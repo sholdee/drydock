@@ -62,6 +62,9 @@ must not shell out. Directory rendering parses YAML/JSON files and flattens
 Kubernetes `List` objects. Keep directory rendering contained to the resolved
 repository root: reject escaping source paths and symlinked source path
 components, and skip symlinked files or directories while walking.
+Kustomize rendering uses Go libraries. Preserve the no-shellout path. Build
+options from Argo settings must be parsed and applied explicitly; do not pass
+opaque command-line strings to a shell.
 
 ## Repository Layout
 
