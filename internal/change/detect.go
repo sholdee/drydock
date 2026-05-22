@@ -66,9 +66,6 @@ func collectFiles(root string, paths map[string]struct{}) error {
 			}
 			return nil
 		}
-		if !entry.Type().IsRegular() {
-			return nil
-		}
 		rel, err := filepath.Rel(root, filePath)
 		if err != nil {
 			return err
