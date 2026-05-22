@@ -2,9 +2,11 @@ package render
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -111,6 +113,93 @@ metadata:
 	}
 }
 
+func TestDirectoryRendererRejectsSourcePathEscape(t *testing.T) {
+	parent := t.TempDir()
+	root := filepath.Join(parent, "repo")
+	outside := filepath.Join(parent, "outside")
+	writeFile(t, filepath.Join(outside, "cm.yaml"), `
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: outside
+`)
+
+	renderer := DirectoryRenderer{}
+	result, diags, err := renderer.Render(context.Background(), ResolvedSource{
+		RepoRoot: root,
+		Path:     ".." + string(filepath.Separator) + "outside",
+	}, RenderOptions{})
+	if err == nil {
+		t.Fatal("Render() error = nil, want path escape error")
+	}
+	if !strings.Contains(err.Error(), "escapes repository root") {
+		t.Fatalf("Render() error = %v, want escape error", err)
+	}
+	if len(diags) != 0 {
+		t.Fatalf("diagnostics = %#v", diags)
+	}
+	if len(result) != 0 {
+		t.Fatalf("result = %#v, want no manifests", result)
+	}
+}
+
+func TestDirectoryRendererRejectsSymlinkedSourcePathComponent(t *testing.T) {
+	root := t.TempDir()
+	outside := t.TempDir()
+	writeFile(t, filepath.Join(outside, "cm.yaml"), `
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: outside
+`)
+	symlink(t, outside, filepath.Join(root, "apps"))
+
+	renderer := DirectoryRenderer{}
+	result, diags, err := renderer.Render(context.Background(), ResolvedSource{
+		RepoRoot: root,
+		Path:     "apps",
+	}, RenderOptions{})
+	if err == nil {
+		t.Fatal("Render() error = nil, want symlink error")
+	}
+	if !strings.Contains(err.Error(), "symlink") {
+		t.Fatalf("Render() error = %v, want symlink error", err)
+	}
+	if len(diags) != 0 {
+		t.Fatalf("diagnostics = %#v", diags)
+	}
+	if len(result) != 0 {
+		t.Fatalf("result = %#v, want no manifests", result)
+	}
+}
+
+func TestDirectoryRendererSkipsSymlinkedYAMLFile(t *testing.T) {
+	root := t.TempDir()
+	outside := t.TempDir()
+	writeFile(t, filepath.Join(outside, "outside.yaml"), `
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: outside
+`)
+	symlink(t, filepath.Join(outside, "outside.yaml"), filepath.Join(root, "apps", "linked.yaml"))
+
+	renderer := DirectoryRenderer{}
+	result, diags, err := renderer.Render(context.Background(), ResolvedSource{
+		RepoRoot: root,
+		Path:     "apps",
+	}, RenderOptions{})
+	if err != nil {
+		t.Fatalf("Render() error = %v", err)
+	}
+	if len(diags) != 0 {
+		t.Fatalf("diagnostics = %#v", diags)
+	}
+	if len(result) != 0 {
+		t.Fatalf("result = %#v, want no manifests from symlinked YAML", result)
+	}
+}
+
 func writeFile(t *testing.T, path, content string) {
 	t.Helper()
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
@@ -118,5 +207,18 @@ func writeFile(t *testing.T, path, content string) {
 	}
 	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
 		t.Fatalf("WriteFile() error = %v", err)
+	}
+}
+
+func symlink(t *testing.T, oldname, newname string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(newname), 0o755); err != nil {
+		t.Fatalf("MkdirAll() error = %v", err)
+	}
+	if err := os.Symlink(oldname, newname); err != nil {
+		if errors.Is(err, os.ErrPermission) {
+			t.Skipf("symlink unavailable: %v", err)
+		}
+		t.Fatalf("Symlink() error = %v", err)
 	}
 }

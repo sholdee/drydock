@@ -59,7 +59,9 @@ mapping exists, keep the built-in cluster-scoped GVK predicate current.
 
 Renderers implement `internal/render.Renderer`. The default implementation path
 must not shell out. Directory rendering parses YAML/JSON files and flattens
-Kubernetes `List` objects.
+Kubernetes `List` objects. Keep directory rendering contained to the resolved
+repository root: reject escaping source paths and symlinked source path
+components, and skip symlinked files or directories while walking.
 
 ## Repository Layout
 
