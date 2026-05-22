@@ -35,3 +35,7 @@ type Manifest struct {
 type Renderer interface {
 	Render(ctx context.Context, source ResolvedSource, opts RenderOptions) ([]Manifest, []diagnostic.Diagnostic, error)
 }
+
+type Provider interface {
+	RenderSource(ctx context.Context, source ResolvedSource, opts RenderOptions) ([]Manifest, []diagnostic.Diagnostic, error)
+}

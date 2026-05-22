@@ -54,6 +54,10 @@ Application planning follows Argo CD precedence: `spec.sources` wins over
 produce no manifests. A source may not combine `ref` and `chart`. Destination
 namespace normalization only fills namespace-scoped objects; until discovery
 mapping exists, keep the built-in cluster-scoped GVK predicate current.
+Within one Application, repeated rendered resource identity is last-wins and
+must emit a diagnostic. Do not dedupe across Applications; cross-Application
+shared-resource behavior belongs to live Argo CD semantics and is out of scope
+for offline MVP.
 
 ## Renderers
 
