@@ -384,11 +384,11 @@ func isRemoteKustomizeRef(ref string) bool {
 	if strings.HasPrefix(lower, "git::") || strings.HasPrefix(lower, "git@") {
 		return true
 	}
-	parsed, err := url.Parse(trimmed)
-	if err == nil && parsed.Scheme != "" {
+	if isColonStyleKustomizeRemoteRef(trimmed) {
 		return true
 	}
-	if isSCPStyleKustomizeRef(trimmed) {
+	parsed, err := url.Parse(trimmed)
+	if err == nil && parsed.Scheme != "" {
 		return true
 	}
 	if strings.Contains(lower, "?ref=") && strings.Contains(lower, "//") {
@@ -402,14 +402,32 @@ func isRemoteKustomizeRef(ref string) bool {
 	return false
 }
 
-func isSCPStyleKustomizeRef(ref string) bool {
-	user, rest, ok := strings.Cut(ref, "@")
-	if !ok || user == "" || strings.ContainsAny(user, `/\`) {
+func isColonStyleKustomizeRemoteRef(ref string) bool {
+	beforeColon, afterColon, ok := strings.Cut(ref, ":")
+	if !ok || beforeColon == "" || afterColon == "" {
 		return false
 	}
-	host, repoPath, ok := strings.Cut(rest, ":")
-	if !ok || host == "" || repoPath == "" || strings.ContainsAny(host, `/\`) {
+	if strings.ContainsAny(beforeColon, `/\`) {
 		return false
 	}
-	return strings.Contains(repoPath, ".git") || strings.Contains(repoPath, "//")
+
+	host := beforeColon
+	if user, afterAt, ok := strings.Cut(beforeColon, "@"); ok {
+		return user != "" && afterAt != "" && !strings.ContainsAny(afterAt, `/\`)
+	}
+	host = strings.ToLower(host)
+	return isKnownGitHost(host) || looksLikeRemoteHost(host)
+}
+
+func isKnownGitHost(host string) bool {
+	for _, known := range []string{"github.com", "gitlab.com", "bitbucket.org"} {
+		if host == known {
+			return true
+		}
+	}
+	return false
+}
+
+func looksLikeRemoteHost(host string) bool {
+	return strings.Contains(host, ".")
 }
