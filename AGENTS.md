@@ -51,7 +51,9 @@ was explicitly enabled by the caller.
 
 Application planning follows Argo CD precedence: `spec.sources` wins over
 `spec.source`. Validate refs before rendering. Ref-only sources are valid and
-produce no manifests. A source may not combine `ref` and `chart`.
+produce no manifests. A source may not combine `ref` and `chart`. Destination
+namespace normalization only fills namespace-scoped objects; until discovery
+mapping exists, keep the conservative cluster-scoped GVK skip list current.
 
 ## Repository Layout
 

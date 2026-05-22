@@ -113,12 +113,29 @@ func TestApplyDestinationNamespaceSetsMissingNamespace(t *testing.T) {
 			Destination: argoappv1.ApplicationDestination{Namespace: "workloads"},
 		},
 	}
-	obj := &unstructured.Unstructured{}
+	tests := []struct {
+		name       string
+		apiVersion string
+		kind       string
+	}{
+		{name: "config map", apiVersion: "v1", kind: "ConfigMap"},
+		{name: "service", apiVersion: "v1", kind: "Service"},
+		{name: "deployment", apiVersion: "apps/v1", kind: "Deployment"},
+	}
 
-	ApplyDestinationNamespace(application, obj)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			obj := &unstructured.Unstructured{Object: map[string]any{
+				"apiVersion": tt.apiVersion,
+				"kind":       tt.kind,
+			}}
 
-	if obj.GetNamespace() != "workloads" {
-		t.Fatalf("Namespace = %q, want workloads", obj.GetNamespace())
+			ApplyDestinationNamespace(application, obj)
+
+			if obj.GetNamespace() != "workloads" {
+				t.Fatalf("Namespace = %q, want workloads", obj.GetNamespace())
+			}
+		})
 	}
 }
 
@@ -128,7 +145,10 @@ func TestApplyDestinationNamespaceKeepsExistingNamespace(t *testing.T) {
 			Destination: argoappv1.ApplicationDestination{Namespace: "workloads"},
 		},
 	}
-	obj := &unstructured.Unstructured{}
+	obj := &unstructured.Unstructured{Object: map[string]any{
+		"apiVersion": "v1",
+		"kind":       "Service",
+	}}
 	obj.SetNamespace("custom")
 
 	ApplyDestinationNamespace(application, obj)
@@ -140,11 +160,54 @@ func TestApplyDestinationNamespaceKeepsExistingNamespace(t *testing.T) {
 
 func TestApplyDestinationNamespaceSkipsEmptyDestinationNamespace(t *testing.T) {
 	application := argoappv1.Application{}
-	obj := &unstructured.Unstructured{}
+	obj := &unstructured.Unstructured{Object: map[string]any{
+		"apiVersion": "apps/v1",
+		"kind":       "Deployment",
+	}}
 
 	ApplyDestinationNamespace(application, obj)
 
 	if obj.GetNamespace() != "" {
 		t.Fatalf("Namespace = %q, want empty", obj.GetNamespace())
+	}
+}
+
+func TestApplyDestinationNamespaceSkipsKnownClusterScopedResources(t *testing.T) {
+	application := argoappv1.Application{
+		Spec: argoappv1.ApplicationSpec{
+			Destination: argoappv1.ApplicationDestination{Namespace: "workloads"},
+		},
+	}
+	tests := []struct {
+		name       string
+		apiVersion string
+		kind       string
+	}{
+		{name: "namespace", apiVersion: "v1", kind: "Namespace"},
+		{name: "node", apiVersion: "v1", kind: "Node"},
+		{name: "persistent volume", apiVersion: "v1", kind: "PersistentVolume"},
+		{name: "mutating webhook configuration", apiVersion: "admissionregistration.k8s.io/v1", kind: "MutatingWebhookConfiguration"},
+		{name: "validating webhook configuration", apiVersion: "admissionregistration.k8s.io/v1", kind: "ValidatingWebhookConfiguration"},
+		{name: "cluster role", apiVersion: "rbac.authorization.k8s.io/v1", kind: "ClusterRole"},
+		{name: "cluster role binding", apiVersion: "rbac.authorization.k8s.io/v1", kind: "ClusterRoleBinding"},
+		{name: "storage class", apiVersion: "storage.k8s.io/v1", kind: "StorageClass"},
+		{name: "priority class", apiVersion: "scheduling.k8s.io/v1", kind: "PriorityClass"},
+		{name: "api service", apiVersion: "apiregistration.k8s.io/v1", kind: "APIService"},
+		{name: "custom resource definition", apiVersion: "apiextensions.k8s.io/v1", kind: "CustomResourceDefinition"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			obj := &unstructured.Unstructured{Object: map[string]any{
+				"apiVersion": tt.apiVersion,
+				"kind":       tt.kind,
+			}}
+
+			ApplyDestinationNamespace(application, obj)
+
+			if obj.GetNamespace() != "" {
+				t.Fatalf("Namespace = %q, want empty", obj.GetNamespace())
+			}
+		})
 	}
 }
