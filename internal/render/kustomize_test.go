@@ -222,29 +222,113 @@ metadata:
 }
 
 func TestKustomizeRendererRejectsRemoteRefs(t *testing.T) {
-	root := t.TempDir()
-	writeFile(t, filepath.Join(root, "app", "kustomization.yaml"), `
+	for _, tt := range []struct {
+		name          string
+		kustomization string
+	}{
+		{
+			name: "https resource",
+			kustomization: `
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 resources:
   - https://github.com/example/repo//base?ref=main
-`)
+`,
+		},
+		{
+			name: "scp-like git resource",
+			kustomization: `
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - alice@example.com:org/repo.git//base
+`,
+		},
+		{
+			name: "file URL resource",
+			kustomization: `
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - file:///tmp/repo//base
+`,
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			assertKustomizeRenderErrorContains(t, tt.kustomization, "remote")
+		})
+	}
+}
 
-	result, diags, err := (KustomizeRenderer{}).Render(context.Background(), ResolvedSource{
-		RepoRoot: root,
-		Path:     "app",
-	}, RenderOptions{})
-	if err == nil {
-		t.Fatal("Render() error = nil, want remote ref error")
-	}
-	if !strings.Contains(err.Error(), "remote") {
-		t.Fatalf("Render() error = %v, want remote ref error", err)
-	}
-	if len(diags) != 0 {
-		t.Fatalf("diagnostics = %#v", diags)
-	}
-	if len(result) != 0 {
-		t.Fatalf("result = %#v, want no manifests", result)
+func TestKustomizeRendererRejectsRemotePathBearingFields(t *testing.T) {
+	for _, tt := range []struct {
+		name          string
+		kustomization string
+	}{
+		{
+			name: "openapi path",
+			kustomization: `
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+openapi:
+  path: https://github.com/example/repo//schema.json?ref=main
+resources: []
+`,
+		},
+		{
+			name: "configurations",
+			kustomization: `
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+configurations:
+  - https://github.com/example/repo//name-reference.yaml?ref=main
+resources: []
+`,
+		},
+		{
+			name: "replacements path",
+			kustomization: `
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+replacements:
+  - path: https://github.com/example/repo//replacement.yaml?ref=main
+resources: []
+`,
+		},
+		{
+			name: "generators",
+			kustomization: `
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+generators:
+  - https://github.com/example/repo//generator.yaml?ref=main
+resources: []
+`,
+		},
+		{
+			name: "transformers",
+			kustomization: `
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+transformers:
+  - https://github.com/example/repo//transformer.yaml?ref=main
+resources: []
+`,
+		},
+		{
+			name: "validators",
+			kustomization: `
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+validators:
+  - https://github.com/example/repo//validator.yaml?ref=main
+resources: []
+`,
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			assertKustomizeRenderErrorContains(t, tt.kustomization, "remote")
+		})
 	}
 }
 
@@ -260,6 +344,29 @@ func TestKustomizeRendererRejectsBuildOptions(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "build options") {
 		t.Fatalf("Render() error = %v, want build options error", err)
+	}
+	if len(diags) != 0 {
+		t.Fatalf("diagnostics = %#v", diags)
+	}
+	if len(result) != 0 {
+		t.Fatalf("result = %#v, want no manifests", result)
+	}
+}
+
+func assertKustomizeRenderErrorContains(t *testing.T, kustomization, want string) {
+	t.Helper()
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "app", "kustomization.yaml"), kustomization)
+
+	result, diags, err := (KustomizeRenderer{}).Render(context.Background(), ResolvedSource{
+		RepoRoot: root,
+		Path:     "app",
+	}, RenderOptions{})
+	if err == nil {
+		t.Fatalf("Render() error = nil, want error containing %q", want)
+	}
+	if !strings.Contains(err.Error(), want) {
+		t.Fatalf("Render() error = %v, want error containing %q", err, want)
 	}
 	if len(diags) != 0 {
 		t.Fatalf("diagnostics = %#v", diags)

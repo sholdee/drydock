@@ -67,7 +67,9 @@ options from Argo settings must be parsed and applied explicitly; do not pass
 opaque command-line strings to a shell. Until that parsing exists, nonempty
 Kustomize build options must fail explicitly. Before invoking Kustomize,
 prevalidate local Kustomization graph references and reject remote refs,
-absolute paths, source-root escapes, and symlinked graph entries.
+absolute paths, source-root escapes, and symlinked graph entries. Treat
+Kustomize path-bearing fields fail-closed: validate new fields before render
+rather than assuming Kustomize's loader restrictions are enough.
 
 ## Repository Layout
 
