@@ -4,11 +4,13 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	argoappv1 "github.com/argoproj/argo-cd/v3/pkg/apis/application/v1alpha1"
 	"github.com/home-operations/argocd-local/internal/diagnostic"
 	"github.com/home-operations/argocd-local/internal/manifest"
 	"github.com/home-operations/argocd-local/internal/render"
+	"go.yaml.in/yaml/v4"
 )
 
 type RenderResult struct {
@@ -37,18 +39,21 @@ func RenderApplication(ctx context.Context, application argoappv1.Application, p
 
 		opts, err := renderOptions(application, sourcePlan.Source)
 		if err != nil {
-			return result, fmt.Errorf("render source %d: %w", sourcePlan.Index, err)
+			return result, fmt.Errorf("%s: %w", renderSourceContext(application, sourcePlan), err)
 		}
 		manifests, diags, err := provider.RenderSource(ctx, render.ResolvedSource{
 			Path:  sourcePlan.Source.Path,
 			Chart: sourcePlan.Source.Chart,
 		}, opts)
 		if err != nil {
-			return result, fmt.Errorf("render source %d: %w", sourcePlan.Index, err)
+			return result, fmt.Errorf("%s: %w", renderSourceContext(application, sourcePlan), err)
 		}
 
-		result.Diagnostics = append(result.Diagnostics, diags...)
+		result.Diagnostics = append(result.Diagnostics, sourceDiagnostics(application, sourcePlan, diags)...)
 		for _, rendered := range manifests {
+			if rendered.Object != nil {
+				rendered.Object = rendered.Object.DeepCopy()
+			}
 			rendered.SourceIndex = sourcePlan.Index
 			rendered.SourceName = sourcePlan.Name
 			ApplyDestinationNamespace(application, rendered.Object)
@@ -87,12 +92,39 @@ func renderOptions(application argoappv1.Application, source argoappv1.Applicati
 	opts.KubeVersion = source.Helm.KubeVersion
 	opts.APIVersions = append(opts.APIVersions, source.Helm.APIVersions...)
 	opts.ValueFiles = append(opts.ValueFiles, source.Helm.ValueFiles...)
-	valuesObject, err := helmValuesObject(source.Helm)
+	valuesObject, err := helmValues(source.Helm)
 	if err != nil {
 		return render.RenderOptions{}, err
 	}
 	opts.ValuesObject = valuesObject
 	return opts, nil
+}
+
+func helmValues(helm *argoappv1.ApplicationSourceHelm) (map[string]any, error) {
+	values, err := helmValuesString(helm.Values)
+	if err != nil {
+		return nil, err
+	}
+
+	valuesObject, err := helmValuesObject(helm)
+	if err != nil {
+		return nil, err
+	}
+	return mergeHelmValues(values, valuesObject), nil
+}
+
+func helmValuesString(raw string) (map[string]any, error) {
+	if strings.TrimSpace(raw) == "" {
+		return nil, nil
+	}
+	var values map[string]any
+	if err := yaml.Unmarshal([]byte(raw), &values); err != nil {
+		return nil, fmt.Errorf("helm values must be a YAML mapping: %w", err)
+	}
+	if values == nil {
+		return nil, fmt.Errorf("helm values must be a YAML mapping")
+	}
+	return values, nil
 }
 
 func helmValuesObject(helm *argoappv1.ApplicationSourceHelm) (map[string]any, error) {
@@ -105,4 +137,82 @@ func helmValuesObject(helm *argoappv1.ApplicationSourceHelm) (map[string]any, er
 		return nil, fmt.Errorf("decode helm valuesObject: %w", err)
 	}
 	return values, nil
+}
+
+func mergeHelmValues(values, valuesObject map[string]any) map[string]any {
+	if values == nil && valuesObject == nil {
+		return nil
+	}
+
+	out := cloneHelmValues(values)
+	for key, value := range valuesObject {
+		if valueMap, ok := value.(map[string]any); ok {
+			if existingMap, ok := out[key].(map[string]any); ok {
+				out[key] = mergeHelmValues(existingMap, valueMap)
+				continue
+			}
+		}
+		out[key] = cloneHelmValue(value)
+	}
+	return out
+}
+
+func cloneHelmValues(values map[string]any) map[string]any {
+	out := make(map[string]any, len(values))
+	for key, value := range values {
+		out[key] = cloneHelmValue(value)
+	}
+	return out
+}
+
+func cloneHelmValue(value any) any {
+	switch value := value.(type) {
+	case map[string]any:
+		return cloneHelmValues(value)
+	case []any:
+		out := make([]any, len(value))
+		for i, item := range value {
+			out[i] = cloneHelmValue(item)
+		}
+		return out
+	default:
+		return value
+	}
+}
+
+func sourceDiagnostics(application argoappv1.Application, sourcePlan SourcePlan, diags []diagnostic.Diagnostic) []diagnostic.Diagnostic {
+	if len(diags) == 0 {
+		return nil
+	}
+
+	context := renderSourceContext(application, sourcePlan)
+	out := make([]diagnostic.Diagnostic, len(diags))
+	for i, diag := range diags {
+		diag.Message = fmt.Sprintf("%s: %s", context, diag.Message)
+		out[i] = diag
+	}
+	return out
+}
+
+func renderSourceContext(application argoappv1.Application, sourcePlan SourcePlan) string {
+	parts := []string{
+		fmt.Sprintf("Application %s source[%d]", applicationName(application), sourcePlan.Index),
+	}
+	if sourcePlan.Name != "" {
+		parts = append(parts, fmt.Sprintf("name=%q", sourcePlan.Name))
+	}
+	if sourcePlan.Source.Path != "" {
+		parts = append(parts, fmt.Sprintf("path=%q", sourcePlan.Source.Path))
+	}
+	if sourcePlan.Source.Chart != "" {
+		parts = append(parts, fmt.Sprintf("chart=%q", sourcePlan.Source.Chart))
+	}
+	return strings.Join(parts, " ")
+}
+
+func applicationName(application argoappv1.Application) string {
+	if application.Namespace == "" {
+		return application.Name
+	}
+	return application.Namespace + "/" + application.Name
 }
