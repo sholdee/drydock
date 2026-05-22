@@ -245,6 +245,24 @@ resources:
 `,
 		},
 		{
+			name: "scp-like git resource without git suffix",
+			kustomization: `
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - alice@example.com:org/repo/base?ref=main
+`,
+		},
+		{
+			name: "github host colon resource",
+			kustomization: `
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - github.com:org/repo//base
+`,
+		},
+		{
 			name: "file URL resource",
 			kustomization: `
 apiVersion: kustomize.config.k8s.io/v1beta1
