@@ -114,6 +114,21 @@ func TestScanRejectsExplicitSymlinkPath(t *testing.T) {
 	}
 }
 
+func TestScanRejectsExplicitPathWithSymlinkedParent(t *testing.T) {
+	root := t.TempDir()
+	outside := t.TempDir()
+	mustCopy(t, filepath.Join("..", "..", "testdata", "applications", "direct-app.yaml"), filepath.Join(outside, "outside-app.yaml"))
+	mustSymlink(t, outside, filepath.Join(root, "apps"))
+
+	_, err := Scan(root, Options{AppManifestPaths: []string{filepath.Join("apps", "outside-app.yaml")}})
+	if err == nil {
+		t.Fatal("Scan() error = nil, want symlink error")
+	}
+	if !strings.Contains(err.Error(), "symlink") {
+		t.Fatalf("Scan() error = %v, want symlink error", err)
+	}
+}
+
 func TestScanFindsApplicationSetAndSettingsCandidates(t *testing.T) {
 	root := t.TempDir()
 	mustWriteFile(t, filepath.Join(root, "apps", "appset.yaml"), `apiVersion: argoproj.io/v1alpha1
