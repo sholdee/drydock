@@ -70,6 +70,9 @@ prevalidate local Kustomization graph references and reject remote refs,
 absolute paths, source-root escapes, and symlinked graph entries. Treat
 Kustomize path-bearing fields fail-closed: validate new fields before render
 rather than assuming Kustomize's loader restrictions are enough.
+Helm rendering must use Go libraries by default. Preserve these Argo CD
+semantics in the MVP: release name defaults to Application name, destination
+namespace is passed to Helm, and `valuesObject` overrides `values`.
 
 ## Repository Layout
 

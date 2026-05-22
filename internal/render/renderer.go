@@ -20,6 +20,9 @@ type RenderOptions struct {
 	APIVersions  []string
 	BuildOptions []string
 	RefRoots     map[string]string
+	ReleaseName  string
+	ValuesObject map[string]any
+	ValueFiles   []string
 }
 
 type Manifest struct {
