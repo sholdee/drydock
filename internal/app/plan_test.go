@@ -194,6 +194,14 @@ func TestApplyDestinationNamespaceSkipsKnownClusterScopedResources(t *testing.T)
 		{name: "priority class", apiVersion: "scheduling.k8s.io/v1", kind: "PriorityClass"},
 		{name: "api service", apiVersion: "apiregistration.k8s.io/v1", kind: "APIService"},
 		{name: "custom resource definition", apiVersion: "apiextensions.k8s.io/v1", kind: "CustomResourceDefinition"},
+		{name: "ingress class", apiVersion: "networking.k8s.io/v1", kind: "IngressClass"},
+		{name: "certificate signing request", apiVersion: "certificates.k8s.io/v1", kind: "CertificateSigningRequest"},
+		{name: "runtime class", apiVersion: "node.k8s.io/v1", kind: "RuntimeClass"},
+		{name: "csi driver", apiVersion: "storage.k8s.io/v1", kind: "CSIDriver"},
+		{name: "csi node", apiVersion: "storage.k8s.io/v1", kind: "CSINode"},
+		{name: "volume attachment", apiVersion: "storage.k8s.io/v1", kind: "VolumeAttachment"},
+		{name: "flow schema", apiVersion: "flowcontrol.apiserver.k8s.io/v1", kind: "FlowSchema"},
+		{name: "priority level configuration", apiVersion: "flowcontrol.apiserver.k8s.io/v1", kind: "PriorityLevelConfiguration"},
 	}
 
 	for _, tt := range tests {
