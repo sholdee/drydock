@@ -162,6 +162,59 @@ func TestDetectReportsSymlinkReplacementWithoutFollowingIt(t *testing.T) {
 	}
 }
 
+func TestDetectReportsSymlinkOnlyChanges(t *testing.T) {
+	base := t.TempDir()
+	current := t.TempDir()
+	outside := t.TempDir()
+	writeFile(t, outside, "old.yaml", "old")
+	writeFile(t, outside, "new.yaml", "new")
+	if err := os.MkdirAll(filepath.Join(base, "apps"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(current, "apps"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(outside, "old.yaml"), filepath.Join(base, "apps", "a.yaml")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(outside, "new.yaml"), filepath.Join(current, "apps", "a.yaml")); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := Detect(base, current)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	want := []string{"apps/a.yaml"}
+	if !equal(got, want) {
+		t.Fatalf("Detect() = %v, want %v", got, want)
+	}
+}
+
+func TestDetectReportsSymlinkOnlyAddition(t *testing.T) {
+	base := t.TempDir()
+	current := t.TempDir()
+	outside := t.TempDir()
+	writeFile(t, outside, "a.yaml", "added")
+	if err := os.MkdirAll(filepath.Join(current, "apps"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(outside, "a.yaml"), filepath.Join(current, "apps", "a.yaml")); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := Detect(base, current)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	want := []string{"apps/a.yaml"}
+	if !equal(got, want) {
+		t.Fatalf("Detect() = %v, want %v", got, want)
+	}
+}
+
 func TestDetectReportsFileToDirectoryTypeChange(t *testing.T) {
 	base := t.TempDir()
 	current := t.TempDir()
