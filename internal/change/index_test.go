@@ -37,6 +37,57 @@ func TestIndexUnownedFallsBackToRenderAll(t *testing.T) {
 	}
 }
 
+func TestIndexDeduplicatesUnownedChangedPaths(t *testing.T) {
+	index := NewIndex()
+	index.Add("app-a", []string{"apps/a"})
+
+	got := index.Match([]string{"docs/readme.md", "docs/readme.md"})
+
+	if !got.RenderAll {
+		t.Fatal("RenderAll = false, want true")
+	}
+	wantUnowned := []string{"docs/readme.md"}
+	if !equal(got.Unowned, wantUnowned) {
+		t.Fatalf("Unowned = %v, want %v", got.Unowned, wantUnowned)
+	}
+}
+
+func TestIndexPathPrefixesMatchWholeSegments(t *testing.T) {
+	index := NewIndex()
+	index.Add("app-a", []string{"apps/a"})
+
+	got := index.Match([]string{"apps/ab/cm.yaml"})
+
+	if len(got.Applications) != 0 {
+		t.Fatalf("Applications = %v, want none", got.Applications)
+	}
+	if !got.RenderAll {
+		t.Fatal("RenderAll = false, want true")
+	}
+	wantUnowned := []string{"apps/ab/cm.yaml"}
+	if !equal(got.Unowned, wantUnowned) {
+		t.Fatalf("Unowned = %v, want %v", got.Unowned, wantUnowned)
+	}
+}
+
+func TestIndexRootInputOwnsAllChangedPaths(t *testing.T) {
+	index := NewIndex()
+	index.Add("app-root", []string{"/"})
+
+	got := index.Match([]string{"apps/a/cm.yaml"})
+
+	wantApps := []string{"app-root"}
+	if !equal(got.Applications, wantApps) {
+		t.Fatalf("Applications = %v, want %v", got.Applications, wantApps)
+	}
+	if got.RenderAll {
+		t.Fatal("RenderAll = true, want false")
+	}
+	if len(got.Unowned) != 0 {
+		t.Fatalf("Unowned = %v, want none", got.Unowned)
+	}
+}
+
 func TestDetectChangedPaths(t *testing.T) {
 	base := t.TempDir()
 	current := t.TempDir()
@@ -50,6 +101,81 @@ func TestDetectChangedPaths(t *testing.T) {
 	}
 
 	want := []string{"apps/a/cm.yaml", "apps/b/cm.yaml"}
+	if !equal(got, want) {
+		t.Fatalf("Detect() = %v, want %v", got, want)
+	}
+}
+
+func TestDetectReportsDeletedPaths(t *testing.T) {
+	base := t.TempDir()
+	current := t.TempDir()
+	writeFile(t, base, "apps/a/cm.yaml", "old")
+
+	got, err := Detect(base, current)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	want := []string{"apps/a/cm.yaml"}
+	if !equal(got, want) {
+		t.Fatalf("Detect() = %v, want %v", got, want)
+	}
+}
+
+func TestDetectSkipsGitDirectories(t *testing.T) {
+	base := t.TempDir()
+	current := t.TempDir()
+	writeFile(t, base, ".git/config", "old")
+	writeFile(t, current, ".git/config", "new")
+
+	got, err := Detect(base, current)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(got) != 0 {
+		t.Fatalf("Detect() = %v, want none", got)
+	}
+}
+
+func TestDetectReportsSymlinkReplacementWithoutFollowingIt(t *testing.T) {
+	base := t.TempDir()
+	current := t.TempDir()
+	outside := t.TempDir()
+	writeFile(t, base, "apps/a.yaml", "same as outside")
+	writeFile(t, outside, "a.yaml", "same as outside")
+	if err := os.MkdirAll(filepath.Join(current, "apps"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(outside, "a.yaml"), filepath.Join(current, "apps", "a.yaml")); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := Detect(base, current)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	want := []string{"apps/a.yaml"}
+	if !equal(got, want) {
+		t.Fatalf("Detect() = %v, want %v", got, want)
+	}
+}
+
+func TestDetectReportsFileToDirectoryTypeChange(t *testing.T) {
+	base := t.TempDir()
+	current := t.TempDir()
+	writeFile(t, base, "apps/a.yaml", "old")
+	if err := os.MkdirAll(filepath.Join(current, "apps", "a.yaml"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := Detect(base, current)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	want := []string{"apps/a.yaml"}
 	if !equal(got, want) {
 		t.Fatalf("Detect() = %v, want %v", got, want)
 	}
