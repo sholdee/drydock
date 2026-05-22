@@ -212,32 +212,53 @@ func collectHelmChartPaths(out map[string]string, chrt helmchart.Charter, render
 	fullPath := path.Clean(renderedFullPath)
 	out[fullPath] = sourceRoot
 
-	dependencySourcePaths := helmDependencySourcePaths(accessor, sourceRoot)
+	type childChart struct {
+		chart    helmchart.Charter
+		accessor helmchart.Accessor
+	}
+	children := make([]childChart, 0, len(accessor.Dependencies()))
 	for _, dependency := range accessor.Dependencies() {
 		child, err := helmchart.NewAccessor(dependency)
 		if err != nil {
 			continue
 		}
-		dependencyPath := dependencySourcePaths[child.Name()]
-		childRenderedName := child.Name()
-		childSourcePath := path.Join(sourceRoot, "charts", child.Name())
-		if dependencyPath.renderedName != "" {
-			childRenderedName = dependencyPath.renderedName
+		children = append(children, childChart{chart: dependency, accessor: child})
+	}
+
+	usedRenderedPaths := make(map[string]struct{})
+	for _, dependencyPath := range helmDependencySourcePaths(accessor, sourceRoot) {
+		for _, child := range children {
+			if child.accessor.Name() != dependencyPath.sourceName {
+				continue
+			}
+			childRenderedPath := path.Join(fullPath, "charts", dependencyPath.renderedName)
+			childSourcePath := dependencyPath.sourcePath
+			if childSourcePath == "" {
+				childSourcePath = path.Join(sourceRoot, "charts", dependencyPath.sourceName)
+			}
+			collectHelmChartPaths(out, child.chart, childRenderedPath, childSourcePath)
+			usedRenderedPaths[childRenderedPath] = struct{}{}
+			break
 		}
-		if dependencyPath.sourcePath != "" {
-			childSourcePath = dependencyPath.sourcePath
+	}
+
+	for _, child := range children {
+		childRenderedPath := path.Join(fullPath, "charts", child.accessor.Name())
+		if _, ok := usedRenderedPaths[childRenderedPath]; ok {
+			continue
 		}
-		collectHelmChartPaths(out, dependency, path.Join(fullPath, "charts", childRenderedName), childSourcePath)
+		collectHelmChartPaths(out, child.chart, childRenderedPath, path.Join(sourceRoot, "charts", child.accessor.Name()))
 	}
 }
 
 type helmDependencyPath struct {
+	sourceName   string
 	renderedName string
 	sourcePath   string
 }
 
-func helmDependencySourcePaths(accessor helmchart.Accessor, parentSourcePath string) map[string]helmDependencyPath {
-	out := make(map[string]helmDependencyPath)
+func helmDependencySourcePaths(accessor helmchart.Accessor, parentSourcePath string) []helmDependencyPath {
+	out := make([]helmDependencyPath, 0, len(accessor.MetaDependencies()))
 	for _, dependency := range accessor.MetaDependencies() {
 		dependencyAccessor, err := helmchart.NewDependencyAccessor(dependency)
 		if err != nil {
@@ -249,10 +270,11 @@ func helmDependencySourcePaths(accessor helmchart.Accessor, parentSourcePath str
 			renderedName = alias
 		}
 		sourcePath := helmDependencySourcePath(parentSourcePath, dependency)
-		out[sourceName] = helmDependencyPath{
+		out = append(out, helmDependencyPath{
+			sourceName:   sourceName,
 			renderedName: renderedName,
 			sourcePath:   sourcePath,
-		}
+		})
 	}
 	return out
 }
