@@ -55,6 +55,12 @@ produce no manifests. A source may not combine `ref` and `chart`. Destination
 namespace normalization only fills namespace-scoped objects; until discovery
 mapping exists, keep the built-in cluster-scoped GVK predicate current.
 
+## Renderers
+
+Renderers implement `internal/render.Renderer`. The default implementation path
+must not shell out. Directory rendering parses YAML/JSON files and flattens
+Kubernetes `List` objects.
+
 ## Repository Layout
 
 - `cmd/argocd-local/`: binary entrypoint

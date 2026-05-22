@@ -1,0 +1,34 @@
+package render
+
+import (
+	"context"
+
+	"github.com/home-operations/argocd-local/internal/diagnostic"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+)
+
+type ResolvedSource struct {
+	RepoRoot string
+	Path     string
+	Chart    string
+}
+
+type RenderOptions struct {
+	AppName      string
+	Namespace    string
+	KubeVersion  string
+	APIVersions  []string
+	BuildOptions []string
+	RefRoots     map[string]string
+}
+
+type Manifest struct {
+	SourceIndex int
+	SourceName  string
+	Path        string
+	Object      *unstructured.Unstructured
+}
+
+type Renderer interface {
+	Render(ctx context.Context, source ResolvedSource, opts RenderOptions) ([]Manifest, []diagnostic.Diagnostic, error)
+}
