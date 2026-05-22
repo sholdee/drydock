@@ -33,6 +33,13 @@ caller wants explicit paths. Classify candidates by full GVK, skip symlinks in
 default scans, reject symlink components in explicit app manifest paths, and
 keep default scans tolerant of unrelated YAML files.
 
+## ApplicationSet MVP
+
+`internal/appset` supports one Git directories generator with Go templates. Use
+path-style matching, keep include/exclude semantics deterministic, and preserve
+Argo CD template behavior such as `missingkey=error` and Sprig functions.
+Unsupported generators must produce diagnostics.
+
 ## Repository Layout
 
 - `cmd/argocd-local/`: binary entrypoint
