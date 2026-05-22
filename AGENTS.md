@@ -40,6 +40,13 @@ path-style matching, keep include/exclude semantics deterministic, and preserve
 Argo CD template behavior such as `missingkey=error` and Sprig functions.
 Unsupported generators must produce diagnostics.
 
+## Source Resolution
+
+Repository URL maps are deterministic and preferred over network fetches.
+Normalize URLs consistently, including optional `.git` suffixes, trailing
+slashes, and whitespace. Unmapped repositories must error unless network access
+was explicitly enabled by the caller.
+
 ## Repository Layout
 
 - `cmd/argocd-local/`: binary entrypoint
