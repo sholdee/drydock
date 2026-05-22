@@ -46,6 +46,11 @@ func Scan(root string, opts Options) (Result, error) {
 		if err != nil {
 			return result, err
 		}
+		if explicit {
+			if err := rejectSymlinkComponents(root, start); err != nil {
+				return result, err
+			}
+		}
 		if err := scanPath(root, start, explicit, seen, &result); err != nil {
 			return result, err
 		}
@@ -184,6 +189,32 @@ func relativePath(root, path string) (string, error) {
 		return "", err
 	}
 	return filepath.Clean(rel), nil
+}
+
+func rejectSymlinkComponents(root, target string) error {
+	rel, err := relativePath(root, target)
+	if err != nil {
+		return err
+	}
+	if rel == "." {
+		return nil
+	}
+
+	current := root
+	for _, component := range strings.Split(rel, string(filepath.Separator)) {
+		if component == "" || component == "." {
+			continue
+		}
+		current = filepath.Join(current, component)
+		info, err := os.Lstat(current)
+		if err != nil {
+			return err
+		}
+		if info.Mode()&os.ModeSymlink != 0 {
+			return fmt.Errorf("app manifest path %q includes symlink component %q", rel, component)
+		}
+	}
+	return nil
 }
 
 func looksLikeCandidate(path string) (bool, error) {
