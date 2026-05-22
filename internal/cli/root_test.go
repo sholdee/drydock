@@ -51,3 +51,19 @@ func TestVersionCommand(t *testing.T) {
 		}
 	}
 }
+
+func TestVersionCommandRejectsOperands(t *testing.T) {
+	cmd := NewRootCommand(VersionInfo{
+		Version:      "test",
+		Commit:       "abc123",
+		ArgoCDModule: "github.com/argoproj/argo-cd/v3",
+	})
+	cmd.SetArgs([]string{"version", "unexpected"})
+	var out bytes.Buffer
+	cmd.SetOut(&out)
+	cmd.SetErr(&out)
+
+	if err := cmd.Execute(); err == nil {
+		t.Fatalf("Execute() error = nil, want error")
+	}
+}
