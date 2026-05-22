@@ -47,6 +47,12 @@ Normalize URLs consistently, including optional `.git` suffixes, trailing
 slashes, and whitespace. Unmapped repositories must error unless network access
 was explicitly enabled by the caller.
 
+## Application Planning
+
+Application planning follows Argo CD precedence: `spec.sources` wins over
+`spec.source`. Validate refs before rendering. Ref-only sources are valid and
+produce no manifests. A source may not combine `ref` and `chart`.
+
 ## Repository Layout
 
 - `cmd/argocd-local/`: binary entrypoint
