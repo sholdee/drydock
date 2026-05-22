@@ -29,7 +29,8 @@ Read the design spec before substantive changes:
 - `internal/app/`: Application source planning and multi-source combine behavior
 - `internal/change/`: changed-file detection and Application input indexing
 - `internal/diff/`: parent-aware desired-vs-desired diffs and image diffs
-- `internal/diagnostic/`: warnings, provenance, and strict-mode escalation
+- `internal/diagnostic/`: structured warnings/errors with provenance and strict-mode promotion
+- `internal/manifest/`: YAML/JSON document loading, List flattening, and resource identity helpers
 - `testdata/`: minimal fixtures only
 
 ## Validation
@@ -50,6 +51,7 @@ If a tool is not installed locally, say so in your final response.
 - Default workflows must not require `helm`, `kustomize`, `kubectl`, or `argocd` on `PATH`.
 - Network access is opt-in through `--allow-network`; prefer `--repo-map`.
 - Do not print secret data. Repository Secrets may provide non-sensitive metadata only.
+- Manifest loaders must never print Secret values. Diagnostics may include file paths and YAML pointers, not manifest data.
 - `spec.sources` takes precedence over `spec.source`.
 - Changed-only mode must not use Flux-style "most-specific owner wins"; Argo CD may have overlapping Applications.
 - Server-side diff/apply settings are diagnostics in offline mode, not executable behavior.
