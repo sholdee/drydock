@@ -1,0 +1,26 @@
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: k3s-apps
+  namespace: argocd
+spec:
+  goTemplate: true
+  goTemplateOptions: ["missingkey=error"]
+  generators:
+    - git:
+        repoURL: https://github.com/example/home-ops
+        revision: master
+        directories:
+          - path: "apps/*"
+  template:
+    metadata:
+      name: "{{.path.basename}}"
+    spec:
+      project: k3s
+      source:
+        repoURL: https://github.com/example/home-ops
+        targetRevision: master
+        path: "{{.path.path}}"
+      destination:
+        name: in-cluster
+        namespace: '{{ regexReplaceAll "-conf$" .path.basename "" }}'
