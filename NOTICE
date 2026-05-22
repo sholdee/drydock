@@ -1,9 +1,5 @@
 argocd-local
 Copyright 2026 argocd-local contributors
 
-This product includes software developed by the Argo Project
-(https://argoproj.github.io/) and Kubernetes project contributors through Go
-module dependencies.
-
 Third-party source files and fixtures copied into this repository must retain
 their original copyright and license notices.

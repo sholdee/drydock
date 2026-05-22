@@ -11,6 +11,7 @@ func newVersionCommand(info VersionInfo) *cobra.Command {
 	return &cobra.Command{
 		Use:   "version",
 		Short: "Print version information",
+		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			_, err := fmt.Fprintf(cmd.OutOrStdout(),
 				"version: %s\ncommit: %s\ngoVersion: %s\nargocdModule: %s\n",
