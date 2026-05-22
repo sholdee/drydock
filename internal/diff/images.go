@@ -7,21 +7,22 @@ import (
 	"go.yaml.in/yaml/v4"
 )
 
-func ExtractImages(body string) ([]string, error) {
-	var value any
-	if err := yaml.Unmarshal([]byte(body), &value); err != nil {
-		return nil, err
-	}
-
+func ExtractImages(docs []Document) []string {
 	images := map[string]struct{}{}
-	collectImages(value, images)
+	for _, doc := range docs {
+		var value any
+		if err := yaml.Unmarshal([]byte(doc.Body), &value); err != nil {
+			continue
+		}
+		collectImages(value, images)
+	}
 
 	out := make([]string, 0, len(images))
 	for image := range images {
 		out = append(out, image)
 	}
 	sort.Strings(out)
-	return out, nil
+	return out
 }
 
 func collectImages(value any, images map[string]struct{}) {

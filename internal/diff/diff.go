@@ -10,9 +10,11 @@ import (
 )
 
 type Parent struct {
-	Kind      string `json:"kind,omitempty" yaml:"kind,omitempty"`
-	Namespace string `json:"namespace,omitempty" yaml:"namespace,omitempty"`
-	Name      string `json:"name" yaml:"name"`
+	Namespace   string `json:"namespace,omitempty" yaml:"namespace,omitempty"`
+	Name        string `json:"name" yaml:"name"`
+	SourceIndex int    `json:"sourceIndex" yaml:"sourceIndex"`
+	SourceName  string `json:"sourceName,omitempty" yaml:"sourceName,omitempty"`
+	SourcePath  string `json:"sourcePath,omitempty" yaml:"sourcePath,omitempty"`
 }
 
 type Resource struct {
@@ -23,12 +25,9 @@ type Resource struct {
 }
 
 type Document struct {
-	Parent      Parent   `json:"parent" yaml:"parent"`
-	SourceIndex int      `json:"sourceIndex" yaml:"sourceIndex"`
-	SourceName  string   `json:"sourceName,omitempty" yaml:"sourceName,omitempty"`
-	SourcePath  string   `json:"sourcePath,omitempty" yaml:"sourcePath,omitempty"`
-	Resource    Resource `json:"resource" yaml:"resource"`
-	Body        string   `json:"body" yaml:"body"`
+	Parent   Parent   `json:"parent" yaml:"parent"`
+	Resource Resource `json:"resource" yaml:"resource"`
+	Body     string   `json:"body" yaml:"body"`
 }
 
 type Change string
@@ -40,13 +39,10 @@ const (
 )
 
 type Result struct {
-	Parent      Parent   `json:"parent" yaml:"parent"`
-	SourceIndex int      `json:"sourceIndex" yaml:"sourceIndex"`
-	SourceName  string   `json:"sourceName,omitempty" yaml:"sourceName,omitempty"`
-	SourcePath  string   `json:"sourcePath,omitempty" yaml:"sourcePath,omitempty"`
-	Resource    Resource `json:"resource" yaml:"resource"`
-	Change      Change   `json:"change" yaml:"change"`
-	Diff        string   `json:"diff" yaml:"diff"`
+	Parent   Parent   `json:"parent" yaml:"parent"`
+	Resource Resource `json:"resource" yaml:"resource"`
+	Change   Change   `json:"change" yaml:"change"`
+	Diff     string   `json:"diff" yaml:"diff"`
 }
 
 type Options struct {
@@ -95,9 +91,9 @@ func keyOf(doc Document) string {
 		parentKind(doc.Parent),
 		doc.Parent.Namespace,
 		doc.Parent.Name,
-		strconv.Itoa(doc.SourceIndex),
-		doc.SourceName,
-		doc.SourcePath,
+		strconv.Itoa(doc.Parent.SourceIndex),
+		doc.Parent.SourceName,
+		doc.Parent.SourcePath,
 		doc.Resource.Group,
 		doc.Resource.Kind,
 		doc.Resource.Namespace,
@@ -136,13 +132,10 @@ func resultFor(doc Document, change Change, from, to string, opts Options) (Resu
 		return Result{}, err
 	}
 	return Result{
-		Parent:      doc.Parent,
-		SourceIndex: doc.SourceIndex,
-		SourceName:  doc.SourceName,
-		SourcePath:  doc.SourcePath,
-		Resource:    doc.Resource,
-		Change:      change,
-		Diff:        diff,
+		Parent:   doc.Parent,
+		Resource: doc.Resource,
+		Change:   change,
+		Diff:     diff,
 	}, nil
 }
 
@@ -164,23 +157,20 @@ func unified(doc Document, from, to string, opts Options) (string, error) {
 func headerOf(doc Document) string {
 	parts := []string{
 		fmt.Sprintf("%s: %s", parentKind(doc.Parent), parentName(doc.Parent)),
-		fmt.Sprintf("Source: %d", doc.SourceIndex),
+		fmt.Sprintf("Source: %d", doc.Parent.SourceIndex),
 	}
-	if doc.SourceName != "" {
-		parts = append(parts, fmt.Sprintf("name=%q", doc.SourceName))
+	if doc.Parent.SourceName != "" {
+		parts = append(parts, fmt.Sprintf("name=%q", doc.Parent.SourceName))
 	}
-	if doc.SourcePath != "" {
-		parts = append(parts, doc.SourcePath)
+	if doc.Parent.SourcePath != "" {
+		parts = append(parts, doc.Parent.SourcePath)
 	}
 	parts = append(parts, resourceName(doc.Resource))
 	return strings.Join(parts, " ")
 }
 
 func parentKind(parent Parent) string {
-	if parent.Kind == "" {
-		return "Application"
-	}
-	return parent.Kind
+	return "Application"
 }
 
 func parentName(parent Parent) string {

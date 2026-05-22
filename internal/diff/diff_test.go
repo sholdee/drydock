@@ -8,11 +8,11 @@ import (
 func TestRunParentAwareDiff(t *testing.T) {
 	left := []Document{{
 		Parent: Parent{
-			Namespace: "argocd",
-			Name:      "app-a",
+			Namespace:   "argocd",
+			Name:        "app-a",
+			SourceIndex: 0,
+			SourcePath:  "apps/a",
 		},
-		SourceIndex: 0,
-		SourcePath:  "apps/a",
 		Resource: Resource{
 			Kind:      "ConfigMap",
 			Namespace: "default",
@@ -22,11 +22,11 @@ func TestRunParentAwareDiff(t *testing.T) {
 	}}
 	right := []Document{{
 		Parent: Parent{
-			Namespace: "argocd",
-			Name:      "app-a",
+			Namespace:   "argocd",
+			Name:        "app-a",
+			SourceIndex: 0,
+			SourcePath:  "apps/a",
 		},
-		SourceIndex: 0,
-		SourcePath:  "apps/a",
 		Resource: Resource{
 			Kind:      "ConfigMap",
 			Namespace: "default",
@@ -70,10 +70,7 @@ spec:
           image: ghcr.io/example/web:v1
 `
 
-	images, err := ExtractImages(body)
-	if err != nil {
-		t.Fatalf("ExtractImages() error = %v", err)
-	}
+	images := ExtractImages([]Document{{Body: body}})
 	if len(images) != 1 || images[0] != "ghcr.io/example/web:v1" {
 		t.Fatalf("ExtractImages() = %#v, want ghcr.io/example/web:v1", images)
 	}
