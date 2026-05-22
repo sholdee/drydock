@@ -7,8 +7,10 @@ import (
 	"path"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 
+	appsetutils "github.com/argoproj/argo-cd/v3/applicationset/utils"
 	argoappv1 "github.com/argoproj/argo-cd/v3/pkg/apis/application/v1alpha1"
 	"github.com/home-operations/argocd-local/internal/diagnostic"
 	"go.yaml.in/yaml/v4"
@@ -51,7 +53,11 @@ func Generate(repoRoot, manifestPath string, appset argoappv1.ApplicationSet) ([
 
 	out := make([]GeneratedApplication, 0, len(matches))
 	for _, match := range matches {
-		rendered, err := renderApplicationTemplate(appset, pathParams(match, git.PathParamPrefix))
+		params, err := pathParams(match, git.PathParamPrefix, git.Values, appset.Spec.GoTemplate, appset.Spec.GoTemplateOptions)
+		if err != nil {
+			return nil, nil, fmt.Errorf("%s render %s: %w", manifestPath, match, err)
+		}
+		rendered, err := renderApplicationTemplate(appset, params)
 		if err != nil {
 			return nil, nil, fmt.Errorf("%s render %s: %w", manifestPath, match, err)
 		}
@@ -108,7 +114,7 @@ func splitDirectoryPatterns(dirs []argoappv1.GitDirectoryGeneratorItem) ([]strin
 }
 
 func matchDirectories(repoRoot string, includes, excludes []string) ([]string, error) {
-	var matches []string
+	var candidates []string
 	err := filepath.WalkDir(repoRoot, func(abs string, entry os.DirEntry, err error) error {
 		if err != nil {
 			return err
@@ -124,25 +130,26 @@ func matchDirectories(repoRoot string, includes, excludes []string) ([]string, e
 			return err
 		}
 		rel = filepath.ToSlash(rel)
-
-		excluded, err := matchesAny(excludes, rel)
-		if err != nil {
-			return err
-		}
-		if excluded {
-			return filepath.SkipDir
-		}
-		included, err := matchesAny(includes, rel)
-		if err != nil {
-			return err
-		}
-		if included {
-			matches = append(matches, rel)
-		}
+		candidates = append(candidates, rel)
 		return nil
 	})
 	if err != nil {
 		return nil, err
+	}
+
+	var matches []string
+	for _, rel := range candidates {
+		included, err := matchesAny(includes, rel)
+		if err != nil {
+			return nil, err
+		}
+		excluded, err := matchesAny(excludes, rel)
+		if err != nil {
+			return nil, err
+		}
+		if included && !excluded {
+			matches = append(matches, rel)
+		}
 	}
 	sort.Strings(matches)
 	return matches, nil
@@ -161,37 +168,72 @@ func matchesAny(patterns []string, rel string) (bool, error) {
 	return false, nil
 }
 
-func pathParams(rel, prefix string) map[string]any {
+func pathParams(rel, prefix string, values map[string]string, useGoTemplate bool, goTemplateOptions []string) (map[string]any, error) {
 	segments := strings.Split(rel, "/")
 	base := path.Base(rel)
-	pathFields := map[string]any{
-		"path":               rel,
-		"basename":           base,
-		"basenameNormalized": normalizeName(base),
-		"segments":           segments,
+
+	params := map[string]any{}
+	pathParamName := "path"
+	if prefix != "" {
+		pathParamName = prefix + "." + pathParamName
 	}
-	if prefix == "" {
-		return map[string]any{"path": pathFields}
+
+	if useGoTemplate {
+		pathFields := map[string]any{
+			"path":               rel,
+			"basename":           base,
+			"basenameNormalized": appsetutils.SanitizeName(base),
+			"segments":           segments,
+		}
+		if prefix == "" {
+			params["path"] = pathFields
+		} else {
+			params[prefix] = map[string]any{"path": pathFields}
+		}
+	} else {
+		params[pathParamName] = rel
+		params[pathParamName+".basename"] = base
+		params[pathParamName+".basenameNormalized"] = appsetutils.SanitizeName(base)
+		for k, v := range segments {
+			if v != "" {
+				params[pathParamName+"["+strconv.Itoa(k)+"]"] = v
+			}
+		}
 	}
-	return map[string]any{prefix: map[string]any{"path": pathFields}}
+
+	if err := appendTemplatedValues(params, values, useGoTemplate, goTemplateOptions); err != nil {
+		return nil, err
+	}
+	return params, nil
 }
 
-func normalizeName(input string) string {
-	var b strings.Builder
-	lastDash := false
-	for _, r := range strings.ToLower(input) {
-		valid := (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9')
-		if valid {
-			b.WriteRune(r)
-			lastDash = false
-			continue
-		}
-		if !lastDash {
-			b.WriteByte('-')
-			lastDash = true
-		}
+func appendTemplatedValues(params map[string]any, values map[string]string, useGoTemplate bool, goTemplateOptions []string) error {
+	if len(values) == 0 {
+		return nil
 	}
-	return strings.Trim(b.String(), "-")
+
+	renderer := &appsetutils.Render{}
+	if useGoTemplate {
+		renderedValues := map[string]any{}
+		for key, value := range values {
+			rendered, err := renderer.Replace(value, params, useGoTemplate, goTemplateOptions)
+			if err != nil {
+				return fmt.Errorf("render value %q: %w", key, err)
+			}
+			renderedValues[key] = rendered
+		}
+		params["values"] = renderedValues
+		return nil
+	}
+
+	for key, value := range values {
+		rendered, err := renderer.Replace(value, params, useGoTemplate, goTemplateOptions)
+		if err != nil {
+			return fmt.Errorf("render value %q: %w", key, err)
+		}
+		params["values."+key] = rendered
+	}
+	return nil
 }
 
 func cleanPathPattern(pattern string) string {
