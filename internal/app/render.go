@@ -101,21 +101,19 @@ func renderOptions(application argoappv1.Application, source argoappv1.Applicati
 }
 
 func helmValues(helm *argoappv1.ApplicationSourceHelm) (map[string]any, error) {
-	values, err := helmValuesString(helm.Values)
+	valuesObject, ok, err := helmValuesObject(helm)
 	if err != nil {
 		return nil, err
 	}
-
-	valuesObject, err := helmValuesObject(helm)
-	if err != nil {
-		return nil, err
+	if ok {
+		return valuesObject, nil
 	}
-	return mergeHelmValues(values, valuesObject), nil
+	return helmValuesString(helm.Values)
 }
 
 func helmValuesString(raw string) (map[string]any, error) {
 	if strings.TrimSpace(raw) == "" {
-		return nil, nil
+		return map[string]any{}, nil
 	}
 	var values map[string]any
 	if err := yaml.Unmarshal([]byte(raw), &values); err != nil {
@@ -127,57 +125,16 @@ func helmValuesString(raw string) (map[string]any, error) {
 	return values, nil
 }
 
-func helmValuesObject(helm *argoappv1.ApplicationSourceHelm) (map[string]any, error) {
+func helmValuesObject(helm *argoappv1.ApplicationSourceHelm) (map[string]any, bool, error) {
 	if helm.ValuesObject == nil || len(helm.ValuesObject.Raw) == 0 {
-		return nil, nil
+		return map[string]any{}, false, nil
 	}
 
 	var values map[string]any
 	if err := json.Unmarshal(helm.ValuesObject.Raw, &values); err != nil {
-		return nil, fmt.Errorf("decode helm valuesObject: %w", err)
+		return nil, false, fmt.Errorf("decode helm valuesObject: %w", err)
 	}
-	return values, nil
-}
-
-func mergeHelmValues(values, valuesObject map[string]any) map[string]any {
-	if values == nil && valuesObject == nil {
-		return nil
-	}
-
-	out := cloneHelmValues(values)
-	for key, value := range valuesObject {
-		if valueMap, ok := value.(map[string]any); ok {
-			if existingMap, ok := out[key].(map[string]any); ok {
-				out[key] = mergeHelmValues(existingMap, valueMap)
-				continue
-			}
-		}
-		out[key] = cloneHelmValue(value)
-	}
-	return out
-}
-
-func cloneHelmValues(values map[string]any) map[string]any {
-	out := make(map[string]any, len(values))
-	for key, value := range values {
-		out[key] = cloneHelmValue(value)
-	}
-	return out
-}
-
-func cloneHelmValue(value any) any {
-	switch value := value.(type) {
-	case map[string]any:
-		return cloneHelmValues(value)
-	case []any:
-		out := make([]any, len(value))
-		for i, item := range value {
-			out[i] = cloneHelmValue(item)
-		}
-		return out
-	default:
-		return value
-	}
+	return values, true, nil
 }
 
 func sourceDiagnostics(application argoappv1.Application, sourcePlan SourcePlan, diags []diagnostic.Diagnostic) []diagnostic.Diagnostic {

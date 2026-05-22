@@ -135,7 +135,7 @@ func TestRenderApplicationValuesObjectOverridesHelmValues(t *testing.T) {
 				RepoURL: "https://repo",
 				Path:    "chart",
 				Helm: &argoappv1.ApplicationSourceHelm{
-					Values: "value: from-values\nnested:\n  from: values\n",
+					Values: "value: from-values\nonlyValues: should-not-survive\nnested:\n  from: values\n  onlyValues: should-not-survive\n",
 					ValuesObject: &runtime.RawExtension{Raw: []byte(`{
 						"value": "from-values-object",
 						"nested": {"from": "values-object"}
@@ -156,12 +156,18 @@ func TestRenderApplicationValuesObjectOverridesHelmValues(t *testing.T) {
 	if got.ValuesObject["value"] != "from-values-object" {
 		t.Fatalf("ValuesObject[value] = %#v, want from-values-object", got.ValuesObject["value"])
 	}
+	if _, ok := got.ValuesObject["onlyValues"]; ok {
+		t.Fatalf("ValuesObject[onlyValues] is present; valuesObject should replace values")
+	}
 	nested, ok := got.ValuesObject["nested"].(map[string]any)
 	if !ok {
 		t.Fatalf("ValuesObject[nested] = %#v, want map", got.ValuesObject["nested"])
 	}
 	if nested["from"] != "values-object" {
 		t.Fatalf("ValuesObject[nested][from] = %#v, want values-object", nested["from"])
+	}
+	if _, ok := nested["onlyValues"]; ok {
+		t.Fatalf("ValuesObject[nested][onlyValues] is present; valuesObject should replace nested values")
 	}
 }
 
