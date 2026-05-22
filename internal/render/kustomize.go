@@ -139,6 +139,9 @@ func (v *kustomizeGraphValidator) validateKustomization(ctx context.Context, dir
 	if err := v.validateOperandRefs(ctx, dir, kustomization); err != nil {
 		return fmt.Errorf("%s: %w", manifestPath, err)
 	}
+	if err := v.validateAuxiliaryRefs(dir, kustomization); err != nil {
+		return fmt.Errorf("%s: %w", manifestPath, err)
+	}
 	if err := v.validatePatchRefs(dir, kustomization); err != nil {
 		return fmt.Errorf("%s: %w", manifestPath, err)
 	}
@@ -167,6 +170,43 @@ func (v *kustomizeGraphValidator) validateOperandRefs(ctx context.Context, dir s
 	}
 	for _, crd := range kustomization.Crds {
 		if err := v.validatePathRef(dir, "crds", crd); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (v *kustomizeGraphValidator) validateAuxiliaryRefs(dir string, kustomization *types.Kustomization) error {
+	if path := kustomization.OpenAPI["path"]; path != "" {
+		if err := v.validatePathRef(dir, "openapi.path", path); err != nil {
+			return err
+		}
+	}
+	for _, configuration := range kustomization.Configurations {
+		if err := v.validatePathRef(dir, "configurations", configuration); err != nil {
+			return err
+		}
+	}
+	for _, generator := range kustomization.Generators {
+		if err := v.validatePathRef(dir, "generators", generator); err != nil {
+			return err
+		}
+	}
+	for _, transformer := range kustomization.Transformers {
+		if err := v.validatePathRef(dir, "transformers", transformer); err != nil {
+			return err
+		}
+	}
+	for _, validator := range kustomization.Validators {
+		if err := v.validatePathRef(dir, "validators", validator); err != nil {
+			return err
+		}
+	}
+	for _, replacement := range kustomization.Replacements {
+		if replacement.Path == "" {
+			continue
+		}
+		if err := v.validatePathRef(dir, "replacements.path", replacement.Path); err != nil {
 			return err
 		}
 	}
@@ -345,7 +385,10 @@ func isRemoteKustomizeRef(ref string) bool {
 		return true
 	}
 	parsed, err := url.Parse(trimmed)
-	if err == nil && parsed.Scheme != "" && parsed.Host != "" {
+	if err == nil && parsed.Scheme != "" {
+		return true
+	}
+	if isSCPStyleKustomizeRef(trimmed) {
 		return true
 	}
 	if strings.Contains(lower, "?ref=") && strings.Contains(lower, "//") {
@@ -357,4 +400,16 @@ func isRemoteKustomizeRef(ref string) bool {
 		}
 	}
 	return false
+}
+
+func isSCPStyleKustomizeRef(ref string) bool {
+	user, rest, ok := strings.Cut(ref, "@")
+	if !ok || user == "" || strings.ContainsAny(user, `/\`) {
+		return false
+	}
+	host, repoPath, ok := strings.Cut(rest, ":")
+	if !ok || host == "" || repoPath == "" || strings.ContainsAny(host, `/\`) {
+		return false
+	}
+	return strings.Contains(repoPath, ".git") || strings.Contains(repoPath, "//")
 }
