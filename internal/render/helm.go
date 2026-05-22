@@ -4,16 +4,20 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"os"
 	"path"
+	"path/filepath"
 	"sort"
 	"strings"
 
 	"github.com/home-operations/argocd-local/internal/diagnostic"
 	"github.com/home-operations/argocd-local/internal/manifest"
-	"helm.sh/helm/v4/pkg/chart"
+	helmchart "helm.sh/helm/v4/pkg/chart"
 	"helm.sh/helm/v4/pkg/chart/common"
 	chartutil "helm.sh/helm/v4/pkg/chart/common/util"
 	"helm.sh/helm/v4/pkg/chart/loader"
+	chartv2 "helm.sh/helm/v4/pkg/chart/v2"
+	chartv2util "helm.sh/helm/v4/pkg/chart/v2/util"
 	"helm.sh/helm/v4/pkg/engine"
 )
 
@@ -33,6 +37,10 @@ func (HelmRenderer) Render(ctx context.Context, source ResolvedSource, opts Rend
 	}
 	manifestPath, err := relativeManifestPath(source.RepoRoot, chartPath)
 	if err != nil {
+		return nil, nil, err
+	}
+
+	if err := validateHelmChartTree(chartPath); err != nil {
 		return nil, nil, err
 	}
 
@@ -56,13 +64,18 @@ func (HelmRenderer) Render(ctx context.Context, source ResolvedSource, opts Rend
 	}
 	capabilities.APIVersions = append(capabilities.APIVersions, opts.APIVersions...)
 
-	values, err := chartutil.ToRenderValuesWithSchemaValidation(chart, cloneValues(opts.ValuesObject), common.ReleaseOptions{
+	inputValues := cloneValues(opts.ValuesObject)
+	if err := processHelmDependencies(chart, inputValues, manifestPath); err != nil {
+		return nil, nil, err
+	}
+
+	values, err := chartutil.ToRenderValuesWithSchemaValidation(chart, inputValues, common.ReleaseOptions{
 		Name:      releaseName,
 		Namespace: opts.Namespace,
 		Revision:  1,
 		IsInstall: true,
 		IsUpgrade: false,
-	}, capabilities, false)
+	}, capabilities, true)
 	if err != nil {
 		return nil, nil, fmt.Errorf("helm render values %s: %w", manifestPath, err)
 	}
@@ -72,30 +85,56 @@ func (HelmRenderer) Render(ctx context.Context, source ResolvedSource, opts Rend
 		return nil, nil, fmt.Errorf("helm template %s: %w", manifestPath, err)
 	}
 
-	docs, err := manifest.DecodeDocuments(manifestPath, bytes.NewReader(helmManifestBytes(chart, rendered)))
-	if err != nil {
-		return nil, nil, err
-	}
-
-	out := make([]Manifest, 0, len(docs))
-	for _, doc := range docs {
-		out = append(out, Manifest{
-			Path:   doc.Path,
-			Object: doc.Object,
-		})
-	}
-	return out, nil, nil
+	return decodeHelmManifests(source.RepoRoot, chartPath, chart, rendered)
 }
 
 type helmCRDProvider interface {
 	CRDs() []*common.File
 }
 
-func helmManifestBytes(chrt chart.Charter, rendered map[string]string) []byte {
-	var out bytes.Buffer
+func validateHelmChartTree(root string) error {
+	return filepath.WalkDir(root, func(path string, entry os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if path == root {
+			return nil
+		}
+		if entry.Type()&os.ModeSymlink != 0 {
+			rel, relErr := filepath.Rel(root, path)
+			if relErr != nil {
+				rel = path
+			}
+			return fmt.Errorf("helm chart path %q is a symlink", rel)
+		}
+		return nil
+	})
+}
+
+func processHelmDependencies(chrt helmchart.Charter, values map[string]any, manifestPath string) error {
+	chart, ok := chrt.(*chartv2.Chart)
+	if !ok {
+		return nil
+	}
+	if err := chartv2util.ProcessDependencies(chart, common.Values(values)); err != nil {
+		return fmt.Errorf("helm chart dependencies %s: %w", manifestPath, err)
+	}
+	return nil
+}
+
+func decodeHelmManifests(repoRoot, chartPath string, chrt helmchart.Charter, rendered map[string]string) ([]Manifest, []diagnostic.Diagnostic, error) {
+	var out []Manifest
 	if provider, ok := chrt.(helmCRDProvider); ok {
 		for _, crd := range provider.CRDs() {
-			writeHelmDocument(&out, string(crd.Data))
+			path, err := helmManifestPath(repoRoot, chartPath, crd.Name)
+			if err != nil {
+				return nil, nil, err
+			}
+			docs, err := manifest.DecodeDocuments(path, bytes.NewReader(crd.Data))
+			if err != nil {
+				return nil, nil, err
+			}
+			out = appendHelmDocuments(out, docs)
 		}
 	}
 
@@ -108,22 +147,44 @@ func helmManifestBytes(chrt chart.Charter, rendered map[string]string) []byte {
 		if path.Base(name) == "NOTES.txt" {
 			continue
 		}
-		writeHelmDocument(&out, rendered[name])
+		path, err := helmManifestPath(repoRoot, chartPath, name)
+		if err != nil {
+			return nil, nil, err
+		}
+		docs, err := manifest.DecodeDocuments(path, bytes.NewReader([]byte(rendered[name])))
+		if err != nil {
+			return nil, nil, err
+		}
+		out = appendHelmDocuments(out, docs)
 	}
-	return out.Bytes()
+	return out, nil, nil
 }
 
-func writeHelmDocument(out *bytes.Buffer, document string) {
-	if strings.TrimSpace(document) == "" {
-		return
+func appendHelmDocuments(out []Manifest, docs []manifest.Document) []Manifest {
+	for _, doc := range docs {
+		out = append(out, Manifest{
+			Path:   doc.Path,
+			Object: doc.Object,
+		})
 	}
-	if out.Len() > 0 {
-		out.WriteString("\n---\n")
+	return out
+}
+
+func helmManifestPath(repoRoot, chartPath, name string) (string, error) {
+	clean := path.Clean(name)
+	if clean == "." || path.IsAbs(clean) || strings.HasPrefix(clean, "../") {
+		return "", fmt.Errorf("helm manifest path %q escapes chart root", name)
 	}
-	out.WriteString(document)
-	if !strings.HasSuffix(document, "\n") {
-		out.WriteByte('\n')
+
+	chartRel, err := relativeManifestPath(repoRoot, chartPath)
+	if err != nil {
+		return "", err
 	}
+	chartRelSlash := filepath.ToSlash(chartRel)
+	if clean == chartRelSlash || strings.HasPrefix(clean, chartRelSlash+"/") {
+		return filepath.FromSlash(clean), nil
+	}
+	return filepath.Join(chartRel, filepath.FromSlash(clean)), nil
 }
 
 func cloneValues(values map[string]any) map[string]any {

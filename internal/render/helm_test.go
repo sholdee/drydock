@@ -38,6 +38,9 @@ func TestHelmRendererRendersInlineValues(t *testing.T) {
 	if obj.GetName() != "demo-config" || obj.GetNamespace() != "demo-ns" {
 		t.Fatalf("unexpected metadata: %s/%s", obj.GetNamespace(), obj.GetName())
 	}
+	if got, want := result[0].Path, filepath.Join("simple", "templates", "configmap.yaml"); got != want {
+		t.Fatalf("Path = %q, want %q", got, want)
+	}
 	value, _, _ := unstructured.NestedString(obj.Object, "data", "value")
 	if value != "from-values-object" {
 		t.Fatalf("data.value = %q", value)
@@ -205,5 +208,204 @@ version: 0.1.0
 	}
 	if len(result) != 0 {
 		t.Fatalf("result = %#v, want no manifests", result)
+	}
+}
+
+func TestHelmRendererRejectsSymlinkedChartFiles(t *testing.T) {
+	for _, tt := range []struct {
+		name       string
+		link       string
+		targetData string
+	}{
+		{
+			name: "chart metadata",
+			link: "Chart.yaml",
+			targetData: `
+apiVersion: v2
+name: simple
+version: 0.1.0
+`,
+		},
+		{
+			name: "template",
+			link: filepath.Join("templates", "configmap.yaml"),
+			targetData: `
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: outside
+`,
+		},
+		{
+			name: "crd",
+			link: filepath.Join("crds", "widgets.yaml"),
+			targetData: `
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: widgets.example.com
+spec:
+  group: example.com
+  names:
+    kind: Widget
+    plural: widgets
+  scope: Namespaced
+  versions:
+    - name: v1
+      served: true
+      storage: true
+      schema:
+        openAPIV3Schema:
+          type: object
+`,
+		},
+		{
+			name: "values",
+			link: "values.yaml",
+			targetData: `
+value: outside
+`,
+		},
+		{
+			name: "schema",
+			link: "values.schema.json",
+			targetData: `
+{
+  "type": "object"
+}
+`,
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			root := t.TempDir()
+			chartDir := filepath.Join(root, "simple")
+			if tt.link != "Chart.yaml" {
+				writeFile(t, filepath.Join(chartDir, "Chart.yaml"), `
+apiVersion: v2
+name: simple
+version: 0.1.0
+`)
+			}
+			writeFile(t, filepath.Join(chartDir, "templates", "local.yaml"), `
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: local
+`)
+			outside := t.TempDir()
+			target := filepath.Join(outside, filepath.Base(tt.link))
+			writeFile(t, target, tt.targetData)
+			symlink(t, target, filepath.Join(chartDir, tt.link))
+
+			result, diags, err := (HelmRenderer{}).Render(context.Background(), ResolvedSource{
+				RepoRoot: root,
+				Path:     "simple",
+				Chart:    "simple",
+			}, RenderOptions{AppName: "demo"})
+			if err == nil {
+				t.Fatal("Render() error = nil, want symlink error")
+			}
+			if !strings.Contains(err.Error(), "symlink") {
+				t.Fatalf("Render() error = %v, want symlink error", err)
+			}
+			if len(diags) != 0 {
+				t.Fatalf("diagnostics = %#v", diags)
+			}
+			if len(result) != 0 {
+				t.Fatalf("result = %#v, want no manifests", result)
+			}
+		})
+	}
+}
+
+func TestHelmRendererSkipsSchemaValidationForOfflineSafety(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "simple", "Chart.yaml"), `
+apiVersion: v2
+name: simple
+version: 0.1.0
+`)
+	writeFile(t, filepath.Join(root, "simple", "values.schema.json"), `
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$ref": "file:///definitely/not/inside/the/repo/schema.json"
+}
+`)
+	writeFile(t, filepath.Join(root, "simple", "templates", "configmap.yaml"), `
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Release.Name }}-config
+`)
+
+	result, diags, err := (HelmRenderer{}).Render(context.Background(), ResolvedSource{
+		RepoRoot: root,
+		Path:     "simple",
+		Chart:    "simple",
+	}, RenderOptions{AppName: "demo"})
+	if err != nil {
+		t.Fatalf("Render() error = %v", err)
+	}
+	if len(diags) != 0 {
+		t.Fatalf("diagnostics = %#v", diags)
+	}
+	if len(result) != 1 {
+		t.Fatalf("len(result) = %d, want 1", len(result))
+	}
+}
+
+func TestHelmRendererProcessesDisabledDependencies(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "parent", "Chart.yaml"), `
+apiVersion: v2
+name: parent
+version: 0.1.0
+dependencies:
+  - name: child
+    version: 0.1.0
+    repository: file://charts/child
+    condition: child.enabled
+`)
+	writeFile(t, filepath.Join(root, "parent", "templates", "parent.yaml"), `
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: parent-config
+`)
+	writeFile(t, filepath.Join(root, "parent", "charts", "child", "Chart.yaml"), `
+apiVersion: v2
+name: child
+version: 0.1.0
+`)
+	writeFile(t, filepath.Join(root, "parent", "charts", "child", "templates", "child.yaml"), `
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: child-config
+`)
+
+	result, diags, err := (HelmRenderer{}).Render(context.Background(), ResolvedSource{
+		RepoRoot: root,
+		Path:     "parent",
+		Chart:    "parent",
+	}, RenderOptions{
+		AppName: "demo",
+		ValuesObject: map[string]any{
+			"child": map[string]any{
+				"enabled": false,
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Render() error = %v", err)
+	}
+	if len(diags) != 0 {
+		t.Fatalf("diagnostics = %#v", diags)
+	}
+	if len(result) != 1 {
+		t.Fatalf("len(result) = %d, want only parent manifest", len(result))
+	}
+	if got, want := result[0].Object.GetName(), "parent-config"; got != want {
+		t.Fatalf("name = %q, want %q", got, want)
 	}
 }
