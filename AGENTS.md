@@ -64,7 +64,10 @@ repository root: reject escaping source paths and symlinked source path
 components, and skip symlinked files or directories while walking.
 Kustomize rendering uses Go libraries. Preserve the no-shellout path. Build
 options from Argo settings must be parsed and applied explicitly; do not pass
-opaque command-line strings to a shell.
+opaque command-line strings to a shell. Until that parsing exists, nonempty
+Kustomize build options must fail explicitly. Before invoking Kustomize,
+prevalidate local Kustomization graph references and reject remote refs,
+absolute paths, source-root escapes, and symlinked graph entries.
 
 ## Repository Layout
 
