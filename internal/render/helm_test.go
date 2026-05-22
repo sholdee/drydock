@@ -497,3 +497,72 @@ spec:
 		t.Fatalf("Path = %q, want %q", got, want)
 	}
 }
+
+func TestHelmRendererUsesSourcePathForAliasedSubcharts(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "parent", "Chart.yaml"), `
+apiVersion: v2
+name: parent
+version: 0.1.0
+dependencies:
+  - name: child
+    alias: childalias
+    version: 0.1.0
+    repository: file://charts/child
+`)
+	writeFile(t, filepath.Join(root, "parent", "charts", "child", "Chart.yaml"), `
+apiVersion: v2
+name: child
+version: 0.1.0
+`)
+	writeFile(t, filepath.Join(root, "parent", "charts", "child", "crds", "widgets.yaml"), `
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: widgets.example.com
+spec:
+  group: example.com
+  names:
+    kind: Widget
+    plural: widgets
+  scope: Namespaced
+  versions:
+    - name: v1
+      served: true
+      storage: true
+      schema:
+        openAPIV3Schema:
+          type: object
+`)
+	writeFile(t, filepath.Join(root, "parent", "charts", "child", "templates", "child.yaml"), `
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: child-config
+`)
+
+	result, diags, err := (HelmRenderer{}).Render(context.Background(), ResolvedSource{
+		RepoRoot: root,
+		Path:     "parent",
+		Chart:    "parent",
+	}, RenderOptions{AppName: "demo"})
+	if err != nil {
+		t.Fatalf("Render() error = %v", err)
+	}
+	if len(diags) != 0 {
+		t.Fatalf("diagnostics = %#v", diags)
+	}
+
+	gotPaths := map[string]struct{}{}
+	for _, manifest := range result {
+		gotPaths[manifest.Path] = struct{}{}
+	}
+	for _, want := range []string{
+		filepath.Join("parent", "charts", "child", "crds", "widgets.yaml"),
+		filepath.Join("parent", "charts", "child", "templates", "child.yaml"),
+	} {
+		if _, ok := gotPaths[want]; !ok {
+			t.Fatalf("paths = %#v, missing %q", gotPaths, want)
+		}
+	}
+}
