@@ -115,6 +115,7 @@ If a tool is not installed locally, say so in your final response.
 - Manifest loaders must never print Secret values. Diagnostics may include file paths and YAML pointers, not manifest data.
 - `spec.sources` takes precedence over `spec.source`.
 - Changed-only mode must not use Flux-style "most-specific owner wins"; Argo CD may have overlapping Applications.
+- Changed-only mode keeps every Application whose inputs intersect a changed file. Do not implement Flux-style longest-prefix ownership. If any changed path is unowned, default behavior is render-all with diagnostics; strict mode can fail.
 - Server-side diff/apply settings are diagnostics in offline mode, not executable behavior.
 
 ## Agent Maintenance Rule
