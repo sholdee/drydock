@@ -499,8 +499,16 @@ spec:
 }
 
 func TestHelmRendererUsesSourcePathForAliasedSubcharts(t *testing.T) {
-	root := t.TempDir()
-	writeFile(t, filepath.Join(root, "parent", "Chart.yaml"), `
+	for _, tt := range []struct {
+		name       string
+		repository string
+	}{
+		{name: "file repository", repository: "file://charts/child"},
+		{name: "remote repository", repository: "https://charts.example.com"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			root := t.TempDir()
+			writeFile(t, filepath.Join(root, "parent", "Chart.yaml"), `
 apiVersion: v2
 name: parent
 version: 0.1.0
@@ -508,14 +516,14 @@ dependencies:
   - name: child
     alias: childalias
     version: 0.1.0
-    repository: file://charts/child
+    repository: `+tt.repository+`
 `)
-	writeFile(t, filepath.Join(root, "parent", "charts", "child", "Chart.yaml"), `
+			writeFile(t, filepath.Join(root, "parent", "charts", "child", "Chart.yaml"), `
 apiVersion: v2
 name: child
 version: 0.1.0
 `)
-	writeFile(t, filepath.Join(root, "parent", "charts", "child", "crds", "widgets.yaml"), `
+			writeFile(t, filepath.Join(root, "parent", "charts", "child", "crds", "widgets.yaml"), `
 apiVersion: apiextensions.k8s.io/v1
 kind: CustomResourceDefinition
 metadata:
@@ -534,35 +542,37 @@ spec:
         openAPIV3Schema:
           type: object
 `)
-	writeFile(t, filepath.Join(root, "parent", "charts", "child", "templates", "child.yaml"), `
+			writeFile(t, filepath.Join(root, "parent", "charts", "child", "templates", "child.yaml"), `
 apiVersion: v1
 kind: ConfigMap
 metadata:
   name: child-config
 `)
 
-	result, diags, err := (HelmRenderer{}).Render(context.Background(), ResolvedSource{
-		RepoRoot: root,
-		Path:     "parent",
-		Chart:    "parent",
-	}, RenderOptions{AppName: "demo"})
-	if err != nil {
-		t.Fatalf("Render() error = %v", err)
-	}
-	if len(diags) != 0 {
-		t.Fatalf("diagnostics = %#v", diags)
-	}
+			result, diags, err := (HelmRenderer{}).Render(context.Background(), ResolvedSource{
+				RepoRoot: root,
+				Path:     "parent",
+				Chart:    "parent",
+			}, RenderOptions{AppName: "demo"})
+			if err != nil {
+				t.Fatalf("Render() error = %v", err)
+			}
+			if len(diags) != 0 {
+				t.Fatalf("diagnostics = %#v", diags)
+			}
 
-	gotPaths := map[string]struct{}{}
-	for _, manifest := range result {
-		gotPaths[manifest.Path] = struct{}{}
-	}
-	for _, want := range []string{
-		filepath.Join("parent", "charts", "child", "crds", "widgets.yaml"),
-		filepath.Join("parent", "charts", "child", "templates", "child.yaml"),
-	} {
-		if _, ok := gotPaths[want]; !ok {
-			t.Fatalf("paths = %#v, missing %q", gotPaths, want)
-		}
+			gotPaths := map[string]struct{}{}
+			for _, manifest := range result {
+				gotPaths[manifest.Path] = struct{}{}
+			}
+			for _, want := range []string{
+				filepath.Join("parent", "charts", "child", "crds", "widgets.yaml"),
+				filepath.Join("parent", "charts", "child", "templates", "child.yaml"),
+			} {
+				if _, ok := gotPaths[want]; !ok {
+					t.Fatalf("paths = %#v, missing %q", gotPaths, want)
+				}
+			}
+		})
 	}
 }
