@@ -59,6 +59,11 @@ must emit a diagnostic. Do not dedupe across Applications; cross-Application
 shared-resource behavior belongs to live Argo CD semantics and is out of scope
 for offline MVP.
 
+Diff output is keyed by parent Application plus child resource identity.
+Same-named resources rendered by different Applications must remain separate.
+Image extraction is conservative in the MVP and may be broadened only behind an
+explicit mode.
+
 ## Renderers
 
 Renderers implement `internal/render.Renderer`. The default implementation path
