@@ -124,6 +124,39 @@ data:
 	}
 }
 
+func TestHelmRendererUsesSourcePathForChartNamedDifferentlyThanDirectory(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "apps", "foo", "Chart.yaml"), `
+apiVersion: v2
+name: bar
+version: 0.1.0
+`)
+	writeFile(t, filepath.Join(root, "apps", "foo", "templates", "configmap.yaml"), `
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Release.Name }}-config
+`)
+
+	result, diags, err := (HelmRenderer{}).Render(context.Background(), ResolvedSource{
+		RepoRoot: root,
+		Path:     filepath.Join("apps", "foo"),
+		Chart:    "bar",
+	}, RenderOptions{AppName: "demo"})
+	if err != nil {
+		t.Fatalf("Render() error = %v", err)
+	}
+	if len(diags) != 0 {
+		t.Fatalf("diagnostics = %#v", diags)
+	}
+	if len(result) != 1 {
+		t.Fatalf("len(result) = %d, want 1", len(result))
+	}
+	if got, want := result[0].Path, filepath.Join("apps", "foo", "templates", "configmap.yaml"); got != want {
+		t.Fatalf("Path = %q, want %q", got, want)
+	}
+}
+
 func TestHelmRendererRejectsValueFilesUntilSupported(t *testing.T) {
 	renderer := HelmRenderer{}
 	source := ResolvedSource{
@@ -407,5 +440,60 @@ metadata:
 	}
 	if got, want := result[0].Object.GetName(), "parent-config"; got != want {
 		t.Fatalf("name = %q, want %q", got, want)
+	}
+}
+
+func TestHelmRendererUsesSubchartPathForSubchartCRDs(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "parent", "Chart.yaml"), `
+apiVersion: v2
+name: parent
+version: 0.1.0
+dependencies:
+  - name: child
+    version: 0.1.0
+    repository: file://charts/child
+`)
+	writeFile(t, filepath.Join(root, "parent", "charts", "child", "Chart.yaml"), `
+apiVersion: v2
+name: child
+version: 0.1.0
+`)
+	writeFile(t, filepath.Join(root, "parent", "charts", "child", "crds", "widgets.yaml"), `
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: widgets.example.com
+spec:
+  group: example.com
+  names:
+    kind: Widget
+    plural: widgets
+  scope: Namespaced
+  versions:
+    - name: v1
+      served: true
+      storage: true
+      schema:
+        openAPIV3Schema:
+          type: object
+`)
+
+	result, diags, err := (HelmRenderer{}).Render(context.Background(), ResolvedSource{
+		RepoRoot: root,
+		Path:     "parent",
+		Chart:    "parent",
+	}, RenderOptions{AppName: "demo"})
+	if err != nil {
+		t.Fatalf("Render() error = %v", err)
+	}
+	if len(diags) != 0 {
+		t.Fatalf("diagnostics = %#v", diags)
+	}
+	if len(result) != 1 {
+		t.Fatalf("len(result) = %d, want 1", len(result))
+	}
+	if got, want := result[0].Path, filepath.Join("parent", "charts", "child", "crds", "widgets.yaml"); got != want {
+		t.Fatalf("Path = %q, want %q", got, want)
 	}
 }
