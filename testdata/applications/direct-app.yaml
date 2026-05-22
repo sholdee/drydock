@@ -1,0 +1,16 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: guestbook
+  namespace: argocd
+  labels:
+    team: platform
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/example/repo
+    path: apps/guestbook
+    targetRevision: main
+  destination:
+    name: in-cluster
+    namespace: guestbook
