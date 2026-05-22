@@ -1,0 +1,4 @@
+configs:
+  cm:
+    kustomize.buildOptions: --enable-helm --helm-api-versions example.io/v1/Foo
+    application.instanceLabelKey: argocd.argoproj.io/instance

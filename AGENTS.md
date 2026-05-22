@@ -17,6 +17,14 @@ Read the design spec before substantive changes:
 
 - `docs/superpowers/specs/2026-05-22-argocd-local-design.md`
 
+## Settings Discovery
+
+Settings flow into `internal/config.ArgoSettings`. Providers must record
+provenance and must fail closed on conflicting discovered values. Repository
+Secrets may contribute non-sensitive fields (`url`, `type`, `name`, `project`,
+`enableOCI`) but must not retain username, password, bearer tokens, SSH keys,
+or TLS material.
+
 ## Repository Layout
 
 - `cmd/argocd-local/`: binary entrypoint
