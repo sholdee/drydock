@@ -9,6 +9,7 @@ import (
 
 	argoappv1 "github.com/argoproj/argo-cd/v3/pkg/apis/application/v1alpha1"
 	"github.com/home-operations/argocd-local/internal/manifest"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 )
 
 type Options struct {
@@ -34,7 +35,8 @@ type Result struct {
 func Scan(root string, opts Options) (Result, error) {
 	var result Result
 	roots := opts.AppManifestPaths
-	if len(roots) == 0 {
+	explicit := len(roots) > 0
+	if !explicit {
 		roots = []string{"."}
 	}
 
@@ -44,28 +46,41 @@ func Scan(root string, opts Options) (Result, error) {
 		if err != nil {
 			return result, err
 		}
-		if err := scanPath(root, start, seen, &result); err != nil {
+		if err := scanPath(root, start, explicit, seen, &result); err != nil {
 			return result, err
 		}
 	}
 	return result, nil
 }
 
-func scanPath(root, start string, seen map[string]struct{}, result *Result) error {
-	info, err := os.Stat(start)
+func scanPath(root, start string, explicit bool, seen map[string]struct{}, result *Result) error {
+	info, err := os.Lstat(start)
 	if err != nil {
 		return err
+	}
+	if info.Mode()&os.ModeSymlink != 0 {
+		if explicit {
+			rel, relErr := relativePath(root, start)
+			if relErr != nil {
+				return relErr
+			}
+			return fmt.Errorf("app manifest path %q is a symlink", rel)
+		}
+		return nil
 	}
 	if !info.IsDir() {
 		if !isYAML(start) {
 			return nil
 		}
-		return scanYAMLFileOnce(root, start, seen, result)
+		return scanYAMLFileOnce(root, start, explicit, seen, result)
 	}
 
 	return filepath.WalkDir(start, func(path string, entry os.DirEntry, err error) error {
 		if err != nil {
 			return err
+		}
+		if entry.Type()&os.ModeSymlink != 0 {
+			return nil
 		}
 		if entry.IsDir() {
 			if shouldSkipDir(entry.Name()) && path != start {
@@ -76,11 +91,11 @@ func scanPath(root, start string, seen map[string]struct{}, result *Result) erro
 		if !isYAML(path) {
 			return nil
 		}
-		return scanYAMLFileOnce(root, path, seen, result)
+		return scanYAMLFileOnce(root, path, explicit, seen, result)
 	})
 }
 
-func scanYAMLFileOnce(root, path string, seen map[string]struct{}, result *Result) error {
+func scanYAMLFileOnce(root, path string, explicit bool, seen map[string]struct{}, result *Result) error {
 	rel, err := relativePath(root, path)
 	if err != nil {
 		return err
@@ -89,6 +104,15 @@ func scanYAMLFileOnce(root, path string, seen map[string]struct{}, result *Resul
 		return nil
 	}
 	seen[rel] = struct{}{}
+	if !explicit {
+		candidate, err := looksLikeCandidate(path)
+		if err != nil {
+			return err
+		}
+		if !candidate {
+			return nil
+		}
+	}
 	return scanYAMLFile(path, rel, result)
 }
 
@@ -104,26 +128,39 @@ func scanYAMLFile(path, rel string, result *Result) error {
 		return err
 	}
 	for _, doc := range docs {
-		switch doc.Object.GetKind() {
-		case "Application":
-			var app argoappv1.Application
-			if err := unstructuredToTyped(doc.Object.Object, &app); err != nil {
-				return fmt.Errorf("%s: decode Application: %w", rel, err)
-			}
-			result.Applications = append(result.Applications, ApplicationFile{Path: rel, Application: app})
-		case "ApplicationSet":
-			result.ApplicationSetPath = append(result.ApplicationSetPath, rel)
-		case "ConfigMap":
-			if doc.Object.GetName() == "argocd-cm" {
-				result.SettingsCandidates = append(result.SettingsCandidates, SettingsCandidate{Path: rel, Kind: "argocd-cm"})
-			}
-		case "Secret":
-			if doc.Object.GetLabels()["argocd.argoproj.io/secret-type"] == "repository" {
-				result.SettingsCandidates = append(result.SettingsCandidates, SettingsCandidate{Path: rel, Kind: "repository-secret"})
-			}
+		if err := scanDocument(rel, doc.Object, result); err != nil {
+			return err
 		}
 	}
 	return nil
+}
+
+func scanDocument(rel string, obj *unstructured.Unstructured, result *Result) error {
+	switch {
+	case isArgoGVK(obj, "Application"):
+		var app argoappv1.Application
+		if err := unstructuredToTyped(obj.Object, &app); err != nil {
+			return fmt.Errorf("%s: decode Application: %w", rel, err)
+		}
+		result.Applications = append(result.Applications, ApplicationFile{Path: rel, Application: app})
+	case isArgoGVK(obj, "ApplicationSet"):
+		result.ApplicationSetPath = append(result.ApplicationSetPath, rel)
+	case isCoreGVK(obj, "ConfigMap") && obj.GetName() == "argocd-cm":
+		result.SettingsCandidates = append(result.SettingsCandidates, SettingsCandidate{Path: rel, Kind: "argocd-cm"})
+	case isCoreGVK(obj, "Secret") && obj.GetLabels()["argocd.argoproj.io/secret-type"] == "repository":
+		result.SettingsCandidates = append(result.SettingsCandidates, SettingsCandidate{Path: rel, Kind: "repository-secret"})
+	}
+	return nil
+}
+
+func isArgoGVK(obj *unstructured.Unstructured, kind string) bool {
+	gvk := obj.GroupVersionKind()
+	return gvk.Group == "argoproj.io" && gvk.Version == "v1alpha1" && gvk.Kind == kind
+}
+
+func isCoreGVK(obj *unstructured.Unstructured, kind string) bool {
+	gvk := obj.GroupVersionKind()
+	return gvk.Group == "" && gvk.Version == "v1" && gvk.Kind == kind
 }
 
 func scanStart(root, relRoot string) (string, error) {
@@ -147,6 +184,17 @@ func relativePath(root, path string) (string, error) {
 		return "", err
 	}
 	return filepath.Clean(rel), nil
+}
+
+func looksLikeCandidate(path string) (bool, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return false, err
+	}
+	text := string(data)
+	return strings.Contains(text, "argoproj.io/v1alpha1") ||
+		strings.Contains(text, "argocd-cm") ||
+		strings.Contains(text, "argocd.argoproj.io/secret-type"), nil
 }
 
 func shouldSkipDir(name string) bool {

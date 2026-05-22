@@ -29,7 +29,8 @@ or TLS material.
 
 Discovery scans YAML files for Argo CD entrypoints. Keep scanning generic; do
 not hard-code `home-ops` paths. Use `--app-manifests` style narrowing when a
-caller wants explicit paths.
+caller wants explicit paths. Classify candidates by full GVK, skip symlinks in
+default scans, and keep default scans tolerant of unrelated YAML files.
 
 ## Repository Layout
 
