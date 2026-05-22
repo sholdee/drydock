@@ -25,6 +25,12 @@ Secrets may contribute non-sensitive fields (`url`, `type`, `name`, `project`,
 `enableOCI`) but must not retain username, password, bearer tokens, SSH keys,
 or TLS material.
 
+## Discovery
+
+Discovery scans YAML files for Argo CD entrypoints. Keep scanning generic; do
+not hard-code `home-ops` paths. Use `--app-manifests` style narrowing when a
+caller wants explicit paths.
+
 ## Repository Layout
 
 - `cmd/argocd-local/`: binary entrypoint
