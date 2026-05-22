@@ -92,6 +92,10 @@ type helmCRDProvider interface {
 	CRDs() []*common.File
 }
 
+type helmCRDObjectProvider interface {
+	CRDObjects() []chartv2.CRD
+}
+
 func validateHelmChartTree(root string) error {
 	return filepath.WalkDir(root, func(path string, entry os.DirEntry, err error) error {
 		if err != nil {
@@ -124,9 +128,25 @@ func processHelmDependencies(chrt helmchart.Charter, values map[string]any, mani
 
 func decodeHelmManifests(repoRoot, chartPath string, chrt helmchart.Charter, rendered map[string]string) ([]Manifest, []diagnostic.Diagnostic, error) {
 	var out []Manifest
-	if provider, ok := chrt.(helmCRDProvider); ok {
+	pathMap, err := helmChartPathMap(repoRoot, chartPath, chrt)
+	if err != nil {
+		return nil, nil, err
+	}
+	if provider, ok := chrt.(helmCRDObjectProvider); ok {
+		for _, crd := range provider.CRDObjects() {
+			path, err := helmManifestPath(pathMap, crd.Filename)
+			if err != nil {
+				return nil, nil, err
+			}
+			docs, err := manifest.DecodeDocuments(path, bytes.NewReader(crd.File.Data))
+			if err != nil {
+				return nil, nil, err
+			}
+			out = appendHelmDocuments(out, docs)
+		}
+	} else if provider, ok := chrt.(helmCRDProvider); ok {
 		for _, crd := range provider.CRDs() {
-			path, err := helmManifestPath(repoRoot, chartPath, crd.Name)
+			path, err := helmManifestPath(pathMap, crd.Name)
 			if err != nil {
 				return nil, nil, err
 			}
@@ -147,7 +167,7 @@ func decodeHelmManifests(repoRoot, chartPath string, chrt helmchart.Charter, ren
 		if path.Base(name) == "NOTES.txt" {
 			continue
 		}
-		path, err := helmManifestPath(repoRoot, chartPath, name)
+		path, err := helmManifestPath(pathMap, name)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -170,21 +190,62 @@ func appendHelmDocuments(out []Manifest, docs []manifest.Document) []Manifest {
 	return out
 }
 
-func helmManifestPath(repoRoot, chartPath, name string) (string, error) {
+func helmChartPathMap(repoRoot, chartPath string, chrt helmchart.Charter) (map[string]string, error) {
+	chartRel, err := relativeManifestPath(repoRoot, chartPath)
+	if err != nil {
+		return nil, err
+	}
+	root, err := helmchart.NewAccessor(chrt)
+	if err != nil {
+		return nil, err
+	}
+	out := make(map[string]string)
+	collectHelmChartPaths(out, root, root.ChartFullPath(), filepath.ToSlash(chartRel))
+	return out, nil
+}
+
+func collectHelmChartPaths(out map[string]string, accessor helmchart.Accessor, rootFullPath, sourceRoot string) {
+	fullPath := path.Clean(accessor.ChartFullPath())
+	sourcePath := sourceRoot
+	if fullPath != rootFullPath {
+		suffix := strings.TrimPrefix(fullPath, rootFullPath)
+		suffix = strings.TrimPrefix(suffix, "/")
+		sourcePath = path.Join(sourceRoot, suffix)
+	}
+	out[fullPath] = sourcePath
+
+	for _, dependency := range accessor.Dependencies() {
+		child, err := helmchart.NewAccessor(dependency)
+		if err != nil {
+			continue
+		}
+		collectHelmChartPaths(out, child, rootFullPath, sourceRoot)
+	}
+}
+
+func helmManifestPath(pathMap map[string]string, name string) (string, error) {
 	clean := path.Clean(name)
 	if clean == "." || path.IsAbs(clean) || strings.HasPrefix(clean, "../") {
 		return "", fmt.Errorf("helm manifest path %q escapes chart root", name)
 	}
 
-	chartRel, err := relativeManifestPath(repoRoot, chartPath)
-	if err != nil {
-		return "", err
+	prefixes := make([]string, 0, len(pathMap))
+	for prefix := range pathMap {
+		prefixes = append(prefixes, prefix)
 	}
-	chartRelSlash := filepath.ToSlash(chartRel)
-	if clean == chartRelSlash || strings.HasPrefix(clean, chartRelSlash+"/") {
-		return filepath.FromSlash(clean), nil
+	sort.Slice(prefixes, func(i, j int) bool {
+		return len(prefixes[i]) > len(prefixes[j])
+	})
+
+	for _, prefix := range prefixes {
+		if clean != prefix && !strings.HasPrefix(clean, prefix+"/") {
+			continue
+		}
+		suffix := strings.TrimPrefix(clean, prefix)
+		suffix = strings.TrimPrefix(suffix, "/")
+		return filepath.FromSlash(path.Join(pathMap[prefix], suffix)), nil
 	}
-	return filepath.Join(chartRel, filepath.FromSlash(clean)), nil
+	return "", fmt.Errorf("helm manifest path %q does not match a loaded chart", name)
 }
 
 func cloneValues(values map[string]any) map[string]any {
