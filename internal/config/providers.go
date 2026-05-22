@@ -93,7 +93,11 @@ func LoadRepositorySecret(path string) (ArgoSettings, []diagnostic.Diagnostic, e
 		return settings, nil, nil
 	}
 
-	enableOCI, _ := strconv.ParseBool(secretStringField(doc.StringData, doc.Data, "enableOCI"))
+	var diags []diagnostic.Diagnostic
+	enableOCI, diag := secretBoolField(doc.StringData, doc.Data, "enableOCI", path)
+	if diag != nil {
+		diags = append(diags, *diag)
+	}
 	settings.HelmRepositories[url] = RepositorySettings{
 		Name:       secretStringField(doc.StringData, doc.Data, "name"),
 		Type:       secretStringField(doc.StringData, doc.Data, "type"),
@@ -102,7 +106,7 @@ func LoadRepositorySecret(path string) (ArgoSettings, []diagnostic.Diagnostic, e
 		Project:    secretStringField(doc.StringData, doc.Data, "project"),
 		Provenance: diagnostic.Provenance{Path: path, Pointer: secretFieldPointer(doc.StringData, "url")},
 	}
-	return settings, nil, nil
+	return settings, diags, nil
 }
 
 func applyCMMap(settings *ArgoSettings, values map[string]string, path, basePointer string) {
@@ -157,6 +161,44 @@ func secretStringField(stringData, data map[string]string, key string) string {
 		return ""
 	}
 	return string(decoded)
+}
+
+func secretBoolField(stringData, data map[string]string, key, path string) (bool, *diagnostic.Diagnostic) {
+	if value, ok := stringData[key]; ok {
+		return parseSecretBool(value, diagnostic.Provenance{Path: path, Pointer: "stringData." + key})
+	}
+	encoded, ok := data[key]
+	if !ok {
+		return false, nil
+	}
+	if encoded == "" {
+		return false, nil
+	}
+	decoded, err := base64.StdEncoding.DecodeString(encoded)
+	if err != nil {
+		return false, invalidSecretBoolDiagnostic(diagnostic.Provenance{Path: path, Pointer: "data." + key})
+	}
+	return parseSecretBool(string(decoded), diagnostic.Provenance{Path: path, Pointer: "data." + key})
+}
+
+func parseSecretBool(raw string, provenance diagnostic.Provenance) (bool, *diagnostic.Diagnostic) {
+	if raw == "" {
+		return false, nil
+	}
+	value, err := strconv.ParseBool(raw)
+	if err != nil {
+		return false, invalidSecretBoolDiagnostic(provenance)
+	}
+	return value, nil
+}
+
+func invalidSecretBoolDiagnostic(provenance diagnostic.Provenance) *diagnostic.Diagnostic {
+	return &diagnostic.Diagnostic{
+		Severity:   diagnostic.SeverityError,
+		Category:   "settings",
+		Message:    "invalid repository Secret enableOCI value",
+		Provenance: provenance,
+	}
 }
 
 func secretFieldPointer(stringData map[string]string, key string) string {
