@@ -200,27 +200,74 @@ func helmChartPathMap(repoRoot, chartPath string, chrt helmchart.Charter) (map[s
 		return nil, err
 	}
 	out := make(map[string]string)
-	collectHelmChartPaths(out, root, root.ChartFullPath(), filepath.ToSlash(chartRel))
+	collectHelmChartPaths(out, chrt, root.ChartFullPath(), filepath.ToSlash(chartRel))
 	return out, nil
 }
 
-func collectHelmChartPaths(out map[string]string, accessor helmchart.Accessor, rootFullPath, sourceRoot string) {
-	fullPath := path.Clean(accessor.ChartFullPath())
-	sourcePath := sourceRoot
-	if fullPath != rootFullPath {
-		suffix := strings.TrimPrefix(fullPath, rootFullPath)
-		suffix = strings.TrimPrefix(suffix, "/")
-		sourcePath = path.Join(sourceRoot, suffix)
+func collectHelmChartPaths(out map[string]string, chrt helmchart.Charter, rootFullPath, sourceRoot string) {
+	accessor, err := helmchart.NewAccessor(chrt)
+	if err != nil {
+		return
 	}
-	out[fullPath] = sourcePath
+	fullPath := path.Clean(accessor.ChartFullPath())
+	out[fullPath] = sourceRoot
 
+	dependencySourcePaths := helmDependencySourcePaths(accessor, sourceRoot)
 	for _, dependency := range accessor.Dependencies() {
 		child, err := helmchart.NewAccessor(dependency)
 		if err != nil {
 			continue
 		}
-		collectHelmChartPaths(out, child, rootFullPath, sourceRoot)
+		childSourcePath := dependencySourcePaths[child.Name()]
+		if childSourcePath == "" {
+			suffix := strings.TrimPrefix(path.Clean(child.ChartFullPath()), rootFullPath)
+			suffix = strings.TrimPrefix(suffix, "/")
+			childSourcePath = path.Join(sourceRoot, suffix)
+		}
+		collectHelmChartPaths(out, dependency, rootFullPath, childSourcePath)
 	}
+}
+
+func helmDependencySourcePaths(accessor helmchart.Accessor, parentSourcePath string) map[string]string {
+	out := make(map[string]string)
+	for _, dependency := range accessor.MetaDependencies() {
+		dependencyAccessor, err := helmchart.NewDependencyAccessor(dependency)
+		if err != nil {
+			continue
+		}
+		renderedName := dependencyAccessor.Name()
+		if alias := dependencyAccessor.Alias(); alias != "" {
+			renderedName = alias
+		}
+		sourcePath := helmDependencySourcePath(parentSourcePath, dependency)
+		if sourcePath == "" {
+			continue
+		}
+		out[renderedName] = sourcePath
+	}
+	return out
+}
+
+func helmDependencySourcePath(parentSourcePath string, dependency helmchart.Dependency) string {
+	switch dep := dependency.(type) {
+	case chartv2.Dependency:
+		return helmV2DependencySourcePath(parentSourcePath, &dep)
+	case *chartv2.Dependency:
+		return helmV2DependencySourcePath(parentSourcePath, dep)
+	default:
+		return ""
+	}
+}
+
+func helmV2DependencySourcePath(parentSourcePath string, dependency *chartv2.Dependency) string {
+	if !strings.HasPrefix(dependency.Repository, "file://") {
+		return ""
+	}
+	sourcePath := path.Clean(strings.TrimPrefix(dependency.Repository, "file://"))
+	if sourcePath == "." || path.IsAbs(sourcePath) || strings.HasPrefix(sourcePath, "../") {
+		return ""
+	}
+	return path.Join(parentSourcePath, sourcePath)
 }
 
 func helmManifestPath(pathMap map[string]string, name string) (string, error) {
