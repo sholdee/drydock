@@ -30,7 +30,7 @@ func (i *Index) Add(application string, inputs []string) {
 
 func (i *Index) Match(changed []string) MatchResult {
 	applications := make(map[string]struct{})
-	var unowned []string
+	unowned := make(map[string]struct{})
 
 	for _, changedPath := range changed {
 		normalizedChanged := normalize(changedPath)
@@ -44,13 +44,13 @@ func (i *Index) Match(changed []string) MatchResult {
 			}
 		}
 		if !owned {
-			unowned = append(unowned, normalizedChanged)
+			unowned[normalizedChanged] = struct{}{}
 		}
 	}
 
 	result := MatchResult{
 		Applications: sortedKeys(applications),
-		Unowned:      sortedValues(unowned),
+		Unowned:      sortedKeys(unowned),
 	}
 	result.RenderAll = len(result.Unowned) > 0
 	return result
@@ -76,12 +76,6 @@ func sortedKeys(values map[string]struct{}) []string {
 	for value := range values {
 		out = append(out, value)
 	}
-	sort.Strings(out)
-	return out
-}
-
-func sortedValues(values []string) []string {
-	out := append([]string(nil), values...)
 	sort.Strings(out)
 	return out
 }
