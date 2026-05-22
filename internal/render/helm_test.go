@@ -576,3 +576,52 @@ metadata:
 		})
 	}
 }
+
+func TestHelmRendererUsesSourcePathForRepeatedAliasedSubcharts(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "parent", "Chart.yaml"), `
+apiVersion: v2
+name: parent
+version: 0.1.0
+dependencies:
+  - name: child
+    alias: childa
+    version: 0.1.0
+    repository: https://charts.example.com
+  - name: child
+    alias: childb
+    version: 0.1.0
+    repository: https://charts.example.com
+`)
+	writeFile(t, filepath.Join(root, "parent", "charts", "child", "Chart.yaml"), `
+apiVersion: v2
+name: child
+version: 0.1.0
+`)
+	writeFile(t, filepath.Join(root, "parent", "charts", "child", "templates", "child.yaml"), `
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Chart.Name }}-config
+`)
+
+	result, diags, err := (HelmRenderer{}).Render(context.Background(), ResolvedSource{
+		RepoRoot: root,
+		Path:     "parent",
+		Chart:    "parent",
+	}, RenderOptions{AppName: "demo"})
+	if err != nil {
+		t.Fatalf("Render() error = %v", err)
+	}
+	if len(diags) != 0 {
+		t.Fatalf("diagnostics = %#v", diags)
+	}
+	if len(result) != 2 {
+		t.Fatalf("len(result) = %d, want one manifest for each alias", len(result))
+	}
+	for _, manifest := range result {
+		if got, want := manifest.Path, filepath.Join("parent", "charts", "child", "templates", "child.yaml"); got != want {
+			t.Fatalf("Path = %q, want %q", got, want)
+		}
+	}
+}
