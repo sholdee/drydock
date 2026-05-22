@@ -1,0 +1,48 @@
+version: "2"
+
+run:
+  timeout: 5m
+
+linters:
+  enable:
+    - bodyclose
+    - copyloopvar
+    - dupword
+    - durationcheck
+    - errcheck
+    - errorlint
+    - exhaustive
+    - gocritic
+    - gocyclo
+    - govet
+    - ineffassign
+    - intrange
+    - misspell
+    - nakedret
+    - nilerr
+    - nilnil
+    - nolintlint
+    - prealloc
+    - staticcheck
+    - unconvert
+    - unused
+    - wastedassign
+    - whitespace
+  settings:
+    gocyclo:
+      min-complexity: 15
+    nolintlint:
+      require-explanation: true
+      require-specific: true
+    errcheck:
+      check-type-assertions: true
+  exclusions:
+    presets:
+      - std-error-handling
+
+formatters:
+  enable:
+    - gofmt
+  settings:
+    gofmt:
+      simplify: true
