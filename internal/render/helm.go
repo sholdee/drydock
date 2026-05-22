@@ -48,6 +48,10 @@ func (HelmRenderer) Render(ctx context.Context, source ResolvedSource, opts Rend
 	if err != nil {
 		return nil, nil, fmt.Errorf("load helm chart %s: %w", manifestPath, err)
 	}
+	pathMap, err := helmChartPathMap(source.RepoRoot, chartPath, chart)
+	if err != nil {
+		return nil, nil, err
+	}
 
 	releaseName := opts.ReleaseName
 	if releaseName == "" {
@@ -85,7 +89,7 @@ func (HelmRenderer) Render(ctx context.Context, source ResolvedSource, opts Rend
 		return nil, nil, fmt.Errorf("helm template %s: %w", manifestPath, err)
 	}
 
-	return decodeHelmManifests(source.RepoRoot, chartPath, chart, rendered)
+	return decodeHelmManifests(pathMap, chart, rendered)
 }
 
 type helmCRDProvider interface {
@@ -126,12 +130,8 @@ func processHelmDependencies(chrt helmchart.Charter, values map[string]any, mani
 	return nil
 }
 
-func decodeHelmManifests(repoRoot, chartPath string, chrt helmchart.Charter, rendered map[string]string) ([]Manifest, []diagnostic.Diagnostic, error) {
+func decodeHelmManifests(pathMap map[string]string, chrt helmchart.Charter, rendered map[string]string) ([]Manifest, []diagnostic.Diagnostic, error) {
 	var out []Manifest
-	pathMap, err := helmChartPathMap(repoRoot, chartPath, chrt)
-	if err != nil {
-		return nil, nil, err
-	}
 	if provider, ok := chrt.(helmCRDObjectProvider); ok {
 		for _, crd := range provider.CRDObjects() {
 			path, err := helmManifestPath(pathMap, crd.Filename)
@@ -204,12 +204,12 @@ func helmChartPathMap(repoRoot, chartPath string, chrt helmchart.Charter) (map[s
 	return out, nil
 }
 
-func collectHelmChartPaths(out map[string]string, chrt helmchart.Charter, rootFullPath, sourceRoot string) {
+func collectHelmChartPaths(out map[string]string, chrt helmchart.Charter, renderedFullPath, sourceRoot string) {
 	accessor, err := helmchart.NewAccessor(chrt)
 	if err != nil {
 		return
 	}
-	fullPath := path.Clean(accessor.ChartFullPath())
+	fullPath := path.Clean(renderedFullPath)
 	out[fullPath] = sourceRoot
 
 	dependencySourcePaths := helmDependencySourcePaths(accessor, sourceRoot)
@@ -218,32 +218,41 @@ func collectHelmChartPaths(out map[string]string, chrt helmchart.Charter, rootFu
 		if err != nil {
 			continue
 		}
-		childSourcePath := dependencySourcePaths[child.Name()]
-		if childSourcePath == "" {
-			suffix := strings.TrimPrefix(path.Clean(child.ChartFullPath()), rootFullPath)
-			suffix = strings.TrimPrefix(suffix, "/")
-			childSourcePath = path.Join(sourceRoot, suffix)
+		dependencyPath := dependencySourcePaths[child.Name()]
+		childRenderedName := child.Name()
+		childSourcePath := path.Join(sourceRoot, "charts", child.Name())
+		if dependencyPath.renderedName != "" {
+			childRenderedName = dependencyPath.renderedName
 		}
-		collectHelmChartPaths(out, dependency, rootFullPath, childSourcePath)
+		if dependencyPath.sourcePath != "" {
+			childSourcePath = dependencyPath.sourcePath
+		}
+		collectHelmChartPaths(out, dependency, path.Join(fullPath, "charts", childRenderedName), childSourcePath)
 	}
 }
 
-func helmDependencySourcePaths(accessor helmchart.Accessor, parentSourcePath string) map[string]string {
-	out := make(map[string]string)
+type helmDependencyPath struct {
+	renderedName string
+	sourcePath   string
+}
+
+func helmDependencySourcePaths(accessor helmchart.Accessor, parentSourcePath string) map[string]helmDependencyPath {
+	out := make(map[string]helmDependencyPath)
 	for _, dependency := range accessor.MetaDependencies() {
 		dependencyAccessor, err := helmchart.NewDependencyAccessor(dependency)
 		if err != nil {
 			continue
 		}
+		sourceName := dependencyAccessor.Name()
 		renderedName := dependencyAccessor.Name()
 		if alias := dependencyAccessor.Alias(); alias != "" {
 			renderedName = alias
 		}
 		sourcePath := helmDependencySourcePath(parentSourcePath, dependency)
-		if sourcePath == "" {
-			continue
+		out[sourceName] = helmDependencyPath{
+			renderedName: renderedName,
+			sourcePath:   sourcePath,
 		}
-		out[renderedName] = sourcePath
 	}
 	return out
 }
@@ -261,7 +270,7 @@ func helmDependencySourcePath(parentSourcePath string, dependency helmchart.Depe
 
 func helmV2DependencySourcePath(parentSourcePath string, dependency *chartv2.Dependency) string {
 	if !strings.HasPrefix(dependency.Repository, "file://") {
-		return ""
+		return path.Join(parentSourcePath, "charts", dependency.Name)
 	}
 	sourcePath := path.Clean(strings.TrimPrefix(dependency.Repository, "file://"))
 	if sourcePath == "." || path.IsAbs(sourcePath) || strings.HasPrefix(sourcePath, "../") {
