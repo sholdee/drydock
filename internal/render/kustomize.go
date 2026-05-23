@@ -118,7 +118,7 @@ func renderKustomizeWithHelmCharts(ctx context.Context, source ResolvedSource, o
 			return nil, nil, err
 		}
 		tempNodeDir := filepath.Join(tempRepoRoot, nodeRelDir)
-		generatedResources, err := renderKustomizeHelmCharts(ctx, tempRepoRoot, tempNodeDir, nodeRelDir, node.Kustomization.Namespace, i, node.Kustomization.HelmCharts, opts)
+		generatedResources, err := renderKustomizeHelmCharts(ctx, tempRepoRoot, tempNodeDir, nodeRelDir, node.effectiveHelmNamespace(), kustomizationChartHome(node.Kustomization), i, node.Kustomization.HelmCharts, opts)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -139,7 +139,7 @@ func renderKustomizeWithHelmCharts(ctx context.Context, source ResolvedSource, o
 	return renderPlainKustomize(ctx, tempSource, tempRoot)
 }
 
-func renderKustomizeHelmCharts(ctx context.Context, tempRepoRoot, tempSourceRoot, valueFilesBaseDir, namespaceFallback string, graphIndex int, helmCharts []types.HelmChart, opts RenderOptions) ([]string, error) {
+func renderKustomizeHelmCharts(ctx context.Context, tempRepoRoot, tempSourceRoot, valueFilesBaseDir, namespaceFallback, chartHome string, graphIndex int, helmCharts []types.HelmChart, opts RenderOptions) ([]string, error) {
 	acquirer := opts.ChartAcquirer
 	if acquirer == nil {
 		acquirer = chart.DefaultAcquirer{}
@@ -151,27 +151,11 @@ func renderKustomizeHelmCharts(ctx context.Context, tempRepoRoot, tempSourceRoot
 			return nil, err
 		}
 
-		request := chart.Request{
-			Repository: helmChart.Repo,
-			Name:       helmChart.Name,
-			Version:    helmChart.Version,
-			Kind:       kustomizeHelmChartRepositoryKind(helmChart.Repo),
-		}
-		result, err := acquirer.Acquire(ctx, request, chart.Options{
-			CacheDir: opts.ChartCacheDir,
-			Offline:  opts.OfflineCharts,
-			Refresh:  opts.RefreshCharts,
-		})
-		if err != nil {
-			return nil, fmt.Errorf("acquire kustomize helm chart %s: %w", helmChart.Name, err)
-		}
-
 		baseName := safeGeneratedKustomizeHelmBaseName(helmChart.Name, helmChart.Version)
 		generatedName := fmt.Sprintf("%03d-%03d-%s", graphIndex, i, baseName)
-		chartRel := filepath.Join(".argocd-local", "charts", generatedName)
-		chartDst := filepath.Join(tempRepoRoot, chartRel)
-		if err := copyRegularTree(result.ChartDir, chartDst); err != nil {
-			return nil, fmt.Errorf("copy acquired helm chart %s: %w", helmChart.Name, err)
+		chartRel, err := resolveKustomizeHelmChart(ctx, tempRepoRoot, tempSourceRoot, chartHome, generatedName, helmChart, opts, acquirer)
+		if err != nil {
+			return nil, err
 		}
 
 		rendered, _, err := (HelmRenderer{}).Render(ctx, ResolvedSource{
@@ -193,6 +177,63 @@ func renderKustomizeHelmCharts(ctx context.Context, tempRepoRoot, tempSourceRoot
 		generatedResources = append(generatedResources, generatedResource)
 	}
 	return generatedResources, nil
+}
+
+func resolveKustomizeHelmChart(ctx context.Context, tempRepoRoot, tempSourceRoot, chartHome, generatedName string, helmChart types.HelmChart, opts RenderOptions, acquirer chart.Acquirer) (string, error) {
+	if chartRel, ok, err := resolveLocalKustomizeHelmChart(tempRepoRoot, tempSourceRoot, chartHome, helmChart); ok || err != nil {
+		return chartRel, err
+	}
+	if helmChart.Repo == "" {
+		return "", fmt.Errorf("kustomize helm chart %q has no local chart and no repo", helmChart.Name)
+	}
+
+	request := chart.Request{
+		Repository: helmChart.Repo,
+		Name:       helmChart.Name,
+		Version:    helmChart.Version,
+		Kind:       kustomizeHelmChartRepositoryKind(helmChart.Repo),
+	}
+	result, err := acquirer.Acquire(ctx, request, chart.Options{
+		CacheDir: opts.ChartCacheDir,
+		Offline:  opts.OfflineCharts,
+		Refresh:  opts.RefreshCharts,
+	})
+	if err != nil {
+		return "", fmt.Errorf("acquire kustomize helm chart %s: %w", helmChart.Name, err)
+	}
+
+	chartRel := filepath.Join(".argocd-local", "charts", generatedName)
+	chartDst := filepath.Join(tempRepoRoot, chartRel)
+	if err := copyRegularTree(result.ChartDir, chartDst); err != nil {
+		return "", fmt.Errorf("copy acquired helm chart %s: %w", helmChart.Name, err)
+	}
+	return chartRel, nil
+}
+
+func resolveLocalKustomizeHelmChart(repoRoot, kustomizationDir, chartHome string, helmChart types.HelmChart) (string, bool, error) {
+	names := []string{helmChart.Name}
+	if helmChart.Repo != "" && helmChart.Version != "" {
+		names = []string{helmChart.Name + "-" + helmChart.Version}
+	}
+	for _, name := range names {
+		path := filepath.Join(kustomizationDir, filepath.FromSlash(chartHome), filepath.FromSlash(name))
+		info, err := os.Stat(path)
+		if err != nil {
+			if os.IsNotExist(err) {
+				continue
+			}
+			return "", false, err
+		}
+		if !info.IsDir() {
+			continue
+		}
+		rel, err := relativeManifestPath(repoRoot, path)
+		if err != nil {
+			return "", false, err
+		}
+		return rel, true, nil
+	}
+	return "", false, nil
 }
 
 func renderOptionsForKustomizeHelmChart(helmChart types.HelmChart, valueFilesBaseDir, namespaceFallback string, opts RenderOptions, acquirer chart.Acquirer) RenderOptions {
@@ -242,6 +283,13 @@ func safeGeneratedKustomizeHelmBaseName(name, version string) string {
 	}
 	replacer := strings.NewReplacer("/", "_", "\\", "_", ":", "_")
 	return replacer.Replace(joined)
+}
+
+func kustomizationChartHome(kustomization types.Kustomization) string {
+	if kustomization.HelmGlobals != nil && kustomization.HelmGlobals.ChartHome != "" {
+		return kustomization.HelmGlobals.ChartHome
+	}
+	return types.HelmDefaultHome
 }
 
 func writeGeneratedHelmManifests(path string, manifests []Manifest) error {
@@ -342,10 +390,18 @@ type kustomizeGraphValidator struct {
 }
 
 type kustomizeGraphNode struct {
-	Dir           string
-	File          string
-	ManifestPath  string
-	Kustomization types.Kustomization
+	Dir                    string
+	File                   string
+	ManifestPath           string
+	InheritedHelmNamespace string
+	Kustomization          types.Kustomization
+}
+
+func (node kustomizeGraphNode) effectiveHelmNamespace() string {
+	if node.Kustomization.Namespace != "" {
+		return node.Kustomization.Namespace
+	}
+	return node.InheritedHelmNamespace
 }
 
 func validateKustomizeGraph(ctx context.Context, repoRoot, sourceRoot string) (string, error) {
@@ -359,11 +415,11 @@ func collectKustomizeGraph(ctx context.Context, repoRoot, sourceRoot string) (st
 		sourceRoot: filepath.Clean(sourceRoot),
 		visited:    make(map[string]struct{}),
 	}
-	manifestPath, err := validator.validateKustomizationDir(ctx, sourceRoot)
+	manifestPath, err := validator.validateKustomizationDir(ctx, sourceRoot, "")
 	return manifestPath, validator.nodes, err
 }
 
-func (v *kustomizeGraphValidator) validateKustomizationDir(ctx context.Context, dir string) (string, error) {
+func (v *kustomizeGraphValidator) validateKustomizationDir(ctx context.Context, dir, inheritedHelmNamespace string) (string, error) {
 	if err := ctx.Err(); err != nil {
 		return "", err
 	}
@@ -394,14 +450,15 @@ func (v *kustomizeGraphValidator) validateKustomizationDir(ctx context.Context, 
 	if err := goyaml.Unmarshal(content, &kustomization); err != nil {
 		return "", fmt.Errorf("decode kustomization %s: %w", manifestPath, err)
 	}
-	if err := v.validateKustomization(ctx, filepath.Dir(kustomizationFile), manifestPath, &kustomization); err != nil {
+	if err := v.validateKustomization(ctx, filepath.Dir(kustomizationFile), manifestPath, &kustomization, inheritedHelmNamespace); err != nil {
 		return "", err
 	}
 	v.nodes = append(v.nodes, kustomizeGraphNode{
-		Dir:           filepath.Dir(kustomizationFile),
-		File:          kustomizationFile,
-		ManifestPath:  manifestPath,
-		Kustomization: kustomization,
+		Dir:                    filepath.Dir(kustomizationFile),
+		File:                   kustomizationFile,
+		ManifestPath:           manifestPath,
+		InheritedHelmNamespace: inheritedHelmNamespace,
+		Kustomization:          kustomization,
 	})
 	return manifestPath, nil
 }
@@ -424,8 +481,11 @@ func findKustomizationFile(root string) (string, error) {
 	return "", fmt.Errorf("kustomization file not found in %q", root)
 }
 
-func (v *kustomizeGraphValidator) validateKustomization(ctx context.Context, dir, manifestPath string, kustomization *types.Kustomization) error {
-	if err := v.validateOperandRefs(ctx, dir, kustomization); err != nil {
+func (v *kustomizeGraphValidator) validateKustomization(ctx context.Context, dir, manifestPath string, kustomization *types.Kustomization, inheritedHelmNamespace string) error {
+	if err := v.validateHelmFields(dir, kustomization); err != nil {
+		return fmt.Errorf("%s: %w", manifestPath, err)
+	}
+	if err := v.validateOperandRefs(ctx, dir, kustomization, inheritedHelmNamespace); err != nil {
 		return fmt.Errorf("%s: %w", manifestPath, err)
 	}
 	if err := v.validateAuxiliaryRefs(dir, kustomization); err != nil {
@@ -440,20 +500,51 @@ func (v *kustomizeGraphValidator) validateKustomization(ctx context.Context, dir
 	return nil
 }
 
-func (v *kustomizeGraphValidator) validateOperandRefs(ctx context.Context, dir string, kustomization *types.Kustomization) error {
+func (v *kustomizeGraphValidator) validateHelmFields(dir string, kustomization *types.Kustomization) error {
+	if len(kustomization.HelmChartInflationGenerator) != 0 {
+		return fmt.Errorf("helmChartInflationGenerator is deprecated and unsupported")
+	}
+	if kustomization.HelmGlobals != nil && kustomization.HelmGlobals.ConfigHome != "" {
+		return fmt.Errorf("helmGlobals.configHome is unsupported")
+	}
+	if len(kustomization.HelmCharts) == 0 {
+		return nil
+	}
+	if _, _, err := v.validateLocalRef(dir, "helmGlobals.chartHome", kustomizationChartHome(*kustomization)); err != nil {
+		return err
+	}
+	for _, helmChart := range kustomization.HelmCharts {
+		if helmChart.NameTemplate != "" {
+			return fmt.Errorf("helmCharts.nameTemplate is unsupported")
+		}
+		if helmChart.Devel {
+			return fmt.Errorf("helmCharts.devel is unsupported")
+		}
+		if helmChart.Debug {
+			return fmt.Errorf("helmCharts.debug is unsupported")
+		}
+	}
+	return nil
+}
+
+func (v *kustomizeGraphValidator) validateOperandRefs(ctx context.Context, dir string, kustomization *types.Kustomization, inheritedHelmNamespace string) error {
+	childInheritedHelmNamespace := inheritedHelmNamespace
+	if kustomization.Namespace != "" {
+		childInheritedHelmNamespace = kustomization.Namespace
+	}
 	for _, resource := range kustomization.Resources {
-		if err := v.validateResourceRef(ctx, dir, "resources", resource); err != nil {
+		if err := v.validateResourceRef(ctx, dir, "resources", resource, childInheritedHelmNamespace); err != nil {
 			return err
 		}
 	}
 	//nolint:staticcheck // Kustomize still accepts bases; validate it to block unsafe refs.
 	for _, base := range kustomization.Bases {
-		if err := v.validateKustomizationRef(ctx, dir, "bases", base); err != nil {
+		if err := v.validateKustomizationRef(ctx, dir, "bases", base, childInheritedHelmNamespace); err != nil {
 			return err
 		}
 	}
 	for _, component := range kustomization.Components {
-		if err := v.validateKustomizationRef(ctx, dir, "components", component); err != nil {
+		if err := v.validateKustomizationRef(ctx, dir, "components", component, childInheritedHelmNamespace); err != nil {
 			return err
 		}
 	}
@@ -547,21 +638,21 @@ func (v *kustomizeGraphValidator) validateGeneratorListRefs(dir string, kustomiz
 	return nil
 }
 
-func (v *kustomizeGraphValidator) validateResourceRef(ctx context.Context, dir, field, ref string) error {
+func (v *kustomizeGraphValidator) validateResourceRef(ctx context.Context, dir, field, ref, inheritedHelmNamespace string) error {
 	path, info, err := v.validateLocalRef(dir, field, ref)
 	if err != nil || info == nil || !info.IsDir() {
 		return err
 	}
-	_, err = v.validateKustomizationDir(ctx, path)
+	_, err = v.validateKustomizationDir(ctx, path, inheritedHelmNamespace)
 	return err
 }
 
-func (v *kustomizeGraphValidator) validateKustomizationRef(ctx context.Context, dir, field, ref string) error {
+func (v *kustomizeGraphValidator) validateKustomizationRef(ctx context.Context, dir, field, ref, inheritedHelmNamespace string) error {
 	path, info, err := v.validateLocalRef(dir, field, ref)
 	if err != nil || info == nil || !info.IsDir() {
 		return err
 	}
-	_, err = v.validateKustomizationDir(ctx, path)
+	_, err = v.validateKustomizationDir(ctx, path, inheritedHelmNamespace)
 	return err
 }
 
