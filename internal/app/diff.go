@@ -3,6 +3,7 @@ package app
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -118,12 +119,11 @@ func (o Orchestrator) DiffApp(ctx context.Context, request DiffAppRequest) (Diff
 
 	leftBuild, err := o.Build(ctx, leftBuildRequest)
 	diagnostics = append(diagnostics, leftBuild.Diagnostics...)
-	if err != nil {
-		return DiffResult{Diagnostics: diagnostics}, err
-	}
+	leftErr := err
 	rightBuild, err := o.Build(ctx, rightBuildRequest)
 	diagnostics = append(diagnostics, rightBuild.Diagnostics...)
-	if err != nil {
+	rightErr := err
+	if err := errors.Join(leftErr, rightErr); err != nil {
 		return DiffResult{Diagnostics: diagnostics}, err
 	}
 
@@ -296,12 +296,11 @@ func (o Orchestrator) buildDiffSides(ctx context.Context, request DiffRequest) (
 
 	leftBuild, err := o.Build(ctx, leftBuildRequest)
 	diagnostics = append(diagnostics, leftBuild.Diagnostics...)
-	if err != nil {
-		return leftBuild, BuildResult{}, diagnostics, err
-	}
+	leftErr := err
 	rightBuild, err := o.Build(ctx, rightBuildRequest)
 	diagnostics = append(diagnostics, rightBuild.Diagnostics...)
-	if err != nil {
+	rightErr := err
+	if err := errors.Join(leftErr, rightErr); err != nil {
 		return leftBuild, rightBuild, diagnostics, err
 	}
 	return leftBuild, rightBuild, diagnostics, nil

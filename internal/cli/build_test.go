@@ -154,6 +154,29 @@ func TestBuildAppReportsMissingApplication(t *testing.T) {
 	}
 }
 
+func TestBuildAppsSuppressesPartialStdoutWhenOutputWouldBeInvalid(t *testing.T) {
+	root := t.TempDir()
+	writeSimpleAppForCLI(t, root, "ok")
+	writeFailingCLIApplication(t, root, "broken")
+
+	cmd := NewRootCommand(VersionInfo{})
+	cmd.SetArgs([]string{"build", "apps", "--path", root})
+	var stdout, stderr bytes.Buffer
+	cmd.SetOut(&stdout)
+	cmd.SetErr(&stderr)
+
+	err := cmd.Execute()
+	if code := commandErrorCode(err); code != 2 {
+		t.Fatalf("error code = %d, want 2; err = %v", code, err)
+	}
+	if stdout.String() != "" {
+		t.Fatalf("stdout = %q, want empty partial output on build error", stdout.String())
+	}
+	if !strings.Contains(stderr.String(), "error render:") {
+		t.Fatalf("stderr = %q, want render diagnostic", stderr.String())
+	}
+}
+
 func TestBuildAppsPassesAuthenticatedSourceFlags(t *testing.T) {
 	root := t.TempDir()
 	external := t.TempDir()

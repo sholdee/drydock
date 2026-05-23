@@ -2,7 +2,8 @@
 
 `argocd-local` currently wires Application discovery, rendered image listing,
 all-Application and named-Application build, all-Application and
-named-Application manifest diffs, image diffs, and repository diagnostics.
+named-Application render tests, named-Application manifest diffs, image diffs,
+and repository diagnostics.
 
 ## Application Discovery
 
@@ -65,6 +66,12 @@ argocd-local build app argocd/renovate --path .
 `build app` errors when no discovered Application matches. The unqualified
 `NAME` form must identify exactly one Application.
 
+When one selected Application fails to render, embedding callers receive a
+partial `BuildResult` containing successful manifests, diagnostics, and
+per-Application statuses. CLI `build` commands keep stdout parseable; on render
+failure they print diagnostics to stderr and do not mix invalid partial manifest
+streams into stdout.
+
 Rendering supports directory sources, Kustomize sources, local Helm charts,
 Kustomize `helmCharts`, safe single-file HTTP(S) Kustomize `resources:`, and
 Argo CD chart-only remote Helm sources. Public Helm chart fetching is enabled
@@ -111,6 +118,50 @@ repository-source fetching. `--offline` cannot be combined with
 `--allow-network`.
 
 Caches must stay outside Git repository trees.
+
+## Render Tests
+
+Test every discovered Application without printing manifest bodies:
+
+```bash
+argocd-local test apps --path .
+```
+
+Test exactly one discovered Application by `metadata.name`:
+
+```bash
+argocd-local test app renovate --path .
+```
+
+Use `NAMESPACE/NAME` when a name appears in multiple namespaces:
+
+```bash
+argocd-local test app argocd/renovate --path .
+```
+
+Default text output prints one status line per selected Application:
+
+```text
+PASS argocd/renovate
+FAIL argocd/broken Application argocd/broken source[0] path="..." ...
+SKIPPED argocd/skipped unsupported ApplicationSet generator ...
+```
+
+Status values are `PASS` for Applications that rendered successfully, `FAIL`
+for render or planning failures, and `SKIPPED` when an earlier discovery or
+expansion precondition prevented safe rendering. `test apps` and `test app`
+return exit code `0` only when every selected Application passes; any `FAIL`,
+`SKIPPED`, or runtime failure returns exit code `2`.
+
+Structured status output is available with `-o json` and `-o yaml`:
+
+```bash
+argocd-local test apps --path . -o json
+argocd-local test apps --path . -o yaml
+```
+
+Structured test output contains only status records and diagnostics remain on
+stderr.
 
 ## Manifest Diffs
 

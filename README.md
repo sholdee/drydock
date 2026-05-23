@@ -8,8 +8,9 @@ manifests that changed. The currently wired commands are `get apps` for
 Application discovery, `get images` for rendered workload image listing,
 `build apps` and `build app NAME` for local rendering, `diff apps` and
 `diff app NAME` for desired-vs-desired manifest diffs, and `diff images` for
-conservative workload image diffs. `diag --path` reports repository diagnostics
-without printing manifests.
+conservative workload image diffs. `test apps` and `test app NAME` report
+per-Application render status without printing manifests. `diag --path` reports
+repository diagnostics without printing manifests.
 
 This project is early implementation work. See
 `docs/superpowers/specs/2026-05-22-argocd-local-design.md` for the approved MVP
@@ -24,6 +25,8 @@ go run ./cmd/argocd-local get images --path ./testdata/renovate-diff/current -o 
 go run ./cmd/argocd-local build apps --path ./testdata/applications/e2e
 go run ./cmd/argocd-local build app renovate \
   --path ./testdata/renovate-diff/current
+go run ./cmd/argocd-local test apps --path ./testdata/applications/e2e
+go run ./cmd/argocd-local test apps --path ./testdata/applications/e2e -o json
 go run ./cmd/argocd-local diff apps \
   --path-orig ./testdata/renovate-diff/baseline \
   --path ./testdata/renovate-diff/current \

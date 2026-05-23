@@ -539,6 +539,87 @@ spec:
 	}
 }
 
+func TestOrchestratorBuildPreservesPartialResults(t *testing.T) {
+	root := t.TempDir()
+	writeBuildApplication(t, root, "valid", "valid")
+	writeExternalPathApplicationNamed(t, root, "invalid", "https://github.com/example/missing", "manifests/missing")
+
+	result, err := Orchestrator{}.Build(context.Background(), BuildRequest{Path: root})
+	if err == nil {
+		t.Fatal("Build() error = nil, want aggregate render error")
+	}
+	if len(result.Manifests) != 1 {
+		t.Fatalf("len(Manifests) = %d, want 1", len(result.Manifests))
+	}
+	if result.Manifests[0].Object.GetName() != "valid" {
+		t.Fatalf("manifest name = %q, want valid", result.Manifests[0].Object.GetName())
+	}
+	assertApplicationStatuses(t, result.Statuses, []ApplicationStatus{
+		{Namespace: "argocd", Name: "valid", Status: ApplicationStatusPass},
+		{Namespace: "argocd", Name: "invalid", Status: ApplicationStatusFail},
+	})
+	diag, ok := diagnosticByCategory(result.Diagnostics, "render")
+	if !ok {
+		t.Fatalf("Diagnostics = %#v, want render diagnostic", result.Diagnostics)
+	}
+	if diag.Severity != diagnostic.SeverityError {
+		t.Fatalf("render diagnostic severity = %s, want error", diag.Severity)
+	}
+	if !strings.Contains(diag.Message, "invalid") || !strings.Contains(diag.Message, "--repo-map") {
+		t.Fatalf("render diagnostic message = %q, want app context and render error", diag.Message)
+	}
+	if !strings.Contains(err.Error(), "1 Application failed") {
+		t.Fatalf("Build() error = %q, want aggregate failure count", err.Error())
+	}
+}
+
+func TestOrchestratorBuildStatusesIncludePassAndFailForPlanningErrors(t *testing.T) {
+	root := t.TempDir()
+	writeBuildApplication(t, root, "valid", "valid")
+	writeTestFile(t, filepath.Join(root, "apps", "bad-ref.yaml"), `apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: bad-ref
+  namespace: argocd
+spec:
+  sources:
+    - repoURL: https://github.com/example/repo
+      targetRevision: main
+      ref: "bad/ref"
+  destination:
+    name: in-cluster
+    namespace: default
+`)
+
+	result, err := Orchestrator{}.Build(context.Background(), BuildRequest{Path: root})
+	if err == nil {
+		t.Fatal("Build() error = nil, want planning error")
+	}
+	assertApplicationStatuses(t, result.Statuses, []ApplicationStatus{
+		{Namespace: "argocd", Name: "valid", Status: ApplicationStatusPass},
+		{Namespace: "argocd", Name: "bad-ref", Status: ApplicationStatusFail},
+	})
+}
+
+func TestOrchestratorBuildMarksApplicationsSkippedWhenPreconditionFails(t *testing.T) {
+	root := t.TempDir()
+	writeUnsupportedApplicationSetFixture(t, root)
+
+	result, err := Orchestrator{}.Build(context.Background(), BuildRequest{Path: root, Strict: true})
+	if err == nil {
+		t.Fatal("Build() error = nil, want strict ApplicationSet precondition error")
+	}
+	if len(result.Manifests) != 0 {
+		t.Fatalf("len(Manifests) = %d, want 0", len(result.Manifests))
+	}
+	assertApplicationStatuses(t, result.Statuses, []ApplicationStatus{
+		{Namespace: "argocd", Name: "direct", Status: ApplicationStatusSkipped},
+	})
+	if !strings.Contains(result.Statuses[0].Message, "unsupported ApplicationSet generator") {
+		t.Fatalf("skipped message = %q, want precondition error", result.Statuses[0].Message)
+	}
+}
+
 func TestOrchestratorBuildReturnsChartAcquireErrorForChartOnlySource(t *testing.T) {
 	root := t.TempDir()
 	writeTestFile(t, filepath.Join(root, "apps", "argocd", "chart-app.yaml"), `apiVersion: argoproj.io/v1alpha1
@@ -934,6 +1015,22 @@ func TestOrchestratorBuildAppPreservesListAndRenderDiagnostics(t *testing.T) {
 	}
 }
 
+func TestOrchestratorBuildAppMarksSelectedApplicationSkippedWhenPreconditionFails(t *testing.T) {
+	root := t.TempDir()
+	writeUnsupportedApplicationSetFixture(t, root)
+
+	result, err := Orchestrator{}.BuildApp(context.Background(), BuildAppRequest{
+		Name:         "direct",
+		BuildRequest: BuildRequest{Path: root, Strict: true},
+	})
+	if err == nil {
+		t.Fatal("BuildApp() error = nil, want strict ApplicationSet precondition error")
+	}
+	assertApplicationStatuses(t, result.Statuses, []ApplicationStatus{
+		{Namespace: "argocd", Name: "direct", Status: ApplicationStatusSkipped},
+	})
+}
+
 func TestOrchestratorListApplicationsSkipsUnsupportedApplicationSetInNonStrictMode(t *testing.T) {
 	root := t.TempDir()
 	writeUnsupportedApplicationSetFixture(t, root)
@@ -999,6 +1096,38 @@ func manifestByName(manifests []render.Manifest, name string) (render.Manifest, 
 	return render.Manifest{}, false
 }
 
+func diagnosticByCategory(diags []diagnostic.Diagnostic, category string) (diagnostic.Diagnostic, bool) {
+	for _, diag := range diags {
+		if diag.Category == category {
+			return diag, true
+		}
+	}
+	return diagnostic.Diagnostic{}, false
+}
+
+func assertApplicationStatuses(t *testing.T, got, want []ApplicationStatus) {
+	t.Helper()
+	if len(got) != len(want) {
+		t.Fatalf("len(Statuses) = %d, want %d: %#v", len(got), len(want), got)
+	}
+	byName := map[string]ApplicationStatus{}
+	for _, status := range got {
+		byName[applicationStatusDisplayName(status)] = status
+	}
+	for _, expected := range want {
+		status, ok := byName[applicationStatusDisplayName(expected)]
+		if !ok {
+			t.Fatalf("Statuses = %#v, missing %s", got, applicationStatusDisplayName(expected))
+		}
+		if status.Status != expected.Status {
+			t.Fatalf("Status for %s = %q, want %q: %#v", applicationStatusDisplayName(expected), status.Status, expected.Status, got)
+		}
+		if status.Status != ApplicationStatusPass && status.Message == "" {
+			t.Fatalf("Status message for %s is empty, want failure/skipped message: %#v", applicationStatusDisplayName(expected), status)
+		}
+	}
+}
+
 func writeBuildApplication(t *testing.T, root, appName, configMapName string) {
 	t.Helper()
 	writeTestFile(t, filepath.Join(root, "apps", appName+".yaml"), `apiVersion: argoproj.io/v1alpha1
@@ -1021,6 +1150,24 @@ metadata:
   name: `+configMapName+`
 data:
   key: value
+`)
+}
+
+func writeExternalPathApplicationNamed(t *testing.T, root, appName, repoURL, sourcePath string) {
+	t.Helper()
+	writeTestFile(t, filepath.Join(root, "apps", appName+".yaml"), `apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: `+appName+`
+  namespace: argocd
+spec:
+  source:
+    repoURL: `+repoURL+`
+    targetRevision: main
+    path: `+sourcePath+`
+  destination:
+    name: in-cluster
+    namespace: default
 `)
 }
 
