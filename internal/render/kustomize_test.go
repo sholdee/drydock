@@ -5,7 +5,26 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/home-operations/argocd-local/internal/chart"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 )
+
+type fakeChartAcquirer struct {
+	chartDir string
+	requests []chart.Request
+}
+
+func (acquirer *fakeChartAcquirer) Acquire(_ context.Context, request chart.Request, _ chart.Options) (chart.Result, error) {
+	acquirer.requests = append(acquirer.requests, request)
+	return chart.Result{
+		ChartDir:   acquirer.chartDir,
+		Repository: request.Repository,
+		Name:       request.Name,
+		Version:    request.Version,
+		Kind:       request.Kind,
+	}, nil
+}
 
 func TestKustomizeRendererRendersResources(t *testing.T) {
 	renderer := KustomizeRenderer{}
@@ -75,6 +94,116 @@ metadata:
 	if len(result) != 2 {
 		t.Fatalf("len(result) = %d, want 2", len(result))
 	}
+}
+
+func TestKustomizeRendererRendersHelmChartsWithoutShellout(t *testing.T) {
+	root := t.TempDir()
+	chartDir := filepath.Join(root, "charts", "demo")
+	writeFile(t, filepath.Join(chartDir, "Chart.yaml"), `
+apiVersion: v2
+name: demo
+version: 1.2.3
+`)
+	writeFile(t, filepath.Join(chartDir, "templates", "deployment.yaml"), `
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Release.Name }}
+  labels:
+    app.kubernetes.io/name: {{ .Chart.Name }}
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: {{ .Chart.Name }}
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: {{ .Chart.Name }}
+    spec:
+      containers:
+        - name: app
+          image: {{ .Values.image }}
+`)
+	writeFile(t, filepath.Join(root, "apps", "demo", "kustomization.yaml"), `
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: demo
+helmCharts:
+  - name: demo
+    repo: https://charts.example.test
+    version: 1.2.3
+    releaseName: demo
+    valuesFile: values.yaml
+patches:
+  - target:
+      group: apps
+      version: v1
+      kind: Deployment
+      name: demo
+    patch: |-
+      - op: add
+        path: /metadata/labels/patched
+        value: "true"
+`)
+	writeFile(t, filepath.Join(root, "apps", "demo", "values.yaml"), `
+image: example/app:v1
+`)
+
+	acquirer := &fakeChartAcquirer{chartDir: chartDir}
+	result, diags, err := (KustomizeRenderer{}).Render(context.Background(), ResolvedSource{
+		RepoRoot: root,
+		Path:     filepath.Join("apps", "demo"),
+	}, RenderOptions{ChartAcquirer: acquirer})
+	if err != nil {
+		t.Fatalf("Render() error = %v", err)
+	}
+	if len(diags) != 0 {
+		t.Fatalf("diagnostics = %#v", diags)
+	}
+	if len(acquirer.requests) != 1 {
+		t.Fatalf("len(acquirer.requests) = %d, want 1", len(acquirer.requests))
+	}
+	if acquirer.requests[0] != (chart.Request{
+		Repository: "https://charts.example.test",
+		Name:       "demo",
+		Version:    "1.2.3",
+		Kind:       chart.RepositoryHTTP,
+	}) {
+		t.Fatalf("acquirer.requests[0] = %#v", acquirer.requests[0])
+	}
+
+	deployments := filterObjects(result, "Deployment")
+	if len(deployments) != 1 {
+		t.Fatalf("len(deployments) = %d, want 1", len(deployments))
+	}
+	if got := deployments[0].GetLabels()["patched"]; got != "true" {
+		t.Fatalf("patched label = %q, want true", got)
+	}
+	containers, found, err := unstructured.NestedSlice(deployments[0].Object, "spec", "template", "spec", "containers")
+	if err != nil || !found {
+		t.Fatalf("deployment containers lookup found=%v err=%v", found, err)
+	}
+	if len(containers) != 1 {
+		t.Fatalf("len(containers) = %d, want 1", len(containers))
+	}
+	container, ok := containers[0].(map[string]any)
+	if !ok {
+		t.Fatalf("container = %#v, want map", containers[0])
+	}
+	image, _ := container["image"].(string)
+	if image != "example/app:v1" {
+		t.Fatalf("deployment image = %q, want example/app:v1", image)
+	}
+}
+
+func filterObjects(manifests []Manifest, kind string) []*unstructured.Unstructured {
+	out := make([]*unstructured.Unstructured, 0, len(manifests))
+	for _, manifest := range manifests {
+		if manifest.Object != nil && manifest.Object.GetKind() == kind {
+			out = append(out, manifest.Object)
+		}
+	}
+	return out
 }
 
 func TestKustomizeRendererRejectsSourcePathEscape(t *testing.T) {

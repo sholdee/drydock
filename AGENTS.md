@@ -144,7 +144,14 @@ options from Argo settings must be parsed and applied explicitly; do not pass
 opaque command-line strings to a shell. Until that parsing exists, nonempty
 Kustomize build options must fail explicitly. Before invoking Kustomize,
 prevalidate local Kustomization graph references and reject remote refs,
-absolute paths, repo-root escapes, and symlinked graph entries. Kustomize graph references may point elsewhere inside the same repository, such as shared components/, but must not escape the repository root or traverse symlinked graph entries. Treat Kustomize path-bearing fields fail-closed: validate new fields before render rather than assuming Kustomize's loader restrictions are enough.
+absolute paths, repo-root escapes, and symlinked graph entries. Kustomize graph
+references may point elsewhere inside the same repository, such as shared
+components/, but must not escape the repository root or traverse symlinked
+graph entries. Treat Kustomize path-bearing fields fail-closed: validate new
+fields before render rather than assuming Kustomize's loader restrictions are
+enough. Kustomize helmCharts must be rendered through argocd-local's chart
+acquisition and Helm Go renderer into a temporary workspace. Do not enable
+Kustomize's Helm shellout plugin or write generated charts into the Git tree.
 Helm rendering must use Go libraries by default. Preserve these Argo CD
 semantics in the MVP: release name defaults to Application name, destination
 namespace is passed to Helm, and `valuesObject` overrides `values`.

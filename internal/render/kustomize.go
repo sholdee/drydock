@@ -4,11 +4,13 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"io"
 	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
 
+	"github.com/home-operations/argocd-local/internal/chart"
 	"github.com/home-operations/argocd-local/internal/diagnostic"
 	"github.com/home-operations/argocd-local/internal/manifest"
 	goyaml "go.yaml.in/yaml/v4"
@@ -32,6 +34,20 @@ func (KustomizeRenderer) Render(ctx context.Context, source ResolvedSource, opts
 		return nil, nil, err
 	}
 
+	kustomizationFile, kustomization, err := loadKustomization(source.RepoRoot, root)
+	if err != nil {
+		return nil, nil, err
+	}
+	if len(kustomization.HelmCharts) != 0 {
+		return renderKustomizeWithHelmCharts(ctx, source, opts, root, kustomizationFile, kustomization)
+	}
+
+	return renderPlainKustomize(ctx, source, root)
+}
+
+var kustomizationFileNames = []string{"kustomization.yaml", "kustomization.yml", "Kustomization"}
+
+func renderPlainKustomize(ctx context.Context, source ResolvedSource, root string) ([]Manifest, []diagnostic.Diagnostic, error) {
 	manifestPath, err := validateKustomizeGraph(ctx, source.RepoRoot, root)
 	if err != nil {
 		return nil, nil, err
@@ -63,7 +79,252 @@ func (KustomizeRenderer) Render(ctx context.Context, source ResolvedSource, opts
 	return out, nil, nil
 }
 
-var kustomizationFileNames = []string{"kustomization.yaml", "kustomization.yml", "Kustomization"}
+func loadKustomization(repoRoot, root string) (string, types.Kustomization, error) {
+	kustomizationFile, err := findKustomizationFile(root)
+	if err != nil {
+		return "", types.Kustomization{}, err
+	}
+	manifestPath, err := relativeManifestPath(repoRoot, kustomizationFile)
+	if err != nil {
+		manifestPath = kustomizationFile
+	}
+	content, err := os.ReadFile(kustomizationFile)
+	if err != nil {
+		return "", types.Kustomization{}, err
+	}
+	var kustomization types.Kustomization
+	if err := goyaml.Unmarshal(content, &kustomization); err != nil {
+		return "", types.Kustomization{}, fmt.Errorf("decode kustomization %s: %w", manifestPath, err)
+	}
+	return kustomizationFile, kustomization, nil
+}
+
+func renderKustomizeWithHelmCharts(ctx context.Context, source ResolvedSource, opts RenderOptions, root, kustomizationFile string, kustomization types.Kustomization) ([]Manifest, []diagnostic.Diagnostic, error) {
+	if _, err := validateKustomizeGraph(ctx, source.RepoRoot, root); err != nil {
+		return nil, nil, err
+	}
+
+	tempDir, err := os.MkdirTemp("", "argocd-local-kustomize-*")
+	if err != nil {
+		return nil, nil, err
+	}
+	defer os.RemoveAll(tempDir)
+
+	tempRepoRoot := filepath.Join(tempDir, "repo")
+	if err := copyRegularTree(source.RepoRoot, tempRepoRoot); err != nil {
+		return nil, nil, fmt.Errorf("copy repository to temp workspace: %w", err)
+	}
+
+	tempSource := ResolvedSource{
+		RepoRoot: tempRepoRoot,
+		Path:     source.Path,
+	}
+	tempRoot, err := sourceRoot(tempSource)
+	if err != nil {
+		return nil, nil, err
+	}
+	generatedResources, err := renderKustomizeHelmCharts(ctx, source, tempRepoRoot, tempRoot, kustomization.HelmCharts, opts)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	kustomization.HelmCharts = nil
+	kustomization.Resources = append(kustomization.Resources, generatedResources...)
+	data, err := goyaml.Marshal(&kustomization)
+	if err != nil {
+		return nil, nil, fmt.Errorf("encode temp kustomization: %w", err)
+	}
+	tempKustomizationFile := filepath.Join(tempRoot, filepath.Base(kustomizationFile))
+	if err := os.WriteFile(tempKustomizationFile, data, 0o644); err != nil {
+		return nil, nil, fmt.Errorf("write temp kustomization: %w", err)
+	}
+
+	return renderPlainKustomize(ctx, tempSource, tempRoot)
+}
+
+func renderKustomizeHelmCharts(ctx context.Context, source ResolvedSource, tempRepoRoot, tempSourceRoot string, helmCharts []types.HelmChart, opts RenderOptions) ([]string, error) {
+	acquirer := opts.ChartAcquirer
+	if acquirer == nil {
+		acquirer = chart.DefaultAcquirer{}
+	}
+
+	generatedResources := make([]string, 0, len(helmCharts))
+	for i, helmChart := range helmCharts {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+
+		request := chart.Request{
+			Repository: helmChart.Repo,
+			Name:       helmChart.Name,
+			Version:    helmChart.Version,
+			Kind:       kustomizeHelmChartRepositoryKind(helmChart.Repo),
+		}
+		result, err := acquirer.Acquire(ctx, request, chart.Options{
+			CacheDir: opts.ChartCacheDir,
+			Offline:  opts.OfflineCharts,
+			Refresh:  opts.RefreshCharts,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("acquire kustomize helm chart %s: %w", helmChart.Name, err)
+		}
+
+		baseName := safeGeneratedKustomizeHelmBaseName(helmChart.Name, helmChart.Version)
+		chartRel := filepath.Join(".argocd-local", "charts", fmt.Sprintf("%03d-%s", i, baseName))
+		chartDst := filepath.Join(tempRepoRoot, chartRel)
+		if err := copyRegularTree(result.ChartDir, chartDst); err != nil {
+			return nil, fmt.Errorf("copy acquired helm chart %s: %w", helmChart.Name, err)
+		}
+
+		rendered, _, err := (HelmRenderer{}).Render(ctx, ResolvedSource{
+			RepoRoot: tempRepoRoot,
+			Path:     chartRel,
+		}, renderOptionsForKustomizeHelmChart(helmChart, source, opts, acquirer))
+		if err != nil {
+			return nil, err
+		}
+		if len(rendered) == 0 {
+			continue
+		}
+
+		generatedResource := filepath.ToSlash(filepath.Join(".argocd-local", "helm", fmt.Sprintf("%03d-%s.yaml", i, baseName)))
+		generatedPath := filepath.Join(tempSourceRoot, filepath.FromSlash(generatedResource))
+		if err := writeGeneratedHelmManifests(generatedPath, rendered); err != nil {
+			return nil, err
+		}
+		generatedResources = append(generatedResources, generatedResource)
+	}
+	return generatedResources, nil
+}
+
+func renderOptionsForKustomizeHelmChart(helmChart types.HelmChart, source ResolvedSource, opts RenderOptions, acquirer chart.Acquirer) RenderOptions {
+	valueFiles := make([]string, 0, 1+len(helmChart.AdditionalValuesFiles))
+	if helmChart.ValuesFile != "" {
+		valueFiles = append(valueFiles, helmChart.ValuesFile)
+	}
+	valueFiles = append(valueFiles, helmChart.AdditionalValuesFiles...)
+
+	return RenderOptions{
+		AppName:           helmChart.Name,
+		ReleaseName:       helmChart.ReleaseName,
+		Namespace:         helmChart.Namespace,
+		KubeVersion:       helmChart.KubeVersion,
+		APIVersions:       append([]string(nil), helmChart.ApiVersions...),
+		ValueFiles:        valueFiles,
+		ValueFilesBaseDir: source.Path,
+		ValuesObject:      cloneValues(helmChart.ValuesInline),
+		ValuesMergeMode:   helmChart.ValuesMerge,
+		ChartCacheDir:     opts.ChartCacheDir,
+		OfflineCharts:     opts.OfflineCharts,
+		RefreshCharts:     opts.RefreshCharts,
+		ChartAcquirer:     acquirer,
+		IncludeCRDs:       helmChart.IncludeCRDs,
+		IncludeCRDsSet:    true,
+		SkipHooks:         helmChart.SkipHooks,
+		SkipTests:         helmChart.SkipTests,
+	}
+}
+
+func kustomizeHelmChartRepositoryKind(repository string) chart.RepositoryKind {
+	if strings.HasPrefix(strings.TrimSpace(repository), "oci://") {
+		return chart.RepositoryOCI
+	}
+	return chart.RepositoryHTTP
+}
+
+func safeGeneratedKustomizeHelmBaseName(name, version string) string {
+	joined := strings.Trim(strings.TrimSpace(name)+"-"+strings.TrimSpace(version), "-")
+	if joined == "" {
+		joined = "chart"
+	}
+	replacer := strings.NewReplacer("/", "_", "\\", "_", ":", "_")
+	return replacer.Replace(joined)
+}
+
+func writeGeneratedHelmManifests(path string, manifests []Manifest) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+	var buffer bytes.Buffer
+	for _, manifest := range manifests {
+		if manifest.Object == nil {
+			continue
+		}
+		data, err := goyaml.Marshal(manifest.Object.Object)
+		if err != nil {
+			return fmt.Errorf("encode generated helm manifest: %w", err)
+		}
+		if _, err := buffer.WriteString("---\n"); err != nil {
+			return err
+		}
+		if _, err := buffer.Write(data); err != nil {
+			return err
+		}
+	}
+	if err := os.WriteFile(path, buffer.Bytes(), 0o644); err != nil {
+		return fmt.Errorf("write generated helm manifests %s: %w", path, err)
+	}
+	return nil
+}
+
+func copyRegularTree(srcRoot, dstRoot string) error {
+	srcRoot = filepath.Clean(srcRoot)
+	dstRoot = filepath.Clean(dstRoot)
+
+	return filepath.WalkDir(srcRoot, func(path string, entry os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		rel, err := filepath.Rel(srcRoot, path)
+		if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+			return fmt.Errorf("copy source path %q escapes source root %q", path, srcRoot)
+		}
+		if rel == ".git" && entry.IsDir() {
+			return filepath.SkipDir
+		}
+		if entry.Type()&os.ModeSymlink != 0 {
+			return fmt.Errorf("copy source path %q is a symlink", path)
+		}
+
+		dstPath := filepath.Clean(filepath.Join(dstRoot, rel))
+		dstRel, err := filepath.Rel(dstRoot, dstPath)
+		if err != nil || dstRel == ".." || strings.HasPrefix(dstRel, ".."+string(filepath.Separator)) {
+			return fmt.Errorf("copy destination path %q escapes destination root %q", dstPath, dstRoot)
+		}
+
+		if entry.IsDir() {
+			return os.MkdirAll(dstPath, 0o755)
+		}
+		if !entry.Type().IsRegular() {
+			return fmt.Errorf("copy source path %q is not a regular file", path)
+		}
+		return copyRegularFile(path, dstPath)
+	})
+}
+
+func copyRegularFile(src, dst string) error {
+	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
+		return err
+	}
+	in, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer in.Close()
+
+	out, err := os.OpenFile(dst, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o644)
+	if err != nil {
+		return err
+	}
+	if _, err := io.Copy(out, in); err != nil {
+		_ = out.Close()
+		return err
+	}
+	if err := out.Close(); err != nil {
+		return err
+	}
+	return nil
+}
 
 type kustomizeGraphValidator struct {
 	repoRoot   string
