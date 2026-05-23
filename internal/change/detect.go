@@ -60,10 +60,13 @@ func collectFiles(root string, paths map[string]struct{}) error {
 		if err != nil {
 			return err
 		}
-		if entry.IsDir() {
-			if entry.Name() == ".git" {
+		if entry.Name() == ".git" {
+			if entry.IsDir() {
 				return filepath.SkipDir
 			}
+			return nil
+		}
+		if entry.IsDir() {
 			return nil
 		}
 		rel, err := filepath.Rel(root, filePath)

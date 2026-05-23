@@ -90,9 +90,11 @@ diff paths do not use it yet.
 Run the optional home-ops Renovate smoke:
 
 ```bash
-scripts/home-ops-renovate-smoke.sh
+RENOVATE_CHART_TO=4.8.2 scripts/home-ops-renovate-smoke.sh
 ```
 
 The smoke script is optional, targets maintainers with a local `home-ops`
-checkout, uses temporary worktrees, and does not mutate the real checkout.
+checkout, uses temporary worktrees, and does not mutate the real checkout. It
+detects the current Renovate chart version from `apps/renovate/kustomization.yaml`
+and requires `RENOVATE_CHART_TO` to name the simulated target version.
 Committed tests and portable fixtures do not depend on `home-ops`.

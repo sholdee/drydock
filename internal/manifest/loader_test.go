@@ -61,6 +61,122 @@ func TestDecodeDocumentsDecodesJSON(t *testing.T) {
 	}
 }
 
+func TestDecodeDocumentsNormalizesYAMLNumbersForUnstructuredDeepCopy(t *testing.T) {
+	input := strings.NewReader(`
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: api
+spec:
+  replicas: 1
+`)
+
+	docs, err := DecodeDocuments("deployment.yaml", input)
+	if err != nil {
+		t.Fatalf("DecodeDocuments() error = %v", err)
+	}
+
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			t.Fatalf("DeepCopy() panic = %v", recovered)
+		}
+	}()
+	copy := docs[0].Object.DeepCopy()
+	replicas, found, err := unstructured.NestedInt64(copy.Object, "spec", "replicas")
+	if err != nil {
+		t.Fatalf("NestedInt64() error = %v", err)
+	}
+	if !found || replicas != 1 {
+		t.Fatalf("replicas = %d, found %t; want 1, true", replicas, found)
+	}
+}
+
+func TestDecodeDocumentsNormalizesYAMLTimestampScalars(t *testing.T) {
+	input := strings.NewReader(`
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: release
+data:
+  releaseDate: 2026-05-23
+`)
+
+	docs, err := DecodeDocuments("configmap.yaml", input)
+	if err != nil {
+		t.Fatalf("DecodeDocuments() error = %v", err)
+	}
+
+	value, found, err := unstructured.NestedString(docs[0].Object.Object, "data", "releaseDate")
+	if err != nil {
+		t.Fatalf("NestedString() error = %v", err)
+	}
+	if !found || value != "2026-05-23T00:00:00Z" {
+		t.Fatalf("releaseDate = %q, found %t; want 2026-05-23T00:00:00Z, true", value, found)
+	}
+	if copy := docs[0].Object.DeepCopy(); copy.GetName() != "release" {
+		t.Fatalf("DeepCopy().GetName() = %q, want release", copy.GetName())
+	}
+}
+
+func TestDecodeDocumentsUnsignedIntegerOverflowErrorDoesNotIncludeManifestValue(t *testing.T) {
+	const secretValue = "9223372036854775808"
+	input := strings.NewReader(`
+apiVersion: v1
+kind: Secret
+metadata:
+  name: credentials
+data:
+  token: ` + secretValue + `
+`)
+
+	_, err := DecodeDocuments("secret.yaml", input)
+	if err == nil {
+		t.Fatalf("DecodeDocuments() error = nil, want overflow error")
+	}
+	if !strings.Contains(err.Error(), "YAML integer overflows int64") {
+		t.Fatalf("error = %q, want overflow message", err)
+	}
+	if strings.Contains(err.Error(), secretValue) {
+		t.Fatalf("error leaked manifest data: %q", err)
+	}
+}
+
+func TestDecodeDocumentsRootScalarErrorDoesNotIncludeManifestValue(t *testing.T) {
+	const secretValue = "secret-token-value"
+	input := strings.NewReader(secretValue)
+
+	_, err := DecodeDocuments("secret.yaml", input)
+	if err == nil {
+		t.Fatalf("DecodeDocuments() error = nil, want root type error")
+	}
+	if !strings.Contains(err.Error(), "unsupported root type") {
+		t.Fatalf("error = %q, want unsupported root type", err)
+	}
+	if strings.Contains(err.Error(), secretValue) {
+		t.Fatalf("error leaked manifest data: %q", err)
+	}
+}
+
+func TestDecodeDocumentsListItemsErrorDoesNotIncludeManifestValue(t *testing.T) {
+	const secretValue = "secret-token-value"
+	input := strings.NewReader(`
+apiVersion: v1
+kind: List
+items: ` + secretValue + `
+`)
+
+	_, err := DecodeDocuments("secrets.yaml", input)
+	if err == nil {
+		t.Fatalf("DecodeDocuments() error = nil, want error")
+	}
+	if !strings.Contains(err.Error(), "secrets.yaml document 0 /items is not a list") {
+		t.Fatalf("error = %q, want path and document index", err)
+	}
+	if strings.Contains(err.Error(), secretValue) {
+		t.Fatalf("error leaked manifest data: %q", err)
+	}
+}
+
 func TestDecodeDocumentsListItemErrorDoesNotIncludeManifestValue(t *testing.T) {
 	input := strings.NewReader(`
 apiVersion: v1

@@ -138,6 +138,25 @@ func TestDetectSkipsGitDirectories(t *testing.T) {
 	}
 }
 
+func TestDetectSkipsGitWorktreeFiles(t *testing.T) {
+	base := t.TempDir()
+	current := t.TempDir()
+	writeFile(t, base, ".git", "gitdir: /tmp/base/.git/worktrees/base\n")
+	writeFile(t, current, ".git", "gitdir: /tmp/current/.git/worktrees/current\n")
+	writeFile(t, base, "apps/a/cm.yaml", "old")
+	writeFile(t, current, "apps/a/cm.yaml", "new")
+
+	got, err := Detect(base, current)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	want := []string{"apps/a/cm.yaml"}
+	if !equal(got, want) {
+		t.Fatalf("Detect() = %v, want %v", got, want)
+	}
+}
+
 func TestDetectReportsSymlinkReplacementWithoutFollowingIt(t *testing.T) {
 	base := t.TempDir()
 	current := t.TempDir()
