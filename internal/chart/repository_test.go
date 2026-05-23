@@ -105,6 +105,34 @@ func TestDefaultAcquirerOfflineRequiresCacheHit(t *testing.T) {
 	}
 }
 
+func TestDefaultAcquirerMapsIndexAuthFailures(t *testing.T) {
+	for _, status := range []int{http.StatusUnauthorized, http.StatusForbidden} {
+		t.Run(http.StatusText(status), func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path != "/index.yaml" {
+					t.Fatalf("request path = %q, want /index.yaml", r.URL.Path)
+				}
+				http.Error(w, "authentication required", status)
+			}))
+			t.Cleanup(server.Close)
+
+			acquirer := DefaultAcquirer{Client: server.Client()}
+			_, err := acquirer.Acquire(context.Background(), Request{
+				Repository: server.URL,
+				Name:       "demo",
+				Version:    "1.2.3",
+				Kind:       RepositoryHTTP,
+			}, Options{CacheDir: t.TempDir()})
+			if err == nil {
+				t.Fatal("Acquire() error = nil, want auth unsupported error")
+			}
+			if !strings.Contains(err.Error(), "authenticated chart repositories are not supported yet") {
+				t.Fatalf("Acquire() error = %q, want auth unsupported error", err)
+			}
+		})
+	}
+}
+
 func TestDefaultAcquirerRejectsUnsupportedKindBeforeCacheHit(t *testing.T) {
 	request := Request{
 		Repository: "oci://charts.example.test",
