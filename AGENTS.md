@@ -17,6 +17,26 @@ Read the design spec before substantive changes:
 
 - `docs/superpowers/specs/2026-05-22-argocd-local-design.md`
 
+## Command Surface
+
+Current top-level commands:
+
+- `argocd-local get apps --path .`: list discovered Applications by name.
+- `argocd-local build apps --path .`: render all discovered Applications.
+- `argocd-local build app NAME --path .`: command is present but not wired yet.
+- `argocd-local diff apps --path . --path-orig ../base`: command is present
+  but not wired yet.
+- `argocd-local diff app NAME --path . --path-orig ../base`: command is
+  present but not wired yet.
+- `argocd-local diff images --path . --path-orig ../base`: command is present
+  but not wired yet.
+- `argocd-local diag --path .`: command is present but not wired yet.
+- `argocd-local version`: print version, commit, Go version, and Argo CD module.
+
+Current shared flags are `--path`, `--path-orig`, `--repo-map`,
+`--allow-network`, `--changed-only`, `--strict-changed-only`, `--strict`,
+`--exit-code`, `--output`/`-o`, `--unified`/`-u`, and `--limit-bytes`.
+
 ## Settings Discovery
 
 Settings flow into `internal/config.ArgoSettings`. Providers must record
@@ -39,6 +59,34 @@ keep default scans tolerant of unrelated YAML files.
 path-style matching, keep include/exclude semantics deterministic, and preserve
 Argo CD template behavior such as `missingkey=error` and Sprig functions.
 Unsupported generators must produce diagnostics.
+
+## Supported Features
+
+The MVP currently supports:
+
+- Direct `Application` CR discovery.
+- Git-directory `ApplicationSet` CR expansion.
+- Single-source and multi-source planning for supported source types.
+- Kustomize, directory, and local Helm chart rendering through Go libraries.
+- Repeated-resource last-wins behavior inside one Application, with a
+  diagnostic.
+- Parent Application-aware desired manifest identity for diffs.
+- Conservative container image extraction.
+- Argo CD settings discovery from Helm values, `argocd-cm`, and repository
+  Secrets, limited to rendering/diff-affecting non-secret values.
+
+## Deferred Features
+
+Do not treat these as supported without an explicit design update:
+
+- Live-cluster diffing or live Argo CD API calls.
+- Kubernetes API defaulting or admission mutation.
+- Server-side apply field ownership, managed fields ignores, and live Argo CD
+  server-side diff behavior.
+- Project, RBAC, and destination validation.
+- Config management plugins.
+- Additional ApplicationSet generators beyond Git directories.
+- Required default shellouts to `helm`, `kustomize`, `kubectl`, or `argocd`.
 
 ## Source Resolution
 
@@ -122,14 +170,48 @@ If a tool is not installed locally, say so in your final response.
 
 ## Hard Constraints
 
-- Default workflows must not require `helm`, `kustomize`, `kubectl`, or `argocd` on `PATH`.
+- Default workflows must not require `helm`, `kustomize`, `kubectl`, or
+  `argocd` on `PATH`.
 - Network access is opt-in through `--allow-network`; prefer `--repo-map`.
-- Do not print secret data. Repository Secrets may provide non-sensitive metadata only.
-- Manifest loaders must never print Secret values. Diagnostics may include file paths and YAML pointers, not manifest data.
+- Do not print secret data. Repository Secrets may provide non-sensitive
+  metadata only.
+- Manifest loaders must never print Secret values. Diagnostics may include file
+  paths and YAML pointers, not manifest data.
 - `spec.sources` takes precedence over `spec.source`.
-- Changed-only mode must not use Flux-style "most-specific owner wins"; Argo CD may have overlapping Applications.
-- Changed-only mode keeps every Application whose inputs intersect a changed file. Do not implement Flux-style longest-prefix ownership. If any changed path is unowned, default behavior is render-all with diagnostics; strict mode can fail.
-- Server-side diff/apply settings are diagnostics in offline mode, not executable behavior.
+- Changed-only mode must not use Flux-style "most-specific owner wins"; Argo CD
+  may have overlapping Applications.
+- Changed-only mode keeps every Application whose inputs intersect a changed
+  file. Do not implement Flux-style longest-prefix ownership. If any changed
+  path is unowned, default behavior is render-all with diagnostics; strict mode
+  can fail.
+- Server-side diff/apply settings are diagnostics in offline mode, not
+  executable behavior.
+
+## Exit Codes
+
+- `0`: command succeeded and, for diff-style commands, no diff was found.
+- `1`: command succeeded and a diff was found when `--exit-code` is enabled.
+- `2`: tool, configuration, discovery, or render error.
+
+`--exit-code=false` makes diffs exit `0` for local inspection. Warnings do not
+change exit code unless strict mode promotes them to errors. Cobra usage output
+should stay suppressed for runtime failures.
+
+## Common Mistakes
+
+- Do not add a shellout path for default rendering when a Go library path is
+  available.
+- Do not enable network access implicitly for unmapped repositories; require
+  `--repo-map` or explicit `--allow-network`.
+- Do not print Secret manifest values or repository credentials in diagnostics.
+- Do not hard-code one user's repository layout or `home-ops` paths.
+- Do not collapse overlapping Applications to one owner in changed-only mode.
+- Do not dedupe repeated resources across Applications; only last-wins inside
+  one Application is part of the offline model.
+- Do not execute server-side diff/apply settings offline; report them as
+  limitations.
+- Do not add supported features, commands, renderers, providers, diagnostics, or
+  validation commands without updating this file.
 
 ## Agent Maintenance Rule
 
