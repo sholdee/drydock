@@ -34,8 +34,9 @@ Current top-level commands:
 - `argocd-local version`: print version, commit, Go version, and Argo CD module.
 
 Current shared flags are `--path`, `--path-orig`, `--repo-map`,
-`--allow-network`, `--changed-only`, `--strict-changed-only`, `--strict`,
-`--exit-code`, `--output`/`-o`, `--unified`/`-u`, and `--limit-bytes`.
+`--allow-network`, `--offline`, `--refresh-charts`, `--chart-cache-dir`,
+`--changed-only`, `--strict-changed-only`, `--strict`, `--exit-code`,
+`--output`/`-o`, `--unified`/`-u`, and `--limit-bytes`.
 Some flags are parsed ahead of wiring: `--repo-map` and `--allow-network` do
 not currently drive the E2E build path, and `diff app`/`diff images` are not
 wired yet.
