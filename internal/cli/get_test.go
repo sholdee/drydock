@@ -162,12 +162,11 @@ metadata:
   namespace: argocd
 spec:
   generators:
-    - list:
-        elements:
-          - name: generated
+    - matrix:
+        generators: []
   template:
     metadata:
-      name: '{{name}}'
+      name: generated
     spec:
       project: default
       source:
@@ -189,7 +188,7 @@ spec:
 		t.Fatalf("Execute() error = %v", err)
 	}
 	assertTableContainsApp(t, out.String(), "NAMESPACE", "NAME", "direct")
-	wantStderr := "warning appset: only one git directories generator is supported in the MVP (path: unsupported-appset.yaml, pointer: spec.generators)\n"
+	wantStderr := "warning appset: unsupported ApplicationSet generator; supported generators are git directories, git files, and list (path: unsupported-appset.yaml, pointer: spec.generators)\n"
 	if got := stderr.String(); got != wantStderr {
 		t.Fatalf("get apps stderr = %q, want %q", got, wantStderr)
 	}

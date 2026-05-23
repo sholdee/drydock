@@ -30,6 +30,18 @@ argocd-local get images --path . -o name
 `get images` supports the same structured output formats as `get apps`.
 Diagnostics are printed to stderr for both commands.
 
+Supported local `ApplicationSet` generators are top-level Git directories, Git
+files, and list generators. Multiple supported top-level generators are
+expanded independently and concatenated in manifest order. Unsupported
+generators emit diagnostics; non-strict commands keep supported generated
+Applications, while `--strict` promotes those diagnostics to errors.
+
+Git files generator matches are sorted by normalized relative path. Include
+and exclude patterns are evaluated deterministically, and `exclude: true`
+removes a file even if another pattern includes it. Files must stay under the
+repository root and must not traverse symlinks. YAML and JSON files must decode
+to non-empty mapping documents.
+
 ## Rendering
 
 Build every discovered Application:
@@ -177,6 +189,8 @@ Use `--strict` to promote warnings to errors.
 
 These source paths are not wired in the current MVP:
 
+- Cluster, SCM provider, pull-request, plugin, matrix, and merge
+  ApplicationSet generators.
 - Remote Kustomize Git refs, bases, components, patches, generators,
   transformers, validators, `crds`, `openapi`, and replacements.
 - Authenticated/private Git repositories.

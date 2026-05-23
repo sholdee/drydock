@@ -46,7 +46,7 @@ func TestDiagPrintsUnsupportedApplicationSetWarning(t *testing.T) {
 	if stdout.String() != "" {
 		t.Fatalf("stdout = %q, want empty", stdout.String())
 	}
-	want := "warning appset: only one git directories generator is supported in the MVP (path: unsupported-appset.yaml, pointer: spec.generators)\n"
+	want := "warning appset: unsupported ApplicationSet generator; supported generators are git directories, git files, and list (path: unsupported-appset.yaml, pointer: spec.generators)\n"
 	if stderr.String() != want {
 		t.Fatalf("stderr = %q, want %q", stderr.String(), want)
 	}
@@ -105,12 +105,11 @@ metadata:
   namespace: argocd
 spec:
   generators:
-    - list:
-        elements:
-          - name: generated
+    - matrix:
+        generators: []
   template:
     metadata:
-      name: '{{name}}'
+      name: generated
     spec:
       project: default
       source:
