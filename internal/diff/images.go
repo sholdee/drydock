@@ -14,7 +14,7 @@ func ExtractImages(docs []Document) []string {
 		if err := yaml.Unmarshal([]byte(doc.Body), &value); err != nil {
 			continue
 		}
-		collectImages(value, images)
+		collectWorkloadImages(value, images)
 	}
 
 	out := make([]string, 0, len(images))
@@ -25,25 +25,31 @@ func ExtractImages(docs []Document) []string {
 	return out
 }
 
-func collectImages(value any, images map[string]struct{}) {
-	switch typed := value.(type) {
-	case map[string]any:
-		for key, child := range typed {
-			if key == "image" {
-				addImage(child, images)
+func collectWorkloadImages(value any, images map[string]struct{}) {
+	kind, ok := stringField(value, "kind")
+	if !ok {
+		return
+	}
+
+	var podSpec any
+	switch kind {
+	case "Pod":
+		podSpec = pathValue(value, "spec")
+	case "Deployment", "StatefulSet", "DaemonSet", "ReplicaSet", "ReplicationController", "Job":
+		podSpec = pathValue(value, "spec", "template", "spec")
+	case "CronJob":
+		podSpec = pathValue(value, "spec", "jobTemplate", "spec", "template", "spec")
+	default:
+		return
+	}
+
+	for _, field := range []string{"containers", "initContainers", "ephemeralContainers"} {
+		for _, container := range listField(podSpec, field) {
+			image, ok := stringField(container, "image")
+			if !ok {
+				continue
 			}
-			collectImages(child, images)
-		}
-	case map[any]any:
-		for key, child := range typed {
-			if key == "image" {
-				addImage(child, images)
-			}
-			collectImages(child, images)
-		}
-	case []any:
-		for _, child := range typed {
-			collectImages(child, images)
+			addImage(image, images)
 		}
 	}
 }
@@ -58,4 +64,50 @@ func addImage(value any, images map[string]struct{}) {
 		return
 	}
 	images[image] = struct{}{}
+}
+
+func stringField(value any, key string) (string, bool) {
+	field, ok := mapField(value, key)
+	if !ok {
+		return "", false
+	}
+	out, ok := field.(string)
+	return out, ok
+}
+
+func listField(value any, key string) []any {
+	field, ok := mapField(value, key)
+	if !ok {
+		return nil
+	}
+	out, ok := field.([]any)
+	if !ok {
+		return nil
+	}
+	return out
+}
+
+func pathValue(value any, keys ...string) any {
+	current := value
+	for _, key := range keys {
+		next, ok := mapField(current, key)
+		if !ok {
+			return nil
+		}
+		current = next
+	}
+	return current
+}
+
+func mapField(value any, key string) (any, bool) {
+	switch typed := value.(type) {
+	case map[string]any:
+		out, ok := typed[key]
+		return out, ok
+	case map[any]any:
+		out, ok := typed[key]
+		return out, ok
+	default:
+		return nil, false
+	}
 }

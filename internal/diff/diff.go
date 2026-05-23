@@ -3,7 +3,6 @@ package diff
 import (
 	"fmt"
 	"sort"
-	"strconv"
 	"strings"
 
 	"github.com/pmezard/go-difflib/difflib"
@@ -91,9 +90,6 @@ func keyOf(doc Document) string {
 		parentKind(doc.Parent),
 		doc.Parent.Namespace,
 		doc.Parent.Name,
-		strconv.Itoa(doc.Parent.SourceIndex),
-		doc.Parent.SourceName,
-		doc.Parent.SourcePath,
 		doc.Resource.Group,
 		doc.Resource.Kind,
 		doc.Resource.Namespace,
