@@ -45,13 +45,9 @@ func (DefaultGitAcquirer) Acquire(ctx context.Context, request GitRequest, opts 
 		return GitResult{}, err
 	}
 
-	cacheDir := opts.CacheDir
-	if cacheDir == "" {
-		defaultDir, err := DefaultGitCacheDir()
-		if err != nil {
-			return GitResult{}, err
-		}
-		cacheDir = defaultDir
+	cacheDir, err := gitCacheDir(opts.CacheDir)
+	if err != nil {
+		return GitResult{}, err
 	}
 	cachePath := filepath.Join(cacheDir, gitCacheKey(request.URL, request.Revision))
 	if err := os.MkdirAll(cacheDir, 0o755); err != nil {
@@ -68,26 +64,23 @@ func (DefaultGitAcquirer) Acquire(ctx context.Context, request GitRequest, opts 
 		return GitResult{}, fmt.Errorf("open repository %s worktree: %s", RedactURL(request.URL), redactGitError(err, request.URL))
 	}
 	if opts.Refresh && !cloned {
-		if isDefaultGitRevision(request.Revision) {
-			if err := pullGitRepository(ctx, worktree, request.URL); err != nil {
-				return GitResult{}, err
-			}
-		} else if err := fetchGitRepository(ctx, repo, request.URL); err != nil {
+		if err := refreshGitRepository(ctx, repo, worktree, request); err != nil {
 			return GitResult{}, err
 		}
 	}
-	revision, err := checkoutGitRevision(repo, worktree, request.Revision)
-	if err != nil && !cloned {
-		if fetchErr := fetchGitRepository(ctx, repo, request.URL); fetchErr != nil {
-			return GitResult{}, fetchErr
-		}
-		revision, err = checkoutGitRevision(repo, worktree, request.Revision)
-	}
+	revision, err := checkoutAcquiredGitRepository(ctx, repo, worktree, request, cloned)
 	if err != nil {
-		return GitResult{}, fmt.Errorf("checkout repository %s revision %q: %s", RedactURL(request.URL), strings.TrimSpace(request.Revision), redactGitError(err, request.URL))
+		return GitResult{}, err
 	}
 
 	return GitResult{Path: cachePath, Revision: revision}, nil
+}
+
+func gitCacheDir(configured string) (string, error) {
+	if configured != "" {
+		return configured, nil
+	}
+	return DefaultGitCacheDir()
 }
 
 func DefaultGitCacheDir() (string, error) {
@@ -124,6 +117,30 @@ func openOrCloneGitRepository(ctx context.Context, cachePath, repoURL string) (*
 		return nil, false, fmt.Errorf("clone repository %s: %s", RedactURL(repoURL), redactGitError(err, repoURL))
 	}
 	return repo, true, nil
+}
+
+func refreshGitRepository(ctx context.Context, repo *git.Repository, worktree *git.Worktree, request GitRequest) error {
+	if isDefaultGitRevision(request.Revision) {
+		return pullGitRepository(ctx, worktree, request.URL)
+	}
+	return fetchGitRepository(ctx, repo, request.URL)
+}
+
+func checkoutAcquiredGitRepository(ctx context.Context, repo *git.Repository, worktree *git.Worktree, request GitRequest, cloned bool) (string, error) {
+	revision, err := checkoutGitRevision(repo, worktree, request.Revision)
+	if err == nil {
+		return revision, nil
+	}
+	if !cloned {
+		if fetchErr := fetchGitRepository(ctx, repo, request.URL); fetchErr != nil {
+			return "", fetchErr
+		}
+		revision, err = checkoutGitRevision(repo, worktree, request.Revision)
+	}
+	if err != nil {
+		return "", fmt.Errorf("checkout repository %s revision %q: %s", RedactURL(request.URL), strings.TrimSpace(request.Revision), redactGitError(err, request.URL))
+	}
+	return revision, nil
 }
 
 func fetchGitRepository(ctx context.Context, repo *git.Repository, repoURL string) error {
