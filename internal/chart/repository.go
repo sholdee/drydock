@@ -54,6 +54,11 @@ func (acquirer DefaultAcquirer) Acquire(ctx context.Context, request Request, op
 	if err := validateChartNamePathLeaf(request.Name); err != nil {
 		return Result{}, err
 	}
+	if request.Kind == RepositoryOCI {
+		if _, err := parseOCIChartRepository(request.Repository); err != nil {
+			return Result{}, err
+		}
+	}
 	if opts.CacheDir == "" {
 		cacheDir, err := DefaultCacheDir()
 		if err != nil {
