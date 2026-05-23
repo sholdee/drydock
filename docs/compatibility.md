@@ -30,6 +30,10 @@ Supported in the MVP:
 - `get images` structured table, name, JSON, and YAML output using the same
   conservative workload image extraction as `diff images`
 - `build app` rendering for one Application by `NAME` or `NAMESPACE/NAME`
+- Partial build results for embedding callers when some selected Applications
+  fail to render
+- `test apps` and `test app` per-Application PASS/FAIL/SKIPPED render status
+  output, including JSON and YAML formats
 - `diff apps` desired-vs-desired manifest diffs
 - `diff app` desired-vs-desired diffs for one Application, including
   add/delete diffs when the Application exists on only one side

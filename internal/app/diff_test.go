@@ -97,6 +97,37 @@ func TestDiffAppsRejectsRemoteCacheInsideEitherRoot(t *testing.T) {
 	}
 }
 
+func TestOrchestratorDiffAppsPreservesDiagnosticsFromBothPartialBuilds(t *testing.T) {
+	root := t.TempDir()
+	left := filepath.Join(root, "left")
+	right := filepath.Join(root, "right")
+	writeExternalPathApplicationNamed(t, left, "left-broken", "https://github.com/example/left", "manifests/missing-left")
+	writeExternalPathApplicationNamed(t, right, "right-broken", "https://github.com/example/right", "manifests/missing-right")
+
+	result, err := Orchestrator{}.DiffApps(context.Background(), DiffRequest{
+		LeftPath:    left,
+		RightPath:   right,
+		ChangedOnly: false,
+	})
+	if err == nil {
+		t.Fatal("DiffApps() error = nil, want partial build error")
+	}
+	if len(result.Diagnostics) != 2 {
+		t.Fatalf("len(Diagnostics) = %d, want diagnostics from both sides: %#v", len(result.Diagnostics), result.Diagnostics)
+	}
+	var sawLeft, sawRight bool
+	for _, diag := range result.Diagnostics {
+		if diag.Category != "render" {
+			t.Fatalf("diagnostic category = %q, want render: %#v", diag.Category, diag)
+		}
+		sawLeft = sawLeft || strings.Contains(diag.Message, "left-broken")
+		sawRight = sawRight || strings.Contains(diag.Message, "right-broken")
+	}
+	if !sawLeft || !sawRight {
+		t.Fatalf("Diagnostics = %#v, want left and right render diagnostics", result.Diagnostics)
+	}
+}
+
 func TestOrchestratorDiffAppsChangedOnlyFallsBackOnUnownedCurrentPath(t *testing.T) {
 	root := t.TempDir()
 	left := filepath.Join(root, "left")

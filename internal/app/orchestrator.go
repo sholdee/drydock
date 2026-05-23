@@ -52,12 +52,26 @@ type ApplicationSelectionInput struct {
 	Paths       []string
 }
 
+const (
+	ApplicationStatusPass    = "PASS"
+	ApplicationStatusFail    = "FAIL"
+	ApplicationStatusSkipped = "SKIPPED"
+)
+
+type ApplicationStatus struct {
+	Namespace string `json:"namespace" yaml:"namespace"`
+	Name      string `json:"name" yaml:"name"`
+	Status    string `json:"status" yaml:"status"`
+	Message   string `json:"message,omitempty" yaml:"message,omitempty"`
+}
+
 type BuildResult struct {
 	Applications         []argoappv1.Application
 	ApplicationInputs    []ApplicationSelectionInput
 	Manifests            []render.Manifest
 	ApplicationManifests []ApplicationManifest
 	Diagnostics          []diagnostic.Diagnostic
+	Statuses             []ApplicationStatus
 }
 
 type DiagRequest = BuildRequest
@@ -147,18 +161,20 @@ func (o Orchestrator) ListApplications(_ context.Context, request BuildRequest) 
 }
 
 func (o Orchestrator) Build(ctx context.Context, request BuildRequest) (BuildResult, error) {
-	if err := validateBuildNetworkOptions(request); err != nil {
-		return BuildResult{}, err
-	}
 	var result BuildResult
 	if request.Applications != nil {
 		result.Applications = append(result.Applications, request.Applications...)
 	} else {
 		listResult, err := o.ListApplications(ctx, request)
 		if err != nil {
+			listResult.Statuses = skippedApplicationStatuses(listResult.Applications, err)
 			return listResult, err
 		}
 		result = listResult
+	}
+	if err := validateBuildNetworkOptions(request); err != nil {
+		result.Statuses = skippedApplicationStatuses(result.Applications, err)
+		return result, err
 	}
 
 	root := request.Path
@@ -197,12 +213,15 @@ func (o Orchestrator) Build(ctx context.Context, request BuildRequest) (BuildRes
 	for _, application := range result.Applications {
 		rendered, err := RenderApplication(ctx, application, provider)
 		if err != nil {
-			return result, err
+			result.Diagnostics = append(result.Diagnostics, renderFailureDiagnostic(application, err))
+			result.Statuses = append(result.Statuses, applicationStatus(application, ApplicationStatusFail, err.Error()))
+			continue
 		}
 		rendered.Diagnostics = normalizeDiagnostics(rendered.Diagnostics, request.Strict, false)
 		result.Diagnostics = append(result.Diagnostics, rendered.Diagnostics...)
 		if err := diagnosticFailure(rendered.Diagnostics, request.Strict); err != nil {
-			return result, err
+			result.Statuses = append(result.Statuses, applicationStatus(application, ApplicationStatusFail, err.Error()))
+			continue
 		}
 		for _, renderedManifest := range rendered.Manifests {
 			result.Manifests = append(result.Manifests, renderedManifest)
@@ -211,8 +230,12 @@ func (o Orchestrator) Build(ctx context.Context, request BuildRequest) (BuildRes
 				Manifest:    renderedManifest,
 			})
 		}
+		result.Statuses = append(result.Statuses, applicationStatus(application, ApplicationStatusPass, ""))
 	}
 
+	if err := buildStatusFailure(result.Statuses); err != nil {
+		return result, err
+	}
 	return result, nil
 }
 
@@ -225,6 +248,7 @@ func (o Orchestrator) BuildApp(ctx context.Context, request BuildAppRequest) (Bu
 	buildRequest := request.BuildRequest
 	listResult, err := o.ListApplications(ctx, buildRequest)
 	if err != nil {
+		listResult.Statuses = skippedStatusesForRequestedApplication(listResult.Applications, name, err)
 		return listResult, err
 	}
 
@@ -238,6 +262,74 @@ func (o Orchestrator) BuildApp(ctx context.Context, request BuildAppRequest) (Bu
 	buildResult.ApplicationInputs = selectApplicationInputsForApplication(listResult.ApplicationInputs, selected)
 	buildResult.Diagnostics = append(append([]diagnostic.Diagnostic(nil), listResult.Diagnostics...), buildResult.Diagnostics...)
 	return buildResult, err
+}
+
+func skippedStatusesForRequestedApplication(applications []argoappv1.Application, name string, cause error) []ApplicationStatus {
+	if len(applications) == 0 || cause == nil {
+		return nil
+	}
+	selected, ok, err := SelectOptionalApplicationByName(applications, name)
+	if err == nil && ok {
+		return []ApplicationStatus{applicationStatus(selected, ApplicationStatusSkipped, cause.Error())}
+	}
+	return skippedApplicationStatuses(applications, cause)
+}
+
+func skippedApplicationStatuses(applications []argoappv1.Application, cause error) []ApplicationStatus {
+	if len(applications) == 0 || cause == nil {
+		return nil
+	}
+	statuses := make([]ApplicationStatus, 0, len(applications))
+	for _, application := range applications {
+		statuses = append(statuses, applicationStatus(application, ApplicationStatusSkipped, cause.Error()))
+	}
+	return statuses
+}
+
+func renderFailureDiagnostic(application argoappv1.Application, err error) diagnostic.Diagnostic {
+	return diagnostic.Diagnostic{
+		Severity: diagnostic.SeverityError,
+		Category: "render",
+		Message:  fmt.Sprintf("Application %s failed to render: %s", applicationDisplayName(application), err),
+	}
+}
+
+func applicationStatus(application argoappv1.Application, status, message string) ApplicationStatus {
+	return ApplicationStatus{
+		Namespace: application.Namespace,
+		Name:      application.Name,
+		Status:    status,
+		Message:   message,
+	}
+}
+
+func buildStatusFailure(statuses []ApplicationStatus) error {
+	var failed []ApplicationStatus
+	for _, status := range statuses {
+		if status.Status == ApplicationStatusFail || status.Status == ApplicationStatusSkipped {
+			failed = append(failed, status)
+		}
+	}
+	if len(failed) == 0 {
+		return nil
+	}
+
+	label := "Applications"
+	if len(failed) == 1 {
+		label = "Application"
+	}
+	messages := make([]string, 0, len(failed))
+	for _, status := range failed {
+		messages = append(messages, fmt.Sprintf("%s: %s", applicationStatusDisplayName(status), status.Message))
+	}
+	return fmt.Errorf("%d %s failed: %s", len(failed), label, strings.Join(messages, "; "))
+}
+
+func applicationStatusDisplayName(status ApplicationStatus) string {
+	if status.Namespace == "" {
+		return status.Name
+	}
+	return status.Namespace + "/" + status.Name
 }
 
 func selectApplicationInputsForApplication(inputs []ApplicationSelectionInput, selected argoappv1.Application) []ApplicationSelectionInput {

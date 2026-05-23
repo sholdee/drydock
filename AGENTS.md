@@ -27,6 +27,10 @@ Current top-level commands:
 - `argocd-local build apps --path .`: render all discovered Applications.
 - `argocd-local build app NAME --path .`: render exactly one discovered
   Application by `metadata.name`.
+- `argocd-local test apps --path .`: report PASS/FAIL/SKIPPED render status
+  for all discovered Applications without printing manifests.
+- `argocd-local test app NAME --path .`: report PASS/FAIL/SKIPPED render
+  status for exactly one discovered Application by `metadata.name`.
 - `argocd-local diff apps --path . --path-orig ../base`: render and diff all
   Applications between a baseline tree and current tree.
 - `argocd-local diff app NAME --path . --path-orig ../base`: diff one
@@ -112,6 +116,8 @@ The MVP currently supports:
 - Conservative container image extraction.
 - Structured `get apps` and `get images` output with table, name, JSON, and
   YAML formats.
+- Per-Application `test apps` and `test app` PASS/FAIL/SKIPPED status output
+  with text, JSON, and YAML formats.
 - Structured `diff apps` and `diff app` output with diff, JSON, and YAML
   formats, plus metadata label/annotation stripping through `--strip-attr`.
 - Argo CD settings discovery from Helm values, `argocd-cm`, and repository
@@ -208,6 +214,10 @@ The orchestrator owns end-to-end flow. Keep it thin: discovery, ApplicationSet
 expansion, planning, rendering, and formatting should stay in their packages. If
 orchestration grows complicated, split behavior into narrower package functions
 rather than accumulating logic in one file.
+Build results preserve partial manifests, diagnostics, and per-Application
+statuses when one selected Application fails. CLI commands must keep stdout
+machine-parseable; diagnostics and failure summaries belong on stderr unless
+the command's primary output is explicitly status text.
 
 ## Renderers
 
