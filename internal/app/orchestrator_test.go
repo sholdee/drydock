@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/home-operations/argocd-local/internal/diagnostic"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 )
 
@@ -169,6 +170,105 @@ spec:
 	}
 }
 
+func TestOrchestratorBuildPreservesListAndRenderDiagnostics(t *testing.T) {
+	root := t.TempDir()
+	writeUnsupportedApplicationSetFixture(t, root)
+	writeDuplicateConfigMaps(t, filepath.Join(root, "manifests", "direct"))
+
+	result, err := Orchestrator{}.Build(context.Background(), BuildRequest{Path: root})
+	if err != nil {
+		t.Fatalf("Build() error = %v", err)
+	}
+
+	if len(result.Manifests) != 1 {
+		t.Fatalf("len(Manifests) = %d, want 1", len(result.Manifests))
+	}
+	if len(result.Diagnostics) != 2 {
+		t.Fatalf("len(Diagnostics) = %d, want 2: %#v", len(result.Diagnostics), result.Diagnostics)
+	}
+	categories := map[string]bool{}
+	for _, diag := range result.Diagnostics {
+		if diag.Severity != diagnostic.SeverityWarning {
+			t.Fatalf("diagnostic severity = %s, want warning: %#v", diag.Severity, diag)
+		}
+		categories[diag.Category] = true
+	}
+	for _, want := range []string{"appset", "repeated-resource"} {
+		if !categories[want] {
+			t.Fatalf("diagnostic categories = %#v, want %q", categories, want)
+		}
+	}
+}
+
+func TestOrchestratorBuildStrictFailsOnRenderDiagnostics(t *testing.T) {
+	root := t.TempDir()
+	writeTestFile(t, filepath.Join(root, "apps", "direct.yaml"), directApplicationYAML())
+	writeDuplicateConfigMaps(t, filepath.Join(root, "manifests", "direct"))
+
+	result, err := Orchestrator{}.Build(context.Background(), BuildRequest{Path: root, Strict: true})
+	if err == nil {
+		t.Fatalf("Build() error = nil, want strict diagnostic error")
+	}
+	if len(result.Diagnostics) != 1 {
+		t.Fatalf("len(Diagnostics) = %d, want 1: %#v", len(result.Diagnostics), result.Diagnostics)
+	}
+	if result.Diagnostics[0].Severity != diagnostic.SeverityError {
+		t.Fatalf("diagnostic severity = %s, want error", result.Diagnostics[0].Severity)
+	}
+	if result.Diagnostics[0].Category != "repeated-resource" {
+		t.Fatalf("diagnostic category = %q, want repeated-resource", result.Diagnostics[0].Category)
+	}
+	if !strings.Contains(err.Error(), "repeated-resource") {
+		t.Fatalf("Build() error = %q, want repeated-resource", err.Error())
+	}
+}
+
+func TestOrchestratorListApplicationsSkipsUnsupportedApplicationSetInNonStrictMode(t *testing.T) {
+	root := t.TempDir()
+	writeUnsupportedApplicationSetFixture(t, root)
+
+	result, err := Orchestrator{}.ListApplications(context.Background(), BuildRequest{Path: root})
+	if err != nil {
+		t.Fatalf("ListApplications() error = %v", err)
+	}
+
+	if len(result.Applications) != 1 {
+		t.Fatalf("len(Applications) = %d, want 1", len(result.Applications))
+	}
+	if result.Applications[0].Name != "direct" {
+		t.Fatalf("Application name = %q, want direct", result.Applications[0].Name)
+	}
+	if len(result.Diagnostics) != 1 {
+		t.Fatalf("len(Diagnostics) = %d, want 1: %#v", len(result.Diagnostics), result.Diagnostics)
+	}
+	diag := result.Diagnostics[0]
+	if diag.Severity != diagnostic.SeverityWarning {
+		t.Fatalf("diagnostic severity = %s, want warning", diag.Severity)
+	}
+	if diag.Category != "appset" {
+		t.Fatalf("diagnostic category = %q, want appset", diag.Category)
+	}
+}
+
+func TestOrchestratorListApplicationsFailsUnsupportedApplicationSetInStrictMode(t *testing.T) {
+	root := t.TempDir()
+	writeUnsupportedApplicationSetFixture(t, root)
+
+	result, err := Orchestrator{}.ListApplications(context.Background(), BuildRequest{Path: root, Strict: true})
+	if err == nil {
+		t.Fatalf("ListApplications() error = nil, want unsupported ApplicationSet error")
+	}
+	if len(result.Diagnostics) != 1 {
+		t.Fatalf("len(Diagnostics) = %d, want 1: %#v", len(result.Diagnostics), result.Diagnostics)
+	}
+	if result.Diagnostics[0].Severity != diagnostic.SeverityError {
+		t.Fatalf("diagnostic severity = %s, want error", result.Diagnostics[0].Severity)
+	}
+	if !strings.Contains(err.Error(), "unsupported ApplicationSet generator") {
+		t.Fatalf("ListApplications() error = %q, want unsupported ApplicationSet generator", err.Error())
+	}
+}
+
 func writeTestFile(t *testing.T, path, content string) {
 	t.Helper()
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
@@ -177,4 +277,68 @@ func writeTestFile(t *testing.T, path, content string) {
 	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
 		t.Fatalf("WriteFile() error = %v", err)
 	}
+}
+
+func writeUnsupportedApplicationSetFixture(t *testing.T, root string) {
+	t.Helper()
+	writeTestFile(t, filepath.Join(root, "apps", "direct.yaml"), directApplicationYAML())
+	writeTestFile(t, filepath.Join(root, "apps", "unsupported-appset.yaml"), `apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: unsupported
+  namespace: argocd
+spec:
+  generators:
+    - list:
+        elements:
+          - name: generated
+  template:
+    metadata:
+      name: '{{name}}'
+    spec:
+      project: default
+      source:
+        repoURL: https://github.com/example/repo
+        path: manifests/generated
+        targetRevision: main
+      destination:
+        name: in-cluster
+        namespace: default
+`)
+}
+
+func directApplicationYAML() string {
+	return `apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: direct
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/example/repo
+    path: manifests/direct
+    targetRevision: main
+  destination:
+    name: in-cluster
+    namespace: default
+`
+}
+
+func writeDuplicateConfigMaps(t *testing.T, dir string) {
+	t.Helper()
+	writeTestFile(t, filepath.Join(dir, "first.yaml"), `apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: direct
+data:
+  value: first
+`)
+	writeTestFile(t, filepath.Join(dir, "second.yaml"), `apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: direct
+data:
+  value: second
+`)
 }

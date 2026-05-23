@@ -2,6 +2,7 @@ package appset
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path"
@@ -22,6 +23,8 @@ type GeneratedApplication struct {
 	SourcePath  string
 	Generator   string
 }
+
+var ErrUnsupportedGenerator = errors.New("unsupported ApplicationSet generator")
 
 func GenerateFromYAML(repoRoot, manifestPath string, data []byte) ([]GeneratedApplication, []diagnostic.Diagnostic, error) {
 	var raw map[string]any
@@ -77,15 +80,15 @@ func Generate(repoRoot, manifestPath string, appset argoappv1.ApplicationSet) ([
 
 func supportedGitDirectoriesGenerator(manifestPath string, appset argoappv1.ApplicationSet) (*argoappv1.GitGenerator, []diagnostic.Diagnostic, error) {
 	if len(appset.Spec.Generators) != 1 {
-		return nil, unsupportedGeneratorDiagnostic(manifestPath), fmt.Errorf("unsupported ApplicationSet generator in %s", manifestPath)
+		return nil, unsupportedGeneratorDiagnostic(manifestPath), fmt.Errorf("%w in %s", ErrUnsupportedGenerator, manifestPath)
 	}
 
 	generator := appset.Spec.Generators[0]
 	if generator.Git == nil {
-		return nil, unsupportedGeneratorDiagnostic(manifestPath), fmt.Errorf("unsupported ApplicationSet generator in %s", manifestPath)
+		return nil, unsupportedGeneratorDiagnostic(manifestPath), fmt.Errorf("%w in %s", ErrUnsupportedGenerator, manifestPath)
 	}
 	if len(generator.Git.Files) > 0 || len(generator.Git.Directories) == 0 {
-		return nil, unsupportedGeneratorDiagnostic(manifestPath), fmt.Errorf("unsupported ApplicationSet git generator in %s", manifestPath)
+		return nil, unsupportedGeneratorDiagnostic(manifestPath), fmt.Errorf("%w git generator in %s", ErrUnsupportedGenerator, manifestPath)
 	}
 	return generator.Git, nil, nil
 }

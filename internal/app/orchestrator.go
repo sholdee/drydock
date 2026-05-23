@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -15,12 +16,14 @@ import (
 )
 
 type BuildRequest struct {
-	Path string
+	Path   string
+	Strict bool
 }
 
 type BuildResult struct {
 	Applications []argoappv1.Application
 	Manifests    []render.Manifest
+	Diagnostics  []diagnostic.Diagnostic
 }
 
 type Orchestrator struct{}
@@ -48,7 +51,20 @@ func (o Orchestrator) ListApplications(_ context.Context, request BuildRequest) 
 		}
 		generated, diags, err := appset.GenerateFromYAML(root, appSetPath, data)
 		if err != nil {
+			if errors.Is(err, appset.ErrUnsupportedGenerator) && len(diags) > 0 {
+				diags = normalizeDiagnostics(diags, request.Strict, true)
+				result.Diagnostics = append(result.Diagnostics, diags...)
+				if request.Strict {
+					return result, diagnosticsError(diags, err)
+				}
+				continue
+			}
 			return result, diagnosticsError(diags, err)
+		}
+		diags = normalizeDiagnostics(diags, request.Strict, false)
+		result.Diagnostics = append(result.Diagnostics, diags...)
+		if err := diagnosticFailure(diags, request.Strict); err != nil {
+			return result, err
 		}
 		for _, app := range generated {
 			result.Applications = append(result.Applications, app.Application)
@@ -73,6 +89,11 @@ func (o Orchestrator) Build(ctx context.Context, request BuildRequest) (BuildRes
 	for _, application := range result.Applications {
 		rendered, err := RenderApplication(ctx, application, provider)
 		if err != nil {
+			return result, err
+		}
+		rendered.Diagnostics = normalizeDiagnostics(rendered.Diagnostics, request.Strict, false)
+		result.Diagnostics = append(result.Diagnostics, rendered.Diagnostics...)
+		if err := diagnosticFailure(rendered.Diagnostics, request.Strict); err != nil {
 			return result, err
 		}
 		result.Manifests = append(result.Manifests, rendered.Manifests...)
@@ -175,4 +196,30 @@ func diagnosticsError(diags []diagnostic.Diagnostic, err error) error {
 		return err
 	}
 	return fmt.Errorf("%w: %s", err, diags[0].Message)
+}
+
+func normalizeDiagnostics(diags []diagnostic.Diagnostic, strict, forceWarning bool) []diagnostic.Diagnostic {
+	if len(diags) == 0 {
+		return nil
+	}
+	out := make([]diagnostic.Diagnostic, len(diags))
+	copy(out, diags)
+	for i := range out {
+		if forceWarning {
+			out[i].Severity = diagnostic.SeverityWarning
+		}
+		if strict {
+			out[i].Severity = diagnostic.SeverityError
+		}
+	}
+	return out
+}
+
+func diagnosticFailure(diags []diagnostic.Diagnostic, strict bool) error {
+	for _, diag := range diags {
+		if strict || diag.Severity == diagnostic.SeverityError {
+			return fmt.Errorf("diagnostic %s: %s", diag.Category, diag.Message)
+		}
+	}
+	return nil
 }
