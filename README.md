@@ -38,6 +38,13 @@ Renovate smoke script:
 RENOVATE_CHART_TO=4.8.2 scripts/home-ops-renovate-smoke.sh
 ```
 
+They can also run the optional pattern smoke, which applies representative
+synthetic changes in temporary `home-ops` worktrees:
+
+```bash
+scripts/home-ops-pattern-smoke.sh
+```
+
 ## Current MVP Limits
 
 - Desired-vs-desired only; no live cluster diff.
