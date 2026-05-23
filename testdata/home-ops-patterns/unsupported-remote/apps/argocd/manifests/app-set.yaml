@@ -1,0 +1,27 @@
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: pattern-apps
+  namespace: argocd
+spec:
+  goTemplate: true
+  goTemplateOptions: ["missingkey=error"]
+  generators:
+    - git:
+        repoURL: https://github.com/example/home-ops
+        revision: main
+        directories:
+          - path: "apps/*"
+  template:
+    metadata:
+      name: "{{.path.basename}}"
+      namespace: argocd
+    spec:
+      project: default
+      source:
+        repoURL: https://github.com/example/home-ops
+        targetRevision: main
+        path: "{{.path.path}}"
+      destination:
+        name: in-cluster
+        namespace: "{{.path.basename}}"

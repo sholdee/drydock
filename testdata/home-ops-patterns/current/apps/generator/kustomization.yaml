@@ -1,0 +1,13 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: generator
+configMapGenerator:
+  - name: generated-config
+    files:
+      - app.conf=app.conf
+secretGenerator:
+  - name: generated-secret
+    literals:
+      - token=redacted
+generatorOptions:
+  disableNameSuffixHash: true

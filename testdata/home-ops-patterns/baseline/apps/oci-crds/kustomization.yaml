@@ -1,0 +1,10 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: oci-crds
+helmCharts:
+  - name: gateway
+    repo: oci://registry.example.test/charts
+    version: 1.0.0
+    releaseName: gateway
+    includeCRDs: true
+    valuesFile: values.yaml

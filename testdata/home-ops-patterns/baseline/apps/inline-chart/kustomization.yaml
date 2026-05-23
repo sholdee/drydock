@@ -1,0 +1,10 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: inline-chart
+helmCharts:
+  - name: demo-inline
+    repo: https://charts.example.test
+    version: 1.0.0
+    releaseName: demo-inline
+    valuesInline:
+      mode: baseline
