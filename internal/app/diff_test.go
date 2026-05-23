@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -29,6 +30,53 @@ func TestOrchestratorDiffAppsReportsManifestChange(t *testing.T) {
 	}
 	if result.Results[0].Change != "modified" {
 		t.Fatalf("Change = %s, want modified", result.Results[0].Change)
+	}
+}
+
+func TestOrchestratorDiffImagesReportsImageChange(t *testing.T) {
+	root := t.TempDir()
+	left := filepath.Join(root, "left")
+	right := filepath.Join(root, "right")
+	writeImageApp(t, left, "example/app:v1")
+	writeImageApp(t, right, "example/app:v2")
+
+	result, err := Orchestrator{}.DiffImages(context.Background(), DiffRequest{
+		LeftPath:  left,
+		RightPath: right,
+	})
+	if err != nil {
+		t.Fatalf("DiffImages() error = %v", err)
+	}
+	if !reflect.DeepEqual(result.Added, []string{"example/app:v2"}) {
+		t.Fatalf("Added = %#v, want example/app:v2", result.Added)
+	}
+	if !reflect.DeepEqual(result.Removed, []string{"example/app:v1"}) {
+		t.Fatalf("Removed = %#v, want example/app:v1", result.Removed)
+	}
+}
+
+func TestOrchestratorDiffImagesReportsUnchangedImage(t *testing.T) {
+	root := t.TempDir()
+	left := filepath.Join(root, "left")
+	right := filepath.Join(root, "right")
+	writeImageApp(t, left, "example/app:v1")
+	writeImageApp(t, right, "example/app:v1")
+
+	result, err := Orchestrator{}.DiffImages(context.Background(), DiffRequest{
+		LeftPath:  left,
+		RightPath: right,
+	})
+	if err != nil {
+		t.Fatalf("DiffImages() error = %v", err)
+	}
+	if len(result.Added) != 0 {
+		t.Fatalf("Added = %#v, want empty", result.Added)
+	}
+	if len(result.Removed) != 0 {
+		t.Fatalf("Removed = %#v, want empty", result.Removed)
+	}
+	if !reflect.DeepEqual(result.Unchanged, []string{"example/app:v1"}) {
+		t.Fatalf("Unchanged = %#v, want example/app:v1", result.Unchanged)
 	}
 }
 
@@ -227,6 +275,41 @@ metadata:
   name: demo
 data:
   value: same
+`)
+}
+
+func writeImageApp(t *testing.T, root, image string) {
+	t.Helper()
+	writeTestFile(t, filepath.Join(root, "apps", "demo.yaml"), `apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: demo
+  namespace: argocd
+spec:
+  source:
+    repoURL: https://github.com/example/repo
+    path: manifests/demo
+    targetRevision: main
+  destination:
+    name: in-cluster
+    namespace: demo
+`)
+	writeTestFile(t, filepath.Join(root, "manifests", "demo", "deployment.yaml"), `apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: demo
+spec:
+  selector:
+    matchLabels:
+      app: demo
+  template:
+    metadata:
+      labels:
+        app: demo
+    spec:
+      containers:
+        - name: app
+          image: `+image+`
 `)
 }
 
