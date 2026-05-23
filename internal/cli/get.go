@@ -26,7 +26,7 @@ func newGetCommand() *cobra.Command {
 		Short: "List Applications",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			result, err := app.Orchestrator{}.Build(context.Background(), app.BuildRequest{Path: appsFlags.path})
+			result, err := app.Orchestrator{}.ListApplications(context.Background(), app.BuildRequest{Path: appsFlags.path})
 			if err != nil {
 				return err
 			}
