@@ -24,7 +24,7 @@ type BuildResult struct {
 
 type Orchestrator struct{}
 
-func (Orchestrator) Build(ctx context.Context, request BuildRequest) (BuildResult, error) {
+func (o Orchestrator) ListApplications(_ context.Context, request BuildRequest) (BuildResult, error) {
 	root := request.Path
 	if root == "" {
 		root = "."
@@ -54,6 +54,20 @@ func (Orchestrator) Build(ctx context.Context, request BuildRequest) (BuildResul
 		}
 	}
 
+	return result, nil
+}
+
+func (o Orchestrator) Build(ctx context.Context, request BuildRequest) (BuildResult, error) {
+	result, err := o.ListApplications(ctx, request)
+	if err != nil {
+		return result, err
+	}
+
+	root := request.Path
+	if root == "" {
+		root = "."
+	}
+
 	provider := localProvider{repoRoot: root}
 	for _, application := range result.Applications {
 		rendered, err := RenderApplication(ctx, application, provider)
@@ -74,9 +88,6 @@ func (p localProvider) RenderSource(ctx context.Context, source render.ResolvedS
 	source.RepoRoot = p.repoRoot
 	if source.Path != "" {
 		return render.KustomizeRenderer{}.Render(ctx, source, opts)
-	}
-	if source.Chart != "" {
-		return render.HelmRenderer{}.Render(ctx, source, opts)
 	}
 	return nil, nil, nil
 }
