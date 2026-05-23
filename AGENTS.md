@@ -24,8 +24,8 @@ Current top-level commands:
 - `argocd-local get apps --path .`: list discovered Applications by name.
 - `argocd-local build apps --path .`: render all discovered Applications.
 - `argocd-local build app NAME --path .`: command is present but not wired yet.
-- `argocd-local diff apps --path . --path-orig ../base`: command is present
-  but not wired yet.
+- `argocd-local diff apps --path . --path-orig ../base`: render and diff all
+  Applications between a baseline tree and current tree.
 - `argocd-local diff app NAME --path . --path-orig ../base`: command is
   present but not wired yet.
 - `argocd-local diff images --path . --path-orig ../base`: command is present
@@ -37,7 +37,8 @@ Current shared flags are `--path`, `--path-orig`, `--repo-map`,
 `--allow-network`, `--changed-only`, `--strict-changed-only`, `--strict`,
 `--exit-code`, `--output`/`-o`, `--unified`/`-u`, and `--limit-bytes`.
 Some flags are parsed ahead of wiring: `--repo-map` and `--allow-network` do
-not currently drive the E2E build path, and `diff` commands are not wired yet.
+not currently drive the E2E build path, and `diff app`/`diff images` are not
+wired yet.
 
 ## Settings Discovery
 

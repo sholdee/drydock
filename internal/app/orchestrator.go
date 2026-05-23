@@ -24,12 +24,19 @@ type BuildRequest struct {
 	Offline       bool
 	RefreshCharts bool
 	ChartCacheDir string
+	Applications  []argoappv1.Application
+}
+
+type ApplicationManifest struct {
+	Application argoappv1.Application
+	Manifest    render.Manifest
 }
 
 type BuildResult struct {
-	Applications []argoappv1.Application
-	Manifests    []render.Manifest
-	Diagnostics  []diagnostic.Diagnostic
+	Applications         []argoappv1.Application
+	Manifests            []render.Manifest
+	ApplicationManifests []ApplicationManifest
+	Diagnostics          []diagnostic.Diagnostic
 }
 
 type Orchestrator struct {
@@ -83,9 +90,15 @@ func (o Orchestrator) ListApplications(_ context.Context, request BuildRequest) 
 }
 
 func (o Orchestrator) Build(ctx context.Context, request BuildRequest) (BuildResult, error) {
-	result, err := o.ListApplications(ctx, request)
-	if err != nil {
-		return result, err
+	var result BuildResult
+	if request.Applications != nil {
+		result.Applications = append(result.Applications, request.Applications...)
+	} else {
+		listResult, err := o.ListApplications(ctx, request)
+		if err != nil {
+			return listResult, err
+		}
+		result = listResult
 	}
 
 	root := request.Path
@@ -114,7 +127,13 @@ func (o Orchestrator) Build(ctx context.Context, request BuildRequest) (BuildRes
 		if err := diagnosticFailure(rendered.Diagnostics, request.Strict); err != nil {
 			return result, err
 		}
-		result.Manifests = append(result.Manifests, rendered.Manifests...)
+		for _, renderedManifest := range rendered.Manifests {
+			result.Manifests = append(result.Manifests, renderedManifest)
+			result.ApplicationManifests = append(result.ApplicationManifests, ApplicationManifest{
+				Application: application,
+				Manifest:    renderedManifest,
+			})
+		}
 	}
 
 	return result, nil
