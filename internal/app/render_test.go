@@ -216,8 +216,12 @@ func TestRenderApplicationPassesCrossRepoHelmValueRef(t *testing.T) {
 		},
 	}
 	calls := 0
-	provider := providerFunc(func(_ context.Context, _ render.ResolvedSource, _ render.RenderOptions) ([]render.Manifest, []diagnostic.Diagnostic, error) {
+	var got render.RenderOptions
+	provider := providerFunc(func(_ context.Context, source render.ResolvedSource, opts render.RenderOptions) ([]render.Manifest, []diagnostic.Diagnostic, error) {
 		calls++
+		if source.Path == "chart" {
+			got = opts
+		}
 		return nil, nil, nil
 	})
 
@@ -226,6 +230,13 @@ func TestRenderApplicationPassesCrossRepoHelmValueRef(t *testing.T) {
 	}
 	if calls != 1 {
 		t.Fatalf("provider calls = %d, want 1", calls)
+	}
+	refSource := got.RefSources["$values"]
+	if refSource.Path != "" {
+		t.Fatalf("RefSources[$values].Path = %q, want empty cross-repo path", refSource.Path)
+	}
+	if refSource.RepoURL != "https://values-user:values-secret@example.com/values.git?token=values-token#values-frag" {
+		t.Fatalf("RefSources[$values].RepoURL = %q, want values repo", refSource.RepoURL)
 	}
 }
 
