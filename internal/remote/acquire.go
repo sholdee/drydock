@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"net/url"
 	"os"
@@ -59,7 +60,7 @@ func NormalizeURL(raw string) (string, error) {
 	}
 	parsed, err := url.Parse(raw)
 	if err != nil {
-		return "", fmt.Errorf("parse remote resource URL: %w", err)
+		return "", fmt.Errorf("parse remote resource URL %q: invalid URL syntax", RedactURL(raw))
 	}
 	if parsed.Scheme != "http" && parsed.Scheme != "https" {
 		return "", fmt.Errorf("remote resource URL %q must use http or https", RedactURL(raw))
@@ -119,6 +120,10 @@ func IsPathInsideAny(targetPath string, roots []string) (bool, string, error) {
 		return false, "", err
 	}
 	absPath = filepath.Clean(absPath)
+	resolvedPath, err := resolvePathForContainment(absPath)
+	if err != nil {
+		return false, "", err
+	}
 	for _, root := range roots {
 		root = strings.TrimSpace(root)
 		if root == "" {
@@ -129,12 +134,43 @@ func IsPathInsideAny(targetPath string, roots []string) (bool, string, error) {
 			return false, "", err
 		}
 		absRoot = filepath.Clean(absRoot)
-		rel, err := filepath.Rel(absRoot, absPath)
+		resolvedRoot, err := resolvePathForContainment(absRoot)
+		if err != nil {
+			return false, "", err
+		}
+		rel, err := filepath.Rel(resolvedRoot, resolvedPath)
 		if err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
 			return true, absRoot, nil
 		}
 	}
 	return false, "", nil
+}
+
+func resolvePathForContainment(targetPath string) (string, error) {
+	absPath, err := filepath.Abs(targetPath)
+	if err != nil {
+		return "", err
+	}
+	current := filepath.Clean(absPath)
+	var missing []string
+	for {
+		resolved, err := filepath.EvalSymlinks(current)
+		if err == nil {
+			for i := len(missing) - 1; i >= 0; i-- {
+				resolved = filepath.Join(resolved, missing[i])
+			}
+			return filepath.Clean(resolved), nil
+		}
+		if !errors.Is(err, os.ErrNotExist) {
+			return "", err
+		}
+		parent := filepath.Dir(current)
+		if parent == current {
+			return "", err
+		}
+		missing = append(missing, filepath.Base(current))
+		current = parent
+	}
 }
 
 func RedactURL(raw string) string {

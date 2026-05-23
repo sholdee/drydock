@@ -45,6 +45,18 @@ func TestNewCacheKeyRejectsUnsafeURLs(t *testing.T) {
 	}
 }
 
+func TestNormalizeURLParseErrorDoesNotLeakSecretBearingURL(t *testing.T) {
+	_, err := NormalizeURL("https://user:secret@example.test/%zz.yaml?token=secret#fragment")
+	if err == nil {
+		t.Fatal("NormalizeURL() error = nil, want parse error")
+	}
+	for _, leaked := range []string{"secret", "token=", "user:", "@example.test", "?token", "#fragment"} {
+		if strings.Contains(err.Error(), leaked) {
+			t.Fatalf("NormalizeURL() error = %q, leaked %q", err, leaked)
+		}
+	}
+}
+
 func TestDefaultCacheDirUsesUserCacheRoot(t *testing.T) {
 	dir, err := DefaultCacheDir()
 	if err != nil {
@@ -180,6 +192,32 @@ func TestDefaultAcquirerRejectsCacheInsideForbiddenRoot(t *testing.T) {
 	}, Options{CacheDir: cacheDir, ForbiddenRoots: []string{repoRoot}})
 	if err == nil || !strings.Contains(err.Error(), "must not be inside repository root") {
 		t.Fatalf("Acquire() error = %v, want cache containment error", err)
+	}
+}
+
+func TestDefaultAcquirerRejectsCacheSymlinkedIntoForbiddenRoot(t *testing.T) {
+	repoRoot := t.TempDir()
+	outsideRoot := t.TempDir()
+	cacheLink := filepath.Join(outsideRoot, "cache-link")
+	if err := os.Symlink(repoRoot, cacheLink); err != nil {
+		t.Skipf("create symlink: %v", err)
+	}
+	cacheDir := filepath.Join(cacheLink, ".argocd-local", "remote-cache")
+	acquirer := DefaultAcquirer{Client: &http.Client{
+		Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+			t.Fatal("Acquire() made a network request before rejecting cache dir")
+			return nil, errors.New("unexpected network request")
+		}),
+	}}
+
+	_, err := acquirer.Acquire(context.Background(), Request{
+		URL: "https://raw.githubusercontent.com/org/repo/main/file.yaml",
+	}, Options{CacheDir: cacheDir, ForbiddenRoots: []string{repoRoot}})
+	if err == nil || !strings.Contains(err.Error(), "must not be inside repository root") {
+		t.Fatalf("Acquire() error = %v, want cache containment error", err)
+	}
+	if _, err := os.Stat(filepath.Join(repoRoot, ".argocd-local")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("forbidden root cache directory exists after rejected Acquire(): %v", err)
 	}
 }
 
