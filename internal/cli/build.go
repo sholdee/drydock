@@ -27,12 +27,20 @@ func newBuildCommand(deps Dependencies) *cobra.Command {
 		Short: "Render all Applications",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
+			repoMaps, err := parseRepoMaps(appsFlags.repoMaps)
+			if err != nil {
+				return err
+			}
 			result, err := deps.Orchestrator.Build(context.Background(), app.BuildRequest{
 				Path:                   appsFlags.path,
 				Strict:                 appsFlags.strict,
 				Offline:                appsFlags.offline,
 				RefreshCharts:          appsFlags.refreshCharts,
 				ChartCacheDir:          appsFlags.chartCacheDir,
+				RepoMaps:               repoMaps,
+				AllowNetwork:           appsFlags.allowNetwork,
+				GitCacheDir:            appsFlags.gitCacheDir,
+				RefreshGit:             appsFlags.refreshGit,
 				RefreshRemoteResources: appsFlags.refreshRemotes,
 				RemoteResourceCacheDir: appsFlags.remoteCacheDir,
 			})
@@ -53,6 +61,10 @@ func newBuildCommand(deps Dependencies) *cobra.Command {
 		Short: "Render one Application",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			repoMaps, err := parseRepoMaps(appFlags.repoMaps)
+			if err != nil {
+				return err
+			}
 			result, err := deps.Orchestrator.BuildApp(context.Background(), app.BuildAppRequest{
 				Name: args[0],
 				BuildRequest: app.BuildRequest{
@@ -61,6 +73,10 @@ func newBuildCommand(deps Dependencies) *cobra.Command {
 					Offline:                appFlags.offline,
 					RefreshCharts:          appFlags.refreshCharts,
 					ChartCacheDir:          appFlags.chartCacheDir,
+					RepoMaps:               repoMaps,
+					AllowNetwork:           appFlags.allowNetwork,
+					GitCacheDir:            appFlags.gitCacheDir,
+					RefreshGit:             appFlags.refreshGit,
 					RefreshRemoteResources: appFlags.refreshRemotes,
 					RemoteResourceCacheDir: appFlags.remoteCacheDir,
 				},

@@ -25,6 +25,10 @@ type BuildRequest struct {
 	Offline                      bool
 	RefreshCharts                bool
 	ChartCacheDir                string
+	RepoMaps                     []sourcepkg.RepoMap
+	AllowNetwork                 bool
+	GitCacheDir                  string
+	RefreshGit                   bool
 	RefreshRemoteResources       bool
 	RemoteResourceCacheDir       string
 	RemoteResourceForbiddenRoots []string
