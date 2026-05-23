@@ -36,6 +36,8 @@ Current top-level commands:
 Current shared flags are `--path`, `--path-orig`, `--repo-map`,
 `--allow-network`, `--changed-only`, `--strict-changed-only`, `--strict`,
 `--exit-code`, `--output`/`-o`, `--unified`/`-u`, and `--limit-bytes`.
+Some flags are parsed ahead of wiring: `--repo-map` and `--allow-network` do
+not currently drive the E2E build path, and `diff` commands are not wired yet.
 
 ## Settings Discovery
 
