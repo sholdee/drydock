@@ -34,6 +34,9 @@ func (acquirer DefaultAcquirer) Acquire(ctx context.Context, request Request, op
 	if request.Kind != RepositoryHTTP {
 		return Result{}, fmt.Errorf("unsupported chart repository kind %q", request.Kind)
 	}
+	if err := validateChartNamePathLeaf(request.Name); err != nil {
+		return Result{}, err
+	}
 	if opts.CacheDir == "" {
 		cacheDir, err := DefaultCacheDir()
 		if err != nil {
@@ -45,7 +48,9 @@ func (acquirer DefaultAcquirer) Acquire(ctx context.Context, request Request, op
 	if err != nil {
 		return Result{}, err
 	}
-	chartDir := filepath.Join(opts.CacheDir, string(request.Kind), key, request.Name)
+	keyParent := filepath.Join(opts.CacheDir, string(request.Kind))
+	keyDir := filepath.Join(keyParent, key)
+	chartDir := filepath.Join(keyDir, request.Name)
 	if !opts.Refresh && chartDirReady(chartDir) {
 		return resultFor(request, chartDir, true), nil
 	}
@@ -61,18 +66,24 @@ func (acquirer DefaultAcquirer) Acquire(ctx context.Context, request Request, op
 		return Result{}, fmt.Errorf("chart archive for %s %s does not contain %s/Chart.yaml", request.Name, request.Version, request.Name)
 	}
 
-	cacheParent := filepath.Dir(chartDir)
-	if err := os.RemoveAll(cacheParent); err != nil {
-		return Result{}, fmt.Errorf("remove chart cache %s: %w", cacheParent, err)
+	if err := os.MkdirAll(keyParent, 0o755); err != nil {
+		return Result{}, fmt.Errorf("create chart cache parent %s: %w", keyParent, err)
 	}
-	if err := os.MkdirAll(cacheParent, 0o755); err != nil {
-		return Result{}, fmt.Errorf("create chart cache %s: %w", cacheParent, err)
+	tmpKeyDir, err := os.MkdirTemp(keyParent, "."+key+".tmp-")
+	if err != nil {
+		return Result{}, fmt.Errorf("create temporary chart cache %s: %w", keyParent, err)
 	}
-	if err := extractChartArchive(bytes.NewReader(archive), chartDir); err != nil {
+	defer os.RemoveAll(tmpKeyDir)
+
+	tmpChartDir := filepath.Join(tmpKeyDir, request.Name)
+	if err := extractChartArchive(bytes.NewReader(archive), tmpChartDir, request.Name); err != nil {
 		return Result{}, err
 	}
-	if !chartDirReady(chartDir) {
+	if !chartDirReady(tmpChartDir) {
 		return Result{}, fmt.Errorf("chart archive for %s %s did not extract Chart.yaml", request.Name, request.Version)
+	}
+	if err := publishChartCache(keyDir, tmpKeyDir); err != nil {
+		return Result{}, err
 	}
 	return resultFor(request, chartDir, false), nil
 }
@@ -90,48 +101,50 @@ func (acquirer DefaultAcquirer) fetchHTTPChart(ctx context.Context, request Requ
 	if err != nil {
 		return nil, err
 	}
+	redactedIndexURL := redactedFetchURL(indexURL, false)
 	indexRequest, err := http.NewRequestWithContext(ctx, http.MethodGet, indexURL, nil)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("create chart repository index request %s: %s", redactedIndexURL, redactedFetchError(err, indexURL, false))
 	}
 	indexResponse, err := client.Do(indexRequest)
 	if err != nil {
-		return nil, fmt.Errorf("fetch chart repository index %s: %w", indexURL, err)
+		return nil, fmt.Errorf("fetch chart repository index %s: %s", redactedIndexURL, redactedFetchError(err, indexURL, false))
 	}
 	defer indexResponse.Body.Close()
 	if indexResponse.StatusCode == http.StatusUnauthorized || indexResponse.StatusCode == http.StatusForbidden {
 		return nil, fmt.Errorf("authenticated chart repositories are not supported yet")
 	}
 	if indexResponse.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("fetch chart repository index %s: HTTP %s", indexURL, indexResponse.Status)
+		return nil, fmt.Errorf("fetch chart repository index %s: HTTP %s", redactedIndexURL, indexResponse.Status)
 	}
 	var index repositoryIndex
 	if err := yaml.NewDecoder(indexResponse.Body).Decode(&index); err != nil {
-		return nil, fmt.Errorf("decode chart repository index %s: %w", indexURL, err)
+		return nil, fmt.Errorf("decode chart repository index %s: %w", redactedIndexURL, err)
 	}
 
 	chartURL, err := findChartURL(repository, request, index)
 	if err != nil {
 		return nil, err
 	}
+	redactedChartURL := redactedFetchURL(chartURL, true)
 	archiveRequest, err := http.NewRequestWithContext(ctx, http.MethodGet, chartURL, nil)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("create chart archive request %s: %s", redactedChartURL, redactedFetchError(err, chartURL, true))
 	}
 	archiveResponse, err := client.Do(archiveRequest)
 	if err != nil {
-		return nil, fmt.Errorf("fetch chart archive %s: %w", chartURL, err)
+		return nil, fmt.Errorf("fetch chart archive %s: %s", redactedChartURL, redactedFetchError(err, chartURL, true))
 	}
 	defer archiveResponse.Body.Close()
 	if archiveResponse.StatusCode == http.StatusUnauthorized || archiveResponse.StatusCode == http.StatusForbidden {
 		return nil, fmt.Errorf("authenticated chart repositories are not supported yet")
 	}
 	if archiveResponse.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("fetch chart archive %s: HTTP %s", chartURL, archiveResponse.Status)
+		return nil, fmt.Errorf("fetch chart archive %s: HTTP %s", redactedChartURL, archiveResponse.Status)
 	}
 	data, err := io.ReadAll(archiveResponse.Body)
 	if err != nil {
-		return nil, fmt.Errorf("read chart archive %s: %w", chartURL, err)
+		return nil, fmt.Errorf("read chart archive %s: %s", redactedChartURL, redactedFetchError(err, chartURL, true))
 	}
 	return data, nil
 }
@@ -159,6 +172,9 @@ func findChartURL(repository string, request Request, index repositoryIndex) (st
 			return "", fmt.Errorf("parse chart archive URL %q: %w", version.URLs[0], err)
 		}
 		if archiveURL.IsAbs() {
+			if archiveURL.Scheme != "http" && archiveURL.Scheme != "https" {
+				return "", fmt.Errorf("absolute chart URL %s must use http or https", redactedFetchURL(archiveURL.String(), true))
+			}
 			return archiveURL.String(), nil
 		}
 		base, err := url.Parse(repository)
@@ -171,7 +187,27 @@ func findChartURL(repository string, request Request, index repositoryIndex) (st
 	return "", fmt.Errorf("chart %s version %s not found in repository index", request.Name, request.Version)
 }
 
-func extractChartArchive(r io.Reader, dest string) error {
+func validateChartNamePathLeaf(name string) error {
+	if strings.TrimSpace(name) == "" {
+		return fmt.Errorf("chart name is required")
+	}
+	normalized := strings.ReplaceAll(name, "\\", "/")
+	if filepath.IsAbs(name) || path.IsAbs(normalized) {
+		return fmt.Errorf("chart name %q must be a relative path leaf", name)
+	}
+	if strings.ContainsAny(name, `/\`) {
+		return fmt.Errorf("chart name %q must be a single path component", name)
+	}
+	if name == "." || name == ".." {
+		return fmt.Errorf("chart name %q must be a single path component", name)
+	}
+	if filepath.Clean(name) != name {
+		return fmt.Errorf("chart name %q must be clean", name)
+	}
+	return nil
+}
+
+func extractChartArchive(r io.Reader, dest, chartName string) error {
 	gz, err := gzip.NewReader(r)
 	if err != nil {
 		return fmt.Errorf("open chart archive gzip: %w", err)
@@ -187,7 +223,7 @@ func extractChartArchive(r io.Reader, dest string) error {
 		if err != nil {
 			return fmt.Errorf("read chart archive: %w", err)
 		}
-		rel, err := safeChartArchivePath(header.Name)
+		rel, err := safeChartArchivePath(header.Name, chartName)
 		if err != nil {
 			return err
 		}
@@ -216,7 +252,7 @@ func extractChartArchive(r io.Reader, dest string) error {
 	}
 }
 
-func safeChartArchivePath(name string) (string, error) {
+func safeChartArchivePath(name, chartName string) (string, error) {
 	normalized := strings.ReplaceAll(name, "\\", "/")
 	if name == "" || path.IsAbs(normalized) || filepath.IsAbs(name) {
 		return "", fmt.Errorf("unsafe chart archive path %q", name)
@@ -230,7 +266,10 @@ func safeChartArchivePath(name string) (string, error) {
 	if cleaned == "." || cleaned == ".." || strings.HasPrefix(cleaned, "../") {
 		return "", fmt.Errorf("unsafe chart archive path %q", name)
 	}
-	_, rel, ok := strings.Cut(cleaned, "/")
+	root, rel, ok := strings.Cut(cleaned, "/")
+	if root != chartName {
+		return "", fmt.Errorf("chart archive entry %q is outside chart root %q", name, chartName)
+	}
 	if !ok {
 		return "", nil
 	}
@@ -238,6 +277,75 @@ func safeChartArchivePath(name string) (string, error) {
 		return "", fmt.Errorf("unsafe chart archive path %q", name)
 	}
 	return rel, nil
+}
+
+func publishChartCache(keyDir, tmpKeyDir string) error {
+	parent := filepath.Dir(keyDir)
+	base := filepath.Base(keyDir)
+	var backupDir string
+	if _, err := os.Lstat(keyDir); err == nil {
+		var err error
+		backupDir, err = os.MkdirTemp(parent, "."+base+".old-")
+		if err != nil {
+			return fmt.Errorf("create chart cache backup %s: %w", parent, err)
+		}
+		if err := os.Remove(backupDir); err != nil {
+			return fmt.Errorf("prepare chart cache backup %s: %w", backupDir, err)
+		}
+		if err := os.Rename(keyDir, backupDir); err != nil {
+			return fmt.Errorf("backup chart cache %s: %w", keyDir, err)
+		}
+	} else if !os.IsNotExist(err) {
+		return fmt.Errorf("stat chart cache %s: %w", keyDir, err)
+	}
+
+	if err := os.Rename(tmpKeyDir, keyDir); err != nil {
+		if backupDir != "" {
+			_ = os.Rename(backupDir, keyDir)
+		}
+		return fmt.Errorf("publish chart cache %s: %w", keyDir, err)
+	}
+	if backupDir != "" {
+		if err := os.RemoveAll(backupDir); err != nil {
+			return fmt.Errorf("remove old chart cache %s: %w", backupDir, err)
+		}
+	}
+	return nil
+}
+
+func redactedFetchURL(raw string, stripQueryFragment bool) string {
+	parsed, err := url.Parse(raw)
+	if err != nil {
+		return raw
+	}
+	parsed.User = nil
+	if stripQueryFragment {
+		parsed.RawQuery = ""
+		parsed.ForceQuery = false
+		parsed.Fragment = ""
+	}
+	return parsed.String()
+}
+
+func redactedFetchError(err error, rawURL string, stripQueryFragment bool) string {
+	message := strings.ReplaceAll(err.Error(), rawURL, redactedFetchURL(rawURL, stripQueryFragment))
+	parsed, parseErr := url.Parse(rawURL)
+	if parseErr != nil || parsed.User == nil {
+		return message
+	}
+	prefix := parsed.Scheme + "://"
+	hostMarker := "@" + parsed.Host
+	for {
+		hostIndex := strings.Index(message, hostMarker)
+		if hostIndex < 0 {
+			return message
+		}
+		start := strings.LastIndex(message[:hostIndex], prefix)
+		if start < 0 {
+			return message
+		}
+		message = message[:start] + prefix + parsed.Host + message[hostIndex+len(hostMarker):]
+	}
 }
 
 func ensureContainedPath(root, target string) error {
