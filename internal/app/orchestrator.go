@@ -132,6 +132,11 @@ func (p localProvider) RenderSource(ctx context.Context, source render.ResolvedS
 	opts.ChartCacheDir = p.chartCacheDir
 	opts.OfflineCharts = p.offline
 	opts.RefreshCharts = p.refreshCharts
+	refRoots, err := anchorLocalRefRoots(p.repoRoot, opts.RefRoots)
+	if err != nil {
+		return nil, nil, err
+	}
+	opts.RefRoots = refRoots
 	if source.Path != "" {
 		renderer, err := selectLocalRenderer(source)
 		if err != nil {
@@ -143,6 +148,25 @@ func (p localProvider) RenderSource(ctx context.Context, source render.ResolvedS
 		return nil, nil, fmt.Errorf("remote chart source %q requires a local chart path; repository chart fetching is not wired", source.Chart)
 	}
 	return nil, nil, nil
+}
+
+func anchorLocalRefRoots(repoRoot string, refRoots map[string]string) (map[string]string, error) {
+	if len(refRoots) == 0 {
+		return nil, nil
+	}
+	out := make(map[string]string, len(refRoots))
+	for key, root := range refRoots {
+		if filepath.IsAbs(root) {
+			out[key] = filepath.Clean(root)
+			continue
+		}
+		clean, err := cleanLocalSourcePath(root)
+		if err != nil {
+			return nil, fmt.Errorf("ref root %s %q: %w", key, root, err)
+		}
+		out[key] = filepath.Join(repoRoot, clean)
+	}
+	return out, nil
 }
 
 func selectLocalRenderer(source render.ResolvedSource) (render.Renderer, error) {

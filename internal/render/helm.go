@@ -436,7 +436,11 @@ func resolveHelmValueFile(repoRoot, baseDir string, refRoots map[string]string, 
 		if !ok || root == "" {
 			return "", "", fmt.Errorf("helm value file %q references unknown ref %q", file, refKey)
 		}
-		return resolveHelmValueFileUnderRoot(filepath.Clean(root), refPath, file)
+		cleanRoot := filepath.Clean(root)
+		if err := rejectHelmRefRootSymlink(cleanRoot); err != nil {
+			return "", "", fmt.Errorf("helm value file %q ref root %q: %w", file, refKey, err)
+		}
+		return resolveHelmValueFileUnderRoot(cleanRoot, refPath, file)
 	}
 
 	cleanBase, err := cleanSourcePath(baseDir)
@@ -448,6 +452,17 @@ func resolveHelmValueFile(repoRoot, baseDir string, refRoots map[string]string, 
 	}
 	root := filepath.Join(repoRoot, cleanBase)
 	return resolveHelmValueFileUnderRoot(root, file, file)
+}
+
+func rejectHelmRefRootSymlink(root string) error {
+	info, err := os.Lstat(root)
+	if err != nil {
+		return err
+	}
+	if info.Mode()&os.ModeSymlink != 0 {
+		return fmt.Errorf("path %q is a symlink", root)
+	}
+	return nil
 }
 
 func rejectHelmValueBaseDirSymlinkComponents(repoRoot, sourcePath string) error {

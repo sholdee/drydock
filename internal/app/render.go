@@ -31,6 +31,7 @@ func RenderApplication(ctx context.Context, application argoappv1.Application, p
 	}
 
 	byID := map[manifest.Identity]int{}
+	refRoots := renderRefRoots(plan)
 	var result RenderResult
 	for _, sourcePlan := range plan.Sources {
 		if sourcePlan.RefOnly {
@@ -41,6 +42,7 @@ func RenderApplication(ctx context.Context, application argoappv1.Application, p
 		if err != nil {
 			return result, fmt.Errorf("%s: %w", renderSourceContext(application, sourcePlan), err)
 		}
+		opts.RefRoots = cloneRefRoots(refRoots)
 		manifests, diags, err := provider.RenderSource(ctx, render.ResolvedSource{
 			Path:  sourcePlan.Source.Path,
 			Chart: sourcePlan.Source.Chart,
@@ -93,12 +95,37 @@ func renderOptions(application argoappv1.Application, source argoappv1.Applicati
 	opts.APIVersions = append(opts.APIVersions, source.Helm.APIVersions...)
 	opts.ValueFiles = append(opts.ValueFiles, source.Helm.ValueFiles...)
 	opts.IgnoreMissingValueFiles = source.Helm.IgnoreMissingValueFiles
+	opts.IncludeCRDsSet = true
+	opts.IncludeCRDs = !source.Helm.SkipCrds
+	opts.SkipTests = source.Helm.SkipTests
 	valuesObject, err := helmValues(source.Helm)
 	if err != nil {
 		return render.RenderOptions{}, err
 	}
 	opts.ValuesObject = valuesObject
 	return opts, nil
+}
+
+func renderRefRoots(plan PlanResult) map[string]string {
+	if len(plan.Refs) == 0 {
+		return nil
+	}
+	out := make(map[string]string, len(plan.Refs))
+	for key := range plan.Refs {
+		out[key] = "."
+	}
+	return out
+}
+
+func cloneRefRoots(refRoots map[string]string) map[string]string {
+	if len(refRoots) == 0 {
+		return nil
+	}
+	out := make(map[string]string, len(refRoots))
+	for key, root := range refRoots {
+		out[key] = root
+	}
+	return out
 }
 
 func helmValues(helm *argoappv1.ApplicationSourceHelm) (map[string]any, error) {
