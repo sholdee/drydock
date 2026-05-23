@@ -33,7 +33,7 @@ func NewRootCommandWithDependencies(info VersionInfo, deps Dependencies) *cobra.
 	cmd.AddCommand(newGetCommand(deps))
 	cmd.AddCommand(newBuildCommand(deps))
 	cmd.AddCommand(newDiffCommand(deps))
-	cmd.AddCommand(newDiagCommand())
+	cmd.AddCommand(newDiagCommand(deps))
 	cmd.AddCommand(newVersionCommand(info))
 	return cmd
 }
