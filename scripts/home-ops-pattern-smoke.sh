@@ -9,6 +9,7 @@ REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 TMP_DIR=""
 BASELINE=""
 CURRENT=""
+REMOTE_CACHE=""
 
 cleanup() {
   local status=$?
@@ -310,7 +311,7 @@ run_diff() {
   echo "== ${label} =="
   (
     cd "${REPO_ROOT}"
-    go run ./cmd/argocd-local diff apps --path-orig "${BASELINE}" --path "${CURRENT}" --changed-only=true --exit-code=false
+    go run ./cmd/argocd-local diff apps --path-orig "${BASELINE}" --path "${CURRENT}" --remote-cache-dir "${REMOTE_CACHE}" --changed-only=true --exit-code=false
   )
 }
 
@@ -321,6 +322,7 @@ fi
 TMP_DIR="$(mktemp -d)"
 BASELINE="${TMP_DIR}/baseline"
 CURRENT="${TMP_DIR}/current"
+REMOTE_CACHE="${TMP_DIR}/remote-cache"
 
 git -C "${ROOT}" worktree add --detach "${BASELINE}" HEAD
 git -C "${ROOT}" worktree add --detach "${CURRENT}" HEAD
@@ -360,3 +362,14 @@ if [[ "${EXTERNAL_SECRETS_TARGET_VERSION}" == "${EXTERNAL_SECRETS_CURRENT_VERSIO
 fi
 update_helm_chart_version_once "${CURRENT}/${EXTERNAL_SECRETS_KUSTOMIZATION}" "external-secrets" "${EXTERNAL_SECRETS_TARGET_VERSION}"
 run_diff "multiple Helm charts edit"
+
+restore_path "${EXTERNAL_SECRETS_KUSTOMIZATION}"
+SYSTEM_UPGRADE_PLAN="apps/system-upgrade/manifests/plan.yaml"
+if [[ ! -f "${CURRENT}/${SYSTEM_UPGRADE_PLAN}" && -f "${CURRENT}/apps/system-upgrade/plan.yaml" ]]; then
+  SYSTEM_UPGRADE_PLAN="apps/system-upgrade/plan.yaml"
+fi
+replace_once_literal \
+  "${CURRENT}/${SYSTEM_UPGRADE_PLAN}" \
+  "operator: DoesNotExist" \
+  "operator: Exists"
+run_diff "system-upgrade remote resource"

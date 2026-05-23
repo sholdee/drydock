@@ -40,7 +40,12 @@ func TestHomeOpsPatternSmokeScriptContract(t *testing.T) {
 		`query: count(kube_node_info)`,
 		"renovate-operator",
 		"external-secrets",
-		"go run ./cmd/argocd-local diff apps --path-orig \"${BASELINE}\" --path \"${CURRENT}\" --changed-only=true --exit-code=false",
+		"system-upgrade remote resource",
+		"apps/system-upgrade/plan.yaml",
+		"--remote-cache-dir",
+		"go run ./cmd/argocd-local diff apps --path-orig \"${BASELINE}\" --path \"${CURRENT}\"",
+		"--remote-cache-dir \"${REMOTE_CACHE}\"",
+		"--changed-only=true --exit-code=false",
 	} {
 		if !strings.Contains(content, want) {
 			t.Fatalf("smoke script missing %q:\n%s", want, content)
