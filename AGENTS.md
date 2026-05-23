@@ -238,8 +238,8 @@ If a tool is not installed locally, say so in your final response.
 - Default workflows must not require `helm`, `kustomize`, `kubectl`, or
   `argocd` on `PATH`.
 - Public Helm chart fetching for Kustomize `helmCharts` and chart-only sources
-  is enabled by default for render/diff. Git/repository-source network fetching
-  remains deferred and reserved for future `--allow-network` behavior.
+  is enabled by default for render/diff. Git repository-source fetching is
+  gated by `--allow-network` and must not be controlled by Helm chart flags.
 - Do not print secret data. Repository Secrets may provide non-sensitive
   metadata only.
 - Manifest loaders must never print Secret values. Diagnostics may include file

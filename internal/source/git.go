@@ -47,7 +47,7 @@ func (DefaultGitAcquirer) Acquire(ctx context.Context, request GitRequest, opts 
 
 	cacheDir := opts.CacheDir
 	if cacheDir == "" {
-		defaultDir, err := defaultGitCacheDir()
+		defaultDir, err := DefaultGitCacheDir()
 		if err != nil {
 			return GitResult{}, err
 		}
@@ -62,15 +62,19 @@ func (DefaultGitAcquirer) Acquire(ctx context.Context, request GitRequest, opts 
 	if err != nil {
 		return GitResult{}, err
 	}
-	if opts.Refresh && !cloned {
-		if err := fetchGitRepository(ctx, repo, request.URL); err != nil {
-			return GitResult{}, err
-		}
-	}
 
 	worktree, err := repo.Worktree()
 	if err != nil {
 		return GitResult{}, fmt.Errorf("open repository %s worktree: %s", RedactURL(request.URL), redactGitError(err, request.URL))
+	}
+	if opts.Refresh && !cloned {
+		if isDefaultGitRevision(request.Revision) {
+			if err := pullGitRepository(ctx, worktree, request.URL); err != nil {
+				return GitResult{}, err
+			}
+		} else if err := fetchGitRepository(ctx, repo, request.URL); err != nil {
+			return GitResult{}, err
+		}
 	}
 	revision, err := checkoutGitRevision(repo, worktree, request.Revision)
 	if err != nil && !cloned {
@@ -86,7 +90,7 @@ func (DefaultGitAcquirer) Acquire(ctx context.Context, request GitRequest, opts 
 	return GitResult{Path: cachePath, Revision: revision}, nil
 }
 
-func defaultGitCacheDir() (string, error) {
+func DefaultGitCacheDir() (string, error) {
 	cacheDir, err := os.UserCacheDir()
 	if err != nil {
 		return "", err
@@ -133,9 +137,20 @@ func fetchGitRepository(ctx context.Context, repo *git.Repository, repoURL strin
 	return fmt.Errorf("fetch repository %s: %s", RedactURL(repoURL), redactGitError(err, repoURL))
 }
 
+func pullGitRepository(ctx context.Context, worktree *git.Worktree, repoURL string) error {
+	err := worktree.PullContext(ctx, &git.PullOptions{
+		RemoteName: "origin",
+		Force:      true,
+	})
+	if err == nil || errors.Is(err, git.NoErrAlreadyUpToDate) {
+		return nil
+	}
+	return fmt.Errorf("fetch repository %s: %s", RedactURL(repoURL), redactGitError(err, repoURL))
+}
+
 func checkoutGitRevision(repo *git.Repository, worktree *git.Worktree, revision string) (string, error) {
 	cleanRevision := strings.TrimSpace(revision)
-	if cleanRevision == "" || cleanRevision == "HEAD" {
+	if isDefaultGitRevision(cleanRevision) {
 		head, err := repo.Head()
 		if err != nil {
 			return "", err
@@ -153,13 +168,13 @@ func checkoutGitRevision(repo *git.Repository, worktree *git.Worktree, revision 
 	return hash.String(), nil
 }
 
+func isDefaultGitRevision(revision string) bool {
+	cleanRevision := strings.TrimSpace(revision)
+	return cleanRevision == "" || cleanRevision == "HEAD"
+}
+
 func resolveGitRevision(repo *git.Repository, revision string) (*plumbing.Hash, error) {
-	candidates := []plumbing.Revision{
-		plumbing.Revision(revision),
-		plumbing.Revision("refs/heads/" + revision),
-		plumbing.Revision("refs/remotes/origin/" + revision),
-		plumbing.Revision("refs/tags/" + revision),
-	}
+	candidates := gitRevisionCandidates(revision)
 	var lastErr error
 	for _, candidate := range candidates {
 		hash, err := repo.ResolveRevision(candidate)
@@ -169,6 +184,27 @@ func resolveGitRevision(repo *git.Repository, revision string) (*plumbing.Hash, 
 		lastErr = err
 	}
 	return nil, lastErr
+}
+
+func gitRevisionCandidates(revision string) []plumbing.Revision {
+	if branch, ok := strings.CutPrefix(revision, "refs/heads/"); ok {
+		return []plumbing.Revision{
+			plumbing.Revision(revision),
+			plumbing.Revision("refs/remotes/origin/" + branch),
+		}
+	}
+	if tag, ok := strings.CutPrefix(revision, "refs/tags/"); ok {
+		return []plumbing.Revision{
+			plumbing.Revision(revision),
+			plumbing.Revision(tag),
+		}
+	}
+	return []plumbing.Revision{
+		plumbing.Revision(revision),
+		plumbing.Revision("refs/heads/" + revision),
+		plumbing.Revision("refs/remotes/origin/" + revision),
+		plumbing.Revision("refs/tags/" + revision),
+	}
 }
 
 func redactGitError(err error, repoURL string) string {

@@ -602,17 +602,29 @@ func validateBuildNetworkOptions(request BuildRequest) error {
 	if request.Offline && request.AllowNetwork {
 		return fmt.Errorf("--offline cannot be combined with --allow-network for Git source fetching")
 	}
-	if request.GitCacheDir == "" {
+	if request.GitCacheDir == "" && !request.AllowNetwork {
 		return nil
 	}
+	gitCacheDir := request.GitCacheDir
+	if gitCacheDir == "" {
+		defaultDir, err := sourcepkg.DefaultGitCacheDir()
+		if err != nil {
+			return err
+		}
+		gitCacheDir = defaultDir
+	}
+	root := request.Path
+	if root == "" {
+		root = "."
+	}
 	forbiddenRoots := append([]string(nil), request.RemoteResourceForbiddenRoots...)
-	forbiddenRoots = append(forbiddenRoots, request.Path)
-	inside, root, err := remote.IsPathInsideAny(request.GitCacheDir, forbiddenRoots)
+	forbiddenRoots = append(forbiddenRoots, root)
+	inside, matchedRoot, err := remote.IsPathInsideAny(gitCacheDir, forbiddenRoots)
 	if err != nil {
 		return err
 	}
 	if inside {
-		return fmt.Errorf("git cache dir %q must not be inside repository root %q", request.GitCacheDir, root)
+		return fmt.Errorf("git cache dir %q must not be inside repository root %q", gitCacheDir, matchedRoot)
 	}
 	return nil
 }
