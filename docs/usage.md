@@ -99,12 +99,13 @@ detects the current Renovate chart version from `apps/renovate/kustomization.yam
 and requires `RENOVATE_CHART_TO` to name the simulated target version.
 Committed tests and portable fixtures do not depend on `home-ops`.
 
-Task 4 adds the optional home-ops pattern smoke:
+Run the optional home-ops pattern smoke:
 
 ```bash
 scripts/home-ops-pattern-smoke.sh
 ```
 
-Once present, maintainers can run it to apply small synthetic changes across
-representative `home-ops` app patterns in temporary worktrees. It is optional
-and may fetch public charts.
+The pattern smoke applies small synthetic changes across representative
+`home-ops` app patterns in temporary worktrees. It is optional, may fetch
+public charts, and accepts `RENOVATE_CHART_TO` or `EXTERNAL_SECRETS_CHART_TO`
+when maintainers want to choose explicit chart target versions.
