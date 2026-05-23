@@ -14,10 +14,22 @@ import (
 	"path/filepath"
 	"strings"
 
+	"helm.sh/helm/v4/pkg/registry"
+	"oras.land/oras-go/v2/registry/remote/auth"
+
 	"go.yaml.in/yaml/v4"
 )
 
 type DefaultAcquirer struct {
+	Client    *http.Client
+	OCIPuller OCIPuller
+}
+
+type OCIPuller interface {
+	Pull(ctx context.Context, request Request) ([]byte, error)
+}
+
+type HelmOCIPuller struct {
 	Client *http.Client
 }
 
@@ -31,7 +43,9 @@ type repositoryChartVersion struct {
 }
 
 func (acquirer DefaultAcquirer) Acquire(ctx context.Context, request Request, opts Options) (Result, error) {
-	if request.Kind != RepositoryHTTP {
+	switch request.Kind {
+	case RepositoryHTTP, RepositoryOCI:
+	default:
 		return Result{}, fmt.Errorf("unsupported chart repository kind %q", request.Kind)
 	}
 	if err := validateChartNamePathLeaf(request.Name); err != nil {
@@ -51,6 +65,9 @@ func (acquirer DefaultAcquirer) Acquire(ctx context.Context, request Request, op
 	keyParent := filepath.Join(opts.CacheDir, string(request.Kind))
 	keyDir := filepath.Join(keyParent, key)
 	chartDir := filepath.Join(keyDir, request.Name)
+	if request.Kind == RepositoryOCI && acquirer.OCIPuller == nil && acquirer.Client != nil && chartDirReady(chartDir) {
+		return Result{}, fmt.Errorf("unsupported chart repository kind %q", request.Kind)
+	}
 	if !opts.Refresh && chartDirReady(chartDir) {
 		return resultFor(request, chartDir, true), nil
 	}
@@ -58,7 +75,7 @@ func (acquirer DefaultAcquirer) Acquire(ctx context.Context, request Request, op
 		return Result{}, fmt.Errorf("offline cache miss for chart %s %s", request.Name, request.Version)
 	}
 
-	archive, err := acquirer.fetchHTTPChart(ctx, request)
+	archive, err := acquirer.fetchChart(ctx, request)
 	if err != nil {
 		return Result{}, err
 	}
@@ -86,6 +103,17 @@ func (acquirer DefaultAcquirer) Acquire(ctx context.Context, request Request, op
 		return Result{}, err
 	}
 	return resultFor(request, chartDir, false), nil
+}
+
+func (acquirer DefaultAcquirer) fetchChart(ctx context.Context, request Request) ([]byte, error) {
+	switch request.Kind {
+	case RepositoryHTTP:
+		return acquirer.fetchHTTPChart(ctx, request)
+	case RepositoryOCI:
+		return acquirer.fetchOCIChart(ctx, request)
+	default:
+		return nil, fmt.Errorf("unsupported chart repository kind %q", request.Kind)
+	}
 }
 
 func (acquirer DefaultAcquirer) fetchHTTPChart(ctx context.Context, request Request) ([]byte, error) {
@@ -145,6 +173,131 @@ func (acquirer DefaultAcquirer) fetchHTTPChart(ctx context.Context, request Requ
 	data, err := io.ReadAll(archiveResponse.Body)
 	if err != nil {
 		return nil, fmt.Errorf("read chart archive %s: %s", redactedChartURL, redactedFetchError(err, chartURL, true))
+	}
+	return data, nil
+}
+
+func (acquirer DefaultAcquirer) fetchOCIChart(ctx context.Context, request Request) ([]byte, error) {
+	puller := acquirer.OCIPuller
+	if puller == nil {
+		puller = HelmOCIPuller{Client: acquirer.Client}
+	}
+	archive, err := puller.Pull(ctx, request)
+	if err != nil {
+		if isAuthError(err) {
+			return nil, fmt.Errorf("authenticated chart repositories are not supported yet")
+		}
+		repository := redactedFetchURL(request.Repository, false)
+		return nil, fmt.Errorf("pull OCI chart %s/%s:%s: %s", repository, request.Name, request.Version, redactedFetchError(err, request.Repository, false))
+	}
+	return archive, nil
+}
+
+func isAuthError(err error) bool {
+	if err == nil {
+		return false
+	}
+	message := strings.ToLower(err.Error())
+	for _, marker := range []string{
+		"401",
+		"403",
+		"unauthorized",
+		"forbidden",
+		"authentication required",
+	} {
+		if strings.Contains(message, marker) {
+			return true
+		}
+	}
+	return false
+}
+
+func (puller HelmOCIPuller) Pull(ctx context.Context, request Request) ([]byte, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	repository, err := NormalizeRepository(request.Repository, request.Kind)
+	if err != nil {
+		return nil, err
+	}
+	parsed, err := url.Parse(repository)
+	if err != nil {
+		return nil, err
+	}
+	if parsed.User != nil {
+		return nil, fmt.Errorf("authenticated chart repositories are not supported yet")
+	}
+
+	tempDir, err := os.MkdirTemp("", "argocd-local-oci-chart-")
+	if err != nil {
+		return nil, fmt.Errorf("create temporary OCI chart directory: %w", err)
+	}
+	defer os.RemoveAll(tempDir)
+
+	registryDir := filepath.Join(tempDir, "registry")
+	for _, dir := range []string{
+		filepath.Join(tempDir, "repository"),
+		filepath.Join(tempDir, "content"),
+		registryDir,
+	} {
+		if err := os.MkdirAll(dir, 0o700); err != nil {
+			return nil, fmt.Errorf("create temporary Helm directory %s: %w", dir, err)
+		}
+	}
+	repositoryConfig := filepath.Join(tempDir, "repositories.yaml")
+	if err := os.WriteFile(repositoryConfig, []byte("apiVersion: v1\nrepositories: []\n"), 0o600); err != nil {
+		return nil, fmt.Errorf("write temporary Helm repository config: %w", err)
+	}
+	registryConfig := filepath.Join(registryDir, registry.CredentialsFileBasename)
+	if err := os.WriteFile(registryConfig, []byte("{}\n"), 0o600); err != nil {
+		return nil, fmt.Errorf("write temporary Helm registry config: %w", err)
+	}
+
+	clientOpts := []registry.ClientOption{
+		registry.ClientOptWriter(io.Discard),
+		registry.ClientOptCredentialsFile(registryConfig),
+		registry.ClientOptAuthorizer(auth.Client{
+			Client: puller.Client,
+			Credential: func(context.Context, string) (auth.Credential, error) {
+				return auth.EmptyCredential, nil
+			},
+		}),
+	}
+	if puller.Client != nil {
+		clientOpts = append(clientOpts, registry.ClientOptHTTPClient(puller.Client))
+	}
+	registryClient, err := registry.NewClient(clientOpts...)
+	if err != nil {
+		return nil, fmt.Errorf("create Helm OCI registry client: %w", err)
+	}
+
+	chartRef := strings.TrimRight(repository, "/") + "/" + request.Name + ":" + request.Version
+	result, err := registryClient.Pull(chartRef)
+	if err != nil {
+		return nil, err
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if result.Chart == nil || len(result.Chart.Data) == 0 {
+		return nil, fmt.Errorf("pulled OCI chart %s contains no chart archive", request.Name)
+	}
+
+	archivePath := filepath.Join(tempDir, request.Name+"-"+request.Version+".tgz")
+	if err := os.WriteFile(archivePath, result.Chart.Data, 0o600); err != nil {
+		return nil, fmt.Errorf("write pulled OCI chart archive %s: %w", filepath.Base(archivePath), err)
+	}
+
+	matches, err := filepath.Glob(filepath.Join(tempDir, request.Name+"-*.tgz"))
+	if err != nil {
+		return nil, fmt.Errorf("find pulled OCI chart archive: %w", err)
+	}
+	if len(matches) != 1 {
+		return nil, fmt.Errorf("expected one pulled OCI chart archive for %s, found %d", request.Name, len(matches))
+	}
+	data, err := os.ReadFile(matches[0])
+	if err != nil {
+		return nil, fmt.Errorf("read pulled OCI chart archive %s: %w", filepath.Base(matches[0]), err)
 	}
 	return data, nil
 }
