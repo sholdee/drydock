@@ -103,7 +103,7 @@ func (acquirer DefaultAcquirer) fetchHTTPChart(ctx context.Context, request Requ
 		return nil, fmt.Errorf("authenticated chart repositories are not supported yet")
 	}
 	if indexResponse.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("fetch chart repository index %s: %s", indexURL, indexResponse.Status)
+		return nil, fmt.Errorf("fetch chart repository index %s: HTTP %s", indexURL, indexResponse.Status)
 	}
 	var index repositoryIndex
 	if err := yaml.NewDecoder(indexResponse.Body).Decode(&index); err != nil {
@@ -127,7 +127,7 @@ func (acquirer DefaultAcquirer) fetchHTTPChart(ctx context.Context, request Requ
 		return nil, fmt.Errorf("authenticated chart repositories are not supported yet")
 	}
 	if archiveResponse.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("fetch chart archive %s: %s", chartURL, archiveResponse.Status)
+		return nil, fmt.Errorf("fetch chart archive %s: HTTP %s", chartURL, archiveResponse.Status)
 	}
 	data, err := io.ReadAll(archiveResponse.Body)
 	if err != nil {

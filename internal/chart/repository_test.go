@@ -84,6 +84,87 @@ entries:
 	}
 }
 
+func TestDefaultAcquirerRefreshBypassesCache(t *testing.T) {
+	archive := chartArchive(t, "demo", map[string]string{
+		"Chart.yaml": "apiVersion: v2\nname: demo\nversion: 1.2.3\n",
+	})
+	archiveRequests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/index.yaml":
+			writeIndex(t, w, "demo-1.2.3.tgz")
+		case "/demo-1.2.3.tgz":
+			archiveRequests++
+			if _, err := w.Write(archive); err != nil {
+				t.Fatalf("write archive response: %v", err)
+			}
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(server.Close)
+
+	request := Request{
+		Repository: server.URL,
+		Name:       "demo",
+		Version:    "1.2.3",
+		Kind:       RepositoryHTTP,
+	}
+	acquirer := DefaultAcquirer{Client: server.Client()}
+	opts := Options{CacheDir: t.TempDir()}
+	if _, err := acquirer.Acquire(context.Background(), request, opts); err != nil {
+		t.Fatalf("initial Acquire() error = %v", err)
+	}
+	refreshed, err := acquirer.Acquire(context.Background(), request, Options{CacheDir: opts.CacheDir, Refresh: true})
+	if err != nil {
+		t.Fatalf("refresh Acquire() error = %v", err)
+	}
+	if refreshed.FromCache {
+		t.Fatal("refresh Acquire() FromCache = true, want false")
+	}
+	if archiveRequests != 2 {
+		t.Fatalf("archive requests = %d, want 2", archiveRequests)
+	}
+}
+
+func TestDefaultAcquirerSupportsAbsoluteChartURLs(t *testing.T) {
+	archive := chartArchive(t, "demo", map[string]string{
+		"Chart.yaml": "apiVersion: v2\nname: demo\nversion: 1.2.3\n",
+	})
+	archiveServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/absolute/demo-1.2.3.tgz" {
+			t.Fatalf("archive request path = %q, want /absolute/demo-1.2.3.tgz", r.URL.Path)
+		}
+		if _, err := w.Write(archive); err != nil {
+			t.Fatalf("write archive response: %v", err)
+		}
+	}))
+	t.Cleanup(archiveServer.Close)
+	indexServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/index.yaml" {
+			t.Fatalf("index request path = %q, want /index.yaml", r.URL.Path)
+		}
+		writeIndex(t, w, archiveServer.URL+"/absolute/demo-1.2.3.tgz")
+	}))
+	t.Cleanup(indexServer.Close)
+
+	result, err := (DefaultAcquirer{Client: indexServer.Client()}).Acquire(context.Background(), Request{
+		Repository: indexServer.URL,
+		Name:       "demo",
+		Version:    "1.2.3",
+		Kind:       RepositoryHTTP,
+	}, Options{CacheDir: t.TempDir()})
+	if err != nil {
+		t.Fatalf("Acquire() error = %v", err)
+	}
+	if result.FromCache {
+		t.Fatal("Acquire() FromCache = true, want false")
+	}
+	if _, err := os.Stat(filepath.Join(result.ChartDir, "Chart.yaml")); err != nil {
+		t.Fatalf("stat extracted Chart.yaml: %v", err)
+	}
+}
+
 func TestDefaultAcquirerOfflineRequiresCacheHit(t *testing.T) {
 	acquirer := DefaultAcquirer{Client: &http.Client{
 		Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
@@ -133,6 +214,87 @@ func TestDefaultAcquirerMapsIndexAuthFailures(t *testing.T) {
 	}
 }
 
+func TestDefaultAcquirerMapsArchiveAuthFailures(t *testing.T) {
+	for _, status := range []int{http.StatusUnauthorized, http.StatusForbidden} {
+		t.Run(http.StatusText(status), func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				switch r.URL.Path {
+				case "/index.yaml":
+					writeIndex(t, w, "demo-1.2.3.tgz")
+				case "/demo-1.2.3.tgz":
+					http.Error(w, "authentication required", status)
+				default:
+					http.NotFound(w, r)
+				}
+			}))
+			t.Cleanup(server.Close)
+
+			_, err := (DefaultAcquirer{Client: server.Client()}).Acquire(context.Background(), Request{
+				Repository: server.URL,
+				Name:       "demo",
+				Version:    "1.2.3",
+				Kind:       RepositoryHTTP,
+			}, Options{CacheDir: t.TempDir()})
+			if err == nil {
+				t.Fatal("Acquire() error = nil, want auth unsupported error")
+			}
+			if !strings.Contains(err.Error(), "authenticated chart repositories are not supported yet") {
+				t.Fatalf("Acquire() error = %q, want auth unsupported error", err)
+			}
+		})
+	}
+}
+
+func TestDefaultAcquirerIncludesHTTPStatusForIndexErrors(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/index.yaml" {
+			t.Fatalf("request path = %q, want /index.yaml", r.URL.Path)
+		}
+		http.Error(w, "server error", http.StatusInternalServerError)
+	}))
+	t.Cleanup(server.Close)
+
+	_, err := (DefaultAcquirer{Client: server.Client()}).Acquire(context.Background(), Request{
+		Repository: server.URL,
+		Name:       "demo",
+		Version:    "1.2.3",
+		Kind:       RepositoryHTTP,
+	}, Options{CacheDir: t.TempDir()})
+	if err == nil {
+		t.Fatal("Acquire() error = nil, want HTTP status error")
+	}
+	if !strings.Contains(err.Error(), "HTTP 500") {
+		t.Fatalf("Acquire() error = %q, want HTTP 500", err)
+	}
+}
+
+func TestDefaultAcquirerIncludesHTTPStatusForArchiveErrors(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/index.yaml":
+			writeIndex(t, w, "demo-1.2.3.tgz")
+		case "/demo-1.2.3.tgz":
+			http.Error(w, "server error", http.StatusInternalServerError)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(server.Close)
+
+	_, err := (DefaultAcquirer{Client: server.Client()}).Acquire(context.Background(), Request{
+		Repository: server.URL,
+		Name:       "demo",
+		Version:    "1.2.3",
+		Kind:       RepositoryHTTP,
+	}, Options{CacheDir: t.TempDir()})
+	if err == nil {
+		t.Fatal("Acquire() error = nil, want HTTP status error")
+	}
+	if !strings.Contains(err.Error(), "HTTP 500") {
+		t.Fatalf("Acquire() error = %q, want HTTP 500", err)
+	}
+}
+
 func TestDefaultAcquirerRejectsUnsupportedKindBeforeCacheHit(t *testing.T) {
 	request := Request{
 		Repository: "oci://charts.example.test",
@@ -165,7 +327,7 @@ func TestDefaultAcquirerRejectsUnsupportedKindBeforeCacheHit(t *testing.T) {
 }
 
 func TestExtractChartArchiveRejectsUnsafePathsBeforeCleaning(t *testing.T) {
-	for _, name := range []string{"demo/../demo/values.yaml", "../evil"} {
+	for _, name := range []string{"demo/../demo/values.yaml", "../evil", "/demo/values.yaml"} {
 		t.Run(name, func(t *testing.T) {
 			err := extractChartArchive(bytes.NewReader(rawChartArchive(t, map[string]string{
 				"demo/Chart.yaml": "apiVersion: v2\nname: demo\nversion: 1.2.3\n",
@@ -245,6 +407,18 @@ func chartArchive(t *testing.T, name string, files map[string]string) []byte {
 		t.Fatalf("close gzip writer: %v", err)
 	}
 	return buf.Bytes()
+}
+
+func writeIndex(t *testing.T, w http.ResponseWriter, chartURL string) {
+	t.Helper()
+	w.Header().Set("Content-Type", "application/yaml")
+	fmt.Fprintf(w, `apiVersion: v1
+entries:
+  demo:
+    - version: 1.2.3
+      urls:
+        - %s
+`, chartURL)
 }
 
 func rawChartArchive(t *testing.T, files map[string]string) []byte {
