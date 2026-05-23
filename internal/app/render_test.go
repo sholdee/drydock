@@ -187,12 +187,11 @@ func TestRenderApplicationPassesSameRepoRefRootsForHelmValueFiles(t *testing.T) 
 	if _, err := RenderApplication(context.Background(), application, provider); err != nil {
 		t.Fatalf("RenderApplication() error = %v", err)
 	}
-	refSource := got.RefSources["$values"]
-	if refSource.Path != "." {
-		t.Fatalf("RefSources[$values].Path = %q, want .", refSource.Path)
+	if got.RefRoots["$values"] != "." {
+		t.Fatalf("RefRoots[$values] = %q, want .", got.RefRoots["$values"])
 	}
-	if refSource.RepoURL != " https://example.com/repo.git/ " {
-		t.Fatalf("RefSources[$values].RepoURL = %q, want source repo", refSource.RepoURL)
+	if len(got.RefSources) != 0 {
+		t.Fatalf("RefSources = %#v, want empty same-repo refs", got.RefSources)
 	}
 	if len(got.ValueFiles) != 1 || got.ValueFiles[0] != "$values/foo.yaml" {
 		t.Fatalf("ValueFiles = %#v, want $values/foo.yaml", got.ValueFiles)

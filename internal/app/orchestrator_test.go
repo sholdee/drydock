@@ -398,6 +398,110 @@ data:
 	}
 }
 
+func TestOrchestratorBuildUsesFetchedSourceRootForSameRepoHelmValueRef(t *testing.T) {
+	root := t.TempDir()
+	fetchedRoot := t.TempDir()
+	writeTestFile(t, filepath.Join(root, "apps", "helm-ref-same-repo.yaml"), `apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: helm-ref-same-repo
+  namespace: argocd
+spec:
+  sources:
+    - repoURL: https://github.com/example/repo
+      targetRevision: main
+      ref: values
+    - repoURL: https://github.com/example/repo
+      targetRevision: main
+      path: charts/demo
+      helm:
+        valueFiles:
+          - $values/root-values.yaml
+  destination:
+    name: in-cluster
+    namespace: default
+`)
+	writeAppTestValueChart(t, filepath.Join(fetchedRoot, "charts", "demo"))
+	writeTestFile(t, filepath.Join(fetchedRoot, "root-values.yaml"), `value: from-fetched-root
+`)
+	acquirer := &recordingGitAcquirer{path: fetchedRoot, revision: "abc123"}
+
+	result, err := (Orchestrator{GitAcquirer: acquirer}).Build(context.Background(), BuildRequest{
+		Path:         root,
+		AllowNetwork: true,
+	})
+	if err != nil {
+		t.Fatalf("Build() error = %v", err)
+	}
+	if len(acquirer.requests) != 1 {
+		t.Fatalf("git acquire calls = %d, want 1", len(acquirer.requests))
+	}
+	value, found, err := unstructured.NestedString(result.Manifests[0].Object.Object, "data", "value")
+	if err != nil || !found || value != "from-fetched-root" {
+		t.Fatalf("data.value = %q, found %v, err %v; want from-fetched-root", value, found, err)
+	}
+}
+
+func TestOrchestratorBuildResolvesSameRepoHelmValueRefWithDifferentRevision(t *testing.T) {
+	root := t.TempDir()
+	chartRoot := t.TempDir()
+	valuesRoot := t.TempDir()
+	writeTestFile(t, filepath.Join(root, "apps", "helm-ref-same-repo-revision.yaml"), `apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: helm-ref-same-repo-revision
+  namespace: argocd
+spec:
+  sources:
+    - repoURL: https://github.com/example/repo
+      targetRevision: values-revision
+      ref: values
+    - repoURL: https://github.com/example/repo
+      targetRevision: chart-revision
+      path: charts/demo
+      helm:
+        valueFiles:
+          - $values/root-values.yaml
+  destination:
+    name: in-cluster
+    namespace: default
+`)
+	writeAppTestValueChart(t, filepath.Join(chartRoot, "charts", "demo"))
+	writeTestFile(t, filepath.Join(valuesRoot, "root-values.yaml"), `value: from-values-revision
+`)
+	acquirer := &recordingGitAcquirer{
+		paths: map[string]string{
+			"chart-revision":  chartRoot,
+			"values-revision": valuesRoot,
+		},
+		revisions: map[string]string{
+			"chart-revision":  "chart-sha",
+			"values-revision": "values-sha",
+		},
+	}
+
+	result, err := (Orchestrator{GitAcquirer: acquirer}).Build(context.Background(), BuildRequest{
+		Path:         root,
+		AllowNetwork: true,
+	})
+	if err != nil {
+		t.Fatalf("Build() error = %v", err)
+	}
+	if len(acquirer.requests) != 2 {
+		t.Fatalf("git acquire calls = %d, want 2: %#v", len(acquirer.requests), acquirer.requests)
+	}
+	wantRevisions := []string{"chart-revision", "values-revision"}
+	for i, want := range wantRevisions {
+		if got := acquirer.requests[i].Revision; got != want {
+			t.Fatalf("git request[%d].Revision = %q, want %q; requests %#v", i, got, want, acquirer.requests)
+		}
+	}
+	value, found, err := unstructured.NestedString(result.Manifests[0].Object.Object, "data", "value")
+	if err != nil || !found || value != "from-values-revision" {
+		t.Fatalf("data.value = %q, found %v, err %v; want from-values-revision", value, found, err)
+	}
+}
+
 func TestOrchestratorBuildRejectsUnmappedCrossRepoHelmValueRefEvenWhenLocalValueFileExists(t *testing.T) {
 	root := t.TempDir()
 	writeTestFile(t, filepath.Join(root, "apps", "helm-ref-unmapped.yaml"), `apiVersion: argoproj.io/v1alpha1
@@ -979,11 +1083,13 @@ type recordingChartAcquirer struct {
 }
 
 type recordingGitAcquirer struct {
-	path     string
-	revision string
-	err      error
-	requests []sourcepkg.GitRequest
-	options  []sourcepkg.GitOptions
+	path      string
+	paths     map[string]string
+	revision  string
+	revisions map[string]string
+	err       error
+	requests  []sourcepkg.GitRequest
+	options   []sourcepkg.GitOptions
 }
 
 func (acquirer *recordingGitAcquirer) Acquire(_ context.Context, request sourcepkg.GitRequest, opts sourcepkg.GitOptions) (sourcepkg.GitResult, error) {
@@ -992,7 +1098,15 @@ func (acquirer *recordingGitAcquirer) Acquire(_ context.Context, request sourcep
 	if acquirer.err != nil {
 		return sourcepkg.GitResult{}, acquirer.err
 	}
-	return sourcepkg.GitResult{Path: acquirer.path, Revision: acquirer.revision}, nil
+	path := acquirer.path
+	if acquirer.paths != nil {
+		path = acquirer.paths[request.Revision]
+	}
+	revision := acquirer.revision
+	if acquirer.revisions != nil {
+		revision = acquirer.revisions[request.Revision]
+	}
+	return sourcepkg.GitResult{Path: path, Revision: revision}, nil
 }
 
 func (acquirer *recordingChartAcquirer) Acquire(_ context.Context, request chart.Request, opts chart.Options) (chart.Result, error) {
