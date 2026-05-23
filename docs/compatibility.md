@@ -21,6 +21,9 @@ Supported in the MVP:
 - `--allow-network` Git clone/fetch for unmapped path sources missing from the
   local tree
 - User Git repository cache entries for fetched path sources
+- Explicit Git HTTPS bearer/basic auth and SSH key-file auth
+- Explicit HTTP(S) Helm bearer/basic auth
+- Explicit Helm OCI registry config path plumbing
 - `diag --path` repository diagnostics through the render validation path
 - `get apps` structured table, name, JSON, and YAML output with Kubernetes
   label selector filtering on Application metadata labels
@@ -47,6 +50,14 @@ Network and cache behavior:
   not control Helm chart fetching.
 - `--git-cache-dir PATH` overrides the default Git repository cache directory.
 - `--refresh-git` fetches cached Git repositories before rendering.
+- `--git-bearer-token` takes precedence over `--git-username` and
+  `--git-password` for Git HTTPS auth.
+- Git SSH auth requires `--git-ssh-key-file` and `--git-known-hosts-file`.
+  `ssh://host/...` defaults the SSH user to `git`.
+- `--helm-bearer-token` takes precedence over `--helm-username` and
+  `--helm-password` for HTTP(S) Helm repository auth.
+- `--registry-config PATH` is the only OCI registry credential source used by
+  this slice; ambient Helm and Docker registry config is not read.
 - `--offline` cannot be combined with `--allow-network`.
 - `--refresh-remotes` refreshes cached remote Kustomize resources.
 - `--remote-cache-dir PATH` overrides the default remote resource cache
@@ -62,8 +73,6 @@ Not reproduced offline:
 - Managed fields ignores
 - Live Argo CD server-side diff
 - Project/RBAC/destination validation
-- Authenticated/private Helm chart repositories
-- Authenticated/private Git repositories
 - Authenticated remote resources
 - Remote Kustomize Git refs, bases, components, patches, generators,
   transformers, validators, `crds`, `openapi`, and replacements

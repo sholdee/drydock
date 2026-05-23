@@ -88,6 +88,19 @@ Network and cache flags:
 - `--git-cache-dir PATH` overrides the default user cache directory for cached
   Git repositories.
 - `--refresh-git` fetches cached Git repositories before rendering.
+- `--git-bearer-token TOKEN` authenticates Git HTTPS clone/fetch requests with
+  bearer auth and takes precedence over basic auth.
+- `--git-username USER` and `--git-password PASS` authenticate Git HTTPS
+  clone/fetch requests with basic auth.
+- `--git-ssh-key-file PATH` authenticates Git SSH clone/fetch requests.
+  `--git-known-hosts-file PATH` is required for SSH in this slice; encrypted
+  keys can use `--git-ssh-passphrase PASSPHRASE`.
+- `--helm-bearer-token TOKEN` authenticates HTTP Helm repository index and
+  archive requests with bearer auth and takes precedence over basic auth.
+- `--helm-username USER` and `--helm-password PASS` authenticate HTTP Helm
+  repository index and archive requests with basic auth.
+- `--registry-config PATH` supplies the only Helm OCI registry credentials used
+  by this slice. Ambient Helm and Docker registry config is not read.
 - `--refresh-remotes` refreshes cached remote Kustomize resources before
   rendering.
 - `--remote-cache-dir PATH` overrides the default user cache directory for

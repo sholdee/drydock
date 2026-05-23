@@ -28,10 +28,12 @@ func newDiagCommand(deps Dependencies) *cobra.Command {
 				Offline:                flags.offline,
 				RefreshCharts:          flags.refreshCharts,
 				ChartCacheDir:          flags.chartCacheDir,
+				ChartCredentials:       flags.chartCredentials(),
 				RepoMaps:               repoMaps,
 				AllowNetwork:           flags.allowNetwork,
 				GitCacheDir:            flags.gitCacheDir,
 				RefreshGit:             flags.refreshGit,
+				GitCredentials:         flags.gitCredentials(),
 				RefreshRemoteResources: flags.refreshRemotes,
 				RemoteResourceCacheDir: flags.remoteCacheDir,
 			})

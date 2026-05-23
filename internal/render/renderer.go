@@ -34,6 +34,7 @@ type RenderOptions struct {
 	ChartCacheDir                string
 	OfflineCharts                bool
 	RefreshCharts                bool
+	ChartCredentials             chart.ChartCredentials
 	ChartAcquirer                chart.Acquirer
 	RemoteResourceCacheDir       string
 	OfflineRemoteResources       bool

@@ -82,10 +82,12 @@ func newGetCommand(deps Dependencies) *cobra.Command {
 				Offline:                imagesFlags.offline,
 				RefreshCharts:          imagesFlags.refreshCharts,
 				ChartCacheDir:          imagesFlags.chartCacheDir,
+				ChartCredentials:       imagesFlags.chartCredentials(),
 				RepoMaps:               repoMaps,
 				AllowNetwork:           imagesFlags.allowNetwork,
 				GitCacheDir:            imagesFlags.gitCacheDir,
 				RefreshGit:             imagesFlags.refreshGit,
+				GitCredentials:         imagesFlags.gitCredentials(),
 				RefreshRemoteResources: imagesFlags.refreshRemotes,
 				RemoteResourceCacheDir: imagesFlags.remoteCacheDir,
 			}

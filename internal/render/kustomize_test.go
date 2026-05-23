@@ -563,6 +563,12 @@ helmCharts:
 		ChartCacheDir: filepath.Join(root, "cache"),
 		OfflineCharts: true,
 		RefreshCharts: true,
+		ChartCredentials: chart.ChartCredentials{
+			Username:       "helm-user",
+			Password:       "helm-pass",
+			BearerToken:    "helm-token",
+			RegistryConfig: filepath.Join(root, "registry.json"),
+		},
 	})
 	if err != nil {
 		t.Fatalf("Render() error = %v", err)
@@ -586,6 +592,12 @@ helmCharts:
 		CacheDir: filepath.Join(root, "cache"),
 		Offline:  true,
 		Refresh:  true,
+		Credentials: chart.ChartCredentials{
+			Username:       "helm-user",
+			Password:       "helm-pass",
+			BearerToken:    "helm-token",
+			RegistryConfig: filepath.Join(root, "registry.json"),
+		},
 	}) {
 		t.Fatalf("acquirer.options[0] = %#v", acquirer.options[0])
 	}

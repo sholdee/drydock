@@ -48,7 +48,12 @@ resource caching. Git path sources can be resolved with deterministic
 path is not present locally. Git fetches use `--git-cache-dir` and
 `--refresh-git`. Caches must stay outside Git repository trees.
 `--allow-network` is not the Helm chart-fetch flag; chart fetching remains
-controlled by the chart flags.
+controlled by the chart flags. Authenticated source support is explicit:
+Git HTTPS accepts `--git-bearer-token` or `--git-username`/`--git-password`;
+Git SSH accepts `--git-ssh-key-file`, optional `--git-ssh-passphrase`, and
+requires `--git-known-hosts-file`; HTTP Helm repositories accept
+`--helm-bearer-token` or `--helm-username`/`--helm-password`; OCI Helm auth is
+read only from an explicit `--registry-config` path.
 
 Manifest diffs default to unified diff output and also support `-o json` and
 `-o yaml` for structured `diff apps` and `diff app` results. Use repeatable
@@ -77,7 +82,7 @@ scripts/home-ops-pattern-smoke.sh
   and list generators.
 - No config management plugins.
 - No required shellouts in default workflows.
-- No authenticated Git, authenticated remote resources, or remote Kustomize
+- No authenticated remote Kustomize resources, remote Kustomize
   bases/components/patches/generators/transformers/validators, `crds`,
   `openapi`, or replacements.
 - Server-side diff/apply settings are reported as offline limitations.
