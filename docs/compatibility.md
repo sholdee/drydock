@@ -17,6 +17,11 @@ Supported in the MVP:
 - Public Helm chart fetching by default for render and diff chart dependencies
 - User chart cache entries for acquired charts
 - User remote-resource cache entries for acquired Kustomize resources
+- `--repo-map URL=PATH` path-source resolution for local external checkouts
+- `--allow-network` Git clone/fetch for unmapped path sources missing from the
+  local tree
+- User Git repository cache entries for fetched path sources
+- `diag --path` repository diagnostics through the render validation path
 - `build app` rendering for one Application by `NAME` or `NAMESPACE/NAME`
 - `diff apps` desired-vs-desired manifest diffs
 - `diff app` desired-vs-desired diffs for one Application, including
@@ -30,12 +35,18 @@ Network and cache behavior:
   fetching. It requires cache hits or local chart availability.
 - `--refresh-charts` refreshes cached immutable chart entries.
 - `--chart-cache-dir PATH` overrides the default user cache directory.
+- `--repo-map URL=PATH` maps a Git repo URL to a local checkout and takes
+  precedence over local fallback and network fetching.
+- `--allow-network` enables Git clone/fetch for unmapped path sources. It does
+  not control Helm chart fetching.
+- `--git-cache-dir PATH` overrides the default Git repository cache directory.
+- `--refresh-git` fetches cached Git repositories before rendering.
+- `--offline` cannot be combined with `--allow-network`.
 - `--refresh-remotes` refreshes cached remote Kustomize resources.
 - `--remote-cache-dir PATH` overrides the default remote resource cache
   directory.
 - Chart and remote-resource caches must stay outside Git repository trees.
-- `--allow-network` is not the Helm chart-fetch flag; it is reserved for future
-  Git/repository-source fetching.
+- `--allow-network` is not the Helm chart-fetch flag.
 
 Not reproduced offline:
 
@@ -46,10 +57,10 @@ Not reproduced offline:
 - Live Argo CD server-side diff
 - Project/RBAC/destination validation
 - Authenticated/private Helm chart repositories
+- Authenticated/private Git repositories
 - Authenticated remote resources
 - Remote Kustomize Git refs, bases, components, patches, generators,
   transformers, validators, `crds`, `openapi`, and replacements
-- Git/repository-source fetching
 
 The tool pins Argo CD dependencies. Upgrade Argo CD dependencies deliberately
 and update compatibility tests in the same change.
