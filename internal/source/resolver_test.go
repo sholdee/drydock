@@ -1,6 +1,9 @@
 package source
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestResolverUsesRepoMapBeforeNetwork(t *testing.T) {
 	resolver := NewResolver(Options{
@@ -58,6 +61,30 @@ func TestResolverRejectsUnmappedWithoutNetwork(t *testing.T) {
 	_, err := resolver.Resolve("https://github.com/example/other", "main")
 	if err == nil {
 		t.Fatalf("expected error")
+	}
+}
+
+func TestResolverRedactsUnmappedRepositoryError(t *testing.T) {
+	resolver := NewResolver(Options{})
+
+	_, err := resolver.Resolve("https://user:secret@github.com/example/private.git?token=abc123#frag", "main")
+	if err == nil {
+		t.Fatalf("expected error")
+	}
+	for _, leaked := range []string{"user", "secret", "token", "abc123", "frag"} {
+		if strings.Contains(err.Error(), leaked) {
+			t.Fatalf("error = %q, leaked %q", err.Error(), leaked)
+		}
+	}
+	if !strings.Contains(err.Error(), "https://github.com/example/private.git") {
+		t.Fatalf("error = %q, want redacted repository URL", err.Error())
+	}
+}
+
+func TestRedactURLStripsSensitiveParts(t *testing.T) {
+	got := RedactURL(" https://user:secret@example.com/org/repo.git?access_token=abc#fragment ")
+	if got != "https://example.com/org/repo.git" {
+		t.Fatalf("RedactURL() = %q", got)
 	}
 }
 

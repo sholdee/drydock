@@ -157,8 +157,7 @@ func anchorLocalRefRoots(repoRoot string, refRoots map[string]string) (map[strin
 	out := make(map[string]string, len(refRoots))
 	for key, root := range refRoots {
 		if filepath.IsAbs(root) {
-			out[key] = filepath.Clean(root)
-			continue
+			return nil, fmt.Errorf("absolute ref root %s %q must be relative for local rendering; repo-map/external ref resolution is not wired", key, root)
 		}
 		clean, err := cleanLocalSourcePath(root)
 		if err != nil {

@@ -200,9 +200,9 @@ func TestRenderApplicationRejectsCrossRepoHelmValueRef(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Namespace: "argocd", Name: "demo"},
 		Spec: argoappv1.ApplicationSpec{
 			Sources: argoappv1.ApplicationSources{
-				{RepoURL: "https://example.com/values", Ref: "values"},
+				{RepoURL: "https://values-user:values-secret@example.com/values.git?token=values-token#values-frag", Ref: "values"},
 				{
-					RepoURL: "https://example.com/repo",
+					RepoURL: "https://source-user:source-secret@example.com/repo.git?token=source-token#source-frag",
 					Path:    "chart",
 					Helm: &argoappv1.ApplicationSourceHelm{
 						ValueFiles: []string{"$values/foo.yaml"},
@@ -221,9 +221,14 @@ func TestRenderApplicationRejectsCrossRepoHelmValueRef(t *testing.T) {
 	if err == nil {
 		t.Fatal("RenderApplication() error = nil, want cross-repo ref error")
 	}
-	for _, want := range []string{"$values", "cross-repo", "https://example.com/values", "https://example.com/repo"} {
+	for _, want := range []string{"$values", "cross-repo", "https://example.com/values.git", "https://example.com/repo.git"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Fatalf("error = %q, want %q", err.Error(), want)
+		}
+	}
+	for _, leaked := range []string{"values-user", "values-secret", "values-token", "values-frag", "source-user", "source-secret", "source-token", "source-frag"} {
+		if strings.Contains(err.Error(), leaked) {
+			t.Fatalf("error = %q, leaked %q", err.Error(), leaked)
 		}
 	}
 	if calls != 0 {
@@ -324,6 +329,32 @@ value: from-ref
 	value, _, _ := unstructured.NestedString(manifests[0].Object.Object, "data", "value")
 	if value != "from-ref" {
 		t.Fatalf("data.value = %q, want from-ref", value)
+	}
+}
+
+func TestLocalProviderRejectsAbsoluteRefRoots(t *testing.T) {
+	root := t.TempDir()
+	absoluteRefRoot := t.TempDir()
+	writeAppTestValueChart(t, filepath.Join(root, "chart"))
+
+	manifests, diags, err := (localProvider{repoRoot: root}).RenderSource(context.Background(), render.ResolvedSource{
+		Path: "chart",
+	}, render.RenderOptions{
+		AppName:    "demo",
+		RefRoots:   map[string]string{"$values": absoluteRefRoot},
+		ValueFiles: []string{"$values/foo.yaml"},
+	})
+	if err == nil {
+		t.Fatal("RenderSource() error = nil, want absolute ref root error")
+	}
+	if !strings.Contains(err.Error(), "absolute") {
+		t.Fatalf("RenderSource() error = %v, want absolute ref root context", err)
+	}
+	if len(diags) != 0 {
+		t.Fatalf("diagnostics = %#v", diags)
+	}
+	if len(manifests) != 0 {
+		t.Fatalf("manifests = %#v, want none", manifests)
 	}
 }
 
