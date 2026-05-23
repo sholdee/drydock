@@ -75,3 +75,37 @@ func TestDefaultCacheDirUsesUserCacheRoot(t *testing.T) {
 		t.Fatalf("DefaultCacheDir() = %q, want argocd-local/charts suffix", dir)
 	}
 }
+
+func TestNormalizeRepositoryRejectsUnsupportedKind(t *testing.T) {
+	if _, err := NormalizeRepository("https://example.com/charts", RepositoryKind("git")); err == nil {
+		t.Fatal("NormalizeRepository() error = nil, want unsupported kind error")
+	}
+}
+
+func TestNormalizeRepositoryRejectsMissingHTTPHost(t *testing.T) {
+	if _, err := NormalizeRepository("https:///charts", RepositoryHTTP); err == nil {
+		t.Fatal("NormalizeRepository() error = nil, want missing host error")
+	}
+}
+
+func TestNormalizeRepositoryRejectsMissingOCIHost(t *testing.T) {
+	if _, err := NormalizeRepository("oci:///charts", RepositoryOCI); err == nil {
+		t.Fatal("NormalizeRepository() error = nil, want missing host error")
+	}
+}
+
+func TestNormalizeRepositoryRejectsInvalidOCIScheme(t *testing.T) {
+	if _, err := NormalizeRepository("https://example.com/charts", RepositoryOCI); err == nil {
+		t.Fatal("NormalizeRepository() error = nil, want invalid OCI scheme error")
+	}
+}
+
+func TestNormalizeRepositoryTrimsOCITrailingSlash(t *testing.T) {
+	normalized, err := NormalizeRepository(" oci://example.com/charts/ ", RepositoryOCI)
+	if err != nil {
+		t.Fatalf("NormalizeRepository() error = %v", err)
+	}
+	if normalized != "oci://example.com/charts" {
+		t.Fatalf("NormalizeRepository() = %q, want oci://example.com/charts", normalized)
+	}
+}
