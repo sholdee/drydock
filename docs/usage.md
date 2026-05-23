@@ -1,8 +1,8 @@
 # Usage
 
-`argocd-local` currently wires Application discovery, all-Application and
-named-Application build, all-Application and named-Application manifest diffs,
-image diffs, and repository diagnostics.
+`argocd-local` currently wires Application discovery, rendered image listing,
+all-Application and named-Application build, all-Application and
+named-Application manifest diffs, image diffs, and repository diagnostics.
 
 ## Application Discovery
 
@@ -12,6 +12,23 @@ List discovered direct `Application` CRs and supported generated
 ```bash
 argocd-local get apps --path .
 ```
+
+`get apps` defaults to table output and supports `-o table`, `-o name`,
+`-o json`, and `-o yaml`. Use `-l`/`--selector` with Kubernetes label selector
+syntax to match `Application.metadata.labels`:
+
+```bash
+argocd-local get apps --path . -l 'env in (prod,stage),tier!=test'
+```
+
+List conservative workload container images from rendered Applications:
+
+```bash
+argocd-local get images --path . -o name
+```
+
+`get images` supports the same structured output formats as `get apps`.
+Diagnostics are printed to stderr for both commands.
 
 ## Rendering
 

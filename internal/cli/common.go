@@ -11,6 +11,7 @@ import (
 type commonFlags struct {
 	path              string
 	pathOrig          string
+	selector          string
 	repoMaps          []string
 	allowNetwork      bool
 	offline           bool
@@ -43,6 +44,7 @@ func defaultCommonFlags() commonFlags {
 func bindCommonFlags(cmd *cobra.Command, flags *commonFlags) {
 	cmd.Flags().StringVar(&flags.path, "path", flags.path, "repository path to inspect")
 	cmd.Flags().StringVar(&flags.pathOrig, "path-orig", flags.pathOrig, "baseline repository path for diffs")
+	cmd.Flags().StringVarP(&flags.selector, "selector", "l", flags.selector, "label selector for Applications")
 	cmd.Flags().StringArrayVar(&flags.repoMaps, "repo-map", flags.repoMaps, "repository URL mapping in from=to form")
 	cmd.Flags().BoolVar(&flags.allowNetwork, "allow-network", flags.allowNetwork, "allow network access for unmapped repositories")
 	cmd.Flags().BoolVar(&flags.offline, "offline", flags.offline, "disable network access for Helm charts and remote Kustomize resources")

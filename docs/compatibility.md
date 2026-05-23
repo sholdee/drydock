@@ -22,6 +22,10 @@ Supported in the MVP:
   local tree
 - User Git repository cache entries for fetched path sources
 - `diag --path` repository diagnostics through the render validation path
+- `get apps` structured table, name, JSON, and YAML output with Kubernetes
+  label selector filtering on Application metadata labels
+- `get images` structured table, name, JSON, and YAML output using the same
+  conservative workload image extraction as `diff images`
 - `build app` rendering for one Application by `NAME` or `NAMESPACE/NAME`
 - `diff apps` desired-vs-desired manifest diffs
 - `diff app` desired-vs-desired diffs for one Application, including

@@ -5,10 +5,11 @@
 The MVP goal is desired-vs-desired pull request diffing: compare a current
 repository tree with a baseline tree and inspect the rendered Kubernetes
 manifests that changed. The currently wired commands are `get apps` for
-Application discovery, `build apps` and `build app NAME` for local rendering,
-`diff apps` and `diff app NAME` for desired-vs-desired manifest diffs, and
-`diff images` for conservative workload image diffs. `diag --path` reports
-repository diagnostics without printing manifests.
+Application discovery, `get images` for rendered workload image listing,
+`build apps` and `build app NAME` for local rendering, `diff apps` and
+`diff app NAME` for desired-vs-desired manifest diffs, and `diff images` for
+conservative workload image diffs. `diag --path` reports repository diagnostics
+without printing manifests.
 
 This project is early implementation work. See
 `docs/superpowers/specs/2026-05-22-argocd-local-design.md` for the approved MVP
@@ -18,6 +19,8 @@ design.
 
 ```bash
 go run ./cmd/argocd-local get apps --path ./testdata/applications/e2e
+go run ./cmd/argocd-local get apps --path ./testdata/applications/e2e -o json
+go run ./cmd/argocd-local get images --path ./testdata/renovate-diff/current -o name
 go run ./cmd/argocd-local build apps --path ./testdata/applications/e2e
 go run ./cmd/argocd-local build app renovate \
   --path ./testdata/renovate-diff/current
