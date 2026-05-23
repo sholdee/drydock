@@ -55,6 +55,14 @@ Current shared flags are `--path`, `--path-orig`, `--selector`/`-l`, `--repo-map
 `--strict-changed-only`, `--strict`, `--exit-code`, `--output`/`-o`,
 `--unified`/`-u`, `--strip-attr`, and `--limit-bytes`.
 
+Public embedding API lives in `pkg/argocdlocal`. Keep its exported types free
+of `internal/...` package types. Package-level functions should follow CLI
+default network/cache behavior, while `NewClient` accepts public Git, chart,
+and remote-resource acquirer interfaces for deterministic tests and embedding
+without shelling out or requiring network access. Preserve partial render
+results: public `Render` must return successful manifests, diagnostics, and
+per-Application statuses even when one selected Application fails.
+
 ## Settings Discovery
 
 Settings flow into `internal/config.ArgoSettings`. Providers must record
@@ -118,6 +126,8 @@ The MVP currently supports:
   YAML formats.
 - Per-Application `test apps` and `test app` PASS/FAIL/SKIPPED status output
   with text, JSON, and YAML formats.
+- Public Go API for listing, rendering, manifest diffs, image diffs, and
+  injectable Git/chart/remote-resource acquisition.
 - Structured `diff apps` and `diff app` output with diff, JSON, and YAML
   formats, plus metadata label/annotation stripping through `--strip-attr`.
 - Argo CD settings discovery from Helm values, `argocd-cm`, and repository

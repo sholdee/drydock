@@ -41,6 +41,9 @@ Supported in the MVP:
 - `--strip-attr KEY` diff normalization for metadata label and annotation keys
 - `diff images` conservative workload image diffs
 - Repeated-resource last-wins behavior inside one Application
+- Public Go API in `pkg/argocdlocal` for Application listing, rendering,
+  manifest diffs, image diffs, and injectable Git/chart/remote-resource
+  acquisition
 
 Network and cache behavior:
 

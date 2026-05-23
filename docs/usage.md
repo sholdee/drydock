@@ -119,6 +119,32 @@ repository-source fetching. `--offline` cannot be combined with
 
 Caches must stay outside Git repository trees.
 
+## Go API
+
+Use `github.com/home-operations/argocd-local/pkg/argocdlocal` when embedding
+the renderer directly:
+
+```go
+client := argocdlocal.NewClient(argocdlocal.Config{
+	Path: ".",
+	RepoMaps: []argocdlocal.RepoMap{
+		{URL: "https://github.com/example/repo", Path: "/work/repo"},
+	},
+})
+result, err := client.Render(ctx)
+```
+
+Package-level `Render`, `ListApplications`, `DiffApplications`, and
+`DiffImages` functions use the same default network and cache behavior as the
+CLI. `NewClient` accepts public Git, chart, and remote-resource acquirer
+interfaces so tests and embedding callers can provide fakes without importing
+internal packages or performing public network fetches.
+
+Public render results include Applications, manifests, diagnostics, and
+per-Application statuses. If one selected Application fails, `Render` returns
+the error and still returns the partial successful manifests, stable
+diagnostics, and statuses.
+
 ## Render Tests
 
 Test every discovered Application without printing manifest bodies:
@@ -257,9 +283,7 @@ These source paths are not wired in the current MVP:
   ApplicationSet generators.
 - Remote Kustomize Git refs, bases, components, patches, generators,
   transformers, validators, `crds`, `openapi`, and replacements.
-- Authenticated/private Git repositories.
 - Authenticated remote resources.
-- Authenticated or private Helm chart repositories.
 
 ## Optional Home-Ops Smoke
 
