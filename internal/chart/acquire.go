@@ -99,13 +99,13 @@ func NormalizeRepository(repository string, kind RepositoryKind) (string, error)
 	case RepositoryOCI:
 		parsed, err := url.Parse(repository)
 		if err != nil {
-			return "", fmt.Errorf("parse OCI chart repository %q: %w", repository, err)
+			return "", fmt.Errorf("parse OCI chart repository: invalid repository URL")
 		}
 		if parsed.Scheme != "oci" {
-			return "", fmt.Errorf("OCI chart repository %q must use oci scheme", repository)
+			return "", fmt.Errorf("OCI chart repository must use oci scheme")
 		}
 		if parsed.Host == "" {
-			return "", fmt.Errorf("OCI chart repository %q must include a host", repository)
+			return "", fmt.Errorf("OCI chart repository must include a host")
 		}
 		parsed.Path = strings.TrimRight(parsed.Path, "/")
 		return parsed.String(), nil
