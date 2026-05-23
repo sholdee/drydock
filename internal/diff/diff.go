@@ -2,6 +2,7 @@ package diff
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"reflect"
 	"sort"
@@ -50,6 +51,8 @@ type Result struct {
 type Options struct {
 	Unified int
 }
+
+var errEmptyDiffBody = errors.New("empty diff body")
 
 func Run(left, right []Document, opts Options) ([]Result, error) {
 	leftByKey := documentsByKey(left)
@@ -167,11 +170,15 @@ func displayBodies(doc Document, from, to string) (string, string, error) {
 func redactedSecretBodies(from, to string) (string, string, error) {
 	fromObject, err := decodeDiffYAML(from)
 	if err != nil {
-		return "", "", fmt.Errorf("redact Secret before body: %w", err)
+		if !errors.Is(err, errEmptyDiffBody) {
+			return "", "", fmt.Errorf("redact Secret before body: %w", err)
+		}
 	}
 	toObject, err := decodeDiffYAML(to)
 	if err != nil {
-		return "", "", fmt.Errorf("redact Secret after body: %w", err)
+		if !errors.Is(err, errEmptyDiffBody) {
+			return "", "", fmt.Errorf("redact Secret after body: %w", err)
+		}
 	}
 
 	redactSecretFieldPair(fromObject, toObject, "data")
@@ -191,7 +198,7 @@ func redactedSecretBodies(from, to string) (string, string, error) {
 
 func decodeDiffYAML(body string) (map[string]any, error) {
 	if body == "" {
-		return nil, nil
+		return nil, errEmptyDiffBody
 	}
 	var object map[string]any
 	if err := yaml.Unmarshal([]byte(body), &object); err != nil {
