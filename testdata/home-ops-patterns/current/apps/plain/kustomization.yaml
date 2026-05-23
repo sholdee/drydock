@@ -6,3 +6,12 @@ components:
   - ../../components/dragonfly
 resources:
   - deployment.yaml
+patches:
+  - target:
+      kind: Deployment
+      name: plain
+    patch: |-
+      - op: add
+        path: /metadata/annotations
+        value:
+          fixture.example.test/patch-mode: current

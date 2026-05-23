@@ -8,6 +8,6 @@ configMapGenerator:
 secretGenerator:
   - name: generated-secret
     literals:
-      - token=redacted
+      - token=redacted-current
 generatorOptions:
   disableNameSuffixHash: true
