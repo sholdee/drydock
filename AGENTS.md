@@ -63,6 +63,9 @@ Diff output is keyed by parent Application plus child resource identity.
 Same-named resources rendered by different Applications must remain separate.
 Image extraction is conservative in the MVP and may be broadened only behind an
 explicit mode.
+CLI diff exit codes are fixed: 0 means success/no diff, 1 means success/diff
+found, 2 means runtime/config/render error. Keep command errors quiet enough for
+CI and avoid Cobra usage spam on runtime failures.
 
 ## Renderers
 
