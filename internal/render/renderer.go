@@ -9,9 +9,11 @@ import (
 )
 
 type ResolvedSource struct {
-	RepoRoot string
-	Path     string
-	Chart    string
+	RepoRoot       string
+	Path           string
+	Chart          string
+	RepoURL        string
+	TargetRevision string
 }
 
 type RenderOptions struct {

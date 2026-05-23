@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -14,6 +15,7 @@ import (
 	"github.com/home-operations/argocd-local/internal/diagnostic"
 	"github.com/home-operations/argocd-local/internal/discovery"
 	"github.com/home-operations/argocd-local/internal/render"
+	sourcepkg "github.com/home-operations/argocd-local/internal/source"
 )
 
 type BuildRequest struct {
@@ -145,9 +147,86 @@ func (p localProvider) RenderSource(ctx context.Context, source render.ResolvedS
 		return renderer.Render(ctx, source, opts)
 	}
 	if source.Chart != "" {
-		return nil, nil, fmt.Errorf("remote chart source %q requires a local chart path; repository chart fetching is not wired", source.Chart)
+		return p.renderChartOnlySource(ctx, source, opts)
 	}
 	return nil, nil, nil
+}
+
+func (p localProvider) renderChartOnlySource(ctx context.Context, source render.ResolvedSource, opts render.RenderOptions) ([]render.Manifest, []diagnostic.Diagnostic, error) {
+	kind := chart.RepositoryHTTP
+	if strings.HasPrefix(strings.TrimSpace(source.RepoURL), "oci://") {
+		kind = chart.RepositoryOCI
+	}
+
+	acquirer := p.chartAcquirer
+	if acquirer == nil {
+		acquirer = chart.DefaultAcquirer{}
+	}
+
+	acquired, err := acquirer.Acquire(ctx, chart.Request{
+		Repository: source.RepoURL,
+		Name:       source.Chart,
+		Version:    source.TargetRevision,
+		Kind:       kind,
+	}, chart.Options{
+		CacheDir: p.chartCacheDir,
+		Offline:  p.offline,
+		Refresh:  p.refreshCharts,
+	})
+	if err != nil {
+		return nil, nil, fmt.Errorf("acquire chart %s: %s", source.Chart, redactChartAcquireError(err, source.RepoURL))
+	}
+
+	return (render.HelmRenderer{}).Render(ctx, render.ResolvedSource{
+		RepoRoot:       acquired.ChartDir,
+		Path:           ".",
+		Chart:          source.Chart,
+		RepoURL:        source.RepoURL,
+		TargetRevision: source.TargetRevision,
+	}, opts)
+}
+
+func redactChartAcquireError(err error, repository string) string {
+	message := err.Error()
+	redacted := sourcepkg.RedactURL(repository)
+	raw := strings.TrimSpace(repository)
+	if raw == "" {
+		return message
+	}
+
+	replacements := []string{raw}
+	if parsed, parseErr := url.Parse(raw); parseErr == nil && parsed.Scheme != "" {
+		withoutFragment := *parsed
+		withoutFragment.Fragment = ""
+		replacements = append(replacements, withoutFragment.String())
+
+		withoutQueryFragment := withoutFragment
+		withoutQueryFragment.RawQuery = ""
+		withoutQueryFragment.ForceQuery = false
+		replacements = append(replacements, withoutQueryFragment.String())
+
+		withoutUser := *parsed
+		withoutUser.User = nil
+		replacements = append(replacements, withoutUser.String())
+
+		if parsed.User != nil {
+			replacements = append(replacements, parsed.User.String()+"@")
+		}
+		if parsed.RawQuery != "" {
+			replacements = append(replacements, parsed.RawQuery)
+		}
+		if parsed.Fragment != "" {
+			replacements = append(replacements, parsed.Fragment)
+		}
+	}
+
+	for _, replacement := range replacements {
+		if replacement == "" || replacement == redacted {
+			continue
+		}
+		message = strings.ReplaceAll(message, replacement, redacted)
+	}
+	return message
 }
 
 func anchorLocalRefRoots(repoRoot string, refRoots map[string]string) (map[string]string, error) {

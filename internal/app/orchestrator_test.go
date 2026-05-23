@@ -2,12 +2,15 @@ package app
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/home-operations/argocd-local/internal/chart"
 	"github.com/home-operations/argocd-local/internal/diagnostic"
+	"github.com/home-operations/argocd-local/internal/render"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 )
 
@@ -139,8 +142,49 @@ data:
 	}
 }
 
-func TestOrchestratorBuildRejectsChartOnlySource(t *testing.T) {
+func TestOrchestratorBuildReturnsChartAcquireErrorForChartOnlySource(t *testing.T) {
 	root := t.TempDir()
+	writeTestFile(t, filepath.Join(root, "apps", "argocd", "chart-app.yaml"), `apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: chart-only
+  namespace: argocd
+spec:
+  source:
+    repoURL: https://repo-user:repo-secret@charts.example.test?token=repo-token#repo-frag
+    targetRevision: 1.2.3
+    chart: demo
+  destination:
+    name: in-cluster
+    namespace: chart-only
+`)
+
+	acquirer := &recordingChartAcquirer{
+		acquireErr: errors.New("fetch https://repo-user:repo-secret@charts.example.test?token=repo-token#repo-frag failed"),
+	}
+	result, err := (Orchestrator{ChartAcquirer: acquirer}).Build(context.Background(), BuildRequest{Path: root})
+	if err == nil {
+		t.Fatalf("Build() error = nil, want chart acquire error")
+	}
+	if len(result.Manifests) != 0 {
+		t.Fatalf("len(Manifests) = %d, want 0", len(result.Manifests))
+	}
+	for _, want := range []string{`chart="demo"`, "acquire chart demo", "https://charts.example.test"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("Build() error = %q, want %q", err.Error(), want)
+		}
+	}
+	for _, leaked := range []string{"repo-user", "repo-secret", "repo-token", "repo-frag"} {
+		if strings.Contains(err.Error(), leaked) {
+			t.Fatalf("Build() error = %q, leaked %q", err.Error(), leaked)
+		}
+	}
+}
+
+func TestOrchestratorBuildRendersChartOnlyApplication(t *testing.T) {
+	root := t.TempDir()
+	chartDir := filepath.Join(root, "cache", "demo")
+	cacheDir := filepath.Join(root, "chart-cache")
 	writeTestFile(t, filepath.Join(root, "apps", "argocd", "chart-app.yaml"), `apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
@@ -151,22 +195,96 @@ spec:
     repoURL: https://charts.example.test
     targetRevision: 1.2.3
     chart: demo
+    helm:
+      valueFiles:
+        - values-extra.yaml
+      values: |
+        value: from-inline
   destination:
     name: in-cluster
-    namespace: chart-only
+    namespace: chart-ns
 `)
+	writeTestFile(t, filepath.Join(chartDir, "Chart.yaml"), `apiVersion: v2
+name: demo
+version: 1.2.3
+`)
+	writeTestFile(t, filepath.Join(chartDir, "values-extra.yaml"), `value: from-file
+`)
+	writeTestFile(t, filepath.Join(chartDir, "templates", "cm.yaml"), `apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Release.Name }}
+data:
+  value: {{ .Values.value | quote }}
+`)
+	acquirer := &recordingChartAcquirer{chartDir: chartDir}
 
-	result, err := Orchestrator{}.Build(context.Background(), BuildRequest{Path: root})
-	if err == nil {
-		t.Fatalf("Build() error = nil, want chart-only error")
+	result, err := (Orchestrator{ChartAcquirer: acquirer}).Build(context.Background(), BuildRequest{
+		Path:          root,
+		ChartCacheDir: cacheDir,
+		Offline:       true,
+		RefreshCharts: true,
+	})
+	if err != nil {
+		t.Fatalf("Build() error = %v", err)
 	}
-	if len(result.Manifests) != 0 {
-		t.Fatalf("len(Manifests) = %d, want 0", len(result.Manifests))
+
+	if len(acquirer.requests) != 1 {
+		t.Fatalf("chart acquire calls = %d, want 1", len(acquirer.requests))
 	}
-	for _, want := range []string{`chart="demo"`, "local chart path", "remote chart"} {
-		if !strings.Contains(err.Error(), want) {
-			t.Fatalf("Build() error = %q, want %q", err.Error(), want)
-		}
+	if got, want := acquirer.requests[0], (chart.Request{
+		Repository: "https://charts.example.test",
+		Name:       "demo",
+		Version:    "1.2.3",
+		Kind:       chart.RepositoryHTTP,
+	}); got != want {
+		t.Fatalf("chart request = %#v, want %#v", got, want)
+	}
+	if got, want := acquirer.options[0], (chart.Options{
+		CacheDir: cacheDir,
+		Offline:  true,
+		Refresh:  true,
+	}); got != want {
+		t.Fatalf("chart options = %#v, want %#v", got, want)
+	}
+	if len(result.Manifests) != 1 {
+		t.Fatalf("len(Manifests) = %d, want 1", len(result.Manifests))
+	}
+	manifest := result.Manifests[0]
+	if manifest.Object.GetKind() != "ConfigMap" || manifest.Object.GetName() != "chart-only" {
+		t.Fatalf("rendered object = %s/%s, want ConfigMap/chart-only", manifest.Object.GetKind(), manifest.Object.GetName())
+	}
+	if namespace := manifest.Object.GetNamespace(); namespace != "chart-ns" {
+		t.Fatalf("namespace = %q, want chart-ns", namespace)
+	}
+	value, found, err := unstructured.NestedString(manifest.Object.Object, "data", "value")
+	if err != nil || !found || value != "from-inline" {
+		t.Fatalf("data.value = %q, found %v, err %v; want from-inline", value, found, err)
+	}
+}
+
+func TestLocalProviderClassifiesChartOnlyOCIRepository(t *testing.T) {
+	root := t.TempDir()
+	chartDir := filepath.Join(root, "cache", "demo")
+	writeAppTestValueChart(t, chartDir)
+	acquirer := &recordingChartAcquirer{chartDir: chartDir}
+
+	_, _, err := (localProvider{
+		repoRoot:      root,
+		chartAcquirer: acquirer,
+	}).RenderSource(context.Background(), render.ResolvedSource{
+		Chart:          "demo",
+		RepoURL:        " oci://registry.example.test/charts ",
+		TargetRevision: "2.0.0",
+	}, render.RenderOptions{AppName: "demo"})
+	if err != nil {
+		t.Fatalf("RenderSource() error = %v", err)
+	}
+	if len(acquirer.requests) != 1 {
+		t.Fatalf("chart acquire calls = %d, want 1", len(acquirer.requests))
+	}
+	if got := acquirer.requests[0].Kind; got != chart.RepositoryOCI {
+		t.Fatalf("request kind = %q, want %q", got, chart.RepositoryOCI)
 	}
 }
 
@@ -341,4 +459,26 @@ metadata:
 data:
   value: second
 `)
+}
+
+type recordingChartAcquirer struct {
+	chartDir   string
+	acquireErr error
+	requests   []chart.Request
+	options    []chart.Options
+}
+
+func (acquirer *recordingChartAcquirer) Acquire(_ context.Context, request chart.Request, opts chart.Options) (chart.Result, error) {
+	acquirer.requests = append(acquirer.requests, request)
+	acquirer.options = append(acquirer.options, opts)
+	if acquirer.acquireErr != nil {
+		return chart.Result{}, acquirer.acquireErr
+	}
+	return chart.Result{
+		ChartDir:   acquirer.chartDir,
+		Repository: request.Repository,
+		Name:       request.Name,
+		Version:    request.Version,
+		Kind:       request.Kind,
+	}, nil
 }
