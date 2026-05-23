@@ -73,7 +73,8 @@ scripts/home-ops-pattern-smoke.sh
 ## Current MVP Limits
 
 - Desired-vs-desired only; no live cluster diff.
-- Git-directory ApplicationSet generator only.
+- ApplicationSet support is limited to top-level Git directories, Git files,
+  and list generators.
 - No config management plugins.
 - No required shellouts in default workflows.
 - No authenticated Git, authenticated remote resources, or remote Kustomize

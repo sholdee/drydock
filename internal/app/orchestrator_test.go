@@ -1021,12 +1021,11 @@ metadata:
   namespace: argocd
 spec:
   generators:
-    - list:
-        elements:
-          - name: generated
+    - matrix:
+        generators: []
   template:
     metadata:
-      name: '{{name}}'
+      name: generated
     spec:
       project: default
       source:

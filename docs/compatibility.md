@@ -5,7 +5,7 @@
 Supported in the MVP:
 
 - Direct `Application` CRs
-- Git-directory `ApplicationSet` CRs
+- Git-directory, Git-files, and list `ApplicationSet` CR expansion
 - Single-source and multi-source planning for supported source types
 - Kustomize and directory rendering, including repo-root-local Kustomize
   references
