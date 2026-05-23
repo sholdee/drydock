@@ -158,10 +158,15 @@ func renderKustomizeHelmCharts(ctx context.Context, tempRepoRoot, tempSourceRoot
 			return nil, err
 		}
 
+		helmOpts, err := renderOptionsForKustomizeHelmChart(helmChart, tempRepoRoot, tempSourceRoot, valueFilesBaseDir, namespaceFallback, generatedName, opts, acquirer)
+		if err != nil {
+			return nil, err
+		}
+
 		rendered, _, err := (HelmRenderer{}).Render(ctx, ResolvedSource{
 			RepoRoot: tempRepoRoot,
 			Path:     chartRel,
-		}, renderOptionsForKustomizeHelmChart(helmChart, valueFilesBaseDir, namespaceFallback, opts, acquirer))
+		}, helmOpts)
 		if err != nil {
 			return nil, err
 		}
@@ -234,12 +239,23 @@ func resolveLocalKustomizeHelmChart(repoRoot, kustomizationDir, chartHome string
 	return rel, true, nil
 }
 
-func renderOptionsForKustomizeHelmChart(helmChart types.HelmChart, valueFilesBaseDir, namespaceFallback string, opts RenderOptions, acquirer chart.Acquirer) RenderOptions {
+func renderOptionsForKustomizeHelmChart(helmChart types.HelmChart, tempRepoRoot, tempSourceRoot, valueFilesBaseDir, namespaceFallback, generatedName string, opts RenderOptions, acquirer chart.Acquirer) (RenderOptions, error) {
 	valueFiles := make([]string, 0, 1+len(helmChart.AdditionalValuesFiles))
+	valuesObject := cloneValues(helmChart.ValuesInline)
+	valuesMergeMode := helmChart.ValuesMerge
 	if helmChart.ValuesFile != "" {
 		valueFiles = append(valueFiles, helmChart.ValuesFile)
 	}
 	valueFiles = append(valueFiles, helmChart.AdditionalValuesFiles...)
+	if len(helmChart.ValuesInline) != 0 {
+		generatedValuesFile, err := writeKustomizeHelmGeneratedValuesFile(tempRepoRoot, tempSourceRoot, valueFilesBaseDir, generatedName, helmChart)
+		if err != nil {
+			return RenderOptions{}, err
+		}
+		valueFiles = append([]string{generatedValuesFile}, helmChart.AdditionalValuesFiles...)
+		valuesObject = nil
+		valuesMergeMode = ""
+	}
 
 	namespace := helmChart.Namespace
 	if namespace == "" {
@@ -254,8 +270,8 @@ func renderOptionsForKustomizeHelmChart(helmChart types.HelmChart, valueFilesBas
 		APIVersions:       append([]string(nil), helmChart.ApiVersions...),
 		ValueFiles:        valueFiles,
 		ValueFilesBaseDir: valueFilesBaseDir,
-		ValuesObject:      cloneValues(helmChart.ValuesInline),
-		ValuesMergeMode:   helmChart.ValuesMerge,
+		ValuesObject:      valuesObject,
+		ValuesMergeMode:   valuesMergeMode,
 		ChartCacheDir:     opts.ChartCacheDir,
 		OfflineCharts:     opts.OfflineCharts,
 		RefreshCharts:     opts.RefreshCharts,
@@ -264,7 +280,39 @@ func renderOptionsForKustomizeHelmChart(helmChart types.HelmChart, valueFilesBas
 		IncludeCRDsSet:    true,
 		SkipHooks:         helmChart.SkipHooks,
 		SkipTests:         helmChart.SkipTests,
+	}, nil
+}
+
+func writeKustomizeHelmGeneratedValuesFile(tempRepoRoot, tempSourceRoot, valueFilesBaseDir, generatedName string, helmChart types.HelmChart) (string, error) {
+	primaryValues := map[string]any{}
+	loadPrimaryValues, err := shouldLoadHelmValueFiles(helmChart.ValuesMerge, helmChart.ValuesInline)
+	if err != nil {
+		return "", err
 	}
+	if loadPrimaryValues && helmChart.ValuesFile != "" {
+		primaryValues, err = loadHelmValueFiles(tempRepoRoot, valueFilesBaseDir, nil, []string{helmChart.ValuesFile}, false)
+		if err != nil {
+			return "", err
+		}
+	}
+	values, err := mergeHelmValues(primaryValues, cloneValues(helmChart.ValuesInline), helmChart.ValuesMerge)
+	if err != nil {
+		return "", err
+	}
+
+	generatedRel := filepath.ToSlash(filepath.Join(".argocd-local", "values", generatedName+".yaml"))
+	generatedPath := filepath.Join(tempSourceRoot, filepath.FromSlash(generatedRel))
+	if err := os.MkdirAll(filepath.Dir(generatedPath), 0o755); err != nil {
+		return "", err
+	}
+	data, err := goyaml.Marshal(values)
+	if err != nil {
+		return "", fmt.Errorf("encode generated helm values %s: %w", generatedRel, err)
+	}
+	if err := os.WriteFile(generatedPath, data, 0o644); err != nil {
+		return "", fmt.Errorf("write generated helm values %s: %w", generatedRel, err)
+	}
+	return generatedRel, nil
 }
 
 func kustomizeHelmChartRepositoryKind(repository string) chart.RepositoryKind {
