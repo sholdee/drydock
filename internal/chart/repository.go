@@ -99,6 +99,9 @@ func (acquirer DefaultAcquirer) fetchHTTPChart(ctx context.Context, request Requ
 		return nil, fmt.Errorf("fetch chart repository index %s: %w", indexURL, err)
 	}
 	defer indexResponse.Body.Close()
+	if indexResponse.StatusCode == http.StatusUnauthorized || indexResponse.StatusCode == http.StatusForbidden {
+		return nil, fmt.Errorf("authenticated chart repositories are not supported yet")
+	}
 	if indexResponse.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("fetch chart repository index %s: %s", indexURL, indexResponse.Status)
 	}
