@@ -244,6 +244,24 @@ func TestOrchestratorBuildRejectsOfflineWithGitNetwork(t *testing.T) {
 	}
 }
 
+func TestOrchestratorBuildRejectsDefaultGitCacheInsideRepoRoot(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("HOME", root)
+	t.Setenv("XDG_CACHE_HOME", filepath.Join(root, ".cache"))
+	writeExternalPathApplication(t, root, "https://github.com/example/external", "manifests/external")
+
+	_, err := Orchestrator{}.Build(context.Background(), BuildRequest{
+		Path:         root,
+		AllowNetwork: true,
+	})
+	if err == nil {
+		t.Fatal("Build() error = nil, want git cache location error")
+	}
+	if !strings.Contains(err.Error(), "git cache dir") || !strings.Contains(err.Error(), "must not be inside repository root") {
+		t.Fatalf("Build() error = %q, want git cache location error", err.Error())
+	}
+}
+
 func TestOrchestratorBuildUsesRepoMappedHelmValueRef(t *testing.T) {
 	root := t.TempDir()
 	valuesRoot := t.TempDir()

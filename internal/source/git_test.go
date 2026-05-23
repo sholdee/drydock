@@ -80,6 +80,81 @@ func TestDefaultGitAcquirerChecksOutBranch(t *testing.T) {
 	}
 }
 
+func TestDefaultGitAcquirerChecksOutFullBranchRef(t *testing.T) {
+	remote := createGitFixture(t)
+	commitFixtureFile(t, remote.repo, remote.worktree, "config.yaml", "version: main\n")
+	checkoutFixtureBranch(t, remote.worktree, "feature")
+	featureHash := commitFixtureFile(t, remote.repo, remote.worktree, "config.yaml", "version: full-ref\n")
+	if err := remote.worktree.Checkout(&git.CheckoutOptions{Branch: plumbing.NewBranchReferenceName("master")}); err != nil {
+		t.Fatalf("Worktree.Checkout(master) error = %v", err)
+	}
+
+	result, err := DefaultGitAcquirer{}.Acquire(context.Background(), GitRequest{
+		URL:      "file://" + filepath.ToSlash(remote.path),
+		Revision: "refs/heads/feature",
+	}, GitOptions{
+		AllowNetwork: true,
+		CacheDir:     t.TempDir(),
+	})
+	if err != nil {
+		t.Fatalf("Acquire() error = %v", err)
+	}
+	if result.Revision != featureHash.String() {
+		t.Fatalf("Revision = %s, want %s", result.Revision, featureHash)
+	}
+	data, err := os.ReadFile(filepath.Join(result.Path, "config.yaml"))
+	if err != nil {
+		t.Fatalf("read cloned file: %v", err)
+	}
+	if string(data) != "version: full-ref\n" {
+		t.Fatalf("cloned file = %q", data)
+	}
+}
+
+func TestDefaultGitAcquirerRefreshesCachedHead(t *testing.T) {
+	remote := createGitFixture(t)
+	firstHash := commitFixtureFile(t, remote.repo, remote.worktree, "config.yaml", "version: first\n")
+	cacheDir := t.TempDir()
+	repoURL := "file://" + filepath.ToSlash(remote.path)
+
+	first, err := DefaultGitAcquirer{}.Acquire(context.Background(), GitRequest{
+		URL:      repoURL,
+		Revision: "HEAD",
+	}, GitOptions{
+		AllowNetwork: true,
+		CacheDir:     cacheDir,
+	})
+	if err != nil {
+		t.Fatalf("first Acquire() error = %v", err)
+	}
+	if first.Revision != firstHash.String() {
+		t.Fatalf("first Revision = %s, want %s", first.Revision, firstHash)
+	}
+
+	secondHash := commitFixtureFile(t, remote.repo, remote.worktree, "config.yaml", "version: second\n")
+	second, err := DefaultGitAcquirer{}.Acquire(context.Background(), GitRequest{
+		URL:      repoURL,
+		Revision: "HEAD",
+	}, GitOptions{
+		AllowNetwork: true,
+		CacheDir:     cacheDir,
+		Refresh:      true,
+	})
+	if err != nil {
+		t.Fatalf("second Acquire() error = %v", err)
+	}
+	if second.Revision != secondHash.String() {
+		t.Fatalf("second Revision = %s, want %s", second.Revision, secondHash)
+	}
+	data, err := os.ReadFile(filepath.Join(second.Path, "config.yaml"))
+	if err != nil {
+		t.Fatalf("read refreshed file: %v", err)
+	}
+	if string(data) != "version: second\n" {
+		t.Fatalf("refreshed file = %q", data)
+	}
+}
+
 func TestDefaultGitAcquirerChecksOutTag(t *testing.T) {
 	remote := createGitFixture(t)
 	tagHash := commitFixtureFile(t, remote.repo, remote.worktree, "config.yaml", "version: tag\n")
