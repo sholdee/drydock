@@ -14,17 +14,21 @@ import (
 	"github.com/home-operations/argocd-local/internal/chart"
 	"github.com/home-operations/argocd-local/internal/diagnostic"
 	"github.com/home-operations/argocd-local/internal/discovery"
+	"github.com/home-operations/argocd-local/internal/remote"
 	"github.com/home-operations/argocd-local/internal/render"
 	sourcepkg "github.com/home-operations/argocd-local/internal/source"
 )
 
 type BuildRequest struct {
-	Path          string
-	Strict        bool
-	Offline       bool
-	RefreshCharts bool
-	ChartCacheDir string
-	Applications  []argoappv1.Application
+	Path                         string
+	Strict                       bool
+	Offline                      bool
+	RefreshCharts                bool
+	ChartCacheDir                string
+	RefreshRemoteResources       bool
+	RemoteResourceCacheDir       string
+	RemoteResourceForbiddenRoots []string
+	Applications                 []argoappv1.Application
 }
 
 type ApplicationManifest struct {
@@ -46,7 +50,8 @@ type BuildResult struct {
 }
 
 type Orchestrator struct {
-	ChartAcquirer chart.Acquirer
+	ChartAcquirer          chart.Acquirer
+	RemoteResourceAcquirer remote.Acquirer
 }
 
 func (o Orchestrator) ListApplications(_ context.Context, request BuildRequest) (BuildResult, error) {
@@ -128,12 +133,18 @@ func (o Orchestrator) Build(ctx context.Context, request BuildRequest) (BuildRes
 	if acquirer == nil {
 		acquirer = chart.DefaultAcquirer{}
 	}
+	forbiddenRoots := append([]string(nil), request.RemoteResourceForbiddenRoots...)
+	forbiddenRoots = append(forbiddenRoots, root)
 	provider := localProvider{
-		repoRoot:      root,
-		chartAcquirer: acquirer,
-		offline:       request.Offline,
-		refreshCharts: request.RefreshCharts,
-		chartCacheDir: request.ChartCacheDir,
+		repoRoot:                     root,
+		chartAcquirer:                acquirer,
+		remoteResourceAcquirer:       o.RemoteResourceAcquirer,
+		offline:                      request.Offline,
+		refreshCharts:                request.RefreshCharts,
+		chartCacheDir:                request.ChartCacheDir,
+		refreshRemoteResources:       request.RefreshRemoteResources,
+		remoteResourceCacheDir:       request.RemoteResourceCacheDir,
+		remoteResourceForbiddenRoots: forbiddenRoots,
 	}
 	for _, application := range result.Applications {
 		rendered, err := RenderApplication(ctx, application, provider)
@@ -158,11 +169,15 @@ func (o Orchestrator) Build(ctx context.Context, request BuildRequest) (BuildRes
 }
 
 type localProvider struct {
-	repoRoot      string
-	chartAcquirer chart.Acquirer
-	offline       bool
-	refreshCharts bool
-	chartCacheDir string
+	repoRoot                     string
+	chartAcquirer                chart.Acquirer
+	remoteResourceAcquirer       remote.Acquirer
+	offline                      bool
+	refreshCharts                bool
+	chartCacheDir                string
+	refreshRemoteResources       bool
+	remoteResourceCacheDir       string
+	remoteResourceForbiddenRoots []string
 }
 
 func (p localProvider) RenderSource(ctx context.Context, source render.ResolvedSource, opts render.RenderOptions) ([]render.Manifest, []diagnostic.Diagnostic, error) {
@@ -171,6 +186,11 @@ func (p localProvider) RenderSource(ctx context.Context, source render.ResolvedS
 	opts.ChartCacheDir = p.chartCacheDir
 	opts.OfflineCharts = p.offline
 	opts.RefreshCharts = p.refreshCharts
+	opts.RemoteResourceAcquirer = p.remoteResourceAcquirer
+	opts.RemoteResourceCacheDir = p.remoteResourceCacheDir
+	opts.OfflineRemoteResources = p.offline
+	opts.RefreshRemoteResources = p.refreshRemoteResources
+	opts.RemoteResourceForbiddenRoots = p.remoteResourceForbiddenRoots
 	refRoots, err := anchorLocalRefRoots(p.repoRoot, opts.RefRoots)
 	if err != nil {
 		return nil, nil, err

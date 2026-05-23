@@ -5,6 +5,7 @@ import (
 
 	"github.com/home-operations/argocd-local/internal/chart"
 	"github.com/home-operations/argocd-local/internal/diagnostic"
+	"github.com/home-operations/argocd-local/internal/remote"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 )
 
@@ -17,26 +18,31 @@ type ResolvedSource struct {
 }
 
 type RenderOptions struct {
-	AppName                 string
-	Namespace               string
-	KubeVersion             string
-	APIVersions             []string
-	BuildOptions            []string
-	RefRoots                map[string]string
-	ReleaseName             string
-	ValuesObject            map[string]any
-	ValuesMergeMode         string
-	ValueFiles              []string
-	ValueFilesBaseDir       string
-	IgnoreMissingValueFiles bool
-	ChartCacheDir           string
-	OfflineCharts           bool
-	RefreshCharts           bool
-	ChartAcquirer           chart.Acquirer
-	IncludeCRDs             bool
-	IncludeCRDsSet          bool
-	SkipHooks               bool
-	SkipTests               bool
+	AppName                      string
+	Namespace                    string
+	KubeVersion                  string
+	APIVersions                  []string
+	BuildOptions                 []string
+	RefRoots                     map[string]string
+	ReleaseName                  string
+	ValuesObject                 map[string]any
+	ValuesMergeMode              string
+	ValueFiles                   []string
+	ValueFilesBaseDir            string
+	IgnoreMissingValueFiles      bool
+	ChartCacheDir                string
+	OfflineCharts                bool
+	RefreshCharts                bool
+	ChartAcquirer                chart.Acquirer
+	RemoteResourceCacheDir       string
+	OfflineRemoteResources       bool
+	RefreshRemoteResources       bool
+	RemoteResourceForbiddenRoots []string
+	RemoteResourceAcquirer       remote.Acquirer
+	IncludeCRDs                  bool
+	IncludeCRDsSet               bool
+	SkipHooks                    bool
+	SkipTests                    bool
 }
 
 type Manifest struct {

@@ -80,6 +80,23 @@ func TestOrchestratorDiffImagesReportsUnchangedImage(t *testing.T) {
 	}
 }
 
+func TestDiffAppsRejectsRemoteCacheInsideEitherRoot(t *testing.T) {
+	left := t.TempDir()
+	right := t.TempDir()
+
+	_, err := Orchestrator{}.DiffApps(context.Background(), DiffRequest{
+		LeftPath:               left,
+		RightPath:              right,
+		RemoteResourceCacheDir: filepath.Join(right, ".argocd-local", "remotes"),
+	})
+	if err == nil {
+		t.Fatal("DiffApps() error = nil, want cache containment error")
+	}
+	if !strings.Contains(err.Error(), "must not be inside repository root") {
+		t.Fatalf("DiffApps() error = %v, want cache containment error", err)
+	}
+}
+
 func TestOrchestratorDiffAppsChangedOnlyFallsBackOnUnownedCurrentPath(t *testing.T) {
 	root := t.TempDir()
 	left := filepath.Join(root, "left")

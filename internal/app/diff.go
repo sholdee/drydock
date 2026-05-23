@@ -10,19 +10,22 @@ import (
 	"github.com/home-operations/argocd-local/internal/diagnostic"
 	"github.com/home-operations/argocd-local/internal/diff"
 	"github.com/home-operations/argocd-local/internal/manifest"
+	"github.com/home-operations/argocd-local/internal/remote"
 	"go.yaml.in/yaml/v4"
 )
 
 type DiffRequest struct {
-	LeftPath          string
-	RightPath         string
-	ChangedOnly       bool
-	StrictChangedOnly bool
-	Strict            bool
-	Unified           int
-	Offline           bool
-	RefreshCharts     bool
-	ChartCacheDir     string
+	LeftPath               string
+	RightPath              string
+	ChangedOnly            bool
+	StrictChangedOnly      bool
+	Strict                 bool
+	Unified                int
+	Offline                bool
+	RefreshCharts          bool
+	ChartCacheDir          string
+	RefreshRemoteResources bool
+	RemoteResourceCacheDir string
 }
 
 type DiffResult struct {
@@ -119,12 +122,26 @@ func compareStringSets(left, right []string) (added, removed, unchanged []string
 }
 
 func (o Orchestrator) buildDiffSides(ctx context.Context, request DiffRequest) (BuildResult, BuildResult, []diagnostic.Diagnostic, error) {
+	forbiddenRoots := []string{request.LeftPath, request.RightPath}
+	if request.RemoteResourceCacheDir != "" {
+		inside, root, err := remote.IsPathInsideAny(request.RemoteResourceCacheDir, forbiddenRoots)
+		if err != nil {
+			return BuildResult{}, BuildResult{}, nil, err
+		}
+		if inside {
+			return BuildResult{}, BuildResult{}, nil, fmt.Errorf("remote resource cache dir %q must not be inside repository root %q", request.RemoteResourceCacheDir, root)
+		}
+	}
+
 	leftBuildRequest := BuildRequest{
-		Path:          request.LeftPath,
-		Strict:        request.Strict,
-		Offline:       request.Offline,
-		RefreshCharts: request.RefreshCharts,
-		ChartCacheDir: request.ChartCacheDir,
+		Path:                         request.LeftPath,
+		Strict:                       request.Strict,
+		Offline:                      request.Offline,
+		RefreshCharts:                request.RefreshCharts,
+		ChartCacheDir:                request.ChartCacheDir,
+		RefreshRemoteResources:       request.RefreshRemoteResources,
+		RemoteResourceCacheDir:       request.RemoteResourceCacheDir,
+		RemoteResourceForbiddenRoots: forbiddenRoots,
 	}
 	rightBuildRequest := leftBuildRequest
 	rightBuildRequest.Path = request.RightPath

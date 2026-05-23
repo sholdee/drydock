@@ -166,18 +166,22 @@ func TestDiffImagesPrintsDiagnosticsOnStrictChangedOnlyError(t *testing.T) {
 	}
 }
 
-func TestChartCacheFlagsAreRegistered(t *testing.T) {
+func TestNetworkCacheFlagsAreRegistered(t *testing.T) {
 	tests := []struct {
 		name string
 		args []string
 	}{
 		{
 			name: "build apps",
-			args: []string{"build", "apps", "--offline", "--refresh-charts", "--chart-cache-dir", "/tmp/charts", "--path", "missing"},
+			args: []string{"build", "apps", "--offline", "--refresh-charts", "--chart-cache-dir", "/tmp/charts", "--refresh-remotes", "--remote-cache-dir", "/tmp/remotes", "--path", "missing"},
 		},
 		{
 			name: "diff apps",
-			args: []string{"diff", "apps", "--offline", "--refresh-charts", "--chart-cache-dir", "/tmp/charts", "--path", "missing", "--path-orig", "base"},
+			args: []string{"diff", "apps", "--offline", "--refresh-charts", "--chart-cache-dir", "/tmp/charts", "--refresh-remotes", "--remote-cache-dir", "/tmp/remotes", "--path", "missing", "--path-orig", "base"},
+		},
+		{
+			name: "diff images",
+			args: []string{"diff", "images", "--offline", "--refresh-charts", "--chart-cache-dir", "/tmp/charts", "--refresh-remotes", "--remote-cache-dir", "/tmp/remotes", "--path", "missing", "--path-orig", "base"},
 		},
 	}
 
@@ -195,7 +199,7 @@ func TestChartCacheFlagsAreRegistered(t *testing.T) {
 				t.Fatal("Execute() error = nil, want runtime error after parsing")
 			}
 			if strings.Contains(err.Error(), "unknown flag") {
-				t.Fatalf("Execute() error = %v, want registered chart cache flags", err)
+				t.Fatalf("Execute() error = %v, want registered network cache flags", err)
 			}
 		})
 	}
