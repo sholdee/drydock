@@ -96,3 +96,54 @@ spec:
 		t.Fatalf("build apps stderr = %q, want %q", got, wantStderr)
 	}
 }
+
+func TestBuildAppRendersOnlyNamedApplication(t *testing.T) {
+	root := t.TempDir()
+	writeSimpleAppForCLI(t, root, "old")
+	writeNamedCLIApplication(t, root, "other", "other", "skip")
+
+	cmd := NewRootCommand(VersionInfo{})
+	cmd.SetArgs([]string{"build", "app", "demo", "--path", root})
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	cmd.SetOut(&stdout)
+	cmd.SetErr(&stderr)
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("Execute() error = %v\nstdout:\n%s\nstderr:\n%s", err, stdout.String(), stderr.String())
+	}
+	for _, want := range []string{"kind: ConfigMap", "name: demo", "value: old"} {
+		if !strings.Contains(stdout.String(), want) {
+			t.Fatalf("stdout missing %q:\n%s", want, stdout.String())
+		}
+	}
+	if strings.Contains(stdout.String(), "skip") || strings.Contains(stdout.String(), "other") {
+		t.Fatalf("stdout included non-selected app:\n%s", stdout.String())
+	}
+	if stderr.String() != "" {
+		t.Fatalf("stderr = %q, want empty", stderr.String())
+	}
+}
+
+func TestBuildAppReportsMissingApplication(t *testing.T) {
+	root := t.TempDir()
+	writeSimpleAppForCLI(t, root, "old")
+
+	cmd := NewRootCommand(VersionInfo{})
+	cmd.SetArgs([]string{"build", "app", "missing", "--path", root})
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	cmd.SetOut(&stdout)
+	cmd.SetErr(&stderr)
+
+	err := cmd.Execute()
+	if err == nil {
+		t.Fatal("Execute() error = nil, want missing app error")
+	}
+	if !strings.Contains(err.Error(), `application "missing" not found`) {
+		t.Fatalf("error = %v, want missing app message", err)
+	}
+	if stdout.String() != "" {
+		t.Fatalf("stdout = %q, want empty", stdout.String())
+	}
+}

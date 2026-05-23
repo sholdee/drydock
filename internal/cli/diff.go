@@ -46,19 +46,7 @@ func newDiffCommand(deps Dependencies) *cobra.Command {
 				}
 				return err
 			}
-			if err := renderDiagnostics(cmd.ErrOrStderr(), result.Diagnostics); err != nil {
-				return err
-			}
-			for _, item := range result.Results {
-				if _, err := fmt.Fprint(cmd.OutOrStdout(), item.Diff); err != nil {
-					return err
-				}
-			}
-			code := exitCode(nil, !appsFlags.exitCode, len(result.Results) > 0)
-			if code != 0 {
-				return ExitError{Code: code}
-			}
-			return nil
+			return renderDiffResult(cmd, result, !appsFlags.exitCode)
 		},
 	}
 	bindCommonFlags(apps, &appsFlags)
@@ -69,7 +57,27 @@ func newDiffCommand(deps Dependencies) *cobra.Command {
 		Short: "Diff one Application",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return fmt.Errorf("%s for %q is not wired yet for path %s", cmd.CommandPath(), args[0], appFlags.path)
+			result, err := deps.Orchestrator.DiffApp(context.Background(), app.DiffAppRequest{
+				Name: args[0],
+				DiffRequest: app.DiffRequest{
+					LeftPath:               appFlags.pathOrig,
+					RightPath:              appFlags.path,
+					Strict:                 appFlags.strict,
+					Unified:                appFlags.unified,
+					Offline:                appFlags.offline,
+					RefreshCharts:          appFlags.refreshCharts,
+					ChartCacheDir:          appFlags.chartCacheDir,
+					RefreshRemoteResources: appFlags.refreshRemotes,
+					RemoteResourceCacheDir: appFlags.remoteCacheDir,
+				},
+			})
+			if err != nil {
+				if renderErr := renderDiagnostics(cmd.ErrOrStderr(), result.Diagnostics); renderErr != nil {
+					return renderErr
+				}
+				return err
+			}
+			return renderDiffResult(cmd, result, !appFlags.exitCode)
 		},
 	}
 	bindCommonFlags(appCmd, &appFlags)
@@ -122,4 +130,20 @@ func newDiffCommand(deps Dependencies) *cobra.Command {
 
 	cmd.AddCommand(apps, appCmd, images)
 	return cmd
+}
+
+func renderDiffResult(cmd *cobra.Command, result app.DiffResult, disableDiffExitCode bool) error {
+	if err := renderDiagnostics(cmd.ErrOrStderr(), result.Diagnostics); err != nil {
+		return err
+	}
+	for _, item := range result.Results {
+		if _, err := fmt.Fprint(cmd.OutOrStdout(), item.Diff); err != nil {
+			return err
+		}
+	}
+	code := exitCode(nil, disableDiffExitCode, len(result.Results) > 0)
+	if code != 0 {
+		return ExitError{Code: code}
+	}
+	return nil
 }
