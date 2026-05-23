@@ -28,8 +28,8 @@ Current top-level commands:
   Applications between a baseline tree and current tree.
 - `argocd-local diff app NAME --path . --path-orig ../base`: command is
   present but not wired yet.
-- `argocd-local diff images --path . --path-orig ../base`: command is present
-  but not wired yet.
+- `argocd-local diff images --path . --path-orig ../base`: render both trees
+  and compare conservative workload container images.
 - `argocd-local diag --path .`: command is present but not wired yet.
 - `argocd-local version`: print version, commit, Go version, and Argo CD module.
 
@@ -38,8 +38,7 @@ Current shared flags are `--path`, `--path-orig`, `--repo-map`,
 `--changed-only`, `--strict-changed-only`, `--strict`, `--exit-code`,
 `--output`/`-o`, `--unified`/`-u`, and `--limit-bytes`.
 Some flags are parsed ahead of wiring: `--repo-map` and `--allow-network` do
-not currently drive the E2E build path, and `diff app`/`diff images` are not
-wired yet.
+not currently drive the E2E build path, and `diff app` is not wired yet.
 
 ## Settings Discovery
 

@@ -76,6 +76,34 @@ func TestDiffAppsPrintsManifestDiff(t *testing.T) {
 	}
 }
 
+func TestDiffImagesPrintsImageDiff(t *testing.T) {
+	root := t.TempDir()
+	left := filepath.Join(root, "left")
+	right := filepath.Join(root, "right")
+	writeImageAppForCLI(t, left, "example/app:v1")
+	writeImageAppForCLI(t, right, "example/app:v2")
+
+	cmd := NewRootCommand(VersionInfo{})
+	cmd.SetArgs([]string{"diff", "images", "--path-orig", left, "--path", right, "--exit-code=false"})
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	cmd.SetOut(&stdout)
+	cmd.SetErr(&stderr)
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+
+	for _, want := range []string{"- example/app:v1", "+ example/app:v2"} {
+		if !strings.Contains(stdout.String(), want) {
+			t.Fatalf("stdout missing %q:\nstdout:\n%s\nstderr:\n%s", want, stdout.String(), stderr.String())
+		}
+	}
+	if stderr.String() != "" {
+		t.Fatalf("stderr = %q, want empty", stderr.String())
+	}
+}
+
 func TestDiffAppsPrintsDiagnosticsOnStrictChangedOnlyError(t *testing.T) {
 	root := t.TempDir()
 	left := filepath.Join(root, "left")
@@ -87,6 +115,37 @@ func TestDiffAppsPrintsDiagnosticsOnStrictChangedOnlyError(t *testing.T) {
 
 	cmd := NewRootCommand(VersionInfo{})
 	cmd.SetArgs([]string{"diff", "apps", "--path-orig", left, "--path", right, "--strict-changed-only"})
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	cmd.SetOut(&stdout)
+	cmd.SetErr(&stderr)
+
+	err := cmd.Execute()
+	if err == nil {
+		t.Fatal("Execute() error = nil, want strict changed-only error")
+	}
+
+	for _, want := range []string{"error changed-only:", "README.md"} {
+		if !strings.Contains(stderr.String(), want) {
+			t.Fatalf("stderr missing %q:\nstdout:\n%s\nstderr:\n%s", want, stdout.String(), stderr.String())
+		}
+	}
+	if stdout.String() != "" {
+		t.Fatalf("stdout = %q, want empty output on strict changed-only error", stdout.String())
+	}
+}
+
+func TestDiffImagesPrintsDiagnosticsOnStrictChangedOnlyError(t *testing.T) {
+	root := t.TempDir()
+	left := filepath.Join(root, "left")
+	right := filepath.Join(root, "right")
+	writeImageAppForCLI(t, left, "example/app:v1")
+	writeImageAppForCLI(t, right, "example/app:v2")
+	writeCLITestFile(t, filepath.Join(left, "README.md"), "left\n")
+	writeCLITestFile(t, filepath.Join(right, "README.md"), "right\n")
+
+	cmd := NewRootCommand(VersionInfo{})
+	cmd.SetArgs([]string{"diff", "images", "--path-orig", left, "--path", right, "--strict-changed-only"})
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
 	cmd.SetOut(&stdout)
@@ -164,5 +223,40 @@ metadata:
   name: demo
 data:
   value: `+value+`
+`)
+}
+
+func writeImageAppForCLI(t *testing.T, root, image string) {
+	t.Helper()
+	writeCLITestFile(t, filepath.Join(root, "apps", "demo.yaml"), `apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: demo
+  namespace: argocd
+spec:
+  source:
+    repoURL: https://github.com/example/repo
+    path: manifests/demo
+    targetRevision: main
+  destination:
+    name: in-cluster
+    namespace: demo
+`)
+	writeCLITestFile(t, filepath.Join(root, "manifests", "demo", "deployment.yaml"), `apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: demo
+spec:
+  selector:
+    matchLabels:
+      app: demo
+  template:
+    metadata:
+      labels:
+        app: demo
+    spec:
+      containers:
+        - name: app
+          image: `+image+`
 `)
 }

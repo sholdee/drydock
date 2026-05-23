@@ -30,6 +30,13 @@ type DiffResult struct {
 	Diagnostics []diagnostic.Diagnostic
 }
 
+type ImageDiffResult struct {
+	Added       []string
+	Removed     []string
+	Unchanged   []string
+	Diagnostics []diagnostic.Diagnostic
+}
+
 func (o Orchestrator) DiffApps(ctx context.Context, request DiffRequest) (DiffResult, error) {
 	if request.LeftPath == "" {
 		return DiffResult{}, fmt.Errorf("--path-orig is required")
@@ -56,6 +63,59 @@ func (o Orchestrator) DiffApps(ctx context.Context, request DiffRequest) (DiffRe
 		return DiffResult{Diagnostics: diagnostics}, err
 	}
 	return DiffResult{Results: results, Diagnostics: diagnostics}, nil
+}
+
+func (o Orchestrator) DiffImages(ctx context.Context, request DiffRequest) (ImageDiffResult, error) {
+	if request.LeftPath == "" {
+		return ImageDiffResult{}, fmt.Errorf("--path-orig is required")
+	}
+	if request.RightPath == "" {
+		return ImageDiffResult{}, fmt.Errorf("--path is required")
+	}
+
+	leftBuild, rightBuild, diagnostics, err := o.buildDiffSides(ctx, request)
+	if err != nil {
+		return ImageDiffResult{Diagnostics: diagnostics}, err
+	}
+
+	leftDocs, err := diffDocuments(leftBuild)
+	if err != nil {
+		return ImageDiffResult{Diagnostics: diagnostics}, err
+	}
+	rightDocs, err := diffDocuments(rightBuild)
+	if err != nil {
+		return ImageDiffResult{Diagnostics: diagnostics}, err
+	}
+
+	added, removed, unchanged := compareStringSets(diff.ExtractImages(leftDocs), diff.ExtractImages(rightDocs))
+	return ImageDiffResult{
+		Added:       added,
+		Removed:     removed,
+		Unchanged:   unchanged,
+		Diagnostics: diagnostics,
+	}, nil
+}
+
+func compareStringSets(left, right []string) (added, removed, unchanged []string) {
+	leftIndex := 0
+	rightIndex := 0
+	for leftIndex < len(left) && rightIndex < len(right) {
+		switch {
+		case left[leftIndex] == right[rightIndex]:
+			unchanged = append(unchanged, left[leftIndex])
+			leftIndex++
+			rightIndex++
+		case left[leftIndex] < right[rightIndex]:
+			removed = append(removed, left[leftIndex])
+			leftIndex++
+		default:
+			added = append(added, right[rightIndex])
+			rightIndex++
+		}
+	}
+	removed = append(removed, left[leftIndex:]...)
+	added = append(added, right[rightIndex:]...)
+	return added, removed, unchanged
 }
 
 func (o Orchestrator) buildDiffSides(ctx context.Context, request DiffRequest) (BuildResult, BuildResult, []diagnostic.Diagnostic, error) {
