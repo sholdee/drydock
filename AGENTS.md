@@ -35,8 +35,9 @@ Current top-level commands:
 
 Current shared flags are `--path`, `--path-orig`, `--repo-map`,
 `--allow-network`, `--offline`, `--refresh-charts`, `--chart-cache-dir`,
-`--changed-only`, `--strict-changed-only`, `--strict`, `--exit-code`,
-`--output`/`-o`, `--unified`/`-u`, and `--limit-bytes`.
+`--refresh-remotes`, `--remote-cache-dir`, `--changed-only`,
+`--strict-changed-only`, `--strict`, `--exit-code`, `--output`/`-o`,
+`--unified`/`-u`, and `--limit-bytes`.
 Some flags are parsed ahead of wiring: `--repo-map` and `--allow-network` do
 not currently drive the E2E build/diff path, and `diff app` and `diag` are not
 wired yet.
@@ -71,8 +72,9 @@ The MVP currently supports:
 - Direct `Application` CR discovery.
 - Git-directory `ApplicationSet` CR expansion.
 - Single-source and multi-source planning for supported source types.
-- Kustomize, directory, local Helm chart, Kustomize `helmCharts`, and
-  chart-only remote Helm source rendering through Go libraries.
+- Kustomize, directory, local Helm chart, Kustomize `helmCharts`, safe
+  single-file HTTP(S) Kustomize `resources:`, and chart-only remote Helm source
+  rendering through Go libraries.
 - Repeated-resource last-wins behavior inside one Application, with a
   diagnostic.
 - Parent Application-aware desired manifest identity for diffs.
@@ -93,7 +95,9 @@ Do not treat these as supported without an explicit design update:
 - Additional ApplicationSet generators beyond Git directories.
 - Required default shellouts to `helm`, `kustomize`, `kubectl`, or `argocd`.
 - Authenticated/private Helm chart repositories.
-- Remote Kustomize refs and Git/repository-source fetching.
+- Remote Kustomize bases, components, patches, generators, transformers,
+  validators, `crds`, `openapi`, replacements, authenticated remote resources,
+  and Git/repository-source fetching.
 
 ## Source Resolution
 
@@ -106,11 +110,16 @@ future Git/repository-source fetching and must not control Helm chart
 acquisition.
 Chart acquisition is shared by Kustomize `helmCharts` and Argo CD chart-only
 sources. Public chart fetching is allowed by default for render/diff commands;
-`--offline` disables chart network fetches. Cache charts under the user cache or
-`--chart-cache-dir`, never inside the Git repository tree.
+`--offline` disables chart and remote Kustomize resource network fetches. Cache
+charts under the user cache or `--chart-cache-dir`, never inside the Git
+repository tree.
 Chart network behavior is controlled by `--offline`, `--refresh-charts`, and
 `--chart-cache-dir`. Do not reuse `--allow-network` for Helm chart fetching;
 that flag is reserved for future Git/repository-source fetching.
+Remote Kustomize resource network behavior is controlled by `--offline`,
+`--refresh-remotes`, and `--remote-cache-dir`. Cache remote Kustomize resources
+under the user cache or `--remote-cache-dir`, never inside the Git repository
+tree.
 OCI chart acquisition must use Helm registry Go libraries, not helm pull.
 Authenticated/private chart repositories remain unsupported and must fail with
 a clear message instead of prompting or reading credentials.
@@ -151,15 +160,21 @@ Kustomize rendering uses Go libraries. Preserve the no-shellout path. Build
 options from Argo settings must be parsed and applied explicitly; do not pass
 opaque command-line strings to a shell. Until that parsing exists, nonempty
 Kustomize build options must fail explicitly. Before invoking Kustomize,
-prevalidate local Kustomization graph references and reject remote refs,
-absolute paths, repo-root escapes, and symlinked graph entries. Kustomize graph
-references may point elsewhere inside the same repository, such as shared
-components/, but must not escape the repository root or traverse symlinked
-graph entries. Treat Kustomize path-bearing fields fail-closed: validate new
-fields before render rather than assuming Kustomize's loader restrictions are
-enough. Kustomize helmCharts must be rendered through argocd-local's chart
+prevalidate local Kustomization graph references and reject unsupported remote
+refs, absolute paths, repo-root escapes, and symlinked graph entries.
+Kustomize graph references may point elsewhere inside the same repository, such
+as shared components/, but must not escape the repository root or traverse
+symlinked graph entries. Treat Kustomize path-bearing fields fail-closed:
+validate new fields before render rather than assuming Kustomize's loader
+restrictions are enough. Kustomize helmCharts must be rendered through
+argocd-local's chart
 acquisition and Helm Go renderer into a temporary workspace. Do not enable
 Kustomize's Helm shellout plugin or write generated charts into the Git tree.
+Single-file HTTP(S) Kustomize `resources:` entries are fetched through
+argocd-local's remote resource cache and rewritten into the temporary
+Kustomize workspace. Remote Kustomize bases, components, patches, generators,
+transformers, validators, `crds`, `openapi`, replacements, authenticated remote
+resources, and Git-style refs remain unsupported.
 Helm rendering must use Go libraries by default. Preserve these Argo CD
 semantics in the MVP: release name defaults to Application name, destination
 namespace is passed to Helm, and `valuesObject` overrides `values`.
@@ -190,7 +205,9 @@ Never mutate `/Users/ethan.shold/git/home-ops` directly from tests.
 `docs/home-ops-pattern-coverage.md` is the source of truth for real
 `home-ops` pattern coverage. Normal tests must use portable fixtures; optional
 smoke scripts may target the real checkout through temporary worktrees only.
-Remote Kustomize resources remain unsupported until explicitly designed.
+Portable fixtures cover safe single-file HTTP(S) Kustomize resources. The real
+`home-ops` `apps/system-upgrade` remote-resource pattern is covered and
+supported in that narrow form.
 
 Run the smallest check that covers your change:
 
@@ -242,6 +259,8 @@ should stay suppressed for runtime failures.
   keep them local-only until repository fetching is explicitly wired.
 - Do not use `--allow-network` as the Helm chart-fetch flag; chart fetching is
   controlled by `--offline`, `--refresh-charts`, and `--chart-cache-dir`.
+- Do not put chart or remote Kustomize resource caches inside Git repository
+  trees.
 - Do not print Secret manifest values or repository credentials in diagnostics.
 - Do not hard-code one user's repository layout or `home-ops` paths.
 - Do not collapse overlapping Applications to one owner in changed-only mode.

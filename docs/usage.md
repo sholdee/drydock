@@ -22,19 +22,27 @@ argocd-local build apps --path .
 ```
 
 Rendering supports directory sources, Kustomize sources, local Helm charts,
-Kustomize `helmCharts`, and Argo CD chart-only remote Helm sources. Public Helm
-chart fetching is enabled by default when a render needs chart dependencies.
+Kustomize `helmCharts`, safe single-file HTTP(S) Kustomize `resources:`, and
+Argo CD chart-only remote Helm sources. Public Helm chart fetching is enabled
+by default when a render needs chart dependencies.
 
-Chart cache flags:
+Network and cache flags:
 
-- `--offline` disables Helm chart network fetching and requires a cached or
-  local chart to already be available.
+- `--offline` disables Helm chart and remote Kustomize resource network
+  fetching. It requires cached or local charts and cached remote Kustomize
+  resources.
 - `--refresh-charts` refreshes cached immutable chart entries before rendering.
 - `--chart-cache-dir PATH` overrides the default user cache directory for
   acquired charts.
+- `--refresh-remotes` refreshes cached remote Kustomize resources before
+  rendering.
+- `--remote-cache-dir PATH` overrides the default user cache directory for
+  cached remote Kustomize resources.
 
 `--allow-network` is not the Helm chart-fetch flag. It is parsed for future
 Git/repository-source fetching, which is not wired yet.
+
+Caches must stay outside Git repository trees.
 
 ## Manifest Diffs
 
@@ -78,8 +86,10 @@ These commands and source paths are not wired in the current MVP:
 
 - `argocd-local diff app NAME --path ./current --path-orig ../base`
 - `argocd-local diag --path .`
-- Remote Kustomize refs.
+- Remote Kustomize Git refs, bases, components, patches, generators,
+  transformers, validators, `crds`, `openapi`, and replacements.
 - Git/repository-source fetching, including `--allow-network` behavior.
+- Authenticated remote resources.
 - Authenticated or private Helm chart repositories.
 
 `--repo-map` is parsed as future command surface, but the current E2E build and
