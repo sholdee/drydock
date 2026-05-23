@@ -23,6 +23,7 @@ type DiffRequest struct {
 	StrictChangedOnly      bool
 	Strict                 bool
 	Unified                int
+	StripAttrs             []string
 	Offline                bool
 	RefreshCharts          bool
 	ChartCacheDir          string
@@ -61,7 +62,7 @@ func (o Orchestrator) DiffApps(ctx context.Context, request DiffRequest) (DiffRe
 		return DiffResult{Diagnostics: diagnostics}, err
 	}
 
-	results, err := diffBuildResults(leftBuild, rightBuild, request.Unified)
+	results, err := diffBuildResults(leftBuild, rightBuild, diff.Options{Unified: request.Unified, StripAttrs: request.StripAttrs})
 	if err != nil {
 		return DiffResult{Diagnostics: diagnostics}, err
 	}
@@ -123,7 +124,7 @@ func (o Orchestrator) DiffApp(ctx context.Context, request DiffAppRequest) (Diff
 		return DiffResult{Diagnostics: diagnostics}, err
 	}
 
-	results, err := diffBuildResults(leftBuild, rightBuild, request.Unified)
+	results, err := diffBuildResults(leftBuild, rightBuild, diff.Options{Unified: request.Unified, StripAttrs: request.StripAttrs})
 	if err != nil {
 		return DiffResult{Diagnostics: diagnostics}, err
 	}
@@ -228,7 +229,7 @@ func selectedApplications(application argoappv1.Application, ok bool) []argoappv
 	return []argoappv1.Application{application}
 }
 
-func diffBuildResults(leftBuild, rightBuild BuildResult, unified int) ([]diff.Result, error) {
+func diffBuildResults(leftBuild, rightBuild BuildResult, opts diff.Options) ([]diff.Result, error) {
 	leftDocs, err := diffDocuments(leftBuild)
 	if err != nil {
 		return nil, err
@@ -237,7 +238,7 @@ func diffBuildResults(leftBuild, rightBuild BuildResult, unified int) ([]diff.Re
 	if err != nil {
 		return nil, err
 	}
-	return diff.Run(leftDocs, rightDocs, diff.Options{Unified: unified})
+	return diff.Run(leftDocs, rightDocs, opts)
 }
 
 func (o Orchestrator) buildDiffSides(ctx context.Context, request DiffRequest) (BuildResult, BuildResult, []diagnostic.Diagnostic, error) {

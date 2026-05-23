@@ -103,6 +103,26 @@ renders all Applications. Use `--changed-only=false` to render all
 Applications explicitly, or `--strict-changed-only` to fail on incomplete input
 ownership.
 
+Manifest diffs default to unified diff output. `diff apps` and `diff app`
+also support `-o json` and `-o yaml`, which serialize the structured
+`[]diff.Result` payload. Diagnostics remain on stderr so stdout stays valid
+JSON or YAML. `-o name` is not supported for manifest diffs.
+
+Use repeatable `--strip-attr KEY` to remove matching keys from
+`metadata.labels` and `metadata.annotations` before comparing rendered
+manifests and generating diffs:
+
+```bash
+argocd-local diff apps \
+  --path-orig ../base \
+  --path ./current \
+  --strip-attr helm.sh/chart \
+  --strip-attr app.kubernetes.io/version
+```
+
+If stripped attributes are the only rendered difference for a resource, no diff
+result is emitted for that resource.
+
 Diff one requested Application by `metadata.name`:
 
 ```bash

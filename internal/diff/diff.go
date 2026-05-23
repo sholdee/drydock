@@ -49,7 +49,8 @@ type Result struct {
 }
 
 type Options struct {
-	Unified int
+	Unified    int
+	StripAttrs []string
 }
 
 var errEmptyDiffBody = errors.New("empty diff body")
@@ -59,28 +60,44 @@ func Run(left, right []Document, opts Options) ([]Result, error) {
 	rightByKey := documentsByKey(right)
 	keys := sortedKeys(leftByKey, rightByKey)
 
-	var results []Result
+	results := make([]Result, 0)
 	for _, key := range keys {
 		l, hasLeft := leftByKey[key]
 		r, hasRight := rightByKey[key]
+		leftBody := ""
+		rightBody := ""
+		if hasLeft {
+			var err error
+			leftBody, err = normalizeDocumentBody(l, opts)
+			if err != nil {
+				return nil, err
+			}
+		}
+		if hasRight {
+			var err error
+			rightBody, err = normalizeDocumentBody(r, opts)
+			if err != nil {
+				return nil, err
+			}
+		}
 
 		switch {
-		case hasLeft && hasRight && l.Body == r.Body:
+		case hasLeft && hasRight && leftBody == rightBody:
 			continue
 		case hasLeft && hasRight:
-			result, err := resultFor(r, ChangeModified, l.Body, r.Body, opts)
+			result, err := resultFor(r, ChangeModified, leftBody, rightBody, opts)
 			if err != nil {
 				return nil, err
 			}
 			results = append(results, result)
 		case hasLeft:
-			result, err := resultFor(l, ChangeRemoved, l.Body, "", opts)
+			result, err := resultFor(l, ChangeRemoved, leftBody, "", opts)
 			if err != nil {
 				return nil, err
 			}
 			results = append(results, result)
 		case hasRight:
-			result, err := resultFor(r, ChangeAdded, "", r.Body, opts)
+			result, err := resultFor(r, ChangeAdded, "", rightBody, opts)
 			if err != nil {
 				return nil, err
 			}
@@ -139,6 +156,87 @@ func resultFor(doc Document, change Change, from, to string, opts Options) (Resu
 		Change:   change,
 		Diff:     diff,
 	}, nil
+}
+
+func normalizeDocumentBody(doc Document, opts Options) (string, error) {
+	body, err := normalizeDiffBody(doc.Body, opts)
+	if err != nil {
+		return "", fmt.Errorf("normalize %s: %w", headerOf(doc), err)
+	}
+	return body, nil
+}
+
+func normalizeDiffBody(body string, opts Options) (string, error) {
+	attrs := stripAttrSet(opts.StripAttrs)
+	if len(attrs) == 0 || body == "" {
+		return body, nil
+	}
+	object, err := decodeDiffYAML(body)
+	if err != nil {
+		return "", err
+	}
+	stripMetadataAttrs(object, attrs)
+	return encodeDiffYAML(object)
+}
+
+func stripAttrSet(attrs []string) map[string]struct{} {
+	out := make(map[string]struct{}, len(attrs))
+	for _, attr := range attrs {
+		attr = strings.TrimSpace(attr)
+		if attr != "" {
+			out[attr] = struct{}{}
+		}
+	}
+	return out
+}
+
+func stripMetadataAttrs(object map[string]any, attrs map[string]struct{}) {
+	metadata, ok := stringMapField(object, "metadata")
+	if !ok {
+		return
+	}
+	stripMetadataAttrMap(metadata, "labels", attrs)
+	stripMetadataAttrMap(metadata, "annotations", attrs)
+}
+
+func stripMetadataAttrMap(metadata map[string]any, field string, attrs map[string]struct{}) {
+	values, ok := stringMapField(metadata, field)
+	if !ok {
+		return
+	}
+	for attr := range attrs {
+		delete(values, attr)
+	}
+	if len(values) == 0 {
+		delete(metadata, field)
+	}
+}
+
+func stringMapField(object map[string]any, field string) (map[string]any, bool) {
+	if object == nil {
+		return nil, false
+	}
+	value, ok := object[field]
+	if !ok {
+		return nil, false
+	}
+	switch typed := value.(type) {
+	case map[string]any:
+		return typed, true
+	case map[any]any:
+		converted := make(map[string]any, len(typed))
+		for key, value := range typed {
+			stringKey, ok := key.(string)
+			if !ok {
+				return nil, false
+			}
+			converted[stringKey] = value
+		}
+		object[field] = converted
+		return converted, true
+	default:
+		return nil, false
+	}
 }
 
 func unified(doc Document, from, to string, opts Options) (string, error) {

@@ -45,7 +45,8 @@ Current shared flags are `--path`, `--path-orig`, `--selector`/`-l`, `--repo-map
 `--allow-network`, `--git-cache-dir`, `--refresh-git`, `--offline`,
 `--refresh-charts`, `--chart-cache-dir`, `--refresh-remotes`,
 `--remote-cache-dir`, `--changed-only`, `--strict-changed-only`, `--strict`,
-`--exit-code`, `--output`/`-o`, `--unified`/`-u`, and `--limit-bytes`.
+`--exit-code`, `--output`/`-o`, `--unified`/`-u`, `--strip-attr`, and
+`--limit-bytes`.
 
 ## Settings Discovery
 
@@ -108,6 +109,8 @@ The MVP currently supports:
 - Conservative container image extraction.
 - Structured `get apps` and `get images` output with table, name, JSON, and
   YAML formats.
+- Structured `diff apps` and `diff app` output with diff, JSON, and YAML
+  formats, plus metadata label/annotation stripping through `--strip-attr`.
 - Argo CD settings discovery from Helm values, `argocd-cm`, and repository
   Secrets, limited to rendering/diff-affecting non-secret values.
 
@@ -187,6 +190,11 @@ Named `diff app` compares the requested Application directly in both trees and
 does not use changed-only Git path filtering. If the Application exists only in
 current, show additions; if it exists only in baseline, show deletions; if it is
 absent from both, error.
+Manifest diff output supports unified diff, JSON, and YAML formats. Keep
+diagnostics on stderr for structured diff output. Do not support `-o name` for
+`diff apps` or `diff app`; that format is for list-style commands and image
+projections. `--strip-attr KEY` removes matching metadata label and annotation
+keys before manifest body comparison and diff generation.
 Image extraction is conservative in the MVP and may be broadened only behind an
 explicit mode.
 CLI diff exit codes are fixed: 0 means success/no diff, 1 means success/diff

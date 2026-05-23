@@ -3,10 +3,14 @@ package cli
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/home-operations/argocd-local/internal/app"
+	cliformat "github.com/home-operations/argocd-local/internal/format"
 	"github.com/spf13/cobra"
 )
+
+const diffOutputUnified = "diff"
 
 //nolint:gocyclo // Cobra wiring keeps diff subcommands and shared flag handling together.
 func newDiffCommand(deps Dependencies) *cobra.Command {
@@ -27,6 +31,10 @@ func newDiffCommand(deps Dependencies) *cobra.Command {
 		Short: "Diff all Applications",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
+			output, err := parseDiffOutput(appsFlags.output, "diff apps")
+			if err != nil {
+				return err
+			}
 			repoMaps, err := parseRepoMaps(appsFlags.repoMaps)
 			if err != nil {
 				return err
@@ -38,6 +46,7 @@ func newDiffCommand(deps Dependencies) *cobra.Command {
 				StrictChangedOnly:      appsFlags.strictChangedOnly,
 				Strict:                 appsFlags.strict,
 				Unified:                appsFlags.unified,
+				StripAttrs:             appsFlags.stripAttrs,
 				Offline:                appsFlags.offline,
 				RefreshCharts:          appsFlags.refreshCharts,
 				ChartCacheDir:          appsFlags.chartCacheDir,
@@ -54,7 +63,7 @@ func newDiffCommand(deps Dependencies) *cobra.Command {
 				}
 				return err
 			}
-			return renderDiffResult(cmd, result, !appsFlags.exitCode)
+			return renderDiffResult(cmd, result, !appsFlags.exitCode, output)
 		},
 	}
 	bindCommonFlags(apps, &appsFlags)
@@ -65,6 +74,10 @@ func newDiffCommand(deps Dependencies) *cobra.Command {
 		Short: "Diff one Application",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			output, err := parseDiffOutput(appFlags.output, "diff app")
+			if err != nil {
+				return err
+			}
 			repoMaps, err := parseRepoMaps(appFlags.repoMaps)
 			if err != nil {
 				return err
@@ -76,6 +89,7 @@ func newDiffCommand(deps Dependencies) *cobra.Command {
 					RightPath:              appFlags.path,
 					Strict:                 appFlags.strict,
 					Unified:                appFlags.unified,
+					StripAttrs:             appFlags.stripAttrs,
 					Offline:                appFlags.offline,
 					RefreshCharts:          appFlags.refreshCharts,
 					ChartCacheDir:          appFlags.chartCacheDir,
@@ -93,7 +107,7 @@ func newDiffCommand(deps Dependencies) *cobra.Command {
 				}
 				return err
 			}
-			return renderDiffResult(cmd, result, !appFlags.exitCode)
+			return renderDiffResult(cmd, result, !appFlags.exitCode, output)
 		},
 	}
 	bindCommonFlags(appCmd, &appFlags)
@@ -156,14 +170,41 @@ func newDiffCommand(deps Dependencies) *cobra.Command {
 	return cmd
 }
 
-func renderDiffResult(cmd *cobra.Command, result app.DiffResult, disableDiffExitCode bool) error {
+func parseDiffOutput(value, command string) (string, error) {
+	output := strings.TrimSpace(value)
+	switch output {
+	case "", diffOutputUnified:
+		return diffOutputUnified, nil
+	case string(cliformat.OutputJSON), string(cliformat.OutputYAML):
+		return output, nil
+	case string(cliformat.OutputName):
+		return "", fmt.Errorf("name output is not supported for %s", command)
+	default:
+		return "", fmt.Errorf("unsupported output %q for %s", value, command)
+	}
+}
+
+func renderDiffResult(cmd *cobra.Command, result app.DiffResult, disableDiffExitCode bool, output string) error {
 	if err := renderDiagnostics(cmd.ErrOrStderr(), result.Diagnostics); err != nil {
 		return err
 	}
-	for _, item := range result.Results {
-		if _, err := fmt.Fprint(cmd.OutOrStdout(), item.Diff); err != nil {
+	switch output {
+	case diffOutputUnified:
+		for _, item := range result.Results {
+			if _, err := fmt.Fprint(cmd.OutOrStdout(), item.Diff); err != nil {
+				return err
+			}
+		}
+	case string(cliformat.OutputJSON):
+		if err := cliformat.JSON(cmd.OutOrStdout(), result.Results); err != nil {
 			return err
 		}
+	case string(cliformat.OutputYAML):
+		if err := cliformat.YAML(cmd.OutOrStdout(), result.Results); err != nil {
+			return err
+		}
+	default:
+		return fmt.Errorf("unsupported output %q for diff", output)
 	}
 	code := exitCode(nil, disableDiffExitCode, len(result.Results) > 0)
 	if code != 0 {

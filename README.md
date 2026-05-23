@@ -27,10 +27,12 @@ go run ./cmd/argocd-local build app renovate \
 go run ./cmd/argocd-local diff apps \
   --path-orig ./testdata/renovate-diff/baseline \
   --path ./testdata/renovate-diff/current \
+  --strip-attr helm.sh/chart \
   --exit-code=false
 go run ./cmd/argocd-local diff app argocd/renovate \
   --path-orig ./testdata/renovate-diff/baseline \
   --path ./testdata/renovate-diff/current \
+  -o json \
   --exit-code=false
 go run ./cmd/argocd-local diag --path ./testdata/applications/e2e
 ```
@@ -47,6 +49,12 @@ path is not present locally. Git fetches use `--git-cache-dir` and
 `--refresh-git`. Caches must stay outside Git repository trees.
 `--allow-network` is not the Helm chart-fetch flag; chart fetching remains
 controlled by the chart flags.
+
+Manifest diffs default to unified diff output and also support `-o json` and
+`-o yaml` for structured `diff apps` and `diff app` results. Use repeatable
+`--strip-attr KEY` to remove matching metadata label and annotation keys before
+comparison and diff generation. Diagnostics continue to print on stderr for
+structured output.
 
 Maintainers with a local `home-ops` checkout can also run the optional
 Renovate smoke script:
