@@ -230,3 +230,107 @@ func TestHelmOCIPullerRejectsUnsafeRepositoriesBeforeNetwork(t *testing.T) {
 		})
 	}
 }
+
+func TestDefaultAcquirerRejectsUnsafeOCIRepositoriesBeforeCacheHit(t *testing.T) {
+	for _, tt := range []struct {
+		name       string
+		repository string
+		want       string
+		notWant    []string
+	}{
+		{
+			name:       "userinfo",
+			repository: "oci://user:password@registry.example.test/charts",
+			want:       "authenticated chart repositories are not supported yet",
+			notWant:    []string{"user", "password"},
+		},
+		{
+			name:       "query",
+			repository: "oci://registry.example.test/charts?token=secret",
+			want:       "must not include query",
+			notWant:    []string{"token=secret"},
+		},
+		{
+			name:       "fragment",
+			repository: "oci://registry.example.test/charts#secret",
+			want:       "must not include fragment",
+			notWant:    []string{"secret"},
+		},
+		{
+			name:       "empty path segment",
+			repository: "oci://registry.example.test/foo//bar",
+			want:       "empty path segment",
+		},
+		{
+			name:       "dot path segment",
+			repository: "oci://registry.example.test/foo/./bar",
+			want:       "unsafe path segment",
+		},
+		{
+			name:       "dot dot path segment",
+			repository: "oci://registry.example.test/foo/../bar",
+			want:       "unsafe path segment",
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			request := Request{
+				Repository: tt.repository,
+				Name:       "demo",
+				Version:    "1.2.3",
+				Kind:       RepositoryOCI,
+			}
+			cacheDir := t.TempDir()
+			chartDir := filepath.Join(cacheDir, string(request.Kind), mustCacheKey(t, request), request.Name)
+			if err := os.MkdirAll(chartDir, 0o755); err != nil {
+				t.Fatalf("create cached chart dir: %v", err)
+			}
+			if err := os.WriteFile(filepath.Join(chartDir, "Chart.yaml"), []byte("apiVersion: v2\nname: demo\nversion: 1.2.3\n"), 0o600); err != nil {
+				t.Fatalf("write cached Chart.yaml: %v", err)
+			}
+
+			result, err := (DefaultAcquirer{}).Acquire(context.Background(), request, Options{CacheDir: cacheDir})
+			if err == nil {
+				t.Fatalf("Acquire() error = nil and FromCache = %v, want repository validation error", result.FromCache)
+			}
+			if !strings.Contains(err.Error(), tt.want) {
+				t.Fatalf("Acquire() error = %q, want %q", err, tt.want)
+			}
+			for _, notWant := range tt.notWant {
+				if strings.Contains(err.Error(), notWant) {
+					t.Fatalf("Acquire() error leaked %q: %q", notWant, err)
+				}
+			}
+		})
+	}
+}
+
+func TestHelmOCIPullerRestoresDockerConfigAfterFailedPull(t *testing.T) {
+	originalDockerConfig := t.TempDir()
+	t.Setenv("DOCKER_CONFIG", originalDockerConfig)
+	client := &http.Client{
+		Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+			return &http.Response{
+				StatusCode: http.StatusUnauthorized,
+				Status:     "401 Unauthorized",
+				Header: http.Header{
+					"WWW-Authenticate": []string{`Basic realm="registry"`},
+				},
+				Body:    io.NopCloser(strings.NewReader("authentication required")),
+				Request: request,
+			}, nil
+		}),
+	}
+
+	_, err := (DefaultAcquirer{Client: client}).Acquire(context.Background(), Request{
+		Repository: "oci://registry.example.test/charts",
+		Name:       "demo",
+		Version:    "1.2.3",
+		Kind:       RepositoryOCI,
+	}, Options{CacheDir: t.TempDir()})
+	if err == nil {
+		t.Fatal("Acquire() error = nil, want unauthorized error")
+	}
+	if got := os.Getenv("DOCKER_CONFIG"); got != originalDockerConfig {
+		t.Fatalf("DOCKER_CONFIG = %q, want restored value %q", got, originalDockerConfig)
+	}
+}
