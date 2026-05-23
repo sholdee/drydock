@@ -1,9 +1,12 @@
 package cli
 
 import (
+	"context"
 	"fmt"
 
+	"github.com/home-operations/argocd-local/internal/app"
 	"github.com/spf13/cobra"
+	"go.yaml.in/yaml/v4"
 )
 
 func newBuildCommand() *cobra.Command {
@@ -24,7 +27,23 @@ func newBuildCommand() *cobra.Command {
 		Short: "Render all Applications",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			return fmt.Errorf("%s orchestration requires Task 15 for path %s", cmd.CommandPath(), appsFlags.path)
+			result, err := app.Orchestrator{}.Build(context.Background(), app.BuildRequest{Path: appsFlags.path})
+			if err != nil {
+				return err
+			}
+			for _, manifest := range result.Manifests {
+				data, err := yaml.Marshal(manifest.Object.Object)
+				if err != nil {
+					return err
+				}
+				if _, err := fmt.Fprintln(cmd.OutOrStdout(), "---"); err != nil {
+					return err
+				}
+				if _, err := cmd.OutOrStdout().Write(data); err != nil {
+					return err
+				}
+			}
+			return nil
 		},
 	}
 	bindCommonFlags(apps, &appsFlags)

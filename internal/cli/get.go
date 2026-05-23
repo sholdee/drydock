@@ -1,8 +1,10 @@
 package cli
 
 import (
+	"context"
 	"fmt"
 
+	"github.com/home-operations/argocd-local/internal/app"
 	"github.com/spf13/cobra"
 )
 
@@ -24,7 +26,16 @@ func newGetCommand() *cobra.Command {
 		Short: "List Applications",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			return fmt.Errorf("%s is not fully wired yet for path %s", cmd.CommandPath(), appsFlags.path)
+			result, err := app.Orchestrator{}.Build(context.Background(), app.BuildRequest{Path: appsFlags.path})
+			if err != nil {
+				return err
+			}
+			for _, application := range result.Applications {
+				if _, err := fmt.Fprintln(cmd.OutOrStdout(), application.Name); err != nil {
+					return err
+				}
+			}
+			return nil
 		},
 	}
 	bindCommonFlags(apps, &appsFlags)
