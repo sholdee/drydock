@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	argoappv1 "github.com/argoproj/argo-cd/v3/pkg/apis/application/v1alpha1"
 	"github.com/home-operations/argocd-local/internal/appset"
@@ -87,9 +88,86 @@ type localProvider struct {
 func (p localProvider) RenderSource(ctx context.Context, source render.ResolvedSource, opts render.RenderOptions) ([]render.Manifest, []diagnostic.Diagnostic, error) {
 	source.RepoRoot = p.repoRoot
 	if source.Path != "" {
-		return render.KustomizeRenderer{}.Render(ctx, source, opts)
+		renderer, err := selectLocalRenderer(source)
+		if err != nil {
+			return nil, nil, err
+		}
+		return renderer.Render(ctx, source, opts)
+	}
+	if source.Chart != "" {
+		return nil, nil, fmt.Errorf("remote chart source %q requires a local chart path; repository chart fetching is not wired", source.Chart)
 	}
 	return nil, nil, nil
+}
+
+func selectLocalRenderer(source render.ResolvedSource) (render.Renderer, error) {
+	sourcePath, err := cleanLocalSourcePath(source.Path)
+	if err != nil {
+		return nil, err
+	}
+	if err := rejectLocalSymlinkComponents(source.RepoRoot, sourcePath); err != nil {
+		return nil, err
+	}
+
+	root := filepath.Join(source.RepoRoot, sourcePath)
+	if exists, err := localPathExists(filepath.Join(root, "Chart.yaml")); err != nil {
+		return nil, err
+	} else if exists {
+		return render.HelmRenderer{}, nil
+	}
+	for _, name := range []string{"kustomization.yaml", "kustomization.yml", "Kustomization"} {
+		if exists, err := localPathExists(filepath.Join(root, name)); err != nil {
+			return nil, err
+		} else if exists {
+			return render.KustomizeRenderer{}, nil
+		}
+	}
+	return render.DirectoryRenderer{}, nil
+}
+
+func cleanLocalSourcePath(path string) (string, error) {
+	if filepath.IsAbs(path) {
+		return "", fmt.Errorf("source path %q must be relative", path)
+	}
+
+	clean := filepath.Clean(path)
+	if clean == ".." || strings.HasPrefix(clean, ".."+string(filepath.Separator)) {
+		return "", fmt.Errorf("source path %q escapes repository root", path)
+	}
+	return clean, nil
+}
+
+func rejectLocalSymlinkComponents(repoRoot, sourcePath string) error {
+	if sourcePath == "." {
+		return nil
+	}
+
+	current := filepath.Clean(repoRoot)
+	for _, component := range strings.Split(sourcePath, string(filepath.Separator)) {
+		if component == "" || component == "." {
+			continue
+		}
+		current = filepath.Join(current, component)
+		info, err := os.Lstat(current)
+		if err != nil {
+			return err
+		}
+		if info.Mode()&os.ModeSymlink != 0 {
+			return fmt.Errorf("source path %q includes symlink component %q", sourcePath, component)
+		}
+	}
+	return nil
+}
+
+func localPathExists(path string) (bool, error) {
+	_, err := os.Lstat(path)
+	if err == nil {
+		return true, nil
+	}
+	if os.IsNotExist(err) {
+		return false, nil
+	}
+	return false, err
 }
 
 func diagnosticsError(diags []diagnostic.Diagnostic, err error) error {
