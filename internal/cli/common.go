@@ -10,6 +10,8 @@ type commonFlags struct {
 	offline           bool
 	refreshCharts     bool
 	chartCacheDir     string
+	refreshRemotes    bool
+	remoteCacheDir    string
 	changedOnly       bool
 	strictChangedOnly bool
 	strict            bool
@@ -35,9 +37,11 @@ func bindCommonFlags(cmd *cobra.Command, flags *commonFlags) {
 	cmd.Flags().StringVar(&flags.pathOrig, "path-orig", flags.pathOrig, "baseline repository path for diffs")
 	cmd.Flags().StringArrayVar(&flags.repoMaps, "repo-map", flags.repoMaps, "repository URL mapping in from=to form")
 	cmd.Flags().BoolVar(&flags.allowNetwork, "allow-network", flags.allowNetwork, "allow network access for unmapped repositories")
-	cmd.Flags().BoolVar(&flags.offline, "offline", flags.offline, "disable network access for Helm chart fetching")
+	cmd.Flags().BoolVar(&flags.offline, "offline", flags.offline, "disable network access for Helm charts and remote Kustomize resources")
 	cmd.Flags().BoolVar(&flags.refreshCharts, "refresh-charts", flags.refreshCharts, "refresh cached Helm charts before rendering")
 	cmd.Flags().StringVar(&flags.chartCacheDir, "chart-cache-dir", flags.chartCacheDir, "directory for cached Helm charts")
+	cmd.Flags().BoolVar(&flags.refreshRemotes, "refresh-remotes", flags.refreshRemotes, "refresh cached remote Kustomize resources before rendering")
+	cmd.Flags().StringVar(&flags.remoteCacheDir, "remote-cache-dir", flags.remoteCacheDir, "directory for cached remote Kustomize resources")
 	cmd.Flags().BoolVar(&flags.changedOnly, "changed-only", flags.changedOnly, "limit work to Applications affected by changed files")
 	cmd.Flags().BoolVar(&flags.strictChangedOnly, "strict-changed-only", flags.strictChangedOnly, "fail when changed-only input ownership is ambiguous or incomplete")
 	cmd.Flags().BoolVar(&flags.strict, "strict", flags.strict, "promote diagnostics to errors")

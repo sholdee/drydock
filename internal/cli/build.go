@@ -28,11 +28,13 @@ func newBuildCommand(deps Dependencies) *cobra.Command {
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			result, err := deps.Orchestrator.Build(context.Background(), app.BuildRequest{
-				Path:          appsFlags.path,
-				Strict:        appsFlags.strict,
-				Offline:       appsFlags.offline,
-				RefreshCharts: appsFlags.refreshCharts,
-				ChartCacheDir: appsFlags.chartCacheDir,
+				Path:                   appsFlags.path,
+				Strict:                 appsFlags.strict,
+				Offline:                appsFlags.offline,
+				RefreshCharts:          appsFlags.refreshCharts,
+				ChartCacheDir:          appsFlags.chartCacheDir,
+				RefreshRemoteResources: appsFlags.refreshRemotes,
+				RemoteResourceCacheDir: appsFlags.remoteCacheDir,
 			})
 			if err != nil {
 				return err

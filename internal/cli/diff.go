@@ -28,15 +28,17 @@ func newDiffCommand(deps Dependencies) *cobra.Command {
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			result, err := deps.Orchestrator.DiffApps(context.Background(), app.DiffRequest{
-				LeftPath:          appsFlags.pathOrig,
-				RightPath:         appsFlags.path,
-				ChangedOnly:       appsFlags.changedOnly,
-				StrictChangedOnly: appsFlags.strictChangedOnly,
-				Strict:            appsFlags.strict,
-				Unified:           appsFlags.unified,
-				Offline:           appsFlags.offline,
-				RefreshCharts:     appsFlags.refreshCharts,
-				ChartCacheDir:     appsFlags.chartCacheDir,
+				LeftPath:               appsFlags.pathOrig,
+				RightPath:              appsFlags.path,
+				ChangedOnly:            appsFlags.changedOnly,
+				StrictChangedOnly:      appsFlags.strictChangedOnly,
+				Strict:                 appsFlags.strict,
+				Unified:                appsFlags.unified,
+				Offline:                appsFlags.offline,
+				RefreshCharts:          appsFlags.refreshCharts,
+				ChartCacheDir:          appsFlags.chartCacheDir,
+				RefreshRemoteResources: appsFlags.refreshRemotes,
+				RemoteResourceCacheDir: appsFlags.remoteCacheDir,
 			})
 			if err != nil {
 				if renderErr := renderDiagnostics(cmd.ErrOrStderr(), result.Diagnostics); renderErr != nil {
@@ -79,14 +81,16 @@ func newDiffCommand(deps Dependencies) *cobra.Command {
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			result, err := deps.Orchestrator.DiffImages(context.Background(), app.DiffRequest{
-				LeftPath:          imagesFlags.pathOrig,
-				RightPath:         imagesFlags.path,
-				ChangedOnly:       imagesFlags.changedOnly,
-				StrictChangedOnly: imagesFlags.strictChangedOnly,
-				Strict:            imagesFlags.strict,
-				Offline:           imagesFlags.offline,
-				RefreshCharts:     imagesFlags.refreshCharts,
-				ChartCacheDir:     imagesFlags.chartCacheDir,
+				LeftPath:               imagesFlags.pathOrig,
+				RightPath:              imagesFlags.path,
+				ChangedOnly:            imagesFlags.changedOnly,
+				StrictChangedOnly:      imagesFlags.strictChangedOnly,
+				Strict:                 imagesFlags.strict,
+				Offline:                imagesFlags.offline,
+				RefreshCharts:          imagesFlags.refreshCharts,
+				ChartCacheDir:          imagesFlags.chartCacheDir,
+				RefreshRemoteResources: imagesFlags.refreshRemotes,
+				RemoteResourceCacheDir: imagesFlags.remoteCacheDir,
 			})
 			if err != nil {
 				if renderErr := renderDiagnostics(cmd.ErrOrStderr(), result.Diagnostics); renderErr != nil {
