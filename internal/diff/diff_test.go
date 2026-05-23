@@ -115,6 +115,62 @@ func TestRunIgnoresSourceMetadataInIdentity(t *testing.T) {
 	}
 }
 
+func TestRunRedactsSecretValuesButReportsChangedKeys(t *testing.T) {
+	left := []Document{{
+		Parent: Parent{
+			Namespace:   "argocd",
+			Name:        "app-a",
+			SourceIndex: 0,
+			SourcePath:  "apps/a",
+		},
+		Resource: Resource{
+			Kind:      "Secret",
+			Namespace: "default",
+			Name:      "creds",
+		},
+		Body: "apiVersion: v1\nkind: Secret\nmetadata:\n  name: creds\n  namespace: default\ndata:\n  password: c2VjcmV0LW9sZA==\n  same: dW5jaGFuZ2Vk\nstringData:\n  token: plain-old\n",
+	}}
+	right := []Document{{
+		Parent: Parent{
+			Namespace:   "argocd",
+			Name:        "app-a",
+			SourceIndex: 0,
+			SourcePath:  "apps/a",
+		},
+		Resource: Resource{
+			Kind:      "Secret",
+			Namespace: "default",
+			Name:      "creds",
+		},
+		Body: "apiVersion: v1\nkind: Secret\nmetadata:\n  name: creds\n  namespace: default\ndata:\n  password: c2VjcmV0LW5ldw==\n  same: dW5jaGFuZ2Vk\nstringData:\n  token: plain-new\n",
+	}}
+
+	results, err := Run(left, right, Options{Unified: 3})
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if len(results) != 1 {
+		t.Fatalf("len(results) = %d, want 1", len(results))
+	}
+	diff := results[0].Diff
+	for _, forbidden := range []string{"c2VjcmV0LW9sZA==", "c2VjcmV0LW5ldw==", "dW5jaGFuZ2Vk", "plain-old", "plain-new"} {
+		if strings.Contains(diff, forbidden) {
+			t.Fatalf("Diff leaked secret value %q:\n%s", forbidden, diff)
+		}
+	}
+	for _, want := range []string{
+		"Secret: default/creds",
+		"password: <redacted-before>",
+		"password: <redacted-after>",
+		"token: <redacted-before>",
+		"token: <redacted-after>",
+	} {
+		if !strings.Contains(diff, want) {
+			t.Fatalf("Diff = %q, want substring %q", diff, want)
+		}
+	}
+}
+
 func TestExtractWorkloadImages(t *testing.T) {
 	docs := []Document{
 		{Body: `

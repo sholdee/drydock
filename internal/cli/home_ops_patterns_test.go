@@ -39,8 +39,8 @@ func TestDiffAppsHomeOpsPatternFixture(t *testing.T) {
 		"mode=baseline",
 		"mode=current",
 		"generated-secret",
-		"cmVkYWN0ZWQtYmFzZWxpbmU=",
-		"cmVkYWN0ZWQtY3VycmVudA==",
+		"token: <redacted-before>",
+		"token: <redacted-after>",
 		"Application: argocd/component-consumer",
 		"ConfigMap: components/cache-settings",
 		"mode: baseline",
@@ -73,6 +73,11 @@ func TestDiffAppsHomeOpsPatternFixture(t *testing.T) {
 	if stderr.String() != "" {
 		t.Fatalf("stderr = %q, want empty", stderr.String())
 	}
+	for _, forbidden := range []string{"cmVkYWN0ZWQtYmFzZWxpbmU=", "cmVkYWN0ZWQtY3VycmVudA=="} {
+		if strings.Contains(stdout.String(), forbidden) {
+			t.Fatalf("stdout leaked Secret value %q:\n%s", forbidden, stdout.String())
+		}
+	}
 }
 
 func TestDiffAppsHomeOpsPatternFixtureStrictChangedOnly(t *testing.T) {
@@ -97,6 +102,36 @@ func TestDiffAppsHomeOpsPatternFixtureStrictChangedOnly(t *testing.T) {
 	}
 	if strings.Contains(stderr.String(), "changed-only") {
 		t.Fatalf("stderr contains changed-only diagnostic:\n%s", stderr.String())
+	}
+	for _, want := range []string{
+		"Application: argocd/plain",
+		"fixture.example.test/patch-mode: baseline",
+		"fixture.example.test/patch-mode: current",
+		"Application: argocd/component-consumer",
+		"ConfigMap: components/cache-settings",
+		"mode: baseline",
+		"mode: current",
+		"Application: argocd/generator",
+		"Secret: generator/generated-secret",
+		"token: <redacted-before>",
+		"token: <redacted-after>",
+		"Application: argocd/http-chart",
+		"example/http:v1",
+		"example/http:v2",
+	} {
+		if !strings.Contains(stdout.String(), want) {
+			t.Fatalf("stdout missing %q:\nstdout:\n%s\nstderr:\n%s", want, stdout.String(), stderr.String())
+		}
+	}
+	for _, forbidden := range []string{
+		"ConfigMap: nested/nested-b",
+		"ConfigMap: multi-chart/beta",
+		"cmVkYWN0ZWQtYmFzZWxpbmU=",
+		"cmVkYWN0ZWQtY3VycmVudA==",
+	} {
+		if strings.Contains(stdout.String(), forbidden) {
+			t.Fatalf("stdout contains forbidden %q:\n%s", forbidden, stdout.String())
+		}
 	}
 }
 
