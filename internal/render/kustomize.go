@@ -464,6 +464,17 @@ func copyRegularTree(srcRoot, dstRoot string) error {
 }
 
 func copyRegularFile(src, dst string) error {
+	info, err := os.Lstat(src)
+	if err != nil {
+		return err
+	}
+	if info.Mode()&os.ModeSymlink != 0 {
+		return fmt.Errorf("source path %q is a symlink", src)
+	}
+	if !info.Mode().IsRegular() {
+		return fmt.Errorf("source path %q is not a regular file", src)
+	}
+
 	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
 		return err
 	}
@@ -927,6 +938,9 @@ func isInlineStrategicMergePatch(patch string) bool {
 func isRemoteKustomizeRef(ref string) bool {
 	trimmed := strings.TrimSpace(ref)
 	lower := strings.ToLower(trimmed)
+	if strings.Contains(trimmed, "://") {
+		return true
+	}
 	if strings.HasPrefix(lower, "git::") || strings.HasPrefix(lower, "git@") {
 		return true
 	}
@@ -935,6 +949,9 @@ func isRemoteKustomizeRef(ref string) bool {
 	}
 	parsed, err := url.Parse(trimmed)
 	if err == nil && parsed.Scheme != "" {
+		return true
+	}
+	if hasRemoteQueryOrFragmentSyntax(trimmed) {
 		return true
 	}
 	if strings.Contains(lower, "?ref=") && strings.Contains(lower, "//") {
@@ -946,6 +963,28 @@ func isRemoteKustomizeRef(ref string) bool {
 		}
 	}
 	return false
+}
+
+func hasRemoteQueryOrFragmentSyntax(ref string) bool {
+	if !strings.ContainsAny(ref, "?#") {
+		return false
+	}
+	refPath := ref
+	if before, _, ok := strings.Cut(refPath, "?"); ok {
+		refPath = before
+	}
+	if before, _, ok := strings.Cut(refPath, "#"); ok {
+		refPath = before
+	}
+	if !strings.Contains(refPath, "/") {
+		return false
+	}
+	hostCandidate, _, _ := strings.Cut(refPath, "/")
+	if user, host, ok := strings.Cut(hostCandidate, "@"); ok {
+		return user != "" && host != "" && looksLikeRemoteHost(strings.ToLower(host))
+	}
+	hostCandidate = strings.ToLower(hostCandidate)
+	return isKnownGitHost(hostCandidate) || looksLikeRemoteHost(hostCandidate)
 }
 
 func isColonStyleKustomizeRemoteRef(ref string) bool {

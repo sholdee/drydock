@@ -158,6 +158,35 @@ spec:
 	}
 }
 
+func TestKustomizeRendererRejectsRemoteResourceSymlink(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "app", "kustomization.yaml"), `apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - https://raw.githubusercontent.com/example/repo/main/resource.yaml
+`)
+	outside := filepath.Join(t.TempDir(), "secret.yaml")
+	writeFile(t, outside, "apiVersion: v1\nkind: Secret\nmetadata:\n  name: leaked\n")
+	cacheFile := filepath.Join(t.TempDir(), "resource.yaml")
+	symlink(t, outside, cacheFile)
+	acquirer := &fakeRemoteAcquirer{path: cacheFile}
+
+	_, _, err := (KustomizeRenderer{}).Render(context.Background(), ResolvedSource{
+		RepoRoot: root,
+		Path:     "app",
+	}, RenderOptions{
+		RemoteResourceAcquirer: acquirer,
+		RemoteResourceCacheDir: t.TempDir(),
+		OfflineRemoteResources: true,
+	})
+	if err == nil {
+		t.Fatal("Render() error = nil, want symlink rejection")
+	}
+	if !strings.Contains(err.Error(), "symlink") {
+		t.Fatalf("Render() error = %v, want symlink rejection", err)
+	}
+}
+
 func TestKustomizeRendererAllowsRepoRootLocalComponents(t *testing.T) {
 	root := t.TempDir()
 	writeFile(t, filepath.Join(root, "components", "namespace", "kustomization.yaml"), `
@@ -1111,8 +1140,16 @@ resources:
 
 func TestKustomizeRendererRejectsUnsupportedRemoteRefsWithoutLeakingSecrets(t *testing.T) {
 	for name, body := range map[string]string{
+		"malformed-resource-url": `resources:
+  - https://user:secret@example.test/%zz.yaml?token=secret#fragment
+`,
 		"component": `components:
   - https://user:secret@example.test/component.yaml?token=secret
+resources:
+  - local.yaml
+`,
+		"malformed-component-url": `components:
+  - https://user:secret@example.test/%zz.yaml?token=secret#fragment
 resources:
   - local.yaml
 `,
@@ -1131,6 +1168,16 @@ resources:
 resources:
   - local.yaml
 `,
+		"malformed-patch-url": `patches:
+  - path: https://user:secret@example.test/%zz.yaml?token=secret#fragment
+resources:
+  - local.yaml
+`,
+		"schemeless-fragment": `components:
+  - github.com/org/repo//base#token=secret
+resources:
+  - local.yaml
+`,
 	} {
 		t.Run(name, func(t *testing.T) {
 			root := t.TempDir()
@@ -1145,7 +1192,7 @@ resources:
 				t.Fatal("Render() error = nil, want unsupported remote ref error")
 			}
 			message := err.Error()
-			for _, leaked := range []string{"secret", "token=", "user:secret", "?token"} {
+			for _, leaked := range []string{"secret", "token=", "user:secret", "user:", "@example.test", "?token", "#fragment", "#token"} {
 				if strings.Contains(message, leaked) {
 					t.Fatalf("Render() error leaked %q: %s", leaked, message)
 				}
