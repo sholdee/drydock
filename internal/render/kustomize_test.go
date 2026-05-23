@@ -2,6 +2,7 @@ package render
 
 import (
 	"context"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -13,10 +14,12 @@ import (
 type fakeChartAcquirer struct {
 	chartDir string
 	requests []chart.Request
+	options  []chart.Options
 }
 
-func (acquirer *fakeChartAcquirer) Acquire(_ context.Context, request chart.Request, _ chart.Options) (chart.Result, error) {
+func (acquirer *fakeChartAcquirer) Acquire(_ context.Context, request chart.Request, opts chart.Options) (chart.Result, error) {
 	acquirer.requests = append(acquirer.requests, request)
+	acquirer.options = append(acquirer.options, opts)
 	return chart.Result{
 		ChartDir:   acquirer.chartDir,
 		Repository: request.Repository,
@@ -49,6 +52,16 @@ func TestKustomizeRendererRendersResources(t *testing.T) {
 	if result[0].Path != filepath.Join("kustomize", "kustomization.yaml") {
 		t.Fatalf("Path = %q, want kustomize/kustomization.yaml", result[0].Path)
 	}
+}
+
+func writeTestChart(t *testing.T, chartDir, template string) {
+	t.Helper()
+	writeFile(t, filepath.Join(chartDir, "Chart.yaml"), `
+apiVersion: v2
+name: demo
+version: 1.2.3
+`)
+	writeFile(t, filepath.Join(chartDir, "templates", "manifest.yaml"), template)
 }
 
 func TestKustomizeRendererAllowsRepoRootLocalComponents(t *testing.T) {
@@ -99,12 +112,7 @@ metadata:
 func TestKustomizeRendererRendersHelmChartsWithoutShellout(t *testing.T) {
 	root := t.TempDir()
 	chartDir := filepath.Join(root, "charts", "demo")
-	writeFile(t, filepath.Join(chartDir, "Chart.yaml"), `
-apiVersion: v2
-name: demo
-version: 1.2.3
-`)
-	writeFile(t, filepath.Join(chartDir, "templates", "deployment.yaml"), `
+	writeTestChart(t, chartDir, `
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -196,6 +204,131 @@ image: example/app:v1
 	}
 }
 
+func TestKustomizeRendererRendersHelmChartsInReferencedKustomizationWithNamespaceFallback(t *testing.T) {
+	root := t.TempDir()
+	chartDir := filepath.Join(root, "charts", "demo")
+	writeTestChart(t, chartDir, `
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Release.Name }}
+data:
+  namespace: {{ .Release.Namespace }}
+`)
+	writeFile(t, filepath.Join(root, "bases", "demo", "kustomization.yaml"), `
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: demo
+helmCharts:
+  - name: demo
+    repo: https://charts.example.test
+    version: 1.2.3
+    releaseName: demo
+`)
+	writeFile(t, filepath.Join(root, "apps", "demo", "kustomization.yaml"), `
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - ../../bases/demo
+`)
+
+	acquirer := &fakeChartAcquirer{chartDir: chartDir}
+	result, diags, err := (KustomizeRenderer{}).Render(context.Background(), ResolvedSource{
+		RepoRoot: root,
+		Path:     filepath.Join("apps", "demo"),
+	}, RenderOptions{ChartAcquirer: acquirer})
+	if err != nil {
+		t.Fatalf("Render() error = %v", err)
+	}
+	if len(diags) != 0 {
+		t.Fatalf("diagnostics = %#v", diags)
+	}
+	if len(acquirer.requests) != 1 {
+		t.Fatalf("len(acquirer.requests) = %d, want 1", len(acquirer.requests))
+	}
+	configMaps := filterObjects(result, "ConfigMap")
+	if len(configMaps) != 1 {
+		t.Fatalf("len(configMaps) = %d, want 1", len(configMaps))
+	}
+	namespace, _, _ := unstructured.NestedString(configMaps[0].Object, "data", "namespace")
+	if namespace != "demo" {
+		t.Fatalf("rendered namespace = %q, want demo", namespace)
+	}
+}
+
+func TestKustomizeRendererPropagatesOCIChartAcquisitionOptions(t *testing.T) {
+	root := t.TempDir()
+	chartDir := filepath.Join(root, "charts", "demo")
+	writeTestChart(t, chartDir, `
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Release.Name }}
+`)
+	writeFile(t, filepath.Join(root, "apps", "demo", "kustomization.yaml"), `
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+helmCharts:
+  - name: demo
+    repo: oci://registry.example.test/charts
+    version: 1.2.3
+    releaseName: demo
+`)
+
+	acquirer := &fakeChartAcquirer{chartDir: chartDir}
+	result, diags, err := (KustomizeRenderer{}).Render(context.Background(), ResolvedSource{
+		RepoRoot: root,
+		Path:     filepath.Join("apps", "demo"),
+	}, RenderOptions{
+		ChartAcquirer: acquirer,
+		ChartCacheDir: filepath.Join(root, "cache"),
+		OfflineCharts: true,
+		RefreshCharts: true,
+	})
+	if err != nil {
+		t.Fatalf("Render() error = %v", err)
+	}
+	if len(diags) != 0 {
+		t.Fatalf("diagnostics = %#v", diags)
+	}
+	if len(result) != 1 {
+		t.Fatalf("len(result) = %d, want 1", len(result))
+	}
+	if len(acquirer.requests) != 1 {
+		t.Fatalf("len(acquirer.requests) = %d, want 1", len(acquirer.requests))
+	}
+	if acquirer.requests[0].Kind != chart.RepositoryOCI {
+		t.Fatalf("request kind = %q, want %q", acquirer.requests[0].Kind, chart.RepositoryOCI)
+	}
+	if len(acquirer.options) != 1 {
+		t.Fatalf("len(acquirer.options) = %d, want 1", len(acquirer.options))
+	}
+	if acquirer.options[0] != (chart.Options{
+		CacheDir: filepath.Join(root, "cache"),
+		Offline:  true,
+		Refresh:  true,
+	}) {
+		t.Fatalf("acquirer.options[0] = %#v", acquirer.options[0])
+	}
+}
+
+func TestCopyRegularTreeSkipsGitFilesAndDirectories(t *testing.T) {
+	src := t.TempDir()
+	dst := filepath.Join(t.TempDir(), "dst")
+	writeFile(t, filepath.Join(src, ".git"), "gitdir: ../main/.git/worktrees/demo\n")
+	writeFile(t, filepath.Join(src, "nested", ".git", "config"), "[core]\n")
+	writeFile(t, filepath.Join(src, "nested", "manifest.yaml"), "apiVersion: v1\nkind: ConfigMap\n")
+
+	if err := copyRegularTree(src, dst); err != nil {
+		t.Fatalf("copyRegularTree() error = %v", err)
+	}
+	assertPathMissing(t, filepath.Join(dst, ".git"))
+	assertPathMissing(t, filepath.Join(dst, "nested", ".git"))
+	if _, err := os.Stat(filepath.Join(dst, "nested", "manifest.yaml")); err != nil {
+		t.Fatalf("copied manifest Stat() error = %v", err)
+	}
+}
+
 func filterObjects(manifests []Manifest, kind string) []*unstructured.Unstructured {
 	out := make([]*unstructured.Unstructured, 0, len(manifests))
 	for _, manifest := range manifests {
@@ -204,6 +337,13 @@ func filterObjects(manifests []Manifest, kind string) []*unstructured.Unstructur
 		}
 	}
 	return out
+}
+
+func assertPathMissing(t *testing.T, path string) {
+	t.Helper()
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Fatalf("Stat(%q) error = %v, want not exist", path, err)
+	}
 }
 
 func TestKustomizeRendererRejectsSourcePathEscape(t *testing.T) {

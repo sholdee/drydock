@@ -34,12 +34,12 @@ func (KustomizeRenderer) Render(ctx context.Context, source ResolvedSource, opts
 		return nil, nil, err
 	}
 
-	kustomizationFile, kustomization, err := loadKustomization(source.RepoRoot, root)
+	_, graph, err := collectKustomizeGraph(ctx, source.RepoRoot, root)
 	if err != nil {
 		return nil, nil, err
 	}
-	if len(kustomization.HelmCharts) != 0 {
-		return renderKustomizeWithHelmCharts(ctx, source, opts, root, kustomizationFile, kustomization)
+	if kustomizeGraphHasHelmCharts(graph) {
+		return renderKustomizeWithHelmCharts(ctx, source, opts, root, graph)
 	}
 
 	return renderPlainKustomize(ctx, source, root)
@@ -79,31 +79,16 @@ func renderPlainKustomize(ctx context.Context, source ResolvedSource, root strin
 	return out, nil, nil
 }
 
-func loadKustomization(repoRoot, root string) (string, types.Kustomization, error) {
-	kustomizationFile, err := findKustomizationFile(root)
-	if err != nil {
-		return "", types.Kustomization{}, err
+func kustomizeGraphHasHelmCharts(graph []kustomizeGraphNode) bool {
+	for _, node := range graph {
+		if len(node.Kustomization.HelmCharts) != 0 {
+			return true
+		}
 	}
-	manifestPath, err := relativeManifestPath(repoRoot, kustomizationFile)
-	if err != nil {
-		manifestPath = kustomizationFile
-	}
-	content, err := os.ReadFile(kustomizationFile)
-	if err != nil {
-		return "", types.Kustomization{}, err
-	}
-	var kustomization types.Kustomization
-	if err := goyaml.Unmarshal(content, &kustomization); err != nil {
-		return "", types.Kustomization{}, fmt.Errorf("decode kustomization %s: %w", manifestPath, err)
-	}
-	return kustomizationFile, kustomization, nil
+	return false
 }
 
-func renderKustomizeWithHelmCharts(ctx context.Context, source ResolvedSource, opts RenderOptions, root, kustomizationFile string, kustomization types.Kustomization) ([]Manifest, []diagnostic.Diagnostic, error) {
-	if _, err := validateKustomizeGraph(ctx, source.RepoRoot, root); err != nil {
-		return nil, nil, err
-	}
-
+func renderKustomizeWithHelmCharts(ctx context.Context, source ResolvedSource, opts RenderOptions, _ string, graph []kustomizeGraphNode) ([]Manifest, []diagnostic.Diagnostic, error) {
 	tempDir, err := os.MkdirTemp("", "argocd-local-kustomize-*")
 	if err != nil {
 		return nil, nil, err
@@ -123,26 +108,38 @@ func renderKustomizeWithHelmCharts(ctx context.Context, source ResolvedSource, o
 	if err != nil {
 		return nil, nil, err
 	}
-	generatedResources, err := renderKustomizeHelmCharts(ctx, source, tempRepoRoot, tempRoot, kustomization.HelmCharts, opts)
-	if err != nil {
-		return nil, nil, err
-	}
 
-	kustomization.HelmCharts = nil
-	kustomization.Resources = append(kustomization.Resources, generatedResources...)
-	data, err := goyaml.Marshal(&kustomization)
-	if err != nil {
-		return nil, nil, fmt.Errorf("encode temp kustomization: %w", err)
-	}
-	tempKustomizationFile := filepath.Join(tempRoot, filepath.Base(kustomizationFile))
-	if err := os.WriteFile(tempKustomizationFile, data, 0o644); err != nil {
-		return nil, nil, fmt.Errorf("write temp kustomization: %w", err)
+	for i, node := range graph {
+		if len(node.Kustomization.HelmCharts) == 0 {
+			continue
+		}
+		nodeRelDir, err := relativeManifestPath(source.RepoRoot, node.Dir)
+		if err != nil {
+			return nil, nil, err
+		}
+		tempNodeDir := filepath.Join(tempRepoRoot, nodeRelDir)
+		generatedResources, err := renderKustomizeHelmCharts(ctx, tempRepoRoot, tempNodeDir, nodeRelDir, node.Kustomization.Namespace, i, node.Kustomization.HelmCharts, opts)
+		if err != nil {
+			return nil, nil, err
+		}
+
+		kustomization := node.Kustomization
+		kustomization.HelmCharts = nil
+		kustomization.Resources = append(kustomization.Resources, generatedResources...)
+		data, err := goyaml.Marshal(&kustomization)
+		if err != nil {
+			return nil, nil, fmt.Errorf("encode temp kustomization %s: %w", node.ManifestPath, err)
+		}
+		tempKustomizationFile := filepath.Join(tempNodeDir, filepath.Base(node.File))
+		if err := os.WriteFile(tempKustomizationFile, data, 0o644); err != nil {
+			return nil, nil, fmt.Errorf("write temp kustomization %s: %w", node.ManifestPath, err)
+		}
 	}
 
 	return renderPlainKustomize(ctx, tempSource, tempRoot)
 }
 
-func renderKustomizeHelmCharts(ctx context.Context, source ResolvedSource, tempRepoRoot, tempSourceRoot string, helmCharts []types.HelmChart, opts RenderOptions) ([]string, error) {
+func renderKustomizeHelmCharts(ctx context.Context, tempRepoRoot, tempSourceRoot, valueFilesBaseDir, namespaceFallback string, graphIndex int, helmCharts []types.HelmChart, opts RenderOptions) ([]string, error) {
 	acquirer := opts.ChartAcquirer
 	if acquirer == nil {
 		acquirer = chart.DefaultAcquirer{}
@@ -170,7 +167,8 @@ func renderKustomizeHelmCharts(ctx context.Context, source ResolvedSource, tempR
 		}
 
 		baseName := safeGeneratedKustomizeHelmBaseName(helmChart.Name, helmChart.Version)
-		chartRel := filepath.Join(".argocd-local", "charts", fmt.Sprintf("%03d-%s", i, baseName))
+		generatedName := fmt.Sprintf("%03d-%03d-%s", graphIndex, i, baseName)
+		chartRel := filepath.Join(".argocd-local", "charts", generatedName)
 		chartDst := filepath.Join(tempRepoRoot, chartRel)
 		if err := copyRegularTree(result.ChartDir, chartDst); err != nil {
 			return nil, fmt.Errorf("copy acquired helm chart %s: %w", helmChart.Name, err)
@@ -179,7 +177,7 @@ func renderKustomizeHelmCharts(ctx context.Context, source ResolvedSource, tempR
 		rendered, _, err := (HelmRenderer{}).Render(ctx, ResolvedSource{
 			RepoRoot: tempRepoRoot,
 			Path:     chartRel,
-		}, renderOptionsForKustomizeHelmChart(helmChart, source, opts, acquirer))
+		}, renderOptionsForKustomizeHelmChart(helmChart, valueFilesBaseDir, namespaceFallback, opts, acquirer))
 		if err != nil {
 			return nil, err
 		}
@@ -187,7 +185,7 @@ func renderKustomizeHelmCharts(ctx context.Context, source ResolvedSource, tempR
 			continue
 		}
 
-		generatedResource := filepath.ToSlash(filepath.Join(".argocd-local", "helm", fmt.Sprintf("%03d-%s.yaml", i, baseName)))
+		generatedResource := filepath.ToSlash(filepath.Join(".argocd-local", "helm", generatedName+".yaml"))
 		generatedPath := filepath.Join(tempSourceRoot, filepath.FromSlash(generatedResource))
 		if err := writeGeneratedHelmManifests(generatedPath, rendered); err != nil {
 			return nil, err
@@ -197,21 +195,26 @@ func renderKustomizeHelmCharts(ctx context.Context, source ResolvedSource, tempR
 	return generatedResources, nil
 }
 
-func renderOptionsForKustomizeHelmChart(helmChart types.HelmChart, source ResolvedSource, opts RenderOptions, acquirer chart.Acquirer) RenderOptions {
+func renderOptionsForKustomizeHelmChart(helmChart types.HelmChart, valueFilesBaseDir, namespaceFallback string, opts RenderOptions, acquirer chart.Acquirer) RenderOptions {
 	valueFiles := make([]string, 0, 1+len(helmChart.AdditionalValuesFiles))
 	if helmChart.ValuesFile != "" {
 		valueFiles = append(valueFiles, helmChart.ValuesFile)
 	}
 	valueFiles = append(valueFiles, helmChart.AdditionalValuesFiles...)
 
+	namespace := helmChart.Namespace
+	if namespace == "" {
+		namespace = namespaceFallback
+	}
+
 	return RenderOptions{
 		AppName:           helmChart.Name,
 		ReleaseName:       helmChart.ReleaseName,
-		Namespace:         helmChart.Namespace,
+		Namespace:         namespace,
 		KubeVersion:       helmChart.KubeVersion,
 		APIVersions:       append([]string(nil), helmChart.ApiVersions...),
 		ValueFiles:        valueFiles,
-		ValueFilesBaseDir: source.Path,
+		ValueFilesBaseDir: valueFilesBaseDir,
 		ValuesObject:      cloneValues(helmChart.ValuesInline),
 		ValuesMergeMode:   helmChart.ValuesMerge,
 		ChartCacheDir:     opts.ChartCacheDir,
@@ -279,8 +282,13 @@ func copyRegularTree(srcRoot, dstRoot string) error {
 		if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
 			return fmt.Errorf("copy source path %q escapes source root %q", path, srcRoot)
 		}
-		if rel == ".git" && entry.IsDir() {
-			return filepath.SkipDir
+		if entry.Name() == ".git" {
+			if entry.IsDir() {
+				return filepath.SkipDir
+			}
+			if entry.Type().IsRegular() {
+				return nil
+			}
 		}
 		if entry.Type()&os.ModeSymlink != 0 {
 			return fmt.Errorf("copy source path %q is a symlink", path)
@@ -330,15 +338,29 @@ type kustomizeGraphValidator struct {
 	repoRoot   string
 	sourceRoot string
 	visited    map[string]struct{}
+	nodes      []kustomizeGraphNode
+}
+
+type kustomizeGraphNode struct {
+	Dir           string
+	File          string
+	ManifestPath  string
+	Kustomization types.Kustomization
 }
 
 func validateKustomizeGraph(ctx context.Context, repoRoot, sourceRoot string) (string, error) {
+	manifestPath, _, err := collectKustomizeGraph(ctx, repoRoot, sourceRoot)
+	return manifestPath, err
+}
+
+func collectKustomizeGraph(ctx context.Context, repoRoot, sourceRoot string) (string, []kustomizeGraphNode, error) {
 	validator := kustomizeGraphValidator{
 		repoRoot:   filepath.Clean(repoRoot),
 		sourceRoot: filepath.Clean(sourceRoot),
 		visited:    make(map[string]struct{}),
 	}
-	return validator.validateKustomizationDir(ctx, sourceRoot)
+	manifestPath, err := validator.validateKustomizationDir(ctx, sourceRoot)
+	return manifestPath, validator.nodes, err
 }
 
 func (v *kustomizeGraphValidator) validateKustomizationDir(ctx context.Context, dir string) (string, error) {
@@ -375,6 +397,12 @@ func (v *kustomizeGraphValidator) validateKustomizationDir(ctx context.Context, 
 	if err := v.validateKustomization(ctx, filepath.Dir(kustomizationFile), manifestPath, &kustomization); err != nil {
 		return "", err
 	}
+	v.nodes = append(v.nodes, kustomizeGraphNode{
+		Dir:           filepath.Dir(kustomizationFile),
+		File:          kustomizationFile,
+		ManifestPath:  manifestPath,
+		Kustomization: kustomization,
+	})
 	return manifestPath, nil
 }
 
