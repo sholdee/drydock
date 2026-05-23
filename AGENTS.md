@@ -61,25 +61,45 @@ caller wants explicit paths. Classify candidates by full GVK, skip symlinks in
 default scans, reject symlink components in explicit app manifest paths, and
 keep default scans tolerant of unrelated YAML files.
 
-## ApplicationSet MVP
+## ApplicationSet Support
 
-`internal/appset` supports one Git directories generator with Go templates. Use
-path-style matching, keep include/exclude semantics deterministic, and preserve
-Argo CD template behavior such as `missingkey=error` and Sprig functions.
+`internal/appset` supports local Git directories, Git files, and list
+generators with Go templates. Use path-style matching, keep include/exclude
+semantics deterministic, and preserve Argo CD template behavior such as
+`missingkey=error` and Sprig functions. Multiple supported top-level
+generators are evaluated independently and concatenated in manifest order.
 Unsupported generators must produce diagnostics.
+
+Git files generator support is intentionally local and fail-closed. Matches are
+sorted by normalized relative path. Do not follow symlinks, allow absolute
+paths, or allow `..` escapes outside the repository root. Decode only YAML/JSON
+mapping documents; arrays, scalars, invalid files, and empty documents must
+produce diagnostics. Supported path params are `.path.path`,
+`.path.basename`, `.path.basenameNormalized`, `.path.filename`,
+`.path.filenameNormalized`, and `.path.segments`, with `pathParamPrefix`
+variants matching Argo CD. Non-Go-template params use `path`,
+`path.basename`, `path.basenameNormalized`, `path.filename`,
+`path.filenameNormalized`, and indexed segment keys such as `path[0]`, again
+with prefix variants when `pathParamPrefix` is set. Decoded file values become
+template params; Go-template mode preserves nested maps and non-Go-template
+mode flattens nested keys. Git files `values` use the same `values.*` and
+`.values.*` behavior as Git directories. Git files `exclude: true` excludes a
+file even when another pattern includes it.
 
 ## Supported Features
 
 The MVP currently supports:
 
 - Direct `Application` CR discovery.
-- Git-directory `ApplicationSet` CR expansion.
+- Git-directory, Git-files, and list `ApplicationSet` CR expansion.
 - Single-source and multi-source planning for supported source types.
 - Kustomize, directory, local Helm chart, Kustomize `helmCharts`, safe
   single-file HTTP(S) Kustomize `resources:`, and chart-only remote Helm source
   rendering through Go libraries.
 - Deterministic `--repo-map` and gated `--allow-network` Git clone/fetch for
   path-based Git sources.
+- Explicit Git HTTPS bearer/basic auth, Git SSH key-file auth, HTTP(S) Helm
+  bearer/basic auth, and explicit OCI Helm registry config path plumbing.
 - Repeated-resource last-wins behavior inside one Application, with a
   diagnostic.
 - Parent Application-aware desired manifest identity for diffs.
@@ -97,10 +117,9 @@ Do not treat these as supported without an explicit design update:
   server-side diff behavior.
 - Project, RBAC, and destination validation.
 - Config management plugins.
-- Additional ApplicationSet generators beyond Git directories.
+- Cluster, SCM provider, pull-request, plugin, matrix, and merge
+  ApplicationSet generators.
 - Required default shellouts to `helm`, `kustomize`, `kubectl`, or `argocd`.
-- Authenticated/private Git repositories.
-- Authenticated/private Helm chart repositories.
 - Remote Kustomize bases, components, patches, generators, transformers,
   validators, `crds`, `openapi`, replacements, authenticated remote resources,
   and arbitrary Kustomize Git refs.
@@ -130,8 +149,21 @@ Remote Kustomize resource network behavior is controlled by `--offline`,
 under the user cache or `--remote-cache-dir`, never inside the Git repository
 tree.
 OCI chart acquisition must use Helm registry Go libraries, not helm pull.
-Authenticated/private chart repositories remain unsupported and must fail with
-a clear message instead of prompting or reading credentials.
+
+Authenticated source handling is explicit and non-interactive. Do not prompt
+for credentials, read ambient Git credential helpers, or read ambient Helm
+registry config in this slice. Git HTTPS auth supports bearer token and basic
+auth; bearer token wins over username/password. Git SSH auth supports
+`ssh://git@host/org/repo.git`, `git@host:org/repo.git`, and
+`ssh://host/org/repo.git`; omitted SSH usernames default to `git`. SSH auth
+requires `--git-ssh-key-file` and `--git-known-hosts-file`; missing key files,
+missing known-hosts files, and passphrase failures must fail before network
+access with non-secret diagnostics. HTTP(S) Helm auth supports bearer token and
+basic auth; bearer token wins over username/password. OCI Helm auth is provided
+only through an explicit `--registry-config` path. Do not consume secret data
+from discovered Argo CD repository Secrets until a later design update says so.
+Never print password, bearer token, SSH private key, SSH passphrase, or
+registry credential values.
 
 ## Application Planning
 
