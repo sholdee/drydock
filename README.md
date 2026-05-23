@@ -1,6 +1,7 @@
 # argocd-local
 
-`argocd-local` is an early Go CLI for local Argo CD GitOps repository analysis.
+`argocd-local` is an early Go CLI and embeddable Go package for local Argo CD
+GitOps repository analysis.
 
 The MVP goal is desired-vs-desired pull request diffing: compare a current
 repository tree with a baseline tree and inspect the rendered Kubernetes
@@ -15,6 +16,21 @@ repository diagnostics without printing manifests.
 This project is early implementation work. See
 `docs/superpowers/specs/2026-05-22-argocd-local-design.md` for the approved MVP
 design.
+
+## Go API
+
+Embedding callers can use `github.com/home-operations/argocd-local/pkg/argocdlocal`
+to list, render, and diff Applications without shelling out:
+
+```go
+result, err := argocdlocal.Render(ctx, argocdlocal.Config{Path: "."})
+```
+
+`argocdlocal.NewClient` accepts public Git, chart, and remote-resource acquirer
+interfaces for tests and embedding. Those fakes can satisfy remote source
+requests without network access. When rendering returns an error for one
+Application, the public result still includes successful manifests,
+diagnostics, and per-Application statuses from the partial build.
 
 ## Quick Start
 

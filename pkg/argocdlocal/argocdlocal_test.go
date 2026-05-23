@@ -1,0 +1,415 @@
+package argocdlocal
+
+import (
+	"context"
+	"errors"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+)
+
+func TestRenderApplications(t *testing.T) {
+	result, err := Render(context.Background(), Config{Path: filepath.Join("..", "..", "testdata", "applications", "e2e")})
+	if err != nil {
+		t.Fatalf("Render() error = %v", err)
+	}
+	if len(result.Applications) != 1 {
+		t.Fatalf("Applications = %d, want 1", len(result.Applications))
+	}
+	if len(result.Manifests) != 1 {
+		t.Fatalf("Manifests = %d, want 1", len(result.Manifests))
+	}
+}
+
+func TestClientUsesInjectedAcquirersForRemoteSources(t *testing.T) {
+	root := t.TempDir()
+	externalRepo := t.TempDir()
+	chartDir := filepath.Join(t.TempDir(), "demo")
+	remoteFile := filepath.Join(t.TempDir(), "remote.yaml")
+	writeAPIFile(t, filepath.Join(externalRepo, "external", "kustomization.yaml"), `apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - cm.yaml
+`)
+	writeAPIFile(t, filepath.Join(externalRepo, "external", "cm.yaml"), `apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: external
+`)
+	writeAPIChart(t, chartDir, "demo", "1.2.3", `apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: charted
+`)
+	writeAPIFile(t, remoteFile, `apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: remote
+`)
+	writeAPIFile(t, filepath.Join(root, "apps", "external.yaml"), `apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: external
+  namespace: argocd
+spec:
+  source:
+    repoURL: https://git.example.test/org/repo.git
+    targetRevision: main
+    path: external
+  destination:
+    name: in-cluster
+    namespace: default
+`)
+	writeAPIFile(t, filepath.Join(root, "apps", "chart.yaml"), `apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: charted
+  namespace: argocd
+spec:
+  source:
+    repoURL: https://charts.example.test
+    chart: demo
+    targetRevision: 1.2.3
+  destination:
+    name: in-cluster
+    namespace: default
+`)
+	writeAPIFile(t, filepath.Join(root, "apps", "remote.yaml"), `apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: remote
+  namespace: argocd
+spec:
+  source:
+    repoURL: https://github.com/example/repo
+    targetRevision: main
+    path: remote
+  destination:
+    name: in-cluster
+    namespace: default
+`)
+	writeAPIFile(t, filepath.Join(root, "remote", "kustomization.yaml"), `apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - https://raw.githubusercontent.com/example/repo/main/remote.yaml
+`)
+
+	gitAcquirer := &recordingGitAcquirer{path: externalRepo, revision: "abc123"}
+	chartAcquirer := &recordingChartAcquirer{chartDir: chartDir}
+	remoteAcquirer := &recordingRemoteAcquirer{path: remoteFile}
+	result, err := NewClient(Config{
+		Path:                   root,
+		AllowNetwork:           true,
+		GitCredentials:         GitCredentials{Username: "git-user", Password: "git-pass"},
+		ChartCredentials:       ChartCredentials{BearerToken: "helm-token"},
+		GitAcquirer:            gitAcquirer,
+		ChartAcquirer:          chartAcquirer,
+		RemoteResourceAcquirer: remoteAcquirer,
+	}).Render(context.Background())
+	if err != nil {
+		t.Fatalf("Render() error = %v", err)
+	}
+	if len(result.Manifests) != 3 {
+		t.Fatalf("Manifests = %d, want 3", len(result.Manifests))
+	}
+	if len(gitAcquirer.requests) != 1 {
+		t.Fatalf("Git acquire calls = %d, want 1", len(gitAcquirer.requests))
+	}
+	if !gitAcquirer.options[0].AllowNetwork {
+		t.Fatalf("Git AllowNetwork = false, want true")
+	}
+	if gitAcquirer.options[0].Credentials.Username != "git-user" || gitAcquirer.options[0].Credentials.Password != "git-pass" {
+		t.Fatalf("Git credentials were not passed through")
+	}
+	if len(chartAcquirer.requests) != 1 {
+		t.Fatalf("Chart acquire calls = %d, want 1", len(chartAcquirer.requests))
+	}
+	if chartAcquirer.requests[0].Repository != "https://charts.example.test" {
+		t.Fatalf("Chart repository = %q", chartAcquirer.requests[0].Repository)
+	}
+	if chartAcquirer.options[0].Credentials.BearerToken != "helm-token" {
+		t.Fatalf("Chart bearer token was not passed through")
+	}
+	if len(remoteAcquirer.requests) != 1 {
+		t.Fatalf("Remote acquire calls = %d, want 1", len(remoteAcquirer.requests))
+	}
+}
+
+func TestRenderReturnsPartialResultDiagnosticsAndStatusesOnInjectedError(t *testing.T) {
+	root := t.TempDir()
+	writeAPIFile(t, filepath.Join(root, "apps", "local.yaml"), `apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: local
+  namespace: argocd
+spec:
+  source:
+    repoURL: https://github.com/example/repo
+    targetRevision: main
+    path: local
+  destination:
+    name: in-cluster
+    namespace: default
+`)
+	writeAPIFile(t, filepath.Join(root, "local", "cm.yaml"), `apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: local
+`)
+	writeAPIFile(t, filepath.Join(root, "apps", "external.yaml"), `apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: external
+  namespace: argocd
+spec:
+  source:
+    repoURL: https://git.example.test/org/repo.git
+    targetRevision: main
+    path: external
+  destination:
+    name: in-cluster
+    namespace: default
+`)
+
+	result, err := NewClient(Config{
+		Path:         root,
+		AllowNetwork: true,
+		GitAcquirer:  &recordingGitAcquirer{err: errors.New("fixture auth failure")},
+	}).Render(context.Background())
+	if err == nil {
+		t.Fatal("Render() error = nil, want injected failure")
+	}
+	if len(result.Manifests) != 1 {
+		t.Fatalf("Manifests = %d, want partial local manifest", len(result.Manifests))
+	}
+	if !hasDiagnostic(result.Diagnostics, "render", "fixture auth failure") {
+		t.Fatalf("Diagnostics = %#v, want stable render diagnostic with injected error", result.Diagnostics)
+	}
+	if !hasStatus(result.Statuses, "local", "PASS") {
+		t.Fatalf("Statuses = %#v, want PASS status for local app", result.Statuses)
+	}
+	if !hasStatus(result.Statuses, "external", "FAIL") {
+		t.Fatalf("Statuses = %#v, want FAIL status for external app", result.Statuses)
+	}
+}
+
+func TestListApplications(t *testing.T) {
+	result, err := ListApplications(context.Background(), Config{Path: filepath.Join("..", "..", "testdata", "applications", "e2e")})
+	if err != nil {
+		t.Fatalf("ListApplications() error = %v", err)
+	}
+	if len(result.Applications) != 1 || result.Applications[0].Name != "demo" {
+		t.Fatalf("Applications = %#v, want demo", result.Applications)
+	}
+}
+
+func TestDiffApplications(t *testing.T) {
+	left, right := writeDiffTrees(t, "v1", "v2")
+
+	result, err := DiffApplications(context.Background(), Config{
+		PathOrig:    left,
+		Path:        right,
+		ChangedOnly: boolPtr(false),
+	})
+	if err != nil {
+		t.Fatalf("DiffApplications() error = %v", err)
+	}
+	if len(result.Results) != 1 {
+		t.Fatalf("Results = %d, want 1", len(result.Results))
+	}
+	if result.Results[0].Change != "modified" {
+		t.Fatalf("Change = %q, want modified", result.Results[0].Change)
+	}
+}
+
+func TestDiffImages(t *testing.T) {
+	left, right := writeImageDiffTrees(t, "repo/demo:v1", "repo/demo:v2")
+
+	result, err := DiffImages(context.Background(), Config{
+		PathOrig:    left,
+		Path:        right,
+		ChangedOnly: boolPtr(false),
+	})
+	if err != nil {
+		t.Fatalf("DiffImages() error = %v", err)
+	}
+	if !containsString(result.Removed, "repo/demo:v1") {
+		t.Fatalf("Removed = %#v, want repo/demo:v1", result.Removed)
+	}
+	if !containsString(result.Added, "repo/demo:v2") {
+		t.Fatalf("Added = %#v, want repo/demo:v2", result.Added)
+	}
+}
+
+type recordingGitAcquirer struct {
+	path     string
+	revision string
+	err      error
+	requests []GitRequest
+	options  []GitOptions
+}
+
+func (acquirer *recordingGitAcquirer) Acquire(_ context.Context, request GitRequest, opts GitOptions) (GitResult, error) {
+	acquirer.requests = append(acquirer.requests, request)
+	acquirer.options = append(acquirer.options, opts)
+	if acquirer.err != nil {
+		return GitResult{}, acquirer.err
+	}
+	return GitResult{Path: acquirer.path, Revision: acquirer.revision}, nil
+}
+
+type recordingChartAcquirer struct {
+	chartDir string
+	err      error
+	requests []ChartRequest
+	options  []ChartOptions
+}
+
+func (acquirer *recordingChartAcquirer) Acquire(_ context.Context, request ChartRequest, opts ChartOptions) (ChartResult, error) {
+	acquirer.requests = append(acquirer.requests, request)
+	acquirer.options = append(acquirer.options, opts)
+	if acquirer.err != nil {
+		return ChartResult{}, acquirer.err
+	}
+	return ChartResult{
+		ChartDir:   acquirer.chartDir,
+		Repository: request.Repository,
+		Name:       request.Name,
+		Version:    request.Version,
+		Kind:       request.Kind,
+	}, nil
+}
+
+type recordingRemoteAcquirer struct {
+	path     string
+	err      error
+	requests []RemoteResourceRequest
+	options  []RemoteResourceOptions
+}
+
+func (acquirer *recordingRemoteAcquirer) Acquire(_ context.Context, request RemoteResourceRequest, opts RemoteResourceOptions) (RemoteResourceResult, error) {
+	acquirer.requests = append(acquirer.requests, request)
+	acquirer.options = append(acquirer.options, opts)
+	if acquirer.err != nil {
+		return RemoteResourceResult{}, acquirer.err
+	}
+	return RemoteResourceResult{Path: acquirer.path, URL: request.URL}, nil
+}
+
+func writeDiffTrees(t *testing.T, leftVersion, rightVersion string) (string, string) {
+	t.Helper()
+	left := t.TempDir()
+	right := t.TempDir()
+	writeAPIAppTree(t, left, "demo", configMapBody("demo", leftVersion))
+	writeAPIAppTree(t, right, "demo", configMapBody("demo", rightVersion))
+	return left, right
+}
+
+func writeImageDiffTrees(t *testing.T, leftImage, rightImage string) (string, string) {
+	t.Helper()
+	left := t.TempDir()
+	right := t.TempDir()
+	writeAPIAppTree(t, left, "demo", deploymentBody("demo", leftImage))
+	writeAPIAppTree(t, right, "demo", deploymentBody("demo", rightImage))
+	return left, right
+}
+
+func writeAPIAppTree(t *testing.T, root, name, manifest string) {
+	t.Helper()
+	writeAPIFile(t, filepath.Join(root, "apps", name+".yaml"), `apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: `+name+`
+  namespace: argocd
+spec:
+  source:
+    repoURL: https://github.com/example/repo
+    targetRevision: main
+    path: manifests/`+name+`
+  destination:
+    name: in-cluster
+    namespace: default
+`)
+	writeAPIFile(t, filepath.Join(root, "manifests", name, "manifest.yaml"), manifest)
+}
+
+func configMapBody(name, version string) string {
+	return `apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ` + name + `
+data:
+  version: ` + version + `
+`
+}
+
+func deploymentBody(name, image string) string {
+	return `apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ` + name + `
+spec:
+  selector:
+    matchLabels:
+      app: ` + name + `
+  template:
+    metadata:
+      labels:
+        app: ` + name + `
+    spec:
+      containers:
+        - name: ` + name + `
+          image: ` + image + `
+`
+}
+
+func writeAPIChart(t *testing.T, chartDir, name, version, template string) {
+	t.Helper()
+	writeAPIFile(t, filepath.Join(chartDir, "Chart.yaml"), `apiVersion: v2
+name: `+name+`
+version: `+version+`
+`)
+	writeAPIFile(t, filepath.Join(chartDir, "templates", "cm.yaml"), template)
+}
+
+func writeAPIFile(t *testing.T, path string, data string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatalf("MkdirAll() error = %v", err)
+	}
+	if err := os.WriteFile(path, []byte(data), 0o644); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+}
+
+func hasDiagnostic(diagnostics []Diagnostic, category, message string) bool {
+	for _, diagnostic := range diagnostics {
+		if diagnostic.Category == category && strings.Contains(diagnostic.Message, message) {
+			return true
+		}
+	}
+	return false
+}
+
+func hasStatus(statuses []ApplicationStatus, name, status string) bool {
+	for _, item := range statuses {
+		if item.Application.Name == name && item.Status == status {
+			return true
+		}
+	}
+	return false
+}
+
+func containsString(items []string, want string) bool {
+	for _, item := range items {
+		if item == want {
+			return true
+		}
+	}
+	return false
+}
+
+func boolPtr(value bool) *bool {
+	return &value
+}
