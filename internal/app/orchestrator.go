@@ -58,10 +58,32 @@ type BuildResult struct {
 	Diagnostics          []diagnostic.Diagnostic
 }
 
+type DiagRequest = BuildRequest
+
+type DiagResult struct {
+	Applications []argoappv1.Application
+	Diagnostics  []diagnostic.Diagnostic
+}
+
 type Orchestrator struct {
 	ChartAcquirer          chart.Acquirer
 	GitAcquirer            sourcepkg.GitAcquirer
 	RemoteResourceAcquirer remote.Acquirer
+}
+
+func (o Orchestrator) Diag(ctx context.Context, request DiagRequest) (DiagResult, error) {
+	result, err := o.Build(ctx, BuildRequest(request))
+	diagResult := DiagResult{
+		Applications: result.Applications,
+		Diagnostics:  result.Diagnostics,
+	}
+	if err != nil {
+		return diagResult, err
+	}
+	if err := diagnosticFailure(result.Diagnostics, request.Strict); err != nil {
+		return diagResult, err
+	}
+	return diagResult, nil
 }
 
 func (o Orchestrator) ListApplications(_ context.Context, request BuildRequest) (BuildResult, error) {

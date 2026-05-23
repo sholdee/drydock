@@ -1,22 +1,44 @@
 package cli
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"strings"
 
+	"github.com/home-operations/argocd-local/internal/app"
 	"github.com/home-operations/argocd-local/internal/diagnostic"
 	"github.com/spf13/cobra"
 )
 
-func newDiagCommand() *cobra.Command {
+func newDiagCommand(deps Dependencies) *cobra.Command {
 	flags := defaultCommonFlags()
 	cmd := &cobra.Command{
 		Use:   "diag",
 		Short: "Report repository diagnostics",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			return fmt.Errorf("%s is not fully wired yet for path %s", cmd.CommandPath(), flags.path)
+			repoMaps, err := parseRepoMaps(flags.repoMaps)
+			if err != nil {
+				return err
+			}
+			result, err := deps.Orchestrator.Diag(context.Background(), app.DiagRequest{
+				Path:                   flags.path,
+				Strict:                 flags.strict,
+				Offline:                flags.offline,
+				RefreshCharts:          flags.refreshCharts,
+				ChartCacheDir:          flags.chartCacheDir,
+				RepoMaps:               repoMaps,
+				AllowNetwork:           flags.allowNetwork,
+				GitCacheDir:            flags.gitCacheDir,
+				RefreshGit:             flags.refreshGit,
+				RefreshRemoteResources: flags.refreshRemotes,
+				RemoteResourceCacheDir: flags.remoteCacheDir,
+			})
+			if renderErr := renderDiagnostics(cmd.ErrOrStderr(), result.Diagnostics); renderErr != nil {
+				return renderErr
+			}
+			return err
 		},
 	}
 	bindCommonFlags(cmd, &flags)
