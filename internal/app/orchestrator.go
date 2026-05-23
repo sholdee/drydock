@@ -619,6 +619,11 @@ func validateBuildNetworkOptions(request BuildRequest) error {
 	}
 	forbiddenRoots := append([]string(nil), request.RemoteResourceForbiddenRoots...)
 	forbiddenRoots = append(forbiddenRoots, root)
+	for _, repoMap := range request.RepoMaps {
+		if strings.TrimSpace(repoMap.Path) != "" {
+			forbiddenRoots = append(forbiddenRoots, repoMap.Path)
+		}
+	}
 	inside, matchedRoot, err := remote.IsPathInsideAny(gitCacheDir, forbiddenRoots)
 	if err != nil {
 		return err

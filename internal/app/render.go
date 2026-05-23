@@ -10,7 +10,6 @@ import (
 	"github.com/home-operations/argocd-local/internal/diagnostic"
 	"github.com/home-operations/argocd-local/internal/manifest"
 	"github.com/home-operations/argocd-local/internal/render"
-	sourcepkg "github.com/home-operations/argocd-local/internal/source"
 	"go.yaml.in/yaml/v4"
 )
 
@@ -167,12 +166,8 @@ func renderRefSourcesForSource(plan PlanResult, sourcePlan SourcePlan, valueFile
 		if !exists {
 			return nil, fmt.Errorf("helm value file %q references unknown ref %s", valueFile, refKey)
 		}
-		refSourceRoot := refSource.Source.Path
-		if sourcepkg.NormalizeURL(refSource.Source.RepoURL) == sourcepkg.NormalizeURL(sourcePlan.Source.RepoURL) {
-			refSourceRoot = "."
-		}
 		out[refKey] = render.ResolvedSource{
-			Path:           refSourceRoot,
+			Path:           ".",
 			RepoURL:        refSource.Source.RepoURL,
 			TargetRevision: refSource.Source.TargetRevision,
 		}
