@@ -86,8 +86,9 @@ func (o Orchestrator) buildDiffSides(ctx context.Context, request DiffRequest) (
 		if err != nil {
 			return BuildResult{}, BuildResult{}, diagnostics, err
 		}
-		leftSelected, _ := SelectChangedApplications(leftList.Applications, changedPaths)
-		rightSelected, unowned := SelectChangedApplications(rightList.Applications, changedPaths)
+		leftSelected, leftUnowned := SelectChangedApplicationInputs(leftList.ApplicationInputs, changedPaths)
+		rightSelected, rightUnowned := SelectChangedApplicationInputs(rightList.ApplicationInputs, changedPaths)
+		unowned := unownedByNeitherSide(leftUnowned, rightUnowned)
 		if len(unowned) > 0 {
 			diag := diagnostic.Diagnostic{
 				Severity: diagnostic.SeverityWarning,
@@ -118,6 +119,21 @@ func (o Orchestrator) buildDiffSides(ctx context.Context, request DiffRequest) (
 		return leftBuild, rightBuild, diagnostics, err
 	}
 	return leftBuild, rightBuild, diagnostics, nil
+}
+
+func unownedByNeitherSide(leftUnowned, rightUnowned []string) []string {
+	left := make(map[string]struct{}, len(leftUnowned))
+	for _, changedPath := range leftUnowned {
+		left[changedPath] = struct{}{}
+	}
+
+	var unowned []string
+	for _, changedPath := range rightUnowned {
+		if _, ok := left[changedPath]; ok {
+			unowned = append(unowned, changedPath)
+		}
+	}
+	return unowned
 }
 
 func diffDocuments(build BuildResult) ([]diff.Document, error) {

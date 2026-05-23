@@ -10,9 +10,19 @@ import (
 // SelectChangedApplications returns Applications whose declared local source
 // paths intersect at least one changed path, plus normalized unowned changes.
 func SelectChangedApplications(apps []argoappv1.Application, changedPaths []string) ([]argoappv1.Application, []string) {
-	appPaths := make([][]string, len(apps))
-	for i, app := range apps {
-		appPaths[i] = applicationSourcePaths(app)
+	inputs := make([]ApplicationSelectionInput, 0, len(apps))
+	for _, app := range apps {
+		inputs = append(inputs, ApplicationSelectionInput{Application: app})
+	}
+	return SelectChangedApplicationInputs(inputs, changedPaths)
+}
+
+// SelectChangedApplicationInputs returns Applications whose explicit inputs or
+// declared local source paths intersect at least one changed path.
+func SelectChangedApplicationInputs(inputs []ApplicationSelectionInput, changedPaths []string) ([]argoappv1.Application, []string) {
+	appPaths := make([][]string, len(inputs))
+	for i, input := range inputs {
+		appPaths[i] = applicationSelectionPaths(input)
 	}
 
 	selectedIndexes := make(map[int]struct{})
@@ -35,13 +45,23 @@ func SelectChangedApplications(apps []argoappv1.Application, changedPaths []stri
 	}
 
 	selected := make([]argoappv1.Application, 0, len(selectedIndexes))
-	for i, app := range apps {
+	for i, input := range inputs {
 		if _, ok := selectedIndexes[i]; ok {
-			selected = append(selected, app)
+			selected = append(selected, input.Application)
 		}
 	}
 
 	return selected, unowned
+}
+
+func applicationSelectionPaths(input ApplicationSelectionInput) []string {
+	sourcePaths := applicationSourcePaths(input.Application)
+	paths := make([]string, 0, len(input.Paths)+len(sourcePaths))
+	for _, inputPath := range input.Paths {
+		paths = append(paths, normalizeSelectPath(inputPath))
+	}
+	paths = append(paths, sourcePaths...)
+	return paths
 }
 
 func applicationSourcePaths(app argoappv1.Application) []string {
@@ -78,7 +98,8 @@ func pathIntersects(sourcePath, changedPath string) bool {
 }
 
 func normalizeSelectPath(p string) string {
-	cleaned := path.Clean(strings.Trim(p, "/"))
+	normalized := strings.ReplaceAll(p, "\\", "/")
+	cleaned := path.Clean(strings.Trim(normalized, "/"))
 	if cleaned == "." {
 		return ""
 	}
