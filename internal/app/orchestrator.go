@@ -10,14 +10,18 @@ import (
 
 	argoappv1 "github.com/argoproj/argo-cd/v3/pkg/apis/application/v1alpha1"
 	"github.com/home-operations/argocd-local/internal/appset"
+	"github.com/home-operations/argocd-local/internal/chart"
 	"github.com/home-operations/argocd-local/internal/diagnostic"
 	"github.com/home-operations/argocd-local/internal/discovery"
 	"github.com/home-operations/argocd-local/internal/render"
 )
 
 type BuildRequest struct {
-	Path   string
-	Strict bool
+	Path          string
+	Strict        bool
+	Offline       bool
+	RefreshCharts bool
+	ChartCacheDir string
 }
 
 type BuildResult struct {
@@ -26,7 +30,9 @@ type BuildResult struct {
 	Diagnostics  []diagnostic.Diagnostic
 }
 
-type Orchestrator struct{}
+type Orchestrator struct {
+	ChartAcquirer chart.Acquirer
+}
 
 func (o Orchestrator) ListApplications(_ context.Context, request BuildRequest) (BuildResult, error) {
 	root := request.Path
@@ -85,7 +91,17 @@ func (o Orchestrator) Build(ctx context.Context, request BuildRequest) (BuildRes
 		root = "."
 	}
 
-	provider := localProvider{repoRoot: root}
+	acquirer := o.ChartAcquirer
+	if acquirer == nil {
+		acquirer = chart.DefaultAcquirer{}
+	}
+	provider := localProvider{
+		repoRoot:      root,
+		chartAcquirer: acquirer,
+		offline:       request.Offline,
+		refreshCharts: request.RefreshCharts,
+		chartCacheDir: request.ChartCacheDir,
+	}
 	for _, application := range result.Applications {
 		rendered, err := RenderApplication(ctx, application, provider)
 		if err != nil {
@@ -103,11 +119,19 @@ func (o Orchestrator) Build(ctx context.Context, request BuildRequest) (BuildRes
 }
 
 type localProvider struct {
-	repoRoot string
+	repoRoot      string
+	chartAcquirer chart.Acquirer
+	offline       bool
+	refreshCharts bool
+	chartCacheDir string
 }
 
 func (p localProvider) RenderSource(ctx context.Context, source render.ResolvedSource, opts render.RenderOptions) ([]render.Manifest, []diagnostic.Diagnostic, error) {
 	source.RepoRoot = p.repoRoot
+	opts.ChartAcquirer = p.chartAcquirer
+	opts.ChartCacheDir = p.chartCacheDir
+	opts.OfflineCharts = p.offline
+	opts.RefreshCharts = p.refreshCharts
 	if source.Path != "" {
 		renderer, err := selectLocalRenderer(source)
 		if err != nil {

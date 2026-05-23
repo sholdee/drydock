@@ -6,7 +6,7 @@ import (
 	"github.com/spf13/cobra"
 )
 
-func newDiffCommand() *cobra.Command {
+func newDiffCommand(deps Dependencies) *cobra.Command {
 	flags := defaultCommonFlags()
 	cmd := &cobra.Command{
 		Use:   "diff",

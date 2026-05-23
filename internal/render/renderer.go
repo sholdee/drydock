@@ -3,6 +3,7 @@ package render
 import (
 	"context"
 
+	"github.com/home-operations/argocd-local/internal/chart"
 	"github.com/home-operations/argocd-local/internal/diagnostic"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 )
@@ -14,15 +15,25 @@ type ResolvedSource struct {
 }
 
 type RenderOptions struct {
-	AppName      string
-	Namespace    string
-	KubeVersion  string
-	APIVersions  []string
-	BuildOptions []string
-	RefRoots     map[string]string
-	ReleaseName  string
-	ValuesObject map[string]any
-	ValueFiles   []string
+	AppName           string
+	Namespace         string
+	KubeVersion       string
+	APIVersions       []string
+	BuildOptions      []string
+	RefRoots          map[string]string
+	ReleaseName       string
+	ValuesObject      map[string]any
+	ValuesMergeMode   string
+	ValueFiles        []string
+	ValueFilesBaseDir string
+	ChartCacheDir     string
+	OfflineCharts     bool
+	RefreshCharts     bool
+	ChartAcquirer     chart.Acquirer
+	IncludeCRDs       bool
+	IncludeCRDsSet    bool
+	SkipHooks         bool
+	SkipTests         bool
 }
 
 type Manifest struct {

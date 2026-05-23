@@ -9,7 +9,7 @@ import (
 	"go.yaml.in/yaml/v4"
 )
 
-func newBuildCommand() *cobra.Command {
+func newBuildCommand(deps Dependencies) *cobra.Command {
 	flags := defaultCommonFlags()
 	cmd := &cobra.Command{
 		Use:   "build",
@@ -27,7 +27,13 @@ func newBuildCommand() *cobra.Command {
 		Short: "Render all Applications",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			result, err := app.Orchestrator{}.Build(context.Background(), app.BuildRequest{Path: appsFlags.path, Strict: appsFlags.strict})
+			result, err := deps.Orchestrator.Build(context.Background(), app.BuildRequest{
+				Path:          appsFlags.path,
+				Strict:        appsFlags.strict,
+				Offline:       appsFlags.offline,
+				RefreshCharts: appsFlags.refreshCharts,
+				ChartCacheDir: appsFlags.chartCacheDir,
+			})
 			if err != nil {
 				return err
 			}

@@ -100,6 +100,9 @@ Chart acquisition is shared by Kustomize `helmCharts` and Argo CD chart-only
 sources. Public chart fetching is allowed by default for render/diff commands;
 `--offline` disables chart network fetches. Cache charts under the user cache or
 `--chart-cache-dir`, never inside the Git repository tree.
+Chart network behavior is controlled by `--offline`, `--refresh-charts`, and
+`--chart-cache-dir`. Do not reuse `--allow-network` for Helm chart fetching;
+that flag is reserved for future Git/repository-source fetching.
 OCI chart acquisition must use Helm registry Go libraries, not helm pull.
 Authenticated/private registries remain unsupported and must fail with a clear
 message instead of prompting or reading credentials.
