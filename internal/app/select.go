@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	argoappv1 "github.com/argoproj/argo-cd/v3/pkg/apis/application/v1alpha1"
+	sourcepkg "github.com/home-operations/argocd-local/internal/source"
 )
 
 // SelectChangedApplications returns Applications whose declared local source
@@ -77,7 +78,86 @@ func applicationSourcePaths(app argoappv1.Application) []string {
 			paths = append(paths, sourcePath)
 		}
 	}
+	paths = append(paths, helmValueFileInputPaths(sources)...)
 	return paths
+}
+
+func helmValueFileInputPaths(sources argoappv1.ApplicationSources) []string {
+	if len(sources) == 0 {
+		return nil
+	}
+	refs := sourceRefsByKey(sources)
+
+	var paths []string
+	for _, source := range sources {
+		if source.Helm == nil || len(source.Helm.ValueFiles) == 0 {
+			continue
+		}
+		for _, valueFile := range source.Helm.ValueFiles {
+			if strings.HasPrefix(valueFile, "$") {
+				if resolved, ok := refHelmValueFileInputPath(source, refs, valueFile); ok {
+					paths = append(paths, resolved)
+				}
+				continue
+			}
+			if resolved, ok := localHelmValueFileInputPath(source, valueFile); ok {
+				paths = append(paths, resolved)
+			}
+		}
+	}
+	return paths
+}
+
+func sourceRefsByKey(sources argoappv1.ApplicationSources) map[string]argoappv1.ApplicationSource {
+	refs := make(map[string]argoappv1.ApplicationSource)
+	for _, source := range sources {
+		if source.Ref == "" {
+			continue
+		}
+		refs["$"+source.Ref] = source
+	}
+	return refs
+}
+
+func refHelmValueFileInputPath(source argoappv1.ApplicationSource, refs map[string]argoappv1.ApplicationSource, valueFile string) (string, bool) {
+	refKey, refPath, ok := splitHelmValueFileRef(valueFile)
+	if !ok {
+		return "", false
+	}
+	refSource, ok := refs[refKey]
+	if !ok {
+		return "", false
+	}
+	if sourcepkg.NormalizeURL(refSource.RepoURL) != sourcepkg.NormalizeURL(source.RepoURL) {
+		return "", false
+	}
+	return cleanSelectionRelativePath(refPath)
+}
+
+func localHelmValueFileInputPath(source argoappv1.ApplicationSource, valueFile string) (string, bool) {
+	if source.Path == "" {
+		return "", false
+	}
+	if strings.Contains(valueFile, "://") {
+		return "", false
+	}
+	sourcePath, ok := cleanSelectionRelativePath(source.Path)
+	if !ok {
+		return "", false
+	}
+	valuePath, ok := cleanSelectionRelativePath(valueFile)
+	if !ok {
+		return "", false
+	}
+	return path.Join(sourcePath, valuePath), true
+}
+
+func splitHelmValueFileRef(valueFile string) (string, string, bool) {
+	ref, refPath, ok := strings.Cut(strings.TrimPrefix(valueFile, "$"), "/")
+	if !ok || ref == "" || refPath == "" {
+		return "", "", false
+	}
+	return "$" + ref, refPath, true
 }
 
 func localSourcePath(source argoappv1.ApplicationSource) (string, bool) {
@@ -104,4 +184,16 @@ func normalizeSelectPath(p string) string {
 		return ""
 	}
 	return cleaned
+}
+
+func cleanSelectionRelativePath(p string) (string, bool) {
+	normalized := strings.ReplaceAll(p, "\\", "/")
+	if strings.HasPrefix(normalized, "/") {
+		return "", false
+	}
+	cleaned := path.Clean(strings.Trim(normalized, "/"))
+	if cleaned == "." || cleaned == ".." || strings.HasPrefix(cleaned, "../") {
+		return "", false
+	}
+	return cleaned, true
 }

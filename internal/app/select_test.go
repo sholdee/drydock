@@ -114,6 +114,51 @@ func TestSelectChangedApplicationsRootPathOwnsAllChangedPaths(t *testing.T) {
 	}
 }
 
+func TestSelectChangedApplicationsUsesSameRepoRefHelmValueFiles(t *testing.T) {
+	apps := []argoappv1.Application{
+		testApplication(
+			"helm",
+			nil,
+			argoappv1.ApplicationSources{
+				{RepoURL: " https://example.com/repo.git/ ", Ref: "values"},
+				{
+					RepoURL: "https://example.com/repo",
+					Path:    "charts/demo",
+					Helm: &argoappv1.ApplicationSourceHelm{
+						ValueFiles: []string{"$values/values/demo.yaml"},
+					},
+				},
+			},
+		),
+	}
+
+	selected, unowned := SelectChangedApplications(apps, []string{"values/demo.yaml"})
+
+	assertApplicationNames(t, selected, []string{"helm"})
+	assertStrings(t, unowned, nil)
+}
+
+func TestSelectChangedApplicationsSkipsRemoteChartOnlyOrdinaryValueFiles(t *testing.T) {
+	apps := []argoappv1.Application{
+		testApplication(
+			"remote-chart",
+			&argoappv1.ApplicationSource{
+				RepoURL: "https://charts.example.com",
+				Chart:   "demo",
+				Helm: &argoappv1.ApplicationSourceHelm{
+					ValueFiles: []string{"values/demo.yaml"},
+				},
+			},
+			nil,
+		),
+	}
+
+	selected, unowned := SelectChangedApplications(apps, []string{"values/demo.yaml"})
+
+	assertApplicationNames(t, selected, nil)
+	assertStrings(t, unowned, []string{"values/demo.yaml"})
+}
+
 func testApplication(name string, source *argoappv1.ApplicationSource, sources argoappv1.ApplicationSources) argoappv1.Application {
 	return argoappv1.Application{
 		ObjectMeta: metav1.ObjectMeta{Name: name},
