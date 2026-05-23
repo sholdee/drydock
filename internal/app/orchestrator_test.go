@@ -262,6 +262,28 @@ func TestOrchestratorBuildRejectsDefaultGitCacheInsideRepoRoot(t *testing.T) {
 	}
 }
 
+func TestOrchestratorBuildRejectsGitCacheInsideRepoMapRoot(t *testing.T) {
+	root := t.TempDir()
+	external := t.TempDir()
+	writeExternalPathApplication(t, root, "https://github.com/example/external", "manifests/external")
+
+	_, err := Orchestrator{}.Build(context.Background(), BuildRequest{
+		Path:         root,
+		AllowNetwork: true,
+		GitCacheDir:  filepath.Join(external, ".argocd-local", "git"),
+		RepoMaps: []sourcepkg.RepoMap{{
+			URL:  "https://github.com/example/external.git",
+			Path: external,
+		}},
+	})
+	if err == nil {
+		t.Fatal("Build() error = nil, want git cache location error")
+	}
+	if !strings.Contains(err.Error(), "git cache dir") || !strings.Contains(err.Error(), "must not be inside repository root") {
+		t.Fatalf("Build() error = %q, want git cache location error", err.Error())
+	}
+}
+
 func TestOrchestratorBuildUsesRepoMappedHelmValueRef(t *testing.T) {
 	root := t.TempDir()
 	valuesRoot := t.TempDir()
@@ -305,6 +327,74 @@ spec:
 	value, found, err := unstructured.NestedString(result.Manifests[0].Object.Object, "data", "value")
 	if err != nil || !found || value != "from-mapped-ref" {
 		t.Fatalf("data.value = %q, found %v, err %v; want from-mapped-ref", value, found, err)
+	}
+}
+
+func TestOrchestratorBuildUsesRepoMappedHelmValueRefFromRepoRootWhenRefHasPath(t *testing.T) {
+	root := t.TempDir()
+	valuesRoot := t.TempDir()
+	writeTestFile(t, filepath.Join(root, "apps", "helm-ref-path.yaml"), `apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: helm-ref-path
+  namespace: argocd
+spec:
+  sources:
+    - repoURL: https://github.com/example/values
+      targetRevision: main
+      ref: values
+      path: value-manifests
+    - repoURL: https://github.com/example/repo
+      targetRevision: main
+      path: charts/demo
+      helm:
+        valueFiles:
+          - $values/root-values.yaml
+  destination:
+    name: in-cluster
+    namespace: default
+`)
+	writeAppTestValueChart(t, filepath.Join(root, "charts", "demo"))
+	writeTestFile(t, filepath.Join(valuesRoot, "root-values.yaml"), `value: from-root-ref
+`)
+	writeTestFile(t, filepath.Join(valuesRoot, "value-manifests", "cm.yaml"), `apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ref-source
+data:
+  source: ref-path
+`)
+
+	result, err := Orchestrator{}.Build(context.Background(), BuildRequest{
+		Path: root,
+		RepoMaps: []sourcepkg.RepoMap{{
+			URL:  "https://github.com/example/values.git",
+			Path: valuesRoot,
+		}},
+	})
+	if err != nil {
+		t.Fatalf("Build() error = %v", err)
+	}
+	if len(result.Manifests) != 2 {
+		t.Fatalf("len(Manifests) = %d, want 2", len(result.Manifests))
+	}
+
+	helmManifest, ok := manifestByName(result.Manifests, "demo")
+	if !ok {
+		t.Fatalf("missing Helm manifest demo: %#v", result.Manifests)
+	}
+	value, found, err := unstructured.NestedString(helmManifest.Object.Object, "data", "value")
+	if err != nil || !found || value != "from-root-ref" {
+		t.Fatalf("data.value = %q, found %v, err %v; want from-root-ref", value, found, err)
+	}
+
+	refManifest, ok := manifestByName(result.Manifests, "ref-source")
+	if !ok {
+		t.Fatalf("missing ref source manifest ref-source: %#v", result.Manifests)
+	}
+	source, found, err := unstructured.NestedString(refManifest.Object.Object, "data", "source")
+	if err != nil || !found || source != "ref-path" {
+		t.Fatalf("data.source = %q, found %v, err %v; want ref-path", source, found, err)
 	}
 }
 
@@ -708,6 +798,15 @@ func writeTestFile(t *testing.T, path, content string) {
 	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
 		t.Fatalf("WriteFile() error = %v", err)
 	}
+}
+
+func manifestByName(manifests []render.Manifest, name string) (render.Manifest, bool) {
+	for _, manifest := range manifests {
+		if manifest.Object.GetName() == name {
+			return manifest, true
+		}
+	}
+	return render.Manifest{}, false
 }
 
 func writeBuildApplication(t *testing.T, root, appName, configMapName string) {
