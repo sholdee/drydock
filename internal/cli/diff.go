@@ -26,6 +26,10 @@ func newDiffCommand(deps Dependencies) *cobra.Command {
 		Short: "Diff all Applications",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
+			repoMaps, err := parseRepoMaps(appsFlags.repoMaps)
+			if err != nil {
+				return err
+			}
 			result, err := deps.Orchestrator.DiffApps(context.Background(), app.DiffRequest{
 				LeftPath:               appsFlags.pathOrig,
 				RightPath:              appsFlags.path,
@@ -36,6 +40,10 @@ func newDiffCommand(deps Dependencies) *cobra.Command {
 				Offline:                appsFlags.offline,
 				RefreshCharts:          appsFlags.refreshCharts,
 				ChartCacheDir:          appsFlags.chartCacheDir,
+				RepoMaps:               repoMaps,
+				AllowNetwork:           appsFlags.allowNetwork,
+				GitCacheDir:            appsFlags.gitCacheDir,
+				RefreshGit:             appsFlags.refreshGit,
 				RefreshRemoteResources: appsFlags.refreshRemotes,
 				RemoteResourceCacheDir: appsFlags.remoteCacheDir,
 			})
@@ -56,6 +64,10 @@ func newDiffCommand(deps Dependencies) *cobra.Command {
 		Short: "Diff one Application",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			repoMaps, err := parseRepoMaps(appFlags.repoMaps)
+			if err != nil {
+				return err
+			}
 			result, err := deps.Orchestrator.DiffApp(context.Background(), app.DiffAppRequest{
 				Name: args[0],
 				DiffRequest: app.DiffRequest{
@@ -66,6 +78,10 @@ func newDiffCommand(deps Dependencies) *cobra.Command {
 					Offline:                appFlags.offline,
 					RefreshCharts:          appFlags.refreshCharts,
 					ChartCacheDir:          appFlags.chartCacheDir,
+					RepoMaps:               repoMaps,
+					AllowNetwork:           appFlags.allowNetwork,
+					GitCacheDir:            appFlags.gitCacheDir,
+					RefreshGit:             appFlags.refreshGit,
 					RefreshRemoteResources: appFlags.refreshRemotes,
 					RemoteResourceCacheDir: appFlags.remoteCacheDir,
 				},
@@ -87,6 +103,10 @@ func newDiffCommand(deps Dependencies) *cobra.Command {
 		Short: "Diff rendered container images",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
+			repoMaps, err := parseRepoMaps(imagesFlags.repoMaps)
+			if err != nil {
+				return err
+			}
 			result, err := deps.Orchestrator.DiffImages(context.Background(), app.DiffRequest{
 				LeftPath:               imagesFlags.pathOrig,
 				RightPath:              imagesFlags.path,
@@ -96,6 +116,10 @@ func newDiffCommand(deps Dependencies) *cobra.Command {
 				Offline:                imagesFlags.offline,
 				RefreshCharts:          imagesFlags.refreshCharts,
 				ChartCacheDir:          imagesFlags.chartCacheDir,
+				RepoMaps:               repoMaps,
+				AllowNetwork:           imagesFlags.allowNetwork,
+				GitCacheDir:            imagesFlags.gitCacheDir,
+				RefreshGit:             imagesFlags.refreshGit,
 				RefreshRemoteResources: imagesFlags.refreshRemotes,
 				RemoteResourceCacheDir: imagesFlags.remoteCacheDir,
 			})

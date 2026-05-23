@@ -12,6 +12,7 @@ import (
 	"github.com/home-operations/argocd-local/internal/diff"
 	"github.com/home-operations/argocd-local/internal/manifest"
 	"github.com/home-operations/argocd-local/internal/remote"
+	sourcepkg "github.com/home-operations/argocd-local/internal/source"
 	"go.yaml.in/yaml/v4"
 )
 
@@ -25,6 +26,10 @@ type DiffRequest struct {
 	Offline                bool
 	RefreshCharts          bool
 	ChartCacheDir          string
+	RepoMaps               []sourcepkg.RepoMap
+	AllowNetwork           bool
+	GitCacheDir            string
+	RefreshGit             bool
 	RefreshRemoteResources bool
 	RemoteResourceCacheDir string
 }
@@ -182,6 +187,10 @@ func (request DiffRequest) buildRequest(path string, forbiddenRoots []string) Bu
 		Offline:                      request.Offline,
 		RefreshCharts:                request.RefreshCharts,
 		ChartCacheDir:                request.ChartCacheDir,
+		RepoMaps:                     request.RepoMaps,
+		AllowNetwork:                 request.AllowNetwork,
+		GitCacheDir:                  request.GitCacheDir,
+		RefreshGit:                   request.RefreshGit,
 		RefreshRemoteResources:       request.RefreshRemoteResources,
 		RemoteResourceCacheDir:       request.RemoteResourceCacheDir,
 		RemoteResourceForbiddenRoots: forbiddenRoots,
