@@ -304,6 +304,52 @@ func TestDefaultAcquirerRejectsUnsafeOCIRepositoriesBeforeCacheHit(t *testing.T)
 	}
 }
 
+func TestDefaultAcquirerRedactsInvalidOCIRepositoryErrors(t *testing.T) {
+	for _, tt := range []struct {
+		name       string
+		repository string
+		secrets    []string
+	}{
+		{
+			name:       "missing host with userinfo",
+			repository: "oci://user:password@",
+			secrets:    []string{"user", "password"},
+		},
+		{
+			name:       "wrong scheme with userinfo",
+			repository: "https://user:password@registry.example.test/charts",
+			secrets:    []string{"user", "password"},
+		},
+		{
+			name:       "wrong scheme with token query",
+			repository: "https://registry.example.test/charts?token=secret-token",
+			secrets:    []string{"secret-token", "token=secret-token"},
+		},
+		{
+			name:       "parse error with userinfo",
+			repository: "oci://user:password@%zz",
+			secrets:    []string{"user", "password"},
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := (DefaultAcquirer{}).Acquire(context.Background(), Request{
+				Repository: tt.repository,
+				Name:       "demo",
+				Version:    "1.2.3",
+				Kind:       RepositoryOCI,
+			}, Options{CacheDir: t.TempDir()})
+			if err == nil {
+				t.Fatal("Acquire() error = nil, want repository validation error")
+			}
+			for _, secret := range tt.secrets {
+				if strings.Contains(err.Error(), secret) {
+					t.Fatalf("Acquire() error leaked %q: %q", secret, err)
+				}
+			}
+		})
+	}
+}
+
 func TestHelmOCIPullerRestoresDockerConfigAfterFailedPull(t *testing.T) {
 	originalDockerConfig := t.TempDir()
 	t.Setenv("DOCKER_CONFIG", originalDockerConfig)
