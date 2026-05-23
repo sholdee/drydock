@@ -3,6 +3,8 @@ package app
 import (
 	"context"
 	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -155,6 +157,104 @@ func TestRenderApplicationPassesHelmIgnoreMissingValueFiles(t *testing.T) {
 	}
 	if len(got.ValueFiles) != 1 || got.ValueFiles[0] != "optional.yaml" {
 		t.Fatalf("ValueFiles = %#v, want optional.yaml", got.ValueFiles)
+	}
+}
+
+func TestRenderApplicationPassesRefRootsForHelmValueFiles(t *testing.T) {
+	application := argoappv1.Application{
+		ObjectMeta: metav1.ObjectMeta{Namespace: "argocd", Name: "demo"},
+		Spec: argoappv1.ApplicationSpec{
+			Sources: argoappv1.ApplicationSources{
+				{RepoURL: "https://values", Ref: "values"},
+				{
+					RepoURL: "https://repo",
+					Path:    "chart",
+					Helm: &argoappv1.ApplicationSourceHelm{
+						ValueFiles: []string{"$values/foo.yaml"},
+					},
+				},
+			},
+		},
+	}
+	var got render.RenderOptions
+	provider := providerFunc(func(_ context.Context, source render.ResolvedSource, opts render.RenderOptions) ([]render.Manifest, []diagnostic.Diagnostic, error) {
+		if source.Path == "chart" {
+			got = opts
+		}
+		return nil, nil, nil
+	})
+
+	if _, err := RenderApplication(context.Background(), application, provider); err != nil {
+		t.Fatalf("RenderApplication() error = %v", err)
+	}
+	if got.RefRoots["$values"] != "." {
+		t.Fatalf("RefRoots[$values] = %q, want .", got.RefRoots["$values"])
+	}
+	if len(got.ValueFiles) != 1 || got.ValueFiles[0] != "$values/foo.yaml" {
+		t.Fatalf("ValueFiles = %#v, want $values/foo.yaml", got.ValueFiles)
+	}
+}
+
+func TestRenderApplicationPassesHelmRenderSwitches(t *testing.T) {
+	application := argoappv1.Application{
+		ObjectMeta: metav1.ObjectMeta{Namespace: "argocd", Name: "demo"},
+		Spec: argoappv1.ApplicationSpec{
+			Source: &argoappv1.ApplicationSource{
+				RepoURL: "https://repo",
+				Path:    "chart",
+				Helm: &argoappv1.ApplicationSourceHelm{
+					SkipCrds:  true,
+					SkipTests: true,
+				},
+			},
+		},
+	}
+	var got render.RenderOptions
+	provider := providerFunc(func(_ context.Context, _ render.ResolvedSource, opts render.RenderOptions) ([]render.Manifest, []diagnostic.Diagnostic, error) {
+		got = opts
+		return nil, nil, nil
+	})
+
+	if _, err := RenderApplication(context.Background(), application, provider); err != nil {
+		t.Fatalf("RenderApplication() error = %v", err)
+	}
+	if !got.IncludeCRDsSet {
+		t.Fatalf("IncludeCRDsSet = false, want true")
+	}
+	if got.IncludeCRDs {
+		t.Fatalf("IncludeCRDs = true, want false")
+	}
+	if !got.SkipTests {
+		t.Fatalf("SkipTests = false, want true")
+	}
+}
+
+func TestLocalProviderAnchorsRelativeRefRootsUnderRepoRoot(t *testing.T) {
+	root := t.TempDir()
+	writeAppTestValueChart(t, filepath.Join(root, "chart"))
+	writeAppTestFile(t, filepath.Join(root, "foo.yaml"), `
+value: from-ref
+`)
+
+	manifests, diags, err := (localProvider{repoRoot: root}).RenderSource(context.Background(), render.ResolvedSource{
+		Path: "chart",
+	}, render.RenderOptions{
+		AppName:    "demo",
+		RefRoots:   map[string]string{"$values": "."},
+		ValueFiles: []string{"$values/foo.yaml"},
+	})
+	if err != nil {
+		t.Fatalf("RenderSource() error = %v", err)
+	}
+	if len(diags) != 0 {
+		t.Fatalf("diagnostics = %#v", diags)
+	}
+	if len(manifests) != 1 {
+		t.Fatalf("len(manifests) = %d, want 1", len(manifests))
+	}
+	value, _, _ := unstructured.NestedString(manifests[0].Object.Object, "data", "value")
+	if value != "from-ref" {
+		t.Fatalf("data.value = %q, want from-ref", value)
 	}
 }
 
@@ -359,4 +459,34 @@ type providerFunc func(context.Context, render.ResolvedSource, render.RenderOpti
 
 func (f providerFunc) RenderSource(ctx context.Context, source render.ResolvedSource, opts render.RenderOptions) ([]render.Manifest, []diagnostic.Diagnostic, error) {
 	return f(ctx, source, opts)
+}
+
+func writeAppTestValueChart(t *testing.T, chartDir string) {
+	t.Helper()
+	writeAppTestFile(t, filepath.Join(chartDir, "Chart.yaml"), `
+apiVersion: v2
+name: chart
+version: 0.1.0
+`)
+	writeAppTestFile(t, filepath.Join(chartDir, "values.yaml"), `
+value: default
+`)
+	writeAppTestFile(t, filepath.Join(chartDir, "templates", "cm.yaml"), `
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: demo
+data:
+  value: {{ .Values.value | quote }}
+`)
+}
+
+func writeAppTestFile(t *testing.T, path string, data string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatalf("MkdirAll(%q): %v", filepath.Dir(path), err)
+	}
+	if err := os.WriteFile(path, []byte(strings.TrimPrefix(data, "\n")), 0o644); err != nil {
+		t.Fatalf("WriteFile(%q): %v", path, err)
+	}
 }

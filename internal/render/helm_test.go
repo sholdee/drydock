@@ -287,6 +287,37 @@ value: outside
 	}
 }
 
+func TestHelmRendererRejectsSymlinkedRefRoot(t *testing.T) {
+	root := t.TempDir()
+	outside := t.TempDir()
+	writeValueChart(t, filepath.Join(root, "chart"))
+	writeFile(t, filepath.Join(outside, "values.yaml"), `
+value: outside
+`)
+	symlink(t, outside, filepath.Join(root, "values-link"))
+
+	result, diags, err := (HelmRenderer{}).Render(context.Background(), ResolvedSource{
+		RepoRoot: root,
+		Path:     "chart",
+	}, RenderOptions{
+		AppName:    "demo",
+		RefRoots:   map[string]string{"$values": filepath.Join(root, "values-link")},
+		ValueFiles: []string{"$values/values.yaml"},
+	})
+	if err == nil {
+		t.Fatal("Render() error = nil, want symlink error")
+	}
+	if !strings.Contains(err.Error(), "symlink") {
+		t.Fatalf("Render() error = %v, want symlink error", err)
+	}
+	if len(diags) != 0 {
+		t.Fatalf("diagnostics = %#v", diags)
+	}
+	if len(result) != 0 {
+		t.Fatalf("result = %#v, want no manifests", result)
+	}
+}
+
 func TestHelmRendererValueFilePrecedence(t *testing.T) {
 	for _, tt := range []struct {
 		name              string
