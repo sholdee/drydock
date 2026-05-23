@@ -38,6 +38,9 @@ func newDiffCommand(deps Dependencies) *cobra.Command {
 				ChartCacheDir:     appsFlags.chartCacheDir,
 			})
 			if err != nil {
+				if renderErr := renderDiagnostics(cmd.ErrOrStderr(), result.Diagnostics); renderErr != nil {
+					return renderErr
+				}
 				return err
 			}
 			if err := renderDiagnostics(cmd.ErrOrStderr(), result.Diagnostics); err != nil {
