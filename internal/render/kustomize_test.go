@@ -582,6 +582,55 @@ helmCharts:
 	}
 }
 
+func TestKustomizeRendererMergesChartDefaultValuesBeforeAdditionalValues(t *testing.T) {
+	root := t.TempDir()
+	chartDir := filepath.Join(root, "charts", "demo")
+	writeTestChart(t, chartDir, `
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Release.Name }}
+data:
+  base: {{ .Values.base }}
+  image: {{ .Values.image }}
+`)
+	writeFile(t, filepath.Join(chartDir, "values.yaml"), `
+base: from-chart-default
+image: from-chart-default
+`)
+	writeFile(t, filepath.Join(root, "apps", "demo", "additional.yaml"), `
+image: from-additional
+`)
+	writeFile(t, filepath.Join(root, "apps", "demo", "kustomization.yaml"), `
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+helmCharts:
+  - name: demo
+    repo: https://charts.example.test
+    version: 1.2.3
+    releaseName: demo
+    additionalValuesFiles:
+      - additional.yaml
+    valuesInline:
+      base: from-inline
+      image: from-inline
+    valuesMerge: merge
+`)
+
+	result, diags, err := (KustomizeRenderer{}).Render(context.Background(), ResolvedSource{
+		RepoRoot: root,
+		Path:     filepath.Join("apps", "demo"),
+	}, RenderOptions{ChartAcquirer: &fakeChartAcquirer{chartDir: chartDir}})
+	if err != nil {
+		t.Fatalf("Render() error = %v", err)
+	}
+	if len(diags) != 0 {
+		t.Fatalf("diagnostics = %#v", diags)
+	}
+	assertConfigMapData(t, result, "base", "from-chart-default")
+	assertConfigMapData(t, result, "image", "from-additional")
+}
+
 func TestKustomizeRendererRejectsUnsupportedHelmFields(t *testing.T) {
 	for _, tt := range []struct {
 		name          string

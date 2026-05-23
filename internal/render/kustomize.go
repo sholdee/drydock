@@ -158,7 +158,7 @@ func renderKustomizeHelmCharts(ctx context.Context, tempRepoRoot, tempSourceRoot
 			return nil, err
 		}
 
-		helmOpts, err := renderOptionsForKustomizeHelmChart(helmChart, tempRepoRoot, tempSourceRoot, valueFilesBaseDir, namespaceFallback, generatedName, opts, acquirer)
+		helmOpts, err := renderOptionsForKustomizeHelmChart(helmChart, tempRepoRoot, tempSourceRoot, chartRel, valueFilesBaseDir, namespaceFallback, generatedName, opts, acquirer)
 		if err != nil {
 			return nil, err
 		}
@@ -239,7 +239,7 @@ func resolveLocalKustomizeHelmChart(repoRoot, kustomizationDir, chartHome string
 	return rel, true, nil
 }
 
-func renderOptionsForKustomizeHelmChart(helmChart types.HelmChart, tempRepoRoot, tempSourceRoot, valueFilesBaseDir, namespaceFallback, generatedName string, opts RenderOptions, acquirer chart.Acquirer) (RenderOptions, error) {
+func renderOptionsForKustomizeHelmChart(helmChart types.HelmChart, tempRepoRoot, tempSourceRoot, chartRel, valueFilesBaseDir, namespaceFallback, generatedName string, opts RenderOptions, acquirer chart.Acquirer) (RenderOptions, error) {
 	valueFiles := make([]string, 0, 1+len(helmChart.AdditionalValuesFiles))
 	valuesObject := cloneValues(helmChart.ValuesInline)
 	valuesMergeMode := helmChart.ValuesMerge
@@ -248,7 +248,7 @@ func renderOptionsForKustomizeHelmChart(helmChart types.HelmChart, tempRepoRoot,
 	}
 	valueFiles = append(valueFiles, helmChart.AdditionalValuesFiles...)
 	if len(helmChart.ValuesInline) != 0 {
-		generatedValuesFile, err := writeKustomizeHelmGeneratedValuesFile(tempRepoRoot, tempSourceRoot, valueFilesBaseDir, generatedName, helmChart)
+		generatedValuesFile, err := writeKustomizeHelmGeneratedValuesFile(tempRepoRoot, tempSourceRoot, chartRel, valueFilesBaseDir, generatedName, helmChart)
 		if err != nil {
 			return RenderOptions{}, err
 		}
@@ -283,14 +283,22 @@ func renderOptionsForKustomizeHelmChart(helmChart types.HelmChart, tempRepoRoot,
 	}, nil
 }
 
-func writeKustomizeHelmGeneratedValuesFile(tempRepoRoot, tempSourceRoot, valueFilesBaseDir, generatedName string, helmChart types.HelmChart) (string, error) {
+func writeKustomizeHelmGeneratedValuesFile(tempRepoRoot, tempSourceRoot, chartRel, valueFilesBaseDir, generatedName string, helmChart types.HelmChart) (string, error) {
 	primaryValues := map[string]any{}
 	loadPrimaryValues, err := shouldLoadHelmValueFiles(helmChart.ValuesMerge, helmChart.ValuesInline)
 	if err != nil {
 		return "", err
 	}
-	if loadPrimaryValues && helmChart.ValuesFile != "" {
-		primaryValues, err = loadHelmValueFiles(tempRepoRoot, valueFilesBaseDir, nil, []string{helmChart.ValuesFile}, false)
+	if loadPrimaryValues {
+		valueFilesBase := valueFilesBaseDir
+		valueFile := helmChart.ValuesFile
+		ignoreMissing := false
+		if valueFile == "" {
+			valueFilesBase = chartRel
+			valueFile = "values.yaml"
+			ignoreMissing = true
+		}
+		primaryValues, err = loadHelmValueFiles(tempRepoRoot, valueFilesBase, nil, []string{valueFile}, ignoreMissing)
 		if err != nil {
 			return "", err
 		}
