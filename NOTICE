@@ -1,5 +1,7 @@
 argocd-local
 Copyright 2026 argocd-local contributors
 
+This product is licensed under the Apache License, Version 2.0.
+
 Third-party source files and fixtures copied into this repository must retain
 their original copyright and license notices.
