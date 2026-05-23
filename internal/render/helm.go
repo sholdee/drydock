@@ -67,11 +67,19 @@ func (HelmRenderer) Render(ctx context.Context, source ResolvedSource, opts Rend
 	}
 	capabilities.APIVersions = append(capabilities.APIVersions, opts.APIVersions...)
 
-	fileValues, err := loadHelmValueFiles(source.RepoRoot, helmValueFilesBaseDir(source, opts), opts.RefRoots, opts.ValueFiles, opts.IgnoreMissingValueFiles)
+	inlineValues := cloneValues(opts.ValuesObject)
+	loadValueFiles, err := shouldLoadHelmValueFiles(opts.ValuesMergeMode, inlineValues)
 	if err != nil {
 		return nil, nil, err
 	}
-	inputValues, err := mergeHelmValues(fileValues, cloneValues(opts.ValuesObject), opts.ValuesMergeMode)
+	fileValues := map[string]any{}
+	if loadValueFiles {
+		fileValues, err = loadHelmValueFiles(source.RepoRoot, helmValueFilesBaseDir(source, opts), opts.RefRoots, opts.ValueFiles, opts.IgnoreMissingValueFiles)
+		if err != nil {
+			return nil, nil, err
+		}
+	}
+	inputValues, err := mergeHelmValues(fileValues, inlineValues, opts.ValuesMergeMode)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -371,6 +379,17 @@ func helmValueFilesBaseDir(source ResolvedSource, opts RenderOptions) string {
 	return source.Path
 }
 
+func shouldLoadHelmValueFiles(mode string, inlineValues map[string]any) (bool, error) {
+	switch mode {
+	case "", "override", "merge":
+		return true, nil
+	case "replace":
+		return len(inlineValues) == 0, nil
+	default:
+		return false, fmt.Errorf("unsupported helm values merge mode %q", mode)
+	}
+}
+
 func loadHelmValueFiles(repoRoot, baseDir string, refRoots map[string]string, files []string, ignoreMissing bool) (map[string]any, error) {
 	out := map[string]any{}
 	for _, file := range files {
@@ -424,8 +443,36 @@ func resolveHelmValueFile(repoRoot, baseDir string, refRoots map[string]string, 
 	if err != nil {
 		return "", "", fmt.Errorf("helm value files base dir %q: %w", baseDir, err)
 	}
+	if err := rejectHelmValueBaseDirSymlinkComponents(repoRoot, cleanBase); err != nil {
+		return "", "", fmt.Errorf("helm value files base dir %q: %w", baseDir, err)
+	}
 	root := filepath.Join(repoRoot, cleanBase)
 	return resolveHelmValueFileUnderRoot(root, file, file)
+}
+
+func rejectHelmValueBaseDirSymlinkComponents(repoRoot, sourcePath string) error {
+	if sourcePath == "." {
+		return nil
+	}
+
+	current := filepath.Clean(repoRoot)
+	for _, component := range strings.Split(sourcePath, string(filepath.Separator)) {
+		if component == "" || component == "." {
+			continue
+		}
+		current = filepath.Join(current, component)
+		info, err := os.Lstat(current)
+		if err != nil {
+			if os.IsNotExist(err) {
+				return nil
+			}
+			return err
+		}
+		if info.Mode()&os.ModeSymlink != 0 {
+			return fmt.Errorf("source path %q includes symlink component %q", sourcePath, component)
+		}
+	}
+	return nil
 }
 
 func resolveHelmValueFileUnderRoot(root, file, display string) (string, string, error) {

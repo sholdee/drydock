@@ -364,6 +364,53 @@ func TestHelmRendererValueFilePrecedence(t *testing.T) {
 	}
 }
 
+func TestHelmRendererReplaceModeSkipsValueFileLoadingWithInlineValues(t *testing.T) {
+	for _, tt := range []struct {
+		name      string
+		file      string
+		fileData  string
+		writeFile bool
+	}{
+		{
+			name: "missing file",
+			file: "missing.yaml",
+		},
+		{
+			name:      "invalid file",
+			file:      "invalid.yaml",
+			fileData:  "- not\n- a\n- mapping\n",
+			writeFile: true,
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			root := t.TempDir()
+			writeValueChart(t, filepath.Join(root, "chart"))
+			if tt.writeFile {
+				writeFile(t, filepath.Join(root, "chart", tt.file), tt.fileData)
+			}
+
+			result, diags, err := (HelmRenderer{}).Render(context.Background(), ResolvedSource{
+				RepoRoot: root,
+				Path:     "chart",
+			}, RenderOptions{
+				AppName:         "demo",
+				ValuesMergeMode: "replace",
+				ValueFiles:      []string{tt.file},
+				ValuesObject:    map[string]any{"value": "from-inline"},
+			})
+			if err != nil {
+				t.Fatalf("Render() error = %v", err)
+			}
+			if len(diags) != 0 {
+				t.Fatalf("diagnostics = %#v", diags)
+			}
+			if value := renderedValue(t, result); value != "from-inline" {
+				t.Fatalf("data.value = %q, want from-inline", value)
+			}
+		})
+	}
+}
+
 func TestHelmRendererRejectsNonMappingValueFiles(t *testing.T) {
 	for _, tt := range []struct {
 		name string
@@ -397,6 +444,37 @@ func TestHelmRendererRejectsNonMappingValueFiles(t *testing.T) {
 				t.Fatalf("result = %#v, want no manifests", result)
 			}
 		})
+	}
+}
+
+func TestHelmRendererRejectsSymlinkedValueFilesBaseDir(t *testing.T) {
+	root := t.TempDir()
+	outside := t.TempDir()
+	writeValueChart(t, filepath.Join(root, "chart"))
+	writeFile(t, filepath.Join(outside, "values.yaml"), `
+value: outside
+`)
+	symlink(t, outside, filepath.Join(root, "linked-values"))
+
+	result, diags, err := (HelmRenderer{}).Render(context.Background(), ResolvedSource{
+		RepoRoot: root,
+		Path:     "chart",
+	}, RenderOptions{
+		AppName:           "demo",
+		ValueFilesBaseDir: "linked-values",
+		ValueFiles:        []string{"values.yaml"},
+	})
+	if err == nil {
+		t.Fatal("Render() error = nil, want symlink error")
+	}
+	if !strings.Contains(err.Error(), "symlink") {
+		t.Fatalf("Render() error = %v, want symlink error", err)
+	}
+	if len(diags) != 0 {
+		t.Fatalf("diagnostics = %#v", diags)
+	}
+	if len(result) != 0 {
+		t.Fatalf("result = %#v, want no manifests", result)
 	}
 }
 
