@@ -1,11 +1,14 @@
 package diff
 
 import (
+	"bytes"
 	"fmt"
+	"reflect"
 	"sort"
 	"strings"
 
 	"github.com/pmezard/go-difflib/difflib"
+	"go.yaml.in/yaml/v4"
 )
 
 type Parent struct {
@@ -137,9 +140,13 @@ func resultFor(doc Document, change Change, from, to string, opts Options) (Resu
 
 func unified(doc Document, from, to string, opts Options) (string, error) {
 	header := headerOf(doc)
+	displayFrom, displayTo, err := displayBodies(doc, from, to)
+	if err != nil {
+		return "", fmt.Errorf("diff %s: %w", header, err)
+	}
 	diff, err := difflib.GetUnifiedDiffString(difflib.UnifiedDiff{
-		A:        difflib.SplitLines(from),
-		B:        difflib.SplitLines(to),
+		A:        difflib.SplitLines(displayFrom),
+		B:        difflib.SplitLines(displayTo),
 		FromFile: header,
 		ToFile:   header,
 		Context:  opts.Unified,
@@ -148,6 +155,133 @@ func unified(doc Document, from, to string, opts Options) (string, error) {
 		return "", fmt.Errorf("diff %s: %w", header, err)
 	}
 	return diff, nil
+}
+
+func displayBodies(doc Document, from, to string) (string, string, error) {
+	if doc.Resource.Kind != "Secret" {
+		return from, to, nil
+	}
+	return redactedSecretBodies(from, to)
+}
+
+func redactedSecretBodies(from, to string) (string, string, error) {
+	fromObject, err := decodeDiffYAML(from)
+	if err != nil {
+		return "", "", fmt.Errorf("redact Secret before body: %w", err)
+	}
+	toObject, err := decodeDiffYAML(to)
+	if err != nil {
+		return "", "", fmt.Errorf("redact Secret after body: %w", err)
+	}
+
+	redactSecretFieldPair(fromObject, toObject, "data")
+	redactSecretFieldPair(fromObject, toObject, "stringData")
+
+	redactedFrom, err := encodeDiffYAML(fromObject)
+	if err != nil {
+		return "", "", fmt.Errorf("encode redacted Secret before body: %w", err)
+	}
+	redactedTo, err := encodeDiffYAML(toObject)
+	if err != nil {
+		return "", "", fmt.Errorf("encode redacted Secret after body: %w", err)
+	}
+	return redactedFrom, redactedTo, nil
+}
+
+func decodeDiffYAML(body string) (map[string]any, error) {
+	if body == "" {
+		return nil, nil
+	}
+	var object map[string]any
+	if err := yaml.Unmarshal([]byte(body), &object); err != nil {
+		return nil, err
+	}
+	return object, nil
+}
+
+func encodeDiffYAML(object map[string]any) (string, error) {
+	if object == nil {
+		return "", nil
+	}
+	var buf bytes.Buffer
+	encoder := yaml.NewEncoder(&buf)
+	encoder.SetIndent(2)
+	if err := encoder.Encode(object); err != nil {
+		return "", err
+	}
+	if err := encoder.Close(); err != nil {
+		return "", err
+	}
+	return buf.String(), nil
+}
+
+func redactSecretFieldPair(fromObject, toObject map[string]any, field string) {
+	fromValues := stringMapField(fromObject, field)
+	toValues := stringMapField(toObject, field)
+	if fromValues == nil && toValues == nil {
+		return
+	}
+
+	keys := mapKeys(fromValues, toValues)
+	for _, key := range keys {
+		fromValue, hasFrom := fromValues[key]
+		toValue, hasTo := toValues[key]
+		switch {
+		case hasFrom && hasTo && reflect.DeepEqual(fromValue, toValue):
+			fromValues[key] = "<redacted>"
+			toValues[key] = "<redacted>"
+		case hasFrom && hasTo:
+			fromValues[key] = "<redacted-before>"
+			toValues[key] = "<redacted-after>"
+		case hasFrom:
+			fromValues[key] = "<redacted-removed>"
+		case hasTo:
+			toValues[key] = "<redacted-added>"
+		}
+	}
+}
+
+func stringMapField(object map[string]any, field string) map[string]any {
+	if object == nil {
+		return nil
+	}
+	values, ok := object[field]
+	if !ok {
+		return nil
+	}
+	switch typed := values.(type) {
+	case map[string]any:
+		return typed
+	case map[any]any:
+		converted := make(map[string]any, len(typed))
+		for key, value := range typed {
+			stringKey, ok := key.(string)
+			if !ok {
+				continue
+			}
+			converted[stringKey] = value
+		}
+		object[field] = converted
+		return converted
+	default:
+		return nil
+	}
+}
+
+func mapKeys(left, right map[string]any) []string {
+	seen := make(map[string]struct{}, len(left)+len(right))
+	for key := range left {
+		seen[key] = struct{}{}
+	}
+	for key := range right {
+		seen[key] = struct{}{}
+	}
+	keys := make([]string, 0, len(seen))
+	for key := range seen {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	return keys
 }
 
 func headerOf(doc Document) string {
