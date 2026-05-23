@@ -86,7 +86,7 @@ func (v *kustomizeGraphValidator) validateKustomizationDir(ctx context.Context, 
 	}
 
 	dir = filepath.Clean(dir)
-	if err := v.rejectSourceRootEscape("kustomization directory", dir); err != nil {
+	if err := v.rejectRepoRootEscape("kustomization directory", dir); err != nil {
 		return "", err
 	}
 	if _, ok := v.visited[dir]; ok {
@@ -313,10 +313,10 @@ func (v *kustomizeGraphValidator) validateLocalRef(dir, field, ref string) (stri
 	}
 
 	path := filepath.Clean(filepath.Join(dir, filepath.FromSlash(ref)))
-	if err := v.rejectSourceRootEscape("kustomize "+field, path); err != nil {
+	if err := v.rejectRepoRootEscape("kustomize "+field, path); err != nil {
 		return "", nil, err
 	}
-	if err := rejectSymlinkedPath(v.sourceRoot, path); err != nil {
+	if err := rejectSymlinkedPath(v.repoRoot, path); err != nil {
 		return "", nil, fmt.Errorf("kustomize %s %q: %w", field, ref, err)
 	}
 
@@ -333,10 +333,10 @@ func (v *kustomizeGraphValidator) validateLocalRef(dir, field, ref string) (stri
 	return path, info, nil
 }
 
-func (v *kustomizeGraphValidator) rejectSourceRootEscape(kind, path string) error {
-	rel, err := filepath.Rel(v.sourceRoot, path)
+func (v *kustomizeGraphValidator) rejectRepoRootEscape(kind, path string) error {
+	rel, err := filepath.Rel(v.repoRoot, path)
 	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-		return fmt.Errorf("%s %q escapes source root %q", kind, path, v.sourceRoot)
+		return fmt.Errorf("%s %q escapes repository root %q", kind, path, v.repoRoot)
 	}
 	return nil
 }

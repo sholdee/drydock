@@ -32,6 +32,51 @@ func TestKustomizeRendererRendersResources(t *testing.T) {
 	}
 }
 
+func TestKustomizeRendererAllowsRepoRootLocalComponents(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "components", "namespace", "kustomization.yaml"), `
+apiVersion: kustomize.config.k8s.io/v1alpha1
+kind: Component
+resources:
+  - serviceaccount.yaml
+`)
+	writeFile(t, filepath.Join(root, "components", "namespace", "serviceaccount.yaml"), `
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: demo
+`)
+	writeFile(t, filepath.Join(root, "apps", "demo", "kustomization.yaml"), `
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: demo
+components:
+  - ../../components/namespace
+resources:
+  - cm.yaml
+`)
+	writeFile(t, filepath.Join(root, "apps", "demo", "cm.yaml"), `
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: demo
+`)
+
+	result, diags, err := (KustomizeRenderer{}).Render(context.Background(), ResolvedSource{
+		RepoRoot: root,
+		Path:     filepath.Join("apps", "demo"),
+	}, RenderOptions{})
+	if err != nil {
+		t.Fatalf("Render() error = %v", err)
+	}
+	if len(diags) != 0 {
+		t.Fatalf("diagnostics = %#v", diags)
+	}
+	if len(result) != 2 {
+		t.Fatalf("len(result) = %d, want 2", len(result))
+	}
+}
+
 func TestKustomizeRendererRejectsSourcePathEscape(t *testing.T) {
 	parent := t.TempDir()
 	root := filepath.Join(parent, "repo")
@@ -73,7 +118,7 @@ func TestKustomizeRendererRejectsKustomizationGraphEscapes(t *testing.T) {
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 resources:
-  - ../../outside/cm.yaml
+  - ../../../outside/cm.yaml
 `,
 			outsideRelPath: filepath.Join("outside", "cm.yaml"),
 		},
@@ -83,15 +128,17 @@ resources:
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 bases:
-  - ../../outside
+  - ../../../outside
 `,
 			outsideRelPath: filepath.Join("outside", "kustomization.yaml"),
 		},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
-			root := t.TempDir()
+			parent := t.TempDir()
+			root := filepath.Join(parent, "repo")
+			outside := filepath.Join(parent, tt.outsideRelPath)
 			writeFile(t, filepath.Join(root, "apps", "demo", "kustomization.yaml"), tt.kustomization)
-			writeFile(t, filepath.Join(root, tt.outsideRelPath), `
+			writeFile(t, outside, `
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -105,8 +152,8 @@ metadata:
 			if err == nil {
 				t.Fatal("Render() error = nil, want graph escape error")
 			}
-			if !strings.Contains(err.Error(), "escapes source root") {
-				t.Fatalf("Render() error = %v, want source root escape error", err)
+			if !strings.Contains(err.Error(), "escapes repository root") {
+				t.Fatalf("Render() error = %v, want repository root escape error", err)
 			}
 			if len(diags) != 0 {
 				t.Fatalf("diagnostics = %#v", diags)
