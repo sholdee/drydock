@@ -3,5 +3,6 @@ kind: Kustomization
 namespace: plain
 components:
   - ../../components/namespace
+  - ../../components/dragonfly
 resources:
   - deployment.yaml
