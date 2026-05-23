@@ -12,6 +12,7 @@ import (
 
 	"github.com/home-operations/argocd-local/internal/diagnostic"
 	"github.com/home-operations/argocd-local/internal/manifest"
+	"go.yaml.in/yaml/v4"
 	helmchart "helm.sh/helm/v4/pkg/chart"
 	"helm.sh/helm/v4/pkg/chart/common"
 	chartutil "helm.sh/helm/v4/pkg/chart/common/util"
@@ -19,6 +20,7 @@ import (
 	chartv2 "helm.sh/helm/v4/pkg/chart/v2"
 	chartv2util "helm.sh/helm/v4/pkg/chart/v2/util"
 	"helm.sh/helm/v4/pkg/engine"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 )
 
 type HelmRenderer struct{}
@@ -26,9 +28,6 @@ type HelmRenderer struct{}
 func (HelmRenderer) Render(ctx context.Context, source ResolvedSource, opts RenderOptions) ([]Manifest, []diagnostic.Diagnostic, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, nil, err
-	}
-	if len(opts.ValueFiles) != 0 {
-		return nil, nil, fmt.Errorf("helm value files are not supported yet")
 	}
 
 	chartPath, err := sourceRoot(source)
@@ -68,7 +67,14 @@ func (HelmRenderer) Render(ctx context.Context, source ResolvedSource, opts Rend
 	}
 	capabilities.APIVersions = append(capabilities.APIVersions, opts.APIVersions...)
 
-	inputValues := cloneValues(opts.ValuesObject)
+	fileValues, err := loadHelmValueFiles(source.RepoRoot, helmValueFilesBaseDir(source, opts), opts.RefRoots, opts.ValueFiles)
+	if err != nil {
+		return nil, nil, err
+	}
+	inputValues, err := mergeHelmValues(fileValues, cloneValues(opts.ValuesObject), opts.ValuesMergeMode)
+	if err != nil {
+		return nil, nil, err
+	}
 	if err := processHelmDependencies(chart, inputValues, manifestPath); err != nil {
 		return nil, nil, err
 	}
@@ -89,7 +95,7 @@ func (HelmRenderer) Render(ctx context.Context, source ResolvedSource, opts Rend
 		return nil, nil, fmt.Errorf("helm template %s: %w", manifestPath, err)
 	}
 
-	return decodeHelmManifests(pathMap, chart, rendered)
+	return decodeHelmManifests(pathMap, chart, rendered, opts)
 }
 
 type helmCRDProvider interface {
@@ -130,31 +136,33 @@ func processHelmDependencies(chrt helmchart.Charter, values map[string]any, mani
 	return nil
 }
 
-func decodeHelmManifests(pathMap map[string]string, chrt helmchart.Charter, rendered map[string]string) ([]Manifest, []diagnostic.Diagnostic, error) {
+func decodeHelmManifests(pathMap map[string]string, chrt helmchart.Charter, rendered map[string]string, opts RenderOptions) ([]Manifest, []diagnostic.Diagnostic, error) {
 	var out []Manifest
-	if provider, ok := chrt.(helmCRDObjectProvider); ok {
-		for _, crd := range provider.CRDObjects() {
-			path, err := helmManifestPath(pathMap, crd.Filename)
-			if err != nil {
-				return nil, nil, err
+	if shouldIncludeCRDs(opts) {
+		if provider, ok := chrt.(helmCRDObjectProvider); ok {
+			for _, crd := range provider.CRDObjects() {
+				path, err := helmManifestPath(pathMap, crd.Filename)
+				if err != nil {
+					return nil, nil, err
+				}
+				docs, err := manifest.DecodeDocuments(path, bytes.NewReader(crd.File.Data))
+				if err != nil {
+					return nil, nil, err
+				}
+				out = appendHelmDocuments(out, docs, opts)
 			}
-			docs, err := manifest.DecodeDocuments(path, bytes.NewReader(crd.File.Data))
-			if err != nil {
-				return nil, nil, err
+		} else if provider, ok := chrt.(helmCRDProvider); ok {
+			for _, crd := range provider.CRDs() {
+				path, err := helmManifestPath(pathMap, crd.Name)
+				if err != nil {
+					return nil, nil, err
+				}
+				docs, err := manifest.DecodeDocuments(path, bytes.NewReader(crd.Data))
+				if err != nil {
+					return nil, nil, err
+				}
+				out = appendHelmDocuments(out, docs, opts)
 			}
-			out = appendHelmDocuments(out, docs)
-		}
-	} else if provider, ok := chrt.(helmCRDProvider); ok {
-		for _, crd := range provider.CRDs() {
-			path, err := helmManifestPath(pathMap, crd.Name)
-			if err != nil {
-				return nil, nil, err
-			}
-			docs, err := manifest.DecodeDocuments(path, bytes.NewReader(crd.Data))
-			if err != nil {
-				return nil, nil, err
-			}
-			out = appendHelmDocuments(out, docs)
 		}
 	}
 
@@ -175,19 +183,49 @@ func decodeHelmManifests(pathMap map[string]string, chrt helmchart.Charter, rend
 		if err != nil {
 			return nil, nil, err
 		}
-		out = appendHelmDocuments(out, docs)
+		out = appendHelmDocuments(out, docs, opts)
 	}
 	return out, nil, nil
 }
 
-func appendHelmDocuments(out []Manifest, docs []manifest.Document) []Manifest {
+func appendHelmDocuments(out []Manifest, docs []manifest.Document, opts RenderOptions) []Manifest {
 	for _, doc := range docs {
+		if shouldSkipHelmDocument(doc.Object, opts) {
+			continue
+		}
 		out = append(out, Manifest{
 			Path:   doc.Path,
 			Object: doc.Object,
 		})
 	}
 	return out
+}
+
+func shouldIncludeCRDs(opts RenderOptions) bool {
+	return !opts.IncludeCRDsSet || opts.IncludeCRDs
+}
+
+func shouldSkipHelmDocument(obj *unstructured.Unstructured, opts RenderOptions) bool {
+	if obj == nil {
+		return false
+	}
+	hook := obj.GetAnnotations()["helm.sh/hook"]
+	if hook == "" {
+		return false
+	}
+	if opts.SkipHooks {
+		return true
+	}
+	if !opts.SkipTests {
+		return false
+	}
+	for _, part := range strings.Split(hook, ",") {
+		switch strings.TrimSpace(part) {
+		case "test", "test-success", "test-failure":
+			return true
+		}
+	}
+	return false
 }
 
 func helmChartPathMap(repoRoot, chartPath string, chrt helmchart.Charter) (map[string]string, error) {
@@ -326,9 +364,148 @@ func helmManifestPath(pathMap map[string]string, name string) (string, error) {
 	return "", fmt.Errorf("helm manifest path %q does not match a loaded chart", name)
 }
 
+func helmValueFilesBaseDir(source ResolvedSource, opts RenderOptions) string {
+	if opts.ValueFilesBaseDir != "" {
+		return opts.ValueFilesBaseDir
+	}
+	return source.Path
+}
+
+func loadHelmValueFiles(repoRoot, baseDir string, refRoots map[string]string, files []string) (map[string]any, error) {
+	out := map[string]any{}
+	for _, file := range files {
+		root, resolved, err := resolveHelmValueFile(repoRoot, baseDir, refRoots, file)
+		if err != nil {
+			return nil, err
+		}
+		if err := rejectSymlinkedPath(root, resolved); err != nil {
+			return nil, fmt.Errorf("helm value file %q: %w", file, err)
+		}
+		data, err := os.ReadFile(resolved)
+		if err != nil {
+			return nil, fmt.Errorf("read helm value file %q: %w", file, err)
+		}
+
+		values := map[string]any{}
+		if err := yaml.Unmarshal(data, &values); err != nil {
+			return nil, fmt.Errorf("parse helm value file %q: %w", file, err)
+		}
+		if err := mergeHelmValueMap(out, values); err != nil {
+			return nil, fmt.Errorf("merge helm value file %q: %w", file, err)
+		}
+	}
+	return out, nil
+}
+
+func resolveHelmValueFile(repoRoot, baseDir string, refRoots map[string]string, file string) (string, string, error) {
+	if strings.HasPrefix(file, "$") {
+		ref, refPath, ok := strings.Cut(strings.TrimPrefix(file, "$"), "/")
+		if !ok || ref == "" || refPath == "" {
+			return "", "", fmt.Errorf("helm value file %q must use $ref/path syntax", file)
+		}
+		root, ok := refRoots[ref]
+		if !ok || root == "" {
+			return "", "", fmt.Errorf("helm value file %q references unknown ref %q", file, ref)
+		}
+		return resolveHelmValueFileUnderRoot(filepath.Clean(root), refPath, file)
+	}
+
+	cleanBase, err := cleanSourcePath(baseDir)
+	if err != nil {
+		return "", "", fmt.Errorf("helm value files base dir %q: %w", baseDir, err)
+	}
+	if filepath.IsAbs(file) {
+		return "", "", fmt.Errorf("helm value file %q must be relative", file)
+	}
+	cleanFile := filepath.Clean(file)
+	if cleanFile == "." {
+		return "", "", fmt.Errorf("helm value file %q escapes value files root", file)
+	}
+	cleanPath, err := cleanSourcePath(filepath.Join(cleanBase, cleanFile))
+	if err != nil {
+		return "", "", fmt.Errorf("helm value file %q: %w", file, err)
+	}
+	return filepath.Clean(repoRoot), filepath.Join(repoRoot, cleanPath), nil
+}
+
+func resolveHelmValueFileUnderRoot(root, file, display string) (string, string, error) {
+	if filepath.IsAbs(file) {
+		return "", "", fmt.Errorf("helm value file %q must be relative", display)
+	}
+	clean := filepath.Clean(file)
+	if clean == "." || clean == ".." || strings.HasPrefix(clean, ".."+string(filepath.Separator)) {
+		return "", "", fmt.Errorf("helm value file %q escapes value files root", display)
+	}
+	resolved := filepath.Join(root, clean)
+	rel, err := filepath.Rel(root, resolved)
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return "", "", fmt.Errorf("helm value file %q escapes value files root", display)
+	}
+	return root, resolved, nil
+}
+
+func mergeHelmValues(fileValues, inlineValues map[string]any, mode string) (map[string]any, error) {
+	switch mode {
+	case "", "override":
+		out := cloneValues(fileValues)
+		if err := mergeHelmValueMap(out, inlineValues); err != nil {
+			return nil, err
+		}
+		return out, nil
+	case "merge":
+		out := cloneValues(inlineValues)
+		if err := mergeHelmValueMap(out, fileValues); err != nil {
+			return nil, err
+		}
+		return out, nil
+	case "replace":
+		if len(inlineValues) != 0 {
+			return cloneValues(inlineValues), nil
+		}
+		return cloneValues(fileValues), nil
+	default:
+		return nil, fmt.Errorf("unsupported helm values merge mode %q", mode)
+	}
+}
+
+func mergeHelmValueMap(dst, src map[string]any) error {
+	for key, srcValue := range src {
+		srcMap, srcIsMap := helmValueMap(srcValue)
+		dstMap, dstIsMap := helmValueMap(dst[key])
+		if srcIsMap && dstIsMap {
+			if err := mergeHelmValueMap(dstMap, srcMap); err != nil {
+				return err
+			}
+			dst[key] = dstMap
+			continue
+		}
+		if srcIsMap {
+			dst[key] = cloneValues(srcMap)
+			continue
+		}
+		dst[key] = srcValue
+	}
+	return nil
+}
+
+func helmValueMap(value any) (map[string]any, bool) {
+	switch typed := value.(type) {
+	case map[string]any:
+		return typed, true
+	case common.Values:
+		return map[string]any(typed), true
+	default:
+		return nil, false
+	}
+}
+
 func cloneValues(values map[string]any) map[string]any {
 	out := make(map[string]any, len(values))
 	for key, value := range values {
+		if valueMap, ok := helmValueMap(value); ok {
+			out[key] = cloneValues(valueMap)
+			continue
+		}
 		out[key] = value
 	}
 	return out
