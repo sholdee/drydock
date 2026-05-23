@@ -62,50 +62,68 @@ func Run(left, right []Document, opts Options) ([]Result, error) {
 
 	results := make([]Result, 0)
 	for _, key := range keys {
-		l, hasLeft := leftByKey[key]
-		r, hasRight := rightByKey[key]
-		leftBody := ""
-		rightBody := ""
-		if hasLeft {
-			var err error
-			leftBody, err = normalizeDocumentBody(l, opts)
-			if err != nil {
-				return nil, err
-			}
+		result, include, err := diffResultForKey(leftByKey, rightByKey, key, opts)
+		if err != nil {
+			return nil, err
 		}
-		if hasRight {
-			var err error
-			rightBody, err = normalizeDocumentBody(r, opts)
-			if err != nil {
-				return nil, err
-			}
-		}
-
-		switch {
-		case hasLeft && hasRight && leftBody == rightBody:
-			continue
-		case hasLeft && hasRight:
-			result, err := resultFor(r, ChangeModified, leftBody, rightBody, opts)
-			if err != nil {
-				return nil, err
-			}
-			results = append(results, result)
-		case hasLeft:
-			result, err := resultFor(l, ChangeRemoved, leftBody, "", opts)
-			if err != nil {
-				return nil, err
-			}
-			results = append(results, result)
-		case hasRight:
-			result, err := resultFor(r, ChangeAdded, "", rightBody, opts)
-			if err != nil {
-				return nil, err
-			}
+		if include {
 			results = append(results, result)
 		}
 	}
 
 	return results, nil
+}
+
+func diffResultForKey(leftByKey, rightByKey map[string]Document, key string, opts Options) (Result, bool, error) {
+	left, hasLeft := leftByKey[key]
+	right, hasRight := rightByKey[key]
+	leftBody, rightBody, err := normalizedDocumentBodies(left, right, hasLeft, hasRight, opts)
+	if err != nil {
+		return Result{}, false, err
+	}
+	doc, change, include := changedDocument(left, right, hasLeft, hasRight, leftBody, rightBody)
+	if !include {
+		return Result{}, false, nil
+	}
+	result, err := resultFor(doc, change, leftBody, rightBody, opts)
+	return result, true, err
+}
+
+func normalizedDocumentBodies(left, right Document, hasLeft, hasRight bool, opts Options) (string, string, error) {
+	var leftBody string
+	if hasLeft {
+		body, err := normalizeDocumentBody(left, opts)
+		if err != nil {
+			return "", "", err
+		}
+		leftBody = body
+	}
+
+	var rightBody string
+	if hasRight {
+		body, err := normalizeDocumentBody(right, opts)
+		if err != nil {
+			return "", "", err
+		}
+		rightBody = body
+	}
+
+	return leftBody, rightBody, nil
+}
+
+func changedDocument(left, right Document, hasLeft, hasRight bool, leftBody, rightBody string) (Document, Change, bool) {
+	switch {
+	case hasLeft && hasRight && leftBody == rightBody:
+		return Document{}, "", false
+	case hasLeft && hasRight:
+		return right, ChangeModified, true
+	case hasLeft:
+		return left, ChangeRemoved, true
+	case hasRight:
+		return right, ChangeAdded, true
+	default:
+		return Document{}, "", false
+	}
 }
 
 func keyOf(doc Document) string {

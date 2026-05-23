@@ -186,7 +186,11 @@ func TestDiffAppsJSONOutput(t *testing.T) {
 	if len(results) != 1 || results[0]["change"] != "modified" {
 		t.Fatalf("results = %#v, want one modified result", results)
 	}
-	if !strings.Contains(results[0]["diff"].(string), "+  value: new") {
+	diff, ok := results[0]["diff"].(string)
+	if !ok {
+		t.Fatalf("diff = %T, want string", results[0]["diff"])
+	}
+	if !strings.Contains(diff, "+  value: new") {
 		t.Fatalf("json diff = %#v, want changed value", results[0]["diff"])
 	}
 	if stderr.String() != "" {
@@ -218,7 +222,11 @@ func TestDiffAppYAMLOutput(t *testing.T) {
 	if len(results) != 1 || results[0]["change"] != "modified" {
 		t.Fatalf("results = %#v, want one modified result", results)
 	}
-	if !strings.Contains(results[0]["diff"].(string), "-  value: old") {
+	diff, ok := results[0]["diff"].(string)
+	if !ok {
+		t.Fatalf("diff = %T, want string", results[0]["diff"])
+	}
+	if !strings.Contains(diff, "-  value: old") {
 		t.Fatalf("yaml diff = %#v, want changed value", results[0]["diff"])
 	}
 	if stderr.String() != "" {

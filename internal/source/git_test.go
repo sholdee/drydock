@@ -213,9 +213,12 @@ func TestDefaultGitAcquirerRedactsURLOnCloneFailure(t *testing.T) {
 }
 
 func TestGitCredentialsHTTPBasicAuth(t *testing.T) {
-	auth, err := gitAuthMethod(GitCredentials{Username: "user", Password: "pass"}, "https://github.com/example/private")
+	auth, hasAuth, err := gitAuthMethod(GitCredentials{Username: "user", Password: "pass"}, "https://github.com/example/private")
 	if err != nil {
 		t.Fatalf("gitAuthMethod() error = %v", err)
+	}
+	if !hasAuth {
+		t.Fatal("hasAuth = false, want true")
 	}
 	basic, ok := auth.(*githttp.BasicAuth)
 	if !ok {
@@ -227,9 +230,12 @@ func TestGitCredentialsHTTPBasicAuth(t *testing.T) {
 }
 
 func TestGitCredentialsBearerToken(t *testing.T) {
-	auth, err := gitAuthMethod(GitCredentials{BearerToken: "token"}, "https://github.com/example/private")
+	auth, hasAuth, err := gitAuthMethod(GitCredentials{BearerToken: "token"}, "https://github.com/example/private")
 	if err != nil {
 		t.Fatalf("gitAuthMethod() error = %v", err)
+	}
+	if !hasAuth {
+		t.Fatal("hasAuth = false, want true")
 	}
 	token, ok := auth.(*githttp.TokenAuth)
 	if !ok {
@@ -241,9 +247,12 @@ func TestGitCredentialsBearerToken(t *testing.T) {
 }
 
 func TestGitCredentialsBearerTokenPrecedence(t *testing.T) {
-	auth, err := gitAuthMethod(GitCredentials{Username: "user", Password: "pass", BearerToken: "token"}, "https://github.com/example/private")
+	auth, hasAuth, err := gitAuthMethod(GitCredentials{Username: "user", Password: "pass", BearerToken: "token"}, "https://github.com/example/private")
 	if err != nil {
 		t.Fatalf("gitAuthMethod() error = %v", err)
+	}
+	if !hasAuth {
+		t.Fatal("hasAuth = false, want true")
 	}
 	if _, ok := auth.(*githttp.TokenAuth); !ok {
 		t.Fatalf("auth = %T, want *http.TokenAuth", auth)
@@ -266,12 +275,15 @@ func TestGitCredentialsSSHAuthUsesSupportedURLsAndDefaultsUser(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			auth, err := gitAuthMethod(GitCredentials{
+			auth, hasAuth, err := gitAuthMethod(GitCredentials{
 				SSHPrivateKeyPath: keyFile,
 				SSHKnownHostsPath: knownHostsFile,
 			}, tt.url)
 			if err != nil {
 				t.Fatalf("gitAuthMethod() error = %v", err)
+			}
+			if !hasAuth {
+				t.Fatal("hasAuth = false, want true")
 			}
 			publicKeys, ok := auth.(*gitssh.PublicKeys)
 			if !ok {
@@ -288,7 +300,7 @@ func TestGitCredentialsSSHAuthUsesSupportedURLsAndDefaultsUser(t *testing.T) {
 }
 
 func TestGitCredentialsSSHAuthRequiresKeyFile(t *testing.T) {
-	_, err := gitAuthMethod(GitCredentials{SSHKnownHostsPath: writeKnownHostsFile(t)}, "ssh://git@example.com/org/repo.git")
+	_, _, err := gitAuthMethod(GitCredentials{SSHKnownHostsPath: writeKnownHostsFile(t)}, "ssh://git@example.com/org/repo.git")
 	if err == nil {
 		t.Fatal("gitAuthMethod() error = nil, want missing key error")
 	}
@@ -298,7 +310,7 @@ func TestGitCredentialsSSHAuthRequiresKeyFile(t *testing.T) {
 }
 
 func TestGitCredentialsSSHAuthRequiresKnownHostsFile(t *testing.T) {
-	_, err := gitAuthMethod(GitCredentials{SSHPrivateKeyPath: writeSSHPrivateKey(t, "")}, "ssh://git@example.com/org/repo.git")
+	_, _, err := gitAuthMethod(GitCredentials{SSHPrivateKeyPath: writeSSHPrivateKey(t, "")}, "ssh://git@example.com/org/repo.git")
 	if err == nil {
 		t.Fatal("gitAuthMethod() error = nil, want missing known_hosts error")
 	}
@@ -313,7 +325,7 @@ func TestGitCredentialsSSHAuthRejectsBadPassphraseWithoutLeakingSecrets(t *testi
 		wrongPassphrase   = "wrong-passphrase"
 	)
 	keyFile := writeSSHPrivateKey(t, correctPassphrase)
-	_, err := gitAuthMethod(GitCredentials{
+	_, _, err := gitAuthMethod(GitCredentials{
 		SSHPrivateKeyPath: keyFile,
 		SSHPassphrase:     wrongPassphrase,
 		SSHKnownHostsPath: writeKnownHostsFile(t),
