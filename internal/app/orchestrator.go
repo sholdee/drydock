@@ -25,10 +25,12 @@ type BuildRequest struct {
 	Offline                      bool
 	RefreshCharts                bool
 	ChartCacheDir                string
+	ChartCredentials             chart.ChartCredentials
 	RepoMaps                     []sourcepkg.RepoMap
 	AllowNetwork                 bool
 	GitCacheDir                  string
 	RefreshGit                   bool
+	GitCredentials               sourcepkg.GitCredentials
 	RefreshRemoteResources       bool
 	RemoteResourceCacheDir       string
 	RemoteResourceForbiddenRoots []string
@@ -184,8 +186,10 @@ func (o Orchestrator) Build(ctx context.Context, request BuildRequest) (BuildRes
 		allowNetwork:                 request.AllowNetwork,
 		refreshCharts:                request.RefreshCharts,
 		chartCacheDir:                request.ChartCacheDir,
+		chartCredentials:             request.ChartCredentials,
 		gitCacheDir:                  request.GitCacheDir,
 		refreshGit:                   request.RefreshGit,
+		gitCredentials:               request.GitCredentials,
 		refreshRemoteResources:       request.RefreshRemoteResources,
 		remoteResourceCacheDir:       request.RemoteResourceCacheDir,
 		remoteResourceForbiddenRoots: forbiddenRoots,
@@ -260,8 +264,10 @@ type localProvider struct {
 	allowNetwork                 bool
 	refreshCharts                bool
 	chartCacheDir                string
+	chartCredentials             chart.ChartCredentials
 	gitCacheDir                  string
 	refreshGit                   bool
+	gitCredentials               sourcepkg.GitCredentials
 	refreshRemoteResources       bool
 	remoteResourceCacheDir       string
 	remoteResourceForbiddenRoots []string
@@ -277,6 +283,7 @@ func (p localProvider) RenderSource(ctx context.Context, source render.ResolvedS
 	opts.ChartCacheDir = p.chartCacheDir
 	opts.OfflineCharts = p.offline
 	opts.RefreshCharts = p.refreshCharts
+	opts.ChartCredentials = p.chartCredentials
 	opts.RemoteResourceAcquirer = p.remoteResourceAcquirer
 	opts.RemoteResourceCacheDir = p.remoteResourceCacheDir
 	opts.OfflineRemoteResources = p.offline
@@ -344,9 +351,10 @@ func (p localProvider) resolveSourceRoot(ctx context.Context, source render.Reso
 		AllowNetwork: p.allowNetwork,
 		CacheDir:     p.gitCacheDir,
 		Refresh:      p.refreshGit,
+		Credentials:  p.gitCredentials,
 	})
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("%s", sourcepkg.RedactGitCredentialError(err.Error(), p.gitCredentials))
 	}
 	return acquired.Path, nil
 }
@@ -417,12 +425,13 @@ func (p localProvider) renderChartOnlySource(ctx context.Context, source render.
 		Version:    source.TargetRevision,
 		Kind:       kind,
 	}, chart.Options{
-		CacheDir: p.chartCacheDir,
-		Offline:  p.offline,
-		Refresh:  p.refreshCharts,
+		CacheDir:    p.chartCacheDir,
+		Offline:     p.offline,
+		Refresh:     p.refreshCharts,
+		Credentials: p.chartCredentials,
 	})
 	if err != nil {
-		return nil, nil, fmt.Errorf("acquire chart %s: %s", source.Chart, redactChartAcquireError(err, source.RepoURL))
+		return nil, nil, fmt.Errorf("acquire chart %s: %s", source.Chart, redactChartAcquireError(err, source.RepoURL, p.chartCredentials))
 	}
 
 	return (render.HelmRenderer{}).Render(ctx, render.ResolvedSource{
@@ -434,7 +443,7 @@ func (p localProvider) renderChartOnlySource(ctx context.Context, source render.
 	}, opts)
 }
 
-func redactChartAcquireError(err error, repository string) string {
+func redactChartAcquireError(err error, repository string, credentials chart.ChartCredentials) string {
 	message := err.Error()
 	redacted := sourcepkg.RedactURL(repository)
 	raw := strings.TrimSpace(repository)
@@ -473,6 +482,17 @@ func redactChartAcquireError(err error, repository string) string {
 			continue
 		}
 		message = strings.ReplaceAll(message, replacement, redacted)
+	}
+	return redactChartCredentialValues(message, credentials)
+}
+
+func redactChartCredentialValues(message string, credentials chart.ChartCredentials) string {
+	for _, secret := range []string{credentials.Password, credentials.BearerToken} {
+		secret = strings.TrimSpace(secret)
+		if secret == "" {
+			continue
+		}
+		message = strings.ReplaceAll(message, secret, "[redacted]")
 	}
 	return message
 }

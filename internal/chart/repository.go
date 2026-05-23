@@ -17,7 +17,6 @@ import (
 	"sync"
 
 	"helm.sh/helm/v4/pkg/registry"
-	"oras.land/oras-go/v2/registry/remote/auth"
 
 	"go.yaml.in/yaml/v4"
 )
@@ -28,7 +27,7 @@ type DefaultAcquirer struct {
 }
 
 type OCIPuller interface {
-	Pull(ctx context.Context, request Request) ([]byte, error)
+	Pull(ctx context.Context, request Request, opts Options) ([]byte, error)
 }
 
 type HelmOCIPuller struct {
@@ -82,7 +81,7 @@ func (acquirer DefaultAcquirer) Acquire(ctx context.Context, request Request, op
 		return Result{}, fmt.Errorf("offline cache miss for chart %s %s", request.Name, request.Version)
 	}
 
-	archive, err := acquirer.fetchChart(ctx, request)
+	archive, err := acquirer.fetchChart(ctx, request, opts)
 	if err != nil {
 		return Result{}, err
 	}
@@ -112,19 +111,19 @@ func (acquirer DefaultAcquirer) Acquire(ctx context.Context, request Request, op
 	return resultFor(request, chartDir, false), nil
 }
 
-func (acquirer DefaultAcquirer) fetchChart(ctx context.Context, request Request) ([]byte, error) {
+func (acquirer DefaultAcquirer) fetchChart(ctx context.Context, request Request, opts Options) ([]byte, error) {
 	switch request.Kind {
 	case RepositoryHTTP:
-		return acquirer.fetchHTTPChart(ctx, request)
+		return acquirer.fetchHTTPChart(ctx, request, opts.Credentials)
 	case RepositoryOCI:
-		return acquirer.fetchOCIChart(ctx, request)
+		return acquirer.fetchOCIChart(ctx, request, opts)
 	default:
 		return nil, fmt.Errorf("unsupported chart repository kind %q", request.Kind)
 	}
 }
 
 //nolint:gocyclo // Keeps index and chart archive request handling together for consistent URL redaction.
-func (acquirer DefaultAcquirer) fetchHTTPChart(ctx context.Context, request Request) ([]byte, error) {
+func (acquirer DefaultAcquirer) fetchHTTPChart(ctx context.Context, request Request, credentials ChartCredentials) ([]byte, error) {
 	client := acquirer.Client
 	if client == nil {
 		client = http.DefaultClient
@@ -142,13 +141,14 @@ func (acquirer DefaultAcquirer) fetchHTTPChart(ctx context.Context, request Requ
 	if err != nil {
 		return nil, fmt.Errorf("create chart repository index request %s: %s", redactedIndexURL, redactedFetchError(err, indexURL, false))
 	}
+	applyChartAuth(indexRequest, credentials)
 	indexResponse, err := client.Do(indexRequest)
 	if err != nil {
-		return nil, fmt.Errorf("fetch chart repository index %s: %s", redactedIndexURL, redactedFetchError(err, indexURL, false))
+		return nil, fmt.Errorf("fetch chart repository index %s: %s", redactedIndexURL, redactedChartCredentialError(redactedFetchError(err, indexURL, false), credentials))
 	}
 	defer indexResponse.Body.Close()
 	if indexResponse.StatusCode == http.StatusUnauthorized || indexResponse.StatusCode == http.StatusForbidden {
-		return nil, fmt.Errorf("authenticated chart repositories are not supported yet")
+		return nil, fmt.Errorf("fetch chart repository index %s: HTTP %s", redactedIndexURL, indexResponse.Status)
 	}
 	if indexResponse.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("fetch chart repository index %s: HTTP %s", redactedIndexURL, indexResponse.Status)
@@ -167,13 +167,14 @@ func (acquirer DefaultAcquirer) fetchHTTPChart(ctx context.Context, request Requ
 	if err != nil {
 		return nil, fmt.Errorf("create chart archive request %s: %s", redactedChartURL, redactedFetchError(err, chartURL, true))
 	}
+	applyChartAuth(archiveRequest, credentials)
 	archiveResponse, err := client.Do(archiveRequest)
 	if err != nil {
-		return nil, fmt.Errorf("fetch chart archive %s: %s", redactedChartURL, redactedFetchError(err, chartURL, true))
+		return nil, fmt.Errorf("fetch chart archive %s: %s", redactedChartURL, redactedChartCredentialError(redactedFetchError(err, chartURL, true), credentials))
 	}
 	defer archiveResponse.Body.Close()
 	if archiveResponse.StatusCode == http.StatusUnauthorized || archiveResponse.StatusCode == http.StatusForbidden {
-		return nil, fmt.Errorf("authenticated chart repositories are not supported yet")
+		return nil, fmt.Errorf("fetch chart archive %s: HTTP %s", redactedChartURL, archiveResponse.Status)
 	}
 	if archiveResponse.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("fetch chart archive %s: HTTP %s", redactedChartURL, archiveResponse.Status)
@@ -185,20 +186,51 @@ func (acquirer DefaultAcquirer) fetchHTTPChart(ctx context.Context, request Requ
 	return data, nil
 }
 
-func (acquirer DefaultAcquirer) fetchOCIChart(ctx context.Context, request Request) ([]byte, error) {
+func (acquirer DefaultAcquirer) fetchOCIChart(ctx context.Context, request Request, opts Options) ([]byte, error) {
+	if err := validateRegistryConfig(opts.Credentials.RegistryConfig); err != nil {
+		return nil, err
+	}
 	puller := acquirer.OCIPuller
 	if puller == nil {
 		puller = HelmOCIPuller{Client: acquirer.Client}
 	}
-	archive, err := puller.Pull(ctx, request)
+	archive, err := puller.Pull(ctx, request, opts)
 	if err != nil {
-		if isAuthError(err) {
-			return nil, fmt.Errorf("authenticated chart repositories are not supported yet")
-		}
 		repository := redactedFetchURL(request.Repository, true)
+		if isAuthError(err) {
+			return nil, fmt.Errorf("authenticate OCI chart %s/%s:%s: %s", repository, request.Name, request.Version, redactedFetchError(err, request.Repository, false))
+		}
 		return nil, fmt.Errorf("pull OCI chart %s/%s:%s: %s", repository, request.Name, request.Version, redactedFetchError(err, request.Repository, false))
 	}
 	return archive, nil
+}
+
+func applyChartAuth(request *http.Request, credentials ChartCredentials) {
+	if strings.TrimSpace(credentials.BearerToken) != "" {
+		request.Header.Set("Authorization", "Bearer "+credentials.BearerToken)
+		return
+	}
+	if strings.TrimSpace(credentials.Username) != "" || credentials.Password != "" {
+		request.SetBasicAuth(credentials.Username, credentials.Password)
+	}
+}
+
+func validateRegistryConfig(registryConfig string) error {
+	registryConfig = strings.TrimSpace(registryConfig)
+	if registryConfig == "" {
+		return nil
+	}
+	info, err := os.Stat(registryConfig)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return fmt.Errorf("registry config %q does not exist", registryConfig)
+		}
+		return fmt.Errorf("stat registry config %q: %w", registryConfig, err)
+	}
+	if info.IsDir() {
+		return fmt.Errorf("registry config %q must be a file", registryConfig)
+	}
+	return nil
 }
 
 func isAuthError(err error) bool {
@@ -221,7 +253,7 @@ func isAuthError(err error) bool {
 }
 
 //nolint:gocyclo // Keeps temporary credential isolation and OCI pull validation in one scoped flow.
-func (puller HelmOCIPuller) Pull(ctx context.Context, request Request) ([]byte, error) {
+func (puller HelmOCIPuller) Pull(ctx context.Context, request Request, opts Options) ([]byte, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -236,9 +268,12 @@ func (puller HelmOCIPuller) Pull(ctx context.Context, request Request) ([]byte, 
 	}
 	defer os.RemoveAll(tempDir)
 
-	registryConfig := filepath.Join(tempDir, "registry-config.json")
-	if err := os.WriteFile(registryConfig, []byte("{}\n"), 0o600); err != nil {
-		return nil, fmt.Errorf("write temporary Helm registry config: %w", err)
+	registryConfig := strings.TrimSpace(opts.Credentials.RegistryConfig)
+	if registryConfig == "" {
+		registryConfig = filepath.Join(tempDir, "registry-config.json")
+		if err := os.WriteFile(registryConfig, []byte("{}\n"), 0o600); err != nil {
+			return nil, fmt.Errorf("write temporary Helm registry config: %w", err)
+		}
 	}
 	dockerConfigDir := filepath.Join(tempDir, "docker")
 	if err := os.MkdirAll(dockerConfigDir, 0o700); err != nil {
@@ -294,7 +329,7 @@ func parseOCIChartRepository(repository string) (string, error) {
 		return "", err
 	}
 	if parsed.User != nil {
-		return "", fmt.Errorf("authenticated chart repositories are not supported yet")
+		return "", fmt.Errorf("OCI chart repository must not include credentials; use --registry-config")
 	}
 	if parsed.RawQuery != "" {
 		return "", fmt.Errorf("OCI chart repository must not include query")
@@ -322,12 +357,6 @@ func newHelmOCIRegistryClient(httpClient *http.Client, registryConfig, dockerCon
 	clientOpts := []registry.ClientOption{
 		registry.ClientOptWriter(io.Discard),
 		registry.ClientOptCredentialsFile(registryConfig),
-		registry.ClientOptAuthorizer(auth.Client{
-			Client: httpClient,
-			Credential: func(context.Context, string) (auth.Credential, error) {
-				return auth.EmptyCredential, nil
-			},
-		}),
 	}
 	if httpClient != nil {
 		clientOpts = append(clientOpts, registry.ClientOptHTTPClient(httpClient))
@@ -546,6 +575,17 @@ func redactedFetchError(err error, rawURL string, stripQueryFragment bool) strin
 		}
 		message = message[:start] + prefix + parsed.Host + message[hostIndex+len(hostMarker):]
 	}
+}
+
+func redactedChartCredentialError(message string, credentials ChartCredentials) string {
+	for _, secret := range []string{credentials.Password, credentials.BearerToken} {
+		secret = strings.TrimSpace(secret)
+		if secret == "" {
+			continue
+		}
+		message = strings.ReplaceAll(message, secret, "[redacted]")
+	}
+	return message
 }
 
 func ensureContainedPath(root, target string) error {

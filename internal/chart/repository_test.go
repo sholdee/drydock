@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"compress/gzip"
 	"context"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"io"
@@ -82,6 +83,115 @@ entries:
 	}
 	if archiveRequests != 1 {
 		t.Fatalf("archive requests = %d, want 1", archiveRequests)
+	}
+}
+
+func TestDefaultAcquirerFetchesAuthenticatedHTTPChart(t *testing.T) {
+	archive := chartArchive(t, "demo", map[string]string{
+		"Chart.yaml": "apiVersion: v2\nname: demo\nversion: 1.2.3\n",
+	})
+	wantAuth := "Basic " + base64.StdEncoding.EncodeToString([]byte("user:pass"))
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := r.Header.Get("Authorization"); got != wantAuth {
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		switch r.URL.Path {
+		case "/index.yaml":
+			writeIndex(t, w, "demo-1.2.3.tgz")
+		case "/demo-1.2.3.tgz":
+			if _, err := w.Write(archive); err != nil {
+				t.Fatalf("write archive response: %v", err)
+			}
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(server.Close)
+
+	result, err := (DefaultAcquirer{Client: server.Client()}).Acquire(context.Background(), Request{
+		Repository: server.URL,
+		Name:       "demo",
+		Version:    "1.2.3",
+		Kind:       RepositoryHTTP,
+	}, Options{
+		CacheDir: t.TempDir(),
+		Credentials: ChartCredentials{
+			Username: "user",
+			Password: "pass",
+		},
+	})
+	if err != nil {
+		t.Fatalf("Acquire() error = %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(result.ChartDir, "Chart.yaml")); err != nil {
+		t.Fatalf("stat extracted Chart.yaml: %v", err)
+	}
+}
+
+func TestDefaultAcquirerBearerTokenTakesPrecedenceOverBasicAuth(t *testing.T) {
+	archive := chartArchive(t, "demo", map[string]string{
+		"Chart.yaml": "apiVersion: v2\nname: demo\nversion: 1.2.3\n",
+	})
+	const wantAuth = "Bearer token"
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := r.Header.Get("Authorization"); got != wantAuth {
+			t.Fatalf("Authorization = %q, want %q", got, wantAuth)
+		}
+		switch r.URL.Path {
+		case "/index.yaml":
+			writeIndex(t, w, "demo-1.2.3.tgz")
+		case "/demo-1.2.3.tgz":
+			if _, err := w.Write(archive); err != nil {
+				t.Fatalf("write archive response: %v", err)
+			}
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(server.Close)
+
+	_, err := (DefaultAcquirer{Client: server.Client()}).Acquire(context.Background(), Request{
+		Repository: server.URL,
+		Name:       "demo",
+		Version:    "1.2.3",
+		Kind:       RepositoryHTTP,
+	}, Options{
+		CacheDir: t.TempDir(),
+		Credentials: ChartCredentials{
+			Username:    "user",
+			Password:    "pass",
+			BearerToken: "token",
+		},
+	})
+	if err != nil {
+		t.Fatalf("Acquire() error = %v", err)
+	}
+}
+
+func TestDefaultAcquirerRedactsChartCredentials(t *testing.T) {
+	_, err := (DefaultAcquirer{Client: &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+		return nil, fmt.Errorf("boom chart-user chart-pass chart-token")
+	})}}).Acquire(context.Background(), Request{
+		Repository: "https://charts.example.test",
+		Name:       "demo",
+		Version:    "1.2.3",
+		Kind:       RepositoryHTTP,
+	}, Options{
+		CacheDir: t.TempDir(),
+		Credentials: ChartCredentials{
+			Username:    "chart-user",
+			Password:    "chart-pass",
+			BearerToken: "chart-token",
+		},
+	})
+	if err == nil {
+		t.Fatal("Acquire() error = nil, want fetch error")
+	}
+	for _, leaked := range []string{"chart-pass", "chart-token"} {
+		if strings.Contains(err.Error(), leaked) {
+			t.Fatalf("Acquire() error = %q, leaked %q", err, leaked)
+		}
 	}
 }
 
@@ -208,8 +318,8 @@ func TestDefaultAcquirerMapsIndexAuthFailures(t *testing.T) {
 			if err == nil {
 				t.Fatal("Acquire() error = nil, want auth unsupported error")
 			}
-			if !strings.Contains(err.Error(), "authenticated chart repositories are not supported yet") {
-				t.Fatalf("Acquire() error = %q, want auth unsupported error", err)
+			if !strings.Contains(err.Error(), fmt.Sprintf("HTTP %d", status)) {
+				t.Fatalf("Acquire() error = %q, want HTTP %d", err, status)
 			}
 		})
 	}
@@ -239,8 +349,8 @@ func TestDefaultAcquirerMapsArchiveAuthFailures(t *testing.T) {
 			if err == nil {
 				t.Fatal("Acquire() error = nil, want auth unsupported error")
 			}
-			if !strings.Contains(err.Error(), "authenticated chart repositories are not supported yet") {
-				t.Fatalf("Acquire() error = %q, want auth unsupported error", err)
+			if !strings.Contains(err.Error(), fmt.Sprintf("HTTP %d", status)) {
+				t.Fatalf("Acquire() error = %q, want HTTP %d", err, status)
 			}
 		})
 	}

@@ -250,9 +250,10 @@ func resolveKustomizeHelmChart(ctx context.Context, tempRepoRoot, tempSourceRoot
 		Kind:       kustomizeHelmChartRepositoryKind(helmChart.Repo),
 	}
 	result, err := acquirer.Acquire(ctx, request, chart.Options{
-		CacheDir: opts.ChartCacheDir,
-		Offline:  opts.OfflineCharts,
-		Refresh:  opts.RefreshCharts,
+		CacheDir:    opts.ChartCacheDir,
+		Offline:     opts.OfflineCharts,
+		Refresh:     opts.RefreshCharts,
+		Credentials: opts.ChartCredentials,
 	})
 	if err != nil {
 		return "", fmt.Errorf("acquire kustomize helm chart %s: %w", helmChart.Name, err)
@@ -326,6 +327,7 @@ func renderOptionsForKustomizeHelmChart(helmChart types.HelmChart, tempRepoRoot,
 		ChartCacheDir:     opts.ChartCacheDir,
 		OfflineCharts:     opts.OfflineCharts,
 		RefreshCharts:     opts.RefreshCharts,
+		ChartCredentials:  opts.ChartCredentials,
 		ChartAcquirer:     acquirer,
 		IncludeCRDs:       helmChart.IncludeCRDs,
 		IncludeCRDsSet:    true,

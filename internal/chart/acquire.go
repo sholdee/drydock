@@ -35,9 +35,17 @@ type Result struct {
 }
 
 type Options struct {
-	CacheDir string
-	Offline  bool
-	Refresh  bool
+	CacheDir    string
+	Offline     bool
+	Refresh     bool
+	Credentials ChartCredentials
+}
+
+type ChartCredentials struct {
+	Username       string
+	Password       string
+	BearerToken    string
+	RegistryConfig string
 }
 
 type Acquirer interface {

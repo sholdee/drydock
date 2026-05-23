@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/home-operations/argocd-local/internal/chart"
 	"github.com/home-operations/argocd-local/internal/source"
 	"github.com/spf13/cobra"
 )
@@ -19,6 +20,16 @@ type commonFlags struct {
 	chartCacheDir     string
 	gitCacheDir       string
 	refreshGit        bool
+	gitUsername       string
+	gitPassword       string
+	gitBearerToken    string
+	gitSSHKeyFile     string
+	gitSSHPassphrase  string
+	gitKnownHostsFile string
+	helmUsername      string
+	helmPassword      string
+	helmBearerToken   string
+	registryConfig    string
 	refreshRemotes    bool
 	remoteCacheDir    string
 	changedOnly       bool
@@ -53,6 +64,16 @@ func bindCommonFlags(cmd *cobra.Command, flags *commonFlags) {
 	cmd.Flags().StringVar(&flags.chartCacheDir, "chart-cache-dir", flags.chartCacheDir, "directory for cached Helm charts")
 	cmd.Flags().StringVar(&flags.gitCacheDir, "git-cache-dir", flags.gitCacheDir, "directory for cached Git repositories")
 	cmd.Flags().BoolVar(&flags.refreshGit, "refresh-git", flags.refreshGit, "fetch cached Git repositories before rendering")
+	cmd.Flags().StringVar(&flags.gitUsername, "git-username", flags.gitUsername, "username for authenticated Git HTTPS sources")
+	cmd.Flags().StringVar(&flags.gitPassword, "git-password", flags.gitPassword, "password for authenticated Git HTTPS sources")
+	cmd.Flags().StringVar(&flags.gitBearerToken, "git-bearer-token", flags.gitBearerToken, "bearer token for authenticated Git HTTPS sources")
+	cmd.Flags().StringVar(&flags.gitSSHKeyFile, "git-ssh-key-file", flags.gitSSHKeyFile, "private key file for authenticated Git SSH sources")
+	cmd.Flags().StringVar(&flags.gitSSHPassphrase, "git-ssh-passphrase", flags.gitSSHPassphrase, "passphrase for encrypted Git SSH private keys")
+	cmd.Flags().StringVar(&flags.gitKnownHostsFile, "git-known-hosts-file", flags.gitKnownHostsFile, "known_hosts file for authenticated Git SSH sources")
+	cmd.Flags().StringVar(&flags.helmUsername, "helm-username", flags.helmUsername, "username for authenticated HTTP Helm repositories")
+	cmd.Flags().StringVar(&flags.helmPassword, "helm-password", flags.helmPassword, "password for authenticated HTTP Helm repositories")
+	cmd.Flags().StringVar(&flags.helmBearerToken, "helm-bearer-token", flags.helmBearerToken, "bearer token for authenticated HTTP Helm repositories")
+	cmd.Flags().StringVar(&flags.registryConfig, "registry-config", flags.registryConfig, "Helm OCI registry config file")
 	cmd.Flags().BoolVar(&flags.refreshRemotes, "refresh-remotes", flags.refreshRemotes, "refresh cached remote Kustomize resources before rendering")
 	cmd.Flags().StringVar(&flags.remoteCacheDir, "remote-cache-dir", flags.remoteCacheDir, "directory for cached remote Kustomize resources")
 	cmd.Flags().BoolVar(&flags.changedOnly, "changed-only", flags.changedOnly, "limit work to Applications affected by changed files")
@@ -63,6 +84,26 @@ func bindCommonFlags(cmd *cobra.Command, flags *commonFlags) {
 	cmd.Flags().IntVarP(&flags.unified, "unified", "u", flags.unified, "number of unified diff context lines")
 	cmd.Flags().StringArrayVar(&flags.stripAttrs, "strip-attr", flags.stripAttrs, "metadata label or annotation key to strip before diffing")
 	cmd.Flags().IntVar(&flags.limitBytes, "limit-bytes", flags.limitBytes, "maximum bytes of rendered output per object")
+}
+
+func (flags commonFlags) gitCredentials() source.GitCredentials {
+	return source.GitCredentials{
+		Username:          flags.gitUsername,
+		Password:          flags.gitPassword,
+		BearerToken:       flags.gitBearerToken,
+		SSHPrivateKeyPath: flags.gitSSHKeyFile,
+		SSHPassphrase:     flags.gitSSHPassphrase,
+		SSHKnownHostsPath: flags.gitKnownHostsFile,
+	}
+}
+
+func (flags commonFlags) chartCredentials() chart.ChartCredentials {
+	return chart.ChartCredentials{
+		Username:       flags.helmUsername,
+		Password:       flags.helmPassword,
+		BearerToken:    flags.helmBearerToken,
+		RegistryConfig: flags.registryConfig,
+	}
 }
 
 func exitCode(err error, disableDiffExitCode bool, hasDiff bool) int {

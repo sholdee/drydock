@@ -43,10 +43,13 @@ namespaces.
 
 Current shared flags are `--path`, `--path-orig`, `--selector`/`-l`, `--repo-map`,
 `--allow-network`, `--git-cache-dir`, `--refresh-git`, `--offline`,
-`--refresh-charts`, `--chart-cache-dir`, `--refresh-remotes`,
-`--remote-cache-dir`, `--changed-only`, `--strict-changed-only`, `--strict`,
-`--exit-code`, `--output`/`-o`, `--unified`/`-u`, `--strip-attr`, and
-`--limit-bytes`.
+`--git-username`, `--git-password`, `--git-bearer-token`,
+`--git-ssh-key-file`, `--git-ssh-passphrase`, `--git-known-hosts-file`,
+`--refresh-charts`, `--chart-cache-dir`, `--helm-username`,
+`--helm-password`, `--helm-bearer-token`, `--registry-config`,
+`--refresh-remotes`, `--remote-cache-dir`, `--changed-only`,
+`--strict-changed-only`, `--strict`, `--exit-code`, `--output`/`-o`,
+`--unified`/`-u`, `--strip-attr`, and `--limit-bytes`.
 
 ## Settings Discovery
 

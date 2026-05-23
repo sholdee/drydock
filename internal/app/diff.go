@@ -8,6 +8,7 @@ import (
 
 	argoappv1 "github.com/argoproj/argo-cd/v3/pkg/apis/application/v1alpha1"
 	"github.com/home-operations/argocd-local/internal/change"
+	"github.com/home-operations/argocd-local/internal/chart"
 	"github.com/home-operations/argocd-local/internal/diagnostic"
 	"github.com/home-operations/argocd-local/internal/diff"
 	"github.com/home-operations/argocd-local/internal/manifest"
@@ -27,10 +28,12 @@ type DiffRequest struct {
 	Offline                bool
 	RefreshCharts          bool
 	ChartCacheDir          string
+	ChartCredentials       chart.ChartCredentials
 	RepoMaps               []sourcepkg.RepoMap
 	AllowNetwork           bool
 	GitCacheDir            string
 	RefreshGit             bool
+	GitCredentials         sourcepkg.GitCredentials
 	RefreshRemoteResources bool
 	RemoteResourceCacheDir string
 }
@@ -188,10 +191,12 @@ func (request DiffRequest) buildRequest(path string, forbiddenRoots []string) Bu
 		Offline:                      request.Offline,
 		RefreshCharts:                request.RefreshCharts,
 		ChartCacheDir:                request.ChartCacheDir,
+		ChartCredentials:             request.ChartCredentials,
 		RepoMaps:                     request.RepoMaps,
 		AllowNetwork:                 request.AllowNetwork,
 		GitCacheDir:                  request.GitCacheDir,
 		RefreshGit:                   request.RefreshGit,
+		GitCredentials:               request.GitCredentials,
 		RefreshRemoteResources:       request.RefreshRemoteResources,
 		RemoteResourceCacheDir:       request.RemoteResourceCacheDir,
 		RemoteResourceForbiddenRoots: forbiddenRoots,

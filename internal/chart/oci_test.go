@@ -17,10 +17,12 @@ type fakeOCIPuller struct {
 	archive []byte
 	err     error
 	pulls   int
+	options []Options
 }
 
-func (puller *fakeOCIPuller) Pull(ctx context.Context, request Request) ([]byte, error) {
+func (puller *fakeOCIPuller) Pull(ctx context.Context, request Request, opts Options) ([]byte, error) {
 	puller.pulls++
+	puller.options = append(puller.options, opts)
 	if puller.err != nil {
 		return nil, puller.err
 	}
@@ -93,22 +95,78 @@ func TestDefaultAcquirerOCIOfflineRequiresCacheHit(t *testing.T) {
 	}
 }
 
+func TestDefaultAcquirerPassesRegistryConfigToOCIPuller(t *testing.T) {
+	registryConfig := filepath.Join(t.TempDir(), "registry.json")
+	if err := os.WriteFile(registryConfig, []byte(`{"auths":{}}`), 0o600); err != nil {
+		t.Fatalf("write registry config: %v", err)
+	}
+	puller := &fakeOCIPuller{archive: chartArchive(t, "demo", map[string]string{
+		"Chart.yaml": "apiVersion: v2\nname: demo\nversion: 1.2.3\n",
+	})}
+
+	_, err := (DefaultAcquirer{OCIPuller: puller}).Acquire(context.Background(), Request{
+		Repository: "oci://registry.example.test/charts",
+		Name:       "demo",
+		Version:    "1.2.3",
+		Kind:       RepositoryOCI,
+	}, Options{
+		CacheDir: t.TempDir(),
+		Credentials: ChartCredentials{
+			RegistryConfig: registryConfig,
+		},
+	})
+	if err != nil {
+		t.Fatalf("Acquire() error = %v", err)
+	}
+	if len(puller.options) != 1 {
+		t.Fatalf("puller options = %d, want 1", len(puller.options))
+	}
+	if got := puller.options[0].Credentials.RegistryConfig; got != registryConfig {
+		t.Fatalf("RegistryConfig = %q, want %q", got, registryConfig)
+	}
+}
+
+func TestDefaultAcquirerRejectsMissingRegistryConfigBeforeNetwork(t *testing.T) {
+	missing := filepath.Join(t.TempDir(), "missing-registry.json")
+	puller := &fakeOCIPuller{archive: chartArchive(t, "demo", map[string]string{
+		"Chart.yaml": "apiVersion: v2\nname: demo\nversion: 1.2.3\n",
+	})}
+
+	_, err := (DefaultAcquirer{OCIPuller: puller}).Acquire(context.Background(), Request{
+		Repository: "oci://registry.example.test/charts",
+		Name:       "demo",
+		Version:    "1.2.3",
+		Kind:       RepositoryOCI,
+	}, Options{
+		CacheDir: t.TempDir(),
+		Credentials: ChartCredentials{
+			RegistryConfig: missing,
+		},
+	})
+	if err == nil {
+		t.Fatal("Acquire() error = nil, want missing registry config error")
+	}
+	if puller.pulls != 0 {
+		t.Fatalf("pull count = %d, want 0", puller.pulls)
+	}
+	if !strings.Contains(err.Error(), "registry config") || !strings.Contains(err.Error(), missing) {
+		t.Fatalf("Acquire() error = %q, want missing registry config path", err)
+	}
+}
+
 func TestDefaultAcquirerMapsOCIAuthFailures(t *testing.T) {
 	puller := &fakeOCIPuller{err: fmt.Errorf("401 unauthorized")}
 	_, err := (DefaultAcquirer{OCIPuller: puller}).Acquire(context.Background(), Request{
-		Repository: "oci://user:pass@registry.example.test/charts",
+		Repository: "oci://registry.example.test/charts",
 		Name:       "demo",
 		Version:    "1.2.3",
 		Kind:       RepositoryOCI,
 	}, Options{CacheDir: t.TempDir()})
 	if err == nil {
-		t.Fatal("Acquire() error = nil, want auth unsupported error")
+		t.Fatal("Acquire() error = nil, want auth failure error")
 	}
-	if !strings.Contains(err.Error(), "authenticated chart repositories are not supported yet") {
-		t.Fatalf("Acquire() error = %q, want auth unsupported error", err)
-	}
-	if strings.Contains(err.Error(), "user:") || strings.Contains(err.Error(), "pass") {
-		t.Fatalf("Acquire() error leaked repository credentials: %q", err)
+	if !strings.Contains(err.Error(), "authenticate OCI chart") || !strings.Contains(err.Error(), "401 unauthorized") {
+		t.Fatalf("Acquire() error = %q, want OCI auth failure", err)
 	}
 }
 
@@ -173,7 +231,7 @@ func TestHelmOCIPullerRejectsUnsafeRepositoriesBeforeNetwork(t *testing.T) {
 		{
 			name:       "userinfo",
 			repository: "oci://user:password@registry.example.test/charts",
-			want:       "authenticated chart repositories are not supported yet",
+			want:       "must not include credentials",
 			notWant:    []string{"user", "password"},
 		},
 		{
@@ -242,7 +300,7 @@ func TestDefaultAcquirerRejectsUnsafeOCIRepositoriesBeforeCacheHit(t *testing.T)
 		{
 			name:       "userinfo",
 			repository: "oci://user:password@registry.example.test/charts",
-			want:       "authenticated chart repositories are not supported yet",
+			want:       "must not include credentials",
 			notWant:    []string{"user", "password"},
 		},
 		{

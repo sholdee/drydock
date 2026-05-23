@@ -685,6 +685,55 @@ func TestLocalProviderClassifiesChartOnlyOCIRepository(t *testing.T) {
 	}
 }
 
+func TestOrchestratorPassesChartCredentialsToKustomizeHelmCharts(t *testing.T) {
+	root := t.TempDir()
+	chartDir := filepath.Join(root, "cache", "demo")
+	writeAppTestValueChart(t, chartDir)
+	writeTestFile(t, filepath.Join(root, "apps", "demo.yaml"), `apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: demo
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/example/repo
+    path: manifests/demo
+    targetRevision: main
+  destination:
+    name: in-cluster
+    namespace: default
+`)
+	writeTestFile(t, filepath.Join(root, "manifests", "demo", "kustomization.yaml"), `apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+helmCharts:
+  - name: chart
+    repo: https://charts.example.test
+    version: 0.1.0
+    releaseName: demo
+`)
+	credentials := chart.ChartCredentials{
+		Username:       "helm-user",
+		Password:       "helm-pass",
+		BearerToken:    "helm-token",
+		RegistryConfig: filepath.Join(root, "registry.json"),
+	}
+	acquirer := &recordingChartAcquirer{chartDir: chartDir}
+
+	if _, err := (Orchestrator{ChartAcquirer: acquirer}).Build(context.Background(), BuildRequest{
+		Path:             root,
+		ChartCredentials: credentials,
+	}); err != nil {
+		t.Fatalf("Build() error = %v", err)
+	}
+	if len(acquirer.options) != 1 {
+		t.Fatalf("chart options = %d, want 1", len(acquirer.options))
+	}
+	if got := acquirer.options[0].Credentials; got != credentials {
+		t.Fatalf("chart credentials = %#v, want %#v", got, credentials)
+	}
+}
+
 func TestOrchestratorBuildPreservesListAndRenderDiagnostics(t *testing.T) {
 	root := t.TempDir()
 	writeUnsupportedApplicationSetFixture(t, root)
