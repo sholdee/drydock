@@ -22,6 +22,8 @@ Read the design spec before substantive changes:
 Current top-level commands:
 
 - `argocd-local get apps --path .`: list discovered Applications by name.
+- `argocd-local get images --path .`: render discovered Applications and list
+  conservative workload container images.
 - `argocd-local build apps --path .`: render all discovered Applications.
 - `argocd-local build app NAME --path .`: render exactly one discovered
   Application by `metadata.name`.
@@ -39,7 +41,7 @@ Named app arguments accept `NAME` or `NAMESPACE/NAME`; use the
 namespace-qualified form when the same `metadata.name` exists in multiple
 namespaces.
 
-Current shared flags are `--path`, `--path-orig`, `--repo-map`,
+Current shared flags are `--path`, `--path-orig`, `--selector`/`-l`, `--repo-map`,
 `--allow-network`, `--git-cache-dir`, `--refresh-git`, `--offline`,
 `--refresh-charts`, `--chart-cache-dir`, `--refresh-remotes`,
 `--remote-cache-dir`, `--changed-only`, `--strict-changed-only`, `--strict`,
@@ -104,6 +106,8 @@ The MVP currently supports:
   diagnostic.
 - Parent Application-aware desired manifest identity for diffs.
 - Conservative container image extraction.
+- Structured `get apps` and `get images` output with table, name, JSON, and
+  YAML formats.
 - Argo CD settings discovery from Helm values, `argocd-cm`, and repository
   Secrets, limited to rendering/diff-affecting non-secret values.
 
@@ -236,6 +240,7 @@ namespace is passed to Helm, and `valuesObject` overrides `values`.
 - `internal/app/`: Application source planning and multi-source combine behavior
 - `internal/change/`: changed-file detection and Application input indexing
 - `internal/diff/`: parent-aware desired-vs-desired diffs and image diffs
+- `internal/format/`: CLI table, name, JSON, and YAML output helpers
 - `internal/diagnostic/`: structured warnings/errors with provenance and strict-mode promotion
 - `internal/manifest/`: YAML/JSON document loading, List flattening, and resource identity helpers
 - `testdata/`: minimal fixtures only
