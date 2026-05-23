@@ -38,7 +38,8 @@ Current shared flags are `--path`, `--path-orig`, `--repo-map`,
 `--changed-only`, `--strict-changed-only`, `--strict`, `--exit-code`,
 `--output`/`-o`, `--unified`/`-u`, and `--limit-bytes`.
 Some flags are parsed ahead of wiring: `--repo-map` and `--allow-network` do
-not currently drive the E2E build path, and `diff app` is not wired yet.
+not currently drive the E2E build/diff path, and `diff app` and `diag` are not
+wired yet.
 
 ## Settings Discovery
 
@@ -70,8 +71,8 @@ The MVP currently supports:
 - Direct `Application` CR discovery.
 - Git-directory `ApplicationSet` CR expansion.
 - Single-source and multi-source planning for supported source types.
-- Kustomize, directory, local Helm chart, and chart-only remote Helm source
-  rendering through Go libraries.
+- Kustomize, directory, local Helm chart, Kustomize `helmCharts`, and
+  chart-only remote Helm source rendering through Go libraries.
 - Repeated-resource last-wins behavior inside one Application, with a
   diagnostic.
 - Parent Application-aware desired manifest identity for diffs.
@@ -91,13 +92,18 @@ Do not treat these as supported without an explicit design update:
 - Config management plugins.
 - Additional ApplicationSet generators beyond Git directories.
 - Required default shellouts to `helm`, `kustomize`, `kubectl`, or `argocd`.
+- Authenticated/private Helm chart repositories.
+- Remote Kustomize refs and Git/repository-source fetching.
 
 ## Source Resolution
 
 Repository URL maps are deterministic and preferred over network fetches.
 Normalize URLs consistently, including optional `.git` suffixes, trailing
-slashes, and whitespace. Unmapped repositories must error unless network access
-was explicitly enabled by the caller.
+slashes, and whitespace. Git/repository-source network fetching remains
+deferred; unmapped non-chart repositories must fail unless a local repository
+source is available through a wired path. `--allow-network` is reserved for
+future Git/repository-source fetching and must not control Helm chart
+acquisition.
 Chart acquisition is shared by Kustomize `helmCharts` and Argo CD chart-only
 sources. Public chart fetching is allowed by default for render/diff commands;
 `--offline` disables chart network fetches. Cache charts under the user cache or
@@ -106,8 +112,8 @@ Chart network behavior is controlled by `--offline`, `--refresh-charts`, and
 `--chart-cache-dir`. Do not reuse `--allow-network` for Helm chart fetching;
 that flag is reserved for future Git/repository-source fetching.
 OCI chart acquisition must use Helm registry Go libraries, not helm pull.
-Authenticated/private registries remain unsupported and must fail with a clear
-message instead of prompting or reading credentials.
+Authenticated/private chart repositories remain unsupported and must fail with
+a clear message instead of prompting or reading credentials.
 
 ## Application Planning
 
@@ -197,7 +203,9 @@ If a tool is not installed locally, say so in your final response.
 
 - Default workflows must not require `helm`, `kustomize`, `kubectl`, or
   `argocd` on `PATH`.
-- Network access is opt-in through `--allow-network`; prefer `--repo-map`.
+- Public Helm chart fetching for Kustomize `helmCharts` and chart-only sources
+  is enabled by default for render/diff. Git/repository-source network fetching
+  remains deferred and reserved for future `--allow-network` behavior.
 - Do not print secret data. Repository Secrets may provide non-sensitive
   metadata only.
 - Manifest loaders must never print Secret values. Diagnostics may include file
@@ -226,8 +234,10 @@ should stay suppressed for runtime failures.
 
 - Do not add a shellout path for default rendering when a Go library path is
   available.
-- Do not enable network access implicitly for unmapped repositories; require
-  `--repo-map` or explicit `--allow-network`.
+- Do not enable network access implicitly for unmapped Git/repository sources;
+  keep them local-only until repository fetching is explicitly wired.
+- Do not use `--allow-network` as the Helm chart-fetch flag; chart fetching is
+  controlled by `--offline`, `--refresh-charts`, and `--chart-cache-dir`.
 - Do not print Secret manifest values or repository credentials in diagnostics.
 - Do not hard-code one user's repository layout or `home-ops` paths.
 - Do not collapse overlapping Applications to one owner in changed-only mode.
