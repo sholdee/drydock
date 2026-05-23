@@ -42,10 +42,12 @@ func RenderApplication(ctx context.Context, application argoappv1.Application, p
 		if err != nil {
 			return result, fmt.Errorf("%s: %w", renderSourceContext(application, sourcePlan), err)
 		}
-		opts.RefSources, err = renderRefSourcesForSource(plan, sourcePlan, opts.ValueFiles)
+		refRoots, refSources, err := renderRefsForSource(plan, sourcePlan, opts.ValueFiles)
 		if err != nil {
 			return result, fmt.Errorf("%s: %w", renderSourceContext(application, sourcePlan), err)
 		}
+		opts.RefRoots = mergeRefRoots(opts.RefRoots, refRoots)
+		opts.RefSources = refSources
 		manifests, diags, err := provider.RenderSource(ctx, render.ResolvedSource{
 			Path:           sourcePlan.Source.Path,
 			Chart:          sourcePlan.Source.Chart,
@@ -148,16 +150,17 @@ func helmValuesObject(helm *argoappv1.ApplicationSourceHelm) (map[string]any, bo
 	return values, true, nil
 }
 
-func renderRefSourcesForSource(plan PlanResult, sourcePlan SourcePlan, valueFiles []string) (map[string]render.ResolvedSource, error) {
+func renderRefsForSource(plan PlanResult, sourcePlan SourcePlan, valueFiles []string) (map[string]string, map[string]render.ResolvedSource, error) {
 	if len(valueFiles) == 0 {
-		return map[string]render.ResolvedSource{}, nil
+		return map[string]string{}, map[string]render.ResolvedSource{}, nil
 	}
 
-	out := map[string]render.ResolvedSource{}
+	refRoots := map[string]string{}
+	refSources := map[string]render.ResolvedSource{}
 	for _, valueFile := range valueFiles {
 		refKey, ok, err := helmValueFileRefKey(valueFile)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		if !ok {
 			continue
@@ -165,22 +168,31 @@ func renderRefSourcesForSource(plan PlanResult, sourcePlan SourcePlan, valueFile
 
 		refSource, exists := plan.Refs[refKey]
 		if !exists {
-			return nil, fmt.Errorf("helm value file %q references unknown ref %s", valueFile, refKey)
+			return nil, nil, fmt.Errorf("helm value file %q references unknown ref %s", valueFile, refKey)
 		}
-		refPath := ""
-		if sourcepkg.NormalizeURL(refSource.Source.RepoURL) == sourcepkg.NormalizeURL(sourcePlan.Source.RepoURL) {
-			refPath = "."
+		if isSameSourceRevision(refSource.Source, sourcePlan.Source) {
+			refRoots[refKey] = "."
+			continue
 		}
-		out[refKey] = render.ResolvedSource{
-			Path:           refPath,
+		refSources[refKey] = render.ResolvedSource{
 			RepoURL:        refSource.Source.RepoURL,
 			TargetRevision: refSource.Source.TargetRevision,
 		}
 	}
-	if len(out) == 0 {
-		return map[string]render.ResolvedSource{}, nil
+	return refRoots, refSources, nil
+}
+
+func isSameSourceRevision(left, right argoappv1.ApplicationSource) bool {
+	return sourcepkg.NormalizeURL(left.RepoURL) == sourcepkg.NormalizeURL(right.RepoURL) &&
+		normalizeTargetRevision(left.TargetRevision) == normalizeTargetRevision(right.TargetRevision)
+}
+
+func normalizeTargetRevision(revision string) string {
+	trimmed := strings.TrimSpace(revision)
+	if trimmed == "" {
+		return "HEAD"
 	}
-	return out, nil
+	return trimmed
 }
 
 func helmValueFileRefKey(valueFile string) (string, bool, error) {
