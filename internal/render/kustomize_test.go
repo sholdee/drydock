@@ -514,6 +514,74 @@ helmCharts:
 	assertConfigMapData(t, result, "image", "from-file")
 }
 
+func TestKustomizeRendererAppliesAdditionalValuesAfterInlineValues(t *testing.T) {
+	for _, tt := range []struct {
+		name        string
+		mergeLine   string
+		valuesFile  string
+		inlineValue string
+	}{
+		{
+			name:        "default override",
+			valuesFile:  "image: from-primary\n",
+			inlineValue: "from-inline",
+		},
+		{
+			name:        "merge",
+			mergeLine:   "    valuesMerge: merge\n",
+			valuesFile:  "image: from-primary\n",
+			inlineValue: "from-inline-default",
+		},
+		{
+			name:        "replace",
+			mergeLine:   "    valuesMerge: replace\n",
+			valuesFile:  "image: from-primary\n",
+			inlineValue: "from-inline-replacement",
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			root := t.TempDir()
+			chartDir := filepath.Join(root, "charts", "demo")
+			writeTestChart(t, chartDir, `
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Release.Name }}
+data:
+  image: {{ .Values.image }}
+`)
+			writeFile(t, filepath.Join(root, "apps", "demo", "values.yaml"), tt.valuesFile)
+			writeFile(t, filepath.Join(root, "apps", "demo", "additional.yaml"), "image: from-additional\n")
+			writeFile(t, filepath.Join(root, "apps", "demo", "kustomization.yaml"), `
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+helmCharts:
+  - name: demo
+    repo: https://charts.example.test
+    version: 1.2.3
+    releaseName: demo
+    valuesFile: values.yaml
+    additionalValuesFiles:
+      - additional.yaml
+    valuesInline:
+      image: `+tt.inlineValue+`
+`+tt.mergeLine)
+
+			result, diags, err := (KustomizeRenderer{}).Render(context.Background(), ResolvedSource{
+				RepoRoot: root,
+				Path:     filepath.Join("apps", "demo"),
+			}, RenderOptions{ChartAcquirer: &fakeChartAcquirer{chartDir: chartDir}})
+			if err != nil {
+				t.Fatalf("Render() error = %v", err)
+			}
+			if len(diags) != 0 {
+				t.Fatalf("diagnostics = %#v", diags)
+			}
+			assertConfigMapData(t, result, "image", "from-additional")
+		})
+	}
+}
+
 func TestKustomizeRendererRejectsUnsupportedHelmFields(t *testing.T) {
 	for _, tt := range []struct {
 		name          string
