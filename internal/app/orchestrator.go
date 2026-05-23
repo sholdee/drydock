@@ -72,7 +72,7 @@ type Orchestrator struct {
 }
 
 func (o Orchestrator) Diag(ctx context.Context, request DiagRequest) (DiagResult, error) {
-	result, err := o.Build(ctx, BuildRequest(request))
+	result, err := o.Build(ctx, request)
 	diagResult := DiagResult{
 		Applications: result.Applications,
 		Diagnostics:  result.Diagnostics,
