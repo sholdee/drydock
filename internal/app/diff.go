@@ -77,8 +77,8 @@ func (o Orchestrator) DiffApp(ctx context.Context, request DiffAppRequest) (Diff
 		return DiffResult{}, err
 	}
 
-	leftBuildRequest := request.DiffRequest.buildRequest(request.LeftPath, forbiddenRoots)
-	rightBuildRequest := request.DiffRequest.buildRequest(request.RightPath, forbiddenRoots)
+	leftBuildRequest := request.buildRequest(request.LeftPath, forbiddenRoots)
+	rightBuildRequest := request.buildRequest(request.RightPath, forbiddenRoots)
 
 	var diagnostics []diagnostic.Diagnostic
 	leftList, err := o.ListApplications(ctx, leftBuildRequest)
