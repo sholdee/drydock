@@ -221,6 +221,44 @@ func TestDefaultAcquirerRejectsCacheSymlinkedIntoForbiddenRoot(t *testing.T) {
 	}
 }
 
+func TestDefaultAcquirerRejectsCacheKeySymlinkedIntoForbiddenRoot(t *testing.T) {
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		requests++
+		_, _ = w.Write([]byte("apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: forbidden\n"))
+	}))
+	defer server.Close()
+
+	repoRoot := t.TempDir()
+	forbiddenTarget := filepath.Join(repoRoot, "remote-cache-key")
+	if err := os.MkdirAll(forbiddenTarget, 0o755); err != nil {
+		t.Fatalf("create forbidden target: %v", err)
+	}
+	cacheDir := t.TempDir()
+	request := Request{URL: server.URL + "/resource.yaml"}
+	key, err := NewCacheKey(request)
+	if err != nil {
+		t.Fatalf("NewCacheKey() error = %v", err)
+	}
+	if err := os.Symlink(forbiddenTarget, filepath.Join(cacheDir, key)); err != nil {
+		t.Skipf("create cache key symlink: %v", err)
+	}
+
+	_, err = (DefaultAcquirer{Client: server.Client()}).Acquire(context.Background(), request, Options{
+		CacheDir:       cacheDir,
+		ForbiddenRoots: []string{repoRoot},
+	})
+	if err == nil || !strings.Contains(err.Error(), "must not be inside repository root") {
+		t.Fatalf("Acquire() error = %v, want cache containment error", err)
+	}
+	if requests != 0 {
+		t.Fatalf("requests = %d, want 0", requests)
+	}
+	if _, err := os.Stat(filepath.Join(forbiddenTarget, "resource.yaml")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("forbidden cache resource exists after rejected Acquire(): %v", err)
+	}
+}
+
 func TestDefaultAcquirerRejectsOversizedResource(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write(make([]byte, defaultMaxResourceBytes+1))

@@ -29,6 +29,9 @@ func (acquirer DefaultAcquirer) Acquire(ctx context.Context, request Request, op
 		return Result{}, err
 	}
 	resourcePath := CachePath(cacheDir, key)
+	if err := rejectForbiddenCachePath(resourcePath, opts.ForbiddenRoots); err != nil {
+		return Result{}, err
+	}
 	if !opts.Refresh && regularFileReady(resourcePath) {
 		return Result{Path: resourcePath, URL: normalized, FromCache: true}, nil
 	}
@@ -38,6 +41,9 @@ func (acquirer DefaultAcquirer) Acquire(ctx context.Context, request Request, op
 
 	data, err := acquirer.fetch(ctx, normalized)
 	if err != nil {
+		return Result{}, err
+	}
+	if err := rejectForbiddenCachePath(resourcePath, opts.ForbiddenRoots); err != nil {
 		return Result{}, err
 	}
 	if err := publishCacheFile(resourcePath, data); err != nil {
