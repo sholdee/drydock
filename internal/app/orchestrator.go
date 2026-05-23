@@ -32,8 +32,14 @@ type ApplicationManifest struct {
 	Manifest    render.Manifest
 }
 
+type ApplicationSelectionInput struct {
+	Application argoappv1.Application
+	Paths       []string
+}
+
 type BuildResult struct {
 	Applications         []argoappv1.Application
+	ApplicationInputs    []ApplicationSelectionInput
 	Manifests            []render.Manifest
 	ApplicationManifests []ApplicationManifest
 	Diagnostics          []diagnostic.Diagnostic
@@ -57,6 +63,10 @@ func (o Orchestrator) ListApplications(_ context.Context, request BuildRequest) 
 	var result BuildResult
 	for _, appFile := range discovered.Applications {
 		result.Applications = append(result.Applications, appFile.Application)
+		result.ApplicationInputs = append(result.ApplicationInputs, ApplicationSelectionInput{
+			Application: appFile.Application,
+			Paths:       []string{filepath.ToSlash(appFile.Path)},
+		})
 	}
 
 	for _, appSetPath := range discovered.ApplicationSetPath {
@@ -83,6 +93,14 @@ func (o Orchestrator) ListApplications(_ context.Context, request BuildRequest) 
 		}
 		for _, app := range generated {
 			result.Applications = append(result.Applications, app.Application)
+			paths := []string{filepath.ToSlash(appSetPath)}
+			if app.SourcePath != "" {
+				paths = append(paths, filepath.ToSlash(app.SourcePath))
+			}
+			result.ApplicationInputs = append(result.ApplicationInputs, ApplicationSelectionInput{
+				Application: app.Application,
+				Paths:       paths,
+			})
 		}
 	}
 
