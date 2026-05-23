@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/home-operations/argocd-local/internal/chart"
+	"github.com/home-operations/argocd-local/internal/remote"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 )
 
@@ -27,6 +28,22 @@ func (acquirer *fakeChartAcquirer) Acquire(_ context.Context, request chart.Requ
 		Version:    request.Version,
 		Kind:       request.Kind,
 	}, nil
+}
+
+type fakeRemoteAcquirer struct {
+	requests []remote.Request
+	options  []remote.Options
+	path     string
+	err      error
+}
+
+func (acquirer *fakeRemoteAcquirer) Acquire(_ context.Context, request remote.Request, opts remote.Options) (remote.Result, error) {
+	acquirer.requests = append(acquirer.requests, request)
+	acquirer.options = append(acquirer.options, opts)
+	if acquirer.err != nil {
+		return remote.Result{}, acquirer.err
+	}
+	return remote.Result{Path: acquirer.path, URL: request.URL}, nil
 }
 
 func writeNamedTestChart(t *testing.T, chartDir, name, version, template string) {
@@ -67,6 +84,78 @@ func TestKustomizeRendererRendersResources(t *testing.T) {
 func writeTestChart(t *testing.T, chartDir, template string) {
 	t.Helper()
 	writeNamedTestChart(t, chartDir, "demo", "1.2.3", template)
+}
+
+func TestKustomizeRendererRendersHTTPFileResource(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "app", "kustomization.yaml"), `apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: remote
+resources:
+  - https://raw.githubusercontent.com/example/repo/main/crd.yaml
+  - local.yaml
+`)
+	writeFile(t, filepath.Join(root, "app", "local.yaml"), `apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: local
+`)
+	remoteFile := filepath.Join(t.TempDir(), "resource.yaml")
+	writeFile(t, remoteFile, `apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: widgets.example.com
+spec:
+  group: example.com
+  names:
+    kind: Widget
+    plural: widgets
+  scope: Namespaced
+  versions:
+    - name: v1
+      served: true
+      storage: true
+      schema:
+        openAPIV3Schema:
+          type: object
+`)
+	acquirer := &fakeRemoteAcquirer{path: remoteFile}
+
+	manifests, diags, err := (KustomizeRenderer{}).Render(context.Background(), ResolvedSource{
+		RepoRoot: root,
+		Path:     "app",
+	}, RenderOptions{
+		RemoteResourceAcquirer: acquirer,
+		RemoteResourceCacheDir: t.TempDir(),
+		OfflineRemoteResources: true,
+	})
+	if err != nil {
+		t.Fatalf("Render() error = %v", err)
+	}
+	if len(diags) != 0 {
+		t.Fatalf("diagnostics = %#v", diags)
+	}
+	if len(acquirer.requests) != 1 {
+		t.Fatalf("remote acquire calls = %d, want 1", len(acquirer.requests))
+	}
+	if acquirer.requests[0].URL != "https://raw.githubusercontent.com/example/repo/main/crd.yaml" {
+		t.Fatalf("remote URL = %q", acquirer.requests[0].URL)
+	}
+	if len(acquirer.options) != 1 {
+		t.Fatalf("remote acquire options = %d, want 1", len(acquirer.options))
+	}
+	if !acquirer.options[0].Offline {
+		t.Fatalf("remote acquire Offline = false, want true")
+	}
+	if len(acquirer.options[0].ForbiddenRoots) != 1 || acquirer.options[0].ForbiddenRoots[0] != root {
+		t.Fatalf("remote acquire ForbiddenRoots = %#v, want repo root", acquirer.options[0].ForbiddenRoots)
+	}
+	if !containsManifest(manifests, "CustomResourceDefinition", "widgets.example.com") {
+		t.Fatalf("rendered manifests = %#v, want remote CRD", manifests)
+	}
+	if !containsManifest(manifests, "ConfigMap", "local") {
+		t.Fatalf("rendered manifests = %#v, want local ConfigMap", manifests)
+	}
 }
 
 func TestKustomizeRendererAllowsRepoRootLocalComponents(t *testing.T) {
@@ -735,6 +824,15 @@ func filterObjects(manifests []Manifest, kind string) []*unstructured.Unstructur
 	return out
 }
 
+func containsManifest(manifests []Manifest, kind, name string) bool {
+	for _, manifest := range manifests {
+		if manifest.Object != nil && manifest.Object.GetKind() == kind && manifest.Object.GetName() == name {
+			return true
+		}
+	}
+	return false
+}
+
 func assertConfigMapData(t *testing.T, manifests []Manifest, key, want string) {
 	t.Helper()
 	configMaps := filterObjects(manifests, "ConfigMap")
@@ -960,6 +1058,15 @@ resources:
 `,
 		},
 		{
+			name: "remote file component",
+			kustomization: `
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+components:
+  - https://raw.githubusercontent.com/example/repo/main/component.yaml
+`,
+		},
+		{
 			name: "scp-like git resource",
 			kustomization: `
 apiVersion: kustomize.config.k8s.io/v1beta1
@@ -998,6 +1105,54 @@ resources:
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			assertKustomizeRenderErrorContains(t, tt.kustomization, "remote")
+		})
+	}
+}
+
+func TestKustomizeRendererRejectsUnsupportedRemoteRefsWithoutLeakingSecrets(t *testing.T) {
+	for name, body := range map[string]string{
+		"component": `components:
+  - https://user:secret@example.test/component.yaml?token=secret
+resources:
+  - local.yaml
+`,
+		"git-scp": `components:
+  - git@github.com:org/repo.git//base?ref=main&token=secret
+resources:
+  - local.yaml
+`,
+		"schemeless-github": `components:
+  - github.com/org/repo//base?ref=main&token=secret
+resources:
+  - local.yaml
+`,
+		"patch": `patches:
+  - path: https://user:secret@example.test/patch.yaml?token=secret
+resources:
+  - local.yaml
+`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			root := t.TempDir()
+			writeFile(t, filepath.Join(root, "app", "local.yaml"), "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: local\n")
+			writeFile(t, filepath.Join(root, "app", "kustomization.yaml"), "apiVersion: kustomize.config.k8s.io/v1beta1\nkind: Kustomization\n"+body)
+
+			_, _, err := (KustomizeRenderer{}).Render(context.Background(), ResolvedSource{
+				RepoRoot: root,
+				Path:     "app",
+			}, RenderOptions{})
+			if err == nil {
+				t.Fatal("Render() error = nil, want unsupported remote ref error")
+			}
+			message := err.Error()
+			for _, leaked := range []string{"secret", "token=", "user:secret", "?token"} {
+				if strings.Contains(message, leaked) {
+					t.Fatalf("Render() error leaked %q: %s", leaked, message)
+				}
+			}
+			if !strings.Contains(message, "remote Kustomize refs are unsupported") {
+				t.Fatalf("Render() error = %v, want unsupported remote message", err)
+			}
 		})
 	}
 }
