@@ -245,6 +245,123 @@ func TestOrchestratorDiffAppsStrictChangedOnlyOwnsSameRepoRefHelmValueFile(t *te
 	}
 }
 
+func TestOrchestratorDiffAppReportsOnlyNamedApplicationChange(t *testing.T) {
+	root := t.TempDir()
+	left := filepath.Join(root, "left")
+	right := filepath.Join(root, "right")
+	writeDiffApplication(t, left, "demo", "demo", "old")
+	writeDiffApplication(t, left, "other", "other", "same")
+	writeDiffApplication(t, right, "demo", "demo", "new")
+	writeDiffApplication(t, right, "other", "other", "changed-but-not-selected")
+
+	result, err := Orchestrator{}.DiffApp(context.Background(), DiffAppRequest{
+		Name: "demo",
+		DiffRequest: DiffRequest{
+			LeftPath:    left,
+			RightPath:   right,
+			Unified:     3,
+			ChangedOnly: true,
+		},
+	})
+	if err != nil {
+		t.Fatalf("DiffApp() error = %v", err)
+	}
+	if len(result.Results) == 0 {
+		t.Fatal("len(Results) = 0, want diff")
+	}
+	got := result.Results[0].Diff
+	for _, want := range []string{"Application: argocd/demo", "-  value: old", "+  value: new"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("diff missing %q:\n%s", want, got)
+		}
+	}
+	if strings.Contains(got, "other") || strings.Contains(got, "changed-but-not-selected") {
+		t.Fatalf("diff included non-selected Application:\n%s", got)
+	}
+	if len(result.Diagnostics) != 0 {
+		t.Fatalf("len(Diagnostics) = %d, want 0: %#v", len(result.Diagnostics), result.Diagnostics)
+	}
+}
+
+func TestOrchestratorDiffAppShowsAddedApplication(t *testing.T) {
+	root := t.TempDir()
+	left := filepath.Join(root, "left")
+	right := filepath.Join(root, "right")
+	writeTestFile(t, filepath.Join(left, ".keep"), "left\n")
+	writeDiffApplication(t, right, "demo", "demo", "new")
+
+	result, err := Orchestrator{}.DiffApp(context.Background(), DiffAppRequest{
+		Name:        "demo",
+		DiffRequest: DiffRequest{LeftPath: left, RightPath: right},
+	})
+	if err != nil {
+		t.Fatalf("DiffApp() error = %v", err)
+	}
+	if len(result.Results) == 0 || !strings.Contains(result.Results[0].Diff, "+  value: new") {
+		t.Fatalf("DiffApp() result = %#v, want added manifest diff", result.Results)
+	}
+}
+
+func TestOrchestratorDiffAppShowsDeletedApplication(t *testing.T) {
+	root := t.TempDir()
+	left := filepath.Join(root, "left")
+	right := filepath.Join(root, "right")
+	writeDiffApplication(t, left, "demo", "demo", "old")
+	writeTestFile(t, filepath.Join(right, ".keep"), "right\n")
+
+	result, err := Orchestrator{}.DiffApp(context.Background(), DiffAppRequest{
+		Name:        "demo",
+		DiffRequest: DiffRequest{LeftPath: left, RightPath: right},
+	})
+	if err != nil {
+		t.Fatalf("DiffApp() error = %v", err)
+	}
+	if len(result.Results) == 0 || !strings.Contains(result.Results[0].Diff, "-  value: old") {
+		t.Fatalf("DiffApp() result = %#v, want deleted manifest diff", result.Results)
+	}
+}
+
+func TestOrchestratorDiffAppReportsMissingBothSides(t *testing.T) {
+	root := t.TempDir()
+	left := filepath.Join(root, "left")
+	right := filepath.Join(root, "right")
+	writeDiffApplication(t, left, "other", "other", "left")
+	writeDiffApplication(t, right, "other", "other", "right")
+
+	_, err := Orchestrator{}.DiffApp(context.Background(), DiffAppRequest{
+		Name:        "missing",
+		DiffRequest: DiffRequest{LeftPath: left, RightPath: right},
+	})
+	if err == nil {
+		t.Fatal("DiffApp() error = nil, want missing error")
+	}
+	if !strings.Contains(err.Error(), `application "missing" not found in either tree`) {
+		t.Fatalf("DiffApp() error = %v, want missing both sides message", err)
+	}
+}
+
+func TestDiffAppRejectsRemoteCacheInsideEitherRoot(t *testing.T) {
+	left := t.TempDir()
+	right := t.TempDir()
+
+	for _, root := range []string{left, right} {
+		_, err := Orchestrator{}.DiffApp(context.Background(), DiffAppRequest{
+			Name: "demo",
+			DiffRequest: DiffRequest{
+				LeftPath:               left,
+				RightPath:              right,
+				RemoteResourceCacheDir: filepath.Join(root, ".argocd-local", "remotes"),
+			},
+		})
+		if err == nil {
+			t.Fatal("DiffApp() error = nil, want cache containment error")
+		}
+		if !strings.Contains(err.Error(), "must not be inside repository root") {
+			t.Fatalf("DiffApp() error = %v, want cache containment error", err)
+		}
+	}
+}
+
 func writeSimpleApp(t *testing.T, root, value string) {
 	t.Helper()
 	writeTestFile(t, filepath.Join(root, "apps", "demo.yaml"), `apiVersion: argoproj.io/v1alpha1
@@ -364,5 +481,30 @@ data:
   value: {{ .Values.value | quote }}
 `)
 	writeTestFile(t, filepath.Join(root, "values", "demo.yaml"), `value: `+value+`
+`)
+}
+
+func writeDiffApplication(t *testing.T, root, appName, configMapName, value string) {
+	t.Helper()
+	writeTestFile(t, filepath.Join(root, "apps", appName+".yaml"), `apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: `+appName+`
+  namespace: argocd
+spec:
+  source:
+    repoURL: https://github.com/example/repo
+    path: manifests/`+appName+`
+    targetRevision: main
+  destination:
+    name: in-cluster
+    namespace: default
+`)
+	writeTestFile(t, filepath.Join(root, "manifests", appName, "cm.yaml"), `apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: `+configMapName+`
+data:
+  value: `+value+`
 `)
 }
