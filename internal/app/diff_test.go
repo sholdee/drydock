@@ -150,6 +150,36 @@ data:
 	}
 }
 
+func TestOrchestratorDiffAppsStrictChangedOnlyOwnsSameRepoRefHelmValueFile(t *testing.T) {
+	root := t.TempDir()
+	left := filepath.Join(root, "left")
+	right := filepath.Join(root, "right")
+	writeHelmAppWithRefValues(t, left, "old")
+	writeHelmAppWithRefValues(t, right, "new")
+
+	result, err := Orchestrator{}.DiffApps(context.Background(), DiffRequest{
+		LeftPath:          left,
+		RightPath:         right,
+		ChangedOnly:       true,
+		StrictChangedOnly: true,
+		Unified:           3,
+	})
+	if err != nil {
+		t.Fatalf("DiffApps() error = %v", err)
+	}
+	if len(result.Diagnostics) != 0 {
+		t.Fatalf("len(Diagnostics) = %d, want 0: %#v", len(result.Diagnostics), result.Diagnostics)
+	}
+	if len(result.Results) != 1 {
+		t.Fatalf("len(Results) = %d, want 1", len(result.Results))
+	}
+	for _, want := range []string{"-  value: old", "+  value: new"} {
+		if !strings.Contains(result.Results[0].Diff, want) {
+			t.Fatalf("Diff = %q, want %q", result.Results[0].Diff, want)
+		}
+	}
+}
+
 func writeSimpleApp(t *testing.T, root, value string) {
 	t.Helper()
 	writeTestFile(t, filepath.Join(root, "apps", "demo.yaml"), `apiVersion: argoproj.io/v1alpha1
@@ -197,5 +227,42 @@ metadata:
   name: demo
 data:
   value: same
+`)
+}
+
+func writeHelmAppWithRefValues(t *testing.T, root, value string) {
+	t.Helper()
+	writeTestFile(t, filepath.Join(root, "apps", "demo.yaml"), `apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: demo
+  namespace: argocd
+spec:
+  sources:
+    - repoURL: https://github.com/example/repo
+      targetRevision: main
+      ref: values
+    - repoURL: https://github.com/example/repo.git
+      targetRevision: main
+      path: charts/demo
+      helm:
+        valueFiles:
+          - $values/values/demo.yaml
+  destination:
+    name: in-cluster
+    namespace: demo
+`)
+	writeTestFile(t, filepath.Join(root, "charts", "demo", "Chart.yaml"), `apiVersion: v2
+name: demo
+version: 0.1.0
+`)
+	writeTestFile(t, filepath.Join(root, "charts", "demo", "templates", "cm.yaml"), `apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: demo
+data:
+  value: {{ .Values.value | quote }}
+`)
+	writeTestFile(t, filepath.Join(root, "values", "demo.yaml"), `value: `+value+`
 `)
 }
