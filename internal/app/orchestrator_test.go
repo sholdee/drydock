@@ -398,6 +398,43 @@ data:
 	}
 }
 
+func TestOrchestratorBuildRejectsUnmappedCrossRepoHelmValueRefEvenWhenLocalValueFileExists(t *testing.T) {
+	root := t.TempDir()
+	writeTestFile(t, filepath.Join(root, "apps", "helm-ref-unmapped.yaml"), `apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: helm-ref-unmapped
+  namespace: argocd
+spec:
+  sources:
+    - repoURL: https://github.com/example/values
+      targetRevision: main
+      ref: values
+    - repoURL: https://github.com/example/repo
+      targetRevision: main
+      path: charts/demo
+      helm:
+        valueFiles:
+          - $values/leaked-values.yaml
+  destination:
+    name: in-cluster
+    namespace: default
+`)
+	writeAppTestValueChart(t, filepath.Join(root, "charts", "demo"))
+	writeTestFile(t, filepath.Join(root, "leaked-values.yaml"), `value: from-current-repo
+`)
+
+	_, err := Orchestrator{}.Build(context.Background(), BuildRequest{Path: root})
+	if err == nil {
+		t.Fatal("Build() error = nil, want unmapped ref repository error")
+	}
+	for _, want := range []string{"ref root $values", "--repo-map", "--allow-network"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("Build() error = %q, want %q", err.Error(), want)
+		}
+	}
+}
+
 func TestOrchestratorBuildReturnsChartAcquireErrorForChartOnlySource(t *testing.T) {
 	root := t.TempDir()
 	writeTestFile(t, filepath.Join(root, "apps", "argocd", "chart-app.yaml"), `apiVersion: argoproj.io/v1alpha1
