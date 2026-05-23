@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 
+	argoappv1 "github.com/argoproj/argo-cd/v3/pkg/apis/application/v1alpha1"
 	"github.com/home-operations/argocd-local/internal/change"
 	"github.com/home-operations/argocd-local/internal/diagnostic"
 	"github.com/home-operations/argocd-local/internal/diff"
@@ -28,6 +29,11 @@ type DiffRequest struct {
 	RemoteResourceCacheDir string
 }
 
+type DiffAppRequest struct {
+	DiffRequest
+	Name string
+}
+
 type DiffResult struct {
 	Results     []diff.Result
 	Diagnostics []diagnostic.Diagnostic
@@ -41,11 +47,8 @@ type ImageDiffResult struct {
 }
 
 func (o Orchestrator) DiffApps(ctx context.Context, request DiffRequest) (DiffResult, error) {
-	if request.LeftPath == "" {
-		return DiffResult{}, fmt.Errorf("--path-orig is required")
-	}
-	if request.RightPath == "" {
-		return DiffResult{}, fmt.Errorf("--path is required")
+	if err := validateDiffPaths(request); err != nil {
+		return DiffResult{}, err
 	}
 
 	leftBuild, rightBuild, diagnostics, err := o.buildDiffSides(ctx, request)
@@ -53,15 +56,69 @@ func (o Orchestrator) DiffApps(ctx context.Context, request DiffRequest) (DiffRe
 		return DiffResult{Diagnostics: diagnostics}, err
 	}
 
-	leftDocs, err := diffDocuments(leftBuild)
+	results, err := diffBuildResults(leftBuild, rightBuild, request.Unified)
 	if err != nil {
 		return DiffResult{Diagnostics: diagnostics}, err
 	}
-	rightDocs, err := diffDocuments(rightBuild)
+	return DiffResult{Results: results, Diagnostics: diagnostics}, nil
+}
+
+func (o Orchestrator) DiffApp(ctx context.Context, request DiffAppRequest) (DiffResult, error) {
+	name := strings.TrimSpace(request.Name)
+	if name == "" {
+		return DiffResult{}, fmt.Errorf("application name is required")
+	}
+	if err := validateDiffPaths(request.DiffRequest); err != nil {
+		return DiffResult{}, err
+	}
+
+	forbiddenRoots := []string{request.LeftPath, request.RightPath}
+	if err := validateDiffRemoteCache(request.DiffRequest, forbiddenRoots); err != nil {
+		return DiffResult{}, err
+	}
+
+	leftBuildRequest := request.DiffRequest.buildRequest(request.LeftPath, forbiddenRoots)
+	rightBuildRequest := request.DiffRequest.buildRequest(request.RightPath, forbiddenRoots)
+
+	var diagnostics []diagnostic.Diagnostic
+	leftList, err := o.ListApplications(ctx, leftBuildRequest)
+	diagnostics = append(diagnostics, leftList.Diagnostics...)
 	if err != nil {
 		return DiffResult{Diagnostics: diagnostics}, err
 	}
-	results, err := diff.Run(leftDocs, rightDocs, diff.Options{Unified: request.Unified})
+	rightList, err := o.ListApplications(ctx, rightBuildRequest)
+	diagnostics = append(diagnostics, rightList.Diagnostics...)
+	if err != nil {
+		return DiffResult{Diagnostics: diagnostics}, err
+	}
+
+	leftApp, leftOK, err := SelectOptionalApplicationByName(leftList.Applications, name)
+	if err != nil {
+		return DiffResult{Diagnostics: diagnostics}, err
+	}
+	rightApp, rightOK, err := SelectOptionalApplicationByName(rightList.Applications, name)
+	if err != nil {
+		return DiffResult{Diagnostics: diagnostics}, err
+	}
+	if !leftOK && !rightOK {
+		return DiffResult{Diagnostics: diagnostics}, fmt.Errorf("application %q not found in either tree", name)
+	}
+
+	leftBuildRequest.Applications = selectedApplications(leftApp, leftOK)
+	rightBuildRequest.Applications = selectedApplications(rightApp, rightOK)
+
+	leftBuild, err := o.Build(ctx, leftBuildRequest)
+	diagnostics = append(diagnostics, leftBuild.Diagnostics...)
+	if err != nil {
+		return DiffResult{Diagnostics: diagnostics}, err
+	}
+	rightBuild, err := o.Build(ctx, rightBuildRequest)
+	diagnostics = append(diagnostics, rightBuild.Diagnostics...)
+	if err != nil {
+		return DiffResult{Diagnostics: diagnostics}, err
+	}
+
+	results, err := diffBuildResults(leftBuild, rightBuild, request.Unified)
 	if err != nil {
 		return DiffResult{Diagnostics: diagnostics}, err
 	}
@@ -69,11 +126,8 @@ func (o Orchestrator) DiffApps(ctx context.Context, request DiffRequest) (DiffRe
 }
 
 func (o Orchestrator) DiffImages(ctx context.Context, request DiffRequest) (ImageDiffResult, error) {
-	if request.LeftPath == "" {
-		return ImageDiffResult{}, fmt.Errorf("--path-orig is required")
-	}
-	if request.RightPath == "" {
-		return ImageDiffResult{}, fmt.Errorf("--path is required")
+	if err := validateDiffPaths(request); err != nil {
+		return ImageDiffResult{}, err
 	}
 
 	leftBuild, rightBuild, diagnostics, err := o.buildDiffSides(ctx, request)
@@ -121,20 +175,9 @@ func compareStringSets(left, right []string) (added, removed, unchanged []string
 	return added, removed, unchanged
 }
 
-func (o Orchestrator) buildDiffSides(ctx context.Context, request DiffRequest) (BuildResult, BuildResult, []diagnostic.Diagnostic, error) {
-	forbiddenRoots := []string{request.LeftPath, request.RightPath}
-	if request.RemoteResourceCacheDir != "" {
-		inside, root, err := remote.IsPathInsideAny(request.RemoteResourceCacheDir, forbiddenRoots)
-		if err != nil {
-			return BuildResult{}, BuildResult{}, nil, err
-		}
-		if inside {
-			return BuildResult{}, BuildResult{}, nil, fmt.Errorf("remote resource cache dir %q must not be inside repository root %q", request.RemoteResourceCacheDir, root)
-		}
-	}
-
-	leftBuildRequest := BuildRequest{
-		Path:                         request.LeftPath,
+func (request DiffRequest) buildRequest(path string, forbiddenRoots []string) BuildRequest {
+	return BuildRequest{
+		Path:                         path,
 		Strict:                       request.Strict,
 		Offline:                      request.Offline,
 		RefreshCharts:                request.RefreshCharts,
@@ -143,8 +186,59 @@ func (o Orchestrator) buildDiffSides(ctx context.Context, request DiffRequest) (
 		RemoteResourceCacheDir:       request.RemoteResourceCacheDir,
 		RemoteResourceForbiddenRoots: forbiddenRoots,
 	}
-	rightBuildRequest := leftBuildRequest
-	rightBuildRequest.Path = request.RightPath
+}
+
+func validateDiffPaths(request DiffRequest) error {
+	if request.LeftPath == "" {
+		return fmt.Errorf("--path-orig is required")
+	}
+	if request.RightPath == "" {
+		return fmt.Errorf("--path is required")
+	}
+	return nil
+}
+
+func validateDiffRemoteCache(request DiffRequest, forbiddenRoots []string) error {
+	if request.RemoteResourceCacheDir == "" {
+		return nil
+	}
+	inside, root, err := remote.IsPathInsideAny(request.RemoteResourceCacheDir, forbiddenRoots)
+	if err != nil {
+		return err
+	}
+	if inside {
+		return fmt.Errorf("remote resource cache dir %q must not be inside repository root %q", request.RemoteResourceCacheDir, root)
+	}
+	return nil
+}
+
+func selectedApplications(application argoappv1.Application, ok bool) []argoappv1.Application {
+	if !ok {
+		return []argoappv1.Application{}
+	}
+	return []argoappv1.Application{application}
+}
+
+func diffBuildResults(leftBuild, rightBuild BuildResult, unified int) ([]diff.Result, error) {
+	leftDocs, err := diffDocuments(leftBuild)
+	if err != nil {
+		return nil, err
+	}
+	rightDocs, err := diffDocuments(rightBuild)
+	if err != nil {
+		return nil, err
+	}
+	return diff.Run(leftDocs, rightDocs, diff.Options{Unified: unified})
+}
+
+func (o Orchestrator) buildDiffSides(ctx context.Context, request DiffRequest) (BuildResult, BuildResult, []diagnostic.Diagnostic, error) {
+	forbiddenRoots := []string{request.LeftPath, request.RightPath}
+	if err := validateDiffRemoteCache(request, forbiddenRoots); err != nil {
+		return BuildResult{}, BuildResult{}, nil, err
+	}
+
+	leftBuildRequest := request.buildRequest(request.LeftPath, forbiddenRoots)
+	rightBuildRequest := request.buildRequest(request.RightPath, forbiddenRoots)
 
 	var diagnostics []diagnostic.Diagnostic
 	if request.ChangedOnly {
