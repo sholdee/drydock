@@ -47,4 +47,6 @@ RENOVATE_CHART_TO=4.8.2 scripts/home-ops-renovate-smoke.sh
 - Server-side diff/apply settings are reported as offline limitations.
 
 See `docs/usage.md` for command examples and `docs/compatibility.md` for
-offline Argo CD compatibility notes.
+offline Argo CD compatibility notes. See `docs/home-ops-pattern-coverage.md`
+for the portable coverage matrix that models real `home-ops` Application
+patterns.

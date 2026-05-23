@@ -98,3 +98,13 @@ checkout, uses temporary worktrees, and does not mutate the real checkout. It
 detects the current Renovate chart version from `apps/renovate/kustomization.yaml`
 and requires `RENOVATE_CHART_TO` to name the simulated target version.
 Committed tests and portable fixtures do not depend on `home-ops`.
+
+Run the optional home-ops pattern smoke:
+
+```bash
+scripts/home-ops-pattern-smoke.sh
+```
+
+The pattern smoke applies small synthetic changes across representative
+`home-ops` app patterns in temporary worktrees. It is optional and may fetch
+public charts.
