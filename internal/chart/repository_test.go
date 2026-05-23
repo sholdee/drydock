@@ -562,7 +562,7 @@ func TestDefaultAcquirerRejectsNonHTTPAbsoluteChartURL(t *testing.T) {
 	}
 }
 
-func TestDefaultAcquirerRejectsUnsupportedKindBeforeCacheHit(t *testing.T) {
+func TestDefaultAcquirerReturnsCachedOCIChartWithClientAndDefaultPuller(t *testing.T) {
 	request := Request{
 		Repository: "oci://charts.example.test",
 		Name:       "demo",
@@ -580,16 +580,19 @@ func TestDefaultAcquirerRejectsUnsupportedKindBeforeCacheHit(t *testing.T) {
 
 	acquirer := DefaultAcquirer{Client: &http.Client{
 		Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
-			t.Fatal("unsupported kind Acquire() made a network request")
+			t.Fatal("cached OCI Acquire() made a network request")
 			return nil, nil
 		}),
 	}}
-	_, err := acquirer.Acquire(context.Background(), request, Options{CacheDir: cacheDir})
-	if err == nil {
-		t.Fatal("Acquire() error = nil, want unsupported kind error")
+	result, err := acquirer.Acquire(context.Background(), request, Options{CacheDir: cacheDir})
+	if err != nil {
+		t.Fatalf("Acquire() error = %v, want cached result", err)
 	}
-	if !strings.Contains(err.Error(), "unsupported chart repository kind") {
-		t.Fatalf("Acquire() error = %q, want unsupported kind error", err)
+	if !result.FromCache {
+		t.Fatal("Acquire() FromCache = false, want true")
+	}
+	if result.ChartDir != chartDir {
+		t.Fatalf("Acquire() ChartDir = %q, want %q", result.ChartDir, chartDir)
 	}
 }
 
