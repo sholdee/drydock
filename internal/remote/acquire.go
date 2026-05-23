@@ -91,6 +91,17 @@ func CachePath(cacheDir string, key string) string {
 	return filepath.Join(cacheDir, key, "resource.yaml")
 }
 
+func rejectForbiddenCachePath(resourcePath string, forbiddenRoots []string) error {
+	inside, matchedRoot, err := IsPathInsideAny(resourcePath, forbiddenRoots)
+	if err != nil {
+		return err
+	}
+	if inside {
+		return fmt.Errorf("remote resource cache path %q must not be inside repository root %q", resourcePath, matchedRoot)
+	}
+	return nil
+}
+
 func ResolveCacheDir(cacheDir string, forbiddenRoots []string) (string, error) {
 	if cacheDir == "" {
 		defaultDir, err := DefaultCacheDir()
