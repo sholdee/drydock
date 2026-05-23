@@ -7,12 +7,14 @@ import (
 	"io"
 	"net/url"
 	"os"
+	"path"
 	"path/filepath"
 	"strings"
 
 	"github.com/home-operations/argocd-local/internal/chart"
 	"github.com/home-operations/argocd-local/internal/diagnostic"
 	"github.com/home-operations/argocd-local/internal/manifest"
+	"github.com/home-operations/argocd-local/internal/remote"
 	goyaml "go.yaml.in/yaml/v4"
 	"sigs.k8s.io/kustomize/api/krusty"
 	"sigs.k8s.io/kustomize/api/types"
@@ -38,8 +40,8 @@ func (KustomizeRenderer) Render(ctx context.Context, source ResolvedSource, opts
 	if err != nil {
 		return nil, nil, err
 	}
-	if kustomizeGraphHasHelmCharts(graph) {
-		return renderKustomizeWithHelmCharts(ctx, source, opts, root, graph)
+	if kustomizeGraphHasHelmCharts(graph) || hasRemoteKustomizeFileResources(graph) {
+		return renderKustomizeWithGeneratedResources(ctx, source, opts, graph)
 	}
 
 	return renderPlainKustomize(ctx, source, root)
@@ -88,7 +90,18 @@ func kustomizeGraphHasHelmCharts(graph []kustomizeGraphNode) bool {
 	return false
 }
 
-func renderKustomizeWithHelmCharts(ctx context.Context, source ResolvedSource, opts RenderOptions, _ string, graph []kustomizeGraphNode) ([]Manifest, []diagnostic.Diagnostic, error) {
+func hasRemoteKustomizeFileResources(graph []kustomizeGraphNode) bool {
+	for _, node := range graph {
+		for _, resource := range node.Kustomization.Resources {
+			if isSupportedRemoteKustomizeFileResource(resource) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func renderKustomizeWithGeneratedResources(ctx context.Context, source ResolvedSource, opts RenderOptions, graph []kustomizeGraphNode) ([]Manifest, []diagnostic.Diagnostic, error) {
 	tempDir, err := os.MkdirTemp("", "argocd-local-kustomize-*")
 	if err != nil {
 		return nil, nil, err
@@ -110,22 +123,26 @@ func renderKustomizeWithHelmCharts(ctx context.Context, source ResolvedSource, o
 	}
 
 	for i, node := range graph {
-		if len(node.Kustomization.HelmCharts) == 0 {
-			continue
-		}
 		nodeRelDir, err := relativeManifestPath(source.RepoRoot, node.Dir)
 		if err != nil {
 			return nil, nil, err
 		}
 		tempNodeDir := filepath.Join(tempRepoRoot, nodeRelDir)
-		generatedResources, err := renderKustomizeHelmCharts(ctx, tempRepoRoot, tempNodeDir, nodeRelDir, node.effectiveHelmNamespace(), kustomizationChartHome(node.Kustomization), i, node.Kustomization.HelmCharts, opts)
+
+		kustomization := node.Kustomization
+		if len(kustomization.HelmCharts) != 0 {
+			generatedResources, err := renderKustomizeHelmCharts(ctx, tempRepoRoot, tempNodeDir, nodeRelDir, node.effectiveHelmNamespace(), kustomizationChartHome(kustomization), i, kustomization.HelmCharts, opts)
+			if err != nil {
+				return nil, nil, err
+			}
+			kustomization.HelmCharts = nil
+			kustomization.Resources = append(kustomization.Resources, generatedResources...)
+		}
+		remoteResources, err := renderKustomizeRemoteFileResources(ctx, source.RepoRoot, tempNodeDir, i, kustomization.Resources, opts)
 		if err != nil {
 			return nil, nil, err
 		}
-
-		kustomization := node.Kustomization
-		kustomization.HelmCharts = nil
-		kustomization.Resources = append(kustomization.Resources, generatedResources...)
+		kustomization.Resources = remoteResources
 		data, err := goyaml.Marshal(&kustomization)
 		if err != nil {
 			return nil, nil, fmt.Errorf("encode temp kustomization %s: %w", node.ManifestPath, err)
@@ -137,6 +154,40 @@ func renderKustomizeWithHelmCharts(ctx context.Context, source ResolvedSource, o
 	}
 
 	return renderPlainKustomize(ctx, tempSource, tempRoot)
+}
+
+func renderKustomizeRemoteFileResources(ctx context.Context, repoRoot, tempNodeDir string, graphIndex int, resources []string, opts RenderOptions) ([]string, error) {
+	acquirer := opts.RemoteResourceAcquirer
+	if acquirer == nil {
+		acquirer = remote.DefaultAcquirer{}
+	}
+	forbiddenRoots := opts.RemoteResourceForbiddenRoots
+	if len(forbiddenRoots) == 0 {
+		forbiddenRoots = []string{repoRoot}
+	}
+
+	out := append([]string(nil), resources...)
+	for i, resourceRef := range resources {
+		if !isSupportedRemoteKustomizeFileResource(resourceRef) {
+			continue
+		}
+		acquired, err := acquirer.Acquire(ctx, remote.Request{URL: resourceRef}, remote.Options{
+			CacheDir:       opts.RemoteResourceCacheDir,
+			Offline:        opts.OfflineRemoteResources,
+			Refresh:        opts.RefreshRemoteResources,
+			ForbiddenRoots: forbiddenRoots,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("acquire remote kustomize resource %s: %w", remote.RedactURL(resourceRef), err)
+		}
+		generatedRel := filepath.ToSlash(filepath.Join(".argocd-local", "remotes", fmt.Sprintf("%03d-%03d-%s", graphIndex, i, safeRemoteResourceBase(resourceRef))))
+		generatedPath := filepath.Join(tempNodeDir, filepath.FromSlash(generatedRel))
+		if err := copyRegularFile(acquired.Path, generatedPath); err != nil {
+			return nil, fmt.Errorf("copy remote kustomize resource %s: %w", remote.RedactURL(resourceRef), err)
+		}
+		out[i] = generatedRel
+	}
+	return out, nil
 }
 
 func renderKustomizeHelmCharts(ctx context.Context, tempRepoRoot, tempSourceRoot, valueFilesBaseDir, namespaceFallback, chartHome string, graphIndex int, helmCharts []types.HelmChart, opts RenderOptions) ([]string, error) {
@@ -693,6 +744,9 @@ func (v *kustomizeGraphValidator) validateGeneratorListRefs(dir string, kustomiz
 }
 
 func (v *kustomizeGraphValidator) validateResourceRef(ctx context.Context, dir, field, ref, inheritedHelmNamespace string) error {
+	if isSupportedRemoteKustomizeFileResource(ref) {
+		return nil
+	}
 	path, info, err := v.validateLocalRef(dir, field, ref)
 	if err != nil || info == nil || !info.IsDir() {
 		return err
@@ -740,7 +794,7 @@ func (v *kustomizeGraphValidator) validateLocalRef(dir, field, ref string) (stri
 		return "", nil, nil
 	}
 	if isRemoteKustomizeRef(ref) {
-		return "", nil, fmt.Errorf("kustomize %s %q is a remote ref; remote Kustomize refs are unsupported", field, ref)
+		return "", nil, unsupportedRemoteKustomizeRefError(field, ref)
 	}
 	if filepath.IsAbs(ref) {
 		return "", nil, fmt.Errorf("kustomize %s %q must be relative", field, ref)
@@ -799,6 +853,64 @@ func rejectSymlinkedPath(root, path string) error {
 		}
 	}
 	return nil
+}
+
+func isSupportedRemoteKustomizeFileResource(ref string) bool {
+	_, err := remote.NormalizeURL(ref)
+	return err == nil
+}
+
+func unsupportedRemoteKustomizeRefError(field, ref string) error {
+	return fmt.Errorf("kustomize %s %q is a remote ref; remote Kustomize refs are unsupported", field, redactKustomizeRef(ref))
+}
+
+func redactKustomizeRef(ref string) string {
+	ref = strings.TrimSpace(ref)
+	if strings.Contains(ref, "://") {
+		nested := ref
+		if schemeIndex := strings.Index(ref, "://"); schemeIndex > 0 {
+			if marker := strings.LastIndex(ref[:schemeIndex], "::"); marker >= 0 {
+				nested = ref[marker+2:]
+			}
+		}
+		if redacted := remote.RedactURL(nested); redacted != "[invalid-url]" {
+			return redacted
+		}
+		return "[remote-ref]"
+	}
+	if strings.Contains(ref, "?") || strings.Contains(ref, "#") || strings.Contains(ref, "@") {
+		return "[remote-ref]"
+	}
+	if strings.Contains(ref, "//") && strings.ContainsAny(ref, ".:") {
+		return "[remote-ref]"
+	}
+	return ref
+}
+
+func safeRemoteResourceBase(ref string) string {
+	parsed, err := url.Parse(strings.TrimSpace(ref))
+	if err != nil {
+		return "resource.yaml"
+	}
+	base := path.Base(parsed.Path)
+	base = strings.TrimSpace(base)
+	if base == "" || base == "." || base == "/" {
+		return "resource.yaml"
+	}
+	return strings.Map(func(r rune) rune {
+		switch {
+		case r >= 'a' && r <= 'z':
+			return r
+		case r >= 'A' && r <= 'Z':
+			return r
+		case r >= '0' && r <= '9':
+			return r
+		case r == '.', r == '-', r == '_':
+			return r
+		default:
+			return '-'
+		}
+	}, base)
 }
 
 func generatorFileSourcePath(source string) string {
