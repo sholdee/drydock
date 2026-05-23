@@ -278,6 +278,142 @@ func TestRunRedactsMalformedSecretBearingFields(t *testing.T) {
 	}
 }
 
+func TestRunStripsAttributes(t *testing.T) {
+	left := []Document{{
+		Parent: Parent{
+			Namespace:   "argocd",
+			Name:        "app-a",
+			SourceIndex: 0,
+			SourcePath:  "apps/a",
+		},
+		Resource: Resource{
+			Kind:      "ConfigMap",
+			Namespace: "default",
+			Name:      "cfg",
+		},
+		Body: "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: cfg\n  namespace: default\n  labels:\n    helm.sh/chart: demo-1.0.0\n  annotations:\n    app.kubernetes.io/version: 1.0.0\n",
+	}}
+	right := []Document{{
+		Parent: Parent{
+			Namespace:   "argocd",
+			Name:        "app-a",
+			SourceIndex: 0,
+			SourcePath:  "apps/a",
+		},
+		Resource: Resource{
+			Kind:      "ConfigMap",
+			Namespace: "default",
+			Name:      "cfg",
+		},
+		Body: "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: cfg\n  namespace: default\n  labels:\n    helm.sh/chart: demo-2.0.0\n  annotations:\n    app.kubernetes.io/version: 2.0.0\n",
+	}}
+
+	results, err := Run(left, right, Options{Unified: 3, StripAttrs: []string{"helm.sh/chart", "app.kubernetes.io/version"}})
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if len(results) != 0 {
+		t.Fatalf("len(results) = %d, want 0: %#v", len(results), results)
+	}
+}
+
+func TestRunStripsAttributesAndPreservesOtherDiffs(t *testing.T) {
+	left := []Document{{
+		Parent: Parent{
+			Namespace:   "argocd",
+			Name:        "app-a",
+			SourceIndex: 0,
+			SourcePath:  "apps/a",
+		},
+		Resource: Resource{
+			Kind:      "ConfigMap",
+			Namespace: "default",
+			Name:      "cfg",
+		},
+		Body: "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: cfg\n  namespace: default\n  labels:\n    helm.sh/chart: demo-1.0.0\n    keep: same\ndata:\n  value: old\n",
+	}}
+	right := []Document{{
+		Parent: Parent{
+			Namespace:   "argocd",
+			Name:        "app-a",
+			SourceIndex: 0,
+			SourcePath:  "apps/a",
+		},
+		Resource: Resource{
+			Kind:      "ConfigMap",
+			Namespace: "default",
+			Name:      "cfg",
+		},
+		Body: "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: cfg\n  namespace: default\n  labels:\n    helm.sh/chart: demo-2.0.0\n    keep: same\ndata:\n  value: new\n",
+	}}
+
+	results, err := Run(left, right, Options{Unified: 3, StripAttrs: []string{"helm.sh/chart"}})
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if len(results) != 1 {
+		t.Fatalf("len(results) = %d, want 1", len(results))
+	}
+	if strings.Contains(results[0].Diff, "helm.sh/chart") {
+		t.Fatalf("Diff includes stripped attribute:\n%s", results[0].Diff)
+	}
+	for _, want := range []string{"-  value: old", "+  value: new"} {
+		if !strings.Contains(results[0].Diff, want) {
+			t.Fatalf("Diff = %q, want substring %q", results[0].Diff, want)
+		}
+	}
+}
+
+func TestRunStripsAttributesAndRedactsSecretValues(t *testing.T) {
+	left := []Document{{
+		Parent: Parent{
+			Namespace:   "argocd",
+			Name:        "app-a",
+			SourceIndex: 0,
+			SourcePath:  "apps/a",
+		},
+		Resource: Resource{
+			Kind:      "Secret",
+			Namespace: "default",
+			Name:      "creds",
+		},
+		Body: "apiVersion: v1\nkind: Secret\nmetadata:\n  name: creds\n  labels:\n    app.kubernetes.io/version: 1.0.0\ndata:\n  password: c2VjcmV0LW9sZA==\n",
+	}}
+	right := []Document{{
+		Parent: Parent{
+			Namespace:   "argocd",
+			Name:        "app-a",
+			SourceIndex: 0,
+			SourcePath:  "apps/a",
+		},
+		Resource: Resource{
+			Kind:      "Secret",
+			Namespace: "default",
+			Name:      "creds",
+		},
+		Body: "apiVersion: v1\nkind: Secret\nmetadata:\n  name: creds\n  labels:\n    app.kubernetes.io/version: 2.0.0\ndata:\n  password: c2VjcmV0LW5ldw==\n",
+	}}
+
+	results, err := Run(left, right, Options{Unified: 3, StripAttrs: []string{"app.kubernetes.io/version"}})
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if len(results) != 1 {
+		t.Fatalf("len(results) = %d, want 1", len(results))
+	}
+	diff := results[0].Diff
+	for _, forbidden := range []string{"app.kubernetes.io/version", "c2VjcmV0LW9sZA==", "c2VjcmV0LW5ldw=="} {
+		if strings.Contains(diff, forbidden) {
+			t.Fatalf("Diff leaked stripped or secret value %q:\n%s", forbidden, diff)
+		}
+	}
+	for _, want := range []string{"password: <redacted-before>", "password: <redacted-after>"} {
+		if !strings.Contains(diff, want) {
+			t.Fatalf("Diff = %q, want substring %q", diff, want)
+		}
+	}
+}
+
 func TestExtractWorkloadImages(t *testing.T) {
 	docs := []Document{
 		{Body: `

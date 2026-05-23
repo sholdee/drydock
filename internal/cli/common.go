@@ -27,6 +27,7 @@ type commonFlags struct {
 	exitCode          bool
 	output            string
 	unified           int
+	stripAttrs        []string
 	limitBytes        int
 }
 
@@ -60,6 +61,7 @@ func bindCommonFlags(cmd *cobra.Command, flags *commonFlags) {
 	cmd.Flags().BoolVar(&flags.exitCode, "exit-code", flags.exitCode, "return exit code 1 when a diff is found")
 	cmd.Flags().StringVarP(&flags.output, "output", "o", flags.output, "output format")
 	cmd.Flags().IntVarP(&flags.unified, "unified", "u", flags.unified, "number of unified diff context lines")
+	cmd.Flags().StringArrayVar(&flags.stripAttrs, "strip-attr", flags.stripAttrs, "metadata label or annotation key to strip before diffing")
 	cmd.Flags().IntVar(&flags.limitBytes, "limit-bytes", flags.limitBytes, "maximum bytes of rendered output per object")
 }
 

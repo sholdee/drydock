@@ -2,9 +2,12 @@ package cli
 
 import (
 	"bytes"
+	"encoding/json"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"go.yaml.in/yaml/v4"
 )
 
 type assertErr struct{}
@@ -131,6 +134,178 @@ func TestDiffAppReportsMissingApplication(t *testing.T) {
 	}
 	if stdout.String() != "" {
 		t.Fatalf("stdout = %q, want empty", stdout.String())
+	}
+}
+
+func TestDiffAppsStripAttrSuppressesOnlyAttributeDiff(t *testing.T) {
+	root := t.TempDir()
+	left := filepath.Join(root, "left")
+	right := filepath.Join(root, "right")
+	writeAttributedAppForCLI(t, left, "1.0.0", "same")
+	writeAttributedAppForCLI(t, right, "2.0.0", "same")
+
+	cmd := NewRootCommand(VersionInfo{})
+	cmd.SetArgs([]string{"diff", "apps", "--path-orig", left, "--path", right, "--strip-attr", "app.kubernetes.io/version"})
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	cmd.SetOut(&stdout)
+	cmd.SetErr(&stderr)
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("Execute() error = %v\nstdout:\n%s\nstderr:\n%s", err, stdout.String(), stderr.String())
+	}
+	if stdout.String() != "" {
+		t.Fatalf("stdout = %q, want no diff", stdout.String())
+	}
+	if stderr.String() != "" {
+		t.Fatalf("stderr = %q, want empty", stderr.String())
+	}
+}
+
+func TestDiffAppsJSONOutput(t *testing.T) {
+	root := t.TempDir()
+	left := filepath.Join(root, "left")
+	right := filepath.Join(root, "right")
+	writeSimpleAppForCLI(t, left, "old")
+	writeSimpleAppForCLI(t, right, "new")
+
+	cmd := NewRootCommand(VersionInfo{})
+	cmd.SetArgs([]string{"diff", "apps", "--path-orig", left, "--path", right, "-o", "json", "--exit-code=false"})
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	cmd.SetOut(&stdout)
+	cmd.SetErr(&stderr)
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("Execute() error = %v\nstdout:\n%s\nstderr:\n%s", err, stdout.String(), stderr.String())
+	}
+	var results []map[string]any
+	if err := json.Unmarshal(stdout.Bytes(), &results); err != nil {
+		t.Fatalf("json.Unmarshal() error = %v\nstdout:\n%s", err, stdout.String())
+	}
+	if len(results) != 1 || results[0]["change"] != "modified" {
+		t.Fatalf("results = %#v, want one modified result", results)
+	}
+	if !strings.Contains(results[0]["diff"].(string), "+  value: new") {
+		t.Fatalf("json diff = %#v, want changed value", results[0]["diff"])
+	}
+	if stderr.String() != "" {
+		t.Fatalf("stderr = %q, want empty", stderr.String())
+	}
+}
+
+func TestDiffAppYAMLOutput(t *testing.T) {
+	root := t.TempDir()
+	left := filepath.Join(root, "left")
+	right := filepath.Join(root, "right")
+	writeSimpleAppForCLI(t, left, "old")
+	writeSimpleAppForCLI(t, right, "new")
+
+	cmd := NewRootCommand(VersionInfo{})
+	cmd.SetArgs([]string{"diff", "app", "demo", "--path-orig", left, "--path", right, "-o", "yaml", "--exit-code=false"})
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	cmd.SetOut(&stdout)
+	cmd.SetErr(&stderr)
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("Execute() error = %v\nstdout:\n%s\nstderr:\n%s", err, stdout.String(), stderr.String())
+	}
+	var results []map[string]any
+	if err := yaml.Unmarshal(stdout.Bytes(), &results); err != nil {
+		t.Fatalf("yaml.Unmarshal() error = %v\nstdout:\n%s", err, stdout.String())
+	}
+	if len(results) != 1 || results[0]["change"] != "modified" {
+		t.Fatalf("results = %#v, want one modified result", results)
+	}
+	if !strings.Contains(results[0]["diff"].(string), "-  value: old") {
+		t.Fatalf("yaml diff = %#v, want changed value", results[0]["diff"])
+	}
+	if stderr.String() != "" {
+		t.Fatalf("stderr = %q, want empty", stderr.String())
+	}
+}
+
+func TestDiffManifestCommandsRejectNameOutput(t *testing.T) {
+	root := t.TempDir()
+	left := filepath.Join(root, "left")
+	right := filepath.Join(root, "right")
+	writeSimpleAppForCLI(t, left, "old")
+	writeSimpleAppForCLI(t, right, "new")
+
+	tests := []struct {
+		name string
+		args []string
+		want string
+	}{
+		{
+			name: "apps",
+			args: []string{"diff", "apps", "--path-orig", left, "--path", right, "-o", "name"},
+			want: "name output is not supported for diff apps",
+		},
+		{
+			name: "app",
+			args: []string{"diff", "app", "demo", "--path-orig", left, "--path", right, "-o", "name"},
+			want: "name output is not supported for diff app",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cmd := NewRootCommand(VersionInfo{})
+			cmd.SetArgs(tt.args)
+			var stdout bytes.Buffer
+			var stderr bytes.Buffer
+			cmd.SetOut(&stdout)
+			cmd.SetErr(&stderr)
+
+			err := cmd.Execute()
+			if err == nil {
+				t.Fatal("Execute() error = nil, want unsupported output error")
+			}
+			if !strings.Contains(err.Error(), tt.want) {
+				t.Fatalf("error = %v, want %q", err, tt.want)
+			}
+			if stdout.String() != "" {
+				t.Fatalf("stdout = %q, want empty", stdout.String())
+			}
+			if stderr.String() != "" {
+				t.Fatalf("stderr = %q, want empty", stderr.String())
+			}
+		})
+	}
+}
+
+func TestDiffAppsStructuredOutputKeepsDiagnosticsOnStderr(t *testing.T) {
+	root := t.TempDir()
+	left := filepath.Join(root, "left")
+	right := filepath.Join(root, "right")
+	writeSimpleAppForCLI(t, left, "old")
+	writeSimpleAppForCLI(t, right, "new")
+	writeCLITestFile(t, filepath.Join(left, "README.md"), "left\n")
+	writeCLITestFile(t, filepath.Join(right, "README.md"), "right\n")
+
+	cmd := NewRootCommand(VersionInfo{})
+	cmd.SetArgs([]string{"diff", "apps", "--path-orig", left, "--path", right, "-o", "json", "--exit-code=false"})
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	cmd.SetOut(&stdout)
+	cmd.SetErr(&stderr)
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("Execute() error = %v\nstdout:\n%s\nstderr:\n%s", err, stdout.String(), stderr.String())
+	}
+	var results []map[string]any
+	if err := json.Unmarshal(stdout.Bytes(), &results); err != nil {
+		t.Fatalf("json.Unmarshal() error = %v\nstdout:\n%s\nstderr:\n%s", err, stdout.String(), stderr.String())
+	}
+	if len(results) != 1 {
+		t.Fatalf("len(results) = %d, want 1", len(results))
+	}
+	for _, want := range []string{"warning changed-only:", "README.md"} {
+		if !strings.Contains(stderr.String(), want) {
+			t.Fatalf("stderr missing %q:\nstdout:\n%s\nstderr:\n%s", want, stdout.String(), stderr.String())
+		}
 	}
 }
 
@@ -316,6 +491,33 @@ spec:
 kind: ConfigMap
 metadata:
   name: demo
+data:
+  value: `+value+`
+`)
+}
+
+func writeAttributedAppForCLI(t *testing.T, root, version, value string) {
+	t.Helper()
+	writeCLITestFile(t, filepath.Join(root, "apps", "demo.yaml"), `apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: demo
+  namespace: argocd
+spec:
+  source:
+    repoURL: https://github.com/example/repo
+    path: manifests/demo
+    targetRevision: main
+  destination:
+    name: in-cluster
+    namespace: demo
+`)
+	writeCLITestFile(t, filepath.Join(root, "manifests", "demo", "cm.yaml"), `apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: demo
+  annotations:
+    app.kubernetes.io/version: `+version+`
 data:
   value: `+value+`
 `)

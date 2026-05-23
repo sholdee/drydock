@@ -30,6 +30,8 @@ Supported in the MVP:
 - `diff apps` desired-vs-desired manifest diffs
 - `diff app` desired-vs-desired diffs for one Application, including
   add/delete diffs when the Application exists on only one side
+- `diff apps` and `diff app` structured JSON and YAML output
+- `--strip-attr KEY` diff normalization for metadata label and annotation keys
 - `diff images` conservative workload image diffs
 - Repeated-resource last-wins behavior inside one Application
 
