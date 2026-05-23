@@ -124,6 +124,47 @@ data:
 	}
 }
 
+func TestHelmRendererAppliesValueFiles(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "chart", "Chart.yaml"), `
+apiVersion: v2
+name: chart
+version: 0.1.0
+`)
+	writeFile(t, filepath.Join(root, "chart", "values.yaml"), `
+value: from-file
+`)
+	writeFile(t, filepath.Join(root, "chart", "templates", "cm.yaml"), `
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: demo
+data:
+  value: {{ .Values.value | quote }}
+`)
+
+	result, diags, err := (HelmRenderer{}).Render(context.Background(), ResolvedSource{
+		RepoRoot: root,
+		Path:     "chart",
+	}, RenderOptions{
+		AppName:    "demo",
+		ValueFiles: []string{"values.yaml"},
+	})
+	if err != nil {
+		t.Fatalf("Render() error = %v", err)
+	}
+	if len(diags) != 0 {
+		t.Fatalf("diagnostics = %#v", diags)
+	}
+	if len(result) != 1 {
+		t.Fatalf("len(result) = %d, want 1", len(result))
+	}
+	value, _, _ := unstructured.NestedString(result[0].Object.Object, "data", "value")
+	if value != "from-file" {
+		t.Fatalf("data.value = %q, want from-file", value)
+	}
+}
+
 func TestHelmRendererUsesSourcePathForChartNamedDifferentlyThanDirectory(t *testing.T) {
 	root := t.TempDir()
 	writeFile(t, filepath.Join(root, "apps", "foo", "Chart.yaml"), `
@@ -154,33 +195,6 @@ metadata:
 	}
 	if got, want := result[0].Path, filepath.Join("apps", "foo", "templates", "configmap.yaml"); got != want {
 		t.Fatalf("Path = %q, want %q", got, want)
-	}
-}
-
-func TestHelmRendererRejectsValueFilesUntilSupported(t *testing.T) {
-	renderer := HelmRenderer{}
-	source := ResolvedSource{
-		RepoRoot: filepath.Join("..", "..", "testdata", "applications", "helm"),
-		Path:     "simple",
-		Chart:    "simple",
-	}
-
-	result, diags, err := renderer.Render(context.Background(), source, RenderOptions{
-		AppName:    "demo",
-		Namespace:  "demo-ns",
-		ValueFiles: []string{"values.yaml"},
-	})
-	if err == nil {
-		t.Fatal("Render() error = nil, want value files unsupported error")
-	}
-	if !strings.Contains(err.Error(), "value files") {
-		t.Fatalf("Render() error = %v, want value files unsupported error", err)
-	}
-	if len(diags) != 0 {
-		t.Fatalf("diagnostics = %#v", diags)
-	}
-	if len(result) != 0 {
-		t.Fatalf("result = %#v, want no manifests", result)
 	}
 }
 
