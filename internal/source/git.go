@@ -58,7 +58,7 @@ func (DefaultGitAcquirer) Acquire(ctx context.Context, request GitRequest, opts 
 	if err := ctx.Err(); err != nil {
 		return GitResult{}, err
 	}
-	auth, err := gitAuthMethod(opts.Credentials, request.URL)
+	auth, _, err := gitAuthMethod(opts.Credentials, request.URL)
 	if err != nil {
 		return GitResult{}, err
 	}
@@ -186,17 +186,18 @@ func pullGitRepository(ctx context.Context, worktree *git.Worktree, repoURL stri
 	return fmt.Errorf("fetch repository %s: %s", RedactURL(repoURL), redactGitError(err, repoURL, credentials))
 }
 
-func gitAuthMethod(credentials GitCredentials, repoURL string) (transport.AuthMethod, error) {
+func gitAuthMethod(credentials GitCredentials, repoURL string) (transport.AuthMethod, bool, error) {
 	if isSSHGitURL(repoURL) {
-		return gitSSHAuthMethod(credentials, repoURL)
+		auth, err := gitSSHAuthMethod(credentials, repoURL)
+		return auth, auth != nil, err
 	}
 	if strings.TrimSpace(credentials.BearerToken) != "" {
-		return &githttp.TokenAuth{Token: credentials.BearerToken}, nil
+		return &githttp.TokenAuth{Token: credentials.BearerToken}, true, nil
 	}
 	if strings.TrimSpace(credentials.Username) != "" || credentials.Password != "" {
-		return &githttp.BasicAuth{Username: credentials.Username, Password: credentials.Password}, nil
+		return &githttp.BasicAuth{Username: credentials.Username, Password: credentials.Password}, true, nil
 	}
-	return nil, nil
+	return nil, false, nil
 }
 
 func gitSSHAuthMethod(credentials GitCredentials, repoURL string) (transport.AuthMethod, error) {
@@ -253,7 +254,7 @@ func isSCPStyleGitURL(repoURL string) bool {
 func sshGitUser(repoURL string) string {
 	repoURL = strings.TrimSpace(repoURL)
 	if isSCPStyleGitURL(repoURL) {
-		userHost := repoURL[:strings.Index(repoURL, ":")]
+		userHost, _, _ := strings.Cut(repoURL, ":")
 		if user, _, ok := strings.Cut(userHost, "@"); ok && user != "" {
 			return user
 		}

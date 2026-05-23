@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"fmt"
+	"slices"
 	"sort"
 	"strings"
 
@@ -100,7 +101,8 @@ func newGetCommand(deps Dependencies) *cobra.Command {
 			}
 			buildRequest.Applications = filterApplicationsBySelector(listResult.Applications, selector)
 			buildResult, err := deps.Orchestrator.Build(context.Background(), buildRequest)
-			diagnostics := append(listResult.Diagnostics, buildResult.Diagnostics...)
+			diagnostics := slices.Clone(listResult.Diagnostics)
+			diagnostics = append(diagnostics, buildResult.Diagnostics...)
 			if renderErr := renderDiagnostics(cmd.ErrOrStderr(), diagnostics); renderErr != nil {
 				return renderErr
 			}
