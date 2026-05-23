@@ -1,8 +1,10 @@
 package cli
 
 import (
+	"context"
 	"fmt"
 
+	"github.com/home-operations/argocd-local/internal/app"
 	"github.com/spf13/cobra"
 )
 
@@ -24,7 +26,33 @@ func newDiffCommand(deps Dependencies) *cobra.Command {
 		Short: "Diff all Applications",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			return fmt.Errorf("%s is not wired yet for path %s", cmd.CommandPath(), appsFlags.path)
+			result, err := deps.Orchestrator.DiffApps(context.Background(), app.DiffRequest{
+				LeftPath:          appsFlags.pathOrig,
+				RightPath:         appsFlags.path,
+				ChangedOnly:       appsFlags.changedOnly,
+				StrictChangedOnly: appsFlags.strictChangedOnly,
+				Strict:            appsFlags.strict,
+				Unified:           appsFlags.unified,
+				Offline:           appsFlags.offline,
+				RefreshCharts:     appsFlags.refreshCharts,
+				ChartCacheDir:     appsFlags.chartCacheDir,
+			})
+			if err != nil {
+				return err
+			}
+			if err := renderDiagnostics(cmd.ErrOrStderr(), result.Diagnostics); err != nil {
+				return err
+			}
+			for _, item := range result.Results {
+				if _, err := fmt.Fprint(cmd.OutOrStdout(), item.Diff); err != nil {
+					return err
+				}
+			}
+			code := exitCode(nil, !appsFlags.exitCode, len(result.Results) > 0)
+			if code != 0 {
+				return ExitError{Code: code}
+			}
+			return nil
 		},
 	}
 	bindCommonFlags(apps, &appsFlags)

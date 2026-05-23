@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bytes"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -51,6 +52,30 @@ func TestExitCodeForDiff(t *testing.T) {
 	}
 }
 
+func TestDiffAppsPrintsManifestDiff(t *testing.T) {
+	root := t.TempDir()
+	left := filepath.Join(root, "left")
+	right := filepath.Join(root, "right")
+	writeSimpleAppForCLI(t, left, "old")
+	writeSimpleAppForCLI(t, right, "new")
+
+	cmd := NewRootCommand(VersionInfo{})
+	cmd.SetArgs([]string{"diff", "apps", "--path-orig", left, "--path", right, "--exit-code=false"})
+	var out bytes.Buffer
+	cmd.SetOut(&out)
+	cmd.SetErr(&out)
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+
+	for _, want := range []string{"Application: argocd/demo", "-  value: old", "+  value: new"} {
+		if !strings.Contains(out.String(), want) {
+			t.Fatalf("diff output missing %q:\n%s", want, out.String())
+		}
+	}
+}
+
 func TestChartCacheFlagsAreRegistered(t *testing.T) {
 	tests := []struct {
 		name string
@@ -84,4 +109,29 @@ func TestChartCacheFlagsAreRegistered(t *testing.T) {
 			}
 		})
 	}
+}
+
+func writeSimpleAppForCLI(t *testing.T, root, value string) {
+	t.Helper()
+	writeCLITestFile(t, filepath.Join(root, "apps", "demo.yaml"), `apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: demo
+  namespace: argocd
+spec:
+  source:
+    repoURL: https://github.com/example/repo
+    path: manifests/demo
+    targetRevision: main
+  destination:
+    name: in-cluster
+    namespace: demo
+`)
+	writeCLITestFile(t, filepath.Join(root, "manifests", "demo", "cm.yaml"), `apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: demo
+data:
+  value: `+value+`
+`)
 }
