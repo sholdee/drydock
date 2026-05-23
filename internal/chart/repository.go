@@ -31,6 +31,9 @@ type repositoryChartVersion struct {
 }
 
 func (acquirer DefaultAcquirer) Acquire(ctx context.Context, request Request, opts Options) (Result, error) {
+	if request.Kind != RepositoryHTTP {
+		return Result{}, fmt.Errorf("unsupported chart repository kind %q", request.Kind)
+	}
 	if opts.CacheDir == "" {
 		cacheDir, err := DefaultCacheDir()
 		if err != nil {
@@ -48,9 +51,6 @@ func (acquirer DefaultAcquirer) Acquire(ctx context.Context, request Request, op
 	}
 	if opts.Offline {
 		return Result{}, fmt.Errorf("offline cache miss for chart %s %s", request.Name, request.Version)
-	}
-	if request.Kind != RepositoryHTTP {
-		return Result{}, fmt.Errorf("unsupported chart repository kind %q", request.Kind)
 	}
 
 	archive, err := acquirer.fetchHTTPChart(ctx, request)
@@ -214,10 +214,16 @@ func extractChartArchive(r io.Reader, dest string) error {
 }
 
 func safeChartArchivePath(name string) (string, error) {
-	if name == "" || path.IsAbs(name) || filepath.IsAbs(name) {
+	normalized := strings.ReplaceAll(name, "\\", "/")
+	if name == "" || path.IsAbs(normalized) || filepath.IsAbs(name) {
 		return "", fmt.Errorf("unsafe chart archive path %q", name)
 	}
-	cleaned := path.Clean(strings.ReplaceAll(name, "\\", "/"))
+	for _, segment := range strings.Split(normalized, "/") {
+		if segment == ".." {
+			return "", fmt.Errorf("unsafe chart archive path %q", name)
+		}
+	}
+	cleaned := path.Clean(normalized)
 	if cleaned == "." || cleaned == ".." || strings.HasPrefix(cleaned, "../") {
 		return "", fmt.Errorf("unsafe chart archive path %q", name)
 	}
@@ -285,8 +291,8 @@ func chartArchiveContainsNamedChart(r io.Reader, name string) bool {
 }
 
 func chartDirReady(chartDir string) bool {
-	info, err := os.Stat(filepath.Join(chartDir, "Chart.yaml"))
-	return err == nil && !info.IsDir()
+	info, err := os.Lstat(filepath.Join(chartDir, "Chart.yaml"))
+	return err == nil && info.Mode().IsRegular()
 }
 
 func resultFor(request Request, chartDir string, fromCache bool) Result {
