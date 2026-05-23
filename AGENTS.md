@@ -23,15 +23,20 @@ Current top-level commands:
 
 - `argocd-local get apps --path .`: list discovered Applications by name.
 - `argocd-local build apps --path .`: render all discovered Applications.
-- `argocd-local build app NAME --path .`: command is present but not wired yet.
+- `argocd-local build app NAME --path .`: render exactly one discovered
+  Application by `metadata.name`.
 - `argocd-local diff apps --path . --path-orig ../base`: render and diff all
   Applications between a baseline tree and current tree.
-- `argocd-local diff app NAME --path . --path-orig ../base`: command is
-  present but not wired yet.
+- `argocd-local diff app NAME --path . --path-orig ../base`: diff one
+  requested Application by name between a baseline tree and current tree.
 - `argocd-local diff images --path . --path-orig ../base`: render both trees
   and compare conservative workload container images.
 - `argocd-local diag --path .`: command is present but not wired yet.
 - `argocd-local version`: print version, commit, Go version, and Argo CD module.
+
+Named app arguments accept `NAME` or `NAMESPACE/NAME`; use the
+namespace-qualified form when the same `metadata.name` exists in multiple
+namespaces.
 
 Current shared flags are `--path`, `--path-orig`, `--repo-map`,
 `--allow-network`, `--offline`, `--refresh-charts`, `--chart-cache-dir`,
@@ -39,8 +44,7 @@ Current shared flags are `--path`, `--path-orig`, `--repo-map`,
 `--strict-changed-only`, `--strict`, `--exit-code`, `--output`/`-o`,
 `--unified`/`-u`, and `--limit-bytes`.
 Some flags are parsed ahead of wiring: `--repo-map` and `--allow-network` do
-not currently drive the E2E build/diff path, and `diff app` and `diag` are not
-wired yet.
+not currently drive the E2E build/diff path, and `diag` is not wired yet.
 
 ## Settings Discovery
 
@@ -138,6 +142,10 @@ for offline MVP.
 
 Diff output is keyed by parent Application plus child resource identity.
 Same-named resources rendered by different Applications must remain separate.
+Named `diff app` compares the requested Application directly in both trees and
+does not use changed-only Git path filtering. If the Application exists only in
+current, show additions; if it exists only in baseline, show deletions; if it is
+absent from both, error.
 Image extraction is conservative in the MVP and may be broadened only behind an
 explicit mode.
 CLI diff exit codes are fixed: 0 means success/no diff, 1 means success/diff

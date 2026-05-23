@@ -1,8 +1,8 @@
 # Usage
 
-`argocd-local` currently wires the all-Application discovery, build, manifest
-diff, and image diff paths. Commands that target one named Application and the
-repository diagnostic command are still placeholders.
+`argocd-local` currently wires Application discovery, all-Application and
+named-Application build, all-Application and named-Application manifest diffs,
+and image diffs. The repository diagnostic command is still a placeholder.
 
 ## Application Discovery
 
@@ -20,6 +20,21 @@ Build every discovered Application:
 ```bash
 argocd-local build apps --path .
 ```
+
+Build exactly one discovered Application by `metadata.name`:
+
+```bash
+argocd-local build app renovate --path .
+```
+
+Use `NAMESPACE/NAME` when a name appears in multiple namespaces:
+
+```bash
+argocd-local build app argocd/renovate --path .
+```
+
+`build app` errors when no discovered Application matches. The unqualified
+`NAME` form must identify exactly one Application.
 
 Rendering supports directory sources, Kustomize sources, local Helm charts,
 Kustomize `helmCharts`, safe single-file HTTP(S) Kustomize `resources:`, and
@@ -60,6 +75,23 @@ renders all Applications. Use `--changed-only=false` to render all
 Applications explicitly, or `--strict-changed-only` to fail on incomplete input
 ownership.
 
+Diff one requested Application by `metadata.name`:
+
+```bash
+argocd-local diff app renovate --path-orig ../base --path .
+```
+
+Use `NAMESPACE/NAME` to disambiguate:
+
+```bash
+argocd-local diff app argocd/renovate --path-orig ../base --path .
+```
+
+`diff app` selects the requested Application directly in each tree and does not
+use changed-only Git path filtering. If the Application exists only in current,
+the diff shows additions; if it exists only in baseline, the diff shows
+deletions. If it is absent from both trees, the command errors.
+
 For local inspection, keep the command successful even when a diff exists:
 
 ```bash
@@ -84,7 +116,6 @@ This projection is intentionally conservative and does not report arbitrary
 
 These commands and source paths are not wired in the current MVP:
 
-- `argocd-local diff app NAME --path ./current --path-orig ../base`
 - `argocd-local diag --path .`
 - Remote Kustomize Git refs, bases, components, patches, generators,
   transformers, validators, `crds`, `openapi`, and replacements.

@@ -17,7 +17,10 @@ Supported in the MVP:
 - Public Helm chart fetching by default for render and diff chart dependencies
 - User chart cache entries for acquired charts
 - User remote-resource cache entries for acquired Kustomize resources
+- `build app` rendering for one Application by `NAME` or `NAMESPACE/NAME`
 - `diff apps` desired-vs-desired manifest diffs
+- `diff app` desired-vs-desired diffs for one Application, including
+  add/delete diffs when the Application exists on only one side
 - `diff images` conservative workload image diffs
 - Repeated-resource last-wins behavior inside one Application
 
