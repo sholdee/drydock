@@ -187,6 +187,10 @@ on `/Users/ethan.shold/git/home-ops`. Real `home-ops` checks belong in optional
 smoke scripts that use temporary worktrees.
 Optional real-repository smokes must use temporary worktrees and clean them up.
 Never mutate `/Users/ethan.shold/git/home-ops` directly from tests.
+`docs/home-ops-pattern-coverage.md` is the source of truth for real
+`home-ops` pattern coverage. Normal tests must use portable fixtures; optional
+smoke scripts may target the real checkout through temporary worktrees only.
+Remote Kustomize resources remain unsupported until explicitly designed.
 
 Run the smallest check that covers your change:
 
