@@ -127,6 +127,37 @@ func TestRenderApplicationPassesHelmValues(t *testing.T) {
 	}
 }
 
+func TestRenderApplicationPassesHelmIgnoreMissingValueFiles(t *testing.T) {
+	application := argoappv1.Application{
+		ObjectMeta: metav1.ObjectMeta{Namespace: "argocd", Name: "demo"},
+		Spec: argoappv1.ApplicationSpec{
+			Source: &argoappv1.ApplicationSource{
+				RepoURL: "https://repo",
+				Path:    "chart",
+				Helm: &argoappv1.ApplicationSourceHelm{
+					ValueFiles:              []string{"optional.yaml"},
+					IgnoreMissingValueFiles: true,
+				},
+			},
+		},
+	}
+	var got render.RenderOptions
+	provider := providerFunc(func(_ context.Context, _ render.ResolvedSource, opts render.RenderOptions) ([]render.Manifest, []diagnostic.Diagnostic, error) {
+		got = opts
+		return nil, nil, nil
+	})
+
+	if _, err := RenderApplication(context.Background(), application, provider); err != nil {
+		t.Fatalf("RenderApplication() error = %v", err)
+	}
+	if !got.IgnoreMissingValueFiles {
+		t.Fatalf("IgnoreMissingValueFiles = false, want true")
+	}
+	if len(got.ValueFiles) != 1 || got.ValueFiles[0] != "optional.yaml" {
+		t.Fatalf("ValueFiles = %#v, want optional.yaml", got.ValueFiles)
+	}
+}
+
 func TestRenderApplicationValuesObjectOverridesHelmValues(t *testing.T) {
 	application := argoappv1.Application{
 		ObjectMeta: metav1.ObjectMeta{Namespace: "argocd", Name: "demo"},

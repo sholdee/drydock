@@ -92,6 +92,7 @@ func renderOptions(application argoappv1.Application, source argoappv1.Applicati
 	opts.KubeVersion = source.Helm.KubeVersion
 	opts.APIVersions = append(opts.APIVersions, source.Helm.APIVersions...)
 	opts.ValueFiles = append(opts.ValueFiles, source.Helm.ValueFiles...)
+	opts.IgnoreMissingValueFiles = source.Helm.IgnoreMissingValueFiles
 	valuesObject, err := helmValues(source.Helm)
 	if err != nil {
 		return render.RenderOptions{}, err

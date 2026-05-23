@@ -15,25 +15,26 @@ type ResolvedSource struct {
 }
 
 type RenderOptions struct {
-	AppName           string
-	Namespace         string
-	KubeVersion       string
-	APIVersions       []string
-	BuildOptions      []string
-	RefRoots          map[string]string
-	ReleaseName       string
-	ValuesObject      map[string]any
-	ValuesMergeMode   string
-	ValueFiles        []string
-	ValueFilesBaseDir string
-	ChartCacheDir     string
-	OfflineCharts     bool
-	RefreshCharts     bool
-	ChartAcquirer     chart.Acquirer
-	IncludeCRDs       bool
-	IncludeCRDsSet    bool
-	SkipHooks         bool
-	SkipTests         bool
+	AppName                 string
+	Namespace               string
+	KubeVersion             string
+	APIVersions             []string
+	BuildOptions            []string
+	RefRoots                map[string]string
+	ReleaseName             string
+	ValuesObject            map[string]any
+	ValuesMergeMode         string
+	ValueFiles              []string
+	ValueFilesBaseDir       string
+	IgnoreMissingValueFiles bool
+	ChartCacheDir           string
+	OfflineCharts           bool
+	RefreshCharts           bool
+	ChartAcquirer           chart.Acquirer
+	IncludeCRDs             bool
+	IncludeCRDsSet          bool
+	SkipHooks               bool
+	SkipTests               bool
 }
 
 type Manifest struct {

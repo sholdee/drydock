@@ -67,7 +67,7 @@ func (HelmRenderer) Render(ctx context.Context, source ResolvedSource, opts Rend
 	}
 	capabilities.APIVersions = append(capabilities.APIVersions, opts.APIVersions...)
 
-	fileValues, err := loadHelmValueFiles(source.RepoRoot, helmValueFilesBaseDir(source, opts), opts.RefRoots, opts.ValueFiles)
+	fileValues, err := loadHelmValueFiles(source.RepoRoot, helmValueFilesBaseDir(source, opts), opts.RefRoots, opts.ValueFiles, opts.IgnoreMissingValueFiles)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -371,7 +371,7 @@ func helmValueFilesBaseDir(source ResolvedSource, opts RenderOptions) string {
 	return source.Path
 }
 
-func loadHelmValueFiles(repoRoot, baseDir string, refRoots map[string]string, files []string) (map[string]any, error) {
+func loadHelmValueFiles(repoRoot, baseDir string, refRoots map[string]string, files []string, ignoreMissing bool) (map[string]any, error) {
 	out := map[string]any{}
 	for _, file := range files {
 		root, resolved, err := resolveHelmValueFile(repoRoot, baseDir, refRoots, file)
@@ -383,12 +383,18 @@ func loadHelmValueFiles(repoRoot, baseDir string, refRoots map[string]string, fi
 		}
 		data, err := os.ReadFile(resolved)
 		if err != nil {
+			if ignoreMissing && os.IsNotExist(err) {
+				continue
+			}
 			return nil, fmt.Errorf("read helm value file %q: %w", file, err)
 		}
 
 		values := map[string]any{}
 		if err := yaml.Unmarshal(data, &values); err != nil {
-			return nil, fmt.Errorf("parse helm value file %q: %w", file, err)
+			return nil, fmt.Errorf("helm value file %q must be a YAML mapping: %w", file, err)
+		}
+		if values == nil {
+			values = map[string]any{}
 		}
 		if err := mergeHelmValueMap(out, values); err != nil {
 			return nil, fmt.Errorf("merge helm value file %q: %w", file, err)
@@ -403,9 +409,13 @@ func resolveHelmValueFile(repoRoot, baseDir string, refRoots map[string]string, 
 		if !ok || ref == "" || refPath == "" {
 			return "", "", fmt.Errorf("helm value file %q must use $ref/path syntax", file)
 		}
-		root, ok := refRoots[ref]
+		refKey := "$" + ref
+		root, ok := refRoots[refKey]
 		if !ok || root == "" {
-			return "", "", fmt.Errorf("helm value file %q references unknown ref %q", file, ref)
+			root, ok = refRoots[ref]
+		}
+		if !ok || root == "" {
+			return "", "", fmt.Errorf("helm value file %q references unknown ref %q", file, refKey)
 		}
 		return resolveHelmValueFileUnderRoot(filepath.Clean(root), refPath, file)
 	}
@@ -414,18 +424,8 @@ func resolveHelmValueFile(repoRoot, baseDir string, refRoots map[string]string, 
 	if err != nil {
 		return "", "", fmt.Errorf("helm value files base dir %q: %w", baseDir, err)
 	}
-	if filepath.IsAbs(file) {
-		return "", "", fmt.Errorf("helm value file %q must be relative", file)
-	}
-	cleanFile := filepath.Clean(file)
-	if cleanFile == "." {
-		return "", "", fmt.Errorf("helm value file %q escapes value files root", file)
-	}
-	cleanPath, err := cleanSourcePath(filepath.Join(cleanBase, cleanFile))
-	if err != nil {
-		return "", "", fmt.Errorf("helm value file %q: %w", file, err)
-	}
-	return filepath.Clean(repoRoot), filepath.Join(repoRoot, cleanPath), nil
+	root := filepath.Join(repoRoot, cleanBase)
+	return resolveHelmValueFileUnderRoot(root, file, file)
 }
 
 func resolveHelmValueFileUnderRoot(root, file, display string) (string, string, error) {
