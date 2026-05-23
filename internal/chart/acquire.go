@@ -82,20 +82,34 @@ func NormalizeRepository(repository string, kind RepositoryKind) (string, error)
 	if repository == "" {
 		return "", fmt.Errorf("chart repository is required")
 	}
-	if kind == RepositoryOCI {
-		repository = strings.TrimSuffix(repository, "/")
-		if !strings.HasPrefix(repository, "oci://") {
-			return "", fmt.Errorf("OCI chart repository %q must start with oci://", repository)
+	switch kind {
+	case RepositoryHTTP:
+		parsed, err := url.Parse(repository)
+		if err != nil {
+			return "", fmt.Errorf("parse chart repository %q: %w", repository, err)
 		}
-		return repository, nil
+		if parsed.Scheme != "http" && parsed.Scheme != "https" {
+			return "", fmt.Errorf("HTTP chart repository %q must use http or https", repository)
+		}
+		if parsed.Host == "" {
+			return "", fmt.Errorf("HTTP chart repository %q must include a host", repository)
+		}
+		parsed.Path = strings.TrimRight(parsed.Path, "/")
+		return parsed.String(), nil
+	case RepositoryOCI:
+		parsed, err := url.Parse(repository)
+		if err != nil {
+			return "", fmt.Errorf("parse OCI chart repository %q: %w", repository, err)
+		}
+		if parsed.Scheme != "oci" {
+			return "", fmt.Errorf("OCI chart repository %q must use oci scheme", repository)
+		}
+		if parsed.Host == "" {
+			return "", fmt.Errorf("OCI chart repository %q must include a host", repository)
+		}
+		parsed.Path = strings.TrimRight(parsed.Path, "/")
+		return parsed.String(), nil
+	default:
+		return "", fmt.Errorf("unsupported chart repository kind %q", kind)
 	}
-	parsed, err := url.Parse(repository)
-	if err != nil {
-		return "", fmt.Errorf("parse chart repository %q: %w", repository, err)
-	}
-	if parsed.Scheme != "http" && parsed.Scheme != "https" {
-		return "", fmt.Errorf("HTTP chart repository %q must use http or https", repository)
-	}
-	parsed.Path = strings.TrimRight(parsed.Path, "/")
-	return parsed.String(), nil
 }
