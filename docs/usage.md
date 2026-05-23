@@ -2,7 +2,7 @@
 
 `argocd-local` currently wires Application discovery, all-Application and
 named-Application build, all-Application and named-Application manifest diffs,
-and image diffs. The repository diagnostic command is still a placeholder.
+image diffs, and repository diagnostics.
 
 ## Application Discovery
 
@@ -39,7 +39,10 @@ argocd-local build app argocd/renovate --path .
 Rendering supports directory sources, Kustomize sources, local Helm charts,
 Kustomize `helmCharts`, safe single-file HTTP(S) Kustomize `resources:`, and
 Argo CD chart-only remote Helm sources. Public Helm chart fetching is enabled
-by default when a render needs chart dependencies.
+by default when a render needs chart dependencies. Path-based Git sources use
+the local `--path` tree when the source path exists there. Use
+`--repo-map URL=PATH` to force a source repo URL to a local checkout, or
+`--allow-network` to clone/fetch a missing path source from its `repoURL`.
 
 Network and cache flags:
 
@@ -49,13 +52,21 @@ Network and cache flags:
 - `--refresh-charts` refreshes cached immutable chart entries before rendering.
 - `--chart-cache-dir PATH` overrides the default user cache directory for
   acquired charts.
+- `--repo-map URL=PATH` maps a Git repository URL to a local checkout and wins
+  over local source-path fallback and network fetching.
+- `--allow-network` enables Git clone/fetch for unmapped path sources whose
+  paths are not present in `--path`.
+- `--git-cache-dir PATH` overrides the default user cache directory for cached
+  Git repositories.
+- `--refresh-git` fetches cached Git repositories before rendering.
 - `--refresh-remotes` refreshes cached remote Kustomize resources before
   rendering.
 - `--remote-cache-dir PATH` overrides the default user cache directory for
   cached remote Kustomize resources.
 
-`--allow-network` is not the Helm chart-fetch flag. It is parsed for future
-Git/repository-source fetching, which is not wired yet.
+`--allow-network` is not the Helm chart-fetch flag. It only gates Git
+repository-source fetching. `--offline` cannot be combined with
+`--allow-network`.
 
 Caches must stay outside Git repository trees.
 
@@ -112,19 +123,28 @@ argocd-local diff images --path ./current --path-orig ../base
 This projection is intentionally conservative and does not report arbitrary
 `image` keys from ConfigMaps or CRDs.
 
+## Diagnostics
+
+Run repository diagnostics without printing rendered manifests:
+
+```bash
+argocd-local diag --path .
+```
+
+`diag` uses the same discovery, ApplicationSet expansion, source resolution,
+and render validation path as `build apps`. It prints diagnostics to stderr and
+returns an error when runtime failures or error-severity diagnostics are found.
+Use `--strict` to promote warnings to errors.
+
 ## Deferred Commands And Sources
 
-These commands and source paths are not wired in the current MVP:
+These source paths are not wired in the current MVP:
 
-- `argocd-local diag --path .`
 - Remote Kustomize Git refs, bases, components, patches, generators,
   transformers, validators, `crds`, `openapi`, and replacements.
-- Git/repository-source fetching, including `--allow-network` behavior.
+- Authenticated/private Git repositories.
 - Authenticated remote resources.
 - Authenticated or private Helm chart repositories.
-
-`--repo-map` is parsed as future command surface, but the current E2E build and
-diff paths do not use it yet.
 
 ## Optional Home-Ops Smoke
 

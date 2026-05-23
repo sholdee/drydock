@@ -31,7 +31,8 @@ Current top-level commands:
   requested Application by name between a baseline tree and current tree.
 - `argocd-local diff images --path . --path-orig ../base`: render both trees
   and compare conservative workload container images.
-- `argocd-local diag --path .`: command is present but not wired yet.
+- `argocd-local diag --path .`: run repository diagnostics without printing
+  manifests.
 - `argocd-local version`: print version, commit, Go version, and Argo CD module.
 
 Named app arguments accept `NAME` or `NAMESPACE/NAME`; use the
@@ -39,12 +40,10 @@ namespace-qualified form when the same `metadata.name` exists in multiple
 namespaces.
 
 Current shared flags are `--path`, `--path-orig`, `--repo-map`,
-`--allow-network`, `--offline`, `--refresh-charts`, `--chart-cache-dir`,
-`--refresh-remotes`, `--remote-cache-dir`, `--changed-only`,
-`--strict-changed-only`, `--strict`, `--exit-code`, `--output`/`-o`,
-`--unified`/`-u`, and `--limit-bytes`.
-Some flags are parsed ahead of wiring: `--repo-map` and `--allow-network` do
-not currently drive the E2E build/diff path, and `diag` is not wired yet.
+`--allow-network`, `--git-cache-dir`, `--refresh-git`, `--offline`,
+`--refresh-charts`, `--chart-cache-dir`, `--refresh-remotes`,
+`--remote-cache-dir`, `--changed-only`, `--strict-changed-only`, `--strict`,
+`--exit-code`, `--output`/`-o`, `--unified`/`-u`, and `--limit-bytes`.
 
 ## Settings Discovery
 
@@ -79,6 +78,8 @@ The MVP currently supports:
 - Kustomize, directory, local Helm chart, Kustomize `helmCharts`, safe
   single-file HTTP(S) Kustomize `resources:`, and chart-only remote Helm source
   rendering through Go libraries.
+- Deterministic `--repo-map` and gated `--allow-network` Git clone/fetch for
+  path-based Git sources.
 - Repeated-resource last-wins behavior inside one Application, with a
   diagnostic.
 - Parent Application-aware desired manifest identity for diffs.
@@ -98,20 +99,24 @@ Do not treat these as supported without an explicit design update:
 - Config management plugins.
 - Additional ApplicationSet generators beyond Git directories.
 - Required default shellouts to `helm`, `kustomize`, `kubectl`, or `argocd`.
+- Authenticated/private Git repositories.
 - Authenticated/private Helm chart repositories.
 - Remote Kustomize bases, components, patches, generators, transformers,
   validators, `crds`, `openapi`, replacements, authenticated remote resources,
-  and Git/repository-source fetching.
+  and arbitrary Kustomize Git refs.
 
 ## Source Resolution
 
 Repository URL maps are deterministic and preferred over network fetches.
 Normalize URLs consistently, including optional `.git` suffixes, trailing
-slashes, and whitespace. Git/repository-source network fetching remains
-deferred; unmapped non-chart repositories must fail unless a local repository
-source is available through a wired path. `--allow-network` is reserved for
-future Git/repository-source fetching and must not control Helm chart
-acquisition.
+slashes, and whitespace. Path source resolution order is: explicit
+`--repo-map`, existing source path under `--path`, gated `--allow-network`
+Git clone/fetch, then clear failure. `--allow-network` controls only Git
+repository-source fetching and must not control Helm chart acquisition.
+Git repositories cache under the user cache or `--git-cache-dir`, never inside
+the current or baseline Git repository tree. `--refresh-git` fetches existing
+cached Git repositories before rendering. `--offline` cannot be combined with
+`--allow-network`.
 Chart acquisition is shared by Kustomize `helmCharts` and Argo CD chart-only
 sources. Public chart fetching is allowed by default for render/diff commands;
 `--offline` disables chart and remote Kustomize resource network fetches. Cache
@@ -119,7 +124,7 @@ charts under the user cache or `--chart-cache-dir`, never inside the Git
 repository tree.
 Chart network behavior is controlled by `--offline`, `--refresh-charts`, and
 `--chart-cache-dir`. Do not reuse `--allow-network` for Helm chart fetching;
-that flag is reserved for future Git/repository-source fetching.
+that flag is reserved for Git repository-source fetching.
 Remote Kustomize resource network behavior is controlled by `--offline`,
 `--refresh-remotes`, and `--remote-cache-dir`. Cache remote Kustomize resources
 under the user cache or `--remote-cache-dir`, never inside the Git repository
