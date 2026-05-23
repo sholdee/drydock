@@ -160,14 +160,14 @@ func TestRenderApplicationPassesHelmIgnoreMissingValueFiles(t *testing.T) {
 	}
 }
 
-func TestRenderApplicationPassesRefRootsForHelmValueFiles(t *testing.T) {
+func TestRenderApplicationPassesSameRepoRefRootsForHelmValueFiles(t *testing.T) {
 	application := argoappv1.Application{
 		ObjectMeta: metav1.ObjectMeta{Namespace: "argocd", Name: "demo"},
 		Spec: argoappv1.ApplicationSpec{
 			Sources: argoappv1.ApplicationSources{
-				{RepoURL: "https://values", Ref: "values"},
+				{RepoURL: " https://example.com/repo.git/ ", Path: "some/path", Ref: "values"},
 				{
-					RepoURL: "https://repo",
+					RepoURL: "https://example.com/repo",
 					Path:    "chart",
 					Helm: &argoappv1.ApplicationSourceHelm{
 						ValueFiles: []string{"$values/foo.yaml"},
@@ -192,6 +192,75 @@ func TestRenderApplicationPassesRefRootsForHelmValueFiles(t *testing.T) {
 	}
 	if len(got.ValueFiles) != 1 || got.ValueFiles[0] != "$values/foo.yaml" {
 		t.Fatalf("ValueFiles = %#v, want $values/foo.yaml", got.ValueFiles)
+	}
+}
+
+func TestRenderApplicationRejectsCrossRepoHelmValueRef(t *testing.T) {
+	application := argoappv1.Application{
+		ObjectMeta: metav1.ObjectMeta{Namespace: "argocd", Name: "demo"},
+		Spec: argoappv1.ApplicationSpec{
+			Sources: argoappv1.ApplicationSources{
+				{RepoURL: "https://example.com/values", Ref: "values"},
+				{
+					RepoURL: "https://example.com/repo",
+					Path:    "chart",
+					Helm: &argoappv1.ApplicationSourceHelm{
+						ValueFiles: []string{"$values/foo.yaml"},
+					},
+				},
+			},
+		},
+	}
+	calls := 0
+	provider := providerFunc(func(_ context.Context, _ render.ResolvedSource, _ render.RenderOptions) ([]render.Manifest, []diagnostic.Diagnostic, error) {
+		calls++
+		return nil, nil, nil
+	})
+
+	_, err := RenderApplication(context.Background(), application, provider)
+	if err == nil {
+		t.Fatal("RenderApplication() error = nil, want cross-repo ref error")
+	}
+	for _, want := range []string{"$values", "cross-repo", "https://example.com/values", "https://example.com/repo"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("error = %q, want %q", err.Error(), want)
+		}
+	}
+	if calls != 0 {
+		t.Fatalf("provider calls = %d, want 0", calls)
+	}
+}
+
+func TestRenderApplicationIgnoresUnusedCrossRepoRef(t *testing.T) {
+	application := argoappv1.Application{
+		ObjectMeta: metav1.ObjectMeta{Namespace: "argocd", Name: "demo"},
+		Spec: argoappv1.ApplicationSpec{
+			Sources: argoappv1.ApplicationSources{
+				{RepoURL: "https://example.com/values", Ref: "values"},
+				{
+					RepoURL: "https://example.com/repo",
+					Path:    "chart",
+					Helm: &argoappv1.ApplicationSourceHelm{
+						ValueFiles: []string{"local.yaml"},
+					},
+				},
+			},
+		},
+	}
+	calls := 0
+	provider := providerFunc(func(_ context.Context, _ render.ResolvedSource, opts render.RenderOptions) ([]render.Manifest, []diagnostic.Diagnostic, error) {
+		calls++
+		if len(opts.RefRoots) != 0 {
+			t.Fatalf("RefRoots = %#v, want empty for unused ref", opts.RefRoots)
+		}
+		return nil, nil, nil
+	})
+
+	if _, err := RenderApplication(context.Background(), application, provider); err != nil {
+		t.Fatalf("RenderApplication() error = %v", err)
+	}
+	if calls != 1 {
+		t.Fatalf("provider calls = %d, want 1", calls)
 	}
 }
 

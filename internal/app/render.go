@@ -10,6 +10,7 @@ import (
 	"github.com/home-operations/argocd-local/internal/diagnostic"
 	"github.com/home-operations/argocd-local/internal/manifest"
 	"github.com/home-operations/argocd-local/internal/render"
+	sourcepkg "github.com/home-operations/argocd-local/internal/source"
 	"go.yaml.in/yaml/v4"
 )
 
@@ -31,7 +32,6 @@ func RenderApplication(ctx context.Context, application argoappv1.Application, p
 	}
 
 	byID := map[manifest.Identity]int{}
-	refRoots := renderRefRoots(plan)
 	var result RenderResult
 	for _, sourcePlan := range plan.Sources {
 		if sourcePlan.RefOnly {
@@ -42,7 +42,10 @@ func RenderApplication(ctx context.Context, application argoappv1.Application, p
 		if err != nil {
 			return result, fmt.Errorf("%s: %w", renderSourceContext(application, sourcePlan), err)
 		}
-		opts.RefRoots = cloneRefRoots(refRoots)
+		opts.RefRoots, err = renderRefRootsForSource(plan, sourcePlan, opts.ValueFiles)
+		if err != nil {
+			return result, fmt.Errorf("%s: %w", renderSourceContext(application, sourcePlan), err)
+		}
 		manifests, diags, err := provider.RenderSource(ctx, render.ResolvedSource{
 			Path:  sourcePlan.Source.Path,
 			Chart: sourcePlan.Source.Chart,
@@ -106,28 +109,6 @@ func renderOptions(application argoappv1.Application, source argoappv1.Applicati
 	return opts, nil
 }
 
-func renderRefRoots(plan PlanResult) map[string]string {
-	if len(plan.Refs) == 0 {
-		return nil
-	}
-	out := make(map[string]string, len(plan.Refs))
-	for key := range plan.Refs {
-		out[key] = "."
-	}
-	return out
-}
-
-func cloneRefRoots(refRoots map[string]string) map[string]string {
-	if len(refRoots) == 0 {
-		return nil
-	}
-	out := make(map[string]string, len(refRoots))
-	for key, root := range refRoots {
-		out[key] = root
-	}
-	return out
-}
-
 func helmValues(helm *argoappv1.ApplicationSourceHelm) (map[string]any, error) {
 	valuesObject, ok, err := helmValuesObject(helm)
 	if err != nil {
@@ -163,6 +144,49 @@ func helmValuesObject(helm *argoappv1.ApplicationSourceHelm) (map[string]any, bo
 		return nil, false, fmt.Errorf("decode helm valuesObject: %w", err)
 	}
 	return values, true, nil
+}
+
+func renderRefRootsForSource(plan PlanResult, sourcePlan SourcePlan, valueFiles []string) (map[string]string, error) {
+	if len(valueFiles) == 0 {
+		return nil, nil
+	}
+
+	out := map[string]string{}
+	currentRepo := sourcepkg.NormalizeURL(sourcePlan.Source.RepoURL)
+	for _, valueFile := range valueFiles {
+		refKey, ok, err := helmValueFileRefKey(valueFile)
+		if err != nil {
+			return nil, err
+		}
+		if !ok {
+			continue
+		}
+
+		refSource, exists := plan.Refs[refKey]
+		if !exists {
+			return nil, fmt.Errorf("helm value file %q references unknown ref %s", valueFile, refKey)
+		}
+		refRepo := sourcepkg.NormalizeURL(refSource.Source.RepoURL)
+		if refRepo != currentRepo {
+			return nil, fmt.Errorf("helm value file %q uses cross-repo ref %s: ref repo %q differs from source repo %q", valueFile, refKey, refSource.Source.RepoURL, sourcePlan.Source.RepoURL)
+		}
+		out[refKey] = "."
+	}
+	if len(out) == 0 {
+		return nil, nil
+	}
+	return out, nil
+}
+
+func helmValueFileRefKey(valueFile string) (string, bool, error) {
+	if !strings.HasPrefix(valueFile, "$") {
+		return "", false, nil
+	}
+	ref, refPath, ok := strings.Cut(strings.TrimPrefix(valueFile, "$"), "/")
+	if !ok || ref == "" || refPath == "" {
+		return "", false, fmt.Errorf("helm value file %q must use $ref/path syntax", valueFile)
+	}
+	return "$" + ref, true, nil
 }
 
 func sourceDiagnostics(application argoappv1.Application, sourcePlan SourcePlan, diags []diagnostic.Diagnostic) []diagnostic.Diagnostic {
