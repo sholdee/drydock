@@ -176,6 +176,7 @@ func redactedSecretBodies(from, to string) (string, string, error) {
 
 	redactSecretFieldPair(fromObject, toObject, "data")
 	redactSecretFieldPair(fromObject, toObject, "stringData")
+	redactSecretFieldPair(fromObject, toObject, "binaryData")
 
 	redactedFrom, err := encodeDiffYAML(fromObject)
 	if err != nil {
@@ -216,56 +217,102 @@ func encodeDiffYAML(object map[string]any) (string, error) {
 }
 
 func redactSecretFieldPair(fromObject, toObject map[string]any, field string) {
-	fromValues := stringMapField(fromObject, field)
-	toValues := stringMapField(toObject, field)
-	if fromValues == nil && toValues == nil {
+	fromField := secretStringMapField(fromObject, field)
+	toField := secretStringMapField(toObject, field)
+	if !fromField.present && !toField.present {
 		return
 	}
 
-	keys := mapKeys(fromValues, toValues)
+	if fromField.malformed || toField.malformed {
+		redactMalformedSecretFieldPair(fromObject, toObject, field, fromField, toField)
+		return
+	}
+
+	keys := mapKeys(fromField.values, toField.values)
 	for _, key := range keys {
-		fromValue, hasFrom := fromValues[key]
-		toValue, hasTo := toValues[key]
+		fromValue, hasFrom := fromField.values[key]
+		toValue, hasTo := toField.values[key]
 		switch {
 		case hasFrom && hasTo && reflect.DeepEqual(fromValue, toValue):
-			fromValues[key] = "<redacted>"
-			toValues[key] = "<redacted>"
+			fromField.values[key] = "<redacted>"
+			toField.values[key] = "<redacted>"
 		case hasFrom && hasTo:
-			fromValues[key] = "<redacted-before>"
-			toValues[key] = "<redacted-after>"
+			fromField.values[key] = "<redacted-before>"
+			toField.values[key] = "<redacted-after>"
 		case hasFrom:
-			fromValues[key] = "<redacted-removed>"
+			fromField.values[key] = "<redacted-removed>"
 		case hasTo:
-			toValues[key] = "<redacted-added>"
+			toField.values[key] = "<redacted-added>"
 		}
 	}
 }
 
-func stringMapField(object map[string]any, field string) map[string]any {
+type secretField struct {
+	present   bool
+	malformed bool
+	values    map[string]any
+	raw       any
+}
+
+func secretStringMapField(object map[string]any, field string) secretField {
 	if object == nil {
-		return nil
+		return secretField{}
 	}
 	values, ok := object[field]
 	if !ok {
-		return nil
+		return secretField{}
 	}
+
 	switch typed := values.(type) {
 	case map[string]any:
-		return typed
+		if !allStringValues(typed) {
+			return secretField{present: true, malformed: true, raw: values}
+		}
+		return secretField{present: true, values: typed, raw: values}
 	case map[any]any:
 		converted := make(map[string]any, len(typed))
 		for key, value := range typed {
 			stringKey, ok := key.(string)
 			if !ok {
-				continue
+				return secretField{present: true, malformed: true, raw: values}
+			}
+			if _, ok := value.(string); !ok {
+				return secretField{present: true, malformed: true, raw: values}
 			}
 			converted[stringKey] = value
 		}
 		object[field] = converted
-		return converted
+		return secretField{present: true, values: converted, raw: values}
 	default:
-		return nil
+		return secretField{present: true, malformed: true, raw: values}
 	}
+}
+
+func allStringValues(values map[string]any) bool {
+	for _, value := range values {
+		if _, ok := value.(string); !ok {
+			return false
+		}
+	}
+	return true
+}
+
+func redactMalformedSecretFieldPair(fromObject, toObject map[string]any, field string, fromField, toField secretField) {
+	if fromField.present && toField.present {
+		if fromField.malformed && toField.malformed && reflect.DeepEqual(fromField.raw, toField.raw) {
+			fromObject[field] = "<redacted-malformed>"
+			toObject[field] = "<redacted-malformed>"
+			return
+		}
+		fromObject[field] = "<redacted-malformed-before>"
+		toObject[field] = "<redacted-malformed-after>"
+		return
+	}
+	if fromField.present {
+		fromObject[field] = "<redacted-malformed-removed>"
+		return
+	}
+	toObject[field] = "<redacted-malformed-added>"
 }
 
 func mapKeys(left, right map[string]any) []string {

@@ -171,6 +171,113 @@ func TestRunRedactsSecretValuesButReportsChangedKeys(t *testing.T) {
 	}
 }
 
+func TestRunRedactsSecretBinaryDataValues(t *testing.T) {
+	left := []Document{{
+		Parent: Parent{
+			Namespace:   "argocd",
+			Name:        "app-a",
+			SourceIndex: 0,
+			SourcePath:  "apps/a",
+		},
+		Resource: Resource{
+			Kind:      "Secret",
+			Namespace: "default",
+			Name:      "tls",
+		},
+		Body: "apiVersion: v1\nkind: Secret\nmetadata:\n  name: tls\n  namespace: default\nbinaryData:\n  tls.crt: YmluYXJ5LW9sZA==\n",
+	}}
+	right := []Document{{
+		Parent: Parent{
+			Namespace:   "argocd",
+			Name:        "app-a",
+			SourceIndex: 0,
+			SourcePath:  "apps/a",
+		},
+		Resource: Resource{
+			Kind:      "Secret",
+			Namespace: "default",
+			Name:      "tls",
+		},
+		Body: "apiVersion: v1\nkind: Secret\nmetadata:\n  name: tls\n  namespace: default\nbinaryData:\n  tls.crt: YmluYXJ5LW5ldw==\n",
+	}}
+
+	results, err := Run(left, right, Options{Unified: 3})
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if len(results) != 1 {
+		t.Fatalf("len(results) = %d, want 1", len(results))
+	}
+	diff := results[0].Diff
+	for _, forbidden := range []string{"YmluYXJ5LW9sZA==", "YmluYXJ5LW5ldw=="} {
+		if strings.Contains(diff, forbidden) {
+			t.Fatalf("Diff leaked binaryData value %q:\n%s", forbidden, diff)
+		}
+	}
+	for _, want := range []string{"tls.crt: <redacted-before>", "tls.crt: <redacted-after>"} {
+		if !strings.Contains(diff, want) {
+			t.Fatalf("Diff = %q, want substring %q", diff, want)
+		}
+	}
+}
+
+func TestRunRedactsMalformedSecretBearingFields(t *testing.T) {
+	left := []Document{{
+		Parent: Parent{
+			Namespace:   "argocd",
+			Name:        "app-a",
+			SourceIndex: 0,
+			SourcePath:  "apps/a",
+		},
+		Resource: Resource{
+			Kind:      "Secret",
+			Namespace: "default",
+			Name:      "malformed",
+		},
+		Body: "apiVersion: v1\nkind: Secret\nmetadata:\n  name: malformed\n  namespace: default\ndata: scalar-old\nstringData:\n  token:\n    nested: plain-old\nbinaryData:\n  bytes: 1\n",
+	}}
+	right := []Document{{
+		Parent: Parent{
+			Namespace:   "argocd",
+			Name:        "app-a",
+			SourceIndex: 0,
+			SourcePath:  "apps/a",
+		},
+		Resource: Resource{
+			Kind:      "Secret",
+			Namespace: "default",
+			Name:      "malformed",
+		},
+		Body: "apiVersion: v1\nkind: Secret\nmetadata:\n  name: malformed\n  namespace: default\ndata: scalar-new\nstringData:\n  token:\n    nested: plain-new\nbinaryData:\n  bytes: 2\n",
+	}}
+
+	results, err := Run(left, right, Options{Unified: 3})
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if len(results) != 1 {
+		t.Fatalf("len(results) = %d, want 1", len(results))
+	}
+	diff := results[0].Diff
+	for _, forbidden := range []string{"scalar-old", "scalar-new", "plain-old", "plain-new", "bytes: 1", "bytes: 2"} {
+		if strings.Contains(diff, forbidden) {
+			t.Fatalf("Diff leaked malformed Secret field value %q:\n%s", forbidden, diff)
+		}
+	}
+	for _, want := range []string{
+		"data: <redacted-malformed-before>",
+		"data: <redacted-malformed-after>",
+		"stringData: <redacted-malformed-before>",
+		"stringData: <redacted-malformed-after>",
+		"binaryData: <redacted-malformed-before>",
+		"binaryData: <redacted-malformed-after>",
+	} {
+		if !strings.Contains(diff, want) {
+			t.Fatalf("Diff = %q, want substring %q", diff, want)
+		}
+	}
+}
+
 func TestExtractWorkloadImages(t *testing.T) {
 	docs := []Document{
 		{Body: `
