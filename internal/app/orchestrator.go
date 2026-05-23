@@ -31,6 +31,11 @@ type BuildRequest struct {
 	Applications                 []argoappv1.Application
 }
 
+type BuildAppRequest struct {
+	BuildRequest
+	Name string
+}
+
 type ApplicationManifest struct {
 	Application argoappv1.Application
 	Manifest    render.Manifest
@@ -166,6 +171,29 @@ func (o Orchestrator) Build(ctx context.Context, request BuildRequest) (BuildRes
 	}
 
 	return result, nil
+}
+
+func (o Orchestrator) BuildApp(ctx context.Context, request BuildAppRequest) (BuildResult, error) {
+	name := strings.TrimSpace(request.Name)
+	if name == "" {
+		return BuildResult{}, fmt.Errorf("application name is required")
+	}
+
+	buildRequest := request.BuildRequest
+	listResult, err := o.ListApplications(ctx, buildRequest)
+	if err != nil {
+		return listResult, err
+	}
+
+	selected, err := SelectApplicationByName(listResult.Applications, name)
+	if err != nil {
+		return listResult, err
+	}
+
+	buildRequest.Applications = []argoappv1.Application{selected}
+	buildResult, err := o.Build(ctx, buildRequest)
+	buildResult.Diagnostics = append(append([]diagnostic.Diagnostic(nil), listResult.Diagnostics...), buildResult.Diagnostics...)
+	return buildResult, err
 }
 
 type localProvider struct {

@@ -341,6 +341,122 @@ func TestOrchestratorBuildStrictFailsOnRenderDiagnostics(t *testing.T) {
 	}
 }
 
+func TestOrchestratorBuildAppRendersOnlyNamedApplication(t *testing.T) {
+	root := t.TempDir()
+	writeBuildApplication(t, root, "first", "one")
+	writeBuildApplication(t, root, "second", "two")
+
+	result, err := Orchestrator{}.BuildApp(context.Background(), BuildAppRequest{
+		Name: "second",
+		BuildRequest: BuildRequest{
+			Path: root,
+		},
+	})
+	if err != nil {
+		t.Fatalf("BuildApp() error = %v", err)
+	}
+	if len(result.Applications) != 1 || result.Applications[0].Name != "second" {
+		t.Fatalf("Applications = %#v, want only second", result.Applications)
+	}
+	if len(result.Manifests) != 1 {
+		t.Fatalf("len(Manifests) = %d, want 1", len(result.Manifests))
+	}
+	if result.Manifests[0].Object.GetName() != "two" {
+		t.Fatalf("rendered ConfigMap name = %q, want two", result.Manifests[0].Object.GetName())
+	}
+}
+
+func TestOrchestratorBuildAppReportsMissingApplication(t *testing.T) {
+	root := t.TempDir()
+	writeBuildApplication(t, root, "demo", "demo")
+
+	_, err := Orchestrator{}.BuildApp(context.Background(), BuildAppRequest{
+		Name:         "missing",
+		BuildRequest: BuildRequest{Path: root},
+	})
+	if err == nil {
+		t.Fatal("BuildApp() error = nil, want missing application error")
+	}
+	if !strings.Contains(err.Error(), `application "missing" not found`) {
+		t.Fatalf("BuildApp() error = %v, want missing application message", err)
+	}
+}
+
+func TestOrchestratorBuildAppRequiresName(t *testing.T) {
+	_, err := Orchestrator{}.BuildApp(context.Background(), BuildAppRequest{
+		Name:         " ",
+		BuildRequest: BuildRequest{Path: t.TempDir()},
+	})
+	if err == nil {
+		t.Fatal("BuildApp() error = nil, want required name error")
+	}
+	if !strings.Contains(err.Error(), "application name is required") {
+		t.Fatalf("BuildApp() error = %v, want required name message", err)
+	}
+}
+
+func TestOrchestratorBuildAppPreservesBuildOptionsForSelectedApplication(t *testing.T) {
+	root := t.TempDir()
+	chartDir := filepath.Join(root, "cache", "demo")
+	cacheDir := filepath.Join(root, "chart-cache")
+	writeAppTestValueChart(t, chartDir)
+	writeBuildApplication(t, root, "plain", "plain")
+	writeChartOnlyBuildApplication(t, root, "chart-only")
+	acquirer := &recordingChartAcquirer{chartDir: chartDir}
+
+	result, err := (Orchestrator{ChartAcquirer: acquirer}).BuildApp(context.Background(), BuildAppRequest{
+		Name: "chart-only",
+		BuildRequest: BuildRequest{
+			Path:          root,
+			ChartCacheDir: cacheDir,
+			Offline:       true,
+			RefreshCharts: true,
+		},
+	})
+	if err != nil {
+		t.Fatalf("BuildApp() error = %v", err)
+	}
+	if len(result.Applications) != 1 || result.Applications[0].Name != "chart-only" {
+		t.Fatalf("Applications = %#v, want only chart-only", result.Applications)
+	}
+	if len(acquirer.requests) != 1 {
+		t.Fatalf("chart acquire calls = %d, want 1", len(acquirer.requests))
+	}
+	if got, want := acquirer.options[0], (chart.Options{
+		CacheDir: cacheDir,
+		Offline:  true,
+		Refresh:  true,
+	}); got != want {
+		t.Fatalf("chart options = %#v, want %#v", got, want)
+	}
+}
+
+func TestOrchestratorBuildAppPreservesListAndRenderDiagnostics(t *testing.T) {
+	root := t.TempDir()
+	writeUnsupportedApplicationSetFixture(t, root)
+	writeDuplicateConfigMaps(t, filepath.Join(root, "manifests", "direct"))
+
+	result, err := Orchestrator{}.BuildApp(context.Background(), BuildAppRequest{
+		Name:         "direct",
+		BuildRequest: BuildRequest{Path: root},
+	})
+	if err != nil {
+		t.Fatalf("BuildApp() error = %v", err)
+	}
+	if len(result.Diagnostics) != 2 {
+		t.Fatalf("len(Diagnostics) = %d, want 2: %#v", len(result.Diagnostics), result.Diagnostics)
+	}
+	categories := map[string]bool{}
+	for _, diag := range result.Diagnostics {
+		categories[diag.Category] = true
+	}
+	for _, want := range []string{"appset", "repeated-resource"} {
+		if !categories[want] {
+			t.Fatalf("diagnostic categories = %#v, want %q", categories, want)
+		}
+	}
+}
+
 func TestOrchestratorListApplicationsSkipsUnsupportedApplicationSetInNonStrictMode(t *testing.T) {
 	root := t.TempDir()
 	writeUnsupportedApplicationSetFixture(t, root)
@@ -395,6 +511,49 @@ func writeTestFile(t *testing.T, path, content string) {
 	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
 		t.Fatalf("WriteFile() error = %v", err)
 	}
+}
+
+func writeBuildApplication(t *testing.T, root, appName, configMapName string) {
+	t.Helper()
+	writeTestFile(t, filepath.Join(root, "apps", appName+".yaml"), `apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: `+appName+`
+  namespace: argocd
+spec:
+  source:
+    repoURL: https://github.com/example/repo
+    path: manifests/`+appName+`
+    targetRevision: main
+  destination:
+    name: in-cluster
+    namespace: default
+`)
+	writeTestFile(t, filepath.Join(root, "manifests", appName, "cm.yaml"), `apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: `+configMapName+`
+data:
+  key: value
+`)
+}
+
+func writeChartOnlyBuildApplication(t *testing.T, root, appName string) {
+	t.Helper()
+	writeTestFile(t, filepath.Join(root, "apps", appName+".yaml"), `apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: `+appName+`
+  namespace: argocd
+spec:
+  source:
+    repoURL: https://charts.example.test
+    targetRevision: 1.2.3
+    chart: demo
+  destination:
+    name: in-cluster
+    namespace: default
+`)
 }
 
 func writeUnsupportedApplicationSetFixture(t *testing.T, root string) {
