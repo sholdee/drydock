@@ -30,6 +30,9 @@ func newGetCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			if err := renderDiagnostics(cmd.ErrOrStderr(), result.Diagnostics); err != nil {
+				return err
+			}
 			for _, application := range result.Applications {
 				if _, err := fmt.Fprintln(cmd.OutOrStdout(), application.Name); err != nil {
 					return err

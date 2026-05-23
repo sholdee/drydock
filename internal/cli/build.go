@@ -31,6 +31,9 @@ func newBuildCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			if err := renderDiagnostics(cmd.ErrOrStderr(), result.Diagnostics); err != nil {
+				return err
+			}
 			for _, manifest := range result.Manifests {
 				data, err := yaml.Marshal(manifest.Object.Object)
 				if err != nil {

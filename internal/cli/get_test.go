@@ -103,9 +103,9 @@ spec:
 
 	cmd := NewRootCommand(VersionInfo{})
 	cmd.SetArgs([]string{"get", "apps", "--path", root})
-	var out bytes.Buffer
+	var out, stderr bytes.Buffer
 	cmd.SetOut(&out)
-	cmd.SetErr(&out)
+	cmd.SetErr(&stderr)
 
 	if err := cmd.Execute(); err != nil {
 		t.Fatalf("Execute() error = %v", err)
@@ -113,12 +113,17 @@ spec:
 	if got, want := out.String(), "direct\n"; got != want {
 		t.Fatalf("get apps output = %q, want %q", got, want)
 	}
+	wantStderr := "warning appset: only one git directories generator is supported in the MVP (path: unsupported-appset.yaml, pointer: spec.generators)\n"
+	if got := stderr.String(); got != wantStderr {
+		t.Fatalf("get apps stderr = %q, want %q", got, wantStderr)
+	}
 
 	cmd = NewRootCommand(VersionInfo{})
 	cmd.SetArgs([]string{"get", "apps", "--path", root, "--strict"})
 	out.Reset()
+	stderr.Reset()
 	cmd.SetOut(&out)
-	cmd.SetErr(&out)
+	cmd.SetErr(&stderr)
 
 	err := cmd.Execute()
 	if err == nil {
