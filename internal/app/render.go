@@ -150,7 +150,7 @@ func helmValuesObject(helm *argoappv1.ApplicationSourceHelm) (map[string]any, bo
 
 func renderRefRootsForSource(plan PlanResult, sourcePlan SourcePlan, valueFiles []string) (map[string]string, error) {
 	if len(valueFiles) == 0 {
-		return nil, nil
+		return map[string]string{}, nil
 	}
 
 	out := map[string]string{}
@@ -175,7 +175,7 @@ func renderRefRootsForSource(plan PlanResult, sourcePlan SourcePlan, valueFiles 
 		out[refKey] = "."
 	}
 	if len(out) == 0 {
-		return nil, nil
+		return map[string]string{}, nil
 	}
 	return out, nil
 }

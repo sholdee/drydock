@@ -8,6 +8,7 @@ import (
 	"github.com/spf13/cobra"
 )
 
+//nolint:gocyclo // Cobra wiring keeps diff subcommands and shared flag handling together.
 func newDiffCommand(deps Dependencies) *cobra.Command {
 	flags := defaultCommonFlags()
 	cmd := &cobra.Command{
