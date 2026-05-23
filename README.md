@@ -35,7 +35,7 @@ Maintainers with a local `home-ops` checkout can also run the optional
 Renovate smoke script:
 
 ```bash
-scripts/home-ops-renovate-smoke.sh
+RENOVATE_CHART_TO=4.8.2 scripts/home-ops-renovate-smoke.sh
 ```
 
 ## Current MVP Limits
