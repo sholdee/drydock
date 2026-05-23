@@ -366,6 +366,37 @@ func TestOrchestratorBuildAppRendersOnlyNamedApplication(t *testing.T) {
 	}
 }
 
+func TestOrchestratorBuildAppPreservesSelectedApplicationInputs(t *testing.T) {
+	root := t.TempDir()
+	writeBuildApplication(t, root, "first", "one")
+	writeBuildApplication(t, root, "second", "two")
+
+	result, err := Orchestrator{}.BuildApp(context.Background(), BuildAppRequest{
+		Name: "second",
+		BuildRequest: BuildRequest{
+			Path: root,
+		},
+	})
+	if err != nil {
+		t.Fatalf("BuildApp() error = %v", err)
+	}
+
+	if len(result.ApplicationInputs) != 1 {
+		t.Fatalf("len(ApplicationInputs) = %d, want 1: %#v", len(result.ApplicationInputs), result.ApplicationInputs)
+	}
+	input := result.ApplicationInputs[0]
+	if input.Application.Name != "second" {
+		t.Fatalf("ApplicationInputs[0].Application.Name = %q, want second", input.Application.Name)
+	}
+	wantPath := filepath.ToSlash(filepath.Join("apps", "second.yaml"))
+	if len(input.Paths) != 1 || input.Paths[0] != wantPath {
+		t.Fatalf("ApplicationInputs[0].Paths = %#v, want [%q]", input.Paths, wantPath)
+	}
+	if strings.Contains(strings.Join(input.Paths, ","), "first") {
+		t.Fatalf("ApplicationInputs[0].Paths = %#v, want no first app paths", input.Paths)
+	}
+}
+
 func TestOrchestratorBuildAppReportsMissingApplication(t *testing.T) {
 	root := t.TempDir()
 	writeBuildApplication(t, root, "demo", "demo")

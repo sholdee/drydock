@@ -192,8 +192,23 @@ func (o Orchestrator) BuildApp(ctx context.Context, request BuildAppRequest) (Bu
 
 	buildRequest.Applications = []argoappv1.Application{selected}
 	buildResult, err := o.Build(ctx, buildRequest)
+	buildResult.ApplicationInputs = selectApplicationInputsForApplication(listResult.ApplicationInputs, selected)
 	buildResult.Diagnostics = append(append([]diagnostic.Diagnostic(nil), listResult.Diagnostics...), buildResult.Diagnostics...)
 	return buildResult, err
+}
+
+func selectApplicationInputsForApplication(inputs []ApplicationSelectionInput, selected argoappv1.Application) []ApplicationSelectionInput {
+	for _, input := range inputs {
+		if input.Application.Namespace == selected.Namespace && input.Application.Name == selected.Name {
+			return []ApplicationSelectionInput{cloneApplicationSelectionInput(input)}
+		}
+	}
+	return nil
+}
+
+func cloneApplicationSelectionInput(input ApplicationSelectionInput) ApplicationSelectionInput {
+	input.Paths = append([]string(nil), input.Paths...)
+	return input
 }
 
 type localProvider struct {
