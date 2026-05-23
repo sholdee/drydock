@@ -1,0 +1,16 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: demo-http
+spec:
+  selector:
+    matchLabels:
+      app: demo-http
+  template:
+    metadata:
+      labels:
+        app: demo-http
+    spec:
+      containers:
+        - name: app
+          image: {{ .Values.image }}

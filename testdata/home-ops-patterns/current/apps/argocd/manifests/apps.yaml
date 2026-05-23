@@ -1,0 +1,37 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: direct-http
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: https://charts.example.test
+    chart: direct-http
+    targetRevision: 1.0.0
+    helm:
+      releaseName: direct-http
+      valuesObject:
+        image: example/direct-http:v2
+  destination:
+    name: in-cluster
+    namespace: direct-http
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: direct-oci
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: oci://registry.example.test/charts
+    chart: direct-oci
+    targetRevision: 1.0.0
+    helm:
+      releaseName: direct-oci
+      valuesObject:
+        image: example/direct-oci:v2
+  destination:
+    name: in-cluster
+    namespace: direct-oci

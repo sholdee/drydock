@@ -1,0 +1,6 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: alpha
+data:
+  value: {{ .Values.value | quote }}

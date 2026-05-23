@@ -1,0 +1,16 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: multi-chart
+helmCharts:
+  - name: alpha
+    repo: https://charts.example.test
+    version: 1.0.0
+    releaseName: alpha
+    valuesInline:
+      value: baseline
+  - name: beta
+    repo: https://charts.example.test
+    version: 1.0.0
+    releaseName: beta
+    valuesInline:
+      value: unchanged
