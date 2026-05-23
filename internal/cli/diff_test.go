@@ -76,6 +76,64 @@ func TestDiffAppsPrintsManifestDiff(t *testing.T) {
 	}
 }
 
+func TestDiffAppPrintsOnlyNamedApplicationDiff(t *testing.T) {
+	root := t.TempDir()
+	left := filepath.Join(root, "left")
+	right := filepath.Join(root, "right")
+	writeSimpleAppForCLI(t, left, "old")
+	writeNamedCLIApplication(t, left, "other", "other", "same")
+	writeSimpleAppForCLI(t, right, "new")
+	writeNamedCLIApplication(t, right, "other", "other", "changed-but-skipped")
+
+	cmd := NewRootCommand(VersionInfo{})
+	cmd.SetArgs([]string{"diff", "app", "demo", "--path-orig", left, "--path", right, "--exit-code=false"})
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	cmd.SetOut(&stdout)
+	cmd.SetErr(&stderr)
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("Execute() error = %v\nstdout:\n%s\nstderr:\n%s", err, stdout.String(), stderr.String())
+	}
+	for _, want := range []string{"Application: argocd/demo", "-  value: old", "+  value: new"} {
+		if !strings.Contains(stdout.String(), want) {
+			t.Fatalf("stdout missing %q:\n%s", want, stdout.String())
+		}
+	}
+	if strings.Contains(stdout.String(), "other") || strings.Contains(stdout.String(), "changed-but-skipped") {
+		t.Fatalf("stdout included non-selected app:\n%s", stdout.String())
+	}
+	if stderr.String() != "" {
+		t.Fatalf("stderr = %q, want empty", stderr.String())
+	}
+}
+
+func TestDiffAppReportsMissingApplication(t *testing.T) {
+	root := t.TempDir()
+	left := filepath.Join(root, "left")
+	right := filepath.Join(root, "right")
+	writeSimpleAppForCLI(t, left, "old")
+	writeSimpleAppForCLI(t, right, "new")
+
+	cmd := NewRootCommand(VersionInfo{})
+	cmd.SetArgs([]string{"diff", "app", "missing", "--path-orig", left, "--path", right})
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	cmd.SetOut(&stdout)
+	cmd.SetErr(&stderr)
+
+	err := cmd.Execute()
+	if err == nil {
+		t.Fatal("Execute() error = nil, want missing app error")
+	}
+	if !strings.Contains(err.Error(), `application "missing" not found in either tree`) {
+		t.Fatalf("error = %v, want missing app message", err)
+	}
+	if stdout.String() != "" {
+		t.Fatalf("stdout = %q, want empty", stdout.String())
+	}
+}
+
 func TestDiffImagesPrintsImageDiff(t *testing.T) {
 	root := t.TempDir()
 	left := filepath.Join(root, "left")
@@ -176,8 +234,16 @@ func TestNetworkCacheFlagsAreRegistered(t *testing.T) {
 			args: []string{"build", "apps", "--offline", "--refresh-charts", "--chart-cache-dir", "/tmp/charts", "--refresh-remotes", "--remote-cache-dir", "/tmp/remotes", "--path", "missing"},
 		},
 		{
+			name: "build app",
+			args: []string{"build", "app", "demo", "--offline", "--refresh-charts", "--chart-cache-dir", "/tmp/charts", "--refresh-remotes", "--remote-cache-dir", "/tmp/remotes", "--path", "missing"},
+		},
+		{
 			name: "diff apps",
 			args: []string{"diff", "apps", "--offline", "--refresh-charts", "--chart-cache-dir", "/tmp/charts", "--refresh-remotes", "--remote-cache-dir", "/tmp/remotes", "--path", "missing", "--path-orig", "base"},
+		},
+		{
+			name: "diff app",
+			args: []string{"diff", "app", "demo", "--offline", "--refresh-charts", "--chart-cache-dir", "/tmp/charts", "--refresh-remotes", "--remote-cache-dir", "/tmp/remotes", "--path", "missing", "--path-orig", "base"},
 		},
 		{
 			name: "diff images",
@@ -203,6 +269,31 @@ func TestNetworkCacheFlagsAreRegistered(t *testing.T) {
 			}
 		})
 	}
+}
+
+func writeNamedCLIApplication(t *testing.T, root, appName, configMapName, value string) {
+	t.Helper()
+	writeCLITestFile(t, filepath.Join(root, "apps", appName+".yaml"), `apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: `+appName+`
+  namespace: argocd
+spec:
+  source:
+    repoURL: https://github.com/example/repo
+    path: manifests/`+appName+`
+    targetRevision: main
+  destination:
+    name: in-cluster
+    namespace: demo
+`)
+	writeCLITestFile(t, filepath.Join(root, "manifests", appName, "cm.yaml"), `apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: `+configMapName+`
+data:
+  value: `+value+`
+`)
 }
 
 func writeSimpleAppForCLI(t *testing.T, root, value string) {

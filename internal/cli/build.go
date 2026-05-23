@@ -37,39 +37,64 @@ func newBuildCommand(deps Dependencies) *cobra.Command {
 				RemoteResourceCacheDir: appsFlags.remoteCacheDir,
 			})
 			if err != nil {
+				if renderErr := renderDiagnostics(cmd.ErrOrStderr(), result.Diagnostics); renderErr != nil {
+					return renderErr
+				}
 				return err
 			}
-			if err := renderDiagnostics(cmd.ErrOrStderr(), result.Diagnostics); err != nil {
-				return err
-			}
-			for _, manifest := range result.Manifests {
-				data, err := yaml.Marshal(manifest.Object.Object)
-				if err != nil {
-					return err
-				}
-				if _, err := fmt.Fprintln(cmd.OutOrStdout(), "---"); err != nil {
-					return err
-				}
-				if _, err := cmd.OutOrStdout().Write(data); err != nil {
-					return err
-				}
-			}
-			return nil
+			return renderBuildResult(cmd, result)
 		},
 	}
 	bindCommonFlags(apps, &appsFlags)
 
 	appFlags := defaultCommonFlags()
-	app := &cobra.Command{
+	appCmd := &cobra.Command{
 		Use:   "app NAME",
 		Short: "Render one Application",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return fmt.Errorf("%s orchestration for %q requires Task 15 for path %s", cmd.CommandPath(), args[0], appFlags.path)
+			result, err := deps.Orchestrator.BuildApp(context.Background(), app.BuildAppRequest{
+				Name: args[0],
+				BuildRequest: app.BuildRequest{
+					Path:                   appFlags.path,
+					Strict:                 appFlags.strict,
+					Offline:                appFlags.offline,
+					RefreshCharts:          appFlags.refreshCharts,
+					ChartCacheDir:          appFlags.chartCacheDir,
+					RefreshRemoteResources: appFlags.refreshRemotes,
+					RemoteResourceCacheDir: appFlags.remoteCacheDir,
+				},
+			})
+			if err != nil {
+				if renderErr := renderDiagnostics(cmd.ErrOrStderr(), result.Diagnostics); renderErr != nil {
+					return renderErr
+				}
+				return err
+			}
+			return renderBuildResult(cmd, result)
 		},
 	}
-	bindCommonFlags(app, &appFlags)
+	bindCommonFlags(appCmd, &appFlags)
 
-	cmd.AddCommand(apps, app)
+	cmd.AddCommand(apps, appCmd)
 	return cmd
+}
+
+func renderBuildResult(cmd *cobra.Command, result app.BuildResult) error {
+	if err := renderDiagnostics(cmd.ErrOrStderr(), result.Diagnostics); err != nil {
+		return err
+	}
+	for _, manifest := range result.Manifests {
+		data, err := yaml.Marshal(manifest.Object.Object)
+		if err != nil {
+			return err
+		}
+		if _, err := fmt.Fprintln(cmd.OutOrStdout(), "---"); err != nil {
+			return err
+		}
+		if _, err := cmd.OutOrStdout().Write(data); err != nil {
+			return err
+		}
+	}
+	return nil
 }
