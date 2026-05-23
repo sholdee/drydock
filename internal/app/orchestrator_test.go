@@ -11,6 +11,7 @@ import (
 	"github.com/home-operations/argocd-local/internal/chart"
 	"github.com/home-operations/argocd-local/internal/diagnostic"
 	"github.com/home-operations/argocd-local/internal/render"
+	sourcepkg "github.com/home-operations/argocd-local/internal/source"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 )
 
@@ -139,6 +140,153 @@ data:
 	}
 	if namespace := manifest.Object.GetNamespace(); namespace != "helm-ns" {
 		t.Fatalf("namespace = %q, want helm-ns", namespace)
+	}
+}
+
+func TestOrchestratorBuildRendersRepoMappedPathSource(t *testing.T) {
+	root := t.TempDir()
+	external := t.TempDir()
+	writeExternalPathApplication(t, root, "https://github.com/example/external", "manifests/external")
+	writeTestFile(t, filepath.Join(external, "manifests", "external", "cm.yaml"), `apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: external
+data:
+  source: repo-map
+`)
+
+	result, err := Orchestrator{}.Build(context.Background(), BuildRequest{
+		Path: root,
+		RepoMaps: []sourcepkg.RepoMap{{
+			URL:  "https://github.com/example/external.git",
+			Path: external,
+		}},
+	})
+	if err != nil {
+		t.Fatalf("Build() error = %v", err)
+	}
+	if len(result.Manifests) != 1 {
+		t.Fatalf("len(Manifests) = %d, want 1", len(result.Manifests))
+	}
+	value, found, err := unstructured.NestedString(result.Manifests[0].Object.Object, "data", "source")
+	if err != nil || !found || value != "repo-map" {
+		t.Fatalf("data.source = %q, found %v, err %v; want repo-map", value, found, err)
+	}
+}
+
+func TestOrchestratorBuildErrorsForMissingUnmappedPathSource(t *testing.T) {
+	root := t.TempDir()
+	writeExternalPathApplication(t, root, "https://github.com/example/external", "manifests/external")
+
+	_, err := Orchestrator{}.Build(context.Background(), BuildRequest{Path: root})
+	if err == nil {
+		t.Fatal("Build() error = nil, want missing unmapped source error")
+	}
+	for _, want := range []string{"manifests/external", "--repo-map", "--allow-network"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("Build() error = %q, want %q", err.Error(), want)
+		}
+	}
+}
+
+func TestOrchestratorBuildFetchesMissingPathSourceWhenNetworkAllowed(t *testing.T) {
+	root := t.TempDir()
+	external := t.TempDir()
+	cacheDir := t.TempDir()
+	writeExternalPathApplication(t, root, "https://github.com/example/external", "manifests/external")
+	writeTestFile(t, filepath.Join(external, "manifests", "external", "cm.yaml"), `apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: external
+data:
+  source: fetched
+`)
+	acquirer := &recordingGitAcquirer{path: external, revision: "abc123"}
+
+	result, err := (Orchestrator{GitAcquirer: acquirer}).Build(context.Background(), BuildRequest{
+		Path:         root,
+		AllowNetwork: true,
+		GitCacheDir:  cacheDir,
+		RefreshGit:   true,
+	})
+	if err != nil {
+		t.Fatalf("Build() error = %v", err)
+	}
+	if len(acquirer.requests) != 1 {
+		t.Fatalf("git acquire calls = %d, want 1", len(acquirer.requests))
+	}
+	if acquirer.requests[0] != (sourcepkg.GitRequest{URL: "https://github.com/example/external", Revision: "main"}) {
+		t.Fatalf("git request = %#v", acquirer.requests[0])
+	}
+	if acquirer.options[0] != (sourcepkg.GitOptions{AllowNetwork: true, CacheDir: cacheDir, Refresh: true}) {
+		t.Fatalf("git options = %#v", acquirer.options[0])
+	}
+	value, found, err := unstructured.NestedString(result.Manifests[0].Object.Object, "data", "source")
+	if err != nil || !found || value != "fetched" {
+		t.Fatalf("data.source = %q, found %v, err %v; want fetched", value, found, err)
+	}
+}
+
+func TestOrchestratorBuildRejectsOfflineWithGitNetwork(t *testing.T) {
+	root := t.TempDir()
+	writeExternalPathApplication(t, root, "https://github.com/example/external", "manifests/external")
+
+	_, err := Orchestrator{}.Build(context.Background(), BuildRequest{
+		Path:         root,
+		Offline:      true,
+		AllowNetwork: true,
+	})
+	if err == nil {
+		t.Fatal("Build() error = nil, want offline allow-network error")
+	}
+	if !strings.Contains(err.Error(), "--offline cannot be combined with --allow-network") {
+		t.Fatalf("Build() error = %q, want offline allow-network message", err.Error())
+	}
+}
+
+func TestOrchestratorBuildUsesRepoMappedHelmValueRef(t *testing.T) {
+	root := t.TempDir()
+	valuesRoot := t.TempDir()
+	writeTestFile(t, filepath.Join(root, "apps", "helm-ref.yaml"), `apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: helm-ref
+  namespace: argocd
+spec:
+  sources:
+    - repoURL: https://github.com/example/values
+      targetRevision: main
+      ref: values
+    - repoURL: https://github.com/example/repo
+      targetRevision: main
+      path: charts/demo
+      helm:
+        valueFiles:
+          - $values/values.yaml
+  destination:
+    name: in-cluster
+    namespace: default
+`)
+	writeAppTestValueChart(t, filepath.Join(root, "charts", "demo"))
+	writeTestFile(t, filepath.Join(valuesRoot, "values.yaml"), `value: from-mapped-ref
+`)
+
+	result, err := Orchestrator{}.Build(context.Background(), BuildRequest{
+		Path: root,
+		RepoMaps: []sourcepkg.RepoMap{{
+			URL:  "https://github.com/example/values.git",
+			Path: valuesRoot,
+		}},
+	})
+	if err != nil {
+		t.Fatalf("Build() error = %v", err)
+	}
+	if len(result.Manifests) != 1 {
+		t.Fatalf("len(Manifests) = %d, want 1", len(result.Manifests))
+	}
+	value, found, err := unstructured.NestedString(result.Manifests[0].Object.Object, "data", "value")
+	if err != nil || !found || value != "from-mapped-ref" {
+		t.Fatalf("data.value = %q, found %v, err %v; want from-mapped-ref", value, found, err)
 	}
 }
 
@@ -587,6 +735,24 @@ spec:
 `)
 }
 
+func writeExternalPathApplication(t *testing.T, root, repoURL, sourcePath string) {
+	t.Helper()
+	writeTestFile(t, filepath.Join(root, "apps", "external.yaml"), `apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: external
+  namespace: argocd
+spec:
+  source:
+    repoURL: `+repoURL+`
+    targetRevision: main
+    path: `+sourcePath+`
+  destination:
+    name: in-cluster
+    namespace: default
+`)
+}
+
 func writeUnsupportedApplicationSetFixture(t *testing.T, root string) {
 	t.Helper()
 	writeTestFile(t, filepath.Join(root, "apps", "direct.yaml"), directApplicationYAML())
@@ -656,6 +822,23 @@ type recordingChartAcquirer struct {
 	acquireErr error
 	requests   []chart.Request
 	options    []chart.Options
+}
+
+type recordingGitAcquirer struct {
+	path     string
+	revision string
+	err      error
+	requests []sourcepkg.GitRequest
+	options  []sourcepkg.GitOptions
+}
+
+func (acquirer *recordingGitAcquirer) Acquire(_ context.Context, request sourcepkg.GitRequest, opts sourcepkg.GitOptions) (sourcepkg.GitResult, error) {
+	acquirer.requests = append(acquirer.requests, request)
+	acquirer.options = append(acquirer.options, opts)
+	if acquirer.err != nil {
+		return sourcepkg.GitResult{}, acquirer.err
+	}
+	return sourcepkg.GitResult{Path: acquirer.path, Revision: acquirer.revision}, nil
 }
 
 func (acquirer *recordingChartAcquirer) Acquire(_ context.Context, request chart.Request, opts chart.Options) (chart.Result, error) {

@@ -24,6 +24,7 @@ type RenderOptions struct {
 	APIVersions                  []string
 	BuildOptions                 []string
 	RefRoots                     map[string]string
+	RefSources                   map[string]ResolvedSource
 	ReleaseName                  string
 	ValuesObject                 map[string]any
 	ValuesMergeMode              string

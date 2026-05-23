@@ -30,6 +30,11 @@ type ResolvedRepository struct {
 	Network          bool
 }
 
+func (r *Resolver) MappedPath(repoURL string) (string, bool) {
+	localPath, ok := r.repoMaps[NormalizeURL(repoURL)]
+	return localPath, ok
+}
+
 func NewResolver(opts Options) *Resolver {
 	repoMaps := make(map[string]string, len(opts.RepoMaps))
 	for _, repoMap := range opts.RepoMaps {

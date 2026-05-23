@@ -60,6 +60,7 @@ type BuildResult struct {
 
 type Orchestrator struct {
 	ChartAcquirer          chart.Acquirer
+	GitAcquirer            sourcepkg.GitAcquirer
 	RemoteResourceAcquirer remote.Acquirer
 }
 
@@ -122,6 +123,9 @@ func (o Orchestrator) ListApplications(_ context.Context, request BuildRequest) 
 }
 
 func (o Orchestrator) Build(ctx context.Context, request BuildRequest) (BuildResult, error) {
+	if err := validateBuildNetworkOptions(request); err != nil {
+		return BuildResult{}, err
+	}
 	var result BuildResult
 	if request.Applications != nil {
 		result.Applications = append(result.Applications, request.Applications...)
@@ -142,15 +146,24 @@ func (o Orchestrator) Build(ctx context.Context, request BuildRequest) (BuildRes
 	if acquirer == nil {
 		acquirer = chart.DefaultAcquirer{}
 	}
+	gitAcquirer := o.GitAcquirer
+	if gitAcquirer == nil {
+		gitAcquirer = sourcepkg.DefaultGitAcquirer{}
+	}
 	forbiddenRoots := append([]string(nil), request.RemoteResourceForbiddenRoots...)
 	forbiddenRoots = append(forbiddenRoots, root)
 	provider := localProvider{
 		repoRoot:                     root,
+		sourceResolver:               sourcepkg.NewResolver(sourcepkg.Options{RepoMaps: request.RepoMaps, AllowNetwork: request.AllowNetwork}),
 		chartAcquirer:                acquirer,
+		gitAcquirer:                  gitAcquirer,
 		remoteResourceAcquirer:       o.RemoteResourceAcquirer,
 		offline:                      request.Offline,
+		allowNetwork:                 request.AllowNetwork,
 		refreshCharts:                request.RefreshCharts,
 		chartCacheDir:                request.ChartCacheDir,
+		gitCacheDir:                  request.GitCacheDir,
+		refreshGit:                   request.RefreshGit,
 		refreshRemoteResources:       request.RefreshRemoteResources,
 		remoteResourceCacheDir:       request.RemoteResourceCacheDir,
 		remoteResourceForbiddenRoots: forbiddenRoots,
@@ -217,18 +230,27 @@ func cloneApplicationSelectionInput(input ApplicationSelectionInput) Application
 
 type localProvider struct {
 	repoRoot                     string
+	sourceResolver               *sourcepkg.Resolver
 	chartAcquirer                chart.Acquirer
+	gitAcquirer                  sourcepkg.GitAcquirer
 	remoteResourceAcquirer       remote.Acquirer
 	offline                      bool
+	allowNetwork                 bool
 	refreshCharts                bool
 	chartCacheDir                string
+	gitCacheDir                  string
+	refreshGit                   bool
 	refreshRemoteResources       bool
 	remoteResourceCacheDir       string
 	remoteResourceForbiddenRoots []string
 }
 
 func (p localProvider) RenderSource(ctx context.Context, source render.ResolvedSource, opts render.RenderOptions) ([]render.Manifest, []diagnostic.Diagnostic, error) {
-	source.RepoRoot = p.repoRoot
+	sourceRoot, err := p.resolveSourceRoot(ctx, source)
+	if err != nil {
+		return nil, nil, err
+	}
+	source.RepoRoot = sourceRoot
 	opts.ChartAcquirer = p.chartAcquirer
 	opts.ChartCacheDir = p.chartCacheDir
 	opts.OfflineCharts = p.offline
@@ -238,11 +260,16 @@ func (p localProvider) RenderSource(ctx context.Context, source render.ResolvedS
 	opts.OfflineRemoteResources = p.offline
 	opts.RefreshRemoteResources = p.refreshRemoteResources
 	opts.RemoteResourceForbiddenRoots = p.remoteResourceForbiddenRoots
-	refRoots, err := anchorLocalRefRoots(p.repoRoot, opts.RefRoots)
+	opts.RemoteResourceForbiddenRoots = appendUniqueString(opts.RemoteResourceForbiddenRoots, sourceRoot)
+	anchoredRefRoots, err := anchorLocalRefRoots(sourceRoot, opts.RefRoots)
 	if err != nil {
 		return nil, nil, err
 	}
-	opts.RefRoots = refRoots
+	refRoots, err := p.resolveRefRoots(ctx, opts.RefSources)
+	if err != nil {
+		return nil, nil, err
+	}
+	opts.RefRoots = mergeRefRoots(anchoredRefRoots, refRoots)
 	if source.Path != "" {
 		renderer, err := selectLocalRenderer(source)
 		if err != nil {
@@ -254,6 +281,101 @@ func (p localProvider) RenderSource(ctx context.Context, source render.ResolvedS
 		return p.renderChartOnlySource(ctx, source, opts)
 	}
 	return nil, nil, nil
+}
+
+func (p localProvider) resolveSourceRoot(ctx context.Context, source render.ResolvedSource) (string, error) {
+	if source.Path == "" && source.Chart != "" {
+		return p.repoRoot, nil
+	}
+	if p.sourceResolver != nil {
+		if mappedPath, ok := p.sourceResolver.MappedPath(source.RepoURL); ok {
+			return filepath.Abs(mappedPath)
+		}
+	}
+	if source.Path != "" {
+		if exists, err := sourcePathExists(p.repoRoot, source.Path); err != nil {
+			return "", err
+		} else if exists {
+			return p.repoRoot, nil
+		}
+	}
+	if strings.TrimSpace(source.RepoURL) == "" {
+		return p.repoRoot, nil
+	}
+	if p.sourceResolver == nil {
+		return p.repoRoot, nil
+	}
+	if _, err := p.sourceResolver.Resolve(source.RepoURL, source.TargetRevision); err != nil {
+		return "", fmt.Errorf("source path %q is not present under local repository root and %w", source.Path, err)
+	}
+	if p.offline && p.allowNetwork {
+		return "", fmt.Errorf("--offline cannot be combined with --allow-network for Git source fetching")
+	}
+	acquirer := p.gitAcquirer
+	if acquirer == nil {
+		acquirer = sourcepkg.DefaultGitAcquirer{}
+	}
+	acquired, err := acquirer.Acquire(ctx, sourcepkg.GitRequest{
+		URL:      source.RepoURL,
+		Revision: source.TargetRevision,
+	}, sourcepkg.GitOptions{
+		AllowNetwork: p.allowNetwork,
+		CacheDir:     p.gitCacheDir,
+		Refresh:      p.refreshGit,
+	})
+	if err != nil {
+		return "", err
+	}
+	return acquired.Path, nil
+}
+
+func (p localProvider) resolveRefRoots(ctx context.Context, refSources map[string]render.ResolvedSource) (map[string]string, error) {
+	if len(refSources) == 0 {
+		return map[string]string{}, nil
+	}
+	out := make(map[string]string, len(refSources))
+	for refKey, refSource := range refSources {
+		root, err := p.resolveSourceRoot(ctx, refSource)
+		if err != nil {
+			return nil, fmt.Errorf("ref root %s: %w", refKey, err)
+		}
+		out[refKey] = root
+	}
+	return out, nil
+}
+
+func sourcePathExists(repoRoot, sourcePath string) (bool, error) {
+	clean, err := cleanLocalSourcePath(sourcePath)
+	if err != nil {
+		return false, err
+	}
+	return localPathExists(filepath.Join(repoRoot, clean))
+}
+
+func mergeRefRoots(base, extra map[string]string) map[string]string {
+	if len(base) == 0 && len(extra) == 0 {
+		return map[string]string{}
+	}
+	out := make(map[string]string, len(base)+len(extra))
+	for key, value := range base {
+		out[key] = value
+	}
+	for key, value := range extra {
+		out[key] = value
+	}
+	return out
+}
+
+func appendUniqueString(values []string, value string) []string {
+	if value == "" {
+		return values
+	}
+	for _, existing := range values {
+		if existing == value {
+			return values
+		}
+	}
+	return append(values, value)
 }
 
 func (p localProvider) renderChartOnlySource(ctx context.Context, source render.ResolvedSource, opts render.RenderOptions) ([]render.Manifest, []diagnostic.Diagnostic, error) {
@@ -340,7 +462,7 @@ func anchorLocalRefRoots(repoRoot string, refRoots map[string]string) (map[strin
 	out := make(map[string]string, len(refRoots))
 	for key, root := range refRoots {
 		if filepath.IsAbs(root) {
-			return nil, fmt.Errorf("absolute ref root %s %q must be relative for local rendering; repo-map/external ref resolution is not wired", key, root)
+			return nil, fmt.Errorf("absolute ref root %s %q must be supplied through repo-map or source resolution", key, root)
 		}
 		clean, err := cleanLocalSourcePath(root)
 		if err != nil {
@@ -450,6 +572,25 @@ func diagnosticFailure(diags []diagnostic.Diagnostic, strict bool) error {
 		if strict || diag.Severity == diagnostic.SeverityError {
 			return fmt.Errorf("diagnostic %s: %s", diag.Category, diag.Message)
 		}
+	}
+	return nil
+}
+
+func validateBuildNetworkOptions(request BuildRequest) error {
+	if request.Offline && request.AllowNetwork {
+		return fmt.Errorf("--offline cannot be combined with --allow-network for Git source fetching")
+	}
+	if request.GitCacheDir == "" {
+		return nil
+	}
+	forbiddenRoots := append([]string(nil), request.RemoteResourceForbiddenRoots...)
+	forbiddenRoots = append(forbiddenRoots, request.Path)
+	inside, root, err := remote.IsPathInsideAny(request.GitCacheDir, forbiddenRoots)
+	if err != nil {
+		return err
+	}
+	if inside {
+		return fmt.Errorf("git cache dir %q must not be inside repository root %q", request.GitCacheDir, root)
 	}
 	return nil
 }

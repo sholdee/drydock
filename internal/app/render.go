@@ -42,7 +42,7 @@ func RenderApplication(ctx context.Context, application argoappv1.Application, p
 		if err != nil {
 			return result, fmt.Errorf("%s: %w", renderSourceContext(application, sourcePlan), err)
 		}
-		opts.RefRoots, err = renderRefRootsForSource(plan, sourcePlan, opts.ValueFiles)
+		opts.RefSources, err = renderRefSourcesForSource(plan, sourcePlan, opts.ValueFiles)
 		if err != nil {
 			return result, fmt.Errorf("%s: %w", renderSourceContext(application, sourcePlan), err)
 		}
@@ -148,13 +148,12 @@ func helmValuesObject(helm *argoappv1.ApplicationSourceHelm) (map[string]any, bo
 	return values, true, nil
 }
 
-func renderRefRootsForSource(plan PlanResult, sourcePlan SourcePlan, valueFiles []string) (map[string]string, error) {
+func renderRefSourcesForSource(plan PlanResult, sourcePlan SourcePlan, valueFiles []string) (map[string]render.ResolvedSource, error) {
 	if len(valueFiles) == 0 {
-		return map[string]string{}, nil
+		return map[string]render.ResolvedSource{}, nil
 	}
 
-	out := map[string]string{}
-	currentRepo := sourcepkg.NormalizeURL(sourcePlan.Source.RepoURL)
+	out := map[string]render.ResolvedSource{}
 	for _, valueFile := range valueFiles {
 		refKey, ok, err := helmValueFileRefKey(valueFile)
 		if err != nil {
@@ -168,14 +167,18 @@ func renderRefRootsForSource(plan PlanResult, sourcePlan SourcePlan, valueFiles 
 		if !exists {
 			return nil, fmt.Errorf("helm value file %q references unknown ref %s", valueFile, refKey)
 		}
-		refRepo := sourcepkg.NormalizeURL(refSource.Source.RepoURL)
-		if refRepo != currentRepo {
-			return nil, fmt.Errorf("helm value file %q uses cross-repo ref %s: ref repo %q differs from source repo %q", valueFile, refKey, sourcepkg.RedactURL(refSource.Source.RepoURL), sourcepkg.RedactURL(sourcePlan.Source.RepoURL))
+		refSourceRoot := refSource.Source.Path
+		if sourcepkg.NormalizeURL(refSource.Source.RepoURL) == sourcepkg.NormalizeURL(sourcePlan.Source.RepoURL) {
+			refSourceRoot = "."
 		}
-		out[refKey] = "."
+		out[refKey] = render.ResolvedSource{
+			Path:           refSourceRoot,
+			RepoURL:        refSource.Source.RepoURL,
+			TargetRevision: refSource.Source.TargetRevision,
+		}
 	}
 	if len(out) == 0 {
-		return map[string]string{}, nil
+		return map[string]render.ResolvedSource{}, nil
 	}
 	return out, nil
 }

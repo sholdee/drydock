@@ -187,15 +187,19 @@ func TestRenderApplicationPassesSameRepoRefRootsForHelmValueFiles(t *testing.T) 
 	if _, err := RenderApplication(context.Background(), application, provider); err != nil {
 		t.Fatalf("RenderApplication() error = %v", err)
 	}
-	if got.RefRoots["$values"] != "." {
-		t.Fatalf("RefRoots[$values] = %q, want .", got.RefRoots["$values"])
+	refSource := got.RefSources["$values"]
+	if refSource.Path != "." {
+		t.Fatalf("RefSources[$values].Path = %q, want .", refSource.Path)
+	}
+	if refSource.RepoURL != " https://example.com/repo.git/ " {
+		t.Fatalf("RefSources[$values].RepoURL = %q, want source repo", refSource.RepoURL)
 	}
 	if len(got.ValueFiles) != 1 || got.ValueFiles[0] != "$values/foo.yaml" {
 		t.Fatalf("ValueFiles = %#v, want $values/foo.yaml", got.ValueFiles)
 	}
 }
 
-func TestRenderApplicationRejectsCrossRepoHelmValueRef(t *testing.T) {
+func TestRenderApplicationPassesCrossRepoHelmValueRef(t *testing.T) {
 	application := argoappv1.Application{
 		ObjectMeta: metav1.ObjectMeta{Namespace: "argocd", Name: "demo"},
 		Spec: argoappv1.ApplicationSpec{
@@ -217,22 +221,11 @@ func TestRenderApplicationRejectsCrossRepoHelmValueRef(t *testing.T) {
 		return nil, nil, nil
 	})
 
-	_, err := RenderApplication(context.Background(), application, provider)
-	if err == nil {
-		t.Fatal("RenderApplication() error = nil, want cross-repo ref error")
+	if _, err := RenderApplication(context.Background(), application, provider); err != nil {
+		t.Fatalf("RenderApplication() error = %v", err)
 	}
-	for _, want := range []string{"$values", "cross-repo", "https://example.com/values.git", "https://example.com/repo.git"} {
-		if !strings.Contains(err.Error(), want) {
-			t.Fatalf("error = %q, want %q", err.Error(), want)
-		}
-	}
-	for _, leaked := range []string{"values-user", "values-secret", "values-token", "values-frag", "source-user", "source-secret", "source-token", "source-frag"} {
-		if strings.Contains(err.Error(), leaked) {
-			t.Fatalf("error = %q, leaked %q", err.Error(), leaked)
-		}
-	}
-	if calls != 0 {
-		t.Fatalf("provider calls = %d, want 0", calls)
+	if calls != 1 {
+		t.Fatalf("provider calls = %d, want 1", calls)
 	}
 }
 
@@ -255,8 +248,8 @@ func TestRenderApplicationIgnoresUnusedCrossRepoRef(t *testing.T) {
 	calls := 0
 	provider := providerFunc(func(_ context.Context, _ render.ResolvedSource, opts render.RenderOptions) ([]render.Manifest, []diagnostic.Diagnostic, error) {
 		calls++
-		if len(opts.RefRoots) != 0 {
-			t.Fatalf("RefRoots = %#v, want empty for unused ref", opts.RefRoots)
+		if len(opts.RefSources) != 0 {
+			t.Fatalf("RefSources = %#v, want empty for unused ref", opts.RefSources)
 		}
 		return nil, nil, nil
 	})
