@@ -382,7 +382,7 @@ helmCharts:
 
 func TestKustomizeRendererPrefersVersionedLocalHelmChartOverRepo(t *testing.T) {
 	root := t.TempDir()
-	writeNamedTestChart(t, filepath.Join(root, "apps", "demo", "charts", "demo-1.2.3"), "demo", "1.2.3", `
+	writeNamedTestChart(t, filepath.Join(root, "apps", "demo", "charts", "demo-1.2.3", "demo"), "demo", "1.2.3", `
 apiVersion: v1
 kind: ConfigMap
 metadata:
