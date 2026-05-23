@@ -10,21 +10,27 @@ Supported in the MVP:
 - Kustomize and directory rendering, including repo-root-local Kustomize
   references
 - Kustomize `helmCharts` rendered through the shared Go-library Helm path
+- Safe single-file HTTP(S) Kustomize `resources:` rendered through the remote
+  resource cache
 - Local Helm chart rendering
 - Chart-only remote Helm sources for public HTTP/S and OCI repositories
 - Public Helm chart fetching by default for render and diff chart dependencies
 - User chart cache entries for acquired charts
+- User remote-resource cache entries for acquired Kustomize resources
 - `diff apps` desired-vs-desired manifest diffs
 - `diff images` conservative workload image diffs
 - Repeated-resource last-wins behavior inside one Application
 
-Chart cache behavior:
+Network and cache behavior:
 
-- `--offline` disables Helm chart network fetching and requires cache hits or
-  local chart availability.
+- `--offline` disables Helm chart and remote Kustomize resource network
+  fetching. It requires cache hits or local chart availability.
 - `--refresh-charts` refreshes cached immutable chart entries.
 - `--chart-cache-dir PATH` overrides the default user cache directory.
-- The chart cache is outside the Git repository tree by default.
+- `--refresh-remotes` refreshes cached remote Kustomize resources.
+- `--remote-cache-dir PATH` overrides the default remote resource cache
+  directory.
+- Chart and remote-resource caches must stay outside Git repository trees.
 - `--allow-network` is not the Helm chart-fetch flag; it is reserved for future
   Git/repository-source fetching.
 
@@ -37,7 +43,9 @@ Not reproduced offline:
 - Live Argo CD server-side diff
 - Project/RBAC/destination validation
 - Authenticated/private Helm chart repositories
-- Remote Kustomize refs
+- Authenticated remote resources
+- Remote Kustomize Git refs, bases, components, patches, generators,
+  transformers, validators, `crds`, `openapi`, and replacements
 - Git/repository-source fetching
 
 The tool pins Argo CD dependencies. Upgrade Argo CD dependencies deliberately

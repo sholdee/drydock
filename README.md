@@ -25,9 +25,12 @@ go run ./cmd/argocd-local diff apps \
 ```
 
 Render and diff commands fetch public Helm charts by default for Kustomize
-`helmCharts` and Argo CD chart-only sources. Use `--offline` to require cached
-or local chart availability, `--refresh-charts` to refresh cached immutable
-chart entries, and `--chart-cache-dir` to choose the chart cache directory.
+`helmCharts` and Argo CD chart-only sources. They also support safe single-file
+HTTP(S) Kustomize `resources:` entries through the remote resource cache.
+Use `--offline` to require cached or local chart availability and cached remote
+Kustomize resources. Use `--refresh-charts` and `--chart-cache-dir` for chart
+caching, and `--refresh-remotes` and `--remote-cache-dir` for remote Kustomize
+resource caching. Caches must stay outside Git repository trees.
 `--allow-network` is not the Helm chart-fetch flag; it is reserved for future
 Git/repository-source fetching.
 
@@ -51,6 +54,9 @@ scripts/home-ops-pattern-smoke.sh
 - Git-directory ApplicationSet generator only.
 - No config management plugins.
 - No required shellouts in default workflows.
+- No Git/repository-source fetching, authenticated remote resources, or remote
+  Kustomize bases/components/patches/generators/transformers/validators,
+  `crds`, `openapi`, or replacements.
 - Server-side diff/apply settings are reported as offline limitations.
 
 See `docs/usage.md` for command examples and `docs/compatibility.md` for
