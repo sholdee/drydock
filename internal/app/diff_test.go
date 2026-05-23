@@ -266,8 +266,8 @@ func TestOrchestratorDiffAppReportsOnlyNamedApplicationChange(t *testing.T) {
 	if err != nil {
 		t.Fatalf("DiffApp() error = %v", err)
 	}
-	if len(result.Results) == 0 {
-		t.Fatal("len(Results) = 0, want diff")
+	if len(result.Results) != 1 {
+		t.Fatalf("len(Results) = %d, want 1", len(result.Results))
 	}
 	got := result.Results[0].Diff
 	for _, want := range []string{"Application: argocd/demo", "-  value: old", "+  value: new"} {
@@ -275,8 +275,10 @@ func TestOrchestratorDiffAppReportsOnlyNamedApplicationChange(t *testing.T) {
 			t.Fatalf("diff missing %q:\n%s", want, got)
 		}
 	}
-	if strings.Contains(got, "other") || strings.Contains(got, "changed-but-not-selected") {
-		t.Fatalf("diff included non-selected Application:\n%s", got)
+	for _, diffResult := range result.Results {
+		if strings.Contains(diffResult.Diff, "other") || strings.Contains(diffResult.Diff, "changed-but-not-selected") {
+			t.Fatalf("diff included non-selected Application:\n%s", diffResult.Diff)
+		}
 	}
 	if len(result.Diagnostics) != 0 {
 		t.Fatalf("len(Diagnostics) = %d, want 0: %#v", len(result.Diagnostics), result.Diagnostics)
