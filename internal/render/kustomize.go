@@ -211,29 +211,27 @@ func resolveKustomizeHelmChart(ctx context.Context, tempRepoRoot, tempSourceRoot
 }
 
 func resolveLocalKustomizeHelmChart(repoRoot, kustomizationDir, chartHome string, helmChart types.HelmChart) (string, bool, error) {
-	names := []string{helmChart.Name}
+	chartPath := filepath.FromSlash(helmChart.Name)
 	if helmChart.Repo != "" && helmChart.Version != "" {
-		names = []string{helmChart.Name + "-" + helmChart.Version}
+		chartPath = filepath.Join(filepath.FromSlash(helmChart.Name+"-"+helmChart.Version), filepath.FromSlash(helmChart.Name))
 	}
-	for _, name := range names {
-		path := filepath.Join(kustomizationDir, filepath.FromSlash(chartHome), filepath.FromSlash(name))
-		info, err := os.Stat(path)
-		if err != nil {
-			if os.IsNotExist(err) {
-				continue
-			}
-			return "", false, err
+
+	path := filepath.Join(kustomizationDir, filepath.FromSlash(chartHome), chartPath)
+	info, err := os.Stat(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return "", false, nil
 		}
-		if !info.IsDir() {
-			continue
-		}
-		rel, err := relativeManifestPath(repoRoot, path)
-		if err != nil {
-			return "", false, err
-		}
-		return rel, true, nil
+		return "", false, err
 	}
-	return "", false, nil
+	if !info.IsDir() {
+		return "", false, nil
+	}
+	rel, err := relativeManifestPath(repoRoot, path)
+	if err != nil {
+		return "", false, err
+	}
+	return rel, true, nil
 }
 
 func renderOptionsForKustomizeHelmChart(helmChart types.HelmChart, valueFilesBaseDir, namespaceFallback string, opts RenderOptions, acquirer chart.Acquirer) RenderOptions {
