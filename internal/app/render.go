@@ -47,8 +47,10 @@ func RenderApplication(ctx context.Context, application argoappv1.Application, p
 			return result, fmt.Errorf("%s: %w", renderSourceContext(application, sourcePlan), err)
 		}
 		manifests, diags, err := provider.RenderSource(ctx, render.ResolvedSource{
-			Path:  sourcePlan.Source.Path,
-			Chart: sourcePlan.Source.Chart,
+			Path:           sourcePlan.Source.Path,
+			Chart:          sourcePlan.Source.Chart,
+			RepoURL:        sourcePlan.Source.RepoURL,
+			TargetRevision: sourcePlan.Source.TargetRevision,
 		}, opts)
 		if err != nil {
 			return result, fmt.Errorf("%s: %w", renderSourceContext(application, sourcePlan), err)

@@ -69,7 +69,8 @@ The MVP currently supports:
 - Direct `Application` CR discovery.
 - Git-directory `ApplicationSet` CR expansion.
 - Single-source and multi-source planning for supported source types.
-- Kustomize, directory, and local Helm chart rendering through Go libraries.
+- Kustomize, directory, local Helm chart, and chart-only remote Helm source
+  rendering through Go libraries.
 - Repeated-resource last-wins behavior inside one Application, with a
   diagnostic.
 - Parent Application-aware desired manifest identity for diffs.
