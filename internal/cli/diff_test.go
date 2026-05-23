@@ -76,6 +76,37 @@ func TestDiffAppsPrintsManifestDiff(t *testing.T) {
 	}
 }
 
+func TestDiffAppsPrintsDiagnosticsOnStrictChangedOnlyError(t *testing.T) {
+	root := t.TempDir()
+	left := filepath.Join(root, "left")
+	right := filepath.Join(root, "right")
+	writeSimpleAppForCLI(t, left, "old")
+	writeSimpleAppForCLI(t, right, "new")
+	writeCLITestFile(t, filepath.Join(left, "README.md"), "left\n")
+	writeCLITestFile(t, filepath.Join(right, "README.md"), "right\n")
+
+	cmd := NewRootCommand(VersionInfo{})
+	cmd.SetArgs([]string{"diff", "apps", "--path-orig", left, "--path", right, "--strict-changed-only"})
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	cmd.SetOut(&stdout)
+	cmd.SetErr(&stderr)
+
+	err := cmd.Execute()
+	if err == nil {
+		t.Fatal("Execute() error = nil, want strict changed-only error")
+	}
+
+	for _, want := range []string{"error changed-only:", "README.md"} {
+		if !strings.Contains(stderr.String(), want) {
+			t.Fatalf("stderr missing %q:\nstdout:\n%s\nstderr:\n%s", want, stdout.String(), stderr.String())
+		}
+	}
+	if stdout.String() != "" {
+		t.Fatalf("stdout = %q, want empty output on strict changed-only error", stdout.String())
+	}
+}
+
 func TestChartCacheFlagsAreRegistered(t *testing.T) {
 	tests := []struct {
 		name string
