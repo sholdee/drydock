@@ -2,36 +2,14 @@ package cli
 
 import (
 	"bytes"
-	"context"
 	"path/filepath"
 	"strings"
 	"testing"
-
-	"github.com/home-operations/argocd-local/internal/app"
-	"github.com/home-operations/argocd-local/internal/chart"
 )
-
-type fixtureChartAcquirer struct {
-	root string
-}
-
-func (acquirer fixtureChartAcquirer) Acquire(_ context.Context, request chart.Request, _ chart.Options) (chart.Result, error) {
-	return chart.Result{
-		ChartDir:   filepath.Join(acquirer.root, "charts", request.Name, request.Version),
-		Repository: request.Repository,
-		Name:       request.Name,
-		Version:    request.Version,
-		Kind:       request.Kind,
-	}, nil
-}
 
 func TestDiffAppsSimulatedRenovateChartBump(t *testing.T) {
 	fixtureRoot := filepath.Join("..", "..", "testdata", "renovate-diff")
-	cmd := NewRootCommandWithDependencies(VersionInfo{}, Dependencies{
-		Orchestrator: app.Orchestrator{
-			ChartAcquirer: fixtureChartAcquirer{root: fixtureRoot},
-		},
-	})
+	cmd := NewRootCommand(VersionInfo{})
 	cmd.SetArgs([]string{
 		"diff", "apps",
 		"--path-orig", filepath.Join(fixtureRoot, "baseline"),
@@ -65,11 +43,7 @@ func TestDiffAppsSimulatedRenovateChartBump(t *testing.T) {
 
 func TestDiffImagesSimulatedRenovateChartBump(t *testing.T) {
 	fixtureRoot := filepath.Join("..", "..", "testdata", "renovate-diff")
-	cmd := NewRootCommandWithDependencies(VersionInfo{}, Dependencies{
-		Orchestrator: app.Orchestrator{
-			ChartAcquirer: fixtureChartAcquirer{root: fixtureRoot},
-		},
-	})
+	cmd := NewRootCommand(VersionInfo{})
 	cmd.SetArgs([]string{
 		"diff", "images",
 		"--path-orig", filepath.Join(fixtureRoot, "baseline"),
