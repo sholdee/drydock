@@ -168,7 +168,7 @@ func renderRefRootsForSource(plan PlanResult, sourcePlan SourcePlan, valueFiles 
 		}
 		refRepo := sourcepkg.NormalizeURL(refSource.Source.RepoURL)
 		if refRepo != currentRepo {
-			return nil, fmt.Errorf("helm value file %q uses cross-repo ref %s: ref repo %q differs from source repo %q", valueFile, refKey, refSource.Source.RepoURL, sourcePlan.Source.RepoURL)
+			return nil, fmt.Errorf("helm value file %q uses cross-repo ref %s: ref repo %q differs from source repo %q", valueFile, refKey, sourcepkg.RedactURL(refSource.Source.RepoURL), sourcepkg.RedactURL(sourcePlan.Source.RepoURL))
 		}
 		out[refKey] = "."
 	}

@@ -2,6 +2,7 @@ package source
 
 import (
 	"fmt"
+	"net/url"
 	"strings"
 )
 
@@ -61,7 +62,7 @@ func (r *Resolver) Resolve(repoURL, revision string) (ResolvedRepository, error)
 		}, nil
 	}
 
-	return ResolvedRepository{}, fmt.Errorf("repository %s is not mapped; pass --repo-map or --allow-network", repoURL)
+	return ResolvedRepository{}, fmt.Errorf("repository %s is not mapped; pass --repo-map or --allow-network", RedactURL(repoURL))
 }
 
 func NormalizeURL(input string) string {
@@ -69,5 +70,31 @@ func NormalizeURL(input string) string {
 	output = strings.TrimRight(output, "/")
 	output = strings.TrimSuffix(output, ".git")
 	output = strings.TrimRight(output, "/")
+	return output
+}
+
+func RedactURL(input string) string {
+	output := strings.TrimSpace(input)
+	if parsed, err := url.Parse(output); err == nil && parsed.Scheme != "" {
+		parsed.User = nil
+		parsed.RawQuery = ""
+		parsed.ForceQuery = false
+		parsed.Fragment = ""
+		return parsed.String()
+	}
+
+	if before, _, ok := strings.Cut(output, "#"); ok {
+		output = before
+	}
+	if before, _, ok := strings.Cut(output, "?"); ok {
+		output = before
+	}
+	if schemeIndex := strings.Index(output, "://"); schemeIndex >= 0 {
+		prefix := output[:schemeIndex+3]
+		rest := output[schemeIndex+3:]
+		if at := strings.LastIndex(rest, "@"); at >= 0 {
+			return prefix + rest[at+1:]
+		}
+	}
 	return output
 }
