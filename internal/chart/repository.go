@@ -65,9 +65,6 @@ func (acquirer DefaultAcquirer) Acquire(ctx context.Context, request Request, op
 	keyParent := filepath.Join(opts.CacheDir, string(request.Kind))
 	keyDir := filepath.Join(keyParent, key)
 	chartDir := filepath.Join(keyDir, request.Name)
-	if request.Kind == RepositoryOCI && acquirer.OCIPuller == nil && acquirer.Client != nil && chartDirReady(chartDir) {
-		return Result{}, fmt.Errorf("unsupported chart repository kind %q", request.Kind)
-	}
 	if !opts.Refresh && chartDirReady(chartDir) {
 		return resultFor(request, chartDir, true), nil
 	}
