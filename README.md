@@ -18,6 +18,13 @@ go run ./cmd/argocd-local get apps --path ./testdata/applications/e2e
 go run ./cmd/argocd-local build apps --path ./testdata/applications/e2e
 ```
 
+Maintainers with a local `home-ops` checkout can also run the optional
+Renovate smoke script:
+
+```bash
+scripts/home-ops-renovate-smoke.sh
+```
+
 ## Current MVP Limits
 
 - Desired-vs-desired only; no live cluster diff.

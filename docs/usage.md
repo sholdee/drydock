@@ -42,3 +42,12 @@ wired in the current E2E `build apps` path.
 ```bash
 argocd-local build apps --path . --allow-network
 ```
+
+Run the optional home-ops Renovate smoke:
+
+```bash
+scripts/home-ops-renovate-smoke.sh
+```
+
+The smoke script uses temporary worktrees and does not mutate the real
+`home-ops` checkout.

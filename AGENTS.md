@@ -179,6 +179,8 @@ namespace is passed to Helm, and `valuesObject` overrides `values`.
 Portable integration fixtures should model `home-ops` behavior without depending
 on `/Users/ethan.shold/git/home-ops`. Real `home-ops` checks belong in optional
 smoke scripts that use temporary worktrees.
+Optional real-repository smokes must use temporary worktrees and clean them up.
+Never mutate `/Users/ethan.shold/git/home-ops` directly from tests.
 
 Run the smallest check that covers your change:
 
