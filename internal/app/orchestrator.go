@@ -268,7 +268,7 @@ func redactChartAcquireError(err error, repository string) string {
 
 func anchorLocalRefRoots(repoRoot string, refRoots map[string]string) (map[string]string, error) {
 	if len(refRoots) == 0 {
-		return nil, nil
+		return map[string]string{}, nil
 	}
 	out := make(map[string]string, len(refRoots))
 	for key, root := range refRoots {

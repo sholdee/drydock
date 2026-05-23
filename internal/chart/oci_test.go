@@ -3,6 +3,7 @@ package chart
 import (
 	"context"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -198,7 +199,7 @@ func TestHelmOCIPullerRejectsUnsafeRepositoriesBeforeNetwork(t *testing.T) {
 			want:       "unsafe path segment",
 		},
 		{
-			name:       "dot dot path segment",
+			name:       "parent path segment",
 			repository: "oci://registry.example.test/foo/../bar",
 			want:       "unsafe path segment",
 		},
@@ -207,7 +208,7 @@ func TestHelmOCIPullerRejectsUnsafeRepositoriesBeforeNetwork(t *testing.T) {
 			client := &http.Client{
 				Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
 					t.Fatal("invalid OCI repository made a network request")
-					return nil, nil
+					return nil, errors.New("unexpected network request")
 				}),
 			}
 			_, err := (DefaultAcquirer{Client: client}).Acquire(context.Background(), Request{
@@ -267,7 +268,7 @@ func TestDefaultAcquirerRejectsUnsafeOCIRepositoriesBeforeCacheHit(t *testing.T)
 			want:       "unsafe path segment",
 		},
 		{
-			name:       "dot dot path segment",
+			name:       "parent path segment",
 			repository: "oci://registry.example.test/foo/../bar",
 			want:       "unsafe path segment",
 		},

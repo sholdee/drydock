@@ -25,6 +25,7 @@ import (
 
 type HelmRenderer struct{}
 
+//nolint:gocyclo // Coordinates Helm loading, values, capabilities, and manifest decoding in render order.
 func (HelmRenderer) Render(ctx context.Context, source ResolvedSource, opts RenderOptions) ([]Manifest, []diagnostic.Diagnostic, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, nil, err

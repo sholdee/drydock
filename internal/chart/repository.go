@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"compress/gzip"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -45,6 +46,7 @@ type repositoryChartVersion struct {
 	URLs    []string `yaml:"urls"`
 }
 
+//nolint:gocyclo // Coordinates validation, cache lookup, fetch, extraction, and publish in acquisition order.
 func (acquirer DefaultAcquirer) Acquire(ctx context.Context, request Request, opts Options) (Result, error) {
 	switch request.Kind {
 	case RepositoryHTTP, RepositoryOCI:
@@ -121,6 +123,7 @@ func (acquirer DefaultAcquirer) fetchChart(ctx context.Context, request Request)
 	}
 }
 
+//nolint:gocyclo // Keeps index and chart archive request handling together for consistent URL redaction.
 func (acquirer DefaultAcquirer) fetchHTTPChart(ctx context.Context, request Request) ([]byte, error) {
 	client := acquirer.Client
 	if client == nil {
@@ -217,6 +220,7 @@ func isAuthError(err error) bool {
 	return false
 }
 
+//nolint:gocyclo // Keeps temporary credential isolation and OCI pull validation in one scoped flow.
 func (puller HelmOCIPuller) Pull(ctx context.Context, request Request) ([]byte, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
@@ -413,7 +417,7 @@ func extractChartArchive(r io.Reader, dest, chartName string) error {
 	tr := tar.NewReader(gz)
 	for {
 		header, err := tr.Next()
-		if err == io.EOF {
+		if errors.Is(err, io.EOF) {
 			return nil
 		}
 		if err != nil {
@@ -435,7 +439,7 @@ func extractChartArchive(r io.Reader, dest, chartName string) error {
 			if err := os.MkdirAll(target, 0o755); err != nil {
 				return fmt.Errorf("create chart archive directory %s: %w", target, err)
 			}
-		case tar.TypeReg, tar.TypeRegA:
+		case tar.TypeReg:
 			if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
 				return fmt.Errorf("create chart archive directory %s: %w", filepath.Dir(target), err)
 			}
@@ -591,7 +595,7 @@ func chartArchiveContainsNamedChart(r io.Reader, name string) bool {
 			return false
 		}
 		cleaned := path.Clean(strings.ReplaceAll(header.Name, "\\", "/"))
-		if cleaned == want && (header.Typeflag == tar.TypeReg || header.Typeflag == tar.TypeRegA) {
+		if cleaned == want && header.Typeflag == tar.TypeReg {
 			return true
 		}
 	}

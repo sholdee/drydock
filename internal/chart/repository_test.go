@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"compress/gzip"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -169,7 +170,7 @@ func TestDefaultAcquirerOfflineRequiresCacheHit(t *testing.T) {
 	acquirer := DefaultAcquirer{Client: &http.Client{
 		Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
 			t.Fatal("offline Acquire() made a network request")
-			return nil, nil
+			return nil, errors.New("unexpected network request")
 		}),
 	}}
 	_, err := acquirer.Acquire(context.Background(), Request{
@@ -581,7 +582,7 @@ func TestDefaultAcquirerReturnsCachedOCIChartWithClientAndDefaultPuller(t *testi
 	acquirer := DefaultAcquirer{Client: &http.Client{
 		Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
 			t.Fatal("cached OCI Acquire() made a network request")
-			return nil, nil
+			return nil, errors.New("unexpected network request")
 		}),
 	}}
 	result, err := acquirer.Acquire(context.Background(), request, Options{CacheDir: cacheDir})
