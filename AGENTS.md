@@ -96,6 +96,10 @@ Repository URL maps are deterministic and preferred over network fetches.
 Normalize URLs consistently, including optional `.git` suffixes, trailing
 slashes, and whitespace. Unmapped repositories must error unless network access
 was explicitly enabled by the caller.
+Chart acquisition is shared by Kustomize `helmCharts` and Argo CD chart-only
+sources. Public chart fetching is allowed by default for render/diff commands;
+`--offline` disables chart network fetches. Cache charts under the user cache or
+`--chart-cache-dir`, never inside the Git repository tree.
 
 ## Application Planning
 
