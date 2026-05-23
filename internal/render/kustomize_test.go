@@ -29,6 +29,16 @@ func (acquirer *fakeChartAcquirer) Acquire(_ context.Context, request chart.Requ
 	}, nil
 }
 
+func writeNamedTestChart(t *testing.T, chartDir, name, version, template string) {
+	t.Helper()
+	writeFile(t, filepath.Join(chartDir, "Chart.yaml"), `
+apiVersion: v2
+name: `+name+`
+version: `+version+`
+`)
+	writeFile(t, filepath.Join(chartDir, "templates", "manifest.yaml"), template)
+}
+
 func TestKustomizeRendererRendersResources(t *testing.T) {
 	renderer := KustomizeRenderer{}
 	source := ResolvedSource{
@@ -56,12 +66,7 @@ func TestKustomizeRendererRendersResources(t *testing.T) {
 
 func writeTestChart(t *testing.T, chartDir, template string) {
 	t.Helper()
-	writeFile(t, filepath.Join(chartDir, "Chart.yaml"), `
-apiVersion: v2
-name: demo
-version: 1.2.3
-`)
-	writeFile(t, filepath.Join(chartDir, "templates", "manifest.yaml"), template)
+	writeNamedTestChart(t, chartDir, "demo", "1.2.3", template)
 }
 
 func TestKustomizeRendererAllowsRepoRootLocalComponents(t *testing.T) {
@@ -256,6 +261,162 @@ resources:
 	}
 }
 
+func TestKustomizeRendererInheritsParentNamespaceForNestedHelmCharts(t *testing.T) {
+	root := t.TempDir()
+	chartDir := filepath.Join(root, "charts", "demo")
+	writeTestChart(t, chartDir, `
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Release.Name }}
+data:
+  namespace: {{ .Release.Namespace }}
+`)
+	writeFile(t, filepath.Join(root, "apps", "demo", "kustomization.yaml"), `
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: overlay
+resources:
+  - ../../bases/mid
+`)
+	writeFile(t, filepath.Join(root, "bases", "mid", "kustomization.yaml"), `
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - ../leaf
+`)
+	writeFile(t, filepath.Join(root, "bases", "leaf", "kustomization.yaml"), `
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+helmCharts:
+  - name: demo
+    repo: https://charts.example.test
+    version: 1.2.3
+    releaseName: demo
+`)
+
+	result, diags, err := (KustomizeRenderer{}).Render(context.Background(), ResolvedSource{
+		RepoRoot: root,
+		Path:     filepath.Join("apps", "demo"),
+	}, RenderOptions{ChartAcquirer: &fakeChartAcquirer{chartDir: chartDir}})
+	if err != nil {
+		t.Fatalf("Render() error = %v", err)
+	}
+	if len(diags) != 0 {
+		t.Fatalf("diagnostics = %#v", diags)
+	}
+	assertConfigMapData(t, result, "namespace", "overlay")
+}
+
+func TestKustomizeRendererUsesLocalHelmChartByDefaultWithoutAcquisition(t *testing.T) {
+	root := t.TempDir()
+	writeTestChart(t, filepath.Join(root, "apps", "demo", "charts", "demo"), `
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Release.Name }}
+data:
+  source: local
+`)
+	writeFile(t, filepath.Join(root, "apps", "demo", "kustomization.yaml"), `
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+helmCharts:
+  - name: demo
+    releaseName: demo
+`)
+
+	acquirer := &fakeChartAcquirer{chartDir: filepath.Join(root, "unused")}
+	result, diags, err := (KustomizeRenderer{}).Render(context.Background(), ResolvedSource{
+		RepoRoot: root,
+		Path:     filepath.Join("apps", "demo"),
+	}, RenderOptions{ChartAcquirer: acquirer})
+	if err != nil {
+		t.Fatalf("Render() error = %v", err)
+	}
+	if len(diags) != 0 {
+		t.Fatalf("diagnostics = %#v", diags)
+	}
+	if len(acquirer.requests) != 0 {
+		t.Fatalf("len(acquirer.requests) = %d, want 0", len(acquirer.requests))
+	}
+	assertConfigMapData(t, result, "source", "local")
+}
+
+func TestKustomizeRendererUsesCustomHelmChartHome(t *testing.T) {
+	root := t.TempDir()
+	writeTestChart(t, filepath.Join(root, "apps", "demo", "vendor", "demo"), `
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Release.Name }}
+data:
+  source: custom
+`)
+	writeFile(t, filepath.Join(root, "apps", "demo", "kustomization.yaml"), `
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+helmGlobals:
+  chartHome: vendor
+helmCharts:
+  - name: demo
+    releaseName: demo
+`)
+
+	acquirer := &fakeChartAcquirer{chartDir: filepath.Join(root, "unused")}
+	result, diags, err := (KustomizeRenderer{}).Render(context.Background(), ResolvedSource{
+		RepoRoot: root,
+		Path:     filepath.Join("apps", "demo"),
+	}, RenderOptions{ChartAcquirer: acquirer})
+	if err != nil {
+		t.Fatalf("Render() error = %v", err)
+	}
+	if len(diags) != 0 {
+		t.Fatalf("diagnostics = %#v", diags)
+	}
+	if len(acquirer.requests) != 0 {
+		t.Fatalf("len(acquirer.requests) = %d, want 0", len(acquirer.requests))
+	}
+	assertConfigMapData(t, result, "source", "custom")
+}
+
+func TestKustomizeRendererPrefersVersionedLocalHelmChartOverRepo(t *testing.T) {
+	root := t.TempDir()
+	writeNamedTestChart(t, filepath.Join(root, "apps", "demo", "charts", "demo-1.2.3"), "demo", "1.2.3", `
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Release.Name }}
+data:
+  source: versioned-local
+`)
+	writeFile(t, filepath.Join(root, "apps", "demo", "kustomization.yaml"), `
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+helmCharts:
+  - name: demo
+    repo: https://charts.example.test
+    version: 1.2.3
+    releaseName: demo
+`)
+
+	acquirer := &fakeChartAcquirer{chartDir: filepath.Join(root, "unused")}
+	result, diags, err := (KustomizeRenderer{}).Render(context.Background(), ResolvedSource{
+		RepoRoot: root,
+		Path:     filepath.Join("apps", "demo"),
+	}, RenderOptions{ChartAcquirer: acquirer})
+	if err != nil {
+		t.Fatalf("Render() error = %v", err)
+	}
+	if len(diags) != 0 {
+		t.Fatalf("diagnostics = %#v", diags)
+	}
+	if len(acquirer.requests) != 0 {
+		t.Fatalf("len(acquirer.requests) = %d, want 0", len(acquirer.requests))
+	}
+	assertConfigMapData(t, result, "source", "versioned-local")
+}
+
 func TestKustomizeRendererPropagatesOCIChartAcquisitionOptions(t *testing.T) {
 	root := t.TempDir()
 	chartDir := filepath.Join(root, "charts", "demo")
@@ -312,6 +473,124 @@ helmCharts:
 	}
 }
 
+func TestKustomizeRendererPropagatesValuesInlineMergeMode(t *testing.T) {
+	root := t.TempDir()
+	chartDir := filepath.Join(root, "charts", "demo")
+	writeTestChart(t, chartDir, `
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Release.Name }}
+data:
+  image: {{ .Values.image }}
+`)
+	writeFile(t, filepath.Join(root, "apps", "demo", "values.yaml"), `
+image: from-file
+`)
+	writeFile(t, filepath.Join(root, "apps", "demo", "kustomization.yaml"), `
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+helmCharts:
+  - name: demo
+    repo: https://charts.example.test
+    version: 1.2.3
+    releaseName: demo
+    valuesFile: values.yaml
+    valuesInline:
+      image: inline-default
+    valuesMerge: merge
+`)
+
+	result, diags, err := (KustomizeRenderer{}).Render(context.Background(), ResolvedSource{
+		RepoRoot: root,
+		Path:     filepath.Join("apps", "demo"),
+	}, RenderOptions{ChartAcquirer: &fakeChartAcquirer{chartDir: chartDir}})
+	if err != nil {
+		t.Fatalf("Render() error = %v", err)
+	}
+	if len(diags) != 0 {
+		t.Fatalf("diagnostics = %#v", diags)
+	}
+	assertConfigMapData(t, result, "image", "from-file")
+}
+
+func TestKustomizeRendererRejectsUnsupportedHelmFields(t *testing.T) {
+	for _, tt := range []struct {
+		name          string
+		kustomization string
+		want          string
+	}{
+		{
+			name: "nameTemplate",
+			kustomization: `
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+helmCharts:
+  - name: demo
+    repo: https://charts.example.test
+    version: 1.2.3
+    nameTemplate: demo-{{ randAlpha 5 }}
+`,
+			want: "nameTemplate",
+		},
+		{
+			name: "devel",
+			kustomization: `
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+helmCharts:
+  - name: demo
+    repo: https://charts.example.test
+    version: 1.2.3
+    devel: true
+`,
+			want: "devel",
+		},
+		{
+			name: "debug",
+			kustomization: `
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+helmCharts:
+  - name: demo
+    repo: https://charts.example.test
+    version: 1.2.3
+    debug: true
+`,
+			want: "debug",
+		},
+		{
+			name: "configHome",
+			kustomization: `
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+helmGlobals:
+  configHome: helm-config
+helmCharts:
+  - name: demo
+    repo: https://charts.example.test
+    version: 1.2.3
+`,
+			want: "configHome",
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			assertKustomizeRenderErrorContains(t, tt.kustomization, tt.want)
+		})
+	}
+}
+
+func TestKustomizeRendererRejectsDeprecatedHelmChartInflationGenerator(t *testing.T) {
+	assertKustomizeRenderErrorContains(t, `
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+helmChartInflationGenerator:
+  - chartName: demo
+    chartRepoUrl: https://charts.example.test
+    chartVersion: 1.2.3
+`, "helmChartInflationGenerator")
+}
+
 func TestCopyRegularTreeSkipsGitFilesAndDirectories(t *testing.T) {
 	src := t.TempDir()
 	dst := filepath.Join(t.TempDir(), "dst")
@@ -337,6 +616,18 @@ func filterObjects(manifests []Manifest, kind string) []*unstructured.Unstructur
 		}
 	}
 	return out
+}
+
+func assertConfigMapData(t *testing.T, manifests []Manifest, key, want string) {
+	t.Helper()
+	configMaps := filterObjects(manifests, "ConfigMap")
+	if len(configMaps) != 1 {
+		t.Fatalf("len(configMaps) = %d, want 1", len(configMaps))
+	}
+	got, _, _ := unstructured.NestedString(configMaps[0].Object, "data", key)
+	if got != want {
+		t.Fatalf("ConfigMap data[%q] = %q, want %q", key, got, want)
+	}
 }
 
 func assertPathMissing(t *testing.T, path string) {
