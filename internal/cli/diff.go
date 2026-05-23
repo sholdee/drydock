@@ -13,7 +13,7 @@ func newDiffCommand() *cobra.Command {
 		Short: "Diff rendered desired manifests",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			return fmt.Errorf("diff orchestration requires Task 15 for path %s", flags.path)
+			return fmt.Errorf("%s is not wired yet for path %s", cmd.CommandPath(), flags.path)
 		},
 	}
 	bindCommonFlags(cmd, &flags)
@@ -23,8 +23,8 @@ func newDiffCommand() *cobra.Command {
 		Use:   "apps",
 		Short: "Diff all Applications",
 		Args:  cobra.NoArgs,
-		RunE: func(_ *cobra.Command, _ []string) error {
-			return fmt.Errorf("diff apps orchestration requires Task 15 for path %s", appsFlags.path)
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			return fmt.Errorf("%s is not wired yet for path %s", cmd.CommandPath(), appsFlags.path)
 		},
 	}
 	bindCommonFlags(apps, &appsFlags)
@@ -34,8 +34,8 @@ func newDiffCommand() *cobra.Command {
 		Use:   "app NAME",
 		Short: "Diff one Application",
 		Args:  cobra.ExactArgs(1),
-		RunE: func(_ *cobra.Command, args []string) error {
-			return fmt.Errorf("diff app orchestration for %q requires Task 15 for path %s", args[0], appFlags.path)
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return fmt.Errorf("%s for %q is not wired yet for path %s", cmd.CommandPath(), args[0], appFlags.path)
 		},
 	}
 	bindCommonFlags(app, &appFlags)
@@ -45,8 +45,8 @@ func newDiffCommand() *cobra.Command {
 		Use:   "images",
 		Short: "Diff rendered container images",
 		Args:  cobra.NoArgs,
-		RunE: func(_ *cobra.Command, _ []string) error {
-			return fmt.Errorf("diff images orchestration requires Task 15 for path %s", imagesFlags.path)
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			return fmt.Errorf("%s is not wired yet for path %s", cmd.CommandPath(), imagesFlags.path)
 		},
 	}
 	bindCommonFlags(images, &imagesFlags)

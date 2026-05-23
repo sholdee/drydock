@@ -67,6 +67,11 @@ CLI diff exit codes are fixed: 0 means success/no diff, 1 means success/diff
 found, 2 means runtime/config/render error. Keep command errors quiet enough for
 CI and avoid Cobra usage spam on runtime failures.
 
+The orchestrator owns end-to-end flow. Keep it thin: discovery, ApplicationSet
+expansion, planning, rendering, and formatting should stay in their packages. If
+orchestration grows complicated, split behavior into narrower package functions
+rather than accumulating logic in one file.
+
 ## Renderers
 
 Renderers implement `internal/render.Renderer`. The default implementation path
