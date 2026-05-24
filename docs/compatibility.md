@@ -41,6 +41,10 @@ Supported in the MVP:
 - `--strip-attr KEY` diff normalization for metadata label and annotation keys
 - Application-level `spec.ignoreDifferences[].jsonPointers` for rendered
   manifest diffs
+- Global `resource.customizations.ignoreDifferences.*.jsonPointers` from
+  discovered `argocd-cm` and Argo CD Helm values `configs.cm`
+- Argo CD core resource exclusions plus discovered global
+  `resource.exclusions` and `resource.inclusions`
 - Explicit rendered-resource filters through `--skip-kind`, `--skip-crds`, and
   `--skip-secrets`
 - `diff images` conservative workload image diffs
@@ -85,12 +89,12 @@ Not reproduced offline:
 - Live Argo CD server-side diff
 - Application-level `ignoreDifferences` `jqPathExpressions` and
   `managedFieldsManagers`
+- Global `resource.customizations` `jqPathExpressions`,
+  `managedFieldsManagers`, `ignoreResourceUpdates`, `knownTypeFields`, health,
+  actions, and Lua settings
 - Project/RBAC/destination validation
 - Authenticated remote resources
 - Remote Kustomize Git refs, bases, components, patches, generators,
   transformers, validators, `crds`, `openapi`, and replacements
-- Argo CD global resource inclusions/exclusions and global
-  `resource.customizations.*`
-
 The tool pins Argo CD dependencies. Upgrade Argo CD dependencies deliberately
 and update compatibility tests in the same change.

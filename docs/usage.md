@@ -232,16 +232,19 @@ argocd-local diff apps \
 If stripped attributes are the only rendered difference for a resource, no diff
 result is emitted for that resource.
 
-Application-level `spec.ignoreDifferences[].jsonPointers` rules are honored for
-rendered resource diffs. When a matching resource exists on both sides,
-`argocd-local` applies the union of matching JSON pointers from the baseline
-and current Application definitions so a newly added ignore rule can suppress
-the intended PR noise immediately. `jqPathExpressions`,
-`managedFieldsManagers`, and global `argocd-cm` resource customizations are not
-implemented yet.
+Application-level `spec.ignoreDifferences[].jsonPointers` rules and global
+`resource.customizations.ignoreDifferences.*.jsonPointers` settings from
+discovered `argocd-cm` or Helm values `configs.cm` are honored for rendered
+resource diffs. When a matching resource exists on both sides, `argocd-local`
+applies the union of matching JSON pointers from the baseline and current
+Applications and global settings so a newly added ignore rule can suppress the
+intended PR noise immediately. `jqPathExpressions` and
+`managedFieldsManagers` are reported as settings diagnostics but are not
+enforced yet.
 
-Rendered-resource filters run before diff comparison. For example, omit CRDs
-and Secrets from a pull request diff with:
+Rendered-resource filters run before diff comparison. Argo CD core exclusions
+and discovered `resource.exclusions`/`resource.inclusions` are applied
+automatically. For example, omit CRDs and Secrets from a pull request diff with:
 
 ```bash
 argocd-local diff apps \

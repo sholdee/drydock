@@ -5,12 +5,14 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 
 	argoappv1 "github.com/argoproj/argo-cd/v3/pkg/apis/application/v1alpha1"
 	"github.com/argoproj/argo-cd/v3/util/glob"
 	"github.com/home-operations/argocd-local/internal/change"
 	"github.com/home-operations/argocd-local/internal/chart"
+	"github.com/home-operations/argocd-local/internal/config"
 	"github.com/home-operations/argocd-local/internal/diagnostic"
 	"github.com/home-operations/argocd-local/internal/diff"
 	"github.com/home-operations/argocd-local/internal/manifest"
@@ -354,13 +356,13 @@ func diffDocuments(build BuildResult) ([]diff.Document, error) {
 				Name:      id.Name,
 			},
 			Body:               body,
-			IgnoreJSONPointers: ignoreJSONPointersFor(item.Application, id),
+			IgnoreJSONPointers: ignoreJSONPointersFor(item.Application, id, build.Settings),
 		})
 	}
 	return docs, nil
 }
 
-func ignoreJSONPointersFor(application argoappv1.Application, id manifest.Identity) []string {
+func ignoreJSONPointersFor(application argoappv1.Application, id manifest.Identity, settings config.ArgoSettings) []string {
 	var pointers []string
 	for _, rule := range application.Spec.IgnoreDifferences {
 		if !ignoreRuleMatches(rule, id) {
@@ -368,7 +370,38 @@ func ignoreJSONPointersFor(application argoappv1.Application, id manifest.Identi
 		}
 		pointers = append(pointers, rule.JSONPointers...)
 	}
+	pointers = append(pointers, globalIgnoreJSONPointersFor(settings, id)...)
 	return pointers
+}
+
+func globalIgnoreJSONPointersFor(settings config.ArgoSettings, id manifest.Identity) []string {
+	var pointers []string
+	keys := make([]string, 0, len(settings.ResourceCustomizations))
+	for key := range settings.ResourceCustomizations {
+		if resourceCustomizationKeyMatches(key, id) {
+			keys = append(keys, key)
+		}
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		customization := settings.ResourceCustomizations[key]
+		pointers = append(pointers, customization.IgnoreDifferences.JSONPointers...)
+	}
+	return pointers
+}
+
+func resourceCustomizationKeyMatches(key string, id manifest.Identity) bool {
+	if key == "" {
+		return false
+	}
+	if key == "*/*" {
+		return true
+	}
+	group, kind, found := strings.Cut(key, "/")
+	if !found {
+		return glob.Match(key, id.Kind)
+	}
+	return glob.Match(group, id.Group) && glob.Match(kind, id.Kind)
 }
 
 func ignoreRuleMatches(rule argoappv1.ResourceIgnoreDifferences, id manifest.Identity) bool {
