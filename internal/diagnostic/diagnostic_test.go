@@ -109,3 +109,40 @@ func TestWithStableCodesAssignsKnownCodes(t *testing.T) {
 		})
 	}
 }
+
+func TestStableCodesIncludeProviderFixtureDiagnostics(t *testing.T) {
+	tests := []struct {
+		name    string
+		message string
+		want    string
+	}{
+		{
+			name:    "invalid fixture",
+			message: "provider fixture invalid: failed to decode fixture.yaml",
+			want:    "appset.provider-fixture-invalid",
+		},
+		{
+			name:    "no match",
+			message: "provider fixture supplied but no entries match cluster generator",
+			want:    "appset.provider-no-match",
+		},
+		{
+			name:    "unsupported filter",
+			message: "provider filter cannot be evaluated from fixture fields",
+			want:    "appset.provider-unsupported-filter",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			diags := WithStableCodes([]Diagnostic{{
+				Severity: SeverityWarning,
+				Category: "appset",
+				Message:  tt.message,
+			}})
+			if got := diags[0].Code; got != tt.want {
+				t.Fatalf("Code = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}

@@ -112,10 +112,18 @@ func StableCode(diag Diagnostic) string {
 }
 
 func appSetCode(message string) string {
-	if strings.Contains(message, "unsupported ApplicationSet generator") {
+	switch {
+	case strings.Contains(message, "provider fixture invalid"):
+		return "appset.provider-fixture-invalid"
+	case strings.Contains(message, "provider fixture supplied but no entries match"):
+		return "appset.provider-no-match"
+	case strings.Contains(message, "provider filter cannot be evaluated"):
+		return "appset.provider-unsupported-filter"
+	case strings.Contains(message, "unsupported ApplicationSet generator"):
 		return "appset.unsupported-generator"
+	default:
+		return "appset.unspecified"
 	}
-	return "appset.unspecified"
 }
 
 func settingsCode(message string) string {
