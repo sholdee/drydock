@@ -147,6 +147,10 @@ func cloneNormalization(normalization Normalization) Normalization {
 }
 
 func normalizedDocumentBodies(left, right Document, hasLeft, hasRight bool, opts Options) (string, string, error) {
+	if hasLeft && hasRight && len(left.Normalization.ManagedFieldsManagers) > 0 {
+		return normalizedDocumentPairBodies(left, right, opts)
+	}
+
 	var leftBody string
 	if hasLeft {
 		body, err := normalizeDocumentBody(left, opts)
@@ -165,6 +169,35 @@ func normalizedDocumentBodies(left, right Document, hasLeft, hasRight bool, opts
 		rightBody = body
 	}
 
+	return leftBody, rightBody, nil
+}
+
+func normalizedDocumentPairBodies(left, right Document, opts Options) (string, string, error) {
+	leftObject, leftRemoved, err := normalizeDiffObject(left.Body, opts, left.Normalization)
+	if err != nil {
+		return "", "", fmt.Errorf("normalize %s: %w", headerOf(left), err)
+	}
+	rightObject, rightRemoved, err := normalizeDiffObject(right.Body, opts, right.Normalization)
+	if err != nil {
+		return "", "", fmt.Errorf("normalize %s: %w", headerOf(right), err)
+	}
+	if !leftRemoved && !rightRemoved {
+		leftObject, rightObject, err = normalizeManagedFieldsPair(leftObject, rightObject, left.Normalization.ManagedFieldsManagers)
+		if err != nil {
+			return "", "", fmt.Errorf("normalize %s: %w", headerOf(right), err)
+		}
+		stripManagedFields(leftObject)
+		stripManagedFields(rightObject)
+	}
+
+	leftBody, err := encodeDiffYAML(leftObject)
+	if err != nil {
+		return "", "", fmt.Errorf("normalize %s: %w", headerOf(left), err)
+	}
+	rightBody, err := encodeDiffYAML(rightObject)
+	if err != nil {
+		return "", "", fmt.Errorf("normalize %s: %w", headerOf(right), err)
+	}
 	return leftBody, rightBody, nil
 }
 
@@ -247,29 +280,41 @@ func normalizeDiffBody(body string, opts Options, normalization Normalization) (
 	if len(attrs) == 0 && len(normalization.JSONPointers) == 0 && len(normalization.JQPathExpressions) == 0 {
 		return body, nil
 	}
-	if err := validateJSONPointers(normalization.JSONPointers); err != nil {
+	object, removedRoot, err := normalizeDiffObject(body, opts, normalization)
+	if err != nil {
 		return "", err
 	}
+	if removedRoot {
+		return "", nil
+	}
+	return encodeDiffYAML(object)
+}
+
+func normalizeDiffObject(body string, opts Options, normalization Normalization) (map[string]any, bool, error) {
+	attrs := stripAttrSet(opts.StripAttrs)
 	if body == "" {
-		return body, nil
+		return nil, false, nil
+	}
+	if err := validateJSONPointers(normalization.JSONPointers); err != nil {
+		return nil, false, err
 	}
 	object, err := decodeDiffYAML(body)
 	if err != nil {
-		return "", err
+		return nil, false, err
 	}
 	stripMetadataAttrs(object, attrs)
 	object, err = removeJSONPointers(object, normalization.JSONPointers)
 	if err != nil {
 		if errors.Is(err, errJSONPointerRemovedRoot) {
-			return "", nil
+			return nil, true, nil
 		}
-		return "", err
+		return nil, false, err
 	}
 	object, err = removeJQPathExpressions(object, normalization.JQPathExpressions)
 	if err != nil {
-		return "", err
+		return nil, false, err
 	}
-	return encodeDiffYAML(object)
+	return object, false, nil
 }
 
 func stripAttrSet(attrs []string) map[string]struct{} {

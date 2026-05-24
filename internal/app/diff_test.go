@@ -177,6 +177,64 @@ func TestOrchestratorDiffAppsInvalidJQPathExpressionReturnsError(t *testing.T) {
 	}
 }
 
+func TestOrchestratorDiffAppsHonorsApplicationManagedFieldsManagers(t *testing.T) {
+	root := t.TempDir()
+	left := filepath.Join(root, "left")
+	right := filepath.Join(root, "right")
+	writeDeploymentAppWithManagedReplicas(t, left, 1, "", "")
+	writeDeploymentAppWithManagedReplicas(t, right, 2, "kube-controller-manager", `  ignoreDifferences:
+    - group: apps
+      kind: Deployment
+      name: demo
+      managedFieldsManagers:
+        - kube-controller-manager
+`)
+
+	result, err := Orchestrator{}.DiffApps(context.Background(), DiffRequest{
+		LeftPath:  left,
+		RightPath: right,
+		Unified:   3,
+	})
+	if err != nil {
+		t.Fatalf("DiffApps() error = %v", err)
+	}
+	if len(result.Results) != 0 {
+		t.Fatalf("len(Results) = %d, want managed replicas ignored: %#v", len(result.Results), result.Results)
+	}
+	if len(result.Diagnostics) != 0 {
+		t.Fatalf("len(Diagnostics) = %d, want no diagnostics: %#v", len(result.Diagnostics), result.Diagnostics)
+	}
+}
+
+func TestOrchestratorDiffAppsHonorsGlobalManagedFieldsManagers(t *testing.T) {
+	root := t.TempDir()
+	left := filepath.Join(root, "left")
+	right := filepath.Join(root, "right")
+	writeDeploymentAppWithManagedReplicas(t, left, 1, "", "")
+	writeDeploymentAppWithManagedReplicas(t, right, 2, "kube-controller-manager", "")
+	writeGlobalCustomization(t, right, `resource.customizations: |
+    apps/Deployment:
+      ignoreDifferences: |
+        managedFieldsManagers:
+          - kube-controller-manager
+`)
+
+	result, err := Orchestrator{}.DiffApps(context.Background(), DiffRequest{
+		LeftPath:  left,
+		RightPath: right,
+		Unified:   3,
+	})
+	if err != nil {
+		t.Fatalf("DiffApps() error = %v", err)
+	}
+	if len(result.Results) != 0 {
+		t.Fatalf("len(Results) = %d, want managed replicas ignored: %#v", len(result.Results), result.Results)
+	}
+	if len(result.Diagnostics) != 0 {
+		t.Fatalf("len(Diagnostics) = %d, want no diagnostics: %#v", len(result.Diagnostics), result.Diagnostics)
+	}
+}
+
 func TestOrchestratorDiffAppsHonorsSplitGlobalResourceCustomizationJSONPointers(t *testing.T) {
 	root := t.TempDir()
 	left := filepath.Join(root, "left")
@@ -233,7 +291,7 @@ func TestOrchestratorDiffAppsUnionsApplicationAndGlobalJSONPointers(t *testing.T
 	}
 }
 
-func TestOrchestratorDiffAppsReportsUnsupportedGlobalCustomizationDiagnostics(t *testing.T) {
+func TestOrchestratorDiffAppsDoesNotWarnForEnforcedGlobalCustomizations(t *testing.T) {
 	root := t.TempDir()
 	left := filepath.Join(root, "left")
 	right := filepath.Join(root, "right")
@@ -256,13 +314,8 @@ func TestOrchestratorDiffAppsReportsUnsupportedGlobalCustomizationDiagnostics(t 
 	if err != nil {
 		t.Fatalf("DiffApps() error = %v", err)
 	}
-	if len(result.Diagnostics) != 1 {
-		t.Fatalf("len(Diagnostics) = %d, want one managedFieldsManagers warning: %#v", len(result.Diagnostics), result.Diagnostics)
-	}
-	for _, diag := range result.Diagnostics {
-		if diag.Severity != diagnostic.SeverityWarning || diag.Category != "settings" {
-			t.Fatalf("diagnostic = %#v, want settings warning", diag)
-		}
+	if len(result.Diagnostics) != 0 {
+		t.Fatalf("len(Diagnostics) = %d, want none: %#v", len(result.Diagnostics), result.Diagnostics)
 	}
 }
 
@@ -794,6 +847,54 @@ spec:
           image: example/app:v1
         - name: sidecar
           image: `+sidecarImage+`
+`)
+}
+
+func writeDeploymentAppWithManagedReplicas(t *testing.T, root string, replicas int, manager, ignoreDifferences string) {
+	t.Helper()
+	writeTestFile(t, filepath.Join(root, "apps", "demo.yaml"), `apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: demo
+  namespace: argocd
+spec:
+  source:
+    repoURL: https://github.com/example/repo
+    path: manifests/demo
+    targetRevision: main
+  destination:
+    name: in-cluster
+    namespace: demo
+`+ignoreDifferences)
+	managedFields := ""
+	if manager != "" {
+		managedFields = `  managedFields:
+    - apiVersion: apps/v1
+      fieldsType: FieldsV1
+      fieldsV1:
+        f:spec:
+          f:replicas: {}
+      manager: ` + manager + `
+      operation: Update
+`
+	}
+	writeTestFile(t, filepath.Join(root, "manifests", "demo", "deployment.yaml"), `apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: demo
+`+managedFields+`spec:
+  replicas: `+fmt.Sprint(replicas)+`
+  selector:
+    matchLabels:
+      app: demo
+  template:
+    metadata:
+      labels:
+        app: demo
+    spec:
+      containers:
+        - name: app
+          image: example/app:v1
 `)
 }
 
