@@ -2,6 +2,7 @@ package diff
 
 import (
 	"encoding/json"
+	"fmt"
 	"reflect"
 	"strings"
 	"testing"
@@ -577,6 +578,50 @@ func TestRunIgnoreJSONPointerSecretRedactionHappensAfterRemoval(t *testing.T) {
 	}
 }
 
+func TestRunHonorsManagedFieldsManagersFromLeftSide(t *testing.T) {
+	left := []Document{{
+		Parent:        testParent(),
+		Resource:      Resource{Group: "apps", Kind: "Deployment", Namespace: "default", Name: "web"},
+		Body:          deploymentWithManagedReplicas("kube-controller-manager", 1),
+		Normalization: Normalization{ManagedFieldsManagers: []string{"kube-controller-manager"}},
+	}}
+	right := []Document{{
+		Parent:   testParent(),
+		Resource: Resource{Group: "apps", Kind: "Deployment", Namespace: "default", Name: "web"},
+		Body:     deploymentWithManagedReplicas("", 2),
+	}}
+
+	results, err := Run(left, right, Options{Unified: 3})
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if len(results) != 0 {
+		t.Fatalf("len(results) = %d, want managed replicas ignored: %#v", len(results), results)
+	}
+}
+
+func TestRunHonorsManagedFieldsManagersFromRightSide(t *testing.T) {
+	left := []Document{{
+		Parent:   testParent(),
+		Resource: Resource{Group: "apps", Kind: "Deployment", Namespace: "default", Name: "web"},
+		Body:     deploymentWithManagedReplicas("", 1),
+	}}
+	right := []Document{{
+		Parent:        testParent(),
+		Resource:      Resource{Group: "apps", Kind: "Deployment", Namespace: "default", Name: "web"},
+		Body:          deploymentWithManagedReplicas("kube-controller-manager", 2),
+		Normalization: Normalization{ManagedFieldsManagers: []string{"kube-controller-manager"}},
+	}}
+
+	results, err := Run(left, right, Options{Unified: 3})
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if len(results) != 0 {
+		t.Fatalf("len(results) = %d, want managed replicas ignored: %#v", len(results), results)
+	}
+}
+
 func TestDocumentNormalizationOmittedFromStructuredOutput(t *testing.T) {
 	doc := configMapDocument("same", []string{"/data/value"})
 
@@ -795,6 +840,40 @@ func secretDocument(password, token string, pointers []string) Document {
 		Body:          "apiVersion: v1\nkind: Secret\nmetadata:\n  name: creds\n  namespace: default\ndata:\n  password: " + password + "\n  token: " + token + "\n",
 		Normalization: Normalization{JSONPointers: pointers},
 	}
+}
+
+func deploymentWithManagedReplicas(manager string, replicas int) string {
+	managedFields := ""
+	if manager != "" {
+		managedFields = `  managedFields:
+    - apiVersion: apps/v1
+      fieldsType: FieldsV1
+      fieldsV1:
+        f:spec:
+          f:replicas: {}
+      manager: ` + manager + `
+      operation: Update
+`
+	}
+	return fmt.Sprintf(`apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: web
+  namespace: default
+%sspec:
+  replicas: %d
+  selector:
+    matchLabels:
+      app: web
+  template:
+    metadata:
+      labels:
+        app: web
+    spec:
+      containers:
+        - name: web
+          image: ghcr.io/example/web:v1
+`, managedFields, replicas)
 }
 
 func testParent() Parent {

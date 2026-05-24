@@ -312,16 +312,7 @@ func parseOverrideIgnoreDifferences(raw string, provenance diagnostic.Provenance
 		}}
 	}
 
-	var diags []diagnostic.Diagnostic
-	if len(ignore.ManagedFieldsManagers) > 0 {
-		diags = append(diags, diagnostic.Diagnostic{
-			Severity:   diagnostic.SeverityWarning,
-			Category:   "settings",
-			Message:    "resource customization managedFieldsManagers are discovered but not enforced",
-			Provenance: provenance,
-		})
-	}
-	return ignore, diags
+	return ignore, nil
 }
 
 func splitResourceCustomizationKey(suffix string, provenance diagnostic.Provenance) (string, *diagnostic.Diagnostic) {
