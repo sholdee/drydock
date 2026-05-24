@@ -58,7 +58,8 @@ Current shared flags are `--path`, `--path-orig`, `--selector`/`-l`, `--repo-map
 `--git-ssh-key-file`, `--git-ssh-passphrase`, `--git-known-hosts-file`,
 `--refresh-charts`, `--chart-cache-dir`, `--helm-username`,
 `--helm-password`, `--helm-bearer-token`, `--registry-config`,
-`--refresh-remotes`, `--remote-cache-dir`, `--changed-only`,
+`--refresh-remotes`, `--remote-cache-dir`, `--remote-username`,
+`--remote-password`, `--remote-bearer-token`, `--changed-only`,
 `--strict-changed-only`, `--strict`, `--exit-code`, `--output`/`-o`,
 `--unified`/`-u`, `--strip-attr`, `--skip-kind`, `--skip-crds`,
 `--skip-secrets`, and `--limit-bytes`.
@@ -125,7 +126,8 @@ The MVP currently supports:
 - Deterministic `--repo-map` and gated `--allow-network` Git clone/fetch for
   path-based Git sources.
 - Explicit Git HTTPS bearer/basic auth, Git SSH key-file auth, HTTP(S) Helm
-  bearer/basic auth, and explicit OCI Helm registry config path plumbing.
+  bearer/basic auth, HTTP(S) remote Kustomize resource bearer/basic auth, and
+  explicit OCI Helm registry config path plumbing.
 - Repeated-resource last-wins behavior inside one Application, with a
   diagnostic.
 - Parent Application-aware desired manifest identity for diffs.
@@ -170,8 +172,8 @@ Do not treat these as supported without an explicit design update:
   ApplicationSet generators.
 - Required default shellouts to `helm`, `kustomize`, `kubectl`, or `argocd`.
 - Remote Kustomize bases, components, patches, generators, transformers,
-  validators, `crds`, `openapi`, replacements, authenticated remote resources,
-  and arbitrary Kustomize Git refs.
+  validators, `crds`, `openapi`, replacements, and arbitrary Kustomize Git
+  refs outside supported `resources:` acquisition.
 
 ## Source Resolution
 
@@ -207,11 +209,13 @@ auth; bearer token wins over username/password. Git SSH auth supports
 `ssh://host/org/repo.git`; omitted SSH usernames default to `git`. SSH auth
 requires `--git-ssh-key-file` and `--git-known-hosts-file`; missing key files,
 missing known-hosts files, and passphrase failures must fail before network
-access with non-secret diagnostics. HTTP(S) Helm auth supports bearer token and
-basic auth; bearer token wins over username/password. OCI Helm auth is provided
-only through an explicit `--registry-config` path. Do not consume secret data
-from discovered Argo CD repository Secrets until a later design update says so.
-Never print password, bearer token, SSH private key, SSH passphrase, or
+access with non-secret diagnostics. HTTP(S) Helm auth and HTTP(S) remote
+Kustomize resource auth support bearer token and basic auth; bearer token wins
+over username/password. Kustomize Git remote refs reuse the explicit `--git-*`
+credentials. OCI Helm auth is provided only through an explicit
+`--registry-config` path. Do not consume secret data from discovered Argo CD
+repository Secrets until a later design update says so. Never print password,
+bearer token, SSH private key, SSH passphrase, remote resource credential, or
 registry credential values.
 
 ## Application Planning
@@ -289,9 +293,11 @@ acquisition and Helm Go renderer into a temporary workspace. Do not enable
 Kustomize's Helm shellout plugin or write generated charts into the Git tree.
 Single-file HTTP(S) Kustomize `resources:` entries are fetched through
 argocd-local's remote resource cache and rewritten into the temporary
-Kustomize workspace. Remote Kustomize bases, components, patches, generators,
-transformers, validators, `crds`, `openapi`, replacements, authenticated remote
-resources, and Git-style refs remain unsupported.
+Kustomize workspace. Remote Kustomize resource credentials are explicit flags
+only and must be redacted in errors. Remote Kustomize bases, components,
+patches, generators, transformers, validators, `crds`, `openapi`,
+replacements, and Git-style refs outside the supported `resources:` acquisition
+path remain unsupported.
 Helm rendering must use Go libraries by default. Preserve these Argo CD
 semantics in the MVP: release name defaults to Application name, destination
 namespace is passed to Helm, and `valuesObject` overrides `values`.

@@ -40,6 +40,8 @@ type RenderOptions struct {
 	OfflineRemoteResources       bool
 	RefreshRemoteResources       bool
 	RemoteResourceForbiddenRoots []string
+	RemoteResourceCredentials    remote.Credentials
+	RemoteResourceGitCredentials remote.GitCredentials
 	RemoteResourceAcquirer       remote.Acquirer
 	IncludeCRDs                  bool
 	IncludeCRDsSet               bool

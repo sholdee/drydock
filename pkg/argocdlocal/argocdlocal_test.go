@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/home-operations/argocd-local/internal/remote"
 )
 
 func TestRenderApplications(t *testing.T) {
@@ -158,6 +160,177 @@ resources:
 	}
 }
 
+func TestClientPassesRemoteResourceCredentials(t *testing.T) {
+	root := t.TempDir()
+	remoteFile := filepath.Join(t.TempDir(), "remote.yaml")
+	writeAPIFile(t, filepath.Join(root, "apps", "remote.yaml"), `apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: remote
+  namespace: argocd
+spec:
+  source:
+    repoURL: https://github.com/example/repo
+    targetRevision: main
+    path: remote
+  destination:
+    name: in-cluster
+    namespace: default
+`)
+	writeAPIFile(t, filepath.Join(root, "remote", "kustomization.yaml"), `apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - https://raw.githubusercontent.com/example/repo/main/remote.yaml
+`)
+	writeAPIFile(t, remoteFile, `apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: remote
+`)
+	credentials := RemoteResourceCredentials{
+		Username:    "remote-user",
+		Password:    "remote-pass",
+		BearerToken: "remote-token",
+	}
+	gitCredentials := GitCredentials{
+		Username:          "git-user",
+		Password:          "git-pass",
+		BearerToken:       "git-token",
+		SSHPrivateKeyPath: filepath.Join(root, "id_ed25519"),
+		SSHPassphrase:     "git-phrase",
+		SSHKnownHostsPath: filepath.Join(root, "known_hosts"),
+	}
+	remoteAcquirer := &recordingRemoteAcquirer{path: remoteFile}
+
+	_, err := NewClient(Config{
+		Path:                      root,
+		Offline:                   true,
+		RefreshRemoteResources:    true,
+		RemoteResourceCacheDir:    t.TempDir(),
+		RemoteResourceCredentials: credentials,
+		GitCredentials:            gitCredentials,
+		RemoteResourceAcquirer:    remoteAcquirer,
+	}).Render(context.Background())
+	if err != nil {
+		t.Fatalf("Render() error = %v", err)
+	}
+	if len(remoteAcquirer.options) != 1 {
+		t.Fatalf("remote options = %d, want 1", len(remoteAcquirer.options))
+	}
+	if got := remoteAcquirer.options[0].Credentials; got != credentials {
+		t.Fatalf("remote credentials = %#v, want %#v", got, credentials)
+	}
+	if got := remoteAcquirer.options[0].GitCredentials; got != gitCredentials {
+		t.Fatalf("remote git credentials = %#v, want %#v", got, gitCredentials)
+	}
+}
+
+func TestClientPassesRemoteGitMetadataToInjectedRemoteAcquirer(t *testing.T) {
+	remoteAcquirer := &recordingRemoteAcquirer{
+		path:      t.TempDir(),
+		revision:  "resolved-sha",
+		fromCache: true,
+	}
+	adapter := remoteResourceAcquirerAdapter{acquirer: remoteAcquirer}
+
+	result, err := adapter.Acquire(context.Background(), remote.Request{
+		URL:      "git::https://github.com/example/repo.git//manifests?ref=v1",
+		Kind:     remote.RequestGitRepo,
+		RepoURL:  "https://github.com/example/repo.git",
+		Revision: "v1",
+	}, remote.Options{
+		CacheDir: t.TempDir(),
+		GitCredentials: remote.GitCredentials{
+			Username:    "git-user",
+			Password:    "git-pass",
+			BearerToken: "git-token",
+		},
+	})
+	if err != nil {
+		t.Fatalf("Acquire() error = %v", err)
+	}
+	if len(remoteAcquirer.requests) != 1 {
+		t.Fatalf("remote requests = %d, want 1", len(remoteAcquirer.requests))
+	}
+	if got := remoteAcquirer.requests[0]; got.Kind != RemoteResourceGitRepo || got.RepoURL != "https://github.com/example/repo.git" || got.Revision != "v1" {
+		t.Fatalf("remote request = %#v, want Git metadata", got)
+	}
+	if got := remoteAcquirer.options[0].GitCredentials; got.Username != "git-user" || got.Password != "git-pass" || got.BearerToken != "git-token" {
+		t.Fatalf("remote git credentials = %#v, want public Git credentials", got)
+	}
+	if result.Revision != "resolved-sha" || !result.FromCache {
+		t.Fatalf("remote result = %#v, want revision/from-cache metadata", result)
+	}
+}
+
+func TestClientRedactsRemoteResourceCredentialErrors(t *testing.T) {
+	root := t.TempDir()
+	remoteRef := "https://github.com/example/repo.git//manifests/remote.yaml?ref=secret%2Frevision"
+	writeAPIFile(t, filepath.Join(root, "apps", "remote.yaml"), `apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: remote
+  namespace: argocd
+spec:
+  source:
+    repoURL: https://github.com/example/repo
+    targetRevision: main
+    path: remote
+  destination:
+    name: in-cluster
+    namespace: default
+`)
+	writeAPIFile(t, filepath.Join(root, "remote", "kustomization.yaml"), `apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - `+remoteRef+`
+`)
+	secrets := []string{
+		remoteRef,
+		"secret%2Frevision",
+		"secret/revision",
+		"remote-user",
+		"remote-pass",
+		"remote-token",
+		"git-user",
+		"git-pass",
+		"git-token",
+		"git-phrase",
+		"private-key-line",
+		"-----BEGIN OPENSSH PRIVATE KEY-----",
+	}
+	remoteAcquirer := &recordingRemoteAcquirer{err: errors.New("failed " + strings.Join(secrets, " "))}
+
+	result, err := NewClient(Config{
+		Path:    root,
+		Offline: true,
+		RemoteResourceCredentials: RemoteResourceCredentials{
+			Username:    "remote-user",
+			Password:    "remote-pass",
+			BearerToken: "remote-token",
+		},
+		GitCredentials: GitCredentials{
+			Username:      "git-user",
+			Password:      "git-pass",
+			BearerToken:   "git-token",
+			SSHPrivateKey: "-----BEGIN OPENSSH PRIVATE KEY-----\nprivate-key-line\n-----END OPENSSH PRIVATE KEY-----",
+			SSHPassphrase: "git-phrase",
+		},
+		RemoteResourceCacheDir: t.TempDir(),
+		RemoteResourceAcquirer: remoteAcquirer,
+	}).Render(context.Background())
+	if err == nil {
+		t.Fatal("Render() error = nil, want injected remote failure")
+	}
+	assertAPIMessageRedacted(t, err.Error(), secrets)
+	for _, diagnostic := range result.Diagnostics {
+		assertAPIMessageRedacted(t, diagnostic.Message, secrets)
+	}
+	for _, status := range result.Statuses {
+		assertAPIMessageRedacted(t, status.Message, secrets)
+	}
+}
+
 func TestRenderReturnsPartialResultDiagnosticsAndStatusesOnInjectedError(t *testing.T) {
 	root := t.TempDir()
 	writeAPIFile(t, filepath.Join(root, "apps", "local.yaml"), `apiVersion: argoproj.io/v1alpha1
@@ -304,10 +477,12 @@ func (acquirer *recordingChartAcquirer) Acquire(_ context.Context, request Chart
 }
 
 type recordingRemoteAcquirer struct {
-	path     string
-	err      error
-	requests []RemoteResourceRequest
-	options  []RemoteResourceOptions
+	path      string
+	revision  string
+	fromCache bool
+	err       error
+	requests  []RemoteResourceRequest
+	options   []RemoteResourceOptions
 }
 
 func (acquirer *recordingRemoteAcquirer) Acquire(_ context.Context, request RemoteResourceRequest, opts RemoteResourceOptions) (RemoteResourceResult, error) {
@@ -316,7 +491,7 @@ func (acquirer *recordingRemoteAcquirer) Acquire(_ context.Context, request Remo
 	if acquirer.err != nil {
 		return RemoteResourceResult{}, acquirer.err
 	}
-	return RemoteResourceResult{Path: acquirer.path, URL: request.URL}, nil
+	return RemoteResourceResult{Path: acquirer.path, URL: request.URL, Revision: acquirer.revision, FromCache: acquirer.fromCache}, nil
 }
 
 func writeDiffTrees(t *testing.T, leftVersion, rightVersion string) (string, string) {
@@ -430,6 +605,21 @@ func containsString(items []string, want string) bool {
 		}
 	}
 	return false
+}
+
+func assertAPIMessageRedacted(t *testing.T, message string, secrets []string) {
+	t.Helper()
+	for _, secret := range secrets {
+		if strings.Contains(message, secret) {
+			t.Fatalf("message = %q leaked secret %q", message, secret)
+		}
+	}
+	if strings.Contains(message, "[redacted]") {
+		return
+	}
+	if message != "" {
+		t.Fatalf("message = %q, want redacted marker", message)
+	}
 }
 
 func boolPtr(value bool) *bool {

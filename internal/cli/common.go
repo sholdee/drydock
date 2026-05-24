@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/home-operations/argocd-local/internal/chart"
+	"github.com/home-operations/argocd-local/internal/remote"
 	"github.com/home-operations/argocd-local/internal/source"
 	"github.com/spf13/cobra"
 )
@@ -32,6 +33,9 @@ type commonFlags struct {
 	registryConfig    string
 	refreshRemotes    bool
 	remoteCacheDir    string
+	remoteUsername    string
+	remotePassword    string
+	remoteBearerToken string
 	skipKinds         []string
 	skipCRDs          bool
 	skipSecrets       bool
@@ -79,6 +83,9 @@ func bindCommonFlags(cmd *cobra.Command, flags *commonFlags) {
 	cmd.Flags().StringVar(&flags.registryConfig, "registry-config", flags.registryConfig, "Helm OCI registry config file")
 	cmd.Flags().BoolVar(&flags.refreshRemotes, "refresh-remotes", flags.refreshRemotes, "refresh cached remote Kustomize resources before rendering")
 	cmd.Flags().StringVar(&flags.remoteCacheDir, "remote-cache-dir", flags.remoteCacheDir, "directory for cached remote Kustomize resources")
+	cmd.Flags().StringVar(&flags.remoteUsername, "remote-username", flags.remoteUsername, "username for authenticated remote Kustomize HTTP resources")
+	cmd.Flags().StringVar(&flags.remotePassword, "remote-password", flags.remotePassword, "password for authenticated remote Kustomize HTTP resources")
+	cmd.Flags().StringVar(&flags.remoteBearerToken, "remote-bearer-token", flags.remoteBearerToken, "bearer token for authenticated remote Kustomize HTTP resources")
 	cmd.Flags().StringArrayVar(&flags.skipKinds, "skip-kind", flags.skipKinds, "rendered resource kind to omit from output and diffs")
 	cmd.Flags().BoolVar(&flags.skipCRDs, "skip-crds", flags.skipCRDs, "omit CustomResourceDefinition resources from output and diffs")
 	cmd.Flags().BoolVar(&flags.skipSecrets, "skip-secrets", flags.skipSecrets, "omit Secret resources from output and diffs")
@@ -94,6 +101,25 @@ func bindCommonFlags(cmd *cobra.Command, flags *commonFlags) {
 
 func (flags commonFlags) gitCredentials() source.GitCredentials {
 	return source.GitCredentials{
+		Username:          flags.gitUsername,
+		Password:          flags.gitPassword,
+		BearerToken:       flags.gitBearerToken,
+		SSHPrivateKeyPath: flags.gitSSHKeyFile,
+		SSHPassphrase:     flags.gitSSHPassphrase,
+		SSHKnownHostsPath: flags.gitKnownHostsFile,
+	}
+}
+
+func (flags commonFlags) remoteCredentials() remote.Credentials {
+	return remote.Credentials{
+		Username:    flags.remoteUsername,
+		Password:    flags.remotePassword,
+		BearerToken: flags.remoteBearerToken,
+	}
+}
+
+func (flags commonFlags) remoteGitCredentials() remote.GitCredentials {
+	return remote.GitCredentials{
 		Username:          flags.gitUsername,
 		Password:          flags.gitPassword,
 		BearerToken:       flags.gitBearerToken,

@@ -40,7 +40,7 @@ func (KustomizeRenderer) Render(ctx context.Context, source ResolvedSource, opts
 	if err != nil {
 		return nil, nil, err
 	}
-	if kustomizeGraphHasHelmCharts(graph) || hasRemoteKustomizeFileResources(graph) {
+	if kustomizeGraphHasHelmCharts(graph) || hasAcquirableRemoteKustomizeResources(graph) {
 		return renderKustomizeWithGeneratedResources(ctx, source, opts, graph)
 	}
 
@@ -90,10 +90,10 @@ func kustomizeGraphHasHelmCharts(graph []kustomizeGraphNode) bool {
 	return false
 }
 
-func hasRemoteKustomizeFileResources(graph []kustomizeGraphNode) bool {
+func hasAcquirableRemoteKustomizeResources(graph []kustomizeGraphNode) bool {
 	for _, node := range graph {
 		for _, resource := range node.Kustomization.Resources {
-			if isSupportedRemoteKustomizeFileResource(resource) {
+			if isAcquirableRemoteKustomizeResource(resource) {
 				return true
 			}
 		}
@@ -168,26 +168,105 @@ func renderKustomizeRemoteFileResources(ctx context.Context, repoRoot, tempNodeD
 
 	out := append([]string(nil), resources...)
 	for i, resourceRef := range resources {
-		if !isSupportedRemoteKustomizeFileResource(resourceRef) {
+		request, ref, ok, err := remoteRequestForKustomizeRef(resourceRef)
+		if err != nil {
+			return nil, err
+		}
+		if !ok {
 			continue
 		}
-		acquired, err := acquirer.Acquire(ctx, remote.Request{URL: resourceRef}, remote.Options{
+		acquired, err := acquirer.Acquire(ctx, request, remote.Options{
 			CacheDir:       opts.RemoteResourceCacheDir,
 			Offline:        opts.OfflineRemoteResources,
 			Refresh:        opts.RefreshRemoteResources,
 			ForbiddenRoots: forbiddenRoots,
+			Credentials:    opts.RemoteResourceCredentials,
+			GitCredentials: opts.RemoteResourceGitCredentials,
 		})
 		if err != nil {
-			return nil, fmt.Errorf("acquire remote kustomize resource %s: %w", remote.RedactURL(resourceRef), err)
+			return nil, fmt.Errorf("acquire remote kustomize resource %s: %s", redactKustomizeRef(resourceRef), redactRemoteKustomizeAcquireError(err, ref, opts))
 		}
-		generatedRel := filepath.ToSlash(filepath.Join(".argocd-local", "remotes", fmt.Sprintf("%03d-%03d-%s", graphIndex, i, safeRemoteResourceBase(resourceRef))))
+		acquiredPath, err := acquiredRemoteKustomizePath(acquired, ref)
+		if err != nil {
+			return nil, err
+		}
+		generatedRel := filepath.ToSlash(filepath.Join(".argocd-local", "remotes", generatedRemoteRefName(fmt.Sprintf("%03d-%03d", graphIndex, i), ref)))
 		generatedPath := filepath.Join(tempNodeDir, filepath.FromSlash(generatedRel))
-		if err := copyRegularFile(acquired.Path, generatedPath); err != nil {
-			return nil, fmt.Errorf("copy remote kustomize resource %s: %w", remote.RedactURL(resourceRef), err)
+		if err := copyAcquiredRemoteKustomizeResource(acquiredPath, generatedPath); err != nil {
+			return nil, fmt.Errorf("copy remote kustomize resource %s: %w", redactKustomizeRef(resourceRef), err)
 		}
 		out[i] = generatedRel
 	}
 	return out, nil
+}
+
+func redactRemoteKustomizeAcquireError(err error, ref kustomizeRemoteRef, opts RenderOptions) string {
+	message := remote.RedactCredentialError(err.Error(), opts.RemoteResourceCredentials, opts.RemoteResourceGitCredentials)
+	replacements := []struct {
+		raw      string
+		redacted string
+	}{
+		{raw: ref.Original, redacted: redactKustomizeRef(ref.Original)},
+		{raw: strings.TrimPrefix(ref.Original, "git::"), redacted: redactKustomizeRef(ref.Original)},
+		{raw: ref.URL, redacted: redactKustomizeRef(ref.URL)},
+		{raw: ref.RepoURL, redacted: remote.RedactGitRepoURL(ref.RepoURL)},
+	}
+	for _, replacement := range replacements {
+		raw := strings.TrimSpace(replacement.raw)
+		if raw == "" || replacement.redacted == "" {
+			continue
+		}
+		message = strings.ReplaceAll(message, raw, replacement.redacted)
+	}
+	if revision := strings.TrimSpace(ref.Revision); revision != "" && revision != "HEAD" {
+		message = strings.ReplaceAll(message, revision, "[redacted]")
+	}
+	for _, value := range rawKustomizeRemoteQueryValues(ref.Original, "ref") {
+		if value == "" {
+			continue
+		}
+		message = strings.ReplaceAll(message, value, "[redacted]")
+	}
+	return message
+}
+
+func rawKustomizeRemoteQueryValues(ref, key string) []string {
+	withoutPrefix := strings.TrimPrefix(strings.TrimSpace(ref), "git::")
+	_, rawQuery, ok := strings.Cut(withoutPrefix, "?")
+	if !ok {
+		return nil
+	}
+	rawQuery, _, _ = strings.Cut(rawQuery, "#")
+	var out []string
+	for _, part := range strings.Split(rawQuery, "&") {
+		rawKey, rawValue, hasValue := strings.Cut(part, "=")
+		decodedKey, err := url.QueryUnescape(rawKey)
+		if err != nil || decodedKey != key || !hasValue {
+			continue
+		}
+		out = append(out, rawValue)
+		if decodedValue, err := url.QueryUnescape(rawValue); err == nil {
+			out = append(out, decodedValue)
+		}
+	}
+	return out
+}
+
+func copyAcquiredRemoteKustomizeResource(src, dst string) error {
+	info, err := os.Lstat(src)
+	if err != nil {
+		return err
+	}
+	if info.Mode()&os.ModeSymlink != 0 {
+		return fmt.Errorf("source path %q is a symlink", src)
+	}
+	if info.IsDir() {
+		return copyRegularTree(src, dst)
+	}
+	if info.Mode().IsRegular() {
+		return copyRegularFile(src, dst)
+	}
+	return fmt.Errorf("source path %q is not a regular file or directory", src)
 }
 
 func renderKustomizeHelmCharts(ctx context.Context, tempRepoRoot, tempSourceRoot, valueFilesBaseDir, namespaceFallback, chartHome string, graphIndex int, helmCharts []types.HelmChart, opts RenderOptions) ([]string, error) {
@@ -757,7 +836,7 @@ func (v *kustomizeGraphValidator) validateGeneratorListRefs(dir string, kustomiz
 }
 
 func (v *kustomizeGraphValidator) validateResourceRef(ctx context.Context, dir, field, ref, inheritedHelmNamespace string) error {
-	if isSupportedRemoteKustomizeFileResource(ref) {
+	if isAcquirableRemoteKustomizeResource(ref) {
 		return nil
 	}
 	path, info, err := v.validateLocalRef(dir, field, ref)
@@ -873,38 +952,72 @@ func isSupportedRemoteKustomizeFileResource(ref string) bool {
 	return err == nil && ok && parsed.Kind == kustomizeRemoteHTTPFile
 }
 
+func isAcquirableRemoteKustomizeResource(ref string) bool {
+	_, _, ok, err := remoteRequestForKustomizeRef(ref)
+	return err == nil && ok
+}
+
+func remoteRequestForKustomizeRef(ref string) (remote.Request, kustomizeRemoteRef, bool, error) {
+	parsed, ok, err := parseKustomizeRemoteRef(ref)
+	if err != nil || !ok {
+		return remote.Request{}, parsed, ok, err
+	}
+	switch parsed.Kind {
+	case kustomizeRemoteHTTPFile:
+		return remote.Request{
+			URL:  parsed.URL,
+			Kind: remote.RequestHTTPFile,
+		}, parsed, true, nil
+	case kustomizeRemoteGit:
+		return remote.Request{
+			URL:      parsed.Original,
+			Kind:     remote.RequestGitRepo,
+			RepoURL:  parsed.RepoURL,
+			Revision: parsed.Revision,
+		}, parsed, true, nil
+	default:
+		return remote.Request{}, parsed, false, nil
+	}
+}
+
+func acquiredRemoteKustomizePath(acquired remote.Result, ref kustomizeRemoteRef) (string, error) {
+	acquiredPath := strings.TrimSpace(acquired.Path)
+	if acquiredPath == "" {
+		return "", fmt.Errorf("remote kustomize resource %s returned an empty path", redactKustomizeRef(ref.Original))
+	}
+
+	switch ref.Kind {
+	case kustomizeRemoteHTTPFile:
+		return acquiredPath, nil
+	case kustomizeRemoteGit:
+		subpath := path.Clean(strings.TrimPrefix(ref.Subpath, "/"))
+		if subpath == "." || subpath == ".." || strings.HasPrefix(subpath, "../") {
+			return "", fmt.Errorf("remote kustomize resource %s subpath %q escapes acquired repository", redactKustomizeRef(ref.Original), ref.Subpath)
+		}
+		repoRoot := filepath.Clean(acquiredPath)
+		target := filepath.Clean(filepath.Join(repoRoot, filepath.FromSlash(subpath)))
+		if err := rejectSymlinkedPath(repoRoot, target); err != nil {
+			return "", fmt.Errorf("remote kustomize resource %s subpath %q: %w", redactKustomizeRef(ref.Original), ref.Subpath, err)
+		}
+		inside, _, err := remote.IsPathInsideAny(target, []string{repoRoot})
+		if err != nil {
+			return "", err
+		}
+		if !inside {
+			return "", fmt.Errorf("remote kustomize resource %s subpath %q escapes acquired repository %q", redactKustomizeRef(ref.Original), ref.Subpath, repoRoot)
+		}
+		return target, nil
+	default:
+		return "", fmt.Errorf("unsupported remote kustomize resource kind %q", ref.Kind)
+	}
+}
+
 func unsupportedRemoteKustomizeRefError(field, ref string) error {
 	return fmt.Errorf("kustomize %s %q is a remote ref; remote Kustomize refs are unsupported", field, redactKustomizeRef(ref))
 }
 
 func redactKustomizeRef(ref string) string {
 	return redactKustomizeRemoteRef(ref)
-}
-
-func safeRemoteResourceBase(ref string) string {
-	parsed, err := url.Parse(strings.TrimSpace(ref))
-	if err != nil {
-		return "resource.yaml"
-	}
-	base := path.Base(parsed.Path)
-	base = strings.TrimSpace(base)
-	if base == "" || base == "." || base == "/" {
-		return "resource.yaml"
-	}
-	return strings.Map(func(r rune) rune {
-		switch {
-		case r >= 'a' && r <= 'z':
-			return r
-		case r >= 'A' && r <= 'Z':
-			return r
-		case r >= '0' && r <= '9':
-			return r
-		case r == '.', r == '-', r == '_':
-			return r
-		default:
-			return '-'
-		}
-	}, base)
 }
 
 func generatorFileSourcePath(source string) string {

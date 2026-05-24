@@ -22,27 +22,29 @@ import (
 )
 
 type DiffRequest struct {
-	LeftPath               string
-	RightPath              string
-	ChangedOnly            bool
-	StrictChangedOnly      bool
-	Strict                 bool
-	Unified                int
-	StripAttrs             []string
-	Offline                bool
-	RefreshCharts          bool
-	ChartCacheDir          string
-	ChartCredentials       chart.ChartCredentials
-	RepoMaps               []sourcepkg.RepoMap
-	AllowNetwork           bool
-	GitCacheDir            string
-	RefreshGit             bool
-	GitCredentials         sourcepkg.GitCredentials
-	RefreshRemoteResources bool
-	RemoteResourceCacheDir string
-	SkipKinds              []string
-	SkipCRDs               bool
-	SkipSecrets            bool
+	LeftPath                     string
+	RightPath                    string
+	ChangedOnly                  bool
+	StrictChangedOnly            bool
+	Strict                       bool
+	Unified                      int
+	StripAttrs                   []string
+	Offline                      bool
+	RefreshCharts                bool
+	ChartCacheDir                string
+	ChartCredentials             chart.ChartCredentials
+	RepoMaps                     []sourcepkg.RepoMap
+	AllowNetwork                 bool
+	GitCacheDir                  string
+	RefreshGit                   bool
+	GitCredentials               sourcepkg.GitCredentials
+	RefreshRemoteResources       bool
+	RemoteResourceCacheDir       string
+	RemoteResourceCredentials    remote.Credentials
+	RemoteResourceGitCredentials remote.GitCredentials
+	SkipKinds                    []string
+	SkipCRDs                     bool
+	SkipSecrets                  bool
 }
 
 type DiffAppRequest struct {
@@ -205,6 +207,8 @@ func (request DiffRequest) buildRequest(path string, forbiddenRoots []string) Bu
 		GitCredentials:               request.GitCredentials,
 		RefreshRemoteResources:       request.RefreshRemoteResources,
 		RemoteResourceCacheDir:       request.RemoteResourceCacheDir,
+		RemoteResourceCredentials:    request.RemoteResourceCredentials,
+		RemoteResourceGitCredentials: request.RemoteResourceGitCredentials,
 		RemoteResourceForbiddenRoots: forbiddenRoots,
 		SkipKinds:                    append([]string(nil), request.SkipKinds...),
 		SkipCRDs:                     request.SkipCRDs,

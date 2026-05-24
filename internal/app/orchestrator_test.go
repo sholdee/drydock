@@ -10,6 +10,7 @@ import (
 
 	"github.com/home-operations/argocd-local/internal/chart"
 	"github.com/home-operations/argocd-local/internal/diagnostic"
+	"github.com/home-operations/argocd-local/internal/remote"
 	"github.com/home-operations/argocd-local/internal/render"
 	sourcepkg "github.com/home-operations/argocd-local/internal/source"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -980,6 +981,70 @@ helmCharts:
 	}
 }
 
+func TestOrchestratorPassesRemoteCredentialsToKustomizeRenderer(t *testing.T) {
+	root := t.TempDir()
+	remoteFile := filepath.Join(t.TempDir(), "remote.yaml")
+	writeTestFile(t, filepath.Join(root, "apps", "demo.yaml"), `apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: demo
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/example/repo
+    path: manifests/demo
+    targetRevision: main
+  destination:
+    name: in-cluster
+    namespace: default
+`)
+	writeTestFile(t, filepath.Join(root, "manifests", "demo", "kustomization.yaml"), `apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - https://raw.githubusercontent.com/example/repo/main/remote.yaml
+`)
+	writeTestFile(t, remoteFile, `apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: remote
+`)
+	remoteCredentials := remote.Credentials{
+		Username:    "remote-user",
+		Password:    "remote-pass",
+		BearerToken: "remote-token",
+	}
+	remoteGitCredentials := remote.GitCredentials{
+		Username:          "git-user",
+		Password:          "git-pass",
+		BearerToken:       "git-token",
+		SSHPrivateKeyPath: filepath.Join(root, "id_ed25519"),
+		SSHPassphrase:     "git-phrase",
+		SSHKnownHostsPath: filepath.Join(root, "known_hosts"),
+	}
+	acquirer := &recordingRemoteAcquirer{path: remoteFile}
+
+	if _, err := (Orchestrator{RemoteResourceAcquirer: acquirer}).Build(context.Background(), BuildRequest{
+		Path:                         root,
+		Offline:                      true,
+		RefreshRemoteResources:       true,
+		RemoteResourceCacheDir:       t.TempDir(),
+		RemoteResourceCredentials:    remoteCredentials,
+		RemoteResourceGitCredentials: remoteGitCredentials,
+	}); err != nil {
+		t.Fatalf("Build() error = %v", err)
+	}
+	if len(acquirer.options) != 1 {
+		t.Fatalf("remote options = %d, want 1", len(acquirer.options))
+	}
+	if got := acquirer.options[0].Credentials; got != remoteCredentials {
+		t.Fatalf("remote credentials = %#v, want %#v", got, remoteCredentials)
+	}
+	if got := acquirer.options[0].GitCredentials; got != remoteGitCredentials {
+		t.Fatalf("remote git credentials = %#v, want %#v", got, remoteGitCredentials)
+	}
+}
+
 func TestOrchestratorBuildPreservesListAndRenderDiagnostics(t *testing.T) {
 	root := t.TempDir()
 	writeUnsupportedApplicationSetFixture(t, root)
@@ -1457,6 +1522,13 @@ type recordingGitAcquirer struct {
 	options   []sourcepkg.GitOptions
 }
 
+type recordingRemoteAcquirer struct {
+	path     string
+	err      error
+	requests []remote.Request
+	options  []remote.Options
+}
+
 func (acquirer *recordingGitAcquirer) Acquire(_ context.Context, request sourcepkg.GitRequest, opts sourcepkg.GitOptions) (sourcepkg.GitResult, error) {
 	acquirer.requests = append(acquirer.requests, request)
 	acquirer.options = append(acquirer.options, opts)
@@ -1472,6 +1544,15 @@ func (acquirer *recordingGitAcquirer) Acquire(_ context.Context, request sourcep
 		revision = acquirer.revisions[request.Revision]
 	}
 	return sourcepkg.GitResult{Path: path, Revision: revision}, nil
+}
+
+func (acquirer *recordingRemoteAcquirer) Acquire(_ context.Context, request remote.Request, opts remote.Options) (remote.Result, error) {
+	acquirer.requests = append(acquirer.requests, request)
+	acquirer.options = append(acquirer.options, opts)
+	if acquirer.err != nil {
+		return remote.Result{}, acquirer.err
+	}
+	return remote.Result{Path: acquirer.path, URL: request.URL}, nil
 }
 
 func (acquirer *recordingChartAcquirer) Acquire(_ context.Context, request chart.Request, opts chart.Options) (chart.Result, error) {

@@ -2,6 +2,7 @@ package render
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -155,6 +156,268 @@ spec:
 	}
 	if !containsManifest(manifests, "ConfigMap", "local") {
 		t.Fatalf("rendered manifests = %#v, want local ConfigMap", manifests)
+	}
+}
+
+func TestKustomizeRendererPassesRemoteCredentialsForHTTPResources(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "app", "kustomization.yaml"), `apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - https://raw.githubusercontent.com/example/repo/main/resource.yaml
+`)
+	remoteFile := filepath.Join(t.TempDir(), "resource.yaml")
+	writeFile(t, remoteFile, `apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: remote
+`)
+	credentials := remote.Credentials{
+		Username:    "remote-user",
+		Password:    "remote-pass",
+		BearerToken: "remote-token",
+	}
+	acquirer := &fakeRemoteAcquirer{path: remoteFile}
+
+	_, _, err := (KustomizeRenderer{}).Render(context.Background(), ResolvedSource{
+		RepoRoot: root,
+		Path:     "app",
+	}, RenderOptions{
+		RemoteResourceAcquirer:    acquirer,
+		RemoteResourceCredentials: credentials,
+		RemoteResourceCacheDir:    t.TempDir(),
+		OfflineRemoteResources:    true,
+	})
+	if err != nil {
+		t.Fatalf("Render() error = %v", err)
+	}
+	if len(acquirer.options) != 1 {
+		t.Fatalf("remote acquire options = %d, want 1", len(acquirer.options))
+	}
+	if got := acquirer.options[0].Credentials; got != credentials {
+		t.Fatalf("remote credentials = %#v, want %#v", got, credentials)
+	}
+}
+
+func TestKustomizeRendererPassesRemoteGitCredentialsAndCacheOptions(t *testing.T) {
+	root := t.TempDir()
+	cacheDir := t.TempDir()
+	writeFile(t, filepath.Join(root, "app", "kustomization.yaml"), `apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - https://github.com/example/repo.git//manifests/resource.yaml?ref=v1.2.3
+`)
+	remoteRepo := t.TempDir()
+	remoteFile := filepath.Join(remoteRepo, "manifests", "resource.yaml")
+	writeFile(t, remoteFile, `apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: remote
+`)
+	gitCredentials := remote.GitCredentials{
+		Username:          "git-user",
+		Password:          "git-pass",
+		BearerToken:       "git-token",
+		SSHPrivateKeyPath: filepath.Join(root, "id_ed25519"),
+		SSHPassphrase:     "git-phrase",
+		SSHKnownHostsPath: filepath.Join(root, "known_hosts"),
+	}
+	acquirer := &fakeRemoteAcquirer{path: remoteRepo}
+
+	_, _, err := (KustomizeRenderer{}).Render(context.Background(), ResolvedSource{
+		RepoRoot: root,
+		Path:     "app",
+	}, RenderOptions{
+		RemoteResourceAcquirer:       acquirer,
+		RemoteResourceGitCredentials: gitCredentials,
+		RemoteResourceCacheDir:       cacheDir,
+		OfflineRemoteResources:       true,
+		RefreshRemoteResources:       true,
+	})
+	if err != nil {
+		t.Fatalf("Render() error = %v", err)
+	}
+	if len(acquirer.options) != 1 {
+		t.Fatalf("remote acquire options = %d, want 1", len(acquirer.options))
+	}
+	if got := acquirer.options[0]; got.CacheDir != cacheDir || !got.Offline || !got.Refresh {
+		t.Fatalf("remote cache options = %#v, want cache/offline/refresh", got)
+	}
+	if got := acquirer.requests[0]; got.Kind != remote.RequestGitRepo || got.RepoURL != "https://github.com/example/repo.git" || got.Revision != "v1.2.3" {
+		t.Fatalf("remote request = %#v, want Git repo metadata", got)
+	}
+	if got := acquirer.options[0].GitCredentials; got != gitCredentials {
+		t.Fatalf("remote git credentials = %#v, want %#v", got, gitCredentials)
+	}
+}
+
+func TestKustomizeRendererRendersRemoteGitResourceDirectory(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "app", "kustomization.yaml"), `apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - https://github.com/example/repo.git//base?ref=v1.2.3
+`)
+	remoteRepo := t.TempDir()
+	writeFile(t, filepath.Join(remoteRepo, "base", "kustomization.yaml"), `apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - cm.yaml
+`)
+	writeFile(t, filepath.Join(remoteRepo, "base", "cm.yaml"), `apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: remote-base
+`)
+	acquirer := &fakeRemoteAcquirer{path: remoteRepo}
+
+	manifests, diags, err := (KustomizeRenderer{}).Render(context.Background(), ResolvedSource{
+		RepoRoot: root,
+		Path:     "app",
+	}, RenderOptions{
+		RemoteResourceAcquirer: acquirer,
+		RemoteResourceCacheDir: t.TempDir(),
+	})
+	if err != nil {
+		t.Fatalf("Render() error = %v", err)
+	}
+	if len(diags) != 0 {
+		t.Fatalf("diagnostics = %#v", diags)
+	}
+	if !containsManifest(manifests, "ConfigMap", "remote-base") {
+		t.Fatalf("rendered manifests = %#v, want remote base ConfigMap", manifests)
+	}
+}
+
+func TestKustomizeRendererRejectsRemoteGitSubpathEscape(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "app", "kustomization.yaml"), `apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - https://github.com/example/repo.git//../outside.yaml?ref=v1.2.3
+`)
+	acquirer := &fakeRemoteAcquirer{path: t.TempDir()}
+
+	_, _, err := (KustomizeRenderer{}).Render(context.Background(), ResolvedSource{
+		RepoRoot: root,
+		Path:     "app",
+	}, RenderOptions{
+		RemoteResourceAcquirer: acquirer,
+		RemoteResourceCacheDir: t.TempDir(),
+	})
+	if err == nil {
+		t.Fatal("Render() error = nil, want subpath escape rejection")
+	}
+	if !strings.Contains(err.Error(), "escapes acquired repository") {
+		t.Fatalf("Render() error = %v, want acquired repository escape error", err)
+	}
+}
+
+func TestKustomizeRendererRejectsRemoteGitSymlinkedSubpath(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "app", "kustomization.yaml"), `apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - https://github.com/example/repo.git//link.yaml?ref=v1.2.3
+`)
+	remoteRepo := t.TempDir()
+	outside := filepath.Join(t.TempDir(), "outside.yaml")
+	writeFile(t, outside, "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: outside\n")
+	symlink(t, outside, filepath.Join(remoteRepo, "link.yaml"))
+	acquirer := &fakeRemoteAcquirer{path: remoteRepo}
+
+	_, _, err := (KustomizeRenderer{}).Render(context.Background(), ResolvedSource{
+		RepoRoot: root,
+		Path:     "app",
+	}, RenderOptions{
+		RemoteResourceAcquirer: acquirer,
+		RemoteResourceCacheDir: t.TempDir(),
+	})
+	if err == nil {
+		t.Fatal("Render() error = nil, want symlink rejection")
+	}
+	if !strings.Contains(err.Error(), "symlink") {
+		t.Fatalf("Render() error = %v, want symlink error", err)
+	}
+}
+
+func TestKustomizeRendererRedactsRemoteAcquireCredentialErrors(t *testing.T) {
+	root := t.TempDir()
+	remoteRef := "https://github.com/example/repo.git//manifests/resource.yaml?ref=secret%2Frevision"
+	writeFile(t, filepath.Join(root, "app", "kustomization.yaml"), `apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - `+remoteRef+`
+`)
+	secrets := []string{
+		remoteRef,
+		"secret%2Frevision",
+		"secret/revision",
+		"remote-user",
+		"remote-pass",
+		"remote-token",
+		"git-user",
+		"git-pass",
+		"git-token",
+		"git-phrase",
+		"private-key-line",
+		"-----BEGIN OPENSSH PRIVATE KEY-----",
+	}
+	acquirer := &fakeRemoteAcquirer{err: errors.New("failed " + strings.Join(secrets, " "))}
+
+	_, _, err := (KustomizeRenderer{}).Render(context.Background(), ResolvedSource{
+		RepoRoot: root,
+		Path:     "app",
+	}, RenderOptions{
+		RemoteResourceAcquirer: acquirer,
+		RemoteResourceCredentials: remote.Credentials{
+			Username:    "remote-user",
+			Password:    "remote-pass",
+			BearerToken: "remote-token",
+		},
+		RemoteResourceGitCredentials: remote.GitCredentials{
+			Username:      "git-user",
+			Password:      "git-pass",
+			BearerToken:   "git-token",
+			SSHPrivateKey: "-----BEGIN OPENSSH PRIVATE KEY-----\nprivate-key-line\n-----END OPENSSH PRIVATE KEY-----",
+			SSHPassphrase: "git-phrase",
+		},
+		RemoteResourceCacheDir: t.TempDir(),
+		OfflineRemoteResources: true,
+	})
+	if err == nil {
+		t.Fatal("Render() error = nil, want acquire failure")
+	}
+	for _, secret := range secrets {
+		if strings.Contains(err.Error(), secret) {
+			t.Fatalf("Render() error = %q, leaked secret %q", err.Error(), secret)
+		}
+	}
+	if !strings.Contains(err.Error(), "[redacted]") {
+		t.Fatalf("Render() error = %q, want redacted marker", err.Error())
+	}
+}
+
+func TestKustomizeRendererRejectsRemoteGitRefWhenOfflineCacheMisses(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "app", "kustomization.yaml"), `apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - https://github.com/example/repo.git//manifests/resource.yaml?ref=v1.2.3
+`)
+
+	_, _, err := (KustomizeRenderer{}).Render(context.Background(), ResolvedSource{
+		RepoRoot: root,
+		Path:     "app",
+	}, RenderOptions{
+		RemoteResourceCacheDir: t.TempDir(),
+		OfflineRemoteResources: true,
+	})
+	if err == nil {
+		t.Fatal("Render() error = nil, want offline cache miss")
+	}
+	if !strings.Contains(err.Error(), "offline cache miss") {
+		t.Fatalf("Render() error = %v, want offline cache miss", err)
 	}
 }
 
