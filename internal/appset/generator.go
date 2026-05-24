@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"os"
 	"path"
 	"path/filepath"
@@ -228,6 +229,24 @@ func evaluateGenerator(ctx generatorContext, generator argoappv1.ApplicationSetG
 		return paramSets, diags, true, err
 	}
 
+	if generator.Plugin != nil {
+		if !ctx.Options.Provider.Supplied() {
+			return nil, unsupportedGeneratorDiagnostic(ctx.ManifestPath), false, nil
+		}
+		template, err := mergeGeneratorTemplate(ctx.BaseTemplate, generator.Plugin.Template)
+		if err != nil {
+			return nil, nil, true, err
+		}
+		paramSets, diags, err := pluginParamSets(ctx.ManifestPath, generator.Plugin, ctx.Options.Provider.Data.Plugins, ctx.AppSet.Spec.GoTemplate, ctx.AppSet.Spec.GoTemplateOptions)
+		if err != nil {
+			return nil, diags, true, err
+		}
+		paramSets = setGeneratorTemplate(paramSets, template)
+		paramSets, selectorDiags, err := applyProviderGeneratorSelector(ctx.ManifestPath, "plugin", generator.Selector, paramSets)
+		diags = append(diags, selectorDiags...)
+		return paramSets, diags, true, err
+	}
+
 	if generator.Git == nil {
 		return nil, unsupportedGeneratorDiagnostic(ctx.ManifestPath), false, nil
 	}
@@ -274,7 +293,7 @@ func supportedGeneratorTree(generator argoappv1.ApplicationSetGenerator, provide
 	switch {
 	case generator.List != nil || generator.Git != nil:
 		return true, nil
-	case generator.Clusters != nil || generator.ClusterDecisionResource != nil || generator.SCMProvider != nil || generator.PullRequest != nil:
+	case generator.Clusters != nil || generator.ClusterDecisionResource != nil || generator.SCMProvider != nil || generator.PullRequest != nil || generator.Plugin != nil:
 		return providerSupplied, nil
 	case generator.Matrix != nil:
 		if err := validateMatrixGenerator(generator.Matrix); err != nil {
@@ -1222,6 +1241,61 @@ func pullRequestParams(input PullRequestInput, values map[string]string, useGoTe
 	return params, nil
 }
 
+func pluginParamSets(manifestPath string, generator *argoappv1.PluginGenerator, inputs []PluginInput, useGoTemplate bool, goTemplateOptions []string) ([]generatorParamSet, []diagnostic.Diagnostic, error) {
+	if len(inputs) == 0 {
+		return nil, []diagnostic.Diagnostic{providerNoMatchDiagnostic(manifestPath, "plugin")}, nil
+	}
+
+	configMapName := generator.ConfigMapRef.Name
+	matched := false
+	var out []generatorParamSet
+	for _, input := range inputs {
+		if input.ConfigMapRef != configMapName {
+			continue
+		}
+		matched = true
+		for _, output := range input.Outputs {
+			outputMap, ok := output.(map[string]any)
+			if !ok || outputMap == nil {
+				return nil, []diagnostic.Diagnostic{providerUnsupportedFilterDiagnostic(manifestPath, "plugin: fixture output must be a mapping object")}, nil
+			}
+			params, err := pluginParams(outputMap, generator.Input.Parameters, generator.Values, useGoTemplate, goTemplateOptions)
+			if err != nil {
+				return nil, nil, err
+			}
+			out = append(out, generatorParamSet{
+				Params:    params,
+				Generator: "plugin",
+			})
+		}
+	}
+	if len(out) == 0 {
+		if matched {
+			return nil, nil, nil
+		}
+		return nil, []diagnostic.Diagnostic{providerNoMatchDiagnostic(manifestPath, "plugin")}, nil
+	}
+	return out, nil, nil
+}
+
+func pluginParams(output map[string]any, inputParameters argoappv1.PluginParameters, values map[string]string, useGoTemplate bool, goTemplateOptions []string) (map[string]any, error) {
+	params := map[string]any{}
+	if useGoTemplate {
+		maps.Copy(params, output)
+	} else {
+		flattenParams("", output, params)
+	}
+	params["generator"] = map[string]any{
+		"input": map[string]argoappv1.PluginParameters{
+			"parameters": inputParameters,
+		},
+	}
+	if err := appendTemplatedValues(params, values, useGoTemplate, goTemplateOptions); err != nil {
+		return nil, err
+	}
+	return params, nil
+}
+
 func providerMatches(actual, expected string) bool {
 	return normalizeProvider(actual) == normalizeProvider(expected)
 }
@@ -1858,11 +1932,20 @@ func flattenParams(prefix string, input map[string]any, out map[string]any) {
 		if prefix != "" {
 			flatKey = prefix + "." + key
 		}
-		if nested, ok := value.(map[string]any); ok {
-			flattenParams(flatKey, nested, out)
-			continue
+		flattenValue(flatKey, value, out)
+	}
+}
+
+func flattenValue(key string, value any, out map[string]any) {
+	switch typed := value.(type) {
+	case map[string]any:
+		flattenParams(key, typed, out)
+	case []any:
+		for i, item := range typed {
+			flattenValue(key+"."+strconv.Itoa(i), item, out)
 		}
-		out[flatKey] = fmt.Sprint(value)
+	default:
+		out[key] = fmt.Sprint(value)
 	}
 }
 

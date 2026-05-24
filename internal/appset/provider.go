@@ -98,7 +98,7 @@ type PullRequestInput struct {
 
 type PluginInput struct {
 	ConfigMapRef string            `json:"configMapRef" yaml:"configMapRef"`
-	Outputs      []map[string]any  `json:"outputs" yaml:"outputs"`
+	Outputs      []any             `json:"outputs" yaml:"outputs"`
 	Values       map[string]string `json:"values" yaml:"values"`
 	FixturePath  string            `json:"-" yaml:"-"`
 }
@@ -252,12 +252,14 @@ func duplicateProviderFixtureDiagnostics(data ProviderData) []diagnostic.Diagnos
 	}
 	seen = map[string]string{}
 	for _, plugin := range data.Plugins {
-		key := pluginIdentity(plugin)
-		if first, ok := seen[key]; ok {
-			diags = append(diags, duplicateProviderFixtureDiagnostic("plugin", key, first, plugin.FixturePath))
-			continue
+		for _, output := range plugin.Outputs {
+			key := pluginOutputIdentity(plugin.ConfigMapRef, output)
+			if first, ok := seen[key]; ok {
+				diags = append(diags, duplicateProviderFixtureDiagnostic("plugin", key, first, plugin.FixturePath))
+				continue
+			}
+			seen[key] = plugin.FixturePath
 		}
-		seen[key] = plugin.FixturePath
 	}
 	return diags
 }
@@ -315,6 +317,10 @@ func lessPullRequest(left, right PullRequestInput) bool {
 
 func pluginIdentity(plugin PluginInput) string {
 	return identity(plugin.ConfigMapRef, canonicalJSON(plugin.Outputs))
+}
+
+func pluginOutputIdentity(configMapRef string, output any) string {
+	return identity(configMapRef, canonicalJSON(output))
 }
 
 func identity(parts ...string) string {

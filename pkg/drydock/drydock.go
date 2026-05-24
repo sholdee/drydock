@@ -829,7 +829,7 @@ func applicationSetProviderDataToInternal(data ApplicationSetProviderData) appse
 	for _, item := range data.Plugins {
 		out.Plugins = append(out.Plugins, appset.PluginInput{
 			ConfigMapRef: item.ConfigMapRef,
-			Outputs:      cloneAnyMaps(item.Outputs),
+			Outputs:      pluginOutputsToInternal(item.Outputs),
 			Values:       cloneStringMap(item.Values),
 		})
 	}
@@ -852,6 +852,17 @@ func cloneAnyMaps(input []map[string]any) []map[string]any {
 		return nil
 	}
 	out := make([]map[string]any, 0, len(input))
+	for _, item := range input {
+		out = append(out, cloneMap(item))
+	}
+	return out
+}
+
+func pluginOutputsToInternal(input []map[string]any) []any {
+	if input == nil {
+		return nil
+	}
+	out := make([]any, 0, len(input))
 	for _, item := range input {
 		out = append(out, cloneMap(item))
 	}
