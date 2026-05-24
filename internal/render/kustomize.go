@@ -107,8 +107,109 @@ func hasAcquirableRemoteKustomizeGraphRefs(graph []kustomizeGraphNode) bool {
 				return true
 			}
 		}
+		if hasAcquirableRemoteKustomizePathRefs(node.Kustomization) {
+			return true
+		}
 	}
 	return false
+}
+
+func hasAcquirableRemoteKustomizePathRefs(kustomization types.Kustomization) bool {
+	if isAcquirableRemoteKustomizePathRef(kustomization.OpenAPI["path"]) {
+		return true
+	}
+	for _, ref := range kustomization.Configurations {
+		if isAcquirableRemoteKustomizePathRef(ref) {
+			return true
+		}
+	}
+	for _, ref := range kustomization.Generators {
+		if isAcquirableRemoteKustomizePathRef(ref) {
+			return true
+		}
+	}
+	for _, ref := range kustomization.Transformers {
+		if isAcquirableRemoteKustomizePathRef(ref) {
+			return true
+		}
+	}
+	for _, ref := range kustomization.Validators {
+		if isAcquirableRemoteKustomizePathRef(ref) {
+			return true
+		}
+	}
+	for _, ref := range kustomization.Crds {
+		if isAcquirableRemoteKustomizePathRef(ref) {
+			return true
+		}
+	}
+	for _, replacement := range kustomization.Replacements {
+		if isAcquirableRemoteKustomizePathRef(replacement.Path) {
+			return true
+		}
+	}
+	for _, patch := range kustomization.Patches {
+		if isAcquirableRemoteKustomizePathRef(patch.Path) {
+			return true
+		}
+	}
+	//nolint:staticcheck // Kustomize still accepts patchesJson6902; scan it for remote refs.
+	for _, patch := range kustomization.PatchesJson6902 {
+		if isAcquirableRemoteKustomizePathRef(patch.Path) {
+			return true
+		}
+	}
+	//nolint:staticcheck // Kustomize still accepts patchesStrategicMerge; scan it for remote refs.
+	for _, patch := range kustomization.PatchesStrategicMerge {
+		ref := string(patch)
+		if !isInlineStrategicMergePatch(ref) && isAcquirableRemoteKustomizePathRef(ref) {
+			return true
+		}
+	}
+	for _, generator := range kustomization.ConfigMapGenerator {
+		if hasAcquirableRemoteGeneratorRefs(generator.KvPairSources) {
+			return true
+		}
+	}
+	for _, generator := range kustomization.SecretGenerator {
+		if hasAcquirableRemoteGeneratorRefs(generator.KvPairSources) {
+			return true
+		}
+	}
+	return false
+}
+
+func hasAcquirableRemoteGeneratorRefs(sources types.KvPairSources) bool {
+	for _, source := range sources.FileSources {
+		if isAcquirableRemoteKustomizePathRef(generatorFileSourcePath(source)) {
+			return true
+		}
+	}
+	for _, source := range sources.EnvSources {
+		if isAcquirableRemoteKustomizePathRef(source) {
+			return true
+		}
+	}
+	return isAcquirableRemoteKustomizePathRef(sources.EnvSource)
+}
+
+func isAcquirableRemoteKustomizePathRef(ref string) bool {
+	_, _, ok, err := remoteRequestForKustomizeRef(ref)
+	return err == nil && ok
+}
+
+type remotePathMode int
+
+const (
+	remotePathFile remotePathMode = iota
+	remotePathDir
+	remotePathAny
+)
+
+type kustomizePathRefNode struct {
+	dir          string
+	boundaryRoot string
+	graphIndex   int
 }
 
 type kustomizeWorkspace struct {
@@ -117,6 +218,7 @@ type kustomizeWorkspace struct {
 	opts             RenderOptions
 	visited          map[string]struct{}
 	nextGraphIndex   int
+	nextPathIndex    int
 }
 
 func renderKustomizeWithPreparedWorkspace(ctx context.Context, source ResolvedSource, opts RenderOptions) ([]Manifest, []diagnostic.Diagnostic, error) {
@@ -227,6 +329,15 @@ func (w *kustomizeWorkspace) prepareKustomizationDir(ctx context.Context, dir, b
 	}
 	kustomization.Components = components
 
+	node := kustomizePathRefNode{
+		dir:          dir,
+		boundaryRoot: boundaryRoot,
+		graphIndex:   graphIndex,
+	}
+	if err := w.rewriteKustomizePathBearingRefs(ctx, node, &kustomization); err != nil {
+		return fmt.Errorf("%s: %w", manifestPath, err)
+	}
+
 	if err := validateWorkspacePathBearingRefs(boundaryRoot, dir, &kustomization); err != nil {
 		return fmt.Errorf("%s: %w", manifestPath, err)
 	}
@@ -252,7 +363,11 @@ func (w *kustomizeWorkspace) prepareKustomizeRefs(ctx context.Context, dir, boun
 			if !allowFileRefs && parsed.Kind == kustomizeRemoteHTTPFile {
 				return nil, fmt.Errorf("kustomize %s %q is a remote file ref; it must resolve to a Kustomization directory", field, redactKustomizeRef(parsed.Original))
 			}
-			rewritten, recurseDir, recurseBoundaryRoot, err := w.acquireAndCopyKustomizeRef(ctx, dir, field, graphIndex, i, request, parsed, allowFileRefs)
+			mode := remotePathDir
+			if allowFileRefs {
+				mode = remotePathAny
+			}
+			rewritten, recurseDir, recurseBoundaryRoot, err := w.acquireAndCopyKustomizeRef(ctx, dir, field, graphIndex, i, request, parsed, mode, true)
 			if err != nil {
 				return nil, err
 			}
@@ -278,7 +393,189 @@ func (w *kustomizeWorkspace) prepareKustomizeRefs(ctx context.Context, dir, boun
 	return out, nil
 }
 
-func (w *kustomizeWorkspace) acquireAndCopyKustomizeRef(ctx context.Context, dir, field string, graphIndex, refIndex int, request remote.Request, ref kustomizeRemoteRef, allowFileRefs bool) (string, string, string, error) {
+func (w *kustomizeWorkspace) rewriteKustomizePathBearingRefs(ctx context.Context, node kustomizePathRefNode, kustomization *types.Kustomization) error {
+	if path := kustomization.OpenAPI["path"]; path != "" {
+		rewritten, ok, err := w.rewriteKustomizePathRef(ctx, node, "openapi.path", path, remotePathFile)
+		if err != nil {
+			return err
+		}
+		if ok {
+			if kustomization.OpenAPI == nil {
+				kustomization.OpenAPI = map[string]string{}
+			}
+			kustomization.OpenAPI["path"] = rewritten
+		}
+	}
+	var err error
+	if kustomization.Configurations, err = w.rewriteKustomizePathRefs(ctx, node, "configurations", kustomization.Configurations, remotePathFile); err != nil {
+		return err
+	}
+	if kustomization.Generators, err = w.rewriteKustomizePathRefs(ctx, node, "generators", kustomization.Generators, remotePathFile); err != nil {
+		return err
+	}
+	if kustomization.Transformers, err = w.rewriteKustomizePathRefs(ctx, node, "transformers", kustomization.Transformers, remotePathFile); err != nil {
+		return err
+	}
+	if kustomization.Validators, err = w.rewriteKustomizePathRefs(ctx, node, "validators", kustomization.Validators, remotePathFile); err != nil {
+		return err
+	}
+	if kustomization.Crds, err = w.rewriteKustomizePathRefs(ctx, node, "crds", kustomization.Crds, remotePathFile); err != nil {
+		return err
+	}
+	if err := w.rewriteKustomizeReplacementRefs(ctx, node, kustomization); err != nil {
+		return err
+	}
+	if err := w.rewriteKustomizePatchRefs(ctx, node, kustomization); err != nil {
+		return err
+	}
+	return w.rewriteKustomizeGeneratorListRefs(ctx, node, kustomization)
+}
+
+func (w *kustomizeWorkspace) rewriteKustomizePathRefs(ctx context.Context, node kustomizePathRefNode, field string, refs []string, mode remotePathMode) ([]string, error) {
+	out := append([]string(nil), refs...)
+	for i, ref := range refs {
+		rewritten, ok, err := w.rewriteKustomizePathRef(ctx, node, field, ref, mode)
+		if err != nil {
+			return nil, err
+		}
+		if ok {
+			out[i] = rewritten
+		}
+	}
+	return out, nil
+}
+
+func (w *kustomizeWorkspace) rewriteKustomizeReplacementRefs(ctx context.Context, node kustomizePathRefNode, kustomization *types.Kustomization) error {
+	for i, replacement := range kustomization.Replacements {
+		if replacement.Path == "" {
+			continue
+		}
+		rewritten, ok, err := w.rewriteKustomizePathRef(ctx, node, "replacements.path", replacement.Path, remotePathFile)
+		if err != nil {
+			return err
+		}
+		if ok {
+			kustomization.Replacements[i].Path = rewritten
+		}
+	}
+	return nil
+}
+
+func (w *kustomizeWorkspace) rewriteKustomizePatchRefs(ctx context.Context, node kustomizePathRefNode, kustomization *types.Kustomization) error {
+	for i, patch := range kustomization.Patches {
+		if patch.Path == "" {
+			continue
+		}
+		rewritten, ok, err := w.rewriteKustomizePathRef(ctx, node, "patches.path", patch.Path, remotePathFile)
+		if err != nil {
+			return err
+		}
+		if ok {
+			kustomization.Patches[i].Path = rewritten
+		}
+	}
+	//nolint:staticcheck // Kustomize still accepts patchesJson6902; rewrite it for parity.
+	for i, patch := range kustomization.PatchesJson6902 {
+		if patch.Path == "" {
+			continue
+		}
+		rewritten, ok, err := w.rewriteKustomizePathRef(ctx, node, "patchesJson6902.path", patch.Path, remotePathFile)
+		if err != nil {
+			return err
+		}
+		if ok {
+			kustomization.PatchesJson6902[i].Path = rewritten
+		}
+	}
+	//nolint:staticcheck // Kustomize still accepts patchesStrategicMerge; rewrite it for parity.
+	for i, patch := range kustomization.PatchesStrategicMerge {
+		ref := string(patch)
+		if isInlineStrategicMergePatch(ref) {
+			continue
+		}
+		rewritten, ok, err := w.rewriteKustomizePathRef(ctx, node, "patchesStrategicMerge", ref, remotePathFile)
+		if err != nil {
+			return err
+		}
+		if ok {
+			kustomization.PatchesStrategicMerge[i] = types.PatchStrategicMerge(rewritten)
+		}
+	}
+	return nil
+}
+
+func (w *kustomizeWorkspace) rewriteKustomizeGeneratorListRefs(ctx context.Context, node kustomizePathRefNode, kustomization *types.Kustomization) error {
+	var err error
+	for i, generator := range kustomization.ConfigMapGenerator {
+		kustomization.ConfigMapGenerator[i].KvPairSources, err = w.rewriteKustomizeGeneratorRefs(ctx, node, "configMapGenerator", generator.KvPairSources)
+		if err != nil {
+			return err
+		}
+	}
+	for i, generator := range kustomization.SecretGenerator {
+		kustomization.SecretGenerator[i].KvPairSources, err = w.rewriteKustomizeGeneratorRefs(ctx, node, "secretGenerator", generator.KvPairSources)
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (w *kustomizeWorkspace) rewriteKustomizeGeneratorRefs(ctx context.Context, node kustomizePathRefNode, field string, sources types.KvPairSources) (types.KvPairSources, error) {
+	out := sources
+	for i, source := range sources.FileSources {
+		key, ref, hasKey := splitGeneratorFileSource(source)
+		rewritten, ok, err := w.rewriteKustomizePathRef(ctx, node, field+".files", ref, remotePathFile)
+		if err != nil {
+			return types.KvPairSources{}, err
+		}
+		if ok {
+			if !hasKey {
+				key, err = generatorRemoteFileSourceKey(ref)
+				if err != nil {
+					return types.KvPairSources{}, err
+				}
+				hasKey = true
+			}
+			out.FileSources[i] = joinGeneratorFileSource(key, rewritten, hasKey)
+		}
+	}
+	for i, source := range sources.EnvSources {
+		rewritten, ok, err := w.rewriteKustomizePathRef(ctx, node, field+".envs", source, remotePathFile)
+		if err != nil {
+			return types.KvPairSources{}, err
+		}
+		if ok {
+			out.EnvSources[i] = rewritten
+		}
+	}
+	if sources.EnvSource != "" {
+		rewritten, ok, err := w.rewriteKustomizePathRef(ctx, node, field+".env", sources.EnvSource, remotePathFile)
+		if err != nil {
+			return types.KvPairSources{}, err
+		}
+		if ok {
+			out.EnvSource = rewritten
+		}
+	}
+	return out, nil
+}
+
+func (w *kustomizeWorkspace) rewriteKustomizePathRef(ctx context.Context, node kustomizePathRefNode, field, ref string, mode remotePathMode) (string, bool, error) {
+	request, parsed, ok, err := remoteRequestForKustomizeRef(ref)
+	if err != nil || !ok {
+		return ref, false, err
+	}
+	refIndex := w.nextPathIndex
+	w.nextPathIndex++
+	rewritten, _, _, err := w.acquireAndCopyKustomizeRef(ctx, node.dir, field, node.graphIndex, refIndex, request, parsed, mode, false)
+	if err != nil {
+		return "", false, err
+	}
+	return rewritten, true, nil
+}
+
+func (w *kustomizeWorkspace) acquireAndCopyKustomizeRef(ctx context.Context, dir, field string, graphIndex, refIndex int, request remote.Request, ref kustomizeRemoteRef, mode remotePathMode, recurseDirs bool) (string, string, string, error) {
 	acquirer := w.opts.RemoteResourceAcquirer
 	if acquirer == nil {
 		acquirer = remote.DefaultAcquirer{}
@@ -312,10 +609,23 @@ func (w *kustomizeWorkspace) acquireAndCopyKustomizeRef(ctx context.Context, dir
 
 	generatedName := generatedRemoteRefName(fmt.Sprintf("%03d-%03d", graphIndex, refIndex), ref)
 	if info.IsDir() {
-		generatedRel := filepath.ToSlash(filepath.Join(".argocd-local", "git", generatedName))
+		if mode == remotePathFile {
+			return "", "", "", fmt.Errorf("kustomize %s %q must resolve to a regular file", field, redactKustomizeRef(ref.Original))
+		}
+		generatedKind := "remotes"
+		if recurseDirs {
+			generatedKind = "git"
+		}
+		generatedRel := filepath.ToSlash(filepath.Join(".argocd-local", generatedKind, generatedName))
 		generatedRoot, err := generatedKustomizeWorkspacePath(dir, generatedRel)
 		if err != nil {
 			return "", "", "", err
+		}
+		if !recurseDirs {
+			if err := copyRegularTree(acquiredPath, generatedRoot); err != nil {
+				return "", "", "", fmt.Errorf("copy remote kustomize resource %s: %w", redactKustomizeRef(ref.Original), err)
+			}
+			return generatedRel, "", "", nil
 		}
 		recurseDir := generatedRoot
 		rewritten := generatedRel
@@ -334,7 +644,7 @@ func (w *kustomizeWorkspace) acquireAndCopyKustomizeRef(ctx context.Context, dir
 		}
 		return rewritten, recurseDir, generatedRoot, nil
 	}
-	if !allowFileRefs {
+	if mode == remotePathDir {
 		return "", "", "", fmt.Errorf("kustomize %s %q must resolve to a Kustomization directory", field, redactKustomizeRef(ref.Original))
 	}
 	if !info.Mode().IsRegular() {
@@ -349,6 +659,61 @@ func (w *kustomizeWorkspace) acquireAndCopyKustomizeRef(ctx context.Context, dir
 		return "", "", "", fmt.Errorf("copy remote kustomize resource %s: %w", redactKustomizeRef(ref.Original), err)
 	}
 	return generatedRel, "", "", nil
+}
+
+func splitGeneratorFileSource(source string) (string, string, bool) {
+	_, _, sourceIsRemote, sourceRemoteErr := remoteRequestForKustomizeRef(source)
+	if sourceIsRemote && sourceRemoteErr == nil {
+		return "", source, false
+	}
+	if before, after, ok := strings.Cut(source, "="); ok && before != "" {
+		if _, _, afterIsRemote, afterRemoteErr := remoteRequestForKustomizeRef(after); afterIsRemote || afterRemoteErr != nil {
+			return before, after, true
+		}
+		if sourceRemoteErr != nil {
+			return "", source, false
+		}
+		return before, after, true
+	}
+	if sourceIsRemote {
+		return "", source, false
+	}
+	return "", source, false
+}
+
+func joinGeneratorFileSource(key, ref string, hasKey bool) string {
+	if !hasKey {
+		return ref
+	}
+	return key + "=" + ref
+}
+
+func generatorRemoteFileSourceKey(ref string) (string, error) {
+	parsed, ok, err := parseKustomizeRemoteRef(ref)
+	if err != nil {
+		return "", err
+	}
+	if !ok {
+		return "", fmt.Errorf("generator file source %q is not a remote ref", ref)
+	}
+
+	var name string
+	switch parsed.Kind {
+	case kustomizeRemoteHTTPFile:
+		parsedURL, err := url.Parse(parsed.URL)
+		if err != nil {
+			return "", err
+		}
+		name = path.Base(parsedURL.Path)
+	case kustomizeRemoteGit:
+		name = path.Base(path.Clean(strings.TrimPrefix(parsed.Subpath, "/")))
+	default:
+		return "", fmt.Errorf("unsupported remote generator file source kind %q", parsed.Kind)
+	}
+	if name == "" || name == "." || name == "/" {
+		return "", fmt.Errorf("remote generator file source %q has no basename", redactKustomizeRef(ref))
+	}
+	return name, nil
 }
 
 func validateWorkspaceLocalRef(boundaryRoot, dir, field, ref string) (string, os.FileInfo, error) {
@@ -1277,6 +1642,11 @@ func (v *kustomizeGraphValidator) validateKustomizationRef(ctx context.Context, 
 }
 
 func (v *kustomizeGraphValidator) validatePathRef(dir, field, ref string) error {
+	if v.allowAcquirableRemoteRefs {
+		if _, _, ok, err := remoteRequestForKustomizeRef(ref); err == nil && ok {
+			return nil
+		}
+	}
 	_, _, err := v.validateLocalRef(dir, field, ref)
 	return err
 }
@@ -1474,10 +1844,8 @@ func redactKustomizeRef(ref string) string {
 }
 
 func generatorFileSourcePath(source string) string {
-	if before, after, ok := strings.Cut(source, "="); ok && before != "" {
-		return after
-	}
-	return source
+	_, ref, _ := splitGeneratorFileSource(source)
+	return ref
 }
 
 func isInlineStrategicMergePatch(patch string) bool {
