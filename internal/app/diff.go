@@ -46,6 +46,7 @@ type DiffRequest struct {
 	RemoteResourceCredentials      remote.Credentials
 	RemoteResourceGitCredentials   remote.GitCredentials
 	PluginTimeout                  time.Duration
+	Parallelism                    int
 	SkipKinds                      []string
 	SkipCRDs                       bool
 	SkipSecrets                    bool
@@ -233,6 +234,7 @@ func (request DiffRequest) buildRequest(path string, forbiddenRoots []string) Bu
 		RemoteResourceGitCredentials:   request.RemoteResourceGitCredentials,
 		RemoteResourceForbiddenRoots:   forbiddenRoots,
 		PluginTimeout:                  request.PluginTimeout,
+		Parallelism:                    request.Parallelism,
 		SkipKinds:                      append([]string(nil), request.SkipKinds...),
 		SkipCRDs:                       request.SkipCRDs,
 		SkipSecrets:                    request.SkipSecrets,

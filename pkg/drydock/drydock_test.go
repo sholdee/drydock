@@ -27,6 +27,62 @@ func TestRenderApplications(t *testing.T) {
 	}
 }
 
+func TestPublicRenderParallelismPreservesManifestOrder(t *testing.T) {
+	root := t.TempDir()
+	writeAPIPluginAppTreeNamed(t, root, "app-a")
+	writeAPIPluginAppTreeNamed(t, root, "app-b")
+	writeAPIPluginAppTreeNamed(t, root, "app-c")
+	renderer := newControlledPublicPluginRenderer([]string{"app-a", "app-b", "app-c"})
+
+	resultCh := make(chan struct {
+		result RenderResult
+		err    error
+	}, 1)
+	go func() {
+		result, err := Render(context.Background(), Config{
+			Path:           root,
+			Parallelism:    3,
+			PluginRenderer: renderer,
+		})
+		resultCh <- struct {
+			result RenderResult
+			err    error
+		}{result: result, err: err}
+	}()
+
+	renderer.waitStarted(t, "app-a", "app-b", "app-c")
+	renderer.release("app-c")
+	renderer.release("app-b")
+	renderer.release("app-a")
+
+	out := <-resultCh
+	if out.err != nil {
+		t.Fatalf("Render() error = %v", out.err)
+	}
+	var names []string
+	for _, manifest := range out.result.Manifests {
+		metadata, ok := manifest.Object["metadata"].(map[string]any)
+		if !ok {
+			t.Fatalf("manifest metadata = %#v, want object", manifest.Object["metadata"])
+		}
+		names = append(names, metadata["name"].(string))
+	}
+	if !slices.Equal(names, []string{"app-a", "app-b", "app-c"}) {
+		t.Fatalf("manifest names = %#v, want selected Application order", names)
+	}
+}
+
+func TestPublicConfigParallelismWiresRequests(t *testing.T) {
+	client := NewClient(Config{Parallelism: 5})
+
+	if got := client.buildRequest().Parallelism; got != 5 {
+		t.Fatalf("build request Parallelism = %d, want 5", got)
+	}
+	if got := client.diffRequest().Parallelism; got != 5 {
+		t.Fatalf("diff request Parallelism = %d, want 5", got)
+	}
+}
+
 func TestRenderAppliesResourceFilters(t *testing.T) {
 	root := t.TempDir()
 	writeAPIAppTree(t, root, "demo", configMapBody("demo", "v1"))
@@ -926,6 +982,26 @@ func TestDiffApplications(t *testing.T) {
 	}
 }
 
+func TestPublicDiffApplicationsParallelismPreservesResults(t *testing.T) {
+	left, right := writeDiffTrees(t, "v1", "v2")
+
+	result, err := DiffApplications(context.Background(), Config{
+		PathOrig:    left,
+		Path:        right,
+		ChangedOnly: boolPtr(false),
+		Parallelism: 2,
+	})
+	if err != nil {
+		t.Fatalf("DiffApplications() error = %v", err)
+	}
+	if len(result.Results) != 1 {
+		t.Fatalf("Results = %d, want 1", len(result.Results))
+	}
+	if result.Results[0].Change != "modified" {
+		t.Fatalf("Change = %q, want modified", result.Results[0].Change)
+	}
+}
+
 func TestDiffApplicationsUsesInjectedPluginRenderer(t *testing.T) {
 	left := t.TempDir()
 	right := t.TempDir()
@@ -992,6 +1068,26 @@ func TestDiffImages(t *testing.T) {
 	}
 }
 
+func TestPublicDiffImagesParallelismPreservesResults(t *testing.T) {
+	left, right := writeImageDiffTrees(t, "repo/demo:v1", "repo/demo:v2")
+
+	result, err := DiffImages(context.Background(), Config{
+		PathOrig:    left,
+		Path:        right,
+		ChangedOnly: boolPtr(false),
+		Parallelism: 2,
+	})
+	if err != nil {
+		t.Fatalf("DiffImages() error = %v", err)
+	}
+	if !containsString(result.Removed, "repo/demo:v1") {
+		t.Fatalf("Removed = %#v, want repo/demo:v1", result.Removed)
+	}
+	if !containsString(result.Added, "repo/demo:v2") {
+		t.Fatalf("Added = %#v, want repo/demo:v2", result.Added)
+	}
+}
+
 func TestDiffImagesUsesInjectedPluginRenderer(t *testing.T) {
 	left := t.TempDir()
 	right := t.TempDir()
@@ -1035,6 +1131,71 @@ type publicPluginRendererFunc func(context.Context, PluginRequest) (PluginResult
 
 func (f publicPluginRendererFunc) RenderPlugin(ctx context.Context, request PluginRequest) (PluginResult, error) {
 	return f(ctx, request)
+}
+
+type controlledPublicPluginRenderer struct {
+	started  chan string
+	releases map[string]chan struct{}
+}
+
+func newControlledPublicPluginRenderer(names []string) *controlledPublicPluginRenderer {
+	releases := make(map[string]chan struct{}, len(names))
+	for _, name := range names {
+		releases[name] = make(chan struct{})
+	}
+	return &controlledPublicPluginRenderer{
+		started:  make(chan string, len(names)),
+		releases: releases,
+	}
+}
+
+func (renderer *controlledPublicPluginRenderer) RenderPlugin(ctx context.Context, request PluginRequest) (PluginResult, error) {
+	name := request.Application.Name
+	select {
+	case renderer.started <- name:
+	case <-ctx.Done():
+		return PluginResult{}, ctx.Err()
+	}
+	if release := renderer.releases[name]; release != nil {
+		select {
+		case <-release:
+		case <-ctx.Done():
+			return PluginResult{}, ctx.Err()
+		}
+	}
+	return PluginResult{Manifests: []PluginManifest{{
+		Path: "plugin/cm.yaml",
+		Object: map[string]any{
+			"apiVersion": "v1",
+			"kind":       "ConfigMap",
+			"metadata":   map[string]any{"name": name},
+		},
+	}}}, nil
+}
+
+func (renderer *controlledPublicPluginRenderer) waitStarted(t *testing.T, want ...string) {
+	t.Helper()
+	remaining := map[string]int{}
+	for _, name := range want {
+		remaining[name]++
+	}
+	for _, expected := range want {
+		select {
+		case got := <-renderer.started:
+			if remaining[got] == 0 {
+				t.Fatalf("started plugin app = %q, want one of %#v", got, want)
+			}
+			remaining[got]--
+		case <-time.After(time.Second):
+			t.Fatalf("timed out waiting for plugin app %q", expected)
+		}
+	}
+}
+
+func (renderer *controlledPublicPluginRenderer) release(name string) {
+	if release := renderer.releases[name]; release != nil {
+		close(release)
+	}
 }
 
 type blockingPublicPluginRenderer struct{}
@@ -1272,10 +1433,15 @@ func writeImageDiffTrees(t *testing.T, leftImage, rightImage string) (string, st
 
 func writeAPIPluginAppTree(t *testing.T, root string) {
 	t.Helper()
-	writeAPIFile(t, filepath.Join(root, "apps", "plugin.yaml"), `apiVersion: argoproj.io/v1alpha1
+	writeAPIPluginAppTreeNamed(t, root, "plugin-app")
+}
+
+func writeAPIPluginAppTreeNamed(t *testing.T, root, name string) {
+	t.Helper()
+	writeAPIFile(t, filepath.Join(root, "apps", name+".yaml"), `apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
-  name: plugin-app
+  name: `+name+`
   namespace: argocd
 spec:
   project: default
