@@ -8,6 +8,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/sholdee/drydock/internal/cache"
 )
 
 type DefaultAcquirer struct {
@@ -44,6 +46,7 @@ func (acquirer DefaultAcquirer) acquireHTTPFile(ctx context.Context, request Req
 		return Result{}, err
 	}
 	if !opts.Refresh && regularFileReady(resourcePath) {
+		writeHTTPFileMetadata(filepath.Dir(resourcePath), key, normalized)
 		return Result{Path: resourcePath, URL: normalized, FromCache: true}, nil
 	}
 	if opts.Offline {
@@ -60,7 +63,17 @@ func (acquirer DefaultAcquirer) acquireHTTPFile(ctx context.Context, request Req
 	if err := publishCacheFile(resourcePath, data); err != nil {
 		return Result{}, err
 	}
+	writeHTTPFileMetadata(filepath.Dir(resourcePath), key, normalized)
 	return Result{Path: resourcePath, URL: normalized}, nil
+}
+
+func writeHTTPFileMetadata(entryRoot, key, target string) {
+	_ = cache.WriteMetadata(entryRoot, cache.Metadata{
+		Source: cache.SourceRemote,
+		Kind:   "http-file",
+		Key:    key,
+		Target: cache.RedactedTarget(target),
+	})
 }
 
 func (acquirer DefaultAcquirer) fetch(ctx context.Context, normalizedURL string, credentials Credentials) ([]byte, error) {

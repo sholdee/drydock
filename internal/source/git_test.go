@@ -16,6 +16,7 @@ import (
 	"github.com/go-git/go-git/v5/plumbing/object"
 	githttp "github.com/go-git/go-git/v5/plumbing/transport/http"
 	gitssh "github.com/go-git/go-git/v5/plumbing/transport/ssh"
+	cachepkg "github.com/sholdee/drydock/internal/cache"
 	cryptossh "golang.org/x/crypto/ssh"
 )
 
@@ -65,6 +66,40 @@ func TestDefaultGitAcquirerClonesLocalFileRepository(t *testing.T) {
 	}
 	if string(data) != "version: main\n" {
 		t.Fatalf("cloned file = %q", data)
+	}
+}
+
+func TestDefaultGitAcquirerWritesMetadata(t *testing.T) {
+	remote := createGitFixture(t)
+	commitFixtureFile(t, remote.repo, remote.worktree, "config.yaml", "version: main\n")
+	repoURL := "file://" + filepath.ToSlash(remote.path)
+
+	result, err := DefaultGitAcquirer{}.Acquire(context.Background(), GitRequest{
+		URL:      repoURL,
+		Revision: "HEAD",
+	}, GitOptions{
+		AllowNetwork: true,
+		CacheDir:     t.TempDir(),
+	})
+	if err != nil {
+		t.Fatalf("Acquire() error = %v", err)
+	}
+
+	metadata, err := cachepkg.ReadMetadata(result.Path, cachepkg.SourceGit, "git", GitCacheKey(repoURL, "HEAD"))
+	if err != nil {
+		t.Fatalf("ReadMetadata() error = %v", err)
+	}
+	if metadata == nil {
+		t.Fatal("metadata = nil, want metadata")
+	}
+	if metadata.SchemaVersion != 1 || metadata.Source != cachepkg.SourceGit || metadata.Kind != "git" {
+		t.Fatalf("metadata identity = %#v, want git metadata", metadata)
+	}
+	if metadata.Target != repoURL {
+		t.Fatalf("Target = %q, want %q", metadata.Target, repoURL)
+	}
+	if metadata.Revision != result.Revision {
+		t.Fatalf("Revision = %q, want %q", metadata.Revision, result.Revision)
 	}
 }
 

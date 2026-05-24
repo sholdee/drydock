@@ -11,6 +11,7 @@ import (
 	git "github.com/go-git/go-git/v5"
 	"github.com/go-git/go-git/v5/plumbing"
 	"github.com/go-git/go-git/v5/plumbing/object"
+	cachepkg "github.com/sholdee/drydock/internal/cache"
 )
 
 func TestDefaultAcquirerClonesGitRemoteIntoRemoteCache(t *testing.T) {
@@ -44,6 +45,37 @@ func TestDefaultAcquirerClonesGitRemoteIntoRemoteCache(t *testing.T) {
 	}
 	if string(data) != "version: main\n" {
 		t.Fatalf("cloned file = %q", data)
+	}
+}
+
+func TestDefaultRemoteAcquirerWritesGitMetadata(t *testing.T) {
+	remote := createRemoteGitFixture(t)
+	commitRemoteGitFixtureFile(t, remote.repo, remote.worktree, "config.yaml", "version: main\n")
+	request := Request{
+		Kind:     RequestGitRepo,
+		RepoURL:  "file://" + filepath.ToSlash(remote.path),
+		Revision: "HEAD",
+	}
+	result, err := DefaultAcquirer{}.Acquire(context.Background(), request, Options{CacheDir: t.TempDir()})
+	if err != nil {
+		t.Fatalf("Acquire() error = %v", err)
+	}
+	key, err := NewCacheKey(request)
+	if err != nil {
+		t.Fatalf("NewCacheKey() error = %v", err)
+	}
+	metadata, err := cachepkg.ReadMetadata(filepath.Dir(result.Path), cachepkg.SourceRemote, "git-repo", key)
+	if err != nil {
+		t.Fatalf("ReadMetadata() error = %v", err)
+	}
+	if metadata == nil {
+		t.Fatal("metadata = nil, want metadata")
+	}
+	if metadata.Target != request.RepoURL {
+		t.Fatalf("Target = %q, want %q", metadata.Target, request.RepoURL)
+	}
+	if metadata.Revision != result.Revision {
+		t.Fatalf("Revision = %q, want %q", metadata.Revision, result.Revision)
 	}
 }
 
