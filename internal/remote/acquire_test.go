@@ -144,6 +144,18 @@ func TestNewCacheKeyForGitRepoRedactsSCPUser(t *testing.T) {
 	if gitUserKey != deployUserKey {
 		t.Fatalf("SCP cache keys differ: git=%s deploy=%s", gitUserKey, deployUserKey)
 	}
+
+	redactedKey, err := NewCacheKey(Request{
+		Kind:     RequestGitRepo,
+		RepoURL:  "example.test:org/repo",
+		Revision: "main",
+	})
+	if err != nil {
+		t.Fatalf("NewCacheKey(redacted) error = %v", err)
+	}
+	if gitUserKey != redactedKey {
+		t.Fatalf("SCP cache key is not idempotent after redaction: git=%s redacted=%s", gitUserKey, redactedKey)
+	}
 }
 
 func TestNormalizeURLParseErrorDoesNotLeakSecretBearingURL(t *testing.T) {

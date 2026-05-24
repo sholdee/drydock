@@ -14,6 +14,7 @@ import (
 
 func TestDiffAppsHomeOpsPatternFixture(t *testing.T) {
 	fixtureRoot := filepath.Join("..", "..", "testdata", "home-ops-patterns")
+	cleanupGeneratedCacheMetadata(t, filepath.Join(fixtureRoot, "chart-cache"))
 	cmd := NewRootCommand(VersionInfo{})
 	cmd.SetArgs([]string{
 		"diff", "apps",
@@ -87,6 +88,7 @@ func TestDiffAppsHomeOpsPatternFixture(t *testing.T) {
 
 func TestDiffAppsHomeOpsPatternFixtureStrictChangedOnly(t *testing.T) {
 	fixtureRoot := filepath.Join("..", "..", "testdata", "home-ops-patterns")
+	cleanupGeneratedCacheMetadata(t, filepath.Join(fixtureRoot, "chart-cache"))
 	cmd := NewRootCommand(VersionInfo{})
 	cmd.SetArgs([]string{
 		"diff", "apps",
@@ -138,6 +140,21 @@ func TestDiffAppsHomeOpsPatternFixtureStrictChangedOnly(t *testing.T) {
 			t.Fatalf("stdout contains forbidden %q:\n%s", forbidden, stdout.String())
 		}
 	}
+}
+
+func cleanupGeneratedCacheMetadata(t *testing.T, root string) {
+	t.Helper()
+	t.Cleanup(func() {
+		_ = filepath.WalkDir(root, func(path string, entry os.DirEntry, err error) error {
+			if err != nil {
+				return nil
+			}
+			if !entry.IsDir() && entry.Name() == "metadata.json" {
+				_ = os.Remove(path)
+			}
+			return nil
+		})
+	})
 }
 
 func TestDiffAppsRemoteKustomizePatternFixture(t *testing.T) {
