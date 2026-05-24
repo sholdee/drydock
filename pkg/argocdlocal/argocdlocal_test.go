@@ -395,73 +395,15 @@ func TestRenderUsesInjectedPluginRenderer(t *testing.T) {
 	writeAPIPluginAppTree(t, root)
 
 	renderer := publicPluginRendererFunc(func(_ context.Context, request PluginRequest) (PluginResult, error) {
-		if request.Application.Name != "plugin-app" {
-			t.Fatalf("Application.Name = %q, want plugin-app", request.Application.Name)
-		}
-		if request.Source.Path != "apps/plugin" {
-			t.Fatalf("Source.Path = %q, want apps/plugin", request.Source.Path)
-		}
-		if request.Source.RepoURL != "https://github.com/example/repo" {
-			t.Fatalf("Source.RepoURL = %q, want https://github.com/example/repo", request.Source.RepoURL)
-		}
-		if request.Source.TargetRevision != "main" {
-			t.Fatalf("Source.TargetRevision = %q, want main", request.Source.TargetRevision)
-		}
-		if request.Source.RepoRoot == "" {
-			t.Fatalf("Source.RepoRoot is empty")
-		}
-		if _, err := os.Stat(request.Source.RepoRoot); err != nil {
-			t.Fatalf("Source.RepoRoot %q stat error = %v", request.Source.RepoRoot, err)
-		}
-		if request.Plugin.Name != "cue" {
-			t.Fatalf("Plugin.Name = %q, want cue", request.Plugin.Name)
-		}
-		if len(request.Plugin.Env) != 1 || request.Plugin.Env[0].Name != "FEATURE" || request.Plugin.Env[0].Value != "enabled" {
-			t.Fatalf("Plugin.Env = %#v, want FEATURE=enabled", request.Plugin.Env)
-		}
-		params := publicPluginParamsByName(request.Plugin.Parameters)
-		if params["mode"].String == nil || *params["mode"].String != "fast" {
-			t.Fatalf("Plugin.Parameters = %#v, want mode=fast", request.Plugin.Parameters)
-		}
-		if params["labels"].Map == nil || params["labels"].Map.Values["tier"] != "backend" {
-			t.Fatalf("Plugin.Parameters = %#v, want labels.tier=backend", request.Plugin.Parameters)
-		}
-		if params["args"].Array == nil || !slices.Equal(params["args"].Array.Values, []string{"--debug"}) {
-			t.Fatalf("Plugin.Parameters = %#v, want args array", request.Plugin.Parameters)
-		}
-		if params["empty-map"].Map == nil || len(params["empty-map"].Map.Values) != 0 {
-			t.Fatalf("Plugin.Parameters = %#v, want present empty map", request.Plugin.Parameters)
-		}
-		if params["empty-array"].Array == nil || len(params["empty-array"].Array.Values) != 0 {
-			t.Fatalf("Plugin.Parameters = %#v, want present empty array", request.Plugin.Parameters)
-		}
-		return PluginResult{Manifests: []PluginManifest{{
-			Path: "plugin/cm.yaml",
-			Object: map[string]any{
-				"apiVersion": "v1",
-				"kind":       "ConfigMap",
-				"metadata": map[string]any{
-					"name": "from-plugin",
-				},
-				"data": map[string]any{"value": "rendered"},
-			},
-		}}}, nil
+		assertPublicPluginRequest(t, request)
+		return publicPluginConfigMapResult(), nil
 	})
 
 	result, err := Render(context.Background(), Config{Path: root, PluginRenderer: renderer})
 	if err != nil {
 		t.Fatalf("Render() error = %v", err)
 	}
-	if len(result.Manifests) != 1 {
-		t.Fatalf("len(Manifests) = %d, want 1", len(result.Manifests))
-	}
-	if got := result.Manifests[0].Object["kind"]; got != "ConfigMap" {
-		t.Fatalf("kind = %#v, want ConfigMap", got)
-	}
-	metadata := result.Manifests[0].Object["metadata"].(map[string]any)
-	if metadata["namespace"] != "rendered" {
-		t.Fatalf("metadata.namespace = %#v, want rendered", metadata["namespace"])
-	}
+	assertRenderedPluginConfigMap(t, result)
 }
 
 func TestListApplications(t *testing.T) {
@@ -610,6 +552,124 @@ func publicPluginParamsByName(params []PluginParameter) map[string]PluginParamet
 		out[param.Name] = param
 	}
 	return out
+}
+
+func assertPublicPluginRequest(t *testing.T, request PluginRequest) {
+	t.Helper()
+	if request.Application.Name != "plugin-app" {
+		t.Fatalf("Application.Name = %q, want plugin-app", request.Application.Name)
+	}
+	if request.Source.Path != "apps/plugin" {
+		t.Fatalf("Source.Path = %q, want apps/plugin", request.Source.Path)
+	}
+	if request.Source.RepoURL != "https://github.com/example/repo" {
+		t.Fatalf("Source.RepoURL = %q, want https://github.com/example/repo", request.Source.RepoURL)
+	}
+	if request.Source.TargetRevision != "main" {
+		t.Fatalf("Source.TargetRevision = %q, want main", request.Source.TargetRevision)
+	}
+	if request.Source.RepoRoot == "" {
+		t.Fatalf("Source.RepoRoot is empty")
+	}
+	if _, err := os.Stat(request.Source.RepoRoot); err != nil {
+		t.Fatalf("Source.RepoRoot %q stat error = %v", request.Source.RepoRoot, err)
+	}
+	assertPublicPluginConfig(t, request.Plugin)
+}
+
+func assertPublicPluginConfig(t *testing.T, config PluginConfig) {
+	t.Helper()
+	if config.Name != "cue" {
+		t.Fatalf("Plugin.Name = %q, want cue", config.Name)
+	}
+	if len(config.Env) != 1 {
+		t.Fatalf("Plugin.Env = %#v, want one env entry", config.Env)
+	}
+	if config.Env[0].Name != "FEATURE" || config.Env[0].Value != "enabled" {
+		t.Fatalf("Plugin.Env = %#v, want FEATURE=enabled", config.Env)
+	}
+	params := publicPluginParamsByName(config.Parameters)
+	assertPublicPluginStringParam(t, params, "mode", "fast")
+	assertPublicPluginMapParam(t, params, "labels", map[string]string{"tier": "backend"})
+	assertPublicPluginArrayParam(t, params, "args", []string{"--debug"})
+	assertPublicPluginMapParam(t, params, "empty-map", map[string]string{})
+	assertPublicPluginArrayParam(t, params, "empty-array", []string{})
+}
+
+func assertPublicPluginStringParam(t *testing.T, params map[string]PluginParameter, name, value string) {
+	t.Helper()
+	param := params[name]
+	if param.String == nil {
+		t.Fatalf("Plugin.Parameters = %#v, want %s string", params, name)
+	}
+	if *param.String != value {
+		t.Fatalf("Plugin.Parameters[%s].String = %q, want %q", name, *param.String, value)
+	}
+}
+
+func assertPublicPluginMapParam(t *testing.T, params map[string]PluginParameter, name string, values map[string]string) {
+	t.Helper()
+	param := params[name]
+	if param.Map == nil {
+		t.Fatalf("Plugin.Parameters = %#v, want %s map", params, name)
+	}
+	if !stringMapsEqual(param.Map.Values, values) {
+		t.Fatalf("Plugin.Parameters[%s].Map = %#v, want %#v", name, param.Map.Values, values)
+	}
+}
+
+func assertPublicPluginArrayParam(t *testing.T, params map[string]PluginParameter, name string, values []string) {
+	t.Helper()
+	param := params[name]
+	if param.Array == nil {
+		t.Fatalf("Plugin.Parameters = %#v, want %s array", params, name)
+	}
+	if !slices.Equal(param.Array.Values, values) {
+		t.Fatalf("Plugin.Parameters[%s].Array = %#v, want %#v", name, param.Array.Values, values)
+	}
+}
+
+func assertRenderedPluginConfigMap(t *testing.T, result RenderResult) {
+	t.Helper()
+	if len(result.Manifests) != 1 {
+		t.Fatalf("len(Manifests) = %d, want 1", len(result.Manifests))
+	}
+	if got := result.Manifests[0].Object["kind"]; got != "ConfigMap" {
+		t.Fatalf("kind = %#v, want ConfigMap", got)
+	}
+	metadata, ok := result.Manifests[0].Object["metadata"].(map[string]any)
+	if !ok {
+		t.Fatalf("metadata = %#v, want object", result.Manifests[0].Object["metadata"])
+	}
+	if metadata["namespace"] != "rendered" {
+		t.Fatalf("metadata.namespace = %#v, want rendered", metadata["namespace"])
+	}
+}
+
+func publicPluginConfigMapResult() PluginResult {
+	return PluginResult{Manifests: []PluginManifest{{
+		Path: "plugin/cm.yaml",
+		Object: map[string]any{
+			"apiVersion": "v1",
+			"kind":       "ConfigMap",
+			"metadata": map[string]any{
+				"name": "from-plugin",
+			},
+			"data": map[string]any{"value": "rendered"},
+		},
+	}}}
+}
+
+func stringMapsEqual(left, right map[string]string) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	for key, leftValue := range left {
+		if right[key] != leftValue {
+			return false
+		}
+	}
+	return true
 }
 
 type recordingGitAcquirer struct {
