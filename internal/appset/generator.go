@@ -163,7 +163,11 @@ func evaluateNestedGenerator(ctx generatorContext, nested argoappv1.ApplicationS
 	if err != nil {
 		return nil, nil, true, err
 	}
-	if !isSupportedNestedGenerator(generator) {
+	supported, err := supportedGeneratorTree(generator)
+	if err != nil {
+		return nil, nil, true, err
+	}
+	if !supported {
 		return nil, unsupportedGeneratorDiagnostic(ctx.ManifestPath), false, nil
 	}
 	if len(inheritedParams) != 0 {
@@ -179,8 +183,31 @@ func evaluateNestedGenerator(ctx generatorContext, nested argoappv1.ApplicationS
 	return evaluateGenerator(ctx, generator)
 }
 
-func isSupportedNestedGenerator(generator argoappv1.ApplicationSetGenerator) bool {
-	return generator.List != nil || generator.Git != nil || generator.Matrix != nil || generator.Merge != nil
+func supportedGeneratorTree(generator argoappv1.ApplicationSetGenerator) (bool, error) {
+	switch {
+	case generator.List != nil || generator.Git != nil:
+		return true, nil
+	case generator.Matrix != nil:
+		return supportedNestedGeneratorTrees(generator.Matrix.Generators)
+	case generator.Merge != nil:
+		return supportedNestedGeneratorTrees(generator.Merge.Generators)
+	default:
+		return false, nil
+	}
+}
+
+func supportedNestedGeneratorTrees(nestedGenerators []argoappv1.ApplicationSetNestedGenerator) (bool, error) {
+	for _, nested := range nestedGenerators {
+		generator, err := generatorFromNested(nested)
+		if err != nil {
+			return false, err
+		}
+		supported, err := supportedGeneratorTree(generator)
+		if err != nil || !supported {
+			return supported, err
+		}
+	}
+	return true, nil
 }
 
 func generatorFromNested(nested argoappv1.ApplicationSetNestedGenerator) (argoappv1.ApplicationSetGenerator, error) {
@@ -218,14 +245,12 @@ func matrixGeneratorParamSets(ctx generatorContext, matrix *argoappv1.MatrixGene
 	if len(matrix.Generators) != 2 {
 		return nil, nil, true, fmt.Errorf("matrix support only two child generators, found %d", len(matrix.Generators))
 	}
-	for _, child := range matrix.Generators {
-		generator, err := generatorFromNested(child)
-		if err != nil {
-			return nil, nil, true, err
-		}
-		if !isSupportedNestedGenerator(generator) {
-			return nil, unsupportedGeneratorDiagnostic(ctx.ManifestPath), false, nil
-		}
+	supported, err := supportedNestedGeneratorTrees(matrix.Generators)
+	if err != nil {
+		return nil, nil, true, err
+	}
+	if !supported {
+		return nil, unsupportedGeneratorDiagnostic(ctx.ManifestPath), false, nil
 	}
 
 	first, firstDiags, supported, err := evaluateNestedGenerator(ctx, matrix.Generators[0], nil)

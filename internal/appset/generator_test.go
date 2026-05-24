@@ -1149,6 +1149,56 @@ spec:
 	}
 }
 
+func TestGenerateMatrixGeneratorReportsUnsupportedNestedChildWhenFirstChildEmpty(t *testing.T) {
+	root := t.TempDir()
+	data := []byte(`
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: mixed-matrix-empty-nested
+spec:
+  goTemplate: true
+  generators:
+    - list:
+        elements:
+          - name: supported
+    - matrix:
+        generators:
+          - list:
+              elements: []
+          - merge:
+              mergeKeys: ["name"]
+              generators:
+                - list:
+                    elements:
+                      - name: unsupported
+                - scmProvider: {}
+  template:
+    metadata:
+      name: '{{.name}}'
+    spec:
+      project: default
+      source:
+        repoURL: https://github.com/example/repo
+        path: apps/{{.name}}
+        targetRevision: main
+      destination:
+        name: in-cluster
+        namespace: default
+`)
+
+	apps, diags, err := GenerateFromYAML(root, "app-set.yaml", data)
+	if err != nil {
+		t.Fatalf("GenerateFromYAML() error = %v", err)
+	}
+	if got := generatedNames(apps); !slices.Equal(got, []string{"supported"}) {
+		t.Fatalf("generated names = %#v, want supported", got)
+	}
+	if len(diags) != 1 || !strings.Contains(diags[0].Message, "unsupported ApplicationSet generator") {
+		t.Fatalf("diagnostics = %#v, want unsupported generator diagnostic", diags)
+	}
+}
+
 func TestGenerateMatrixGeneratorPreservesAllChildSourcePaths(t *testing.T) {
 	root := t.TempDir()
 	for _, dir := range []string{
