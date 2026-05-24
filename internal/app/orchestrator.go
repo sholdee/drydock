@@ -36,6 +36,8 @@ type BuildRequest struct {
 	RefreshRemoteResources       bool
 	RemoteResourceCacheDir       string
 	RemoteResourceForbiddenRoots []string
+	RemoteResourceCredentials    remote.Credentials
+	RemoteResourceGitCredentials remote.GitCredentials
 	SkipKinds                    []string
 	SkipCRDs                     bool
 	SkipSecrets                  bool
@@ -226,6 +228,8 @@ func (o Orchestrator) Build(ctx context.Context, request BuildRequest) (BuildRes
 		refreshRemoteResources:       request.RefreshRemoteResources,
 		remoteResourceCacheDir:       request.RemoteResourceCacheDir,
 		remoteResourceForbiddenRoots: forbiddenRoots,
+		remoteResourceCredentials:    request.RemoteResourceCredentials,
+		remoteResourceGitCredentials: request.RemoteResourceGitCredentials,
 	}
 	for _, application := range result.Applications {
 		rendered, err := RenderApplication(ctx, application, provider)
@@ -469,6 +473,8 @@ type localProvider struct {
 	refreshRemoteResources       bool
 	remoteResourceCacheDir       string
 	remoteResourceForbiddenRoots []string
+	remoteResourceCredentials    remote.Credentials
+	remoteResourceGitCredentials remote.GitCredentials
 }
 
 func (p localProvider) RenderSource(ctx context.Context, source render.ResolvedSource, opts render.RenderOptions) ([]render.Manifest, []diagnostic.Diagnostic, error) {
@@ -488,6 +494,8 @@ func (p localProvider) RenderSource(ctx context.Context, source render.ResolvedS
 	opts.RefreshRemoteResources = p.refreshRemoteResources
 	opts.RemoteResourceForbiddenRoots = p.remoteResourceForbiddenRoots
 	opts.RemoteResourceForbiddenRoots = appendUniqueString(opts.RemoteResourceForbiddenRoots, sourceRoot)
+	opts.RemoteResourceCredentials = p.remoteResourceCredentials
+	opts.RemoteResourceGitCredentials = p.remoteResourceGitCredentials
 	anchoredRefRoots, err := anchorLocalRefRoots(sourceRoot, opts.RefRoots)
 	if err != nil {
 		return nil, nil, err

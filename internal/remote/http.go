@@ -137,7 +137,11 @@ func applyHTTPAuth(request *http.Request, credentials Credentials) {
 
 func redactFetchError(err error, rawURL string, credentials Credentials) string {
 	message := strings.ReplaceAll(err.Error(), rawURL, RedactURL(rawURL))
-	return redactCredentialValues(message, credentials, GitCredentials{})
+	return RedactCredentialError(message, credentials, GitCredentials{})
+}
+
+func RedactCredentialError(message string, credentials Credentials, gitCredentials GitCredentials) string {
+	return redactCredentialValues(message, credentials, gitCredentials)
 }
 
 func redactCredentialValues(message string, credentials Credentials, gitCredentials GitCredentials) string {

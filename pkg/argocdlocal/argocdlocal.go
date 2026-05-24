@@ -17,7 +17,8 @@ import (
 // Config controls render, list, and diff operations.
 //
 // Path is the working tree to inspect for render/list operations and the right
-// side for diff operations. PathOrig is the left side for diff operations.
+// side for diff operations. PathOrig is the left side for diff operations. Use
+// keyed struct literals; new fields may be added as argocd-local gains parity.
 type Config struct {
 	Path                         string
 	PathOrig                     string
@@ -34,6 +35,7 @@ type Config struct {
 	RefreshRemoteResources       bool
 	RemoteResourceCacheDir       string
 	RemoteResourceForbiddenRoots []string
+	RemoteResourceCredentials    RemoteResourceCredentials
 	SkipKinds                    []string
 	SkipCRDs                     bool
 	SkipSecrets                  bool
@@ -150,6 +152,8 @@ func (client *Client) buildRequest() app.BuildRequest {
 		RefreshRemoteResources:       client.config.RefreshRemoteResources,
 		RemoteResourceCacheDir:       client.config.RemoteResourceCacheDir,
 		RemoteResourceForbiddenRoots: append([]string(nil), client.config.RemoteResourceForbiddenRoots...),
+		RemoteResourceCredentials:    remoteResourceCredentialsToInternal(client.config.RemoteResourceCredentials),
+		RemoteResourceGitCredentials: gitCredentialsToRemoteInternal(client.config.GitCredentials),
 		SkipKinds:                    append([]string(nil), client.config.SkipKinds...),
 		SkipCRDs:                     client.config.SkipCRDs,
 		SkipSecrets:                  client.config.SkipSecrets,
@@ -166,27 +170,29 @@ func (client *Client) diffRequest() app.DiffRequest {
 		changedOnly = *client.config.ChangedOnly
 	}
 	return app.DiffRequest{
-		LeftPath:               client.config.PathOrig,
-		RightPath:              client.config.Path,
-		ChangedOnly:            changedOnly,
-		StrictChangedOnly:      client.config.StrictChangedOnly,
-		Strict:                 client.config.Strict,
-		Unified:                unified,
-		StripAttrs:             append([]string(nil), client.config.StripAttrs...),
-		Offline:                client.config.Offline,
-		RefreshCharts:          client.config.RefreshCharts,
-		ChartCacheDir:          client.config.ChartCacheDir,
-		ChartCredentials:       chartCredentialsToInternal(client.config.ChartCredentials),
-		RepoMaps:               repoMapsToInternal(client.config.RepoMaps),
-		AllowNetwork:           client.config.AllowNetwork,
-		GitCacheDir:            client.config.GitCacheDir,
-		RefreshGit:             client.config.RefreshGit,
-		GitCredentials:         gitCredentialsToInternal(client.config.GitCredentials),
-		RefreshRemoteResources: client.config.RefreshRemoteResources,
-		RemoteResourceCacheDir: client.config.RemoteResourceCacheDir,
-		SkipKinds:              append([]string(nil), client.config.SkipKinds...),
-		SkipCRDs:               client.config.SkipCRDs,
-		SkipSecrets:            client.config.SkipSecrets,
+		LeftPath:                     client.config.PathOrig,
+		RightPath:                    client.config.Path,
+		ChangedOnly:                  changedOnly,
+		StrictChangedOnly:            client.config.StrictChangedOnly,
+		Strict:                       client.config.Strict,
+		Unified:                      unified,
+		StripAttrs:                   append([]string(nil), client.config.StripAttrs...),
+		Offline:                      client.config.Offline,
+		RefreshCharts:                client.config.RefreshCharts,
+		ChartCacheDir:                client.config.ChartCacheDir,
+		ChartCredentials:             chartCredentialsToInternal(client.config.ChartCredentials),
+		RepoMaps:                     repoMapsToInternal(client.config.RepoMaps),
+		AllowNetwork:                 client.config.AllowNetwork,
+		GitCacheDir:                  client.config.GitCacheDir,
+		RefreshGit:                   client.config.RefreshGit,
+		GitCredentials:               gitCredentialsToInternal(client.config.GitCredentials),
+		RefreshRemoteResources:       client.config.RefreshRemoteResources,
+		RemoteResourceCacheDir:       client.config.RemoteResourceCacheDir,
+		RemoteResourceCredentials:    remoteResourceCredentialsToInternal(client.config.RemoteResourceCredentials),
+		RemoteResourceGitCredentials: gitCredentialsToRemoteInternal(client.config.GitCredentials),
+		SkipKinds:                    append([]string(nil), client.config.SkipKinds...),
+		SkipCRDs:                     client.config.SkipCRDs,
+		SkipSecrets:                  client.config.SkipSecrets,
 	}
 }
 
@@ -372,9 +378,29 @@ type ChartAcquirer interface {
 	Acquire(ctx context.Context, request ChartRequest, opts ChartOptions) (ChartResult, error)
 }
 
-// RemoteResourceRequest identifies a remote Kustomize resource to acquire.
+// RemoteResourceKind classifies a remote Kustomize resource acquisition.
+type RemoteResourceKind string
+
+const (
+	RemoteResourceHTTPFile RemoteResourceKind = "http-file"
+	RemoteResourceGitRepo  RemoteResourceKind = "git-repo"
+)
+
+// RemoteResourceRequest identifies a remote Kustomize resource to acquire. URL
+// is the original Kustomize ref; RepoURL and Revision are structured metadata
+// for Git refs.
 type RemoteResourceRequest struct {
-	URL string
+	URL      string
+	Kind     RemoteResourceKind
+	RepoURL  string
+	Revision string
+}
+
+// RemoteResourceCredentials supplies credentials for remote Kustomize HTTP resources.
+type RemoteResourceCredentials struct {
+	Username    string
+	Password    string
+	BearerToken string
 }
 
 // RemoteResourceOptions controls remote Kustomize resource acquisition.
@@ -383,12 +409,15 @@ type RemoteResourceOptions struct {
 	Offline        bool
 	Refresh        bool
 	ForbiddenRoots []string
+	Credentials    RemoteResourceCredentials
+	GitCredentials GitCredentials
 }
 
 // RemoteResourceResult describes an acquired remote Kustomize resource.
 type RemoteResourceResult struct {
 	Path      string
 	URL       string
+	Revision  string
 	FromCache bool
 }
 
@@ -538,6 +567,46 @@ func gitCredentialsToInternal(credentials GitCredentials) sourcepkg.GitCredentia
 	}
 }
 
+func gitCredentialsToRemoteInternal(credentials GitCredentials) remote.GitCredentials {
+	return remote.GitCredentials{
+		Username:          credentials.Username,
+		Password:          credentials.Password,
+		BearerToken:       credentials.BearerToken,
+		SSHPrivateKeyPath: credentials.SSHPrivateKeyPath,
+		SSHPrivateKey:     credentials.SSHPrivateKey,
+		SSHPassphrase:     credentials.SSHPassphrase,
+		SSHKnownHostsPath: credentials.SSHKnownHostsPath,
+	}
+}
+
+func remoteGitCredentialsFromInternal(credentials remote.GitCredentials) GitCredentials {
+	return GitCredentials{
+		Username:          credentials.Username,
+		Password:          credentials.Password,
+		BearerToken:       credentials.BearerToken,
+		SSHPrivateKeyPath: credentials.SSHPrivateKeyPath,
+		SSHPrivateKey:     credentials.SSHPrivateKey,
+		SSHPassphrase:     credentials.SSHPassphrase,
+		SSHKnownHostsPath: credentials.SSHKnownHostsPath,
+	}
+}
+
+func remoteResourceCredentialsToInternal(credentials RemoteResourceCredentials) remote.Credentials {
+	return remote.Credentials{
+		Username:    credentials.Username,
+		Password:    credentials.Password,
+		BearerToken: credentials.BearerToken,
+	}
+}
+
+func remoteResourceCredentialsFromInternal(credentials remote.Credentials) RemoteResourceCredentials {
+	return RemoteResourceCredentials{
+		Username:    credentials.Username,
+		Password:    credentials.Password,
+		BearerToken: credentials.BearerToken,
+	}
+}
+
 func gitCredentialsFromInternal(credentials sourcepkg.GitCredentials) GitCredentials {
 	return GitCredentials{
 		Username:          credentials.Username,
@@ -547,6 +616,28 @@ func gitCredentialsFromInternal(credentials sourcepkg.GitCredentials) GitCredent
 		SSHPrivateKey:     credentials.SSHPrivateKey,
 		SSHPassphrase:     credentials.SSHPassphrase,
 		SSHKnownHostsPath: credentials.SSHKnownHostsPath,
+	}
+}
+
+func remoteResourceKindToInternal(kind RemoteResourceKind) remote.RequestKind {
+	switch kind {
+	case "", RemoteResourceHTTPFile:
+		return remote.RequestHTTPFile
+	case RemoteResourceGitRepo:
+		return remote.RequestGitRepo
+	default:
+		return remote.RequestKind(kind)
+	}
+}
+
+func remoteResourceKindFromInternal(kind remote.RequestKind) RemoteResourceKind {
+	switch kind {
+	case "", remote.RequestHTTPFile:
+		return RemoteResourceHTTPFile
+	case remote.RequestGitRepo:
+		return RemoteResourceGitRepo
+	default:
+		return RemoteResourceKind(kind)
 	}
 }
 
@@ -628,16 +719,22 @@ type remoteResourceAcquirerAdapter struct {
 
 func (adapter remoteResourceAcquirerAdapter) Acquire(ctx context.Context, request remote.Request, opts remote.Options) (remote.Result, error) {
 	result, err := adapter.acquirer.Acquire(ctx, RemoteResourceRequest{
-		URL: request.URL,
+		URL:      request.URL,
+		Kind:     remoteResourceKindFromInternal(request.Kind),
+		RepoURL:  request.RepoURL,
+		Revision: request.Revision,
 	}, RemoteResourceOptions{
 		CacheDir:       opts.CacheDir,
 		Offline:        opts.Offline,
 		Refresh:        opts.Refresh,
 		ForbiddenRoots: append([]string(nil), opts.ForbiddenRoots...),
+		Credentials:    remoteResourceCredentialsFromInternal(opts.Credentials),
+		GitCredentials: remoteGitCredentialsFromInternal(opts.GitCredentials),
 	})
 	return remote.Result{
 		Path:      result.Path,
 		URL:       result.URL,
+		Revision:  result.Revision,
 		FromCache: result.FromCache,
 	}, err
 }
