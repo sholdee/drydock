@@ -433,6 +433,22 @@ func TestRunIgnoreJSONPointerSuppressesReplicasDiff(t *testing.T) {
 	}
 }
 
+func TestRunKnownTypeFieldsSuppressesRolloutPodSpecQuantityDiff(t *testing.T) {
+	normalization := Normalization{
+		KnownTypeFields: []KnownTypeField{{Field: "spec.template.spec", Type: "core/v1/PodSpec"}},
+	}
+	left := []Document{rolloutDocumentWithCPU("0.1", normalization)}
+	right := []Document{rolloutDocumentWithCPU("100m", normalization)}
+
+	results, err := Run(left, right, Options{Unified: 3})
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if len(results) != 0 {
+		t.Fatalf("len(results) = %d, want knownTypeFields CPU quantity diff ignored: %#v", len(results), results)
+	}
+}
+
 func TestRunIgnoreJSONPointerMissingPathsAreNoOp(t *testing.T) {
 	left := []Document{configMapDocument("old", []string{"/metadata/annotations/missing", "/data/missing"})}
 	right := []Document{configMapDocument("new", []string{"/metadata/annotations/missing", "/data/missing"})}
@@ -910,6 +926,32 @@ spec:
               value: two
 `,
 		Normalization: Normalization{JSONPointers: pointers},
+	}
+}
+
+func rolloutDocumentWithCPU(cpu string, normalization Normalization) Document {
+	return Document{
+		Parent: testParent(),
+		Resource: Resource{
+			Group: "argoproj.io",
+			Kind:  "Rollout",
+			Name:  "demo-rollout",
+		},
+		Body: `apiVersion: argoproj.io/v1alpha1
+kind: Rollout
+metadata:
+  name: demo-rollout
+spec:
+  template:
+    spec:
+      containers:
+        - name: app
+          image: repo/app:v1
+          resources:
+            requests:
+              cpu: ` + cpu + `
+`,
+		Normalization: normalization,
 	}
 }
 

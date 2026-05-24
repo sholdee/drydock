@@ -9,8 +9,11 @@ import (
 	"strconv"
 	"strings"
 
+	argoappv1 "github.com/argoproj/argo-cd/v3/pkg/apis/application/v1alpha1"
+	"github.com/argoproj/argo-cd/v3/util/argo/normalizers"
 	"github.com/pmezard/go-difflib/difflib"
 	"go.yaml.in/yaml/v4"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 )
 
 type Parent struct {
@@ -28,10 +31,16 @@ type Resource struct {
 	Name      string `json:"name" yaml:"name"`
 }
 
+type KnownTypeField struct {
+	Field string
+	Type  string
+}
+
 type Normalization struct {
 	JSONPointers          []string
 	JQPathExpressions     []string
 	ManagedFieldsManagers []string
+	KnownTypeFields       []KnownTypeField
 	CompareOptions        CompareOptions
 }
 
@@ -131,6 +140,7 @@ func appendUniqueNormalization(left, right Normalization) Normalization {
 	left.JSONPointers = appendUniqueStrings(left.JSONPointers, right.JSONPointers)
 	left.JQPathExpressions = appendUniqueStrings(left.JQPathExpressions, right.JQPathExpressions)
 	left.ManagedFieldsManagers = appendUniqueStrings(left.ManagedFieldsManagers, right.ManagedFieldsManagers)
+	left.KnownTypeFields = appendUniqueKnownTypeFields(left.KnownTypeFields, right.KnownTypeFields)
 	return left
 }
 
@@ -149,11 +159,27 @@ func appendUniqueStrings(out []string, values []string) []string {
 	return out
 }
 
+func appendUniqueKnownTypeFields(out []KnownTypeField, values []KnownTypeField) []KnownTypeField {
+	seen := make(map[KnownTypeField]struct{}, len(out)+len(values))
+	for _, value := range out {
+		seen[value] = struct{}{}
+	}
+	for _, value := range values {
+		if _, ok := seen[value]; ok {
+			continue
+		}
+		seen[value] = struct{}{}
+		out = append(out, value)
+	}
+	return out
+}
+
 func cloneNormalization(normalization Normalization) Normalization {
 	return Normalization{
 		JSONPointers:          append([]string(nil), normalization.JSONPointers...),
 		JQPathExpressions:     append([]string(nil), normalization.JQPathExpressions...),
 		ManagedFieldsManagers: append([]string(nil), normalization.ManagedFieldsManagers...),
+		KnownTypeFields:       append([]KnownTypeField(nil), normalization.KnownTypeFields...),
 		CompareOptions:        normalization.CompareOptions,
 	}
 }
@@ -296,6 +322,7 @@ func normalizeDiffBodyForResource(body string, opts Options, normalization Norma
 	if len(attrs) == 0 &&
 		len(normalization.JSONPointers) == 0 &&
 		len(normalization.JQPathExpressions) == 0 &&
+		len(normalization.KnownTypeFields) == 0 &&
 		!compareOptionsRequireObject(resource, normalization.CompareOptions) {
 		return body, nil
 	}
@@ -321,6 +348,10 @@ func normalizeDiffObject(body string, opts Options, normalization Normalization,
 	if err != nil {
 		return nil, false, err
 	}
+	object, err = normalizeKnownTypeFields(object, resource, normalization.KnownTypeFields)
+	if err != nil {
+		return nil, false, err
+	}
 	stripMetadataAttrs(object, attrs)
 	object, err = removeJSONPointers(object, normalization.JSONPointers)
 	if err != nil {
@@ -335,6 +366,31 @@ func normalizeDiffObject(body string, opts Options, normalization Normalization,
 	}
 	object = normalizeCompareOptionsObject(object, resource, normalization.CompareOptions)
 	return object, false, nil
+}
+
+func normalizeKnownTypeFields(object map[string]any, resource Resource, fields []KnownTypeField) (map[string]any, error) {
+	if len(fields) == 0 {
+		return object, nil
+	}
+	overrideFields := make([]argoappv1.KnownTypeField, 0, len(fields))
+	for _, field := range fields {
+		overrideFields = append(overrideFields, argoappv1.KnownTypeField{Field: field.Field, Type: field.Type})
+	}
+	key := resource.Kind
+	if resource.Group != "" {
+		key = resource.Group + "/" + resource.Kind
+	}
+	normalizer, err := normalizers.NewKnownTypesNormalizer(map[string]argoappv1.ResourceOverride{
+		key: {KnownTypeFields: overrideFields},
+	})
+	if err != nil {
+		return nil, err
+	}
+	obj := &unstructured.Unstructured{Object: object}
+	if err := normalizer.Normalize(obj); err != nil {
+		return nil, err
+	}
+	return obj.Object, nil
 }
 
 func stripAttrSet(attrs []string) map[string]struct{} {

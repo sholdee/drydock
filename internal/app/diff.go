@@ -385,6 +385,7 @@ func normalizationFor(application argoappv1.Application, id manifest.Identity, s
 	normalization.JSONPointers = append(normalization.JSONPointers, global.JSONPointers...)
 	normalization.JQPathExpressions = append(normalization.JQPathExpressions, global.JQPathExpressions...)
 	normalization.ManagedFieldsManagers = append(normalization.ManagedFieldsManagers, global.ManagedFieldsManagers...)
+	normalization.KnownTypeFields = append(normalization.KnownTypeFields, global.KnownTypeFields...)
 	return normalization
 }
 
@@ -402,6 +403,12 @@ func globalNormalizationFor(settings config.ArgoSettings, id manifest.Identity) 
 		normalization.JSONPointers = append(normalization.JSONPointers, customization.IgnoreDifferences.JSONPointers...)
 		normalization.JQPathExpressions = append(normalization.JQPathExpressions, customization.IgnoreDifferences.JQPathExpressions...)
 		normalization.ManagedFieldsManagers = append(normalization.ManagedFieldsManagers, customization.IgnoreDifferences.ManagedFieldsManagers...)
+		for _, field := range customization.KnownTypeFields {
+			normalization.KnownTypeFields = append(normalization.KnownTypeFields, diff.KnownTypeField{
+				Field: field.Field,
+				Type:  field.Type,
+			})
+		}
 	}
 	return normalization
 }
