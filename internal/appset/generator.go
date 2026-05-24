@@ -26,6 +26,7 @@ import (
 type GeneratedApplication struct {
 	Application argoappv1.Application
 	SourcePath  string
+	SourcePaths []string
 	Generator   string
 }
 
@@ -87,10 +88,11 @@ func Generate(repoRoot, manifestPath string, appset argoappv1.ApplicationSet) ([
 }
 
 type generatorParamSet struct {
-	Params     map[string]any
-	SourcePath string
-	Generator  string
-	Template   argoappv1.ApplicationSetTemplate
+	Params      map[string]any
+	SourcePath  string
+	SourcePaths []string
+	Generator   string
+	Template    argoappv1.ApplicationSetTemplate
 }
 
 type generatorContext struct {
@@ -113,6 +115,19 @@ func evaluateGenerator(ctx generatorContext, generator argoappv1.ApplicationSetG
 		return paramSets, diags, true, err
 	}
 
+	if generator.Matrix != nil {
+		template, err := mergeGeneratorTemplate(ctx.BaseTemplate, generator.Matrix.Template)
+		if err != nil {
+			return nil, nil, true, err
+		}
+		paramSets, diags, supported, err := matrixGeneratorParamSets(ctx, generator.Matrix, generator.Selector)
+		if err != nil || !supported {
+			return paramSets, diags, supported, err
+		}
+		paramSets = setGeneratorTemplate(paramSets, template)
+		return paramSets, diags, true, nil
+	}
+
 	if generator.Git == nil {
 		return nil, unsupportedGeneratorDiagnostic(ctx.ManifestPath), false, nil
 	}
@@ -128,6 +143,269 @@ func evaluateGenerator(ctx generatorContext, generator argoappv1.ApplicationSetG
 	paramSets, selectorDiags, err := applyGeneratorSelector(ctx.ManifestPath, generator.Selector, paramSets)
 	diags = append(diags, selectorDiags...)
 	return paramSets, diags, supported, err
+}
+
+func evaluateNestedGenerator(ctx generatorContext, nested argoappv1.ApplicationSetNestedGenerator, inheritedParams map[string]any) ([]generatorParamSet, []diagnostic.Diagnostic, bool, error) {
+	generator, err := generatorFromNested(nested)
+	if err != nil {
+		return nil, nil, true, err
+	}
+	if !isSupportedNestedGenerator(generator) {
+		return nil, unsupportedGeneratorDiagnostic(ctx.ManifestPath), false, nil
+	}
+	if len(inheritedParams) != 0 {
+		rendered, err := (&appsetutils.Render{}).RenderGeneratorParams(&generator, inheritedParams, ctx.AppSet.Spec.GoTemplate, ctx.AppSet.Spec.GoTemplateOptions)
+		if err != nil {
+			return nil, nil, true, fmt.Errorf("interpolate nested generator: %w", err)
+		}
+		generator = *rendered
+	}
+	if generator.Merge != nil {
+		return mergeGeneratorParamSets(ctx, generator.Merge, generator.Selector)
+	}
+	return evaluateGenerator(ctx, generator)
+}
+
+func isSupportedNestedGenerator(generator argoappv1.ApplicationSetGenerator) bool {
+	return generator.List != nil || generator.Git != nil || generator.Matrix != nil || generator.Merge != nil
+}
+
+func generatorFromNested(nested argoappv1.ApplicationSetNestedGenerator) (argoappv1.ApplicationSetGenerator, error) {
+	matrix, err := argoappv1.ToNestedMatrixGenerator(nested.Matrix)
+	if err != nil {
+		return argoappv1.ApplicationSetGenerator{}, fmt.Errorf("convert nested matrix generator: %w", err)
+	}
+	merge, err := argoappv1.ToNestedMergeGenerator(nested.Merge)
+	if err != nil {
+		return argoappv1.ApplicationSetGenerator{}, fmt.Errorf("convert nested merge generator: %w", err)
+	}
+	var matrixGenerator *argoappv1.MatrixGenerator
+	if matrix != nil {
+		matrixGenerator = matrix.ToMatrixGenerator()
+	}
+	var mergeGenerator *argoappv1.MergeGenerator
+	if merge != nil {
+		mergeGenerator = merge.ToMergeGenerator()
+	}
+	return argoappv1.ApplicationSetGenerator{
+		List:                    nested.List,
+		Clusters:                nested.Clusters,
+		Git:                     nested.Git,
+		SCMProvider:             nested.SCMProvider,
+		ClusterDecisionResource: nested.ClusterDecisionResource,
+		PullRequest:             nested.PullRequest,
+		Matrix:                  matrixGenerator,
+		Merge:                   mergeGenerator,
+		Selector:                nested.Selector,
+		Plugin:                  nested.Plugin,
+	}, nil
+}
+
+func matrixGeneratorParamSets(ctx generatorContext, matrix *argoappv1.MatrixGenerator, selector *metav1.LabelSelector) ([]generatorParamSet, []diagnostic.Diagnostic, bool, error) {
+	if len(matrix.Generators) != 2 {
+		return nil, nil, true, fmt.Errorf("matrix support only two child generators, found %d", len(matrix.Generators))
+	}
+	for _, child := range matrix.Generators {
+		generator, err := generatorFromNested(child)
+		if err != nil {
+			return nil, nil, true, err
+		}
+		if !isSupportedNestedGenerator(generator) {
+			return nil, unsupportedGeneratorDiagnostic(ctx.ManifestPath), false, nil
+		}
+	}
+
+	first, firstDiags, supported, err := evaluateNestedGenerator(ctx, matrix.Generators[0], nil)
+	if err != nil || !supported {
+		return nil, firstDiags, supported, err
+	}
+
+	var out []generatorParamSet
+	var diags []diagnostic.Diagnostic
+	diags = append(diags, firstDiags...)
+	for _, firstSet := range first {
+		second, secondDiags, supported, err := evaluateNestedGenerator(ctx, matrix.Generators[1], firstSet.Params)
+		diags = append(diags, secondDiags...)
+		if err != nil || !supported {
+			return nil, diags, supported, err
+		}
+		for _, secondSet := range second {
+			params, err := combineMatrixParams(firstSet.Params, secondSet.Params, ctx.AppSet.Spec.GoTemplate)
+			if err != nil {
+				return nil, diags, true, err
+			}
+			out = append(out, generatorParamSet{
+				Params:      params,
+				SourcePath:  primarySourcePath(mergeSourcePaths(firstSet, secondSet)),
+				SourcePaths: mergeSourcePaths(firstSet, secondSet),
+				Generator:   "matrix",
+			})
+		}
+	}
+	out, selectorDiags, err := applyGeneratorSelector(ctx.ManifestPath, selector, out)
+	diags = append(diags, selectorDiags...)
+	return out, diags, true, err
+}
+
+func combineMatrixParams(first, second map[string]any, useGoTemplate bool) (map[string]any, error) {
+	if useGoTemplate {
+		out := cloneParams(second)
+		if err := mergo.Merge(&out, cloneParams(first), mergo.WithOverride); err != nil {
+			return nil, fmt.Errorf("merge matrix params: %w", err)
+		}
+		return out, nil
+	}
+	out, err := appsetutils.CombineStringMaps(first, second)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func primarySourcePath(sourcePaths []string) string {
+	if len(sourcePaths) == 0 {
+		return ""
+	}
+	return sourcePaths[0]
+}
+
+func mergeSourcePaths(paramSets ...generatorParamSet) []string {
+	var out []string
+	seen := map[string]struct{}{}
+	for _, paramSet := range paramSets {
+		paths := paramSet.SourcePaths
+		if len(paths) == 0 && paramSet.SourcePath != "" {
+			paths = []string{paramSet.SourcePath}
+		}
+		for _, sourcePath := range paths {
+			if sourcePath == "" {
+				continue
+			}
+			if _, ok := seen[sourcePath]; ok {
+				continue
+			}
+			seen[sourcePath] = struct{}{}
+			out = append(out, sourcePath)
+		}
+	}
+	return out
+}
+
+func cloneParams(params map[string]any) map[string]any {
+	out := make(map[string]any, len(params))
+	for key, value := range params {
+		out[key] = cloneParamValue(value)
+	}
+	return out
+}
+
+func cloneParamValue(value any) any {
+	switch typed := value.(type) {
+	case map[string]any:
+		return cloneParams(typed)
+	case []any:
+		out := make([]any, len(typed))
+		for i, value := range typed {
+			out[i] = cloneParamValue(value)
+		}
+		return out
+	default:
+		return typed
+	}
+}
+
+func mergeGeneratorParamSets(ctx generatorContext, merge *argoappv1.MergeGenerator, selector *metav1.LabelSelector) ([]generatorParamSet, []diagnostic.Diagnostic, bool, error) {
+	if len(merge.Generators) < 2 {
+		return nil, nil, true, fmt.Errorf("merge requires two or more child generators, found %d", len(merge.Generators))
+	}
+	if len(merge.MergeKeys) == 0 {
+		return nil, nil, true, errors.New("merge requires at least one merge key")
+	}
+
+	var allDiags []diagnostic.Diagnostic
+	allSets := make([][]generatorParamSet, 0, len(merge.Generators))
+	for _, generator := range merge.Generators {
+		paramSets, diags, supported, err := evaluateNestedGenerator(ctx, generator, nil)
+		allDiags = append(allDiags, diags...)
+		if err != nil || !supported {
+			return nil, allDiags, supported, err
+		}
+		allSets = append(allSets, paramSets)
+	}
+
+	baseByKey := map[string]int{}
+	out := make([]generatorParamSet, len(allSets[0]))
+	for i, paramSet := range allSets[0] {
+		key, err := mergeParamSetKey(paramSet.Params, merge.MergeKeys)
+		if err != nil {
+			return nil, allDiags, true, err
+		}
+		if _, exists := baseByKey[key]; exists {
+			return nil, allDiags, true, fmt.Errorf("parameters from a generator were not unique by merge keys; duplicate key was %s", key)
+		}
+		baseByKey[key] = i
+		out[i] = generatorParamSet{
+			Params:      cloneParams(paramSet.Params),
+			SourcePath:  paramSet.SourcePath,
+			SourcePaths: mergeSourcePaths(paramSet),
+			Generator:   "merge",
+		}
+	}
+
+	for _, paramSets := range allSets[1:] {
+		seen := map[string]struct{}{}
+		for _, paramSet := range paramSets {
+			key, err := mergeParamSetKey(paramSet.Params, merge.MergeKeys)
+			if err != nil {
+				return nil, allDiags, true, err
+			}
+			if _, exists := seen[key]; exists {
+				return nil, allDiags, true, fmt.Errorf("parameters from a generator were not unique by merge keys; duplicate key was %s", key)
+			}
+			seen[key] = struct{}{}
+			baseIndex, exists := baseByKey[key]
+			if !exists {
+				continue
+			}
+			merged, err := mergeParams(out[baseIndex].Params, paramSet.Params, ctx.AppSet.Spec.GoTemplate)
+			if err != nil {
+				return nil, allDiags, true, err
+			}
+			out[baseIndex].Params = merged
+			out[baseIndex].SourcePaths = mergeSourcePaths(out[baseIndex], paramSet)
+			out[baseIndex].SourcePath = primarySourcePath(out[baseIndex].SourcePaths)
+		}
+	}
+
+	out, selectorDiags, err := applyGeneratorSelector(ctx.ManifestPath, selector, out)
+	allDiags = append(allDiags, selectorDiags...)
+	return out, allDiags, true, err
+}
+
+func mergeParamSetKey(params map[string]any, mergeKeys []string) (string, error) {
+	key := make(map[string]any, len(mergeKeys))
+	for _, mergeKey := range mergeKeys {
+		key[mergeKey] = params[mergeKey]
+	}
+	data, err := json.Marshal(key)
+	if err != nil {
+		return "", fmt.Errorf("marshal merge key: %w", err)
+	}
+	return string(data), nil
+}
+
+func mergeParams(base, override map[string]any, useGoTemplate bool) (map[string]any, error) {
+	out := cloneParams(base)
+	if useGoTemplate {
+		if err := mergo.Merge(&out, cloneParams(override), mergo.WithOverride); err != nil {
+			return nil, fmt.Errorf("merge params: %w", err)
+		}
+		return out, nil
+	}
+	for key, value := range override {
+		out[key] = value
+	}
+	return out, nil
 }
 
 func listGeneratorParamSets(manifestPath string, list *argoappv1.ListGenerator) ([]generatorParamSet, []diagnostic.Diagnostic) {
@@ -260,7 +538,7 @@ func gitGeneratorParamSets(repoRoot, manifestPath string, git *argoappv1.GitGene
 }
 
 func unsupportedGeneratorDiagnostic(manifestPath string) []diagnostic.Diagnostic {
-	return []diagnostic.Diagnostic{appsetDiagnostic(manifestPath, "unsupported ApplicationSet generator; supported generators are git directories, git files, and list")}
+	return []diagnostic.Diagnostic{appsetDiagnostic(manifestPath, "unsupported ApplicationSet generator; supported generators are git directories, git files, list, and matrix")}
 }
 
 func appsetDiagnostic(manifestPath, message string) diagnostic.Diagnostic {
@@ -281,6 +559,7 @@ func generatedApplication(appset argoappv1.ApplicationSet, rendered argoappv1.Ap
 	return GeneratedApplication{
 		Application: rendered,
 		SourcePath:  paramSet.SourcePath,
+		SourcePaths: mergeSourcePaths(paramSet),
 		Generator:   paramSet.Generator,
 	}
 }
@@ -299,9 +578,10 @@ func gitDirectoryParamSets(repoRoot, manifestPath string, git *argoappv1.GitGene
 			return nil, fmt.Errorf("%s render %s: %w", manifestPath, match, err)
 		}
 		out = append(out, generatorParamSet{
-			Params:     params,
-			SourcePath: match,
-			Generator:  "git-directories",
+			Params:      params,
+			SourcePath:  match,
+			SourcePaths: []string{match},
+			Generator:   "git-directories",
 		})
 	}
 	return out, nil
@@ -382,9 +662,10 @@ func gitFileParamSets(repoRoot, manifestPath string, git *argoappv1.GitGenerator
 			continue
 		}
 		out = append(out, generatorParamSet{
-			Params:     params,
-			SourcePath: match,
-			Generator:  "git-files",
+			Params:      params,
+			SourcePath:  match,
+			SourcePaths: []string{match},
+			Generator:   "git-files",
 		})
 	}
 	return out, diags, nil
