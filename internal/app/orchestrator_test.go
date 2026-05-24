@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/sholdee/drydock/internal/appset"
 	"github.com/sholdee/drydock/internal/cacheevent"
 	"github.com/sholdee/drydock/internal/chart"
 	"github.com/sholdee/drydock/internal/diagnostic"
@@ -1660,6 +1661,37 @@ func TestOrchestratorListApplicationsSkipsUnsupportedApplicationSetInNonStrictMo
 	}
 	if diag.Category != "appset" {
 		t.Fatalf("diagnostic category = %q, want appset", diag.Category)
+	}
+}
+
+func TestOrchestratorLoadsAndMergesProviderFixtureConfig(t *testing.T) {
+	root := t.TempDir()
+	fixturePath := filepath.Join(root, "provider.yaml")
+	writeTestFile(t, fixturePath, `
+clusters:
+  - name: prod
+    server: https://prod.example.invalid
+`)
+	writeUnsupportedApplicationSetFixture(t, root)
+
+	result, err := Orchestrator{}.ListApplications(context.Background(), BuildRequest{
+		Path:                           root,
+		ApplicationSetProviderFixtures: []string{fixturePath},
+		ApplicationSetProviderData: appset.ProviderData{
+			Clusters: []appset.ClusterInput{{
+				Name:   "prod",
+				Server: "https://prod.example.invalid",
+			}},
+		},
+	})
+	if err == nil {
+		t.Fatal("ListApplications() error = nil, want duplicate provider fixture identity error")
+	}
+	if !strings.Contains(err.Error(), "duplicate provider fixture cluster identity") {
+		t.Fatalf("ListApplications() error = %v, want duplicate provider fixture identity", err)
+	}
+	if len(result.Diagnostics) == 0 || !strings.Contains(result.Diagnostics[0].Message, "duplicate provider fixture cluster identity") {
+		t.Fatalf("Diagnostics = %#v, want provider fixture duplicate diagnostic", result.Diagnostics)
 	}
 }
 

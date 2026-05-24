@@ -830,6 +830,33 @@ spec:
 	}
 }
 
+func TestGenerateFromYAMLWithOptionsPreservesUnsupportedWithoutFixture(t *testing.T) {
+	root := t.TempDir()
+	data := []byte(`
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: clusters
+spec:
+  generators:
+    - scmProvider: {}
+  template:
+    metadata:
+      name: generated
+`)
+
+	_, diags, err := GenerateFromYAMLWithOptions(root, "app-set.yaml", data, Options{})
+	if err == nil {
+		t.Fatal("GenerateFromYAMLWithOptions() error = nil, want unsupported generator error")
+	}
+	if len(diags) == 0 {
+		t.Fatal("GenerateFromYAMLWithOptions() diagnostics empty, want unsupported generator diagnostic")
+	}
+	if !strings.Contains(diags[0].Message, "unsupported ApplicationSet generator") {
+		t.Fatalf("diagnostic message = %q, want unsupported ApplicationSet generator", diags[0].Message)
+	}
+}
+
 func TestGenerateMatrixGeneratorCombinesListChildrenInOrder(t *testing.T) {
 	root := t.TempDir()
 	data := []byte(`

@@ -24,28 +24,30 @@ import (
 )
 
 type BuildRequest struct {
-	Path                         string
-	Strict                       bool
-	Offline                      bool
-	RefreshCharts                bool
-	ChartCacheDir                string
-	ChartCredentials             chart.ChartCredentials
-	RepoMaps                     []sourcepkg.RepoMap
-	AllowNetwork                 bool
-	GitCacheDir                  string
-	RefreshGit                   bool
-	GitCredentials               sourcepkg.GitCredentials
-	RefreshRemoteResources       bool
-	RemoteResourceCacheDir       string
-	RemoteResourceForbiddenRoots []string
-	RemoteResourceCredentials    remote.Credentials
-	RemoteResourceGitCredentials remote.GitCredentials
-	SkipKinds                    []string
-	SkipCRDs                     bool
-	SkipSecrets                  bool
-	PluginRenderer               render.PluginRenderer
-	Applications                 []argoappv1.Application
-	RecordCacheEvents            bool
+	Path                           string
+	Strict                         bool
+	Offline                        bool
+	RefreshCharts                  bool
+	ChartCacheDir                  string
+	ChartCredentials               chart.ChartCredentials
+	RepoMaps                       []sourcepkg.RepoMap
+	AllowNetwork                   bool
+	GitCacheDir                    string
+	RefreshGit                     bool
+	GitCredentials                 sourcepkg.GitCredentials
+	RefreshRemoteResources         bool
+	RemoteResourceCacheDir         string
+	RemoteResourceForbiddenRoots   []string
+	RemoteResourceCredentials      remote.Credentials
+	RemoteResourceGitCredentials   remote.GitCredentials
+	SkipKinds                      []string
+	SkipCRDs                       bool
+	SkipSecrets                    bool
+	PluginRenderer                 render.PluginRenderer
+	Applications                   []argoappv1.Application
+	ApplicationSetProviderFixtures []string
+	ApplicationSetProviderData     appset.ProviderData
+	RecordCacheEvents              bool
 }
 
 type BuildAppRequest struct {
@@ -140,6 +142,12 @@ func (o Orchestrator) ListApplications(_ context.Context, request BuildRequest) 
 	settingsDiags = normalizeDiagnostics(settingsDiags, request.Strict, false)
 	result.Diagnostics = append(result.Diagnostics, settingsDiags...)
 	result.Projects = appendDiscoveredProjects(result.Projects, discovered)
+	appsetOptions, providerDiags, err := applicationSetOptionsForRequest(request)
+	if err != nil {
+		result.Diagnostics = append(result.Diagnostics, providerDiags...)
+		return result, diagnosticsError(providerDiags, err)
+	}
+	result.Diagnostics = append(result.Diagnostics, normalizeDiagnostics(providerDiags, request.Strict, false)...)
 
 	for _, appFile := range discovered.Applications {
 		result.Applications = append(result.Applications, appFile.Application)
@@ -154,7 +162,7 @@ func (o Orchestrator) ListApplications(_ context.Context, request BuildRequest) 
 		if err != nil {
 			return result, err
 		}
-		generated, diags, err := appset.GenerateFromYAML(root, appSetPath, data)
+		generated, diags, err := appset.GenerateFromYAMLWithOptions(root, appSetPath, data, appsetOptions)
 		if err != nil {
 			if errors.Is(err, appset.ErrUnsupportedGenerator) && len(diags) > 0 {
 				diags = normalizeDiagnostics(diags, request.Strict, true)
@@ -198,6 +206,24 @@ func generatedApplicationInputPaths(appSetPath string, app appset.GeneratedAppli
 		}
 	}
 	return paths
+}
+
+func applicationSetOptionsForRequest(request BuildRequest) (appset.Options, []diagnostic.Diagnostic, error) {
+	fixtureData, diags, err := appset.LoadProviderFixtures(request.ApplicationSetProviderFixtures)
+	if err != nil {
+		return appset.Options{}, diags, err
+	}
+	data, mergeDiags, err := appset.MergeProviderData(fixtureData, request.ApplicationSetProviderData)
+	diags = append(diags, mergeDiags...)
+	if err != nil {
+		return appset.Options{}, diags, err
+	}
+	return appset.Options{
+		Provider: appset.ProviderOptions{
+			FixturePaths: append([]string(nil), request.ApplicationSetProviderFixtures...),
+			Data:         data,
+		},
+	}, diags, nil
 }
 
 func (o Orchestrator) Build(ctx context.Context, request BuildRequest) (BuildResult, error) {

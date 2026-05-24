@@ -7,6 +7,7 @@ import (
 
 	argoappv1 "github.com/argoproj/argo-cd/v3/pkg/apis/application/v1alpha1"
 	"github.com/sholdee/drydock/internal/app"
+	"github.com/sholdee/drydock/internal/appset"
 	"github.com/sholdee/drydock/internal/cacheevent"
 	"github.com/sholdee/drydock/internal/chart"
 	"github.com/sholdee/drydock/internal/diagnostic"
@@ -23,34 +24,103 @@ import (
 // side for diff operations. PathOrig is the left side for diff operations. Use
 // keyed struct literals; new fields may be added as drydock gains parity.
 type Config struct {
-	Path                         string
-	PathOrig                     string
-	Strict                       bool
-	Offline                      bool
-	RefreshCharts                bool
-	ChartCacheDir                string
-	ChartCredentials             ChartCredentials
-	RepoMaps                     []RepoMap
-	AllowNetwork                 bool
-	GitCacheDir                  string
-	RefreshGit                   bool
-	GitCredentials               GitCredentials
-	RefreshRemoteResources       bool
-	RemoteResourceCacheDir       string
-	RemoteResourceForbiddenRoots []string
-	RemoteResourceCredentials    RemoteResourceCredentials
-	PluginRenderer               PluginRenderer
-	SkipKinds                    []string
-	SkipCRDs                     bool
-	SkipSecrets                  bool
-	ChangedOnly                  *bool
-	StrictChangedOnly            bool
-	Unified                      int
-	StripAttrs                   []string
-	GitAcquirer                  GitAcquirer
-	ChartAcquirer                ChartAcquirer
-	RemoteResourceAcquirer       RemoteResourceAcquirer
-	RecordCacheEvents            bool
+	Path                           string
+	PathOrig                       string
+	Strict                         bool
+	Offline                        bool
+	RefreshCharts                  bool
+	ChartCacheDir                  string
+	ChartCredentials               ChartCredentials
+	RepoMaps                       []RepoMap
+	AllowNetwork                   bool
+	GitCacheDir                    string
+	RefreshGit                     bool
+	GitCredentials                 GitCredentials
+	RefreshRemoteResources         bool
+	RemoteResourceCacheDir         string
+	RemoteResourceForbiddenRoots   []string
+	RemoteResourceCredentials      RemoteResourceCredentials
+	PluginRenderer                 PluginRenderer
+	SkipKinds                      []string
+	SkipCRDs                       bool
+	SkipSecrets                    bool
+	ApplicationSetProviderFixtures []string
+	ApplicationSetProviderData     ApplicationSetProviderData
+	ChangedOnly                    *bool
+	StrictChangedOnly              bool
+	Unified                        int
+	StripAttrs                     []string
+	GitAcquirer                    GitAcquirer
+	ChartAcquirer                  ChartAcquirer
+	RemoteResourceAcquirer         RemoteResourceAcquirer
+	RecordCacheEvents              bool
+}
+
+// ApplicationSetProviderData supplies explicit offline data for provider-backed
+// ApplicationSet generators.
+type ApplicationSetProviderData struct {
+	Clusters         []ApplicationSetProviderCluster
+	ClusterDecisions []ApplicationSetProviderClusterDecision
+	SCMRepositories  []ApplicationSetProviderSCMRepository
+	PullRequests     []ApplicationSetProviderPullRequest
+	Plugins          []ApplicationSetProviderPlugin
+}
+
+// ApplicationSetProviderCluster mirrors one cluster fixture entry.
+type ApplicationSetProviderCluster struct {
+	Name        string
+	Server      string
+	Project     string
+	Labels      map[string]string
+	Annotations map[string]string
+	Values      map[string]string
+}
+
+// ApplicationSetProviderClusterDecision mirrors one cluster decision fixture entry.
+type ApplicationSetProviderClusterDecision struct {
+	ConfigMapRef  string
+	ResourceName  string
+	Labels        map[string]string
+	MatchKey      string
+	StatusListKey string
+	Decisions     []map[string]any
+	Values        map[string]string
+}
+
+// ApplicationSetProviderSCMRepository mirrors one SCM repository fixture entry.
+type ApplicationSetProviderSCMRepository struct {
+	Provider     string
+	Organization string
+	Repository   string
+	RepositoryID string
+	Branch       string
+	SHA          string
+	URL          string
+	Labels       []string
+	Paths        []string
+	Values       map[string]string
+}
+
+// ApplicationSetProviderPullRequest mirrors one pull request fixture entry.
+type ApplicationSetProviderPullRequest struct {
+	Provider     string
+	Organization string
+	Repository   string
+	Number       int
+	Title        string
+	Branch       string
+	TargetBranch string
+	HeadSHA      string
+	Author       string
+	Labels       []string
+	Values       map[string]string
+}
+
+// ApplicationSetProviderPlugin mirrors one plugin fixture entry.
+type ApplicationSetProviderPlugin struct {
+	ConfigMapRef string
+	Outputs      []map[string]any
+	Values       map[string]string
 }
 
 // Client runs drydock operations with a reusable Config and optional
@@ -149,26 +219,28 @@ func (client *Client) DiffImages(ctx context.Context) (ImageDiffResult, error) {
 
 func (client *Client) buildRequest() app.BuildRequest {
 	return app.BuildRequest{
-		Path:                         client.config.Path,
-		Strict:                       client.config.Strict,
-		Offline:                      client.config.Offline,
-		RefreshCharts:                client.config.RefreshCharts,
-		ChartCacheDir:                client.config.ChartCacheDir,
-		ChartCredentials:             chartCredentialsToInternal(client.config.ChartCredentials),
-		RepoMaps:                     repoMapsToInternal(client.config.RepoMaps),
-		AllowNetwork:                 client.config.AllowNetwork,
-		GitCacheDir:                  client.config.GitCacheDir,
-		RefreshGit:                   client.config.RefreshGit,
-		GitCredentials:               gitCredentialsToInternal(client.config.GitCredentials),
-		RefreshRemoteResources:       client.config.RefreshRemoteResources,
-		RemoteResourceCacheDir:       client.config.RemoteResourceCacheDir,
-		RemoteResourceForbiddenRoots: append([]string(nil), client.config.RemoteResourceForbiddenRoots...),
-		RemoteResourceCredentials:    remoteResourceCredentialsToInternal(client.config.RemoteResourceCredentials),
-		RemoteResourceGitCredentials: gitCredentialsToRemoteInternal(client.config.GitCredentials),
-		SkipKinds:                    append([]string(nil), client.config.SkipKinds...),
-		SkipCRDs:                     client.config.SkipCRDs,
-		SkipSecrets:                  client.config.SkipSecrets,
-		RecordCacheEvents:            client.config.RecordCacheEvents,
+		Path:                           client.config.Path,
+		Strict:                         client.config.Strict,
+		Offline:                        client.config.Offline,
+		RefreshCharts:                  client.config.RefreshCharts,
+		ChartCacheDir:                  client.config.ChartCacheDir,
+		ChartCredentials:               chartCredentialsToInternal(client.config.ChartCredentials),
+		RepoMaps:                       repoMapsToInternal(client.config.RepoMaps),
+		AllowNetwork:                   client.config.AllowNetwork,
+		GitCacheDir:                    client.config.GitCacheDir,
+		RefreshGit:                     client.config.RefreshGit,
+		GitCredentials:                 gitCredentialsToInternal(client.config.GitCredentials),
+		RefreshRemoteResources:         client.config.RefreshRemoteResources,
+		RemoteResourceCacheDir:         client.config.RemoteResourceCacheDir,
+		RemoteResourceForbiddenRoots:   append([]string(nil), client.config.RemoteResourceForbiddenRoots...),
+		RemoteResourceCredentials:      remoteResourceCredentialsToInternal(client.config.RemoteResourceCredentials),
+		RemoteResourceGitCredentials:   gitCredentialsToRemoteInternal(client.config.GitCredentials),
+		SkipKinds:                      append([]string(nil), client.config.SkipKinds...),
+		SkipCRDs:                       client.config.SkipCRDs,
+		SkipSecrets:                    client.config.SkipSecrets,
+		ApplicationSetProviderFixtures: append([]string(nil), client.config.ApplicationSetProviderFixtures...),
+		ApplicationSetProviderData:     applicationSetProviderDataToInternal(client.config.ApplicationSetProviderData),
+		RecordCacheEvents:              client.config.RecordCacheEvents,
 	}
 }
 
@@ -182,30 +254,32 @@ func (client *Client) diffRequest() app.DiffRequest {
 		changedOnly = *client.config.ChangedOnly
 	}
 	return app.DiffRequest{
-		LeftPath:                     client.config.PathOrig,
-		RightPath:                    client.config.Path,
-		ChangedOnly:                  changedOnly,
-		StrictChangedOnly:            client.config.StrictChangedOnly,
-		Strict:                       client.config.Strict,
-		Unified:                      unified,
-		StripAttrs:                   append([]string(nil), client.config.StripAttrs...),
-		Offline:                      client.config.Offline,
-		RefreshCharts:                client.config.RefreshCharts,
-		ChartCacheDir:                client.config.ChartCacheDir,
-		ChartCredentials:             chartCredentialsToInternal(client.config.ChartCredentials),
-		RepoMaps:                     repoMapsToInternal(client.config.RepoMaps),
-		AllowNetwork:                 client.config.AllowNetwork,
-		GitCacheDir:                  client.config.GitCacheDir,
-		RefreshGit:                   client.config.RefreshGit,
-		GitCredentials:               gitCredentialsToInternal(client.config.GitCredentials),
-		RefreshRemoteResources:       client.config.RefreshRemoteResources,
-		RemoteResourceCacheDir:       client.config.RemoteResourceCacheDir,
-		RemoteResourceCredentials:    remoteResourceCredentialsToInternal(client.config.RemoteResourceCredentials),
-		RemoteResourceGitCredentials: gitCredentialsToRemoteInternal(client.config.GitCredentials),
-		SkipKinds:                    append([]string(nil), client.config.SkipKinds...),
-		SkipCRDs:                     client.config.SkipCRDs,
-		SkipSecrets:                  client.config.SkipSecrets,
-		RecordCacheEvents:            client.config.RecordCacheEvents,
+		LeftPath:                       client.config.PathOrig,
+		RightPath:                      client.config.Path,
+		ChangedOnly:                    changedOnly,
+		StrictChangedOnly:              client.config.StrictChangedOnly,
+		Strict:                         client.config.Strict,
+		Unified:                        unified,
+		StripAttrs:                     append([]string(nil), client.config.StripAttrs...),
+		Offline:                        client.config.Offline,
+		RefreshCharts:                  client.config.RefreshCharts,
+		ChartCacheDir:                  client.config.ChartCacheDir,
+		ChartCredentials:               chartCredentialsToInternal(client.config.ChartCredentials),
+		RepoMaps:                       repoMapsToInternal(client.config.RepoMaps),
+		AllowNetwork:                   client.config.AllowNetwork,
+		GitCacheDir:                    client.config.GitCacheDir,
+		RefreshGit:                     client.config.RefreshGit,
+		GitCredentials:                 gitCredentialsToInternal(client.config.GitCredentials),
+		RefreshRemoteResources:         client.config.RefreshRemoteResources,
+		RemoteResourceCacheDir:         client.config.RemoteResourceCacheDir,
+		RemoteResourceCredentials:      remoteResourceCredentialsToInternal(client.config.RemoteResourceCredentials),
+		RemoteResourceGitCredentials:   gitCredentialsToRemoteInternal(client.config.GitCredentials),
+		SkipKinds:                      append([]string(nil), client.config.SkipKinds...),
+		SkipCRDs:                       client.config.SkipCRDs,
+		SkipSecrets:                    client.config.SkipSecrets,
+		ApplicationSetProviderFixtures: append([]string(nil), client.config.ApplicationSetProviderFixtures...),
+		ApplicationSetProviderData:     applicationSetProviderDataToInternal(client.config.ApplicationSetProviderData),
+		RecordCacheEvents:              client.config.RecordCacheEvents,
 	}
 }
 
@@ -682,6 +756,96 @@ func cloneValue(value any) any {
 	default:
 		return typed
 	}
+}
+
+func applicationSetProviderDataToInternal(data ApplicationSetProviderData) appset.ProviderData {
+	out := appset.ProviderData{
+		Clusters:         make([]appset.ClusterInput, 0, len(data.Clusters)),
+		ClusterDecisions: make([]appset.ClusterDecisionInput, 0, len(data.ClusterDecisions)),
+		SCMRepositories:  make([]appset.SCMRepositoryInput, 0, len(data.SCMRepositories)),
+		PullRequests:     make([]appset.PullRequestInput, 0, len(data.PullRequests)),
+		Plugins:          make([]appset.PluginInput, 0, len(data.Plugins)),
+	}
+	for _, item := range data.Clusters {
+		out.Clusters = append(out.Clusters, appset.ClusterInput{
+			Name:        item.Name,
+			Server:      item.Server,
+			Project:     item.Project,
+			Labels:      cloneStringMap(item.Labels),
+			Annotations: cloneStringMap(item.Annotations),
+			Values:      cloneStringMap(item.Values),
+		})
+	}
+	for _, item := range data.ClusterDecisions {
+		out.ClusterDecisions = append(out.ClusterDecisions, appset.ClusterDecisionInput{
+			ConfigMapRef:  item.ConfigMapRef,
+			ResourceName:  item.ResourceName,
+			Labels:        cloneStringMap(item.Labels),
+			MatchKey:      item.MatchKey,
+			StatusListKey: item.StatusListKey,
+			Decisions:     cloneAnyMaps(item.Decisions),
+			Values:        cloneStringMap(item.Values),
+		})
+	}
+	for _, item := range data.SCMRepositories {
+		out.SCMRepositories = append(out.SCMRepositories, appset.SCMRepositoryInput{
+			Provider:     item.Provider,
+			Organization: item.Organization,
+			Repository:   item.Repository,
+			RepositoryID: item.RepositoryID,
+			Branch:       item.Branch,
+			SHA:          item.SHA,
+			URL:          item.URL,
+			Labels:       append([]string(nil), item.Labels...),
+			Paths:        append([]string(nil), item.Paths...),
+			Values:       cloneStringMap(item.Values),
+		})
+	}
+	for _, item := range data.PullRequests {
+		out.PullRequests = append(out.PullRequests, appset.PullRequestInput{
+			Provider:     item.Provider,
+			Organization: item.Organization,
+			Repository:   item.Repository,
+			Number:       item.Number,
+			Title:        item.Title,
+			Branch:       item.Branch,
+			TargetBranch: item.TargetBranch,
+			HeadSHA:      item.HeadSHA,
+			Author:       item.Author,
+			Labels:       append([]string(nil), item.Labels...),
+			Values:       cloneStringMap(item.Values),
+		})
+	}
+	for _, item := range data.Plugins {
+		out.Plugins = append(out.Plugins, appset.PluginInput{
+			ConfigMapRef: item.ConfigMapRef,
+			Outputs:      cloneAnyMaps(item.Outputs),
+			Values:       cloneStringMap(item.Values),
+		})
+	}
+	return out
+}
+
+func cloneStringMap(input map[string]string) map[string]string {
+	if input == nil {
+		return nil
+	}
+	out := make(map[string]string, len(input))
+	for key, value := range input {
+		out[key] = value
+	}
+	return out
+}
+
+func cloneAnyMaps(input []map[string]any) []map[string]any {
+	if input == nil {
+		return nil
+	}
+	out := make([]map[string]any, 0, len(input))
+	for _, item := range input {
+		out = append(out, cloneMap(item))
+	}
+	return out
 }
 
 func repoMapsToInternal(repoMaps []RepoMap) []sourcepkg.RepoMap {
