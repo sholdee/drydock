@@ -11,7 +11,9 @@ import (
 	"github.com/home-operations/argocd-local/internal/diagnostic"
 	"github.com/home-operations/argocd-local/internal/diff"
 	"github.com/home-operations/argocd-local/internal/remote"
+	renderpkg "github.com/home-operations/argocd-local/internal/render"
 	sourcepkg "github.com/home-operations/argocd-local/internal/source"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 )
 
 // Config controls render, list, and diff operations.
@@ -36,6 +38,7 @@ type Config struct {
 	RemoteResourceCacheDir       string
 	RemoteResourceForbiddenRoots []string
 	RemoteResourceCredentials    RemoteResourceCredentials
+	PluginRenderer               PluginRenderer
 	SkipKinds                    []string
 	SkipCRDs                     bool
 	SkipSecrets                  bool
@@ -69,6 +72,9 @@ func NewClient(config Config) *Client {
 	}
 	if config.RemoteResourceAcquirer != nil {
 		client.orchestrator.RemoteResourceAcquirer = remoteResourceAcquirerAdapter{acquirer: config.RemoteResourceAcquirer}
+	}
+	if config.PluginRenderer != nil {
+		client.orchestrator.PluginRenderer = pluginRendererAdapter{renderer: config.PluginRenderer}
 	}
 	return client
 }
@@ -207,6 +213,73 @@ type Application struct {
 	Namespace string
 	Name      string
 	Project   string
+}
+
+// PluginRenderer renders Argo CD config management plugin sources for embedded
+// callers. The default CLI and public API paths do not execute plugin commands.
+type PluginRenderer interface {
+	RenderPlugin(ctx context.Context, request PluginRequest) (PluginResult, error)
+}
+
+// PluginRequest is passed to an injected PluginRenderer.
+type PluginRequest struct {
+	Application Application
+	Source      PluginSource
+	Plugin      PluginConfig
+}
+
+// PluginSource describes the resolved source for a plugin render.
+type PluginSource struct {
+	RepoRoot       string
+	Path           string
+	RepoURL        string
+	TargetRevision string
+}
+
+// PluginConfig is the explicit plugin configuration from an Application source.
+type PluginConfig struct {
+	Name       string
+	Env        []PluginEnvEntry
+	Parameters []PluginParameter
+}
+
+// PluginEnvEntry is one explicit plugin environment entry.
+type PluginEnvEntry struct {
+	Name  string
+	Value string
+}
+
+// PluginParameter is one plugin parameter. String, Map, and Array preserve
+// Argo CD's distinct optional value semantics.
+type PluginParameter struct {
+	Name   string
+	String *string
+	Map    *PluginMapParameter
+	Array  *PluginArrayParameter
+}
+
+// PluginMapParameter wraps a map parameter so present-empty maps are distinct
+// from absent map parameters.
+type PluginMapParameter struct {
+	Values map[string]string
+}
+
+// PluginArrayParameter wraps an array parameter so present-empty arrays are
+// distinct from absent array parameters.
+type PluginArrayParameter struct {
+	Values []string
+}
+
+// PluginResult is returned by an injected PluginRenderer.
+type PluginResult struct {
+	Manifests   []PluginManifest
+	Diagnostics []Diagnostic
+}
+
+// PluginManifest is one rendered plugin object with optional source path.
+type PluginManifest struct {
+	Path   string
+	Object map[string]any
 }
 
 // Manifest is one rendered Kubernetes object with source provenance.
@@ -482,6 +555,22 @@ func diagnosticsFromInternal(diagnostics []diagnostic.Diagnostic) []Diagnostic {
 	return out
 }
 
+func diagnosticsToInternal(diagnostics []Diagnostic) []diagnostic.Diagnostic {
+	out := make([]diagnostic.Diagnostic, 0, len(diagnostics))
+	for _, item := range diagnostics {
+		out = append(out, diagnostic.Diagnostic{
+			Severity: diagnostic.Severity(item.Severity),
+			Category: item.Category,
+			Message:  item.Message,
+			Provenance: diagnostic.Provenance{
+				Path:    item.Provenance.Path,
+				Pointer: item.Provenance.Pointer,
+			},
+		})
+	}
+	return out
+}
+
 func statusesFromInternal(statuses []app.ApplicationStatus) []ApplicationStatus {
 	out := make([]ApplicationStatus, 0, len(statuses))
 	for _, item := range statuses {
@@ -607,6 +696,75 @@ func remoteResourceCredentialsFromInternal(credentials remote.Credentials) Remot
 	}
 }
 
+func pluginRequestFromInternal(request renderpkg.PluginRequest) PluginRequest {
+	return PluginRequest{
+		Application: Application{
+			Name: request.AppName,
+		},
+		Source: PluginSource{
+			RepoRoot:       request.Source.RepoRoot,
+			Path:           request.Source.Path,
+			RepoURL:        request.Source.RepoURL,
+			TargetRevision: request.Source.TargetRevision,
+		},
+		Plugin: pluginConfigFromInternal(request.Plugin),
+	}
+}
+
+func pluginConfigFromInternal(config renderpkg.PluginConfig) PluginConfig {
+	return PluginConfig{
+		Name:       config.Name,
+		Env:        pluginEnvFromInternal(config.Env),
+		Parameters: pluginParametersFromInternal(config.Parameters),
+	}
+}
+
+func pluginEnvFromInternal(env argoappv1.Env) []PluginEnvEntry {
+	out := make([]PluginEnvEntry, 0, len(env))
+	for _, item := range env {
+		out = append(out, PluginEnvEntry{Name: item.Name, Value: item.Value})
+	}
+	return out
+}
+
+func pluginParametersFromInternal(params argoappv1.ApplicationSourcePluginParameters) []PluginParameter {
+	out := make([]PluginParameter, 0, len(params))
+	for _, item := range params {
+		param := PluginParameter{Name: item.Name}
+		if item.String_ != nil {
+			value := *item.String_
+			param.String = &value
+		}
+		if item.OptionalMap != nil {
+			param.Map = &PluginMapParameter{Values: cloneStringMapPresent(item.OptionalMap.Map)}
+		}
+		if item.OptionalArray != nil {
+			param.Array = &PluginArrayParameter{Values: append([]string{}, item.OptionalArray.Array...)}
+		}
+		out = append(out, param)
+	}
+	return out
+}
+
+func pluginManifestsToInternal(manifests []PluginManifest) []renderpkg.Manifest {
+	out := make([]renderpkg.Manifest, 0, len(manifests))
+	for _, item := range manifests {
+		out = append(out, renderpkg.Manifest{
+			Path:   item.Path,
+			Object: &unstructured.Unstructured{Object: cloneMap(item.Object)},
+		})
+	}
+	return out
+}
+
+func cloneStringMapPresent(input map[string]string) map[string]string {
+	out := make(map[string]string, len(input))
+	for key, value := range input {
+		out[key] = value
+	}
+	return out
+}
+
 func gitCredentialsFromInternal(credentials sourcepkg.GitCredentials) GitCredentials {
 	return GitCredentials{
 		Username:          credentials.Username,
@@ -726,4 +884,13 @@ func (adapter remoteResourceAcquirerAdapter) Acquire(ctx context.Context, reques
 		Revision:  result.Revision,
 		FromCache: result.FromCache,
 	}, err
+}
+
+type pluginRendererAdapter struct {
+	renderer PluginRenderer
+}
+
+func (adapter pluginRendererAdapter) RenderPlugin(ctx context.Context, request renderpkg.PluginRequest) ([]renderpkg.Manifest, []diagnostic.Diagnostic, error) {
+	result, err := adapter.renderer.RenderPlugin(ctx, pluginRequestFromInternal(request))
+	return pluginManifestsToInternal(result.Manifests), diagnosticsToInternal(result.Diagnostics), err
 }

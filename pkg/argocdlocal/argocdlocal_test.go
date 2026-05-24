@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -389,6 +390,80 @@ spec:
 	}
 }
 
+func TestRenderUsesInjectedPluginRenderer(t *testing.T) {
+	root := t.TempDir()
+	writeAPIPluginAppTree(t, root)
+
+	renderer := publicPluginRendererFunc(func(_ context.Context, request PluginRequest) (PluginResult, error) {
+		if request.Application.Name != "plugin-app" {
+			t.Fatalf("Application.Name = %q, want plugin-app", request.Application.Name)
+		}
+		if request.Source.Path != "apps/plugin" {
+			t.Fatalf("Source.Path = %q, want apps/plugin", request.Source.Path)
+		}
+		if request.Source.RepoURL != "https://github.com/example/repo" {
+			t.Fatalf("Source.RepoURL = %q, want https://github.com/example/repo", request.Source.RepoURL)
+		}
+		if request.Source.TargetRevision != "main" {
+			t.Fatalf("Source.TargetRevision = %q, want main", request.Source.TargetRevision)
+		}
+		if request.Source.RepoRoot == "" {
+			t.Fatalf("Source.RepoRoot is empty")
+		}
+		if _, err := os.Stat(request.Source.RepoRoot); err != nil {
+			t.Fatalf("Source.RepoRoot %q stat error = %v", request.Source.RepoRoot, err)
+		}
+		if request.Plugin.Name != "cue" {
+			t.Fatalf("Plugin.Name = %q, want cue", request.Plugin.Name)
+		}
+		if len(request.Plugin.Env) != 1 || request.Plugin.Env[0].Name != "FEATURE" || request.Plugin.Env[0].Value != "enabled" {
+			t.Fatalf("Plugin.Env = %#v, want FEATURE=enabled", request.Plugin.Env)
+		}
+		params := publicPluginParamsByName(request.Plugin.Parameters)
+		if params["mode"].String == nil || *params["mode"].String != "fast" {
+			t.Fatalf("Plugin.Parameters = %#v, want mode=fast", request.Plugin.Parameters)
+		}
+		if params["labels"].Map == nil || params["labels"].Map.Values["tier"] != "backend" {
+			t.Fatalf("Plugin.Parameters = %#v, want labels.tier=backend", request.Plugin.Parameters)
+		}
+		if params["args"].Array == nil || !slices.Equal(params["args"].Array.Values, []string{"--debug"}) {
+			t.Fatalf("Plugin.Parameters = %#v, want args array", request.Plugin.Parameters)
+		}
+		if params["empty-map"].Map == nil || len(params["empty-map"].Map.Values) != 0 {
+			t.Fatalf("Plugin.Parameters = %#v, want present empty map", request.Plugin.Parameters)
+		}
+		if params["empty-array"].Array == nil || len(params["empty-array"].Array.Values) != 0 {
+			t.Fatalf("Plugin.Parameters = %#v, want present empty array", request.Plugin.Parameters)
+		}
+		return PluginResult{Manifests: []PluginManifest{{
+			Path: "plugin/cm.yaml",
+			Object: map[string]any{
+				"apiVersion": "v1",
+				"kind":       "ConfigMap",
+				"metadata": map[string]any{
+					"name": "from-plugin",
+				},
+				"data": map[string]any{"value": "rendered"},
+			},
+		}}}, nil
+	})
+
+	result, err := Render(context.Background(), Config{Path: root, PluginRenderer: renderer})
+	if err != nil {
+		t.Fatalf("Render() error = %v", err)
+	}
+	if len(result.Manifests) != 1 {
+		t.Fatalf("len(Manifests) = %d, want 1", len(result.Manifests))
+	}
+	if got := result.Manifests[0].Object["kind"]; got != "ConfigMap" {
+		t.Fatalf("kind = %#v, want ConfigMap", got)
+	}
+	metadata := result.Manifests[0].Object["metadata"].(map[string]any)
+	if metadata["namespace"] != "rendered" {
+		t.Fatalf("metadata.namespace = %#v, want rendered", metadata["namespace"])
+	}
+}
+
 func TestListApplications(t *testing.T) {
 	result, err := ListApplications(context.Background(), Config{Path: filepath.Join("..", "..", "testdata", "applications", "e2e")})
 	if err != nil {
@@ -418,6 +493,53 @@ func TestDiffApplications(t *testing.T) {
 	}
 }
 
+func TestDiffApplicationsUsesInjectedPluginRenderer(t *testing.T) {
+	left := t.TempDir()
+	right := t.TempDir()
+	writeAPIPluginAppTree(t, left)
+	writeAPIPluginAppTree(t, right)
+
+	renderCount := 0
+	renderer := publicPluginRendererFunc(func(_ context.Context, request PluginRequest) (PluginResult, error) {
+		renderCount++
+		value := "left"
+		if renderCount == 2 {
+			value = "right"
+		}
+		return PluginResult{Manifests: []PluginManifest{{
+			Path: "plugin/cm.yaml",
+			Object: map[string]any{
+				"apiVersion": "v1",
+				"kind":       "ConfigMap",
+				"metadata": map[string]any{
+					"name":      "from-plugin",
+					"namespace": "rendered",
+				},
+				"data": map[string]any{"value": value},
+			},
+		}}}, nil
+	})
+
+	result, err := DiffApplications(context.Background(), Config{
+		PathOrig:       left,
+		Path:           right,
+		ChangedOnly:    boolPtr(false),
+		PluginRenderer: renderer,
+	})
+	if err != nil {
+		t.Fatalf("DiffApplications() error = %v", err)
+	}
+	if renderCount != 2 {
+		t.Fatalf("plugin render calls = %d, want 2", renderCount)
+	}
+	if len(result.Results) != 1 {
+		t.Fatalf("Results = %d, want 1", len(result.Results))
+	}
+	if result.Results[0].Change != "modified" {
+		t.Fatalf("Change = %q, want modified", result.Results[0].Change)
+	}
+}
+
 func TestDiffImages(t *testing.T) {
 	left, right := writeImageDiffTrees(t, "repo/demo:v1", "repo/demo:v2")
 
@@ -435,6 +557,59 @@ func TestDiffImages(t *testing.T) {
 	if !containsString(result.Added, "repo/demo:v2") {
 		t.Fatalf("Added = %#v, want repo/demo:v2", result.Added)
 	}
+}
+
+func TestDiffImagesUsesInjectedPluginRenderer(t *testing.T) {
+	left := t.TempDir()
+	right := t.TempDir()
+	writeAPIPluginAppTree(t, left)
+	writeAPIPluginAppTree(t, right)
+
+	renderCount := 0
+	renderer := publicPluginRendererFunc(func(_ context.Context, request PluginRequest) (PluginResult, error) {
+		renderCount++
+		image := "repo/demo:v1"
+		if renderCount == 2 {
+			image = "repo/demo:v2"
+		}
+		return PluginResult{Manifests: []PluginManifest{{
+			Path:   "plugin/deployment.yaml",
+			Object: deploymentObject("from-plugin", image),
+		}}}, nil
+	})
+
+	result, err := DiffImages(context.Background(), Config{
+		PathOrig:       left,
+		Path:           right,
+		ChangedOnly:    boolPtr(false),
+		PluginRenderer: renderer,
+	})
+	if err != nil {
+		t.Fatalf("DiffImages() error = %v", err)
+	}
+	if renderCount != 2 {
+		t.Fatalf("plugin render calls = %d, want 2", renderCount)
+	}
+	if !containsString(result.Removed, "repo/demo:v1") {
+		t.Fatalf("Removed = %#v, want repo/demo:v1", result.Removed)
+	}
+	if !containsString(result.Added, "repo/demo:v2") {
+		t.Fatalf("Added = %#v, want repo/demo:v2", result.Added)
+	}
+}
+
+type publicPluginRendererFunc func(context.Context, PluginRequest) (PluginResult, error)
+
+func (f publicPluginRendererFunc) RenderPlugin(ctx context.Context, request PluginRequest) (PluginResult, error) {
+	return f(ctx, request)
+}
+
+func publicPluginParamsByName(params []PluginParameter) map[string]PluginParameter {
+	out := make(map[string]PluginParameter, len(params))
+	for _, param := range params {
+		out[param.Name] = param
+	}
+	return out
 }
 
 type recordingGitAcquirer struct {
@@ -512,6 +687,46 @@ func writeImageDiffTrees(t *testing.T, leftImage, rightImage string) (string, st
 	return left, right
 }
 
+func writeAPIPluginAppTree(t *testing.T, root string) {
+	t.Helper()
+	writeAPIFile(t, filepath.Join(root, "apps", "plugin.yaml"), `apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: plugin-app
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/example/repo
+    targetRevision: main
+    path: apps/plugin
+    plugin:
+      name: cue
+      env:
+        - name: FEATURE
+          value: enabled
+      parameters:
+        - name: mode
+          string: fast
+        - name: labels
+          map:
+            tier: backend
+        - name: args
+          array:
+            - --debug
+        - name: empty-map
+          map: {}
+        - name: empty-array
+          array: []
+  destination:
+    name: in-cluster
+    namespace: rendered
+`)
+	if err := os.MkdirAll(filepath.Join(root, "apps", "plugin"), 0o755); err != nil {
+		t.Fatalf("MkdirAll() error = %v", err)
+	}
+}
+
 func writeAPIAppTree(t *testing.T, root, name, manifest string) {
 	t.Helper()
 	writeAPIFile(t, filepath.Join(root, "apps", name+".yaml"), `apiVersion: argoproj.io/v1alpha1
@@ -559,6 +774,34 @@ spec:
         - name: ` + name + `
           image: ` + image + `
 `
+}
+
+func deploymentObject(name, image string) map[string]any {
+	return map[string]any{
+		"apiVersion": "apps/v1",
+		"kind":       "Deployment",
+		"metadata": map[string]any{
+			"name": name,
+		},
+		"spec": map[string]any{
+			"selector": map[string]any{
+				"matchLabels": map[string]any{"app": name},
+			},
+			"template": map[string]any{
+				"metadata": map[string]any{
+					"labels": map[string]any{"app": name},
+				},
+				"spec": map[string]any{
+					"containers": []any{
+						map[string]any{
+							"name":  name,
+							"image": image,
+						},
+					},
+				},
+			},
+		},
+	}
 }
 
 func writeAPIChart(t *testing.T, chartDir, name, version, template string) {
