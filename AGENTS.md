@@ -41,14 +41,17 @@ constraint:
 
 The coordinating agent should treat approval-gated checks as unavailable
 verification, not as blockers. If a spawned agent does request approval anyway,
-redirect it once with the constraint above or close it and continue the phase
-using local evidence plus an explicit skipped-check note.
+do not wait for that prompt. Mark the command as skipped, redirect the agent
+once with the constraint above, or close/replace that agent and continue the
+phase using local evidence plus an explicit skipped-check note.
 
 Roadmap phases must keep progressing when only optional verification is
 approval-gated. Do not wait on a subagent approval prompt before starting other
 independent implementation or review work. If the skipped command is required
 to prove correctness, record the gap in the slice review and use another local
-check or a narrower review prompt.
+check or a narrower review prompt. Controller prompts for future roadmap phases
+should state that approval prompts from workers or reviewers are abandoned as
+skipped verification, never treated as human-blocking phase status.
 
 ## Command Surface
 
