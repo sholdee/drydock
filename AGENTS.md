@@ -24,6 +24,15 @@ Read the design spec before substantive changes:
 
 - `docs/superpowers/specs/2026-05-22-argocd-local-design.md`
 
+## Subagent Sandbox Rules
+
+Subagents must not request sandbox escalation as part of routine
+implementation, review, or verification. Run local, non-network commands that
+work inside the current sandbox. If a useful command would require escalation,
+network access, or approval, skip that command, report the verification gap,
+and continue with the rest of the local review or implementation. Do not leave
+roadmap execution blocked on approval prompts from review agents.
+
 ## Command Surface
 
 Current top-level commands:
