@@ -41,6 +41,7 @@ type BuildRequest struct {
 	SkipKinds                    []string
 	SkipCRDs                     bool
 	SkipSecrets                  bool
+	PluginRenderer               render.PluginRenderer
 	Applications                 []argoappv1.Application
 }
 
@@ -93,6 +94,7 @@ type Orchestrator struct {
 	ChartAcquirer          chart.Acquirer
 	GitAcquirer            sourcepkg.GitAcquirer
 	RemoteResourceAcquirer remote.Acquirer
+	PluginRenderer         render.PluginRenderer
 }
 
 func (o Orchestrator) Diag(ctx context.Context, request DiagRequest) (DiagResult, error) {
@@ -227,6 +229,7 @@ func (o Orchestrator) Build(ctx context.Context, request BuildRequest) (BuildRes
 		chartAcquirer:                acquirer,
 		gitAcquirer:                  gitAcquirer,
 		remoteResourceAcquirer:       o.RemoteResourceAcquirer,
+		pluginRenderer:               o.pluginRenderer(request),
 		offline:                      request.Offline,
 		allowNetwork:                 request.AllowNetwork,
 		refreshCharts:                request.RefreshCharts,
@@ -244,6 +247,7 @@ func (o Orchestrator) Build(ctx context.Context, request BuildRequest) (BuildRes
 	for _, application := range result.Applications {
 		rendered, err := RenderApplication(ctx, application, provider)
 		if err != nil {
+			result.Diagnostics = append(result.Diagnostics, normalizeDiagnostics(rendered.Diagnostics, request.Strict, false)...)
 			result.Diagnostics = append(result.Diagnostics, renderFailureDiagnostic(application, err))
 			result.Statuses = append(result.Statuses, applicationStatus(application, ApplicationStatusFail, err.Error()))
 			continue
@@ -276,6 +280,13 @@ func (o Orchestrator) Build(ctx context.Context, request BuildRequest) (BuildRes
 		return result, err
 	}
 	return result, nil
+}
+
+func (o Orchestrator) pluginRenderer(request BuildRequest) render.PluginRenderer {
+	if request.PluginRenderer != nil {
+		return request.PluginRenderer
+	}
+	return o.PluginRenderer
 }
 
 func (o Orchestrator) prepareBuildResult(ctx context.Context, request BuildRequest, root string) (BuildResult, error) {
@@ -472,6 +483,7 @@ type localProvider struct {
 	chartAcquirer                chart.Acquirer
 	gitAcquirer                  sourcepkg.GitAcquirer
 	remoteResourceAcquirer       remote.Acquirer
+	pluginRenderer               render.PluginRenderer
 	offline                      bool
 	allowNetwork                 bool
 	refreshCharts                bool
@@ -515,6 +527,9 @@ func (p localProvider) RenderSource(ctx context.Context, source render.ResolvedS
 		return nil, nil, err
 	}
 	opts.RefRoots = mergeRefRoots(anchoredRefRoots, refRoots)
+	if opts.Plugin != nil {
+		return p.renderPluginSource(ctx, source, opts)
+	}
 	if source.Path != "" {
 		renderer, err := selectLocalRenderer(source)
 		if err != nil {
@@ -526,6 +541,33 @@ func (p localProvider) RenderSource(ctx context.Context, source render.ResolvedS
 		return p.renderChartOnlySource(ctx, source, opts)
 	}
 	return nil, nil, nil
+}
+
+func (p localProvider) renderPluginSource(ctx context.Context, source render.ResolvedSource, opts render.RenderOptions) ([]render.Manifest, []diagnostic.Diagnostic, error) {
+	if p.pluginRenderer == nil {
+		message := fmt.Sprintf("config management plugin %s is not supported without an injected plugin renderer", pluginDisplayName(opts.Plugin.Name))
+		return nil, []diagnostic.Diagnostic{{
+			Severity: diagnostic.SeverityError,
+			Category: "plugin",
+			Message:  message,
+		}}, fmt.Errorf("%s: %w", message, render.ErrUnsupportedPlugin)
+	}
+	return p.pluginRenderer.RenderPlugin(ctx, render.PluginRequest{
+		AppName:    opts.AppName,
+		Namespace:  opts.Namespace,
+		Source:     source,
+		Plugin:     *opts.Plugin,
+		RefRoots:   cloneStringMap(opts.RefRoots),
+		RefSources: cloneResolvedSourceMap(opts.RefSources),
+	})
+}
+
+func pluginDisplayName(name string) string {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return "<unnamed>"
+	}
+	return name
 }
 
 func (p localProvider) resolveSourceRoot(ctx context.Context, source render.ResolvedSource) (string, error) {
@@ -607,6 +649,28 @@ func mergeRefRoots(base, extra map[string]string) map[string]string {
 		out[key] = value
 	}
 	for key, value := range extra {
+		out[key] = value
+	}
+	return out
+}
+
+func cloneStringMap(in map[string]string) map[string]string {
+	if len(in) == 0 {
+		return map[string]string{}
+	}
+	out := make(map[string]string, len(in))
+	for key, value := range in {
+		out[key] = value
+	}
+	return out
+}
+
+func cloneResolvedSourceMap(in map[string]render.ResolvedSource) map[string]render.ResolvedSource {
+	if len(in) == 0 {
+		return map[string]render.ResolvedSource{}
+	}
+	out := make(map[string]render.ResolvedSource, len(in))
+	for key, value := range in {
 		out[key] = value
 	}
 	return out

@@ -2,7 +2,9 @@ package render
 
 import (
 	"context"
+	"errors"
 
+	argoappv1 "github.com/argoproj/argo-cd/v3/pkg/apis/application/v1alpha1"
 	"github.com/home-operations/argocd-local/internal/chart"
 	"github.com/home-operations/argocd-local/internal/diagnostic"
 	"github.com/home-operations/argocd-local/internal/remote"
@@ -20,6 +22,7 @@ type ResolvedSource struct {
 type RenderOptions struct {
 	AppName                      string
 	Namespace                    string
+	Plugin                       *PluginConfig
 	KubeVersion                  string
 	APIVersions                  []string
 	BuildOptions                 []string
@@ -48,6 +51,27 @@ type RenderOptions struct {
 	SkipHooks                    bool
 	SkipTests                    bool
 }
+
+type PluginConfig struct {
+	Name       string
+	Env        argoappv1.Env
+	Parameters argoappv1.ApplicationSourcePluginParameters
+}
+
+type PluginRequest struct {
+	AppName    string
+	Namespace  string
+	Source     ResolvedSource
+	Plugin     PluginConfig
+	RefRoots   map[string]string
+	RefSources map[string]ResolvedSource
+}
+
+type PluginRenderer interface {
+	RenderPlugin(ctx context.Context, request PluginRequest) ([]Manifest, []diagnostic.Diagnostic, error)
+}
+
+var ErrUnsupportedPlugin = errors.New("unsupported config management plugin")
 
 type Manifest struct {
 	SourceIndex int
