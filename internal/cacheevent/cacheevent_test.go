@@ -149,15 +149,15 @@ func TestRecorderRedactsStandaloneQueryValues(t *testing.T) {
 	recorder.Record(Event{
 		Source: SourceGit,
 		Action: ActionError,
-		Target: "https://example.test/repo.git?token=abc&encoded=space%20value#frag",
-		Error:  "token abc rejected and encoded space value rejected",
+		Target: "https://example.test/repo.git?token=abc&encoded=space%20value&slash=abc%2Fdef#frag",
+		Error:  "token abc rejected and encoded space%20value space value abc%2Fdef abc/def rejected",
 	})
 
 	events := recorder.Events()
 	if len(events) != 1 {
 		t.Fatalf("Events = %#v, want one event", events)
 	}
-	for _, leaked := range []string{"abc", "space value"} {
+	for _, leaked := range []string{"abc", "space%20value", "space value", "abc%2Fdef", "abc/def"} {
 		if strings.Contains(events[0].Error, leaked) {
 			t.Fatalf("Error = %q leaked query value %q", events[0].Error, leaked)
 		}
