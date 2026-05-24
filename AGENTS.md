@@ -90,12 +90,27 @@ keep default scans tolerant of unrelated YAML files.
 
 ## ApplicationSet Support
 
-`internal/appset` supports local Git directories, Git files, and list
-generators with Go templates. Use path-style matching, keep include/exclude
-semantics deterministic, and preserve Argo CD template behavior such as
-`missingkey=error` and Sprig functions. Multiple supported top-level
-generators are evaluated independently and concatenated in manifest order.
-Unsupported generators must produce diagnostics.
+`internal/appset` supports local Git directories, Git files, list, matrix, and
+merge generators with Go templates. Use path-style matching, keep
+include/exclude semantics deterministic, and preserve Argo CD template
+behavior such as `missingkey=error` and Sprig functions. Multiple supported
+top-level generators are evaluated independently and concatenated in manifest
+order. Unsupported generators must produce diagnostics.
+
+List generators support both `elements` and `elementsYaml`; `elementsYaml`
+entries must decode to mapping objects, including empty mappings. Supported
+generators honor generator-level selectors and generator-level template
+overrides. Selectors match flattened parameter keys for nested Go-template
+maps.
+
+Matrix generators support exactly two child generators. The second child is
+interpolated from first-child params, including list `elementsYaml` values.
+Merge generators support two or more child generators and deterministic
+merge-key overlays in base generator order. Supported matrix/merge children
+are list, Git directories, Git files, and nested matrix/merge combinations
+where the Argo CD v3 nested JSON API permits them. Provider-backed children,
+including cluster, clusterDecisionResource, SCM provider, pull-request, and
+plugin generators, remain unsupported diagnostics in this phase.
 
 Git files generator support is intentionally local and fail-closed. Matches are
 sorted by normalized relative path. Do not follow symlinks, allow absolute
@@ -118,7 +133,10 @@ file even when another pattern includes it.
 The MVP currently supports:
 
 - Direct `Application` CR discovery.
-- Git-directory, Git-files, and list `ApplicationSet` CR expansion.
+- Git-directory, Git-files, list, matrix, and merge `ApplicationSet` CR
+  expansion, including list `elementsYaml`, generator selectors, generator
+  template overrides, matrix interpolation, deterministic merge-key overlays,
+  and supported nested matrix/merge combinations.
 - Single-source and multi-source planning for supported source types.
 - Kustomize, directory, local Helm chart, Kustomize `helmCharts`, remote
   Kustomize HTTP(S) files and Git refs, and chart-only remote Helm source
@@ -168,7 +186,7 @@ Do not treat these as supported without an explicit design update:
   `knownTypeFields`, health, actions, and Lua settings.
 - Project, RBAC, and destination validation.
 - Config management plugins.
-- Cluster, SCM provider, pull-request, plugin, matrix, and merge
+- Cluster, clusterDecisionResource, SCM provider, pull-request, and plugin
   ApplicationSet generators.
 - Required default shellouts to `helm`, `kustomize`, `kubectl`, or `argocd`.
 - A first-class cache inspection command or structured cache event stream for

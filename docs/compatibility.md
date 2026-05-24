@@ -5,7 +5,16 @@
 Supported in the MVP:
 
 - Direct `Application` CRs
-- Git-directory, Git-files, and list `ApplicationSet` CR expansion
+- Git-directory, Git-files, list, matrix, and merge `ApplicationSet` CR
+  expansion
+- ApplicationSet list `elementsYaml`, including matrix-interpolated
+  `elementsYaml`
+- ApplicationSet generator selectors and generator template overrides for
+  supported generators
+- Matrix interpolation for supported local children
+- Deterministic merge-key overlays for supported local children
+- Nested ApplicationSet matrix/merge combinations where the Argo CD v3 nested
+  JSON API permits them
 - Single-source and multi-source planning for supported source types
 - Kustomize and directory rendering, including repo-root-local Kustomize
   references
@@ -108,6 +117,9 @@ Not reproduced offline:
 - Global `resource.customizations` `ignoreResourceUpdates`,
   `knownTypeFields`, health, actions, and Lua settings
 - Project/RBAC/destination validation
+- Cluster, clusterDecisionResource, SCM provider, pull-request, and plugin
+  ApplicationSet generators
+- Live cluster and Argo CD API sources
 
 The tool pins Argo CD dependencies. Upgrade Argo CD dependencies deliberately
 and update compatibility tests in the same change.
