@@ -1199,6 +1199,45 @@ spec:
 	}
 }
 
+func TestGenerateMatrixGeneratorRejectsInvalidNestedChildWhenFirstChildEmpty(t *testing.T) {
+	root := t.TempDir()
+	data := []byte(`
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: invalid-nested-matrix
+spec:
+  goTemplate: true
+  generators:
+    - matrix:
+        generators:
+          - list:
+              elements: []
+          - matrix:
+              generators:
+                - list:
+                    elements:
+                      - name: alpha
+  template:
+    metadata:
+      name: '{{.name}}'
+    spec:
+      project: default
+      source:
+        repoURL: https://github.com/example/repo
+        path: apps/{{.name}}
+        targetRevision: main
+      destination:
+        name: in-cluster
+        namespace: default
+`)
+
+	_, _, err := GenerateFromYAML(root, "app-set.yaml", data)
+	if err == nil || !strings.Contains(err.Error(), "matrix support only two child generators") {
+		t.Fatalf("GenerateFromYAML() error = %v, want nested matrix child count error", err)
+	}
+}
+
 func TestGenerateMatrixGeneratorPreservesAllChildSourcePaths(t *testing.T) {
 	root := t.TempDir()
 	for _, dir := range []string{
