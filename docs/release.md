@@ -32,5 +32,37 @@ passphrases, or raw repository URLs with embedded secrets.
 
 ## GitHub Action
 
-A composite install action is deferred until release artifact names and version
-channels are stable. Until then, CI should build or test from source.
+The repository includes an optional composite install action at
+`.github/actions/setup-drydock`. It is release metadata only; it does not
+change the default static binary or offline render/diff runtime contract.
+
+The action requires an explicit semantic-version `version` tag input and
+rejects `latest`. It builds versioned GitHub Release URLs for the current runner
+OS/architecture and never uses `curl | sh`. Supported runner pairs are Linux
+and macOS on `amd64` and `arm64`.
+
+Expected release artifact names are:
+
+- `drydock_linux-amd64.tar.gz`
+- `drydock_linux-arm64.tar.gz`
+- `drydock_darwin-amd64.tar.gz`
+- `drydock_darwin-arm64.tar.gz`
+
+If the release publishes `checksums.txt`, the action verifies the selected
+artifact with `sha256sum --check` when available, or `shasum -a 256 -c` on
+runners where `shasum` is the available SHA-256 verifier. Only a 404 for
+`checksums.txt` can be treated as an intentionally unpublished checksum
+artifact, and only when `allow-unverified: true` is set. By default, missing
+checksums and checksum download failures fail the action.
+
+Example:
+
+```yaml
+- uses: ./.github/actions/setup-drydock
+  with:
+    version: v0.1.0
+    install-dir: /usr/local/bin
+```
+
+Public required CI should continue to build and test from source unless a
+workflow intentionally opts into installing a released binary.

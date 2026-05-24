@@ -322,7 +322,6 @@ Do not treat these as supported without an explicit design update:
   provider, or plugin-service access for ApplicationSet provider generators.
   Use explicit local fixtures instead.
 - Required default shellouts to `helm`, `kustomize`, `kubectl`, or `argocd`.
-- Composite install GitHub Action publishing.
 
 ## Source Resolution
 
