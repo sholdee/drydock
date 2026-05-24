@@ -13,12 +13,14 @@ import (
 	"strconv"
 	"strings"
 
+	"dario.cat/mergo"
 	appsetutils "github.com/argoproj/argo-cd/v3/applicationset/utils"
 	argoappv1 "github.com/argoproj/argo-cd/v3/pkg/apis/application/v1alpha1"
 	"github.com/bmatcuk/doublestar/v4"
 	"github.com/home-operations/argocd-local/internal/diagnostic"
 	"go.yaml.in/yaml/v4"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/labels"
 )
 
 type GeneratedApplication struct {
@@ -54,8 +56,14 @@ func Generate(repoRoot, manifestPath string, appset argoappv1.ApplicationSet) ([
 		return nil, diags, fmt.Errorf("%w in %s", ErrUnsupportedGenerator, manifestPath)
 	}
 
+	ctx := generatorContext{
+		RepoRoot:     repoRoot,
+		ManifestPath: manifestPath,
+		AppSet:       appset,
+		BaseTemplate: appset.Spec.Template,
+	}
 	for _, generator := range appset.Spec.Generators {
-		paramSets, generatorDiags, supported, err := generatorParamSets(repoRoot, manifestPath, appset, generator)
+		paramSets, generatorDiags, supported, err := evaluateGenerator(ctx, generator)
 		if err != nil {
 			return out, append(diags, generatorDiags...), err
 		}
@@ -65,7 +73,7 @@ func Generate(repoRoot, manifestPath string, appset argoappv1.ApplicationSet) ([
 			continue
 		}
 		for _, paramSet := range paramSets {
-			rendered, err := renderApplicationTemplate(appset, paramSet.Params)
+			rendered, err := renderApplicationTemplateWithTemplate(appset, paramSet.Template, paramSet.Params)
 			if err != nil {
 				return out, diags, fmt.Errorf("%s render %s: %w", manifestPath, paramSet.SourcePath, err)
 			}
@@ -82,18 +90,43 @@ type generatorParamSet struct {
 	Params     map[string]any
 	SourcePath string
 	Generator  string
+	Template   argoappv1.ApplicationSetTemplate
 }
 
-func generatorParamSets(repoRoot, manifestPath string, appset argoappv1.ApplicationSet, generator argoappv1.ApplicationSetGenerator) ([]generatorParamSet, []diagnostic.Diagnostic, bool, error) {
+type generatorContext struct {
+	RepoRoot     string
+	ManifestPath string
+	AppSet       argoappv1.ApplicationSet
+	BaseTemplate argoappv1.ApplicationSetTemplate
+}
+
+func evaluateGenerator(ctx generatorContext, generator argoappv1.ApplicationSetGenerator) ([]generatorParamSet, []diagnostic.Diagnostic, bool, error) {
 	if generator.List != nil {
-		paramSets, diags := listGeneratorParamSets(manifestPath, generator.List)
-		return paramSets, diags, true, nil
+		template, err := mergeGeneratorTemplate(ctx.BaseTemplate, generator.List.Template)
+		if err != nil {
+			return nil, nil, true, err
+		}
+		paramSets, diags := listGeneratorParamSets(ctx.ManifestPath, generator.List)
+		paramSets = setGeneratorTemplate(paramSets, template)
+		paramSets, selectorDiags, err := applyGeneratorSelector(ctx.ManifestPath, generator.Selector, paramSets)
+		diags = append(diags, selectorDiags...)
+		return paramSets, diags, true, err
 	}
 
 	if generator.Git == nil {
-		return nil, unsupportedGeneratorDiagnostic(manifestPath), false, nil
+		return nil, unsupportedGeneratorDiagnostic(ctx.ManifestPath), false, nil
 	}
-	paramSets, diags, supported, err := gitGeneratorParamSets(repoRoot, manifestPath, generator.Git, appset.Spec.GoTemplate, appset.Spec.GoTemplateOptions)
+	template, err := mergeGeneratorTemplate(ctx.BaseTemplate, generator.Git.Template)
+	if err != nil {
+		return nil, nil, true, err
+	}
+	paramSets, diags, supported, err := gitGeneratorParamSets(ctx.RepoRoot, ctx.ManifestPath, generator.Git, ctx.AppSet.Spec.GoTemplate, ctx.AppSet.Spec.GoTemplateOptions)
+	if err != nil || !supported {
+		return paramSets, diags, supported, err
+	}
+	paramSets = setGeneratorTemplate(paramSets, template)
+	paramSets, selectorDiags, err := applyGeneratorSelector(ctx.ManifestPath, generator.Selector, paramSets)
+	diags = append(diags, selectorDiags...)
 	return paramSets, diags, supported, err
 }
 
@@ -113,7 +146,93 @@ func listGeneratorParamSets(manifestPath string, list *argoappv1.ListGenerator) 
 			Generator: "list",
 		})
 	}
+	if strings.TrimSpace(list.ElementsYaml) == "" {
+		return out, diags
+	}
+	var elements []any
+	if err := yaml.Unmarshal([]byte(list.ElementsYaml), &elements); err != nil {
+		diags = append(diags, appsetDiagnostic(manifestPath, fmt.Sprintf("list generator elementsYaml is not valid YAML: %v", err)))
+		return out, diags
+	}
+	for i, element := range elements {
+		params, ok := element.(map[string]any)
+		if !ok {
+			diags = append(diags, appsetDiagnostic(manifestPath, fmt.Sprintf("list generator elementsYaml entries must be mappings: entry %d", i)))
+			continue
+		}
+		out = append(out, generatorParamSet{
+			Params:    params,
+			Generator: "list",
+		})
+	}
 	return out, diags
+}
+
+func setGeneratorTemplate(paramSets []generatorParamSet, template argoappv1.ApplicationSetTemplate) []generatorParamSet {
+	for i := range paramSets {
+		paramSets[i].Template = template
+	}
+	return paramSets
+}
+
+func mergeGeneratorTemplate(base, override argoappv1.ApplicationSetTemplate) (argoappv1.ApplicationSetTemplate, error) {
+	dest := override.DeepCopy()
+	if err := mergo.Merge(dest, base); err != nil {
+		return argoappv1.ApplicationSetTemplate{}, err
+	}
+	return *dest, nil
+}
+
+func applyGeneratorSelector(manifestPath string, selectorSpec *metav1.LabelSelector, paramSets []generatorParamSet) ([]generatorParamSet, []diagnostic.Diagnostic, error) {
+	if selectorSpec == nil {
+		return paramSets, nil, nil
+	}
+	selector, err := appsetutils.LabelSelectorAsSelector(selectorSpec)
+	if err != nil {
+		return nil, nil, fmt.Errorf("parse generator selector: %w", err)
+	}
+	filtered := make([]generatorParamSet, 0, len(paramSets))
+	for _, paramSet := range paramSets {
+		flat := map[string]string{}
+		flattenSelectorParams("", paramSet.Params, flat)
+		if selector.Matches(labels.Set(flat)) {
+			filtered = append(filtered, paramSet)
+		}
+	}
+	return filtered, nil, nil
+}
+
+func flattenSelectorParams(prefix string, value any, out map[string]string) {
+	switch typed := value.(type) {
+	case map[string]any:
+		for key, nested := range typed {
+			flatKey := key
+			if prefix != "" {
+				flatKey = prefix + "." + key
+			}
+			flattenSelectorParams(flatKey, nested, out)
+		}
+	case map[string]string:
+		for key, nested := range typed {
+			flatKey := key
+			if prefix != "" {
+				flatKey = prefix + "." + key
+			}
+			out[flatKey] = nested
+		}
+	case []any:
+		for i, nested := range typed {
+			flattenSelectorParams(prefix+"."+strconv.Itoa(i), nested, out)
+		}
+	case []string:
+		for i, nested := range typed {
+			out[prefix+"."+strconv.Itoa(i)] = nested
+		}
+	default:
+		if prefix != "" {
+			out[prefix] = fmt.Sprint(typed)
+		}
+	}
 }
 
 func gitGeneratorParamSets(repoRoot, manifestPath string, git *argoappv1.GitGenerator, useGoTemplate bool, goTemplateOptions []string) ([]generatorParamSet, []diagnostic.Diagnostic, bool, error) {

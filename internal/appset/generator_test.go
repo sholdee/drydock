@@ -449,6 +449,317 @@ spec:
 	}
 }
 
+func TestGenerateListGeneratorAppliesSelector(t *testing.T) {
+	root := t.TempDir()
+	data := []byte(`
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: selected
+spec:
+  goTemplate: true
+  generators:
+    - list:
+        elements:
+          - name: alpha
+            env: dev
+          - name: beta
+            env: prod
+      selector:
+        matchLabels:
+          env: prod
+  template:
+    metadata:
+      name: '{{.name}}'
+    spec:
+      project: default
+      source:
+        repoURL: https://github.com/example/repo
+        path: apps/{{.name}}
+        targetRevision: main
+      destination:
+        name: in-cluster
+        namespace: default
+`)
+
+	apps, diags, err := GenerateFromYAML(root, "app-set.yaml", data)
+	if err != nil {
+		t.Fatalf("GenerateFromYAML() error = %v", err)
+	}
+	if len(diags) != 0 {
+		t.Fatalf("diagnostics = %#v", diags)
+	}
+	if got := generatedNames(apps); !slices.Equal(got, []string{"beta"}) {
+		t.Fatalf("generated names = %#v, want beta", got)
+	}
+}
+
+func TestGenerateGitFilesGeneratorSelectorMatchesFlattenedNestedParams(t *testing.T) {
+	root := t.TempDir()
+	writeAppsetTestFile(t, filepath.Join(root, "clusters", "dev.yaml"), `cluster:
+  name: dev
+  tier: test
+app:
+  path: apps/dev
+`)
+	writeAppsetTestFile(t, filepath.Join(root, "clusters", "prod.yaml"), `cluster:
+  name: prod
+  tier: prod
+app:
+  path: apps/prod
+`)
+	data := []byte(`
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: selected-files
+spec:
+  goTemplate: true
+  generators:
+    - git:
+        files:
+          - path: clusters/*.yaml
+      selector:
+        matchExpressions:
+          - key: cluster.tier
+            operator: In
+            values: ["prod"]
+  template:
+    metadata:
+      name: '{{.cluster.name}}'
+    spec:
+      project: default
+      source:
+        repoURL: https://github.com/example/repo
+        path: '{{.app.path}}'
+        targetRevision: main
+      destination:
+        name: in-cluster
+        namespace: default
+`)
+
+	apps, diags, err := GenerateFromYAML(root, "app-set.yaml", data)
+	if err != nil {
+		t.Fatalf("GenerateFromYAML() error = %v", err)
+	}
+	if len(diags) != 0 {
+		t.Fatalf("diagnostics = %#v", diags)
+	}
+	if got := generatedNames(apps); !slices.Equal(got, []string{"prod"}) {
+		t.Fatalf("generated names = %#v, want prod", got)
+	}
+}
+
+func TestGenerateListGeneratorTemplateOverridesBaseTemplate(t *testing.T) {
+	root := t.TempDir()
+	data := []byte(`
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: template-override
+spec:
+  goTemplate: true
+  generators:
+    - list:
+        elements:
+          - name: alpha
+        template:
+          spec:
+            destination:
+              namespace: override
+  template:
+    metadata:
+      name: '{{.name}}'
+    spec:
+      project: default
+      source:
+        repoURL: https://github.com/example/repo
+        path: apps/{{.name}}
+        targetRevision: main
+      destination:
+        name: in-cluster
+        namespace: base
+`)
+
+	apps, diags, err := GenerateFromYAML(root, "app-set.yaml", data)
+	if err != nil {
+		t.Fatalf("GenerateFromYAML() error = %v", err)
+	}
+	if len(diags) != 0 {
+		t.Fatalf("diagnostics = %#v", diags)
+	}
+	if apps[0].Application.Spec.Destination.Namespace != "override" {
+		t.Fatalf("namespace = %q, want override", apps[0].Application.Spec.Destination.Namespace)
+	}
+	if apps[0].Application.Spec.Project != "default" {
+		t.Fatalf("project = %q, want inherited default", apps[0].Application.Spec.Project)
+	}
+}
+
+func TestGenerateGitDirectoriesGeneratorTemplateOverridesBaseTemplate(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "apps", "alpha"), 0o755); err != nil {
+		t.Fatalf("MkdirAll() error = %v", err)
+	}
+	data := []byte(`
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: git-template-override
+spec:
+  goTemplate: true
+  generators:
+    - git:
+        directories:
+          - path: apps/*
+        template:
+          spec:
+            destination:
+              namespace: git-override
+  template:
+    metadata:
+      name: '{{.path.basename}}'
+    spec:
+      project: default
+      source:
+        repoURL: https://github.com/example/repo
+        path: '{{.path.path}}'
+        targetRevision: main
+      destination:
+        name: in-cluster
+        namespace: base
+`)
+
+	apps, diags, err := GenerateFromYAML(root, "app-set.yaml", data)
+	if err != nil {
+		t.Fatalf("GenerateFromYAML() error = %v", err)
+	}
+	if len(diags) != 0 {
+		t.Fatalf("diagnostics = %#v", diags)
+	}
+	if apps[0].Application.Spec.Destination.Namespace != "git-override" {
+		t.Fatalf("namespace = %q, want git-override", apps[0].Application.Spec.Destination.Namespace)
+	}
+	if apps[0].Application.Spec.Project != "default" {
+		t.Fatalf("project = %q, want inherited default", apps[0].Application.Spec.Project)
+	}
+}
+
+func TestGenerateListGeneratorElementsYaml(t *testing.T) {
+	root := t.TempDir()
+	data := []byte(`
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: list-yaml
+spec:
+  goTemplate: true
+  generators:
+    - list:
+        elements:
+          - name: alpha
+            namespace: base
+        elementsYaml: |
+          - name: beta
+            namespace: extra
+          - name: gamma
+            namespace: extra
+  template:
+    metadata:
+      name: '{{.name}}'
+    spec:
+      project: default
+      source:
+        repoURL: https://github.com/example/repo
+        path: apps/{{.name}}
+        targetRevision: main
+      destination:
+        name: in-cluster
+        namespace: '{{.namespace}}'
+`)
+
+	apps, diags, err := GenerateFromYAML(root, "app-set.yaml", data)
+	if err != nil {
+		t.Fatalf("GenerateFromYAML() error = %v", err)
+	}
+	if len(diags) != 0 {
+		t.Fatalf("diagnostics = %#v", diags)
+	}
+	if got := generatedNames(apps); !slices.Equal(got, []string{"alpha", "beta", "gamma"}) {
+		t.Fatalf("generated names = %#v, want alpha beta gamma", got)
+	}
+	if apps[2].Application.Spec.Destination.Namespace != "extra" {
+		t.Fatalf("gamma namespace = %q, want extra", apps[2].Application.Spec.Destination.Namespace)
+	}
+}
+
+func TestGenerateListGeneratorElementsYamlNonMappingReturnsDiagnostic(t *testing.T) {
+	root := t.TempDir()
+	data := []byte(`
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: bad-list-yaml
+spec:
+  generators:
+    - list:
+        elementsYaml: |
+          - alpha
+  template:
+    metadata:
+      name: '{{name}}'
+`)
+
+	apps, diags, err := GenerateFromYAML(root, "app-set.yaml", data)
+	if err != nil {
+		t.Fatalf("GenerateFromYAML() error = %v", err)
+	}
+	if len(apps) != 0 {
+		t.Fatalf("generated apps = %#v, want none", apps)
+	}
+	if len(diags) != 1 || !strings.Contains(diags[0].Message, "elementsYaml entries must be mappings") {
+		t.Fatalf("diagnostics = %#v, want elementsYaml mapping diagnostic", diags)
+	}
+}
+
+func TestGenerateListGeneratorElementsYamlAllowsEmptyMapping(t *testing.T) {
+	root := t.TempDir()
+	data := []byte(`
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: empty-list-yaml
+spec:
+  generators:
+    - list:
+        elementsYaml: |
+          - {}
+  template:
+    metadata:
+      name: static
+    spec:
+      project: default
+      source:
+        repoURL: https://github.com/example/repo
+        path: apps/static
+        targetRevision: main
+      destination:
+        name: in-cluster
+        namespace: default
+`)
+
+	apps, diags, err := GenerateFromYAML(root, "app-set.yaml", data)
+	if err != nil {
+		t.Fatalf("GenerateFromYAML() error = %v", err)
+	}
+	if len(diags) != 0 {
+		t.Fatalf("diagnostics = %#v", diags)
+	}
+	if got := generatedNames(apps); !slices.Equal(got, []string{"static"}) {
+		t.Fatalf("generated names = %#v, want static", got)
+	}
+}
+
 func TestGenerateSupportedAndUnsupportedGeneratorsKeepsSupportedOutput(t *testing.T) {
 	root := t.TempDir()
 	data := []byte(`
