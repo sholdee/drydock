@@ -736,10 +736,10 @@ func pluginParametersFromInternal(params argoappv1.ApplicationSourcePluginParame
 			param.String = &value
 		}
 		if item.OptionalMap != nil {
-			param.Map = &PluginMapParameter{Values: cloneStringMapPresent(item.OptionalMap.Map)}
+			param.Map = &PluginMapParameter{Values: cloneStringMapPresent(item.Map)}
 		}
 		if item.OptionalArray != nil {
-			param.Array = &PluginArrayParameter{Values: append([]string{}, item.OptionalArray.Array...)}
+			param.Array = &PluginArrayParameter{Values: append([]string{}, item.Array...)}
 		}
 		out = append(out, param)
 	}
