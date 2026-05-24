@@ -10,8 +10,10 @@ Supported in the MVP:
 - Kustomize and directory rendering, including repo-root-local Kustomize
   references
 - Kustomize `helmCharts` rendered through the shared Go-library Helm path
-- Remote Kustomize HTTP(S) files and Git refs rendered through the remote
+- Remote Kustomize HTTP(S) file refs and Git refs rendered through the remote
   resource cache
+- HTTP(S) Kustomize refs as single YAML/JSON files, with directory-shaped refs
+  such as bases and components requiring Git refs to Kustomization directories
 - Remote Kustomize `resources`, `bases`, `components`, `patches.path`,
   `patchesJson6902.path`, non-inline `patchesStrategicMerge`, `generators`,
   `transformers`, `validators`, `configurations`, `crds`, `openapi.path`,

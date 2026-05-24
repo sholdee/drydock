@@ -91,9 +91,12 @@ Remote Kustomize refs are supported in `resources`, `bases`, `components`,
 `patches.path`, `patchesJson6902.path`, non-inline `patchesStrategicMerge`,
 `generators`, `transformers`, `validators`, `configurations`, `crds`,
 `openapi.path`, `replacements.path`, and ConfigMap/Secret generator
-`files`, `envs`, and `env` entries. The renderer copies acquired content into
-a temporary workspace under generated `.argocd-local` paths and does not write
-generated manifests into the source tree.
+`files`, `envs`, and `env` entries. HTTP(S) refs are treated as single
+YAML/JSON files. Directory-shaped fields, including remote bases and
+components, must use Git refs that resolve to Kustomization directories. The
+renderer copies acquired content into a temporary workspace under generated
+`.argocd-local` paths and does not write generated manifests into the source
+tree.
 
 Network and cache flags:
 
