@@ -35,6 +35,7 @@ type fakeRemoteAcquirer struct {
 	requests []remote.Request
 	options  []remote.Options
 	path     string
+	paths    map[string]string
 	err      error
 }
 
@@ -44,7 +45,19 @@ func (acquirer *fakeRemoteAcquirer) Acquire(_ context.Context, request remote.Re
 	if acquirer.err != nil {
 		return remote.Result{}, acquirer.err
 	}
-	return remote.Result{Path: acquirer.path, URL: request.URL}, nil
+	acquiredPath := acquirer.path
+	if acquirer.paths != nil {
+		for _, key := range []string{request.RepoURL, request.URL} {
+			if key == "" {
+				continue
+			}
+			if path, ok := acquirer.paths[key]; ok {
+				acquiredPath = path
+				break
+			}
+		}
+	}
+	return remote.Result{Path: acquiredPath, URL: request.URL}, nil
 }
 
 func writeNamedTestChart(t *testing.T, chartDir, name, version, template string) {
@@ -289,6 +302,676 @@ metadata:
 	}
 }
 
+func TestKustomizeRendererRendersRemoteGitResourceBase(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "app", "kustomization.yaml"), `apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+bases:
+  - https://github.com/example/remote-base.git//base?ref=v1.2.3
+`)
+	remoteRepo := t.TempDir()
+	writeFile(t, filepath.Join(remoteRepo, "base", "kustomization.yaml"), `apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - cm.yaml
+`)
+	writeFile(t, filepath.Join(remoteRepo, "base", "cm.yaml"), `apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: remote-base
+`)
+	acquirer := &fakeRemoteAcquirer{path: remoteRepo}
+
+	manifests, diags, err := (KustomizeRenderer{}).Render(context.Background(), ResolvedSource{
+		RepoRoot: root,
+		Path:     "app",
+	}, RenderOptions{
+		RemoteResourceAcquirer: acquirer,
+		RemoteResourceCacheDir: t.TempDir(),
+	})
+	if err != nil {
+		t.Fatalf("Render() error = %v", err)
+	}
+	if len(diags) != 0 {
+		t.Fatalf("diagnostics = %#v", diags)
+	}
+	if len(acquirer.requests) != 1 {
+		t.Fatalf("remote acquire calls = %d, want 1", len(acquirer.requests))
+	}
+	if !containsManifest(manifests, "ConfigMap", "remote-base") {
+		t.Fatalf("rendered manifests = %#v, want remote base ConfigMap", manifests)
+	}
+}
+
+func TestKustomizeRendererAllowsRemoteRelativeRefsInsideRemoteRepo(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "app", "kustomization.yaml"), `apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - https://github.com/example/remote.git//overlays/dev?ref=v1.2.3
+`)
+	remoteRepo := t.TempDir()
+	writeFile(t, filepath.Join(remoteRepo, "overlays", "dev", "kustomization.yaml"), `apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - ../../base
+`)
+	writeFile(t, filepath.Join(remoteRepo, "base", "kustomization.yaml"), `apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - cm.yaml
+`)
+	writeFile(t, filepath.Join(remoteRepo, "base", "cm.yaml"), `apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: remote-base
+`)
+	acquirer := &fakeRemoteAcquirer{path: remoteRepo}
+
+	manifests, diags, err := (KustomizeRenderer{}).Render(context.Background(), ResolvedSource{
+		RepoRoot: root,
+		Path:     "app",
+	}, RenderOptions{
+		RemoteResourceAcquirer: acquirer,
+		RemoteResourceCacheDir: t.TempDir(),
+	})
+	if err != nil {
+		t.Fatalf("Render() error = %v", err)
+	}
+	if len(diags) != 0 {
+		t.Fatalf("diagnostics = %#v", diags)
+	}
+	if !containsManifest(manifests, "ConfigMap", "remote-base") {
+		t.Fatalf("rendered manifests = %#v, want remote base ConfigMap", manifests)
+	}
+}
+
+func TestKustomizeRendererIgnoresUnrelatedCallerSymlinkInWorkspaceCopy(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "app", "kustomization.yaml"), `apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - https://github.com/example/remote.git//base?ref=v1.2.3
+`)
+	outside := filepath.Join(t.TempDir(), "outside.yaml")
+	writeFile(t, outside, "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: outside\n")
+	symlink(t, outside, filepath.Join(root, "unrelated-link.yaml"))
+	remoteRepo := t.TempDir()
+	writeFile(t, filepath.Join(remoteRepo, "base", "kustomization.yaml"), `apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - cm.yaml
+`)
+	writeFile(t, filepath.Join(remoteRepo, "base", "cm.yaml"), `apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: remote-base
+`)
+	acquirer := &fakeRemoteAcquirer{path: remoteRepo}
+
+	manifests, diags, err := (KustomizeRenderer{}).Render(context.Background(), ResolvedSource{
+		RepoRoot: root,
+		Path:     "app",
+	}, RenderOptions{
+		RemoteResourceAcquirer: acquirer,
+		RemoteResourceCacheDir: t.TempDir(),
+	})
+	if err != nil {
+		t.Fatalf("Render() error = %v", err)
+	}
+	if len(diags) != 0 {
+		t.Fatalf("diagnostics = %#v", diags)
+	}
+	if !containsManifest(manifests, "ConfigMap", "remote-base") {
+		t.Fatalf("rendered manifests = %#v, want remote base ConfigMap", manifests)
+	}
+}
+
+func TestKustomizeRendererRejectsCallerGeneratedDirSymlink(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "app", "kustomization.yaml"), `apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - https://github.com/example/remote.git//base?ref=v1.2.3
+`)
+	outside := t.TempDir()
+	symlink(t, outside, filepath.Join(root, "app", ".argocd-local"))
+	remoteRepo := t.TempDir()
+	writeFile(t, filepath.Join(remoteRepo, "base", "kustomization.yaml"), `apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - cm.yaml
+`)
+	writeFile(t, filepath.Join(remoteRepo, "base", "cm.yaml"), `apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: remote-base
+`)
+	acquirer := &fakeRemoteAcquirer{path: remoteRepo}
+
+	_, _, err := (KustomizeRenderer{}).Render(context.Background(), ResolvedSource{
+		RepoRoot: root,
+		Path:     "app",
+	}, RenderOptions{
+		RemoteResourceAcquirer: acquirer,
+		RemoteResourceCacheDir: t.TempDir(),
+	})
+	if err == nil {
+		t.Fatal("Render() error = nil, want generated symlink rejection")
+	}
+	if !strings.Contains(err.Error(), "generated kustomize path") || !strings.Contains(err.Error(), "symlink") {
+		t.Fatalf("Render() error = %v, want generated symlink rejection", err)
+	}
+	entries, readErr := os.ReadDir(outside)
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
+	if len(entries) != 0 {
+		t.Fatalf("outside symlink target entries = %d, want 0", len(entries))
+	}
+}
+
+func TestKustomizeRendererIgnoresUnrelatedRemoteSymlinkOutsideGraph(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "app", "kustomization.yaml"), `apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - https://github.com/example/remote.git//base?ref=v1.2.3
+`)
+	remoteRepo := t.TempDir()
+	outside := filepath.Join(t.TempDir(), "outside.yaml")
+	writeFile(t, outside, "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: outside\n")
+	symlink(t, outside, filepath.Join(remoteRepo, "unrelated-link.yaml"))
+	writeFile(t, filepath.Join(remoteRepo, "base", "kustomization.yaml"), `apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - cm.yaml
+`)
+	writeFile(t, filepath.Join(remoteRepo, "base", "cm.yaml"), `apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: remote-base
+`)
+	acquirer := &fakeRemoteAcquirer{path: remoteRepo}
+
+	manifests, diags, err := (KustomizeRenderer{}).Render(context.Background(), ResolvedSource{
+		RepoRoot: root,
+		Path:     "app",
+	}, RenderOptions{
+		RemoteResourceAcquirer: acquirer,
+		RemoteResourceCacheDir: t.TempDir(),
+	})
+	if err != nil {
+		t.Fatalf("Render() error = %v", err)
+	}
+	if len(diags) != 0 {
+		t.Fatalf("diagnostics = %#v", diags)
+	}
+	if !containsManifest(manifests, "ConfigMap", "remote-base") {
+		t.Fatalf("rendered manifests = %#v, want remote base ConfigMap", manifests)
+	}
+}
+
+func TestKustomizeRendererRejectsRemoteGeneratedDirSymlink(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "app", "kustomization.yaml"), `apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - https://github.com/example/outer.git//base?ref=v1.2.3
+`)
+	outerRepo := t.TempDir()
+	writeFile(t, filepath.Join(outerRepo, "base", "kustomization.yaml"), `apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - https://github.com/example/inner.git//base?ref=v2.0.0
+`)
+	outside := t.TempDir()
+	symlink(t, outside, filepath.Join(outerRepo, "base", ".argocd-local"))
+	innerRepo := t.TempDir()
+	writeFile(t, filepath.Join(innerRepo, "base", "kustomization.yaml"), `apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - cm.yaml
+`)
+	writeFile(t, filepath.Join(innerRepo, "base", "cm.yaml"), `apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: inner-base
+`)
+	acquirer := &fakeRemoteAcquirer{paths: map[string]string{
+		"https://github.com/example/outer.git": outerRepo,
+		"https://github.com/example/inner.git": innerRepo,
+	}}
+
+	_, _, err := (KustomizeRenderer{}).Render(context.Background(), ResolvedSource{
+		RepoRoot: root,
+		Path:     "app",
+	}, RenderOptions{
+		RemoteResourceAcquirer: acquirer,
+		RemoteResourceCacheDir: t.TempDir(),
+	})
+	if err == nil {
+		t.Fatal("Render() error = nil, want generated symlink rejection")
+	}
+	if !strings.Contains(err.Error(), "generated kustomize path") || !strings.Contains(err.Error(), "symlink") {
+		t.Fatalf("Render() error = %v, want generated symlink rejection", err)
+	}
+	entries, readErr := os.ReadDir(outside)
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
+	if len(entries) != 0 {
+		t.Fatalf("outside symlink target entries = %d, want 0", len(entries))
+	}
+}
+
+func TestKustomizeRendererRendersRemoteGitComponent(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "app", "kustomization.yaml"), `apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+components:
+  - https://github.com/example/remote-component.git//component?ref=v1.2.3
+resources:
+  - cm.yaml
+`)
+	writeFile(t, filepath.Join(root, "app", "cm.yaml"), `apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: local
+`)
+	remoteRepo := t.TempDir()
+	writeFile(t, filepath.Join(remoteRepo, "component", "kustomization.yaml"), `apiVersion: kustomize.config.k8s.io/v1alpha1
+kind: Component
+resources:
+  - serviceaccount.yaml
+`)
+	writeFile(t, filepath.Join(remoteRepo, "component", "serviceaccount.yaml"), `apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: remote-component
+`)
+	acquirer := &fakeRemoteAcquirer{path: remoteRepo}
+
+	manifests, diags, err := (KustomizeRenderer{}).Render(context.Background(), ResolvedSource{
+		RepoRoot: root,
+		Path:     "app",
+	}, RenderOptions{
+		RemoteResourceAcquirer: acquirer,
+		RemoteResourceCacheDir: t.TempDir(),
+	})
+	if err != nil {
+		t.Fatalf("Render() error = %v", err)
+	}
+	if len(diags) != 0 {
+		t.Fatalf("diagnostics = %#v", diags)
+	}
+	if !containsManifest(manifests, "ConfigMap", "local") {
+		t.Fatalf("rendered manifests = %#v, want local ConfigMap", manifests)
+	}
+	if !containsManifest(manifests, "ServiceAccount", "remote-component") {
+		t.Fatalf("rendered manifests = %#v, want remote component ServiceAccount", manifests)
+	}
+}
+
+func TestKustomizeRendererRendersNestedRemoteKustomizeRefs(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "app", "kustomization.yaml"), `apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - https://github.com/example/outer.git//base?ref=v1.0.0
+`)
+	outerRepo := t.TempDir()
+	writeFile(t, filepath.Join(outerRepo, "base", "kustomization.yaml"), `apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - cm.yaml
+  - https://github.com/example/inner.git//base?ref=v2.0.0
+`)
+	writeFile(t, filepath.Join(outerRepo, "base", "cm.yaml"), `apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: outer
+`)
+	innerRepo := t.TempDir()
+	writeFile(t, filepath.Join(innerRepo, "base", "kustomization.yaml"), `apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - cm.yaml
+`)
+	writeFile(t, filepath.Join(innerRepo, "base", "cm.yaml"), `apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: inner
+`)
+	acquirer := &fakeRemoteAcquirer{paths: map[string]string{
+		"https://github.com/example/outer.git": outerRepo,
+		"https://github.com/example/inner.git": innerRepo,
+	}}
+
+	manifests, diags, err := (KustomizeRenderer{}).Render(context.Background(), ResolvedSource{
+		RepoRoot: root,
+		Path:     "app",
+	}, RenderOptions{
+		RemoteResourceAcquirer: acquirer,
+		RemoteResourceCacheDir: t.TempDir(),
+	})
+	if err != nil {
+		t.Fatalf("Render() error = %v", err)
+	}
+	if len(diags) != 0 {
+		t.Fatalf("diagnostics = %#v", diags)
+	}
+	if len(acquirer.requests) != 2 {
+		t.Fatalf("remote acquire calls = %d, want 2", len(acquirer.requests))
+	}
+	if !containsManifest(manifests, "ConfigMap", "outer") {
+		t.Fatalf("rendered manifests = %#v, want outer ConfigMap", manifests)
+	}
+	if !containsManifest(manifests, "ConfigMap", "inner") {
+		t.Fatalf("rendered manifests = %#v, want nested inner ConfigMap", manifests)
+	}
+}
+
+func TestKustomizeRendererRejectsRemoteBoundaryEscape(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "app", "kustomization.yaml"), `apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - https://github.com/example/remote.git//base?ref=v1.2.3
+`)
+	remoteRepo := t.TempDir()
+	writeFile(t, filepath.Join(remoteRepo, "base", "kustomization.yaml"), `apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - ../../outside.yaml
+`)
+	acquirer := &fakeRemoteAcquirer{path: remoteRepo}
+
+	_, _, err := (KustomizeRenderer{}).Render(context.Background(), ResolvedSource{
+		RepoRoot: root,
+		Path:     "app",
+	}, RenderOptions{
+		RemoteResourceAcquirer: acquirer,
+		RemoteResourceCacheDir: t.TempDir(),
+	})
+	if err == nil {
+		t.Fatal("Render() error = nil, want remote boundary escape rejection")
+	}
+	if !strings.Contains(err.Error(), "escapes") {
+		t.Fatalf("Render() error = %v, want escape rejection", err)
+	}
+}
+
+func TestKustomizeRendererRejectsRemotePathBearingBoundaryEscape(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "app", "kustomization.yaml"), `apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - https://github.com/example/remote.git//base?ref=v1.2.3
+`)
+	writeFile(t, filepath.Join(root, "app", "caller-patch.yaml"), `apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: remote
+  labels:
+    leaked: "true"
+`)
+	remoteRepo := t.TempDir()
+	writeFile(t, filepath.Join(remoteRepo, "base", "kustomization.yaml"), `apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - cm.yaml
+patches:
+  - path: ../../../../caller-patch.yaml
+    target:
+      version: v1
+      kind: ConfigMap
+      name: remote
+`)
+	writeFile(t, filepath.Join(remoteRepo, "base", "cm.yaml"), `apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: remote
+`)
+	acquirer := &fakeRemoteAcquirer{path: remoteRepo}
+
+	_, _, err := (KustomizeRenderer{}).Render(context.Background(), ResolvedSource{
+		RepoRoot: root,
+		Path:     "app",
+	}, RenderOptions{
+		RemoteResourceAcquirer: acquirer,
+		RemoteResourceCacheDir: t.TempDir(),
+	})
+	if err == nil {
+		t.Fatal("Render() error = nil, want remote path-bearing boundary escape rejection")
+	}
+	if !strings.Contains(err.Error(), "escapes") {
+		t.Fatalf("Render() error = %v, want escape rejection", err)
+	}
+}
+
+func TestKustomizeRendererRejectsRemoteHelmBoundaryEscapes(t *testing.T) {
+	for _, tt := range []struct {
+		name          string
+		kustomization string
+		want          string
+	}{
+		{
+			name: "chartHome",
+			kustomization: `apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+helmGlobals:
+  chartHome: ../../../../caller-charts
+helmCharts:
+  - name: demo
+    releaseName: demo
+`,
+			want: "escapes",
+		},
+		{
+			name: "chart name",
+			kustomization: `apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+helmGlobals:
+  chartHome: .
+helmCharts:
+  - name: ../../../../caller-chart
+    releaseName: demo
+`,
+			want: "escapes",
+		},
+		{
+			name: "nameTemplate",
+			kustomization: `apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+helmCharts:
+  - name: demo
+    repo: https://charts.example.test
+    version: 1.2.3
+    nameTemplate: demo-{{ randAlpha 5 }}
+`,
+			want: "nameTemplate",
+		},
+		{
+			name: "valuesFile",
+			kustomization: `apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+helmCharts:
+  - name: demo
+    releaseName: demo
+    valuesFile: ../../../../caller-values.yaml
+`,
+			want: "escapes",
+		},
+		{
+			name: "additionalValuesFiles",
+			kustomization: `apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+helmCharts:
+  - name: demo
+    releaseName: demo
+    additionalValuesFiles:
+      - ../../../../caller-values.yaml
+`,
+			want: "escapes",
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			root := t.TempDir()
+			writeFile(t, filepath.Join(root, "app", "kustomization.yaml"), `apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - https://github.com/example/remote.git//base?ref=v1.2.3
+`)
+			remoteRepo := t.TempDir()
+			writeFile(t, filepath.Join(remoteRepo, "base", "kustomization.yaml"), tt.kustomization)
+			acquirer := &fakeRemoteAcquirer{path: remoteRepo}
+
+			_, _, err := (KustomizeRenderer{}).Render(context.Background(), ResolvedSource{
+				RepoRoot: root,
+				Path:     "app",
+			}, RenderOptions{
+				RemoteResourceAcquirer: acquirer,
+				RemoteResourceCacheDir: t.TempDir(),
+			})
+			if err == nil {
+				t.Fatalf("Render() error = nil, want %q", tt.want)
+			}
+			if !strings.Contains(err.Error(), tt.want) {
+				t.Fatalf("Render() error = %v, want %q", err, tt.want)
+			}
+		})
+	}
+}
+
+func TestKustomizeRendererRejectsRemoteHelmValueRefsWithoutLeakingSecrets(t *testing.T) {
+	for _, tt := range []struct {
+		name string
+		body string
+		opts RenderOptions
+	}{
+		{
+			name: "local",
+			body: `apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+helmCharts:
+  - name: demo
+    releaseName: demo
+    valuesFile: https://user:secret@example.test/values.yaml?token=secret
+`,
+		},
+		{
+			name: "remote",
+			body: `apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - https://github.com/example/remote.git//base?ref=v1.2.3
+`,
+			opts: RenderOptions{RemoteResourceAcquirer: &fakeRemoteAcquirer{}},
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			root := t.TempDir()
+			writeFile(t, filepath.Join(root, "app", "kustomization.yaml"), tt.body)
+			if tt.name == "remote" {
+				remoteRepo := t.TempDir()
+				writeFile(t, filepath.Join(remoteRepo, "base", "kustomization.yaml"), `apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+helmCharts:
+  - name: demo
+    releaseName: demo
+    additionalValuesFiles:
+      - https://user:secret@example.test/values.yaml?token=secret
+`)
+				tt.opts.RemoteResourceAcquirer = &fakeRemoteAcquirer{path: remoteRepo}
+			}
+
+			_, _, err := (KustomizeRenderer{}).Render(context.Background(), ResolvedSource{
+				RepoRoot: root,
+				Path:     "app",
+			}, tt.opts)
+			if err == nil {
+				t.Fatal("Render() error = nil, want remote Helm values rejection")
+			}
+			if !strings.Contains(err.Error(), "remote") {
+				t.Fatalf("Render() error = %v, want remote ref rejection", err)
+			}
+			for _, secret := range []string{"user", "secret", "token=secret"} {
+				if strings.Contains(err.Error(), secret) {
+					t.Fatalf("Render() error = %q leaked %q", err.Error(), secret)
+				}
+			}
+		})
+	}
+}
+
+func TestKustomizeRendererRejectsRemoteHTTPComponentWithoutAcquire(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "app", "kustomization.yaml"), `apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+components:
+  - https://raw.githubusercontent.com/example/repo/main/component.yaml
+resources:
+  - local.yaml
+`)
+	writeFile(t, filepath.Join(root, "app", "local.yaml"), `apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: local
+`)
+	acquirer := &fakeRemoteAcquirer{path: filepath.Join(t.TempDir(), "component.yaml")}
+
+	_, _, err := (KustomizeRenderer{}).Render(context.Background(), ResolvedSource{
+		RepoRoot: root,
+		Path:     "app",
+	}, RenderOptions{
+		RemoteResourceAcquirer: acquirer,
+		RemoteResourceCacheDir: t.TempDir(),
+	})
+	if err == nil {
+		t.Fatal("Render() error = nil, want remote HTTP component rejection")
+	}
+	if !strings.Contains(err.Error(), "must resolve to a Kustomization directory") {
+		t.Fatalf("Render() error = %v, want Kustomization directory rejection", err)
+	}
+	if len(acquirer.requests) != 0 {
+		t.Fatalf("remote acquire calls = %d, want 0", len(acquirer.requests))
+	}
+}
+
+func TestKustomizeRendererRejectsRemoteSymlinkedGraphEntry(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "app", "kustomization.yaml"), `apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - https://github.com/example/remote.git//base?ref=v1.2.3
+`)
+	remoteRepo := t.TempDir()
+	writeFile(t, filepath.Join(remoteRepo, "base", "kustomization.yaml"), `apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - linked.yaml
+`)
+	outside := filepath.Join(t.TempDir(), "outside.yaml")
+	writeFile(t, outside, "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: outside\n")
+	symlink(t, outside, filepath.Join(remoteRepo, "base", "linked.yaml"))
+	acquirer := &fakeRemoteAcquirer{path: remoteRepo}
+
+	_, _, err := (KustomizeRenderer{}).Render(context.Background(), ResolvedSource{
+		RepoRoot: root,
+		Path:     "app",
+	}, RenderOptions{
+		RemoteResourceAcquirer: acquirer,
+		RemoteResourceCacheDir: t.TempDir(),
+	})
+	if err == nil {
+		t.Fatal("Render() error = nil, want symlink rejection")
+	}
+	if !strings.Contains(err.Error(), "symlink") {
+		t.Fatalf("Render() error = %v, want symlink rejection", err)
+	}
+}
+
 func TestKustomizeRendererRejectsRemoteGitSubpathEscape(t *testing.T) {
 	root := t.TempDir()
 	writeFile(t, filepath.Join(root, "app", "kustomization.yaml"), `apiVersion: kustomize.config.k8s.io/v1beta1
@@ -338,6 +1021,43 @@ resources:
 	}
 	if !strings.Contains(err.Error(), "symlink") {
 		t.Fatalf("Render() error = %v, want symlink error", err)
+	}
+}
+
+func TestKustomizeRendererRejectsRemoteGitSymlinkedRoot(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "app", "kustomization.yaml"), `apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - https://github.com/example/repo.git//base?ref=v1.2.3
+`)
+	remoteRepo := t.TempDir()
+	writeFile(t, filepath.Join(remoteRepo, "base", "kustomization.yaml"), `apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - cm.yaml
+`)
+	writeFile(t, filepath.Join(remoteRepo, "base", "cm.yaml"), `apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: remote-base
+`)
+	remoteLink := filepath.Join(t.TempDir(), "remote-link")
+	symlink(t, remoteRepo, remoteLink)
+	acquirer := &fakeRemoteAcquirer{path: remoteLink}
+
+	_, _, err := (KustomizeRenderer{}).Render(context.Background(), ResolvedSource{
+		RepoRoot: root,
+		Path:     "app",
+	}, RenderOptions{
+		RemoteResourceAcquirer: acquirer,
+		RemoteResourceCacheDir: t.TempDir(),
+	})
+	if err == nil {
+		t.Fatal("Render() error = nil, want symlink root rejection")
+	}
+	if !strings.Contains(err.Error(), "symlinked repository root") {
+		t.Fatalf("Render() error = %v, want symlinked repository root error", err)
 	}
 }
 
@@ -1353,48 +2073,12 @@ func TestKustomizeRendererRejectsRemoteRefs(t *testing.T) {
 		kustomization string
 	}{
 		{
-			name: "https resource",
-			kustomization: `
-apiVersion: kustomize.config.k8s.io/v1beta1
-kind: Kustomization
-resources:
-  - https://github.com/example/repo//base?ref=main
-`,
-		},
-		{
 			name: "remote file component",
 			kustomization: `
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 components:
   - https://raw.githubusercontent.com/example/repo/main/component.yaml
-`,
-		},
-		{
-			name: "scp-like git resource",
-			kustomization: `
-apiVersion: kustomize.config.k8s.io/v1beta1
-kind: Kustomization
-resources:
-  - alice@example.com:org/repo.git//base
-`,
-		},
-		{
-			name: "scp-like git resource without git suffix",
-			kustomization: `
-apiVersion: kustomize.config.k8s.io/v1beta1
-kind: Kustomization
-resources:
-  - alice@example.com:org/repo/base?ref=main
-`,
-		},
-		{
-			name: "github host colon resource",
-			kustomization: `
-apiVersion: kustomize.config.k8s.io/v1beta1
-kind: Kustomization
-resources:
-  - github.com:org/repo//base
 `,
 		},
 		{
