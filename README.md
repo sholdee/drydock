@@ -27,10 +27,11 @@ result, err := argocdlocal.Render(ctx, argocdlocal.Config{Path: "."})
 ```
 
 `argocdlocal.NewClient` accepts public Git, chart, and remote-resource acquirer
-interfaces for tests and embedding. Those fakes can satisfy remote source
-requests without network access. When rendering returns an error for one
-Application, the public result still includes successful manifests,
-diagnostics, and per-Application statuses from the partial build.
+interfaces, plus a public config management plugin renderer hook, for tests
+and embedding. Those fakes can satisfy remote source and plugin render
+requests without network access or shelling out. When rendering returns an
+error for one Application, the public result still includes successful
+manifests, diagnostics, and per-Application statuses from the partial build.
 
 ## Quick Start
 
@@ -96,6 +97,14 @@ combinations where the Argo CD v3 API permits them. Provider-backed
 ApplicationSet generators still produce diagnostics instead of approximating
 live or external services.
 
+Application sources that declare `spec.source.plugin` are detected explicitly.
+The CLI and default Go client do not execute plugin commands; without an
+injected renderer they fail closed with a plugin diagnostic. Embedders can
+provide `argocdlocal.Config.PluginRenderer` to render those sources
+deterministically inside their own Go process, and returned manifests
+participate in normal render, diff, image extraction, namespace defaulting,
+and resource filtering.
+
 Rendered-resource filters include Argo CD core exclusions and discovered
 `argocd-cm` or Helm values `configs.cm` `resource.exclusions` and
 `resource.inclusions`. Use repeatable `--skip-kind KIND`, `--skip-crds`, or
@@ -136,7 +145,7 @@ scripts/home-ops-pattern-smoke.sh
 - Desired-vs-desired only; no live cluster diff.
 - ApplicationSet provider-backed generators remain deferred: cluster,
   clusterDecisionResource, SCM provider, pull-request, and plugin.
-- No config management plugins.
+- No CLI config management plugin execution or shellout plugin adapters.
 - No required shellouts in default workflows.
 - No cache-inspection command or structured cache event stream yet. Remote Git,
   Helm, and Kustomize cache observability is tracked as a Phase 1B follow-up.

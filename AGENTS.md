@@ -164,7 +164,10 @@ The MVP currently supports:
 - Per-Application `test apps` and `test app` PASS/FAIL/SKIPPED status output
   with text, JSON, and YAML formats.
 - Public Go API for listing, rendering, manifest diffs, image diffs, and
-  injectable Git/chart/remote-resource acquisition.
+  injectable Git/chart/remote-resource acquisition plus injectable config
+  management plugin rendering.
+- Config management plugin source detection with fail-closed diagnostics in
+  the CLI/default path when no plugin renderer is injected.
 - Structured `diff apps` and `diff app` output with diff, JSON, and YAML
   formats, plus metadata label/annotation stripping through `--strip-attr`.
 - Application-level `spec.ignoreDifferences[]` `jsonPointers`,
@@ -194,7 +197,9 @@ Do not treat these as supported without an explicit design update:
 - Global `resource.customizations` `ignoreResourceUpdates`,
   `knownTypeFields`, health, actions, and Lua settings.
 - Project, RBAC, and destination validation.
-- Config management plugins.
+- CLI config management plugin execution, shellout plugin adapters, Argo CD
+  repo-server sidecar plugin discovery, ambient plugin configuration, ambient
+  plugin environment loading, and plugin credential injection.
 - Cluster, clusterDecisionResource, SCM provider, pull-request, and plugin
   ApplicationSet generators.
 - Required default shellouts to `helm`, `kustomize`, `kubectl`, or `argocd`.

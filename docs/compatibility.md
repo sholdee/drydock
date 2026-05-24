@@ -70,8 +70,10 @@ Supported in the MVP:
 - `diff images` conservative workload image diffs
 - Repeated-resource last-wins behavior inside one Application
 - Public Go API in `pkg/argocdlocal` for Application listing, rendering,
-  manifest diffs, image diffs, and injectable Git/chart/remote-resource
-  acquisition
+  manifest diffs, image diffs, injectable Git/chart/remote-resource
+  acquisition, and injectable config management plugin rendering
+- Config management plugin source detection with fail-closed diagnostics in
+  the CLI and default Go client when no plugin renderer is injected
 
 Network and cache behavior:
 
@@ -117,6 +119,9 @@ Not reproduced offline:
 - Global `resource.customizations` `ignoreResourceUpdates`,
   `knownTypeFields`, health, actions, and Lua settings
 - Project/RBAC/destination validation
+- CLI config management plugin execution, shellout plugin adapters, Argo CD
+  repo-server sidecar plugin discovery, ambient plugin configuration, ambient
+  plugin environment loading, and plugin credential injection
 - Cluster, clusterDecisionResource, SCM provider, pull-request, and plugin
   ApplicationSet generators
 - Live cluster and Argo CD API sources

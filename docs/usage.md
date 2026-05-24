@@ -188,6 +188,13 @@ diagnostics, and statuses. Set `SkipKinds`, `SkipCRDs`, or `SkipSecrets` on
 `argocdlocal.Config` to apply the same rendered-resource filters exposed by
 the CLI.
 
+Config management plugin sources are explicit. The CLI and default Go client
+do not execute plugin commands; an Application source with `spec.source.plugin`
+fails closed with a plugin diagnostic unless an embedding caller supplies
+`argocdlocal.Config.PluginRenderer`. Injected plugin renderer output
+participates in normal render, diff, image extraction, destination namespace
+defaulting, and resource filtering.
+
 ## Render Tests
 
 Test every discovered Application without printing manifest bodies:
@@ -356,7 +363,9 @@ These source paths are not wired in the current MVP:
 
 - Cluster, clusterDecisionResource, SCM provider, pull-request, and plugin
   ApplicationSet generators.
-- Config management plugins.
+- CLI config management plugin execution, shellout plugin adapters, Argo CD
+  repo-server sidecar plugin discovery, ambient plugin configuration, ambient
+  plugin environment loading, and plugin credential injection.
 - Live cluster and Argo CD API sources.
 
 ## Optional Home-Ops Smoke
