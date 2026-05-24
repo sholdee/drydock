@@ -88,10 +88,18 @@ diffs, image extraction, and render tests. Embedding callers can set
 `SkipKinds`, `SkipCRDs`, and `SkipSecrets` on `argocdlocal.Config` for the
 same explicit-filter behavior.
 
-Application-level `spec.ignoreDifferences[].jsonPointers` rules and global
-`resource.customizations.ignoreDifferences.*.jsonPointers` settings are honored
-for rendered manifest diffs. `jqPathExpressions` and `managedFieldsManagers`
-are discovered as settings diagnostics but remain unenforced.
+Application-level `spec.ignoreDifferences[]` `jsonPointers`,
+`jqPathExpressions`, and `managedFieldsManagers` rules are honored for rendered
+manifest diffs. Global `resource.customizations.ignoreDifferences.*`
+`jsonPointers`, `jqPathExpressions`, and `managedFieldsManagers` settings are
+also honored. Managed-fields support is an offline rendered-manifest
+approximation; it uses `metadata.managedFields` only when those fields are
+present in the rendered manifests.
+
+Discovered `resource.compareoptions` settings are honored for
+`ignoreResourceStatusField` and `ignoreAggregatedRoles`. The default matches
+Argo CD's `ignoreResourceStatusField: all`; set it to `none`, `off`, or
+`false` to keep status diffs.
 
 Maintainers with a local `home-ops` checkout can also run the optional
 Renovate smoke script:
@@ -117,12 +125,9 @@ scripts/home-ops-pattern-smoke.sh
 - No authenticated remote Kustomize resources, remote Kustomize
   bases/components/patches/generators/transformers/validators, `crds`,
   `openapi`, or replacements.
-- Server-side diff/apply settings are reported as offline limitations.
-- Global `resource.customizations` support is limited to
-  `ignoreDifferences.jsonPointers`; `jqPathExpressions`,
-  `managedFieldsManagers`, `ignoreResourceUpdates`, health, actions, and known
-  type fields remain deferred.
-- Application `ignoreDifferences` support is limited to `jsonPointers`.
+- Live server-side diff/apply behavior is not reproduced.
+- Global `resource.customizations` support does not include
+  `ignoreResourceUpdates`, health, actions, or known type fields.
 
 See `docs/usage.md` for command examples and `docs/compatibility.md` for
 offline Argo CD compatibility notes. See `docs/home-ops-pattern-coverage.md`

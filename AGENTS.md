@@ -131,10 +131,13 @@ The MVP currently supports:
   injectable Git/chart/remote-resource acquisition.
 - Structured `diff apps` and `diff app` output with diff, JSON, and YAML
   formats, plus metadata label/annotation stripping through `--strip-attr`.
-- Application-level `spec.ignoreDifferences[].jsonPointers` for rendered
-  manifest diffs.
-- Global `resource.customizations.ignoreDifferences.*.jsonPointers` from
-  discovered `argocd-cm` and Argo CD Helm values `configs.cm`.
+- Application-level `spec.ignoreDifferences[]` `jsonPointers`,
+  `jqPathExpressions`, and `managedFieldsManagers` for rendered manifest diffs.
+- Global `resource.customizations.ignoreDifferences.*` `jsonPointers`,
+  `jqPathExpressions`, and `managedFieldsManagers` from discovered `argocd-cm`
+  and Argo CD Helm values `configs.cm`.
+- Discovered `resource.compareoptions.ignoreResourceStatusField` and
+  `resource.compareoptions.ignoreAggregatedRoles`.
 - Argo CD core resource exclusions plus discovered global
   `resource.exclusions` and `resource.inclusions`.
 - Explicit rendered-resource filters through `--skip-kind`, `--skip-crds`, and
@@ -149,13 +152,11 @@ Do not treat these as supported without an explicit design update:
 
 - Live-cluster diffing or live Argo CD API calls.
 - Kubernetes API defaulting or admission mutation.
-- Server-side apply field ownership, managed fields ignores, and live Argo CD
+- Live server-side apply field ownership prediction and live Argo CD
   server-side diff behavior.
-- Application-level `ignoreDifferences` `jqPathExpressions` and
-  `managedFieldsManagers`.
-- Global `resource.customizations` `jqPathExpressions`,
-  `managedFieldsManagers`, `ignoreResourceUpdates`, `knownTypeFields`, health,
-  actions, and Lua settings.
+- Managed fields ignores when ownership data exists only on the live cluster.
+- Global `resource.customizations` `ignoreResourceUpdates`,
+  `knownTypeFields`, health, actions, and Lua settings.
 - Project, RBAC, and destination validation.
 - Config management plugins.
 - Cluster, SCM provider, pull-request, plugin, matrix, and merge
@@ -232,13 +233,17 @@ keys before manifest body comparison and diff generation.
 `--skip-kind KIND`, `--skip-crds`, and `--skip-secrets` drop rendered resources
 before build output, diff comparison, and image extraction. These filters are
 explicit opt-ins; do not change defaults to hide Secrets or CRDs.
-Application `spec.ignoreDifferences[].jsonPointers` rules are honored with
-Argo CD glob matching for group/kind and exact optional name/namespace matches.
+Application `spec.ignoreDifferences[]` rules are honored with Argo CD glob
+matching for group/kind and exact optional name/namespace matches.
 When both sides contain a matching resource, apply the union of left and right
-Application-local and global JSON pointers to both sides before comparison. Do
-not claim support for `jqPathExpressions`, `managedFieldsManagers`,
-`ignoreResourceUpdates`, health, actions, or known type fields until they are
-explicitly implemented.
+Application-local and global `jsonPointers`, `jqPathExpressions`, and
+`managedFieldsManagers` to both sides before comparison. JQ expressions run as
+`del(<expression>)` and fail closed on compile/runtime errors.
+`managedFieldsManagers` is an offline desired-vs-desired approximation using
+rendered `metadata.managedFields`; do not claim live server-side ownership
+prediction. `resource.compareoptions` supports status-field and aggregated-role
+normalization. Do not claim support for `ignoreResourceUpdates`, health,
+actions, or known type fields until they are explicitly implemented.
 Image extraction is conservative in the MVP and may be broadened only behind an
 explicit mode.
 CLI diff exit codes are fixed: 0 means success/no diff, 1 means success/diff

@@ -305,6 +305,63 @@ func TestOrchestratorDiffAppsCompareOptionsIgnoreAggregatedRoles(t *testing.T) {
 	}
 }
 
+func TestOrchestratorDiffAppsDiffSettingsFixture(t *testing.T) {
+	result, err := Orchestrator{}.DiffApps(context.Background(), DiffRequest{
+		LeftPath:  filepath.Join("testdata", "diff-settings", "left"),
+		RightPath: filepath.Join("testdata", "diff-settings", "right"),
+		Unified:   3,
+	})
+	if err != nil {
+		t.Fatalf("DiffApps() error = %v", err)
+	}
+	if len(result.Diagnostics) != 0 {
+		t.Fatalf("len(Diagnostics) = %d, want none: %#v", len(result.Diagnostics), result.Diagnostics)
+	}
+	if len(result.Results) != 2 {
+		t.Fatalf("len(Results) = %d, want exactly status plus data diffs: %#v", len(result.Results), result.Results)
+	}
+
+	byKey := map[string]string{}
+	for _, item := range result.Results {
+		key := item.Parent.Name + "/" + item.Resource.Kind + "/" + item.Resource.Name
+		byKey[key] = item.Diff
+	}
+	statusDiff, ok := byKey["status/ConfigMap/status"]
+	if !ok {
+		t.Fatalf("Results = %#v, want status ConfigMap diff", result.Results)
+	}
+	for _, want := range []string{"-  value: old", "+  value: new"} {
+		if !strings.Contains(statusDiff, want) {
+			t.Fatalf("status diff missing %q:\n%s", want, statusDiff)
+		}
+	}
+	workloadDiff, ok := byKey["workload/ConfigMap/workload-config"]
+	if !ok {
+		t.Fatalf("Results = %#v, want workload ConfigMap diff", result.Results)
+	}
+	for _, want := range []string{"-  mode: old", "+  mode: new"} {
+		if !strings.Contains(workloadDiff, want) {
+			t.Fatalf("workload diff missing %q:\n%s", want, workloadDiff)
+		}
+	}
+
+	combinedDiff := statusDiff + workloadDiff
+	for _, forbidden := range []string{
+		"example/sidecar:v1",
+		"example/sidecar:v2",
+		"left-ca",
+		"right-ca",
+		"replicas: 1",
+		"replicas: 2",
+		"resources: [\"pods\"]",
+		"resources: [\"services\"]",
+	} {
+		if strings.Contains(combinedDiff, forbidden) {
+			t.Fatalf("combined diff includes ignored value %q:\n%s", forbidden, combinedDiff)
+		}
+	}
+}
+
 func TestOrchestratorDiffAppsHonorsSplitGlobalResourceCustomizationJSONPointers(t *testing.T) {
 	root := t.TempDir()
 	left := filepath.Join(root, "left")

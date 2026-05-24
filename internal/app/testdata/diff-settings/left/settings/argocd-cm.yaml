@@ -1,0 +1,17 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: argocd-cm
+data:
+  resource.compareoptions: |
+    ignoreResourceStatusField: none
+    ignoreAggregatedRoles: true
+  resource.customizations: |
+    admissionregistration.k8s.io/MutatingWebhookConfiguration:
+      ignoreDifferences: |
+        jqPathExpressions:
+          - .webhooks[].clientConfig.caBundle
+    apps/Deployment:
+      ignoreDifferences: |
+        managedFieldsManagers:
+          - kube-controller-manager

@@ -115,7 +115,6 @@ func documentsWithSharedNormalization(left, right Document, hasLeft, hasRight bo
 			compareOptions = mergeCompareOptions(compareOptions, right.Normalization.CompareOptions)
 		} else {
 			compareOptions = right.Normalization.CompareOptions
-			hasCompareOptions = true
 		}
 	}
 	normalization.CompareOptions = compareOptions

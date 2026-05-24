@@ -47,7 +47,7 @@ func normalizeManagedFieldsPair(left, right map[string]any, managers []string) (
 
 func cloneMap(in map[string]any) (map[string]any, error) {
 	if in == nil {
-		return nil, nil
+		return nil, fmt.Errorf("clone map: nil input")
 	}
 	data, err := json.Marshal(in)
 	if err != nil {

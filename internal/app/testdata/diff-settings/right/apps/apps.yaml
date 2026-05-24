@@ -1,0 +1,74 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: workload
+  namespace: argocd
+spec:
+  source:
+    repoURL: https://github.com/example/repo
+    path: manifests/workload
+    targetRevision: main
+  destination:
+    name: in-cluster
+    namespace: default
+  ignoreDifferences:
+    - group: apps
+      kind: Deployment
+      name: workload
+      jqPathExpressions:
+        - .spec.template.spec.containers[] | select(.name == "sidecar")
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: webhook
+  namespace: argocd
+spec:
+  source:
+    repoURL: https://github.com/example/repo
+    path: manifests/webhook
+    targetRevision: main
+  destination:
+    name: in-cluster
+    namespace: default
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: managed
+  namespace: argocd
+spec:
+  source:
+    repoURL: https://github.com/example/repo
+    path: manifests/managed
+    targetRevision: main
+  destination:
+    name: in-cluster
+    namespace: default
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: status
+  namespace: argocd
+spec:
+  source:
+    repoURL: https://github.com/example/repo
+    path: manifests/status
+    targetRevision: main
+  destination:
+    name: in-cluster
+    namespace: default
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: role
+  namespace: argocd
+spec:
+  source:
+    repoURL: https://github.com/example/repo
+    path: manifests/role
+    targetRevision: main
+  destination:
+    name: in-cluster
