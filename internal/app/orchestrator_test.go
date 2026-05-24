@@ -477,6 +477,30 @@ func TestOrchestratorPluginTimeoutReturnsPartialStatus(t *testing.T) {
 	}
 }
 
+func TestOrchestratorInjectedPluginRendererErrorPreservesDiagnostics(t *testing.T) {
+	root := t.TempDir()
+	writeBuildApplication(t, root, "ok", "ok")
+	writePluginBuildApplication(t, root, "plugin", "cue")
+
+	result, err := (Orchestrator{PluginRenderer: failingInternalPluginRenderer{}}).Build(context.Background(), BuildRequest{Path: root})
+	if err == nil {
+		t.Fatal("Build() error = nil, want plugin renderer error")
+	}
+	if _, ok := manifestByName(result.Manifests, "ok"); !ok {
+		t.Fatalf("Manifests = %#v, want successful non-plugin manifest", result.Manifests)
+	}
+	assertApplicationStatuses(t, result.Statuses, []ApplicationStatus{
+		{Namespace: "argocd", Name: "ok", Status: ApplicationStatusPass},
+		{Namespace: "argocd", Name: "plugin", Status: ApplicationStatusFail},
+	})
+	if !hasDiagnosticCode(result.Diagnostics, "plugin.custom") {
+		t.Fatalf("Diagnostics = %#v, want renderer diagnostic", result.Diagnostics)
+	}
+	if !hasDiagnosticCode(result.Diagnostics, diagnostic.CodePluginFailed) {
+		t.Fatalf("Diagnostics = %#v, want plugin.failed", result.Diagnostics)
+	}
+}
+
 func TestOrchestratorBuildRendersLocalHelmChartSource(t *testing.T) {
 	root := t.TempDir()
 	writeTestFile(t, filepath.Join(root, "apps", "argocd", "helm-app.yaml"), `apiVersion: argoproj.io/v1alpha1
@@ -1754,6 +1778,17 @@ type blockingInternalPluginRenderer struct{}
 func (blockingInternalPluginRenderer) RenderPlugin(ctx context.Context, _ render.PluginRequest) ([]render.Manifest, []diagnostic.Diagnostic, error) {
 	<-ctx.Done()
 	return nil, nil, ctx.Err()
+}
+
+type failingInternalPluginRenderer struct{}
+
+func (failingInternalPluginRenderer) RenderPlugin(_ context.Context, _ render.PluginRequest) ([]render.Manifest, []diagnostic.Diagnostic, error) {
+	return nil, []diagnostic.Diagnostic{{
+		Code:     "plugin.custom",
+		Severity: diagnostic.SeverityError,
+		Category: "plugin",
+		Message:  "renderer supplied diagnostic",
+	}}, errors.New("renderer failed")
 }
 
 func manifestByName(manifests []render.Manifest, name string) (render.Manifest, bool) {

@@ -110,6 +110,26 @@ func TestWithStableCodesAssignsKnownCodes(t *testing.T) {
 	}
 }
 
+func TestStableCodePluginFallbacks(t *testing.T) {
+	diags := WithStableCodes([]Diagnostic{{
+		Severity: SeverityError,
+		Category: "plugin",
+		Message:  "legacy plugin diagnostic",
+	}})
+	if got := diags[0].Code; got != CodePluginUnspecified {
+		t.Fatalf("Code = %q, want %s", got, CodePluginUnspecified)
+	}
+	explicit := WithStableCodes([]Diagnostic{{
+		Code:     CodePluginFailed,
+		Severity: SeverityError,
+		Category: "plugin",
+		Message:  "explicit failure",
+	}})
+	if got := explicit[0].Code; got != CodePluginFailed {
+		t.Fatalf("Code = %q, want %s", got, CodePluginFailed)
+	}
+}
+
 func TestStableCodesIncludeProviderFixtureDiagnostics(t *testing.T) {
 	tests := []struct {
 		name    string
