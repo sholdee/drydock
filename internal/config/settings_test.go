@@ -280,6 +280,27 @@ data:
 }
 
 func TestLoadConfigMapAdvancedResourceCustomizations(t *testing.T) {
+	settings, diags := loadAdvancedResourceCustomizations(t)
+	if len(diags) != 8 {
+		t.Fatalf("len(diags) = %d, want 8 warnings: %#v", len(diags), diags)
+	}
+	if settings.IgnoreResourceUpdatesEnabled.Value {
+		t.Fatalf("IgnoreResourceUpdatesEnabled = true, want false")
+	}
+}
+
+func TestLoadConfigMapAdvancedResourceCustomizationsBulkSections(t *testing.T) {
+	settings, _ := loadAdvancedResourceCustomizations(t)
+	assertDeploymentAdvancedCustomization(t, settings.ResourceCustomizations["apps/Deployment"])
+}
+
+func TestLoadConfigMapAdvancedResourceCustomizationsSplitSections(t *testing.T) {
+	settings, _ := loadAdvancedResourceCustomizations(t)
+	assertSplitAdvancedResourceCustomizations(t, settings)
+}
+
+func loadAdvancedResourceCustomizations(t *testing.T) (ArgoSettings, []diagnostic.Diagnostic) {
+	t.Helper()
 	path := filepath.Join(t.TempDir(), "argocd-cm.yaml")
 	if err := os.WriteFile(path, []byte(`apiVersion: v1
 kind: ConfigMap
@@ -328,13 +349,11 @@ data:
 	if err != nil {
 		t.Fatalf("LoadFromConfigMap() error = %v", err)
 	}
-	if len(diags) != 8 {
-		t.Fatalf("len(diags) = %d, want 8 warnings: %#v", len(diags), diags)
-	}
-	if settings.IgnoreResourceUpdatesEnabled.Value {
-		t.Fatalf("IgnoreResourceUpdatesEnabled = true, want false")
-	}
-	deployment := settings.ResourceCustomizations["apps/Deployment"]
+	return settings, diags
+}
+
+func assertDeploymentAdvancedCustomization(t *testing.T, deployment ResourceCustomization) {
+	t.Helper()
 	if len(deployment.IgnoreResourceUpdates.JSONPointers) != 1 || deployment.IgnoreResourceUpdates.JSONPointers[0] != "/status" {
 		t.Fatalf("deployment IgnoreResourceUpdates = %#v", deployment.IgnoreResourceUpdates)
 	}
@@ -347,6 +366,10 @@ data:
 	if !deployment.Actions.HasActions || !deployment.Actions.MergeBuiltinActions || !containsString(deployment.Actions.ActionNames, "restart") {
 		t.Fatalf("deployment actions metadata = %#v", deployment.Actions)
 	}
+}
+
+func assertSplitAdvancedResourceCustomizations(t *testing.T, settings ArgoSettings) {
+	t.Helper()
 	job := settings.ResourceCustomizations["batch/Job"]
 	if len(job.IgnoreResourceUpdates.JQPathExpressions) != 1 || job.IgnoreResourceUpdates.JQPathExpressions[0] != ".status" {
 		t.Fatalf("job IgnoreResourceUpdates = %#v", job.IgnoreResourceUpdates)

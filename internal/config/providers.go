@@ -340,37 +340,31 @@ func appendParsedResourceCustomizations(settings *ArgoSettings, raw string, prov
 	return diags
 }
 
+type splitResourceCustomizationEntry struct {
+	prefix  string
+	section string
+}
+
+const (
+	ignoreDifferencesSplitSection     = "ignoreDifferences"
+	ignoreResourceUpdatesSplitSection = "ignoreResourceUpdates"
+	knownTypeFieldsSplitSection       = "knownTypeFields"
+	healthSplitSection                = "health"
+	useOpenLibsSplitSection           = "useOpenLibs"
+	actionsSplitSection               = "actions"
+)
+
+var splitResourceCustomizationEntries = []splitResourceCustomizationEntry{
+	{prefix: "resource.customizations.ignoreDifferences.", section: ignoreDifferencesSplitSection},
+	{prefix: "resource.customizations.ignoreResourceUpdates.", section: ignoreResourceUpdatesSplitSection},
+	{prefix: "resource.customizations.knownTypeFields.", section: knownTypeFieldsSplitSection},
+	{prefix: "resource.customizations.health.", section: healthSplitSection},
+	{prefix: "resource.customizations.useOpenLibs.", section: useOpenLibsSplitSection},
+	{prefix: "resource.customizations.actions.", section: actionsSplitSection},
+}
+
 func appendParsedSplitResourceCustomizations(settings *ArgoSettings, values map[string]string, path, basePointer string, diags []diagnostic.Diagnostic) []diagnostic.Diagnostic {
-	const (
-		ignoreDifferencesPrefix     = "resource.customizations.ignoreDifferences."
-		ignoreResourceUpdatesPrefix = "resource.customizations.ignoreResourceUpdates."
-		knownTypeFieldsPrefix       = "resource.customizations.knownTypeFields."
-		healthPrefix                = "resource.customizations.health."
-		useOpenLibsPrefix           = "resource.customizations.useOpenLibs."
-		actionsPrefix               = "resource.customizations.actions."
-	)
-	type splitEntry struct {
-		key     string
-		prefix  string
-		section string
-	}
-	keys := make([]string, 0, len(values))
-	for key := range values {
-		switch {
-		case strings.HasPrefix(key, ignoreDifferencesPrefix):
-			keys = append(keys, key)
-		case strings.HasPrefix(key, ignoreResourceUpdatesPrefix):
-			keys = append(keys, key)
-		case strings.HasPrefix(key, knownTypeFieldsPrefix):
-			keys = append(keys, key)
-		case strings.HasPrefix(key, healthPrefix):
-			keys = append(keys, key)
-		case strings.HasPrefix(key, useOpenLibsPrefix):
-			keys = append(keys, key)
-		case strings.HasPrefix(key, actionsPrefix):
-			keys = append(keys, key)
-		}
-	}
+	keys := splitResourceCustomizationKeys(values)
 	sort.Strings(keys)
 	for _, key := range keys {
 		raw := values[key]
@@ -381,99 +375,112 @@ func appendParsedSplitResourceCustomizations(settings *ArgoSettings, values map[
 			Path:    path,
 			Pointer: basePointer + "." + key,
 		}
-		entry := splitEntry{key: key}
-		switch {
-		case strings.HasPrefix(key, ignoreDifferencesPrefix):
-			entry.prefix = ignoreDifferencesPrefix
-			entry.section = "ignoreDifferences"
-		case strings.HasPrefix(key, ignoreResourceUpdatesPrefix):
-			entry.prefix = ignoreResourceUpdatesPrefix
-			entry.section = "ignoreResourceUpdates"
-		case strings.HasPrefix(key, knownTypeFieldsPrefix):
-			entry.prefix = knownTypeFieldsPrefix
-			entry.section = "knownTypeFields"
-		case strings.HasPrefix(key, healthPrefix):
-			entry.prefix = healthPrefix
-			entry.section = "health"
-		case strings.HasPrefix(key, useOpenLibsPrefix):
-			entry.prefix = useOpenLibsPrefix
-			entry.section = "useOpenLibs"
-		case strings.HasPrefix(key, actionsPrefix):
-			entry.prefix = actionsPrefix
-			entry.section = "actions"
+		entry, ok := splitResourceCustomizationEntryForKey(key)
+		if !ok {
+			continue
 		}
-		customizationKey, diag := splitResourceCustomizationKey(strings.TrimPrefix(entry.key, entry.prefix), provenance)
+		customizationKey, diag := splitResourceCustomizationKey(strings.TrimPrefix(key, entry.prefix), provenance)
 		if diag != nil {
 			diags = append(diags, *diag)
 			continue
 		}
-		customization := ResourceCustomization{
-			Provenance: provenance,
-		}
-		switch entry.section {
-		case "ignoreDifferences":
-			ignore, next := parseOverrideIgnoreDifferences(raw, provenance)
-			diags = append(diags, next...)
-			if hasErrorDiagnostic(next) {
-				continue
-			}
-			customization.IgnoreDifferences = ignore
-		case "ignoreResourceUpdates":
-			ignore, next := parseOverrideIgnoreDifferencesWithMessage(
-				raw,
-				provenance,
-				"invalid resource customization ignoreResourceUpdates settings",
-			)
-			diags = append(diags, next...)
-			if hasErrorDiagnostic(next) {
-				continue
-			}
-			customization.IgnoreResourceUpdates = ignore
-			diags = append(diags, advancedResourceCustomizationWarning(
-				"resource customizations ignoreResourceUpdates are parsed but not applied to desired-vs-desired diffs",
-				provenance,
-			))
-		case "knownTypeFields":
-			fields, next := parseKnownTypeFields(raw, provenance)
-			diags = append(diags, next...)
-			if hasErrorDiagnostic(next) {
-				continue
-			}
-			customization.KnownTypeFields = fields
-		case "health":
-			customization.HasHealthLua = true
-			customization.healthLuaFingerprint = stringFingerprint(raw)
-			diags = append(diags, advancedResourceCustomizationWarning(
-				"resource customizations health Lua is parsed as metadata only and is not executed offline",
-				provenance,
-			))
-		case "useOpenLibs":
-			value, diag := parseSettingsBool(raw, provenance, "invalid resource customization useOpenLibs value")
-			if diag != nil {
-				diags = append(diags, *diag)
-				continue
-			}
-			customization.HasUseOpenLibs = true
-			customization.UseOpenLibs = value
-			diags = append(diags, advancedResourceCustomizationWarning(
-				"resource customizations useOpenLibs is parsed as metadata only and is not executed offline",
-				provenance,
-			))
-		case "actions":
-			actions, next := parseResourceActionsSummary(raw, provenance)
-			diags = append(diags, next...)
-			if hasErrorDiagnostic(next) {
-				continue
-			}
-			customization.Actions = actions
-			diags = append(diags, advancedResourceCustomizationWarning(
-				"resource customizations actions are parsed as metadata only and are not executed offline",
-				provenance,
-			))
+		customization, next := parseSplitResourceCustomization(entry.section, raw, provenance)
+		diags = append(diags, next...)
+		if hasErrorDiagnostic(next) {
+			continue
 		}
 		diags = addResourceCustomization(settings, customizationKey, customization, diags)
 	}
 	return diags
+}
+
+func splitResourceCustomizationKeys(values map[string]string) []string {
+	keys := make([]string, 0, len(values))
+	for key := range values {
+		if _, ok := splitResourceCustomizationEntryForKey(key); ok {
+			keys = append(keys, key)
+		}
+	}
+	return keys
+}
+
+func splitResourceCustomizationEntryForKey(key string) (splitResourceCustomizationEntry, bool) {
+	for _, entry := range splitResourceCustomizationEntries {
+		if strings.HasPrefix(key, entry.prefix) {
+			return entry, true
+		}
+	}
+	return splitResourceCustomizationEntry{}, false
+}
+
+func parseSplitResourceCustomization(section, raw string, provenance diagnostic.Provenance) (ResourceCustomization, []diagnostic.Diagnostic) {
+	customization := ResourceCustomization{Provenance: provenance}
+	switch section {
+	case ignoreDifferencesSplitSection:
+		ignore, diags := parseOverrideIgnoreDifferences(raw, provenance)
+		customization.IgnoreDifferences = ignore
+		return customization, diags
+	case ignoreResourceUpdatesSplitSection:
+		return parseSplitIgnoreResourceUpdates(raw, provenance, customization)
+	case knownTypeFieldsSplitSection:
+		fields, diags := parseKnownTypeFields(raw, provenance)
+		customization.KnownTypeFields = fields
+		return customization, diags
+	case healthSplitSection:
+		customization.HasHealthLua = true
+		customization.healthLuaFingerprint = stringFingerprint(raw)
+		return customization, []diagnostic.Diagnostic{advancedResourceCustomizationWarning(
+			"resource customizations health Lua is parsed as metadata only and is not executed offline",
+			provenance,
+		)}
+	case useOpenLibsSplitSection:
+		return parseSplitUseOpenLibs(raw, provenance, customization)
+	case actionsSplitSection:
+		return parseSplitActions(raw, provenance, customization)
+	default:
+		return customization, nil
+	}
+}
+
+func parseSplitIgnoreResourceUpdates(raw string, provenance diagnostic.Provenance, customization ResourceCustomization) (ResourceCustomization, []diagnostic.Diagnostic) {
+	ignore, diags := parseOverrideIgnoreDifferencesWithMessage(
+		raw,
+		provenance,
+		"invalid resource customization ignoreResourceUpdates settings",
+	)
+	customization.IgnoreResourceUpdates = ignore
+	if hasErrorDiagnostic(diags) {
+		return customization, diags
+	}
+	return customization, append(diags, advancedResourceCustomizationWarning(
+		"resource customizations ignoreResourceUpdates are parsed but not applied to desired-vs-desired diffs",
+		provenance,
+	))
+}
+
+func parseSplitUseOpenLibs(raw string, provenance diagnostic.Provenance, customization ResourceCustomization) (ResourceCustomization, []diagnostic.Diagnostic) {
+	value, diag := parseSettingsBool(raw, provenance, "invalid resource customization useOpenLibs value")
+	if diag != nil {
+		return customization, []diagnostic.Diagnostic{*diag}
+	}
+	customization.HasUseOpenLibs = true
+	customization.UseOpenLibs = value
+	return customization, []diagnostic.Diagnostic{advancedResourceCustomizationWarning(
+		"resource customizations useOpenLibs is parsed as metadata only and is not executed offline",
+		provenance,
+	)}
+}
+
+func parseSplitActions(raw string, provenance diagnostic.Provenance, customization ResourceCustomization) (ResourceCustomization, []diagnostic.Diagnostic) {
+	actions, diags := parseResourceActionsSummary(raw, provenance)
+	customization.Actions = actions
+	if hasErrorDiagnostic(diags) {
+		return customization, diags
+	}
+	return customization, append(diags, advancedResourceCustomizationWarning(
+		"resource customizations actions are parsed as metadata only and are not executed offline",
+		provenance,
+	))
 }
 
 func parseOverrideIgnoreDifferences(raw string, provenance diagnostic.Provenance) (OverrideIgnoreDifferences, []diagnostic.Diagnostic) {
@@ -605,41 +612,78 @@ func mergeResourceCustomizationSections(existing, incoming ResourceCustomization
 	if merged.IgnoreResourceUpdates, ok = mergeOverrideSection(merged.IgnoreResourceUpdates, incoming.IgnoreResourceUpdates); !ok {
 		return existing, false
 	}
-	if len(incoming.KnownTypeFields) > 0 {
-		if len(merged.KnownTypeFields) > 0 && !reflect.DeepEqual(merged.KnownTypeFields, incoming.KnownTypeFields) {
-			return existing, false
-		}
-		if len(merged.KnownTypeFields) == 0 {
-			merged.KnownTypeFields = incoming.KnownTypeFields
-		}
+	return mergeAdvancedResourceCustomizationSections(merged, incoming, existing)
+}
+
+func mergeAdvancedResourceCustomizationSections(merged, incoming, existing ResourceCustomization) (ResourceCustomization, bool) {
+	var ok bool
+	if merged.KnownTypeFields, ok = mergeKnownTypeFieldsSection(merged.KnownTypeFields, incoming.KnownTypeFields); !ok {
+		return existing, false
 	}
-	if incoming.HasHealthLua {
-		if merged.HasHealthLua && merged.healthLuaFingerprint != incoming.healthLuaFingerprint {
-			return existing, false
-		}
-		merged.HasHealthLua = true
-		if merged.healthLuaFingerprint == "" {
-			merged.healthLuaFingerprint = incoming.healthLuaFingerprint
-		}
+	if merged, ok = mergeHealthLuaSection(merged, incoming); !ok {
+		return existing, false
 	}
-	if incoming.HasUseOpenLibs {
-		if merged.HasUseOpenLibs && merged.UseOpenLibs != incoming.UseOpenLibs {
-			return existing, false
-		}
-		if !merged.HasUseOpenLibs {
-			merged.HasUseOpenLibs = true
-			merged.UseOpenLibs = incoming.UseOpenLibs
-		}
+	if merged, ok = mergeUseOpenLibsSection(merged, incoming); !ok {
+		return existing, false
 	}
-	if incoming.Actions.HasActions {
-		if merged.Actions.HasActions && !reflect.DeepEqual(merged.Actions, incoming.Actions) {
-			return existing, false
-		}
-		if !merged.Actions.HasActions {
-			merged.Actions = incoming.Actions
-		}
+	if merged.Actions, ok = mergeActionsSection(merged.Actions, incoming.Actions); !ok {
+		return existing, false
 	}
 	return merged, true
+}
+
+func mergeKnownTypeFieldsSection(existing, incoming []KnownTypeField) ([]KnownTypeField, bool) {
+	if len(incoming) == 0 {
+		return existing, true
+	}
+	if len(existing) > 0 && !reflect.DeepEqual(existing, incoming) {
+		return existing, false
+	}
+	if len(existing) == 0 {
+		return incoming, true
+	}
+	return existing, true
+}
+
+func mergeHealthLuaSection(existing, incoming ResourceCustomization) (ResourceCustomization, bool) {
+	if !incoming.HasHealthLua {
+		return existing, true
+	}
+	if existing.HasHealthLua && existing.healthLuaFingerprint != incoming.healthLuaFingerprint {
+		return existing, false
+	}
+	existing.HasHealthLua = true
+	if existing.healthLuaFingerprint == "" {
+		existing.healthLuaFingerprint = incoming.healthLuaFingerprint
+	}
+	return existing, true
+}
+
+func mergeUseOpenLibsSection(existing, incoming ResourceCustomization) (ResourceCustomization, bool) {
+	if !incoming.HasUseOpenLibs {
+		return existing, true
+	}
+	if existing.HasUseOpenLibs && existing.UseOpenLibs != incoming.UseOpenLibs {
+		return existing, false
+	}
+	if !existing.HasUseOpenLibs {
+		existing.HasUseOpenLibs = true
+		existing.UseOpenLibs = incoming.UseOpenLibs
+	}
+	return existing, true
+}
+
+func mergeActionsSection(existing, incoming ResourceActionsSummary) (ResourceActionsSummary, bool) {
+	if !incoming.HasActions {
+		return existing, true
+	}
+	if existing.HasActions && !reflect.DeepEqual(existing, incoming) {
+		return existing, false
+	}
+	if !existing.HasActions {
+		return incoming, true
+	}
+	return existing, true
 }
 
 func stringFingerprint(value string) string {
