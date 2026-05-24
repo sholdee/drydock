@@ -128,6 +128,19 @@ func evaluateGenerator(ctx generatorContext, generator argoappv1.ApplicationSetG
 		return paramSets, diags, true, nil
 	}
 
+	if generator.Merge != nil {
+		template, err := mergeGeneratorTemplate(ctx.BaseTemplate, generator.Merge.Template)
+		if err != nil {
+			return nil, nil, true, err
+		}
+		paramSets, diags, supported, err := mergeGeneratorParamSets(ctx, generator.Merge, generator.Selector)
+		if err != nil || !supported {
+			return paramSets, diags, supported, err
+		}
+		paramSets = setGeneratorTemplate(paramSets, template)
+		return paramSets, diags, true, nil
+	}
+
 	if generator.Git == nil {
 		return nil, unsupportedGeneratorDiagnostic(ctx.ManifestPath), false, nil
 	}
@@ -538,7 +551,7 @@ func gitGeneratorParamSets(repoRoot, manifestPath string, git *argoappv1.GitGene
 }
 
 func unsupportedGeneratorDiagnostic(manifestPath string) []diagnostic.Diagnostic {
-	return []diagnostic.Diagnostic{appsetDiagnostic(manifestPath, "unsupported ApplicationSet generator; supported generators are git directories, git files, list, and matrix")}
+	return []diagnostic.Diagnostic{appsetDiagnostic(manifestPath, "unsupported ApplicationSet generator; supported generators are git directories, git files, list, matrix, and merge")}
 }
 
 func appsetDiagnostic(manifestPath, message string) diagnostic.Diagnostic {
