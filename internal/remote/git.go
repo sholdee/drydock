@@ -57,11 +57,13 @@ func (acquirer DefaultAcquirer) acquireGitRepo(ctx context.Context, request Requ
 			if err != nil {
 				return Result{}, fmt.Errorf("checkout remote Git repository %s revision %q: %s", RedactGitRepoURL(repoURL), strings.TrimSpace(request.Revision), redactGitError(err, repoURL, opts.GitCredentials))
 			}
+			writeGitRepoMetadata(filepath.Dir(cachePath), key, normalizedURL, revision)
 			return Result{Path: cachePath, URL: normalizedURL, Revision: revision, FromCache: true}, nil
 		}
 		if !opts.Refresh {
 			revision, err := checkoutGitRevision(repo, worktree, request.Revision)
 			if err == nil {
+				writeGitRepoMetadata(filepath.Dir(cachePath), key, normalizedURL, revision)
 				return Result{Path: cachePath, URL: normalizedURL, Revision: revision, FromCache: true}, nil
 			}
 			return Result{}, fmt.Errorf("checkout cached remote Git repository %s revision %q: %s", RedactGitRepoURL(repoURL), strings.TrimSpace(request.Revision), redactGitError(err, repoURL, opts.GitCredentials))

@@ -98,9 +98,7 @@ func (DefaultGitAcquirer) Acquire(ctx context.Context, request GitRequest, opts 
 	}
 
 	network := cloned || refreshed || fetched
-	if network {
-		writeGitMetadata(cachePath, key, request, revision)
-	}
+	writeGitMetadata(cachePath, key, request, revision)
 	return GitResult{Path: cachePath, Revision: revision, FromCache: !network, Network: network}, nil
 }
 

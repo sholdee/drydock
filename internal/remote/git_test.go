@@ -79,6 +79,36 @@ func TestDefaultRemoteAcquirerWritesGitMetadata(t *testing.T) {
 	}
 }
 
+func TestDefaultRemoteAcquirerWritesGitMetadataOnCacheHit(t *testing.T) {
+	remote := createRemoteGitFixture(t)
+	hash := commitRemoteGitFixtureFile(t, remote.repo, remote.worktree, "config.yaml", "version: main\n")
+	request := Request{
+		Kind:     RequestGitRepo,
+		RepoURL:  "file://" + filepath.ToSlash(remote.path),
+		Revision: hash.String(),
+	}
+	cacheDir := t.TempDir()
+	first, err := DefaultAcquirer{}.Acquire(context.Background(), request, Options{CacheDir: cacheDir})
+	if err != nil {
+		t.Fatalf("first Acquire() error = %v", err)
+	}
+	metadataPath := cachepkg.MetadataPath(filepath.Dir(first.Path))
+	if err := os.Remove(metadataPath); err != nil {
+		t.Fatalf("Remove(metadata) error = %v", err)
+	}
+
+	second, err := DefaultAcquirer{}.Acquire(context.Background(), request, Options{CacheDir: cacheDir})
+	if err != nil {
+		t.Fatalf("second Acquire() error = %v", err)
+	}
+	if !second.FromCache {
+		t.Fatal("second FromCache = false, want true")
+	}
+	if _, err := os.Stat(metadataPath); err != nil {
+		t.Fatalf("metadata was not rewritten on cache hit: %v", err)
+	}
+}
+
 func TestDefaultAcquirerUsesCachedGitRemoteWhenOffline(t *testing.T) {
 	remote := createRemoteGitFixture(t)
 	hash := commitRemoteGitFixtureFile(t, remote.repo, remote.worktree, "config.yaml", "version: cached\n")

@@ -131,6 +131,51 @@ entries:
 	}
 }
 
+func TestDefaultAcquirerWritesChartMetadataOnCacheHit(t *testing.T) {
+	archive := chartArchive(t, "demo", map[string]string{
+		"Chart.yaml": "apiVersion: v2\nname: demo\nversion: 1.2.3\n",
+	})
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/index.yaml":
+			fmt.Fprintf(w, `apiVersion: v1
+entries:
+  demo:
+    - version: 1.2.3
+      urls:
+        - demo-1.2.3.tgz
+`)
+		case "/demo-1.2.3.tgz":
+			_, _ = w.Write(archive)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(server.Close)
+
+	request := Request{Repository: server.URL, Name: "demo", Version: "1.2.3", Kind: RepositoryHTTP}
+	acquirer := DefaultAcquirer{Client: server.Client()}
+	first, err := acquirer.Acquire(context.Background(), request, Options{CacheDir: t.TempDir()})
+	if err != nil {
+		t.Fatalf("first Acquire() error = %v", err)
+	}
+	metadataPath := cachepkg.MetadataPath(filepath.Dir(first.ChartDir))
+	if err := os.Remove(metadataPath); err != nil {
+		t.Fatalf("Remove(metadata) error = %v", err)
+	}
+
+	second, err := acquirer.Acquire(context.Background(), request, Options{CacheDir: filepath.Dir(filepath.Dir(filepath.Dir(first.ChartDir))), Offline: true})
+	if err != nil {
+		t.Fatalf("second Acquire() error = %v", err)
+	}
+	if !second.FromCache {
+		t.Fatal("second FromCache = false, want true")
+	}
+	if _, err := os.Stat(metadataPath); err != nil {
+		t.Fatalf("metadata was not rewritten on cache hit: %v", err)
+	}
+}
+
 func TestDefaultAcquirerFetchesAuthenticatedHTTPChart(t *testing.T) {
 	archive := chartArchive(t, "demo", map[string]string{
 		"Chart.yaml": "apiVersion: v2\nname: demo\nversion: 1.2.3\n",
