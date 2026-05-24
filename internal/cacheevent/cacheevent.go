@@ -287,6 +287,12 @@ func (c *variantCollector) addRawQueryAndFragment(raw string) {
 }
 
 func (c *variantCollector) addRawQueryValues(rawQuery string) {
+	for _, rawPart := range strings.Split(rawQuery, "&") {
+		_, rawValue, ok := strings.Cut(rawPart, "=")
+		if ok {
+			c.add(rawValue)
+		}
+	}
 	values, err := url.ParseQuery(rawQuery)
 	if err != nil {
 		return
