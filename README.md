@@ -182,13 +182,18 @@ scripts/home-ops-pattern-smoke.sh
 - Live server-side diff/apply behavior is not reproduced.
 - Live-only managed-field ownership is not reproduced when ownership data is
   absent from rendered manifests.
+- Live integration work is design-gated; see
+  `docs/reports/2026-05-24-live-integration-design-gate.md` before proposing
+  live-cluster, Argo CD server, server-side diff, defaulting, admission, or
+  server-side apply ownership behavior.
 - Health/action Lua is not executed offline.
 - Live destination cluster existence, sync windows, source integrity
   verification, project-scoped cluster Secrets, and full RBAC simulation remain
   deferred.
 
 See `docs/usage.md` for command examples, `docs/compatibility.md` for offline
-Argo CD compatibility notes, `docs/ci.md` for the local CI contract, and
-`docs/release.md` for release and Argo CD dependency upgrade notes. See
-`docs/home-ops-pattern-coverage.md` for the portable coverage matrix that
-models real `home-ops` Application patterns.
+Argo CD compatibility notes, `docs/ci.md` for the local CI contract,
+`docs/release.md` for release and Argo CD dependency upgrade notes, and
+`docs/reports/2026-05-24-live-integration-design-gate.md` for the boundary
+around future live integration. See `docs/home-ops-pattern-coverage.md` for the
+portable coverage matrix that models real `home-ops` Application patterns.
