@@ -60,6 +60,121 @@ func TestOrchestratorDiffAppsHonorsApplicationJSONPointerIgnores(t *testing.T) {
 	}
 }
 
+func TestOrchestratorDiffAppsHonorsGlobalResourceCustomizationJSONPointers(t *testing.T) {
+	root := t.TempDir()
+	left := filepath.Join(root, "left")
+	right := filepath.Join(root, "right")
+	writeDeploymentAppWithReplicas(t, left, 1, "")
+	writeDeploymentAppWithReplicas(t, right, 2, "")
+	writeGlobalCustomization(t, right, `resource.customizations: |
+    apps/Deployment:
+      ignoreDifferences: |
+        jsonPointers:
+          - /spec/replicas
+`)
+
+	result, err := Orchestrator{}.DiffApps(context.Background(), DiffRequest{
+		LeftPath:  left,
+		RightPath: right,
+		Unified:   3,
+	})
+	if err != nil {
+		t.Fatalf("DiffApps() error = %v", err)
+	}
+	if len(result.Results) != 0 {
+		t.Fatalf("len(Results) = %d, want replicas-only diff ignored: %#v", len(result.Results), result.Results)
+	}
+}
+
+func TestOrchestratorDiffAppsHonorsSplitGlobalResourceCustomizationJSONPointers(t *testing.T) {
+	root := t.TempDir()
+	left := filepath.Join(root, "left")
+	right := filepath.Join(root, "right")
+	writeWebhookApp(t, left, "left-ca")
+	writeWebhookApp(t, right, "right-ca")
+	writeGlobalCustomization(t, right, `resource.customizations.ignoreDifferences.admissionregistration.k8s.io_MutatingWebhookConfiguration: |
+    jsonPointers:
+      - /webhooks/0/clientConfig/caBundle
+`)
+
+	result, err := Orchestrator{}.DiffApps(context.Background(), DiffRequest{
+		LeftPath:  left,
+		RightPath: right,
+		Unified:   3,
+	})
+	if err != nil {
+		t.Fatalf("DiffApps() error = %v", err)
+	}
+	if len(result.Results) != 0 {
+		t.Fatalf("len(Results) = %d, want caBundle-only diff ignored: %#v", len(result.Results), result.Results)
+	}
+}
+
+func TestOrchestratorDiffAppsUnionsApplicationAndGlobalJSONPointers(t *testing.T) {
+	root := t.TempDir()
+	left := filepath.Join(root, "left")
+	right := filepath.Join(root, "right")
+	writeDeploymentAppWithReplicasAndAnnotation(t, left, 1, "left", "")
+	writeDeploymentAppWithReplicasAndAnnotation(t, right, 2, "right", `  ignoreDifferences:
+    - group: apps
+      kind: Deployment
+      name: demo
+      jsonPointers:
+        - /spec/replicas
+`)
+	writeGlobalCustomization(t, right, `resource.customizations: |
+    apps/Deployment:
+      ignoreDifferences: |
+        jsonPointers:
+          - /metadata/annotations/generated
+`)
+
+	result, err := Orchestrator{}.DiffApps(context.Background(), DiffRequest{
+		LeftPath:  left,
+		RightPath: right,
+		Unified:   3,
+	})
+	if err != nil {
+		t.Fatalf("DiffApps() error = %v", err)
+	}
+	if len(result.Results) != 0 {
+		t.Fatalf("len(Results) = %d, want app-local and global ignored: %#v", len(result.Results), result.Results)
+	}
+}
+
+func TestOrchestratorDiffAppsReportsUnsupportedGlobalCustomizationDiagnostics(t *testing.T) {
+	root := t.TempDir()
+	left := filepath.Join(root, "left")
+	right := filepath.Join(root, "right")
+	writeDeploymentAppWithReplicas(t, left, 1, "")
+	writeDeploymentAppWithReplicas(t, right, 1, "")
+	writeGlobalCustomization(t, right, `resource.customizations: |
+    apps/Deployment:
+      ignoreDifferences: |
+        jqPathExpressions:
+          - .spec.template.metadata.annotations
+        managedFieldsManagers:
+          - kube-controller-manager
+`)
+
+	result, err := Orchestrator{}.DiffApps(context.Background(), DiffRequest{
+		LeftPath:  left,
+		RightPath: right,
+		Unified:   3,
+	})
+	if err != nil {
+		t.Fatalf("DiffApps() error = %v", err)
+	}
+	if len(result.Diagnostics) != 2 {
+		t.Fatalf("len(Diagnostics) = %d, want 2: %#v", len(result.Diagnostics), result.Diagnostics)
+	}
+	for _, diag := range result.Diagnostics {
+		if diag.Severity != diagnostic.SeverityWarning || diag.Category != "settings" {
+			t.Fatalf("diagnostic = %#v, want settings warning", diag)
+		}
+	}
+}
+
 func TestOrchestratorDiffImagesReportsImageChange(t *testing.T) {
 	root := t.TempDir()
 	left := filepath.Join(root, "left")
@@ -509,6 +624,11 @@ spec:
 
 func writeDeploymentAppWithReplicas(t *testing.T, root string, replicas int, ignoreDifferences string) {
 	t.Helper()
+	writeDeploymentAppWithReplicasAndAnnotation(t, root, replicas, "", ignoreDifferences)
+}
+
+func writeDeploymentAppWithReplicasAndAnnotation(t *testing.T, root string, replicas int, annotation, ignoreDifferences string) {
+	t.Helper()
 	writeTestFile(t, filepath.Join(root, "apps", "demo.yaml"), `apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
@@ -523,11 +643,17 @@ spec:
     name: in-cluster
     namespace: demo
 `+ignoreDifferences)
+	annotations := ""
+	if annotation != "" {
+		annotations = `  annotations:
+    generated: ` + annotation + `
+`
+	}
 	writeTestFile(t, filepath.Join(root, "manifests", "demo", "deployment.yaml"), `apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: demo
-spec:
+`+annotations+`spec:
   replicas: `+fmt.Sprint(replicas)+`
   selector:
     matchLabels:
@@ -541,6 +667,43 @@ spec:
         - name: app
           image: example/app:v1
 `)
+}
+
+func writeWebhookApp(t *testing.T, root, caBundle string) {
+	t.Helper()
+	writeTestFile(t, filepath.Join(root, "apps", "webhook.yaml"), `apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: webhook
+  namespace: argocd
+spec:
+  source:
+    repoURL: https://github.com/example/repo
+    path: manifests/webhook
+    targetRevision: main
+  destination:
+    name: in-cluster
+    namespace: default
+`)
+	writeTestFile(t, filepath.Join(root, "manifests", "webhook", "webhook.yaml"), `apiVersion: admissionregistration.k8s.io/v1
+kind: MutatingWebhookConfiguration
+metadata:
+  name: demo
+webhooks:
+  - name: demo.example.com
+    clientConfig:
+      caBundle: `+caBundle+`
+`)
+}
+
+func writeGlobalCustomization(t *testing.T, root, data string) {
+	t.Helper()
+	writeTestFile(t, filepath.Join(root, "settings", "argocd-cm.yaml"), `apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: argocd-cm
+data:
+  `+data)
 }
 
 func writeHelmAppWithRefValues(t *testing.T, root, value string) {

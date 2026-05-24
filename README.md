@@ -80,15 +80,18 @@ Manifest diffs default to unified diff output and also support `-o json` and
 comparison and diff generation. Diagnostics continue to print on stderr for
 structured output.
 
-Rendered-resource filters are explicit and opt-in. Use repeatable
-`--skip-kind KIND`, `--skip-crds`, or `--skip-secrets` to omit rendered
-resources from build output, manifest diffs, image extraction, and render
-tests. Embedding callers can set `SkipKinds`, `SkipCRDs`, and `SkipSecrets` on
-`argocdlocal.Config` for the same behavior.
+Rendered-resource filters include Argo CD core exclusions and discovered
+`argocd-cm` or Helm values `configs.cm` `resource.exclusions` and
+`resource.inclusions`. Use repeatable `--skip-kind KIND`, `--skip-crds`, or
+`--skip-secrets` for additional explicit omissions from build output, manifest
+diffs, image extraction, and render tests. Embedding callers can set
+`SkipKinds`, `SkipCRDs`, and `SkipSecrets` on `argocdlocal.Config` for the
+same explicit-filter behavior.
 
-Application-level `spec.ignoreDifferences[].jsonPointers` rules are honored for
-rendered manifest diffs. `jqPathExpressions`, `managedFieldsManagers`, and
-global `argocd-cm` resource customizations remain deferred.
+Application-level `spec.ignoreDifferences[].jsonPointers` rules and global
+`resource.customizations.ignoreDifferences.*.jsonPointers` settings are honored
+for rendered manifest diffs. `jqPathExpressions` and `managedFieldsManagers`
+are discovered as settings diagnostics but remain unenforced.
 
 Maintainers with a local `home-ops` checkout can also run the optional
 Renovate smoke script:
@@ -115,8 +118,10 @@ scripts/home-ops-pattern-smoke.sh
   bases/components/patches/generators/transformers/validators, `crds`,
   `openapi`, or replacements.
 - Server-side diff/apply settings are reported as offline limitations.
-- Argo CD global resource inclusions/exclusions and global
-  `resource.customizations.*` are not supported yet.
+- Global `resource.customizations` support is limited to
+  `ignoreDifferences.jsonPointers`; `jqPathExpressions`,
+  `managedFieldsManagers`, `ignoreResourceUpdates`, health, actions, and known
+  type fields remain deferred.
 - Application `ignoreDifferences` support is limited to `jsonPointers`.
 
 See `docs/usage.md` for command examples and `docs/compatibility.md` for

@@ -133,6 +133,10 @@ The MVP currently supports:
   formats, plus metadata label/annotation stripping through `--strip-attr`.
 - Application-level `spec.ignoreDifferences[].jsonPointers` for rendered
   manifest diffs.
+- Global `resource.customizations.ignoreDifferences.*.jsonPointers` from
+  discovered `argocd-cm` and Argo CD Helm values `configs.cm`.
+- Argo CD core resource exclusions plus discovered global
+  `resource.exclusions` and `resource.inclusions`.
 - Explicit rendered-resource filters through `--skip-kind`, `--skip-crds`, and
   `--skip-secrets` for build output, diffs, image extraction, tests, and the
   public Go API.
@@ -149,6 +153,9 @@ Do not treat these as supported without an explicit design update:
   server-side diff behavior.
 - Application-level `ignoreDifferences` `jqPathExpressions` and
   `managedFieldsManagers`.
+- Global `resource.customizations` `jqPathExpressions`,
+  `managedFieldsManagers`, `ignoreResourceUpdates`, `knownTypeFields`, health,
+  actions, and Lua settings.
 - Project, RBAC, and destination validation.
 - Config management plugins.
 - Cluster, SCM provider, pull-request, plugin, matrix, and merge
@@ -228,9 +235,10 @@ explicit opt-ins; do not change defaults to hide Secrets or CRDs.
 Application `spec.ignoreDifferences[].jsonPointers` rules are honored with
 Argo CD glob matching for group/kind and exact optional name/namespace matches.
 When both sides contain a matching resource, apply the union of left and right
-JSON pointers to both sides before comparison. Do not claim support for
-`jqPathExpressions`, `managedFieldsManagers`, or global resource customizations
-until they are explicitly implemented.
+Application-local and global JSON pointers to both sides before comparison. Do
+not claim support for `jqPathExpressions`, `managedFieldsManagers`,
+`ignoreResourceUpdates`, health, actions, or known type fields until they are
+explicitly implemented.
 Image extraction is conservative in the MVP and may be broadened only behind an
 explicit mode.
 CLI diff exit codes are fixed: 0 means success/no diff, 1 means success/diff

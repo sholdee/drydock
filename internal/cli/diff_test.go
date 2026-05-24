@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -146,6 +147,33 @@ func TestDiffAppsStripAttrSuppressesOnlyAttributeDiff(t *testing.T) {
 
 	cmd := NewRootCommand(VersionInfo{})
 	cmd.SetArgs([]string{"diff", "apps", "--path-orig", left, "--path", right, "--strip-attr", "app.kubernetes.io/version"})
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	cmd.SetOut(&stdout)
+	cmd.SetErr(&stderr)
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("Execute() error = %v\nstdout:\n%s\nstderr:\n%s", err, stdout.String(), stderr.String())
+	}
+	if stdout.String() != "" {
+		t.Fatalf("stdout = %q, want no diff", stdout.String())
+	}
+	if stderr.String() != "" {
+		t.Fatalf("stderr = %q, want empty", stderr.String())
+	}
+}
+
+func TestDiffAppsGlobalCustomizationSuppressesOnlyJSONPointerDiff(t *testing.T) {
+	root := t.TempDir()
+	left := filepath.Join(root, "left")
+	right := filepath.Join(root, "right")
+	writeDeploymentAppForCLI(t, left, 1)
+	writeDeploymentAppForCLI(t, right, 2)
+	writeGlobalCustomizationForCLI(t, left)
+	writeGlobalCustomizationForCLI(t, right)
+
+	cmd := NewRootCommand(VersionInfo{})
+	cmd.SetArgs([]string{"diff", "apps", "--path-orig", left, "--path", right})
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
 	cmd.SetOut(&stdout)
@@ -588,5 +616,56 @@ spec:
       containers:
         - name: app
           image: `+image+`
+`)
+}
+
+func writeDeploymentAppForCLI(t *testing.T, root string, replicas int) {
+	t.Helper()
+	writeCLITestFile(t, filepath.Join(root, "apps", "demo.yaml"), `apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: demo
+  namespace: argocd
+spec:
+  source:
+    repoURL: https://github.com/example/repo
+    path: manifests/demo
+    targetRevision: main
+  destination:
+    name: in-cluster
+    namespace: demo
+`)
+	writeCLITestFile(t, filepath.Join(root, "manifests", "demo", "deployment.yaml"), `apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: demo
+spec:
+  replicas: `+strconv.Itoa(replicas)+`
+  selector:
+    matchLabels:
+      app: demo
+  template:
+    metadata:
+      labels:
+        app: demo
+    spec:
+      containers:
+        - name: app
+          image: example/app:v1
+`)
+}
+
+func writeGlobalCustomizationForCLI(t *testing.T, root string) {
+	t.Helper()
+	writeCLITestFile(t, filepath.Join(root, "settings", "argocd-cm.yaml"), `apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: argocd-cm
+data:
+  resource.customizations: |
+    apps/Deployment:
+      ignoreDifferences: |
+        jsonPointers:
+          - /spec/replicas
 `)
 }
