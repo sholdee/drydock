@@ -1409,6 +1409,458 @@ spec:
 	}
 }
 
+func TestGenerateMergeGeneratorOverlaysByMergeKeyInBaseOrder(t *testing.T) {
+	root := t.TempDir()
+	data := []byte(`
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: merge-apps
+spec:
+  goTemplate: true
+  generators:
+    - merge:
+        mergeKeys: ["name"]
+        generators:
+          - list:
+              elements:
+                - name: alpha
+                  namespace: base
+                  enabled: "true"
+                - name: beta
+                  namespace: base
+                  enabled: "true"
+          - list:
+              elements:
+                - name: beta
+                  namespace: override
+  template:
+    metadata:
+      name: '{{.name}}'
+    spec:
+      project: default
+      source:
+        repoURL: https://github.com/example/repo
+        path: apps/{{.name}}
+        targetRevision: main
+      destination:
+        name: in-cluster
+        namespace: '{{.namespace}}'
+`)
+
+	apps, diags, err := GenerateFromYAML(root, "app-set.yaml", data)
+	if err != nil {
+		t.Fatalf("GenerateFromYAML() error = %v", err)
+	}
+	if len(diags) != 0 {
+		t.Fatalf("diagnostics = %#v", diags)
+	}
+	if got := generatedNames(apps); !slices.Equal(got, []string{"alpha", "beta"}) {
+		t.Fatalf("generated names = %#v, want base order alpha beta", got)
+	}
+	if apps[0].Application.Spec.Destination.Namespace != "base" {
+		t.Fatalf("alpha namespace = %q, want base", apps[0].Application.Spec.Destination.Namespace)
+	}
+	if apps[1].Application.Spec.Destination.Namespace != "override" {
+		t.Fatalf("beta namespace = %q, want override", apps[1].Application.Spec.Destination.Namespace)
+	}
+}
+
+func TestGenerateMergeGeneratorRejectsInvalidConfiguration(t *testing.T) {
+	root := t.TempDir()
+	for _, tc := range []struct {
+		name string
+		yaml string
+		want string
+	}{
+		{
+			name: "no merge keys",
+			yaml: `
+        generators:
+          - list:
+              elements:
+                - name: alpha
+          - list:
+              elements:
+                - name: alpha`,
+			want: "merge requires at least one merge key",
+		},
+		{
+			name: "one child",
+			yaml: `
+        mergeKeys: ["name"]
+        generators:
+          - list:
+              elements:
+                - name: alpha`,
+			want: "merge requires two or more",
+		},
+		{
+			name: "duplicate base key",
+			yaml: `
+        mergeKeys: ["name"]
+        generators:
+          - list:
+              elements:
+                - name: alpha
+                - name: alpha
+          - list:
+              elements:
+                - name: alpha`,
+			want: "parameters from a generator were not unique",
+		},
+		{
+			name: "duplicate override key",
+			yaml: `
+        mergeKeys: ["name"]
+        generators:
+          - list:
+              elements:
+                - name: alpha
+          - list:
+              elements:
+                - name: alpha
+                - name: alpha`,
+			want: "parameters from a generator were not unique",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			data := []byte(`
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: merge-invalid
+spec:
+  goTemplate: true
+  generators:
+    - merge:` + tc.yaml + `
+  template:
+    metadata:
+      name: '{{.name}}'
+`)
+
+			_, _, err := GenerateFromYAML(root, "app-set.yaml", data)
+			if err == nil {
+				t.Fatalf("expected merge error")
+			}
+			if !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("error = %v, want %q", err, tc.want)
+			}
+		})
+	}
+}
+
+func TestGenerateMergeGeneratorIgnoresOverrideKeysMissingFromBase(t *testing.T) {
+	root := t.TempDir()
+	data := []byte(`
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: merge-missing
+spec:
+  goTemplate: true
+  generators:
+    - merge:
+        mergeKeys: ["name"]
+        generators:
+          - list:
+              elements:
+                - name: alpha
+                  namespace: base
+          - list:
+              elements:
+                - name: beta
+                  namespace: ignored
+  template:
+    metadata:
+      name: '{{.name}}'
+    spec:
+      project: default
+      source:
+        repoURL: https://github.com/example/repo
+        path: apps/{{.name}}
+        targetRevision: main
+      destination:
+        name: in-cluster
+        namespace: '{{.namespace}}'
+`)
+
+	apps, diags, err := GenerateFromYAML(root, "app-set.yaml", data)
+	if err != nil {
+		t.Fatalf("GenerateFromYAML() error = %v", err)
+	}
+	if len(diags) != 0 {
+		t.Fatalf("diagnostics = %#v", diags)
+	}
+	if got := generatedNames(apps); !slices.Equal(got, []string{"alpha"}) {
+		t.Fatalf("generated names = %#v, want alpha", got)
+	}
+	if apps[0].Application.Spec.Destination.Namespace != "base" {
+		t.Fatalf("namespace = %q, want base", apps[0].Application.Spec.Destination.Namespace)
+	}
+}
+
+func TestGenerateMergeGeneratorMergesNestedMapsInGoTemplateMode(t *testing.T) {
+	root := t.TempDir()
+	data := []byte(`
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: merge-nested
+spec:
+  goTemplate: true
+  generators:
+    - merge:
+        mergeKeys: ["name"]
+        generators:
+          - list:
+              elements:
+                - name: alpha
+                  cluster:
+                    name: base
+                    region: us
+          - list:
+              elements:
+                - name: alpha
+                  cluster:
+                    name: override
+  template:
+    metadata:
+      name: '{{.name}}'
+      labels:
+        cluster: '{{.cluster.name}}'
+        region: '{{.cluster.region}}'
+    spec:
+      project: default
+      source:
+        repoURL: https://github.com/example/repo
+        path: apps/{{.name}}
+        targetRevision: main
+      destination:
+        name: in-cluster
+        namespace: default
+`)
+
+	apps, diags, err := GenerateFromYAML(root, "app-set.yaml", data)
+	if err != nil {
+		t.Fatalf("GenerateFromYAML() error = %v", err)
+	}
+	if len(diags) != 0 {
+		t.Fatalf("diagnostics = %#v", diags)
+	}
+	if apps[0].Application.Labels["cluster"] != "override" || apps[0].Application.Labels["region"] != "us" {
+		t.Fatalf("labels = %#v, want nested merge with override cluster and inherited region", apps[0].Application.Labels)
+	}
+}
+
+func TestGenerateMergeGeneratorKeepsSupportedTopLevelOutputWhenChildUnsupported(t *testing.T) {
+	root := t.TempDir()
+	data := []byte(`
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: mixed-merge
+spec:
+  goTemplate: true
+  generators:
+    - list:
+        elements:
+          - name: supported
+    - merge:
+        mergeKeys: ["name"]
+        generators:
+          - list:
+              elements:
+                - name: unsupported
+          - scmProvider: {}
+  template:
+    metadata:
+      name: '{{.name}}'
+    spec:
+      project: default
+      source:
+        repoURL: https://github.com/example/repo
+        path: apps/{{.name}}
+        targetRevision: main
+      destination:
+        name: in-cluster
+        namespace: default
+`)
+
+	apps, diags, err := GenerateFromYAML(root, "app-set.yaml", data)
+	if err != nil {
+		t.Fatalf("GenerateFromYAML() error = %v", err)
+	}
+	if got := generatedNames(apps); !slices.Equal(got, []string{"supported"}) {
+		t.Fatalf("generated names = %#v, want supported", got)
+	}
+	if len(diags) != 1 || !strings.Contains(diags[0].Message, "unsupported ApplicationSet generator") {
+		t.Fatalf("diagnostics = %#v, want unsupported generator diagnostic", diags)
+	}
+}
+
+func TestGenerateMergeGeneratorAppliesSelectorAfterMerge(t *testing.T) {
+	root := t.TempDir()
+	data := []byte(`
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: merge-selected
+spec:
+  goTemplate: true
+  generators:
+    - merge:
+        mergeKeys: ["name"]
+        generators:
+          - list:
+              elements:
+                - name: alpha
+                  enabled: "false"
+                - name: beta
+                  enabled: "false"
+          - list:
+              elements:
+                - name: beta
+                  enabled: "true"
+      selector:
+        matchLabels:
+          enabled: "true"
+  template:
+    metadata:
+      name: '{{.name}}'
+    spec:
+      project: default
+      source:
+        repoURL: https://github.com/example/repo
+        path: apps/{{.name}}
+        targetRevision: main
+      destination:
+        name: in-cluster
+        namespace: default
+`)
+
+	apps, diags, err := GenerateFromYAML(root, "app-set.yaml", data)
+	if err != nil {
+		t.Fatalf("GenerateFromYAML() error = %v", err)
+	}
+	if len(diags) != 0 {
+		t.Fatalf("diagnostics = %#v", diags)
+	}
+	if got := generatedNames(apps); !slices.Equal(got, []string{"beta"}) {
+		t.Fatalf("generated names = %#v, want beta", got)
+	}
+}
+
+func TestGenerateMergeGeneratorTemplateOverridesBaseTemplate(t *testing.T) {
+	root := t.TempDir()
+	data := []byte(`
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: merge-template
+spec:
+  goTemplate: true
+  generators:
+    - merge:
+        mergeKeys: ["name"]
+        generators:
+          - list:
+              elements:
+                - name: alpha
+                  namespace: base
+          - list:
+              elements:
+                - name: alpha
+                  namespace: override
+        template:
+          spec:
+            destination:
+              namespace: merge
+  template:
+    metadata:
+      name: '{{.name}}'
+    spec:
+      project: default
+      source:
+        repoURL: https://github.com/example/repo
+        path: apps/{{.name}}
+        targetRevision: main
+      destination:
+        name: in-cluster
+        namespace: base
+`)
+
+	apps, diags, err := GenerateFromYAML(root, "app-set.yaml", data)
+	if err != nil {
+		t.Fatalf("GenerateFromYAML() error = %v", err)
+	}
+	if len(diags) != 0 {
+		t.Fatalf("diagnostics = %#v", diags)
+	}
+	if apps[0].Application.Spec.Destination.Namespace != "merge" {
+		t.Fatalf("namespace = %q, want merge", apps[0].Application.Spec.Destination.Namespace)
+	}
+}
+
+func TestGenerateMergeGeneratorSupportsNestedMatrixChild(t *testing.T) {
+	root := t.TempDir()
+	data := []byte(`
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: merge-nested-matrix
+spec:
+  goTemplate: true
+  generators:
+    - merge:
+        mergeKeys: ["name"]
+        generators:
+          - matrix:
+              generators:
+                - list:
+                    elements:
+                      - app: alpha
+                - list:
+                    elements:
+                      - name: alpha-dev
+                        env: dev
+                        namespace: base
+                      - name: alpha-prod
+                        env: prod
+                        namespace: base
+          - list:
+              elements:
+                - name: alpha-prod
+                  namespace: override
+  template:
+    metadata:
+      name: '{{.name}}'
+    spec:
+      project: default
+      source:
+        repoURL: https://github.com/example/repo
+        path: apps/{{.app}}/{{.env}}
+        targetRevision: main
+      destination:
+        name: in-cluster
+        namespace: '{{.namespace}}'
+`)
+
+	apps, diags, err := GenerateFromYAML(root, "app-set.yaml", data)
+	if err != nil {
+		t.Fatalf("GenerateFromYAML() error = %v", err)
+	}
+	if len(diags) != 0 {
+		t.Fatalf("diagnostics = %#v", diags)
+	}
+	if got := generatedNames(apps); !slices.Equal(got, []string{"alpha-dev", "alpha-prod"}) {
+		t.Fatalf("generated names = %#v, want alpha-dev alpha-prod", got)
+	}
+	if apps[1].Application.Spec.Destination.Namespace != "override" {
+		t.Fatalf("prod namespace = %q, want override", apps[1].Application.Spec.Destination.Namespace)
+	}
+}
+
 func TestGenerateGitFilesGeneratorOrdersExcludesAndSetsGoTemplateParams(t *testing.T) {
 	root := t.TempDir()
 	writeAppsetTestFile(t, filepath.Join(root, "configs", "b", "app.yaml"), `cluster:
