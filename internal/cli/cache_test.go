@@ -296,6 +296,32 @@ func TestCacheRejectsRootInsidePathOrig(t *testing.T) {
 	}
 }
 
+func TestCachePathRejectsRootInsidePathOrig(t *testing.T) {
+	repoRoot := t.TempDir()
+	cacheRoot := filepath.Join(repoRoot, ".cache", "git")
+
+	cmd := NewRootCommand(VersionInfo{})
+	cmd.SetArgs([]string{
+		"cache", "path",
+		"--path", filepath.Join(t.TempDir(), "current"),
+		"--path-orig", repoRoot,
+		"--git-cache-dir", cacheRoot,
+		"--chart-cache-dir", filepath.Join(t.TempDir(), "charts"),
+		"--remote-cache-dir", filepath.Join(t.TempDir(), "remotes"),
+	})
+	var stdout bytes.Buffer
+	cmd.SetOut(&stdout)
+	cmd.SetErr(&stdout)
+
+	err := cmd.Execute()
+	if err == nil || !strings.Contains(err.Error(), "must not be inside protected root") {
+		t.Fatalf("Execute() error = %v, want path-orig protected root error", err)
+	}
+	if stdout.String() != "" {
+		t.Fatalf("stdout = %q, want no paths for unsafe cache root", stdout.String())
+	}
+}
+
 func TestCacheRejectsInvalidOutputBeforeMutation(t *testing.T) {
 	root := t.TempDir()
 	gitCacheDir := filepath.Join(root, "git")

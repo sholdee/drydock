@@ -50,11 +50,18 @@ func newCacheCommand() *cobra.Command {
 		Short: "Print cache root paths",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			roots, err := cacheRoots(pathFlags)
+			opts, err := cacheListOptions(pathFlags)
 			if err != nil {
 				return err
 			}
-			return renderCachePaths(cmd, roots)
+			if _, err := cache.List(opts); err != nil {
+				return err
+			}
+			return renderCachePaths(cmd, map[cache.Source]string{
+				cache.SourceGit:    opts.GitCacheDir,
+				cache.SourceChart:  opts.ChartCacheDir,
+				cache.SourceRemote: opts.RemoteCacheDir,
+			})
 		},
 	}
 	bindCacheRootFlags(pathCmd, &pathFlags)
