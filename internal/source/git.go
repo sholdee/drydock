@@ -16,6 +16,7 @@ import (
 	"github.com/go-git/go-git/v5/plumbing/transport"
 	githttp "github.com/go-git/go-git/v5/plumbing/transport/http"
 	gitssh "github.com/go-git/go-git/v5/plumbing/transport/ssh"
+	"github.com/sholdee/drydock/internal/cache"
 )
 
 type GitRequest struct {
@@ -69,7 +70,8 @@ func (DefaultGitAcquirer) Acquire(ctx context.Context, request GitRequest, opts 
 	if err != nil {
 		return GitResult{}, err
 	}
-	cachePath := filepath.Join(cacheDir, gitCacheKey(request.URL, request.Revision))
+	key := GitCacheKey(request.URL, request.Revision)
+	cachePath := filepath.Join(cacheDir, key)
 	if err := os.MkdirAll(cacheDir, 0o755); err != nil {
 		return GitResult{}, err
 	}
@@ -96,6 +98,7 @@ func (DefaultGitAcquirer) Acquire(ctx context.Context, request GitRequest, opts 
 	}
 
 	network := cloned || refreshed || fetched
+	writeGitMetadata(cachePath, key, request, revision)
 	return GitResult{Path: cachePath, Revision: revision, FromCache: !network, Network: network}, nil
 }
 
@@ -114,9 +117,19 @@ func DefaultGitCacheDir() (string, error) {
 	return filepath.Join(cacheDir, "drydock", "git"), nil
 }
 
-func gitCacheKey(repoURL, revision string) string {
-	sum := sha256.Sum256([]byte(NormalizeURL(repoURL) + "\n" + strings.TrimSpace(revision)))
+func GitCacheKey(repoURL, revision string) string {
+	sum := sha256.Sum256([]byte(NormalizeURL(cache.RedactedTarget(repoURL)) + "\n" + strings.TrimSpace(revision)))
 	return hex.EncodeToString(sum[:])
+}
+
+func writeGitMetadata(cachePath, key string, request GitRequest, revision string) {
+	_ = cache.WriteMetadata(cachePath, cache.Metadata{
+		Source:   cache.SourceGit,
+		Kind:     "git",
+		Key:      key,
+		Target:   cache.RedactedTarget(request.URL),
+		Revision: revision,
+	})
 }
 
 func openOrCloneGitRepository(ctx context.Context, cachePath, repoURL string, auth transport.AuthMethod, credentials GitCredentials) (*git.Repository, bool, error) {

@@ -17,6 +17,8 @@ import (
 	"strings"
 	"syscall"
 	"testing"
+
+	cachepkg "github.com/sholdee/drydock/internal/cache"
 )
 
 func TestDefaultAcquirerFetchesHTTPChartAndCachesIt(t *testing.T) {
@@ -83,6 +85,49 @@ entries:
 	}
 	if archiveRequests != 1 {
 		t.Fatalf("archive requests = %d, want 1", archiveRequests)
+	}
+}
+
+func TestDefaultAcquirerWritesChartMetadata(t *testing.T) {
+	archive := chartArchive(t, "demo", map[string]string{
+		"Chart.yaml": "apiVersion: v2\nname: demo\nversion: 1.2.3\n",
+	})
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/index.yaml":
+			fmt.Fprintf(w, `apiVersion: v1
+entries:
+  demo:
+    - version: 1.2.3
+      urls:
+        - demo-1.2.3.tgz
+`)
+		case "/demo-1.2.3.tgz":
+			_, _ = w.Write(archive)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(server.Close)
+
+	request := Request{Repository: server.URL, Name: "demo", Version: "1.2.3", Kind: RepositoryHTTP}
+	result, err := (DefaultAcquirer{Client: server.Client()}).Acquire(context.Background(), request, Options{CacheDir: t.TempDir()})
+	if err != nil {
+		t.Fatalf("Acquire() error = %v", err)
+	}
+	key := mustCacheKey(t, request)
+	metadata, err := cachepkg.ReadMetadata(filepath.Dir(result.ChartDir), cachepkg.SourceChart, string(request.Kind), key)
+	if err != nil {
+		t.Fatalf("ReadMetadata() error = %v", err)
+	}
+	if metadata == nil {
+		t.Fatal("metadata = nil, want metadata")
+	}
+	if strings.Contains(metadata.Target, "secret") || strings.Contains(metadata.Target, "?") || strings.Contains(metadata.Target, "#") {
+		t.Fatalf("metadata Target = %q, want redacted target", metadata.Target)
+	}
+	if metadata.Name != request.Name || metadata.Version != request.Version {
+		t.Fatalf("metadata = %#v, want chart name/version", metadata)
 	}
 }
 

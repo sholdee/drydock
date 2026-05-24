@@ -18,6 +18,7 @@ import (
 
 	"helm.sh/helm/v4/pkg/registry"
 
+	"github.com/sholdee/drydock/internal/cache"
 	"go.yaml.in/yaml/v4"
 )
 
@@ -75,6 +76,7 @@ func (acquirer DefaultAcquirer) Acquire(ctx context.Context, request Request, op
 	keyDir := filepath.Join(keyParent, key)
 	chartDir := filepath.Join(keyDir, request.Name)
 	if !opts.Refresh && chartDirReady(chartDir) {
+		writeChartMetadata(keyDir, key, request)
 		return resultFor(request, chartDir, true), nil
 	}
 	if opts.Offline {
@@ -108,7 +110,23 @@ func (acquirer DefaultAcquirer) Acquire(ctx context.Context, request Request, op
 	if err := publishChartCache(keyDir, tmpKeyDir); err != nil {
 		return Result{}, err
 	}
+	writeChartMetadata(keyDir, key, request)
 	return resultFor(request, chartDir, false), nil
+}
+
+func writeChartMetadata(keyDir, key string, request Request) {
+	target := request.Repository
+	if normalized, err := NormalizeRepository(request.Repository, request.Kind); err == nil {
+		target = normalized
+	}
+	_ = cache.WriteMetadata(keyDir, cache.Metadata{
+		Source:  cache.SourceChart,
+		Kind:    string(request.Kind),
+		Key:     key,
+		Target:  cache.RedactedTarget(target),
+		Name:    strings.TrimSpace(request.Name),
+		Version: strings.TrimSpace(request.Version),
+	})
 }
 
 func (acquirer DefaultAcquirer) fetchChart(ctx context.Context, request Request, opts Options) ([]byte, error) {

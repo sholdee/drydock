@@ -11,6 +11,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	cachepkg "github.com/sholdee/drydock/internal/cache"
 )
 
 func TestNewCacheKeyNormalizesURL(t *testing.T) {
@@ -208,6 +210,34 @@ func TestDefaultAcquirerFetchesAndCachesResource(t *testing.T) {
 	}
 	if second.Path != first.Path {
 		t.Fatalf("offline Path = %q, want %q", second.Path, first.Path)
+	}
+}
+
+func TestDefaultRemoteAcquirerWritesHTTPMetadata(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte("apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: remote\n"))
+	}))
+	defer server.Close()
+
+	cacheDir := t.TempDir()
+	request := Request{URL: server.URL + "/resource.yaml"}
+	result, err := (DefaultAcquirer{Client: server.Client()}).Acquire(context.Background(), request, Options{CacheDir: cacheDir})
+	if err != nil {
+		t.Fatalf("Acquire() error = %v", err)
+	}
+	key, err := NewCacheKey(request)
+	if err != nil {
+		t.Fatalf("NewCacheKey() error = %v", err)
+	}
+	metadata, err := cachepkg.ReadMetadata(filepath.Dir(result.Path), cachepkg.SourceRemote, "http-file", key)
+	if err != nil {
+		t.Fatalf("ReadMetadata() error = %v", err)
+	}
+	if metadata == nil {
+		t.Fatal("metadata = nil, want metadata")
+	}
+	if metadata.Target != request.URL {
+		t.Fatalf("Target = %q, want %q", metadata.Target, request.URL)
 	}
 }
 

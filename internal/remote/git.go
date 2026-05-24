@@ -14,6 +14,7 @@ import (
 	"github.com/go-git/go-git/v5/plumbing/transport"
 	githttp "github.com/go-git/go-git/v5/plumbing/transport/http"
 	gitssh "github.com/go-git/go-git/v5/plumbing/transport/ssh"
+	"github.com/sholdee/drydock/internal/cache"
 )
 
 //nolint:gocyclo // Git acquisition has distinct cache hit, refresh, offline, auth, clone, and checkout branches.
@@ -56,11 +57,13 @@ func (acquirer DefaultAcquirer) acquireGitRepo(ctx context.Context, request Requ
 			if err != nil {
 				return Result{}, fmt.Errorf("checkout remote Git repository %s revision %q: %s", RedactGitRepoURL(repoURL), strings.TrimSpace(request.Revision), redactGitError(err, repoURL, opts.GitCredentials))
 			}
+			writeGitRepoMetadata(filepath.Dir(cachePath), key, normalizedURL, revision)
 			return Result{Path: cachePath, URL: normalizedURL, Revision: revision, FromCache: true}, nil
 		}
 		if !opts.Refresh {
 			revision, err := checkoutGitRevision(repo, worktree, request.Revision)
 			if err == nil {
+				writeGitRepoMetadata(filepath.Dir(cachePath), key, normalizedURL, revision)
 				return Result{Path: cachePath, URL: normalizedURL, Revision: revision, FromCache: true}, nil
 			}
 			return Result{}, fmt.Errorf("checkout cached remote Git repository %s revision %q: %s", RedactGitRepoURL(repoURL), strings.TrimSpace(request.Revision), redactGitError(err, repoURL, opts.GitCredentials))
@@ -76,6 +79,7 @@ func (acquirer DefaultAcquirer) acquireGitRepo(ctx context.Context, request Requ
 		if err != nil {
 			return Result{}, fmt.Errorf("checkout remote Git repository %s revision %q: %s", RedactGitRepoURL(repoURL), strings.TrimSpace(request.Revision), redactGitError(err, repoURL, opts.GitCredentials))
 		}
+		writeGitRepoMetadata(filepath.Dir(cachePath), key, normalizedURL, revision)
 		return Result{Path: cachePath, URL: normalizedURL, Revision: revision}, nil
 	}
 	if opts.Offline {
@@ -103,7 +107,18 @@ func (acquirer DefaultAcquirer) acquireGitRepo(ctx context.Context, request Requ
 	if err != nil {
 		return Result{}, fmt.Errorf("checkout remote Git repository %s revision %q: %s", RedactGitRepoURL(repoURL), strings.TrimSpace(request.Revision), redactGitError(err, repoURL, opts.GitCredentials))
 	}
+	writeGitRepoMetadata(filepath.Dir(cachePath), key, normalizedURL, revision)
 	return Result{Path: cachePath, URL: normalizedURL, Revision: revision}, nil
+}
+
+func writeGitRepoMetadata(entryRoot, key, target, revision string) {
+	_ = cache.WriteMetadata(entryRoot, cache.Metadata{
+		Source:   cache.SourceRemote,
+		Kind:     "git-repo",
+		Key:      key,
+		Target:   cache.RedactedTarget(target),
+		Revision: revision,
+	})
 }
 
 func openCachedGitRepository(cachePath, repoURL string, credentials GitCredentials) (*git.Repository, bool, error) {
