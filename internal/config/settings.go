@@ -47,6 +47,7 @@ type ResourceActionsSummary struct {
 	HasDiscoveryLua     bool     `json:"hasDiscoveryLua,omitempty" yaml:"hasDiscoveryLua,omitempty"`
 	ActionNames         []string `json:"actionNames,omitempty" yaml:"actionNames,omitempty"`
 	MergeBuiltinActions bool     `json:"mergeBuiltinActions,omitempty" yaml:"mergeBuiltinActions,omitempty"`
+	fingerprint         string
 }
 
 type ResourceCustomization struct {
@@ -54,10 +55,11 @@ type ResourceCustomization struct {
 	IgnoreResourceUpdates OverrideIgnoreDifferences `json:"ignoreResourceUpdates,omitempty" yaml:"ignoreResourceUpdates,omitempty"`
 	KnownTypeFields       []KnownTypeField          `json:"knownTypeFields,omitempty" yaml:"knownTypeFields,omitempty"`
 	HasHealthLua          bool                      `json:"hasHealthLua,omitempty" yaml:"hasHealthLua,omitempty"`
-	HasUseOpenLibs        bool                      `json:"hasUseOpenLibs,omitempty" yaml:"hasUseOpenLibs,omitempty"`
-	UseOpenLibs           bool                      `json:"useOpenLibs,omitempty" yaml:"useOpenLibs,omitempty"`
-	Actions               ResourceActionsSummary    `json:"actions,omitempty" yaml:"actions,omitempty"`
-	Provenance            Provenance                `json:"provenance,omitempty" yaml:"provenance,omitempty"`
+	healthLuaFingerprint  string
+	HasUseOpenLibs        bool                   `json:"hasUseOpenLibs,omitempty" yaml:"hasUseOpenLibs,omitempty"`
+	UseOpenLibs           bool                   `json:"useOpenLibs,omitempty" yaml:"useOpenLibs,omitempty"`
+	Actions               ResourceActionsSummary `json:"actions,omitempty" yaml:"actions,omitempty"`
+	Provenance            Provenance             `json:"provenance,omitempty" yaml:"provenance,omitempty"`
 }
 
 type ArgoSettings struct {

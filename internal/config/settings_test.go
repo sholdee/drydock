@@ -397,6 +397,87 @@ data:
 	}
 }
 
+func TestLoadConfigMapConflictingHealthLuaBodyFailsClosed(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "argocd-cm.yaml")
+	if err := os.WriteFile(path, []byte(`apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: argocd-cm
+data:
+  resource.customizations: |
+    apps/Deployment:
+      health.lua: |
+        return { status = "Healthy" }
+  resource.customizations.health.apps_Deployment: |
+    return { status = "Progressing" }
+`), 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	_, diags, err := LoadFromConfigMap(path)
+	if err != nil {
+		t.Fatalf("LoadFromConfigMap() error = %v", err)
+	}
+	if !hasDiagnosticMessage(diags, "conflicting resource customization settings discovered") {
+		t.Fatalf("diagnostics = %#v, want conflicting health Lua diagnostic", diags)
+	}
+}
+
+func TestLoadConfigMapConflictingActionLuaBodyFailsClosed(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "argocd-cm.yaml")
+	if err := os.WriteFile(path, []byte(`apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: argocd-cm
+data:
+  resource.customizations: |
+    apps/Deployment:
+      actions: |
+        definitions:
+          - name: restart
+            action.lua: |
+              return obj
+  resource.customizations.actions.apps_Deployment: |
+    definitions:
+      - name: restart
+        action.lua: |
+          obj.metadata.name = "changed"
+          return obj
+`), 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	_, diags, err := LoadFromConfigMap(path)
+	if err != nil {
+		t.Fatalf("LoadFromConfigMap() error = %v", err)
+	}
+	if !hasDiagnosticMessage(diags, "conflicting resource customization settings discovered") {
+		t.Fatalf("diagnostics = %#v, want conflicting actions diagnostic", diags)
+	}
+}
+
+func TestLoadConfigMapInvalidIgnoreResourceUpdatesNamesSection(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "argocd-cm.yaml")
+	if err := os.WriteFile(path, []byte(`apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: argocd-cm
+data:
+  resource.customizations.ignoreResourceUpdates.apps_Deployment: |
+    jsonPointers: [
+`), 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	_, diags, err := LoadFromConfigMap(path)
+	if err != nil {
+		t.Fatalf("LoadFromConfigMap() error = %v", err)
+	}
+	if !hasDiagnosticMessage(diags, "invalid resource customization ignoreResourceUpdates settings") {
+		t.Fatalf("diagnostics = %#v, want ignoreResourceUpdates parse diagnostic", diags)
+	}
+}
+
 func TestLoadConfigMapInvalidResourceCustomizationSkipsSetting(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "argocd-cm.yaml")
 	if err := os.WriteFile(path, []byte(`apiVersion: v1
@@ -636,6 +717,15 @@ func TestMergeCompareOptionsIgnoresProvenance(t *testing.T) {
 func containsString(values []string, want string) bool {
 	for _, value := range values {
 		if value == want {
+			return true
+		}
+	}
+	return false
+}
+
+func hasDiagnosticMessage(diags []diagnostic.Diagnostic, fragment string) bool {
+	for _, diag := range diags {
+		if strings.Contains(diag.Message, fragment) {
 			return true
 		}
 	}

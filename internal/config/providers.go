@@ -1,6 +1,7 @@
 package config
 
 import (
+	"crypto/sha256"
 	"encoding/base64"
 	"fmt"
 	"os"
@@ -283,7 +284,11 @@ func appendParsedResourceCustomizations(settings *ArgoSettings, raw string, prov
 			}
 		}
 		if strings.TrimSpace(block.IgnoreResourceUpdates) != "" {
-			ignore, next := parseOverrideIgnoreDifferences(block.IgnoreResourceUpdates, provenance)
+			ignore, next := parseOverrideIgnoreDifferencesWithMessage(
+				block.IgnoreResourceUpdates,
+				provenance,
+				"invalid resource customization ignoreResourceUpdates settings",
+			)
 			diags = append(diags, next...)
 			if !hasErrorDiagnostic(next) {
 				customization.IgnoreResourceUpdates = ignore
@@ -300,6 +305,7 @@ func appendParsedResourceCustomizations(settings *ArgoSettings, raw string, prov
 		}
 		if strings.TrimSpace(block.HealthLua) != "" {
 			customization.HasHealthLua = true
+			customization.healthLuaFingerprint = stringFingerprint(block.HealthLua)
 			hasCustomization = true
 			diags = append(diags, advancedResourceCustomizationWarning(
 				"resource customizations health Lua is parsed as metadata only and is not executed offline",
@@ -413,7 +419,11 @@ func appendParsedSplitResourceCustomizations(settings *ArgoSettings, values map[
 			}
 			customization.IgnoreDifferences = ignore
 		case "ignoreResourceUpdates":
-			ignore, next := parseOverrideIgnoreDifferences(raw, provenance)
+			ignore, next := parseOverrideIgnoreDifferencesWithMessage(
+				raw,
+				provenance,
+				"invalid resource customization ignoreResourceUpdates settings",
+			)
 			diags = append(diags, next...)
 			if hasErrorDiagnostic(next) {
 				continue
@@ -432,6 +442,7 @@ func appendParsedSplitResourceCustomizations(settings *ArgoSettings, values map[
 			customization.KnownTypeFields = fields
 		case "health":
 			customization.HasHealthLua = true
+			customization.healthLuaFingerprint = stringFingerprint(raw)
 			diags = append(diags, advancedResourceCustomizationWarning(
 				"resource customizations health Lua is parsed as metadata only and is not executed offline",
 				provenance,
@@ -466,12 +477,16 @@ func appendParsedSplitResourceCustomizations(settings *ArgoSettings, values map[
 }
 
 func parseOverrideIgnoreDifferences(raw string, provenance diagnostic.Provenance) (OverrideIgnoreDifferences, []diagnostic.Diagnostic) {
+	return parseOverrideIgnoreDifferencesWithMessage(raw, provenance, "invalid resource customization ignoreDifferences settings")
+}
+
+func parseOverrideIgnoreDifferencesWithMessage(raw string, provenance diagnostic.Provenance, message string) (OverrideIgnoreDifferences, []diagnostic.Diagnostic) {
 	var ignore OverrideIgnoreDifferences
 	if err := yaml.Unmarshal([]byte(raw), &ignore); err != nil {
 		return ignore, []diagnostic.Diagnostic{{
 			Severity:   diagnostic.SeverityError,
 			Category:   "settings",
-			Message:    "invalid resource customization ignoreDifferences settings",
+			Message:    message,
 			Provenance: provenance,
 		}}
 	}
@@ -507,6 +522,7 @@ func parseResourceActionsSummary(raw string, provenance diagnostic.Provenance) (
 		HasActions:          true,
 		HasDiscoveryLua:     strings.TrimSpace(actions.ActionDiscoveryLua) != "",
 		MergeBuiltinActions: actions.MergeBuiltinActions,
+		fingerprint:         stringFingerprint(raw),
 	}
 	for _, definition := range actions.Definitions {
 		summary.ActionNames = append(summary.ActionNames, definition.Name)
@@ -598,7 +614,13 @@ func mergeResourceCustomizationSections(existing, incoming ResourceCustomization
 		}
 	}
 	if incoming.HasHealthLua {
+		if merged.HasHealthLua && merged.healthLuaFingerprint != incoming.healthLuaFingerprint {
+			return existing, false
+		}
 		merged.HasHealthLua = true
+		if merged.healthLuaFingerprint == "" {
+			merged.healthLuaFingerprint = incoming.healthLuaFingerprint
+		}
 	}
 	if incoming.HasUseOpenLibs {
 		if merged.HasUseOpenLibs && merged.UseOpenLibs != incoming.UseOpenLibs {
@@ -618,6 +640,11 @@ func mergeResourceCustomizationSections(existing, incoming ResourceCustomization
 		}
 	}
 	return merged, true
+}
+
+func stringFingerprint(value string) string {
+	sum := sha256.Sum256([]byte(strings.TrimSpace(value)))
+	return fmt.Sprintf("%x", sum)
 }
 
 func mergeOverrideSection(existing, incoming OverrideIgnoreDifferences) (OverrideIgnoreDifferences, bool) {
