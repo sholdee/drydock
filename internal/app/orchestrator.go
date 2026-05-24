@@ -648,6 +648,9 @@ func (p localProvider) renderPluginSource(ctx context.Context, source render.Res
 		diags = append(diags, pluginFailedDiagnostic(message))
 		return manifests, diags, fmt.Errorf("%s: %w", message, err)
 	}
+	if errors.Is(err, render.ErrUnsupportedPlugin) || diagnosticsContainCode(diags, diagnostic.CodePluginUnsupported) {
+		return manifests, diags, err
+	}
 	message := fmt.Sprintf("config management plugin %s failed: %s", pluginDisplayName(opts.Plugin.Name), err)
 	diags = append(diags, pluginFailedDiagnostic(message))
 	return manifests, diags, err
@@ -668,6 +671,15 @@ func pluginFailedDiagnostic(message string) diagnostic.Diagnostic {
 		Category: "plugin",
 		Message:  message,
 	}
+}
+
+func diagnosticsContainCode(diags []diagnostic.Diagnostic, code string) bool {
+	for _, diag := range diags {
+		if diag.Code == code {
+			return true
+		}
+	}
+	return false
 }
 
 func (p localProvider) resolveSourceRoot(ctx context.Context, source render.ResolvedSource) (string, error) {
