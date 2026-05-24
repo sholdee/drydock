@@ -162,6 +162,11 @@ stringData:
     resource.exclusions: |
       - apiGroups: ["events.k8s.io"]
 `)
+	mustWriteFile(t, filepath.Join(root, "settings", "compare-values.yaml"), `configs:
+  cm:
+    resource.compareoptions: |
+      ignoreResourceStatusField: none
+`)
 
 	result, err := Scan(root, Options{})
 	if err != nil {
@@ -173,6 +178,7 @@ stringData:
 	}
 	wantSettings := []SettingsCandidate{
 		{Path: filepath.Join("settings", "argocd-cm.yaml"), Kind: "argocd-cm"},
+		{Path: filepath.Join("settings", "compare-values.yaml"), Kind: "argocd-values"},
 		{Path: filepath.Join("settings", "repo-secret.yaml"), Kind: "repository-secret"},
 		{Path: filepath.Join("settings", "values.yaml"), Kind: "argocd-values"},
 	}

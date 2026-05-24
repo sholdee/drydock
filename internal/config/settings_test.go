@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/home-operations/argocd-local/internal/diagnostic"
 )
 
 func TestLoadHelmValuesSettings(t *testing.T) {
@@ -112,6 +114,117 @@ func TestLoadHelmValuesResourceSettings(t *testing.T) {
 	customization := settings.ResourceCustomizations["apps/Deployment"]
 	if len(customization.IgnoreDifferences.JSONPointers) != 1 || customization.IgnoreDifferences.JSONPointers[0] != "/spec/replicas" {
 		t.Fatalf("Deployment customization = %#v", customization)
+	}
+}
+
+func TestLoadConfigMapResourceCompareOptions(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "argocd-cm.yaml")
+	if err := os.WriteFile(path, []byte(`apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: argocd-cm
+data:
+  resource.compareoptions: |
+    ignoreResourceStatusField: crd
+    ignoreAggregatedRoles: true
+`), 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	settings, diags, err := LoadFromConfigMap(path)
+	if err != nil {
+		t.Fatalf("LoadFromConfigMap() error = %v", err)
+	}
+	if len(diags) != 0 {
+		t.Fatalf("diagnostics = %#v", diags)
+	}
+	if settings.CompareOptions.IgnoreResourceStatusField != "crd" {
+		t.Fatalf("CompareOptions = %#v", settings.CompareOptions)
+	}
+	if !settings.CompareOptions.IgnoreAggregatedRoles {
+		t.Fatalf("IgnoreAggregatedRoles = false, want true")
+	}
+	if settings.CompareOptions.Provenance.Path != path {
+		t.Fatalf("CompareOptions provenance = %#v", settings.CompareOptions.Provenance)
+	}
+}
+
+func TestLoadHelmValuesResourceCompareOptions(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "values.yaml")
+	if err := os.WriteFile(path, []byte(`configs:
+  cm:
+    resource.compareoptions: |
+      ignoreResourceStatusField: none
+`), 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	settings, diags, err := LoadFromHelmValues(path)
+	if err != nil {
+		t.Fatalf("LoadFromHelmValues() error = %v", err)
+	}
+	if len(diags) != 0 {
+		t.Fatalf("diagnostics = %#v", diags)
+	}
+	if settings.CompareOptions.IgnoreResourceStatusField != "none" {
+		t.Fatalf("CompareOptions = %#v", settings.CompareOptions)
+	}
+}
+
+func TestLoadConfigMapCompareOptionsUnknownStatusWarns(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "argocd-cm.yaml")
+	if err := os.WriteFile(path, []byte(`apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: argocd-cm
+data:
+  resource.compareoptions: |
+    ignoreResourceStatusField: typo
+`), 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	settings, diags, err := LoadFromConfigMap(path)
+	if err != nil {
+		t.Fatalf("LoadFromConfigMap() error = %v", err)
+	}
+	if len(diags) != 1 {
+		t.Fatalf("diagnostics = %#v, want one warning", diags)
+	}
+	if diags[0].Severity != diagnostic.SeverityWarning || diags[0].Category != "settings" {
+		t.Fatalf("diagnostic = %#v", diags[0])
+	}
+	if settings.CompareOptions.IgnoreResourceStatusField != "typo" {
+		t.Fatalf("CompareOptions = %#v", settings.CompareOptions)
+	}
+}
+
+func TestLoadConfigMapCompareOptionsFalseAndOffAreKnown(t *testing.T) {
+	for _, value := range []string{"false", "off"} {
+		t.Run(value, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "argocd-cm.yaml")
+			if err := os.WriteFile(path, []byte(`apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: argocd-cm
+data:
+  resource.compareoptions: |
+    ignoreResourceStatusField: `+value+`
+`), 0o600); err != nil {
+				t.Fatalf("WriteFile() error = %v", err)
+			}
+
+			settings, diags, err := LoadFromConfigMap(path)
+			if err != nil {
+				t.Fatalf("LoadFromConfigMap() error = %v", err)
+			}
+			if len(diags) != 0 {
+				t.Fatalf("diagnostics = %#v", diags)
+			}
+			if settings.CompareOptions.IgnoreResourceStatusField != value {
+				t.Fatalf("CompareOptions = %#v", settings.CompareOptions)
+			}
+		})
 	}
 }
 
@@ -376,5 +489,28 @@ func TestMergeResourceCustomizationsIgnoresProvenance(t *testing.T) {
 	customization := merged.ResourceCustomizations["apps/Deployment"]
 	if customization.Provenance.Path != "a.yaml" {
 		t.Fatalf("customization provenance = %#v", customization.Provenance)
+	}
+}
+
+func TestMergeCompareOptionsIgnoresProvenance(t *testing.T) {
+	left := DefaultSettings()
+	left.CompareOptions = ResourceCompareOptions{
+		IgnoreResourceStatusField: "crd",
+		IgnoreAggregatedRoles:     true,
+		Provenance:                Provenance{Path: "a.yaml"},
+	}
+	right := DefaultSettings()
+	right.CompareOptions = ResourceCompareOptions{
+		IgnoreResourceStatusField: "crd",
+		IgnoreAggregatedRoles:     true,
+		Provenance:                Provenance{Path: "b.yaml"},
+	}
+
+	merged, diags := MergeDiscovered([]ArgoSettings{left, right})
+	if len(diags) != 0 {
+		t.Fatalf("diagnostics = %#v", diags)
+	}
+	if merged.CompareOptions.Provenance.Path != "a.yaml" {
+		t.Fatalf("CompareOptions provenance = %#v", merged.CompareOptions.Provenance)
 	}
 }
