@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -1154,6 +1155,71 @@ func TestOrchestratorBuildAppPreservesSelectedApplicationInputs(t *testing.T) {
 	}
 }
 
+func TestOrchestratorListApplicationsPreservesMatrixGeneratorInputPaths(t *testing.T) {
+	root := t.TempDir()
+	for _, dir := range []string{
+		filepath.Join(root, "apps", "alpha"),
+		filepath.Join(root, "clusters", "dev"),
+	} {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatalf("MkdirAll() error = %v", err)
+		}
+	}
+	writeTestFile(t, filepath.Join(root, "appsets", "appset.yaml"), `apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: matrix-paths
+  namespace: argocd
+spec:
+  goTemplate: true
+  generators:
+    - matrix:
+        generators:
+          - git:
+              pathParamPrefix: app
+              directories:
+                - path: apps/*
+          - git:
+              pathParamPrefix: cluster
+              directories:
+                - path: clusters/*
+  template:
+    metadata:
+      name: '{{.app.path.basename}}-{{.cluster.path.basename}}'
+    spec:
+      project: default
+      source:
+        repoURL: https://github.com/example/repo
+        path: '{{.app.path.path}}'
+        targetRevision: main
+      destination:
+        name: in-cluster
+        namespace: '{{.cluster.path.basename}}'
+`)
+
+	result, err := Orchestrator{}.ListApplications(context.Background(), BuildRequest{Path: root})
+	if err != nil {
+		t.Fatalf("ListApplications() error = %v", err)
+	}
+	if len(result.ApplicationInputs) != 1 {
+		t.Fatalf("len(ApplicationInputs) = %d, want 1: %#v", len(result.ApplicationInputs), result.ApplicationInputs)
+	}
+	input := result.ApplicationInputs[0]
+	for _, want := range []string{"appsets/appset.yaml", "apps/alpha", "clusters/dev"} {
+		if !slices.Contains(input.Paths, want) {
+			t.Fatalf("ApplicationInputs[0].Paths = %#v, missing %q", input.Paths, want)
+		}
+	}
+
+	selected, unowned := SelectChangedApplicationInputs(result.ApplicationInputs, []string{"clusters/dev/config.yaml"})
+	if len(unowned) != 0 {
+		t.Fatalf("unowned = %#v, want none", unowned)
+	}
+	if len(selected) != 1 || selected[0].Name != "alpha-dev" {
+		t.Fatalf("selected = %#v, want alpha-dev", selected)
+	}
+}
+
 func TestOrchestratorBuildAppReportsMissingApplication(t *testing.T) {
 	root := t.TempDir()
 	writeBuildApplication(t, root, "demo", "demo")
@@ -1452,8 +1518,7 @@ metadata:
   namespace: argocd
 spec:
   generators:
-    - matrix:
-        generators: []
+    - scmProvider: {}
   template:
     metadata:
       name: generated

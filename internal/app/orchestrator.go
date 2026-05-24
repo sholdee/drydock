@@ -163,13 +163,9 @@ func (o Orchestrator) ListApplications(_ context.Context, request BuildRequest) 
 		}
 		for _, app := range generated {
 			result.Applications = append(result.Applications, app.Application)
-			paths := []string{filepath.ToSlash(appSetPath)}
-			if app.SourcePath != "" {
-				paths = append(paths, filepath.ToSlash(app.SourcePath))
-			}
 			result.ApplicationInputs = append(result.ApplicationInputs, ApplicationSelectionInput{
 				Application: app.Application,
-				Paths:       paths,
+				Paths:       generatedApplicationInputPaths(appSetPath, app),
 			})
 		}
 	}
@@ -178,6 +174,20 @@ func (o Orchestrator) ListApplications(_ context.Context, request BuildRequest) 
 		return result, err
 	}
 	return result, nil
+}
+
+func generatedApplicationInputPaths(appSetPath string, app appset.GeneratedApplication) []string {
+	paths := []string{filepath.ToSlash(appSetPath)}
+	sourcePaths := app.SourcePaths
+	if len(sourcePaths) == 0 && app.SourcePath != "" {
+		sourcePaths = []string{app.SourcePath}
+	}
+	for _, sourcePath := range sourcePaths {
+		if sourcePath != "" {
+			paths = append(paths, filepath.ToSlash(sourcePath))
+		}
+	}
+	return paths
 }
 
 func (o Orchestrator) Build(ctx context.Context, request BuildRequest) (BuildResult, error) {
