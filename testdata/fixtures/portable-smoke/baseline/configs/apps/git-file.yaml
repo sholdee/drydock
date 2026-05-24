@@ -1,0 +1,4 @@
+app:
+  name: git-file-generated
+  namespace: git-file
+  path: workloads/git-file-generated

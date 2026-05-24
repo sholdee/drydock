@@ -1,0 +1,3 @@
+apiVersion: v2
+name: multi-source
+version: 0.1.0
