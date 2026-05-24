@@ -5,6 +5,7 @@ import (
 	"errors"
 
 	argoappv1 "github.com/argoproj/argo-cd/v3/pkg/apis/application/v1alpha1"
+	"github.com/home-operations/argocd-local/internal/cacheevent"
 	"github.com/home-operations/argocd-local/internal/chart"
 	"github.com/home-operations/argocd-local/internal/diagnostic"
 	"github.com/home-operations/argocd-local/internal/remote"
@@ -48,6 +49,7 @@ type RenderOptions struct {
 	RemoteResourceCredentials    remote.Credentials
 	RemoteResourceGitCredentials remote.GitCredentials
 	RemoteResourceAcquirer       remote.Acquirer
+	CacheEventRecorder           *cacheevent.Recorder
 	IncludeCRDs                  bool
 	IncludeCRDsSet               bool
 	SkipHooks                    bool

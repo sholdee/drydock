@@ -9,15 +9,17 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/home-operations/argocd-local/internal/cacheevent"
 	"github.com/home-operations/argocd-local/internal/chart"
 	"github.com/home-operations/argocd-local/internal/remote"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 )
 
 type fakeChartAcquirer struct {
-	chartDir string
-	requests []chart.Request
-	options  []chart.Options
+	chartDir  string
+	fromCache bool
+	requests  []chart.Request
+	options   []chart.Options
 }
 
 func (acquirer *fakeChartAcquirer) Acquire(_ context.Context, request chart.Request, opts chart.Options) (chart.Result, error) {
@@ -29,15 +31,17 @@ func (acquirer *fakeChartAcquirer) Acquire(_ context.Context, request chart.Requ
 		Name:       request.Name,
 		Version:    request.Version,
 		Kind:       request.Kind,
+		FromCache:  acquirer.fromCache,
 	}, nil
 }
 
 type fakeRemoteAcquirer struct {
-	requests []remote.Request
-	options  []remote.Options
-	path     string
-	paths    map[string]string
-	err      error
+	requests  []remote.Request
+	options   []remote.Options
+	path      string
+	paths     map[string]string
+	fromCache bool
+	err       error
 }
 
 func (acquirer *fakeRemoteAcquirer) Acquire(_ context.Context, request remote.Request, opts remote.Options) (remote.Result, error) {
@@ -58,7 +62,7 @@ func (acquirer *fakeRemoteAcquirer) Acquire(_ context.Context, request remote.Re
 			}
 		}
 	}
-	return remote.Result{Path: acquiredPath, URL: request.URL}, nil
+	return remote.Result{Path: acquiredPath, URL: request.URL, Revision: request.Revision, FromCache: acquirer.fromCache}, nil
 }
 
 func writeNamedTestChart(t *testing.T, chartDir, name, version, template string) {
@@ -170,6 +174,38 @@ spec:
 	}
 	if !containsManifest(manifests, "ConfigMap", "local") {
 		t.Fatalf("rendered manifests = %#v, want local ConfigMap", manifests)
+	}
+}
+
+func TestKustomizeRendererRecordsRemoteCacheEvents(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "app", "kustomization.yaml"), `apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - https://raw.githubusercontent.com/example/repo/main/resource.yaml
+`)
+	remoteFile := filepath.Join(t.TempDir(), "resource.yaml")
+	writeFile(t, remoteFile, `apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: remote
+`)
+	acquirer := &fakeRemoteAcquirer{path: remoteFile, fromCache: true}
+	recorder := cacheevent.NewRecorder(true)
+
+	_, diags, err := (KustomizeRenderer{}).Render(context.Background(), ResolvedSource{
+		RepoRoot: root,
+		Path:     "app",
+	}, RenderOptions{
+		RemoteResourceAcquirer: acquirer,
+		RemoteResourceCacheDir: t.TempDir(),
+		CacheEventRecorder:     recorder,
+	})
+	if err != nil {
+		t.Fatalf("Render() error = %v, diagnostics = %#v", err, diags)
+	}
+	if !hasRenderCacheEvent(recorder.Events(), "remote", "hit", "https://raw.githubusercontent.com/example/repo/main/resource.yaml") {
+		t.Fatalf("Cache events = %#v, want remote hit", recorder.Events())
 	}
 }
 
@@ -1719,6 +1755,34 @@ image: example/app:v1
 	}
 }
 
+func TestKustomizeRendererRecordsHelmChartCacheEvents(t *testing.T) {
+	root := t.TempDir()
+	chartDir := filepath.Join(t.TempDir(), "demo")
+	writeTestChart(t, chartDir, `apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: charted
+`)
+	writeFile(t, filepath.Join(root, "kustomization.yaml"), `apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+helmCharts:
+  - name: demo
+    repo: https://charts.example.test
+    version: 1.2.3
+`)
+	recorder := cacheevent.NewRecorder(true)
+	_, diags, err := (KustomizeRenderer{}).Render(context.Background(), ResolvedSource{RepoRoot: root, Path: "."}, RenderOptions{
+		ChartAcquirer:      &fakeChartAcquirer{chartDir: chartDir, fromCache: true},
+		CacheEventRecorder: recorder,
+	})
+	if err != nil {
+		t.Fatalf("Render() error = %v, diagnostics = %#v", err, diags)
+	}
+	if !hasRenderCacheEvent(recorder.Events(), "chart", "hit", "https://charts.example.test") {
+		t.Fatalf("Cache events = %#v, want chart hit", recorder.Events())
+	}
+}
+
 func TestKustomizeRendererRendersHelmChartsInReferencedKustomizationWithNamespaceFallback(t *testing.T) {
 	root := t.TempDir()
 	chartDir := filepath.Join(root, "charts", "demo")
@@ -2259,6 +2323,15 @@ func filterObjects(manifests []Manifest, kind string) []*unstructured.Unstructur
 
 func containsManifest(manifests []Manifest, kind, name string) bool {
 	return findManifest(manifests, kind, name) != nil
+}
+
+func hasRenderCacheEvent(events []cacheevent.Event, source, action, targetFragment string) bool {
+	for _, event := range events {
+		if string(event.Source) == source && string(event.Action) == action && strings.Contains(event.Target, targetFragment) {
+			return true
+		}
+	}
+	return false
 }
 
 func findManifest(manifests []Manifest, kind, name string) *unstructured.Unstructured {

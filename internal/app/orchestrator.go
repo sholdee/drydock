@@ -11,6 +11,7 @@ import (
 
 	argoappv1 "github.com/argoproj/argo-cd/v3/pkg/apis/application/v1alpha1"
 	"github.com/home-operations/argocd-local/internal/appset"
+	"github.com/home-operations/argocd-local/internal/cacheevent"
 	"github.com/home-operations/argocd-local/internal/chart"
 	"github.com/home-operations/argocd-local/internal/config"
 	"github.com/home-operations/argocd-local/internal/diagnostic"
@@ -44,6 +45,7 @@ type BuildRequest struct {
 	SkipSecrets                  bool
 	PluginRenderer               render.PluginRenderer
 	Applications                 []argoappv1.Application
+	RecordCacheEvents            bool
 }
 
 type BuildAppRequest struct {
@@ -83,6 +85,7 @@ type BuildResult struct {
 	Diagnostics          []diagnostic.Diagnostic
 	Settings             config.ArgoSettings
 	Statuses             []ApplicationStatus
+	CacheEvents          []cacheevent.Event
 }
 
 type DiagRequest = BuildRequest
@@ -90,6 +93,7 @@ type DiagRequest = BuildRequest
 type DiagResult struct {
 	Applications []argoappv1.Application
 	Diagnostics  []diagnostic.Diagnostic
+	CacheEvents  []cacheevent.Event
 }
 
 type Orchestrator struct {
@@ -104,6 +108,7 @@ func (o Orchestrator) Diag(ctx context.Context, request DiagRequest) (DiagResult
 	diagResult := DiagResult{
 		Applications: result.Applications,
 		Diagnostics:  result.Diagnostics,
+		CacheEvents:  result.CacheEvents,
 	}
 	if err != nil {
 		return diagResult, err
@@ -200,9 +205,11 @@ func (o Orchestrator) Build(ctx context.Context, request BuildRequest) (BuildRes
 	if root == "" {
 		root = "."
 	}
+	cacheRecorder := cacheevent.NewRecorder(request.RecordCacheEvents)
 
 	result, err := o.prepareBuildResult(ctx, request, root)
 	if err != nil {
+		result.CacheEvents = cacheRecorder.Events()
 		return result, err
 	}
 	projectDiags := project.ValidateApplications(result.Applications, result.Projects, result.Settings)
@@ -210,10 +217,12 @@ func (o Orchestrator) Build(ctx context.Context, request BuildRequest) (BuildRes
 	result.Diagnostics = append(result.Diagnostics, projectDiags...)
 	if err := diagnosticFailure(projectDiags, request.Strict); err != nil {
 		result.Statuses = skippedApplicationStatuses(result.Applications, err)
+		result.CacheEvents = cacheRecorder.Events()
 		return result, err
 	}
 	if err := validateBuildNetworkOptions(request); err != nil {
 		result.Statuses = skippedApplicationStatuses(result.Applications, err)
+		result.CacheEvents = cacheRecorder.Events()
 		return result, err
 	}
 
@@ -253,6 +262,7 @@ func (o Orchestrator) Build(ctx context.Context, request BuildRequest) (BuildRes
 		remoteResourceForbiddenRoots: forbiddenRoots,
 		remoteResourceCredentials:    request.RemoteResourceCredentials,
 		remoteResourceGitCredentials: request.RemoteResourceGitCredentials,
+		cacheEvents:                  cacheRecorder,
 	}
 	for _, application := range result.Applications {
 		rendered, err := RenderApplication(ctx, application, provider)
@@ -287,8 +297,10 @@ func (o Orchestrator) Build(ctx context.Context, request BuildRequest) (BuildRes
 	}
 
 	if err := buildStatusFailure(result.Statuses); err != nil {
+		result.CacheEvents = cacheRecorder.Events()
 		return result, err
 	}
+	result.CacheEvents = cacheRecorder.Events()
 	return result, nil
 }
 
@@ -512,6 +524,7 @@ type localProvider struct {
 	remoteResourceForbiddenRoots []string
 	remoteResourceCredentials    remote.Credentials
 	remoteResourceGitCredentials remote.GitCredentials
+	cacheEvents                  *cacheevent.Recorder
 }
 
 func (p localProvider) RenderSource(ctx context.Context, source render.ResolvedSource, opts render.RenderOptions) ([]render.Manifest, []diagnostic.Diagnostic, error) {
@@ -533,6 +546,7 @@ func (p localProvider) RenderSource(ctx context.Context, source render.ResolvedS
 	opts.RemoteResourceForbiddenRoots = appendUniqueString(opts.RemoteResourceForbiddenRoots, sourceRoot)
 	opts.RemoteResourceCredentials = p.remoteResourceCredentials
 	opts.RemoteResourceGitCredentials = p.remoteResourceGitCredentials
+	opts.CacheEventRecorder = p.cacheEvents
 	anchoredRefRoots, err := anchorLocalRefRoots(sourceRoot, opts.RefRoots)
 	if err != nil {
 		return nil, nil, err
@@ -593,6 +607,7 @@ func (p localProvider) resolveSourceRoot(ctx context.Context, source render.Reso
 	}
 	if p.sourceResolver != nil {
 		if mappedPath, ok := p.sourceResolver.MappedPath(source.RepoURL); ok {
+			p.recordCacheEvent(cacheevent.Event{Source: cacheevent.SourceGit, Action: cacheevent.ActionMapped, Target: source.RepoURL, Revision: source.TargetRevision})
 			return filepath.Abs(mappedPath)
 		}
 	}
@@ -600,6 +615,7 @@ func (p localProvider) resolveSourceRoot(ctx context.Context, source render.Reso
 		if exists, err := sourcePathExists(p.repoRoot, source.Path); err != nil {
 			return "", err
 		} else if exists {
+			p.recordCacheEvent(cacheevent.Event{Source: cacheevent.SourceGit, Action: cacheevent.ActionLocal, Target: source.RepoURL, Revision: source.TargetRevision})
 			return p.repoRoot, nil
 		}
 	}
@@ -629,8 +645,28 @@ func (p localProvider) resolveSourceRoot(ctx context.Context, source render.Reso
 		Credentials:  p.gitCredentials,
 	})
 	if err != nil {
-		return "", fmt.Errorf("%s", sourcepkg.RedactGitCredentialError(err.Error(), p.gitCredentials))
+		redactedError := redactGitAcquireError(err, source.RepoURL, p.gitCredentials)
+		p.recordCacheEvent(cacheevent.Event{
+			Source:          cacheevent.SourceGit,
+			Action:          cacheActionForError(err),
+			Target:          source.RepoURL,
+			Revision:        source.TargetRevision,
+			Offline:         p.offline,
+			Refresh:         p.refreshGit,
+			Error:           err.Error(),
+			SensitiveValues: sourceGitSensitiveValues(p.gitCredentials),
+		})
+		return "", fmt.Errorf("%s", redactedError)
 	}
+	p.recordCacheEvent(cacheevent.Event{
+		Source:   cacheevent.SourceGit,
+		Action:   actionForAcquisition(acquired.FromCache, acquired.Network, p.refreshGit),
+		Target:   source.RepoURL,
+		Revision: acquired.Revision,
+		CacheHit: acquired.FromCache,
+		Offline:  p.offline,
+		Refresh:  p.refreshGit,
+	})
 	return acquired.Path, nil
 }
 
@@ -705,6 +741,65 @@ func appendUniqueString(values []string, value string) []string {
 	return append(values, value)
 }
 
+func (p localProvider) recordCacheEvent(event cacheevent.Event) {
+	if p.cacheEvents != nil {
+		p.cacheEvents.Record(event)
+	}
+}
+
+func actionForAcquisition(fromCache bool, network bool, refresh bool) cacheevent.Action {
+	if fromCache {
+		return cacheevent.ActionHit
+	}
+	if network && refresh {
+		return cacheevent.ActionRefresh
+	}
+	return cacheevent.ActionFetch
+}
+
+func cacheActionForError(err error) cacheevent.Action {
+	if err != nil && strings.Contains(err.Error(), "offline cache miss") {
+		return cacheevent.ActionMiss
+	}
+	return cacheevent.ActionError
+}
+
+func redactGitAcquireError(err error, repoURL string, credentials sourcepkg.GitCredentials) string {
+	if err == nil {
+		return ""
+	}
+	return cacheevent.RedactEventError(
+		sourcepkg.RedactGitCredentialError(err.Error(), credentials),
+		cacheevent.RedactTarget(repoURL),
+		[]string{repoURL},
+		sourceGitSensitiveValues(credentials)...,
+	)
+}
+
+func sourceGitSensitiveValues(credentials sourcepkg.GitCredentials) []string {
+	return compactSensitiveValues(
+		credentials.Username,
+		credentials.Password,
+		credentials.BearerToken,
+		credentials.SSHPrivateKey,
+		credentials.SSHPassphrase,
+	)
+}
+
+func chartSensitiveValues(credentials chart.ChartCredentials) []string {
+	return compactSensitiveValues(credentials.Username, credentials.Password, credentials.BearerToken)
+}
+
+func compactSensitiveValues(values ...string) []string {
+	out := make([]string, 0, len(values))
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			out = append(out, value)
+		}
+	}
+	return out
+}
+
 func (p localProvider) renderChartOnlySource(ctx context.Context, source render.ResolvedSource, opts render.RenderOptions) ([]render.Manifest, []diagnostic.Diagnostic, error) {
 	kind := chart.RepositoryHTTP
 	if strings.HasPrefix(strings.TrimSpace(source.RepoURL), "oci://") {
@@ -728,8 +823,27 @@ func (p localProvider) renderChartOnlySource(ctx context.Context, source render.
 		Credentials: p.chartCredentials,
 	})
 	if err != nil {
+		p.recordCacheEvent(cacheevent.Event{
+			Source:          cacheevent.SourceChart,
+			Action:          cacheActionForError(err),
+			Target:          source.RepoURL,
+			Revision:        source.TargetRevision,
+			Offline:         p.offline,
+			Refresh:         p.refreshCharts,
+			Error:           err.Error(),
+			SensitiveValues: chartSensitiveValues(p.chartCredentials),
+		})
 		return nil, nil, fmt.Errorf("acquire chart %s: %s", source.Chart, redactChartAcquireError(err, source.RepoURL, p.chartCredentials))
 	}
+	p.recordCacheEvent(cacheevent.Event{
+		Source:   cacheevent.SourceChart,
+		Action:   actionForAcquisition(acquired.FromCache, !acquired.FromCache, p.refreshCharts),
+		Target:   source.RepoURL,
+		Revision: acquired.Version,
+		CacheHit: acquired.FromCache,
+		Offline:  p.offline,
+		Refresh:  p.refreshCharts,
+	})
 
 	return (render.HelmRenderer{}).Render(ctx, render.ResolvedSource{
 		RepoRoot:       acquired.ChartDir,
@@ -784,7 +898,7 @@ func redactChartAcquireError(err error, repository string, credentials chart.Cha
 }
 
 func redactChartCredentialValues(message string, credentials chart.ChartCredentials) string {
-	for _, secret := range []string{credentials.Password, credentials.BearerToken} {
+	for _, secret := range []string{credentials.Username, credentials.Password, credentials.BearerToken} {
 		secret = strings.TrimSpace(secret)
 		if secret == "" {
 			continue

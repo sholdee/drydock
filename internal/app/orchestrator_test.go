@@ -3,12 +3,14 @@ package app
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
 
+	"github.com/home-operations/argocd-local/internal/cacheevent"
 	"github.com/home-operations/argocd-local/internal/chart"
 	"github.com/home-operations/argocd-local/internal/diagnostic"
 	"github.com/home-operations/argocd-local/internal/remote"
@@ -1102,6 +1104,81 @@ data:
 	}
 }
 
+func TestOrchestratorRecordsChartCacheEvents(t *testing.T) {
+	root := t.TempDir()
+	writeTestFile(t, filepath.Join(root, "apps", "argocd", "charted.yaml"), `apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: charted
+  namespace: argocd
+spec:
+  source:
+    repoURL: https://charts.example.test
+    targetRevision: 1.2.3
+    chart: demo
+  destination:
+    name: in-cluster
+    namespace: charted
+`)
+	chartDir := filepath.Join(t.TempDir(), "demo")
+	writeTestFile(t, filepath.Join(chartDir, "Chart.yaml"), `apiVersion: v2
+name: demo
+version: 1.2.3
+`)
+	writeTestFile(t, filepath.Join(chartDir, "templates", "cm.yaml"), `apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: charted
+`)
+
+	result, err := Orchestrator{ChartAcquirer: &recordingChartAcquirer{chartDir: chartDir, fromCache: true}}.Build(context.Background(), BuildRequest{
+		Path:              root,
+		RecordCacheEvents: true,
+	})
+	if err != nil {
+		t.Fatalf("Build() error = %v", err)
+	}
+	if !hasCacheEvent(result.CacheEvents, "chart", "hit", "https://charts.example.test") {
+		t.Fatalf("CacheEvents = %#v, want chart cache hit", result.CacheEvents)
+	}
+}
+
+func TestOrchestratorRecordsRedactedGitCacheErrors(t *testing.T) {
+	root := t.TempDir()
+	writeTestFile(t, filepath.Join(root, "apps", "external.yaml"), `apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: external
+  namespace: argocd
+spec:
+  source:
+    repoURL: https://user:secret@example.test/repo.git?token=abc#frag
+    path: missing
+    targetRevision: main
+  destination:
+    name: in-cluster
+    namespace: default
+`)
+
+	result, err := Orchestrator{GitAcquirer: &recordingGitAcquirer{err: errors.New("offline cache miss for https://user:secret@example.test/repo.git?token=abc#frag")}}.Build(context.Background(), BuildRequest{
+		Path:              root,
+		AllowNetwork:      true,
+		RecordCacheEvents: true,
+	})
+	if err == nil {
+		t.Fatal("Build() error = nil, want failing Git acquire")
+	}
+	if len(result.CacheEvents) == 0 {
+		t.Fatalf("CacheEvents = %#v, want Git cache event", result.CacheEvents)
+	}
+	text := fmt.Sprintf("err=%v diagnostics=%#v statuses=%#v events=%#v", err, result.Diagnostics, result.Statuses, result.CacheEvents)
+	for _, leaked := range []string{"user", "secret", "token", "abc", "frag"} {
+		if strings.Contains(text, leaked) {
+			t.Fatalf("result leaked %q: %s", leaked, text)
+		}
+	}
+}
+
 func TestLocalProviderClassifiesChartOnlyOCIRepository(t *testing.T) {
 	root := t.TempDir()
 	chartDir := filepath.Join(root, "cache", "demo")
@@ -1642,6 +1719,15 @@ func hasDiagnosticMessage(diags []diagnostic.Diagnostic, fragment string) bool {
 	return false
 }
 
+func hasCacheEvent(events []cacheevent.Event, source, action, targetFragment string) bool {
+	for _, event := range events {
+		if string(event.Source) == source && string(event.Action) == action && strings.Contains(event.Target, targetFragment) {
+			return true
+		}
+	}
+	return false
+}
+
 func assertApplicationStatuses(t *testing.T, got, want []ApplicationStatus) {
 	t.Helper()
 	if len(got) != len(want) {
@@ -1839,6 +1925,7 @@ data:
 type recordingChartAcquirer struct {
 	chartDir   string
 	acquireErr error
+	fromCache  bool
 	requests   []chart.Request
 	options    []chart.Options
 }
@@ -1898,5 +1985,6 @@ func (acquirer *recordingChartAcquirer) Acquire(_ context.Context, request chart
 		Name:       request.Name,
 		Version:    request.Version,
 		Kind:       request.Kind,
+		FromCache:  acquirer.fromCache,
 	}, nil
 }
