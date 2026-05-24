@@ -208,6 +208,43 @@ func TestBuildAppsSuppressesPartialStdoutWhenOutputWouldBeInvalid(t *testing.T) 
 	}
 }
 
+func TestBuildAppsFailsClosedForPluginSource(t *testing.T) {
+	for _, shape := range []string{"directory", "kustomize", "helm"} {
+		t.Run(shape, func(t *testing.T) {
+			root := t.TempDir()
+			writePluginCLIApplication(t, root, "cue", shape)
+
+			cmd := NewRootCommand(VersionInfo{})
+			cmd.SetArgs([]string{"build", "apps", "--path", root})
+			var stdout bytes.Buffer
+			var stderr bytes.Buffer
+			cmd.SetOut(&stdout)
+			cmd.SetErr(&stderr)
+
+			err := cmd.Execute()
+			if code := commandErrorCode(err); code != 2 {
+				t.Fatalf("error code = %d, want 2; err = %v", code, err)
+			}
+			if stdout.String() != "" {
+				t.Fatalf("stdout = %q, want empty partial output", stdout.String())
+			}
+			for _, want := range []string{
+				"error plugin:",
+				"config management plugin cue is not supported without an injected plugin renderer",
+			} {
+				if !strings.Contains(stderr.String(), want) {
+					t.Fatalf("stderr = %q, want %q", stderr.String(), want)
+				}
+			}
+			for _, unwanted := range []string{"should-not-render", "kind: ConfigMap", "kind: Deployment"} {
+				if strings.Contains(stdout.String(), unwanted) {
+					t.Fatalf("stdout rendered plugin source through %s fallback:\n%s", shape, stdout.String())
+				}
+			}
+		})
+	}
+}
+
 func TestBuildAppsPassesAuthenticatedSourceFlags(t *testing.T) {
 	root := t.TempDir()
 	external := t.TempDir()

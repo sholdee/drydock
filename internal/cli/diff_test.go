@@ -271,6 +271,51 @@ func TestDiffAppsSkipKindSuppressesFilteredResourceDiff(t *testing.T) {
 	}
 }
 
+func TestDiffAppsFailsClosedForPluginSource(t *testing.T) {
+	for _, shape := range []string{"directory", "kustomize", "helm"} {
+		t.Run(shape, func(t *testing.T) {
+			root := t.TempDir()
+			left := filepath.Join(root, "left")
+			right := filepath.Join(root, "right")
+			writePluginCLIApplication(t, left, "cue", shape)
+			writePluginCLIApplication(t, right, "cue", shape)
+
+			cmd := NewRootCommand(VersionInfo{})
+			cmd.SetArgs([]string{
+				"diff", "apps",
+				"--path-orig", left,
+				"--path", right,
+				"--changed-only=false",
+			})
+			var stdout bytes.Buffer
+			var stderr bytes.Buffer
+			cmd.SetOut(&stdout)
+			cmd.SetErr(&stderr)
+
+			err := cmd.Execute()
+			if code := commandErrorCode(err); code != 2 {
+				t.Fatalf("error code = %d, want 2; err = %v", code, err)
+			}
+			if stdout.String() != "" {
+				t.Fatalf("stdout = %q, want empty diff output", stdout.String())
+			}
+			for _, want := range []string{
+				"error plugin:",
+				"config management plugin cue is not supported without an injected plugin renderer",
+			} {
+				if !strings.Contains(stderr.String(), want) {
+					t.Fatalf("stderr = %q, want %q", stderr.String(), want)
+				}
+			}
+			for _, unwanted := range []string{"should-not-render", "kind: ConfigMap", "kind: Deployment"} {
+				if strings.Contains(stdout.String(), unwanted) {
+					t.Fatalf("stdout rendered plugin source through %s fallback:\n%s", shape, stdout.String())
+				}
+			}
+		})
+	}
+}
+
 func TestDiffAppsJSONOutput(t *testing.T) {
 	root := t.TempDir()
 	left := filepath.Join(root, "left")
@@ -611,6 +656,74 @@ metadata:
 data:
   value: `+value+`
 `)
+}
+
+func writePluginCLIApplication(t *testing.T, root, pluginName, shape string) {
+	t.Helper()
+	writeCLITestFile(t, filepath.Join(root, "apps", "plugin.yaml"), `apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: plugin-app
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/example/repo
+    path: manifests/plugin
+    targetRevision: main
+    plugin:
+      name: `+pluginName+`
+  destination:
+    name: in-cluster
+    namespace: default
+`)
+	switch shape {
+	case "directory":
+		writeCLITestFile(t, filepath.Join(root, "manifests", "plugin", "configmap.yaml"), `apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: should-not-render
+data:
+  value: directory
+`)
+	case "kustomize":
+		writeCLITestFile(t, filepath.Join(root, "manifests", "plugin", "kustomization.yaml"), `apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - configmap.yaml
+`)
+		writeCLITestFile(t, filepath.Join(root, "manifests", "plugin", "configmap.yaml"), `apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: should-not-render
+data:
+  value: kustomize
+`)
+	case "helm":
+		writeCLITestFile(t, filepath.Join(root, "manifests", "plugin", "Chart.yaml"), `apiVersion: v2
+name: should-not-render
+version: 0.1.0
+`)
+		writeCLITestFile(t, filepath.Join(root, "manifests", "plugin", "templates", "deployment.yaml"), `apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: should-not-render
+spec:
+  selector:
+    matchLabels:
+      app: should-not-render
+  template:
+    metadata:
+      labels:
+        app: should-not-render
+    spec:
+      containers:
+        - name: should-not-render
+          image: example/should-not-render:v1
+`)
+	default:
+		t.Fatalf("unknown plugin source shape %q", shape)
+	}
 }
 
 func writeAttributedAppForCLI(t *testing.T, root, version, value string) {
