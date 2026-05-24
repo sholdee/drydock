@@ -82,6 +82,9 @@ Current top-level commands:
   manifests.
 - `drydock diag --path . -o json|yaml`: write a structured diagnostic
   report to stdout.
+- `drydock diag --path . --settings -o json|yaml`: include a redacted Argo CD
+  settings summary from the CLI only. The summary may include Lua/action names
+  and SHA-256 hashes, but never raw Lua bodies.
 - `drydock cache path`: print resolved Git, chart, and remote cache roots.
 - `drydock cache list`: list recognized local cache entries.
 - `drydock cache prune --older-than 720h --dry-run`: report stale cache
@@ -272,7 +275,9 @@ The MVP currently supports:
 - Global `resource.customizations.ignoreResourceUpdates.*` parsing and
   diagnostics; these settings are not applied to desired-vs-desired diffs.
 - Health and action customization parsing and diagnostics, including
-  `useOpenLibs`/Lua metadata. Lua is not executed offline.
+  `useOpenLibs`/Lua metadata. Lua is not executed offline. Structured
+  `diag --settings` output reports only redacted metadata such as names,
+  booleans, and SHA-256 hashes.
 - Discovered `resource.compareoptions.ignoreResourceStatusField` and
   `resource.compareoptions.ignoreAggregatedRoles`.
 - Argo CD core resource exclusions plus discovered global
@@ -410,7 +415,9 @@ normalization. `knownTypeFields` normalization is applied to
 desired-vs-desired diffs. `ignoreResourceUpdates`, health customizations,
 action customizations, and `useOpenLibs`/Lua metadata are parsed and reported
 as settings diagnostics only; do not execute Lua or apply
-`ignoreResourceUpdates` as a desired diff ignore.
+`ignoreResourceUpdates` as a desired diff ignore. When emitting structured
+settings summaries, include redacted metadata only and never print raw Lua
+bodies or secret-looking strings embedded in Lua.
 Image extraction is conservative in the MVP and may be broadened only behind an
 explicit mode.
 CLI diff exit codes are fixed: 0 means success/no diff, 1 means success/diff

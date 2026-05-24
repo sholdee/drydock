@@ -480,7 +480,10 @@ when normalizing rendered resources for desired-vs-desired diffs. Global
 `resource.customizations.ignoreResourceUpdates.*` settings are parsed and
 reported as diagnostics, but they are not applied as desired diff ignores.
 Health and action customizations, including `useOpenLibs` and Lua metadata, are
-parsed and reported only. `drydock` does not execute Lua offline.
+parsed and reported only. `drydock` does not execute Lua offline. Structured
+`diag --settings` output can report redacted names, booleans, and SHA-256
+hashes for these settings without printing raw Lua bodies or secret-looking
+strings embedded in Lua.
 
 Discovered `resource.compareoptions` settings are also honored for
 `ignoreResourceStatusField` and `ignoreAggregatedRoles`. By default status is
@@ -548,6 +551,21 @@ drydock diag --path .
 and render validation path as `build apps`. It prints diagnostics to stderr and
 returns an error when runtime failures or error-severity diagnostics are found.
 Use `--strict` to promote warnings to errors.
+
+Structured diagnostic output can include a redacted settings summary:
+
+```bash
+drydock diag --path . --settings -o json
+drydock diag --path . --settings -o yaml
+```
+
+The settings summary is CLI-only in this phase. It reports parsed
+resource-customization metadata such as action names, `useOpenLibs`, and
+SHA-256 hashes for health/action Lua. It does not print raw Lua bodies,
+embedded secret-looking strings, or any live-cluster state. It also does not
+change default render/diff behavior, which remains offline and independent of a
+live Argo CD runtime, Kubernetes cluster, `kubectl`, or external renderer
+shellout.
 
 When local `AppProject` manifests are present, `diag`, `build`, `test`, `diff`,
 and the Go API report source repository and destination server/name/namespace
