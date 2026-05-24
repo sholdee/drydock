@@ -155,6 +155,42 @@ func evaluateGenerator(ctx generatorContext, generator argoappv1.ApplicationSetG
 		return paramSets, diags, true, nil
 	}
 
+	if generator.Clusters != nil {
+		if !ctx.Options.Provider.Supplied() {
+			return nil, unsupportedGeneratorDiagnostic(ctx.ManifestPath), false, nil
+		}
+		template, err := mergeGeneratorTemplate(ctx.BaseTemplate, generator.Clusters.Template)
+		if err != nil {
+			return nil, nil, true, err
+		}
+		paramSets, diags, err := clusterGeneratorParamSets(ctx.ManifestPath, generator.Clusters, ctx.Options.Provider.Data.Clusters, ctx.AppSet.Spec.GoTemplate, ctx.AppSet.Spec.GoTemplateOptions)
+		if err != nil {
+			return nil, diags, true, err
+		}
+		paramSets = setGeneratorTemplate(paramSets, template)
+		paramSets, selectorDiags, err := applyProviderGeneratorSelector(ctx.ManifestPath, "clusters", generator.Selector, paramSets)
+		diags = append(diags, selectorDiags...)
+		return paramSets, diags, true, err
+	}
+
+	if generator.ClusterDecisionResource != nil {
+		if !ctx.Options.Provider.Supplied() {
+			return nil, unsupportedGeneratorDiagnostic(ctx.ManifestPath), false, nil
+		}
+		template, err := mergeGeneratorTemplate(ctx.BaseTemplate, generator.ClusterDecisionResource.Template)
+		if err != nil {
+			return nil, nil, true, err
+		}
+		paramSets, diags, err := clusterDecisionResourceParamSets(ctx.ManifestPath, generator.ClusterDecisionResource, ctx.Options.Provider.Data, ctx.AppSet.Spec.GoTemplate, ctx.AppSet.Spec.GoTemplateOptions)
+		if err != nil {
+			return nil, diags, true, err
+		}
+		paramSets = setGeneratorTemplate(paramSets, template)
+		paramSets, selectorDiags, err := applyProviderGeneratorSelector(ctx.ManifestPath, "clusterDecisionResource", generator.Selector, paramSets)
+		diags = append(diags, selectorDiags...)
+		return paramSets, diags, true, err
+	}
+
 	if generator.Git == nil {
 		return nil, unsupportedGeneratorDiagnostic(ctx.ManifestPath), false, nil
 	}
@@ -177,7 +213,7 @@ func evaluateNestedGenerator(ctx generatorContext, nested argoappv1.ApplicationS
 	if err != nil {
 		return nil, nil, true, err
 	}
-	supported, err := supportedGeneratorTree(generator)
+	supported, err := supportedGeneratorTree(generator, ctx.Options.Provider.Supplied())
 	if err != nil {
 		return nil, nil, true, err
 	}
@@ -197,32 +233,34 @@ func evaluateNestedGenerator(ctx generatorContext, nested argoappv1.ApplicationS
 	return evaluateGenerator(ctx, generator)
 }
 
-func supportedGeneratorTree(generator argoappv1.ApplicationSetGenerator) (bool, error) {
+func supportedGeneratorTree(generator argoappv1.ApplicationSetGenerator, providerSupplied bool) (bool, error) {
 	switch {
 	case generator.List != nil || generator.Git != nil:
 		return true, nil
+	case generator.Clusters != nil || generator.ClusterDecisionResource != nil:
+		return providerSupplied, nil
 	case generator.Matrix != nil:
 		if err := validateMatrixGenerator(generator.Matrix); err != nil {
 			return true, err
 		}
-		return supportedNestedGeneratorTrees(generator.Matrix.Generators)
+		return supportedNestedGeneratorTrees(generator.Matrix.Generators, providerSupplied)
 	case generator.Merge != nil:
 		if err := validateMergeGenerator(generator.Merge); err != nil {
 			return true, err
 		}
-		return supportedNestedGeneratorTrees(generator.Merge.Generators)
+		return supportedNestedGeneratorTrees(generator.Merge.Generators, providerSupplied)
 	default:
 		return false, nil
 	}
 }
 
-func supportedNestedGeneratorTrees(nestedGenerators []argoappv1.ApplicationSetNestedGenerator) (bool, error) {
+func supportedNestedGeneratorTrees(nestedGenerators []argoappv1.ApplicationSetNestedGenerator, providerSupplied bool) (bool, error) {
 	for _, nested := range nestedGenerators {
 		generator, err := generatorFromNested(nested)
 		if err != nil {
 			return false, err
 		}
-		supported, err := supportedGeneratorTree(generator)
+		supported, err := supportedGeneratorTree(generator, providerSupplied)
 		if err != nil || !supported {
 			return supported, err
 		}
@@ -265,7 +303,7 @@ func matrixGeneratorParamSets(ctx generatorContext, matrix *argoappv1.MatrixGene
 	if err := validateMatrixGenerator(matrix); err != nil {
 		return nil, nil, true, err
 	}
-	supported, err := supportedNestedGeneratorTrees(matrix.Generators)
+	supported, err := supportedNestedGeneratorTrees(matrix.Generators, ctx.Options.Provider.Supplied())
 	if err != nil {
 		return nil, nil, true, err
 	}
@@ -300,7 +338,12 @@ func matrixGeneratorParamSets(ctx generatorContext, matrix *argoappv1.MatrixGene
 			})
 		}
 	}
-	out, selectorDiags, err := applyGeneratorSelector(ctx.ManifestPath, selector, out)
+	var selectorDiags []diagnostic.Diagnostic
+	if ctx.Options.Provider.Supplied() && nestedGeneratorsContainProvider(matrix.Generators) {
+		out, selectorDiags, err = applyProviderGeneratorSelector(ctx.ManifestPath, "matrix", selector, out)
+	} else {
+		out, selectorDiags, err = applyGeneratorSelector(ctx.ManifestPath, selector, out)
+	}
 	diags = append(diags, selectorDiags...)
 	return out, diags, true, err
 }
@@ -432,7 +475,13 @@ func mergeGeneratorParamSets(ctx generatorContext, merge *argoappv1.MergeGenerat
 		}
 	}
 
-	out, selectorDiags, err := applyGeneratorSelector(ctx.ManifestPath, selector, out)
+	var selectorDiags []diagnostic.Diagnostic
+	var err error
+	if ctx.Options.Provider.Supplied() && nestedGeneratorsContainProvider(merge.Generators) {
+		out, selectorDiags, err = applyProviderGeneratorSelector(ctx.ManifestPath, "merge", selector, out)
+	} else {
+		out, selectorDiags, err = applyGeneratorSelector(ctx.ManifestPath, selector, out)
+	}
 	allDiags = append(allDiags, selectorDiags...)
 	return out, allDiags, true, err
 }
@@ -518,6 +567,177 @@ func listGeneratorParamSets(manifestPath string, list *argoappv1.ListGenerator) 
 	return out, diags
 }
 
+func clusterGeneratorParamSets(manifestPath string, clusters *argoappv1.ClusterGenerator, inputs []ClusterInput, useGoTemplate bool, goTemplateOptions []string) ([]generatorParamSet, []diagnostic.Diagnostic, error) {
+	if len(inputs) == 0 {
+		return nil, []diagnostic.Diagnostic{providerNoMatchDiagnostic(manifestPath, "clusters")}, nil
+	}
+
+	selector, err := appsetutils.LabelSelectorAsSelector(&clusters.Selector)
+	if err != nil {
+		return nil, []diagnostic.Diagnostic{providerUnsupportedFilterDiagnostic(manifestPath, fmt.Sprintf("clusters selector: %v", err))}, nil
+	}
+
+	var out []generatorParamSet
+	for _, cluster := range inputs {
+		if !selector.Matches(labels.Set(cluster.Labels)) {
+			continue
+		}
+		params, err := clusterParams(cluster, clusters.Values, useGoTemplate, goTemplateOptions)
+		if err != nil {
+			return nil, nil, err
+		}
+		out = append(out, generatorParamSet{
+			Params:    params,
+			Generator: "clusters",
+		})
+	}
+	if len(out) == 0 {
+		return nil, []diagnostic.Diagnostic{providerNoMatchDiagnostic(manifestPath, "clusters")}, nil
+	}
+	if clusters.FlatList {
+		clusterList := make([]any, 0, len(out))
+		for _, paramSet := range out {
+			clusterList = append(clusterList, paramSet.Params)
+		}
+		return []generatorParamSet{{
+			Params:    map[string]any{"clusters": clusterList},
+			Generator: "clusters",
+		}}, nil, nil
+	}
+	return out, nil, nil
+}
+
+func clusterParams(cluster ClusterInput, values map[string]string, useGoTemplate bool, goTemplateOptions []string) (map[string]any, error) {
+	project := cluster.Project
+	params := map[string]any{
+		"name":           cluster.Name,
+		"nameNormalized": appsetutils.SanitizeName(cluster.Name),
+		"server":         cluster.Server,
+		"project":        project,
+	}
+
+	if useGoTemplate {
+		params["metadata"] = map[string]any{
+			"labels":      stringMapAny(cluster.Labels),
+			"annotations": stringMapAny(cluster.Annotations),
+		}
+	} else {
+		for key, value := range cluster.Labels {
+			params["metadata.labels."+key] = value
+		}
+		for key, value := range cluster.Annotations {
+			params["metadata.annotations."+key] = value
+		}
+	}
+
+	if err := appendTemplatedValues(params, values, useGoTemplate, goTemplateOptions); err != nil {
+		return nil, err
+	}
+	return params, nil
+}
+
+func clusterDecisionResourceParamSets(manifestPath string, generator *argoappv1.DuckTypeGenerator, data ProviderData, useGoTemplate bool, _ []string) ([]generatorParamSet, []diagnostic.Diagnostic, error) {
+	if len(data.ClusterDecisions) == 0 {
+		return nil, []diagnostic.Diagnostic{providerNoMatchDiagnostic(manifestPath, "clusterDecisionResource")}, nil
+	}
+	hasLabelSelector := len(generator.LabelSelector.MatchLabels) > 0 || len(generator.LabelSelector.MatchExpressions) > 0
+	switch {
+	case generator.Name == "" && !hasLabelSelector:
+		return nil, []diagnostic.Diagnostic{providerUnsupportedFilterDiagnostic(manifestPath, "clusterDecisionResource must set exactly one of name or labelSelector with provider fixtures")}, nil
+	case generator.Name != "" && hasLabelSelector:
+		return nil, []diagnostic.Diagnostic{providerUnsupportedFilterDiagnostic(manifestPath, "clusterDecisionResource cannot combine name and labelSelector with provider fixtures")}, nil
+	}
+
+	clustersByName := map[string]ClusterInput{}
+	for _, cluster := range data.Clusters {
+		clustersByName[cluster.Name] = cluster
+	}
+
+	var out []generatorParamSet
+	for _, input := range data.ClusterDecisions {
+		matched, err := clusterDecisionResourceMatches(generator, input)
+		if err != nil {
+			return nil, []diagnostic.Diagnostic{providerUnsupportedFilterDiagnostic(manifestPath, err.Error())}, nil
+		}
+		if !matched {
+			continue
+		}
+		if input.StatusListKey != defaultClusterDecisionStatusListKey {
+			continue
+		}
+		matchKey := input.MatchKey
+		if matchKey == "" {
+			continue
+		}
+		for _, decision := range input.Decisions {
+			matchValue, ok := decision[matchKey]
+			if !ok || fmt.Sprint(matchValue) == "" {
+				continue
+			}
+			cluster, ok := clustersByName[fmt.Sprint(matchValue)]
+			if !ok {
+				continue
+			}
+			params := map[string]any{
+				"name":   cluster.Name,
+				"server": cluster.Server,
+			}
+			for key, value := range decision {
+				params[key] = fmt.Sprint(value)
+			}
+			appendRawValues(params, generator.Values, useGoTemplate)
+			out = append(out, generatorParamSet{
+				Params:    params,
+				Generator: "clusterDecisionResource",
+			})
+		}
+	}
+	if len(out) == 0 {
+		return nil, []diagnostic.Diagnostic{providerNoMatchDiagnostic(manifestPath, "clusterDecisionResource")}, nil
+	}
+	return out, nil, nil
+}
+
+const defaultClusterDecisionStatusListKey = "clusters"
+
+func clusterDecisionResourceMatches(generator *argoappv1.DuckTypeGenerator, input ClusterDecisionInput) (bool, error) {
+	if generator.ConfigMapRef != input.ConfigMapRef {
+		return false, nil
+	}
+	if generator.Name != "" && generator.Name != input.ResourceName {
+		return false, nil
+	}
+	if len(generator.LabelSelector.MatchLabels) == 0 && len(generator.LabelSelector.MatchExpressions) == 0 {
+		return true, nil
+	}
+	selector, err := appsetutils.LabelSelectorAsSelector(&generator.LabelSelector)
+	if err != nil {
+		return false, fmt.Errorf("clusterDecisionResource labelSelector: %w", err)
+	}
+	return selector.Matches(labels.Set(input.Labels)), nil
+}
+
+func stringMapAny(input map[string]string) map[string]any {
+	out := make(map[string]any, len(input))
+	for key, value := range input {
+		out[key] = value
+	}
+	return out
+}
+
+func appendRawValues(params map[string]any, values map[string]string, useGoTemplate bool) {
+	if len(values) == 0 {
+		return
+	}
+	if useGoTemplate {
+		params["values"] = values
+		return
+	}
+	for key, value := range values {
+		params["values."+key] = value
+	}
+}
+
 func setGeneratorTemplate(paramSets []generatorParamSet, template argoappv1.ApplicationSetTemplate) []generatorParamSet {
 	for i := range paramSets {
 		paramSets[i].Template = template
@@ -550,6 +770,48 @@ func applyGeneratorSelector(manifestPath string, selectorSpec *metav1.LabelSelec
 		}
 	}
 	return filtered, nil, nil
+}
+
+func applyProviderGeneratorSelector(manifestPath, kind string, selectorSpec *metav1.LabelSelector, paramSets []generatorParamSet) ([]generatorParamSet, []diagnostic.Diagnostic, error) {
+	filtered, diags, err := applyGeneratorSelector(manifestPath, selectorSpec, paramSets)
+	if err != nil {
+		diags = append(diags, providerUnsupportedFilterDiagnostic(manifestPath, fmt.Sprintf("%s selector: %v", kind, err)))
+		return nil, diags, nil
+	}
+	if selectorSpec != nil && len(paramSets) > 0 && len(filtered) == 0 {
+		diags = append(diags, providerNoMatchDiagnostic(manifestPath, kind))
+	}
+	return filtered, diags, nil
+}
+
+func nestedGeneratorsContainProvider(nestedGenerators []argoappv1.ApplicationSetNestedGenerator) bool {
+	for _, nested := range nestedGenerators {
+		generator, err := generatorFromNested(nested)
+		if err != nil {
+			continue
+		}
+		if generatorContainsProvider(generator) {
+			return true
+		}
+	}
+	return false
+}
+
+func generatorContainsProvider(generator argoappv1.ApplicationSetGenerator) bool {
+	switch {
+	case generator.Clusters != nil ||
+		generator.ClusterDecisionResource != nil ||
+		generator.SCMProvider != nil ||
+		generator.PullRequest != nil ||
+		generator.Plugin != nil:
+		return true
+	case generator.Matrix != nil:
+		return nestedGeneratorsContainProvider(generator.Matrix.Generators)
+	case generator.Merge != nil:
+		return nestedGeneratorsContainProvider(generator.Merge.Generators)
+	default:
+		return false
+	}
 }
 
 func flattenSelectorParams(prefix string, value any, out map[string]string) {
@@ -611,6 +873,18 @@ func gitGeneratorParamSets(repoRoot, manifestPath string, git *argoappv1.GitGene
 
 func unsupportedGeneratorDiagnostic(manifestPath string) []diagnostic.Diagnostic {
 	return []diagnostic.Diagnostic{appsetDiagnostic(manifestPath, "unsupported ApplicationSet generator; supported generators are git directories, git files, list, matrix, and merge")}
+}
+
+func providerNoMatchDiagnostic(manifestPath, kind string) diagnostic.Diagnostic {
+	diag := appsetDiagnostic(manifestPath, fmt.Sprintf("provider fixture supplied but no entries match %s generator", kind))
+	diag.Code = diagnostic.StableCode(diag)
+	return diag
+}
+
+func providerUnsupportedFilterDiagnostic(manifestPath, detail string) diagnostic.Diagnostic {
+	diag := appsetDiagnostic(manifestPath, fmt.Sprintf("provider filter cannot be evaluated from fixture data: %s", detail))
+	diag.Code = diagnostic.StableCode(diag)
+	return diag
 }
 
 func appsetDiagnostic(manifestPath, message string) diagnostic.Diagnostic {
