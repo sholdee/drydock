@@ -88,7 +88,7 @@ helmCharts:
 	}
 
 	command := exec.Command("bash", "-c", `source "$1"; detect_renovate_chart_version "$2" renovate-operator; update_renovate_chart_version "$2" renovate-operator 4.8.0 "$3"`, "bash", scriptPath, input, output)
-	command.Env = append(os.Environ(), "ARGOCD_LOCAL_SMOKE_LIB_ONLY=true")
+	command.Env = append(os.Environ(), "DRYDOCK_SMOKE_LIB_ONLY=true")
 	combined, err := command.CombinedOutput()
 	if err != nil {
 		t.Fatalf("script helper command error = %v\n%s", err, string(combined))
@@ -136,7 +136,7 @@ func TestHomeOpsRenovateSmokeScriptCleanupKeepsTempDirWhenWorktreeRemovalFails(t
 	}
 
 	command := exec.Command("bash", "-c", `source "$1"; ROOT="$2"; TMP_DIR="$3"; BASELINE="$3/baseline"; CURRENT="$3/current"; cleanup`, "bash", scriptPath, root, tmpDir)
-	command.Env = append(os.Environ(), "ARGOCD_LOCAL_SMOKE_LIB_ONLY=true", "PATH="+fakeBin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	command.Env = append(os.Environ(), "DRYDOCK_SMOKE_LIB_ONLY=true", "PATH="+fakeBin+string(os.PathListSeparator)+os.Getenv("PATH"))
 	combined, err := command.CombinedOutput()
 	if err == nil {
 		t.Fatalf("cleanup command error = nil, want failure\n%s", string(combined))

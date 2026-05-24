@@ -472,7 +472,7 @@ resources:
   - https://github.com/example/remote.git//base?ref=v1.2.3
 `)
 	outside := t.TempDir()
-	symlink(t, outside, filepath.Join(root, "app", ".argocd-local"))
+	symlink(t, outside, filepath.Join(root, "app", ".drydock"))
 	remoteRepo := t.TempDir()
 	writeFile(t, filepath.Join(remoteRepo, "base", "kustomization.yaml"), `apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
@@ -563,7 +563,7 @@ resources:
   - https://github.com/example/inner.git//base?ref=v2.0.0
 `)
 	outside := t.TempDir()
-	symlink(t, outside, filepath.Join(outerRepo, "base", ".argocd-local"))
+	symlink(t, outside, filepath.Join(outerRepo, "base", ".drydock"))
 	innerRepo := t.TempDir()
 	writeFile(t, filepath.Join(innerRepo, "base", "kustomization.yaml"), `apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization

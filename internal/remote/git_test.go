@@ -204,7 +204,7 @@ func TestDefaultAcquirerRefreshesGitRemoteWhenRequested(t *testing.T) {
 
 func TestDefaultAcquirerRejectsGitRemoteCacheInsideForbiddenRoot(t *testing.T) {
 	repoRoot := t.TempDir()
-	cacheDir := filepath.Join(repoRoot, ".argocd-local", "remote-cache")
+	cacheDir := filepath.Join(repoRoot, ".drydock", "remote-cache")
 
 	_, err := DefaultAcquirer{}.Acquire(context.Background(), Request{
 		Kind:     RequestGitRepo,

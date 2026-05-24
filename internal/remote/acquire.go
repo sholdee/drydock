@@ -70,7 +70,7 @@ func DefaultCacheDir() (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return filepath.Join(root, "argocd-local", "remotes"), nil
+	return filepath.Join(root, "drydock", "remotes"), nil
 }
 
 func NewCacheKey(request Request) (string, error) {

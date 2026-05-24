@@ -385,7 +385,7 @@ func TestBuildAppsHomeOpsRemoteResourceRejectsCacheInsideRepo(t *testing.T) {
 		"build", "apps",
 		"--path", fixtureRoot,
 		"--offline",
-		"--remote-cache-dir", filepath.Join(fixtureRoot, ".argocd-local", "remotes"),
+		"--remote-cache-dir", filepath.Join(fixtureRoot, ".drydock", "remotes"),
 	})
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer

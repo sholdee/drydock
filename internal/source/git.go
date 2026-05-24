@@ -111,7 +111,7 @@ func DefaultGitCacheDir() (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return filepath.Join(cacheDir, "argocd-local", "git"), nil
+	return filepath.Join(cacheDir, "drydock", "git"), nil
 }
 
 func gitCacheKey(repoURL, revision string) string {

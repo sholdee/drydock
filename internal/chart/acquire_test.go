@@ -71,8 +71,8 @@ func TestDefaultCacheDirUsesUserCacheRoot(t *testing.T) {
 	if err != nil {
 		t.Fatalf("DefaultCacheDir() error = %v", err)
 	}
-	if !strings.HasSuffix(filepath.ToSlash(dir), "/argocd-local/charts") {
-		t.Fatalf("DefaultCacheDir() = %q, want argocd-local/charts suffix", dir)
+	if !strings.HasSuffix(filepath.ToSlash(dir), "/drydock/charts") {
+		t.Fatalf("DefaultCacheDir() = %q, want drydock/charts suffix", dir)
 	}
 }
 

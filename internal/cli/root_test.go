@@ -22,7 +22,7 @@ func TestRootHelp(t *testing.T) {
 	}
 
 	got := out.String()
-	for _, want := range []string{"argocd-local", "diff", "build", "get", "diag", "version"} {
+	for _, want := range []string{"drydock", "diff", "build", "get", "diag", "version"} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("help output missing %q:\n%s", want, got)
 		}

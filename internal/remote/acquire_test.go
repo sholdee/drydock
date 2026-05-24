@@ -139,8 +139,8 @@ func TestDefaultCacheDirUsesUserCacheRoot(t *testing.T) {
 	if err != nil {
 		t.Fatalf("DefaultCacheDir() error = %v", err)
 	}
-	if !strings.HasSuffix(filepath.ToSlash(dir), "/argocd-local/remotes") {
-		t.Fatalf("DefaultCacheDir() = %q, want argocd-local/remotes suffix", dir)
+	if !strings.HasSuffix(filepath.ToSlash(dir), "/drydock/remotes") {
+		t.Fatalf("DefaultCacheDir() = %q, want drydock/remotes suffix", dir)
 	}
 }
 
@@ -358,7 +358,7 @@ func TestDefaultAcquirerOfflineRequiresCacheHit(t *testing.T) {
 
 func TestDefaultAcquirerRejectsCacheInsideForbiddenRoot(t *testing.T) {
 	repoRoot := t.TempDir()
-	cacheDir := filepath.Join(repoRoot, ".argocd-local", "remote-cache")
+	cacheDir := filepath.Join(repoRoot, ".drydock", "remote-cache")
 	_, err := (DefaultAcquirer{}).Acquire(context.Background(), Request{
 		URL: "https://raw.githubusercontent.com/org/repo/main/file.yaml",
 	}, Options{CacheDir: cacheDir, ForbiddenRoots: []string{repoRoot}})
@@ -374,7 +374,7 @@ func TestDefaultAcquirerRejectsCacheSymlinkedIntoForbiddenRoot(t *testing.T) {
 	if err := os.Symlink(repoRoot, cacheLink); err != nil {
 		t.Skipf("create symlink: %v", err)
 	}
-	cacheDir := filepath.Join(cacheLink, ".argocd-local", "remote-cache")
+	cacheDir := filepath.Join(cacheLink, ".drydock", "remote-cache")
 	acquirer := DefaultAcquirer{Client: &http.Client{
 		Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
 			t.Fatal("Acquire() made a network request before rejecting cache dir")
@@ -388,7 +388,7 @@ func TestDefaultAcquirerRejectsCacheSymlinkedIntoForbiddenRoot(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "must not be inside repository root") {
 		t.Fatalf("Acquire() error = %v, want cache containment error", err)
 	}
-	if _, err := os.Stat(filepath.Join(repoRoot, ".argocd-local")); !errors.Is(err, os.ErrNotExist) {
+	if _, err := os.Stat(filepath.Join(repoRoot, ".drydock")); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("forbidden root cache directory exists after rejected Acquire(): %v", err)
 	}
 }
