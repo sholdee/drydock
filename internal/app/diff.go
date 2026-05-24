@@ -363,7 +363,12 @@ func diffDocuments(build BuildResult) ([]diff.Document, error) {
 }
 
 func normalizationFor(application argoappv1.Application, id manifest.Identity, settings config.ArgoSettings) diff.Normalization {
-	var normalization diff.Normalization
+	normalization := diff.Normalization{
+		CompareOptions: diff.CompareOptions{
+			IgnoreAggregatedRoles:     settings.CompareOptions.IgnoreAggregatedRoles,
+			IgnoreResourceStatusField: settings.CompareOptions.IgnoreResourceStatusField,
+		},
+	}
 	for _, rule := range application.Spec.IgnoreDifferences {
 		if !ignoreRuleMatches(rule, id) {
 			continue
