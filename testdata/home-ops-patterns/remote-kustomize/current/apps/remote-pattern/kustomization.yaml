@@ -1,0 +1,14 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: remote-pattern
+resources:
+  - local.yaml
+  - https://github.com/example/remote-base.git//base?ref=v1.0.0
+  - https://raw.githubusercontent.com/example/remote/resource.yaml
+components:
+  - https://github.com/example/remote-component.git//component?ref=v1.0.0
+patches:
+  - path: https://github.com/example/remote-patch.git//patches/local-label.yaml?ref=v1.0.0
+    target:
+      kind: ConfigMap
+      name: local
