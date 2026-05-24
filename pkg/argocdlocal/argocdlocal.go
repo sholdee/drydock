@@ -223,9 +223,10 @@ type PluginRenderer interface {
 
 // PluginRequest is passed to an injected PluginRenderer.
 type PluginRequest struct {
-	Application Application
-	Source      PluginSource
-	Plugin      PluginConfig
+	Application          Application
+	DestinationNamespace string
+	Source               PluginSource
+	Plugin               PluginConfig
 }
 
 // PluginSource describes the resolved source for a plugin render.
@@ -699,8 +700,11 @@ func remoteResourceCredentialsFromInternal(credentials remote.Credentials) Remot
 func pluginRequestFromInternal(request renderpkg.PluginRequest) PluginRequest {
 	return PluginRequest{
 		Application: Application{
-			Name: request.AppName,
+			Namespace: request.AppNamespace,
+			Name:      request.AppName,
+			Project:   request.Project,
 		},
+		DestinationNamespace: request.Namespace,
 		Source: PluginSource{
 			RepoRoot:       request.Source.RepoRoot,
 			Path:           request.Source.Path,

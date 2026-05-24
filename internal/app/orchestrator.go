@@ -553,12 +553,14 @@ func (p localProvider) renderPluginSource(ctx context.Context, source render.Res
 		}}, fmt.Errorf("%s: %w", message, render.ErrUnsupportedPlugin)
 	}
 	return p.pluginRenderer.RenderPlugin(ctx, render.PluginRequest{
-		AppName:    opts.AppName,
-		Namespace:  opts.Namespace,
-		Source:     source,
-		Plugin:     *opts.Plugin,
-		RefRoots:   cloneStringMap(opts.RefRoots),
-		RefSources: cloneResolvedSourceMap(opts.RefSources),
+		AppName:      opts.AppName,
+		AppNamespace: opts.AppNamespace,
+		Project:      opts.Project,
+		Namespace:    opts.Namespace,
+		Source:       source,
+		Plugin:       *opts.Plugin,
+		RefRoots:     cloneStringMap(opts.RefRoots),
+		RefSources:   cloneResolvedSourceMap(opts.RefSources),
 	})
 }
 

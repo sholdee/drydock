@@ -87,8 +87,10 @@ func RenderApplication(ctx context.Context, application argoappv1.Application, p
 
 func renderOptions(application argoappv1.Application, source argoappv1.ApplicationSource) (render.RenderOptions, error) {
 	opts := render.RenderOptions{
-		AppName:   application.Name,
-		Namespace: application.Spec.Destination.Namespace,
+		AppName:      application.Name,
+		AppNamespace: application.Namespace,
+		Project:      application.Spec.Project,
+		Namespace:    application.Spec.Destination.Namespace,
 	}
 	if source.Plugin != nil {
 		plugin := source.Plugin.DeepCopy()

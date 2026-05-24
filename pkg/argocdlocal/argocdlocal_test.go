@@ -559,6 +559,15 @@ func assertPublicPluginRequest(t *testing.T, request PluginRequest) {
 	if request.Application.Name != "plugin-app" {
 		t.Fatalf("Application.Name = %q, want plugin-app", request.Application.Name)
 	}
+	if request.Application.Namespace != "argocd" {
+		t.Fatalf("Application.Namespace = %q, want argocd", request.Application.Namespace)
+	}
+	if request.Application.Project != "default" {
+		t.Fatalf("Application.Project = %q, want default", request.Application.Project)
+	}
+	if request.DestinationNamespace != "rendered" {
+		t.Fatalf("DestinationNamespace = %q, want rendered", request.DestinationNamespace)
+	}
 	if request.Source.Path != "apps/plugin" {
 		t.Fatalf("Source.Path = %q, want apps/plugin", request.Source.Path)
 	}
