@@ -86,6 +86,9 @@ func RedactedTarget(raw string) string {
 	if raw == "" {
 		return ""
 	}
+	if after, ok := strings.CutPrefix(raw, "git::"); ok {
+		return "git::" + RedactedTarget(after)
+	}
 	if isSCPStyleTarget(raw) {
 		if before, _, ok := strings.Cut(raw, "#"); ok {
 			raw = before

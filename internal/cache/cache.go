@@ -1,7 +1,6 @@
 package cache
 
 import (
-	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -230,11 +229,6 @@ func listRemoteEntries(root string, forbiddenRoots []string) ([]Entry, error) {
 		}
 		entryPath := filepath.Join(root, child.Name())
 		kind := remoteEntryKind(entryPath)
-		if kind == "" {
-			if metadata, err := readMetadataUnchecked(entryPath); err == nil && metadata != nil && metadata.Source == SourceRemote && metadata.Key == child.Name() {
-				kind = metadata.Kind
-			}
-		}
 		if kind != "http-file" && kind != "git-repo" {
 			continue
 		}
@@ -408,21 +402,6 @@ func pathSize(root string) (int64, error) {
 		return nil
 	})
 	return total, err
-}
-
-func readMetadataUnchecked(entryPath string) (*Metadata, error) {
-	data, err := os.ReadFile(MetadataPath(entryPath))
-	if err != nil {
-		if os.IsNotExist(err) {
-			return nil, nil
-		}
-		return nil, err
-	}
-	var metadata Metadata
-	if err := json.Unmarshal(data, &metadata); err != nil {
-		return nil, err
-	}
-	return &metadata, nil
 }
 
 func pathInsideAny(targetPath string, roots []string) (bool, string, error) {

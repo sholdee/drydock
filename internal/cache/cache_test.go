@@ -114,6 +114,14 @@ func TestRedactedTargetStripsSecretsQueryAndFragment(t *testing.T) {
 			raw:  "git@example.test:org/repo.git?token=secret#frag",
 			want: "example.test:org/repo.git",
 		},
+		{
+			raw:  "git::https://user:secret@example.test/org/repo.git?token=secret#frag",
+			want: "git::https://example.test/org/repo.git",
+		},
+		{
+			raw:  "git::ssh://user:secret@example.test/org/repo.git?token=secret#frag",
+			want: "git::ssh://example.test/org/repo.git",
+		},
 	} {
 		if got := RedactedTarget(tc.raw); got != tc.want {
 			t.Fatalf("RedactedTarget(%q) = %q, want %q", tc.raw, got, tc.want)
@@ -277,6 +285,53 @@ func TestListSkipsMalformedEntryNames(t *testing.T) {
 	}
 	if len(entries) != 0 {
 		t.Fatalf("entries = %#v, want malformed entry skipped", entries)
+	}
+}
+
+func TestListDoesNotTrustRemoteMetadataWithoutRecognizedLayout(t *testing.T) {
+	root := t.TempDir()
+	entryRoot := filepath.Join(root, "remotes", testRemoteKey)
+	if err := WriteMetadata(entryRoot, Metadata{
+		SchemaVersion: 1,
+		Source:        SourceRemote,
+		Kind:          "http-file",
+		Key:           testRemoteKey,
+		UpdatedAt:     time.Now(),
+	}); err != nil {
+		t.Fatalf("WriteMetadata() error = %v", err)
+	}
+
+	entries, err := List(Options{RemoteCacheDir: filepath.Join(root, "remotes")})
+	if err != nil {
+		t.Fatalf("List() error = %v", err)
+	}
+	if len(entries) != 0 {
+		t.Fatalf("entries = %#v, want metadata-only remote entry skipped", entries)
+	}
+}
+
+func TestListDoesNotTrustUnsupportedRemoteMetadataWithoutRecognizedLayout(t *testing.T) {
+	root := t.TempDir()
+	entryRoot := filepath.Join(root, "remotes", testRemoteKey)
+	if err := os.MkdirAll(entryRoot, 0o755); err != nil {
+		t.Fatalf("MkdirAll() error = %v", err)
+	}
+	if err := os.WriteFile(MetadataPath(entryRoot), []byte(`{
+  "schemaVersion": 99,
+  "source": "remote",
+  "kind": "http-file",
+  "key": "`+testRemoteKey+`"
+}
+`), 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	entries, err := List(Options{RemoteCacheDir: filepath.Join(root, "remotes")})
+	if err != nil {
+		t.Fatalf("List() error = %v", err)
+	}
+	if len(entries) != 0 {
+		t.Fatalf("entries = %#v, want unsupported metadata-only remote entry skipped", entries)
 	}
 }
 
