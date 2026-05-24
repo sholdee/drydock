@@ -1,8 +1,8 @@
-# AGENTS.md - argocd-local
+# AGENTS.md - drydock
 
 ## What This Is
 
-`argocd-local` is an independent Go CLI for offline Argo CD GitOps repository
+`drydock` is an independent Go CLI for offline Argo CD GitOps repository
 analysis. The first product goal is desired-vs-desired PR diffing: render Argo
 CD Applications from a current tree and a baseline tree, then show what desired
 Kubernetes manifests changed.
@@ -22,7 +22,7 @@ the design spec is updated first.
 
 Read the design spec before substantive changes:
 
-- `docs/superpowers/specs/2026-05-22-argocd-local-design.md`
+- `docs/superpowers/specs/2026-05-22-drydock-design.md`
 - `docs/reports/2026-05-24-live-integration-design-gate.md` before proposing
   Kubernetes, Argo CD server, server-side diff, defaulting, admission, or
   managed-fields ownership work.
@@ -60,27 +60,27 @@ skipped verification, never treated as human-blocking phase status.
 
 Current top-level commands:
 
-- `argocd-local get apps --path .`: list discovered Applications by name.
-- `argocd-local get images --path .`: render discovered Applications and list
+- `drydock get apps --path .`: list discovered Applications by name.
+- `drydock get images --path .`: render discovered Applications and list
   conservative workload container images.
-- `argocd-local build apps --path .`: render all discovered Applications.
-- `argocd-local build app NAME --path .`: render exactly one discovered
+- `drydock build apps --path .`: render all discovered Applications.
+- `drydock build app NAME --path .`: render exactly one discovered
   Application by `metadata.name`.
-- `argocd-local test apps --path .`: report PASS/FAIL/SKIPPED render status
+- `drydock test apps --path .`: report PASS/FAIL/SKIPPED render status
   for all discovered Applications without printing manifests.
-- `argocd-local test app NAME --path .`: report PASS/FAIL/SKIPPED render
+- `drydock test app NAME --path .`: report PASS/FAIL/SKIPPED render
   status for exactly one discovered Application by `metadata.name`.
-- `argocd-local diff apps --path . --path-orig ../base`: render and diff all
+- `drydock diff apps --path . --path-orig ../base`: render and diff all
   Applications between a baseline tree and current tree.
-- `argocd-local diff app NAME --path . --path-orig ../base`: diff one
+- `drydock diff app NAME --path . --path-orig ../base`: diff one
   requested Application by name between a baseline tree and current tree.
-- `argocd-local diff images --path . --path-orig ../base`: render both trees
+- `drydock diff images --path . --path-orig ../base`: render both trees
   and compare conservative workload container images.
-- `argocd-local diag --path .`: run repository diagnostics without printing
+- `drydock diag --path .`: run repository diagnostics without printing
   manifests.
-- `argocd-local diag --path . -o json|yaml`: write a structured diagnostic
+- `drydock diag --path . -o json|yaml`: write a structured diagnostic
   report to stdout.
-- `argocd-local version`: print version, commit, Go version, and Argo CD module.
+- `drydock version`: print version, commit, Go version, and Argo CD module.
 
 Named app arguments accept `NAME` or `NAMESPACE/NAME`; use the
 namespace-qualified form when the same `metadata.name` exists in multiple
@@ -98,7 +98,7 @@ Current shared flags are `--path`, `--path-orig`, `--selector`/`-l`, `--repo-map
 `--unified`/`-u`, `--strip-attr`, `--skip-kind`, `--skip-crds`,
 `--skip-secrets`, `--limit-bytes`, and `--cache-events`.
 
-Public embedding API lives in `pkg/argocdlocal`. Keep its exported types free
+Public embedding API lives in `pkg/drydock`. Keep its exported types free
 of `internal/...` package types. Package-level functions should follow CLI
 default network/cache behavior, while `NewClient` accepts public Git, chart,
 and remote-resource acquirer interfaces for deterministic tests and embedding
@@ -391,11 +391,11 @@ as shared components/, but must not escape the repository root or traverse
 symlinked graph entries. Treat Kustomize path-bearing fields fail-closed:
 validate new fields before render rather than assuming Kustomize's loader
 restrictions are enough. Kustomize helmCharts must be rendered through
-argocd-local's chart
+drydock's chart
 acquisition and Helm Go renderer into a temporary workspace. Do not enable
 Kustomize's Helm shellout plugin or write generated charts into the Git tree.
 Remote Kustomize HTTP(S) file refs and Git refs are fetched through
-argocd-local's remote resource cache and rewritten into the temporary
+drydock's remote resource cache and rewritten into the temporary
 Kustomize workspace. Supported remote fields include `resources`, `bases`,
 `components`, `patches.path`, `patchesJson6902.path`, non-inline
 `patchesStrategicMerge`, `generators`, `transformers`, `validators`,
@@ -411,7 +411,7 @@ namespace is passed to Helm, and `valuesObject` overrides `values`.
 
 ## Repository Layout
 
-- `cmd/argocd-local/`: binary entrypoint
+- `cmd/drydock/`: binary entrypoint
 - `internal/cli/`: Cobra command tree and exit-code mapping
 - `internal/config/`: Argo settings discovery and merge model
 - `internal/discovery/`: repository scanning for Applications, ApplicationSets, and settings
