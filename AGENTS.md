@@ -7,6 +7,13 @@ analysis. The first product goal is desired-vs-desired PR diffing: render Argo
 CD Applications from a current tree and a baseline tree, then show what desired
 Kubernetes manifests changed.
 
+The product contract is a self-contained Go binary that can render and diff
+Argo CD repositories from checked-out files plus explicit local caches, without
+requiring a Kubernetes cluster, `kubectl`, the `argocd` CLI, Helm/Kustomize
+executables, or any other external renderer. Network-aware source acquisition
+may exist as an explicit cache-population path, but the core render/diff engine
+must remain local, deterministic, and library-backed.
+
 It is not a live-cluster diff tool in the MVP. Do not add Kubernetes API
 dependencies, live Argo CD server calls, or shellout-based render paths unless
 the design spec is updated first.
@@ -335,6 +342,9 @@ If a tool is not installed locally, say so in your final response.
 
 - Default workflows must not require `helm`, `kustomize`, `kubectl`, or
   `argocd` on `PATH`.
+- The render/diff path must stay inside the compiled Go executable and its
+  libraries. Do not require a live cluster, sidecar service, Argo CD server, or
+  host-installed renderer to produce PR diffs.
 - Public Helm chart fetching for Kustomize `helmCharts` and chart-only sources
   is enabled by default for render/diff. Git repository-source fetching is
   gated by `--allow-network` and must not be controlled by Helm chart flags.
