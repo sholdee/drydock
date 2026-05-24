@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	argoappv1 "github.com/argoproj/argo-cd/v3/pkg/apis/application/v1alpha1"
+	"github.com/argoproj/argo-cd/v3/util/glob"
 	"github.com/home-operations/argocd-local/internal/change"
 	"github.com/home-operations/argocd-local/internal/chart"
 	"github.com/home-operations/argocd-local/internal/diagnostic"
@@ -352,10 +353,35 @@ func diffDocuments(build BuildResult) ([]diff.Document, error) {
 				Namespace: id.Namespace,
 				Name:      id.Name,
 			},
-			Body: body,
+			Body:               body,
+			IgnoreJSONPointers: ignoreJSONPointersFor(item.Application, id),
 		})
 	}
 	return docs, nil
+}
+
+func ignoreJSONPointersFor(application argoappv1.Application, id manifest.Identity) []string {
+	var pointers []string
+	for _, rule := range application.Spec.IgnoreDifferences {
+		if !ignoreRuleMatches(rule, id) {
+			continue
+		}
+		pointers = append(pointers, rule.JSONPointers...)
+	}
+	return pointers
+}
+
+func ignoreRuleMatches(rule argoappv1.ResourceIgnoreDifferences, id manifest.Identity) bool {
+	if !glob.Match(rule.Group, id.Group) || !glob.Match(rule.Kind, id.Kind) {
+		return false
+	}
+	if rule.Name != "" && rule.Name != id.Name {
+		return false
+	}
+	if rule.Namespace != "" && rule.Namespace != id.Namespace {
+		return false
+	}
+	return true
 }
 
 func marshalDiffObject(obj map[string]any) (string, error) {

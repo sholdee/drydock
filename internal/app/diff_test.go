@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"fmt"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -30,6 +31,32 @@ func TestOrchestratorDiffAppsReportsManifestChange(t *testing.T) {
 	}
 	if result.Results[0].Change != "modified" {
 		t.Fatalf("Change = %s, want modified", result.Results[0].Change)
+	}
+}
+
+func TestOrchestratorDiffAppsHonorsApplicationJSONPointerIgnores(t *testing.T) {
+	root := t.TempDir()
+	left := filepath.Join(root, "left")
+	right := filepath.Join(root, "right")
+	writeDeploymentAppWithReplicas(t, left, 1, "")
+	writeDeploymentAppWithReplicas(t, right, 2, `  ignoreDifferences:
+    - group: app*
+      kind: Deploy*
+      name: demo
+      jsonPointers:
+        - /spec/replicas
+`)
+
+	result, err := Orchestrator{}.DiffApps(context.Background(), DiffRequest{
+		LeftPath:  left,
+		RightPath: right,
+		Unified:   3,
+	})
+	if err != nil {
+		t.Fatalf("DiffApps() error = %v", err)
+	}
+	if len(result.Results) != 0 {
+		t.Fatalf("len(Results) = %d, want replicas-only diff ignored: %#v", len(result.Results), result.Results)
 	}
 }
 
@@ -477,6 +504,42 @@ spec:
       containers:
         - name: app
           image: `+image+`
+`)
+}
+
+func writeDeploymentAppWithReplicas(t *testing.T, root string, replicas int, ignoreDifferences string) {
+	t.Helper()
+	writeTestFile(t, filepath.Join(root, "apps", "demo.yaml"), `apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: demo
+  namespace: argocd
+spec:
+  source:
+    repoURL: https://github.com/example/repo
+    path: manifests/demo
+    targetRevision: main
+  destination:
+    name: in-cluster
+    namespace: demo
+`+ignoreDifferences)
+	writeTestFile(t, filepath.Join(root, "manifests", "demo", "deployment.yaml"), `apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: demo
+spec:
+  replicas: `+fmt.Sprint(replicas)+`
+  selector:
+    matchLabels:
+      app: demo
+  template:
+    metadata:
+      labels:
+        app: demo
+    spec:
+      containers:
+        - name: app
+          image: example/app:v1
 `)
 }
 

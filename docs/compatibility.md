@@ -39,6 +39,8 @@ Supported in the MVP:
   add/delete diffs when the Application exists on only one side
 - `diff apps` and `diff app` structured JSON and YAML output
 - `--strip-attr KEY` diff normalization for metadata label and annotation keys
+- Application-level `spec.ignoreDifferences[].jsonPointers` for rendered
+  manifest diffs
 - Explicit rendered-resource filters through `--skip-kind`, `--skip-crds`, and
   `--skip-secrets`
 - `diff images` conservative workload image diffs
@@ -81,6 +83,8 @@ Not reproduced offline:
 - Server-side apply field ownership
 - Managed fields ignores
 - Live Argo CD server-side diff
+- Application-level `ignoreDifferences` `jqPathExpressions` and
+  `managedFieldsManagers`
 - Project/RBAC/destination validation
 - Authenticated remote resources
 - Remote Kustomize Git refs, bases, components, patches, generators,

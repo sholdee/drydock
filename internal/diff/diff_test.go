@@ -1,9 +1,12 @@
 package diff
 
 import (
+	"encoding/json"
 	"reflect"
 	"strings"
 	"testing"
+
+	"go.yaml.in/yaml/v4"
 )
 
 func TestRunParentAwareDiff(t *testing.T) {
@@ -414,6 +417,190 @@ func TestRunStripsAttributesAndRedactsSecretValues(t *testing.T) {
 	}
 }
 
+func TestRunIgnoreJSONPointerSuppressesReplicasDiff(t *testing.T) {
+	left := []Document{deploymentDocument("1", nil)}
+	right := []Document{deploymentDocument("2", nil)}
+	left[0].IgnoreJSONPointers = []string{"/spec/replicas"}
+	right[0].IgnoreJSONPointers = []string{"/spec/replicas"}
+
+	results, err := Run(left, right, Options{Unified: 3})
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if len(results) != 0 {
+		t.Fatalf("len(results) = %d, want 0: %#v", len(results), results)
+	}
+}
+
+func TestRunIgnoreJSONPointerMissingPathsAreNoOp(t *testing.T) {
+	left := []Document{configMapDocument("old", []string{"/metadata/annotations/missing", "/data/missing"})}
+	right := []Document{configMapDocument("new", []string{"/metadata/annotations/missing", "/data/missing"})}
+
+	results, err := Run(left, right, Options{Unified: 3})
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if len(results) != 1 {
+		t.Fatalf("len(results) = %d, want original diff preserved", len(results))
+	}
+	for _, want := range []string{"-  value: old", "+  value: new"} {
+		if !strings.Contains(results[0].Diff, want) {
+			t.Fatalf("Diff = %q, want substring %q", results[0].Diff, want)
+		}
+	}
+}
+
+func TestRunIgnoreJSONPointerInvalidPointersReturnClearError(t *testing.T) {
+	tests := []struct {
+		name      string
+		pointer   string
+		wantParts []string
+	}{
+		{
+			name:      "missing leading slash",
+			pointer:   "spec/replicas",
+			wantParts: []string{"JSON pointer", "must be empty or start with /"},
+		},
+		{
+			name:      "invalid array index",
+			pointer:   "/spec/template/spec/containers/web/image",
+			wantParts: []string{"JSON pointer", "array index"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			left := []Document{deploymentDocument("1", []string{tt.pointer})}
+			right := []Document{deploymentDocument("1", nil)}
+
+			_, err := Run(left, right, Options{Unified: 3})
+			if err == nil {
+				t.Fatalf("Run() error = nil, want error")
+			}
+			for _, want := range tt.wantParts {
+				if !strings.Contains(err.Error(), want) {
+					t.Fatalf("Run() error = %q, want substring %q", err, want)
+				}
+			}
+		})
+	}
+}
+
+func TestRunIgnoreJSONPointerUsesUnionForMatchedResources(t *testing.T) {
+	left := []Document{deploymentDocument("1", nil)}
+	right := []Document{deploymentDocument("2", []string{"/spec/replicas"})}
+
+	results, err := Run(left, right, Options{Unified: 3})
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if len(results) != 0 {
+		t.Fatalf("len(results) = %d, want 0: %#v", len(results), results)
+	}
+}
+
+func TestRunIgnoreJSONPointerEmptyPointerRemovesWholeDocument(t *testing.T) {
+	right := []Document{configMapDocument("new", []string{""})}
+
+	results, err := Run(nil, right, Options{Unified: 3})
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if len(results) != 0 {
+		t.Fatalf("len(results) = %d, want whole-document ignore to suppress add diff: %#v", len(results), results)
+	}
+}
+
+func TestNormalizeDocumentBodyIgnoreJSONPointerDecodesEscapes(t *testing.T) {
+	doc := Document{
+		Body: `apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: cfg
+data:
+  a/b~c: remove
+  keep: same
+`,
+		IgnoreJSONPointers: []string{"/data/a~1b~0c"},
+	}
+
+	body, err := normalizeDocumentBody(doc, Options{})
+	if err != nil {
+		t.Fatalf("normalizeDocumentBody() error = %v", err)
+	}
+	if strings.Contains(body, "a/b~c") || strings.Contains(body, "remove") {
+		t.Fatalf("normalized body still contains escaped key target:\n%s", body)
+	}
+	if !strings.Contains(body, "keep: same") {
+		t.Fatalf("normalized body = %q, want kept key", body)
+	}
+}
+
+func TestNormalizeDocumentBodyIgnoreJSONPointerRemovesArrayElement(t *testing.T) {
+	doc := deploymentDocument("1", []string{"/spec/template/spec/containers/0/env/0"})
+
+	body, err := normalizeDocumentBody(doc, Options{})
+	if err != nil {
+		t.Fatalf("normalizeDocumentBody() error = %v", err)
+	}
+	for _, forbidden := range []string{"first", "null"} {
+		if strings.Contains(body, forbidden) {
+			t.Fatalf("normalized body contains %q:\n%s", forbidden, body)
+		}
+	}
+	if !strings.Contains(body, "name: second") {
+		t.Fatalf("normalized body = %q, want remaining array element", body)
+	}
+}
+
+func TestRunIgnoreJSONPointerSecretRedactionHappensAfterRemoval(t *testing.T) {
+	left := []Document{secretDocument("old-password", "old-token", []string{"/data/password"})}
+	right := []Document{secretDocument("new-password", "new-token", []string{"/data/password"})}
+
+	results, err := Run(left, right, Options{Unified: 3})
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if len(results) != 1 {
+		t.Fatalf("len(results) = %d, want 1: %#v", len(results), results)
+	}
+	diff := results[0].Diff
+	for _, forbidden := range []string{"password", "old-password", "new-password", "old-token", "new-token"} {
+		if strings.Contains(diff, forbidden) {
+			t.Fatalf("Diff leaked ignored or secret value %q:\n%s", forbidden, diff)
+		}
+	}
+	for _, want := range []string{"token: <redacted-before>", "token: <redacted-after>"} {
+		if !strings.Contains(diff, want) {
+			t.Fatalf("Diff = %q, want substring %q", diff, want)
+		}
+	}
+}
+
+func TestDocumentIgnoreJSONPointersOmittedFromStructuredOutput(t *testing.T) {
+	doc := configMapDocument("same", []string{"/data/value"})
+
+	jsonBody, err := json.Marshal(doc)
+	if err != nil {
+		t.Fatalf("json.Marshal() error = %v", err)
+	}
+	yamlBody, err := yaml.Marshal(doc)
+	if err != nil {
+		t.Fatalf("yaml.Marshal() error = %v", err)
+	}
+
+	for format, body := range map[string]string{
+		"json": string(jsonBody),
+		"yaml": string(yamlBody),
+	} {
+		for _, forbidden := range []string{"IgnoreJSONPointers", "ignoreJSONPointers", "/data/value"} {
+			if strings.Contains(body, forbidden) {
+				t.Fatalf("%s output includes ignored JSON pointer field or value %q:\n%s", format, forbidden, body)
+			}
+		}
+	}
+}
+
 func TestExtractWorkloadImages(t *testing.T) {
 	docs := []Document{
 		{Body: `
@@ -550,5 +737,71 @@ data:
 	images := ExtractImages([]Document{{Body: body}})
 	if len(images) != 0 {
 		t.Fatalf("ExtractImages() = %#v, want no images", images)
+	}
+}
+
+func configMapDocument(value string, pointers []string) Document {
+	return Document{
+		Parent: testParent(),
+		Resource: Resource{
+			Kind:      "ConfigMap",
+			Namespace: "default",
+			Name:      "cfg",
+		},
+		Body:               "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: cfg\n  namespace: default\ndata:\n  value: " + value + "\n",
+		IgnoreJSONPointers: pointers,
+	}
+}
+
+func deploymentDocument(replicas string, pointers []string) Document {
+	return Document{
+		Parent: testParent(),
+		Resource: Resource{
+			Group:     "apps",
+			Kind:      "Deployment",
+			Namespace: "default",
+			Name:      "web",
+		},
+		Body: `apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: web
+  namespace: default
+spec:
+  replicas: ` + replicas + `
+  template:
+    spec:
+      containers:
+        - name: web
+          image: ghcr.io/example/web:v1
+          env:
+            - name: first
+              value: one
+            - name: second
+              value: two
+`,
+		IgnoreJSONPointers: pointers,
+	}
+}
+
+func secretDocument(password, token string, pointers []string) Document {
+	return Document{
+		Parent: testParent(),
+		Resource: Resource{
+			Kind:      "Secret",
+			Namespace: "default",
+			Name:      "creds",
+		},
+		Body:               "apiVersion: v1\nkind: Secret\nmetadata:\n  name: creds\n  namespace: default\ndata:\n  password: " + password + "\n  token: " + token + "\n",
+		IgnoreJSONPointers: pointers,
+	}
+}
+
+func testParent() Parent {
+	return Parent{
+		Namespace:   "argocd",
+		Name:        "app-a",
+		SourceIndex: 0,
+		SourcePath:  "apps/a",
 	}
 }
