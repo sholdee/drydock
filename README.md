@@ -14,7 +14,8 @@ Application discovery, `get images` for rendered workload image listing,
 conservative workload image diffs. `test apps` and `test app NAME` report
 per-Application render status without printing manifests. `diag --path` reports
 repository diagnostics without printing manifests, and `diag -o json` or
-`diag -o yaml` emits structured diagnostic reports.
+`diag -o yaml` emits structured diagnostic reports. `cache path`, `cache list`,
+`cache prune`, and `cache delete` inspect and maintain local source caches.
 
 This project is early implementation work. See `docs/design.md` for the
 approved MVP design and `docs/roadmap.md` for outstanding work.
@@ -63,6 +64,9 @@ go run ./cmd/drydock diag --path ./testdata/applications/e2e -o json
 go run ./cmd/drydock diag --path ./testdata/applications/e2e \
   -o yaml \
   --cache-events
+go run ./cmd/drydock cache path
+go run ./cmd/drydock cache list -o json
+go run ./cmd/drydock cache prune --older-than 720h --dry-run
 ```
 
 Render and diff commands fetch public Helm charts by default for Kustomize
@@ -95,6 +99,15 @@ Diagnostics include stable codes in structured CLI and public API output.
 `diag --cache-events` can include optional redacted cache acquisition events in
 JSON or YAML reports; cache data and event metadata must stay outside the
 GitOps repository tree.
+
+Cache lifecycle commands are local filesystem operations only. They do not
+render Applications, clone/fetch Git repositories, fetch Helm charts, fetch
+remote Kustomize resources, or use credential flags. New cache entries include
+hidden `.drydock-cache/metadata.json` sidecars with redacted target metadata;
+older hash-only entries are listed as legacy entries when their filesystem
+layout is recognized. Non-dry-run `cache prune` and `cache delete` operations
+require `--yes`, and cache roots are rejected when they resolve inside the
+current or selected GitOps repository tree.
 
 Manifest diffs default to unified diff output and also support `-o json` and
 `-o yaml` for structured `diff apps` and `diff app` results. Use repeatable
@@ -178,8 +191,8 @@ scripts/home-ops-pattern-smoke.sh
   clusterDecisionResource, SCM provider, pull-request, and plugin.
 - No CLI config management plugin execution or shellout plugin adapters.
 - No required shellouts in default workflows.
-- No cache pruning or invalidation command yet. Remote Git, Helm, and
-  Kustomize cache lifecycle commands are tracked as a Phase 1B follow-up.
+- Cache lifecycle commands operate on recognized drydock cache layouts only;
+  they do not reverse-engineer legacy hash keys without metadata.
 - Live server-side diff/apply behavior is not reproduced.
 - Live-only managed-field ownership is not reproduced when ownership data is
   absent from rendered manifests.

@@ -3,7 +3,7 @@
 `drydock` currently wires Application discovery, rendered image listing,
 all-Application and named-Application build, all-Application and
 named-Application render tests, named-Application manifest diffs, image diffs,
-and repository diagnostics.
+repository diagnostics, and local source-cache lifecycle commands.
 
 ## Application Discovery
 
@@ -160,9 +160,52 @@ Network and cache flags:
 repository-source fetching. `--offline` cannot be combined with
 `--allow-network`.
 
-Caches must stay outside Git repository trees. A first-class cache inspection
-command or structured cache event stream is not implemented yet; that remains
-the Phase 1B cache-observability follow-up.
+Caches must stay outside Git repository trees. New cache entries include
+hidden `.drydock-cache/metadata.json` sidecars with redacted target metadata,
+and older hash-only entries are listed as legacy entries when their filesystem
+layout is recognized.
+
+## Cache Lifecycle
+
+Print resolved cache roots:
+
+```bash
+drydock cache path
+```
+
+List recognized Git, chart, and remote Kustomize cache entries:
+
+```bash
+drydock cache list
+drydock cache list --source chart -o json
+```
+
+Report stale entries without deleting them:
+
+```bash
+drydock cache prune --older-than 720h --dry-run
+```
+
+Delete a specific entry or all selected entries:
+
+```bash
+drydock cache delete --source git --key HASH --yes
+drydock cache delete --source remote --all --dry-run
+```
+
+`cache prune` and `cache delete` require `--yes` for non-dry-run deletion.
+Dry-runs never require confirmation and leave cache files in place. Cache
+commands accept `--git-cache-dir`, `--chart-cache-dir`, and
+`--remote-cache-dir`; `--path` is used only for safety checks and defaults to
+the current directory.
+
+Cache lifecycle commands do not render Applications, clone/fetch Git
+repositories, fetch Helm charts, fetch remote Kustomize resources, or read
+credential flags. They operate only on recognized drydock cache entry roots
+and reject cache roots that resolve inside the current working directory, the
+selected `--path`, or any Git repository tree. Corrupt, mismatched, or
+unsupported metadata may hide descriptive metadata, but it must not make an
+unrecognized filesystem child deletable.
 
 ## Go API
 
