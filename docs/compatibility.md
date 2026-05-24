@@ -32,6 +32,8 @@ Supported in the MVP:
 - Public Helm chart fetching by default for render and diff chart dependencies
 - User chart cache entries for acquired charts
 - User remote-resource cache entries for acquired Kustomize resources
+- Optional cache event API/reporting for Git, Helm, and remote Kustomize
+  acquisition, with redacted targets and errors
 - `--repo-map URL=PATH` path-source resolution for local external checkouts
 - `--allow-network` Git clone/fetch for unmapped path sources missing from the
   local tree
@@ -42,6 +44,10 @@ Supported in the MVP:
   reusing explicit Git credentials
 - Explicit Helm OCI registry config path plumbing
 - `diag --path` repository diagnostics through the render validation path
+- Stable diagnostic codes in structured CLI and public API diagnostic output
+- `diag -o json` and `diag -o yaml` structured diagnostic reports
+- `diag --cache-events` optional cache acquisition event reporting in
+  structured diagnostic reports
 - `get apps` structured table, name, JSON, and YAML output with Kubernetes
   label selector filtering on Application metadata labels
 - `get images` structured table, name, JSON, and YAML output using the same
@@ -90,6 +96,12 @@ Supported in the MVP:
   offline project-scoped cluster Secret enforcement
 - Repository credential matching diagnostics based on discovered repository
   Secret metadata only, without reading secret credential fields
+- Benchmarks for repeated local Application rendering and ApplicationSet
+  expansion
+- CI documentation for local, library-backed verification without cluster,
+  server, or renderer CLI dependencies
+- Release and upgrade documentation for static binary/module releases, Argo CD
+  dependency upgrades, cache compatibility, and deferred install Action work
 
 Network and cache behavior:
 
@@ -122,8 +134,8 @@ Network and cache behavior:
   `--remote-password` for HTTP(S) remote Kustomize resource auth.
 - Chart and remote-resource caches must stay outside Git repository trees.
 - `--allow-network` is not the Helm chart-fetch flag.
-- Cache hit/miss inspection is not a first-class command or structured output
-  surface yet; that is tracked as Phase 1B cache observability.
+- Cache event reporting is optional observability data; cache pruning and
+  invalidation commands are still tracked as Phase 1B cache lifecycle work.
 
 Not reproduced offline:
 
@@ -145,6 +157,8 @@ Not reproduced offline:
 - Cluster, clusterDecisionResource, SCM provider, pull-request, and plugin
   ApplicationSet generators
 - Live cluster and Argo CD API sources
+- Parallel rendering and `--parallelism` controls
+- Composite install GitHub Action publishing
 
 The tool pins Argo CD dependencies. Upgrade Argo CD dependencies deliberately
 and update compatibility tests in the same change.

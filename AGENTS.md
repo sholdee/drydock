@@ -75,6 +75,8 @@ Current top-level commands:
   and compare conservative workload container images.
 - `argocd-local diag --path .`: run repository diagnostics without printing
   manifests.
+- `argocd-local diag --path . -o json|yaml`: write a structured diagnostic
+  report to stdout.
 - `argocd-local version`: print version, commit, Go version, and Argo CD module.
 
 Named app arguments accept `NAME` or `NAMESPACE/NAME`; use the
@@ -91,7 +93,7 @@ Current shared flags are `--path`, `--path-orig`, `--selector`/`-l`, `--repo-map
 `--remote-password`, `--remote-bearer-token`, `--changed-only`,
 `--strict-changed-only`, `--strict`, `--exit-code`, `--output`/`-o`,
 `--unified`/`-u`, `--strip-attr`, `--skip-kind`, `--skip-crds`,
-`--skip-secrets`, and `--limit-bytes`.
+`--skip-secrets`, `--limit-bytes`, and `--cache-events`.
 
 Public embedding API lives in `pkg/argocdlocal`. Keep its exported types free
 of `internal/...` package types. Package-level functions should follow CLI
@@ -99,7 +101,9 @@ default network/cache behavior, while `NewClient` accepts public Git, chart,
 and remote-resource acquirer interfaces for deterministic tests and embedding
 without shelling out or requiring network access. Preserve partial render
 results: public `Render` must return successful manifests, diagnostics, and
-per-Application statuses even when one selected Application fails.
+per-Application statuses even when one selected Application fails. Public
+diagnostics include stable `Code` values. Public render/list/diff results may
+include cache events when `RecordCacheEvents` is enabled.
 
 ## Settings Discovery
 
@@ -196,6 +200,10 @@ The MVP currently supports:
   diagnostic.
 - Parent Application-aware desired manifest identity for diffs.
 - Conservative container image extraction.
+- Stable diagnostic codes in CLI JSON/YAML and public API diagnostic output.
+- Structured `diag -o json` and `diag -o yaml` output.
+- Optional redacted cache event reporting for Git, Helm, and remote Kustomize
+  acquisition through `diag --cache-events` and public API results.
 - Structured `get apps` and `get images` output with table, name, JSON, and
   YAML formats.
 - Per-Application `test apps` and `test app` PASS/FAIL/SKIPPED status output
@@ -253,8 +261,10 @@ Do not treat these as supported without an explicit design update:
 - Cluster, clusterDecisionResource, SCM provider, pull-request, and plugin
   ApplicationSet generators.
 - Required default shellouts to `helm`, `kustomize`, `kubectl`, or `argocd`.
-- A first-class cache inspection command or structured cache event stream for
-  Git, Helm, and remote Kustomize acquisition.
+- A first-class cache pruning or invalidation command for Git, Helm, and remote
+  Kustomize acquisition.
+- Parallel rendering and `--parallelism` controls.
+- Composite install GitHub Action publishing.
 
 ## Source Resolution
 
@@ -281,6 +291,10 @@ Remote Kustomize resource network behavior is controlled by `--offline`,
 under the user cache or `--remote-cache-dir`, never inside the Git repository
 tree.
 OCI chart acquisition must use Helm registry Go libraries, not helm pull.
+Cache events are optional reporting data only. They must redact targets and
+errors, must not expose credentials or credential-bearing URLs, and must not
+write cache metadata or generated manifests inside the current or baseline
+repository tree.
 
 Authenticated source handling is explicit and non-interactive. Do not prompt
 for credentials, read ambient Git credential helpers, or read ambient Helm

@@ -11,7 +11,8 @@ Application discovery, `get images` for rendered workload image listing,
 `diff app NAME` for desired-vs-desired manifest diffs, and `diff images` for
 conservative workload image diffs. `test apps` and `test app NAME` report
 per-Application render status without printing manifests. `diag --path` reports
-repository diagnostics without printing manifests.
+repository diagnostics without printing manifests, and `diag -o json` or
+`diag -o yaml` emits structured diagnostic reports.
 
 This project is early implementation work. See
 `docs/superpowers/specs/2026-05-22-argocd-local-design.md` for the approved MVP
@@ -32,6 +33,8 @@ and embedding. Those fakes can satisfy remote source and plugin render
 requests without network access or shelling out. When rendering returns an
 error for one Application, the public result still includes successful
 manifests, diagnostics, and per-Application statuses from the partial build.
+Set `RecordCacheEvents` to include optional redacted cache acquisition events
+for API callers.
 
 ## Quick Start
 
@@ -55,6 +58,10 @@ go run ./cmd/argocd-local diff app argocd/renovate \
   -o json \
   --exit-code=false
 go run ./cmd/argocd-local diag --path ./testdata/applications/e2e
+go run ./cmd/argocd-local diag --path ./testdata/applications/e2e -o json
+go run ./cmd/argocd-local diag --path ./testdata/applications/e2e \
+  -o yaml \
+  --cache-events
 ```
 
 Render and diff commands fetch public Helm charts by default for Kustomize
@@ -82,6 +89,11 @@ read only from an explicit `--registry-config` path. Remote Kustomize HTTP(S)
 resources accept `--remote-bearer-token` or
 `--remote-username`/`--remote-password`; Kustomize Git refs reuse the explicit
 `--git-*` credentials.
+
+Diagnostics include stable codes in structured CLI and public API output.
+`diag --cache-events` can include optional redacted cache acquisition events in
+JSON or YAML reports; cache data and event metadata must stay outside the
+GitOps repository tree.
 
 Manifest diffs default to unified diff output and also support `-o json` and
 `-o yaml` for structured `diff apps` and `diff app` results. Use repeatable
@@ -165,8 +177,8 @@ scripts/home-ops-pattern-smoke.sh
   clusterDecisionResource, SCM provider, pull-request, and plugin.
 - No CLI config management plugin execution or shellout plugin adapters.
 - No required shellouts in default workflows.
-- No cache-inspection command or structured cache event stream yet. Remote Git,
-  Helm, and Kustomize cache observability is tracked as a Phase 1B follow-up.
+- No cache pruning or invalidation command yet. Remote Git, Helm, and
+  Kustomize cache lifecycle commands are tracked as a Phase 1B follow-up.
 - Live server-side diff/apply behavior is not reproduced.
 - Live-only managed-field ownership is not reproduced when ownership data is
   absent from rendered manifests.
@@ -175,7 +187,8 @@ scripts/home-ops-pattern-smoke.sh
   verification, project-scoped cluster Secrets, and full RBAC simulation remain
   deferred.
 
-See `docs/usage.md` for command examples and `docs/compatibility.md` for
-offline Argo CD compatibility notes. See `docs/home-ops-pattern-coverage.md`
-for the portable coverage matrix that models real `home-ops` Application
-patterns.
+See `docs/usage.md` for command examples, `docs/compatibility.md` for offline
+Argo CD compatibility notes, `docs/ci.md` for the local CI contract, and
+`docs/release.md` for release and Argo CD dependency upgrade notes. See
+`docs/home-ops-pattern-coverage.md` for the portable coverage matrix that
+models real `home-ops` Application patterns.
