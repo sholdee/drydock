@@ -5,6 +5,12 @@ all-Application and named-Application build, all-Application and
 named-Application render tests, named-Application manifest diffs, image diffs,
 repository diagnostics, and local source-cache lifecycle commands.
 
+Default commands are offline desired-vs-desired workflows. They do not contact
+a Kubernetes cluster or Argo CD server, do not shell out to `kubectl`, `argocd`,
+Helm CLI, or Kustomize CLI, and do not silently approximate Kubernetes
+defaulting, admission mutation, Argo CD server-side diff, or live-only managed
+fields.
+
 ## Application Discovery
 
 List discovered direct `Application` CRs and supported generated
