@@ -157,13 +157,17 @@ Network and cache flags:
 - `--skip-secrets` omits rendered `Secret` resources.
 
 `--allow-network` is not the Helm chart-fetch flag. It only gates Git
-repository-source fetching. `--offline` cannot be combined with
-`--allow-network`.
+repository-source clone/fetch for path sources. Chart and remote Kustomize
+network behavior is controlled by `--offline`, `--refresh-charts`,
+`--refresh-remotes`, `--chart-cache-dir`, and `--remote-cache-dir`.
+`--offline` cannot be combined with `--allow-network`.
 
 Caches must stay outside Git repository trees. New cache entries include
 hidden `.drydock-cache/metadata.json` sidecars with redacted target metadata,
 and older hash-only entries are listed as legacy entries when their filesystem
-layout is recognized.
+layout is recognized. Offline render/build/diff commands require cache hits
+or local chart availability; populate caches with a prior non-offline render
+using the relevant auth, cache-dir, and refresh flags.
 
 ## Cache Lifecycle
 
@@ -197,15 +201,21 @@ drydock cache delete --source remote --all --dry-run
 Dry-runs never require confirmation and leave cache files in place. Cache
 commands accept `--git-cache-dir`, `--chart-cache-dir`, and
 `--remote-cache-dir`; `--path` is used only for safety checks and defaults to
-the current directory.
+the current directory. Render-time network and credential flags such as
+`--allow-network`, `--offline`, `--refresh-*`, and auth flags are not cache
+lifecycle behavior, except that cache commands resolve the same cache
+directories.
 
 Cache lifecycle commands do not render Applications, clone/fetch Git
 repositories, fetch Helm charts, fetch remote Kustomize resources, or read
 credential flags. They operate only on recognized drydock cache entry roots
 and reject cache roots that resolve inside the current working directory, the
-selected `--path`, or any Git repository tree. Corrupt, mismatched, or
-unsupported metadata may hide descriptive metadata, but it must not make an
-unrecognized filesystem child deletable.
+selected `--path`/`--path-orig` protected roots, any Git repository tree, or
+symlink-resolved equivalents. They never retry failed network or
+authentication acquisitions; rerun the render/build/diff acquisition path with
+the relevant credentials or refresh flags to repopulate a missing or stale
+cache entry. Corrupt, mismatched, or unsupported metadata may hide descriptive
+metadata, but it must not make an unrecognized filesystem child deletable.
 
 ## Go API
 

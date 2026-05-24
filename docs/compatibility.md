@@ -115,7 +115,7 @@ Network and cache behavior:
 - `--repo-map URL=PATH` maps a Git repo URL to a local checkout and takes
   precedence over local fallback and network fetching.
 - `--allow-network` enables Git clone/fetch for unmapped path sources. It does
-  not control Helm chart fetching.
+  not control Helm chart or remote Kustomize fetching.
 - `--git-cache-dir PATH` overrides the default Git repository cache directory.
 - `--refresh-git` fetches cached Git repositories before rendering.
 - `--git-bearer-token` takes precedence over `--git-username` and
@@ -135,17 +135,22 @@ Network and cache behavior:
   directory.
 - `--remote-bearer-token` takes precedence over `--remote-username` and
   `--remote-password` for HTTP(S) remote Kustomize resource auth.
-- Git, chart, and remote-resource caches must stay outside Git repository
-  trees.
+- Git, chart, and remote-resource caches must stay outside the current working
+  directory, selected repository roots, Git repository trees, and
+  symlink-resolved equivalents.
 - `--allow-network` is not the Helm chart-fetch flag.
 - Cache lifecycle commands are local filesystem operations only. They do not
   render Applications, clone/fetch Git repositories, fetch Helm charts, fetch
-  remote Kustomize resources, or read credential flags.
+  remote Kustomize resources, read credential flags, or retry failed
+  network/auth acquisitions.
 - New cache entries include hidden `.drydock-cache/metadata.json` sidecars
   with redacted target metadata. Older hash-only entries are listed as legacy
   entries when their filesystem layout is recognized.
 - Non-dry-run `cache prune` and `cache delete` operations require `--yes`;
   dry-runs do not require confirmation.
+- Offline render/build/diff commands require existing cache hits or local chart
+  availability. Populate caches with a prior non-offline render using the
+  relevant auth, cache-dir, and refresh flags.
 
 Not reproduced offline:
 
