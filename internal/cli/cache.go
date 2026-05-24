@@ -119,6 +119,9 @@ func newCacheCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			if err := validateCacheDeleteFlags(deleteFlags); err != nil {
+				return err
+			}
 			opts, err := cacheOperationOptions(deleteFlags)
 			if err != nil {
 				return err
@@ -204,6 +207,13 @@ func cacheOperationOptions(flags cacheFlags) (cache.OperationOptions, error) {
 		Key:       strings.TrimSpace(flags.key),
 		All:       flags.all,
 	}, nil
+}
+
+func validateCacheDeleteFlags(flags cacheFlags) error {
+	if flags.all && strings.TrimSpace(flags.key) != "" {
+		return fmt.Errorf("--all cannot be combined with --key")
+	}
+	return nil
 }
 
 func cacheRoots(flags cacheFlags) (map[cache.Source]string, error) {
@@ -298,6 +308,7 @@ func renderCacheList(cmd *cobra.Command, output cliformat.Output, entries []cach
 			{Header: "KEY", Key: "key"},
 			{Header: "SIZE", Key: "size"},
 			{Header: "MODIFIED", Key: "modified"},
+			{Header: "LEGACY", Key: "legacy"},
 			{Header: "PATH", Key: "path"},
 		}, cacheEntryRows(entries))
 	case cliformat.OutputJSON:
@@ -338,6 +349,7 @@ func cacheEntryRows(entries []cache.Entry) []map[string]string {
 			"key":      entry.Key,
 			"size":     strconv.FormatInt(entry.SizeBytes, 10),
 			"modified": entry.ModifiedAt.UTC().Format(time.RFC3339),
+			"legacy":   strconv.FormatBool(entry.Legacy),
 			"path":     entry.Path,
 		})
 	}

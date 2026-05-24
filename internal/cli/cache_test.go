@@ -64,6 +64,28 @@ func TestCacheListJSON(t *testing.T) {
 	}
 }
 
+func TestCacheListTableReportsLegacyStatus(t *testing.T) {
+	root := t.TempDir()
+	gitCacheDir := filepath.Join(root, "git")
+	writeCacheEntry(t, filepath.Join(gitCacheDir, cacheCLITestKey, ".git", "HEAD"))
+
+	cmd := NewRootCommand(VersionInfo{})
+	cmd.SetArgs([]string{"cache", "list", "--git-cache-dir", gitCacheDir})
+	var stdout bytes.Buffer
+	cmd.SetOut(&stdout)
+	cmd.SetErr(&stdout)
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+	got := stdout.String()
+	for _, want := range []string{"LEGACY", "true"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("cache list table output missing %q:\n%s", want, got)
+		}
+	}
+}
+
 func TestCachePruneDryRun(t *testing.T) {
 	root := t.TempDir()
 	gitCacheDir := filepath.Join(root, "git")
@@ -207,6 +229,48 @@ func TestCacheDeleteWithYesRemovesEntry(t *testing.T) {
 	}
 	if _, err := os.Stat(entryRoot); !os.IsNotExist(err) {
 		t.Fatalf("cache entry exists after delete: %v", err)
+	}
+}
+
+func TestCacheDeleteRejectsAllWithKeyBeforeMutation(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		extra []string
+	}{
+		{name: "yes", extra: []string{"--yes"}},
+		{name: "dry-run", extra: []string{"--dry-run"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			gitCacheDir := filepath.Join(root, "git")
+			chartCacheDir := filepath.Join(root, "charts")
+			remoteCacheDir := filepath.Join(root, "remotes")
+			entryRoot := filepath.Join(gitCacheDir, cacheCLITestKey)
+			writeCacheEntry(t, filepath.Join(entryRoot, ".git", "HEAD"))
+
+			cmd := NewRootCommand(VersionInfo{})
+			args := []string{
+				"cache", "delete",
+				"--all",
+				"--key", cacheCLITestKey,
+				"--git-cache-dir", gitCacheDir,
+				"--chart-cache-dir", chartCacheDir,
+				"--remote-cache-dir", remoteCacheDir,
+			}
+			args = append(args, tc.extra...)
+			cmd.SetArgs(args)
+			var stdout bytes.Buffer
+			cmd.SetOut(&stdout)
+			cmd.SetErr(&stdout)
+
+			err := cmd.Execute()
+			if err == nil || !strings.Contains(err.Error(), "--all cannot be combined with --key") {
+				t.Fatalf("Execute() error = %v, want mutually exclusive flags error", err)
+			}
+			if _, statErr := os.Stat(entryRoot); statErr != nil {
+				t.Fatalf("cache entry removed after invalid delete flags: %v", statErr)
+			}
+		})
 	}
 }
 
