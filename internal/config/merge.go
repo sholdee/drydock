@@ -9,72 +9,95 @@ import (
 
 func MergeDiscovered(candidates []ArgoSettings) (ArgoSettings, []diagnostic.Diagnostic) {
 	merged := DefaultSettings()
-	var diags []diagnostic.Diagnostic
+	diags := make([]diagnostic.Diagnostic, 0, len(candidates))
 
 	for _, candidate := range candidates {
-		if len(candidate.KustomizeBuildOptions) > 0 {
-			if len(merged.KustomizeBuildOptions) > 0 && !reflect.DeepEqual(valuesOnly(merged.KustomizeBuildOptions), valuesOnly(candidate.KustomizeBuildOptions)) {
-				diags = append(diags, conflictDiagnostic(
-					"conflicting kustomize.buildOptions discovered; pass --argocd-cm or --argocd-values",
-					firstValueProvenance(candidate.KustomizeBuildOptions),
-				))
-			} else {
-				merged.KustomizeBuildOptions = candidate.KustomizeBuildOptions
-			}
-		}
-
-		if hasProvenance(candidate.TrackingMethod) {
-			if hasProvenance(merged.TrackingMethod) && merged.TrackingMethod.Value != candidate.TrackingMethod.Value {
-				diags = append(diags, conflictDiagnostic(
-					fmt.Sprintf("conflicting application.resourceTrackingMethod values %q and %q", merged.TrackingMethod.Value, candidate.TrackingMethod.Value),
-					candidate.TrackingMethod.Provenance,
-				))
-			} else {
-				merged.TrackingMethod = candidate.TrackingMethod
-			}
-		}
-
-		if hasProvenance(candidate.InstanceLabelKey) {
-			if hasProvenance(merged.InstanceLabelKey) && merged.InstanceLabelKey.Value != candidate.InstanceLabelKey.Value {
-				diags = append(diags, conflictDiagnostic(
-					fmt.Sprintf("conflicting application.instanceLabelKey values %q and %q", merged.InstanceLabelKey.Value, candidate.InstanceLabelKey.Value),
-					candidate.InstanceLabelKey.Provenance,
-				))
-			} else {
-				merged.InstanceLabelKey = candidate.InstanceLabelKey
-			}
-		}
-
-		for url, repo := range candidate.HelmRepositories {
-			existing, ok := merged.HelmRepositories[url]
-			if ok && !sameRepositorySettings(existing, repo) {
-				diags = append(diags, conflictDiagnostic(
-					fmt.Sprintf("conflicting repository settings discovered for %q", url),
-					repo.Provenance,
-				))
-				continue
-			}
-			merged.HelmRepositories[url] = repo
-		}
-
+		diags = append(diags, mergeKustomizeBuildOptions(&merged, candidate)...)
+		diags = append(diags, mergeTrackingMethod(&merged, candidate)...)
+		diags = append(diags, mergeInstanceLabelKey(&merged, candidate)...)
+		diags = append(diags, mergeHelmRepositories(&merged, candidate)...)
 		merged.ResourceExclusions = append(merged.ResourceExclusions, candidate.ResourceExclusions...)
 		merged.ResourceInclusions = append(merged.ResourceInclusions, candidate.ResourceInclusions...)
-		for key, customization := range candidate.ResourceCustomizations {
-			existing, ok := merged.ResourceCustomizations[key]
-			if ok && !sameResourceCustomization(existing, customization) {
-				diags = append(diags, conflictDiagnostic(
-					fmt.Sprintf("conflicting resource customization settings discovered for %q", key),
-					customization.Provenance,
-				))
-				continue
-			}
-			if !ok {
-				merged.ResourceCustomizations[key] = customization
-			}
-		}
+		diags = append(diags, mergeResourceCustomizations(&merged, candidate)...)
 	}
 
 	return merged, diags
+}
+
+func mergeKustomizeBuildOptions(merged *ArgoSettings, candidate ArgoSettings) []diagnostic.Diagnostic {
+	if len(candidate.KustomizeBuildOptions) == 0 {
+		return nil
+	}
+	if len(merged.KustomizeBuildOptions) > 0 && !reflect.DeepEqual(valuesOnly(merged.KustomizeBuildOptions), valuesOnly(candidate.KustomizeBuildOptions)) {
+		return []diagnostic.Diagnostic{conflictDiagnostic(
+			"conflicting kustomize.buildOptions discovered; pass --argocd-cm or --argocd-values",
+			firstValueProvenance(candidate.KustomizeBuildOptions),
+		)}
+	}
+	merged.KustomizeBuildOptions = candidate.KustomizeBuildOptions
+	return nil
+}
+
+func mergeTrackingMethod(merged *ArgoSettings, candidate ArgoSettings) []diagnostic.Diagnostic {
+	if !hasProvenance(candidate.TrackingMethod) {
+		return nil
+	}
+	if hasProvenance(merged.TrackingMethod) && merged.TrackingMethod.Value != candidate.TrackingMethod.Value {
+		return []diagnostic.Diagnostic{conflictDiagnostic(
+			fmt.Sprintf("conflicting application.resourceTrackingMethod values %q and %q", merged.TrackingMethod.Value, candidate.TrackingMethod.Value),
+			candidate.TrackingMethod.Provenance,
+		)}
+	}
+	merged.TrackingMethod = candidate.TrackingMethod
+	return nil
+}
+
+func mergeInstanceLabelKey(merged *ArgoSettings, candidate ArgoSettings) []diagnostic.Diagnostic {
+	if !hasProvenance(candidate.InstanceLabelKey) {
+		return nil
+	}
+	if hasProvenance(merged.InstanceLabelKey) && merged.InstanceLabelKey.Value != candidate.InstanceLabelKey.Value {
+		return []diagnostic.Diagnostic{conflictDiagnostic(
+			fmt.Sprintf("conflicting application.instanceLabelKey values %q and %q", merged.InstanceLabelKey.Value, candidate.InstanceLabelKey.Value),
+			candidate.InstanceLabelKey.Provenance,
+		)}
+	}
+	merged.InstanceLabelKey = candidate.InstanceLabelKey
+	return nil
+}
+
+func mergeHelmRepositories(merged *ArgoSettings, candidate ArgoSettings) []diagnostic.Diagnostic {
+	var diags []diagnostic.Diagnostic
+	for url, repo := range candidate.HelmRepositories {
+		existing, ok := merged.HelmRepositories[url]
+		if ok && !sameRepositorySettings(existing, repo) {
+			diags = append(diags, conflictDiagnostic(
+				fmt.Sprintf("conflicting repository settings discovered for %q", url),
+				repo.Provenance,
+			))
+			continue
+		}
+		merged.HelmRepositories[url] = repo
+	}
+	return diags
+}
+
+func mergeResourceCustomizations(merged *ArgoSettings, candidate ArgoSettings) []diagnostic.Diagnostic {
+	var diags []diagnostic.Diagnostic
+	for key, customization := range candidate.ResourceCustomizations {
+		existing, ok := merged.ResourceCustomizations[key]
+		if ok && !sameResourceCustomization(existing, customization) {
+			diags = append(diags, conflictDiagnostic(
+				fmt.Sprintf("conflicting resource customization settings discovered for %q", key),
+				customization.Provenance,
+			))
+			continue
+		}
+		if !ok {
+			merged.ResourceCustomizations[key] = customization
+		}
+	}
+	return diags
 }
 
 func valuesOnly(values []Value[string]) []string {

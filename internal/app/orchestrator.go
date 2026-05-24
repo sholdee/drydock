@@ -179,32 +179,14 @@ func (o Orchestrator) ListApplications(_ context.Context, request BuildRequest) 
 }
 
 func (o Orchestrator) Build(ctx context.Context, request BuildRequest) (BuildResult, error) {
-	var result BuildResult
 	root := request.Path
 	if root == "" {
 		root = "."
 	}
-	if request.Applications != nil {
-		result.Applications = append(result.Applications, request.Applications...)
-		settings, diags, err := loadSettingsFromPath(root)
-		if err != nil {
-			result.Statuses = skippedApplicationStatuses(result.Applications, err)
-			return result, err
-		}
-		result.Settings = settings
-		diags = normalizeDiagnostics(diags, request.Strict, false)
-		result.Diagnostics = append(result.Diagnostics, diags...)
-		if err := diagnosticFailure(diags, request.Strict); err != nil {
-			result.Statuses = skippedApplicationStatuses(result.Applications, err)
-			return result, err
-		}
-	} else {
-		listResult, err := o.ListApplications(ctx, request)
-		if err != nil {
-			listResult.Statuses = skippedApplicationStatuses(listResult.Applications, err)
-			return listResult, err
-		}
-		result = listResult
+
+	result, err := o.prepareBuildResult(ctx, request, root)
+	if err != nil {
+		return result, err
 	}
 	if err := validateBuildNetworkOptions(request); err != nil {
 		result.Statuses = skippedApplicationStatuses(result.Applications, err)
@@ -277,6 +259,33 @@ func (o Orchestrator) Build(ctx context.Context, request BuildRequest) (BuildRes
 	}
 
 	if err := buildStatusFailure(result.Statuses); err != nil {
+		return result, err
+	}
+	return result, nil
+}
+
+func (o Orchestrator) prepareBuildResult(ctx context.Context, request BuildRequest, root string) (BuildResult, error) {
+	if request.Applications == nil {
+		listResult, err := o.ListApplications(ctx, request)
+		if err != nil {
+			listResult.Statuses = skippedApplicationStatuses(listResult.Applications, err)
+			return listResult, err
+		}
+		return listResult, nil
+	}
+
+	var result BuildResult
+	result.Applications = append(result.Applications, request.Applications...)
+	settings, diags, err := loadSettingsFromPath(root)
+	if err != nil {
+		result.Statuses = skippedApplicationStatuses(result.Applications, err)
+		return result, err
+	}
+	result.Settings = settings
+	diags = normalizeDiagnostics(diags, request.Strict, false)
+	result.Diagnostics = append(result.Diagnostics, diags...)
+	if err := diagnosticFailure(diags, request.Strict); err != nil {
+		result.Statuses = skippedApplicationStatuses(result.Applications, err)
 		return result, err
 	}
 	return result, nil
