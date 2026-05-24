@@ -65,11 +65,14 @@ type ClusterDecisionInput struct {
 type SCMRepositoryInput struct {
 	Provider     string            `json:"provider" yaml:"provider"`
 	Organization string            `json:"organization" yaml:"organization"`
+	Project      string            `json:"project" yaml:"project"`
+	Region       string            `json:"region" yaml:"region"`
 	Repository   string            `json:"repository" yaml:"repository"`
 	RepositoryID string            `json:"repositoryID" yaml:"repositoryID"`
 	Branch       string            `json:"branch" yaml:"branch"`
 	SHA          string            `json:"sha" yaml:"sha"`
 	URL          string            `json:"url" yaml:"url"`
+	Tags         map[string]string `json:"tags" yaml:"tags"`
 	Labels       []string          `json:"labels" yaml:"labels"`
 	Paths        []string          `json:"paths" yaml:"paths"`
 	Values       map[string]string `json:"values" yaml:"values"`
@@ -79,6 +82,7 @@ type SCMRepositoryInput struct {
 type PullRequestInput struct {
 	Provider     string            `json:"provider" yaml:"provider"`
 	Organization string            `json:"organization" yaml:"organization"`
+	Project      string            `json:"project" yaml:"project"`
 	Repository   string            `json:"repository" yaml:"repository"`
 	Number       int               `json:"number" yaml:"number"`
 	Title        string            `json:"title" yaml:"title"`
@@ -86,6 +90,7 @@ type PullRequestInput struct {
 	TargetBranch string            `json:"targetBranch" yaml:"targetBranch"`
 	HeadSHA      string            `json:"headSHA" yaml:"headSHA"`
 	Author       string            `json:"author" yaml:"author"`
+	State        string            `json:"state" yaml:"state"`
 	Labels       []string          `json:"labels" yaml:"labels"`
 	Values       map[string]string `json:"values" yaml:"values"`
 	FixturePath  string            `json:"-" yaml:"-"`
@@ -292,16 +297,16 @@ func clusterDecisionIdentity(decision ClusterDecisionInput) string {
 }
 
 func scmRepositoryIdentity(repo SCMRepositoryInput) string {
-	return identity(repo.Provider, repo.Organization, repo.Repository, repo.Branch, repo.URL)
+	return identity(repo.Provider, repo.Organization, repo.Project, repo.Region, repo.Repository, repo.Branch, repo.URL)
 }
 
 func pullRequestIdentity(pr PullRequestInput) string {
-	return identity(pr.Provider, pr.Organization, pr.Repository, strconv.Itoa(pr.Number))
+	return identity(pr.Provider, pr.Organization, pr.Project, pr.Repository, strconv.Itoa(pr.Number))
 }
 
 func lessPullRequest(left, right PullRequestInput) bool {
-	leftPrefix := identity(left.Provider, left.Organization, left.Repository)
-	rightPrefix := identity(right.Provider, right.Organization, right.Repository)
+	leftPrefix := identity(left.Provider, left.Organization, left.Project, left.Repository)
+	rightPrefix := identity(right.Provider, right.Organization, right.Project, right.Repository)
 	if leftPrefix != rightPrefix {
 		return leftPrefix < rightPrefix
 	}
