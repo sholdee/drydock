@@ -665,7 +665,7 @@ func TestBuildParallelismPreservesCacheEventOrder(t *testing.T) {
 	if out.err != nil {
 		t.Fatalf("Build() error = %v", out.err)
 	}
-	var revisions []string
+	revisions := make([]string, 0, len(out.result.CacheEvents))
 	for _, event := range out.result.CacheEvents {
 		revisions = append(revisions, event.Revision)
 	}
@@ -730,7 +730,6 @@ func TestBuildParallelismSerializesSameCacheTargetAcrossConcurrentBuilds(t *test
 		"two": t.TempDir(),
 	}
 	for _, name := range []string{"one", "two"} {
-		name := name
 		root := roots[name]
 		go func() {
 			result, err := (Orchestrator{ChartAcquirer: acquirer}).Build(context.Background(), BuildRequest{
