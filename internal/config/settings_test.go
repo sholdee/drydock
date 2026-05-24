@@ -279,6 +279,124 @@ data:
 	}
 }
 
+func TestLoadConfigMapAdvancedResourceCustomizations(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "argocd-cm.yaml")
+	if err := os.WriteFile(path, []byte(`apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: argocd-cm
+data:
+  resource.ignoreResourceUpdatesEnabled: "false"
+  resource.customizations: |
+    apps/Deployment:
+      ignoreResourceUpdates: |
+        jsonPointers:
+          - /status
+      knownTypeFields:
+        - field: spec.template.spec
+          type: core/v1/PodSpec
+      health.lua: |
+        return { status = "Healthy" }
+      health.lua.useOpenLibs: true
+      actions: |
+        discovery.lua: |
+          return {}
+        definitions:
+          - name: restart
+            action.lua: |
+              return obj
+        mergeBuiltinActions: true
+  resource.customizations.ignoreResourceUpdates.batch_Job: |
+    jqPathExpressions:
+      - .status
+  resource.customizations.knownTypeFields.argoproj.io_Rollout: |
+    - field: spec.template.spec
+      type: core/v1/PodSpec
+  resource.customizations.health.cert-manager.io_Certificate: |
+    return { status = "Progressing" }
+  resource.customizations.useOpenLibs.cert-manager.io_Certificate: "true"
+  resource.customizations.actions.ConfigMap: |
+    definitions:
+      - name: inspect
+        action.lua: |
+          return obj
+`), 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	settings, diags, err := LoadFromConfigMap(path)
+	if err != nil {
+		t.Fatalf("LoadFromConfigMap() error = %v", err)
+	}
+	if len(diags) != 8 {
+		t.Fatalf("len(diags) = %d, want 8 warnings: %#v", len(diags), diags)
+	}
+	if settings.IgnoreResourceUpdatesEnabled.Value {
+		t.Fatalf("IgnoreResourceUpdatesEnabled = true, want false")
+	}
+	deployment := settings.ResourceCustomizations["apps/Deployment"]
+	if len(deployment.IgnoreResourceUpdates.JSONPointers) != 1 || deployment.IgnoreResourceUpdates.JSONPointers[0] != "/status" {
+		t.Fatalf("deployment IgnoreResourceUpdates = %#v", deployment.IgnoreResourceUpdates)
+	}
+	if len(deployment.KnownTypeFields) != 1 || deployment.KnownTypeFields[0].Field != "spec.template.spec" || deployment.KnownTypeFields[0].Type != "core/v1/PodSpec" {
+		t.Fatalf("deployment KnownTypeFields = %#v", deployment.KnownTypeFields)
+	}
+	if !deployment.HasHealthLua || !deployment.HasUseOpenLibs || !deployment.UseOpenLibs {
+		t.Fatalf("deployment health metadata = %#v", deployment)
+	}
+	if !deployment.Actions.HasActions || !deployment.Actions.MergeBuiltinActions || !containsString(deployment.Actions.ActionNames, "restart") {
+		t.Fatalf("deployment actions metadata = %#v", deployment.Actions)
+	}
+	job := settings.ResourceCustomizations["batch/Job"]
+	if len(job.IgnoreResourceUpdates.JQPathExpressions) != 1 || job.IgnoreResourceUpdates.JQPathExpressions[0] != ".status" {
+		t.Fatalf("job IgnoreResourceUpdates = %#v", job.IgnoreResourceUpdates)
+	}
+	rollout := settings.ResourceCustomizations["argoproj.io/Rollout"]
+	if len(rollout.KnownTypeFields) != 1 || rollout.KnownTypeFields[0].Field != "spec.template.spec" {
+		t.Fatalf("rollout KnownTypeFields = %#v", rollout.KnownTypeFields)
+	}
+	cert := settings.ResourceCustomizations["cert-manager.io/Certificate"]
+	if !cert.HasHealthLua || !cert.HasUseOpenLibs || !cert.UseOpenLibs {
+		t.Fatalf("cert health metadata = %#v", cert)
+	}
+	configMap := settings.ResourceCustomizations["ConfigMap"]
+	if !configMap.Actions.HasActions || !containsString(configMap.Actions.ActionNames, "inspect") {
+		t.Fatalf("configMap actions metadata = %#v", configMap.Actions)
+	}
+}
+
+func TestLoadConfigMapUseOpenLibsFalseIsPresent(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "argocd-cm.yaml")
+	if err := os.WriteFile(path, []byte(`apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: argocd-cm
+data:
+  resource.customizations: |
+    apps/Deployment:
+      health.lua.useOpenLibs: false
+  resource.customizations.useOpenLibs.ConfigMap: "false"
+`), 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	settings, diags, err := LoadFromConfigMap(path)
+	if err != nil {
+		t.Fatalf("LoadFromConfigMap() error = %v", err)
+	}
+	if len(diags) != 2 {
+		t.Fatalf("len(diags) = %d, want 2 useOpenLibs warnings: %#v", len(diags), diags)
+	}
+	deployment := settings.ResourceCustomizations["apps/Deployment"]
+	if !deployment.HasUseOpenLibs || deployment.UseOpenLibs {
+		t.Fatalf("deployment useOpenLibs = present %v value %v, want present false", deployment.HasUseOpenLibs, deployment.UseOpenLibs)
+	}
+	configMap := settings.ResourceCustomizations["ConfigMap"]
+	if !configMap.HasUseOpenLibs || configMap.UseOpenLibs {
+		t.Fatalf("configMap useOpenLibs = present %v value %v, want present false", configMap.HasUseOpenLibs, configMap.UseOpenLibs)
+	}
+}
+
 func TestLoadConfigMapInvalidResourceCustomizationSkipsSetting(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "argocd-cm.yaml")
 	if err := os.WriteFile(path, []byte(`apiVersion: v1
@@ -513,4 +631,13 @@ func TestMergeCompareOptionsIgnoresProvenance(t *testing.T) {
 	if merged.CompareOptions.Provenance.Path != "a.yaml" {
 		t.Fatalf("CompareOptions provenance = %#v", merged.CompareOptions.Provenance)
 	}
+}
+
+func containsString(values []string, want string) bool {
+	for _, value := range values {
+		if value == want {
+			return true
+		}
+	}
+	return false
 }

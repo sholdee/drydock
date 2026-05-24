@@ -37,20 +37,39 @@ type OverrideIgnoreDifferences struct {
 	ManagedFieldsManagers []string `json:"managedFieldsManagers,omitempty" yaml:"managedFieldsManagers,omitempty"`
 }
 
+type KnownTypeField struct {
+	Field string `json:"field,omitempty" yaml:"field,omitempty"`
+	Type  string `json:"type,omitempty" yaml:"type,omitempty"`
+}
+
+type ResourceActionsSummary struct {
+	HasActions          bool     `json:"hasActions,omitempty" yaml:"hasActions,omitempty"`
+	HasDiscoveryLua     bool     `json:"hasDiscoveryLua,omitempty" yaml:"hasDiscoveryLua,omitempty"`
+	ActionNames         []string `json:"actionNames,omitempty" yaml:"actionNames,omitempty"`
+	MergeBuiltinActions bool     `json:"mergeBuiltinActions,omitempty" yaml:"mergeBuiltinActions,omitempty"`
+}
+
 type ResourceCustomization struct {
-	IgnoreDifferences OverrideIgnoreDifferences `json:"ignoreDifferences,omitempty" yaml:"ignoreDifferences,omitempty"`
-	Provenance        Provenance                `json:"provenance,omitempty" yaml:"provenance,omitempty"`
+	IgnoreDifferences     OverrideIgnoreDifferences `json:"ignoreDifferences,omitempty" yaml:"ignoreDifferences,omitempty"`
+	IgnoreResourceUpdates OverrideIgnoreDifferences `json:"ignoreResourceUpdates,omitempty" yaml:"ignoreResourceUpdates,omitempty"`
+	KnownTypeFields       []KnownTypeField          `json:"knownTypeFields,omitempty" yaml:"knownTypeFields,omitempty"`
+	HasHealthLua          bool                      `json:"hasHealthLua,omitempty" yaml:"hasHealthLua,omitempty"`
+	HasUseOpenLibs        bool                      `json:"hasUseOpenLibs,omitempty" yaml:"hasUseOpenLibs,omitempty"`
+	UseOpenLibs           bool                      `json:"useOpenLibs,omitempty" yaml:"useOpenLibs,omitempty"`
+	Actions               ResourceActionsSummary    `json:"actions,omitempty" yaml:"actions,omitempty"`
+	Provenance            Provenance                `json:"provenance,omitempty" yaml:"provenance,omitempty"`
 }
 
 type ArgoSettings struct {
-	KustomizeBuildOptions  []Value[string]                  `json:"kustomizeBuildOptions,omitempty" yaml:"kustomizeBuildOptions,omitempty"`
-	HelmRepositories       map[string]RepositorySettings    `json:"helmRepositories,omitempty" yaml:"helmRepositories,omitempty"`
-	TrackingMethod         Value[string]                    `json:"trackingMethod,omitempty" yaml:"trackingMethod,omitempty"`
-	InstanceLabelKey       Value[string]                    `json:"instanceLabelKey,omitempty" yaml:"instanceLabelKey,omitempty"`
-	ResourceExclusions     []ResourceFilterRule             `json:"resourceExclusions,omitempty" yaml:"resourceExclusions,omitempty"`
-	ResourceInclusions     []ResourceFilterRule             `json:"resourceInclusions,omitempty" yaml:"resourceInclusions,omitempty"`
-	CompareOptions         ResourceCompareOptions           `json:"compareOptions,omitempty" yaml:"compareOptions,omitempty"`
-	ResourceCustomizations map[string]ResourceCustomization `json:"resourceCustomizations,omitempty" yaml:"resourceCustomizations,omitempty"`
+	KustomizeBuildOptions        []Value[string]                  `json:"kustomizeBuildOptions,omitempty" yaml:"kustomizeBuildOptions,omitempty"`
+	HelmRepositories             map[string]RepositorySettings    `json:"helmRepositories,omitempty" yaml:"helmRepositories,omitempty"`
+	TrackingMethod               Value[string]                    `json:"trackingMethod,omitempty" yaml:"trackingMethod,omitempty"`
+	InstanceLabelKey             Value[string]                    `json:"instanceLabelKey,omitempty" yaml:"instanceLabelKey,omitempty"`
+	ResourceExclusions           []ResourceFilterRule             `json:"resourceExclusions,omitempty" yaml:"resourceExclusions,omitempty"`
+	ResourceInclusions           []ResourceFilterRule             `json:"resourceInclusions,omitempty" yaml:"resourceInclusions,omitempty"`
+	CompareOptions               ResourceCompareOptions           `json:"compareOptions,omitempty" yaml:"compareOptions,omitempty"`
+	ResourceCustomizations       map[string]ResourceCustomization `json:"resourceCustomizations,omitempty" yaml:"resourceCustomizations,omitempty"`
+	IgnoreResourceUpdatesEnabled Value[bool]                      `json:"ignoreResourceUpdatesEnabled,omitempty" yaml:"ignoreResourceUpdatesEnabled,omitempty"`
 }
 
 func DefaultSettings() ArgoSettings {
@@ -65,6 +84,9 @@ func DefaultSettings() ArgoSettings {
 		},
 		InstanceLabelKey: Value[string]{
 			Value: "app.kubernetes.io/instance",
+		},
+		IgnoreResourceUpdatesEnabled: Value[bool]{
+			Value: true,
 		},
 	}
 }
