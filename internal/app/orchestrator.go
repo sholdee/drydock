@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -13,6 +12,7 @@ import (
 	"time"
 
 	argoappv1 "github.com/argoproj/argo-cd/v3/pkg/apis/application/v1alpha1"
+	"github.com/sholdee/drydock/internal/acquisition"
 	"github.com/sholdee/drydock/internal/appset"
 	"github.com/sholdee/drydock/internal/cacheevent"
 	"github.com/sholdee/drydock/internal/chart"
@@ -311,9 +311,11 @@ func (o Orchestrator) Build(ctx context.Context, request BuildRequest) (BuildRes
 		return result, err
 	}
 	defer os.RemoveAll(snapshotRoot)
-	provider.cacheLocks = processCacheTargetLocks
-	provider.cacheSnapshotRoot = snapshotRoot
-	provider.snapshotCacheReads = true
+	provider.acquisition = acquisition.Session{
+		Locks:              processCacheTargetLocks,
+		SnapshotRoot:       snapshotRoot,
+		SnapshotCacheReads: true,
+	}
 
 	rendered, renderErr := renderApplications(ctx, renderApplicationsRequest{
 		applications:   result.Applications,
@@ -719,12 +721,10 @@ type localProvider struct {
 	remoteResourceGitCredentials remote.GitCredentials
 	pluginTimeout                time.Duration
 	cacheEvents                  *cacheevent.Recorder
-	cacheLocks                   *cacheTargetLocks
-	cacheSnapshotRoot            string
-	snapshotCacheReads           bool
+	acquisition                  acquisition.Session
 }
 
-var processCacheTargetLocks = newCacheTargetLocks()
+var processCacheTargetLocks = acquisition.NewTargetLocks()
 
 func (p localProvider) RenderSource(ctx context.Context, source render.ResolvedSource, opts render.RenderOptions) ([]render.Manifest, []diagnostic.Diagnostic, error) {
 	sourceRoot, err := p.resolveSourceRoot(ctx, source)
@@ -732,12 +732,12 @@ func (p localProvider) RenderSource(ctx context.Context, source render.ResolvedS
 		return nil, nil, err
 	}
 	source.RepoRoot = sourceRoot
-	opts.ChartAcquirer = p.cacheSafeChartAcquirer(p.chartAcquirer)
+	opts.ChartAcquirer = p.acquisition.ChartAcquirer(p.chartAcquirer)
 	opts.ChartCacheDir = p.chartCacheDir
 	opts.OfflineCharts = p.offline
 	opts.RefreshCharts = p.refreshCharts
 	opts.ChartCredentials = p.chartCredentials
-	opts.RemoteResourceAcquirer = p.cacheSafeRemoteAcquirer(p.remoteResourceAcquirer)
+	opts.RemoteResourceAcquirer = p.acquisition.RemoteAcquirer(p.remoteResourceAcquirer)
 	opts.RemoteResourceCacheDir = p.remoteResourceCacheDir
 	opts.OfflineRemoteResources = p.offline
 	opts.RefreshRemoteResources = p.refreshRemoteResources
@@ -881,7 +881,7 @@ func (p localProvider) resolveSourceRoot(ctx context.Context, source render.Reso
 	if acquirer == nil {
 		acquirer = sourcepkg.DefaultGitAcquirer{}
 	}
-	acquirer = p.cacheSafeGitAcquirer(acquirer)
+	acquirer = p.acquisition.GitAcquirer(acquirer)
 	acquired, err := acquirer.Acquire(ctx, sourcepkg.GitRequest{
 		URL:      source.RepoURL,
 		Revision: source.TargetRevision,
@@ -994,290 +994,6 @@ func (p localProvider) recordCacheEvent(event cacheevent.Event) {
 	}
 }
 
-func (p localProvider) cacheSafeGitAcquirer(delegate sourcepkg.GitAcquirer) sourcepkg.GitAcquirer {
-	if delegate == nil {
-		delegate = sourcepkg.DefaultGitAcquirer{}
-	}
-	if p.cacheLocks == nil {
-		return delegate
-	}
-	return cacheSafeGitAcquirer{
-		delegate:     delegate,
-		locks:        p.cacheLocks,
-		snapshotRoot: p.cacheSnapshotRoot,
-		snapshot:     p.snapshotCacheReads,
-	}
-}
-
-func (p localProvider) cacheSafeChartAcquirer(delegate chart.Acquirer) chart.Acquirer {
-	if delegate == nil {
-		delegate = chart.DefaultAcquirer{}
-	}
-	if p.cacheLocks == nil {
-		return delegate
-	}
-	return cacheSafeChartAcquirer{
-		delegate:     delegate,
-		locks:        p.cacheLocks,
-		snapshotRoot: p.cacheSnapshotRoot,
-		snapshot:     p.snapshotCacheReads,
-	}
-}
-
-func (p localProvider) cacheSafeRemoteAcquirer(delegate remote.Acquirer) remote.Acquirer {
-	if delegate == nil {
-		delegate = remote.DefaultAcquirer{}
-	}
-	if p.cacheLocks == nil {
-		return delegate
-	}
-	return cacheSafeRemoteAcquirer{
-		delegate:     delegate,
-		locks:        p.cacheLocks,
-		snapshotRoot: p.cacheSnapshotRoot,
-		snapshot:     p.snapshotCacheReads,
-	}
-}
-
-type cacheTargetLocks struct {
-	mu    sync.Mutex
-	locks map[string]*cacheTargetLock
-}
-
-type cacheTargetLock struct {
-	mu   sync.Mutex
-	refs int
-}
-
-func newCacheTargetLocks() *cacheTargetLocks {
-	return &cacheTargetLocks{locks: map[string]*cacheTargetLock{}}
-}
-
-func (locks *cacheTargetLocks) lock(key string) func() {
-	if locks == nil || key == "" {
-		return func() {}
-	}
-	locks.mu.Lock()
-	targetLock, ok := locks.locks[key]
-	if !ok {
-		targetLock = &cacheTargetLock{}
-		locks.locks[key] = targetLock
-	}
-	targetLock.refs++
-	locks.mu.Unlock()
-	targetLock.mu.Lock()
-	return func() {
-		targetLock.mu.Unlock()
-		locks.mu.Lock()
-		targetLock.refs--
-		if targetLock.refs == 0 {
-			delete(locks.locks, key)
-		}
-		locks.mu.Unlock()
-	}
-}
-
-type cacheSafeGitAcquirer struct {
-	delegate     sourcepkg.GitAcquirer
-	locks        *cacheTargetLocks
-	snapshotRoot string
-	snapshot     bool
-}
-
-func (acquirer cacheSafeGitAcquirer) Acquire(ctx context.Context, request sourcepkg.GitRequest, opts sourcepkg.GitOptions) (sourcepkg.GitResult, error) {
-	key, keyErr := gitCacheLockKey(request, opts)
-	if keyErr != nil {
-		return acquirer.delegate.Acquire(ctx, request, opts)
-	}
-	unlock := acquirer.locks.lock(key)
-	defer unlock()
-
-	result, err := acquirer.delegate.Acquire(ctx, request, opts)
-	if err != nil || !acquirer.snapshot {
-		return result, err
-	}
-	snapshot, err := snapshotCachePath(acquirer.snapshotRoot, "git", result.Path)
-	if err != nil {
-		return sourcepkg.GitResult{}, err
-	}
-	result.Path = snapshot
-	return result, nil
-}
-
-type cacheSafeChartAcquirer struct {
-	delegate     chart.Acquirer
-	locks        *cacheTargetLocks
-	snapshotRoot string
-	snapshot     bool
-}
-
-func (acquirer cacheSafeChartAcquirer) Acquire(ctx context.Context, request chart.Request, opts chart.Options) (chart.Result, error) {
-	key, keyErr := chartCacheLockKey(request, opts)
-	if keyErr != nil {
-		return acquirer.delegate.Acquire(ctx, request, opts)
-	}
-	unlock := acquirer.locks.lock(key)
-	defer unlock()
-
-	result, err := acquirer.delegate.Acquire(ctx, request, opts)
-	if err != nil || !acquirer.snapshot {
-		return result, err
-	}
-	snapshot, err := snapshotCachePath(acquirer.snapshotRoot, "chart", result.ChartDir)
-	if err != nil {
-		return chart.Result{}, err
-	}
-	result.ChartDir = snapshot
-	return result, nil
-}
-
-type cacheSafeRemoteAcquirer struct {
-	delegate     remote.Acquirer
-	locks        *cacheTargetLocks
-	snapshotRoot string
-	snapshot     bool
-}
-
-func (acquirer cacheSafeRemoteAcquirer) Acquire(ctx context.Context, request remote.Request, opts remote.Options) (remote.Result, error) {
-	key, keyErr := remoteCacheLockKey(request, opts)
-	if keyErr != nil {
-		return acquirer.delegate.Acquire(ctx, request, opts)
-	}
-	unlock := acquirer.locks.lock(key)
-	defer unlock()
-
-	result, err := acquirer.delegate.Acquire(ctx, request, opts)
-	if err != nil || !acquirer.snapshot {
-		return result, err
-	}
-	snapshot, err := snapshotCachePath(acquirer.snapshotRoot, "remote", result.Path)
-	if err != nil {
-		return remote.Result{}, err
-	}
-	result.Path = snapshot
-	return result, nil
-}
-
-func gitCacheLockKey(request sourcepkg.GitRequest, opts sourcepkg.GitOptions) (string, error) {
-	cacheDir := opts.CacheDir
-	if cacheDir == "" {
-		var err error
-		cacheDir, err = sourcepkg.DefaultGitCacheDir()
-		if err != nil {
-			return "", err
-		}
-	}
-	return absoluteCacheLockKey("git", filepath.Join(cacheDir, sourcepkg.GitCacheKey(request.URL, request.Revision)))
-}
-
-func chartCacheLockKey(request chart.Request, opts chart.Options) (string, error) {
-	cacheDir := opts.CacheDir
-	if cacheDir == "" {
-		var err error
-		cacheDir, err = chart.DefaultCacheDir()
-		if err != nil {
-			return "", err
-		}
-	}
-	key, err := chart.NewCacheKey(request)
-	if err != nil {
-		return "", err
-	}
-	return absoluteCacheLockKey("chart", filepath.Join(cacheDir, string(request.Kind), key))
-}
-
-func remoteCacheLockKey(request remote.Request, opts remote.Options) (string, error) {
-	cacheDir, err := remote.ResolveCacheDir(opts.CacheDir, opts.ForbiddenRoots)
-	if err != nil {
-		return "", err
-	}
-	key, err := remote.NewCacheKey(request)
-	if err != nil {
-		return "", err
-	}
-	if request.Kind == remote.RequestGitRepo {
-		return absoluteCacheLockKey("remote-git", filepath.Join(cacheDir, key, "repo"))
-	}
-	return absoluteCacheLockKey("remote", remote.CachePath(cacheDir, key))
-}
-
-func absoluteCacheLockKey(prefix, path string) (string, error) {
-	abs, err := filepath.Abs(path)
-	if err != nil {
-		return "", err
-	}
-	return prefix + ":" + filepath.Clean(abs), nil
-}
-
-func snapshotCachePath(root, prefix, sourcePath string) (string, error) {
-	if strings.TrimSpace(root) == "" || strings.TrimSpace(sourcePath) == "" {
-		return sourcePath, nil
-	}
-	snapshotRoot, err := os.MkdirTemp(root, prefix+"-*")
-	if err != nil {
-		return "", err
-	}
-	snapshotPath := filepath.Join(snapshotRoot, filepath.Base(sourcePath))
-	if err := copyCachePath(sourcePath, snapshotPath); err != nil {
-		_ = os.RemoveAll(snapshotRoot)
-		return "", err
-	}
-	return snapshotPath, nil
-}
-
-func copyCachePath(src, dst string) error {
-	info, err := os.Lstat(src)
-	if err != nil {
-		return err
-	}
-	switch {
-	case info.Mode()&os.ModeSymlink != 0:
-		target, err := os.Readlink(src)
-		if err != nil {
-			return err
-		}
-		return os.Symlink(target, dst)
-	case info.IsDir():
-		if err := os.MkdirAll(dst, info.Mode().Perm()); err != nil {
-			return err
-		}
-		entries, err := os.ReadDir(src)
-		if err != nil {
-			return err
-		}
-		for _, entry := range entries {
-			if err := copyCachePath(filepath.Join(src, entry.Name()), filepath.Join(dst, entry.Name())); err != nil {
-				return err
-			}
-		}
-		return nil
-	case info.Mode().IsRegular():
-		if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
-			return err
-		}
-		return copyRegularCacheFile(src, dst, info.Mode().Perm())
-	default:
-		return fmt.Errorf("cache path %q is not a regular file, directory, or symlink", src)
-	}
-}
-
-func copyRegularCacheFile(src, dst string, mode os.FileMode) error {
-	in, err := os.Open(src)
-	if err != nil {
-		return err
-	}
-	defer in.Close()
-	out, err := os.OpenFile(dst, os.O_CREATE|os.O_EXCL|os.O_WRONLY, mode)
-	if err != nil {
-		return err
-	}
-	if _, err := io.Copy(out, in); err != nil {
-		_ = out.Close()
-		return err
-	}
-	return out.Close()
-}
-
 func actionForAcquisition(fromCache bool, network bool, refresh bool) cacheevent.Action {
 	if fromCache {
 		return cacheevent.ActionHit
@@ -1341,7 +1057,7 @@ func (p localProvider) renderChartOnlySource(ctx context.Context, source render.
 	if acquirer == nil {
 		acquirer = chart.DefaultAcquirer{}
 	}
-	acquirer = p.cacheSafeChartAcquirer(acquirer)
+	acquirer = p.acquisition.ChartAcquirer(acquirer)
 
 	acquired, err := acquirer.Acquire(ctx, chart.Request{
 		Repository: source.RepoURL,
