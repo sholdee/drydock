@@ -11,7 +11,7 @@ import (
 
 func BenchmarkOrchestratorBuildManyLocalApplications(b *testing.B) {
 	root := b.TempDir()
-	for i := 0; i < 100; i++ {
+	for i := range 100 {
 		name := fmt.Sprintf("demo-%03d", i)
 		writeBenchmarkApplication(b, root, name)
 		writeBenchmarkFile(b, filepath.Join(root, "manifests", name, "kustomization.yaml"), `apiVersion: kustomize.config.k8s.io/v1beta1
@@ -32,7 +32,7 @@ data:
 
 	b.ReportAllocs()
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for range b.N {
 		result, err := orchestrator.Build(context.Background(), request)
 		if err != nil {
 			b.Fatalf("Build() error = %v", err)
@@ -51,7 +51,7 @@ func BenchmarkOrchestratorExpandApplicationSetList(b *testing.B) {
 
 	b.ReportAllocs()
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for range b.N {
 		result, err := orchestrator.ListApplications(context.Background(), request)
 		if err != nil {
 			b.Fatalf("ListApplications() error = %v", err)
@@ -83,7 +83,7 @@ spec:
 func writeBenchmarkApplicationSetList(tb testing.TB, root string, count int) {
 	tb.Helper()
 	var elements strings.Builder
-	for i := 0; i < count; i++ {
+	for i := range count {
 		name := fmt.Sprintf("appset-%03d", i)
 		fmt.Fprintf(&elements, "          - name: %s\n            namespace: ns-%03d\n", name, i)
 	}
