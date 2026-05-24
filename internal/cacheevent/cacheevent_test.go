@@ -144,6 +144,26 @@ func TestRecorderRedactsBareUserInfoPassword(t *testing.T) {
 	}
 }
 
+func TestRecorderRedactsRawEscapedUserInfoPassword(t *testing.T) {
+	recorder := NewRecorder(true)
+	recorder.Record(Event{
+		Source: SourceGit,
+		Action: ActionError,
+		Target: "https://user:p%40ss@example.test/repo.git",
+		Error:  "authentication failed with p%40ss and p@ss",
+	})
+
+	events := recorder.Events()
+	if len(events) != 1 {
+		t.Fatalf("Events = %#v, want one event", events)
+	}
+	for _, leaked := range []string{"p%40ss", "p@ss"} {
+		if strings.Contains(events[0].Error, leaked) {
+			t.Fatalf("Error = %q leaked userinfo password %q", events[0].Error, leaked)
+		}
+	}
+}
+
 func TestRecorderRedactsStandaloneQueryValues(t *testing.T) {
 	recorder := NewRecorder(true)
 	recorder.Record(Event{

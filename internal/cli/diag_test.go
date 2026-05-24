@@ -172,6 +172,53 @@ metadata:
 	}
 }
 
+func TestDiagJSONOutputOmitsCacheEventsWithoutFlag(t *testing.T) {
+	root := t.TempDir()
+	chartDir := filepath.Join(t.TempDir(), "demo")
+	writeCLITestFile(t, filepath.Join(root, "apps", "chart.yaml"), `apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: charted
+  namespace: argocd
+spec:
+  source:
+    repoURL: https://charts.example.test
+    chart: demo
+    targetRevision: 1.2.3
+  destination:
+    name: in-cluster
+    namespace: default
+`)
+	writeCLITestFile(t, filepath.Join(chartDir, "Chart.yaml"), `apiVersion: v2
+name: demo
+version: 1.2.3
+`)
+	writeCLITestFile(t, filepath.Join(chartDir, "templates", "cm.yaml"), `apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: charted
+`)
+	cmd := NewRootCommandWithDependencies(VersionInfo{}, Dependencies{
+		Orchestrator: app.Orchestrator{ChartAcquirer: &recordingDiagChartAcquirer{chartDir: chartDir, fromCache: true}},
+	})
+	cmd.SetArgs([]string{"diag", "--path", root, "-o", "json"})
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	cmd.SetOut(&stdout)
+	cmd.SetErr(&stderr)
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("Execute() error = %v\nstdout:\n%s\nstderr:\n%s", err, stdout.String(), stderr.String())
+	}
+	var report map[string]any
+	if err := json.Unmarshal(stdout.Bytes(), &report); err != nil {
+		t.Fatalf("json.Unmarshal() error = %v\nstdout:\n%s", err, stdout.String())
+	}
+	if _, ok := report["cacheEvents"]; ok {
+		t.Fatalf("stdout = %s, want no cacheEvents without --cache-events", stdout.String())
+	}
+}
+
 func TestDiagRejectsUnsupportedStructuredOutput(t *testing.T) {
 	cmd := NewRootCommand(VersionInfo{})
 	cmd.SetArgs([]string{"diag", "-o", "name"})
