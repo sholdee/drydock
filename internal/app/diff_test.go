@@ -567,6 +567,62 @@ func TestOrchestratorDiffAppsPreservesDiagnosticsFromBothPartialBuilds(t *testin
 	}
 }
 
+func TestOrchestratorDiffAppsReturnsResultsFromSuccessfulAppsWithPluginFailure(t *testing.T) {
+	root := t.TempDir()
+	left := filepath.Join(root, "left")
+	right := filepath.Join(root, "right")
+	writeSimpleApp(t, left, "old")
+	writeSimpleApp(t, right, "new")
+	writePluginBuildApplication(t, left, "plugin", "cue")
+	writePluginBuildApplication(t, right, "plugin", "cue")
+
+	result, err := (Orchestrator{PluginRenderer: failingInternalPluginRenderer{}}).DiffApps(context.Background(), DiffRequest{
+		LeftPath:    left,
+		RightPath:   right,
+		ChangedOnly: false,
+	})
+	if err == nil {
+		t.Fatal("DiffApps() error = nil, want partial plugin render error")
+	}
+	if len(result.Results) != 1 {
+		t.Fatalf("Results = %d, want successful app diff despite plugin error: %#v", len(result.Results), result.Results)
+	}
+	if result.Results[0].Parent.Name != "demo" || result.Results[0].Change != "modified" {
+		t.Fatalf("Results[0] = %#v, want modified demo diff", result.Results[0])
+	}
+	if !hasDiagnosticCode(result.Diagnostics, diagnostic.CodePluginFailed) {
+		t.Fatalf("Diagnostics = %#v, want plugin.failed", result.Diagnostics)
+	}
+}
+
+func TestOrchestratorDiffImagesReturnsResultsFromSuccessfulAppsWithPluginFailure(t *testing.T) {
+	root := t.TempDir()
+	left := filepath.Join(root, "left")
+	right := filepath.Join(root, "right")
+	writeImageApp(t, left, "example/app:v1")
+	writeImageApp(t, right, "example/app:v2")
+	writePluginBuildApplication(t, left, "plugin", "cue")
+	writePluginBuildApplication(t, right, "plugin", "cue")
+
+	result, err := (Orchestrator{PluginRenderer: failingInternalPluginRenderer{}}).DiffImages(context.Background(), DiffRequest{
+		LeftPath:    left,
+		RightPath:   right,
+		ChangedOnly: false,
+	})
+	if err == nil {
+		t.Fatal("DiffImages() error = nil, want partial plugin render error")
+	}
+	if !containsString(result.Removed, "example/app:v1") {
+		t.Fatalf("Removed = %#v, want example/app:v1 despite plugin error", result.Removed)
+	}
+	if !containsString(result.Added, "example/app:v2") {
+		t.Fatalf("Added = %#v, want example/app:v2 despite plugin error", result.Added)
+	}
+	if !hasDiagnosticCode(result.Diagnostics, diagnostic.CodePluginFailed) {
+		t.Fatalf("Diagnostics = %#v, want plugin.failed", result.Diagnostics)
+	}
+}
+
 func TestOrchestratorDiffAppsChangedOnlyFallsBackOnUnownedCurrentPath(t *testing.T) {
 	root := t.TempDir()
 	left := filepath.Join(root, "left")
@@ -985,6 +1041,15 @@ metadata:
         - name: app
           image: example/app:v1
 `)
+}
+
+func containsString(items []string, want string) bool {
+	for _, item := range items {
+		if item == want {
+			return true
+		}
+	}
+	return false
 }
 
 func writeDeploymentAppWithSidecarImage(t *testing.T, root, sidecarImage, ignoreDifferences string) {

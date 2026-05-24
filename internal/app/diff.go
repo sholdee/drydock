@@ -80,13 +80,14 @@ func (o Orchestrator) DiffApps(ctx context.Context, request DiffRequest) (DiffRe
 
 	leftBuild, rightBuild, diagnostics, err := o.buildDiffSides(ctx, request)
 	cacheEvents := cacheEventsFromBuilds(leftBuild, rightBuild)
-	if err != nil {
+	buildErr := err
+	if buildErr != nil && !hasRenderedDiffInput(leftBuild, rightBuild) {
 		return DiffResult{Diagnostics: diagnostics, CacheEvents: cacheEvents}, err
 	}
 
-	results, err := diffBuildResults(leftBuild, rightBuild, diff.Options{Unified: request.Unified, StripAttrs: request.StripAttrs})
-	if err != nil {
-		return DiffResult{Diagnostics: diagnostics, CacheEvents: cacheEvents}, err
+	results, diffErr := diffBuildResults(leftBuild, rightBuild, diff.Options{Unified: request.Unified, StripAttrs: request.StripAttrs})
+	if err := errors.Join(buildErr, diffErr); err != nil {
+		return DiffResult{Results: results, Diagnostics: diagnostics, CacheEvents: cacheEvents}, err
 	}
 	return DiffResult{Results: results, Diagnostics: diagnostics, CacheEvents: cacheEvents}, nil
 }
@@ -160,7 +161,8 @@ func (o Orchestrator) DiffImages(ctx context.Context, request DiffRequest) (Imag
 
 	leftBuild, rightBuild, diagnostics, err := o.buildDiffSides(ctx, request)
 	cacheEvents := cacheEventsFromBuilds(leftBuild, rightBuild)
-	if err != nil {
+	buildErr := err
+	if buildErr != nil && !hasRenderedDiffInput(leftBuild, rightBuild) {
 		return ImageDiffResult{Diagnostics: diagnostics, CacheEvents: cacheEvents}, err
 	}
 
@@ -180,7 +182,7 @@ func (o Orchestrator) DiffImages(ctx context.Context, request DiffRequest) (Imag
 		Unchanged:   unchanged,
 		Diagnostics: diagnostics,
 		CacheEvents: cacheEvents,
-	}, nil
+	}, buildErr
 }
 
 func cacheEventsFromBuilds(leftBuild, rightBuild BuildResult) []cacheevent.Event {
@@ -281,6 +283,10 @@ func diffBuildResults(leftBuild, rightBuild BuildResult, opts diff.Options) ([]d
 		return nil, err
 	}
 	return diff.Run(leftDocs, rightDocs, opts)
+}
+
+func hasRenderedDiffInput(leftBuild, rightBuild BuildResult) bool {
+	return len(leftBuild.ApplicationManifests) > 0 || len(rightBuild.ApplicationManifests) > 0
 }
 
 func (o Orchestrator) buildDiffSides(ctx context.Context, request DiffRequest) (BuildResult, BuildResult, []diagnostic.Diagnostic, error) {

@@ -687,6 +687,9 @@ func TestRenderNamedPluginRegistryReportsMissingRenderer(t *testing.T) {
 	if !hasDiagnosticCode(result.Diagnostics, "plugin.unsupported") {
 		t.Fatalf("Diagnostics = %#v, want plugin.unsupported", result.Diagnostics)
 	}
+	if hasDiagnosticCode(result.Diagnostics, "plugin.failed") {
+		t.Fatalf("Diagnostics = %#v, did not want plugin.failed for registry miss", result.Diagnostics)
+	}
 	if !hasStatus(result.Statuses, "plugin-app", "FAIL") {
 		t.Fatalf("Statuses = %#v, want plugin-app FAIL", result.Statuses)
 	}
@@ -752,6 +755,62 @@ func TestDiffImagesPluginRendererHonorsConfiguredTimeout(t *testing.T) {
 	})
 	if err == nil {
 		t.Fatal("DiffImages() error = nil, want plugin timeout")
+	}
+	if !hasDiagnosticCode(result.Diagnostics, "plugin.failed") {
+		t.Fatalf("Diagnostics = %#v, want plugin.failed", result.Diagnostics)
+	}
+}
+
+func TestDiffApplicationsReturnsResultsFromSuccessfulAppsWithPluginFailure(t *testing.T) {
+	left := t.TempDir()
+	right := t.TempDir()
+	writeAPIAppTree(t, left, "demo", configMapBody("demo", "old"))
+	writeAPIAppTree(t, right, "demo", configMapBody("demo", "new"))
+	writeAPIPluginAppTree(t, left)
+	writeAPIPluginAppTree(t, right)
+
+	result, err := DiffApplications(context.Background(), Config{
+		PathOrig:       left,
+		Path:           right,
+		ChangedOnly:    boolPtr(false),
+		PluginRenderer: failingPublicPluginRenderer{},
+	})
+	if err == nil {
+		t.Fatal("DiffApplications() error = nil, want partial plugin render error")
+	}
+	if len(result.Results) != 1 {
+		t.Fatalf("Results = %d, want successful app diff despite plugin error: %#v", len(result.Results), result.Results)
+	}
+	if result.Results[0].Parent.Name != "demo" || result.Results[0].Change != "modified" {
+		t.Fatalf("Results[0] = %#v, want modified demo diff", result.Results[0])
+	}
+	if !hasDiagnosticCode(result.Diagnostics, "plugin.failed") {
+		t.Fatalf("Diagnostics = %#v, want plugin.failed", result.Diagnostics)
+	}
+}
+
+func TestDiffImagesReturnsResultsFromSuccessfulAppsWithPluginFailure(t *testing.T) {
+	left := t.TempDir()
+	right := t.TempDir()
+	writeAPIAppTree(t, left, "demo", deploymentBody("demo", "repo/demo:v1"))
+	writeAPIAppTree(t, right, "demo", deploymentBody("demo", "repo/demo:v2"))
+	writeAPIPluginAppTree(t, left)
+	writeAPIPluginAppTree(t, right)
+
+	result, err := DiffImages(context.Background(), Config{
+		PathOrig:       left,
+		Path:           right,
+		ChangedOnly:    boolPtr(false),
+		PluginRenderer: failingPublicPluginRenderer{},
+	})
+	if err == nil {
+		t.Fatal("DiffImages() error = nil, want partial plugin render error")
+	}
+	if !containsString(result.Removed, "repo/demo:v1") {
+		t.Fatalf("Removed = %#v, want repo/demo:v1 despite plugin error", result.Removed)
+	}
+	if !containsString(result.Added, "repo/demo:v2") {
+		t.Fatalf("Added = %#v, want repo/demo:v2 despite plugin error", result.Added)
 	}
 	if !hasDiagnosticCode(result.Diagnostics, "plugin.failed") {
 		t.Fatalf("Diagnostics = %#v, want plugin.failed", result.Diagnostics)
@@ -983,6 +1042,17 @@ type blockingPublicPluginRenderer struct{}
 func (blockingPublicPluginRenderer) RenderPlugin(ctx context.Context, _ PluginRequest) (PluginResult, error) {
 	<-ctx.Done()
 	return PluginResult{}, ctx.Err()
+}
+
+type failingPublicPluginRenderer struct{}
+
+func (failingPublicPluginRenderer) RenderPlugin(_ context.Context, _ PluginRequest) (PluginResult, error) {
+	return PluginResult{Diagnostics: []Diagnostic{{
+		Code:     "plugin.custom",
+		Severity: "error",
+		Category: "plugin",
+		Message:  "renderer supplied diagnostic",
+	}}}, errors.New("renderer failed")
 }
 
 func publicPluginParamsByName(params []PluginParameter) map[string]PluginParameter {
