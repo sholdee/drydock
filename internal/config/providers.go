@@ -313,14 +313,6 @@ func parseOverrideIgnoreDifferences(raw string, provenance diagnostic.Provenance
 	}
 
 	var diags []diagnostic.Diagnostic
-	if len(ignore.JQPathExpressions) > 0 {
-		diags = append(diags, diagnostic.Diagnostic{
-			Severity:   diagnostic.SeverityWarning,
-			Category:   "settings",
-			Message:    "resource customization jqPathExpressions are discovered but not enforced",
-			Provenance: provenance,
-		})
-	}
 	if len(ignore.ManagedFieldsManagers) > 0 {
 		diags = append(diags, diagnostic.Diagnostic{
 			Severity:   diagnostic.SeverityWarning,

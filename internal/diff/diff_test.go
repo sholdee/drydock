@@ -420,8 +420,8 @@ func TestRunStripsAttributesAndRedactsSecretValues(t *testing.T) {
 func TestRunIgnoreJSONPointerSuppressesReplicasDiff(t *testing.T) {
 	left := []Document{deploymentDocument("1", nil)}
 	right := []Document{deploymentDocument("2", nil)}
-	left[0].IgnoreJSONPointers = []string{"/spec/replicas"}
-	right[0].IgnoreJSONPointers = []string{"/spec/replicas"}
+	left[0].Normalization.JSONPointers = []string{"/spec/replicas"}
+	right[0].Normalization.JSONPointers = []string{"/spec/replicas"}
 
 	results, err := Run(left, right, Options{Unified: 3})
 	if err != nil {
@@ -521,7 +521,7 @@ data:
   a/b~c: remove
   keep: same
 `,
-		IgnoreJSONPointers: []string{"/data/a~1b~0c"},
+		Normalization: Normalization{JSONPointers: []string{"/data/a~1b~0c"}},
 	}
 
 	body, err := normalizeDocumentBody(doc, Options{})
@@ -577,7 +577,7 @@ func TestRunIgnoreJSONPointerSecretRedactionHappensAfterRemoval(t *testing.T) {
 	}
 }
 
-func TestDocumentIgnoreJSONPointersOmittedFromStructuredOutput(t *testing.T) {
+func TestDocumentNormalizationOmittedFromStructuredOutput(t *testing.T) {
 	doc := configMapDocument("same", []string{"/data/value"})
 
 	jsonBody, err := json.Marshal(doc)
@@ -593,9 +593,9 @@ func TestDocumentIgnoreJSONPointersOmittedFromStructuredOutput(t *testing.T) {
 		"json": string(jsonBody),
 		"yaml": string(yamlBody),
 	} {
-		for _, forbidden := range []string{"IgnoreJSONPointers", "ignoreJSONPointers", "/data/value"} {
+		for _, forbidden := range []string{"Normalization", "normalization", "/data/value"} {
 			if strings.Contains(body, forbidden) {
-				t.Fatalf("%s output includes ignored JSON pointer field or value %q:\n%s", format, forbidden, body)
+				t.Fatalf("%s output includes normalization field or value %q:\n%s", format, forbidden, body)
 			}
 		}
 	}
@@ -748,8 +748,8 @@ func configMapDocument(value string, pointers []string) Document {
 			Namespace: "default",
 			Name:      "cfg",
 		},
-		Body:               "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: cfg\n  namespace: default\ndata:\n  value: " + value + "\n",
-		IgnoreJSONPointers: pointers,
+		Body:          "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: cfg\n  namespace: default\ndata:\n  value: " + value + "\n",
+		Normalization: Normalization{JSONPointers: pointers},
 	}
 }
 
@@ -780,7 +780,7 @@ spec:
             - name: second
               value: two
 `,
-		IgnoreJSONPointers: pointers,
+		Normalization: Normalization{JSONPointers: pointers},
 	}
 }
 
@@ -792,8 +792,8 @@ func secretDocument(password, token string, pointers []string) Document {
 			Namespace: "default",
 			Name:      "creds",
 		},
-		Body:               "apiVersion: v1\nkind: Secret\nmetadata:\n  name: creds\n  namespace: default\ndata:\n  password: " + password + "\n  token: " + token + "\n",
-		IgnoreJSONPointers: pointers,
+		Body:          "apiVersion: v1\nkind: Secret\nmetadata:\n  name: creds\n  namespace: default\ndata:\n  password: " + password + "\n  token: " + token + "\n",
+		Normalization: Normalization{JSONPointers: pointers},
 	}
 }
 
