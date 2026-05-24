@@ -299,6 +299,118 @@ func TestLoadConfigMapAdvancedResourceCustomizationsSplitSections(t *testing.T) 
 	assertSplitAdvancedResourceCustomizations(t, settings)
 }
 
+func TestLoadConfigMapHealthLuaReportsHashWithoutBody(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "argocd-cm.yaml")
+	if err := os.WriteFile(path, []byte(`apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: argocd-cm
+data:
+  resource.customizations: |
+    apps/Deployment:
+      health.lua: |
+        return { status = "Healthy", message = "SUPER_SECRET_HEALTH_TOKEN" }
+`), 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	settings, diags, err := LoadFromConfigMap(path)
+	if err != nil {
+		t.Fatalf("LoadFromConfigMap() error = %v", err)
+	}
+	if !hasDiagnosticCode(diags, "settings.metadata-only") {
+		t.Fatalf("diagnostics = %#v, want settings.metadata-only", diags)
+	}
+	customization := settings.ResourceCustomizations["apps/Deployment"]
+	if !customization.HasHealthLua {
+		t.Fatalf("HasHealthLua = false, want true")
+	}
+	const wantHash = "5891509de2d4c98e33ce3c17387504bc74033b0bfc02f2a307ccf58a8e826a9b"
+	if customization.HealthLuaSHA256 != wantHash {
+		t.Fatalf("HealthLuaSHA256 = %q, want %q", customization.HealthLuaSHA256, wantHash)
+	}
+	assertJSONDoesNotContain(t, settings, "SUPER_SECRET_HEALTH_TOKEN")
+}
+
+func TestLoadConfigMapActionsReportNamesAndHashesWithoutBodies(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "argocd-cm.yaml")
+	if err := os.WriteFile(path, []byte(`apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: argocd-cm
+data:
+  resource.customizations.actions.apps_Deployment: |
+    discovery.lua: |
+      return { { name = "restart" } }
+    definitions:
+      - name: restart
+        action.lua: |
+          return obj
+      - name: restart
+        action.lua: |
+          obj.metadata.annotations = { token = "SUPER_SECRET_ACTION_TOKEN" }
+          return obj
+`), 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	settings, diags, err := LoadFromConfigMap(path)
+	if err != nil {
+		t.Fatalf("LoadFromConfigMap() error = %v", err)
+	}
+	if !hasDiagnosticCode(diags, "settings.metadata-only") {
+		t.Fatalf("diagnostics = %#v, want settings.metadata-only", diags)
+	}
+	actions := settings.ResourceCustomizations["apps/Deployment"].Actions
+	if !actions.HasActions || !actions.HasDiscoveryLua {
+		t.Fatalf("actions metadata = %#v, want actions and discovery Lua", actions)
+	}
+	const wantDiscoveryHash = "0596745fe0c0878b1a95592a3bbdcb73f103017dc971de03e911b4074303afbd"
+	if actions.DiscoveryLuaSHA256 != wantDiscoveryHash {
+		t.Fatalf("DiscoveryLuaSHA256 = %q, want %q", actions.DiscoveryLuaSHA256, wantDiscoveryHash)
+	}
+	wantActionHashes := []ResourceActionLuaHash{
+		{Name: "restart", Index: 0, SHA256: "70c6e5307755641aca90a429eeaaff5903ab4cfe1ca79866be48c56ea62cc721"},
+		{Name: "restart", Index: 1, SHA256: "e5b0bdd6e3d65ea212b780b9c00247603f5da7a2b90cb024311732875322b51e"},
+	}
+	if len(actions.ActionLuaSHA256) != len(wantActionHashes) {
+		t.Fatalf("ActionLuaSHA256 = %#v, want %#v", actions.ActionLuaSHA256, wantActionHashes)
+	}
+	for i, want := range wantActionHashes {
+		if actions.ActionLuaSHA256[i] != want {
+			t.Fatalf("ActionLuaSHA256[%d] = %#v, want %#v", i, actions.ActionLuaSHA256[i], want)
+		}
+	}
+	assertJSONDoesNotContain(t, settings, "SUPER_SECRET_ACTION_TOKEN")
+}
+
+func TestLoadConfigMapIgnoreResourceUpdatesMetadataOnlyDiagnostic(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "argocd-cm.yaml")
+	if err := os.WriteFile(path, []byte(`apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: argocd-cm
+data:
+  resource.customizations.ignoreResourceUpdates.apps_Deployment: |
+    jsonPointers:
+      - /status
+`), 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	settings, diags, err := LoadFromConfigMap(path)
+	if err != nil {
+		t.Fatalf("LoadFromConfigMap() error = %v", err)
+	}
+	if !hasDiagnosticCode(diags, "settings.metadata-only") {
+		t.Fatalf("diagnostics = %#v, want settings.metadata-only", diags)
+	}
+	customization := settings.ResourceCustomizations["apps/Deployment"]
+	if len(customization.IgnoreResourceUpdates.JSONPointers) != 1 || customization.IgnoreResourceUpdates.JSONPointers[0] != "/status" {
+		t.Fatalf("IgnoreResourceUpdates = %#v, want /status", customization.IgnoreResourceUpdates)
+	}
+}
+
 func loadAdvancedResourceCustomizations(t *testing.T) (ArgoSettings, []diagnostic.Diagnostic) {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "argocd-cm.yaml")
@@ -871,4 +983,24 @@ func hasDiagnosticMessage(diags []diagnostic.Diagnostic, fragment string) bool {
 		}
 	}
 	return false
+}
+
+func hasDiagnosticCode(diags []diagnostic.Diagnostic, code string) bool {
+	for _, diag := range diagnostic.WithStableCodes(diags) {
+		if diag.Code == code {
+			return true
+		}
+	}
+	return false
+}
+
+func assertJSONDoesNotContain(t *testing.T, value any, forbidden string) {
+	t.Helper()
+	data, err := json.Marshal(value)
+	if err != nil {
+		t.Fatalf("Marshal() error = %v", err)
+	}
+	if strings.Contains(string(data), forbidden) {
+		t.Fatalf("JSON output contains %q: %s", forbidden, data)
+	}
 }
