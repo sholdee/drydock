@@ -49,6 +49,7 @@ type commonFlags struct {
 	stripAttrs        []string
 	limitBytes        int
 	cacheEvents       bool
+	parallelism       int
 }
 
 func defaultCommonFlags() commonFlags {
@@ -59,6 +60,7 @@ func defaultCommonFlags() commonFlags {
 		output:      "diff",
 		unified:     3,
 		limitBytes:  65536,
+		parallelism: 1,
 	}
 }
 
@@ -101,6 +103,7 @@ func bindCommonFlags(cmd *cobra.Command, flags *commonFlags) {
 	cmd.Flags().StringArrayVar(&flags.stripAttrs, "strip-attr", flags.stripAttrs, "metadata label or annotation key to strip before diffing")
 	cmd.Flags().IntVar(&flags.limitBytes, "limit-bytes", flags.limitBytes, "maximum bytes of rendered output per object")
 	cmd.Flags().BoolVar(&flags.cacheEvents, "cache-events", flags.cacheEvents, "include cache acquisition events in structured diagnostic output")
+	cmd.Flags().IntVar(&flags.parallelism, "parallelism", flags.parallelism, "maximum number of Applications to render concurrently")
 }
 
 func (flags commonFlags) gitCredentials() source.GitCredentials {

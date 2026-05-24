@@ -108,7 +108,7 @@ Current shared flags are `--path`, `--path-orig`, `--selector`/`-l`, `--repo-map
 `--strict-changed-only`, `--strict`, `--exit-code`, `--output`/`-o`,
 `--unified`/`-u`, `--strip-attr`, `--skip-kind`, `--skip-crds`,
 `--skip-secrets`, `--appset-provider-fixture`, `--limit-bytes`, and
-`--cache-events`.
+`--cache-events`, and `--parallelism`.
 
 Cache lifecycle commands additionally use `--source`, `--older-than`,
 `--dry-run`, `--yes`, `--key`, and `--all`. They do not render, fetch, clone,
@@ -322,7 +322,6 @@ Do not treat these as supported without an explicit design update:
   provider, or plugin-service access for ApplicationSet provider generators.
   Use explicit local fixtures instead.
 - Required default shellouts to `helm`, `kustomize`, `kubectl`, or `argocd`.
-- CLI `--parallelism` controls.
 - Composite install GitHub Action publishing.
 
 ## Source Resolution
