@@ -12,6 +12,7 @@ const (
 const (
 	CodePluginUnsupported = "plugin.unsupported"
 	CodePluginFailed      = "plugin.failed"
+	CodePluginUnspecified = "plugin.unspecified"
 )
 
 type Provenance struct {
@@ -102,7 +103,7 @@ func StableCode(diag Diagnostic) string {
 	case "repository":
 		return repositoryCode(diag.Message)
 	case "plugin":
-		return CodePluginUnsupported
+		return CodePluginUnspecified
 	case "render":
 		return "render.failed"
 	case "repeated-resource":

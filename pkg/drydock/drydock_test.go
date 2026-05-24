@@ -777,6 +777,67 @@ func TestRenderPluginRendererPreservesCallerCancellation(t *testing.T) {
 	}
 }
 
+func TestInjectedPluginRendererDiagnosticsKeepStableCodes(t *testing.T) {
+	root := t.TempDir()
+	writeAPIPluginAppTree(t, root)
+
+	renderer := publicPluginRendererFunc(func(_ context.Context, _ PluginRequest) (PluginResult, error) {
+		return PluginResult{
+			Manifests: publicPluginConfigMapResult().Manifests,
+			Diagnostics: []Diagnostic{{
+				Severity: "warning",
+				Category: "plugin",
+				Message:  "plugin emitted a warning",
+			}},
+		}, nil
+	})
+
+	result, err := Render(context.Background(), Config{Path: root, PluginRenderer: renderer})
+	if err != nil {
+		t.Fatalf("Render() error = %v", err)
+	}
+	if !hasDiagnosticCode(result.Diagnostics, "plugin.unspecified") {
+		t.Fatalf("Diagnostics = %#v, want stable neutral plugin diagnostic code", result.Diagnostics)
+	}
+}
+
+func TestInjectedPluginRendererErrorPreservesDiagnostics(t *testing.T) {
+	root := t.TempDir()
+	writeAPIAppTree(t, root, "ok", configMapBody("ok", "v1"))
+	writeAPIPluginAppTree(t, root)
+
+	renderer := publicPluginRendererFunc(func(_ context.Context, _ PluginRequest) (PluginResult, error) {
+		return PluginResult{Diagnostics: []Diagnostic{{
+			Code:     "plugin.custom",
+			Severity: "error",
+			Category: "plugin",
+			Message:  "renderer supplied diagnostic",
+		}}}, errors.New("renderer failed")
+	})
+
+	result, err := Render(context.Background(), Config{Path: root, PluginRenderer: renderer})
+	if err == nil {
+		t.Fatal("Render() error = nil, want plugin renderer error")
+	}
+	if len(result.Manifests) != 1 {
+		t.Fatalf("Manifests = %d, want successful non-plugin manifest", len(result.Manifests))
+	}
+	if !hasStatus(result.Statuses, "ok", "PASS") || !hasStatus(result.Statuses, "plugin-app", "FAIL") {
+		t.Fatalf("Statuses = %#v, want ok PASS and plugin-app FAIL", result.Statuses)
+	}
+	if !hasDiagnosticCode(result.Diagnostics, "plugin.custom") {
+		t.Fatalf("Diagnostics = %#v, want renderer diagnostic", result.Diagnostics)
+	}
+	if !hasDiagnosticCode(result.Diagnostics, "plugin.failed") {
+		t.Fatalf("Diagnostics = %#v, want plugin.failed", result.Diagnostics)
+	}
+	for _, diag := range result.Diagnostics {
+		if strings.Contains(diag.Message, "FEATURE=enabled") {
+			t.Fatalf("Diagnostics = %#v, leaked plugin env value", result.Diagnostics)
+		}
+	}
+}
+
 func TestListApplications(t *testing.T) {
 	result, err := ListApplications(context.Background(), Config{Path: filepath.Join("..", "..", "testdata", "applications", "e2e")})
 	if err != nil {
