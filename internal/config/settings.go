@@ -18,16 +18,38 @@ type RepositorySettings struct {
 	Provenance Provenance `json:"provenance,omitempty" yaml:"provenance,omitempty"`
 }
 
+type ResourceFilterRule struct {
+	APIGroups  []string   `json:"apiGroups,omitempty" yaml:"apiGroups,omitempty"`
+	Kinds      []string   `json:"kinds,omitempty" yaml:"kinds,omitempty"`
+	Clusters   []string   `json:"clusters,omitempty" yaml:"clusters,omitempty"`
+	Provenance Provenance `json:"provenance,omitempty" yaml:"provenance,omitempty"`
+}
+
+type OverrideIgnoreDifferences struct {
+	JSONPointers          []string `json:"jsonPointers,omitempty" yaml:"jsonPointers,omitempty"`
+	JQPathExpressions     []string `json:"jqPathExpressions,omitempty" yaml:"jqPathExpressions,omitempty"`
+	ManagedFieldsManagers []string `json:"managedFieldsManagers,omitempty" yaml:"managedFieldsManagers,omitempty"`
+}
+
+type ResourceCustomization struct {
+	IgnoreDifferences OverrideIgnoreDifferences `json:"ignoreDifferences,omitempty" yaml:"ignoreDifferences,omitempty"`
+	Provenance        Provenance                `json:"provenance,omitempty" yaml:"provenance,omitempty"`
+}
+
 type ArgoSettings struct {
-	KustomizeBuildOptions []Value[string]               `json:"kustomizeBuildOptions,omitempty" yaml:"kustomizeBuildOptions,omitempty"`
-	HelmRepositories      map[string]RepositorySettings `json:"helmRepositories,omitempty" yaml:"helmRepositories,omitempty"`
-	TrackingMethod        Value[string]                 `json:"trackingMethod,omitempty" yaml:"trackingMethod,omitempty"`
-	InstanceLabelKey      Value[string]                 `json:"instanceLabelKey,omitempty" yaml:"instanceLabelKey,omitempty"`
+	KustomizeBuildOptions  []Value[string]                  `json:"kustomizeBuildOptions,omitempty" yaml:"kustomizeBuildOptions,omitempty"`
+	HelmRepositories       map[string]RepositorySettings    `json:"helmRepositories,omitempty" yaml:"helmRepositories,omitempty"`
+	TrackingMethod         Value[string]                    `json:"trackingMethod,omitempty" yaml:"trackingMethod,omitempty"`
+	InstanceLabelKey       Value[string]                    `json:"instanceLabelKey,omitempty" yaml:"instanceLabelKey,omitempty"`
+	ResourceExclusions     []ResourceFilterRule             `json:"resourceExclusions,omitempty" yaml:"resourceExclusions,omitempty"`
+	ResourceInclusions     []ResourceFilterRule             `json:"resourceInclusions,omitempty" yaml:"resourceInclusions,omitempty"`
+	ResourceCustomizations map[string]ResourceCustomization `json:"resourceCustomizations,omitempty" yaml:"resourceCustomizations,omitempty"`
 }
 
 func DefaultSettings() ArgoSettings {
 	return ArgoSettings{
-		HelmRepositories: map[string]RepositorySettings{},
+		HelmRepositories:       map[string]RepositorySettings{},
+		ResourceCustomizations: map[string]ResourceCustomization{},
 		TrackingMethod: Value[string]{
 			Value: "label",
 		},
