@@ -15,8 +15,34 @@ import (
 
 const defaultMaxResourceBytes int64 = 10 * 1024 * 1024
 
+type RequestKind string
+
+const (
+	RequestHTTPFile RequestKind = "http-file"
+	RequestGitRepo  RequestKind = "git-repo"
+)
+
 type Request struct {
-	URL string
+	URL      string
+	Kind     RequestKind
+	RepoURL  string
+	Revision string
+}
+
+type Credentials struct {
+	Username    string
+	Password    string
+	BearerToken string
+}
+
+type GitCredentials struct {
+	Username          string
+	Password          string
+	BearerToken       string
+	SSHPrivateKeyPath string
+	SSHPrivateKey     string
+	SSHPassphrase     string
+	SSHKnownHostsPath string
 }
 
 type Options struct {
@@ -24,11 +50,14 @@ type Options struct {
 	Offline        bool
 	Refresh        bool
 	ForbiddenRoots []string
+	Credentials    Credentials
+	GitCredentials GitCredentials
 }
 
 type Result struct {
 	Path      string
 	URL       string
+	Revision  string
 	FromCache bool
 }
 
@@ -45,12 +74,74 @@ func DefaultCacheDir() (string, error) {
 }
 
 func NewCacheKey(request Request) (string, error) {
-	normalized, err := NormalizeURL(request.URL)
-	if err != nil {
-		return "", err
+	switch requestKind(request.Kind) {
+	case RequestHTTPFile:
+		normalized, err := NormalizeURL(request.URL)
+		if err != nil {
+			return "", err
+		}
+		sum := sha256.Sum256([]byte(normalized))
+		return hex.EncodeToString(sum[:]), nil
+	case RequestGitRepo:
+		repoURL := strings.TrimSpace(request.RepoURL)
+		if repoURL == "" {
+			repoURL = strings.TrimSpace(request.URL)
+		}
+		normalized, err := NormalizeGitRepoURL(repoURL)
+		if err != nil {
+			return "", err
+		}
+		sum := sha256.Sum256([]byte(normalized + "\n" + strings.TrimSpace(request.Revision)))
+		return hex.EncodeToString(sum[:]), nil
+	default:
+		return "", fmt.Errorf("unsupported remote resource request kind %q", request.Kind)
 	}
-	sum := sha256.Sum256([]byte(normalized))
-	return hex.EncodeToString(sum[:]), nil
+}
+
+func requestKind(kind RequestKind) RequestKind {
+	if kind == "" {
+		return RequestHTTPFile
+	}
+	return kind
+}
+
+func NormalizeGitRepoURL(raw string) (string, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return "", fmt.Errorf("remote Git repository URL is required")
+	}
+	if isSCPStyleGitURL(raw) {
+		base := raw
+		if before, _, ok := strings.Cut(base, "#"); ok {
+			base = before
+		}
+		if before, _, ok := strings.Cut(base, "?"); ok {
+			base = before
+		}
+		base = strings.TrimRight(base, "/")
+		base = strings.TrimSuffix(base, ".git")
+		base = strings.TrimRight(base, "/")
+		return base, nil
+	}
+	parsed, err := url.Parse(raw)
+	if err != nil {
+		return "", fmt.Errorf("parse remote Git repository URL %q: invalid URL syntax", RedactURL(raw))
+	}
+	switch parsed.Scheme {
+	case "file", "http", "https", "ssh":
+	default:
+		return "", fmt.Errorf("remote Git repository URL %q must use file, http, https, or ssh", RedactURL(raw))
+	}
+	if parsed.Scheme != "file" && parsed.Host == "" {
+		return "", fmt.Errorf("remote Git repository URL %q must include a host", RedactURL(raw))
+	}
+	parsed.User = nil
+	parsed.RawQuery = ""
+	parsed.Fragment = ""
+	parsed.Path = strings.TrimRight(parsed.Path, "/")
+	parsed.Path = strings.TrimSuffix(parsed.Path, ".git")
+	parsed.Path = strings.TrimRight(parsed.Path, "/")
+	return parsed.String(), nil
 }
 
 func NormalizeURL(raw string) (string, error) {

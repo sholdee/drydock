@@ -2,6 +2,7 @@ package remote
 
 import (
 	"context"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"net/http"
@@ -42,6 +43,82 @@ func TestNewCacheKeyRejectsUnsafeURLs(t *testing.T) {
 		if _, err := NewCacheKey(Request{URL: raw}); err == nil {
 			t.Fatalf("NewCacheKey(%q) error = nil, want validation error", raw)
 		}
+	}
+}
+
+func TestNewCacheKeyForGitRepoIncludesRevisionAndOmitsSecrets(t *testing.T) {
+	mainKey, err := NewCacheKey(Request{
+		Kind:     RequestGitRepo,
+		URL:      "https://example.test/org/repo.git",
+		Revision: "main",
+	})
+	if err != nil {
+		t.Fatalf("NewCacheKey(main) error = %v", err)
+	}
+	devKey, err := NewCacheKey(Request{
+		Kind:     RequestGitRepo,
+		RepoURL:  "https://example.test/org/repo.git",
+		Revision: "dev",
+	})
+	if err != nil {
+		t.Fatalf("NewCacheKey(dev) error = %v", err)
+	}
+	if mainKey == devKey {
+		t.Fatalf("cache keys match for different revisions: %s", mainKey)
+	}
+
+	secretBearingKey, err := NewCacheKey(Request{
+		Kind:     RequestGitRepo,
+		RepoURL:  "https://user:secret@example.test/org/repo.git?token=secret#fragment",
+		Revision: "main",
+	})
+	if err != nil {
+		t.Fatalf("NewCacheKey(secret-bearing) error = %v", err)
+	}
+	if secretBearingKey != mainKey {
+		t.Fatalf("secret-bearing key = %s, want clean repo key %s", secretBearingKey, mainKey)
+	}
+}
+
+func TestNewCacheKeyForGitRepoCanonicalizesEquivalentURLs(t *testing.T) {
+	left, err := NewCacheKey(Request{
+		Kind:     RequestGitRepo,
+		RepoURL:  "https://example.test/org/repo.git/",
+		Revision: "main",
+	})
+	if err != nil {
+		t.Fatalf("NewCacheKey(left) error = %v", err)
+	}
+	right, err := NewCacheKey(Request{
+		Kind:     RequestGitRepo,
+		RepoURL:  "https://example.test/org/repo",
+		Revision: "main",
+	})
+	if err != nil {
+		t.Fatalf("NewCacheKey(right) error = %v", err)
+	}
+	if left != right {
+		t.Fatalf("URL keys differ: %s != %s", left, right)
+	}
+
+	scpLeft, err := NewCacheKey(Request{
+		Kind:     RequestGitRepo,
+		RepoURL:  "git@example.test:org/repo.git/",
+		Revision: "main",
+	})
+	if err != nil {
+		t.Fatalf("NewCacheKey(scpLeft) error = %v", err)
+	}
+	scpRight, err := NewCacheKey(Request{
+		Kind:     RequestGitRepo,
+		RepoURL:  "git@example.test:org/repo",
+		Revision: "main",
+	})
+	if err != nil {
+		t.Fatalf("NewCacheKey(scpRight) error = %v", err)
+	}
+	if scpLeft != scpRight {
+		t.Fatalf("SCP keys differ: %s != %s", scpLeft, scpRight)
 	}
 }
 
@@ -131,6 +208,101 @@ func TestDefaultAcquirerFetchesAndCachesResource(t *testing.T) {
 	}
 	if second.Path != first.Path {
 		t.Fatalf("offline Path = %q, want %q", second.Path, first.Path)
+	}
+}
+
+func TestDefaultAcquirerUsesBearerToken(t *testing.T) {
+	const token = "secret-token"
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got, want := r.Header.Get("Authorization"), "Bearer "+token; got != want {
+			t.Fatalf("Authorization = %q, want %q", got, want)
+		}
+		_, _ = w.Write([]byte("apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: bearer\n"))
+	}))
+	defer server.Close()
+
+	_, err := (DefaultAcquirer{Client: server.Client()}).Acquire(context.Background(), Request{
+		URL: server.URL + "/resource.yaml",
+	}, Options{
+		CacheDir:    t.TempDir(),
+		Credentials: Credentials{BearerToken: token},
+	})
+	if err != nil {
+		t.Fatalf("Acquire() error = %v", err)
+	}
+}
+
+func TestDefaultAcquirerUsesBasicAuth(t *testing.T) {
+	const username = "user"
+	const password = "secret-password"
+	wantAuth := "Basic " + base64.StdEncoding.EncodeToString([]byte(username+":"+password))
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := r.Header.Get("Authorization"); got != wantAuth {
+			t.Fatalf("Authorization = %q, want %q", got, wantAuth)
+		}
+		_, _ = w.Write([]byte("apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: basic\n"))
+	}))
+	defer server.Close()
+
+	_, err := (DefaultAcquirer{Client: server.Client()}).Acquire(context.Background(), Request{
+		URL: server.URL + "/resource.yaml",
+	}, Options{
+		CacheDir: t.TempDir(),
+		Credentials: Credentials{
+			Username: username,
+			Password: password,
+		},
+	})
+	if err != nil {
+		t.Fatalf("Acquire() error = %v", err)
+	}
+}
+
+func TestDefaultAcquirerBearerWinsOverBasic(t *testing.T) {
+	const token = "secret-token"
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got, want := r.Header.Get("Authorization"), "Bearer "+token; got != want {
+			t.Fatalf("Authorization = %q, want %q", got, want)
+		}
+		_, _ = w.Write([]byte("apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: bearer\n"))
+	}))
+	defer server.Close()
+
+	_, err := (DefaultAcquirer{Client: server.Client()}).Acquire(context.Background(), Request{
+		URL: server.URL + "/resource.yaml",
+	}, Options{
+		CacheDir: t.TempDir(),
+		Credentials: Credentials{
+			Username:    "user",
+			Password:    "secret-password",
+			BearerToken: token,
+		},
+	})
+	if err != nil {
+		t.Fatalf("Acquire() error = %v", err)
+	}
+}
+
+func TestDefaultAcquirerRedactsCredentialFetchErrors(t *testing.T) {
+	creds := Credentials{
+		Username:    "user",
+		Password:    "secret-password",
+		BearerToken: "secret-token",
+	}
+	_, err := (DefaultAcquirer{Client: &http.Client{
+		Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+			return nil, fmt.Errorf("failed with %s, %s, and %s", creds.Username, creds.Password, creds.BearerToken)
+		}),
+	}}).Acquire(context.Background(), Request{
+		URL: "https://example.test/resource.yaml",
+	}, Options{CacheDir: t.TempDir(), Credentials: creds})
+	if err == nil {
+		t.Fatal("Acquire() error = nil, want fetch error")
+	}
+	for _, leaked := range []string{creds.Username, creds.Password, creds.BearerToken} {
+		if strings.Contains(err.Error(), leaked) {
+			t.Fatalf("Acquire() error = %q, leaked %q", err, leaked)
+		}
 	}
 }
 
@@ -300,8 +472,8 @@ func TestDefaultAcquirerMapsAuthFailures(t *testing.T) {
 			_, err := (DefaultAcquirer{Client: server.Client()}).Acquire(context.Background(), Request{
 				URL: server.URL + "/resource.yaml",
 			}, Options{CacheDir: t.TempDir()})
-			if err == nil || !strings.Contains(err.Error(), "authenticated remote Kustomize resources are not supported") {
-				t.Fatalf("Acquire() error = %v, want auth unsupported error", err)
+			if err == nil || !strings.Contains(err.Error(), fmt.Sprintf("HTTP %d", status)) {
+				t.Fatalf("Acquire() error = %v, want HTTP status error", err)
 			}
 		})
 	}
