@@ -652,6 +652,45 @@ func TestRenderUsesInjectedPluginRenderer(t *testing.T) {
 	assertRenderedPluginConfigMap(t, result)
 }
 
+func TestRenderUsesNamedPluginRegistry(t *testing.T) {
+	root := t.TempDir()
+	writeAPIPluginAppTree(t, root)
+
+	renderer := publicPluginRendererFunc(func(_ context.Context, request PluginRequest) (PluginResult, error) {
+		assertPublicPluginRequest(t, request)
+		return publicPluginConfigMapResult(), nil
+	})
+	registry := NewPluginRegistry(map[string]PluginRenderer{" cue ": renderer})
+
+	result, err := Render(context.Background(), Config{Path: root, PluginRenderer: registry})
+	if err != nil {
+		t.Fatalf("Render() error = %v", err)
+	}
+	assertRenderedPluginConfigMap(t, result)
+}
+
+func TestRenderNamedPluginRegistryReportsMissingRenderer(t *testing.T) {
+	root := t.TempDir()
+	writeAPIPluginAppTree(t, root)
+
+	result, err := Render(context.Background(), Config{
+		Path:           root,
+		PluginRenderer: NewPluginRegistry(map[string]PluginRenderer{"jsonnet": nil}),
+	})
+	if err == nil {
+		t.Fatal("Render() error = nil, want missing plugin renderer error")
+	}
+	if len(result.Manifests) != 0 {
+		t.Fatalf("Manifests = %d, want no fallback manifests", len(result.Manifests))
+	}
+	if !hasDiagnosticCode(result.Diagnostics, "plugin.unsupported") {
+		t.Fatalf("Diagnostics = %#v, want plugin.unsupported", result.Diagnostics)
+	}
+	if !hasStatus(result.Statuses, "plugin-app", "FAIL") {
+		t.Fatalf("Statuses = %#v, want plugin-app FAIL", result.Statuses)
+	}
+}
+
 func TestListApplications(t *testing.T) {
 	result, err := ListApplications(context.Background(), Config{Path: filepath.Join("..", "..", "testdata", "applications", "e2e")})
 	if err != nil {

@@ -4,6 +4,8 @@ package drydock
 
 import (
 	"context"
+	"fmt"
+	"strings"
 
 	argoappv1 "github.com/argoproj/argo-cd/v3/pkg/apis/application/v1alpha1"
 	"github.com/sholdee/drydock/internal/app"
@@ -305,6 +307,56 @@ type Application struct {
 // callers. The default CLI and public API paths do not execute plugin commands.
 type PluginRenderer interface {
 	RenderPlugin(ctx context.Context, request PluginRequest) (PluginResult, error)
+}
+
+// PluginRegistry dispatches plugin render requests by explicit plugin name.
+// It never discovers plugins or executes plugin commands itself.
+type PluginRegistry struct {
+	renderers map[string]PluginRenderer
+}
+
+// NewPluginRegistry creates a named in-process plugin renderer registry.
+//
+// Plugin names are trimmed. A source with an empty plugin name only matches an
+// explicitly registered empty-name renderer.
+func NewPluginRegistry(renderers map[string]PluginRenderer) *PluginRegistry {
+	registry := &PluginRegistry{renderers: make(map[string]PluginRenderer, len(renderers))}
+	for name, renderer := range renderers {
+		registry.renderers[strings.TrimSpace(name)] = renderer
+	}
+	return registry
+}
+
+// RenderPlugin renders a plugin source with the registered renderer for the
+// requested plugin name.
+func (registry *PluginRegistry) RenderPlugin(ctx context.Context, request PluginRequest) (PluginResult, error) {
+	name := strings.TrimSpace(request.Plugin.Name)
+	renderer, ok := registry.renderer(name)
+	if !ok {
+		message := fmt.Sprintf("config management plugin %s is not registered in plugin registry", pluginDisplayName(name))
+		return PluginResult{Diagnostics: []Diagnostic{{
+			Code:     "plugin.unsupported",
+			Severity: "error",
+			Category: "plugin",
+			Message:  message,
+		}}}, fmt.Errorf("%s", message)
+	}
+	return renderer.RenderPlugin(ctx, request)
+}
+
+func (registry *PluginRegistry) renderer(name string) (PluginRenderer, bool) {
+	if registry == nil {
+		return nil, false
+	}
+	renderer, ok := registry.renderers[name]
+	return renderer, ok && renderer != nil
+}
+
+func pluginDisplayName(name string) string {
+	if name == "" {
+		return "<unnamed>"
+	}
+	return name
 }
 
 // PluginRequest is passed to an injected PluginRenderer.
