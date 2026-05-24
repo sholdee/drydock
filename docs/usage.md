@@ -378,6 +378,27 @@ and project-scoped cluster Secret enforcement is not simulated offline.
 Repository credential matching diagnostics use discovered repository Secret
 metadata only and never read secret credential fields.
 
+## Local Verification And Benchmarks
+
+Run the normal local verification suite before merging:
+
+```bash
+go test ./...
+go vet ./...
+golangci-lint run --allow-parallel-runners
+git diff --check main..HEAD
+```
+
+Run the Phase 6 render and ApplicationSet benchmarks when changing discovery,
+rendering, ApplicationSet expansion, cache event recording, or diagnostics on
+hot paths:
+
+```bash
+go test ./internal/app -run '^$' -bench 'BenchmarkOrchestrator(BuildManyLocalApplications|ExpandApplicationSetList)' -benchmem -count=1
+```
+
+Benchmark numbers are trend signals, not hard pass/fail thresholds.
+
 ## Deferred Commands And Sources
 
 These source paths are not wired in the current MVP:
