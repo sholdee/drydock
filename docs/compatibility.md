@@ -1,6 +1,6 @@
 # Argo CD Compatibility Notes
 
-`argocd-local` targets offline desired-vs-desired PR diffs.
+`drydock` targets offline desired-vs-desired PR diffs.
 
 Supported in the MVP:
 
@@ -81,7 +81,7 @@ Supported in the MVP:
   `--skip-secrets`
 - `diff images` conservative workload image diffs
 - Repeated-resource last-wins behavior inside one Application
-- Public Go API in `pkg/argocdlocal` for Application listing, rendering,
+- Public Go API in `pkg/drydock` for Application listing, rendering,
   manifest diffs, image diffs, injectable Git/chart/remote-resource
   acquisition, and injectable config management plugin rendering
 - Config management plugin source detection with fail-closed diagnostics in
