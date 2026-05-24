@@ -72,6 +72,142 @@ stringData:
 	}
 }
 
+func TestOrchestratorBuildAppliesConfigMapResourceExclusions(t *testing.T) {
+	root := t.TempDir()
+	writeBuildApplication(t, root, "demo", "demo")
+	writeTestFile(t, filepath.Join(root, "manifests", "demo", "deployment.yaml"), `apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: demo
+spec:
+  selector:
+    matchLabels:
+      app: demo
+  template:
+    metadata:
+      labels:
+        app: demo
+    spec:
+      containers:
+        - name: demo
+          image: example/demo:v1
+`)
+	writeTestFile(t, filepath.Join(root, "settings", "argocd-cm.yaml"), `apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: argocd-cm
+data:
+  resource.exclusions: |
+    - apiGroups: [""]
+      kinds: ["ConfigMap"]
+`)
+
+	result, err := Orchestrator{}.Build(context.Background(), BuildRequest{Path: root})
+	if err != nil {
+		t.Fatalf("Build() error = %v", err)
+	}
+	if len(result.Manifests) != 1 {
+		t.Fatalf("len(Manifests) = %d, want 1", len(result.Manifests))
+	}
+	if got := result.Manifests[0].Object.GetKind(); got != "Deployment" {
+		t.Fatalf("rendered kind = %q, want Deployment", got)
+	}
+	if len(result.Settings.ResourceExclusions) != 1 {
+		t.Fatalf("ResourceExclusions = %#v", result.Settings.ResourceExclusions)
+	}
+}
+
+func TestOrchestratorBuildAppliesHelmValuesResourceExclusions(t *testing.T) {
+	root := t.TempDir()
+	writeBuildApplication(t, root, "demo", "demo")
+	writeTestFile(t, filepath.Join(root, "manifests", "demo", "deployment.yaml"), `apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: demo
+spec:
+  selector:
+    matchLabels:
+      app: demo
+  template:
+    metadata:
+      labels:
+        app: demo
+    spec:
+      containers:
+        - name: demo
+          image: example/demo:v1
+`)
+	writeTestFile(t, filepath.Join(root, "settings", "values.yaml"), `configs:
+  cm:
+    resource.exclusions: |
+      - apiGroups: [""]
+        kinds: ["ConfigMap"]
+`)
+
+	result, err := Orchestrator{}.Build(context.Background(), BuildRequest{Path: root})
+	if err != nil {
+		t.Fatalf("Build() error = %v", err)
+	}
+	if len(result.Manifests) != 1 {
+		t.Fatalf("len(Manifests) = %d, want 1", len(result.Manifests))
+	}
+	if got := result.Manifests[0].Object.GetKind(); got != "Deployment" {
+		t.Fatalf("rendered kind = %q, want Deployment", got)
+	}
+}
+
+func TestOrchestratorBuildAppliesClusterScopedResourceInclusions(t *testing.T) {
+	root := t.TempDir()
+	writeBuildApplicationWithDestination(t, root, "prod", "prod-cm", "prod-west")
+	writeBuildApplicationWithDestination(t, root, "dev", "dev-cm", "dev")
+	writeTestFile(t, filepath.Join(root, "settings", "argocd-cm.yaml"), `apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: argocd-cm
+data:
+  resource.inclusions: |
+    - apiGroups: ["apps"]
+      kinds: ["Deployment"]
+      clusters: ["prod-*"]
+`)
+
+	result, err := Orchestrator{}.Build(context.Background(), BuildRequest{Path: root})
+	if err != nil {
+		t.Fatalf("Build() error = %v", err)
+	}
+	if len(result.Manifests) != 1 {
+		t.Fatalf("len(Manifests) = %d, want 1", len(result.Manifests))
+	}
+	if got := result.Manifests[0].Object.GetName(); got != "dev-cm" {
+		t.Fatalf("rendered name = %q, want dev-cm", got)
+	}
+}
+
+func TestOrchestratorBuildStrictFailsOnInvalidSettings(t *testing.T) {
+	root := t.TempDir()
+	writeBuildApplication(t, root, "demo", "demo")
+	writeTestFile(t, filepath.Join(root, "settings", "argocd-cm.yaml"), `apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: argocd-cm
+data:
+  resource.exclusions: |
+    - apiGroups: [
+`)
+
+	result, err := Orchestrator{}.Build(context.Background(), BuildRequest{Path: root, Strict: true})
+	if err == nil {
+		t.Fatal("Build() error = nil, want settings diagnostic failure")
+	}
+	diag, ok := diagnosticByCategory(result.Diagnostics, "settings")
+	if !ok {
+		t.Fatalf("Diagnostics = %#v, want settings diagnostic", result.Diagnostics)
+	}
+	if diag.Severity != diagnostic.SeverityError {
+		t.Fatalf("settings diagnostic severity = %s, want error", diag.Severity)
+	}
+}
+
 func TestOrchestratorBuildRendersPlainDirectorySource(t *testing.T) {
 	root := t.TempDir()
 	writeTestFile(t, filepath.Join(root, "apps", "argocd", "plain-app.yaml"), `apiVersion: argoproj.io/v1alpha1
@@ -1159,6 +1295,11 @@ func assertApplicationStatuses(t *testing.T, got, want []ApplicationStatus) {
 
 func writeBuildApplication(t *testing.T, root, appName, configMapName string) {
 	t.Helper()
+	writeBuildApplicationWithDestination(t, root, appName, configMapName, "in-cluster")
+}
+
+func writeBuildApplicationWithDestination(t *testing.T, root, appName, configMapName, destinationName string) {
+	t.Helper()
 	writeTestFile(t, filepath.Join(root, "apps", appName+".yaml"), `apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
@@ -1170,7 +1311,7 @@ spec:
     path: manifests/`+appName+`
     targetRevision: main
   destination:
-    name: in-cluster
+    name: `+destinationName+`
     namespace: default
 `)
 	writeTestFile(t, filepath.Join(root, "manifests", appName, "cm.yaml"), `apiVersion: v1

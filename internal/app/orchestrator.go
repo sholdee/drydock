@@ -12,6 +12,7 @@ import (
 	argoappv1 "github.com/argoproj/argo-cd/v3/pkg/apis/application/v1alpha1"
 	"github.com/home-operations/argocd-local/internal/appset"
 	"github.com/home-operations/argocd-local/internal/chart"
+	"github.com/home-operations/argocd-local/internal/config"
 	"github.com/home-operations/argocd-local/internal/diagnostic"
 	"github.com/home-operations/argocd-local/internal/discovery"
 	"github.com/home-operations/argocd-local/internal/manifest"
@@ -75,6 +76,7 @@ type BuildResult struct {
 	Manifests            []render.Manifest
 	ApplicationManifests []ApplicationManifest
 	Diagnostics          []diagnostic.Diagnostic
+	Settings             config.ArgoSettings
 	Statuses             []ApplicationStatus
 }
 
@@ -117,7 +119,16 @@ func (o Orchestrator) ListApplications(_ context.Context, request BuildRequest) 
 		return BuildResult{}, err
 	}
 
+	settings, settingsDiags, err := loadSettingsFromDiscovery(root, discovered)
+	if err != nil {
+		return BuildResult{}, err
+	}
+
 	var result BuildResult
+	result.Settings = settings
+	settingsDiags = normalizeDiagnostics(settingsDiags, request.Strict, false)
+	result.Diagnostics = append(result.Diagnostics, settingsDiags...)
+
 	for _, appFile := range discovered.Applications {
 		result.Applications = append(result.Applications, appFile.Application)
 		result.ApplicationInputs = append(result.ApplicationInputs, ApplicationSelectionInput{
@@ -161,13 +172,32 @@ func (o Orchestrator) ListApplications(_ context.Context, request BuildRequest) 
 		}
 	}
 
+	if err := diagnosticFailure(result.Diagnostics, request.Strict); err != nil {
+		return result, err
+	}
 	return result, nil
 }
 
 func (o Orchestrator) Build(ctx context.Context, request BuildRequest) (BuildResult, error) {
 	var result BuildResult
+	root := request.Path
+	if root == "" {
+		root = "."
+	}
 	if request.Applications != nil {
 		result.Applications = append(result.Applications, request.Applications...)
+		settings, diags, err := loadSettingsFromPath(root)
+		if err != nil {
+			result.Statuses = skippedApplicationStatuses(result.Applications, err)
+			return result, err
+		}
+		result.Settings = settings
+		diags = normalizeDiagnostics(diags, request.Strict, false)
+		result.Diagnostics = append(result.Diagnostics, diags...)
+		if err := diagnosticFailure(diags, request.Strict); err != nil {
+			result.Statuses = skippedApplicationStatuses(result.Applications, err)
+			return result, err
+		}
 	} else {
 		listResult, err := o.ListApplications(ctx, request)
 		if err != nil {
@@ -181,11 +211,11 @@ func (o Orchestrator) Build(ctx context.Context, request BuildRequest) (BuildRes
 		return result, err
 	}
 
-	root := request.Path
-	if root == "" {
-		root = "."
-	}
 	resourceFilter := request.resourceFilter()
+	settingsFilter := manifest.SettingsResourceFilter{
+		Exclusions: result.Settings.ResourceExclusions,
+		Inclusions: result.Settings.ResourceInclusions,
+	}
 
 	acquirer := o.ChartAcquirer
 	if acquirer == nil {
@@ -228,7 +258,12 @@ func (o Orchestrator) Build(ctx context.Context, request BuildRequest) (BuildRes
 			result.Statuses = append(result.Statuses, applicationStatus(application, ApplicationStatusFail, err.Error()))
 			continue
 		}
+		cluster := applicationDestinationCluster(application)
 		for _, renderedManifest := range rendered.Manifests {
+			id := manifest.IdentityOf(renderedManifest.Object)
+			if settingsFilter.Drop(id, cluster) {
+				continue
+			}
 			if resourceFilter.Drop(renderedManifest.Object) {
 				continue
 			}
@@ -247,12 +282,58 @@ func (o Orchestrator) Build(ctx context.Context, request BuildRequest) (BuildRes
 	return result, nil
 }
 
+func loadSettingsFromPath(root string) (config.ArgoSettings, []diagnostic.Diagnostic, error) {
+	discovered, err := discovery.Scan(root, discovery.Options{})
+	if err != nil {
+		return config.DefaultSettings(), nil, err
+	}
+	return loadSettingsFromDiscovery(root, discovered)
+}
+
+func loadSettingsFromDiscovery(root string, discovered discovery.Result) (config.ArgoSettings, []diagnostic.Diagnostic, error) {
+	var candidates []config.ArgoSettings
+	var diags []diagnostic.Diagnostic
+	for _, candidate := range discovered.SettingsCandidates {
+		path := filepath.Join(root, candidate.Path)
+		var (
+			settings  config.ArgoSettings
+			nextDiags []diagnostic.Diagnostic
+			err       error
+		)
+		switch candidate.Kind {
+		case "argocd-cm":
+			settings, nextDiags, err = config.LoadFromConfigMap(path)
+		case "argocd-values":
+			settings, nextDiags, err = config.LoadFromHelmValues(path)
+		case "repository-secret":
+			settings, nextDiags, err = config.LoadRepositorySecret(path)
+		default:
+			continue
+		}
+		if err != nil {
+			return config.DefaultSettings(), diags, err
+		}
+		candidates = append(candidates, settings)
+		diags = append(diags, nextDiags...)
+	}
+	merged, mergeDiags := config.MergeDiscovered(candidates)
+	diags = append(diags, mergeDiags...)
+	return merged, diags, nil
+}
+
 func (request BuildRequest) resourceFilter() manifest.ResourceFilter {
 	return manifest.ResourceFilter{
 		SkipKinds:   append([]string(nil), request.SkipKinds...),
 		SkipCRDs:    request.SkipCRDs,
 		SkipSecrets: request.SkipSecrets,
 	}
+}
+
+func applicationDestinationCluster(application argoappv1.Application) string {
+	if application.Spec.Destination.Name != "" {
+		return application.Spec.Destination.Name
+	}
+	return application.Spec.Destination.Server
 }
 
 func (o Orchestrator) BuildApp(ctx context.Context, request BuildAppRequest) (BuildResult, error) {

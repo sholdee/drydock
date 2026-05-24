@@ -154,6 +154,8 @@ func scanDocument(rel string, obj *unstructured.Unstructured, result *Result) er
 		result.SettingsCandidates = append(result.SettingsCandidates, SettingsCandidate{Path: rel, Kind: "argocd-cm"})
 	case isCoreGVK(obj, "Secret") && obj.GetLabels()["argocd.argoproj.io/secret-type"] == "repository":
 		result.SettingsCandidates = append(result.SettingsCandidates, SettingsCandidate{Path: rel, Kind: "repository-secret"})
+	case isArgoHelmValuesSettings(obj):
+		result.SettingsCandidates = append(result.SettingsCandidates, SettingsCandidate{Path: rel, Kind: "argocd-values"})
 	}
 	return nil
 }
@@ -166,6 +168,37 @@ func isArgoGVK(obj *unstructured.Unstructured, kind string) bool {
 func isCoreGVK(obj *unstructured.Unstructured, kind string) bool {
 	gvk := obj.GroupVersionKind()
 	return gvk.Group == "" && gvk.Version == "v1" && gvk.Kind == kind
+}
+
+func isArgoHelmValuesSettings(obj *unstructured.Unstructured) bool {
+	configs, ok := obj.Object["configs"].(map[string]any)
+	if !ok {
+		return false
+	}
+	cm, ok := configs["cm"].(map[string]any)
+	if !ok {
+		return false
+	}
+	for key := range cm {
+		if isKnownArgoCMSettingKey(key) {
+			return true
+		}
+	}
+	return false
+}
+
+func isKnownArgoCMSettingKey(key string) bool {
+	switch key {
+	case "kustomize.buildOptions",
+		"application.resourceTrackingMethod",
+		"application.instanceLabelKey",
+		"resource.exclusions",
+		"resource.inclusions",
+		"resource.customizations":
+		return true
+	default:
+		return strings.HasPrefix(key, "resource.customizations.")
+	}
 }
 
 func scanStart(root, relRoot string) (string, error) {
@@ -225,7 +258,8 @@ func looksLikeCandidate(path string) (bool, error) {
 	text := string(data)
 	return strings.Contains(text, "argoproj.io/v1alpha1") ||
 		strings.Contains(text, "argocd-cm") ||
-		strings.Contains(text, "argocd.argoproj.io/secret-type"), nil
+		strings.Contains(text, "argocd.argoproj.io/secret-type") ||
+		(strings.Contains(text, "configs:") && strings.Contains(text, "cm:")), nil
 }
 
 func shouldSkipDir(name string) bool {
