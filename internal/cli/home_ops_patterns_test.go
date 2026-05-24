@@ -8,8 +8,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/home-operations/argocd-local/internal/app"
-	"github.com/home-operations/argocd-local/internal/remote"
+	"github.com/sholdee/drydock/internal/app"
+	"github.com/sholdee/drydock/internal/remote"
 )
 
 func TestDiffAppsHomeOpsPatternFixture(t *testing.T) {

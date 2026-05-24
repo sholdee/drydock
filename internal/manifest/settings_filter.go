@@ -2,7 +2,7 @@ package manifest
 
 import (
 	"github.com/argoproj/argo-cd/v3/util/glob"
-	"github.com/home-operations/argocd-local/internal/config"
+	"github.com/sholdee/drydock/internal/config"
 )
 
 var coreExcludedResourceRules = []config.ResourceFilterRule{

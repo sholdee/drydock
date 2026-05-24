@@ -9,8 +9,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/home-operations/argocd-local/internal/app"
-	"github.com/home-operations/argocd-local/internal/chart"
+	"github.com/sholdee/drydock/internal/app"
+	"github.com/sholdee/drydock/internal/chart"
 )
 
 func TestDiagCleanRepositoryPrintsNoManifests(t *testing.T) {

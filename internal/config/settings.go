@@ -1,6 +1,6 @@
 package config
 
-import "github.com/home-operations/argocd-local/internal/diagnostic"
+import "github.com/sholdee/drydock/internal/diagnostic"
 
 type Provenance = diagnostic.Provenance
 

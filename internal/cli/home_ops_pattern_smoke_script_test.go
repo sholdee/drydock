@@ -43,7 +43,7 @@ func TestHomeOpsPatternSmokeScriptContract(t *testing.T) {
 		"system-upgrade remote resource",
 		"apps/system-upgrade/plan.yaml",
 		"--remote-cache-dir",
-		"go run ./cmd/argocd-local diff apps --path-orig \"${BASELINE}\" --path \"${CURRENT}\"",
+		"go run ./cmd/drydock diff apps --path-orig \"${BASELINE}\" --path \"${CURRENT}\"",
 		"--remote-cache-dir \"${REMOTE_CACHE}\"",
 		"--changed-only=true --exit-code=false",
 	} {

@@ -8,7 +8,7 @@ import (
 	"strings"
 
 	argoappv1 "github.com/argoproj/argo-cd/v3/pkg/apis/application/v1alpha1"
-	"github.com/home-operations/argocd-local/internal/manifest"
+	"github.com/sholdee/drydock/internal/manifest"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 )
 

@@ -40,7 +40,7 @@ func TestHomeOpsRenovateSmokeScriptContract(t *testing.T) {
 		"git -C \"${ROOT}\" worktree add --detach \"${BASELINE}\" HEAD",
 		"git -C \"${ROOT}\" worktree add --detach \"${CURRENT}\" HEAD",
 		`KUSTOMIZATION="${CURRENT}/apps/renovate/kustomization.yaml"`,
-		`go run ./cmd/argocd-local diff apps --path-orig "${BASELINE}" --path "${CURRENT}" --changed-only=true --exit-code=false`,
+		`go run ./cmd/drydock diff apps --path-orig "${BASELINE}" --path "${CURRENT}" --changed-only=true --exit-code=false`,
 	} {
 		if !strings.Contains(content, want) {
 			t.Fatalf("smoke script missing %q:\n%s", want, content)

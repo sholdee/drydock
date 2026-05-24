@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/home-operations/argocd-local/internal/cli"
+	"github.com/sholdee/drydock/internal/cli"
 )
 
 var (

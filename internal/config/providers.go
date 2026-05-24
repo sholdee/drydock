@@ -11,7 +11,7 @@ import (
 	"strings"
 
 	argoappv1 "github.com/argoproj/argo-cd/v3/pkg/apis/application/v1alpha1"
-	"github.com/home-operations/argocd-local/internal/diagnostic"
+	"github.com/sholdee/drydock/internal/diagnostic"
 	"go.yaml.in/yaml/v4"
 )
 

@@ -7,10 +7,10 @@ import (
 	"strings"
 
 	argoappv1 "github.com/argoproj/argo-cd/v3/pkg/apis/application/v1alpha1"
-	"github.com/home-operations/argocd-local/internal/diagnostic"
-	"github.com/home-operations/argocd-local/internal/manifest"
-	"github.com/home-operations/argocd-local/internal/render"
-	sourcepkg "github.com/home-operations/argocd-local/internal/source"
+	"github.com/sholdee/drydock/internal/diagnostic"
+	"github.com/sholdee/drydock/internal/manifest"
+	"github.com/sholdee/drydock/internal/render"
+	sourcepkg "github.com/sholdee/drydock/internal/source"
 	"go.yaml.in/yaml/v4"
 )
 

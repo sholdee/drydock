@@ -9,9 +9,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/home-operations/argocd-local/internal/cacheevent"
-	"github.com/home-operations/argocd-local/internal/chart"
-	"github.com/home-operations/argocd-local/internal/remote"
+	"github.com/sholdee/drydock/internal/cacheevent"
+	"github.com/sholdee/drydock/internal/chart"
+	"github.com/sholdee/drydock/internal/remote"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 )
 

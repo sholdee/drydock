@@ -4,9 +4,9 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/home-operations/argocd-local/internal/chart"
-	"github.com/home-operations/argocd-local/internal/remote"
-	"github.com/home-operations/argocd-local/internal/source"
+	"github.com/sholdee/drydock/internal/chart"
+	"github.com/sholdee/drydock/internal/remote"
+	"github.com/sholdee/drydock/internal/source"
 	"github.com/spf13/cobra"
 )
 

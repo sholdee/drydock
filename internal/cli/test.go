@@ -5,9 +5,9 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/home-operations/argocd-local/internal/app"
-	cliformat "github.com/home-operations/argocd-local/internal/format"
-	sourcepkg "github.com/home-operations/argocd-local/internal/source"
+	"github.com/sholdee/drydock/internal/app"
+	cliformat "github.com/sholdee/drydock/internal/format"
+	sourcepkg "github.com/sholdee/drydock/internal/source"
 	"github.com/spf13/cobra"
 )
 

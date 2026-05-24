@@ -283,4 +283,4 @@ if [[ "${before_checksum}" == "${after_checksum}" ]]; then
 fi
 
 cd "${REPO_ROOT}"
-go run ./cmd/argocd-local diff apps --path-orig "${BASELINE}" --path "${CURRENT}" --changed-only=true --exit-code=false
+go run ./cmd/drydock diff apps --path-orig "${BASELINE}" --path "${CURRENT}" --changed-only=true --exit-code=false

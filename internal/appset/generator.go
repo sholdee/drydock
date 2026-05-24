@@ -17,7 +17,7 @@ import (
 	appsetutils "github.com/argoproj/argo-cd/v3/applicationset/utils"
 	argoappv1 "github.com/argoproj/argo-cd/v3/pkg/apis/application/v1alpha1"
 	"github.com/bmatcuk/doublestar/v4"
-	"github.com/home-operations/argocd-local/internal/diagnostic"
+	"github.com/sholdee/drydock/internal/diagnostic"
 	"go.yaml.in/yaml/v4"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"

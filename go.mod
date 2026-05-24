@@ -1,4 +1,4 @@
-module github.com/home-operations/argocd-local
+module github.com/sholdee/drydock
 
 go 1.26.2
 
