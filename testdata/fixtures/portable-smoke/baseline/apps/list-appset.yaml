@@ -1,0 +1,26 @@
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: list-apps
+  namespace: argocd
+spec:
+  goTemplate: true
+  generators:
+    - list:
+        elements:
+          - name: list-generated
+            namespace: list
+            path: workloads/list-generated
+  template:
+    metadata:
+      name: "{{.name}}"
+      namespace: argocd
+    spec:
+      project: default
+      source:
+        repoURL: https://github.com/example/portable-smoke
+        targetRevision: main
+        path: "{{.path}}"
+      destination:
+        name: in-cluster
+        namespace: "{{.namespace}}"

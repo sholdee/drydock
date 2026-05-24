@@ -1,0 +1,25 @@
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: git-files-apps
+  namespace: argocd
+spec:
+  goTemplate: true
+  generators:
+    - git:
+        pathParamPrefix: repo
+        files:
+          - path: configs/apps/*.yaml
+  template:
+    metadata:
+      name: "{{.app.name}}"
+      namespace: argocd
+    spec:
+      project: default
+      source:
+        repoURL: https://github.com/example/portable-smoke
+        targetRevision: main
+        path: "{{.app.path}}"
+      destination:
+        name: in-cluster
+        namespace: "{{.app.namespace}}"

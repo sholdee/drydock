@@ -1,0 +1,20 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: multi-source
+  namespace: argocd
+spec:
+  project: default
+  sources:
+    - repoURL: https://github.com/example/portable-smoke
+      targetRevision: main
+      ref: values
+    - repoURL: https://github.com/example/portable-smoke.git
+      targetRevision: main
+      path: charts/multi-source
+      helm:
+        valueFiles:
+          - $values/values/multi-source.yaml
+  destination:
+    name: in-cluster
+    namespace: multi-source
