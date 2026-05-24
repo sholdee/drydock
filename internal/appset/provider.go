@@ -29,6 +29,18 @@ type ProviderData struct {
 	Plugins          []PluginInput
 }
 
+func (options ProviderOptions) Supplied() bool {
+	return len(options.FixturePaths) > 0 || options.Data.Supplied()
+}
+
+func (data ProviderData) Supplied() bool {
+	return len(data.Clusters) > 0 ||
+		len(data.ClusterDecisions) > 0 ||
+		len(data.SCMRepositories) > 0 ||
+		len(data.PullRequests) > 0 ||
+		len(data.Plugins) > 0
+}
+
 type ClusterInput struct {
 	Name        string            `json:"name" yaml:"name"`
 	Server      string            `json:"server" yaml:"server"`
