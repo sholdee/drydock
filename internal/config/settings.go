@@ -43,11 +43,19 @@ type KnownTypeField struct {
 }
 
 type ResourceActionsSummary struct {
-	HasActions          bool     `json:"hasActions,omitempty" yaml:"hasActions,omitempty"`
-	HasDiscoveryLua     bool     `json:"hasDiscoveryLua,omitempty" yaml:"hasDiscoveryLua,omitempty"`
-	ActionNames         []string `json:"actionNames,omitempty" yaml:"actionNames,omitempty"`
-	MergeBuiltinActions bool     `json:"mergeBuiltinActions,omitempty" yaml:"mergeBuiltinActions,omitempty"`
+	HasActions          bool                    `json:"hasActions,omitempty" yaml:"hasActions,omitempty"`
+	HasDiscoveryLua     bool                    `json:"hasDiscoveryLua,omitempty" yaml:"hasDiscoveryLua,omitempty"`
+	DiscoveryLuaSHA256  string                  `json:"discoveryLuaSHA256,omitempty" yaml:"discoveryLuaSHA256,omitempty"`
+	ActionNames         []string                `json:"actionNames,omitempty" yaml:"actionNames,omitempty"`
+	ActionLuaSHA256     []ResourceActionLuaHash `json:"actionLuaSHA256,omitempty" yaml:"actionLuaSHA256,omitempty"`
+	MergeBuiltinActions bool                    `json:"mergeBuiltinActions,omitempty" yaml:"mergeBuiltinActions,omitempty"`
 	fingerprint         string
+}
+
+type ResourceActionLuaHash struct {
+	Name   string `json:"name" yaml:"name"`
+	Index  int    `json:"index" yaml:"index"`
+	SHA256 string `json:"sha256" yaml:"sha256"`
 }
 
 type ResourceCustomization struct {
@@ -55,6 +63,7 @@ type ResourceCustomization struct {
 	IgnoreResourceUpdates OverrideIgnoreDifferences `json:"ignoreResourceUpdates,omitempty" yaml:"ignoreResourceUpdates,omitempty"`
 	KnownTypeFields       []KnownTypeField          `json:"knownTypeFields,omitempty" yaml:"knownTypeFields,omitempty"`
 	HasHealthLua          bool                      `json:"hasHealthLua,omitempty" yaml:"hasHealthLua,omitempty"`
+	HealthLuaSHA256       string                    `json:"healthLuaSHA256,omitempty" yaml:"healthLuaSHA256,omitempty"`
 	healthLuaFingerprint  string
 	HasUseOpenLibs        bool                   `json:"hasUseOpenLibs,omitempty" yaml:"hasUseOpenLibs,omitempty"`
 	UseOpenLibs           bool                   `json:"useOpenLibs,omitempty" yaml:"useOpenLibs,omitempty"`

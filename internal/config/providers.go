@@ -305,7 +305,8 @@ func appendParsedResourceCustomizations(settings *ArgoSettings, raw string, prov
 		}
 		if strings.TrimSpace(block.HealthLua) != "" {
 			customization.HasHealthLua = true
-			customization.healthLuaFingerprint = stringFingerprint(block.HealthLua)
+			customization.HealthLuaSHA256 = stringFingerprint(block.HealthLua)
+			customization.healthLuaFingerprint = customization.HealthLuaSHA256
 			hasCustomization = true
 			diags = append(diags, advancedResourceCustomizationWarning(
 				"resource customizations health Lua is parsed as metadata only and is not executed offline",
@@ -428,7 +429,8 @@ func parseSplitResourceCustomization(section, raw string, provenance diagnostic.
 		return customization, diags
 	case healthSplitSection:
 		customization.HasHealthLua = true
-		customization.healthLuaFingerprint = stringFingerprint(raw)
+		customization.HealthLuaSHA256 = stringFingerprint(raw)
+		customization.healthLuaFingerprint = customization.HealthLuaSHA256
 		return customization, []diagnostic.Diagnostic{advancedResourceCustomizationWarning(
 			"resource customizations health Lua is parsed as metadata only and is not executed offline",
 			provenance,
@@ -531,9 +533,27 @@ func parseResourceActionsSummary(raw string, provenance diagnostic.Provenance) (
 		MergeBuiltinActions: actions.MergeBuiltinActions,
 		fingerprint:         stringFingerprint(raw),
 	}
-	for _, definition := range actions.Definitions {
-		summary.ActionNames = append(summary.ActionNames, definition.Name)
+	if summary.HasDiscoveryLua {
+		summary.DiscoveryLuaSHA256 = stringFingerprint(actions.ActionDiscoveryLua)
 	}
+	for index, definition := range actions.Definitions {
+		summary.ActionNames = append(summary.ActionNames, definition.Name)
+		if strings.TrimSpace(definition.ActionLua) != "" {
+			summary.ActionLuaSHA256 = append(summary.ActionLuaSHA256, ResourceActionLuaHash{
+				Name:   definition.Name,
+				Index:  index,
+				SHA256: stringFingerprint(definition.ActionLua),
+			})
+		}
+	}
+	sort.SliceStable(summary.ActionLuaSHA256, func(i, j int) bool {
+		left := summary.ActionLuaSHA256[i]
+		right := summary.ActionLuaSHA256[j]
+		if left.Name == right.Name {
+			return left.Index < right.Index
+		}
+		return left.Name < right.Name
+	})
 	return summary, nil
 }
 
@@ -653,6 +673,7 @@ func mergeHealthLuaSection(existing, incoming ResourceCustomization) (ResourceCu
 		return existing, false
 	}
 	existing.HasHealthLua = true
+	existing.HealthLuaSHA256 = incoming.HealthLuaSHA256
 	if existing.healthLuaFingerprint == "" {
 		existing.healthLuaFingerprint = incoming.healthLuaFingerprint
 	}
