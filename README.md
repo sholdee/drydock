@@ -16,9 +16,8 @@ per-Application render status without printing manifests. `diag --path` reports
 repository diagnostics without printing manifests, and `diag -o json` or
 `diag -o yaml` emits structured diagnostic reports.
 
-This project is early implementation work. See
-`docs/superpowers/specs/2026-05-22-drydock-design.md` for the approved MVP
-design.
+This project is early implementation work. See `docs/design.md` for the
+approved MVP design and `docs/roadmap.md` for outstanding work.
 
 ## Go API
 
@@ -194,8 +193,9 @@ scripts/home-ops-pattern-smoke.sh
   deferred.
 
 See `docs/usage.md` for command examples, `docs/compatibility.md` for offline
-Argo CD compatibility notes, `docs/ci.md` for the local CI contract,
-`docs/release.md` for release and Argo CD dependency upgrade notes, and
+Argo CD compatibility notes, `docs/roadmap.md` for outstanding work,
+`docs/ci.md` for the local CI contract, `docs/release.md` for release and
+Argo CD dependency upgrade notes, and
 `docs/reports/2026-05-24-live-integration-design-gate.md` for the boundary
 around future live integration. See `docs/home-ops-pattern-coverage.md` for the
 portable coverage matrix that models real `home-ops` Application patterns.
