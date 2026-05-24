@@ -1,0 +1,18 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: workload
+spec:
+  selector:
+    matchLabels:
+      app: workload
+  template:
+    metadata:
+      labels:
+        app: workload
+    spec:
+      containers:
+        - name: app
+          image: example/app:v1
+        - name: sidecar
+          image: example/sidecar:v2

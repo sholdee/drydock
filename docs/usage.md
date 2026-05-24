@@ -232,15 +232,25 @@ argocd-local diff apps \
 If stripped attributes are the only rendered difference for a resource, no diff
 result is emitted for that resource.
 
-Application-level `spec.ignoreDifferences[].jsonPointers` rules and global
-`resource.customizations.ignoreDifferences.*.jsonPointers` settings from
-discovered `argocd-cm` or Helm values `configs.cm` are honored for rendered
-resource diffs. When a matching resource exists on both sides, `argocd-local`
-applies the union of matching JSON pointers from the baseline and current
-Applications and global settings so a newly added ignore rule can suppress the
-intended PR noise immediately. `jqPathExpressions` and
-`managedFieldsManagers` are reported as settings diagnostics but are not
-enforced yet.
+Application-level `spec.ignoreDifferences[]` rules and global
+`resource.customizations.ignoreDifferences.*` settings from discovered
+`argocd-cm` or Helm values `configs.cm` are honored for rendered resource
+diffs. Supported ignore fields are `jsonPointers`, `jqPathExpressions`, and
+`managedFieldsManagers`. When a matching resource exists on both sides,
+`argocd-local` applies the union of matching Application-local and global
+settings from the baseline and current trees so a newly added ignore rule can
+suppress the intended PR noise immediately.
+
+`jqPathExpressions` are evaluated as Argo CD-style `del(<expression>)` delete
+filters. Invalid expressions fail the diff so unsafe normalization does not hide
+changes. `managedFieldsManagers` is an offline approximation: it suppresses
+fields only when rendered desired manifests include matching
+`metadata.managedFields` ownership data.
+
+Discovered `resource.compareoptions` settings are also honored for
+`ignoreResourceStatusField` and `ignoreAggregatedRoles`. By default status is
+ignored for all resources. Use `ignoreResourceStatusField: none`, `off`, or
+`false` when rendered status fields should remain visible in PR diffs.
 
 Rendered-resource filters run before diff comparison. Argo CD core exclusions
 and discovered `resource.exclusions`/`resource.inclusions` are applied

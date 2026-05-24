@@ -39,10 +39,13 @@ Supported in the MVP:
   add/delete diffs when the Application exists on only one side
 - `diff apps` and `diff app` structured JSON and YAML output
 - `--strip-attr KEY` diff normalization for metadata label and annotation keys
-- Application-level `spec.ignoreDifferences[].jsonPointers` for rendered
-  manifest diffs
-- Global `resource.customizations.ignoreDifferences.*.jsonPointers` from
-  discovered `argocd-cm` and Argo CD Helm values `configs.cm`
+- Application-level `spec.ignoreDifferences[]` `jsonPointers`,
+  `jqPathExpressions`, and `managedFieldsManagers` for rendered manifest diffs
+- Global `resource.customizations.ignoreDifferences.*` `jsonPointers`,
+  `jqPathExpressions`, and `managedFieldsManagers` from discovered `argocd-cm`
+  and Argo CD Helm values `configs.cm`
+- Discovered `resource.compareoptions.ignoreResourceStatusField` and
+  `resource.compareoptions.ignoreAggregatedRoles`
 - Argo CD core resource exclusions plus discovered global
   `resource.exclusions` and `resource.inclusions`
 - Explicit rendered-resource filters through `--skip-kind`, `--skip-crds`, and
@@ -84,14 +87,11 @@ Not reproduced offline:
 
 - Kubernetes API defaulting
 - Admission mutation
-- Server-side apply field ownership
-- Managed fields ignores
+- Live server-side apply field ownership prediction
 - Live Argo CD server-side diff
-- Application-level `ignoreDifferences` `jqPathExpressions` and
-  `managedFieldsManagers`
-- Global `resource.customizations` `jqPathExpressions`,
-  `managedFieldsManagers`, `ignoreResourceUpdates`, `knownTypeFields`, health,
-  actions, and Lua settings
+- Managed-fields ignores when ownership data exists only on the live cluster
+- Global `resource.customizations` `ignoreResourceUpdates`,
+  `knownTypeFields`, health, actions, and Lua settings
 - Project/RBAC/destination validation
 - Authenticated remote resources
 - Remote Kustomize Git refs, bases, components, patches, generators,

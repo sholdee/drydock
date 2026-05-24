@@ -1,0 +1,17 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: managed
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: managed
+  template:
+    metadata:
+      labels:
+        app: managed
+    spec:
+      containers:
+        - name: app
+          image: example/app:v1
