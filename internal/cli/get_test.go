@@ -329,6 +329,28 @@ func TestGetImagesNameOutput(t *testing.T) {
 	}
 }
 
+func TestGetImagesSkipKindOmitsFilteredWorkloads(t *testing.T) {
+	root := t.TempDir()
+	writeImageAppForCLI(t, root, "ghcr.io/example/demo:v1")
+
+	cmd := NewRootCommand(VersionInfo{})
+	cmd.SetArgs([]string{"get", "images", "--path", root, "-o", "name", "--skip-kind", "Deployment"})
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	cmd.SetOut(&stdout)
+	cmd.SetErr(&stderr)
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("Execute() error = %v\nstdout:\n%s\nstderr:\n%s", err, stdout.String(), stderr.String())
+	}
+	if stdout.String() != "" {
+		t.Fatalf("stdout = %q, want no images", stdout.String())
+	}
+	if stderr.String() != "" {
+		t.Fatalf("stderr = %q, want empty", stderr.String())
+	}
+}
+
 func TestGetImagesDefaultOutputIsTable(t *testing.T) {
 	root := t.TempDir()
 	writeImageAppForCLI(t, root, "ghcr.io/example/demo:v1")

@@ -112,6 +112,11 @@ Network and cache flags:
   rendering.
 - `--remote-cache-dir PATH` overrides the default user cache directory for
   cached remote Kustomize resources.
+- `--skip-kind KIND` omits rendered resources with that Kubernetes kind from
+  build output, manifest diffs, image extraction, and render tests. The flag is
+  repeatable and matches kind only.
+- `--skip-crds` omits rendered `CustomResourceDefinition` resources.
+- `--skip-secrets` omits rendered `Secret` resources.
 
 `--allow-network` is not the Helm chart-fetch flag. It only gates Git
 repository-source fetching. `--offline` cannot be combined with
@@ -143,7 +148,9 @@ internal packages or performing public network fetches.
 Public render results include Applications, manifests, diagnostics, and
 per-Application statuses. If one selected Application fails, `Render` returns
 the error and still returns the partial successful manifests, stable
-diagnostics, and statuses.
+diagnostics, and statuses. Set `SkipKinds`, `SkipCRDs`, or `SkipSecrets` on
+`argocdlocal.Config` to apply the same rendered-resource filters exposed by
+the CLI.
 
 ## Render Tests
 
@@ -224,6 +231,17 @@ argocd-local diff apps \
 
 If stripped attributes are the only rendered difference for a resource, no diff
 result is emitted for that resource.
+
+Rendered-resource filters run before diff comparison. For example, omit CRDs
+and Secrets from a pull request diff with:
+
+```bash
+argocd-local diff apps \
+  --path-orig ../base \
+  --path ./current \
+  --skip-crds \
+  --skip-secrets
+```
 
 Diff one requested Application by `metadata.name`:
 

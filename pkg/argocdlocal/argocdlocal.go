@@ -34,6 +34,9 @@ type Config struct {
 	RefreshRemoteResources       bool
 	RemoteResourceCacheDir       string
 	RemoteResourceForbiddenRoots []string
+	SkipKinds                    []string
+	SkipCRDs                     bool
+	SkipSecrets                  bool
 	ChangedOnly                  *bool
 	StrictChangedOnly            bool
 	Unified                      int
@@ -147,6 +150,9 @@ func (client *Client) buildRequest() app.BuildRequest {
 		RefreshRemoteResources:       client.config.RefreshRemoteResources,
 		RemoteResourceCacheDir:       client.config.RemoteResourceCacheDir,
 		RemoteResourceForbiddenRoots: append([]string(nil), client.config.RemoteResourceForbiddenRoots...),
+		SkipKinds:                    append([]string(nil), client.config.SkipKinds...),
+		SkipCRDs:                     client.config.SkipCRDs,
+		SkipSecrets:                  client.config.SkipSecrets,
 	}
 }
 
@@ -178,6 +184,9 @@ func (client *Client) diffRequest() app.DiffRequest {
 		GitCredentials:         gitCredentialsToInternal(client.config.GitCredentials),
 		RefreshRemoteResources: client.config.RefreshRemoteResources,
 		RemoteResourceCacheDir: client.config.RemoteResourceCacheDir,
+		SkipKinds:              append([]string(nil), client.config.SkipKinds...),
+		SkipCRDs:               client.config.SkipCRDs,
+		SkipSecrets:            client.config.SkipSecrets,
 	}
 }
 

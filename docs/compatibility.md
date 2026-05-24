@@ -39,6 +39,8 @@ Supported in the MVP:
   add/delete diffs when the Application exists on only one side
 - `diff apps` and `diff app` structured JSON and YAML output
 - `--strip-attr KEY` diff normalization for metadata label and annotation keys
+- Explicit rendered-resource filters through `--skip-kind`, `--skip-crds`, and
+  `--skip-secrets`
 - `diff images` conservative workload image diffs
 - Repeated-resource last-wins behavior inside one Application
 - Public Go API in `pkg/argocdlocal` for Application listing, rendering,
@@ -83,6 +85,8 @@ Not reproduced offline:
 - Authenticated remote resources
 - Remote Kustomize Git refs, bases, components, patches, generators,
   transformers, validators, `crds`, `openapi`, and replacements
+- Argo CD global resource inclusions/exclusions and global
+  `resource.customizations.*`
 
 The tool pins Argo CD dependencies. Upgrade Argo CD dependencies deliberately
 and update compatibility tests in the same change.
