@@ -6,8 +6,8 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
-func renderApplicationTemplate(appset argoappv1.ApplicationSet, params map[string]any) (argoappv1.Application, error) {
-	meta := appset.Spec.Template.ApplicationSetTemplateMeta
+func renderApplicationTemplateWithTemplate(appset argoappv1.ApplicationSet, template argoappv1.ApplicationSetTemplate, params map[string]any) (argoappv1.Application, error) {
+	meta := template.ApplicationSetTemplateMeta
 	templateApp, err := cloneTemplateApp(argoappv1.Application{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:        meta.Name,
@@ -16,7 +16,7 @@ func renderApplicationTemplate(appset argoappv1.ApplicationSet, params map[strin
 			Annotations: meta.Annotations,
 			Finalizers:  meta.Finalizers,
 		},
-		Spec: appset.Spec.Template.Spec,
+		Spec: template.Spec,
 	})
 	if err != nil {
 		return argoappv1.Application{}, err
