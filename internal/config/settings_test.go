@@ -411,6 +411,64 @@ data:
 	}
 }
 
+func TestSplitHealthActionsAndIgnoreResourceUpdatesEmitMetadataOnlyDiagnostics(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "argocd-cm.yaml")
+	if err := os.WriteFile(path, []byte(`apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: argocd-cm
+data:
+  resource.customizations.health.apps_Deployment: |
+    return { status = "Healthy" }
+  resource.customizations.actions.apps_Deployment: |
+    definitions:
+      - name: restart
+        action.lua: |
+          return obj
+  resource.customizations.ignoreResourceUpdates.apps_Deployment: |
+    jsonPointers:
+      - /status
+`), 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	_, diags, err := LoadFromConfigMap(path)
+	if err != nil {
+		t.Fatalf("LoadFromConfigMap() error = %v", err)
+	}
+	assertDiagnosticStableCode(t, diags, "resource customizations health Lua", "settings.metadata-only")
+	assertDiagnosticStableCode(t, diags, "resource customizations actions", "settings.metadata-only")
+	assertDiagnosticStableCode(t, diags, "resource customizations ignoreResourceUpdates", "settings.metadata-only")
+}
+
+func TestLoadConfigMapCompareOptionsAppliedWithoutMetadataOnlyDiagnostic(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "argocd-cm.yaml")
+	if err := os.WriteFile(path, []byte(`apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: argocd-cm
+data:
+  resource.compareoptions: |
+    ignoreResourceStatusField: crd
+    ignoreAggregatedRoles: true
+`), 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	settings, diags, err := LoadFromConfigMap(path)
+	if err != nil {
+		t.Fatalf("LoadFromConfigMap() error = %v", err)
+	}
+	if settings.CompareOptions.IgnoreResourceStatusField != "crd" || !settings.CompareOptions.IgnoreAggregatedRoles {
+		t.Fatalf("CompareOptions = %#v, want applied compare options", settings.CompareOptions)
+	}
+	for _, diag := range diagnostic.WithStableCodes(diags) {
+		if diag.Code == "settings.metadata-only" {
+			t.Fatalf("diagnostics = %#v, did not want metadata-only diagnostic for applied compare options", diags)
+		}
+	}
+}
+
 func loadAdvancedResourceCustomizations(t *testing.T) (ArgoSettings, []diagnostic.Diagnostic) {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "argocd-cm.yaml")
@@ -992,6 +1050,19 @@ func hasDiagnosticCode(diags []diagnostic.Diagnostic, code string) bool {
 		}
 	}
 	return false
+}
+
+func assertDiagnosticStableCode(t *testing.T, diags []diagnostic.Diagnostic, fragment, code string) {
+	t.Helper()
+	for _, diag := range diagnostic.WithStableCodes(diags) {
+		if strings.Contains(diag.Message, fragment) {
+			if diag.Code != code {
+				t.Fatalf("diagnostic code for %q = %q, want %q: %#v", fragment, diag.Code, code, diag)
+			}
+			return
+		}
+	}
+	t.Fatalf("diagnostics = %#v, missing message containing %q", diags, fragment)
 }
 
 func assertJSONDoesNotContain(t *testing.T, value any, forbidden string) {
