@@ -386,6 +386,31 @@ func TestOrchestratorDiffAppsHonorsSplitGlobalResourceCustomizationJSONPointers(
 	}
 }
 
+func TestOrchestratorDiffAppliesKnownTypeFields(t *testing.T) {
+	left := t.TempDir()
+	right := t.TempDir()
+	writeBuildApplication(t, left, "rollout", "rollout")
+	writeBuildApplication(t, right, "rollout", "rollout")
+	writeTestFile(t, filepath.Join(left, "manifests", "rollout", "manifest.yaml"), rolloutWithCPU("0.1"))
+	writeTestFile(t, filepath.Join(right, "manifests", "rollout", "manifest.yaml"), rolloutWithCPU("100m"))
+	writeGlobalCustomization(t, right, `resource.customizations.knownTypeFields.argoproj.io_Rollout: |
+    - field: spec.template.spec
+      type: core/v1/PodSpec
+`)
+
+	result, err := Orchestrator{}.DiffApps(context.Background(), DiffRequest{
+		LeftPath:    left,
+		RightPath:   right,
+		ChangedOnly: false,
+	})
+	if err != nil {
+		t.Fatalf("DiffApps() error = %v", err)
+	}
+	if len(result.Results) != 0 {
+		t.Fatalf("Results = %#v, want no diff after knownTypeFields normalization", result.Results)
+	}
+}
+
 func TestOrchestratorDiffAppsUnionsApplicationAndGlobalJSONPointers(t *testing.T) {
 	root := t.TempDir()
 	left := filepath.Join(root, "left")
@@ -1128,6 +1153,23 @@ metadata:
   name: argocd-cm
 data:
   `+data)
+}
+
+func rolloutWithCPU(cpu string) string {
+	return `apiVersion: argoproj.io/v1alpha1
+kind: Rollout
+metadata:
+  name: demo-rollout
+spec:
+  template:
+    spec:
+      containers:
+        - name: app
+          image: repo/app:v1
+          resources:
+            requests:
+              cpu: ` + cpu + `
+`
 }
 
 func writeHelmAppWithRefValues(t *testing.T, root, value string) {
