@@ -157,6 +157,11 @@ stringData:
   url: https://github.com/example/repo
   password: super-secret
 `)
+	mustWriteFile(t, filepath.Join(root, "settings", "values.yaml"), `configs:
+  cm:
+    resource.exclusions: |
+      - apiGroups: ["events.k8s.io"]
+`)
 
 	result, err := Scan(root, Options{})
 	if err != nil {
@@ -169,6 +174,7 @@ stringData:
 	wantSettings := []SettingsCandidate{
 		{Path: filepath.Join("settings", "argocd-cm.yaml"), Kind: "argocd-cm"},
 		{Path: filepath.Join("settings", "repo-secret.yaml"), Kind: "repository-secret"},
+		{Path: filepath.Join("settings", "values.yaml"), Kind: "argocd-values"},
 	}
 	if !reflect.DeepEqual(result.SettingsCandidates, wantSettings) {
 		t.Fatalf("SettingsCandidates = %#v, want %#v", result.SettingsCandidates, wantSettings)
@@ -225,6 +231,10 @@ func TestDefaultScanIgnoresUnrelatedMalformedYAML(t *testing.T) {
 image:
   tag: latest
 `)
+	mustWriteFile(t, filepath.Join(root, "unrelated-values.yaml"), `configs:
+  cm:
+    unrelated: value
+`)
 	mustWriteFile(t, filepath.Join(root, "templates", "deployment.yaml"), `{{- if .Values.enabled }}
 apiVersion: apps/v1
 kind: Deployment
@@ -244,6 +254,9 @@ kind: Deployment
 	}
 	if result.Applications[0].Path != filepath.Join("apps", "argocd", "app.yaml") {
 		t.Fatalf("Path = %s", result.Applications[0].Path)
+	}
+	if len(result.SettingsCandidates) != 0 {
+		t.Fatalf("SettingsCandidates = %#v, want none", result.SettingsCandidates)
 	}
 }
 
