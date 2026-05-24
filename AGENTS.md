@@ -20,9 +20,10 @@ the design spec is updated first.
 
 ## Current Design
 
-Read the design spec before substantive changes:
+Read the design spec and roadmap before substantive changes:
 
-- `docs/superpowers/specs/2026-05-22-drydock-design.md`
+- `docs/design.md`
+- `docs/roadmap.md`
 - `docs/reports/2026-05-24-live-integration-design-gate.md` before proposing
   Kubernetes, Argo CD server, server-side diff, defaulting, admission, or
   managed-fields ownership work.
