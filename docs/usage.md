@@ -1,6 +1,6 @@
 # Usage
 
-`argocd-local` currently wires Application discovery, rendered image listing,
+`drydock` currently wires Application discovery, rendered image listing,
 all-Application and named-Application build, all-Application and
 named-Application render tests, named-Application manifest diffs, image diffs,
 and repository diagnostics.
@@ -11,7 +11,7 @@ List discovered direct `Application` CRs and supported generated
 `ApplicationSet` Applications:
 
 ```bash
-argocd-local get apps --path .
+drydock get apps --path .
 ```
 
 `get apps` defaults to table output and supports `-o table`, `-o name`,
@@ -19,13 +19,13 @@ argocd-local get apps --path .
 syntax to match `Application.metadata.labels`:
 
 ```bash
-argocd-local get apps --path . -l 'env in (prod,stage),tier!=test'
+drydock get apps --path . -l 'env in (prod,stage),tier!=test'
 ```
 
 List conservative workload container images from rendered Applications:
 
 ```bash
-argocd-local get images --path . -o name
+drydock get images --path . -o name
 ```
 
 `get images` supports the same structured output formats as `get apps`.
@@ -62,19 +62,19 @@ server.
 Build every discovered Application:
 
 ```bash
-argocd-local build apps --path .
+drydock build apps --path .
 ```
 
 Build exactly one discovered Application by `metadata.name`:
 
 ```bash
-argocd-local build app renovate --path .
+drydock build app renovate --path .
 ```
 
 Use `NAMESPACE/NAME` when a name appears in multiple namespaces:
 
 ```bash
-argocd-local build app argocd/renovate --path .
+drydock build app argocd/renovate --path .
 ```
 
 `build app` errors when no discovered Application matches. The unqualified
@@ -109,7 +109,7 @@ Remote Kustomize refs are supported in `resources`, `bases`, `components`,
 YAML/JSON files. Directory-shaped fields, including remote bases and
 components, must use Git refs that resolve to Kustomization directories. The
 renderer copies acquired content into a temporary workspace under generated
-`.argocd-local` paths and does not write generated manifests into the source
+`.drydock` paths and does not write generated manifests into the source
 tree.
 
 Network and cache flags:
@@ -166,13 +166,13 @@ the Phase 1B cache-observability follow-up.
 
 ## Go API
 
-Use `github.com/home-operations/argocd-local/pkg/argocdlocal` when embedding
+Use `github.com/sholdee/drydock/pkg/drydock` when embedding
 the renderer directly:
 
 ```go
-client := argocdlocal.NewClient(argocdlocal.Config{
+client := drydock.NewClient(drydock.Config{
 	Path: ".",
-	RepoMaps: []argocdlocal.RepoMap{
+	RepoMaps: []drydock.RepoMap{
 		{URL: "https://github.com/example/repo", Path: "/work/repo"},
 	},
 })
@@ -189,13 +189,13 @@ Public render results include Applications, manifests, diagnostics, and
 per-Application statuses. If one selected Application fails, `Render` returns
 the error and still returns the partial successful manifests, stable
 diagnostics, and statuses. Set `SkipKinds`, `SkipCRDs`, or `SkipSecrets` on
-`argocdlocal.Config` to apply the same rendered-resource filters exposed by
+`drydock.Config` to apply the same rendered-resource filters exposed by
 the CLI.
 
 Config management plugin sources are explicit. The CLI and default Go client
 do not execute plugin commands; an Application source with `spec.source.plugin`
 fails closed with a plugin diagnostic unless an embedding caller supplies
-`argocdlocal.Config.PluginRenderer`. Injected plugin renderer output
+`drydock.Config.PluginRenderer`. Injected plugin renderer output
 participates in normal render, diff, image extraction, destination namespace
 defaulting, and resource filtering.
 
@@ -204,19 +204,19 @@ defaulting, and resource filtering.
 Test every discovered Application without printing manifest bodies:
 
 ```bash
-argocd-local test apps --path .
+drydock test apps --path .
 ```
 
 Test exactly one discovered Application by `metadata.name`:
 
 ```bash
-argocd-local test app renovate --path .
+drydock test app renovate --path .
 ```
 
 Use `NAMESPACE/NAME` when a name appears in multiple namespaces:
 
 ```bash
-argocd-local test app argocd/renovate --path .
+drydock test app argocd/renovate --path .
 ```
 
 Default text output prints one status line per selected Application:
@@ -236,8 +236,8 @@ return exit code `0` only when every selected Application passes; any `FAIL`,
 Structured status output is available with `-o json` and `-o yaml`:
 
 ```bash
-argocd-local test apps --path . -o json
-argocd-local test apps --path . -o yaml
+drydock test apps --path . -o json
+drydock test apps --path . -o yaml
 ```
 
 Structured test output contains only status records and diagnostics remain on
@@ -248,7 +248,7 @@ stderr.
 Diff all affected Applications between two repository trees:
 
 ```bash
-argocd-local diff apps --path ./current --path-orig ../base
+drydock diff apps --path ./current --path-orig ../base
 ```
 
 `diff apps` renders the baseline and current trees, then prints
@@ -269,7 +269,7 @@ Use repeatable `--strip-attr KEY` to remove matching keys from
 manifests and generating diffs:
 
 ```bash
-argocd-local diff apps \
+drydock diff apps \
   --path-orig ../base \
   --path ./current \
   --strip-attr helm.sh/chart \
@@ -284,7 +284,7 @@ Application-level `spec.ignoreDifferences[]` rules and global
 `argocd-cm` or Helm values `configs.cm` are honored for rendered resource
 diffs. Supported ignore fields are `jsonPointers`, `jqPathExpressions`, and
 `managedFieldsManagers`. When a matching resource exists on both sides,
-`argocd-local` applies the union of matching Application-local and global
+`drydock` applies the union of matching Application-local and global
 settings from the baseline and current trees so a newly added ignore rule can
 suppress the intended PR noise immediately.
 
@@ -299,7 +299,7 @@ when normalizing rendered resources for desired-vs-desired diffs. Global
 `resource.customizations.ignoreResourceUpdates.*` settings are parsed and
 reported as diagnostics, but they are not applied as desired diff ignores.
 Health and action customizations, including `useOpenLibs` and Lua metadata, are
-parsed and reported only. `argocd-local` does not execute Lua offline.
+parsed and reported only. `drydock` does not execute Lua offline.
 
 Discovered `resource.compareoptions` settings are also honored for
 `ignoreResourceStatusField` and `ignoreAggregatedRoles`. By default status is
@@ -311,7 +311,7 @@ and discovered `resource.exclusions`/`resource.inclusions` are applied
 automatically. For example, omit CRDs and Secrets from a pull request diff with:
 
 ```bash
-argocd-local diff apps \
+drydock diff apps \
   --path-orig ../base \
   --path ./current \
   --skip-crds \
@@ -321,13 +321,13 @@ argocd-local diff apps \
 Diff one requested Application by `metadata.name`:
 
 ```bash
-argocd-local diff app renovate --path-orig ../base --path .
+drydock diff app renovate --path-orig ../base --path .
 ```
 
 Use `NAMESPACE/NAME` to disambiguate:
 
 ```bash
-argocd-local diff app argocd/renovate --path-orig ../base --path .
+drydock diff app argocd/renovate --path-orig ../base --path .
 ```
 
 `diff app` selects the requested Application directly in each tree and does not
@@ -338,7 +338,7 @@ deletions. If it is absent from both trees, the command errors.
 For local inspection, keep the command successful even when a diff exists:
 
 ```bash
-argocd-local diff apps \
+drydock diff apps \
   --path-orig ../base \
   --path ./current \
   --exit-code=false
@@ -349,7 +349,7 @@ argocd-local diff apps \
 Diff conservative workload container images from rendered manifests:
 
 ```bash
-argocd-local diff images --path ./current --path-orig ../base
+drydock diff images --path ./current --path-orig ../base
 ```
 
 This projection is intentionally conservative and does not report arbitrary
@@ -360,7 +360,7 @@ This projection is intentionally conservative and does not report arbitrary
 Run repository diagnostics without printing rendered manifests:
 
 ```bash
-argocd-local diag --path .
+drydock diag --path .
 ```
 
 `diag` uses the same discovery, ApplicationSet expansion, source resolution,

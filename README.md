@@ -1,7 +1,9 @@
-# argocd-local
+# drydock
 
-`argocd-local` is an early Go CLI and embeddable Go package for local Argo CD
-GitOps repository analysis.
+`drydock` is a Go CLI and embeddable Go package for offline Argo CD GitOps
+repository analysis.
+
+Inspect your Argo CD fleet without getting wet.
 
 The MVP goal is desired-vs-desired pull request diffing: compare a current
 repository tree with a baseline tree and inspect the rendered Kubernetes
@@ -15,19 +17,19 @@ repository diagnostics without printing manifests, and `diag -o json` or
 `diag -o yaml` emits structured diagnostic reports.
 
 This project is early implementation work. See
-`docs/superpowers/specs/2026-05-22-argocd-local-design.md` for the approved MVP
+`docs/superpowers/specs/2026-05-22-drydock-design.md` for the approved MVP
 design.
 
 ## Go API
 
-Embedding callers can use `github.com/home-operations/argocd-local/pkg/argocdlocal`
+Embedding callers can use `github.com/sholdee/drydock/pkg/drydock`
 to list, render, and diff Applications without shelling out:
 
 ```go
-result, err := argocdlocal.Render(ctx, argocdlocal.Config{Path: "."})
+result, err := drydock.Render(ctx, drydock.Config{Path: "."})
 ```
 
-`argocdlocal.NewClient` accepts public Git, chart, and remote-resource acquirer
+`drydock.NewClient` accepts public Git, chart, and remote-resource acquirer
 interfaces, plus a public config management plugin renderer hook, for tests
 and embedding. Those fakes can satisfy remote source and plugin render
 requests without network access or shelling out. When rendering returns an
@@ -39,27 +41,27 @@ for API callers.
 ## Quick Start
 
 ```bash
-go run ./cmd/argocd-local get apps --path ./testdata/applications/e2e
-go run ./cmd/argocd-local get apps --path ./testdata/applications/e2e -o json
-go run ./cmd/argocd-local get images --path ./testdata/renovate-diff/current -o name
-go run ./cmd/argocd-local build apps --path ./testdata/applications/e2e
-go run ./cmd/argocd-local build app renovate \
+go run ./cmd/drydock get apps --path ./testdata/applications/e2e
+go run ./cmd/drydock get apps --path ./testdata/applications/e2e -o json
+go run ./cmd/drydock get images --path ./testdata/renovate-diff/current -o name
+go run ./cmd/drydock build apps --path ./testdata/applications/e2e
+go run ./cmd/drydock build app renovate \
   --path ./testdata/renovate-diff/current
-go run ./cmd/argocd-local test apps --path ./testdata/applications/e2e
-go run ./cmd/argocd-local test apps --path ./testdata/applications/e2e -o json
-go run ./cmd/argocd-local diff apps \
+go run ./cmd/drydock test apps --path ./testdata/applications/e2e
+go run ./cmd/drydock test apps --path ./testdata/applications/e2e -o json
+go run ./cmd/drydock diff apps \
   --path-orig ./testdata/renovate-diff/baseline \
   --path ./testdata/renovate-diff/current \
   --strip-attr helm.sh/chart \
   --exit-code=false
-go run ./cmd/argocd-local diff app argocd/renovate \
+go run ./cmd/drydock diff app argocd/renovate \
   --path-orig ./testdata/renovate-diff/baseline \
   --path ./testdata/renovate-diff/current \
   -o json \
   --exit-code=false
-go run ./cmd/argocd-local diag --path ./testdata/applications/e2e
-go run ./cmd/argocd-local diag --path ./testdata/applications/e2e -o json
-go run ./cmd/argocd-local diag --path ./testdata/applications/e2e \
+go run ./cmd/drydock diag --path ./testdata/applications/e2e
+go run ./cmd/drydock diag --path ./testdata/applications/e2e -o json
+go run ./cmd/drydock diag --path ./testdata/applications/e2e \
   -o yaml \
   --cache-events
 ```
@@ -110,7 +112,7 @@ ApplicationSet generators still produce diagnostics instead of approximating
 live or external services.
 
 Local `AppProject` manifests are discovered and used for offline diagnostics.
-`argocd-local` reports Application source repository and destination
+`drydock` reports Application source repository and destination
 server/name/namespace policy mismatches from those manifests, plus source
 namespace mismatches when `spec.sourceNamespaces` is set. RBAC roles and
 policies are parsed and reported as metadata only; authorization is not
@@ -122,7 +124,7 @@ metadata only and never read secret credential fields.
 Application sources that declare `spec.source.plugin` are detected explicitly.
 The CLI and default Go client do not execute plugin commands; without an
 injected renderer they fail closed with a plugin diagnostic. Embedders can
-provide `argocdlocal.Config.PluginRenderer` to render those sources
+provide `drydock.Config.PluginRenderer` to render those sources
 deterministically inside their own Go process, and returned manifests
 participate in normal render, diff, image extraction, namespace defaulting,
 and resource filtering.
@@ -132,7 +134,7 @@ Rendered-resource filters include Argo CD core exclusions and discovered
 `resource.inclusions`. Use repeatable `--skip-kind KIND`, `--skip-crds`, or
 `--skip-secrets` for additional explicit omissions from build output, manifest
 diffs, image extraction, and render tests. Embedding callers can set
-`SkipKinds`, `SkipCRDs`, and `SkipSecrets` on `argocdlocal.Config` for the
+`SkipKinds`, `SkipCRDs`, and `SkipSecrets` on `drydock.Config` for the
 same explicit-filter behavior.
 
 Application-level `spec.ignoreDifferences[]` `jsonPointers`,
