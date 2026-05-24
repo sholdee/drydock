@@ -32,6 +32,15 @@ func TestReporterError(t *testing.T) {
 	}
 }
 
+func TestReporterAssignsStableCodes(t *testing.T) {
+	reporter := NewReporter(false)
+	reporter.Warn("appset", "unsupported ApplicationSet generator; supported generators are git directories, git files, list, matrix, and merge", Provenance{})
+
+	if got := reporter.All()[0].Code; got != "appset.unsupported-generator" {
+		t.Fatalf("Code = %q, want appset.unsupported-generator", got)
+	}
+}
+
 func TestReporterAllReturnsCopy(t *testing.T) {
 	reporter := NewReporter(false)
 	reporter.Warn("settings", "missing argocd-cm", Provenance{Path: "values.yaml"})
@@ -49,5 +58,54 @@ func TestReporterAllReturnsCopy(t *testing.T) {
 	}
 	if again[0].Message != "missing argocd-cm" {
 		t.Fatalf("stored diagnostic was mutated: %#v", again[0])
+	}
+}
+
+func TestWithStableCodesPreservesExplicitCodes(t *testing.T) {
+	diags := WithStableCodes([]Diagnostic{{
+		Code:     "custom.explicit",
+		Severity: SeverityWarning,
+		Category: "custom",
+		Message:  "message",
+	}})
+	if got := diags[0].Code; got != "custom.explicit" {
+		t.Fatalf("Code = %q, want custom.explicit", got)
+	}
+}
+
+func TestWithStableCodesAssignsKnownCodes(t *testing.T) {
+	tests := []struct {
+		name string
+		diag Diagnostic
+		want string
+	}{
+		{
+			name: "unsupported appset generator",
+			diag: Diagnostic{Severity: SeverityWarning, Category: "appset", Message: "unsupported ApplicationSet generator; supported generators are git directories, git files, list, matrix, and merge"},
+			want: "appset.unsupported-generator",
+		},
+		{
+			name: "project source denied",
+			diag: Diagnostic{Severity: SeverityWarning, Category: "project", Message: "Application argocd/demo source repository \"https://github.com/example/repo\" is not permitted by AppProject \"platform\""},
+			want: "project.source-repository-denied",
+		},
+		{
+			name: "repository metadata missing",
+			diag: Diagnostic{Severity: SeverityWarning, Category: "repository", Message: "Application argocd/demo source repository \"https://github.com/example/repo\" is missing repository metadata from discovered repository Secrets"},
+			want: "repository.metadata-missing",
+		},
+		{
+			name: "fallback",
+			diag: Diagnostic{Severity: SeverityWarning, Category: "custom", Message: "message with variable value"},
+			want: "custom.unspecified",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := WithStableCodes([]Diagnostic{tt.diag})
+			if got[0].Code != tt.want {
+				t.Fatalf("Code = %q, want %q", got[0].Code, tt.want)
+			}
+		})
 	}
 }
