@@ -146,6 +146,7 @@ func diffRequestFromFlags(flags commonFlags, repoMaps []sourcepkg.RepoMap) app.D
 		RemoteResourceCacheDir:         flags.remoteCacheDir,
 		RemoteResourceCredentials:      flags.remoteCredentials(),
 		RemoteResourceGitCredentials:   flags.remoteGitCredentials(),
+		Parallelism:                    flags.parallelism,
 		SkipKinds:                      append([]string(nil), flags.skipKinds...),
 		SkipCRDs:                       flags.skipCRDs,
 		SkipSecrets:                    flags.skipSecrets,

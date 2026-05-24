@@ -1,6 +1,8 @@
 package cli
 
 import (
+	"context"
+
 	"github.com/sholdee/drydock/internal/app"
 	"github.com/spf13/cobra"
 )
@@ -12,7 +14,17 @@ type VersionInfo struct {
 }
 
 type Dependencies struct {
-	Orchestrator app.Orchestrator
+	Orchestrator Orchestrator
+}
+
+type Orchestrator interface {
+	Build(context.Context, app.BuildRequest) (app.BuildResult, error)
+	BuildApp(context.Context, app.BuildAppRequest) (app.BuildResult, error)
+	ListApplications(context.Context, app.BuildRequest) (app.BuildResult, error)
+	DiffApps(context.Context, app.DiffRequest) (app.DiffResult, error)
+	DiffApp(context.Context, app.DiffAppRequest) (app.DiffResult, error)
+	DiffImages(context.Context, app.DiffRequest) (app.ImageDiffResult, error)
+	Diag(context.Context, app.DiagRequest) (app.DiagResult, error)
 }
 
 func defaultDependencies() Dependencies {

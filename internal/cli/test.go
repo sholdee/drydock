@@ -119,6 +119,7 @@ func buildRequestFromFlags(flags commonFlags, repoMaps []sourcepkg.RepoMap) app.
 		RemoteResourceCacheDir:         flags.remoteCacheDir,
 		RemoteResourceCredentials:      flags.remoteCredentials(),
 		RemoteResourceGitCredentials:   flags.remoteGitCredentials(),
+		Parallelism:                    flags.parallelism,
 		ApplicationSetProviderFixtures: append([]string(nil), flags.appsetFixtures...),
 		SkipKinds:                      append([]string(nil), flags.skipKinds...),
 		SkipCRDs:                       flags.skipCRDs,

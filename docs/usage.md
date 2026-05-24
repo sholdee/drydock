@@ -196,6 +196,14 @@ per-Application statuses. CLI `build` commands keep stdout parseable; on render
 failure they print diagnostics to stderr and do not mix invalid partial manifest
 streams into stdout.
 
+Use `--parallelism N` on render-backed commands to render up to `N`
+Applications concurrently. The default is `--parallelism 1`; `0` is treated as
+`1`, and negative values fail before rendering. Parallel rendering preserves
+selected Application order for manifests, statuses, diagnostics, cache events,
+and structured output. It does not enable network access, does not change
+offline behavior, and snapshots cache-backed sources before render reads so
+same-target cache refreshes do not race with readers.
+
 Rendering supports directory sources, Kustomize sources, local Helm charts,
 Kustomize `helmCharts`, remote Kustomize HTTP(S) files and Git refs, and
 Argo CD chart-only remote Helm sources. Public Helm chart fetching is enabled
@@ -268,6 +276,8 @@ Network and cache flags:
   repeatable and matches kind only.
 - `--skip-crds` omits rendered `CustomResourceDefinition` resources.
 - `--skip-secrets` omits rendered `Secret` resources.
+- `--parallelism N` controls Application render concurrency for render-backed
+  commands while preserving deterministic output ordering.
 
 `--allow-network` is not the Helm chart-fetch flag. It only gates Git
 repository-source clone/fetch for path sources. Chart and remote Kustomize

@@ -111,6 +111,9 @@ Supported in the MVP:
   Secret metadata only, without reading secret credential fields
 - Benchmarks for repeated local Application rendering and ApplicationSet
   expansion
+- Opt-in render concurrency through `--parallelism N` and
+  `drydock.Config.Parallelism`, with deterministic output ordering and
+  cache-backed source snapshots before render reads
 - CI documentation for local, library-backed verification without cluster,
   server, or renderer CLI dependencies
 - Release and upgrade documentation for static binary/module releases, Argo CD
@@ -187,7 +190,6 @@ Not reproduced offline:
   pull-request, and plugin ApplicationSet generators. Only explicit local
   fixtures are supported.
 - Live cluster and Argo CD API sources
-- Parallel rendering and `--parallelism` controls
 - Composite install GitHub Action publishing
 
 Live integration is design-gated in
