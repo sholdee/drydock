@@ -97,6 +97,7 @@ type DiagRequest = BuildRequest
 type DiagResult struct {
 	Applications []argoappv1.Application
 	Diagnostics  []diagnostic.Diagnostic
+	Settings     config.ArgoSettings
 	CacheEvents  []cacheevent.Event
 }
 
@@ -112,6 +113,7 @@ func (o Orchestrator) Diag(ctx context.Context, request DiagRequest) (DiagResult
 	diagResult := DiagResult{
 		Applications: result.Applications,
 		Diagnostics:  result.Diagnostics,
+		Settings:     result.Settings,
 		CacheEvents:  result.CacheEvents,
 	}
 	if err != nil {

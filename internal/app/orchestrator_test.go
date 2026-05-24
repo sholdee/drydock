@@ -49,6 +49,31 @@ func TestOrchestratorDiscoversGeneratesAndRenders(t *testing.T) {
 	}
 }
 
+func TestOrchestratorDiagIncludesSettings(t *testing.T) {
+	root := t.TempDir()
+	writeBuildApplication(t, root, "demo", "demo")
+	writeTestFile(t, filepath.Join(root, "settings", "argocd-cm.yaml"), `apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: argocd-cm
+data:
+  resource.customizations.health.apps_Deployment: |
+    return { status = "Healthy" }
+`)
+
+	result, err := Orchestrator{}.Diag(context.Background(), DiagRequest{Path: root})
+	if err != nil {
+		t.Fatalf("Diag() error = %v", err)
+	}
+	customization := result.Settings.ResourceCustomizations["apps/Deployment"]
+	if !customization.HasHealthLua {
+		t.Fatalf("Settings = %#v, want health Lua metadata", result.Settings)
+	}
+	if customization.HealthLuaSHA256 == "" {
+		t.Fatalf("HealthLuaSHA256 = empty, want settings carried through")
+	}
+}
+
 func TestOrchestratorBuildFiltersRenderedResources(t *testing.T) {
 	root := t.TempDir()
 	writeBuildApplication(t, root, "demo", "demo")

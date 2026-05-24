@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/sholdee/drydock/internal/cacheevent"
+	"github.com/sholdee/drydock/internal/config"
 	"github.com/sholdee/drydock/internal/diagnostic"
 	cliformat "github.com/sholdee/drydock/internal/format"
 	"github.com/spf13/cobra"
@@ -15,10 +16,37 @@ import (
 type diagReport struct {
 	Diagnostics []diagnostic.Diagnostic `json:"diagnostics" yaml:"diagnostics"`
 	CacheEvents []cacheevent.Event      `json:"cacheEvents,omitempty" yaml:"cacheEvents,omitempty"`
+	Settings    *diagSettingsSummary    `json:"settings,omitempty" yaml:"settings,omitempty"`
+}
+
+type diagSettingsSummary struct {
+	ResourceCustomizations map[string]diagResourceCustomizationSummary `json:"resourceCustomizations,omitempty" yaml:"resourceCustomizations,omitempty"`
+}
+
+type diagResourceCustomizationSummary struct {
+	HasHealthLua         bool                    `json:"hasHealthLua,omitempty" yaml:"hasHealthLua,omitempty"`
+	HealthLuaSHA256      string                  `json:"healthLuaSHA256,omitempty" yaml:"healthLuaSHA256,omitempty"`
+	HasIgnoreUpdates     bool                    `json:"hasIgnoreResourceUpdates,omitempty" yaml:"hasIgnoreResourceUpdates,omitempty"`
+	HasKnownTypeFields   bool                    `json:"hasKnownTypeFields,omitempty" yaml:"hasKnownTypeFields,omitempty"`
+	HasUseOpenLibs       bool                    `json:"hasUseOpenLibs,omitempty" yaml:"hasUseOpenLibs,omitempty"`
+	UseOpenLibs          bool                    `json:"useOpenLibs,omitempty" yaml:"useOpenLibs,omitempty"`
+	Actions              diagResourceActions     `json:"actions,omitempty" yaml:"actions,omitempty"`
+	HasIgnoreDifferences bool                    `json:"hasIgnoreDifferences,omitempty" yaml:"hasIgnoreDifferences,omitempty"`
+	KnownTypeFields      []config.KnownTypeField `json:"knownTypeFields,omitempty" yaml:"knownTypeFields,omitempty"`
+}
+
+type diagResourceActions struct {
+	HasActions          bool                           `json:"hasActions,omitempty" yaml:"hasActions,omitempty"`
+	HasDiscoveryLua     bool                           `json:"hasDiscoveryLua,omitempty" yaml:"hasDiscoveryLua,omitempty"`
+	DiscoveryLuaSHA256  string                         `json:"discoveryLuaSHA256,omitempty" yaml:"discoveryLuaSHA256,omitempty"`
+	ActionNames         []string                       `json:"actionNames,omitempty" yaml:"actionNames,omitempty"`
+	ActionLuaSHA256     []config.ResourceActionLuaHash `json:"actionLuaSHA256,omitempty" yaml:"actionLuaSHA256,omitempty"`
+	MergeBuiltinActions bool                           `json:"mergeBuiltinActions,omitempty" yaml:"mergeBuiltinActions,omitempty"`
 }
 
 func newDiagCommand(deps Dependencies) *cobra.Command {
 	flags := defaultCommonFlags()
+	includeSettings := false
 	cmd := &cobra.Command{
 		Use:   "diag",
 		Short: "Report repository diagnostics",
@@ -36,17 +64,24 @@ func newDiagCommand(deps Dependencies) *cobra.Command {
 			request.RecordCacheEvents = flags.cacheEvents
 			result, err := deps.Orchestrator.Diag(context.Background(), request)
 			result.Diagnostics = diagnostic.WithStableCodes(result.Diagnostics)
+			report := diagReport{
+				Diagnostics: result.Diagnostics,
+				CacheEvents: result.CacheEvents,
+			}
+			if includeSettings {
+				report.Settings = settingsSummary(result.Settings)
+			}
 			switch output {
 			case "text":
 				if renderErr := renderDiagnostics(cmd.ErrOrStderr(), result.Diagnostics); renderErr != nil {
 					return renderErr
 				}
 			case string(cliformat.OutputJSON):
-				if renderErr := cliformat.JSON(cmd.OutOrStdout(), diagReport{Diagnostics: result.Diagnostics, CacheEvents: result.CacheEvents}); renderErr != nil {
+				if renderErr := cliformat.JSON(cmd.OutOrStdout(), report); renderErr != nil {
 					return renderErr
 				}
 			case string(cliformat.OutputYAML):
-				if renderErr := cliformat.YAML(cmd.OutOrStdout(), diagReport{Diagnostics: result.Diagnostics, CacheEvents: result.CacheEvents}); renderErr != nil {
+				if renderErr := cliformat.YAML(cmd.OutOrStdout(), report); renderErr != nil {
 					return renderErr
 				}
 			default:
@@ -56,7 +91,48 @@ func newDiagCommand(deps Dependencies) *cobra.Command {
 		},
 	}
 	bindCommonFlags(cmd, &flags)
+	cmd.Flags().BoolVar(&includeSettings, "settings", false, "include redacted Argo CD settings summary in structured diagnostic output")
 	return cmd
+}
+
+func settingsSummary(settings config.ArgoSettings) *diagSettingsSummary {
+	summary := &diagSettingsSummary{}
+	if len(settings.ResourceCustomizations) > 0 {
+		summary.ResourceCustomizations = make(map[string]diagResourceCustomizationSummary, len(settings.ResourceCustomizations))
+	}
+	for key, customization := range settings.ResourceCustomizations {
+		summary.ResourceCustomizations[key] = resourceCustomizationSummary(customization)
+	}
+	return summary
+}
+
+func resourceCustomizationSummary(customization config.ResourceCustomization) diagResourceCustomizationSummary {
+	return diagResourceCustomizationSummary{
+		HasHealthLua:         customization.HasHealthLua,
+		HealthLuaSHA256:      customization.HealthLuaSHA256,
+		HasIgnoreUpdates:     hasIgnoreDifferences(customization.IgnoreResourceUpdates),
+		HasKnownTypeFields:   len(customization.KnownTypeFields) > 0,
+		HasUseOpenLibs:       customization.HasUseOpenLibs,
+		UseOpenLibs:          customization.UseOpenLibs,
+		Actions:              resourceActionsSummary(customization.Actions),
+		HasIgnoreDifferences: hasIgnoreDifferences(customization.IgnoreDifferences),
+		KnownTypeFields:      append([]config.KnownTypeField(nil), customization.KnownTypeFields...),
+	}
+}
+
+func resourceActionsSummary(actions config.ResourceActionsSummary) diagResourceActions {
+	return diagResourceActions{
+		HasActions:          actions.HasActions,
+		HasDiscoveryLua:     actions.HasDiscoveryLua,
+		DiscoveryLuaSHA256:  actions.DiscoveryLuaSHA256,
+		ActionNames:         append([]string(nil), actions.ActionNames...),
+		ActionLuaSHA256:     append([]config.ResourceActionLuaHash(nil), actions.ActionLuaSHA256...),
+		MergeBuiltinActions: actions.MergeBuiltinActions,
+	}
+}
+
+func hasIgnoreDifferences(ignore config.OverrideIgnoreDifferences) bool {
+	return len(ignore.JSONPointers) > 0 || len(ignore.JQPathExpressions) > 0 || len(ignore.ManagedFieldsManagers) > 0
 }
 
 func parseDiagOutput(value string) (string, error) {
