@@ -318,8 +318,11 @@ render Applications, clone/fetch Git repositories, fetch Helm charts, fetch
 remote Kustomize resources, or read credential flags. New cache entries write
 hidden `.drydock-cache/metadata.json` sidecars with redacted metadata. Cache
 prune/delete must require `--yes` unless `--dry-run` is set, and cache roots
-must be rejected when they resolve inside the current or selected GitOps
-repository tree.
+must be rejected when they resolve inside the current working directory,
+selected `--path`/`--path-orig` protected roots, any Git repository tree, or
+symlink-resolved equivalents. Cache lifecycle commands never retry failed
+network or authentication acquisitions; repopulate caches through the relevant
+render/build/diff acquisition path.
 
 Authenticated source handling is explicit and non-interactive. Do not prompt
 for credentials, read ambient Git credential helpers, or read ambient Helm
@@ -514,8 +517,8 @@ should stay suppressed for runtime failures.
   keep them local-only until repository fetching is explicitly wired.
 - Do not use `--allow-network` as the Helm chart-fetch flag; chart fetching is
   controlled by `--offline`, `--refresh-charts`, and `--chart-cache-dir`.
-- Do not put chart or remote Kustomize resource caches inside Git repository
-  trees.
+- Do not put Git, chart, or remote Kustomize resource caches inside protected
+  repository roots, Git repository trees, or symlink-resolved equivalents.
 - Do not print Secret manifest values or repository credentials in diagnostics.
 - Do not hard-code one user's repository layout or `home-ops` paths.
 - Do not collapse overlapping Applications to one owner in changed-only mode.

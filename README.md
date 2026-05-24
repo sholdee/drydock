@@ -107,7 +107,12 @@ hidden `.drydock-cache/metadata.json` sidecars with redacted target metadata;
 older hash-only entries are listed as legacy entries when their filesystem
 layout is recognized. Non-dry-run `cache prune` and `cache delete` operations
 require `--yes`, and cache roots are rejected when they resolve inside the
-current or selected GitOps repository tree.
+current working directory, selected repository roots, any Git repository tree,
+or symlink-resolved equivalents. Offline render/build/diff runs require
+existing cache hits or local chart availability; populate caches with a prior
+non-offline render using the relevant auth, cache-dir, and refresh flags.
+Cache lifecycle commands inspect and delete local entries only, so they never
+retry failed network or authentication acquisitions.
 
 Manifest diffs default to unified diff output and also support `-o json` and
 `-o yaml` for structured `diff apps` and `diff app` results. Use repeatable
@@ -192,7 +197,8 @@ scripts/home-ops-pattern-smoke.sh
 - No CLI config management plugin execution or shellout plugin adapters.
 - No required shellouts in default workflows.
 - Cache lifecycle commands operate on recognized drydock cache layouts only;
-  they do not reverse-engineer legacy hash keys without metadata.
+  legacy entries expose key, path, and layout, but not recovered target, name,
+  version, or revision metadata.
 - Live server-side diff/apply behavior is not reproduced.
 - Live-only managed-field ownership is not reproduced when ownership data is
   absent from rendered manifests.
