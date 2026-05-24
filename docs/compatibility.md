@@ -145,6 +145,7 @@ Not reproduced offline:
 - Live Argo CD server-side diff
 - Managed-fields ignores when ownership data exists only on the live cluster
 - Applying `ignoreResourceUpdates` to desired-vs-desired diffs
+- Any live integration that has not passed the live integration design gate
 - Health or action Lua execution
 - Live destination cluster existence checks
 - Sync window enforcement
@@ -159,6 +160,11 @@ Not reproduced offline:
 - Live cluster and Argo CD API sources
 - Parallel rendering and `--parallelism` controls
 - Composite install GitHub Action publishing
+
+Live integration is design-gated in
+`docs/reports/2026-05-24-live-integration-design-gate.md`. Future live work
+must stay explicitly opt-in and must not change the default offline render/diff
+contract.
 
 The tool pins Argo CD dependencies. Upgrade Argo CD dependencies deliberately
 and update compatibility tests in the same change.

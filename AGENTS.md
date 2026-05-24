@@ -23,6 +23,9 @@ the design spec is updated first.
 Read the design spec before substantive changes:
 
 - `docs/superpowers/specs/2026-05-22-argocd-local-design.md`
+- `docs/reports/2026-05-24-live-integration-design-gate.md` before proposing
+  Kubernetes, Argo CD server, server-side diff, defaulting, admission, or
+  managed-fields ownership work.
 
 ## Subagent Sandbox Rules
 
@@ -245,6 +248,8 @@ The MVP currently supports:
 Do not treat these as supported without an explicit design update:
 
 - Live-cluster diffing or live Argo CD API calls.
+- Any live-integration command, public API, or compatibility backend that has
+  not first passed `docs/reports/2026-05-24-live-integration-design-gate.md`.
 - Kubernetes API defaulting or admission mutation.
 - Live server-side apply field ownership prediction and live Argo CD
   server-side diff behavior.
@@ -498,6 +503,8 @@ should stay suppressed for runtime failures.
   one Application is part of the offline model.
 - Do not execute server-side diff/apply settings offline; report them as
   limitations.
+- Do not add live Kubernetes or Argo CD server behavior without first updating
+  the live integration design gate and preserving default offline behavior.
 - Do not add supported features, commands, renderers, providers, diagnostics, or
   validation commands without updating this file.
 
