@@ -121,6 +121,18 @@ per-Application statuses even when one selected Application fails. Public
 diagnostics include stable `Code` values. Public render/list/diff results may
 include cache events when `RecordCacheEvents` is enabled.
 
+Config management plugin sources fail closed in the CLI/default path. The
+public API may render plugins only through explicit in-process
+`Config.PluginRenderer` injection. `NewPluginRegistry` dispatches injected
+renderers by trimmed `plugin.name`; unnamed plugin sources match only an
+explicitly registered empty-name renderer. `Config.PluginTimeout` bounds each
+injected plugin renderer call and propagates through render, manifest diff, and
+image diff APIs. Plugin registry misses and default unsupported plugin sources
+must use explicit `plugin.unsupported`; renderer failures and timeouts must use
+explicit `plugin.failed`; renderer-supplied plugin diagnostics without explicit
+codes use neutral `plugin.unspecified`. Caller cancellation must not be
+reclassified as a plugin timeout.
+
 ## Settings Discovery
 
 Settings flow into `internal/config.ArgoSettings`. Providers must record
@@ -244,7 +256,8 @@ The MVP currently supports:
   with text, JSON, and YAML formats.
 - Public Go API for listing, rendering, manifest diffs, image diffs, and
   injectable Git/chart/remote-resource acquisition plus injectable config
-  management plugin rendering.
+  management plugin rendering, named plugin renderer registry dispatch, and
+  plugin renderer timeout controls.
 - Config management plugin source detection with fail-closed diagnostics in
   the CLI/default path when no plugin renderer is injected.
 - Structured `diff apps` and `diff app` output with diff, JSON, and YAML

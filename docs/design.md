@@ -46,16 +46,17 @@ MVP supports:
 - Explicit Git HTTPS bearer/basic auth, Git SSH key-file auth, HTTP(S) Helm
   bearer/basic auth, and explicit OCI Helm registry config path plumbing.
 - Config management plugin source detection with fail-closed diagnostics in
-  the CLI/default path, plus an injectable Go API plugin renderer hook for
-  embedders that provide deterministic in-process plugin rendering.
+  the CLI/default path, plus injectable Go API plugin renderers, named
+  in-process plugin registry dispatch, and plugin renderer timeout controls
+  for embedders that provide deterministic local plugin rendering.
+- Cluster, clusterDecisionResource, SCM provider, pull-request, and plugin
+  ApplicationSet generators through explicit local fixtures.
 - PR diff, build, get, and image diff commands.
 - Changed-only rendering with safe fallback.
 
 Deferred:
 
 - Live-cluster diff.
-- Cluster, clusterDecisionResource, SCM provider, pull-request, and plugin
-  ApplicationSet generators.
 - CLI config management plugin execution, shellout plugin adapters, Argo CD
   repo-server sidecar plugin discovery, ambient plugin configuration, ambient
   plugin environment loading, and plugin credential injection.
@@ -98,6 +99,15 @@ The shellout approach is also not the default architecture. The product goal is
 a single binary with no required `helm`, `kustomize`, `kubectl`, or `argocd`
 executables on `PATH`. A future optional compatibility backend may be added
 behind the renderer interface if needed.
+
+Config management plugin execution follows the same boundary. The default CLI
+and package-level API do not execute plugin commands or discover repo-server
+sidecars. Embedders may inject deterministic in-process plugin renderers through
+`pkg/drydock`; those renderers receive explicit Application source metadata and
+return manifests and diagnostics in-process. The named registry helper dispatches
+only by explicit `plugin.name`. Timeouts are caller-configured through the public
+API and are reported as plugin failures without converting caller cancellation
+into plugin timeout diagnostics.
 
 ## Argo CD Versioning
 
