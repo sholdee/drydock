@@ -91,11 +91,14 @@ type ApplicationSetProviderClusterDecision struct {
 type ApplicationSetProviderSCMRepository struct {
 	Provider     string
 	Organization string
+	Project      string
+	Region       string
 	Repository   string
 	RepositoryID string
 	Branch       string
 	SHA          string
 	URL          string
+	Tags         map[string]string
 	Labels       []string
 	Paths        []string
 	Values       map[string]string
@@ -105,6 +108,7 @@ type ApplicationSetProviderSCMRepository struct {
 type ApplicationSetProviderPullRequest struct {
 	Provider     string
 	Organization string
+	Project      string
 	Repository   string
 	Number       int
 	Title        string
@@ -112,6 +116,7 @@ type ApplicationSetProviderPullRequest struct {
 	TargetBranch string
 	HeadSHA      string
 	Author       string
+	State        string
 	Labels       []string
 	Values       map[string]string
 }
@@ -791,11 +796,14 @@ func applicationSetProviderDataToInternal(data ApplicationSetProviderData) appse
 		out.SCMRepositories = append(out.SCMRepositories, appset.SCMRepositoryInput{
 			Provider:     item.Provider,
 			Organization: item.Organization,
+			Project:      item.Project,
+			Region:       item.Region,
 			Repository:   item.Repository,
 			RepositoryID: item.RepositoryID,
 			Branch:       item.Branch,
 			SHA:          item.SHA,
 			URL:          item.URL,
+			Tags:         cloneStringMap(item.Tags),
 			Labels:       append([]string(nil), item.Labels...),
 			Paths:        append([]string(nil), item.Paths...),
 			Values:       cloneStringMap(item.Values),
@@ -805,6 +813,7 @@ func applicationSetProviderDataToInternal(data ApplicationSetProviderData) appse
 		out.PullRequests = append(out.PullRequests, appset.PullRequestInput{
 			Provider:     item.Provider,
 			Organization: item.Organization,
+			Project:      item.Project,
 			Repository:   item.Repository,
 			Number:       item.Number,
 			Title:        item.Title,
@@ -812,6 +821,7 @@ func applicationSetProviderDataToInternal(data ApplicationSetProviderData) appse
 			TargetBranch: item.TargetBranch,
 			HeadSHA:      item.HeadSHA,
 			Author:       item.Author,
+			State:        item.State,
 			Labels:       append([]string(nil), item.Labels...),
 			Values:       cloneStringMap(item.Values),
 		})
