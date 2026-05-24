@@ -45,6 +45,7 @@ type Config struct {
 	RemoteResourceCredentials      RemoteResourceCredentials
 	PluginRenderer                 PluginRenderer
 	PluginTimeout                  time.Duration
+	Parallelism                    int
 	SkipKinds                      []string
 	SkipCRDs                       bool
 	SkipSecrets                    bool
@@ -245,6 +246,7 @@ func (client *Client) buildRequest() app.BuildRequest {
 		RemoteResourceCredentials:      remoteResourceCredentialsToInternal(client.config.RemoteResourceCredentials),
 		RemoteResourceGitCredentials:   gitCredentialsToRemoteInternal(client.config.GitCredentials),
 		PluginTimeout:                  client.config.PluginTimeout,
+		Parallelism:                    client.config.Parallelism,
 		SkipKinds:                      append([]string(nil), client.config.SkipKinds...),
 		SkipCRDs:                       client.config.SkipCRDs,
 		SkipSecrets:                    client.config.SkipSecrets,
@@ -285,6 +287,7 @@ func (client *Client) diffRequest() app.DiffRequest {
 		RemoteResourceCredentials:      remoteResourceCredentialsToInternal(client.config.RemoteResourceCredentials),
 		RemoteResourceGitCredentials:   gitCredentialsToRemoteInternal(client.config.GitCredentials),
 		PluginTimeout:                  client.config.PluginTimeout,
+		Parallelism:                    client.config.Parallelism,
 		SkipKinds:                      append([]string(nil), client.config.SkipKinds...),
 		SkipCRDs:                       client.config.SkipCRDs,
 		SkipSecrets:                    client.config.SkipSecrets,

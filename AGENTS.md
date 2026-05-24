@@ -122,7 +122,13 @@ without shelling out or requiring network access. Preserve partial render
 results: public `Render` must return successful manifests, diagnostics, and
 per-Application statuses even when one selected Application fails. Public
 diagnostics include stable `Code` values. Public render/list/diff results may
-include cache events when `RecordCacheEvents` is enabled.
+include cache events when `RecordCacheEvents` is enabled. `Config.Parallelism`
+is opt-in runtime parallelism for render and diff paths; `0` means the default
+sequential behavior, negative values fail validation before rendering, and
+non-default values must preserve selected Application order for manifests,
+statuses, diagnostics, cache events, and structured public results. Parallel
+rendering snapshots cache-backed sources before render reads so same-target
+Git, chart, or remote-resource refreshes cannot race with readers.
 
 Config management plugin sources fail closed in the CLI/default path. The
 public API may render plugins only through explicit in-process
@@ -316,7 +322,7 @@ Do not treat these as supported without an explicit design update:
   provider, or plugin-service access for ApplicationSet provider generators.
   Use explicit local fixtures instead.
 - Required default shellouts to `helm`, `kustomize`, `kubectl`, or `argocd`.
-- Parallel rendering and `--parallelism` controls.
+- CLI `--parallelism` controls.
 - Composite install GitHub Action publishing.
 
 ## Source Resolution
@@ -506,6 +512,7 @@ Run the smallest check that covers your change:
 ```bash
 go test ./...
 go vet ./...
+go test -race ./internal/app -run 'Parallelism|Parallel'
 golangci-lint run
 markdownlint-cli2 '**/*.md'
 ```
