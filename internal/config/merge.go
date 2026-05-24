@@ -56,6 +56,22 @@ func MergeDiscovered(candidates []ArgoSettings) (ArgoSettings, []diagnostic.Diag
 			}
 			merged.HelmRepositories[url] = repo
 		}
+
+		merged.ResourceExclusions = append(merged.ResourceExclusions, candidate.ResourceExclusions...)
+		merged.ResourceInclusions = append(merged.ResourceInclusions, candidate.ResourceInclusions...)
+		for key, customization := range candidate.ResourceCustomizations {
+			existing, ok := merged.ResourceCustomizations[key]
+			if ok && !sameResourceCustomization(existing, customization) {
+				diags = append(diags, conflictDiagnostic(
+					fmt.Sprintf("conflicting resource customization settings discovered for %q", key),
+					customization.Provenance,
+				))
+				continue
+			}
+			if !ok {
+				merged.ResourceCustomizations[key] = customization
+			}
+		}
 	}
 
 	return merged, diags
@@ -86,6 +102,10 @@ func sameRepositorySettings(left, right RepositorySettings) bool {
 		left.URL == right.URL &&
 		left.EnableOCI == right.EnableOCI &&
 		left.Project == right.Project
+}
+
+func sameResourceCustomization(left, right ResourceCustomization) bool {
+	return reflect.DeepEqual(left.IgnoreDifferences, right.IgnoreDifferences)
 }
 
 func conflictDiagnostic(message string, provenance diagnostic.Provenance) diagnostic.Diagnostic {

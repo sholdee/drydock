@@ -4,6 +4,8 @@ import (
 	"encoding/base64"
 	"fmt"
 	"os"
+	"reflect"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -27,8 +29,8 @@ func LoadFromHelmValues(path string) (ArgoSettings, []diagnostic.Diagnostic, err
 		return settings, nil, fmt.Errorf("parse helm values %s: %w", path, err)
 	}
 
-	applyCMMap(&settings, doc.Configs.CM, path, "configs.cm")
-	return settings, nil, nil
+	diags := applyCMMap(&settings, doc.Configs.CM, path, "configs.cm")
+	return settings, diags, nil
 }
 
 func LoadFromConfigMap(path string) (ArgoSettings, []diagnostic.Diagnostic, error) {
@@ -57,8 +59,8 @@ func LoadFromConfigMap(path string) (ArgoSettings, []diagnostic.Diagnostic, erro
 		}}, nil
 	}
 
-	applyCMMap(&settings, doc.Data, path, "data")
-	return settings, nil, nil
+	diags := applyCMMap(&settings, doc.Data, path, "data")
+	return settings, diags, nil
 }
 
 func LoadRepositorySecret(path string) (ArgoSettings, []diagnostic.Diagnostic, error) {
@@ -109,9 +111,10 @@ func LoadRepositorySecret(path string) (ArgoSettings, []diagnostic.Diagnostic, e
 	return settings, diags, nil
 }
 
-func applyCMMap(settings *ArgoSettings, values map[string]string, path, basePointer string) {
+func applyCMMap(settings *ArgoSettings, values map[string]string, path, basePointer string) []diagnostic.Diagnostic {
+	var diags []diagnostic.Diagnostic
 	if values == nil {
-		return
+		return diags
 	}
 	if raw := values["kustomize.buildOptions"]; raw != "" {
 		settings.KustomizeBuildOptions = splitShellFields(raw, diagnostic.Provenance{
@@ -137,6 +140,26 @@ func applyCMMap(settings *ArgoSettings, values map[string]string, path, basePoin
 			},
 		}
 	}
+	if raw := values["resource.exclusions"]; strings.TrimSpace(raw) != "" {
+		diags = appendParsedResourceFilters(&settings.ResourceExclusions, raw, diagnostic.Provenance{
+			Path:    path,
+			Pointer: basePointer + ".resource.exclusions",
+		}, diags)
+	}
+	if raw := values["resource.inclusions"]; strings.TrimSpace(raw) != "" {
+		diags = appendParsedResourceFilters(&settings.ResourceInclusions, raw, diagnostic.Provenance{
+			Path:    path,
+			Pointer: basePointer + ".resource.inclusions",
+		}, diags)
+	}
+	if raw := values["resource.customizations"]; strings.TrimSpace(raw) != "" {
+		diags = appendParsedResourceCustomizations(settings, raw, diagnostic.Provenance{
+			Path:    path,
+			Pointer: basePointer + ".resource.customizations",
+		}, diags)
+	}
+	diags = appendParsedSplitResourceCustomizations(settings, values, path, basePointer, diags)
+	return diags
 }
 
 func splitShellFields(raw string, provenance diagnostic.Provenance) []Value[string] {
@@ -146,6 +169,178 @@ func splitShellFields(raw string, provenance diagnostic.Provenance) []Value[stri
 		out = append(out, Value[string]{Value: field, Provenance: provenance})
 	}
 	return out
+}
+
+func appendParsedResourceFilters(dst *[]ResourceFilterRule, raw string, provenance diagnostic.Provenance, diags []diagnostic.Diagnostic) []diagnostic.Diagnostic {
+	var rules []ResourceFilterRule
+	if err := yaml.Unmarshal([]byte(raw), &rules); err != nil {
+		return append(diags, diagnostic.Diagnostic{
+			Severity:   diagnostic.SeverityError,
+			Category:   "settings",
+			Message:    "invalid resource filter settings",
+			Provenance: provenance,
+		})
+	}
+	for i := range rules {
+		rules[i].Provenance = provenance
+	}
+	*dst = append(*dst, rules...)
+	return diags
+}
+
+func appendParsedResourceCustomizations(settings *ArgoSettings, raw string, provenance diagnostic.Provenance, diags []diagnostic.Diagnostic) []diagnostic.Diagnostic {
+	var customizations map[string]struct {
+		IgnoreDifferences string `yaml:"ignoreDifferences"`
+	}
+	if err := yaml.Unmarshal([]byte(raw), &customizations); err != nil {
+		return append(diags, diagnostic.Diagnostic{
+			Severity:   diagnostic.SeverityError,
+			Category:   "settings",
+			Message:    "invalid resource.customizations settings",
+			Provenance: provenance,
+		})
+	}
+
+	keys := make([]string, 0, len(customizations))
+	for key := range customizations {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		block := customizations[key]
+		if strings.TrimSpace(block.IgnoreDifferences) == "" {
+			continue
+		}
+		ignore, next := parseOverrideIgnoreDifferences(block.IgnoreDifferences, provenance)
+		diags = append(diags, next...)
+		if hasErrorDiagnostic(next) {
+			continue
+		}
+		diags = addResourceCustomization(settings, key, ResourceCustomization{
+			IgnoreDifferences: ignore,
+			Provenance:        provenance,
+		}, diags)
+	}
+	return diags
+}
+
+func appendParsedSplitResourceCustomizations(settings *ArgoSettings, values map[string]string, path, basePointer string, diags []diagnostic.Diagnostic) []diagnostic.Diagnostic {
+	const prefix = "resource.customizations.ignoreDifferences."
+	keys := make([]string, 0, len(values))
+	for key := range values {
+		if strings.HasPrefix(key, prefix) {
+			keys = append(keys, key)
+		}
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		raw := values[key]
+		if strings.TrimSpace(raw) == "" {
+			continue
+		}
+		provenance := diagnostic.Provenance{
+			Path:    path,
+			Pointer: basePointer + "." + key,
+		}
+		customizationKey, diag := splitResourceCustomizationKey(strings.TrimPrefix(key, prefix), provenance)
+		if diag != nil {
+			diags = append(diags, *diag)
+			continue
+		}
+		ignore, next := parseOverrideIgnoreDifferences(raw, provenance)
+		diags = append(diags, next...)
+		if hasErrorDiagnostic(next) {
+			continue
+		}
+		diags = addResourceCustomization(settings, customizationKey, ResourceCustomization{
+			IgnoreDifferences: ignore,
+			Provenance:        provenance,
+		}, diags)
+	}
+	return diags
+}
+
+func parseOverrideIgnoreDifferences(raw string, provenance diagnostic.Provenance) (OverrideIgnoreDifferences, []diagnostic.Diagnostic) {
+	var ignore OverrideIgnoreDifferences
+	if err := yaml.Unmarshal([]byte(raw), &ignore); err != nil {
+		return ignore, []diagnostic.Diagnostic{{
+			Severity:   diagnostic.SeverityError,
+			Category:   "settings",
+			Message:    "invalid resource customization ignoreDifferences settings",
+			Provenance: provenance,
+		}}
+	}
+
+	var diags []diagnostic.Diagnostic
+	if len(ignore.JQPathExpressions) > 0 {
+		diags = append(diags, diagnostic.Diagnostic{
+			Severity:   diagnostic.SeverityWarning,
+			Category:   "settings",
+			Message:    "resource customization jqPathExpressions are discovered but not enforced",
+			Provenance: provenance,
+		})
+	}
+	if len(ignore.ManagedFieldsManagers) > 0 {
+		diags = append(diags, diagnostic.Diagnostic{
+			Severity:   diagnostic.SeverityWarning,
+			Category:   "settings",
+			Message:    "resource customization managedFieldsManagers are discovered but not enforced",
+			Provenance: provenance,
+		})
+	}
+	return ignore, diags
+}
+
+func splitResourceCustomizationKey(suffix string, provenance diagnostic.Provenance) (string, *diagnostic.Diagnostic) {
+	if suffix == "all" {
+		return "*/*", nil
+	}
+	if suffix == "" || strings.Count(suffix, "_") > 1 {
+		return "", invalidSplitResourceCustomizationKeyDiagnostic(provenance)
+	}
+	if idx := strings.Index(suffix, "_"); idx >= 0 {
+		if idx == 0 || idx == len(suffix)-1 {
+			return "", invalidSplitResourceCustomizationKeyDiagnostic(provenance)
+		}
+		return suffix[:idx] + "/" + suffix[idx+1:], nil
+	}
+	return suffix, nil
+}
+
+func invalidSplitResourceCustomizationKeyDiagnostic(provenance diagnostic.Provenance) *diagnostic.Diagnostic {
+	return &diagnostic.Diagnostic{
+		Severity:   diagnostic.SeverityError,
+		Category:   "settings",
+		Message:    "invalid resource customization split key",
+		Provenance: provenance,
+	}
+}
+
+func hasErrorDiagnostic(diags []diagnostic.Diagnostic) bool {
+	for _, diag := range diags {
+		if diag.Severity == diagnostic.SeverityError {
+			return true
+		}
+	}
+	return false
+}
+
+func addResourceCustomization(settings *ArgoSettings, key string, customization ResourceCustomization, diags []diagnostic.Diagnostic) []diagnostic.Diagnostic {
+	if settings.ResourceCustomizations == nil {
+		settings.ResourceCustomizations = map[string]ResourceCustomization{}
+	}
+	existing, ok := settings.ResourceCustomizations[key]
+	if ok {
+		if reflect.DeepEqual(existing.IgnoreDifferences, customization.IgnoreDifferences) {
+			return diags
+		}
+		return append(diags, conflictDiagnostic(
+			fmt.Sprintf("conflicting resource customization settings discovered for %q", key),
+			customization.Provenance,
+		))
+	}
+	settings.ResourceCustomizations[key] = customization
+	return diags
 }
 
 func secretStringField(stringData, data map[string]string, key string) string {

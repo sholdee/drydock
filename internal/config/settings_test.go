@@ -45,6 +45,178 @@ func TestLoadConfigMapSettings(t *testing.T) {
 	}
 }
 
+func TestLoadConfigMapResourceFilters(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "argocd-cm.yaml")
+	if err := os.WriteFile(path, []byte(`apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: argocd-cm
+data:
+  resource.exclusions: |
+    - apiGroups: ["events.k8s.io"]
+    - apiGroups: [""]
+      kinds: ["Event"]
+  resource.inclusions: |
+    - apiGroups: ["apps"]
+      kinds: ["Deployment"]
+      clusters: ["prod-*"]
+`), 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	settings, diags, err := LoadFromConfigMap(path)
+	if err != nil {
+		t.Fatalf("LoadFromConfigMap() error = %v", err)
+	}
+	if len(diags) != 0 {
+		t.Fatalf("diagnostics = %#v", diags)
+	}
+	if len(settings.ResourceExclusions) != 2 {
+		t.Fatalf("ResourceExclusions = %#v", settings.ResourceExclusions)
+	}
+	if len(settings.ResourceInclusions) != 1 {
+		t.Fatalf("ResourceInclusions = %#v", settings.ResourceInclusions)
+	}
+	if settings.ResourceInclusions[0].Clusters[0] != "prod-*" {
+		t.Fatalf("ResourceInclusions = %#v", settings.ResourceInclusions)
+	}
+	if settings.ResourceInclusions[0].Provenance.Path != path {
+		t.Fatalf("ResourceInclusions provenance = %#v", settings.ResourceInclusions[0].Provenance)
+	}
+}
+
+func TestLoadHelmValuesResourceSettings(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "values.yaml")
+	if err := os.WriteFile(path, []byte(`configs:
+  cm:
+    resource.exclusions: |
+      - apiGroups: ["coordination.k8s.io"]
+        kinds: ["Lease"]
+    resource.customizations.ignoreDifferences.apps_Deployment: |
+      jsonPointers:
+        - /spec/replicas
+`), 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	settings, diags, err := LoadFromHelmValues(path)
+	if err != nil {
+		t.Fatalf("LoadFromHelmValues() error = %v", err)
+	}
+	if len(diags) != 0 {
+		t.Fatalf("diagnostics = %#v", diags)
+	}
+	if len(settings.ResourceExclusions) != 1 {
+		t.Fatalf("ResourceExclusions = %#v", settings.ResourceExclusions)
+	}
+	customization := settings.ResourceCustomizations["apps/Deployment"]
+	if len(customization.IgnoreDifferences.JSONPointers) != 1 || customization.IgnoreDifferences.JSONPointers[0] != "/spec/replicas" {
+		t.Fatalf("Deployment customization = %#v", customization)
+	}
+}
+
+func TestLoadConfigMapResourceCustomizations(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "argocd-cm.yaml")
+	if err := os.WriteFile(path, []byte(`apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: argocd-cm
+data:
+  resource.customizations: |
+    apps/Deployment:
+      ignoreDifferences: |
+        jsonPointers:
+          - /spec/replicas
+        jqPathExpressions:
+          - .spec.template.metadata.annotations
+    "*/*":
+      ignoreDifferences: |
+        jsonPointers:
+          - /metadata/annotations/generated
+  resource.customizations.ignoreDifferences.admissionregistration.k8s.io_MutatingWebhookConfiguration: |
+    jsonPointers:
+      - /webhooks/0/clientConfig/caBundle
+    managedFieldsManagers:
+      - kube-controller-manager
+`), 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	settings, diags, err := LoadFromConfigMap(path)
+	if err != nil {
+		t.Fatalf("LoadFromConfigMap() error = %v", err)
+	}
+	if len(settings.ResourceCustomizations) != 3 {
+		t.Fatalf("ResourceCustomizations = %#v", settings.ResourceCustomizations)
+	}
+	deployment := settings.ResourceCustomizations["apps/Deployment"]
+	if len(deployment.IgnoreDifferences.JSONPointers) != 1 || deployment.IgnoreDifferences.JSONPointers[0] != "/spec/replicas" {
+		t.Fatalf("Deployment customization = %#v", deployment)
+	}
+	wildcard := settings.ResourceCustomizations["*/*"]
+	if len(wildcard.IgnoreDifferences.JSONPointers) != 1 || wildcard.IgnoreDifferences.JSONPointers[0] != "/metadata/annotations/generated" {
+		t.Fatalf("Wildcard customization = %#v", wildcard)
+	}
+	webhook := settings.ResourceCustomizations["admissionregistration.k8s.io/MutatingWebhookConfiguration"]
+	if len(webhook.IgnoreDifferences.JSONPointers) != 1 || webhook.IgnoreDifferences.JSONPointers[0] != "/webhooks/0/clientConfig/caBundle" {
+		t.Fatalf("Webhook customization = %#v", webhook)
+	}
+	if len(diags) != 2 {
+		t.Fatalf("diagnostics = %#v, want warnings for jq and managedFieldsManagers", diags)
+	}
+}
+
+func TestLoadConfigMapInvalidResourceCustomizationSkipsSetting(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "argocd-cm.yaml")
+	if err := os.WriteFile(path, []byte(`apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: argocd-cm
+data:
+  resource.customizations.ignoreDifferences.apps_Deployment: |
+    jsonPointers: [
+`), 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	settings, diags, err := LoadFromConfigMap(path)
+	if err != nil {
+		t.Fatalf("LoadFromConfigMap() error = %v", err)
+	}
+	if len(diags) != 1 || diags[0].Severity != "error" {
+		t.Fatalf("diagnostics = %#v, want one error", diags)
+	}
+	if len(settings.ResourceCustomizations) != 0 {
+		t.Fatalf("ResourceCustomizations = %#v, want none", settings.ResourceCustomizations)
+	}
+}
+
+func TestLoadConfigMapInvalidSplitResourceCustomizationKey(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "argocd-cm.yaml")
+	if err := os.WriteFile(path, []byte(`apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: argocd-cm
+data:
+  resource.customizations.ignoreDifferences.apps_Deployment_extra: |
+    jsonPointers:
+      - /spec/replicas
+`), 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	settings, diags, err := LoadFromConfigMap(path)
+	if err != nil {
+		t.Fatalf("LoadFromConfigMap() error = %v", err)
+	}
+	if len(diags) != 1 || diags[0].Severity != "error" {
+		t.Fatalf("diagnostics = %#v, want one error", diags)
+	}
+	if len(settings.ResourceCustomizations) != 0 {
+		t.Fatalf("ResourceCustomizations = %#v, want none", settings.ResourceCustomizations)
+	}
+}
+
 func TestLoadRepositorySecretIgnoresCredentials(t *testing.T) {
 	settings, diags, err := LoadRepositorySecret(filepath.Join("..", "..", "testdata", "settings", "repo-secret.yaml"))
 	if err != nil {
@@ -182,5 +354,27 @@ func TestMergeSettingsDetectsConflict(t *testing.T) {
 	}
 	if diags[0].Severity != "error" {
 		t.Fatalf("severity = %s, want error", diags[0].Severity)
+	}
+}
+
+func TestMergeResourceCustomizationsIgnoresProvenance(t *testing.T) {
+	left := DefaultSettings()
+	left.ResourceCustomizations["apps/Deployment"] = ResourceCustomization{
+		IgnoreDifferences: OverrideIgnoreDifferences{JSONPointers: []string{"/spec/replicas"}},
+		Provenance:        Provenance{Path: "a.yaml"},
+	}
+	right := DefaultSettings()
+	right.ResourceCustomizations["apps/Deployment"] = ResourceCustomization{
+		IgnoreDifferences: OverrideIgnoreDifferences{JSONPointers: []string{"/spec/replicas"}},
+		Provenance:        Provenance{Path: "b.yaml"},
+	}
+
+	merged, diags := MergeDiscovered([]ArgoSettings{left, right})
+	if len(diags) != 0 {
+		t.Fatalf("diagnostics = %#v", diags)
+	}
+	customization := merged.ResourceCustomizations["apps/Deployment"]
+	if customization.Provenance.Path != "a.yaml" {
+		t.Fatalf("customization provenance = %#v", customization.Provenance)
 	}
 }
