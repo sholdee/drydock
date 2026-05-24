@@ -25,8 +25,8 @@ func NewRootCommand(info VersionInfo) *cobra.Command {
 
 func NewRootCommandWithDependencies(info VersionInfo, deps Dependencies) *cobra.Command {
 	cmd := &cobra.Command{
-		Use:           "argocd-local",
-		Short:         "Render and diff Argo CD GitOps repositories locally",
+		Use:           "drydock",
+		Short:         "Inspect your Argo CD fleet without getting wet",
 		SilenceUsage:  true,
 		SilenceErrors: true,
 	}

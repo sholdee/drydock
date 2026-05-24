@@ -633,7 +633,7 @@ func TestOrchestratorBuildRejectsGitCacheInsideRepoMapRoot(t *testing.T) {
 	_, err := Orchestrator{}.Build(context.Background(), BuildRequest{
 		Path:         root,
 		AllowNetwork: true,
-		GitCacheDir:  filepath.Join(external, ".argocd-local", "git"),
+		GitCacheDir:  filepath.Join(external, ".drydock", "git"),
 		RepoMaps: []sourcepkg.RepoMap{{
 			URL:  "https://github.com/example/external.git",
 			Path: external,

@@ -225,7 +225,7 @@ type kustomizeWorkspace struct {
 }
 
 func renderKustomizeWithPreparedWorkspace(ctx context.Context, source ResolvedSource, opts RenderOptions) ([]Manifest, []diagnostic.Diagnostic, error) {
-	tempDir, err := os.MkdirTemp("", "argocd-local-kustomize-*")
+	tempDir, err := os.MkdirTemp("", "drydock-kustomize-*")
 	if err != nil {
 		return nil, nil, err
 	}
@@ -625,7 +625,7 @@ func (w *kustomizeWorkspace) acquireAndCopyKustomizeRef(ctx context.Context, dir
 		if recurseDirs {
 			generatedKind = "git"
 		}
-		generatedRel := filepath.ToSlash(filepath.Join(".argocd-local", generatedKind, generatedName))
+		generatedRel := filepath.ToSlash(filepath.Join(".drydock", generatedKind, generatedName))
 		generatedRoot, err := generatedKustomizeWorkspacePath(dir, generatedRel)
 		if err != nil {
 			return "", "", "", err
@@ -659,7 +659,7 @@ func (w *kustomizeWorkspace) acquireAndCopyKustomizeRef(ctx context.Context, dir
 	if !info.Mode().IsRegular() {
 		return "", "", "", fmt.Errorf("remote kustomize resource %s is not a regular file or directory", redactKustomizeRef(ref.Original))
 	}
-	generatedRel := filepath.ToSlash(filepath.Join(".argocd-local", "remotes", generatedName))
+	generatedRel := filepath.ToSlash(filepath.Join(".drydock", "remotes", generatedName))
 	generatedPath, err := generatedKustomizeWorkspacePath(dir, generatedRel)
 	if err != nil {
 		return "", "", "", err
@@ -1126,7 +1126,7 @@ func renderKustomizeHelmCharts(ctx context.Context, tempRepoRoot, tempSourceRoot
 			continue
 		}
 
-		generatedResource := filepath.ToSlash(filepath.Join(".argocd-local", "helm", generatedName+".yaml"))
+		generatedResource := filepath.ToSlash(filepath.Join(".drydock", "helm", generatedName+".yaml"))
 		generatedPath, err := generatedKustomizeWorkspacePath(tempSourceRoot, generatedResource)
 		if err != nil {
 			return nil, err
@@ -1165,7 +1165,7 @@ func resolveKustomizeHelmChart(ctx context.Context, tempRepoRoot, tempSourceRoot
 	}
 	recordKustomizeChartCacheEvent(opts, request, nil, result)
 
-	chartRel := filepath.ToSlash(filepath.Join(".argocd-local", "charts", generatedName))
+	chartRel := filepath.ToSlash(filepath.Join(".drydock", "charts", generatedName))
 	chartDst, err := generatedKustomizeWorkspacePath(tempRepoRoot, chartRel)
 	if err != nil {
 		return "", err
@@ -1309,7 +1309,7 @@ func writeKustomizeHelmGeneratedValuesFile(tempRepoRoot, tempSourceRoot, chartRe
 		return "", err
 	}
 
-	generatedRel := filepath.ToSlash(filepath.Join(".argocd-local", "values", generatedName+".yaml"))
+	generatedRel := filepath.ToSlash(filepath.Join(".drydock", "values", generatedName+".yaml"))
 	generatedPath, err := generatedKustomizeWorkspacePath(tempSourceRoot, generatedRel)
 	if err != nil {
 		return "", err

@@ -525,7 +525,7 @@ func TestDiffAppsRejectsRemoteCacheInsideEitherRoot(t *testing.T) {
 	_, err := Orchestrator{}.DiffApps(context.Background(), DiffRequest{
 		LeftPath:               left,
 		RightPath:              right,
-		RemoteResourceCacheDir: filepath.Join(right, ".argocd-local", "remotes"),
+		RemoteResourceCacheDir: filepath.Join(right, ".drydock", "remotes"),
 	})
 	if err == nil {
 		t.Fatal("DiffApps() error = nil, want cache containment error")
@@ -821,7 +821,7 @@ func TestDiffAppRejectsRemoteCacheInsideEitherRoot(t *testing.T) {
 			DiffRequest: DiffRequest{
 				LeftPath:               left,
 				RightPath:              right,
-				RemoteResourceCacheDir: filepath.Join(root, ".argocd-local", "remotes"),
+				RemoteResourceCacheDir: filepath.Join(root, ".drydock", "remotes"),
 			},
 		})
 		if err == nil {

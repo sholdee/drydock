@@ -262,7 +262,7 @@ func (puller HelmOCIPuller) Pull(ctx context.Context, request Request, opts Opti
 		return nil, err
 	}
 
-	tempDir, err := os.MkdirTemp("", "argocd-local-oci-chart-")
+	tempDir, err := os.MkdirTemp("", "drydock-oci-chart-")
 	if err != nil {
 		return nil, fmt.Errorf("create temporary OCI chart directory: %w", err)
 	}

@@ -228,7 +228,7 @@ update_renovate_chart_version() {
   ' "${file}" > "${output}"
 }
 
-if [[ "${ARGOCD_LOCAL_SMOKE_LIB_ONLY:-}" == "true" ]]; then
+if [[ "${DRYDOCK_SMOKE_LIB_ONLY:-}" == "true" ]]; then
   if [[ "${BASH_SOURCE[0]}" != "$0" ]]; then
     return 0
   fi

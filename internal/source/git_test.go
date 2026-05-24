@@ -32,6 +32,16 @@ func TestDefaultGitAcquirerRejectsNetworkWhenNotAllowed(t *testing.T) {
 	}
 }
 
+func TestDefaultGitCacheDirUsesUserCacheRoot(t *testing.T) {
+	dir, err := DefaultGitCacheDir()
+	if err != nil {
+		t.Fatalf("DefaultGitCacheDir() error = %v", err)
+	}
+	if !strings.HasSuffix(filepath.ToSlash(dir), "/drydock/git") {
+		t.Fatalf("DefaultGitCacheDir() = %q, want drydock/git suffix", dir)
+	}
+}
+
 func TestDefaultGitAcquirerClonesLocalFileRepository(t *testing.T) {
 	remote := createGitFixture(t)
 	mainHash := commitFixtureFile(t, remote.repo, remote.worktree, "config.yaml", "version: main\n")
