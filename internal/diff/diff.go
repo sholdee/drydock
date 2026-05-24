@@ -32,6 +32,7 @@ type Normalization struct {
 	JSONPointers          []string
 	JQPathExpressions     []string
 	ManagedFieldsManagers []string
+	CompareOptions        CompareOptions
 }
 
 type Document struct {
@@ -101,12 +102,23 @@ func diffResultForKey(leftByKey, rightByKey map[string]Document, key string, opt
 
 func documentsWithSharedNormalization(left, right Document, hasLeft, hasRight bool) (Document, Document) {
 	normalization := Normalization{}
+	var compareOptions CompareOptions
+	var hasCompareOptions bool
 	if hasLeft {
 		normalization = appendUniqueNormalization(normalization, left.Normalization)
+		compareOptions = left.Normalization.CompareOptions
+		hasCompareOptions = true
 	}
 	if hasRight {
 		normalization = appendUniqueNormalization(normalization, right.Normalization)
+		if hasCompareOptions {
+			compareOptions = mergeCompareOptions(compareOptions, right.Normalization.CompareOptions)
+		} else {
+			compareOptions = right.Normalization.CompareOptions
+			hasCompareOptions = true
+		}
 	}
+	normalization.CompareOptions = compareOptions
 	if hasLeft {
 		left.Normalization = cloneNormalization(normalization)
 	}
@@ -143,6 +155,7 @@ func cloneNormalization(normalization Normalization) Normalization {
 		JSONPointers:          append([]string(nil), normalization.JSONPointers...),
 		JQPathExpressions:     append([]string(nil), normalization.JQPathExpressions...),
 		ManagedFieldsManagers: append([]string(nil), normalization.ManagedFieldsManagers...),
+		CompareOptions:        normalization.CompareOptions,
 	}
 }
 
@@ -173,11 +186,11 @@ func normalizedDocumentBodies(left, right Document, hasLeft, hasRight bool, opts
 }
 
 func normalizedDocumentPairBodies(left, right Document, opts Options) (string, string, error) {
-	leftObject, leftRemoved, err := normalizeDiffObject(left.Body, opts, left.Normalization)
+	leftObject, leftRemoved, err := normalizeDiffObject(left.Body, opts, left.Normalization, left.Resource)
 	if err != nil {
 		return "", "", fmt.Errorf("normalize %s: %w", headerOf(left), err)
 	}
-	rightObject, rightRemoved, err := normalizeDiffObject(right.Body, opts, right.Normalization)
+	rightObject, rightRemoved, err := normalizeDiffObject(right.Body, opts, right.Normalization, right.Resource)
 	if err != nil {
 		return "", "", fmt.Errorf("normalize %s: %w", headerOf(right), err)
 	}
@@ -268,7 +281,7 @@ func resultFor(doc Document, change Change, from, to string, opts Options) (Resu
 }
 
 func normalizeDocumentBody(doc Document, opts Options) (string, error) {
-	body, err := normalizeDiffBody(doc.Body, opts, doc.Normalization)
+	body, err := normalizeDiffBodyForResource(doc.Body, opts, doc.Normalization, doc.Resource)
 	if err != nil {
 		return "", fmt.Errorf("normalize %s: %w", headerOf(doc), err)
 	}
@@ -276,11 +289,18 @@ func normalizeDocumentBody(doc Document, opts Options) (string, error) {
 }
 
 func normalizeDiffBody(body string, opts Options, normalization Normalization) (string, error) {
+	return normalizeDiffBodyForResource(body, opts, normalization, Resource{})
+}
+
+func normalizeDiffBodyForResource(body string, opts Options, normalization Normalization, resource Resource) (string, error) {
 	attrs := stripAttrSet(opts.StripAttrs)
-	if len(attrs) == 0 && len(normalization.JSONPointers) == 0 && len(normalization.JQPathExpressions) == 0 {
+	if len(attrs) == 0 &&
+		len(normalization.JSONPointers) == 0 &&
+		len(normalization.JQPathExpressions) == 0 &&
+		!compareOptionsRequireObject(resource, normalization.CompareOptions) {
 		return body, nil
 	}
-	object, removedRoot, err := normalizeDiffObject(body, opts, normalization)
+	object, removedRoot, err := normalizeDiffObject(body, opts, normalization, resource)
 	if err != nil {
 		return "", err
 	}
@@ -290,7 +310,7 @@ func normalizeDiffBody(body string, opts Options, normalization Normalization) (
 	return encodeDiffYAML(object)
 }
 
-func normalizeDiffObject(body string, opts Options, normalization Normalization) (map[string]any, bool, error) {
+func normalizeDiffObject(body string, opts Options, normalization Normalization, resource Resource) (map[string]any, bool, error) {
 	attrs := stripAttrSet(opts.StripAttrs)
 	if body == "" {
 		return nil, false, nil
@@ -314,6 +334,7 @@ func normalizeDiffObject(body string, opts Options, normalization Normalization)
 	if err != nil {
 		return nil, false, err
 	}
+	object = normalizeCompareOptionsObject(object, resource, normalization.CompareOptions)
 	return object, false, nil
 }
 

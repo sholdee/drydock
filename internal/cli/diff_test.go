@@ -217,6 +217,35 @@ func TestDiffAppsGlobalJQCustomizationSuppressesOnlyDiff(t *testing.T) {
 	}
 }
 
+func TestDiffAppsCompareOptionsNonePrintsStatusDiff(t *testing.T) {
+	root := t.TempDir()
+	left := filepath.Join(root, "left")
+	right := filepath.Join(root, "right")
+	writeStatusAppForCLI(t, left, "old")
+	writeStatusAppForCLI(t, right, "new")
+	writeCompareOptionsForCLI(t, left, "none", false)
+	writeCompareOptionsForCLI(t, right, "none", false)
+
+	cmd := NewRootCommand(VersionInfo{})
+	cmd.SetArgs([]string{"diff", "apps", "--path-orig", left, "--path", right, "--exit-code=false"})
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	cmd.SetOut(&stdout)
+	cmd.SetErr(&stderr)
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("Execute() error = %v\nstdout:\n%s\nstderr:\n%s", err, stdout.String(), stderr.String())
+	}
+	for _, want := range []string{"ConfigMap: default/status", "-  value: old", "+  value: new"} {
+		if !strings.Contains(stdout.String(), want) {
+			t.Fatalf("stdout missing %q:\nstdout:\n%s\nstderr:\n%s", want, stdout.String(), stderr.String())
+		}
+	}
+	if stderr.String() != "" {
+		t.Fatalf("stderr = %q, want empty", stderr.String())
+	}
+}
+
 func TestDiffAppsSkipKindSuppressesFilteredResourceDiff(t *testing.T) {
 	root := t.TempDir()
 	left := filepath.Join(root, "left")
@@ -709,5 +738,43 @@ data:
       ignoreDifferences: |
         jqPathExpressions:
           - .spec.replicas
+`)
+}
+
+func writeStatusAppForCLI(t *testing.T, root, statusValue string) {
+	t.Helper()
+	writeCLITestFile(t, filepath.Join(root, "apps", "status.yaml"), `apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: status
+  namespace: argocd
+spec:
+  source:
+    repoURL: https://github.com/example/repo
+    path: manifests/status
+    targetRevision: main
+  destination:
+    name: in-cluster
+    namespace: default
+`)
+	writeCLITestFile(t, filepath.Join(root, "manifests", "status", "cm.yaml"), `apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: status
+status:
+  value: `+statusValue+`
+`)
+}
+
+func writeCompareOptionsForCLI(t *testing.T, root, statusMode string, ignoreAggregatedRoles bool) {
+	t.Helper()
+	writeCLITestFile(t, filepath.Join(root, "settings", "argocd-cm.yaml"), `apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: argocd-cm
+data:
+  resource.compareoptions: |
+    ignoreResourceStatusField: `+statusMode+`
+    ignoreAggregatedRoles: `+strconv.FormatBool(ignoreAggregatedRoles)+`
 `)
 }

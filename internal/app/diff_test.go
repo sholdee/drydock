@@ -235,6 +235,76 @@ func TestOrchestratorDiffAppsHonorsGlobalManagedFieldsManagers(t *testing.T) {
 	}
 }
 
+func TestOrchestratorDiffAppsDefaultCompareOptionsSuppressStatusOnlyDiff(t *testing.T) {
+	root := t.TempDir()
+	left := filepath.Join(root, "left")
+	right := filepath.Join(root, "right")
+	writeConfigMapStatusApp(t, left, "old")
+	writeConfigMapStatusApp(t, right, "new")
+
+	result, err := Orchestrator{}.DiffApps(context.Background(), DiffRequest{
+		LeftPath:  left,
+		RightPath: right,
+		Unified:   3,
+	})
+	if err != nil {
+		t.Fatalf("DiffApps() error = %v", err)
+	}
+	if len(result.Results) != 0 {
+		t.Fatalf("len(Results) = %d, want status-only diff ignored by default: %#v", len(result.Results), result.Results)
+	}
+}
+
+func TestOrchestratorDiffAppsCompareOptionsNoneKeepsStatusDiff(t *testing.T) {
+	root := t.TempDir()
+	left := filepath.Join(root, "left")
+	right := filepath.Join(root, "right")
+	writeConfigMapStatusApp(t, left, "old")
+	writeConfigMapStatusApp(t, right, "new")
+	writeCompareOptions(t, left, "none", false)
+	writeCompareOptions(t, right, "none", false)
+
+	result, err := Orchestrator{}.DiffApps(context.Background(), DiffRequest{
+		LeftPath:  left,
+		RightPath: right,
+		Unified:   3,
+	})
+	if err != nil {
+		t.Fatalf("DiffApps() error = %v", err)
+	}
+	if len(result.Results) != 1 {
+		t.Fatalf("len(Results) = %d, want status diff", len(result.Results))
+	}
+	diff := result.Results[0].Diff
+	for _, want := range []string{"-  value: old", "+  value: new"} {
+		if !strings.Contains(diff, want) {
+			t.Fatalf("Diff = %q, want substring %q", diff, want)
+		}
+	}
+}
+
+func TestOrchestratorDiffAppsCompareOptionsIgnoreAggregatedRoles(t *testing.T) {
+	root := t.TempDir()
+	left := filepath.Join(root, "left")
+	right := filepath.Join(root, "right")
+	writeAggregatedClusterRoleApp(t, left, "pods")
+	writeAggregatedClusterRoleApp(t, right, "services")
+	writeCompareOptions(t, left, "none", true)
+	writeCompareOptions(t, right, "none", true)
+
+	result, err := Orchestrator{}.DiffApps(context.Background(), DiffRequest{
+		LeftPath:  left,
+		RightPath: right,
+		Unified:   3,
+	})
+	if err != nil {
+		t.Fatalf("DiffApps() error = %v", err)
+	}
+	if len(result.Results) != 0 {
+		t.Fatalf("len(Results) = %d, want aggregated rules diff ignored: %#v", len(result.Results), result.Results)
+	}
+}
+
 func TestOrchestratorDiffAppsHonorsSplitGlobalResourceCustomizationJSONPointers(t *testing.T) {
 	root := t.TempDir()
 	left := filepath.Join(root, "left")
@@ -922,6 +992,74 @@ webhooks:
   - name: demo.example.com
     clientConfig:
       caBundle: `+caBundle+`
+`)
+}
+
+func writeConfigMapStatusApp(t *testing.T, root, statusValue string) {
+	t.Helper()
+	writeTestFile(t, filepath.Join(root, "apps", "status.yaml"), `apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: status
+  namespace: argocd
+spec:
+  source:
+    repoURL: https://github.com/example/repo
+    path: manifests/status
+    targetRevision: main
+  destination:
+    name: in-cluster
+    namespace: default
+`)
+	writeTestFile(t, filepath.Join(root, "manifests", "status", "cm.yaml"), `apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: status
+status:
+  value: `+statusValue+`
+`)
+}
+
+func writeAggregatedClusterRoleApp(t *testing.T, root, ruleResource string) {
+	t.Helper()
+	writeTestFile(t, filepath.Join(root, "apps", "role.yaml"), `apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: role
+  namespace: argocd
+spec:
+  source:
+    repoURL: https://github.com/example/repo
+    path: manifests/role
+    targetRevision: main
+  destination:
+    name: in-cluster
+`)
+	writeTestFile(t, filepath.Join(root, "manifests", "role", "role.yaml"), `apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: aggregate-view
+aggregationRule:
+  clusterRoleSelectors:
+    - matchLabels:
+        rbac.example.com/aggregate-to-view: "true"
+rules:
+  - apiGroups: [""]
+    resources: ["`+ruleResource+`"]
+    verbs: ["get"]
+`)
+}
+
+func writeCompareOptions(t *testing.T, root, statusMode string, ignoreAggregatedRoles bool) {
+	t.Helper()
+	writeTestFile(t, filepath.Join(root, "settings", "argocd-cm.yaml"), `apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: argocd-cm
+data:
+  resource.compareoptions: |
+    ignoreResourceStatusField: `+statusMode+`
+    ignoreAggregatedRoles: `+fmt.Sprint(ignoreAggregatedRoles)+`
 `)
 }
 

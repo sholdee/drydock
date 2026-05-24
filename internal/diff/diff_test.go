@@ -622,6 +622,90 @@ func TestRunHonorsManagedFieldsManagersFromRightSide(t *testing.T) {
 	}
 }
 
+func TestRunCompareOptionsDefaultIgnoresStatusDiff(t *testing.T) {
+	left := []Document{configMapStatusDocument("old", Normalization{})}
+	right := []Document{configMapStatusDocument("new", Normalization{})}
+
+	results, err := Run(left, right, Options{Unified: 3})
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if len(results) != 0 {
+		t.Fatalf("len(results) = %d, want status-only diff ignored by default: %#v", len(results), results)
+	}
+}
+
+func TestRunCompareOptionsNoneKeepsStatusDiff(t *testing.T) {
+	normalization := Normalization{CompareOptions: CompareOptions{IgnoreResourceStatusField: "none"}}
+	left := []Document{configMapStatusDocument("old", normalization)}
+	right := []Document{configMapStatusDocument("new", normalization)}
+
+	results, err := Run(left, right, Options{Unified: 3})
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if len(results) != 1 {
+		t.Fatalf("len(results) = %d, want status diff", len(results))
+	}
+	for _, want := range []string{"-  value: old", "+  value: new"} {
+		if !strings.Contains(results[0].Diff, want) {
+			t.Fatalf("Diff = %q, want substring %q", results[0].Diff, want)
+		}
+	}
+}
+
+func TestRunCompareOptionsCRDIgnoresOnlyCRDStatus(t *testing.T) {
+	normalization := Normalization{CompareOptions: CompareOptions{IgnoreResourceStatusField: "crd"}}
+	leftCRD := []Document{crdStatusDocument("old", normalization)}
+	rightCRD := []Document{crdStatusDocument("new", normalization)}
+
+	crdResults, err := Run(leftCRD, rightCRD, Options{Unified: 3})
+	if err != nil {
+		t.Fatalf("Run(CRD) error = %v", err)
+	}
+	if len(crdResults) != 0 {
+		t.Fatalf("len(CRD results) = %d, want CRD status ignored: %#v", len(crdResults), crdResults)
+	}
+
+	leftConfigMap := []Document{configMapStatusDocument("old", normalization)}
+	rightConfigMap := []Document{configMapStatusDocument("new", normalization)}
+	configMapResults, err := Run(leftConfigMap, rightConfigMap, Options{Unified: 3})
+	if err != nil {
+		t.Fatalf("Run(ConfigMap) error = %v", err)
+	}
+	if len(configMapResults) != 1 {
+		t.Fatalf("len(ConfigMap results) = %d, want non-CRD status diff", len(configMapResults))
+	}
+}
+
+func TestRunCompareOptionsUnknownStatusBehavesAsAll(t *testing.T) {
+	normalization := Normalization{CompareOptions: CompareOptions{IgnoreResourceStatusField: "typo"}}
+	left := []Document{configMapStatusDocument("old", normalization)}
+	right := []Document{configMapStatusDocument("new", normalization)}
+
+	results, err := Run(left, right, Options{Unified: 3})
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if len(results) != 0 {
+		t.Fatalf("len(results) = %d, want unknown status mode to ignore all status: %#v", len(results), results)
+	}
+}
+
+func TestRunCompareOptionsIgnoresAggregatedClusterRoleRules(t *testing.T) {
+	normalization := Normalization{CompareOptions: CompareOptions{IgnoreAggregatedRoles: true, IgnoreResourceStatusField: "none"}}
+	left := []Document{aggregatedClusterRoleDocument("old", normalization)}
+	right := []Document{aggregatedClusterRoleDocument("new", normalization)}
+
+	results, err := Run(left, right, Options{Unified: 3})
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if len(results) != 0 {
+		t.Fatalf("len(results) = %d, want aggregated role rules ignored: %#v", len(results), results)
+	}
+}
+
 func TestDocumentNormalizationOmittedFromStructuredOutput(t *testing.T) {
 	doc := configMapDocument("same", []string{"/data/value"})
 
@@ -874,6 +958,72 @@ metadata:
         - name: web
           image: ghcr.io/example/web:v1
 `, managedFields, replicas)
+}
+
+func configMapStatusDocument(value string, normalization Normalization) Document {
+	return Document{
+		Parent:   testParent(),
+		Resource: Resource{Kind: "ConfigMap", Namespace: "default", Name: "cfg"},
+		Body: `apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: cfg
+  namespace: default
+status:
+  value: ` + value + `
+`,
+		Normalization: normalization,
+	}
+}
+
+func crdStatusDocument(value string, normalization Normalization) Document {
+	return Document{
+		Parent:   testParent(),
+		Resource: Resource{Group: "apiextensions.k8s.io", Kind: "CustomResourceDefinition", Name: "widgets.example.com"},
+		Body: `apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: widgets.example.com
+spec:
+  group: example.com
+  names:
+    kind: Widget
+    plural: widgets
+  scope: Namespaced
+  versions:
+    - name: v1
+      served: true
+      storage: true
+      schema:
+        openAPIV3Schema:
+          type: object
+status:
+  storedVersions:
+    - ` + value + `
+`,
+		Normalization: normalization,
+	}
+}
+
+func aggregatedClusterRoleDocument(ruleResource string, normalization Normalization) Document {
+	return Document{
+		Parent:   testParent(),
+		Resource: Resource{Group: "rbac.authorization.k8s.io", Kind: "ClusterRole", Name: "aggregate-view"},
+		Body: `apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: aggregate-view
+aggregationRule:
+  clusterRoleSelectors:
+    - matchLabels:
+        rbac.example.com/aggregate-to-view: "true"
+rules:
+  - apiGroups: [""]
+    resources: ["` + ruleResource + `"]
+    verbs: ["get"]
+`,
+		Normalization: normalization,
+	}
 }
 
 func testParent() Parent {
