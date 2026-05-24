@@ -17,6 +17,7 @@ func MergeDiscovered(candidates []ArgoSettings) (ArgoSettings, []diagnostic.Diag
 		diags = append(diags, mergeInstanceLabelKey(&merged, candidate)...)
 		diags = append(diags, mergeHelmRepositories(&merged, candidate)...)
 		diags = append(diags, mergeCompareOptions(&merged, candidate)...)
+		diags = append(diags, mergeIgnoreResourceUpdatesEnabled(&merged, candidate)...)
 		merged.ResourceExclusions = append(merged.ResourceExclusions, candidate.ResourceExclusions...)
 		merged.ResourceInclusions = append(merged.ResourceInclusions, candidate.ResourceInclusions...)
 		diags = append(diags, mergeResourceCustomizations(&merged, candidate)...)
@@ -99,20 +100,39 @@ func mergeCompareOptions(merged *ArgoSettings, candidate ArgoSettings) []diagnos
 	return nil
 }
 
+func mergeIgnoreResourceUpdatesEnabled(merged *ArgoSettings, candidate ArgoSettings) []diagnostic.Diagnostic {
+	if !hasProvenanceBool(candidate.IgnoreResourceUpdatesEnabled) {
+		return nil
+	}
+	if hasProvenanceBool(merged.IgnoreResourceUpdatesEnabled) && merged.IgnoreResourceUpdatesEnabled.Value != candidate.IgnoreResourceUpdatesEnabled.Value {
+		return []diagnostic.Diagnostic{conflictDiagnostic(
+			fmt.Sprintf("conflicting resource.ignoreResourceUpdatesEnabled values %t and %t", merged.IgnoreResourceUpdatesEnabled.Value, candidate.IgnoreResourceUpdatesEnabled.Value),
+			candidate.IgnoreResourceUpdatesEnabled.Provenance,
+		)}
+	}
+	if !hasProvenanceBool(merged.IgnoreResourceUpdatesEnabled) {
+		merged.IgnoreResourceUpdatesEnabled = candidate.IgnoreResourceUpdatesEnabled
+	}
+	return nil
+}
+
 func mergeResourceCustomizations(merged *ArgoSettings, candidate ArgoSettings) []diagnostic.Diagnostic {
 	var diags []diagnostic.Diagnostic
 	for key, customization := range candidate.ResourceCustomizations {
 		existing, ok := merged.ResourceCustomizations[key]
-		if ok && !sameResourceCustomization(existing, customization) {
+		if !ok {
+			merged.ResourceCustomizations[key] = customization
+			continue
+		}
+		next, ok := mergeResourceCustomizationSections(existing, customization)
+		if !ok {
 			diags = append(diags, conflictDiagnostic(
 				fmt.Sprintf("conflicting resource customization settings discovered for %q", key),
 				customization.Provenance,
 			))
 			continue
 		}
-		if !ok {
-			merged.ResourceCustomizations[key] = customization
-		}
+		merged.ResourceCustomizations[key] = next
 	}
 	return diags
 }
@@ -136,6 +156,10 @@ func hasProvenance(value Value[string]) bool {
 	return value.Provenance.Path != "" || value.Provenance.Pointer != ""
 }
 
+func hasProvenanceBool(value Value[bool]) bool {
+	return value.Provenance.Path != "" || value.Provenance.Pointer != ""
+}
+
 func hasProvenanceCompareOptions(value ResourceCompareOptions) bool {
 	return value.Provenance.Path != "" || value.Provenance.Pointer != ""
 }
@@ -146,10 +170,6 @@ func sameRepositorySettings(left, right RepositorySettings) bool {
 		left.URL == right.URL &&
 		left.EnableOCI == right.EnableOCI &&
 		left.Project == right.Project
-}
-
-func sameResourceCustomization(left, right ResourceCustomization) bool {
-	return reflect.DeepEqual(left.IgnoreDifferences, right.IgnoreDifferences)
 }
 
 func sameCompareOptions(left, right ResourceCompareOptions) bool {

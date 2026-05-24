@@ -691,6 +691,124 @@ func TestMergeResourceCustomizationsIgnoresProvenance(t *testing.T) {
 	}
 }
 
+func TestMergeSettingsCombinesResourceCustomizationSections(t *testing.T) {
+	left := DefaultSettings()
+	left.ResourceCustomizations["apps/Deployment"] = ResourceCustomization{
+		IgnoreDifferences: OverrideIgnoreDifferences{JSONPointers: []string{"/spec/replicas"}},
+		Provenance:        Provenance{Path: "left.yaml"},
+	}
+	right := DefaultSettings()
+	right.ResourceCustomizations["apps/Deployment"] = ResourceCustomization{
+		IgnoreResourceUpdates: OverrideIgnoreDifferences{JQPathExpressions: []string{".status"}},
+		KnownTypeFields:       []KnownTypeField{{Field: "spec.template.spec", Type: "core/v1/PodSpec"}},
+		HasHealthLua:          true,
+		healthLuaFingerprint:  "health-fingerprint",
+		HasUseOpenLibs:        true,
+		UseOpenLibs:           true,
+		Actions: ResourceActionsSummary{
+			HasActions:      true,
+			HasDiscoveryLua: true,
+			ActionNames:     []string{"restart"},
+			fingerprint:     "actions-fingerprint",
+		},
+		Provenance: Provenance{Path: "right.yaml"},
+	}
+
+	merged, diags := MergeDiscovered([]ArgoSettings{left, right})
+	if len(diags) != 0 {
+		t.Fatalf("Diagnostics = %#v", diags)
+	}
+	got := merged.ResourceCustomizations["apps/Deployment"]
+	if len(got.IgnoreDifferences.JSONPointers) != 1 || len(got.KnownTypeFields) != 1 {
+		t.Fatalf("merged customization = %#v", got)
+	}
+	if len(got.IgnoreResourceUpdates.JQPathExpressions) != 1 || !got.HasHealthLua || !got.HasUseOpenLibs || !got.UseOpenLibs || !got.Actions.HasActions {
+		t.Fatalf("merged customization = %#v", got)
+	}
+}
+
+func TestMergeSettingsDetectsAdvancedResourceCustomizationConflict(t *testing.T) {
+	left := DefaultSettings()
+	left.ResourceCustomizations["apps/Deployment"] = ResourceCustomization{
+		KnownTypeFields: []KnownTypeField{{Field: "spec.template.spec", Type: "core/v1/PodSpec"}},
+		Provenance:      Provenance{Path: "left.yaml"},
+	}
+	right := DefaultSettings()
+	right.ResourceCustomizations["apps/Deployment"] = ResourceCustomization{
+		KnownTypeFields: []KnownTypeField{{Field: "spec.template.spec", Type: "core/Quantity"}},
+		Provenance:      Provenance{Path: "right.yaml"},
+	}
+
+	_, diags := MergeDiscovered([]ArgoSettings{left, right})
+	if len(diags) != 1 {
+		t.Fatalf("len(diags) = %d, want 1: %#v", len(diags), diags)
+	}
+	if diags[0].Category != "settings" {
+		t.Fatalf("diagnostic = %#v", diags[0])
+	}
+}
+
+func TestMergeSettingsDetectsUseOpenLibsConflict(t *testing.T) {
+	left := DefaultSettings()
+	left.ResourceCustomizations["apps/Deployment"] = ResourceCustomization{
+		HasUseOpenLibs: true,
+		UseOpenLibs:    false,
+		Provenance:     Provenance{Path: "left.yaml"},
+	}
+	right := DefaultSettings()
+	right.ResourceCustomizations["apps/Deployment"] = ResourceCustomization{
+		HasUseOpenLibs: true,
+		UseOpenLibs:    true,
+		Provenance:     Provenance{Path: "right.yaml"},
+	}
+
+	_, diags := MergeDiscovered([]ArgoSettings{left, right})
+	if len(diags) != 1 {
+		t.Fatalf("len(diags) = %d, want 1: %#v", len(diags), diags)
+	}
+	if diags[0].Category != "settings" {
+		t.Fatalf("diagnostic = %#v", diags[0])
+	}
+}
+
+func TestMergeSettingsIgnoreResourceUpdatesEnabledDefaultDoesNotConflict(t *testing.T) {
+	left := DefaultSettings()
+	right := DefaultSettings()
+	right.IgnoreResourceUpdatesEnabled = Value[bool]{
+		Value:      false,
+		Provenance: Provenance{Path: "right.yaml"},
+	}
+
+	merged, diags := MergeDiscovered([]ArgoSettings{left, right})
+	if len(diags) != 0 {
+		t.Fatalf("Diagnostics = %#v", diags)
+	}
+	if merged.IgnoreResourceUpdatesEnabled.Value {
+		t.Fatalf("IgnoreResourceUpdatesEnabled = true, want false")
+	}
+}
+
+func TestMergeSettingsDetectsIgnoreResourceUpdatesEnabledConflict(t *testing.T) {
+	left := DefaultSettings()
+	left.IgnoreResourceUpdatesEnabled = Value[bool]{
+		Value:      false,
+		Provenance: Provenance{Path: "left.yaml"},
+	}
+	right := DefaultSettings()
+	right.IgnoreResourceUpdatesEnabled = Value[bool]{
+		Value:      true,
+		Provenance: Provenance{Path: "right.yaml"},
+	}
+
+	_, diags := MergeDiscovered([]ArgoSettings{left, right})
+	if len(diags) != 1 {
+		t.Fatalf("len(diags) = %d, want 1: %#v", len(diags), diags)
+	}
+	if diags[0].Category != "settings" {
+		t.Fatalf("diagnostic = %#v", diags[0])
+	}
+}
+
 func TestMergeCompareOptionsIgnoresProvenance(t *testing.T) {
 	left := DefaultSettings()
 	left.CompareOptions = ResourceCompareOptions{
