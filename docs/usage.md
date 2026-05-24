@@ -290,6 +290,13 @@ changes. `managedFieldsManagers` is an offline approximation: it suppresses
 fields only when rendered desired manifests include matching
 `metadata.managedFields` ownership data.
 
+Global `resource.customizations.knownTypeFields.*` settings are also applied
+when normalizing rendered resources for desired-vs-desired diffs. Global
+`resource.customizations.ignoreResourceUpdates.*` settings are parsed and
+reported as diagnostics, but they are not applied as desired diff ignores.
+Health and action customizations, including `useOpenLibs` and Lua metadata, are
+parsed and reported only. `argocd-local` does not execute Lua offline.
+
 Discovered `resource.compareoptions` settings are also honored for
 `ignoreResourceStatusField` and `ignoreAggregatedRoles`. By default status is
 ignored for all resources. Use `ignoreResourceStatusField: none`, `off`, or

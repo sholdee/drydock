@@ -61,6 +61,12 @@ Supported in the MVP:
 - Global `resource.customizations.ignoreDifferences.*` `jsonPointers`,
   `jqPathExpressions`, and `managedFieldsManagers` from discovered `argocd-cm`
   and Argo CD Helm values `configs.cm`
+- Global `resource.customizations.knownTypeFields.*` normalization for
+  desired-vs-desired manifest diffs
+- Global `resource.customizations.ignoreResourceUpdates.*` parsing and
+  diagnostics, without applying them to desired-vs-desired diffs
+- Health and action customization parsing and diagnostics, including
+  `useOpenLibs`/Lua metadata, without executing Lua offline
 - Discovered `resource.compareoptions.ignoreResourceStatusField` and
   `resource.compareoptions.ignoreAggregatedRoles`
 - Argo CD core resource exclusions plus discovered global
@@ -116,8 +122,8 @@ Not reproduced offline:
 - Live server-side apply field ownership prediction
 - Live Argo CD server-side diff
 - Managed-fields ignores when ownership data exists only on the live cluster
-- Global `resource.customizations` `ignoreResourceUpdates`,
-  `knownTypeFields`, health, actions, and Lua settings
+- Applying `ignoreResourceUpdates` to desired-vs-desired diffs
+- Health or action Lua execution
 - Project/RBAC/destination validation
 - CLI config management plugin execution, shellout plugin adapters, Argo CD
   repo-server sidecar plugin discovery, ambient plugin configuration, ambient

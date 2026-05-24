@@ -121,6 +121,14 @@ also honored. Managed-fields support is an offline rendered-manifest
 approximation; it uses `metadata.managedFields` only when those fields are
 present in the rendered manifests.
 
+Global `resource.customizations.knownTypeFields.*` settings are applied during
+desired-vs-desired diff normalization. Global
+`resource.customizations.ignoreResourceUpdates.*` settings are parsed and
+reported, but they are not applied to desired-vs-desired diffs because they
+belong to live update/cache behavior. Health and action customizations,
+including `useOpenLibs` and Lua metadata, are parsed and reported only; Lua is
+not executed offline.
+
 Discovered `resource.compareoptions` settings are honored for
 `ignoreResourceStatusField` and `ignoreAggregatedRoles`. The default matches
 Argo CD's `ignoreResourceStatusField: all`; set it to `none`, `off`, or
@@ -150,8 +158,9 @@ scripts/home-ops-pattern-smoke.sh
 - No cache-inspection command or structured cache event stream yet. Remote Git,
   Helm, and Kustomize cache observability is tracked as a Phase 1B follow-up.
 - Live server-side diff/apply behavior is not reproduced.
-- Global `resource.customizations` support does not include
-  `ignoreResourceUpdates`, health, actions, or known type fields.
+- Live-only managed-field ownership is not reproduced when ownership data is
+  absent from rendered manifests.
+- Health/action Lua is not executed offline.
 
 See `docs/usage.md` for command examples and `docs/compatibility.md` for
 offline Argo CD compatibility notes. See `docs/home-ops-pattern-coverage.md`
