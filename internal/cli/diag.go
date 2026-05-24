@@ -49,7 +49,7 @@ func newDiagCommand(deps Dependencies) *cobra.Command {
 				RemoteResourceCacheDir:       flags.remoteCacheDir,
 				RemoteResourceCredentials:    flags.remoteCredentials(),
 				RemoteResourceGitCredentials: flags.remoteGitCredentials(),
-				RecordCacheEvents:            flags.cacheEvents || output == string(cliformat.OutputJSON) || output == string(cliformat.OutputYAML),
+				RecordCacheEvents:            flags.cacheEvents,
 			})
 			result.Diagnostics = diagnostic.WithStableCodes(result.Diagnostics)
 			switch output {

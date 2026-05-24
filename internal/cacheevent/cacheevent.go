@@ -254,12 +254,18 @@ func (c *variantCollector) addUserInfoVariants(userInfo *url.Userinfo) {
 	}
 	username := userInfo.Username()
 	password, hasPassword := userInfo.Password()
-	c.add(userInfo.String() + "@")
+	rawUserInfo := userInfo.String()
+	c.add(rawUserInfo + "@")
+	rawUsername, rawPassword, rawHasPassword := strings.Cut(rawUserInfo, ":")
 	if username != "" {
+		c.add(rawUsername)
 		c.add(username + ":***@")
 		c.add(username + "@")
 	}
 	if hasPassword {
+		if rawHasPassword {
+			c.add(rawPassword)
+		}
 		c.add(password)
 	}
 }
