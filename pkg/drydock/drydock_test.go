@@ -59,13 +59,17 @@ func TestPublicRenderParallelismPreservesManifestOrder(t *testing.T) {
 	if out.err != nil {
 		t.Fatalf("Render() error = %v", out.err)
 	}
-	var names []string
+	names := make([]string, 0, len(out.result.Manifests))
 	for _, manifest := range out.result.Manifests {
 		metadata, ok := manifest.Object["metadata"].(map[string]any)
 		if !ok {
 			t.Fatalf("manifest metadata = %#v, want object", manifest.Object["metadata"])
 		}
-		names = append(names, metadata["name"].(string))
+		name, ok := metadata["name"].(string)
+		if !ok {
+			t.Fatalf("manifest metadata.name = %#v, want string", metadata["name"])
+		}
+		names = append(names, name)
 	}
 	if !slices.Equal(names, []string{"app-a", "app-b", "app-c"}) {
 		t.Fatalf("manifest names = %#v, want selected Application order", names)
