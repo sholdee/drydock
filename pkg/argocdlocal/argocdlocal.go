@@ -7,6 +7,7 @@ import (
 
 	argoappv1 "github.com/argoproj/argo-cd/v3/pkg/apis/application/v1alpha1"
 	"github.com/home-operations/argocd-local/internal/app"
+	"github.com/home-operations/argocd-local/internal/cacheevent"
 	"github.com/home-operations/argocd-local/internal/chart"
 	"github.com/home-operations/argocd-local/internal/diagnostic"
 	"github.com/home-operations/argocd-local/internal/diff"
@@ -49,6 +50,7 @@ type Config struct {
 	GitAcquirer                  GitAcquirer
 	ChartAcquirer                ChartAcquirer
 	RemoteResourceAcquirer       RemoteResourceAcquirer
+	RecordCacheEvents            bool
 }
 
 // Client runs argocd-local operations with a reusable Config and optional
@@ -107,6 +109,7 @@ func (client *Client) ListApplications(ctx context.Context) (ListApplicationsRes
 	return ListApplicationsResult{
 		Applications: applicationsFromInternal(result.Applications),
 		Diagnostics:  diagnosticsFromInternal(result.Diagnostics),
+		CacheEvents:  cacheEventsFromInternal(result.CacheEvents),
 	}, err
 }
 
@@ -123,6 +126,7 @@ func (client *Client) DiffApplications(ctx context.Context) (DiffApplicationsRes
 	return DiffApplicationsResult{
 		Results:     diffResultsFromInternal(result.Results),
 		Diagnostics: diagnosticsFromInternal(result.Diagnostics),
+		CacheEvents: cacheEventsFromInternal(result.CacheEvents),
 	}, err
 }
 
@@ -139,6 +143,7 @@ func (client *Client) DiffImages(ctx context.Context) (ImageDiffResult, error) {
 		Removed:     append([]string(nil), result.Removed...),
 		Unchanged:   append([]string(nil), result.Unchanged...),
 		Diagnostics: diagnosticsFromInternal(result.Diagnostics),
+		CacheEvents: cacheEventsFromInternal(result.CacheEvents),
 	}, err
 }
 
@@ -163,6 +168,7 @@ func (client *Client) buildRequest() app.BuildRequest {
 		SkipKinds:                    append([]string(nil), client.config.SkipKinds...),
 		SkipCRDs:                     client.config.SkipCRDs,
 		SkipSecrets:                  client.config.SkipSecrets,
+		RecordCacheEvents:            client.config.RecordCacheEvents,
 	}
 }
 
@@ -199,6 +205,7 @@ func (client *Client) diffRequest() app.DiffRequest {
 		SkipKinds:                    append([]string(nil), client.config.SkipKinds...),
 		SkipCRDs:                     client.config.SkipCRDs,
 		SkipSecrets:                  client.config.SkipSecrets,
+		RecordCacheEvents:            client.config.RecordCacheEvents,
 	}
 }
 
@@ -315,24 +322,39 @@ type ApplicationStatus struct {
 	Message     string
 }
 
+// CacheEvent describes an optional source acquisition cache observation.
+type CacheEvent struct {
+	Source   string
+	Action   string
+	Target   string
+	Revision string
+	CacheHit bool
+	Offline  bool
+	Refresh  bool
+	Error    string
+}
+
 // RenderResult is returned by render operations.
 type RenderResult struct {
 	Applications []Application
 	Manifests    []Manifest
 	Diagnostics  []Diagnostic
 	Statuses     []ApplicationStatus
+	CacheEvents  []CacheEvent
 }
 
 // ListApplicationsResult is returned by list operations.
 type ListApplicationsResult struct {
 	Applications []Application
 	Diagnostics  []Diagnostic
+	CacheEvents  []CacheEvent
 }
 
 // DiffApplicationsResult is returned by Application diff operations.
 type DiffApplicationsResult struct {
 	Results     []DiffResult
 	Diagnostics []Diagnostic
+	CacheEvents []CacheEvent
 }
 
 // DiffResult describes one resource-level Application diff.
@@ -366,6 +388,7 @@ type ImageDiffResult struct {
 	Removed     []string
 	Unchanged   []string
 	Diagnostics []Diagnostic
+	CacheEvents []CacheEvent
 }
 
 // GitCredentials supplies credentials for Git source acquisition.
@@ -395,8 +418,10 @@ type GitOptions struct {
 
 // GitResult describes an acquired Git source.
 type GitResult struct {
-	Path     string
-	Revision string
+	Path      string
+	Revision  string
+	FromCache bool
+	Network   bool
 }
 
 // GitAcquirer acquires Git sources for Application rendering.
@@ -508,6 +533,7 @@ func renderResultFromBuild(result app.BuildResult) RenderResult {
 		Manifests:    manifestsFromInternal(result.ApplicationManifests),
 		Diagnostics:  diagnosticsFromInternal(result.Diagnostics),
 		Statuses:     statusesFromInternal(result.Statuses),
+		CacheEvents:  cacheEventsFromInternal(result.CacheEvents),
 	}
 }
 
@@ -586,6 +612,23 @@ func statusesFromInternal(statuses []app.ApplicationStatus) []ApplicationStatus 
 			},
 			Status:  item.Status,
 			Message: item.Message,
+		})
+	}
+	return out
+}
+
+func cacheEventsFromInternal(events []cacheevent.Event) []CacheEvent {
+	out := make([]CacheEvent, 0, len(events))
+	for _, event := range events {
+		out = append(out, CacheEvent{
+			Source:   string(event.Source),
+			Action:   string(event.Action),
+			Target:   event.Target,
+			Revision: event.Revision,
+			CacheHit: event.CacheHit,
+			Offline:  event.Offline,
+			Refresh:  event.Refresh,
+			Error:    event.Error,
 		})
 	}
 	return out
@@ -837,8 +880,10 @@ func (adapter gitAcquirerAdapter) Acquire(ctx context.Context, request sourcepkg
 		Credentials:  gitCredentialsFromInternal(opts.Credentials),
 	})
 	return sourcepkg.GitResult{
-		Path:     result.Path,
-		Revision: result.Revision,
+		Path:      result.Path,
+		Revision:  result.Revision,
+		FromCache: result.FromCache,
+		Network:   result.Network,
 	}, err
 }
 

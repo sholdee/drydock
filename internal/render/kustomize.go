@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/home-operations/argocd-local/internal/cacheevent"
 	"github.com/home-operations/argocd-local/internal/chart"
 	"github.com/home-operations/argocd-local/internal/diagnostic"
 	"github.com/home-operations/argocd-local/internal/manifest"
@@ -599,8 +600,10 @@ func (w *kustomizeWorkspace) acquireAndCopyKustomizeRef(ctx context.Context, dir
 		GitCredentials: w.opts.RemoteResourceGitCredentials,
 	})
 	if err != nil {
+		recordRemoteCacheEvent(w.opts, request, err, remote.Result{})
 		return "", "", "", fmt.Errorf("acquire remote kustomize resource %s: %s", redactKustomizeRef(ref.Original), redactRemoteKustomizeAcquireError(err, ref, w.opts))
 	}
+	recordRemoteCacheEvent(w.opts, request, nil, acquired)
 	acquiredPath, err := acquiredRemoteKustomizePath(acquired, ref)
 	if err != nil {
 		return "", "", "", err
@@ -665,6 +668,88 @@ func (w *kustomizeWorkspace) acquireAndCopyKustomizeRef(ctx context.Context, dir
 		return "", "", "", fmt.Errorf("copy remote kustomize resource %s: %w", redactKustomizeRef(ref.Original), err)
 	}
 	return generatedRel, "", "", nil
+}
+
+func recordRemoteCacheEvent(opts RenderOptions, request remote.Request, acquireErr error, acquired remote.Result) {
+	if opts.CacheEventRecorder == nil {
+		return
+	}
+	event := cacheevent.Event{
+		Source:   cacheevent.SourceRemote,
+		Target:   remoteTargetForEvent(request),
+		Revision: request.Revision,
+		Offline:  opts.OfflineRemoteResources,
+		Refresh:  opts.RefreshRemoteResources,
+		RawTargets: []string{
+			request.URL,
+			request.RepoURL,
+		},
+		SensitiveValues: remoteSensitiveValues(opts.RemoteResourceCredentials, opts.RemoteResourceGitCredentials),
+	}
+	if acquireErr != nil {
+		event.Action = cacheActionForRemoteError(acquireErr)
+		event.Error = acquireErr.Error()
+		opts.CacheEventRecorder.Record(event)
+		return
+	}
+	event.Action = actionForRemoteAcquisition(acquired.FromCache, opts.RefreshRemoteResources)
+	event.Revision = acquired.Revision
+	if event.Revision == "" {
+		event.Revision = request.Revision
+	}
+	event.CacheHit = acquired.FromCache
+	opts.CacheEventRecorder.Record(event)
+}
+
+func actionForRemoteAcquisition(fromCache bool, refresh bool) cacheevent.Action {
+	if fromCache {
+		return cacheevent.ActionHit
+	}
+	if refresh {
+		return cacheevent.ActionRefresh
+	}
+	return cacheevent.ActionFetch
+}
+
+func cacheActionForRemoteError(err error) cacheevent.Action {
+	if err != nil && strings.Contains(err.Error(), "offline cache miss") {
+		return cacheevent.ActionMiss
+	}
+	return cacheevent.ActionError
+}
+
+func remoteTargetForEvent(request remote.Request) string {
+	if request.RepoURL != "" {
+		return request.RepoURL
+	}
+	return request.URL
+}
+
+func remoteSensitiveValues(credentials remote.Credentials, gitCredentials remote.GitCredentials) []string {
+	return compactSensitiveValues(
+		credentials.Username,
+		credentials.Password,
+		credentials.BearerToken,
+		gitCredentials.Username,
+		gitCredentials.Password,
+		gitCredentials.BearerToken,
+		gitCredentials.SSHPrivateKey,
+		gitCredentials.SSHPassphrase,
+	)
+}
+
+func chartSensitiveValues(credentials chart.ChartCredentials) []string {
+	return compactSensitiveValues(credentials.Username, credentials.Password, credentials.BearerToken)
+}
+
+func compactSensitiveValues(values ...string) []string {
+	out := make([]string, 0, len(values))
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			out = append(out, value)
+		}
+	}
+	return out
 }
 
 func splitGeneratorFileSource(source string) (string, string, bool) {
@@ -1075,8 +1160,10 @@ func resolveKustomizeHelmChart(ctx context.Context, tempRepoRoot, tempSourceRoot
 		Credentials: opts.ChartCredentials,
 	})
 	if err != nil {
-		return "", fmt.Errorf("acquire kustomize helm chart %s: %w", helmChart.Name, err)
+		recordKustomizeChartCacheEvent(opts, request, err, chart.Result{})
+		return "", fmt.Errorf("acquire kustomize helm chart %s: %s", helmChart.Name, redactKustomizeChartAcquireError(err, request.Repository, opts.ChartCredentials))
 	}
+	recordKustomizeChartCacheEvent(opts, request, nil, result)
 
 	chartRel := filepath.ToSlash(filepath.Join(".argocd-local", "charts", generatedName))
 	chartDst, err := generatedKustomizeWorkspacePath(tempRepoRoot, chartRel)
@@ -1087,6 +1174,45 @@ func resolveKustomizeHelmChart(ctx context.Context, tempRepoRoot, tempSourceRoot
 		return "", fmt.Errorf("copy acquired helm chart %s: %w", helmChart.Name, err)
 	}
 	return chartRel, nil
+}
+
+func recordKustomizeChartCacheEvent(opts RenderOptions, request chart.Request, acquireErr error, acquired chart.Result) {
+	if opts.CacheEventRecorder == nil {
+		return
+	}
+	event := cacheevent.Event{
+		Source:          cacheevent.SourceChart,
+		Target:          request.Repository,
+		Revision:        request.Version,
+		Offline:         opts.OfflineCharts,
+		Refresh:         opts.RefreshCharts,
+		SensitiveValues: chartSensitiveValues(opts.ChartCredentials),
+	}
+	if acquireErr != nil {
+		event.Action = cacheActionForRemoteError(acquireErr)
+		event.Error = acquireErr.Error()
+		opts.CacheEventRecorder.Record(event)
+		return
+	}
+	event.Action = actionForRemoteAcquisition(acquired.FromCache, opts.RefreshCharts)
+	event.Revision = acquired.Version
+	if event.Revision == "" {
+		event.Revision = request.Version
+	}
+	event.CacheHit = acquired.FromCache
+	opts.CacheEventRecorder.Record(event)
+}
+
+func redactKustomizeChartAcquireError(err error, repository string, credentials chart.ChartCredentials) string {
+	if err == nil {
+		return ""
+	}
+	return cacheevent.RedactEventError(
+		err.Error(),
+		cacheevent.RedactTarget(repository),
+		[]string{repository},
+		chartSensitiveValues(credentials)...,
+	)
 }
 
 func resolveLocalKustomizeHelmChart(repoRoot, kustomizationDir, chartHome string, helmChart types.HelmChart) (string, bool, error) {

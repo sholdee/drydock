@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/home-operations/argocd-local/internal/app"
+	"github.com/home-operations/argocd-local/internal/cacheevent"
 	"github.com/home-operations/argocd-local/internal/diagnostic"
 	cliformat "github.com/home-operations/argocd-local/internal/format"
 	"github.com/spf13/cobra"
@@ -14,6 +15,7 @@ import (
 
 type diagReport struct {
 	Diagnostics []diagnostic.Diagnostic `json:"diagnostics" yaml:"diagnostics"`
+	CacheEvents []cacheevent.Event      `json:"cacheEvents,omitempty" yaml:"cacheEvents,omitempty"`
 }
 
 func newDiagCommand(deps Dependencies) *cobra.Command {
@@ -47,6 +49,7 @@ func newDiagCommand(deps Dependencies) *cobra.Command {
 				RemoteResourceCacheDir:       flags.remoteCacheDir,
 				RemoteResourceCredentials:    flags.remoteCredentials(),
 				RemoteResourceGitCredentials: flags.remoteGitCredentials(),
+				RecordCacheEvents:            flags.cacheEvents || output == string(cliformat.OutputJSON) || output == string(cliformat.OutputYAML),
 			})
 			result.Diagnostics = diagnostic.WithStableCodes(result.Diagnostics)
 			switch output {
@@ -55,11 +58,11 @@ func newDiagCommand(deps Dependencies) *cobra.Command {
 					return renderErr
 				}
 			case string(cliformat.OutputJSON):
-				if renderErr := cliformat.JSON(cmd.OutOrStdout(), diagReport{Diagnostics: result.Diagnostics}); renderErr != nil {
+				if renderErr := cliformat.JSON(cmd.OutOrStdout(), diagReport{Diagnostics: result.Diagnostics, CacheEvents: result.CacheEvents}); renderErr != nil {
 					return renderErr
 				}
 			case string(cliformat.OutputYAML):
-				if renderErr := cliformat.YAML(cmd.OutOrStdout(), diagReport{Diagnostics: result.Diagnostics}); renderErr != nil {
+				if renderErr := cliformat.YAML(cmd.OutOrStdout(), diagReport{Diagnostics: result.Diagnostics, CacheEvents: result.CacheEvents}); renderErr != nil {
 					return renderErr
 				}
 			default:

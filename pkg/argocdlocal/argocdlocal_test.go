@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/home-operations/argocd-local/internal/remote"
+	sourcepkg "github.com/home-operations/argocd-local/internal/source"
 )
 
 func TestRenderApplications(t *testing.T) {
@@ -255,6 +256,105 @@ resources:
 	}
 }
 
+func TestPublicRenderReturnsCacheEventsWhenEnabled(t *testing.T) {
+	root := t.TempDir()
+	chartDir := filepath.Join(t.TempDir(), "demo")
+	writeAPIChart(t, chartDir, "demo", "1.2.3", `apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: charted
+`)
+	writeAPIChartApplication(t, root)
+
+	result, err := Render(context.Background(), Config{
+		Path:              root,
+		RecordCacheEvents: true,
+		ChartAcquirer:     &recordingChartAcquirer{chartDir: chartDir, fromCache: true},
+	})
+	if err != nil {
+		t.Fatalf("Render() error = %v", err)
+	}
+	if !hasPublicCacheEvent(result.CacheEvents, "chart", "hit", "https://charts.example.test") {
+		t.Fatalf("CacheEvents = %#v, want chart hit", result.CacheEvents)
+	}
+}
+
+func TestPublicDiffApplicationsReturnsCacheEventsWhenEnabled(t *testing.T) {
+	left := t.TempDir()
+	right := t.TempDir()
+	chartDir := filepath.Join(t.TempDir(), "demo")
+	writeAPIChart(t, chartDir, "demo", "1.2.3", `apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: charted
+`)
+	writeAPIChartApplication(t, left)
+	writeAPIChartApplication(t, right)
+
+	result, err := DiffApplications(context.Background(), Config{
+		PathOrig:          left,
+		Path:              right,
+		ChangedOnly:       boolPtr(false),
+		RecordCacheEvents: true,
+		ChartAcquirer:     &recordingChartAcquirer{chartDir: chartDir, fromCache: true},
+	})
+	if err != nil {
+		t.Fatalf("DiffApplications() error = %v", err)
+	}
+	if len(result.CacheEvents) != 2 {
+		t.Fatalf("CacheEvents = %#v, want left then right events", result.CacheEvents)
+	}
+	for _, event := range result.CacheEvents {
+		if event.Source != "chart" || event.Action != "hit" || event.Target != "https://charts.example.test" {
+			t.Fatalf("CacheEvents = %#v, want chart hits", result.CacheEvents)
+		}
+	}
+}
+
+func TestPublicDiffImagesReturnsCacheEventsWhenEnabled(t *testing.T) {
+	left := t.TempDir()
+	right := t.TempDir()
+	chartDir := filepath.Join(t.TempDir(), "demo")
+	writeAPIChart(t, chartDir, "demo", "1.2.3", `apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: charted
+spec:
+  selector:
+    matchLabels:
+      app: charted
+  template:
+    metadata:
+      labels:
+        app: charted
+    spec:
+      containers:
+        - name: app
+          image: repo/demo:v1
+`)
+	writeAPIChartApplication(t, left)
+	writeAPIChartApplication(t, right)
+
+	result, err := DiffImages(context.Background(), Config{
+		PathOrig:          left,
+		Path:              right,
+		ChangedOnly:       boolPtr(false),
+		RecordCacheEvents: true,
+		ChartAcquirer:     &recordingChartAcquirer{chartDir: chartDir, fromCache: true},
+	})
+	if err != nil {
+		t.Fatalf("DiffImages() error = %v", err)
+	}
+	if len(result.CacheEvents) != 2 {
+		t.Fatalf("CacheEvents = %#v, want left then right events", result.CacheEvents)
+	}
+	for _, event := range result.CacheEvents {
+		if event.Source != "chart" || event.Action != "hit" || event.Target != "https://charts.example.test" {
+			t.Fatalf("CacheEvents = %#v, want chart hits", result.CacheEvents)
+		}
+	}
+}
+
 func TestClientPassesRemoteResourceCredentials(t *testing.T) {
 	root := t.TempDir()
 	remoteFile := filepath.Join(t.TempDir(), "remote.yaml")
@@ -355,6 +455,25 @@ func TestClientPassesRemoteGitMetadataToInjectedRemoteAcquirer(t *testing.T) {
 	}
 	if result.Revision != "resolved-sha" || !result.FromCache {
 		t.Fatalf("remote result = %#v, want revision/from-cache metadata", result)
+	}
+}
+
+func TestClientPassesGitCacheMetadataFromInjectedGitAcquirer(t *testing.T) {
+	gitAcquirer := &recordingGitAcquirer{path: t.TempDir(), revision: "resolved-sha", fromCache: true, network: false}
+	adapter := gitAcquirerAdapter{acquirer: gitAcquirer}
+
+	result, err := adapter.Acquire(context.Background(), sourcepkg.GitRequest{
+		URL:      "https://git.example.test/repo.git",
+		Revision: "main",
+	}, sourcepkg.GitOptions{})
+	if err != nil {
+		t.Fatalf("Acquire() error = %v", err)
+	}
+	if !result.FromCache {
+		t.Fatalf("FromCache = false, want true")
+	}
+	if result.Network {
+		t.Fatalf("Network = true, want false")
 	}
 }
 
@@ -777,11 +896,13 @@ func stringMapsEqual(left, right map[string]string) bool {
 }
 
 type recordingGitAcquirer struct {
-	path     string
-	revision string
-	err      error
-	requests []GitRequest
-	options  []GitOptions
+	path      string
+	revision  string
+	fromCache bool
+	network   bool
+	err       error
+	requests  []GitRequest
+	options   []GitOptions
 }
 
 func (acquirer *recordingGitAcquirer) Acquire(_ context.Context, request GitRequest, opts GitOptions) (GitResult, error) {
@@ -790,14 +911,15 @@ func (acquirer *recordingGitAcquirer) Acquire(_ context.Context, request GitRequ
 	if acquirer.err != nil {
 		return GitResult{}, acquirer.err
 	}
-	return GitResult{Path: acquirer.path, Revision: acquirer.revision}, nil
+	return GitResult{Path: acquirer.path, Revision: acquirer.revision, FromCache: acquirer.fromCache, Network: acquirer.network}, nil
 }
 
 type recordingChartAcquirer struct {
-	chartDir string
-	err      error
-	requests []ChartRequest
-	options  []ChartOptions
+	chartDir  string
+	fromCache bool
+	err       error
+	requests  []ChartRequest
+	options   []ChartOptions
 }
 
 func (acquirer *recordingChartAcquirer) Acquire(_ context.Context, request ChartRequest, opts ChartOptions) (ChartResult, error) {
@@ -812,6 +934,7 @@ func (acquirer *recordingChartAcquirer) Acquire(_ context.Context, request Chart
 		Name:       request.Name,
 		Version:    request.Version,
 		Kind:       request.Kind,
+		FromCache:  acquirer.fromCache,
 	}, nil
 }
 
@@ -996,6 +1119,24 @@ version: `+version+`
 	writeAPIFile(t, filepath.Join(chartDir, "templates", "cm.yaml"), template)
 }
 
+func writeAPIChartApplication(t *testing.T, root string) {
+	t.Helper()
+	writeAPIFile(t, filepath.Join(root, "apps", "chart.yaml"), `apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: charted
+  namespace: argocd
+spec:
+  source:
+    repoURL: https://charts.example.test
+    chart: demo
+    targetRevision: 1.2.3
+  destination:
+    name: in-cluster
+    namespace: default
+`)
+}
+
 func writeAPIFile(t *testing.T, path string, data string) {
 	t.Helper()
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
@@ -1018,6 +1159,15 @@ func hasDiagnostic(diagnostics []Diagnostic, category, message string) bool {
 func hasDiagnosticCode(diagnostics []Diagnostic, code string) bool {
 	for _, diagnostic := range diagnostics {
 		if diagnostic.Code == code {
+			return true
+		}
+	}
+	return false
+}
+
+func hasPublicCacheEvent(events []CacheEvent, source, action, target string) bool {
+	for _, event := range events {
+		if event.Source == source && event.Action == action && event.Target == target {
 			return true
 		}
 	}

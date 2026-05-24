@@ -41,8 +41,10 @@ type GitCredentials struct {
 }
 
 type GitResult struct {
-	Path     string
-	Revision string
+	Path      string
+	Revision  string
+	FromCache bool
+	Network   bool
 }
 
 type GitAcquirer interface {
@@ -81,17 +83,20 @@ func (DefaultGitAcquirer) Acquire(ctx context.Context, request GitRequest, opts 
 	if err != nil {
 		return GitResult{}, fmt.Errorf("open repository %s worktree: %s", RedactURL(request.URL), redactGitError(err, request.URL, opts.Credentials))
 	}
+	refreshed := false
 	if opts.Refresh && !cloned {
 		if err := refreshGitRepository(ctx, repo, worktree, request, auth, opts.Credentials); err != nil {
 			return GitResult{}, err
 		}
+		refreshed = true
 	}
-	revision, err := checkoutAcquiredGitRepository(ctx, repo, worktree, request, cloned, auth, opts.Credentials)
+	revision, fetched, err := checkoutAcquiredGitRepository(ctx, repo, worktree, request, cloned, auth, opts.Credentials)
 	if err != nil {
 		return GitResult{}, err
 	}
 
-	return GitResult{Path: cachePath, Revision: revision}, nil
+	network := cloned || refreshed || fetched
+	return GitResult{Path: cachePath, Revision: revision, FromCache: !network, Network: network}, nil
 }
 
 func gitCacheDir(configured string) (string, error) {
@@ -145,21 +150,23 @@ func refreshGitRepository(ctx context.Context, repo *git.Repository, worktree *g
 	return fetchGitRepository(ctx, repo, request.URL, auth, credentials)
 }
 
-func checkoutAcquiredGitRepository(ctx context.Context, repo *git.Repository, worktree *git.Worktree, request GitRequest, cloned bool, auth transport.AuthMethod, credentials GitCredentials) (string, error) {
+func checkoutAcquiredGitRepository(ctx context.Context, repo *git.Repository, worktree *git.Worktree, request GitRequest, cloned bool, auth transport.AuthMethod, credentials GitCredentials) (string, bool, error) {
 	revision, err := checkoutGitRevision(repo, worktree, request.Revision)
 	if err == nil {
-		return revision, nil
+		return revision, false, nil
 	}
+	fetched := false
 	if !cloned {
 		if fetchErr := fetchGitRepository(ctx, repo, request.URL, auth, credentials); fetchErr != nil {
-			return "", fetchErr
+			return "", false, fetchErr
 		}
+		fetched = true
 		revision, err = checkoutGitRevision(repo, worktree, request.Revision)
 	}
 	if err != nil {
-		return "", fmt.Errorf("checkout repository %s revision %q: %s", RedactURL(request.URL), strings.TrimSpace(request.Revision), redactGitError(err, request.URL, credentials))
+		return "", fetched, fmt.Errorf("checkout repository %s revision %q: %s", RedactURL(request.URL), strings.TrimSpace(request.Revision), redactGitError(err, request.URL, credentials))
 	}
-	return revision, nil
+	return revision, fetched, nil
 }
 
 func fetchGitRepository(ctx context.Context, repo *git.Repository, repoURL string, auth transport.AuthMethod, credentials GitCredentials) error {

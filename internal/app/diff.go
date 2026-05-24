@@ -10,6 +10,7 @@ import (
 
 	argoappv1 "github.com/argoproj/argo-cd/v3/pkg/apis/application/v1alpha1"
 	"github.com/argoproj/argo-cd/v3/util/glob"
+	"github.com/home-operations/argocd-local/internal/cacheevent"
 	"github.com/home-operations/argocd-local/internal/change"
 	"github.com/home-operations/argocd-local/internal/chart"
 	"github.com/home-operations/argocd-local/internal/config"
@@ -45,6 +46,7 @@ type DiffRequest struct {
 	SkipKinds                    []string
 	SkipCRDs                     bool
 	SkipSecrets                  bool
+	RecordCacheEvents            bool
 }
 
 type DiffAppRequest struct {
@@ -55,6 +57,7 @@ type DiffAppRequest struct {
 type DiffResult struct {
 	Results     []diff.Result
 	Diagnostics []diagnostic.Diagnostic
+	CacheEvents []cacheevent.Event
 }
 
 type ImageDiffResult struct {
@@ -62,6 +65,7 @@ type ImageDiffResult struct {
 	Removed     []string
 	Unchanged   []string
 	Diagnostics []diagnostic.Diagnostic
+	CacheEvents []cacheevent.Event
 }
 
 func (o Orchestrator) DiffApps(ctx context.Context, request DiffRequest) (DiffResult, error) {
@@ -70,15 +74,16 @@ func (o Orchestrator) DiffApps(ctx context.Context, request DiffRequest) (DiffRe
 	}
 
 	leftBuild, rightBuild, diagnostics, err := o.buildDiffSides(ctx, request)
+	cacheEvents := cacheEventsFromBuilds(leftBuild, rightBuild)
 	if err != nil {
-		return DiffResult{Diagnostics: diagnostics}, err
+		return DiffResult{Diagnostics: diagnostics, CacheEvents: cacheEvents}, err
 	}
 
 	results, err := diffBuildResults(leftBuild, rightBuild, diff.Options{Unified: request.Unified, StripAttrs: request.StripAttrs})
 	if err != nil {
-		return DiffResult{Diagnostics: diagnostics}, err
+		return DiffResult{Diagnostics: diagnostics, CacheEvents: cacheEvents}, err
 	}
-	return DiffResult{Results: results, Diagnostics: diagnostics}, nil
+	return DiffResult{Results: results, Diagnostics: diagnostics, CacheEvents: cacheEvents}, nil
 }
 
 func (o Orchestrator) DiffApp(ctx context.Context, request DiffAppRequest) (DiffResult, error) {
@@ -131,15 +136,16 @@ func (o Orchestrator) DiffApp(ctx context.Context, request DiffAppRequest) (Diff
 	rightBuild, err := o.Build(ctx, rightBuildRequest)
 	diagnostics = append(diagnostics, rightBuild.Diagnostics...)
 	rightErr := err
+	cacheEvents := cacheEventsFromBuilds(leftBuild, rightBuild)
 	if err := errors.Join(leftErr, rightErr); err != nil {
-		return DiffResult{Diagnostics: diagnostics}, err
+		return DiffResult{Diagnostics: diagnostics, CacheEvents: cacheEvents}, err
 	}
 
 	results, err := diffBuildResults(leftBuild, rightBuild, diff.Options{Unified: request.Unified, StripAttrs: request.StripAttrs})
 	if err != nil {
-		return DiffResult{Diagnostics: diagnostics}, err
+		return DiffResult{Diagnostics: diagnostics, CacheEvents: cacheEvents}, err
 	}
-	return DiffResult{Results: results, Diagnostics: diagnostics}, nil
+	return DiffResult{Results: results, Diagnostics: diagnostics, CacheEvents: cacheEvents}, nil
 }
 
 func (o Orchestrator) DiffImages(ctx context.Context, request DiffRequest) (ImageDiffResult, error) {
@@ -148,17 +154,18 @@ func (o Orchestrator) DiffImages(ctx context.Context, request DiffRequest) (Imag
 	}
 
 	leftBuild, rightBuild, diagnostics, err := o.buildDiffSides(ctx, request)
+	cacheEvents := cacheEventsFromBuilds(leftBuild, rightBuild)
 	if err != nil {
-		return ImageDiffResult{Diagnostics: diagnostics}, err
+		return ImageDiffResult{Diagnostics: diagnostics, CacheEvents: cacheEvents}, err
 	}
 
 	leftDocs, err := diffDocuments(leftBuild)
 	if err != nil {
-		return ImageDiffResult{Diagnostics: diagnostics}, err
+		return ImageDiffResult{Diagnostics: diagnostics, CacheEvents: cacheEvents}, err
 	}
 	rightDocs, err := diffDocuments(rightBuild)
 	if err != nil {
-		return ImageDiffResult{Diagnostics: diagnostics}, err
+		return ImageDiffResult{Diagnostics: diagnostics, CacheEvents: cacheEvents}, err
 	}
 
 	added, removed, unchanged := compareStringSets(diff.ExtractImages(leftDocs), diff.ExtractImages(rightDocs))
@@ -167,7 +174,15 @@ func (o Orchestrator) DiffImages(ctx context.Context, request DiffRequest) (Imag
 		Removed:     removed,
 		Unchanged:   unchanged,
 		Diagnostics: diagnostics,
+		CacheEvents: cacheEvents,
 	}, nil
+}
+
+func cacheEventsFromBuilds(leftBuild, rightBuild BuildResult) []cacheevent.Event {
+	out := make([]cacheevent.Event, 0, len(leftBuild.CacheEvents)+len(rightBuild.CacheEvents))
+	out = append(out, leftBuild.CacheEvents...)
+	out = append(out, rightBuild.CacheEvents...)
+	return out
 }
 
 func compareStringSets(left, right []string) (added, removed, unchanged []string) {
@@ -213,6 +228,7 @@ func (request DiffRequest) buildRequest(path string, forbiddenRoots []string) Bu
 		SkipKinds:                    append([]string(nil), request.SkipKinds...),
 		SkipCRDs:                     request.SkipCRDs,
 		SkipSecrets:                  request.SkipSecrets,
+		RecordCacheEvents:            request.RecordCacheEvents,
 	}
 }
 

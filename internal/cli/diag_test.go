@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"path/filepath"
@@ -9,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/home-operations/argocd-local/internal/app"
+	"github.com/home-operations/argocd-local/internal/chart"
 )
 
 func TestDiagCleanRepositoryPrintsNoManifests(t *testing.T) {
@@ -111,6 +113,62 @@ func TestDiagYAMLOutputContainsDiagnosticsWithCodes(t *testing.T) {
 	}
 	if !strings.Contains(stdout.String(), "code: appset.unsupported-generator") {
 		t.Fatalf("stdout = %q, want diagnostic code", stdout.String())
+	}
+}
+
+func TestDiagJSONOutputCanIncludeCacheEvents(t *testing.T) {
+	root := t.TempDir()
+	chartDir := filepath.Join(t.TempDir(), "demo")
+	writeCLITestFile(t, filepath.Join(root, "apps", "chart.yaml"), `apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: charted
+  namespace: argocd
+spec:
+  source:
+    repoURL: https://charts.example.test
+    chart: demo
+    targetRevision: 1.2.3
+  destination:
+    name: in-cluster
+    namespace: default
+`)
+	writeCLITestFile(t, filepath.Join(chartDir, "Chart.yaml"), `apiVersion: v2
+name: demo
+version: 1.2.3
+`)
+	writeCLITestFile(t, filepath.Join(chartDir, "templates", "cm.yaml"), `apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: charted
+`)
+	cmd := NewRootCommandWithDependencies(VersionInfo{}, Dependencies{
+		Orchestrator: app.Orchestrator{ChartAcquirer: &recordingDiagChartAcquirer{chartDir: chartDir, fromCache: true}},
+	})
+	cmd.SetArgs([]string{"diag", "--path", root, "-o", "json", "--cache-events"})
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	cmd.SetOut(&stdout)
+	cmd.SetErr(&stderr)
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("Execute() error = %v\nstdout:\n%s\nstderr:\n%s", err, stdout.String(), stderr.String())
+	}
+	var report struct {
+		CacheEvents []struct {
+			Source string `json:"source"`
+			Action string `json:"action"`
+			Target string `json:"target"`
+		} `json:"cacheEvents"`
+	}
+	if err := json.Unmarshal(stdout.Bytes(), &report); err != nil {
+		t.Fatalf("json.Unmarshal() error = %v\nstdout:\n%s", err, stdout.String())
+	}
+	if len(report.CacheEvents) == 0 {
+		t.Fatalf("cacheEvents = %#v, want non-empty", report.CacheEvents)
+	}
+	if report.CacheEvents[0].Source != "chart" || report.CacheEvents[0].Action != "hit" || report.CacheEvents[0].Target != "https://charts.example.test" {
+		t.Fatalf("cacheEvents = %#v, want chart hit", report.CacheEvents)
 	}
 }
 
@@ -218,4 +276,20 @@ spec:
         name: in-cluster
         namespace: default
 `)
+}
+
+type recordingDiagChartAcquirer struct {
+	chartDir  string
+	fromCache bool
+}
+
+func (acquirer *recordingDiagChartAcquirer) Acquire(_ context.Context, request chart.Request, _ chart.Options) (chart.Result, error) {
+	return chart.Result{
+		ChartDir:   acquirer.chartDir,
+		Repository: request.Repository,
+		Name:       request.Name,
+		Version:    request.Version,
+		Kind:       request.Kind,
+		FromCache:  acquirer.fromCache,
+	}, nil
 }

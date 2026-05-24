@@ -161,6 +161,77 @@ func TestDefaultGitAcquirerRefreshesCachedHead(t *testing.T) {
 	}
 }
 
+func TestDefaultGitAcquirerReportsCacheHit(t *testing.T) {
+	remote := createGitFixture(t)
+	firstHash := commitFixtureFile(t, remote.repo, remote.worktree, "config.yaml", "version: first\n")
+	cacheDir := t.TempDir()
+	repoURL := "file://" + filepath.ToSlash(remote.path)
+	request := GitRequest{URL: repoURL, Revision: firstHash.String()}
+
+	first, err := DefaultGitAcquirer{}.Acquire(context.Background(), request, GitOptions{AllowNetwork: true, CacheDir: cacheDir})
+	if err != nil {
+		t.Fatalf("first Acquire() error = %v", err)
+	}
+	if first.FromCache {
+		t.Fatal("first FromCache = true, want false")
+	}
+	second, err := DefaultGitAcquirer{}.Acquire(context.Background(), request, GitOptions{AllowNetwork: true, CacheDir: cacheDir})
+	if err != nil {
+		t.Fatalf("second Acquire() error = %v", err)
+	}
+	if !second.FromCache {
+		t.Fatal("second FromCache = false, want true")
+	}
+	if second.Network {
+		t.Fatal("second Network = true, want false")
+	}
+}
+
+func TestDefaultGitAcquirerReportsRefreshAsNetwork(t *testing.T) {
+	remote := createGitFixture(t)
+	firstHash := commitFixtureFile(t, remote.repo, remote.worktree, "config.yaml", "version: first\n")
+	cacheDir := t.TempDir()
+	repoURL := "file://" + filepath.ToSlash(remote.path)
+	request := GitRequest{URL: repoURL, Revision: firstHash.String()}
+	if _, err := (DefaultGitAcquirer{}).Acquire(context.Background(), request, GitOptions{AllowNetwork: true, CacheDir: cacheDir}); err != nil {
+		t.Fatalf("seed Acquire() error = %v", err)
+	}
+
+	refreshed, err := DefaultGitAcquirer{}.Acquire(context.Background(), request, GitOptions{AllowNetwork: true, CacheDir: cacheDir, Refresh: true})
+	if err != nil {
+		t.Fatalf("refresh Acquire() error = %v", err)
+	}
+	if refreshed.FromCache {
+		t.Fatal("refresh FromCache = true, want false")
+	}
+	if !refreshed.Network {
+		t.Fatal("refresh Network = false, want true")
+	}
+}
+
+func TestDefaultGitAcquirerReportsRevisionMissFetchAsNetwork(t *testing.T) {
+	remote := createGitFixture(t)
+	firstHash := commitFixtureFile(t, remote.repo, remote.worktree, "config.yaml", "version: first\n")
+	cacheDir := t.TempDir()
+	repoURL := "file://" + filepath.ToSlash(remote.path)
+	request := GitRequest{URL: repoURL, Revision: firstHash.String()}
+	if _, err := (DefaultGitAcquirer{}).Acquire(context.Background(), request, GitOptions{AllowNetwork: true, CacheDir: cacheDir}); err != nil {
+		t.Fatalf("seed Acquire() error = %v", err)
+	}
+	secondHash := commitFixtureFile(t, remote.repo, remote.worktree, "config.yaml", "version: second\n")
+
+	fetched, err := DefaultGitAcquirer{}.Acquire(context.Background(), GitRequest{URL: repoURL, Revision: secondHash.String()}, GitOptions{AllowNetwork: true, CacheDir: cacheDir})
+	if err != nil {
+		t.Fatalf("revision-miss Acquire() error = %v", err)
+	}
+	if fetched.FromCache {
+		t.Fatal("revision-miss FromCache = true, want false")
+	}
+	if !fetched.Network {
+		t.Fatal("revision-miss Network = false, want true")
+	}
+}
+
 func TestDefaultGitAcquirerChecksOutTag(t *testing.T) {
 	remote := createGitFixture(t)
 	tagHash := commitFixtureFile(t, remote.repo, remote.worktree, "config.yaml", "version: tag\n")
