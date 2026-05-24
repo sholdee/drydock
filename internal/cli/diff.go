@@ -7,6 +7,7 @@ import (
 
 	"github.com/sholdee/drydock/internal/app"
 	cliformat "github.com/sholdee/drydock/internal/format"
+	sourcepkg "github.com/sholdee/drydock/internal/source"
 	"github.com/spf13/cobra"
 )
 
@@ -39,31 +40,7 @@ func newDiffCommand(deps Dependencies) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			result, err := deps.Orchestrator.DiffApps(context.Background(), app.DiffRequest{
-				LeftPath:                     appsFlags.pathOrig,
-				RightPath:                    appsFlags.path,
-				ChangedOnly:                  appsFlags.changedOnly,
-				StrictChangedOnly:            appsFlags.strictChangedOnly,
-				Strict:                       appsFlags.strict,
-				Unified:                      appsFlags.unified,
-				StripAttrs:                   appsFlags.stripAttrs,
-				Offline:                      appsFlags.offline,
-				RefreshCharts:                appsFlags.refreshCharts,
-				ChartCacheDir:                appsFlags.chartCacheDir,
-				ChartCredentials:             appsFlags.chartCredentials(),
-				RepoMaps:                     repoMaps,
-				AllowNetwork:                 appsFlags.allowNetwork,
-				GitCacheDir:                  appsFlags.gitCacheDir,
-				RefreshGit:                   appsFlags.refreshGit,
-				GitCredentials:               appsFlags.gitCredentials(),
-				RefreshRemoteResources:       appsFlags.refreshRemotes,
-				RemoteResourceCacheDir:       appsFlags.remoteCacheDir,
-				RemoteResourceCredentials:    appsFlags.remoteCredentials(),
-				RemoteResourceGitCredentials: appsFlags.remoteGitCredentials(),
-				SkipKinds:                    append([]string(nil), appsFlags.skipKinds...),
-				SkipCRDs:                     appsFlags.skipCRDs,
-				SkipSecrets:                  appsFlags.skipSecrets,
-			})
+			result, err := deps.Orchestrator.DiffApps(context.Background(), diffRequestFromFlags(appsFlags, repoMaps))
 			if err != nil {
 				if renderErr := renderDiagnostics(cmd.ErrOrStderr(), result.Diagnostics); renderErr != nil {
 					return renderErr
@@ -90,30 +67,8 @@ func newDiffCommand(deps Dependencies) *cobra.Command {
 				return err
 			}
 			result, err := deps.Orchestrator.DiffApp(context.Background(), app.DiffAppRequest{
-				Name: args[0],
-				DiffRequest: app.DiffRequest{
-					LeftPath:                     appFlags.pathOrig,
-					RightPath:                    appFlags.path,
-					Strict:                       appFlags.strict,
-					Unified:                      appFlags.unified,
-					StripAttrs:                   appFlags.stripAttrs,
-					Offline:                      appFlags.offline,
-					RefreshCharts:                appFlags.refreshCharts,
-					ChartCacheDir:                appFlags.chartCacheDir,
-					ChartCredentials:             appFlags.chartCredentials(),
-					RepoMaps:                     repoMaps,
-					AllowNetwork:                 appFlags.allowNetwork,
-					GitCacheDir:                  appFlags.gitCacheDir,
-					RefreshGit:                   appFlags.refreshGit,
-					GitCredentials:               appFlags.gitCredentials(),
-					RefreshRemoteResources:       appFlags.refreshRemotes,
-					RemoteResourceCacheDir:       appFlags.remoteCacheDir,
-					RemoteResourceCredentials:    appFlags.remoteCredentials(),
-					RemoteResourceGitCredentials: appFlags.remoteGitCredentials(),
-					SkipKinds:                    append([]string(nil), appFlags.skipKinds...),
-					SkipCRDs:                     appFlags.skipCRDs,
-					SkipSecrets:                  appFlags.skipSecrets,
-				},
+				Name:        args[0],
+				DiffRequest: diffRequestFromFlags(appFlags, repoMaps),
 			})
 			if err != nil {
 				if renderErr := renderDiagnostics(cmd.ErrOrStderr(), result.Diagnostics); renderErr != nil {
@@ -136,29 +91,7 @@ func newDiffCommand(deps Dependencies) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			result, err := deps.Orchestrator.DiffImages(context.Background(), app.DiffRequest{
-				LeftPath:                     imagesFlags.pathOrig,
-				RightPath:                    imagesFlags.path,
-				ChangedOnly:                  imagesFlags.changedOnly,
-				StrictChangedOnly:            imagesFlags.strictChangedOnly,
-				Strict:                       imagesFlags.strict,
-				Offline:                      imagesFlags.offline,
-				RefreshCharts:                imagesFlags.refreshCharts,
-				ChartCacheDir:                imagesFlags.chartCacheDir,
-				ChartCredentials:             imagesFlags.chartCredentials(),
-				RepoMaps:                     repoMaps,
-				AllowNetwork:                 imagesFlags.allowNetwork,
-				GitCacheDir:                  imagesFlags.gitCacheDir,
-				RefreshGit:                   imagesFlags.refreshGit,
-				GitCredentials:               imagesFlags.gitCredentials(),
-				RefreshRemoteResources:       imagesFlags.refreshRemotes,
-				RemoteResourceCacheDir:       imagesFlags.remoteCacheDir,
-				RemoteResourceCredentials:    imagesFlags.remoteCredentials(),
-				RemoteResourceGitCredentials: imagesFlags.remoteGitCredentials(),
-				SkipKinds:                    append([]string(nil), imagesFlags.skipKinds...),
-				SkipCRDs:                     imagesFlags.skipCRDs,
-				SkipSecrets:                  imagesFlags.skipSecrets,
-			})
+			result, err := deps.Orchestrator.DiffImages(context.Background(), diffRequestFromFlags(imagesFlags, repoMaps))
 			if err != nil {
 				if renderErr := renderDiagnostics(cmd.ErrOrStderr(), result.Diagnostics); renderErr != nil {
 					return renderErr
@@ -189,6 +122,36 @@ func newDiffCommand(deps Dependencies) *cobra.Command {
 
 	cmd.AddCommand(apps, appCmd, images)
 	return cmd
+}
+
+func diffRequestFromFlags(flags commonFlags, repoMaps []sourcepkg.RepoMap) app.DiffRequest {
+	return app.DiffRequest{
+		LeftPath:                       flags.pathOrig,
+		RightPath:                      flags.path,
+		ChangedOnly:                    flags.changedOnly,
+		StrictChangedOnly:              flags.strictChangedOnly,
+		Strict:                         flags.strict,
+		Unified:                        flags.unified,
+		StripAttrs:                     append([]string(nil), flags.stripAttrs...),
+		Offline:                        flags.offline,
+		RefreshCharts:                  flags.refreshCharts,
+		ChartCacheDir:                  flags.chartCacheDir,
+		ChartCredentials:               flags.chartCredentials(),
+		RepoMaps:                       repoMaps,
+		AllowNetwork:                   flags.allowNetwork,
+		GitCacheDir:                    flags.gitCacheDir,
+		RefreshGit:                     flags.refreshGit,
+		GitCredentials:                 flags.gitCredentials(),
+		RefreshRemoteResources:         flags.refreshRemotes,
+		RemoteResourceCacheDir:         flags.remoteCacheDir,
+		RemoteResourceCredentials:      flags.remoteCredentials(),
+		RemoteResourceGitCredentials:   flags.remoteGitCredentials(),
+		SkipKinds:                      append([]string(nil), flags.skipKinds...),
+		SkipCRDs:                       flags.skipCRDs,
+		SkipSecrets:                    flags.skipSecrets,
+		ApplicationSetProviderFixtures: append([]string(nil), flags.appsetFixtures...),
+		RecordCacheEvents:              flags.cacheEvents,
+	}
 }
 
 func parseDiffOutput(value, command string) (string, error) {

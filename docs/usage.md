@@ -32,10 +32,11 @@ drydock get images --path . -o name
 Diagnostics are printed to stderr for both commands.
 
 Supported local `ApplicationSet` generators are Git directories, Git files,
-list, matrix, and merge. Multiple supported top-level generators are expanded
-independently and concatenated in manifest order. Unsupported generators emit
-diagnostics; non-strict commands keep supported generated Applications, while
-`--strict` promotes those diagnostics to errors.
+list, matrix, merge, and explicit fixture-backed provider generators. Multiple
+supported top-level generators are expanded independently and concatenated in
+manifest order. Unsupported generators emit diagnostics; non-strict commands
+keep supported generated Applications, while `--strict` promotes those
+diagnostics to errors.
 
 Git files generator matches are sorted by normalized relative path. Include
 and exclude patterns are evaluated deterministically, and `exclude: true`
@@ -50,8 +51,117 @@ Matrix generators combine exactly two child generators and interpolate the
 second child from first-child params, including templated `elementsYaml`.
 Merge generators overlay two or more child generators by `mergeKeys` in base
 generator order. Matrix and merge children may use list, Git directories, Git
-files, and nested matrix/merge combinations where the Argo CD v3 nested JSON
-API permits them.
+files, fixture-backed provider generators, and nested matrix/merge combinations
+where the Argo CD v3 nested JSON API permits them.
+
+Provider-backed `ApplicationSet` generators are supported only from explicit
+local fixture files. The CLI never contacts Kubernetes, Argo CD, SCM provider,
+pull-request, cloud, or plugin-service APIs for these generators. Supply one
+or more fixtures with the repeatable flag:
+
+```bash
+drydock get apps --path . --appset-provider-fixture fixtures/appset-providers.yaml
+drydock diff apps --path . --path-orig ../base --appset-provider-fixture fixtures/appset-providers.yaml
+```
+
+Fixture files are strict YAML or JSON documents. Unknown fields, duplicate
+identities, URL-like fixture paths, and malformed files produce
+`appset.provider-fixture-invalid`. If fixtures are supplied but no entries
+match a provider generator, drydock emits `appset.provider-no-match`. Filters
+that cannot be evaluated from fixture data fail closed with
+`appset.provider-unsupported-filter`.
+
+Fixture schema:
+
+```yaml
+clusters:
+  - name: prod-a
+    server: https://prod-a.example.invalid
+    project: platform
+    labels:
+      environment: prod
+    annotations:
+      owner: platform
+    values:
+      region: home
+
+clusterDecisions:
+  - configMapRef: placement-config
+    resourceName: placement-a
+    labels:
+      placement: edge
+    matchKey: clusterName
+    statusListKey: clusters
+    decisions:
+      - clusterName: prod-a
+        placement: edge
+    values:
+      tier: edge
+
+scmRepositories:
+  - provider: github
+    organization: example-org
+    repository: example-repo
+    repositoryID: repo-123
+    branch: main
+    sha: abcdef1234567890
+    url: https://github.com/example-org/example-repo
+    labels:
+      - ops
+    paths:
+      - deploy/app.yaml
+    values:
+      tier: ops
+
+pullRequests:
+  - provider: github
+    organization: example-org
+    repository: example-repo
+    number: 42
+    title: Update chart
+    branch: renovate/chart
+    targetBranch: main
+    headSHA: abcdef1234567890
+    author: renovate
+    labels:
+      - dependencies
+    values:
+      kind: renovate
+
+plugins:
+  - configMapRef: generator-plugin
+    outputs:
+      - environment: prod
+        cluster:
+          name: prod-a
+    values:
+      source: fixture
+```
+
+Additional provider-specific fixture fields are available where Argo provider
+configuration needs scope data that should not alter emitted template params:
+SCM repositories accept `project`, `region`, and `tags`; pull requests accept
+`project` and `state`. For example, Azure DevOps uses `organization` plus
+`project` for matching, AWS CodeCommit requires explicit `region` and can
+evaluate `tagFilters` from `tags`, and GitLab `pullRequestState` is evaluated
+from `state`.
+
+Provider fixtures emit the same stable template parameter names that Argo CD
+uses for each supported provider family:
+
+| Generator | Stable template parameters |
+| --- | --- |
+| `clusters` | `name`, `nameNormalized`, `server`, `project`, metadata labels/annotations, `values` |
+| `clusterDecisionResource` | `name`, `server`, decision fields, `values` |
+| `scmProvider` | `organization`, `repository`, `repository_id`, `url`, `branch`, `branchNormalized`, `sha`, `short_sha`, `short_sha_7`, `labels`, `values` |
+| `pullRequest` | `number`, `title`, `branch`, `branch_slug`, `target_branch`, `target_branch_slug`, `head_sha`, `head_short_sha`, `head_short_sha_7`, `author`, `labels`, `values` |
+| `plugin` | fixture output fields, `generator.input.parameters`, `values` |
+
+For non-Go-template ApplicationSets, nested maps are flattened with dot
+notation, including `metadata.labels.<key>`, `metadata.annotations.<key>`, and
+`values.<key>`. For Go-template ApplicationSets, nested values remain available
+as maps or arrays, such as `.metadata.labels`, `.metadata.annotations`,
+`.labels`, and `.values`.
 
 Local `AppProject` manifests are also discovered. They are used for offline
 diagnostics only; discovery does not contact a Kubernetes cluster or Argo CD
@@ -150,6 +260,9 @@ Network and cache flags:
   resource requests with bearer auth and takes precedence over basic auth.
 - `--remote-username USER` and `--remote-password PASS` authenticate HTTP(S)
   remote Kustomize resource requests with basic auth.
+- `--appset-provider-fixture PATH` supplies offline YAML/JSON data for
+  provider-backed ApplicationSet generators. The flag is repeatable and is
+  local-file only; it never enables live provider access.
 - `--skip-kind KIND` omits rendered resources with that Kubernetes kind from
   build output, manifest diffs, image extraction, and render tests. The flag is
   repeatable and matches kind only.
@@ -456,8 +569,9 @@ Benchmark numbers are trend signals, not hard pass/fail thresholds.
 
 These source paths are not wired in the current MVP:
 
-- Cluster, clusterDecisionResource, SCM provider, pull-request, and plugin
-  ApplicationSet generators.
+- Live provider API calls for cluster, clusterDecisionResource, SCM provider,
+  pull-request, and plugin ApplicationSet generators. Use explicit local
+  `--appset-provider-fixture` data instead.
 - CLI config management plugin execution, shellout plugin adapters, Argo CD
   repo-server sidecar plugin discovery, ambient plugin configuration, ambient
   plugin environment loading, and plugin credential injection.
