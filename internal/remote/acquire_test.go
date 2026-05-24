@@ -124,6 +124,28 @@ func TestNewCacheKeyForGitRepoCanonicalizesEquivalentURLs(t *testing.T) {
 	}
 }
 
+func TestNewCacheKeyForGitRepoRedactsSCPUser(t *testing.T) {
+	gitUserKey, err := NewCacheKey(Request{
+		Kind:     RequestGitRepo,
+		RepoURL:  "git@example.test:org/repo",
+		Revision: "main",
+	})
+	if err != nil {
+		t.Fatalf("NewCacheKey(git user) error = %v", err)
+	}
+	deployUserKey, err := NewCacheKey(Request{
+		Kind:     RequestGitRepo,
+		RepoURL:  "deploy@example.test:org/repo.git?token=secret#frag",
+		Revision: "main",
+	})
+	if err != nil {
+		t.Fatalf("NewCacheKey(deploy user) error = %v", err)
+	}
+	if gitUserKey != deployUserKey {
+		t.Fatalf("SCP cache keys differ: git=%s deploy=%s", gitUserKey, deployUserKey)
+	}
+}
+
 func TestNormalizeURLParseErrorDoesNotLeakSecretBearingURL(t *testing.T) {
 	_, err := NormalizeURL("https://user:secret@example.test/%zz.yaml?token=secret#fragment")
 	if err == nil {

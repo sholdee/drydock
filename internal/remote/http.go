@@ -46,7 +46,6 @@ func (acquirer DefaultAcquirer) acquireHTTPFile(ctx context.Context, request Req
 		return Result{}, err
 	}
 	if !opts.Refresh && regularFileReady(resourcePath) {
-		writeHTTPFileMetadata(filepath.Dir(resourcePath), key, normalized)
 		return Result{Path: resourcePath, URL: normalized, FromCache: true}, nil
 	}
 	if opts.Offline {

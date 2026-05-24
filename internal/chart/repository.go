@@ -76,7 +76,6 @@ func (acquirer DefaultAcquirer) Acquire(ctx context.Context, request Request, op
 	keyDir := filepath.Join(keyParent, key)
 	chartDir := filepath.Join(keyDir, request.Name)
 	if !opts.Refresh && chartDirReady(chartDir) {
-		writeChartMetadata(keyDir, key, request)
 		return resultFor(request, chartDir, true), nil
 	}
 	if opts.Offline {
@@ -116,7 +115,7 @@ func (acquirer DefaultAcquirer) Acquire(ctx context.Context, request Request, op
 
 func writeChartMetadata(keyDir, key string, request Request) {
 	target := request.Repository
-	if normalized, err := NormalizeRepository(request.Repository, request.Kind); err == nil {
+	if normalized, err := NormalizeCacheRepository(request.Repository, request.Kind); err == nil {
 		target = normalized
 	}
 	_ = cache.WriteMetadata(keyDir, cache.Metadata{
