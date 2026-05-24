@@ -16,6 +16,7 @@ func MergeDiscovered(candidates []ArgoSettings) (ArgoSettings, []diagnostic.Diag
 		diags = append(diags, mergeTrackingMethod(&merged, candidate)...)
 		diags = append(diags, mergeInstanceLabelKey(&merged, candidate)...)
 		diags = append(diags, mergeHelmRepositories(&merged, candidate)...)
+		diags = append(diags, mergeCompareOptions(&merged, candidate)...)
 		merged.ResourceExclusions = append(merged.ResourceExclusions, candidate.ResourceExclusions...)
 		merged.ResourceInclusions = append(merged.ResourceInclusions, candidate.ResourceInclusions...)
 		diags = append(diags, mergeResourceCustomizations(&merged, candidate)...)
@@ -82,6 +83,22 @@ func mergeHelmRepositories(merged *ArgoSettings, candidate ArgoSettings) []diagn
 	return diags
 }
 
+func mergeCompareOptions(merged *ArgoSettings, candidate ArgoSettings) []diagnostic.Diagnostic {
+	if !hasProvenanceCompareOptions(candidate.CompareOptions) {
+		return nil
+	}
+	if hasProvenanceCompareOptions(merged.CompareOptions) && !sameCompareOptions(merged.CompareOptions, candidate.CompareOptions) {
+		return []diagnostic.Diagnostic{conflictDiagnostic(
+			"conflicting resource.compareoptions settings discovered",
+			candidate.CompareOptions.Provenance,
+		)}
+	}
+	if !hasProvenanceCompareOptions(merged.CompareOptions) {
+		merged.CompareOptions = candidate.CompareOptions
+	}
+	return nil
+}
+
 func mergeResourceCustomizations(merged *ArgoSettings, candidate ArgoSettings) []diagnostic.Diagnostic {
 	var diags []diagnostic.Diagnostic
 	for key, customization := range candidate.ResourceCustomizations {
@@ -119,6 +136,10 @@ func hasProvenance(value Value[string]) bool {
 	return value.Provenance.Path != "" || value.Provenance.Pointer != ""
 }
 
+func hasProvenanceCompareOptions(value ResourceCompareOptions) bool {
+	return value.Provenance.Path != "" || value.Provenance.Pointer != ""
+}
+
 func sameRepositorySettings(left, right RepositorySettings) bool {
 	return left.Name == right.Name &&
 		left.Type == right.Type &&
@@ -129,6 +150,11 @@ func sameRepositorySettings(left, right RepositorySettings) bool {
 
 func sameResourceCustomization(left, right ResourceCustomization) bool {
 	return reflect.DeepEqual(left.IgnoreDifferences, right.IgnoreDifferences)
+}
+
+func sameCompareOptions(left, right ResourceCompareOptions) bool {
+	return left.IgnoreAggregatedRoles == right.IgnoreAggregatedRoles &&
+		left.IgnoreResourceStatusField == right.IgnoreResourceStatusField
 }
 
 func conflictDiagnostic(message string, provenance diagnostic.Provenance) diagnostic.Diagnostic {

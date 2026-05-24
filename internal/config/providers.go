@@ -152,6 +152,12 @@ func applyCMMap(settings *ArgoSettings, values map[string]string, path, basePoin
 			Pointer: basePointer + ".resource.inclusions",
 		}, diags)
 	}
+	if raw := values["resource.compareoptions"]; strings.TrimSpace(raw) != "" {
+		diags = appendParsedResourceCompareOptions(settings, raw, diagnostic.Provenance{
+			Path:    path,
+			Pointer: basePointer + ".resource.compareoptions",
+		}, diags)
+	}
 	if raw := values["resource.customizations"]; strings.TrimSpace(raw) != "" {
 		diags = appendParsedResourceCustomizations(settings, raw, diagnostic.Provenance{
 			Path:    path,
@@ -186,6 +192,41 @@ func appendParsedResourceFilters(dst *[]ResourceFilterRule, raw string, provenan
 	}
 	*dst = append(*dst, rules...)
 	return diags
+}
+
+func appendParsedResourceCompareOptions(settings *ArgoSettings, raw string, provenance diagnostic.Provenance, diags []diagnostic.Diagnostic) []diagnostic.Diagnostic {
+	var options ResourceCompareOptions
+	if err := yaml.Unmarshal([]byte(raw), &options); err != nil {
+		return append(diags, diagnostic.Diagnostic{
+			Severity:   diagnostic.SeverityError,
+			Category:   "settings",
+			Message:    "invalid resource.compareoptions settings",
+			Provenance: provenance,
+		})
+	}
+	if strings.TrimSpace(options.IgnoreResourceStatusField) == "" {
+		options.IgnoreResourceStatusField = "all"
+	}
+	options.Provenance = provenance
+	settings.CompareOptions = options
+	if !knownIgnoreResourceStatusField(options.IgnoreResourceStatusField) {
+		diags = append(diags, diagnostic.Diagnostic{
+			Severity:   diagnostic.SeverityWarning,
+			Category:   "settings",
+			Message:    "unrecognized resource.compareoptions ignoreResourceStatusField value; treating as all",
+			Provenance: provenance,
+		})
+	}
+	return diags
+}
+
+func knownIgnoreResourceStatusField(value string) bool {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "", "all", "crd", "none", "off", "false":
+		return true
+	default:
+		return false
+	}
 }
 
 func appendParsedResourceCustomizations(settings *ArgoSettings, raw string, provenance diagnostic.Provenance, diags []diagnostic.Diagnostic) []diagnostic.Diagnostic {

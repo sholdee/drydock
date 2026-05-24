@@ -25,6 +25,12 @@ type ResourceFilterRule struct {
 	Provenance Provenance `json:"provenance,omitempty" yaml:"provenance,omitempty"`
 }
 
+type ResourceCompareOptions struct {
+	IgnoreAggregatedRoles     bool       `json:"ignoreAggregatedRoles,omitempty" yaml:"ignoreAggregatedRoles,omitempty"`
+	IgnoreResourceStatusField string     `json:"ignoreResourceStatusField,omitempty" yaml:"ignoreResourceStatusField,omitempty"`
+	Provenance                Provenance `json:"provenance,omitempty" yaml:"provenance,omitempty"`
+}
+
 type OverrideIgnoreDifferences struct {
 	JSONPointers          []string `json:"jsonPointers,omitempty" yaml:"jsonPointers,omitempty"`
 	JQPathExpressions     []string `json:"jqPathExpressions,omitempty" yaml:"jqPathExpressions,omitempty"`
@@ -43,6 +49,7 @@ type ArgoSettings struct {
 	InstanceLabelKey       Value[string]                    `json:"instanceLabelKey,omitempty" yaml:"instanceLabelKey,omitempty"`
 	ResourceExclusions     []ResourceFilterRule             `json:"resourceExclusions,omitempty" yaml:"resourceExclusions,omitempty"`
 	ResourceInclusions     []ResourceFilterRule             `json:"resourceInclusions,omitempty" yaml:"resourceInclusions,omitempty"`
+	CompareOptions         ResourceCompareOptions           `json:"compareOptions,omitempty" yaml:"compareOptions,omitempty"`
 	ResourceCustomizations map[string]ResourceCustomization `json:"resourceCustomizations,omitempty" yaml:"resourceCustomizations,omitempty"`
 }
 
@@ -50,6 +57,9 @@ func DefaultSettings() ArgoSettings {
 	return ArgoSettings{
 		HelmRepositories:       map[string]RepositorySettings{},
 		ResourceCustomizations: map[string]ResourceCustomization{},
+		CompareOptions: ResourceCompareOptions{
+			IgnoreResourceStatusField: "all",
+		},
 		TrackingMethod: Value[string]{
 			Value: "label",
 		},
