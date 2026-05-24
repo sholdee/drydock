@@ -113,6 +113,56 @@ metadata:
 	}
 }
 
+func TestDirectoryRendererSkipsKustomizeGeneratorDataFiles(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "apps", "kustomization.yaml"), `
+configMapGenerator:
+  - name: generated-config
+    files:
+      - settings=config/settings.yaml
+secretGenerator:
+  - name: generated-secret
+    envs:
+      - secrets/credentials.yaml
+`)
+	writeFile(t, filepath.Join(root, "apps", "config", "settings.yaml"), `
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: generator-data-config
+`)
+	writeFile(t, filepath.Join(root, "apps", "secrets", "credentials.yaml"), `
+apiVersion: v1
+kind: Secret
+metadata:
+  name: generator-data-secret
+`)
+	writeFile(t, filepath.Join(root, "apps", "visible.yaml"), `
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: visible
+`)
+
+	renderer := DirectoryRenderer{}
+	result, diags, err := renderer.Render(context.Background(), ResolvedSource{
+		RepoRoot: root,
+		Path:     "apps",
+	}, RenderOptions{})
+	if err != nil {
+		t.Fatalf("Render() error = %v", err)
+	}
+	if len(diags) != 0 {
+		t.Fatalf("diagnostics = %#v", diags)
+	}
+	if len(result) != 1 {
+		t.Fatalf("len(result) = %d, want 1", len(result))
+	}
+	if result[0].Object.GetName() != "visible" {
+		t.Fatalf("rendered object name = %q, want visible", result[0].Object.GetName())
+	}
+}
+
 func TestDirectoryRendererRejectsSourcePathEscape(t *testing.T) {
 	parent := t.TempDir()
 	root := filepath.Join(parent, "repo")

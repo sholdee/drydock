@@ -2,11 +2,13 @@ package cli
 
 import (
 	"bytes"
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/home-operations/argocd-local/internal/app"
 	"github.com/home-operations/argocd-local/internal/remote"
 )
 
@@ -136,6 +138,116 @@ func TestDiffAppsHomeOpsPatternFixtureStrictChangedOnly(t *testing.T) {
 			t.Fatalf("stdout contains forbidden %q:\n%s", forbidden, stdout.String())
 		}
 	}
+}
+
+func TestDiffAppsRemoteKustomizePatternFixture(t *testing.T) {
+	fixtureRoot := filepath.Join("..", "..", "testdata", "home-ops-patterns", "remote-kustomize")
+	remoteRoot := filepath.Join(fixtureRoot, "remote")
+
+	acquirer := &recordingCLIRemoteAcquirer{paths: map[string]string{
+		"https://github.com/example/remote-base.git":                     filepath.Join(remoteRoot, "base"),
+		"https://github.com/example/remote-component.git":                filepath.Join(remoteRoot, "component"),
+		"https://github.com/example/remote-patch.git":                    filepath.Join(remoteRoot, "patch"),
+		"https://raw.githubusercontent.com/example/remote/resource.yaml": filepath.Join(remoteRoot, "http", "resource.yaml"),
+	}}
+	cmd := NewRootCommandWithDependencies(VersionInfo{}, Dependencies{
+		Orchestrator: app.Orchestrator{RemoteResourceAcquirer: acquirer},
+	})
+	cmd.SetArgs([]string{
+		"diff", "apps",
+		"--path-orig", filepath.Join(fixtureRoot, "baseline"),
+		"--path", filepath.Join(fixtureRoot, "current"),
+		"--offline",
+		"--remote-cache-dir", filepath.Join(t.TempDir(), "remote-cache"),
+		"--remote-bearer-token", "fixture-token",
+		"--exit-code=false",
+	})
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	cmd.SetOut(&stdout)
+	cmd.SetErr(&stderr)
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("Execute() error = %v\nstdout:\n%s\nstderr:\n%s", err, stdout.String(), stderr.String())
+	}
+	for _, want := range []string{
+		"Application: argocd/remote-pattern",
+		"ConfigMap: remote-pattern/local",
+		"-  value: baseline",
+		"+  value: current",
+	} {
+		if !strings.Contains(stdout.String(), want) {
+			t.Fatalf("stdout missing %q:\nstdout:\n%s\nstderr:\n%s", want, stdout.String(), stderr.String())
+		}
+	}
+	if stderr.String() != "" {
+		t.Fatalf("stderr = %q, want empty", stderr.String())
+	}
+	if got, want := len(acquirer.requests), 8; got != want {
+		t.Fatalf("remote acquire calls = %d, want %d", got, want)
+	}
+	for _, want := range []string{
+		"https://github.com/example/remote-base.git",
+		"https://github.com/example/remote-component.git",
+		"https://github.com/example/remote-patch.git",
+		"https://raw.githubusercontent.com/example/remote/resource.yaml",
+	} {
+		if !recordedRemoteRequest(acquirer.requests, want) {
+			t.Fatalf("remote acquire requests missing %q: %#v", want, acquirer.requests)
+		}
+	}
+	if !recordedHTTPRemoteCredential(acquirer.requests, acquirer.options, "https://raw.githubusercontent.com/example/remote/resource.yaml", "fixture-token") {
+		t.Fatalf("remote HTTP credential was not passed to fake acquirer: requests=%#v options=%#v", acquirer.requests, acquirer.options)
+	}
+}
+
+type recordingCLIRemoteAcquirer struct {
+	paths    map[string]string
+	requests []remote.Request
+	options  []remote.Options
+}
+
+func (acquirer *recordingCLIRemoteAcquirer) Acquire(_ context.Context, request remote.Request, opts remote.Options) (remote.Result, error) {
+	acquirer.requests = append(acquirer.requests, request)
+	acquirer.options = append(acquirer.options, opts)
+	for _, key := range []string{request.RepoURL, request.URL} {
+		if key == "" {
+			continue
+		}
+		if path, ok := acquirer.paths[key]; ok {
+			return remote.Result{Path: path, URL: request.URL, Revision: request.Revision}, nil
+		}
+	}
+	return remote.Result{}, &remoteFixtureMiss{request: request}
+}
+
+type remoteFixtureMiss struct {
+	request remote.Request
+}
+
+func (err *remoteFixtureMiss) Error() string {
+	return "missing remote fixture for " + err.request.RepoURL + err.request.URL
+}
+
+func recordedRemoteRequest(requests []remote.Request, want string) bool {
+	for _, request := range requests {
+		if request.RepoURL == want || request.URL == want {
+			return true
+		}
+	}
+	return false
+}
+
+func recordedHTTPRemoteCredential(requests []remote.Request, options []remote.Options, url, bearerToken string) bool {
+	for i, request := range requests {
+		if request.URL != url || request.Kind != remote.RequestHTTPFile || i >= len(options) {
+			continue
+		}
+		if options[i].Credentials.BearerToken == bearerToken {
+			return true
+		}
+	}
+	return false
 }
 
 func seedRemoteResourceCache(t *testing.T, cacheDir string, rawURL string, body string) {
