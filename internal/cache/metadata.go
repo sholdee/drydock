@@ -39,6 +39,7 @@ func ReadMetadata(entryPath string, expected Source, expectedKind, expectedKey s
 	data, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
+			//nolint:nilnil // Missing metadata identifies a legacy cache entry.
 			return nil, nil
 		}
 		return nil, err

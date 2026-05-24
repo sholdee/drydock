@@ -119,137 +119,159 @@ type generatorContext struct {
 }
 
 func evaluateGenerator(ctx generatorContext, generator argoappv1.ApplicationSetGenerator) ([]generatorParamSet, []diagnostic.Diagnostic, bool, error) {
-	if generator.List != nil {
-		template, err := mergeGeneratorTemplate(ctx.BaseTemplate, generator.List.Template)
-		if err != nil {
-			return nil, nil, true, err
-		}
-		paramSets, diags := listGeneratorParamSets(ctx.ManifestPath, generator.List)
-		paramSets = setGeneratorTemplate(paramSets, template)
-		paramSets, selectorDiags, err := applyGeneratorSelector(ctx.ManifestPath, generator.Selector, paramSets)
-		diags = append(diags, selectorDiags...)
-		return paramSets, diags, true, err
-	}
-
-	if generator.Matrix != nil {
-		template, err := mergeGeneratorTemplate(ctx.BaseTemplate, generator.Matrix.Template)
-		if err != nil {
-			return nil, nil, true, err
-		}
-		paramSets, diags, supported, err := matrixGeneratorParamSets(ctx, generator.Matrix, generator.Selector)
-		if err != nil || !supported {
-			return paramSets, diags, supported, err
-		}
-		paramSets = setGeneratorTemplate(paramSets, template)
-		return paramSets, diags, true, nil
-	}
-
-	if generator.Merge != nil {
-		template, err := mergeGeneratorTemplate(ctx.BaseTemplate, generator.Merge.Template)
-		if err != nil {
-			return nil, nil, true, err
-		}
-		paramSets, diags, supported, err := mergeGeneratorParamSets(ctx, generator.Merge, generator.Selector)
-		if err != nil || !supported {
-			return paramSets, diags, supported, err
-		}
-		paramSets = setGeneratorTemplate(paramSets, template)
-		return paramSets, diags, true, nil
-	}
-
-	if generator.Clusters != nil {
-		if !ctx.Options.Provider.Supplied() {
-			return nil, unsupportedGeneratorDiagnostic(ctx.ManifestPath), false, nil
-		}
-		template, err := mergeGeneratorTemplate(ctx.BaseTemplate, generator.Clusters.Template)
-		if err != nil {
-			return nil, nil, true, err
-		}
-		paramSets, diags, err := clusterGeneratorParamSets(ctx.ManifestPath, generator.Clusters, ctx.Options.Provider.Data.Clusters, ctx.AppSet.Spec.GoTemplate, ctx.AppSet.Spec.GoTemplateOptions)
-		if err != nil {
-			return nil, diags, true, err
-		}
-		paramSets = setGeneratorTemplate(paramSets, template)
-		paramSets, selectorDiags, err := applyProviderGeneratorSelector(ctx.ManifestPath, "clusters", generator.Selector, paramSets)
-		diags = append(diags, selectorDiags...)
-		return paramSets, diags, true, err
-	}
-
-	if generator.ClusterDecisionResource != nil {
-		if !ctx.Options.Provider.Supplied() {
-			return nil, unsupportedGeneratorDiagnostic(ctx.ManifestPath), false, nil
-		}
-		template, err := mergeGeneratorTemplate(ctx.BaseTemplate, generator.ClusterDecisionResource.Template)
-		if err != nil {
-			return nil, nil, true, err
-		}
-		paramSets, diags, err := clusterDecisionResourceParamSets(ctx.ManifestPath, generator.ClusterDecisionResource, ctx.Options.Provider.Data, ctx.AppSet.Spec.GoTemplate, ctx.AppSet.Spec.GoTemplateOptions)
-		if err != nil {
-			return nil, diags, true, err
-		}
-		paramSets = setGeneratorTemplate(paramSets, template)
-		paramSets, selectorDiags, err := applyProviderGeneratorSelector(ctx.ManifestPath, "clusterDecisionResource", generator.Selector, paramSets)
-		diags = append(diags, selectorDiags...)
-		return paramSets, diags, true, err
-	}
-
-	if generator.SCMProvider != nil {
-		if !ctx.Options.Provider.Supplied() {
-			return nil, unsupportedGeneratorDiagnostic(ctx.ManifestPath), false, nil
-		}
-		template, err := mergeGeneratorTemplate(ctx.BaseTemplate, generator.SCMProvider.Template)
-		if err != nil {
-			return nil, nil, true, err
-		}
-		paramSets, diags, err := scmProviderParamSets(ctx.ManifestPath, generator.SCMProvider, ctx.Options.Provider.Data.SCMRepositories, ctx.AppSet.Spec.GoTemplate, ctx.AppSet.Spec.GoTemplateOptions)
-		if err != nil {
-			return nil, diags, true, err
-		}
-		paramSets = setGeneratorTemplate(paramSets, template)
-		paramSets, selectorDiags, err := applyProviderGeneratorSelector(ctx.ManifestPath, "scmProvider", generator.Selector, paramSets)
-		diags = append(diags, selectorDiags...)
-		return paramSets, diags, true, err
-	}
-
-	if generator.PullRequest != nil {
-		if !ctx.Options.Provider.Supplied() {
-			return nil, unsupportedGeneratorDiagnostic(ctx.ManifestPath), false, nil
-		}
-		template, err := mergeGeneratorTemplate(ctx.BaseTemplate, generator.PullRequest.Template)
-		if err != nil {
-			return nil, nil, true, err
-		}
-		paramSets, diags, err := pullRequestParamSets(ctx.ManifestPath, generator.PullRequest, ctx.Options.Provider.Data.PullRequests, ctx.AppSet.Spec.GoTemplate, ctx.AppSet.Spec.GoTemplateOptions)
-		if err != nil {
-			return nil, diags, true, err
-		}
-		paramSets = setGeneratorTemplate(paramSets, template)
-		paramSets, selectorDiags, err := applyProviderGeneratorSelector(ctx.ManifestPath, "pullRequest", generator.Selector, paramSets)
-		diags = append(diags, selectorDiags...)
-		return paramSets, diags, true, err
-	}
-
-	if generator.Plugin != nil {
-		if !ctx.Options.Provider.Supplied() {
-			return nil, unsupportedGeneratorDiagnostic(ctx.ManifestPath), false, nil
-		}
-		template, err := mergeGeneratorTemplate(ctx.BaseTemplate, generator.Plugin.Template)
-		if err != nil {
-			return nil, nil, true, err
-		}
-		paramSets, diags, err := pluginParamSets(ctx.ManifestPath, generator.Plugin, ctx.Options.Provider.Data.Plugins, ctx.AppSet.Spec.GoTemplate, ctx.AppSet.Spec.GoTemplateOptions)
-		if err != nil {
-			return nil, diags, true, err
-		}
-		paramSets = setGeneratorTemplate(paramSets, template)
-		paramSets, selectorDiags, err := applyProviderGeneratorSelector(ctx.ManifestPath, "plugin", generator.Selector, paramSets)
-		diags = append(diags, selectorDiags...)
-		return paramSets, diags, true, err
-	}
-
-	if generator.Git == nil {
+	switch {
+	case generator.List != nil:
+		return evaluateListGenerator(ctx, generator)
+	case generator.Matrix != nil:
+		return evaluateMatrixGenerator(ctx, generator)
+	case generator.Merge != nil:
+		return evaluateMergeGenerator(ctx, generator)
+	case generator.Clusters != nil:
+		return evaluateClustersGenerator(ctx, generator)
+	case generator.ClusterDecisionResource != nil:
+		return evaluateClusterDecisionResourceGenerator(ctx, generator)
+	case generator.SCMProvider != nil:
+		return evaluateSCMProviderGenerator(ctx, generator)
+	case generator.PullRequest != nil:
+		return evaluatePullRequestGenerator(ctx, generator)
+	case generator.Plugin != nil:
+		return evaluatePluginGenerator(ctx, generator)
+	case generator.Git != nil:
+		return evaluateGitGenerator(ctx, generator)
+	default:
 		return nil, unsupportedGeneratorDiagnostic(ctx.ManifestPath), false, nil
 	}
+}
+
+func evaluateListGenerator(ctx generatorContext, generator argoappv1.ApplicationSetGenerator) ([]generatorParamSet, []diagnostic.Diagnostic, bool, error) {
+	template, err := mergeGeneratorTemplate(ctx.BaseTemplate, generator.List.Template)
+	if err != nil {
+		return nil, nil, true, err
+	}
+	paramSets, diags := listGeneratorParamSets(ctx.ManifestPath, generator.List)
+	paramSets = setGeneratorTemplate(paramSets, template)
+	paramSets, selectorDiags, err := applyGeneratorSelector(ctx.ManifestPath, generator.Selector, paramSets)
+	diags = append(diags, selectorDiags...)
+	return paramSets, diags, true, err
+}
+
+func evaluateMatrixGenerator(ctx generatorContext, generator argoappv1.ApplicationSetGenerator) ([]generatorParamSet, []diagnostic.Diagnostic, bool, error) {
+	template, err := mergeGeneratorTemplate(ctx.BaseTemplate, generator.Matrix.Template)
+	if err != nil {
+		return nil, nil, true, err
+	}
+	paramSets, diags, supported, err := matrixGeneratorParamSets(ctx, generator.Matrix, generator.Selector)
+	if err != nil || !supported {
+		return paramSets, diags, supported, err
+	}
+	paramSets = setGeneratorTemplate(paramSets, template)
+	return paramSets, diags, true, nil
+}
+
+func evaluateMergeGenerator(ctx generatorContext, generator argoappv1.ApplicationSetGenerator) ([]generatorParamSet, []diagnostic.Diagnostic, bool, error) {
+	template, err := mergeGeneratorTemplate(ctx.BaseTemplate, generator.Merge.Template)
+	if err != nil {
+		return nil, nil, true, err
+	}
+	paramSets, diags, supported, err := mergeGeneratorParamSets(ctx, generator.Merge, generator.Selector)
+	if err != nil || !supported {
+		return paramSets, diags, supported, err
+	}
+	paramSets = setGeneratorTemplate(paramSets, template)
+	return paramSets, diags, true, nil
+}
+
+func evaluateClustersGenerator(ctx generatorContext, generator argoappv1.ApplicationSetGenerator) ([]generatorParamSet, []diagnostic.Diagnostic, bool, error) {
+	if !ctx.Options.Provider.Supplied() {
+		return nil, unsupportedGeneratorDiagnostic(ctx.ManifestPath), false, nil
+	}
+	template, err := mergeGeneratorTemplate(ctx.BaseTemplate, generator.Clusters.Template)
+	if err != nil {
+		return nil, nil, true, err
+	}
+	paramSets, diags, err := clusterGeneratorParamSets(ctx.ManifestPath, generator.Clusters, ctx.Options.Provider.Data.Clusters, ctx.AppSet.Spec.GoTemplate, ctx.AppSet.Spec.GoTemplateOptions)
+	if err != nil {
+		return nil, diags, true, err
+	}
+	paramSets = setGeneratorTemplate(paramSets, template)
+	paramSets, selectorDiags, err := applyProviderGeneratorSelector(ctx.ManifestPath, "clusters", generator.Selector, paramSets)
+	diags = append(diags, selectorDiags...)
+	return paramSets, diags, true, err
+}
+
+func evaluateClusterDecisionResourceGenerator(ctx generatorContext, generator argoappv1.ApplicationSetGenerator) ([]generatorParamSet, []diagnostic.Diagnostic, bool, error) {
+	if !ctx.Options.Provider.Supplied() {
+		return nil, unsupportedGeneratorDiagnostic(ctx.ManifestPath), false, nil
+	}
+	template, err := mergeGeneratorTemplate(ctx.BaseTemplate, generator.ClusterDecisionResource.Template)
+	if err != nil {
+		return nil, nil, true, err
+	}
+	paramSets, diags, err := clusterDecisionResourceParamSets(ctx.ManifestPath, generator.ClusterDecisionResource, ctx.Options.Provider.Data, ctx.AppSet.Spec.GoTemplate, ctx.AppSet.Spec.GoTemplateOptions)
+	if err != nil {
+		return nil, diags, true, err
+	}
+	paramSets = setGeneratorTemplate(paramSets, template)
+	paramSets, selectorDiags, err := applyProviderGeneratorSelector(ctx.ManifestPath, "clusterDecisionResource", generator.Selector, paramSets)
+	diags = append(diags, selectorDiags...)
+	return paramSets, diags, true, err
+}
+
+func evaluateSCMProviderGenerator(ctx generatorContext, generator argoappv1.ApplicationSetGenerator) ([]generatorParamSet, []diagnostic.Diagnostic, bool, error) {
+	if !ctx.Options.Provider.Supplied() {
+		return nil, unsupportedGeneratorDiagnostic(ctx.ManifestPath), false, nil
+	}
+	template, err := mergeGeneratorTemplate(ctx.BaseTemplate, generator.SCMProvider.Template)
+	if err != nil {
+		return nil, nil, true, err
+	}
+	paramSets, diags, err := scmProviderParamSets(ctx.ManifestPath, generator.SCMProvider, ctx.Options.Provider.Data.SCMRepositories, ctx.AppSet.Spec.GoTemplate, ctx.AppSet.Spec.GoTemplateOptions)
+	if err != nil {
+		return nil, diags, true, err
+	}
+	paramSets = setGeneratorTemplate(paramSets, template)
+	paramSets, selectorDiags, err := applyProviderGeneratorSelector(ctx.ManifestPath, "scmProvider", generator.Selector, paramSets)
+	diags = append(diags, selectorDiags...)
+	return paramSets, diags, true, err
+}
+
+func evaluatePullRequestGenerator(ctx generatorContext, generator argoappv1.ApplicationSetGenerator) ([]generatorParamSet, []diagnostic.Diagnostic, bool, error) {
+	if !ctx.Options.Provider.Supplied() {
+		return nil, unsupportedGeneratorDiagnostic(ctx.ManifestPath), false, nil
+	}
+	template, err := mergeGeneratorTemplate(ctx.BaseTemplate, generator.PullRequest.Template)
+	if err != nil {
+		return nil, nil, true, err
+	}
+	paramSets, diags, err := pullRequestParamSets(ctx.ManifestPath, generator.PullRequest, ctx.Options.Provider.Data.PullRequests, ctx.AppSet.Spec.GoTemplate, ctx.AppSet.Spec.GoTemplateOptions)
+	if err != nil {
+		return nil, diags, true, err
+	}
+	paramSets = setGeneratorTemplate(paramSets, template)
+	paramSets, selectorDiags, err := applyProviderGeneratorSelector(ctx.ManifestPath, "pullRequest", generator.Selector, paramSets)
+	diags = append(diags, selectorDiags...)
+	return paramSets, diags, true, err
+}
+
+func evaluatePluginGenerator(ctx generatorContext, generator argoappv1.ApplicationSetGenerator) ([]generatorParamSet, []diagnostic.Diagnostic, bool, error) {
+	if !ctx.Options.Provider.Supplied() {
+		return nil, unsupportedGeneratorDiagnostic(ctx.ManifestPath), false, nil
+	}
+	template, err := mergeGeneratorTemplate(ctx.BaseTemplate, generator.Plugin.Template)
+	if err != nil {
+		return nil, nil, true, err
+	}
+	paramSets, diags, err := pluginParamSets(ctx.ManifestPath, generator.Plugin, ctx.Options.Provider.Data.Plugins, ctx.AppSet.Spec.GoTemplate, ctx.AppSet.Spec.GoTemplateOptions)
+	if err != nil {
+		return nil, diags, true, err
+	}
+	paramSets = setGeneratorTemplate(paramSets, template)
+	paramSets, selectorDiags, err := applyProviderGeneratorSelector(ctx.ManifestPath, "plugin", generator.Selector, paramSets)
+	diags = append(diags, selectorDiags...)
+	return paramSets, diags, true, err
+}
+
+func evaluateGitGenerator(ctx generatorContext, generator argoappv1.ApplicationSetGenerator) ([]generatorParamSet, []diagnostic.Diagnostic, bool, error) {
 	template, err := mergeGeneratorTemplate(ctx.BaseTemplate, generator.Git.Template)
 	if err != nil {
 		return nil, nil, true, err
@@ -476,8 +498,29 @@ func mergeGeneratorParamSets(ctx generatorContext, merge *argoappv1.MergeGenerat
 		return nil, nil, true, err
 	}
 
-	var allDiags []diagnostic.Diagnostic
+	allSets, allDiags, supported, err := mergeGeneratorChildSets(ctx, merge)
+	if err != nil || !supported {
+		return nil, allDiags, supported, err
+	}
+	out, baseByKey, err := baseMergeParamSets(allSets[0], merge.MergeKeys)
+	if err != nil {
+		return nil, allDiags, true, err
+	}
+	for _, paramSets := range allSets[1:] {
+		if err := applyMergeParamSets(out, baseByKey, paramSets, merge.MergeKeys, ctx.AppSet.Spec.GoTemplate); err != nil {
+			return nil, allDiags, true, err
+		}
+	}
+
+	var selectorDiags []diagnostic.Diagnostic
+	out, selectorDiags, err = applyMergeGeneratorSelector(ctx, merge, selector, out)
+	allDiags = append(allDiags, selectorDiags...)
+	return out, allDiags, true, err
+}
+
+func mergeGeneratorChildSets(ctx generatorContext, merge *argoappv1.MergeGenerator) ([][]generatorParamSet, []diagnostic.Diagnostic, bool, error) {
 	allSets := make([][]generatorParamSet, 0, len(merge.Generators))
+	var allDiags []diagnostic.Diagnostic
 	for _, generator := range merge.Generators {
 		paramSets, diags, supported, err := evaluateNestedGenerator(ctx, generator, nil)
 		allDiags = append(allDiags, diags...)
@@ -486,16 +529,19 @@ func mergeGeneratorParamSets(ctx generatorContext, merge *argoappv1.MergeGenerat
 		}
 		allSets = append(allSets, paramSets)
 	}
+	return allSets, allDiags, true, nil
+}
 
+func baseMergeParamSets(paramSets []generatorParamSet, mergeKeys []string) ([]generatorParamSet, map[string]int, error) {
 	baseByKey := map[string]int{}
-	out := make([]generatorParamSet, len(allSets[0]))
-	for i, paramSet := range allSets[0] {
-		key, err := mergeParamSetKey(paramSet.Params, merge.MergeKeys)
+	out := make([]generatorParamSet, len(paramSets))
+	for i, paramSet := range paramSets {
+		key, err := mergeParamSetKey(paramSet.Params, mergeKeys)
 		if err != nil {
-			return nil, allDiags, true, err
+			return nil, nil, err
 		}
 		if _, exists := baseByKey[key]; exists {
-			return nil, allDiags, true, fmt.Errorf("parameters from a generator were not unique by merge keys; duplicate key was %s", key)
+			return nil, nil, fmt.Errorf("parameters from a generator were not unique by merge keys; duplicate key was %s", key)
 		}
 		baseByKey[key] = i
 		out[i] = generatorParamSet{
@@ -505,41 +551,47 @@ func mergeGeneratorParamSets(ctx generatorContext, merge *argoappv1.MergeGenerat
 			Generator:   "merge",
 		}
 	}
+	return out, baseByKey, nil
+}
 
-	for _, paramSets := range allSets[1:] {
-		seen := map[string]struct{}{}
-		for _, paramSet := range paramSets {
-			key, err := mergeParamSetKey(paramSet.Params, merge.MergeKeys)
-			if err != nil {
-				return nil, allDiags, true, err
-			}
-			if _, exists := seen[key]; exists {
-				return nil, allDiags, true, fmt.Errorf("parameters from a generator were not unique by merge keys; duplicate key was %s", key)
-			}
-			seen[key] = struct{}{}
-			baseIndex, exists := baseByKey[key]
-			if !exists {
-				continue
-			}
-			merged, err := mergeParams(out[baseIndex].Params, paramSet.Params, ctx.AppSet.Spec.GoTemplate)
-			if err != nil {
-				return nil, allDiags, true, err
-			}
-			out[baseIndex].Params = merged
-			out[baseIndex].SourcePaths = mergeSourcePaths(out[baseIndex], paramSet)
-			out[baseIndex].SourcePath = primarySourcePath(out[baseIndex].SourcePaths)
+func applyMergeParamSets(out []generatorParamSet, baseByKey map[string]int, paramSets []generatorParamSet, mergeKeys []string, useGoTemplate bool) error {
+	seen := map[string]struct{}{}
+	for _, paramSet := range paramSets {
+		if err := applyMergeParamSet(out, baseByKey, seen, paramSet, mergeKeys, useGoTemplate); err != nil {
+			return err
 		}
 	}
+	return nil
+}
 
-	var selectorDiags []diagnostic.Diagnostic
-	var err error
-	if ctx.Options.Provider.Supplied() && nestedGeneratorsContainProvider(merge.Generators) {
-		out, selectorDiags, err = applyProviderGeneratorSelector(ctx.ManifestPath, "merge", selector, out)
-	} else {
-		out, selectorDiags, err = applyGeneratorSelector(ctx.ManifestPath, selector, out)
+func applyMergeParamSet(out []generatorParamSet, baseByKey map[string]int, seen map[string]struct{}, paramSet generatorParamSet, mergeKeys []string, useGoTemplate bool) error {
+	key, err := mergeParamSetKey(paramSet.Params, mergeKeys)
+	if err != nil {
+		return err
 	}
-	allDiags = append(allDiags, selectorDiags...)
-	return out, allDiags, true, err
+	if _, exists := seen[key]; exists {
+		return fmt.Errorf("parameters from a generator were not unique by merge keys; duplicate key was %s", key)
+	}
+	seen[key] = struct{}{}
+	baseIndex, exists := baseByKey[key]
+	if !exists {
+		return nil
+	}
+	merged, err := mergeParams(out[baseIndex].Params, paramSet.Params, useGoTemplate)
+	if err != nil {
+		return err
+	}
+	out[baseIndex].Params = merged
+	out[baseIndex].SourcePaths = mergeSourcePaths(out[baseIndex], paramSet)
+	out[baseIndex].SourcePath = primarySourcePath(out[baseIndex].SourcePaths)
+	return nil
+}
+
+func applyMergeGeneratorSelector(ctx generatorContext, merge *argoappv1.MergeGenerator, selector *metav1.LabelSelector, paramSets []generatorParamSet) ([]generatorParamSet, []diagnostic.Diagnostic, error) {
+	if ctx.Options.Provider.Supplied() && nestedGeneratorsContainProvider(merge.Generators) {
+		return applyProviderGeneratorSelector(ctx.ManifestPath, "merge", selector, paramSets)
+	}
+	return applyGeneratorSelector(ctx.ManifestPath, selector, paramSets)
 }
 
 func validateMatrixGenerator(matrix *argoappv1.MatrixGenerator) error {
@@ -692,66 +744,108 @@ func clusterParams(cluster ClusterInput, values map[string]string, useGoTemplate
 	return params, nil
 }
 
-func clusterDecisionResourceParamSets(manifestPath string, generator *argoappv1.DuckTypeGenerator, data ProviderData, useGoTemplate bool, _ []string) ([]generatorParamSet, []diagnostic.Diagnostic, error) {
+func clusterDecisionResourceParamSets(manifestPath string, generator *argoappv1.DuckTypeGenerator, data ProviderData, useGoTemplate bool, goTemplateOptions []string) ([]generatorParamSet, []diagnostic.Diagnostic, error) {
 	if len(data.ClusterDecisions) == 0 {
 		return nil, []diagnostic.Diagnostic{providerNoMatchDiagnostic(manifestPath, "clusterDecisionResource")}, nil
 	}
-	hasLabelSelector := len(generator.LabelSelector.MatchLabels) > 0 || len(generator.LabelSelector.MatchExpressions) > 0
-	switch {
-	case generator.Name == "" && !hasLabelSelector:
-		return nil, []diagnostic.Diagnostic{providerUnsupportedFilterDiagnostic(manifestPath, "clusterDecisionResource must set exactly one of name or labelSelector with provider fixtures")}, nil
-	case generator.Name != "" && hasLabelSelector:
-		return nil, []diagnostic.Diagnostic{providerUnsupportedFilterDiagnostic(manifestPath, "clusterDecisionResource cannot combine name and labelSelector with provider fixtures")}, nil
+	if err := validateClusterDecisionResourceGenerator(generator); err != nil {
+		return nil, []diagnostic.Diagnostic{providerUnsupportedFilterDiagnostic(manifestPath, err.Error())}, nil
 	}
 
-	clustersByName := map[string]ClusterInput{}
-	for _, cluster := range data.Clusters {
-		clustersByName[cluster.Name] = cluster
+	clustersByName := clusterInputsByName(data.Clusters)
+	out, diag, err := clusterDecisionResourceInputParamSets(manifestPath, generator, data.ClusterDecisions, clustersByName, useGoTemplate, goTemplateOptions)
+	if diag != nil {
+		return nil, []diagnostic.Diagnostic{*diag}, nil
 	}
-
-	var out []generatorParamSet
-	for _, input := range data.ClusterDecisions {
-		matched, err := clusterDecisionResourceMatches(generator, input)
-		if err != nil {
-			return nil, []diagnostic.Diagnostic{providerUnsupportedFilterDiagnostic(manifestPath, err.Error())}, nil
-		}
-		if !matched {
-			continue
-		}
-		if input.StatusListKey != defaultClusterDecisionStatusListKey {
-			continue
-		}
-		matchKey := input.MatchKey
-		if matchKey == "" {
-			continue
-		}
-		for _, decision := range input.Decisions {
-			matchValue, ok := decision[matchKey]
-			if !ok || fmt.Sprint(matchValue) == "" {
-				continue
-			}
-			cluster, ok := clustersByName[fmt.Sprint(matchValue)]
-			if !ok {
-				continue
-			}
-			params := map[string]any{
-				"name":   cluster.Name,
-				"server": cluster.Server,
-			}
-			for key, value := range decision {
-				params[key] = fmt.Sprint(value)
-			}
-			appendRawValues(params, generator.Values, useGoTemplate)
-			out = append(out, generatorParamSet{
-				Params:    params,
-				Generator: "clusterDecisionResource",
-			})
-		}
+	if err != nil {
+		return nil, nil, err
 	}
 	if len(out) == 0 {
 		return nil, []diagnostic.Diagnostic{providerNoMatchDiagnostic(manifestPath, "clusterDecisionResource")}, nil
 	}
 	return out, nil, nil
+}
+
+func validateClusterDecisionResourceGenerator(generator *argoappv1.DuckTypeGenerator) error {
+	hasLabelSelector := len(generator.LabelSelector.MatchLabels) > 0 || len(generator.LabelSelector.MatchExpressions) > 0
+	switch {
+	case generator.Name == "" && !hasLabelSelector:
+		return errors.New("clusterDecisionResource must set exactly one of name or labelSelector with provider fixtures")
+	case generator.Name != "" && hasLabelSelector:
+		return errors.New("clusterDecisionResource cannot combine name and labelSelector with provider fixtures")
+	default:
+		return nil
+	}
+}
+
+func clusterInputsByName(clusters []ClusterInput) map[string]ClusterInput {
+	clustersByName := map[string]ClusterInput{}
+	for _, cluster := range clusters {
+		clustersByName[cluster.Name] = cluster
+	}
+	return clustersByName
+}
+
+func clusterDecisionResourceInputParamSets(manifestPath string, generator *argoappv1.DuckTypeGenerator, inputs []ClusterDecisionInput, clustersByName map[string]ClusterInput, useGoTemplate bool, goTemplateOptions []string) ([]generatorParamSet, *diagnostic.Diagnostic, error) {
+	var out []generatorParamSet
+	for _, input := range inputs {
+		matched, err := clusterDecisionResourceMatches(generator, input)
+		if err != nil {
+			diag := providerUnsupportedFilterDiagnostic(manifestPath, err.Error())
+			return nil, &diag, nil
+		}
+		if !matched {
+			continue
+		}
+		paramSets, err := clusterDecisionResourceDecisionParamSets(generator, input, clustersByName, useGoTemplate, goTemplateOptions)
+		if err != nil {
+			return nil, nil, err
+		}
+		out = append(out, paramSets...)
+	}
+	return out, nil, nil
+}
+
+func clusterDecisionResourceDecisionParamSets(generator *argoappv1.DuckTypeGenerator, input ClusterDecisionInput, clustersByName map[string]ClusterInput, useGoTemplate bool, goTemplateOptions []string) ([]generatorParamSet, error) {
+	if input.StatusListKey != defaultClusterDecisionStatusListKey || input.MatchKey == "" {
+		return nil, nil
+	}
+	out := make([]generatorParamSet, 0, len(input.Decisions))
+	for _, decision := range input.Decisions {
+		paramSet, ok, err := clusterDecisionResourceDecisionParamSet(generator, input.MatchKey, decision, clustersByName, useGoTemplate, goTemplateOptions)
+		if err != nil {
+			return nil, err
+		}
+		if ok {
+			out = append(out, paramSet)
+		}
+	}
+	return out, nil
+}
+
+func clusterDecisionResourceDecisionParamSet(generator *argoappv1.DuckTypeGenerator, matchKey string, decision map[string]any, clustersByName map[string]ClusterInput, useGoTemplate bool, goTemplateOptions []string) (generatorParamSet, bool, error) {
+	matchValue, ok := decision[matchKey]
+	if !ok || fmt.Sprint(matchValue) == "" {
+		return generatorParamSet{}, false, nil
+	}
+	cluster, ok := clustersByName[fmt.Sprint(matchValue)]
+	if !ok {
+		return generatorParamSet{}, false, nil
+	}
+	params := map[string]any{
+		"name":   cluster.Name,
+		"server": cluster.Server,
+	}
+	for key, value := range decision {
+		params[key] = fmt.Sprint(value)
+	}
+	if err := appendTemplatedValues(params, generator.Values, useGoTemplate, goTemplateOptions); err != nil {
+		return generatorParamSet{}, false, err
+	}
+	return generatorParamSet{
+		Params:    params,
+		Generator: "clusterDecisionResource",
+	}, true, nil
 }
 
 const defaultClusterDecisionStatusListKey = "clusters"
@@ -825,24 +919,52 @@ func scmProviderParamSets(manifestPath string, generator *argoappv1.SCMProviderG
 func scmProviderMatchesScope(generator *argoappv1.SCMProviderGenerator, input SCMRepositoryInput) bool {
 	switch {
 	case generator.Github != nil:
-		return providerMatches(input.Provider, "github") && scopeEqual(input.Organization, generator.Github.Organization)
+		return scmProviderMatchesGitHubScope(generator, input)
 	case generator.Gitlab != nil:
-		return providerMatches(input.Provider, "gitlab") && gitLabGroupScopeEqual(input.Organization, generator.Gitlab.Group, generator.Gitlab.IncludeSubgroups)
+		return scmProviderMatchesGitLabScope(generator, input)
 	case generator.Gitea != nil:
-		return providerMatches(input.Provider, "gitea") && scopeEqual(input.Organization, generator.Gitea.Owner)
+		return scmProviderMatchesGiteaScope(generator, input)
 	case generator.Bitbucket != nil:
-		return providerMatches(input.Provider, "bitbucket") && scopeEqual(input.Organization, generator.Bitbucket.Owner)
+		return scmProviderMatchesBitbucketScope(generator, input)
 	case generator.BitbucketServer != nil:
-		return providerMatches(input.Provider, "bitbucketServer") && scopeEqual(providerProject(input), generator.BitbucketServer.Project)
+		return scmProviderMatchesBitbucketServerScope(generator, input)
 	case generator.AzureDevOps != nil:
-		return providerMatches(input.Provider, "azureDevOps") &&
-			scopeEqual(input.Organization, generator.AzureDevOps.Organization) &&
-			scopeEqual(providerProject(input), generator.AzureDevOps.TeamProject)
+		return scmProviderMatchesAzureDevOpsScope(generator, input)
 	case generator.AWSCodeCommit != nil:
-		return providerMatches(input.Provider, "awsCodeCommit") && optionalScopeEqual(input.Region, generator.AWSCodeCommit.Region)
+		return scmProviderMatchesAWSCodeCommitScope(generator, input)
 	default:
 		return false
 	}
+}
+
+func scmProviderMatchesGitHubScope(generator *argoappv1.SCMProviderGenerator, input SCMRepositoryInput) bool {
+	return providerMatches(input.Provider, "github") && scopeEqual(input.Organization, generator.Github.Organization)
+}
+
+func scmProviderMatchesGitLabScope(generator *argoappv1.SCMProviderGenerator, input SCMRepositoryInput) bool {
+	return providerMatches(input.Provider, "gitlab") && gitLabGroupScopeEqual(input.Organization, generator.Gitlab.Group, generator.Gitlab.IncludeSubgroups)
+}
+
+func scmProviderMatchesGiteaScope(generator *argoappv1.SCMProviderGenerator, input SCMRepositoryInput) bool {
+	return providerMatches(input.Provider, "gitea") && scopeEqual(input.Organization, generator.Gitea.Owner)
+}
+
+func scmProviderMatchesBitbucketScope(generator *argoappv1.SCMProviderGenerator, input SCMRepositoryInput) bool {
+	return providerMatches(input.Provider, "bitbucket") && scopeEqual(input.Organization, generator.Bitbucket.Owner)
+}
+
+func scmProviderMatchesBitbucketServerScope(generator *argoappv1.SCMProviderGenerator, input SCMRepositoryInput) bool {
+	return providerMatches(input.Provider, "bitbucketServer") && scopeEqual(providerProject(input), generator.BitbucketServer.Project)
+}
+
+func scmProviderMatchesAzureDevOpsScope(generator *argoappv1.SCMProviderGenerator, input SCMRepositoryInput) bool {
+	return providerMatches(input.Provider, "azureDevOps") &&
+		scopeEqual(input.Organization, generator.AzureDevOps.Organization) &&
+		scopeEqual(providerProject(input), generator.AzureDevOps.TeamProject)
+}
+
+func scmProviderMatchesAWSCodeCommitScope(generator *argoappv1.SCMProviderGenerator, input SCMRepositoryInput) bool {
+	return providerMatches(input.Provider, "awsCodeCommit") && optionalScopeEqual(input.Region, generator.AWSCodeCommit.Region)
 }
 
 func scmRepositoryMatchesProviderFilters(input SCMRepositoryInput, generator *argoappv1.SCMProviderGenerator) (bool, error) {
@@ -968,6 +1090,23 @@ func scmFilterType(filter argoappv1.SCMProviderGeneratorFilter) string {
 }
 
 func scmRepositoryMatchesFilter(input SCMRepositoryInput, filter argoappv1.SCMProviderGeneratorFilter) (bool, error) {
+	checks := []func(SCMRepositoryInput, argoappv1.SCMProviderGeneratorFilter) (bool, error){
+		scmRepositoryMatchesRepositoryFilter,
+		scmRepositoryMatchesBranchFilter,
+		scmRepositoryMatchesLabelFilter,
+		scmRepositoryMatchesPathsExistFilter,
+		scmRepositoryMatchesPathsDoNotExistFilter,
+	}
+	for _, check := range checks {
+		matches, err := check(input, filter)
+		if err != nil || !matches {
+			return matches, err
+		}
+	}
+	return true, nil
+}
+
+func scmRepositoryMatchesRepositoryFilter(input SCMRepositoryInput, filter argoappv1.SCMProviderGeneratorFilter) (bool, error) {
 	if filter.RepositoryMatch != nil {
 		matches, err := regexp.MatchString(*filter.RepositoryMatch, input.Repository)
 		if err != nil {
@@ -977,6 +1116,10 @@ func scmRepositoryMatchesFilter(input SCMRepositoryInput, filter argoappv1.SCMPr
 			return false, nil
 		}
 	}
+	return true, nil
+}
+
+func scmRepositoryMatchesBranchFilter(input SCMRepositoryInput, filter argoappv1.SCMProviderGeneratorFilter) (bool, error) {
 	if filter.BranchMatch != nil {
 		matches, err := regexp.MatchString(*filter.BranchMatch, input.Branch)
 		if err != nil {
@@ -986,6 +1129,10 @@ func scmRepositoryMatchesFilter(input SCMRepositoryInput, filter argoappv1.SCMPr
 			return false, nil
 		}
 	}
+	return true, nil
+}
+
+func scmRepositoryMatchesLabelFilter(input SCMRepositoryInput, filter argoappv1.SCMProviderGeneratorFilter) (bool, error) {
 	if filter.LabelMatch != nil {
 		if input.Labels == nil {
 			return false, errors.New("labelMatch requires fixture labels")
@@ -1005,6 +1152,10 @@ func scmRepositoryMatchesFilter(input SCMRepositoryInput, filter argoappv1.SCMPr
 			return false, nil
 		}
 	}
+	return true, nil
+}
+
+func scmRepositoryMatchesPathsExistFilter(input SCMRepositoryInput, filter argoappv1.SCMProviderGeneratorFilter) (bool, error) {
 	if len(filter.PathsExist) != 0 {
 		if input.Paths == nil {
 			return false, errors.New("pathsExist requires fixture paths")
@@ -1015,6 +1166,10 @@ func scmRepositoryMatchesFilter(input SCMRepositoryInput, filter argoappv1.SCMPr
 			}
 		}
 	}
+	return true, nil
+}
+
+func scmRepositoryMatchesPathsDoNotExistFilter(input SCMRepositoryInput, filter argoappv1.SCMProviderGeneratorFilter) (bool, error) {
 	if len(filter.PathsDoNotExist) != 0 {
 		if input.Paths == nil {
 			return false, errors.New("pathsDoNotExist requires fixture paths")
@@ -1104,32 +1259,56 @@ func pullRequestParamSets(manifestPath string, generator *argoappv1.PullRequestG
 func pullRequestMatchesScope(generator *argoappv1.PullRequestGenerator, input PullRequestInput) bool {
 	switch {
 	case generator.Github != nil:
-		return providerMatches(input.Provider, "github") &&
-			scopeEqual(input.Organization, generator.Github.Owner) &&
-			scopeEqual(input.Repository, generator.Github.Repo)
+		return pullRequestMatchesGitHubScope(generator, input)
 	case generator.GitLab != nil:
-		org, repo := splitProviderProject(generator.GitLab.Project)
-		return providerMatches(input.Provider, "gitlab") && repositoryProjectScopeEqual(input.Organization, input.Repository, org, repo, generator.GitLab.Project)
+		return pullRequestMatchesGitLabScope(generator, input)
 	case generator.Gitea != nil:
-		return providerMatches(input.Provider, "gitea") &&
-			scopeEqual(input.Organization, generator.Gitea.Owner) &&
-			scopeEqual(input.Repository, generator.Gitea.Repo)
+		return pullRequestMatchesGiteaScope(generator, input)
 	case generator.Bitbucket != nil:
-		return providerMatches(input.Provider, "bitbucket") &&
-			scopeEqual(input.Organization, generator.Bitbucket.Owner) &&
-			scopeEqual(input.Repository, generator.Bitbucket.Repo)
+		return pullRequestMatchesBitbucketScope(generator, input)
 	case generator.BitbucketServer != nil:
-		return providerMatches(input.Provider, "bitbucketServer") &&
-			scopeEqual(providerProjectFromPR(input), generator.BitbucketServer.Project) &&
-			scopeEqual(input.Repository, generator.BitbucketServer.Repo)
+		return pullRequestMatchesBitbucketServerScope(generator, input)
 	case generator.AzureDevOps != nil:
-		return providerMatches(input.Provider, "azureDevOps") &&
-			scopeEqual(input.Organization, generator.AzureDevOps.Organization) &&
-			scopeEqual(providerProjectFromPR(input), generator.AzureDevOps.Project) &&
-			scopeEqual(input.Repository, generator.AzureDevOps.Repo)
+		return pullRequestMatchesAzureDevOpsScope(generator, input)
 	default:
 		return false
 	}
+}
+
+func pullRequestMatchesGitHubScope(generator *argoappv1.PullRequestGenerator, input PullRequestInput) bool {
+	return providerMatches(input.Provider, "github") &&
+		scopeEqual(input.Organization, generator.Github.Owner) &&
+		scopeEqual(input.Repository, generator.Github.Repo)
+}
+
+func pullRequestMatchesGitLabScope(generator *argoappv1.PullRequestGenerator, input PullRequestInput) bool {
+	org, repo := splitProviderProject(generator.GitLab.Project)
+	return providerMatches(input.Provider, "gitlab") && repositoryProjectScopeEqual(input.Organization, input.Repository, org, repo, generator.GitLab.Project)
+}
+
+func pullRequestMatchesGiteaScope(generator *argoappv1.PullRequestGenerator, input PullRequestInput) bool {
+	return providerMatches(input.Provider, "gitea") &&
+		scopeEqual(input.Organization, generator.Gitea.Owner) &&
+		scopeEqual(input.Repository, generator.Gitea.Repo)
+}
+
+func pullRequestMatchesBitbucketScope(generator *argoappv1.PullRequestGenerator, input PullRequestInput) bool {
+	return providerMatches(input.Provider, "bitbucket") &&
+		scopeEqual(input.Organization, generator.Bitbucket.Owner) &&
+		scopeEqual(input.Repository, generator.Bitbucket.Repo)
+}
+
+func pullRequestMatchesBitbucketServerScope(generator *argoappv1.PullRequestGenerator, input PullRequestInput) bool {
+	return providerMatches(input.Provider, "bitbucketServer") &&
+		scopeEqual(providerProjectFromPR(input), generator.BitbucketServer.Project) &&
+		scopeEqual(input.Repository, generator.BitbucketServer.Repo)
+}
+
+func pullRequestMatchesAzureDevOpsScope(generator *argoappv1.PullRequestGenerator, input PullRequestInput) bool {
+	return providerMatches(input.Provider, "azureDevOps") &&
+		scopeEqual(input.Organization, generator.AzureDevOps.Organization) &&
+		scopeEqual(providerProjectFromPR(input), generator.AzureDevOps.Project) &&
+		scopeEqual(input.Repository, generator.AzureDevOps.Repo)
 }
 
 func pullRequestRequiredLabels(generator *argoappv1.PullRequestGenerator) []string {
@@ -1377,19 +1556,6 @@ func stringMapAny(input map[string]string) map[string]any {
 		out[key] = value
 	}
 	return out
-}
-
-func appendRawValues(params map[string]any, values map[string]string, useGoTemplate bool) {
-	if len(values) == 0 {
-		return
-	}
-	if useGoTemplate {
-		params["values"] = values
-		return
-	}
-	for key, value := range values {
-		params["values."+key] = value
-	}
 }
 
 func setGeneratorTemplate(paramSets []generatorParamSet, template argoappv1.ApplicationSetTemplate) []generatorParamSet {

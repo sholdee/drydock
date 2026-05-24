@@ -254,6 +254,72 @@ plugins:
 	}
 }
 
+func TestLoadProviderFixtureRejectsDuplicateSCMIdentityAcrossScopeFields(t *testing.T) {
+	dir := t.TempDir()
+	first := filepath.Join(dir, "first.yaml")
+	second := filepath.Join(dir, "second.yaml")
+	writeProviderFixture(t, first, `
+scmRepositories:
+  - provider: azureDevOps
+    organization: example
+    project: platform
+    region: us-east-1
+    repository: repo
+    branch: main
+    url: https://example.invalid/repo
+`)
+	writeProviderFixture(t, second, `
+scmRepositories:
+  - provider: azureDevOps
+    organization: example
+    project: workloads
+    region: us-west-2
+    repository: repo
+    branch: main
+    url: https://example.invalid/repo
+`)
+
+	_, diags, err := LoadProviderFixtures([]string{first, second})
+	if err == nil {
+		t.Fatalf("LoadProviderFixtures() succeeded with duplicate SCM repository identity")
+	}
+	assertProviderFixtureInvalidDiagnostic(t, diags, second)
+	if !strings.Contains(diags[0].Message, "duplicate provider fixture SCM repository") {
+		t.Fatalf("diagnostic message = %q, want duplicate SCM repository", diags[0].Message)
+	}
+}
+
+func TestLoadProviderFixtureRejectsDuplicatePullRequestIdentityAcrossProject(t *testing.T) {
+	dir := t.TempDir()
+	first := filepath.Join(dir, "first.yaml")
+	second := filepath.Join(dir, "second.yaml")
+	writeProviderFixture(t, first, `
+pullRequests:
+  - provider: azureDevOps
+    organization: example
+    project: platform
+    repository: repo
+    number: 42
+`)
+	writeProviderFixture(t, second, `
+pullRequests:
+  - provider: azureDevOps
+    organization: example
+    project: workloads
+    repository: repo
+    number: 42
+`)
+
+	_, diags, err := LoadProviderFixtures([]string{first, second})
+	if err == nil {
+		t.Fatalf("LoadProviderFixtures() succeeded with duplicate pull request identity")
+	}
+	assertProviderFixtureInvalidDiagnostic(t, diags, second)
+	if !strings.Contains(diags[0].Message, "duplicate provider fixture pull request") {
+		t.Fatalf("diagnostic message = %q, want duplicate pull request", diags[0].Message)
+	}
+}
+
 func TestProviderFixtureSortsInputs(t *testing.T) {
 	data, diags, err := MergeProviderData(ProviderData{
 		Clusters: []ClusterInput{

@@ -37,7 +37,7 @@ func TestListDiscoversCacheLayouts(t *testing.T) {
 		t.Fatalf("List() error = %v", err)
 	}
 
-	var got []string
+	got := make([]string, 0, len(entries))
 	for _, entry := range entries {
 		got = append(got, string(entry.Source)+"/"+entry.Kind+"/"+entry.Key)
 		if entry.SizeBytes <= 0 {

@@ -8,8 +8,6 @@ import (
 	"strings"
 	"testing"
 	"time"
-
-	cachepkg "github.com/sholdee/drydock/internal/cache"
 )
 
 const cacheCLITestKey = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
@@ -249,14 +247,15 @@ func TestCacheDeleteRejectsAllWithKeyBeforeMutation(t *testing.T) {
 			writeCacheEntry(t, filepath.Join(entryRoot, ".git", "HEAD"))
 
 			cmd := NewRootCommand(VersionInfo{})
-			args := []string{
+			args := make([]string, 0, 11+len(tc.extra))
+			args = append(args,
 				"cache", "delete",
 				"--all",
 				"--key", cacheCLITestKey,
 				"--git-cache-dir", gitCacheDir,
 				"--chart-cache-dir", chartCacheDir,
 				"--remote-cache-dir", remoteCacheDir,
-			}
+			)
 			args = append(args, tc.extra...)
 			cmd.SetArgs(args)
 			var stdout bytes.Buffer
@@ -346,11 +345,4 @@ func TestCacheRejectsInvalidOutputBeforeMutation(t *testing.T) {
 func writeCacheEntry(t *testing.T, path string) {
 	t.Helper()
 	writeCLITestFile(t, path, "cache")
-}
-
-func writeCacheMetadata(t *testing.T, entryRoot string, metadata cachepkg.Metadata) {
-	t.Helper()
-	if err := cachepkg.WriteMetadata(entryRoot, metadata); err != nil {
-		t.Fatalf("WriteMetadata() error = %v", err)
-	}
 }

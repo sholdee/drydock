@@ -2483,8 +2483,8 @@ spec:
 	if len(diags) != 0 {
 		t.Fatalf("diagnostics = %#v", diags)
 	}
-	if got := generatedNames(apps); !slices.Equal(got, []string{"prod-a-edge-{{region}}"}) {
-		t.Fatalf("generated names = %#v, want raw decision value without recursive rendering", got)
+	if got := generatedNames(apps); !slices.Equal(got, []string{"prod-a-edge-east"}) {
+		t.Fatalf("generated names = %#v, want rendered decision value", got)
 	}
 	if apps[0].Application.Spec.Destination.Server != "https://prod-a.example.invalid" {
 		t.Fatalf("destination server = %q, want matched cluster server", apps[0].Application.Spec.Destination.Server)
@@ -2945,7 +2945,7 @@ spec:
     metadata:
       name: '{{.repository}}-{{.branchNormalized}}'
       labels:
-        labels: '{{.labels}}'
+        repo-labels: '{{.labels}}'
       annotations:
         repo-id: '{{.repository_id}}'
         short: '{{.short_sha}}'
@@ -2987,7 +2987,7 @@ spec:
 	if app.Spec.GetSource().RepoURL != "https://github.com/example-org/platform-api" || app.Spec.GetSource().TargetRevision != "feature/Add_Login" {
 		t.Fatalf("source = %#v, want repo URL and branch from fixture", app.Spec.GetSource())
 	}
-	if app.Labels["labels"] != "deploy,team-a" || app.Annotations["repo-id"] != "repo-123" {
+	if app.Labels["repo-labels"] != "deploy,team-a" || app.Annotations["repo-id"] != "repo-123" {
 		t.Fatalf("metadata = labels %#v annotations %#v, want SCM params", app.Labels, app.Annotations)
 	}
 	if app.Annotations["short"] != "abcdef12" || app.Annotations["short7"] != "abcdef1" {
