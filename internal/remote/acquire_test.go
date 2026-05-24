@@ -263,6 +263,36 @@ func TestDefaultRemoteAcquirerWritesHTTPMetadata(t *testing.T) {
 	}
 }
 
+func TestDefaultRemoteAcquirerWritesHTTPMetadataOnCacheHit(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte("apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: remote\n"))
+	}))
+	defer server.Close()
+
+	cacheDir := t.TempDir()
+	request := Request{URL: server.URL + "/resource.yaml"}
+	acquirer := DefaultAcquirer{Client: server.Client()}
+	first, err := acquirer.Acquire(context.Background(), request, Options{CacheDir: cacheDir})
+	if err != nil {
+		t.Fatalf("first Acquire() error = %v", err)
+	}
+	metadataPath := cachepkg.MetadataPath(filepath.Dir(first.Path))
+	if err := os.Remove(metadataPath); err != nil {
+		t.Fatalf("Remove(metadata) error = %v", err)
+	}
+
+	second, err := acquirer.Acquire(context.Background(), request, Options{CacheDir: cacheDir, Offline: true})
+	if err != nil {
+		t.Fatalf("second Acquire() error = %v", err)
+	}
+	if !second.FromCache {
+		t.Fatal("second FromCache = false, want true")
+	}
+	if _, err := os.Stat(metadataPath); err != nil {
+		t.Fatalf("metadata was not rewritten on cache hit: %v", err)
+	}
+}
+
 func TestDefaultAcquirerUsesBearerToken(t *testing.T) {
 	const token = "secret-token"
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

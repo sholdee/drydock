@@ -76,6 +76,7 @@ func (acquirer DefaultAcquirer) Acquire(ctx context.Context, request Request, op
 	keyDir := filepath.Join(keyParent, key)
 	chartDir := filepath.Join(keyDir, request.Name)
 	if !opts.Refresh && chartDirReady(chartDir) {
+		writeChartMetadata(keyDir, key, request)
 		return resultFor(request, chartDir, true), nil
 	}
 	if opts.Offline {

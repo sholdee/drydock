@@ -103,6 +103,34 @@ func TestDefaultGitAcquirerWritesMetadata(t *testing.T) {
 	}
 }
 
+func TestDefaultGitAcquirerWritesMetadataOnCacheHit(t *testing.T) {
+	remote := createGitFixture(t)
+	hash := commitFixtureFile(t, remote.repo, remote.worktree, "config.yaml", "version: main\n")
+	repoURL := "file://" + filepath.ToSlash(remote.path)
+	cacheDir := t.TempDir()
+	request := GitRequest{URL: repoURL, Revision: hash.String()}
+
+	first, err := DefaultGitAcquirer{}.Acquire(context.Background(), request, GitOptions{AllowNetwork: true, CacheDir: cacheDir})
+	if err != nil {
+		t.Fatalf("first Acquire() error = %v", err)
+	}
+	metadataPath := cachepkg.MetadataPath(first.Path)
+	if err := os.Remove(metadataPath); err != nil {
+		t.Fatalf("Remove(metadata) error = %v", err)
+	}
+
+	second, err := DefaultGitAcquirer{}.Acquire(context.Background(), request, GitOptions{AllowNetwork: true, CacheDir: cacheDir})
+	if err != nil {
+		t.Fatalf("second Acquire() error = %v", err)
+	}
+	if !second.FromCache {
+		t.Fatal("second FromCache = false, want true")
+	}
+	if _, err := os.Stat(metadataPath); err != nil {
+		t.Fatalf("metadata was not rewritten on cache hit: %v", err)
+	}
+}
+
 func TestGitCacheKeyAndMetadataUseCanonicalRedactedTarget(t *testing.T) {
 	cleanURL := "https://example.test/org/repo"
 	secretURL := "https://user:secret@example.test/org/repo.git/?token=secret#frag"
