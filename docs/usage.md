@@ -31,17 +31,27 @@ argocd-local get images --path . -o name
 `get images` supports the same structured output formats as `get apps`.
 Diagnostics are printed to stderr for both commands.
 
-Supported local `ApplicationSet` generators are top-level Git directories, Git
-files, and list generators. Multiple supported top-level generators are
-expanded independently and concatenated in manifest order. Unsupported
-generators emit diagnostics; non-strict commands keep supported generated
-Applications, while `--strict` promotes those diagnostics to errors.
+Supported local `ApplicationSet` generators are Git directories, Git files,
+list, matrix, and merge. Multiple supported top-level generators are expanded
+independently and concatenated in manifest order. Unsupported generators emit
+diagnostics; non-strict commands keep supported generated Applications, while
+`--strict` promotes those diagnostics to errors.
 
 Git files generator matches are sorted by normalized relative path. Include
 and exclude patterns are evaluated deterministically, and `exclude: true`
 removes a file even if another pattern includes it. Files must stay under the
 repository root and must not traverse symlinks. YAML and JSON files must decode
 to non-empty mapping documents.
+
+List generators support `elements` and `elementsYaml`. Supported generators
+honor generator-level selectors and generator-level template overrides.
+Selectors match flattened parameter keys, including nested Go-template maps.
+Matrix generators combine exactly two child generators and interpolate the
+second child from first-child params, including templated `elementsYaml`.
+Merge generators overlay two or more child generators by `mergeKeys` in base
+generator order. Matrix and merge children may use list, Git directories, Git
+files, and nested matrix/merge combinations where the Argo CD v3 nested JSON
+API permits them.
 
 ## Rendering
 
@@ -344,7 +354,7 @@ Use `--strict` to promote warnings to errors.
 
 These source paths are not wired in the current MVP:
 
-- Cluster, SCM provider, pull-request, plugin, matrix, and merge
+- Cluster, clusterDecisionResource, SCM provider, pull-request, and plugin
   ApplicationSet generators.
 - Config management plugins.
 - Live cluster and Argo CD API sources.

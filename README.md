@@ -88,6 +88,14 @@ Manifest diffs default to unified diff output and also support `-o json` and
 comparison and diff generation. Diagnostics continue to print on stderr for
 structured output.
 
+ApplicationSet expansion supports local Git directories, Git files, list,
+matrix, and merge generators. Supported generators honor `elementsYaml`,
+generator selectors, generator template overrides, matrix interpolation for
+local children, deterministic merge-key overlays, and nested matrix/merge
+combinations where the Argo CD v3 API permits them. Provider-backed
+ApplicationSet generators still produce diagnostics instead of approximating
+live or external services.
+
 Rendered-resource filters include Argo CD core exclusions and discovered
 `argocd-cm` or Helm values `configs.cm` `resource.exclusions` and
 `resource.inclusions`. Use repeatable `--skip-kind KIND`, `--skip-crds`, or
@@ -126,8 +134,8 @@ scripts/home-ops-pattern-smoke.sh
 ## Current MVP Limits
 
 - Desired-vs-desired only; no live cluster diff.
-- ApplicationSet support is limited to top-level Git directories, Git files,
-  and list generators.
+- ApplicationSet provider-backed generators remain deferred: cluster,
+  clusterDecisionResource, SCM provider, pull-request, and plugin.
 - No config management plugins.
 - No required shellouts in default workflows.
 - No cache-inspection command or structured cache event stream yet. Remote Git,
