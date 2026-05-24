@@ -186,6 +186,12 @@ The MVP currently supports:
 - Global `resource.customizations.ignoreDifferences.*` `jsonPointers`,
   `jqPathExpressions`, and `managedFieldsManagers` from discovered `argocd-cm`
   and Argo CD Helm values `configs.cm`.
+- Global `resource.customizations.knownTypeFields.*` normalization for
+  desired-vs-desired manifest diffs.
+- Global `resource.customizations.ignoreResourceUpdates.*` parsing and
+  diagnostics; these settings are not applied to desired-vs-desired diffs.
+- Health and action customization parsing and diagnostics, including
+  `useOpenLibs`/Lua metadata. Lua is not executed offline.
 - Discovered `resource.compareoptions.ignoreResourceStatusField` and
   `resource.compareoptions.ignoreAggregatedRoles`.
 - Argo CD core resource exclusions plus discovered global
@@ -205,8 +211,7 @@ Do not treat these as supported without an explicit design update:
 - Live server-side apply field ownership prediction and live Argo CD
   server-side diff behavior.
 - Managed fields ignores when ownership data exists only on the live cluster.
-- Global `resource.customizations` `ignoreResourceUpdates`,
-  `knownTypeFields`, health, actions, and Lua settings.
+- Health or action Lua execution.
 - Project, RBAC, and destination validation.
 - CLI config management plugin execution, shellout plugin adapters, Argo CD
   repo-server sidecar plugin discovery, ambient plugin configuration, ambient
@@ -295,8 +300,11 @@ Application-local and global `jsonPointers`, `jqPathExpressions`, and
 `managedFieldsManagers` is an offline desired-vs-desired approximation using
 rendered `metadata.managedFields`; do not claim live server-side ownership
 prediction. `resource.compareoptions` supports status-field and aggregated-role
-normalization. Do not claim support for `ignoreResourceUpdates`, health,
-actions, or known type fields until they are explicitly implemented.
+normalization. `knownTypeFields` normalization is applied to
+desired-vs-desired diffs. `ignoreResourceUpdates`, health customizations,
+action customizations, and `useOpenLibs`/Lua metadata are parsed and reported
+as settings diagnostics only; do not execute Lua or apply
+`ignoreResourceUpdates` as a desired diff ignore.
 Image extraction is conservative in the MVP and may be broadened only behind an
 explicit mode.
 CLI diff exit codes are fixed: 0 means success/no diff, 1 means success/diff

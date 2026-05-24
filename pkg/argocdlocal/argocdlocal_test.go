@@ -47,6 +47,45 @@ func TestRenderAppliesResourceFilters(t *testing.T) {
 	}
 }
 
+func TestRenderReportsAdvancedSettingsDiagnostics(t *testing.T) {
+	root := t.TempDir()
+	writeAPIAppTree(t, root, "demo", configMapBody("demo", "v1"))
+	writeAPIFile(t, filepath.Join(root, "settings", "argocd-cm.yaml"), `apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: argocd-cm
+data:
+  resource.customizations.ignoreResourceUpdates.apps_Deployment: |
+    jsonPointers:
+      - /status
+  resource.customizations.health.apps_Deployment: |
+    return { status = "Healthy" }
+  resource.customizations.useOpenLibs.apps_Deployment: "true"
+  resource.customizations.actions.apps_Deployment: |
+    definitions:
+      - name: restart
+        action.lua: |
+          return obj
+`)
+
+	result, err := Render(context.Background(), Config{Path: root})
+	if err != nil {
+		t.Fatalf("Render() error = %v", err)
+	}
+	if !hasDiagnostic(result.Diagnostics, "settings", "ignoreResourceUpdates are parsed but not applied") {
+		t.Fatalf("Diagnostics = %#v, want ignoreResourceUpdates warning", result.Diagnostics)
+	}
+	if !hasDiagnostic(result.Diagnostics, "settings", "health Lua is parsed as metadata only") {
+		t.Fatalf("Diagnostics = %#v, want health warning", result.Diagnostics)
+	}
+	if !hasDiagnostic(result.Diagnostics, "settings", "useOpenLibs is parsed as metadata only") {
+		t.Fatalf("Diagnostics = %#v, want useOpenLibs warning", result.Diagnostics)
+	}
+	if !hasDiagnostic(result.Diagnostics, "settings", "actions are parsed as metadata only") {
+		t.Fatalf("Diagnostics = %#v, want actions warning", result.Diagnostics)
+	}
+}
+
 func TestClientUsesInjectedAcquirersForRemoteSources(t *testing.T) {
 	root := t.TempDir()
 	externalRepo := t.TempDir()
