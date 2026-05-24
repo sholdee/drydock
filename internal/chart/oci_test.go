@@ -13,6 +13,27 @@ import (
 	"testing"
 )
 
+func TestOCIChartRefUsesDigestSeparator(t *testing.T) {
+	const repository = "registry.example.test/charts"
+	tests := []struct {
+		name    string
+		version string
+		want    string
+	}{
+		{name: "semver tag", version: "1.2.3", want: "registry.example.test/charts/demo:1.2.3"},
+		{name: "named tag", version: "latest", want: "registry.example.test/charts/demo:latest"},
+		{name: "sha256 digest", version: "sha256:abc123", want: "registry.example.test/charts/demo@sha256:abc123"},
+		{name: "sha512 digest", version: "sha512:deadbeef", want: "registry.example.test/charts/demo@sha512:deadbeef"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := ociChartRef(repository, "demo", tt.version); got != tt.want {
+				t.Fatalf("ociChartRef() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
 type fakeOCIPuller struct {
 	archive []byte
 	err     error
