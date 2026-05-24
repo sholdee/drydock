@@ -1,0 +1,33 @@
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: matrix-patterns
+  namespace: argocd
+spec:
+  goTemplate: true
+  goTemplateOptions: ["missingkey=error"]
+  generators:
+    - matrix:
+        generators:
+          - list:
+              elements:
+                - env: dev
+          - git:
+              pathParamPrefix: app
+              repoURL: https://github.com/example/home-ops
+              revision: main
+              directories:
+                - path: apps/matrix-*
+  template:
+    metadata:
+      name: "{{.app.path.basename}}-{{.env}}"
+      namespace: argocd
+    spec:
+      project: default
+      source:
+        repoURL: https://github.com/example/home-ops
+        targetRevision: main
+        path: "{{.app.path.path}}"
+      destination:
+        name: in-cluster
+        namespace: "{{.env}}"

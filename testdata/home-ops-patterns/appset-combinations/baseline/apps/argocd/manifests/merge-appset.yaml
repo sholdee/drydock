@@ -1,0 +1,37 @@
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: merge-patterns
+  namespace: argocd
+spec:
+  goTemplate: true
+  goTemplateOptions: ["missingkey=error"]
+  generators:
+    - merge:
+        mergeKeys: ["name"]
+        generators:
+          - list:
+              elements:
+                - name: merge-alpha
+                  namespace: base
+                  path: apps/merge-alpha
+                - name: merge-beta
+                  namespace: base
+                  path: apps/merge-beta
+          - list:
+              elements:
+                - name: merge-beta
+                  namespace: merge
+  template:
+    metadata:
+      name: "{{.name}}"
+      namespace: argocd
+    spec:
+      project: default
+      source:
+        repoURL: https://github.com/example/home-ops
+        targetRevision: main
+        path: "{{.path}}"
+      destination:
+        name: in-cluster
+        namespace: "{{.namespace}}"

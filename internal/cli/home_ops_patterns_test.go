@@ -201,6 +201,42 @@ func TestDiffAppsRemoteKustomizePatternFixture(t *testing.T) {
 	}
 }
 
+func TestDiffAppsApplicationSetCombinationPatternFixture(t *testing.T) {
+	fixtureRoot := filepath.Join("..", "..", "testdata", "home-ops-patterns", "appset-combinations")
+	cmd := NewRootCommand(VersionInfo{})
+	cmd.SetArgs([]string{
+		"diff", "apps",
+		"--path-orig", filepath.Join(fixtureRoot, "baseline"),
+		"--path", filepath.Join(fixtureRoot, "current"),
+		"--exit-code=false",
+	})
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	cmd.SetOut(&stdout)
+	cmd.SetErr(&stderr)
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("Execute() error = %v\nstdout:\n%s\nstderr:\n%s", err, stdout.String(), stderr.String())
+	}
+	for _, want := range []string{
+		"Application: argocd/matrix-alpha-dev",
+		"ConfigMap: dev/matrix-config",
+		"value: matrix-baseline",
+		"value: matrix-current",
+		"Application: argocd/merge-beta",
+		"ConfigMap: merge/merge-beta",
+		"value: merge-baseline",
+		"value: merge-current",
+	} {
+		if !strings.Contains(stdout.String(), want) {
+			t.Fatalf("stdout missing %q:\nstdout:\n%s\nstderr:\n%s", want, stdout.String(), stderr.String())
+		}
+	}
+	if stderr.String() != "" {
+		t.Fatalf("stderr = %q, want empty", stderr.String())
+	}
+}
+
 type recordingCLIRemoteAcquirer struct {
 	paths    map[string]string
 	requests []remote.Request
