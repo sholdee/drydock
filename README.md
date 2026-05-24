@@ -62,6 +62,9 @@ go run ./cmd/drydock diff app argocd/renovate \
 go run ./cmd/drydock diag --path ./testdata/applications/e2e
 go run ./cmd/drydock diag --path ./testdata/applications/e2e -o json
 go run ./cmd/drydock diag --path ./testdata/applications/e2e \
+  --settings \
+  -o json
+go run ./cmd/drydock diag --path ./testdata/applications/e2e \
   -o yaml \
   --cache-events
 go run ./cmd/drydock cache path
@@ -170,7 +173,9 @@ desired-vs-desired diff normalization. Global
 reported, but they are not applied to desired-vs-desired diffs because they
 belong to live update/cache behavior. Health and action customizations,
 including `useOpenLibs` and Lua metadata, are parsed and reported only; Lua is
-not executed offline.
+not executed offline. Use `diag --settings -o json|yaml` to include a CLI-only
+redacted settings summary with names, booleans, and SHA-256 hashes. Raw Lua
+bodies and secret-looking strings embedded in Lua are not printed.
 
 Discovered `resource.compareoptions` settings are honored for
 `ignoreResourceStatusField` and `ignoreAggregatedRoles`. The default matches

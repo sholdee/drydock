@@ -53,6 +53,9 @@ Supported in the MVP:
 - `diag -o json` and `diag -o yaml` structured diagnostic reports
 - `diag --cache-events` optional cache acquisition event reporting in
   structured diagnostic reports
+- `diag --settings -o json|yaml` CLI-only redacted settings summaries for
+  parsed Argo CD settings metadata. Lua/action bodies and secret-looking
+  strings embedded in Lua are not printed.
 - `cache path`, `cache list`, `cache prune`, and `cache delete` local source
   cache lifecycle commands for recognized Git, chart, and remote Kustomize
   cache layouts
@@ -80,7 +83,8 @@ Supported in the MVP:
 - Global `resource.customizations.ignoreResourceUpdates.*` parsing and
   diagnostics, without applying them to desired-vs-desired diffs
 - Health and action customization parsing and diagnostics, including
-  `useOpenLibs`/Lua metadata, without executing Lua offline
+  `useOpenLibs`/Lua metadata and redacted SHA-256 summaries, without executing
+  Lua offline
 - Discovered `resource.compareoptions.ignoreResourceStatusField` and
   `resource.compareoptions.ignoreAggregatedRoles`
 - Argo CD core resource exclusions plus discovered global
