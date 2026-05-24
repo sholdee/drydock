@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/sholdee/drydock/internal/appset"
 	"github.com/sholdee/drydock/internal/diagnostic"
 )
 
@@ -808,6 +809,27 @@ func TestOrchestratorDiffAppReportsMissingBothSides(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), `application "missing" not found in either tree`) {
 		t.Fatalf("DiffApp() error = %v, want missing both sides message", err)
+	}
+}
+
+func TestDiffRequestCarriesProviderFixtureConfig(t *testing.T) {
+	request := DiffRequest{
+		LeftPath:                       "/tmp/left",
+		RightPath:                      "/tmp/right",
+		ApplicationSetProviderFixtures: []string{"clusters.yaml"},
+		ApplicationSetProviderData:     appset.ProviderData{Clusters: []appset.ClusterInput{{Name: "prod", Server: "https://prod.example.invalid"}}},
+	}
+
+	left := request.buildRequest(request.LeftPath, []string{request.LeftPath, request.RightPath})
+	right := request.buildRequest(request.RightPath, []string{request.LeftPath, request.RightPath})
+
+	for side, buildRequest := range map[string]BuildRequest{"left": left, "right": right} {
+		if !reflect.DeepEqual(buildRequest.ApplicationSetProviderFixtures, request.ApplicationSetProviderFixtures) {
+			t.Fatalf("%s ApplicationSetProviderFixtures = %#v, want %#v", side, buildRequest.ApplicationSetProviderFixtures, request.ApplicationSetProviderFixtures)
+		}
+		if !reflect.DeepEqual(buildRequest.ApplicationSetProviderData, request.ApplicationSetProviderData) {
+			t.Fatalf("%s ApplicationSetProviderData = %#v, want %#v", side, buildRequest.ApplicationSetProviderData, request.ApplicationSetProviderData)
+		}
 	}
 }
 

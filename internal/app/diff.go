@@ -10,6 +10,7 @@ import (
 
 	argoappv1 "github.com/argoproj/argo-cd/v3/pkg/apis/application/v1alpha1"
 	"github.com/argoproj/argo-cd/v3/util/glob"
+	"github.com/sholdee/drydock/internal/appset"
 	"github.com/sholdee/drydock/internal/cacheevent"
 	"github.com/sholdee/drydock/internal/change"
 	"github.com/sholdee/drydock/internal/chart"
@@ -23,30 +24,32 @@ import (
 )
 
 type DiffRequest struct {
-	LeftPath                     string
-	RightPath                    string
-	ChangedOnly                  bool
-	StrictChangedOnly            bool
-	Strict                       bool
-	Unified                      int
-	StripAttrs                   []string
-	Offline                      bool
-	RefreshCharts                bool
-	ChartCacheDir                string
-	ChartCredentials             chart.ChartCredentials
-	RepoMaps                     []sourcepkg.RepoMap
-	AllowNetwork                 bool
-	GitCacheDir                  string
-	RefreshGit                   bool
-	GitCredentials               sourcepkg.GitCredentials
-	RefreshRemoteResources       bool
-	RemoteResourceCacheDir       string
-	RemoteResourceCredentials    remote.Credentials
-	RemoteResourceGitCredentials remote.GitCredentials
-	SkipKinds                    []string
-	SkipCRDs                     bool
-	SkipSecrets                  bool
-	RecordCacheEvents            bool
+	LeftPath                       string
+	RightPath                      string
+	ChangedOnly                    bool
+	StrictChangedOnly              bool
+	Strict                         bool
+	Unified                        int
+	StripAttrs                     []string
+	Offline                        bool
+	RefreshCharts                  bool
+	ChartCacheDir                  string
+	ChartCredentials               chart.ChartCredentials
+	RepoMaps                       []sourcepkg.RepoMap
+	AllowNetwork                   bool
+	GitCacheDir                    string
+	RefreshGit                     bool
+	GitCredentials                 sourcepkg.GitCredentials
+	RefreshRemoteResources         bool
+	RemoteResourceCacheDir         string
+	RemoteResourceCredentials      remote.Credentials
+	RemoteResourceGitCredentials   remote.GitCredentials
+	SkipKinds                      []string
+	SkipCRDs                       bool
+	SkipSecrets                    bool
+	ApplicationSetProviderFixtures []string
+	ApplicationSetProviderData     appset.ProviderData
+	RecordCacheEvents              bool
 }
 
 type DiffAppRequest struct {
@@ -209,26 +212,28 @@ func compareStringSets(left, right []string) (added, removed, unchanged []string
 
 func (request DiffRequest) buildRequest(path string, forbiddenRoots []string) BuildRequest {
 	return BuildRequest{
-		Path:                         path,
-		Strict:                       request.Strict,
-		Offline:                      request.Offline,
-		RefreshCharts:                request.RefreshCharts,
-		ChartCacheDir:                request.ChartCacheDir,
-		ChartCredentials:             request.ChartCredentials,
-		RepoMaps:                     request.RepoMaps,
-		AllowNetwork:                 request.AllowNetwork,
-		GitCacheDir:                  request.GitCacheDir,
-		RefreshGit:                   request.RefreshGit,
-		GitCredentials:               request.GitCredentials,
-		RefreshRemoteResources:       request.RefreshRemoteResources,
-		RemoteResourceCacheDir:       request.RemoteResourceCacheDir,
-		RemoteResourceCredentials:    request.RemoteResourceCredentials,
-		RemoteResourceGitCredentials: request.RemoteResourceGitCredentials,
-		RemoteResourceForbiddenRoots: forbiddenRoots,
-		SkipKinds:                    append([]string(nil), request.SkipKinds...),
-		SkipCRDs:                     request.SkipCRDs,
-		SkipSecrets:                  request.SkipSecrets,
-		RecordCacheEvents:            request.RecordCacheEvents,
+		Path:                           path,
+		Strict:                         request.Strict,
+		Offline:                        request.Offline,
+		RefreshCharts:                  request.RefreshCharts,
+		ChartCacheDir:                  request.ChartCacheDir,
+		ChartCredentials:               request.ChartCredentials,
+		RepoMaps:                       request.RepoMaps,
+		AllowNetwork:                   request.AllowNetwork,
+		GitCacheDir:                    request.GitCacheDir,
+		RefreshGit:                     request.RefreshGit,
+		GitCredentials:                 request.GitCredentials,
+		RefreshRemoteResources:         request.RefreshRemoteResources,
+		RemoteResourceCacheDir:         request.RemoteResourceCacheDir,
+		RemoteResourceCredentials:      request.RemoteResourceCredentials,
+		RemoteResourceGitCredentials:   request.RemoteResourceGitCredentials,
+		RemoteResourceForbiddenRoots:   forbiddenRoots,
+		SkipKinds:                      append([]string(nil), request.SkipKinds...),
+		SkipCRDs:                       request.SkipCRDs,
+		SkipSecrets:                    request.SkipSecrets,
+		ApplicationSetProviderFixtures: append([]string(nil), request.ApplicationSetProviderFixtures...),
+		ApplicationSetProviderData:     request.ApplicationSetProviderData,
+		RecordCacheEvents:              request.RecordCacheEvents,
 	}
 }
 

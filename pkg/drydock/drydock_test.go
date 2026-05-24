@@ -142,6 +142,39 @@ spec:
 	}
 }
 
+func TestPublicConfigRoutesProviderFixtureDataWithoutInternalTypes(t *testing.T) {
+	client := NewClient(Config{
+		Path:                           "/tmp/repo",
+		ApplicationSetProviderFixtures: []string{"clusters.yaml"},
+		ApplicationSetProviderData: ApplicationSetProviderData{
+			Clusters: []ApplicationSetProviderCluster{{
+				Name:        "prod",
+				Server:      "https://prod.example.invalid",
+				Project:     "platform",
+				Labels:      map[string]string{"environment": "prod"},
+				Annotations: map[string]string{"owner": "platform"},
+				Values:      map[string]string{"region": "home"},
+			}},
+		},
+	})
+
+	buildRequest := client.buildRequest()
+	if !slices.Equal(buildRequest.ApplicationSetProviderFixtures, []string{"clusters.yaml"}) {
+		t.Fatalf("ApplicationSetProviderFixtures = %#v, want clusters.yaml", buildRequest.ApplicationSetProviderFixtures)
+	}
+	if got := buildRequest.ApplicationSetProviderData.Clusters; len(got) != 1 || got[0].Name != "prod" || got[0].Labels["environment"] != "prod" {
+		t.Fatalf("ApplicationSetProviderData.Clusters = %#v, want public data converted to internal request data", got)
+	}
+
+	diffRequest := client.diffRequest()
+	if !slices.Equal(diffRequest.ApplicationSetProviderFixtures, []string{"clusters.yaml"}) {
+		t.Fatalf("diff ApplicationSetProviderFixtures = %#v, want clusters.yaml", diffRequest.ApplicationSetProviderFixtures)
+	}
+	if got := diffRequest.ApplicationSetProviderData.Clusters; len(got) != 1 || got[0].Name != "prod" {
+		t.Fatalf("diff ApplicationSetProviderData.Clusters = %#v, want public data converted to internal request data", got)
+	}
+}
+
 func TestClientUsesInjectedAcquirersForRemoteSources(t *testing.T) {
 	root := t.TempDir()
 	externalRepo := t.TempDir()

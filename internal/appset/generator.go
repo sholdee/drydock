@@ -32,7 +32,15 @@ type GeneratedApplication struct {
 
 var ErrUnsupportedGenerator = errors.New("unsupported ApplicationSet generator")
 
+type Options struct {
+	Provider ProviderOptions
+}
+
 func GenerateFromYAML(repoRoot, manifestPath string, data []byte) ([]GeneratedApplication, []diagnostic.Diagnostic, error) {
+	return GenerateFromYAMLWithOptions(repoRoot, manifestPath, data, Options{})
+}
+
+func GenerateFromYAMLWithOptions(repoRoot, manifestPath string, data []byte, options Options) ([]GeneratedApplication, []diagnostic.Diagnostic, error) {
 	var raw map[string]any
 	if err := yaml.Unmarshal(data, &raw); err != nil {
 		return nil, nil, fmt.Errorf("parse ApplicationSet %s: %w", manifestPath, err)
@@ -45,10 +53,14 @@ func GenerateFromYAML(repoRoot, manifestPath string, data []byte) ([]GeneratedAp
 	if err := json.Unmarshal(normalized, &appset); err != nil {
 		return nil, nil, fmt.Errorf("parse ApplicationSet %s: %w", manifestPath, err)
 	}
-	return Generate(repoRoot, manifestPath, appset)
+	return GenerateWithOptions(repoRoot, manifestPath, appset, options)
 }
 
 func Generate(repoRoot, manifestPath string, appset argoappv1.ApplicationSet) ([]GeneratedApplication, []diagnostic.Diagnostic, error) {
+	return GenerateWithOptions(repoRoot, manifestPath, appset, Options{})
+}
+
+func GenerateWithOptions(repoRoot, manifestPath string, appset argoappv1.ApplicationSet, options Options) ([]GeneratedApplication, []diagnostic.Diagnostic, error) {
 	var out []GeneratedApplication
 	var diags []diagnostic.Diagnostic
 	unsupportedCount := 0
@@ -62,6 +74,7 @@ func Generate(repoRoot, manifestPath string, appset argoappv1.ApplicationSet) ([
 		ManifestPath: manifestPath,
 		AppSet:       appset,
 		BaseTemplate: appset.Spec.Template,
+		Options:      options,
 	}
 	for _, generator := range appset.Spec.Generators {
 		paramSets, generatorDiags, supported, err := evaluateGenerator(ctx, generator)
@@ -100,6 +113,7 @@ type generatorContext struct {
 	ManifestPath string
 	AppSet       argoappv1.ApplicationSet
 	BaseTemplate argoappv1.ApplicationSetTemplate
+	Options      Options
 }
 
 func evaluateGenerator(ctx generatorContext, generator argoappv1.ApplicationSetGenerator) ([]generatorParamSet, []diagnostic.Diagnostic, bool, error) {
