@@ -33,6 +33,17 @@ network access, or approval, skip that command, report the verification gap,
 and continue with the rest of the local review or implementation. Do not leave
 roadmap execution blocked on approval prompts from review agents.
 
+Every worker and reviewer prompt for roadmap work must include this exact
+constraint:
+
+> Do not request sandbox escalation. If a useful command would require
+> approval, network, or escalation, skip it and report it as skipped.
+
+The coordinating agent should treat approval-gated checks as unavailable
+verification, not as blockers. If a spawned agent does request approval anyway,
+redirect it once with the constraint above or close it and continue the phase
+using local evidence plus an explicit skipped-check note.
+
 ## Command Surface
 
 Current top-level commands:
