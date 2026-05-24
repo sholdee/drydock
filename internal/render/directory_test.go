@@ -8,6 +8,8 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+
+	cachepkg "github.com/sholdee/drydock/internal/cache"
 )
 
 func TestDirectoryRendererRendersYAML(t *testing.T) {
@@ -107,6 +109,45 @@ metadata:
 	}
 	if len(result) != 1 {
 		t.Fatalf("len(result) = %d, want 1", len(result))
+	}
+	if result[0].Object.GetName() != "visible" {
+		t.Fatalf("rendered object name = %q, want visible", result[0].Object.GetName())
+	}
+}
+
+func TestDirectoryRendererSkipsDrydockCacheMetadata(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "visible.yaml"), `
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: visible
+`)
+	if err := cachepkg.WriteMetadata(root, cachepkg.Metadata{
+		Source: cachepkg.SourceGit,
+		Kind:   "git",
+		Key:    strings.Repeat("a", 64),
+		Target: "https://example.test/org/repo.git",
+	}); err != nil {
+		t.Fatalf("WriteMetadata() error = %v", err)
+	}
+
+	renderer := DirectoryRenderer{}
+	result, diags, err := renderer.Render(context.Background(), ResolvedSource{
+		RepoRoot: root,
+		Path:     ".",
+	}, RenderOptions{})
+	if err != nil {
+		t.Fatalf("Render() error = %v", err)
+	}
+	if len(diags) != 0 {
+		t.Fatalf("diagnostics = %#v", diags)
+	}
+	if len(result) != 1 {
+		t.Fatalf("len(result) = %d, want only visible manifest: %#v", len(result), result)
+	}
+	if result[0].Path != "visible.yaml" {
+		t.Fatalf("Path = %q, want visible.yaml", result[0].Path)
 	}
 	if result[0].Object.GetName() != "visible" {
 		t.Fatalf("rendered object name = %q, want visible", result[0].Object.GetName())

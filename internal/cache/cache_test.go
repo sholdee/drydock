@@ -101,6 +101,25 @@ func TestMetadataRoundTripAndValidation(t *testing.T) {
 	}
 }
 
+func TestMetadataPathUsesHiddenDirectory(t *testing.T) {
+	entryRoot := filepath.Join(t.TempDir(), testGitKey)
+	if err := WriteMetadata(entryRoot, Metadata{
+		Source: SourceGit,
+		Kind:   "git",
+		Key:    testGitKey,
+		Target: "https://example.test/org/repo.git",
+	}); err != nil {
+		t.Fatalf("WriteMetadata() error = %v", err)
+	}
+
+	metadataPath := MetadataPath(entryRoot)
+	if !strings.Contains(filepath.ToSlash(metadataPath), "/.drydock-cache/metadata.json") {
+		t.Fatalf("MetadataPath() = %q, want hidden cache metadata path", metadataPath)
+	}
+	assertExists(t, metadataPath)
+	assertNotExists(t, filepath.Join(entryRoot, "metadata.json"))
+}
+
 func TestRedactedTargetStripsSecretsQueryAndFragment(t *testing.T) {
 	for _, tc := range []struct {
 		raw  string
@@ -316,15 +335,13 @@ func TestListDoesNotTrustUnsupportedRemoteMetadataWithoutRecognizedLayout(t *tes
 	if err := os.MkdirAll(entryRoot, 0o755); err != nil {
 		t.Fatalf("MkdirAll() error = %v", err)
 	}
-	if err := os.WriteFile(MetadataPath(entryRoot), []byte(`{
+	writeCacheFile(t, MetadataPath(entryRoot), `{
   "schemaVersion": 99,
   "source": "remote",
   "kind": "http-file",
   "key": "`+testRemoteKey+`"
 }
-`), 0o600); err != nil {
-		t.Fatalf("WriteFile() error = %v", err)
-	}
+`)
 
 	entries, err := List(Options{RemoteCacheDir: filepath.Join(root, "remotes")})
 	if err != nil {

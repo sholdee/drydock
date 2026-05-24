@@ -149,6 +149,10 @@ func cleanupGeneratedCacheMetadata(t *testing.T, root string) {
 			if err != nil {
 				return nil
 			}
+			if entry.IsDir() && entry.Name() == ".drydock-cache" {
+				_ = os.RemoveAll(path)
+				return filepath.SkipDir
+			}
 			if !entry.IsDir() && entry.Name() == "metadata.json" {
 				_ = os.Remove(path)
 			}
