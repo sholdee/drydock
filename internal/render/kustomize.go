@@ -674,12 +674,12 @@ func recordRemoteCacheEvent(opts RenderOptions, request remote.Request, acquireE
 	if opts.CacheEventRecorder == nil {
 		return
 	}
-	event := cacheevent.Event{
-		Source:   cacheevent.SourceRemote,
-		Target:   remoteTargetForEvent(request),
-		Revision: request.Revision,
-		Offline:  opts.OfflineRemoteResources,
-		Refresh:  opts.RefreshRemoteResources,
+	input := cacheevent.AcquisitionEventInput{
+		Source:            cacheevent.SourceRemote,
+		Target:            remoteTargetForEvent(request),
+		RequestedRevision: request.Revision,
+		Offline:           opts.OfflineRemoteResources,
+		Refresh:           opts.RefreshRemoteResources,
 		RawTargets: []string{
 			request.URL,
 			request.RepoURL,
@@ -687,35 +687,14 @@ func recordRemoteCacheEvent(opts RenderOptions, request remote.Request, acquireE
 		SensitiveValues: remoteSensitiveValues(opts.RemoteResourceCredentials, opts.RemoteResourceGitCredentials),
 	}
 	if acquireErr != nil {
-		event.Action = cacheActionForRemoteError(acquireErr)
-		event.Error = acquireErr.Error()
-		opts.CacheEventRecorder.Record(event)
+		input.Err = acquireErr
+		opts.CacheEventRecorder.Record(cacheevent.NewAcquisitionError(input).Event)
 		return
 	}
-	event.Action = actionForRemoteAcquisition(acquired.FromCache, opts.RefreshRemoteResources)
-	event.Revision = acquired.Revision
-	if event.Revision == "" {
-		event.Revision = request.Revision
-	}
-	event.CacheHit = acquired.FromCache
-	opts.CacheEventRecorder.Record(event)
-}
-
-func actionForRemoteAcquisition(fromCache bool, refresh bool) cacheevent.Action {
-	if fromCache {
-		return cacheevent.ActionHit
-	}
-	if refresh {
-		return cacheevent.ActionRefresh
-	}
-	return cacheevent.ActionFetch
-}
-
-func cacheActionForRemoteError(err error) cacheevent.Action {
-	if err != nil && strings.Contains(err.Error(), "offline cache miss") {
-		return cacheevent.ActionMiss
-	}
-	return cacheevent.ActionError
+	input.Revision = acquired.Revision
+	input.FromCache = acquired.FromCache
+	input.Network = !acquired.FromCache
+	opts.CacheEventRecorder.Record(cacheevent.NewAcquisitionEvent(input))
 }
 
 func remoteTargetForEvent(request remote.Request) string {
@@ -726,7 +705,7 @@ func remoteTargetForEvent(request remote.Request) string {
 }
 
 func remoteSensitiveValues(credentials remote.Credentials, gitCredentials remote.GitCredentials) []string {
-	return compactSensitiveValues(
+	return cacheevent.CompactSensitiveValues(
 		credentials.Username,
 		credentials.Password,
 		credentials.BearerToken,
@@ -739,17 +718,7 @@ func remoteSensitiveValues(credentials remote.Credentials, gitCredentials remote
 }
 
 func chartSensitiveValues(credentials chart.ChartCredentials) []string {
-	return compactSensitiveValues(credentials.Username, credentials.Password, credentials.BearerToken)
-}
-
-func compactSensitiveValues(values ...string) []string {
-	out := make([]string, 0, len(values))
-	for _, value := range values {
-		if strings.TrimSpace(value) != "" {
-			out = append(out, value)
-		}
-	}
-	return out
+	return cacheevent.CompactSensitiveValues(credentials.Username, credentials.Password, credentials.BearerToken)
 }
 
 func splitGeneratorFileSource(source string) (string, string, bool) {
@@ -1180,27 +1149,23 @@ func recordKustomizeChartCacheEvent(opts RenderOptions, request chart.Request, a
 	if opts.CacheEventRecorder == nil {
 		return
 	}
-	event := cacheevent.Event{
-		Source:          cacheevent.SourceChart,
-		Target:          request.Repository,
-		Revision:        request.Version,
-		Offline:         opts.OfflineCharts,
-		Refresh:         opts.RefreshCharts,
-		SensitiveValues: chartSensitiveValues(opts.ChartCredentials),
+	input := cacheevent.AcquisitionEventInput{
+		Source:            cacheevent.SourceChart,
+		Target:            request.Repository,
+		RequestedRevision: request.Version,
+		Offline:           opts.OfflineCharts,
+		Refresh:           opts.RefreshCharts,
+		SensitiveValues:   chartSensitiveValues(opts.ChartCredentials),
 	}
 	if acquireErr != nil {
-		event.Action = cacheActionForRemoteError(acquireErr)
-		event.Error = acquireErr.Error()
-		opts.CacheEventRecorder.Record(event)
+		input.Err = acquireErr
+		opts.CacheEventRecorder.Record(cacheevent.NewAcquisitionError(input).Event)
 		return
 	}
-	event.Action = actionForRemoteAcquisition(acquired.FromCache, opts.RefreshCharts)
-	event.Revision = acquired.Version
-	if event.Revision == "" {
-		event.Revision = request.Version
-	}
-	event.CacheHit = acquired.FromCache
-	opts.CacheEventRecorder.Record(event)
+	input.Revision = acquired.Version
+	input.FromCache = acquired.FromCache
+	input.Network = !acquired.FromCache
+	opts.CacheEventRecorder.Record(cacheevent.NewAcquisitionEvent(input))
 }
 
 func redactKustomizeChartAcquireError(err error, repository string, credentials chart.ChartCredentials) string {

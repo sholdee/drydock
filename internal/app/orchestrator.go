@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -892,28 +891,29 @@ func (p localProvider) resolveSourceRoot(ctx context.Context, source render.Reso
 		Credentials:  p.gitCredentials,
 	})
 	if err != nil {
-		redactedError := redactGitAcquireError(err, source.RepoURL, p.gitCredentials)
-		p.recordCacheEvent(cacheevent.Event{
-			Source:          cacheevent.SourceGit,
-			Action:          cacheActionForError(err),
-			Target:          source.RepoURL,
-			Revision:        source.TargetRevision,
-			Offline:         p.offline,
-			Refresh:         p.refreshGit,
-			Error:           err.Error(),
-			SensitiveValues: sourceGitSensitiveValues(p.gitCredentials),
+		acquireError := cacheevent.NewAcquisitionError(cacheevent.AcquisitionEventInput{
+			Source:            cacheevent.SourceGit,
+			Target:            source.RepoURL,
+			RequestedRevision: source.TargetRevision,
+			Offline:           p.offline,
+			Refresh:           p.refreshGit,
+			Err:               err,
+			ErrorText:         sourcepkg.RedactGitCredentialError(err.Error(), p.gitCredentials),
+			SensitiveValues:   sourceGitSensitiveValues(p.gitCredentials),
 		})
-		return "", fmt.Errorf("%s", redactedError)
+		p.recordCacheEvent(acquireError.Event)
+		return "", fmt.Errorf("%s", acquireError.RedactedError)
 	}
-	p.recordCacheEvent(cacheevent.Event{
-		Source:   cacheevent.SourceGit,
-		Action:   actionForAcquisition(acquired.FromCache, acquired.Network, p.refreshGit),
-		Target:   source.RepoURL,
-		Revision: acquired.Revision,
-		CacheHit: acquired.FromCache,
-		Offline:  p.offline,
-		Refresh:  p.refreshGit,
-	})
+	p.recordCacheEvent(cacheevent.NewAcquisitionEvent(cacheevent.AcquisitionEventInput{
+		Source:            cacheevent.SourceGit,
+		Target:            source.RepoURL,
+		Revision:          acquired.Revision,
+		RequestedRevision: source.TargetRevision,
+		FromCache:         acquired.FromCache,
+		Network:           acquired.Network,
+		Offline:           p.offline,
+		Refresh:           p.refreshGit,
+	}))
 	return acquired.Path, nil
 }
 
@@ -994,37 +994,8 @@ func (p localProvider) recordCacheEvent(event cacheevent.Event) {
 	}
 }
 
-func actionForAcquisition(fromCache bool, network bool, refresh bool) cacheevent.Action {
-	if fromCache {
-		return cacheevent.ActionHit
-	}
-	if network && refresh {
-		return cacheevent.ActionRefresh
-	}
-	return cacheevent.ActionFetch
-}
-
-func cacheActionForError(err error) cacheevent.Action {
-	if err != nil && strings.Contains(err.Error(), "offline cache miss") {
-		return cacheevent.ActionMiss
-	}
-	return cacheevent.ActionError
-}
-
-func redactGitAcquireError(err error, repoURL string, credentials sourcepkg.GitCredentials) string {
-	if err == nil {
-		return ""
-	}
-	return cacheevent.RedactEventError(
-		sourcepkg.RedactGitCredentialError(err.Error(), credentials),
-		cacheevent.RedactTarget(repoURL),
-		[]string{repoURL},
-		sourceGitSensitiveValues(credentials)...,
-	)
-}
-
 func sourceGitSensitiveValues(credentials sourcepkg.GitCredentials) []string {
-	return compactSensitiveValues(
+	return cacheevent.CompactSensitiveValues(
 		credentials.Username,
 		credentials.Password,
 		credentials.BearerToken,
@@ -1034,17 +1005,7 @@ func sourceGitSensitiveValues(credentials sourcepkg.GitCredentials) []string {
 }
 
 func chartSensitiveValues(credentials chart.ChartCredentials) []string {
-	return compactSensitiveValues(credentials.Username, credentials.Password, credentials.BearerToken)
-}
-
-func compactSensitiveValues(values ...string) []string {
-	out := make([]string, 0, len(values))
-	for _, value := range values {
-		if strings.TrimSpace(value) != "" {
-			out = append(out, value)
-		}
-	}
-	return out
+	return cacheevent.CompactSensitiveValues(credentials.Username, credentials.Password, credentials.BearerToken)
 }
 
 func (p localProvider) renderChartOnlySource(ctx context.Context, source render.ResolvedSource, opts render.RenderOptions) ([]render.Manifest, []diagnostic.Diagnostic, error) {
@@ -1071,27 +1032,28 @@ func (p localProvider) renderChartOnlySource(ctx context.Context, source render.
 		Credentials: p.chartCredentials,
 	})
 	if err != nil {
-		p.recordCacheEvent(cacheevent.Event{
-			Source:          cacheevent.SourceChart,
-			Action:          cacheActionForError(err),
-			Target:          source.RepoURL,
-			Revision:        source.TargetRevision,
-			Offline:         p.offline,
-			Refresh:         p.refreshCharts,
-			Error:           err.Error(),
-			SensitiveValues: chartSensitiveValues(p.chartCredentials),
+		acquireError := cacheevent.NewAcquisitionError(cacheevent.AcquisitionEventInput{
+			Source:            cacheevent.SourceChart,
+			Target:            source.RepoURL,
+			RequestedRevision: source.TargetRevision,
+			Offline:           p.offline,
+			Refresh:           p.refreshCharts,
+			Err:               err,
+			SensitiveValues:   chartSensitiveValues(p.chartCredentials),
 		})
-		return nil, nil, fmt.Errorf("acquire chart %s: %s", source.Chart, redactChartAcquireError(err, source.RepoURL, p.chartCredentials))
+		p.recordCacheEvent(acquireError.Event)
+		return nil, nil, fmt.Errorf("acquire chart %s: %s", source.Chart, acquireError.RedactedError)
 	}
-	p.recordCacheEvent(cacheevent.Event{
-		Source:   cacheevent.SourceChart,
-		Action:   actionForAcquisition(acquired.FromCache, !acquired.FromCache, p.refreshCharts),
-		Target:   source.RepoURL,
-		Revision: acquired.Version,
-		CacheHit: acquired.FromCache,
-		Offline:  p.offline,
-		Refresh:  p.refreshCharts,
-	})
+	p.recordCacheEvent(cacheevent.NewAcquisitionEvent(cacheevent.AcquisitionEventInput{
+		Source:            cacheevent.SourceChart,
+		Target:            source.RepoURL,
+		Revision:          acquired.Version,
+		RequestedRevision: source.TargetRevision,
+		FromCache:         acquired.FromCache,
+		Network:           !acquired.FromCache,
+		Offline:           p.offline,
+		Refresh:           p.refreshCharts,
+	}))
 
 	return (render.HelmRenderer{}).Render(ctx, render.ResolvedSource{
 		RepoRoot:       acquired.ChartDir,
@@ -1100,60 +1062,6 @@ func (p localProvider) renderChartOnlySource(ctx context.Context, source render.
 		RepoURL:        source.RepoURL,
 		TargetRevision: source.TargetRevision,
 	}, opts)
-}
-
-func redactChartAcquireError(err error, repository string, credentials chart.ChartCredentials) string {
-	message := err.Error()
-	redacted := sourcepkg.RedactURL(repository)
-	raw := strings.TrimSpace(repository)
-	if raw == "" {
-		return message
-	}
-
-	replacements := []string{raw}
-	if parsed, parseErr := url.Parse(raw); parseErr == nil && parsed.Scheme != "" {
-		withoutFragment := *parsed
-		withoutFragment.Fragment = ""
-		replacements = append(replacements, withoutFragment.String())
-
-		withoutQueryFragment := withoutFragment
-		withoutQueryFragment.RawQuery = ""
-		withoutQueryFragment.ForceQuery = false
-		replacements = append(replacements, withoutQueryFragment.String())
-
-		withoutUser := *parsed
-		withoutUser.User = nil
-		replacements = append(replacements, withoutUser.String())
-
-		if parsed.User != nil {
-			replacements = append(replacements, parsed.User.String()+"@")
-		}
-		if parsed.RawQuery != "" {
-			replacements = append(replacements, parsed.RawQuery)
-		}
-		if parsed.Fragment != "" {
-			replacements = append(replacements, parsed.Fragment)
-		}
-	}
-
-	for _, replacement := range replacements {
-		if replacement == "" || replacement == redacted {
-			continue
-		}
-		message = strings.ReplaceAll(message, replacement, redacted)
-	}
-	return redactChartCredentialValues(message, credentials)
-}
-
-func redactChartCredentialValues(message string, credentials chart.ChartCredentials) string {
-	for _, secret := range []string{credentials.Username, credentials.Password, credentials.BearerToken} {
-		secret = strings.TrimSpace(secret)
-		if secret == "" {
-			continue
-		}
-		message = strings.ReplaceAll(message, secret, "[redacted]")
-	}
-	return message
 }
 
 func anchorLocalRefRoots(repoRoot string, refRoots map[string]string) (map[string]string, error) {

@@ -1,6 +1,7 @@
 package cacheevent
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 )
@@ -181,6 +182,87 @@ func TestRecorderRedactsStandaloneQueryValues(t *testing.T) {
 		if strings.Contains(events[0].Error, leaked) {
 			t.Fatalf("Error = %q leaked query value %q", events[0].Error, leaked)
 		}
+	}
+}
+
+func TestActionForAcquisition(t *testing.T) {
+	tests := []struct {
+		name      string
+		fromCache bool
+		network   bool
+		refresh   bool
+		want      Action
+	}{
+		{name: "cache hit", fromCache: true, want: ActionHit},
+		{name: "refresh fetch", network: true, refresh: true, want: ActionRefresh},
+		{name: "network fetch", network: true, want: ActionFetch},
+		{name: "local fetch fallback", want: ActionFetch},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := ActionForAcquisition(tt.fromCache, tt.network, tt.refresh); got != tt.want {
+				t.Fatalf("ActionForAcquisition() = %s, want %s", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestActionForError(t *testing.T) {
+	if got := ActionForError(fmt.Errorf("offline cache miss for chart")); got != ActionMiss {
+		t.Fatalf("ActionForError(cache miss) = %s, want %s", got, ActionMiss)
+	}
+	if got := ActionForError(fmt.Errorf("permission denied")); got != ActionError {
+		t.Fatalf("ActionForError(other) = %s, want %s", got, ActionError)
+	}
+}
+
+func TestCompactSensitiveValues(t *testing.T) {
+	got := CompactSensitiveValues("", " user ", "token")
+	if diff := strings.Join(got, ","); diff != "user,token" {
+		t.Fatalf("CompactSensitiveValues() = %q, want user,token", diff)
+	}
+}
+
+func TestNewAcquisitionEventBuildsSuccessEvent(t *testing.T) {
+	event := NewAcquisitionEvent(AcquisitionEventInput{
+		Source:   SourceChart,
+		Target:   "https://charts.example.test",
+		Revision: "1.2.3",
+		Refresh:  true,
+		Network:  true,
+	})
+	if event.Action != ActionRefresh {
+		t.Fatalf("Action = %s, want %s", event.Action, ActionRefresh)
+	}
+	if event.Revision != "1.2.3" {
+		t.Fatalf("Revision = %q, want 1.2.3", event.Revision)
+	}
+}
+
+func TestNewAcquisitionErrorRedactsEventAndReturnedMessage(t *testing.T) {
+	result := NewAcquisitionError(AcquisitionEventInput{
+		Source: SourceGit,
+		Target: "https://user:secret@example.test/repo.git?token=abc",
+		Err:    fmt.Errorf("offline cache miss for https://user:secret@example.test/repo.git?token=abc"),
+		RawTargets: []string{
+			"https://user:secret@example.test/repo.git?token=abc",
+		},
+		SensitiveValues: []string{"secret"},
+	})
+	if result.Event.Action != ActionMiss {
+		t.Fatalf("Action = %s, want %s", result.Event.Action, ActionMiss)
+	}
+	if strings.Contains(result.RedactedError, "secret") || strings.Contains(result.RedactedError, "abc") {
+		t.Fatalf("RedactedError = %q leaked credentials", result.RedactedError)
+	}
+	recorder := NewRecorder(true)
+	recorder.Record(result.Event)
+	events := recorder.Events()
+	if len(events) != 1 {
+		t.Fatalf("Events = %#v, want one event", events)
+	}
+	if strings.Contains(events[0].Error, "secret") || strings.Contains(events[0].Error, "abc") {
+		t.Fatalf("Event error = %q leaked credentials", events[0].Error)
 	}
 }
 

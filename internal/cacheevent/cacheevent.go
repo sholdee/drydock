@@ -43,6 +43,26 @@ type Event struct {
 	SensitiveValues []string `json:"-" yaml:"-"`
 }
 
+type AcquisitionEventInput struct {
+	Source            Source
+	Target            string
+	Revision          string
+	RequestedRevision string
+	Offline           bool
+	Refresh           bool
+	FromCache         bool
+	Network           bool
+	Err               error
+	ErrorText         string
+	RawTargets        []string
+	SensitiveValues   []string
+}
+
+type AcquisitionErrorResult struct {
+	Event         Event
+	RedactedError string
+}
+
 type Recorder struct {
 	enabled bool
 	mu      sync.Mutex
@@ -80,6 +100,72 @@ func (r *Recorder) Events() []Event {
 	out := make([]Event, len(r.events))
 	copy(out, r.events)
 	return out
+}
+
+func ActionForAcquisition(fromCache bool, network bool, refresh bool) Action {
+	if fromCache {
+		return ActionHit
+	}
+	if network && refresh {
+		return ActionRefresh
+	}
+	return ActionFetch
+}
+
+func ActionForError(err error) Action {
+	if err != nil && strings.Contains(err.Error(), "offline cache miss") {
+		return ActionMiss
+	}
+	return ActionError
+}
+
+func CompactSensitiveValues(values ...string) []string {
+	out := make([]string, 0, len(values))
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value != "" {
+			out = append(out, value)
+		}
+	}
+	return out
+}
+
+func NewAcquisitionEvent(input AcquisitionEventInput) Event {
+	revision := input.Revision
+	if revision == "" {
+		revision = input.RequestedRevision
+	}
+	return Event{
+		Source:          input.Source,
+		Action:          ActionForAcquisition(input.FromCache, input.Network, input.Refresh),
+		Target:          input.Target,
+		Revision:        revision,
+		CacheHit:        input.FromCache,
+		Offline:         input.Offline,
+		Refresh:         input.Refresh,
+		RawTargets:      append([]string(nil), input.RawTargets...),
+		SensitiveValues: append([]string(nil), input.SensitiveValues...),
+	}
+}
+
+func NewAcquisitionError(input AcquisitionEventInput) AcquisitionErrorResult {
+	event := NewAcquisitionEvent(input)
+	event.Action = ActionForError(input.Err)
+	errorText := input.ErrorText
+	if errorText == "" && input.Err != nil {
+		errorText = input.Err.Error()
+	}
+	event.Error = errorText
+	rawTargets := append([]string{input.Target}, input.RawTargets...)
+	return AcquisitionErrorResult{
+		Event: event,
+		RedactedError: RedactEventError(
+			errorText,
+			RedactTarget(input.Target),
+			rawTargets,
+			input.SensitiveValues...,
+		),
+	}
 }
 
 func RedactTarget(raw string) string {

@@ -209,6 +209,38 @@ metadata:
 	}
 }
 
+func TestKustomizeRendererRecordsRemoteRefreshCacheEvent(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "app", "kustomization.yaml"), `apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - https://raw.githubusercontent.com/example/repo/main/resource.yaml
+`)
+	remoteFile := filepath.Join(t.TempDir(), "resource.yaml")
+	writeFile(t, remoteFile, `apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: remote
+`)
+	recorder := cacheevent.NewRecorder(true)
+
+	_, diags, err := (KustomizeRenderer{}).Render(context.Background(), ResolvedSource{
+		RepoRoot: root,
+		Path:     "app",
+	}, RenderOptions{
+		RemoteResourceAcquirer: &fakeRemoteAcquirer{path: remoteFile, fromCache: false},
+		RemoteResourceCacheDir: t.TempDir(),
+		RefreshRemoteResources: true,
+		CacheEventRecorder:     recorder,
+	})
+	if err != nil {
+		t.Fatalf("Render() error = %v, diagnostics = %#v", err, diags)
+	}
+	if !hasRenderCacheEvent(recorder.Events(), "remote", "refresh", "https://raw.githubusercontent.com/example/repo/main/resource.yaml") {
+		t.Fatalf("Cache events = %#v, want remote refresh", recorder.Events())
+	}
+}
+
 func TestKustomizeRendererPassesRemoteCredentialsForHTTPResources(t *testing.T) {
 	root := t.TempDir()
 	writeFile(t, filepath.Join(root, "app", "kustomization.yaml"), `apiVersion: kustomize.config.k8s.io/v1beta1
@@ -1780,6 +1812,35 @@ helmCharts:
 	}
 	if !hasRenderCacheEvent(recorder.Events(), "chart", "hit", "https://charts.example.test") {
 		t.Fatalf("Cache events = %#v, want chart hit", recorder.Events())
+	}
+}
+
+func TestKustomizeRendererRecordsHelmChartRefreshCacheEvent(t *testing.T) {
+	root := t.TempDir()
+	chartDir := filepath.Join(t.TempDir(), "demo")
+	writeTestChart(t, chartDir, `apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: charted
+`)
+	writeFile(t, filepath.Join(root, "kustomization.yaml"), `apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+helmCharts:
+  - name: demo
+    repo: https://charts.example.test
+    version: 1.2.3
+`)
+	recorder := cacheevent.NewRecorder(true)
+	_, diags, err := (KustomizeRenderer{}).Render(context.Background(), ResolvedSource{RepoRoot: root, Path: "."}, RenderOptions{
+		ChartAcquirer:      &fakeChartAcquirer{chartDir: chartDir, fromCache: false},
+		RefreshCharts:      true,
+		CacheEventRecorder: recorder,
+	})
+	if err != nil {
+		t.Fatalf("Render() error = %v, diagnostics = %#v", err, diags)
+	}
+	if !hasRenderCacheEvent(recorder.Events(), "chart", "refresh", "https://charts.example.test") {
+		t.Fatalf("Cache events = %#v, want chart refresh", recorder.Events())
 	}
 }
 
