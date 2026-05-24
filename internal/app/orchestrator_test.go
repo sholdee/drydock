@@ -158,6 +158,45 @@ spec:
 	}
 }
 
+func TestOrchestratorReportsLiveOnlyResourceCustomizationSettings(t *testing.T) {
+	root := t.TempDir()
+	writeBuildApplication(t, root, "demo", "demo")
+	writeTestFile(t, filepath.Join(root, "settings", "argocd-cm.yaml"), `apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: argocd-cm
+data:
+  resource.customizations.ignoreResourceUpdates.apps_Deployment: |
+    jsonPointers:
+      - /status
+  resource.customizations.health.apps_Deployment: |
+    return { status = "Healthy" }
+  resource.customizations.useOpenLibs.apps_Deployment: "true"
+  resource.customizations.actions.apps_Deployment: |
+    definitions:
+      - name: restart
+        action.lua: |
+          return obj
+`)
+
+	result, err := Orchestrator{}.Build(context.Background(), BuildRequest{Path: root})
+	if err != nil {
+		t.Fatalf("Build() error = %v", err)
+	}
+	if !hasDiagnosticMessage(result.Diagnostics, "ignoreResourceUpdates are parsed but not applied") {
+		t.Fatalf("Diagnostics = %#v, want ignoreResourceUpdates warning", result.Diagnostics)
+	}
+	if !hasDiagnosticMessage(result.Diagnostics, "health Lua is parsed as metadata only") {
+		t.Fatalf("Diagnostics = %#v, want health Lua warning", result.Diagnostics)
+	}
+	if !hasDiagnosticMessage(result.Diagnostics, "useOpenLibs is parsed as metadata only") {
+		t.Fatalf("Diagnostics = %#v, want useOpenLibs warning", result.Diagnostics)
+	}
+	if !hasDiagnosticMessage(result.Diagnostics, "actions are parsed as metadata only") {
+		t.Fatalf("Diagnostics = %#v, want actions warning", result.Diagnostics)
+	}
+}
+
 func TestOrchestratorBuildAppliesClusterScopedResourceInclusions(t *testing.T) {
 	root := t.TempDir()
 	writeBuildApplicationWithDestination(t, root, "prod", "prod-cm", "prod-west")
@@ -1503,6 +1542,15 @@ func diagnosticByCategory(diags []diagnostic.Diagnostic, category string) (diagn
 		}
 	}
 	return diagnostic.Diagnostic{}, false
+}
+
+func hasDiagnosticMessage(diags []diagnostic.Diagnostic, fragment string) bool {
+	for _, diag := range diags {
+		if strings.Contains(diag.Message, fragment) {
+			return true
+		}
+	}
+	return false
 }
 
 func assertApplicationStatuses(t *testing.T, got, want []ApplicationStatus) {
