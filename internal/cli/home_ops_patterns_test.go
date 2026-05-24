@@ -147,7 +147,7 @@ func cleanupGeneratedCacheMetadata(t *testing.T, root string) {
 	t.Cleanup(func() {
 		_ = filepath.WalkDir(root, func(path string, entry os.DirEntry, err error) error {
 			if err != nil {
-				return nil
+				return err
 			}
 			if entry.IsDir() && entry.Name() == ".drydock-cache" {
 				_ = os.RemoveAll(path)

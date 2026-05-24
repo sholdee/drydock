@@ -6,7 +6,6 @@ import (
 	"io"
 	"strings"
 
-	"github.com/sholdee/drydock/internal/app"
 	"github.com/sholdee/drydock/internal/cacheevent"
 	"github.com/sholdee/drydock/internal/diagnostic"
 	cliformat "github.com/sholdee/drydock/internal/format"
@@ -35,7 +34,7 @@ func newDiagCommand(deps Dependencies) *cobra.Command {
 			}
 			request := buildRequestFromFlags(flags, repoMaps)
 			request.RecordCacheEvents = flags.cacheEvents
-			result, err := deps.Orchestrator.Diag(context.Background(), app.DiagRequest(request))
+			result, err := deps.Orchestrator.Diag(context.Background(), request)
 			result.Diagnostics = diagnostic.WithStableCodes(result.Diagnostics)
 			switch output {
 			case "text":

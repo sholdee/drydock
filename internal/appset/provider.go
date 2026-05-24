@@ -187,13 +187,7 @@ func decodeProviderFixture(path string, data []byte) (providerFixtureFile, error
 }
 
 func providerDataFromFixture(fixture providerFixtureFile, path string) ProviderData {
-	data := ProviderData{
-		Clusters:         fixture.Clusters,
-		ClusterDecisions: fixture.ClusterDecisions,
-		SCMRepositories:  fixture.SCMRepositories,
-		PullRequests:     fixture.PullRequests,
-		Plugins:          fixture.Plugins,
-	}
+	data := ProviderData(fixture)
 	for i := range data.Clusters {
 		data.Clusters[i].FixturePath = path
 	}
@@ -299,16 +293,16 @@ func clusterDecisionIdentity(decision ClusterDecisionInput) string {
 }
 
 func scmRepositoryIdentity(repo SCMRepositoryInput) string {
-	return identity(repo.Provider, repo.Organization, repo.Project, repo.Region, repo.Repository, repo.Branch, repo.URL)
+	return identity(repo.Provider, repo.Organization, repo.Repository, repo.Branch, repo.URL)
 }
 
 func pullRequestIdentity(pr PullRequestInput) string {
-	return identity(pr.Provider, pr.Organization, pr.Project, pr.Repository, strconv.Itoa(pr.Number))
+	return identity(pr.Provider, pr.Organization, pr.Repository, strconv.Itoa(pr.Number))
 }
 
 func lessPullRequest(left, right PullRequestInput) bool {
-	leftPrefix := identity(left.Provider, left.Organization, left.Project, left.Repository)
-	rightPrefix := identity(right.Provider, right.Organization, right.Project, right.Repository)
+	leftPrefix := identity(left.Provider, left.Organization, left.Repository)
+	rightPrefix := identity(right.Provider, right.Organization, right.Repository)
 	if leftPrefix != rightPrefix {
 		return leftPrefix < rightPrefix
 	}

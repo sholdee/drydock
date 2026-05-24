@@ -294,6 +294,8 @@ func parseCacheOutput(raw string) (cliformat.Output, error) {
 	switch output {
 	case cliformat.OutputTable, cliformat.OutputJSON, cliformat.OutputYAML:
 		return output, nil
+	case cliformat.OutputName:
+		return "", fmt.Errorf("cache output supports table, json, or yaml, got %q", raw)
 	default:
 		return "", fmt.Errorf("cache output supports table, json, or yaml, got %q", raw)
 	}
@@ -326,6 +328,8 @@ func renderCacheList(cmd *cobra.Command, output cliformat.Output, entries []cach
 		return cliformat.JSON(cmd.OutOrStdout(), entries)
 	case cliformat.OutputYAML:
 		return cliformat.YAML(cmd.OutOrStdout(), entries)
+	case cliformat.OutputName:
+		return fmt.Errorf("unsupported cache output %q", output)
 	default:
 		return fmt.Errorf("unsupported cache output %q", output)
 	}
@@ -346,6 +350,8 @@ func renderCacheOperation(cmd *cobra.Command, output cliformat.Output, result ca
 		return cliformat.JSON(cmd.OutOrStdout(), result)
 	case cliformat.OutputYAML:
 		return cliformat.YAML(cmd.OutOrStdout(), result)
+	case cliformat.OutputName:
+		return fmt.Errorf("unsupported cache output %q", output)
 	default:
 		return fmt.Errorf("unsupported cache output %q", output)
 	}
