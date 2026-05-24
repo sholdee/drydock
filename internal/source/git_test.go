@@ -103,6 +103,25 @@ func TestDefaultGitAcquirerWritesMetadata(t *testing.T) {
 	}
 }
 
+func TestGitCacheKeyAndMetadataUseCanonicalRedactedTarget(t *testing.T) {
+	cleanURL := "https://example.test/org/repo"
+	secretURL := "https://user:secret@example.test/org/repo.git/?token=secret#frag"
+	if cleanKey, secretKey := GitCacheKey(cleanURL, "main"), GitCacheKey(secretURL, "main"); cleanKey != secretKey {
+		t.Fatalf("GitCacheKey() differs for equivalent redacted URLs: clean=%s secret=%s", cleanKey, secretKey)
+	}
+
+	entryRoot := t.TempDir()
+	key := GitCacheKey(secretURL, "main")
+	writeGitMetadata(entryRoot, key, GitRequest{URL: secretURL, Revision: "main"}, "abc123")
+	metadata, err := cachepkg.ReadMetadata(entryRoot, cachepkg.SourceGit, "git", key)
+	if err != nil {
+		t.Fatalf("ReadMetadata() error = %v", err)
+	}
+	if metadata.Target != cleanURL {
+		t.Fatalf("Target = %q, want %q", metadata.Target, cleanURL)
+	}
+}
+
 func TestDefaultGitAcquirerChecksOutBranch(t *testing.T) {
 	remote := createGitFixture(t)
 	commitFixtureFile(t, remote.repo, remote.worktree, "config.yaml", "version: main\n")

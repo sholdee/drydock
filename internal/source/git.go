@@ -98,7 +98,9 @@ func (DefaultGitAcquirer) Acquire(ctx context.Context, request GitRequest, opts 
 	}
 
 	network := cloned || refreshed || fetched
-	writeGitMetadata(cachePath, key, request, revision)
+	if network {
+		writeGitMetadata(cachePath, key, request, revision)
+	}
 	return GitResult{Path: cachePath, Revision: revision, FromCache: !network, Network: network}, nil
 }
 
@@ -118,7 +120,7 @@ func DefaultGitCacheDir() (string, error) {
 }
 
 func GitCacheKey(repoURL, revision string) string {
-	sum := sha256.Sum256([]byte(NormalizeURL(cache.RedactedTarget(repoURL)) + "\n" + strings.TrimSpace(revision)))
+	sum := sha256.Sum256([]byte(gitCacheTarget(repoURL) + "\n" + strings.TrimSpace(revision)))
 	return hex.EncodeToString(sum[:])
 }
 
@@ -127,9 +129,13 @@ func writeGitMetadata(cachePath, key string, request GitRequest, revision string
 		Source:   cache.SourceGit,
 		Kind:     "git",
 		Key:      key,
-		Target:   cache.RedactedTarget(request.URL),
+		Target:   gitCacheTarget(request.URL),
 		Revision: revision,
 	})
+}
+
+func gitCacheTarget(repoURL string) string {
+	return NormalizeURL(cache.RedactedTarget(repoURL))
 }
 
 func openOrCloneGitRepository(ctx context.Context, cachePath, repoURL string, auth transport.AuthMethod, credentials GitCredentials) (*git.Repository, bool, error) {

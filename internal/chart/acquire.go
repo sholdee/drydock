@@ -61,7 +61,7 @@ func DefaultCacheDir() (string, error) {
 }
 
 func NewCacheKey(request Request) (string, error) {
-	normalized, err := NormalizeRepository(request.Repository, request.Kind)
+	normalized, err := NormalizeCacheRepository(request.Repository, request.Kind)
 	if err != nil {
 		return "", err
 	}
@@ -83,6 +83,22 @@ func NewCacheKey(request Request) (string, error) {
 		version,
 	}, "\x00")))
 	return hex.EncodeToString(sum[:]), nil
+}
+
+func NormalizeCacheRepository(repository string, kind RepositoryKind) (string, error) {
+	normalized, err := NormalizeRepository(repository, kind)
+	if err != nil {
+		return "", err
+	}
+	parsed, err := url.Parse(normalized)
+	if err != nil {
+		return "", err
+	}
+	parsed.User = nil
+	parsed.RawQuery = ""
+	parsed.ForceQuery = false
+	parsed.Fragment = ""
+	return parsed.String(), nil
 }
 
 func NormalizeRepository(repository string, kind RepositoryKind) (string, error) {

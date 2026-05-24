@@ -11,6 +11,8 @@ import (
 	"path"
 	"path/filepath"
 	"strings"
+
+	"github.com/sholdee/drydock/internal/cache"
 )
 
 const defaultMaxResourceBytes int64 = 10 * 1024 * 1024
@@ -87,7 +89,7 @@ func NewCacheKey(request Request) (string, error) {
 		if repoURL == "" {
 			repoURL = strings.TrimSpace(request.URL)
 		}
-		normalized, err := NormalizeGitRepoURL(repoURL)
+		normalized, err := NormalizeGitRepoCacheURL(repoURL)
 		if err != nil {
 			return "", err
 		}
@@ -96,6 +98,14 @@ func NewCacheKey(request Request) (string, error) {
 	default:
 		return "", fmt.Errorf("unsupported remote resource request kind %q", request.Kind)
 	}
+}
+
+func NormalizeGitRepoCacheURL(raw string) (string, error) {
+	normalized, err := NormalizeGitRepoURL(raw)
+	if err != nil {
+		return "", err
+	}
+	return cache.RedactedTarget(normalized), nil
 }
 
 func requestKind(kind RequestKind) RequestKind {

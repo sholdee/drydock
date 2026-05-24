@@ -54,6 +54,42 @@ func TestCacheKeySeparatesOCIAndHTTP(t *testing.T) {
 	}
 }
 
+func TestCacheKeyUsesCanonicalRedactedRepository(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		clean      string
+		secret     string
+		repository RepositoryKind
+	}{
+		{
+			name:       "http",
+			clean:      "https://example.com/charts",
+			secret:     "https://user:secret@example.com/charts/?token=secret#frag",
+			repository: RepositoryHTTP,
+		},
+		{
+			name:       "oci",
+			clean:      "oci://example.com/charts",
+			secret:     "oci://user:secret@example.com/charts/?token=secret#frag",
+			repository: RepositoryOCI,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cleanKey, err := NewCacheKey(Request{Repository: tc.clean, Name: "demo", Version: "1.2.3", Kind: tc.repository})
+			if err != nil {
+				t.Fatalf("NewCacheKey(clean) error = %v", err)
+			}
+			secretKey, err := NewCacheKey(Request{Repository: tc.secret, Name: "demo", Version: "1.2.3", Kind: tc.repository})
+			if err != nil {
+				t.Fatalf("NewCacheKey(secret) error = %v", err)
+			}
+			if cleanKey != secretKey {
+				t.Fatalf("cache keys differ:\nclean:  %s\nsecret: %s", cleanKey, secretKey)
+			}
+		})
+	}
+}
+
 func TestCacheKeyRejectsMissingFields(t *testing.T) {
 	for _, request := range []Request{
 		{Name: "demo", Version: "1.2.3", Kind: RepositoryHTTP},
