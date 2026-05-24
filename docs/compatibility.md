@@ -117,7 +117,8 @@ Supported in the MVP:
 - CI documentation for local, library-backed verification without cluster,
   server, or renderer CLI dependencies
 - Release and upgrade documentation for static binary/module releases, Argo CD
-  dependency upgrades, cache compatibility, and deferred install Action work
+  dependency upgrades, cache compatibility, and an optional explicit-version
+  install Action
 
 Network and cache behavior:
 
@@ -190,7 +191,6 @@ Not reproduced offline:
   pull-request, and plugin ApplicationSet generators. Only explicit local
   fixtures are supported.
 - Live cluster and Argo CD API sources
-- Composite install GitHub Action publishing
 
 Live integration is design-gated in
 `docs/reports/2026-05-24-live-integration-design-gate.md`. Future live work

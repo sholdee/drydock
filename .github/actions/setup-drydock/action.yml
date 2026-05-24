@@ -1,0 +1,140 @@
+name: Setup drydock
+description: Install a versioned drydock release artifact
+
+inputs:
+  version:
+    description: Explicit drydock release version to install, for example v0.1.0.
+    required: true
+  install-dir:
+    description: Directory to install the drydock binary into.
+    required: false
+    default: /usr/local/bin
+  github-token:
+    description: Optional GitHub token for downloading release artifacts.
+    required: false
+  allow-unverified:
+    description: Allow installation when the release does not publish checksums.txt.
+    required: false
+    default: "false"
+
+runs:
+  using: composite
+  steps:
+    - name: Resolve runner artifact
+      id: artifact
+      shell: bash
+      env:
+        DRYDOCK_VERSION: ${{ inputs.version }}
+      run: |
+        set -euo pipefail
+
+        case "${RUNNER_OS}-${RUNNER_ARCH}" in
+          Linux-X64)
+            platform="linux-amd64"
+            ;;
+          Linux-ARM64)
+            platform="linux-arm64"
+            ;;
+          macOS-X64)
+            platform="darwin-amd64"
+            ;;
+          macOS-ARM64)
+            platform="darwin-arm64"
+            ;;
+          *)
+            echo "Unsupported runner platform: ${RUNNER_OS}-${RUNNER_ARCH}" >&2
+            exit 1
+            ;;
+        esac
+
+        version="${DRYDOCK_VERSION}"
+        if [[ -z "${version}" || "${version}" == "latest" || ! "${version}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([-.+][0-9A-Za-z.-]+)?$ ]]; then
+          echo "setup-drydock requires an explicit semantic version tag, for example v0.1.0." >&2
+          exit 1
+        fi
+
+        repo="${GITHUB_ACTION_REPOSITORY:-${GITHUB_REPOSITORY}}"
+        base_url="https://github.com/${repo}/releases/download/${version}"
+        echo "asset_url=${base_url}/drydock_${platform}.tar.gz" >> "${GITHUB_OUTPUT}"
+        echo "checksums_url=${base_url}/checksums.txt" >> "${GITHUB_OUTPUT}"
+
+    - name: Download drydock
+      shell: bash
+      env:
+        DRYDOCK_ALLOW_UNVERIFIED: ${{ inputs.allow-unverified }}
+        DRYDOCK_GITHUB_TOKEN: ${{ inputs.github-token }}
+        DRYDOCK_INSTALL_DIR: ${{ inputs.install-dir }}
+      run: |
+        set -euo pipefail
+
+        tmpdir="$(mktemp -d)"
+        trap 'rm -rf "${tmpdir}"' EXIT
+
+        headers=()
+        if [[ -n "${DRYDOCK_GITHUB_TOKEN}" ]]; then
+          headers=(-H "Authorization: Bearer ${DRYDOCK_GITHUB_TOKEN}")
+        fi
+        install_dir="${DRYDOCK_INSTALL_DIR}"
+        if [[ -z "${install_dir}" ]]; then
+          echo "setup-drydock requires a non-empty install-dir." >&2
+          exit 1
+        fi
+
+        allow_unverified="${DRYDOCK_ALLOW_UNVERIFIED}"
+        if [[ "${allow_unverified}" != "true" && "${allow_unverified}" != "false" ]]; then
+          echo "setup-drydock allow-unverified must be true or false." >&2
+          exit 1
+        fi
+
+        curl --fail --location --show-error "${headers[@]}" \
+          --output "${tmpdir}/drydock.tar.gz" \
+          "${{ steps.artifact.outputs.asset_url }}"
+        asset_name="$(basename "${{ steps.artifact.outputs.asset_url }}")"
+
+        verify_checksum() {
+          if command -v sha256sum >/dev/null 2>&1; then
+            sha256sum --check "${tmpdir}/checksums.selected"
+          elif command -v shasum >/dev/null 2>&1; then
+            shasum -a 256 -c "${tmpdir}/checksums.selected"
+          else
+            echo "No supported SHA-256 checksum tool found." >&2
+            exit 1
+          fi
+        }
+
+        checksum_http_code="$(
+          curl --location --silent --show-error --write-out '%{http_code}' \
+            "${headers[@]}" \
+            --output "${tmpdir}/checksums.txt" \
+            "${{ steps.artifact.outputs.checksums_url }}" || true
+        )"
+
+        if [[ "${checksum_http_code}" == "200" ]]; then
+          expected_line="$(
+            awk -v asset="${asset_name}" '
+              $2 == asset { print; found=1; exit }
+              END { exit found ? 0 : 1 }
+            ' "${tmpdir}/checksums.txt" || true
+          )"
+          if [[ -z "${expected_line}" ]]; then
+            echo "checksums.txt did not contain the drydock artifact checksum." >&2
+            exit 1
+          fi
+          expected_hash="${expected_line%% *}"
+          printf '%s  %s\n' "${expected_hash}" "${tmpdir}/drydock.tar.gz" > "${tmpdir}/checksums.selected"
+          verify_checksum
+        elif [[ "${checksum_http_code}" == "404" ]]; then
+          if [[ "${allow_unverified}" == "true" ]]; then
+            echo "No checksums.txt artifact found; continuing because allow-unverified is true." >&2
+          else
+            echo "No checksums.txt artifact found; refusing unverified install." >&2
+            exit 1
+          fi
+        else
+          echo "Failed to download checksums.txt; HTTP status ${checksum_http_code}." >&2
+          exit 1
+        fi
+
+        mkdir -p "${install_dir}"
+        tar -xzf "${tmpdir}/drydock.tar.gz" -C "${tmpdir}"
+        install -m 0755 "${tmpdir}/drydock" "${install_dir}/drydock"
