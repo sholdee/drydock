@@ -213,6 +213,7 @@ func (c *variantCollector) addURLVariants(prefix string, rawURL string) {
 	}
 	c.addUserInfoVariants(parsed.User)
 	c.add(parsed.RawQuery)
+	c.addRawQueryValues(parsed.RawQuery)
 	c.add(parsed.Fragment)
 }
 
@@ -267,6 +268,7 @@ func (c *variantCollector) addSCPStyleComponents(raw string) {
 	c.addRawQueryAndFragment(raw)
 	if parsed, err := url.Parse("ssh://" + raw); err == nil && parsed.Host != "" {
 		c.add(parsed.RawQuery)
+		c.addRawQueryValues(parsed.RawQuery)
 		c.add(parsed.Fragment)
 		c.addUserInfoVariants(parsed.User)
 	}
@@ -280,5 +282,18 @@ func (c *variantCollector) addRawQueryAndFragment(raw string) {
 	_, rawQuery, hasQuery := strings.Cut(withoutFragment, "?")
 	if hasQuery {
 		c.add(rawQuery)
+		c.addRawQueryValues(rawQuery)
+	}
+}
+
+func (c *variantCollector) addRawQueryValues(rawQuery string) {
+	values, err := url.ParseQuery(rawQuery)
+	if err != nil {
+		return
+	}
+	for _, queryValues := range values {
+		for _, value := range queryValues {
+			c.add(value)
+		}
 	}
 }
