@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" width="128" height="128">
+  <defs>
+    <linearGradient id="hull-grad" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0%" stop-color="#a84a22"/>
+      <stop offset="100%" stop-color="#c45a2c"/>
+    </linearGradient>
+  </defs>
+  <!-- Basin walls: tapered, containing lower hull -->
+  <path d="M16 58 L28 58 L34 102 L94 102 L100 58 L112 58 L106 110 L22 110 Z" fill="#2d3748"/>
+  <!-- Keel block -->
+  <rect x="59" y="90" width="10" height="12" fill="#4a5568"/>
+  <!-- Hull: gradient for subtle depth -->
+  <path d="M35 32 L93 32 L93 58 C93 80 77 90 64 90 C51 90 35 80 35 58 Z" fill="url(#hull-grad)"/>
+  <!-- Waterline stripe at basin wall tops -->
+  <line x1="36" y1="58" x2="92" y2="58" stroke="#9e4420" stroke-width="1.5"/>
+  <!-- Ark cabin: peaked roof, golden-oak tone -->
+  <path d="M64 12 L87 22 L87 32 L41 32 L41 22 Z" fill="#cc7e45"/>
+</svg>
