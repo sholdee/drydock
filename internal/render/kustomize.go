@@ -97,6 +97,7 @@ func hasAcquirableRemoteKustomizeGraphRefs(graph []kustomizeGraphNode) bool {
 				return true
 			}
 		}
+		//nolint:staticcheck // Kustomize still accepts bases; scan it for remote refs.
 		for _, base := range node.Kustomization.Bases {
 			if isAcquirableRemoteKustomizeResource(base) {
 				return true
@@ -114,6 +115,7 @@ func hasAcquirableRemoteKustomizeGraphRefs(graph []kustomizeGraphNode) bool {
 	return false
 }
 
+//nolint:gocyclo // Mirrors Kustomize's path-bearing field surface explicitly.
 func hasAcquirableRemoteKustomizePathRefs(kustomization types.Kustomization) bool {
 	if isAcquirableRemoteKustomizePathRef(kustomization.OpenAPI["path"]) {
 		return true
@@ -255,6 +257,7 @@ func renderKustomizeWithPreparedWorkspace(ctx context.Context, source ResolvedSo
 	return renderPlainKustomize(ctx, tempSource, tempRoot)
 }
 
+//nolint:gocyclo // Coordinates helm inflation, remote graph rewriting, and validation.
 func (w *kustomizeWorkspace) prepareKustomizationDir(ctx context.Context, dir, boundaryRoot, inheritedHelmNamespace string) error {
 	if err := ctx.Err(); err != nil {
 		return err
@@ -317,10 +320,12 @@ func (w *kustomizeWorkspace) prepareKustomizationDir(ctx context.Context, dir, b
 	}
 	kustomization.Resources = resources
 
+	//nolint:staticcheck // Kustomize still accepts bases; rewrite it for parity.
 	bases, err := w.prepareKustomizeRefs(ctx, dir, boundaryRoot, "bases", graphIndex, kustomization.Bases, childInheritedHelmNamespace, false)
 	if err != nil {
 		return fmt.Errorf("%s: %w", manifestPath, err)
 	}
+	//nolint:staticcheck // Kustomize still accepts bases; rewrite it for parity.
 	kustomization.Bases = bases
 
 	components, err := w.prepareKustomizeRefs(ctx, dir, boundaryRoot, "components", graphIndex, kustomization.Components, childInheritedHelmNamespace, false)
@@ -575,6 +580,7 @@ func (w *kustomizeWorkspace) rewriteKustomizePathRef(ctx context.Context, node k
 	return rewritten, true, nil
 }
 
+//nolint:gocyclo // Remote acquisition branches on file/dir mode, Git copies, and recursive graph preparation.
 func (w *kustomizeWorkspace) acquireAndCopyKustomizeRef(ctx context.Context, dir, field string, graphIndex, refIndex int, request remote.Request, ref kustomizeRemoteRef, mode remotePathMode, recurseDirs bool) (string, string, string, error) {
 	acquirer := w.opts.RemoteResourceAcquirer
 	if acquirer == nil {
@@ -699,6 +705,8 @@ func generatorRemoteFileSourceKey(ref string) (string, error) {
 
 	var name string
 	switch parsed.Kind {
+	case kustomizeRemoteNone:
+		return "", fmt.Errorf("unsupported remote generator file source kind %q", parsed.Kind)
 	case kustomizeRemoteHTTPFile:
 		parsedURL, err := url.Parse(parsed.URL)
 		if err != nil {
@@ -811,6 +819,7 @@ func validateWorkspaceHelmValueRefs(boundaryRoot, dir string, helmChart types.He
 	return nil
 }
 
+//nolint:gocyclo // Mirrors Kustomize's path-bearing field surface explicitly.
 func validateWorkspacePathBearingRefs(boundaryRoot, dir string, kustomization *types.Kustomization) error {
 	if path := kustomization.OpenAPI["path"]; path != "" {
 		if err := validateWorkspacePathRef(boundaryRoot, dir, "openapi.path", path); err != nil {
@@ -1249,6 +1258,7 @@ func copyWorkspaceTree(srcRoot, dstRoot string) error {
 	return copyTree(srcRoot, dstRoot, true)
 }
 
+//nolint:gocyclo // Tree copy handles regular files, directories, optional symlinks, and parent safety.
 func copyTree(srcRoot, dstRoot string, preserveSymlinks bool) error {
 	srcRoot = filepath.Clean(srcRoot)
 	dstRoot = filepath.Clean(dstRoot)
@@ -1346,13 +1356,6 @@ type kustomizeGraphNode struct {
 	ManifestPath           string
 	InheritedHelmNamespace string
 	Kustomization          types.Kustomization
-}
-
-func (node kustomizeGraphNode) effectiveHelmNamespace() string {
-	if node.Kustomization.Namespace != "" {
-		return node.Kustomization.Namespace
-	}
-	return node.InheritedHelmNamespace
 }
 
 func validateKustomizeGraph(ctx context.Context, repoRoot, sourceRoot string) (string, error) {
@@ -1760,11 +1763,6 @@ func generatedKustomizeWorkspacePath(root, rel string) (string, error) {
 	return generatedPath, nil
 }
 
-func isSupportedRemoteKustomizeFileResource(ref string) bool {
-	parsed, ok, err := parseKustomizeRemoteRef(ref)
-	return err == nil && ok && parsed.Kind == kustomizeRemoteHTTPFile
-}
-
 func isAcquirableRemoteKustomizeResource(ref string) bool {
 	_, _, ok, err := remoteRequestForKustomizeRef(ref)
 	return err == nil && ok
@@ -1776,6 +1774,8 @@ func remoteRequestForKustomizeRef(ref string) (remote.Request, kustomizeRemoteRe
 		return remote.Request{}, parsed, ok, err
 	}
 	switch parsed.Kind {
+	case kustomizeRemoteNone:
+		return remote.Request{}, parsed, false, nil
 	case kustomizeRemoteHTTPFile:
 		return remote.Request{
 			URL:  parsed.URL,
@@ -1800,6 +1800,8 @@ func acquiredRemoteKustomizePath(acquired remote.Result, ref kustomizeRemoteRef)
 	}
 
 	switch ref.Kind {
+	case kustomizeRemoteNone:
+		return "", fmt.Errorf("unsupported remote kustomize resource kind %q", ref.Kind)
 	case kustomizeRemoteHTTPFile:
 		return acquiredPath, nil
 	case kustomizeRemoteGit:

@@ -10,8 +10,12 @@ Supported in the MVP:
 - Kustomize and directory rendering, including repo-root-local Kustomize
   references
 - Kustomize `helmCharts` rendered through the shared Go-library Helm path
-- Safe single-file HTTP(S) Kustomize `resources:` rendered through the remote
+- Remote Kustomize HTTP(S) files and Git refs rendered through the remote
   resource cache
+- Remote Kustomize `resources`, `bases`, `components`, `patches.path`,
+  `patchesJson6902.path`, non-inline `patchesStrategicMerge`, `generators`,
+  `transformers`, `validators`, `configurations`, `crds`, `openapi.path`,
+  `replacements.path`, and generator file/env refs
 - Local Helm chart rendering
 - Chart-only remote Helm sources for public HTTP/S and OCI repositories
 - Public Helm chart fetching by default for render and diff chart dependencies
@@ -23,6 +27,8 @@ Supported in the MVP:
 - User Git repository cache entries for fetched path sources
 - Explicit Git HTTPS bearer/basic auth and SSH key-file auth
 - Explicit HTTP(S) Helm bearer/basic auth
+- Explicit HTTP(S) remote Kustomize bearer/basic auth, with Kustomize Git refs
+  reusing explicit Git credentials
 - Explicit Helm OCI registry config path plumbing
 - `diag --path` repository diagnostics through the render validation path
 - `get apps` structured table, name, JSON, and YAML output with Kubernetes
@@ -72,6 +78,9 @@ Network and cache behavior:
   `--git-password` for Git HTTPS auth.
 - Git SSH auth requires `--git-ssh-key-file` and `--git-known-hosts-file`.
   `ssh://host/...` defaults the SSH user to `git`.
+- Kustomize Git remote refs reuse the explicit `--git-*` credentials, but use
+  `--remote-cache-dir`, `--refresh-remotes`, and `--offline` for cache and
+  network behavior.
 - `--helm-bearer-token` takes precedence over `--helm-username` and
   `--helm-password` for HTTP(S) Helm repository auth.
 - `--registry-config PATH` is the only OCI registry credential source used by
@@ -80,8 +89,12 @@ Network and cache behavior:
 - `--refresh-remotes` refreshes cached remote Kustomize resources.
 - `--remote-cache-dir PATH` overrides the default remote resource cache
   directory.
+- `--remote-bearer-token` takes precedence over `--remote-username` and
+  `--remote-password` for HTTP(S) remote Kustomize resource auth.
 - Chart and remote-resource caches must stay outside Git repository trees.
 - `--allow-network` is not the Helm chart-fetch flag.
+- Cache hit/miss inspection is not a first-class command or structured output
+  surface yet; that is tracked as Phase 1B cache observability.
 
 Not reproduced offline:
 
@@ -93,8 +106,6 @@ Not reproduced offline:
 - Global `resource.customizations` `ignoreResourceUpdates`,
   `knownTypeFields`, health, actions, and Lua settings
 - Project/RBAC/destination validation
-- Authenticated remote resources
-- Remote Kustomize Git refs, bases, components, patches, generators,
-  transformers, validators, `crds`, `openapi`, and replacements
+
 The tool pins Argo CD dependencies. Upgrade Argo CD dependencies deliberately
 and update compatibility tests in the same change.

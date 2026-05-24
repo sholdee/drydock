@@ -57,12 +57,14 @@ go run ./cmd/argocd-local diag --path ./testdata/applications/e2e
 ```
 
 Render and diff commands fetch public Helm charts by default for Kustomize
-`helmCharts` and Argo CD chart-only sources. They also support safe single-file
-HTTP(S) Kustomize `resources:` entries through the remote resource cache.
-Use `--offline` to require cached or local chart availability and cached remote
-Kustomize resources. Use `--refresh-charts` and `--chart-cache-dir` for chart
-caching, and `--refresh-remotes` and `--remote-cache-dir` for remote Kustomize
-resource caching. Git path sources can be resolved with deterministic
+`helmCharts` and Argo CD chart-only sources. They also support remote
+Kustomize HTTP(S) file resources, Git refs, bases, components, patches,
+generators, transformers, validators, `crds`, `openapi.path`,
+`replacements.path`, and generator file/env refs through the remote resource
+cache. Use `--offline` to require cached or local chart availability and cached
+remote Kustomize resources. Use `--refresh-charts` and `--chart-cache-dir` for
+chart caching, and `--refresh-remotes` and `--remote-cache-dir` for remote
+Kustomize resource caching. Git path sources can be resolved with deterministic
 `--repo-map URL=PATH` entries, or fetched with `--allow-network` when the source
 path is not present locally. Git fetches use `--git-cache-dir` and
 `--refresh-git`. Caches must stay outside Git repository trees.
@@ -72,7 +74,10 @@ Git HTTPS accepts `--git-bearer-token` or `--git-username`/`--git-password`;
 Git SSH accepts `--git-ssh-key-file`, optional `--git-ssh-passphrase`, and
 requires `--git-known-hosts-file`; HTTP Helm repositories accept
 `--helm-bearer-token` or `--helm-username`/`--helm-password`; OCI Helm auth is
-read only from an explicit `--registry-config` path.
+read only from an explicit `--registry-config` path. Remote Kustomize HTTP(S)
+resources accept `--remote-bearer-token` or
+`--remote-username`/`--remote-password`; Kustomize Git refs reuse the explicit
+`--git-*` credentials.
 
 Manifest diffs default to unified diff output and also support `-o json` and
 `-o yaml` for structured `diff apps` and `diff app` results. Use repeatable
@@ -122,9 +127,8 @@ scripts/home-ops-pattern-smoke.sh
   and list generators.
 - No config management plugins.
 - No required shellouts in default workflows.
-- No authenticated remote Kustomize resources, remote Kustomize
-  bases/components/patches/generators/transformers/validators, `crds`,
-  `openapi`, or replacements.
+- No cache-inspection command or structured cache event stream yet. Remote Git,
+  Helm, and Kustomize cache observability is tracked as a Phase 1B follow-up.
 - Live server-side diff/apply behavior is not reproduced.
 - Global `resource.customizations` support does not include
   `ignoreResourceUpdates`, health, actions, or known type fields.

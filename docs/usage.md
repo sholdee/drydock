@@ -73,12 +73,27 @@ failure they print diagnostics to stderr and do not mix invalid partial manifest
 streams into stdout.
 
 Rendering supports directory sources, Kustomize sources, local Helm charts,
-Kustomize `helmCharts`, safe single-file HTTP(S) Kustomize `resources:`, and
+Kustomize `helmCharts`, remote Kustomize HTTP(S) files and Git refs, and
 Argo CD chart-only remote Helm sources. Public Helm chart fetching is enabled
 by default when a render needs chart dependencies. Path-based Git sources use
 the local `--path` tree when the source path exists there. Use
 `--repo-map URL=PATH` to force a source repo URL to a local checkout, or
 `--allow-network` to clone/fetch a missing path source from its `repoURL`.
+
+Supported Kustomize remote refs include:
+
+- `https://github.com/org/repo//path?ref=v1`
+- `git::https://github.com/org/repo.git//path?ref=v1`
+- `ssh://git@github.com/org/repo.git//path?ref=v1`
+- `git@github.com:org/repo.git//path?ref=v1`
+
+Remote Kustomize refs are supported in `resources`, `bases`, `components`,
+`patches.path`, `patchesJson6902.path`, non-inline `patchesStrategicMerge`,
+`generators`, `transformers`, `validators`, `configurations`, `crds`,
+`openapi.path`, `replacements.path`, and ConfigMap/Secret generator
+`files`, `envs`, and `env` entries. The renderer copies acquired content into
+a temporary workspace under generated `.argocd-local` paths and does not write
+generated manifests into the source tree.
 
 Network and cache flags:
 
@@ -102,6 +117,8 @@ Network and cache flags:
 - `--git-ssh-key-file PATH` authenticates Git SSH clone/fetch requests.
   `--git-known-hosts-file PATH` is required for SSH in this slice; encrypted
   keys can use `--git-ssh-passphrase PASSPHRASE`.
+- Kustomize Git remote refs reuse the explicit `--git-*` credentials, but use
+  the remote Kustomize cache and `--offline`/`--refresh-remotes` behavior.
 - `--helm-bearer-token TOKEN` authenticates HTTP Helm repository index and
   archive requests with bearer auth and takes precedence over basic auth.
 - `--helm-username USER` and `--helm-password PASS` authenticate HTTP Helm
@@ -112,6 +129,10 @@ Network and cache flags:
   rendering.
 - `--remote-cache-dir PATH` overrides the default user cache directory for
   cached remote Kustomize resources.
+- `--remote-bearer-token TOKEN` authenticates HTTP(S) remote Kustomize
+  resource requests with bearer auth and takes precedence over basic auth.
+- `--remote-username USER` and `--remote-password PASS` authenticate HTTP(S)
+  remote Kustomize resource requests with basic auth.
 - `--skip-kind KIND` omits rendered resources with that Kubernetes kind from
   build output, manifest diffs, image extraction, and render tests. The flag is
   repeatable and matches kind only.
@@ -122,7 +143,9 @@ Network and cache flags:
 repository-source fetching. `--offline` cannot be combined with
 `--allow-network`.
 
-Caches must stay outside Git repository trees.
+Caches must stay outside Git repository trees. A first-class cache inspection
+command or structured cache event stream is not implemented yet; that remains
+the Phase 1B cache-observability follow-up.
 
 ## Go API
 
@@ -320,9 +343,8 @@ These source paths are not wired in the current MVP:
 
 - Cluster, SCM provider, pull-request, plugin, matrix, and merge
   ApplicationSet generators.
-- Remote Kustomize Git refs, bases, components, patches, generators,
-  transformers, validators, `crds`, `openapi`, and replacements.
-- Authenticated remote resources.
+- Config management plugins.
+- Live cluster and Argo CD API sources.
 
 ## Optional Home-Ops Smoke
 
