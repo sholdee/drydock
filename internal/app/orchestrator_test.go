@@ -249,6 +249,57 @@ data:
 	}
 }
 
+func TestOrchestratorReportsProjectValidationDiagnostics(t *testing.T) {
+	root := t.TempDir()
+	writeBuildApplicationWithProject(t, root, "demo", "demo", "platform", "https://github.com/example/denied", "forbidden")
+	writeTestFile(t, filepath.Join(root, "projects", "platform.yaml"), `apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: platform
+spec:
+  sourceRepos:
+    - https://github.com/example/allowed
+  destinations:
+    - server: https://kubernetes.default.svc
+      namespace: workloads
+`)
+
+	result, err := Orchestrator{}.Build(context.Background(), BuildRequest{Path: root})
+	if err != nil {
+		t.Fatalf("Build() error = %v", err)
+	}
+	if !hasDiagnosticMessage(result.Diagnostics, "source repository") {
+		t.Fatalf("Diagnostics = %#v, want source policy warning", result.Diagnostics)
+	}
+	if !hasDiagnosticMessage(result.Diagnostics, "destination") {
+		t.Fatalf("Diagnostics = %#v, want destination policy warning", result.Diagnostics)
+	}
+}
+
+func TestOrchestratorProjectValidationStrictModeFails(t *testing.T) {
+	root := t.TempDir()
+	writeBuildApplicationWithProject(t, root, "demo", "demo", "platform", "https://github.com/example/denied", "workloads")
+	writeTestFile(t, filepath.Join(root, "projects", "platform.yaml"), `apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: platform
+spec:
+  sourceRepos:
+    - https://github.com/example/allowed
+  destinations:
+    - server: https://kubernetes.default.svc
+      namespace: workloads
+`)
+
+	result, err := Orchestrator{}.Build(context.Background(), BuildRequest{Path: root, Strict: true})
+	if err == nil {
+		t.Fatal("Build() error = nil, want strict project validation failure")
+	}
+	if len(result.Statuses) == 0 || result.Statuses[0].Status != ApplicationStatusSkipped {
+		t.Fatalf("Statuses = %#v, want skipped status from strict project validation", result.Statuses)
+	}
+}
+
 func TestOrchestratorBuildRendersPlainDirectorySource(t *testing.T) {
 	root := t.TempDir()
 	writeTestFile(t, filepath.Join(root, "apps", "argocd", "plain-app.yaml"), `apiVersion: argoproj.io/v1alpha1
@@ -1298,6 +1349,44 @@ func TestOrchestratorBuildAppPreservesSelectedApplicationInputs(t *testing.T) {
 	}
 }
 
+func TestOrchestratorBuildAppStrictValidatesOnlySelectedApplication(t *testing.T) {
+	root := t.TempDir()
+	writeBuildApplicationWithProject(t, root, "selected", "selected", "platform", "https://github.com/example/allowed", "workloads")
+	writeBuildApplicationWithProject(t, root, "unrelated", "unrelated", "platform", "https://github.com/example/denied", "workloads")
+	writeTestFile(t, filepath.Join(root, "settings", "allowed-repo.yaml"), `apiVersion: v1
+kind: Secret
+metadata:
+  name: allowed-repo
+  labels:
+    argocd.argoproj.io/secret-type: repository
+stringData:
+  url: https://github.com/example/allowed
+  project: platform
+`)
+	writeTestFile(t, filepath.Join(root, "projects", "platform.yaml"), `apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: platform
+spec:
+  sourceRepos:
+    - https://github.com/example/allowed
+  destinations:
+    - server: https://kubernetes.default.svc
+      namespace: workloads
+`)
+
+	result, err := Orchestrator{}.BuildApp(context.Background(), BuildAppRequest{
+		Name:         "selected",
+		BuildRequest: BuildRequest{Path: root, Strict: true},
+	})
+	if err != nil {
+		t.Fatalf("BuildApp() error = %v", err)
+	}
+	if hasDiagnosticMessage(result.Diagnostics, "unrelated") || hasDiagnosticMessage(result.Diagnostics, "denied") {
+		t.Fatalf("Diagnostics = %#v, want no unrelated project violation", result.Diagnostics)
+	}
+}
+
 func TestOrchestratorListApplicationsPreservesMatrixGeneratorInputPaths(t *testing.T) {
 	root := t.TempDir()
 	for _, dir := range []string{
@@ -1603,6 +1692,31 @@ metadata:
   name: `+configMapName+`
 data:
   key: value
+`)
+}
+
+func writeBuildApplicationWithProject(t *testing.T, root, appName, configMapName, projectName, repoURL, destinationNamespace string) {
+	t.Helper()
+	writeTestFile(t, filepath.Join(root, "apps", appName+".yaml"), `apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: `+appName+`
+  namespace: argocd
+spec:
+  project: `+projectName+`
+  source:
+    repoURL: `+repoURL+`
+    path: manifests/`+appName+`
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: `+destinationNamespace+`
+`)
+	writeTestFile(t, filepath.Join(root, "manifests", appName, "cm.yaml"), `apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: `+configMapName+`
+data:
+  value: demo
 `)
 }
 

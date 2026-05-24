@@ -16,6 +16,7 @@ import (
 	"github.com/home-operations/argocd-local/internal/diagnostic"
 	"github.com/home-operations/argocd-local/internal/discovery"
 	"github.com/home-operations/argocd-local/internal/manifest"
+	"github.com/home-operations/argocd-local/internal/project"
 	"github.com/home-operations/argocd-local/internal/remote"
 	"github.com/home-operations/argocd-local/internal/render"
 	sourcepkg "github.com/home-operations/argocd-local/internal/source"
@@ -76,6 +77,7 @@ type ApplicationStatus struct {
 type BuildResult struct {
 	Applications         []argoappv1.Application
 	ApplicationInputs    []ApplicationSelectionInput
+	Projects             []argoappv1.AppProject
 	Manifests            []render.Manifest
 	ApplicationManifests []ApplicationManifest
 	Diagnostics          []diagnostic.Diagnostic
@@ -132,6 +134,7 @@ func (o Orchestrator) ListApplications(_ context.Context, request BuildRequest) 
 	result.Settings = settings
 	settingsDiags = normalizeDiagnostics(settingsDiags, request.Strict, false)
 	result.Diagnostics = append(result.Diagnostics, settingsDiags...)
+	result.Projects = appendDiscoveredProjects(result.Projects, discovered)
 
 	for _, appFile := range discovered.Applications {
 		result.Applications = append(result.Applications, appFile.Application)
@@ -200,6 +203,13 @@ func (o Orchestrator) Build(ctx context.Context, request BuildRequest) (BuildRes
 
 	result, err := o.prepareBuildResult(ctx, request, root)
 	if err != nil {
+		return result, err
+	}
+	projectDiags := project.ValidateApplications(result.Applications, result.Projects, result.Settings)
+	projectDiags = normalizeDiagnostics(projectDiags, request.Strict, false)
+	result.Diagnostics = append(result.Diagnostics, projectDiags...)
+	if err := diagnosticFailure(projectDiags, request.Strict); err != nil {
+		result.Statuses = skippedApplicationStatuses(result.Applications, err)
 		return result, err
 	}
 	if err := validateBuildNetworkOptions(request); err != nil {
@@ -301,7 +311,13 @@ func (o Orchestrator) prepareBuildResult(ctx context.Context, request BuildReque
 
 	var result BuildResult
 	result.Applications = append(result.Applications, request.Applications...)
-	settings, diags, err := loadSettingsFromPath(root)
+	discovered, err := discovery.Scan(root, discovery.Options{})
+	if err != nil {
+		result.Statuses = skippedApplicationStatuses(result.Applications, err)
+		return result, err
+	}
+	result.Projects = appendDiscoveredProjects(result.Projects, discovered)
+	settings, diags, err := loadSettingsFromDiscovery(root, discovered)
 	if err != nil {
 		result.Statuses = skippedApplicationStatuses(result.Applications, err)
 		return result, err
@@ -316,12 +332,11 @@ func (o Orchestrator) prepareBuildResult(ctx context.Context, request BuildReque
 	return result, nil
 }
 
-func loadSettingsFromPath(root string) (config.ArgoSettings, []diagnostic.Diagnostic, error) {
-	discovered, err := discovery.Scan(root, discovery.Options{})
-	if err != nil {
-		return config.DefaultSettings(), nil, err
+func appendDiscoveredProjects(projects []argoappv1.AppProject, discovered discovery.Result) []argoappv1.AppProject {
+	for _, projectFile := range discovered.Projects {
+		projects = append(projects, projectFile.Project)
 	}
-	return loadSettingsFromDiscovery(root, discovered)
+	return projects
 }
 
 func loadSettingsFromDiscovery(root string, discovered discovery.Result) (config.ArgoSettings, []diagnostic.Diagnostic, error) {
