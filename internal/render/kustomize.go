@@ -869,8 +869,8 @@ func rejectSymlinkedPath(root, path string) error {
 }
 
 func isSupportedRemoteKustomizeFileResource(ref string) bool {
-	_, err := remote.NormalizeURL(ref)
-	return err == nil
+	parsed, ok, err := parseKustomizeRemoteRef(ref)
+	return err == nil && ok && parsed.Kind == kustomizeRemoteHTTPFile
 }
 
 func unsupportedRemoteKustomizeRefError(field, ref string) error {
@@ -878,26 +878,7 @@ func unsupportedRemoteKustomizeRefError(field, ref string) error {
 }
 
 func redactKustomizeRef(ref string) string {
-	ref = strings.TrimSpace(ref)
-	if strings.Contains(ref, "://") {
-		nested := ref
-		if schemeIndex := strings.Index(ref, "://"); schemeIndex > 0 {
-			if marker := strings.LastIndex(ref[:schemeIndex], "::"); marker >= 0 {
-				nested = ref[marker+2:]
-			}
-		}
-		if redacted := remote.RedactURL(nested); redacted != "[invalid-url]" {
-			return redacted
-		}
-		return "[remote-ref]"
-	}
-	if strings.Contains(ref, "?") || strings.Contains(ref, "#") || strings.Contains(ref, "@") {
-		return "[remote-ref]"
-	}
-	if strings.Contains(ref, "//") && strings.ContainsAny(ref, ".:") {
-		return "[remote-ref]"
-	}
-	return ref
+	return redactKustomizeRemoteRef(ref)
 }
 
 func safeRemoteResourceBase(ref string) string {
@@ -939,6 +920,9 @@ func isInlineStrategicMergePatch(patch string) bool {
 
 func isRemoteKustomizeRef(ref string) bool {
 	trimmed := strings.TrimSpace(ref)
+	if _, ok, err := parseKustomizeRemoteRef(trimmed); ok || err != nil {
+		return true
+	}
 	lower := strings.ToLower(trimmed)
 	if strings.Contains(trimmed, "://") {
 		return true
