@@ -20,6 +20,12 @@ repository diagnostics without printing manifests, and `diag -o json` or
 This project is early implementation work. See `docs/design.md` for the
 approved MVP design and `docs/roadmap.md` for outstanding work.
 
+Default commands are offline desired-vs-desired analysis. They do not contact a
+Kubernetes cluster or Argo CD server, do not read ambient live runtime config,
+and do not require `kubectl`, `argocd`, Helm CLI, or Kustomize CLI. Kubernetes
+defaulting, admission mutation, Argo CD server-side diff, and live-only
+managed-field ownership are design-gated rather than silently approximated.
+
 ## Go API
 
 Embedding callers can use `github.com/sholdee/drydock/pkg/drydock`
@@ -199,6 +205,8 @@ scripts/home-ops-pattern-smoke.sh
 ## Current MVP Limits
 
 - Desired-vs-desired only; no live cluster diff.
+- No live Argo CD server integration or server-side diff parity.
+- No Kubernetes defaulting or admission mutation approximation.
 - Live provider access for ApplicationSet provider-backed generators remains
   deferred. Use explicit local fixtures for cluster, clusterDecisionResource,
   SCM provider, pull-request, and plugin generators.

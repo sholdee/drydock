@@ -15,6 +15,15 @@ does not contact the Kubernetes API server, does not run Argo CD controllers,
 and does not claim to reproduce server-side apply prediction, admission
 mutation, or managed-fields ownership.
 
+Default render, diff, image, and diagnostic workflows are offline
+desired-vs-desired analysis. Live-cluster diffing, Argo CD server-side diff
+parity, Kubernetes defaulting, admission mutation, and live-only
+managed-fields ownership prediction are not approximated silently. Any future
+implementation for those behaviors must first update the live integration
+design gate and keep the default offline path independent of a Kubernetes
+cluster, Argo CD server, `kubectl`, `argocd`, Helm/Kustomize command-line
+tools, and external render services.
+
 ## Repository
 
 The canonical module and repository identity is:
@@ -57,6 +66,9 @@ MVP supports:
 Deferred:
 
 - Live-cluster diff.
+- Argo CD API/server integration, Argo CD server-side diff parity,
+  Kubernetes defaulting, admission mutation, and live-only managed-fields
+  ownership prediction.
 - CLI config management plugin execution, shellout plugin adapters, Argo CD
   repo-server sidecar plugin discovery, ambient plugin configuration, ambient
   plugin environment loading, and plugin credential injection.

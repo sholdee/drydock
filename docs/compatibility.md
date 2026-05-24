@@ -192,6 +192,11 @@ Not reproduced offline:
   fixtures are supported.
 - Live cluster and Argo CD API sources
 
+These live-state behaviors must stay explicit unsupported/deferred results in
+offline workflows. Do not approximate them silently in desired-vs-desired diffs.
+Any implementation must pass the live integration design gate and preserve the
+default local, library-backed render/diff path.
+
 Live integration is design-gated in
 `docs/reports/2026-05-24-live-integration-design-gate.md`. Future live work
 must stay explicitly opt-in and must not change the default offline render/diff

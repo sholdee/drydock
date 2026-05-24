@@ -573,6 +573,22 @@ should stay suppressed for runtime failures.
 - Do not add supported features, commands, renderers, providers, diagnostics, or
   validation commands without updating this file.
 
+## Future Live Work Checklist
+
+Before implementing any live Kubernetes, Argo CD server, server-side diff,
+defaulting, admission, or live managed-fields behavior:
+
+- Update and obtain approval for the live integration design gate first.
+- Keep default render, diff, image, and diagnostic commands offline.
+- Require explicit opt-in configuration for every live endpoint, credential,
+  and mode.
+- Keep external tool shellouts out of default workflows; any compatibility
+  shellout must be separately approved and opt-in.
+- Add tests proving default paths run without a cluster, Argo CD runtime,
+  network access, `kubectl`, `argocd`, Helm CLI, or Kustomize CLI.
+- Document unsupported divergence instead of silently approximating live-only
+  behavior.
+
 ## Agent Maintenance Rule
 
 When you add, remove, or materially change a package, command, renderer,
