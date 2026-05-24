@@ -171,7 +171,11 @@ func isRedactedSCPStyleGitURL(raw string) bool {
 		return false
 	}
 	host := raw[:colon]
-	return strings.Contains(host, ".") && !strings.Contains(host, "@")
+	repoPath := raw[colon+1:]
+	if host == "" || repoPath == "" || strings.Contains(host, "@") {
+		return false
+	}
+	return strings.Contains(host, ".") || strings.ContainsAny(repoPath, `/\`)
 }
 
 func NormalizeURL(raw string) (string, error) {
