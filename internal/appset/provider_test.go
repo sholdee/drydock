@@ -107,7 +107,11 @@ scmRepositories:
 	if got := data.PullRequests[0].Number; got != 42 {
 		t.Fatalf("pull request number = %d, want 42", got)
 	}
-	if got := data.Plugins[0].Outputs[0]["environment"]; got != "test" {
+	output, ok := data.Plugins[0].Outputs[0].(map[string]any)
+	if !ok {
+		t.Fatalf("plugin output = %#v, want mapping object", data.Plugins[0].Outputs[0])
+	}
+	if got := output["environment"]; got != "test" {
 		t.Fatalf("plugin output = %#v, want environment test", data.Plugins[0].Outputs[0])
 	}
 
@@ -146,6 +150,27 @@ clusters:
 		t.Fatalf("LoadProviderFixtures() succeeded with unknown item field")
 	}
 	assertProviderFixtureInvalidDiagnostic(t, diags, path)
+}
+
+func TestLoadProviderFixtureAllowsPluginOutputShapeForGeneratorDiagnostic(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "fixture.yaml")
+	writeProviderFixture(t, path, `
+plugins:
+  - configMapRef: generator-plugin
+    outputs:
+      - not-a-map
+`)
+
+	data, diags, err := LoadProviderFixtures([]string{path})
+	if err != nil {
+		t.Fatalf("LoadProviderFixtures() error = %v", err)
+	}
+	if len(diags) != 0 {
+		t.Fatalf("diagnostics = %#v", diags)
+	}
+	if got := data.Plugins[0].Outputs[0]; got != "not-a-map" {
+		t.Fatalf("plugin output = %#v, want scalar preserved for generator diagnostic", got)
+	}
 }
 
 func TestLoadProviderFixtureRejectsUnsupportedExtension(t *testing.T) {
@@ -201,6 +226,34 @@ clusters:
 	}
 }
 
+func TestLoadProviderFixtureRejectsDuplicatePluginOutputs(t *testing.T) {
+	dir := t.TempDir()
+	first := filepath.Join(dir, "first.yaml")
+	second := filepath.Join(dir, "second.yaml")
+	writeProviderFixture(t, first, `
+plugins:
+  - configMapRef: generator-plugin
+    outputs:
+      - environment: prod
+`)
+	writeProviderFixture(t, second, `
+plugins:
+  - configMapRef: generator-plugin
+    outputs:
+      - environment: prod
+      - environment: stage
+`)
+
+	_, diags, err := LoadProviderFixtures([]string{first, second})
+	if err == nil {
+		t.Fatalf("LoadProviderFixtures() succeeded with duplicate plugin output identity")
+	}
+	assertProviderFixtureInvalidDiagnostic(t, diags, second)
+	if !strings.Contains(diags[0].Message, "duplicate provider fixture plugin") {
+		t.Fatalf("diagnostic message = %q, want duplicate plugin", diags[0].Message)
+	}
+}
+
 func TestProviderFixtureSortsInputs(t *testing.T) {
 	data, diags, err := MergeProviderData(ProviderData{
 		Clusters: []ClusterInput{
@@ -225,9 +278,9 @@ func TestProviderFixtureSortsInputs(t *testing.T) {
 			{Provider: "github", Organization: "another", Repository: "repo", Number: 30},
 		},
 		Plugins: []PluginInput{
-			{ConfigMapRef: "plugin-b", Outputs: []map[string]any{{"environment": "prod"}}},
-			{ConfigMapRef: "plugin-a", Outputs: []map[string]any{{"environment": "stage"}}},
-			{ConfigMapRef: "plugin-a", Outputs: []map[string]any{{"environment": "dev"}}},
+			{ConfigMapRef: "plugin-b", Outputs: []any{map[string]any{"environment": "prod"}}},
+			{ConfigMapRef: "plugin-a", Outputs: []any{map[string]any{"environment": "stage"}}},
+			{ConfigMapRef: "plugin-a", Outputs: []any{map[string]any{"environment": "dev"}}},
 		},
 	})
 	if err != nil {
@@ -252,7 +305,11 @@ func TestProviderFixtureSortsInputs(t *testing.T) {
 	if got := []int{data.PullRequests[1].Number, data.PullRequests[2].Number, data.PullRequests[3].Number}; got[0] != 2 || got[1] != 10 || got[2] != 20 {
 		t.Fatalf("example pull request order = %#v, want numeric order 2, 10, 20", got)
 	}
-	if got := data.Plugins[0].Outputs[0]["environment"]; got != "dev" {
+	output, ok := data.Plugins[0].Outputs[0].(map[string]any)
+	if !ok {
+		t.Fatalf("first plugin output = %#v, want mapping object", data.Plugins[0].Outputs[0])
+	}
+	if got := output["environment"]; got != "dev" {
 		t.Fatalf("first plugin output = %#v, want dev", data.Plugins[0].Outputs[0])
 	}
 }
