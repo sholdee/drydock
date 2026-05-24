@@ -306,6 +306,49 @@ func TestRenderApplicationPassesHelmRenderSwitches(t *testing.T) {
 	}
 }
 
+func TestRenderApplicationPassesPluginOptions(t *testing.T) {
+	stringValue := "fast"
+	application := argoappv1.Application{
+		ObjectMeta: metav1.ObjectMeta{Namespace: "argocd", Name: "plugin-app"},
+		Spec: argoappv1.ApplicationSpec{
+			Source: &argoappv1.ApplicationSource{
+				RepoURL: "https://repo",
+				Path:    "apps/plugin",
+				Plugin: &argoappv1.ApplicationSourcePlugin{
+					Name: "cue",
+					Env: argoappv1.Env{
+						{Name: "FEATURE", Value: "enabled"},
+					},
+					Parameters: argoappv1.ApplicationSourcePluginParameters{
+						{Name: "mode", String_: &stringValue},
+					},
+				},
+			},
+		},
+	}
+	var got render.RenderOptions
+	provider := providerFunc(func(_ context.Context, _ render.ResolvedSource, opts render.RenderOptions) ([]render.Manifest, []diagnostic.Diagnostic, error) {
+		got = opts
+		return nil, nil, nil
+	})
+
+	if _, err := RenderApplication(context.Background(), application, provider); err != nil {
+		t.Fatalf("RenderApplication() error = %v", err)
+	}
+	if got.Plugin == nil {
+		t.Fatalf("Plugin = nil, want plugin config")
+	}
+	if got.Plugin.Name != "cue" {
+		t.Fatalf("Plugin.Name = %q, want cue", got.Plugin.Name)
+	}
+	if len(got.Plugin.Env) != 1 || got.Plugin.Env[0].Name != "FEATURE" || got.Plugin.Env[0].Value != "enabled" {
+		t.Fatalf("Plugin.Env = %#v, want FEATURE=enabled", got.Plugin.Env)
+	}
+	if len(got.Plugin.Parameters) != 1 || got.Plugin.Parameters[0].Name != "mode" || got.Plugin.Parameters[0].String_ == nil || *got.Plugin.Parameters[0].String_ != "fast" {
+		t.Fatalf("Plugin.Parameters = %#v, want string parameter mode=fast", got.Plugin.Parameters)
+	}
+}
+
 func TestLocalProviderAnchorsRelativeRefRootsUnderRepoRoot(t *testing.T) {
 	root := t.TempDir()
 	writeAppTestValueChart(t, filepath.Join(root, "chart"))

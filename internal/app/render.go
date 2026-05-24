@@ -54,11 +54,11 @@ func RenderApplication(ctx context.Context, application argoappv1.Application, p
 			RepoURL:        sourcePlan.Source.RepoURL,
 			TargetRevision: sourcePlan.Source.TargetRevision,
 		}, opts)
+		result.Diagnostics = append(result.Diagnostics, sourceDiagnostics(application, sourcePlan, diags)...)
 		if err != nil {
 			return result, fmt.Errorf("%s: %w", renderSourceContext(application, sourcePlan), err)
 		}
 
-		result.Diagnostics = append(result.Diagnostics, sourceDiagnostics(application, sourcePlan, diags)...)
 		for _, rendered := range manifests {
 			if rendered.Object != nil {
 				rendered.Object = rendered.Object.DeepCopy()
@@ -89,6 +89,14 @@ func renderOptions(application argoappv1.Application, source argoappv1.Applicati
 	opts := render.RenderOptions{
 		AppName:   application.Name,
 		Namespace: application.Spec.Destination.Namespace,
+	}
+	if source.Plugin != nil {
+		plugin := source.Plugin.DeepCopy()
+		opts.Plugin = &render.PluginConfig{
+			Name:       plugin.Name,
+			Env:        append(argoappv1.Env(nil), plugin.Env...),
+			Parameters: plugin.Parameters.DeepCopy(),
+		}
 	}
 	if source.Helm == nil {
 		return opts, nil
