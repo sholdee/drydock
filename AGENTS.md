@@ -24,6 +24,7 @@ Read the design spec and roadmap before substantive changes:
 
 - `docs/design.md`
 - `docs/roadmap.md`
+- `docs/plans/` for approved or proposed phase implementation plans.
 - `docs/reports/2026-05-24-live-integration-design-gate.md` before proposing
   Kubernetes, Argo CD server, server-side diff, defaulting, admission, or
   managed-fields ownership work.
