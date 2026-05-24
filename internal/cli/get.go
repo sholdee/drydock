@@ -43,7 +43,11 @@ func newGetCommand(deps Dependencies) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			result, err := deps.Orchestrator.ListApplications(context.Background(), app.BuildRequest{Path: appsFlags.path, Strict: appsFlags.strict})
+			repoMaps, err := parseRepoMaps(appsFlags.repoMaps)
+			if err != nil {
+				return err
+			}
+			result, err := deps.Orchestrator.ListApplications(context.Background(), buildRequestFromFlags(appsFlags, repoMaps))
 			if err != nil {
 				if renderErr := renderDiagnostics(cmd.ErrOrStderr(), result.Diagnostics); renderErr != nil {
 					return renderErr
@@ -77,26 +81,7 @@ func newGetCommand(deps Dependencies) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			buildRequest := app.BuildRequest{
-				Path:                         imagesFlags.path,
-				Strict:                       imagesFlags.strict,
-				Offline:                      imagesFlags.offline,
-				RefreshCharts:                imagesFlags.refreshCharts,
-				ChartCacheDir:                imagesFlags.chartCacheDir,
-				ChartCredentials:             imagesFlags.chartCredentials(),
-				RepoMaps:                     repoMaps,
-				AllowNetwork:                 imagesFlags.allowNetwork,
-				GitCacheDir:                  imagesFlags.gitCacheDir,
-				RefreshGit:                   imagesFlags.refreshGit,
-				GitCredentials:               imagesFlags.gitCredentials(),
-				RefreshRemoteResources:       imagesFlags.refreshRemotes,
-				RemoteResourceCacheDir:       imagesFlags.remoteCacheDir,
-				RemoteResourceCredentials:    imagesFlags.remoteCredentials(),
-				RemoteResourceGitCredentials: imagesFlags.remoteGitCredentials(),
-				SkipKinds:                    append([]string(nil), imagesFlags.skipKinds...),
-				SkipCRDs:                     imagesFlags.skipCRDs,
-				SkipSecrets:                  imagesFlags.skipSecrets,
-			}
+			buildRequest := buildRequestFromFlags(imagesFlags, repoMaps)
 			listResult, err := deps.Orchestrator.ListApplications(context.Background(), buildRequest)
 			if err != nil {
 				if renderErr := renderDiagnostics(cmd.ErrOrStderr(), listResult.Diagnostics); renderErr != nil {

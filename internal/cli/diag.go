@@ -33,24 +33,9 @@ func newDiagCommand(deps Dependencies) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			result, err := deps.Orchestrator.Diag(context.Background(), app.DiagRequest{
-				Path:                         flags.path,
-				Strict:                       flags.strict,
-				Offline:                      flags.offline,
-				RefreshCharts:                flags.refreshCharts,
-				ChartCacheDir:                flags.chartCacheDir,
-				ChartCredentials:             flags.chartCredentials(),
-				RepoMaps:                     repoMaps,
-				AllowNetwork:                 flags.allowNetwork,
-				GitCacheDir:                  flags.gitCacheDir,
-				RefreshGit:                   flags.refreshGit,
-				GitCredentials:               flags.gitCredentials(),
-				RefreshRemoteResources:       flags.refreshRemotes,
-				RemoteResourceCacheDir:       flags.remoteCacheDir,
-				RemoteResourceCredentials:    flags.remoteCredentials(),
-				RemoteResourceGitCredentials: flags.remoteGitCredentials(),
-				RecordCacheEvents:            flags.cacheEvents,
-			})
+			request := buildRequestFromFlags(flags, repoMaps)
+			request.RecordCacheEvents = flags.cacheEvents
+			result, err := deps.Orchestrator.Diag(context.Background(), app.DiagRequest(request))
 			result.Diagnostics = diagnostic.WithStableCodes(result.Diagnostics)
 			switch output {
 			case "text":

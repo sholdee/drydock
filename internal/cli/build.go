@@ -31,26 +31,7 @@ func newBuildCommand(deps Dependencies) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			result, err := deps.Orchestrator.Build(context.Background(), app.BuildRequest{
-				Path:                         appsFlags.path,
-				Strict:                       appsFlags.strict,
-				Offline:                      appsFlags.offline,
-				RefreshCharts:                appsFlags.refreshCharts,
-				ChartCacheDir:                appsFlags.chartCacheDir,
-				ChartCredentials:             appsFlags.chartCredentials(),
-				RepoMaps:                     repoMaps,
-				AllowNetwork:                 appsFlags.allowNetwork,
-				GitCacheDir:                  appsFlags.gitCacheDir,
-				RefreshGit:                   appsFlags.refreshGit,
-				GitCredentials:               appsFlags.gitCredentials(),
-				RefreshRemoteResources:       appsFlags.refreshRemotes,
-				RemoteResourceCacheDir:       appsFlags.remoteCacheDir,
-				RemoteResourceCredentials:    appsFlags.remoteCredentials(),
-				RemoteResourceGitCredentials: appsFlags.remoteGitCredentials(),
-				SkipKinds:                    append([]string(nil), appsFlags.skipKinds...),
-				SkipCRDs:                     appsFlags.skipCRDs,
-				SkipSecrets:                  appsFlags.skipSecrets,
-			})
+			result, err := deps.Orchestrator.Build(context.Background(), buildRequestFromFlags(appsFlags, repoMaps))
 			if err != nil {
 				if renderErr := renderDiagnostics(cmd.ErrOrStderr(), result.Diagnostics); renderErr != nil {
 					return renderErr
@@ -73,27 +54,8 @@ func newBuildCommand(deps Dependencies) *cobra.Command {
 				return err
 			}
 			result, err := deps.Orchestrator.BuildApp(context.Background(), app.BuildAppRequest{
-				Name: args[0],
-				BuildRequest: app.BuildRequest{
-					Path:                         appFlags.path,
-					Strict:                       appFlags.strict,
-					Offline:                      appFlags.offline,
-					RefreshCharts:                appFlags.refreshCharts,
-					ChartCacheDir:                appFlags.chartCacheDir,
-					ChartCredentials:             appFlags.chartCredentials(),
-					RepoMaps:                     repoMaps,
-					AllowNetwork:                 appFlags.allowNetwork,
-					GitCacheDir:                  appFlags.gitCacheDir,
-					RefreshGit:                   appFlags.refreshGit,
-					GitCredentials:               appFlags.gitCredentials(),
-					RefreshRemoteResources:       appFlags.refreshRemotes,
-					RemoteResourceCacheDir:       appFlags.remoteCacheDir,
-					RemoteResourceCredentials:    appFlags.remoteCredentials(),
-					RemoteResourceGitCredentials: appFlags.remoteGitCredentials(),
-					SkipKinds:                    append([]string(nil), appFlags.skipKinds...),
-					SkipCRDs:                     appFlags.skipCRDs,
-					SkipSecrets:                  appFlags.skipSecrets,
-				},
+				Name:         args[0],
+				BuildRequest: buildRequestFromFlags(appFlags, repoMaps),
 			})
 			if err != nil {
 				if renderErr := renderDiagnostics(cmd.ErrOrStderr(), result.Diagnostics); renderErr != nil {

@@ -104,7 +104,8 @@ Current shared flags are `--path`, `--path-orig`, `--selector`/`-l`, `--repo-map
 `--remote-password`, `--remote-bearer-token`, `--changed-only`,
 `--strict-changed-only`, `--strict`, `--exit-code`, `--output`/`-o`,
 `--unified`/`-u`, `--strip-attr`, `--skip-kind`, `--skip-crds`,
-`--skip-secrets`, `--limit-bytes`, and `--cache-events`.
+`--skip-secrets`, `--appset-provider-fixture`, `--limit-bytes`, and
+`--cache-events`.
 
 Cache lifecycle commands additionally use `--source`, `--older-than`,
 `--dry-run`, `--yes`, `--key`, and `--all`. They do not render, fetch, clone,
@@ -155,12 +156,13 @@ keep default scans tolerant of unrelated YAML files.
 
 ## ApplicationSet Support
 
-`internal/appset` supports local Git directories, Git files, list, matrix, and
-merge generators with Go templates. Use path-style matching, keep
-include/exclude semantics deterministic, and preserve Argo CD template
-behavior such as `missingkey=error` and Sprig functions. Multiple supported
-top-level generators are evaluated independently and concatenated in manifest
-order. Unsupported generators must produce diagnostics.
+`internal/appset` supports local Git directories, Git files, list, matrix,
+merge, and explicit fixture-backed provider generators with Go templates. Use
+path-style matching, keep include/exclude semantics deterministic, and
+preserve Argo CD template behavior such as `missingkey=error` and Sprig
+functions. Multiple supported top-level generators are evaluated independently
+and concatenated in manifest order. Unsupported generators must produce
+diagnostics.
 
 List generators support both `elements` and `elementsYaml`; `elementsYaml`
 entries must decode to mapping objects, including empty mappings. Supported
@@ -172,10 +174,20 @@ Matrix generators support exactly two child generators. The second child is
 interpolated from first-child params, including list `elementsYaml` values.
 Merge generators support two or more child generators and deterministic
 merge-key overlays in base generator order. Supported matrix/merge children
-are list, Git directories, Git files, and nested matrix/merge combinations
-where the Argo CD v3 nested JSON API permits them. Provider-backed children,
-including cluster, clusterDecisionResource, SCM provider, pull-request, and
-plugin generators, remain unsupported diagnostics in this phase.
+are list, Git directories, Git files, fixture-backed provider generators, and
+nested matrix/merge combinations where the Argo CD v3 nested JSON API permits
+them.
+
+Provider-backed ApplicationSet generators are offline fixture-backed only.
+The CLI flag is `--appset-provider-fixture PATH`, and the public Go API uses
+`ApplicationSetProviderFixtures` or `ApplicationSetProviderData`. Do not add
+Kubernetes API reads, Argo CD API reads, SCM/pull-request/cloud API calls,
+plugin service calls, shellouts, or ambient credential discovery for these
+generators. If no provider data is supplied, preserve the existing unsupported
+generator diagnostic. If provider data is supplied but no entries match, emit
+`appset.provider-no-match`. If a provider filter cannot be evaluated from
+fixture fields, fail closed with `appset.provider-unsupported-filter`.
+Fixture decode/shape errors use `appset.provider-fixture-invalid`.
 
 Git files generator support is intentionally local and fail-closed. Matches are
 sorted by normalized relative path. Do not follow symlinks, allow absolute
@@ -198,10 +210,14 @@ file even when another pattern includes it.
 The MVP currently supports:
 
 - Direct `Application` CR discovery.
-- Git-directory, Git-files, list, matrix, and merge `ApplicationSet` CR
-  expansion, including list `elementsYaml`, generator selectors, generator
-  template overrides, matrix interpolation, deterministic merge-key overlays,
-  and supported nested matrix/merge combinations.
+- Git-directory, Git-files, list, matrix, merge, and explicit
+  fixture-backed provider `ApplicationSet` CR expansion, including list
+  `elementsYaml`, generator selectors, generator template overrides, matrix
+  interpolation, deterministic merge-key overlays, and supported nested
+  matrix/merge combinations.
+- Offline fixture-backed cluster, clusterDecisionResource, SCM provider,
+  pull-request, and plugin ApplicationSet generators through local YAML/JSON
+  files or public Go API data structs.
 - Single-source and multi-source planning for supported source types.
 - Kustomize, directory, local Helm chart, Kustomize `helmCharts`, remote
   Kustomize HTTP(S) files and Git refs, and chart-only remote Helm source
@@ -278,8 +294,9 @@ Do not treat these as supported without an explicit design update:
 - CLI config management plugin execution, shellout plugin adapters, Argo CD
   repo-server sidecar plugin discovery, ambient plugin configuration, ambient
   plugin environment loading, and plugin credential injection.
-- Cluster, clusterDecisionResource, SCM provider, pull-request, and plugin
-  ApplicationSet generators.
+- Live Kubernetes, Argo CD, SCM provider, pull-request provider, cloud
+  provider, or plugin-service access for ApplicationSet provider generators.
+  Use explicit local fixtures instead.
 - Required default shellouts to `helm`, `kustomize`, `kubectl`, or `argocd`.
 - Parallel rendering and `--parallelism` controls.
 - Composite install GitHub Action publishing.

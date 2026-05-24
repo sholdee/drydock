@@ -5,8 +5,8 @@
 Supported in the MVP:
 
 - Direct `Application` CRs
-- Git-directory, Git-files, list, matrix, and merge `ApplicationSet` CR
-  expansion
+- Git-directory, Git-files, list, matrix, merge, and fixture-backed provider
+  `ApplicationSet` CR expansion
 - ApplicationSet list `elementsYaml`, including matrix-interpolated
   `elementsYaml`
 - ApplicationSet generator selectors and generator template overrides for
@@ -15,6 +15,11 @@ Supported in the MVP:
 - Deterministic merge-key overlays for supported local children
 - Nested ApplicationSet matrix/merge combinations where the Argo CD v3 nested
   JSON API permits them
+- Explicit local YAML/JSON fixtures for cluster, clusterDecisionResource, SCM
+  provider, pull-request, and plugin ApplicationSet generators, including
+  nested matrix/merge children
+- Fail-closed fixture diagnostics for invalid provider fixtures, no provider
+  matches, and unsupported provider filters
 - Single-source and multi-source planning for supported source types
 - Kustomize and directory rendering, including repo-root-local Kustomize
   references
@@ -130,6 +135,9 @@ Network and cache behavior:
 - `--registry-config PATH` is the only OCI registry credential source used by
   this slice; ambient Helm and Docker registry config is not read.
 - `--offline` cannot be combined with `--allow-network`.
+- `--appset-provider-fixture PATH` supplies local-only provider generator data
+  and does not enable Kubernetes, Argo CD, SCM, pull-request, cloud, or plugin
+  service API access.
 - `--refresh-remotes` refreshes cached remote Kustomize resources.
 - `--remote-cache-dir PATH` overrides the default remote resource cache
   directory.
@@ -170,8 +178,9 @@ Not reproduced offline:
 - CLI config management plugin execution, shellout plugin adapters, Argo CD
   repo-server sidecar plugin discovery, ambient plugin configuration, ambient
   plugin environment loading, and plugin credential injection
-- Cluster, clusterDecisionResource, SCM provider, pull-request, and plugin
-  ApplicationSet generators
+- Live provider API calls for cluster, clusterDecisionResource, SCM provider,
+  pull-request, and plugin ApplicationSet generators. Only explicit local
+  fixtures are supported.
 - Live cluster and Argo CD API sources
 - Parallel rendering and `--parallelism` controls
 - Composite install GitHub Action publishing

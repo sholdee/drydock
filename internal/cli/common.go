@@ -36,6 +36,7 @@ type commonFlags struct {
 	remoteUsername    string
 	remotePassword    string
 	remoteBearerToken string
+	appsetFixtures    []string
 	skipKinds         []string
 	skipCRDs          bool
 	skipSecrets       bool
@@ -87,6 +88,7 @@ func bindCommonFlags(cmd *cobra.Command, flags *commonFlags) {
 	cmd.Flags().StringVar(&flags.remoteUsername, "remote-username", flags.remoteUsername, "username for authenticated remote Kustomize HTTP resources")
 	cmd.Flags().StringVar(&flags.remotePassword, "remote-password", flags.remotePassword, "password for authenticated remote Kustomize HTTP resources")
 	cmd.Flags().StringVar(&flags.remoteBearerToken, "remote-bearer-token", flags.remoteBearerToken, "bearer token for authenticated remote Kustomize HTTP resources")
+	cmd.Flags().StringArrayVar(&flags.appsetFixtures, "appset-provider-fixture", flags.appsetFixtures, "local YAML/JSON fixture file for provider-backed ApplicationSet generators")
 	cmd.Flags().StringArrayVar(&flags.skipKinds, "skip-kind", flags.skipKinds, "rendered resource kind to omit from output and diffs")
 	cmd.Flags().BoolVar(&flags.skipCRDs, "skip-crds", flags.skipCRDs, "omit CustomResourceDefinition resources from output and diffs")
 	cmd.Flags().BoolVar(&flags.skipSecrets, "skip-secrets", flags.skipSecrets, "omit Secret resources from output and diffs")
