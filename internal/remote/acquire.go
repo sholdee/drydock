@@ -120,13 +120,18 @@ func NormalizeGitRepoURL(raw string) (string, error) {
 	if raw == "" {
 		return "", fmt.Errorf("remote Git repository URL is required")
 	}
-	if isSCPStyleGitURL(raw) {
+	if isSCPStyleGitURL(raw) || isRedactedSCPStyleGitURL(raw) {
 		base := raw
 		if before, _, ok := strings.Cut(base, "#"); ok {
 			base = before
 		}
 		if before, _, ok := strings.Cut(base, "?"); ok {
 			base = before
+		}
+		if userHost, repoPath, ok := strings.Cut(base, ":"); ok {
+			if _, host, ok := strings.Cut(userHost, "@"); ok && host != "" {
+				base = host + ":" + repoPath
+			}
 		}
 		base = strings.TrimRight(base, "/")
 		base = strings.TrimSuffix(base, ".git")
@@ -152,6 +157,21 @@ func NormalizeGitRepoURL(raw string) (string, error) {
 	parsed.Path = strings.TrimSuffix(parsed.Path, ".git")
 	parsed.Path = strings.TrimRight(parsed.Path, "/")
 	return parsed.String(), nil
+}
+
+func isRedactedSCPStyleGitURL(raw string) bool {
+	if strings.Contains(raw, "://") || strings.HasPrefix(raw, "/") {
+		return false
+	}
+	colon := strings.Index(raw, ":")
+	if colon <= 0 {
+		return false
+	}
+	if slash := strings.IndexAny(raw, `/\`); slash >= 0 && slash < colon {
+		return false
+	}
+	host := raw[:colon]
+	return strings.Contains(host, ".") && !strings.Contains(host, "@")
 }
 
 func NormalizeURL(raw string) (string, error) {
