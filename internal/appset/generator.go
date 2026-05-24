@@ -188,8 +188,14 @@ func supportedGeneratorTree(generator argoappv1.ApplicationSetGenerator) (bool, 
 	case generator.List != nil || generator.Git != nil:
 		return true, nil
 	case generator.Matrix != nil:
+		if err := validateMatrixGenerator(generator.Matrix); err != nil {
+			return true, err
+		}
 		return supportedNestedGeneratorTrees(generator.Matrix.Generators)
 	case generator.Merge != nil:
+		if err := validateMergeGenerator(generator.Merge); err != nil {
+			return true, err
+		}
 		return supportedNestedGeneratorTrees(generator.Merge.Generators)
 	default:
 		return false, nil
@@ -242,8 +248,8 @@ func generatorFromNested(nested argoappv1.ApplicationSetNestedGenerator) (argoap
 }
 
 func matrixGeneratorParamSets(ctx generatorContext, matrix *argoappv1.MatrixGenerator, selector *metav1.LabelSelector) ([]generatorParamSet, []diagnostic.Diagnostic, bool, error) {
-	if len(matrix.Generators) != 2 {
-		return nil, nil, true, fmt.Errorf("matrix support only two child generators, found %d", len(matrix.Generators))
+	if err := validateMatrixGenerator(matrix); err != nil {
+		return nil, nil, true, err
 	}
 	supported, err := supportedNestedGeneratorTrees(matrix.Generators)
 	if err != nil {
@@ -353,11 +359,8 @@ func cloneParamValue(value any) any {
 }
 
 func mergeGeneratorParamSets(ctx generatorContext, merge *argoappv1.MergeGenerator, selector *metav1.LabelSelector) ([]generatorParamSet, []diagnostic.Diagnostic, bool, error) {
-	if len(merge.Generators) < 2 {
-		return nil, nil, true, fmt.Errorf("merge requires two or more child generators, found %d", len(merge.Generators))
-	}
-	if len(merge.MergeKeys) == 0 {
-		return nil, nil, true, errors.New("merge requires at least one merge key")
+	if err := validateMergeGenerator(merge); err != nil {
+		return nil, nil, true, err
 	}
 
 	var allDiags []diagnostic.Diagnostic
@@ -418,6 +421,23 @@ func mergeGeneratorParamSets(ctx generatorContext, merge *argoappv1.MergeGenerat
 	out, selectorDiags, err := applyGeneratorSelector(ctx.ManifestPath, selector, out)
 	allDiags = append(allDiags, selectorDiags...)
 	return out, allDiags, true, err
+}
+
+func validateMatrixGenerator(matrix *argoappv1.MatrixGenerator) error {
+	if len(matrix.Generators) != 2 {
+		return fmt.Errorf("matrix support only two child generators, found %d", len(matrix.Generators))
+	}
+	return nil
+}
+
+func validateMergeGenerator(merge *argoappv1.MergeGenerator) error {
+	if len(merge.Generators) < 2 {
+		return fmt.Errorf("merge requires two or more child generators, found %d", len(merge.Generators))
+	}
+	if len(merge.MergeKeys) == 0 {
+		return errors.New("merge requires at least one merge key")
+	}
+	return nil
 }
 
 func mergeParamSetKey(params map[string]any, mergeKeys []string) (string, error) {
