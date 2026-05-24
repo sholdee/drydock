@@ -9,6 +9,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/sholdee/drydock/internal/appset"
 	"github.com/sholdee/drydock/internal/cacheevent"
@@ -449,6 +450,30 @@ spec:
 				t.Fatalf("diagnostics = %#v, want plugin diagnostic", result.Diagnostics)
 			}
 		})
+	}
+}
+
+func TestOrchestratorPluginTimeoutReturnsPartialStatus(t *testing.T) {
+	root := t.TempDir()
+	writeBuildApplication(t, root, "ok", "ok")
+	writePluginBuildApplication(t, root, "plugin", "cue")
+
+	result, err := (Orchestrator{PluginRenderer: blockingInternalPluginRenderer{}}).Build(context.Background(), BuildRequest{
+		Path:          root,
+		PluginTimeout: time.Nanosecond,
+	})
+	if err == nil {
+		t.Fatal("Build() error = nil, want plugin timeout")
+	}
+	if _, ok := manifestByName(result.Manifests, "ok"); !ok {
+		t.Fatalf("Manifests = %#v, want successful non-plugin manifest", result.Manifests)
+	}
+	assertApplicationStatuses(t, result.Statuses, []ApplicationStatus{
+		{Namespace: "argocd", Name: "ok", Status: ApplicationStatusPass},
+		{Namespace: "argocd", Name: "plugin", Status: ApplicationStatusFail},
+	})
+	if !hasDiagnosticCode(result.Diagnostics, diagnostic.CodePluginFailed) {
+		t.Fatalf("Diagnostics = %#v, want plugin.failed", result.Diagnostics)
 	}
 }
 
@@ -1724,6 +1749,13 @@ func writeTestFile(t *testing.T, path, content string) {
 	}
 }
 
+type blockingInternalPluginRenderer struct{}
+
+func (blockingInternalPluginRenderer) RenderPlugin(ctx context.Context, _ render.PluginRequest) ([]render.Manifest, []diagnostic.Diagnostic, error) {
+	<-ctx.Done()
+	return nil, nil, ctx.Err()
+}
+
 func manifestByName(manifests []render.Manifest, name string) (render.Manifest, bool) {
 	for _, manifest := range manifests {
 		if manifest.Object.GetName() == name {
@@ -1745,6 +1777,15 @@ func diagnosticByCategory(diags []diagnostic.Diagnostic, category string) (diagn
 func hasDiagnosticMessage(diags []diagnostic.Diagnostic, fragment string) bool {
 	for _, diag := range diags {
 		if strings.Contains(diag.Message, fragment) {
+			return true
+		}
+	}
+	return false
+}
+
+func hasDiagnosticCode(diags []diagnostic.Diagnostic, code string) bool {
+	for _, diag := range diags {
+		if diag.Code == code {
 			return true
 		}
 	}
@@ -1811,6 +1852,28 @@ metadata:
 data:
   key: value
 `)
+}
+
+func writePluginBuildApplication(t *testing.T, root, appName, pluginName string) {
+	t.Helper()
+	writeTestFile(t, filepath.Join(root, "apps", appName+".yaml"), `apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: `+appName+`
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/example/repo
+    path: manifests/`+appName+`
+    targetRevision: main
+    plugin:
+      name: `+pluginName+`
+  destination:
+    name: in-cluster
+    namespace: default
+`)
+	writeTestFile(t, filepath.Join(root, "manifests", appName, ".keep"), "")
 }
 
 func writeBuildApplicationWithProject(t *testing.T, root, appName, configMapName, projectName, repoURL, destinationNamespace string) {

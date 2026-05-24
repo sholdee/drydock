@@ -8,6 +8,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/sholdee/drydock/internal/remote"
 	sourcepkg "github.com/sholdee/drydock/internal/source"
@@ -691,6 +692,91 @@ func TestRenderNamedPluginRegistryReportsMissingRenderer(t *testing.T) {
 	}
 }
 
+func TestRenderPluginRendererHonorsConfiguredTimeout(t *testing.T) {
+	root := t.TempDir()
+	writeAPIAppTree(t, root, "ok", configMapBody("ok", "v1"))
+	writeAPIPluginAppTree(t, root)
+
+	result, err := Render(context.Background(), Config{
+		Path:           root,
+		PluginRenderer: blockingPublicPluginRenderer{},
+		PluginTimeout:  time.Nanosecond,
+	})
+	if err == nil {
+		t.Fatal("Render() error = nil, want plugin timeout")
+	}
+	if len(result.Manifests) != 1 {
+		t.Fatalf("Manifests = %d, want successful non-plugin manifest", len(result.Manifests))
+	}
+	if !hasStatus(result.Statuses, "ok", "PASS") || !hasStatus(result.Statuses, "plugin-app", "FAIL") {
+		t.Fatalf("Statuses = %#v, want ok PASS and plugin-app FAIL", result.Statuses)
+	}
+	if !hasDiagnosticCode(result.Diagnostics, "plugin.failed") {
+		t.Fatalf("Diagnostics = %#v, want plugin.failed", result.Diagnostics)
+	}
+}
+
+func TestDiffApplicationsPluginRendererHonorsConfiguredTimeout(t *testing.T) {
+	left := t.TempDir()
+	right := t.TempDir()
+	writeAPIPluginAppTree(t, left)
+	writeAPIPluginAppTree(t, right)
+
+	result, err := DiffApplications(context.Background(), Config{
+		PathOrig:       left,
+		Path:           right,
+		ChangedOnly:    boolPtr(false),
+		PluginRenderer: blockingPublicPluginRenderer{},
+		PluginTimeout:  time.Nanosecond,
+	})
+	if err == nil {
+		t.Fatal("DiffApplications() error = nil, want plugin timeout")
+	}
+	if !hasDiagnosticCode(result.Diagnostics, "plugin.failed") {
+		t.Fatalf("Diagnostics = %#v, want plugin.failed", result.Diagnostics)
+	}
+}
+
+func TestDiffImagesPluginRendererHonorsConfiguredTimeout(t *testing.T) {
+	left := t.TempDir()
+	right := t.TempDir()
+	writeAPIPluginAppTree(t, left)
+	writeAPIPluginAppTree(t, right)
+
+	result, err := DiffImages(context.Background(), Config{
+		PathOrig:       left,
+		Path:           right,
+		ChangedOnly:    boolPtr(false),
+		PluginRenderer: blockingPublicPluginRenderer{},
+		PluginTimeout:  time.Nanosecond,
+	})
+	if err == nil {
+		t.Fatal("DiffImages() error = nil, want plugin timeout")
+	}
+	if !hasDiagnosticCode(result.Diagnostics, "plugin.failed") {
+		t.Fatalf("Diagnostics = %#v, want plugin.failed", result.Diagnostics)
+	}
+}
+
+func TestRenderPluginRendererPreservesCallerCancellation(t *testing.T) {
+	root := t.TempDir()
+	writeAPIPluginAppTree(t, root)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	result, err := Render(ctx, Config{
+		Path:           root,
+		PluginRenderer: blockingPublicPluginRenderer{},
+		PluginTimeout:  time.Hour,
+	})
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("Render() error = %v, want context.Canceled", err)
+	}
+	if hasDiagnosticCode(result.Diagnostics, "plugin.failed") {
+		t.Fatalf("Diagnostics = %#v, did not want plugin.failed for caller cancellation", result.Diagnostics)
+	}
+}
+
 func TestListApplications(t *testing.T) {
 	result, err := ListApplications(context.Background(), Config{Path: filepath.Join("..", "..", "testdata", "applications", "e2e")})
 	if err != nil {
@@ -829,6 +915,13 @@ type publicPluginRendererFunc func(context.Context, PluginRequest) (PluginResult
 
 func (f publicPluginRendererFunc) RenderPlugin(ctx context.Context, request PluginRequest) (PluginResult, error) {
 	return f(ctx, request)
+}
+
+type blockingPublicPluginRenderer struct{}
+
+func (blockingPublicPluginRenderer) RenderPlugin(ctx context.Context, _ PluginRequest) (PluginResult, error) {
+	<-ctx.Done()
+	return PluginResult{}, ctx.Err()
 }
 
 func publicPluginParamsByName(params []PluginParameter) map[string]PluginParameter {
