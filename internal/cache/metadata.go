@@ -10,7 +10,11 @@ import (
 	"time"
 )
 
-const metadataSchemaVersion = 1
+const (
+	metadataSchemaVersion = 1
+	metadataDirName       = ".drydock-cache"
+	metadataFileName      = "metadata.json"
+)
 
 type Metadata struct {
 	SchemaVersion int       `json:"schemaVersion" yaml:"schemaVersion"`
@@ -27,7 +31,7 @@ type Metadata struct {
 }
 
 func MetadataPath(entryPath string) string {
-	return filepath.Join(entryPath, "metadata.json")
+	return filepath.Join(entryPath, metadataDirName, metadataFileName)
 }
 
 func ReadMetadata(entryPath string, expected Source, expectedKind, expectedKey string) (*Metadata, error) {
@@ -70,7 +74,7 @@ func WriteMetadata(entryPath string, metadata Metadata) error {
 		metadata.UpdatedAt = now
 	}
 	metadata.Target = RedactedTarget(metadata.Target)
-	if err := os.MkdirAll(entryPath, 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(MetadataPath(entryPath)), 0o755); err != nil {
 		return err
 	}
 	data, err := json.MarshalIndent(metadata, "", "  ")
