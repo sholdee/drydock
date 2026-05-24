@@ -110,6 +110,37 @@ spec:
 	}
 }
 
+func TestRenderReturnsDiagnosticCodes(t *testing.T) {
+	root := t.TempDir()
+	writeAPIFile(t, filepath.Join(root, "appset.yaml"), `apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: unsupported
+spec:
+  generators:
+    - scmProvider: {}
+  template:
+    metadata:
+      name: generated
+    spec:
+      project: default
+      source:
+        repoURL: https://github.com/example/repo
+        path: manifests/generated
+      destination:
+        name: in-cluster
+        namespace: default
+`)
+
+	result, err := Render(context.Background(), Config{Path: root})
+	if err != nil {
+		t.Fatalf("Render() error = %v", err)
+	}
+	if !hasDiagnosticCode(result.Diagnostics, "appset.unsupported-generator") {
+		t.Fatalf("Diagnostics = %#v, want stable appset diagnostic code", result.Diagnostics)
+	}
+}
+
 func TestClientUsesInjectedAcquirersForRemoteSources(t *testing.T) {
 	root := t.TempDir()
 	externalRepo := t.TempDir()
@@ -978,6 +1009,15 @@ func writeAPIFile(t *testing.T, path string, data string) {
 func hasDiagnostic(diagnostics []Diagnostic, category, message string) bool {
 	for _, diagnostic := range diagnostics {
 		if diagnostic.Category == category && strings.Contains(diagnostic.Message, message) {
+			return true
+		}
+	}
+	return false
+}
+
+func hasDiagnosticCode(diagnostics []Diagnostic, code string) bool {
+	for _, diagnostic := range diagnostics {
+		if diagnostic.Code == code {
 			return true
 		}
 	}

@@ -294,6 +294,7 @@ type Manifest struct {
 
 // Diagnostic describes a warning, error, or informational finding.
 type Diagnostic struct {
+	Code       string
 	Severity   string
 	Category   string
 	Message    string
@@ -541,9 +542,11 @@ func manifestsFromInternal(manifests []app.ApplicationManifest) []Manifest {
 }
 
 func diagnosticsFromInternal(diagnostics []diagnostic.Diagnostic) []Diagnostic {
-	out := make([]Diagnostic, 0, len(diagnostics))
-	for _, item := range diagnostics {
+	normalized := diagnostic.WithStableCodes(diagnostics)
+	out := make([]Diagnostic, 0, len(normalized))
+	for _, item := range normalized {
 		out = append(out, Diagnostic{
+			Code:     item.Code,
 			Severity: string(item.Severity),
 			Category: item.Category,
 			Message:  item.Message,
@@ -560,6 +563,7 @@ func diagnosticsToInternal(diagnostics []Diagnostic) []diagnostic.Diagnostic {
 	out := make([]diagnostic.Diagnostic, 0, len(diagnostics))
 	for _, item := range diagnostics {
 		out = append(out, diagnostic.Diagnostic{
+			Code:     item.Code,
 			Severity: diagnostic.Severity(item.Severity),
 			Category: item.Category,
 			Message:  item.Message,
