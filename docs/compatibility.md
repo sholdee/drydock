@@ -48,6 +48,9 @@ Supported in the MVP:
 - `diag -o json` and `diag -o yaml` structured diagnostic reports
 - `diag --cache-events` optional cache acquisition event reporting in
   structured diagnostic reports
+- `cache path`, `cache list`, `cache prune`, and `cache delete` local source
+  cache lifecycle commands for recognized Git, chart, and remote Kustomize
+  cache layouts
 - `get apps` structured table, name, JSON, and YAML output with Kubernetes
   label selector filtering on Application metadata labels
 - `get images` structured table, name, JSON, and YAML output using the same
@@ -132,10 +135,17 @@ Network and cache behavior:
   directory.
 - `--remote-bearer-token` takes precedence over `--remote-username` and
   `--remote-password` for HTTP(S) remote Kustomize resource auth.
-- Chart and remote-resource caches must stay outside Git repository trees.
+- Git, chart, and remote-resource caches must stay outside Git repository
+  trees.
 - `--allow-network` is not the Helm chart-fetch flag.
-- Cache event reporting is optional observability data; cache pruning and
-  invalidation commands are still tracked as Phase 1B cache lifecycle work.
+- Cache lifecycle commands are local filesystem operations only. They do not
+  render Applications, clone/fetch Git repositories, fetch Helm charts, fetch
+  remote Kustomize resources, or read credential flags.
+- New cache entries include hidden `.drydock-cache/metadata.json` sidecars
+  with redacted target metadata. Older hash-only entries are listed as legacy
+  entries when their filesystem layout is recognized.
+- Non-dry-run `cache prune` and `cache delete` operations require `--yes`;
+  dry-runs do not require confirmation.
 
 Not reproduced offline:
 

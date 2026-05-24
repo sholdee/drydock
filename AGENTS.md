@@ -82,6 +82,12 @@ Current top-level commands:
   manifests.
 - `drydock diag --path . -o json|yaml`: write a structured diagnostic
   report to stdout.
+- `drydock cache path`: print resolved Git, chart, and remote cache roots.
+- `drydock cache list`: list recognized local cache entries.
+- `drydock cache prune --older-than 720h --dry-run`: report stale cache
+  entries without deleting them.
+- `drydock cache delete --source git --key HASH --yes`: delete one recognized
+  cache entry.
 - `drydock version`: print version, commit, Go version, and Argo CD module.
 
 Named app arguments accept `NAME` or `NAMESPACE/NAME`; use the
@@ -99,6 +105,10 @@ Current shared flags are `--path`, `--path-orig`, `--selector`/`-l`, `--repo-map
 `--strict-changed-only`, `--strict`, `--exit-code`, `--output`/`-o`,
 `--unified`/`-u`, `--strip-attr`, `--skip-kind`, `--skip-crds`,
 `--skip-secrets`, `--limit-bytes`, and `--cache-events`.
+
+Cache lifecycle commands additionally use `--source`, `--older-than`,
+`--dry-run`, `--yes`, `--key`, and `--all`. They do not render, fetch, clone,
+or read credential flags.
 
 Public embedding API lives in `pkg/drydock`. Keep its exported types free
 of `internal/...` package types. Package-level functions should follow CLI
@@ -209,6 +219,9 @@ The MVP currently supports:
 - Structured `diag -o json` and `diag -o yaml` output.
 - Optional redacted cache event reporting for Git, Helm, and remote Kustomize
   acquisition through `diag --cache-events` and public API results.
+- First-class local cache lifecycle commands for path inspection, listing,
+  pruning, and deletion of recognized Git, Helm chart, and remote Kustomize
+  cache entries.
 - Structured `get apps` and `get images` output with table, name, JSON, and
   YAML formats.
 - Per-Application `test apps` and `test app` PASS/FAIL/SKIPPED status output
@@ -268,8 +281,6 @@ Do not treat these as supported without an explicit design update:
 - Cluster, clusterDecisionResource, SCM provider, pull-request, and plugin
   ApplicationSet generators.
 - Required default shellouts to `helm`, `kustomize`, `kubectl`, or `argocd`.
-- A first-class cache pruning or invalidation command for Git, Helm, and remote
-  Kustomize acquisition.
 - Parallel rendering and `--parallelism` controls.
 - Composite install GitHub Action publishing.
 
@@ -301,6 +312,13 @@ OCI chart acquisition must use Helm registry Go libraries, not helm pull.
 Cache events are optional reporting data only. They must redact targets and
 errors, must not expose credentials or credential-bearing URLs, and must not
 write cache metadata or generated manifests inside the current or baseline
+repository tree.
+Cache lifecycle commands are local filesystem operations only. They must not
+render Applications, clone/fetch Git repositories, fetch Helm charts, fetch
+remote Kustomize resources, or read credential flags. New cache entries write
+hidden `.drydock-cache/metadata.json` sidecars with redacted metadata. Cache
+prune/delete must require `--yes` unless `--dry-run` is set, and cache roots
+must be rejected when they resolve inside the current or selected GitOps
 repository tree.
 
 Authenticated source handling is explicit and non-interactive. Do not prompt
