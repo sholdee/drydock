@@ -80,6 +80,16 @@ Supported in the MVP:
   acquisition, and injectable config management plugin rendering
 - Config management plugin source detection with fail-closed diagnostics in
   the CLI and default Go client when no plugin renderer is injected
+- Local `AppProject` manifest discovery
+- Offline diagnostics for Application source repository, destination
+  server/name/namespace, and source namespace validation from local
+  `AppProject` manifests
+- AppProject RBAC role and policy parsing as reported metadata, without
+  simulating authorization
+- `permitOnlyProjectScopedClusters` reporting as deferred metadata, without
+  offline project-scoped cluster Secret enforcement
+- Repository credential matching diagnostics based on discovered repository
+  Secret metadata only, without reading secret credential fields
 
 Network and cache behavior:
 
@@ -124,7 +134,11 @@ Not reproduced offline:
 - Managed-fields ignores when ownership data exists only on the live cluster
 - Applying `ignoreResourceUpdates` to desired-vs-desired diffs
 - Health or action Lua execution
-- Project/RBAC/destination validation
+- Live destination cluster existence checks
+- Sync window enforcement
+- Source integrity signature verification
+- Project-scoped cluster Secret enforcement
+- Full Argo CD RBAC/Casbin authorization simulation
 - CLI config management plugin execution, shellout plugin adapters, Argo CD
   repo-server sidecar plugin discovery, ambient plugin configuration, ambient
   plugin environment loading, and plugin credential injection

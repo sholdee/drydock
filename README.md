@@ -97,6 +97,16 @@ combinations where the Argo CD v3 API permits them. Provider-backed
 ApplicationSet generators still produce diagnostics instead of approximating
 live or external services.
 
+Local `AppProject` manifests are discovered and used for offline diagnostics.
+`argocd-local` reports Application source repository and destination
+server/name/namespace policy mismatches from those manifests, plus source
+namespace mismatches when `spec.sourceNamespaces` is set. RBAC roles and
+policies are parsed and reported as metadata only; authorization is not
+simulated. `permitOnlyProjectScopedClusters` is reported as deferred metadata,
+and project-scoped cluster Secret enforcement is not simulated offline.
+Repository credential matching diagnostics use discovered repository Secret
+metadata only and never read secret credential fields.
+
 Application sources that declare `spec.source.plugin` are detected explicitly.
 The CLI and default Go client do not execute plugin commands; without an
 injected renderer they fail closed with a plugin diagnostic. Embedders can
@@ -161,6 +171,9 @@ scripts/home-ops-pattern-smoke.sh
 - Live-only managed-field ownership is not reproduced when ownership data is
   absent from rendered manifests.
 - Health/action Lua is not executed offline.
+- Live destination cluster existence, sync windows, source integrity
+  verification, project-scoped cluster Secrets, and full RBAC simulation remain
+  deferred.
 
 See `docs/usage.md` for command examples and `docs/compatibility.md` for
 offline Argo CD compatibility notes. See `docs/home-ops-pattern-coverage.md`

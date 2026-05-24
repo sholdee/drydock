@@ -106,6 +106,23 @@ Secrets may contribute non-sensitive fields (`url`, `type`, `name`, `project`,
 `enableOCI`) but must not retain username, password, bearer tokens, SSH keys,
 or TLS material.
 
+## AppProject Validation
+
+Discovery includes local `AppProject` manifests. Source repository and
+destination server/name/namespace checks are offline diagnostics derived from
+those local manifests only. Application source namespace checks are also local
+diagnostics when `spec.sourceNamespaces` is set.
+
+RBAC roles and policies are parsed and reported as metadata only; do not
+simulate Argo CD authorization or Casbin policy evaluation offline.
+`permitOnlyProjectScopedClusters` is reported as deferred metadata, and
+project-scoped cluster Secret enforcement is not simulated offline.
+
+Repository credential matching diagnostics use discovered repository Secret
+metadata only. They may compare non-sensitive fields such as `url`, `type`,
+`name`, `project`, and `enableOCI`, but must never read, retain, or report
+secret credential fields.
+
 ## Discovery
 
 Discovery scans YAML files for Argo CD entrypoints. Keep scanning generic; do
@@ -207,6 +224,10 @@ The MVP currently supports:
   public Go API.
 - Argo CD settings discovery from Helm values, `argocd-cm`, and repository
   Secrets, limited to rendering/diff-affecting non-secret values.
+- Discovered `AppProject` manifests with offline diagnostics for Application
+  project references, source repositories, destinations, source namespaces,
+  RBAC role metadata, deferred project-scoped cluster metadata, and repository
+  Secret metadata matching without reading credential fields.
 
 ## Deferred Features
 
@@ -218,7 +239,11 @@ Do not treat these as supported without an explicit design update:
   server-side diff behavior.
 - Managed fields ignores when ownership data exists only on the live cluster.
 - Health or action Lua execution.
-- Project, RBAC, and destination validation.
+- Live destination cluster existence checks.
+- Sync window enforcement.
+- Source integrity signature verification.
+- Project-scoped cluster Secret enforcement.
+- Full Argo CD RBAC/Casbin authorization simulation.
 - CLI config management plugin execution, shellout plugin adapters, Argo CD
   repo-server sidecar plugin discovery, ambient plugin configuration, ambient
   plugin environment loading, and plugin credential injection.

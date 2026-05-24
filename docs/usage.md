@@ -53,6 +53,10 @@ generator order. Matrix and merge children may use list, Git directories, Git
 files, and nested matrix/merge combinations where the Argo CD v3 nested JSON
 API permits them.
 
+Local `AppProject` manifests are also discovered. They are used for offline
+diagnostics only; discovery does not contact a Kubernetes cluster or Argo CD
+server.
+
 ## Rendering
 
 Build every discovered Application:
@@ -364,6 +368,16 @@ and render validation path as `build apps`. It prints diagnostics to stderr and
 returns an error when runtime failures or error-severity diagnostics are found.
 Use `--strict` to promote warnings to errors.
 
+When local `AppProject` manifests are present, `diag`, `build`, `test`, `diff`,
+and the Go API report source repository and destination server/name/namespace
+validation diagnostics from those manifests. They also report source namespace
+diagnostics when a project sets `spec.sourceNamespaces`. RBAC roles and
+policies are parsed and reported as metadata only; Argo CD authorization is not
+simulated. `permitOnlyProjectScopedClusters` is reported as deferred metadata,
+and project-scoped cluster Secret enforcement is not simulated offline.
+Repository credential matching diagnostics use discovered repository Secret
+metadata only and never read secret credential fields.
+
 ## Deferred Commands And Sources
 
 These source paths are not wired in the current MVP:
@@ -374,6 +388,8 @@ These source paths are not wired in the current MVP:
   repo-server sidecar plugin discovery, ambient plugin configuration, ambient
   plugin environment loading, and plugin credential injection.
 - Live cluster and Argo CD API sources.
+- Live destination cluster existence, sync windows, source integrity
+  verification, project-scoped cluster Secrets, and full RBAC simulation.
 
 ## Optional Home-Ops Smoke
 

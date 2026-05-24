@@ -86,6 +86,30 @@ data:
 	}
 }
 
+func TestRenderReportsProjectValidationDiagnostics(t *testing.T) {
+	root := t.TempDir()
+	writeAPIAppTreeWithProject(t, root, "demo", "platform", "https://github.com/example/denied")
+	writeAPIFile(t, filepath.Join(root, "projects", "platform.yaml"), `apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: platform
+spec:
+  sourceRepos:
+    - https://github.com/example/allowed
+  destinations:
+    - server: https://kubernetes.default.svc
+      namespace: default
+`)
+
+	result, err := Render(context.Background(), Config{Path: root})
+	if err != nil {
+		t.Fatalf("Render() error = %v", err)
+	}
+	if !hasDiagnostic(result.Diagnostics, "project", "source repository") {
+		t.Fatalf("Diagnostics = %#v, want project source warning", result.Diagnostics)
+	}
+}
+
 func TestClientUsesInjectedAcquirersForRemoteSources(t *testing.T) {
 	root := t.TempDir()
 	externalRepo := t.TempDir()
@@ -853,6 +877,25 @@ spec:
     namespace: default
 `)
 	writeAPIFile(t, filepath.Join(root, "manifests", name, "manifest.yaml"), manifest)
+}
+
+func writeAPIAppTreeWithProject(t *testing.T, root, appName, projectName, repoURL string) {
+	t.Helper()
+	writeAPIFile(t, filepath.Join(root, "apps", appName+".yaml"), `apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: `+appName+`
+  namespace: argocd
+spec:
+  project: `+projectName+`
+  source:
+    repoURL: `+repoURL+`
+    path: manifests/`+appName+`
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: default
+`)
+	writeAPIFile(t, filepath.Join(root, "manifests", appName, "cm.yaml"), configMapBody(appName, "v1"))
 }
 
 func configMapBody(name, version string) string {
