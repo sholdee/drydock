@@ -21,6 +21,8 @@ type ResolvedSource struct {
 
 type RenderOptions struct {
 	AppName                      string
+	AppNamespace                 string
+	Project                      string
 	Namespace                    string
 	Plugin                       *PluginConfig
 	KubeVersion                  string
@@ -59,12 +61,14 @@ type PluginConfig struct {
 }
 
 type PluginRequest struct {
-	AppName    string
-	Namespace  string
-	Source     ResolvedSource
-	Plugin     PluginConfig
-	RefRoots   map[string]string
-	RefSources map[string]ResolvedSource
+	AppName      string
+	AppNamespace string
+	Project      string
+	Namespace    string
+	Source       ResolvedSource
+	Plugin       PluginConfig
+	RefRoots     map[string]string
+	RefSources   map[string]ResolvedSource
 }
 
 type PluginRenderer interface {

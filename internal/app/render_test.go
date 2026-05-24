@@ -311,6 +311,8 @@ func TestRenderApplicationPassesPluginOptions(t *testing.T) {
 	application := argoappv1.Application{
 		ObjectMeta: metav1.ObjectMeta{Namespace: "argocd", Name: "plugin-app"},
 		Spec: argoappv1.ApplicationSpec{
+			Project:     "platform",
+			Destination: argoappv1.ApplicationDestination{Namespace: "workloads"},
 			Source: &argoappv1.ApplicationSource{
 				RepoURL: "https://repo",
 				Path:    "apps/plugin",
@@ -337,6 +339,18 @@ func TestRenderApplicationPassesPluginOptions(t *testing.T) {
 	}
 	if got.Plugin == nil {
 		t.Fatalf("Plugin = nil, want plugin config")
+	}
+	if got.AppName != "plugin-app" {
+		t.Fatalf("AppName = %q, want plugin-app", got.AppName)
+	}
+	if got.AppNamespace != "argocd" {
+		t.Fatalf("AppNamespace = %q, want argocd", got.AppNamespace)
+	}
+	if got.Project != "platform" {
+		t.Fatalf("Project = %q, want platform", got.Project)
+	}
+	if got.Namespace != "workloads" {
+		t.Fatalf("Namespace = %q, want workloads", got.Namespace)
 	}
 	if got.Plugin.Name != "cue" {
 		t.Fatalf("Plugin.Name = %q, want cue", got.Plugin.Name)
