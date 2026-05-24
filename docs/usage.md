@@ -360,10 +360,25 @@ the CLI.
 
 Config management plugin sources are explicit. The CLI and default Go client
 do not execute plugin commands; an Application source with `spec.source.plugin`
-fails closed with a plugin diagnostic unless an embedding caller supplies
-`drydock.Config.PluginRenderer`. Injected plugin renderer output
-participates in normal render, diff, image extraction, destination namespace
-defaulting, and resource filtering.
+fails closed with `plugin.unsupported` unless an embedding caller supplies
+`drydock.Config.PluginRenderer`. Embedders can pass a renderer directly or use
+`drydock.NewPluginRegistry(map[string]drydock.PluginRenderer{...})` to dispatch
+in-process renderers by `plugin.name`. Plugin names are trimmed for registry
+lookup, and unnamed plugin sources match only an explicitly registered empty
+name.
+
+Set `drydock.Config.PluginTimeout` to bound each injected plugin renderer
+call. A plugin timeout emits `plugin.failed` while preserving partial render
+results from successful Applications. Renderer-supplied plugin diagnostics get
+stable codes; diagnostics without explicit plugin codes use the neutral
+`plugin.unspecified` fallback. Injected plugin renderer output participates in
+normal render, diff, image extraction, destination namespace defaulting, and
+resource filtering.
+
+Shellout plugin adapters, Argo CD repo-server sidecar plugin discovery,
+ambient plugin configuration, ambient plugin environment loading, and plugin
+credential injection remain deferred. The default CLI path does not read
+ambient plugin credentials or execute external plugin commands.
 
 ## Render Tests
 

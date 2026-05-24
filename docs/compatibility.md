@@ -91,7 +91,8 @@ Supported in the MVP:
 - Repeated-resource last-wins behavior inside one Application
 - Public Go API in `pkg/drydock` for Application listing, rendering,
   manifest diffs, image diffs, injectable Git/chart/remote-resource
-  acquisition, and injectable config management plugin rendering
+  acquisition, injectable config management plugin rendering, named in-process
+  plugin renderer registry dispatch, and plugin renderer timeout controls
 - Config management plugin source detection with fail-closed diagnostics in
   the CLI and default Go client when no plugin renderer is injected
 - Local `AppProject` manifest discovery

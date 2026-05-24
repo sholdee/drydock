@@ -121,12 +121,14 @@ comparison and diff generation. Diagnostics continue to print on stderr for
 structured output.
 
 ApplicationSet expansion supports local Git directories, Git files, list,
-matrix, and merge generators. Supported generators honor `elementsYaml`,
-generator selectors, generator template overrides, matrix interpolation for
-local children, deterministic merge-key overlays, and nested matrix/merge
-combinations where the Argo CD v3 API permits them. Provider-backed
-ApplicationSet generators still produce diagnostics instead of approximating
-live or external services.
+matrix, merge, and explicit fixture-backed provider generators. Supported
+generators honor `elementsYaml`, generator selectors, generator template
+overrides, matrix interpolation for local children, deterministic merge-key
+overlays, and nested matrix/merge combinations where the Argo CD v3 API permits
+them. Cluster, clusterDecisionResource, SCM provider, pull-request, and plugin
+ApplicationSet generators require explicit local YAML/JSON fixtures; drydock
+does not call live Kubernetes, Argo CD, SCM, pull-request, cloud, or plugin
+service APIs for those generators.
 
 Local `AppProject` manifests are discovered and used for offline diagnostics.
 `drydock` reports Application source repository and destination
@@ -192,8 +194,9 @@ scripts/home-ops-pattern-smoke.sh
 ## Current MVP Limits
 
 - Desired-vs-desired only; no live cluster diff.
-- ApplicationSet provider-backed generators remain deferred: cluster,
-  clusterDecisionResource, SCM provider, pull-request, and plugin.
+- Live provider access for ApplicationSet provider-backed generators remains
+  deferred. Use explicit local fixtures for cluster, clusterDecisionResource,
+  SCM provider, pull-request, and plugin generators.
 - No CLI config management plugin execution or shellout plugin adapters.
 - No required shellouts in default workflows.
 - Cache lifecycle commands operate on recognized drydock cache layouts only;
