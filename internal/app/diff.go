@@ -355,27 +355,32 @@ func diffDocuments(build BuildResult) ([]diff.Document, error) {
 				Namespace: id.Namespace,
 				Name:      id.Name,
 			},
-			Body:               body,
-			IgnoreJSONPointers: ignoreJSONPointersFor(item.Application, id, build.Settings),
+			Body:          body,
+			Normalization: normalizationFor(item.Application, id, build.Settings),
 		})
 	}
 	return docs, nil
 }
 
-func ignoreJSONPointersFor(application argoappv1.Application, id manifest.Identity, settings config.ArgoSettings) []string {
-	var pointers []string
+func normalizationFor(application argoappv1.Application, id manifest.Identity, settings config.ArgoSettings) diff.Normalization {
+	var normalization diff.Normalization
 	for _, rule := range application.Spec.IgnoreDifferences {
 		if !ignoreRuleMatches(rule, id) {
 			continue
 		}
-		pointers = append(pointers, rule.JSONPointers...)
+		normalization.JSONPointers = append(normalization.JSONPointers, rule.JSONPointers...)
+		normalization.JQPathExpressions = append(normalization.JQPathExpressions, rule.JQPathExpressions...)
+		normalization.ManagedFieldsManagers = append(normalization.ManagedFieldsManagers, rule.ManagedFieldsManagers...)
 	}
-	pointers = append(pointers, globalIgnoreJSONPointersFor(settings, id)...)
-	return pointers
+	global := globalNormalizationFor(settings, id)
+	normalization.JSONPointers = append(normalization.JSONPointers, global.JSONPointers...)
+	normalization.JQPathExpressions = append(normalization.JQPathExpressions, global.JQPathExpressions...)
+	normalization.ManagedFieldsManagers = append(normalization.ManagedFieldsManagers, global.ManagedFieldsManagers...)
+	return normalization
 }
 
-func globalIgnoreJSONPointersFor(settings config.ArgoSettings, id manifest.Identity) []string {
-	var pointers []string
+func globalNormalizationFor(settings config.ArgoSettings, id manifest.Identity) diff.Normalization {
+	var normalization diff.Normalization
 	keys := make([]string, 0, len(settings.ResourceCustomizations))
 	for key := range settings.ResourceCustomizations {
 		if resourceCustomizationKeyMatches(key, id) {
@@ -385,9 +390,11 @@ func globalIgnoreJSONPointersFor(settings config.ArgoSettings, id manifest.Ident
 	sort.Strings(keys)
 	for _, key := range keys {
 		customization := settings.ResourceCustomizations[key]
-		pointers = append(pointers, customization.IgnoreDifferences.JSONPointers...)
+		normalization.JSONPointers = append(normalization.JSONPointers, customization.IgnoreDifferences.JSONPointers...)
+		normalization.JQPathExpressions = append(normalization.JQPathExpressions, customization.IgnoreDifferences.JQPathExpressions...)
+		normalization.ManagedFieldsManagers = append(normalization.ManagedFieldsManagers, customization.IgnoreDifferences.ManagedFieldsManagers...)
 	}
-	return pointers
+	return normalization
 }
 
 func resourceCustomizationKeyMatches(key string, id manifest.Identity) bool {

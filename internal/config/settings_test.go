@@ -274,8 +274,8 @@ data:
 	if len(webhook.IgnoreDifferences.JSONPointers) != 1 || webhook.IgnoreDifferences.JSONPointers[0] != "/webhooks/0/clientConfig/caBundle" {
 		t.Fatalf("Webhook customization = %#v", webhook)
 	}
-	if len(diags) != 2 {
-		t.Fatalf("diagnostics = %#v, want warnings for jq and managedFieldsManagers", diags)
+	if len(diags) != 1 {
+		t.Fatalf("diagnostics = %#v, want warning for managedFieldsManagers", diags)
 	}
 }
 

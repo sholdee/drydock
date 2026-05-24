@@ -28,11 +28,17 @@ type Resource struct {
 	Name      string `json:"name" yaml:"name"`
 }
 
+type Normalization struct {
+	JSONPointers          []string
+	JQPathExpressions     []string
+	ManagedFieldsManagers []string
+}
+
 type Document struct {
-	Parent             Parent   `json:"parent" yaml:"parent"`
-	Resource           Resource `json:"resource" yaml:"resource"`
-	Body               string   `json:"body" yaml:"body"`
-	IgnoreJSONPointers []string `json:"-" yaml:"-"`
+	Parent        Parent        `json:"parent" yaml:"parent"`
+	Resource      Resource      `json:"resource" yaml:"resource"`
+	Body          string        `json:"body" yaml:"body"`
+	Normalization Normalization `json:"-" yaml:"-"`
 }
 
 type Change string
@@ -80,7 +86,7 @@ func Run(left, right []Document, opts Options) ([]Result, error) {
 func diffResultForKey(leftByKey, rightByKey map[string]Document, key string, opts Options) (Result, bool, error) {
 	left, hasLeft := leftByKey[key]
 	right, hasRight := rightByKey[key]
-	left, right = documentsWithSharedIgnorePointers(left, right, hasLeft, hasRight)
+	left, right = documentsWithSharedNormalization(left, right, hasLeft, hasRight)
 	leftBody, rightBody, err := normalizedDocumentBodies(left, right, hasLeft, hasRight, opts)
 	if err != nil {
 		return Result{}, false, err
@@ -93,33 +99,51 @@ func diffResultForKey(leftByKey, rightByKey map[string]Document, key string, opt
 	return result, true, err
 }
 
-func documentsWithSharedIgnorePointers(left, right Document, hasLeft, hasRight bool) (Document, Document) {
-	pointers := make([]string, 0, len(left.IgnoreJSONPointers)+len(right.IgnoreJSONPointers))
-	seen := make(map[string]struct{}, cap(pointers))
+func documentsWithSharedNormalization(left, right Document, hasLeft, hasRight bool) (Document, Document) {
+	normalization := Normalization{}
 	if hasLeft {
-		pointers = appendUniqueJSONPointers(pointers, seen, left.IgnoreJSONPointers)
+		normalization = appendUniqueNormalization(normalization, left.Normalization)
 	}
 	if hasRight {
-		pointers = appendUniqueJSONPointers(pointers, seen, right.IgnoreJSONPointers)
+		normalization = appendUniqueNormalization(normalization, right.Normalization)
 	}
 	if hasLeft {
-		left.IgnoreJSONPointers = append([]string(nil), pointers...)
+		left.Normalization = cloneNormalization(normalization)
 	}
 	if hasRight {
-		right.IgnoreJSONPointers = append([]string(nil), pointers...)
+		right.Normalization = cloneNormalization(normalization)
 	}
 	return left, right
 }
 
-func appendUniqueJSONPointers(out []string, seen map[string]struct{}, pointers []string) []string {
-	for _, pointer := range pointers {
-		if _, ok := seen[pointer]; ok {
+func appendUniqueNormalization(left, right Normalization) Normalization {
+	left.JSONPointers = appendUniqueStrings(left.JSONPointers, right.JSONPointers)
+	left.JQPathExpressions = appendUniqueStrings(left.JQPathExpressions, right.JQPathExpressions)
+	left.ManagedFieldsManagers = appendUniqueStrings(left.ManagedFieldsManagers, right.ManagedFieldsManagers)
+	return left
+}
+
+func appendUniqueStrings(out []string, values []string) []string {
+	seen := make(map[string]struct{}, len(out)+len(values))
+	for _, value := range out {
+		seen[value] = struct{}{}
+	}
+	for _, value := range values {
+		if _, ok := seen[value]; ok {
 			continue
 		}
-		seen[pointer] = struct{}{}
-		out = append(out, pointer)
+		seen[value] = struct{}{}
+		out = append(out, value)
 	}
 	return out
+}
+
+func cloneNormalization(normalization Normalization) Normalization {
+	return Normalization{
+		JSONPointers:          append([]string(nil), normalization.JSONPointers...),
+		JQPathExpressions:     append([]string(nil), normalization.JQPathExpressions...),
+		ManagedFieldsManagers: append([]string(nil), normalization.ManagedFieldsManagers...),
+	}
 }
 
 func normalizedDocumentBodies(left, right Document, hasLeft, hasRight bool, opts Options) (string, string, error) {
@@ -211,19 +235,19 @@ func resultFor(doc Document, change Change, from, to string, opts Options) (Resu
 }
 
 func normalizeDocumentBody(doc Document, opts Options) (string, error) {
-	body, err := normalizeDiffBody(doc.Body, opts, doc.IgnoreJSONPointers)
+	body, err := normalizeDiffBody(doc.Body, opts, doc.Normalization)
 	if err != nil {
 		return "", fmt.Errorf("normalize %s: %w", headerOf(doc), err)
 	}
 	return body, nil
 }
 
-func normalizeDiffBody(body string, opts Options, ignoreJSONPointers []string) (string, error) {
+func normalizeDiffBody(body string, opts Options, normalization Normalization) (string, error) {
 	attrs := stripAttrSet(opts.StripAttrs)
-	if len(attrs) == 0 && len(ignoreJSONPointers) == 0 {
+	if len(attrs) == 0 && len(normalization.JSONPointers) == 0 && len(normalization.JQPathExpressions) == 0 {
 		return body, nil
 	}
-	if err := validateJSONPointers(ignoreJSONPointers); err != nil {
+	if err := validateJSONPointers(normalization.JSONPointers); err != nil {
 		return "", err
 	}
 	if body == "" {
@@ -234,11 +258,15 @@ func normalizeDiffBody(body string, opts Options, ignoreJSONPointers []string) (
 		return "", err
 	}
 	stripMetadataAttrs(object, attrs)
-	object, err = removeJSONPointers(object, ignoreJSONPointers)
+	object, err = removeJSONPointers(object, normalization.JSONPointers)
 	if err != nil {
 		if errors.Is(err, errJSONPointerRemovedRoot) {
 			return "", nil
 		}
+		return "", err
+	}
+	object, err = removeJQPathExpressions(object, normalization.JQPathExpressions)
+	if err != nil {
 		return "", err
 	}
 	return encodeDiffYAML(object)

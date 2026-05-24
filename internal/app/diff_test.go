@@ -60,6 +60,35 @@ func TestOrchestratorDiffAppsHonorsApplicationJSONPointerIgnores(t *testing.T) {
 	}
 }
 
+func TestOrchestratorDiffAppsHonorsApplicationJQPathExpressions(t *testing.T) {
+	root := t.TempDir()
+	left := filepath.Join(root, "left")
+	right := filepath.Join(root, "right")
+	writeDeploymentAppWithSidecarImage(t, left, "example/sidecar:v1", "")
+	writeDeploymentAppWithSidecarImage(t, right, "example/sidecar:v2", `  ignoreDifferences:
+    - group: apps
+      kind: Deployment
+      name: demo
+      jqPathExpressions:
+        - .spec.template.spec.containers[] | select(.name == "sidecar")
+`)
+
+	result, err := Orchestrator{}.DiffApps(context.Background(), DiffRequest{
+		LeftPath:  left,
+		RightPath: right,
+		Unified:   3,
+	})
+	if err != nil {
+		t.Fatalf("DiffApps() error = %v", err)
+	}
+	if len(result.Results) != 0 {
+		t.Fatalf("len(Results) = %d, want sidecar image diff ignored: %#v", len(result.Results), result.Results)
+	}
+	if len(result.Diagnostics) != 0 {
+		t.Fatalf("len(Diagnostics) = %d, want no diagnostics: %#v", len(result.Diagnostics), result.Diagnostics)
+	}
+}
+
 func TestOrchestratorDiffAppsHonorsGlobalResourceCustomizationJSONPointers(t *testing.T) {
 	root := t.TempDir()
 	left := filepath.Join(root, "left")
@@ -83,6 +112,68 @@ func TestOrchestratorDiffAppsHonorsGlobalResourceCustomizationJSONPointers(t *te
 	}
 	if len(result.Results) != 0 {
 		t.Fatalf("len(Results) = %d, want replicas-only diff ignored: %#v", len(result.Results), result.Results)
+	}
+}
+
+func TestOrchestratorDiffAppsHonorsGlobalResourceCustomizationJQPathExpressions(t *testing.T) {
+	root := t.TempDir()
+	left := filepath.Join(root, "left")
+	right := filepath.Join(root, "right")
+	writeWebhookApp(t, left, "left-ca")
+	writeWebhookApp(t, right, "right-ca")
+	writeGlobalCustomization(t, right, `resource.customizations: |
+    admissionregistration.k8s.io/MutatingWebhookConfiguration:
+      ignoreDifferences: |
+        jqPathExpressions:
+          - .webhooks[].clientConfig.caBundle
+`)
+
+	result, err := Orchestrator{}.DiffApps(context.Background(), DiffRequest{
+		LeftPath:  left,
+		RightPath: right,
+		Unified:   3,
+	})
+	if err != nil {
+		t.Fatalf("DiffApps() error = %v", err)
+	}
+	if len(result.Results) != 0 {
+		t.Fatalf("len(Results) = %d, want caBundle-only diff ignored: %#v", len(result.Results), result.Results)
+	}
+	if len(result.Diagnostics) != 0 {
+		t.Fatalf("len(Diagnostics) = %d, want no diagnostics: %#v", len(result.Diagnostics), result.Diagnostics)
+	}
+}
+
+func TestOrchestratorDiffAppsInvalidJQPathExpressionReturnsError(t *testing.T) {
+	for _, strict := range []bool{false, true} {
+		t.Run(fmt.Sprintf("strict=%t", strict), func(t *testing.T) {
+			root := t.TempDir()
+			left := filepath.Join(root, "left")
+			right := filepath.Join(root, "right")
+			writeDeploymentAppWithReplicas(t, left, 1, "")
+			writeDeploymentAppWithReplicas(t, right, 2, `  ignoreDifferences:
+    - group: apps
+      kind: Deployment
+      jqPathExpressions:
+        - .spec.replicas)
+`)
+
+			result, err := Orchestrator{}.DiffApps(context.Background(), DiffRequest{
+				LeftPath:  left,
+				RightPath: right,
+				Strict:    strict,
+				Unified:   3,
+			})
+			if err == nil {
+				t.Fatal("DiffApps() error = nil, want invalid jq error")
+			}
+			if !strings.Contains(err.Error(), "normalize") || !strings.Contains(err.Error(), "jq") {
+				t.Fatalf("DiffApps() error = %v, want jq normalization error", err)
+			}
+			if len(result.Results) != 0 {
+				t.Fatalf("Results = %#v, want none on normalization error", result.Results)
+			}
+		})
 	}
 }
 
@@ -165,8 +256,8 @@ func TestOrchestratorDiffAppsReportsUnsupportedGlobalCustomizationDiagnostics(t 
 	if err != nil {
 		t.Fatalf("DiffApps() error = %v", err)
 	}
-	if len(result.Diagnostics) != 2 {
-		t.Fatalf("len(Diagnostics) = %d, want 2: %#v", len(result.Diagnostics), result.Diagnostics)
+	if len(result.Diagnostics) != 1 {
+		t.Fatalf("len(Diagnostics) = %d, want one managedFieldsManagers warning: %#v", len(result.Diagnostics), result.Diagnostics)
 	}
 	for _, diag := range result.Diagnostics {
 		if diag.Severity != diagnostic.SeverityWarning || diag.Category != "settings" {
@@ -666,6 +757,43 @@ metadata:
       containers:
         - name: app
           image: example/app:v1
+`)
+}
+
+func writeDeploymentAppWithSidecarImage(t *testing.T, root, sidecarImage, ignoreDifferences string) {
+	t.Helper()
+	writeTestFile(t, filepath.Join(root, "apps", "demo.yaml"), `apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: demo
+  namespace: argocd
+spec:
+  source:
+    repoURL: https://github.com/example/repo
+    path: manifests/demo
+    targetRevision: main
+  destination:
+    name: in-cluster
+    namespace: demo
+`+ignoreDifferences)
+	writeTestFile(t, filepath.Join(root, "manifests", "demo", "deployment.yaml"), `apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: demo
+spec:
+  selector:
+    matchLabels:
+      app: demo
+  template:
+    metadata:
+      labels:
+        app: demo
+    spec:
+      containers:
+        - name: app
+          image: example/app:v1
+        - name: sidecar
+          image: `+sidecarImage+`
 `)
 }
 
