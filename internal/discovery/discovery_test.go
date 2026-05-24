@@ -190,6 +190,36 @@ stringData:
 	}
 }
 
+func TestScanDiscoversAppProjects(t *testing.T) {
+	root := t.TempDir()
+	mustWriteFile(t, filepath.Join(root, "projects", "platform.yaml"), `apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: platform
+  namespace: argocd
+spec:
+  sourceRepos:
+    - https://github.com/example/*
+  destinations:
+    - server: https://kubernetes.default.svc
+      namespace: workloads
+`)
+
+	result, err := Scan(root, Options{})
+	if err != nil {
+		t.Fatalf("Scan() error = %v", err)
+	}
+	if len(result.Projects) != 1 {
+		t.Fatalf("Projects = %#v, want one AppProject", result.Projects)
+	}
+	if result.Projects[0].Path != filepath.Join("projects", "platform.yaml") {
+		t.Fatalf("Project path = %q", result.Projects[0].Path)
+	}
+	if result.Projects[0].Project.Name != "platform" {
+		t.Fatalf("Project name = %q, want platform", result.Projects[0].Project.Name)
+	}
+}
+
 func TestScanRequiresCandidateGVK(t *testing.T) {
 	root := t.TempDir()
 	mustWriteFile(t, filepath.Join(root, "fake-app.yaml"), `apiVersion: example.com/v1

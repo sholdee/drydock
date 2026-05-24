@@ -21,6 +21,11 @@ type ApplicationFile struct {
 	Application argoappv1.Application
 }
 
+type ProjectFile struct {
+	Path    string
+	Project argoappv1.AppProject
+}
+
 type SettingsCandidate struct {
 	Path string
 	Kind string
@@ -30,6 +35,7 @@ type Result struct {
 	Applications       []ApplicationFile
 	ApplicationSetPath []string
 	SettingsCandidates []SettingsCandidate
+	Projects           []ProjectFile
 }
 
 func Scan(root string, opts Options) (Result, error) {
@@ -150,6 +156,12 @@ func scanDocument(rel string, obj *unstructured.Unstructured, result *Result) er
 		result.Applications = append(result.Applications, ApplicationFile{Path: rel, Application: app})
 	case isArgoGVK(obj, "ApplicationSet"):
 		result.ApplicationSetPath = append(result.ApplicationSetPath, rel)
+	case isArgoGVK(obj, "AppProject"):
+		var project argoappv1.AppProject
+		if err := unstructuredToTyped(obj.Object, &project); err != nil {
+			return fmt.Errorf("%s: decode AppProject: %w", rel, err)
+		}
+		result.Projects = append(result.Projects, ProjectFile{Path: rel, Project: project})
 	case isCoreGVK(obj, "ConfigMap") && obj.GetName() == "argocd-cm":
 		result.SettingsCandidates = append(result.SettingsCandidates, SettingsCandidate{Path: rel, Kind: "argocd-cm"})
 	case isCoreGVK(obj, "Secret") && obj.GetLabels()["argocd.argoproj.io/secret-type"] == "repository":
