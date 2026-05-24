@@ -58,13 +58,16 @@ go run ./cmd/argocd-local diag --path ./testdata/applications/e2e
 
 Render and diff commands fetch public Helm charts by default for Kustomize
 `helmCharts` and Argo CD chart-only sources. They also support remote
-Kustomize HTTP(S) file resources, Git refs, bases, components, patches,
-generators, transformers, validators, `crds`, `openapi.path`,
-`replacements.path`, and generator file/env refs through the remote resource
-cache. Use `--offline` to require cached or local chart availability and cached
-remote Kustomize resources. Use `--refresh-charts` and `--chart-cache-dir` for
-chart caching, and `--refresh-remotes` and `--remote-cache-dir` for remote
-Kustomize resource caching. Git path sources can be resolved with deterministic
+Kustomize HTTP(S) file resources and Git refs. HTTP(S) Kustomize refs are
+single manifest/data files; directory-shaped refs such as bases and components
+must be Git refs that resolve to Kustomization directories. Supported remote
+fields include bases, components, patches, generators, transformers,
+validators, `crds`, `openapi.path`, `replacements.path`, and generator
+file/env refs through the remote resource cache. Use `--offline` to require
+cached or local chart availability and cached remote Kustomize resources. Use
+`--refresh-charts` and `--chart-cache-dir` for chart caching, and
+`--refresh-remotes` and `--remote-cache-dir` for remote Kustomize resource
+caching. Git path sources can be resolved with deterministic
 `--repo-map URL=PATH` entries, or fetched with `--allow-network` when the source
 path is not present locally. Git fetches use `--git-cache-dir` and
 `--refresh-git`. Caches must stay outside Git repository trees.
