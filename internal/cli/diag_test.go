@@ -116,6 +116,127 @@ func TestDiagYAMLOutputContainsDiagnosticsWithCodes(t *testing.T) {
 	}
 }
 
+func TestDiagJSONIncludesSettingsSummary(t *testing.T) {
+	root := t.TempDir()
+	writeSimpleAppForCLI(t, root, "ok")
+	writeSettingsSummaryConfigMapForCLI(t, root)
+
+	cmd := NewRootCommand(VersionInfo{})
+	cmd.SetArgs([]string{"diag", "--path", root, "-o", "json", "--settings"})
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	cmd.SetOut(&stdout)
+	cmd.SetErr(&stderr)
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("Execute() error = %v\nstdout:\n%s\nstderr:\n%s", err, stdout.String(), stderr.String())
+	}
+	if stderr.String() != "" {
+		t.Fatalf("stderr = %q, want empty for structured diag output", stderr.String())
+	}
+	var report struct {
+		Settings struct {
+			ResourceCustomizations map[string]struct {
+				HasHealthLua    bool   `json:"hasHealthLua"`
+				HealthLuaSHA256 string `json:"healthLuaSHA256"`
+				Actions         struct {
+					HasActions         bool   `json:"hasActions"`
+					HasDiscoveryLua    bool   `json:"hasDiscoveryLua"`
+					DiscoveryLuaSHA256 string `json:"discoveryLuaSHA256"`
+					ActionNames        []string
+					ActionLuaSHA256    []struct {
+						Name   string `json:"name"`
+						Index  int    `json:"index"`
+						SHA256 string `json:"sha256"`
+					} `json:"actionLuaSHA256"`
+				} `json:"actions"`
+			} `json:"resourceCustomizations"`
+		} `json:"settings"`
+	}
+	if err := json.Unmarshal(stdout.Bytes(), &report); err != nil {
+		t.Fatalf("json.Unmarshal() error = %v\nstdout:\n%s", err, stdout.String())
+	}
+	customization := report.Settings.ResourceCustomizations["apps/Deployment"]
+	if !customization.HasHealthLua {
+		t.Fatalf("settings = %#v, want health Lua summary", report.Settings)
+	}
+	if customization.HealthLuaSHA256 != "5891509de2d4c98e33ce3c17387504bc74033b0bfc02f2a307ccf58a8e826a9b" {
+		t.Fatalf("healthLuaSHA256 = %q", customization.HealthLuaSHA256)
+	}
+	if !customization.Actions.HasActions || !customization.Actions.HasDiscoveryLua {
+		t.Fatalf("actions = %#v, want actions and discovery summary", customization.Actions)
+	}
+	if customization.Actions.DiscoveryLuaSHA256 != "0596745fe0c0878b1a95592a3bbdcb73f103017dc971de03e911b4074303afbd" {
+		t.Fatalf("discoveryLuaSHA256 = %q", customization.Actions.DiscoveryLuaSHA256)
+	}
+	if len(customization.Actions.ActionLuaSHA256) != 1 || customization.Actions.ActionLuaSHA256[0].SHA256 != "e5b0bdd6e3d65ea212b780b9c00247603f5da7a2b90cb024311732875322b51e" {
+		t.Fatalf("actionLuaSHA256 = %#v", customization.Actions.ActionLuaSHA256)
+	}
+}
+
+func TestDiagYAMLIncludesSettingsSummary(t *testing.T) {
+	root := t.TempDir()
+	writeSimpleAppForCLI(t, root, "ok")
+	writeSettingsSummaryConfigMapForCLI(t, root)
+
+	cmd := NewRootCommand(VersionInfo{})
+	cmd.SetArgs([]string{"diag", "--path", root, "-o", "yaml", "--settings"})
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	cmd.SetOut(&stdout)
+	cmd.SetErr(&stderr)
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("Execute() error = %v\nstdout:\n%s\nstderr:\n%s", err, stdout.String(), stderr.String())
+	}
+	if stderr.String() != "" {
+		t.Fatalf("stderr = %q, want empty for structured diag output", stderr.String())
+	}
+	for _, want := range []string{
+		"settings:",
+		"resourceCustomizations:",
+		"healthLuaSHA256: 5891509de2d4c98e33ce3c17387504bc74033b0bfc02f2a307ccf58a8e826a9b",
+		"discoveryLuaSHA256: 0596745fe0c0878b1a95592a3bbdcb73f103017dc971de03e911b4074303afbd",
+		"sha256: e5b0bdd6e3d65ea212b780b9c00247603f5da7a2b90cb024311732875322b51e",
+	} {
+		if !strings.Contains(stdout.String(), want) {
+			t.Fatalf("stdout = %q, want %q", stdout.String(), want)
+		}
+	}
+}
+
+func TestDiagSettingsSummaryDoesNotLeakLuaBodies(t *testing.T) {
+	root := t.TempDir()
+	writeSimpleAppForCLI(t, root, "ok")
+	writeSettingsSummaryConfigMapForCLI(t, root)
+
+	for _, output := range []string{"json", "yaml"} {
+		t.Run(output, func(t *testing.T) {
+			cmd := NewRootCommand(VersionInfo{})
+			cmd.SetArgs([]string{"diag", "--path", root, "-o", output, "--settings"})
+			var stdout bytes.Buffer
+			var stderr bytes.Buffer
+			cmd.SetOut(&stdout)
+			cmd.SetErr(&stderr)
+
+			if err := cmd.Execute(); err != nil {
+				t.Fatalf("Execute() error = %v\nstdout:\n%s\nstderr:\n%s", err, stdout.String(), stderr.String())
+			}
+			combined := stdout.String() + stderr.String()
+			for _, forbidden := range []string{
+				"SUPER_SECRET_HEALTH_TOKEN",
+				"SUPER_SECRET_ACTION_TOKEN",
+				"return { status",
+				"obj.metadata.annotations",
+			} {
+				if strings.Contains(combined, forbidden) {
+					t.Fatalf("%s output leaked %q\nstdout:\n%s\nstderr:\n%s", output, forbidden, stdout.String(), stderr.String())
+				}
+			}
+		})
+	}
+}
+
 func TestDiagJSONOutputCanIncludeCacheEvents(t *testing.T) {
 	root := t.TempDir()
 	chartDir := filepath.Join(t.TempDir(), "demo")
@@ -322,6 +443,28 @@ spec:
       destination:
         name: in-cluster
         namespace: default
+`)
+}
+
+func writeSettingsSummaryConfigMapForCLI(t *testing.T, root string) {
+	t.Helper()
+	writeCLITestFile(t, filepath.Join(root, "settings", "argocd-cm.yaml"), `apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: argocd-cm
+data:
+  resource.customizations: |
+    apps/Deployment:
+      health.lua: |
+        return { status = "Healthy", message = "SUPER_SECRET_HEALTH_TOKEN" }
+      actions: |
+        discovery.lua: |
+          return { { name = "restart" } }
+        definitions:
+          - name: restart
+            action.lua: |
+              obj.metadata.annotations = { token = "SUPER_SECRET_ACTION_TOKEN" }
+              return obj
 `)
 }
 
