@@ -131,6 +131,8 @@ The MVP currently supports:
   injectable Git/chart/remote-resource acquisition.
 - Structured `diff apps` and `diff app` output with diff, JSON, and YAML
   formats, plus metadata label/annotation stripping through `--strip-attr`.
+- Application-level `spec.ignoreDifferences[].jsonPointers` for rendered
+  manifest diffs.
 - Explicit rendered-resource filters through `--skip-kind`, `--skip-crds`, and
   `--skip-secrets` for build output, diffs, image extraction, tests, and the
   public Go API.
@@ -145,6 +147,8 @@ Do not treat these as supported without an explicit design update:
 - Kubernetes API defaulting or admission mutation.
 - Server-side apply field ownership, managed fields ignores, and live Argo CD
   server-side diff behavior.
+- Application-level `ignoreDifferences` `jqPathExpressions` and
+  `managedFieldsManagers`.
 - Project, RBAC, and destination validation.
 - Config management plugins.
 - Cluster, SCM provider, pull-request, plugin, matrix, and merge
@@ -221,6 +225,12 @@ keys before manifest body comparison and diff generation.
 `--skip-kind KIND`, `--skip-crds`, and `--skip-secrets` drop rendered resources
 before build output, diff comparison, and image extraction. These filters are
 explicit opt-ins; do not change defaults to hide Secrets or CRDs.
+Application `spec.ignoreDifferences[].jsonPointers` rules are honored with
+Argo CD glob matching for group/kind and exact optional name/namespace matches.
+When both sides contain a matching resource, apply the union of left and right
+JSON pointers to both sides before comparison. Do not claim support for
+`jqPathExpressions`, `managedFieldsManagers`, or global resource customizations
+until they are explicitly implemented.
 Image extraction is conservative in the MVP and may be broadened only behind an
 explicit mode.
 CLI diff exit codes are fixed: 0 means success/no diff, 1 means success/diff

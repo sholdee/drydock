@@ -86,6 +86,10 @@ resources from build output, manifest diffs, image extraction, and render
 tests. Embedding callers can set `SkipKinds`, `SkipCRDs`, and `SkipSecrets` on
 `argocdlocal.Config` for the same behavior.
 
+Application-level `spec.ignoreDifferences[].jsonPointers` rules are honored for
+rendered manifest diffs. `jqPathExpressions`, `managedFieldsManagers`, and
+global `argocd-cm` resource customizations remain deferred.
+
 Maintainers with a local `home-ops` checkout can also run the optional
 Renovate smoke script:
 
@@ -113,6 +117,7 @@ scripts/home-ops-pattern-smoke.sh
 - Server-side diff/apply settings are reported as offline limitations.
 - Argo CD global resource inclusions/exclusions and global
   `resource.customizations.*` are not supported yet.
+- Application `ignoreDifferences` support is limited to `jsonPointers`.
 
 See `docs/usage.md` for command examples and `docs/compatibility.md` for
 offline Argo CD compatibility notes. See `docs/home-ops-pattern-coverage.md`
