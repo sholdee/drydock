@@ -89,40 +89,13 @@ func WithStableCodes(diags []Diagnostic) []Diagnostic {
 func StableCode(diag Diagnostic) string {
 	switch diag.Category {
 	case "appset":
-		if strings.Contains(diag.Message, "unsupported ApplicationSet generator") {
-			return "appset.unsupported-generator"
-		}
+		return appSetCode(diag.Message)
 	case "settings":
-		switch {
-		case strings.Contains(diag.Message, "conflicting"):
-			return "settings.conflict"
-		case strings.Contains(diag.Message, "failed to parse"):
-			return "settings.parse-error"
-		case strings.Contains(diag.Message, "parsed as metadata only") || strings.Contains(diag.Message, "parsed but not applied"):
-			return "settings.metadata-only"
-		}
+		return settingsCode(diag.Message)
 	case "project":
-		switch {
-		case strings.Contains(diag.Message, "source repository") && strings.Contains(diag.Message, "not permitted"):
-			return "project.source-repository-denied"
-		case strings.Contains(diag.Message, "destination is not permitted"):
-			return "project.destination-denied"
-		case strings.Contains(diag.Message, "source namespace"):
-			return "project.source-namespace-denied"
-		case strings.Contains(diag.Message, "RBAC roles"):
-			return "project.rbac-metadata-only"
-		case strings.Contains(diag.Message, "permitOnlyProjectScopedClusters"):
-			return "project.project-scoped-clusters-deferred"
-		case strings.Contains(diag.Message, "references missing AppProject"):
-			return "project.missing"
-		}
+		return projectCode(diag.Message)
 	case "repository":
-		switch {
-		case strings.Contains(diag.Message, "missing repository metadata"):
-			return "repository.metadata-missing"
-		case strings.Contains(diag.Message, "repository metadata"):
-			return "repository.project-mismatch"
-		}
+		return repositoryCode(diag.Message)
 	case "plugin":
 		return "plugin.unsupported"
 	case "render":
@@ -136,4 +109,54 @@ func StableCode(diag Diagnostic) string {
 		return "diagnostic.unspecified"
 	}
 	return diag.Category + ".unspecified"
+}
+
+func appSetCode(message string) string {
+	if strings.Contains(message, "unsupported ApplicationSet generator") {
+		return "appset.unsupported-generator"
+	}
+	return "appset.unspecified"
+}
+
+func settingsCode(message string) string {
+	switch {
+	case strings.Contains(message, "conflicting"):
+		return "settings.conflict"
+	case strings.Contains(message, "failed to parse"):
+		return "settings.parse-error"
+	case strings.Contains(message, "parsed as metadata only") || strings.Contains(message, "parsed but not applied"):
+		return "settings.metadata-only"
+	default:
+		return "settings.unspecified"
+	}
+}
+
+func projectCode(message string) string {
+	switch {
+	case strings.Contains(message, "source repository") && strings.Contains(message, "not permitted"):
+		return "project.source-repository-denied"
+	case strings.Contains(message, "destination is not permitted"):
+		return "project.destination-denied"
+	case strings.Contains(message, "source namespace"):
+		return "project.source-namespace-denied"
+	case strings.Contains(message, "RBAC roles"):
+		return "project.rbac-metadata-only"
+	case strings.Contains(message, "permitOnlyProjectScopedClusters"):
+		return "project.project-scoped-clusters-deferred"
+	case strings.Contains(message, "references missing AppProject"):
+		return "project.missing"
+	default:
+		return "project.unspecified"
+	}
+}
+
+func repositoryCode(message string) string {
+	switch {
+	case strings.Contains(message, "missing repository metadata"):
+		return "repository.metadata-missing"
+	case strings.Contains(message, "repository metadata"):
+		return "repository.project-mismatch"
+	default:
+		return "repository.unspecified"
+	}
 }
