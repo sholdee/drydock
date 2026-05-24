@@ -619,17 +619,6 @@ func gitCredentialsFromInternal(credentials sourcepkg.GitCredentials) GitCredent
 	}
 }
 
-func remoteResourceKindToInternal(kind RemoteResourceKind) remote.RequestKind {
-	switch kind {
-	case "", RemoteResourceHTTPFile:
-		return remote.RequestHTTPFile
-	case RemoteResourceGitRepo:
-		return remote.RequestGitRepo
-	default:
-		return remote.RequestKind(kind)
-	}
-}
-
 func remoteResourceKindFromInternal(kind remote.RequestKind) RemoteResourceKind {
 	switch kind {
 	case "", remote.RequestHTTPFile:

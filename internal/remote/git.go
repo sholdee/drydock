@@ -16,6 +16,7 @@ import (
 	gitssh "github.com/go-git/go-git/v5/plumbing/transport/ssh"
 )
 
+//nolint:gocyclo // Git acquisition has distinct cache hit, refresh, offline, auth, clone, and checkout branches.
 func (acquirer DefaultAcquirer) acquireGitRepo(ctx context.Context, request Request, opts Options) (Result, error) {
 	repoURL := strings.TrimSpace(request.RepoURL)
 	if repoURL == "" {

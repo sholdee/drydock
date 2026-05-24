@@ -14,6 +14,7 @@ import (
 
 type DirectoryRenderer struct{}
 
+//nolint:gocyclo // Directory rendering keeps walk, filtering, decode, and path provenance in one pass.
 func (DirectoryRenderer) Render(ctx context.Context, source ResolvedSource, _ RenderOptions) ([]Manifest, []diagnostic.Diagnostic, error) {
 	root, err := sourceRoot(source)
 	if err != nil {
@@ -100,12 +101,12 @@ func kustomizeGeneratorSkipSet(ctx context.Context, root string) (map[string]boo
 		}
 		skipFiles[filepath.Clean(path)] = true
 
-		content, err := os.ReadFile(path)
-		if err != nil {
-			return err
+		content, readErr := os.ReadFile(path)
+		if readErr != nil {
+			return readErr
 		}
 		var kustomization types.Kustomization
-		if err := kustomization.Unmarshal(content); err != nil {
+		if !unmarshalKustomizationForDirectorySkip(content, &kustomization) {
 			return nil
 		}
 		for _, generator := range kustomization.ConfigMapGenerator {
@@ -120,6 +121,10 @@ func kustomizeGeneratorSkipSet(ctx context.Context, root string) (map[string]boo
 		return nil, err
 	}
 	return skipFiles, nil
+}
+
+func unmarshalKustomizationForDirectorySkip(content []byte, kustomization *types.Kustomization) bool {
+	return kustomization.Unmarshal(content) == nil
 }
 
 func addKvPairSourcesToSkipSet(skipFiles map[string]bool, root, dir string, sources types.KvPairSources) {

@@ -120,8 +120,8 @@ The MVP currently supports:
 - Direct `Application` CR discovery.
 - Git-directory, Git-files, and list `ApplicationSet` CR expansion.
 - Single-source and multi-source planning for supported source types.
-- Kustomize, directory, local Helm chart, Kustomize `helmCharts`, safe
-  single-file HTTP(S) Kustomize `resources:`, and chart-only remote Helm source
+- Kustomize, directory, local Helm chart, Kustomize `helmCharts`, remote
+  Kustomize HTTP(S) files and Git refs, and chart-only remote Helm source
   rendering through Go libraries.
 - Deterministic `--repo-map` and gated `--allow-network` Git clone/fetch for
   path-based Git sources.
@@ -171,9 +171,8 @@ Do not treat these as supported without an explicit design update:
 - Cluster, SCM provider, pull-request, plugin, matrix, and merge
   ApplicationSet generators.
 - Required default shellouts to `helm`, `kustomize`, `kubectl`, or `argocd`.
-- Remote Kustomize bases, components, patches, generators, transformers,
-  validators, `crds`, `openapi`, replacements, and arbitrary Kustomize Git
-  refs outside supported `resources:` acquisition.
+- A first-class cache inspection command or structured cache event stream for
+  Git, Helm, and remote Kustomize acquisition.
 
 ## Source Resolution
 
@@ -291,13 +290,17 @@ restrictions are enough. Kustomize helmCharts must be rendered through
 argocd-local's chart
 acquisition and Helm Go renderer into a temporary workspace. Do not enable
 Kustomize's Helm shellout plugin or write generated charts into the Git tree.
-Single-file HTTP(S) Kustomize `resources:` entries are fetched through
+Remote Kustomize HTTP(S) file refs and Git refs are fetched through
 argocd-local's remote resource cache and rewritten into the temporary
-Kustomize workspace. Remote Kustomize resource credentials are explicit flags
-only and must be redacted in errors. Remote Kustomize bases, components,
-patches, generators, transformers, validators, `crds`, `openapi`,
-replacements, and Git-style refs outside the supported `resources:` acquisition
-path remain unsupported.
+Kustomize workspace. Supported remote fields include `resources`, `bases`,
+`components`, `patches.path`, `patchesJson6902.path`, non-inline
+`patchesStrategicMerge`, `generators`, `transformers`, `validators`,
+`configurations`, `crds`, `openapi.path`, `replacements.path`, and
+ConfigMap/Secret generator `files`, `envs`, and `env` entries. Remote
+Kustomize HTTP(S) credentials are explicit flags only and must be redacted in
+errors. Kustomize Git refs reuse explicit Git credentials but follow remote
+Kustomize cache/offline/refresh semantics, not repository-source
+`--allow-network` semantics.
 Helm rendering must use Go libraries by default. Preserve these Argo CD
 semantics in the MVP: release name defaults to Application name, destination
 namespace is passed to Helm, and `valuesObject` overrides `values`.
@@ -329,9 +332,10 @@ Never mutate `/Users/ethan.shold/git/home-ops` directly from tests.
 `docs/home-ops-pattern-coverage.md` is the source of truth for real
 `home-ops` pattern coverage. Normal tests must use portable fixtures; optional
 smoke scripts may target the real checkout through temporary worktrees only.
-Portable fixtures cover safe single-file HTTP(S) Kustomize resources. The real
-`home-ops` `apps/system-upgrade` remote-resource pattern is covered and
-supported in that narrow form.
+Portable fixtures cover HTTP(S) and Git remote Kustomize resources, including
+remote bases, components, authenticated HTTP resource credentials, and remote
+patch files. The real `home-ops` `apps/system-upgrade` remote-resource pattern
+is covered and supported.
 
 Run the smallest check that covers your change:
 

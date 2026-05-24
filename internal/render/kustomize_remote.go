@@ -61,6 +61,7 @@ func parseKustomizeGitRemoteRef(ref string) (kustomizeRemoteRef, bool, error) {
 	return kustomizeRemoteRef{}, false, nil
 }
 
+//nolint:gocyclo // URL remote parsing validates scheme, auth, query, repo path, and subpath together.
 func parseKustomizeGitURLRef(original, raw string) (kustomizeRemoteRef, bool, error) {
 	parsed, err := url.Parse(raw)
 	if err != nil {
@@ -216,6 +217,8 @@ func generatedRemoteRefName(prefix string, ref kustomizeRemoteRef) string {
 
 func remoteRefIdentity(ref kustomizeRemoteRef) string {
 	switch ref.Kind {
+	case kustomizeRemoteNone:
+		return string(ref.Kind) + "\n" + redactKustomizeRemoteRef(ref.Original)
 	case kustomizeRemoteHTTPFile:
 		return string(ref.Kind) + "\n" + ref.URL
 	case kustomizeRemoteGit:
