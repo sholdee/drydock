@@ -6,9 +6,9 @@ import (
 	"strings"
 
 	argoappv1 "github.com/argoproj/argo-cd/v3/pkg/apis/application/v1alpha1"
-	"github.com/home-operations/argocd-local/internal/config"
-	"github.com/home-operations/argocd-local/internal/diagnostic"
-	"github.com/home-operations/argocd-local/internal/remote"
+	"github.com/sholdee/drydock/internal/config"
+	"github.com/sholdee/drydock/internal/diagnostic"
+	"github.com/sholdee/drydock/internal/remote"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 

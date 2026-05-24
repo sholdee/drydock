@@ -1,4 +1,4 @@
-package argocdlocal
+package drydock
 
 import (
 	"context"
@@ -9,8 +9,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/home-operations/argocd-local/internal/remote"
-	sourcepkg "github.com/home-operations/argocd-local/internal/source"
+	"github.com/sholdee/drydock/internal/remote"
+	sourcepkg "github.com/sholdee/drydock/internal/source"
 )
 
 func TestRenderApplications(t *testing.T) {

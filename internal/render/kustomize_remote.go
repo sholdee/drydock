@@ -8,7 +8,7 @@ import (
 	"path"
 	"strings"
 
-	"github.com/home-operations/argocd-local/internal/remote"
+	"github.com/sholdee/drydock/internal/remote"
 )
 
 type kustomizeRemoteKind string

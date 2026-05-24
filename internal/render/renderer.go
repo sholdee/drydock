@@ -5,10 +5,10 @@ import (
 	"errors"
 
 	argoappv1 "github.com/argoproj/argo-cd/v3/pkg/apis/application/v1alpha1"
-	"github.com/home-operations/argocd-local/internal/cacheevent"
-	"github.com/home-operations/argocd-local/internal/chart"
-	"github.com/home-operations/argocd-local/internal/diagnostic"
-	"github.com/home-operations/argocd-local/internal/remote"
+	"github.com/sholdee/drydock/internal/cacheevent"
+	"github.com/sholdee/drydock/internal/chart"
+	"github.com/sholdee/drydock/internal/diagnostic"
+	"github.com/sholdee/drydock/internal/remote"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 )
 

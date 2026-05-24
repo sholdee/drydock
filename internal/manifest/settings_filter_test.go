@@ -3,7 +3,7 @@ package manifest
 import (
 	"testing"
 
-	"github.com/home-operations/argocd-local/internal/config"
+	"github.com/sholdee/drydock/internal/config"
 )
 
 func TestSettingsResourceFilterDropsCoreExcludedResources(t *testing.T) {

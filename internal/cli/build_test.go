@@ -9,9 +9,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/home-operations/argocd-local/internal/app"
-	"github.com/home-operations/argocd-local/internal/chart"
-	sourcepkg "github.com/home-operations/argocd-local/internal/source"
+	"github.com/sholdee/drydock/internal/app"
+	"github.com/sholdee/drydock/internal/chart"
+	sourcepkg "github.com/sholdee/drydock/internal/source"
 )
 
 func TestBuildAppsRendersManifests(t *testing.T) {

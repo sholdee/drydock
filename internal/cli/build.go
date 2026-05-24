@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/home-operations/argocd-local/internal/app"
+	"github.com/sholdee/drydock/internal/app"
 	"github.com/spf13/cobra"
 	"go.yaml.in/yaml/v4"
 )

@@ -10,17 +10,17 @@ import (
 	"strings"
 
 	argoappv1 "github.com/argoproj/argo-cd/v3/pkg/apis/application/v1alpha1"
-	"github.com/home-operations/argocd-local/internal/appset"
-	"github.com/home-operations/argocd-local/internal/cacheevent"
-	"github.com/home-operations/argocd-local/internal/chart"
-	"github.com/home-operations/argocd-local/internal/config"
-	"github.com/home-operations/argocd-local/internal/diagnostic"
-	"github.com/home-operations/argocd-local/internal/discovery"
-	"github.com/home-operations/argocd-local/internal/manifest"
-	"github.com/home-operations/argocd-local/internal/project"
-	"github.com/home-operations/argocd-local/internal/remote"
-	"github.com/home-operations/argocd-local/internal/render"
-	sourcepkg "github.com/home-operations/argocd-local/internal/source"
+	"github.com/sholdee/drydock/internal/appset"
+	"github.com/sholdee/drydock/internal/cacheevent"
+	"github.com/sholdee/drydock/internal/chart"
+	"github.com/sholdee/drydock/internal/config"
+	"github.com/sholdee/drydock/internal/diagnostic"
+	"github.com/sholdee/drydock/internal/discovery"
+	"github.com/sholdee/drydock/internal/manifest"
+	"github.com/sholdee/drydock/internal/project"
+	"github.com/sholdee/drydock/internal/remote"
+	"github.com/sholdee/drydock/internal/render"
+	sourcepkg "github.com/sholdee/drydock/internal/source"
 )
 
 type BuildRequest struct {

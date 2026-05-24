@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"reflect"
 
-	"github.com/home-operations/argocd-local/internal/diagnostic"
+	"github.com/sholdee/drydock/internal/diagnostic"
 )
 
 func MergeDiscovered(candidates []ArgoSettings) (ArgoSettings, []diagnostic.Diagnostic) {

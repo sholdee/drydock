@@ -6,10 +6,10 @@ import (
 	"io"
 	"strings"
 
-	"github.com/home-operations/argocd-local/internal/app"
-	"github.com/home-operations/argocd-local/internal/cacheevent"
-	"github.com/home-operations/argocd-local/internal/diagnostic"
-	cliformat "github.com/home-operations/argocd-local/internal/format"
+	"github.com/sholdee/drydock/internal/app"
+	"github.com/sholdee/drydock/internal/cacheevent"
+	"github.com/sholdee/drydock/internal/diagnostic"
+	cliformat "github.com/sholdee/drydock/internal/format"
 	"github.com/spf13/cobra"
 )
 

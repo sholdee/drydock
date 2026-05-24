@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/home-operations/argocd-local/internal/app"
-	cliformat "github.com/home-operations/argocd-local/internal/format"
+	"github.com/sholdee/drydock/internal/app"
+	cliformat "github.com/sholdee/drydock/internal/format"
 	"github.com/spf13/cobra"
 )
 

@@ -5,7 +5,7 @@ import (
 	"strings"
 
 	argoappv1 "github.com/argoproj/argo-cd/v3/pkg/apis/application/v1alpha1"
-	sourcepkg "github.com/home-operations/argocd-local/internal/source"
+	sourcepkg "github.com/sholdee/drydock/internal/source"
 )
 
 // SelectChangedApplications returns Applications whose declared local source

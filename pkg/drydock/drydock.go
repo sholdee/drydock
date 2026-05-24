@@ -1,19 +1,19 @@
-// Package argocdlocal exposes the argocd-local orchestrator as an embeddable Go
-// API for rendering Argo CD Applications and calculating local diffs.
-package argocdlocal
+// Package drydock exposes the drydock orchestrator as an embeddable Go API for
+// rendering Argo CD Applications and calculating local diffs.
+package drydock
 
 import (
 	"context"
 
 	argoappv1 "github.com/argoproj/argo-cd/v3/pkg/apis/application/v1alpha1"
-	"github.com/home-operations/argocd-local/internal/app"
-	"github.com/home-operations/argocd-local/internal/cacheevent"
-	"github.com/home-operations/argocd-local/internal/chart"
-	"github.com/home-operations/argocd-local/internal/diagnostic"
-	"github.com/home-operations/argocd-local/internal/diff"
-	"github.com/home-operations/argocd-local/internal/remote"
-	renderpkg "github.com/home-operations/argocd-local/internal/render"
-	sourcepkg "github.com/home-operations/argocd-local/internal/source"
+	"github.com/sholdee/drydock/internal/app"
+	"github.com/sholdee/drydock/internal/cacheevent"
+	"github.com/sholdee/drydock/internal/chart"
+	"github.com/sholdee/drydock/internal/diagnostic"
+	"github.com/sholdee/drydock/internal/diff"
+	"github.com/sholdee/drydock/internal/remote"
+	renderpkg "github.com/sholdee/drydock/internal/render"
+	sourcepkg "github.com/sholdee/drydock/internal/source"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 )
 
@@ -21,7 +21,7 @@ import (
 //
 // Path is the working tree to inspect for render/list operations and the right
 // side for diff operations. PathOrig is the left side for diff operations. Use
-// keyed struct literals; new fields may be added as argocd-local gains parity.
+// keyed struct literals; new fields may be added as drydock gains parity.
 type Config struct {
 	Path                         string
 	PathOrig                     string
@@ -53,7 +53,7 @@ type Config struct {
 	RecordCacheEvents            bool
 }
 
-// Client runs argocd-local operations with a reusable Config and optional
+// Client runs drydock operations with a reusable Config and optional
 // injected source acquirers.
 type Client struct {
 	config       Config

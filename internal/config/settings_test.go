@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/home-operations/argocd-local/internal/diagnostic"
+	"github.com/sholdee/drydock/internal/diagnostic"
 )
 
 func TestLoadHelmValuesSettings(t *testing.T) {

@@ -1,7 +1,7 @@
 package cli
 
 import (
-	"github.com/home-operations/argocd-local/internal/app"
+	"github.com/sholdee/drydock/internal/app"
 	"github.com/spf13/cobra"
 )
 

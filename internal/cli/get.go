@@ -8,9 +8,9 @@ import (
 	"strings"
 
 	argoappv1 "github.com/argoproj/argo-cd/v3/pkg/apis/application/v1alpha1"
-	"github.com/home-operations/argocd-local/internal/app"
-	"github.com/home-operations/argocd-local/internal/diff"
-	cliformat "github.com/home-operations/argocd-local/internal/format"
+	"github.com/sholdee/drydock/internal/app"
+	"github.com/sholdee/drydock/internal/diff"
+	cliformat "github.com/sholdee/drydock/internal/format"
 	"github.com/spf13/cobra"
 	"go.yaml.in/yaml/v4"
 	"k8s.io/apimachinery/pkg/labels"
