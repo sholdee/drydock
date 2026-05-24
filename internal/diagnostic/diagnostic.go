@@ -9,6 +9,11 @@ const (
 	SeverityError   Severity = "error"
 )
 
+const (
+	CodePluginUnsupported = "plugin.unsupported"
+	CodePluginFailed      = "plugin.failed"
+)
+
 type Provenance struct {
 	Path    string `json:"path,omitempty" yaml:"path,omitempty"`
 	Pointer string `json:"pointer,omitempty" yaml:"pointer,omitempty"`
@@ -97,7 +102,7 @@ func StableCode(diag Diagnostic) string {
 	case "repository":
 		return repositoryCode(diag.Message)
 	case "plugin":
-		return "plugin.unsupported"
+		return CodePluginUnsupported
 	case "render":
 		return "render.failed"
 	case "repeated-resource":

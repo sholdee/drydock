@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"time"
 
 	argoappv1 "github.com/argoproj/argo-cd/v3/pkg/apis/application/v1alpha1"
 	"github.com/argoproj/argo-cd/v3/util/glob"
@@ -44,6 +45,7 @@ type DiffRequest struct {
 	RemoteResourceCacheDir         string
 	RemoteResourceCredentials      remote.Credentials
 	RemoteResourceGitCredentials   remote.GitCredentials
+	PluginTimeout                  time.Duration
 	SkipKinds                      []string
 	SkipCRDs                       bool
 	SkipSecrets                    bool
@@ -228,6 +230,7 @@ func (request DiffRequest) buildRequest(path string, forbiddenRoots []string) Bu
 		RemoteResourceCredentials:      request.RemoteResourceCredentials,
 		RemoteResourceGitCredentials:   request.RemoteResourceGitCredentials,
 		RemoteResourceForbiddenRoots:   forbiddenRoots,
+		PluginTimeout:                  request.PluginTimeout,
 		SkipKinds:                      append([]string(nil), request.SkipKinds...),
 		SkipCRDs:                       request.SkipCRDs,
 		SkipSecrets:                    request.SkipSecrets,

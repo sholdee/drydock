@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	argoappv1 "github.com/argoproj/argo-cd/v3/pkg/apis/application/v1alpha1"
 	"github.com/sholdee/drydock/internal/appset"
@@ -40,6 +41,7 @@ type BuildRequest struct {
 	RemoteResourceForbiddenRoots   []string
 	RemoteResourceCredentials      remote.Credentials
 	RemoteResourceGitCredentials   remote.GitCredentials
+	PluginTimeout                  time.Duration
 	SkipKinds                      []string
 	SkipCRDs                       bool
 	SkipSecrets                    bool
@@ -288,6 +290,7 @@ func (o Orchestrator) Build(ctx context.Context, request BuildRequest) (BuildRes
 		remoteResourceForbiddenRoots: forbiddenRoots,
 		remoteResourceCredentials:    request.RemoteResourceCredentials,
 		remoteResourceGitCredentials: request.RemoteResourceGitCredentials,
+		pluginTimeout:                request.PluginTimeout,
 		cacheEvents:                  cacheRecorder,
 	}
 	for _, application := range result.Applications {
@@ -296,6 +299,10 @@ func (o Orchestrator) Build(ctx context.Context, request BuildRequest) (BuildRes
 			result.Diagnostics = append(result.Diagnostics, normalizeDiagnostics(rendered.Diagnostics, request.Strict, false)...)
 			result.Diagnostics = append(result.Diagnostics, renderFailureDiagnostic(application, err))
 			result.Statuses = append(result.Statuses, applicationStatus(application, ApplicationStatusFail, err.Error()))
+			if ctxErr := ctx.Err(); ctxErr != nil {
+				result.CacheEvents = cacheRecorder.Events()
+				return result, ctxErr
+			}
 			continue
 		}
 		rendered.Diagnostics = normalizeDiagnostics(rendered.Diagnostics, request.Strict, false)
@@ -550,6 +557,7 @@ type localProvider struct {
 	remoteResourceForbiddenRoots []string
 	remoteResourceCredentials    remote.Credentials
 	remoteResourceGitCredentials remote.GitCredentials
+	pluginTimeout                time.Duration
 	cacheEvents                  *cacheevent.Recorder
 }
 
@@ -602,12 +610,22 @@ func (p localProvider) renderPluginSource(ctx context.Context, source render.Res
 	if p.pluginRenderer == nil {
 		message := fmt.Sprintf("config management plugin %s is not supported without an injected plugin renderer", pluginDisplayName(opts.Plugin.Name))
 		return nil, []diagnostic.Diagnostic{{
+			Code:     diagnostic.CodePluginUnsupported,
 			Severity: diagnostic.SeverityError,
 			Category: "plugin",
 			Message:  message,
 		}}, fmt.Errorf("%s: %w", message, render.ErrUnsupportedPlugin)
 	}
-	return p.pluginRenderer.RenderPlugin(ctx, render.PluginRequest{
+	if err := ctx.Err(); err != nil {
+		return nil, nil, err
+	}
+	renderCtx := ctx
+	cancel := func() {}
+	if p.pluginTimeout > 0 {
+		renderCtx, cancel = context.WithTimeout(ctx, p.pluginTimeout)
+	}
+	defer cancel()
+	request := render.PluginRequest{
 		AppName:      opts.AppName,
 		AppNamespace: opts.AppNamespace,
 		Project:      opts.Project,
@@ -616,7 +634,23 @@ func (p localProvider) renderPluginSource(ctx context.Context, source render.Res
 		Plugin:       *opts.Plugin,
 		RefRoots:     cloneStringMap(opts.RefRoots),
 		RefSources:   cloneResolvedSourceMap(opts.RefSources),
-	})
+	}
+	manifests, diags, err := p.pluginRenderer.RenderPlugin(renderCtx, request)
+	diags = diagnostic.WithStableCodes(diags)
+	if err == nil {
+		return manifests, diags, nil
+	}
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		return manifests, diags, ctxErr
+	}
+	if renderCtx.Err() == context.DeadlineExceeded {
+		message := fmt.Sprintf("config management plugin %s timed out", pluginDisplayName(opts.Plugin.Name))
+		diags = append(diags, pluginFailedDiagnostic(message))
+		return manifests, diags, fmt.Errorf("%s: %w", message, err)
+	}
+	message := fmt.Sprintf("config management plugin %s failed: %s", pluginDisplayName(opts.Plugin.Name), err)
+	diags = append(diags, pluginFailedDiagnostic(message))
+	return manifests, diags, err
 }
 
 func pluginDisplayName(name string) string {
@@ -625,6 +659,15 @@ func pluginDisplayName(name string) string {
 		return "<unnamed>"
 	}
 	return name
+}
+
+func pluginFailedDiagnostic(message string) diagnostic.Diagnostic {
+	return diagnostic.Diagnostic{
+		Code:     diagnostic.CodePluginFailed,
+		Severity: diagnostic.SeverityError,
+		Category: "plugin",
+		Message:  message,
+	}
 }
 
 func (p localProvider) resolveSourceRoot(ctx context.Context, source render.ResolvedSource) (string, error) {

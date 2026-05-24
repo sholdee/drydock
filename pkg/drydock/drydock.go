@@ -6,6 +6,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	argoappv1 "github.com/argoproj/argo-cd/v3/pkg/apis/application/v1alpha1"
 	"github.com/sholdee/drydock/internal/app"
@@ -43,6 +44,7 @@ type Config struct {
 	RemoteResourceForbiddenRoots   []string
 	RemoteResourceCredentials      RemoteResourceCredentials
 	PluginRenderer                 PluginRenderer
+	PluginTimeout                  time.Duration
 	SkipKinds                      []string
 	SkipCRDs                       bool
 	SkipSecrets                    bool
@@ -242,6 +244,7 @@ func (client *Client) buildRequest() app.BuildRequest {
 		RemoteResourceForbiddenRoots:   append([]string(nil), client.config.RemoteResourceForbiddenRoots...),
 		RemoteResourceCredentials:      remoteResourceCredentialsToInternal(client.config.RemoteResourceCredentials),
 		RemoteResourceGitCredentials:   gitCredentialsToRemoteInternal(client.config.GitCredentials),
+		PluginTimeout:                  client.config.PluginTimeout,
 		SkipKinds:                      append([]string(nil), client.config.SkipKinds...),
 		SkipCRDs:                       client.config.SkipCRDs,
 		SkipSecrets:                    client.config.SkipSecrets,
@@ -281,6 +284,7 @@ func (client *Client) diffRequest() app.DiffRequest {
 		RemoteResourceCacheDir:         client.config.RemoteResourceCacheDir,
 		RemoteResourceCredentials:      remoteResourceCredentialsToInternal(client.config.RemoteResourceCredentials),
 		RemoteResourceGitCredentials:   gitCredentialsToRemoteInternal(client.config.GitCredentials),
+		PluginTimeout:                  client.config.PluginTimeout,
 		SkipKinds:                      append([]string(nil), client.config.SkipKinds...),
 		SkipCRDs:                       client.config.SkipCRDs,
 		SkipSecrets:                    client.config.SkipSecrets,
@@ -335,7 +339,7 @@ func (registry *PluginRegistry) RenderPlugin(ctx context.Context, request Plugin
 	if !ok {
 		message := fmt.Sprintf("config management plugin %s is not registered in plugin registry", pluginDisplayName(name))
 		return PluginResult{Diagnostics: []Diagnostic{{
-			Code:     "plugin.unsupported",
+			Code:     diagnostic.CodePluginUnsupported,
 			Severity: "error",
 			Category: "plugin",
 			Message:  message,
