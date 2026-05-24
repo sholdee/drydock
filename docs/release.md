@@ -1,6 +1,6 @@
 # Release And Upgrade Notes
 
-`argocd-local` is a single static Go binary and embeddable Go module. Release
+`drydock` is a single static Go binary and embeddable Go module. Release
 artifacts should preserve the offline core contract: render and diff from
 checked-out files plus explicit caches, without requiring a cluster, Argo CD
 server, `kubectl`, `argocd`, Helm/Kustomize command-line tools, or external
