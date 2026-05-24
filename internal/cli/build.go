@@ -45,6 +45,9 @@ func newBuildCommand(deps Dependencies) *cobra.Command {
 				GitCredentials:         appsFlags.gitCredentials(),
 				RefreshRemoteResources: appsFlags.refreshRemotes,
 				RemoteResourceCacheDir: appsFlags.remoteCacheDir,
+				SkipKinds:              append([]string(nil), appsFlags.skipKinds...),
+				SkipCRDs:               appsFlags.skipCRDs,
+				SkipSecrets:            appsFlags.skipSecrets,
 			})
 			if err != nil {
 				if renderErr := renderDiagnostics(cmd.ErrOrStderr(), result.Diagnostics); renderErr != nil {
@@ -83,6 +86,9 @@ func newBuildCommand(deps Dependencies) *cobra.Command {
 					GitCredentials:         appFlags.gitCredentials(),
 					RefreshRemoteResources: appFlags.refreshRemotes,
 					RemoteResourceCacheDir: appFlags.remoteCacheDir,
+					SkipKinds:              append([]string(nil), appFlags.skipKinds...),
+					SkipCRDs:               appFlags.skipCRDs,
+					SkipSecrets:            appFlags.skipSecrets,
 				},
 			})
 			if err != nil {

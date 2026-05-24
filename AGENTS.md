@@ -53,7 +53,8 @@ Current shared flags are `--path`, `--path-orig`, `--selector`/`-l`, `--repo-map
 `--helm-password`, `--helm-bearer-token`, `--registry-config`,
 `--refresh-remotes`, `--remote-cache-dir`, `--changed-only`,
 `--strict-changed-only`, `--strict`, `--exit-code`, `--output`/`-o`,
-`--unified`/`-u`, `--strip-attr`, and `--limit-bytes`.
+`--unified`/`-u`, `--strip-attr`, `--skip-kind`, `--skip-crds`,
+`--skip-secrets`, and `--limit-bytes`.
 
 Public embedding API lives in `pkg/argocdlocal`. Keep its exported types free
 of `internal/...` package types. Package-level functions should follow CLI
@@ -130,6 +131,9 @@ The MVP currently supports:
   injectable Git/chart/remote-resource acquisition.
 - Structured `diff apps` and `diff app` output with diff, JSON, and YAML
   formats, plus metadata label/annotation stripping through `--strip-attr`.
+- Explicit rendered-resource filters through `--skip-kind`, `--skip-crds`, and
+  `--skip-secrets` for build output, diffs, image extraction, tests, and the
+  public Go API.
 - Argo CD settings discovery from Helm values, `argocd-cm`, and repository
   Secrets, limited to rendering/diff-affecting non-secret values.
 
@@ -214,6 +218,9 @@ diagnostics on stderr for structured diff output. Do not support `-o name` for
 `diff apps` or `diff app`; that format is for list-style commands and image
 projections. `--strip-attr KEY` removes matching metadata label and annotation
 keys before manifest body comparison and diff generation.
+`--skip-kind KIND`, `--skip-crds`, and `--skip-secrets` drop rendered resources
+before build output, diff comparison, and image extraction. These filters are
+explicit opt-ins; do not change defaults to hide Secrets or CRDs.
 Image extraction is conservative in the MVP and may be broadened only behind an
 explicit mode.
 CLI diff exit codes are fixed: 0 means success/no diff, 1 means success/diff

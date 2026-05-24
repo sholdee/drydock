@@ -14,6 +14,7 @@ import (
 	"github.com/home-operations/argocd-local/internal/chart"
 	"github.com/home-operations/argocd-local/internal/diagnostic"
 	"github.com/home-operations/argocd-local/internal/discovery"
+	"github.com/home-operations/argocd-local/internal/manifest"
 	"github.com/home-operations/argocd-local/internal/remote"
 	"github.com/home-operations/argocd-local/internal/render"
 	sourcepkg "github.com/home-operations/argocd-local/internal/source"
@@ -34,6 +35,9 @@ type BuildRequest struct {
 	RefreshRemoteResources       bool
 	RemoteResourceCacheDir       string
 	RemoteResourceForbiddenRoots []string
+	SkipKinds                    []string
+	SkipCRDs                     bool
+	SkipSecrets                  bool
 	Applications                 []argoappv1.Application
 }
 
@@ -181,6 +185,7 @@ func (o Orchestrator) Build(ctx context.Context, request BuildRequest) (BuildRes
 	if root == "" {
 		root = "."
 	}
+	resourceFilter := request.resourceFilter()
 
 	acquirer := o.ChartAcquirer
 	if acquirer == nil {
@@ -224,6 +229,9 @@ func (o Orchestrator) Build(ctx context.Context, request BuildRequest) (BuildRes
 			continue
 		}
 		for _, renderedManifest := range rendered.Manifests {
+			if resourceFilter.Drop(renderedManifest.Object) {
+				continue
+			}
 			result.Manifests = append(result.Manifests, renderedManifest)
 			result.ApplicationManifests = append(result.ApplicationManifests, ApplicationManifest{
 				Application: application,
@@ -237,6 +245,14 @@ func (o Orchestrator) Build(ctx context.Context, request BuildRequest) (BuildRes
 		return result, err
 	}
 	return result, nil
+}
+
+func (request BuildRequest) resourceFilter() manifest.ResourceFilter {
+	return manifest.ResourceFilter{
+		SkipKinds:   append([]string(nil), request.SkipKinds...),
+		SkipCRDs:    request.SkipCRDs,
+		SkipSecrets: request.SkipSecrets,
+	}
 }
 
 func (o Orchestrator) BuildApp(ctx context.Context, request BuildAppRequest) (BuildResult, error) {

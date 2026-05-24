@@ -117,6 +117,9 @@ func buildRequestFromFlags(flags commonFlags, repoMaps []sourcepkg.RepoMap) app.
 		GitCredentials:         flags.gitCredentials(),
 		RefreshRemoteResources: flags.refreshRemotes,
 		RemoteResourceCacheDir: flags.remoteCacheDir,
+		SkipKinds:              append([]string(nil), flags.skipKinds...),
+		SkipCRDs:               flags.skipCRDs,
+		SkipSecrets:            flags.skipSecrets,
 	}
 }
 

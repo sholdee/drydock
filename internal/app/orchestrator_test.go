@@ -43,6 +43,35 @@ func TestOrchestratorDiscoversGeneratesAndRenders(t *testing.T) {
 	}
 }
 
+func TestOrchestratorBuildFiltersRenderedResources(t *testing.T) {
+	root := t.TempDir()
+	writeBuildApplication(t, root, "demo", "demo")
+	writeTestFile(t, filepath.Join(root, "manifests", "demo", "secret.yaml"), `apiVersion: v1
+kind: Secret
+metadata:
+  name: demo
+stringData:
+  password: secret
+`)
+
+	result, err := Orchestrator{}.Build(context.Background(), BuildRequest{
+		Path:        root,
+		SkipSecrets: true,
+	})
+	if err != nil {
+		t.Fatalf("Build() error = %v", err)
+	}
+	if len(result.Manifests) != 1 {
+		t.Fatalf("len(Manifests) = %d, want 1", len(result.Manifests))
+	}
+	if len(result.ApplicationManifests) != 1 {
+		t.Fatalf("len(ApplicationManifests) = %d, want 1", len(result.ApplicationManifests))
+	}
+	if got := result.Manifests[0].Object.GetKind(); got != "ConfigMap" {
+		t.Fatalf("filtered manifest kind = %q, want ConfigMap", got)
+	}
+}
+
 func TestOrchestratorBuildRendersPlainDirectorySource(t *testing.T) {
 	root := t.TempDir()
 	writeTestFile(t, filepath.Join(root, "apps", "argocd", "plain-app.yaml"), `apiVersion: argoproj.io/v1alpha1

@@ -91,6 +91,9 @@ func newGetCommand(deps Dependencies) *cobra.Command {
 				GitCredentials:         imagesFlags.gitCredentials(),
 				RefreshRemoteResources: imagesFlags.refreshRemotes,
 				RemoteResourceCacheDir: imagesFlags.remoteCacheDir,
+				SkipKinds:              append([]string(nil), imagesFlags.skipKinds...),
+				SkipCRDs:               imagesFlags.skipCRDs,
+				SkipSecrets:            imagesFlags.skipSecrets,
 			}
 			listResult, err := deps.Orchestrator.ListApplications(context.Background(), buildRequest)
 			if err != nil {

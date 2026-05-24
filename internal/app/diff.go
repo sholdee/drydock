@@ -37,6 +37,9 @@ type DiffRequest struct {
 	GitCredentials         sourcepkg.GitCredentials
 	RefreshRemoteResources bool
 	RemoteResourceCacheDir string
+	SkipKinds              []string
+	SkipCRDs               bool
+	SkipSecrets            bool
 }
 
 type DiffAppRequest struct {
@@ -200,6 +203,9 @@ func (request DiffRequest) buildRequest(path string, forbiddenRoots []string) Bu
 		RefreshRemoteResources:       request.RefreshRemoteResources,
 		RemoteResourceCacheDir:       request.RemoteResourceCacheDir,
 		RemoteResourceForbiddenRoots: forbiddenRoots,
+		SkipKinds:                    append([]string(nil), request.SkipKinds...),
+		SkipCRDs:                     request.SkipCRDs,
+		SkipSecrets:                  request.SkipSecrets,
 	}
 }
 

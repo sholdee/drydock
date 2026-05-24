@@ -162,6 +162,31 @@ func TestDiffAppsStripAttrSuppressesOnlyAttributeDiff(t *testing.T) {
 	}
 }
 
+func TestDiffAppsSkipKindSuppressesFilteredResourceDiff(t *testing.T) {
+	root := t.TempDir()
+	left := filepath.Join(root, "left")
+	right := filepath.Join(root, "right")
+	writeSimpleAppForCLI(t, left, "old")
+	writeSimpleAppForCLI(t, right, "new")
+
+	cmd := NewRootCommand(VersionInfo{})
+	cmd.SetArgs([]string{"diff", "apps", "--path-orig", left, "--path", right, "--skip-kind", "ConfigMap"})
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	cmd.SetOut(&stdout)
+	cmd.SetErr(&stderr)
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("Execute() error = %v\nstdout:\n%s\nstderr:\n%s", err, stdout.String(), stderr.String())
+	}
+	if stdout.String() != "" {
+		t.Fatalf("stdout = %q, want no diff", stdout.String())
+	}
+	if stderr.String() != "" {
+		t.Fatalf("stderr = %q, want empty", stderr.String())
+	}
+}
+
 func TestDiffAppsJSONOutput(t *testing.T) {
 	root := t.TempDir()
 	left := filepath.Join(root, "left")

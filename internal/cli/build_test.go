@@ -33,6 +33,38 @@ func TestBuildAppsRendersManifests(t *testing.T) {
 	}
 }
 
+func TestBuildAppsSkipSecretsOmitsSecretManifests(t *testing.T) {
+	root := t.TempDir()
+	writeSimpleAppForCLI(t, root, "kept")
+	writeCLITestFile(t, filepath.Join(root, "manifests", "demo", "secret.yaml"), `apiVersion: v1
+kind: Secret
+metadata:
+  name: demo
+stringData:
+  password: secret
+`)
+
+	cmd := NewRootCommand(VersionInfo{})
+	cmd.SetArgs([]string{"build", "apps", "--path", root, "--skip-secrets"})
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	cmd.SetOut(&stdout)
+	cmd.SetErr(&stderr)
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("Execute() error = %v\nstdout:\n%s\nstderr:\n%s", err, stdout.String(), stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "kind: ConfigMap") || !strings.Contains(stdout.String(), "value: kept") {
+		t.Fatalf("stdout missing kept ConfigMap:\n%s", stdout.String())
+	}
+	if strings.Contains(stdout.String(), "kind: Secret") || strings.Contains(stdout.String(), "password") {
+		t.Fatalf("stdout included filtered Secret:\n%s", stdout.String())
+	}
+	if stderr.String() != "" {
+		t.Fatalf("stderr = %q, want empty", stderr.String())
+	}
+}
+
 func TestBuildAppsPrintsUnsupportedApplicationSetDiagnosticToStderr(t *testing.T) {
 	root := t.TempDir()
 	writeCLITestFile(t, filepath.Join(root, "direct.yaml"), `apiVersion: argoproj.io/v1alpha1

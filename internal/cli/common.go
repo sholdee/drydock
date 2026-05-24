@@ -32,6 +32,9 @@ type commonFlags struct {
 	registryConfig    string
 	refreshRemotes    bool
 	remoteCacheDir    string
+	skipKinds         []string
+	skipCRDs          bool
+	skipSecrets       bool
 	changedOnly       bool
 	strictChangedOnly bool
 	strict            bool
@@ -76,6 +79,9 @@ func bindCommonFlags(cmd *cobra.Command, flags *commonFlags) {
 	cmd.Flags().StringVar(&flags.registryConfig, "registry-config", flags.registryConfig, "Helm OCI registry config file")
 	cmd.Flags().BoolVar(&flags.refreshRemotes, "refresh-remotes", flags.refreshRemotes, "refresh cached remote Kustomize resources before rendering")
 	cmd.Flags().StringVar(&flags.remoteCacheDir, "remote-cache-dir", flags.remoteCacheDir, "directory for cached remote Kustomize resources")
+	cmd.Flags().StringArrayVar(&flags.skipKinds, "skip-kind", flags.skipKinds, "rendered resource kind to omit from output and diffs")
+	cmd.Flags().BoolVar(&flags.skipCRDs, "skip-crds", flags.skipCRDs, "omit CustomResourceDefinition resources from output and diffs")
+	cmd.Flags().BoolVar(&flags.skipSecrets, "skip-secrets", flags.skipSecrets, "omit Secret resources from output and diffs")
 	cmd.Flags().BoolVar(&flags.changedOnly, "changed-only", flags.changedOnly, "limit work to Applications affected by changed files")
 	cmd.Flags().BoolVar(&flags.strictChangedOnly, "strict-changed-only", flags.strictChangedOnly, "fail when changed-only input ownership is ambiguous or incomplete")
 	cmd.Flags().BoolVar(&flags.strict, "strict", flags.strict, "promote diagnostics to errors")

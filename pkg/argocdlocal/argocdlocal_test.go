@@ -22,6 +22,28 @@ func TestRenderApplications(t *testing.T) {
 	}
 }
 
+func TestRenderAppliesResourceFilters(t *testing.T) {
+	root := t.TempDir()
+	writeAPIAppTree(t, root, "demo", configMapBody("demo", "v1"))
+
+	result, err := Render(context.Background(), Config{
+		Path:      root,
+		SkipKinds: []string{"ConfigMap"},
+	})
+	if err != nil {
+		t.Fatalf("Render() error = %v", err)
+	}
+	if len(result.Applications) != 1 {
+		t.Fatalf("Applications = %d, want 1", len(result.Applications))
+	}
+	if len(result.Manifests) != 0 {
+		t.Fatalf("Manifests = %d, want 0 after ConfigMap filter", len(result.Manifests))
+	}
+	if !hasStatus(result.Statuses, "demo", "PASS") {
+		t.Fatalf("Statuses = %#v, want PASS status for filtered render", result.Statuses)
+	}
+}
+
 func TestClientUsesInjectedAcquirersForRemoteSources(t *testing.T) {
 	root := t.TempDir()
 	externalRepo := t.TempDir()
