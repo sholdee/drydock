@@ -288,7 +288,7 @@ func (puller HelmOCIPuller) Pull(ctx context.Context, request Request, opts Opti
 		return nil, fmt.Errorf("create Helm OCI registry client: %w", err)
 	}
 
-	chartRef := repository + "/" + request.Name + ":" + request.Version
+	chartRef := ociChartRef(repository, request.Name, request.Version)
 	result, err := registryClient.Pull(chartRef)
 	if err != nil {
 		return nil, err
@@ -317,6 +317,14 @@ func (puller HelmOCIPuller) Pull(ctx context.Context, request Request, opts Opti
 		return nil, fmt.Errorf("read pulled OCI chart archive %s: %w", filepath.Base(matches[0]), err)
 	}
 	return data, nil
+}
+
+func ociChartRef(repository, name, version string) string {
+	separator := ":"
+	if strings.Contains(version, ":") {
+		separator = "@"
+	}
+	return repository + "/" + name + separator + version
 }
 
 func parseOCIChartRepository(repository string) (string, error) {
