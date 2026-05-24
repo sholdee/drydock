@@ -106,6 +106,44 @@ func TestRecorderRedactsMultilineSensitiveValues(t *testing.T) {
 	}
 }
 
+func TestRecorderRedactsSCPStyleTargetComponents(t *testing.T) {
+	recorder := NewRecorder(true)
+	recorder.Record(Event{
+		Source: SourceGit,
+		Action: ActionError,
+		Target: "git@example.test:org/repo.git?token=abc#frag",
+		Error:  "scp fetch failed token=abc frag",
+	})
+
+	events := recorder.Events()
+	if len(events) != 1 {
+		t.Fatalf("Events = %#v, want one event", events)
+	}
+	for _, leaked := range []string{"token=abc", "frag"} {
+		if strings.Contains(events[0].Error, leaked) {
+			t.Fatalf("Error = %q leaked %q", events[0].Error, leaked)
+		}
+	}
+}
+
+func TestRecorderRedactsBareUserInfoPassword(t *testing.T) {
+	recorder := NewRecorder(true)
+	recorder.Record(Event{
+		Source: SourceGit,
+		Action: ActionError,
+		Target: "https://user:standalone-secret@example.test/repo.git",
+		Error:  "authentication failed with standalone-secret",
+	})
+
+	events := recorder.Events()
+	if len(events) != 1 {
+		t.Fatalf("Events = %#v, want one event", events)
+	}
+	if strings.Contains(events[0].Error, "standalone-secret") {
+		t.Fatalf("Error = %q leaked userinfo password", events[0].Error)
+	}
+}
+
 func contains(value, fragment string) bool {
 	return strings.Contains(value, fragment)
 }

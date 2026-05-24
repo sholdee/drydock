@@ -162,75 +162,123 @@ func targetVariants(raw string) []string {
 	if raw == "" {
 		return nil
 	}
-	seen := map[string]struct{}{}
-	var variants []string
-	add := func(value string) {
-		value = strings.TrimSpace(value)
-		if value == "" {
-			return
-		}
-		if _, exists := seen[value]; exists {
-			return
-		}
-		seen[value] = struct{}{}
-		variants = append(variants, value)
-	}
-
-	add(raw)
+	collector := newVariantCollector()
+	collector.add(raw)
 	withoutGitPrefix := strings.TrimPrefix(raw, "git::")
-	add(withoutGitPrefix)
-	addURLVariants := func(prefix string, rawURL string) {
-		parsed, err := url.Parse(rawURL)
-		if err != nil || parsed.Scheme == "" || parsed.Host == "" {
-			return
-		}
-		baseURLs := []url.URL{*parsed}
-		if strippedPath := strings.TrimSuffix(parsed.Path, ".git"); strippedPath != parsed.Path {
-			stripped := *parsed
-			stripped.Path = strippedPath
-			baseURLs = append(baseURLs, stripped)
-		}
-		for _, base := range baseURLs {
-			for _, dropUser := range []bool{false, true} {
-				for _, dropQuery := range []bool{false, true} {
-					for _, dropFragment := range []bool{false, true} {
-						clone := base
-						if dropUser {
-							clone.User = nil
-						}
-						if dropQuery {
-							clone.RawQuery = ""
-							clone.ForceQuery = false
-						}
-						if dropFragment {
-							clone.Fragment = ""
-						}
-						add(prefix + clone.String())
-					}
-				}
-			}
-		}
-		if parsed.User != nil {
-			username := parsed.User.Username()
-			add(parsed.User.String() + "@")
-			if username != "" {
-				add(username + ":***@")
-				add(username + "@")
-			}
-		}
-		if parsed.RawQuery != "" {
-			add(parsed.RawQuery)
-		}
-		if parsed.Fragment != "" {
-			add(parsed.Fragment)
-		}
-	}
-	addURLVariants("", withoutGitPrefix)
+	collector.add(withoutGitPrefix)
+	collector.addURLVariants("", withoutGitPrefix)
 	if strings.HasPrefix(raw, "git::") {
-		addURLVariants("git::", withoutGitPrefix)
+		collector.addURLVariants("git::", withoutGitPrefix)
 	}
+	collector.addSCPStyleComponents(withoutGitPrefix)
+	variants := collector.values()
 	sort.SliceStable(variants, func(i, j int) bool {
 		return len(variants[i]) > len(variants[j])
 	})
 	return variants
+}
+
+type variantCollector struct {
+	seen       map[string]struct{}
+	valuesList []string
+}
+
+func newVariantCollector() *variantCollector {
+	return &variantCollector{seen: map[string]struct{}{}}
+}
+
+func (c *variantCollector) add(value string) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return
+	}
+	if _, exists := c.seen[value]; exists {
+		return
+	}
+	c.seen[value] = struct{}{}
+	c.valuesList = append(c.valuesList, value)
+}
+
+func (c *variantCollector) values() []string {
+	return c.valuesList
+}
+
+func (c *variantCollector) addURLVariants(prefix string, rawURL string) {
+	parsed, err := url.Parse(rawURL)
+	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
+		return
+	}
+	for _, base := range parsedURLBases(*parsed) {
+		c.addURLComponentCombinations(prefix, base)
+	}
+	c.addUserInfoVariants(parsed.User)
+	c.add(parsed.RawQuery)
+	c.add(parsed.Fragment)
+}
+
+func parsedURLBases(parsed url.URL) []url.URL {
+	baseURLs := []url.URL{parsed}
+	if strippedPath := strings.TrimSuffix(parsed.Path, ".git"); strippedPath != parsed.Path {
+		stripped := parsed
+		stripped.Path = strippedPath
+		baseURLs = append(baseURLs, stripped)
+	}
+	return baseURLs
+}
+
+func (c *variantCollector) addURLComponentCombinations(prefix string, base url.URL) {
+	for _, dropUser := range []bool{false, true} {
+		for _, dropQuery := range []bool{false, true} {
+			for _, dropFragment := range []bool{false, true} {
+				clone := base
+				if dropUser {
+					clone.User = nil
+				}
+				if dropQuery {
+					clone.RawQuery = ""
+					clone.ForceQuery = false
+				}
+				if dropFragment {
+					clone.Fragment = ""
+				}
+				c.add(prefix + clone.String())
+			}
+		}
+	}
+}
+
+func (c *variantCollector) addUserInfoVariants(userInfo *url.Userinfo) {
+	if userInfo == nil {
+		return
+	}
+	username := userInfo.Username()
+	password, hasPassword := userInfo.Password()
+	c.add(userInfo.String() + "@")
+	if username != "" {
+		c.add(username + ":***@")
+		c.add(username + "@")
+	}
+	if hasPassword {
+		c.add(password)
+	}
+}
+
+func (c *variantCollector) addSCPStyleComponents(raw string) {
+	c.addRawQueryAndFragment(raw)
+	if parsed, err := url.Parse("ssh://" + raw); err == nil && parsed.Host != "" {
+		c.add(parsed.RawQuery)
+		c.add(parsed.Fragment)
+		c.addUserInfoVariants(parsed.User)
+	}
+}
+
+func (c *variantCollector) addRawQueryAndFragment(raw string) {
+	withoutFragment, fragment, hasFragment := strings.Cut(raw, "#")
+	if hasFragment {
+		c.add(fragment)
+	}
+	_, rawQuery, hasQuery := strings.Cut(withoutFragment, "?")
+	if hasQuery {
+		c.add(rawQuery)
+	}
 }
