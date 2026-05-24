@@ -19,7 +19,6 @@ import (
 	"github.com/sholdee/drydock/internal/diagnostic"
 	"github.com/sholdee/drydock/internal/discovery"
 	"github.com/sholdee/drydock/internal/manifest"
-	"github.com/sholdee/drydock/internal/project"
 	"github.com/sholdee/drydock/internal/remote"
 	"github.com/sholdee/drydock/internal/render"
 	sourcepkg "github.com/sholdee/drydock/internal/source"
@@ -233,110 +232,11 @@ func applicationSetOptionsForRequest(request BuildRequest) (appset.Options, []di
 }
 
 func (o Orchestrator) Build(ctx context.Context, request BuildRequest) (BuildResult, error) {
-	root := request.Path
-	if root == "" {
-		root = "."
-	}
-	parallelism, err := normalizeParallelism(request.Parallelism)
+	session, err := newBuildSession(o, request)
 	if err != nil {
 		return BuildResult{}, err
 	}
-	cacheRecorder := cacheevent.NewRecorder(request.RecordCacheEvents)
-
-	result, err := o.prepareBuildResult(ctx, request, root)
-	if err != nil {
-		result.CacheEvents = cacheRecorder.Events()
-		return result, err
-	}
-	projectDiags := project.ValidateApplications(result.Applications, result.Projects, result.Settings)
-	projectDiags = normalizeDiagnostics(projectDiags, request.Strict, false)
-	result.Diagnostics = append(result.Diagnostics, projectDiags...)
-	if err := diagnosticFailure(projectDiags, request.Strict); err != nil {
-		result.Statuses = skippedApplicationStatuses(result.Applications, err)
-		result.CacheEvents = cacheRecorder.Events()
-		return result, err
-	}
-	if err := validateBuildNetworkOptions(request); err != nil {
-		result.Statuses = skippedApplicationStatuses(result.Applications, err)
-		result.CacheEvents = cacheRecorder.Events()
-		return result, err
-	}
-	if len(result.Applications) == 0 {
-		result.CacheEvents = cacheRecorder.Events()
-		return result, nil
-	}
-
-	resourceFilter := request.resourceFilter()
-	settingsFilter := manifest.SettingsResourceFilter{
-		Exclusions: result.Settings.ResourceExclusions,
-		Inclusions: result.Settings.ResourceInclusions,
-	}
-
-	acquirer := o.ChartAcquirer
-	if acquirer == nil {
-		acquirer = chart.DefaultAcquirer{}
-	}
-	gitAcquirer := o.GitAcquirer
-	if gitAcquirer == nil {
-		gitAcquirer = sourcepkg.DefaultGitAcquirer{}
-	}
-	forbiddenRoots := append([]string(nil), request.RemoteResourceForbiddenRoots...)
-	forbiddenRoots = append(forbiddenRoots, root)
-	provider := localProvider{
-		repoRoot:                     root,
-		sourceResolver:               sourcepkg.NewResolver(sourcepkg.Options{RepoMaps: request.RepoMaps, AllowNetwork: request.AllowNetwork}),
-		chartAcquirer:                acquirer,
-		gitAcquirer:                  gitAcquirer,
-		remoteResourceAcquirer:       o.RemoteResourceAcquirer,
-		pluginRenderer:               o.pluginRenderer(request),
-		offline:                      request.Offline,
-		allowNetwork:                 request.AllowNetwork,
-		refreshCharts:                request.RefreshCharts,
-		chartCacheDir:                request.ChartCacheDir,
-		chartCredentials:             request.ChartCredentials,
-		gitCacheDir:                  request.GitCacheDir,
-		refreshGit:                   request.RefreshGit,
-		gitCredentials:               request.GitCredentials,
-		refreshRemoteResources:       request.RefreshRemoteResources,
-		remoteResourceCacheDir:       request.RemoteResourceCacheDir,
-		remoteResourceForbiddenRoots: forbiddenRoots,
-		remoteResourceCredentials:    request.RemoteResourceCredentials,
-		remoteResourceGitCredentials: request.RemoteResourceGitCredentials,
-		pluginTimeout:                request.PluginTimeout,
-		cacheEvents:                  cacheRecorder,
-	}
-	snapshotRoot, err := os.MkdirTemp("", "drydock-cache-snapshots-*")
-	if err != nil {
-		return result, err
-	}
-	defer os.RemoveAll(snapshotRoot)
-	provider.acquisition = acquisition.Session{
-		Locks:              processCacheTargetLocks,
-		SnapshotRoot:       snapshotRoot,
-		SnapshotCacheReads: true,
-	}
-
-	rendered, renderErr := renderApplications(ctx, renderApplicationsRequest{
-		applications:   result.Applications,
-		provider:       provider,
-		strict:         request.Strict,
-		settingsFilter: settingsFilter,
-		resourceFilter: resourceFilter,
-		recordEvents:   request.RecordCacheEvents,
-		parallelism:    parallelism,
-	})
-	result.Manifests = append(result.Manifests, rendered.manifests...)
-	result.ApplicationManifests = append(result.ApplicationManifests, rendered.applicationManifests...)
-	result.Diagnostics = append(result.Diagnostics, rendered.diagnostics...)
-	result.Statuses = append(result.Statuses, rendered.statuses...)
-	result.CacheEvents = append(result.CacheEvents, rendered.cacheEvents...)
-	if renderErr != nil {
-		return result, renderErr
-	}
-	if err := buildStatusFailure(result.Statuses); err != nil {
-		return result, err
-	}
-	return result, nil
+	return session.Build(ctx)
 }
 
 func normalizeParallelism(value int) (int, error) {

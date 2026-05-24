@@ -674,6 +674,35 @@ func TestBuildParallelismPreservesCacheEventOrder(t *testing.T) {
 	}
 }
 
+func TestBuildSessionPreservesValidationBeforeRendering(t *testing.T) {
+	root := t.TempDir()
+	writeTestFile(t, filepath.Join(root, "apps", "app.yaml"), `
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: demo
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: https://example.test/repo.git
+    targetRevision: main
+    path: missing
+  destination:
+    namespace: demo
+    server: https://kubernetes.default.svc
+`)
+
+	_, err := (Orchestrator{}).Build(context.Background(), BuildRequest{
+		Path:         root,
+		Offline:      true,
+		AllowNetwork: true,
+	})
+	if err == nil || !strings.Contains(err.Error(), "--offline cannot be combined with --allow-network") {
+		t.Fatalf("Build error = %v, want offline/network validation error", err)
+	}
+}
+
 func TestBuildParallelismSerializesSameCacheTargetAcquisition(t *testing.T) {
 	root := t.TempDir()
 	chartRoot := t.TempDir()
