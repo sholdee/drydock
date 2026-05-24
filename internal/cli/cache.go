@@ -17,6 +17,7 @@ import (
 
 type cacheFlags struct {
 	path           string
+	pathOrig       string
 	gitCacheDir    string
 	chartCacheDir  string
 	remoteCacheDir string
@@ -145,6 +146,7 @@ func newCacheCommand() *cobra.Command {
 
 func bindCacheRootFlags(cmd *cobra.Command, flags *cacheFlags) {
 	cmd.Flags().StringVar(&flags.path, "path", flags.path, "repository path used only for cache safety checks")
+	cmd.Flags().StringVar(&flags.pathOrig, "path-orig", flags.pathOrig, "baseline repository path used only for cache safety checks")
 	cmd.Flags().StringVar(&flags.gitCacheDir, "git-cache-dir", flags.gitCacheDir, "directory for cached Git repositories")
 	cmd.Flags().StringVar(&flags.chartCacheDir, "chart-cache-dir", flags.chartCacheDir, "directory for cached Helm charts")
 	cmd.Flags().StringVar(&flags.remoteCacheDir, "remote-cache-dir", flags.remoteCacheDir, "directory for cached remote Kustomize resources")
@@ -169,7 +171,7 @@ func cacheListOptions(flags cacheFlags) (cache.Options, error) {
 	if err != nil {
 		return cache.Options{}, err
 	}
-	forbiddenRoots, err := cacheForbiddenRoots(flags.path)
+	forbiddenRoots, err := cacheForbiddenRoots(flags.path, flags.pathOrig)
 	if err != nil {
 		return cache.Options{}, err
 	}
@@ -248,10 +250,12 @@ func cacheRoots(flags cacheFlags) (map[cache.Source]string, error) {
 	}, nil
 }
 
-func cacheForbiddenRoots(path string) ([]string, error) {
+func cacheForbiddenRoots(paths ...string) ([]string, error) {
 	var roots []string
-	if strings.TrimSpace(path) != "" {
-		roots = append(roots, path)
+	for _, path := range paths {
+		if strings.TrimSpace(path) != "" {
+			roots = append(roots, path)
+		}
 	}
 	cwd, err := os.Getwd()
 	if err != nil {

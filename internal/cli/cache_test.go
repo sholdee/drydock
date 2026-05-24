@@ -274,6 +274,28 @@ func TestCacheDeleteRejectsAllWithKeyBeforeMutation(t *testing.T) {
 	}
 }
 
+func TestCacheRejectsRootInsidePathOrig(t *testing.T) {
+	repoRoot := t.TempDir()
+	gitCacheDir := filepath.Join(repoRoot, ".cache", "git")
+	writeCacheEntry(t, filepath.Join(gitCacheDir, cacheCLITestKey, ".git", "HEAD"))
+
+	cmd := NewRootCommand(VersionInfo{})
+	cmd.SetArgs([]string{
+		"cache", "list",
+		"--path", filepath.Join(t.TempDir(), "current"),
+		"--path-orig", repoRoot,
+		"--git-cache-dir", gitCacheDir,
+	})
+	var stdout bytes.Buffer
+	cmd.SetOut(&stdout)
+	cmd.SetErr(&stdout)
+
+	err := cmd.Execute()
+	if err == nil || !strings.Contains(err.Error(), "must not be inside protected root") {
+		t.Fatalf("Execute() error = %v, want path-orig protected root error", err)
+	}
+}
+
 func TestCacheRejectsInvalidOutputBeforeMutation(t *testing.T) {
 	root := t.TempDir()
 	gitCacheDir := filepath.Join(root, "git")

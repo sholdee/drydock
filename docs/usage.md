@@ -200,11 +200,11 @@ drydock cache delete --source remote --all --dry-run
 `cache prune` and `cache delete` require `--yes` for non-dry-run deletion.
 Dry-runs never require confirmation and leave cache files in place. Cache
 commands accept `--git-cache-dir`, `--chart-cache-dir`, and
-`--remote-cache-dir`; `--path` is used only for safety checks and defaults to
-the current directory. Render-time network and credential flags such as
-`--allow-network`, `--offline`, `--refresh-*`, and auth flags are not cache
-lifecycle behavior, except that cache commands resolve the same cache
-directories.
+`--remote-cache-dir`; `--path` and `--path-orig` are used only for safety
+checks, and `--path` defaults to the current directory. Render-time network
+and credential flags such as `--allow-network`, `--offline`, `--refresh-*`,
+and auth flags are not cache lifecycle behavior, except that cache commands
+resolve the same cache directories.
 
 Cache lifecycle commands do not render Applications, clone/fetch Git
 repositories, fetch Helm charts, fetch remote Kustomize resources, or read
