@@ -111,9 +111,14 @@ data:
 }
 func TestOrchestratorBuildOfflineErrorsForMissingUnmappedPathSource(t *testing.T) {
 	root := t.TempDir()
+	cacheDir := t.TempDir()
 	writeExternalPathApplication(t, root, "https://github.com/example/external", "manifests/external")
 
-	_, err := Orchestrator{}.Build(context.Background(), BuildRequest{Path: root, Offline: true})
+	_, err := Orchestrator{}.Build(context.Background(), BuildRequest{
+		Path:        root,
+		GitCacheDir: cacheDir,
+		Offline:     true,
+	})
 	if err == nil {
 		t.Fatal("Build() error = nil, want offline cache miss")
 	}

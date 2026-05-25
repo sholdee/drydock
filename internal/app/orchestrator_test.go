@@ -412,10 +412,14 @@ spec:
 
 func TestOrchestratorBuildPreservesPartialResults(t *testing.T) {
 	fixture := newAppFixture(t)
+	cacheDir := t.TempDir()
 	fixture.writeBuildApplication(t, "valid", "valid")
 	fixture.writeExternalPathApplicationNamed(t, "invalid", "https://github.com/example/missing", "manifests/missing")
 
-	result, err := fixture.buildAllowError(t, Orchestrator{}, BuildRequest{Offline: true})
+	result, err := fixture.buildAllowError(t, Orchestrator{}, BuildRequest{
+		GitCacheDir: cacheDir,
+		Offline:     true,
+	})
 	assertBuildErrorContains(t, err, "1 Application failed", "argocd/invalid")
 	if len(result.Manifests) != 1 {
 		t.Fatalf("len(Manifests) = %d, want 1", len(result.Manifests))
