@@ -253,11 +253,11 @@ data:
 	if !hasDiagnosticMessage(result.Diagnostics, "ignoreResourceUpdates are parsed but not applied") {
 		t.Fatalf("Diagnostics = %#v, want ignoreResourceUpdates warning", result.Diagnostics)
 	}
-	if !hasDiagnosticMessage(result.Diagnostics, "health Lua is parsed as metadata only") {
-		t.Fatalf("Diagnostics = %#v, want health Lua warning", result.Diagnostics)
+	if hasDiagnosticMessage(result.Diagnostics, "health Lua is parsed as metadata only") {
+		t.Fatalf("Diagnostics = %#v, want no health Lua metadata-only warning", result.Diagnostics)
 	}
-	if !hasDiagnosticMessage(result.Diagnostics, "useOpenLibs is parsed as metadata only") {
-		t.Fatalf("Diagnostics = %#v, want useOpenLibs warning", result.Diagnostics)
+	if hasDiagnosticMessage(result.Diagnostics, "useOpenLibs is parsed as metadata only") {
+		t.Fatalf("Diagnostics = %#v, want no useOpenLibs metadata-only warning", result.Diagnostics)
 	}
 	if !hasDiagnosticMessage(result.Diagnostics, "actions are parsed as metadata only") {
 		t.Fatalf("Diagnostics = %#v, want actions warning", result.Diagnostics)
