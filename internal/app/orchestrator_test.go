@@ -264,6 +264,113 @@ data:
 	}
 }
 
+func TestOrchestratorBuildValidatesLuaHealthWhenEnabled(t *testing.T) {
+	root := t.TempDir()
+	writeBuildApplication(t, root, "demo", "demo")
+	writeHealthCustomizationSettings(t, root, "ConfigMap", `error("boom")`)
+
+	result, err := Orchestrator{}.Build(context.Background(), BuildRequest{Path: root, ValidateLuaHealth: true})
+	assertBuildErrorContains(t, err, "1 Application failed", "argocd/demo", "diagnostic health")
+	assertApplicationStatuses(t, result.Statuses, []ApplicationStatus{
+		{Namespace: "argocd", Name: "demo", Status: ApplicationStatusFail},
+	})
+	diag := assertDiagnosticCategory(t, result.Diagnostics, "health")
+	if diag.Code != "health.lua-failed" {
+		t.Fatalf("health diagnostic code = %q, want health.lua-failed", diag.Code)
+	}
+	if len(result.Manifests) != 0 {
+		t.Fatalf("len(Manifests) = %d, want no manifests retained for failed application", len(result.Manifests))
+	}
+}
+
+func TestOrchestratorBuildLuaHealthValidStateDoesNotFail(t *testing.T) {
+	root := t.TempDir()
+	writeBuildApplication(t, root, "demo", "demo")
+	writeHealthCustomizationSettings(t, root, "ConfigMap", `return { status = "Healthy" }`)
+
+	result, err := Orchestrator{}.Build(context.Background(), BuildRequest{Path: root, ValidateLuaHealth: true})
+	if err != nil {
+		t.Fatalf("Build() error = %v", err)
+	}
+	assertApplicationStatuses(t, result.Statuses, []ApplicationStatus{
+		{Namespace: "argocd", Name: "demo", Status: ApplicationStatusPass},
+	})
+	if _, ok := diagnosticByCategory(result.Diagnostics, "health"); ok {
+		t.Fatalf("Diagnostics = %#v, want no health diagnostics", result.Diagnostics)
+	}
+}
+
+func TestOrchestratorBuildDoesNotValidateLuaHealthUnlessEnabled(t *testing.T) {
+	root := t.TempDir()
+	writeBuildApplication(t, root, "demo", "demo")
+	writeHealthCustomizationSettings(t, root, "ConfigMap", `error("boom")`)
+
+	result, err := Orchestrator{}.Build(context.Background(), BuildRequest{Path: root})
+	if err != nil {
+		t.Fatalf("Build() error = %v", err)
+	}
+	assertApplicationStatuses(t, result.Statuses, []ApplicationStatus{
+		{Namespace: "argocd", Name: "demo", Status: ApplicationStatusPass},
+	})
+	if _, ok := diagnosticByCategory(result.Diagnostics, "health"); ok {
+		t.Fatalf("Diagnostics = %#v, want no health diagnostics without opt-in", result.Diagnostics)
+	}
+}
+
+func TestOrchestratorBuildFiltersResourcesBeforeLuaHealthValidation(t *testing.T) {
+	root := t.TempDir()
+	writeBuildApplication(t, root, "demo", "demo")
+	writeTestFile(t, filepath.Join(root, "manifests", "demo", "secret.yaml"), `apiVersion: v1
+kind: Secret
+metadata:
+  name: demo
+stringData:
+  password: secret
+`)
+	writeHealthCustomizationSettings(t, root, "Secret", `error("boom")`)
+
+	result, err := Orchestrator{}.Build(context.Background(), BuildRequest{
+		Path:              root,
+		StatusOnly:        true,
+		SkipSecrets:       true,
+		ValidateLuaHealth: true,
+	})
+	if err != nil {
+		t.Fatalf("Build() error = %v", err)
+	}
+	if len(result.Manifests) != 0 {
+		t.Fatalf("len(Manifests) = %d, want 0 for status-only build", len(result.Manifests))
+	}
+	if len(result.ApplicationManifests) != 0 {
+		t.Fatalf("len(ApplicationManifests) = %d, want 0 for status-only build", len(result.ApplicationManifests))
+	}
+	assertApplicationStatuses(t, result.Statuses, []ApplicationStatus{
+		{Namespace: "argocd", Name: "demo", Status: ApplicationStatusPass},
+	})
+	if _, ok := diagnosticByCategory(result.Diagnostics, "health"); ok {
+		t.Fatalf("Diagnostics = %#v, want filtered Secret to skip health validation", result.Diagnostics)
+	}
+}
+
+func TestOrchestratorBuildSkipsApplicationsOnLuaHealthCompileDiagnostics(t *testing.T) {
+	root := t.TempDir()
+	writeBuildApplication(t, root, "demo", "demo")
+	writeHealthCustomizationSettings(t, root, "ConfigMap", `return { status = "Healthy" `)
+
+	result, err := Orchestrator{}.Build(context.Background(), BuildRequest{Path: root, ValidateLuaHealth: true})
+	assertBuildErrorContains(t, err, "diagnostic health", "failed to compile health Lua")
+	if len(result.Manifests) != 0 {
+		t.Fatalf("len(Manifests) = %d, want 0 when health evaluator compile fails before render", len(result.Manifests))
+	}
+	assertApplicationStatuses(t, result.Statuses, []ApplicationStatus{
+		{Namespace: "argocd", Name: "demo", Status: ApplicationStatusSkipped},
+	})
+	diag := assertDiagnosticCategory(t, result.Diagnostics, "health")
+	if diag.Code != "health.lua-compile-failed" {
+		t.Fatalf("health diagnostic code = %q, want health.lua-compile-failed", diag.Code)
+	}
+}
+
 func TestOrchestratorBuildStrictFailsOnInvalidSettings(t *testing.T) {
 	root := t.TempDir()
 	writeBuildApplication(t, root, "demo", "demo")
@@ -743,4 +850,25 @@ data:
 	if got := result.Manifests[0].Object.GetName(); got != "dev-cm" {
 		t.Fatalf("rendered name = %q, want dev-cm", got)
 	}
+}
+
+func writeHealthCustomizationSettings(t *testing.T, root, key, lua string) {
+	t.Helper()
+	writeTestFile(t, filepath.Join(root, "settings", "argocd-cm.yaml"), `apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: argocd-cm
+data:
+  resource.customizations.health.`+key+`: |
+`+indentLua(lua))
+}
+
+func indentLua(lua string) string {
+	var out strings.Builder
+	for _, line := range strings.Split(lua, "\n") {
+		out.WriteString("    ")
+		out.WriteString(line)
+		out.WriteByte('\n')
+	}
+	return out.String()
 }
