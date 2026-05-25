@@ -7,7 +7,7 @@ import (
 
 	"github.com/sholdee/drydock/internal/app"
 	cliformat "github.com/sholdee/drydock/internal/format"
-	sourcepkg "github.com/sholdee/drydock/internal/source"
+	"github.com/sholdee/drydock/internal/source"
 	"github.com/spf13/cobra"
 )
 
@@ -102,29 +102,8 @@ func newTestCommand(deps Dependencies) *cobra.Command {
 	return cmd
 }
 
-func buildRequestFromFlags(flags commonFlags, repoMaps []sourcepkg.RepoMap) app.BuildRequest {
-	return app.BuildRequest{
-		Path:                           flags.path,
-		Strict:                         flags.strict,
-		Offline:                        flags.offline,
-		RefreshCharts:                  flags.refreshCharts,
-		ChartCacheDir:                  flags.chartCacheDir,
-		ChartCredentials:               flags.chartCredentials(),
-		RepoMaps:                       repoMaps,
-		AllowNetwork:                   flags.allowNetwork,
-		GitCacheDir:                    flags.gitCacheDir,
-		RefreshGit:                     flags.refreshGit,
-		GitCredentials:                 flags.gitCredentials(),
-		RefreshRemoteResources:         flags.refreshRemotes,
-		RemoteResourceCacheDir:         flags.remoteCacheDir,
-		RemoteResourceCredentials:      flags.remoteCredentials(),
-		RemoteResourceGitCredentials:   flags.remoteGitCredentials(),
-		Parallelism:                    flags.parallelism,
-		ApplicationSetProviderFixtures: append([]string(nil), flags.appsetFixtures...),
-		SkipKinds:                      append([]string(nil), flags.skipKinds...),
-		SkipCRDs:                       flags.skipCRDs,
-		SkipSecrets:                    flags.skipSecrets,
-	}
+func buildRequestFromFlags(flags commonFlags, repoMaps []source.RepoMap) app.BuildRequest {
+	return requestOptionsFromFlags(flags, repoMaps).Build()
 }
 
 func parseTestOutput(value string) (string, error) {

@@ -87,6 +87,14 @@ func TestPublicConfigParallelismWiresRequests(t *testing.T) {
 	}
 }
 
+func TestPublicConfigUnifiedDefaultsToThree(t *testing.T) {
+	client := NewClient(Config{})
+
+	if got := client.diffRequest().Unified; got != 3 {
+		t.Fatalf("diff request Unified = %d, want default 3", got)
+	}
+}
+
 func TestRenderAppliesResourceFilters(t *testing.T) {
 	root := t.TempDir()
 	writeAPIAppTree(t, root, "demo", configMapBody("demo", "v1"))

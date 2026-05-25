@@ -72,6 +72,15 @@ func TestDiffImagesParallelismFlag(t *testing.T) {
 	}
 }
 
+func TestDiffAppsUnifiedZeroFlag(t *testing.T) {
+	recorder := &recordingCLIOrchestrator{}
+	executeParallelismCommand(t, recorder, "diff", "apps", "--path-orig", "left", "--path", "right", "--unified", "0")
+
+	if got := recorder.diffAppsRequests[0].Unified; got != 0 {
+		t.Fatalf("DiffRequest.Unified = %d, want explicit 0", got)
+	}
+}
+
 func TestGetImagesParallelismFlag(t *testing.T) {
 	recorder := &recordingCLIOrchestrator{}
 	executeParallelismCommand(t, recorder, "get", "images", "--parallelism", "7")

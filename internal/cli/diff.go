@@ -7,7 +7,7 @@ import (
 
 	"github.com/sholdee/drydock/internal/app"
 	cliformat "github.com/sholdee/drydock/internal/format"
-	sourcepkg "github.com/sholdee/drydock/internal/source"
+	"github.com/sholdee/drydock/internal/source"
 	"github.com/spf13/cobra"
 )
 
@@ -124,35 +124,8 @@ func newDiffCommand(deps Dependencies) *cobra.Command {
 	return cmd
 }
 
-func diffRequestFromFlags(flags commonFlags, repoMaps []sourcepkg.RepoMap) app.DiffRequest {
-	return app.DiffRequest{
-		LeftPath:                       flags.pathOrig,
-		RightPath:                      flags.path,
-		ChangedOnly:                    flags.changedOnly,
-		StrictChangedOnly:              flags.strictChangedOnly,
-		Strict:                         flags.strict,
-		Unified:                        flags.unified,
-		StripAttrs:                     append([]string(nil), flags.stripAttrs...),
-		Offline:                        flags.offline,
-		RefreshCharts:                  flags.refreshCharts,
-		ChartCacheDir:                  flags.chartCacheDir,
-		ChartCredentials:               flags.chartCredentials(),
-		RepoMaps:                       repoMaps,
-		AllowNetwork:                   flags.allowNetwork,
-		GitCacheDir:                    flags.gitCacheDir,
-		RefreshGit:                     flags.refreshGit,
-		GitCredentials:                 flags.gitCredentials(),
-		RefreshRemoteResources:         flags.refreshRemotes,
-		RemoteResourceCacheDir:         flags.remoteCacheDir,
-		RemoteResourceCredentials:      flags.remoteCredentials(),
-		RemoteResourceGitCredentials:   flags.remoteGitCredentials(),
-		Parallelism:                    flags.parallelism,
-		SkipKinds:                      append([]string(nil), flags.skipKinds...),
-		SkipCRDs:                       flags.skipCRDs,
-		SkipSecrets:                    flags.skipSecrets,
-		ApplicationSetProviderFixtures: append([]string(nil), flags.appsetFixtures...),
-		RecordCacheEvents:              flags.cacheEvents,
-	}
+func diffRequestFromFlags(flags commonFlags, repoMaps []source.RepoMap) app.DiffRequest {
+	return requestOptionsFromFlags(flags, repoMaps).Diff()
 }
 
 func parseDiffOutput(value, command string) (string, error) {
