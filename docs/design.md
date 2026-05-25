@@ -75,7 +75,8 @@ Deferred:
   repo-server sidecar plugin discovery, ambient plugin configuration, ambient
   plugin environment loading, and plugin credential injection.
 - Full Argo CD project/RBAC/destination validation.
-- Health evaluation.
+- Live health aggregation and richer health diagnostics beyond offline custom
+  health Lua validation.
 
 ## Architecture
 
