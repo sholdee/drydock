@@ -87,8 +87,9 @@ human-blocking phase status.
   user-facing switch for disabling declared source acquisition.
 - Hiding Secrets or CRDs by default. `--skip-secrets`, `--skip-crds`, and
   `--skip-kind` are explicit opt-ins.
-- Executing Lua or server-side diff/apply settings offline. Parse and report
-  metadata only unless the design changes.
+- Treating all Lua customization as metadata-only. Custom health Lua is now
+  validated offline against rendered desired manifests during render tests;
+  resource action Lua remains metadata-only/deferred.
 - Adding provider generator network/API access. Provider-backed
   ApplicationSet generators are fixture-backed offline.
 - Assuming old plans or reports describe current file sizes. Use `rg --files`,

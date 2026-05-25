@@ -57,6 +57,10 @@ Supported in the MVP:
 - `diag --settings -o json|yaml` CLI-only redacted settings summaries for
   parsed Argo CD settings metadata. Lua/action bodies and secret-looking
   strings embedded in Lua are not printed.
+- Custom health Lua validation in `test apps` and `test app`, executed offline
+  against rendered desired manifests. This catches Lua script and return
+  contract failures, but is not live Argo CD health aggregation because no
+  cluster state is read.
 - `cache path`, `cache list`, `cache prune`, and `cache delete` local source
   cache lifecycle commands for recognized Git, chart, and remote Kustomize
   cache layouts
@@ -84,8 +88,8 @@ Supported in the MVP:
 - Global `resource.customizations.ignoreResourceUpdates.*` parsing and
   diagnostics, without applying them to desired-vs-desired diffs
 - Health and action customization parsing and diagnostics, including
-  `useOpenLibs`/Lua metadata and redacted SHA-256 summaries, without executing
-  Lua offline
+  `useOpenLibs`/Lua metadata and redacted SHA-256 summaries. Resource action
+  Lua is not executed offline.
 - Discovered `resource.compareoptions.ignoreResourceStatusField` and
   `resource.compareoptions.ignoreAggregatedRoles`
 - Argo CD core resource exclusions plus discovered global
@@ -179,7 +183,8 @@ Not reproduced offline:
 - Managed-fields ignores when ownership data exists only on the live cluster
 - Applying `ignoreResourceUpdates` to desired-vs-desired diffs
 - Any live integration that has not passed the live integration design gate
-- Health or action Lua execution
+- Resource action Lua execution
+- Live Argo CD Application health aggregation
 - Live destination cluster existence checks
 - Sync window enforcement
 - Source integrity signature verification

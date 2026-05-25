@@ -423,6 +423,20 @@ expansion precondition prevented safe rendering. `test apps` and `test app`
 return exit code `0` only when every selected Application passes; any `FAIL`,
 `SKIPPED`, or runtime failure returns exit code `2`.
 
+`drydock test apps` and `drydock test app` validate configured custom Argo CD
+health Lua by default. Validation is offline and runs against rendered desired
+manifests, not live Argo CD Application health aggregation. It catches Lua
+compile, runtime, invalid return, invalid status, and ambiguous customization
+failures. Valid health states do not make render tests fail because desired
+manifests often lack live `.status`.
+
+Use `--skip-lua-health` to isolate render failures or benchmark render-only
+behavior:
+
+```bash
+drydock test apps --path . --skip-lua-health
+```
+
 When `test apps` writes text output to a terminal, statuses stream as each
 Application completes. Status labels are colored, a single stderr progress
 counter updates in place when stderr is also a terminal, and a final summary is
@@ -493,11 +507,11 @@ Global `resource.customizations.knownTypeFields.*` settings are also applied
 when normalizing rendered resources for desired-vs-desired diffs. Global
 `resource.customizations.ignoreResourceUpdates.*` settings are parsed and
 reported as diagnostics, but they are not applied as desired diff ignores.
-Health and action customizations, including `useOpenLibs` and Lua metadata, are
-parsed and reported only. `drydock` does not execute Lua offline. Structured
-`diag --settings` output can report redacted names, booleans, and SHA-256
-hashes for these settings without printing raw Lua bodies or secret-looking
-strings embedded in Lua.
+Custom health Lua validation belongs to `drydock test`; diff commands do not
+execute Lua. Resource action Lua remains metadata-only and is not executed
+offline. Structured `diag --settings` output can report redacted names,
+booleans, and SHA-256 hashes for these settings without printing raw Lua bodies
+or secret-looking strings embedded in Lua.
 
 Discovered `resource.compareoptions` settings are also honored for
 `ignoreResourceStatusField` and `ignoreAggregatedRoles`. By default status is

@@ -179,13 +179,18 @@ kustomize.buildOptions:
   source: apps/argocd/manifests/values.yaml:configs.cm.kustomize.buildOptions
 ```
 
-Health customizations, RBAC, and resource exclusions are recorded when found,
-but only rendering/diff-affecting settings are enforced in the MVP.
-Health/action Lua is parsed as metadata only and is never executed in the
-local render/diff path. `diag --settings -o json|yaml` exposes a CLI-only
-redacted summary for operators, including names, booleans, and SHA-256 hashes
-of trimmed Lua bodies. Raw Lua bodies and secret-looking strings embedded in
-Lua are not part of the structured summary.
+Health customizations, RBAC, and resource exclusions are recorded when found.
+Rendering/diff-affecting settings are enforced during render and diff.
+`drydock test apps` validates configured custom Argo CD health Lua offline by
+default against rendered desired manifests, not live Argo CD Application
+health aggregation. Valid returned health states such as `Healthy`,
+`Progressing`, or `Degraded` do not fail Applications; Lua compile, runtime,
+invalid-return, invalid-status, and ambiguous-customization failures do.
+Resource action Lua remains metadata-only and is not executed offline.
+`diag --settings -o json|yaml` exposes a CLI-only redacted summary for
+operators, including names, booleans, and SHA-256 hashes of trimmed Lua
+bodies. Raw Lua bodies and secret-looking strings embedded in Lua are not part
+of the structured summary.
 
 ## Application Discovery
 
