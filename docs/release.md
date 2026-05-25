@@ -34,7 +34,8 @@ passphrases, or raw repository URLs with embedded secrets.
 
 The repository includes an optional composite install action at
 `.github/actions/setup-drydock`. It is release metadata only; it does not
-change the default static binary or offline render/diff runtime contract.
+change the default static binary, `--offline` behavior, or local render/diff
+runtime contract.
 
 The action requires an explicit semantic-version `version` tag input and
 rejects `latest`. It builds versioned GitHub Release URLs for the current runner

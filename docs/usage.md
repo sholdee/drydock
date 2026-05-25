@@ -5,11 +5,12 @@ all-Application and named-Application build, all-Application and
 named-Application render tests, named-Application manifest diffs, image diffs,
 repository diagnostics, and local source-cache lifecycle commands.
 
-Default commands are offline desired-vs-desired workflows. They do not contact
-a Kubernetes cluster or Argo CD server, do not shell out to `kubectl`, `argocd`,
-Helm CLI, or Kustomize CLI, and do not silently approximate Kubernetes
-defaulting, admission mutation, Argo CD server-side diff, or live-only managed
-fields.
+Default commands are local desired-vs-desired workflows. They may fetch
+declared Git, HTTP Helm, OCI Helm, and remote Kustomize sources into explicit
+caches unless `--offline` is set. They do not contact a Kubernetes cluster or
+Argo CD server, do not shell out to `kubectl`, `argocd`, Helm CLI, or
+Kustomize CLI, and do not silently approximate Kubernetes defaulting,
+admission mutation, Argo CD server-side diff, or live-only managed fields.
 
 ## Application Discovery
 
@@ -212,11 +213,10 @@ same-target cache refreshes do not race with readers.
 
 Rendering supports directory sources, Kustomize sources, local Helm charts,
 Kustomize `helmCharts`, remote Kustomize HTTP(S) files and Git refs, and
-Argo CD chart-only remote Helm sources. Public Helm chart fetching is enabled
-by default when a render needs chart dependencies. Path-based Git sources use
-the local `--path` tree when the source path exists there. Use
-`--repo-map URL=PATH` to force a source repo URL to a local checkout, or
-`--allow-network` to clone/fetch a missing path source from its `repoURL`.
+Argo CD chart-only remote Helm sources. Declared Git, chart, and remote
+Kustomize fetching is enabled by default when a render needs remote content.
+Path-based Git sources use the local `--path` tree when the source path exists
+there. Use `--repo-map URL=PATH` to force a source repo URL to a local checkout.
 
 Supported Kustomize remote refs include:
 
@@ -238,16 +238,13 @@ tree.
 
 Network and cache flags:
 
-- `--offline` disables Helm chart and remote Kustomize resource network
-  fetching. It requires cached or local charts and cached remote Kustomize
-  resources.
+- `--offline` disables Git, Helm chart, and remote Kustomize network fetching.
+  It requires local files, repo maps, local charts, or existing cache entries.
 - `--refresh-charts` refreshes cached immutable chart entries before rendering.
 - `--chart-cache-dir PATH` overrides the default user cache directory for
   acquired charts.
 - `--repo-map URL=PATH` maps a Git repository URL to a local checkout and wins
   over local source-path fallback and network fetching.
-- `--allow-network` enables Git clone/fetch for unmapped path sources whose
-  paths are not present in `--path`.
 - `--git-cache-dir PATH` overrides the default user cache directory for cached
   Git repositories.
 - `--refresh-git` fetches cached Git repositories before rendering.
@@ -284,12 +281,6 @@ Network and cache flags:
 - `--skip-secrets` omits rendered `Secret` resources.
 - `--parallelism N` controls Application render concurrency for render-backed
   commands while preserving deterministic output ordering.
-
-`--allow-network` is not the Helm chart-fetch flag. It only gates Git
-repository-source clone/fetch for path sources. Chart and remote Kustomize
-network behavior is controlled by `--offline`, `--refresh-charts`,
-`--refresh-remotes`, `--chart-cache-dir`, and `--remote-cache-dir`.
-`--offline` cannot be combined with `--allow-network`.
 
 Caches must stay outside Git repository trees. New cache entries include
 hidden `.drydock-cache/metadata.json` sidecars with redacted target metadata,
@@ -331,9 +322,9 @@ Dry-runs never require confirmation and leave cache files in place. Cache
 commands accept `--git-cache-dir`, `--chart-cache-dir`, and
 `--remote-cache-dir`; `--path` and `--path-orig` are used only for safety
 checks, and `--path` defaults to the current directory. Render-time network
-and credential flags such as `--allow-network`, `--offline`, `--refresh-*`,
-and auth flags are not cache lifecycle behavior, except that cache commands
-resolve the same cache directories.
+and credential flags such as `--offline`, `--refresh-*`, and auth flags are
+not cache lifecycle behavior, except that cache commands resolve the same cache
+directories.
 
 Cache lifecycle commands do not render Applications, clone/fetch Git
 repositories, fetch Helm charts, fetch remote Kustomize resources, or read
@@ -579,7 +570,7 @@ The settings summary is CLI-only. It reports parsed resource-customization
 metadata such as action names, `useOpenLibs`, and SHA-256 hashes for
 health/action Lua. It does not print raw Lua bodies, embedded secret-looking
 strings, or any live-cluster state. It also does not change default render/diff
-behavior, which remains offline and independent of a live Argo CD runtime,
+behavior, which remains local/static and independent of a live Argo CD runtime,
 Kubernetes cluster, `kubectl`, or external renderer shellout.
 
 When local `AppProject` manifests are present, `diag`, `build`, `test`, `diff`,

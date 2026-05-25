@@ -16,7 +16,6 @@ type commonFlags struct {
 	pathOrig          string
 	selector          string
 	repoMaps          []string
-	allowNetwork      bool
 	offline           bool
 	refreshCharts     bool
 	chartCacheDir     string
@@ -70,8 +69,7 @@ func bindCommonFlags(cmd *cobra.Command, flags *commonFlags) {
 	cmd.Flags().StringVar(&flags.pathOrig, "path-orig", flags.pathOrig, "baseline repository path for diffs")
 	cmd.Flags().StringVarP(&flags.selector, "selector", "l", flags.selector, "label selector for Applications")
 	cmd.Flags().StringArrayVar(&flags.repoMaps, "repo-map", flags.repoMaps, "repository URL mapping in from=to form")
-	cmd.Flags().BoolVar(&flags.allowNetwork, "allow-network", flags.allowNetwork, "allow network access for unmapped repositories")
-	cmd.Flags().BoolVar(&flags.offline, "offline", flags.offline, "disable network access for Helm charts and remote Kustomize resources")
+	cmd.Flags().BoolVar(&flags.offline, "offline", flags.offline, "disable network access and use local files, repo maps, or existing caches")
 	cmd.Flags().BoolVar(&flags.refreshCharts, "refresh-charts", flags.refreshCharts, "refresh cached Helm charts before rendering")
 	cmd.Flags().StringVar(&flags.chartCacheDir, "chart-cache-dir", flags.chartCacheDir, "directory for cached Helm charts")
 	cmd.Flags().StringVar(&flags.gitCacheDir, "git-cache-dir", flags.gitCacheDir, "directory for cached Git repositories")
@@ -161,7 +159,6 @@ func requestOptionsFromFlags(flags commonFlags, repoMaps []source.RepoMap) reque
 		ChartCacheDir:                  flags.chartCacheDir,
 		ChartCredentials:               flags.chartCredentials(),
 		RepoMaps:                       repoMaps,
-		AllowNetwork:                   flags.allowNetwork,
 		GitCacheDir:                    flags.gitCacheDir,
 		RefreshGit:                     flags.refreshGit,
 		GitCredentials:                 flags.gitCredentials(),

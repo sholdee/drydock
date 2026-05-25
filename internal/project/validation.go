@@ -168,7 +168,6 @@ func repositoryMetadataDiagnostics(app argoappv1.Application, settings config.Ar
 		}
 		repo, ok := repositorySettingsForURL(repoURL, settings)
 		if !ok {
-			diags = append(diags, repositoryWarning(app, fmt.Sprintf("Application %s source repository %q is missing repository metadata from discovered repository Secrets", applicationName(app), displayRepoURL(repoURL))))
 			continue
 		}
 		if repo.Project != "" && repo.Project != projectName {

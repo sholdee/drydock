@@ -1,9 +1,6 @@
 package source
 
-import (
-	"strings"
-	"testing"
-)
+import "testing"
 
 func TestResolverUsesRepoMapBeforeNetwork(t *testing.T) {
 	resolver := NewResolver(Options{
@@ -11,7 +8,6 @@ func TestResolverUsesRepoMapBeforeNetwork(t *testing.T) {
 			URL:  "https://github.com/example/repo",
 			Path: "/work/current",
 		}},
-		AllowNetwork: true,
 	})
 
 	resolved, err := resolver.Resolve("https://github.com/example/repo.git", "main")
@@ -55,29 +51,42 @@ func TestResolverNormalizesRepoMapURLs(t *testing.T) {
 	}
 }
 
-func TestResolverRejectsUnmappedWithoutNetwork(t *testing.T) {
+func TestResolverDefaultsUnmappedRepositoryToNetwork(t *testing.T) {
 	resolver := NewResolver(Options{})
 
-	_, err := resolver.Resolve("https://github.com/example/other", "main")
-	if err == nil {
-		t.Fatalf("expected error")
+	resolved, err := resolver.Resolve("https://github.com/example/other.git", "main")
+	if err != nil {
+		t.Fatalf("Resolve() error = %v", err)
+	}
+	if !resolved.Network {
+		t.Fatalf("Network = false, want true")
+	}
+	if resolved.Mapped {
+		t.Fatalf("Mapped = true, want false")
+	}
+	if resolved.NormalizedURL != "https://github.com/example/other" {
+		t.Fatalf("NormalizedURL = %q, want normalized URL", resolved.NormalizedURL)
+	}
+	if resolved.DeclaredRevision != "main" {
+		t.Fatalf("DeclaredRevision = %s, want main", resolved.DeclaredRevision)
 	}
 }
 
-func TestResolverRedactsUnmappedRepositoryError(t *testing.T) {
-	resolver := NewResolver(Options{})
+func TestResolverOfflineLeavesUnmappedRepositoryCacheResolvable(t *testing.T) {
+	resolver := NewResolver(Options{Offline: true})
 
-	_, err := resolver.Resolve("https://user:secret@github.com/example/private.git?token=abc123#frag", "main")
-	if err == nil {
-		t.Fatalf("expected error")
+	resolved, err := resolver.Resolve("https://github.com/example/other.git", "main")
+	if err != nil {
+		t.Fatalf("Resolve() error = %v", err)
 	}
-	for _, leaked := range []string{"user", "secret", "token", "abc123", "frag"} {
-		if strings.Contains(err.Error(), leaked) {
-			t.Fatalf("error = %q, leaked %q", err.Error(), leaked)
-		}
+	if resolved.Network {
+		t.Fatalf("Network = true, want false for offline cache-only resolution")
 	}
-	if !strings.Contains(err.Error(), "https://github.com/example/private.git") {
-		t.Fatalf("error = %q, want redacted repository URL", err.Error())
+	if resolved.Mapped {
+		t.Fatalf("Mapped = true, want false")
+	}
+	if resolved.NormalizedURL != "https://github.com/example/other" {
+		t.Fatalf("NormalizedURL = %q, want normalized URL", resolved.NormalizedURL)
 	}
 }
 
@@ -89,7 +98,7 @@ func TestRedactURLStripsSensitiveParts(t *testing.T) {
 }
 
 func TestResolverAllowsNetwork(t *testing.T) {
-	resolver := NewResolver(Options{AllowNetwork: true})
+	resolver := NewResolver(Options{})
 
 	resolved, err := resolver.Resolve("https://github.com/example/other", "main")
 	if err != nil {

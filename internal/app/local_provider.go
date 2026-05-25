@@ -22,7 +22,6 @@ type localProvider struct {
 	remoteResourceAcquirer       remote.Acquirer
 	pluginRenderer               render.PluginRenderer
 	offline                      bool
-	allowNetwork                 bool
 	refreshCharts                bool
 	chartCacheDir                string
 	chartCredentials             chart.ChartCredentials

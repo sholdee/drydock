@@ -8,9 +8,10 @@ the area you touch.
 ## Purpose
 
 `drydock` renders and diffs Argo CD GitOps repositories locally. The default
-workflow is offline, deterministic, and library-backed: checked-out files plus
-explicit local caches are the input, and no Kubernetes cluster, Argo CD server,
-`kubectl`, `argocd`, Helm CLI, Kustomize CLI, or external renderer is required.
+workflow is deterministic and library-backed: checked-out files, declared
+source fetches, and explicit local caches are the inputs, and no Kubernetes
+cluster, Argo CD server, `kubectl`, `argocd`, Helm CLI, Kustomize CLI, or
+external renderer is required. `--offline` is the cache-only/no-network mode.
 
 Network-aware source acquisition exists only as explicit cache population. Do
 not add live runtime behavior, ambient credentials, shellout renderers, or

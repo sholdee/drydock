@@ -320,7 +320,6 @@ resources:
 	remoteAcquirer := &recordingRemoteAcquirer{path: remoteFile}
 	result, err := NewClient(Config{
 		Path:                   root,
-		AllowNetwork:           true,
 		GitCredentials:         GitCredentials{Username: "git-user", Password: "git-pass"},
 		ChartCredentials:       ChartCredentials{BearerToken: "helm-token"},
 		GitAcquirer:            gitAcquirer,
@@ -353,6 +352,41 @@ resources:
 	}
 	if len(remoteAcquirer.requests) != 1 {
 		t.Fatalf("Remote acquire calls = %d, want 1", len(remoteAcquirer.requests))
+	}
+}
+
+func TestConfigOfflineOverridesDeprecatedAllowNetwork(t *testing.T) {
+	root := t.TempDir()
+	writeAPIFile(t, filepath.Join(root, "apps", "external.yaml"), `apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: external
+  namespace: argocd
+spec:
+  source:
+    repoURL: https://git.example.test/org/repo.git
+    targetRevision: main
+    path: external
+  destination:
+    name: in-cluster
+    namespace: default
+`)
+	gitAcquirer := &recordingGitAcquirer{err: errors.New("offline cache miss")}
+
+	_, err := NewClient(Config{
+		Path:         root,
+		Offline:      true,
+		AllowNetwork: true,
+		GitAcquirer:  gitAcquirer,
+	}).Render(context.Background())
+	if err == nil {
+		t.Fatal("Render() error = nil, want offline cache miss")
+	}
+	if len(gitAcquirer.options) != 1 {
+		t.Fatalf("Git options = %#v, want one call", gitAcquirer.options)
+	}
+	if gitAcquirer.options[0].AllowNetwork {
+		t.Fatalf("Git AllowNetwork = true, want false when Offline is authoritative")
 	}
 }
 
@@ -450,9 +484,8 @@ spec:
 `)
 
 	result, err := NewClient(Config{
-		Path:         root,
-		AllowNetwork: true,
-		GitAcquirer:  &recordingGitAcquirer{err: errors.New("fixture auth failure")},
+		Path:        root,
+		GitAcquirer: &recordingGitAcquirer{err: errors.New("fixture auth failure")},
 	}).Render(context.Background())
 	if err == nil {
 		t.Fatal("Render() error = nil, want injected failure")

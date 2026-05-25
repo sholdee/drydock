@@ -17,7 +17,6 @@ import (
 	"github.com/sholdee/drydock/internal/render"
 	sourcepkg "github.com/sholdee/drydock/internal/source"
 
-	"os"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -34,7 +33,6 @@ type BuildRequest struct {
 	ChartCacheDir                  string
 	ChartCredentials               chart.ChartCredentials
 	RepoMaps                       []sourcepkg.RepoMap
-	AllowNetwork                   bool
 	GitCacheDir                    string
 	RefreshGit                     bool
 	GitCredentials                 sourcepkg.GitCredentials
@@ -164,12 +162,8 @@ func (o Orchestrator) ListApplications(_ context.Context, request BuildRequest) 
 		})
 	}
 
-	for _, appSetPath := range discovered.ApplicationSetPath {
-		data, err := os.ReadFile(filepath.Join(root, appSetPath))
-		if err != nil {
-			return result, err
-		}
-		generated, diags, err := appset.GenerateFromYAMLWithOptions(root, appSetPath, data, appsetOptions)
+	for _, appSetFile := range discovered.ApplicationSets {
+		generated, diags, err := appset.GenerateWithOptions(root, appSetFile.Path, appSetFile.ApplicationSet, appsetOptions)
 		if err != nil {
 			if errors.Is(err, appset.ErrUnsupportedGenerator) && len(diags) > 0 {
 				diags = normalizeDiagnostics(diags, request.Strict, true)
@@ -190,7 +184,7 @@ func (o Orchestrator) ListApplications(_ context.Context, request BuildRequest) 
 			result.Applications = append(result.Applications, app.Application)
 			result.ApplicationInputs = append(result.ApplicationInputs, ApplicationSelectionInput{
 				Application: app.Application,
-				Paths:       generatedApplicationInputPaths(appSetPath, app),
+				Paths:       generatedApplicationInputPaths(appSetFile.Path, app),
 			})
 		}
 	}
@@ -458,7 +452,7 @@ func loadSettingsFromDiscovery(root string, discovered discovery.Result) (config
 	var diags []diagnostic.Diagnostic
 	seen := make(map[string]struct{}, len(discovered.SettingsCandidates))
 	for _, candidate := range discovered.SettingsCandidates {
-		key := candidate.Kind + "\x00" + candidate.Path
+		key := fmt.Sprintf("%s\x00%s\x00%d", candidate.Kind, candidate.Path, candidate.DocumentIndex)
 		if _, ok := seen[key]; ok {
 			continue
 		}
@@ -471,11 +465,11 @@ func loadSettingsFromDiscovery(root string, discovered discovery.Result) (config
 		)
 		switch candidate.Kind {
 		case "argocd-cm":
-			settings, nextDiags, err = config.LoadFromConfigMap(path)
+			settings, nextDiags, err = config.LoadFromConfigMapDocument(path, candidate.DocumentIndex)
 		case "argocd-values":
-			settings, nextDiags, err = config.LoadFromHelmValues(path)
+			settings, nextDiags, err = config.LoadFromHelmValuesDocument(path, candidate.DocumentIndex)
 		case "repository-secret":
-			settings, nextDiags, err = config.LoadRepositorySecret(path)
+			settings, nextDiags, err = config.LoadRepositorySecretDocument(path, candidate.DocumentIndex)
 		default:
 			continue
 		}

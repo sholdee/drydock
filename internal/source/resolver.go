@@ -1,7 +1,6 @@
 package source
 
 import (
-	"fmt"
 	"net/url"
 	"strings"
 )
@@ -12,13 +11,13 @@ type RepoMap struct {
 }
 
 type Options struct {
-	RepoMaps     []RepoMap
-	AllowNetwork bool
+	RepoMaps []RepoMap
+	Offline  bool
 }
 
 type Resolver struct {
-	repoMaps     map[string]string
-	allowNetwork bool
+	repoMaps map[string]string
+	offline  bool
 }
 
 type ResolvedRepository struct {
@@ -41,8 +40,8 @@ func NewResolver(opts Options) *Resolver {
 		repoMaps[NormalizeURL(repoMap.URL)] = repoMap.Path
 	}
 	return &Resolver{
-		repoMaps:     repoMaps,
-		allowNetwork: opts.AllowNetwork,
+		repoMaps: repoMaps,
+		offline:  opts.Offline,
 	}
 }
 
@@ -58,16 +57,12 @@ func (r *Resolver) Resolve(repoURL, revision string) (ResolvedRepository, error)
 		}, nil
 	}
 
-	if r.allowNetwork {
-		return ResolvedRepository{
-			URL:              repoURL,
-			NormalizedURL:    normalizedURL,
-			DeclaredRevision: revision,
-			Network:          true,
-		}, nil
-	}
-
-	return ResolvedRepository{}, fmt.Errorf("repository %s is not mapped; pass --repo-map or --allow-network", RedactURL(repoURL))
+	return ResolvedRepository{
+		URL:              repoURL,
+		NormalizedURL:    normalizedURL,
+		DeclaredRevision: revision,
+		Network:          !r.offline,
+	}, nil
 }
 
 func NormalizeURL(input string) string {

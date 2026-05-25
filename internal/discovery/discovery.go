@@ -17,23 +17,32 @@ type Options struct {
 }
 
 type ApplicationFile struct {
-	Path        string
-	Application argoappv1.Application
+	Path          string
+	DocumentIndex int
+	Application   argoappv1.Application
+}
+
+type ApplicationSetFile struct {
+	Path           string
+	DocumentIndex  int
+	ApplicationSet argoappv1.ApplicationSet
 }
 
 type ProjectFile struct {
-	Path    string
-	Project argoappv1.AppProject
+	Path          string
+	DocumentIndex int
+	Project       argoappv1.AppProject
 }
 
 type SettingsCandidate struct {
-	Path string
-	Kind string
+	Path          string
+	DocumentIndex int
+	Kind          string
 }
 
 type Result struct {
 	Applications       []ApplicationFile
-	ApplicationSetPath []string
+	ApplicationSets    []ApplicationSetFile
 	SettingsCandidates []SettingsCandidate
 	Projects           []ProjectFile
 }
@@ -139,35 +148,39 @@ func scanYAMLFile(path, rel string, result *Result) error {
 		return err
 	}
 	for _, doc := range docs {
-		if err := scanDocument(rel, doc.Object, result); err != nil {
+		if err := scanDocument(rel, doc.Index, doc.Object, result); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func scanDocument(rel string, obj *unstructured.Unstructured, result *Result) error {
+func scanDocument(rel string, documentIndex int, obj *unstructured.Unstructured, result *Result) error {
 	switch {
 	case isArgoGVK(obj, "Application"):
 		var app argoappv1.Application
 		if err := unstructuredToTyped(obj.Object, &app); err != nil {
 			return fmt.Errorf("%s: decode Application: %w", rel, err)
 		}
-		result.Applications = append(result.Applications, ApplicationFile{Path: rel, Application: app})
+		result.Applications = append(result.Applications, ApplicationFile{Path: rel, DocumentIndex: documentIndex, Application: app})
 	case isArgoGVK(obj, "ApplicationSet"):
-		result.ApplicationSetPath = append(result.ApplicationSetPath, rel)
+		var appSet argoappv1.ApplicationSet
+		if err := unstructuredToTyped(obj.Object, &appSet); err != nil {
+			return fmt.Errorf("%s: decode ApplicationSet: %w", rel, err)
+		}
+		result.ApplicationSets = append(result.ApplicationSets, ApplicationSetFile{Path: rel, DocumentIndex: documentIndex, ApplicationSet: appSet})
 	case isArgoGVK(obj, "AppProject"):
 		var project argoappv1.AppProject
 		if err := unstructuredToTyped(obj.Object, &project); err != nil {
 			return fmt.Errorf("%s: decode AppProject: %w", rel, err)
 		}
-		result.Projects = append(result.Projects, ProjectFile{Path: rel, Project: project})
+		result.Projects = append(result.Projects, ProjectFile{Path: rel, DocumentIndex: documentIndex, Project: project})
 	case isCoreGVK(obj, "ConfigMap") && obj.GetName() == "argocd-cm":
-		result.SettingsCandidates = append(result.SettingsCandidates, SettingsCandidate{Path: rel, Kind: "argocd-cm"})
+		result.SettingsCandidates = append(result.SettingsCandidates, SettingsCandidate{Path: rel, DocumentIndex: documentIndex, Kind: "argocd-cm"})
 	case isCoreGVK(obj, "Secret") && obj.GetLabels()["argocd.argoproj.io/secret-type"] == "repository":
-		result.SettingsCandidates = append(result.SettingsCandidates, SettingsCandidate{Path: rel, Kind: "repository-secret"})
+		result.SettingsCandidates = append(result.SettingsCandidates, SettingsCandidate{Path: rel, DocumentIndex: documentIndex, Kind: "repository-secret"})
 	case isArgoHelmValuesSettings(obj):
-		result.SettingsCandidates = append(result.SettingsCandidates, SettingsCandidate{Path: rel, Kind: "argocd-values"})
+		result.SettingsCandidates = append(result.SettingsCandidates, SettingsCandidate{Path: rel, DocumentIndex: documentIndex, Kind: "argocd-values"})
 	}
 	return nil
 }

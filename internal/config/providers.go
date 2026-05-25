@@ -29,6 +29,21 @@ func LoadFromHelmValues(path string) (ArgoSettings, []diagnostic.Diagnostic, err
 	diags := applyCMMap(&settings, doc.Configs.CM, path, "configs.cm")
 	return settings, diags, nil
 }
+
+func LoadFromHelmValuesDocument(path string, documentIndex int) (ArgoSettings, []diagnostic.Diagnostic, error) {
+	settings := DefaultSettings()
+	var doc struct {
+		Configs struct {
+			CM map[string]string `yaml:"cm"`
+		} `yaml:"configs"`
+	}
+	if err := decodeYAMLDocumentAt(path, documentIndex, &doc); err != nil {
+		return settings, nil, fmt.Errorf("parse helm values %s document %d: %w", path, documentIndex, err)
+	}
+	diags := applyCMMap(&settings, doc.Configs.CM, path, "configs.cm")
+	return settings, diags, nil
+}
+
 func LoadFromConfigMap(path string) (ArgoSettings, []diagnostic.Diagnostic, error) {
 	settings := DefaultSettings()
 	data, err := os.ReadFile(path)
@@ -58,6 +73,31 @@ func LoadFromConfigMap(path string) (ArgoSettings, []diagnostic.Diagnostic, erro
 	diags := applyCMMap(&settings, doc.Data, path, "data")
 	return settings, diags, nil
 }
+
+func LoadFromConfigMapDocument(path string, documentIndex int) (ArgoSettings, []diagnostic.Diagnostic, error) {
+	settings := DefaultSettings()
+	var doc struct {
+		Kind     string `yaml:"kind"`
+		Metadata struct {
+			Name string `yaml:"name"`
+		} `yaml:"metadata"`
+		Data map[string]string `yaml:"data"`
+	}
+	if err := decodeYAMLDocumentAt(path, documentIndex, &doc); err != nil {
+		return settings, nil, fmt.Errorf("parse configmap %s document %d: %w", path, documentIndex, err)
+	}
+	if doc.Kind != "ConfigMap" || doc.Metadata.Name != "argocd-cm" {
+		return settings, []diagnostic.Diagnostic{{
+			Severity:   diagnostic.SeverityWarning,
+			Category:   "settings",
+			Message:    "file document is not argocd-cm ConfigMap",
+			Provenance: diagnostic.Provenance{Path: path},
+		}}, nil
+	}
+	diags := applyCMMap(&settings, doc.Data, path, "data")
+	return settings, diags, nil
+}
+
 func LoadRepositorySecret(path string) (ArgoSettings, []diagnostic.Diagnostic, error) {
 	settings := DefaultSettings()
 	data, err := os.ReadFile(path)
@@ -97,6 +137,58 @@ func LoadRepositorySecret(path string) (ArgoSettings, []diagnostic.Diagnostic, e
 	settings, mergeDiags := MergeDiscovered(candidates)
 	diags = append(diags, mergeDiags...)
 	return settings, diags, nil
+}
+
+func LoadRepositorySecretDocument(path string, documentIndex int) (ArgoSettings, []diagnostic.Diagnostic, error) {
+	settings := DefaultSettings()
+	var doc repositorySecretDocument
+	if err := decodeYAMLDocumentAt(path, documentIndex, &doc); err != nil {
+		return settings, nil, fmt.Errorf("parse repository secret %s document %d: %w", path, documentIndex, err)
+	}
+	if doc.Kind != "Secret" || doc.Metadata.Labels["argocd.argoproj.io/secret-type"] != "repository" {
+		return settings, []diagnostic.Diagnostic{{
+			Severity:   diagnostic.SeverityWarning,
+			Category:   "settings",
+			Message:    "file document is not an Argo CD repository Secret",
+			Provenance: diagnostic.Provenance{Path: path},
+		}}, nil
+	}
+	settings, diags := repositorySecretSettings(path, doc)
+	return settings, diags, nil
+}
+
+func decodeYAMLDocumentAt(path string, documentIndex int, out any) error {
+	if documentIndex < 0 {
+		return fmt.Errorf("document index must be greater than or equal to 0")
+	}
+	file, err := os.Open(path)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+
+	decoder := yaml.NewDecoder(file)
+	for index := 0; ; index++ {
+		var raw any
+		err := decoder.Decode(&raw)
+		if err == io.EOF {
+			return fmt.Errorf("document %d not found", documentIndex)
+		}
+		if err != nil {
+			return err
+		}
+		if index != documentIndex {
+			continue
+		}
+		if raw == nil {
+			return fmt.Errorf("document %d is empty", documentIndex)
+		}
+		data, err := yaml.Marshal(raw)
+		if err != nil {
+			return err
+		}
+		return yaml.Unmarshal(data, out)
+	}
 }
 
 type repositorySecretDocument struct {

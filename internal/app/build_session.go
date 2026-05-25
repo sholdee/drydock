@@ -80,13 +80,12 @@ func (session *buildSession) Build(ctx context.Context) (BuildResult, error) {
 	forbiddenRoots = append(forbiddenRoots, session.root)
 	provider := localProvider{
 		repoRoot:                     session.root,
-		sourceResolver:               sourcepkg.NewResolver(sourcepkg.Options{RepoMaps: session.request.RepoMaps, AllowNetwork: session.request.AllowNetwork}),
+		sourceResolver:               sourcepkg.NewResolver(sourcepkg.Options{RepoMaps: session.request.RepoMaps, Offline: session.request.Offline}),
 		chartAcquirer:                acquirer,
 		gitAcquirer:                  gitAcquirer,
 		remoteResourceAcquirer:       session.orchestrator.RemoteResourceAcquirer,
 		pluginRenderer:               session.orchestrator.pluginRenderer(session.request),
 		offline:                      session.request.Offline,
-		allowNetwork:                 session.request.AllowNetwork,
 		refreshCharts:                session.request.RefreshCharts,
 		chartCacheDir:                session.request.ChartCacheDir,
 		chartCredentials:             session.request.ChartCredentials,
@@ -141,8 +140,5 @@ func shouldSnapshotCacheReads(request BuildRequest) bool {
 	if !request.Offline {
 		return true
 	}
-	return request.RefreshCharts ||
-		request.RefreshGit ||
-		request.RefreshRemoteResources ||
-		request.AllowNetwork
+	return true
 }

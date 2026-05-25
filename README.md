@@ -1,6 +1,6 @@
 # drydock
 
-`drydock` is a Go CLI and embeddable Go package for offline Argo CD GitOps
+`drydock` is a Go CLI and embeddable Go package for local Argo CD GitOps
 repository analysis.
 
 Inspect your Argo CD fleet without getting wet.
@@ -20,11 +20,13 @@ repository diagnostics without printing manifests, and `diag -o json` or
 This project is early implementation work. See `docs/README.md` for the full
 documentation index.
 
-Default commands are offline desired-vs-desired analysis. They do not contact a
-Kubernetes cluster or Argo CD server, do not read ambient live runtime config,
-and do not require `kubectl`, `argocd`, Helm CLI, or Kustomize CLI. Kubernetes
-defaulting, admission mutation, Argo CD server-side diff, and live-only
-managed-field ownership are design-gated rather than silently approximated.
+Default commands are local desired-vs-desired analysis. They may fetch declared
+Git, HTTP Helm, OCI Helm, and remote Kustomize sources into explicit caches
+unless `--offline` is set. They do not contact a Kubernetes cluster or Argo CD
+server, do not read ambient live runtime config, and do not require `kubectl`,
+`argocd`, Helm CLI, or Kustomize CLI. Kubernetes defaulting, admission
+mutation, Argo CD server-side diff, and live-only managed-field ownership are
+design-gated rather than silently approximated.
 
 ## Go API
 

@@ -13,8 +13,9 @@ func TestShouldSnapshotCacheReads(t *testing.T) {
 			want: true,
 		},
 		{
-			name:    "offline read only skips cache read snapshots",
+			name:    "offline read only snapshots cache reads",
 			request: BuildRequest{Offline: true},
+			want:    true,
 		},
 		{
 			name:    "offline refresh charts snapshots cache reads",
@@ -29,11 +30,6 @@ func TestShouldSnapshotCacheReads(t *testing.T) {
 		{
 			name:    "offline refresh remote resources snapshots cache reads",
 			request: BuildRequest{Offline: true, RefreshRemoteResources: true},
-			want:    true,
-		},
-		{
-			name:    "offline allow network snapshots cache reads",
-			request: BuildRequest{Offline: true, AllowNetwork: true},
 			want:    true,
 		},
 	}

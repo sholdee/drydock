@@ -16,14 +16,17 @@ import (
 // side for diff operations. PathOrig is the left side for diff operations. Use
 // keyed struct literals; new fields may be added as drydock gains parity.
 type Config struct {
-	Path                           string
-	PathOrig                       string
-	Strict                         bool
-	Offline                        bool
-	RefreshCharts                  bool
-	ChartCacheDir                  string
-	ChartCredentials               ChartCredentials
-	RepoMaps                       []RepoMap
+	Path             string
+	PathOrig         string
+	Strict           bool
+	Offline          bool
+	RefreshCharts    bool
+	ChartCacheDir    string
+	ChartCredentials ChartCredentials
+	RepoMaps         []RepoMap
+	// Deprecated: Git, chart, and remote resource acquisition are enabled by
+	// default. Set Offline to true to disable network acquisition. Offline is
+	// authoritative when both fields are set.
 	AllowNetwork                   bool
 	GitCacheDir                    string
 	RefreshGit                     bool
@@ -171,7 +174,6 @@ func (client *Client) requestOptions() requestopts.Options {
 		ChartCacheDir:                  client.config.ChartCacheDir,
 		ChartCredentials:               chartCredentialsToInternal(client.config.ChartCredentials),
 		RepoMaps:                       repoMapsToInternal(client.config.RepoMaps),
-		AllowNetwork:                   client.config.AllowNetwork,
 		GitCacheDir:                    client.config.GitCacheDir,
 		RefreshGit:                     client.config.RefreshGit,
 		GitCredentials:                 gitCredentialsToInternal(client.config.GitCredentials),

@@ -157,11 +157,21 @@ func TestValidateApplicationsReportsRepositoryMetadataIssues(t *testing.T) {
 	assertDiagnostic(t, diags, "repository metadata")
 }
 
-func TestValidateApplicationsReportsMissingRepositoryMetadataForRemoteGitPathSource(t *testing.T) {
-	apps := []argoappv1.Application{application("demo", "platform", argoappv1.ApplicationSource{
-		RepoURL: "https://github.com/example/repo",
-		Path:    "apps/demo",
-	}, argoappv1.ApplicationDestination{Name: "in-cluster", Namespace: "workloads"})}
+func TestValidateApplicationsDoesNotRequireRepositoryMetadataForPublicSources(t *testing.T) {
+	apps := []argoappv1.Application{
+		application("http-chart", "platform", argoappv1.ApplicationSource{
+			RepoURL: "https://charts.example.test",
+			Chart:   "demo",
+		}, argoappv1.ApplicationDestination{Name: "in-cluster", Namespace: "workloads"}),
+		application("oci-chart", "platform", argoappv1.ApplicationSource{
+			RepoURL: "ghcr.io/example/charts",
+			Chart:   "demo",
+		}, argoappv1.ApplicationDestination{Name: "in-cluster", Namespace: "workloads"}),
+		application("git-path", "platform", argoappv1.ApplicationSource{
+			RepoURL: "https://github.com/example/repo",
+			Path:    "apps/demo",
+		}, argoappv1.ApplicationDestination{Name: "in-cluster", Namespace: "workloads"}),
+	}
 	projects := []argoappv1.AppProject{{
 		ObjectMeta: objectMeta("platform"),
 		Spec: argoappv1.AppProjectSpec{
@@ -171,7 +181,7 @@ func TestValidateApplicationsReportsMissingRepositoryMetadataForRemoteGitPathSou
 	}}
 
 	diags := ValidateApplications(apps, projects, config.DefaultSettings())
-	assertDiagnostic(t, diags, "missing repository metadata")
+	assertNoDiagnostic(t, diags, "missing repository metadata")
 }
 
 func TestValidateApplicationsMatchesCanonicalOCIRepositoryMetadata(t *testing.T) {

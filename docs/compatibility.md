@@ -1,6 +1,7 @@
 # Argo CD Compatibility Notes
 
-`drydock` targets offline desired-vs-desired PR diffs.
+`drydock` targets local desired-vs-desired PR diffs. Default commands may fetch
+declared sources into explicit caches unless `--offline` is set.
 
 Supported in the MVP:
 
@@ -40,8 +41,8 @@ Supported in the MVP:
 - Optional cache event API/reporting for Git, Helm, and remote Kustomize
   acquisition, with redacted targets and errors
 - `--repo-map URL=PATH` path-source resolution for local external checkouts
-- `--allow-network` Git clone/fetch for unmapped path sources missing from the
-  local tree
+- Default Git clone/fetch into the Git cache for unmapped path sources missing
+  from the local tree
 - User Git repository cache entries for fetched path sources
 - Explicit Git HTTPS bearer/basic auth and SSH key-file auth
 - Explicit HTTP(S) Helm bearer/basic auth
@@ -122,14 +123,12 @@ Supported in the MVP:
 
 Network and cache behavior:
 
-- `--offline` disables Helm chart and remote Kustomize resource network
-  fetching. It requires cache hits or local chart availability.
+- `--offline` disables Git, Helm chart, and remote Kustomize resource network
+  fetching. It requires cache hits, repo maps, or local chart availability.
 - `--refresh-charts` refreshes cached immutable chart entries.
 - `--chart-cache-dir PATH` overrides the default user cache directory.
 - `--repo-map URL=PATH` maps a Git repo URL to a local checkout and takes
   precedence over local fallback and network fetching.
-- `--allow-network` enables Git clone/fetch for unmapped path sources. It does
-  not control Helm chart or remote Kustomize fetching.
 - `--git-cache-dir PATH` overrides the default Git repository cache directory.
 - `--refresh-git` fetches cached Git repositories before rendering.
 - `--git-bearer-token` takes precedence over `--git-username` and
@@ -143,7 +142,6 @@ Network and cache behavior:
   `--helm-password` for HTTP(S) Helm repository auth.
 - `--registry-config PATH` is the only OCI registry credential source used by
   this slice; ambient Helm and Docker registry config is not read.
-- `--offline` cannot be combined with `--allow-network`.
 - `--appset-provider-fixture PATH` supplies local-only provider generator data
   and does not enable Kubernetes, Argo CD, SCM, pull-request, cloud, or plugin
   service API access.
@@ -155,7 +153,6 @@ Network and cache behavior:
 - Git, chart, and remote-resource caches must stay outside the current working
   directory, selected repository roots, Git repository trees, and
   symlink-resolved equivalents.
-- `--allow-network` is not the Helm chart-fetch flag.
 - Cache lifecycle commands are local filesystem operations only. They do not
   render Applications, clone/fetch Git repositories, fetch Helm charts, fetch
   remote Kustomize resources, read credential flags, or retry failed
@@ -199,8 +196,8 @@ default local, library-backed render/diff path.
 
 Live integration is design-gated in
 `docs/reports/2026-05-24-live-integration-design-gate.md`. Future live work
-must stay explicitly opt-in and must not change the default offline render/diff
-contract.
+must stay explicitly opt-in and must not change `--offline` cache-only behavior
+or the default local render/diff contract.
 
 The tool pins Argo CD dependencies. Upgrade Argo CD dependencies deliberately
 and update compatibility tests in the same change.
