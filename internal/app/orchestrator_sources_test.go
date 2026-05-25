@@ -312,6 +312,128 @@ data:
 		t.Fatalf("data.source = %q, found %v, err %v; want ref-path", source, found, err)
 	}
 }
+
+func TestOrchestratorBuildUsesLocalSameRepoPathSourceForRefOnlyHelmValueRef(t *testing.T) {
+	root := t.TempDir()
+	chartRoot := t.TempDir()
+	writeTestFile(t, filepath.Join(root, "apps", "helm-ref-chart-only-same-repo.yaml"), `apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: helm-ref-chart-only-same-repo
+  namespace: argocd
+spec:
+  sources:
+    - repoURL: https://github.com/example/repo
+      targetRevision: main
+      ref: values
+    - repoURL: https://github.com/example/repo
+      targetRevision: main
+      path: manifests/anchor
+    - repoURL: https://charts.example.test
+      targetRevision: 1.2.3
+      chart: demo
+      helm:
+        valueFiles:
+          - $values/root-values.yaml
+  destination:
+    name: in-cluster
+    namespace: default
+`)
+	writeTestFile(t, filepath.Join(root, "root-values.yaml"), `value: from-current-repo-root
+`)
+	writeTestFile(t, filepath.Join(root, "manifests", "anchor", "cm.yaml"), `apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: anchor
+data:
+  source: local
+`)
+	writeAppTestValueChart(t, chartRoot)
+
+	gitAcquirer := &recordingGitAcquirer{err: errors.New("unexpected git acquire")}
+	chartAcquirer := &recordingChartAcquirer{chartDir: chartRoot}
+	result, err := (Orchestrator{
+		GitAcquirer:   gitAcquirer,
+		ChartAcquirer: chartAcquirer,
+	}).Build(context.Background(), BuildRequest{Path: root})
+	if err != nil {
+		t.Fatalf("Build() error = %v", err)
+	}
+	if got := len(gitAcquirer.requests); got != 0 {
+		t.Fatalf("git acquire calls = %d, want 0: %#v", got, gitAcquirer.requests)
+	}
+	helmManifest, ok := manifestByName(result.Manifests, "demo")
+	if !ok {
+		t.Fatalf("missing Helm manifest demo: %#v", result.Manifests)
+	}
+	value, found, err := unstructured.NestedString(helmManifest.Object.Object, "data", "value")
+	if err != nil || !found || value != "from-current-repo-root" {
+		t.Fatalf("data.value = %q, found %v, err %v; want from-current-repo-root", value, found, err)
+	}
+}
+
+func TestOrchestratorBuildUsesFetchedSameRepoPathSourceForRefOnlyHelmValueRef(t *testing.T) {
+	root := t.TempDir()
+	fetchedRoot := t.TempDir()
+	chartRoot := t.TempDir()
+	writeTestFile(t, filepath.Join(root, "apps", "helm-ref-chart-only-fetched-same-repo.yaml"), `apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: helm-ref-chart-only-fetched-same-repo
+  namespace: argocd
+spec:
+  sources:
+    - repoURL: https://github.com/example/repo
+      targetRevision: main
+      ref: values
+    - repoURL: https://github.com/example/repo
+      targetRevision: main
+      path: manifests/anchor
+    - repoURL: https://charts.example.test
+      targetRevision: 1.2.3
+      chart: demo
+      helm:
+        valueFiles:
+          - $values/root-values.yaml
+  destination:
+    name: in-cluster
+    namespace: default
+`)
+	writeTestFile(t, filepath.Join(root, "root-values.yaml"), `value: from-current-root-wrong
+`)
+	writeTestFile(t, filepath.Join(fetchedRoot, "root-values.yaml"), `value: from-fetched-root
+`)
+	writeTestFile(t, filepath.Join(fetchedRoot, "manifests", "anchor", "cm.yaml"), `apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: anchor
+data:
+  source: fetched
+`)
+	writeAppTestValueChart(t, chartRoot)
+
+	gitAcquirer := &recordingGitAcquirer{path: fetchedRoot, revision: "abc123"}
+	chartAcquirer := &recordingChartAcquirer{chartDir: chartRoot}
+	result, err := (Orchestrator{
+		GitAcquirer:   gitAcquirer,
+		ChartAcquirer: chartAcquirer,
+	}).Build(context.Background(), BuildRequest{Path: root})
+	if err != nil {
+		t.Fatalf("Build() error = %v", err)
+	}
+	if got := len(gitAcquirer.requests); got != 1 {
+		t.Fatalf("git acquire calls = %d, want 1: %#v", got, gitAcquirer.requests)
+	}
+	helmManifest, ok := manifestByName(result.Manifests, "demo")
+	if !ok {
+		t.Fatalf("missing Helm manifest demo: %#v", result.Manifests)
+	}
+	value, found, err := unstructured.NestedString(helmManifest.Object.Object, "data", "value")
+	if err != nil || !found || value != "from-fetched-root" {
+		t.Fatalf("data.value = %q, found %v, err %v; want from-fetched-root", value, found, err)
+	}
+}
+
 func TestOrchestratorBuildUsesFetchedSourceRootForSameRepoHelmValueRef(t *testing.T) {
 	root := t.TempDir()
 	fetchedRoot := t.TempDir()

@@ -12,6 +12,8 @@ import (
 	"github.com/spf13/cobra"
 )
 
+const maxDefaultTestAppsParallelism = 8
+
 func newTestCommand(deps Dependencies) *cobra.Command {
 	flags := defaultCommonFlags()
 	flags.output = testOutputText
@@ -109,6 +111,9 @@ func defaultTestAppsParallelism() int {
 	value := runtime.GOMAXPROCS(0)
 	if value < 1 {
 		return 1
+	}
+	if value > maxDefaultTestAppsParallelism {
+		return maxDefaultTestAppsParallelism
 	}
 	return value
 }

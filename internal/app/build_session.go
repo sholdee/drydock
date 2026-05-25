@@ -110,6 +110,7 @@ func (session *buildSession) Build(ctx context.Context) (BuildResult, error) {
 		Locks:              processCacheTargetLocks,
 		SnapshotRoot:       snapshotRoot,
 		SnapshotCacheReads: shouldSnapshotCacheReads(session.request),
+		SnapshotCache:      acquisition.NewSnapshotCache(),
 	}
 
 	rendered, renderErr := renderApplications(ctx, renderApplicationsRequest{
