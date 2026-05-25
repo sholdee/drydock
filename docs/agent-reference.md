@@ -6,15 +6,9 @@ you.
 
 ## Document Ownership
 
-- `AGENTS.md`: mandatory operating rules and non-negotiable constraints.
-- `docs/agent-orientation.md`: fast task routing for fresh agents.
-- `docs/agent-reference.md`: task-specific agent constraints and links to
-  canonical docs.
-- `docs/design.md`: canonical product architecture and behavior model.
-- `docs/roadmap.md`: canonical supported/deferred feature status.
-
-This file should not become a duplicate design spec. Prefer concise constraints
-plus links to the canonical docs.
+Use `docs/README.md` for documentation ownership. This file should not become
+a duplicate design spec; keep concise task constraints plus links to canonical
+docs.
 
 ## Command And API Surface
 

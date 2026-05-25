@@ -25,6 +25,7 @@ Use these entry points before substantive work:
 - `docs/agent-orientation.md`: fast routing for fresh agents.
 - `docs/agent-reference.md`: task-specific agent constraints and canonical
   links.
+- `docs/README.md`: documentation ownership map.
 - `docs/design.md`: canonical product architecture and behavior model.
 - `docs/roadmap.md`: canonical supported/deferred feature status.
 - `docs/reports/2026-05-24-live-integration-design-gate.md`: required before
@@ -134,11 +135,6 @@ must use temporary worktrees and clean them up. Never mutate the real
 
 ## Maintenance Rule
 
-- Update `AGENTS.md` when mandatory agent rules, hard constraints, validation
-  expectations, or subagent coordination rules change.
-- Update `docs/agent-orientation.md` when package routing or high-context file
-  guidance changes.
-- Update `docs/agent-reference.md` when task-specific agent constraints or
-  canonical doc links change.
-- Update `docs/design.md` when product architecture or behavior changes.
-- Update `docs/roadmap.md` when supported/deferred feature status changes.
+- Use `docs/README.md` for documentation ownership decisions.
+- Update `AGENTS.md` only when mandatory agent rules, hard constraints,
+  validation expectations, or subagent coordination rules change.

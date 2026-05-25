@@ -17,8 +17,8 @@ repository diagnostics without printing manifests, and `diag -o json` or
 `diag -o yaml` emits structured diagnostic reports. `cache path`, `cache list`,
 `cache prune`, and `cache delete` inspect and maintain local source caches.
 
-This project is early implementation work. See `docs/design.md` for the
-approved MVP design and `docs/roadmap.md` for outstanding work.
+This project is early implementation work. See `docs/README.md` for the full
+documentation index.
 
 Default commands are offline desired-vs-desired analysis. They do not contact a
 Kubernetes cluster or Argo CD server, do not read ambient live runtime config,
@@ -227,10 +227,7 @@ scripts/home-ops-pattern-smoke.sh
   verification, project-scoped cluster Secrets, and full RBAC simulation remain
   deferred.
 
-See `docs/usage.md` for command examples, `docs/compatibility.md` for offline
-Argo CD compatibility notes, `docs/roadmap.md` for outstanding work,
-`docs/ci.md` for the local CI contract, `docs/release.md` for release and
-Argo CD dependency upgrade notes, and
+See `docs/README.md` for documentation ownership, `docs/usage.md` for command
+examples, `docs/compatibility.md` for offline Argo CD compatibility notes, and
 `docs/reports/2026-05-24-live-integration-design-gate.md` for the boundary
-around future live integration. See `docs/home-ops-pattern-coverage.md` for the
-portable coverage matrix that models real `home-ops` Application patterns.
+around future live integration.
