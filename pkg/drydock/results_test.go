@@ -50,34 +50,68 @@ func TestRenderResultFromBuildGoldenClonesManifestsAndStabilizesDiagnostics(t *t
 		}},
 	})
 
-	if len(result.Applications) != 1 || result.Applications[0].Project != "default" {
-		t.Fatalf("Applications = %#v, want default project", result.Applications)
+	assertGoldenResultApplication(t, result.Applications)
+	manifest := assertGoldenResultManifest(t, result.Manifests)
+	originalData, ok := object["data"].(map[string]any)
+	if !ok {
+		t.Fatalf("original data = %#v, want map", object["data"])
 	}
-	if len(result.Manifests) != 1 {
-		t.Fatalf("len(Manifests) = %d, want 1", len(result.Manifests))
+	originalItems, ok := originalData["items"].([]any)
+	if !ok {
+		t.Fatalf("original items = %#v, want slice", originalData["items"])
 	}
-	manifest := result.Manifests[0]
+	originalData["value"] = "after"
+	originalItems[0] = "changed"
+	data, ok := manifest.Object["data"].(map[string]any)
+	if !ok {
+		t.Fatalf("public manifest data = %#v, want map", manifest.Object["data"])
+	}
+	assertGoldenResultManifestClone(t, data)
+	assertGoldenResultDiagnostic(t, result.Diagnostics)
+}
+
+func assertGoldenResultApplication(t *testing.T, applications []Application) {
+	t.Helper()
+	if len(applications) != 1 || applications[0].Project != "default" {
+		t.Fatalf("Applications = %#v, want default project", applications)
+	}
+}
+
+func assertGoldenResultManifest(t *testing.T, manifests []Manifest) Manifest {
+	t.Helper()
+	if len(manifests) != 1 {
+		t.Fatalf("len(Manifests) = %d, want 1", len(manifests))
+	}
+	manifest := manifests[0]
 	if manifest.Application.Name != "demo" {
 		t.Fatalf("manifest Application.Name = %q, want demo", manifest.Application.Name)
 	}
 	if manifest.SourceIndex != 1 || manifest.SourceName != "values" || manifest.SourcePath != "apps/demo" {
 		t.Fatalf("manifest source = %#v, want values source", manifest)
 	}
+	return manifest
+}
 
-	object["data"].(map[string]any)["value"] = "after"
-	object["data"].(map[string]any)["items"].([]any)[0] = "changed"
-	data := manifest.Object["data"].(map[string]any)
+func assertGoldenResultManifestClone(t *testing.T, data map[string]any) {
+	t.Helper()
 	if data["value"] != "before" {
 		t.Fatalf("public manifest data.value = %q, want cloned before value", data["value"])
 	}
-	if data["items"].([]any)[0] != "one" {
-		t.Fatalf("public manifest data.items[0] = %q, want cloned item", data["items"].([]any)[0])
+	items, ok := data["items"].([]any)
+	if !ok {
+		t.Fatalf("public manifest data.items = %#v, want slice", data["items"])
 	}
+	if items[0] != "one" {
+		t.Fatalf("public manifest data.items[0] = %q, want cloned item", items[0])
+	}
+}
 
-	if len(result.Diagnostics) != 1 {
-		t.Fatalf("Diagnostics = %#v, want one diagnostic", result.Diagnostics)
+func assertGoldenResultDiagnostic(t *testing.T, diagnostics []Diagnostic) {
+	t.Helper()
+	if len(diagnostics) != 1 {
+		t.Fatalf("Diagnostics = %#v, want one diagnostic", diagnostics)
 	}
-	diag := result.Diagnostics[0]
+	diag := diagnostics[0]
 	if diag.Code == "" {
 		t.Fatalf("diagnostic Code = empty, want stable code")
 	}
