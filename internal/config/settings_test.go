@@ -799,6 +799,92 @@ data:
 	}
 }
 
+func TestLoadRepositorySecretLoadsMultiDocumentRepositorySecrets(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "repos.yaml")
+	if err := os.WriteFile(path, []byte(`apiVersion: v1
+kind: Secret
+metadata:
+  name: git
+  labels:
+    argocd.argoproj.io/secret-type: repository
+stringData:
+  name: platform-repo
+  type: git
+  url: https://github.com/example/platform-repo
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: charts
+  labels:
+    argocd.argoproj.io/secret-type: repository
+stringData:
+  name: charts
+  type: helm
+  url: ghcr.io/example/charts
+  enableOCI: "true"
+`), 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	settings, diags, err := LoadRepositorySecret(path)
+	if err != nil {
+		t.Fatalf("LoadRepositorySecret() error = %v", err)
+	}
+	if len(diags) != 0 {
+		t.Fatalf("diagnostics = %#v", diags)
+	}
+	if len(settings.HelmRepositories) != 2 {
+		t.Fatalf("len(HelmRepositories) = %d, want 2: %#v", len(settings.HelmRepositories), settings.HelmRepositories)
+	}
+	repo := settings.HelmRepositories["ghcr.io/example/charts"]
+	if repo.Name != "charts" || repo.Type != "helm" || !repo.EnableOCI {
+		t.Fatalf("OCI repo = %#v", repo)
+	}
+}
+
+func TestLoadRepositorySecretReportsMultiDocumentRepositoryConflicts(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "repos.yaml")
+	if err := os.WriteFile(path, []byte(`apiVersion: v1
+kind: Secret
+metadata:
+  name: charts-a
+  labels:
+    argocd.argoproj.io/secret-type: repository
+stringData:
+  name: charts-a
+  type: helm
+  url: https://charts.example.test
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: charts-b
+  labels:
+    argocd.argoproj.io/secret-type: repository
+stringData:
+  name: charts-b
+  type: helm
+  url: https://charts.example.test
+`), 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	_, diags, err := LoadRepositorySecret(path)
+	if err != nil {
+		t.Fatalf("LoadRepositorySecret() error = %v", err)
+	}
+	if len(diags) != 1 {
+		t.Fatalf("len(diags) = %d, want 1: %#v", len(diags), diags)
+	}
+	if diags[0].Severity != "error" || !strings.Contains(diags[0].Message, "conflicting repository settings discovered") {
+		t.Fatalf("diagnostic = %#v", diags[0])
+	}
+	if diags[0].Provenance.Path != path || diags[0].Provenance.Pointer != "stringData.url" {
+		t.Fatalf("provenance = %#v", diags[0].Provenance)
+	}
+}
+
 func TestLoadRepositorySecretInvalidEnableOCIReturnsSafeDiagnostic(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "repo-secret.yaml")
 	if err := os.WriteFile(path, []byte(`apiVersion: v1

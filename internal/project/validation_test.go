@@ -174,6 +174,30 @@ func TestValidateApplicationsReportsMissingRepositoryMetadataForRemoteGitPathSou
 	assertDiagnostic(t, diags, "missing repository metadata")
 }
 
+func TestValidateApplicationsMatchesCanonicalOCIRepositoryMetadata(t *testing.T) {
+	settings := config.DefaultSettings()
+	settings.HelmRepositories["ghcr.io/example/charts"] = config.RepositorySettings{
+		URL:       "ghcr.io/example/charts",
+		Type:      "helm",
+		EnableOCI: true,
+		Project:   "platform",
+	}
+	apps := []argoappv1.Application{application("demo", "platform", argoappv1.ApplicationSource{
+		RepoURL: "oci://ghcr.io/example/charts/",
+		Chart:   "demo",
+	}, argoappv1.ApplicationDestination{Name: "in-cluster", Namespace: "workloads"})}
+	projects := []argoappv1.AppProject{{
+		ObjectMeta: objectMeta("platform"),
+		Spec: argoappv1.AppProjectSpec{
+			SourceRepos:  []string{"*"},
+			Destinations: []argoappv1.ApplicationDestination{{Name: "*", Namespace: "*"}},
+		},
+	}}
+
+	diags := ValidateApplications(apps, projects, settings)
+	assertNoDiagnostic(t, diags, "missing repository metadata")
+}
+
 func TestValidateApplicationsRedactsCredentialBearingRepoURLsInDiagnostics(t *testing.T) {
 	secretURL := "https://user:password@example.test/org/repo.git?token=query-secret#frag-secret"
 	apps := []argoappv1.Application{application("demo", "platform", argoappv1.ApplicationSource{

@@ -428,6 +428,48 @@ helmCharts:
 		t.Fatalf("acquirer.options[0] = %#v", acquirer.options[0])
 	}
 }
+func TestKustomizeRendererUsesDiscoveredBareOCIChartRepository(t *testing.T) {
+	root := t.TempDir()
+	chartDir := filepath.Join(root, "charts", "demo")
+	writeTestChart(t, chartDir, `
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Release.Name }}
+`)
+	writeFile(t, filepath.Join(root, "apps", "demo", "kustomization.yaml"), `
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+helmCharts:
+  - name: demo
+    repo: ghcr.io/example/charts/
+    version: 1.2.3
+    releaseName: demo
+`)
+
+	acquirer := &fakeChartAcquirer{chartDir: chartDir}
+	_, diags, err := (KustomizeRenderer{}).Render(context.Background(), ResolvedSource{
+		RepoRoot: root,
+		Path:     filepath.Join("apps", "demo"),
+	}, RenderOptions{
+		ChartAcquirer: acquirer,
+		OCIChartRepositories: map[string]bool{
+			"oci://ghcr.io/example/charts": true,
+		},
+	})
+	if err != nil {
+		t.Fatalf("Render() error = %v", err)
+	}
+	if len(diags) != 0 {
+		t.Fatalf("diagnostics = %#v", diags)
+	}
+	if len(acquirer.requests) != 1 {
+		t.Fatalf("len(acquirer.requests) = %d, want 1", len(acquirer.requests))
+	}
+	if acquirer.requests[0].Kind != chart.RepositoryOCI {
+		t.Fatalf("request kind = %q, want %q", acquirer.requests[0].Kind, chart.RepositoryOCI)
+	}
+}
 func TestKustomizeRendererPropagatesValuesInlineMergeMode(t *testing.T) {
 	root := t.TempDir()
 	chartDir := filepath.Join(root, "charts", "demo")

@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	argoappv1 "github.com/argoproj/argo-cd/v3/pkg/apis/application/v1alpha1"
+	"github.com/sholdee/drydock/internal/chart"
 	"github.com/sholdee/drydock/internal/config"
 	"github.com/sholdee/drydock/internal/diagnostic"
 	"github.com/sholdee/drydock/internal/remote"
@@ -161,6 +162,7 @@ func repositorySettingsForURL(repoURL string, settings config.ArgoSettings) (con
 		return repo, true
 	}
 	normalizedRepoURL, repoURLNormalized := normalizeGitURL(repoURL)
+	normalizedOCIRepoURL, repoURLOCI := normalizeOCIURL(repoURL)
 	for key, repo := range settings.HelmRepositories {
 		if key == repoURL || repo.URL == repoURL {
 			return repo, true
@@ -173,12 +175,28 @@ func repositorySettingsForURL(repoURL string, settings config.ArgoSettings) (con
 				return repo, true
 			}
 		}
+		if repoURLOCI && repo.EnableOCI {
+			if normalizedKey, ok := normalizeOCIURL(key); ok && normalizedKey == normalizedOCIRepoURL {
+				return repo, true
+			}
+			if normalizedURL, ok := normalizeOCIURL(repo.URL); ok && normalizedURL == normalizedOCIRepoURL {
+				return repo, true
+			}
+		}
 	}
 	return config.RepositorySettings{}, false
 }
 
 func normalizeGitURL(raw string) (string, bool) {
 	normalized, err := remote.NormalizeGitRepoURL(raw)
+	if err != nil {
+		return "", false
+	}
+	return normalized, true
+}
+
+func normalizeOCIURL(raw string) (string, bool) {
+	normalized, err := chart.NormalizeRepository(raw, chart.RepositoryOCI)
 	if err != nil {
 		return "", false
 	}

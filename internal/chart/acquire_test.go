@@ -30,6 +30,30 @@ func TestCacheKeyNormalizesRepositoryURL(t *testing.T) {
 	}
 }
 
+func TestCacheKeyNormalizesBareOCIRepositoryURL(t *testing.T) {
+	left, err := NewCacheKey(Request{
+		Repository: " ghcr.io/example/charts/ ",
+		Name:       "demo",
+		Version:    "1.2.3",
+		Kind:       RepositoryOCI,
+	})
+	if err != nil {
+		t.Fatalf("NewCacheKey(bare) error = %v", err)
+	}
+	right, err := NewCacheKey(Request{
+		Repository: "oci://ghcr.io/example/charts",
+		Name:       "demo",
+		Version:    "1.2.3",
+		Kind:       RepositoryOCI,
+	})
+	if err != nil {
+		t.Fatalf("NewCacheKey(oci) error = %v", err)
+	}
+	if left != right {
+		t.Fatalf("cache keys differ:\nleft:  %s\nright: %s", left, right)
+	}
+}
+
 func TestCacheKeySeparatesOCIAndHTTP(t *testing.T) {
 	httpKey, err := NewCacheKey(Request{
 		Repository: "https://example.com/charts",
@@ -143,5 +167,15 @@ func TestNormalizeRepositoryTrimsOCITrailingSlash(t *testing.T) {
 	}
 	if normalized != "oci://example.com/charts" {
 		t.Fatalf("NormalizeRepository() = %q, want oci://example.com/charts", normalized)
+	}
+}
+
+func TestNormalizeRepositoryCanonicalizesBareOCIRepository(t *testing.T) {
+	normalized, err := NormalizeRepository(" ghcr.io/example/charts/ ", RepositoryOCI)
+	if err != nil {
+		t.Fatalf("NormalizeRepository() error = %v", err)
+	}
+	if normalized != "oci://ghcr.io/example/charts" {
+		t.Fatalf("NormalizeRepository() = %q, want oci://ghcr.io/example/charts", normalized)
 	}
 }

@@ -257,7 +257,7 @@ func resolveKustomizeHelmChart(ctx context.Context, tempRepoRoot, tempSourceRoot
 		Repository: helmChart.Repo,
 		Name:       helmChart.Name,
 		Version:    helmChart.Version,
-		Kind:       kustomizeHelmChartRepositoryKind(helmChart.Repo),
+		Kind:       ChartRepositoryKind(helmChart.Repo, opts.OCIChartRepositories),
 	}
 	result, err := acquirer.Acquire(ctx, request, chart.Options{
 		CacheDir:    opts.ChartCacheDir,
@@ -427,13 +427,6 @@ func writeKustomizeHelmGeneratedValuesFile(tempRepoRoot, tempSourceRoot, chartRe
 		return "", fmt.Errorf("write generated helm values %s: %w", generatedRel, err)
 	}
 	return generatedRel, nil
-}
-
-func kustomizeHelmChartRepositoryKind(repository string) chart.RepositoryKind {
-	if strings.HasPrefix(strings.TrimSpace(repository), "oci://") {
-		return chart.RepositoryOCI
-	}
-	return chart.RepositoryHTTP
 }
 
 func safeGeneratedKustomizeHelmBaseName(name, version string) string {

@@ -2,11 +2,13 @@ package app
 
 import (
 	"context"
-	"github.com/sholdee/drydock/internal/diagnostic"
-	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/sholdee/drydock/internal/chart"
+	"github.com/sholdee/drydock/internal/diagnostic"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 )
 
 func TestOrchestratorDiscoversGeneratesAndRenders(t *testing.T) {
@@ -59,6 +61,118 @@ data:
 	}
 	if customization.HealthLuaSHA256 == "" {
 		t.Fatalf("HealthLuaSHA256 = empty, want settings carried through")
+	}
+}
+
+func TestOrchestratorLoadsLaterRepositorySecretDocuments(t *testing.T) {
+	root := t.TempDir()
+	chartDir := filepath.Join(root, "cache", "chart")
+	writeAppTestValueChart(t, chartDir)
+	writeTestFile(t, filepath.Join(root, "apps", "chart.yaml"), `apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: chart
+  namespace: argocd
+spec:
+  project: k3s
+  source:
+    repoURL: ghcr.io/example/charts
+    targetRevision: 0.1.0
+    chart: chart
+  destination:
+    name: in-cluster
+    namespace: default
+`)
+	writeTestFile(t, filepath.Join(root, "projects", "k3s.yaml"), `apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: k3s
+spec:
+  sourceRepos:
+    - ghcr.io/example/charts
+  destinations:
+    - name: "*"
+      namespace: "*"
+`)
+	writeTestFile(t, filepath.Join(root, "settings", "repos.yaml"), `apiVersion: v1
+kind: Secret
+metadata:
+  name: git
+  labels:
+    argocd.argoproj.io/secret-type: repository
+stringData:
+  name: platform-repo
+  type: git
+  url: https://github.com/example/platform-repo
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: charts
+  labels:
+    argocd.argoproj.io/secret-type: repository
+stringData:
+  name: charts
+  type: helm
+  url: ghcr.io/example/charts
+  enableOCI: "true"
+`)
+
+	acquirer := &recordingChartAcquirer{chartDir: chartDir}
+	result, err := (Orchestrator{ChartAcquirer: acquirer}).Build(context.Background(), BuildRequest{Path: root})
+	if err != nil {
+		t.Fatalf("Build() error = %v", err)
+	}
+	if len(acquirer.requests) != 1 {
+		t.Fatalf("chart acquire calls = %d, want 1", len(acquirer.requests))
+	}
+	if got := acquirer.requests[0].Kind; got != chart.RepositoryOCI {
+		t.Fatalf("chart request kind = %q, want %q", got, chart.RepositoryOCI)
+	}
+	if got := acquirer.options[0].Offline; got {
+		t.Fatalf("chart acquire Offline = %t, want false without explicit offline flag", got)
+	}
+	for _, diag := range result.Diagnostics {
+		if diag.Category == "repository" && strings.Contains(diag.Message, "missing repository metadata") {
+			t.Fatalf("Diagnostics = %#v, want later repository Secret document to satisfy metadata", result.Diagnostics)
+		}
+	}
+}
+
+func TestOrchestratorDedupesRepeatedRepositorySecretCandidates(t *testing.T) {
+	root := t.TempDir()
+	writeTestFile(t, filepath.Join(root, "settings", "repos.yaml"), `apiVersion: v1
+kind: Secret
+metadata:
+  name: git
+  labels:
+    argocd.argoproj.io/secret-type: repository
+stringData:
+  url: https://github.com/example/platform-repo
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: charts
+  labels:
+    argocd.argoproj.io/secret-type: repository
+stringData:
+  url: ghcr.io/example/charts
+  enableOCI: typo
+`)
+
+	result, err := Orchestrator{}.Diag(context.Background(), DiagRequest{Path: root})
+	if err == nil {
+		t.Fatalf("Diag() error = nil, want invalid settings diagnostic error")
+	}
+	count := 0
+	for _, diag := range result.Diagnostics {
+		if diag.Message == "invalid repository Secret enableOCI value" {
+			count++
+		}
+	}
+	if count != 1 {
+		t.Fatalf("invalid enableOCI diagnostics = %d, want 1: %#v", count, result.Diagnostics)
 	}
 }
 

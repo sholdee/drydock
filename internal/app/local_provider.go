@@ -26,6 +26,7 @@ type localProvider struct {
 	refreshCharts                bool
 	chartCacheDir                string
 	chartCredentials             chart.ChartCredentials
+	ociChartRepositories         map[string]bool
 	gitCacheDir                  string
 	refreshGit                   bool
 	gitCredentials               sourcepkg.GitCredentials
@@ -52,6 +53,7 @@ func (p localProvider) RenderSource(ctx context.Context, source render.ResolvedS
 	opts.OfflineCharts = p.offline
 	opts.RefreshCharts = p.refreshCharts
 	opts.ChartCredentials = p.chartCredentials
+	opts.OCIChartRepositories = p.ociChartRepositories
 	opts.RemoteResourceAcquirer = p.acquisition.RemoteAcquirer(p.remoteResourceAcquirer)
 	opts.RemoteResourceCacheDir = p.remoteResourceCacheDir
 	opts.OfflineRemoteResources = p.offline
