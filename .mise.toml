@@ -1,0 +1,70 @@
+[tools]
+go = "1.26.3"
+node = "24.11.1"
+golangci-lint = "2.12.2"
+lefthook = "2.1.8"
+zizmor = "1.25.2"
+
+[tasks.fmt]
+description = "Run go fmt against Go code"
+run = "go fmt ./..."
+
+[tasks.test]
+description = "Run Go tests"
+run = "go test ./..."
+
+[tasks.test-race]
+description = "Run Go tests with the race detector"
+run = "go test -race ./... -coverprofile=coverage.txt -covermode=atomic"
+
+[tasks.coverage]
+description = "Print coverage summary for coverage.txt"
+run = "go tool cover -func=coverage.txt"
+
+[tasks.vet]
+description = "Run go vet"
+run = "go vet ./..."
+
+[tasks.lint]
+description = "Run golangci-lint"
+run = "golangci-lint run --allow-parallel-runners"
+
+[tasks.lint-fix]
+description = "Run golangci-lint with fixes"
+run = "golangci-lint run --allow-parallel-runners --fix"
+
+[tasks.mod-verify]
+description = "Verify module downloads"
+run = "go mod verify"
+
+[tasks.mod-tidy-check]
+description = "Check go.mod and go.sum are tidy"
+run = "go mod tidy && git diff --exit-code go.mod go.sum"
+
+[tasks.markdownlint]
+description = "Lint Markdown files"
+run = "npx --yes markdownlint-cli2@0.22.1 '**/*.md' '#node_modules' '#docs/superpowers/plans'"
+
+[tasks.actionlint]
+description = "Lint GitHub Actions workflows"
+run = "go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.12"
+
+[tasks.vuln]
+description = "Run advisory govulncheck"
+run = "go run golang.org/x/vuln/cmd/govulncheck@v1.1.4 ./..."
+
+[tasks.whitespace]
+description = "Check for whitespace errors in changed lines"
+run = "git diff --check"
+
+[tasks.zizmor]
+description = "Audit GitHub Actions workflow security"
+run = "zizmor .github/workflows .github/actions"
+
+[tasks.hooks-install]
+description = "Install optional local lefthook hooks"
+run = "lefthook install"
+
+[tasks.ci]
+description = "Run the main local CI checks"
+depends = ["mod-verify", "mod-tidy-check", "test", "vet", "lint", "markdownlint", "actionlint", "whitespace"]

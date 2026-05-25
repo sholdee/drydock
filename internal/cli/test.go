@@ -17,6 +17,7 @@ import (
 
 const maxDefaultTestAppsParallelism = 8
 
+//nolint:gocyclo // CLI flag binding and output-mode branching stay together for command readability.
 func newTestCommand(deps Dependencies) *cobra.Command {
 	flags := defaultCommonFlags()
 	flags.output = testOutputText
@@ -163,7 +164,6 @@ func renderTestResult(cmd *cobra.Command, statuses []app.ApplicationStatus, outp
 	default:
 		return fmt.Errorf("unsupported output %q for test", output)
 	}
-	return nil
 }
 
 func renderTestStatuses(w io.Writer, statuses []app.ApplicationStatus, color bool) error {

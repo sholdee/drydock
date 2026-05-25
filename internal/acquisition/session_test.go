@@ -385,7 +385,7 @@ func TestSessionReusesChartSnapshotForSameTargetConcurrently(t *testing.T) {
 
 	release()
 	results := make([]chart.Result, 0, 2)
-	for i := 0; i < 2; i++ {
+	for range 2 {
 		select {
 		case completed := <-done:
 			if completed.err != nil {

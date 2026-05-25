@@ -346,10 +346,10 @@ the renderer directly:
 
 ```go
 client := drydock.NewClient(drydock.Config{
-	Path: ".",
-	RepoMaps: []drydock.RepoMap{
-		{URL: "https://github.com/example/repo", Path: "/work/repo"},
-	},
+    Path: ".",
+    RepoMaps: []drydock.RepoMap{
+        {URL: "https://github.com/example/repo", Path: "/work/repo"},
+    },
 })
 result, err := client.Render(ctx)
 ```

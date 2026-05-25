@@ -310,6 +310,7 @@ func renderApplicationsSequential(ctx context.Context, request renderApplication
 	return out, nil
 }
 
+//nolint:gocyclo // Parallel rendering coordinates cancellation, ordered status emission, and partial results.
 func renderApplicationsParallel(ctx context.Context, request renderApplicationsRequest) (renderApplicationsResult, error) {
 	workerCount := request.parallelism
 	if workerCount > len(request.applications) {

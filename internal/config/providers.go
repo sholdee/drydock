@@ -2,6 +2,7 @@ package config
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -112,7 +113,7 @@ func LoadRepositorySecret(path string) (ArgoSettings, []diagnostic.Diagnostic, e
 	for {
 		var doc repositorySecretDocument
 		if err := decoder.Decode(&doc); err != nil {
-			if err == io.EOF {
+			if errors.Is(err, io.EOF) {
 				break
 			}
 			return settings, nil, fmt.Errorf("parse repository secret %s: %w", path, err)
@@ -171,7 +172,7 @@ func decodeYAMLDocumentAt(path string, documentIndex int, out any) error {
 	for index := 0; ; index++ {
 		var raw any
 		err := decoder.Decode(&raw)
-		if err == io.EOF {
+		if errors.Is(err, io.EOF) {
 			return fmt.Errorf("document %d not found", documentIndex)
 		}
 		if err != nil {
