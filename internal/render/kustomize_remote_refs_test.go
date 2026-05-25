@@ -4,7 +4,12 @@ import (
 	"context"
 	"encoding/base64"
 	"errors"
+	"os"
+	"time"
+
+	"github.com/sholdee/drydock/internal/acquisition"
 	"github.com/sholdee/drydock/internal/cacheevent"
+	"github.com/sholdee/drydock/internal/diagnostic"
 	"github.com/sholdee/drydock/internal/remote"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"path/filepath"
@@ -403,6 +408,249 @@ metadata:
 	}
 	if !containsManifest(manifests, "ConfigMap", "remote-base") {
 		t.Fatalf("rendered manifests = %#v, want remote base ConfigMap", manifests)
+	}
+}
+
+func TestKustomizeWorkspaceCopiesOnlyRemoteGitLocalGraph(t *testing.T) {
+	sourceRoot := t.TempDir()
+	tempRoot := t.TempDir()
+	sourceDir := filepath.Join(tempRoot, "source")
+	if err := os.MkdirAll(sourceDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(sourceRoot, "apps", "demo", "kustomization.yaml"), `
+resources:
+  - config.yaml
+`)
+	writeFile(t, filepath.Join(sourceRoot, "apps", "demo", "config.yaml"), `
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: demo
+`)
+	writeFile(t, filepath.Join(sourceRoot, "unused", "payload.yaml"), strings.Repeat("unused: true\n", 2048))
+
+	released := false
+	acquirer := &fakeRemoteAcquirer{
+		path: sourceRoot,
+		release: func() {
+			released = true
+		},
+	}
+	workspace := &kustomizeWorkspace{
+		originalRepoRoot: sourceDir,
+		tempRepoRoot:     tempRoot,
+		opts: RenderOptions{
+			RemoteResourceAcquirer: acquirer,
+			RemoteResourceCacheDir: t.TempDir(),
+		},
+		visited: map[string]struct{}{},
+	}
+	request, parsed, ok, err := remoteRequestForKustomizeRef("https://github.com/example/repo.git//apps/demo?ref=v1.2.3")
+	if err != nil || !ok {
+		t.Fatalf("remoteRequestForKustomizeRef() ok=%t err=%v", ok, err)
+	}
+	_, recurseDir, boundaryRoot, err := workspace.acquireAndCopyKustomizeRef(context.Background(), sourceDir, "resources", 0, 0, request, parsed, remotePathDir, true)
+	if err != nil {
+		t.Fatalf("acquireAndCopyKustomizeRef() error = %v", err)
+	}
+	if !released {
+		t.Fatal("remote release was not called")
+	}
+	if recurseDir == "" || boundaryRoot == "" {
+		t.Fatalf("recurseDir=%q boundaryRoot=%q, want both set", recurseDir, boundaryRoot)
+	}
+	if _, err := os.Stat(filepath.Join(boundaryRoot, "apps", "demo", "config.yaml")); err != nil {
+		t.Fatalf("generated graph missing config: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(boundaryRoot, "unused", "payload.yaml")); !os.IsNotExist(err) {
+		t.Fatalf("unused remote path exists = %v, want not exist", err)
+	}
+}
+
+func TestKustomizeWorkspaceReleasesRemoteGitOnGraphCopyError(t *testing.T) {
+	sourceRoot := t.TempDir()
+	tempRoot := t.TempDir()
+	sourceDir := filepath.Join(tempRoot, "source")
+	if err := os.MkdirAll(sourceDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(sourceRoot, "apps", "demo", "kustomization.yaml"), `
+resources:
+  - ../linked
+`)
+	if err := os.Symlink(t.TempDir(), filepath.Join(sourceRoot, "apps", "linked")); err != nil {
+		t.Fatal(err)
+	}
+
+	releaseCalls := 0
+	workspace := &kustomizeWorkspace{
+		originalRepoRoot: sourceDir,
+		tempRepoRoot:     tempRoot,
+		opts: RenderOptions{
+			RemoteResourceAcquirer: &fakeRemoteAcquirer{
+				path: sourceRoot,
+				release: func() {
+					releaseCalls++
+				},
+			},
+			RemoteResourceCacheDir: t.TempDir(),
+		},
+		visited: map[string]struct{}{},
+	}
+	request, parsed, ok, err := remoteRequestForKustomizeRef("https://github.com/example/repo.git//apps/demo?ref=v1.2.3")
+	if err != nil || !ok {
+		t.Fatalf("remoteRequestForKustomizeRef() ok=%t err=%v", ok, err)
+	}
+	_, _, _, err = workspace.acquireAndCopyKustomizeRef(context.Background(), sourceDir, "resources", 0, 0, request, parsed, remotePathDir, true)
+	if err == nil {
+		t.Fatal("acquireAndCopyKustomizeRef() error = nil, want symlink rejection")
+	}
+	if releaseCalls != 1 {
+		t.Fatalf("release calls = %d, want 1", releaseCalls)
+	}
+}
+
+func TestKustomizeRendererCopiesRemoteGitSiblingRefs(t *testing.T) {
+	root := t.TempDir()
+	remoteRepo := t.TempDir()
+	writeFile(t, filepath.Join(root, "app", "kustomization.yaml"), `
+resources:
+  - https://github.com/example/repo.git//apps/demo?ref=v1.2.3
+`)
+	writeFile(t, filepath.Join(remoteRepo, "apps", "demo", "kustomization.yaml"), `
+resources:
+  - ../base
+`)
+	writeFile(t, filepath.Join(remoteRepo, "apps", "base", "kustomization.yaml"), `
+resources:
+  - config.yaml
+`)
+	writeFile(t, filepath.Join(remoteRepo, "apps", "base", "config.yaml"), `
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: demo
+  labels:
+    mirrored: "true"
+`)
+
+	manifests, diags, err := KustomizeRenderer{}.Render(context.Background(), ResolvedSource{
+		RepoRoot: root,
+		Path:     "app",
+	}, RenderOptions{
+		RemoteResourceAcquirer: &fakeRemoteAcquirer{path: remoteRepo},
+		RemoteResourceCacheDir: t.TempDir(),
+	})
+	if err != nil {
+		t.Fatalf("Render() error = %v", err)
+	}
+	if len(diags) != 0 {
+		t.Fatalf("Diagnostics = %#v, want none", diags)
+	}
+	if got := manifests[0].Object.GetLabels()["mirrored"]; got != "true" {
+		t.Fatalf("mirrored label = %q, want true", got)
+	}
+}
+
+func TestKustomizeRendererRejectsRemoteGitSiblingSymlink(t *testing.T) {
+	root := t.TempDir()
+	remoteRepo := t.TempDir()
+	outside := t.TempDir()
+	writeFile(t, filepath.Join(root, "app", "kustomization.yaml"), `
+resources:
+  - https://github.com/example/repo.git//apps/demo?ref=v1.2.3
+`)
+	writeFile(t, filepath.Join(remoteRepo, "apps", "demo", "kustomization.yaml"), `
+resources:
+  - ../linked
+`)
+	writeFile(t, filepath.Join(outside, "kustomization.yaml"), `
+resources:
+  - config.yaml
+`)
+	writeFile(t, filepath.Join(outside, "config.yaml"), `
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: outside
+`)
+	if err := os.Symlink(outside, filepath.Join(remoteRepo, "apps", "linked")); err != nil {
+		t.Fatal(err)
+	}
+
+	_, _, err := KustomizeRenderer{}.Render(context.Background(), ResolvedSource{
+		RepoRoot: root,
+		Path:     "app",
+	}, RenderOptions{
+		RemoteResourceAcquirer: &fakeRemoteAcquirer{path: remoteRepo},
+		RemoteResourceCacheDir: t.TempDir(),
+	})
+	if err == nil {
+		t.Fatal("Render() error = nil, want symlink rejection")
+	}
+	if !strings.Contains(err.Error(), "includes symlink component") && !strings.Contains(err.Error(), "is a symlink") {
+		t.Fatalf("Render() error = %v, want symlink rejection", err)
+	}
+}
+
+func TestKustomizeRendererNestedSameRemoteRefDoesNotDeadlock(t *testing.T) {
+	root := t.TempDir()
+	remoteRepo := t.TempDir()
+	writeFile(t, filepath.Join(root, "app", "kustomization.yaml"), `
+resources:
+  - https://github.com/example/repo.git//apps/outer?ref=v1.2.3
+`)
+	writeFile(t, filepath.Join(remoteRepo, "apps", "outer", "kustomization.yaml"), `
+resources:
+  - https://github.com/example/repo.git//apps/inner?ref=v1.2.3
+`)
+	writeFile(t, filepath.Join(remoteRepo, "apps", "inner", "kustomization.yaml"), `
+resources:
+  - config.yaml
+`)
+	writeFile(t, filepath.Join(remoteRepo, "apps", "inner", "config.yaml"), `
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: inner
+`)
+
+	type renderResult struct {
+		manifests []Manifest
+		diags     []diagnostic.Diagnostic
+		err       error
+	}
+	done := make(chan renderResult, 1)
+	go func() {
+		manifests, diags, err := KustomizeRenderer{}.Render(context.Background(), ResolvedSource{
+			RepoRoot: root,
+			Path:     "app",
+		}, RenderOptions{
+			RemoteResourceAcquirer: (&acquisition.Session{
+				Locks:              acquisition.NewTargetLocks(),
+				SnapshotRoot:       t.TempDir(),
+				SnapshotCacheReads: true,
+			}).RemoteAcquirer(&fakeRemoteAcquirer{path: remoteRepo}),
+			RemoteResourceCacheDir: t.TempDir(),
+		})
+		done <- renderResult{manifests: manifests, diags: diags, err: err}
+	}()
+
+	var result renderResult
+	select {
+	case result = <-done:
+	case <-time.After(time.Second):
+		t.Fatal("Render did not complete; possible nested remote cache lock deadlock")
+	}
+	if result.err != nil {
+		t.Fatalf("Render() error = %v", result.err)
+	}
+	if len(result.diags) != 0 {
+		t.Fatalf("Diagnostics = %#v, want none", result.diags)
+	}
+	if got := result.manifests[0].Object.GetName(); got != "inner" {
+		t.Fatalf("manifest name = %q, want inner", got)
 	}
 }
 

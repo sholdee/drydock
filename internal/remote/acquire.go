@@ -61,6 +61,11 @@ type Result struct {
 	URL       string
 	Revision  string
 	FromCache bool
+	// Release releases any read lock or temporary resource associated with Path.
+	// Callers that receive a non-nil Release must call it exactly once after they
+	// finish copying from Path. Release implementations must be idempotent so
+	// defensive double-calls are harmless.
+	Release func()
 }
 
 type Acquirer interface {

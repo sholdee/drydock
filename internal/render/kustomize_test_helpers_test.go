@@ -38,6 +38,7 @@ type fakeRemoteAcquirer struct {
 	path      string
 	paths     map[string]string
 	fromCache bool
+	release   func()
 	err       error
 }
 
@@ -59,7 +60,7 @@ func (acquirer *fakeRemoteAcquirer) Acquire(_ context.Context, request remote.Re
 			}
 		}
 	}
-	return remote.Result{Path: acquiredPath, URL: request.URL, Revision: request.Revision, FromCache: acquirer.fromCache}, nil
+	return remote.Result{Path: acquiredPath, URL: request.URL, Revision: request.Revision, FromCache: acquirer.fromCache, Release: acquirer.release}, nil
 }
 func writeNamedTestChart(t *testing.T, chartDir, name, version, template string) {
 	t.Helper()

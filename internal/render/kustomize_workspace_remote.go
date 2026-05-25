@@ -37,6 +37,12 @@ func (w *kustomizeWorkspace) acquireAndCopyKustomizeRef(ctx context.Context, dir
 		recordRemoteCacheEvent(w.opts, request, err, remote.Result{})
 		return "", "", "", fmt.Errorf("acquire remote kustomize resource %s: %s", redactKustomizeRef(ref.Original), redactRemoteKustomizeAcquireError(err, ref, w.opts))
 	}
+	release := acquired.Release
+	defer func() {
+		if release != nil {
+			release()
+		}
+	}()
 	recordRemoteCacheEvent(w.opts, request, nil, acquired)
 	acquiredPath, err := acquiredRemoteKustomizePath(acquired, ref)
 	if err != nil {
@@ -74,7 +80,11 @@ func (w *kustomizeWorkspace) acquireAndCopyKustomizeRef(ctx context.Context, dir
 		rewritten := generatedRel
 		if ref.Kind == kustomizeRemoteGit {
 			repoRoot := filepath.Clean(acquired.Path)
-			if err := copyWorkspaceTree(repoRoot, generatedRoot); err != nil {
+			_, graph, err := collectKustomizeGraphForPreparation(ctx, repoRoot, acquiredPath)
+			if err != nil {
+				return "", "", "", fmt.Errorf("collect remote kustomize graph %s: %w", redactKustomizeRef(ref.Original), err)
+			}
+			if err := copyPreparedKustomizeWorkspaceTree(repoRoot, acquiredPath, generatedRoot, graph); err != nil {
 				return "", "", "", fmt.Errorf("copy remote kustomize resource %s: %w", redactKustomizeRef(ref.Original), err)
 			}
 			subpath := path.Clean(strings.TrimPrefix(ref.Subpath, "/"))
