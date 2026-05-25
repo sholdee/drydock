@@ -1,116 +1,210 @@
+<p align="center">
+  <img src="docs/logo/drydock-display.svg" alt="drydock" width="480">
+</p>
+
 # drydock
 
-`drydock` is a Go CLI and embeddable Go package for local Argo CD GitOps
-repository analysis.
+`drydock` renders, tests, and diffs Argo CD GitOps repositories locally for
+pull request review.
 
-Inspect your Argo CD fleet without getting wet.
+It is built for operators who want to inspect rendered desired state before a
+change reaches the cluster. The default workflow is a self-contained Go binary:
+no Kubernetes cluster, no Argo CD server, no `kubectl`, no `argocd`, and no
+Helm or Kustomize CLI shellouts.
 
-The MVP goal is desired-vs-desired pull request diffing: compare a current
-repository tree with a baseline tree and inspect the rendered Kubernetes
-manifests that changed. The currently wired commands are `get apps` for
-Application discovery, `get images` for rendered workload image listing,
-`build apps` and `build app NAME` for local rendering, `diff apps` and
-`diff app NAME` for desired-vs-desired manifest diffs, and `diff images` for
-conservative workload image diffs. `test apps` and `test app NAME` report
-per-Application render status without printing manifests. `diag --path` reports
-repository diagnostics without printing manifests, and `diag -o json` or
-`diag -o yaml` emits structured diagnostic reports. `cache path`, `cache list`,
-`cache prune`, and `cache delete` inspect and maintain local source caches.
+Declared Git, HTTP Helm, OCI Helm, and remote Kustomize sources may be fetched
+into explicit drydock caches when needed. Use `--offline` to require local
+files, repo maps, local charts, or existing cache hits only.
 
-This project is early implementation work. See `docs/README.md` for the full
-documentation index.
+## Install
 
-Default commands are local desired-vs-desired analysis. They may fetch declared
-Git, HTTP Helm, OCI Helm, and remote Kustomize sources into explicit caches
-unless `--offline` is set. They do not contact a Kubernetes cluster or Argo CD
-server, do not read ambient live runtime config, and do not require `kubectl`,
-`argocd`, Helm CLI, or Kustomize CLI. Kubernetes defaulting, admission
-mutation, Argo CD server-side diff, and live-only managed-field ownership are
-design-gated rather than silently approximated.
+Install from source with Go:
+
+```bash
+go install github.com/sholdee/drydock/cmd/drydock@latest
+```
+
+Workflows that install a released binary can use the versioned setup action:
+
+```yaml
+- uses: sholdee/drydock/.github/actions/setup-drydock@main
+  with:
+    version: v0.1.0
+```
+
+The setup action intentionally requires an explicit version. It does not accept
+`latest`.
+
+## Quick Start
+
+Run drydock from the root of an Argo CD GitOps repository.
+
+Test every discovered Application without printing rendered manifests:
+
+```bash
+drydock test apps --path .
+```
+
+Example text output:
+
+```text
+PASS argocd/renovate
+PASS argocd/cert-manager
+FAIL argocd/broken Application argocd/broken source[0] path="..." ...
+```
+
+Compare a pull request checkout against a baseline tree:
+
+```bash
+git worktree add ../baseline main
+drydock diff apps --path . --path-orig ../baseline
+```
+
+Inspect image changes in a machine-readable form:
+
+```bash
+drydock diff images --path . --path-orig ../baseline -o json
+```
+
+For CI jobs that have already populated drydock's source caches, require a
+cache-only run:
+
+```bash
+drydock test apps --path . --offline
+drydock diff apps --path . --path-orig ../baseline --offline
+```
+
+## Common Workflows
+
+| Goal | Command |
+| --- | --- |
+| List Applications | `drydock get apps --path .` |
+| List rendered workload images | `drydock get images --path . -o name` |
+| Render all Applications | `drydock build apps --path .` |
+| Render one Application | `drydock build app argocd/renovate --path .` |
+| Test renderability | `drydock test apps --path .` |
+| Diff rendered manifests | `drydock diff apps --path . --path-orig ../baseline` |
+| Diff one Application | `drydock diff app argocd/renovate --path . --path-orig ../baseline` |
+| Diff workload images | `drydock diff images --path . --path-orig ../baseline -o json` |
+| Inspect repository diagnostics | `drydock diag --path .` |
+| Inspect redacted settings | `drydock diag --path . --settings -o json` |
+| Inspect cache roots | `drydock cache path` |
+| List cache entries | `drydock cache list -o json` |
+
+`drydock <command> --help` lists command-specific flags. See
+[`docs/usage.md`](docs/usage.md) for the full CLI guide.
+
+## What It Supports
+
+drydock discovers and renders local Argo CD desired state, including:
+
+- `Application` resources and supported `ApplicationSet` generators.
+- Single-source and multi-source Applications.
+- Directory, Kustomize, local Helm chart, remote Helm chart, and remote
+  Kustomize sources.
+- Declared Git, HTTP Helm, OCI Helm, and remote Kustomize source acquisition
+  into local caches.
+- Repository maps with `--repo-map URL=PATH` for adjacent local checkouts.
+- Changed-only desired-vs-desired PR diffs, with strict diagnostics available
+  when a safe ownership decision cannot be made.
+- Argo CD diff customizations such as `ignoreDifferences`,
+  `knownTypeFields`, selected compare options, and resource filters.
+- Per-Application render test status as `PASS`, `FAIL`, or `SKIPPED`, including
+  structured JSON and YAML output.
+- Offline validation of configured custom health Lua during render tests.
+- Redacted diagnostics for settings, source repositories, AppProjects, and
+  cache acquisition events.
+- Cache lifecycle commands for Git, chart, and remote Kustomize caches.
+
+See [`docs/compatibility.md`](docs/compatibility.md) for the detailed Argo CD
+support matrix.
+
+## Safety Model
+
+drydock is desired-vs-desired analysis. It renders the desired Kubernetes
+manifests from a current tree and, for diff commands, a baseline tree. It does
+not ask a live cluster or Argo CD server what is currently running.
+
+Default commands do not reproduce:
+
+- Kubernetes API defaulting or admission mutation.
+- Argo CD server-side diff.
+- Live Argo CD Application health aggregation.
+- Live-only managed-field ownership.
+- Full Argo CD RBAC authorization.
+- CLI config management plugin execution or shellout plugin adapters.
+
+These behaviors are not silently approximated. Live-runtime work is design-gated
+so the default local, cache-backed workflow stays deterministic and safe for CI.
+
+Structured outputs keep stdout machine-parseable. Diagnostics and failure
+summaries are written to stderr where appropriate, and drydock avoids printing
+Secret values, repository credentials, tokens, SSH private keys, passphrases,
+registry credentials, or credential-bearing URLs.
+
+## How It Works
+
+```text
+current tree    baseline tree
+     |               |
+     v               v
+discover Argo CD Applications and settings
+     |               |
+     v               v
+plan sources, use repo maps, populate or read caches
+     |               |
+     v               v
+render desired manifests with Go libraries
+     |               |
+     v               v
+apply Argo-aware filters and diff normalization
+     |               |
+     v               v
+test statuses, manifest diffs, image diffs, diagnostics
+```
+
+The render path imports Argo CD API types and selected reusable helpers, but
+drydock owns local orchestration. See [`docs/design.md`](docs/design.md) for
+the architecture and behavior model.
 
 ## Go API
 
-Embedding callers can use `github.com/sholdee/drydock/pkg/drydock`
-to list, render, and diff Applications without shelling out:
+Embedding callers can use `github.com/sholdee/drydock/pkg/drydock` to list,
+render, and diff Applications without shelling out:
 
 ```go
 result, err := drydock.Render(ctx, drydock.Config{Path: "."})
 ```
 
 `drydock.NewClient` accepts public Git, chart, and remote-resource acquirer
-interfaces, plus a public config management plugin renderer hook, for tests
-and embedding. Those fakes can satisfy remote source and plugin render
-requests without network access or shelling out. When rendering returns an
-error for one Application, the public result still includes successful
+interfaces, plus a public config management plugin renderer hook. Embedders can
+use those interfaces for tests, offline fixtures, and custom source handling.
+When one selected Application fails, the result still includes successful
 manifests, diagnostics, and per-Application statuses from the partial build.
-Set `RecordCacheEvents` to include optional redacted cache acquisition events
-for API callers.
 
-## Quick Start
+## Community
 
-```bash
-go run ./cmd/drydock get apps --path ./testdata/applications/e2e
-go run ./cmd/drydock get apps --path ./testdata/applications/e2e -o json
-go run ./cmd/drydock get images --path ./testdata/renovate-diff/current -o name
-go run ./cmd/drydock build apps --path ./testdata/applications/e2e
-go run ./cmd/drydock build app renovate \
-  --path ./testdata/renovate-diff/current
-go run ./cmd/drydock test apps --path ./testdata/applications/e2e
-go run ./cmd/drydock test apps --path ./testdata/applications/e2e -o json
-go run ./cmd/drydock diff apps \
-  --path-orig ./testdata/renovate-diff/baseline \
-  --path ./testdata/renovate-diff/current \
-  --strip-attr helm.sh/chart \
-  --exit-code=false
-go run ./cmd/drydock diff app argocd/renovate \
-  --path-orig ./testdata/renovate-diff/baseline \
-  --path ./testdata/renovate-diff/current \
-  -o json \
-  --exit-code=false
-go run ./cmd/drydock diag --path ./testdata/applications/e2e
-go run ./cmd/drydock diag --path ./testdata/applications/e2e -o json
-go run ./cmd/drydock diag --path ./testdata/applications/e2e \
-  --settings \
-  -o json
-go run ./cmd/drydock diag --path ./testdata/applications/e2e \
-  -o yaml \
-  --cache-events
-go run ./cmd/drydock cache path
-go run ./cmd/drydock cache list -o json
-go run ./cmd/drydock cache prune --older-than 720h --dry-run
-```
+drydock is independently implemented, but its local-first GitOps PR-diff
+workflow was inspired by
+[home-operations/flate](https://github.com/home-operations/flate) and the
+home-operations community.
+
+Join the home-operations Discord at <https://discord.gg/home-operations>.
 
 ## Documentation
 
-- `docs/README.md`: documentation ownership and routing.
-- `docs/usage.md`: CLI examples, flags, outputs, cache behavior, and optional
-  smoke tests.
-- `docs/compatibility.md`: supported and deferred Argo CD behavior.
-- `docs/roadmap.md`: current status and next-work rules.
-- `docs/reports/2026-05-24-live-integration-design-gate.md`: required before
-  proposing live runtime behavior.
+- [`docs/README.md`](docs/README.md): documentation ownership and routing.
+- [`docs/usage.md`](docs/usage.md): CLI examples, flags, outputs, cache
+  behavior, and optional smoke tests.
+- [`docs/compatibility.md`](docs/compatibility.md): supported and deferred
+  Argo CD behavior.
+- [`docs/roadmap.md`](docs/roadmap.md): supported/deferred feature status and
+  next-work rules.
+- [`docs/release.md`](docs/release.md): release and Argo CD dependency upgrade
+  notes.
+- [`docs/reports/2026-05-24-live-integration-design-gate.md`](docs/reports/2026-05-24-live-integration-design-gate.md):
+  required before proposing live runtime behavior.
 
-## Current MVP Limits
+## License
 
-- Desired-vs-desired only; no live cluster diff.
-- No live Argo CD server integration or server-side diff parity.
-- No Kubernetes defaulting or admission mutation approximation.
-- Live provider access for ApplicationSet provider-backed generators remains
-  deferred. Use explicit local fixtures for cluster, clusterDecisionResource,
-  SCM provider, pull-request, and plugin generators.
-- No CLI config management plugin execution or shellout plugin adapters.
-- No required shellouts in default workflows.
-- Cache lifecycle commands operate on recognized drydock cache layouts only;
-  legacy entries expose key, path, and layout, but not recovered target, name,
-  version, or revision metadata.
-- Live server-side diff/apply behavior is not reproduced.
-- Live-only managed-field ownership is not reproduced when ownership data is
-  absent from rendered manifests.
-- Live integration work is design-gated; see
-  `docs/reports/2026-05-24-live-integration-design-gate.md` before proposing
-  live-cluster, Argo CD server, server-side diff, defaulting, admission, or
-  server-side apply ownership behavior.
-- Health/action Lua is not executed offline.
-- Live destination cluster existence, sync windows, source integrity
-  verification, project-scoped cluster Secrets, and full RBAC simulation remain
-  deferred.
+Apache-2.0. See [`LICENSE`](LICENSE).
