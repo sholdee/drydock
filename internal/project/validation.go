@@ -322,6 +322,7 @@ func repositoryMetadataDiagnostics(app argoappv1.Application, settings config.Ar
 	return diags
 }
 
+//nolint:gocyclo // Repository matching intentionally covers Argo CD's URL normalization variants in one place.
 func repositorySettingsForURL(repoURL string, settings config.ArgoSettings) (config.RepositorySettings, bool) {
 	if repo, ok := settings.HelmRepositories[repoURL]; ok {
 		return repo, true

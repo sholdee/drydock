@@ -1,3 +1,5 @@
+---
+# yaml-language-server: $schema=https://json.schemastore.org/github-workflow.json
 name: CI
 
 on:
@@ -5,6 +7,11 @@ on:
   push:
     branches:
       - main
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 permissions:
   contents: read
@@ -14,26 +21,37 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           fetch-depth: 0
+          persist-credentials: false
 
-      - name: Set up Go
-        uses: actions/setup-go@v5
+      - name: Setup mise
+        uses: jdx/mise-action@1648a7812b9aeae629881980618f079932869151 # v4.0.1
         with:
-          go-version-file: go.mod
-          cache: true
+          experimental: true
+          install_args: --locked
+
+      - name: Verify dependencies
+        run: mise run mod-verify
+
+      - name: Check go.mod tidiness
+        run: mise run mod-tidy-check
 
       - name: Test
-        run: go test ./...
+        run: mise run test
 
       - name: Vet
-        run: go vet ./...
+        run: mise run vet
 
-      - name: golangci-lint
-        uses: golangci/golangci-lint-action@v6
-        with:
-          args: --allow-parallel-runners
+      - name: Lint Go
+        run: mise run lint
+
+      - name: Lint Markdown
+        run: mise run markdownlint
+
+      - name: Lint GitHub Actions
+        run: mise run actionlint
 
       - name: Diff check
         shell: bash

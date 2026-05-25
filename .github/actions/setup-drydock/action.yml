@@ -1,10 +1,11 @@
 name: Setup drydock
-description: Install a versioned drydock release artifact
+description: Install a drydock release artifact
 
 inputs:
   version:
-    description: Explicit drydock release version to install, for example v0.1.0.
-    required: true
+    description: drydock release version to install, for example v0.1.0. Defaults to latest.
+    required: false
+    default: latest
   install-dir:
     description: Directory to install the drydock binary into.
     required: false
@@ -24,6 +25,7 @@ runs:
       id: artifact
       shell: bash
       env:
+        DRYDOCK_GITHUB_TOKEN: ${{ inputs.github-token }}
         DRYDOCK_VERSION: ${{ inputs.version }}
       run: |
         set -euo pipefail
@@ -47,13 +49,38 @@ runs:
             ;;
         esac
 
+        repo="${GITHUB_ACTION_REPOSITORY:-${GITHUB_REPOSITORY}}"
+
+        resolve_latest() {
+          if [[ -n "${DRYDOCK_GITHUB_TOKEN}" ]]; then
+            curl --fail --silent --show-error --location \
+              -H "Authorization: Bearer ${DRYDOCK_GITHUB_TOKEN}" \
+              -H "Accept: application/vnd.github+json" \
+              "https://api.github.com/repos/${repo}/releases/latest" \
+              | sed -n 's/.*"tag_name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' \
+              | head -n 1
+          else
+            curl --write-out '%{url_effective}\n' --head --silent --show-error --location \
+              "https://github.com/${repo}/releases/latest" \
+              --output /dev/null \
+              | sed 's|.*/||'
+          fi
+        }
+
         version="${DRYDOCK_VERSION}"
-        if [[ -z "${version}" || "${version}" == "latest" || ! "${version}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([-.+][0-9A-Za-z.-]+)?$ ]]; then
-          echo "setup-drydock requires an explicit semantic version tag, for example v0.1.0." >&2
-          exit 1
+        if [[ -z "${version}" || "${version}" == "latest" ]]; then
+          version="$(resolve_latest)"
         fi
 
-        repo="${GITHUB_ACTION_REPOSITORY:-${GITHUB_REPOSITORY}}"
+        version="${version#refs/tags/}"
+        candidate="${version#v}"
+        semver_re='^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-((0|[1-9][0-9]*|[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*)(\.(0|[1-9][0-9]*|[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*))*))?(\+([0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*))?$'
+        if [[ -z "${candidate}" || ! "${candidate}" =~ ${semver_re} ]]; then
+          echo "setup-drydock requires latest or a semantic version tag, for example v0.1.0." >&2
+          exit 1
+        fi
+        version="v${candidate}"
+
         base_url="https://github.com/${repo}/releases/download/${version}"
         echo "asset_url=${base_url}/drydock_${platform}.tar.gz" >> "${GITHUB_OUTPUT}"
         echo "checksums_url=${base_url}/checksums.txt" >> "${GITHUB_OUTPUT}"

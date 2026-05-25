@@ -24,7 +24,14 @@ Install from source with Go:
 go install github.com/sholdee/drydock/cmd/drydock@latest
 ```
 
-Workflows that install a released binary can use the versioned setup action:
+Workflows that install a released binary can use the setup action. It installs
+the latest release by default:
+
+```yaml
+- uses: sholdee/drydock/.github/actions/setup-drydock@main
+```
+
+Pin a release when the workflow needs exact repeatability:
 
 ```yaml
 - uses: sholdee/drydock/.github/actions/setup-drydock@main
@@ -32,8 +39,8 @@ Workflows that install a released binary can use the versioned setup action:
     version: v0.1.0
 ```
 
-The setup action intentionally requires an explicit version. It does not accept
-`latest`.
+The setup action accepts `latest`, `vX.Y.Z`, or bare `X.Y.Z` and verifies the
+selected archive with the release checksum manifest by default.
 
 ## Quick Start
 

@@ -112,6 +112,7 @@ func (c *preparedKustomizeWorkspaceCopier) pathCovered(path string) bool {
 	return false
 }
 
+//nolint:gocyclo // Kustomize local-reference collection mirrors the schema fields that can point at files.
 func referencedKustomizeWorkspacePaths(dir string, kustomization types.Kustomization) []string {
 	refs := make([]string, 0)
 	appendLocalRef := func(ref string) {

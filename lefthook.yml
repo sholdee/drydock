@@ -1,0 +1,9 @@
+pre-commit:
+  parallel: true
+  commands:
+    gofmt:
+      run: mise run fmt
+    golangci-lint:
+      run: mise run lint
+    markdownlint:
+      run: mise run markdownlint
