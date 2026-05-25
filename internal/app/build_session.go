@@ -7,6 +7,7 @@ import (
 	"github.com/sholdee/drydock/internal/acquisition"
 	"github.com/sholdee/drydock/internal/cacheevent"
 	"github.com/sholdee/drydock/internal/chart"
+	"github.com/sholdee/drydock/internal/luahealth"
 	"github.com/sholdee/drydock/internal/manifest"
 	"github.com/sholdee/drydock/internal/project"
 	sourcepkg "github.com/sholdee/drydock/internal/source"
@@ -51,6 +52,18 @@ func (session *buildSession) Build(ctx context.Context) (BuildResult, error) {
 		result.Statuses = skippedApplicationStatuses(result.Applications, err)
 		result.CacheEvents = session.cacheRecorder.Events()
 		return result, err
+	}
+	var healthEvaluator *luahealth.Evaluator
+	if session.request.ValidateLuaHealth {
+		evaluator, healthDiags := luahealth.New(result.Settings)
+		healthDiags = normalizeDiagnostics(healthDiags, session.request.Strict, false)
+		result.Diagnostics = append(result.Diagnostics, healthDiags...)
+		if err := diagnosticFailure(healthDiags, session.request.Strict); err != nil {
+			result.Statuses = skippedApplicationStatuses(result.Applications, err)
+			result.CacheEvents = session.cacheRecorder.Events()
+			return result, err
+		}
+		healthEvaluator = &evaluator
 	}
 	if err := validateBuildNetworkOptions(session.request); err != nil {
 		result.Statuses = skippedApplicationStatuses(result.Applications, err)
@@ -114,15 +127,16 @@ func (session *buildSession) Build(ctx context.Context) (BuildResult, error) {
 	}
 
 	rendered, renderErr := renderApplications(ctx, renderApplicationsRequest{
-		applications:   result.Applications,
-		provider:       provider,
-		strict:         session.request.Strict,
-		statusOnly:     session.request.StatusOnly,
-		settingsFilter: settingsFilter,
-		resourceFilter: resourceFilter,
-		recordEvents:   session.request.RecordCacheEvents,
-		parallelism:    session.parallelism,
-		statusCallback: session.request.StatusCallback,
+		applications:    result.Applications,
+		provider:        provider,
+		strict:          session.request.Strict,
+		statusOnly:      session.request.StatusOnly,
+		settingsFilter:  settingsFilter,
+		resourceFilter:  resourceFilter,
+		healthEvaluator: healthEvaluator,
+		recordEvents:    session.request.RecordCacheEvents,
+		parallelism:     session.parallelism,
+		statusCallback:  session.request.StatusCallback,
 	})
 	result.Manifests = append(result.Manifests, rendered.manifests...)
 	result.ApplicationManifests = append(result.ApplicationManifests, rendered.applicationManifests...)

@@ -12,6 +12,7 @@ import (
 	"github.com/sholdee/drydock/internal/config"
 	"github.com/sholdee/drydock/internal/diagnostic"
 	"github.com/sholdee/drydock/internal/discovery"
+	"github.com/sholdee/drydock/internal/luahealth"
 	"github.com/sholdee/drydock/internal/manifest"
 	"github.com/sholdee/drydock/internal/remote"
 	"github.com/sholdee/drydock/internal/render"
@@ -28,6 +29,7 @@ type BuildRequest struct {
 	Strict bool
 	// StatusOnly renders Applications for validation without retaining manifests.
 	StatusOnly                     bool
+	ValidateLuaHealth              bool
 	Offline                        bool
 	RefreshCharts                  bool
 	ChartCacheDir                  string
@@ -255,15 +257,16 @@ func normalizeParallelism(value int) (int, error) {
 }
 
 type renderApplicationsRequest struct {
-	applications   []argoappv1.Application
-	provider       localProvider
-	strict         bool
-	statusOnly     bool
-	settingsFilter manifest.SettingsResourceFilter
-	resourceFilter manifest.ResourceFilter
-	recordEvents   bool
-	parallelism    int
-	statusCallback ApplicationStatusCallback
+	applications    []argoappv1.Application
+	provider        localProvider
+	strict          bool
+	statusOnly      bool
+	settingsFilter  manifest.SettingsResourceFilter
+	resourceFilter  manifest.ResourceFilter
+	healthEvaluator *luahealth.Evaluator
+	recordEvents    bool
+	parallelism     int
+	statusCallback  ApplicationStatusCallback
 }
 
 type renderApplicationsResult struct {
@@ -435,13 +438,8 @@ func renderOneApplication(ctx context.Context, application argoappv1.Application
 		out.cacheEvents = append(out.cacheEvents, recorder.Events()...)
 		return out
 	}
-	if request.statusOnly {
-		out.statuses = append(out.statuses, applicationStatus(application, ApplicationStatusPass, ""))
-		out.cacheEvents = append(out.cacheEvents, recorder.Events()...)
-		return out
-	}
-
 	cluster := applicationDestinationCluster(application)
+	filteredManifests := make([]render.Manifest, 0, len(rendered.Manifests))
 	for _, renderedManifest := range rendered.Manifests {
 		id := manifest.IdentityOf(renderedManifest.Object)
 		if request.settingsFilter.Drop(id, cluster) {
@@ -450,6 +448,33 @@ func renderOneApplication(ctx context.Context, application argoappv1.Application
 		if request.resourceFilter.Drop(renderedManifest.Object) {
 			continue
 		}
+		filteredManifests = append(filteredManifests, renderedManifest)
+	}
+
+	if request.healthEvaluator != nil {
+		healthDiags := request.healthEvaluator.Validate(ctx, luahealth.Request{
+			Application: luahealth.ApplicationRef{
+				Namespace: application.Namespace,
+				Name:      application.Name,
+			},
+			Manifests: filteredManifests,
+		})
+		healthDiags = normalizeDiagnostics(healthDiags, request.strict, false)
+		out.diagnostics = append(out.diagnostics, healthDiags...)
+		if err := diagnosticFailure(healthDiags, request.strict); err != nil {
+			out.statuses = append(out.statuses, applicationStatus(application, ApplicationStatusFail, err.Error()))
+			out.cacheEvents = append(out.cacheEvents, recorder.Events()...)
+			return out
+		}
+	}
+
+	if request.statusOnly {
+		out.statuses = append(out.statuses, applicationStatus(application, ApplicationStatusPass, ""))
+		out.cacheEvents = append(out.cacheEvents, recorder.Events()...)
+		return out
+	}
+
+	for _, renderedManifest := range filteredManifests {
 		out.manifests = append(out.manifests, renderedManifest)
 		out.applicationManifests = append(out.applicationManifests, ApplicationManifest{
 			Application: application,
