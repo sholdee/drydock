@@ -20,7 +20,7 @@ type kustomizeWorkspace struct {
 	nextPathIndex    int
 }
 
-func renderKustomizeWithPreparedWorkspace(ctx context.Context, source ResolvedSource, opts RenderOptions) ([]Manifest, []diagnostic.Diagnostic, error) {
+func renderKustomizeWithPreparedWorkspace(ctx context.Context, source ResolvedSource, graph []kustomizeGraphNode, opts RenderOptions) ([]Manifest, []diagnostic.Diagnostic, error) {
 	tempDir, err := os.MkdirTemp("", "drydock-kustomize-*")
 	if err != nil {
 		return nil, nil, err
@@ -28,7 +28,11 @@ func renderKustomizeWithPreparedWorkspace(ctx context.Context, source ResolvedSo
 	defer os.RemoveAll(tempDir)
 
 	tempRepoRoot := filepath.Join(tempDir, "repo")
-	if err := copyWorkspaceTree(source.RepoRoot, tempRepoRoot); err != nil {
+	root, err := sourceRoot(source)
+	if err != nil {
+		return nil, nil, err
+	}
+	if err := copyPreparedKustomizeWorkspaceTree(source.RepoRoot, root, tempRepoRoot, graph); err != nil {
 		return nil, nil, fmt.Errorf("copy repository to temp workspace: %w", err)
 	}
 

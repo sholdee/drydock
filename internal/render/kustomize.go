@@ -38,7 +38,7 @@ func (KustomizeRenderer) Render(ctx context.Context, source ResolvedSource, opts
 		return nil, nil, err
 	}
 	if kustomizeGraphHasHelmCharts(graph) || hasAcquirableRemoteKustomizeGraphRefs(graph) {
-		return renderKustomizeWithPreparedWorkspace(ctx, source, opts)
+		return renderKustomizeWithPreparedWorkspace(ctx, source, graph, opts)
 	}
 
 	return renderPlainKustomize(ctx, source, root)

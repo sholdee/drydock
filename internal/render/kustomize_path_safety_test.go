@@ -574,6 +574,53 @@ func TestCopyRegularTreeSkipsGitFilesAndDirectories(t *testing.T) {
 		t.Fatalf("copied manifest Stat() error = %v", err)
 	}
 }
+func TestCopyPreparedKustomizeWorkspaceSkipsUnreferencedRepoTrees(t *testing.T) {
+	root := t.TempDir()
+	sourceRoot := filepath.Join(root, "apps", "demo")
+	writeFile(t, filepath.Join(sourceRoot, "kustomization.yaml"), `apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - ../../components/namespace
+  - cm.yaml
+helmCharts:
+  - name: demo
+    repo: https://charts.example.test
+    version: 1.2.3
+`)
+	writeFile(t, filepath.Join(sourceRoot, "cm.yaml"), `apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: demo
+`)
+	writeFile(t, filepath.Join(root, "components", "namespace", "kustomization.yaml"), `apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - namespace.yaml
+`)
+	writeFile(t, filepath.Join(root, "components", "namespace", "namespace.yaml"), `apiVersion: v1
+kind: Namespace
+metadata:
+  name: demo
+`)
+	writeFile(t, filepath.Join(root, "hack", "large-unrelated-artifact.txt"), "not needed\n")
+	_, graph, err := collectKustomizeGraphForPreparation(context.Background(), root, sourceRoot)
+	if err != nil {
+		t.Fatalf("collectKustomizeGraphForPreparation() error = %v", err)
+	}
+
+	dst := filepath.Join(t.TempDir(), "repo")
+	if err := copyPreparedKustomizeWorkspaceTree(root, sourceRoot, dst, graph); err != nil {
+		t.Fatalf("copyPreparedKustomizeWorkspaceTree() error = %v", err)
+	}
+
+	if _, err := os.Stat(filepath.Join(dst, "apps", "demo", "kustomization.yaml")); err != nil {
+		t.Fatalf("copied app kustomization Stat() error = %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dst, "components", "namespace", "namespace.yaml")); err != nil {
+		t.Fatalf("copied component Stat() error = %v", err)
+	}
+	assertPathMissing(t, filepath.Join(dst, "hack"))
+}
 func TestKustomizeRendererRejectsSourcePathEscape(t *testing.T) {
 	parent := t.TempDir()
 	root := filepath.Join(parent, "repo")
