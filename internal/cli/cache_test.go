@@ -38,10 +38,17 @@ func TestCachePathPrintsRoots(t *testing.T) {
 func TestCacheListJSON(t *testing.T) {
 	root := t.TempDir()
 	gitCacheDir := filepath.Join(root, "git")
+	chartCacheDir := filepath.Join(root, "charts")
+	remoteCacheDir := filepath.Join(root, "remotes")
 	writeCacheEntry(t, filepath.Join(gitCacheDir, cacheCLITestKey, ".git", "HEAD"))
 
 	cmd := NewRootCommand(VersionInfo{})
-	cmd.SetArgs([]string{"cache", "list", "-o", "json", "--git-cache-dir", gitCacheDir})
+	cmd.SetArgs([]string{
+		"cache", "list", "-o", "json",
+		"--git-cache-dir", gitCacheDir,
+		"--chart-cache-dir", chartCacheDir,
+		"--remote-cache-dir", remoteCacheDir,
+	})
 	var stdout bytes.Buffer
 	cmd.SetOut(&stdout)
 	cmd.SetErr(&stdout)
@@ -65,10 +72,17 @@ func TestCacheListJSON(t *testing.T) {
 func TestCacheListTableReportsLegacyStatus(t *testing.T) {
 	root := t.TempDir()
 	gitCacheDir := filepath.Join(root, "git")
+	chartCacheDir := filepath.Join(root, "charts")
+	remoteCacheDir := filepath.Join(root, "remotes")
 	writeCacheEntry(t, filepath.Join(gitCacheDir, cacheCLITestKey, ".git", "HEAD"))
 
 	cmd := NewRootCommand(VersionInfo{})
-	cmd.SetArgs([]string{"cache", "list", "--git-cache-dir", gitCacheDir})
+	cmd.SetArgs([]string{
+		"cache", "list",
+		"--git-cache-dir", gitCacheDir,
+		"--chart-cache-dir", chartCacheDir,
+		"--remote-cache-dir", remoteCacheDir,
+	})
 	var stdout bytes.Buffer
 	cmd.SetOut(&stdout)
 	cmd.SetErr(&stdout)
@@ -87,6 +101,8 @@ func TestCacheListTableReportsLegacyStatus(t *testing.T) {
 func TestCachePruneDryRun(t *testing.T) {
 	root := t.TempDir()
 	gitCacheDir := filepath.Join(root, "git")
+	chartCacheDir := filepath.Join(root, "charts")
+	remoteCacheDir := filepath.Join(root, "remotes")
 	entryRoot := filepath.Join(gitCacheDir, cacheCLITestKey)
 	writeCacheEntry(t, filepath.Join(entryRoot, ".git", "HEAD"))
 	oldTime := time.Now().Add(-48 * time.Hour)
@@ -95,7 +111,14 @@ func TestCachePruneDryRun(t *testing.T) {
 	}
 
 	cmd := NewRootCommand(VersionInfo{})
-	cmd.SetArgs([]string{"cache", "prune", "--git-cache-dir", gitCacheDir, "--older-than", "24h", "--dry-run"})
+	cmd.SetArgs([]string{
+		"cache", "prune",
+		"--git-cache-dir", gitCacheDir,
+		"--chart-cache-dir", chartCacheDir,
+		"--remote-cache-dir", remoteCacheDir,
+		"--older-than", "24h",
+		"--dry-run",
+	})
 	var stdout bytes.Buffer
 	cmd.SetOut(&stdout)
 	cmd.SetErr(&stdout)
@@ -114,10 +137,19 @@ func TestCachePruneDryRun(t *testing.T) {
 func TestCachePruneDryRunDoesNotRequireYes(t *testing.T) {
 	root := t.TempDir()
 	gitCacheDir := filepath.Join(root, "git")
+	chartCacheDir := filepath.Join(root, "charts")
+	remoteCacheDir := filepath.Join(root, "remotes")
 	writeCacheEntry(t, filepath.Join(gitCacheDir, cacheCLITestKey, ".git", "HEAD"))
 
 	cmd := NewRootCommand(VersionInfo{})
-	cmd.SetArgs([]string{"cache", "prune", "--git-cache-dir", gitCacheDir, "--older-than", "24h", "--dry-run"})
+	cmd.SetArgs([]string{
+		"cache", "prune",
+		"--git-cache-dir", gitCacheDir,
+		"--chart-cache-dir", chartCacheDir,
+		"--remote-cache-dir", remoteCacheDir,
+		"--older-than", "24h",
+		"--dry-run",
+	})
 	var stdout bytes.Buffer
 	cmd.SetOut(&stdout)
 	cmd.SetErr(&stdout)
@@ -130,11 +162,19 @@ func TestCachePruneDryRunDoesNotRequireYes(t *testing.T) {
 func TestCachePruneRequiresYesBeforeMutation(t *testing.T) {
 	root := t.TempDir()
 	gitCacheDir := filepath.Join(root, "git")
+	chartCacheDir := filepath.Join(root, "charts")
+	remoteCacheDir := filepath.Join(root, "remotes")
 	entryRoot := filepath.Join(gitCacheDir, cacheCLITestKey)
 	writeCacheEntry(t, filepath.Join(entryRoot, ".git", "HEAD"))
 
 	cmd := NewRootCommand(VersionInfo{})
-	cmd.SetArgs([]string{"cache", "prune", "--git-cache-dir", gitCacheDir, "--older-than", "24h"})
+	cmd.SetArgs([]string{
+		"cache", "prune",
+		"--git-cache-dir", gitCacheDir,
+		"--chart-cache-dir", chartCacheDir,
+		"--remote-cache-dir", remoteCacheDir,
+		"--older-than", "24h",
+	})
 	var stdout bytes.Buffer
 	cmd.SetOut(&stdout)
 	cmd.SetErr(&stdout)
@@ -192,11 +232,19 @@ func TestCacheDeleteDryRunDoesNotRequireYes(t *testing.T) {
 func TestCacheDeleteAllRequiresYes(t *testing.T) {
 	root := t.TempDir()
 	gitCacheDir := filepath.Join(root, "git")
+	chartCacheDir := filepath.Join(root, "charts")
+	remoteCacheDir := filepath.Join(root, "remotes")
 	entryRoot := filepath.Join(gitCacheDir, cacheCLITestKey)
 	writeCacheEntry(t, filepath.Join(entryRoot, ".git", "HEAD"))
 
 	cmd := NewRootCommand(VersionInfo{})
-	cmd.SetArgs([]string{"cache", "delete", "--all", "--git-cache-dir", gitCacheDir})
+	cmd.SetArgs([]string{
+		"cache", "delete",
+		"--all",
+		"--git-cache-dir", gitCacheDir,
+		"--chart-cache-dir", chartCacheDir,
+		"--remote-cache-dir", remoteCacheDir,
+	})
 	var stdout bytes.Buffer
 	cmd.SetOut(&stdout)
 	cmd.SetErr(&stdout)
@@ -276,6 +324,8 @@ func TestCacheDeleteRejectsAllWithKeyBeforeMutation(t *testing.T) {
 func TestCacheRejectsRootInsidePathOrig(t *testing.T) {
 	repoRoot := t.TempDir()
 	gitCacheDir := filepath.Join(repoRoot, ".cache", "git")
+	chartCacheDir := filepath.Join(t.TempDir(), "charts")
+	remoteCacheDir := filepath.Join(t.TempDir(), "remotes")
 	writeCacheEntry(t, filepath.Join(gitCacheDir, cacheCLITestKey, ".git", "HEAD"))
 
 	cmd := NewRootCommand(VersionInfo{})
@@ -284,6 +334,8 @@ func TestCacheRejectsRootInsidePathOrig(t *testing.T) {
 		"--path", filepath.Join(t.TempDir(), "current"),
 		"--path-orig", repoRoot,
 		"--git-cache-dir", gitCacheDir,
+		"--chart-cache-dir", chartCacheDir,
+		"--remote-cache-dir", remoteCacheDir,
 	})
 	var stdout bytes.Buffer
 	cmd.SetOut(&stdout)
@@ -324,11 +376,21 @@ func TestCachePathRejectsRootInsidePathOrig(t *testing.T) {
 func TestCacheRejectsInvalidOutputBeforeMutation(t *testing.T) {
 	root := t.TempDir()
 	gitCacheDir := filepath.Join(root, "git")
+	chartCacheDir := filepath.Join(root, "charts")
+	remoteCacheDir := filepath.Join(root, "remotes")
 	entryRoot := filepath.Join(gitCacheDir, cacheCLITestKey)
 	writeCacheEntry(t, filepath.Join(entryRoot, ".git", "HEAD"))
 
 	cmd := NewRootCommand(VersionInfo{})
-	cmd.SetArgs([]string{"cache", "delete", "--all", "--git-cache-dir", gitCacheDir, "--yes", "-o", "name"})
+	cmd.SetArgs([]string{
+		"cache", "delete",
+		"--all",
+		"--git-cache-dir", gitCacheDir,
+		"--chart-cache-dir", chartCacheDir,
+		"--remote-cache-dir", remoteCacheDir,
+		"--yes",
+		"-o", "name",
+	})
 	var stdout bytes.Buffer
 	cmd.SetOut(&stdout)
 	cmd.SetErr(&stdout)

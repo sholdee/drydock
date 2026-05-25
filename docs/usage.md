@@ -603,7 +603,7 @@ golangci-lint run --allow-parallel-runners
 git diff --check main..HEAD
 ```
 
-Run the Phase 6 render and ApplicationSet benchmarks when changing discovery,
+Run the render and ApplicationSet benchmarks when changing discovery,
 rendering, ApplicationSet expansion, cache event recording, or diagnostics on
 hot paths:
 
