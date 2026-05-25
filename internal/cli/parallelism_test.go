@@ -49,12 +49,96 @@ func TestTestAppsDefaultParallelismIsAuto(t *testing.T) {
 	}
 }
 
+func TestTestAppsRequestsStatusOnlyBuild(t *testing.T) {
+	recorder := &recordingCLIOrchestrator{}
+	executeParallelismCommand(t, recorder, "test", "apps")
+
+	if got := recorder.buildRequests[0].StatusOnly; !got {
+		t.Fatalf("BuildRequest.StatusOnly = %t, want true", got)
+	}
+}
+
+func TestTestAppsSelectorRequestsStatusOnlyBuild(t *testing.T) {
+	recorder := &recordingCLIOrchestrator{}
+	executeParallelismCommand(t, recorder, "test", "apps", "--selector", "app=demo")
+
+	if got := len(recorder.buildRequests); got != 1 {
+		t.Fatalf("build requests = %d, want 1", got)
+	}
+	if got := recorder.buildRequests[0].StatusOnly; !got {
+		t.Fatalf("BuildRequest.StatusOnly = %t, want true", got)
+	}
+}
+
 func TestTestAppParallelismFlag(t *testing.T) {
 	recorder := &recordingCLIOrchestrator{}
 	executeParallelismCommand(t, recorder, "test", "app", "demo", "--parallelism", "7")
 
 	if got := recorder.buildAppRequests[0].Parallelism; got != 7 {
 		t.Fatalf("BuildAppRequest.Parallelism = %d, want 7", got)
+	}
+}
+
+func TestTestAppRequestsStatusOnlyBuild(t *testing.T) {
+	recorder := &recordingCLIOrchestrator{}
+	executeParallelismCommand(t, recorder, "test", "app", "demo")
+
+	if got := recorder.buildAppRequests[0].StatusOnly; !got {
+		t.Fatalf("BuildAppRequest.StatusOnly = %t, want true", got)
+	}
+}
+
+func TestNonTestCommandsDoNotRequestStatusOnlyBuild(t *testing.T) {
+	tests := []struct {
+		name       string
+		args       []string
+		statusOnly func(*recordingCLIOrchestrator) bool
+	}{
+		{
+			name: "build apps",
+			args: []string{"build", "apps"},
+			statusOnly: func(recorder *recordingCLIOrchestrator) bool {
+				return recorder.buildRequests[0].StatusOnly
+			},
+		},
+		{
+			name: "build app",
+			args: []string{"build", "app", "demo"},
+			statusOnly: func(recorder *recordingCLIOrchestrator) bool {
+				return recorder.buildAppRequests[0].StatusOnly
+			},
+		},
+		{
+			name: "get apps",
+			args: []string{"get", "apps"},
+			statusOnly: func(recorder *recordingCLIOrchestrator) bool {
+				return recorder.listRequests[0].StatusOnly
+			},
+		},
+		{
+			name: "get images",
+			args: []string{"get", "images"},
+			statusOnly: func(recorder *recordingCLIOrchestrator) bool {
+				return recorder.listRequests[0].StatusOnly || recorder.buildRequests[0].StatusOnly
+			},
+		},
+		{
+			name: "diag",
+			args: []string{"diag"},
+			statusOnly: func(recorder *recordingCLIOrchestrator) bool {
+				return recorder.diagRequests[0].StatusOnly
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			recorder := &recordingCLIOrchestrator{}
+			executeParallelismCommand(t, recorder, tt.args...)
+			if got := tt.statusOnly(recorder); got {
+				t.Fatalf("StatusOnly = %t, want false", got)
+			}
+		})
 	}
 }
 

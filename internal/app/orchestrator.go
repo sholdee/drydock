@@ -25,8 +25,10 @@ import (
 )
 
 type BuildRequest struct {
-	Path                           string
-	Strict                         bool
+	Path   string
+	Strict bool
+	// StatusOnly renders Applications for validation without retaining manifests.
+	StatusOnly                     bool
 	Offline                        bool
 	RefreshCharts                  bool
 	ChartCacheDir                  string
@@ -253,6 +255,7 @@ type renderApplicationsRequest struct {
 	applications   []argoappv1.Application
 	provider       localProvider
 	strict         bool
+	statusOnly     bool
 	settingsFilter manifest.SettingsResourceFilter
 	resourceFilter manifest.ResourceFilter
 	recordEvents   bool
@@ -374,6 +377,11 @@ func renderOneApplication(ctx context.Context, application argoappv1.Application
 	out.diagnostics = append(out.diagnostics, rendered.Diagnostics...)
 	if err := diagnosticFailure(rendered.Diagnostics, request.strict); err != nil {
 		out.statuses = append(out.statuses, applicationStatus(application, ApplicationStatusFail, err.Error()))
+		out.cacheEvents = append(out.cacheEvents, recorder.Events()...)
+		return out
+	}
+	if request.statusOnly {
+		out.statuses = append(out.statuses, applicationStatus(application, ApplicationStatusPass, ""))
 		out.cacheEvents = append(out.cacheEvents, recorder.Events()...)
 		return out
 	}
