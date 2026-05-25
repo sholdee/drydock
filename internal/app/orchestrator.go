@@ -19,6 +19,7 @@ import (
 	"github.com/sholdee/drydock/internal/diagnostic"
 	"github.com/sholdee/drydock/internal/discovery"
 	"github.com/sholdee/drydock/internal/manifest"
+	"github.com/sholdee/drydock/internal/pathsafety"
 	"github.com/sholdee/drydock/internal/remote"
 	"github.com/sholdee/drydock/internal/render"
 	sourcepkg "github.com/sholdee/drydock/internal/source"
@@ -1012,8 +1013,11 @@ func cleanLocalSourcePath(path string) (string, error) {
 		return "", fmt.Errorf("source path %q must be relative", path)
 	}
 
-	clean := filepath.Clean(path)
-	if clean == ".." || strings.HasPrefix(clean, ".."+string(filepath.Separator)) {
+	if filepath.Clean(path) == "." {
+		return ".", nil
+	}
+	clean, ok := pathsafety.CleanRelative(path)
+	if !ok {
 		return "", fmt.Errorf("source path %q escapes repository root", path)
 	}
 	return clean, nil
@@ -1111,7 +1115,7 @@ func validateBuildNetworkOptions(request BuildRequest) error {
 			forbiddenRoots = append(forbiddenRoots, repoMap.Path)
 		}
 	}
-	inside, matchedRoot, err := remote.IsPathInsideAny(gitCacheDir, forbiddenRoots)
+	inside, matchedRoot, err := pathsafety.IsInsideAny(gitCacheDir, forbiddenRoots)
 	if err != nil {
 		return err
 	}

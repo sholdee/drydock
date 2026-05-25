@@ -4032,6 +4032,16 @@ spec:
 	}
 }
 
+func TestCleanGitFilePatternTrimsAndNormalizesSlashPath(t *testing.T) {
+	got, err := cleanGitFilePattern(" configs/../apps/app.yaml ")
+	if err != nil {
+		t.Fatalf("cleanGitFilePattern() error = %v", err)
+	}
+	if got != "apps/app.yaml" {
+		t.Fatalf("cleanGitFilePattern() = %q, want apps/app.yaml", got)
+	}
+}
+
 func generatedNames(apps []GeneratedApplication) []string {
 	names := make([]string, 0, len(apps))
 	for _, app := range apps {

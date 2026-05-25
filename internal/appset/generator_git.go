@@ -16,6 +16,7 @@ import (
 	argoappv1 "github.com/argoproj/argo-cd/v3/pkg/apis/application/v1alpha1"
 	"github.com/bmatcuk/doublestar/v4"
 	"github.com/sholdee/drydock/internal/diagnostic"
+	"github.com/sholdee/drydock/internal/pathsafety"
 	"go.yaml.in/yaml/v4"
 )
 
@@ -192,7 +193,7 @@ func cleanGitFilePattern(pattern string) (string, error) {
 	if cleaned == "." || cleaned == "" {
 		return "", fmt.Errorf("git files pattern %q must name files", pattern)
 	}
-	if cleaned == ".." || strings.HasPrefix(cleaned, "../") {
+	if pathsafety.SlashRelEscapes(cleaned) {
 		return "", fmt.Errorf("git files pattern %q escapes repository root", pattern)
 	}
 	return cleaned, nil

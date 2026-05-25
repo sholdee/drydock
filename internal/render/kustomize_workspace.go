@@ -13,6 +13,7 @@ import (
 	"github.com/sholdee/drydock/internal/cacheevent"
 	"github.com/sholdee/drydock/internal/chart"
 	"github.com/sholdee/drydock/internal/diagnostic"
+	"github.com/sholdee/drydock/internal/pathsafety"
 	"github.com/sholdee/drydock/internal/remote"
 	goyaml "go.yaml.in/yaml/v4"
 	"sigs.k8s.io/kustomize/api/types"
@@ -1339,7 +1340,7 @@ func (v *kustomizeGraphValidator) rejectRepoRootEscape(kind, path string) error 
 
 func rejectPathOutsideBoundary(kind, path, boundaryRoot string) error {
 	rel, err := filepath.Rel(boundaryRoot, path)
-	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+	if err != nil || pathsafety.RelEscapes(rel) {
 		return fmt.Errorf("%s %q escapes repository root %q", kind, path, boundaryRoot)
 	}
 	return nil
@@ -1347,7 +1348,7 @@ func rejectPathOutsideBoundary(kind, path, boundaryRoot string) error {
 
 func rejectSymlinkedPath(root, path string) error {
 	rel, err := filepath.Rel(filepath.Clean(root), path)
-	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+	if err != nil || pathsafety.RelEscapes(rel) {
 		return fmt.Errorf("path %q escapes source root %q", path, root)
 	}
 	if rel == "." {
@@ -1377,7 +1378,7 @@ func generatedKustomizeWorkspacePath(root, rel string) (string, error) {
 		return "", fmt.Errorf("generated kustomize path must not be empty")
 	}
 	cleanRel := filepath.Clean(filepath.FromSlash(rel))
-	if filepath.IsAbs(cleanRel) || cleanRel == "." || cleanRel == ".." || strings.HasPrefix(cleanRel, ".."+string(filepath.Separator)) {
+	if filepath.IsAbs(cleanRel) || cleanRel == "." || pathsafety.RelEscapes(cleanRel) {
 		return "", fmt.Errorf("generated kustomize path %q must be relative inside %q", rel, root)
 	}
 	generatedPath := filepath.Join(root, cleanRel)
@@ -1433,7 +1434,7 @@ func acquiredRemoteKustomizePath(acquired remote.Result, ref kustomizeRemoteRef)
 		return acquiredPath, nil
 	case kustomizeRemoteGit:
 		subpath := path.Clean(strings.TrimPrefix(ref.Subpath, "/"))
-		if subpath == "." || subpath == ".." || strings.HasPrefix(subpath, "../") {
+		if subpath == "." || pathsafety.SlashRelEscapes(subpath) {
 			return "", fmt.Errorf("remote kustomize resource %s subpath %q escapes acquired repository", redactKustomizeRef(ref.Original), ref.Subpath)
 		}
 		repoRoot := filepath.Clean(acquiredPath)

@@ -19,6 +19,7 @@ import (
 	"github.com/sholdee/drydock/internal/diagnostic"
 	"github.com/sholdee/drydock/internal/diff"
 	"github.com/sholdee/drydock/internal/manifest"
+	"github.com/sholdee/drydock/internal/pathsafety"
 	"github.com/sholdee/drydock/internal/remote"
 	sourcepkg "github.com/sholdee/drydock/internal/source"
 	"go.yaml.in/yaml/v4"
@@ -258,7 +259,7 @@ func validateDiffRemoteCache(request DiffRequest, forbiddenRoots []string) error
 	if request.RemoteResourceCacheDir == "" {
 		return nil
 	}
-	inside, root, err := remote.IsPathInsideAny(request.RemoteResourceCacheDir, forbiddenRoots)
+	inside, root, err := pathsafety.IsInsideAny(request.RemoteResourceCacheDir, forbiddenRoots)
 	if err != nil {
 		return err
 	}

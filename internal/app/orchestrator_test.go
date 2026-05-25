@@ -703,6 +703,18 @@ spec:
 	}
 }
 
+func TestCleanLocalSourcePathPreservesRootPaths(t *testing.T) {
+	for _, input := range []string{"", "."} {
+		got, err := cleanLocalSourcePath(input)
+		if err != nil {
+			t.Fatalf("cleanLocalSourcePath(%q) error = %v", input, err)
+		}
+		if got != "." {
+			t.Fatalf("cleanLocalSourcePath(%q) = %q, want .", input, got)
+		}
+	}
+}
+
 func TestBuildParallelismSerializesSameCacheTargetAcquisition(t *testing.T) {
 	root := t.TempDir()
 	chartRoot := t.TempDir()

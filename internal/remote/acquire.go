@@ -4,7 +4,6 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"errors"
 	"fmt"
 	"net/url"
 	"os"
@@ -13,6 +12,7 @@ import (
 	"strings"
 
 	"github.com/sholdee/drydock/internal/cache"
+	"github.com/sholdee/drydock/internal/pathsafety"
 )
 
 const defaultMaxResourceBytes int64 = 10 * 1024 * 1024
@@ -251,62 +251,7 @@ func ResolveCacheDir(cacheDir string, forbiddenRoots []string) (string, error) {
 }
 
 func IsPathInsideAny(targetPath string, roots []string) (bool, string, error) {
-	absPath, err := filepath.Abs(targetPath)
-	if err != nil {
-		return false, "", err
-	}
-	absPath = filepath.Clean(absPath)
-	resolvedPath, err := resolvePathForContainment(absPath)
-	if err != nil {
-		return false, "", err
-	}
-	for _, root := range roots {
-		root = strings.TrimSpace(root)
-		if root == "" {
-			continue
-		}
-		absRoot, err := filepath.Abs(root)
-		if err != nil {
-			return false, "", err
-		}
-		absRoot = filepath.Clean(absRoot)
-		resolvedRoot, err := resolvePathForContainment(absRoot)
-		if err != nil {
-			return false, "", err
-		}
-		rel, err := filepath.Rel(resolvedRoot, resolvedPath)
-		if err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-			return true, absRoot, nil
-		}
-	}
-	return false, "", nil
-}
-
-func resolvePathForContainment(targetPath string) (string, error) {
-	absPath, err := filepath.Abs(targetPath)
-	if err != nil {
-		return "", err
-	}
-	current := filepath.Clean(absPath)
-	var missing []string
-	for {
-		resolved, err := filepath.EvalSymlinks(current)
-		if err == nil {
-			for i := len(missing) - 1; i >= 0; i-- {
-				resolved = filepath.Join(resolved, missing[i])
-			}
-			return filepath.Clean(resolved), nil
-		}
-		if !errors.Is(err, os.ErrNotExist) {
-			return "", err
-		}
-		parent := filepath.Dir(current)
-		if parent == current {
-			return "", err
-		}
-		missing = append(missing, filepath.Base(current))
-		current = parent
-	}
+	return pathsafety.IsInsideAny(targetPath, roots)
 }
 
 func RedactURL(raw string) string {
