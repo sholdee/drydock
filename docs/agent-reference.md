@@ -223,8 +223,9 @@ Canonical references:
 - `docs/home-ops-pattern-coverage.md`
 
 Portable integration fixtures should model real repository behavior without
-depending on `/Users/ethan.shold/git/home-ops`. Real `home-ops` checks belong
-in optional smoke scripts that use temporary worktrees and clean them up.
+depending on a maintainer-provided `home-ops` checkout. Real `home-ops` checks
+belong in optional smoke scripts that use temporary worktrees and clean them
+up.
 
 Normal tests must use portable fixtures. Optional smokes may target the real
 checkout through temporary worktrees only. Never mutate the real `home-ops`

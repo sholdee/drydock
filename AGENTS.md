@@ -129,9 +129,9 @@ If a command is unavailable or approval-gated, skip it and record the gap
 rather than requesting sandbox escalation from a subagent.
 
 Portable integration fixtures should model real repository behavior without
-depending on `/Users/ethan.shold/git/home-ops`. Optional real-repository smokes
-must use temporary worktrees and clean them up. Never mutate the real
-`home-ops` checkout from tests.
+depending on a maintainer-provided `home-ops` checkout. Optional
+real-repository smokes must use temporary worktrees and clean them up. Never
+mutate the real `home-ops` checkout from tests.
 
 ## Maintenance Rule
 

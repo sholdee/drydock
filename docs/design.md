@@ -123,9 +123,9 @@ into plugin timeout diagnostics.
 
 ## Argo CD Versioning
 
-The Go module pins Argo CD dependencies deliberately, starting from the local
-`/Users/ethan.shold/git/argo-cd` checkout version used during initial
-development.
+The Go module pins Argo CD dependencies deliberately. Initial dependency
+selection followed the Argo CD checkout used during project bootstrap, and
+future changes should happen through explicit upgrade PRs.
 
 `drydock version` prints:
 
@@ -473,8 +473,8 @@ Important flags:
 
 The repository includes linting from the start.
 
-`.golangci.yml` is modeled on
-`/Users/ethan.shold/git/crd-schema-publisher/.golangci.yml`:
+`.golangci.yml` keeps the strict Go lint profile selected during project
+bootstrap:
 
 - golangci-lint config version `2`
 - 5 minute timeout
@@ -489,8 +489,8 @@ The repository includes linting from the start.
 - standard error-handling exclusions
 - `gofmt` formatter with simplify enabled
 
-`.markdownlint-cli2.yaml` is modeled on
-`/Users/ethan.shold/git/crd-schema-publisher/.markdownlint-cli2.yaml`:
+`.markdownlint-cli2.yaml` keeps the Markdown lint profile selected during
+project bootstrap:
 
 - disable line length
 - allow inline HTML
