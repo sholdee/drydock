@@ -68,14 +68,12 @@ historical line-count claims, then load only the relevant behavior family:
   orchestrator; helper behavior lives in neighboring split files.
 
 Use `rg --files`, `wc -l`, and current code inspection before repeating file
-size or refactor-history claims. Historical reports can explain why a shape
-exists, but they are not current sizing evidence.
+size or refactor-history claims.
 
-## Historical Reports
+## Reports
 
-Implemented plans are pruned from active docs and remain available through git
-history. Treat retained reports as historical evidence only, not required
-current guidance or proof that old line counts and next steps are still true.
+Implemented plans and closed audit files are pruned from active docs and remain
+available through git history. `docs/reports` retains active design gates only.
 
 Required report:
 
