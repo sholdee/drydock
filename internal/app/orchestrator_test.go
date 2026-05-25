@@ -333,8 +333,8 @@ spec:
 }
 
 func TestOrchestratorBuildRendersPlainDirectorySource(t *testing.T) {
-	root := t.TempDir()
-	writeTestFile(t, filepath.Join(root, "apps", "argocd", "plain-app.yaml"), `apiVersion: argoproj.io/v1alpha1
+	fixture := newAppFixture(t)
+	writeTestFile(t, filepath.Join(fixture.Root, "apps", "argocd", "plain-app.yaml"), `apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
   name: plain
@@ -348,7 +348,7 @@ spec:
     name: in-cluster
     namespace: plain
 `)
-	writeTestFile(t, filepath.Join(root, "manifests", "plain", "cm.yaml"), `apiVersion: v1
+	writeTestFile(t, filepath.Join(fixture.Root, "manifests", "plain", "cm.yaml"), `apiVersion: v1
 kind: ConfigMap
 metadata:
   name: plain
@@ -356,20 +356,16 @@ data:
   source: directory
 `)
 
-	result, err := Orchestrator{}.Build(context.Background(), BuildRequest{Path: root})
-	if err != nil {
-		t.Fatalf("Build() error = %v", err)
-	}
-
+	result := fixture.build(t, BuildRequest{})
 	if len(result.Applications) != 1 {
 		t.Fatalf("len(Applications) = %d, want 1", len(result.Applications))
 	}
 	if len(result.Manifests) != 1 {
 		t.Fatalf("len(Manifests) = %d, want 1", len(result.Manifests))
 	}
-	manifest := result.Manifests[0]
-	if manifest.Object.GetKind() != "ConfigMap" || manifest.Object.GetName() != "plain" {
-		t.Fatalf("rendered object = %s/%s, want ConfigMap/plain", manifest.Object.GetKind(), manifest.Object.GetName())
+	manifest := assertManifestNamed(t, result.Manifests, "plain")
+	if manifest.Object.GetKind() != "ConfigMap" {
+		t.Fatalf("rendered kind = %q, want ConfigMap", manifest.Object.GetKind())
 	}
 	value, found, err := unstructured.NestedString(manifest.Object.Object, "data", "source")
 	if err != nil || !found || value != "directory" {
@@ -1377,43 +1373,33 @@ spec:
 }
 
 func TestOrchestratorBuildPreservesPartialResults(t *testing.T) {
-	root := t.TempDir()
-	writeBuildApplication(t, root, "valid", "valid")
-	writeExternalPathApplicationNamed(t, root, "invalid", "https://github.com/example/missing", "manifests/missing")
+	fixture := newAppFixture(t)
+	fixture.writeBuildApplication(t, "valid", "valid")
+	fixture.writeExternalPathApplicationNamed(t, "invalid", "https://github.com/example/missing", "manifests/missing")
 
-	result, err := Orchestrator{}.Build(context.Background(), BuildRequest{Path: root})
-	if err == nil {
-		t.Fatal("Build() error = nil, want aggregate render error")
-	}
+	result, err := fixture.buildAllowError(t, Orchestrator{}, BuildRequest{})
+	assertBuildErrorContains(t, err, "1 Application failed", "argocd/invalid")
 	if len(result.Manifests) != 1 {
 		t.Fatalf("len(Manifests) = %d, want 1", len(result.Manifests))
 	}
-	if result.Manifests[0].Object.GetName() != "valid" {
-		t.Fatalf("manifest name = %q, want valid", result.Manifests[0].Object.GetName())
-	}
+	assertManifestNamed(t, result.Manifests, "valid")
 	assertApplicationStatuses(t, result.Statuses, []ApplicationStatus{
 		{Namespace: "argocd", Name: "valid", Status: ApplicationStatusPass},
 		{Namespace: "argocd", Name: "invalid", Status: ApplicationStatusFail},
 	})
-	diag, ok := diagnosticByCategory(result.Diagnostics, "render")
-	if !ok {
-		t.Fatalf("Diagnostics = %#v, want render diagnostic", result.Diagnostics)
-	}
+	diag := assertDiagnosticCategory(t, result.Diagnostics, "render")
 	if diag.Severity != diagnostic.SeverityError {
 		t.Fatalf("render diagnostic severity = %s, want error", diag.Severity)
 	}
 	if !strings.Contains(diag.Message, "invalid") || !strings.Contains(diag.Message, "--repo-map") {
 		t.Fatalf("render diagnostic message = %q, want app context and render error", diag.Message)
 	}
-	if !strings.Contains(err.Error(), "1 Application failed") {
-		t.Fatalf("Build() error = %q, want aggregate failure count", err.Error())
-	}
 }
 
 func TestOrchestratorBuildStatusesIncludePassAndFailForPlanningErrors(t *testing.T) {
-	root := t.TempDir()
-	writeBuildApplication(t, root, "valid", "valid")
-	writeTestFile(t, filepath.Join(root, "apps", "bad-ref.yaml"), `apiVersion: argoproj.io/v1alpha1
+	fixture := newAppFixture(t)
+	fixture.writeBuildApplication(t, "valid", "valid")
+	writeTestFile(t, filepath.Join(fixture.Root, "apps", "bad-ref.yaml"), `apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
   name: bad-ref
@@ -1428,10 +1414,8 @@ spec:
     namespace: default
 `)
 
-	result, err := Orchestrator{}.Build(context.Background(), BuildRequest{Path: root})
-	if err == nil {
-		t.Fatal("Build() error = nil, want planning error")
-	}
+	result, err := fixture.buildAllowError(t, Orchestrator{}, BuildRequest{})
+	assertBuildErrorContains(t, err, "1 Application failed", "bad/ref")
 	assertApplicationStatuses(t, result.Statuses, []ApplicationStatus{
 		{Namespace: "argocd", Name: "valid", Status: ApplicationStatusPass},
 		{Namespace: "argocd", Name: "bad-ref", Status: ApplicationStatusFail},
@@ -1439,13 +1423,11 @@ spec:
 }
 
 func TestOrchestratorBuildMarksApplicationsSkippedWhenPreconditionFails(t *testing.T) {
-	root := t.TempDir()
-	writeUnsupportedApplicationSetFixture(t, root)
+	fixture := newAppFixture(t)
+	fixture.writeUnsupportedApplicationSet(t)
 
-	result, err := Orchestrator{}.Build(context.Background(), BuildRequest{Path: root, Strict: true})
-	if err == nil {
-		t.Fatal("Build() error = nil, want strict ApplicationSet precondition error")
-	}
+	result, err := fixture.buildAllowError(t, Orchestrator{}, BuildRequest{Strict: true})
+	assertBuildErrorContains(t, err, "unsupported ApplicationSet generator")
 	if len(result.Manifests) != 0 {
 		t.Fatalf("len(Manifests) = %d, want 0", len(result.Manifests))
 	}
