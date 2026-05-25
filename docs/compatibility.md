@@ -103,7 +103,10 @@ Supported in the MVP:
 - Local `AppProject` manifest discovery
 - Offline diagnostics for Application source repository, destination
   server/name/namespace, and source namespace validation from local
-  `AppProject` manifests
+  `AppProject` manifests. Name-only destinations are accepted when the
+  AppProject permits `server: "*"` for the target namespace; exact
+  server-only allowlists still require `destination.server` because drydock
+  does not parse cluster Secret metadata.
 - AppProject RBAC role and policy parsing as reported metadata, without
   simulating authorization
 - `permitOnlyProjectScopedClusters` reporting as deferred metadata, without

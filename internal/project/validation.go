@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	argoappv1 "github.com/argoproj/argo-cd/v3/pkg/apis/application/v1alpha1"
+	argoglob "github.com/argoproj/argo-cd/v3/util/glob"
 	"github.com/sholdee/drydock/internal/chart"
 	"github.com/sholdee/drydock/internal/config"
 	"github.com/sholdee/drydock/internal/diagnostic"
@@ -128,9 +129,153 @@ func validateDestination(app argoappv1.Application, proj argoappv1.AppProject) [
 		return diags
 	}
 	if !permitted {
+		if nameOnlyDestinationExplicitlyDenied(dest, proj) {
+			diags = append(diags, projectWarning(app, fmt.Sprintf("Application %s destination is not permitted by AppProject %q", applicationName(app), proj.Name)))
+			return diags
+		}
+		if nameOnlyDestinationHasServerDenyPolicy(dest, proj) {
+			diags = append(diags, projectWarning(app, fmt.Sprintf("Application %s destination name %q cannot be resolved against AppProject server policy offline", applicationName(app), dest.Name)))
+			return diags
+		}
+		if nameOnlyDestinationHasServerScopedNamespaceDenyPolicy(dest, proj) {
+			diags = append(diags, projectWarning(app, fmt.Sprintf("Application %s destination name %q cannot be resolved against AppProject server policy offline", applicationName(app), dest.Name)))
+			return diags
+		}
+		if nameOnlyDestinationPermittedByWildcardServer(dest, proj) {
+			return diags
+		}
+		if nameOnlyDestinationHasServerSpecificPolicy(dest, proj) {
+			diags = append(diags, projectWarning(app, fmt.Sprintf("Application %s destination name %q cannot be resolved against AppProject server policy offline", applicationName(app), dest.Name)))
+			return diags
+		}
 		diags = append(diags, projectWarning(app, fmt.Sprintf("Application %s destination is not permitted by AppProject %q", applicationName(app), proj.Name)))
 	}
 	return diags
+}
+
+func nameOnlyDestinationExplicitlyDenied(dest argoappv1.ApplicationDestination, proj argoappv1.AppProject) bool {
+	if !isNameOnlyDestination(dest) {
+		return false
+	}
+	for _, allowed := range proj.Spec.Destinations {
+		if destinationNameDenied(allowed.Name, dest.Name) {
+			return true
+		}
+		if strings.TrimSpace(allowed.Server) == "*" && destinationNamespaceDenied(allowed.Namespace, dest.Namespace) {
+			return true
+		}
+	}
+	return false
+}
+
+func nameOnlyDestinationHasServerDenyPolicy(dest argoappv1.ApplicationDestination, proj argoappv1.AppProject) bool {
+	if !isNameOnlyDestination(dest) {
+		return false
+	}
+	for _, allowed := range proj.Spec.Destinations {
+		server := strings.TrimSpace(allowed.Server)
+		if !destinationDenyPattern(server) {
+			continue
+		}
+		if destinationPatternMatch(allowed.Namespace, dest.Namespace) {
+			return true
+		}
+	}
+	return false
+}
+
+func nameOnlyDestinationHasServerScopedNamespaceDenyPolicy(dest argoappv1.ApplicationDestination, proj argoappv1.AppProject) bool {
+	if !isNameOnlyDestination(dest) {
+		return false
+	}
+	for _, allowed := range proj.Spec.Destinations {
+		server := strings.TrimSpace(allowed.Server)
+		if server == "" || server == "*" {
+			continue
+		}
+		if destinationNamespaceDenied(allowed.Namespace, dest.Namespace) {
+			return true
+		}
+	}
+	return false
+}
+
+func nameOnlyDestinationPermittedByWildcardServer(dest argoappv1.ApplicationDestination, proj argoappv1.AppProject) bool {
+	if !isNameOnlyDestination(dest) {
+		return false
+	}
+	for _, allowed := range proj.Spec.Destinations {
+		if strings.TrimSpace(allowed.Server) != "*" {
+			continue
+		}
+		if destinationNamespaceAllowed(allowed.Namespace, dest.Namespace) {
+			return true
+		}
+	}
+	return false
+}
+
+func nameOnlyDestinationHasServerSpecificPolicy(dest argoappv1.ApplicationDestination, proj argoappv1.AppProject) bool {
+	if !isNameOnlyDestination(dest) {
+		return false
+	}
+	for _, allowed := range proj.Spec.Destinations {
+		server := strings.TrimSpace(allowed.Server)
+		if server == "" || server == "*" || destinationDenyPattern(server) {
+			continue
+		}
+		if destinationNamespaceAllowed(allowed.Namespace, dest.Namespace) {
+			return true
+		}
+	}
+	return false
+}
+
+func isNameOnlyDestination(dest argoappv1.ApplicationDestination) bool {
+	return strings.TrimSpace(dest.Name) != "" && strings.TrimSpace(dest.Server) == ""
+}
+
+func destinationNameDenied(pattern, name string) bool {
+	pattern = strings.TrimSpace(pattern)
+	if pattern == "" || !destinationDenyPattern(pattern) {
+		return false
+	}
+	return destinationGlobMatch(strings.TrimPrefix(pattern, "!"), name)
+}
+
+func destinationNamespaceDenied(pattern, namespace string) bool {
+	pattern = strings.TrimSpace(pattern)
+	if pattern == "" || !destinationDenyPattern(pattern) {
+		return false
+	}
+	return destinationGlobMatch(strings.TrimPrefix(pattern, "!"), namespace)
+}
+
+func destinationNamespaceAllowed(pattern, namespace string) bool {
+	pattern = strings.TrimSpace(pattern)
+	if pattern == "" || destinationDenyPattern(pattern) {
+		return false
+	}
+	return destinationGlobMatch(pattern, namespace)
+}
+
+func destinationDenyPattern(pattern string) bool {
+	return strings.HasPrefix(pattern, "!")
+}
+
+func destinationGlobMatch(pattern, value string) bool {
+	if pattern == "*" {
+		return true
+	}
+	return argoglob.Match(pattern, value)
+}
+
+func destinationPatternMatch(pattern, value string) bool {
+	pattern = strings.TrimSpace(pattern)
+	if destinationDenyPattern(pattern) {
+		return !destinationGlobMatch(strings.TrimPrefix(pattern, "!"), value)
+	}
+	return destinationGlobMatch(pattern, value)
 }
 
 func validateSourceNamespace(app argoappv1.Application, proj argoappv1.AppProject) []diagnostic.Diagnostic {
