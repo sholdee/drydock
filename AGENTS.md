@@ -22,6 +22,9 @@ the design spec is updated first.
 
 Read the design spec and roadmap before substantive changes:
 
+- `docs/agent-orientation.md` for a short routing map that helps fresh agents
+  find the right package, report, or design section without loading stale or
+  unrelated context.
 - `docs/design.md`
 - `docs/roadmap.md`
 - `docs/plans/` for approved or proposed phase implementation plans.
