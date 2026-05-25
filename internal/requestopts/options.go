@@ -120,6 +120,9 @@ func cloneProviderData(input appset.ProviderData) appset.ProviderData {
 }
 
 func cloneClusterInputs(input []appset.ClusterInput) []appset.ClusterInput {
+	if input == nil {
+		return nil
+	}
 	out := make([]appset.ClusterInput, 0, len(input))
 	for _, item := range input {
 		item.Labels = cloneStringMap(item.Labels)
@@ -131,6 +134,9 @@ func cloneClusterInputs(input []appset.ClusterInput) []appset.ClusterInput {
 }
 
 func cloneClusterDecisionInputs(input []appset.ClusterDecisionInput) []appset.ClusterDecisionInput {
+	if input == nil {
+		return nil
+	}
 	out := make([]appset.ClusterDecisionInput, 0, len(input))
 	for _, item := range input {
 		item.Labels = cloneStringMap(item.Labels)
@@ -142,6 +148,9 @@ func cloneClusterDecisionInputs(input []appset.ClusterDecisionInput) []appset.Cl
 }
 
 func cloneSCMRepositoryInputs(input []appset.SCMRepositoryInput) []appset.SCMRepositoryInput {
+	if input == nil {
+		return nil
+	}
 	out := make([]appset.SCMRepositoryInput, 0, len(input))
 	for _, item := range input {
 		item.Tags = cloneStringMap(item.Tags)
@@ -154,6 +163,9 @@ func cloneSCMRepositoryInputs(input []appset.SCMRepositoryInput) []appset.SCMRep
 }
 
 func clonePullRequestInputs(input []appset.PullRequestInput) []appset.PullRequestInput {
+	if input == nil {
+		return nil
+	}
 	out := make([]appset.PullRequestInput, 0, len(input))
 	for _, item := range input {
 		item.Labels = append([]string(nil), item.Labels...)
@@ -164,6 +176,9 @@ func clonePullRequestInputs(input []appset.PullRequestInput) []appset.PullReques
 }
 
 func clonePluginInputs(input []appset.PluginInput) []appset.PluginInput {
+	if input == nil {
+		return nil
+	}
 	out := make([]appset.PluginInput, 0, len(input))
 	for _, item := range input {
 		item.Outputs = cloneAnySlice(item.Outputs)
