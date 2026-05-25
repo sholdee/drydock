@@ -36,6 +36,19 @@ func TestTestAppsParallelismFlag(t *testing.T) {
 	}
 }
 
+func TestTestAppsDefaultParallelismIsAuto(t *testing.T) {
+	recorder := &recordingCLIOrchestrator{}
+	executeParallelismCommand(t, recorder, "test", "apps")
+
+	want := defaultTestAppsParallelism()
+	if want < 1 {
+		t.Fatalf("defaultTestAppsParallelism() = %d, want >= 1", want)
+	}
+	if got := recorder.buildRequests[0].Parallelism; got != want {
+		t.Fatalf("BuildRequest.Parallelism = %d, want %d", got, want)
+	}
+}
+
 func TestTestAppParallelismFlag(t *testing.T) {
 	recorder := &recordingCLIOrchestrator{}
 	executeParallelismCommand(t, recorder, "test", "app", "demo", "--parallelism", "7")

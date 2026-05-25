@@ -448,7 +448,13 @@ func appendDiscoveredProjects(projects []argoappv1.AppProject, discovered discov
 func loadSettingsFromDiscovery(root string, discovered discovery.Result) (config.ArgoSettings, []diagnostic.Diagnostic, error) {
 	var candidates []config.ArgoSettings
 	var diags []diagnostic.Diagnostic
+	seen := make(map[string]struct{}, len(discovered.SettingsCandidates))
 	for _, candidate := range discovered.SettingsCandidates {
+		key := candidate.Kind + "\x00" + candidate.Path
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
 		path := filepath.Join(root, candidate.Path)
 		var (
 			settings  config.ArgoSettings

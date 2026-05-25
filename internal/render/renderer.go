@@ -42,6 +42,7 @@ type RenderOptions struct {
 	RefreshCharts                bool
 	ChartCredentials             chart.ChartCredentials
 	ChartAcquirer                chart.Acquirer
+	OCIChartRepositories         map[string]bool
 	RemoteResourceCacheDir       string
 	OfflineRemoteResources       bool
 	RefreshRemoteResources       bool

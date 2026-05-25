@@ -188,13 +188,25 @@ func decodeHelmManifests(pathMap map[string]string, chrt helmchart.Charter, rend
 		if err != nil {
 			return nil, nil, err
 		}
-		docs, err := manifest.DecodeDocuments(path, bytes.NewReader([]byte(rendered[name])))
+		docs, err := decodeRenderedHelmTemplate(path, rendered[name])
 		if err != nil {
 			return nil, nil, err
 		}
 		out = appendHelmDocuments(out, docs, opts)
 	}
 	return out, nil, nil
+}
+
+func decodeRenderedHelmTemplate(path, rendered string) ([]manifest.Document, error) {
+	var out []manifest.Document
+	for _, document := range splitHelmRenderedManifests(rendered) {
+		docs, err := manifest.DecodeDocuments(path, strings.NewReader(document))
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, docs...)
+	}
+	return out, nil
 }
 
 func appendHelmDocuments(out []Manifest, docs []manifest.Document, opts RenderOptions) []Manifest {

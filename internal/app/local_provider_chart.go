@@ -3,7 +3,6 @@ package app
 import (
 	"context"
 	"fmt"
-	"strings"
 
 	"github.com/sholdee/drydock/internal/cacheevent"
 	"github.com/sholdee/drydock/internal/chart"
@@ -16,10 +15,7 @@ func chartSensitiveValues(credentials chart.ChartCredentials) []string {
 }
 
 func (p localProvider) renderChartOnlySource(ctx context.Context, source render.ResolvedSource, opts render.RenderOptions) ([]render.Manifest, []diagnostic.Diagnostic, error) {
-	kind := chart.RepositoryHTTP
-	if strings.HasPrefix(strings.TrimSpace(source.RepoURL), "oci://") {
-		kind = chart.RepositoryOCI
-	}
+	kind := render.ChartRepositoryKind(source.RepoURL, opts.OCIChartRepositories)
 
 	acquirer := p.chartAcquirer
 	if acquirer == nil {

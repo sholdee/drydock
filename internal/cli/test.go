@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"fmt"
+	"runtime"
 	"strings"
 
 	"github.com/sholdee/drydock/internal/app"
@@ -26,6 +27,7 @@ func newTestCommand(deps Dependencies) *cobra.Command {
 
 	appsFlags := defaultCommonFlags()
 	appsFlags.output = testOutputText
+	appsFlags.parallelism = defaultTestAppsParallelism()
 	apps := &cobra.Command{
 		Use:   "apps",
 		Short: "Test all Applications",
@@ -98,6 +100,14 @@ func newTestCommand(deps Dependencies) *cobra.Command {
 
 	cmd.AddCommand(apps, appCmd)
 	return cmd
+}
+
+func defaultTestAppsParallelism() int {
+	value := runtime.GOMAXPROCS(0)
+	if value < 1 {
+		return 1
+	}
+	return value
 }
 
 func buildRequestFromFlags(flags commonFlags, repoMaps []source.RepoMap) app.BuildRequest {

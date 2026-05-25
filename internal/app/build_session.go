@@ -90,6 +90,7 @@ func (session *buildSession) Build(ctx context.Context) (BuildResult, error) {
 		refreshCharts:                session.request.RefreshCharts,
 		chartCacheDir:                session.request.ChartCacheDir,
 		chartCredentials:             session.request.ChartCredentials,
+		ociChartRepositories:         ociChartRepositoriesFromSettings(result.Settings),
 		gitCacheDir:                  session.request.GitCacheDir,
 		refreshGit:                   session.request.RefreshGit,
 		gitCredentials:               session.request.GitCredentials,

@@ -121,6 +121,9 @@ func NormalizeRepository(repository string, kind RepositoryKind) (string, error)
 		parsed.Path = strings.TrimRight(parsed.Path, "/")
 		return parsed.String(), nil
 	case RepositoryOCI:
+		if !strings.Contains(repository, "://") {
+			repository = "oci://" + repository
+		}
 		parsed, err := url.Parse(repository)
 		if err != nil {
 			return "", fmt.Errorf("parse OCI chart repository: invalid repository URL")

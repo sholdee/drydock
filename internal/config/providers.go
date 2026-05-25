@@ -1,10 +1,13 @@
 package config
 
 import (
+	"bytes"
 	"fmt"
+	"io"
+	"os"
+
 	"github.com/sholdee/drydock/internal/diagnostic"
 	"go.yaml.in/yaml/v4"
-	"os"
 )
 
 func LoadFromHelmValues(path string) (ArgoSettings, []diagnostic.Diagnostic, error) {
@@ -62,18 +65,27 @@ func LoadRepositorySecret(path string) (ArgoSettings, []diagnostic.Diagnostic, e
 		return settings, nil, err
 	}
 
-	var doc struct {
-		Kind     string `yaml:"kind"`
-		Metadata struct {
-			Labels map[string]string `yaml:"labels"`
-		} `yaml:"metadata"`
-		StringData map[string]string `yaml:"stringData"`
-		Data       map[string]string `yaml:"data"`
+	decoder := yaml.NewDecoder(bytes.NewReader(data))
+	candidates := make([]ArgoSettings, 0)
+	diags := make([]diagnostic.Diagnostic, 0)
+	foundRepositorySecret := false
+	for {
+		var doc repositorySecretDocument
+		if err := decoder.Decode(&doc); err != nil {
+			if err == io.EOF {
+				break
+			}
+			return settings, nil, fmt.Errorf("parse repository secret %s: %w", path, err)
+		}
+		if doc.Kind != "Secret" || doc.Metadata.Labels["argocd.argoproj.io/secret-type"] != "repository" {
+			continue
+		}
+		foundRepositorySecret = true
+		candidate, nextDiags := repositorySecretSettings(path, doc)
+		candidates = append(candidates, candidate)
+		diags = append(diags, nextDiags...)
 	}
-	if err := yaml.Unmarshal(data, &doc); err != nil {
-		return settings, nil, fmt.Errorf("parse repository secret %s: %w", path, err)
-	}
-	if doc.Kind != "Secret" || doc.Metadata.Labels["argocd.argoproj.io/secret-type"] != "repository" {
+	if !foundRepositorySecret {
 		return settings, []diagnostic.Diagnostic{{
 			Severity:   diagnostic.SeverityWarning,
 			Category:   "settings",
@@ -82,9 +94,25 @@ func LoadRepositorySecret(path string) (ArgoSettings, []diagnostic.Diagnostic, e
 		}}, nil
 	}
 
+	settings, mergeDiags := MergeDiscovered(candidates)
+	diags = append(diags, mergeDiags...)
+	return settings, diags, nil
+}
+
+type repositorySecretDocument struct {
+	Kind     string `yaml:"kind"`
+	Metadata struct {
+		Labels map[string]string `yaml:"labels"`
+	} `yaml:"metadata"`
+	StringData map[string]string `yaml:"stringData"`
+	Data       map[string]string `yaml:"data"`
+}
+
+func repositorySecretSettings(path string, doc repositorySecretDocument) (ArgoSettings, []diagnostic.Diagnostic) {
+	settings := DefaultSettings()
 	url := secretStringField(doc.StringData, doc.Data, "url")
 	if url == "" {
-		return settings, nil, nil
+		return settings, nil
 	}
 
 	var diags []diagnostic.Diagnostic
@@ -100,5 +128,5 @@ func LoadRepositorySecret(path string) (ArgoSettings, []diagnostic.Diagnostic, e
 		Project:    secretStringField(doc.StringData, doc.Data, "project"),
 		Provenance: diagnostic.Provenance{Path: path, Pointer: secretFieldPointer(doc.StringData, "url")},
 	}
-	return settings, diags, nil
+	return settings, diags
 }
