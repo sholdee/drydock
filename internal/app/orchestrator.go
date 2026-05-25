@@ -51,6 +51,7 @@ type BuildRequest struct {
 	ApplicationSetProviderFixtures []string
 	ApplicationSetProviderData     appset.ProviderData
 	RecordCacheEvents              bool
+	StatusCallback                 ApplicationStatusCallback
 }
 
 type BuildAppRequest struct {
@@ -80,6 +81,14 @@ type ApplicationStatus struct {
 	Status    string `json:"status" yaml:"status"`
 	Message   string `json:"message,omitempty" yaml:"message,omitempty"`
 }
+
+type ApplicationStatusEvent struct {
+	Status    ApplicationStatus
+	Completed int
+	Total     int
+}
+
+type ApplicationStatusCallback func(ApplicationStatusEvent) error
 
 type BuildResult struct {
 	Applications         []argoappv1.Application
@@ -254,6 +263,7 @@ type renderApplicationsRequest struct {
 	resourceFilter manifest.ResourceFilter
 	recordEvents   bool
 	parallelism    int
+	statusCallback ApplicationStatusCallback
 }
 
 type renderApplicationsResult struct {
@@ -270,6 +280,11 @@ type applicationRenderResult struct {
 	err error
 }
 
+type indexedApplicationRenderResult struct {
+	index  int
+	result applicationRenderResult
+}
+
 func renderApplications(ctx context.Context, request renderApplicationsRequest) (renderApplicationsResult, error) {
 	if request.parallelism <= 1 || len(request.applications) <= 1 {
 		return renderApplicationsSequential(ctx, request)
@@ -282,6 +297,9 @@ func renderApplicationsSequential(ctx context.Context, request renderApplication
 	for _, application := range request.applications {
 		result := renderOneApplication(ctx, application, request)
 		appendApplicationRenderResult(&out, result)
+		if err := emitApplicationStatusEvent(request.statusCallback, result, len(out.statuses), len(request.applications)); err != nil {
+			return out, err
+		}
 		if result.err != nil {
 			return out, result.err
 		}
@@ -295,7 +313,11 @@ func renderApplicationsParallel(ctx context.Context, request renderApplicationsR
 		workerCount = len(request.applications)
 	}
 
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
 	jobs := make(chan int)
+	resultsCh := make(chan indexedApplicationRenderResult, len(request.applications))
 	results := make([]applicationRenderResult, len(request.applications))
 	var wg sync.WaitGroup
 	for range workerCount {
@@ -303,23 +325,47 @@ func renderApplicationsParallel(ctx context.Context, request renderApplicationsR
 		go func() {
 			defer wg.Done()
 			for index := range jobs {
-				results[index] = renderOneApplication(ctx, request.applications[index], request)
+				resultsCh <- indexedApplicationRenderResult{
+					index:  index,
+					result: renderOneApplication(ctx, request.applications[index], request),
+				}
 			}
 		}()
 	}
 
-	var scheduleErr error
-schedule:
-	for index := range request.applications {
-		select {
-		case <-ctx.Done():
-			scheduleErr = ctx.Err()
-			break schedule
-		case jobs <- index:
+	scheduleErrCh := make(chan error, 1)
+	go func() {
+		defer close(jobs)
+		for index := range request.applications {
+			select {
+			case <-ctx.Done():
+				scheduleErrCh <- ctx.Err()
+				return
+			case jobs <- index:
+			}
+		}
+		scheduleErrCh <- nil
+	}()
+
+	go func() {
+		wg.Wait()
+		close(resultsCh)
+	}()
+
+	var callbackErr error
+	completed := 0
+	for indexed := range resultsCh {
+		results[indexed.index] = indexed.result
+		completed++
+		if callbackErr != nil {
+			continue
+		}
+		if err := emitApplicationStatusEvent(request.statusCallback, indexed.result, completed, len(request.applications)); err != nil {
+			callbackErr = err
+			cancel()
 		}
 	}
-	close(jobs)
-	wg.Wait()
+	scheduleErr := <-scheduleErrCh
 
 	var out renderApplicationsResult
 	var renderErr error
@@ -332,6 +378,9 @@ schedule:
 			renderErr = result.err
 		}
 	}
+	if callbackErr != nil {
+		return out, callbackErr
+	}
 	if scheduleErr != nil {
 		return out, scheduleErr
 	}
@@ -339,6 +388,18 @@ schedule:
 		return out, renderErr
 	}
 	return out, nil
+}
+
+func emitApplicationStatusEvent(callback ApplicationStatusCallback, result applicationRenderResult, completed, total int) error {
+	if callback == nil {
+		return nil
+	}
+	for _, status := range result.statuses {
+		if err := callback(ApplicationStatusEvent{Status: status, Completed: completed, Total: total}); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func appendApplicationRenderResult(out *renderApplicationsResult, result applicationRenderResult) {

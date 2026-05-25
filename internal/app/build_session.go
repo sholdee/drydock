@@ -122,6 +122,7 @@ func (session *buildSession) Build(ctx context.Context) (BuildResult, error) {
 		resourceFilter: resourceFilter,
 		recordEvents:   session.request.RecordCacheEvents,
 		parallelism:    session.parallelism,
+		statusCallback: session.request.StatusCallback,
 	})
 	result.Manifests = append(result.Manifests, rendered.manifests...)
 	result.ApplicationManifests = append(result.ApplicationManifests, rendered.applicationManifests...)
