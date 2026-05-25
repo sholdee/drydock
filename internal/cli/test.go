@@ -48,6 +48,7 @@ func newTestCommand(deps Dependencies) *cobra.Command {
 			}
 			buildRequest := buildRequestFromFlags(appsFlags, repoMaps)
 			buildRequest.StatusOnly = true
+			buildRequest.ValidateLuaHealth = !appsFlags.skipLuaHealth
 			var liveReporter *testLiveReporter
 			if output == testOutputText && deps.isTerminal(cmd.OutOrStdout()) {
 				liveReporter = newTestLiveReporter(cmd.OutOrStdout(), cmd.ErrOrStderr(), deps.isTerminal(cmd.ErrOrStderr()))
@@ -96,6 +97,7 @@ func newTestCommand(deps Dependencies) *cobra.Command {
 		},
 	}
 	bindCommonFlags(apps, &appsFlags)
+	bindLuaHealthTestFlag(apps, &appsFlags)
 
 	appFlags := defaultCommonFlags()
 	appFlags.output = testOutputText
@@ -114,6 +116,7 @@ func newTestCommand(deps Dependencies) *cobra.Command {
 			}
 			buildRequest := buildRequestFromFlags(appFlags, repoMaps)
 			buildRequest.StatusOnly = true
+			buildRequest.ValidateLuaHealth = !appFlags.skipLuaHealth
 			result, err := deps.Orchestrator.BuildApp(context.Background(), app.BuildAppRequest{
 				Name:         args[0],
 				BuildRequest: buildRequest,
@@ -128,6 +131,7 @@ func newTestCommand(deps Dependencies) *cobra.Command {
 		},
 	}
 	bindCommonFlags(appCmd, &appFlags)
+	bindLuaHealthTestFlag(appCmd, &appFlags)
 
 	cmd.AddCommand(apps, appCmd)
 	return cmd

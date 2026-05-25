@@ -40,6 +40,7 @@ type commonFlags struct {
 	skipKinds         []string
 	skipCRDs          bool
 	skipSecrets       bool
+	skipLuaHealth     bool
 	changedOnly       bool
 	strictChangedOnly bool
 	strict            bool
@@ -103,6 +104,10 @@ func bindCommonFlags(cmd *cobra.Command, flags *commonFlags) {
 	cmd.Flags().IntVar(&flags.limitBytes, "limit-bytes", flags.limitBytes, "maximum bytes of rendered output per object")
 	cmd.Flags().BoolVar(&flags.cacheEvents, "cache-events", flags.cacheEvents, "include cache acquisition events in structured diagnostic output")
 	cmd.Flags().IntVar(&flags.parallelism, "parallelism", flags.parallelism, "maximum number of Applications to render concurrently")
+}
+
+func bindLuaHealthTestFlag(cmd *cobra.Command, flags *commonFlags) {
+	cmd.Flags().BoolVar(&flags.skipLuaHealth, "skip-lua-health", flags.skipLuaHealth, "skip Lua health validation while testing Applications")
 }
 
 func (flags commonFlags) gitCredentials() source.GitCredentials {

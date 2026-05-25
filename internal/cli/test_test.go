@@ -86,6 +86,102 @@ func TestTestAppsReportsPluginSourceFailure(t *testing.T) {
 	}
 }
 
+func TestTestAppsFailsOnLuaHealthRuntimeErrorByDefault(t *testing.T) {
+	root := t.TempDir()
+	writeLuaHealthFailureCLIApplication(t, root, "widget")
+
+	cmd := NewRootCommand(VersionInfo{})
+	cmd.SetArgs([]string{"test", "apps", "--path", root, "--offline"})
+	var stdout, stderr bytes.Buffer
+	cmd.SetOut(&stdout)
+	cmd.SetErr(&stderr)
+
+	err := cmd.Execute()
+	if code := commandErrorCode(err); code != 2 {
+		t.Fatalf("error code = %d, want 2; err = %v", code, err)
+	}
+	if !strings.Contains(stdout.String(), "FAIL argocd/widget") {
+		t.Fatalf("stdout = %q, want failed widget status", stdout.String())
+	}
+	if !strings.Contains(stderr.String(), "health Lua failed") {
+		t.Fatalf("stderr = %q, want health Lua diagnostic", stderr.String())
+	}
+}
+
+func TestTestAppsSkipLuaHealthPassesRuntimeErrorRepo(t *testing.T) {
+	root := t.TempDir()
+	writeLuaHealthFailureCLIApplication(t, root, "widget")
+
+	cmd := NewRootCommand(VersionInfo{})
+	cmd.SetArgs([]string{"test", "apps", "--path", root, "--offline", "--skip-lua-health"})
+	var stdout, stderr bytes.Buffer
+	cmd.SetOut(&stdout)
+	cmd.SetErr(&stderr)
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("Execute() error = %v\nstdout:\n%s\nstderr:\n%s", err, stdout.String(), stderr.String())
+	}
+	if got, want := stdout.String(), "PASS argocd/widget\n"; got != want {
+		t.Fatalf("stdout = %q, want %q", got, want)
+	}
+	if strings.Contains(stderr.String(), "health Lua failed") {
+		t.Fatalf("stderr = %q, want no health Lua diagnostic", stderr.String())
+	}
+}
+
+func TestTestAppFailsOnLuaHealthRuntimeErrorByDefault(t *testing.T) {
+	root := t.TempDir()
+	writeLuaHealthFailureCLIApplication(t, root, "widget")
+
+	cmd := NewRootCommand(VersionInfo{})
+	cmd.SetArgs([]string{"test", "app", "widget", "--path", root, "--offline"})
+	var stdout, stderr bytes.Buffer
+	cmd.SetOut(&stdout)
+	cmd.SetErr(&stderr)
+
+	err := cmd.Execute()
+	if code := commandErrorCode(err); code != 2 {
+		t.Fatalf("error code = %d, want 2; err = %v", code, err)
+	}
+	if !strings.Contains(stdout.String(), "FAIL argocd/widget") {
+		t.Fatalf("stdout = %q, want failed widget status", stdout.String())
+	}
+	if !strings.Contains(stderr.String(), "health Lua failed") {
+		t.Fatalf("stderr = %q, want health Lua diagnostic", stderr.String())
+	}
+}
+
+func TestTestAppSkipLuaHealthPassesRuntimeErrorRepo(t *testing.T) {
+	root := t.TempDir()
+	writeLuaHealthFailureCLIApplication(t, root, "widget")
+
+	cmd := NewRootCommand(VersionInfo{})
+	cmd.SetArgs([]string{"test", "app", "widget", "--path", root, "--offline", "--skip-lua-health"})
+	var stdout, stderr bytes.Buffer
+	cmd.SetOut(&stdout)
+	cmd.SetErr(&stderr)
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("Execute() error = %v\nstdout:\n%s\nstderr:\n%s", err, stdout.String(), stderr.String())
+	}
+	if got, want := stdout.String(), "PASS argocd/widget\n"; got != want {
+		t.Fatalf("stdout = %q, want %q", got, want)
+	}
+	if strings.Contains(stderr.String(), "health Lua failed") {
+		t.Fatalf("stderr = %q, want no health Lua diagnostic", stderr.String())
+	}
+}
+
+func TestSkipLuaHealthFlagIsNotGlobal(t *testing.T) {
+	cmd := NewRootCommand(VersionInfo{})
+	cmd.SetArgs([]string{"build", "apps", "--skip-lua-health"})
+
+	err := cmd.Execute()
+	if err == nil || !strings.Contains(err.Error(), "unknown flag: --skip-lua-health") {
+		t.Fatalf("Execute() error = %v, want unknown --skip-lua-health flag", err)
+	}
+}
+
 func TestTestAppsReportsSkippedPreconditionFailures(t *testing.T) {
 	root := t.TempDir()
 	writeUnsupportedApplicationSetForCLI(t, root)
@@ -505,5 +601,38 @@ spec:
   destination:
     name: in-cluster
     namespace: default
+`)
+}
+
+func writeLuaHealthFailureCLIApplication(t *testing.T, root, appName string) {
+	t.Helper()
+	writeCLITestFile(t, filepath.Join(root, "apps", appName+".yaml"), `apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: `+appName+`
+  namespace: argocd
+spec:
+  source:
+    repoURL: https://github.com/example/repo
+    path: manifests/`+appName+`
+    targetRevision: main
+  destination:
+    name: in-cluster
+    namespace: default
+`)
+	writeCLITestFile(t, filepath.Join(root, "manifests", appName, "cm.yaml"), `apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: `+appName+`
+data:
+  value: `+appName+`
+`)
+	writeCLITestFile(t, filepath.Join(root, "settings", "argocd-cm.yaml"), `apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: argocd-cm
+data:
+  resource.customizations.health.ConfigMap: |
+    error("boom")
 `)
 }

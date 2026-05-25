@@ -17,6 +17,7 @@ type Options struct {
 	ChangedOnly                    *bool
 	StrictChangedOnly              bool
 	Strict                         bool
+	ValidateLuaHealth              bool
 	Unified                        int
 	StripAttrs                     []string
 	Offline                        bool
@@ -46,6 +47,7 @@ func (options Options) Build() app.BuildRequest {
 	return app.BuildRequest{
 		Path:                           options.Path,
 		Strict:                         options.Strict,
+		ValidateLuaHealth:              options.ValidateLuaHealth,
 		Offline:                        options.Offline,
 		RefreshCharts:                  options.RefreshCharts,
 		ChartCacheDir:                  options.ChartCacheDir,
