@@ -19,12 +19,13 @@ repository-specific shortcuts without an approved design update.
 ## First Five Minutes
 
 1. Read `AGENTS.md` for mandatory repository constraints and subagent rules.
-2. Use this file to route to the right package or detailed doc.
-3. Read `docs/agent-reference.md` only for task-specific agent constraints.
-4. Read `docs/design.md` and `docs/roadmap.md` for product design and
+2. Use `docs/README.md` for documentation ownership.
+3. Use this file to route to the right package or detailed doc.
+4. Read `docs/agent-reference.md` only for task-specific agent constraints.
+5. Read `docs/design.md` and `docs/roadmap.md` for product design and
    supported/deferred feature context.
-5. Check `git status --short --branch` before editing.
-6. Use `rg` and focused file reads before loading broad tests or reports.
+6. Check `git status --short --branch` before editing.
+7. Use `rg` and focused file reads before loading broad tests or reports.
 
 If your task involves Kubernetes API access, Argo CD API/server behavior,
 server-side diff, defaulting, admission, managed fields, or live cluster
@@ -71,11 +72,6 @@ Use `rg --files`, `wc -l`, and current code inspection before repeating file
 size or refactor-history claims.
 
 ## Reports
-
-Implemented plans and closed audit files are pruned from active docs and remain
-available through git history. `docs/reports` retains active design gates only.
-
-Required report:
 
 - `docs/reports/2026-05-24-live-integration-design-gate.md`: required before
   proposing live runtime work.
