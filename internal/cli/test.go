@@ -50,7 +50,7 @@ func newTestCommand(deps Dependencies) *cobra.Command {
 			buildRequest.StatusOnly = true
 			var liveReporter *testLiveReporter
 			if output == testOutputText && deps.isTerminal(cmd.OutOrStdout()) {
-				liveReporter = newTestLiveReporter(cmd.OutOrStdout(), cmd.ErrOrStderr())
+				liveReporter = newTestLiveReporter(cmd.OutOrStdout(), cmd.ErrOrStderr(), deps.isTerminal(cmd.ErrOrStderr()))
 				buildRequest.StatusCallback = liveReporter.Handle
 			}
 			if strings.TrimSpace(appsFlags.selector) != "" {
@@ -68,14 +68,19 @@ func newTestCommand(deps Dependencies) *cobra.Command {
 				buildRequest.Applications = filterApplicationsBySelector(listResult.Applications, selector)
 			}
 			result, err := deps.Orchestrator.Build(context.Background(), buildRequest)
-			if renderErr := renderDiagnostics(cmd.ErrOrStderr(), result.Diagnostics); renderErr != nil {
-				return renderErr
-			}
 			if liveReporter != nil {
 				var liveErr liveTestOutputError
 				if errors.As(err, &liveErr) {
 					return err
 				}
+				if renderErr := liveReporter.Clear(); renderErr != nil {
+					return renderErr
+				}
+			}
+			if renderErr := renderDiagnostics(cmd.ErrOrStderr(), result.Diagnostics); renderErr != nil {
+				return renderErr
+			}
+			if liveReporter != nil {
 				if renderErr := liveReporter.RenderMissingStatuses(result.Statuses); renderErr != nil {
 					return renderErr
 				}
@@ -193,28 +198,46 @@ func colorizeTestStatus(status string) string {
 }
 
 type testLiveReporter struct {
-	out     io.Writer
-	errOut  io.Writer
-	started time.Time
-	emitted map[string]struct{}
+	out      io.Writer
+	errOut   io.Writer
+	started  time.Time
+	emitted  map[string]struct{}
+	progress bool
 }
 
-func newTestLiveReporter(out, errOut io.Writer) *testLiveReporter {
+func newTestLiveReporter(out, errOut io.Writer, progress bool) *testLiveReporter {
 	return &testLiveReporter{
-		out:     out,
-		errOut:  errOut,
-		started: time.Now(),
-		emitted: map[string]struct{}{},
+		out:      out,
+		errOut:   errOut,
+		started:  time.Now(),
+		emitted:  map[string]struct{}{},
+		progress: progress,
 	}
 }
 
 func (reporter *testLiveReporter) Handle(event app.ApplicationStatusEvent) error {
+	if err := reporter.Clear(); err != nil {
+		return err
+	}
 	if err := renderApplicationStatus(reporter.out, event.Status, true); err != nil {
 		return liveTestOutputError{err: fmt.Errorf("write live test status: %w", err)}
 	}
 	reporter.emitted[applicationStatusKey(event.Status)] = struct{}{}
-	if _, err := fmt.Fprintf(reporter.errOut, "Testing apps %d/%d\n", event.Completed, event.Total); err != nil {
+	if !reporter.progress {
+		return nil
+	}
+	if _, err := fmt.Fprintf(reporter.errOut, "\rTesting apps %d/%d", event.Completed, event.Total); err != nil {
 		return liveTestOutputError{err: fmt.Errorf("write live test progress: %w", err)}
+	}
+	return nil
+}
+
+func (reporter *testLiveReporter) Clear() error {
+	if !reporter.progress {
+		return nil
+	}
+	if _, err := fmt.Fprint(reporter.errOut, "\r\x1b[2K"); err != nil {
+		return liveTestOutputError{err: fmt.Errorf("clear live test progress: %w", err)}
 	}
 	return nil
 }

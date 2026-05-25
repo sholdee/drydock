@@ -265,8 +265,49 @@ func TestTestAppsTTYStreamsColoredStatusesProgressAndSummary(t *testing.T) {
 		t.Fatalf("stdout = %q, want summary", out)
 	}
 	errOut := stderr.String()
-	if !strings.Contains(errOut, "Testing apps 1/2") || !strings.Contains(errOut, "Testing apps 2/2") {
-		t.Fatalf("stderr = %q, want progress", errOut)
+	if !strings.Contains(errOut, "\rTesting apps 1/2") || !strings.Contains(errOut, "\rTesting apps 2/2") {
+		t.Fatalf("stderr = %q, want in-place progress", errOut)
+	}
+	if strings.Contains(errOut, "\n") {
+		t.Fatalf("stderr = %q, progress must not add one line per app", errOut)
+	}
+	if strings.Count(out, "\n") != 3 {
+		t.Fatalf("stdout = %q, want two status lines plus summary", out)
+	}
+}
+
+func TestTestAppsTTYSuppressesProgressWhenStderrIsNotTerminal(t *testing.T) {
+	recorder := &recordingCLIOrchestrator{
+		buildResult: app.BuildResult{
+			Statuses: []app.ApplicationStatus{{Namespace: "argocd", Name: "demo", Status: app.ApplicationStatusPass}},
+		},
+		buildHook: func(request app.BuildRequest) error {
+			return request.StatusCallback(app.ApplicationStatusEvent{
+				Status:    app.ApplicationStatus{Namespace: "argocd", Name: "demo", Status: app.ApplicationStatusPass},
+				Completed: 1,
+				Total:     1,
+			})
+		},
+	}
+	var stdout, stderr bytes.Buffer
+	cmd := NewRootCommandWithDependencies(VersionInfo{}, Dependencies{
+		Orchestrator: recorder,
+		IsTerminal: func(w io.Writer) bool {
+			return w == &stdout
+		},
+	})
+	cmd.SetArgs([]string{"test", "apps"})
+	cmd.SetOut(&stdout)
+	cmd.SetErr(&stderr)
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+	if !strings.Contains(stdout.String(), "\x1b[32mPASS\x1b[0m argocd/demo\n") {
+		t.Fatalf("stdout = %q, want live colored status", stdout.String())
+	}
+	if stderr.String() != "" {
+		t.Fatalf("stderr = %q, want no progress control bytes when stderr is not a terminal", stderr.String())
 	}
 }
 
