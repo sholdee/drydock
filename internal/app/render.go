@@ -189,12 +189,35 @@ func renderRefsForSource(plan PlanResult, sourcePlan SourcePlan, valueFiles []st
 			refRoots[refKey] = "."
 			continue
 		}
+		if candidate, ok := planSameRepoPathSource(plan, refSource); ok {
+			refSources[refKey] = render.ResolvedSource{
+				Path:           candidate.Source.Path,
+				RepoURL:        candidate.Source.RepoURL,
+				TargetRevision: candidate.Source.TargetRevision,
+			}
+			continue
+		}
 		refSources[refKey] = render.ResolvedSource{
 			RepoURL:        refSource.Source.RepoURL,
 			TargetRevision: refSource.Source.TargetRevision,
 		}
 	}
 	return refRoots, refSources, nil
+}
+
+func planSameRepoPathSource(plan PlanResult, refSource SourcePlan) (SourcePlan, bool) {
+	for _, candidate := range plan.Sources {
+		if candidate.Index == refSource.Index {
+			continue
+		}
+		if strings.TrimSpace(candidate.Source.Path) == "" {
+			continue
+		}
+		if isSameSourceRevision(candidate.Source, refSource.Source) {
+			return candidate, true
+		}
+	}
+	return SourcePlan{}, false
 }
 
 func isSameSourceRevision(left, right argoappv1.ApplicationSource) bool {

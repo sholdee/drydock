@@ -3,6 +3,7 @@ package cli
 import (
 	"bytes"
 	"context"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -40,9 +41,15 @@ func TestTestAppsDefaultParallelismIsAuto(t *testing.T) {
 	recorder := &recordingCLIOrchestrator{}
 	executeParallelismCommand(t, recorder, "test", "apps")
 
-	want := defaultTestAppsParallelism()
+	want := runtime.GOMAXPROCS(0)
 	if want < 1 {
-		t.Fatalf("defaultTestAppsParallelism() = %d, want >= 1", want)
+		want = 1
+	}
+	if want > 8 {
+		want = 8
+	}
+	if got := defaultTestAppsParallelism(); got != want {
+		t.Fatalf("defaultTestAppsParallelism() = %d, want %d", got, want)
 	}
 	if got := recorder.buildRequests[0].Parallelism; got != want {
 		t.Fatalf("BuildRequest.Parallelism = %d, want %d", got, want)

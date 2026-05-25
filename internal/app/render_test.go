@@ -233,6 +233,50 @@ func TestRenderApplicationPassesSameRepoRefRootsForHelmValueFiles(t *testing.T) 
 	}
 }
 
+func TestRenderApplicationPassesSameRepoSiblingPathRefSourceForChartOnlyHelmValueFiles(t *testing.T) {
+	application := argoappv1.Application{
+		ObjectMeta: metav1.ObjectMeta{Namespace: "argocd", Name: "demo"},
+		Spec: argoappv1.ApplicationSpec{
+			Sources: argoappv1.ApplicationSources{
+				{RepoURL: "https://example.com/repo", TargetRevision: "main", Ref: "values"},
+				{RepoURL: "https://example.com/repo", TargetRevision: "main", Path: "manifests/anchor"},
+				{
+					RepoURL:        "https://charts.example.test",
+					TargetRevision: "1.2.3",
+					Chart:          "demo",
+					Helm: &argoappv1.ApplicationSourceHelm{
+						ValueFiles: []string{"$values/root-values.yaml"},
+					},
+				},
+			},
+		},
+	}
+	var got render.RenderOptions
+	provider := providerFunc(func(_ context.Context, source render.ResolvedSource, opts render.RenderOptions) ([]render.Manifest, []diagnostic.Diagnostic, error) {
+		if source.Chart == "demo" {
+			got = opts
+		}
+		return nil, nil, nil
+	})
+
+	if _, err := RenderApplication(context.Background(), application, provider); err != nil {
+		t.Fatalf("RenderApplication() error = %v", err)
+	}
+	if got.RefRoots["$values"] != "" {
+		t.Fatalf("RefRoots[$values] = %q, want empty path-bearing ref source", got.RefRoots["$values"])
+	}
+	refSource := got.RefSources["$values"]
+	if refSource.Path != "manifests/anchor" {
+		t.Fatalf("RefSources[$values].Path = %q, want manifests/anchor", refSource.Path)
+	}
+	if refSource.RepoURL != "https://example.com/repo" {
+		t.Fatalf("RefSources[$values].RepoURL = %q, want same repo", refSource.RepoURL)
+	}
+	if refSource.TargetRevision != "main" {
+		t.Fatalf("RefSources[$values].TargetRevision = %q, want main", refSource.TargetRevision)
+	}
+}
+
 func TestRenderApplicationPassesCrossRepoHelmValueRef(t *testing.T) {
 	application := argoappv1.Application{
 		ObjectMeta: metav1.ObjectMeta{Namespace: "argocd", Name: "demo"},

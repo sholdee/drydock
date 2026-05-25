@@ -18,11 +18,18 @@ type Session struct {
 	Locks              *TargetLocks
 	SnapshotRoot       string
 	SnapshotCacheReads bool
+	SnapshotCache      *SnapshotCache
 }
 
 type TargetLocks struct {
 	mu    sync.Mutex
 	locks map[string]*targetLock
+}
+
+type SnapshotCache struct {
+	mu     sync.Mutex
+	gits   map[string]source.GitResult
+	charts map[string]chart.Result
 }
 
 type targetLock struct {
@@ -32,6 +39,54 @@ type targetLock struct {
 
 func NewTargetLocks() *TargetLocks {
 	return &TargetLocks{locks: map[string]*targetLock{}}
+}
+
+func NewSnapshotCache() *SnapshotCache {
+	return &SnapshotCache{
+		gits:   map[string]source.GitResult{},
+		charts: map[string]chart.Result{},
+	}
+}
+
+func (cache *SnapshotCache) git(key string) (source.GitResult, bool) {
+	if cache == nil {
+		return source.GitResult{}, false
+	}
+	cache.mu.Lock()
+	defer cache.mu.Unlock()
+	result, ok := cache.gits[key]
+	return result, ok
+}
+
+func (cache *SnapshotCache) storeGit(key string, result source.GitResult) {
+	if cache == nil {
+		return
+	}
+	result.FromCache = true
+	result.Network = false
+	cache.mu.Lock()
+	defer cache.mu.Unlock()
+	cache.gits[key] = result
+}
+
+func (cache *SnapshotCache) chart(key string) (chart.Result, bool) {
+	if cache == nil {
+		return chart.Result{}, false
+	}
+	cache.mu.Lock()
+	defer cache.mu.Unlock()
+	result, ok := cache.charts[key]
+	return result, ok
+}
+
+func (cache *SnapshotCache) storeChart(key string, result chart.Result) {
+	if cache == nil {
+		return
+	}
+	result.FromCache = true
+	cache.mu.Lock()
+	defer cache.mu.Unlock()
+	cache.charts[key] = result
 }
 
 func (locks *TargetLocks) lock(key string) func() {
@@ -66,10 +121,11 @@ func (session Session) GitAcquirer(delegate source.GitAcquirer) source.GitAcquir
 		return delegate
 	}
 	return cacheSafeGitAcquirer{
-		delegate:     delegate,
-		locks:        session.Locks,
-		snapshotRoot: session.SnapshotRoot,
-		snapshot:     session.SnapshotCacheReads,
+		delegate:      delegate,
+		locks:         session.Locks,
+		snapshotRoot:  session.SnapshotRoot,
+		snapshot:      session.SnapshotCacheReads,
+		snapshotCache: session.SnapshotCache,
 	}
 }
 
@@ -81,10 +137,11 @@ func (session Session) ChartAcquirer(delegate chart.Acquirer) chart.Acquirer {
 		return delegate
 	}
 	return cacheSafeChartAcquirer{
-		delegate:     delegate,
-		locks:        session.Locks,
-		snapshotRoot: session.SnapshotRoot,
-		snapshot:     session.SnapshotCacheReads,
+		delegate:      delegate,
+		locks:         session.Locks,
+		snapshotRoot:  session.SnapshotRoot,
+		snapshot:      session.SnapshotCacheReads,
+		snapshotCache: session.SnapshotCache,
 	}
 }
 
@@ -104,10 +161,11 @@ func (session Session) RemoteAcquirer(delegate remote.Acquirer) remote.Acquirer 
 }
 
 type cacheSafeGitAcquirer struct {
-	delegate     source.GitAcquirer
-	locks        *TargetLocks
-	snapshotRoot string
-	snapshot     bool
+	delegate      source.GitAcquirer
+	locks         *TargetLocks
+	snapshotRoot  string
+	snapshot      bool
+	snapshotCache *SnapshotCache
 }
 
 func (acquirer cacheSafeGitAcquirer) Acquire(ctx context.Context, request source.GitRequest, opts source.GitOptions) (source.GitResult, error) {
@@ -118,6 +176,12 @@ func (acquirer cacheSafeGitAcquirer) Acquire(ctx context.Context, request source
 	unlock := acquirer.locks.lock(key)
 	defer unlock()
 
+	if acquirer.snapshot {
+		if result, ok := acquirer.snapshotCache.git(key); ok {
+			return result, nil
+		}
+	}
+
 	result, err := acquirer.delegate.Acquire(ctx, request, opts)
 	if err != nil || !acquirer.snapshot {
 		return result, err
@@ -127,14 +191,16 @@ func (acquirer cacheSafeGitAcquirer) Acquire(ctx context.Context, request source
 		return source.GitResult{}, err
 	}
 	result.Path = snapshot
+	acquirer.snapshotCache.storeGit(key, result)
 	return result, nil
 }
 
 type cacheSafeChartAcquirer struct {
-	delegate     chart.Acquirer
-	locks        *TargetLocks
-	snapshotRoot string
-	snapshot     bool
+	delegate      chart.Acquirer
+	locks         *TargetLocks
+	snapshotRoot  string
+	snapshot      bool
+	snapshotCache *SnapshotCache
 }
 
 func (acquirer cacheSafeChartAcquirer) Acquire(ctx context.Context, request chart.Request, opts chart.Options) (chart.Result, error) {
@@ -145,6 +211,12 @@ func (acquirer cacheSafeChartAcquirer) Acquire(ctx context.Context, request char
 	unlock := acquirer.locks.lock(key)
 	defer unlock()
 
+	if acquirer.snapshot {
+		if result, ok := acquirer.snapshotCache.chart(key); ok {
+			return result, nil
+		}
+	}
+
 	result, err := acquirer.delegate.Acquire(ctx, request, opts)
 	if err != nil || !acquirer.snapshot {
 		return result, err
@@ -154,6 +226,7 @@ func (acquirer cacheSafeChartAcquirer) Acquire(ctx context.Context, request char
 		return chart.Result{}, err
 	}
 	result.ChartDir = snapshot
+	acquirer.snapshotCache.storeChart(key, result)
 	return result, nil
 }
 
