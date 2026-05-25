@@ -1,8 +1,9 @@
 # Agent Orientation
 
 This page is a routing map for fresh agents. It is intentionally shorter than
-`AGENTS.md`, `docs/design.md`, and `docs/roadmap.md`; use it to find the right
-context quickly, then read the authoritative docs for the area you touch.
+`AGENTS.md`, `docs/agent-reference.md`, `docs/design.md`, and `docs/roadmap.md`;
+use it to find the right context quickly, then read the authoritative docs for
+the area you touch.
 
 ## Purpose
 
@@ -17,11 +18,13 @@ repository-specific shortcuts without an approved design update.
 
 ## First Five Minutes
 
-1. Read `AGENTS.md` for repository constraints and subagent rules.
-2. Read `docs/design.md` for the product contract and package map.
-3. Read `docs/roadmap.md` for completed support boundaries and deferred work.
-4. Check `git status --short --branch` before editing.
-5. Use `rg` and focused file reads before loading large tests or reports.
+1. Read `AGENTS.md` for mandatory repository constraints and subagent rules.
+2. Use this file to route to the right package or detailed doc.
+3. Read `docs/agent-reference.md` only for task-specific agent constraints.
+4. Read `docs/design.md` and `docs/roadmap.md` for product design and
+   supported/deferred feature context.
+5. Check `git status --short --branch` before editing.
+6. Use `rg` and focused file reads before loading broad tests or reports.
 
 If your task involves Kubernetes API access, Argo CD API/server behavior,
 server-side diff, defaulting, admission, managed fields, or live cluster
@@ -43,33 +46,30 @@ Use these entry points before broad searches:
 | Git, Helm chart, or remote resource acquisition | `internal/source`, `internal/chart`, `internal/remote`, `internal/acquisition` |
 | Desired manifest diffing or image extraction | `internal/diff`, `internal/manifest` |
 | Cache metadata and cache lifecycle | `internal/cache`, `internal/cacheevent`, `internal/cli/cache.go` |
-| Path containment and symlink rules | `internal/pathsafety`, then the caller-specific checks |
+| Path containment and symlink rules | `internal/pathsafety`, then caller-specific checks |
 
 When behavior crosses packages, prefer following the request path from CLI or
 `pkg/drydock` into `internal/app`, then into the renderer, generator, or
 acquisition adapter. That usually costs less context than reading packages in
 alphabetical order.
 
-## High Context Files
+## High Context Areas
 
-Some files are intentionally broad test or implementation surfaces. Load them
-only after narrowing to the behavior family you need:
+Some tests remain broad by design. Verify current file sizes before repeating
+historical line-count claims, then load only the relevant behavior family:
 
-- `internal/appset/generator_test.go`: generator-family coverage.
-- `internal/render/kustomize_test.go`: Kustomize renderer parity and path
-  safety coverage.
-- `internal/app/orchestrator_test.go`: orchestration, partial status,
-  plugin, acquisition, and parallelism coverage.
+- `internal/appset/generator_test.go`: shared generator-family coverage.
+- `internal/app/orchestrator_test.go`: orchestration, status, plugin,
+  acquisition, and selection coverage.
 - `pkg/drydock/drydock_test.go`: public API integration contracts.
-- `internal/render/kustomize_workspace.go`: Kustomize workspace preparation.
-- `internal/app/orchestrator.go`: orchestration and local provider adapter
-  behavior.
-- `internal/appset/generator_provider_generators.go`: fixture-backed provider
-  generator behavior.
+- `internal/render/kustomize_test.go`: now a narrow Kustomize entrypoint; use
+  neighboring split test files for specific behavior.
+- `internal/render/kustomize_workspace.go`: now a smaller workspace
+  orchestrator; helper behavior lives in neighboring split files.
 
-For current size data and refactor priorities, read
+For historical size data and completed refactor phases, read
 `docs/reports/2026-05-25-refactor-orientation-roadmap.md` instead of copying
-line counts into new task prompts.
+old line counts into new task prompts.
 
 ## Historical Plans And Reports
 
@@ -77,16 +77,19 @@ line counts into new task prompts.
 history. Treat completed phase reports as evidence of why a shape exists, not
 as proof that old line counts or old next steps are still current.
 
-Current high-signal reports:
+High-signal reports:
 
-- `docs/reports/2026-05-25-refactor-orientation-roadmap.md`: active refactor
-  and splitting roadmap.
+- `docs/reports/2026-05-25-refactor-orientation-roadmap.md`: current
+  refactor/orientation history.
 - `docs/reports/2026-05-24-refactoring-audit.md`: closed R1-R5 remediation
   history.
-- `docs/reports/2026-05-24-live-integration-design-gate.md`: required context
-  before proposing live runtime work.
+- `docs/reports/2026-05-24-live-integration-design-gate.md`: required before
+  proposing live runtime work.
 
-## Do Not Cross These Boundaries
+## Boundaries
+
+Before touching a package, read the matching section in
+`docs/agent-reference.md`. The most common boundaries are:
 
 - Do not hard-code `home-ops` paths, chart versions, branches, or repository
   names.
@@ -98,4 +101,3 @@ Current high-signal reports:
 - Do not weaken path containment, symlink rejection, cache-root safety, or
   credential redaction to make a fixture pass.
 - Do not expose `internal/...` package types through `pkg/drydock`.
-
