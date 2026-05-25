@@ -1,45 +1,45 @@
 # AGENTS.md - drydock
 
-## What This Is
+## Product Contract
 
-`drydock` is an independent Go CLI for offline Argo CD GitOps repository
-analysis. The first product goal is desired-vs-desired PR diffing: render Argo
-CD Applications from a current tree and a baseline tree, then show what desired
+`drydock` is an independent Go CLI for local Argo CD GitOps repository
+analysis. Its core job is desired-vs-desired PR diffing: render Argo CD
+Applications from a current tree and a baseline tree, then show what desired
 Kubernetes manifests changed.
 
-The product contract is a self-contained Go binary that can render and diff
-Argo CD repositories from checked-out files plus explicit local caches, without
-requiring a Kubernetes cluster, `kubectl`, the `argocd` CLI, Helm/Kustomize
-executables, or any other external renderer. Network-aware source acquisition
-may exist as an explicit cache-population path, but the core render/diff engine
-must remain local, deterministic, and library-backed.
+The default workflow must remain a self-contained Go binary using checked-out
+files plus explicit local caches. Do not require a Kubernetes cluster,
+`kubectl`, the `argocd` CLI, Helm CLI, Kustomize CLI, an external renderer, an
+Argo CD server, or any live runtime dependency for default render, diff, image,
+test, or diagnostic paths.
 
-It is not a live-cluster diff tool in the MVP. Do not add Kubernetes API
-dependencies, live Argo CD server calls, or shellout-based render paths unless
-the design spec is updated first.
+Network-aware acquisition may exist only as explicit cache population. Live
+Kubernetes, live Argo CD, server-side diff, defaulting, admission, managed
+fields ownership prediction, SCM/cloud/provider API calls, and shellout
+renderers require an approved design update first.
 
-## Current Design
+## Read This First
 
-Read the design spec and roadmap before substantive changes:
+Use these entry points before substantive work:
 
-- `docs/agent-orientation.md` for a short routing map that helps fresh agents
-  find the right package, report, or design section without loading stale or
-  unrelated context.
-- `docs/design.md`
-- `docs/roadmap.md`
-- `docs/plans/` for approved or proposed phase implementation plans.
-- `docs/reports/2026-05-24-live-integration-design-gate.md` before proposing
-  Kubernetes, Argo CD server, server-side diff, defaulting, admission, or
-  managed-fields ownership work.
+- `docs/agent-orientation.md`: fast routing for fresh agents.
+- `docs/agent-reference.md`: task-specific agent constraints and canonical
+  links.
+- `docs/design.md`: canonical product architecture and behavior model.
+- `docs/roadmap.md`: canonical supported/deferred feature status.
+- `docs/reports/2026-05-24-live-integration-design-gate.md`: required before
+  proposing live runtime, server-side diff, defaulting, admission, or
+  managed-fields work.
+
+If a repo-local `CLAUDE.md` exists, read it alongside this file and resolve
+conflicts conservatively.
 
 ## Subagent Sandbox Rules
 
-Subagents must not request sandbox escalation as part of routine
-implementation, review, or verification. Run local, non-network commands that
-work inside the current sandbox. If a useful command would require escalation,
-network access, or approval, skip that command, report the verification gap,
-and continue with the rest of the local review or implementation. Do not leave
-roadmap execution blocked on approval prompts from review agents.
+Subagents must not request sandbox escalation for routine implementation,
+review, or verification. Run local, non-network commands that work inside the
+current sandbox. If a useful command would require escalation, network access,
+or approval, skip it, report the verification gap, and continue.
 
 Every worker and reviewer prompt for roadmap work must include this exact
 constraint:
@@ -47,468 +47,74 @@ constraint:
 > Do not request sandbox escalation. If a useful command would require
 > approval, network, or escalation, skip it and report it as skipped.
 
-The coordinating agent should treat approval-gated checks as unavailable
-verification, not as blockers. If a spawned agent does request approval anyway,
-do not wait for that prompt. Mark the command as skipped, redirect the agent
-once with the constraint above, or close/replace that agent and continue the
-phase using local evidence plus an explicit skipped-check note.
+Treat approval-gated checks as skipped verification, not blockers. Do not wait
+on a subagent approval prompt before starting other independent work. If a
+spawned agent requests approval anyway, redirect it once with the constraint
+above or close/replace it. If a skipped command is required to prove
+correctness, record the gap and use another local check or a narrower review.
+Controller prompts for roadmap phases should state that approval prompts from
+workers or reviewers are abandoned as skipped verification, never treated as
+human-blocking phase status.
 
-Roadmap phases must keep progressing when only optional verification is
-approval-gated. Do not wait on a subagent approval prompt before starting other
-independent implementation or review work. If the skipped command is required
-to prove correctness, record the gap in the slice review and use another local
-check or a narrower review prompt. Controller prompts for future roadmap phases
-should state that approval prompts from workers or reviewers are abandoned as
-skipped verification, never treated as human-blocking phase status.
+## Hard Constraints
 
-## Command Surface
+- Do not add default shellouts to `helm`, `kustomize`, `kubectl`, `argocd`, or
+  config-management plugins.
+- Do not add live Kubernetes or Argo CD server behavior without updating the
+  live integration design gate and preserving default offline behavior.
+- Do not hard-code `home-ops` paths, chart versions, branches, or repository
+  names.
+- Do not print Secret manifest values, repository credentials, tokens, SSH
+  private keys, passphrases, registry credentials, or credential-bearing URLs.
+- Do not read ambient Git credential helpers, ambient Helm registry config, or
+  discovered repository Secret credential fields unless a future design update
+  explicitly allows it.
+- Do not expose `internal/...` package types through `pkg/drydock`.
+- Do not use Flux ownership rules. Changed-only behavior is Argo
+  Application-aware; overlapping Applications are not collapsed to one owner.
+- Do not dedupe repeated resources across Applications. Last-wins behavior
+  applies only inside one Application and must emit a diagnostic.
+- Keep caches outside the current and baseline repository trees, protected
+  roots, and symlink-resolved equivalents.
+- Keep stdout machine-parseable for structured/list outputs; diagnostics and
+  failure summaries belong on stderr unless status text is the primary output.
 
-Current top-level commands:
+## Common Mistakes
 
-- `drydock get apps --path .`: list discovered Applications by name.
-- `drydock get images --path .`: render discovered Applications and list
-  conservative workload container images.
-- `drydock build apps --path .`: render all discovered Applications.
-- `drydock build app NAME --path .`: render exactly one discovered
-  Application by `metadata.name`.
-- `drydock test apps --path .`: report PASS/FAIL/SKIPPED render status
-  for all discovered Applications without printing manifests.
-- `drydock test app NAME --path .`: report PASS/FAIL/SKIPPED render
-  status for exactly one discovered Application by `metadata.name`.
-- `drydock diff apps --path . --path-orig ../base`: render and diff all
-  Applications between a baseline tree and current tree.
-- `drydock diff app NAME --path . --path-orig ../base`: diff one
-  requested Application by name between a baseline tree and current tree.
-- `drydock diff images --path . --path-orig ../base`: render both trees
-  and compare conservative workload container images.
-- `drydock diag --path .`: run repository diagnostics without printing
-  manifests.
-- `drydock diag --path . -o json|yaml`: write a structured diagnostic
-  report to stdout.
-- `drydock diag --path . --settings -o json|yaml`: include a redacted Argo CD
-  settings summary from the CLI only. The summary may include Lua/action names
-  and SHA-256 hashes, but never raw Lua bodies.
-- `drydock cache path`: print resolved Git, chart, and remote cache roots.
-- `drydock cache list`: list recognized local cache entries.
-- `drydock cache prune --older-than 720h --dry-run`: report stale cache
-  entries without deleting them.
-- `drydock cache delete --source git --key HASH --yes`: delete one recognized
-  cache entry.
-- `drydock version`: print version, commit, Go version, and Argo CD module.
+- Treating `--allow-network` as a Helm or remote-resource fetch flag. It is for
+  Git repository-source fetching only.
+- Hiding Secrets or CRDs by default. `--skip-secrets`, `--skip-crds`, and
+  `--skip-kind` are explicit opt-ins.
+- Executing Lua or server-side diff/apply settings offline. Parse and report
+  metadata only unless the design changes.
+- Adding provider generator network/API access. Provider-backed
+  ApplicationSet generators are fixture-backed offline.
+- Assuming old plans or reports describe current file sizes. Use `rg --files`,
+  `wc -l`, and current code before repeating historical claims.
 
-Named app arguments accept `NAME` or `NAMESPACE/NAME`; use the
-namespace-qualified form when the same `metadata.name` exists in multiple
-namespaces.
+## Task Routing
 
-Current shared flags are `--path`, `--path-orig`, `--selector`/`-l`, `--repo-map`,
-`--allow-network`, `--git-cache-dir`, `--refresh-git`, `--offline`,
-`--git-username`, `--git-password`, `--git-bearer-token`,
-`--git-ssh-key-file`, `--git-ssh-passphrase`, `--git-known-hosts-file`,
-`--refresh-charts`, `--chart-cache-dir`, `--helm-username`,
-`--helm-password`, `--helm-bearer-token`, `--registry-config`,
-`--refresh-remotes`, `--remote-cache-dir`, `--remote-username`,
-`--remote-password`, `--remote-bearer-token`, `--changed-only`,
-`--strict-changed-only`, `--strict`, `--exit-code`, `--output`/`-o`,
-`--unified`/`-u`, `--strip-attr`, `--skip-kind`, `--skip-crds`,
-`--skip-secrets`, `--appset-provider-fixture`, `--limit-bytes`, and
-`--cache-events`, and `--parallelism`.
+Use `rg` first, then read the smallest relevant files.
 
-Cache lifecycle commands additionally use `--source`, `--older-than`,
-`--dry-run`, `--yes`, `--key`, and `--all`. They do not render, fetch, clone,
-or read credential flags.
+| Task | Start Here |
+| --- | --- |
+| CLI flags, output, exit codes | `internal/cli`, `internal/requestopts` |
+| Public Go API | `pkg/drydock`, then matching `internal/app` request types |
+| Discovery and Argo settings | `internal/discovery`, `internal/config` |
+| ApplicationSet generation | `internal/appset` |
+| Application planning and orchestration | `internal/app` |
+| Kustomize, Helm, directory rendering | `internal/render` |
+| Git, chart, remote acquisition | `internal/source`, `internal/chart`, `internal/remote`, `internal/acquisition` |
+| Manifest diffs and image extraction | `internal/diff`, `internal/manifest` |
+| Cache lifecycle and cache events | `internal/cache`, `internal/cacheevent`, `internal/cli/cache.go` |
+| Path containment and symlink rules | `internal/pathsafety`, then caller-specific checks |
 
-Public embedding API lives in `pkg/drydock`. Keep its exported types free
-of `internal/...` package types. Package-level functions should follow CLI
-default network/cache behavior, while `NewClient` accepts public Git, chart,
-and remote-resource acquirer interfaces for deterministic tests and embedding
-without shelling out or requiring network access. Preserve partial render
-results: public `Render` must return successful manifests, diagnostics, and
-per-Application statuses even when one selected Application fails. Public
-diagnostics include stable `Code` values. Public render/list/diff results may
-include cache events when `RecordCacheEvents` is enabled. `Config.Parallelism`
-is opt-in runtime parallelism for render and diff paths; `0` means the default
-sequential behavior, negative values fail validation before rendering, and
-non-default values must preserve selected Application order for manifests,
-statuses, diagnostics, cache events, and structured public results. Parallel
-rendering snapshots cache-backed sources before render reads so same-target
-Git, chart, or remote-resource refreshes cannot race with readers.
-
-Config management plugin sources fail closed in the CLI/default path. The
-public API may render plugins only through explicit in-process
-`Config.PluginRenderer` injection. `NewPluginRegistry` dispatches injected
-renderers by trimmed `plugin.name`; unnamed plugin sources match only an
-explicitly registered empty-name renderer. `Config.PluginTimeout` bounds each
-injected plugin renderer call and propagates through render, manifest diff, and
-image diff APIs. Plugin registry misses and default unsupported plugin sources
-must use explicit `plugin.unsupported`; renderer failures and timeouts must use
-explicit `plugin.failed`; renderer-supplied plugin diagnostics without explicit
-codes use neutral `plugin.unspecified`. Caller cancellation must not be
-reclassified as a plugin timeout.
-
-## Settings Discovery
-
-Settings flow into `internal/config.ArgoSettings`. Providers must record
-provenance and must fail closed on conflicting discovered values. Repository
-Secrets may contribute non-sensitive fields (`url`, `type`, `name`, `project`,
-`enableOCI`) but must not retain username, password, bearer tokens, SSH keys,
-or TLS material.
-
-## AppProject Validation
-
-Discovery includes local `AppProject` manifests. Source repository and
-destination server/name/namespace checks are offline diagnostics derived from
-those local manifests only. Application source namespace checks are also local
-diagnostics when `spec.sourceNamespaces` is set.
-
-RBAC roles and policies are parsed and reported as metadata only; do not
-simulate Argo CD authorization or Casbin policy evaluation offline.
-`permitOnlyProjectScopedClusters` is reported as deferred metadata, and
-project-scoped cluster Secret enforcement is not simulated offline.
-
-Repository credential matching diagnostics use discovered repository Secret
-metadata only. They may compare non-sensitive fields such as `url`, `type`,
-`name`, `project`, and `enableOCI`, but must never read, retain, or report
-secret credential fields.
-
-## Discovery
-
-Discovery scans YAML files for Argo CD entrypoints. Keep scanning generic; do
-not hard-code `home-ops` paths. Use `--app-manifests` style narrowing when a
-caller wants explicit paths. Classify candidates by full GVK, skip symlinks in
-default scans, reject symlink components in explicit app manifest paths, and
-keep default scans tolerant of unrelated YAML files.
-
-## ApplicationSet Support
-
-`internal/appset` supports local Git directories, Git files, list, matrix,
-merge, and explicit fixture-backed provider generators with Go templates. Use
-path-style matching, keep include/exclude semantics deterministic, and
-preserve Argo CD template behavior such as `missingkey=error` and Sprig
-functions. Multiple supported top-level generators are evaluated independently
-and concatenated in manifest order. Unsupported generators must produce
-diagnostics.
-
-List generators support both `elements` and `elementsYaml`; `elementsYaml`
-entries must decode to mapping objects, including empty mappings. Supported
-generators honor generator-level selectors and generator-level template
-overrides. Selectors match flattened parameter keys for nested Go-template
-maps.
-
-Matrix generators support exactly two child generators. The second child is
-interpolated from first-child params, including list `elementsYaml` values.
-Merge generators support two or more child generators and deterministic
-merge-key overlays in base generator order. Supported matrix/merge children
-are list, Git directories, Git files, fixture-backed provider generators, and
-nested matrix/merge combinations where the Argo CD v3 nested JSON API permits
-them.
-
-Provider-backed ApplicationSet generators are offline fixture-backed only.
-The CLI flag is `--appset-provider-fixture PATH`, and the public Go API uses
-`ApplicationSetProviderFixtures` or `ApplicationSetProviderData`. Do not add
-Kubernetes API reads, Argo CD API reads, SCM/pull-request/cloud API calls,
-plugin service calls, shellouts, or ambient credential discovery for these
-generators. If no provider data is supplied, preserve the existing unsupported
-generator diagnostic. If provider data is supplied but no entries match, emit
-`appset.provider-no-match`. If a provider filter cannot be evaluated from
-fixture fields, fail closed with `appset.provider-unsupported-filter`.
-Fixture decode/shape errors use `appset.provider-fixture-invalid`.
-
-Git files generator support is intentionally local and fail-closed. Matches are
-sorted by normalized relative path. Do not follow symlinks, allow absolute
-paths, or allow `..` escapes outside the repository root. Decode only YAML/JSON
-mapping documents; arrays, scalars, invalid files, and empty documents must
-produce diagnostics. Supported path params are `.path.path`,
-`.path.basename`, `.path.basenameNormalized`, `.path.filename`,
-`.path.filenameNormalized`, and `.path.segments`, with `pathParamPrefix`
-variants matching Argo CD. Non-Go-template params use `path`,
-`path.basename`, `path.basenameNormalized`, `path.filename`,
-`path.filenameNormalized`, and indexed segment keys such as `path[0]`, again
-with prefix variants when `pathParamPrefix` is set. Decoded file values become
-template params; Go-template mode preserves nested maps and non-Go-template
-mode flattens nested keys. Git files `values` use the same `values.*` and
-`.values.*` behavior as Git directories. Git files `exclude: true` excludes a
-file even when another pattern includes it.
-
-## Supported Features
-
-The MVP currently supports:
-
-- Direct `Application` CR discovery.
-- Git-directory, Git-files, list, matrix, merge, and explicit
-  fixture-backed provider `ApplicationSet` CR expansion, including list
-  `elementsYaml`, generator selectors, generator template overrides, matrix
-  interpolation, deterministic merge-key overlays, and supported nested
-  matrix/merge combinations.
-- Offline fixture-backed cluster, clusterDecisionResource, SCM provider,
-  pull-request, and plugin ApplicationSet generators through local YAML/JSON
-  files or public Go API data structs.
-- Single-source and multi-source planning for supported source types.
-- Kustomize, directory, local Helm chart, Kustomize `helmCharts`, remote
-  Kustomize HTTP(S) files and Git refs, and chart-only remote Helm source
-  rendering through Go libraries.
-- Deterministic `--repo-map` and gated `--allow-network` Git clone/fetch for
-  path-based Git sources.
-- Explicit Git HTTPS bearer/basic auth, Git SSH key-file auth, HTTP(S) Helm
-  bearer/basic auth, HTTP(S) remote Kustomize resource bearer/basic auth, and
-  explicit OCI Helm registry config path plumbing.
-- Repeated-resource last-wins behavior inside one Application, with a
-  diagnostic.
-- Parent Application-aware desired manifest identity for diffs.
-- Conservative container image extraction.
-- Stable diagnostic codes in CLI JSON/YAML and public API diagnostic output.
-- Structured `diag -o json` and `diag -o yaml` output.
-- Optional redacted cache event reporting for Git, Helm, and remote Kustomize
-  acquisition through `diag --cache-events` and public API results.
-- First-class local cache lifecycle commands for path inspection, listing,
-  pruning, and deletion of recognized Git, Helm chart, and remote Kustomize
-  cache entries.
-- Structured `get apps` and `get images` output with table, name, JSON, and
-  YAML formats.
-- Per-Application `test apps` and `test app` PASS/FAIL/SKIPPED status output
-  with text, JSON, and YAML formats.
-- Public Go API for listing, rendering, manifest diffs, image diffs, and
-  injectable Git/chart/remote-resource acquisition plus injectable config
-  management plugin rendering, named plugin renderer registry dispatch, and
-  plugin renderer timeout controls.
-- Config management plugin source detection with fail-closed diagnostics in
-  the CLI/default path when no plugin renderer is injected.
-- Structured `diff apps` and `diff app` output with diff, JSON, and YAML
-  formats, plus metadata label/annotation stripping through `--strip-attr`.
-- Application-level `spec.ignoreDifferences[]` `jsonPointers`,
-  `jqPathExpressions`, and `managedFieldsManagers` for rendered manifest diffs.
-- Global `resource.customizations.ignoreDifferences.*` `jsonPointers`,
-  `jqPathExpressions`, and `managedFieldsManagers` from discovered `argocd-cm`
-  and Argo CD Helm values `configs.cm`.
-- Global `resource.customizations.knownTypeFields.*` normalization for
-  desired-vs-desired manifest diffs.
-- Global `resource.customizations.ignoreResourceUpdates.*` parsing and
-  diagnostics; these settings are not applied to desired-vs-desired diffs.
-- Health and action customization parsing and diagnostics, including
-  `useOpenLibs`/Lua metadata. Lua is not executed offline. Structured
-  `diag --settings` output reports only redacted metadata such as names,
-  booleans, and SHA-256 hashes.
-- Discovered `resource.compareoptions.ignoreResourceStatusField` and
-  `resource.compareoptions.ignoreAggregatedRoles`.
-- Argo CD core resource exclusions plus discovered global
-  `resource.exclusions` and `resource.inclusions`.
-- Explicit rendered-resource filters through `--skip-kind`, `--skip-crds`, and
-  `--skip-secrets` for build output, diffs, image extraction, tests, and the
-  public Go API.
-- Argo CD settings discovery from Helm values, `argocd-cm`, and repository
-  Secrets, limited to rendering/diff-affecting non-secret values.
-- Discovered `AppProject` manifests with offline diagnostics for Application
-  project references, source repositories, destinations, source namespaces,
-  RBAC role metadata, deferred project-scoped cluster metadata, and repository
-  Secret metadata matching without reading credential fields.
-
-## Deferred Features
-
-Do not treat these as supported without an explicit design update:
-
-- Live-cluster diffing or live Argo CD API calls.
-- Any live-integration command, public API, or compatibility backend that has
-  not first passed `docs/reports/2026-05-24-live-integration-design-gate.md`.
-- Kubernetes API defaulting or admission mutation.
-- Live server-side apply field ownership prediction and live Argo CD
-  server-side diff behavior.
-- Managed fields ignores when ownership data exists only on the live cluster.
-- Health or action Lua execution.
-- Live destination cluster existence checks.
-- Sync window enforcement.
-- Source integrity signature verification.
-- Project-scoped cluster Secret enforcement.
-- Full Argo CD RBAC/Casbin authorization simulation.
-- CLI config management plugin execution, shellout plugin adapters, Argo CD
-  repo-server sidecar plugin discovery, ambient plugin configuration, ambient
-  plugin environment loading, and plugin credential injection.
-- Live Kubernetes, Argo CD, SCM provider, pull-request provider, cloud
-  provider, or plugin-service access for ApplicationSet provider generators.
-  Use explicit local fixtures instead.
-- Required default shellouts to `helm`, `kustomize`, `kubectl`, or `argocd`.
-
-## Source Resolution
-
-Repository URL maps are deterministic and preferred over network fetches.
-Normalize URLs consistently, including optional `.git` suffixes, trailing
-slashes, and whitespace. Path source resolution order is: explicit
-`--repo-map`, existing source path under `--path`, gated `--allow-network`
-Git clone/fetch, then clear failure. `--allow-network` controls only Git
-repository-source fetching and must not control Helm chart acquisition.
-Git repositories cache under the user cache or `--git-cache-dir`, never inside
-the current or baseline Git repository tree. `--refresh-git` fetches existing
-cached Git repositories before rendering. `--offline` cannot be combined with
-`--allow-network`.
-Chart acquisition is shared by Kustomize `helmCharts` and Argo CD chart-only
-sources. Public chart fetching is allowed by default for render/diff commands;
-`--offline` disables chart and remote Kustomize resource network fetches. Cache
-charts under the user cache or `--chart-cache-dir`, never inside the Git
-repository tree.
-Chart network behavior is controlled by `--offline`, `--refresh-charts`, and
-`--chart-cache-dir`. Do not reuse `--allow-network` for Helm chart fetching;
-that flag is reserved for Git repository-source fetching.
-Remote Kustomize resource network behavior is controlled by `--offline`,
-`--refresh-remotes`, and `--remote-cache-dir`. Cache remote Kustomize resources
-under the user cache or `--remote-cache-dir`, never inside the Git repository
-tree.
-OCI chart acquisition must use Helm registry Go libraries, not helm pull.
-Cache events are optional reporting data only. They must redact targets and
-errors, must not expose credentials or credential-bearing URLs, and must not
-write cache metadata or generated manifests inside the current or baseline
-repository tree.
-Cache lifecycle commands are local filesystem operations only. They must not
-render Applications, clone/fetch Git repositories, fetch Helm charts, fetch
-remote Kustomize resources, or read credential flags. New cache entries write
-hidden `.drydock-cache/metadata.json` sidecars with redacted metadata. Cache
-prune/delete must require `--yes` unless `--dry-run` is set, and cache roots
-must be rejected when they resolve inside the current working directory,
-selected `--path`/`--path-orig` protected roots, any Git repository tree, or
-symlink-resolved equivalents. Cache lifecycle commands never retry failed
-network or authentication acquisitions; repopulate caches through the relevant
-render/build/diff acquisition path.
-
-Authenticated source handling is explicit and non-interactive. Do not prompt
-for credentials, read ambient Git credential helpers, or read ambient Helm
-registry config in this slice. Git HTTPS auth supports bearer token and basic
-auth; bearer token wins over username/password. Git SSH auth supports
-`ssh://git@host/org/repo.git`, `git@host:org/repo.git`, and
-`ssh://host/org/repo.git`; omitted SSH usernames default to `git`. SSH auth
-requires `--git-ssh-key-file` and `--git-known-hosts-file`; missing key files,
-missing known-hosts files, and passphrase failures must fail before network
-access with non-secret diagnostics. HTTP(S) Helm auth and HTTP(S) remote
-Kustomize resource auth support bearer token and basic auth; bearer token wins
-over username/password. Kustomize Git remote refs reuse the explicit `--git-*`
-credentials. OCI Helm auth is provided only through an explicit
-`--registry-config` path. Do not consume secret data from discovered Argo CD
-repository Secrets until a later design update says so. Never print password,
-bearer token, SSH private key, SSH passphrase, remote resource credential, or
-registry credential values.
-
-## Application Planning
-
-Application planning follows Argo CD precedence: `spec.sources` wins over
-`spec.source`. Validate refs before rendering. Ref-only sources are valid and
-produce no manifests. A source may not combine `ref` and `chart`. Destination
-namespace normalization only fills namespace-scoped objects; until discovery
-mapping exists, keep the built-in cluster-scoped GVK predicate current.
-Within one Application, repeated rendered resource identity is last-wins and
-must emit a diagnostic. Do not dedupe across Applications; cross-Application
-shared-resource behavior belongs to live Argo CD semantics and is out of scope
-for offline MVP.
-
-Diff output is keyed by parent Application plus child resource identity.
-Same-named resources rendered by different Applications must remain separate.
-Named `diff app` compares the requested Application directly in both trees and
-does not use changed-only Git path filtering. If the Application exists only in
-current, show additions; if it exists only in baseline, show deletions; if it is
-absent from both, error.
-Manifest diff output supports unified diff, JSON, and YAML formats. Keep
-diagnostics on stderr for structured diff output. Do not support `-o name` for
-`diff apps` or `diff app`; that format is for list-style commands and image
-projections. `--strip-attr KEY` removes matching metadata label and annotation
-keys before manifest body comparison and diff generation.
-`--skip-kind KIND`, `--skip-crds`, and `--skip-secrets` drop rendered resources
-before build output, diff comparison, and image extraction. These filters are
-explicit opt-ins; do not change defaults to hide Secrets or CRDs.
-Application `spec.ignoreDifferences[]` rules are honored with Argo CD glob
-matching for group/kind and exact optional name/namespace matches.
-When both sides contain a matching resource, apply the union of left and right
-Application-local and global `jsonPointers`, `jqPathExpressions`, and
-`managedFieldsManagers` to both sides before comparison. JQ expressions run as
-`del(<expression>)` and fail closed on compile/runtime errors.
-`managedFieldsManagers` is an offline desired-vs-desired approximation using
-rendered `metadata.managedFields`; do not claim live server-side ownership
-prediction. `resource.compareoptions` supports status-field and aggregated-role
-normalization. `knownTypeFields` normalization is applied to
-desired-vs-desired diffs. `ignoreResourceUpdates`, health customizations,
-action customizations, and `useOpenLibs`/Lua metadata are parsed and reported
-as settings diagnostics only; do not execute Lua or apply
-`ignoreResourceUpdates` as a desired diff ignore. When emitting structured
-settings summaries, include redacted metadata only and never print raw Lua
-bodies or secret-looking strings embedded in Lua.
-Image extraction is conservative in the MVP and may be broadened only behind an
-explicit mode.
-CLI diff exit codes are fixed: 0 means success/no diff, 1 means success/diff
-found, 2 means runtime/config/render error. Keep command errors quiet enough for
-CI and avoid Cobra usage spam on runtime failures.
-
-The orchestrator owns end-to-end flow. Keep it thin: discovery, ApplicationSet
-expansion, planning, rendering, and formatting should stay in their packages. If
-orchestration grows complicated, split behavior into narrower package functions
-rather than accumulating logic in one file.
-Build results preserve partial manifests, diagnostics, and per-Application
-statuses when one selected Application fails. CLI commands must keep stdout
-machine-parseable; diagnostics and failure summaries belong on stderr unless
-the command's primary output is explicitly status text.
-
-## Renderers
-
-Renderers implement `internal/render.Renderer`. The default implementation path
-must not shell out. Directory rendering parses YAML/JSON files and flattens
-Kubernetes `List` objects. Keep directory rendering contained to the resolved
-repository root: reject escaping source paths and symlinked source path
-components, and skip symlinked files or directories while walking.
-Kustomize rendering uses Go libraries. Preserve the no-shellout path. Build
-options from Argo settings must be parsed and applied explicitly; do not pass
-opaque command-line strings to a shell. Until that parsing exists, nonempty
-Kustomize build options must fail explicitly. Before invoking Kustomize,
-prevalidate local Kustomization graph references and reject unsupported remote
-refs, absolute paths, repo-root escapes, and symlinked graph entries.
-Kustomize graph references may point elsewhere inside the same repository, such
-as shared components/, but must not escape the repository root or traverse
-symlinked graph entries. Treat Kustomize path-bearing fields fail-closed:
-validate new fields before render rather than assuming Kustomize's loader
-restrictions are enough. Kustomize helmCharts must be rendered through
-drydock's chart
-acquisition and Helm Go renderer into a temporary workspace. Do not enable
-Kustomize's Helm shellout plugin or write generated charts into the Git tree.
-Remote Kustomize HTTP(S) file refs and Git refs are fetched through
-drydock's remote resource cache and rewritten into the temporary
-Kustomize workspace. Supported remote fields include `resources`, `bases`,
-`components`, `patches.path`, `patchesJson6902.path`, non-inline
-`patchesStrategicMerge`, `generators`, `transformers`, `validators`,
-`configurations`, `crds`, `openapi.path`, `replacements.path`, and
-ConfigMap/Secret generator `files`, `envs`, and `env` entries. Remote
-Kustomize HTTP(S) credentials are explicit flags only and must be redacted in
-errors. Kustomize Git refs reuse explicit Git credentials but follow remote
-Kustomize cache/offline/refresh semantics, not repository-source
-`--allow-network` semantics.
-Helm rendering must use Go libraries by default. Preserve these Argo CD
-semantics in the MVP: release name defaults to Application name, destination
-namespace is passed to Helm, and `valuesObject` overrides `values`.
-
-## Repository Layout
-
-- `cmd/drydock/`: binary entrypoint
-- `internal/cli/`: Cobra command tree and exit-code mapping
-- `internal/config/`: Argo settings discovery and merge model
-- `internal/discovery/`: repository scanning for Applications, ApplicationSets, and settings
-- `internal/appset/`: supported local ApplicationSet generators
-- `internal/source/`: repository URL normalization, repo maps, and network opt-in
-- `internal/render/`: renderer interfaces and source renderers
-- `internal/app/`: Application source planning and multi-source combine behavior
-- `internal/change/`: changed-file detection and Application input indexing
-- `internal/diff/`: parent-aware desired-vs-desired diffs and image diffs
-- `internal/format/`: CLI table, name, JSON, and YAML output helpers
-- `internal/diagnostic/`: structured warnings/errors with provenance and strict-mode promotion
-- `internal/manifest/`: YAML/JSON document loading, List flattening, and resource identity helpers
-- `testdata/`: minimal fixtures only
+For detailed task constraints, read the matching section in
+`docs/agent-reference.md`.
 
 ## Validation
 
-Portable integration fixtures should model `home-ops` behavior without depending
-on `/Users/ethan.shold/git/home-ops`. Real `home-ops` checks belong in optional
-smoke scripts that use temporary worktrees.
-Optional real-repository smokes must use temporary worktrees and clean them up.
-Never mutate `/Users/ethan.shold/git/home-ops` directly from tests.
-`docs/home-ops-pattern-coverage.md` is the source of truth for real
-`home-ops` pattern coverage. Normal tests must use portable fixtures; optional
-smoke scripts may target the real checkout through temporary worktrees only.
-Portable fixtures cover HTTP(S) and Git remote Kustomize resources, including
-remote bases, components, authenticated HTTP resource credentials, and remote
-patch files. The real `home-ops` `apps/system-upgrade` remote-resource pattern
-is covered and supported.
-
-Run the smallest check that covers your change:
+Run the smallest check that covers your change. Common checks:
 
 ```bash
 go test ./...
@@ -518,82 +124,21 @@ golangci-lint run
 markdownlint-cli2 '**/*.md'
 ```
 
-If a tool is not installed locally, say so in your final response.
+If a command is unavailable or approval-gated, skip it and record the gap
+rather than requesting sandbox escalation from a subagent.
 
-## Hard Constraints
+Portable integration fixtures should model real repository behavior without
+depending on `/Users/ethan.shold/git/home-ops`. Optional real-repository smokes
+must use temporary worktrees and clean them up. Never mutate the real
+`home-ops` checkout from tests.
 
-- Default workflows must not require `helm`, `kustomize`, `kubectl`, or
-  `argocd` on `PATH`.
-- The render/diff path must stay inside the compiled Go executable and its
-  libraries. Do not require a live cluster, sidecar service, Argo CD server, or
-  host-installed renderer to produce PR diffs.
-- Public Helm chart fetching for Kustomize `helmCharts` and chart-only sources
-  is enabled by default for render/diff. Git repository-source fetching is
-  gated by `--allow-network` and must not be controlled by Helm chart flags.
-- Do not print secret data. Repository Secrets may provide non-sensitive
-  metadata only.
-- Manifest loaders must never print Secret values. Diagnostics may include file
-  paths and YAML pointers, not manifest data.
-- `spec.sources` takes precedence over `spec.source`.
-- Changed-only mode must not use Flux-style "most-specific owner wins"; Argo CD
-  may have overlapping Applications.
-- Changed-only mode keeps every Application whose inputs intersect a changed
-  file. Do not implement Flux-style longest-prefix ownership. If any changed
-  path is unowned, default behavior is render-all with diagnostics; strict mode
-  can fail.
-- Server-side diff/apply settings are diagnostics in offline mode, not
-  executable behavior.
+## Maintenance Rule
 
-## Exit Codes
-
-- `0`: command succeeded and, for diff-style commands, no diff was found.
-- `1`: command succeeded and a diff was found when `--exit-code` is enabled.
-- `2`: tool, configuration, discovery, or render error.
-
-`--exit-code=false` makes diffs exit `0` for local inspection. Warnings do not
-change exit code unless strict mode promotes them to errors. Cobra usage output
-should stay suppressed for runtime failures.
-
-## Common Mistakes
-
-- Do not add a shellout path for default rendering when a Go library path is
-  available.
-- Do not enable network access implicitly for unmapped Git/repository sources;
-  keep them local-only until repository fetching is explicitly wired.
-- Do not use `--allow-network` as the Helm chart-fetch flag; chart fetching is
-  controlled by `--offline`, `--refresh-charts`, and `--chart-cache-dir`.
-- Do not put Git, chart, or remote Kustomize resource caches inside protected
-  repository roots, Git repository trees, or symlink-resolved equivalents.
-- Do not print Secret manifest values or repository credentials in diagnostics.
-- Do not hard-code one user's repository layout or `home-ops` paths.
-- Do not collapse overlapping Applications to one owner in changed-only mode.
-- Do not dedupe repeated resources across Applications; only last-wins inside
-  one Application is part of the offline model.
-- Do not execute server-side diff/apply settings offline; report them as
-  limitations.
-- Do not add live Kubernetes or Argo CD server behavior without first updating
-  the live integration design gate and preserving default offline behavior.
-- Do not add supported features, commands, renderers, providers, diagnostics, or
-  validation commands without updating this file.
-
-## Future Live Work Checklist
-
-Before implementing any live Kubernetes, Argo CD server, server-side diff,
-defaulting, admission, or live managed-fields behavior:
-
-- Update and obtain approval for the live integration design gate first.
-- Keep default render, diff, image, and diagnostic commands offline.
-- Require explicit opt-in configuration for every live endpoint, credential,
-  and mode.
-- Keep external tool shellouts out of default workflows; any compatibility
-  shellout must be separately approved and opt-in.
-- Add tests proving default paths run without a cluster, Argo CD runtime,
-  network access, `kubectl`, `argocd`, Helm CLI, or Kustomize CLI.
-- Document unsupported divergence instead of silently approximating live-only
-  behavior.
-
-## Agent Maintenance Rule
-
-When you add, remove, or materially change a package, command, renderer,
-setting provider, diagnostic, validation command, or supported Argo CD feature,
-update this file in the same change.
+- Update `AGENTS.md` when mandatory agent rules, hard constraints, validation
+  expectations, or subagent coordination rules change.
+- Update `docs/agent-orientation.md` when package routing or high-context file
+  guidance changes.
+- Update `docs/agent-reference.md` when task-specific agent constraints or
+  canonical doc links change.
+- Update `docs/design.md` when product architecture or behavior changes.
+- Update `docs/roadmap.md` when supported/deferred feature status changes.
