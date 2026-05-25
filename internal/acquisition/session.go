@@ -170,11 +170,28 @@ func (acquirer cacheSafeRemoteAcquirer) Acquire(ctx context.Context, request rem
 		return acquirer.delegate.Acquire(ctx, request, opts)
 	}
 	unlock := acquirer.locks.lock(key)
-	defer unlock()
 
 	result, err := acquirer.delegate.Acquire(ctx, request, opts)
-	if err != nil || !acquirer.snapshot {
+	if err != nil {
+		unlock()
 		return result, err
+	}
+	if request.Kind == remote.RequestGitRepo {
+		delegateRelease := result.Release
+		var once sync.Once
+		result.Release = func() {
+			once.Do(func() {
+				if delegateRelease != nil {
+					delegateRelease()
+				}
+				unlock()
+			})
+		}
+		return result, nil
+	}
+	defer unlock()
+	if !acquirer.snapshot {
+		return result, nil
 	}
 	snapshot, err := snapshotCachePath(acquirer.snapshotRoot, "remote", result.Path)
 	if err != nil {

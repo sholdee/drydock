@@ -204,12 +204,14 @@ failure they print diagnostics to stderr and do not mix invalid partial manifest
 streams into stdout.
 
 Use `--parallelism N` on render-backed commands to render up to `N`
-Applications concurrently. The default is `--parallelism 1`; `0` is treated as
-`1`, and negative values fail before rendering. Parallel rendering preserves
-selected Application order for manifests, statuses, diagnostics, cache events,
-and structured output. It does not enable network access, does not change
-offline behavior, and snapshots cache-backed sources before render reads so
-same-target cache refreshes do not race with readers.
+Applications concurrently. `drydock test apps` defaults to host CPU
+parallelism; other render-backed commands default to `1`. Parallel rendering
+preserves selected Application order for manifests, statuses, diagnostics,
+cache events, and structured output. Cache-backed chart, Git source, and remote
+HTTP resources are snapshot-protected before render reads. Remote Kustomize Git
+refs hold the cache lock only long enough to collect and copy the local
+Kustomize graph into the temporary workspace, avoiding full repository
+snapshots while preserving same-process cache safety.
 
 Rendering supports directory sources, Kustomize sources, local Helm charts,
 Kustomize `helmCharts`, remote Kustomize HTTP(S) files and Git refs, and
