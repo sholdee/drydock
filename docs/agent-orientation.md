@@ -67,22 +67,18 @@ historical line-count claims, then load only the relevant behavior family:
 - `internal/render/kustomize_workspace.go`: now a smaller workspace
   orchestrator; helper behavior lives in neighboring split files.
 
-For historical size data and completed refactor phases, read
-`docs/reports/2026-05-25-refactor-orientation-roadmap.md` instead of copying
-old line counts into new task prompts.
+Use `rg --files`, `wc -l`, and current code inspection before repeating file
+size or refactor-history claims. Historical reports can explain why a shape
+exists, but they are not current sizing evidence.
 
-## Historical Plans And Reports
+## Historical Reports
 
-`docs/plans/` and `docs/reports/` contain both active guidance and closed
-history. Treat completed phase reports as evidence of why a shape exists, not
-as proof that old line counts or old next steps are still current.
+Implemented plans are pruned from active docs and remain available through git
+history. Treat retained reports as historical evidence only, not required
+current guidance or proof that old line counts and next steps are still true.
 
-High-signal reports:
+Required report:
 
-- `docs/reports/2026-05-25-refactor-orientation-roadmap.md`: current
-  refactor/orientation history.
-- `docs/reports/2026-05-24-refactoring-audit.md`: closed R1-R5 remediation
-  history.
 - `docs/reports/2026-05-24-live-integration-design-gate.md`: required before
   proposing live runtime work.
 
