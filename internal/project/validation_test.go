@@ -198,6 +198,60 @@ func TestValidateApplicationsMatchesCanonicalOCIRepositoryMetadata(t *testing.T)
 	assertNoDiagnostic(t, diags, "missing repository metadata")
 }
 
+func TestValidateApplicationsAllowsProjectScopedRepositorySecretsAsSources(t *testing.T) {
+	settings := config.DefaultSettings()
+	settings.HelmRepositories["https://charts.example.test"] = config.RepositorySettings{
+		URL:     "https://charts.example.test",
+		Type:    "helm",
+		Project: "platform",
+	}
+	settings.HelmRepositories["ghcr.io/example/charts"] = config.RepositorySettings{
+		URL:       "ghcr.io/example/charts",
+		Type:      "helm",
+		EnableOCI: true,
+		Project:   "platform",
+	}
+	apps := []argoappv1.Application{
+		application("http-chart", "platform", argoappv1.ApplicationSource{
+			RepoURL: "https://charts.example.test",
+			Chart:   "demo",
+		}, argoappv1.ApplicationDestination{Name: "in-cluster", Namespace: "workloads"}),
+		application("oci-chart", "platform", argoappv1.ApplicationSource{
+			RepoURL: "ghcr.io/example/charts",
+			Chart:   "demo",
+		}, argoappv1.ApplicationDestination{Name: "in-cluster", Namespace: "workloads"}),
+	}
+	projects := []argoappv1.AppProject{{
+		ObjectMeta: objectMeta("platform"),
+		Spec: argoappv1.AppProjectSpec{
+			SourceRepos:  []string{"https://github.com/example/gitops"},
+			Destinations: []argoappv1.ApplicationDestination{{Name: "*", Namespace: "*"}},
+		},
+	}}
+
+	diags := ValidateApplications(apps, projects, settings)
+	assertNoDiagnostic(t, diags, "source repository")
+	assertNoDiagnostic(t, diags, "missing repository metadata")
+}
+
+func TestValidateApplicationsDisplaysBareOCIRepositoryURLsInDiagnostics(t *testing.T) {
+	apps := []argoappv1.Application{application("oci-chart", "platform", argoappv1.ApplicationSource{
+		RepoURL: "ghcr.io/example/charts",
+		Chart:   "demo",
+	}, argoappv1.ApplicationDestination{Name: "in-cluster", Namespace: "workloads"})}
+	projects := []argoappv1.AppProject{{
+		ObjectMeta: objectMeta("platform"),
+		Spec: argoappv1.AppProjectSpec{
+			SourceRepos:  []string{"https://github.com/example/gitops"},
+			Destinations: []argoappv1.ApplicationDestination{{Name: "*", Namespace: "*"}},
+		},
+	}}
+
+	diags := ValidateApplications(apps, projects, config.DefaultSettings())
+	assertDiagnostic(t, diags, "ghcr.io/example/charts")
+	assertNoDiagnostic(t, diags, "[invalid-url]")
+}
+
 func TestValidateApplicationsRedactsCredentialBearingRepoURLsInDiagnostics(t *testing.T) {
 	secretURL := "https://user:password@example.test/org/repo.git?token=query-secret#frag-secret"
 	apps := []argoappv1.Application{application("demo", "platform", argoappv1.ApplicationSource{

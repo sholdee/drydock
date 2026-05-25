@@ -37,6 +37,7 @@ func ValidateApplications(apps []argoappv1.Application, projects []argoappv1.App
 				continue
 			}
 		}
+		proj = effectiveProject(proj, settings)
 
 		diags = append(diags, validateSources(app, proj)...)
 		diags = append(diags, validateDestination(app, proj)...)
@@ -59,6 +60,26 @@ func projectIndex(projects []argoappv1.AppProject) map[string]argoappv1.AppProje
 		index[proj.Name] = proj
 	}
 	return index
+}
+
+func effectiveProject(proj argoappv1.AppProject, settings config.ArgoSettings) argoappv1.AppProject {
+	repos := make([]string, 0)
+	for key, repo := range settings.HelmRepositories {
+		if repo.Project != proj.Name {
+			continue
+		}
+		repoURL := strings.TrimSpace(repo.URL)
+		if repoURL == "" {
+			repoURL = strings.TrimSpace(key)
+		}
+		if repoURL == "" {
+			continue
+		}
+		repos = append(repos, repoURL)
+	}
+	sort.Strings(repos)
+	proj.Spec.SourceRepos = append(proj.Spec.SourceRepos, repos...)
+	return proj
 }
 
 func applicationProject(app argoappv1.Application) string {
@@ -204,7 +225,26 @@ func normalizeOCIURL(raw string) (string, bool) {
 }
 
 func displayRepoURL(raw string) string {
-	return remote.RedactGitRepoURL(raw)
+	if redacted := remote.RedactGitRepoURL(raw); redacted != "[invalid-url]" {
+		return redacted
+	}
+	return redactOCIRepoURL(raw)
+}
+
+func redactOCIRepoURL(raw string) string {
+	trimmed := strings.TrimSpace(raw)
+	normalized, err := chart.NormalizeRepository(trimmed, chart.RepositoryOCI)
+	if err != nil {
+		return "[invalid-url]"
+	}
+	redacted := remote.RedactURL(normalized)
+	if redacted == "[invalid-url]" {
+		return redacted
+	}
+	if !strings.Contains(trimmed, "://") {
+		return strings.TrimPrefix(redacted, "oci://")
+	}
+	return redacted
 }
 
 func projectWarning(app argoappv1.Application, message string) diagnostic.Diagnostic {
