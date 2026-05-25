@@ -29,7 +29,7 @@ func DecodeDocuments(path string, reader io.Reader) ([]Document, error) {
 			return out, nil
 		}
 		if err != nil {
-			return nil, fmt.Errorf("%s document %d: decode YAML document failed", path, index)
+			return nil, fmt.Errorf("%s document %d: decode YAML document failed: %w", path, index, err)
 		}
 		if raw == nil {
 			index++

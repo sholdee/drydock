@@ -30,6 +30,22 @@ func TestParseKustomizeRemoteRef(t *testing.T) {
 			subpath:  "deploy/base",
 		},
 		{
+			name:     "github shorthand ref",
+			ref:      "https://github.com/argoproj/argo-cd/manifests/crds?ref=v3.4.2",
+			kind:     kustomizeRemoteGit,
+			repoURL:  "https://github.com/argoproj/argo-cd",
+			revision: "v3.4.2",
+			subpath:  "manifests/crds",
+		},
+		{
+			name:     "git path segment shorthand ref",
+			ref:      "https://git.example.test/platform/repo.git/deploy/base?ref=main",
+			kind:     kustomizeRemoteGit,
+			repoURL:  "https://git.example.test/platform/repo.git",
+			revision: "main",
+			subpath:  "deploy/base",
+		},
+		{
 			name:     "git URL ref defaults revision",
 			ref:      "https://github.com/org/repo.git//deploy/base",
 			kind:     kustomizeRemoteGit,
