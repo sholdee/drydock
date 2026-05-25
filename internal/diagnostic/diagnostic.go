@@ -106,6 +106,8 @@ func StableCode(diag Diagnostic) string {
 		return CodePluginUnspecified
 	case "render":
 		return "render.failed"
+	case "health":
+		return healthCode(diag.Message)
 	case "repeated-resource":
 		return "render.repeated-resource"
 	case "changed-only":
@@ -172,5 +174,22 @@ func repositoryCode(message string) string {
 		return "repository.project-mismatch"
 	default:
 		return "repository.unspecified"
+	}
+}
+
+func healthCode(message string) string {
+	switch {
+	case strings.Contains(message, "failed to compile health Lua"):
+		return "health.lua-compile-failed"
+	case strings.Contains(message, "ambiguous health Lua customizations"):
+		return "health.lua-ambiguous-customization"
+	case strings.Contains(message, "Lua returned an invalid health status"):
+		return "health.lua-invalid-status"
+	case strings.Contains(message, "expect table output from Lua script"):
+		return "health.lua-invalid-return"
+	case strings.Contains(message, "health Lua failed"):
+		return "health.lua-failed"
+	default:
+		return "health.unspecified"
 	}
 }
