@@ -39,22 +39,6 @@ func runCLICommand(t *testing.T, cmd *cobra.Command, args ...string) cliCommandR
 	return cliCommandResult{Stdout: stdout.String(), Stderr: stderr.String()}
 }
 
-func runCLICommandAllowError(t *testing.T, cmd *cobra.Command, args ...string) (cliCommandResult, error) {
-	t.Helper()
-	var stdout bytes.Buffer
-	var stderr bytes.Buffer
-	cmd.SetArgs(args)
-	cmd.SetOut(&stdout)
-	cmd.SetErr(&stderr)
-	err := cmd.Execute()
-	return cliCommandResult{Stdout: stdout.String(), Stderr: stderr.String()}, err
-}
-
-func runCLIAllowError(t *testing.T, args ...string) (cliCommandResult, error) {
-	t.Helper()
-	return runCLICommandAllowError(t, NewRootCommand(VersionInfo{}), args...)
-}
-
 func assertStdoutContainsAll(t *testing.T, result cliCommandResult, wants ...string) {
 	t.Helper()
 	for _, want := range wants {

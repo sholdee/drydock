@@ -23,16 +23,38 @@ func TestWriteMetadataGoldenRedactsTarget(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ReadFile(metadata) error = %v", err)
 	}
-	for _, leaked := range []string{"user", "secret", "token=", "fragment"} {
-		if strings.Contains(string(data), leaked) {
-			t.Fatalf("metadata leaked %q:\n%s", leaked, string(data))
-		}
-	}
+	assertMetadataDoesNotLeak(t, data, "user", "secret", "token=", "fragment")
 
 	var got Metadata
 	if err := json.Unmarshal(data, &got); err != nil {
 		t.Fatalf("Unmarshal(metadata) error = %v", err)
 	}
+	assertMetadataGoldenShape(t, got)
+
+	read, err := ReadMetadata(entry, SourceGit, "git", "abc123")
+	if err != nil {
+		t.Fatalf("ReadMetadata() error = %v", err)
+	}
+	if read == nil {
+		t.Fatal("ReadMetadata() = nil, want metadata")
+	}
+	if read.Target != "https://example.test/repo.git" {
+		t.Fatalf("ReadMetadata().Target = %q, want redacted target", read.Target)
+	}
+}
+
+func assertMetadataDoesNotLeak(t *testing.T, data []byte, forbidden ...string) {
+	t.Helper()
+	text := string(data)
+	for _, leaked := range forbidden {
+		if strings.Contains(text, leaked) {
+			t.Fatalf("metadata leaked %q:\n%s", leaked, text)
+		}
+	}
+}
+
+func assertMetadataGoldenShape(t *testing.T, got Metadata) {
+	t.Helper()
 	if got.SchemaVersion != 1 {
 		t.Fatalf("SchemaVersion = %d, want 1", got.SchemaVersion)
 	}
@@ -53,16 +75,5 @@ func TestWriteMetadataGoldenRedactsTarget(t *testing.T) {
 	}
 	if got.UpdatedAt.IsZero() {
 		t.Fatal("UpdatedAt is zero, want timestamp")
-	}
-
-	read, err := ReadMetadata(entry, SourceGit, "git", "abc123")
-	if err != nil {
-		t.Fatalf("ReadMetadata() error = %v", err)
-	}
-	if read == nil {
-		t.Fatal("ReadMetadata() = nil, want metadata")
-	}
-	if read.Target != "https://example.test/repo.git" {
-		t.Fatalf("ReadMetadata().Target = %q, want redacted target", read.Target)
 	}
 }
