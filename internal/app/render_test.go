@@ -129,6 +129,41 @@ func TestRenderApplicationPassesHelmValues(t *testing.T) {
 	}
 }
 
+func TestRenderApplicationPassesDirectoryOptions(t *testing.T) {
+	application := argoappv1.Application{
+		ObjectMeta: metav1.ObjectMeta{Namespace: "argocd", Name: "demo"},
+		Spec: argoappv1.ApplicationSpec{
+			Source: &argoappv1.ApplicationSource{
+				RepoURL: "https://repo",
+				Path:    "manifests",
+				Directory: &argoappv1.ApplicationSourceDirectory{
+					Recurse: true,
+					Include: "*.yaml",
+					Exclude: "disabled/*",
+				},
+			},
+		},
+	}
+	var got render.RenderOptions
+	provider := providerFunc(func(_ context.Context, _ render.ResolvedSource, opts render.RenderOptions) ([]render.Manifest, []diagnostic.Diagnostic, error) {
+		got = opts
+		return nil, nil, nil
+	})
+
+	if _, err := RenderApplication(context.Background(), application, provider); err != nil {
+		t.Fatalf("RenderApplication() error = %v", err)
+	}
+	if !got.DirectoryRecurse {
+		t.Fatalf("DirectoryRecurse = false, want true")
+	}
+	if got.DirectoryInclude != "*.yaml" {
+		t.Fatalf("DirectoryInclude = %q, want *.yaml", got.DirectoryInclude)
+	}
+	if got.DirectoryExclude != "disabled/*" {
+		t.Fatalf("DirectoryExclude = %q, want disabled/*", got.DirectoryExclude)
+	}
+}
+
 func TestRenderApplicationPassesHelmIgnoreMissingValueFiles(t *testing.T) {
 	application := argoappv1.Application{
 		ObjectMeta: metav1.ObjectMeta{Namespace: "argocd", Name: "demo"},

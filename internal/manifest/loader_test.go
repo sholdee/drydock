@@ -61,6 +61,26 @@ func TestDecodeDocumentsDecodesJSON(t *testing.T) {
 	}
 }
 
+func TestDecodeDocumentsDuplicateKeyErrorIncludesParserContext(t *testing.T) {
+	input := strings.NewReader(`apiVersion: v1
+kind: Service
+metadata:
+  name: first
+metadata:
+  name: second
+`)
+
+	_, err := DecodeDocuments("service.yaml", input)
+	if err == nil {
+		t.Fatal("DecodeDocuments() error = nil, want duplicate key error")
+	}
+	for _, want := range []string{"service.yaml document 0", "decode YAML document failed", "mapping key \"metadata\" already defined"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("DecodeDocuments() error = %q, want %q", err.Error(), want)
+		}
+	}
+}
+
 func TestDecodeDocumentsNormalizesYAMLNumbersForUnstructuredDeepCopy(t *testing.T) {
 	input := strings.NewReader(`
 apiVersion: apps/v1

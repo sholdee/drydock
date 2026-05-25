@@ -92,6 +92,11 @@ func renderOptions(application argoappv1.Application, source argoappv1.Applicati
 		Project:      application.Spec.Project,
 		Namespace:    application.Spec.Destination.Namespace,
 	}
+	if source.Directory != nil {
+		opts.DirectoryRecurse = source.Directory.Recurse
+		opts.DirectoryInclude = source.Directory.Include
+		opts.DirectoryExclude = source.Directory.Exclude
+	}
 	if source.Plugin != nil {
 		plugin := source.Plugin.DeepCopy()
 		opts.Plugin = &render.PluginConfig{

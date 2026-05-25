@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	argoglob "github.com/argoproj/argo-cd/v3/util/glob"
 	"github.com/sholdee/drydock/internal/diagnostic"
 	"github.com/sholdee/drydock/internal/manifest"
 	"sigs.k8s.io/kustomize/api/types"
@@ -15,7 +16,7 @@ import (
 type DirectoryRenderer struct{}
 
 //nolint:gocyclo // Directory rendering keeps walk, filtering, decode, and path provenance in one pass.
-func (DirectoryRenderer) Render(ctx context.Context, source ResolvedSource, _ RenderOptions) ([]Manifest, []diagnostic.Diagnostic, error) {
+func (DirectoryRenderer) Render(ctx context.Context, source ResolvedSource, opts RenderOptions) ([]Manifest, []diagnostic.Diagnostic, error) {
 	root, err := sourceRoot(source)
 	if err != nil {
 		return nil, nil, err
@@ -40,12 +41,18 @@ func (DirectoryRenderer) Render(ctx context.Context, source ResolvedSource, _ Re
 			if path != root && strings.HasPrefix(entry.Name(), ".") {
 				return filepath.SkipDir
 			}
+			if path != root && !opts.DirectoryRecurse {
+				return filepath.SkipDir
+			}
 			return nil
 		}
 		if !isManifestFile(path) {
 			return nil
 		}
 		if skipFiles[filepath.Clean(path)] {
+			return nil
+		}
+		if !directoryManifestIncluded(root, path, opts) {
 			return nil
 		}
 
@@ -76,6 +83,21 @@ func (DirectoryRenderer) Render(ctx context.Context, source ResolvedSource, _ Re
 		return nil
 	})
 	return out, nil, err
+}
+
+func directoryManifestIncluded(root, filePath string, opts RenderOptions) bool {
+	rel, err := filepath.Rel(root, filePath)
+	if err != nil {
+		return false
+	}
+	rel = filepath.ToSlash(rel)
+	if opts.DirectoryExclude != "" && argoglob.Match(opts.DirectoryExclude, rel) {
+		return false
+	}
+	if opts.DirectoryInclude != "" && !argoglob.Match(opts.DirectoryInclude, rel) {
+		return false
+	}
+	return true
 }
 
 func kustomizeGeneratorSkipSet(ctx context.Context, root string) (map[string]bool, error) {

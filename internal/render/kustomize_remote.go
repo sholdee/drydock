@@ -86,7 +86,10 @@ func parseKustomizeGitURLRef(original, raw string) (kustomizeRemoteRef, bool, er
 
 	repoPath, subpath, ok := strings.Cut(parsed.Path, "//")
 	if !ok {
-		return kustomizeRemoteRef{}, false, nil
+		repoPath, subpath, ok = inferKustomizeGitURLPath(parsed.Host, parsed.Path)
+		if !ok {
+			return kustomizeRemoteRef{}, false, nil
+		}
 	}
 	repoPath = strings.TrimSuffix(repoPath, "/")
 	subpath = strings.TrimPrefix(subpath, "/")
@@ -105,6 +108,41 @@ func parseKustomizeGitURLRef(original, raw string) (kustomizeRemoteRef, bool, er
 		Revision: revision,
 		Subpath:  path.Clean(subpath),
 	}, true, nil
+}
+
+func inferKustomizeGitURLPath(host, rawPath string) (string, string, bool) {
+	segments := pathSegments(rawPath)
+	if len(segments) < 2 {
+		return "", "", false
+	}
+	for i, segment := range segments {
+		if strings.HasSuffix(segment, ".git") {
+			if i == len(segments)-1 {
+				return "", "", false
+			}
+			return "/" + path.Join(segments[:i+1]...), path.Join(segments[i+1:]...), true
+		}
+	}
+	if !isKnownGitHost(strings.ToLower(host)) || len(segments) < 3 {
+		return "", "", false
+	}
+	return "/" + path.Join(segments[:2]...), path.Join(segments[2:]...), true
+}
+
+func pathSegments(rawPath string) []string {
+	trimmed := strings.Trim(rawPath, "/")
+	if trimmed == "" {
+		return nil
+	}
+	parts := strings.Split(trimmed, "/")
+	segments := parts[:0]
+	for _, part := range parts {
+		if part == "" {
+			continue
+		}
+		segments = append(segments, part)
+	}
+	return segments
 }
 
 func parseKustomizeGitSCPRef(original, raw string) (kustomizeRemoteRef, bool, error) {

@@ -37,6 +37,9 @@ type RenderOptions struct {
 	ValueFiles                   []string
 	ValueFilesBaseDir            string
 	IgnoreMissingValueFiles      bool
+	DirectoryRecurse             bool
+	DirectoryInclude             string
+	DirectoryExclude             string
 	ChartCacheDir                string
 	OfflineCharts                bool
 	RefreshCharts                bool

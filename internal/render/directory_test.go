@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"sort"
 	"strings"
 	"testing"
 
@@ -112,6 +113,145 @@ metadata:
 	}
 	if result[0].Object.GetName() != "visible" {
 		t.Fatalf("rendered object name = %q, want visible", result[0].Object.GetName())
+	}
+}
+
+func TestDirectoryRendererDefaultSkipsNestedManifests(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "apps", "root.yaml"), `
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: root
+`)
+	writeFile(t, filepath.Join(root, "apps", "nested", "child.yaml"), `
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: child
+`)
+
+	result, diags, err := (DirectoryRenderer{}).Render(context.Background(), ResolvedSource{
+		RepoRoot: root,
+		Path:     "apps",
+	}, RenderOptions{})
+	if err != nil {
+		t.Fatalf("Render() error = %v", err)
+	}
+	if len(diags) != 0 {
+		t.Fatalf("diagnostics = %#v", diags)
+	}
+	if got := directoryManifestNames(result); !reflect.DeepEqual(got, []string{"root"}) {
+		t.Fatalf("rendered names = %#v, want root only", got)
+	}
+}
+
+func TestDirectoryRendererHonorsDirectoryRecurse(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "apps", "root.yaml"), `
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: root
+`)
+	writeFile(t, filepath.Join(root, "apps", "nested", "child.yaml"), `
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: child
+`)
+
+	result, diags, err := (DirectoryRenderer{}).Render(context.Background(), ResolvedSource{
+		RepoRoot: root,
+		Path:     "apps",
+	}, RenderOptions{DirectoryRecurse: true})
+	if err != nil {
+		t.Fatalf("Render() error = %v", err)
+	}
+	if len(diags) != 0 {
+		t.Fatalf("diagnostics = %#v", diags)
+	}
+	if got := directoryManifestNames(result); !reflect.DeepEqual(got, []string{"child", "root"}) {
+		t.Fatalf("rendered names = %#v, want root and child", got)
+	}
+}
+
+func TestDirectoryRendererHonorsDirectoryInclude(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "apps", "root.yaml"), `
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: root
+`)
+	writeFile(t, filepath.Join(root, "apps", "nested", "child.yaml"), `
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: child
+`)
+	writeFile(t, filepath.Join(root, "apps", "nested", "ignored.json"), `{
+  "apiVersion": "v1",
+  "kind": "ConfigMap",
+  "metadata": {"name": "ignored"}
+}`)
+
+	result, _, err := (DirectoryRenderer{}).Render(context.Background(), ResolvedSource{
+		RepoRoot: root,
+		Path:     "apps",
+	}, RenderOptions{DirectoryRecurse: true, DirectoryInclude: "*.yaml"})
+	if err != nil {
+		t.Fatalf("Render() error = %v", err)
+	}
+	if got := directoryManifestNames(result); !reflect.DeepEqual(got, []string{"child", "root"}) {
+		t.Fatalf("*.yaml rendered names = %#v, want root and child", got)
+	}
+
+	result, _, err = (DirectoryRenderer{}).Render(context.Background(), ResolvedSource{
+		RepoRoot: root,
+		Path:     "apps",
+	}, RenderOptions{DirectoryRecurse: true, DirectoryInclude: "**/*.yaml"})
+	if err != nil {
+		t.Fatalf("Render() error = %v", err)
+	}
+	if got := directoryManifestNames(result); !reflect.DeepEqual(got, []string{"child"}) {
+		t.Fatalf("**/*.yaml rendered names = %#v, want child", got)
+	}
+}
+
+func TestDirectoryRendererHonorsDirectoryExclude(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "apps", "root.yaml"), `
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: root
+`)
+	writeFile(t, filepath.Join(root, "apps", "disabled", "ignored.yaml"), `
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ignored
+`)
+	writeFile(t, filepath.Join(root, "apps", "enabled", "child.yaml"), `
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: child
+`)
+
+	result, diags, err := (DirectoryRenderer{}).Render(context.Background(), ResolvedSource{
+		RepoRoot: root,
+		Path:     "apps",
+	}, RenderOptions{DirectoryRecurse: true, DirectoryExclude: "disabled/*"})
+	if err != nil {
+		t.Fatalf("Render() error = %v", err)
+	}
+	if len(diags) != 0 {
+		t.Fatalf("diagnostics = %#v", diags)
+	}
+	if got := directoryManifestNames(result); !reflect.DeepEqual(got, []string{"child", "root"}) {
+		t.Fatalf("rendered names = %#v, want root and child", got)
 	}
 }
 
@@ -289,6 +429,15 @@ metadata:
 	if len(result) != 0 {
 		t.Fatalf("result = %#v, want no manifests from symlinked YAML", result)
 	}
+}
+
+func directoryManifestNames(manifests []Manifest) []string {
+	names := make([]string, 0, len(manifests))
+	for _, manifest := range manifests {
+		names = append(names, manifest.Object.GetName())
+	}
+	sort.Strings(names)
+	return names
 }
 
 func writeFile(t *testing.T, path, content string) {
