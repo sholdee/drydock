@@ -37,9 +37,10 @@ type customization struct {
 	healthLua   string
 	useOpenLibs bool
 	provenance  diagnostic.Provenance
+	compileErr  bool
 }
 
-func New(settings config.ArgoSettings) (Evaluator, []diagnostic.Diagnostic) {
+func New(settings config.ArgoSettings) Evaluator {
 	keys := make([]string, 0, len(settings.ResourceCustomizations))
 	for key, resourceCustomization := range settings.ResourceCustomizations {
 		if resourceCustomization.HasHealthLua && strings.TrimSpace(resourceCustomization.HealthLua) != "" {
@@ -49,7 +50,6 @@ func New(settings config.ArgoSettings) (Evaluator, []diagnostic.Diagnostic) {
 	sort.Strings(keys)
 
 	customizations := make([]customization, 0, len(keys))
-	var diags []diagnostic.Diagnostic
 	for _, key := range keys {
 		resourceCustomization := settings.ResourceCustomizations[key]
 		next := customization{
@@ -59,18 +59,12 @@ func New(settings config.ArgoSettings) (Evaluator, []diagnostic.Diagnostic) {
 			provenance:  resourceCustomization.Provenance,
 		}
 		if err := compileHealthLua(next.healthLua); err != nil {
-			diags = append(diags, diagnostic.Diagnostic{
-				Severity:   diagnostic.SeverityError,
-				Category:   "health",
-				Message:    fmt.Sprintf("failed to compile health Lua customization %q: syntax error", next.key),
-				Provenance: next.provenance,
-			})
-			continue
+			next.compileErr = true
 		}
 		customizations = append(customizations, next)
 	}
 
-	return Evaluator{customizations: customizations}, diagnostic.WithStableCodes(diags)
+	return Evaluator{customizations: customizations}
 }
 
 func (e Evaluator) Validate(ctx context.Context, request Request) []diagnostic.Diagnostic {
@@ -89,6 +83,10 @@ func (e Evaluator) Validate(ctx context.Context, request Request) []diagnostic.D
 		case 0:
 			continue
 		case 1:
+			if matches[0].compileErr {
+				diags = append(diags, compileFailureDiagnostic(request.Application, renderedManifest, matches[0]))
+				continue
+			}
 			diag := evaluate(request.Application, renderedManifest, matches[0])
 			if diag != nil {
 				diags = append(diags, *diag)
@@ -122,6 +120,20 @@ func (e Evaluator) matches(renderedManifest render.Manifest) []customization {
 		}
 	}
 	return matches
+}
+
+func compileFailureDiagnostic(application ApplicationRef, renderedManifest render.Manifest, customization customization) diagnostic.Diagnostic {
+	return diagnostic.Diagnostic{
+		Severity: diagnostic.SeverityError,
+		Category: "health",
+		Message: fmt.Sprintf(
+			"failed to compile health Lua for Application %s resource %s using customization %q: syntax error",
+			applicationName(application),
+			resourceName(renderedManifest),
+			customization.key,
+		),
+		Provenance: customization.provenance,
+	}
 }
 
 func evaluate(application ApplicationRef, renderedManifest render.Manifest, customization customization) *diagnostic.Diagnostic {

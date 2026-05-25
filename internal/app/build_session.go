@@ -55,14 +55,7 @@ func (session *buildSession) Build(ctx context.Context) (BuildResult, error) {
 	}
 	var healthEvaluator *luahealth.Evaluator
 	if session.request.ValidateLuaHealth {
-		evaluator, healthDiags := luahealth.New(result.Settings)
-		healthDiags = normalizeDiagnostics(healthDiags, session.request.Strict, false)
-		result.Diagnostics = append(result.Diagnostics, healthDiags...)
-		if err := diagnosticFailure(healthDiags, session.request.Strict); err != nil {
-			result.Statuses = skippedApplicationStatuses(result.Applications, err)
-			result.CacheEvents = session.cacheRecorder.Events()
-			return result, err
-		}
+		evaluator := luahealth.New(result.Settings)
 		healthEvaluator = &evaluator
 	}
 	if err := validateBuildNetworkOptions(session.request); err != nil {
