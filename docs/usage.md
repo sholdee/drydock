@@ -575,13 +575,12 @@ drydock diag --path . --settings -o json
 drydock diag --path . --settings -o yaml
 ```
 
-The settings summary is CLI-only in this phase. It reports parsed
-resource-customization metadata such as action names, `useOpenLibs`, and
-SHA-256 hashes for health/action Lua. It does not print raw Lua bodies,
-embedded secret-looking strings, or any live-cluster state. It also does not
-change default render/diff behavior, which remains offline and independent of a
-live Argo CD runtime, Kubernetes cluster, `kubectl`, or external renderer
-shellout.
+The settings summary is CLI-only. It reports parsed resource-customization
+metadata such as action names, `useOpenLibs`, and SHA-256 hashes for
+health/action Lua. It does not print raw Lua bodies, embedded secret-looking
+strings, or any live-cluster state. It also does not change default render/diff
+behavior, which remains offline and independent of a live Argo CD runtime,
+Kubernetes cluster, `kubectl`, or external renderer shellout.
 
 When local `AppProject` manifests are present, `diag`, `build`, `test`, `diff`,
 and the Go API report source repository and destination server/name/namespace
