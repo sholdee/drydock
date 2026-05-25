@@ -18,6 +18,7 @@ copying the same rule into multiple files.
 | `docs/ci.md` | Local CI and required verification contract. |
 | `docs/release.md` | Release and Argo CD dependency upgrade notes. |
 | `docs/home-ops-pattern-coverage.md` | Portable fixture coverage for home-ops-like patterns. |
+| `docs/logo/` | Project logo assets. |
 | `docs/reports/2026-05-24-live-integration-design-gate.md` | Required gate for live runtime work. |
 
 ## Anti-Sprawl Rules
