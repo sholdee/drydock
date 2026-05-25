@@ -2,9 +2,11 @@ package cli
 
 import (
 	"context"
+	"io"
 
 	"github.com/sholdee/drydock/internal/app"
 	"github.com/spf13/cobra"
+	"golang.org/x/term"
 )
 
 type VersionInfo struct {
@@ -15,6 +17,7 @@ type VersionInfo struct {
 
 type Dependencies struct {
 	Orchestrator Orchestrator
+	IsTerminal   func(io.Writer) bool
 }
 
 type Orchestrator interface {
@@ -28,7 +31,10 @@ type Orchestrator interface {
 }
 
 func defaultDependencies() Dependencies {
-	return Dependencies{Orchestrator: app.Orchestrator{}}
+	return Dependencies{
+		Orchestrator: app.Orchestrator{},
+		IsTerminal:   isTerminalWriter,
+	}
 }
 
 func NewRootCommand(info VersionInfo) *cobra.Command {
@@ -50,4 +56,16 @@ func NewRootCommandWithDependencies(info VersionInfo, deps Dependencies) *cobra.
 	cmd.AddCommand(newDiagCommand(deps))
 	cmd.AddCommand(newVersionCommand(info))
 	return cmd
+}
+
+func (deps Dependencies) isTerminal(w io.Writer) bool {
+	if deps.IsTerminal != nil {
+		return deps.IsTerminal(w)
+	}
+	return isTerminalWriter(w)
+}
+
+func isTerminalWriter(w io.Writer) bool {
+	file, ok := w.(interface{ Fd() uintptr })
+	return ok && term.IsTerminal(int(file.Fd()))
 }

@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"errors"
+	"fmt"
 	argoappv1 "github.com/argoproj/argo-cd/v3/pkg/apis/application/v1alpha1"
 	"github.com/sholdee/drydock/internal/diagnostic"
 	"github.com/sholdee/drydock/internal/render"
@@ -59,6 +60,143 @@ func TestBuildParallelismPreservesApplicationOrder(t *testing.T) {
 		"argocd/last:PASS",
 	})
 }
+
+func TestBuildStatusCallbackReportsCompletionOrder(t *testing.T) {
+	root := t.TempDir()
+	chartRoot := t.TempDir()
+	writeTestChart(t, chartRoot, "slow")
+	writeTestChart(t, chartRoot, "fast")
+	acquirer := newControlledChartAcquirer(chartRoot, []string{"slow", "fast"})
+
+	eventsCh := make(chan ApplicationStatusEvent, 2)
+	resultCh := make(chan BuildResult, 1)
+	errCh := make(chan error, 1)
+	go func() {
+		result, err := (Orchestrator{ChartAcquirer: acquirer}).Build(context.Background(), BuildRequest{
+			Path:        root,
+			StatusOnly:  true,
+			Parallelism: 2,
+			Applications: []argoappv1.Application{
+				chartOnlyApplication("slow", "slow", "1.0.0"),
+				chartOnlyApplication("fast", "fast", "1.0.0"),
+			},
+			StatusCallback: func(event ApplicationStatusEvent) error {
+				eventsCh <- event
+				return nil
+			},
+		})
+		resultCh <- result
+		errCh <- err
+	}()
+
+	acquirer.waitStarted(t, "slow", "fast")
+	acquirer.release("fast")
+	var first ApplicationStatusEvent
+	select {
+	case first = <-eventsCh:
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for first status callback before slow chart release")
+	}
+	if got, want := eventStatusKey(first), "argocd/fast:PASS:1/2"; got != want {
+		t.Fatalf("first event = %q, want %q", got, want)
+	}
+	select {
+	case event := <-eventsCh:
+		t.Fatalf("second event = %#v before slow chart was released", event)
+	case <-time.After(50 * time.Millisecond):
+	}
+	acquirer.release("slow")
+
+	result := <-resultCh
+	if err := <-errCh; err != nil {
+		t.Fatalf("Build() error = %v", err)
+	}
+	assertApplicationStatusOrder(t, result.Statuses, []string{"argocd/slow:PASS", "argocd/fast:PASS"})
+	var second ApplicationStatusEvent
+	select {
+	case second = <-eventsCh:
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for second status callback after slow chart release")
+	}
+	if got, want := eventStatusKey(second), "argocd/slow:PASS:2/2"; got != want {
+		t.Fatalf("second event = %q, want %q", got, want)
+	}
+}
+
+func TestBuildStatusCallbackErrorStopsBuild(t *testing.T) {
+	root := t.TempDir()
+	writeBuildApplication(t, root, "demo", "demo")
+
+	result, err := Orchestrator{}.Build(context.Background(), BuildRequest{
+		Path:        root,
+		StatusOnly:  true,
+		Parallelism: 1,
+		StatusCallback: func(ApplicationStatusEvent) error {
+			return errors.New("write status")
+		},
+	})
+	if err == nil || !strings.Contains(err.Error(), "write status") {
+		t.Fatalf("Build() error = %v, want callback error", err)
+	}
+	assertApplicationStatusOrder(t, result.Statuses, []string{"argocd/demo:PASS"})
+}
+
+func TestBuildStatusCallbackErrorStopsParallelCallbacks(t *testing.T) {
+	root := t.TempDir()
+	chartRoot := t.TempDir()
+	writeTestChart(t, chartRoot, "slow")
+	writeTestChart(t, chartRoot, "fast")
+	acquirer := newControlledChartAcquirer(chartRoot, []string{"slow", "fast"})
+
+	resultCh := make(chan struct {
+		result BuildResult
+		err    error
+	}, 1)
+	callbacks := 0
+	go func() {
+		result, err := (Orchestrator{ChartAcquirer: acquirer}).Build(context.Background(), BuildRequest{
+			Path:        root,
+			StatusOnly:  true,
+			Parallelism: 2,
+			Applications: []argoappv1.Application{
+				chartOnlyApplication("slow", "slow", "1.0.0"),
+				chartOnlyApplication("fast", "fast", "1.0.0"),
+			},
+			StatusCallback: func(ApplicationStatusEvent) error {
+				callbacks++
+				return errors.New("write status")
+			},
+		})
+		resultCh <- struct {
+			result BuildResult
+			err    error
+		}{result: result, err: err}
+	}()
+
+	acquirer.waitStarted(t, "slow", "fast")
+	acquirer.release("fast")
+
+	var out struct {
+		result BuildResult
+		err    error
+	}
+	select {
+	case out = <-resultCh:
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for Build() after callback error")
+	}
+	if out.err == nil || !strings.Contains(out.err.Error(), "write status") {
+		t.Fatalf("Build() error = %v, want callback error", out.err)
+	}
+	if callbacks != 1 {
+		t.Fatalf("callback count = %d, want one callback before cancellation", callbacks)
+	}
+}
+
+func eventStatusKey(event ApplicationStatusEvent) string {
+	return fmt.Sprintf("%s/%s:%s:%d/%d", event.Status.Namespace, event.Status.Name, event.Status.Status, event.Completed, event.Total)
+}
+
 func TestBuildParallelismPreservesPartialFailureStatuses(t *testing.T) {
 	root := t.TempDir()
 	chartRoot := t.TempDir()

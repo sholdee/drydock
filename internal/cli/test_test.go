@@ -3,10 +3,13 @@ package cli
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
+	"io"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/sholdee/drydock/internal/app"
 	"go.yaml.in/yaml/v4"
 )
 
@@ -205,6 +208,235 @@ func TestTestAppsYAMLOutputContainsSkippedStatusesOnly(t *testing.T) {
 	if strings.Contains(stdout.String(), "apiVersion") {
 		t.Fatalf("yaml output contains manifest-like body:\n%s", stdout.String())
 	}
+}
+
+func TestTestAppsTTYStreamsColoredStatusesProgressAndSummary(t *testing.T) {
+	recorder := &recordingCLIOrchestrator{
+		buildResult: app.BuildResult{
+			Statuses: []app.ApplicationStatus{
+				{Namespace: "argocd", Name: "slow", Status: app.ApplicationStatusPass},
+				{Namespace: "argocd", Name: "fast", Status: app.ApplicationStatusFail, Message: "boom"},
+			},
+		},
+		buildHook: func(request app.BuildRequest) error {
+			if err := request.StatusCallback(app.ApplicationStatusEvent{
+				Status:    app.ApplicationStatus{Namespace: "argocd", Name: "fast", Status: app.ApplicationStatusFail, Message: "boom"},
+				Completed: 1,
+				Total:     2,
+			}); err != nil {
+				return err
+			}
+			if err := request.StatusCallback(app.ApplicationStatusEvent{
+				Status:    app.ApplicationStatus{Namespace: "argocd", Name: "slow", Status: app.ApplicationStatusPass},
+				Completed: 2,
+				Total:     2,
+			}); err != nil {
+				return err
+			}
+			return nil
+		},
+	}
+	cmd := NewRootCommandWithDependencies(VersionInfo{}, Dependencies{
+		Orchestrator: recorder,
+		IsTerminal: func(io.Writer) bool {
+			return true
+		},
+	})
+	cmd.SetArgs([]string{"test", "apps"})
+	var stdout, stderr bytes.Buffer
+	cmd.SetOut(&stdout)
+	cmd.SetErr(&stderr)
+
+	err := cmd.Execute()
+	if code := commandErrorCode(err); code != 2 {
+		t.Fatalf("error code = %d, want 2; err = %v", code, err)
+	}
+	out := stdout.String()
+	if !strings.Contains(out, "\x1b[31mFAIL\x1b[0m argocd/fast boom\n") {
+		t.Fatalf("stdout = %q, want colored FAIL line", out)
+	}
+	if !strings.Contains(out, "\x1b[32mPASS\x1b[0m argocd/slow\n") {
+		t.Fatalf("stdout = %q, want colored PASS line", out)
+	}
+	if strings.Index(out, "fast") > strings.Index(out, "slow") {
+		t.Fatalf("stdout = %q, want completion order", out)
+	}
+	if !strings.Contains(out, "2 applications: 1 passed, 1 failed, 0 skipped in ") {
+		t.Fatalf("stdout = %q, want summary", out)
+	}
+	errOut := stderr.String()
+	if !strings.Contains(errOut, "Testing apps 1/2") || !strings.Contains(errOut, "Testing apps 2/2") {
+		t.Fatalf("stderr = %q, want progress", errOut)
+	}
+}
+
+func TestTestAppsNonTTYKeepsBufferedPlainOutput(t *testing.T) {
+	recorder := &recordingCLIOrchestrator{
+		buildResult: app.BuildResult{
+			Statuses: []app.ApplicationStatus{
+				{Namespace: "argocd", Name: "slow", Status: app.ApplicationStatusPass},
+				{Namespace: "argocd", Name: "fast", Status: app.ApplicationStatusPass},
+			},
+		},
+	}
+	cmd := NewRootCommandWithDependencies(VersionInfo{}, Dependencies{
+		Orchestrator: recorder,
+		IsTerminal: func(io.Writer) bool {
+			return false
+		},
+	})
+	cmd.SetArgs([]string{"test", "apps"})
+	var stdout, stderr bytes.Buffer
+	cmd.SetOut(&stdout)
+	cmd.SetErr(&stderr)
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+	if got, want := stdout.String(), "PASS argocd/slow\nPASS argocd/fast\n"; got != want {
+		t.Fatalf("stdout = %q, want %q", got, want)
+	}
+	if stderr.String() != "" {
+		t.Fatalf("stderr = %q, want empty", stderr.String())
+	}
+	if recorder.buildRequests[0].StatusCallback != nil {
+		t.Fatalf("StatusCallback configured for non-TTY output")
+	}
+}
+
+func TestTestAppsStructuredOutputDoesNotConfigureLiveReporter(t *testing.T) {
+	recorder := &recordingCLIOrchestrator{
+		buildResult: app.BuildResult{
+			Statuses: []app.ApplicationStatus{{Namespace: "argocd", Name: "demo", Status: app.ApplicationStatusPass}},
+		},
+	}
+	cmd := NewRootCommandWithDependencies(VersionInfo{}, Dependencies{
+		Orchestrator: recorder,
+		IsTerminal: func(io.Writer) bool {
+			return true
+		},
+	})
+	cmd.SetArgs([]string{"test", "apps", "-o", "json"})
+	var stdout, stderr bytes.Buffer
+	cmd.SetOut(&stdout)
+	cmd.SetErr(&stderr)
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+	var statuses []map[string]any
+	if err := json.Unmarshal(stdout.Bytes(), &statuses); err != nil {
+		t.Fatalf("json.Unmarshal() error = %v\nstdout:\n%s", err, stdout.String())
+	}
+	if recorder.buildRequests[0].StatusCallback != nil {
+		t.Fatalf("StatusCallback configured for structured output")
+	}
+	if stderr.String() != "" {
+		t.Fatalf("stderr = %q, want empty", stderr.String())
+	}
+}
+
+func TestTestAppsYAMLOutputDoesNotConfigureLiveReporter(t *testing.T) {
+	recorder := &recordingCLIOrchestrator{
+		buildResult: app.BuildResult{
+			Statuses: []app.ApplicationStatus{{Namespace: "argocd", Name: "demo", Status: app.ApplicationStatusPass}},
+		},
+	}
+	cmd := NewRootCommandWithDependencies(VersionInfo{}, Dependencies{
+		Orchestrator: recorder,
+		IsTerminal: func(io.Writer) bool {
+			return true
+		},
+	})
+	cmd.SetArgs([]string{"test", "apps", "-o", "yaml"})
+	var stdout, stderr bytes.Buffer
+	cmd.SetOut(&stdout)
+	cmd.SetErr(&stderr)
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+	var statuses []map[string]any
+	if err := yaml.Unmarshal(stdout.Bytes(), &statuses); err != nil {
+		t.Fatalf("yaml.Unmarshal() error = %v\nstdout:\n%s", err, stdout.String())
+	}
+	if recorder.buildRequests[0].StatusCallback != nil {
+		t.Fatalf("StatusCallback configured for YAML output")
+	}
+	if stderr.String() != "" {
+		t.Fatalf("stderr = %q, want empty", stderr.String())
+	}
+}
+
+func TestTestAppsTTYSetsLiveOutputWriteErrorApartFromTestFailure(t *testing.T) {
+	writeErr := errors.New("stdout closed")
+	recorder := &recordingCLIOrchestrator{
+		buildResult: app.BuildResult{
+			Statuses: []app.ApplicationStatus{{Namespace: "argocd", Name: "demo", Status: app.ApplicationStatusPass}},
+		},
+		buildHook: func(request app.BuildRequest) error {
+			return request.StatusCallback(app.ApplicationStatusEvent{
+				Status:    app.ApplicationStatus{Namespace: "argocd", Name: "demo", Status: app.ApplicationStatusPass},
+				Completed: 1,
+				Total:     1,
+			})
+		},
+	}
+	cmd := NewRootCommandWithDependencies(VersionInfo{}, Dependencies{
+		Orchestrator: recorder,
+		IsTerminal: func(io.Writer) bool {
+			return true
+		},
+	})
+	cmd.SetArgs([]string{"test", "apps"})
+	cmd.SetOut(failingWriter{err: writeErr})
+	var stderr bytes.Buffer
+	cmd.SetErr(&stderr)
+
+	err := cmd.Execute()
+	if err == nil || !errors.Is(err, writeErr) {
+		t.Fatalf("Execute() error = %v, want write error", err)
+	}
+	var exitErr ExitError
+	if errors.As(err, &exitErr) {
+		t.Fatalf("Execute() error = %v, must not be converted to ExitError", err)
+	}
+}
+
+func TestTestAppsTTYSkippedPreconditionStatusesAreColoredAndSummarized(t *testing.T) {
+	root := t.TempDir()
+	writeUnsupportedApplicationSetForCLI(t, root)
+
+	cmd := NewRootCommandWithDependencies(VersionInfo{}, Dependencies{
+		Orchestrator: app.Orchestrator{},
+		IsTerminal: func(io.Writer) bool {
+			return true
+		},
+	})
+	cmd.SetArgs([]string{"test", "apps", "--path", root, "--strict"})
+	var stdout, stderr bytes.Buffer
+	cmd.SetOut(&stdout)
+	cmd.SetErr(&stderr)
+
+	err := cmd.Execute()
+	if code := commandErrorCode(err); code != 2 {
+		t.Fatalf("error code = %d, want 2; err = %v", code, err)
+	}
+	out := stdout.String()
+	if !strings.Contains(out, "\x1b[33mSKIPPED\x1b[0m argocd/demo") {
+		t.Fatalf("stdout = %q, want colored SKIPPED", out)
+	}
+	if !strings.Contains(out, "1 applications: 0 passed, 0 failed, 1 skipped in ") {
+		t.Fatalf("stdout = %q, want summary", out)
+	}
+}
+
+type failingWriter struct {
+	err error
+}
+
+func (writer failingWriter) Write([]byte) (int, error) {
+	return 0, writer.err
 }
 
 func assertStatusOutputContains(t *testing.T, statuses []map[string]any, name, status string) {

@@ -247,11 +247,19 @@ type recordingCLIOrchestrator struct {
 	diffAppRequests    []app.DiffAppRequest
 	diffImagesRequests []app.DiffRequest
 	diagRequests       []app.DiagRequest
+	buildResult        app.BuildResult
+	buildError         error
+	buildHook          func(app.BuildRequest) error
 }
 
 func (orchestrator *recordingCLIOrchestrator) Build(_ context.Context, request app.BuildRequest) (app.BuildResult, error) {
 	orchestrator.buildRequests = append(orchestrator.buildRequests, request)
-	return app.BuildResult{}, nil
+	if orchestrator.buildHook != nil {
+		if err := orchestrator.buildHook(request); err != nil {
+			return orchestrator.buildResult, err
+		}
+	}
+	return orchestrator.buildResult, orchestrator.buildError
 }
 
 func (orchestrator *recordingCLIOrchestrator) BuildApp(_ context.Context, request app.BuildAppRequest) (app.BuildResult, error) {
