@@ -498,32 +498,10 @@ The repository includes linting from the start.
 
 ## Agent Guidance
 
-`AGENTS.md` is a first-class project artifact, not a final polish item.
-
-Implementation planning must include AGENTS.md work from the first task. As the
-package layout, command surface, render contracts, diagnostics, and validation
-commands evolve, `AGENTS.md` must be updated in parallel so a fresh agent with
-no conversation context can work effectively in the repository immediately.
-
-AGENTS.md should document:
-
-- what the tool is and is not
-- repository layout
-- supported Argo CD feature subset
-- package ownership and boundaries
-- command surface
-- validation commands
-- linting expectations
-- no-shellout design constraint
-- settings discovery rules
-- changed-only behavior
-- diagnostics and exit codes
-- common mistakes to avoid
-- current deferred features
-
-Any implementation slice that adds, removes, or materially changes a package,
-command, renderer, setting provider, or validation command must update
-AGENTS.md in the same slice.
+`AGENTS.md` owns mandatory agent operating rules and hard constraints.
+`docs/README.md` owns documentation routing. Update those files when a design
+change alters agent rules, package routing, validation expectations, or
+documentation ownership.
 
 ## Validation
 
