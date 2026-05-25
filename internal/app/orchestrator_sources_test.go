@@ -109,21 +109,21 @@ data:
 		t.Fatalf("data.source = %q, found %v, err %v; want repo-map", value, found, err)
 	}
 }
-func TestOrchestratorBuildErrorsForMissingUnmappedPathSource(t *testing.T) {
+func TestOrchestratorBuildOfflineErrorsForMissingUnmappedPathSource(t *testing.T) {
 	root := t.TempDir()
 	writeExternalPathApplication(t, root, "https://github.com/example/external", "manifests/external")
 
-	_, err := Orchestrator{}.Build(context.Background(), BuildRequest{Path: root})
+	_, err := Orchestrator{}.Build(context.Background(), BuildRequest{Path: root, Offline: true})
 	if err == nil {
-		t.Fatal("Build() error = nil, want missing unmapped source error")
+		t.Fatal("Build() error = nil, want offline cache miss")
 	}
-	for _, want := range []string{"manifests/external", "--repo-map", "--allow-network"} {
+	for _, want := range []string{"offline cache miss", "https://github.com/example/external"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Fatalf("Build() error = %q, want %q", err.Error(), want)
 		}
 	}
 }
-func TestOrchestratorBuildFetchesMissingPathSourceWhenNetworkAllowed(t *testing.T) {
+func TestOrchestratorBuildFetchesMissingPathSourceByDefault(t *testing.T) {
 	root := t.TempDir()
 	external := t.TempDir()
 	cacheDir := t.TempDir()
@@ -138,10 +138,9 @@ data:
 	acquirer := &recordingGitAcquirer{path: external, revision: "abc123"}
 
 	result, err := (Orchestrator{GitAcquirer: acquirer}).Build(context.Background(), BuildRequest{
-		Path:         root,
-		AllowNetwork: true,
-		GitCacheDir:  cacheDir,
-		RefreshGit:   true,
+		Path:        root,
+		GitCacheDir: cacheDir,
+		RefreshGit:  true,
 	})
 	if err != nil {
 		t.Fatalf("Build() error = %v", err)
@@ -160,22 +159,6 @@ data:
 		t.Fatalf("data.source = %q, found %v, err %v; want fetched", value, found, err)
 	}
 }
-func TestOrchestratorBuildRejectsOfflineWithGitNetwork(t *testing.T) {
-	root := t.TempDir()
-	writeExternalPathApplication(t, root, "https://github.com/example/external", "manifests/external")
-
-	_, err := Orchestrator{}.Build(context.Background(), BuildRequest{
-		Path:         root,
-		Offline:      true,
-		AllowNetwork: true,
-	})
-	if err == nil {
-		t.Fatal("Build() error = nil, want offline allow-network error")
-	}
-	if !strings.Contains(err.Error(), "--offline cannot be combined with --allow-network") {
-		t.Fatalf("Build() error = %q, want offline allow-network message", err.Error())
-	}
-}
 func TestOrchestratorBuildRejectsDefaultGitCacheInsideRepoRoot(t *testing.T) {
 	root := t.TempDir()
 	t.Setenv("HOME", root)
@@ -183,8 +166,7 @@ func TestOrchestratorBuildRejectsDefaultGitCacheInsideRepoRoot(t *testing.T) {
 	writeExternalPathApplication(t, root, "https://github.com/example/external", "manifests/external")
 
 	_, err := Orchestrator{}.Build(context.Background(), BuildRequest{
-		Path:         root,
-		AllowNetwork: true,
+		Path: root,
 	})
 	if err == nil {
 		t.Fatal("Build() error = nil, want git cache location error")
@@ -199,9 +181,8 @@ func TestOrchestratorBuildRejectsGitCacheInsideRepoMapRoot(t *testing.T) {
 	writeExternalPathApplication(t, root, "https://github.com/example/external", "manifests/external")
 
 	_, err := Orchestrator{}.Build(context.Background(), BuildRequest{
-		Path:         root,
-		AllowNetwork: true,
-		GitCacheDir:  filepath.Join(external, ".drydock", "git"),
+		Path:        root,
+		GitCacheDir: filepath.Join(external, ".drydock", "git"),
 		RepoMaps: []sourcepkg.RepoMap{{
 			URL:  "https://github.com/example/external.git",
 			Path: external,
@@ -355,8 +336,7 @@ spec:
 	acquirer := &recordingGitAcquirer{path: fetchedRoot, revision: "abc123"}
 
 	result, err := (Orchestrator{GitAcquirer: acquirer}).Build(context.Background(), BuildRequest{
-		Path:         root,
-		AllowNetwork: true,
+		Path: root,
 	})
 	if err != nil {
 		t.Fatalf("Build() error = %v", err)
@@ -408,8 +388,7 @@ spec:
 	}
 
 	result, err := (Orchestrator{GitAcquirer: acquirer}).Build(context.Background(), BuildRequest{
-		Path:         root,
-		AllowNetwork: true,
+		Path: root,
 	})
 	if err != nil {
 		t.Fatalf("Build() error = %v", err)
@@ -454,11 +433,11 @@ spec:
 	writeTestFile(t, filepath.Join(root, "leaked-values.yaml"), `value: from-current-repo
 `)
 
-	_, err := Orchestrator{}.Build(context.Background(), BuildRequest{Path: root})
+	_, err := Orchestrator{}.Build(context.Background(), BuildRequest{Path: root, Offline: true})
 	if err == nil {
 		t.Fatal("Build() error = nil, want unmapped ref repository error")
 	}
-	for _, want := range []string{"ref root $values", "--repo-map", "--allow-network"} {
+	for _, want := range []string{"ref root $values", "offline cache miss"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Fatalf("Build() error = %q, want %q", err.Error(), want)
 		}
@@ -640,7 +619,6 @@ spec:
 
 	result, err := Orchestrator{GitAcquirer: &recordingGitAcquirer{err: errors.New("offline cache miss for https://user:secret@example.test/repo.git?token=abc#frag")}}.Build(context.Background(), BuildRequest{
 		Path:              root,
-		AllowNetwork:      true,
 		RecordCacheEvents: true,
 	})
 	if err == nil {
@@ -680,6 +658,32 @@ func TestLocalProviderClassifiesChartOnlyOCIRepository(t *testing.T) {
 		t.Fatalf("request kind = %q, want %q", got, chart.RepositoryOCI)
 	}
 }
+
+func TestLocalProviderClassifiesBareChartOnlyRepositoryAsOCI(t *testing.T) {
+	root := t.TempDir()
+	chartDir := filepath.Join(root, "cache", "demo")
+	writeAppTestValueChart(t, chartDir)
+	acquirer := &recordingChartAcquirer{chartDir: chartDir}
+
+	_, _, err := (localProvider{
+		repoRoot:      root,
+		chartAcquirer: acquirer,
+	}).RenderSource(context.Background(), render.ResolvedSource{
+		Chart:          "demo",
+		RepoURL:        "ghcr.io/grafana/helm-charts",
+		TargetRevision: "2.0.0",
+	}, render.RenderOptions{AppName: "demo"})
+	if err != nil {
+		t.Fatalf("RenderSource() error = %v", err)
+	}
+	if len(acquirer.requests) != 1 {
+		t.Fatalf("chart acquire calls = %d, want 1", len(acquirer.requests))
+	}
+	if got := acquirer.requests[0].Kind; got != chart.RepositoryOCI {
+		t.Fatalf("request kind = %q, want %q", got, chart.RepositoryOCI)
+	}
+}
+
 func TestOrchestratorPassesChartCredentialsToKustomizeHelmCharts(t *testing.T) {
 	root := t.TempDir()
 	chartDir := filepath.Join(root, "cache", "demo")

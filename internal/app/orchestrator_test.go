@@ -401,12 +401,12 @@ spec:
 `)
 
 	_, err := (Orchestrator{}).Build(context.Background(), BuildRequest{
-		Path:         root,
-		Offline:      true,
-		AllowNetwork: true,
+		Path:        root,
+		Offline:     true,
+		GitCacheDir: filepath.Join(root, ".drydock", "git"),
 	})
-	if err == nil || !strings.Contains(err.Error(), "--offline cannot be combined with --allow-network") {
-		t.Fatalf("Build error = %v, want offline/network validation error", err)
+	if err == nil || !strings.Contains(err.Error(), "git cache dir") {
+		t.Fatalf("Build error = %v, want git cache validation error", err)
 	}
 }
 
@@ -415,7 +415,7 @@ func TestOrchestratorBuildPreservesPartialResults(t *testing.T) {
 	fixture.writeBuildApplication(t, "valid", "valid")
 	fixture.writeExternalPathApplicationNamed(t, "invalid", "https://github.com/example/missing", "manifests/missing")
 
-	result, err := fixture.buildAllowError(t, Orchestrator{}, BuildRequest{})
+	result, err := fixture.buildAllowError(t, Orchestrator{}, BuildRequest{Offline: true})
 	assertBuildErrorContains(t, err, "1 Application failed", "argocd/invalid")
 	if len(result.Manifests) != 1 {
 		t.Fatalf("len(Manifests) = %d, want 1", len(result.Manifests))
@@ -429,9 +429,80 @@ func TestOrchestratorBuildPreservesPartialResults(t *testing.T) {
 	if diag.Severity != diagnostic.SeverityError {
 		t.Fatalf("render diagnostic severity = %s, want error", diag.Severity)
 	}
-	if !strings.Contains(diag.Message, "invalid") || !strings.Contains(diag.Message, "--repo-map") {
+	if !strings.Contains(diag.Message, "invalid") || !strings.Contains(diag.Message, "offline cache miss") {
 		t.Fatalf("render diagnostic message = %q, want app context and render error", diag.Message)
 	}
+}
+
+func TestOrchestratorGeneratesApplicationSetFromLaterDocument(t *testing.T) {
+	root := t.TempDir()
+	writeTestFile(t, filepath.Join(root, "pineapp", "demo", "manifest.yaml"), `apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: direct-demo
+  namespace: argocd
+spec:
+  project: homelab
+  source:
+    repoURL: https://github.com/example/repo.git
+    path: pineapp/demo
+    targetRevision: HEAD
+    directory:
+      include: "{manifest.yaml}"
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: demo
+`)
+	writeTestFile(t, filepath.Join(root, "pineapp", "argocd", "manifest.yaml"), `apiVersion: v1
+kind: Namespace
+metadata:
+  name: argocd
+---
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: pineapp-homelab
+  namespace: argocd
+spec:
+  goTemplate: true
+  generators:
+    - git:
+        repoURL: https://github.com/example/repo.git
+        revision: HEAD
+        files:
+          - path: pineapp/demo/manifest.yaml
+  template:
+    metadata:
+      name: '{{.path.basename}}.manifest'
+      namespace: argocd
+    spec:
+      project: homelab
+      source:
+        repoURL: https://github.com/example/repo.git
+        path: '{{.path.path}}'
+        targetRevision: HEAD
+        directory:
+          include: "{manifest.yaml}"
+      destination:
+        server: https://kubernetes.default.svc
+        namespace: '{{.path.basename}}'
+`)
+
+	result, err := Orchestrator{}.ListApplications(context.Background(), BuildRequest{Path: root})
+	if err != nil {
+		t.Fatalf("ListApplications() error = %v", err)
+	}
+	for _, diag := range result.Diagnostics {
+		if diag.Category == "appset" && strings.Contains(diag.Message, "unsupported ApplicationSet generator") {
+			t.Fatalf("Diagnostics = %#v, want no unsupported ApplicationSet generator warning", result.Diagnostics)
+		}
+	}
+	for _, app := range result.Applications {
+		if app.Name == "demo.manifest" {
+			return
+		}
+	}
+	t.Fatalf("Applications = %#v, want generated demo.manifest", result.Applications)
 }
 
 func TestOrchestratorBuildStatusesIncludePassAndFailForPlanningErrors(t *testing.T) {

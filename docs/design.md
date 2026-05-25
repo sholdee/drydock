@@ -4,7 +4,7 @@ Date: 2026-05-22
 
 ## Purpose
 
-`drydock` is an independent Go CLI for offline Argo CD GitOps repository
+`drydock` is an independent Go CLI for local Argo CD GitOps repository
 analysis. Its first product goal is desired-vs-desired pull request diffing:
 given a current GitOps tree and a baseline tree, render the Argo CD
 Applications that would be reconciled and show what desired Kubernetes
@@ -15,14 +15,15 @@ does not contact the Kubernetes API server, does not run Argo CD controllers,
 and does not claim to reproduce server-side apply prediction, admission
 mutation, or managed-fields ownership.
 
-Default render, diff, image, and diagnostic workflows are offline
-desired-vs-desired analysis. Live-cluster diffing, Argo CD server-side diff
-parity, Kubernetes defaulting, admission mutation, and live-only
-managed-fields ownership prediction are not approximated silently. Any future
-implementation for those behaviors must first update the live integration
-design gate and keep the default offline path independent of a Kubernetes
-cluster, Argo CD server, `kubectl`, `argocd`, Helm/Kustomize command-line
-tools, and external render services.
+Default render, diff, image, and diagnostic workflows are local/static
+desired-vs-desired analysis. They may fetch declared Git, HTTP Helm, OCI Helm,
+and remote Kustomize sources into explicit caches unless `--offline` is set.
+Live-cluster diffing, Argo CD server-side diff parity, Kubernetes defaulting,
+admission mutation, and live-only managed-fields ownership prediction are not
+approximated silently. Any future implementation for those behaviors must
+first update the live integration design gate and keep the default path
+independent of a Kubernetes cluster, Argo CD server, `kubectl`, `argocd`,
+Helm/Kustomize command-line tools, and external render services.
 
 ## Repository
 
@@ -51,7 +52,8 @@ MVP supports:
 - Helm chart sources from HTTP and OCI repositories.
 - Helm `$ref/...` external value files from Git sources.
 - Repository URL to local path mappings.
-- Explicit network opt-in for unmapped external repositories.
+- Default Git cache acquisition for unmapped external repositories unless
+  `--offline` is set.
 - Explicit Git HTTPS bearer/basic auth, Git SSH key-file auth, HTTP(S) Helm
   bearer/basic auth, and explicit OCI Helm registry config path plumbing.
 - Config management plugin source detection with fail-closed diagnostics in
@@ -90,8 +92,8 @@ Primary packages:
   `ApplicationSet`, Argo CD settings, and repository metadata.
 - `internal/appset`: local ApplicationSet Git directories, Git files, list,
   matrix, and merge generators with Go-template support.
-- `internal/source`: repository URL normalization, local repo maps, network
-  opt-in, source checkout, and cache management.
+- `internal/source`: repository URL normalization, local repo maps, source
+  checkout, and cache management.
 - `internal/render`: renderer interface plus Helm, Kustomize, and directory
   renderers.
 - `internal/app`: Application normalization, single/multi-source planning,
@@ -180,7 +182,7 @@ kustomize.buildOptions:
 Health customizations, RBAC, and resource exclusions are recorded when found,
 but only rendering/diff-affecting settings are enforced in the MVP.
 Health/action Lua is parsed as metadata only and is never executed in the
-offline render/diff path. `diag --settings -o json|yaml` exposes a CLI-only
+local render/diff path. `diag --settings -o json|yaml` exposes a CLI-only
 redacted summary for operators, including names, booleans, and SHA-256 hashes
 of trimmed Lua bodies. Raw Lua bodies and secret-looking strings embedded in
 Lua are not part of the structured summary.
@@ -283,8 +285,8 @@ Repository resolution:
 - `--repo-map <url>=<path>` maps normalized repository URLs to local trees.
 - `--path` and `--path-orig` are authoritative for mapped PR repositories and
   override declared revisions.
-- Unmapped external repositories require another repo map or `--allow-network`.
-- Network access is off by default.
+- Unmapped external repositories fetch into the Git cache by default and require
+  another repo map or cache hit when `--offline` is set.
 - Git HTTPS auth is explicit via bearer token or username/password, with bearer
   token taking precedence.
 - Git SSH auth is explicit via key file, passphrase when required, and
@@ -452,7 +454,6 @@ Important flags:
 - `--path`
 - `--path-orig`
 - `--repo-map <url>=<path>`
-- `--allow-network`
 - `--changed-only`
 - `--strict-changed-only`
 - `--strict`

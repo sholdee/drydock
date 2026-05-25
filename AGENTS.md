@@ -8,15 +8,16 @@ Applications from a current tree and a baseline tree, then show what desired
 Kubernetes manifests changed.
 
 The default workflow must remain a self-contained Go binary using checked-out
-files plus explicit local caches. Do not require a Kubernetes cluster,
-`kubectl`, the `argocd` CLI, Helm CLI, Kustomize CLI, an external renderer, an
-Argo CD server, or any live runtime dependency for default render, diff, image,
-test, or diagnostic paths.
+files plus explicit local caches. It may fetch declared Git, HTTP Helm, OCI
+Helm, and remote Kustomize sources into those caches unless `--offline` is set.
+Do not require a Kubernetes cluster, `kubectl`, the `argocd` CLI, Helm CLI,
+Kustomize CLI, an external renderer, an Argo CD server, or any live runtime
+dependency for default render, diff, image, test, or diagnostic paths.
 
-Network-aware acquisition may exist only as explicit cache population. Live
-Kubernetes, live Argo CD, server-side diff, defaulting, admission, managed
-fields ownership prediction, SCM/cloud/provider API calls, and shellout
-renderers require an approved design update first.
+Network-aware acquisition may exist only as declared source cache population.
+Live Kubernetes, live Argo CD, server-side diff, defaulting, admission,
+managed fields ownership prediction, SCM/cloud/provider API calls, and
+shellout renderers require an approved design update first.
 
 ## Read This First
 
@@ -62,7 +63,7 @@ human-blocking phase status.
 - Do not add default shellouts to `helm`, `kustomize`, `kubectl`, `argocd`, or
   config-management plugins.
 - Do not add live Kubernetes or Argo CD server behavior without updating the
-  live integration design gate and preserving default offline behavior.
+  live integration design gate and preserving `--offline` behavior.
 - Do not hard-code `home-ops` paths, chart versions, branches, or repository
   names.
 - Do not print Secret manifest values, repository credentials, tokens, SSH
@@ -82,8 +83,8 @@ human-blocking phase status.
 
 ## Common Mistakes
 
-- Treating `--allow-network` as a Helm or remote-resource fetch flag. It is for
-  Git repository-source fetching only.
+- Reintroducing a separate network-enabling flag. `--offline` is the
+  user-facing switch for disabling declared source acquisition.
 - Hiding Secrets or CRDs by default. `--skip-secrets`, `--skip-crds`, and
   `--skip-kind` are explicit opt-ins.
 - Executing Lua or server-side diff/apply settings offline. Parse and report

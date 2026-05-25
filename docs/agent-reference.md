@@ -119,12 +119,11 @@ Canonical references:
 
 Repository URL maps are deterministic and preferred over network fetches. Path
 source resolution order is explicit repo map, existing local source path,
-gated `--allow-network` Git clone/fetch, then clear failure.
+declared Git cache/fetch behavior, then clear failure.
 
-`--allow-network` controls only Git repository-source fetching. Helm chart and
-remote Kustomize resource network behavior is controlled by `--offline`,
-`--refresh-charts`, `--chart-cache-dir`, `--refresh-remotes`, and
-`--remote-cache-dir`.
+`--offline` controls Git, Helm chart, and remote Kustomize network behavior.
+When it is set, source resolution must use local files, repo maps, or existing
+cache entries.
 
 Caches live under user cache roots or explicit cache directories, never inside
 the current or baseline repository tree. Cache lifecycle commands are local

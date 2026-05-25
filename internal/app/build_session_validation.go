@@ -10,12 +10,6 @@ import (
 )
 
 func validateBuildNetworkOptions(request BuildRequest) error {
-	if request.Offline && request.AllowNetwork {
-		return fmt.Errorf("--offline cannot be combined with --allow-network for Git source fetching")
-	}
-	if request.GitCacheDir == "" && !request.AllowNetwork {
-		return nil
-	}
 	gitCacheDir := request.GitCacheDir
 	if gitCacheDir == "" {
 		defaultDir, err := sourcepkg.DefaultGitCacheDir()

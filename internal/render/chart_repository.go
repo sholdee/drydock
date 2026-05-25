@@ -7,11 +7,17 @@ import (
 )
 
 func ChartRepositoryKind(repository string, ociRepositories map[string]bool) chart.RepositoryKind {
-	if strings.HasPrefix(strings.TrimSpace(repository), "oci://") {
+	trimmed := strings.TrimSpace(repository)
+	if strings.HasPrefix(trimmed, "oci://") {
 		return chart.RepositoryOCI
 	}
-	if OCIChartRepositoryEnabled(repository, ociRepositories) {
+	if OCIChartRepositoryEnabled(trimmed, ociRepositories) {
 		return chart.RepositoryOCI
+	}
+	if !strings.Contains(trimmed, "://") {
+		if _, ok := CanonicalOCIChartRepository(trimmed); ok {
+			return chart.RepositoryOCI
+		}
 	}
 	return chart.RepositoryHTTP
 }

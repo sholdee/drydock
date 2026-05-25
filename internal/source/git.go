@@ -55,14 +55,7 @@ type GitAcquirer interface {
 type DefaultGitAcquirer struct{}
 
 func (DefaultGitAcquirer) Acquire(ctx context.Context, request GitRequest, opts GitOptions) (GitResult, error) {
-	if !opts.AllowNetwork {
-		return GitResult{}, fmt.Errorf("repository %s requires --allow-network for Git fetching", RedactURL(request.URL))
-	}
 	if err := ctx.Err(); err != nil {
-		return GitResult{}, err
-	}
-	auth, _, err := gitAuthMethod(opts.Credentials, request.URL)
-	if err != nil {
 		return GitResult{}, err
 	}
 
@@ -73,6 +66,19 @@ func (DefaultGitAcquirer) Acquire(ctx context.Context, request GitRequest, opts 
 	key := GitCacheKey(request.URL, request.Revision)
 	cachePath := filepath.Join(cacheDir, key)
 	if err := os.MkdirAll(cacheDir, 0o755); err != nil {
+		return GitResult{}, err
+	}
+
+	if !opts.AllowNetwork {
+		result, err := acquireCachedGitRepository(cachePath, key, request)
+		if err != nil {
+			return GitResult{}, err
+		}
+		return result, nil
+	}
+
+	auth, _, err := gitAuthMethod(opts.Credentials, request.URL)
+	if err != nil {
 		return GitResult{}, err
 	}
 
@@ -100,6 +106,23 @@ func (DefaultGitAcquirer) Acquire(ctx context.Context, request GitRequest, opts 
 	network := cloned || refreshed || fetched
 	writeGitMetadata(cachePath, key, request, revision)
 	return GitResult{Path: cachePath, Revision: revision, FromCache: !network, Network: network}, nil
+}
+
+func acquireCachedGitRepository(cachePath, key string, request GitRequest) (GitResult, error) {
+	repo, err := openExistingGitRepository(cachePath)
+	if err != nil {
+		return GitResult{}, fmt.Errorf("offline cache miss for Git repository %s", RedactURL(request.URL))
+	}
+	worktree, err := repo.Worktree()
+	if err != nil {
+		return GitResult{}, fmt.Errorf("open cached repository %s worktree: %w", RedactURL(request.URL), err)
+	}
+	revision, err := checkoutGitRevision(repo, worktree, request.Revision)
+	if err != nil {
+		return GitResult{}, fmt.Errorf("checkout cached repository %s revision %q: %w", RedactURL(request.URL), strings.TrimSpace(request.Revision), err)
+	}
+	writeGitMetadata(cachePath, key, request, revision)
+	return GitResult{Path: cachePath, Revision: revision, FromCache: true, Network: false}, nil
 }
 
 func gitCacheDir(configured string) (string, error) {
@@ -134,6 +157,10 @@ func writeGitMetadata(cachePath, key string, request GitRequest, revision string
 
 func gitCacheTarget(repoURL string) string {
 	return NormalizeURL(cache.RedactedTarget(repoURL))
+}
+
+func openExistingGitRepository(cachePath string) (*git.Repository, error) {
+	return git.PlainOpen(cachePath)
 }
 
 func openOrCloneGitRepository(ctx context.Context, cachePath, repoURL string, auth transport.AuthMethod, credentials GitCredentials) (*git.Repository, bool, error) {

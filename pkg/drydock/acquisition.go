@@ -33,6 +33,8 @@ type GitRequest struct {
 
 // GitOptions controls Git source acquisition.
 type GitOptions struct {
+	// AllowNetwork is set by drydock for custom acquirers. Users should set
+	// Config.Offline to disable network acquisition.
 	AllowNetwork bool
 	CacheDir     string
 	Refresh      bool

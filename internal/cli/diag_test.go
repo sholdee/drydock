@@ -368,7 +368,7 @@ spec:
 	cmd := NewRootCommandWithDependencies(VersionInfo{}, Dependencies{
 		Orchestrator: app.Orchestrator{GitAcquirer: gitAcquirer},
 	})
-	cmd.SetArgs([]string{"diag", "--path", root, "--allow-network", "-o", "name"})
+	cmd.SetArgs([]string{"diag", "--path", root, "-o", "name"})
 	if err := cmd.Execute(); err == nil || !strings.Contains(err.Error(), "diag output supports text, json, or yaml") {
 		t.Fatalf("Execute() error = %v, want diag output error", err)
 	}

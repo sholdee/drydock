@@ -38,9 +38,6 @@ func (p localProvider) resolveSourceRoot(ctx context.Context, source render.Reso
 	if _, err := p.sourceResolver.Resolve(source.RepoURL, source.TargetRevision); err != nil {
 		return "", fmt.Errorf("source path %q is not present under local repository root and %w", source.Path, err)
 	}
-	if p.offline && p.allowNetwork {
-		return "", fmt.Errorf("--offline cannot be combined with --allow-network for Git source fetching")
-	}
 	acquirer := p.gitAcquirer
 	if acquirer == nil {
 		acquirer = sourcepkg.DefaultGitAcquirer{}
@@ -50,7 +47,7 @@ func (p localProvider) resolveSourceRoot(ctx context.Context, source render.Reso
 		URL:      source.RepoURL,
 		Revision: source.TargetRevision,
 	}, sourcepkg.GitOptions{
-		AllowNetwork: p.allowNetwork,
+		AllowNetwork: !p.offline,
 		CacheDir:     p.gitCacheDir,
 		Refresh:      p.refreshGit,
 		Credentials:  p.gitCredentials,

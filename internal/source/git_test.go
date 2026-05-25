@@ -20,16 +20,78 @@ import (
 	cryptossh "golang.org/x/crypto/ssh"
 )
 
-func TestDefaultGitAcquirerRejectsNetworkWhenNotAllowed(t *testing.T) {
+func TestDefaultGitAcquirerOfflineCacheMiss(t *testing.T) {
 	_, err := DefaultGitAcquirer{}.Acquire(context.Background(), GitRequest{
-		URL:      "file:///tmp/repo",
+		URL:      "https://github.com/example/private.git",
 		Revision: "main",
 	}, GitOptions{CacheDir: t.TempDir()})
 	if err == nil {
-		t.Fatal("Acquire() error = nil, want allow-network error")
+		t.Fatal("Acquire() error = nil, want offline cache miss")
 	}
-	if !strings.Contains(err.Error(), "--allow-network") {
-		t.Fatalf("Acquire() error = %q, want --allow-network", err)
+	if !strings.Contains(err.Error(), "offline cache miss for Git repository https://github.com/example/private.git") {
+		t.Fatalf("Acquire() error = %q, want redacted offline cache miss", err)
+	}
+	if strings.Contains(err.Error(), "--allow-network") {
+		t.Fatalf("Acquire() error = %q, must not mention --allow-network", err)
+	}
+}
+
+func TestDefaultGitAcquirerOfflineCacheHit(t *testing.T) {
+	remote := createGitFixture(t)
+	hash := commitFixtureFile(t, remote.repo, remote.worktree, "config.yaml", "version: cached\n")
+	repoURL := "file://" + filepath.ToSlash(remote.path)
+	cacheDir := t.TempDir()
+	request := GitRequest{URL: repoURL, Revision: "HEAD"}
+
+	first, err := DefaultGitAcquirer{}.Acquire(context.Background(), request, GitOptions{AllowNetwork: true, CacheDir: cacheDir})
+	if err != nil {
+		t.Fatalf("initial Acquire() error = %v", err)
+	}
+	second, err := DefaultGitAcquirer{}.Acquire(context.Background(), request, GitOptions{CacheDir: cacheDir})
+	if err != nil {
+		t.Fatalf("offline Acquire() error = %v", err)
+	}
+	if second.Path == "" || second.Path != first.Path {
+		t.Fatalf("offline path = %q, want cached path %q", second.Path, first.Path)
+	}
+	if second.Revision != hash.String() {
+		t.Fatalf("offline Revision = %s, want %s", second.Revision, hash)
+	}
+	if !second.FromCache {
+		t.Fatalf("FromCache = false, want true")
+	}
+	if second.Network {
+		t.Fatalf("Network = true, want false")
+	}
+}
+
+func TestDefaultGitAcquirerOfflineSSHCacheHitDoesNotRequireCredentials(t *testing.T) {
+	remote := createGitFixture(t)
+	hash := commitFixtureFile(t, remote.repo, remote.worktree, "config.yaml", "version: cached\n")
+	cacheDir := t.TempDir()
+	seedURL := "file://" + filepath.ToSlash(remote.path)
+	sshURL := "ssh://git@example.test/example/private.git"
+	key := GitCacheKey(sshURL, "HEAD")
+	cachePath := filepath.Join(cacheDir, key)
+	if err := os.MkdirAll(cacheDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll() error = %v", err)
+	}
+	seed, err := DefaultGitAcquirer{}.Acquire(context.Background(), GitRequest{URL: seedURL, Revision: "HEAD"}, GitOptions{AllowNetwork: true, CacheDir: cacheDir})
+	if err != nil {
+		t.Fatalf("seed Acquire() error = %v", err)
+	}
+	if err := os.Rename(seed.Path, cachePath); err != nil {
+		t.Fatalf("rename seed cache: %v", err)
+	}
+	result, err := DefaultGitAcquirer{}.Acquire(context.Background(), GitRequest{URL: sshURL, Revision: "HEAD"}, GitOptions{CacheDir: cacheDir})
+	if err != nil {
+		t.Fatalf("offline SSH cache Acquire() error = %v", err)
+	}
+	if result.Revision != hash.String() {
+		t.Fatalf("Revision = %s, want %s", result.Revision, hash)
+	}
+	if result.Network {
+		t.Fatalf("Network = true, want false")
 	}
 }
 

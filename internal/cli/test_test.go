@@ -15,7 +15,7 @@ func TestTestAppsPassesAllApplications(t *testing.T) {
 	writeSimpleAppForCLI(t, root, "ok")
 
 	cmd := NewRootCommand(VersionInfo{})
-	cmd.SetArgs([]string{"test", "apps", "--path", root})
+	cmd.SetArgs([]string{"test", "apps", "--path", root, "--offline"})
 	var stdout, stderr bytes.Buffer
 	cmd.SetOut(&stdout)
 	cmd.SetErr(&stderr)
@@ -36,7 +36,7 @@ func TestTestAppsReportsFailures(t *testing.T) {
 	writeFailingCLIApplication(t, root, "broken")
 
 	cmd := NewRootCommand(VersionInfo{})
-	cmd.SetArgs([]string{"test", "apps", "--path", root})
+	cmd.SetArgs([]string{"test", "apps", "--path", root, "--offline"})
 	var stdout, stderr bytes.Buffer
 	cmd.SetOut(&stdout)
 	cmd.SetErr(&stderr)
@@ -45,7 +45,7 @@ func TestTestAppsReportsFailures(t *testing.T) {
 	if code := commandErrorCode(err); code != 2 {
 		t.Fatalf("error code = %d, want 2; err = %v", code, err)
 	}
-	for _, want := range []string{"FAIL argocd/broken", "--repo-map"} {
+	for _, want := range []string{"FAIL argocd/broken", "offline cache miss"} {
 		if !strings.Contains(stdout.String(), want) {
 			t.Fatalf("stdout = %q, want %q", stdout.String(), want)
 		}
@@ -104,45 +104,12 @@ func TestTestAppsReportsSkippedPreconditionFailures(t *testing.T) {
 	}
 }
 
-func TestTestAppsReportsSkippedNetworkPreconditionFailures(t *testing.T) {
-	root := t.TempDir()
-	writeSimpleAppForCLI(t, root, "ok")
-
+func TestAllowNetworkFlagRemoved(t *testing.T) {
 	cmd := NewRootCommand(VersionInfo{})
-	cmd.SetArgs([]string{"test", "apps", "--path", root, "--offline", "--allow-network"})
-	var stdout, stderr bytes.Buffer
-	cmd.SetOut(&stdout)
-	cmd.SetErr(&stderr)
-
+	cmd.SetArgs([]string{"test", "apps", "--allow-network"})
 	err := cmd.Execute()
-	if code := commandErrorCode(err); code != 2 {
-		t.Fatalf("error code = %d, want 2; err = %v", code, err)
-	}
-	for _, want := range []string{"SKIPPED argocd/demo", "--offline cannot be combined with --allow-network"} {
-		if !strings.Contains(stdout.String(), want) {
-			t.Fatalf("stdout = %q, want %q", stdout.String(), want)
-		}
-	}
-}
-
-func TestTestAppReportsSkippedNetworkPreconditionFailures(t *testing.T) {
-	root := t.TempDir()
-	writeSimpleAppForCLI(t, root, "ok")
-
-	cmd := NewRootCommand(VersionInfo{})
-	cmd.SetArgs([]string{"test", "app", "demo", "--path", root, "--offline", "--allow-network"})
-	var stdout, stderr bytes.Buffer
-	cmd.SetOut(&stdout)
-	cmd.SetErr(&stderr)
-
-	err := cmd.Execute()
-	if code := commandErrorCode(err); code != 2 {
-		t.Fatalf("error code = %d, want 2; err = %v", code, err)
-	}
-	for _, want := range []string{"SKIPPED argocd/demo", "--offline cannot be combined with --allow-network"} {
-		if !strings.Contains(stdout.String(), want) {
-			t.Fatalf("stdout = %q, want %q", stdout.String(), want)
-		}
+	if err == nil || !strings.Contains(err.Error(), "unknown flag: --allow-network") {
+		t.Fatalf("Execute() error = %v, want unknown --allow-network flag", err)
 	}
 }
 

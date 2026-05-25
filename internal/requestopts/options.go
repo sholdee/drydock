@@ -24,7 +24,6 @@ type Options struct {
 	ChartCacheDir                  string
 	ChartCredentials               chart.ChartCredentials
 	RepoMaps                       []source.RepoMap
-	AllowNetwork                   bool
 	GitCacheDir                    string
 	RefreshGit                     bool
 	GitCredentials                 source.GitCredentials
@@ -52,7 +51,6 @@ func (options Options) Build() app.BuildRequest {
 		ChartCacheDir:                  options.ChartCacheDir,
 		ChartCredentials:               options.ChartCredentials,
 		RepoMaps:                       append([]source.RepoMap(nil), options.RepoMaps...),
-		AllowNetwork:                   options.AllowNetwork,
 		GitCacheDir:                    options.GitCacheDir,
 		RefreshGit:                     options.RefreshGit,
 		GitCredentials:                 options.GitCredentials,
@@ -90,7 +88,6 @@ func (options Options) Diff() app.DiffRequest {
 		ChartCacheDir:                  options.ChartCacheDir,
 		ChartCredentials:               options.ChartCredentials,
 		RepoMaps:                       append([]source.RepoMap(nil), options.RepoMaps...),
-		AllowNetwork:                   options.AllowNetwork,
 		GitCacheDir:                    options.GitCacheDir,
 		RefreshGit:                     options.RefreshGit,
 		GitCredentials:                 options.GitCredentials,

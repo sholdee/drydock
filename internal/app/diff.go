@@ -38,7 +38,6 @@ type DiffRequest struct {
 	ChartCacheDir                  string
 	ChartCredentials               chart.ChartCredentials
 	RepoMaps                       []sourcepkg.RepoMap
-	AllowNetwork                   bool
 	GitCacheDir                    string
 	RefreshGit                     bool
 	GitCredentials                 sourcepkg.GitCredentials
@@ -225,7 +224,6 @@ func (request DiffRequest) buildRequest(path string, forbiddenRoots []string) Bu
 		ChartCacheDir:                  request.ChartCacheDir,
 		ChartCredentials:               request.ChartCredentials,
 		RepoMaps:                       request.RepoMaps,
-		AllowNetwork:                   request.AllowNetwork,
 		GitCacheDir:                    request.GitCacheDir,
 		RefreshGit:                     request.RefreshGit,
 		GitCredentials:                 request.GitCredentials,

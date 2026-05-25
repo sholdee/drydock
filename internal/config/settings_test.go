@@ -47,6 +47,36 @@ func TestLoadConfigMapSettings(t *testing.T) {
 	}
 }
 
+func TestLoadFromConfigMapDocumentLoadsLaterDocument(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "multi.yaml")
+	if err := os.WriteFile(path, []byte(`apiVersion: v1
+kind: Namespace
+metadata:
+  name: ignored
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: argocd-cm
+data:
+  resource.compareoptions: |
+    ignoreAggregatedRoles: true
+`), 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	settings, diags, err := LoadFromConfigMapDocument(path, 1)
+	if err != nil {
+		t.Fatalf("LoadFromConfigMapDocument() error = %v", err)
+	}
+	if len(diags) != 0 {
+		t.Fatalf("diagnostics = %#v", diags)
+	}
+	if !settings.CompareOptions.IgnoreAggregatedRoles {
+		t.Fatalf("IgnoreAggregatedRoles = false, want true")
+	}
+}
+
 func TestLoadConfigMapResourceFilters(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "argocd-cm.yaml")
 	if err := os.WriteFile(path, []byte(`apiVersion: v1
@@ -840,6 +870,48 @@ stringData:
 	repo := settings.HelmRepositories["ghcr.io/example/charts"]
 	if repo.Name != "charts" || repo.Type != "helm" || !repo.EnableOCI {
 		t.Fatalf("OCI repo = %#v", repo)
+	}
+}
+
+func TestLoadRepositorySecretDocumentLoadsOneDocumentWithoutSecretLeak(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "repos.yaml")
+	if err := os.WriteFile(path, []byte(`apiVersion: v1
+kind: Secret
+metadata:
+  name: repo-one
+  labels:
+    argocd.argoproj.io/secret-type: repository
+stringData:
+  url: https://charts.example.test
+  password: super-secret
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: repo-two
+  labels:
+    argocd.argoproj.io/secret-type: repository
+stringData:
+  url: ghcr.io/example/charts
+  enableOCI: "true"
+  username: user
+`), 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	settings, diags, err := LoadRepositorySecretDocument(path, 1)
+	if err != nil {
+		t.Fatalf("LoadRepositorySecretDocument() error = %v", err)
+	}
+	if len(diags) != 0 {
+		t.Fatalf("diagnostics = %#v", diags)
+	}
+	if got := settings.HelmRepositories["ghcr.io/example/charts"].EnableOCI; !got {
+		t.Fatalf("EnableOCI = false, want true")
+	}
+	rendered := fmt.Sprintf("%#v %#v", settings, diags)
+	if strings.Contains(rendered, "super-secret") || strings.Contains(rendered, "username") {
+		t.Fatalf("settings leaked credential material: %s", rendered)
 	}
 }
 

@@ -23,7 +23,6 @@ func TestOptionsBuildCopiesSharedFields(t *testing.T) {
 	assertDeepEqual(t, "ChartCacheDir", request.ChartCacheDir, "chart-cache")
 	assertDeepEqual(t, "ChartCredentials", request.ChartCredentials, chart.ChartCredentials{Username: "helm-user"})
 	assertDeepEqual(t, "RepoMaps", request.RepoMaps, []source.RepoMap{{URL: "https://example.test/repo.git", Path: "/repo"}})
-	assertDeepEqual(t, "AllowNetwork", request.AllowNetwork, true)
 	assertDeepEqual(t, "GitCacheDir", request.GitCacheDir, "git-cache")
 	assertDeepEqual(t, "RefreshGit", request.RefreshGit, true)
 	assertDeepEqual(t, "GitCredentials", request.GitCredentials, source.GitCredentials{Username: "git-user"})
@@ -66,7 +65,6 @@ func TestOptionsDiffCopiesSharedFields(t *testing.T) {
 	assertDeepEqual(t, "ChartCacheDir", request.ChartCacheDir, "chart-cache")
 	assertDeepEqual(t, "ChartCredentials", request.ChartCredentials, chart.ChartCredentials{Username: "helm-user"})
 	assertDeepEqual(t, "RepoMaps", request.RepoMaps, []source.RepoMap{{URL: "https://example.test/repo.git", Path: "/repo"}})
-	assertDeepEqual(t, "AllowNetwork", request.AllowNetwork, true)
 	assertDeepEqual(t, "GitCacheDir", request.GitCacheDir, "git-cache")
 	assertDeepEqual(t, "RefreshGit", request.RefreshGit, true)
 	assertDeepEqual(t, "GitCredentials", request.GitCredentials, source.GitCredentials{Username: "git-user"})
@@ -112,7 +110,6 @@ func fixtureOptions() Options {
 		ChartCacheDir:                "chart-cache",
 		ChartCredentials:             chart.ChartCredentials{Username: "helm-user"},
 		RepoMaps:                     []source.RepoMap{{URL: "https://example.test/repo.git", Path: "/repo"}},
-		AllowNetwork:                 true,
 		GitCacheDir:                  "git-cache",
 		RefreshGit:                   true,
 		GitCredentials:               source.GitCredentials{Username: "git-user"},

@@ -297,7 +297,6 @@ data:
 	cmd.SetArgs([]string{
 		"build", "apps",
 		"--path", root,
-		"--allow-network",
 		"--git-cache-dir", t.TempDir(),
 		"--git-username", "git-user",
 		"--git-password", "git-pass",

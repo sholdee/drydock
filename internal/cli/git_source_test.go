@@ -72,7 +72,7 @@ data:
 	}
 }
 
-func TestBuildAppsFetchesGitSourceWhenNetworkAllowed(t *testing.T) {
+func TestBuildAppsFetchesGitSourceByDefault(t *testing.T) {
 	root := t.TempDir()
 	cacheDir := t.TempDir()
 	remote := createCLIGitRepository(t)
@@ -86,7 +86,7 @@ data:
 	writeExternalCLIApplication(t, root, "file://"+filepath.ToSlash(remote), "manifests/external")
 
 	cmd := NewRootCommand(VersionInfo{})
-	cmd.SetArgs([]string{"build", "apps", "--path", root, "--allow-network", "--git-cache-dir", cacheDir})
+	cmd.SetArgs([]string{"build", "apps", "--path", root, "--git-cache-dir", cacheDir})
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
 	cmd.SetOut(&stdout)
@@ -103,7 +103,7 @@ data:
 	}
 }
 
-func TestDiagFetchesGitSourceWhenNetworkAllowed(t *testing.T) {
+func TestDiagFetchesGitSourceByDefault(t *testing.T) {
 	root := t.TempDir()
 	cacheDir := t.TempDir()
 	remote := createCLIGitRepository(t)
@@ -117,7 +117,7 @@ data:
 	writeExternalCLIApplication(t, root, "file://"+filepath.ToSlash(remote), "manifests/external")
 
 	cmd := NewRootCommand(VersionInfo{})
-	cmd.SetArgs([]string{"diag", "--path", root, "--allow-network", "--git-cache-dir", cacheDir})
+	cmd.SetArgs([]string{"diag", "--path", root, "--git-cache-dir", cacheDir})
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
 	cmd.SetOut(&stdout)

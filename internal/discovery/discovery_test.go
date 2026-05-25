@@ -173,20 +173,109 @@ stringData:
 		t.Fatalf("Scan() error = %v", err)
 	}
 
-	if !reflect.DeepEqual(result.ApplicationSetPath, []string{filepath.Join("apps", "appset.yaml")}) {
-		t.Fatalf("ApplicationSetPath = %#v", result.ApplicationSetPath)
+	if len(result.ApplicationSets) != 1 {
+		t.Fatalf("ApplicationSets = %#v, want one", result.ApplicationSets)
+	}
+	if result.ApplicationSets[0].Path != filepath.Join("apps", "appset.yaml") || result.ApplicationSets[0].DocumentIndex != 0 {
+		t.Fatalf("ApplicationSet = %#v, want path and document index 0", result.ApplicationSets[0])
 	}
 	wantSettings := []SettingsCandidate{
-		{Path: filepath.Join("settings", "argocd-cm.yaml"), Kind: "argocd-cm"},
-		{Path: filepath.Join("settings", "compare-values.yaml"), Kind: "argocd-values"},
-		{Path: filepath.Join("settings", "repo-secret.yaml"), Kind: "repository-secret"},
-		{Path: filepath.Join("settings", "values.yaml"), Kind: "argocd-values"},
+		{Path: filepath.Join("settings", "argocd-cm.yaml"), DocumentIndex: 0, Kind: "argocd-cm"},
+		{Path: filepath.Join("settings", "compare-values.yaml"), DocumentIndex: 0, Kind: "argocd-values"},
+		{Path: filepath.Join("settings", "repo-secret.yaml"), DocumentIndex: 0, Kind: "repository-secret"},
+		{Path: filepath.Join("settings", "values.yaml"), DocumentIndex: 0, Kind: "argocd-values"},
 	}
 	if !reflect.DeepEqual(result.SettingsCandidates, wantSettings) {
 		t.Fatalf("SettingsCandidates = %#v, want %#v", result.SettingsCandidates, wantSettings)
 	}
 	if strings.Contains(fmt.Sprintf("%#v", result), "super-secret") {
 		t.Fatalf("discovery result leaked Secret data: %#v", result)
+	}
+}
+
+func TestScanPreservesDocumentIdentityForTypedObjects(t *testing.T) {
+	root := t.TempDir()
+	mustWriteFile(t, filepath.Join(root, "apps", "multi.yaml"), `apiVersion: v1
+kind: Namespace
+metadata:
+  name: ignored
+---
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: generated
+spec:
+  generators:
+    - git:
+        repoURL: https://github.com/example/repo.git
+        revision: HEAD
+        files:
+          - path: apps/**/manifest.yaml
+  template:
+    metadata:
+      name: '{{.path.basename}}'
+    spec:
+      project: default
+      source:
+        repoURL: https://github.com/example/repo.git
+        targetRevision: HEAD
+        path: '{{.path.path}}'
+      destination:
+        server: https://kubernetes.default.svc
+        namespace: default
+---
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: platform
+spec:
+  sourceRepos: ["*"]
+  destinations:
+    - server: "*"
+      namespace: "*"
+`)
+
+	result, err := Scan(root, Options{})
+	if err != nil {
+		t.Fatalf("Scan() error = %v", err)
+	}
+	if len(result.ApplicationSets) != 1 {
+		t.Fatalf("ApplicationSets = %#v, want one", result.ApplicationSets)
+	}
+	if result.ApplicationSets[0].DocumentIndex != 1 {
+		t.Fatalf("ApplicationSet document index = %d, want 1", result.ApplicationSets[0].DocumentIndex)
+	}
+	if result.ApplicationSets[0].ApplicationSet.Name != "generated" {
+		t.Fatalf("ApplicationSet name = %q, want generated", result.ApplicationSets[0].ApplicationSet.Name)
+	}
+	if len(result.Projects) != 1 || result.Projects[0].DocumentIndex != 2 {
+		t.Fatalf("Projects = %#v, want document index 2", result.Projects)
+	}
+}
+
+func TestScanUsesYAMLDocumentIndexAfterEmptyDocuments(t *testing.T) {
+	root := t.TempDir()
+	mustWriteFile(t, filepath.Join(root, "settings.yaml"), `---
+---
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: argocd-cm
+data:
+  resource.compareoptions: |
+    ignoreAggregatedRoles: true
+`)
+
+	result, err := Scan(root, Options{})
+	if err != nil {
+		t.Fatalf("Scan() error = %v", err)
+	}
+	if len(result.SettingsCandidates) != 1 {
+		t.Fatalf("SettingsCandidates = %#v, want one", result.SettingsCandidates)
+	}
+	if result.SettingsCandidates[0].DocumentIndex != 2 {
+		t.Fatalf("DocumentIndex = %d, want real YAML document index 2", result.SettingsCandidates[0].DocumentIndex)
 	}
 }
 
@@ -252,8 +341,8 @@ metadata:
 	if len(result.Applications) != 0 {
 		t.Fatalf("Applications = %#v, want none", result.Applications)
 	}
-	if len(result.ApplicationSetPath) != 0 {
-		t.Fatalf("ApplicationSetPath = %#v, want none", result.ApplicationSetPath)
+	if len(result.ApplicationSets) != 0 {
+		t.Fatalf("ApplicationSets = %#v, want none", result.ApplicationSets)
 	}
 	if len(result.SettingsCandidates) != 0 {
 		t.Fatalf("SettingsCandidates = %#v, want none", result.SettingsCandidates)

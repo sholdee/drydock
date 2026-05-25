@@ -273,9 +273,8 @@ func TestBuildParallelismProtectsSameCacheTargetDuringRenderRead(t *testing.T) {
 			GitAcquirer:    staticGitAcquirer{path: cacheRoot},
 			PluginRenderer: renderer,
 		}).Build(context.Background(), BuildRequest{
-			Path:         root,
-			AllowNetwork: true,
-			Parallelism:  2,
+			Path:        root,
+			Parallelism: 2,
 			Applications: []argoappv1.Application{
 				pluginApplication("snapshot"),
 			},
