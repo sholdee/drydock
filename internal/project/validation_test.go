@@ -35,6 +35,190 @@ func TestValidateApplicationsReportsProjectPolicyViolations(t *testing.T) {
 	assertDiagnostic(t, diags, "destination")
 }
 
+func TestValidateApplicationsAllowsNamedDestinationWhenProjectAllowsWildcardServer(t *testing.T) {
+	apps := []argoappv1.Application{application("cilium", "platform", argoappv1.ApplicationSource{
+		RepoURL: "https://github.com/example/repo",
+		Path:    "apps/cilium",
+	}, argoappv1.ApplicationDestination{
+		Name:      "in-cluster",
+		Namespace: "kube-system",
+	})}
+	projects := []argoappv1.AppProject{{
+		ObjectMeta: objectMeta("platform"),
+		Spec: argoappv1.AppProjectSpec{
+			SourceRepos: []string{"*"},
+			Destinations: []argoappv1.ApplicationDestination{{
+				Server:    "*",
+				Namespace: "*",
+			}},
+		},
+	}}
+
+	diags := ValidateApplications(apps, projects, config.DefaultSettings())
+	assertNoDiagnostic(t, diags, "destination is not permitted")
+	assertNoDiagnostic(t, diags, "destination name")
+}
+
+func TestValidateApplicationsReportsNamedDestinationNamespaceMismatch(t *testing.T) {
+	apps := []argoappv1.Application{application("cilium", "platform", argoappv1.ApplicationSource{
+		RepoURL: "https://github.com/example/repo",
+		Path:    "apps/cilium",
+	}, argoappv1.ApplicationDestination{
+		Name:      "in-cluster",
+		Namespace: "kube-system",
+	})}
+	projects := []argoappv1.AppProject{{
+		ObjectMeta: objectMeta("platform"),
+		Spec: argoappv1.AppProjectSpec{
+			SourceRepos: []string{"*"},
+			Destinations: []argoappv1.ApplicationDestination{{
+				Server:    "*",
+				Namespace: "workloads",
+			}},
+		},
+	}}
+
+	diags := ValidateApplications(apps, projects, config.DefaultSettings())
+	assertDiagnostic(t, diags, "destination is not permitted")
+}
+
+func TestValidateApplicationsReportsNamedDestinationServerResolutionDeferred(t *testing.T) {
+	apps := []argoappv1.Application{application("cilium", "platform", argoappv1.ApplicationSource{
+		RepoURL: "https://github.com/example/repo",
+		Path:    "apps/cilium",
+	}, argoappv1.ApplicationDestination{
+		Name:      "in-cluster",
+		Namespace: "kube-system",
+	})}
+	projects := []argoappv1.AppProject{{
+		ObjectMeta: objectMeta("platform"),
+		Spec: argoappv1.AppProjectSpec{
+			SourceRepos: []string{"*"},
+			Destinations: []argoappv1.ApplicationDestination{{
+				Server:    "https://kubernetes.default.svc",
+				Namespace: "*",
+			}},
+		},
+	}}
+
+	diags := ValidateApplications(apps, projects, config.DefaultSettings())
+	assertDiagnostic(t, diags, "destination name \"in-cluster\" cannot be resolved against AppProject server policy offline")
+	assertNoDiagnostic(t, diags, "destination is not permitted")
+}
+
+func TestValidateApplicationsDoesNotUseWildcardServerFallbackForDeniedDestinationName(t *testing.T) {
+	apps := []argoappv1.Application{application("prod-app", "platform", argoappv1.ApplicationSource{
+		RepoURL: "https://github.com/example/repo",
+		Path:    "apps/prod-app",
+	}, argoappv1.ApplicationDestination{
+		Name:      "prod",
+		Namespace: "workloads",
+	})}
+	projects := []argoappv1.AppProject{{
+		ObjectMeta: objectMeta("platform"),
+		Spec: argoappv1.AppProjectSpec{
+			SourceRepos: []string{"*"},
+			Destinations: []argoappv1.ApplicationDestination{{
+				Name:      "!prod",
+				Server:    "*",
+				Namespace: "*",
+			}},
+		},
+	}}
+
+	diags := ValidateApplications(apps, projects, config.DefaultSettings())
+	assertDiagnostic(t, diags, "destination is not permitted")
+}
+
+func TestValidateApplicationsDoesNotUseWildcardServerFallbackForDeniedDestinationNamespace(t *testing.T) {
+	apps := []argoappv1.Application{application("system-app", "platform", argoappv1.ApplicationSource{
+		RepoURL: "https://github.com/example/repo",
+		Path:    "apps/system-app",
+	}, argoappv1.ApplicationDestination{
+		Name:      "in-cluster",
+		Namespace: "kube-system",
+	})}
+	projects := []argoappv1.AppProject{{
+		ObjectMeta: objectMeta("platform"),
+		Spec: argoappv1.AppProjectSpec{
+			SourceRepos: []string{"*"},
+			Destinations: []argoappv1.ApplicationDestination{
+				{
+					Server:    "*",
+					Namespace: "*",
+				},
+				{
+					Server:    "*",
+					Namespace: "!kube-system",
+				},
+			},
+		},
+	}}
+
+	diags := ValidateApplications(apps, projects, config.DefaultSettings())
+	assertDiagnostic(t, diags, "destination is not permitted")
+}
+
+func TestValidateApplicationsDoesNotUseWildcardServerFallbackForDeniedDestinationServer(t *testing.T) {
+	apps := []argoappv1.Application{application("system-app", "platform", argoappv1.ApplicationSource{
+		RepoURL: "https://github.com/example/repo",
+		Path:    "apps/system-app",
+	}, argoappv1.ApplicationDestination{
+		Name:      "in-cluster",
+		Namespace: "kube-system",
+	})}
+	projects := []argoappv1.AppProject{{
+		ObjectMeta: objectMeta("platform"),
+		Spec: argoappv1.AppProjectSpec{
+			SourceRepos: []string{"*"},
+			Destinations: []argoappv1.ApplicationDestination{
+				{
+					Server:    "*",
+					Namespace: "*",
+				},
+				{
+					Server:    "!https://kubernetes.default.svc",
+					Namespace: "*",
+				},
+			},
+		},
+	}}
+
+	diags := ValidateApplications(apps, projects, config.DefaultSettings())
+	assertDiagnostic(t, diags, "destination name \"in-cluster\" cannot be resolved against AppProject server policy offline")
+	assertNoDiagnostic(t, diags, "destination is not permitted")
+}
+
+func TestValidateApplicationsDoesNotUseWildcardServerFallbackForServerScopedDestinationNamespaceDeny(t *testing.T) {
+	apps := []argoappv1.Application{application("system-app", "platform", argoappv1.ApplicationSource{
+		RepoURL: "https://github.com/example/repo",
+		Path:    "apps/system-app",
+	}, argoappv1.ApplicationDestination{
+		Name:      "in-cluster",
+		Namespace: "kube-system",
+	})}
+	projects := []argoappv1.AppProject{{
+		ObjectMeta: objectMeta("platform"),
+		Spec: argoappv1.AppProjectSpec{
+			SourceRepos: []string{"*"},
+			Destinations: []argoappv1.ApplicationDestination{
+				{
+					Server:    "*",
+					Namespace: "*",
+				},
+				{
+					Server:    "https://prod.example",
+					Namespace: "!kube-system",
+				},
+			},
+		},
+	}}
+
+	diags := ValidateApplications(apps, projects, config.DefaultSettings())
+	assertDiagnostic(t, diags, "destination name \"in-cluster\" cannot be resolved against AppProject server policy offline")
+	assertNoDiagnostic(t, diags, "destination is not permitted")
+}
+
 func TestValidateApplicationsAllowsImplicitDefaultProject(t *testing.T) {
 	apps := []argoappv1.Application{application("demo", "", argoappv1.ApplicationSource{
 		RepoURL: "https://github.com/example/repo",
