@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/sholdee/drydock/internal/app"
+	"github.com/sholdee/drydock/internal/requestopts"
 )
 
 // Config controls render, list, and diff operations.
@@ -144,47 +145,23 @@ func (client *Client) DiffImages(ctx context.Context) (ImageDiffResult, error) {
 }
 
 func (client *Client) buildRequest() app.BuildRequest {
-	return app.BuildRequest{
-		Path:                           client.config.Path,
-		Strict:                         client.config.Strict,
-		Offline:                        client.config.Offline,
-		RefreshCharts:                  client.config.RefreshCharts,
-		ChartCacheDir:                  client.config.ChartCacheDir,
-		ChartCredentials:               chartCredentialsToInternal(client.config.ChartCredentials),
-		RepoMaps:                       repoMapsToInternal(client.config.RepoMaps),
-		AllowNetwork:                   client.config.AllowNetwork,
-		GitCacheDir:                    client.config.GitCacheDir,
-		RefreshGit:                     client.config.RefreshGit,
-		GitCredentials:                 gitCredentialsToInternal(client.config.GitCredentials),
-		RefreshRemoteResources:         client.config.RefreshRemoteResources,
-		RemoteResourceCacheDir:         client.config.RemoteResourceCacheDir,
-		RemoteResourceForbiddenRoots:   append([]string(nil), client.config.RemoteResourceForbiddenRoots...),
-		RemoteResourceCredentials:      remoteResourceCredentialsToInternal(client.config.RemoteResourceCredentials),
-		RemoteResourceGitCredentials:   gitCredentialsToRemoteInternal(client.config.GitCredentials),
-		PluginTimeout:                  client.config.PluginTimeout,
-		Parallelism:                    client.config.Parallelism,
-		SkipKinds:                      append([]string(nil), client.config.SkipKinds...),
-		SkipCRDs:                       client.config.SkipCRDs,
-		SkipSecrets:                    client.config.SkipSecrets,
-		ApplicationSetProviderFixtures: append([]string(nil), client.config.ApplicationSetProviderFixtures...),
-		ApplicationSetProviderData:     applicationSetProviderDataToInternal(client.config.ApplicationSetProviderData),
-		RecordCacheEvents:              client.config.RecordCacheEvents,
-	}
+	return client.requestOptions().Build()
 }
 
 func (client *Client) diffRequest() app.DiffRequest {
+	return client.requestOptions().Diff()
+}
+
+func (client *Client) requestOptions() requestopts.Options {
 	unified := client.config.Unified
 	if unified == 0 {
 		unified = 3
 	}
-	changedOnly := true
-	if client.config.ChangedOnly != nil {
-		changedOnly = *client.config.ChangedOnly
-	}
-	return app.DiffRequest{
+	return requestopts.Options{
+		Path:                           client.config.Path,
 		LeftPath:                       client.config.PathOrig,
 		RightPath:                      client.config.Path,
-		ChangedOnly:                    changedOnly,
+		ChangedOnly:                    client.config.ChangedOnly,
 		StrictChangedOnly:              client.config.StrictChangedOnly,
 		Strict:                         client.config.Strict,
 		Unified:                        unified,
@@ -200,6 +177,7 @@ func (client *Client) diffRequest() app.DiffRequest {
 		GitCredentials:                 gitCredentialsToInternal(client.config.GitCredentials),
 		RefreshRemoteResources:         client.config.RefreshRemoteResources,
 		RemoteResourceCacheDir:         client.config.RemoteResourceCacheDir,
+		RemoteResourceForbiddenRoots:   append([]string(nil), client.config.RemoteResourceForbiddenRoots...),
 		RemoteResourceCredentials:      remoteResourceCredentialsToInternal(client.config.RemoteResourceCredentials),
 		RemoteResourceGitCredentials:   gitCredentialsToRemoteInternal(client.config.GitCredentials),
 		PluginTimeout:                  client.config.PluginTimeout,

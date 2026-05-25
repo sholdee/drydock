@@ -6,6 +6,7 @@ import (
 
 	"github.com/sholdee/drydock/internal/chart"
 	"github.com/sholdee/drydock/internal/remote"
+	"github.com/sholdee/drydock/internal/requestopts"
 	"github.com/sholdee/drydock/internal/source"
 	"github.com/spf13/cobra"
 )
@@ -142,6 +143,38 @@ func (flags commonFlags) chartCredentials() chart.ChartCredentials {
 		Password:       flags.helmPassword,
 		BearerToken:    flags.helmBearerToken,
 		RegistryConfig: flags.registryConfig,
+	}
+}
+
+func requestOptionsFromFlags(flags commonFlags, repoMaps []source.RepoMap) requestopts.Options {
+	return requestopts.Options{
+		Path:                           flags.path,
+		LeftPath:                       flags.pathOrig,
+		RightPath:                      flags.path,
+		ChangedOnly:                    &flags.changedOnly,
+		StrictChangedOnly:              flags.strictChangedOnly,
+		Strict:                         flags.strict,
+		Unified:                        flags.unified,
+		StripAttrs:                     append([]string(nil), flags.stripAttrs...),
+		Offline:                        flags.offline,
+		RefreshCharts:                  flags.refreshCharts,
+		ChartCacheDir:                  flags.chartCacheDir,
+		ChartCredentials:               flags.chartCredentials(),
+		RepoMaps:                       repoMaps,
+		AllowNetwork:                   flags.allowNetwork,
+		GitCacheDir:                    flags.gitCacheDir,
+		RefreshGit:                     flags.refreshGit,
+		GitCredentials:                 flags.gitCredentials(),
+		RefreshRemoteResources:         flags.refreshRemotes,
+		RemoteResourceCacheDir:         flags.remoteCacheDir,
+		RemoteResourceCredentials:      flags.remoteCredentials(),
+		RemoteResourceGitCredentials:   flags.remoteGitCredentials(),
+		Parallelism:                    flags.parallelism,
+		ApplicationSetProviderFixtures: append([]string(nil), flags.appsetFixtures...),
+		SkipKinds:                      append([]string(nil), flags.skipKinds...),
+		SkipCRDs:                       flags.skipCRDs,
+		SkipSecrets:                    flags.skipSecrets,
+		RecordCacheEvents:              flags.cacheEvents,
 	}
 }
 
