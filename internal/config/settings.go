@@ -64,6 +64,7 @@ type ResourceCustomization struct {
 	KnownTypeFields       []KnownTypeField          `json:"knownTypeFields,omitempty" yaml:"knownTypeFields,omitempty"`
 	HasHealthLua          bool                      `json:"hasHealthLua,omitempty" yaml:"hasHealthLua,omitempty"`
 	HealthLuaSHA256       string                    `json:"healthLuaSHA256,omitempty" yaml:"healthLuaSHA256,omitempty"`
+	HealthLua             string                    `json:"-" yaml:"-"`
 	healthLuaFingerprint  string
 	HasUseOpenLibs        bool                   `json:"hasUseOpenLibs,omitempty" yaml:"hasUseOpenLibs,omitempty"`
 	UseOpenLibs           bool                   `json:"useOpenLibs,omitempty" yaml:"useOpenLibs,omitempty"`
