@@ -423,6 +423,11 @@ expansion precondition prevented safe rendering. `test apps` and `test app`
 return exit code `0` only when every selected Application passes; any `FAIL`,
 `SKIPPED`, or runtime failure returns exit code `2`.
 
+When `test apps` writes text output to a terminal, statuses stream as each
+Application completes. Status labels are colored, a single stderr progress
+counter updates in place when stderr is also a terminal, and a final summary is
+printed after the status lines. Redirected text output stays plain and buffered.
+
 Structured status output is available with `-o json` and `-o yaml`:
 
 ```bash
@@ -560,6 +565,8 @@ drydock diag --path .
 and render validation path as `build apps`. It prints diagnostics to stderr and
 returns an error when runtime failures or error-severity diagnostics are found.
 Use `--strict` to promote warnings to errors.
+When diagnostics are written to a terminal, warning severity labels are yellow
+and error severity labels are red.
 
 Structured diagnostic output can include a redacted settings summary:
 

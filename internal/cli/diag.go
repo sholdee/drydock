@@ -131,12 +131,31 @@ func hasIgnoreDifferences(ignore config.OverrideIgnoreDifferences) bool {
 }
 
 func renderDiagnostics(w io.Writer, diags []diagnostic.Diagnostic) error {
+	return renderDiagnosticsWithColor(w, diags, isTerminalWriter(w))
+}
+
+func renderDiagnosticsWithColor(w io.Writer, diags []diagnostic.Diagnostic, color bool) error {
 	for _, diag := range diagnostic.WithStableCodes(diags) {
-		if _, err := fmt.Fprintf(w, "%s %s: %s%s\n", diag.Severity, diag.Category, diag.Message, formatDiagnosticProvenance(diag.Provenance)); err != nil {
+		severity := string(diag.Severity)
+		if color {
+			severity = colorizeDiagnosticSeverity(diag.Severity)
+		}
+		if _, err := fmt.Fprintf(w, "%s %s: %s%s\n", severity, diag.Category, diag.Message, formatDiagnosticProvenance(diag.Provenance)); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+func colorizeDiagnosticSeverity(severity diagnostic.Severity) string {
+	switch severity {
+	case diagnostic.SeverityWarning:
+		return "\x1b[33m" + string(severity) + "\x1b[0m"
+	case diagnostic.SeverityError:
+		return "\x1b[31m" + string(severity) + "\x1b[0m"
+	default:
+		return string(severity)
+	}
 }
 
 func formatDiagnosticProvenance(provenance diagnostic.Provenance) string {

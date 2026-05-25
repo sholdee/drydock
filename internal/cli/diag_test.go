@@ -11,6 +11,7 @@ import (
 
 	"github.com/sholdee/drydock/internal/app"
 	"github.com/sholdee/drydock/internal/chart"
+	"github.com/sholdee/drydock/internal/diagnostic"
 )
 
 func TestDiagCleanRepositoryPrintsNoManifests(t *testing.T) {
@@ -55,6 +56,39 @@ func TestDiagPrintsUnsupportedApplicationSetWarning(t *testing.T) {
 	want := "warning appset: unsupported ApplicationSet generator; supported generators are git directories, git files, list, matrix, and merge (path: unsupported-appset.yaml, pointer: spec.generators)\n"
 	if stderr.String() != want {
 		t.Fatalf("stderr = %q, want %q", stderr.String(), want)
+	}
+}
+
+func TestRenderDiagnosticsWithColorColorsWarningAndErrorLabels(t *testing.T) {
+	diags := []diagnostic.Diagnostic{
+		{Severity: diagnostic.SeverityWarning, Category: "settings", Message: "metadata only"},
+		{Severity: diagnostic.SeverityError, Category: "render", Message: "decode failed"},
+	}
+	var stderr bytes.Buffer
+
+	if err := renderDiagnosticsWithColor(&stderr, diags, true); err != nil {
+		t.Fatalf("renderDiagnosticsWithColor() error = %v", err)
+	}
+
+	want := "\x1b[33mwarning\x1b[0m settings: metadata only\n" +
+		"\x1b[31merror\x1b[0m render: decode failed\n"
+	if stderr.String() != want {
+		t.Fatalf("stderr = %q, want %q", stderr.String(), want)
+	}
+}
+
+func TestRenderDiagnosticsWithoutColorKeepsPlainOutput(t *testing.T) {
+	diags := []diagnostic.Diagnostic{
+		{Severity: diagnostic.SeverityWarning, Category: "settings", Message: "metadata only"},
+	}
+	var stderr bytes.Buffer
+
+	if err := renderDiagnosticsWithColor(&stderr, diags, false); err != nil {
+		t.Fatalf("renderDiagnosticsWithColor() error = %v", err)
+	}
+
+	if got, want := stderr.String(), "warning settings: metadata only\n"; got != want {
+		t.Fatalf("stderr = %q, want %q", got, want)
 	}
 }
 
