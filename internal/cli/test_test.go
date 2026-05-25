@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -279,6 +280,40 @@ func TestTestAppsJSONOutputContainsStatusesOnly(t *testing.T) {
 	assertStatusOutputContains(t, statuses, "broken", "FAIL")
 	if strings.Contains(stdout.String(), "apiVersion") || strings.Contains(stdout.String(), "kind:") {
 		t.Fatalf("json output contains manifest-like body:\n%s", stdout.String())
+	}
+}
+
+func TestTestAppsJSONOutputSuppressesLuaHealthPrints(t *testing.T) {
+	root := t.TempDir()
+	writeLuaHealthSecretPrintCLIApplication(t, root)
+
+	cmd := NewRootCommand(VersionInfo{})
+	cmd.SetArgs([]string{"test", "apps", "--path", root, "--offline", "-o", "json"})
+	var stdout, stderr bytes.Buffer
+	cmd.SetOut(&stdout)
+	cmd.SetErr(&stderr)
+
+	processStdout, executeErr := captureProcessStdoutDuring(t, cmd.Execute)
+	if executeErr != nil {
+		t.Fatalf("Execute() error = %v\nstdout:\n%s\nstderr:\n%s\nprocess stdout:\n%s", executeErr, stdout.String(), stderr.String(), processStdout)
+	}
+
+	if processStdout != "" {
+		t.Fatalf("process stdout = %q, want empty", processStdout)
+	}
+	var statuses []map[string]any
+	if err := json.Unmarshal(stdout.Bytes(), &statuses); err != nil {
+		t.Fatalf("json.Unmarshal() error = %v\nstdout:\n%s\nprocess stdout:\n%s", err, stdout.String(), processStdout)
+	}
+	assertStatusOutputContains(t, statuses, "secret-health", "PASS")
+	for name, got := range map[string]string{
+		"stdout":         stdout.String(),
+		"stderr":         stderr.String(),
+		"process stdout": processStdout,
+	} {
+		if strings.Contains(got, "super-secret") {
+			t.Fatalf("%s leaked Secret value: %q", name, got)
+		}
 	}
 }
 
@@ -576,6 +611,44 @@ func (writer failingWriter) Write([]byte) (int, error) {
 	return 0, writer.err
 }
 
+func captureProcessStdoutDuring(t *testing.T, run func() error) (string, error) {
+	t.Helper()
+	originalStdout := os.Stdout
+	reader, writer, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("os.Pipe() error = %v", err)
+	}
+	readDone := make(chan struct {
+		output string
+		err    error
+	}, 1)
+	go func() {
+		var buffer bytes.Buffer
+		_, copyErr := io.Copy(&buffer, reader)
+		readDone <- struct {
+			output string
+			err    error
+		}{output: buffer.String(), err: copyErr}
+	}()
+
+	os.Stdout = writer
+	defer func() {
+		os.Stdout = originalStdout
+	}()
+	runErr := run()
+	if err := writer.Close(); err != nil {
+		t.Fatalf("stdout pipe Close() error = %v", err)
+	}
+	result := <-readDone
+	if err := reader.Close(); err != nil {
+		t.Fatalf("stdout pipe reader Close() error = %v", err)
+	}
+	if result.err != nil {
+		t.Fatalf("reading process stdout error = %v", result.err)
+	}
+	return result.output, runErr
+}
+
 func assertStatusOutputContains(t *testing.T, statuses []map[string]any, name, status string) {
 	t.Helper()
 	for _, got := range statuses {
@@ -584,6 +657,44 @@ func assertStatusOutputContains(t *testing.T, statuses []map[string]any, name, s
 		}
 	}
 	t.Fatalf("statuses = %#v, want %s %s", statuses, name, status)
+}
+
+func writeLuaHealthSecretPrintCLIApplication(t *testing.T, root string) {
+	t.Helper()
+	writeCLITestFile(t, filepath.Join(root, "apps", "secret-health.yaml"), `apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: secret-health
+  namespace: argocd
+spec:
+  source:
+    repoURL: https://github.com/example/repo
+    path: manifests/secret-health
+    targetRevision: main
+  destination:
+    name: in-cluster
+    namespace: default
+`)
+	writeCLITestFile(t, filepath.Join(root, "manifests", "secret-health", "secret.yaml"), `apiVersion: v1
+kind: Secret
+metadata:
+  name: secret-health
+type: Opaque
+data:
+  token: super-secret
+`)
+	writeCLITestFile(t, filepath.Join(root, "settings", "argocd-cm.yaml"), `apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: argocd-cm
+data:
+  resource.customizations.health.Secret: |
+    print(obj.data.token)
+    hs = {}
+    hs.status = "Healthy"
+    hs.message = "ok"
+    return hs
+`)
 }
 
 func writeFailingCLIApplication(t *testing.T, root, appName string) {

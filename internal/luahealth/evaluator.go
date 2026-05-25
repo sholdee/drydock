@@ -3,8 +3,11 @@ package luahealth
 import (
 	"context"
 	"fmt"
+	"io"
+	"os"
 	"sort"
 	"strings"
+	"sync"
 
 	"github.com/argoproj/argo-cd/gitops-engine/pkg/health"
 	argoglob "github.com/argoproj/argo-cd/v3/util/glob"
@@ -17,6 +20,8 @@ import (
 )
 
 const invalidHealthStatusMessage = "Lua returned an invalid health status"
+
+var luaStdoutMu sync.Mutex
 
 type ApplicationRef struct {
 	Namespace string
@@ -138,7 +143,7 @@ func compileFailureDiagnostic(application ApplicationRef, renderedManifest rende
 
 func evaluate(application ApplicationRef, renderedManifest render.Manifest, customization customization) *diagnostic.Diagnostic {
 	vm := argolua.VM{UseOpenLibs: customization.useOpenLibs}
-	status, err := vm.ExecuteHealthLua(renderedManifest.Object, customization.healthLua)
+	status, err := executeHealthLuaSilently(vm, renderedManifest.Object, customization.healthLua)
 	if err != nil {
 		diag := healthFailureDiagnostic(application, renderedManifest, customization.key, luaErrorReason(err))
 		diag.Provenance = customization.provenance
@@ -150,6 +155,33 @@ func evaluate(application ApplicationRef, renderedManifest render.Manifest, cust
 		return &diag
 	}
 	return nil
+}
+
+func executeHealthLuaSilently(vm argolua.VM, obj *unstructured.Unstructured, script string) (*health.HealthStatus, error) {
+	luaStdoutMu.Lock()
+	reader, writer, err := os.Pipe()
+	if err != nil {
+		luaStdoutMu.Unlock()
+		return nil, err
+	}
+	done := make(chan struct{})
+	go func() {
+		_, _ = io.Copy(io.Discard, reader)
+		_ = reader.Close()
+		close(done)
+	}()
+
+	// gopher-lua's base print writes to process stdout directly. Argo CD's VM
+	// does not expose a print hook, so redirect only while user health Lua runs.
+	original := os.Stdout
+	os.Stdout = writer
+	defer func() {
+		os.Stdout = original
+		_ = writer.Close()
+		<-done
+		luaStdoutMu.Unlock()
+	}()
+	return vm.ExecuteHealthLua(obj, script)
 }
 
 func healthFailureDiagnostic(application ApplicationRef, renderedManifest render.Manifest, customizationKey, reason string) diagnostic.Diagnostic {

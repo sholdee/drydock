@@ -1,7 +1,10 @@
 package luahealth
 
 import (
+	"bytes"
 	"context"
+	"io"
+	"os"
 	"strings"
 	"testing"
 
@@ -279,6 +282,31 @@ func TestEvaluatorDoesNotExposeSecretManifestValueFromLuaError(t *testing.T) {
 	assertMessageDoesNotContain(t, diags[0], "super-secret")
 }
 
+func TestEvaluatorSuppressesLuaPrintOutput(t *testing.T) {
+	evaluator := New(config.ArgoSettings{ResourceCustomizations: map[string]config.ResourceCustomization{
+		"Secret": {
+			HasHealthLua: true,
+			HealthLua:    `print(obj.data.token); return { status = "Healthy" }`,
+		},
+	}})
+
+	secret := object("v1", "Secret", "default", "demo")
+	secret.Object["data"] = map[string]any{"token": "super-secret"}
+	var diags []diagnostic.Diagnostic
+	output := captureProcessStdout(t, func() {
+		diags = evaluator.Validate(context.Background(), Request{
+			Application: ApplicationRef{Name: "demo", Namespace: "argocd"},
+			Manifests:   []render.Manifest{{Object: secret}},
+		})
+	})
+	if len(diags) != 0 {
+		t.Fatalf("diagnostics = %#v, want none", diags)
+	}
+	if output != "" {
+		t.Fatalf("process stdout = %q, want suppressed Lua print output", output)
+	}
+}
+
 func object(apiVersion, kind, namespace, name string) *unstructured.Unstructured {
 	return &unstructured.Unstructured{Object: map[string]any{
 		"apiVersion": apiVersion,
@@ -319,4 +347,30 @@ func assertMessageDoesNotContain(t *testing.T, diag diagnostic.Diagnostic, fragm
 	if strings.Contains(diag.Message, fragment) {
 		t.Fatalf("diagnostic message = %q, must not contain %q", diag.Message, fragment)
 	}
+}
+
+func captureProcessStdout(t *testing.T, fn func()) (output string) {
+	t.Helper()
+	original := os.Stdout
+	reader, writer, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("os.Pipe() error = %v", err)
+	}
+	var buf bytes.Buffer
+	done := make(chan struct{})
+	go func() {
+		_, _ = io.Copy(&buf, reader)
+		_ = reader.Close()
+		close(done)
+	}()
+
+	os.Stdout = writer
+	defer func() {
+		os.Stdout = original
+		_ = writer.Close()
+		<-done
+		output = buf.String()
+	}()
+	fn()
+	return output
 }
