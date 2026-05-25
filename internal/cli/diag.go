@@ -9,7 +9,6 @@ import (
 	"github.com/sholdee/drydock/internal/cacheevent"
 	"github.com/sholdee/drydock/internal/config"
 	"github.com/sholdee/drydock/internal/diagnostic"
-	cliformat "github.com/sholdee/drydock/internal/format"
 	"github.com/spf13/cobra"
 )
 
@@ -76,12 +75,8 @@ func newDiagCommand(deps Dependencies) *cobra.Command {
 				if renderErr := renderDiagnostics(cmd.ErrOrStderr(), result.Diagnostics); renderErr != nil {
 					return renderErr
 				}
-			case string(cliformat.OutputJSON):
-				if renderErr := cliformat.JSON(cmd.OutOrStdout(), report); renderErr != nil {
-					return renderErr
-				}
-			case string(cliformat.OutputYAML):
-				if renderErr := cliformat.YAML(cmd.OutOrStdout(), report); renderErr != nil {
+			case "json", "yaml":
+				if renderErr := writeStructuredOutput(cmd.OutOrStdout(), output, report); renderErr != nil {
 					return renderErr
 				}
 			default:
@@ -133,19 +128,6 @@ func resourceActionsSummary(actions config.ResourceActionsSummary) diagResourceA
 
 func hasIgnoreDifferences(ignore config.OverrideIgnoreDifferences) bool {
 	return len(ignore.JSONPointers) > 0 || len(ignore.JQPathExpressions) > 0 || len(ignore.ManagedFieldsManagers) > 0
-}
-
-func parseDiagOutput(value string) (string, error) {
-	switch strings.TrimSpace(value) {
-	case "", "diff", "text":
-		return "text", nil
-	case string(cliformat.OutputJSON):
-		return string(cliformat.OutputJSON), nil
-	case string(cliformat.OutputYAML):
-		return string(cliformat.OutputYAML), nil
-	default:
-		return "", fmt.Errorf("diag output supports text, json, or yaml, got %q", value)
-	}
 }
 
 func renderDiagnostics(w io.Writer, diags []diagnostic.Diagnostic) error {
