@@ -71,21 +71,14 @@ func appendParsedResourceCustomizations(settings *ArgoSettings, raw string, prov
 		if strings.TrimSpace(block.HealthLua) != "" {
 			customization.HasHealthLua = true
 			customization.HealthLuaSHA256 = stringFingerprint(block.HealthLua)
+			customization.HealthLua = block.HealthLua
 			customization.healthLuaFingerprint = customization.HealthLuaSHA256
 			hasCustomization = true
-			diags = append(diags, advancedResourceCustomizationWarning(
-				"resource customizations health Lua is parsed as metadata only and is not executed offline",
-				provenance,
-			))
 		}
 		if block.UseOpenLibs != nil {
 			customization.HasUseOpenLibs = true
 			customization.UseOpenLibs = *block.UseOpenLibs
 			hasCustomization = true
-			diags = append(diags, advancedResourceCustomizationWarning(
-				"resource customizations useOpenLibs is parsed as metadata only and is not executed offline",
-				provenance,
-			))
 		}
 		if strings.TrimSpace(block.Actions) != "" {
 			actions, next := parseResourceActionsSummary(block.Actions, provenance)
@@ -251,6 +244,9 @@ func mergeHealthLuaSection(existing, incoming ResourceCustomization) (ResourceCu
 	}
 	existing.HasHealthLua = true
 	existing.HealthLuaSHA256 = incoming.HealthLuaSHA256
+	if existing.HealthLua == "" {
+		existing.HealthLua = incoming.HealthLua
+	}
 	if existing.healthLuaFingerprint == "" {
 		existing.healthLuaFingerprint = incoming.healthLuaFingerprint
 	}

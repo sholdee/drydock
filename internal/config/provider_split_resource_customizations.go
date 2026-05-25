@@ -93,11 +93,9 @@ func parseSplitResourceCustomization(section, raw string, provenance diagnostic.
 	case healthSplitSection:
 		customization.HasHealthLua = true
 		customization.HealthLuaSHA256 = stringFingerprint(raw)
+		customization.HealthLua = raw
 		customization.healthLuaFingerprint = customization.HealthLuaSHA256
-		return customization, []diagnostic.Diagnostic{advancedResourceCustomizationWarning(
-			"resource customizations health Lua is parsed as metadata only and is not executed offline",
-			provenance,
-		)}
+		return customization, nil
 	case useOpenLibsSplitSection:
 		return parseSplitUseOpenLibs(raw, provenance, customization)
 	case actionsSplitSection:
@@ -128,10 +126,7 @@ func parseSplitUseOpenLibs(raw string, provenance diagnostic.Provenance, customi
 	}
 	customization.HasUseOpenLibs = true
 	customization.UseOpenLibs = value
-	return customization, []diagnostic.Diagnostic{advancedResourceCustomizationWarning(
-		"resource customizations useOpenLibs is parsed as metadata only and is not executed offline",
-		provenance,
-	)}
+	return customization, nil
 }
 func parseSplitActions(raw string, provenance diagnostic.Provenance, customization ResourceCustomization) (ResourceCustomization, []diagnostic.Diagnostic) {
 	actions, diags := parseResourceActionsSummary(raw, provenance)

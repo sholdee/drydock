@@ -311,8 +311,8 @@ data:
 
 func TestLoadConfigMapAdvancedResourceCustomizations(t *testing.T) {
 	settings, diags := loadAdvancedResourceCustomizations(t)
-	if len(diags) != 8 {
-		t.Fatalf("len(diags) = %d, want 8 warnings: %#v", len(diags), diags)
+	if len(diags) != 4 {
+		t.Fatalf("len(diags) = %d, want 4 warnings: %#v", len(diags), diags)
 	}
 	if settings.IgnoreResourceUpdatesEnabled.Value {
 		t.Fatalf("IgnoreResourceUpdatesEnabled = true, want false")
@@ -329,8 +329,9 @@ func TestLoadConfigMapAdvancedResourceCustomizationsSplitSections(t *testing.T) 
 	assertSplitAdvancedResourceCustomizations(t, settings)
 }
 
-func TestLoadConfigMapHealthLuaReportsHashWithoutBody(t *testing.T) {
+func TestLoadConfigMapResourceCustomizationRetainsHealthLuaWithoutWarning(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "argocd-cm.yaml")
+	const healthLua = `return { status = "Healthy", message = "SUPER_SECRET_HEALTH_TOKEN" }`
 	if err := os.WriteFile(path, []byte(`apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -340,6 +341,7 @@ data:
     apps/Deployment:
       health.lua: |
         return { status = "Healthy", message = "SUPER_SECRET_HEALTH_TOKEN" }
+      health.lua.useOpenLibs: true
 `), 0o600); err != nil {
 		t.Fatalf("WriteFile() error = %v", err)
 	}
@@ -348,18 +350,36 @@ data:
 	if err != nil {
 		t.Fatalf("LoadFromConfigMap() error = %v", err)
 	}
-	if !hasDiagnosticCode(diags, "settings.metadata-only") {
-		t.Fatalf("diagnostics = %#v, want settings.metadata-only", diags)
+	if hasDiagnosticMessage(diags, "resource customizations health Lua") {
+		t.Fatalf("diagnostics = %#v, want no health Lua metadata-only warning", diags)
+	}
+	if hasDiagnosticMessage(diags, "resource customizations useOpenLibs") {
+		t.Fatalf("diagnostics = %#v, want no useOpenLibs metadata-only warning", diags)
 	}
 	customization := settings.ResourceCustomizations["apps/Deployment"]
 	if !customization.HasHealthLua {
 		t.Fatalf("HasHealthLua = false, want true")
 	}
+	if strings.TrimSpace(customization.HealthLua) != healthLua {
+		t.Fatalf("HealthLua = %q, want source %q", customization.HealthLua, healthLua)
+	}
 	const wantHash = "5891509de2d4c98e33ce3c17387504bc74033b0bfc02f2a307ccf58a8e826a9b"
 	if customization.HealthLuaSHA256 != wantHash {
 		t.Fatalf("HealthLuaSHA256 = %q, want %q", customization.HealthLuaSHA256, wantHash)
 	}
-	assertJSONDoesNotContain(t, settings, "SUPER_SECRET_HEALTH_TOKEN")
+	if !customization.HasUseOpenLibs || !customization.UseOpenLibs {
+		t.Fatalf("useOpenLibs = present %v value %v, want present true", customization.HasUseOpenLibs, customization.UseOpenLibs)
+	}
+	serialized, err := json.Marshal(settings)
+	if err != nil {
+		t.Fatalf("Marshal() error = %v", err)
+	}
+	if strings.Contains(string(serialized), "SUPER_SECRET_HEALTH_TOKEN") {
+		t.Fatalf("JSON output contains health Lua source: %s", serialized)
+	}
+	if !strings.Contains(string(serialized), wantHash) {
+		t.Fatalf("JSON output = %s, want health Lua hash %q", serialized, wantHash)
+	}
 }
 
 func TestLoadConfigMapActionsReportNamesAndHashesWithoutBodies(t *testing.T) {
@@ -441,7 +461,7 @@ data:
 	}
 }
 
-func TestSplitHealthActionsAndIgnoreResourceUpdatesEmitMetadataOnlyDiagnostics(t *testing.T) {
+func TestSplitActionsAndIgnoreResourceUpdatesEmitMetadataOnlyDiagnostics(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "argocd-cm.yaml")
 	if err := os.WriteFile(path, []byte(`apiVersion: v1
 kind: ConfigMap
@@ -466,9 +486,59 @@ data:
 	if err != nil {
 		t.Fatalf("LoadFromConfigMap() error = %v", err)
 	}
-	assertDiagnosticStableCode(t, diags, "resource customizations health Lua", "settings.metadata-only")
 	assertDiagnosticStableCode(t, diags, "resource customizations actions", "settings.metadata-only")
 	assertDiagnosticStableCode(t, diags, "resource customizations ignoreResourceUpdates", "settings.metadata-only")
+}
+
+func TestLoadConfigMapSplitResourceCustomizationRetainsHealthLuaWithoutWarning(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "argocd-cm.yaml")
+	const healthLua = `return { status = "Healthy", message = "SUPER_SECRET_SPLIT_HEALTH_TOKEN" }`
+	if err := os.WriteFile(path, []byte(`apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: argocd-cm
+data:
+  resource.customizations.health.apps_Deployment: |
+    return { status = "Healthy", message = "SUPER_SECRET_SPLIT_HEALTH_TOKEN" }
+  resource.customizations.useOpenLibs.apps_Deployment: "true"
+`), 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	settings, diags, err := LoadFromConfigMap(path)
+	if err != nil {
+		t.Fatalf("LoadFromConfigMap() error = %v", err)
+	}
+	if hasDiagnosticMessage(diags, "resource customizations health Lua") {
+		t.Fatalf("diagnostics = %#v, want no health Lua metadata-only warning", diags)
+	}
+	if hasDiagnosticMessage(diags, "resource customizations useOpenLibs") {
+		t.Fatalf("diagnostics = %#v, want no useOpenLibs metadata-only warning", diags)
+	}
+	customization := settings.ResourceCustomizations["apps/Deployment"]
+	if !customization.HasHealthLua {
+		t.Fatalf("HasHealthLua = false, want true")
+	}
+	if strings.TrimSpace(customization.HealthLua) != healthLua {
+		t.Fatalf("HealthLua = %q, want source %q", customization.HealthLua, healthLua)
+	}
+	const wantHash = "fdbc7dd6551a80f11a58acbacd68e2420cf710333d872268421c436ca9a37bca"
+	if customization.HealthLuaSHA256 != wantHash {
+		t.Fatalf("HealthLuaSHA256 = %q, want %q", customization.HealthLuaSHA256, wantHash)
+	}
+	if !customization.HasUseOpenLibs || !customization.UseOpenLibs {
+		t.Fatalf("useOpenLibs = present %v value %v, want present true", customization.HasUseOpenLibs, customization.UseOpenLibs)
+	}
+	serialized, err := json.Marshal(settings)
+	if err != nil {
+		t.Fatalf("Marshal() error = %v", err)
+	}
+	if strings.Contains(string(serialized), "SUPER_SECRET_SPLIT_HEALTH_TOKEN") {
+		t.Fatalf("JSON output contains health Lua source: %s", serialized)
+	}
+	if !strings.Contains(string(serialized), wantHash) {
+		t.Fatalf("JSON output = %s, want health Lua hash %q", serialized, wantHash)
+	}
 }
 
 func TestLoadConfigMapCompareOptionsAppliedWithoutMetadataOnlyDiagnostic(t *testing.T) {
@@ -607,8 +677,8 @@ data:
 	if err != nil {
 		t.Fatalf("LoadFromConfigMap() error = %v", err)
 	}
-	if len(diags) != 2 {
-		t.Fatalf("len(diags) = %d, want 2 useOpenLibs warnings: %#v", len(diags), diags)
+	if hasDiagnosticMessage(diags, "resource customizations useOpenLibs") {
+		t.Fatalf("diagnostics = %#v, want no useOpenLibs metadata-only warning", diags)
 	}
 	deployment := settings.ResourceCustomizations["apps/Deployment"]
 	if !deployment.HasUseOpenLibs || deployment.UseOpenLibs {
@@ -643,6 +713,40 @@ data:
 	}
 	if !hasDiagnosticMessage(diags, "conflicting resource customization settings discovered") {
 		t.Fatalf("diagnostics = %#v, want conflicting health Lua diagnostic", diags)
+	}
+}
+
+func TestLoadConfigMapMatchingHealthLuaSectionsMergeRetainsSource(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "argocd-cm.yaml")
+	const healthLua = `return { status = "Healthy", message = "MERGED_HEALTH_TOKEN" }`
+	if err := os.WriteFile(path, []byte(`apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: argocd-cm
+data:
+  resource.customizations: |
+    apps/Deployment:
+      health.lua: |
+        return { status = "Healthy", message = "MERGED_HEALTH_TOKEN" }
+  resource.customizations.health.apps_Deployment: |
+    return { status = "Healthy", message = "MERGED_HEALTH_TOKEN" }
+`), 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	settings, diags, err := LoadFromConfigMap(path)
+	if err != nil {
+		t.Fatalf("LoadFromConfigMap() error = %v", err)
+	}
+	if len(diags) != 0 {
+		t.Fatalf("diagnostics = %#v, want none", diags)
+	}
+	customization := settings.ResourceCustomizations["apps/Deployment"]
+	if !customization.HasHealthLua {
+		t.Fatalf("HasHealthLua = false, want true")
+	}
+	if strings.TrimSpace(customization.HealthLua) != healthLua {
+		t.Fatalf("HealthLua = %q, want source %q", customization.HealthLua, healthLua)
 	}
 }
 
