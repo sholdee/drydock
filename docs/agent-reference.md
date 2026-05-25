@@ -227,7 +227,6 @@ Canonical references:
 
 - `testdata/`
 - `docs/home-ops-pattern-coverage.md`
-- `docs/reports/2026-05-25-refactor-orientation-roadmap.md`
 
 Portable integration fixtures should model real repository behavior without
 depending on `/Users/ethan.shold/git/home-ops`. Real `home-ops` checks belong
