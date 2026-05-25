@@ -12,7 +12,7 @@ import (
 )
 
 func TestEvaluatorValidHealthStatesDoNotDiagnose(t *testing.T) {
-	evaluator, compileDiags := New(config.ArgoSettings{ResourceCustomizations: map[string]config.ResourceCustomization{
+	evaluator := New(config.ArgoSettings{ResourceCustomizations: map[string]config.ResourceCustomization{
 		"example.com/Widget": {
 			HasHealthLua: true,
 			HealthLua:    `return { status = "Progressing", message = "waiting for status" }`,
@@ -22,9 +22,6 @@ func TestEvaluatorValidHealthStatesDoNotDiagnose(t *testing.T) {
 			HealthLua:    `return { status = "Healthy" }`,
 		},
 	}})
-	if len(compileDiags) != 0 {
-		t.Fatalf("compile diagnostics = %#v, want none", compileDiags)
-	}
 
 	diags := evaluator.Validate(context.Background(), Request{
 		Application: ApplicationRef{Name: "demo", Namespace: "argocd"},
@@ -38,8 +35,8 @@ func TestEvaluatorValidHealthStatesDoNotDiagnose(t *testing.T) {
 	}
 }
 
-func TestNewReportsSyntaxErrorWithoutSource(t *testing.T) {
-	_, diags := New(config.ArgoSettings{ResourceCustomizations: map[string]config.ResourceCustomization{
+func TestEvaluatorReportsSyntaxErrorForMatchingResourceWithoutSource(t *testing.T) {
+	evaluator := New(config.ArgoSettings{ResourceCustomizations: map[string]config.ResourceCustomization{
 		"example.com/Widget": {
 			HasHealthLua:    true,
 			HealthLua:       `return { status = "Healthy", message = "super-secret" `,
@@ -48,6 +45,18 @@ func TestNewReportsSyntaxErrorWithoutSource(t *testing.T) {
 		},
 	}})
 
+	unmatchedDiags := evaluator.Validate(context.Background(), Request{
+		Application: ApplicationRef{Name: "demo", Namespace: "argocd"},
+		Manifests:   []render.Manifest{{Object: object("example.com/v1", "Gadget", "default", "demo")}},
+	})
+	if len(unmatchedDiags) != 0 {
+		t.Fatalf("unmatched diagnostics = %#v, want none", unmatchedDiags)
+	}
+
+	diags := evaluator.Validate(context.Background(), Request{
+		Application: ApplicationRef{Name: "demo", Namespace: "argocd"},
+		Manifests:   []render.Manifest{{Object: object("example.com/v1", "Widget", "default", "demo")}},
+	})
 	assertOneHealthDiagnostic(t, diags, "health.lua-compile-failed", "failed to compile health Lua")
 	if got := diags[0].Provenance.Path; got != "apps/argocd/values.yaml" {
 		t.Fatalf("Provenance.Path = %q, want settings path", got)
@@ -56,15 +65,12 @@ func TestNewReportsSyntaxErrorWithoutSource(t *testing.T) {
 }
 
 func TestEvaluatorReportsRuntimeErrorForMatchingResource(t *testing.T) {
-	evaluator, compileDiags := New(config.ArgoSettings{ResourceCustomizations: map[string]config.ResourceCustomization{
+	evaluator := New(config.ArgoSettings{ResourceCustomizations: map[string]config.ResourceCustomization{
 		"example.com/Widget": {
 			HasHealthLua: true,
 			HealthLua:    `return obj.status.conditions[1].type`,
 		},
 	}})
-	if len(compileDiags) != 0 {
-		t.Fatalf("compile diagnostics = %#v, want none", compileDiags)
-	}
 
 	diags := evaluator.Validate(context.Background(), Request{
 		Application: ApplicationRef{Name: "demo", Namespace: "argocd"},
@@ -75,15 +81,12 @@ func TestEvaluatorReportsRuntimeErrorForMatchingResource(t *testing.T) {
 }
 
 func TestEvaluatorReportsInvalidReturnType(t *testing.T) {
-	evaluator, compileDiags := New(config.ArgoSettings{ResourceCustomizations: map[string]config.ResourceCustomization{
+	evaluator := New(config.ArgoSettings{ResourceCustomizations: map[string]config.ResourceCustomization{
 		"example.com/Widget": {
 			HasHealthLua: true,
 			HealthLua:    `return "Healthy"`,
 		},
 	}})
-	if len(compileDiags) != 0 {
-		t.Fatalf("compile diagnostics = %#v, want none", compileDiags)
-	}
 
 	diags := evaluator.Validate(context.Background(), Request{
 		Application: ApplicationRef{Name: "demo", Namespace: "argocd"},
@@ -93,15 +96,12 @@ func TestEvaluatorReportsInvalidReturnType(t *testing.T) {
 }
 
 func TestEvaluatorReportsInvalidHealthStatus(t *testing.T) {
-	evaluator, compileDiags := New(config.ArgoSettings{ResourceCustomizations: map[string]config.ResourceCustomization{
+	evaluator := New(config.ArgoSettings{ResourceCustomizations: map[string]config.ResourceCustomization{
 		"example.com/Widget": {
 			HasHealthLua: true,
 			HealthLua:    `return { status = "AlmostHealthy" }`,
 		},
 	}})
-	if len(compileDiags) != 0 {
-		t.Fatalf("compile diagnostics = %#v, want none", compileDiags)
-	}
 
 	diags := evaluator.Validate(context.Background(), Request{
 		Application: ApplicationRef{Name: "demo", Namespace: "argocd"},
@@ -111,15 +111,12 @@ func TestEvaluatorReportsInvalidHealthStatus(t *testing.T) {
 }
 
 func TestEvaluatorAllowsReservedInvalidStatusMessageWhenStatusIsValid(t *testing.T) {
-	evaluator, compileDiags := New(config.ArgoSettings{ResourceCustomizations: map[string]config.ResourceCustomization{
+	evaluator := New(config.ArgoSettings{ResourceCustomizations: map[string]config.ResourceCustomization{
 		"example.com/Widget": {
 			HasHealthLua: true,
 			HealthLua:    `return { status = "Healthy", message = "Lua returned an invalid health status" }`,
 		},
 	}})
-	if len(compileDiags) != 0 {
-		t.Fatalf("compile diagnostics = %#v, want none", compileDiags)
-	}
 
 	diags := evaluator.Validate(context.Background(), Request{
 		Application: ApplicationRef{Name: "demo", Namespace: "argocd"},
@@ -131,15 +128,12 @@ func TestEvaluatorAllowsReservedInvalidStatusMessageWhenStatusIsValid(t *testing
 }
 
 func TestEvaluatorTreatsReservedInvalidStatusErrorPayloadAsRuntimeError(t *testing.T) {
-	evaluator, compileDiags := New(config.ArgoSettings{ResourceCustomizations: map[string]config.ResourceCustomization{
+	evaluator := New(config.ArgoSettings{ResourceCustomizations: map[string]config.ResourceCustomization{
 		"example.com/Widget": {
 			HasHealthLua: true,
 			HealthLua:    `error("Lua returned an invalid health status")`,
 		},
 	}})
-	if len(compileDiags) != 0 {
-		t.Fatalf("compile diagnostics = %#v, want none", compileDiags)
-	}
 
 	diags := evaluator.Validate(context.Background(), Request{
 		Application: ApplicationRef{Name: "demo", Namespace: "argocd"},
@@ -159,10 +153,7 @@ func TestEvaluatorHonorsUseOpenLibs(t *testing.T) {
 		},
 	}}
 
-	evaluator, compileDiags := New(settings)
-	if len(compileDiags) != 0 {
-		t.Fatalf("compile diagnostics = %#v, want none", compileDiags)
-	}
+	evaluator := New(settings)
 	diags := evaluator.Validate(context.Background(), Request{
 		Application: ApplicationRef{Name: "demo", Namespace: "argocd"},
 		Manifests:   []render.Manifest{{Object: object("example.com/v1", "Widget", "default", "demo")}},
@@ -180,10 +171,7 @@ func TestEvaluatorReportsUseOpenLibsDisabledRuntimeError(t *testing.T) {
 		},
 	}}
 
-	evaluator, compileDiags := New(settings)
-	if len(compileDiags) != 0 {
-		t.Fatalf("compile diagnostics = %#v, want none", compileDiags)
-	}
+	evaluator := New(settings)
 	diags := evaluator.Validate(context.Background(), Request{
 		Application: ApplicationRef{Name: "demo", Namespace: "argocd"},
 		Manifests:   []render.Manifest{{Object: object("example.com/v1", "Widget", "default", "demo")}},
@@ -192,15 +180,12 @@ func TestEvaluatorReportsUseOpenLibsDisabledRuntimeError(t *testing.T) {
 }
 
 func TestEvaluatorMatchesWildcard(t *testing.T) {
-	evaluator, compileDiags := New(config.ArgoSettings{ResourceCustomizations: map[string]config.ResourceCustomization{
+	evaluator := New(config.ArgoSettings{ResourceCustomizations: map[string]config.ResourceCustomization{
 		"example.com/*": {
 			HasHealthLua: true,
 			HealthLua:    `return { status = "Healthy" }`,
 		},
 	}})
-	if len(compileDiags) != 0 {
-		t.Fatalf("compile diagnostics = %#v, want none", compileDiags)
-	}
 
 	diags := evaluator.Validate(context.Background(), Request{
 		Application: ApplicationRef{Name: "demo", Namespace: "argocd"},
@@ -212,7 +197,7 @@ func TestEvaluatorMatchesWildcard(t *testing.T) {
 }
 
 func TestEvaluatorExactMatchWinsOverWildcard(t *testing.T) {
-	evaluator, compileDiags := New(config.ArgoSettings{ResourceCustomizations: map[string]config.ResourceCustomization{
+	evaluator := New(config.ArgoSettings{ResourceCustomizations: map[string]config.ResourceCustomization{
 		"example.com/*": {
 			HasHealthLua: true,
 			HealthLua:    `return obj.status.conditions[1].type`,
@@ -222,9 +207,6 @@ func TestEvaluatorExactMatchWinsOverWildcard(t *testing.T) {
 			HealthLua:    `return { status = "Healthy" }`,
 		},
 	}})
-	if len(compileDiags) != 0 {
-		t.Fatalf("compile diagnostics = %#v, want none", compileDiags)
-	}
 
 	diags := evaluator.Validate(context.Background(), Request{
 		Application: ApplicationRef{Name: "demo", Namespace: "argocd"},
@@ -236,7 +218,7 @@ func TestEvaluatorExactMatchWinsOverWildcard(t *testing.T) {
 }
 
 func TestEvaluatorReportsAmbiguousWildcardMatches(t *testing.T) {
-	evaluator, compileDiags := New(config.ArgoSettings{ResourceCustomizations: map[string]config.ResourceCustomization{
+	evaluator := New(config.ArgoSettings{ResourceCustomizations: map[string]config.ResourceCustomization{
 		"example.com/*": {
 			HasHealthLua: true,
 			HealthLua:    `return { status = "Healthy" }`,
@@ -246,9 +228,6 @@ func TestEvaluatorReportsAmbiguousWildcardMatches(t *testing.T) {
 			HealthLua:    `return { status = "Healthy" }`,
 		},
 	}})
-	if len(compileDiags) != 0 {
-		t.Fatalf("compile diagnostics = %#v, want none", compileDiags)
-	}
 
 	diags := evaluator.Validate(context.Background(), Request{
 		Application: ApplicationRef{Name: "demo", Namespace: "argocd"},
@@ -264,15 +243,12 @@ func TestEvaluatorDoesNotExposeLuaSource(t *testing.T) {
 		`error("health.lua:super-secret")`,
 	} {
 		t.Run(script, func(t *testing.T) {
-			evaluator, compileDiags := New(config.ArgoSettings{ResourceCustomizations: map[string]config.ResourceCustomization{
+			evaluator := New(config.ArgoSettings{ResourceCustomizations: map[string]config.ResourceCustomization{
 				"example.com/Widget": {
 					HasHealthLua: true,
 					HealthLua:    script,
 				},
 			}})
-			if len(compileDiags) != 0 {
-				t.Fatalf("compile diagnostics = %#v, want none", compileDiags)
-			}
 
 			diags := evaluator.Validate(context.Background(), Request{
 				Application: ApplicationRef{Name: "demo", Namespace: "argocd"},
@@ -286,15 +262,12 @@ func TestEvaluatorDoesNotExposeLuaSource(t *testing.T) {
 }
 
 func TestEvaluatorDoesNotExposeSecretManifestValueFromLuaError(t *testing.T) {
-	evaluator, compileDiags := New(config.ArgoSettings{ResourceCustomizations: map[string]config.ResourceCustomization{
+	evaluator := New(config.ArgoSettings{ResourceCustomizations: map[string]config.ResourceCustomization{
 		"Secret": {
 			HasHealthLua: true,
 			HealthLua:    `error(obj.data.token)`,
 		},
 	}})
-	if len(compileDiags) != 0 {
-		t.Fatalf("compile diagnostics = %#v, want none", compileDiags)
-	}
 
 	secret := object("v1", "Secret", "default", "demo")
 	secret.Object["data"] = map[string]any{"token": "super-secret"}

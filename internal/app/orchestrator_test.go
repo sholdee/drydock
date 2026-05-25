@@ -352,22 +352,39 @@ stringData:
 	}
 }
 
-func TestOrchestratorBuildSkipsApplicationsOnLuaHealthCompileDiagnostics(t *testing.T) {
+func TestOrchestratorBuildFailsOwningApplicationOnLuaHealthCompileDiagnostics(t *testing.T) {
 	root := t.TempDir()
 	writeBuildApplication(t, root, "demo", "demo")
 	writeHealthCustomizationSettings(t, root, "ConfigMap", `return { status = "Healthy" `)
 
 	result, err := Orchestrator{}.Build(context.Background(), BuildRequest{Path: root, ValidateLuaHealth: true})
-	assertBuildErrorContains(t, err, "diagnostic health", "failed to compile health Lua")
+	assertBuildErrorContains(t, err, "1 Application failed", "argocd/demo", "diagnostic health", "failed to compile health Lua")
 	if len(result.Manifests) != 0 {
-		t.Fatalf("len(Manifests) = %d, want 0 when health evaluator compile fails before render", len(result.Manifests))
+		t.Fatalf("len(Manifests) = %d, want no manifests retained for failed application", len(result.Manifests))
 	}
 	assertApplicationStatuses(t, result.Statuses, []ApplicationStatus{
-		{Namespace: "argocd", Name: "demo", Status: ApplicationStatusSkipped},
+		{Namespace: "argocd", Name: "demo", Status: ApplicationStatusFail},
 	})
 	diag := assertDiagnosticCategory(t, result.Diagnostics, "health")
 	if diag.Code != "health.lua-compile-failed" {
 		t.Fatalf("health diagnostic code = %q, want health.lua-compile-failed", diag.Code)
+	}
+}
+
+func TestOrchestratorBuildIgnoresUnmatchedLuaHealthCompileDiagnostics(t *testing.T) {
+	root := t.TempDir()
+	writeBuildApplication(t, root, "demo", "demo")
+	writeHealthCustomizationSettings(t, root, "Secret", `return { status = "Healthy" `)
+
+	result, err := Orchestrator{}.Build(context.Background(), BuildRequest{Path: root, ValidateLuaHealth: true})
+	if err != nil {
+		t.Fatalf("Build() error = %v", err)
+	}
+	assertApplicationStatuses(t, result.Statuses, []ApplicationStatus{
+		{Namespace: "argocd", Name: "demo", Status: ApplicationStatusPass},
+	})
+	if _, ok := diagnosticByCategory(result.Diagnostics, "health"); ok {
+		t.Fatalf("Diagnostics = %#v, want unmatched invalid customization to skip health validation", result.Diagnostics)
 	}
 }
 
