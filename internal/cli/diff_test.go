@@ -63,21 +63,9 @@ func TestDiffAppsPrintsManifestDiff(t *testing.T) {
 	writeSimpleAppForCLI(t, left, "old")
 	writeSimpleAppForCLI(t, right, "new")
 
-	cmd := NewRootCommand(VersionInfo{})
-	cmd.SetArgs([]string{"diff", "apps", "--path-orig", left, "--path", right, "--exit-code=false"})
-	var out bytes.Buffer
-	cmd.SetOut(&out)
-	cmd.SetErr(&out)
-
-	if err := cmd.Execute(); err != nil {
-		t.Fatalf("Execute() error = %v", err)
-	}
-
-	for _, want := range []string{"Application: argocd/demo", "-  value: old", "+  value: new"} {
-		if !strings.Contains(out.String(), want) {
-			t.Fatalf("diff output missing %q:\n%s", want, out.String())
-		}
-	}
+	result := runCLI(t, "diff", "apps", "--path-orig", left, "--path", right, "--exit-code=false")
+	assertStdoutContainsAll(t, result, "Application: argocd/demo", "-  value: old", "+  value: new")
+	assertStderrEmpty(t, result)
 }
 
 func TestDiffAppPrintsOnlyNamedApplicationDiff(t *testing.T) {
@@ -89,27 +77,10 @@ func TestDiffAppPrintsOnlyNamedApplicationDiff(t *testing.T) {
 	writeSimpleAppForCLI(t, right, "new")
 	writeNamedCLIApplication(t, right, "other", "other", "changed-but-skipped")
 
-	cmd := NewRootCommand(VersionInfo{})
-	cmd.SetArgs([]string{"diff", "app", "demo", "--path-orig", left, "--path", right, "--exit-code=false"})
-	var stdout bytes.Buffer
-	var stderr bytes.Buffer
-	cmd.SetOut(&stdout)
-	cmd.SetErr(&stderr)
-
-	if err := cmd.Execute(); err != nil {
-		t.Fatalf("Execute() error = %v\nstdout:\n%s\nstderr:\n%s", err, stdout.String(), stderr.String())
-	}
-	for _, want := range []string{"Application: argocd/demo", "-  value: old", "+  value: new"} {
-		if !strings.Contains(stdout.String(), want) {
-			t.Fatalf("stdout missing %q:\n%s", want, stdout.String())
-		}
-	}
-	if strings.Contains(stdout.String(), "other") || strings.Contains(stdout.String(), "changed-but-skipped") {
-		t.Fatalf("stdout included non-selected app:\n%s", stdout.String())
-	}
-	if stderr.String() != "" {
-		t.Fatalf("stderr = %q, want empty", stderr.String())
-	}
+	result := runCLI(t, "diff", "app", "demo", "--path-orig", left, "--path", right, "--exit-code=false")
+	assertStdoutContainsAll(t, result, "Application: argocd/demo", "-  value: old", "+  value: new")
+	assertStdoutExcludesAll(t, result, "other", "changed-but-skipped")
+	assertStderrEmpty(t, result)
 }
 
 func TestDiffAppReportsMissingApplication(t *testing.T) {
