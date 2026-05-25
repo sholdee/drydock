@@ -110,13 +110,14 @@ func (session *buildSession) Build(ctx context.Context) (BuildResult, error) {
 	provider.acquisition = acquisition.Session{
 		Locks:              processCacheTargetLocks,
 		SnapshotRoot:       snapshotRoot,
-		SnapshotCacheReads: true,
+		SnapshotCacheReads: shouldSnapshotCacheReads(session.request),
 	}
 
 	rendered, renderErr := renderApplications(ctx, renderApplicationsRequest{
 		applications:   result.Applications,
 		provider:       provider,
 		strict:         session.request.Strict,
+		statusOnly:     session.request.StatusOnly,
 		settingsFilter: settingsFilter,
 		resourceFilter: resourceFilter,
 		recordEvents:   session.request.RecordCacheEvents,
@@ -134,4 +135,14 @@ func (session *buildSession) Build(ctx context.Context) (BuildResult, error) {
 		return result, err
 	}
 	return result, nil
+}
+
+func shouldSnapshotCacheReads(request BuildRequest) bool {
+	if !request.Offline {
+		return true
+	}
+	return request.RefreshCharts ||
+		request.RefreshGit ||
+		request.RefreshRemoteResources ||
+		request.AllowNetwork
 }

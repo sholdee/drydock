@@ -42,6 +42,7 @@ func newTestCommand(deps Dependencies) *cobra.Command {
 				return err
 			}
 			buildRequest := buildRequestFromFlags(appsFlags, repoMaps)
+			buildRequest.StatusOnly = true
 			if strings.TrimSpace(appsFlags.selector) != "" {
 				selector, err := parseApplicationSelector(appsFlags.selector)
 				if err != nil {
@@ -83,9 +84,11 @@ func newTestCommand(deps Dependencies) *cobra.Command {
 			if err != nil {
 				return err
 			}
+			buildRequest := buildRequestFromFlags(appFlags, repoMaps)
+			buildRequest.StatusOnly = true
 			result, err := deps.Orchestrator.BuildApp(context.Background(), app.BuildAppRequest{
 				Name:         args[0],
-				BuildRequest: buildRequestFromFlags(appFlags, repoMaps),
+				BuildRequest: buildRequest,
 			})
 			if renderErr := renderDiagnostics(cmd.ErrOrStderr(), result.Diagnostics); renderErr != nil {
 				return renderErr

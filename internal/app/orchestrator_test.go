@@ -39,6 +39,26 @@ func TestOrchestratorDiscoversGeneratesAndRenders(t *testing.T) {
 	}
 }
 
+func TestOrchestratorBuildStatusOnlyDoesNotCollectManifests(t *testing.T) {
+	root := t.TempDir()
+	writeBuildApplication(t, root, "demo", "demo")
+
+	result, err := Orchestrator{}.Build(context.Background(), BuildRequest{Path: root, StatusOnly: true})
+	if err != nil {
+		t.Fatalf("Build() error = %v", err)
+	}
+
+	if len(result.Manifests) != 0 {
+		t.Fatalf("len(Manifests) = %d, want 0", len(result.Manifests))
+	}
+	if len(result.ApplicationManifests) != 0 {
+		t.Fatalf("len(ApplicationManifests) = %d, want 0", len(result.ApplicationManifests))
+	}
+	assertApplicationStatuses(t, result.Statuses, []ApplicationStatus{
+		{Namespace: "argocd", Name: "demo", Status: ApplicationStatusPass},
+	})
+}
+
 func TestOrchestratorDiagIncludesSettings(t *testing.T) {
 	root := t.TempDir()
 	writeBuildApplication(t, root, "demo", "demo")
@@ -508,6 +528,35 @@ func TestOrchestratorBuildStrictFailsOnRenderDiagnostics(t *testing.T) {
 	if !strings.Contains(err.Error(), "repeated-resource") {
 		t.Fatalf("Build() error = %q, want repeated-resource", err.Error())
 	}
+}
+
+func TestOrchestratorBuildStatusOnlyStrictFailsOnRenderDiagnostics(t *testing.T) {
+	root := t.TempDir()
+	writeTestFile(t, filepath.Join(root, "apps", "direct.yaml"), directApplicationYAML())
+	writeDuplicateConfigMaps(t, filepath.Join(root, "manifests", "direct"))
+
+	result, err := Orchestrator{}.Build(context.Background(), BuildRequest{Path: root, Strict: true, StatusOnly: true})
+	if err == nil {
+		t.Fatalf("Build() error = nil, want strict diagnostic error")
+	}
+	if len(result.Manifests) != 0 {
+		t.Fatalf("len(Manifests) = %d, want 0", len(result.Manifests))
+	}
+	if len(result.ApplicationManifests) != 0 {
+		t.Fatalf("len(ApplicationManifests) = %d, want 0", len(result.ApplicationManifests))
+	}
+	if len(result.Diagnostics) != 1 {
+		t.Fatalf("len(Diagnostics) = %d, want 1: %#v", len(result.Diagnostics), result.Diagnostics)
+	}
+	if result.Diagnostics[0].Category != "repeated-resource" {
+		t.Fatalf("diagnostic category = %q, want repeated-resource", result.Diagnostics[0].Category)
+	}
+	if !strings.Contains(err.Error(), "repeated-resource") {
+		t.Fatalf("Build() error = %q, want repeated-resource", err.Error())
+	}
+	assertApplicationStatuses(t, result.Statuses, []ApplicationStatus{
+		{Namespace: "argocd", Name: "direct", Status: ApplicationStatusFail},
+	})
 }
 
 func TestOrchestratorBuildAppliesConfigMapResourceExclusions(t *testing.T) {
