@@ -11,8 +11,6 @@ import (
 	"github.com/spf13/cobra"
 )
 
-const testOutputText = "text"
-
 func newTestCommand(deps Dependencies) *cobra.Command {
 	flags := defaultCommonFlags()
 	flags.output = testOutputText
@@ -106,18 +104,6 @@ func buildRequestFromFlags(flags commonFlags, repoMaps []source.RepoMap) app.Bui
 	return requestOptionsFromFlags(flags, repoMaps).Build()
 }
 
-func parseTestOutput(value string) (string, error) {
-	output := strings.TrimSpace(value)
-	switch output {
-	case "", testOutputText:
-		return testOutputText, nil
-	case string(cliformat.OutputJSON), string(cliformat.OutputYAML):
-		return output, nil
-	default:
-		return "", fmt.Errorf("unsupported output %q for test", value)
-	}
-}
-
 func renderTestResult(cmd *cobra.Command, statuses []app.ApplicationStatus, output string) error {
 	switch output {
 	case testOutputText:
@@ -133,9 +119,9 @@ func renderTestResult(cmd *cobra.Command, statuses []app.ApplicationStatus, outp
 			}
 		}
 	case string(cliformat.OutputJSON):
-		return cliformat.JSON(cmd.OutOrStdout(), statuses)
+		return writeStructuredOutput(cmd.OutOrStdout(), output, statuses)
 	case string(cliformat.OutputYAML):
-		return cliformat.YAML(cmd.OutOrStdout(), statuses)
+		return writeStructuredOutput(cmd.OutOrStdout(), output, statuses)
 	default:
 		return fmt.Errorf("unsupported output %q for test", output)
 	}

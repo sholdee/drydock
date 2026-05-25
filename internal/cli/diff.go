@@ -3,15 +3,12 @@ package cli
 import (
 	"context"
 	"fmt"
-	"strings"
 
 	"github.com/sholdee/drydock/internal/app"
 	cliformat "github.com/sholdee/drydock/internal/format"
 	"github.com/sholdee/drydock/internal/source"
 	"github.com/spf13/cobra"
 )
-
-const diffOutputUnified = "diff"
 
 //nolint:gocyclo // Cobra wiring keeps diff subcommands and shared flag handling together.
 func newDiffCommand(deps Dependencies) *cobra.Command {
@@ -128,20 +125,6 @@ func diffRequestFromFlags(flags commonFlags, repoMaps []source.RepoMap) app.Diff
 	return requestOptionsFromFlags(flags, repoMaps).Diff()
 }
 
-func parseDiffOutput(value, command string) (string, error) {
-	output := strings.TrimSpace(value)
-	switch output {
-	case "", diffOutputUnified:
-		return diffOutputUnified, nil
-	case string(cliformat.OutputJSON), string(cliformat.OutputYAML):
-		return output, nil
-	case string(cliformat.OutputName):
-		return "", fmt.Errorf("name output is not supported for %s", command)
-	default:
-		return "", fmt.Errorf("unsupported output %q for %s", value, command)
-	}
-}
-
 func renderDiffResult(cmd *cobra.Command, result app.DiffResult, disableDiffExitCode bool, output string) error {
 	if err := renderDiagnostics(cmd.ErrOrStderr(), result.Diagnostics); err != nil {
 		return err
@@ -154,11 +137,11 @@ func renderDiffResult(cmd *cobra.Command, result app.DiffResult, disableDiffExit
 			}
 		}
 	case string(cliformat.OutputJSON):
-		if err := cliformat.JSON(cmd.OutOrStdout(), result.Results); err != nil {
+		if err := writeStructuredOutput(cmd.OutOrStdout(), output, result.Results); err != nil {
 			return err
 		}
 	case string(cliformat.OutputYAML):
-		if err := cliformat.YAML(cmd.OutOrStdout(), result.Results); err != nil {
+		if err := writeStructuredOutput(cmd.OutOrStdout(), output, result.Results); err != nil {
 			return err
 		}
 	default:
