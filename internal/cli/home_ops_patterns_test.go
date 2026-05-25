@@ -8,32 +8,21 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/sholdee/drydock/internal/app"
 	"github.com/sholdee/drydock/internal/remote"
 )
 
 func TestDiffAppsHomeOpsPatternFixture(t *testing.T) {
-	fixtureRoot := filepath.Join("..", "..", "testdata", "home-ops-patterns")
+	fixtureRoot := homeOpsPatternFixtureRoot()
 	cleanupGeneratedCacheMetadata(t, filepath.Join(fixtureRoot, "chart-cache"))
-	cmd := NewRootCommand(VersionInfo{})
-	cmd.SetArgs([]string{
+	result := runCLI(t,
 		"diff", "apps",
 		"--path-orig", filepath.Join(fixtureRoot, "baseline"),
 		"--path", filepath.Join(fixtureRoot, "current"),
 		"--offline",
 		"--chart-cache-dir", filepath.Join(fixtureRoot, "chart-cache"),
 		"--exit-code=false",
-	})
-	var stdout bytes.Buffer
-	var stderr bytes.Buffer
-	cmd.SetOut(&stdout)
-	cmd.SetErr(&stderr)
-
-	if err := cmd.Execute(); err != nil {
-		t.Fatalf("Execute() error = %v\nstdout:\n%s\nstderr:\n%s", err, stdout.String(), stderr.String())
-	}
-
-	for _, want := range []string{
+	)
+	assertStdoutContainsAll(t, result,
 		"Application: argocd/plain",
 		"example/plain:v1",
 		"example/plain:v2",
@@ -71,26 +60,15 @@ func TestDiffAppsHomeOpsPatternFixture(t *testing.T) {
 		"Application: argocd/direct-oci",
 		"example/direct-oci:v1",
 		"example/direct-oci:v2",
-	} {
-		if !strings.Contains(stdout.String(), want) {
-			t.Fatalf("stdout missing %q:\nstdout:\n%s\nstderr:\n%s", want, stdout.String(), stderr.String())
-		}
-	}
-	if stderr.String() != "" {
-		t.Fatalf("stderr = %q, want empty", stderr.String())
-	}
-	for _, forbidden := range []string{"cmVkYWN0ZWQtYmFzZWxpbmU=", "cmVkYWN0ZWQtY3VycmVudA=="} {
-		if strings.Contains(stdout.String(), forbidden) {
-			t.Fatalf("stdout leaked Secret value %q:\n%s", forbidden, stdout.String())
-		}
-	}
+	)
+	assertStderrEmpty(t, result)
+	assertStdoutExcludesAll(t, result, "cmVkYWN0ZWQtYmFzZWxpbmU=", "cmVkYWN0ZWQtY3VycmVudA==")
 }
 
 func TestDiffAppsHomeOpsPatternFixtureStrictChangedOnly(t *testing.T) {
-	fixtureRoot := filepath.Join("..", "..", "testdata", "home-ops-patterns")
+	fixtureRoot := homeOpsPatternFixtureRoot()
 	cleanupGeneratedCacheMetadata(t, filepath.Join(fixtureRoot, "chart-cache"))
-	cmd := NewRootCommand(VersionInfo{})
-	cmd.SetArgs([]string{
+	result := runCLI(t,
 		"diff", "apps",
 		"--path-orig", filepath.Join(fixtureRoot, "baseline"),
 		"--path", filepath.Join(fixtureRoot, "current"),
@@ -98,19 +76,11 @@ func TestDiffAppsHomeOpsPatternFixtureStrictChangedOnly(t *testing.T) {
 		"--chart-cache-dir", filepath.Join(fixtureRoot, "chart-cache"),
 		"--strict-changed-only",
 		"--exit-code=false",
-	})
-	var stdout bytes.Buffer
-	var stderr bytes.Buffer
-	cmd.SetOut(&stdout)
-	cmd.SetErr(&stderr)
-
-	if err := cmd.Execute(); err != nil {
-		t.Fatalf("Execute() error = %v\nstdout:\n%s\nstderr:\n%s", err, stdout.String(), stderr.String())
+	)
+	if strings.Contains(result.Stderr, "changed-only") {
+		t.Fatalf("stderr contains changed-only diagnostic:\n%s", result.Stderr)
 	}
-	if strings.Contains(stderr.String(), "changed-only") {
-		t.Fatalf("stderr contains changed-only diagnostic:\n%s", stderr.String())
-	}
-	for _, want := range []string{
+	assertStdoutContainsAll(t, result,
 		"Application: argocd/plain",
 		"fixture.example.test/patch-mode: baseline",
 		"fixture.example.test/patch-mode: current",
@@ -125,21 +95,13 @@ func TestDiffAppsHomeOpsPatternFixtureStrictChangedOnly(t *testing.T) {
 		"Application: argocd/http-chart",
 		"example/http:v1",
 		"example/http:v2",
-	} {
-		if !strings.Contains(stdout.String(), want) {
-			t.Fatalf("stdout missing %q:\nstdout:\n%s\nstderr:\n%s", want, stdout.String(), stderr.String())
-		}
-	}
-	for _, forbidden := range []string{
+	)
+	assertStdoutExcludesAll(t, result,
 		"ConfigMap: nested/nested-b",
 		"ConfigMap: multi-chart/beta",
 		"cmVkYWN0ZWQtYmFzZWxpbmU=",
 		"cmVkYWN0ZWQtY3VycmVudA==",
-	} {
-		if strings.Contains(stdout.String(), forbidden) {
-			t.Fatalf("stdout contains forbidden %q:\n%s", forbidden, stdout.String())
-		}
-	}
+	)
 }
 
 func cleanupGeneratedCacheMetadata(t *testing.T, root string) {
@@ -162,7 +124,7 @@ func cleanupGeneratedCacheMetadata(t *testing.T, root string) {
 }
 
 func TestDiffAppsRemoteKustomizePatternFixture(t *testing.T) {
-	fixtureRoot := filepath.Join("..", "..", "testdata", "home-ops-patterns", "remote-kustomize")
+	fixtureRoot := homeOpsPatternFixtureRoot("remote-kustomize")
 	remoteRoot := filepath.Join(fixtureRoot, "remote")
 
 	acquirer := &recordingCLIRemoteAcquirer{paths: map[string]string{
@@ -171,10 +133,8 @@ func TestDiffAppsRemoteKustomizePatternFixture(t *testing.T) {
 		"https://github.com/example/remote-patch.git":                    filepath.Join(remoteRoot, "patch"),
 		"https://raw.githubusercontent.com/example/remote/resource.yaml": filepath.Join(remoteRoot, "http", "resource.yaml"),
 	}}
-	cmd := NewRootCommandWithDependencies(VersionInfo{}, Dependencies{
-		Orchestrator: app.Orchestrator{RemoteResourceAcquirer: acquirer},
-	})
-	cmd.SetArgs([]string{
+	result := runCLIWithDependencies(t,
+		remoteFixtureDependencies(acquirer),
 		"diff", "apps",
 		"--path-orig", filepath.Join(fixtureRoot, "baseline"),
 		"--path", filepath.Join(fixtureRoot, "current"),
@@ -182,28 +142,14 @@ func TestDiffAppsRemoteKustomizePatternFixture(t *testing.T) {
 		"--remote-cache-dir", filepath.Join(t.TempDir(), "remote-cache"),
 		"--remote-bearer-token", "fixture-token",
 		"--exit-code=false",
-	})
-	var stdout bytes.Buffer
-	var stderr bytes.Buffer
-	cmd.SetOut(&stdout)
-	cmd.SetErr(&stderr)
-
-	if err := cmd.Execute(); err != nil {
-		t.Fatalf("Execute() error = %v\nstdout:\n%s\nstderr:\n%s", err, stdout.String(), stderr.String())
-	}
-	for _, want := range []string{
+	)
+	assertStdoutContainsAll(t, result,
 		"Application: argocd/remote-pattern",
 		"ConfigMap: remote-pattern/local",
 		"-  value: baseline",
 		"+  value: current",
-	} {
-		if !strings.Contains(stdout.String(), want) {
-			t.Fatalf("stdout missing %q:\nstdout:\n%s\nstderr:\n%s", want, stdout.String(), stderr.String())
-		}
-	}
-	if stderr.String() != "" {
-		t.Fatalf("stderr = %q, want empty", stderr.String())
-	}
+	)
+	assertStderrEmpty(t, result)
 	if got, want := len(acquirer.requests), 8; got != want {
 		t.Fatalf("remote acquire calls = %d, want %d", got, want)
 	}
@@ -223,23 +169,14 @@ func TestDiffAppsRemoteKustomizePatternFixture(t *testing.T) {
 }
 
 func TestDiffAppsApplicationSetCombinationPatternFixture(t *testing.T) {
-	fixtureRoot := filepath.Join("..", "..", "testdata", "home-ops-patterns", "appset-combinations")
-	cmd := NewRootCommand(VersionInfo{})
-	cmd.SetArgs([]string{
+	fixtureRoot := homeOpsPatternFixtureRoot("appset-combinations")
+	result := runCLI(t,
 		"diff", "apps",
 		"--path-orig", filepath.Join(fixtureRoot, "baseline"),
 		"--path", filepath.Join(fixtureRoot, "current"),
 		"--exit-code=false",
-	})
-	var stdout bytes.Buffer
-	var stderr bytes.Buffer
-	cmd.SetOut(&stdout)
-	cmd.SetErr(&stderr)
-
-	if err := cmd.Execute(); err != nil {
-		t.Fatalf("Execute() error = %v\nstdout:\n%s\nstderr:\n%s", err, stdout.String(), stderr.String())
-	}
-	for _, want := range []string{
+	)
+	assertStdoutContainsAll(t, result,
 		"Application: argocd/matrix-alpha-dev",
 		"ConfigMap: dev/matrix-config",
 		"value: matrix-baseline",
@@ -248,14 +185,8 @@ func TestDiffAppsApplicationSetCombinationPatternFixture(t *testing.T) {
 		"ConfigMap: merge/merge-beta",
 		"value: merge-baseline",
 		"value: merge-current",
-	} {
-		if !strings.Contains(stdout.String(), want) {
-			t.Fatalf("stdout missing %q:\nstdout:\n%s\nstderr:\n%s", want, stdout.String(), stderr.String())
-		}
-	}
-	if stderr.String() != "" {
-		t.Fatalf("stderr = %q, want empty", stderr.String())
-	}
+	)
+	assertStderrEmpty(t, result)
 }
 
 type recordingCLIRemoteAcquirer struct {
