@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.1.1](https://github.com/sholdee/drydock/compare/v0.1.0...v0.1.1) (2026-05-26)
+
+
+### Bug Fixes
+
+* **deps:** align gitops-engine with argocd v3.4.2 ([24873ef](https://github.com/sholdee/drydock/commit/24873efea3cc203c311713ed11b0c39bfd783f34))
+* **deps:** update module github.com/argoproj/argo-cd/v3 to v3.4.2 ([ecfc966](https://github.com/sholdee/drydock/commit/ecfc9668ac347830b493446daaee41a0aa01c771))
+* **deps:** update module github.com/argoproj/argo-cd/v3 to v3.4.2 ([ad1d6bf](https://github.com/sholdee/drydock/commit/ad1d6bf8ee5ce7b121009b4ad47eddee7a9c36d0))
+* **deps:** update module k8s.io/apimachinery to v0.36.1 ([0eff67e](https://github.com/sholdee/drydock/commit/0eff67e64bf2027ae17dc2178e13c78b9acd3276))
+* **deps:** update module k8s.io/apimachinery to v0.36.1 ([e587a7a](https://github.com/sholdee/drydock/commit/e587a7a8392aa128706b6be5e282068318141cbc))
+
 ## 0.1.0 (2026-05-26)
 
 
