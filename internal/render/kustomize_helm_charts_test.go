@@ -2,11 +2,13 @@ package render
 
 import (
 	"context"
+	"strings"
+	"testing"
+
 	"github.com/sholdee/drydock/internal/cacheevent"
 	"github.com/sholdee/drydock/internal/chart"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"path/filepath"
-	"testing"
 )
 
 func TestKustomizeRendererRendersHelmChartsWithoutShellout(t *testing.T) {
@@ -625,6 +627,171 @@ helmCharts:
 	assertConfigMapData(t, result, "base", "from-chart-default")
 	assertConfigMapData(t, result, "image", "from-additional")
 }
+
+func TestKustomizeRendererAllowsRepoRootBoundedHelmValuesWithLoadRestrictionsNone(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "values", "demo.yaml"), "nameOverride: shared\n")
+	writeFile(t, filepath.Join(root, "apps", "demo", "kustomization.yaml"), `
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+helmCharts:
+  - name: demo
+    valuesFile: ../../values/demo.yaml
+`)
+	writeTestChart(t, filepath.Join(root, "apps", "demo", "charts", "demo"), `
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Values.nameOverride }}
+`)
+
+	result, diags, err := (KustomizeRenderer{}).Render(context.Background(), ResolvedSource{
+		RepoRoot: root,
+		Path:     filepath.Join("apps", "demo"),
+	}, RenderOptions{BuildOptions: []string{"--load-restrictor=LoadRestrictionsNone"}})
+	if err != nil {
+		t.Fatalf("Render() error = %v", err)
+	}
+	if len(diags) != 0 {
+		t.Fatalf("diagnostics = %#v", diags)
+	}
+	if len(result) != 1 || result[0].Object.GetName() != "shared" {
+		t.Fatalf("result = %#v, want shared ConfigMap", result)
+	}
+}
+
+func TestKustomizeRendererAllowsRepoRootBoundedAdditionalHelmValues(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "values", "extra.yaml"), "extraName: from-extra\n")
+	writeFile(t, filepath.Join(root, "apps", "demo", "kustomization.yaml"), `
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+helmCharts:
+  - name: demo
+    valuesInline:
+      nameOverride: base
+    additionalValuesFiles:
+      - ../../values/extra.yaml
+`)
+	writeTestChart(t, filepath.Join(root, "apps", "demo", "charts", "demo"), `
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Values.extraName }}
+`)
+
+	result, diags, err := (KustomizeRenderer{}).Render(context.Background(), ResolvedSource{
+		RepoRoot: root,
+		Path:     filepath.Join("apps", "demo"),
+	}, RenderOptions{BuildOptions: []string{"--load-restrictor=LoadRestrictionsNone"}})
+	if err != nil {
+		t.Fatalf("Render() error = %v", err)
+	}
+	if len(diags) != 0 {
+		t.Fatalf("diagnostics = %#v", diags)
+	}
+	if len(result) != 1 || result[0].Object.GetName() != "from-extra" {
+		t.Fatalf("result = %#v, want from-extra ConfigMap", result)
+	}
+}
+
+func TestKustomizeRendererMergesInlineValuesWithRepoRootBoundedPrimaryValuesFile(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "values", "base.yaml"), "baseName: from-file\n")
+	writeFile(t, filepath.Join(root, "apps", "demo", "kustomization.yaml"), `
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+helmCharts:
+  - name: demo
+    valuesFile: ../../values/base.yaml
+    valuesInline:
+      inlineName: from-inline
+`)
+	writeTestChart(t, filepath.Join(root, "apps", "demo", "charts", "demo"), `
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Values.baseName }}-{{ .Values.inlineName }}
+`)
+
+	result, diags, err := (KustomizeRenderer{}).Render(context.Background(), ResolvedSource{
+		RepoRoot: root,
+		Path:     filepath.Join("apps", "demo"),
+	}, RenderOptions{BuildOptions: []string{"--load-restrictor=LoadRestrictionsNone"}})
+	if err != nil {
+		t.Fatalf("Render() error = %v", err)
+	}
+	if len(diags) != 0 {
+		t.Fatalf("diagnostics = %#v", diags)
+	}
+	if len(result) != 1 || result[0].Object.GetName() != "from-file-from-inline" {
+		t.Fatalf("result = %#v, want merged ConfigMap", result)
+	}
+}
+
+func TestKustomizeRendererRejectsHelmValuesOutsideRepoRoot(t *testing.T) {
+	parent := t.TempDir()
+	root := filepath.Join(parent, "repo")
+	outside := filepath.Join(parent, "outside")
+	writeFile(t, filepath.Join(outside, "values.yaml"), "nameOverride: outside\n")
+	writeFile(t, filepath.Join(root, "apps", "demo", "kustomization.yaml"), `
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+helmCharts:
+  - name: demo
+    valuesFile: ../../../outside/values.yaml
+`)
+	writeTestChart(t, filepath.Join(root, "apps", "demo", "charts", "demo"), `
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Values.nameOverride }}
+`)
+
+	_, _, err := (KustomizeRenderer{}).Render(context.Background(), ResolvedSource{
+		RepoRoot: root,
+		Path:     filepath.Join("apps", "demo"),
+	}, RenderOptions{BuildOptions: []string{"--load-restrictor=LoadRestrictionsNone"}})
+	if err == nil {
+		t.Fatal("Render() error = nil, want repo escape error")
+	}
+	if !strings.Contains(err.Error(), "escapes") {
+		t.Fatalf("Render() error = %v, want escape error", err)
+	}
+}
+
+func TestKustomizeRendererRejectsAdditionalHelmValuesOutsideRepoRoot(t *testing.T) {
+	parent := t.TempDir()
+	root := filepath.Join(parent, "repo")
+	outside := filepath.Join(parent, "outside")
+	writeFile(t, filepath.Join(outside, "extra.yaml"), "extraName: outside\n")
+	writeFile(t, filepath.Join(root, "apps", "demo", "kustomization.yaml"), `
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+helmCharts:
+  - name: demo
+    additionalValuesFiles:
+      - ../../../outside/extra.yaml
+`)
+	writeTestChart(t, filepath.Join(root, "apps", "demo", "charts", "demo"), `
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Values.extraName }}
+`)
+
+	_, _, err := (KustomizeRenderer{}).Render(context.Background(), ResolvedSource{
+		RepoRoot: root,
+		Path:     filepath.Join("apps", "demo"),
+	}, RenderOptions{BuildOptions: []string{"--load-restrictor=LoadRestrictionsNone"}})
+	if err == nil {
+		t.Fatal("Render() error = nil, want repo escape error")
+	}
+	if !strings.Contains(err.Error(), "escapes") {
+		t.Fatalf("Render() error = %v, want escape error", err)
+	}
+}
+
 func TestKustomizeRendererRejectsUnsupportedHelmFields(t *testing.T) {
 	for _, tt := range []struct {
 		name          string

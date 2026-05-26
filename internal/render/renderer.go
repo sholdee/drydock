@@ -36,6 +36,7 @@ type RenderOptions struct {
 	ValuesMergeMode              string
 	ValueFiles                   []string
 	ValueFilesBaseDir            string
+	ValueFilesBoundaryRoot       string
 	IgnoreMissingValueFiles      bool
 	DirectoryRecurse             bool
 	DirectoryInclude             string

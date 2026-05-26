@@ -75,7 +75,7 @@ func (HelmRenderer) Render(ctx context.Context, source ResolvedSource, opts Rend
 	}
 	fileValues := map[string]any{}
 	if loadValueFiles {
-		fileValues, err = loadHelmValueFiles(source.RepoRoot, helmValueFilesBaseDir(source, opts), opts.RefRoots, opts.ValueFiles, opts.IgnoreMissingValueFiles)
+		fileValues, err = loadHelmValueFiles(source.RepoRoot, helmValueFilesBaseDir(source, opts), helmValueFilesBoundaryRoot(source, opts), opts.RefRoots, opts.ValueFiles, opts.IgnoreMissingValueFiles)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -392,6 +392,13 @@ func helmValueFilesBaseDir(source ResolvedSource, opts RenderOptions) string {
 	return source.Path
 }
 
+func helmValueFilesBoundaryRoot(source ResolvedSource, opts RenderOptions) string {
+	if opts.ValueFilesBoundaryRoot != "" {
+		return opts.ValueFilesBoundaryRoot
+	}
+	return helmValueFilesBaseDir(source, opts)
+}
+
 func shouldLoadHelmValueFiles(mode string, inlineValues map[string]any) (bool, error) {
 	switch mode {
 	case "", "override", "merge":
@@ -403,10 +410,10 @@ func shouldLoadHelmValueFiles(mode string, inlineValues map[string]any) (bool, e
 	}
 }
 
-func loadHelmValueFiles(repoRoot, baseDir string, refRoots map[string]string, files []string, ignoreMissing bool) (map[string]any, error) {
+func loadHelmValueFiles(repoRoot, baseDir, boundaryDir string, refRoots map[string]string, files []string, ignoreMissing bool) (map[string]any, error) {
 	out := map[string]any{}
 	for _, file := range files {
-		root, resolved, err := resolveHelmValueFile(repoRoot, baseDir, refRoots, file)
+		root, resolved, err := resolveHelmValueFile(repoRoot, baseDir, boundaryDir, refRoots, file)
 		if err != nil {
 			return nil, err
 		}
@@ -435,7 +442,7 @@ func loadHelmValueFiles(repoRoot, baseDir string, refRoots map[string]string, fi
 	return out, nil
 }
 
-func resolveHelmValueFile(repoRoot, baseDir string, refRoots map[string]string, file string) (string, string, error) {
+func resolveHelmValueFile(repoRoot, baseDir, boundaryDir string, refRoots map[string]string, file string) (string, string, error) {
 	if strings.HasPrefix(file, "$") {
 		ref, refPath, ok := strings.Cut(strings.TrimPrefix(file, "$"), "/")
 		if !ok || ref == "" || refPath == "" {
@@ -463,8 +470,19 @@ func resolveHelmValueFile(repoRoot, baseDir string, refRoots map[string]string, 
 	if err := rejectHelmValueBaseDirSymlinkComponents(repoRoot, cleanBase); err != nil {
 		return "", "", fmt.Errorf("helm value files base dir %q: %w", baseDir, err)
 	}
-	root := filepath.Join(repoRoot, cleanBase)
-	return resolveHelmValueFileUnderRoot(root, file, file)
+	cleanBoundary, err := cleanSourcePath(boundaryDir)
+	if err != nil {
+		return "", "", fmt.Errorf("helm value files boundary root %q: %w", boundaryDir, err)
+	}
+	if err := rejectHelmValueBaseDirSymlinkComponents(repoRoot, cleanBoundary); err != nil {
+		return "", "", fmt.Errorf("helm value files boundary root %q: %w", boundaryDir, err)
+	}
+	baseRoot := filepath.Join(repoRoot, cleanBase)
+	boundaryRoot := filepath.Join(repoRoot, cleanBoundary)
+	if cleanBoundary == cleanBase {
+		return resolveHelmValueFileUnderRoot(baseRoot, file, file)
+	}
+	return resolveHelmValueFileUnderBoundary(baseRoot, boundaryRoot, file, file)
 }
 
 func rejectHelmRefRootSymlink(root string) error {
@@ -517,6 +535,22 @@ func resolveHelmValueFileUnderRoot(root, file, display string) (string, string, 
 		return "", "", fmt.Errorf("helm value file %q escapes value files root", display)
 	}
 	return root, resolved, nil
+}
+
+func resolveHelmValueFileUnderBoundary(baseRoot, boundaryRoot, file, display string) (string, string, error) {
+	if filepath.IsAbs(file) {
+		return "", "", fmt.Errorf("helm value file %q must be relative", display)
+	}
+	clean := filepath.Clean(file)
+	if strings.TrimSpace(file) == "" || clean == "." {
+		return "", "", fmt.Errorf("helm value file %q escapes value files boundary", display)
+	}
+	resolved := filepath.Clean(filepath.Join(baseRoot, clean))
+	rel, err := filepath.Rel(boundaryRoot, resolved)
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return "", "", fmt.Errorf("helm value file %q escapes value files boundary", display)
+	}
+	return boundaryRoot, resolved, nil
 }
 
 func mergeHelmValues(fileValues, inlineValues map[string]any, mode string) (map[string]any, error) {

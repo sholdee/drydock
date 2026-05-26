@@ -368,24 +368,25 @@ func renderOptionsForKustomizeHelmChart(helmChart types.HelmChart, tempRepoRoot,
 	}
 
 	return RenderOptions{
-		AppName:           helmChart.Name,
-		ReleaseName:       helmChart.ReleaseName,
-		Namespace:         namespace,
-		KubeVersion:       helmChart.KubeVersion,
-		APIVersions:       append([]string(nil), helmChart.ApiVersions...),
-		ValueFiles:        valueFiles,
-		ValueFilesBaseDir: valueFilesBaseDir,
-		ValuesObject:      valuesObject,
-		ValuesMergeMode:   valuesMergeMode,
-		ChartCacheDir:     opts.ChartCacheDir,
-		OfflineCharts:     opts.OfflineCharts,
-		RefreshCharts:     opts.RefreshCharts,
-		ChartCredentials:  opts.ChartCredentials,
-		ChartAcquirer:     acquirer,
-		IncludeCRDs:       helmChart.IncludeCRDs,
-		IncludeCRDsSet:    true,
-		SkipHooks:         helmChart.SkipHooks,
-		SkipTests:         helmChart.SkipTests,
+		AppName:                helmChart.Name,
+		ReleaseName:            helmChart.ReleaseName,
+		Namespace:              namespace,
+		KubeVersion:            helmChart.KubeVersion,
+		APIVersions:            append([]string(nil), helmChart.ApiVersions...),
+		ValueFiles:             valueFiles,
+		ValueFilesBaseDir:      valueFilesBaseDir,
+		ValueFilesBoundaryRoot: ".",
+		ValuesObject:           valuesObject,
+		ValuesMergeMode:        valuesMergeMode,
+		ChartCacheDir:          opts.ChartCacheDir,
+		OfflineCharts:          opts.OfflineCharts,
+		RefreshCharts:          opts.RefreshCharts,
+		ChartCredentials:       opts.ChartCredentials,
+		ChartAcquirer:          acquirer,
+		IncludeCRDs:            helmChart.IncludeCRDs,
+		IncludeCRDsSet:         true,
+		SkipHooks:              helmChart.SkipHooks,
+		SkipTests:              helmChart.SkipTests,
 	}, nil
 }
 
@@ -404,7 +405,11 @@ func writeKustomizeHelmGeneratedValuesFile(tempRepoRoot, tempSourceRoot, chartRe
 			valueFile = "values.yaml"
 			ignoreMissing = true
 		}
-		primaryValues, err = loadHelmValueFiles(tempRepoRoot, valueFilesBase, nil, []string{valueFile}, ignoreMissing)
+		valueFilesBoundary := "."
+		if valueFilesBase == chartRel {
+			valueFilesBoundary = chartRel
+		}
+		primaryValues, err = loadHelmValueFiles(tempRepoRoot, valueFilesBase, valueFilesBoundary, nil, []string{valueFile}, ignoreMissing)
 		if err != nil {
 			return "", err
 		}
