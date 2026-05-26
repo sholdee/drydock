@@ -7,7 +7,10 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"runtime"
+	"sort"
 	"strings"
+	"sync"
 
 	"github.com/go-git/go-git/v5/plumbing/filemode"
 	"github.com/go-git/go-git/v5/plumbing/object"
@@ -114,43 +117,104 @@ func looksLikeSCPRemote(value string) bool {
 }
 
 func materializeTree(ctx context.Context, tree *object.Tree, root string) error {
-	return tree.Files().ForEach(func(file *object.File) error {
-		if err := ctx.Err(); err != nil {
-			return err
-		}
-		path := filepath.Clean(file.Name)
-		if path == "." || filepath.IsAbs(path) || path == ".." || strings.HasPrefix(path, ".."+string(os.PathSeparator)) {
-			return fmt.Errorf("unsafe Git tree path %q", file.Name)
-		}
-		target := filepath.Join(root, path)
-		parent := filepath.Dir(target)
-		if err := validateSnapshotWriteParent(root, parent); err != nil {
-			return err
-		}
-		if err := os.MkdirAll(parent, 0o755); err != nil {
-			return err
-		}
-		if err := validateSnapshotWriteParent(root, parent); err != nil {
-			return err
-		}
+	files := make([]object.File, 0)
+	if err := tree.Files().ForEach(func(file *object.File) error {
+		files = append(files, *file)
+		return nil
+	}); err != nil {
+		return err
+	}
+	sort.Slice(files, func(i, j int) bool { return files[i].Name < files[j].Name })
+	return materializeTreeFiles(ctx, files, root)
+}
 
-		switch file.Mode {
-		case filemode.Symlink:
-			body, err := file.Contents()
-			if err != nil {
-				return err
+func materializeTreeFiles(ctx context.Context, files []object.File, root string) error {
+	if len(files) == 0 {
+		return ctx.Err()
+	}
+	workers := materializeTreeParallelism(len(files))
+	jobs := make(chan int)
+	errs := make([]error, len(files))
+	var wg sync.WaitGroup
+	wg.Add(workers)
+	for range workers {
+		go func() {
+			defer wg.Done()
+			for i := range jobs {
+				if err := ctx.Err(); err != nil {
+					errs[i] = err
+					continue
+				}
+				errs[i] = materializeTreeFile(root, &files[i])
 			}
-			if err := validateSnapshotSymlinkTarget(root, target, body); err != nil {
-				return fmt.Errorf("materialize symlink %q: %w", file.Name, err)
-			}
-			return os.Symlink(body, target)
-		case filemode.Regular, filemode.Deprecated, filemode.Executable:
-			return writeSnapshotFile(target, file)
-		case filemode.Empty, filemode.Dir, filemode.Submodule:
-			return fmt.Errorf("unsupported Git tree file mode %s for %q", file.Mode, file.Name)
+		}()
+	}
+	for i := range files {
+		jobs <- i
+	}
+	close(jobs)
+	wg.Wait()
+	for _, err := range errs {
+		if err != nil {
+			return err
 		}
+	}
+	return nil
+}
+
+const maxMaterializeTreeWorkers = 16
+
+func materializeTreeParallelism(fileCount int) int {
+	if fileCount <= 1 {
+		return fileCount
+	}
+	workers := runtime.GOMAXPROCS(0)
+	if workers < 1 {
+		workers = 1
+	}
+	if workers > maxMaterializeTreeWorkers {
+		workers = maxMaterializeTreeWorkers
+	}
+	if workers > fileCount {
+		workers = fileCount
+	}
+	return workers
+}
+
+func materializeTreeFile(root string, file *object.File) error {
+	path := filepath.Clean(file.Name)
+	if path == "." || filepath.IsAbs(path) || path == ".." || strings.HasPrefix(path, ".."+string(os.PathSeparator)) {
+		return fmt.Errorf("unsafe Git tree path %q", file.Name)
+	}
+	target := filepath.Join(root, path)
+	parent := filepath.Dir(target)
+	if err := validateSnapshotWriteParent(root, parent); err != nil {
+		return err
+	}
+	if err := os.MkdirAll(parent, 0o755); err != nil {
+		return err
+	}
+	if err := validateSnapshotWriteParent(root, parent); err != nil {
+		return err
+	}
+
+	switch file.Mode {
+	case filemode.Symlink:
+		body, err := file.Contents()
+		if err != nil {
+			return err
+		}
+		if err := validateSnapshotSymlinkTarget(root, target, body); err != nil {
+			return fmt.Errorf("materialize symlink %q: %w", file.Name, err)
+		}
+		return os.Symlink(body, target)
+	case filemode.Regular, filemode.Deprecated, filemode.Executable:
+		return writeSnapshotFile(target, file)
+	case filemode.Empty, filemode.Dir, filemode.Submodule:
 		return fmt.Errorf("unsupported Git tree file mode %s for %q", file.Mode, file.Name)
-	})
+	default:
+		return fmt.Errorf("unsupported Git tree file mode %s for %q", file.Mode, file.Name)
+	}
 }
 
 func writeSnapshotFile(target string, file *object.File) error {

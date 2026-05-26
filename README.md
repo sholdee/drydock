@@ -4,13 +4,16 @@
 
 # drydock
 
-`drydock` renders, tests, and diffs Argo CD GitOps repositories offline from
-live Argo CD and Kubernetes runtime for pull request review.
+`drydock` performs offline Argo CD desired-state analysis for GitOps
+repositories. It discovers, renders, tests, diffs, and diagnoses Applications
+without requiring live Argo CD or Kubernetes runtime.
 
 It is built for operators who want to inspect rendered desired state before a
-change reaches the cluster. The default workflow is a self-contained Go binary
-that does not need a running Kubernetes cluster, Argo CD instance, `kubectl`,
-`argocd`, or Helm/Kustomize CLI shellouts.
+change reaches the cluster. Pull request diffing is the primary workflow, but
+the same engine also supports render validation, image inventory, repository
+diagnostics, cache inspection, and embeddable Go APIs. The default workflow is
+a self-contained Go binary that does not need a running Kubernetes cluster,
+Argo CD instance, `kubectl`, `argocd`, or Helm/Kustomize CLI shellouts.
 
 This is runtime-offline, not necessarily network-disconnected: declared Git,
 HTTP Helm, OCI Helm, and remote Kustomize sources may be fetched into explicit

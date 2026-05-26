@@ -175,6 +175,33 @@ func TestSessionGitSnapshotCacheHitReportsCacheReuse(t *testing.T) {
 	}
 }
 
+func TestSessionGitSnapshotCopiesRegularFiles(t *testing.T) {
+	cacheDir := t.TempDir()
+	gitDir := filepath.Join(cacheDir, "repo")
+	if err := os.MkdirAll(gitDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	manifestPath := filepath.Join(gitDir, "manifest.yaml")
+	if err := os.WriteFile(manifestPath, []byte("kind: ConfigMap\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	acquirer := (Session{
+		Locks:              NewTargetLocks(),
+		SnapshotRoot:       t.TempDir(),
+		SnapshotCacheReads: true,
+		SnapshotCache:      NewSnapshotCache(),
+	}).GitAcquirer(&countingGitAcquirer{path: gitDir, revision: "abc123", fromCache: true})
+
+	result, err := acquirer.Acquire(context.Background(), source.GitRequest{
+		URL:      "https://example.test/repo.git",
+		Revision: "main",
+	}, source.GitOptions{CacheDir: cacheDir})
+	if err != nil {
+		t.Fatalf("Acquire() error = %v", err)
+	}
+	assertDifferentSnapshotFile(t, manifestPath, filepath.Join(result.Path, "manifest.yaml"))
+}
+
 type countingChartAcquirer struct {
 	chartDir  string
 	fromCache bool
@@ -240,6 +267,35 @@ func TestSessionReusesChartSnapshotForSameTarget(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(first.ChartDir, "Chart.yaml")); err != nil {
 		t.Fatalf("snapshot missing Chart.yaml: %v", err)
 	}
+}
+
+func TestSessionChartSnapshotContainsRegularFiles(t *testing.T) {
+	cacheDir := t.TempDir()
+	chartDir := filepath.Join(cacheDir, "demo")
+	if err := os.MkdirAll(chartDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	chartPath := filepath.Join(chartDir, "Chart.yaml")
+	if err := os.WriteFile(chartPath, []byte("apiVersion: v2\nname: demo\nversion: 1.2.3\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	acquirer := (Session{
+		Locks:              NewTargetLocks(),
+		SnapshotRoot:       t.TempDir(),
+		SnapshotCacheReads: true,
+		SnapshotCache:      NewSnapshotCache(),
+	}).ChartAcquirer(&countingChartAcquirer{chartDir: chartDir, fromCache: true})
+
+	result, err := acquirer.Acquire(context.Background(), chart.Request{
+		Repository: "https://charts.example.test",
+		Name:       "demo",
+		Version:    "1.2.3",
+		Kind:       chart.RepositoryHTTP,
+	}, chart.Options{CacheDir: cacheDir})
+	if err != nil {
+		t.Fatalf("Acquire() error = %v", err)
+	}
+	assertSnapshotFileContent(t, filepath.Join(result.ChartDir, "Chart.yaml"), "apiVersion: v2\nname: demo\nversion: 1.2.3\n")
 }
 
 func TestSessionChartSnapshotCacheHitReportsCacheReuse(t *testing.T) {
@@ -548,5 +604,31 @@ func TestSessionChainsRemoteGitDelegateRelease(t *testing.T) {
 	result.Release()
 	if releaseCalls != 1 {
 		t.Fatalf("delegate release calls = %d, want 1", releaseCalls)
+	}
+}
+
+func assertDifferentSnapshotFile(t *testing.T, left, right string) {
+	t.Helper()
+	leftInfo, err := os.Stat(left)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rightInfo, err := os.Stat(right)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if os.SameFile(leftInfo, rightInfo) {
+		t.Fatalf("%s and %s are the same file, want different files", left, right)
+	}
+}
+
+func assertSnapshotFileContent(t *testing.T, path, want string) {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != want {
+		t.Fatalf("%s content = %q, want %q", path, data, want)
 	}
 }

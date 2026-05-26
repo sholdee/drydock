@@ -1,8 +1,10 @@
 # Argo CD Compatibility Notes
 
-`drydock` targets desired-vs-desired PR diffs that run offline from live Argo CD
-and Kubernetes runtime. Default commands may fetch declared sources into
-explicit caches unless `--offline` is set.
+`drydock` tracks Argo CD compatibility for offline desired-state analysis:
+Application discovery, rendering, render tests, diagnostics, image inspection,
+cache-backed source acquisition, and desired-vs-desired diffs. Default commands
+run offline from live Argo CD and Kubernetes runtime and may fetch declared
+sources into explicit caches unless `--offline` is set.
 
 Supported today:
 
@@ -25,7 +27,8 @@ Supported today:
 - Single-source and multi-source planning for supported source types
 - Kustomize and directory rendering, including repo-root-local Kustomize
   references
-- Argo CD `kustomize.buildOptions` support for `--enable-helm` and
+- Argo CD `kustomize.buildOptions` support for `--enable-helm`,
+  `--helm-api-versions`, and
   `--load-restrictor=LoadRestrictionsRootOnly|LoadRestrictionsNone`
 - Kustomize `helmCharts` rendered through the shared Go-library Helm path
 - Kustomize Helm `valuesFile` and `additionalValuesFiles` entries may point

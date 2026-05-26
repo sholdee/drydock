@@ -1,12 +1,13 @@
 package change
 
 import (
-	"bytes"
 	"errors"
 	"io/fs"
 	"os"
 	"path/filepath"
 	"sort"
+
+	"github.com/sholdee/drydock/internal/streamcmp"
 )
 
 func Detect(baseRoot, currentRoot string) ([]string, error) {
@@ -34,19 +35,11 @@ func Detect(baseRoot, currentRoot string) ([]string, error) {
 			changed = append(changed, rel)
 			continue
 		}
-		if !isRegularFile(baseInfo) || !isRegularFile(currentInfo) {
-			changed = append(changed, rel)
-			continue
-		}
-		base, err := os.ReadFile(basePath)
+		fileChanged, err := pathsChanged(basePath, currentPath, baseInfo, currentInfo)
 		if err != nil {
 			return nil, err
 		}
-		current, err := os.ReadFile(currentPath)
-		if err != nil {
-			return nil, err
-		}
-		if !bytes.Equal(base, current) {
+		if fileChanged {
 			changed = append(changed, rel)
 		}
 	}
@@ -80,4 +73,52 @@ func collectFiles(root string, paths map[string]struct{}) error {
 
 func isRegularFile(info fs.FileInfo) bool {
 	return info.Mode().IsRegular() && info.Mode()&fs.ModeSymlink == 0
+}
+
+func isSymlink(info fs.FileInfo) bool {
+	return info.Mode()&fs.ModeSymlink != 0
+}
+
+func pathsChanged(basePath, currentPath string, baseInfo, currentInfo fs.FileInfo) (bool, error) {
+	switch {
+	case isSymlink(baseInfo) && isSymlink(currentInfo):
+		return symlinksChanged(basePath, currentPath)
+	case !isRegularFile(baseInfo) || !isRegularFile(currentInfo):
+		return true, nil
+	default:
+		return regularFilesChanged(basePath, currentPath, baseInfo, currentInfo)
+	}
+}
+
+func symlinksChanged(basePath, currentPath string) (bool, error) {
+	baseTarget, err := os.Readlink(basePath)
+	if err != nil {
+		return false, err
+	}
+	currentTarget, err := os.Readlink(currentPath)
+	if err != nil {
+		return false, err
+	}
+	return baseTarget != currentTarget, nil
+}
+
+func regularFilesChanged(basePath, currentPath string, baseInfo, currentInfo fs.FileInfo) (bool, error) {
+	if baseInfo.Size() != currentInfo.Size() {
+		return true, nil
+	}
+	base, err := os.Open(basePath)
+	if err != nil {
+		return false, err
+	}
+	defer base.Close()
+	current, err := os.Open(currentPath)
+	if err != nil {
+		return false, err
+	}
+	defer current.Close()
+	equal, err := streamcmp.Equal(base, current)
+	if err != nil {
+		return false, err
+	}
+	return !equal, nil
 }

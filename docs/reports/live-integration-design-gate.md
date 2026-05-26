@@ -6,10 +6,11 @@ Date: 2026-05-24
 
 `drydock` intentionally does not integrate with live Kubernetes or Argo CD
 runtime in its core execution path. The default product is a native Go
-renderer/differ for Argo CD GitOps repositories that works from checked-out
-files and explicit caches. It must not require a Kubernetes cluster, Argo CD
-server, `kubectl`, `argocd`, Helm/Kustomize command-line tools, or any
-external render service to produce PR diffs.
+renderer, analyzer, and differ for Argo CD GitOps repositories that works from
+checked-out files and explicit caches. It must not require a Kubernetes
+cluster, Argo CD server, `kubectl`, `argocd`, Helm/Kustomize command-line
+tools, or any external render service to analyze desired state or produce pull
+request diffs.
 
 This offline-runtime contract is separate from network source acquisition.
 Declared Git, HTTP Helm, OCI Helm, and remote Kustomize sources may be fetched

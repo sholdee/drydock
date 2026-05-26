@@ -3,9 +3,10 @@
 ## Product Contract
 
 `drydock` is an independent Go CLI for Argo CD GitOps repository analysis that
-runs offline from live Argo CD and Kubernetes runtime. Its core job is
-desired-vs-desired PR diffing: render Argo CD Applications from a current tree
-and a baseline tree, then show what desired Kubernetes manifests changed.
+runs offline from live Argo CD and Kubernetes runtime. Its core job is offline
+desired-state analysis for Argo CD Applications: render local desired state,
+validate renderability, inspect images and diagnostics, and compare current and
+baseline trees for desired-vs-desired pull request diffs.
 
 The default workflow must remain a self-contained Go binary using checked-out
 files plus explicit local caches. It may fetch declared Git, HTTP Helm, OCI

@@ -1,11 +1,9 @@
 package gitref
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
 	"sort"
@@ -16,6 +14,7 @@ import (
 	"github.com/go-git/go-git/v5/plumbing/object"
 	"github.com/go-git/go-git/v5/utils/merkletrie"
 	"github.com/sholdee/drydock/internal/source"
+	"github.com/sholdee/drydock/internal/streamcmp"
 )
 
 func ChangedPathsBetweenRefs(ctx context.Context, repoPath, leftRef, rightRef string) ([]string, error) {
@@ -203,20 +202,28 @@ func worktreeFileChanged(root string, file *object.File) (bool, error) {
 }
 
 func regularWorktreeFileChanged(path string, file *object.File) (bool, error) {
+	info, err := os.Stat(path)
+	if err != nil {
+		return false, err
+	}
+	if info.Size() != file.Size {
+		return true, nil
+	}
 	reader, err := file.Reader()
 	if err != nil {
 		return false, err
 	}
 	defer reader.Close()
-	want, err := io.ReadAll(reader)
+	worktreeFile, err := os.Open(path)
 	if err != nil {
 		return false, err
 	}
-	got, err := os.ReadFile(path)
+	defer worktreeFile.Close()
+	equal, err := streamcmp.Equal(worktreeFile, reader)
 	if err != nil {
 		return false, err
 	}
-	return !bytes.Equal(got, want), nil
+	return !equal, nil
 }
 
 func stringSet(values []string) map[string]struct{} {

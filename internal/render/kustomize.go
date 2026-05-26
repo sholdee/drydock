@@ -28,6 +28,9 @@ func (KustomizeRenderer) Render(ctx context.Context, source ResolvedSource, opts
 	if err != nil {
 		return nil, nil, err
 	}
+	if len(buildSettings.APIVersions) != 0 {
+		opts.APIVersions = append(append([]string(nil), buildSettings.APIVersions...), opts.APIVersions...)
+	}
 
 	root, err := sourceRoot(source)
 	if err != nil {
@@ -372,7 +375,7 @@ func renderOptionsForKustomizeHelmChart(helmChart types.HelmChart, tempRepoRoot,
 		ReleaseName:            helmChart.ReleaseName,
 		Namespace:              namespace,
 		KubeVersion:            helmChart.KubeVersion,
-		APIVersions:            append([]string(nil), helmChart.ApiVersions...),
+		APIVersions:            append(append([]string(nil), opts.APIVersions...), helmChart.ApiVersions...),
 		ValueFiles:             valueFiles,
 		ValueFilesBaseDir:      valueFilesBaseDir,
 		ValueFilesBoundaryRoot: ".",

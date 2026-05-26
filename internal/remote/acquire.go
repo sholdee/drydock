@@ -218,7 +218,7 @@ func NormalizeURL(raw string) (string, error) {
 }
 
 func CachePath(cacheDir string, key string) string {
-	return filepath.Join(cacheDir, key, "resource.yaml")
+	return cache.RemoteHTTPFilePath(cacheDir, key)
 }
 
 func rejectForbiddenCachePath(resourcePath string, forbiddenRoots []string) error {

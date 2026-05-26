@@ -228,7 +228,7 @@ when no `Application` or supported `ApplicationSet` objects are discovered.
 
 For local Kustomize sources, drydock applies the supported subset of Argo CD
 `kustomize.buildOptions` discovered from `argocd-cm` or Argo CD Helm values:
-`--enable-helm` and
+`--enable-helm`, `--helm-api-versions`, and
 `--load-restrictor=LoadRestrictionsRootOnly|LoadRestrictionsNone`.
 Unsupported build options fail explicitly instead of being ignored.
 
@@ -350,6 +350,11 @@ authentication acquisitions; rerun the render/build/diff acquisition path with
 the relevant credentials or refresh flags to repopulate a missing or stale
 cache entry. Corrupt, mismatched, or unsupported metadata may hide descriptive
 metadata, but it must not make an unrecognized filesystem child deletable.
+
+The current cache model is one hash-addressed entry per acquired source.
+Content-addressed blob sharing, ref tables, leases, and mark-sweep garbage
+collection are deferred until the cache has enough shared-blob behavior to
+justify the extra lifecycle semantics.
 
 ## Go API
 

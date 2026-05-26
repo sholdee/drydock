@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestWriteMetadataGoldenRedactsTarget(t *testing.T) {
@@ -75,5 +76,38 @@ func assertMetadataGoldenShape(t *testing.T, got Metadata) {
 	}
 	if got.UpdatedAt.IsZero() {
 		t.Fatal("UpdatedAt is zero, want timestamp")
+	}
+}
+
+func TestWriteMetadataPreservesExistingCreatedAt(t *testing.T) {
+	entry := filepath.Join(t.TempDir(), "entry")
+	created := time.Now().Add(-time.Hour).UTC().Truncate(time.Second)
+	if err := WriteMetadata(entry, Metadata{
+		Source:    SourceRemote,
+		Kind:      "http-file",
+		Key:       "abc123",
+		CreatedAt: created,
+		UpdatedAt: created,
+	}); err != nil {
+		t.Fatalf("WriteMetadata(first) error = %v", err)
+	}
+	if err := WriteMetadata(entry, Metadata{
+		Source: SourceRemote,
+		Kind:   "http-file",
+		Key:    "abc123",
+		Target: "https://example.test/resource.yaml",
+	}); err != nil {
+		t.Fatalf("WriteMetadata(second) error = %v", err)
+	}
+
+	got, err := ReadMetadata(entry, SourceRemote, "http-file", "abc123")
+	if err != nil {
+		t.Fatalf("ReadMetadata() error = %v", err)
+	}
+	if !got.CreatedAt.Equal(created) {
+		t.Fatalf("CreatedAt = %v, want preserved %v", got.CreatedAt, created)
+	}
+	if !got.UpdatedAt.After(created) {
+		t.Fatalf("UpdatedAt = %v, want refreshed after %v", got.UpdatedAt, created)
 	}
 }

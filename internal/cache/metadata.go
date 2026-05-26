@@ -65,6 +65,12 @@ func ReadMetadata(entryPath string, expected Source, expectedKind, expectedKey s
 
 func WriteMetadata(entryPath string, metadata Metadata) error {
 	now := time.Now().UTC()
+	if metadata.CreatedAt.IsZero() {
+		existing, err := ReadMetadata(entryPath, metadata.Source, metadata.Kind, metadata.Key)
+		if err == nil && existing != nil && !existing.CreatedAt.IsZero() {
+			metadata.CreatedAt = existing.CreatedAt
+		}
+	}
 	if metadata.SchemaVersion == 0 {
 		metadata.SchemaVersion = metadataSchemaVersion
 	}
@@ -75,7 +81,8 @@ func WriteMetadata(entryPath string, metadata Metadata) error {
 		metadata.UpdatedAt = now
 	}
 	metadata.Target = RedactedTarget(metadata.Target)
-	if err := os.MkdirAll(filepath.Dir(MetadataPath(entryPath)), 0o755); err != nil {
+	metadataPath := MetadataPath(entryPath)
+	if err := os.MkdirAll(filepath.Dir(metadataPath), 0o755); err != nil {
 		return err
 	}
 	data, err := json.MarshalIndent(metadata, "", "  ")
@@ -83,7 +90,29 @@ func WriteMetadata(entryPath string, metadata Metadata) error {
 		return err
 	}
 	data = append(data, '\n')
-	return os.WriteFile(MetadataPath(entryPath), data, 0o600)
+	return writeFileAtomic(metadataPath, data, 0o600)
+}
+
+func writeFileAtomic(path string, data []byte, mode os.FileMode) error {
+	parent := filepath.Dir(path)
+	tmp, err := os.CreateTemp(parent, "."+filepath.Base(path)+".tmp-")
+	if err != nil {
+		return err
+	}
+	tmpName := tmp.Name()
+	defer os.Remove(tmpName)
+	if _, err := tmp.Write(data); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if err := tmp.Chmod(mode); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	return os.Rename(tmpName, path)
 }
 
 func RedactedTarget(raw string) string {

@@ -2,13 +2,14 @@ package render
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/sholdee/drydock/internal/cacheevent"
 	"github.com/sholdee/drydock/internal/chart"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
-	"path/filepath"
 )
 
 func TestKustomizeRendererRendersHelmChartsWithoutShellout(t *testing.T) {
@@ -103,6 +104,82 @@ image: example/app:v1
 	image, _ := container["image"].(string)
 	if image != "example/app:v1" {
 		t.Fatalf("deployment image = %q, want example/app:v1", image)
+	}
+}
+func TestKustomizeRendererPassesBuildOptionHelmAPIVersionsToCharts(t *testing.T) {
+	root := t.TempDir()
+	chartDir := filepath.Join(root, "charts", "demo")
+	writeTestChart(t, chartDir, `
+{{- if .Capabilities.APIVersions.Has "example.io/v1/Foo" }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: api-version-present
+{{- end }}
+`)
+	writeFile(t, filepath.Join(root, "apps", "demo", "kustomization.yaml"), `
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+helmCharts:
+  - name: demo
+    repo: https://charts.example.test
+    version: 1.2.3
+    releaseName: demo
+`)
+
+	result, diags, err := (KustomizeRenderer{}).Render(context.Background(), ResolvedSource{
+		RepoRoot: root,
+		Path:     filepath.Join("apps", "demo"),
+	}, RenderOptions{
+		BuildOptions:  []string{"--enable-helm", "--helm-api-versions", "example.io/v1/Foo"},
+		ChartAcquirer: &fakeChartAcquirer{chartDir: chartDir},
+	})
+	if err != nil {
+		t.Fatalf("Render() error = %v", err)
+	}
+	if len(diags) != 0 {
+		t.Fatalf("diagnostics = %#v", diags)
+	}
+	if !containsManifest(result, "ConfigMap", "api-version-present") {
+		t.Fatalf("rendered manifests = %#v, want gated ConfigMap", result)
+	}
+}
+func TestKustomizeRendererPreparedWorkspaceDoesNotMutateSourceKustomization(t *testing.T) {
+	root := t.TempDir()
+	chartDir := filepath.Join(root, "charts", "demo")
+	writeTestChart(t, chartDir, `
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Release.Name }}
+`)
+	kustomizationPath := filepath.Join(root, "apps", "demo", "kustomization.yaml")
+	original := `apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+helmCharts:
+  - name: demo
+    repo: https://charts.example.test
+    version: 1.2.3
+    releaseName: demo
+`
+	writeFile(t, kustomizationPath, original)
+
+	_, diags, err := (KustomizeRenderer{}).Render(context.Background(), ResolvedSource{
+		RepoRoot: root,
+		Path:     filepath.Join("apps", "demo"),
+	}, RenderOptions{ChartAcquirer: &fakeChartAcquirer{chartDir: chartDir}})
+	if err != nil {
+		t.Fatalf("Render() error = %v", err)
+	}
+	if len(diags) != 0 {
+		t.Fatalf("diagnostics = %#v", diags)
+	}
+	got, err := os.ReadFile(kustomizationPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != original {
+		t.Fatalf("source kustomization mutated:\n%s", got)
 	}
 }
 func TestKustomizeRendererRecordsHelmChartCacheEvents(t *testing.T) {

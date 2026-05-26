@@ -35,7 +35,7 @@ func (acquirer DefaultAcquirer) acquireGitRepo(ctx context.Context, request Requ
 	if err != nil {
 		return Result{}, err
 	}
-	cachePath := filepath.Join(cacheDir, key, "repo")
+	cachePath := cache.RemoteGitRepoPath(cacheDir, key)
 	if err := rejectForbiddenCachePath(cachePath, opts.ForbiddenRoots); err != nil {
 		return Result{}, err
 	}

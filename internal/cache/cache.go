@@ -174,7 +174,7 @@ func listSimpleEntries(source Source, kind, root string, forbiddenRoots []string
 		if !child.IsDir() || !isCacheKey(child.Name()) {
 			continue
 		}
-		entry, ok := buildEntry(source, kind, child.Name(), filepath.Join(root, child.Name()), root)
+		entry, ok := buildEntry(source, kind, child.Name(), GitEntryPath(root, child.Name()), root)
 		if ok {
 			entries = append(entries, entry)
 		}
@@ -189,7 +189,7 @@ func listChartEntries(root string, forbiddenRoots []string) ([]Entry, error) {
 	}
 	var entries []Entry
 	for _, kind := range []string{"http", "oci"} {
-		kindRoot := filepath.Join(root, kind)
+		kindRoot := ChartKindRoot(root, kind)
 		children, err := os.ReadDir(kindRoot)
 		if err != nil {
 			if os.IsNotExist(err) {
@@ -201,7 +201,7 @@ func listChartEntries(root string, forbiddenRoots []string) ([]Entry, error) {
 			if !child.IsDir() || !isCacheKey(child.Name()) {
 				continue
 			}
-			entry, ok := buildEntry(SourceChart, kind, child.Name(), filepath.Join(kindRoot, child.Name()), root)
+			entry, ok := buildEntry(SourceChart, kind, child.Name(), ChartEntryPath(root, kind, child.Name()), root)
 			if ok {
 				entries = append(entries, entry)
 			}
@@ -227,7 +227,7 @@ func listRemoteEntries(root string, forbiddenRoots []string) ([]Entry, error) {
 		if !child.IsDir() || !isCacheKey(child.Name()) {
 			continue
 		}
-		entryPath := filepath.Join(root, child.Name())
+		entryPath := RemoteEntryPath(root, child.Name())
 		kind := remoteEntryKind(entryPath)
 		if kind != "http-file" && kind != "git-repo" {
 			continue
