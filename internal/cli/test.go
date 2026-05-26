@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"runtime"
 	"strings"
 	"time"
 
@@ -14,8 +13,6 @@ import (
 	"github.com/sholdee/drydock/internal/source"
 	"github.com/spf13/cobra"
 )
-
-const maxDefaultTestAppsParallelism = 8
 
 //nolint:gocyclo // CLI flag binding and output-mode branching stay together for command readability.
 func newTestCommand(deps Dependencies) *cobra.Command {
@@ -33,7 +30,7 @@ func newTestCommand(deps Dependencies) *cobra.Command {
 
 	appsFlags := defaultCommonFlags()
 	appsFlags.output = testOutputText
-	appsFlags.parallelism = defaultTestAppsParallelism()
+	appsFlags.parallelism = defaultRenderAppsParallelism()
 	apps := &cobra.Command{
 		Use:   "apps",
 		Short: "Test all Applications",
@@ -136,17 +133,6 @@ func newTestCommand(deps Dependencies) *cobra.Command {
 
 	cmd.AddCommand(apps, appCmd)
 	return cmd
-}
-
-func defaultTestAppsParallelism() int {
-	value := runtime.GOMAXPROCS(0)
-	if value < 1 {
-		return 1
-	}
-	if value > maxDefaultTestAppsParallelism {
-		return maxDefaultTestAppsParallelism
-	}
-	return value
 }
 
 func buildRequestFromFlags(flags commonFlags, repoMaps []source.RepoMap) app.BuildRequest {

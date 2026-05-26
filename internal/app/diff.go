@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"path/filepath"
 	"sort"
 	"strings"
 	"time"
@@ -57,6 +58,8 @@ type DiffRequest struct {
 	ApplicationSetProviderFixtures []string
 	ApplicationSetProviderData     appset.ProviderData
 	RecordCacheEvents              bool
+
+	changedPaths []string
 }
 
 type DiffAppRequest struct {
@@ -79,7 +82,7 @@ type ImageDiffResult struct {
 }
 
 func (o Orchestrator) DiffApps(ctx context.Context, request DiffRequest) (DiffResult, error) {
-	request, cleanup, err := resolveDiffRequestPaths(ctx, request)
+	request, cleanup, err := resolveDiffRequestPaths(ctx, request, true)
 	if err != nil {
 		return DiffResult{}, err
 	}
@@ -112,7 +115,7 @@ func (o Orchestrator) DiffApp(ctx context.Context, request DiffAppRequest) (Diff
 	if name == "" {
 		return DiffResult{}, fmt.Errorf("application name is required")
 	}
-	diffRequest, cleanup, err := resolveDiffRequestPaths(ctx, request.DiffRequest)
+	diffRequest, cleanup, err := resolveDiffRequestPaths(ctx, request.DiffRequest, false)
 	if err != nil {
 		return DiffResult{}, err
 	}
@@ -181,7 +184,7 @@ func (o Orchestrator) DiffApp(ctx context.Context, request DiffAppRequest) (Diff
 }
 
 func (o Orchestrator) DiffImages(ctx context.Context, request DiffRequest) (ImageDiffResult, error) {
-	request, cleanup, err := resolveDiffRequestPaths(ctx, request)
+	request, cleanup, err := resolveDiffRequestPaths(ctx, request, true)
 	if err != nil {
 		return ImageDiffResult{}, err
 	}
@@ -250,7 +253,7 @@ func compareStringSets(left, right []string) (added, removed, unchanged []string
 	return added, removed, unchanged
 }
 
-func resolveDiffRequestPaths(ctx context.Context, request DiffRequest) (DiffRequest, func() error, error) {
+func resolveDiffRequestPaths(ctx context.Context, request DiffRequest, computeChangedPaths bool) (DiffRequest, func() error, error) {
 	var cleanups []func() error
 	cleanup := func() error {
 		var err error
@@ -265,14 +268,21 @@ func resolveDiffRequestPaths(ctx context.Context, request DiffRequest) (DiffRequ
 		repoPath = request.RightPath
 	}
 	hasRef := strings.TrimSpace(request.Ref) != "" || strings.TrimSpace(request.RefOrig) != ""
-	if strings.TrimSpace(request.Repo) != "" && !hasRef {
-		return request, cleanup, fmt.Errorf("--repo requires --ref or --ref-orig")
-	}
-	if strings.TrimSpace(request.RefOrig) != "" && strings.TrimSpace(request.LeftPath) != "" {
-		return request, cleanup, fmt.Errorf("--ref-orig cannot be combined with --path-orig")
+	if err := validateDiffRefOptions(request, hasRef); err != nil {
+		return request, cleanup, err
 	}
 	if hasRef {
 		request.Repo = repoPath
+	}
+
+	if computeChangedPaths && request.ChangedOnly {
+		changedPaths, ok, err := gitRefChangedPaths(ctx, request, repoPath)
+		if err != nil {
+			return request, cleanup, err
+		}
+		if ok {
+			request.changedPaths = changedPaths
+		}
 	}
 
 	forbiddenRoots := []string{request.LeftPath, request.RightPath, repoPath}
@@ -302,6 +312,56 @@ func resolveDiffRequestPaths(ctx context.Context, request DiffRequest) (DiffRequ
 		cleanups = append(cleanups, result.Cleanup)
 	}
 	return request, cleanup, nil
+}
+
+func validateDiffRefOptions(request DiffRequest, hasRef bool) error {
+	if strings.TrimSpace(request.Repo) != "" && !hasRef {
+		return fmt.Errorf("--repo requires --ref or --ref-orig")
+	}
+	if strings.TrimSpace(request.RefOrig) != "" && strings.TrimSpace(request.LeftPath) != "" {
+		return fmt.Errorf("--ref-orig cannot be combined with --path-orig")
+	}
+	return nil
+}
+
+func gitRefChangedPaths(ctx context.Context, request DiffRequest, repoPath string) ([]string, bool, error) {
+	refOrig := strings.TrimSpace(request.RefOrig)
+	if refOrig == "" {
+		return nil, false, nil
+	}
+	ref := strings.TrimSpace(request.Ref)
+	if ref != "" {
+		changedPaths, err := gitref.ChangedPathsBetweenRefs(ctx, repoPath, refOrig, ref)
+		return changedPaths, true, err
+	}
+	if !sameLocalPath(repoPath, request.RightPath) {
+		return nil, false, nil
+	}
+	changedPaths, err := gitref.ChangedPathsFromRefToWorktree(ctx, repoPath, refOrig)
+	return changedPaths, true, err
+}
+
+func sameLocalPath(left, right string) bool {
+	left = strings.TrimSpace(left)
+	right = strings.TrimSpace(right)
+	if left == "" || right == "" {
+		return false
+	}
+	leftAbs, err := filepath.Abs(left)
+	if err != nil {
+		return false
+	}
+	rightAbs, err := filepath.Abs(right)
+	if err != nil {
+		return false
+	}
+	if resolved, err := filepath.EvalSymlinks(leftAbs); err == nil {
+		leftAbs = resolved
+	}
+	if resolved, err := filepath.EvalSymlinks(rightAbs); err == nil {
+		rightAbs = resolved
+	}
+	return filepath.Clean(leftAbs) == filepath.Clean(rightAbs)
 }
 
 func (request DiffRequest) buildRequest(path string, forbiddenRoots []string) BuildRequest {
@@ -406,9 +466,13 @@ func (o Orchestrator) buildDiffSides(ctx context.Context, request DiffRequest) (
 			return BuildResult{}, BuildResult{}, diagnostics, err
 		}
 
-		changedPaths, err := change.Detect(request.LeftPath, request.RightPath)
-		if err != nil {
-			return BuildResult{}, BuildResult{}, diagnostics, err
+		changedPaths := request.changedPaths
+		if changedPaths == nil {
+			var err error
+			changedPaths, err = change.Detect(request.LeftPath, request.RightPath)
+			if err != nil {
+				return BuildResult{}, BuildResult{}, diagnostics, err
+			}
 		}
 		leftSelected, leftUnowned := SelectChangedApplicationInputs(leftList.ApplicationInputs, changedPaths)
 		rightSelected, rightUnowned := SelectChangedApplicationInputs(rightList.ApplicationInputs, changedPaths)

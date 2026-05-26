@@ -584,6 +584,45 @@ func TestDiffAppsRefAndRefOrigCompareCommittedRefs(t *testing.T) {
 	}
 }
 
+func TestDiffAppsRefOrigChangedOnlyUsesGitTrackedPaths(t *testing.T) {
+	root := t.TempDir()
+	repo, wt := initDiffGitRepo(t, root)
+	writeDiffApplication(t, root, "demo", "demo", "old")
+	writeDiffApplication(t, root, "other", "other", "same")
+	writeTestFile(t, filepath.Join(root, ".gitignore"), "ignored/\n")
+	baseline := commitDiffGitRepo(t, repo, wt, "baseline")
+
+	writeDiffApplication(t, root, "demo", "demo", "new")
+	writeTestFile(t, filepath.Join(root, "ignored", "output.yaml"), "ignored\n")
+	writeTestFile(t, filepath.Join(root, "scratch.yaml"), "untracked\n")
+
+	result, err := (Orchestrator{}).DiffApps(context.Background(), DiffRequest{
+		RightPath:   root,
+		Repo:        root,
+		RefOrig:     baseline.String(),
+		ChangedOnly: true,
+		Unified:     3,
+	})
+	if err != nil {
+		t.Fatalf("DiffApps() error = %v", err)
+	}
+	if len(result.Diagnostics) != 0 {
+		t.Fatalf("Diagnostics = %#v, want none", result.Diagnostics)
+	}
+	if len(result.Results) != 1 {
+		t.Fatalf("len(Results) = %d, want 1", len(result.Results))
+	}
+	diff := result.Results[0].Diff
+	for _, want := range []string{"Application: argocd/demo", "-  value: old", "+  value: new"} {
+		if !strings.Contains(diff, want) {
+			t.Fatalf("Diff missing %q:\n%s", want, diff)
+		}
+	}
+	if strings.Contains(diff, "other") || strings.Contains(diff, "scratch") || strings.Contains(diff, "ignored") {
+		t.Fatalf("Diff included unselected or untracked content:\n%s", diff)
+	}
+}
+
 func TestDiffAppRefOrigComparesWorkingTreeAgainstBaselineRef(t *testing.T) {
 	root := t.TempDir()
 	repo, wt := initDiffGitRepo(t, root)
@@ -598,6 +637,36 @@ func TestDiffAppRefOrigComparesWorkingTreeAgainstBaselineRef(t *testing.T) {
 			Repo:        root,
 			RefOrig:     "HEAD",
 			ChangedOnly: false,
+			Unified:     3,
+		},
+	})
+	if err != nil {
+		t.Fatalf("DiffApp() error = %v", err)
+	}
+	if len(result.Results) == 0 {
+		t.Fatal("Results = 0, want baseline-to-working diff")
+	}
+	diff := diffResultText(result.Results)
+	if !strings.Contains(diff, "-  value: baseline") || !strings.Contains(diff, "+  value: working") {
+		t.Fatalf("Diff = %q, want baseline-to-working change", diff)
+	}
+}
+
+func TestDiffAppRefOrigDoesNotRunChangedOnlyGitPathDetection(t *testing.T) {
+	root := t.TempDir()
+	repo, wt := initDiffGitRepo(t, root)
+	writeDeploymentAppWithDataValue(t, root, "baseline")
+	baseline := commitDiffGitRepo(t, repo, wt, "baseline")
+	writeDeploymentAppWithDataValue(t, root, "working")
+	writeTestFile(t, filepath.Join(root, ".git", "HEAD"), "ref: refs/heads/missing\n")
+
+	result, err := (Orchestrator{}).DiffApp(context.Background(), DiffAppRequest{
+		Name: "demo",
+		DiffRequest: DiffRequest{
+			RightPath:   root,
+			Repo:        root,
+			RefOrig:     baseline.String(),
+			ChangedOnly: true,
 			Unified:     3,
 		},
 	})

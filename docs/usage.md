@@ -204,11 +204,12 @@ failure they print diagnostics to stderr and do not mix invalid partial manifest
 streams into stdout.
 
 Use `--parallelism N` on render-backed commands to render up to `N`
-Applications concurrently. `drydock test apps` defaults to host CPU
-parallelism; other render-backed commands default to `1`. Parallel rendering
-preserves selected Application order for manifests, statuses, diagnostics,
-cache events, and structured output. Cache-backed chart, Git source, and remote
-HTTP resources are snapshot-protected before render reads. Remote Kustomize Git
+Applications concurrently. `drydock test apps`, `drydock diff apps`, and
+`drydock diff images` default to bounded host CPU parallelism; single-Application
+commands default to `1`. Parallel rendering preserves selected Application
+order for manifests, statuses, diagnostics, cache events, and structured
+output. Cache-backed chart, Git source, and remote HTTP resources are
+snapshot-protected before render reads. Remote Kustomize Git
 refs hold the cache lock only long enough to collect and copy the local
 Kustomize graph into the temporary workspace, avoiding full repository
 snapshots while preserving same-process cache safety.
@@ -481,8 +482,10 @@ drydock diff apps --path . --ref-orig main
 drydock diff apps --repo . --ref feature --ref-orig main
 ```
 
-`--path . --ref-orig main` compares the current working tree, including
-uncommitted changes, against committed `main`. `--repo . --ref feature
+`--path . --ref-orig main` compares the current working tree, including tracked
+uncommitted changes, against committed `main`. Ref-based changed-only
+selection uses the local Git object graph and tracked worktree files instead of
+walking ignored or untracked output directories. `--repo . --ref feature
 --ref-orig main` compares committed refs only. Top-level remote `--repo` URLs
 are not supported yet; clone the repository locally and pass the local path.
 

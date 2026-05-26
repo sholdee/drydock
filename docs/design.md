@@ -378,7 +378,9 @@ Changed-only mode is on by default for PR diffs.
 
 Algorithm:
 
-1. Compute changed paths between `--path-orig` and `--path`.
+1. Compute changed paths between `--path-orig` and `--path`. For local Git ref
+   diffs, compute changed paths from Git refs and tracked worktree files so
+   ignored or untracked local output does not force a full render.
 2. Build an Application input index from discovered direct and generated
    Applications.
 3. Match changed files to every Application whose inputs intersect the change.
