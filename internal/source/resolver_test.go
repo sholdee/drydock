@@ -97,6 +97,27 @@ func TestRedactURLStripsSensitiveParts(t *testing.T) {
 	}
 }
 
+func TestRedactURLStripsSCPUserAndSensitiveParts(t *testing.T) {
+	got := RedactURL(" user@github.com:org/repo.git?token=secret#fragment ")
+	if got != "github.com:org/repo.git" {
+		t.Fatalf("RedactURL() = %q", got)
+	}
+}
+
+func TestRedactURLStripsEmbeddedSchemeUserAndSensitiveParts(t *testing.T) {
+	got := RedactURL(" git::https://user:secret@example.com/org/repo.git?token=secret#fragment ")
+	if got != "git::https://example.com/org/repo.git" {
+		t.Fatalf("RedactURL() = %q", got)
+	}
+}
+
+func TestRedactURLStripsOpaqueSchemeUserAndSensitiveParts(t *testing.T) {
+	got := RedactURL(" https:user:secret@example.com/org/repo.git?token=secret#fragment ")
+	if got != "https:example.com/org/repo.git" {
+		t.Fatalf("RedactURL() = %q", got)
+	}
+}
+
 func TestResolverAllowsNetwork(t *testing.T) {
 	resolver := NewResolver(Options{})
 

@@ -419,7 +419,10 @@ Supported formats:
 - `diff`
 - `json`
 - `yaml`
-- `name` where useful, especially image output
+
+`-o name` is reserved for list-style commands such as `get apps` and
+`get images`; diff commands reject it. `diff images -o json|yaml` emits
+structured `added`, `removed`, and `unchanged` image lists.
 
 Image diff defaults to Argo-style workload image extraction. A future
 `--images all-strings` mode can provide broader heuristic extraction for CRDs
@@ -481,7 +484,8 @@ Important flags:
 - `--exit-code`
 - `--unified`
 - `--limit-bytes`
-- `-o diff|json|yaml|name`
+- `-o diff|json|yaml` for diff commands
+- `-o table|json|yaml|name` for list commands
 - `--argocd-cm`
 - `--argocd-values`
 - `--repo-secret`
