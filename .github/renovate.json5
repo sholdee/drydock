@@ -6,6 +6,7 @@
     'helpers:pinGitHubActionDigests',
   ],
   platformAutomerge: true,
+  ignorePaths: ['testdata/**'],
   postUpdateOptions: ['gomodTidy'],
   packageRules: [
     {
