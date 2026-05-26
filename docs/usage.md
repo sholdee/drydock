@@ -221,6 +221,16 @@ Kustomize fetching is enabled by default when a render needs remote content.
 Path-based Git sources use the local `--path` tree when the source path exists
 there. Use `--repo-map URL=PATH` to force a source repo URL to a local checkout.
 
+Repositories tagged with `argocd` or `gitops` are not always Argo CD
+Application fleet repositories. `drydock test apps` reports zero applications
+when no `Application` or supported `ApplicationSet` objects are discovered.
+
+For local Kustomize sources, drydock applies the supported subset of Argo CD
+`kustomize.buildOptions` discovered from `argocd-cm` or Argo CD Helm values:
+`--enable-helm` and
+`--load-restrictor=LoadRestrictionsRootOnly|LoadRestrictionsNone`.
+Unsupported build options fail explicitly instead of being ignored.
+
 Supported Kustomize remote refs include:
 
 - `https://github.com/org/repo//path?ref=v1`

@@ -24,7 +24,17 @@ Supported in the MVP:
 - Single-source and multi-source planning for supported source types
 - Kustomize and directory rendering, including repo-root-local Kustomize
   references
+- Argo CD `kustomize.buildOptions` support for `--enable-helm` and
+  `--load-restrictor=LoadRestrictionsRootOnly|LoadRestrictionsNone`
 - Kustomize `helmCharts` rendered through the shared Go-library Helm path
+- Kustomize Helm `valuesFile` and `additionalValuesFiles` entries may point
+  outside the kustomization directory when the resolved file remains inside
+  the repository root
+- Default discovery skips Helm chart template files and only discovers Argo CD
+  objects from real manifests, not raw Go-template YAML
+- Directory rendering ignores values-like YAML documents only when both
+  `apiVersion` and `kind` are absent, and fails clearly when exactly one of
+  those fields is present
 - Remote Kustomize HTTP(S) file refs and Git refs rendered through the remote
   resource cache
 - HTTP(S) Kustomize refs as single YAML/JSON files, with directory-shaped refs
