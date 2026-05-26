@@ -329,7 +329,7 @@ func checkoutGitRevision(repo *git.Repository, worktree *git.Worktree, revision 
 		return head.Hash().String(), nil
 	}
 
-	hash, err := resolveGitRevision(repo, cleanRevision)
+	hash, err := ResolveGitRevision(repo, cleanRevision)
 	if err != nil {
 		return "", err
 	}
@@ -344,8 +344,8 @@ func isDefaultGitRevision(revision string) bool {
 	return cleanRevision == "" || cleanRevision == "HEAD"
 }
 
-func resolveGitRevision(repo *git.Repository, revision string) (*plumbing.Hash, error) {
-	candidates := gitRevisionCandidates(revision)
+func ResolveGitRevision(repo *git.Repository, revision string) (*plumbing.Hash, error) {
+	candidates := GitRevisionCandidates(revision)
 	var lastErr error
 	for _, candidate := range candidates {
 		hash, err := repo.ResolveRevision(candidate)
@@ -357,7 +357,7 @@ func resolveGitRevision(repo *git.Repository, revision string) (*plumbing.Hash, 
 	return nil, lastErr
 }
 
-func gitRevisionCandidates(revision string) []plumbing.Revision {
+func GitRevisionCandidates(revision string) []plumbing.Revision {
 	if branch, ok := strings.CutPrefix(revision, "refs/heads/"); ok {
 		return []plumbing.Revision{
 			plumbing.Revision(revision),
