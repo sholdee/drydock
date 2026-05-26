@@ -44,6 +44,12 @@ items:
 	if docs[0].Object.GetKind() != "ConfigMap" || docs[1].Object.GetKind() != "Service" {
 		t.Fatalf("unexpected kinds: %s %s", docs[0].Object.GetKind(), docs[1].Object.GetKind())
 	}
+	if docs[0].RootObject != docs[0].Object {
+		t.Fatal("docs[0].RootObject does not point at the root object")
+	}
+	if docs[1].RootObject == nil || docs[1].RootObject.GetKind() != "List" {
+		t.Fatalf("docs[1].RootObject kind = %q, want List", docs[1].RootObject.GetKind())
+	}
 }
 
 func TestDecodeDocumentsDecodesJSON(t *testing.T) {

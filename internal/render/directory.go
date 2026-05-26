@@ -75,6 +75,11 @@ func (DirectoryRenderer) Render(ctx context.Context, source ResolvedSource, opts
 		}
 
 		for _, doc := range docs {
+			if doc.RootObject != nil && doc.RootObject != doc.Object {
+				if _, err := classifyDirectoryDocument(Manifest{Path: doc.Path, Object: doc.RootObject}); err != nil {
+					return err
+				}
+			}
 			rendered := Manifest{
 				Path:   doc.Path,
 				Object: doc.Object,

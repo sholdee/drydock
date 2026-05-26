@@ -13,9 +13,10 @@ import (
 )
 
 type Document struct {
-	Path   string
-	Index  int
-	Object *unstructured.Unstructured
+	Path       string
+	Index      int
+	Object     *unstructured.Unstructured
+	RootObject *unstructured.Unstructured
 }
 
 func DecodeDocuments(path string, reader io.Reader) ([]Document, error) {
@@ -63,9 +64,10 @@ func DecodeDocuments(path string, reader io.Reader) ([]Document, error) {
 						return nil, fmt.Errorf("%s document %d list item /items/%d is not an object", path, index, i)
 					}
 					out = append(out, Document{
-						Path:   path,
-						Index:  index,
-						Object: &unstructured.Unstructured{Object: itemMap},
+						Path:       path,
+						Index:      index,
+						Object:     &unstructured.Unstructured{Object: itemMap},
+						RootObject: obj,
 					})
 				}
 			}
@@ -74,9 +76,10 @@ func DecodeDocuments(path string, reader io.Reader) ([]Document, error) {
 		}
 
 		out = append(out, Document{
-			Path:   path,
-			Index:  index,
-			Object: obj,
+			Path:       path,
+			Index:      index,
+			Object:     obj,
+			RootObject: obj,
 		})
 		index++
 	}
