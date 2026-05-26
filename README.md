@@ -4,6 +4,13 @@
 
 # drydock
 
+Inspect your Argo CD fleet without getting wet.
+
+[![Go Report Card](https://goreportcard.com/badge/github.com/sholdee/drydock)](https://goreportcard.com/report/github.com/sholdee/drydock)
+[![CI](https://github.com/sholdee/drydock/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/sholdee/drydock/actions/workflows/ci.yml)
+[![License: Apache-2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
+[![Go Version](https://img.shields.io/github/go-mod/go-version/sholdee/drydock)](go.mod)
+
 `drydock` performs offline Argo CD desired-state analysis for GitOps
 repositories. It discovers, renders, tests, diffs, and diagnoses Applications
 without requiring live Argo CD or Kubernetes runtime.
@@ -169,23 +176,19 @@ registry credentials, or credential-bearing URLs.
 
 ## How It Works
 
-```text
-current tree    baseline tree
-     |               |
-     v               v
-discover Argo CD Applications and settings
-     |               |
-     v               v
-plan sources, use repo maps, populate or read caches
-     |               |
-     v               v
-render desired manifests with Go libraries
-     |               |
-     v               v
-apply Argo-aware filters and diff normalization
-     |               |
-     v               v
-test statuses, manifest diffs, image diffs, diagnostics
+```mermaid
+flowchart TD
+  current[Current tree]
+  baseline[Baseline tree]
+
+  current --> discover
+  baseline --> discover
+
+  discover[Discover Argo CD Applications and settings]
+  discover --> plan[Plan sources, resolve repo maps, use caches]
+  plan --> render[Render desired manifests with Go libraries]
+  render --> normalize[Apply Argo-aware filters and diff normalization]
+  normalize --> outputs[Test statuses, manifest diffs, image diffs, diagnostics]
 ```
 
 The render path imports Argo CD API types and selected reusable helpers, but
