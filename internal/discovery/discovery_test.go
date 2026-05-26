@@ -385,6 +385,33 @@ kind: Deployment
 	}
 }
 
+func TestDefaultScanIgnoresArgoCDHelmChartTemplates(t *testing.T) {
+	root := t.TempDir()
+	mustCopy(t, filepath.Join("..", "..", "testdata", "applications", "direct-app.yaml"), filepath.Join(root, "apps", "argocd", "app.yaml"))
+	mustWriteFile(t, filepath.Join(root, "charts", "control-plane", "Chart.yaml"), `apiVersion: v2
+name: control-plane
+version: 0.1.0
+`)
+	mustWriteFile(t, filepath.Join(root, "charts", "control-plane", "templates", "project.yaml"), `{{- if .Values.project.enabled }}
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: {{ .Values.project.name }}
+{{- end }}
+`)
+
+	result, err := Scan(root, Options{})
+	if err != nil {
+		t.Fatalf("Scan() error = %v", err)
+	}
+	if len(result.Applications) != 1 {
+		t.Fatalf("Applications = %d, want 1", len(result.Applications))
+	}
+	if len(result.Projects) != 0 {
+		t.Fatalf("Projects = %#v, want none from Helm templates", result.Projects)
+	}
+}
+
 func TestExplicitPathFailsMalformedYAML(t *testing.T) {
 	root := t.TempDir()
 	malformed := filepath.Join("apps", "bad-app.yaml")

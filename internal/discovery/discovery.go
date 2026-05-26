@@ -125,6 +125,9 @@ func scanYAMLFileOnce(root, path string, explicit bool, seen map[string]struct{}
 	}
 	seen[rel] = struct{}{}
 	if !explicit {
+		if isHelmTemplateYAML(root, path) {
+			return nil
+		}
 		candidate, err := looksLikeCandidate(path)
 		if err != nil {
 			return err
@@ -290,6 +293,41 @@ func looksLikeCandidate(path string) (bool, error) {
 
 func shouldSkipDir(name string) bool {
 	return name == ".git" || name == ".out" || strings.HasPrefix(name, ".cache")
+}
+
+func isHelmTemplateYAML(root, path string) bool {
+	if !isYAML(path) {
+		return false
+	}
+	root = filepath.Clean(root)
+	dir := filepath.Clean(filepath.Dir(path))
+	for {
+		if filepath.Base(dir) == "templates" && chartFileExists(filepath.Dir(dir)) {
+			return true
+		}
+		if samePath(dir, root) {
+			return false
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			return false
+		}
+		dir = parent
+	}
+}
+
+func chartFileExists(dir string) bool {
+	info, err := os.Lstat(filepath.Join(dir, "Chart.yaml"))
+	return err == nil && info.Mode().IsRegular()
+}
+
+func samePath(left, right string) bool {
+	leftAbs, leftErr := filepath.Abs(filepath.Clean(left))
+	rightAbs, rightErr := filepath.Abs(filepath.Clean(right))
+	if leftErr == nil && rightErr == nil {
+		return leftAbs == rightAbs
+	}
+	return filepath.Clean(left) == filepath.Clean(right)
 }
 
 func isYAML(path string) bool {
