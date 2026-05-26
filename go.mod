@@ -191,7 +191,7 @@ require (
 )
 
 replace (
-	github.com/argoproj/argo-cd/gitops-engine => github.com/argoproj/argo-cd/gitops-engine v0.0.0-20260522094300-1bed88faea06
+	github.com/argoproj/argo-cd/gitops-engine => github.com/argoproj/argo-cd/gitops-engine v0.0.0-20260526130100-21ea32e6d950
 
 	// Helm v4.2.0 requires Kubernetes v0.36 modules, but the pinned Argo CD
 	// stack still imports Kubernetes APIs removed from v0.36.
