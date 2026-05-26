@@ -344,6 +344,74 @@ metadata:
 	}
 }
 
+func TestDirectoryRendererSkipsYAMLDocumentsWithoutAPIVersionAndKind(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "apps", "values.yaml"), `
+image:
+  tag: latest
+`)
+	writeFile(t, filepath.Join(root, "apps", "cm.yaml"), `
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: visible
+`)
+
+	result, diags, err := (DirectoryRenderer{}).Render(context.Background(), ResolvedSource{
+		RepoRoot: root,
+		Path:     "apps",
+	}, RenderOptions{})
+	if err != nil {
+		t.Fatalf("Render() error = %v", err)
+	}
+	if len(diags) != 0 {
+		t.Fatalf("diagnostics = %#v", diags)
+	}
+	if len(result) != 1 || result[0].Object.GetName() != "visible" {
+		t.Fatalf("result = %#v, want visible ConfigMap only", result)
+	}
+}
+
+func TestDirectoryRendererRejectsYAMLDocumentWithKindButNoAPIVersion(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "apps", "broken.yaml"), `
+kind: ConfigMap
+metadata:
+  name: broken
+`)
+
+	_, _, err := (DirectoryRenderer{}).Render(context.Background(), ResolvedSource{
+		RepoRoot: root,
+		Path:     "apps",
+	}, RenderOptions{})
+	if err == nil {
+		t.Fatal("Render() error = nil, want partial manifest error")
+	}
+	if !strings.Contains(err.Error(), "missing apiVersion") {
+		t.Fatalf("Render() error = %v, want missing apiVersion message", err)
+	}
+}
+
+func TestDirectoryRendererRejectsYAMLDocumentWithAPIVersionButNoKind(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "apps", "broken.yaml"), `
+apiVersion: v1
+metadata:
+  name: broken
+`)
+
+	_, _, err := (DirectoryRenderer{}).Render(context.Background(), ResolvedSource{
+		RepoRoot: root,
+		Path:     "apps",
+	}, RenderOptions{})
+	if err == nil {
+		t.Fatal("Render() error = nil, want partial manifest error")
+	}
+	if !strings.Contains(err.Error(), "missing kind") {
+		t.Fatalf("Render() error = %v, want missing kind message", err)
+	}
+}
+
 func TestDirectoryRendererRejectsSourcePathEscape(t *testing.T) {
 	parent := t.TempDir()
 	root := filepath.Join(parent, "repo")

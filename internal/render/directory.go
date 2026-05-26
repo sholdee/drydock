@@ -75,14 +75,40 @@ func (DirectoryRenderer) Render(ctx context.Context, source ResolvedSource, opts
 		}
 
 		for _, doc := range docs {
-			out = append(out, Manifest{
+			rendered := Manifest{
 				Path:   doc.Path,
 				Object: doc.Object,
-			})
+			}
+			include, err := classifyDirectoryDocument(rendered)
+			if err != nil {
+				return err
+			}
+			if !include {
+				continue
+			}
+			out = append(out, rendered)
 		}
 		return nil
 	})
 	return out, nil, err
+}
+
+func classifyDirectoryDocument(manifest Manifest) (bool, error) {
+	if manifest.Object == nil {
+		return false, nil
+	}
+	apiVersion := manifest.Object.GetAPIVersion()
+	kind := manifest.Object.GetKind()
+	if apiVersion == "" && kind == "" {
+		return false, nil
+	}
+	if apiVersion == "" {
+		return false, fmt.Errorf("%s document is missing apiVersion", manifest.Path)
+	}
+	if kind == "" {
+		return false, fmt.Errorf("%s document is missing kind", manifest.Path)
+	}
+	return true, nil
 }
 
 func directoryManifestIncluded(root, filePath string, opts RenderOptions) bool {
