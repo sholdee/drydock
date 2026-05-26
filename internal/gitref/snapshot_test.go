@@ -36,7 +36,7 @@ func TestSnapshotLocalRefMaterializesBranchTagAndSHA(t *testing.T) {
 			if err != nil {
 				t.Fatalf("Snapshot() error = %v", err)
 			}
-			defer result.Cleanup()
+			defer cleanupSnapshot(t, result)
 
 			body, err := os.ReadFile(filepath.Join(result.Path, "app.yaml"))
 			if err != nil {
@@ -83,7 +83,7 @@ func TestSnapshotLocalRefResolvesRemoteTrackingBranch(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Snapshot() error = %v", err)
 	}
-	defer result.Cleanup()
+	defer cleanupSnapshot(t, result)
 
 	body, err := os.ReadFile(filepath.Join(result.Path, "app.yaml"))
 	if err != nil {
@@ -113,7 +113,7 @@ func TestSnapshotLocalRefPreservesExecutableMode(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Snapshot() error = %v", err)
 	}
-	defer result.Cleanup()
+	defer cleanupSnapshot(t, result)
 
 	info, err := os.Stat(filepath.Join(result.Path, "hook.sh"))
 	if err != nil {
@@ -149,7 +149,7 @@ func TestSnapshotLocalRefMaterializesSafeSymlink(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Snapshot() error = %v", err)
 	}
-	defer result.Cleanup()
+	defer cleanupSnapshot(t, result)
 
 	target, err := os.Readlink(filepath.Join(result.Path, "link.txt"))
 	if err != nil {
@@ -188,7 +188,7 @@ func TestSnapshotLocalRefMaterializesSafeParentTraversalSymlink(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Snapshot() error = %v", err)
 	}
-	defer result.Cleanup()
+	defer cleanupSnapshot(t, result)
 
 	target, err := os.Readlink(filepath.Join(result.Path, "nested", "link.txt"))
 	if err != nil {
@@ -350,6 +350,13 @@ func newSnapshotRepo(t *testing.T) (string, *git.Repository, *git.Worktree) {
 		t.Fatalf("Worktree() error = %v", err)
 	}
 	return root, repo, wt
+}
+
+func cleanupSnapshot(t *testing.T, result Result) {
+	t.Helper()
+	if err := result.Cleanup(); err != nil {
+		t.Fatalf("Cleanup() error = %v", err)
+	}
 }
 
 func commitSnapshotFile(t *testing.T, repo *git.Repository, wt *git.Worktree, name, body string) plumbing.Hash {
