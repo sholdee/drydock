@@ -18,6 +18,7 @@ import (
 	"github.com/sholdee/drydock/internal/config"
 	"github.com/sholdee/drydock/internal/diagnostic"
 	"github.com/sholdee/drydock/internal/diff"
+	"github.com/sholdee/drydock/internal/gitref"
 	"github.com/sholdee/drydock/internal/manifest"
 	"github.com/sholdee/drydock/internal/pathsafety"
 	"github.com/sholdee/drydock/internal/remote"
@@ -28,6 +29,9 @@ import (
 type DiffRequest struct {
 	LeftPath                       string
 	RightPath                      string
+	Repo                           string
+	Ref                            string
+	RefOrig                        string
 	ChangedOnly                    bool
 	StrictChangedOnly              bool
 	Strict                         bool
@@ -75,6 +79,16 @@ type ImageDiffResult struct {
 }
 
 func (o Orchestrator) DiffApps(ctx context.Context, request DiffRequest) (DiffResult, error) {
+	request, cleanup, err := resolveDiffRequestPaths(ctx, request)
+	if err != nil {
+		return DiffResult{}, err
+	}
+	defer func() {
+		// Git ref snapshots live under OS temp; cleanup must not turn a valid diff
+		// result into a command failure.
+		_ = cleanup()
+	}()
+
 	if err := validateDiffPaths(request); err != nil {
 		return DiffResult{}, err
 	}
@@ -98,6 +112,17 @@ func (o Orchestrator) DiffApp(ctx context.Context, request DiffAppRequest) (Diff
 	if name == "" {
 		return DiffResult{}, fmt.Errorf("application name is required")
 	}
+	diffRequest, cleanup, err := resolveDiffRequestPaths(ctx, request.DiffRequest)
+	if err != nil {
+		return DiffResult{}, err
+	}
+	request.DiffRequest = diffRequest
+	defer func() {
+		// Git ref snapshots live under OS temp; cleanup must not turn a valid diff
+		// result into a command failure.
+		_ = cleanup()
+	}()
+
 	if err := validateDiffPaths(request.DiffRequest); err != nil {
 		return DiffResult{}, err
 	}
@@ -156,6 +181,16 @@ func (o Orchestrator) DiffApp(ctx context.Context, request DiffAppRequest) (Diff
 }
 
 func (o Orchestrator) DiffImages(ctx context.Context, request DiffRequest) (ImageDiffResult, error) {
+	request, cleanup, err := resolveDiffRequestPaths(ctx, request)
+	if err != nil {
+		return ImageDiffResult{}, err
+	}
+	defer func() {
+		// Git ref snapshots live under OS temp; cleanup must not turn a valid diff
+		// result into a command failure.
+		_ = cleanup()
+	}()
+
 	if err := validateDiffPaths(request); err != nil {
 		return ImageDiffResult{}, err
 	}
@@ -213,6 +248,56 @@ func compareStringSets(left, right []string) (added, removed, unchanged []string
 	removed = append(removed, left[leftIndex:]...)
 	added = append(added, right[rightIndex:]...)
 	return added, removed, unchanged
+}
+
+func resolveDiffRequestPaths(ctx context.Context, request DiffRequest) (DiffRequest, func() error, error) {
+	var cleanups []func() error
+	cleanup := func() error {
+		var err error
+		for i := len(cleanups) - 1; i >= 0; i-- {
+			err = errors.Join(err, cleanups[i]())
+		}
+		return err
+	}
+
+	repoPath := strings.TrimSpace(request.Repo)
+	if repoPath == "" {
+		repoPath = request.RightPath
+	}
+	if strings.TrimSpace(request.Repo) != "" && strings.TrimSpace(request.Ref) == "" && strings.TrimSpace(request.RefOrig) == "" {
+		return request, cleanup, fmt.Errorf("--repo requires --ref or --ref-orig")
+	}
+	if strings.TrimSpace(request.RefOrig) != "" && strings.TrimSpace(request.LeftPath) != "" {
+		return request, cleanup, fmt.Errorf("--ref-orig cannot be combined with --path-orig")
+	}
+
+	forbiddenRoots := []string{request.LeftPath, request.RightPath, repoPath}
+	if strings.TrimSpace(request.RefOrig) != "" {
+		result, err := gitref.Snapshot(ctx, gitref.Request{
+			Repo:           repoPath,
+			Ref:            request.RefOrig,
+			ForbiddenRoots: forbiddenRoots,
+		})
+		if err != nil {
+			return request, cleanup, err
+		}
+		request.LeftPath = result.Path
+		cleanups = append(cleanups, result.Cleanup)
+		forbiddenRoots = append(forbiddenRoots, result.Path)
+	}
+	if strings.TrimSpace(request.Ref) != "" {
+		result, err := gitref.Snapshot(ctx, gitref.Request{
+			Repo:           repoPath,
+			Ref:            request.Ref,
+			ForbiddenRoots: forbiddenRoots,
+		})
+		if err != nil {
+			return request, cleanup, errors.Join(err, cleanup())
+		}
+		request.RightPath = result.Path
+		cleanups = append(cleanups, result.Cleanup)
+	}
+	return request, cleanup, nil
 }
 
 func (request DiffRequest) buildRequest(path string, forbiddenRoots []string) BuildRequest {
