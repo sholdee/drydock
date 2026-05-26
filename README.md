@@ -67,6 +67,14 @@ git worktree add ../baseline main
 drydock diff apps --path . --path-orig ../baseline
 ```
 
+You can also compare against committed Git refs without creating a baseline
+worktree:
+
+```bash
+drydock diff apps --path . --ref-orig main
+drydock diff apps --repo . --ref feature --ref-orig main
+```
+
 Inspect image changes in a machine-readable form:
 
 ```bash

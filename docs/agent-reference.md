@@ -31,9 +31,10 @@ Current command groups are:
 
 Shared flags cover repository paths, selectors, repo maps, explicit Git/chart
 and remote-resource acquisition controls, output formats, diff filters,
-ApplicationSet fixtures, cache events, and render parallelism. Keep detailed
-flag behavior in CLI code or generated/user-facing docs instead of duplicating
-full inventories here.
+ApplicationSet fixtures, cache events, and render parallelism. Diff commands
+also accept `--repo`, `--ref`, and `--ref-orig` for local Git ref diffs. Keep
+detailed flag behavior in CLI code or generated/user-facing docs instead of
+duplicating full inventories here.
 
 Public API rules:
 
@@ -166,6 +167,12 @@ Diff identity is parent Application plus child resource identity. Same-named
 resources from different Applications remain separate. Named app arguments may
 use `NAME` or `NAMESPACE/NAME`.
 
+Git ref diffs use temporary local snapshots before entering the normal
+path-based diff pipeline. `--ref-orig` replaces `--path-orig`, `--ref`
+replaces `--path`, and `--repo` defaults to `--path`. Do not add shellouts,
+`git worktree add`, checkout mutation, or top-level remote `--repo` URL
+support without an approved design update.
+
 Manifest diff output supports unified diff, JSON, and YAML. Diagnostics stay
 on stderr for structured diff output. `-o name` is for list-style commands and
 image projections, not `diff apps` or `diff app`.
@@ -229,6 +236,11 @@ up.
 Normal tests must use portable fixtures. Optional smokes may target the real
 checkout through temporary worktrees only. Never mutate the real `home-ops`
 checkout from tests.
+
+Git ref diff implementation and unit tests should use go-git fixtures and temp
+directories. Do not use `git worktree add` inside implementation or normal
+tests; reserve it for optional smoke scripts that create and clean up temporary
+worktrees.
 
 Use the smallest verification that covers the change. If a useful command is
 unavailable or approval-gated, skip it and report the gap rather than blocking

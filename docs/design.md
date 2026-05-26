@@ -203,6 +203,19 @@ drydock build app --path ./repo monitoring
 drydock diff apps --path ./repo --path-orig ../repo-base
 ```
 
+Diff commands may also compare local Git refs. A ref side is materialized as a
+temporary local snapshot, then the existing path-based planning and rendering
+pipeline is reused:
+
+```bash
+drydock diff apps --path ./repo --ref-orig main
+drydock diff apps --repo ./repo --ref feature --ref-orig main
+```
+
+`--ref-orig` replaces `--path-orig`; `--ref` replaces `--path`; `--repo`
+defaults to `--path` and must be a local repository path. Top-level remote
+repository URLs are deferred.
+
 Optional narrowing flags include:
 
 - `--app-manifests <path>`
@@ -348,6 +361,8 @@ Offline-safe behavior:
   where decoupled.
 - Treat `ServerSideDiff=true` and `ServerSideApply=true` as diagnostics, not
   executable behavior.
+- Resolve `--ref` and `--ref-orig` through temporary local snapshots without
+  shelling out to `git` or mutating the operator checkout.
 
 The tool does not claim to reproduce:
 
