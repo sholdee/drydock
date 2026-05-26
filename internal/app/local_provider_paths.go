@@ -82,6 +82,9 @@ func rejectLocalSymlinkComponents(repoRoot, sourcePath string) error {
 		current = filepath.Join(current, component)
 		info, err := os.Lstat(current)
 		if err != nil {
+			if os.IsNotExist(err) {
+				return fmt.Errorf("source path %q does not exist", sourcePath)
+			}
 			return err
 		}
 		if info.Mode()&os.ModeSymlink != 0 {

@@ -82,6 +82,34 @@ resources:
 	}
 }
 
+func TestOrchestratorReportsMissingSourcePathClearly(t *testing.T) {
+	root := t.TempDir()
+	writeTestFile(t, filepath.Join(root, "apps", "missing", "app.yaml"), `apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: missing
+spec:
+  project: default
+  destination:
+    namespace: default
+    server: https://kubernetes.default.svc
+  source:
+    targetRevision: HEAD
+    path: apps/missing/source
+`)
+
+	result, err := Orchestrator{}.Build(context.Background(), BuildRequest{Path: root})
+	if err == nil {
+		t.Fatal("Build() error = nil, want missing source path failure")
+	}
+	if len(result.Statuses) != 1 || result.Statuses[0].Status != ApplicationStatusFail {
+		t.Fatalf("Statuses = %#v, want one failed status", result.Statuses)
+	}
+	if !strings.Contains(result.Statuses[0].Message, `source path "apps/missing/source" does not exist`) {
+		t.Fatalf("status message = %q, want clear missing source path", result.Statuses[0].Message)
+	}
+}
+
 func TestOrchestratorBuildStatusOnlyDoesNotCollectManifests(t *testing.T) {
 	root := t.TempDir()
 	writeBuildApplication(t, root, "demo", "demo")
