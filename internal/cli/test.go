@@ -88,7 +88,7 @@ func newTestCommand(deps Dependencies) *cobra.Command {
 				}
 				return testCommandError(err, result.Statuses)
 			}
-			if renderErr := renderTestResult(cmd, result.Statuses, output); renderErr != nil {
+			if renderErr := renderTestResult(cmd, result.Statuses, output, false); renderErr != nil {
 				return renderErr
 			}
 			return testCommandError(err, result.Statuses)
@@ -122,7 +122,7 @@ func newTestCommand(deps Dependencies) *cobra.Command {
 			if renderErr := renderDiagnostics(cmd.ErrOrStderr(), result.Diagnostics); renderErr != nil {
 				return renderErr
 			}
-			if renderErr := renderTestResult(cmd, result.Statuses, output); renderErr != nil {
+			if renderErr := renderTestResult(cmd, result.Statuses, output, deps.isTerminal(cmd.OutOrStdout())); renderErr != nil {
 				return renderErr
 			}
 			return testCommandError(err, result.Statuses)
@@ -139,10 +139,10 @@ func buildRequestFromFlags(flags commonFlags, repoMaps []source.RepoMap) app.Bui
 	return requestOptionsFromFlags(flags, repoMaps).Build()
 }
 
-func renderTestResult(cmd *cobra.Command, statuses []app.ApplicationStatus, output string) error {
+func renderTestResult(cmd *cobra.Command, statuses []app.ApplicationStatus, output string, color bool) error {
 	switch output {
 	case testOutputText:
-		return renderTestStatuses(cmd.OutOrStdout(), statuses, false)
+		return renderTestStatuses(cmd.OutOrStdout(), statuses, color)
 	case string(cliformat.OutputJSON):
 		return writeStructuredOutput(cmd.OutOrStdout(), output, statuses)
 	case string(cliformat.OutputYAML):
