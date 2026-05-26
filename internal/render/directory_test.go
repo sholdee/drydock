@@ -412,6 +412,29 @@ metadata:
 	}
 }
 
+func TestDirectoryRendererRejectsListDocumentWithKindButNoAPIVersion(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "apps", "broken-list.yaml"), `
+kind: List
+items:
+  - apiVersion: v1
+    kind: ConfigMap
+    metadata:
+      name: demo
+`)
+
+	_, _, err := (DirectoryRenderer{}).Render(context.Background(), ResolvedSource{
+		RepoRoot: root,
+		Path:     "apps",
+	}, RenderOptions{})
+	if err == nil {
+		t.Fatal("Render() error = nil, want partial List manifest error")
+	}
+	if !strings.Contains(err.Error(), "missing apiVersion") {
+		t.Fatalf("Render() error = %v, want missing apiVersion message", err)
+	}
+}
+
 func TestDirectoryRendererRejectsSourcePathEscape(t *testing.T) {
 	parent := t.TempDir()
 	root := filepath.Join(parent, "repo")
