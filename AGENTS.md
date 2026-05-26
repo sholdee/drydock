@@ -25,13 +25,13 @@ renderers require an approved design update first.
 
 Use these entry points before substantive work:
 
-- `docs/agent-orientation.md`: fast routing for fresh agents.
 - `docs/agent-reference.md`: task-specific agent constraints and canonical
   links.
 - `docs/README.md`: documentation ownership map.
 - `docs/design.md`: canonical product architecture and behavior model.
-- `docs/roadmap.md`: canonical feature status and runtime boundaries.
-- `docs/reports/2026-05-24-live-integration-design-gate.md`: required before
+- `docs/compatibility.md`: supported Argo CD behavior and runtime-boundary
+  status.
+- `docs/reports/live-integration-design-gate.md`: required before
   proposing live runtime, server-side diff, defaulting, admission, or
   managed-fields work.
 
@@ -45,8 +45,8 @@ review, or verification. Run local, non-network commands that work inside the
 current sandbox. If a useful command would require escalation, network access,
 or approval, skip it, report the verification gap, and continue.
 
-Every worker and reviewer prompt for roadmap work must include this exact
-constraint:
+Every worker and reviewer prompt for delegated phase work must include this
+exact constraint:
 
 > Do not request sandbox escalation. If a useful command would require
 > approval, network, or escalation, skip it and report it as skipped.
@@ -56,7 +56,7 @@ on a subagent approval prompt before starting other independent work. If a
 spawned agent requests approval anyway, redirect it once with the constraint
 above or close/replace it. If a skipped command is required to prove
 correctness, record the gap and use another local check or a narrower review.
-Controller prompts for roadmap phases should state that approval prompts from
+Controller prompts for delegated phases should state that approval prompts from
 workers or reviewers are abandoned as skipped verification, never treated as
 human-blocking phase status.
 
@@ -122,6 +122,7 @@ For detailed task constraints, read the matching section in
 Run the smallest check that covers your change. Common checks:
 
 ```bash
+mise run ci
 go test ./...
 go vet ./...
 go test -race ./internal/app -run 'Parallelism|Parallel'

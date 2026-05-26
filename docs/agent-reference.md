@@ -62,7 +62,6 @@ Canonical references:
 - `internal/project`
 - `internal/discovery`
 - `docs/design.md`
-- `docs/roadmap.md`
 
 Settings flow into `internal/config.ArgoSettings`. Providers must record
 provenance and fail closed on conflicting discovered values.
@@ -85,7 +84,6 @@ Canonical references:
 - `internal/discovery`
 - `internal/appset`
 - `docs/design.md`
-- `docs/roadmap.md`
 
 Discovery scans YAML files by GVK. Keep scans generic; do not hard-code a
 specific user's repository layout. Default scans skip symlinks and tolerate
@@ -228,7 +226,6 @@ namespace to Helm, and `valuesObject` overriding `values`.
 Canonical references:
 
 - `testdata/`
-- `docs/home-ops-pattern-coverage.md`
 
 Portable integration fixtures should model real repository behavior without
 depending on a maintainer-provided `home-ops` checkout. Real `home-ops` checks
@@ -246,4 +243,4 @@ worktrees.
 
 Use the smallest verification that covers the change. If a useful command is
 unavailable or approval-gated, skip it and report the gap rather than blocking
-the roadmap.
+the work.

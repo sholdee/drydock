@@ -220,7 +220,7 @@ desired-vs-desired diffs. Any implementation must pass the live runtime
 boundary gate and preserve the default library-backed render/diff path.
 
 Live runtime access is design-gated in
-`docs/reports/2026-05-24-live-integration-design-gate.md`. Future live work
+`docs/reports/live-integration-design-gate.md`. Future live work
 must stay explicitly opt-in and must not change `--offline` cache-only behavior
 or the default offline-runtime render/diff contract.
 

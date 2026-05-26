@@ -9,17 +9,13 @@ copying the same rule into multiple files.
 | --- | --- |
 | `README.md` | Project overview, quick start, and highest-value links. |
 | `AGENTS.md` | Mandatory agent operating rules and hard constraints. |
-| `docs/agent-orientation.md` | Fast task routing for fresh agents. |
 | `docs/agent-reference.md` | Task-specific agent constraints and code-area notes. |
 | `docs/design.md` | Product architecture and behavior model. |
 | `docs/usage.md` | CLI examples, flags, outputs, and user workflows. |
 | `docs/compatibility.md` | Supported Argo CD behavior and runtime-boundary status. |
-| `docs/roadmap.md` | Current feature status, runtime boundaries, and next-work rules. |
-| `docs/ci.md` | Local CI and required verification contract. |
 | `docs/release.md` | Release and Argo CD dependency upgrade notes. |
-| `docs/home-ops-pattern-coverage.md` | Portable fixture coverage for home-ops-like patterns. |
 | `docs/logo/` | Project logo assets. |
-| `docs/reports/2026-05-24-live-integration-design-gate.md` | No-live-runtime boundary and gate for exceptions. |
+| `docs/reports/live-integration-design-gate.md` | No-live-runtime boundary and gate for exceptions. |
 
 ## Anti-Sprawl Rules
 
@@ -27,7 +23,7 @@ copying the same rule into multiple files.
   closed plans and audits.
 - Keep `docs/reports` for active design gates only.
 - Put durable product behavior in `docs/design.md`, `docs/usage.md`,
-  `docs/compatibility.md`, or `docs/roadmap.md`, depending on ownership above.
-- Keep `README.md`, `AGENTS.md`, and agent docs as routing surfaces; link to
-  canonical docs instead of duplicating long explanations.
+  or `docs/compatibility.md`, depending on ownership above.
+- Keep `README.md`, `AGENTS.md`, and `docs/agent-reference.md` as routing
+  surfaces; link to canonical docs instead of duplicating long explanations.
 - Update this file when adding, deleting, or changing ownership of docs.

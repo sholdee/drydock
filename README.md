@@ -216,11 +216,9 @@ Join the home-operations Discord at <https://discord.gg/home-operations>.
   behavior, and optional smoke tests.
 - [`docs/compatibility.md`](docs/compatibility.md): supported Argo CD behavior
   and intentional runtime boundaries.
-- [`docs/roadmap.md`](docs/roadmap.md): feature status, runtime boundaries, and
-  next-work rules.
 - [`docs/release.md`](docs/release.md): release and Argo CD dependency upgrade
   notes.
-- [`docs/reports/2026-05-24-live-integration-design-gate.md`](docs/reports/2026-05-24-live-integration-design-gate.md):
+- [`docs/reports/live-integration-design-gate.md`](docs/reports/live-integration-design-gate.md):
   the no-live-runtime boundary decision and gate for exceptions.
 
 ## License
