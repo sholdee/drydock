@@ -3,13 +3,18 @@ package app
 import (
 	"context"
 	"fmt"
+	"os"
 	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
 
+	git "github.com/go-git/go-git/v5"
+	"github.com/go-git/go-git/v5/plumbing"
+	"github.com/go-git/go-git/v5/plumbing/object"
 	"github.com/sholdee/drydock/internal/appset"
 	"github.com/sholdee/drydock/internal/diagnostic"
+	"github.com/sholdee/drydock/internal/diff"
 )
 
 func TestOrchestratorDiffAppsReportsManifestChange(t *testing.T) {
@@ -519,6 +524,196 @@ func TestOrchestratorDiffImagesReportsUnchangedImage(t *testing.T) {
 	}
 }
 
+func TestDiffAppsRefOrigComparesWorkingTreeAgainstBaselineRef(t *testing.T) {
+	root := t.TempDir()
+	repo, wt := initDiffGitRepo(t, root)
+	writeDeploymentAppWithDataValue(t, root, "baseline")
+	commitDiffGitRepo(t, repo, wt, "baseline")
+	writeDeploymentAppWithDataValue(t, root, "working")
+
+	result, err := (Orchestrator{}).DiffApps(context.Background(), DiffRequest{
+		RightPath:   root,
+		Repo:        root,
+		RefOrig:     "HEAD",
+		ChangedOnly: false,
+		Unified:     3,
+	})
+	if err != nil {
+		t.Fatalf("DiffApps() error = %v", err)
+	}
+	if len(result.Results) == 0 {
+		t.Fatal("Results = 0, want baseline-to-working diff")
+	}
+	diff := diffResultText(result.Results)
+	if !strings.Contains(diff, "-  value: baseline") || !strings.Contains(diff, "+  value: working") {
+		t.Fatalf("Diff = %q, want baseline-to-working change", diff)
+	}
+}
+
+func TestDiffAppsRefAndRefOrigCompareCommittedRefs(t *testing.T) {
+	root := t.TempDir()
+	repo, wt := initDiffGitRepo(t, root)
+	writeDeploymentAppWithDataValue(t, root, "baseline")
+	commitDiffGitRepo(t, repo, wt, "baseline")
+	checkoutDiffGitBranch(t, wt, "feature")
+	writeDeploymentAppWithDataValue(t, root, "feature")
+	commitDiffGitRepo(t, repo, wt, "feature")
+	writeDeploymentAppWithDataValue(t, root, "uncommitted")
+
+	result, err := (Orchestrator{}).DiffApps(context.Background(), DiffRequest{
+		Repo:        root,
+		RefOrig:     "master",
+		Ref:         "feature",
+		ChangedOnly: false,
+		Unified:     3,
+	})
+	if err != nil {
+		t.Fatalf("DiffApps() error = %v", err)
+	}
+	if len(result.Results) == 0 {
+		t.Fatal("Results = 0, want baseline-to-feature diff")
+	}
+	diff := diffResultText(result.Results)
+	for _, want := range []string{"-  value: baseline", "+  value: feature"} {
+		if !strings.Contains(diff, want) {
+			t.Fatalf("Diff missing %q:\n%s", want, diff)
+		}
+	}
+	if strings.Contains(diff, "uncommitted") {
+		t.Fatalf("Diff included uncommitted working-tree value:\n%s", diff)
+	}
+}
+
+func TestDiffAppRefOrigComparesWorkingTreeAgainstBaselineRef(t *testing.T) {
+	root := t.TempDir()
+	repo, wt := initDiffGitRepo(t, root)
+	writeDeploymentAppWithDataValue(t, root, "baseline")
+	commitDiffGitRepo(t, repo, wt, "baseline")
+	writeDeploymentAppWithDataValue(t, root, "working")
+
+	result, err := (Orchestrator{}).DiffApp(context.Background(), DiffAppRequest{
+		Name: "demo",
+		DiffRequest: DiffRequest{
+			RightPath:   root,
+			Repo:        root,
+			RefOrig:     "HEAD",
+			ChangedOnly: false,
+			Unified:     3,
+		},
+	})
+	if err != nil {
+		t.Fatalf("DiffApp() error = %v", err)
+	}
+	if len(result.Results) == 0 {
+		t.Fatal("Results = 0, want baseline-to-working diff")
+	}
+	diff := diffResultText(result.Results)
+	if !strings.Contains(diff, "-  value: baseline") || !strings.Contains(diff, "+  value: working") {
+		t.Fatalf("Diff = %q, want baseline-to-working change", diff)
+	}
+}
+
+func TestDiffImagesRefOrigComparesWorkingTreeAgainstBaselineRef(t *testing.T) {
+	root := t.TempDir()
+	repo, wt := initDiffGitRepo(t, root)
+	writeDeploymentAppWithDataValue(t, root, "baseline")
+	commitDiffGitRepo(t, repo, wt, "baseline")
+	writeDeploymentAppWithDataValue(t, root, "working")
+
+	result, err := (Orchestrator{}).DiffImages(context.Background(), DiffRequest{
+		RightPath:   root,
+		Repo:        root,
+		RefOrig:     "HEAD",
+		ChangedOnly: false,
+	})
+	if err != nil {
+		t.Fatalf("DiffImages() error = %v", err)
+	}
+	requireStringInSlice(t, result.Removed, "ghcr.io/example/demo:baseline")
+	requireStringInSlice(t, result.Added, "ghcr.io/example/demo:working")
+}
+
+func TestDiffAppsRefOrigDoesNotRequirePathOrig(t *testing.T) {
+	root := t.TempDir()
+	repo, wt := initDiffGitRepo(t, root)
+	writeDeploymentAppWithDataValue(t, root, "baseline")
+	commitDiffGitRepo(t, repo, wt, "baseline")
+
+	_, err := (Orchestrator{}).DiffApps(context.Background(), DiffRequest{
+		RightPath:   root,
+		Repo:        root,
+		RefOrig:     "HEAD",
+		ChangedOnly: false,
+	})
+	if err != nil {
+		t.Fatalf("DiffApps() error = %v, want path-orig not required with RefOrig", err)
+	}
+}
+
+func TestDiffAppsRefValidationErrors(t *testing.T) {
+	root := t.TempDir()
+	repo, wt := initDiffGitRepo(t, root)
+	writeDeploymentAppWithDataValue(t, root, "baseline")
+	commitDiffGitRepo(t, repo, wt, "baseline")
+
+	tests := []struct {
+		name    string
+		request DiffRequest
+		want    string
+	}{
+		{
+			name:    "repo without refs",
+			request: DiffRequest{Repo: root, RightPath: root, LeftPath: root},
+			want:    "--repo requires --ref or --ref-orig",
+		},
+		{
+			name:    "path-orig with ref-orig",
+			request: DiffRequest{Repo: root, RightPath: root, LeftPath: root, RefOrig: "HEAD"},
+			want:    "--ref-orig cannot be combined with --path-orig",
+		},
+		{
+			name:    "missing ref",
+			request: DiffRequest{Repo: root, RightPath: root, RefOrig: "missing"},
+			want:    "resolve Git ref",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := (Orchestrator{}).DiffApps(context.Background(), tt.request)
+			if err == nil {
+				t.Fatalf("DiffApps() error = nil, want %q", tt.want)
+			}
+			if !strings.Contains(err.Error(), tt.want) {
+				t.Fatalf("DiffApps() error = %q, want substring %q", err, tt.want)
+			}
+		})
+	}
+}
+
+func TestDiffAppsRefCleanupOnSecondSnapshotError(t *testing.T) {
+	root := t.TempDir()
+	tempRoot := t.TempDir()
+	t.Setenv("TMPDIR", tempRoot)
+	repo, wt := initDiffGitRepo(t, root)
+	writeDeploymentAppWithDataValue(t, root, "baseline")
+	commitDiffGitRepo(t, repo, wt, "baseline")
+
+	_, err := (Orchestrator{}).DiffApps(context.Background(), DiffRequest{
+		Repo:        root,
+		RefOrig:     "HEAD",
+		Ref:         "missing",
+		ChangedOnly: false,
+	})
+	if err == nil {
+		t.Fatal("DiffApps() error = nil, want missing right ref error")
+	}
+	if !strings.Contains(err.Error(), "resolve Git ref") {
+		t.Fatalf("DiffApps() error = %q, want missing ref error", err)
+	}
+	assertNoDrydockGitRefDirs(t, tempRoot)
+}
+
 func TestDiffAppsRejectsRemoteCacheInsideEitherRoot(t *testing.T) {
 	left := t.TempDir()
 	right := t.TempDir()
@@ -961,6 +1156,48 @@ data:
 `)
 }
 
+func writeDeploymentAppWithDataValue(t *testing.T, root, value string) {
+	t.Helper()
+	writeTestFile(t, filepath.Join(root, "apps", "demo.yaml"), `apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: demo
+  namespace: argocd
+spec:
+  source:
+    repoURL: https://github.com/example/repo
+    path: manifests/demo
+    targetRevision: main
+  destination:
+    name: in-cluster
+    namespace: default
+`)
+	writeTestFile(t, filepath.Join(root, "manifests", "demo", "cm.yaml"), `apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: demo
+data:
+  value: `+value+`
+`)
+	writeTestFile(t, filepath.Join(root, "manifests", "demo", "deploy.yaml"), `apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: demo
+spec:
+  selector:
+    matchLabels:
+      app: demo
+  template:
+    metadata:
+      labels:
+        app: demo
+    spec:
+      containers:
+      - name: demo
+        image: ghcr.io/example/demo:`+value+`
+`)
+}
+
 func writeImageApp(t *testing.T, root, image string) {
 	t.Helper()
 	writeTestFile(t, filepath.Join(root, "apps", "demo.yaml"), `apiVersion: argoproj.io/v1alpha1
@@ -1050,6 +1287,75 @@ func containsString(items []string, want string) bool {
 		}
 	}
 	return false
+}
+
+func diffResultText(results []diff.Result) string {
+	var builder strings.Builder
+	for _, result := range results {
+		builder.WriteString(result.Diff)
+		builder.WriteString("\n")
+	}
+	return builder.String()
+}
+
+func initDiffGitRepo(t *testing.T, root string) (*git.Repository, *git.Worktree) {
+	t.Helper()
+	repo, err := git.PlainInit(root, false)
+	if err != nil {
+		t.Fatalf("PlainInit() error = %v", err)
+	}
+	wt, err := repo.Worktree()
+	if err != nil {
+		t.Fatalf("Worktree() error = %v", err)
+	}
+	return repo, wt
+}
+
+func commitDiffGitRepo(t *testing.T, repo *git.Repository, wt *git.Worktree, message string) plumbing.Hash {
+	t.Helper()
+	if err := wt.AddWithOptions(&git.AddOptions{All: true}); err != nil {
+		t.Fatalf("AddWithOptions() error = %v", err)
+	}
+	hash, err := wt.Commit(message, &git.CommitOptions{
+		Author: &object.Signature{Name: "Test", Email: "test@example.invalid"},
+	})
+	if err != nil {
+		t.Fatalf("Commit() error = %v", err)
+	}
+	return hash
+}
+
+func checkoutDiffGitBranch(t *testing.T, wt *git.Worktree, name string) {
+	t.Helper()
+	if err := wt.Checkout(&git.CheckoutOptions{
+		Branch: plumbing.NewBranchReferenceName(name),
+		Create: true,
+	}); err != nil {
+		t.Fatalf("Checkout(%s) error = %v", name, err)
+	}
+}
+
+func requireStringInSlice(t *testing.T, values []string, want string) {
+	t.Helper()
+	for _, value := range values {
+		if value == want {
+			return
+		}
+	}
+	t.Fatalf("values = %#v, want %q", values, want)
+}
+
+func assertNoDrydockGitRefDirs(t *testing.T, root string) {
+	t.Helper()
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		t.Fatalf("ReadDir(%s) error = %v", root, err)
+	}
+	for _, entry := range entries {
+		if strings.HasPrefix(entry.Name(), "drydock-gitref-") {
+			t.Fatalf("temporary Git ref snapshot was not cleaned up: %s", filepath.Join(root, entry.Name()))
+		}
+	}
 }
 
 func writeDeploymentAppWithSidecarImage(t *testing.T, root, sidecarImage, ignoreDifferences string) {
