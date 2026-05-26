@@ -8,6 +8,13 @@
   platformAutomerge: true,
   ignorePaths: ['testdata/**'],
   postUpdateOptions: ['gomodTidy'],
+  postUpgradeTasks: {
+    commands: ['go run ./scripts/sync-argocd-gitops-engine.go'],
+    dataFileTemplate:
+      '[{{#each upgrades}}{"depName":"{{{depName}}}","packageName":"{{{packageName}}}","manager":"{{{manager}}}","newValue":"{{{newValue}}}","newVersion":"{{{newVersion}}}"}{{#unless @last}},{{/unless}}{{/each}}]',
+    executionMode: 'branch',
+    fileFilters: ['go.mod', 'go.sum'],
+  },
   packageRules: [
     {
       description: 'Automerge minor/patch GitHub Actions updates',
