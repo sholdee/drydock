@@ -63,8 +63,11 @@ jobs:
             git diff --check "${{ github.event.pull_request.base.sha }}...HEAD"
           else
             before="${{ github.event.before }}"
-            if [ "$before" = "0000000000000000000000000000000000000000" ]; then
-              before="$(git rev-list --max-parents=0 HEAD)"
+            empty_tree="4b825dc642cb6eb9a060e54bf8d69288fbee4904"
+            if [ "$before" = "0000000000000000000000000000000000000000" ] || \
+              ! git cat-file -e "$before^{commit}" 2>/dev/null; then
+              git diff --check "$empty_tree" HEAD
+            else
+              git diff --check "$before..HEAD"
             fi
-            git diff --check "$before..HEAD"
           fi
