@@ -89,6 +89,8 @@ runs:
       shell: bash
       env:
         DRYDOCK_ALLOW_UNVERIFIED: ${{ inputs.allow-unverified }}
+        DRYDOCK_ASSET_URL: ${{ steps.artifact.outputs.asset_url }}
+        DRYDOCK_CHECKSUMS_URL: ${{ steps.artifact.outputs.checksums_url }}
         DRYDOCK_GITHUB_TOKEN: ${{ inputs.github-token }}
         DRYDOCK_INSTALL_DIR: ${{ inputs.install-dir }}
       run: |
@@ -115,8 +117,8 @@ runs:
 
         curl --fail --location --show-error "${headers[@]}" \
           --output "${tmpdir}/drydock.tar.gz" \
-          "${{ steps.artifact.outputs.asset_url }}"
-        asset_name="$(basename "${{ steps.artifact.outputs.asset_url }}")"
+          "${DRYDOCK_ASSET_URL}"
+        asset_name="$(basename "${DRYDOCK_ASSET_URL}")"
 
         verify_checksum() {
           if command -v sha256sum >/dev/null 2>&1; then
@@ -133,7 +135,7 @@ runs:
           curl --location --silent --show-error --write-out '%{http_code}' \
             "${headers[@]}" \
             --output "${tmpdir}/checksums.txt" \
-            "${{ steps.artifact.outputs.checksums_url }}" || true
+            "${DRYDOCK_CHECKSUMS_URL}" || true
         )"
 
         if [[ "${checksum_http_code}" == "200" ]]; then

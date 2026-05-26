@@ -53,6 +53,9 @@ jobs:
       - name: Lint GitHub Actions
         run: mise run actionlint
 
+      - name: Audit GitHub Actions security
+        run: mise run zizmor
+
       - name: Diff check
         shell: bash
         run: |

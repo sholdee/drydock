@@ -9,12 +9,14 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write
-  pull-requests: write
+  contents: read
 
 jobs:
   release-please:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
     outputs:
       releases-created: ${{ steps.release.outputs.releases_created || steps.release.outputs.release_created }}
     steps:
