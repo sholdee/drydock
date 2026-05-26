@@ -5,7 +5,7 @@ go 1.26.3
 require (
 	dario.cat/mergo v1.0.2
 	github.com/argoproj/argo-cd/gitops-engine v0.7.1-0.20250908182407-97ad5b59a627
-	github.com/argoproj/argo-cd/v3 v3.0.0-20260522094300-1bed88faea06
+	github.com/argoproj/argo-cd/v3 v3.4.2
 	github.com/bmatcuk/doublestar/v4 v4.10.0
 	github.com/go-git/go-git/v5 v5.19.1
 	github.com/itchyny/gojq v0.12.19
@@ -36,6 +36,7 @@ require (
 	github.com/Masterminds/sprig/v3 v3.3.0 // indirect
 	github.com/Microsoft/go-winio v0.6.2 // indirect
 	github.com/ProtonMail/go-crypto v1.4.1 // indirect
+	github.com/argoproj/pkg v0.13.6 // indirect
 	github.com/argoproj/pkg/v2 v2.0.1 // indirect
 	github.com/beorn7/perks v1.0.1 // indirect
 	github.com/blang/semver/v4 v4.0.0 // indirect
@@ -120,6 +121,7 @@ require (
 	github.com/peterbourgon/diskv v2.0.1+incompatible // indirect
 	github.com/pjbgf/sha1cd v0.6.0 // indirect
 	github.com/pkg/browser v0.0.0-20240102092130-5ac0b6a4141c // indirect
+	github.com/pkg/errors v0.9.1 // indirect
 	github.com/prometheus/client_golang v1.23.2 // indirect
 	github.com/prometheus/client_model v0.6.2 // indirect
 	github.com/prometheus/common v0.67.5 // indirect
@@ -191,7 +193,9 @@ require (
 )
 
 replace (
-	github.com/argoproj/argo-cd/gitops-engine => github.com/argoproj/argo-cd/gitops-engine v0.0.0-20260526130100-21ea32e6d950
+	// Argo CD uses a local replace for GitOps Engine. Consumers do not inherit
+	// it, so this pseudo-version must track the selected Argo CD tag.
+	github.com/argoproj/argo-cd/gitops-engine => github.com/argoproj/argo-cd/gitops-engine v0.0.0-20260512203152-0dc6b1b57dd5
 
 	// Helm v4.2.0 requires Kubernetes v0.36 modules, but the pinned Argo CD
 	// stack still imports Kubernetes APIs removed from v0.36.
