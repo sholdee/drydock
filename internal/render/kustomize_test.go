@@ -75,3 +75,41 @@ metadata:
 		t.Fatalf("len(result) = %d, want 2", len(result))
 	}
 }
+
+func TestKustomizeRendererHonorsLoadRestrictionsNone(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "shared", "cm.yaml"), `
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: shared
+`)
+	writeFile(t, filepath.Join(root, "apps", "demo", "kustomization.yaml"), `
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - ../../shared/cm.yaml
+`)
+
+	_, _, err := (KustomizeRenderer{}).Render(context.Background(), ResolvedSource{
+		RepoRoot: root,
+		Path:     filepath.Join("apps", "demo"),
+	}, RenderOptions{})
+	if err == nil {
+		t.Fatal("Render() error = nil, want default load restriction error")
+	}
+
+	result, diags, err := (KustomizeRenderer{}).Render(context.Background(), ResolvedSource{
+		RepoRoot: root,
+		Path:     filepath.Join("apps", "demo"),
+	}, RenderOptions{BuildOptions: []string{"--load-restrictor=LoadRestrictionsNone"}})
+	if err != nil {
+		t.Fatalf("Render() error = %v", err)
+	}
+	if len(diags) != 0 {
+		t.Fatalf("diagnostics = %#v", diags)
+	}
+	if len(result) != 1 || result[0].Object.GetName() != "shared" {
+		t.Fatalf("result = %#v, want shared ConfigMap", result)
+	}
+}

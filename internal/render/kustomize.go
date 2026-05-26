@@ -24,8 +24,9 @@ func (KustomizeRenderer) Render(ctx context.Context, source ResolvedSource, opts
 	if err := ctx.Err(); err != nil {
 		return nil, nil, err
 	}
-	if len(opts.BuildOptions) != 0 {
-		return nil, nil, fmt.Errorf("kustomize build options are not supported yet")
+	buildSettings, err := parseKustomizeBuildOptions(opts.BuildOptions)
+	if err != nil {
+		return nil, nil, err
 	}
 
 	root, err := sourceRoot(source)
@@ -38,21 +39,23 @@ func (KustomizeRenderer) Render(ctx context.Context, source ResolvedSource, opts
 		return nil, nil, err
 	}
 	if kustomizeGraphHasHelmCharts(graph) || hasAcquirableRemoteKustomizeGraphRefs(graph) {
-		return renderKustomizeWithPreparedWorkspace(ctx, source, graph, opts)
+		return renderKustomizeWithPreparedWorkspace(ctx, source, graph, opts, buildSettings)
 	}
 
-	return renderPlainKustomize(ctx, source, root)
+	return renderPlainKustomize(ctx, source, root, buildSettings)
 }
 
 var kustomizationFileNames = []string{"kustomization.yaml", "kustomization.yml", "Kustomization"}
 
-func renderPlainKustomize(ctx context.Context, source ResolvedSource, root string) ([]Manifest, []diagnostic.Diagnostic, error) {
+func renderPlainKustomize(ctx context.Context, source ResolvedSource, root string, settings kustomizeBuildSettings) ([]Manifest, []diagnostic.Diagnostic, error) {
 	manifestPath, err := validateKustomizeGraph(ctx, source.RepoRoot, root)
 	if err != nil {
 		return nil, nil, err
 	}
 
-	kustomizer := krusty.MakeKustomizer(krusty.MakeDefaultOptions())
+	options := krusty.MakeDefaultOptions()
+	options.LoadRestrictions = settings.LoadRestrictions
+	kustomizer := krusty.MakeKustomizer(options)
 	resMap, err := kustomizer.Run(filesys.MakeFsOnDisk(), root)
 	if err != nil {
 		return nil, nil, fmt.Errorf("kustomize build %s: %w", root, err)

@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"sigs.k8s.io/kustomize/api/types"
 )
 
 func TestKustomizeRendererIgnoresUnrelatedCallerSymlinkInWorkspaceCopy(t *testing.T) {
@@ -902,23 +904,32 @@ resources:
 		})
 	}
 }
-func TestKustomizeRendererRejectsBuildOptions(t *testing.T) {
-	result, diags, err := (KustomizeRenderer{}).Render(context.Background(), ResolvedSource{
-		RepoRoot: filepath.Join("..", "..", "testdata", "applications"),
-		Path:     "kustomize",
-	}, RenderOptions{
-		BuildOptions: []string{"--enable-helm"},
-	})
+func TestParseKustomizeBuildOptionsSupportsArgoCDDefaults(t *testing.T) {
+	settings, err := parseKustomizeBuildOptions([]string{"--enable-helm", "--load-restrictor=LoadRestrictionsNone"})
+	if err != nil {
+		t.Fatalf("parseKustomizeBuildOptions() error = %v", err)
+	}
+	if settings.LoadRestrictions != types.LoadRestrictionsNone {
+		t.Fatalf("LoadRestrictions = %v, want LoadRestrictionsNone", settings.LoadRestrictions)
+	}
+}
+
+func TestParseKustomizeBuildOptionsSupportsSplitLoadRestrictor(t *testing.T) {
+	settings, err := parseKustomizeBuildOptions([]string{"--load-restrictor", "LoadRestrictionsNone"})
+	if err != nil {
+		t.Fatalf("parseKustomizeBuildOptions() error = %v", err)
+	}
+	if settings.LoadRestrictions != types.LoadRestrictionsNone {
+		t.Fatalf("LoadRestrictions = %v, want LoadRestrictionsNone", settings.LoadRestrictions)
+	}
+}
+
+func TestParseKustomizeBuildOptionsRejectsUnsupportedOptions(t *testing.T) {
+	_, err := parseKustomizeBuildOptions([]string{"--enable-alpha-plugins"})
 	if err == nil {
-		t.Fatal("Render() error = nil, want build options error")
+		t.Fatal("parseKustomizeBuildOptions() error = nil, want unsupported option error")
 	}
-	if !strings.Contains(err.Error(), "build options") {
-		t.Fatalf("Render() error = %v, want build options error", err)
-	}
-	if len(diags) != 0 {
-		t.Fatalf("diagnostics = %#v", diags)
-	}
-	if len(result) != 0 {
-		t.Fatalf("result = %#v, want no manifests", result)
+	if !strings.Contains(err.Error(), "unsupported kustomize build option") {
+		t.Fatalf("parseKustomizeBuildOptions() error = %v, want unsupported option message", err)
 	}
 }
