@@ -9,7 +9,6 @@ import (
 	"path/filepath"
 	"strings"
 
-	git "github.com/go-git/go-git/v5"
 	"github.com/go-git/go-git/v5/plumbing/filemode"
 	"github.com/go-git/go-git/v5/plumbing/object"
 	"github.com/sholdee/drydock/internal/pathsafety"
@@ -32,22 +31,14 @@ func Snapshot(ctx context.Context, request Request) (Result, error) {
 	if err := ctx.Err(); err != nil {
 		return Result{}, err
 	}
-	repoPath := strings.TrimSpace(request.Repo)
-	if repoPath == "" {
-		return Result{}, fmt.Errorf("git ref snapshot repository path is required")
-	}
-	displayRepoPath := source.RedactURL(repoPath)
-	if looksLikeRemoteRepo(repoPath) {
-		return Result{}, fmt.Errorf("git ref snapshot repository %q must be a local path; remote repository URLs are not supported for --repo yet", displayRepoPath)
-	}
 	ref := strings.TrimSpace(request.Ref)
 	if ref == "" {
 		ref = "HEAD"
 	}
 
-	repo, err := git.PlainOpenWithOptions(repoPath, &git.PlainOpenOptions{EnableDotGitCommonDir: true})
+	repo, displayRepoPath, err := openLocalRepository(request.Repo)
 	if err != nil {
-		return Result{}, fmt.Errorf("open Git repository %q: %w", displayRepoPath, err)
+		return Result{}, err
 	}
 	hash, err := source.ResolveGitRevision(repo, ref)
 	if err != nil {

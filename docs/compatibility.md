@@ -121,10 +121,10 @@ Supported in the MVP:
   Secret metadata only, without reading secret credential fields
 - Benchmarks for repeated local Application rendering and ApplicationSet
   expansion
-- Opt-in render concurrency through `--parallelism N` and
-  `drydock.Config.Parallelism`, with deterministic output ordering,
-  cache-backed source snapshots, and lock-held local graph copies for remote
-  Kustomize Git refs
+- Render concurrency through `--parallelism N`, bounded automatic defaults for
+  multi-Application test/diff commands, and `drydock.Config.Parallelism`, with
+  deterministic output ordering, cache-backed source snapshots, and lock-held
+  local graph copies for remote Kustomize Git refs
 - CI documentation for local, library-backed verification without cluster,
   server, or renderer CLI dependencies
 - Release and upgrade documentation for static binary/module releases, Argo CD

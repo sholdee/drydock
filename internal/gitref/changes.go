@@ -1,0 +1,237 @@
+package gitref
+
+import (
+	"bytes"
+	"context"
+	"errors"
+	"fmt"
+	"io"
+	"os"
+	"path/filepath"
+	"sort"
+	"strings"
+
+	git "github.com/go-git/go-git/v5"
+	"github.com/go-git/go-git/v5/plumbing/filemode"
+	"github.com/go-git/go-git/v5/plumbing/object"
+	"github.com/go-git/go-git/v5/utils/merkletrie"
+	"github.com/sholdee/drydock/internal/source"
+)
+
+func ChangedPathsBetweenRefs(ctx context.Context, repoPath, leftRef, rightRef string) ([]string, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	repo, displayRepoPath, err := openLocalRepository(repoPath)
+	if err != nil {
+		return nil, err
+	}
+	leftTree, err := treeForRef(repo, leftRef)
+	if err != nil {
+		return nil, fmt.Errorf("resolve Git ref %q in %q: %w", leftRef, displayRepoPath, err)
+	}
+	rightTree, err := treeForRef(repo, rightRef)
+	if err != nil {
+		return nil, fmt.Errorf("resolve Git ref %q in %q: %w", rightRef, displayRepoPath, err)
+	}
+	return changedPathsBetweenTrees(ctx, leftTree, rightTree)
+}
+
+func ChangedPathsFromRefToWorktree(ctx context.Context, repoPath, leftRef string) ([]string, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	repo, displayRepoPath, err := openLocalRepository(repoPath)
+	if err != nil {
+		return nil, err
+	}
+	leftTree, err := treeForRef(repo, leftRef)
+	if err != nil {
+		return nil, fmt.Errorf("resolve Git ref %q in %q: %w", leftRef, displayRepoPath, err)
+	}
+	headTree, err := treeForRef(repo, "HEAD")
+	if err != nil {
+		return nil, fmt.Errorf("resolve Git ref %q in %q: %w", "HEAD", displayRepoPath, err)
+	}
+	paths, err := changedPathsBetweenTrees(ctx, leftTree, headTree)
+	if err != nil {
+		return nil, err
+	}
+	index := stringSet(paths)
+	if err := addTrackedWorktreeChanges(repo, headTree, index); err != nil {
+		return nil, fmt.Errorf("detect Git worktree changes %q: %w", displayRepoPath, err)
+	}
+	return sortedStringSet(index), nil
+}
+
+func openLocalRepository(repoPath string) (*git.Repository, string, error) {
+	repoPath = strings.TrimSpace(repoPath)
+	displayRepoPath := source.RedactURL(repoPath)
+	if repoPath == "" {
+		return nil, displayRepoPath, fmt.Errorf("git ref snapshot repository path is required")
+	}
+	if looksLikeRemoteRepo(repoPath) {
+		return nil, displayRepoPath, fmt.Errorf("git ref snapshot repository %q must be a local path; remote repository URLs are not supported for --repo yet", displayRepoPath)
+	}
+	repo, err := git.PlainOpenWithOptions(repoPath, &git.PlainOpenOptions{EnableDotGitCommonDir: true})
+	if err != nil {
+		return nil, displayRepoPath, fmt.Errorf("open Git repository %q: %w", displayRepoPath, err)
+	}
+	return repo, displayRepoPath, nil
+}
+
+func treeForRef(repo *git.Repository, ref string) (*object.Tree, error) {
+	hash, err := source.ResolveGitRevision(repo, ref)
+	if err != nil {
+		return nil, err
+	}
+	commit, err := repo.CommitObject(*hash)
+	if err != nil {
+		return nil, err
+	}
+	return commit.Tree()
+}
+
+func changedPathsBetweenTrees(ctx context.Context, leftTree, rightTree *object.Tree) ([]string, error) {
+	changes, err := object.DiffTreeContext(ctx, leftTree, rightTree)
+	if err != nil {
+		return nil, err
+	}
+	paths := make(map[string]struct{}, len(changes))
+	for _, change := range changes {
+		action, err := change.Action()
+		if err != nil {
+			return nil, err
+		}
+		switch action {
+		case merkletrie.Delete:
+			paths[filepath.ToSlash(change.From.Name)] = struct{}{}
+		case merkletrie.Insert, merkletrie.Modify:
+			paths[filepath.ToSlash(change.To.Name)] = struct{}{}
+		}
+	}
+	return sortedStringSet(paths), nil
+}
+
+func addTrackedWorktreeChanges(repo *git.Repository, headTree *object.Tree, paths map[string]struct{}) error {
+	wt, err := repo.Worktree()
+	if err != nil {
+		return err
+	}
+	root := wt.Filesystem.Root()
+	headPaths := make(map[string]object.File)
+	if err := headTree.Files().ForEach(func(file *object.File) error {
+		name := filepath.ToSlash(file.Name)
+		headPaths[name] = *file
+		changed, err := worktreeFileChanged(root, file)
+		if err != nil {
+			return err
+		}
+		if changed {
+			paths[name] = struct{}{}
+		}
+		return nil
+	}); err != nil {
+		return err
+	}
+
+	idx, err := repo.Storer.Index()
+	if err != nil {
+		return err
+	}
+	indexPaths := make(map[string]struct{}, len(idx.Entries))
+	for _, entry := range idx.Entries {
+		name := filepath.ToSlash(entry.Name)
+		indexPaths[name] = struct{}{}
+		headFile, ok := headPaths[name]
+		if !ok || entry.Hash != headFile.Hash || !sameGitFileMode(entry.Mode, headFile.Mode) || entry.Stage != 0 || entry.IntentToAdd {
+			paths[name] = struct{}{}
+		}
+	}
+	for name := range headPaths {
+		if _, ok := indexPaths[name]; !ok {
+			paths[name] = struct{}{}
+		}
+	}
+	return nil
+}
+
+func sameGitFileMode(left, right filemode.FileMode) bool {
+	return comparableGitFileMode(left) == comparableGitFileMode(right)
+}
+
+func comparableGitFileMode(mode filemode.FileMode) filemode.FileMode {
+	if mode == filemode.Deprecated {
+		return filemode.Regular
+	}
+	return mode
+}
+
+func worktreeFileChanged(root string, file *object.File) (bool, error) {
+	path := filepath.Join(root, filepath.FromSlash(file.Name))
+	info, err := os.Lstat(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return true, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	switch file.Mode {
+	case filemode.Symlink:
+		if info.Mode()&os.ModeSymlink == 0 {
+			return true, nil
+		}
+		want, err := file.Contents()
+		if err != nil {
+			return false, err
+		}
+		got, err := os.Readlink(path)
+		if err != nil {
+			return false, err
+		}
+		return got != want, nil
+	case filemode.Regular, filemode.Deprecated, filemode.Executable:
+		if !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 {
+			return true, nil
+		}
+		return regularWorktreeFileChanged(path, file)
+	case filemode.Empty, filemode.Dir, filemode.Submodule:
+		return true, nil
+	default:
+		return true, nil
+	}
+}
+
+func regularWorktreeFileChanged(path string, file *object.File) (bool, error) {
+	reader, err := file.Reader()
+	if err != nil {
+		return false, err
+	}
+	defer reader.Close()
+	want, err := io.ReadAll(reader)
+	if err != nil {
+		return false, err
+	}
+	got, err := os.ReadFile(path)
+	if err != nil {
+		return false, err
+	}
+	return !bytes.Equal(got, want), nil
+}
+
+func stringSet(values []string) map[string]struct{} {
+	out := make(map[string]struct{}, len(values))
+	for _, value := range values {
+		out[value] = struct{}{}
+	}
+	return out
+}
+
+func sortedStringSet(values map[string]struct{}) []string {
+	out := make([]string, 0, len(values))
+	for value := range values {
+		out = append(out, value)
+	}
+	sort.Strings(out)
+	return out
+}

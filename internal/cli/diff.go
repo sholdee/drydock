@@ -23,6 +23,7 @@ func newDiffCommand(deps Dependencies) *cobra.Command {
 	bindCommonFlags(cmd, &flags)
 
 	appsFlags := defaultCommonFlags()
+	appsFlags.parallelism = defaultRenderAppsParallelism()
 	apps := &cobra.Command{
 		Use:   "apps",
 		Short: "Diff all Applications",
@@ -80,6 +81,7 @@ func newDiffCommand(deps Dependencies) *cobra.Command {
 	bindDiffRefFlags(appCmd, &appFlags)
 
 	imagesFlags := defaultCommonFlags()
+	imagesFlags.parallelism = defaultRenderAppsParallelism()
 	images := &cobra.Command{
 		Use:   "images",
 		Short: "Diff rendered container images",

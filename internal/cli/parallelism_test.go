@@ -48,8 +48,8 @@ func TestTestAppsDefaultParallelismIsAuto(t *testing.T) {
 	if want > 8 {
 		want = 8
 	}
-	if got := defaultTestAppsParallelism(); got != want {
-		t.Fatalf("defaultTestAppsParallelism() = %d, want %d", got, want)
+	if got := defaultRenderAppsParallelism(); got != want {
+		t.Fatalf("defaultRenderAppsParallelism() = %d, want %d", got, want)
 	}
 	if got := recorder.buildRequests[0].Parallelism; got != want {
 		t.Fatalf("BuildRequest.Parallelism = %d, want %d", got, want)
@@ -158,6 +158,16 @@ func TestDiffAppsParallelismFlag(t *testing.T) {
 	}
 }
 
+func TestDiffAppsDefaultParallelismIsAuto(t *testing.T) {
+	recorder := &recordingCLIOrchestrator{}
+	executeParallelismCommand(t, recorder, "diff", "apps", "--path-orig", "left", "--path", "right")
+
+	want := defaultRenderAppsParallelism()
+	if got := recorder.diffAppsRequests[0].Parallelism; got != want {
+		t.Fatalf("DiffRequest.Parallelism = %d, want %d", got, want)
+	}
+}
+
 func TestDiffAppParallelismFlag(t *testing.T) {
 	recorder := &recordingCLIOrchestrator{}
 	executeParallelismCommand(t, recorder, "diff", "app", "demo", "--path-orig", "left", "--path", "right", "--parallelism", "7")
@@ -167,12 +177,31 @@ func TestDiffAppParallelismFlag(t *testing.T) {
 	}
 }
 
+func TestDiffAppDefaultParallelismRemainsSingleApplication(t *testing.T) {
+	recorder := &recordingCLIOrchestrator{}
+	executeParallelismCommand(t, recorder, "diff", "app", "demo", "--path-orig", "left", "--path", "right")
+
+	if got := recorder.diffAppRequests[0].Parallelism; got != 1 {
+		t.Fatalf("DiffAppRequest.Parallelism = %d, want 1", got)
+	}
+}
+
 func TestDiffImagesParallelismFlag(t *testing.T) {
 	recorder := &recordingCLIOrchestrator{}
 	executeParallelismCommand(t, recorder, "diff", "images", "--path-orig", "left", "--path", "right", "--parallelism", "7")
 
 	if got := recorder.diffImagesRequests[0].Parallelism; got != 7 {
 		t.Fatalf("DiffRequest.Parallelism = %d, want 7", got)
+	}
+}
+
+func TestDiffImagesDefaultParallelismIsAuto(t *testing.T) {
+	recorder := &recordingCLIOrchestrator{}
+	executeParallelismCommand(t, recorder, "diff", "images", "--path-orig", "left", "--path", "right")
+
+	want := defaultRenderAppsParallelism()
+	if got := recorder.diffImagesRequests[0].Parallelism; got != want {
+		t.Fatalf("DiffRequest.Parallelism = %d, want %d", got, want)
 	}
 }
 
