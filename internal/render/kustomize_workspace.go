@@ -20,7 +20,7 @@ type kustomizeWorkspace struct {
 	nextPathIndex    int
 }
 
-func renderKustomizeWithPreparedWorkspace(ctx context.Context, source ResolvedSource, graph []kustomizeGraphNode, opts RenderOptions) ([]Manifest, []diagnostic.Diagnostic, error) {
+func renderKustomizeWithPreparedWorkspace(ctx context.Context, source ResolvedSource, graph []kustomizeGraphNode, opts RenderOptions, buildSettings kustomizeBuildSettings) ([]Manifest, []diagnostic.Diagnostic, error) {
 	tempDir, err := os.MkdirTemp("", "drydock-kustomize-*")
 	if err != nil {
 		return nil, nil, err
@@ -55,7 +55,7 @@ func renderKustomizeWithPreparedWorkspace(ctx context.Context, source ResolvedSo
 		return nil, nil, err
 	}
 
-	return renderPlainKustomize(ctx, tempSource, tempRoot)
+	return renderPlainKustomize(ctx, tempSource, tempRoot, buildSettings)
 }
 
 //nolint:gocyclo // Coordinates helm inflation, remote graph rewriting, and validation.
