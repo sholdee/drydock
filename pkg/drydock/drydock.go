@@ -18,6 +18,9 @@ import (
 type Config struct {
 	Path             string
 	PathOrig         string
+	Repo             string
+	Ref              string
+	RefOrig          string
 	Strict           bool
 	Offline          bool
 	RefreshCharts    bool
@@ -164,6 +167,9 @@ func (client *Client) requestOptions() requestopts.Options {
 		Path:                           client.config.Path,
 		LeftPath:                       client.config.PathOrig,
 		RightPath:                      client.config.Path,
+		Repo:                           client.config.Repo,
+		Ref:                            client.config.Ref,
+		RefOrig:                        client.config.RefOrig,
 		ChangedOnly:                    client.config.ChangedOnly,
 		StrictChangedOnly:              client.config.StrictChangedOnly,
 		Strict:                         client.config.Strict,

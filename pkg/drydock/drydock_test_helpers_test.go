@@ -9,6 +9,10 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	git "github.com/go-git/go-git/v5"
+	"github.com/go-git/go-git/v5/plumbing"
+	"github.com/go-git/go-git/v5/plumbing/object"
 )
 
 type publicPluginRendererFunc func(context.Context, PluginRequest) (PluginResult, error)
@@ -300,6 +304,44 @@ func writeImageDiffTrees(t *testing.T, leftImage, rightImage string) (string, st
 	writeAPIAppTree(t, right, "demo", deploymentBody("demo", rightImage))
 	return left, right
 }
+
+func initPublicGitRepo(t *testing.T, root string) (*git.Repository, *git.Worktree) {
+	t.Helper()
+	repo, err := git.PlainInit(root, false)
+	if err != nil {
+		t.Fatalf("PlainInit() error = %v", err)
+	}
+	wt, err := repo.Worktree()
+	if err != nil {
+		t.Fatalf("Worktree() error = %v", err)
+	}
+	return repo, wt
+}
+
+func commitPublicGitRepo(t *testing.T, repo *git.Repository, wt *git.Worktree, message string) plumbing.Hash {
+	t.Helper()
+	if _, err := wt.Add("."); err != nil {
+		t.Fatalf("Add(.) error = %v", err)
+	}
+	hash, err := wt.Commit(message, &git.CommitOptions{
+		Author: &object.Signature{Name: "Test", Email: "test@example.invalid"},
+	})
+	if err != nil {
+		t.Fatalf("Commit(%s) error = %v", message, err)
+	}
+	return hash
+}
+
+func checkoutPublicGitBranch(t *testing.T, wt *git.Worktree, name string) {
+	t.Helper()
+	if err := wt.Checkout(&git.CheckoutOptions{
+		Branch: plumbing.NewBranchReferenceName(name),
+		Create: true,
+	}); err != nil {
+		t.Fatalf("Checkout(create %s) error = %v", name, err)
+	}
+}
+
 func writeAPIPluginAppTree(t *testing.T, root string) {
 	t.Helper()
 	writeAPIPluginAppTreeNamed(t, root, "plugin-app")

@@ -14,6 +14,9 @@ type Options struct {
 	Path                           string
 	LeftPath                       string
 	RightPath                      string
+	Repo                           string
+	Ref                            string
+	RefOrig                        string
 	ChangedOnly                    *bool
 	StrictChangedOnly              bool
 	Strict                         bool
@@ -80,6 +83,9 @@ func (options Options) Diff() app.DiffRequest {
 	return app.DiffRequest{
 		LeftPath:                       options.LeftPath,
 		RightPath:                      options.RightPath,
+		Repo:                           options.Repo,
+		Ref:                            options.Ref,
+		RefOrig:                        options.RefOrig,
 		ChangedOnly:                    changedOnly,
 		StrictChangedOnly:              options.StrictChangedOnly,
 		Strict:                         options.Strict,
