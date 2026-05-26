@@ -24,6 +24,12 @@
       automerge: true,
     },
     {
+      description: 'Automerge Docker base image digest updates',
+      matchManagers: ['dockerfile'],
+      matchUpdateTypes: ['digest'],
+      automerge: true,
+    },
+    {
       description: 'Bump the go.mod go directive with Go releases',
       matchManagers: ['gomod'],
       matchDepTypes: ['golang'],
