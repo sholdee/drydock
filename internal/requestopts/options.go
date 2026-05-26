@@ -23,6 +23,7 @@ type Options struct {
 	ValidateLuaHealth              bool
 	Unified                        int
 	StripAttrs                     []string
+	ShowIgnoredFields              bool
 	Offline                        bool
 	RefreshCharts                  bool
 	ChartCacheDir                  string
@@ -91,6 +92,7 @@ func (options Options) Diff() app.DiffRequest {
 		Strict:                         options.Strict,
 		Unified:                        options.Unified,
 		StripAttrs:                     append([]string(nil), options.StripAttrs...),
+		ShowIgnoredFields:              options.ShowIgnoredFields,
 		Offline:                        options.Offline,
 		RefreshCharts:                  options.RefreshCharts,
 		ChartCacheDir:                  options.ChartCacheDir,

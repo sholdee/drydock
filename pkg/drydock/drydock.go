@@ -50,6 +50,7 @@ type Config struct {
 	StrictChangedOnly              bool
 	Unified                        int
 	StripAttrs                     []string
+	ShowIgnoredFields              bool
 	GitAcquirer                    GitAcquirer
 	ChartAcquirer                  ChartAcquirer
 	RemoteResourceAcquirer         RemoteResourceAcquirer
@@ -175,6 +176,7 @@ func (client *Client) requestOptions() requestopts.Options {
 		Strict:                         client.config.Strict,
 		Unified:                        unified,
 		StripAttrs:                     append([]string(nil), client.config.StripAttrs...),
+		ShowIgnoredFields:              client.config.ShowIgnoredFields,
 		Offline:                        client.config.Offline,
 		RefreshCharts:                  client.config.RefreshCharts,
 		ChartCacheDir:                  client.config.ChartCacheDir,

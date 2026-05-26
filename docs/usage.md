@@ -511,6 +511,20 @@ also support `-o json` and `-o yaml`, which serialize the structured
 `[]diff.Result` payload. Diagnostics remain on stderr so stdout stays valid
 JSON or YAML. `-o name` is not supported for manifest diffs.
 
+Manifest diffs hide common Helm-rendered metadata noise by default:
+
+- `metadata.labels.helm.sh/chart`
+- `metadata.labels.chart`
+- `metadata.labels.app.kubernetes.io/version`
+- `spec.template.metadata.labels.helm.sh/chart`
+- `spec.template.metadata.labels.chart`
+- `spec.template.metadata.labels.app.kubernetes.io/version`
+- `spec.template.metadata.annotations.checksum/*`
+
+Use `--show-ignored-fields` on `diff apps` or `diff app` to include these
+drydock-default ignored fields again. This flag does not disable Argo CD
+`ignoreDifferences`, compare options, or explicit `--strip-attr` filters.
+
 Use repeatable `--strip-attr KEY` to remove matching keys from
 `metadata.labels` and `metadata.annotations` before comparing rendered
 manifests and generating diffs:

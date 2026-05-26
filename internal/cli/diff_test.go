@@ -166,6 +166,55 @@ func TestDiffAppsStripAttrSuppressesOnlyAttributeDiff(t *testing.T) {
 	}
 }
 
+func TestDiffAppsSuppressesDefaultIgnoredFields(t *testing.T) {
+	root := t.TempDir()
+	left := filepath.Join(root, "left")
+	right := filepath.Join(root, "right")
+	writeHelmMetadataAppForCLI(t, left, "demo-1.0.0", "1.0.0", "old")
+	writeHelmMetadataAppForCLI(t, right, "demo-2.0.0", "2.0.0", "new")
+
+	cmd := NewRootCommand(VersionInfo{})
+	cmd.SetArgs([]string{"diff", "apps", "--path-orig", left, "--path", right})
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	cmd.SetOut(&stdout)
+	cmd.SetErr(&stderr)
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("Execute() error = %v\nstdout:\n%s\nstderr:\n%s", err, stdout.String(), stderr.String())
+	}
+	if stdout.String() != "" {
+		t.Fatalf("stdout = %q, want default ignored fields to suppress diff", stdout.String())
+	}
+	if stderr.String() != "" {
+		t.Fatalf("stderr = %q, want empty", stderr.String())
+	}
+}
+
+func TestDiffAppsShowIgnoredFieldsPrintsDefaultIgnoredFields(t *testing.T) {
+	root := t.TempDir()
+	left := filepath.Join(root, "left")
+	right := filepath.Join(root, "right")
+	writeHelmMetadataAppForCLI(t, left, "demo-1.0.0", "1.0.0", "old")
+	writeHelmMetadataAppForCLI(t, right, "demo-2.0.0", "2.0.0", "new")
+
+	result := runCLI(t, "diff", "apps", "--path-orig", left, "--path", right, "--show-ignored-fields", "--exit-code=false")
+	assertStdoutContainsAll(t, result, "helm.sh/chart", "demo-1.0.0", "demo-2.0.0", "checksum/config", "old", "new")
+	assertStderrEmpty(t, result)
+}
+
+func TestDiffAppShowIgnoredFieldsPrintsDefaultIgnoredFields(t *testing.T) {
+	root := t.TempDir()
+	left := filepath.Join(root, "left")
+	right := filepath.Join(root, "right")
+	writeHelmMetadataAppForCLI(t, left, "demo-1.0.0", "1.0.0", "old")
+	writeHelmMetadataAppForCLI(t, right, "demo-2.0.0", "2.0.0", "new")
+
+	result := runCLI(t, "diff", "app", "demo", "--path-orig", left, "--path", right, "--show-ignored-fields", "--exit-code=false")
+	assertStdoutContainsAll(t, result, "helm.sh/chart", "demo-1.0.0", "demo-2.0.0", "checksum/config", "old", "new")
+	assertStderrEmpty(t, result)
+}
+
 func TestDiffAppsGlobalCustomizationSuppressesOnlyJSONPointerDiff(t *testing.T) {
 	root := t.TempDir()
 	left := filepath.Join(root, "left")
@@ -793,6 +842,49 @@ metadata:
   name: demo
 data:
   value: `+value+`
+`)
+}
+
+func writeHelmMetadataAppForCLI(t *testing.T, root, chartVersion, appVersion, checksum string) {
+	t.Helper()
+	writeCLITestFile(t, filepath.Join(root, "apps", "demo.yaml"), `apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: demo
+  namespace: argocd
+spec:
+  source:
+    repoURL: https://github.com/example/repo
+    path: manifests/demo
+    targetRevision: main
+  destination:
+    name: in-cluster
+    namespace: demo
+`)
+	writeCLITestFile(t, filepath.Join(root, "manifests", "demo", "deployment.yaml"), `apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: demo
+  labels:
+    helm.sh/chart: `+chartVersion+`
+    chart: `+chartVersion+`
+    app.kubernetes.io/version: `+appVersion+`
+spec:
+  selector:
+    matchLabels:
+      app: demo
+  template:
+    metadata:
+      labels:
+        helm.sh/chart: `+chartVersion+`
+        chart: `+chartVersion+`
+        app.kubernetes.io/version: `+appVersion+`
+      annotations:
+        checksum/config: `+checksum+`
+    spec:
+      containers:
+        - name: app
+          image: example/app:v1
 `)
 }
 

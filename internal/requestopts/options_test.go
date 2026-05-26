@@ -63,6 +63,7 @@ func TestOptionsDiffCopiesSharedFields(t *testing.T) {
 	assertDeepEqual(t, "Strict", request.Strict, true)
 	assertDeepEqual(t, "Unified", request.Unified, 0)
 	assertDeepEqual(t, "StripAttrs", request.StripAttrs, []string{"metadata.annotations.checksum/config"})
+	assertDeepEqual(t, "ShowIgnoredFields", request.ShowIgnoredFields, true)
 	assertDeepEqual(t, "Offline", request.Offline, true)
 	assertDeepEqual(t, "RefreshCharts", request.RefreshCharts, true)
 	assertDeepEqual(t, "ChartCacheDir", request.ChartCacheDir, "chart-cache")
@@ -111,6 +112,7 @@ func fixtureOptions() Options {
 		StrictChangedOnly:            true,
 		Strict:                       true,
 		StripAttrs:                   []string{"metadata.annotations.checksum/config"},
+		ShowIgnoredFields:            true,
 		Offline:                      true,
 		RefreshCharts:                true,
 		ChartCacheDir:                "chart-cache",

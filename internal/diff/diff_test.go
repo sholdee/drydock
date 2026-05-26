@@ -418,6 +418,62 @@ func TestRunStripsAttributesAndRedactsSecretValues(t *testing.T) {
 	}
 }
 
+func TestRunDefaultIgnoredFieldsSuppressesHelmMetadataNoise(t *testing.T) {
+	left := []Document{helmMetadataDeploymentDocument("demo-1.0.0", "1.0.0", "old-config", "old-secret")}
+	right := []Document{helmMetadataDeploymentDocument("demo-2.0.0", "2.0.0", "new-config", "new-secret")}
+
+	results, err := Run(left, right, Options{Unified: 3})
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if len(results) != 0 {
+		t.Fatalf("len(results) = %d, want default ignored fields to suppress metadata-only diff: %#v", len(results), results)
+	}
+}
+
+func TestRunDefaultIgnoredFieldsSuppressesIgnoredOnlyPodTemplateMetadata(t *testing.T) {
+	left := []Document{helmMetadataDeploymentDocument("demo-1.0.0", "1.0.0", "old-config", "old-secret")}
+	right := []Document{deploymentDocumentWithoutPodTemplateMetadata()}
+
+	results, err := Run(left, right, Options{Unified: 3})
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if len(results) != 0 {
+		t.Fatalf("len(results) = %d, want ignored-only pod template metadata suppressed: %#v", len(results), results)
+	}
+}
+
+func TestRunShowIgnoredFieldsIncludesDefaultIgnoredHelmMetadata(t *testing.T) {
+	left := []Document{helmMetadataDeploymentDocument("demo-1.0.0", "1.0.0", "old-config", "old-secret")}
+	right := []Document{helmMetadataDeploymentDocument("demo-2.0.0", "2.0.0", "new-config", "new-secret")}
+
+	results, err := Run(left, right, Options{Unified: 3, ShowIgnoredFields: true})
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if len(results) != 1 {
+		t.Fatalf("len(results) = %d, want ignored fields to be visible", len(results))
+	}
+	diff := results[0].Diff
+	for _, want := range []string{
+		"-    helm.sh/chart: demo-1.0.0",
+		"+    helm.sh/chart: demo-2.0.0",
+		"-    chart: demo-1.0.0",
+		"+    chart: demo-2.0.0",
+		"-    app.kubernetes.io/version: 1.0.0",
+		"+    app.kubernetes.io/version: 2.0.0",
+		"-        checksum/config: old-config",
+		"+        checksum/config: new-config",
+		"-        checksum/secret: old-secret",
+		"+        checksum/secret: new-secret",
+	} {
+		if !strings.Contains(diff, want) {
+			t.Fatalf("Diff missing %q:\n%s", want, diff)
+		}
+	}
+}
+
 func TestRunIgnoreJSONPointerSuppressesReplicasDiff(t *testing.T) {
 	left := []Document{deploymentDocument("1", nil)}
 	right := []Document{deploymentDocument("2", nil)}
@@ -926,6 +982,62 @@ spec:
               value: two
 `,
 		Normalization: Normalization{JSONPointers: pointers},
+	}
+}
+
+func helmMetadataDeploymentDocument(chartVersion, appVersion, checksumConfig, checksumSecret string) Document {
+	return Document{
+		Parent:   testParent(),
+		Resource: Resource{Group: "apps", Kind: "Deployment", Namespace: "default", Name: "web"},
+		Body: `apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: web
+  namespace: default
+  labels:
+    helm.sh/chart: ` + chartVersion + `
+    chart: ` + chartVersion + `
+    app.kubernetes.io/version: ` + appVersion + `
+spec:
+  selector:
+    matchLabels:
+      app: web
+  template:
+    metadata:
+      labels:
+        helm.sh/chart: ` + chartVersion + `
+        chart: ` + chartVersion + `
+        app.kubernetes.io/version: ` + appVersion + `
+      annotations:
+        checksum/config: ` + checksumConfig + `
+        checksum/secret: ` + checksumSecret + `
+    spec:
+      containers:
+        - name: web
+          image: ghcr.io/example/web:v1
+`,
+	}
+}
+
+func deploymentDocumentWithoutPodTemplateMetadata() Document {
+	return Document{
+		Parent:   testParent(),
+		Resource: Resource{Group: "apps", Kind: "Deployment", Namespace: "default", Name: "web"},
+		Body: `apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: web
+  namespace: default
+spec:
+  selector:
+    matchLabels:
+      app: web
+  template:
+    spec:
+      containers:
+        - name: web
+          image: ghcr.io/example/web:v1
+`,
 	}
 }
 

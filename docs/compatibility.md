@@ -94,6 +94,9 @@ Supported today:
 - `diff apps`, `diff app`, and `diff images` against local Git refs through
   temporary local snapshots, without `git` shellouts or checkout mutation
 - `--strip-attr KEY` diff normalization for metadata label and annotation keys
+- Default diff ignores for common Helm chart/version labels and pod-template
+  `checksum/*` annotations, plus `--show-ignored-fields` to include those
+  drydock-default ignored fields in manifest diffs
 - Application-level `spec.ignoreDifferences[]` `jsonPointers`,
   `jqPathExpressions`, and `managedFieldsManagers` for rendered manifest diffs
 - Global `resource.customizations.ignoreDifferences.*` `jsonPointers`,

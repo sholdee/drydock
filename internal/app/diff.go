@@ -38,6 +38,7 @@ type DiffRequest struct {
 	Strict                         bool
 	Unified                        int
 	StripAttrs                     []string
+	ShowIgnoredFields              bool
 	Offline                        bool
 	RefreshCharts                  bool
 	ChartCacheDir                  string
@@ -103,7 +104,11 @@ func (o Orchestrator) DiffApps(ctx context.Context, request DiffRequest) (DiffRe
 		return DiffResult{Diagnostics: diagnostics, CacheEvents: cacheEvents}, err
 	}
 
-	results, diffErr := diffBuildResults(leftBuild, rightBuild, diff.Options{Unified: request.Unified, StripAttrs: request.StripAttrs})
+	results, diffErr := diffBuildResults(leftBuild, rightBuild, diff.Options{
+		Unified:           request.Unified,
+		StripAttrs:        request.StripAttrs,
+		ShowIgnoredFields: request.ShowIgnoredFields,
+	})
 	if err := errors.Join(buildErr, diffErr); err != nil {
 		return DiffResult{Results: results, Diagnostics: diagnostics, CacheEvents: cacheEvents}, err
 	}
@@ -176,7 +181,11 @@ func (o Orchestrator) DiffApp(ctx context.Context, request DiffAppRequest) (Diff
 		return DiffResult{Diagnostics: diagnostics, CacheEvents: cacheEvents}, err
 	}
 
-	results, err := diffBuildResults(leftBuild, rightBuild, diff.Options{Unified: request.Unified, StripAttrs: request.StripAttrs})
+	results, err := diffBuildResults(leftBuild, rightBuild, diff.Options{
+		Unified:           request.Unified,
+		StripAttrs:        request.StripAttrs,
+		ShowIgnoredFields: request.ShowIgnoredFields,
+	})
 	if err != nil {
 		return DiffResult{Diagnostics: diagnostics, CacheEvents: cacheEvents}, err
 	}

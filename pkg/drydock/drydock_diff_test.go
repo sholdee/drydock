@@ -24,6 +24,39 @@ func TestDiffApplications(t *testing.T) {
 		t.Fatalf("Change = %q, want modified", result.Results[0].Change)
 	}
 }
+
+func TestDiffApplicationsShowIgnoredFields(t *testing.T) {
+	left, right := writeIgnoredFieldDiffTrees(t, "demo-1.0.0", "demo-2.0.0")
+
+	defaultResult, err := DiffApplications(context.Background(), Config{
+		PathOrig:    left,
+		Path:        right,
+		ChangedOnly: boolPtr(false),
+	})
+	if err != nil {
+		t.Fatalf("DiffApplications(default) error = %v", err)
+	}
+	if len(defaultResult.Results) != 0 {
+		t.Fatalf("default Results = %d, want ignored fields suppressed", len(defaultResult.Results))
+	}
+
+	result, err := DiffApplications(context.Background(), Config{
+		PathOrig:          left,
+		Path:              right,
+		ChangedOnly:       boolPtr(false),
+		ShowIgnoredFields: true,
+	})
+	if err != nil {
+		t.Fatalf("DiffApplications(show ignored) error = %v", err)
+	}
+	if len(result.Results) != 1 {
+		t.Fatalf("Results = %d, want ignored field diff", len(result.Results))
+	}
+	if !strings.Contains(result.Results[0].Diff, "demo-2.0.0") {
+		t.Fatalf("Diff = %q, want shown ignored field value", result.Results[0].Diff)
+	}
+}
+
 func TestPublicDiffApplicationsParallelismPreservesResults(t *testing.T) {
 	left, right := writeDiffTrees(t, "v1", "v2")
 

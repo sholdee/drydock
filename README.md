@@ -126,6 +126,9 @@ drydock discovers and renders local Argo CD desired state, including:
 - Repository maps with `--repo-map URL=PATH` for adjacent local checkouts.
 - Changed-only desired-vs-desired PR diffs, with strict diagnostics available
   when a safe ownership decision cannot be made.
+- Default diff noise filtering for common Helm chart/version labels and
+  pod-template checksum annotations, with `--show-ignored-fields` when those
+  fields need inspection.
 - Argo CD diff customizations such as `ignoreDifferences`,
   `knownTypeFields`, selected compare options, and resource filters.
 - Per-Application render test status as `PASS`, `FAIL`, or `SKIPPED`, including

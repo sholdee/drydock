@@ -374,7 +374,10 @@ manifests changed between the base tree and current tree?"
 Offline-safe behavior:
 
 - Render both sides using the same planning and settings model.
-- Normalize obvious generated noise.
+- Normalize obvious generated noise. By default this removes common Helm
+  chart/version labels from resource metadata and pod-template metadata, plus
+  pod-template `checksum/*` annotations. `--show-ignored-fields` disables only
+  this drydock-default filtering and leaves Argo CD diff customizations active.
 - Apply Argo CD `ignoreDifferences` where possible without live managed fields.
 - Apply JSON pointer and jq path ignores through reusable Argo CD normalizers
   where decoupled.
