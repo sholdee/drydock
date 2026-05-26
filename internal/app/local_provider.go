@@ -35,6 +35,7 @@ type localProvider struct {
 	remoteResourceCredentials    remote.Credentials
 	remoteResourceGitCredentials remote.GitCredentials
 	pluginTimeout                time.Duration
+	kustomizeBuildOptions        []string
 	cacheEvents                  *cacheevent.Recorder
 	acquisition                  acquisition.Session
 }
@@ -62,6 +63,7 @@ func (p localProvider) RenderSource(ctx context.Context, source render.ResolvedS
 	opts.RemoteResourceCredentials = p.remoteResourceCredentials
 	opts.RemoteResourceGitCredentials = p.remoteResourceGitCredentials
 	opts.CacheEventRecorder = p.cacheEvents
+	opts.BuildOptions = append(opts.BuildOptions, p.kustomizeBuildOptions...)
 	anchoredRefRoots, err := anchorLocalRefRoots(sourceRoot, opts.RefRoots)
 	if err != nil {
 		return nil, nil, err

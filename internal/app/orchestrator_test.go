@@ -39,6 +39,49 @@ func TestOrchestratorDiscoversGeneratesAndRenders(t *testing.T) {
 	}
 }
 
+func TestOrchestratorAppliesDiscoveredKustomizeBuildOptions(t *testing.T) {
+	root := t.TempDir()
+	writeTestFile(t, filepath.Join(root, "settings", "argocd-cm.yaml"), `apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: argocd-cm
+data:
+  kustomize.buildOptions: --enable-helm --load-restrictor=LoadRestrictionsNone
+`)
+	writeTestFile(t, filepath.Join(root, "shared", "cm.yaml"), `apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: shared
+`)
+	writeTestFile(t, filepath.Join(root, "apps", "demo", "app.yaml"), `apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: demo
+spec:
+  project: default
+  destination:
+    namespace: default
+    server: https://kubernetes.default.svc
+  source:
+    repoURL: https://example.test/repo.git
+    targetRevision: HEAD
+    path: apps/demo
+`)
+	writeTestFile(t, filepath.Join(root, "apps", "demo", "kustomization.yaml"), `apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - ../../shared/cm.yaml
+`)
+
+	result, err := Orchestrator{}.Build(context.Background(), BuildRequest{Path: root})
+	if err != nil {
+		t.Fatalf("Build() error = %v", err)
+	}
+	if len(result.Manifests) != 1 || result.Manifests[0].Object.GetName() != "shared" {
+		t.Fatalf("Manifests = %#v, want shared ConfigMap", result.Manifests)
+	}
+}
+
 func TestOrchestratorBuildStatusOnlyDoesNotCollectManifests(t *testing.T) {
 	root := t.TempDir()
 	writeBuildApplication(t, root, "demo", "demo")
