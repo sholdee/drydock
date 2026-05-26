@@ -45,8 +45,9 @@ type Result struct {
 	Diff     string   `json:"diff" yaml:"diff"`
 }
 type Options struct {
-	Unified    int
-	StripAttrs []string
+	Unified           int
+	StripAttrs        []string
+	ShowIgnoredFields bool
 }
 
 func Run(left, right []Document, opts Options) ([]Result, error) {

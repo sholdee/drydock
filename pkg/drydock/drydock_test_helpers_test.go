@@ -305,6 +305,15 @@ func writeImageDiffTrees(t *testing.T, leftImage, rightImage string) (string, st
 	return left, right
 }
 
+func writeIgnoredFieldDiffTrees(t *testing.T, leftChartVersion, rightChartVersion string) (string, string) {
+	t.Helper()
+	left := t.TempDir()
+	right := t.TempDir()
+	writeAPIAppTree(t, left, "demo", helmMetadataDeploymentBody("demo", leftChartVersion))
+	writeAPIAppTree(t, right, "demo", helmMetadataDeploymentBody("demo", rightChartVersion))
+	return left, right
+}
+
 func initPublicGitRepo(t *testing.T, root string) (*git.Repository, *git.Worktree) {
 	t.Helper()
 	repo, err := git.PlainInit(root, false)
@@ -449,6 +458,31 @@ spec:
           image: ` + image + `
 `
 }
+
+func helmMetadataDeploymentBody(name, chartVersion string) string {
+	return `apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ` + name + `
+  labels:
+    helm.sh/chart: ` + chartVersion + `
+spec:
+  selector:
+    matchLabels:
+      app: ` + name + `
+  template:
+    metadata:
+      annotations:
+        checksum/config: ` + chartVersion + `
+      labels:
+        helm.sh/chart: ` + chartVersion + `
+    spec:
+      containers:
+        - name: ` + name + `
+          image: repo/` + name + `:v1
+`
+}
+
 func deploymentObject(name, image string) map[string]any {
 	return map[string]any{
 		"apiVersion": "apps/v1",

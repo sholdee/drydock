@@ -51,6 +51,7 @@ type commonFlags struct {
 	output            string
 	unified           int
 	stripAttrs        []string
+	showIgnoredFields bool
 	limitBytes        int
 	cacheEvents       bool
 	parallelism       int
@@ -113,6 +114,10 @@ func bindLuaHealthTestFlag(cmd *cobra.Command, flags *commonFlags) {
 	cmd.Flags().BoolVar(&flags.skipLuaHealth, "skip-lua-health", flags.skipLuaHealth, "skip Lua health validation while testing Applications")
 }
 
+func bindShowIgnoredFieldsFlag(cmd *cobra.Command, flags *commonFlags) {
+	cmd.Flags().BoolVar(&flags.showIgnoredFields, "show-ignored-fields", flags.showIgnoredFields, "show drydock default ignored diff fields")
+}
+
 func bindDiffRefFlags(cmd *cobra.Command, flags *commonFlags) {
 	cmd.Flags().StringVar(&flags.repo, "repo", flags.repo, "local Git repository path used to resolve --ref and --ref-orig")
 	cmd.Flags().StringVar(&flags.ref, "ref", flags.ref, "Git ref to use for the current diff side")
@@ -171,6 +176,7 @@ func requestOptionsFromFlags(flags commonFlags, repoMaps []source.RepoMap) reque
 		Strict:                         flags.strict,
 		Unified:                        flags.unified,
 		StripAttrs:                     append([]string(nil), flags.stripAttrs...),
+		ShowIgnoredFields:              flags.showIgnoredFields,
 		Offline:                        flags.offline,
 		RefreshCharts:                  flags.refreshCharts,
 		ChartCacheDir:                  flags.chartCacheDir,

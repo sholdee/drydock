@@ -78,7 +78,8 @@ func normalizeDiffBody(body string, opts Options, normalization Normalization) (
 }
 func normalizeDiffBodyForResource(body string, opts Options, normalization Normalization, resource Resource) (string, error) {
 	attrs := stripAttrSet(opts.StripAttrs)
-	if len(attrs) == 0 &&
+	if !requiresDefaultIgnoredFieldNormalization(body, opts) &&
+		len(attrs) == 0 &&
 		len(normalization.JSONPointers) == 0 &&
 		len(normalization.JQPathExpressions) == 0 &&
 		len(normalization.KnownTypeFields) == 0 &&
@@ -94,6 +95,17 @@ func normalizeDiffBodyForResource(body string, opts Options, normalization Norma
 	}
 	return encodeDiffYAML(object)
 }
+
+func requiresDefaultIgnoredFieldNormalization(body string, opts Options) bool {
+	return !opts.ShowIgnoredFields &&
+		(strings.Contains(body, "helm.sh/chart") ||
+			strings.Contains(body, "chart:") ||
+			strings.Contains(body, `"chart":`) ||
+			strings.Contains(body, `'chart':`) ||
+			strings.Contains(body, "app.kubernetes.io/version") ||
+			strings.Contains(body, "checksum/"))
+}
+
 func normalizeDiffObject(body string, opts Options, normalization Normalization, resource Resource) (map[string]any, bool, error) {
 	attrs := stripAttrSet(opts.StripAttrs)
 	if body == "" {
@@ -111,6 +123,9 @@ func normalizeDiffObject(body string, opts Options, normalization Normalization,
 		return nil, false, err
 	}
 	stripMetadataAttrs(object, attrs)
+	if !opts.ShowIgnoredFields {
+		stripDefaultIgnoredFields(object)
+	}
 	object, err = removeJSONPointers(object, normalization.JSONPointers)
 	if err != nil {
 		if errors.Is(err, errJSONPointerRemovedRoot) {
@@ -179,6 +194,80 @@ func stripMetadataAttrMap(metadata map[string]any, field string, attrs map[strin
 		delete(metadata, field)
 	}
 }
+
+func stripDefaultIgnoredFields(object map[string]any) {
+	stripDefaultIgnoredMetadataAttrs(object, []string{"metadata"}, "labels")
+	stripDefaultIgnoredMetadataAttrs(object, []string{"spec", "template", "metadata"}, "labels")
+	stripChecksumAnnotations(object)
+	deleteEmptyNestedMap(object, "spec", "template", "metadata")
+}
+
+func stripDefaultIgnoredMetadataAttrs(object map[string]any, path []string, field string) {
+	metadata, ok := nestedStringMapField(object, path...)
+	if !ok {
+		return
+	}
+	values, ok := stringMapField(metadata, field)
+	if !ok {
+		return
+	}
+	for _, attr := range []string{"helm.sh/chart", "chart", "app.kubernetes.io/version"} {
+		delete(values, attr)
+	}
+	if len(values) == 0 {
+		delete(metadata, field)
+	}
+}
+
+func stripChecksumAnnotations(object map[string]any) {
+	metadata, ok := nestedStringMapField(object, "spec", "template", "metadata")
+	if !ok {
+		return
+	}
+	annotations, ok := stringMapField(metadata, "annotations")
+	if !ok {
+		return
+	}
+	for key := range annotations {
+		if strings.HasPrefix(key, "checksum/") {
+			delete(annotations, key)
+		}
+	}
+	if len(annotations) == 0 {
+		delete(metadata, "annotations")
+	}
+}
+
+func nestedStringMapField(object map[string]any, fields ...string) (map[string]any, bool) {
+	current := object
+	for _, field := range fields {
+		next, ok := stringMapField(current, field)
+		if !ok {
+			return nil, false
+		}
+		current = next
+	}
+	return current, true
+}
+
+func deleteEmptyNestedMap(object map[string]any, fields ...string) {
+	if len(fields) == 0 {
+		return
+	}
+	parent := object
+	for _, field := range fields[:len(fields)-1] {
+		next, ok := stringMapField(parent, field)
+		if !ok {
+			return
+		}
+		parent = next
+	}
+	child, ok := stringMapField(parent, fields[len(fields)-1])
+	if ok && len(child) == 0 {
+		delete(parent, fields[len(fields)-1])
+	}
+}
+
 func stringMapField(object map[string]any, field string) (map[string]any, bool) {
 	if object == nil {
 		return nil, false

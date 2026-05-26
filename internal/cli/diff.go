@@ -49,6 +49,7 @@ func newDiffCommand(deps Dependencies) *cobra.Command {
 	}
 	bindCommonFlags(apps, &appsFlags)
 	bindDiffRefFlags(apps, &appsFlags)
+	bindShowIgnoredFieldsFlag(apps, &appsFlags)
 
 	appFlags := defaultCommonFlags()
 	appCmd := &cobra.Command{
@@ -79,6 +80,7 @@ func newDiffCommand(deps Dependencies) *cobra.Command {
 	}
 	bindCommonFlags(appCmd, &appFlags)
 	bindDiffRefFlags(appCmd, &appFlags)
+	bindShowIgnoredFieldsFlag(appCmd, &appFlags)
 
 	imagesFlags := defaultCommonFlags()
 	imagesFlags.parallelism = defaultRenderAppsParallelism()
