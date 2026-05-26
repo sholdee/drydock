@@ -192,7 +192,7 @@ drydock build app renovate --path .
 Use `NAMESPACE/NAME` when a name appears in multiple namespaces:
 
 ```bash
-drydock build app argocd/renovate --path .
+drydock build app argocd/my-app --path .
 ```
 
 `build app` errors when no discovered Application matches. The unqualified
@@ -424,13 +424,13 @@ drydock test app renovate --path .
 Use `NAMESPACE/NAME` when a name appears in multiple namespaces:
 
 ```bash
-drydock test app argocd/renovate --path .
+drydock test app argocd/my-app --path .
 ```
 
 Default text output prints one status line per selected Application:
 
 ```text
-PASS argocd/renovate
+PASS renovate
 FAIL argocd/broken Application argocd/broken source[0] path="..." ...
 SKIPPED argocd/skipped unsupported ApplicationSet generator ...
 ```
@@ -591,7 +591,7 @@ drydock diff app renovate --path-orig ../base --path .
 Use `NAMESPACE/NAME` to disambiguate:
 
 ```bash
-drydock diff app argocd/renovate --path-orig ../base --path .
+drydock diff app argocd/my-app --path-orig ../base --path .
 ```
 
 `diff app` selects the requested Application directly in each tree and does not

@@ -28,7 +28,7 @@ func TestHomeOpsRenovateSmokeScriptContract(t *testing.T) {
 	for _, want := range []string{
 		"#!/usr/bin/env bash",
 		"set -euo pipefail",
-		`HOME_OPS_ROOT="${HOME_OPS_ROOT:-/Users/ethan.shold/git/home-ops}"`,
+		`HOME_OPS_ROOT="${HOME_OPS_ROOT:-${HOME}/git/home-ops}"`,
 		`if [[ -z "${RENOVATE_CHART_TO:-}" ]]; then`,
 		"detect_renovate_chart_version()",
 		"update_renovate_chart_version()",

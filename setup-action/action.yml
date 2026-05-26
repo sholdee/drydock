@@ -76,7 +76,7 @@ runs:
         candidate="${version#v}"
         semver_re='^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-((0|[1-9][0-9]*|[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*)(\.(0|[1-9][0-9]*|[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*))*))?(\+([0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*))?$'
         if [[ -z "${candidate}" || ! "${candidate}" =~ ${semver_re} ]]; then
-          echo "setup-drydock requires latest or a semantic version tag, for example v0.1.0." >&2
+          echo "setup-action requires latest or a semantic version tag, for example v0.1.0." >&2
           exit 1
         fi
         version="v${candidate}"
@@ -105,13 +105,13 @@ runs:
         fi
         install_dir="${DRYDOCK_INSTALL_DIR}"
         if [[ -z "${install_dir}" ]]; then
-          echo "setup-drydock requires a non-empty install-dir." >&2
+          echo "setup-action requires a non-empty install-dir." >&2
           exit 1
         fi
 
         allow_unverified="${DRYDOCK_ALLOW_UNVERIFIED}"
         if [[ "${allow_unverified}" != "true" && "${allow_unverified}" != "false" ]]; then
-          echo "setup-drydock allow-unverified must be true or false." >&2
+          echo "setup-action allow-unverified must be true or false." >&2
           exit 1
         fi
 

@@ -159,7 +159,7 @@ may not combine `ref` and `chart`.
 Within one Application, repeated rendered resource identity is last-wins and
 must emit a diagnostic. Do not dedupe across Applications; cross-Application
 shared-resource behavior belongs to live Argo CD semantics and is out of
-scope for offline MVP.
+scope for offline desired-state analysis.
 
 Diff identity is parent Application plus child resource identity. Same-named
 resources from different Applications remain separate. Named app arguments may

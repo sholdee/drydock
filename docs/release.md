@@ -31,10 +31,9 @@ passphrases, or raw repository URLs with embedded secrets.
 
 ## GitHub Action
 
-The repository includes an optional composite install action at
-`.github/actions/setup-drydock`. It is release metadata only; it does not
-change the default static binary, `--offline` behavior, or offline-runtime
-render/diff contract.
+The repository includes an optional composite install action at `setup-action`.
+It is release metadata only; it does not change the default static binary,
+`--offline` behavior, or offline-runtime render/diff contract.
 
 The action accepts `latest`, `vX.Y.Z`, or bare `X.Y.Z` inputs. `latest` is
 resolved from the latest GitHub Release before download. Bare versions are
@@ -60,13 +59,13 @@ checksums and checksum download failures fail the action.
 Example:
 
 ```yaml
-- uses: ./.github/actions/setup-drydock
+- uses: sholdee/drydock/setup-action@main
 ```
 
 Pinned example:
 
 ```yaml
-- uses: ./.github/actions/setup-drydock
+- uses: sholdee/drydock/setup-action@main
   with:
     version: v0.1.0
     install-dir: /usr/local/bin

@@ -58,7 +58,7 @@ run = "git diff --check"
 
 [tasks.zizmor]
 description = "Audit GitHub Actions workflow security"
-run = "zizmor .github/workflows .github/actions"
+run = "zizmor .github/workflows setup-action"
 
 [tasks.hooks-install]
 description = "Install optional local lefthook hooks"
