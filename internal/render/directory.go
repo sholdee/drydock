@@ -1,6 +1,7 @@
 package render
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"os"
@@ -56,22 +57,24 @@ func (DirectoryRenderer) Render(ctx context.Context, source ResolvedSource, opts
 			return nil
 		}
 
-		file, err := os.Open(path)
+		manifestPath, pathErr := relativeManifestPath(source.RepoRoot, path)
+		if pathErr != nil {
+			return pathErr
+		}
+		data, err := os.ReadFile(path)
 		if err != nil {
 			return err
 		}
-		manifestPath, pathErr := relativeManifestPath(source.RepoRoot, path)
-		if pathErr != nil {
-			_ = file.Close()
-			return pathErr
+		roots, err := manifest.DecodeDocumentRoots(manifestPath, bytes.NewReader(data))
+		if err != nil {
+			return err
 		}
-		docs, decodeErr := manifest.DecodeDocuments(manifestPath, file)
-		closeErr := file.Close()
-		if decodeErr != nil {
-			return decodeErr
+		if err := classifyDirectoryRoots(roots); err != nil {
+			return err
 		}
-		if closeErr != nil {
-			return closeErr
+		docs, err := manifest.DecodeDocuments(manifestPath, bytes.NewReader(data))
+		if err != nil {
+			return err
 		}
 
 		for _, doc := range docs {
@@ -96,6 +99,15 @@ func (DirectoryRenderer) Render(ctx context.Context, source ResolvedSource, opts
 		return nil
 	})
 	return out, nil, err
+}
+
+func classifyDirectoryRoots(docs []manifest.Document) error {
+	for _, doc := range docs {
+		if _, err := classifyDirectoryDocument(Manifest{Path: doc.Path, Object: doc.Object}); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func classifyDirectoryDocument(manifest Manifest) (bool, error) {

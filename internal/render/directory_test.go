@@ -413,25 +413,50 @@ metadata:
 }
 
 func TestDirectoryRendererRejectsListDocumentWithKindButNoAPIVersion(t *testing.T) {
-	root := t.TempDir()
-	writeFile(t, filepath.Join(root, "apps", "broken-list.yaml"), `
+	for _, tt := range []struct {
+		name string
+		body string
+	}{
+		{
+			name: "with item",
+			body: `
 kind: List
 items:
   - apiVersion: v1
     kind: ConfigMap
     metadata:
       name: demo
-`)
+`,
+		},
+		{
+			name: "empty items",
+			body: `
+kind: List
+items: []
+`,
+		},
+		{
+			name: "missing items",
+			body: `
+kind: List
+`,
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			root := t.TempDir()
+			writeFile(t, filepath.Join(root, "apps", "broken-list.yaml"), tt.body)
 
-	_, _, err := (DirectoryRenderer{}).Render(context.Background(), ResolvedSource{
-		RepoRoot: root,
-		Path:     "apps",
-	}, RenderOptions{})
-	if err == nil {
-		t.Fatal("Render() error = nil, want partial List manifest error")
-	}
-	if !strings.Contains(err.Error(), "missing apiVersion") {
-		t.Fatalf("Render() error = %v, want missing apiVersion message", err)
+			_, _, err := (DirectoryRenderer{}).Render(context.Background(), ResolvedSource{
+				RepoRoot: root,
+				Path:     "apps",
+			}, RenderOptions{})
+			if err == nil {
+				t.Fatal("Render() error = nil, want partial List manifest error")
+			}
+			if !strings.Contains(err.Error(), "missing apiVersion") {
+				t.Fatalf("Render() error = %v, want missing apiVersion message", err)
+			}
+		})
 	}
 }
 
