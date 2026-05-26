@@ -14,6 +14,16 @@ import (
 	cachepkg "github.com/sholdee/drydock/internal/cache"
 )
 
+func TestNormalizeGitRepoCacheURLDoesNotDoubleAppendGitSuffix(t *testing.T) {
+	got, err := NormalizeGitRepoCacheURL("https://github.com/example/repo.git")
+	if err != nil {
+		t.Fatalf("NormalizeGitRepoCacheURL() error = %v", err)
+	}
+	if strings.Contains(got, ".git.git") {
+		t.Fatalf("NormalizeGitRepoCacheURL() = %q, must not contain .git.git", got)
+	}
+}
+
 func TestDefaultAcquirerClonesGitRemoteIntoRemoteCache(t *testing.T) {
 	remote := createRemoteGitFixture(t)
 	hash := commitRemoteGitFixtureFile(t, remote.repo, remote.worktree, "config.yaml", "version: main\n")

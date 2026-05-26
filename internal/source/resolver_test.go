@@ -51,6 +51,13 @@ func TestResolverNormalizesRepoMapURLs(t *testing.T) {
 	}
 }
 
+func TestNormalizeURLDoesNotDoubleAppendGitSuffix(t *testing.T) {
+	got := NormalizeURL("https://github.com/example/repo.git")
+	if got != "https://github.com/example/repo" {
+		t.Fatalf("NormalizeURL() = %q, want https://github.com/example/repo", got)
+	}
+}
+
 func TestResolverDefaultsUnmappedRepositoryToNetwork(t *testing.T) {
 	resolver := NewResolver(Options{})
 
