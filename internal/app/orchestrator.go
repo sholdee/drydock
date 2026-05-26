@@ -571,6 +571,14 @@ func loadSettingsFromDiscovery(root string, discovered discovery.Result) (config
 	return merged, diags, nil
 }
 
+func settingsBuildOptions(settings config.ArgoSettings) []string {
+	out := make([]string, 0, len(settings.KustomizeBuildOptions))
+	for _, option := range settings.KustomizeBuildOptions {
+		out = append(out, option.Value)
+	}
+	return out
+}
+
 func (request BuildRequest) resourceFilter() manifest.ResourceFilter {
 	return manifest.ResourceFilter{
 		SkipKinds:   append([]string(nil), request.SkipKinds...),
