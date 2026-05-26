@@ -77,6 +77,8 @@ Supported in the MVP:
 - `diff app` desired-vs-desired diffs for one Application, including
   add/delete diffs when the Application exists on only one side
 - `diff apps` and `diff app` structured JSON and YAML output
+- `diff apps`, `diff app`, and `diff images` against local Git refs through
+  temporary local snapshots, without `git` shellouts or checkout mutation
 - `--strip-attr KEY` diff normalization for metadata label and annotation keys
 - Application-level `spec.ignoreDifferences[]` `jsonPointers`,
   `jqPathExpressions`, and `managedFieldsManagers` for rendered manifest diffs
@@ -146,6 +148,9 @@ Network and cache behavior:
 - Kustomize Git remote refs reuse the explicit `--git-*` credentials, but use
   `--remote-cache-dir`, `--refresh-remotes`, and `--offline` for cache and
   network behavior.
+- Top-level `--repo` for Git ref diffs supports local repository paths only.
+  Remote repository URLs are deferred; clone locally before using `--ref` or
+  `--ref-orig`.
 - `--helm-bearer-token` takes precedence over `--helm-username` and
   `--helm-password` for HTTP(S) Helm repository auth.
 - `--registry-config PATH` is the only OCI registry credential source used by

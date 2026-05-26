@@ -468,6 +468,24 @@ renders all Applications. Use `--changed-only=false` to render all
 Applications explicitly, or `--strict-changed-only` to fail on incomplete input
 ownership.
 
+### Git ref diffs
+
+Diff commands can compare local Git refs without creating a separate baseline
+worktree. `--ref-orig` replaces `--path-orig` with a temporary snapshot of the
+baseline ref. `--ref` replaces `--path` with a temporary snapshot of the
+current ref. `--repo` selects the local Git repository used to resolve refs and
+defaults to `--path`.
+
+```bash
+drydock diff apps --path . --ref-orig main
+drydock diff apps --repo . --ref feature --ref-orig main
+```
+
+`--path . --ref-orig main` compares the current working tree, including
+uncommitted changes, against committed `main`. `--repo . --ref feature
+--ref-orig main` compares committed refs only. Top-level remote `--repo` URLs
+are not supported yet; clone the repository locally and pass the local path.
+
 Manifest diffs default to unified diff output. `diff apps` and `diff app`
 also support `-o json` and `-o yaml`, which serialize the structured
 `[]diff.Result` payload. Diagnostics remain on stderr so stdout stays valid
