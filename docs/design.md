@@ -284,7 +284,7 @@ Applications are planned using Argo CD source precedence:
 - If `spec.sources` is non-empty, it wins and `spec.source` is ignored.
 - Otherwise, `spec.source` is used.
 
-Multi-source support is included in the MVP for supported source types.
+Multi-source support is included for supported source types.
 
 Supported multi-source semantics:
 
@@ -351,7 +351,7 @@ type Renderer interface {
 }
 ```
 
-MVP renderers:
+Supported renderers:
 
 - Helm renderer: supports HTTP and OCI chart sources, target revision,
   release name, destination namespace, `valuesObject`, `values`, value files,

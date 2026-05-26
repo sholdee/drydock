@@ -26,7 +26,7 @@ func TestHomeOpsPatternSmokeScriptContract(t *testing.T) {
 	for _, want := range []string{
 		"#!/usr/bin/env bash",
 		"set -euo pipefail",
-		`HOME_OPS_ROOT="${HOME_OPS_ROOT:-/Users/ethan.shold/git/home-ops}"`,
+		`HOME_OPS_ROOT="${HOME_OPS_ROOT:-${HOME}/git/home-ops}"`,
 		"replace_once_literal()",
 		"update_helm_chart_version_once()",
 		"run_diff()",

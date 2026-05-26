@@ -32,13 +32,13 @@ Workflows that install a released binary can use the setup action. It installs
 the latest release by default:
 
 ```yaml
-- uses: sholdee/drydock/.github/actions/setup-drydock@main
+- uses: sholdee/drydock/setup-action@main
 ```
 
 Pin a release when the workflow needs exact repeatability:
 
 ```yaml
-- uses: sholdee/drydock/.github/actions/setup-drydock@main
+- uses: sholdee/drydock/setup-action@main
   with:
     version: v0.1.0
 ```
@@ -59,8 +59,8 @@ drydock test apps --path .
 Example text output:
 
 ```text
-PASS argocd/renovate
-PASS argocd/cert-manager
+PASS renovate
+PASS cert-manager
 FAIL argocd/broken Application argocd/broken source[0] path="..." ...
 ```
 
@@ -100,10 +100,10 @@ drydock diff apps --path . --path-orig ../baseline --offline
 | List Applications | `drydock get apps --path .` |
 | List rendered workload images | `drydock get images --path . -o name` |
 | Render all Applications | `drydock build apps --path .` |
-| Render one Application | `drydock build app argocd/renovate --path .` |
+| Render one Application | `drydock build app renovate --path .` |
 | Test renderability | `drydock test apps --path .` |
 | Diff rendered manifests | `drydock diff apps --path . --path-orig ../baseline` |
-| Diff one Application | `drydock diff app argocd/renovate --path . --path-orig ../baseline` |
+| Diff one Application | `drydock diff app renovate --path . --path-orig ../baseline` |
 | Diff workload images | `drydock diff images --path . --path-orig ../baseline -o json` |
 | Inspect repository diagnostics | `drydock diag --path .` |
 | Inspect redacted settings | `drydock diag --path . --settings -o json` |

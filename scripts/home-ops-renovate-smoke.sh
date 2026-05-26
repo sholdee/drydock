@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-HOME_OPS_ROOT="${HOME_OPS_ROOT:-/Users/ethan.shold/git/home-ops}"
+HOME_OPS_ROOT="${HOME_OPS_ROOT:-${HOME}/git/home-ops}"
 RENOVATE_CHART_NAME="${RENOVATE_CHART_NAME:-renovate-operator}"
 
 ROOT="${HOME_OPS_ROOT}"
