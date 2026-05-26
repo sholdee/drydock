@@ -7,6 +7,7 @@
   ],
   platformAutomerge: true,
   ignorePaths: ['testdata/**'],
+  ignoreDeps: ['github.com/argoproj/argo-cd/gitops-engine'],
   postUpdateOptions: ['gomodTidy'],
   postUpgradeTasks: {
     commands: ['go run ./scripts/sync-argocd-gitops-engine.go'],
@@ -43,14 +44,6 @@
       matchManagers: ['gomod'],
       matchUpdateTypes: ['minor', 'patch'],
       automerge: true,
-    },
-    {
-      description: 'Do not update gitops-engine require digests; the replace pin controls the tested Argo CD source snapshot',
-      matchManagers: ['gomod'],
-      matchDepTypes: ['require'],
-      matchPackageNames: ['github.com/argoproj/argo-cd/gitops-engine'],
-      matchUpdateTypes: ['digest'],
-      enabled: false,
     },
     {
       description: 'Keep Kubernetes compatibility replace pins on manually reviewed minor lines',
