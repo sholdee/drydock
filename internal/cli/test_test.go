@@ -257,6 +257,32 @@ func TestTestAppScopesToNamedApplication(t *testing.T) {
 	}
 }
 
+func TestTestAppTTYColorsTextStatus(t *testing.T) {
+	root := t.TempDir()
+	writeSimpleAppForCLI(t, root, "ok")
+
+	var stdout, stderr bytes.Buffer
+	cmd := NewRootCommandWithDependencies(VersionInfo{}, Dependencies{
+		Orchestrator: app.Orchestrator{},
+		IsTerminal: func(w io.Writer) bool {
+			return w == &stdout
+		},
+	})
+	cmd.SetArgs([]string{"test", "app", "demo", "--path", root, "--offline"})
+	cmd.SetOut(&stdout)
+	cmd.SetErr(&stderr)
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("Execute() error = %v\nstdout:\n%s\nstderr:\n%s", err, stdout.String(), stderr.String())
+	}
+	if got, want := stdout.String(), "\x1b[32mPASS\x1b[0m argocd/demo\n"; got != want {
+		t.Fatalf("stdout = %q, want %q", got, want)
+	}
+	if stderr.String() != "" {
+		t.Fatalf("stderr = %q, want empty", stderr.String())
+	}
+}
+
 func TestTestAppsJSONOutputContainsStatusesOnly(t *testing.T) {
 	root := t.TempDir()
 	writeSimpleAppForCLI(t, root, "ok")
