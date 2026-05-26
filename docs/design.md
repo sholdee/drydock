@@ -4,26 +4,26 @@ Date: 2026-05-22
 
 ## Purpose
 
-`drydock` is an independent Go CLI for local Argo CD GitOps repository
-analysis. Its first product goal is desired-vs-desired pull request diffing:
-given a current GitOps tree and a baseline tree, render the Argo CD
-Applications that would be reconciled and show what desired Kubernetes
-manifests changed.
+`drydock` is an independent Go CLI for Argo CD GitOps repository analysis that
+runs offline from live Argo CD and Kubernetes runtime. Its first product goal
+is desired-vs-desired pull request diffing: given a current GitOps tree and a
+baseline tree, render the Argo CD Applications that would be reconciled and
+show what desired Kubernetes manifests changed.
 
-The tool is intentionally not a live-cluster diff in the first release. It
-does not contact the Kubernetes API server, does not run Argo CD controllers,
-and does not claim to reproduce server-side apply prediction, admission
-mutation, or managed-fields ownership.
+The tool is intentionally not a live-cluster diff. It does not contact the
+Kubernetes API server, does not run Argo CD controllers, and does not claim to
+reproduce server-side apply prediction, admission mutation, or managed-fields
+ownership. This is a product boundary, not a missing default integration.
 
-Default render, diff, image, and diagnostic workflows are local/static
+Default render, diff, image, and diagnostic workflows are offline-runtime
 desired-vs-desired analysis. They may fetch declared Git, HTTP Helm, OCI Helm,
 and remote Kustomize sources into explicit caches unless `--offline` is set.
 Live-cluster diffing, Argo CD server-side diff parity, Kubernetes defaulting,
 admission mutation, and live-only managed-fields ownership prediction are not
-approximated silently. Any future implementation for those behaviors must
-first update the live integration design gate and keep the default path
-independent of a Kubernetes cluster, Argo CD server, `kubectl`, `argocd`,
-Helm/Kustomize command-line tools, and external render services.
+approximated silently. Any future exception to that boundary must first update
+the live runtime boundary document and keep the default path independent of a
+Kubernetes cluster, Argo CD server, `kubectl`, `argocd`, Helm/Kustomize
+command-line tools, and external render services.
 
 ## Repository
 
@@ -42,7 +42,7 @@ distributions, and imported Apache-2.0 components as needed.
 
 ## Scope
 
-MVP supports:
+Supported:
 
 - Direct `Application` CRs.
 - `ApplicationSet` Git directories, Git files, list, matrix, and merge
@@ -65,7 +65,7 @@ MVP supports:
 - PR diff, build, get, and image diff commands.
 - Changed-only rendering with safe fallback.
 
-Deferred:
+Outside the core runtime contract:
 
 - Live-cluster diff.
 - Argo CD API/server integration, Argo CD server-side diff parity,
@@ -517,12 +517,12 @@ bootstrap:
 - standard error-handling exclusions
 - `gofmt` formatter with simplify enabled
 
-`.markdownlint-cli2.yaml` keeps the Markdown lint profile selected during
+`.gomarklint.json` keeps the Go-native Markdown lint profile selected during
 project bootstrap:
 
 - disable line length
-- allow inline HTML
-- allow files without first-line headings
+- allow top-level document headings
+- keep list spacing compatible with dense reference docs
 
 ## Agent Guidance
 
@@ -539,7 +539,7 @@ Baseline validation commands:
 go test ./...
 go vet ./...
 golangci-lint run
-markdownlint-cli2 '**/*.md'
+go run github.com/shinagawa-web/gomarklint/v3@v3.0.5
 ```
 
 Compatibility and regression tests cover:

@@ -4,17 +4,18 @@
 
 # drydock
 
-`drydock` renders, tests, and diffs Argo CD GitOps repositories locally for
-pull request review.
+`drydock` renders, tests, and diffs Argo CD GitOps repositories offline from
+live Argo CD and Kubernetes runtime for pull request review.
 
 It is built for operators who want to inspect rendered desired state before a
-change reaches the cluster. The default workflow is a self-contained Go binary:
-no Kubernetes cluster, no Argo CD server, no `kubectl`, no `argocd`, and no
-Helm or Kustomize CLI shellouts.
+change reaches the cluster. The default workflow is a self-contained Go binary
+that does not need a running Kubernetes cluster, Argo CD instance, `kubectl`,
+`argocd`, or Helm/Kustomize CLI shellouts.
 
-Declared Git, HTTP Helm, OCI Helm, and remote Kustomize sources may be fetched
-into explicit drydock caches when needed. Use `--offline` to require local
-files, repo maps, local charts, or existing cache hits only.
+This is runtime-offline, not necessarily network-disconnected: declared Git,
+HTTP Helm, OCI Helm, and remote Kustomize sources may be fetched into explicit
+drydock caches when needed. Use `--offline` to require local files, repo maps,
+local charts, or existing cache hits only.
 
 ## Install
 
@@ -134,11 +135,13 @@ drydock discovers and renders local Argo CD desired state, including:
 See [`docs/compatibility.md`](docs/compatibility.md) for the detailed Argo CD
 support matrix.
 
-## Safety Model
+## Offline Runtime Model
 
 drydock is desired-vs-desired analysis. It renders the desired Kubernetes
 manifests from a current tree and, for diff commands, a baseline tree. It does
-not ask a live cluster or Argo CD server what is currently running.
+not ask a live cluster or Argo CD server what is currently running. Network
+source acquisition, when enabled, is limited to populating explicit drydock
+caches for declared repository, chart, and remote Kustomize inputs.
 
 Default commands do not reproduce:
 
@@ -149,8 +152,9 @@ Default commands do not reproduce:
 - Full Argo CD RBAC authorization.
 - CLI config management plugin execution or shellout plugin adapters.
 
-These behaviors are not silently approximated. Live-runtime work is design-gated
-so the default local, cache-backed workflow stays deterministic and safe for CI.
+These behaviors are not silently approximated. The no-live-runtime boundary is
+an intentional product decision so the default cache-backed workflow stays
+deterministic and safe for CI.
 
 Structured outputs keep stdout machine-parseable. Diagnostics and failure
 summaries are written to stderr where appropriate, and drydock avoids printing
@@ -179,7 +183,7 @@ test statuses, manifest diffs, image diffs, diagnostics
 ```
 
 The render path imports Argo CD API types and selected reusable helpers, but
-drydock owns local orchestration. See [`docs/design.md`](docs/design.md) for
+drydock owns offline orchestration. See [`docs/design.md`](docs/design.md) for
 the architecture and behavior model.
 
 ## Go API
@@ -199,10 +203,9 @@ manifests, diagnostics, and per-Application statuses from the partial build.
 
 ## Community
 
-drydock is independently implemented, but its local-first GitOps PR-diff
-workflow was inspired by
-[home-operations/flate](https://github.com/home-operations/flate) and the
-home-operations community.
+drydock is independently implemented, but its offline GitOps desired-state workflow
+was inspired by [home-operations/flate](https://github.com/home-operations/flate)
+and the home-operations community.
 
 Join the home-operations Discord at <https://discord.gg/home-operations>.
 
@@ -211,14 +214,14 @@ Join the home-operations Discord at <https://discord.gg/home-operations>.
 - [`docs/README.md`](docs/README.md): documentation ownership and routing.
 - [`docs/usage.md`](docs/usage.md): CLI examples, flags, outputs, cache
   behavior, and optional smoke tests.
-- [`docs/compatibility.md`](docs/compatibility.md): supported and deferred
-  Argo CD behavior.
-- [`docs/roadmap.md`](docs/roadmap.md): supported/deferred feature status and
+- [`docs/compatibility.md`](docs/compatibility.md): supported Argo CD behavior
+  and intentional runtime boundaries.
+- [`docs/roadmap.md`](docs/roadmap.md): feature status, runtime boundaries, and
   next-work rules.
 - [`docs/release.md`](docs/release.md): release and Argo CD dependency upgrade
   notes.
 - [`docs/reports/2026-05-24-live-integration-design-gate.md`](docs/reports/2026-05-24-live-integration-design-gate.md):
-  required before proposing live runtime behavior.
+  the no-live-runtime boundary decision and gate for exceptions.
 
 ## License
 

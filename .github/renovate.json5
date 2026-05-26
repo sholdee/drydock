@@ -74,7 +74,7 @@
       description: 'Automerge minor/patch CI tool updates',
       matchPackageNames: [
         'rhysd/actionlint',
-        'markdownlint-cli2',
+        'shinagawa-web/gomarklint',
         'golang/vuln',
         'goreleaser/goreleaser',
         'sigstore/cosign',
@@ -105,16 +105,6 @@
       depNameTemplate: 'golang/vuln',
       datasourceTemplate: 'github-releases',
       versioningTemplate: 'semver',
-    },
-    {
-      customType: 'regex',
-      description: ['Process npx tool versions in mise tasks'],
-      managerFilePatterns: ['/^\\.mise\\.toml$/'],
-      matchStrings: [
-        'npx --yes (?<depName>[\\w-]+)@(?<currentValue>[\\d.]+)',
-      ],
-      datasourceTemplate: 'npm',
-      versioningTemplate: 'npm',
     },
   ],
 }

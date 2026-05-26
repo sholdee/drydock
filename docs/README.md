@@ -13,13 +13,13 @@ copying the same rule into multiple files.
 | `docs/agent-reference.md` | Task-specific agent constraints and code-area notes. |
 | `docs/design.md` | Product architecture and behavior model. |
 | `docs/usage.md` | CLI examples, flags, outputs, and user workflows. |
-| `docs/compatibility.md` | Supported/deferred Argo CD compatibility status. |
-| `docs/roadmap.md` | Current supported/deferred feature status and next-work rules. |
+| `docs/compatibility.md` | Supported Argo CD behavior and runtime-boundary status. |
+| `docs/roadmap.md` | Current feature status, runtime boundaries, and next-work rules. |
 | `docs/ci.md` | Local CI and required verification contract. |
 | `docs/release.md` | Release and Argo CD dependency upgrade notes. |
 | `docs/home-ops-pattern-coverage.md` | Portable fixture coverage for home-ops-like patterns. |
 | `docs/logo/` | Project logo assets. |
-| `docs/reports/2026-05-24-live-integration-design-gate.md` | Required gate for live runtime work. |
+| `docs/reports/2026-05-24-live-integration-design-gate.md` | No-live-runtime boundary and gate for exceptions. |
 
 ## Anti-Sprawl Rules
 
