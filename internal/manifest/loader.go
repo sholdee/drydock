@@ -20,6 +20,14 @@ type Document struct {
 }
 
 func DecodeDocuments(path string, reader io.Reader) ([]Document, error) {
+	return decodeDocuments(path, reader, true)
+}
+
+func DecodeDocumentRoots(path string, reader io.Reader) ([]Document, error) {
+	return decodeDocuments(path, reader, false)
+}
+
+func decodeDocuments(path string, reader io.Reader, flattenLists bool) ([]Document, error) {
 	dec := yaml.NewDecoder(reader)
 	var out []Document
 	index := 0
@@ -51,7 +59,7 @@ func DecodeDocuments(path string, reader io.Reader) ([]Document, error) {
 		}
 
 		obj := &unstructured.Unstructured{Object: normalizedMap}
-		if obj.GetKind() == "List" {
+		if flattenLists && obj.GetKind() == "List" {
 			itemsRaw, ok := obj.Object["items"]
 			if ok {
 				items, ok := itemsRaw.([]any)

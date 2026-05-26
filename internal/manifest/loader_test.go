@@ -52,6 +52,27 @@ items:
 	}
 }
 
+func TestDecodeDocumentRootsPreservesListWrapper(t *testing.T) {
+	input := strings.NewReader(`
+kind: List
+items: []
+`)
+
+	docs, err := DecodeDocumentRoots("list.yaml", input)
+	if err != nil {
+		t.Fatalf("DecodeDocumentRoots() error = %v", err)
+	}
+	if len(docs) != 1 {
+		t.Fatalf("len(docs) = %d, want 1", len(docs))
+	}
+	if docs[0].Object.GetKind() != "List" {
+		t.Fatalf("root kind = %q, want List", docs[0].Object.GetKind())
+	}
+	if docs[0].RootObject != docs[0].Object {
+		t.Fatal("RootObject does not point at root object")
+	}
+}
+
 func TestDecodeDocumentsDecodesJSON(t *testing.T) {
 	input := strings.NewReader(`{"apiVersion":"v1","kind":"Namespace","metadata":{"name":"team-a"}}`)
 
