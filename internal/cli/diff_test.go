@@ -8,6 +8,9 @@ import (
 	"strings"
 	"testing"
 
+	git "github.com/go-git/go-git/v5"
+	"github.com/go-git/go-git/v5/plumbing"
+	"github.com/go-git/go-git/v5/plumbing/object"
 	"go.yaml.in/yaml/v4"
 )
 
@@ -65,6 +68,34 @@ func TestDiffAppsPrintsManifestDiff(t *testing.T) {
 
 	result := runCLI(t, "diff", "apps", "--path-orig", left, "--path", right, "--exit-code=false")
 	assertStdoutContainsAll(t, result, "Application: argocd/demo", "-  value: old", "+  value: new")
+	assertStderrEmpty(t, result)
+}
+
+func TestDiffAppsRefOrigCLIComparesWorkingTreeAgainstRef(t *testing.T) {
+	root := t.TempDir()
+	repo, wt := initCLIGitRepo(t, root)
+	writeSimpleAppForCLI(t, root, "baseline")
+	commitCLIGitRepo(t, repo, wt, "baseline")
+	writeSimpleAppForCLI(t, root, "working")
+
+	result := runCLI(t, "diff", "apps", "--path", root, "--ref-orig", "HEAD", "--exit-code=false")
+	assertStdoutContainsAll(t, result, "-  value: baseline", "+  value: working")
+	assertStderrEmpty(t, result)
+}
+
+func TestDiffAppsRefCLIComparesTwoRefs(t *testing.T) {
+	root := t.TempDir()
+	repo, wt := initCLIGitRepo(t, root)
+	writeSimpleAppForCLI(t, root, "baseline")
+	commitCLIGitRepo(t, repo, wt, "baseline")
+	checkoutCLIGitBranch(t, wt, "feature")
+	writeSimpleAppForCLI(t, root, "feature")
+	commitCLIGitRepo(t, repo, wt, "feature")
+	writeSimpleAppForCLI(t, root, "uncommitted")
+
+	result := runCLI(t, "diff", "apps", "--repo", root, "--ref-orig", "master", "--ref", "feature", "--exit-code=false")
+	assertStdoutContainsAll(t, result, "-  value: baseline", "+  value: feature")
+	assertStdoutExcludesAll(t, result, "uncommitted")
 	assertStderrEmpty(t, result)
 }
 
@@ -579,6 +610,78 @@ func TestNetworkCacheFlagsAreRegistered(t *testing.T) {
 	}
 }
 
+func TestDiffRefFlagsAreOnlyRegisteredOnDiffCommands(t *testing.T) {
+	commands := map[string][]string{
+		"diff apps":   {"diff", "apps", "--path", "missing"},
+		"diff app":    {"diff", "app", "demo", "--path", "missing"},
+		"diff images": {"diff", "images", "--path", "missing"},
+	}
+	flags := []struct {
+		name  string
+		value string
+	}{
+		{name: "--repo", value: "."},
+		{name: "--ref", value: "feature"},
+		{name: "--ref-orig", value: "main"},
+	}
+	for commandName, commandArgs := range commands {
+		for _, flag := range flags {
+			t.Run(commandName+" "+flag.name, func(t *testing.T) {
+				cmd := NewRootCommand(VersionInfo{})
+				args := append(append([]string(nil), commandArgs...), flag.name, flag.value)
+				cmd.SetArgs(args)
+				err := cmd.Execute()
+				if err == nil {
+					t.Fatal("Execute() error = nil, want runtime error after parsing")
+				}
+				if strings.Contains(err.Error(), "unknown flag") {
+					t.Fatalf("Execute() error = %v, want %s registered", err, flag.name)
+				}
+			})
+		}
+	}
+}
+
+func TestDiffRefFlagsAreRejectedOutsideDiffCommands(t *testing.T) {
+	commands := map[string][]string{
+		"build apps":   {"build", "apps"},
+		"build app":    {"build", "app", "demo"},
+		"test apps":    {"test", "apps"},
+		"test app":     {"test", "app", "demo"},
+		"get apps":     {"get", "apps"},
+		"get images":   {"get", "images"},
+		"diag":         {"diag"},
+		"cache path":   {"cache", "path"},
+		"cache list":   {"cache", "list"},
+		"cache prune":  {"cache", "prune"},
+		"cache delete": {"cache", "delete", "--key", "git/demo"},
+	}
+	flags := []struct {
+		name  string
+		value string
+	}{
+		{name: "--repo", value: "."},
+		{name: "--ref", value: "main"},
+		{name: "--ref-orig", value: "main"},
+	}
+	for commandName, commandArgs := range commands {
+		for _, flag := range flags {
+			t.Run(commandName+" "+flag.name, func(t *testing.T) {
+				cmd := NewRootCommand(VersionInfo{})
+				args := append(append([]string(nil), commandArgs...), flag.name, flag.value)
+				cmd.SetArgs(args)
+				err := cmd.Execute()
+				if err == nil {
+					t.Fatal("Execute() error = nil, want unknown flag error")
+				}
+				if !strings.Contains(err.Error(), "unknown flag: "+flag.name) {
+					t.Fatalf("Execute() error = %v, want %s rejected outside diff commands", err, flag.name)
+				}
+			})
+		}
+	}
+}
+
 func writeNamedCLIApplication(t *testing.T, root, appName, configMapName, value string) {
 	t.Helper()
 	writeCLITestFile(t, filepath.Join(root, "apps", appName+".yaml"), `apiVersion: argoproj.io/v1alpha1
@@ -627,6 +730,43 @@ metadata:
 data:
   value: `+value+`
 `)
+}
+
+func initCLIGitRepo(t *testing.T, root string) (*git.Repository, *git.Worktree) {
+	t.Helper()
+	repo, err := git.PlainInit(root, false)
+	if err != nil {
+		t.Fatalf("PlainInit() error = %v", err)
+	}
+	wt, err := repo.Worktree()
+	if err != nil {
+		t.Fatalf("Worktree() error = %v", err)
+	}
+	return repo, wt
+}
+
+func commitCLIGitRepo(t *testing.T, repo *git.Repository, wt *git.Worktree, message string) plumbing.Hash {
+	t.Helper()
+	if _, err := wt.Add("."); err != nil {
+		t.Fatalf("Add(.) error = %v", err)
+	}
+	hash, err := wt.Commit(message, &git.CommitOptions{
+		Author: &object.Signature{Name: "Test", Email: "test@example.invalid"},
+	})
+	if err != nil {
+		t.Fatalf("Commit(%s) error = %v", message, err)
+	}
+	return hash
+}
+
+func checkoutCLIGitBranch(t *testing.T, wt *git.Worktree, name string) {
+	t.Helper()
+	if err := wt.Checkout(&git.CheckoutOptions{
+		Branch: plumbing.NewBranchReferenceName(name),
+		Create: true,
+	}); err != nil {
+		t.Fatalf("Checkout(create %s) error = %v", name, err)
+	}
 }
 
 func writePluginCLIApplication(t *testing.T, root, pluginName, shape string) {

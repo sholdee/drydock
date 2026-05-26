@@ -48,6 +48,7 @@ func newDiffCommand(deps Dependencies) *cobra.Command {
 		},
 	}
 	bindCommonFlags(apps, &appsFlags)
+	bindDiffRefFlags(apps, &appsFlags)
 
 	appFlags := defaultCommonFlags()
 	appCmd := &cobra.Command{
@@ -77,6 +78,7 @@ func newDiffCommand(deps Dependencies) *cobra.Command {
 		},
 	}
 	bindCommonFlags(appCmd, &appFlags)
+	bindDiffRefFlags(appCmd, &appFlags)
 
 	imagesFlags := defaultCommonFlags()
 	images := &cobra.Command{
@@ -116,6 +118,7 @@ func newDiffCommand(deps Dependencies) *cobra.Command {
 		},
 	}
 	bindCommonFlags(images, &imagesFlags)
+	bindDiffRefFlags(images, &imagesFlags)
 
 	cmd.AddCommand(apps, appCmd, images)
 	return cmd

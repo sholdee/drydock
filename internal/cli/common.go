@@ -14,6 +14,9 @@ import (
 type commonFlags struct {
 	path              string
 	pathOrig          string
+	repo              string
+	ref               string
+	refOrig           string
 	selector          string
 	repoMaps          []string
 	offline           bool
@@ -110,6 +113,12 @@ func bindLuaHealthTestFlag(cmd *cobra.Command, flags *commonFlags) {
 	cmd.Flags().BoolVar(&flags.skipLuaHealth, "skip-lua-health", flags.skipLuaHealth, "skip Lua health validation while testing Applications")
 }
 
+func bindDiffRefFlags(cmd *cobra.Command, flags *commonFlags) {
+	cmd.Flags().StringVar(&flags.repo, "repo", flags.repo, "local Git repository path used to resolve --ref and --ref-orig")
+	cmd.Flags().StringVar(&flags.ref, "ref", flags.ref, "Git ref to use for the current diff side")
+	cmd.Flags().StringVar(&flags.refOrig, "ref-orig", flags.refOrig, "Git ref to use for the baseline diff side")
+}
+
 func (flags commonFlags) gitCredentials() source.GitCredentials {
 	return source.GitCredentials{
 		Username:          flags.gitUsername,
@@ -154,6 +163,9 @@ func requestOptionsFromFlags(flags commonFlags, repoMaps []source.RepoMap) reque
 		Path:                           flags.path,
 		LeftPath:                       flags.pathOrig,
 		RightPath:                      flags.path,
+		Repo:                           flags.repo,
+		Ref:                            flags.ref,
+		RefOrig:                        flags.refOrig,
 		ChangedOnly:                    &flags.changedOnly,
 		StrictChangedOnly:              flags.strictChangedOnly,
 		Strict:                         flags.strict,

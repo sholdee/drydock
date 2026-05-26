@@ -55,6 +55,9 @@ func TestOptionsDiffCopiesSharedFields(t *testing.T) {
 
 	assertDeepEqual(t, "LeftPath", request.LeftPath, "left")
 	assertDeepEqual(t, "RightPath", request.RightPath, "right")
+	assertDeepEqual(t, "Repo", request.Repo, "repo-root")
+	assertDeepEqual(t, "Ref", request.Ref, "feature")
+	assertDeepEqual(t, "RefOrig", request.RefOrig, "main")
 	assertDeepEqual(t, "ChangedOnly", request.ChangedOnly, true)
 	assertDeepEqual(t, "StrictChangedOnly", request.StrictChangedOnly, true)
 	assertDeepEqual(t, "Strict", request.Strict, true)
@@ -102,6 +105,9 @@ func fixtureOptions() Options {
 		Path:                         "repo",
 		LeftPath:                     "left",
 		RightPath:                    "right",
+		Repo:                         "repo-root",
+		Ref:                          "feature",
+		RefOrig:                      "main",
 		StrictChangedOnly:            true,
 		Strict:                       true,
 		StripAttrs:                   []string{"metadata.annotations.checksum/config"},
