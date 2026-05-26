@@ -71,7 +71,7 @@ func Snapshot(ctx context.Context, request Request) (Result, error) {
 		return Result{}, fmt.Errorf("validate Git ref snapshot temp directory %q: %w", root, err)
 	} else if inside {
 		_ = cleanup()
-		return Result{}, fmt.Errorf("Git ref snapshot temp directory %q is inside protected root %q", root, matchedRoot)
+		return Result{}, fmt.Errorf("git ref snapshot temp directory %q is inside protected root %q", root, matchedRoot)
 	}
 
 	if err := materializeTree(ctx, tree, root); err != nil {
@@ -138,9 +138,12 @@ func materializeTree(ctx context.Context, tree *object.Tree, root string) error 
 				return fmt.Errorf("materialize symlink %q: %w", file.Name, err)
 			}
 			return os.Symlink(body, target)
-		default:
+		case filemode.Regular, filemode.Deprecated, filemode.Executable:
 			return writeSnapshotFile(target, file)
+		case filemode.Empty, filemode.Dir, filemode.Submodule:
+			return fmt.Errorf("unsupported Git tree file mode %s for %q", file.Mode, file.Name)
 		}
+		return fmt.Errorf("unsupported Git tree file mode %s for %q", file.Mode, file.Name)
 	})
 }
 
