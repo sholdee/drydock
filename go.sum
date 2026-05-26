@@ -43,8 +43,8 @@ github.com/alicebob/miniredis/v2 v2.38.0/go.mod h1:TcL7YfarKPGDAthEtl5NBeHZfeUQj
 github.com/anmitsu/go-shlex v0.0.0-20200514113438-38f4b401e2be h1:9AeTilPcZAjCFIImctFaOjnTIavg87rW78vTPkQqLI8=
 github.com/anmitsu/go-shlex v0.0.0-20200514113438-38f4b401e2be/go.mod h1:ySMOLuWl6zY27l47sB3qLNK6tF2fkHG55UZxx8oIVo4=
 github.com/antihax/optional v1.0.0/go.mod h1:uupD/76wgC+ih3iEmQUL+0Ugr19nfwCT1kdvxnR2qWY=
-github.com/argoproj/argo-cd/gitops-engine v0.0.0-20260522094300-1bed88faea06 h1:0oUflB4HKv9F1o4UpYDycCjvu5EOYDscCrHeEjGWnY4=
-github.com/argoproj/argo-cd/gitops-engine v0.0.0-20260522094300-1bed88faea06/go.mod h1:oRAmiJ1yLU1zeGwia5wxA07PdR0SbeDm47EoM1zxkFs=
+github.com/argoproj/argo-cd/gitops-engine v0.0.0-20260526130100-21ea32e6d950 h1:2/fUmV1egGzqPLkBzhfiiHpBBJuC7WwqXVgIbrIxa9U=
+github.com/argoproj/argo-cd/gitops-engine v0.0.0-20260526130100-21ea32e6d950/go.mod h1:oRAmiJ1yLU1zeGwia5wxA07PdR0SbeDm47EoM1zxkFs=
 github.com/argoproj/argo-cd/v3 v3.0.0-20260522094300-1bed88faea06 h1:JnOBlRM0s/1jYWEKq2vuxQxLe/9ynDWtBelXjiYkUwY=
 github.com/argoproj/argo-cd/v3 v3.0.0-20260522094300-1bed88faea06/go.mod h1:UO/RtKAzF+RM6mMqpVTL2F2xwK9dxAupoGnz22dvEeM=
 github.com/argoproj/pkg/v2 v2.0.1 h1:O/gCETzB/3+/hyFL/7d/VM/6pSOIRWIiBOTb2xqAHvc=
