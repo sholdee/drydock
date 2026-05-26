@@ -1,6 +1,5 @@
 [tools]
 go = "1.26.3"
-node = "24.11.1"
 golangci-lint = "2.12.2"
 lefthook = "2.1.8"
 zizmor = "1.25.2"
@@ -43,7 +42,7 @@ run = "go mod tidy && git diff --exit-code go.mod go.sum"
 
 [tasks.markdownlint]
 description = "Lint Markdown files"
-run = "npx --yes markdownlint-cli2@0.22.1 '**/*.md' '#node_modules' '#docs/superpowers/plans'"
+run = "go run github.com/shinagawa-web/gomarklint/v3@v3.0.5"
 
 [tasks.actionlint]
 description = "Lint GitHub Actions workflows"

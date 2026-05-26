@@ -1,10 +1,10 @@
 # Release And Upgrade Notes
 
 `drydock` is a single static Go binary and embeddable Go module. Release
-artifacts should preserve the offline core contract: render and diff from
-checked-out files plus explicit caches, without requiring a cluster, Argo CD
-server, `kubectl`, `argocd`, Helm/Kustomize command-line tools, or external
-rendering processes.
+artifacts should preserve the offline-runtime core contract: render and diff
+from checked-out files plus explicit caches, without requiring a cluster,
+Argo CD server, `kubectl`, `argocd`, Helm/Kustomize command-line tools, or
+external rendering processes.
 
 ## Argo CD Dependency Upgrades
 
@@ -33,8 +33,8 @@ passphrases, or raw repository URLs with embedded secrets.
 
 The repository includes an optional composite install action at
 `.github/actions/setup-drydock`. It is release metadata only; it does not
-change the default static binary, `--offline` behavior, or local render/diff
-runtime contract.
+change the default static binary, `--offline` behavior, or offline-runtime
+render/diff contract.
 
 The action accepts `latest`, `vX.Y.Z`, or bare `X.Y.Z` inputs. `latest` is
 resolved from the latest GitHub Release before download. Bare versions are

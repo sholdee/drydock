@@ -5,12 +5,13 @@ all-Application and named-Application build, all-Application and
 named-Application render tests, named-Application manifest diffs, image diffs,
 repository diagnostics, and local source-cache lifecycle commands.
 
-Default commands are local desired-vs-desired workflows. They may fetch
-declared Git, HTTP Helm, OCI Helm, and remote Kustomize sources into explicit
-caches unless `--offline` is set. They do not contact a Kubernetes cluster or
-Argo CD server, do not shell out to `kubectl`, `argocd`, Helm CLI, or
-Kustomize CLI, and do not silently approximate Kubernetes defaulting,
-admission mutation, Argo CD server-side diff, or live-only managed fields.
+Default commands are desired-vs-desired workflows that run offline from live
+Argo CD and Kubernetes runtime. They may fetch declared Git, HTTP Helm, OCI
+Helm, and remote Kustomize sources into explicit caches unless `--offline` is
+set. They do not contact a Kubernetes cluster or Argo CD server, do not shell
+out to `kubectl`, `argocd`, Helm CLI, or Kustomize CLI, and do not silently
+approximate Kubernetes defaulting, admission mutation, Argo CD server-side
+diff, or live-only managed fields.
 
 ## Application Discovery
 
@@ -397,8 +398,9 @@ resource filtering.
 
 Shellout plugin adapters, Argo CD repo-server sidecar plugin discovery,
 ambient plugin configuration, ambient plugin environment loading, and plugin
-credential injection remain deferred. The default CLI path does not read
-ambient plugin credentials or execute external plugin commands.
+credential injection are outside the default CLI/runtime contract. The default
+CLI path does not read ambient plugin credentials or execute external plugin
+commands.
 
 ## Render Tests
 
@@ -626,8 +628,8 @@ The settings summary is CLI-only. It reports parsed resource-customization
 metadata such as action names, `useOpenLibs`, and SHA-256 hashes for
 health/action Lua. It does not print raw Lua bodies, embedded secret-looking
 strings, or any live-cluster state. It also does not change default render/diff
-behavior, which remains local/static and independent of a live Argo CD runtime,
-Kubernetes cluster, `kubectl`, or external renderer shellout.
+behavior, which remains offline from live Argo CD and Kubernetes runtime and
+independent of `kubectl` or external renderer shellouts.
 
 When local `AppProject` manifests are present, `diag`, `build`, `test`, `diff`,
 and the Go API report source repository and destination server/name/namespace
@@ -660,9 +662,9 @@ go test ./internal/app -run '^$' -bench 'BenchmarkOrchestrator(BuildManyLocalApp
 
 Benchmark numbers are trend signals, not hard pass/fail thresholds.
 
-## Deferred Commands And Sources
+## Runtime-Boundary Commands And Sources
 
-These source paths are not wired in the current MVP:
+These source paths are outside the current default runtime contract:
 
 - Live provider API calls for cluster, clusterDecisionResource, SCM provider,
   pull-request, and plugin ApplicationSet generators. Use explicit local

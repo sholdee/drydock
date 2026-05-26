@@ -2,10 +2,10 @@
 
 ## Product Contract
 
-`drydock` is an independent Go CLI for local Argo CD GitOps repository
-analysis. Its core job is desired-vs-desired PR diffing: render Argo CD
-Applications from a current tree and a baseline tree, then show what desired
-Kubernetes manifests changed.
+`drydock` is an independent Go CLI for Argo CD GitOps repository analysis that
+runs offline from live Argo CD and Kubernetes runtime. Its core job is
+desired-vs-desired PR diffing: render Argo CD Applications from a current tree
+and a baseline tree, then show what desired Kubernetes manifests changed.
 
 The default workflow must remain a self-contained Go binary using checked-out
 files plus explicit local caches. It may fetch declared Git, HTTP Helm, OCI
@@ -14,10 +14,12 @@ Do not require a Kubernetes cluster, `kubectl`, the `argocd` CLI, Helm CLI,
 Kustomize CLI, an external renderer, an Argo CD server, or any live runtime
 dependency for default render, diff, image, test, or diagnostic paths.
 
-Network-aware acquisition may exist only as declared source cache population.
-Live Kubernetes, live Argo CD, server-side diff, defaulting, admission,
-managed fields ownership prediction, SCM/cloud/provider API calls, and
-shellout renderers require an approved design update first.
+In this repository, "offline" means no running cluster or Argo CD instance is
+required; it does not mean source networks are disabled. Network-aware
+acquisition may exist only as declared source cache population. Live
+Kubernetes, live Argo CD, server-side diff, defaulting, admission, managed
+fields ownership prediction, SCM/cloud/provider API calls, and shellout
+renderers require an approved design update first.
 
 ## Read This First
 
@@ -28,7 +30,7 @@ Use these entry points before substantive work:
   links.
 - `docs/README.md`: documentation ownership map.
 - `docs/design.md`: canonical product architecture and behavior model.
-- `docs/roadmap.md`: canonical supported/deferred feature status.
+- `docs/roadmap.md`: canonical feature status and runtime boundaries.
 - `docs/reports/2026-05-24-live-integration-design-gate.md`: required before
   proposing live runtime, server-side diff, defaulting, admission, or
   managed-fields work.
@@ -63,7 +65,7 @@ human-blocking phase status.
 - Do not add default shellouts to `helm`, `kustomize`, `kubectl`, `argocd`, or
   config-management plugins.
 - Do not add live Kubernetes or Argo CD server behavior without updating the
-  live integration design gate and preserving `--offline` behavior.
+  live runtime boundary document and preserving `--offline` behavior.
 - Do not hard-code `home-ops` paths, chart versions, branches, or repository
   names.
 - Do not print Secret manifest values, repository credentials, tokens, SSH
@@ -124,7 +126,7 @@ go test ./...
 go vet ./...
 go test -race ./internal/app -run 'Parallelism|Parallel'
 golangci-lint run
-markdownlint-cli2 '**/*.md'
+go run github.com/shinagawa-web/gomarklint/v3@v3.0.5
 ```
 
 If a command is unavailable or approval-gated, skip it and record the gap

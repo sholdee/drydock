@@ -1,9 +1,10 @@
 # Argo CD Compatibility Notes
 
-`drydock` targets local desired-vs-desired PR diffs. Default commands may fetch
-declared sources into explicit caches unless `--offline` is set.
+`drydock` targets desired-vs-desired PR diffs that run offline from live Argo CD
+and Kubernetes runtime. Default commands may fetch declared sources into
+explicit caches unless `--offline` is set.
 
-Supported in the MVP:
+Supported today:
 
 - Direct `Application` CRs
 - Git-directory, Git-files, list, matrix, merge, and fixture-backed provider
@@ -197,7 +198,7 @@ Not reproduced offline:
 - Live Argo CD server-side diff
 - Managed-fields ignores when ownership data exists only on the live cluster
 - Applying `ignoreResourceUpdates` to desired-vs-desired diffs
-- Any live integration that has not passed the live integration design gate
+- Any live runtime behavior that has not passed the live runtime boundary gate
 - Resource action Lua execution
 - Live Argo CD Application health aggregation
 - Live destination cluster existence checks
@@ -213,15 +214,15 @@ Not reproduced offline:
   fixtures are supported.
 - Live cluster and Argo CD API sources
 
-These live-state behaviors must stay explicit unsupported/deferred results in
-offline workflows. Do not approximate them silently in desired-vs-desired diffs.
-Any implementation must pass the live integration design gate and preserve the
-default local, library-backed render/diff path.
+These live-state behaviors must stay explicit out-of-boundary results in
+offline-runtime workflows. Do not approximate them silently in
+desired-vs-desired diffs. Any implementation must pass the live runtime
+boundary gate and preserve the default library-backed render/diff path.
 
-Live integration is design-gated in
+Live runtime access is design-gated in
 `docs/reports/2026-05-24-live-integration-design-gate.md`. Future live work
 must stay explicitly opt-in and must not change `--offline` cache-only behavior
-or the default local render/diff contract.
+or the default offline-runtime render/diff contract.
 
 The tool pins Argo CD dependencies. Upgrade Argo CD dependencies deliberately
 and update compatibility tests in the same change.

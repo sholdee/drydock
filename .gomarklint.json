@@ -1,0 +1,11 @@
+{
+  "default": true,
+  "rules": {
+    "blanks-around-lists": false,
+    "heading-level": false,
+    "max-line-length": { "enabled": false }
+  },
+  "include": ["README.md", "CHANGELOG.md", "AGENTS.md", "docs"],
+  "ignore": [".worktrees"],
+  "output": "text"
+}

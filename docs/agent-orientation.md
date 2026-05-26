@@ -7,11 +7,12 @@ the area you touch.
 
 ## Purpose
 
-`drydock` renders and diffs Argo CD GitOps repositories locally. The default
-workflow is deterministic and library-backed: checked-out files, declared
-source fetches, and explicit local caches are the inputs, and no Kubernetes
-cluster, Argo CD server, `kubectl`, `argocd`, Helm CLI, Kustomize CLI, or
-external renderer is required. `--offline` is the cache-only/no-network mode.
+`drydock` renders and diffs Argo CD GitOps repositories offline from live Argo
+CD and Kubernetes runtime. The default workflow is deterministic and
+library-backed: checked-out files, declared source fetches, and explicit local
+caches are the inputs, and no Kubernetes cluster, Argo CD server, `kubectl`,
+`argocd`, Helm CLI, Kustomize CLI, or external renderer is required.
+`--offline` is the cache-only/no-network mode.
 
 Network-aware source acquisition exists only as explicit cache population. Do
 not add live runtime behavior, ambient credentials, shellout renderers, or
@@ -23,8 +24,8 @@ repository-specific shortcuts without an approved design update.
 2. Use `docs/README.md` for documentation ownership.
 3. Use this file to route to the right package or detailed doc.
 4. Read `docs/agent-reference.md` only for task-specific agent constraints.
-5. Read `docs/design.md` and `docs/roadmap.md` for product design and
-   supported/deferred feature context.
+5. Read `docs/design.md` and `docs/roadmap.md` for product design, feature
+   status, and runtime-boundary context.
 6. Check `git status --short --branch` before editing.
 7. Use `rg` and focused file reads before loading broad tests or reports.
 
