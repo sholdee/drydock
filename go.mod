@@ -225,5 +225,5 @@ replace (
 	k8s.io/pod-security-admission => k8s.io/pod-security-admission v0.34.0
 	k8s.io/sample-apiserver => k8s.io/sample-apiserver v0.34.0
 
-	sigs.k8s.io/controller-runtime => sigs.k8s.io/controller-runtime v0.21.0
+	sigs.k8s.io/controller-runtime => sigs.k8s.io/controller-runtime v0.24.1
 )
