@@ -64,7 +64,7 @@ func (DefaultGitAcquirer) Acquire(ctx context.Context, request GitRequest, opts 
 		return GitResult{}, err
 	}
 	key := GitCacheKey(request.URL, request.Revision)
-	cachePath := filepath.Join(cacheDir, key)
+	cachePath := cache.GitEntryPath(cacheDir, key)
 	if err := os.MkdirAll(cacheDir, 0o755); err != nil {
 		return GitResult{}, err
 	}

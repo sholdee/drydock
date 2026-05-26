@@ -7,12 +7,16 @@ import (
 )
 
 func TestParseDiffOutputRejectsName(t *testing.T) {
-	_, err := parseDiffOutput("name", "diff apps")
-	if err == nil {
-		t.Fatal("parseDiffOutput() error = nil, want name rejection")
-	}
-	if !strings.Contains(err.Error(), "name output is not supported for diff apps") {
-		t.Fatalf("parseDiffOutput() error = %v, want diff apps name rejection", err)
+	for _, command := range []string{"diff apps", "diff app"} {
+		t.Run(command, func(t *testing.T) {
+			_, err := parseDiffOutput("name", command)
+			if err == nil {
+				t.Fatal("parseDiffOutput() error = nil, want name rejection")
+			}
+			if !strings.Contains(err.Error(), "name output is not supported for "+command) {
+				t.Fatalf("parseDiffOutput() error = %v, want %s name rejection", err, command)
+			}
+		})
 	}
 }
 

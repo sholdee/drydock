@@ -211,6 +211,32 @@ func TestDetectReportsSymlinkOnlyChanges(t *testing.T) {
 	}
 }
 
+func TestDetectIgnoresUnchangedSymlinkTargets(t *testing.T) {
+	base := t.TempDir()
+	current := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(base, "apps"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(current, "apps"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("../shared/a.yaml", filepath.Join(base, "apps", "a.yaml")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("../shared/a.yaml", filepath.Join(current, "apps", "a.yaml")); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := Detect(base, current)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(got) != 0 {
+		t.Fatalf("Detect() = %v, want none", got)
+	}
+}
+
 func TestDetectReportsSymlinkOnlyAddition(t *testing.T) {
 	base := t.TempDir()
 	current := t.TempDir()

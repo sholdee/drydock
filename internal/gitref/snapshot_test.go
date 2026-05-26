@@ -1,6 +1,7 @@
 package gitref
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -149,6 +150,46 @@ func TestSnapshotLocalRefPreservesExecutableMode(t *testing.T) {
 	}
 }
 
+func TestSnapshotLocalRefMaterializesManyFiles(t *testing.T) {
+	repoPath, _, wt := newSnapshotRepo(t)
+	root := wt.Filesystem.Root()
+	for i := range 96 {
+		name := fmt.Sprintf("apps/%03d/config.yaml", i)
+		path := filepath.Join(root, name)
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatalf("MkdirAll(%s) error = %v", name, err)
+		}
+		if err := os.WriteFile(path, []byte(fmt.Sprintf("value: %03d\n", i)), 0o644); err != nil {
+			t.Fatalf("WriteFile(%s) error = %v", name, err)
+		}
+		if _, err := wt.Add(name); err != nil {
+			t.Fatalf("Add(%s) error = %v", name, err)
+		}
+	}
+	if _, err := wt.Commit("add many files", &git.CommitOptions{
+		Author: &object.Signature{Name: "Test", Email: "test@example.invalid"},
+	}); err != nil {
+		t.Fatalf("Commit() error = %v", err)
+	}
+
+	result, err := Snapshot(t.Context(), Request{Repo: repoPath, Ref: "HEAD", ForbiddenRoots: []string{repoPath}})
+	if err != nil {
+		t.Fatalf("Snapshot() error = %v", err)
+	}
+	defer cleanupSnapshot(t, result)
+
+	for i := range 96 {
+		name := fmt.Sprintf("apps/%03d/config.yaml", i)
+		body, err := os.ReadFile(filepath.Join(result.Path, name))
+		if err != nil {
+			t.Fatalf("ReadFile(snapshot %s) error = %v", name, err)
+		}
+		if want := fmt.Sprintf("value: %03d\n", i); string(body) != want {
+			t.Fatalf("snapshot %s body = %q, want %q", name, string(body), want)
+		}
+	}
+}
+
 func TestSnapshotLocalRefMaterializesSafeSymlink(t *testing.T) {
 	repoPath, _, wt := newSnapshotRepo(t)
 	root := wt.Filesystem.Root()
@@ -252,6 +293,32 @@ func TestSnapshotRejectsEscapingSymlink(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "symlink target") {
 		t.Fatalf("Snapshot() error = %q, want symlink target error", err)
+	}
+}
+
+func TestSnapshotRejectsEscapingSymlinkDeterministically(t *testing.T) {
+	repoPath, _, wt := newSnapshotRepo(t)
+	root := wt.Filesystem.Root()
+	for _, name := range []string{"z-escape", "a-escape"} {
+		if err := os.Symlink("../outside", filepath.Join(root, name)); err != nil {
+			t.Fatalf("Symlink(%s) error = %v", name, err)
+		}
+		if _, err := wt.Add(name); err != nil {
+			t.Fatalf("Add(%s) error = %v", name, err)
+		}
+	}
+	if _, err := wt.Commit("add escaping symlinks", &git.CommitOptions{
+		Author: &object.Signature{Name: "Test", Email: "test@example.invalid"},
+	}); err != nil {
+		t.Fatalf("Commit() error = %v", err)
+	}
+
+	_, err := Snapshot(t.Context(), Request{Repo: repoPath, Ref: "HEAD", ForbiddenRoots: []string{repoPath}})
+	if err == nil {
+		t.Fatal("Snapshot() error = nil, want escaping symlink error")
+	}
+	if !strings.Contains(err.Error(), `materialize symlink "a-escape"`) {
+		t.Fatalf("Snapshot() error = %q, want first sorted symlink error", err)
 	}
 }
 

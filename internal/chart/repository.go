@@ -50,8 +50,8 @@ func (acquirer DefaultAcquirer) Acquire(ctx context.Context, request Request, op
 	if err != nil {
 		return Result{}, err
 	}
-	keyParent := filepath.Join(opts.CacheDir, string(request.Kind))
-	keyDir := filepath.Join(keyParent, key)
+	keyParent := cache.ChartKindRoot(opts.CacheDir, string(request.Kind))
+	keyDir := cache.ChartEntryPath(opts.CacheDir, string(request.Kind), key)
 	chartDir := filepath.Join(keyDir, request.Name)
 	if !opts.Refresh && chartDirReady(chartDir) {
 		writeChartMetadata(keyDir, key, request)

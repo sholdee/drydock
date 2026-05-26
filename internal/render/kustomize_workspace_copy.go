@@ -2,11 +2,11 @@ package render
 
 import (
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
 	"strings"
 
+	"github.com/sholdee/drydock/internal/filecopy"
 	"sigs.k8s.io/kustomize/api/types"
 )
 
@@ -28,11 +28,7 @@ func copyAcquiredRemoteKustomizeResource(src, dst string) error {
 }
 
 func copyRegularTree(srcRoot, dstRoot string) error {
-	return copyTree(srcRoot, dstRoot, false)
-}
-
-func copyWorkspaceTree(srcRoot, dstRoot string) error {
-	return copyTree(srcRoot, dstRoot, true)
+	return copyTree(srcRoot, dstRoot, copyTreeOptions{})
 }
 
 type preparedKustomizeWorkspaceCopier struct {
@@ -40,13 +36,19 @@ type preparedKustomizeWorkspaceCopier struct {
 	dstRoot    string
 	copiedDirs []string
 	copied     map[string]struct{}
+	forceCopy  map[string]struct{}
 }
 
 func copyPreparedKustomizeWorkspaceTree(repoRoot, sourceRoot, dstRoot string, graph []kustomizeGraphNode) error {
+	forceCopy, err := mutableKustomizationFiles(sourceRoot, graph)
+	if err != nil {
+		return err
+	}
 	copier := &preparedKustomizeWorkspaceCopier{
-		repoRoot: filepath.Clean(repoRoot),
-		dstRoot:  filepath.Clean(dstRoot),
-		copied:   map[string]struct{}{},
+		repoRoot:  filepath.Clean(repoRoot),
+		dstRoot:   filepath.Clean(dstRoot),
+		copied:    map[string]struct{}{},
+		forceCopy: forceCopy,
 	}
 	if err := copier.copyPath(sourceRoot); err != nil {
 		return err
@@ -86,7 +88,7 @@ func (c *preparedKustomizeWorkspaceCopier) copyPath(path string) error {
 		return fmt.Errorf("copy destination path %q escapes destination root %q", dstPath, c.dstRoot)
 	}
 	if info.IsDir() {
-		if err := copyWorkspaceTree(path, dstPath); err != nil {
+		if err := copyWorkspaceTreeWithForceCopy(path, dstPath, c.forceCopy); err != nil {
 			return err
 		}
 		c.copiedDirs = append(c.copiedDirs, path)
@@ -95,11 +97,31 @@ func (c *preparedKustomizeWorkspaceCopier) copyPath(path string) error {
 	if _, ok := c.copied[path]; ok {
 		return nil
 	}
-	if err := copyRegularFile(path, dstPath); err != nil {
+	if err := copyWorkspaceFile(path, dstPath, c.forceCopy); err != nil {
 		return err
 	}
 	c.copied[path] = struct{}{}
 	return nil
+}
+
+func mutableKustomizationFiles(sourceRoot string, graph []kustomizeGraphNode) (map[string]struct{}, error) {
+	out := map[string]struct{}{}
+	for _, dir := range append([]string{sourceRoot}, kustomizeGraphDirs(graph)...) {
+		file, err := findKustomizationFile(dir)
+		if err != nil {
+			return nil, err
+		}
+		out[filepath.Clean(file)] = struct{}{}
+	}
+	return out, nil
+}
+
+func kustomizeGraphDirs(graph []kustomizeGraphNode) []string {
+	out := make([]string, 0, len(graph))
+	for _, node := range graph {
+		out = append(out, node.Dir)
+	}
+	return out
 }
 
 func (c *preparedKustomizeWorkspaceCopier) pathCovered(path string) bool {
@@ -194,8 +216,22 @@ func appendGeneratorWorkspaceRefs(appendLocalRef func(string), sources types.KvP
 	appendLocalRef(sources.EnvSource)
 }
 
-//nolint:gocyclo // Tree copy handles regular files, directories, optional symlinks, and parent safety.
-func copyTree(srcRoot, dstRoot string, preserveSymlinks bool) error {
+type copyTreeOptions struct {
+	preserveSymlinks bool
+	linkRegularFiles bool
+	forceCopy        map[string]struct{}
+}
+
+func copyWorkspaceTreeWithForceCopy(srcRoot, dstRoot string, forceCopy map[string]struct{}) error {
+	return copyTree(srcRoot, dstRoot, copyTreeOptions{
+		preserveSymlinks: true,
+		linkRegularFiles: true,
+		forceCopy:        forceCopy,
+	})
+}
+
+//nolint:gocyclo // Tree copy handles regular files, directories, optional symlinks, hardlinks, and parent safety.
+func copyTree(srcRoot, dstRoot string, options copyTreeOptions) error {
 	srcRoot = filepath.Clean(srcRoot)
 	dstRoot = filepath.Clean(dstRoot)
 
@@ -220,7 +256,7 @@ func copyTree(srcRoot, dstRoot string, preserveSymlinks bool) error {
 		}
 
 		if entry.Type()&os.ModeSymlink != 0 {
-			if !preserveSymlinks {
+			if !options.preserveSymlinks {
 				return fmt.Errorf("copy source path %q is a symlink", path)
 			}
 			target, err := os.Readlink(path)
@@ -239,41 +275,20 @@ func copyTree(srcRoot, dstRoot string, preserveSymlinks bool) error {
 		if !entry.Type().IsRegular() {
 			return fmt.Errorf("copy source path %q is not a regular file", path)
 		}
+		if options.linkRegularFiles {
+			return copyWorkspaceFile(path, dstPath, options.forceCopy)
+		}
 		return copyRegularFile(path, dstPath)
 	})
 }
 
 func copyRegularFile(src, dst string) error {
-	info, err := os.Lstat(src)
-	if err != nil {
-		return err
-	}
-	if info.Mode()&os.ModeSymlink != 0 {
-		return fmt.Errorf("source path %q is a symlink", src)
-	}
-	if !info.Mode().IsRegular() {
-		return fmt.Errorf("source path %q is not a regular file", src)
-	}
+	return filecopy.CopyRegularFile(src, dst, 0o644)
+}
 
-	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
-		return err
+func copyWorkspaceFile(src, dst string, forceCopy map[string]struct{}) error {
+	if _, ok := forceCopy[filepath.Clean(src)]; ok {
+		return copyRegularFile(src, dst)
 	}
-	in, err := os.Open(src)
-	if err != nil {
-		return err
-	}
-	defer in.Close()
-
-	out, err := os.OpenFile(dst, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o644)
-	if err != nil {
-		return err
-	}
-	if _, err := io.Copy(out, in); err != nil {
-		_ = out.Close()
-		return err
-	}
-	if err := out.Close(); err != nil {
-		return err
-	}
-	return nil
+	return filecopy.LinkOrCopyRegularFile(src, dst, 0o644)
 }

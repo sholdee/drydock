@@ -5,10 +5,10 @@ Date: 2026-05-22
 ## Purpose
 
 `drydock` is an independent Go CLI for Argo CD GitOps repository analysis that
-runs offline from live Argo CD and Kubernetes runtime. Its first product goal
-is desired-vs-desired pull request diffing: given a current GitOps tree and a
-baseline tree, render the Argo CD Applications that would be reconciled and
-show what desired Kubernetes manifests changed.
+runs offline from live Argo CD and Kubernetes runtime. It performs offline
+desired-state analysis: discover Argo CD Applications, render desired
+manifests, validate renderability, inspect images and diagnostics, and compare
+current and baseline trees for desired-vs-desired pull request diffs.
 
 The tool is intentionally not a live-cluster diff. It does not contact the
 Kubernetes API server, does not run Argo CD controllers, and does not claim to
@@ -62,7 +62,7 @@ Supported:
   for embedders that provide deterministic local plugin rendering.
 - Cluster, clusterDecisionResource, SCM provider, pull-request, and plugin
   ApplicationSet generators through explicit local fixtures.
-- PR diff, build, get, and image diff commands.
+- Render, test, get, diagnostic, cache, manifest diff, and image diff commands.
 - Changed-only rendering with safe fallback.
 
 Outside the core runtime contract:
@@ -321,6 +321,25 @@ Repository resolution:
   helpers, and never reads ambient Helm registry config in this slice.
 - Passwords, bearer tokens, SSH private keys, SSH passphrases, and registry
   credential values are never printed in diagnostics or formatted errors.
+
+## Cache Model
+
+Source caches are explicit operator-managed roots for Git repositories, Helm
+charts, and remote Kustomize resources. Entries keep their current hash-based
+layout and include hidden `.drydock-cache/metadata.json` sidecars with redacted
+target metadata. Metadata writes are atomic and preserve original creation
+time across cache hits.
+
+`cache list`, `cache prune`, and `cache delete` only operate on recognized
+entry roots. Prune/delete remain explicit filesystem lifecycle commands,
+guarded by protected-root checks, age/key/source filters, dry-run support, and
+`--yes` for destructive execution.
+
+A shared content-addressed store with ref tables, leases, and mark-sweep
+collection is intentionally deferred. It would be useful only after drydock has
+multiple cache surfaces sharing the same immutable blobs; until then, it would
+add deletion semantics that need stronger live-reference protection than the
+current one-entry-per-acquisition layout requires.
 
 ## Rendering
 

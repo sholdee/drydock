@@ -623,6 +623,77 @@ metadata:
 	}
 	assertPathMissing(t, filepath.Join(dst, "hack"))
 }
+
+func TestCopyPreparedKustomizeWorkspaceHardlinksOnlyReadOnlyFiles(t *testing.T) {
+	if !hardlinksSupported(t) {
+		t.Skip("hardlinks unavailable")
+	}
+	root := t.TempDir()
+	sourceRoot := filepath.Join(root, "apps", "demo")
+	writeFile(t, filepath.Join(sourceRoot, "kustomization.yaml"), `apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - cm.yaml
+`)
+	writeFile(t, filepath.Join(sourceRoot, "cm.yaml"), `apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: demo
+`)
+	_, graph, err := collectKustomizeGraphForPreparation(context.Background(), root, sourceRoot)
+	if err != nil {
+		t.Fatalf("collectKustomizeGraphForPreparation() error = %v", err)
+	}
+
+	dst := filepath.Join(t.TempDir(), "repo")
+	if err := copyPreparedKustomizeWorkspaceTree(root, sourceRoot, dst, graph); err != nil {
+		t.Fatalf("copyPreparedKustomizeWorkspaceTree() error = %v", err)
+	}
+
+	assertSameFile(t, filepath.Join(sourceRoot, "cm.yaml"), filepath.Join(dst, "apps", "demo", "cm.yaml"))
+	assertDifferentFile(t, filepath.Join(sourceRoot, "kustomization.yaml"), filepath.Join(dst, "apps", "demo", "kustomization.yaml"))
+}
+
+func hardlinksSupported(t *testing.T) bool {
+	t.Helper()
+	root := t.TempDir()
+	src := filepath.Join(root, "src")
+	dst := filepath.Join(root, "dst")
+	if err := os.WriteFile(src, []byte("data"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return os.Link(src, dst) == nil
+}
+
+func assertSameFile(t *testing.T, left, right string) {
+	t.Helper()
+	leftInfo, err := os.Stat(left)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rightInfo, err := os.Stat(right)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !os.SameFile(leftInfo, rightInfo) {
+		t.Fatalf("%s and %s are different files, want same file", left, right)
+	}
+}
+
+func assertDifferentFile(t *testing.T, left, right string) {
+	t.Helper()
+	leftInfo, err := os.Stat(left)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rightInfo, err := os.Stat(right)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if os.SameFile(leftInfo, rightInfo) {
+		t.Fatalf("%s and %s are the same file, want different files", left, right)
+	}
+}
 func TestKustomizeRendererRejectsSourcePathEscape(t *testing.T) {
 	parent := t.TempDir()
 	root := filepath.Join(parent, "repo")
@@ -921,6 +992,21 @@ func TestParseKustomizeBuildOptionsSupportsSplitLoadRestrictor(t *testing.T) {
 	}
 	if settings.LoadRestrictions != types.LoadRestrictionsNone {
 		t.Fatalf("LoadRestrictions = %v, want LoadRestrictionsNone", settings.LoadRestrictions)
+	}
+}
+
+func TestParseKustomizeBuildOptionsSupportsHelmAPIVersions(t *testing.T) {
+	settings, err := parseKustomizeBuildOptions([]string{
+		"--helm-api-versions",
+		"example.io/v1/Foo,example.io/v1/Bar",
+		"--helm-api-versions=other.io/v1/Baz",
+	})
+	if err != nil {
+		t.Fatalf("parseKustomizeBuildOptions() error = %v", err)
+	}
+	want := []string{"example.io/v1/Foo", "example.io/v1/Bar", "other.io/v1/Baz"}
+	if strings.Join(settings.APIVersions, ",") != strings.Join(want, ",") {
+		t.Fatalf("APIVersions = %#v, want %#v", settings.APIVersions, want)
 	}
 }
 

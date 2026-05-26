@@ -45,8 +45,8 @@ func TestTestAppsDefaultParallelismIsAuto(t *testing.T) {
 	if want < 1 {
 		want = 1
 	}
-	if want > 8 {
-		want = 8
+	if want > maxDefaultRenderAppsParallelism {
+		want = maxDefaultRenderAppsParallelism
 	}
 	if got := defaultRenderAppsParallelism(); got != want {
 		t.Fatalf("defaultRenderAppsParallelism() = %d, want %d", got, want)

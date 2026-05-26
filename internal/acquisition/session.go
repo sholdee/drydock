@@ -3,13 +3,13 @@ package acquisition
 import (
 	"context"
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
 	"strings"
 	"sync"
 
 	"github.com/sholdee/drydock/internal/chart"
+	"github.com/sholdee/drydock/internal/filecopy"
 	"github.com/sholdee/drydock/internal/remote"
 	"github.com/sholdee/drydock/internal/source"
 )
@@ -186,7 +186,7 @@ func (acquirer cacheSafeGitAcquirer) Acquire(ctx context.Context, request source
 	if err != nil || !acquirer.snapshot {
 		return result, err
 	}
-	snapshot, err := snapshotCachePath(acquirer.snapshotRoot, "git", result.Path)
+	snapshot, err := snapshotCachePath(acquirer.snapshotRoot, "git", result.Path, false)
 	if err != nil {
 		return source.GitResult{}, err
 	}
@@ -221,7 +221,7 @@ func (acquirer cacheSafeChartAcquirer) Acquire(ctx context.Context, request char
 	if err != nil || !acquirer.snapshot {
 		return result, err
 	}
-	snapshot, err := snapshotCachePath(acquirer.snapshotRoot, "chart", result.ChartDir)
+	snapshot, err := snapshotCachePath(acquirer.snapshotRoot, "chart", result.ChartDir, true)
 	if err != nil {
 		return chart.Result{}, err
 	}
@@ -266,7 +266,7 @@ func (acquirer cacheSafeRemoteAcquirer) Acquire(ctx context.Context, request rem
 	if !acquirer.snapshot {
 		return result, nil
 	}
-	snapshot, err := snapshotCachePath(acquirer.snapshotRoot, "remote", result.Path)
+	snapshot, err := snapshotCachePath(acquirer.snapshotRoot, "remote", result.Path, false)
 	if err != nil {
 		return remote.Result{}, err
 	}
@@ -325,7 +325,7 @@ func absoluteCacheLockKey(prefix, path string) (string, error) {
 	return prefix + ":" + filepath.Clean(abs), nil
 }
 
-func snapshotCachePath(root, prefix, sourcePath string) (string, error) {
+func snapshotCachePath(root, prefix, sourcePath string, linkRegularFiles bool) (string, error) {
 	if strings.TrimSpace(root) == "" || strings.TrimSpace(sourcePath) == "" {
 		return sourcePath, nil
 	}
@@ -334,14 +334,14 @@ func snapshotCachePath(root, prefix, sourcePath string) (string, error) {
 		return "", err
 	}
 	snapshotPath := filepath.Join(snapshotRoot, filepath.Base(sourcePath))
-	if err := copyCachePath(sourcePath, snapshotPath); err != nil {
+	if err := copyCachePath(sourcePath, snapshotPath, linkRegularFiles); err != nil {
 		_ = os.RemoveAll(snapshotRoot)
 		return "", err
 	}
 	return snapshotPath, nil
 }
 
-func copyCachePath(src, dst string) error {
+func copyCachePath(src, dst string, linkRegularFiles bool) error {
 	info, err := os.Lstat(src)
 	if err != nil {
 		return err
@@ -362,7 +362,7 @@ func copyCachePath(src, dst string) error {
 			return err
 		}
 		for _, entry := range entries {
-			if err := copyCachePath(filepath.Join(src, entry.Name()), filepath.Join(dst, entry.Name())); err != nil {
+			if err := copyCachePath(filepath.Join(src, entry.Name()), filepath.Join(dst, entry.Name()), linkRegularFiles); err != nil {
 				return err
 			}
 		}
@@ -371,25 +371,15 @@ func copyCachePath(src, dst string) error {
 		if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
 			return err
 		}
-		return copyRegularCacheFile(src, dst, info.Mode().Perm())
+		return copyRegularCacheFile(src, dst, info.Mode().Perm(), linkRegularFiles)
 	default:
 		return fmt.Errorf("cache path %q is not a regular file, directory, or symlink", src)
 	}
 }
 
-func copyRegularCacheFile(src, dst string, mode os.FileMode) error {
-	in, err := os.Open(src)
-	if err != nil {
-		return err
+func copyRegularCacheFile(src, dst string, mode os.FileMode, linkRegularFiles bool) error {
+	if linkRegularFiles {
+		return filecopy.LinkOrCopyRegularFile(src, dst, mode)
 	}
-	defer in.Close()
-	out, err := os.OpenFile(dst, os.O_CREATE|os.O_EXCL|os.O_WRONLY, mode)
-	if err != nil {
-		return err
-	}
-	if _, err := io.Copy(out, in); err != nil {
-		_ = out.Close()
-		return err
-	}
-	return out.Close()
+	return filecopy.CopyRegularFile(src, dst, mode)
 }
