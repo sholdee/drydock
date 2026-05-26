@@ -94,6 +94,31 @@ func TestSnapshotLocalRefResolvesRemoteTrackingBranch(t *testing.T) {
 	}
 }
 
+func TestSnapshotLocalRefResolvesLinkedWorktreeHEAD(t *testing.T) {
+	repoPath, repo, wt := newSnapshotRepo(t)
+	commitSnapshotFile(t, repo, wt, "app.yaml", "value: main\n")
+	createSnapshotBranch(t, wt, "linked-feature")
+	featureHash := commitSnapshotFile(t, repo, wt, "app.yaml", "value: linked\n")
+	linkedPath := createLinkedSnapshotWorktree(t, repoPath, "linked-feature")
+
+	result, err := Snapshot(t.Context(), Request{Repo: linkedPath, Ref: "HEAD", ForbiddenRoots: []string{repoPath, linkedPath}})
+	if err != nil {
+		t.Fatalf("Snapshot() error = %v", err)
+	}
+	defer cleanupSnapshot(t, result)
+
+	body, err := os.ReadFile(filepath.Join(result.Path, "app.yaml"))
+	if err != nil {
+		t.Fatalf("ReadFile(snapshot app.yaml) error = %v", err)
+	}
+	if string(body) != "value: linked\n" {
+		t.Fatalf("snapshot body = %q, want linked worktree branch content", string(body))
+	}
+	if result.Revision != featureHash.String() {
+		t.Fatalf("Revision = %q, want %q", result.Revision, featureHash.String())
+	}
+}
+
 func TestSnapshotLocalRefPreservesExecutableMode(t *testing.T) {
 	repoPath, _, wt := newSnapshotRepo(t)
 	root := wt.Filesystem.Root()
@@ -321,8 +346,13 @@ func TestSnapshotRejectsInvalidInputs(t *testing.T) {
 		{name: "missing ref", req: Request{Repo: repoPath, Ref: "missing"}, want: "resolve Git ref"},
 		{name: "non repo", req: Request{Repo: t.TempDir(), Ref: "HEAD"}, want: "open Git repository"},
 		{name: "remote URL", req: Request{Repo: "https://github.com/example/repo.git", Ref: "main"}, want: "remote repository URLs are not supported"},
+		{name: "credential remote URL", req: Request{Repo: "https://user:secret@example.com/org/repo.git?token=abc#fragment", Ref: "main"}, want: `git ref snapshot repository "https://example.com/org/repo.git" must be a local path`},
+		{name: "embedded credential remote URL", req: Request{Repo: "git::https://user:secret@example.com/org/repo.git?token=abc#fragment", Ref: "main"}, want: `git ref snapshot repository "git::https://example.com/org/repo.git" must be a local path`},
+		{name: "opaque credential remote URL", req: Request{Repo: "https:user:secret@example.com/org/repo.git?token=abc#fragment", Ref: "main"}, want: `git ref snapshot repository "https:example.com/org/repo.git" must be a local path`},
 		{name: "scp style URL", req: Request{Repo: "git@github.com:example/repo.git", Ref: "main"}, want: "remote repository URLs are not supported"},
+		{name: "credential scp style URL", req: Request{Repo: "user@github.com:org/repo.git?token=abc#fragment", Ref: "main"}, want: `git ref snapshot repository "github.com:org/repo.git" must be a local path`},
 		{name: "scp style URL without user", req: Request{Repo: "github.com:example/repo.git", Ref: "main"}, want: "remote repository URLs are not supported"},
+		{name: "malformed URL-like repo", req: Request{Repo: "https://user:secret@example.com/%zz?token=abc#fragment", Ref: "main"}, want: `git ref snapshot repository "https://example.com/%zz" must be a local path`},
 	}
 
 	for _, tt := range tests {
@@ -333,6 +363,11 @@ func TestSnapshotRejectsInvalidInputs(t *testing.T) {
 			}
 			if !strings.Contains(err.Error(), tt.want) {
 				t.Fatalf("Snapshot() error = %q, want substring %q", err, tt.want)
+			}
+			for _, leak := range []string{"user", "secret", "token=abc", "fragment", "git@"} {
+				if strings.Contains(err.Error(), leak) {
+					t.Fatalf("Snapshot() error = %q, leaked %q", err, leak)
+				}
 			}
 		})
 	}
@@ -394,6 +429,30 @@ func createSnapshotTag(t *testing.T, repo *git.Repository, hash plumbing.Hash, n
 	t.Helper()
 	if _, err := repo.CreateTag(name, hash, nil); err != nil {
 		t.Fatalf("CreateTag(%s) error = %v", name, err)
+	}
+}
+
+func createLinkedSnapshotWorktree(t *testing.T, repoPath, branch string) string {
+	t.Helper()
+	linkedPath := filepath.Join(t.TempDir(), "linked")
+	worktreeGitDir := filepath.Join(repoPath, ".git", "worktrees", "linked")
+	if err := os.MkdirAll(worktreeGitDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll(worktree git dir) error = %v", err)
+	}
+	if err := os.MkdirAll(linkedPath, 0o755); err != nil {
+		t.Fatalf("MkdirAll(linked worktree) error = %v", err)
+	}
+	writeSnapshotFileForTest(t, filepath.Join(linkedPath, ".git"), "gitdir: "+worktreeGitDir+"\n")
+	writeSnapshotFileForTest(t, filepath.Join(worktreeGitDir, "HEAD"), "ref: refs/heads/"+branch+"\n")
+	writeSnapshotFileForTest(t, filepath.Join(worktreeGitDir, "commondir"), "../..\n")
+	writeSnapshotFileForTest(t, filepath.Join(worktreeGitDir, "gitdir"), filepath.Join(linkedPath, ".git")+"\n")
+	return linkedPath
+}
+
+func writeSnapshotFileForTest(t *testing.T, path, body string) {
+	t.Helper()
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+		t.Fatalf("WriteFile(%s) error = %v", path, err)
 	}
 }
 

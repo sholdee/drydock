@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -501,6 +502,69 @@ func TestDiffImagesPrintsImageDiff(t *testing.T) {
 	}
 }
 
+func TestDiffImagesJSONOutput(t *testing.T) {
+	root := t.TempDir()
+	left := filepath.Join(root, "left")
+	right := filepath.Join(root, "right")
+	writeTwoImageAppForCLI(t, left, "example/app:v1", "example/sidecar:v1")
+	writeTwoImageAppForCLI(t, right, "example/app:v2", "example/sidecar:v1")
+
+	result := runCLI(t, "diff", "images", "--path-orig", left, "--path", right, "-o", "json", "--exit-code=false")
+	assertStdoutExcludesAll(t, result, "- example/app:v1", "+ example/app:v2")
+	assertStderrEmpty(t, result)
+
+	var payload imageDiffOutput
+	if err := json.Unmarshal([]byte(result.Stdout), &payload); err != nil {
+		t.Fatalf("json.Unmarshal() error = %v\nstdout:\n%s", err, result.Stdout)
+	}
+	assertStringSliceEqual(t, payload.Added, []string{"example/app:v2"})
+	assertStringSliceEqual(t, payload.Removed, []string{"example/app:v1"})
+	assertStringSliceEqual(t, payload.Unchanged, []string{"example/sidecar:v1"})
+}
+
+func TestDiffImagesYAMLOutput(t *testing.T) {
+	root := t.TempDir()
+	left := filepath.Join(root, "left")
+	right := filepath.Join(root, "right")
+	writeTwoImageAppForCLI(t, left, "example/app:v1", "example/sidecar:v1")
+	writeTwoImageAppForCLI(t, right, "example/app:v2", "example/sidecar:v1")
+
+	result := runCLI(t, "diff", "images", "--path-orig", left, "--path", right, "-o", "yaml", "--exit-code=false")
+	assertStdoutExcludesAll(t, result, "+ example/app:v2")
+	assertStderrEmpty(t, result)
+
+	var payload imageDiffOutput
+	if err := yaml.Unmarshal([]byte(result.Stdout), &payload); err != nil {
+		t.Fatalf("yaml.Unmarshal() error = %v\nstdout:\n%s", err, result.Stdout)
+	}
+	assertStringSliceEqual(t, payload.Added, []string{"example/app:v2"})
+	assertStringSliceEqual(t, payload.Removed, []string{"example/app:v1"})
+	assertStringSliceEqual(t, payload.Unchanged, []string{"example/sidecar:v1"})
+}
+
+func TestDiffImagesRejectsNameOutput(t *testing.T) {
+	cmd := NewRootCommand(VersionInfo{})
+	cmd.SetArgs([]string{"diff", "images", "-o", "name"})
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	cmd.SetOut(&stdout)
+	cmd.SetErr(&stderr)
+
+	err := cmd.Execute()
+	if err == nil {
+		t.Fatal("Execute() error = nil, want unsupported output error")
+	}
+	if !strings.Contains(err.Error(), "name output is not supported for diff images") {
+		t.Fatalf("error = %v, want diff images name rejection", err)
+	}
+	if stdout.String() != "" {
+		t.Fatalf("stdout = %q, want empty", stdout.String())
+	}
+	if stderr.String() != "" {
+		t.Fatalf("stderr = %q, want empty", stderr.String())
+	}
+}
+
 func TestDiffAppsPrintsDiagnosticsOnStrictChangedOnlyError(t *testing.T) {
 	root := t.TempDir()
 	left := filepath.Join(root, "left")
@@ -897,6 +961,50 @@ spec:
         - name: app
           image: `+image+`
 `)
+}
+
+func writeTwoImageAppForCLI(t *testing.T, root, appImage, sidecarImage string) {
+	t.Helper()
+	writeCLITestFile(t, filepath.Join(root, "apps", "demo.yaml"), `apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: demo
+  namespace: argocd
+spec:
+  source:
+    repoURL: https://github.com/example/repo
+    path: manifests/demo
+    targetRevision: main
+  destination:
+    name: in-cluster
+    namespace: demo
+`)
+	writeCLITestFile(t, filepath.Join(root, "manifests", "demo", "deployment.yaml"), `apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: demo
+spec:
+  selector:
+    matchLabels:
+      app: demo
+  template:
+    metadata:
+      labels:
+        app: demo
+    spec:
+      containers:
+        - name: app
+          image: `+appImage+`
+        - name: sidecar
+          image: `+sidecarImage+`
+`)
+}
+
+func assertStringSliceEqual(t *testing.T, got, want []string) {
+	t.Helper()
+	if !slices.Equal(got, want) {
+		t.Fatalf("slice = %#v, want %#v", got, want)
+	}
 }
 
 func writeDeploymentAppForCLI(t *testing.T, root string, replicas int) {

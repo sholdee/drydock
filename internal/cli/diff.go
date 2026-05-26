@@ -10,7 +10,6 @@ import (
 	"github.com/spf13/cobra"
 )
 
-//nolint:gocyclo // Cobra wiring keeps diff subcommands and shared flag handling together.
 func newDiffCommand(deps Dependencies) *cobra.Command {
 	flags := defaultCommonFlags()
 	cmd := &cobra.Command{
@@ -86,6 +85,10 @@ func newDiffCommand(deps Dependencies) *cobra.Command {
 		Short: "Diff rendered container images",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
+			output, err := parseDiffOutput(imagesFlags.output, "diff images")
+			if err != nil {
+				return err
+			}
 			repoMaps, err := parseRepoMaps(imagesFlags.repoMaps)
 			if err != nil {
 				return err
@@ -97,24 +100,7 @@ func newDiffCommand(deps Dependencies) *cobra.Command {
 				}
 				return err
 			}
-			if err := renderDiagnostics(cmd.ErrOrStderr(), result.Diagnostics); err != nil {
-				return err
-			}
-			for _, image := range result.Removed {
-				if _, err := fmt.Fprintf(cmd.OutOrStdout(), "- %s\n", image); err != nil {
-					return err
-				}
-			}
-			for _, image := range result.Added {
-				if _, err := fmt.Fprintf(cmd.OutOrStdout(), "+ %s\n", image); err != nil {
-					return err
-				}
-			}
-			code := exitCode(nil, !imagesFlags.exitCode, len(result.Added) > 0 || len(result.Removed) > 0)
-			if code != 0 {
-				return ExitError{Code: code}
-			}
-			return nil
+			return renderImageDiffResult(cmd, result, !imagesFlags.exitCode, output)
 		},
 	}
 	bindCommonFlags(images, &imagesFlags)
@@ -122,6 +108,12 @@ func newDiffCommand(deps Dependencies) *cobra.Command {
 
 	cmd.AddCommand(apps, appCmd, images)
 	return cmd
+}
+
+type imageDiffOutput struct {
+	Added     []string `json:"added" yaml:"added"`
+	Removed   []string `json:"removed" yaml:"removed"`
+	Unchanged []string `json:"unchanged" yaml:"unchanged"`
 }
 
 func diffRequestFromFlags(flags commonFlags, repoMaps []source.RepoMap) app.DiffRequest {
@@ -155,4 +147,43 @@ func renderDiffResult(cmd *cobra.Command, result app.DiffResult, disableDiffExit
 		return ExitError{Code: code}
 	}
 	return nil
+}
+
+func renderImageDiffResult(cmd *cobra.Command, result app.ImageDiffResult, disableDiffExitCode bool, output string) error {
+	if err := renderDiagnostics(cmd.ErrOrStderr(), result.Diagnostics); err != nil {
+		return err
+	}
+	switch output {
+	case diffOutputUnified:
+		for _, image := range result.Removed {
+			if _, err := fmt.Fprintf(cmd.OutOrStdout(), "- %s\n", image); err != nil {
+				return err
+			}
+		}
+		for _, image := range result.Added {
+			if _, err := fmt.Fprintf(cmd.OutOrStdout(), "+ %s\n", image); err != nil {
+				return err
+			}
+		}
+	case string(cliformat.OutputJSON), string(cliformat.OutputYAML):
+		payload := imageDiffOutput{
+			Added:     cloneStringSlice(result.Added),
+			Removed:   cloneStringSlice(result.Removed),
+			Unchanged: cloneStringSlice(result.Unchanged),
+		}
+		if err := writeStructuredOutput(cmd.OutOrStdout(), output, payload); err != nil {
+			return err
+		}
+	default:
+		return fmt.Errorf("unsupported output %q for diff images", output)
+	}
+	code := exitCode(nil, disableDiffExitCode, len(result.Added) > 0 || len(result.Removed) > 0)
+	if code != 0 {
+		return ExitError{Code: code}
+	}
+	return nil
+}
+
+func cloneStringSlice(values []string) []string {
+	return append([]string{}, values...)
 }

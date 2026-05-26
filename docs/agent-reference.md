@@ -173,9 +173,11 @@ replaces `--path`, and `--repo` defaults to `--path`. Do not add shellouts,
 `git worktree add`, checkout mutation, or top-level remote `--repo` URL
 support without an approved design update.
 
-Manifest diff output supports unified diff, JSON, and YAML. Diagnostics stay
-on stderr for structured diff output. `-o name` is for list-style commands and
-image projections, not `diff apps` or `diff app`.
+Manifest diff output supports unified diff, JSON, and YAML. Image diff output
+also supports unified diff, JSON, and YAML for `added`, `removed`, and
+`unchanged` image lists. Diagnostics stay on stderr for structured diff
+output. `-o name` is for list-style commands such as `get apps` and
+`get images`, not `diff apps`, `diff app`, or `diff images`.
 
 Application-local and global ignore rules support `jsonPointers`,
 `jqPathExpressions`, and `managedFieldsManagers`. Apply the union from both

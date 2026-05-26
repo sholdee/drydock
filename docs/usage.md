@@ -583,7 +583,9 @@ drydock diff images --path ./current --path-orig ../base
 ```
 
 This projection is intentionally conservative and does not report arbitrary
-`image` keys from ConfigMaps or CRDs.
+`image` keys from ConfigMaps or CRDs. Use `-o json` or `-o yaml` for
+machine-readable `added`, `removed`, and `unchanged` image lists. Diagnostics
+remain on stderr so stdout stays valid JSON or YAML.
 
 ## Diagnostics
 

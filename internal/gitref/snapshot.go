@@ -36,29 +36,30 @@ func Snapshot(ctx context.Context, request Request) (Result, error) {
 	if repoPath == "" {
 		return Result{}, fmt.Errorf("git ref snapshot repository path is required")
 	}
+	displayRepoPath := source.RedactURL(repoPath)
 	if looksLikeRemoteRepo(repoPath) {
-		return Result{}, fmt.Errorf("git ref snapshot repository %q must be a local path; remote repository URLs are not supported for --repo yet", repoPath)
+		return Result{}, fmt.Errorf("git ref snapshot repository %q must be a local path; remote repository URLs are not supported for --repo yet", displayRepoPath)
 	}
 	ref := strings.TrimSpace(request.Ref)
 	if ref == "" {
 		ref = "HEAD"
 	}
 
-	repo, err := git.PlainOpen(repoPath)
+	repo, err := git.PlainOpenWithOptions(repoPath, &git.PlainOpenOptions{EnableDotGitCommonDir: true})
 	if err != nil {
-		return Result{}, fmt.Errorf("open Git repository %q: %w", repoPath, err)
+		return Result{}, fmt.Errorf("open Git repository %q: %w", displayRepoPath, err)
 	}
 	hash, err := source.ResolveGitRevision(repo, ref)
 	if err != nil {
-		return Result{}, fmt.Errorf("resolve Git ref %q in %q: %w", ref, repoPath, err)
+		return Result{}, fmt.Errorf("resolve Git ref %q in %q: %w", ref, displayRepoPath, err)
 	}
 	commit, err := repo.CommitObject(*hash)
 	if err != nil {
-		return Result{}, fmt.Errorf("load Git commit %q in %q: %w", hash.String(), repoPath, err)
+		return Result{}, fmt.Errorf("load Git commit %q in %q: %w", hash.String(), displayRepoPath, err)
 	}
 	tree, err := commit.Tree()
 	if err != nil {
-		return Result{}, fmt.Errorf("load Git tree for %q in %q: %w", hash.String(), repoPath, err)
+		return Result{}, fmt.Errorf("load Git tree for %q in %q: %w", hash.String(), displayRepoPath, err)
 	}
 
 	root, err := os.MkdirTemp("", "drydock-gitref-*")
@@ -82,11 +83,25 @@ func Snapshot(ctx context.Context, request Request) (Result, error) {
 }
 
 func looksLikeRemoteRepo(value string) bool {
+	if strings.Contains(value, "://") {
+		return true
+	}
 	if looksLikeSCPRemote(value) {
 		return true
 	}
 	parsed, err := url.Parse(value)
-	return err == nil && parsed.Scheme != "" && parsed.Host != ""
+	if err != nil || parsed.Scheme == "" {
+		return false
+	}
+	if parsed.Host != "" {
+		return true
+	}
+	switch strings.ToLower(parsed.Scheme) {
+	case "file", "git", "git+ssh", "http", "https", "oci", "ssh":
+		return true
+	default:
+		return false
+	}
 }
 
 func looksLikeSCPRemote(value string) bool {

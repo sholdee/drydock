@@ -731,6 +731,98 @@ func TestDiffAppsRejectsRemoteCacheInsideEitherRoot(t *testing.T) {
 	}
 }
 
+func TestDiffAppsRefRejectsGitCacheInsideOriginalRepo(t *testing.T) {
+	root := t.TempDir()
+	repo, wt := initDiffGitRepo(t, root)
+	writeDeploymentAppWithDataValue(t, root, "baseline")
+	commitDiffGitRepo(t, repo, wt, "baseline")
+
+	for _, tt := range []struct {
+		name    string
+		request DiffRequest
+	}{
+		{
+			name: "explicit repo",
+			request: DiffRequest{
+				Repo:        root,
+				RefOrig:     "HEAD",
+				Ref:         "HEAD",
+				ChangedOnly: false,
+				GitCacheDir: filepath.Join(root, ".drydock", "git"),
+			},
+		},
+		{
+			name: "repo defaults from right path",
+			request: DiffRequest{
+				LeftPath:    t.TempDir(),
+				RightPath:   root,
+				Ref:         "HEAD",
+				ChangedOnly: false,
+				GitCacheDir: filepath.Join(root, ".drydock", "git"),
+			},
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			if tt.request.LeftPath != "" {
+				writeDeploymentAppWithDataValue(t, tt.request.LeftPath, "baseline")
+			}
+			_, err := Orchestrator{}.DiffApps(context.Background(), tt.request)
+			if err == nil {
+				t.Fatal("DiffApps() error = nil, want git cache containment error")
+			}
+			if !strings.Contains(err.Error(), "git cache dir") || !strings.Contains(err.Error(), "must not be inside repository root") {
+				t.Fatalf("DiffApps() error = %v, want original repo git cache containment error", err)
+			}
+		})
+	}
+}
+
+func TestDiffAppsRefRejectsRemoteCacheInsideOriginalRepo(t *testing.T) {
+	root := t.TempDir()
+	repo, wt := initDiffGitRepo(t, root)
+	writeDeploymentAppWithDataValue(t, root, "baseline")
+	commitDiffGitRepo(t, repo, wt, "baseline")
+
+	for _, tt := range []struct {
+		name    string
+		request DiffRequest
+	}{
+		{
+			name: "explicit repo",
+			request: DiffRequest{
+				Repo:                   root,
+				RefOrig:                "HEAD",
+				Ref:                    "HEAD",
+				ChangedOnly:            false,
+				RemoteResourceCacheDir: filepath.Join(root, ".drydock", "remotes"),
+			},
+		},
+		{
+			name: "repo defaults from right path",
+			request: DiffRequest{
+				LeftPath:               t.TempDir(),
+				RightPath:              root,
+				Ref:                    "HEAD",
+				ChangedOnly:            false,
+				RemoteResourceCacheDir: filepath.Join(root, ".drydock", "remotes"),
+			},
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			if tt.request.LeftPath != "" {
+				writeDeploymentAppWithDataValue(t, tt.request.LeftPath, "baseline")
+			}
+			_, err := Orchestrator{}.DiffApps(context.Background(), tt.request)
+			if err == nil {
+				t.Fatal("DiffApps() error = nil, want remote cache containment error")
+			}
+			if !strings.Contains(err.Error(), "remote resource cache dir") || !strings.Contains(err.Error(), "must not be inside repository root") {
+				t.Fatalf("DiffApps() error = %v, want original repo remote cache containment error", err)
+			}
+		})
+	}
+}
+
 func TestOrchestratorDiffAppsPreservesDiagnosticsFromBothPartialBuilds(t *testing.T) {
 	root := t.TempDir()
 	left := filepath.Join(root, "left")
@@ -1103,6 +1195,30 @@ func TestDiffAppRejectsRemoteCacheInsideEitherRoot(t *testing.T) {
 		if !strings.Contains(err.Error(), "must not be inside repository root") {
 			t.Fatalf("DiffApp() error = %v, want cache containment error", err)
 		}
+	}
+}
+
+func TestDiffAppRefRejectsGitCacheInsideOriginalRepo(t *testing.T) {
+	root := t.TempDir()
+	repo, wt := initDiffGitRepo(t, root)
+	writeDeploymentAppWithDataValue(t, root, "baseline")
+	commitDiffGitRepo(t, repo, wt, "baseline")
+
+	_, err := Orchestrator{}.DiffApp(context.Background(), DiffAppRequest{
+		Name: "demo",
+		DiffRequest: DiffRequest{
+			Repo:        root,
+			RefOrig:     "HEAD",
+			Ref:         "HEAD",
+			ChangedOnly: false,
+			GitCacheDir: filepath.Join(root, ".drydock", "git"),
+		},
+	})
+	if err == nil {
+		t.Fatal("DiffApp() error = nil, want git cache containment error")
+	}
+	if !strings.Contains(err.Error(), "git cache dir") || !strings.Contains(err.Error(), "must not be inside repository root") {
+		t.Fatalf("DiffApp() error = %v, want original repo git cache containment error", err)
 	}
 }
 

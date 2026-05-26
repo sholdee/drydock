@@ -127,7 +127,7 @@ func (o Orchestrator) DiffApp(ctx context.Context, request DiffAppRequest) (Diff
 		return DiffResult{}, err
 	}
 
-	forbiddenRoots := []string{request.LeftPath, request.RightPath}
+	forbiddenRoots := diffForbiddenRoots(request.DiffRequest)
 	if err := validateDiffRemoteCache(request.DiffRequest, forbiddenRoots); err != nil {
 		return DiffResult{}, err
 	}
@@ -264,11 +264,15 @@ func resolveDiffRequestPaths(ctx context.Context, request DiffRequest) (DiffRequ
 	if repoPath == "" {
 		repoPath = request.RightPath
 	}
-	if strings.TrimSpace(request.Repo) != "" && strings.TrimSpace(request.Ref) == "" && strings.TrimSpace(request.RefOrig) == "" {
+	hasRef := strings.TrimSpace(request.Ref) != "" || strings.TrimSpace(request.RefOrig) != ""
+	if strings.TrimSpace(request.Repo) != "" && !hasRef {
 		return request, cleanup, fmt.Errorf("--repo requires --ref or --ref-orig")
 	}
 	if strings.TrimSpace(request.RefOrig) != "" && strings.TrimSpace(request.LeftPath) != "" {
 		return request, cleanup, fmt.Errorf("--ref-orig cannot be combined with --path-orig")
+	}
+	if hasRef {
+		request.Repo = repoPath
 	}
 
 	forbiddenRoots := []string{request.LeftPath, request.RightPath, repoPath}
@@ -352,6 +356,11 @@ func validateDiffRemoteCache(request DiffRequest, forbiddenRoots []string) error
 	return nil
 }
 
+func diffForbiddenRoots(request DiffRequest) []string {
+	forbiddenRoots := []string{request.LeftPath, request.RightPath}
+	return appendUniqueString(forbiddenRoots, request.Repo)
+}
+
 func selectedApplications(application argoappv1.Application, ok bool) []argoappv1.Application {
 	if !ok {
 		return []argoappv1.Application{}
@@ -376,7 +385,7 @@ func hasRenderedDiffInput(leftBuild, rightBuild BuildResult) bool {
 }
 
 func (o Orchestrator) buildDiffSides(ctx context.Context, request DiffRequest) (BuildResult, BuildResult, []diagnostic.Diagnostic, error) {
-	forbiddenRoots := []string{request.LeftPath, request.RightPath}
+	forbiddenRoots := diffForbiddenRoots(request)
 	if err := validateDiffRemoteCache(request, forbiddenRoots); err != nil {
 		return BuildResult{}, BuildResult{}, nil, err
 	}
