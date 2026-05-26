@@ -1,3 +1,5 @@
+# syntax=docker/dockerfile:1.7
+
 FROM --platform=$BUILDPLATFORM golang:1.26.3@sha256:2d6c80227255c3112a4d08e67ba98e58efd3846daf15d9d7d4c389565d881b1a AS build
 
 ARG TARGETOS
@@ -8,10 +10,13 @@ ARG COMMIT=none
 WORKDIR /src
 
 COPY go.mod go.sum ./
-RUN go mod download
+RUN --mount=type=cache,id=drydock-go-mod,target=/go/pkg/mod,sharing=locked \
+  go mod download
 
 COPY . .
-RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build \
+RUN --mount=type=cache,id=drydock-go-mod,target=/go/pkg/mod,sharing=locked \
+  --mount=type=cache,id=drydock-go-build-${TARGETOS}-${TARGETARCH},target=/root/.cache/go-build,sharing=locked \
+  CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build \
   -trimpath \
   -ldflags="-s -w -X main.version=${VERSION} -X main.commit=${COMMIT}" \
   -o /drydock \
