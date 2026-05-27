@@ -88,7 +88,7 @@ func newTestCommand(deps Dependencies) *cobra.Command {
 				}
 				return testCommandError(err, result.Statuses)
 			}
-			if renderErr := renderTestResult(cmd, result.Statuses, output, false); renderErr != nil {
+			if renderErr := renderTestResult(cmd, result.Statuses, output, false, true); renderErr != nil {
 				return renderErr
 			}
 			return testCommandError(err, result.Statuses)
@@ -122,7 +122,7 @@ func newTestCommand(deps Dependencies) *cobra.Command {
 			if renderErr := renderDiagnostics(cmd.ErrOrStderr(), result.Diagnostics); renderErr != nil {
 				return renderErr
 			}
-			if renderErr := renderTestResult(cmd, result.Statuses, output, deps.isTerminal(cmd.OutOrStdout())); renderErr != nil {
+			if renderErr := renderTestResult(cmd, result.Statuses, output, deps.isTerminal(cmd.OutOrStdout()), false); renderErr != nil {
 				return renderErr
 			}
 			return testCommandError(err, result.Statuses)
@@ -139,26 +139,40 @@ func buildRequestFromFlags(flags commonFlags, repoMaps []source.RepoMap) app.Bui
 	return requestOptionsFromFlags(flags, repoMaps).Build()
 }
 
-func renderTestResult(cmd *cobra.Command, statuses []app.ApplicationStatus, output string, color bool) error {
+func renderTestResult(cmd *cobra.Command, statuses []app.ApplicationStatus, output string, color, showEmptyMessage bool) error {
 	switch output {
 	case testOutputText:
-		return renderTestStatuses(cmd.OutOrStdout(), statuses, color)
+		return renderTestStatuses(cmd.OutOrStdout(), statuses, color, showEmptyMessage)
 	case string(cliformat.OutputJSON):
-		return writeStructuredOutput(cmd.OutOrStdout(), output, statuses)
+		return writeStructuredOutput(cmd.OutOrStdout(), output, nonNilTestStatuses(statuses))
 	case string(cliformat.OutputYAML):
-		return writeStructuredOutput(cmd.OutOrStdout(), output, statuses)
+		return writeStructuredOutput(cmd.OutOrStdout(), output, nonNilTestStatuses(statuses))
 	default:
 		return fmt.Errorf("unsupported output %q for test", output)
 	}
 }
 
-func renderTestStatuses(w io.Writer, statuses []app.ApplicationStatus, color bool) error {
+func renderTestStatuses(w io.Writer, statuses []app.ApplicationStatus, color, showEmptyMessage bool) error {
+	if len(statuses) == 0 {
+		if !showEmptyMessage {
+			return nil
+		}
+		_, err := fmt.Fprintln(w, "No Applications discovered.")
+		return err
+	}
 	for _, status := range statuses {
 		if err := renderApplicationStatus(w, status, color); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+func nonNilTestStatuses(statuses []app.ApplicationStatus) []app.ApplicationStatus {
+	if statuses == nil {
+		return []app.ApplicationStatus{}
+	}
+	return statuses
 }
 
 func renderApplicationStatus(w io.Writer, status app.ApplicationStatus, color bool) error {
@@ -245,6 +259,10 @@ func (reporter *testLiveReporter) RenderMissingStatuses(statuses []app.Applicati
 }
 
 func (reporter *testLiveReporter) Summary(statuses []app.ApplicationStatus) error {
+	if len(statuses) == 0 {
+		_, err := fmt.Fprintln(reporter.out, "No Applications discovered.")
+		return err
+	}
 	counts := summarizeTestStatuses(statuses)
 	if _, err := fmt.Fprintf(reporter.out, "%d applications: %d passed, %d failed, %d skipped in %s\n",
 		len(statuses), counts.passed, counts.failed, counts.skipped, formatTestDuration(time.Since(reporter.started))); err != nil {

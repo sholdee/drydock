@@ -18,6 +18,7 @@ func TestOptionsBuildCopiesSharedFields(t *testing.T) {
 
 	assertDeepEqual(t, "Path", request.Path, "repo")
 	assertDeepEqual(t, "Strict", request.Strict, true)
+	assertDeepEqual(t, "DiscoverKustomizePaths", request.DiscoverKustomizePaths, []string{"argocd/overlays/prod"})
 	assertDeepEqual(t, "Offline", request.Offline, true)
 	assertDeepEqual(t, "RefreshCharts", request.RefreshCharts, true)
 	assertDeepEqual(t, "ChartCacheDir", request.ChartCacheDir, "chart-cache")
@@ -41,6 +42,7 @@ func TestOptionsBuildCopiesSharedFields(t *testing.T) {
 	assertDeepEqual(t, "RecordCacheEvents", request.RecordCacheEvents, true)
 
 	mutateOptions(&options)
+	assertDeepEqual(t, "copied DiscoverKustomizePaths", request.DiscoverKustomizePaths, []string{"argocd/overlays/prod"})
 	assertDeepEqual(t, "copied RepoMaps", request.RepoMaps, []source.RepoMap{{URL: "https://example.test/repo.git", Path: "/repo"}})
 	assertDeepEqual(t, "copied RemoteResourceForbiddenRoots", request.RemoteResourceForbiddenRoots, []string{"/repo"})
 	assertDeepEqual(t, "copied SkipKinds", request.SkipKinds, []string{"Secret"})
@@ -58,6 +60,7 @@ func TestOptionsDiffCopiesSharedFields(t *testing.T) {
 	assertDeepEqual(t, "Repo", request.Repo, "repo-root")
 	assertDeepEqual(t, "Ref", request.Ref, "feature")
 	assertDeepEqual(t, "RefOrig", request.RefOrig, "main")
+	assertDeepEqual(t, "DiscoverKustomizePaths", request.DiscoverKustomizePaths, []string{"argocd/overlays/prod"})
 	assertDeepEqual(t, "ChangedOnly", request.ChangedOnly, true)
 	assertDeepEqual(t, "StrictChangedOnly", request.StrictChangedOnly, true)
 	assertDeepEqual(t, "Strict", request.Strict, true)
@@ -86,6 +89,7 @@ func TestOptionsDiffCopiesSharedFields(t *testing.T) {
 	assertDeepEqual(t, "RecordCacheEvents", request.RecordCacheEvents, true)
 
 	mutateOptions(&options)
+	assertDeepEqual(t, "copied DiscoverKustomizePaths", request.DiscoverKustomizePaths, []string{"argocd/overlays/prod"})
 	assertDeepEqual(t, "copied StripAttrs", request.StripAttrs, []string{"metadata.annotations.checksum/config"})
 	assertDeepEqual(t, "copied RepoMaps", request.RepoMaps, []source.RepoMap{{URL: "https://example.test/repo.git", Path: "/repo"}})
 	assertDeepEqual(t, "copied SkipKinds", request.SkipKinds, []string{"Secret"})
@@ -109,6 +113,7 @@ func fixtureOptions() Options {
 		Repo:                         "repo-root",
 		Ref:                          "feature",
 		RefOrig:                      "main",
+		DiscoverKustomizePaths:       []string{"argocd/overlays/prod"},
 		StrictChangedOnly:            true,
 		Strict:                       true,
 		StripAttrs:                   []string{"metadata.annotations.checksum/config"},
@@ -150,6 +155,7 @@ func providerDataFixture() appset.ProviderData {
 
 func mutateOptions(options *Options) {
 	options.StripAttrs[0] = "mutated"
+	options.DiscoverKustomizePaths[0] = "mutated"
 	options.RepoMaps[0].Path = "/mutated"
 	options.RemoteResourceForbiddenRoots[0] = "/mutated"
 	options.SkipKinds[0] = "ConfigMap"

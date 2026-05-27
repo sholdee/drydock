@@ -18,6 +18,7 @@ type commonFlags struct {
 	ref               string
 	refOrig           string
 	selector          string
+	discoverKustomize []string
 	repoMaps          []string
 	offline           bool
 	refreshCharts     bool
@@ -73,6 +74,7 @@ func bindCommonFlags(cmd *cobra.Command, flags *commonFlags) {
 	cmd.Flags().StringVar(&flags.path, "path", flags.path, "repository path to inspect")
 	cmd.Flags().StringVar(&flags.pathOrig, "path-orig", flags.pathOrig, "baseline repository path for diffs")
 	cmd.Flags().StringVarP(&flags.selector, "selector", "l", flags.selector, "label selector for Applications")
+	cmd.Flags().StringArrayVar(&flags.discoverKustomize, "discover-kustomize", flags.discoverKustomize, "additional local Kustomize path to render for Argo CD Application discovery")
 	cmd.Flags().StringArrayVar(&flags.repoMaps, "repo-map", flags.repoMaps, "repository URL mapping in from=to form")
 	cmd.Flags().BoolVar(&flags.offline, "offline", flags.offline, "disable network access and use local files, repo maps, or existing caches")
 	cmd.Flags().BoolVar(&flags.refreshCharts, "refresh-charts", flags.refreshCharts, "refresh cached Helm charts before rendering")
@@ -171,6 +173,7 @@ func requestOptionsFromFlags(flags commonFlags, repoMaps []source.RepoMap) reque
 		Repo:                           flags.repo,
 		Ref:                            flags.ref,
 		RefOrig:                        flags.refOrig,
+		DiscoverKustomizePaths:         append([]string(nil), flags.discoverKustomize...),
 		ChangedOnly:                    &flags.changedOnly,
 		StrictChangedOnly:              flags.strictChangedOnly,
 		Strict:                         flags.strict,

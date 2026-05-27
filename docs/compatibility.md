@@ -43,6 +43,8 @@ silent approximations.
 Supported:
 
 - Direct Application discovery from repository manifests.
+- Explicit `--discover-kustomize PATH` discovery from rendered local
+  Kustomize entrypoints, with normal path containment and symlink checks.
 - ApplicationSet Git directories, Git files, list, matrix, and merge
   generators.
 - ApplicationSet list `elementsYaml`, including matrix-interpolated
@@ -55,6 +57,8 @@ Supported:
   provider, pull-request, and plugin ApplicationSet generators.
 - Fail-closed fixture diagnostics for invalid provider fixtures, no provider
   matches, and unsupported provider filters.
+- Warning diagnostics when a discovered ApplicationSet generates zero
+  Applications; `--strict` promotes those diagnostics to errors.
 
 Not supported:
 

@@ -203,11 +203,11 @@ data:
 		t.Fatalf("ApplicationSet = %#v, want path and document index 0", result.ApplicationSets[0])
 	}
 	wantSettings := []SettingsCandidate{
-		{Path: filepath.Join("settings", "argocd-cm.yaml"), DocumentIndex: 0, Kind: "argocd-cm"},
-		{Path: filepath.Join("settings", "cmp-configmap.yaml"), DocumentIndex: 0, Kind: "argocd-cmp-cm"},
+		{Path: filepath.Join("settings", "argocd-cm.yaml"), DocumentIndex: 0, Kind: "argocd-cm", APIVersion: "v1", Namespace: "argocd", Name: "argocd-cm"},
+		{Path: filepath.Join("settings", "cmp-configmap.yaml"), DocumentIndex: 0, Kind: "argocd-cmp-cm", APIVersion: "v1", Name: "argocd-cmp-cm"},
 		{Path: filepath.Join("settings", "cmp-values.yaml"), DocumentIndex: 0, Kind: "argocd-values"},
 		{Path: filepath.Join("settings", "compare-values.yaml"), DocumentIndex: 0, Kind: "argocd-values"},
-		{Path: filepath.Join("settings", "repo-secret.yaml"), DocumentIndex: 0, Kind: "repository-secret"},
+		{Path: filepath.Join("settings", "repo-secret.yaml"), DocumentIndex: 0, Kind: "repository-secret", APIVersion: "v1", Namespace: "argocd", Name: "repo"},
 		{Path: filepath.Join("settings", "values.yaml"), DocumentIndex: 0, Kind: "argocd-values"},
 	}
 	if !reflect.DeepEqual(result.SettingsCandidates, wantSettings) {
