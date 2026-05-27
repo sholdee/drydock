@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.1.4](https://github.com/sholdee/drydock/compare/v0.1.3...v0.1.4) (2026-05-27)
+
+
+### Features
+
+* discover rendered Argo CD fleets ([#35](https://github.com/sholdee/drydock/issues/35)) ([645684b](https://github.com/sholdee/drydock/commit/645684b05f66406be800f2b8c9ee4ada4018b14f))
+* discover rendered kustomize apps ([#32](https://github.com/sholdee/drydock/issues/32)) ([a5db3bf](https://github.com/sholdee/drydock/commit/a5db3bf1486704f9450a444a3f6b47bb0fb1489b))
+
 ## [0.1.3](https://github.com/sholdee/drydock/compare/v0.1.2...v0.1.3) (2026-05-27)
 
 
