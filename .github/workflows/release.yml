@@ -243,6 +243,8 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+    outputs:
+      release-id: ${{ steps.stage.outputs.release-id }}
     steps:
       - name: Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
@@ -257,6 +259,7 @@ jobs:
           path: dist/
 
       - name: Stage draft release
+        id: stage
         env:
           FULL_IMAGE: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -340,6 +343,18 @@ jobs:
             --target "${GITHUB_SHA}" \
             --title "${TAG}" \
             --notes-file release-notes.md
+
+          release_id="$(gh release view "${TAG}" --json databaseId --jq '.databaseId')"
+          release_target="$(gh release view "${TAG}" --json targetCommitish --jq '.targetCommitish')"
+          if [[ -z "${release_id}" ]]; then
+            echo "Failed to resolve draft release ID for ${TAG}." >&2
+            exit 1
+          fi
+          if [[ "${release_target}" != "${GITHUB_SHA}" ]]; then
+            echo "Draft release ${TAG} points to ${release_target}, expected ${GITHUB_SHA}." >&2
+            exit 1
+          fi
+          echo "release-id=${release_id}" >> "${GITHUB_OUTPUT}"
 
   publish-image:
     needs:
@@ -438,13 +453,30 @@ jobs:
           DIGEST: ${{ needs.publish-image.outputs.digest }}
           FULL_IMAGE: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_ID: ${{ needs.stage-release.outputs.release-id }}
           TAG: ${{ needs.release-meta.outputs.tag }}
           VERSION: ${{ needs.release-meta.outputs.semver }}
         shell: bash
         run: |
-          release_draft="$(gh release view "${TAG}" --json isDraft --jq '.isDraft')"
+          if [[ -z "${RELEASE_ID}" ]]; then
+            echo "stage-release did not provide a release ID." >&2
+            exit 1
+          fi
+
+          release_json="$(gh api "repos/${GITHUB_REPOSITORY}/releases/${RELEASE_ID}")"
+          release_draft="$(jq -r '.draft' <<< "${release_json}")"
+          release_tag="$(jq -r '.tag_name' <<< "${release_json}")"
+          release_target="$(jq -r '.target_commitish' <<< "${release_json}")"
           if [[ "${release_draft}" != "true" ]]; then
-            echo "Release ${TAG} is not an unpublished draft." >&2
+            echo "Release ${RELEASE_ID} is not an unpublished draft." >&2
+            exit 1
+          fi
+          if [[ "${release_tag}" != "${TAG}" ]]; then
+            echo "Release ${RELEASE_ID} tag is ${release_tag}, expected ${TAG}." >&2
+            exit 1
+          fi
+          if [[ "${release_target}" != "${GITHUB_SHA}" ]]; then
+            echo "Release ${RELEASE_ID} target is ${release_target}, expected ${GITHUB_SHA}." >&2
             exit 1
           fi
 
@@ -473,12 +505,10 @@ jobs:
             printf "**Checksums:** \`checksums.txt\`\n"
           } >> release-notes.md
 
-          gh release edit "${TAG}" --notes-file release-notes.md
-
-          release_id="$(gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${TAG}" --jq '.id')"
           gh api \
             --method PATCH \
-            "repos/${GITHUB_REPOSITORY}/releases/${release_id}" \
+            "repos/${GITHUB_REPOSITORY}/releases/${RELEASE_ID}" \
+            -F body=@release-notes.md \
             -f draft=false
 
           published_sha="$(git ls-remote --tags origin "refs/tags/${TAG}" | awk 'NR == 1 { print $1 }')"
