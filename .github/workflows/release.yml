@@ -533,7 +533,7 @@ jobs:
     permissions:
       contents: write
       issues: write
-      pull-requests: read
+      pull-requests: write
     steps:
       - name: Mark release latest and release-please PR tagged
         env:
@@ -584,5 +584,28 @@ jobs:
             exit 0
           fi
 
-          gh issue edit "${release_pr_number}" --add-label "autorelease: tagged"
-          gh issue edit "${release_pr_number}" --remove-label "autorelease: pending"
+          gh api \
+            --method POST \
+            "repos/${GITHUB_REPOSITORY}/issues/${release_pr_number}/labels" \
+            -f "labels[]=autorelease: tagged" \
+            >/dev/null
+
+          pending_label="$(jq -rn --arg label "autorelease: pending" '$label|@uri')"
+          gh api \
+            --method DELETE \
+            "repos/${GITHUB_REPOSITORY}/issues/${release_pr_number}/labels/${pending_label}" \
+            >/dev/null
+
+          current_labels="$(
+            gh api \
+              "repos/${GITHUB_REPOSITORY}/issues/${release_pr_number}/labels" \
+              --jq '.[].name'
+          )"
+          if ! grep -Fxq "autorelease: tagged" <<< "${current_labels}"; then
+            echo "Release PR #${release_pr_number} is missing autorelease: tagged after label update." >&2
+            exit 1
+          fi
+          if grep -Fxq "autorelease: pending" <<< "${current_labels}"; then
+            echo "Release PR #${release_pr_number} still has autorelease: pending after label update." >&2
+            exit 1
+          fi
