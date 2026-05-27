@@ -28,7 +28,6 @@ jobs:
       created: ${{ steps.version.outputs.created }}
       publish: ${{ steps.version.outputs.publish }}
       semver: ${{ steps.version.outputs.semver }}
-      tag-exists: ${{ steps.version.outputs.tag-exists }}
       tag: ${{ steps.version.outputs.tag }}
     steps:
       - name: Verify release ref
@@ -60,23 +59,16 @@ jobs:
           tag="v${version}"
           created="$(git show -s --format=%cI "${GITHUB_SHA}")"
           publish="true"
-          tag_exists="false"
           remote_sha="$(git ls-remote --tags origin "refs/tags/${tag}" | awk 'NR == 1 { print $1 }')"
-          if [[ -n "${remote_sha}" ]]; then
-            tag_exists="true"
-            release_draft=""
-            if release_draft="$(gh release view "${tag}" --json isDraft --jq '.isDraft' 2>/dev/null)"; then
-              publish="false"
-              if [[ "${release_draft}" == "true" ]]; then
-                if [[ "${remote_sha}" != "${GITHUB_SHA}" ]]; then
-                  echo "Draft release ${tag} exists, but its tag points to ${remote_sha}, expected ${GITHUB_SHA}." >&2
-                  exit 1
-                fi
-                publish="true"
+
+          if release_draft="$(gh release view "${tag}" --json isDraft --jq '.isDraft' 2>/dev/null)"; then
+            publish="false"
+            if [[ "${release_draft}" == "true" ]]; then
+              if [[ -n "${remote_sha}" && "${remote_sha}" != "${GITHUB_SHA}" ]]; then
+                echo "Draft release ${tag} exists, but its tag points to ${remote_sha}, expected ${GITHUB_SHA}." >&2
+                exit 1
               fi
-            elif [[ "${remote_sha}" != "${GITHUB_SHA}" ]]; then
-              echo "Release tag ${tag} exists without a GitHub Release and points to ${remote_sha}, expected ${GITHUB_SHA}." >&2
-              exit 1
+              publish="true"
             fi
           fi
 
@@ -84,7 +76,6 @@ jobs:
             echo "created=${created}"
             echo "publish=${publish}"
             echo "semver=${version}"
-            echo "tag-exists=${tag_exists}"
             echo "tag=${tag}"
           } >> "${GITHUB_OUTPUT}"
 
@@ -143,16 +134,7 @@ jobs:
         env:
           TAG: ${{ needs.release-meta.outputs.tag }}
         shell: bash
-        run: |
-          if git rev-parse --verify --quiet "refs/tags/${TAG}" >/dev/null; then
-            tagged_sha="$(git rev-list -n 1 "${TAG}")"
-            if [[ "${tagged_sha}" != "${GITHUB_SHA}" ]]; then
-              echo "Local tag ${TAG} points to ${tagged_sha}, expected ${GITHUB_SHA}" >&2
-              exit 1
-            fi
-          else
-            git tag "${TAG}" "${GITHUB_SHA}"
-          fi
+        run: git tag --force "${TAG}" "${GITHUB_SHA}"
 
       - name: Build release artifacts
         uses: goreleaser/goreleaser-action@5daf1e915a5f0af01ddbcd89a43b8061ff4f1a89 # v7.2.2
@@ -242,19 +224,24 @@ jobs:
           FULL_IMAGE: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG: ${{ needs.release-meta.outputs.tag }}
-          TAG_EXISTS: ${{ needs.release-meta.outputs.tag-exists }}
           VERSION: ${{ needs.release-meta.outputs.semver }}
         shell: bash
         run: |
           remote_sha="$(git ls-remote --tags origin "refs/tags/${TAG}" | awk 'NR == 1 { print $1 }')"
-          if [[ -n "${remote_sha}" && "${remote_sha}" != "${GITHUB_SHA}" ]]; then
-            echo "Remote tag ${TAG} points to ${remote_sha}, expected ${GITHUB_SHA}" >&2
-            exit 1
+
+          existing_release="$(gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${TAG}" 2>/dev/null || true)"
+          if [[ -n "${existing_release}" ]]; then
+            existing_release_draft="$(jq -r '.draft' <<< "${existing_release}")"
+            if [[ "${existing_release_draft}" == "true" ]]; then
+              gh release delete "${TAG}" --yes
+            else
+              echo "Release ${TAG} already exists and is not a draft." >&2
+              exit 1
+            fi
           fi
 
-          if [[ "${TAG_EXISTS}" != "true" ]]; then
-            git tag "${TAG}" "${GITHUB_SHA}"
-            git push "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" "refs/tags/${TAG}"
+          if [[ -n "${remote_sha}" ]]; then
+            git push "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" ":refs/tags/${TAG}"
           fi
 
           awk -v version="${VERSION}" '
@@ -313,20 +300,9 @@ jobs:
             fi
           done
 
-          existing_release="$(gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${TAG}" 2>/dev/null || true)"
-          if [[ -n "${existing_release}" ]]; then
-            existing_release_draft="$(jq -r '.draft' <<< "${existing_release}")"
-            if [[ "${existing_release_draft}" == "true" ]]; then
-              gh release delete "${TAG}" --yes
-            else
-              echo "Release ${TAG} already exists and is not a draft." >&2
-              exit 1
-            fi
-          fi
-
           gh release create "${TAG}" "${release_assets[@]}" \
             --draft \
-            --verify-tag \
+            --target "${GITHUB_SHA}" \
             --title "${TAG}" \
             --notes-file release-notes.md
 
@@ -469,3 +445,9 @@ jobs:
             --method PATCH \
             "repos/${GITHUB_REPOSITORY}/releases/${release_id}" \
             -f draft=false
+
+          published_sha="$(git ls-remote --tags origin "refs/tags/${TAG}" | awk 'NR == 1 { print $1 }')"
+          if [[ "${published_sha}" != "${GITHUB_SHA}" ]]; then
+            echo "Published tag ${TAG} points to ${published_sha}, expected ${GITHUB_SHA}" >&2
+            exit 1
+          fi
