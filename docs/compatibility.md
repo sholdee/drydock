@@ -159,6 +159,8 @@ Supported:
   add/delete diffs when the Application exists on only one side.
 - `diff apps`, `diff app`, and `diff images` against local Git refs through
   temporary local snapshots, without `git` shellouts or checkout mutation.
+- Git-style ANSI color for text diff output with
+  `--color=auto|always|never`; JSON and YAML payloads remain plain.
 - Changed-only Application selection with safe render-all fallback and strict
   failure mode.
 - Default diff ignores for common Helm chart/version labels and pod-template
