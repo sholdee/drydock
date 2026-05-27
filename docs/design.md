@@ -1,613 +1,219 @@
 # drydock Design
 
-Date: 2026-05-22
+`drydock` is an independent Go CLI and embeddable library for Argo CD GitOps
+repository analysis. It discovers Argo CD Applications, renders desired
+manifests, validates renderability, inspects images and diagnostics, and
+compares current and baseline desired state for pull request diffs.
 
-## Purpose
+The core design target is offline-runtime analysis: default workflows require
+no running Kubernetes cluster, Argo CD instance, `kubectl`, `argocd`, Helm CLI,
+Kustomize CLI, repo-server, or external render service. Declared Git, HTTP
+Helm, OCI Helm, and remote Kustomize sources may be fetched into explicit
+drydock caches unless `--offline` is set.
 
-`drydock` is an independent Go CLI for Argo CD GitOps repository analysis that
-runs offline from live Argo CD and Kubernetes runtime. It performs offline
-desired-state analysis: discover Argo CD Applications, render desired
-manifests, validate renderability, inspect images and diagnostics, and compare
-current and baseline trees for desired-vs-desired pull request diffs.
+## Runtime Boundary
 
-The tool is intentionally not a live-cluster diff. It does not contact the
-Kubernetes API server, does not run Argo CD controllers, and does not claim to
-reproduce server-side apply prediction, admission mutation, or managed-fields
-ownership. This is a product boundary, not a missing default integration.
+drydock is not a live-cluster diff. It does not query Kubernetes or Argo CD,
+run Argo CD controllers, or silently approximate live-only behavior. These are
+intentional product boundaries:
 
-Default render, diff, image, and diagnostic workflows are offline-runtime
-desired-vs-desired analysis. They may fetch declared Git, HTTP Helm, OCI Helm,
-and remote Kustomize sources into explicit caches unless `--offline` is set.
-Live-cluster diffing, Argo CD server-side diff parity, Kubernetes defaulting,
-admission mutation, and live-only managed-fields ownership prediction are not
-approximated silently. Any future exception to that boundary must first update
-the live runtime boundary document and keep the default path independent of a
-Kubernetes cluster, Argo CD server, `kubectl`, `argocd`, Helm/Kustomize
-command-line tools, and external render services.
+- Kubernetes API defaulting and admission mutation.
+- Argo CD server-side diff.
+- Live server-side apply field ownership prediction.
+- Live Argo CD Application health aggregation.
+- Full Argo CD RBAC authorization.
+- CLI config management plugin execution and repo-server sidecar discovery.
+- Live provider APIs for ApplicationSet generators.
 
-## Repository
-
-The canonical module and repository identity is:
-
-```text
-github.com/sholdee/drydock
-```
-
-Local checkout paths are operator-specific and may lag the repository rename
-until the external rename checklist is completed.
-
-The repository is licensed Apache-2.0. Releases include a root `LICENSE` and
-third-party notices for redistributed source, copied fixtures, binary/container
-distributions, and imported Apache-2.0 components as needed.
-
-## Scope
-
-Supported:
-
-- Direct `Application` CRs.
-- `ApplicationSet` Git directories, Git files, list, matrix, and merge
-  generators with Go templates.
-- Single-source and multi-source Applications.
-- Git path sources rendered as Kustomize or directory manifests.
-- Helm chart sources from HTTP and OCI repositories.
-- Helm `$ref/...` external value files from Git sources.
-- Repository URL to local path mappings.
-- Default Git cache acquisition for unmapped external repositories unless
-  `--offline` is set.
-- Explicit Git HTTPS bearer/basic auth, Git SSH key-file auth, HTTP(S) Helm
-  bearer/basic auth, and explicit OCI Helm registry config path plumbing.
-- Config management plugin source detection with fail-closed diagnostics in
-  the CLI/default path, plus injectable Go API plugin renderers, named
-  in-process plugin registry dispatch, and plugin renderer timeout controls
-  for embedders that provide deterministic local plugin rendering.
-- Cluster, clusterDecisionResource, SCM provider, pull-request, and plugin
-  ApplicationSet generators through explicit local fixtures.
-- Render, test, get, diagnostic, cache, manifest diff, and image diff commands.
-- Changed-only rendering with safe fallback.
-
-Outside the core runtime contract:
-
-- Live-cluster diff.
-- Argo CD API/server integration, Argo CD server-side diff parity,
-  Kubernetes defaulting, admission mutation, and live-only managed-fields
-  ownership prediction.
-- CLI config management plugin execution, shellout plugin adapters, Argo CD
-  repo-server sidecar plugin discovery, ambient plugin configuration, ambient
-  plugin environment loading, and plugin credential injection.
-- Full Argo CD project/RBAC/destination validation.
-- Live health aggregation and richer health diagnostics beyond offline custom
-  health Lua validation.
+Future live-runtime work must remain explicitly opt-in and pass the design gate
+in `docs/reports/live-integration-design-gate.md`.
 
 ## Architecture
 
-The default architecture is a native local engine with Argo CD types and
-decoupled helpers. The tool imports Argo CD API types and selected reusable
-normalization/diff helpers, but owns local orchestration and rendering.
+The production path is a native local engine using Argo CD API types and
+selected reusable helpers where they are decoupled from live runtime services.
+drydock owns discovery, source planning, cache use, rendering orchestration,
+diagnostics, and output shaping.
+
+```mermaid
+flowchart LR
+  Repo[Checked-out repository] --> Discover[Discover Applications, ApplicationSets, settings]
+  Discover --> Plan[Plan sources and inputs]
+  Plan --> Acquire[Acquire declared sources into caches]
+  Acquire --> Render[Render desired manifests with Go libraries]
+  Render --> Normalize[Apply Argo-aware normalization]
+  Normalize --> Diffs[Manifest diffs]
+  Normalize --> Images[Image diffs and inventory]
+  Render --> Tests[Render tests and Lua health validation]
+  Render --> Diag[Diagnostics]
+```
 
 Primary packages:
 
 - `cmd/drydock`: Cobra CLI and exit-code handling.
-- `internal/config`: canonical `ArgoSettings` model loaded from CLI flags,
-  `argocd-cm`, Argo CD Helm values, repository secrets, and defaults.
-- `internal/discovery`: scans repository trees for `Application`,
-  `ApplicationSet`, Argo CD settings, and repository metadata.
-- `internal/appset`: local ApplicationSet Git directories, Git files, list,
-  matrix, and merge generators with Go-template support.
-- `internal/source`: repository URL normalization, local repo maps, source
-  checkout, and cache management.
-- `internal/render`: renderer interface plus Helm, Kustomize, and directory
-  renderers.
-- `internal/app`: Application normalization, single/multi-source planning,
-  `$ref` resolution, repeated-resource warnings, and per-Application rendered
-  output.
+- `pkg/drydock`: public embedding API.
+- `internal/config`: Argo CD settings model and provenance.
+- `internal/discovery`: repository scanning for Applications, ApplicationSets,
+  settings, projects, repository metadata, and cluster metadata.
+- `internal/appset`: deterministic local ApplicationSet expansion.
+- `internal/source`, `internal/chart`, `internal/remote`,
+  `internal/acquisition`: Git, Helm, remote Kustomize, cache, and credential
+  plumbing.
+- `internal/render`: Helm, Kustomize, directory, and plugin renderer
+  interfaces.
+- `internal/app`: Application normalization, source planning, `$ref`
+  resolution, repeated-resource handling, and orchestration.
 - `internal/change`: changed-file detection and Application input indexing.
-- `internal/diff`: parent-aware desired-vs-desired diffs and image diffs.
-- `internal/diagnostic`: warnings, provenance, unsupported-feature reporting,
-  and strict-mode escalation.
+- `internal/diff` and `internal/manifest`: manifest normalization, resource
+  diffs, and image extraction.
+- `internal/diagnostic`: stable diagnostics, provenance, and strict-mode
+  escalation.
 
 The repo-server wrapper approach is not the default architecture. Argo CD
-repo-server internals can be used as compatibility references or test oracles,
-but the production path should not depend on repo-server service/cache/gRPC
-plumbing.
-
-The shellout approach is also not the default architecture. The product goal is
-a single binary with no required `helm`, `kustomize`, `kubectl`, or `argocd`
-executables on `PATH`. A future optional compatibility backend may be added
-behind the renderer interface if needed.
-
-Config management plugin execution follows the same boundary. The default CLI
-and package-level API do not execute plugin commands or discover repo-server
-sidecars. Embedders may inject deterministic in-process plugin renderers through
-`pkg/drydock`; those renderers receive explicit Application source metadata and
-return manifests and diagnostics in-process. The named registry helper dispatches
-only by explicit `plugin.name`. Timeouts are caller-configured through the public
-API and are reported as plugin failures without converting caller cancellation
-into plugin timeout diagnostics.
-
-## Argo CD Versioning
-
-The Go module pins Argo CD dependencies deliberately. Initial dependency
-selection followed the Argo CD checkout used during project bootstrap, and
-future changes should happen through explicit upgrade PRs.
-
-`drydock version` prints:
-
-- `drydock` version.
-- Embedded Argo CD API/diff dependency versions.
-- Go version.
-
-Argo CD dependency upgrades are explicit PRs with compatibility test updates.
-The project does not float Argo CD dependencies to `latest`.
+repo-server internals can be compatibility references or test oracles, but the
+runtime path must stay a self-contained Go binary.
 
 ## Settings Model
 
-All runtime settings are normalized into a canonical `ArgoSettings` structure.
-Providers feed this model, and every discovered value carries provenance.
-
-Example model:
-
-```go
-type ArgoSettings struct {
-    KustomizeBuildOptions []string
-    HelmRepositories map[string]RepositorySettings
-    ResourceCustomizations map[string]ResourceCustomization
-    ResourceExclusions []ResourceExclusion
-    TrackingMethod string
-    InstanceLabelKey string
-}
-```
+Runtime settings are normalized into `ArgoSettings`. Every discovered value
+carries provenance so diagnostics can explain where behavior came from.
 
 Provider precedence:
 
-1. Explicit CLI flags, including `--argocd-cm`, `--argocd-values`,
+1. Explicit CLI flags such as `--argocd-cm`, `--argocd-values`,
    `--repo-secret`, and `--kustomize-build-option`.
 2. Rendered Argo CD ConfigMap candidates, especially `argocd-cm`.
-3. Argo CD Helm chart values candidates, including `configs.cm`.
-4. Repository secrets labeled `argocd.argoproj.io/secret-type: repository`,
-   using only non-sensitive fields such as `url`, `type`, `enableOCI`, `name`,
-   and `project`.
+3. Argo CD Helm values candidates, including `configs.cm`.
+4. Repository Secrets labeled
+   `argocd.argoproj.io/secret-type: repository`, using only non-sensitive
+   metadata.
 5. Built-in Argo CD defaults.
 
-Discovery is generic and not specific to any one repository. Common paths may
-be scanned, but conflicting discovered settings fail closed and require an
-explicit CLI selection. Missing settings use defaults with a warning.
+Rendering and diff-affecting settings are enforced. Resource action Lua is
+parsed as metadata only. Custom health Lua is validated offline during render
+tests against rendered desired manifests; it is not live Argo CD health
+aggregation.
 
-Example diagnostic:
+## Discovery And ApplicationSets
 
-```text
-kustomize.buildOptions:
-  value: --enable-helm --helm-api-versions grafana.integreatly.org/v1beta1/GrafanaDashboard
-  source: apps/argocd/manifests/values.yaml:configs.cm.kustomize.buildOptions
-```
+Discovery scans the selected repository tree for direct `Application` CRs,
+supported generated `ApplicationSet` Applications, Argo CD settings,
+AppProjects, repository metadata, and cluster Secret metadata. Generated and
+direct Applications share the same downstream planning, rendering, test, and
+diff path.
 
-Health customizations, RBAC, and resource exclusions are recorded when found.
-Rendering/diff-affecting settings are enforced during render and diff.
-`drydock test apps` validates configured custom Argo CD health Lua offline by
-default against rendered desired manifests, not live Argo CD Application
-health aggregation. Valid returned health states such as `Healthy`,
-`Progressing`, or `Degraded` do not fail Applications; Lua compile, runtime,
-invalid-return, invalid-status, and ambiguous-customization failures do.
-Resource action Lua remains metadata-only and is not executed offline.
-`diag --settings -o json|yaml` exposes a CLI-only redacted summary for
-operators, including names, booleans, and SHA-256 hashes of trimmed Lua
-bodies. Raw Lua bodies and secret-looking strings embedded in Lua are not part
-of the structured summary.
+ApplicationSet support is deterministic and local. Git, list, matrix, merge,
+and fixture-backed provider generators are documented in
+`docs/applicationsets.md`.
 
-## Application Discovery
+Unsupported generators or unsupported fields produce diagnostics. Non-strict
+commands keep supported Applications where possible; `--strict` promotes those
+diagnostics to errors.
 
-The default command behavior scans the provided tree for Argo CD entrypoints:
+## Source Planning And Acquisition
 
-```bash
-drydock get apps --path ./repo
-drydock build app --path ./repo monitoring
-drydock diff apps --path ./repo --path-orig ../repo-base
-```
+Applications follow Argo CD source precedence:
 
-Diff commands may also compare local Git refs. A ref side is materialized as a
-temporary local snapshot, then the existing path-based planning and rendering
-pipeline is reused:
+- `spec.sources` wins when non-empty.
+- `spec.source` is used otherwise.
 
-```bash
-drydock diff apps --path ./repo --ref-orig main
-drydock diff apps --repo ./repo --ref feature --ref-orig main
-```
+Each source renders independently in source array order. Ref-only sources
+render no manifests. `$ref/...` Helm value files resolve from the referenced
+source root, not from the referenced source `path`. If multiple sources emit
+the same resource identity inside one Application, the later source wins and a
+repeated-resource diagnostic is emitted.
 
-`--ref-orig` replaces `--path-orig`; `--ref` replaces `--path`; `--repo`
-defaults to `--path` and must be a local repository path. Top-level remote
-repository URLs are deferred.
+Repository resolution and cache behavior are documented in
+`docs/source-acquisition.md`. Important invariants:
 
-Optional narrowing flags include:
-
-- `--app-manifests <path>`
-- `--namespace <namespace>`
-- `--project <project>`
-- `--selector <label-selector>`
-- `--app <name>`
-
-The scanner identifies direct `Application` CRs and supported
-`ApplicationSet` CRs. Generated Applications and direct Applications share the
-same downstream planning, rendering, and diff path.
-
-## ApplicationSet Support
-
-The supported local ApplicationSet subset includes the Git directories
-generator, Git files generator, and list generator.
-
-Supported behavior:
-
-- `spec.goTemplate: true`
-- `spec.goTemplateOptions`, including `missingkey=error`
-- Sprig-compatible template functions used by Argo CD, including
-  `regexReplaceAll`
-- directory include/exclude filtering
-- git-files include/exclude filtering
-- `.path.path`
-- `.path.basename`
-- `.path.basenameNormalized`
-- `.path.filename` for git-files
-- `.path.filenameNormalized` for git-files
-- `.path.segments`
-- generated `Application.metadata.namespace` set to the ApplicationSet
-  namespace
-- Argo CD's default generated Application finalizer where applicable
-- multiple supported top-level generators evaluated independently and
-  concatenated in manifest order
-
-Unsupported generators or unsupported ApplicationSet fields produce diagnostics.
-In non-strict mode, unsupported ApplicationSets are skipped with warnings. In
-strict mode, they are errors.
-
-Git files generator matches are sorted by normalized relative path. Traversal is
-contained to the repository root: symlinks, absolute paths, and `..` escapes are
-not followed. YAML/JSON mapping documents become template params. Go-template
-mode preserves nested maps such as `.cluster.name`; non-Go-template mode
-flattens nested keys such as `cluster.name` and converts scalar values to
-strings. Arrays, scalars, invalid YAML/JSON, and empty files produce
-diagnostics.
-
-Git files `values` use the same `values.*` and `.values.*` behavior as Git
-directories. Git files `exclude: true` excludes a file even when another
-pattern includes it.
-
-`pathParamPrefix` applies to all path-related params. For example,
-`pathParamPrefix: myRepo` produces `.myRepo.path.path` in Go templates and
-`myRepo.path` in non-Go-template mode.
-
-In PR diff mode, mapped repository URLs use the local `--path` or `--path-orig`
-trees for directory discovery and rendering, even when the ApplicationSet
-declares `revision: master`.
-
-## Source Planning
-
-Applications are planned using Argo CD source precedence:
-
-- If `spec.sources` is non-empty, it wins and `spec.source` is ignored.
-- Otherwise, `spec.source` is used.
-
-Multi-source support is included for supported source types.
-
-Supported multi-source semantics:
-
-- Each source renders independently in source array order.
-- Ref-only sources are allowed and render no manifests.
-- `ref: values` creates a `$values` root for Helm value files.
-- `$ref/...` value file paths resolve from the referenced source root, not
-  from its `path`.
-- Duplicate refs are errors.
-- Invalid ref keys are errors.
-- Sources with `ref` and `chart` are rejected for external value usage.
-- If multiple sources emit the same resource identity within one Application,
-  the later source wins and a repeated-resource warning is emitted.
-
-Repository resolution:
-
-- `--repo-map <url>=<path>` maps normalized repository URLs to local trees.
-- `--path` and `--path-orig` are authoritative for mapped PR repositories and
-  override declared revisions.
-- Unmapped external repositories fetch into the Git cache by default and require
-  another repo map or cache hit when `--offline` is set.
-- Git HTTPS auth is explicit via bearer token or username/password, with bearer
-  token taking precedence.
-- Git SSH auth is explicit via key file, passphrase when required, and
-  known-hosts file. SSH auth fails closed before network access if the key file
-  or known-hosts file is missing.
-- Supported SSH URL forms are `ssh://git@host/org/repo.git`,
-  `git@host:org/repo.git`, and `ssh://host/org/repo.git`. Missing usernames
-  default to `git`.
-- HTTP(S) Helm auth is explicit via bearer token or username/password, with
-  bearer token taking precedence.
-- OCI Helm auth is explicit via a `--registry-config` path.
-- The tool never prompts for credentials, never reads ambient Git credential
-  helpers, and never reads ambient Helm registry config in this slice.
-- Passwords, bearer tokens, SSH private keys, SSH passphrases, and registry
-  credential values are never printed in diagnostics or formatted errors.
-
-## Cache Model
-
-Source caches are explicit operator-managed roots for Git repositories, Helm
-charts, and remote Kustomize resources. Entries keep their current hash-based
-layout and include hidden `.drydock-cache/metadata.json` sidecars with redacted
-target metadata. Metadata writes are atomic and preserve original creation
-time across cache hits.
-
-`cache list`, `cache prune`, and `cache delete` only operate on recognized
-entry roots. Prune/delete remain explicit filesystem lifecycle commands,
-guarded by protected-root checks, age/key/source filters, dry-run support, and
-`--yes` for destructive execution.
-
-A shared content-addressed store with ref tables, leases, and mark-sweep
-collection is intentionally deferred. It would be useful only after drydock has
-multiple cache surfaces sharing the same immutable blobs; until then, it would
-add deletion semantics that need stronger live-reference protection than the
-current one-entry-per-acquisition layout requires.
+- `--repo-map URL=PATH` wins over local source fallback and network fetching.
+- PR diff roots are authoritative for mapped repositories.
+- Unmapped external Git repositories fetch into the Git cache by default and
+  require cache hits or repo maps under `--offline`.
+- Credential use is explicit, non-interactive, and redacted.
+- Caches must stay outside selected repository trees and symlink-resolved
+  equivalents.
 
 ## Rendering
 
-All renderers implement:
+All renderers implement an internal renderer interface and return manifests,
+diagnostics, and errors without writing generated output into the source tree.
 
-```go
-type Renderer interface {
-    Render(ctx context.Context, source ResolvedSource, opts RenderOptions) ([]Manifest, Diagnostics, error)
-}
-```
+Supported render paths:
 
-Supported renderers:
+- Directory manifests.
+- Kustomize sources using Go libraries and supported Argo CD build options.
+- Local Helm charts.
+- Kustomize `helmCharts` through the shared Helm library path.
+- Remote Helm chart sources from HTTP(S) and OCI repositories.
+- Remote Kustomize HTTP(S) files and Git refs.
+- Deterministic in-process plugin renderers supplied by embedding callers.
 
-- Helm renderer: supports HTTP and OCI chart sources, target revision,
-  release name, destination namespace, `valuesObject`, `values`, value files,
-  file parameters, `ignoreMissingValueFiles`, and `$ref/...` external value
-  files.
-- Kustomize renderer: supports local Kustomize builds with Argo settings build
-  options, especially `--enable-helm` and Helm API versions. App-level
-  Kustomize overrides are supported where Go libraries make this practical.
-- Directory renderer: parses plain YAML/JSON manifests, flattens `List`
-  resources, skips irrelevant files, and errors on invalid manifest content.
-
-The default render path does not shell out. Renderers should use Go libraries
-and isolated temp/cache directories.
+The default CLI and default Go client fail closed for config management plugin
+sources unless an embedding caller injects a plugin renderer.
 
 ## Diff Semantics
 
-The primary diff is desired-vs-desired. It answers: "What rendered desired
-manifests changed between the base tree and current tree?"
+Manifest diffs are desired-vs-desired. They answer: "What rendered desired
+manifests changed between the baseline tree and current tree?"
 
-Offline-safe behavior:
+Diff behavior:
 
-- Render both sides using the same planning and settings model.
-- Normalize obvious generated noise. By default this removes common Helm
-  chart/version labels from resource metadata and pod-template metadata, plus
-  pod-template `checksum/*` annotations. `--show-ignored-fields` disables only
-  this drydock-default filtering and leaves Argo CD diff customizations active.
-- Apply Argo CD `ignoreDifferences` where possible without live managed fields.
-- Apply JSON pointer and jq path ignores through reusable Argo CD normalizers
-  where decoupled.
-- Treat `ServerSideDiff=true` and `ServerSideApply=true` as diagnostics, not
-  executable behavior.
+- Render both sides with the same planning and settings model.
+- Apply Argo CD `ignoreDifferences`, known type fields, resource exclusions,
+  inclusions, and supported compare options where possible without live state.
+- Hide common Helm chart/version label noise and pod-template `checksum/*`
+  annotations by default.
+- Preserve the ability to show drydock-default ignored fields with
+  `--show-ignored-fields`.
+- Treat server-side diff/apply settings as diagnostics, not executable live
+  behavior.
 - Resolve `--ref` and `--ref-orig` through temporary local snapshots without
   shelling out to `git` or mutating the operator checkout.
 
-The tool does not claim to reproduce:
+Changed-only mode is on by default for multi-Application PR diffs. It indexes
+Application manifest files, source paths, `$ref` value files, and supported
+`argocd.argoproj.io/manifest-generate-paths` inputs. If every changed path can
+be mapped, only affected Applications render. If any path is unowned,
+non-strict mode warns and renders all Applications; `--strict-changed-only`
+fails instead.
 
-- Kubernetes API defaulting.
-- Server-side apply field ownership.
-- Admission webhooks.
-- Managed-fields-manager ignores.
-- Live Argo CD server-side diff.
+Argo CD permits overlapping Applications, so drydock keeps every affected
+Application instead of collapsing ownership to one most-specific owner.
 
-## Changed-Only Mode
+## Output And Diagnostics
 
-Changed-only mode is on by default for PR diffs.
+Structured outputs keep stdout machine-parseable. Diagnostics and failure
+summaries go to stderr unless status text is the primary output.
 
-Algorithm:
+Exit codes:
 
-1. Compute changed paths between `--path-orig` and `--path`. For local Git ref
-   diffs, compute changed paths from Git refs and tracked worktree files so
-   ignored or untracked local output does not force a full render.
-2. Build an Application input index from discovered direct and generated
-   Applications.
-3. Match changed files to every Application whose inputs intersect the change.
-4. Include Application manifest files, source paths, `$ref` value-file inputs,
-   and `argocd.argoproj.io/manifest-generate-paths` where supported.
-5. Render only affected Applications when every changed path is owned.
-6. If any changed path is unowned, render all Applications and report the
-   unowned paths.
-7. `--strict-changed-only` fails on unowned paths instead.
-8. `--changed-only=false` renders all Applications.
-
-Unlike Flux-oriented ownership, Argo CD changed-only mode does not choose a
-single most-specific owner. Overlapping Applications are valid, so all affected
-Applications are kept.
-
-## Output
-
-Default unified diff headers include parent Application, source, and child
-resource identity:
-
-```diff
---- Application: argocd/monitoring Source: 0 apps/monitoring Deployment: monitoring/foo
-+++ Application: argocd/monitoring Source: 0 apps/monitoring Deployment: monitoring/foo
-@@ ...
-```
-
-Structured output includes:
-
-- parent Application kind, namespace, and name
-- source index, source name, and source path/chart
-- resource group, kind, namespace, and name
-- change type
-- warnings
-- diff body
-
-Supported formats:
-
-- `diff`
-- `json`
-- `yaml`
-
-`-o name` is reserved for list-style commands such as `get apps` and
-`get images`; diff commands reject it. `diff images -o json|yaml` emits
-structured `added`, `removed`, and `unchanged` image lists.
-
-Image diff extracts PodSpec container images and scalar rendered manifest
-fields whose key is exactly `image`. It skips Secret manifests, top-level
-metadata/status, ConfigMap data payloads, and arbitrary string scanning so CI
-pull-test workflows catch CRD image fields without treating every string as an
-image reference.
-
-## Diagnostics
-
-Diagnostics are explicit and provenance-based.
-
-Required diagnostics:
-
-- settings provenance
-- conflicting settings candidates
-- unsupported ApplicationSet fields/generators
-- unsupported source types
-- server-side diff/apply offline limitations
-- repeated resources per Application
-- unowned changed files and render-all fallback
-- strict-mode escalations
-
-Secrets are never printed. Repository secrets only contribute non-sensitive
-metadata.
-
-## Exit Codes
-
-Diff-style commands use:
-
-- `0`: command succeeded and no diff was found.
-- `1`: command succeeded and a diff was found.
+- `0`: success and no diff for diff-style commands.
+- `1`: success with a diff for diff-style commands.
 - `2`: tool, configuration, discovery, or render error.
 
-`--exit-code=false` makes diffs exit `0` for local inspection.
+Diagnostics are provenance-based and redact secrets. Repository Secrets only
+contribute non-sensitive metadata. Required diagnostic surfaces include
+settings provenance, conflicting settings candidates, unsupported
+ApplicationSet behavior, unsupported source types, offline runtime limitations,
+repeated resources, unowned changed files, strict-mode escalations, source
+repository checks, destination checks, and cache acquisition events.
 
-Warnings do not change exit code unless strict mode promotes them to errors.
+## Public API
 
-## CLI Shape
+`pkg/drydock` exposes Application listing, rendering, manifest diffs, image
+diffs, source acquisition hooks, plugin renderer hooks, stable diagnostics, and
+partial build results. Public APIs must not expose `internal/...` types.
 
-Initial command surface:
+Embedding callers can inject deterministic Git, chart, remote-resource, and
+plugin renderers for tests or controlled environments. The package-level API
+uses the same default network, cache, and runtime-boundary behavior as the CLI.
 
-```bash
-drydock get apps --path .
-drydock build app <name> --path .
-drydock build apps --path .
-drydock diff app <name> --path . --path-orig ../base
-drydock diff apps --path . --path-orig ../base
-drydock diff images --path . --path-orig ../base -o json
-drydock diag --path .
-drydock version
-```
+## Versioning
 
-Important flags:
+The module pins Argo CD dependencies deliberately. Argo CD upgrades are explicit
+PRs with compatibility test updates and `docs/compatibility.md` updates.
 
-- `--path`
-- `--path-orig`
-- `--repo-map <url>=<path>`
-- `--changed-only`
-- `--strict-changed-only`
-- `--strict`
-- `--exit-code`
-- `--unified`
-- `--limit-bytes`
-- `-o diff|json|yaml` for diff commands
-- `-o table|json|yaml|name` for list commands
-- `--argocd-cm`
-- `--argocd-values`
-- `--repo-secret`
-- `--kustomize-build-option`
-- `--app-manifests`
-- `--namespace`
-- `--project`
-- `--selector`
-
-## Linting And Formatting
-
-The repository includes linting from the start.
-
-`.golangci.yml` keeps the strict Go lint profile selected during project
-bootstrap:
-
-- golangci-lint config version `2`
-- 5 minute timeout
-- strict linters including `bodyclose`, `copyloopvar`, `durationcheck`,
-  `errcheck`, `errorlint`, `exhaustive`, `gocritic`, `gocyclo`, `govet`,
-  `ineffassign`, `intrange`, `misspell`, `nakedret`, `nilerr`, `nilnil`,
-  `nolintlint`, `prealloc`, `staticcheck`, `unconvert`, `unused`,
-  `wastedassign`, and `whitespace`
-- `gocyclo` threshold 15
-- `nolintlint` requires explanations and specific linters
-- `errcheck` checks type assertions
-- standard error-handling exclusions
-- `gofmt` formatter with simplify enabled
-
-`.gomarklint.json` keeps the Go-native Markdown lint profile selected during
-project bootstrap:
-
-- disable line length
-- allow top-level document headings
-- keep list spacing compatible with dense reference docs
-
-## Agent Guidance
-
-`AGENTS.md` owns mandatory agent operating rules and hard constraints.
-`docs/README.md` owns documentation routing. Update those files when a design
-change alters agent rules, package routing, validation expectations, or
-documentation ownership.
-
-## Validation
-
-Baseline validation commands:
-
-```bash
-go test ./...
-go vet ./...
-golangci-lint run
-go run github.com/shinagawa-web/gomarklint/v3@v3.0.5
-```
-
-Compatibility and regression tests cover:
-
-- ApplicationSet Git directories rendering.
-- ApplicationSet Go-template behavior and missing-key errors.
-- Multi-source precedence.
-- Ref validation.
-- Helm `$ref` external value files.
-- Helm `valuesObject` precedence.
-- OCI Helm repository metadata.
-- Kustomize build options from settings discovery.
-- Repeated-resource last-wins warnings.
-- Changed-only mapping.
-- Unowned changed-file fallback and strict failure.
-- Exit-code behavior.
-
-Home-ops-oriented tests use minimal fixtures adapted for the behavior under
-test, not a wholesale copy of the operational repository.
-
-## Open Risks
-
-- Pure-Go Kustomize with Helm chart support may expose compatibility gaps
-  against Argo CD's shellout behavior.
-- Pure-Go Helm OCI handling must match Argo CD chart-source semantics closely
-  enough for common repos.
-- Argo CD internal packages may change across versions, so imports must stay
-  conservative and pinned.
-- Offline normalization cannot know all cluster-scoped CRDs without discovery
-  data, so unknown GVK namespace handling must be documented and configurable
-  over time.
-- Network-off default requires clear diagnostics for missing external sources.
-
-## Acceptance Criteria
-
-- New repository is Apache-2.0 licensed.
-- No required shellouts for default render/diff workflows.
-- Direct Applications and supported ApplicationSets are discovered from repo
-  trees.
-- Multi-source Applications work for supported source types.
-- Local repo maps override declared revisions in PR diff mode.
-- Argo CD settings discovery is generic, provenance-based, and conflict-aware.
-- Changed-only mode is safe by default and strict when requested.
-- Diff output is parent-aware.
-- Exit codes are CI-friendly.
-- Linting configs mirror the referenced Go and Markdown lint settings.
-- AGENTS.md is created early and maintained alongside implementation changes.
+`drydock version` prints the drydock version, embedded Argo CD dependency
+versions, and Go version. Release binaries receive their version from release
+build metadata.

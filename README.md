@@ -154,7 +154,9 @@ drydock discovers and renders local Argo CD desired state, including:
 - Cache lifecycle commands for Git, chart, and remote Kustomize caches.
 
 See [`docs/compatibility.md`](docs/compatibility.md) for the detailed Argo CD
-support matrix.
+support matrix. See [`docs/applicationsets.md`](docs/applicationsets.md) for
+ApplicationSet details and [`docs/source-acquisition.md`](docs/source-acquisition.md)
+for remote source, cache, and auth behavior.
 
 ## Offline Runtime Model
 
@@ -229,8 +231,12 @@ Join the home-operations Discord at <https://discord.gg/home-operations>.
 ## Documentation
 
 - [`docs/README.md`](docs/README.md): documentation ownership and routing.
-- [`docs/usage.md`](docs/usage.md): CLI examples, flags, outputs, cache
-  behavior, and optional smoke tests.
+- [`docs/usage.md`](docs/usage.md): operator CLI workflows and high-value
+  command examples.
+- [`docs/applicationsets.md`](docs/applicationsets.md): ApplicationSet
+  generator behavior, fixture schema, and template parameters.
+- [`docs/source-acquisition.md`](docs/source-acquisition.md): Git, Helm,
+  remote Kustomize, cache, and auth behavior.
 - [`docs/compatibility.md`](docs/compatibility.md): supported Argo CD behavior
   and intentional runtime boundaries.
 - [`docs/release.md`](docs/release.md): release and Argo CD dependency upgrade
