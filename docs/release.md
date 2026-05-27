@@ -100,12 +100,15 @@ If the manifest version already has a matching remote tag and published GitHub
 Release, the publish workflow exits without creating another release. If the
 tag is missing, the workflow creates only a local tag for GoReleaser version
 calculation, builds release artifacts, validates the container image build,
-pushes the release tag, and creates a draft GitHub Release with all binary
-assets attached. After the draft exists, it pushes and signs the container
-image tags, updates the release notes with the image digest, and publishes the
-draft. This order keeps the release process compatible with GitHub immutable
-releases while still allowing retries if a draft release was left behind by a
-failed run.
+and creates a draft GitHub Release targeted at the release commit with all
+binary assets attached. After the draft exists, it pushes and signs the
+container image tags, updates the release notes with the image digest, and
+publishes the draft. The workflow does not push the release tag directly before
+the draft exists; it lets GitHub manage the tag from the draft release target
+and verifies that the published tag points to the release commit. This order
+keeps the release process compatible with GitHub immutable releases while still
+allowing retries if a draft release or stale automation tag was left behind by
+a failed run.
 
 GoReleaser builds static Linux and macOS archives for `amd64` and `arm64`:
 
