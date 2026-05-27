@@ -20,6 +20,39 @@ func TestParseDiffOutputRejectsName(t *testing.T) {
 	}
 }
 
+func TestParseDiffColorMode(t *testing.T) {
+	tests := []struct {
+		value string
+		want  string
+	}{
+		{value: "", want: "auto"},
+		{value: "auto", want: "auto"},
+		{value: "always", want: "always"},
+		{value: "never", want: "never"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.value, func(t *testing.T) {
+			got, err := parseDiffColorMode(tt.value)
+			if err != nil {
+				t.Fatalf("parseDiffColorMode(%q) error = %v", tt.value, err)
+			}
+			if got != tt.want {
+				t.Fatalf("parseDiffColorMode(%q) = %q, want %q", tt.value, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestParseDiffColorModeRejectsUnsupportedValue(t *testing.T) {
+	_, err := parseDiffColorMode("sometimes")
+	if err == nil {
+		t.Fatal("parseDiffColorMode() error = nil, want unsupported mode")
+	}
+	if !strings.Contains(err.Error(), `color must be auto, always, or never, got "sometimes"`) {
+		t.Fatalf("parseDiffColorMode() error = %v, want unsupported color message", err)
+	}
+}
+
 func TestParseTestOutputSupportsStructuredFormats(t *testing.T) {
 	tests := []struct {
 		value string

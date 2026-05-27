@@ -3,6 +3,7 @@ package cli
 import (
 	"bytes"
 	"encoding/json"
+	"io"
 	"path/filepath"
 	"slices"
 	"strconv"
@@ -12,6 +13,9 @@ import (
 	git "github.com/go-git/go-git/v5"
 	"github.com/go-git/go-git/v5/plumbing"
 	"github.com/go-git/go-git/v5/plumbing/object"
+	"github.com/sholdee/drydock/internal/app"
+	"github.com/sholdee/drydock/internal/diagnostic"
+	"github.com/sholdee/drydock/internal/diff"
 	"go.yaml.in/yaml/v4"
 )
 
@@ -113,6 +117,97 @@ func TestDiffAppPrintsOnlyNamedApplicationDiff(t *testing.T) {
 	assertStdoutContainsAll(t, result, "Application: argocd/demo", "-  value: old", "+  value: new")
 	assertStdoutExcludesAll(t, result, "other", "changed-but-skipped")
 	assertStderrEmpty(t, result)
+}
+
+func TestDiffAppsColorAlwaysColorsUnifiedOutput(t *testing.T) {
+	recorder := &recordingCLIOrchestrator{
+		diffAppsResult: app.DiffResult{
+			Results: []diff.Result{{Diff: sampleUnifiedDiffForCLI()}},
+		},
+	}
+
+	result := runCLIWithDependencies(t, Dependencies{
+		Orchestrator: recorder,
+		IsTerminal: func(io.Writer) bool {
+			return false
+		},
+	}, "diff", "apps", "--path-orig", "left", "--path", "right", "--color=always", "--exit-code=false")
+
+	assertStdoutContainsAll(t, result,
+		"\x1b[31m--- Application: argocd/demo source[0]\x1b[0m\n",
+		"\x1b[32m+++ Application: argocd/demo source[0]\x1b[0m\n",
+		"\x1b[36m@@ -1,3 +1,3 @@\x1b[0m\n",
+		"\x1b[31m-  value: old\x1b[0m\n",
+		"\x1b[32m+  value: new\x1b[0m\n",
+	)
+	assertStderrEmpty(t, result)
+}
+
+func TestDiffAppsColorNeverKeepsTTYOutputPlain(t *testing.T) {
+	recorder := &recordingCLIOrchestrator{
+		diffAppsResult: app.DiffResult{
+			Results: []diff.Result{{Diff: sampleUnifiedDiffForCLI()}},
+		},
+	}
+
+	result := runCLIWithDependencies(t, Dependencies{
+		Orchestrator: recorder,
+		IsTerminal: func(io.Writer) bool {
+			return true
+		},
+	}, "diff", "apps", "--path-orig", "left", "--path", "right", "--color=never", "--exit-code=false")
+
+	assertStdoutContainsAll(t, result, "-  value: old", "+  value: new")
+	assertStdoutExcludesAll(t, result, "\x1b[")
+	assertStderrEmpty(t, result)
+}
+
+func TestDiffAppsColorAutoUsesStdoutTerminal(t *testing.T) {
+	tests := []struct {
+		name      string
+		terminal  bool
+		wantANSI  bool
+		forbidden string
+	}{
+		{name: "terminal", terminal: true, wantANSI: true},
+		{name: "not terminal", terminal: false, forbidden: "\x1b["},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			recorder := &recordingCLIOrchestrator{
+				diffAppsResult: app.DiffResult{
+					Results: []diff.Result{{Diff: sampleUnifiedDiffForCLI()}},
+				},
+			}
+
+			result := runCLIWithDependencies(t, Dependencies{
+				Orchestrator: recorder,
+				IsTerminal: func(io.Writer) bool {
+					return tt.terminal
+				},
+			}, "diff", "apps", "--path-orig", "left", "--path", "right", "--color=auto", "--exit-code=false")
+
+			if tt.wantANSI {
+				assertStdoutContainsAll(t, result, "\x1b[31m-  value: old\x1b[0m\n")
+			}
+			if tt.forbidden != "" {
+				assertStdoutExcludesAll(t, result, tt.forbidden)
+			}
+		})
+	}
+}
+
+func TestDiffAppColorFlagIsRegistered(t *testing.T) {
+	recorder := &recordingCLIOrchestrator{
+		diffAppResult: app.DiffResult{
+			Results: []diff.Result{{Diff: sampleUnifiedDiffForCLI()}},
+		},
+	}
+
+	result := runCLIWithDependencies(t, Dependencies{Orchestrator: recorder}, "diff", "app", "demo", "--path-orig", "left", "--path", "right", "--color=always", "--exit-code=false")
+
+	assertStdoutContainsAll(t, result, "\x1b[31m-  value: old\x1b[0m\n", "\x1b[32m+  value: new\x1b[0m\n")
 }
 
 func TestDiffAppReportsMissingApplication(t *testing.T) {
@@ -404,6 +499,37 @@ func TestDiffAppsJSONOutput(t *testing.T) {
 	}
 }
 
+func TestDiffAppsStructuredOutputStaysPlainWithColorAlways(t *testing.T) {
+	recorder := &recordingCLIOrchestrator{
+		diffAppsResult: app.DiffResult{
+			Results: []diff.Result{{Diff: sampleUnifiedDiffForCLI(), Change: diff.ChangeModified}},
+		},
+	}
+
+	result := runCLIWithDependencies(t, Dependencies{
+		Orchestrator: recorder,
+		IsTerminal: func(io.Writer) bool {
+			return true
+		},
+	}, "diff", "apps", "--path-orig", "left", "--path", "right", "-o", "json", "--color=always", "--exit-code=false")
+
+	assertStdoutExcludesAll(t, result, "\x1b[")
+	var results []map[string]any
+	if err := json.Unmarshal([]byte(result.Stdout), &results); err != nil {
+		t.Fatalf("json.Unmarshal() error = %v\nstdout:\n%s", err, result.Stdout)
+	}
+	if len(results) != 1 {
+		t.Fatalf("results = %#v, want one diff", results)
+	}
+	diffText, ok := results[0]["diff"].(string)
+	if !ok {
+		t.Fatalf("diff = %T, want string", results[0]["diff"])
+	}
+	if strings.Contains(diffText, "\x1b[") {
+		t.Fatalf("json diff contains ANSI escapes: %#v", diffText)
+	}
+}
+
 func TestDiffAppYAMLOutput(t *testing.T) {
 	root := t.TempDir()
 	left := filepath.Join(root, "left")
@@ -548,6 +674,68 @@ func TestDiffImagesPrintsImageDiff(t *testing.T) {
 	}
 	if stderr.String() != "" {
 		t.Fatalf("stderr = %q, want empty", stderr.String())
+	}
+}
+
+func TestDiffImagesColorAlwaysColorsImageDiff(t *testing.T) {
+	recorder := &recordingCLIOrchestrator{
+		diffImagesResult: app.ImageDiffResult{
+			Removed: []string{"example/app:v1"},
+			Added:   []string{"example/app:v2"},
+		},
+	}
+
+	result := runCLIWithDependencies(t, Dependencies{Orchestrator: recorder}, "diff", "images", "--path-orig", "left", "--path", "right", "--color=always", "--exit-code=false")
+
+	assertStdoutContainsAll(t, result,
+		"\x1b[31m- example/app:v1\x1b[0m\n",
+		"\x1b[32m+ example/app:v2\x1b[0m\n",
+	)
+	assertStderrEmpty(t, result)
+}
+
+func TestDiffColorNeverLeavesDiagnosticsColorIndependent(t *testing.T) {
+	recorder := &recordingCLIOrchestrator{
+		diffAppsResult: app.DiffResult{
+			Diagnostics: []diagnostic.Diagnostic{
+				{Severity: diagnostic.SeverityWarning, Category: "changed-only", Message: "unowned input"},
+			},
+		},
+	}
+
+	result := runCLIWithDependencies(t, Dependencies{
+		Orchestrator: recorder,
+		IsTerminal: func(io.Writer) bool {
+			return true
+		},
+	}, "diff", "apps", "--path-orig", "left", "--path", "right", "--color=never", "--exit-code=false")
+
+	if !strings.Contains(result.Stderr, "\x1b[33mwarning\x1b[0m changed-only: unowned input") {
+		t.Fatalf("stderr = %q, want colored warning diagnostic", result.Stderr)
+	}
+}
+
+func TestDiffRejectsInvalidColorBeforeOrchestration(t *testing.T) {
+	recorder := &recordingCLIOrchestrator{}
+	cmd := NewRootCommandWithDependencies(VersionInfo{}, Dependencies{Orchestrator: recorder})
+	cmd.SetArgs([]string{"diff", "apps", "--path-orig", "left", "--path", "right", "--color=sometimes"})
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	cmd.SetOut(&stdout)
+	cmd.SetErr(&stderr)
+
+	err := cmd.Execute()
+	if err == nil {
+		t.Fatal("Execute() error = nil, want invalid color mode")
+	}
+	if !strings.Contains(err.Error(), `color must be auto, always, or never, got "sometimes"`) {
+		t.Fatalf("error = %v, want invalid color mode", err)
+	}
+	if len(recorder.diffAppsRequests) != 0 {
+		t.Fatalf("DiffApps requests = %#v, want none before color validation", recorder.diffAppsRequests)
+	}
+	if stdout.String() != "" || stderr.String() != "" {
+		t.Fatalf("stdout=%q stderr=%q, want empty output", stdout.String(), stderr.String())
 	}
 }
 
@@ -818,6 +1006,15 @@ metadata:
 data:
   value: `+value+`
 `)
+}
+
+func sampleUnifiedDiffForCLI() string {
+	return "--- Application: argocd/demo source[0]\n" +
+		"+++ Application: argocd/demo source[0]\n" +
+		"@@ -1,3 +1,3 @@\n" +
+		" kind: ConfigMap\n" +
+		"-  value: old\n" +
+		"+  value: new\n"
 }
 
 func writeSimpleAppForCLI(t *testing.T, root, value string) {

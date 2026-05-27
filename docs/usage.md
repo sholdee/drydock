@@ -301,6 +301,13 @@ support `-o json` and `-o yaml`, which serialize the structured `[]diff.Result`
 payload. Diagnostics remain on stderr so stdout stays valid JSON or YAML.
 `-o name` is not supported for manifest diffs.
 
+Unified diff output supports git-style ANSI color with
+`--color=auto|always|never`. The default, `auto`, colors only when writing to a
+terminal. `always` forces ANSI color for text diff output, while `never`
+disables ANSI color for text diff output. Diagnostics keep their existing
+stderr terminal-color behavior. Structured JSON and YAML payloads never contain
+ANSI escapes.
+
 Manifest diffs hide common Helm-rendered metadata noise by default:
 
 - `metadata.labels.helm.sh/chart`
@@ -386,6 +393,8 @@ whose key is exactly `image`. It does not scan arbitrary string content, Secret
 manifests, top-level metadata/status, or ConfigMap data payloads. Use `-o json`
 or `-o yaml` for machine-readable `added`, `removed`, and `unchanged` image
 lists. Diagnostics remain on stderr so stdout stays valid JSON or YAML.
+Text image diffs use the same `--color=auto|always|never` behavior as manifest
+diffs.
 
 ## Diagnostics
 

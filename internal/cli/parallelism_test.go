@@ -279,6 +279,12 @@ type recordingCLIOrchestrator struct {
 	buildResult        app.BuildResult
 	buildError         error
 	buildHook          func(app.BuildRequest) error
+	diffAppsResult     app.DiffResult
+	diffAppsError      error
+	diffAppResult      app.DiffResult
+	diffAppError       error
+	diffImagesResult   app.ImageDiffResult
+	diffImagesError    error
 }
 
 func (orchestrator *recordingCLIOrchestrator) Build(_ context.Context, request app.BuildRequest) (app.BuildResult, error) {
@@ -303,17 +309,17 @@ func (orchestrator *recordingCLIOrchestrator) ListApplications(_ context.Context
 
 func (orchestrator *recordingCLIOrchestrator) DiffApps(_ context.Context, request app.DiffRequest) (app.DiffResult, error) {
 	orchestrator.diffAppsRequests = append(orchestrator.diffAppsRequests, request)
-	return app.DiffResult{}, nil
+	return orchestrator.diffAppsResult, orchestrator.diffAppsError
 }
 
 func (orchestrator *recordingCLIOrchestrator) DiffApp(_ context.Context, request app.DiffAppRequest) (app.DiffResult, error) {
 	orchestrator.diffAppRequests = append(orchestrator.diffAppRequests, request)
-	return app.DiffResult{}, nil
+	return orchestrator.diffAppResult, orchestrator.diffAppError
 }
 
 func (orchestrator *recordingCLIOrchestrator) DiffImages(_ context.Context, request app.DiffRequest) (app.ImageDiffResult, error) {
 	orchestrator.diffImagesRequests = append(orchestrator.diffImagesRequests, request)
-	return app.ImageDiffResult{}, nil
+	return orchestrator.diffImagesResult, orchestrator.diffImagesError
 }
 
 func (orchestrator *recordingCLIOrchestrator) Diag(_ context.Context, request app.DiagRequest) (app.DiagResult, error) {

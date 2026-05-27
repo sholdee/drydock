@@ -3,11 +3,19 @@ package cli
 import (
 	"context"
 	"fmt"
+	"io"
+	"strings"
 
 	"github.com/sholdee/drydock/internal/app"
 	cliformat "github.com/sholdee/drydock/internal/format"
 	"github.com/sholdee/drydock/internal/source"
 	"github.com/spf13/cobra"
+)
+
+const (
+	diffColorAuto   = "auto"
+	diffColorAlways = "always"
+	diffColorNever  = "never"
 )
 
 func newDiffCommand(deps Dependencies) *cobra.Command {
@@ -22,8 +30,14 @@ func newDiffCommand(deps Dependencies) *cobra.Command {
 	}
 	bindCommonFlags(cmd, &flags)
 
+	cmd.AddCommand(newDiffAppsCommand(deps), newDiffAppCommand(deps), newDiffImagesCommand(deps))
+	return cmd
+}
+
+func newDiffAppsCommand(deps Dependencies) *cobra.Command {
 	appsFlags := defaultCommonFlags()
 	appsFlags.parallelism = defaultRenderAppsParallelism()
+	appsColor := diffColorAuto
 	apps := &cobra.Command{
 		Use:   "apps",
 		Short: "Diff all Applications",
@@ -33,31 +47,47 @@ func newDiffCommand(deps Dependencies) *cobra.Command {
 			if err != nil {
 				return err
 			}
+			colorMode, err := parseDiffColorMode(appsColor)
+			if err != nil {
+				return err
+			}
 			repoMaps, err := parseRepoMaps(appsFlags.repoMaps)
 			if err != nil {
 				return err
 			}
 			result, err := deps.Orchestrator.DiffApps(context.Background(), diffRequestFromFlags(cmd, appsFlags, repoMaps))
+			diagnosticColor := deps.isTerminal(cmd.ErrOrStderr())
 			if err != nil {
-				if renderErr := renderDiagnostics(cmd.ErrOrStderr(), result.Diagnostics); renderErr != nil {
+				if renderErr := renderDiagnosticsWithColor(cmd.ErrOrStderr(), result.Diagnostics, diagnosticColor); renderErr != nil {
 					return renderErr
 				}
 				return err
 			}
-			return renderDiffResult(cmd, result, !appsFlags.exitCode, output)
+			diffColor := output == diffOutputUnified && shouldColorDiffOutput(colorMode, deps, cmd.OutOrStdout())
+			return renderDiffResult(cmd, result, !appsFlags.exitCode, output, diffColor, diagnosticColor)
 		},
 	}
 	bindCommonFlags(apps, &appsFlags)
 	bindDiffRefFlags(apps, &appsFlags)
 	bindShowIgnoredFieldsFlag(apps, &appsFlags)
+	bindDiffColorFlag(apps, &appsColor)
 
+	return apps
+}
+
+func newDiffAppCommand(deps Dependencies) *cobra.Command {
 	appFlags := defaultCommonFlags()
+	appColor := diffColorAuto
 	appCmd := &cobra.Command{
 		Use:   "app NAME",
 		Short: "Diff one Application",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			output, err := parseDiffOutput(appFlags.output, "diff app")
+			if err != nil {
+				return err
+			}
+			colorMode, err := parseDiffColorMode(appColor)
 			if err != nil {
 				return err
 			}
@@ -69,21 +99,29 @@ func newDiffCommand(deps Dependencies) *cobra.Command {
 				Name:        args[0],
 				DiffRequest: diffRequestFromFlags(cmd, appFlags, repoMaps),
 			})
+			diagnosticColor := deps.isTerminal(cmd.ErrOrStderr())
 			if err != nil {
-				if renderErr := renderDiagnostics(cmd.ErrOrStderr(), result.Diagnostics); renderErr != nil {
+				if renderErr := renderDiagnosticsWithColor(cmd.ErrOrStderr(), result.Diagnostics, diagnosticColor); renderErr != nil {
 					return renderErr
 				}
 				return err
 			}
-			return renderDiffResult(cmd, result, !appFlags.exitCode, output)
+			diffColor := output == diffOutputUnified && shouldColorDiffOutput(colorMode, deps, cmd.OutOrStdout())
+			return renderDiffResult(cmd, result, !appFlags.exitCode, output, diffColor, diagnosticColor)
 		},
 	}
 	bindCommonFlags(appCmd, &appFlags)
 	bindDiffRefFlags(appCmd, &appFlags)
 	bindShowIgnoredFieldsFlag(appCmd, &appFlags)
+	bindDiffColorFlag(appCmd, &appColor)
 
+	return appCmd
+}
+
+func newDiffImagesCommand(deps Dependencies) *cobra.Command {
 	imagesFlags := defaultCommonFlags()
 	imagesFlags.parallelism = defaultRenderAppsParallelism()
+	imagesColor := diffColorAuto
 	images := &cobra.Command{
 		Use:   "images",
 		Short: "Diff rendered image references",
@@ -93,25 +131,31 @@ func newDiffCommand(deps Dependencies) *cobra.Command {
 			if err != nil {
 				return err
 			}
+			colorMode, err := parseDiffColorMode(imagesColor)
+			if err != nil {
+				return err
+			}
 			repoMaps, err := parseRepoMaps(imagesFlags.repoMaps)
 			if err != nil {
 				return err
 			}
 			result, err := deps.Orchestrator.DiffImages(context.Background(), diffRequestFromFlags(cmd, imagesFlags, repoMaps))
+			diagnosticColor := deps.isTerminal(cmd.ErrOrStderr())
 			if err != nil {
-				if renderErr := renderDiagnostics(cmd.ErrOrStderr(), result.Diagnostics); renderErr != nil {
+				if renderErr := renderDiagnosticsWithColor(cmd.ErrOrStderr(), result.Diagnostics, diagnosticColor); renderErr != nil {
 					return renderErr
 				}
 				return err
 			}
-			return renderImageDiffResult(cmd, result, !imagesFlags.exitCode, output)
+			diffColor := output == diffOutputUnified && shouldColorDiffOutput(colorMode, deps, cmd.OutOrStdout())
+			return renderImageDiffResult(cmd, result, !imagesFlags.exitCode, output, diffColor, diagnosticColor)
 		},
 	}
 	bindCommonFlags(images, &imagesFlags)
 	bindDiffRefFlags(images, &imagesFlags)
+	bindDiffColorFlag(images, &imagesColor)
 
-	cmd.AddCommand(apps, appCmd, images)
-	return cmd
+	return images
 }
 
 type imageDiffOutput struct {
@@ -124,14 +168,42 @@ func diffRequestFromFlags(cmd *cobra.Command, flags commonFlags, repoMaps []sour
 	return requestOptionsFromFlags(commandAwareFlags(cmd, flags), repoMaps).Diff()
 }
 
-func renderDiffResult(cmd *cobra.Command, result app.DiffResult, disableDiffExitCode bool, output string) error {
-	if err := renderDiagnostics(cmd.ErrOrStderr(), result.Diagnostics); err != nil {
+func bindDiffColorFlag(cmd *cobra.Command, colorMode *string) {
+	cmd.Flags().StringVar(colorMode, "color", *colorMode, "color diff output: auto, always, or never")
+}
+
+func parseDiffColorMode(value string) (string, error) {
+	mode := strings.TrimSpace(value)
+	if mode == "" {
+		return diffColorAuto, nil
+	}
+	switch mode {
+	case diffColorAuto, diffColorAlways, diffColorNever:
+		return mode, nil
+	default:
+		return "", fmt.Errorf("color must be auto, always, or never, got %q", value)
+	}
+}
+
+func shouldColorDiffOutput(mode string, deps Dependencies, w io.Writer) bool {
+	switch mode {
+	case diffColorAlways:
+		return true
+	case diffColorNever:
+		return false
+	default:
+		return deps.isTerminal(w)
+	}
+}
+
+func renderDiffResult(cmd *cobra.Command, result app.DiffResult, disableDiffExitCode bool, output string, diffColor, diagnosticColor bool) error {
+	if err := renderDiagnosticsWithColor(cmd.ErrOrStderr(), result.Diagnostics, diagnosticColor); err != nil {
 		return err
 	}
 	switch output {
 	case diffOutputUnified:
 		for _, item := range result.Results {
-			if _, err := fmt.Fprint(cmd.OutOrStdout(), item.Diff); err != nil {
+			if _, err := fmt.Fprint(cmd.OutOrStdout(), colorizeUnifiedDiff(item.Diff, diffColor)); err != nil {
 				return err
 			}
 		}
@@ -153,19 +225,19 @@ func renderDiffResult(cmd *cobra.Command, result app.DiffResult, disableDiffExit
 	return nil
 }
 
-func renderImageDiffResult(cmd *cobra.Command, result app.ImageDiffResult, disableDiffExitCode bool, output string) error {
-	if err := renderDiagnostics(cmd.ErrOrStderr(), result.Diagnostics); err != nil {
+func renderImageDiffResult(cmd *cobra.Command, result app.ImageDiffResult, disableDiffExitCode bool, output string, diffColor, diagnosticColor bool) error {
+	if err := renderDiagnosticsWithColor(cmd.ErrOrStderr(), result.Diagnostics, diagnosticColor); err != nil {
 		return err
 	}
 	switch output {
 	case diffOutputUnified:
 		for _, image := range result.Removed {
-			if _, err := fmt.Fprintf(cmd.OutOrStdout(), "- %s\n", image); err != nil {
+			if _, err := fmt.Fprint(cmd.OutOrStdout(), colorizeDiffLine(fmt.Sprintf("- %s\n", image), diffColor)); err != nil {
 				return err
 			}
 		}
 		for _, image := range result.Added {
-			if _, err := fmt.Fprintf(cmd.OutOrStdout(), "+ %s\n", image); err != nil {
+			if _, err := fmt.Fprint(cmd.OutOrStdout(), colorizeDiffLine(fmt.Sprintf("+ %s\n", image), diffColor)); err != nil {
 				return err
 			}
 		}
@@ -186,6 +258,43 @@ func renderImageDiffResult(cmd *cobra.Command, result app.ImageDiffResult, disab
 		return ExitError{Code: code}
 	}
 	return nil
+}
+
+func colorizeUnifiedDiff(text string, color bool) string {
+	if !color || text == "" {
+		return text
+	}
+	var builder strings.Builder
+	builder.Grow(len(text))
+	for _, line := range strings.SplitAfter(text, "\n") {
+		builder.WriteString(colorizeDiffLine(line, true))
+	}
+	return builder.String()
+}
+
+func colorizeDiffLine(line string, color bool) string {
+	if !color || line == "" {
+		return line
+	}
+	body := line
+	trailingNewline := ""
+	if strings.HasSuffix(body, "\n") {
+		body = strings.TrimSuffix(body, "\n")
+		trailingNewline = "\n"
+	}
+	if body == "" {
+		return line
+	}
+	switch {
+	case strings.HasPrefix(body, "--- "), strings.HasPrefix(body, "-"):
+		return "\x1b[31m" + body + "\x1b[0m" + trailingNewline
+	case strings.HasPrefix(body, "+++ "), strings.HasPrefix(body, "+"):
+		return "\x1b[32m" + body + "\x1b[0m" + trailingNewline
+	case strings.HasPrefix(body, "@@"):
+		return "\x1b[36m" + body + "\x1b[0m" + trailingNewline
+	default:
+		return line
+	}
 }
 
 func cloneStringSlice(values []string) []string {
