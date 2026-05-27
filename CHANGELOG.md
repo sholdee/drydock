@@ -1,5 +1,24 @@
 # Changelog
 
+## [0.1.3](https://github.com/sholdee/drydock/compare/v0.1.2...v0.1.3) (2026-05-27)
+
+
+### Features
+
+* detect exact image fields ([#26](https://github.com/sholdee/drydock/issues/26)) ([36f24fd](https://github.com/sholdee/drydock/commit/36f24fdca939c149eb3d70b5f933c0127166d4e2))
+* render native kustomize cmp sources ([#29](https://github.com/sholdee/drydock/issues/29)) ([a4eee98](https://github.com/sholdee/drydock/commit/a4eee980499829517ee52bf9891e546d154fa9f6))
+
+
+### Documentation
+
+* refactor documentation routing ([#27](https://github.com/sholdee/drydock/issues/27)) ([440f332](https://github.com/sholdee/drydock/commit/440f3328d8495d8d44bf92fb896b119e4f447a02))
+* sharpen readme positioning ([#31](https://github.com/sholdee/drydock/issues/31)) ([a986b71](https://github.com/sholdee/drydock/commit/a986b71619f38639503a45ba244c513b86c6dd9e))
+
+
+### Miscellaneous Chores
+
+* **deps:** update dependency shinagawa-web/gomarklint to v3.2.2 ([#28](https://github.com/sholdee/drydock/issues/28)) ([1e34141](https://github.com/sholdee/drydock/commit/1e34141f8f13fd502a58a0836df3bc364cf5ed67))
+
 ## [0.1.2](https://github.com/sholdee/drydock/compare/v0.1.1...v0.1.2) (2026-05-27)
 
 
