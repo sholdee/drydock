@@ -180,6 +180,8 @@ func scanDocument(rel string, documentIndex int, obj *unstructured.Unstructured,
 		result.Projects = append(result.Projects, ProjectFile{Path: rel, DocumentIndex: documentIndex, Project: project})
 	case isCoreGVK(obj, "ConfigMap") && obj.GetName() == "argocd-cm":
 		result.SettingsCandidates = append(result.SettingsCandidates, SettingsCandidate{Path: rel, DocumentIndex: documentIndex, Kind: "argocd-cm"})
+	case isCoreGVK(obj, "ConfigMap") && obj.GetName() == "argocd-cmp-cm" && isConfigManagementPluginConfigMap(obj):
+		result.SettingsCandidates = append(result.SettingsCandidates, SettingsCandidate{Path: rel, DocumentIndex: documentIndex, Kind: "argocd-cmp-cm"})
 	case isCoreGVK(obj, "Secret") && obj.GetLabels()["argocd.argoproj.io/secret-type"] == "repository":
 		result.SettingsCandidates = append(result.SettingsCandidates, SettingsCandidate{Path: rel, DocumentIndex: documentIndex, Kind: "repository-secret"})
 	case isArgoHelmValuesSettings(obj):
@@ -202,6 +204,11 @@ func isArgoHelmValuesSettings(obj *unstructured.Unstructured) bool {
 	configs, ok := obj.Object["configs"].(map[string]any)
 	if !ok {
 		return false
+	}
+	if cmp, ok := configs["cmp"].(map[string]any); ok {
+		if plugins, ok := cmp["plugins"].(map[string]any); ok && len(plugins) > 0 {
+			return true
+		}
 	}
 	cm, ok := configs["cm"].(map[string]any)
 	if !ok {
@@ -228,6 +235,19 @@ func isKnownArgoCMSettingKey(key string) bool {
 	default:
 		return strings.HasPrefix(key, "resource.customizations.")
 	}
+}
+
+func isConfigManagementPluginConfigMap(obj *unstructured.Unstructured) bool {
+	data, ok, err := unstructured.NestedStringMap(obj.Object, "data")
+	if err != nil || !ok {
+		return false
+	}
+	for _, value := range data {
+		if looksLikeConfigManagementPluginYAML(value) {
+			return true
+		}
+	}
+	return false
 }
 
 func scanStart(root, relRoot string) (string, error) {
@@ -287,8 +307,13 @@ func looksLikeCandidate(path string) (bool, error) {
 	text := string(data)
 	return strings.Contains(text, "argoproj.io/v1alpha1") ||
 		strings.Contains(text, "argocd-cm") ||
+		strings.Contains(text, "ConfigManagementPlugin") ||
 		strings.Contains(text, "argocd.argoproj.io/secret-type") ||
-		(strings.Contains(text, "configs:") && strings.Contains(text, "cm:")), nil
+		(strings.Contains(text, "configs:") && (strings.Contains(text, "cm:") || strings.Contains(text, "cmp:"))), nil
+}
+
+func looksLikeConfigManagementPluginYAML(value string) bool {
+	return strings.Contains(value, "ConfigManagementPlugin")
 }
 
 func shouldSkipDir(name string) bool {

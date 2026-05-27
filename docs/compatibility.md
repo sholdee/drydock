@@ -119,6 +119,11 @@ Supported:
   `patchesStrategicMerge`, `generators`, `transformers`, `validators`,
   `configurations`, `crds`, `openapi.path`, `replacements.path`, and generator
   file/env refs.
+- Native-compatible Kustomize build config management plugin definitions
+  discovered from Argo CD Helm values or rendered `argocd-cmp-cm` ConfigMaps.
+  drydock parses those definitions as metadata and renders matched
+  Applications through the Go-native Kustomize renderer without executing the
+  plugin command.
 - Config management plugin source detection with fail-closed diagnostics in
   the CLI and default Go client.
 - Injectable in-process plugin renderers, named plugin registry dispatch, and
@@ -126,8 +131,8 @@ Supported:
 
 Not supported:
 
-- CLI config management plugin execution.
-- Shellout plugin adapters.
+- Arbitrary CLI config management plugin execution.
+- Shellout plugin adapters or plugin command execution.
 - Argo CD repo-server sidecar plugin discovery.
 - Ambient plugin configuration or environment loading.
 - Plugin credential injection.

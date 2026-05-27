@@ -553,6 +553,8 @@ func loadSettingsFromDiscovery(root string, discovered discovery.Result) (config
 		switch candidate.Kind {
 		case "argocd-cm":
 			settings, nextDiags, err = config.LoadFromConfigMapDocument(path, candidate.DocumentIndex)
+		case "argocd-cmp-cm":
+			settings, nextDiags, err = config.LoadConfigManagementPluginConfigMapDocument(path, candidate.DocumentIndex)
 		case "argocd-values":
 			settings, nextDiags, err = config.LoadFromHelmValuesDocument(path, candidate.DocumentIndex)
 		case "repository-secret":

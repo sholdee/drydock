@@ -271,6 +271,40 @@ func TestDiagSettingsSummaryDoesNotLeakLuaBodies(t *testing.T) {
 	}
 }
 
+func TestDiagSettingsSummaryDoesNotLeakConfigManagementPluginCommands(t *testing.T) {
+	root := t.TempDir()
+	writeSimpleAppForCLI(t, root, "ok")
+	writeCLITestFile(t, filepath.Join(root, "settings", "values.yaml"), `configs:
+  cmp:
+    plugins:
+      kustomize-build-with-helm:
+        generate:
+          command: [sh, -c]
+          args: [kustomize build --enable-helm --secret-token]
+`)
+
+	for _, output := range []string{"json", "yaml"} {
+		t.Run(output, func(t *testing.T) {
+			cmd := NewRootCommand(VersionInfo{})
+			cmd.SetArgs([]string{"diag", "--path", root, "-o", output, "--settings"})
+			var stdout bytes.Buffer
+			var stderr bytes.Buffer
+			cmd.SetOut(&stdout)
+			cmd.SetErr(&stderr)
+
+			if err := cmd.Execute(); err != nil {
+				t.Fatalf("Execute() error = %v\nstdout:\n%s\nstderr:\n%s", err, stdout.String(), stderr.String())
+			}
+			combined := stdout.String() + stderr.String()
+			for _, forbidden := range []string{"kustomize build", "--secret-token", "ConfigManagementPlugins"} {
+				if strings.Contains(combined, forbidden) {
+					t.Fatalf("%s output leaked %q\nstdout:\n%s\nstderr:\n%s", output, forbidden, stdout.String(), stderr.String())
+				}
+			}
+		})
+	}
+}
+
 func TestDiagJSONOutputCanIncludeCacheEvents(t *testing.T) {
 	root := t.TempDir()
 	chartDir := filepath.Join(t.TempDir(), "demo")

@@ -16,6 +16,11 @@ func defaultKustomizeBuildSettings() kustomizeBuildSettings {
 	return kustomizeBuildSettings{LoadRestrictions: types.LoadRestrictionsRootOnly}
 }
 
+func ValidateKustomizeBuildOptions(options []string) error {
+	_, err := parseKustomizeBuildOptions(options)
+	return err
+}
+
 func parseKustomizeBuildOptions(options []string) (kustomizeBuildSettings, error) {
 	settings := defaultKustomizeBuildSettings()
 	for i := 0; i < len(options); i++ {

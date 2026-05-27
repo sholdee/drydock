@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/sholdee/drydock/internal/diagnostic"
+	"go.yaml.in/yaml/v4"
 )
 
 func TestLoadHelmValuesSettings(t *testing.T) {
@@ -28,6 +29,156 @@ func TestLoadHelmValuesSettings(t *testing.T) {
 	}
 	if settings.InstanceLabelKey.Provenance.Path == "" {
 		t.Fatalf("expected provenance")
+	}
+}
+
+func TestLoadHelmValuesConfigManagementPlugins(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "values.yaml")
+	if err := os.WriteFile(path, []byte(`configs:
+  cmp:
+    plugins:
+      kustomize-build-with-helm:
+        version: v1
+        generate:
+          command: [sh, -c]
+          args: [kustomize build --enable-helm]
+`), 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	settings, diags, err := LoadFromHelmValues(path)
+	if err != nil {
+		t.Fatalf("LoadFromHelmValues() error = %v", err)
+	}
+	if len(diags) != 0 {
+		t.Fatalf("diagnostics = %#v", diags)
+	}
+	plugin, ok := settings.ConfigManagementPlugins["kustomize-build-with-helm-v1"]
+	if !ok {
+		t.Fatalf("ConfigManagementPlugins = %#v, want versioned plugin key", settings.ConfigManagementPlugins)
+	}
+	if plugin.Name != "kustomize-build-with-helm" || plugin.Version != "v1" || plugin.EffectiveName() != "kustomize-build-with-helm-v1" {
+		t.Fatalf("plugin = %#v", plugin)
+	}
+	if got := strings.Join(append(plugin.GenerateCommand, plugin.GenerateArgs...), " "); got != "sh -c kustomize build --enable-helm" {
+		t.Fatalf("plugin command = %q", got)
+	}
+}
+
+func TestLoadHelmValuesRawConfigManagementPluginYAML(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "values.yaml")
+	if err := os.WriteFile(path, []byte(`configs:
+  cmp:
+    plugins:
+      kustomize-build-with-helm.yaml: |
+        apiVersion: argoproj.io/v1alpha1
+        kind: ConfigManagementPlugin
+        metadata:
+          name: kustomize-build-with-helm
+        spec:
+          version: v2
+          generate:
+            command: [kustomize, build]
+            args: [--enable-helm]
+`), 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	settings, diags, err := LoadFromHelmValues(path)
+	if err != nil {
+		t.Fatalf("LoadFromHelmValues() error = %v", err)
+	}
+	if len(diags) != 0 {
+		t.Fatalf("diagnostics = %#v", diags)
+	}
+	plugin, ok := settings.ConfigManagementPlugins["kustomize-build-with-helm-v2"]
+	if !ok {
+		t.Fatalf("ConfigManagementPlugins = %#v, want plugin from raw Helm values YAML", settings.ConfigManagementPlugins)
+	}
+	if got := strings.Join(append(plugin.GenerateCommand, plugin.GenerateArgs...), " "); got != "kustomize build --enable-helm" {
+		t.Fatalf("plugin command = %q", got)
+	}
+}
+
+func TestLoadConfigManagementPluginConfigMapDocument(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "cmp.yaml")
+	if err := os.WriteFile(path, []byte(`apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: argocd-cmp-cm
+data:
+  kustomize-build-with-helm.yaml: |
+    apiVersion: argoproj.io/v1alpha1
+    kind: ConfigManagementPlugin
+    metadata:
+      name: kustomize-build-with-helm
+    spec:
+      generate:
+        command: [kustomize, build]
+        args: [--enable-helm]
+`), 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	settings, diags, err := LoadConfigManagementPluginConfigMapDocument(path, 0)
+	if err != nil {
+		t.Fatalf("LoadConfigManagementPluginConfigMapDocument() error = %v", err)
+	}
+	if len(diags) != 0 {
+		t.Fatalf("diagnostics = %#v", diags)
+	}
+	plugin, ok := settings.ConfigManagementPlugins["kustomize-build-with-helm"]
+	if !ok {
+		t.Fatalf("ConfigManagementPlugins = %#v, want rendered ConfigMap plugin", settings.ConfigManagementPlugins)
+	}
+	if got := strings.Join(append(plugin.GenerateCommand, plugin.GenerateArgs...), " "); got != "kustomize build --enable-helm" {
+		t.Fatalf("plugin command = %q", got)
+	}
+}
+
+func TestMergeDiscoveredConfigManagementPluginConflictsAreRedacted(t *testing.T) {
+	leftPath := filepath.Join(t.TempDir(), "left.yaml")
+	rightPath := filepath.Join(t.TempDir(), "right.yaml")
+	left := DefaultSettings()
+	left.ConfigManagementPlugins["cmp"] = configManagementPluginFromSpec("cmp", cmpPluginSpec{
+		Generate: cmpCommand{Command: []string{"sh", "-c"}, Args: []string{"secret-token-one"}},
+	}, leftPath, "configs.cmp.plugins.cmp")
+	right := DefaultSettings()
+	right.ConfigManagementPlugins["cmp"] = configManagementPluginFromSpec("cmp", cmpPluginSpec{
+		Generate: cmpCommand{Command: []string{"sh", "-c"}, Args: []string{"secret-token-two"}},
+	}, rightPath, "configs.cmp.plugins.cmp")
+
+	_, diags := MergeDiscovered([]ArgoSettings{left, right})
+	if len(diags) != 1 {
+		t.Fatalf("diagnostics = %#v, want one conflict", diags)
+	}
+	if strings.Contains(diags[0].Message, "secret-token") {
+		t.Fatalf("diagnostic leaked command: %#v", diags[0])
+	}
+	if !strings.Contains(diags[0].Message, "cmp") {
+		t.Fatalf("diagnostic = %#v, want plugin name", diags[0])
+	}
+}
+
+func TestConfigManagementPluginsDoNotSerializeRawCommands(t *testing.T) {
+	settings := DefaultSettings()
+	settings.ConfigManagementPlugins["cmp"] = configManagementPluginFromSpec("cmp", cmpPluginSpec{
+		Generate: cmpCommand{Command: []string{"sh", "-c"}, Args: []string{"kustomize build --enable-helm"}},
+	}, "values.yaml", "configs.cmp.plugins.cmp")
+
+	jsonData, err := json.Marshal(settings)
+	if err != nil {
+		t.Fatalf("json.Marshal() error = %v", err)
+	}
+	yamlData, err := yaml.Marshal(settings)
+	if err != nil {
+		t.Fatalf("yaml.Marshal() error = %v", err)
+	}
+	combined := string(jsonData) + string(yamlData)
+	for _, forbidden := range []string{"ConfigManagementPlugins", "kustomize build", "--enable-helm"} {
+		if strings.Contains(combined, forbidden) {
+			t.Fatalf("serialized settings leaked %q\njson:\n%s\nyaml:\n%s", forbidden, jsonData, yamlData)
+		}
 	}
 }
 
