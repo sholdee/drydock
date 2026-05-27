@@ -11,21 +11,29 @@ Inspect your Argo CD fleet without getting wet.
 [![License: Apache-2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
 [![Go Version](https://img.shields.io/github/go-mod/go-version/sholdee/drydock)](go.mod)
 
-`drydock` performs offline Argo CD desired-state analysis for GitOps
-repositories. It discovers, renders, tests, diffs, and diagnoses Applications
-without requiring live Argo CD or Kubernetes runtime.
+`drydock` is a fast, single static Go binary and embeddable library for
+offline Argo CD desired-state analysis. It discovers, renders, tests, diffs,
+and diagnoses GitOps Applications without requiring a live Argo CD instance or
+Kubernetes cluster.
 
-It is built for operators who want to inspect rendered desired state before a
+It is built for operators who want quick, deterministic feedback before a
 change reaches the cluster. Pull request diffing is the primary workflow, but
-the same engine also supports render validation, image inventory, repository
-diagnostics, cache inspection, and embeddable Go APIs. The default workflow is
-a self-contained Go binary that does not need a running Kubernetes cluster,
-Argo CD instance, `kubectl`, `argocd`, or Helm/Kustomize CLI shellouts.
+the same native engine also supports render validation, image inventory,
+repository diagnostics, cache inspection, and Go API embedding.
 
-This is runtime-offline, not necessarily network-disconnected: declared Git,
-HTTP Helm, OCI Helm, and remote Kustomize sources may be fetched into explicit
-drydock caches when needed. Use `--offline` to require local files, repo maps,
-local charts, or existing cache hits only.
+Core properties:
+
+- Single static Go binary for local use and CI.
+- Native Go renderers and public Go APIs; no repo-server wrapper.
+- No default shellouts to `kubectl`, `argocd`, Helm, Kustomize, or config
+  management plugin commands.
+- Runtime-offline analysis: no running cluster or Argo CD server is required.
+- Cache-backed source acquisition for fast repeatable validation.
+
+Runtime-offline does not mean network-disconnected. Declared Git, HTTP Helm,
+OCI Helm, and remote Kustomize sources may be fetched into explicit drydock
+caches when needed. Use `--offline` to require local files, repo maps, local
+charts, or existing cache hits only.
 
 ## Install
 
@@ -141,6 +149,7 @@ drydock discovers and renders local Argo CD desired state, including:
   commands.
 - Declared Git, HTTP Helm, OCI Helm, and remote Kustomize source acquisition
   into local caches.
+- Fast cache-backed repeated runs for local development and CI.
 - Repository maps with `--repo-map URL=PATH` for adjacent local checkouts.
 - Changed-only desired-vs-desired PR diffs, with strict diagnostics available
   when a safe ownership decision cannot be made.
