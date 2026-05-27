@@ -76,6 +76,19 @@ func defaultCommonFlags() commonFlags {
 }
 
 func bindCommonFlags(cmd *cobra.Command, flags *commonFlags) {
+	bindPathDiscoveryFlags(cmd, flags)
+	bindAcquisitionCacheFlags(cmd, flags)
+	bindAuthFlags(cmd, flags)
+	bindRemoteAcquisitionCacheFlags(cmd, flags)
+	bindApplicationSetFixtureFlags(cmd, flags)
+	bindFilterFlags(cmd, flags)
+	bindStrictExitFlags(cmd, flags)
+	bindOutputDiffFormattingFlags(cmd, flags)
+	bindDiagnosticsCacheEventFlags(cmd, flags)
+	bindParallelismFlags(cmd, flags)
+}
+
+func bindPathDiscoveryFlags(cmd *cobra.Command, flags *commonFlags) {
 	cmd.Flags().StringVar(&flags.path, "path", flags.path, "repository path to inspect")
 	cmd.Flags().StringVar(&flags.pathOrig, "path-orig", flags.pathOrig, "baseline repository path for diffs")
 	cmd.Flags().StringVarP(&flags.selector, "selector", "l", flags.selector, "label selector for Applications")
@@ -83,11 +96,17 @@ func bindCommonFlags(cmd *cobra.Command, flags *commonFlags) {
 	cmd.Flags().IntVar(&flags.maxDiscoveryDepth, "max-discovery-depth", flags.maxDiscoveryDepth, "maximum recursive rendered Application discovery depth")
 	cmd.Flags().StringArrayVar(&flags.discoverKustomize, "discover-kustomize", flags.discoverKustomize, "additional local Kustomize path to render for Argo CD Application discovery")
 	cmd.Flags().StringArrayVar(&flags.repoMaps, "repo-map", flags.repoMaps, "repository URL mapping in from=to form")
+}
+
+func bindAcquisitionCacheFlags(cmd *cobra.Command, flags *commonFlags) {
 	cmd.Flags().BoolVar(&flags.offline, "offline", flags.offline, "disable network access and use local files, repo maps, or existing caches")
 	cmd.Flags().BoolVar(&flags.refreshCharts, "refresh-charts", flags.refreshCharts, "refresh cached Helm charts before rendering")
 	cmd.Flags().StringVar(&flags.chartCacheDir, "chart-cache-dir", flags.chartCacheDir, "directory for cached Helm charts")
 	cmd.Flags().StringVar(&flags.gitCacheDir, "git-cache-dir", flags.gitCacheDir, "directory for cached Git repositories")
 	cmd.Flags().BoolVar(&flags.refreshGit, "refresh-git", flags.refreshGit, "fetch cached Git repositories before rendering")
+}
+
+func bindAuthFlags(cmd *cobra.Command, flags *commonFlags) {
 	cmd.Flags().StringVar(&flags.gitUsername, "git-username", flags.gitUsername, "username for authenticated Git HTTPS sources")
 	cmd.Flags().StringVar(&flags.gitPassword, "git-password", flags.gitPassword, "password for authenticated Git HTTPS sources")
 	cmd.Flags().StringVar(&flags.gitBearerToken, "git-bearer-token", flags.gitBearerToken, "bearer token for authenticated Git HTTPS sources")
@@ -98,24 +117,45 @@ func bindCommonFlags(cmd *cobra.Command, flags *commonFlags) {
 	cmd.Flags().StringVar(&flags.helmPassword, "helm-password", flags.helmPassword, "password for authenticated HTTP Helm repositories")
 	cmd.Flags().StringVar(&flags.helmBearerToken, "helm-bearer-token", flags.helmBearerToken, "bearer token for authenticated HTTP Helm repositories")
 	cmd.Flags().StringVar(&flags.registryConfig, "registry-config", flags.registryConfig, "Helm OCI registry config file")
-	cmd.Flags().BoolVar(&flags.refreshRemotes, "refresh-remotes", flags.refreshRemotes, "refresh cached remote Kustomize resources before rendering")
-	cmd.Flags().StringVar(&flags.remoteCacheDir, "remote-cache-dir", flags.remoteCacheDir, "directory for cached remote Kustomize resources")
 	cmd.Flags().StringVar(&flags.remoteUsername, "remote-username", flags.remoteUsername, "username for authenticated remote Kustomize HTTP resources")
 	cmd.Flags().StringVar(&flags.remotePassword, "remote-password", flags.remotePassword, "password for authenticated remote Kustomize HTTP resources")
 	cmd.Flags().StringVar(&flags.remoteBearerToken, "remote-bearer-token", flags.remoteBearerToken, "bearer token for authenticated remote Kustomize HTTP resources")
+}
+
+func bindRemoteAcquisitionCacheFlags(cmd *cobra.Command, flags *commonFlags) {
+	cmd.Flags().BoolVar(&flags.refreshRemotes, "refresh-remotes", flags.refreshRemotes, "refresh cached remote Kustomize resources before rendering")
+	cmd.Flags().StringVar(&flags.remoteCacheDir, "remote-cache-dir", flags.remoteCacheDir, "directory for cached remote Kustomize resources")
+}
+
+func bindApplicationSetFixtureFlags(cmd *cobra.Command, flags *commonFlags) {
 	cmd.Flags().StringArrayVar(&flags.appsetFixtures, "appset-provider-fixture", flags.appsetFixtures, "local YAML/JSON fixture file for provider-backed ApplicationSet generators")
+}
+
+func bindFilterFlags(cmd *cobra.Command, flags *commonFlags) {
 	cmd.Flags().StringArrayVar(&flags.skipKinds, "skip-kind", flags.skipKinds, "rendered resource kind to omit from output and diffs")
 	cmd.Flags().BoolVar(&flags.skipCRDs, "skip-crds", flags.skipCRDs, "omit CustomResourceDefinition resources from output and diffs")
 	cmd.Flags().BoolVar(&flags.skipSecrets, "skip-secrets", flags.skipSecrets, "omit Secret resources from output and diffs")
 	cmd.Flags().BoolVar(&flags.changedOnly, "changed-only", flags.changedOnly, "limit work to Applications affected by changed files")
 	cmd.Flags().BoolVar(&flags.strictChangedOnly, "strict-changed-only", flags.strictChangedOnly, "fail when changed-only input ownership is ambiguous or incomplete")
+}
+
+func bindStrictExitFlags(cmd *cobra.Command, flags *commonFlags) {
 	cmd.Flags().BoolVar(&flags.strict, "strict", flags.strict, "promote diagnostics to errors")
 	cmd.Flags().BoolVar(&flags.exitCode, "exit-code", flags.exitCode, "return exit code 1 when a diff is found")
+}
+
+func bindOutputDiffFormattingFlags(cmd *cobra.Command, flags *commonFlags) {
 	cmd.Flags().StringVarP(&flags.output, "output", "o", flags.output, "output format")
 	cmd.Flags().IntVarP(&flags.unified, "unified", "u", flags.unified, "number of unified diff context lines")
 	cmd.Flags().StringArrayVar(&flags.stripAttrs, "strip-attr", flags.stripAttrs, "metadata label or annotation key to strip before diffing")
 	cmd.Flags().IntVar(&flags.limitBytes, "limit-bytes", flags.limitBytes, "maximum bytes of rendered output per object")
+}
+
+func bindDiagnosticsCacheEventFlags(cmd *cobra.Command, flags *commonFlags) {
 	cmd.Flags().BoolVar(&flags.cacheEvents, "cache-events", flags.cacheEvents, "include cache acquisition events in structured diagnostic output")
+}
+
+func bindParallelismFlags(cmd *cobra.Command, flags *commonFlags) {
 	cmd.Flags().IntVar(&flags.parallelism, "parallelism", flags.parallelism, "maximum number of Applications to render concurrently")
 }
 

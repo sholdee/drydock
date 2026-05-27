@@ -1,6 +1,10 @@
 package cli
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/spf13/cobra"
+)
 
 func TestParseRepoMaps(t *testing.T) {
 	maps, err := parseRepoMaps([]string{
@@ -26,4 +30,58 @@ func TestParseRepoMapsRejectsInvalidMapping(t *testing.T) {
 	if err == nil {
 		t.Fatal("parseRepoMaps() error = nil, want invalid mapping error")
 	}
+}
+
+func TestRepresentativeCommandsExposeFocusedFlagGroups(t *testing.T) {
+	tests := []struct {
+		name    string
+		command []string
+		flags   []string
+	}{
+		{
+			name:    "build apps common acquisition discovery fixtures filters",
+			command: []string{"build", "apps"},
+			flags:   []string{"offline", "repo-map", "appset-provider-fixture", "skip-kind"},
+		},
+		{
+			name:    "diff apps common specialized diff flags",
+			command: []string{"diff", "apps"},
+			flags:   []string{"offline", "repo-map", "appset-provider-fixture", "skip-kind", "ref-orig", "show-ignored-fields"},
+		},
+		{
+			name:    "test apps common specialized lua flag",
+			command: []string{"test", "apps"},
+			flags:   []string{"offline", "repo-map", "appset-provider-fixture", "skip-kind", "skip-lua-health"},
+		},
+		{
+			name:    "diag common flags",
+			command: []string{"diag"},
+			flags:   []string{"offline", "repo-map", "appset-provider-fixture", "skip-kind"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cmd := findCLICommand(t, tt.command...)
+			for _, flagName := range tt.flags {
+				if cmd.Flags().Lookup(flagName) == nil {
+					t.Fatalf("%s missing --%s", cmd.CommandPath(), flagName)
+				}
+			}
+		})
+	}
+}
+
+func findCLICommand(t *testing.T, args ...string) *cobra.Command {
+	t.Helper()
+
+	root := NewRootCommand(VersionInfo{})
+	cmd, _, err := root.Find(args)
+	if err != nil {
+		t.Fatalf("Find(%v) error = %v", args, err)
+	}
+	if cmd == root {
+		t.Fatalf("Find(%v) returned root command", args)
+	}
+	return cmd
 }
