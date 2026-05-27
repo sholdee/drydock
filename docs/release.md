@@ -80,17 +80,24 @@ Release tags use true SemVer with a leading `v`, such as `v0.1.0`. Release PRs
 are managed by release-please using conventional commits and
 `release-please-config.json`.
 
-The first public release is bootstrapped from `.release-please-manifest.json`
-version `0.0.0` and `initial-version: 0.1.0`. The release-readiness commit uses
-`Release-As: 0.1.0` so release-please should open the first release PR for
-`v0.1.0`. Do not publish a different first release tag.
-
 Release automation is split by ownership:
 
 - The `Release Please` workflow manages changelog/version release PRs only.
   It must not create GitHub Releases or release tags.
 - The `Release` workflow publishes an unreleased version from
   `.release-please-manifest.json` after the release PR is merged.
+
+```mermaid
+flowchart TD
+  ReleasePR[Release Please PR] --> Merge[Merge release PR to main]
+  Merge --> Version[Read manifest version]
+  Version --> Checks[Run source checks]
+  Checks --> Build[Build archives and container]
+  Build --> Draft[Create draft immutable GitHub Release]
+  Draft --> PushImage[Push and sign GHCR image tags]
+  PushImage --> Publish[Publish release and mark latest]
+  Publish --> Verify[Verify tag target and artifacts]
+```
 
 This preserves the normal operator workflow of marking the release PR ready,
 waiting for CI, and merging it. The publishing workflow then builds, signs, and

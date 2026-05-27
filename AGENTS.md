@@ -32,6 +32,8 @@ Use these entry points before substantive work:
 - `docs/design.md`: canonical product architecture and behavior model.
 - `docs/compatibility.md`: supported Argo CD behavior and runtime-boundary
   status.
+- `docs/source-acquisition.md`: Git, Helm, remote Kustomize, cache, and auth
+  behavior.
 - `docs/reports/live-integration-design-gate.md`: required before
   proposing live runtime, server-side diff, defaulting, admission, or
   managed-fields work.
@@ -107,10 +109,10 @@ Use `rg` first, then read the smallest relevant files.
 | CLI flags, output, exit codes | `internal/cli`, `internal/requestopts` |
 | Public Go API | `pkg/drydock`, then matching `internal/app` request types |
 | Discovery and Argo settings | `internal/discovery`, `internal/config` |
-| ApplicationSet generation | `internal/appset` |
+| ApplicationSet generation | `docs/applicationsets.md`, then `internal/appset` |
 | Application planning and orchestration | `internal/app` |
 | Kustomize, Helm, directory rendering | `internal/render` |
-| Git, chart, remote acquisition | `internal/source`, `internal/chart`, `internal/remote`, `internal/acquisition` |
+| Git, chart, remote acquisition | `docs/source-acquisition.md`, then `internal/source`, `internal/chart`, `internal/remote`, `internal/acquisition` |
 | Manifest diffs and image extraction | `internal/diff`, `internal/manifest` |
 | Cache lifecycle and cache events | `internal/cache`, `internal/cacheevent`, `internal/cli/cache.go` |
 | Path containment and symlink rules | `internal/pathsafety`, then caller-specific checks |
