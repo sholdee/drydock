@@ -30,6 +30,30 @@ func TestParseKustomizeRemoteRef(t *testing.T) {
 			subpath:  "deploy/base",
 		},
 		{
+			name:     "github root shorthand ref",
+			ref:      "https://github.com/org/repo?ref=v1",
+			kind:     kustomizeRemoteGit,
+			repoURL:  "https://github.com/org/repo",
+			revision: "v1",
+			subpath:  ".",
+		},
+		{
+			name:     "github git suffix root shorthand ref",
+			ref:      "https://github.com/org/repo.git?ref=v1",
+			kind:     kustomizeRemoteGit,
+			repoURL:  "https://github.com/org/repo.git",
+			revision: "v1",
+			subpath:  ".",
+		},
+		{
+			name:     "github root shorthand defaults revision",
+			ref:      "https://github.com/org/repo",
+			kind:     kustomizeRemoteGit,
+			repoURL:  "https://github.com/org/repo",
+			revision: "HEAD",
+			subpath:  ".",
+		},
+		{
 			name:     "github shorthand ref",
 			ref:      "https://github.com/argoproj/argo-cd/manifests/crds?ref=v3.4.2",
 			kind:     kustomizeRemoteGit,
@@ -44,6 +68,14 @@ func TestParseKustomizeRemoteRef(t *testing.T) {
 			repoURL:  "https://git.example.test/platform/repo.git",
 			revision: "main",
 			subpath:  "deploy/base",
+		},
+		{
+			name:     "git path segment root ref",
+			ref:      "https://git.example.test/platform/repo.git?ref=main",
+			kind:     kustomizeRemoteGit,
+			repoURL:  "https://git.example.test/platform/repo.git",
+			revision: "main",
+			subpath:  ".",
 		},
 		{
 			name:     "git URL ref defaults revision",
@@ -62,6 +94,22 @@ func TestParseKustomizeRemoteRef(t *testing.T) {
 			subpath:  "deploy/base",
 		},
 		{
+			name:     "git prefix root URL ref",
+			ref:      "git::https://host.example.test/org/repo.git?ref=v1",
+			kind:     kustomizeRemoteGit,
+			repoURL:  "https://host.example.test/org/repo.git",
+			revision: "v1",
+			subpath:  ".",
+		},
+		{
+			name:     "git prefix root URL defaults revision",
+			ref:      "git::https://host.example.test/org/repo.git",
+			kind:     kustomizeRemoteGit,
+			repoURL:  "https://host.example.test/org/repo.git",
+			revision: "HEAD",
+			subpath:  ".",
+		},
+		{
 			name:     "ssh URL ref",
 			ref:      "ssh://git@github.com/org/repo.git//deploy/base?ref=release",
 			kind:     kustomizeRemoteGit,
@@ -70,12 +118,36 @@ func TestParseKustomizeRemoteRef(t *testing.T) {
 			subpath:  "deploy/base",
 		},
 		{
+			name:     "ssh root URL ref",
+			ref:      "ssh://git@host.example.test/org/repo.git?ref=v1",
+			kind:     kustomizeRemoteGit,
+			repoURL:  "ssh://git@host.example.test/org/repo.git",
+			revision: "v1",
+			subpath:  ".",
+		},
+		{
 			name:     "scp-like ref",
 			ref:      "git@github.com:org/repo.git//deploy/base?ref=release",
 			kind:     kustomizeRemoteGit,
 			repoURL:  "git@github.com:org/repo.git",
 			revision: "release",
 			subpath:  "deploy/base",
+		},
+		{
+			name:     "scp-like root ref",
+			ref:      "git@host.example.test:org/repo.git?ref=v1",
+			kind:     kustomizeRemoteGit,
+			repoURL:  "git@host.example.test:org/repo.git",
+			revision: "v1",
+			subpath:  ".",
+		},
+		{
+			name:     "scp-like root defaults revision",
+			ref:      "git@host.example.test:org/repo.git",
+			kind:     kustomizeRemoteGit,
+			repoURL:  "git@host.example.test:org/repo.git",
+			revision: "HEAD",
+			subpath:  ".",
 		},
 	}
 
@@ -114,10 +186,27 @@ func TestParseKustomizeRemoteRefIgnoresLocalRefs(t *testing.T) {
 	}
 }
 
+func TestParseKustomizeRemoteRefRejectsAmbiguousHTTPGitLikeRefs(t *testing.T) {
+	for _, ref := range []string{
+		"https://example.test/org/repo?ref=v1",
+		"https://example.test/org/repo",
+		"https://example.test/org/repo/base?ref=v1",
+	} {
+		got, ok, err := parseKustomizeRemoteRef(ref)
+		if err != nil {
+			t.Fatalf("parseKustomizeRemoteRef(%q) error = %v", ref, err)
+		}
+		if ok {
+			t.Fatalf("parseKustomizeRemoteRef(%q) = %#v, true; want false", ref, got)
+		}
+	}
+}
+
 func TestParseKustomizeRemoteRefRejectsSecretBearingUnsupportedQuery(t *testing.T) {
 	for _, ref := range []string{
 		"https://github.com/org/repo//base?token=secret&ref=main",
 		"https://github.com/org/repo//base?secret=value&ref=main",
+		"https://github.com/org/repo?token=secret&ref=main",
 	} {
 		_, ok, err := parseKustomizeRemoteRef(ref)
 		if err == nil {
@@ -134,7 +223,9 @@ func TestParseKustomizeRemoteRefRejectsUserinfo(t *testing.T) {
 	for _, ref := range []string{
 		"https://user:secret@example.test/file.yaml",
 		"https://user:secret@github.com/org/repo//base?ref=main",
+		"https://user:secret@github.com/org/repo?ref=main",
 		"git::https://user:secret@github.com/org/repo.git//base?ref=main",
+		"alice:secret@github.com:org/repo.git?ref=main",
 	} {
 		_, ok, err := parseKustomizeRemoteRef(ref)
 		if err == nil {

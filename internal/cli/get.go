@@ -30,6 +30,7 @@ func newGetCommand(deps Dependencies) *cobra.Command {
 
 	appsFlags := defaultCommonFlags()
 	appsFlags.output = string(cliformat.OutputTable)
+	appsFlags.parallelism = defaultRenderAppsParallelism()
 	apps := &cobra.Command{
 		Use:   "apps",
 		Short: "List Applications",
@@ -47,7 +48,7 @@ func newGetCommand(deps Dependencies) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			result, err := deps.Orchestrator.ListApplications(context.Background(), buildRequestFromFlags(appsFlags, repoMaps))
+			result, err := deps.Orchestrator.ListApplications(context.Background(), buildRequestFromFlags(cmd, appsFlags, repoMaps))
 			if err != nil {
 				if renderErr := renderDiagnostics(cmd.ErrOrStderr(), result.Diagnostics); renderErr != nil {
 					return renderErr
@@ -64,6 +65,7 @@ func newGetCommand(deps Dependencies) *cobra.Command {
 
 	imagesFlags := defaultCommonFlags()
 	imagesFlags.output = string(cliformat.OutputTable)
+	imagesFlags.parallelism = defaultRenderAppsParallelism()
 	images := &cobra.Command{
 		Use:   "images",
 		Short: "List rendered image references",
@@ -81,7 +83,7 @@ func newGetCommand(deps Dependencies) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			buildRequest := buildRequestFromFlags(imagesFlags, repoMaps)
+			buildRequest := buildRequestFromFlags(cmd, imagesFlags, repoMaps)
 			listResult, err := deps.Orchestrator.ListApplications(context.Background(), buildRequest)
 			if err != nil {
 				if renderErr := renderDiagnostics(cmd.ErrOrStderr(), listResult.Diagnostics); renderErr != nil {

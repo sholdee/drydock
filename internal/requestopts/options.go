@@ -17,6 +17,9 @@ type Options struct {
 	Repo                           string
 	Ref                            string
 	RefOrig                        string
+	DiscoveryMode                  string
+	MaxDiscoveryDepth              int
+	MaxDiscoveryDepthSet           bool
 	DiscoverKustomizePaths         []string
 	ChangedOnly                    *bool
 	StrictChangedOnly              bool
@@ -52,6 +55,9 @@ func (options Options) Build() app.BuildRequest {
 	return app.BuildRequest{
 		Path:                           options.Path,
 		Strict:                         options.Strict,
+		DiscoveryMode:                  options.DiscoveryMode,
+		MaxDiscoveryDepth:              options.MaxDiscoveryDepth,
+		MaxDiscoveryDepthSet:           options.MaxDiscoveryDepthSet,
 		DiscoverKustomizePaths:         append([]string(nil), options.DiscoverKustomizePaths...),
 		ValidateLuaHealth:              options.ValidateLuaHealth,
 		Offline:                        options.Offline,
@@ -89,6 +95,9 @@ func (options Options) Diff() app.DiffRequest {
 		Repo:                           options.Repo,
 		Ref:                            options.Ref,
 		RefOrig:                        options.RefOrig,
+		DiscoveryMode:                  options.DiscoveryMode,
+		MaxDiscoveryDepth:              options.MaxDiscoveryDepth,
+		MaxDiscoveryDepthSet:           options.MaxDiscoveryDepthSet,
 		DiscoverKustomizePaths:         append([]string(nil), options.DiscoverKustomizePaths...),
 		ChangedOnly:                    changedOnly,
 		StrictChangedOnly:              options.StrictChangedOnly,

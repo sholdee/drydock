@@ -16,22 +16,35 @@ type Options struct {
 	AppManifestPaths []string
 }
 
+type SourceTier int
+
+const (
+	SourceTierStatic SourceTier = iota
+	SourceTierExplicitRendered
+	SourceTierRenderedFleet
+)
+
 type ApplicationFile struct {
 	Path          string
 	DocumentIndex int
 	Application   argoappv1.Application
+	Tier          SourceTier
+	InputPaths    []string
 }
 
 type ApplicationSetFile struct {
 	Path           string
 	DocumentIndex  int
 	ApplicationSet argoappv1.ApplicationSet
+	Tier           SourceTier
+	InputPaths     []string
 }
 
 type ProjectFile struct {
 	Path          string
 	DocumentIndex int
 	Project       argoappv1.AppProject
+	Tier          SourceTier
 }
 
 type SettingsCandidate struct {
@@ -42,6 +55,7 @@ type SettingsCandidate struct {
 	Namespace     string
 	Name          string
 	Object        *unstructured.Unstructured
+	Tier          SourceTier
 }
 
 type Result struct {
@@ -182,13 +196,13 @@ func scanDocument(rel string, documentIndex int, obj *unstructured.Unstructured,
 		if err := unstructuredToTyped(obj.Object, &app); err != nil {
 			return fmt.Errorf("%s: decode Application: %w", rel, err)
 		}
-		result.Applications = append(result.Applications, ApplicationFile{Path: rel, DocumentIndex: documentIndex, Application: app})
+		result.Applications = append(result.Applications, ApplicationFile{Path: rel, DocumentIndex: documentIndex, Application: app, InputPaths: []string{rel}})
 	case isArgoGVK(obj, "ApplicationSet"):
 		var appSet argoappv1.ApplicationSet
 		if err := unstructuredToTyped(obj.Object, &appSet); err != nil {
 			return fmt.Errorf("%s: decode ApplicationSet: %w", rel, err)
 		}
-		result.ApplicationSets = append(result.ApplicationSets, ApplicationSetFile{Path: rel, DocumentIndex: documentIndex, ApplicationSet: appSet})
+		result.ApplicationSets = append(result.ApplicationSets, ApplicationSetFile{Path: rel, DocumentIndex: documentIndex, ApplicationSet: appSet, InputPaths: []string{rel}})
 	case isArgoGVK(obj, "AppProject"):
 		var project argoappv1.AppProject
 		if err := unstructuredToTyped(obj.Object, &project); err != nil {

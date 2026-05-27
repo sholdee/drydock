@@ -18,6 +18,9 @@ func TestOptionsBuildCopiesSharedFields(t *testing.T) {
 
 	assertDeepEqual(t, "Path", request.Path, "repo")
 	assertDeepEqual(t, "Strict", request.Strict, true)
+	assertDeepEqual(t, "DiscoveryMode", request.DiscoveryMode, "fleet")
+	assertDeepEqual(t, "MaxDiscoveryDepth", request.MaxDiscoveryDepth, 2)
+	assertDeepEqual(t, "MaxDiscoveryDepthSet", request.MaxDiscoveryDepthSet, true)
 	assertDeepEqual(t, "DiscoverKustomizePaths", request.DiscoverKustomizePaths, []string{"argocd/overlays/prod"})
 	assertDeepEqual(t, "Offline", request.Offline, true)
 	assertDeepEqual(t, "RefreshCharts", request.RefreshCharts, true)
@@ -60,6 +63,9 @@ func TestOptionsDiffCopiesSharedFields(t *testing.T) {
 	assertDeepEqual(t, "Repo", request.Repo, "repo-root")
 	assertDeepEqual(t, "Ref", request.Ref, "feature")
 	assertDeepEqual(t, "RefOrig", request.RefOrig, "main")
+	assertDeepEqual(t, "DiscoveryMode", request.DiscoveryMode, "fleet")
+	assertDeepEqual(t, "MaxDiscoveryDepth", request.MaxDiscoveryDepth, 2)
+	assertDeepEqual(t, "MaxDiscoveryDepthSet", request.MaxDiscoveryDepthSet, true)
 	assertDeepEqual(t, "DiscoverKustomizePaths", request.DiscoverKustomizePaths, []string{"argocd/overlays/prod"})
 	assertDeepEqual(t, "ChangedOnly", request.ChangedOnly, true)
 	assertDeepEqual(t, "StrictChangedOnly", request.StrictChangedOnly, true)
@@ -113,6 +119,9 @@ func fixtureOptions() Options {
 		Repo:                         "repo-root",
 		Ref:                          "feature",
 		RefOrig:                      "main",
+		DiscoveryMode:                "fleet",
+		MaxDiscoveryDepth:            2,
+		MaxDiscoveryDepthSet:         true,
 		DiscoverKustomizePaths:       []string{"argocd/overlays/prod"},
 		StrictChangedOnly:            true,
 		Strict:                       true,

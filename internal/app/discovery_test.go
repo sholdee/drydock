@@ -4,13 +4,19 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
+	"sync/atomic"
 	"testing"
 
+	argoappv1 "github.com/argoproj/argo-cd/v3/pkg/apis/application/v1alpha1"
 	"github.com/sholdee/drydock/internal/diagnostic"
+	"github.com/sholdee/drydock/internal/discovery"
+	"github.com/sholdee/drydock/internal/render"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 )
 
-func TestListApplicationsDiscoversRenderedKustomizeAndRenderedSettingsWin(t *testing.T) {
+func TestListApplicationsKeepsStaticObjectsAheadOfRenderedKustomizeDuplicates(t *testing.T) {
 	root := t.TempDir()
 	writeTestFile(t, filepath.Join(root, "argocd", "base", "application.yaml"), `apiVersion: argoproj.io/v1alpha1
 kind: Application
@@ -69,16 +75,288 @@ patches:
 		t.Fatalf("ListApplications() error = %v", err)
 	}
 	if len(result.Applications) != 1 {
-		t.Fatalf("Applications = %#v, want one rendered Application", result.Applications)
+		t.Fatalf("Applications = %#v, want one static Application", result.Applications)
 	}
-	if got := result.Applications[0].Spec.Source.Path; got != "apps/rendered" {
-		t.Fatalf("Application source path = %q, want rendered path", got)
+	if got := result.Applications[0].Spec.Source.Path; got != "apps/raw" {
+		t.Fatalf("Application source path = %q, want static path", got)
 	}
+	if got := result.Settings.InstanceLabelKey.Value; got != "app.kubernetes.io/raw" {
+		t.Fatalf("InstanceLabelKey = %q, want static settings", got)
+	}
+	if len(result.ApplicationInputs) != 1 || len(result.ApplicationInputs[0].Paths) != 1 || result.ApplicationInputs[0].Paths[0] != "argocd/base/application.yaml" {
+		t.Fatalf("ApplicationInputs = %#v, want static discovery path", result.ApplicationInputs)
+	}
+	if diag, ok := diagnosticByCategory(result.Diagnostics, "discovery"); !ok || !strings.Contains(diag.Message, "duplicate Application") {
+		t.Fatalf("Diagnostics = %#v, want duplicate discovery warning", result.Diagnostics)
+	}
+}
+
+func TestListApplicationsDiscoversRenderedFleetApplicationsByDefault(t *testing.T) {
+	root := t.TempDir()
+	writeRenderedFleetFixture(t, root)
+
+	result, err := Orchestrator{}.ListApplications(context.Background(), BuildRequest{Path: root})
+	if err != nil {
+		t.Fatalf("ListApplications() error = %v", err)
+	}
+
+	names := applicationNames(result.Applications)
+	if strings.Join(names, ",") != "child,root" {
+		t.Fatalf("Applications = %#v, want child and root", names)
+	}
+	inputs, ok := applicationInputPaths(result.ApplicationInputs, "child")
+	if !ok {
+		t.Fatalf("ApplicationInputs = %#v, missing child", result.ApplicationInputs)
+	}
+	for _, want := range []string{"apps/root.yaml", "bootstrap-chart/templates/child.yaml"} {
+		if !containsPath(inputs, want) {
+			t.Fatalf("child inputs = %#v, missing %q", inputs, want)
+		}
+	}
+}
+
+func TestListApplicationsStaticDiscoveryModeDisablesRenderedFleetExpansion(t *testing.T) {
+	root := t.TempDir()
+	writeRenderedFleetFixture(t, root)
+
+	result, err := Orchestrator{}.ListApplications(context.Background(), BuildRequest{
+		Path:          root,
+		DiscoveryMode: DiscoveryModeStatic,
+	})
+	if err != nil {
+		t.Fatalf("ListApplications() error = %v", err)
+	}
+
+	names := applicationNames(result.Applications)
+	if strings.Join(names, ",") != "root" {
+		t.Fatalf("Applications = %#v, want only static root", names)
+	}
+}
+
+func TestListApplicationsPrefersRenderedNamespaceOverNamespaceLessApplicationSet(t *testing.T) {
+	root := t.TempDir()
+	writeTestFile(t, filepath.Join(root, "overlays", "argocd", "appset.yaml"), `apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: apps
+spec:
+  generators:
+    - list:
+        elements:
+          - name: demo
+  template:
+    metadata:
+      name: '{{name}}'
+    spec:
+      project: default
+      source:
+        repoURL: https://github.com/example/repo
+        targetRevision: main
+        path: workloads/{{name}}
+      destination:
+        name: in-cluster
+        namespace: '{{name}}'
+`)
+	writeTestFile(t, filepath.Join(root, "overlays", "argocd", "kustomization.yaml"), `namespace: argocd
+resources:
+  - appset.yaml
+`)
+
+	result, err := Orchestrator{}.ListApplications(context.Background(), BuildRequest{
+		Path:                   root,
+		DiscoverKustomizePaths: []string{"overlays/argocd"},
+	})
+	if err != nil {
+		t.Fatalf("ListApplications() error = %v", err)
+	}
+	if names := applicationNames(result.Applications); strings.Join(names, ",") != "demo" {
+		t.Fatalf("Applications = %#v, want demo", names)
+	}
+	if got := result.Applications[0].Namespace; got != "argocd" {
+		t.Fatalf("Application namespace = %q, want rendered namespace", got)
+	}
+	if diag, ok := diagnosticByCategory(result.Diagnostics, "discovery"); ok && strings.Contains(diag.Message, "duplicate") {
+		t.Fatalf("Diagnostics = %#v, want namespace-defaulted duplicate to stay quiet", result.Diagnostics)
+	}
+}
+
+func TestListApplicationsErrorsWhenRenderedFleetDiscoveryDoesNotConverge(t *testing.T) {
+	root := t.TempDir()
+	writeRenderedFleetFixture(t, root)
+
+	_, err := Orchestrator{}.ListApplications(context.Background(), BuildRequest{
+		Path:              root,
+		MaxDiscoveryDepth: 1,
+	})
+	if err == nil || !strings.Contains(err.Error(), "maximum discovery depth 1") {
+		t.Fatalf("ListApplications() error = %v, want max discovery depth error", err)
+	}
+}
+
+func TestListApplicationsDiscoversRenderedProjectsAndSettings(t *testing.T) {
+	root := t.TempDir()
+	writeRenderedFleetFixture(t, root)
+
+	result, err := Orchestrator{}.ListApplications(context.Background(), BuildRequest{Path: root})
+	if err != nil {
+		t.Fatalf("ListApplications() error = %v", err)
+	}
+
 	if got := result.Settings.InstanceLabelKey.Value; got != "app.kubernetes.io/rendered" {
 		t.Fatalf("InstanceLabelKey = %q, want rendered settings", got)
 	}
-	if len(result.ApplicationInputs) != 1 || len(result.ApplicationInputs[0].Paths) != 1 || result.ApplicationInputs[0].Paths[0] != "argocd/overlays/prod" {
-		t.Fatalf("ApplicationInputs = %#v, want rendered discovery path", result.ApplicationInputs)
+	projectNames := make([]string, 0, len(result.Projects))
+	for _, project := range result.Projects {
+		projectNames = append(projectNames, project.Name)
+	}
+	if strings.Join(projectNames, ",") != "rendered" {
+		t.Fatalf("Projects = %#v, want rendered project", projectNames)
+	}
+}
+
+func TestRenderedFleetApplicationInputsIncludeParentAndRenderedPaths(t *testing.T) {
+	root := t.TempDir()
+	writeRenderedFleetFixture(t, root)
+
+	result, err := Orchestrator{}.ListApplications(context.Background(), BuildRequest{Path: root})
+	if err != nil {
+		t.Fatalf("ListApplications() error = %v", err)
+	}
+
+	selected, unowned := SelectChangedApplicationInputs(result.ApplicationInputs, []string{"workloads/child/cm.yaml"})
+	if len(unowned) != 0 {
+		t.Fatalf("unowned = %#v, want none", unowned)
+	}
+	if names := applicationNames(selected); strings.Join(names, ",") != "child" {
+		t.Fatalf("selected for child source change = %#v, want child", names)
+	}
+
+	selected, unowned = SelectChangedApplicationInputs(result.ApplicationInputs, []string{"bootstrap-chart/templates/child.yaml"})
+	if len(unowned) != 0 {
+		t.Fatalf("unowned = %#v, want none", unowned)
+	}
+	if names := applicationNames(selected); strings.Join(names, ",") != "child,root" {
+		t.Fatalf("selected for rendered child definition change = %#v, want child and root", names)
+	}
+
+	selected, unowned = SelectChangedApplicationInputs(result.ApplicationInputs, []string{"apps/root.yaml"})
+	if len(unowned) != 0 {
+		t.Fatalf("unowned = %#v, want none", unowned)
+	}
+	if names := applicationNames(selected); strings.Join(names, ",") != "child,root" {
+		t.Fatalf("selected for parent change = %#v, want child and root", names)
+	}
+}
+
+func TestBuildReusesRenderedDiscoveryCacheForFinalRender(t *testing.T) {
+	root := t.TempDir()
+	writeTestFile(t, filepath.Join(root, "apps", "root.yaml"), `apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: root
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/example/repo
+    targetRevision: main
+    path: manifests/root
+    plugin:
+      name: app-of-apps
+  destination:
+    name: in-cluster
+    namespace: argocd
+`)
+	writeTestFile(t, filepath.Join(root, "manifests", "root", "marker.yaml"), `apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: child
+`)
+	writeTestFile(t, filepath.Join(root, "workloads", "child", "cm.yaml"), `apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: child
+`)
+
+	var calls int32
+	renderer := internalPluginRendererFunc(func(_ context.Context, _ render.PluginRequest) ([]render.Manifest, []diagnostic.Diagnostic, error) {
+		atomic.AddInt32(&calls, 1)
+		return []render.Manifest{{
+			Path: "templates/child.yaml",
+			Object: &unstructured.Unstructured{Object: map[string]any{
+				"apiVersion": "argoproj.io/v1alpha1",
+				"kind":       "Application",
+				"metadata": map[string]any{
+					"name":      "child",
+					"namespace": "argocd",
+				},
+				"spec": map[string]any{
+					"project": "default",
+					"source": map[string]any{
+						"repoURL":        "https://github.com/example/repo",
+						"targetRevision": "main",
+						"path":           "workloads/child",
+					},
+					"destination": map[string]any{
+						"name":      "in-cluster",
+						"namespace": "child",
+					},
+				},
+			}},
+		}}, nil, nil
+	})
+
+	result, err := (Orchestrator{PluginRenderer: renderer}).Build(context.Background(), BuildRequest{
+		Path:        root,
+		Parallelism: 1,
+	})
+	if err != nil {
+		t.Fatalf("Build() error = %v", err)
+	}
+	if got := atomic.LoadInt32(&calls); got != 1 {
+		t.Fatalf("plugin render calls = %d, want discovery result reused for final render", got)
+	}
+	if names := applicationNames(result.Applications); strings.Join(names, ",") != "child,root" {
+		t.Fatalf("Applications = %#v, want child and root", names)
+	}
+}
+
+func TestApplicationMayRenderDiscoveryObjectsUsesLocalSourcePrefilter(t *testing.T) {
+	root := t.TempDir()
+	leaf := argoappv1.Application{}
+	leaf.Name = "leaf"
+	leaf.Spec.Source = &argoappv1.ApplicationSource{
+		RepoURL:        "https://github.com/example/repo",
+		TargetRevision: "main",
+		Path:           "leaf",
+	}
+	writeTestFile(t, filepath.Join(root, "leaf", "cm.yaml"), `apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: leaf
+`)
+	if applicationMayRenderDiscoveryObjects(root, BuildRequest{}, discovery.Result{}, leaf) {
+		t.Fatal("leaf Application prefilter = true, want false")
+	}
+
+	appOfApps := argoappv1.Application{}
+	appOfApps.Name = "app-of-apps"
+	appOfApps.Spec.Source = &argoappv1.ApplicationSource{
+		RepoURL:        "https://github.com/example/repo",
+		TargetRevision: "main",
+		Path:           "chart",
+	}
+	writeTestFile(t, filepath.Join(root, "chart", "Chart.yaml"), `apiVersion: v2
+name: app-of-apps
+version: 0.1.0
+`)
+	writeTestFile(t, filepath.Join(root, "chart", "templates", "app.yaml"), `apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: child
+`)
+	if !applicationMayRenderDiscoveryObjects(root, BuildRequest{}, discovery.Result{}, appOfApps) {
+		t.Fatal("app-of-apps prefilter = false, want true")
 	}
 }
 
@@ -155,4 +433,98 @@ spec:
         targetRevision: HEAD
         path: apps/{{name}}
 `)
+}
+
+func writeRenderedFleetFixture(t *testing.T, root string) {
+	t.Helper()
+	writeTestFile(t, filepath.Join(root, "apps", "root.yaml"), `apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: root
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/example/repo
+    targetRevision: main
+    path: bootstrap-chart
+  destination:
+    name: in-cluster
+    namespace: argocd
+`)
+	writeTestFile(t, filepath.Join(root, "bootstrap-chart", "Chart.yaml"), `apiVersion: v2
+name: bootstrap-chart
+version: 0.1.0
+`)
+	writeTestFile(t, filepath.Join(root, "bootstrap-chart", "templates", "child.yaml"), `apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: child
+  namespace: argocd
+spec:
+  project: rendered
+  source:
+    repoURL: https://github.com/example/repo
+    targetRevision: main
+    path: workloads/child
+  destination:
+    name: in-cluster
+    namespace: child
+`)
+	writeTestFile(t, filepath.Join(root, "bootstrap-chart", "templates", "project.yaml"), `apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: rendered
+  namespace: argocd
+spec:
+  sourceRepos:
+    - '*'
+  destinations:
+    - namespace: '*'
+      server: '*'
+      name: '*'
+`)
+	writeTestFile(t, filepath.Join(root, "bootstrap-chart", "templates", "argocd-cm.yaml"), `apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: argocd-cm
+  namespace: argocd
+data:
+  application.instanceLabelKey: app.kubernetes.io/rendered
+`)
+	writeTestFile(t, filepath.Join(root, "workloads", "child", "cm.yaml"), `apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: child
+  namespace: child
+data:
+  source: rendered-fleet
+`)
+}
+
+func applicationNames(applications []argoappv1.Application) []string {
+	names := make([]string, 0, len(applications))
+	for _, application := range applications {
+		names = append(names, application.Name)
+	}
+	sort.Strings(names)
+	return names
+}
+
+func applicationInputPaths(inputs []ApplicationSelectionInput, name string) ([]string, bool) {
+	for _, input := range inputs {
+		if input.Application.Name == name {
+			return input.Paths, true
+		}
+	}
+	return nil, false
+}
+
+func containsPath(values []string, want string) bool {
+	for _, value := range values {
+		if value == want {
+			return true
+		}
+	}
+	return false
 }

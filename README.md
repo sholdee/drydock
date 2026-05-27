@@ -140,9 +140,11 @@ drydock diff apps --path . --path-orig ../baseline --offline
 
 drydock discovers and renders local Argo CD desired state, including:
 
-- `Application` resources and supported `ApplicationSet` generators.
-- Optional rendered discovery from explicit local Kustomize entrypoints with
-  `--discover-kustomize`.
+- Static `Application` resources, supported `ApplicationSet` generators, and
+  rendered child `Application`, `ApplicationSet`, `AppProject`, and settings
+  objects from app-of-apps/bootstrap sources.
+- Optional additional rendered discovery from explicit local Kustomize
+  entrypoints with `--discover-kustomize`.
 - Single-source and multi-source Applications.
 - Directory, Kustomize, local Helm chart, remote Helm chart, and remote
   Kustomize sources.
@@ -208,7 +210,7 @@ flowchart TD
   current --> discover
   baseline --> discover
 
-  discover[Discover Argo CD Applications and settings]
+  discover[Discover static and rendered Argo CD fleet objects]
   discover --> plan[Plan sources, resolve repo maps, use caches]
   plan --> render[Render desired manifests with Go libraries]
   render --> normalize[Apply Argo-aware filters and diff normalization]

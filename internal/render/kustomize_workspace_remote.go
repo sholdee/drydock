@@ -260,7 +260,7 @@ func acquiredRemoteKustomizePath(acquired remote.Result, ref kustomizeRemoteRef)
 		return acquiredPath, nil
 	case kustomizeRemoteGit:
 		subpath := path.Clean(strings.TrimPrefix(ref.Subpath, "/"))
-		if subpath == "." || pathsafety.SlashRelEscapes(subpath) {
+		if pathsafety.SlashRelEscapes(subpath) {
 			return "", fmt.Errorf("remote kustomize resource %s subpath %q escapes acquired repository", redactKustomizeRef(ref.Original), ref.Subpath)
 		}
 		repoRoot := filepath.Clean(acquiredPath)

@@ -11,8 +11,9 @@ must be cache-only.
 
 ## Application Discovery
 
-List direct `Application` CRs and supported generated `ApplicationSet`
-Applications:
+List discovered `Application` CRs, supported generated `ApplicationSet`
+Applications, and rendered child Applications from app-of-apps bootstrap
+sources:
 
 ```bash
 drydock get apps --path .
@@ -35,6 +36,23 @@ drydock get images --path . -o name
 `get images` uses the same output formats as `get apps`. Diagnostics are
 printed to stderr for both commands.
 
+By default, fleet commands recursively render discovered Applications to find
+additional Argo CD `Application`, `ApplicationSet`, `AppProject`, and settings
+objects in their desired output. This lets repositories that commit a bootstrap
+Application or Helm app-of-apps chart behave like repositories that commit the
+inflated child objects. Discovery stops when it converges, with a default
+maximum depth of `4`.
+
+Use `--discovery-mode static` to disable recursive rendered fleet discovery.
+Committed `ApplicationSet` objects still expand through supported offline
+generators. Use `--max-discovery-depth 0` to keep normal static discovery and
+explicit `--discover-kustomize` rendering while disabling recursive rendered
+fleet discovery.
+
+Static committed objects take precedence over rendered objects with the same
+API version, kind, namespace, and name. Rendered duplicates emit diagnostics
+instead of silently replacing committed intent.
+
 Supported local `ApplicationSet` generators are Git directories, Git files,
 list, matrix, merge, and explicit fixture-backed provider generators.
 Unsupported generators emit diagnostics; non-strict commands keep supported
@@ -43,8 +61,9 @@ Applications, while `--strict` promotes the diagnostics to errors.
 For generator details, fixture schemas, and stable template parameters, see
 [`applicationsets.md`](applicationsets.md).
 
-Local `AppProject` manifests are discovered for offline diagnostics only.
-Discovery does not contact a Kubernetes cluster or Argo CD server.
+Committed and rendered `AppProject` manifests are discovered for offline
+diagnostics only. Discovery does not contact a Kubernetes cluster or Argo CD
+server.
 
 Some repositories commit Argo CD bootstrap inputs as Kustomize bases and
 overlays rather than committing the fully inflated Argo CD objects. Add
@@ -59,8 +78,8 @@ drydock test apps --path . --discover-kustomize clusters/prod/argocd
 
 The path must be relative to `--path`, must not escape through `..`, and must
 not include symlinked path components. Rendered discovery is additive: normal
-repository scanning still runs, and rendered objects replace raw objects only
-when they have the same API version, kind, namespace, and name.
+repository scanning still runs, and committed objects retain precedence over
+rendered duplicates.
 
 ## Rendering
 

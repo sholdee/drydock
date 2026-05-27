@@ -30,6 +30,12 @@ func newBuildSession(orchestrator Orchestrator, request BuildRequest) (*buildSes
 	if err != nil {
 		return nil, err
 	}
+	if _, err := normalizeDiscoveryMode(request.DiscoveryMode); err != nil {
+		return nil, err
+	}
+	if _, err := normalizeMaxDiscoveryDepth(request.MaxDiscoveryDepth, request.MaxDiscoveryDepthSet); err != nil {
+		return nil, err
+	}
 	return &buildSession{
 		orchestrator:  orchestrator,
 		request:       request,
@@ -122,22 +128,26 @@ func (session *buildSession) Build(ctx context.Context) (BuildResult, error) {
 	}
 
 	rendered, renderErr := renderApplications(ctx, renderApplicationsRequest{
-		applications:    result.Applications,
-		provider:        provider,
-		strict:          session.request.Strict,
-		statusOnly:      session.request.StatusOnly,
-		settingsFilter:  settingsFilter,
-		resourceFilter:  resourceFilter,
-		healthEvaluator: healthEvaluator,
-		recordEvents:    session.request.RecordCacheEvents,
-		parallelism:     session.parallelism,
-		statusCallback:  session.request.StatusCallback,
+		applications:      result.Applications,
+		provider:          provider,
+		renderCache:       result.renderCache,
+		settingsSignature: result.renderSettingsSignature,
+		request:           session.request,
+		strict:            session.request.Strict,
+		statusOnly:        session.request.StatusOnly,
+		settingsFilter:    settingsFilter,
+		resourceFilter:    resourceFilter,
+		healthEvaluator:   healthEvaluator,
+		recordEvents:      session.request.RecordCacheEvents,
+		parallelism:       session.parallelism,
+		statusCallback:    session.request.StatusCallback,
 	})
 	result.Manifests = append(result.Manifests, rendered.manifests...)
 	result.ApplicationManifests = append(result.ApplicationManifests, rendered.applicationManifests...)
 	result.Diagnostics = append(result.Diagnostics, rendered.diagnostics...)
 	result.Statuses = append(result.Statuses, rendered.statuses...)
 	result.CacheEvents = append(result.CacheEvents, rendered.cacheEvents...)
+	result.Diagnostics = dedupeDiagnostics(result.Diagnostics)
 	if renderErr != nil {
 		return result, renderErr
 	}

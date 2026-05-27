@@ -21,6 +21,8 @@ type Config struct {
 	Repo                   string
 	Ref                    string
 	RefOrig                string
+	DiscoveryMode          string
+	MaxDiscoveryDepth      *int
 	DiscoverKustomizePaths []string
 	Strict                 bool
 	Offline                bool
@@ -165,6 +167,12 @@ func (client *Client) requestOptions() requestopts.Options {
 	if unified == 0 {
 		unified = 3
 	}
+	maxDiscoveryDepth := app.DefaultMaxDiscoveryDepth
+	maxDiscoveryDepthSet := false
+	if client.config.MaxDiscoveryDepth != nil {
+		maxDiscoveryDepth = *client.config.MaxDiscoveryDepth
+		maxDiscoveryDepthSet = true
+	}
 	return requestopts.Options{
 		Path:                           client.config.Path,
 		LeftPath:                       client.config.PathOrig,
@@ -172,6 +180,9 @@ func (client *Client) requestOptions() requestopts.Options {
 		Repo:                           client.config.Repo,
 		Ref:                            client.config.Ref,
 		RefOrig:                        client.config.RefOrig,
+		DiscoveryMode:                  client.config.DiscoveryMode,
+		MaxDiscoveryDepth:              maxDiscoveryDepth,
+		MaxDiscoveryDepthSet:           maxDiscoveryDepthSet,
 		DiscoverKustomizePaths:         append([]string(nil), client.config.DiscoverKustomizePaths...),
 		ChangedOnly:                    client.config.ChangedOnly,
 		StrictChangedOnly:              client.config.StrictChangedOnly,

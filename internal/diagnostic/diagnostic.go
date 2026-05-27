@@ -112,11 +112,25 @@ func StableCode(diag Diagnostic) string {
 		return "render.repeated-resource"
 	case "changed-only":
 		return "diff.changed-only-incomplete"
+	case "discovery":
+		return discoveryCode(diag.Message)
 	}
 	if diag.Category == "" {
 		return "diagnostic.unspecified"
 	}
 	return diag.Category + ".unspecified"
+}
+
+func discoveryCode(message string) string {
+	switch {
+	case strings.Contains(message, "duplicate"):
+		return "discovery.duplicate"
+	case strings.Contains(message, "maximum discovery depth"):
+		return "discovery.depth-exceeded"
+	case strings.Contains(message, "could not be rendered"):
+		return "discovery.render-failed"
+	}
+	return "discovery.unspecified"
 }
 
 func appSetCode(message string) string {

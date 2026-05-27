@@ -12,61 +12,66 @@ import (
 )
 
 type commonFlags struct {
-	path              string
-	pathOrig          string
-	repo              string
-	ref               string
-	refOrig           string
-	selector          string
-	discoverKustomize []string
-	repoMaps          []string
-	offline           bool
-	refreshCharts     bool
-	chartCacheDir     string
-	gitCacheDir       string
-	refreshGit        bool
-	gitUsername       string
-	gitPassword       string
-	gitBearerToken    string
-	gitSSHKeyFile     string
-	gitSSHPassphrase  string
-	gitKnownHostsFile string
-	helmUsername      string
-	helmPassword      string
-	helmBearerToken   string
-	registryConfig    string
-	refreshRemotes    bool
-	remoteCacheDir    string
-	remoteUsername    string
-	remotePassword    string
-	remoteBearerToken string
-	appsetFixtures    []string
-	skipKinds         []string
-	skipCRDs          bool
-	skipSecrets       bool
-	skipLuaHealth     bool
-	changedOnly       bool
-	strictChangedOnly bool
-	strict            bool
-	exitCode          bool
-	output            string
-	unified           int
-	stripAttrs        []string
-	showIgnoredFields bool
-	limitBytes        int
-	cacheEvents       bool
-	parallelism       int
+	path                 string
+	pathOrig             string
+	repo                 string
+	ref                  string
+	refOrig              string
+	selector             string
+	discoveryMode        string
+	maxDiscoveryDepth    int
+	maxDiscoveryDepthSet bool
+	discoverKustomize    []string
+	repoMaps             []string
+	offline              bool
+	refreshCharts        bool
+	chartCacheDir        string
+	gitCacheDir          string
+	refreshGit           bool
+	gitUsername          string
+	gitPassword          string
+	gitBearerToken       string
+	gitSSHKeyFile        string
+	gitSSHPassphrase     string
+	gitKnownHostsFile    string
+	helmUsername         string
+	helmPassword         string
+	helmBearerToken      string
+	registryConfig       string
+	refreshRemotes       bool
+	remoteCacheDir       string
+	remoteUsername       string
+	remotePassword       string
+	remoteBearerToken    string
+	appsetFixtures       []string
+	skipKinds            []string
+	skipCRDs             bool
+	skipSecrets          bool
+	skipLuaHealth        bool
+	changedOnly          bool
+	strictChangedOnly    bool
+	strict               bool
+	exitCode             bool
+	output               string
+	unified              int
+	stripAttrs           []string
+	showIgnoredFields    bool
+	limitBytes           int
+	cacheEvents          bool
+	parallelism          int
 }
 
 func defaultCommonFlags() commonFlags {
 	return commonFlags{
-		path:        ".",
-		changedOnly: true,
-		exitCode:    true,
-		output:      "diff",
-		unified:     3,
-		limitBytes:  65536,
-		parallelism: 1,
+		path:              ".",
+		changedOnly:       true,
+		exitCode:          true,
+		output:            "diff",
+		unified:           3,
+		limitBytes:        65536,
+		parallelism:       1,
+		discoveryMode:     "fleet",
+		maxDiscoveryDepth: 4,
 	}
 }
 
@@ -74,6 +79,8 @@ func bindCommonFlags(cmd *cobra.Command, flags *commonFlags) {
 	cmd.Flags().StringVar(&flags.path, "path", flags.path, "repository path to inspect")
 	cmd.Flags().StringVar(&flags.pathOrig, "path-orig", flags.pathOrig, "baseline repository path for diffs")
 	cmd.Flags().StringVarP(&flags.selector, "selector", "l", flags.selector, "label selector for Applications")
+	cmd.Flags().StringVar(&flags.discoveryMode, "discovery-mode", flags.discoveryMode, "Application discovery mode: fleet or static")
+	cmd.Flags().IntVar(&flags.maxDiscoveryDepth, "max-discovery-depth", flags.maxDiscoveryDepth, "maximum recursive rendered Application discovery depth")
 	cmd.Flags().StringArrayVar(&flags.discoverKustomize, "discover-kustomize", flags.discoverKustomize, "additional local Kustomize path to render for Argo CD Application discovery")
 	cmd.Flags().StringArrayVar(&flags.repoMaps, "repo-map", flags.repoMaps, "repository URL mapping in from=to form")
 	cmd.Flags().BoolVar(&flags.offline, "offline", flags.offline, "disable network access and use local files, repo maps, or existing caches")
@@ -173,6 +180,9 @@ func requestOptionsFromFlags(flags commonFlags, repoMaps []source.RepoMap) reque
 		Repo:                           flags.repo,
 		Ref:                            flags.ref,
 		RefOrig:                        flags.refOrig,
+		DiscoveryMode:                  flags.discoveryMode,
+		MaxDiscoveryDepth:              flags.maxDiscoveryDepth,
+		MaxDiscoveryDepthSet:           flags.maxDiscoveryDepthSet,
 		DiscoverKustomizePaths:         append([]string(nil), flags.discoverKustomize...),
 		ChangedOnly:                    &flags.changedOnly,
 		StrictChangedOnly:              flags.strictChangedOnly,
@@ -199,6 +209,11 @@ func requestOptionsFromFlags(flags commonFlags, repoMaps []source.RepoMap) reque
 		SkipSecrets:                    flags.skipSecrets,
 		RecordCacheEvents:              flags.cacheEvents,
 	}
+}
+
+func commandAwareFlags(cmd *cobra.Command, flags commonFlags) commonFlags {
+	flags.maxDiscoveryDepthSet = cmd.Flags().Changed("max-discovery-depth")
+	return flags
 }
 
 func exitCode(err error, disableDiffExitCode bool, hasDiff bool) int {
