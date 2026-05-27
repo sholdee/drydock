@@ -13,46 +13,79 @@ type orderedParallelOptions[T any] struct {
 	shouldCancel func(T) bool
 }
 
-func runOrderedParallel[T any](ctx context.Context, options orderedParallelOptions[T]) ([]T, []bool, error) {
-	workerCount := options.parallelism
-	if workerCount > options.total {
-		workerCount = options.total
-	}
-	if workerCount < 1 && options.total > 0 {
-		workerCount = 1
-	}
+type indexedOrderedResult[T any] struct {
+	index  int
+	result T
+}
 
+func runOrderedParallel[T any](ctx context.Context, options orderedParallelOptions[T]) ([]T, []bool, error) {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
-	type indexedResult struct {
-		index  int
-		result T
-	}
-
+	workerCount := orderedParallelWorkerCount(options.total, options.parallelism)
 	jobs := make(chan int)
-	resultsCh := make(chan indexedResult, options.total)
+	resultsCh := make(chan indexedOrderedResult[T], options.total)
 	results := make([]T, options.total)
 	completedResults := make([]bool, options.total)
 
+	launchOrderedParallelWorkers(ctx, jobs, resultsCh, workerCount, options.run)
+	scheduleErrCh := scheduleOrderedParallelJobs(ctx, jobs, options.total)
+
+	callbackErr, cancelRequested := collectOrderedParallelResults(resultsCh, results, completedResults, cancel, options)
+	scheduleErr := <-scheduleErrCh
+
+	if callbackErr != nil {
+		return results, completedResults, callbackErr
+	}
+	if scheduleErr != nil && !cancelRequested {
+		return results, completedResults, scheduleErr
+	}
+	return results, completedResults, nil
+}
+
+func orderedParallelWorkerCount(total, parallelism int) int {
+	workerCount := parallelism
+	if workerCount > total {
+		workerCount = total
+	}
+	if workerCount < 1 && total > 0 {
+		workerCount = 1
+	}
+	return workerCount
+}
+
+func launchOrderedParallelWorkers[T any](
+	ctx context.Context,
+	jobs <-chan int,
+	resultsCh chan<- indexedOrderedResult[T],
+	workerCount int,
+	run func(context.Context, int) T,
+) {
 	var wg sync.WaitGroup
 	for range workerCount {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
 			for index := range jobs {
-				resultsCh <- indexedResult{
+				resultsCh <- indexedOrderedResult[T]{
 					index:  index,
-					result: options.run(ctx, index),
+					result: run(ctx, index),
 				}
 			}
 		}()
 	}
 
+	go func() {
+		wg.Wait()
+		close(resultsCh)
+	}()
+}
+
+func scheduleOrderedParallelJobs(ctx context.Context, jobs chan<- int, total int) <-chan error {
 	scheduleErrCh := make(chan error, 1)
 	go func() {
 		defer close(jobs)
-		for index := range options.total {
+		for index := range total {
 			select {
 			case <-ctx.Done():
 				scheduleErrCh <- ctx.Err()
@@ -62,12 +95,16 @@ func runOrderedParallel[T any](ctx context.Context, options orderedParallelOptio
 		}
 		scheduleErrCh <- nil
 	}()
+	return scheduleErrCh
+}
 
-	go func() {
-		wg.Wait()
-		close(resultsCh)
-	}()
-
+func collectOrderedParallelResults[T any](
+	resultsCh <-chan indexedOrderedResult[T],
+	results []T,
+	completedResults []bool,
+	cancel context.CancelFunc,
+	options orderedParallelOptions[T],
+) (error, bool) {
 	var callbackErr error
 	cancelRequested := false
 	completed := 0
@@ -88,13 +125,5 @@ func runOrderedParallel[T any](ctx context.Context, options orderedParallelOptio
 			cancel()
 		}
 	}
-	scheduleErr := <-scheduleErrCh
-
-	if callbackErr != nil {
-		return results, completedResults, callbackErr
-	}
-	if scheduleErr != nil && !cancelRequested {
-		return results, completedResults, scheduleErr
-	}
-	return results, completedResults, nil
+	return callbackErr, cancelRequested
 }
