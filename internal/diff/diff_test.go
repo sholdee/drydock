@@ -941,6 +941,83 @@ data:
 	}
 }
 
+func TestExtractImagesIncludesExactImageKeysFromCRDs(t *testing.T) {
+	docs := []Document{
+		{Body: `
+apiVersion: renovate-operator.mogenius.com/v1alpha1
+kind: RenovateJob
+metadata:
+  name: renovate
+spec:
+  image: renovate/renovate:43.195.6@sha256:72d184865d505d5badc5c3b32a48410096e0d9d7e0d875dae28ee97832178f47
+`},
+		{Body: `
+apiVersion: example.test/v1
+kind: ExampleApp
+metadata:
+  name: nested
+spec:
+  components:
+    - name: api
+      image: ghcr.io/example/api:v1
+    - name: worker
+      template:
+        image: ghcr.io/example/worker:v1
+`},
+	}
+
+	images := ExtractImages(docs)
+	want := []string{
+		"ghcr.io/example/api:v1",
+		"ghcr.io/example/worker:v1",
+		"renovate/renovate:43.195.6@sha256:72d184865d505d5badc5c3b32a48410096e0d9d7e0d875dae28ee97832178f47",
+	}
+	if !reflect.DeepEqual(images, want) {
+		t.Fatalf("ExtractImages() = %#v, want %#v", images, want)
+	}
+}
+
+func TestExtractImagesIgnoresNonDeployableExactImageKeys(t *testing.T) {
+	docs := []Document{
+		{Body: `
+apiVersion: v1
+kind: Secret
+metadata:
+  name: secret
+spec:
+  image: ghcr.io/example/secret:v1
+`},
+		{Body: `
+apiVersion: example.test/v1
+kind: ExampleApp
+metadata:
+  name: metadata
+  labels:
+    image: ghcr.io/example/metadata:v1
+status:
+  image: ghcr.io/example/status:v1
+spec:
+  containerImage: ghcr.io/example/container-image:v1
+  description: ghcr.io/example/description:v1
+`},
+		{Body: `
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: config
+data:
+  image: ghcr.io/example/configmap-data:v1
+binaryData:
+  image: Z2hjci5pby9leGFtcGxlL2NvbmZpZ21hcC1iaW5hcnk6djE=
+`},
+	}
+
+	images := ExtractImages(docs)
+	if len(images) != 0 {
+		t.Fatalf("ExtractImages() = %#v, want no images", images)
+	}
+}
+
 func configMapDocument(value string, pointers []string) Document {
 	return Document{
 		Parent: testParent(),

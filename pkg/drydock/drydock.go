@@ -134,12 +134,12 @@ func (client *Client) DiffApplications(ctx context.Context) (DiffApplicationsRes
 	}, err
 }
 
-// DiffImages compares container images between config.PathOrig and config.Path.
+// DiffImages compares image references between config.PathOrig and config.Path.
 func DiffImages(ctx context.Context, config Config) (ImageDiffResult, error) {
 	return NewClient(config).DiffImages(ctx)
 }
 
-// DiffImages compares container images between the client's PathOrig and Path.
+// DiffImages compares image references between the client's PathOrig and Path.
 func (client *Client) DiffImages(ctx context.Context) (ImageDiffResult, error) {
 	result, err := client.orchestrator.DiffImages(ctx, client.diffRequest())
 	return ImageDiffResult{

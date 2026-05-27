@@ -30,7 +30,7 @@ syntax to match `Application.metadata.labels`:
 drydock get apps --path . -l 'env in (prod,stage),tier!=test'
 ```
 
-List conservative workload container images from rendered Applications:
+List rendered image references from Applications:
 
 ```bash
 drydock get images --path . -o name
@@ -610,16 +610,17 @@ drydock diff apps \
 
 ## Image Diffs
 
-Diff conservative workload container images from rendered manifests:
+Diff rendered image references from rendered manifests:
 
 ```bash
 drydock diff images --path ./current --path-orig ../base
 ```
 
-This projection is intentionally conservative and does not report arbitrary
-`image` keys from ConfigMaps or CRDs. Use `-o json` or `-o yaml` for
-machine-readable `added`, `removed`, and `unchanged` image lists. Diagnostics
-remain on stderr so stdout stays valid JSON or YAML.
+This projection includes PodSpec container images plus scalar manifest fields
+whose key is exactly `image`. It does not scan arbitrary string content, Secret
+manifests, top-level metadata/status, or ConfigMap data payloads. Use `-o json`
+or `-o yaml` for machine-readable `added`, `removed`, and `unchanged` image
+lists. Diagnostics remain on stderr so stdout stays valid JSON or YAML.
 
 ## Diagnostics
 

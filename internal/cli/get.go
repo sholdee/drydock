@@ -66,7 +66,7 @@ func newGetCommand(deps Dependencies) *cobra.Command {
 	imagesFlags.output = string(cliformat.OutputTable)
 	images := &cobra.Command{
 		Use:   "images",
-		Short: "List rendered container images",
+		Short: "List rendered image references",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			output, err := cliformat.ParseOutput(imagesFlags.output)

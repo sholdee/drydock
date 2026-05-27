@@ -113,13 +113,13 @@ drydock diff apps --path . --path-orig ../baseline --offline
 | Goal | Command |
 | --- | --- |
 | List Applications | `drydock get apps --path .` |
-| List rendered workload images | `drydock get images --path . -o name` |
+| List rendered image references | `drydock get images --path . -o name` |
 | Render all Applications | `drydock build apps --path .` |
 | Render one Application | `drydock build app renovate --path .` |
 | Test renderability | `drydock test apps --path .` |
 | Diff rendered manifests | `drydock diff apps --path . --path-orig ../baseline` |
 | Diff one Application | `drydock diff app renovate --path . --path-orig ../baseline` |
-| Diff workload images | `drydock diff images --path . --path-orig ../baseline -o json` |
+| Diff rendered image references | `drydock diff images --path . --path-orig ../baseline -o json` |
 | Inspect repository diagnostics | `drydock diag --path .` |
 | Inspect redacted settings | `drydock diag --path . --settings -o json` |
 | Inspect cache roots | `drydock cache path` |

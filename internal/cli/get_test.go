@@ -328,6 +328,25 @@ func TestGetImagesNameOutput(t *testing.T) {
 	}
 }
 
+func TestGetImagesIncludesExactImageKey(t *testing.T) {
+	root := t.TempDir()
+	writeExactImageKeyAppForCLI(t, root, "renovate/renovate:43.195.6@sha256:72d184865d505d5badc5c3b32a48410096e0d9d7e0d875dae28ee97832178f47")
+
+	cmd := NewRootCommand(VersionInfo{})
+	cmd.SetArgs([]string{"get", "images", "--path", root, "-o", "name"})
+	var out bytes.Buffer
+	cmd.SetOut(&out)
+	cmd.SetErr(&out)
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+	want := "renovate/renovate:43.195.6@sha256:72d184865d505d5badc5c3b32a48410096e0d9d7e0d875dae28ee97832178f47\n"
+	if got := out.String(); got != want {
+		t.Fatalf("get images -o name output = %q, want %q", got, want)
+	}
+}
+
 func TestGetImagesSkipKindOmitsFilteredWorkloads(t *testing.T) {
 	root := t.TempDir()
 	writeImageAppForCLI(t, root, "ghcr.io/example/demo:v1")
@@ -484,5 +503,30 @@ metadata:
   name: `+appName+`
 data:
   value: `+appName+`
+`)
+}
+
+func writeExactImageKeyAppForCLI(t *testing.T, root, image string) {
+	t.Helper()
+	writeCLITestFile(t, filepath.Join(root, "apps", "renovate.yaml"), `apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: renovate
+  namespace: argocd
+spec:
+  source:
+    repoURL: https://github.com/example/repo
+    path: manifests/renovate
+    targetRevision: main
+  destination:
+    name: in-cluster
+    namespace: renovate
+`)
+	writeCLITestFile(t, filepath.Join(root, "manifests", "renovate", "renovatejob.yaml"), `apiVersion: renovate-operator.mogenius.com/v1alpha1
+kind: RenovateJob
+metadata:
+  name: renovate
+spec:
+  image: `+image+`
 `)
 }

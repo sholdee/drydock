@@ -86,7 +86,7 @@ func newDiffCommand(deps Dependencies) *cobra.Command {
 	imagesFlags.parallelism = defaultRenderAppsParallelism()
 	images := &cobra.Command{
 		Use:   "images",
-		Short: "Diff rendered container images",
+		Short: "Diff rendered image references",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			output, err := parseDiffOutput(imagesFlags.output, "diff images")
