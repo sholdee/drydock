@@ -509,7 +509,8 @@ jobs:
             --method PATCH \
             "repos/${GITHUB_REPOSITORY}/releases/${RELEASE_ID}" \
             -F body=@release-notes.md \
-            -f draft=false
+            -f draft=false \
+            -f make_latest=true
 
           published_sha="$(git ls-remote --tags origin "refs/tags/${TAG}" | awk 'NR == 1 { print $1 }')"
           if [[ "${published_sha}" != "${GITHUB_SHA}" ]]; then
