@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.1.2](https://github.com/sholdee/drydock/compare/v0.1.1...v0.1.2) (2026-05-27)
+
+
+### Features
+
+* publish immutable release artifacts ([31207c0](https://github.com/sholdee/drydock/commit/31207c039ac9582b03f18f9e7192df7ce77873f5))
+* publish immutable release artifacts ([d28e166](https://github.com/sholdee/drydock/commit/d28e166469228577f911f416e0d2f24b40e1dbc4))
+
 ## [0.1.1](https://github.com/sholdee/drydock/compare/v0.1.0...v0.1.1) (2026-05-26)
 
 
