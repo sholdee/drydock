@@ -11,10 +11,8 @@ import (
 	"sync"
 
 	argoappv1 "github.com/argoproj/argo-cd/v3/pkg/apis/application/v1alpha1"
-	"github.com/sholdee/drydock/internal/acquisition"
 	"github.com/sholdee/drydock/internal/appset"
 	"github.com/sholdee/drydock/internal/cacheevent"
-	"github.com/sholdee/drydock/internal/chart"
 	"github.com/sholdee/drydock/internal/config"
 	"github.com/sholdee/drydock/internal/diagnostic"
 	"github.com/sholdee/drydock/internal/discovery"
@@ -615,52 +613,7 @@ func expandApplicationSetDiscovery(root string, request BuildRequest, discovered
 }
 
 func (o Orchestrator) discoveryProvider(root string, settings config.ArgoSettings, request BuildRequest, recorder *cacheevent.Recorder) (localProvider, func(), error) {
-	acquirer := o.ChartAcquirer
-	if acquirer == nil {
-		acquirer = chart.DefaultAcquirer{}
-	}
-	gitAcquirer := o.GitAcquirer
-	if gitAcquirer == nil {
-		gitAcquirer = sourcepkg.DefaultGitAcquirer{}
-	}
-	forbiddenRoots := append([]string(nil), request.RemoteResourceForbiddenRoots...)
-	forbiddenRoots = append(forbiddenRoots, root)
-	provider := localProvider{
-		repoRoot:                     root,
-		sourceResolver:               sourcepkg.NewResolver(sourcepkg.Options{RepoMaps: request.RepoMaps, Offline: request.Offline}),
-		chartAcquirer:                acquirer,
-		gitAcquirer:                  gitAcquirer,
-		remoteResourceAcquirer:       o.RemoteResourceAcquirer,
-		pluginRenderer:               o.pluginRenderer(request),
-		offline:                      request.Offline,
-		refreshCharts:                request.RefreshCharts,
-		chartCacheDir:                request.ChartCacheDir,
-		chartCredentials:             request.ChartCredentials,
-		ociChartRepositories:         ociChartRepositoriesFromSettings(settings),
-		gitCacheDir:                  request.GitCacheDir,
-		refreshGit:                   request.RefreshGit,
-		gitCredentials:               request.GitCredentials,
-		refreshRemoteResources:       request.RefreshRemoteResources,
-		remoteResourceCacheDir:       request.RemoteResourceCacheDir,
-		remoteResourceForbiddenRoots: forbiddenRoots,
-		remoteResourceCredentials:    request.RemoteResourceCredentials,
-		remoteResourceGitCredentials: request.RemoteResourceGitCredentials,
-		pluginTimeout:                request.PluginTimeout,
-		kustomizeBuildOptions:        settingsBuildOptions(settings),
-		configManagementPlugins:      settings.ConfigManagementPlugins,
-		cacheEvents:                  recorder,
-	}
-	snapshotRoot, err := os.MkdirTemp("", "drydock-discovery-cache-snapshots-*")
-	if err != nil {
-		return provider, func() {}, err
-	}
-	provider.acquisition = acquisition.Session{
-		Locks:              processCacheTargetLocks,
-		SnapshotRoot:       snapshotRoot,
-		SnapshotCacheReads: shouldSnapshotCacheReads(request),
-		SnapshotCache:      acquisition.NewSnapshotCache(),
-	}
-	return provider, func() { _ = os.RemoveAll(snapshotRoot) }, nil
+	return newLocalProvider(o, root, settings, request, recorder, "drydock-discovery-cache-snapshots-*")
 }
 
 func cleanDiscoverKustomizePath(root, rawPath string) (string, error) {
