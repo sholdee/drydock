@@ -266,19 +266,17 @@ jobs:
         run: |
           remote_sha="$(git ls-remote --tags origin "refs/tags/${TAG}" | awk 'NR == 1 { print $1 }')"
 
-          existing_release="$(gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${TAG}" 2>/dev/null || true)"
-          if [[ -n "${existing_release}" ]]; then
-            existing_release_draft="$(jq -r '.draft' <<< "${existing_release}")"
-            if [[ "${existing_release_draft}" == "true" ]]; then
-              gh release delete "${TAG}" --yes
-            else
+          if existing_release_draft="$(gh release view "${TAG}" --json isDraft --jq '.isDraft' 2>/dev/null)"; then
+            if [[ "${existing_release_draft}" != "true" ]]; then
               echo "Release ${TAG} already exists and is not a draft." >&2
               exit 1
             fi
+            gh release delete "${TAG}" --yes
           fi
 
           if [[ -n "${remote_sha}" ]]; then
             git push "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" ":refs/tags/${TAG}"
+            git tag --delete "${TAG}" 2>/dev/null || true
           fi
 
           awk -v version="${VERSION}" '
