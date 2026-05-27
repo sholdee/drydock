@@ -45,9 +45,12 @@ Supported:
 - Direct Application discovery from repository manifests.
 - Recursive rendered fleet discovery from desired output, including rendered
   `Application`, `ApplicationSet`, `AppProject`, and Argo CD settings objects.
-  Static committed objects take precedence over rendered duplicates.
+  Static committed objects take precedence over default rendered fleet
+  duplicates.
 - Explicit `--discover-kustomize PATH` discovery from rendered local
-  Kustomize entrypoints, with normal path containment and symlink checks.
+  Kustomize entrypoints. Explicitly rendered Kustomize objects take precedence
+  over committed duplicates because the path is the operator-selected Argo CD
+  entrypoint.
 - ApplicationSet Git directories, Git files, list, matrix, and merge
   generators.
 - ApplicationSet list `elementsYaml`, including matrix-interpolated

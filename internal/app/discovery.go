@@ -987,7 +987,7 @@ func resolveDiscoveryConflict(kind, key string, existingTier discovery.SourceTie
 	if existingTier == incomingTier && existingPath == incomingPath && existingDocument == incomingDocument {
 		return true, nil
 	}
-	replace := incomingTier < existingTier
+	replace := discoveryTierPriority(incomingTier) < discoveryTierPriority(existingTier)
 	winnerPath := existingPath
 	ignoredPath := incomingPath
 	if replace {
@@ -1005,6 +1005,19 @@ func resolveDiscoveryConflict(kind, key string, existingTier discovery.SourceTie
 	}
 	diag.Code = diagnostic.StableCode(diag)
 	return replace, &diag
+}
+
+func discoveryTierPriority(tier discovery.SourceTier) int {
+	switch tier {
+	case discovery.SourceTierExplicitRendered:
+		return 0
+	case discovery.SourceTierStatic:
+		return 1
+	case discovery.SourceTierRenderedFleet:
+		return 2
+	default:
+		return 1
+	}
 }
 
 func resolveNamespaceDefaultedDiscoveryConflict(kind, existingKey, incomingKey string, existingTier discovery.SourceTier, existingPath string, existingDocument int, incomingTier discovery.SourceTier, incomingPath string, incomingDocument int) (bool, *diagnostic.Diagnostic) {

@@ -49,9 +49,9 @@ generators. Use `--max-discovery-depth 0` to keep normal static discovery and
 explicit `--discover-kustomize` rendering while disabling recursive rendered
 fleet discovery.
 
-Static committed objects take precedence over rendered objects with the same
-API version, kind, namespace, and name. Rendered duplicates emit diagnostics
-instead of silently replacing committed intent.
+Static committed objects take precedence over default rendered fleet objects
+with the same API version, kind, namespace, and name. Rendered duplicates emit
+diagnostics instead of silently replacing committed intent.
 
 Supported local `ApplicationSet` generators are Git directories, Git files,
 list, matrix, merge, and explicit fixture-backed provider generators.
@@ -78,8 +78,8 @@ drydock test apps --path . --discover-kustomize clusters/prod/argocd
 
 The path must be relative to `--path`, must not escape through `..`, and must
 not include symlinked path components. Rendered discovery is additive: normal
-repository scanning still runs, and committed objects retain precedence over
-rendered duplicates.
+repository scanning still runs, and explicitly rendered Kustomize objects take
+precedence over committed duplicates with the same identity.
 
 ## Rendering
 
