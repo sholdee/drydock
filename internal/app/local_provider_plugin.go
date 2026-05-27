@@ -13,6 +13,9 @@ import (
 
 func (p localProvider) renderPluginSource(ctx context.Context, source render.ResolvedSource, opts render.RenderOptions) ([]render.Manifest, []diagnostic.Diagnostic, error) {
 	if p.pluginRenderer == nil {
+		if manifests, diags, handled, err := p.renderNativeKustomizePluginSource(ctx, source, opts); handled {
+			return manifests, diags, err
+		}
 		message := fmt.Sprintf("config management plugin %s is not supported without an injected plugin renderer", pluginDisplayName(opts.Plugin.Name))
 		return nil, []diagnostic.Diagnostic{{
 			Code:     diagnostic.CodePluginUnsupported,

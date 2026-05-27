@@ -162,6 +162,29 @@ stringData:
     resource.exclusions: |
       - apiGroups: ["events.k8s.io"]
 `)
+	mustWriteFile(t, filepath.Join(root, "settings", "cmp-values.yaml"), `configs:
+  cmp:
+    plugins:
+      kustomize-build-with-helm:
+        generate:
+          command: [sh, -c]
+          args: [kustomize build --enable-helm]
+`)
+	mustWriteFile(t, filepath.Join(root, "settings", "cmp-configmap.yaml"), `apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: argocd-cmp-cm
+data:
+  kustomize-build-with-helm.yaml: |
+    apiVersion: argoproj.io/v1alpha1
+    kind: ConfigManagementPlugin
+    metadata:
+      name: kustomize-build-with-helm
+    spec:
+      generate:
+        command: [kustomize, build]
+        args: [--enable-helm]
+`)
 	mustWriteFile(t, filepath.Join(root, "settings", "compare-values.yaml"), `configs:
   cm:
     resource.compareoptions: |
@@ -181,6 +204,8 @@ stringData:
 	}
 	wantSettings := []SettingsCandidate{
 		{Path: filepath.Join("settings", "argocd-cm.yaml"), DocumentIndex: 0, Kind: "argocd-cm"},
+		{Path: filepath.Join("settings", "cmp-configmap.yaml"), DocumentIndex: 0, Kind: "argocd-cmp-cm"},
+		{Path: filepath.Join("settings", "cmp-values.yaml"), DocumentIndex: 0, Kind: "argocd-values"},
 		{Path: filepath.Join("settings", "compare-values.yaml"), DocumentIndex: 0, Kind: "argocd-values"},
 		{Path: filepath.Join("settings", "repo-secret.yaml"), DocumentIndex: 0, Kind: "repository-secret"},
 		{Path: filepath.Join("settings", "values.yaml"), DocumentIndex: 0, Kind: "argocd-values"},
@@ -276,6 +301,32 @@ data:
 	}
 	if result.SettingsCandidates[0].DocumentIndex != 2 {
 		t.Fatalf("DocumentIndex = %d, want real YAML document index 2", result.SettingsCandidates[0].DocumentIndex)
+	}
+}
+
+func TestScanDoesNotTreatWorkloadConfigMapWithCMPExampleAsSettings(t *testing.T) {
+	root := t.TempDir()
+	mustWriteFile(t, filepath.Join(root, "apps", "example-cmp.yaml"), `apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: example-cmp-snippet
+data:
+  plugin.yaml: |
+    apiVersion: argoproj.io/v1alpha1
+    kind: ConfigManagementPlugin
+    metadata:
+      name: kustomize-build-with-helm
+    spec:
+      generate:
+        command: [kustomize, build]
+`)
+
+	result, err := Scan(root, Options{})
+	if err != nil {
+		t.Fatalf("Scan() error = %v", err)
+	}
+	if len(result.SettingsCandidates) != 0 {
+		t.Fatalf("SettingsCandidates = %#v, want none", result.SettingsCandidates)
 	}
 }
 

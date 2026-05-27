@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
 
 	"github.com/sholdee/drydock/internal/diagnostic"
 	"go.yaml.in/yaml/v4"
@@ -18,30 +19,32 @@ func LoadFromHelmValues(path string) (ArgoSettings, []diagnostic.Diagnostic, err
 		return settings, nil, err
 	}
 
-	var doc struct {
-		Configs struct {
-			CM map[string]string `yaml:"cm"`
-		} `yaml:"configs"`
-	}
+	var doc helmValuesSettingsDocument
 	if err := yaml.Unmarshal(data, &doc); err != nil {
 		return settings, nil, fmt.Errorf("parse helm values %s: %w", path, err)
 	}
 
 	diags := applyCMMap(&settings, doc.Configs.CM, path, "configs.cm")
+	cmpDiags, err := applyCMPPlugins(&settings, doc.Configs.CMP.Plugins, path, "configs.cmp.plugins")
+	if err != nil {
+		return settings, diags, err
+	}
+	diags = append(diags, cmpDiags...)
 	return settings, diags, nil
 }
 
 func LoadFromHelmValuesDocument(path string, documentIndex int) (ArgoSettings, []diagnostic.Diagnostic, error) {
 	settings := DefaultSettings()
-	var doc struct {
-		Configs struct {
-			CM map[string]string `yaml:"cm"`
-		} `yaml:"configs"`
-	}
+	var doc helmValuesSettingsDocument
 	if err := decodeYAMLDocumentAt(path, documentIndex, &doc); err != nil {
 		return settings, nil, fmt.Errorf("parse helm values %s document %d: %w", path, documentIndex, err)
 	}
 	diags := applyCMMap(&settings, doc.Configs.CM, path, "configs.cm")
+	cmpDiags, err := applyCMPPlugins(&settings, doc.Configs.CMP.Plugins, path, "configs.cmp.plugins")
+	if err != nil {
+		return settings, diags, err
+	}
+	diags = append(diags, cmpDiags...)
 	return settings, diags, nil
 }
 
@@ -97,6 +100,49 @@ func LoadFromConfigMapDocument(path string, documentIndex int) (ArgoSettings, []
 	}
 	diags := applyCMMap(&settings, doc.Data, path, "data")
 	return settings, diags, nil
+}
+
+func LoadConfigManagementPluginConfigMapDocument(path string, documentIndex int) (ArgoSettings, []diagnostic.Diagnostic, error) {
+	settings := DefaultSettings()
+	var doc struct {
+		Kind     string `yaml:"kind"`
+		Metadata struct {
+			Name string `yaml:"name"`
+		} `yaml:"metadata"`
+		Data map[string]string `yaml:"data"`
+	}
+	if err := decodeYAMLDocumentAt(path, documentIndex, &doc); err != nil {
+		return settings, nil, fmt.Errorf("parse config management plugin ConfigMap %s document %d: %w", path, documentIndex, err)
+	}
+	if doc.Kind != "ConfigMap" || doc.Metadata.Name != "argocd-cmp-cm" {
+		return settings, []diagnostic.Diagnostic{{
+			Severity:   diagnostic.SeverityWarning,
+			Category:   "settings",
+			Message:    "file document is not argocd-cmp-cm ConfigMap",
+			Provenance: diagnostic.Provenance{Path: path},
+		}}, nil
+	}
+
+	var diags []diagnostic.Diagnostic
+	for key, value := range doc.Data {
+		if !looksLikeConfigManagementPluginYAML(value) {
+			continue
+		}
+		plugins, err := configManagementPluginsFromYAML([]byte(value), path, "data."+key)
+		if err != nil {
+			return settings, nil, fmt.Errorf("parse config management plugin %s document %d data %q: %w", path, documentIndex, key, err)
+		}
+		for _, plugin := range plugins {
+			if diag := addConfigManagementPlugin(&settings, plugin); diag != nil {
+				diags = append(diags, *diag)
+			}
+		}
+	}
+	return settings, diags, nil
+}
+
+func looksLikeConfigManagementPluginYAML(value string) bool {
+	return strings.Contains(value, "ConfigManagementPlugin")
 }
 
 func LoadRepositorySecret(path string) (ArgoSettings, []diagnostic.Diagnostic, error) {
@@ -190,6 +236,143 @@ func decodeYAMLDocumentAt(path string, documentIndex int, out any) error {
 		}
 		return yaml.Unmarshal(data, out)
 	}
+}
+
+type helmValuesSettingsDocument struct {
+	Configs struct {
+		CM  map[string]string `yaml:"cm"`
+		CMP struct {
+			Plugins map[string]any `yaml:"plugins"`
+		} `yaml:"cmp"`
+	} `yaml:"configs"`
+}
+
+type cmpPluginSpec struct {
+	Version  string     `yaml:"version"`
+	Init     cmpCommand `yaml:"init"`
+	Generate cmpCommand `yaml:"generate"`
+}
+
+type cmpCommand struct {
+	Command []string `yaml:"command"`
+	Args    []string `yaml:"args"`
+}
+
+func applyCMPPlugins(settings *ArgoSettings, plugins map[string]any, path, pointer string) ([]diagnostic.Diagnostic, error) {
+	var diags []diagnostic.Diagnostic
+	for key, value := range plugins {
+		name := strings.TrimSpace(key)
+		if name == "" {
+			continue
+		}
+		plugins, err := configManagementPluginsFromHelmValue(name, value, path, pointer+"."+name)
+		if err != nil {
+			return diags, err
+		}
+		for _, plugin := range plugins {
+			if diag := addConfigManagementPlugin(settings, plugin); diag != nil {
+				diags = append(diags, *diag)
+			}
+		}
+	}
+	return diags, nil
+}
+
+func configManagementPluginsFromHelmValue(name string, value any, path, pointer string) ([]ConfigManagementPlugin, error) {
+	switch typed := value.(type) {
+	case nil:
+		return nil, nil
+	case string:
+		if !looksLikeConfigManagementPluginYAML(typed) {
+			return nil, nil
+		}
+		return configManagementPluginsFromYAML([]byte(typed), path, pointer)
+	default:
+		data, err := yaml.Marshal(typed)
+		if err != nil {
+			return nil, fmt.Errorf("parse config management plugin %s: %w", pointer, err)
+		}
+		if looksLikeConfigManagementPluginYAML(string(data)) {
+			return configManagementPluginsFromYAML(data, path, pointer)
+		}
+		var spec cmpPluginSpec
+		if err := yaml.Unmarshal(data, &spec); err != nil {
+			return nil, fmt.Errorf("parse config management plugin %s: %w", pointer, err)
+		}
+		return []ConfigManagementPlugin{configManagementPluginFromSpec(name, spec, path, pointer)}, nil
+	}
+}
+
+func addConfigManagementPlugin(settings *ArgoSettings, plugin ConfigManagementPlugin) *diagnostic.Diagnostic {
+	name := plugin.EffectiveName()
+	if name == "" {
+		return nil
+	}
+	existing, ok := settings.ConfigManagementPlugins[name]
+	if ok && existing.commandFingerprint != plugin.commandFingerprint {
+		diag := conflictDiagnostic(
+			fmt.Sprintf("conflicting config management plugin settings discovered for %q", name),
+			plugin.Provenance,
+		)
+		return &diag
+	}
+	settings.ConfigManagementPlugins[name] = plugin
+	return nil
+}
+
+func configManagementPluginsFromYAML(data []byte, path, pointer string) ([]ConfigManagementPlugin, error) {
+	decoder := yaml.NewDecoder(bytes.NewReader(data))
+	var plugins []ConfigManagementPlugin
+	for index := 0; ; index++ {
+		var doc configManagementPluginDocument
+		if err := decoder.Decode(&doc); err != nil {
+			if errors.Is(err, io.EOF) {
+				break
+			}
+			return nil, err
+		}
+		if doc.Kind != "ConfigManagementPlugin" {
+			continue
+		}
+		name := strings.TrimSpace(doc.Metadata.Name)
+		if name == "" {
+			continue
+		}
+		plugin := configManagementPluginFromSpec(name, doc.Spec, path, fmt.Sprintf("%s#%d", pointer, index))
+		plugins = append(plugins, plugin)
+	}
+	return plugins, nil
+}
+
+type configManagementPluginDocument struct {
+	Kind     string `yaml:"kind"`
+	Metadata struct {
+		Name string `yaml:"name"`
+	} `yaml:"metadata"`
+	Spec cmpPluginSpec `yaml:"spec"`
+}
+
+func configManagementPluginFromSpec(name string, spec cmpPluginSpec, path, pointer string) ConfigManagementPlugin {
+	plugin := ConfigManagementPlugin{
+		Name:            name,
+		Version:         strings.TrimSpace(spec.Version),
+		GenerateCommand: append([]string(nil), spec.Generate.Command...),
+		GenerateArgs:    append([]string(nil), spec.Generate.Args...),
+		HasInit:         len(spec.Init.Command) > 0 || len(spec.Init.Args) > 0,
+		Provenance:      diagnostic.Provenance{Path: path, Pointer: pointer},
+	}
+	plugin.commandFingerprint = pluginCommandFingerprint(plugin)
+	return plugin
+}
+
+func pluginCommandFingerprint(plugin ConfigManagementPlugin) string {
+	return fmt.Sprintf("name=%s\x00version=%s\x00init=%t\x00command=%q\x00args=%q",
+		plugin.Name,
+		plugin.Version,
+		plugin.HasInit,
+		plugin.GenerateCommand,
+		plugin.GenerateArgs,
+	)
 }
 
 type repositorySecretDocument struct {

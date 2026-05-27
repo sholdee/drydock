@@ -159,8 +159,10 @@ and statuses. `SkipKinds`, `SkipCRDs`, and `SkipSecrets` apply the same
 rendered-resource filters exposed by the CLI.
 
 Config management plugin sources are explicit. The CLI and default Go client do
-not execute plugin commands; an Application source with `spec.source.plugin`
-fails closed with `plugin.unsupported` unless an embedding caller supplies
+not execute plugin commands. Native-compatible Kustomize build plugin
+definitions discovered from Argo CD Helm values or rendered `argocd-cmp-cm`
+ConfigMaps are rendered through drydock's Go-native Kustomize path; other
+plugin sources fail closed with `plugin.unsupported` unless an embedding caller supplies
 `drydock.Config.PluginRenderer`. Embedders can pass a renderer directly or use
 `drydock.NewPluginRegistry(map[string]drydock.PluginRenderer{...})` to dispatch
 in-process renderers by `plugin.name`.
@@ -405,9 +407,9 @@ These source paths are outside the current default runtime contract:
 
 - Live provider API calls for cluster, clusterDecisionResource, SCM provider,
   pull-request, and plugin ApplicationSet generators.
-- CLI config management plugin execution, shellout plugin adapters, Argo CD
-  repo-server sidecar plugin discovery, ambient plugin configuration, ambient
-  plugin environment loading, and plugin credential injection.
+- Arbitrary CLI config management plugin execution, shellout plugin adapters,
+  Argo CD repo-server sidecar plugin discovery, ambient plugin configuration,
+  ambient plugin environment loading, and plugin credential injection.
 - Live cluster and Argo CD API sources.
 - Live destination cluster existence, sync windows, source integrity
   verification, project-scoped cluster Secrets, and full RBAC simulation.

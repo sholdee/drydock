@@ -106,6 +106,7 @@ func (session *buildSession) Build(ctx context.Context) (BuildResult, error) {
 		remoteResourceGitCredentials: session.request.RemoteResourceGitCredentials,
 		pluginTimeout:                session.request.PluginTimeout,
 		kustomizeBuildOptions:        settingsBuildOptions(result.Settings),
+		configManagementPlugins:      result.Settings.ConfigManagementPlugins,
 		cacheEvents:                  session.cacheRecorder,
 	}
 	snapshotRoot, err := os.MkdirTemp("", "drydock-cache-snapshots-*")

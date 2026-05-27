@@ -72,22 +72,41 @@ type ResourceCustomization struct {
 	Provenance            Provenance             `json:"provenance,omitempty" yaml:"provenance,omitempty"`
 }
 
+type ConfigManagementPlugin struct {
+	Name               string     `json:"-" yaml:"-"`
+	Version            string     `json:"-" yaml:"-"`
+	GenerateCommand    []string   `json:"-" yaml:"-"`
+	GenerateArgs       []string   `json:"-" yaml:"-"`
+	HasInit            bool       `json:"-" yaml:"-"`
+	Provenance         Provenance `json:"-" yaml:"-"`
+	commandFingerprint string
+}
+
+func (plugin ConfigManagementPlugin) EffectiveName() string {
+	if plugin.Version == "" {
+		return plugin.Name
+	}
+	return plugin.Name + "-" + plugin.Version
+}
+
 type ArgoSettings struct {
-	KustomizeBuildOptions        []Value[string]                  `json:"kustomizeBuildOptions,omitempty" yaml:"kustomizeBuildOptions,omitempty"`
-	HelmRepositories             map[string]RepositorySettings    `json:"helmRepositories,omitempty" yaml:"helmRepositories,omitempty"`
-	TrackingMethod               Value[string]                    `json:"trackingMethod,omitempty" yaml:"trackingMethod,omitempty"`
-	InstanceLabelKey             Value[string]                    `json:"instanceLabelKey,omitempty" yaml:"instanceLabelKey,omitempty"`
-	ResourceExclusions           []ResourceFilterRule             `json:"resourceExclusions,omitempty" yaml:"resourceExclusions,omitempty"`
-	ResourceInclusions           []ResourceFilterRule             `json:"resourceInclusions,omitempty" yaml:"resourceInclusions,omitempty"`
-	CompareOptions               ResourceCompareOptions           `json:"compareOptions,omitempty" yaml:"compareOptions,omitempty"`
-	ResourceCustomizations       map[string]ResourceCustomization `json:"resourceCustomizations,omitempty" yaml:"resourceCustomizations,omitempty"`
-	IgnoreResourceUpdatesEnabled Value[bool]                      `json:"ignoreResourceUpdatesEnabled,omitempty" yaml:"ignoreResourceUpdatesEnabled,omitempty"`
+	KustomizeBuildOptions        []Value[string]                   `json:"kustomizeBuildOptions,omitempty" yaml:"kustomizeBuildOptions,omitempty"`
+	HelmRepositories             map[string]RepositorySettings     `json:"helmRepositories,omitempty" yaml:"helmRepositories,omitempty"`
+	TrackingMethod               Value[string]                     `json:"trackingMethod,omitempty" yaml:"trackingMethod,omitempty"`
+	InstanceLabelKey             Value[string]                     `json:"instanceLabelKey,omitempty" yaml:"instanceLabelKey,omitempty"`
+	ResourceExclusions           []ResourceFilterRule              `json:"resourceExclusions,omitempty" yaml:"resourceExclusions,omitempty"`
+	ResourceInclusions           []ResourceFilterRule              `json:"resourceInclusions,omitempty" yaml:"resourceInclusions,omitempty"`
+	CompareOptions               ResourceCompareOptions            `json:"compareOptions,omitempty" yaml:"compareOptions,omitempty"`
+	ResourceCustomizations       map[string]ResourceCustomization  `json:"resourceCustomizations,omitempty" yaml:"resourceCustomizations,omitempty"`
+	IgnoreResourceUpdatesEnabled Value[bool]                       `json:"ignoreResourceUpdatesEnabled,omitempty" yaml:"ignoreResourceUpdatesEnabled,omitempty"`
+	ConfigManagementPlugins      map[string]ConfigManagementPlugin `json:"-" yaml:"-"`
 }
 
 func DefaultSettings() ArgoSettings {
 	return ArgoSettings{
-		HelmRepositories:       map[string]RepositorySettings{},
-		ResourceCustomizations: map[string]ResourceCustomization{},
+		HelmRepositories:        map[string]RepositorySettings{},
+		ResourceCustomizations:  map[string]ResourceCustomization{},
+		ConfigManagementPlugins: map[string]ConfigManagementPlugin{},
 		CompareOptions: ResourceCompareOptions{
 			IgnoreResourceStatusField: "all",
 		},

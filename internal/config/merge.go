@@ -18,6 +18,7 @@ func MergeDiscovered(candidates []ArgoSettings) (ArgoSettings, []diagnostic.Diag
 		diags = append(diags, mergeHelmRepositories(&merged, candidate)...)
 		diags = append(diags, mergeCompareOptions(&merged, candidate)...)
 		diags = append(diags, mergeIgnoreResourceUpdatesEnabled(&merged, candidate)...)
+		diags = append(diags, mergeConfigManagementPlugins(&merged, candidate)...)
 		merged.ResourceExclusions = append(merged.ResourceExclusions, candidate.ResourceExclusions...)
 		merged.ResourceInclusions = append(merged.ResourceInclusions, candidate.ResourceInclusions...)
 		diags = append(diags, mergeResourceCustomizations(&merged, candidate)...)
@@ -133,6 +134,25 @@ func mergeResourceCustomizations(merged *ArgoSettings, candidate ArgoSettings) [
 			continue
 		}
 		merged.ResourceCustomizations[key] = next
+	}
+	return diags
+}
+
+func mergeConfigManagementPlugins(merged *ArgoSettings, candidate ArgoSettings) []diagnostic.Diagnostic {
+	var diags []diagnostic.Diagnostic
+	for name, plugin := range candidate.ConfigManagementPlugins {
+		if name == "" {
+			continue
+		}
+		existing, ok := merged.ConfigManagementPlugins[name]
+		if ok && existing.commandFingerprint != plugin.commandFingerprint {
+			diags = append(diags, conflictDiagnostic(
+				fmt.Sprintf("conflicting config management plugin settings discovered for %q", name),
+				plugin.Provenance,
+			))
+			continue
+		}
+		merged.ConfigManagementPlugins[name] = plugin
 	}
 	return diags
 }

@@ -6,6 +6,7 @@ import (
 	"github.com/sholdee/drydock/internal/acquisition"
 	"github.com/sholdee/drydock/internal/cacheevent"
 	"github.com/sholdee/drydock/internal/chart"
+	"github.com/sholdee/drydock/internal/config"
 	"github.com/sholdee/drydock/internal/diagnostic"
 	"github.com/sholdee/drydock/internal/remote"
 	"github.com/sholdee/drydock/internal/render"
@@ -36,6 +37,7 @@ type localProvider struct {
 	remoteResourceGitCredentials remote.GitCredentials
 	pluginTimeout                time.Duration
 	kustomizeBuildOptions        []string
+	configManagementPlugins      map[string]config.ConfigManagementPlugin
 	cacheEvents                  *cacheevent.Recorder
 	acquisition                  acquisition.Session
 }
@@ -63,7 +65,6 @@ func (p localProvider) RenderSource(ctx context.Context, source render.ResolvedS
 	opts.RemoteResourceCredentials = p.remoteResourceCredentials
 	opts.RemoteResourceGitCredentials = p.remoteResourceGitCredentials
 	opts.CacheEventRecorder = p.cacheEvents
-	opts.BuildOptions = append(opts.BuildOptions, p.kustomizeBuildOptions...)
 	anchoredRefRoots, err := anchorLocalRefRoots(sourceRoot, opts.RefRoots)
 	if err != nil {
 		return nil, nil, err
@@ -76,6 +77,7 @@ func (p localProvider) RenderSource(ctx context.Context, source render.ResolvedS
 	if opts.Plugin != nil {
 		return p.renderPluginSource(ctx, source, opts)
 	}
+	opts.BuildOptions = append(opts.BuildOptions, p.kustomizeBuildOptions...)
 	if source.Path != "" {
 		renderer, err := selectLocalRenderer(source)
 		if err != nil {

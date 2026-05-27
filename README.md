@@ -136,6 +136,9 @@ drydock discovers and renders local Argo CD desired state, including:
 - Single-source and multi-source Applications.
 - Directory, Kustomize, local Helm chart, remote Helm chart, and remote
   Kustomize sources.
+- Native-compatible Kustomize build config management plugin definitions,
+  rendered through drydock's Go-native Kustomize path without executing plugin
+  commands.
 - Declared Git, HTTP Helm, OCI Helm, and remote Kustomize source acquisition
   into local caches.
 - Repository maps with `--repo-map URL=PATH` for adjacent local checkouts.
