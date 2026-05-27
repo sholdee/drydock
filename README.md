@@ -53,6 +53,14 @@ Pin a release when the workflow needs exact repeatability:
 The setup action accepts `latest`, `vX.Y.Z`, or bare `X.Y.Z` and verifies the
 selected archive with the release checksum manifest by default.
 
+Release containers are published to GHCR for Linux `amd64` and `arm64`:
+
+```bash
+docker run --rm -v "$PWD:/workspace:ro" ghcr.io/sholdee/drydock:latest test apps --path /workspace
+```
+
+For repeatable automation, pin `ghcr.io/sholdee/drydock:vX.Y.Z`.
+
 ## Quick Start
 
 Run drydock from the root of an Argo CD GitOps repository.

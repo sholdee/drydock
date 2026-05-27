@@ -8,33 +8,117 @@ on:
       - main
   workflow_dispatch:
 
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
 permissions:
   contents: read
 
-jobs:
-  release-please:
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-      pull-requests: write
-    outputs:
-      releases-created: ${{ steps.release.outputs.releases_created || steps.release.outputs.release_created }}
-    steps:
-      - name: Release Please
-        id: release
-        uses: googleapis/release-please-action@45996ed1f6d02564a971a2fa1b5860e934307cf7 # v5.0.0
-        with:
-          config-file: release-please-config.json
-          manifest-file: .release-please-manifest.json
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
 
-  goreleaser:
-    name: Run GoReleaser
-    needs:
-      - release-please
-    if: needs.release-please.outputs.releases-created == 'true'
+jobs:
+  release-meta:
     runs-on: ubuntu-latest
     permissions:
-      contents: write
+      contents: read
+    outputs:
+      created: ${{ steps.version.outputs.created }}
+      publish: ${{ steps.version.outputs.publish }}
+      semver: ${{ steps.version.outputs.semver }}
+      tag-exists: ${{ steps.version.outputs.tag-exists }}
+      tag: ${{ steps.version.outputs.tag }}
+    steps:
+      - name: Verify release ref
+        shell: bash
+        run: |
+          if [[ "${GITHUB_REF}" != "refs/heads/main" ]]; then
+            echo "Release publishing must run from refs/heads/main; got ${GITHUB_REF}." >&2
+            exit 1
+          fi
+
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Resolve release version
+        id: version
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          version="$(jq -r '."."' .release-please-manifest.json)"
+          if [[ ! "${version}" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$ ]]; then
+            echo "Invalid release version in .release-please-manifest.json: ${version}" >&2
+            exit 1
+          fi
+
+          tag="v${version}"
+          created="$(git show -s --format=%cI "${GITHUB_SHA}")"
+          publish="true"
+          tag_exists="false"
+          remote_sha="$(git ls-remote --tags origin "refs/tags/${tag}" | awk 'NR == 1 { print $1 }')"
+          if [[ -n "${remote_sha}" ]]; then
+            tag_exists="true"
+            release_draft=""
+            if release_draft="$(gh release view "${tag}" --json isDraft --jq '.isDraft' 2>/dev/null)"; then
+              publish="false"
+              if [[ "${release_draft}" == "true" ]]; then
+                if [[ "${remote_sha}" != "${GITHUB_SHA}" ]]; then
+                  echo "Draft release ${tag} exists, but its tag points to ${remote_sha}, expected ${GITHUB_SHA}." >&2
+                  exit 1
+                fi
+                publish="true"
+              fi
+            elif [[ "${remote_sha}" != "${GITHUB_SHA}" ]]; then
+              echo "Release tag ${tag} exists without a GitHub Release and points to ${remote_sha}, expected ${GITHUB_SHA}." >&2
+              exit 1
+            fi
+          fi
+
+          {
+            echo "created=${created}"
+            echo "publish=${publish}"
+            echo "semver=${version}"
+            echo "tag-exists=${tag_exists}"
+            echo "tag=${tag}"
+          } >> "${GITHUB_OUTPUT}"
+
+  source-checks:
+    needs:
+      - release-meta
+    if: needs.release-meta.outputs.publish == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Setup mise
+        uses: jdx/mise-action@1648a7812b9aeae629881980618f079932869151 # v4.0.1
+        with:
+          experimental: true
+          install_args: --locked
+
+      - name: Run source CI
+        run: mise run ci
+
+  binaries:
+    needs:
+      - release-meta
+      - source-checks
+    if: needs.release-meta.outputs.publish == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
       id-token: write
     steps:
       - name: Checkout
@@ -55,11 +139,333 @@ jobs:
       - name: Install Cosign
         uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
 
-      - name: Run GoReleaser
+      - name: Create local release tag
+        env:
+          TAG: ${{ needs.release-meta.outputs.tag }}
+        shell: bash
+        run: |
+          if git rev-parse --verify --quiet "refs/tags/${TAG}" >/dev/null; then
+            tagged_sha="$(git rev-list -n 1 "${TAG}")"
+            if [[ "${tagged_sha}" != "${GITHUB_SHA}" ]]; then
+              echo "Local tag ${TAG} points to ${tagged_sha}, expected ${GITHUB_SHA}" >&2
+              exit 1
+            fi
+          else
+            git tag "${TAG}" "${GITHUB_SHA}"
+          fi
+
+      - name: Build release artifacts
         uses: goreleaser/goreleaser-action@5daf1e915a5f0af01ddbcd89a43b8061ff4f1a89 # v7.2.2
         with:
           distribution: goreleaser
           version: "~> v2"
-          args: release --clean
+          args: release --clean --skip=publish
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Upload release artifacts
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: release-artifacts
+          path: dist/
+          retention-days: 1
+
+  image:
+    needs:
+      - release-meta
+      - source-checks
+    if: needs.release-meta.outputs.publish == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Install Cosign
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+
+      - name: Verify distroless base image
+        shell: bash
+        run: |
+          distroless_ref="$(awk '/^FROM gcr.io\/distroless\// {print $2}' Dockerfile)"
+          if [[ -z "${distroless_ref}" ]]; then
+            echo "No distroless base image found in Dockerfile" >&2
+            exit 1
+          fi
+
+          cosign verify "${distroless_ref}" \
+            --certificate-oidc-issuer https://accounts.google.com \
+            --certificate-identity keyless@distroless.iam.gserviceaccount.com
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@d7f5e7f509e45cec5c76c4d5afdd7de93d0b3df5 # v4.1.0
+
+      - name: Build image
+        uses: docker/build-push-action@f9f3042f7e2789586610d6e8b85c8f03e5195baf # v7.2.0
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: false
+          build-args: |
+            VERSION=${{ needs.release-meta.outputs.tag }}
+            COMMIT=${{ github.sha }}
+          cache-from: type=gha,scope=drydock
+          cache-to: type=gha,scope=drydock,mode=max,ignore-error=true
+
+  stage-release:
+    needs:
+      - binaries
+      - image
+      - release-meta
+    if: needs.release-meta.outputs.publish == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Download release artifacts
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: release-artifacts
+          path: dist/
+
+      - name: Stage draft release
+        env:
+          FULL_IMAGE: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ needs.release-meta.outputs.tag }}
+          TAG_EXISTS: ${{ needs.release-meta.outputs.tag-exists }}
+          VERSION: ${{ needs.release-meta.outputs.semver }}
+        shell: bash
+        run: |
+          remote_sha="$(git ls-remote --tags origin "refs/tags/${TAG}" | awk 'NR == 1 { print $1 }')"
+          if [[ -n "${remote_sha}" && "${remote_sha}" != "${GITHUB_SHA}" ]]; then
+            echo "Remote tag ${TAG} points to ${remote_sha}, expected ${GITHUB_SHA}" >&2
+            exit 1
+          fi
+
+          if [[ "${TAG_EXISTS}" != "true" ]]; then
+            git tag "${TAG}" "${GITHUB_SHA}"
+            git push "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" "refs/tags/${TAG}"
+          fi
+
+          awk -v version="${VERSION}" '
+            $0 ~ "^## \\[?" version "\\]?" {
+              emit = 1
+              next
+            }
+            emit && /^## / {
+              exit
+            }
+            emit {
+              print
+            }
+          ' CHANGELOG.md > release-notes.md
+
+          if [[ ! -s release-notes.md ]]; then
+            gh api "repos/${GITHUB_REPOSITORY}/releases/generate-notes" \
+              -f tag_name="${TAG}" \
+              --jq '.body' > release-notes.md
+          fi
+
+          {
+            printf "\n---\n\n"
+            printf "**Container image:** \`%s:%s\`\n" "${FULL_IMAGE}" "${TAG}"
+            printf "**Checksums:** \`checksums.txt\`\n"
+          } >> release-notes.md
+
+          mapfile -d '' release_assets < <(find dist -maxdepth 1 -type f -print0 | sort -z)
+          if [[ "${#release_assets[@]}" -eq 0 ]]; then
+            echo "No release artifacts found in dist/" >&2
+            exit 1
+          fi
+
+          required_assets=(
+            checksums.txt
+            drydock_darwin-amd64.tar.gz
+            drydock_darwin-arm64.tar.gz
+            drydock_linux-amd64.tar.gz
+            drydock_linux-arm64.tar.gz
+          )
+          for required_asset in "${required_assets[@]}"; do
+            if [[ ! -f "dist/${required_asset}" ]]; then
+              echo "Missing required release artifact: ${required_asset}" >&2
+              exit 1
+            fi
+          done
+
+          for required_archive in \
+            drydock_darwin-amd64.tar.gz \
+            drydock_darwin-arm64.tar.gz \
+            drydock_linux-amd64.tar.gz \
+            drydock_linux-arm64.tar.gz; do
+            if ! grep -Eq "[[:space:]]${required_archive}$" dist/checksums.txt; then
+              echo "checksums.txt does not contain ${required_archive}" >&2
+              exit 1
+            fi
+          done
+
+          existing_release="$(gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${TAG}" 2>/dev/null || true)"
+          if [[ -n "${existing_release}" ]]; then
+            existing_release_draft="$(jq -r '.draft' <<< "${existing_release}")"
+            if [[ "${existing_release_draft}" == "true" ]]; then
+              gh release delete "${TAG}" --yes
+            else
+              echo "Release ${TAG} already exists and is not a draft." >&2
+              exit 1
+            fi
+          fi
+
+          gh release create "${TAG}" "${release_assets[@]}" \
+            --draft \
+            --verify-tag \
+            --title "${TAG}" \
+            --notes-file release-notes.md
+
+  publish-image:
+    needs:
+      - release-meta
+      - stage-release
+    if: needs.release-meta.outputs.publish == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+      packages: write
+    outputs:
+      digest: ${{ steps.build.outputs.digest }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Install Cosign
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+
+      - name: Verify distroless base image
+        shell: bash
+        run: |
+          distroless_ref="$(awk '/^FROM gcr.io\/distroless\// {print $2}' Dockerfile)"
+          if [[ -z "${distroless_ref}" ]]; then
+            echo "No distroless base image found in Dockerfile" >&2
+            exit 1
+          fi
+
+          cosign verify "${distroless_ref}" \
+            --certificate-oidc-issuer https://accounts.google.com \
+            --certificate-identity keyless@distroless.iam.gserviceaccount.com
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@d7f5e7f509e45cec5c76c4d5afdd7de93d0b3df5 # v4.1.0
+
+      - name: Log in to GHCR
+        uses: docker/login-action@650006c6eb7dba73a995cc03b0b2d7f5ca915bee # v4.2.0
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push image
+        id: build
+        uses: docker/build-push-action@f9f3042f7e2789586610d6e8b85c8f03e5195baf # v7.2.0
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: |
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ needs.release-meta.outputs.tag }}
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
+          build-args: |
+            VERSION=${{ needs.release-meta.outputs.tag }}
+            COMMIT=${{ github.sha }}
+          annotations: |
+            index:org.opencontainers.image.description=Inspect your Argo CD fleet without getting wet
+            index:org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            index:org.opencontainers.image.licenses=Apache-2.0
+          labels: |
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.version=${{ needs.release-meta.outputs.tag }}
+            org.opencontainers.image.created=${{ needs.release-meta.outputs.created }}
+          cache-from: type=gha,scope=drydock
+          cache-to: type=gha,scope=drydock,mode=max,ignore-error=true
+
+      - name: Sign image tags
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+          FULL_IMAGE: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          TAG: ${{ needs.release-meta.outputs.tag }}
+        run: |
+          cosign sign --yes "${FULL_IMAGE}:${TAG}@${DIGEST}"
+          cosign sign --yes "${FULL_IMAGE}:latest@${DIGEST}"
+
+  publish-release:
+    needs:
+      - publish-image
+      - release-meta
+      - stage-release
+    if: needs.release-meta.outputs.publish == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Publish draft release
+        env:
+          DIGEST: ${{ needs.publish-image.outputs.digest }}
+          FULL_IMAGE: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ needs.release-meta.outputs.tag }}
+          VERSION: ${{ needs.release-meta.outputs.semver }}
+        shell: bash
+        run: |
+          release_draft="$(gh release view "${TAG}" --json isDraft --jq '.isDraft')"
+          if [[ "${release_draft}" != "true" ]]; then
+            echo "Release ${TAG} is not an unpublished draft." >&2
+            exit 1
+          fi
+
+          awk -v version="${VERSION}" '
+            $0 ~ "^## \\[?" version "\\]?" {
+              emit = 1
+              next
+            }
+            emit && /^## / {
+              exit
+            }
+            emit {
+              print
+            }
+          ' CHANGELOG.md > release-notes.md
+
+          if [[ ! -s release-notes.md ]]; then
+            gh api "repos/${GITHUB_REPOSITORY}/releases/generate-notes" \
+              -f tag_name="${TAG}" \
+              --jq '.body' > release-notes.md
+          fi
+
+          {
+            printf "\n---\n\n"
+            printf "**Container image:** \`%s:%s@%s\`\n" "${FULL_IMAGE}" "${TAG}" "${DIGEST}"
+            printf "**Checksums:** \`checksums.txt\`\n"
+          } >> release-notes.md
+
+          gh release edit "${TAG}" --notes-file release-notes.md
+
+          release_id="$(gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${TAG}" --jq '.id')"
+          gh api \
+            --method PATCH \
+            "repos/${GITHUB_REPOSITORY}/releases/${release_id}" \
+            -f draft=false

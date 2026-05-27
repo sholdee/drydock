@@ -1,0 +1,5 @@
+.drydock
+.git
+.worktrees
+coverage.txt
+dist
