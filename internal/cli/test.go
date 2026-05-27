@@ -44,7 +44,7 @@ func newTestCommand(deps Dependencies) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			buildRequest := buildRequestFromFlags(appsFlags, repoMaps)
+			buildRequest := buildRequestFromFlags(cmd, appsFlags, repoMaps)
 			buildRequest.StatusOnly = true
 			buildRequest.ValidateLuaHealth = !appsFlags.skipLuaHealth
 			var liveReporter *testLiveReporter
@@ -112,7 +112,7 @@ func newTestCommand(deps Dependencies) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			buildRequest := buildRequestFromFlags(appFlags, repoMaps)
+			buildRequest := buildRequestFromFlags(cmd, appFlags, repoMaps)
 			buildRequest.StatusOnly = true
 			buildRequest.ValidateLuaHealth = !appFlags.skipLuaHealth
 			result, err := deps.Orchestrator.BuildApp(context.Background(), app.BuildAppRequest{
@@ -135,8 +135,8 @@ func newTestCommand(deps Dependencies) *cobra.Command {
 	return cmd
 }
 
-func buildRequestFromFlags(flags commonFlags, repoMaps []source.RepoMap) app.BuildRequest {
-	return requestOptionsFromFlags(flags, repoMaps).Build()
+func buildRequestFromFlags(cmd *cobra.Command, flags commonFlags, repoMaps []source.RepoMap) app.BuildRequest {
+	return requestOptionsFromFlags(commandAwareFlags(cmd, flags), repoMaps).Build()
 }
 
 func renderTestResult(cmd *cobra.Command, statuses []app.ApplicationStatus, output string, color, showEmptyMessage bool) error {

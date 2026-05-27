@@ -37,7 +37,7 @@ func newDiffCommand(deps Dependencies) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			result, err := deps.Orchestrator.DiffApps(context.Background(), diffRequestFromFlags(appsFlags, repoMaps))
+			result, err := deps.Orchestrator.DiffApps(context.Background(), diffRequestFromFlags(cmd, appsFlags, repoMaps))
 			if err != nil {
 				if renderErr := renderDiagnostics(cmd.ErrOrStderr(), result.Diagnostics); renderErr != nil {
 					return renderErr
@@ -67,7 +67,7 @@ func newDiffCommand(deps Dependencies) *cobra.Command {
 			}
 			result, err := deps.Orchestrator.DiffApp(context.Background(), app.DiffAppRequest{
 				Name:        args[0],
-				DiffRequest: diffRequestFromFlags(appFlags, repoMaps),
+				DiffRequest: diffRequestFromFlags(cmd, appFlags, repoMaps),
 			})
 			if err != nil {
 				if renderErr := renderDiagnostics(cmd.ErrOrStderr(), result.Diagnostics); renderErr != nil {
@@ -97,7 +97,7 @@ func newDiffCommand(deps Dependencies) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			result, err := deps.Orchestrator.DiffImages(context.Background(), diffRequestFromFlags(imagesFlags, repoMaps))
+			result, err := deps.Orchestrator.DiffImages(context.Background(), diffRequestFromFlags(cmd, imagesFlags, repoMaps))
 			if err != nil {
 				if renderErr := renderDiagnostics(cmd.ErrOrStderr(), result.Diagnostics); renderErr != nil {
 					return renderErr
@@ -120,8 +120,8 @@ type imageDiffOutput struct {
 	Unchanged []string `json:"unchanged" yaml:"unchanged"`
 }
 
-func diffRequestFromFlags(flags commonFlags, repoMaps []source.RepoMap) app.DiffRequest {
-	return requestOptionsFromFlags(flags, repoMaps).Diff()
+func diffRequestFromFlags(cmd *cobra.Command, flags commonFlags, repoMaps []source.RepoMap) app.DiffRequest {
+	return requestOptionsFromFlags(commandAwareFlags(cmd, flags), repoMaps).Diff()
 }
 
 func renderDiffResult(cmd *cobra.Command, result app.DiffResult, disableDiffExitCode bool, output string) error {

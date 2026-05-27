@@ -33,6 +33,7 @@ func TestPublicRenderParallelismPreservesManifestOrder(t *testing.T) {
 	go func() {
 		result, err := Render(context.Background(), Config{
 			Path:           root,
+			DiscoveryMode:  "static",
 			Parallelism:    3,
 			PluginRenderer: renderer,
 		})
@@ -77,6 +78,22 @@ func TestPublicConfigParallelismWiresRequests(t *testing.T) {
 		t.Fatalf("diff request Parallelism = %d, want 5", got)
 	}
 }
+
+func TestPublicConfigMaxDiscoveryDepthDistinguishesUnsetFromExplicitZero(t *testing.T) {
+	client := NewClient(Config{})
+	request := client.buildRequest()
+	if request.MaxDiscoveryDepth != 4 || request.MaxDiscoveryDepthSet {
+		t.Fatalf("default max discovery depth = %d set=%t, want 4 set=false", request.MaxDiscoveryDepth, request.MaxDiscoveryDepthSet)
+	}
+
+	zero := 0
+	client = NewClient(Config{MaxDiscoveryDepth: &zero})
+	request = client.buildRequest()
+	if request.MaxDiscoveryDepth != 0 || !request.MaxDiscoveryDepthSet {
+		t.Fatalf("explicit max discovery depth = %d set=%t, want 0 set=true", request.MaxDiscoveryDepth, request.MaxDiscoveryDepthSet)
+	}
+}
+
 func TestPublicConfigUnifiedDefaultsToThree(t *testing.T) {
 	client := NewClient(Config{})
 

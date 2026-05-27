@@ -31,7 +31,7 @@ func newBuildCommand(deps Dependencies) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			result, err := deps.Orchestrator.Build(context.Background(), buildRequestFromFlags(appsFlags, repoMaps))
+			result, err := deps.Orchestrator.Build(context.Background(), buildRequestFromFlags(cmd, appsFlags, repoMaps))
 			if err != nil {
 				if renderErr := renderDiagnostics(cmd.ErrOrStderr(), result.Diagnostics); renderErr != nil {
 					return renderErr
@@ -55,7 +55,7 @@ func newBuildCommand(deps Dependencies) *cobra.Command {
 			}
 			result, err := deps.Orchestrator.BuildApp(context.Background(), app.BuildAppRequest{
 				Name:         args[0],
-				BuildRequest: buildRequestFromFlags(appFlags, repoMaps),
+				BuildRequest: buildRequestFromFlags(cmd, appFlags, repoMaps),
 			})
 			if err != nil {
 				if renderErr := renderDiagnostics(cmd.ErrOrStderr(), result.Diagnostics); renderErr != nil {

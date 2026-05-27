@@ -43,8 +43,14 @@ silent approximations.
 Supported:
 
 - Direct Application discovery from repository manifests.
+- Recursive rendered fleet discovery from desired output, including rendered
+  `Application`, `ApplicationSet`, `AppProject`, and Argo CD settings objects.
+  Static committed objects take precedence over default rendered fleet
+  duplicates.
 - Explicit `--discover-kustomize PATH` discovery from rendered local
-  Kustomize entrypoints, with normal path containment and symlink checks.
+  Kustomize entrypoints. Explicitly rendered Kustomize objects take precedence
+  over committed duplicates because the path is the operator-selected Argo CD
+  entrypoint.
 - ApplicationSet Git directories, Git files, list, matrix, and merge
   generators.
 - ApplicationSet list `elementsYaml`, including matrix-interpolated
@@ -123,6 +129,9 @@ Supported:
   `patchesStrategicMerge`, `generators`, `transformers`, `validators`,
   `configurations`, `crds`, `openapi.path`, `replacements.path`, and generator
   file/env refs.
+- Kustomize root Git remote refs such as
+  `https://github.com/org/repo?ref=v1` when they resolve to a repository-root
+  Kustomization directory.
 - Native-compatible Kustomize build config management plugin definitions
   discovered from Argo CD Helm values or rendered `argocd-cmp-cm` ConfigMaps.
   drydock parses those definitions as metadata and renders matched
@@ -183,6 +192,7 @@ Supported:
 - `diag --settings -o json|yaml` redacted settings summaries for parsed Argo
   CD settings metadata.
 - Local AppProject manifest discovery.
+- Rendered AppProject discovery from app-of-apps/bootstrap desired output.
 - Offline diagnostics for Application source repository, destination
   server/name/namespace, and source namespace validation from local AppProject
   manifests.

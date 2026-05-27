@@ -33,6 +33,9 @@ type DiffRequest struct {
 	Repo                           string
 	Ref                            string
 	RefOrig                        string
+	DiscoveryMode                  string
+	MaxDiscoveryDepth              int
+	MaxDiscoveryDepthSet           bool
 	DiscoverKustomizePaths         []string
 	ChangedOnly                    bool
 	StrictChangedOnly              bool
@@ -150,11 +153,15 @@ func (o Orchestrator) DiffApp(ctx context.Context, request DiffAppRequest) (Diff
 	if err != nil {
 		return DiffResult{Diagnostics: diagnostics}, err
 	}
+	leftBuildRequest.renderCache = leftList.renderCache
+	leftBuildRequest.renderSettingsSignature = leftList.renderSettingsSignature
 	rightList, err := o.ListApplications(ctx, rightBuildRequest)
 	diagnostics = append(diagnostics, rightList.Diagnostics...)
 	if err != nil {
 		return DiffResult{Diagnostics: diagnostics}, err
 	}
+	rightBuildRequest.renderCache = rightList.renderCache
+	rightBuildRequest.renderSettingsSignature = rightList.renderSettingsSignature
 
 	leftApp, leftOK, err := SelectOptionalApplicationByName(leftList.Applications, name)
 	if err != nil {
@@ -378,6 +385,9 @@ func (request DiffRequest) buildRequest(path string, forbiddenRoots []string) Bu
 	return BuildRequest{
 		Path:                           path,
 		Strict:                         request.Strict,
+		DiscoveryMode:                  request.DiscoveryMode,
+		MaxDiscoveryDepth:              request.MaxDiscoveryDepth,
+		MaxDiscoveryDepthSet:           request.MaxDiscoveryDepthSet,
 		DiscoverKustomizePaths:         append([]string(nil), request.DiscoverKustomizePaths...),
 		Offline:                        request.Offline,
 		RefreshCharts:                  request.RefreshCharts,
@@ -471,11 +481,15 @@ func (o Orchestrator) buildDiffSides(ctx context.Context, request DiffRequest) (
 		if err != nil {
 			return BuildResult{}, BuildResult{}, diagnostics, err
 		}
+		leftBuildRequest.renderCache = leftList.renderCache
+		leftBuildRequest.renderSettingsSignature = leftList.renderSettingsSignature
 		rightList, err := o.ListApplications(ctx, rightBuildRequest)
 		diagnostics = append(diagnostics, rightList.Diagnostics...)
 		if err != nil {
 			return BuildResult{}, BuildResult{}, diagnostics, err
 		}
+		rightBuildRequest.renderCache = rightList.renderCache
+		rightBuildRequest.renderSettingsSignature = rightList.renderSettingsSignature
 
 		changedPaths := request.changedPaths
 		if changedPaths == nil {

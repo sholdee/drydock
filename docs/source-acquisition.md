@@ -36,9 +36,14 @@ Unsupported build options fail explicitly instead of being ignored.
 
 Supported Kustomize remote refs include:
 
+- `https://github.com/org/repo?ref=v1`
+- `https://github.com/org/repo.git?ref=v1`
 - `https://github.com/org/repo//path?ref=v1`
+- `git::https://github.com/org/repo.git?ref=v1`
 - `git::https://github.com/org/repo.git//path?ref=v1`
+- `ssh://git@github.com/org/repo.git?ref=v1`
 - `ssh://git@github.com/org/repo.git//path?ref=v1`
+- `git@github.com:org/repo.git?ref=v1`
 - `git@github.com:org/repo.git//path?ref=v1`
 
 Remote Kustomize refs are supported in `resources`, `bases`, `components`,
@@ -52,6 +57,12 @@ including remote bases and components, must use Git refs that resolve to
 Kustomization directories. The renderer copies acquired content into a
 temporary workspace under generated `.drydock` paths and does not write
 generated manifests into the source tree.
+
+Git refs may omit `ref`; omitted or empty `ref` values resolve to `HEAD`.
+Root Git refs copy the repository root as the remote Kustomization root.
+Ambiguous non-file HTTP(S) URLs are rejected unless they use known Git host
+shorthand, a `.git` repository path, or explicit Git syntax such as `git::`,
+`ssh://`, or SCP-style `git@host:org/repo.git`.
 
 ## Network And Cache Flags
 

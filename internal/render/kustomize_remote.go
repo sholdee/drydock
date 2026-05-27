@@ -55,6 +55,9 @@ func parseKustomizeGitRemoteRef(ref string) (kustomizeRemoteRef, bool, error) {
 	if strings.Contains(withoutPrefix, "://") {
 		return parseKustomizeGitURLRef(trimmed, withoutPrefix)
 	}
+	if scpRefHasRemoteCredentialUserinfo(withoutPrefix) {
+		return kustomizeRemoteRef{}, true, fmt.Errorf("kustomize remote ref %q must not include userinfo", redactKustomizeRemoteRef(trimmed))
+	}
 	if isSCPStyleKustomizeGitRef(withoutPrefix) {
 		return parseKustomizeGitSCPRef(trimmed, withoutPrefix)
 	}
@@ -93,9 +96,10 @@ func parseKustomizeGitURLRef(original, raw string) (kustomizeRemoteRef, bool, er
 	}
 	repoPath = strings.TrimSuffix(repoPath, "/")
 	subpath = strings.TrimPrefix(subpath, "/")
-	if repoPath == "" || subpath == "" {
+	if repoPath == "" {
 		return kustomizeRemoteRef{}, false, nil
 	}
+	subpath = cleanKustomizeGitSubpath(subpath)
 
 	repo := *parsed
 	repo.Path = repoPath
@@ -118,13 +122,16 @@ func inferKustomizeGitURLPath(host, rawPath string) (string, string, bool) {
 	for i, segment := range segments {
 		if strings.HasSuffix(segment, ".git") {
 			if i == len(segments)-1 {
-				return "", "", false
+				return "/" + path.Join(segments[:i+1]...), ".", true
 			}
 			return "/" + path.Join(segments[:i+1]...), path.Join(segments[i+1:]...), true
 		}
 	}
-	if !isKnownGitHost(strings.ToLower(host)) || len(segments) < 3 {
+	if !isKnownGitHost(strings.ToLower(host)) || len(segments) < 2 {
 		return "", "", false
+	}
+	if len(segments) == 2 {
+		return "/" + path.Join(segments[:2]...), ".", true
 	}
 	return "/" + path.Join(segments[:2]...), path.Join(segments[2:]...), true
 }
@@ -158,13 +165,18 @@ func parseKustomizeGitSCPRef(original, raw string) (kustomizeRemoteRef, bool, er
 
 	repo, subpath, ok := strings.Cut(beforeQuery, "//")
 	if !ok {
-		return kustomizeRemoteRef{}, false, nil
+		if !isRootSCPStyleKustomizeGitRepo(beforeQuery) {
+			return kustomizeRemoteRef{}, false, nil
+		}
+		repo = beforeQuery
+		subpath = "."
 	}
 	repo = strings.TrimSuffix(repo, "/")
 	subpath = strings.TrimPrefix(subpath, "/")
-	if repo == "" || subpath == "" {
+	if repo == "" {
 		return kustomizeRemoteRef{}, false, nil
 	}
+	subpath = cleanKustomizeGitSubpath(subpath)
 	if userHost, _, ok := strings.Cut(repo, ":"); ok {
 		if user, _, ok := strings.Cut(userHost, "@"); ok && strings.Contains(user, ":") {
 			return kustomizeRemoteRef{}, true, fmt.Errorf("kustomize remote ref %q must not include userinfo", redactKustomizeRemoteRef(original))
@@ -178,6 +190,14 @@ func parseKustomizeGitSCPRef(original, raw string) (kustomizeRemoteRef, bool, er
 		Revision: revision,
 		Subpath:  path.Clean(subpath),
 	}, true, nil
+}
+
+func cleanKustomizeGitSubpath(subpath string) string {
+	cleaned := path.Clean(subpath)
+	if cleaned == "" {
+		return "."
+	}
+	return cleaned
 }
 
 func kustomizeRemoteRevision(rawQuery, original string) (string, error) {
@@ -286,9 +306,21 @@ func isSCPStyleKustomizeGitRef(ref string) bool {
 		beforePath = before
 	}
 	repo, _, ok := strings.Cut(beforePath, "//")
-	if !ok || repo == "" {
+	if !ok {
+		return isRootSCPStyleKustomizeGitRepo(beforePath)
+	}
+	if repo == "" {
 		return false
 	}
+	return isSCPStyleKustomizeGitRepo(repo)
+}
+
+func isRootSCPStyleKustomizeGitRepo(repo string) bool {
+	repo = strings.TrimSuffix(strings.TrimSpace(repo), "/")
+	return strings.HasSuffix(repo, ".git") && isSCPStyleKustomizeGitRepo(repo)
+}
+
+func isSCPStyleKustomizeGitRepo(repo string) bool {
 	beforeColon, afterColon, ok := strings.Cut(repo, ":")
 	if !ok || beforeColon == "" || afterColon == "" || strings.ContainsAny(beforeColon, `/\`) {
 		return false
@@ -321,6 +353,31 @@ func scpRefHasCredentialUserinfo(ref string) bool {
 		return false
 	}
 	return strings.Contains(repo[:at], ":")
+}
+
+func scpRefHasRemoteCredentialUserinfo(ref string) bool {
+	beforePath := ref
+	if before, _, ok := strings.Cut(beforePath, "?"); ok {
+		beforePath = before
+	}
+	if before, _, ok := strings.Cut(beforePath, "#"); ok {
+		beforePath = before
+	}
+	repo, _, ok := strings.Cut(beforePath, "//")
+	if !ok {
+		repo = beforePath
+	}
+	at := strings.LastIndex(repo, "@")
+	if at <= 0 || !strings.Contains(repo[:at], ":") {
+		return false
+	}
+	hostPath := repo[at+1:]
+	host, _, ok := strings.Cut(hostPath, ":")
+	if !ok {
+		return false
+	}
+	host = strings.ToLower(host)
+	return isKnownGitHost(host) || looksLikeRemoteHost(host)
 }
 
 func safeRemoteRefNamePart(value string) string {

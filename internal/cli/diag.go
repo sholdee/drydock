@@ -59,7 +59,7 @@ func newDiagCommand(deps Dependencies) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			request := buildRequestFromFlags(flags, repoMaps)
+			request := buildRequestFromFlags(cmd, flags, repoMaps)
 			request.RecordCacheEvents = flags.cacheEvents
 			result, err := deps.Orchestrator.Diag(context.Background(), request)
 			result.Diagnostics = diagnostic.WithStableCodes(result.Diagnostics)

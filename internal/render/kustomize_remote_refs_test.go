@@ -283,6 +283,55 @@ metadata:
 	}
 }
 
+func TestKustomizeRendererRendersRemoteGitRootResourceDirectory(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "app", "kustomization.yaml"), `apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - https://github.com/example/root.git?ref=v1.2.3
+`)
+	remoteRepo := t.TempDir()
+	writeFile(t, filepath.Join(remoteRepo, "kustomization.yaml"), `apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - base
+`)
+	writeFile(t, filepath.Join(remoteRepo, "base", "kustomization.yaml"), `apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - cm.yaml
+`)
+	writeFile(t, filepath.Join(remoteRepo, "base", "cm.yaml"), `apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: remote-root
+`)
+	acquirer := &fakeRemoteAcquirer{path: remoteRepo}
+
+	manifests, diags, err := (KustomizeRenderer{}).Render(context.Background(), ResolvedSource{
+		RepoRoot: root,
+		Path:     "app",
+	}, RenderOptions{
+		RemoteResourceAcquirer: acquirer,
+		RemoteResourceCacheDir: t.TempDir(),
+	})
+	if err != nil {
+		t.Fatalf("Render() error = %v", err)
+	}
+	if len(diags) != 0 {
+		t.Fatalf("diagnostics = %#v", diags)
+	}
+	if len(acquirer.requests) != 1 {
+		t.Fatalf("remote acquire calls = %d, want 1", len(acquirer.requests))
+	}
+	if got := acquirer.requests[0]; got.Kind != remote.RequestGitRepo || got.RepoURL != "https://github.com/example/root.git" || got.Revision != "v1.2.3" {
+		t.Fatalf("remote request = %#v, want root Git repo metadata", got)
+	}
+	if !containsManifest(manifests, "ConfigMap", "remote-root") {
+		t.Fatalf("rendered manifests = %#v, want remote root ConfigMap", manifests)
+	}
+}
+
 func TestKustomizeRendererRendersRemoteGitHubShorthandResourceDirectory(t *testing.T) {
 	root := t.TempDir()
 	writeFile(t, filepath.Join(root, "app", "kustomization.yaml"), `apiVersion: kustomize.config.k8s.io/v1beta1

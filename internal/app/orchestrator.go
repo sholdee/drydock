@@ -2,7 +2,6 @@ package app
 
 import (
 	"context"
-	"errors"
 	"fmt"
 
 	argoappv1 "github.com/argoproj/argo-cd/v3/pkg/apis/application/v1alpha1"
@@ -24,11 +23,21 @@ import (
 	"time"
 )
 
+const (
+	DiscoveryModeFleet  = "fleet"
+	DiscoveryModeStatic = "static"
+
+	DefaultMaxDiscoveryDepth = 4
+)
+
 type BuildRequest struct {
 	Path   string
 	Strict bool
 	// StatusOnly renders Applications for validation without retaining manifests.
 	StatusOnly                     bool
+	DiscoveryMode                  string
+	MaxDiscoveryDepth              int
+	MaxDiscoveryDepthSet           bool
 	DiscoverKustomizePaths         []string
 	ValidateLuaHealth              bool
 	Offline                        bool
@@ -55,6 +64,8 @@ type BuildRequest struct {
 	ApplicationSetProviderData     appset.ProviderData
 	RecordCacheEvents              bool
 	StatusCallback                 ApplicationStatusCallback
+	renderCache                    *applicationRenderCache
+	renderSettingsSignature        string
 }
 
 type BuildAppRequest struct {
@@ -94,15 +105,17 @@ type ApplicationStatusEvent struct {
 type ApplicationStatusCallback func(ApplicationStatusEvent) error
 
 type BuildResult struct {
-	Applications         []argoappv1.Application
-	ApplicationInputs    []ApplicationSelectionInput
-	Projects             []argoappv1.AppProject
-	Manifests            []render.Manifest
-	ApplicationManifests []ApplicationManifest
-	Diagnostics          []diagnostic.Diagnostic
-	Settings             config.ArgoSettings
-	Statuses             []ApplicationStatus
-	CacheEvents          []cacheevent.Event
+	Applications            []argoappv1.Application
+	ApplicationInputs       []ApplicationSelectionInput
+	Projects                []argoappv1.AppProject
+	Manifests               []render.Manifest
+	ApplicationManifests    []ApplicationManifest
+	Diagnostics             []diagnostic.Diagnostic
+	Settings                config.ArgoSettings
+	Statuses                []ApplicationStatus
+	CacheEvents             []cacheevent.Event
+	renderCache             *applicationRenderCache
+	renderSettingsSignature string
 }
 
 type DiagRequest = BuildRequest
@@ -145,7 +158,9 @@ func (o Orchestrator) ListApplications(ctx context.Context, request BuildRequest
 	}
 
 	var result BuildResult
-	discovered, discoveryDiags, cacheEvents, err := o.discoverRepository(ctx, root, request)
+	discovered, discoveryDiags, cacheEvents, renderCache, renderSettingsSignature, err := o.discoverRepository(ctx, root, request)
+	result.renderCache = renderCache
+	result.renderSettingsSignature = renderSettingsSignature
 	result.CacheEvents = append(result.CacheEvents, cacheEvents...)
 	discoveryDiags = normalizeDiagnostics(discoveryDiags, request.Strict, false)
 	result.Diagnostics = append(result.Diagnostics, discoveryDiags...)
@@ -162,75 +177,47 @@ func (o Orchestrator) ListApplications(ctx context.Context, request BuildRequest
 	settingsDiags = normalizeDiagnostics(settingsDiags, request.Strict, false)
 	result.Diagnostics = append(result.Diagnostics, settingsDiags...)
 	result.Projects = appendDiscoveredProjects(result.Projects, discovered)
-	appsetOptions, providerDiags, err := applicationSetOptionsForRequest(request)
-	if err != nil {
-		result.Diagnostics = append(result.Diagnostics, providerDiags...)
-		return result, diagnosticsError(providerDiags, err)
-	}
-	result.Diagnostics = append(result.Diagnostics, normalizeDiagnostics(providerDiags, request.Strict, false)...)
-
-	for _, appFile := range discovered.Applications {
-		result.Applications = append(result.Applications, appFile.Application)
-		result.ApplicationInputs = append(result.ApplicationInputs, ApplicationSelectionInput{
-			Application: appFile.Application,
-			Paths:       []string{filepath.ToSlash(appFile.Path)},
-		})
-	}
-
-	if err := appendApplicationSetApplications(root, request, discovered.ApplicationSets, appsetOptions, &result); err != nil {
+	if err := appendDiscoveredApplications(discovered, &result); err != nil {
 		return result, err
 	}
 
+	result.Diagnostics = dedupeDiagnostics(result.Diagnostics)
 	if err := diagnosticFailure(result.Diagnostics, request.Strict); err != nil {
 		return result, err
 	}
 	return result, nil
 }
 
-func appendApplicationSetApplications(root string, request BuildRequest, appSetFiles []discovery.ApplicationSetFile, appsetOptions appset.Options, result *BuildResult) error {
-	for _, appSetFile := range appSetFiles {
-		generated, diags, err := appset.GenerateWithOptions(root, appSetFile.Path, appSetFile.ApplicationSet, appsetOptions)
-		if err != nil {
-			if errors.Is(err, appset.ErrUnsupportedGenerator) && len(diags) > 0 {
-				diags = normalizeDiagnostics(diags, request.Strict, true)
-				result.Diagnostics = append(result.Diagnostics, diags...)
-				if request.Strict {
-					return diagnosticsError(diags, err)
-				}
-				continue
-			}
-			return diagnosticsError(diags, err)
-		}
-		diags = normalizeDiagnostics(diags, request.Strict, false)
-		result.Diagnostics = append(result.Diagnostics, diags...)
-		if err := diagnosticFailure(diags, request.Strict); err != nil {
-			return err
-		}
-		if err := appendZeroApplicationSetDiagnostic(appSetFile, request.Strict, result, len(generated)); err != nil {
-			return err
-		}
-		for _, app := range generated {
-			result.Applications = append(result.Applications, app.Application)
-			result.ApplicationInputs = append(result.ApplicationInputs, ApplicationSelectionInput{
-				Application: app.Application,
-				Paths:       generatedApplicationInputPaths(appSetFile.Path, app),
-			})
-		}
+func appendDiscoveredApplications(discovered discovery.Result, result *BuildResult) error {
+	for _, appFile := range discovered.Applications {
+		result.Applications = append(result.Applications, appFile.Application)
+		result.ApplicationInputs = append(result.ApplicationInputs, ApplicationSelectionInput{
+			Application: appFile.Application,
+			Paths:       discoveredApplicationInputPaths(appFile),
+		})
 	}
 	return nil
 }
 
-func appendZeroApplicationSetDiagnostic(appSetFile discovery.ApplicationSetFile, strict bool, result *BuildResult, generatedCount int) error {
-	if generatedCount > 0 {
-		return nil
+func discoveredApplicationInputPaths(appFile discovery.ApplicationFile) []string {
+	paths := append([]string(nil), appFile.InputPaths...)
+	if len(paths) == 0 && appFile.Path != "" {
+		paths = []string{appFile.Path}
 	}
-	diags := normalizeDiagnostics([]diagnostic.Diagnostic{emptyApplicationSetDiagnostic(appSetFile)}, strict, false)
-	result.Diagnostics = append(result.Diagnostics, diags...)
-	return diagnosticFailure(diags, strict)
+	for i := range paths {
+		paths[i] = filepath.ToSlash(paths[i])
+	}
+	return paths
 }
 
-func generatedApplicationInputPaths(appSetPath string, app appset.GeneratedApplication) []string {
-	paths := []string{filepath.ToSlash(appSetPath)}
+func generatedApplicationInputPaths(appSetFile discovery.ApplicationSetFile, app appset.GeneratedApplication) []string {
+	paths := append([]string(nil), appSetFile.InputPaths...)
+	if len(paths) == 0 && appSetFile.Path != "" {
+		paths = []string{appSetFile.Path}
+	}
+	for i := range paths {
+		paths[i] = filepath.ToSlash(paths[i])
+	}
 	sourcePaths := app.SourcePaths
 	if len(sourcePaths) == 0 && app.SourcePath != "" {
 		sourcePaths = []string{app.SourcePath}
@@ -279,17 +266,43 @@ func normalizeParallelism(value int) (int, error) {
 	return value, nil
 }
 
+func normalizeDiscoveryMode(value string) (string, error) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return DiscoveryModeFleet, nil
+	}
+	switch value {
+	case DiscoveryModeFleet, DiscoveryModeStatic:
+		return value, nil
+	default:
+		return "", fmt.Errorf("discovery-mode must be %q or %q", DiscoveryModeFleet, DiscoveryModeStatic)
+	}
+}
+
+func normalizeMaxDiscoveryDepth(value int, explicitlySet bool) (int, error) {
+	if value < 0 {
+		return 0, fmt.Errorf("max-discovery-depth must be greater than or equal to 0")
+	}
+	if value == 0 && !explicitlySet {
+		return DefaultMaxDiscoveryDepth, nil
+	}
+	return value, nil
+}
+
 type renderApplicationsRequest struct {
-	applications    []argoappv1.Application
-	provider        localProvider
-	strict          bool
-	statusOnly      bool
-	settingsFilter  manifest.SettingsResourceFilter
-	resourceFilter  manifest.ResourceFilter
-	healthEvaluator *luahealth.Evaluator
-	recordEvents    bool
-	parallelism     int
-	statusCallback  ApplicationStatusCallback
+	applications      []argoappv1.Application
+	provider          localProvider
+	renderCache       *applicationRenderCache
+	settingsSignature string
+	request           BuildRequest
+	strict            bool
+	statusOnly        bool
+	settingsFilter    manifest.SettingsResourceFilter
+	resourceFilter    manifest.ResourceFilter
+	healthEvaluator   *luahealth.Evaluator
+	recordEvents      bool
+	parallelism       int
+	statusCallback    ApplicationStatusCallback
 }
 
 type renderApplicationsResult struct {
@@ -443,7 +456,13 @@ func renderOneApplication(ctx context.Context, application argoappv1.Application
 	provider.cacheEvents = recorder
 	out := applicationRenderResult{set: true}
 
-	rendered, err := RenderApplication(ctx, application, provider)
+	rendered, err := renderApplicationCached(renderContext{
+		context:           ctx,
+		provider:          provider,
+		cache:             request.renderCache,
+		settingsSignature: request.settingsSignature,
+		request:           request.request,
+	}, application)
 	if err != nil {
 		out.diagnostics = append(out.diagnostics, normalizeDiagnostics(rendered.Diagnostics, request.strict, false)...)
 		out.diagnostics = append(out.diagnostics, renderFailureDiagnostic(application, err))
@@ -529,7 +548,9 @@ func (o Orchestrator) prepareBuildResult(ctx context.Context, request BuildReque
 
 	var result BuildResult
 	result.Applications = append(result.Applications, request.Applications...)
-	discovered, discoveryDiags, cacheEvents, err := o.discoverRepository(ctx, root, request)
+	discovered, discoveryDiags, cacheEvents, renderCache, renderSettingsSignature, err := o.discoverRepository(ctx, root, request)
+	result.renderCache = renderCache
+	result.renderSettingsSignature = renderSettingsSignature
 	result.CacheEvents = append(result.CacheEvents, cacheEvents...)
 	discoveryDiags = normalizeDiagnostics(discoveryDiags, request.Strict, false)
 	result.Diagnostics = append(result.Diagnostics, discoveryDiags...)
@@ -657,9 +678,12 @@ func (o Orchestrator) BuildApp(ctx context.Context, request BuildAppRequest) (Bu
 	}
 
 	buildRequest.Applications = []argoappv1.Application{selected}
+	buildRequest.renderCache = listResult.renderCache
+	buildRequest.renderSettingsSignature = listResult.renderSettingsSignature
 	buildResult, err := o.Build(ctx, buildRequest)
 	buildResult.ApplicationInputs = selectApplicationInputsForApplication(listResult.ApplicationInputs, selected)
 	buildResult.Diagnostics = append(append([]diagnostic.Diagnostic(nil), listResult.Diagnostics...), buildResult.Diagnostics...)
+	buildResult.Diagnostics = dedupeDiagnostics(buildResult.Diagnostics)
 	return buildResult, err
 }
 
