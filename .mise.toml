@@ -42,7 +42,7 @@ run = "go mod tidy && git diff --exit-code go.mod go.sum"
 
 [tasks.markdownlint]
 description = "Lint Markdown files"
-run = "go run github.com/shinagawa-web/gomarklint/v3@v3.2.0"
+run = "go run github.com/shinagawa-web/gomarklint/v3@v3.2.1"
 
 [tasks.actionlint]
 description = "Lint GitHub Actions workflows"
