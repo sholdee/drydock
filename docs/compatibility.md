@@ -81,7 +81,7 @@ Supported today:
 - `get apps` structured table, name, JSON, and YAML output with Kubernetes
   label selector filtering on Application metadata labels
 - `get images` structured table, name, JSON, and YAML output using the same
-  conservative workload image extraction as `diff images`
+  rendered image reference extraction as `diff images`
 - `build app` rendering for one Application by `NAME` or `NAMESPACE/NAME`
 - Partial build results for embedding callers when some selected Applications
   fail to render
@@ -115,7 +115,7 @@ Supported today:
   `resource.exclusions` and `resource.inclusions`
 - Explicit rendered-resource filters through `--skip-kind`, `--skip-crds`, and
   `--skip-secrets`
-- `diff images` conservative workload image diffs
+- `diff images` rendered image reference diffs
 - Repeated-resource last-wins behavior inside one Application
 - Public Go API in `pkg/drydock` for Application listing, rendering,
   manifest diffs, image diffs, injectable Git/chart/remote-resource

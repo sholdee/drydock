@@ -448,9 +448,11 @@ Supported formats:
 `get images`; diff commands reject it. `diff images -o json|yaml` emits
 structured `added`, `removed`, and `unchanged` image lists.
 
-Image diff defaults to Argo-style workload image extraction. A future
-`--images all-strings` mode can provide broader heuristic extraction for CRDs
-and CI pull-test workflows.
+Image diff extracts PodSpec container images and scalar rendered manifest
+fields whose key is exactly `image`. It skips Secret manifests, top-level
+metadata/status, ConfigMap data payloads, and arbitrary string scanning so CI
+pull-test workflows catch CRD image fields without treating every string as an
+image reference.
 
 ## Diagnostics
 

@@ -15,6 +15,7 @@ func ExtractImages(docs []Document) []string {
 			continue
 		}
 		collectWorkloadImages(value, images)
+		collectExactImageFields(value, images)
 	}
 
 	out := make([]string, 0, len(images))
@@ -23,6 +24,56 @@ func ExtractImages(docs []Document) []string {
 	}
 	sort.Strings(out)
 	return out
+}
+
+func collectExactImageFields(value any, images map[string]struct{}) {
+	kind, _ := stringField(value, "kind")
+	if kind == "Secret" {
+		return
+	}
+	collectExactImageFieldsAt(value, images, kind, nil)
+}
+
+func collectExactImageFieldsAt(value any, images map[string]struct{}, kind string, path []string) {
+	switch typed := value.(type) {
+	case map[string]any:
+		for key, child := range typed {
+			collectExactImageFieldChild(key, child, images, kind, path)
+		}
+	case map[any]any:
+		for key, child := range typed {
+			stringKey, ok := key.(string)
+			if !ok {
+				continue
+			}
+			collectExactImageFieldChild(stringKey, child, images, kind, path)
+		}
+	case []any:
+		for _, child := range typed {
+			collectExactImageFieldsAt(child, images, kind, path)
+		}
+	}
+}
+
+func collectExactImageFieldChild(key string, value any, images map[string]struct{}, kind string, path []string) {
+	if skipExactImageFieldPath(kind, path, key) {
+		return
+	}
+	if key == "image" {
+		addImage(value, images)
+		return
+	}
+	collectExactImageFieldsAt(value, images, kind, append(path, key))
+}
+
+func skipExactImageFieldPath(kind string, path []string, key string) bool {
+	if len(path) != 0 {
+		return false
+	}
+	if key == "metadata" || key == "status" {
+		return true
+	}
+	return kind == "ConfigMap" && (key == "data" || key == "binaryData")
 }
 
 func collectWorkloadImages(value any, images map[string]struct{}) {
