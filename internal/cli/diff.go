@@ -25,7 +25,7 @@ func newDiffCommand(deps Dependencies) *cobra.Command {
 		Short: "Diff rendered desired manifests",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			return fmt.Errorf("%s is not wired yet for path %s", cmd.CommandPath(), flags.path)
+			return fmt.Errorf("%s requires a subcommand", cmd.CommandPath())
 		},
 	}
 	bindCommonFlags(cmd, &flags)
