@@ -23,7 +23,7 @@ func newGetCommand(deps Dependencies) *cobra.Command {
 		Short: "List discovered Argo CD objects",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			return fmt.Errorf("%s is not fully wired yet for path %s", cmd.CommandPath(), flags.path)
+			return fmt.Errorf("%s requires a subcommand", cmd.CommandPath())
 		},
 	}
 	bindCommonFlags(cmd, &flags)

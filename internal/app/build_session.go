@@ -2,15 +2,11 @@ package app
 
 import (
 	"context"
-	"os"
 
-	"github.com/sholdee/drydock/internal/acquisition"
 	"github.com/sholdee/drydock/internal/cacheevent"
-	"github.com/sholdee/drydock/internal/chart"
 	"github.com/sholdee/drydock/internal/luahealth"
 	"github.com/sholdee/drydock/internal/manifest"
 	"github.com/sholdee/drydock/internal/project"
-	sourcepkg "github.com/sholdee/drydock/internal/source"
 )
 
 type buildSession struct {
@@ -80,52 +76,11 @@ func (session *buildSession) Build(ctx context.Context) (BuildResult, error) {
 		Inclusions: result.Settings.ResourceInclusions,
 	}
 
-	acquirer := session.orchestrator.ChartAcquirer
-	if acquirer == nil {
-		acquirer = chart.DefaultAcquirer{}
-	}
-	gitAcquirer := session.orchestrator.GitAcquirer
-	if gitAcquirer == nil {
-		gitAcquirer = sourcepkg.DefaultGitAcquirer{}
-	}
-	forbiddenRoots := append([]string(nil), session.request.RemoteResourceForbiddenRoots...)
-	forbiddenRoots = append(forbiddenRoots, session.root)
-	provider := localProvider{
-		repoRoot:                     session.root,
-		sourceResolver:               sourcepkg.NewResolver(sourcepkg.Options{RepoMaps: session.request.RepoMaps, Offline: session.request.Offline}),
-		chartAcquirer:                acquirer,
-		gitAcquirer:                  gitAcquirer,
-		remoteResourceAcquirer:       session.orchestrator.RemoteResourceAcquirer,
-		pluginRenderer:               session.orchestrator.pluginRenderer(session.request),
-		offline:                      session.request.Offline,
-		refreshCharts:                session.request.RefreshCharts,
-		chartCacheDir:                session.request.ChartCacheDir,
-		chartCredentials:             session.request.ChartCredentials,
-		ociChartRepositories:         ociChartRepositoriesFromSettings(result.Settings),
-		gitCacheDir:                  session.request.GitCacheDir,
-		refreshGit:                   session.request.RefreshGit,
-		gitCredentials:               session.request.GitCredentials,
-		refreshRemoteResources:       session.request.RefreshRemoteResources,
-		remoteResourceCacheDir:       session.request.RemoteResourceCacheDir,
-		remoteResourceForbiddenRoots: forbiddenRoots,
-		remoteResourceCredentials:    session.request.RemoteResourceCredentials,
-		remoteResourceGitCredentials: session.request.RemoteResourceGitCredentials,
-		pluginTimeout:                session.request.PluginTimeout,
-		kustomizeBuildOptions:        settingsBuildOptions(result.Settings),
-		configManagementPlugins:      result.Settings.ConfigManagementPlugins,
-		cacheEvents:                  session.cacheRecorder,
-	}
-	snapshotRoot, err := os.MkdirTemp("", "drydock-cache-snapshots-*")
+	provider, cleanup, err := newLocalProvider(session.orchestrator, session.root, result.Settings, session.request, session.cacheRecorder, "drydock-cache-snapshots-*")
 	if err != nil {
 		return result, err
 	}
-	defer os.RemoveAll(snapshotRoot)
-	provider.acquisition = acquisition.Session{
-		Locks:              processCacheTargetLocks,
-		SnapshotRoot:       snapshotRoot,
-		SnapshotCacheReads: shouldSnapshotCacheReads(session.request),
-		SnapshotCache:      acquisition.NewSnapshotCache(),
-	}
+	defer cleanup()
 
 	rendered, renderErr := renderApplications(ctx, renderApplicationsRequest{
 		applications:      result.Applications,
@@ -155,11 +110,4 @@ func (session *buildSession) Build(ctx context.Context) (BuildResult, error) {
 		return result, err
 	}
 	return result, nil
-}
-
-func shouldSnapshotCacheReads(request BuildRequest) bool {
-	if !request.Offline {
-		return true
-	}
-	return true
 }

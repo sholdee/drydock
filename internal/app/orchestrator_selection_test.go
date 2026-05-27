@@ -212,10 +212,12 @@ func TestOrchestratorBuildAppPreservesBuildOptionsForSelectedApplication(t *test
 	result, err := (Orchestrator{ChartAcquirer: acquirer}).BuildApp(context.Background(), BuildAppRequest{
 		Name: "chart-only",
 		BuildRequest: BuildRequest{
-			Path:          root,
-			ChartCacheDir: cacheDir,
-			Offline:       true,
-			RefreshCharts: true,
+			Path: root,
+			AcquisitionOptions: AcquisitionOptions{
+				ChartCacheDir: cacheDir,
+				Offline:       true,
+				RefreshCharts: true,
+			},
 		},
 	})
 	if err != nil {
@@ -316,13 +318,15 @@ clusters:
 	writeUnsupportedApplicationSetFixture(t, root)
 
 	result, err := Orchestrator{}.ListApplications(context.Background(), BuildRequest{
-		Path:                           root,
-		ApplicationSetProviderFixtures: []string{fixturePath},
-		ApplicationSetProviderData: appset.ProviderData{
-			Clusters: []appset.ClusterInput{{
-				Name:   "prod",
-				Server: "https://prod.example.invalid",
-			}},
+		Path: root,
+		ApplicationSetOptions: ApplicationSetOptions{
+			ApplicationSetProviderFixtures: []string{fixturePath},
+			ApplicationSetProviderData: appset.ProviderData{
+				Clusters: []appset.ClusterInput{{
+					Name:   "prod",
+					Server: "https://prod.example.invalid",
+				}},
+			},
 		},
 	})
 	if err == nil {

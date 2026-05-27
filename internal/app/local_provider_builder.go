@@ -1,0 +1,60 @@
+package app
+
+import (
+	"os"
+
+	"github.com/sholdee/drydock/internal/acquisition"
+	"github.com/sholdee/drydock/internal/cacheevent"
+	"github.com/sholdee/drydock/internal/chart"
+	"github.com/sholdee/drydock/internal/config"
+	sourcepkg "github.com/sholdee/drydock/internal/source"
+)
+
+func newLocalProvider(orchestrator Orchestrator, root string, settings config.ArgoSettings, request BuildRequest, recorder *cacheevent.Recorder, snapshotPrefix string) (localProvider, func(), error) {
+	acquirer := orchestrator.ChartAcquirer
+	if acquirer == nil {
+		acquirer = chart.DefaultAcquirer{}
+	}
+	gitAcquirer := orchestrator.GitAcquirer
+	if gitAcquirer == nil {
+		gitAcquirer = sourcepkg.DefaultGitAcquirer{}
+	}
+	forbiddenRoots := append([]string(nil), request.RemoteResourceForbiddenRoots...)
+	forbiddenRoots = append(forbiddenRoots, root)
+	provider := localProvider{
+		repoRoot:                     root,
+		sourceResolver:               sourcepkg.NewResolver(sourcepkg.Options{RepoMaps: request.RepoMaps, Offline: request.Offline}),
+		chartAcquirer:                acquirer,
+		gitAcquirer:                  gitAcquirer,
+		remoteResourceAcquirer:       orchestrator.RemoteResourceAcquirer,
+		pluginRenderer:               orchestrator.pluginRenderer(request),
+		offline:                      request.Offline,
+		refreshCharts:                request.RefreshCharts,
+		chartCacheDir:                request.ChartCacheDir,
+		chartCredentials:             request.ChartCredentials,
+		ociChartRepositories:         ociChartRepositoriesFromSettings(settings),
+		gitCacheDir:                  request.GitCacheDir,
+		refreshGit:                   request.RefreshGit,
+		gitCredentials:               request.GitCredentials,
+		refreshRemoteResources:       request.RefreshRemoteResources,
+		remoteResourceCacheDir:       request.RemoteResourceCacheDir,
+		remoteResourceForbiddenRoots: forbiddenRoots,
+		remoteResourceCredentials:    request.RemoteResourceCredentials,
+		remoteResourceGitCredentials: request.RemoteResourceGitCredentials,
+		pluginTimeout:                request.PluginTimeout,
+		kustomizeBuildOptions:        settingsBuildOptions(settings),
+		configManagementPlugins:      settings.ConfigManagementPlugins,
+		cacheEvents:                  recorder,
+	}
+	snapshotRoot, err := os.MkdirTemp("", snapshotPrefix)
+	if err != nil {
+		return provider, func() {}, err
+	}
+	provider.acquisition = acquisition.Session{
+		Locks:              processCacheTargetLocks,
+		SnapshotRoot:       snapshotRoot,
+		SnapshotCacheReads: true,
+		SnapshotCache:      acquisition.NewSnapshotCache(),
+	}
+	return provider, func() { _ = os.RemoveAll(snapshotRoot) }, nil
+}

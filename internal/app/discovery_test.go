@@ -93,8 +93,10 @@ patches:
 `)
 
 	result, err := Orchestrator{}.ListApplications(context.Background(), BuildRequest{
-		Path:                   root,
-		DiscoverKustomizePaths: []string{filepath.Join("argocd", "overlays", "prod")},
+		Path: root,
+		DiscoveryOptions: DiscoveryOptions{
+			DiscoverKustomizePaths: []string{filepath.Join("argocd", "overlays", "prod")},
+		},
 	})
 	if err != nil {
 		t.Fatalf("ListApplications() error = %v", err)
@@ -179,8 +181,10 @@ destination:
 `)
 
 	result, err := Orchestrator{}.ListApplications(context.Background(), BuildRequest{
-		Path:                   root,
-		DiscoverKustomizePaths: []string{"argocd/overlays/nuc10-cluster"},
+		Path: root,
+		DiscoveryOptions: DiscoveryOptions{
+			DiscoverKustomizePaths: []string{"argocd/overlays/nuc10-cluster"},
+		},
 	})
 	if err != nil {
 		t.Fatalf("ListApplications() error = %v", err)
@@ -301,8 +305,10 @@ func TestListApplicationsStaticDiscoveryModeDisablesRenderedFleetExpansion(t *te
 	writeRenderedFleetFixture(t, root)
 
 	result, err := Orchestrator{}.ListApplications(context.Background(), BuildRequest{
-		Path:          root,
-		DiscoveryMode: DiscoveryModeStatic,
+		Path: root,
+		DiscoveryOptions: DiscoveryOptions{
+			DiscoveryMode: DiscoveryModeStatic,
+		},
 	})
 	if err != nil {
 		t.Fatalf("ListApplications() error = %v", err)
@@ -344,8 +350,10 @@ resources:
 `)
 
 	result, err := Orchestrator{}.ListApplications(context.Background(), BuildRequest{
-		Path:                   root,
-		DiscoverKustomizePaths: []string{"overlays/argocd"},
+		Path: root,
+		DiscoveryOptions: DiscoveryOptions{
+			DiscoverKustomizePaths: []string{"overlays/argocd"},
+		},
 	})
 	if err != nil {
 		t.Fatalf("ListApplications() error = %v", err)
@@ -366,8 +374,10 @@ func TestListApplicationsErrorsWhenRenderedFleetDiscoveryDoesNotConverge(t *test
 	writeRenderedFleetFixture(t, root)
 
 	_, err := Orchestrator{}.ListApplications(context.Background(), BuildRequest{
-		Path:              root,
-		MaxDiscoveryDepth: 1,
+		Path: root,
+		DiscoveryOptions: DiscoveryOptions{
+			MaxDiscoveryDepth: 1,
+		},
 	})
 	if err == nil || !strings.Contains(err.Error(), "maximum discovery depth 1") {
 		t.Fatalf("ListApplications() error = %v, want max discovery depth error", err)
@@ -488,8 +498,10 @@ metadata:
 	})
 
 	result, err := (Orchestrator{PluginRenderer: renderer}).Build(context.Background(), BuildRequest{
-		Path:        root,
-		Parallelism: 1,
+		Path: root,
+		ExecutionOptions: ExecutionOptions{
+			Parallelism: 1,
+		},
 	})
 	if err != nil {
 		t.Fatalf("Build() error = %v", err)
@@ -546,8 +558,10 @@ func TestListApplicationsRejectsUnsafeDiscoverKustomizePath(t *testing.T) {
 	writeTestFile(t, filepath.Join(root, "overlay", "kustomization.yaml"), "resources: []\n")
 
 	_, err := Orchestrator{}.ListApplications(context.Background(), BuildRequest{
-		Path:                   root,
-		DiscoverKustomizePaths: []string{filepath.Join(root, "overlay")},
+		Path: root,
+		DiscoveryOptions: DiscoveryOptions{
+			DiscoverKustomizePaths: []string{filepath.Join(root, "overlay")},
+		},
 	})
 	if err == nil || !strings.Contains(err.Error(), "must be relative") {
 		t.Fatalf("ListApplications() error = %v, want relative path error", err)
@@ -557,8 +571,10 @@ func TestListApplicationsRejectsUnsafeDiscoverKustomizePath(t *testing.T) {
 		t.Fatalf("Symlink() error = %v", err)
 	}
 	_, err = Orchestrator{}.ListApplications(context.Background(), BuildRequest{
-		Path:                   root,
-		DiscoverKustomizePaths: []string{"linked-overlay"},
+		Path: root,
+		DiscoveryOptions: DiscoveryOptions{
+			DiscoverKustomizePaths: []string{"linked-overlay"},
+		},
 	})
 	if err == nil || !strings.Contains(err.Error(), "symlink component") {
 		t.Fatalf("ListApplications() error = %v, want symlink path error", err)

@@ -16,7 +16,7 @@ func newBuildCommand(deps Dependencies) *cobra.Command {
 		Short: "Render Applications",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			return fmt.Errorf("%s orchestration requires Task 15 for path %s", cmd.CommandPath(), flags.path)
+			return fmt.Errorf("%s requires a subcommand", cmd.CommandPath())
 		},
 	}
 	bindCommonFlags(cmd, &flags)

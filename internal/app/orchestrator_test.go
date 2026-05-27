@@ -279,8 +279,10 @@ stringData:
 `)
 
 	result, err := Orchestrator{}.Build(context.Background(), BuildRequest{
-		Path:        root,
-		SkipSecrets: true,
+		Path: root,
+		FilterOptions: FilterOptions{
+			SkipSecrets: true,
+		},
 	})
 	if err != nil {
 		t.Fatalf("Build() error = %v", err)
@@ -403,8 +405,10 @@ stringData:
 	result, err := Orchestrator{}.Build(context.Background(), BuildRequest{
 		Path:              root,
 		StatusOnly:        true,
-		SkipSecrets:       true,
 		ValidateLuaHealth: true,
+		FilterOptions: FilterOptions{
+			SkipSecrets: true,
+		},
 	})
 	if err != nil {
 		t.Fatalf("Build() error = %v", err)
@@ -596,9 +600,11 @@ spec:
 `)
 
 	_, err := (Orchestrator{}).Build(context.Background(), BuildRequest{
-		Path:        root,
-		Offline:     true,
-		GitCacheDir: filepath.Join(root, ".drydock", "git"),
+		Path: root,
+		AcquisitionOptions: AcquisitionOptions{
+			Offline:     true,
+			GitCacheDir: filepath.Join(root, ".drydock", "git"),
+		},
 	})
 	if err == nil || !strings.Contains(err.Error(), "git cache dir") {
 		t.Fatalf("Build error = %v, want git cache validation error", err)
@@ -612,8 +618,10 @@ func TestOrchestratorBuildPreservesPartialResults(t *testing.T) {
 	fixture.writeExternalPathApplicationNamed(t, "invalid", "https://github.com/example/missing", "manifests/missing")
 
 	result, err := fixture.buildAllowError(t, Orchestrator{}, BuildRequest{
-		GitCacheDir: cacheDir,
-		Offline:     true,
+		AcquisitionOptions: AcquisitionOptions{
+			GitCacheDir: cacheDir,
+			Offline:     true,
+		},
 	})
 	assertBuildErrorContains(t, err, "1 Application failed", "argocd/invalid")
 	if len(result.Manifests) != 1 {
