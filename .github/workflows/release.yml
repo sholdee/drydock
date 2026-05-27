@@ -25,6 +25,7 @@ jobs:
     permissions:
       contents: read
     outputs:
+      bookkeep: ${{ steps.version.outputs.bookkeep }}
       created: ${{ steps.version.outputs.created }}
       publish: ${{ steps.version.outputs.publish }}
       semver: ${{ steps.version.outputs.semver }}
@@ -58,6 +59,7 @@ jobs:
 
           tag="v${version}"
           created="$(git show -s --format=%cI "${GITHUB_SHA}")"
+          bookkeep="false"
           publish="true"
           remote_sha="$(git ls-remote --tags origin "refs/tags/${tag}" | awk 'NR == 1 { print $1 }')"
 
@@ -69,10 +71,13 @@ jobs:
                 exit 1
               fi
               publish="true"
+            elif [[ -n "${remote_sha}" && "${remote_sha}" == "${GITHUB_SHA}" ]]; then
+              bookkeep="true"
             fi
           fi
 
           {
+            echo "bookkeep=${bookkeep}"
             echo "created=${created}"
             echo "publish=${publish}"
             echo "semver=${version}"
@@ -505,15 +510,78 @@ jobs:
             printf "**Checksums:** \`checksums.txt\`\n"
           } >> release-notes.md
 
-          gh api \
-            --method PATCH \
-            "repos/${GITHUB_REPOSITORY}/releases/${RELEASE_ID}" \
-            -F body=@release-notes.md \
-            -f draft=false \
-            -f make_latest=true
+          gh release edit "${TAG}" \
+            --draft=false \
+            --latest \
+            --notes-file release-notes.md
 
           published_sha="$(git ls-remote --tags origin "refs/tags/${TAG}" | awk 'NR == 1 { print $1 }')"
           if [[ "${published_sha}" != "${GITHUB_SHA}" ]]; then
             echo "Published tag ${TAG} points to ${published_sha}, expected ${GITHUB_SHA}" >&2
             exit 1
           fi
+
+  release-please-bookkeeping:
+    needs:
+      - publish-release
+      - release-meta
+    if: >-
+      always() &&
+      (needs.publish-release.result == 'success' ||
+      needs.release-meta.outputs.bookkeep == 'true')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      issues: write
+      pull-requests: read
+    steps:
+      - name: Mark release latest and release-please PR tagged
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ needs.release-meta.outputs.tag }}
+        shell: bash
+        run: |
+          release_json="$(gh release view "${TAG}" --json isDraft,targetCommitish)"
+          release_draft="$(jq -r '.isDraft' <<< "${release_json}")"
+          release_target="$(jq -r '.targetCommitish' <<< "${release_json}")"
+          if [[ "${release_draft}" != "false" ]]; then
+            echo "Release ${TAG} is still a draft." >&2
+            exit 1
+          fi
+          if [[ "${release_target}" != "${GITHUB_SHA}" ]]; then
+            echo "Release ${TAG} target is ${release_target}, expected ${GITHUB_SHA}." >&2
+            exit 1
+          fi
+
+          tag_ref_json="$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/${TAG}")"
+          tag_type="$(jq -r '.object.type' <<< "${tag_ref_json}")"
+          tag_sha="$(jq -r '.object.sha' <<< "${tag_ref_json}")"
+          if [[ "${tag_type}" == "tag" ]]; then
+            tag_sha="$(gh api "repos/${GITHUB_REPOSITORY}/git/tags/${tag_sha}" --jq '.object.sha')"
+          fi
+          if [[ "${tag_sha}" != "${GITHUB_SHA}" ]]; then
+            echo "Published tag ${TAG} points to ${tag_sha}, expected ${GITHUB_SHA}." >&2
+            exit 1
+          fi
+
+          gh release edit "${TAG}" --latest
+          latest_tag="$(gh api "repos/${GITHUB_REPOSITORY}/releases/latest" --jq '.tag_name')"
+          if [[ "${latest_tag}" != "${TAG}" ]]; then
+            echo "Latest release is ${latest_tag}, expected ${TAG}" >&2
+            exit 1
+          fi
+
+          release_pr_number="$(
+            gh api \
+              -H "Accept: application/vnd.github+json" \
+              "repos/${GITHUB_REPOSITORY}/commits/${GITHUB_SHA}/pulls" \
+              --jq 'map(select(.merged_at != null and any(.labels[]?; .name == "autorelease: pending")))[0].number // ""'
+          )"
+
+          if [[ -z "${release_pr_number}" ]]; then
+            echo "No merged release-please PR with autorelease: pending found for ${GITHUB_SHA}; skipping label update."
+            exit 0
+          fi
+
+          gh issue edit "${release_pr_number}" --add-label "autorelease: tagged"
+          gh issue edit "${release_pr_number}" --remove-label "autorelease: pending"
