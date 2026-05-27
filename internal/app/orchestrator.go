@@ -19,7 +19,6 @@ import (
 
 	"path/filepath"
 	"strings"
-	"time"
 )
 
 const (
@@ -33,38 +32,19 @@ type BuildRequest struct {
 	Path   string
 	Strict bool
 	// StatusOnly renders Applications for validation without retaining manifests.
-	StatusOnly                     bool
-	DiscoveryMode                  string
-	MaxDiscoveryDepth              int
-	MaxDiscoveryDepthSet           bool
-	DiscoverKustomizePaths         []string
-	ValidateLuaHealth              bool
-	Offline                        bool
-	RefreshCharts                  bool
-	ChartCacheDir                  string
-	ChartCredentials               chart.ChartCredentials
-	RepoMaps                       []sourcepkg.RepoMap
-	GitCacheDir                    string
-	RefreshGit                     bool
-	GitCredentials                 sourcepkg.GitCredentials
-	RefreshRemoteResources         bool
-	RemoteResourceCacheDir         string
-	RemoteResourceForbiddenRoots   []string
-	RemoteResourceCredentials      remote.Credentials
-	RemoteResourceGitCredentials   remote.GitCredentials
-	PluginTimeout                  time.Duration
-	Parallelism                    int
-	SkipKinds                      []string
-	SkipCRDs                       bool
-	SkipSecrets                    bool
-	PluginRenderer                 render.PluginRenderer
-	Applications                   []argoappv1.Application
-	ApplicationSetProviderFixtures []string
-	ApplicationSetProviderData     appset.ProviderData
-	RecordCacheEvents              bool
-	StatusCallback                 ApplicationStatusCallback
-	renderCache                    *applicationRenderCache
-	renderSettingsSignature        string
+	StatusOnly bool
+	DiscoveryOptions
+	ValidateLuaHealth bool
+	AcquisitionOptions
+	PluginOptions
+	ExecutionOptions
+	FilterOptions
+	PluginRenderer render.PluginRenderer
+	Applications   []argoappv1.Application
+	ApplicationSetOptions
+	StatusCallback          ApplicationStatusCallback
+	renderCache             *applicationRenderCache
+	renderSettingsSignature string
 }
 
 type BuildAppRequest struct {

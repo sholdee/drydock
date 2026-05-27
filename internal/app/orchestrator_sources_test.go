@@ -93,10 +93,12 @@ data:
 
 	result, err := Orchestrator{}.Build(context.Background(), BuildRequest{
 		Path: root,
-		RepoMaps: []sourcepkg.RepoMap{{
-			URL:  "https://github.com/example/external.git",
-			Path: external,
-		}},
+		AcquisitionOptions: AcquisitionOptions{
+			RepoMaps: []sourcepkg.RepoMap{{
+				URL:  "https://github.com/example/external.git",
+				Path: external,
+			}},
+		},
 	})
 	if err != nil {
 		t.Fatalf("Build() error = %v", err)
@@ -115,9 +117,11 @@ func TestOrchestratorBuildOfflineErrorsForMissingUnmappedPathSource(t *testing.T
 	writeExternalPathApplication(t, root, "https://github.com/example/external", "manifests/external")
 
 	_, err := Orchestrator{}.Build(context.Background(), BuildRequest{
-		Path:        root,
-		GitCacheDir: cacheDir,
-		Offline:     true,
+		Path: root,
+		AcquisitionOptions: AcquisitionOptions{
+			GitCacheDir: cacheDir,
+			Offline:     true,
+		},
 	})
 	if err == nil {
 		t.Fatal("Build() error = nil, want offline cache miss")
@@ -143,9 +147,11 @@ data:
 	acquirer := &recordingGitAcquirer{path: external, revision: "abc123"}
 
 	result, err := (Orchestrator{GitAcquirer: acquirer}).Build(context.Background(), BuildRequest{
-		Path:        root,
-		GitCacheDir: cacheDir,
-		RefreshGit:  true,
+		Path: root,
+		AcquisitionOptions: AcquisitionOptions{
+			GitCacheDir: cacheDir,
+			RefreshGit:  true,
+		},
 	})
 	if err != nil {
 		t.Fatalf("Build() error = %v", err)
@@ -186,12 +192,14 @@ func TestOrchestratorBuildRejectsGitCacheInsideRepoMapRoot(t *testing.T) {
 	writeExternalPathApplication(t, root, "https://github.com/example/external", "manifests/external")
 
 	_, err := Orchestrator{}.Build(context.Background(), BuildRequest{
-		Path:        root,
-		GitCacheDir: filepath.Join(external, ".drydock", "git"),
-		RepoMaps: []sourcepkg.RepoMap{{
-			URL:  "https://github.com/example/external.git",
-			Path: external,
-		}},
+		Path: root,
+		AcquisitionOptions: AcquisitionOptions{
+			GitCacheDir: filepath.Join(external, ".drydock", "git"),
+			RepoMaps: []sourcepkg.RepoMap{{
+				URL:  "https://github.com/example/external.git",
+				Path: external,
+			}},
+		},
 	})
 	if err == nil {
 		t.Fatal("Build() error = nil, want git cache location error")
@@ -229,10 +237,12 @@ spec:
 
 	result, err := Orchestrator{}.Build(context.Background(), BuildRequest{
 		Path: root,
-		RepoMaps: []sourcepkg.RepoMap{{
-			URL:  "https://github.com/example/values.git",
-			Path: valuesRoot,
-		}},
+		AcquisitionOptions: AcquisitionOptions{
+			RepoMaps: []sourcepkg.RepoMap{{
+				URL:  "https://github.com/example/values.git",
+				Path: valuesRoot,
+			}},
+		},
 	})
 	if err != nil {
 		t.Fatalf("Build() error = %v", err)
@@ -282,10 +292,12 @@ data:
 
 	result, err := Orchestrator{}.Build(context.Background(), BuildRequest{
 		Path: root,
-		RepoMaps: []sourcepkg.RepoMap{{
-			URL:  "https://github.com/example/values.git",
-			Path: valuesRoot,
-		}},
+		AcquisitionOptions: AcquisitionOptions{
+			RepoMaps: []sourcepkg.RepoMap{{
+				URL:  "https://github.com/example/values.git",
+				Path: valuesRoot,
+			}},
+		},
 	})
 	if err != nil {
 		t.Fatalf("Build() error = %v", err)
@@ -560,7 +572,12 @@ spec:
 	writeTestFile(t, filepath.Join(root, "leaked-values.yaml"), `value: from-current-repo
 `)
 
-	_, err := Orchestrator{}.Build(context.Background(), BuildRequest{Path: root, Offline: true})
+	_, err := Orchestrator{}.Build(context.Background(), BuildRequest{
+		Path: root,
+		AcquisitionOptions: AcquisitionOptions{
+			Offline: true,
+		},
+	})
 	if err == nil {
 		t.Fatal("Build() error = nil, want unmapped ref repository error")
 	}
@@ -647,10 +664,12 @@ data:
 	acquirer := &recordingChartAcquirer{chartDir: chartDir}
 
 	result, err := (Orchestrator{ChartAcquirer: acquirer}).Build(context.Background(), BuildRequest{
-		Path:          root,
-		ChartCacheDir: cacheDir,
-		Offline:       true,
-		RefreshCharts: true,
+		Path: root,
+		AcquisitionOptions: AcquisitionOptions{
+			ChartCacheDir: cacheDir,
+			Offline:       true,
+			RefreshCharts: true,
+		},
 	})
 	if err != nil {
 		t.Fatalf("Build() error = %v", err)
@@ -717,8 +736,10 @@ metadata:
 `)
 
 	result, err := Orchestrator{ChartAcquirer: &recordingChartAcquirer{chartDir: chartDir, fromCache: true}}.Build(context.Background(), BuildRequest{
-		Path:              root,
-		RecordCacheEvents: true,
+		Path: root,
+		AcquisitionOptions: AcquisitionOptions{
+			RecordCacheEvents: true,
+		},
 	})
 	if err != nil {
 		t.Fatalf("Build() error = %v", err)
@@ -745,8 +766,10 @@ spec:
 `)
 
 	result, err := Orchestrator{GitAcquirer: &recordingGitAcquirer{err: errors.New("offline cache miss for https://user:secret@example.test/repo.git?token=abc#frag")}}.Build(context.Background(), BuildRequest{
-		Path:              root,
-		RecordCacheEvents: true,
+		Path: root,
+		AcquisitionOptions: AcquisitionOptions{
+			RecordCacheEvents: true,
+		},
 	})
 	if err == nil {
 		t.Fatal("Build() error = nil, want failing Git acquire")
@@ -847,8 +870,10 @@ helmCharts:
 	acquirer := &recordingChartAcquirer{chartDir: chartDir}
 
 	if _, err := (Orchestrator{ChartAcquirer: acquirer}).Build(context.Background(), BuildRequest{
-		Path:             root,
-		ChartCredentials: credentials,
+		Path: root,
+		AcquisitionOptions: AcquisitionOptions{
+			ChartCredentials: credentials,
+		},
 	}); err != nil {
 		t.Fatalf("Build() error = %v", err)
 	}
@@ -903,12 +928,14 @@ metadata:
 	acquirer := &recordingRemoteAcquirer{path: remoteFile}
 
 	if _, err := (Orchestrator{RemoteResourceAcquirer: acquirer}).Build(context.Background(), BuildRequest{
-		Path:                         root,
-		Offline:                      true,
-		RefreshRemoteResources:       true,
-		RemoteResourceCacheDir:       t.TempDir(),
-		RemoteResourceCredentials:    remoteCredentials,
-		RemoteResourceGitCredentials: remoteGitCredentials,
+		Path: root,
+		AcquisitionOptions: AcquisitionOptions{
+			Offline:                      true,
+			RefreshRemoteResources:       true,
+			RemoteResourceCacheDir:       t.TempDir(),
+			RemoteResourceCredentials:    remoteCredentials,
+			RemoteResourceGitCredentials: remoteGitCredentials,
+		},
 	}); err != nil {
 		t.Fatalf("Build() error = %v", err)
 	}

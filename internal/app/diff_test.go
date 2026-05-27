@@ -8,13 +8,17 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	git "github.com/go-git/go-git/v5"
 	"github.com/go-git/go-git/v5/plumbing"
 	"github.com/go-git/go-git/v5/plumbing/object"
 	"github.com/sholdee/drydock/internal/appset"
+	"github.com/sholdee/drydock/internal/chart"
 	"github.com/sholdee/drydock/internal/diagnostic"
 	"github.com/sholdee/drydock/internal/diff"
+	"github.com/sholdee/drydock/internal/remote"
+	sourcepkg "github.com/sholdee/drydock/internal/source"
 )
 
 func TestOrchestratorDiffAppsReportsManifestChange(t *testing.T) {
@@ -788,9 +792,11 @@ func TestDiffAppsRejectsRemoteCacheInsideEitherRoot(t *testing.T) {
 	right := t.TempDir()
 
 	_, err := Orchestrator{}.DiffApps(context.Background(), DiffRequest{
-		LeftPath:               left,
-		RightPath:              right,
-		RemoteResourceCacheDir: filepath.Join(right, ".drydock", "remotes"),
+		LeftPath:  left,
+		RightPath: right,
+		AcquisitionOptions: AcquisitionOptions{
+			RemoteResourceCacheDir: filepath.Join(right, ".drydock", "remotes"),
+		},
 	})
 	if err == nil {
 		t.Fatal("DiffApps() error = nil, want cache containment error")
@@ -817,7 +823,9 @@ func TestDiffAppsRefRejectsGitCacheInsideOriginalRepo(t *testing.T) {
 				RefOrig:     "HEAD",
 				Ref:         "HEAD",
 				ChangedOnly: false,
-				GitCacheDir: filepath.Join(root, ".drydock", "git"),
+				AcquisitionOptions: AcquisitionOptions{
+					GitCacheDir: filepath.Join(root, ".drydock", "git"),
+				},
 			},
 		},
 		{
@@ -827,7 +835,9 @@ func TestDiffAppsRefRejectsGitCacheInsideOriginalRepo(t *testing.T) {
 				RightPath:   root,
 				Ref:         "HEAD",
 				ChangedOnly: false,
-				GitCacheDir: filepath.Join(root, ".drydock", "git"),
+				AcquisitionOptions: AcquisitionOptions{
+					GitCacheDir: filepath.Join(root, ".drydock", "git"),
+				},
 			},
 		},
 	} {
@@ -859,21 +869,25 @@ func TestDiffAppsRefRejectsRemoteCacheInsideOriginalRepo(t *testing.T) {
 		{
 			name: "explicit repo",
 			request: DiffRequest{
-				Repo:                   root,
-				RefOrig:                "HEAD",
-				Ref:                    "HEAD",
-				ChangedOnly:            false,
-				RemoteResourceCacheDir: filepath.Join(root, ".drydock", "remotes"),
+				Repo:        root,
+				RefOrig:     "HEAD",
+				Ref:         "HEAD",
+				ChangedOnly: false,
+				AcquisitionOptions: AcquisitionOptions{
+					RemoteResourceCacheDir: filepath.Join(root, ".drydock", "remotes"),
+				},
 			},
 		},
 		{
 			name: "repo defaults from right path",
 			request: DiffRequest{
-				LeftPath:               t.TempDir(),
-				RightPath:              root,
-				Ref:                    "HEAD",
-				ChangedOnly:            false,
-				RemoteResourceCacheDir: filepath.Join(root, ".drydock", "remotes"),
+				LeftPath:    t.TempDir(),
+				RightPath:   root,
+				Ref:         "HEAD",
+				ChangedOnly: false,
+				AcquisitionOptions: AcquisitionOptions{
+					RemoteResourceCacheDir: filepath.Join(root, ".drydock", "remotes"),
+				},
 			},
 		},
 	} {
@@ -1226,11 +1240,40 @@ func TestOrchestratorDiffAppReportsMissingBothSides(t *testing.T) {
 
 func TestDiffRequestCarriesProviderFixtureConfig(t *testing.T) {
 	request := DiffRequest{
-		LeftPath:                       "/tmp/left",
-		RightPath:                      "/tmp/right",
-		DiscoverKustomizePaths:         []string{"argocd/overlays/prod"},
-		ApplicationSetProviderFixtures: []string{"clusters.yaml"},
-		ApplicationSetProviderData:     appset.ProviderData{Clusters: []appset.ClusterInput{{Name: "prod", Server: "https://prod.example.invalid"}}},
+		LeftPath:  "/tmp/left",
+		RightPath: "/tmp/right",
+		DiscoveryOptions: DiscoveryOptions{
+			DiscoveryMode:          DiscoveryModeFleet,
+			MaxDiscoveryDepth:      2,
+			MaxDiscoveryDepthSet:   true,
+			DiscoverKustomizePaths: []string{"argocd/overlays/prod"},
+		},
+		AcquisitionOptions: AcquisitionOptions{
+			Offline:                      true,
+			RefreshCharts:                true,
+			ChartCacheDir:                "chart-cache",
+			ChartCredentials:             chart.ChartCredentials{Username: "chart-user"},
+			RepoMaps:                     []sourcepkg.RepoMap{{URL: "https://example.test/repo.git", Path: "/repo"}},
+			GitCacheDir:                  "git-cache",
+			RefreshGit:                   true,
+			GitCredentials:               sourcepkg.GitCredentials{Username: "git-user"},
+			RefreshRemoteResources:       true,
+			RemoteResourceCacheDir:       "remote-cache",
+			RemoteResourceCredentials:    remote.Credentials{Username: "remote-user"},
+			RemoteResourceGitCredentials: remote.GitCredentials{Username: "remote-git-user"},
+			RecordCacheEvents:            true,
+		},
+		PluginOptions:    PluginOptions{PluginTimeout: time.Second},
+		ExecutionOptions: ExecutionOptions{Parallelism: 3},
+		FilterOptions: FilterOptions{
+			SkipKinds:   []string{"Secret"},
+			SkipCRDs:    true,
+			SkipSecrets: true,
+		},
+		ApplicationSetOptions: ApplicationSetOptions{
+			ApplicationSetProviderFixtures: []string{"clusters.yaml"},
+			ApplicationSetProviderData:     appset.ProviderData{Clusters: []appset.ClusterInput{{Name: "prod", Server: "https://prod.example.invalid"}}},
+		},
 	}
 
 	left := request.buildRequest(request.LeftPath, []string{request.LeftPath, request.RightPath})
@@ -1239,6 +1282,18 @@ func TestDiffRequestCarriesProviderFixtureConfig(t *testing.T) {
 	for side, buildRequest := range map[string]BuildRequest{"left": left, "right": right} {
 		if !reflect.DeepEqual(buildRequest.DiscoverKustomizePaths, request.DiscoverKustomizePaths) {
 			t.Fatalf("%s DiscoverKustomizePaths = %#v, want %#v", side, buildRequest.DiscoverKustomizePaths, request.DiscoverKustomizePaths)
+		}
+		if !reflect.DeepEqual(buildRequest.AcquisitionOptions, wantBuildAcquisitionOptions(request.AcquisitionOptions, []string{request.LeftPath, request.RightPath})) {
+			t.Fatalf("%s AcquisitionOptions = %#v, want diff acquisition options with forbidden roots", side, buildRequest.AcquisitionOptions)
+		}
+		if !reflect.DeepEqual(buildRequest.PluginOptions, request.PluginOptions) {
+			t.Fatalf("%s PluginOptions = %#v, want %#v", side, buildRequest.PluginOptions, request.PluginOptions)
+		}
+		if !reflect.DeepEqual(buildRequest.ExecutionOptions, request.ExecutionOptions) {
+			t.Fatalf("%s ExecutionOptions = %#v, want %#v", side, buildRequest.ExecutionOptions, request.ExecutionOptions)
+		}
+		if !reflect.DeepEqual(buildRequest.FilterOptions, request.FilterOptions) {
+			t.Fatalf("%s FilterOptions = %#v, want %#v", side, buildRequest.FilterOptions, request.FilterOptions)
 		}
 		if !reflect.DeepEqual(buildRequest.ApplicationSetProviderFixtures, request.ApplicationSetProviderFixtures) {
 			t.Fatalf("%s ApplicationSetProviderFixtures = %#v, want %#v", side, buildRequest.ApplicationSetProviderFixtures, request.ApplicationSetProviderFixtures)
@@ -1249,6 +1304,11 @@ func TestDiffRequestCarriesProviderFixtureConfig(t *testing.T) {
 	}
 }
 
+func wantBuildAcquisitionOptions(input AcquisitionOptions, forbiddenRoots []string) AcquisitionOptions {
+	input.RemoteResourceForbiddenRoots = forbiddenRoots
+	return input
+}
+
 func TestDiffAppRejectsRemoteCacheInsideEitherRoot(t *testing.T) {
 	left := t.TempDir()
 	right := t.TempDir()
@@ -1257,9 +1317,11 @@ func TestDiffAppRejectsRemoteCacheInsideEitherRoot(t *testing.T) {
 		_, err := Orchestrator{}.DiffApp(context.Background(), DiffAppRequest{
 			Name: "demo",
 			DiffRequest: DiffRequest{
-				LeftPath:               left,
-				RightPath:              right,
-				RemoteResourceCacheDir: filepath.Join(root, ".drydock", "remotes"),
+				LeftPath:  left,
+				RightPath: right,
+				AcquisitionOptions: AcquisitionOptions{
+					RemoteResourceCacheDir: filepath.Join(root, ".drydock", "remotes"),
+				},
 			},
 		})
 		if err == nil {
@@ -1284,7 +1346,9 @@ func TestDiffAppRefRejectsGitCacheInsideOriginalRepo(t *testing.T) {
 			RefOrig:     "HEAD",
 			Ref:         "HEAD",
 			ChangedOnly: false,
-			GitCacheDir: filepath.Join(root, ".drydock", "git"),
+			AcquisitionOptions: AcquisitionOptions{
+				GitCacheDir: filepath.Join(root, ".drydock", "git"),
+			},
 		},
 	})
 	if err == nil {

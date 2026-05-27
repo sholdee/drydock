@@ -8,61 +8,39 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
-	"time"
 
 	argoappv1 "github.com/argoproj/argo-cd/v3/pkg/apis/application/v1alpha1"
 	"github.com/argoproj/argo-cd/v3/util/glob"
-	"github.com/sholdee/drydock/internal/appset"
 	"github.com/sholdee/drydock/internal/cacheevent"
 	"github.com/sholdee/drydock/internal/change"
-	"github.com/sholdee/drydock/internal/chart"
 	"github.com/sholdee/drydock/internal/config"
 	"github.com/sholdee/drydock/internal/diagnostic"
 	"github.com/sholdee/drydock/internal/diff"
 	"github.com/sholdee/drydock/internal/gitref"
 	"github.com/sholdee/drydock/internal/manifest"
 	"github.com/sholdee/drydock/internal/pathsafety"
-	"github.com/sholdee/drydock/internal/remote"
 	sourcepkg "github.com/sholdee/drydock/internal/source"
 	"go.yaml.in/yaml/v4"
 )
 
 type DiffRequest struct {
-	LeftPath                       string
-	RightPath                      string
-	Repo                           string
-	Ref                            string
-	RefOrig                        string
-	DiscoveryMode                  string
-	MaxDiscoveryDepth              int
-	MaxDiscoveryDepthSet           bool
-	DiscoverKustomizePaths         []string
-	ChangedOnly                    bool
-	StrictChangedOnly              bool
-	Strict                         bool
-	Unified                        int
-	StripAttrs                     []string
-	ShowIgnoredFields              bool
-	Offline                        bool
-	RefreshCharts                  bool
-	ChartCacheDir                  string
-	ChartCredentials               chart.ChartCredentials
-	RepoMaps                       []sourcepkg.RepoMap
-	GitCacheDir                    string
-	RefreshGit                     bool
-	GitCredentials                 sourcepkg.GitCredentials
-	RefreshRemoteResources         bool
-	RemoteResourceCacheDir         string
-	RemoteResourceCredentials      remote.Credentials
-	RemoteResourceGitCredentials   remote.GitCredentials
-	PluginTimeout                  time.Duration
-	Parallelism                    int
-	SkipKinds                      []string
-	SkipCRDs                       bool
-	SkipSecrets                    bool
-	ApplicationSetProviderFixtures []string
-	ApplicationSetProviderData     appset.ProviderData
-	RecordCacheEvents              bool
+	LeftPath  string
+	RightPath string
+	Repo      string
+	Ref       string
+	RefOrig   string
+	DiscoveryOptions
+	ChangedOnly       bool
+	StrictChangedOnly bool
+	Strict            bool
+	Unified           int
+	StripAttrs        []string
+	ShowIgnoredFields bool
+	AcquisitionOptions
+	PluginOptions
+	ExecutionOptions
+	FilterOptions
+	ApplicationSetOptions
 
 	changedPaths []string
 }
@@ -383,34 +361,42 @@ func sameLocalPath(left, right string) bool {
 
 func (request DiffRequest) buildRequest(path string, forbiddenRoots []string) BuildRequest {
 	return BuildRequest{
-		Path:                           path,
-		Strict:                         request.Strict,
-		DiscoveryMode:                  request.DiscoveryMode,
-		MaxDiscoveryDepth:              request.MaxDiscoveryDepth,
-		MaxDiscoveryDepthSet:           request.MaxDiscoveryDepthSet,
-		DiscoverKustomizePaths:         append([]string(nil), request.DiscoverKustomizePaths...),
-		Offline:                        request.Offline,
-		RefreshCharts:                  request.RefreshCharts,
-		ChartCacheDir:                  request.ChartCacheDir,
-		ChartCredentials:               request.ChartCredentials,
-		RepoMaps:                       request.RepoMaps,
-		GitCacheDir:                    request.GitCacheDir,
-		RefreshGit:                     request.RefreshGit,
-		GitCredentials:                 request.GitCredentials,
-		RefreshRemoteResources:         request.RefreshRemoteResources,
-		RemoteResourceCacheDir:         request.RemoteResourceCacheDir,
-		RemoteResourceCredentials:      request.RemoteResourceCredentials,
-		RemoteResourceGitCredentials:   request.RemoteResourceGitCredentials,
-		RemoteResourceForbiddenRoots:   forbiddenRoots,
-		PluginTimeout:                  request.PluginTimeout,
-		Parallelism:                    request.Parallelism,
-		SkipKinds:                      append([]string(nil), request.SkipKinds...),
-		SkipCRDs:                       request.SkipCRDs,
-		SkipSecrets:                    request.SkipSecrets,
-		ApplicationSetProviderFixtures: append([]string(nil), request.ApplicationSetProviderFixtures...),
-		ApplicationSetProviderData:     request.ApplicationSetProviderData,
-		RecordCacheEvents:              request.RecordCacheEvents,
+		Path:                  path,
+		Strict:                request.Strict,
+		DiscoveryOptions:      cloneDiscoveryOptions(request.DiscoveryOptions),
+		AcquisitionOptions:    request.buildAcquisitionOptions(forbiddenRoots),
+		PluginOptions:         request.PluginOptions,
+		ExecutionOptions:      request.ExecutionOptions,
+		FilterOptions:         cloneFilterOptions(request.FilterOptions),
+		ApplicationSetOptions: cloneApplicationSetOptions(request.ApplicationSetOptions),
 	}
+}
+
+func (request DiffRequest) buildAcquisitionOptions(forbiddenRoots []string) AcquisitionOptions {
+	options := cloneAcquisitionOptions(request.AcquisitionOptions)
+	options.RemoteResourceForbiddenRoots = append([]string(nil), forbiddenRoots...)
+	return options
+}
+
+func cloneDiscoveryOptions(input DiscoveryOptions) DiscoveryOptions {
+	input.DiscoverKustomizePaths = append([]string(nil), input.DiscoverKustomizePaths...)
+	return input
+}
+
+func cloneAcquisitionOptions(input AcquisitionOptions) AcquisitionOptions {
+	input.RepoMaps = append([]sourcepkg.RepoMap(nil), input.RepoMaps...)
+	input.RemoteResourceForbiddenRoots = append([]string(nil), input.RemoteResourceForbiddenRoots...)
+	return input
+}
+
+func cloneFilterOptions(input FilterOptions) FilterOptions {
+	input.SkipKinds = append([]string(nil), input.SkipKinds...)
+	return input
+}
+
+func cloneApplicationSetOptions(input ApplicationSetOptions) ApplicationSetOptions {
+	input.ApplicationSetProviderFixtures = append([]string(nil), input.ApplicationSetProviderFixtures...)
+	return input
 }
 
 func validateDiffPaths(request DiffRequest) error {

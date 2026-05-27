@@ -351,8 +351,10 @@ func TestOrchestratorPluginTimeoutReturnsPartialStatus(t *testing.T) {
 	writePluginBuildApplication(t, root, "plugin", "cue")
 
 	result, err := (Orchestrator{PluginRenderer: blockingInternalPluginRenderer{}}).Build(context.Background(), BuildRequest{
-		Path:          root,
-		PluginTimeout: time.Nanosecond,
+		Path: root,
+		PluginOptions: PluginOptions{
+			PluginTimeout: time.Nanosecond,
+		},
 	})
 	if err == nil {
 		t.Fatal("Build() error = nil, want plugin timeout")

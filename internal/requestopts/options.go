@@ -53,34 +53,15 @@ type Options struct {
 
 func (options Options) Build() app.BuildRequest {
 	return app.BuildRequest{
-		Path:                           options.Path,
-		Strict:                         options.Strict,
-		DiscoveryMode:                  options.DiscoveryMode,
-		MaxDiscoveryDepth:              options.MaxDiscoveryDepth,
-		MaxDiscoveryDepthSet:           options.MaxDiscoveryDepthSet,
-		DiscoverKustomizePaths:         append([]string(nil), options.DiscoverKustomizePaths...),
-		ValidateLuaHealth:              options.ValidateLuaHealth,
-		Offline:                        options.Offline,
-		RefreshCharts:                  options.RefreshCharts,
-		ChartCacheDir:                  options.ChartCacheDir,
-		ChartCredentials:               options.ChartCredentials,
-		RepoMaps:                       append([]source.RepoMap(nil), options.RepoMaps...),
-		GitCacheDir:                    options.GitCacheDir,
-		RefreshGit:                     options.RefreshGit,
-		GitCredentials:                 options.GitCredentials,
-		RefreshRemoteResources:         options.RefreshRemoteResources,
-		RemoteResourceCacheDir:         options.RemoteResourceCacheDir,
-		RemoteResourceForbiddenRoots:   append([]string(nil), options.RemoteResourceForbiddenRoots...),
-		RemoteResourceCredentials:      options.RemoteResourceCredentials,
-		RemoteResourceGitCredentials:   options.RemoteResourceGitCredentials,
-		PluginTimeout:                  options.PluginTimeout,
-		Parallelism:                    options.Parallelism,
-		SkipKinds:                      append([]string(nil), options.SkipKinds...),
-		SkipCRDs:                       options.SkipCRDs,
-		SkipSecrets:                    options.SkipSecrets,
-		ApplicationSetProviderFixtures: append([]string(nil), options.ApplicationSetProviderFixtures...),
-		ApplicationSetProviderData:     cloneProviderData(options.ApplicationSetProviderData),
-		RecordCacheEvents:              options.RecordCacheEvents,
+		Path:                  options.Path,
+		Strict:                options.Strict,
+		DiscoveryOptions:      options.discoveryOptions(),
+		ValidateLuaHealth:     options.ValidateLuaHealth,
+		AcquisitionOptions:    options.acquisitionOptions(),
+		PluginOptions:         options.pluginOptions(),
+		ExecutionOptions:      options.executionOptions(),
+		FilterOptions:         options.filterOptions(),
+		ApplicationSetOptions: options.applicationSetOptions(),
 	}
 }
 
@@ -90,41 +71,74 @@ func (options Options) Diff() app.DiffRequest {
 		changedOnly = *options.ChangedOnly
 	}
 	return app.DiffRequest{
-		LeftPath:                       options.LeftPath,
-		RightPath:                      options.RightPath,
-		Repo:                           options.Repo,
-		Ref:                            options.Ref,
-		RefOrig:                        options.RefOrig,
-		DiscoveryMode:                  options.DiscoveryMode,
-		MaxDiscoveryDepth:              options.MaxDiscoveryDepth,
-		MaxDiscoveryDepthSet:           options.MaxDiscoveryDepthSet,
-		DiscoverKustomizePaths:         append([]string(nil), options.DiscoverKustomizePaths...),
-		ChangedOnly:                    changedOnly,
-		StrictChangedOnly:              options.StrictChangedOnly,
-		Strict:                         options.Strict,
-		Unified:                        options.Unified,
-		StripAttrs:                     append([]string(nil), options.StripAttrs...),
-		ShowIgnoredFields:              options.ShowIgnoredFields,
-		Offline:                        options.Offline,
-		RefreshCharts:                  options.RefreshCharts,
-		ChartCacheDir:                  options.ChartCacheDir,
-		ChartCredentials:               options.ChartCredentials,
-		RepoMaps:                       append([]source.RepoMap(nil), options.RepoMaps...),
-		GitCacheDir:                    options.GitCacheDir,
-		RefreshGit:                     options.RefreshGit,
-		GitCredentials:                 options.GitCredentials,
-		RefreshRemoteResources:         options.RefreshRemoteResources,
-		RemoteResourceCacheDir:         options.RemoteResourceCacheDir,
-		RemoteResourceCredentials:      options.RemoteResourceCredentials,
-		RemoteResourceGitCredentials:   options.RemoteResourceGitCredentials,
-		PluginTimeout:                  options.PluginTimeout,
-		Parallelism:                    options.Parallelism,
-		SkipKinds:                      append([]string(nil), options.SkipKinds...),
-		SkipCRDs:                       options.SkipCRDs,
-		SkipSecrets:                    options.SkipSecrets,
+		LeftPath:              options.LeftPath,
+		RightPath:             options.RightPath,
+		Repo:                  options.Repo,
+		Ref:                   options.Ref,
+		RefOrig:               options.RefOrig,
+		DiscoveryOptions:      options.discoveryOptions(),
+		ChangedOnly:           changedOnly,
+		StrictChangedOnly:     options.StrictChangedOnly,
+		Strict:                options.Strict,
+		Unified:               options.Unified,
+		StripAttrs:            append([]string(nil), options.StripAttrs...),
+		ShowIgnoredFields:     options.ShowIgnoredFields,
+		AcquisitionOptions:    options.acquisitionOptions(),
+		PluginOptions:         options.pluginOptions(),
+		ExecutionOptions:      options.executionOptions(),
+		FilterOptions:         options.filterOptions(),
+		ApplicationSetOptions: options.applicationSetOptions(),
+	}
+}
+
+func (options Options) discoveryOptions() app.DiscoveryOptions {
+	return app.DiscoveryOptions{
+		DiscoveryMode:          options.DiscoveryMode,
+		MaxDiscoveryDepth:      options.MaxDiscoveryDepth,
+		MaxDiscoveryDepthSet:   options.MaxDiscoveryDepthSet,
+		DiscoverKustomizePaths: append([]string(nil), options.DiscoverKustomizePaths...),
+	}
+}
+
+func (options Options) acquisitionOptions() app.AcquisitionOptions {
+	return app.AcquisitionOptions{
+		Offline:                      options.Offline,
+		RefreshCharts:                options.RefreshCharts,
+		ChartCacheDir:                options.ChartCacheDir,
+		ChartCredentials:             options.ChartCredentials,
+		RepoMaps:                     append([]source.RepoMap(nil), options.RepoMaps...),
+		GitCacheDir:                  options.GitCacheDir,
+		RefreshGit:                   options.RefreshGit,
+		GitCredentials:               options.GitCredentials,
+		RefreshRemoteResources:       options.RefreshRemoteResources,
+		RemoteResourceCacheDir:       options.RemoteResourceCacheDir,
+		RemoteResourceForbiddenRoots: append([]string(nil), options.RemoteResourceForbiddenRoots...),
+		RemoteResourceCredentials:    options.RemoteResourceCredentials,
+		RemoteResourceGitCredentials: options.RemoteResourceGitCredentials,
+		RecordCacheEvents:            options.RecordCacheEvents,
+	}
+}
+
+func (options Options) pluginOptions() app.PluginOptions {
+	return app.PluginOptions{PluginTimeout: options.PluginTimeout}
+}
+
+func (options Options) executionOptions() app.ExecutionOptions {
+	return app.ExecutionOptions{Parallelism: options.Parallelism}
+}
+
+func (options Options) filterOptions() app.FilterOptions {
+	return app.FilterOptions{
+		SkipKinds:   append([]string(nil), options.SkipKinds...),
+		SkipCRDs:    options.SkipCRDs,
+		SkipSecrets: options.SkipSecrets,
+	}
+}
+
+func (options Options) applicationSetOptions() app.ApplicationSetOptions {
+	return app.ApplicationSetOptions{
 		ApplicationSetProviderFixtures: append([]string(nil), options.ApplicationSetProviderFixtures...),
 		ApplicationSetProviderData:     cloneProviderData(options.ApplicationSetProviderData),
-		RecordCacheEvents:              options.RecordCacheEvents,
 	}
 }
 
