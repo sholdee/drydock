@@ -16,17 +16,18 @@ import (
 // side for diff operations. PathOrig is the left side for diff operations. Use
 // keyed struct literals; new fields may be added as drydock gains parity.
 type Config struct {
-	Path             string
-	PathOrig         string
-	Repo             string
-	Ref              string
-	RefOrig          string
-	Strict           bool
-	Offline          bool
-	RefreshCharts    bool
-	ChartCacheDir    string
-	ChartCredentials ChartCredentials
-	RepoMaps         []RepoMap
+	Path                   string
+	PathOrig               string
+	Repo                   string
+	Ref                    string
+	RefOrig                string
+	DiscoverKustomizePaths []string
+	Strict                 bool
+	Offline                bool
+	RefreshCharts          bool
+	ChartCacheDir          string
+	ChartCredentials       ChartCredentials
+	RepoMaps               []RepoMap
 	// Deprecated: Git, chart, and remote resource acquisition are enabled by
 	// default. Set Offline to true to disable network acquisition. Offline is
 	// authoritative when both fields are set.
@@ -171,6 +172,7 @@ func (client *Client) requestOptions() requestopts.Options {
 		Repo:                           client.config.Repo,
 		Ref:                            client.config.Ref,
 		RefOrig:                        client.config.RefOrig,
+		DiscoverKustomizePaths:         append([]string(nil), client.config.DiscoverKustomizePaths...),
 		ChangedOnly:                    client.config.ChangedOnly,
 		StrictChangedOnly:              client.config.StrictChangedOnly,
 		Strict:                         client.config.Strict,

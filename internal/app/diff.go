@@ -33,6 +33,7 @@ type DiffRequest struct {
 	Repo                           string
 	Ref                            string
 	RefOrig                        string
+	DiscoverKustomizePaths         []string
 	ChangedOnly                    bool
 	StrictChangedOnly              bool
 	Strict                         bool
@@ -377,6 +378,7 @@ func (request DiffRequest) buildRequest(path string, forbiddenRoots []string) Bu
 	return BuildRequest{
 		Path:                           path,
 		Strict:                         request.Strict,
+		DiscoverKustomizePaths:         append([]string(nil), request.DiscoverKustomizePaths...),
 		Offline:                        request.Offline,
 		RefreshCharts:                  request.RefreshCharts,
 		ChartCacheDir:                  request.ChartCacheDir,

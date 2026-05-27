@@ -35,6 +35,46 @@ func TestTestAppsPassesAllApplications(t *testing.T) {
 	}
 }
 
+func TestTestAppsReportsNoApplicationsInTextOutput(t *testing.T) {
+	root := t.TempDir()
+
+	cmd := NewRootCommand(VersionInfo{})
+	cmd.SetArgs([]string{"test", "apps", "--path", root})
+	var stdout, stderr bytes.Buffer
+	cmd.SetOut(&stdout)
+	cmd.SetErr(&stderr)
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+	if got, want := stdout.String(), "No Applications discovered.\n"; got != want {
+		t.Fatalf("stdout = %q, want %q", got, want)
+	}
+	if stderr.String() != "" {
+		t.Fatalf("stderr = %q, want empty", stderr.String())
+	}
+}
+
+func TestTestAppsReportsEmptyJSONArrayWhenNoApplicationsDiscovered(t *testing.T) {
+	root := t.TempDir()
+
+	cmd := NewRootCommand(VersionInfo{})
+	cmd.SetArgs([]string{"test", "apps", "--path", root, "-o", "json"})
+	var stdout, stderr bytes.Buffer
+	cmd.SetOut(&stdout)
+	cmd.SetErr(&stderr)
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+	if got, want := strings.TrimSpace(stdout.String()), "[]"; got != want {
+		t.Fatalf("stdout = %q, want %q", stdout.String(), want)
+	}
+	if stderr.String() != "" {
+		t.Fatalf("stderr = %q, want empty", stderr.String())
+	}
+}
+
 func TestTestAppsReportsFailures(t *testing.T) {
 	root := t.TempDir()
 	writeFailingCLIApplication(t, root, "broken")

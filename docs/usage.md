@@ -46,6 +46,22 @@ For generator details, fixture schemas, and stable template parameters, see
 Local `AppProject` manifests are discovered for offline diagnostics only.
 Discovery does not contact a Kubernetes cluster or Argo CD server.
 
+Some repositories commit Argo CD bootstrap inputs as Kustomize bases and
+overlays rather than committing the fully inflated Argo CD objects. Add
+`--discover-kustomize PATH` to render one or more local Kustomize entrypoints
+with drydock's native renderer, then discover `Application`, `ApplicationSet`,
+`AppProject`, and Argo CD settings objects from the rendered output:
+
+```bash
+drydock get apps --path . --discover-kustomize argocd/overlays/prod
+drydock test apps --path . --discover-kustomize clusters/prod/argocd
+```
+
+The path must be relative to `--path`, must not escape through `..`, and must
+not include symlinked path components. Rendered discovery is additive: normal
+repository scanning still runs, and rendered objects replace raw objects only
+when they have the same API version, kind, namespace, and name.
+
 ## Rendering
 
 Build every discovered Application:
@@ -193,6 +209,9 @@ PASS renovate
 FAIL argocd/broken Application argocd/broken source[0] path="..." ...
 SKIPPED argocd/skipped unsupported ApplicationSet generator ...
 ```
+
+When `test apps` discovers no Applications, text output prints
+`No Applications discovered.` and structured JSON output prints `[]`.
 
 Status values are `PASS` for Applications that rendered successfully, `FAIL`
 for render or planning failures, and `SKIPPED` when discovery or expansion

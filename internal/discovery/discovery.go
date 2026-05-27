@@ -38,6 +38,10 @@ type SettingsCandidate struct {
 	Path          string
 	DocumentIndex int
 	Kind          string
+	APIVersion    string
+	Namespace     string
+	Name          string
+	Object        *unstructured.Unstructured
 }
 
 type Result struct {
@@ -67,6 +71,19 @@ func Scan(root string, opts Options) (Result, error) {
 			}
 		}
 		if err := scanPath(root, start, explicit, seen, &result); err != nil {
+			return result, err
+		}
+	}
+	return result, nil
+}
+
+func ScanObjects(path string, objects []*unstructured.Unstructured) (Result, error) {
+	var result Result
+	for index, obj := range objects {
+		if obj == nil {
+			continue
+		}
+		if err := scanDocument(path, index, obj, true, &result); err != nil {
 			return result, err
 		}
 	}
@@ -151,14 +168,14 @@ func scanYAMLFile(path, rel string, result *Result) error {
 		return err
 	}
 	for _, doc := range docs {
-		if err := scanDocument(rel, doc.Index, doc.Object, result); err != nil {
+		if err := scanDocument(rel, doc.Index, doc.Object, false, result); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func scanDocument(rel string, documentIndex int, obj *unstructured.Unstructured, result *Result) error {
+func scanDocument(rel string, documentIndex int, obj *unstructured.Unstructured, includeObject bool, result *Result) error {
 	switch {
 	case isArgoGVK(obj, "Application"):
 		var app argoappv1.Application
@@ -179,15 +196,33 @@ func scanDocument(rel string, documentIndex int, obj *unstructured.Unstructured,
 		}
 		result.Projects = append(result.Projects, ProjectFile{Path: rel, DocumentIndex: documentIndex, Project: project})
 	case isCoreGVK(obj, "ConfigMap") && obj.GetName() == "argocd-cm":
-		result.SettingsCandidates = append(result.SettingsCandidates, SettingsCandidate{Path: rel, DocumentIndex: documentIndex, Kind: "argocd-cm"})
+		result.SettingsCandidates = append(result.SettingsCandidates, settingsCandidate(rel, documentIndex, "argocd-cm", obj, includeObject))
 	case isCoreGVK(obj, "ConfigMap") && obj.GetName() == "argocd-cmp-cm" && isConfigManagementPluginConfigMap(obj):
-		result.SettingsCandidates = append(result.SettingsCandidates, SettingsCandidate{Path: rel, DocumentIndex: documentIndex, Kind: "argocd-cmp-cm"})
+		result.SettingsCandidates = append(result.SettingsCandidates, settingsCandidate(rel, documentIndex, "argocd-cmp-cm", obj, includeObject))
 	case isCoreGVK(obj, "Secret") && obj.GetLabels()["argocd.argoproj.io/secret-type"] == "repository":
-		result.SettingsCandidates = append(result.SettingsCandidates, SettingsCandidate{Path: rel, DocumentIndex: documentIndex, Kind: "repository-secret"})
+		result.SettingsCandidates = append(result.SettingsCandidates, settingsCandidate(rel, documentIndex, "repository-secret", obj, includeObject))
 	case isArgoHelmValuesSettings(obj):
-		result.SettingsCandidates = append(result.SettingsCandidates, SettingsCandidate{Path: rel, DocumentIndex: documentIndex, Kind: "argocd-values"})
+		result.SettingsCandidates = append(result.SettingsCandidates, settingsCandidate(rel, documentIndex, "argocd-values", obj, includeObject))
 	}
 	return nil
+}
+
+func settingsCandidate(rel string, documentIndex int, kind string, obj *unstructured.Unstructured, includeObject bool) SettingsCandidate {
+	candidate := SettingsCandidate{
+		Path:          rel,
+		DocumentIndex: documentIndex,
+		Kind:          kind,
+	}
+	if obj == nil {
+		return candidate
+	}
+	candidate.APIVersion = obj.GetAPIVersion()
+	candidate.Namespace = obj.GetNamespace()
+	candidate.Name = obj.GetName()
+	if includeObject {
+		candidate.Object = obj.DeepCopy()
+	}
+	return candidate
 }
 
 func isArgoGVK(obj *unstructured.Unstructured, kind string) bool {

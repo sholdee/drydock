@@ -29,6 +29,7 @@ type BuildRequest struct {
 	Strict bool
 	// StatusOnly renders Applications for validation without retaining manifests.
 	StatusOnly                     bool
+	DiscoverKustomizePaths         []string
 	ValidateLuaHealth              bool
 	Offline                        bool
 	RefreshCharts                  bool
@@ -137,23 +138,26 @@ func (o Orchestrator) Diag(ctx context.Context, request DiagRequest) (DiagResult
 	return diagResult, nil
 }
 
-func (o Orchestrator) ListApplications(_ context.Context, request BuildRequest) (BuildResult, error) {
+func (o Orchestrator) ListApplications(ctx context.Context, request BuildRequest) (BuildResult, error) {
 	root := request.Path
 	if root == "" {
 		root = "."
 	}
 
-	discovered, err := discovery.Scan(root, discovery.Options{})
+	var result BuildResult
+	discovered, discoveryDiags, cacheEvents, err := o.discoverRepository(ctx, root, request)
+	result.CacheEvents = append(result.CacheEvents, cacheEvents...)
+	discoveryDiags = normalizeDiagnostics(discoveryDiags, request.Strict, false)
+	result.Diagnostics = append(result.Diagnostics, discoveryDiags...)
 	if err != nil {
-		return BuildResult{}, err
+		return result, diagnosticsError(discoveryDiags, err)
 	}
 
 	settings, settingsDiags, err := loadSettingsFromDiscovery(root, discovered)
 	if err != nil {
-		return BuildResult{}, err
+		return result, err
 	}
 
-	var result BuildResult
 	result.Settings = settings
 	settingsDiags = normalizeDiagnostics(settingsDiags, request.Strict, false)
 	result.Diagnostics = append(result.Diagnostics, settingsDiags...)
@@ -173,23 +177,37 @@ func (o Orchestrator) ListApplications(_ context.Context, request BuildRequest) 
 		})
 	}
 
-	for _, appSetFile := range discovered.ApplicationSets {
+	if err := appendApplicationSetApplications(root, request, discovered.ApplicationSets, appsetOptions, &result); err != nil {
+		return result, err
+	}
+
+	if err := diagnosticFailure(result.Diagnostics, request.Strict); err != nil {
+		return result, err
+	}
+	return result, nil
+}
+
+func appendApplicationSetApplications(root string, request BuildRequest, appSetFiles []discovery.ApplicationSetFile, appsetOptions appset.Options, result *BuildResult) error {
+	for _, appSetFile := range appSetFiles {
 		generated, diags, err := appset.GenerateWithOptions(root, appSetFile.Path, appSetFile.ApplicationSet, appsetOptions)
 		if err != nil {
 			if errors.Is(err, appset.ErrUnsupportedGenerator) && len(diags) > 0 {
 				diags = normalizeDiagnostics(diags, request.Strict, true)
 				result.Diagnostics = append(result.Diagnostics, diags...)
 				if request.Strict {
-					return result, diagnosticsError(diags, err)
+					return diagnosticsError(diags, err)
 				}
 				continue
 			}
-			return result, diagnosticsError(diags, err)
+			return diagnosticsError(diags, err)
 		}
 		diags = normalizeDiagnostics(diags, request.Strict, false)
 		result.Diagnostics = append(result.Diagnostics, diags...)
 		if err := diagnosticFailure(diags, request.Strict); err != nil {
-			return result, err
+			return err
+		}
+		if err := appendZeroApplicationSetDiagnostic(appSetFile, request.Strict, result, len(generated)); err != nil {
+			return err
 		}
 		for _, app := range generated {
 			result.Applications = append(result.Applications, app.Application)
@@ -199,11 +217,16 @@ func (o Orchestrator) ListApplications(_ context.Context, request BuildRequest) 
 			})
 		}
 	}
+	return nil
+}
 
-	if err := diagnosticFailure(result.Diagnostics, request.Strict); err != nil {
-		return result, err
+func appendZeroApplicationSetDiagnostic(appSetFile discovery.ApplicationSetFile, strict bool, result *BuildResult, generatedCount int) error {
+	if generatedCount > 0 {
+		return nil
 	}
-	return result, nil
+	diags := normalizeDiagnostics([]diagnostic.Diagnostic{emptyApplicationSetDiagnostic(appSetFile)}, strict, false)
+	result.Diagnostics = append(result.Diagnostics, diags...)
+	return diagnosticFailure(diags, strict)
 }
 
 func generatedApplicationInputPaths(appSetPath string, app appset.GeneratedApplication) []string {
@@ -506,10 +529,13 @@ func (o Orchestrator) prepareBuildResult(ctx context.Context, request BuildReque
 
 	var result BuildResult
 	result.Applications = append(result.Applications, request.Applications...)
-	discovered, err := discovery.Scan(root, discovery.Options{})
+	discovered, discoveryDiags, cacheEvents, err := o.discoverRepository(ctx, root, request)
+	result.CacheEvents = append(result.CacheEvents, cacheEvents...)
+	discoveryDiags = normalizeDiagnostics(discoveryDiags, request.Strict, false)
+	result.Diagnostics = append(result.Diagnostics, discoveryDiags...)
 	if err != nil {
 		result.Statuses = skippedApplicationStatuses(result.Applications, err)
-		return result, err
+		return result, diagnosticsError(discoveryDiags, err)
 	}
 	result.Projects = appendDiscoveredProjects(result.Projects, discovered)
 	settings, diags, err := loadSettingsFromDiscovery(root, discovered)
@@ -552,13 +578,29 @@ func loadSettingsFromDiscovery(root string, discovered discovery.Result) (config
 		)
 		switch candidate.Kind {
 		case "argocd-cm":
-			settings, nextDiags, err = config.LoadFromConfigMapDocument(path, candidate.DocumentIndex)
+			if candidate.Object != nil {
+				settings, nextDiags, err = config.LoadFromConfigMapObject(candidate.Path, candidate.Object)
+			} else {
+				settings, nextDiags, err = config.LoadFromConfigMapDocument(path, candidate.DocumentIndex)
+			}
 		case "argocd-cmp-cm":
-			settings, nextDiags, err = config.LoadConfigManagementPluginConfigMapDocument(path, candidate.DocumentIndex)
+			if candidate.Object != nil {
+				settings, nextDiags, err = config.LoadConfigManagementPluginConfigMapObject(candidate.Path, candidate.Object)
+			} else {
+				settings, nextDiags, err = config.LoadConfigManagementPluginConfigMapDocument(path, candidate.DocumentIndex)
+			}
 		case "argocd-values":
-			settings, nextDiags, err = config.LoadFromHelmValuesDocument(path, candidate.DocumentIndex)
+			if candidate.Object != nil {
+				settings, nextDiags, err = config.LoadFromHelmValuesObject(candidate.Path, candidate.Object)
+			} else {
+				settings, nextDiags, err = config.LoadFromHelmValuesDocument(path, candidate.DocumentIndex)
+			}
 		case "repository-secret":
-			settings, nextDiags, err = config.LoadRepositorySecretDocument(path, candidate.DocumentIndex)
+			if candidate.Object != nil {
+				settings, nextDiags, err = config.LoadRepositorySecretObject(candidate.Path, candidate.Object)
+			} else {
+				settings, nextDiags, err = config.LoadRepositorySecretDocument(path, candidate.DocumentIndex)
+			}
 		default:
 			continue
 		}

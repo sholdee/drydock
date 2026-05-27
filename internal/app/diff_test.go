@@ -1228,6 +1228,7 @@ func TestDiffRequestCarriesProviderFixtureConfig(t *testing.T) {
 	request := DiffRequest{
 		LeftPath:                       "/tmp/left",
 		RightPath:                      "/tmp/right",
+		DiscoverKustomizePaths:         []string{"argocd/overlays/prod"},
 		ApplicationSetProviderFixtures: []string{"clusters.yaml"},
 		ApplicationSetProviderData:     appset.ProviderData{Clusters: []appset.ClusterInput{{Name: "prod", Server: "https://prod.example.invalid"}}},
 	}
@@ -1236,6 +1237,9 @@ func TestDiffRequestCarriesProviderFixtureConfig(t *testing.T) {
 	right := request.buildRequest(request.RightPath, []string{request.LeftPath, request.RightPath})
 
 	for side, buildRequest := range map[string]BuildRequest{"left": left, "right": right} {
+		if !reflect.DeepEqual(buildRequest.DiscoverKustomizePaths, request.DiscoverKustomizePaths) {
+			t.Fatalf("%s DiscoverKustomizePaths = %#v, want %#v", side, buildRequest.DiscoverKustomizePaths, request.DiscoverKustomizePaths)
+		}
 		if !reflect.DeepEqual(buildRequest.ApplicationSetProviderFixtures, request.ApplicationSetProviderFixtures) {
 			t.Fatalf("%s ApplicationSetProviderFixtures = %#v, want %#v", side, buildRequest.ApplicationSetProviderFixtures, request.ApplicationSetProviderFixtures)
 		}

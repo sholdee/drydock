@@ -10,6 +10,7 @@ import (
 
 	"github.com/sholdee/drydock/internal/diagnostic"
 	"go.yaml.in/yaml/v4"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 )
 
 func LoadFromHelmValues(path string) (ArgoSettings, []diagnostic.Diagnostic, error) {
@@ -38,6 +39,21 @@ func LoadFromHelmValuesDocument(path string, documentIndex int) (ArgoSettings, [
 	var doc helmValuesSettingsDocument
 	if err := decodeYAMLDocumentAt(path, documentIndex, &doc); err != nil {
 		return settings, nil, fmt.Errorf("parse helm values %s document %d: %w", path, documentIndex, err)
+	}
+	diags := applyCMMap(&settings, doc.Configs.CM, path, "configs.cm")
+	cmpDiags, err := applyCMPPlugins(&settings, doc.Configs.CMP.Plugins, path, "configs.cmp.plugins")
+	if err != nil {
+		return settings, diags, err
+	}
+	diags = append(diags, cmpDiags...)
+	return settings, diags, nil
+}
+
+func LoadFromHelmValuesObject(path string, obj *unstructured.Unstructured) (ArgoSettings, []diagnostic.Diagnostic, error) {
+	settings := DefaultSettings()
+	var doc helmValuesSettingsDocument
+	if err := decodeUnstructuredObject(obj, &doc); err != nil {
+		return settings, nil, fmt.Errorf("parse helm values %s: %w", path, err)
 	}
 	diags := applyCMMap(&settings, doc.Configs.CM, path, "configs.cm")
 	cmpDiags, err := applyCMPPlugins(&settings, doc.Configs.CMP.Plugins, path, "configs.cmp.plugins")
@@ -102,6 +118,30 @@ func LoadFromConfigMapDocument(path string, documentIndex int) (ArgoSettings, []
 	return settings, diags, nil
 }
 
+func LoadFromConfigMapObject(path string, obj *unstructured.Unstructured) (ArgoSettings, []diagnostic.Diagnostic, error) {
+	settings := DefaultSettings()
+	var doc struct {
+		Kind     string `yaml:"kind"`
+		Metadata struct {
+			Name string `yaml:"name"`
+		} `yaml:"metadata"`
+		Data map[string]string `yaml:"data"`
+	}
+	if err := decodeUnstructuredObject(obj, &doc); err != nil {
+		return settings, nil, fmt.Errorf("parse configmap %s: %w", path, err)
+	}
+	if doc.Kind != "ConfigMap" || doc.Metadata.Name != "argocd-cm" {
+		return settings, []diagnostic.Diagnostic{{
+			Severity:   diagnostic.SeverityWarning,
+			Category:   "settings",
+			Message:    "object is not argocd-cm ConfigMap",
+			Provenance: diagnostic.Provenance{Path: path},
+		}}, nil
+	}
+	diags := applyCMMap(&settings, doc.Data, path, "data")
+	return settings, diags, nil
+}
+
 func LoadConfigManagementPluginConfigMapDocument(path string, documentIndex int) (ArgoSettings, []diagnostic.Diagnostic, error) {
 	settings := DefaultSettings()
 	var doc struct {
@@ -131,6 +171,45 @@ func LoadConfigManagementPluginConfigMapDocument(path string, documentIndex int)
 		plugins, err := configManagementPluginsFromYAML([]byte(value), path, "data."+key)
 		if err != nil {
 			return settings, nil, fmt.Errorf("parse config management plugin %s document %d data %q: %w", path, documentIndex, key, err)
+		}
+		for _, plugin := range plugins {
+			if diag := addConfigManagementPlugin(&settings, plugin); diag != nil {
+				diags = append(diags, *diag)
+			}
+		}
+	}
+	return settings, diags, nil
+}
+
+func LoadConfigManagementPluginConfigMapObject(path string, obj *unstructured.Unstructured) (ArgoSettings, []diagnostic.Diagnostic, error) {
+	settings := DefaultSettings()
+	var doc struct {
+		Kind     string `yaml:"kind"`
+		Metadata struct {
+			Name string `yaml:"name"`
+		} `yaml:"metadata"`
+		Data map[string]string `yaml:"data"`
+	}
+	if err := decodeUnstructuredObject(obj, &doc); err != nil {
+		return settings, nil, fmt.Errorf("parse config management plugin ConfigMap %s: %w", path, err)
+	}
+	if doc.Kind != "ConfigMap" || doc.Metadata.Name != "argocd-cmp-cm" {
+		return settings, []diagnostic.Diagnostic{{
+			Severity:   diagnostic.SeverityWarning,
+			Category:   "settings",
+			Message:    "object is not argocd-cmp-cm ConfigMap",
+			Provenance: diagnostic.Provenance{Path: path},
+		}}, nil
+	}
+
+	var diags []diagnostic.Diagnostic
+	for key, value := range doc.Data {
+		if !looksLikeConfigManagementPluginYAML(value) {
+			continue
+		}
+		plugins, err := configManagementPluginsFromYAML([]byte(value), path, "data."+key)
+		if err != nil {
+			return settings, nil, fmt.Errorf("parse config management plugin %s data %q: %w", path, key, err)
 		}
 		for _, plugin := range plugins {
 			if diag := addConfigManagementPlugin(&settings, plugin); diag != nil {
@@ -202,6 +281,35 @@ func LoadRepositorySecretDocument(path string, documentIndex int) (ArgoSettings,
 	}
 	settings, diags := repositorySecretSettings(path, doc)
 	return settings, diags, nil
+}
+
+func LoadRepositorySecretObject(path string, obj *unstructured.Unstructured) (ArgoSettings, []diagnostic.Diagnostic, error) {
+	settings := DefaultSettings()
+	var doc repositorySecretDocument
+	if err := decodeUnstructuredObject(obj, &doc); err != nil {
+		return settings, nil, fmt.Errorf("parse repository secret %s: %w", path, err)
+	}
+	if doc.Kind != "Secret" || doc.Metadata.Labels["argocd.argoproj.io/secret-type"] != "repository" {
+		return settings, []diagnostic.Diagnostic{{
+			Severity:   diagnostic.SeverityWarning,
+			Category:   "settings",
+			Message:    "object is not an Argo CD repository Secret",
+			Provenance: diagnostic.Provenance{Path: path},
+		}}, nil
+	}
+	settings, diags := repositorySecretSettings(path, doc)
+	return settings, diags, nil
+}
+
+func decodeUnstructuredObject(obj *unstructured.Unstructured, out any) error {
+	if obj == nil {
+		return fmt.Errorf("object is nil")
+	}
+	data, err := yaml.Marshal(obj.Object)
+	if err != nil {
+		return err
+	}
+	return yaml.Unmarshal(data, out)
 }
 
 func decodeYAMLDocumentAt(path string, documentIndex int, out any) error {

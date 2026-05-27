@@ -17,6 +17,7 @@ type Options struct {
 	Repo                           string
 	Ref                            string
 	RefOrig                        string
+	DiscoverKustomizePaths         []string
 	ChangedOnly                    *bool
 	StrictChangedOnly              bool
 	Strict                         bool
@@ -51,6 +52,7 @@ func (options Options) Build() app.BuildRequest {
 	return app.BuildRequest{
 		Path:                           options.Path,
 		Strict:                         options.Strict,
+		DiscoverKustomizePaths:         append([]string(nil), options.DiscoverKustomizePaths...),
 		ValidateLuaHealth:              options.ValidateLuaHealth,
 		Offline:                        options.Offline,
 		RefreshCharts:                  options.RefreshCharts,
@@ -87,6 +89,7 @@ func (options Options) Diff() app.DiffRequest {
 		Repo:                           options.Repo,
 		Ref:                            options.Ref,
 		RefOrig:                        options.RefOrig,
+		DiscoverKustomizePaths:         append([]string(nil), options.DiscoverKustomizePaths...),
 		ChangedOnly:                    changedOnly,
 		StrictChangedOnly:              options.StrictChangedOnly,
 		Strict:                         options.Strict,
