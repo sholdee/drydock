@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.1.5](https://github.com/sholdee/drydock/compare/v0.1.4...v0.1.5) (2026-05-27)
+
+
+### Features
+
+* color diff output ([#37](https://github.com/sholdee/drydock/issues/37)) ([77a8cf3](https://github.com/sholdee/drydock/commit/77a8cf31bf15d35c836e53f16cf77707ee905be5))
+
+
+### Code Refactoring
+
+* clarify discovery, rendering, and CLI plumbing ([#39](https://github.com/sholdee/drydock/issues/39)) ([ff12879](https://github.com/sholdee/drydock/commit/ff12879cfef15b833ab21ac4c744d61f0a5be77e))
+
 ## [0.1.4](https://github.com/sholdee/drydock/compare/v0.1.3...v0.1.4) (2026-05-27)
 
 
