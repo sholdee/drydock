@@ -19,7 +19,6 @@ import (
 
 	"path/filepath"
 	"strings"
-	"sync"
 	"time"
 )
 
@@ -319,11 +318,6 @@ type applicationRenderResult struct {
 	err error
 }
 
-type indexedApplicationRenderResult struct {
-	index  int
-	result applicationRenderResult
-}
-
 func renderApplications(ctx context.Context, request renderApplicationsRequest) (renderApplicationsResult, error) {
 	if request.parallelism <= 1 || len(request.applications) <= 1 {
 		return renderApplicationsSequential(ctx, request)
@@ -346,71 +340,22 @@ func renderApplicationsSequential(ctx context.Context, request renderApplication
 	return out, nil
 }
 
-//nolint:gocyclo // Parallel rendering coordinates cancellation, ordered status emission, and partial results.
 func renderApplicationsParallel(ctx context.Context, request renderApplicationsRequest) (renderApplicationsResult, error) {
-	workerCount := request.parallelism
-	if workerCount > len(request.applications) {
-		workerCount = len(request.applications)
-	}
-
-	ctx, cancel := context.WithCancel(ctx)
-	defer cancel()
-
-	jobs := make(chan int)
-	resultsCh := make(chan indexedApplicationRenderResult, len(request.applications))
-	results := make([]applicationRenderResult, len(request.applications))
-	var wg sync.WaitGroup
-	for range workerCount {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			for index := range jobs {
-				resultsCh <- indexedApplicationRenderResult{
-					index:  index,
-					result: renderOneApplication(ctx, request.applications[index], request),
-				}
-			}
-		}()
-	}
-
-	scheduleErrCh := make(chan error, 1)
-	go func() {
-		defer close(jobs)
-		for index := range request.applications {
-			select {
-			case <-ctx.Done():
-				scheduleErrCh <- ctx.Err()
-				return
-			case jobs <- index:
-			}
-		}
-		scheduleErrCh <- nil
-	}()
-
-	go func() {
-		wg.Wait()
-		close(resultsCh)
-	}()
-
-	var callbackErr error
-	completed := 0
-	for indexed := range resultsCh {
-		results[indexed.index] = indexed.result
-		completed++
-		if callbackErr != nil {
-			continue
-		}
-		if err := emitApplicationStatusEvent(request.statusCallback, indexed.result, completed, len(request.applications)); err != nil {
-			callbackErr = err
-			cancel()
-		}
-	}
-	scheduleErr := <-scheduleErrCh
+	results, completed, parallelErr := runOrderedParallel(ctx, orderedParallelOptions[applicationRenderResult]{
+		total:       len(request.applications),
+		parallelism: request.parallelism,
+		run: func(ctx context.Context, index int) applicationRenderResult {
+			return renderOneApplication(ctx, request.applications[index], request)
+		},
+		onComplete: func(result applicationRenderResult, completed, total int) error {
+			return emitApplicationStatusEvent(request.statusCallback, result, completed, total)
+		},
+	})
 
 	var out renderApplicationsResult
 	var renderErr error
-	for _, result := range results {
-		if !result.set {
+	for index, result := range results {
+		if !completed[index] || !result.set {
 			continue
 		}
 		appendApplicationRenderResult(&out, result)
@@ -418,11 +363,8 @@ func renderApplicationsParallel(ctx context.Context, request renderApplicationsR
 			renderErr = result.err
 		}
 	}
-	if callbackErr != nil {
-		return out, callbackErr
-	}
-	if scheduleErr != nil {
-		return out, scheduleErr
+	if parallelErr != nil {
+		return out, parallelErr
 	}
 	if renderErr != nil {
 		return out, renderErr

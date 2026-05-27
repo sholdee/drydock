@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"path/filepath"
-	"sync"
 
 	argoappv1 "github.com/argoproj/argo-cd/v3/pkg/apis/application/v1alpha1"
 	"github.com/sholdee/drydock/internal/cacheevent"
@@ -49,7 +48,6 @@ func (o Orchestrator) renderDiscoveryFrontier(ctx context.Context, root string, 
 }
 
 type indexedDiscoveryRenderResult struct {
-	index  int
 	result discovery.Result
 	diags  []diagnostic.Diagnostic
 	err    error
@@ -57,61 +55,27 @@ type indexedDiscoveryRenderResult struct {
 
 func renderDiscoveryFrontierParallel(ctx context.Context, root string, request BuildRequest, discovered discovery.Result, inputs map[string][]string, provider localProvider, settingsSig string, renderCache *applicationRenderCache, parallelism int) (discovery.Result, []diagnostic.Diagnostic, error) {
 	applications := discovered.Applications
-	workerCount := parallelism
-	if workerCount > len(applications) {
-		workerCount = len(applications)
-	}
-
-	ctx, cancel := context.WithCancel(ctx)
-	defer cancel()
-
-	jobs := make(chan int)
-	resultsCh := make(chan indexedDiscoveryRenderResult, len(applications))
-	results := make([]indexedDiscoveryRenderResult, len(applications))
-	var wg sync.WaitGroup
-	for range workerCount {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			for index := range jobs {
-				result, diags, err := renderDiscoveryApplication(ctx, root, request, provider, settingsSig, renderCache, inputs, discovered, applications[index])
-				resultsCh <- indexedDiscoveryRenderResult{index: index, result: result, diags: diags, err: err}
-			}
-		}()
-	}
-
-	scheduleErrCh := make(chan error, 1)
-	go func() {
-		defer close(jobs)
-		for index := range applications {
-			select {
-			case <-ctx.Done():
-				scheduleErrCh <- ctx.Err()
-				return
-			case jobs <- index:
-			}
-		}
-		scheduleErrCh <- nil
-	}()
-
-	go func() {
-		wg.Wait()
-		close(resultsCh)
-	}()
-
-	for indexed := range resultsCh {
-		results[indexed.index] = indexed
-		if indexed.err != nil {
-			cancel()
-		}
-	}
-	if scheduleErr := <-scheduleErrCh; scheduleErr != nil {
-		return discovery.Result{}, nil, scheduleErr
+	results, completed, parallelErr := runOrderedParallel(ctx, orderedParallelOptions[indexedDiscoveryRenderResult]{
+		total:       len(applications),
+		parallelism: parallelism,
+		run: func(ctx context.Context, index int) indexedDiscoveryRenderResult {
+			result, diags, err := renderDiscoveryApplication(ctx, root, request, provider, settingsSig, renderCache, inputs, discovered, applications[index])
+			return indexedDiscoveryRenderResult{result: result, diags: diags, err: err}
+		},
+		shouldCancel: func(result indexedDiscoveryRenderResult) bool {
+			return result.err != nil
+		},
+	})
+	if parallelErr != nil {
+		return discovery.Result{}, nil, parallelErr
 	}
 
 	var out discovery.Result
 	var allDiags []diagnostic.Diagnostic
-	for _, result := range results {
+	for index, result := range results {
+		if !completed[index] {
+			continue
+		}
 		allDiags = append(allDiags, result.diags...)
 		if result.err != nil {
 			return out, allDiags, result.err
