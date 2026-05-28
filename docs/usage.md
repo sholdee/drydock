@@ -196,37 +196,16 @@ rendered-resource filters exposed by the CLI.
 Config management plugin sources are explicit. The CLI and default Go client do
 not execute plugin commands by default. Plugin sources fail closed with
 `plugin.unsupported` unless an embedding caller supplies
-`drydock.Config.PluginRenderer`, a trusted `.drydock/plugins.yaml` maps the
-plugin name to a native drydock engine, or a trusted `engine: exec` policy is
-enabled with `--enable-plugins`. `avp-compat` replaces supported AVP
-placeholders with deterministic redacted values. `native-kustomize` permits
-native-compatible Kustomize build plugin definitions discovered from Argo CD
-Helm values or rendered `argocd-cmp-cm` ConfigMaps to render through drydock's
-Go-native Kustomize path. Embedders can pass a renderer directly or use
+`drydock.Config.PluginRenderer` or a trusted drydock plugin policy matches the
+plugin name. Exec policy requires trusted provenance and `--enable-plugins`;
+native policy engines such as `avp-compat` and `native-kustomize` do not
+execute plugin commands. Embedders can pass a renderer directly or use
 `drydock.NewPluginRegistry(map[string]drydock.PluginRenderer{...})` to dispatch
 in-process renderers by `plugin.name`.
 
-Shellout plugin adapters are available only through explicit drydock policy.
-Argo CD repo-server sidecar plugin discovery, ambient plugin configuration,
-ambient plugin environment loading, and plugin credential injection remain
-outside the default CLI/runtime contract.
-
-Trusted plugin policy is loaded from `.drydock/plugins.yaml` by default. Use
-`--plugin-policy-path` for a different relative policy path,
-`--plugin-policy-ref` to load policy from a trusted Git ref, and
-`--plugin-policy-repo` when that trusted ref lives in a different local Git
-checkout. Use `--disable-plugin-policy` to force plugin sources to fail closed
-even when a default policy file is present.
-
-Exec plugin policy is intentionally stricter than Argo CD CMP sidecars:
-commands are argv arrays, resolved from a controlled local path or absolute
-trusted executable, and run from a temporary copy of the resolved source path.
-Optional `postRenderers` run in policy order, receive the previous manifest
-bytes on stdin, and pass their stdout to the next renderer or final manifest
-decoder.
-Application-authored plugin env and parameters are rejected for exec policy in
-this phase. For PR diffs, command definitions come from the baseline policy or
-an explicit `--plugin-policy-ref`, not from the proposed tree.
+See [`plugin-policy.md`](plugin-policy.md) for `--plugin-policy-path`,
+`--plugin-policy-ref`, `--plugin-policy-repo`, `--disable-plugin-policy`, the
+policy schema, CMP compatibility behavior, and exec security model.
 
 ## Render Tests
 
@@ -483,6 +462,9 @@ These source paths are outside the current default runtime contract:
 - Live cluster and Argo CD API sources.
 - Live destination cluster existence, sync windows, source integrity
   verification, project-scoped cluster Secrets, and full RBAC simulation.
+
+See [`plugin-policy.md`](plugin-policy.md) for the supported trusted CMP
+compatibility path.
 
 See
 [`reports/live-integration-design-gate.md`](reports/live-integration-design-gate.md)

@@ -1,0 +1,17 @@
+apiVersion: drydock.sholdee.dev/v1alpha1
+kind: PluginPolicy
+plugins:
+  avp-directory-include:
+    engine: exec
+    generate:
+      command: ["argocd-vault-plugin", "generate", "."]
+    postRenderers:
+      - command: ["drydock-normalize", "--strip-runtime-fields"]
+    env:
+      allow:
+        - AVP_TYPE
+        - OP_CONNECT_HOST
+        - OP_CONNECT_TOKEN
+    output:
+      maxStdoutBytes: 10485760
+      maxStderrBytes: 65536

@@ -132,17 +132,8 @@ Supported:
 - Kustomize root Git remote refs such as
   `https://github.com/org/repo?ref=v1` when they resolve to a repository-root
   Kustomization directory.
-- Trusted `.drydock/plugins.yaml` policy entries that map plugin names to
-  native drydock engines. `avp-compat` performs deterministic placeholder
-  redaction without contacting a secret backend. `native-kustomize` allows
-  discovered native-compatible Kustomize build CMP definitions to render
-  through the Go-native Kustomize renderer without executing the plugin
-  command.
-- Trusted `.drydock/plugins.yaml` policy entries with `engine: exec` when
-  callers explicitly pass `--enable-plugins`. Exec plugins run local commands
-  from a copied source workspace and may chain policy-defined post-renderers.
-  They are never discovered from Argo CD repo-server sidecars or ambient CMP
-  configuration.
+- Trusted drydock plugin policy entries for native CMP compatibility and
+  explicitly enabled exec CMP compatibility.
 - Config management plugin source detection with fail-closed diagnostics in
   the CLI and default Go client.
 - Injectable in-process plugin renderers, named plugin registry dispatch, and
@@ -156,6 +147,9 @@ Not supported:
 - Argo CD repo-server sidecar plugin discovery.
 - Ambient plugin configuration or environment loading.
 - Plugin credential injection.
+
+See `docs/plugin-policy.md` for trusted policy provenance, supported engines,
+schema, and exec security controls.
 
 ## Diff, Images, And Output
 

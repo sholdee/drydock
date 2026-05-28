@@ -18,6 +18,8 @@ Canonical references:
 - `internal/requestopts` for shared option parsing.
 - `pkg/drydock` for the public embedding API.
 - `docs/design.md` for architecture and behavior contracts.
+- `docs/plugin-policy.md` for trusted plugin policy provenance, schema, and
+  exec security controls.
 
 Current command groups are:
 
@@ -49,18 +51,14 @@ Public API rules:
   contract.
 
 Config management plugin sources fail closed by default. CLI/default paths do
-not execute plugin commands unless a trusted drydock plugin policy maps the
-plugin name to `engine: exec` and the caller explicitly sets
-`--enable-plugins`. Native plugin interpretation is allowed only when a trusted
-plugin policy maps the plugin name to a native engine such as `avp-compat` or
-`native-kustomize`; discovered Kustomize CMP definitions are not ambiently
-trusted. Exec command definitions must come from baseline/trusted policy
-provenance, not from the current PR tree. Policy-defined exec post-renderers
-share the same trust and process controls as exec generate commands. Public API
-plugin rendering is allowed only through explicit in-process
-`Config.PluginRenderer` or registry injection. Preserve `plugin.unsupported`,
-`plugin.failed`, and `plugin.unspecified` diagnostics, and do not reclassify
-caller cancellation as plugin timeout.
+not execute plugin commands unless trusted drydock plugin policy provenance
+matches `engine: exec` and the caller explicitly sets `--enable-plugins`.
+Native plugin interpretation must remain policy-gated; discovered CMP
+definitions are not ambiently trusted. Keep detailed policy behavior in
+`docs/plugin-policy.md`. Public API plugin rendering is allowed only through
+explicit in-process `Config.PluginRenderer` or registry injection. Preserve
+`plugin.unsupported`, `plugin.failed`, and `plugin.unspecified` diagnostics,
+and do not reclassify caller cancellation as plugin timeout.
 
 ## Settings And Project Discovery
 

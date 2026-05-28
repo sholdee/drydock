@@ -3,6 +3,8 @@ package pluginpolicy
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -174,6 +176,66 @@ plugins:
 	}
 	if plugin.Exec.Output.MaxStdoutBytes != 1024 || plugin.Exec.Output.MaxStderrBytes != 128 {
 		t.Fatalf("Output = %#v, want explicit limits", plugin.Exec.Output)
+	}
+}
+
+func TestParseFixturePolicies(t *testing.T) {
+	tests := []struct {
+		path           string
+		plugin         string
+		engine         Engine
+		postRenderers  int
+		allowedEnvVars []string
+	}{
+		{
+			path:   "avp-placeholder.yaml",
+			plugin: "avp-directory-include",
+			engine: EngineAVPCompat,
+		},
+		{
+			path:           "exec-post-renderer.yaml",
+			plugin:         "avp-directory-include",
+			engine:         EngineExec,
+			postRenderers:  1,
+			allowedEnvVars: []string{"AVP_TYPE", "OP_CONNECT_HOST", "OP_CONNECT_TOKEN"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.path, func(t *testing.T) {
+			policyPath := filepath.Join("..", "..", "testdata", "plugin-policy", tt.path)
+			data, err := os.ReadFile(policyPath)
+			if err != nil {
+				t.Fatalf("ReadFile(%q) error = %v", policyPath, err)
+			}
+			policy, err := Parse(policyPath, data)
+			if err != nil {
+				t.Fatalf("Parse(%q) error = %v", policyPath, err)
+			}
+			plugin, ok := policy.Plugin(tt.plugin)
+			if !ok {
+				t.Fatalf("Plugin(%q) missing in fixture", tt.plugin)
+			}
+			if plugin.Engine != tt.engine {
+				t.Fatalf("Engine = %q, want %q", plugin.Engine, tt.engine)
+			}
+			if plugin.Engine == EngineExec {
+				if plugin.Exec == nil {
+					t.Fatal("Exec = nil, want parsed exec config")
+				}
+				if got := len(plugin.Exec.PostRenderers); got != tt.postRenderers {
+					t.Fatalf("len(PostRenderers) = %d, want %d", got, tt.postRenderers)
+				}
+				if got := strings.Join(plugin.Exec.Env.Allow, ","); got != strings.Join(tt.allowedEnvVars, ",") {
+					t.Fatalf("Env.Allow = %q, want %q", got, strings.Join(tt.allowedEnvVars, ","))
+				}
+			}
+			if fingerprint, err := Fingerprint(policy); err != nil {
+				t.Fatalf("Fingerprint(%q) error = %v", policyPath, err)
+			} else if fingerprint == NoPolicyFingerprint {
+				t.Fatalf("Fingerprint(%q) = NoPolicyFingerprint, want stable non-empty fingerprint", policyPath)
+			}
+		})
 	}
 }
 

@@ -343,6 +343,9 @@ func TestOrchestratorBuildRejectsExecPolicyWithoutTrustedRef(t *testing.T) {
 	if !hasDiagnosticMessage(result.Diagnostics, "untrusted policy source") {
 		t.Fatalf("Diagnostics = %#v, want trusted-ref guidance", result.Diagnostics)
 	}
+	if !hasDiagnosticMessage(result.Diagnostics, "diff baseline") || !hasDiagnosticMessage(result.Diagnostics, "--plugin-policy-ref") {
+		t.Fatalf("Diagnostics = %#v, want baseline or plugin-policy-ref guidance", result.Diagnostics)
+	}
 }
 
 func TestOrchestratorBuildRendersTrustedExecPolicyPlugin(t *testing.T) {
@@ -404,8 +407,11 @@ func TestOrchestratorBuildReportsInvalidExecPolicyOutput(t *testing.T) {
 	if !hasDiagnosticCode(result.Diagnostics, diagnostic.CodePluginFailed) {
 		t.Fatalf("Diagnostics = %#v, want plugin.failed", result.Diagnostics)
 	}
-	if !hasDiagnosticMessage(result.Diagnostics, "produced invalid manifests") {
-		t.Fatalf("Diagnostics = %#v, want invalid manifest diagnostic", result.Diagnostics)
+	if !hasDiagnosticMessage(result.Diagnostics, "produced invalid generated manifests") {
+		t.Fatalf("Diagnostics = %#v, want invalid generated manifest diagnostic", result.Diagnostics)
+	}
+	if !hasDiagnosticMessage(result.Diagnostics, `source path "manifests/plugin"`) || !hasDiagnosticMessage(result.Diagnostics, "generate-output") {
+		t.Fatalf("Diagnostics = %#v, want source path and decode target", result.Diagnostics)
 	}
 }
 
@@ -460,8 +466,14 @@ func TestOrchestratorBuildReportsInvalidExecPolicyPostRendererOutput(t *testing.
 	if !hasDiagnosticCode(result.Diagnostics, diagnostic.CodePluginFailed) {
 		t.Fatalf("Diagnostics = %#v, want plugin.failed", result.Diagnostics)
 	}
-	if !hasDiagnosticMessage(result.Diagnostics, "produced invalid manifests") {
-		t.Fatalf("Diagnostics = %#v, want invalid manifest diagnostic", result.Diagnostics)
+	if !hasDiagnosticMessage(result.Diagnostics, "produced invalid final post-render manifests") {
+		t.Fatalf("Diagnostics = %#v, want invalid final post-render diagnostic", result.Diagnostics)
+	}
+	if !hasDiagnosticMessage(result.Diagnostics, "final-post-render-output") {
+		t.Fatalf("Diagnostics = %#v, want final post-render decode target", result.Diagnostics)
+	}
+	if hasDiagnosticMessage(result.Diagnostics, "metadata: [") {
+		t.Fatalf("Diagnostics = %#v, leaked invalid output bytes", result.Diagnostics)
 	}
 }
 

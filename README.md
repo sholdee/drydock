@@ -196,14 +196,11 @@ Default commands do not reproduce:
   explicit trusted exec plugin policy is enabled.
 
 Plugin-backed sources fail closed unless an embedding caller injects an
-in-process renderer or a trusted `.drydock/plugins.yaml` policy maps that
-plugin name to a native drydock engine. Native Kustomize CMP interpretation is
-policy-gated; drydock does not treat discovered CMP commands as ambiently
-trusted.
-Use `--plugin-policy-path`, `--plugin-policy-ref`, and `--plugin-policy-repo`
-when CI should load policy from a trusted path or Git ref. Use
-`--enable-plugins` only when that trusted policy contains `engine: exec`
-entries that should run local commands or post-renderers.
+in-process renderer or a trusted drydock plugin policy matches the plugin name.
+Native policy engines do not execute plugin commands. Exec policy requires
+trusted provenance and `--enable-plugins`. See
+[`docs/plugin-policy.md`](docs/plugin-policy.md) for the policy schema,
+provenance rules, CMP compatibility model, and exec security controls.
 
 These behaviors are not silently approximated. The no-live-runtime boundary is
 an intentional product decision so the default cache-backed workflow stays
@@ -267,6 +264,8 @@ Join the home-operations Discord at <https://discord.gg/home-operations>.
   generator behavior, fixture schema, and template parameters.
 - [`docs/source-acquisition.md`](docs/source-acquisition.md): Git, Helm,
   remote Kustomize, cache, and auth behavior.
+- [`docs/plugin-policy.md`](docs/plugin-policy.md): trusted plugin policy,
+  CMP compatibility, and exec plugin security.
 - [`docs/compatibility.md`](docs/compatibility.md): supported Argo CD behavior
   and intentional runtime boundaries.
 - [`docs/release.md`](docs/release.md): release and Argo CD dependency upgrade

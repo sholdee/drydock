@@ -109,7 +109,7 @@ func (p localProvider) renderMatchedPolicyPluginSource(ctx context.Context, sour
 			return nil, unsupportedPluginDiagnostic(message), true, unsupportedPolicyPluginError(message)
 		}
 		if !p.pluginPolicyExecTrusted {
-			message := fmt.Sprintf("config management plugin %s uses exec policy from an untrusted policy source; use --plugin-policy-ref for single-tree commands", pluginDisplayName(name))
+			message := fmt.Sprintf("config management plugin %s uses exec policy from an untrusted policy source; use a policy from the diff baseline or pass --plugin-policy-ref for a trusted Git ref", pluginDisplayName(name))
 			return nil, unsupportedPluginDiagnostic(message), true, unsupportedPolicyPluginError(message)
 		}
 		return p.renderExecPolicyPluginSource(ctx, source, opts, name, policyPlugin)
@@ -196,9 +196,10 @@ func (p localProvider) renderExecPolicyPluginSource(ctx context.Context, source 
 		message := fmt.Sprintf("config management plugin %s failed: %s", pluginDisplayName(name), err)
 		return nil, []diagnostic.Diagnostic{pluginFailedDiagnostic(message)}, true, fmt.Errorf("%s: %w", message, err)
 	}
-	docs, err := manifest.DecodeDocuments("plugin/"+pluginDisplayName(name)+"/stdout", bytes.NewReader(result.Stdout))
+	phase, decodePath := execPolicyDecodeTarget(name, source, len(policyPlugin.Exec.PostRenderers) > 0)
+	docs, err := manifest.DecodeDocuments(decodePath, bytes.NewReader(result.Stdout))
 	if err != nil {
-		message := fmt.Sprintf("config management plugin %s produced invalid manifests: %s", pluginDisplayName(name), err)
+		message := fmt.Sprintf("config management plugin %s produced invalid %s for %s at %s: %s", pluginDisplayName(name), phase, execPolicySourceLabel(source), decodePath, err)
 		return nil, []diagnostic.Diagnostic{pluginFailedDiagnostic(message)}, true, fmt.Errorf("%s: %w", message, err)
 	}
 	manifests := make([]render.Manifest, 0, len(docs))
@@ -239,7 +240,35 @@ func pluginDisplayName(name string) string {
 }
 
 func unsupportedPluginMessage(name string) string {
-	return fmt.Sprintf("config management plugin %s is disabled in the default renderer; future plugin policy support will require an explicit trusted policy and plugin execution opt-in", pluginDisplayName(name))
+	return fmt.Sprintf("config management plugin %s is disabled in the default renderer; use an explicit trusted policy, and pass --enable-plugins for exec policy entries", pluginDisplayName(name))
+}
+
+func execPolicyDecodeTarget(name string, source render.ResolvedSource, hasPostRenderers bool) (string, string) {
+	displayName := pluginDisplayName(name)
+	if hasPostRenderers {
+		return "final post-render manifests", "plugin/" + displayName + "/" + execPolicySourcePath(source) + "/final-post-render-output"
+	}
+	return "generated manifests", "plugin/" + displayName + "/" + execPolicySourcePath(source) + "/generate-output"
+}
+
+func execPolicySourcePath(source render.ResolvedSource) string {
+	if source.Path != "" {
+		return "path/" + strings.Trim(source.Path, `/\`)
+	}
+	if source.Chart != "" {
+		return "chart/" + source.Chart
+	}
+	return "source"
+}
+
+func execPolicySourceLabel(source render.ResolvedSource) string {
+	if source.Path != "" {
+		return fmt.Sprintf("source path %q", source.Path)
+	}
+	if source.Chart != "" {
+		return fmt.Sprintf("source chart %q", source.Chart)
+	}
+	return "source"
 }
 
 func pluginFailedDiagnostic(message string) diagnostic.Diagnostic {
