@@ -1,11 +1,17 @@
 package app
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
+	"path/filepath"
+	"time"
 
 	"github.com/sholdee/drydock/internal/diagnostic"
+	"github.com/sholdee/drydock/internal/manifest"
+	"github.com/sholdee/drydock/internal/pluginexec"
+	"github.com/sholdee/drydock/internal/pluginpolicy"
 	"github.com/sholdee/drydock/internal/render"
 
 	"strings"
@@ -13,10 +19,13 @@ import (
 
 func (p localProvider) renderPluginSource(ctx context.Context, source render.ResolvedSource, opts render.RenderOptions) ([]render.Manifest, []diagnostic.Diagnostic, error) {
 	if p.pluginRenderer == nil {
+		if manifests, diags, handled, err := p.renderPolicyPluginSource(ctx, source, opts); handled {
+			return manifests, diags, err
+		}
 		if manifests, diags, handled, err := p.renderNativeKustomizePluginSource(ctx, source, opts); handled {
 			return manifests, diags, err
 		}
-		message := fmt.Sprintf("config management plugin %s is not supported without an injected plugin renderer", pluginDisplayName(opts.Plugin.Name))
+		message := unsupportedPluginMessage(opts.Plugin.Name)
 		return nil, []diagnostic.Diagnostic{{
 			Code:     diagnostic.CodePluginUnsupported,
 			Severity: diagnostic.SeverityError,
@@ -64,12 +73,234 @@ func (p localProvider) renderPluginSource(ctx context.Context, source render.Res
 	return manifests, diags, err
 }
 
+func (p localProvider) renderPolicyPluginSource(ctx context.Context, source render.ResolvedSource, opts render.RenderOptions) ([]render.Manifest, []diagnostic.Diagnostic, bool, error) {
+	if opts.Plugin == nil {
+		return nil, nil, false, nil
+	}
+	name := strings.TrimSpace(opts.Plugin.Name)
+	if name == "" {
+		return nil, unsupportedPluginDiagnostic("config management plugin name is required"), true, unsupportedPolicyPluginError("config management plugin name is required")
+	}
+	policyPlugin, ok := p.pluginPolicy.Plugin(name)
+	if !ok {
+		return nil, nil, false, nil
+	}
+	if message := validatePolicyPluginSource(name, source, opts); message != "" {
+		return nil, unsupportedPluginDiagnostic(message), true, unsupportedPolicyPluginError(message)
+	}
+
+	return p.renderMatchedPolicyPluginSource(ctx, source, opts, name, policyPlugin)
+}
+
+func (p localProvider) renderMatchedPolicyPluginSource(ctx context.Context, source render.ResolvedSource, opts render.RenderOptions, name string, policyPlugin pluginpolicy.Plugin) ([]render.Manifest, []diagnostic.Diagnostic, bool, error) {
+	switch policyPlugin.Engine {
+	case pluginpolicy.EngineAVPCompat:
+		return p.renderAVPCompatPolicyPluginSource(ctx, source, opts)
+	case pluginpolicy.EngineNativeKustomize:
+		if source.Chart != "" {
+			message := fmt.Sprintf("config management plugin %s uses chart source, which is unsupported by native-kustomize policy", pluginDisplayName(name))
+			return nil, unsupportedPluginDiagnostic(message), true, unsupportedPolicyPluginError(message)
+		}
+		manifests, diags, handled, err := p.renderNativeKustomizePluginSource(ctx, source, opts)
+		if handled {
+			return manifests, diags, true, err
+		}
+		message := fmt.Sprintf("config management plugin %s is permitted by policy but no compatible native Kustomize plugin settings were discovered", pluginDisplayName(name))
+		return nil, unsupportedPluginDiagnostic(message), true, unsupportedPolicyPluginError(message)
+	case pluginpolicy.EngineExec:
+		if !opts.EnablePlugins {
+			message := fmt.Sprintf("config management plugin %s uses exec policy, which requires --enable-plugins", pluginDisplayName(name))
+			return nil, unsupportedPluginDiagnostic(message), true, unsupportedPolicyPluginError(message)
+		}
+		if !p.pluginPolicyExecTrusted {
+			message := fmt.Sprintf("config management plugin %s uses exec policy from an untrusted policy source; use a policy from the diff baseline or pass --plugin-policy-ref for a trusted Git ref", pluginDisplayName(name))
+			return nil, unsupportedPluginDiagnostic(message), true, unsupportedPolicyPluginError(message)
+		}
+		return p.renderExecPolicyPluginSource(ctx, source, opts, name, policyPlugin)
+	default:
+		message := fmt.Sprintf("config management plugin %s has unsupported trusted policy engine %q", pluginDisplayName(name), policyPlugin.Engine)
+		return nil, unsupportedPluginDiagnostic(message), true, unsupportedPolicyPluginError(message)
+	}
+}
+
+func validatePolicyPluginSource(name string, source render.ResolvedSource, opts render.RenderOptions) string {
+	if len(opts.Plugin.Env) > 0 || len(opts.Plugin.Parameters) > 0 {
+		return fmt.Sprintf("config management plugin %s uses env or parameters, which are unsupported by trusted native plugin policy", pluginDisplayName(name))
+	}
+	if source.Path == "" && source.Chart == "" {
+		return fmt.Sprintf("config management plugin %s must define path or chart for trusted native plugin policy", pluginDisplayName(name))
+	}
+	if source.Path != "" && source.Chart != "" {
+		return fmt.Sprintf("config management plugin %s cannot define both path and chart for trusted native plugin policy", pluginDisplayName(name))
+	}
+	return ""
+}
+
+func (p localProvider) renderAVPCompatPolicyPluginSource(ctx context.Context, source render.ResolvedSource, opts render.RenderOptions) ([]render.Manifest, []diagnostic.Diagnostic, bool, error) {
+	nativeOptions := opts
+	nativeOptions.Plugin = nil
+	nativeOptions.EnableAVPCompat = true
+	nativeOptions.QuietAVPCompat = true
+	var (
+		manifests []render.Manifest
+		diags     []diagnostic.Diagnostic
+		err       error
+	)
+	if source.Path != "" {
+		var renderer render.Renderer
+		renderer, err = selectLocalRenderer(source)
+		if err == nil {
+			manifests, diags, err = renderer.Render(ctx, source, nativeOptions)
+		}
+	} else {
+		manifests, diags, err = p.renderChartOnlySource(ctx, source, nativeOptions)
+	}
+	if err != nil {
+		return manifests, diags, true, err
+	}
+	for i := range manifests {
+		if manifests[i].Object != nil {
+			manifests[i].Object = manifests[i].Object.DeepCopy()
+		}
+		applyAVPCompatToManifest(&manifests[i], nativeOptions)
+	}
+	return manifests, diags, true, nil
+}
+
+func (p localProvider) renderExecPolicyPluginSource(ctx context.Context, source render.ResolvedSource, opts render.RenderOptions, name string, policyPlugin pluginpolicy.Plugin) ([]render.Manifest, []diagnostic.Diagnostic, bool, error) {
+	if source.Chart != "" {
+		message := fmt.Sprintf("config management plugin %s uses chart source, which is unsupported by exec policy", pluginDisplayName(name))
+		return nil, unsupportedPluginDiagnostic(message), true, unsupportedPolicyPluginError(message)
+	}
+	if source.Path == "" {
+		message := fmt.Sprintf("config management plugin %s must define path for exec policy", pluginDisplayName(name))
+		return nil, unsupportedPluginDiagnostic(message), true, unsupportedPolicyPluginError(message)
+	}
+	if policyPlugin.Exec == nil {
+		message := fmt.Sprintf("config management plugin %s has invalid exec policy", pluginDisplayName(name))
+		return nil, unsupportedPluginDiagnostic(message), true, unsupportedPolicyPluginError(message)
+	}
+	sourcePath, err := cleanLocalSourcePath(source.Path)
+	if err != nil {
+		return nil, nil, true, err
+	}
+	if err := rejectLocalSymlinkComponents(source.RepoRoot, sourcePath); err != nil {
+		return nil, nil, true, err
+	}
+	sourceDir := filepath.Join(source.RepoRoot, sourcePath)
+	result, err := (pluginexec.DefaultRunner{}).Run(ctx, pluginexec.Request{
+		SourceDir:      sourceDir,
+		Config:         *policyPlugin.Exec,
+		ProtectedRoots: p.execProtectedRoots(source.RepoRoot),
+	})
+	if err != nil {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return nil, nil, true, ctxErr
+		}
+		message := fmt.Sprintf("config management plugin %s failed: %s", pluginDisplayName(name), err)
+		return nil, []diagnostic.Diagnostic{pluginFailedDiagnostic(message)}, true, fmt.Errorf("%s: %w", message, err)
+	}
+	phase, decodePath := execPolicyDecodeTarget(name, source, len(policyPlugin.Exec.PostRenderers) > 0)
+	docs, err := manifest.DecodeDocuments(decodePath, bytes.NewReader(result.Stdout))
+	if err != nil {
+		message := fmt.Sprintf("config management plugin %s produced invalid %s for %s at %s: %s", pluginDisplayName(name), phase, execPolicySourceLabel(source), decodePath, err)
+		return nil, []diagnostic.Diagnostic{pluginFailedDiagnostic(message)}, true, fmt.Errorf("%s: %w", message, err)
+	}
+	manifests := make([]render.Manifest, 0, len(docs))
+	for _, doc := range docs {
+		manifests = append(manifests, render.Manifest{
+			Path:   doc.Path,
+			Object: doc.Object,
+		})
+	}
+	p.recordPluginExecutions(opts, source, name, result.Executions)
+	return manifests, nil, true, nil
+}
+
+func (p localProvider) execProtectedRoots(sourceRoot string) []string {
+	roots := append([]string(nil), p.remoteResourceForbiddenRoots...)
+	roots = append(roots, p.repoRoot, sourceRoot, p.chartCacheDir, p.gitCacheDir, p.remoteResourceCacheDir)
+	return compactStrings(roots...)
+}
+
+func unsupportedPluginDiagnostic(message string) []diagnostic.Diagnostic {
+	return []diagnostic.Diagnostic{{
+		Code:     diagnostic.CodePluginUnsupported,
+		Severity: diagnostic.SeverityError,
+		Category: "plugin",
+		Message:  message,
+	}}
+}
+
+func unsupportedPolicyPluginError(message string) error {
+	return fmt.Errorf("%s: %w", message, render.ErrUnsupportedPlugin)
+}
+
 func pluginDisplayName(name string) string {
 	name = strings.TrimSpace(name)
 	if name == "" {
 		return "<unnamed>"
 	}
 	return name
+}
+
+func unsupportedPluginMessage(name string) string {
+	return fmt.Sprintf("config management plugin %s is not supported by the default renderer; no compatible native renderer or trusted drydock plugin policy matched", pluginDisplayName(name))
+}
+
+func execPolicyDecodeTarget(name string, source render.ResolvedSource, hasPostRenderers bool) (string, string) {
+	displayName := pluginDisplayName(name)
+	if hasPostRenderers {
+		return "final post-render manifests", "plugin/" + displayName + "/" + execPolicySourcePath(source) + "/final-post-render-output"
+	}
+	return "generated manifests", "plugin/" + displayName + "/" + execPolicySourcePath(source) + "/generate-output"
+}
+
+func execPolicySourcePath(source render.ResolvedSource) string {
+	if source.Path != "" {
+		return "path/" + strings.Trim(source.Path, `/\`)
+	}
+	if source.Chart != "" {
+		return "chart/" + source.Chart
+	}
+	return "source"
+}
+
+func execPolicySourceLabel(source render.ResolvedSource) string {
+	if source.Path != "" {
+		return fmt.Sprintf("source path %q", source.Path)
+	}
+	if source.Chart != "" {
+		return fmt.Sprintf("source chart %q", source.Chart)
+	}
+	return "source"
+}
+
+func (p localProvider) recordPluginExecutions(opts render.RenderOptions, source render.ResolvedSource, name string, executions []pluginexec.Execution) {
+	if p.pluginExecutions == nil || len(executions) == 0 {
+		return
+	}
+	for _, execution := range executions {
+		*p.pluginExecutions = append(*p.pluginExecutions, PluginExecution{
+			AppNamespace: opts.AppNamespace,
+			AppName:      opts.AppName,
+			SourceIndex:  opts.SourceIndex,
+			SourceName:   opts.SourceName,
+			SourcePath:   source.Path,
+			PluginName:   pluginDisplayName(name),
+			Engine:       string(pluginpolicy.EngineExec),
+			Phase:        execution.Phase,
+			Command:      execution.Command,
+			Duration:     formatPluginExecutionDuration(execution.Duration),
+		})
+	}
+}
+
+func formatPluginExecutionDuration(duration time.Duration) string {
+	if duration < time.Millisecond {
+		return duration.String()
+	}
+	return duration.Round(time.Millisecond).String()
 }
 
 func pluginFailedDiagnostic(message string) diagnostic.Diagnostic {

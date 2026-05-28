@@ -10,6 +10,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/sholdee/drydock/internal/avpcompat"
 	"github.com/sholdee/drydock/internal/diagnostic"
 	"github.com/sholdee/drydock/internal/manifest"
 	"go.yaml.in/yaml/v4"
@@ -84,6 +85,7 @@ func (HelmRenderer) Render(ctx context.Context, source ResolvedSource, opts Rend
 	if err != nil {
 		return nil, nil, err
 	}
+	avpDiags := applyAVPCompatToHelmValues(inputValues, opts)
 	if err := processHelmDependencies(chart, inputValues, manifestPath); err != nil {
 		return nil, nil, err
 	}
@@ -104,7 +106,9 @@ func (HelmRenderer) Render(ctx context.Context, source ResolvedSource, opts Rend
 		return nil, nil, fmt.Errorf("helm template %s: %w", manifestPath, err)
 	}
 
-	return decodeHelmManifests(pathMap, chart, rendered, opts)
+	manifests, diags, err := decodeHelmManifests(pathMap, chart, rendered, opts)
+	diags = append(avpDiags, diags...)
+	return manifests, diags, err
 }
 
 type helmCRDProvider interface {
@@ -247,6 +251,35 @@ func shouldSkipHelmDocument(obj *unstructured.Unstructured, opts RenderOptions) 
 		}
 	}
 	return false
+}
+
+func applyAVPCompatToHelmValues(values map[string]any, opts RenderOptions) []diagnostic.Diagnostic {
+	if !opts.EnableAVPCompat {
+		return nil
+	}
+	replaced, changed := avpcompat.ReplaceValue(values)
+	if !changed {
+		return nil
+	}
+	replacedMap, ok := replaced.(map[string]any)
+	if !ok {
+		return nil
+	}
+	for key := range values {
+		delete(values, key)
+	}
+	for key, value := range replacedMap {
+		values[key] = value
+	}
+	if opts.QuietAVPCompat {
+		return nil
+	}
+	return []diagnostic.Diagnostic{{
+		Code:     "plugin.avp-compat-substituted",
+		Severity: diagnostic.SeverityWarning,
+		Category: "plugin",
+		Message:  "argocd-vault-plugin placeholders were replaced with deterministic redacted values",
+	}}
 }
 
 func helmChartPathMap(repoRoot, chartPath string, chrt helmchart.Charter) (map[string]string, error) {

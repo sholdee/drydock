@@ -116,7 +116,37 @@ func TestTestAppsReportsPluginSourceFailure(t *testing.T) {
 	}
 	for _, want := range []string{
 		"FAIL argocd/plugin-app",
-		"config management plugin cue is not supported without an injected plugin renderer",
+		"config management plugin cue is not supported by the default renderer",
+		"no compatible native renderer",
+	} {
+		if !strings.Contains(stdout.String(), want) {
+			t.Fatalf("stdout = %q, want %q", stdout.String(), want)
+		}
+	}
+	if !strings.Contains(stderr.String(), "error plugin:") {
+		t.Fatalf("stderr = %q, want plugin diagnostic", stderr.String())
+	}
+}
+
+func TestTestAppReportsPluginSourceFailure(t *testing.T) {
+	root := t.TempDir()
+	writePluginCLIApplication(t, root, "cue", "directory")
+
+	cmd := NewRootCommand(VersionInfo{})
+	cmd.SetArgs([]string{"test", "app", "plugin-app", "--path", root})
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	cmd.SetOut(&stdout)
+	cmd.SetErr(&stderr)
+
+	err := cmd.Execute()
+	if code := commandErrorCode(err); code != 2 {
+		t.Fatalf("error code = %d, want 2; err = %v", code, err)
+	}
+	for _, want := range []string{
+		"FAIL argocd/plugin-app",
+		"config management plugin cue is not supported by the default renderer",
+		"no compatible native renderer",
 	} {
 		if !strings.Contains(stdout.String(), want) {
 			t.Fatalf("stdout = %q, want %q", stdout.String(), want)

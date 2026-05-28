@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/spf13/cobra"
@@ -41,7 +42,7 @@ func TestRepresentativeCommandsExposeFocusedFlagGroups(t *testing.T) {
 		{
 			name:    "build apps common acquisition discovery fixtures filters",
 			command: []string{"build", "apps"},
-			flags:   []string{"offline", "repo-map", "appset-provider-fixture", "skip-kind"},
+			flags:   []string{"offline", "repo-map", "enable-avp-compat", "enable-plugins", "plugin-policy-path", "plugin-policy-ref", "plugin-policy-repo", "appset-provider-fixture", "skip-kind"},
 		},
 		{
 			name:    "diff apps common specialized diff flags",
@@ -69,6 +70,19 @@ func TestRepresentativeCommandsExposeFocusedFlagGroups(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestEnablePluginsHelpDescribesTrustedExecPolicy(t *testing.T) {
+	cmd := findCLICommand(t, "build", "apps")
+	flag := cmd.Flags().Lookup("enable-plugins")
+	if flag == nil {
+		t.Fatal("build apps missing --enable-plugins")
+	}
+	for _, want := range []string{"trusted", "exec", "plugin policy"} {
+		if !strings.Contains(flag.Usage, want) {
+			t.Fatalf("--enable-plugins usage = %q, want %q", flag.Usage, want)
+		}
 	}
 }
 

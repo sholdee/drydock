@@ -8,6 +8,7 @@ import (
 	"github.com/sholdee/drydock/internal/chart"
 	"github.com/sholdee/drydock/internal/config"
 	"github.com/sholdee/drydock/internal/diagnostic"
+	"github.com/sholdee/drydock/internal/pluginpolicy"
 	"github.com/sholdee/drydock/internal/remote"
 	"github.com/sholdee/drydock/internal/render"
 	sourcepkg "github.com/sholdee/drydock/internal/source"
@@ -36,9 +37,13 @@ type localProvider struct {
 	remoteResourceCredentials    remote.Credentials
 	remoteResourceGitCredentials remote.GitCredentials
 	pluginTimeout                time.Duration
+	pluginPolicy                 pluginpolicy.Policy
+	pluginPolicyFingerprint      string
+	pluginPolicyExecTrusted      bool
 	kustomizeBuildOptions        []string
 	configManagementPlugins      map[string]config.ConfigManagementPlugin
 	cacheEvents                  *cacheevent.Recorder
+	pluginExecutions             *[]PluginExecution
 	acquisition                  acquisition.Session
 }
 

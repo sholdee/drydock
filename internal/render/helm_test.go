@@ -47,6 +47,93 @@ func TestHelmRendererRendersInlineValues(t *testing.T) {
 	}
 }
 
+func TestHelmRendererAVPCompatibilitySubstitutesInputValuesBeforeRender(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "simple", "Chart.yaml"), `
+apiVersion: v2
+name: simple
+version: 0.1.0
+`)
+	writeFile(t, filepath.Join(root, "simple", "templates", "configmap.yaml"), `
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: demo
+data:
+  domain: {{ .Values.domain | quote }}
+`)
+
+	result, diags, err := (HelmRenderer{}).Render(context.Background(), ResolvedSource{
+		RepoRoot: root,
+		Path:     "simple",
+		Chart:    "simple",
+	}, RenderOptions{
+		AppName:         "demo",
+		EnableAVPCompat: true,
+		ValuesObject: map[string]any{
+			"domain": "argocd.<path:vaults/Kubernetes/items/cluster#domain>",
+		},
+	})
+	if err != nil {
+		t.Fatalf("Render() error = %v", err)
+	}
+	value, _, _ := unstructured.NestedString(result[0].Object.Object, "data", "domain")
+	if !strings.HasPrefix(value, "argocd.drydock-redacted-") {
+		t.Fatalf("data.domain = %q, want redacted AVP value", value)
+	}
+	for _, forbidden := range []string{"vaults", "Kubernetes", "cluster", "<path:"} {
+		if strings.Contains(value, forbidden) {
+			t.Fatalf("data.domain = %q contains forbidden placeholder material %q", value, forbidden)
+		}
+	}
+	if len(diags) != 1 || diags[0].Code != "plugin.avp-compat-substituted" {
+		t.Fatalf("diagnostics = %#v, want AVP compatibility warning", diags)
+	}
+	if strings.Contains(diags[0].Message, "vaults") || strings.Contains(diags[0].Message, "<path:") {
+		t.Fatalf("diagnostic leaked placeholder material: %#v", diags[0])
+	}
+}
+
+func TestHelmRendererAVPCompatibilitySubstitutesValueFilesBeforeRender(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "simple", "Chart.yaml"), `
+apiVersion: v2
+name: simple
+version: 0.1.0
+`)
+	writeFile(t, filepath.Join(root, "simple", "values.yaml"), `
+domain: argocd.<path:vaults/Kubernetes/items/cluster#domain>
+`)
+	writeFile(t, filepath.Join(root, "simple", "templates", "configmap.yaml"), `
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: demo
+data:
+  domain: {{ .Values.domain | quote }}
+`)
+
+	result, diags, err := (HelmRenderer{}).Render(context.Background(), ResolvedSource{
+		RepoRoot: root,
+		Path:     "simple",
+		Chart:    "simple",
+	}, RenderOptions{
+		AppName:         "demo",
+		EnableAVPCompat: true,
+		ValueFiles:      []string{"values.yaml"},
+	})
+	if err != nil {
+		t.Fatalf("Render() error = %v", err)
+	}
+	value, _, _ := unstructured.NestedString(result[0].Object.Object, "data", "domain")
+	if !strings.HasPrefix(value, "argocd.drydock-redacted-") {
+		t.Fatalf("data.domain = %q, want redacted AVP value", value)
+	}
+	if len(diags) != 1 || diags[0].Code != "plugin.avp-compat-substituted" {
+		t.Fatalf("diagnostics = %#v, want AVP compatibility warning", diags)
+	}
+}
+
 func TestHelmRendererUsesReleaseNameOverride(t *testing.T) {
 	renderer := HelmRenderer{}
 	source := ResolvedSource{

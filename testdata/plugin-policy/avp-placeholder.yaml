@@ -1,0 +1,5 @@
+apiVersion: drydock.sholdee.dev/v1alpha1
+kind: PluginPolicy
+plugins:
+  avp-directory-include:
+    engine: avp-compat

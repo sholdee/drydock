@@ -10,9 +10,10 @@ const (
 )
 
 const (
-	CodePluginUnsupported = "plugin.unsupported"
-	CodePluginFailed      = "plugin.failed"
-	CodePluginUnspecified = "plugin.unspecified"
+	CodePluginUnsupported   = "plugin.unsupported"
+	CodePluginFailed        = "plugin.failed"
+	CodePluginUnspecified   = "plugin.unspecified"
+	CodePluginPolicyInvalid = "plugin.policy.invalid"
 )
 
 type Provenance struct {

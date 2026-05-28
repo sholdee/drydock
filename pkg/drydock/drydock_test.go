@@ -4,6 +4,7 @@ import (
 	"context"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 )
 
@@ -19,6 +20,37 @@ func TestRenderApplications(t *testing.T) {
 		t.Fatalf("Manifests = %d, want 1", len(result.Manifests))
 	}
 }
+
+func TestRenderAVPCompatibilityReplacesPlaceholders(t *testing.T) {
+	root := t.TempDir()
+	writeAPIAppTree(t, root, "demo", `apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: demo
+data:
+  domain: argocd.<path:vaults/Kubernetes/items/cluster#domain>
+`)
+
+	result, err := Render(context.Background(), Config{Path: root, EnableAVPCompat: true})
+	if err != nil {
+		t.Fatalf("Render() error = %v", err)
+	}
+	if len(result.Manifests) != 1 {
+		t.Fatalf("Manifests = %d, want 1", len(result.Manifests))
+	}
+	data, ok := result.Manifests[0].Object["data"].(map[string]any)
+	if !ok {
+		t.Fatalf("data = %#v, want map", result.Manifests[0].Object["data"])
+	}
+	value, ok := data["domain"].(string)
+	if !ok || !strings.HasPrefix(value, "argocd.drydock-redacted-") {
+		t.Fatalf("data.domain = %#v, want redacted AVP value", data["domain"])
+	}
+	if !hasDiagnosticCode(result.Diagnostics, "plugin.avp-compat-substituted") {
+		t.Fatalf("Diagnostics = %#v, want AVP compatibility diagnostic", result.Diagnostics)
+	}
+}
+
 func TestPublicRenderParallelismPreservesManifestOrder(t *testing.T) {
 	root := t.TempDir()
 	writeAPIPluginAppTreeNamed(t, root, "app-a")

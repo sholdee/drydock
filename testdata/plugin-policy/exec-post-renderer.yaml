@@ -1,0 +1,16 @@
+apiVersion: drydock.sholdee.dev/v1alpha1
+kind: PluginPolicy
+plugins:
+  ytt-render:
+    engine: exec
+    generate:
+      command: ["/usr/local/bin/ytt", "-f", "."]
+    postRenderers:
+      - command: ["/usr/local/bin/kbld", "-f", "-"]
+    env:
+      allow:
+        - CLUSTER_NAME
+        - ENVIRONMENT
+    output:
+      maxStdoutBytes: 10485760
+      maxStderrBytes: 65536

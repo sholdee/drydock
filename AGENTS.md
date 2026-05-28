@@ -13,7 +13,9 @@ files plus explicit local caches. It may fetch declared Git, HTTP Helm, OCI
 Helm, and remote Kustomize sources into those caches unless `--offline` is set.
 Do not require a Kubernetes cluster, `kubectl`, the `argocd` CLI, Helm CLI,
 Kustomize CLI, an external renderer, an Argo CD server, or any live runtime
-dependency for default render, diff, image, test, or diagnostic paths.
+dependency for default render, diff, image, test, or diagnostic paths. Shellout
+config-management plugin execution is allowed only when a trusted drydock plugin
+policy matches and the caller explicitly passes `--enable-plugins`.
 
 In this repository, "offline" means no running cluster or Argo CD instance is
 required; it does not mean source networks are disabled. Network-aware
@@ -66,7 +68,8 @@ human-blocking phase status.
 ## Hard Constraints
 
 - Do not add default shellouts to `helm`, `kustomize`, `kubectl`, `argocd`, or
-  config-management plugins.
+  config-management plugins. Exec plugin policy support must stay opt-in via
+  `--enable-plugins` and trusted policy provenance.
 - Do not add live Kubernetes or Argo CD server behavior without updating the
   live runtime boundary document and preserving `--offline` behavior.
 - Do not hard-code `home-ops` paths, chart versions, branches, or repository

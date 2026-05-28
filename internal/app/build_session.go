@@ -42,7 +42,14 @@ func newBuildSession(orchestrator Orchestrator, request BuildRequest) (*buildSes
 }
 
 func (session *buildSession) Build(ctx context.Context) (BuildResult, error) {
+	loadedRequest, policyDiags, cleanup, err := ensureBuildPluginPolicy(ctx, session.request, session.root)
+	defer cleanup()
+	session.request = loadedRequest
+	if err != nil {
+		return BuildResult{Diagnostics: policyDiags, CacheEvents: session.cacheRecorder.Events()}, err
+	}
 	result, err := session.orchestrator.prepareBuildResult(ctx, session.request, session.root)
+	result.Diagnostics = append(policyDiags, result.Diagnostics...)
 	if err != nil {
 		result.CacheEvents = session.cacheRecorder.Events()
 		return result, err
@@ -102,6 +109,7 @@ func (session *buildSession) Build(ctx context.Context) (BuildResult, error) {
 	result.Diagnostics = append(result.Diagnostics, rendered.diagnostics...)
 	result.Statuses = append(result.Statuses, rendered.statuses...)
 	result.CacheEvents = append(result.CacheEvents, rendered.cacheEvents...)
+	result.PluginExecutions = append(result.PluginExecutions, rendered.pluginExecutions...)
 	result.Diagnostics = dedupeDiagnostics(result.Diagnostics)
 	if renderErr != nil {
 		return result, renderErr

@@ -78,8 +78,15 @@ func (o Orchestrator) DiffApps(ctx context.Context, request DiffRequest) (DiffRe
 	if err := validateDiffPaths(request); err != nil {
 		return DiffResult{}, err
 	}
+	loadedRequest, policyDiags, policyCleanup, err := ensureDiffPluginPolicy(ctx, request)
+	defer policyCleanup()
+	if err != nil {
+		return DiffResult{Diagnostics: policyDiags}, err
+	}
+	request = loadedRequest
 
 	leftBuild, rightBuild, diagnostics, err := o.buildDiffSides(ctx, request)
+	diagnostics = append(policyDiags, diagnostics...)
 	cacheEvents := cacheEventsFromBuilds(leftBuild, rightBuild)
 	buildErr := err
 	if buildErr != nil && !hasRenderedDiffInput(leftBuild, rightBuild) {
@@ -116,6 +123,12 @@ func (o Orchestrator) DiffApp(ctx context.Context, request DiffAppRequest) (Diff
 	if err := validateDiffPaths(request.DiffRequest); err != nil {
 		return DiffResult{}, err
 	}
+	loadedRequest, policyDiags, policyCleanup, err := ensureDiffPluginPolicy(ctx, request.DiffRequest)
+	defer policyCleanup()
+	if err != nil {
+		return DiffResult{Diagnostics: policyDiags}, err
+	}
+	request.DiffRequest = loadedRequest
 
 	forbiddenRoots := diffForbiddenRoots(request.DiffRequest)
 	if err := validateDiffRemoteCache(request.DiffRequest, forbiddenRoots); err != nil {
@@ -125,7 +138,7 @@ func (o Orchestrator) DiffApp(ctx context.Context, request DiffAppRequest) (Diff
 	leftBuildRequest := request.buildRequest(request.LeftPath, forbiddenRoots)
 	rightBuildRequest := request.buildRequest(request.RightPath, forbiddenRoots)
 
-	var diagnostics []diagnostic.Diagnostic
+	diagnostics := append([]diagnostic.Diagnostic(nil), policyDiags...)
 	leftList, err := o.ListApplications(ctx, leftBuildRequest)
 	diagnostics = append(diagnostics, leftList.Diagnostics...)
 	if err != nil {
@@ -192,8 +205,15 @@ func (o Orchestrator) DiffImages(ctx context.Context, request DiffRequest) (Imag
 	if err := validateDiffPaths(request); err != nil {
 		return ImageDiffResult{}, err
 	}
+	loadedRequest, policyDiags, policyCleanup, err := ensureDiffPluginPolicy(ctx, request)
+	defer policyCleanup()
+	if err != nil {
+		return ImageDiffResult{Diagnostics: policyDiags}, err
+	}
+	request = loadedRequest
 
 	leftBuild, rightBuild, diagnostics, err := o.buildDiffSides(ctx, request)
+	diagnostics = append(policyDiags, diagnostics...)
 	cacheEvents := cacheEventsFromBuilds(leftBuild, rightBuild)
 	buildErr := err
 	if buildErr != nil && !hasRenderedDiffInput(leftBuild, rightBuild) {
@@ -310,7 +330,7 @@ func resolveDiffRequestPaths(ctx context.Context, request DiffRequest, computeCh
 }
 
 func validateDiffRefOptions(request DiffRequest, hasRef bool) error {
-	if strings.TrimSpace(request.Repo) != "" && !hasRef {
+	if strings.TrimSpace(request.Repo) != "" && !hasRef && strings.TrimSpace(request.PluginPolicyRef) == "" {
 		return fmt.Errorf("--repo requires --ref or --ref-orig")
 	}
 	if strings.TrimSpace(request.RefOrig) != "" && strings.TrimSpace(request.LeftPath) != "" {

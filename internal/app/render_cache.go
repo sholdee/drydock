@@ -10,6 +10,7 @@ import (
 
 	argoappv1 "github.com/argoproj/argo-cd/v3/pkg/apis/application/v1alpha1"
 	"github.com/sholdee/drydock/internal/diagnostic"
+	"github.com/sholdee/drydock/internal/pluginpolicy"
 	"github.com/sholdee/drydock/internal/render"
 	sourcepkg "github.com/sholdee/drydock/internal/source"
 )
@@ -55,8 +56,9 @@ func (cache *applicationRenderCache) set(key string, result RenderResult, err er
 
 func cloneRenderResult(result RenderResult) RenderResult {
 	return RenderResult{
-		Manifests:   cloneRenderManifests(result.Manifests),
-		Diagnostics: cloneDiagnostics(result.Diagnostics),
+		Manifests:        cloneRenderManifests(result.Manifests),
+		Diagnostics:      cloneDiagnostics(result.Diagnostics),
+		PluginExecutions: clonePluginExecutions(result.PluginExecutions),
 	}
 }
 
@@ -83,6 +85,15 @@ func cloneDiagnostics(input []diagnostic.Diagnostic) []diagnostic.Diagnostic {
 	return out
 }
 
+func clonePluginExecutions(input []PluginExecution) []PluginExecution {
+	if input == nil {
+		return nil
+	}
+	out := make([]PluginExecution, len(input))
+	copy(out, input)
+	return out
+}
+
 func renderApplicationCached(ctx renderContext, application argoappv1.Application) (RenderResult, error) {
 	key, err := applicationRenderCacheKey(ctx, application)
 	if err != nil {
@@ -97,7 +108,7 @@ func renderApplicationCached(ctx renderContext, application argoappv1.Applicatio
 			return result, err
 		}
 	}
-	result, err := RenderApplication(ctx.context, application, ctx.provider)
+	result, err := RenderApplication(ctx.context, application, ctx.provider, ctx.request.PluginOptions)
 	if ctx.context.Err() == nil {
 		ctx.cache.set(key, result, err)
 	}
@@ -136,6 +147,9 @@ type renderContext struct {
 }
 
 func applicationRenderCacheKey(ctx renderContext, application argoappv1.Application) (string, error) {
+	if applicationUsesMatchedExecPolicy(application, ctx.request.pluginPolicy) {
+		return "", nil
+	}
 	input := struct {
 		Root                    string                      `json:"root"`
 		Application             applicationRenderCacheInput `json:"application"`
@@ -149,6 +163,9 @@ func applicationRenderCacheKey(ctx renderContext, application argoappv1.Applicat
 		RefreshRemoteResources  bool                        `json:"refreshRemoteResources"`
 		RemoteResourceCacheDir  string                      `json:"remoteResourceCacheDir,omitempty"`
 		PluginTimeout           string                      `json:"pluginTimeout,omitempty"`
+		EnableAVPCompat         bool                        `json:"enableAVPCompat,omitempty"`
+		EnablePlugins           bool                        `json:"enablePlugins,omitempty"`
+		PluginPolicyFingerprint string                      `json:"pluginPolicyFingerprint,omitempty"`
 		HasInjectedPluginRender bool                        `json:"hasInjectedPluginRender"`
 	}{
 		Root:                    ctx.provider.repoRoot,
@@ -163,6 +180,9 @@ func applicationRenderCacheKey(ctx renderContext, application argoappv1.Applicat
 		RefreshRemoteResources:  ctx.request.RefreshRemoteResources,
 		RemoteResourceCacheDir:  ctx.request.RemoteResourceCacheDir,
 		PluginTimeout:           ctx.request.PluginTimeout.String(),
+		EnableAVPCompat:         ctx.request.EnableAVPCompat,
+		EnablePlugins:           ctx.request.EnablePlugins,
+		PluginPolicyFingerprint: ctx.request.pluginPolicyFingerprint,
 		HasInjectedPluginRender: ctx.request.PluginRenderer != nil,
 	}
 	data, err := json.Marshal(input)
@@ -171,6 +191,23 @@ func applicationRenderCacheKey(ctx renderContext, application argoappv1.Applicat
 	}
 	sum := sha256.Sum256(data)
 	return hex.EncodeToString(sum[:]), nil
+}
+
+func applicationUsesMatchedExecPolicy(application argoappv1.Application, policy pluginpolicy.Policy) bool {
+	sources := application.Spec.Sources
+	if len(sources) == 0 && application.Spec.Source != nil {
+		sources = argoappv1.ApplicationSources{*application.Spec.Source}
+	}
+	for _, source := range sources {
+		if source.Plugin == nil {
+			continue
+		}
+		plugin, ok := policy.Plugin(source.Plugin.Name)
+		if ok && plugin.Engine == pluginpolicy.EngineExec {
+			return true
+		}
+	}
+	return false
 }
 
 type applicationRenderCacheInput struct {

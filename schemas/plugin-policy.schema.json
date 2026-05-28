@@ -1,0 +1,159 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/sholdee/drydock/main/schemas/plugin-policy.schema.json",
+  "title": "drydock PluginPolicy",
+  "description": "Editor schema for drydock trusted plugin policy files. The drydock Go parser remains the authoritative security boundary.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "apiVersion",
+    "kind"
+  ],
+  "properties": {
+    "apiVersion": {
+      "const": "drydock.sholdee.dev/v1alpha1"
+    },
+    "kind": {
+      "const": "PluginPolicy"
+    },
+    "plugins": {
+      "type": "object",
+      "description": "Mapping from Argo CD spec.source.plugin.name to a drydock policy entry.",
+      "propertyNames": {
+        "type": "string",
+        "pattern": "\\S"
+      },
+      "additionalProperties": {
+        "$ref": "#/$defs/plugin"
+      }
+    }
+  },
+  "$defs": {
+    "plugin": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/avpCompatPlugin"
+        },
+        {
+          "$ref": "#/$defs/nativeKustomizePlugin"
+        },
+        {
+          "$ref": "#/$defs/execPlugin"
+        }
+      ]
+    },
+    "avpCompatPlugin": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "engine"
+      ],
+      "properties": {
+        "engine": {
+          "const": "avp-compat"
+        }
+      }
+    },
+    "nativeKustomizePlugin": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "engine"
+      ],
+      "properties": {
+        "engine": {
+          "const": "native-kustomize"
+        }
+      }
+    },
+    "execPlugin": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "engine",
+        "generate"
+      ],
+      "properties": {
+        "engine": {
+          "const": "exec"
+        },
+        "workdir": {
+          "const": "source",
+          "description": "Only source workdir is supported."
+        },
+        "init": {
+          "$ref": "#/$defs/command"
+        },
+        "generate": {
+          "$ref": "#/$defs/command"
+        },
+        "postRenderers": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/command"
+          }
+        },
+        "env": {
+          "$ref": "#/$defs/env"
+        },
+        "output": {
+          "$ref": "#/$defs/output"
+        }
+      }
+    },
+    "command": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "command"
+      ],
+      "properties": {
+        "command": {
+          "type": "array",
+          "description": "Argv sequence. Shell strings and empty tokens are rejected by drydock.",
+          "minItems": 1,
+          "items": {
+            "type": "string",
+            "pattern": "\\S"
+          }
+        },
+        "timeout": {
+          "type": "string",
+          "description": "Go duration such as 2s, 500ms, 1.5s, or 1m30s. The drydock parser is authoritative."
+        }
+      }
+    },
+    "env": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "allow": {
+          "type": "array",
+          "maxItems": 64,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
+          }
+        }
+      }
+    },
+    "output": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "maxStdoutBytes": {
+          "type": "integer",
+          "minimum": 1,
+          "default": 10485760
+        },
+        "maxStderrBytes": {
+          "type": "integer",
+          "minimum": 1,
+          "default": 65536
+        }
+      }
+    }
+  }
+}

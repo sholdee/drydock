@@ -6,6 +6,7 @@ import (
 	"io"
 	"strings"
 
+	"github.com/sholdee/drydock/internal/app"
 	"github.com/sholdee/drydock/internal/cacheevent"
 	"github.com/sholdee/drydock/internal/config"
 	"github.com/sholdee/drydock/internal/diagnostic"
@@ -13,9 +14,10 @@ import (
 )
 
 type diagReport struct {
-	Diagnostics []diagnostic.Diagnostic `json:"diagnostics" yaml:"diagnostics"`
-	CacheEvents []cacheevent.Event      `json:"cacheEvents,omitempty" yaml:"cacheEvents,omitempty"`
-	Settings    *diagSettingsSummary    `json:"settings,omitempty" yaml:"settings,omitempty"`
+	Diagnostics      []diagnostic.Diagnostic `json:"diagnostics" yaml:"diagnostics"`
+	CacheEvents      []cacheevent.Event      `json:"cacheEvents,omitempty" yaml:"cacheEvents,omitempty"`
+	PluginExecutions []app.PluginExecution   `json:"pluginExecutions,omitempty" yaml:"pluginExecutions,omitempty"`
+	Settings         *diagSettingsSummary    `json:"settings,omitempty" yaml:"settings,omitempty"`
 }
 
 type diagSettingsSummary struct {
@@ -64,8 +66,9 @@ func newDiagCommand(deps Dependencies) *cobra.Command {
 			result, err := deps.Orchestrator.Diag(context.Background(), request)
 			result.Diagnostics = diagnostic.WithStableCodes(result.Diagnostics)
 			report := diagReport{
-				Diagnostics: result.Diagnostics,
-				CacheEvents: result.CacheEvents,
+				Diagnostics:      result.Diagnostics,
+				CacheEvents:      result.CacheEvents,
+				PluginExecutions: result.PluginExecutions,
 			}
 			if includeSettings {
 				report.Settings = settingsSummary(result.Settings)

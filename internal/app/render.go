@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	argoappv1 "github.com/argoproj/argo-cd/v3/pkg/apis/application/v1alpha1"
+	"github.com/sholdee/drydock/internal/avpcompat"
 	"github.com/sholdee/drydock/internal/diagnostic"
 	"github.com/sholdee/drydock/internal/manifest"
 	"github.com/sholdee/drydock/internal/render"
@@ -15,8 +16,9 @@ import (
 )
 
 type RenderResult struct {
-	Manifests   []render.Manifest
-	Diagnostics []diagnostic.Diagnostic
+	Manifests        []render.Manifest
+	Diagnostics      []diagnostic.Diagnostic
+	PluginExecutions []PluginExecution
 }
 
 type StaticRenderers map[string][]render.Manifest
@@ -25,12 +27,13 @@ func (s StaticRenderers) RenderSource(_ context.Context, source render.ResolvedS
 	return s[source.Path], nil, nil
 }
 
-func RenderApplication(ctx context.Context, application argoappv1.Application, provider render.Provider) (RenderResult, error) {
+func RenderApplication(ctx context.Context, application argoappv1.Application, provider render.Provider, pluginOptions ...PluginOptions) (RenderResult, error) {
 	plan, err := Plan(application)
 	if err != nil {
 		return RenderResult{}, err
 	}
 
+	pluginOpts := renderPluginOptions(pluginOptions)
 	byID := map[manifest.Identity]int{}
 	var result RenderResult
 	for _, sourcePlan := range plan.Sources {
@@ -42,6 +45,10 @@ func RenderApplication(ctx context.Context, application argoappv1.Application, p
 		if err != nil {
 			return result, fmt.Errorf("%s: %w", renderSourceContext(application, sourcePlan), err)
 		}
+		opts.EnableAVPCompat = pluginOpts.EnableAVPCompat
+		opts.EnablePlugins = pluginOpts.EnablePlugins
+		opts.SourceIndex = sourcePlan.Index
+		opts.SourceName = sourcePlan.Name
 		refRoots, refSources, err := renderRefsForSource(plan, sourcePlan, opts.ValueFiles)
 		if err != nil {
 			return result, fmt.Errorf("%s: %w", renderSourceContext(application, sourcePlan), err)
@@ -58,10 +65,14 @@ func RenderApplication(ctx context.Context, application argoappv1.Application, p
 		if err != nil {
 			return result, fmt.Errorf("%s: %w", renderSourceContext(application, sourcePlan), err)
 		}
+		avpCompatSubstituted := false
 
 		for _, rendered := range manifests {
 			if rendered.Object != nil {
 				rendered.Object = rendered.Object.DeepCopy()
+			}
+			if applyAVPCompatToManifest(&rendered, opts) {
+				avpCompatSubstituted = true
 			}
 			rendered.SourceIndex = sourcePlan.Index
 			rendered.SourceName = sourcePlan.Name
@@ -81,8 +92,18 @@ func RenderApplication(ctx context.Context, application argoappv1.Application, p
 			byID[id] = len(result.Manifests)
 			result.Manifests = append(result.Manifests, rendered)
 		}
+		if avpCompatSubstituted {
+			result.Diagnostics = append(result.Diagnostics, sourceDiagnostics(application, sourcePlan, []diagnostic.Diagnostic{avpCompatDiagnostic()})...)
+		}
 	}
 	return result, nil
+}
+
+func renderPluginOptions(options []PluginOptions) PluginOptions {
+	if len(options) == 0 {
+		return PluginOptions{}
+	}
+	return options[0]
 }
 
 func renderOptions(application argoappv1.Application, source argoappv1.ApplicationSource) (render.RenderOptions, error) {
@@ -126,6 +147,31 @@ func renderOptions(application argoappv1.Application, source argoappv1.Applicati
 	}
 	opts.ValuesObject = valuesObject
 	return opts, nil
+}
+
+func applyAVPCompatToManifest(manifest *render.Manifest, opts render.RenderOptions) bool {
+	if !opts.EnableAVPCompat || manifest == nil || manifest.Object == nil {
+		return false
+	}
+	value, changed := avpcompat.ReplaceValue(manifest.Object.Object)
+	if !changed {
+		return false
+	}
+	object, ok := value.(map[string]any)
+	if !ok {
+		return false
+	}
+	manifest.Object.Object = object
+	return true
+}
+
+func avpCompatDiagnostic() diagnostic.Diagnostic {
+	return diagnostic.Diagnostic{
+		Code:     "plugin.avp-compat-substituted",
+		Severity: diagnostic.SeverityWarning,
+		Category: "plugin",
+		Message:  "argocd-vault-plugin placeholders were replaced with deterministic redacted values",
+	}
 }
 
 func helmValues(helm *argoappv1.ApplicationSourceHelm) (map[string]any, error) {

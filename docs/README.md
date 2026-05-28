@@ -14,6 +14,8 @@ copying the same rule into multiple files.
 | `docs/usage.md` | Operator CLI workflows and high-value command examples. |
 | `docs/applicationsets.md` | ApplicationSet generator behavior, fixture schema, and template parameters. |
 | `docs/source-acquisition.md` | Git, Helm, remote Kustomize, cache, and auth behavior. |
+| `docs/plugin-policy.md` | Trusted plugin policy provenance, editor schema, CMP compatibility, and exec security. |
+| `schemas/plugin-policy.schema.json` | Editor validation schema for `.drydock/plugins.yaml`; parser remains authoritative. |
 | `docs/compatibility.md` | Supported Argo CD behavior and runtime-boundary status. |
 | `docs/release.md` | Release and Argo CD dependency upgrade notes. |
 | `docs/logo/` | Project logo assets. |
@@ -26,7 +28,8 @@ copying the same rule into multiple files.
 - Keep `docs/reports` for active design gates only.
 - Put durable product behavior in `docs/design.md`, `docs/usage.md`,
   `docs/applicationsets.md`, `docs/source-acquisition.md`, or
-  `docs/compatibility.md`, depending on ownership above.
+  `docs/plugin-policy.md`, or `docs/compatibility.md`, depending on ownership
+  above.
 - Split a focused reference page only when it removes dense detail from
   `docs/usage.md` or `docs/design.md`.
 - Keep `README.md`, `AGENTS.md`, and `docs/agent-reference.md` as routing

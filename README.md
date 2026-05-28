@@ -148,9 +148,13 @@ drydock discovers and renders local Argo CD desired state, including:
 - Single-source and multi-source Applications.
 - Directory, Kustomize, local Helm chart, remote Helm chart, and remote
   Kustomize sources.
-- Native-compatible Kustomize build config management plugin definitions,
-  rendered through drydock's Go-native Kustomize path without executing plugin
-  commands.
+- Discovered safe Kustomize build config management plugins rendered through
+  drydock's native Kustomize adapter, without executing plugin commands.
+- Trusted plugin policy entries for native `avp-compat` placeholder redaction
+  and native plugin overrides.
+- Explicit trusted exec plugin policy support with `--enable-plugins` for
+  operators who need shellout CMP compatibility, including policy-defined
+  post-renderer chains.
 - Declared Git, HTTP Helm, OCI Helm, and remote Kustomize source acquisition
   into local caches.
 - Fast cache-backed repeated runs for local development and CI.
@@ -189,7 +193,16 @@ Default commands do not reproduce:
 - Live Argo CD Application health aggregation.
 - Live-only managed-field ownership.
 - Full Argo CD RBAC authorization.
-- CLI config management plugin execution or shellout plugin adapters.
+- CLI config management plugin execution or shellout plugin adapters unless an
+  explicit trusted exec plugin policy is enabled.
+
+Plugin command execution fails closed unless an embedding caller injects an
+in-process renderer or a trusted drydock exec plugin policy matches the plugin
+name. Discovered safe Kustomize build CMP definitions and native policy
+engines do not execute plugin commands. Exec policy requires trusted
+provenance and `--enable-plugins`. See
+[`docs/plugin-policy.md`](docs/plugin-policy.md) for the policy schema,
+provenance rules, CMP compatibility model, and exec security controls.
 
 These behaviors are not silently approximated. The no-live-runtime boundary is
 an intentional product decision so the default cache-backed workflow stays
@@ -253,6 +266,8 @@ Join the home-operations Discord at <https://discord.gg/home-operations>.
   generator behavior, fixture schema, and template parameters.
 - [`docs/source-acquisition.md`](docs/source-acquisition.md): Git, Helm,
   remote Kustomize, cache, and auth behavior.
+- [`docs/plugin-policy.md`](docs/plugin-policy.md): trusted plugin policy,
+  editor schema, CMP compatibility, and exec plugin security.
 - [`docs/compatibility.md`](docs/compatibility.md): supported Argo CD behavior
   and intentional runtime boundaries.
 - [`docs/release.md`](docs/release.md): release and Argo CD dependency upgrade

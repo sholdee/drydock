@@ -132,11 +132,10 @@ Supported:
 - Kustomize root Git remote refs such as
   `https://github.com/org/repo?ref=v1` when they resolve to a repository-root
   Kustomization directory.
-- Native-compatible Kustomize build config management plugin definitions
-  discovered from Argo CD Helm values or rendered `argocd-cmp-cm` ConfigMaps.
-  drydock parses those definitions as metadata and renders matched
-  Applications through the Go-native Kustomize renderer without executing the
-  plugin command.
+- Discovered safe Kustomize build CMP definitions interpreted by drydock's
+  native Kustomize renderer.
+- Trusted drydock plugin policy entries for native AVP compatibility, native
+  plugin overrides, and explicitly enabled exec CMP compatibility.
 - Config management plugin source detection with fail-closed diagnostics in
   the CLI and default Go client.
 - Injectable in-process plugin renderers, named plugin registry dispatch, and
@@ -144,11 +143,15 @@ Supported:
 
 Not supported:
 
-- Arbitrary CLI config management plugin execution.
-- Shellout plugin adapters or plugin command execution.
+- Arbitrary CLI config management plugin execution outside trusted
+  `engine: exec` policy plus `--enable-plugins`.
+- Shellout plugin adapters or plugin command execution by default.
 - Argo CD repo-server sidecar plugin discovery.
 - Ambient plugin configuration or environment loading.
 - Plugin credential injection.
+
+See `docs/plugin-policy.md` for trusted policy provenance, supported engines,
+schema, and exec security controls.
 
 ## Diff, Images, And Output
 

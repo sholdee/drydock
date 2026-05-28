@@ -48,6 +48,18 @@ func TestRenderResultFromBuildGoldenClonesManifestsAndStabilizesDiagnostics(t *t
 				Path: "app.yaml",
 			},
 		}},
+		PluginExecutions: []app.PluginExecution{{
+			AppNamespace: "argocd",
+			AppName:      "demo",
+			SourceIndex:  1,
+			SourceName:   "values",
+			SourcePath:   "apps/demo",
+			PluginName:   "exec-renderer",
+			Engine:       "exec",
+			Phase:        "generate",
+			Command:      "renderer",
+			Duration:     "12ms",
+		}},
 	})
 
 	assertGoldenResultApplication(t, result.Applications)
@@ -68,6 +80,7 @@ func TestRenderResultFromBuildGoldenClonesManifestsAndStabilizesDiagnostics(t *t
 	}
 	assertGoldenResultManifestClone(t, data)
 	assertGoldenResultDiagnostic(t, result.Diagnostics)
+	assertGoldenResultPluginExecution(t, result.PluginExecutions)
 }
 
 func assertGoldenResultApplication(t *testing.T, applications []Application) {
@@ -117,5 +130,22 @@ func assertGoldenResultDiagnostic(t *testing.T, diagnostics []Diagnostic) {
 	}
 	if diag.Severity != "error" || diag.Category != "render" || diag.Provenance.Path != "app.yaml" {
 		t.Fatalf("diagnostic = %#v, want public render diagnostic", diag)
+	}
+}
+
+func assertGoldenResultPluginExecution(t *testing.T, executions []PluginExecution) {
+	t.Helper()
+	if len(executions) != 1 {
+		t.Fatalf("PluginExecutions = %#v, want one execution", executions)
+	}
+	execution := executions[0]
+	if execution.Application.Namespace != "argocd" || execution.Application.Name != "demo" {
+		t.Fatalf("PluginExecution.Application = %#v, want argocd/demo", execution.Application)
+	}
+	if execution.SourceIndex != 1 || execution.SourceName != "values" || execution.SourcePath != "apps/demo" {
+		t.Fatalf("PluginExecution source = %#v, want values source", execution)
+	}
+	if execution.PluginName != "exec-renderer" || execution.Engine != "exec" || execution.Phase != "generate" || execution.Command != "renderer" || execution.Duration != "12ms" {
+		t.Fatalf("PluginExecution = %#v, want exec metadata", execution)
 	}
 }

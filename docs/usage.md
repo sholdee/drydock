@@ -194,17 +194,20 @@ and statuses. `SkipKinds`, `SkipCRDs`, and `SkipSecrets` apply the same
 rendered-resource filters exposed by the CLI.
 
 Config management plugin sources are explicit. The CLI and default Go client do
-not execute plugin commands. Native-compatible Kustomize build plugin
-definitions discovered from Argo CD Helm values or rendered `argocd-cmp-cm`
-ConfigMaps are rendered through drydock's Go-native Kustomize path; other
-plugin sources fail closed with `plugin.unsupported` unless an embedding caller supplies
-`drydock.Config.PluginRenderer`. Embedders can pass a renderer directly or use
+not execute plugin commands by default. Discovered Argo CD CMP definitions that
+normalize to a safe `kustomize build` command are interpreted through drydock's
+native Kustomize renderer. Other plugin sources fail closed with
+`plugin.unsupported` unless an embedding caller supplies
+`drydock.Config.PluginRenderer` or a trusted drydock plugin policy matches the
+plugin name. Exec policy requires trusted provenance and `--enable-plugins`;
+native policy engines such as `avp-compat` and `native-kustomize` do not
+execute plugin commands. Embedders can pass a renderer directly or use
 `drydock.NewPluginRegistry(map[string]drydock.PluginRenderer{...})` to dispatch
 in-process renderers by `plugin.name`.
 
-Shellout plugin adapters, Argo CD repo-server sidecar plugin discovery, ambient
-plugin configuration, ambient plugin environment loading, and plugin credential
-injection are outside the default CLI/runtime contract.
+See [`plugin-policy.md`](plugin-policy.md) for `--plugin-policy-path`,
+`--plugin-policy-ref`, `--plugin-policy-repo`, `--disable-plugin-policy`, the
+policy schema, CMP compatibility behavior, and exec security model.
 
 ## Render Tests
 
@@ -454,12 +457,16 @@ These source paths are outside the current default runtime contract:
 
 - Live provider API calls for cluster, clusterDecisionResource, SCM provider,
   pull-request, and plugin ApplicationSet generators.
-- Arbitrary CLI config management plugin execution, shellout plugin adapters,
-  Argo CD repo-server sidecar plugin discovery, ambient plugin configuration,
-  ambient plugin environment loading, and plugin credential injection.
+- Arbitrary CLI config management plugin execution outside trusted exec policy
+  plus `--enable-plugins`, Argo CD repo-server sidecar plugin discovery,
+  ambient plugin configuration, ambient plugin environment loading, and plugin
+  credential injection.
 - Live cluster and Argo CD API sources.
 - Live destination cluster existence, sync windows, source integrity
   verification, project-scoped cluster Secrets, and full RBAC simulation.
+
+See [`plugin-policy.md`](plugin-policy.md) for the supported trusted CMP
+compatibility path.
 
 See
 [`reports/live-integration-design-gate.md`](reports/live-integration-design-gate.md)

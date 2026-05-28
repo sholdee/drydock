@@ -59,6 +59,35 @@ func TestDiagPrintsUnsupportedApplicationSetWarning(t *testing.T) {
 	}
 }
 
+func TestDiagReportsPluginSourceFailure(t *testing.T) {
+	root := t.TempDir()
+	writePluginCLIApplication(t, root, "cue", "directory")
+
+	cmd := NewRootCommand(VersionInfo{})
+	cmd.SetArgs([]string{"diag", "--path", root})
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	cmd.SetOut(&stdout)
+	cmd.SetErr(&stderr)
+
+	err := cmd.Execute()
+	if code := commandErrorCode(err); code != 2 {
+		t.Fatalf("error code = %d, want 2; err = %v", code, err)
+	}
+	if stdout.String() != "" {
+		t.Fatalf("stdout = %q, want empty", stdout.String())
+	}
+	for _, want := range []string{
+		"error plugin:",
+		"config management plugin cue is not supported by the default renderer",
+		"no compatible native renderer",
+	} {
+		if !strings.Contains(stderr.String(), want) {
+			t.Fatalf("stderr = %q, want %q", stderr.String(), want)
+		}
+	}
+}
+
 func TestRenderDiagnosticsWithColorColorsWarningAndErrorLabels(t *testing.T) {
 	diags := []diagnostic.Diagnostic{
 		{Severity: diagnostic.SeverityWarning, Category: "settings", Message: "metadata only"},
@@ -361,6 +390,53 @@ metadata:
 	}
 }
 
+func TestDiagJSONOutputIncludesPluginExecutions(t *testing.T) {
+	orchestrator := &recordingCLIOrchestrator{
+		diagResult: app.DiagResult{
+			PluginExecutions: []app.PluginExecution{{
+				AppNamespace: "argocd",
+				AppName:      "plugin-app",
+				SourceIndex:  0,
+				SourcePath:   "manifests/plugin",
+				PluginName:   "exec-renderer",
+				Engine:       "exec",
+				Phase:        "generate",
+				Command:      "argocd-vault-plugin",
+				Duration:     "12ms",
+			}},
+		},
+	}
+	cmd := NewRootCommandWithDependencies(VersionInfo{}, Dependencies{Orchestrator: orchestrator})
+	cmd.SetArgs([]string{"diag", "--path", "ignored", "-o", "json"})
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	cmd.SetOut(&stdout)
+	cmd.SetErr(&stderr)
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("Execute() error = %v\nstdout:\n%s\nstderr:\n%s", err, stdout.String(), stderr.String())
+	}
+	var report struct {
+		PluginExecutions []struct {
+			AppName    string `json:"appName"`
+			PluginName string `json:"pluginName"`
+			Phase      string `json:"phase"`
+			Command    string `json:"command"`
+			Duration   string `json:"duration"`
+		} `json:"pluginExecutions"`
+	}
+	if err := json.Unmarshal(stdout.Bytes(), &report); err != nil {
+		t.Fatalf("json.Unmarshal() error = %v\nstdout:\n%s", err, stdout.String())
+	}
+	if len(report.PluginExecutions) != 1 {
+		t.Fatalf("pluginExecutions = %#v, want one execution", report.PluginExecutions)
+	}
+	execution := report.PluginExecutions[0]
+	if execution.AppName != "plugin-app" || execution.PluginName != "exec-renderer" || execution.Phase != "generate" || execution.Command != "argocd-vault-plugin" || execution.Duration != "12ms" {
+		t.Fatalf("pluginExecutions[0] = %#v, want exec metadata", execution)
+	}
+}
+
 func TestDiagJSONOutputOmitsCacheEventsWithoutFlag(t *testing.T) {
 	root := t.TempDir()
 	chartDir := filepath.Join(t.TempDir(), "demo")
@@ -405,6 +481,9 @@ metadata:
 	}
 	if _, ok := report["cacheEvents"]; ok {
 		t.Fatalf("stdout = %s, want no cacheEvents without --cache-events", stdout.String())
+	}
+	if _, ok := report["pluginExecutions"]; ok {
+		t.Fatalf("stdout = %s, want no pluginExecutions without exec plugin runs", stdout.String())
 	}
 }
 

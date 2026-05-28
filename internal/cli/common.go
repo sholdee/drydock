@@ -12,53 +12,60 @@ import (
 )
 
 type commonFlags struct {
-	path                 string
-	pathOrig             string
-	repo                 string
-	ref                  string
-	refOrig              string
-	selector             string
-	discoveryMode        string
-	maxDiscoveryDepth    int
-	maxDiscoveryDepthSet bool
-	discoverKustomize    []string
-	repoMaps             []string
-	offline              bool
-	refreshCharts        bool
-	chartCacheDir        string
-	gitCacheDir          string
-	refreshGit           bool
-	gitUsername          string
-	gitPassword          string
-	gitBearerToken       string
-	gitSSHKeyFile        string
-	gitSSHPassphrase     string
-	gitKnownHostsFile    string
-	helmUsername         string
-	helmPassword         string
-	helmBearerToken      string
-	registryConfig       string
-	refreshRemotes       bool
-	remoteCacheDir       string
-	remoteUsername       string
-	remotePassword       string
-	remoteBearerToken    string
-	appsetFixtures       []string
-	skipKinds            []string
-	skipCRDs             bool
-	skipSecrets          bool
-	skipLuaHealth        bool
-	changedOnly          bool
-	strictChangedOnly    bool
-	strict               bool
-	exitCode             bool
-	output               string
-	unified              int
-	stripAttrs           []string
-	showIgnoredFields    bool
-	limitBytes           int
-	cacheEvents          bool
-	parallelism          int
+	path                     string
+	pathOrig                 string
+	repo                     string
+	ref                      string
+	refOrig                  string
+	selector                 string
+	discoveryMode            string
+	maxDiscoveryDepth        int
+	maxDiscoveryDepthSet     bool
+	discoverKustomize        []string
+	repoMaps                 []string
+	offline                  bool
+	refreshCharts            bool
+	chartCacheDir            string
+	gitCacheDir              string
+	refreshGit               bool
+	gitUsername              string
+	gitPassword              string
+	gitBearerToken           string
+	gitSSHKeyFile            string
+	gitSSHPassphrase         string
+	gitKnownHostsFile        string
+	helmUsername             string
+	helmPassword             string
+	helmBearerToken          string
+	registryConfig           string
+	refreshRemotes           bool
+	remoteCacheDir           string
+	remoteUsername           string
+	remotePassword           string
+	remoteBearerToken        string
+	enableAVPCompat          bool
+	enablePlugins            bool
+	pluginPolicyPath         string
+	pluginPolicyPathExplicit bool
+	pluginPolicyRef          string
+	pluginPolicyRepo         string
+	disablePluginPolicy      bool
+	appsetFixtures           []string
+	skipKinds                []string
+	skipCRDs                 bool
+	skipSecrets              bool
+	skipLuaHealth            bool
+	changedOnly              bool
+	strictChangedOnly        bool
+	strict                   bool
+	exitCode                 bool
+	output                   string
+	unified                  int
+	stripAttrs               []string
+	showIgnoredFields        bool
+	limitBytes               int
+	cacheEvents              bool
+	parallelism              int
 }
 
 func defaultCommonFlags() commonFlags {
@@ -80,6 +87,7 @@ func bindCommonFlags(cmd *cobra.Command, flags *commonFlags) {
 	bindAcquisitionCacheFlags(cmd, flags)
 	bindAuthFlags(cmd, flags)
 	bindRemoteAcquisitionCacheFlags(cmd, flags)
+	bindPluginFlags(cmd, flags)
 	bindApplicationSetFixtureFlags(cmd, flags)
 	bindFilterFlags(cmd, flags)
 	bindStrictExitFlags(cmd, flags)
@@ -125,6 +133,15 @@ func bindAuthFlags(cmd *cobra.Command, flags *commonFlags) {
 func bindRemoteAcquisitionCacheFlags(cmd *cobra.Command, flags *commonFlags) {
 	cmd.Flags().BoolVar(&flags.refreshRemotes, "refresh-remotes", flags.refreshRemotes, "refresh cached remote Kustomize resources before rendering")
 	cmd.Flags().StringVar(&flags.remoteCacheDir, "remote-cache-dir", flags.remoteCacheDir, "directory for cached remote Kustomize resources")
+}
+
+func bindPluginFlags(cmd *cobra.Command, flags *commonFlags) {
+	cmd.Flags().BoolVar(&flags.enableAVPCompat, "enable-avp-compat", flags.enableAVPCompat, "replace argocd-vault-plugin placeholders with deterministic redacted values")
+	cmd.Flags().BoolVar(&flags.enablePlugins, "enable-plugins", flags.enablePlugins, "enable trusted exec plugin policy entries")
+	cmd.Flags().StringVar(&flags.pluginPolicyPath, "plugin-policy-path", flags.pluginPolicyPath, "trusted plugin policy path relative to the selected policy root")
+	cmd.Flags().StringVar(&flags.pluginPolicyRef, "plugin-policy-ref", flags.pluginPolicyRef, "Git ref to use as the trusted plugin policy source")
+	cmd.Flags().StringVar(&flags.pluginPolicyRepo, "plugin-policy-repo", flags.pluginPolicyRepo, "local Git repository path used to resolve --plugin-policy-ref")
+	cmd.Flags().BoolVar(&flags.disablePluginPolicy, "disable-plugin-policy", flags.disablePluginPolicy, "disable trusted plugin policy loading")
 }
 
 func bindApplicationSetFixtureFlags(cmd *cobra.Command, flags *commonFlags) {
@@ -242,6 +259,13 @@ func requestOptionsFromFlags(flags commonFlags, repoMaps []source.RepoMap) reque
 		RemoteResourceCacheDir:         flags.remoteCacheDir,
 		RemoteResourceCredentials:      flags.remoteCredentials(),
 		RemoteResourceGitCredentials:   flags.remoteGitCredentials(),
+		EnableAVPCompat:                flags.enableAVPCompat,
+		EnablePlugins:                  flags.enablePlugins,
+		PluginPolicyPath:               flags.pluginPolicyPath,
+		PluginPolicyPathExplicit:       flags.pluginPolicyPathExplicit,
+		PluginPolicyRef:                flags.pluginPolicyRef,
+		PluginPolicyRepo:               flags.pluginPolicyRepo,
+		DisablePluginPolicy:            flags.disablePluginPolicy,
 		Parallelism:                    flags.parallelism,
 		ApplicationSetProviderFixtures: append([]string(nil), flags.appsetFixtures...),
 		SkipKinds:                      append([]string(nil), flags.skipKinds...),
@@ -253,6 +277,7 @@ func requestOptionsFromFlags(flags commonFlags, repoMaps []source.RepoMap) reque
 
 func commandAwareFlags(cmd *cobra.Command, flags commonFlags) commonFlags {
 	flags.maxDiscoveryDepthSet = cmd.Flags().Changed("max-discovery-depth")
+	flags.pluginPolicyPathExplicit = cmd.Flags().Changed("plugin-policy-path")
 	return flags
 }
 

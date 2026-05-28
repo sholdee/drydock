@@ -41,6 +41,13 @@ type Options struct {
 	RemoteResourceForbiddenRoots   []string
 	RemoteResourceCredentials      remote.Credentials
 	RemoteResourceGitCredentials   remote.GitCredentials
+	EnableAVPCompat                bool
+	EnablePlugins                  bool
+	PluginPolicyPath               string
+	PluginPolicyPathExplicit       bool
+	PluginPolicyRef                string
+	PluginPolicyRepo               string
+	DisablePluginPolicy            bool
 	PluginTimeout                  time.Duration
 	Parallelism                    int
 	SkipKinds                      []string
@@ -120,7 +127,16 @@ func (options Options) acquisitionOptions() app.AcquisitionOptions {
 }
 
 func (options Options) pluginOptions() app.PluginOptions {
-	return app.PluginOptions{PluginTimeout: options.PluginTimeout}
+	return app.PluginOptions{
+		PluginTimeout:            options.PluginTimeout,
+		EnableAVPCompat:          options.EnableAVPCompat,
+		EnablePlugins:            options.EnablePlugins,
+		PluginPolicyPath:         options.PluginPolicyPath,
+		PluginPolicyPathExplicit: options.PluginPolicyPathExplicit,
+		PluginPolicyRef:          options.PluginPolicyRef,
+		PluginPolicyRepo:         options.PluginPolicyRepo,
+		DisablePluginPolicy:      options.DisablePluginPolicy,
+	}
 }
 
 func (options Options) executionOptions() app.ExecutionOptions {

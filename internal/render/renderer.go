@@ -23,8 +23,13 @@ type ResolvedSource struct {
 type RenderOptions struct {
 	AppName                      string
 	AppNamespace                 string
+	SourceIndex                  int
+	SourceName                   string
 	Project                      string
 	Namespace                    string
+	EnableAVPCompat              bool
+	QuietAVPCompat               bool
+	EnablePlugins                bool
 	Plugin                       *PluginConfig
 	KubeVersion                  string
 	APIVersions                  []string
