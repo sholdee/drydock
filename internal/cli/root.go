@@ -10,9 +10,13 @@ import (
 )
 
 type VersionInfo struct {
-	Version      string
-	Commit       string
-	ArgoCDModule string
+	Version            string
+	Commit             string
+	ArgoCDModule       string
+	GitOpsEngineModule string
+	HelmModule         string
+	KustomizeModule    string
+	KubernetesModule   string
 }
 
 type Dependencies struct {

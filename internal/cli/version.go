@@ -13,14 +13,32 @@ func newVersionCommand(info VersionInfo) *cobra.Command {
 		Short: "Print version information",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			_, err := fmt.Fprintf(cmd.OutOrStdout(),
-				"version: %s\ncommit: %s\ngoVersion: %s\nargocdModule: %s\n",
+			if _, err := fmt.Fprintf(cmd.OutOrStdout(),
+				"version: %s\ncommit: %s\ngoVersion: %s\n",
 				info.Version,
 				info.Commit,
 				runtime.Version(),
-				info.ArgoCDModule,
-			)
-			return err
+			); err != nil {
+				return err
+			}
+			for _, module := range []struct {
+				name  string
+				value string
+			}{
+				{name: "argocdModule", value: info.ArgoCDModule},
+				{name: "gitopsEngineModule", value: info.GitOpsEngineModule},
+				{name: "helmModule", value: info.HelmModule},
+				{name: "kustomizeModule", value: info.KustomizeModule},
+				{name: "kubernetesModule", value: info.KubernetesModule},
+			} {
+				if module.value == "" {
+					continue
+				}
+				if _, err := fmt.Fprintf(cmd.OutOrStdout(), "%s: %s\n", module.name, module.value); err != nil {
+					return err
+				}
+			}
+			return nil
 		},
 	}
 }
