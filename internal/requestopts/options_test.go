@@ -36,6 +36,7 @@ func TestOptionsBuildCopiesSharedFields(t *testing.T) {
 	assertDeepEqual(t, "RemoteResourceCredentials", request.RemoteResourceCredentials, remote.Credentials{Username: "remote-user"})
 	assertDeepEqual(t, "RemoteResourceGitCredentials", request.RemoteResourceGitCredentials, remote.GitCredentials{Username: "remote-git-user"})
 	assertDeepEqual(t, "EnableAVPCompat", request.EnableAVPCompat, true)
+	assertDeepEqual(t, "EnablePlugins", request.EnablePlugins, true)
 	assertDeepEqual(t, "PluginPolicyPath", request.PluginPolicyPath, ".drydock/custom-plugins.yaml")
 	assertDeepEqual(t, "PluginPolicyPathExplicit", request.PluginPolicyPathExplicit, true)
 	assertDeepEqual(t, "PluginPolicyRef", request.PluginPolicyRef, "main")
@@ -92,6 +93,7 @@ func TestOptionsDiffCopiesSharedFields(t *testing.T) {
 	assertDeepEqual(t, "RemoteResourceCredentials", request.RemoteResourceCredentials, remote.Credentials{Username: "remote-user"})
 	assertDeepEqual(t, "RemoteResourceGitCredentials", request.RemoteResourceGitCredentials, remote.GitCredentials{Username: "remote-git-user"})
 	assertDeepEqual(t, "EnableAVPCompat", request.EnableAVPCompat, true)
+	assertDeepEqual(t, "EnablePlugins", request.EnablePlugins, true)
 	assertDeepEqual(t, "PluginPolicyPath", request.PluginPolicyPath, ".drydock/custom-plugins.yaml")
 	assertDeepEqual(t, "PluginPolicyPathExplicit", request.PluginPolicyPathExplicit, true)
 	assertDeepEqual(t, "PluginPolicyRef", request.PluginPolicyRef, "main")
@@ -153,6 +155,7 @@ func fixtureOptions() Options {
 		RemoteResourceCredentials:    remote.Credentials{Username: "remote-user"},
 		RemoteResourceGitCredentials: remote.GitCredentials{Username: "remote-git-user"},
 		EnableAVPCompat:              true,
+		EnablePlugins:                true,
 		PluginPolicyPath:             ".drydock/custom-plugins.yaml",
 		PluginPolicyPathExplicit:     true,
 		PluginPolicyRef:              "main",

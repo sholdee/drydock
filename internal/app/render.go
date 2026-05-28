@@ -45,6 +45,7 @@ func RenderApplication(ctx context.Context, application argoappv1.Application, p
 			return result, fmt.Errorf("%s: %w", renderSourceContext(application, sourcePlan), err)
 		}
 		opts.EnableAVPCompat = pluginOpts.EnableAVPCompat
+		opts.EnablePlugins = pluginOpts.EnablePlugins
 		refRoots, refSources, err := renderRefsForSource(plan, sourcePlan, opts.ValueFiles)
 		if err != nil {
 			return result, fmt.Errorf("%s: %w", renderSourceContext(application, sourcePlan), err)

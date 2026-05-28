@@ -68,6 +68,396 @@ plugins: {}
 	}
 }
 
+func TestParseExecPolicyAppliesDefaults(t *testing.T) {
+	policy, err := Parse("policy.yaml", []byte(`apiVersion: drydock.sholdee.dev/v1alpha1
+kind: PluginPolicy
+plugins:
+  avp-directory-include:
+    engine: exec
+    generate:
+      command: ["argocd-vault-plugin", "generate", "."]
+`))
+	if err != nil {
+		t.Fatalf("Parse() error = %v", err)
+	}
+	plugin, ok := policy.Plugin("avp-directory-include")
+	if !ok {
+		t.Fatal("Plugin() did not find exec plugin")
+	}
+	if plugin.Engine != EngineExec {
+		t.Fatalf("Engine = %q, want %q", plugin.Engine, EngineExec)
+	}
+	if plugin.Exec == nil {
+		t.Fatal("Exec = nil, want config")
+	}
+	if plugin.Exec.Workdir != ExecWorkdirSource {
+		t.Fatalf("Workdir = %q, want %q", plugin.Exec.Workdir, ExecWorkdirSource)
+	}
+	if got := plugin.Exec.Generate.Timeout; got != DefaultGenerateTimeout {
+		t.Fatalf("Generate.Timeout = %s, want %s", got, DefaultGenerateTimeout)
+	}
+	if got := plugin.Exec.Output.MaxStdoutBytes; got != DefaultMaxStdoutBytes {
+		t.Fatalf("MaxStdoutBytes = %d, want %d", got, DefaultMaxStdoutBytes)
+	}
+	if got := plugin.Exec.Output.MaxStderrBytes; got != DefaultMaxStderrBytes {
+		t.Fatalf("MaxStderrBytes = %d, want %d", got, DefaultMaxStderrBytes)
+	}
+}
+
+func TestParseExecPolicyIsRuntimeGateNeutral(t *testing.T) {
+	policy, err := Parse("policy.yaml", []byte(`apiVersion: drydock.sholdee.dev/v1alpha1
+kind: PluginPolicy
+plugins:
+  disabled-at-runtime:
+    engine: exec
+    generate:
+      command: ["argocd-vault-plugin", "generate", "."]
+`))
+	if err != nil {
+		t.Fatalf("Parse() error = %v", err)
+	}
+	plugin, ok := policy.Plugin("disabled-at-runtime")
+	if !ok {
+		t.Fatal("Plugin() did not find exec plugin")
+	}
+	if plugin.Engine != EngineExec || plugin.Exec == nil {
+		t.Fatalf("Plugin() = %#v, want parsed exec plugin", plugin)
+	}
+}
+
+func TestParseExecPolicyExplicitFields(t *testing.T) {
+	policy, err := Parse("policy.yaml", []byte(`apiVersion: drydock.sholdee.dev/v1alpha1
+kind: PluginPolicy
+plugins:
+  renderer:
+    engine: exec
+    workdir: source
+    init:
+      command: ["argocd-vault-plugin", "version"]
+      timeout: 2s
+    generate:
+      command: ["argocd-vault-plugin", "generate", "."]
+      timeout: 3s
+    env:
+      allow: [" OP_CONNECT_HOST ", "AVP_TYPE"]
+    output:
+      maxStdoutBytes: 1024
+      maxStderrBytes: 128
+`))
+	if err != nil {
+		t.Fatalf("Parse() error = %v", err)
+	}
+	plugin, ok := policy.Plugin("renderer")
+	if !ok || plugin.Exec == nil || plugin.Exec.Init == nil {
+		t.Fatalf("Plugin(renderer) = %#v, want exec plugin with init", plugin)
+	}
+	if got := plugin.Exec.Init.Timeout.String(); got != "2s" {
+		t.Fatalf("Init timeout = %s, want 2s", got)
+	}
+	if got := plugin.Exec.Generate.Timeout.String(); got != "3s" {
+		t.Fatalf("Generate timeout = %s, want 3s", got)
+	}
+	if got := strings.Join(plugin.Exec.Env.Allow, ","); got != "AVP_TYPE,OP_CONNECT_HOST" {
+		t.Fatalf("Env allow = %q, want AVP_TYPE,OP_CONNECT_HOST", got)
+	}
+	if plugin.Exec.Output.MaxStdoutBytes != 1024 || plugin.Exec.Output.MaxStderrBytes != 128 {
+		t.Fatalf("Output = %#v, want explicit limits", plugin.Exec.Output)
+	}
+}
+
+func TestParseExecPolicyRejectsUnsafeFields(t *testing.T) {
+	for _, tt := range []struct {
+		name string
+		body string
+		want string
+	}{
+		{
+			name: "missing generate",
+			body: `    engine: exec
+`,
+			want: "missing required field $.plugins.renderer.generate",
+		},
+		{
+			name: "unsupported workdir",
+			body: `    engine: exec
+    workdir: repo
+    generate:
+      command: ["argocd-vault-plugin"]
+`,
+			want: "workdir",
+		},
+		{
+			name: "empty command",
+			body: `    engine: exec
+    generate:
+      command: []
+`,
+			want: "must not be empty",
+		},
+		{
+			name: "empty command token",
+			body: `    engine: exec
+    generate:
+      command: ["argocd-vault-plugin", ""]
+`,
+			want: "must not be empty",
+		},
+		{
+			name: "shell string command value",
+			body: `    engine: exec
+    generate:
+      command: argocd-vault-plugin generate .
+`,
+			want: "must be a sequence",
+		},
+		{
+			name: "non string command token",
+			body: `    engine: exec
+    generate:
+      command: ["argocd-vault-plugin", 1]
+`,
+			want: "must be a string",
+		},
+		{
+			name: "bad duration",
+			body: `    engine: exec
+    generate:
+      command: ["argocd-vault-plugin"]
+      timeout: soon
+`,
+			want: "must be a duration",
+		},
+		{
+			name: "relative command path",
+			body: `    engine: exec
+    generate:
+      command: ["./render.sh"]
+`,
+			want: "basename or absolute path",
+		},
+		{
+			name: "shell command",
+			body: `    engine: exec
+    generate:
+      command: ["sh", "./render.sh"]
+`,
+			want: "not permitted",
+		},
+		{
+			name: "reserved env",
+			body: `    engine: exec
+    generate:
+      command: ["argocd-vault-plugin"]
+    env:
+      allow: ["PATH"]
+`,
+			want: "reserved",
+		},
+		{
+			name: "duplicate env after trim",
+			body: `    engine: exec
+    generate:
+      command: ["argocd-vault-plugin"]
+    env:
+      allow: ["AVP_TYPE", " AVP_TYPE "]
+`,
+			want: "duplicate env name",
+		},
+		{
+			name: "empty env after trim",
+			body: `    engine: exec
+    generate:
+      command: ["argocd-vault-plugin"]
+    env:
+      allow: [" "]
+`,
+			want: "must not be empty",
+		},
+		{
+			name: "non string env value",
+			body: `    engine: exec
+    generate:
+      command: ["argocd-vault-plugin"]
+    env:
+      allow: [1]
+`,
+			want: "must be a string",
+		},
+		{
+			name: "unknown exec field",
+			body: `    engine: exec
+    postRenderers: []
+    generate:
+      command: ["argocd-vault-plugin"]
+`,
+			want: "unknown field",
+		},
+		{
+			name: "bad output limit",
+			body: `    engine: exec
+    generate:
+      command: ["argocd-vault-plugin"]
+    output:
+      maxStdoutBytes: 0
+`,
+			want: "greater than zero",
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := Parse("policy.yaml", []byte(`apiVersion: drydock.sholdee.dev/v1alpha1
+kind: PluginPolicy
+plugins:
+  renderer:
+`+tt.body))
+			if err == nil {
+				t.Fatalf("Parse() succeeded, want error containing %q", tt.want)
+			}
+			if !strings.Contains(err.Error(), tt.want) {
+				t.Fatalf("Parse() error = %v, want substring %q", err, tt.want)
+			}
+		})
+	}
+}
+
+func TestFingerprintExecPolicyIsDeterministic(t *testing.T) {
+	left, err := Parse("policy.yaml", []byte(`apiVersion: drydock.sholdee.dev/v1alpha1
+kind: PluginPolicy
+plugins:
+  zeta:
+    engine: avp-compat
+  renderer:
+    engine: exec
+    generate:
+      timeout: 3s
+      command: ["argocd-vault-plugin", "generate", "."]
+    init:
+      timeout: 2s
+      command: ["argocd-vault-plugin", "version"]
+    env:
+      allow: [" OP_CONNECT_HOST ", "AVP_TYPE"]
+`))
+	if err != nil {
+		t.Fatalf("Parse(left) error = %v", err)
+	}
+	right, err := Parse("policy.yaml", []byte(`kind: PluginPolicy
+apiVersion: drydock.sholdee.dev/v1alpha1
+plugins:
+  renderer:
+    env:
+      allow: ["AVP_TYPE", "OP_CONNECT_HOST"]
+    init:
+      command: ["argocd-vault-plugin", "version"]
+      timeout: 2s
+    generate:
+      command: ["argocd-vault-plugin", "generate", "."]
+      timeout: 3s
+    engine: exec
+  zeta:
+    engine: avp-compat
+`))
+	if err != nil {
+		t.Fatalf("Parse(right) error = %v", err)
+	}
+	leftFingerprint, err := Fingerprint(left)
+	if err != nil {
+		t.Fatalf("Fingerprint(left) error = %v", err)
+	}
+	rightFingerprint, err := Fingerprint(right)
+	if err != nil {
+		t.Fatalf("Fingerprint(right) error = %v", err)
+	}
+	if leftFingerprint != rightFingerprint {
+		t.Fatalf("fingerprints differ:\nleft:  %s\nright: %s", leftFingerprint, rightFingerprint)
+	}
+}
+
+func TestFingerprintIncludesExecFields(t *testing.T) {
+	left, err := Parse("policy.yaml", []byte(`apiVersion: drydock.sholdee.dev/v1alpha1
+kind: PluginPolicy
+plugins:
+  renderer:
+    engine: exec
+    generate:
+      command: ["argocd-vault-plugin", "generate", "."]
+      timeout: 3s
+`))
+	if err != nil {
+		t.Fatalf("Parse(left) error = %v", err)
+	}
+	right, err := Parse("policy.yaml", []byte(`apiVersion: drydock.sholdee.dev/v1alpha1
+kind: PluginPolicy
+plugins:
+  renderer:
+    engine: exec
+    generate:
+      command: ["argocd-vault-plugin", "generate", "."]
+      timeout: 4s
+`))
+	if err != nil {
+		t.Fatalf("Parse(right) error = %v", err)
+	}
+	leftFingerprint, err := Fingerprint(left)
+	if err != nil {
+		t.Fatalf("Fingerprint(left) error = %v", err)
+	}
+	rightFingerprint, err := Fingerprint(right)
+	if err != nil {
+		t.Fatalf("Fingerprint(right) error = %v", err)
+	}
+	if leftFingerprint == rightFingerprint {
+		t.Fatalf("fingerprints match for different exec timeouts: %s", leftFingerprint)
+	}
+}
+
+func TestFingerprintChangesForExecFields(t *testing.T) {
+	base := `apiVersion: drydock.sholdee.dev/v1alpha1
+kind: PluginPolicy
+plugins:
+  renderer:
+    engine: exec
+    init:
+      command: ["argocd-vault-plugin", "version"]
+      timeout: 2s
+    generate:
+      command: ["argocd-vault-plugin", "generate", "."]
+      timeout: 3s
+    env:
+      allow: ["AVP_TYPE"]
+    output:
+      maxStdoutBytes: 1024
+      maxStderrBytes: 128
+`
+	baseFingerprint := mustPolicyFingerprint(t, base)
+	for _, tt := range []struct {
+		name string
+		data string
+	}{
+		{
+			name: "init argv",
+			data: strings.Replace(base, `"version"`, `"--version"`, 1),
+		},
+		{
+			name: "generate argv",
+			data: strings.Replace(base, `"generate"`, `"render"`, 1),
+		},
+		{
+			name: "env allowlist",
+			data: strings.Replace(base, `allow: ["AVP_TYPE"]`, `allow: ["AVP_TYPE", "OP_CONNECT_HOST"]`, 1),
+		},
+		{
+			name: "output limits",
+			data: strings.Replace(base, `maxStdoutBytes: 1024`, `maxStdoutBytes: 2048`, 1),
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			fingerprint := mustPolicyFingerprint(t, tt.data)
+			if fingerprint == baseFingerprint {
+				t.Fatalf("fingerprint did not change for %s: %s", tt.name, fingerprint)
+			}
+		})
+	}
+}
+
 func TestParseRejectsInvalidPolicyShape(t *testing.T) {
 	validHeader := `apiVersion: drydock.sholdee.dev/v1alpha1
 kind: PluginPolicy
@@ -368,4 +758,17 @@ func TestFingerprintRejectsInvalidInputPolicy(t *testing.T) {
 func sha256Hex(value string) string {
 	sum := sha256.Sum256([]byte(value))
 	return hex.EncodeToString(sum[:])
+}
+
+func mustPolicyFingerprint(t *testing.T, data string) string {
+	t.Helper()
+	policy, err := Parse("policy.yaml", []byte(data))
+	if err != nil {
+		t.Fatalf("Parse() error = %v", err)
+	}
+	fingerprint, err := Fingerprint(policy)
+	if err != nil {
+		t.Fatalf("Fingerprint() error = %v", err)
+	}
+	return fingerprint
 }

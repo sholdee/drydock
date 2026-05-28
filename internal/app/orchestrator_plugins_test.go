@@ -2,9 +2,12 @@ package app
 
 import (
 	"context"
+	"fmt"
 	"github.com/sholdee/drydock/internal/config"
 	"github.com/sholdee/drydock/internal/diagnostic"
+	"github.com/sholdee/drydock/internal/pluginpolicy"
 	"github.com/sholdee/drydock/internal/render"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -298,6 +301,154 @@ metadata:
 	}
 	if !hasDiagnosticMessage(result.Diagnostics, "env or parameters") {
 		t.Fatalf("Diagnostics = %#v, want env/parameters rejection", result.Diagnostics)
+	}
+}
+
+func TestOrchestratorBuildRejectsExecPolicyWithoutEnablePlugins(t *testing.T) {
+	root := t.TempDir()
+	writePluginBuildApplication(t, root, "plugin", "exec-renderer")
+	writeExecPluginPolicy(t, root, "exec-renderer", appExecCommand(t, "manifest"))
+
+	result, err := (Orchestrator{}).Build(context.Background(), BuildRequest{Path: root})
+	if err == nil {
+		t.Fatal("Build() error = nil, want exec plugin opt-in failure")
+	}
+	if !hasDiagnosticCode(result.Diagnostics, diagnostic.CodePluginUnsupported) {
+		t.Fatalf("Diagnostics = %#v, want plugin.unsupported", result.Diagnostics)
+	}
+	if !hasDiagnosticMessage(result.Diagnostics, "requires --enable-plugins") {
+		t.Fatalf("Diagnostics = %#v, want enable-plugins guidance", result.Diagnostics)
+	}
+}
+
+func TestOrchestratorBuildRejectsExecPolicyWithoutTrustedRef(t *testing.T) {
+	root := t.TempDir()
+	writePluginBuildApplication(t, root, "plugin", "exec-renderer")
+	writeExecPluginPolicy(t, root, "exec-renderer", appExecCommand(t, "manifest"))
+
+	result, err := (Orchestrator{}).Build(context.Background(), BuildRequest{
+		Path: root,
+		PluginOptions: PluginOptions{
+			EnablePlugins: true,
+		},
+	})
+	if err == nil {
+		t.Fatal("Build() error = nil, want untrusted exec policy failure")
+	}
+	if !hasDiagnosticCode(result.Diagnostics, diagnostic.CodePluginUnsupported) {
+		t.Fatalf("Diagnostics = %#v, want plugin.unsupported", result.Diagnostics)
+	}
+	if !hasDiagnosticMessage(result.Diagnostics, "untrusted policy source") {
+		t.Fatalf("Diagnostics = %#v, want trusted-ref guidance", result.Diagnostics)
+	}
+}
+
+func TestOrchestratorBuildRendersTrustedExecPolicyPlugin(t *testing.T) {
+	root := t.TempDir()
+	writePluginBuildApplication(t, root, "plugin", "exec-renderer")
+	writeTestFile(t, filepath.Join(root, "manifests", "plugin", "marker.txt"), "from-source")
+	t.Setenv("DRYDOCK_APP_EXEC_HELPER", "1")
+	t.Setenv("DRYDOCK_APP_EXEC_VALUE", "allowed-value")
+	policy, fingerprint := testExecPluginPolicy(t, "exec-renderer", appExecCommand(t, "manifest"))
+
+	result, err := (Orchestrator{}).Build(context.Background(), BuildRequest{
+		Path: root,
+		PluginOptions: PluginOptions{
+			EnablePlugins:           true,
+			pluginPolicyLoaded:      true,
+			pluginPolicy:            policy,
+			pluginPolicyFingerprint: fingerprint,
+			pluginPolicyExecTrusted: true,
+		},
+	})
+	if err != nil {
+		t.Fatalf("Build() error = %v\nDiagnostics: %#v", err, result.Diagnostics)
+	}
+	manifest, ok := manifestByName(result.Manifests, "exec-rendered")
+	if !ok {
+		t.Fatalf("Manifests = %#v, want exec-rendered", result.Manifests)
+	}
+	data, ok := manifest.Object.Object["data"].(map[string]any)
+	if !ok {
+		t.Fatalf("data = %#v, want map", manifest.Object.Object["data"])
+	}
+	if data["marker"] != "from-source" || data["env"] != "allowed-value" {
+		t.Fatalf("data = %#v, want source marker and allowed env", data)
+	}
+	if _, err := os.Stat(filepath.Join(root, "manifests", "plugin", "generated.txt")); !os.IsNotExist(err) {
+		t.Fatalf("original source generated.txt exists or unexpected stat error: %v", err)
+	}
+}
+
+func TestOrchestratorBuildReportsInvalidExecPolicyOutput(t *testing.T) {
+	root := t.TempDir()
+	writePluginBuildApplication(t, root, "plugin", "exec-renderer")
+	t.Setenv("DRYDOCK_APP_EXEC_HELPER", "1")
+	policy, fingerprint := testExecPluginPolicy(t, "exec-renderer", appExecCommand(t, "invalid"))
+
+	result, err := (Orchestrator{}).Build(context.Background(), BuildRequest{
+		Path: root,
+		PluginOptions: PluginOptions{
+			EnablePlugins:           true,
+			pluginPolicyLoaded:      true,
+			pluginPolicy:            policy,
+			pluginPolicyFingerprint: fingerprint,
+			pluginPolicyExecTrusted: true,
+		},
+	})
+	if err == nil {
+		t.Fatal("Build() error = nil, want invalid manifest output failure")
+	}
+	if !hasDiagnosticCode(result.Diagnostics, diagnostic.CodePluginFailed) {
+		t.Fatalf("Diagnostics = %#v, want plugin.failed", result.Diagnostics)
+	}
+	if !hasDiagnosticMessage(result.Diagnostics, "produced invalid manifests") {
+		t.Fatalf("Diagnostics = %#v, want invalid manifest diagnostic", result.Diagnostics)
+	}
+}
+
+func TestOrchestratorDiffAppsUsesLeftExecPolicyForBothSides(t *testing.T) {
+	root := t.TempDir()
+	left := filepath.Join(root, "left")
+	right := filepath.Join(root, "right")
+	writePluginBuildApplication(t, left, "plugin", "exec-renderer")
+	writePluginBuildApplication(t, right, "plugin", "exec-renderer")
+	writeExecPluginPolicy(t, left, "exec-renderer", appExecCommand(t, "manifest"))
+	writeTestFile(t, filepath.Join(right, ".drydock", "plugins.yaml"), `apiVersion: v1
+kind: PluginPolicy
+`)
+	writeTestFile(t, filepath.Join(left, "manifests", "plugin", "marker.txt"), "left")
+	writeTestFile(t, filepath.Join(right, "manifests", "plugin", "marker.txt"), "right")
+	t.Setenv("DRYDOCK_APP_EXEC_HELPER", "1")
+
+	result, err := Orchestrator{}.DiffApps(context.Background(), DiffRequest{
+		LeftPath:      left,
+		RightPath:     right,
+		ChangedOnly:   false,
+		Unified:       3,
+		PluginOptions: PluginOptions{EnablePlugins: true},
+	})
+	if err != nil {
+		t.Fatalf("DiffApps() error = %v\nDiagnostics: %#v", err, result.Diagnostics)
+	}
+	if hasDiagnosticCode(result.Diagnostics, diagnostic.CodePluginPolicyInvalid) {
+		t.Fatalf("Diagnostics = %#v, right-side policy should be ignored", result.Diagnostics)
+	}
+	if len(result.Results) != 1 {
+		t.Fatalf("len(Results) = %d, want 1: %#v", len(result.Results), result.Results)
+	}
+}
+
+func TestApplicationRenderCacheDisablesMatchedExecPolicy(t *testing.T) {
+	policy, _ := testExecPluginPolicy(t, "cue", appExecCommand(t, "manifest"))
+	key, err := applicationRenderCacheKey(renderContext{
+		request: BuildRequest{PluginOptions: PluginOptions{pluginPolicy: policy}},
+	}, pluginApplication("plugin"))
+	if err != nil {
+		t.Fatalf("applicationRenderCacheKey() error = %v", err)
+	}
+	if key != "" {
+		t.Fatalf("applicationRenderCacheKey() = %q, want empty key for matched exec policy", key)
 	}
 }
 
@@ -621,6 +772,92 @@ plugins:
   `+name+`:
     engine: `+engine+`
 `)
+}
+
+func writeExecPluginPolicy(t *testing.T, root, name string, command []string) {
+	t.Helper()
+	quoted := make([]string, 0, len(command))
+	for _, arg := range command {
+		quoted = append(quoted, yamlSingleQuoted(arg))
+	}
+	writeTestFile(t, filepath.Join(root, ".drydock", "plugins.yaml"), `apiVersion: drydock.sholdee.dev/v1alpha1
+kind: PluginPolicy
+plugins:
+  `+name+`:
+    engine: exec
+    generate:
+      command: [`+strings.Join(quoted, ", ")+`]
+      timeout: 2s
+    env:
+      allow: ["DRYDOCK_APP_EXEC_HELPER", "DRYDOCK_APP_EXEC_VALUE"]
+`)
+}
+
+func testExecPluginPolicy(t *testing.T, name string, command []string) (pluginpolicy.Policy, string) {
+	t.Helper()
+	root := t.TempDir()
+	writeExecPluginPolicy(t, root, name, command)
+	data, err := os.ReadFile(filepath.Join(root, ".drydock", "plugins.yaml"))
+	if err != nil {
+		t.Fatalf("ReadFile() error = %v", err)
+	}
+	policy, err := pluginpolicy.Parse(".drydock/plugins.yaml", data)
+	if err != nil {
+		t.Fatalf("Parse() error = %v", err)
+	}
+	fingerprint, err := pluginpolicy.Fingerprint(policy)
+	if err != nil {
+		t.Fatalf("Fingerprint() error = %v", err)
+	}
+	return policy, fingerprint
+}
+
+func appExecCommand(t *testing.T, mode string) []string {
+	t.Helper()
+	path, err := filepath.Abs(os.Args[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	return []string{path, "-test.run=TestAppExecPluginHelperProcess", "--", mode}
+}
+
+func yamlSingleQuoted(value string) string {
+	return "'" + strings.ReplaceAll(value, "'", "''") + "'"
+}
+
+func TestAppExecPluginHelperProcess(t *testing.T) {
+	if os.Getenv("DRYDOCK_APP_EXEC_HELPER") != "1" {
+		return
+	}
+	args := os.Args
+	for len(args) > 0 && args[0] != "--" {
+		args = args[1:]
+	}
+	if len(args) < 2 {
+		os.Exit(2)
+	}
+	switch args[1] {
+	case "manifest":
+		marker, _ := os.ReadFile("marker.txt")
+		value := strings.TrimSpace(string(marker))
+		if value == "" {
+			value = "rendered"
+		}
+		_ = os.WriteFile("generated.txt", []byte("temp"), 0o644)
+		fmt.Println("apiVersion: v1")
+		fmt.Println("kind: ConfigMap")
+		fmt.Println("metadata:")
+		fmt.Println("  name: exec-rendered")
+		fmt.Println("data:")
+		fmt.Printf("  marker: %q\n", value)
+		fmt.Printf("  env: %q\n", os.Getenv("DRYDOCK_APP_EXEC_VALUE"))
+		os.Exit(0)
+	case "invalid":
+		fmt.Println("metadata: [")
+		os.Exit(0)
+	default:
+		os.Exit(2)
+	}
 }
 
 func writeNativeKustomizeCMPRawHelmValues(t *testing.T, root, name, version, command, args string) {

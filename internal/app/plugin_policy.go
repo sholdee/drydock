@@ -26,14 +26,17 @@ func ensureBuildPluginPolicy(ctx context.Context, request BuildRequest, root str
 	if request.DisablePluginPolicy {
 		request.pluginPolicyLoaded = true
 		request.pluginPolicyFingerprint = pluginpolicy.NoPolicyFingerprint
+		request.pluginPolicyExecTrusted = false
 		return request, nil, func() {}, nil
 	}
 
 	policyRoot := root
 	cleanup := func() {}
 	requirePolicy := false
+	execTrusted := false
 	if strings.TrimSpace(request.PluginPolicyRef) != "" {
 		requirePolicy = true
+		execTrusted = true
 		repo := strings.TrimSpace(request.PluginPolicyRepo)
 		if repo == "" {
 			repo = root
@@ -52,7 +55,7 @@ func ensureBuildPluginPolicy(ctx context.Context, request BuildRequest, root str
 		cleanup = func() { _ = result.Cleanup() }
 	}
 
-	return loadPluginPolicyFromRoot(request, policyRoot, requirePolicy, cleanup)
+	return loadPluginPolicyFromRoot(request, policyRoot, requirePolicy, execTrusted, cleanup)
 }
 
 func ensureDiffPluginPolicy(ctx context.Context, request DiffRequest) (DiffRequest, []diagnostic.Diagnostic, func(), error) {
@@ -66,14 +69,17 @@ func ensureDiffPluginPolicy(ctx context.Context, request DiffRequest) (DiffReque
 	if request.DisablePluginPolicy {
 		request.pluginPolicyLoaded = true
 		request.pluginPolicyFingerprint = pluginpolicy.NoPolicyFingerprint
+		request.pluginPolicyExecTrusted = false
 		return request, nil, func() {}, nil
 	}
 
 	policyRoot := request.LeftPath
 	cleanup := func() {}
 	requirePolicy := false
+	execTrusted := diffPluginPolicyExecTrusted(request)
 	if strings.TrimSpace(request.PluginPolicyRef) != "" {
 		requirePolicy = true
+		execTrusted = true
 		repo := strings.TrimSpace(request.PluginPolicyRepo)
 		if repo == "" {
 			repo = strings.TrimSpace(request.Repo)
@@ -96,12 +102,12 @@ func ensureDiffPluginPolicy(ctx context.Context, request DiffRequest) (DiffReque
 	}
 
 	buildRequest := BuildRequest{PluginOptions: request.PluginOptions}
-	buildRequest, diags, loadCleanup, err := loadPluginPolicyFromRoot(buildRequest, policyRoot, requirePolicy, cleanup)
+	buildRequest, diags, loadCleanup, err := loadPluginPolicyFromRoot(buildRequest, policyRoot, requirePolicy, execTrusted, cleanup)
 	request.PluginOptions = buildRequest.PluginOptions
 	return request, diags, loadCleanup, err
 }
 
-func loadPluginPolicyFromRoot(request BuildRequest, root string, requirePolicy bool, cleanup func()) (BuildRequest, []diagnostic.Diagnostic, func(), error) {
+func loadPluginPolicyFromRoot(request BuildRequest, root string, requirePolicy bool, execTrusted bool, cleanup func()) (BuildRequest, []diagnostic.Diagnostic, func(), error) {
 	policy, fingerprint, ok, err := loadPluginPolicyFile(root, request.PluginOptions, requirePolicy)
 	if err != nil {
 		diag := pluginPolicyInvalidDiagnostic(err)
@@ -111,10 +117,42 @@ func loadPluginPolicyFromRoot(request BuildRequest, root string, requirePolicy b
 	if ok {
 		request.pluginPolicy = policy
 		request.pluginPolicyFingerprint = fingerprint
+		request.pluginPolicyExecTrusted = execTrusted
 	} else {
 		request.pluginPolicyFingerprint = pluginpolicy.NoPolicyFingerprint
+		request.pluginPolicyExecTrusted = false
 	}
 	return request, nil, cleanup, nil
+}
+
+func diffPluginPolicyExecTrusted(request DiffRequest) bool {
+	if strings.TrimSpace(request.RefOrig) != "" {
+		return true
+	}
+	return pathsDiffer(request.LeftPath, request.RightPath)
+}
+
+func pathsDiffer(left, right string) bool {
+	left = strings.TrimSpace(left)
+	right = strings.TrimSpace(right)
+	if left == "" || right == "" {
+		return false
+	}
+	leftAbs, err := filepath.Abs(left)
+	if err != nil {
+		return false
+	}
+	rightAbs, err := filepath.Abs(right)
+	if err != nil {
+		return false
+	}
+	if resolved, err := filepath.EvalSymlinks(leftAbs); err == nil {
+		leftAbs = resolved
+	}
+	if resolved, err := filepath.EvalSymlinks(rightAbs); err == nil {
+		rightAbs = resolved
+	}
+	return filepath.Clean(leftAbs) != filepath.Clean(rightAbs)
 }
 
 func loadPluginPolicyFile(root string, options PluginOptions, requirePolicy bool) (pluginpolicy.Policy, string, bool, error) {

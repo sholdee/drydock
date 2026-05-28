@@ -41,7 +41,7 @@ func TestRepresentativeCommandsExposeFocusedFlagGroups(t *testing.T) {
 		{
 			name:    "build apps common acquisition discovery fixtures filters",
 			command: []string{"build", "apps"},
-			flags:   []string{"offline", "repo-map", "enable-avp-compat", "plugin-policy-path", "plugin-policy-ref", "plugin-policy-repo", "appset-provider-fixture", "skip-kind"},
+			flags:   []string{"offline", "repo-map", "enable-avp-compat", "enable-plugins", "plugin-policy-path", "plugin-policy-ref", "plugin-policy-repo", "appset-provider-fixture", "skip-kind"},
 		},
 		{
 			name:    "diff apps common specialized diff flags",

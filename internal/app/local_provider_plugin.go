@@ -1,11 +1,15 @@
 package app
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
+	"path/filepath"
 
 	"github.com/sholdee/drydock/internal/diagnostic"
+	"github.com/sholdee/drydock/internal/manifest"
+	"github.com/sholdee/drydock/internal/pluginexec"
 	"github.com/sholdee/drydock/internal/pluginpolicy"
 	"github.com/sholdee/drydock/internal/render"
 
@@ -77,19 +81,14 @@ func (p localProvider) renderPolicyPluginSource(ctx context.Context, source rend
 	if !ok {
 		return nil, nil, false, nil
 	}
-	if len(opts.Plugin.Env) > 0 || len(opts.Plugin.Parameters) > 0 {
-		message := fmt.Sprintf("config management plugin %s uses env or parameters, which are unsupported by trusted native plugin policy", pluginDisplayName(name))
-		return nil, unsupportedPluginDiagnostic(message), true, unsupportedPolicyPluginError(message)
-	}
-	if source.Path == "" && source.Chart == "" {
-		message := fmt.Sprintf("config management plugin %s must define path or chart for trusted native plugin policy", pluginDisplayName(name))
-		return nil, unsupportedPluginDiagnostic(message), true, unsupportedPolicyPluginError(message)
-	}
-	if source.Path != "" && source.Chart != "" {
-		message := fmt.Sprintf("config management plugin %s cannot define both path and chart for trusted native plugin policy", pluginDisplayName(name))
+	if message := validatePolicyPluginSource(name, source, opts); message != "" {
 		return nil, unsupportedPluginDiagnostic(message), true, unsupportedPolicyPluginError(message)
 	}
 
+	return p.renderMatchedPolicyPluginSource(ctx, source, opts, name, policyPlugin)
+}
+
+func (p localProvider) renderMatchedPolicyPluginSource(ctx context.Context, source render.ResolvedSource, opts render.RenderOptions, name string, policyPlugin pluginpolicy.Plugin) ([]render.Manifest, []diagnostic.Diagnostic, bool, error) {
 	switch policyPlugin.Engine {
 	case pluginpolicy.EngineAVPCompat:
 		return p.renderAVPCompatPolicyPluginSource(ctx, source, opts)
@@ -104,10 +103,33 @@ func (p localProvider) renderPolicyPluginSource(ctx context.Context, source rend
 		}
 		message := fmt.Sprintf("config management plugin %s is permitted by policy but no compatible native Kustomize plugin settings were discovered", pluginDisplayName(name))
 		return nil, unsupportedPluginDiagnostic(message), true, unsupportedPolicyPluginError(message)
+	case pluginpolicy.EngineExec:
+		if !opts.EnablePlugins {
+			message := fmt.Sprintf("config management plugin %s uses exec policy, which requires --enable-plugins", pluginDisplayName(name))
+			return nil, unsupportedPluginDiagnostic(message), true, unsupportedPolicyPluginError(message)
+		}
+		if !p.pluginPolicyExecTrusted {
+			message := fmt.Sprintf("config management plugin %s uses exec policy from an untrusted policy source; use --plugin-policy-ref for single-tree commands", pluginDisplayName(name))
+			return nil, unsupportedPluginDiagnostic(message), true, unsupportedPolicyPluginError(message)
+		}
+		return p.renderExecPolicyPluginSource(ctx, source, opts, name, policyPlugin)
 	default:
 		message := fmt.Sprintf("config management plugin %s has unsupported trusted policy engine %q", pluginDisplayName(name), policyPlugin.Engine)
 		return nil, unsupportedPluginDiagnostic(message), true, unsupportedPolicyPluginError(message)
 	}
+}
+
+func validatePolicyPluginSource(name string, source render.ResolvedSource, opts render.RenderOptions) string {
+	if len(opts.Plugin.Env) > 0 || len(opts.Plugin.Parameters) > 0 {
+		return fmt.Sprintf("config management plugin %s uses env or parameters, which are unsupported by trusted native plugin policy", pluginDisplayName(name))
+	}
+	if source.Path == "" && source.Chart == "" {
+		return fmt.Sprintf("config management plugin %s must define path or chart for trusted native plugin policy", pluginDisplayName(name))
+	}
+	if source.Path != "" && source.Chart != "" {
+		return fmt.Sprintf("config management plugin %s cannot define both path and chart for trusted native plugin policy", pluginDisplayName(name))
+	}
+	return ""
 }
 
 func (p localProvider) renderAVPCompatPolicyPluginSource(ctx context.Context, source render.ResolvedSource, opts render.RenderOptions) ([]render.Manifest, []diagnostic.Diagnostic, bool, error) {
@@ -139,6 +161,60 @@ func (p localProvider) renderAVPCompatPolicyPluginSource(ctx context.Context, so
 		applyAVPCompatToManifest(&manifests[i], nativeOptions)
 	}
 	return manifests, diags, true, nil
+}
+
+func (p localProvider) renderExecPolicyPluginSource(ctx context.Context, source render.ResolvedSource, opts render.RenderOptions, name string, policyPlugin pluginpolicy.Plugin) ([]render.Manifest, []diagnostic.Diagnostic, bool, error) {
+	if source.Chart != "" {
+		message := fmt.Sprintf("config management plugin %s uses chart source, which is unsupported by exec policy", pluginDisplayName(name))
+		return nil, unsupportedPluginDiagnostic(message), true, unsupportedPolicyPluginError(message)
+	}
+	if source.Path == "" {
+		message := fmt.Sprintf("config management plugin %s must define path for exec policy", pluginDisplayName(name))
+		return nil, unsupportedPluginDiagnostic(message), true, unsupportedPolicyPluginError(message)
+	}
+	if policyPlugin.Exec == nil {
+		message := fmt.Sprintf("config management plugin %s has invalid exec policy", pluginDisplayName(name))
+		return nil, unsupportedPluginDiagnostic(message), true, unsupportedPolicyPluginError(message)
+	}
+	sourcePath, err := cleanLocalSourcePath(source.Path)
+	if err != nil {
+		return nil, nil, true, err
+	}
+	if err := rejectLocalSymlinkComponents(source.RepoRoot, sourcePath); err != nil {
+		return nil, nil, true, err
+	}
+	sourceDir := filepath.Join(source.RepoRoot, sourcePath)
+	result, err := (pluginexec.DefaultRunner{}).Run(ctx, pluginexec.Request{
+		SourceDir:      sourceDir,
+		Config:         *policyPlugin.Exec,
+		ProtectedRoots: p.execProtectedRoots(source.RepoRoot),
+	})
+	if err != nil {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return nil, nil, true, ctxErr
+		}
+		message := fmt.Sprintf("config management plugin %s failed: %s", pluginDisplayName(name), err)
+		return nil, []diagnostic.Diagnostic{pluginFailedDiagnostic(message)}, true, fmt.Errorf("%s: %w", message, err)
+	}
+	docs, err := manifest.DecodeDocuments("plugin/"+pluginDisplayName(name)+"/stdout", bytes.NewReader(result.Stdout))
+	if err != nil {
+		message := fmt.Sprintf("config management plugin %s produced invalid manifests: %s", pluginDisplayName(name), err)
+		return nil, []diagnostic.Diagnostic{pluginFailedDiagnostic(message)}, true, fmt.Errorf("%s: %w", message, err)
+	}
+	manifests := make([]render.Manifest, 0, len(docs))
+	for _, doc := range docs {
+		manifests = append(manifests, render.Manifest{
+			Path:   doc.Path,
+			Object: doc.Object,
+		})
+	}
+	return manifests, nil, true, nil
+}
+
+func (p localProvider) execProtectedRoots(sourceRoot string) []string {
+	roots := append([]string(nil), p.remoteResourceForbiddenRoots...)
+	roots = append(roots, p.repoRoot, sourceRoot, p.chartCacheDir, p.gitCacheDir, p.remoteResourceCacheDir)
+	return compactStrings(roots...)
 }
 
 func unsupportedPluginDiagnostic(message string) []diagnostic.Diagnostic {

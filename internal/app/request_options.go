@@ -48,6 +48,7 @@ type ApplicationSetOptions struct {
 type PluginOptions struct {
 	PluginTimeout            time.Duration
 	EnableAVPCompat          bool
+	EnablePlugins            bool
 	PluginPolicyPath         string
 	PluginPolicyPathExplicit bool
 	PluginPolicyRef          string
@@ -57,6 +58,7 @@ type PluginOptions struct {
 	pluginPolicyLoaded      bool
 	pluginPolicy            pluginpolicy.Policy
 	pluginPolicyFingerprint string
+	pluginPolicyExecTrusted bool
 }
 
 type ExecutionOptions struct {

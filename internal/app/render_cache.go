@@ -10,6 +10,7 @@ import (
 
 	argoappv1 "github.com/argoproj/argo-cd/v3/pkg/apis/application/v1alpha1"
 	"github.com/sholdee/drydock/internal/diagnostic"
+	"github.com/sholdee/drydock/internal/pluginpolicy"
 	"github.com/sholdee/drydock/internal/render"
 	sourcepkg "github.com/sholdee/drydock/internal/source"
 )
@@ -136,6 +137,9 @@ type renderContext struct {
 }
 
 func applicationRenderCacheKey(ctx renderContext, application argoappv1.Application) (string, error) {
+	if applicationUsesMatchedExecPolicy(application, ctx.request.pluginPolicy) {
+		return "", nil
+	}
 	input := struct {
 		Root                    string                      `json:"root"`
 		Application             applicationRenderCacheInput `json:"application"`
@@ -150,6 +154,7 @@ func applicationRenderCacheKey(ctx renderContext, application argoappv1.Applicat
 		RemoteResourceCacheDir  string                      `json:"remoteResourceCacheDir,omitempty"`
 		PluginTimeout           string                      `json:"pluginTimeout,omitempty"`
 		EnableAVPCompat         bool                        `json:"enableAVPCompat,omitempty"`
+		EnablePlugins           bool                        `json:"enablePlugins,omitempty"`
 		PluginPolicyFingerprint string                      `json:"pluginPolicyFingerprint,omitempty"`
 		HasInjectedPluginRender bool                        `json:"hasInjectedPluginRender"`
 	}{
@@ -166,6 +171,7 @@ func applicationRenderCacheKey(ctx renderContext, application argoappv1.Applicat
 		RemoteResourceCacheDir:  ctx.request.RemoteResourceCacheDir,
 		PluginTimeout:           ctx.request.PluginTimeout.String(),
 		EnableAVPCompat:         ctx.request.EnableAVPCompat,
+		EnablePlugins:           ctx.request.EnablePlugins,
 		PluginPolicyFingerprint: ctx.request.pluginPolicyFingerprint,
 		HasInjectedPluginRender: ctx.request.PluginRenderer != nil,
 	}
@@ -175,6 +181,23 @@ func applicationRenderCacheKey(ctx renderContext, application argoappv1.Applicat
 	}
 	sum := sha256.Sum256(data)
 	return hex.EncodeToString(sum[:]), nil
+}
+
+func applicationUsesMatchedExecPolicy(application argoappv1.Application, policy pluginpolicy.Policy) bool {
+	sources := application.Spec.Sources
+	if len(sources) == 0 && application.Spec.Source != nil {
+		sources = argoappv1.ApplicationSources{*application.Spec.Source}
+	}
+	for _, source := range sources {
+		if source.Plugin == nil {
+			continue
+		}
+		plugin, ok := policy.Plugin(source.Plugin.Name)
+		if ok && plugin.Engine == pluginpolicy.EngineExec {
+			return true
+		}
+	}
+	return false
 }
 
 type applicationRenderCacheInput struct {

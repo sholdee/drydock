@@ -42,6 +42,7 @@ type Options struct {
 	RemoteResourceCredentials      remote.Credentials
 	RemoteResourceGitCredentials   remote.GitCredentials
 	EnableAVPCompat                bool
+	EnablePlugins                  bool
 	PluginPolicyPath               string
 	PluginPolicyPathExplicit       bool
 	PluginPolicyRef                string
@@ -129,6 +130,7 @@ func (options Options) pluginOptions() app.PluginOptions {
 	return app.PluginOptions{
 		PluginTimeout:            options.PluginTimeout,
 		EnableAVPCompat:          options.EnableAVPCompat,
+		EnablePlugins:            options.EnablePlugins,
 		PluginPolicyPath:         options.PluginPolicyPath,
 		PluginPolicyPathExplicit: options.PluginPolicyPathExplicit,
 		PluginPolicyRef:          options.PluginPolicyRef,

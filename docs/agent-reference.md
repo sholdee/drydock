@@ -49,13 +49,16 @@ Public API rules:
   contract.
 
 Config management plugin sources fail closed by default. CLI/default paths do
-not execute plugin commands. Native plugin interpretation is allowed only when
-a trusted plugin policy maps the plugin name to a native engine such as
-`avp-compat` or `native-kustomize`; discovered Kustomize CMP definitions are
-not ambiently trusted. Public API plugin rendering is allowed only through
-explicit in-process `Config.PluginRenderer` or registry injection. Preserve
-`plugin.unsupported`, `plugin.failed`, and `plugin.unspecified` diagnostics,
-and do not reclassify caller cancellation as plugin timeout.
+not execute plugin commands unless a trusted drydock plugin policy maps the
+plugin name to `engine: exec` and the caller explicitly sets
+`--enable-plugins`. Native plugin interpretation is allowed only when a trusted
+plugin policy maps the plugin name to a native engine such as `avp-compat` or
+`native-kustomize`; discovered Kustomize CMP definitions are not ambiently
+trusted. Exec command definitions must come from baseline/trusted policy
+provenance, not from the current PR tree. Public API plugin rendering is allowed
+only through explicit in-process `Config.PluginRenderer` or registry injection.
+Preserve `plugin.unsupported`, `plugin.failed`, and `plugin.unspecified`
+diagnostics, and do not reclassify caller cancellation as plugin timeout.
 
 ## Settings And Project Discovery
 

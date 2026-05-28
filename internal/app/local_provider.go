@@ -39,6 +39,7 @@ type localProvider struct {
 	pluginTimeout                time.Duration
 	pluginPolicy                 pluginpolicy.Policy
 	pluginPolicyFingerprint      string
+	pluginPolicyExecTrusted      bool
 	kustomizeBuildOptions        []string
 	configManagementPlugins      map[string]config.ConfigManagementPlugin
 	cacheEvents                  *cacheevent.Recorder

@@ -150,7 +150,9 @@ drydock discovers and renders local Argo CD desired state, including:
   Kustomize sources.
 - Trusted plugin policy entries for native `avp-compat` placeholder redaction
   and native-compatible Kustomize build config management plugins, without
-  executing plugin commands.
+  executing plugin commands by default.
+- Explicit trusted exec plugin policy support with `--enable-plugins` for
+  operators who need shellout CMP compatibility.
 - Declared Git, HTTP Helm, OCI Helm, and remote Kustomize source acquisition
   into local caches.
 - Fast cache-backed repeated runs for local development and CI.
@@ -189,7 +191,8 @@ Default commands do not reproduce:
 - Live Argo CD Application health aggregation.
 - Live-only managed-field ownership.
 - Full Argo CD RBAC authorization.
-- CLI config management plugin execution or shellout plugin adapters.
+- CLI config management plugin execution or shellout plugin adapters unless an
+  explicit trusted exec plugin policy is enabled.
 
 Plugin-backed sources fail closed unless an embedding caller injects an
 in-process renderer or a trusted `.drydock/plugins.yaml` policy maps that
@@ -197,7 +200,9 @@ plugin name to a native drydock engine. Native Kustomize CMP interpretation is
 policy-gated; drydock does not treat discovered CMP commands as ambiently
 trusted.
 Use `--plugin-policy-path`, `--plugin-policy-ref`, and `--plugin-policy-repo`
-when CI should load policy from a trusted path or Git ref.
+when CI should load policy from a trusted path or Git ref. Use
+`--enable-plugins` only when that trusted policy contains `engine: exec`
+entries that should run local commands.
 
 These behaviors are not silently approximated. The no-live-runtime boundary is
 an intentional product decision so the default cache-backed workflow stays

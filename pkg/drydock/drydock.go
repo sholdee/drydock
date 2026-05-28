@@ -42,6 +42,7 @@ type Config struct {
 	RemoteResourceForbiddenRoots   []string
 	RemoteResourceCredentials      RemoteResourceCredentials
 	EnableAVPCompat                bool
+	EnablePlugins                  bool
 	PluginPolicyPath               string
 	PluginPolicyPathExplicit       bool
 	PluginPolicyRef                string
@@ -210,6 +211,7 @@ func (client *Client) requestOptions() requestopts.Options {
 		RemoteResourceCredentials:      remoteResourceCredentialsToInternal(client.config.RemoteResourceCredentials),
 		RemoteResourceGitCredentials:   gitCredentialsToRemoteInternal(client.config.GitCredentials),
 		EnableAVPCompat:                client.config.EnableAVPCompat,
+		EnablePlugins:                  client.config.EnablePlugins,
 		PluginPolicyPath:               client.config.PluginPolicyPath,
 		PluginPolicyPathExplicit:       client.config.PluginPolicyPathExplicit,
 		PluginPolicyRef:                client.config.PluginPolicyRef,

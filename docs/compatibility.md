@@ -138,6 +138,10 @@ Supported:
   discovered native-compatible Kustomize build CMP definitions to render
   through the Go-native Kustomize renderer without executing the plugin
   command.
+- Trusted `.drydock/plugins.yaml` policy entries with `engine: exec` when
+  callers explicitly pass `--enable-plugins`. Exec plugins run local commands
+  from a copied source workspace and are never discovered from Argo CD
+  repo-server sidecars or ambient CMP configuration.
 - Config management plugin source detection with fail-closed diagnostics in
   the CLI and default Go client.
 - Injectable in-process plugin renderers, named plugin registry dispatch, and
@@ -145,8 +149,9 @@ Supported:
 
 Not supported:
 
-- Arbitrary CLI config management plugin execution.
-- Shellout plugin adapters or plugin command execution.
+- Arbitrary CLI config management plugin execution outside trusted
+  `engine: exec` policy plus `--enable-plugins`.
+- Shellout plugin adapters or plugin command execution by default.
 - Argo CD repo-server sidecar plugin discovery.
 - Ambient plugin configuration or environment loading.
 - Plugin credential injection.
