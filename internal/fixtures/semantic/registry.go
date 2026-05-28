@@ -28,8 +28,8 @@ func Cases() []Case {
 			Phase:             "1",
 			Category:          "source-selection",
 			FixturePath:       "testdata/semantic-remediation/source-selection/explicit-conflict",
-			Status:            StatusPending,
-			Reason:            "R1 source conflict validation is not implemented yet.",
+			Status:            StatusActive,
+			Reason:            "R1 source conflict validation is covered by Phase 1 tests.",
 			VerificationScope: "go test ./internal/app -run ExplicitSource",
 		},
 		{
@@ -37,8 +37,8 @@ func Cases() []Case {
 			Phase:             "1",
 			Category:          "source-selection",
 			FixturePath:       "testdata/semantic-remediation/source-selection/explicit-directory",
-			Status:            StatusPending,
-			Reason:            "R2 explicit directory source selection is not implemented yet.",
+			Status:            StatusActive,
+			Reason:            "R2 explicit directory source selection is covered by Phase 1 tests.",
 			VerificationScope: "go test ./internal/app ./internal/render -run ExplicitSource",
 		},
 		{
@@ -46,8 +46,8 @@ func Cases() []Case {
 			Phase:             "1",
 			Category:          "source-selection",
 			FixturePath:       "testdata/semantic-remediation/source-selection/discovery-precedence",
-			Status:            StatusPending,
-			Reason:            "R3 discovery precedence decision is unresolved.",
+			Status:            StatusActive,
+			Reason:            "R3 discovery precedence is covered by Phase 1 tests.",
 			VerificationScope: "go test ./internal/app -run DiscoveryPrecedence",
 		},
 		{
@@ -55,8 +55,8 @@ func Cases() []Case {
 			Phase:             "1",
 			Category:          "source-overrides",
 			FixturePath:       "testdata/semantic-remediation/source-overrides/basic",
-			Status:            StatusPending,
-			Reason:            "R5 source override loading is not implemented yet.",
+			Status:            StatusActive,
+			Reason:            "R5 source override loading is covered by Phase 1 tests.",
 			VerificationScope: "go test ./internal/app -run ArgocdSource",
 		},
 		{

@@ -18,6 +18,7 @@ type ResolvedSource struct {
 	Chart          string
 	RepoURL        string
 	TargetRevision string
+	ExplicitType   argoappv1.ApplicationSourceType
 }
 
 type RenderOptions struct {

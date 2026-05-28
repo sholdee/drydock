@@ -27,6 +27,10 @@ func (s StaticRenderers) RenderSource(_ context.Context, source render.ResolvedS
 	return s[source.Path], nil, nil
 }
 
+type sourcePreparer interface {
+	PrepareSource(ctx context.Context, application argoappv1.Application, sourcePlan SourcePlan) (SourcePlan, error)
+}
+
 func RenderApplication(ctx context.Context, application argoappv1.Application, provider render.Provider, pluginOptions ...PluginOptions) (RenderResult, error) {
 	plan, err := Plan(application)
 	if err != nil {
@@ -39,6 +43,13 @@ func RenderApplication(ctx context.Context, application argoappv1.Application, p
 	for _, sourcePlan := range plan.Sources {
 		if sourcePlan.RefOnly {
 			continue
+		}
+		if preparer, ok := provider.(sourcePreparer); ok {
+			prepared, err := preparer.PrepareSource(ctx, application, sourcePlan)
+			if err != nil {
+				return result, fmt.Errorf("%s: %w", renderSourceContext(application, sourcePlan), err)
+			}
+			sourcePlan = prepared
 		}
 
 		opts, err := renderOptions(application, sourcePlan.Source)
@@ -56,10 +67,12 @@ func RenderApplication(ctx context.Context, application argoappv1.Application, p
 		opts.RefRoots = mergeRefRoots(opts.RefRoots, refRoots)
 		opts.RefSources = refSources
 		manifests, diags, err := provider.RenderSource(ctx, render.ResolvedSource{
+			RepoRoot:       sourcePlan.SourceRoot,
 			Path:           sourcePlan.Source.Path,
 			Chart:          sourcePlan.Source.Chart,
 			RepoURL:        sourcePlan.Source.RepoURL,
 			TargetRevision: sourcePlan.Source.TargetRevision,
+			ExplicitType:   sourcePlan.ExplicitType,
 		}, opts)
 		result.Diagnostics = append(result.Diagnostics, sourceDiagnostics(application, sourcePlan, diags)...)
 		if err != nil {
@@ -237,15 +250,18 @@ func renderRefsForSource(plan PlanResult, sourcePlan SourcePlan, valueFiles []st
 		}
 		if candidate, ok := planSameRepoPathSource(plan, refSource); ok {
 			refSources[refKey] = render.ResolvedSource{
+				RepoRoot:       candidate.SourceRoot,
 				Path:           candidate.Source.Path,
 				RepoURL:        candidate.Source.RepoURL,
 				TargetRevision: candidate.Source.TargetRevision,
+				ExplicitType:   candidate.ExplicitType,
 			}
 			continue
 		}
 		refSources[refKey] = render.ResolvedSource{
 			RepoURL:        refSource.Source.RepoURL,
 			TargetRevision: refSource.Source.TargetRevision,
+			ExplicitType:   refSource.ExplicitType,
 		}
 	}
 	return refRoots, refSources, nil

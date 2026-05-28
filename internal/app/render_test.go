@@ -605,6 +605,126 @@ func TestLocalProviderRejectsAbsoluteRefRoots(t *testing.T) {
 	}
 }
 
+func TestRenderApplicationUsesExplicitDirectoryRenderer(t *testing.T) {
+	root := t.TempDir()
+	writeDirectorySelectionFixture(t, filepath.Join(root, "apps", "demo"))
+	application := rendererSelectionApplication("demo", argoappv1.ApplicationSource{
+		RepoURL:   "https://repo",
+		Path:      "apps/demo",
+		Directory: &argoappv1.ApplicationSourceDirectory{},
+	})
+
+	result, err := RenderApplication(context.Background(), application, localProvider{repoRoot: root})
+	if err != nil {
+		t.Fatalf("RenderApplication() error = %v", err)
+	}
+	if _, ok := manifestByName(result.Manifests, "directory-only"); !ok {
+		t.Fatalf("manifests = %#v, want directory-only manifest from directory renderer", result.Manifests)
+	}
+}
+
+func TestRenderApplicationUsesExplicitLocalHelmRenderer(t *testing.T) {
+	root := t.TempDir()
+	writeRendererSelectionFixture(t, filepath.Join(root, "apps", "demo"))
+	application := rendererSelectionApplication("demo", argoappv1.ApplicationSource{
+		RepoURL: "https://repo",
+		Path:    "apps/demo",
+		Helm:    &argoappv1.ApplicationSourceHelm{},
+	})
+
+	result, err := RenderApplication(context.Background(), application, localProvider{repoRoot: root})
+	if err != nil {
+		t.Fatalf("RenderApplication() error = %v", err)
+	}
+	if _, ok := manifestByName(result.Manifests, "demo"); !ok {
+		t.Fatalf("manifests = %#v, want Helm release manifest", result.Manifests)
+	}
+	if _, ok := manifestByName(result.Manifests, "kustomize-only"); ok {
+		t.Fatalf("manifests = %#v, explicit Helm source rendered as Kustomize", result.Manifests)
+	}
+}
+
+func TestRenderApplicationDiscoveryPrefersKustomizeOverChart(t *testing.T) {
+	root := t.TempDir()
+	writeRendererSelectionFixture(t, filepath.Join(root, "apps", "demo"))
+	application := rendererSelectionApplication("demo", argoappv1.ApplicationSource{
+		RepoURL: "https://repo",
+		Path:    "apps/demo",
+	})
+
+	result, err := RenderApplication(context.Background(), application, localProvider{repoRoot: root})
+	if err != nil {
+		t.Fatalf("RenderApplication() error = %v", err)
+	}
+	if _, ok := manifestByName(result.Manifests, "kustomize-only"); !ok {
+		t.Fatalf("manifests = %#v, want Kustomize manifest", result.Manifests)
+	}
+	if _, ok := manifestByName(result.Manifests, "demo"); ok {
+		t.Fatalf("manifests = %#v, mixed source rendered as Helm", result.Manifests)
+	}
+}
+
+func TestRenderApplicationAppliesArgocdSourceOverridesBeforeRendering(t *testing.T) {
+	root := t.TempDir()
+	writeSourceOverrideChart(t, filepath.Join(root, "apps", "demo"), "demo")
+	writeSourceOverrideChart(t, filepath.Join(root, "apps", "other"), "other")
+	writeAppTestFile(t, filepath.Join(root, "apps", "demo", ".argocd-source.yaml"), `
+path: apps/other
+repoURL: https://other.example.invalid/repo.git
+targetRevision: ignored
+helm:
+  values: |
+    message: global
+`)
+	writeAppTestFile(t, filepath.Join(root, "apps", "demo", ".argocd-source-demo.yaml"), `
+chart: ignored
+helm:
+  values: |
+    message: app-specific
+`)
+	application := rendererSelectionApplication("demo", argoappv1.ApplicationSource{
+		RepoURL: "https://repo.example.invalid/repo.git",
+		Path:    "apps/demo",
+	})
+
+	result, err := RenderApplication(context.Background(), application, localProvider{repoRoot: root})
+	if err != nil {
+		t.Fatalf("RenderApplication() error = %v", err)
+	}
+	manifest := assertManifestNamed(t, result.Manifests, "demo")
+	message, _, _ := unstructured.NestedString(manifest.Object.Object, "data", "message")
+	if message != "app-specific" {
+		t.Fatalf("data.message = %q, want app-specific", message)
+	}
+	sourcePath, _, _ := unstructured.NestedString(manifest.Object.Object, "data", "sourcePath")
+	if sourcePath != "demo" {
+		t.Fatalf("data.sourcePath = %q, want original path chart", sourcePath)
+	}
+}
+
+func TestRenderApplicationRejectsArgocdSourceOverrideExplicitTypeConflict(t *testing.T) {
+	root := t.TempDir()
+	writeDirectorySelectionFixture(t, filepath.Join(root, "apps", "demo"))
+	writeAppTestFile(t, filepath.Join(root, "apps", "demo", ".argocd-source.yaml"), `
+helm:
+  values: |
+    message: conflict
+`)
+	application := rendererSelectionApplication("demo", argoappv1.ApplicationSource{
+		RepoURL:   "https://repo.example.invalid/repo.git",
+		Path:      "apps/demo",
+		Directory: &argoappv1.ApplicationSourceDirectory{},
+	})
+
+	_, err := RenderApplication(context.Background(), application, localProvider{repoRoot: root})
+	if err == nil {
+		t.Fatal("RenderApplication() error = nil, want explicit source conflict")
+	}
+	if !strings.Contains(err.Error(), "multiple application sources defined") {
+		t.Fatalf("RenderApplication() error = %v, want explicit source conflict", err)
+	}
+}
+
 func TestRenderApplicationValuesObjectOverridesHelmValues(t *testing.T) {
 	application := argoappv1.Application{
 		ObjectMeta: metav1.ObjectMeta{Namespace: "argocd", Name: "demo"},
@@ -825,6 +945,99 @@ metadata:
   name: demo
 data:
   value: {{ .Values.value | quote }}
+`)
+}
+
+func rendererSelectionApplication(name string, source argoappv1.ApplicationSource) argoappv1.Application {
+	return argoappv1.Application{
+		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: "argocd"},
+		Spec: argoappv1.ApplicationSpec{
+			Source:      &source,
+			Destination: argoappv1.ApplicationDestination{Namespace: "default"},
+		},
+	}
+}
+
+func writeRendererSelectionFixture(t *testing.T, root string) {
+	t.Helper()
+	writeAppTestFile(t, filepath.Join(root, "Chart.yaml"), `
+apiVersion: v2
+name: renderer-selection
+version: 0.1.0
+`)
+	writeAppTestFile(t, filepath.Join(root, "templates", "cm.yaml"), `
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Release.Name }}
+data:
+  renderer: helm
+`)
+	writeAppTestFile(t, filepath.Join(root, "kustomization.yaml"), `
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - kustomize.yaml
+`)
+	writeAppTestFile(t, filepath.Join(root, "kustomize.yaml"), `
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: kustomize-only
+data:
+  renderer: kustomize
+`)
+	writeAppTestFile(t, filepath.Join(root, "directory.yaml"), `
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: directory-only
+data:
+  renderer: directory
+`)
+}
+
+func writeSourceOverrideChart(t *testing.T, root, sourcePath string) {
+	t.Helper()
+	writeAppTestFile(t, filepath.Join(root, "Chart.yaml"), `
+apiVersion: v2
+name: source-overrides
+version: 0.1.0
+`)
+	writeAppTestFile(t, filepath.Join(root, "templates", "cm.yaml"), `
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Release.Name }}
+data:
+  message: {{ .Values.message | default "default" | quote }}
+  sourcePath: `+sourcePath+`
+`)
+}
+
+func writeDirectorySelectionFixture(t *testing.T, root string) {
+	t.Helper()
+	writeAppTestFile(t, filepath.Join(root, "kustomization.yaml"), `
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - kustomize.yaml
+`)
+	writeAppTestFile(t, filepath.Join(root, "kustomize.yaml"), `
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: kustomize-only
+data:
+  renderer: kustomize
+`)
+	writeAppTestFile(t, filepath.Join(root, "directory.yaml"), `
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: directory-only
+data:
+  renderer: directory
 `)
 }
 

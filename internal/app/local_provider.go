@@ -50,9 +50,13 @@ type localProvider struct {
 var processCacheTargetLocks = acquisition.NewTargetLocks()
 
 func (p localProvider) RenderSource(ctx context.Context, source render.ResolvedSource, opts render.RenderOptions) ([]render.Manifest, []diagnostic.Diagnostic, error) {
-	sourceRoot, err := p.resolveSourceRoot(ctx, source)
-	if err != nil {
-		return nil, nil, err
+	sourceRoot := source.RepoRoot
+	var err error
+	if sourceRoot == "" {
+		sourceRoot, err = p.resolveSourceRoot(ctx, source)
+		if err != nil {
+			return nil, nil, err
+		}
 	}
 	source.RepoRoot = sourceRoot
 	opts.ChartAcquirer = p.acquisition.ChartAcquirer(p.chartAcquirer)
