@@ -131,6 +131,13 @@ loader/interpreter variables such as `PATH`, `LD_*`, `DYLD_*`, `PYTHONPATH`,
 at 16 KiB. Application-authored plugin env and parameters are rejected for
 policy-backed plugin sources.
 
+Exec runs keep structured execution metadata per phase: phase name, sanitized
+executable basename, and elapsed duration. Metadata does not include plugin
+stdout, stderr, argv beyond the executable basename, environment values, or
+rendered manifests. If a basename executable is missing from drydock's
+controlled `PATH`, install it there or configure an absolute trusted executable
+path outside protected roots.
+
 ## Engines
 
 `avp-compat` renders the source with drydock's native renderer and replaces

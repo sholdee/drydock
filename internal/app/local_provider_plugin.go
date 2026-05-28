@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"time"
 
 	"github.com/sholdee/drydock/internal/diagnostic"
 	"github.com/sholdee/drydock/internal/manifest"
@@ -209,6 +210,7 @@ func (p localProvider) renderExecPolicyPluginSource(ctx context.Context, source 
 			Object: doc.Object,
 		})
 	}
+	p.recordPluginExecutions(opts, source, name, result.Executions)
 	return manifests, nil, true, nil
 }
 
@@ -269,6 +271,33 @@ func execPolicySourceLabel(source render.ResolvedSource) string {
 		return fmt.Sprintf("source chart %q", source.Chart)
 	}
 	return "source"
+}
+
+func (p localProvider) recordPluginExecutions(opts render.RenderOptions, source render.ResolvedSource, name string, executions []pluginexec.Execution) {
+	if p.pluginExecutions == nil || len(executions) == 0 {
+		return
+	}
+	for _, execution := range executions {
+		*p.pluginExecutions = append(*p.pluginExecutions, PluginExecution{
+			AppNamespace: opts.AppNamespace,
+			AppName:      opts.AppName,
+			SourceIndex:  opts.SourceIndex,
+			SourceName:   opts.SourceName,
+			SourcePath:   source.Path,
+			PluginName:   pluginDisplayName(name),
+			Engine:       string(pluginpolicy.EngineExec),
+			Phase:        execution.Phase,
+			Command:      execution.Command,
+			Duration:     formatPluginExecutionDuration(execution.Duration),
+		})
+	}
+}
+
+func formatPluginExecutionDuration(duration time.Duration) string {
+	if duration < time.Millisecond {
+		return duration.String()
+	}
+	return duration.Round(time.Millisecond).String()
 }
 
 func pluginFailedDiagnostic(message string) diagnostic.Diagnostic {

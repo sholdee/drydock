@@ -56,8 +56,9 @@ func (cache *applicationRenderCache) set(key string, result RenderResult, err er
 
 func cloneRenderResult(result RenderResult) RenderResult {
 	return RenderResult{
-		Manifests:   cloneRenderManifests(result.Manifests),
-		Diagnostics: cloneDiagnostics(result.Diagnostics),
+		Manifests:        cloneRenderManifests(result.Manifests),
+		Diagnostics:      cloneDiagnostics(result.Diagnostics),
+		PluginExecutions: clonePluginExecutions(result.PluginExecutions),
 	}
 }
 
@@ -80,6 +81,15 @@ func cloneDiagnostics(input []diagnostic.Diagnostic) []diagnostic.Diagnostic {
 		return nil
 	}
 	out := make([]diagnostic.Diagnostic, len(input))
+	copy(out, input)
+	return out
+}
+
+func clonePluginExecutions(input []PluginExecution) []PluginExecution {
+	if input == nil {
+		return nil
+	}
+	out := make([]PluginExecution, len(input))
 	copy(out, input)
 	return out
 }

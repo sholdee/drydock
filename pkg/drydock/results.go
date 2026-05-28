@@ -59,13 +59,27 @@ type CacheEvent struct {
 	Error    string
 }
 
+// PluginExecution describes one trusted exec plugin command that ran.
+type PluginExecution struct {
+	Application Application
+	SourceIndex int
+	SourceName  string
+	SourcePath  string
+	PluginName  string
+	Engine      string
+	Phase       string
+	Command     string
+	Duration    string
+}
+
 // RenderResult is returned by render operations.
 type RenderResult struct {
-	Applications []Application
-	Manifests    []Manifest
-	Diagnostics  []Diagnostic
-	Statuses     []ApplicationStatus
-	CacheEvents  []CacheEvent
+	Applications     []Application
+	Manifests        []Manifest
+	Diagnostics      []Diagnostic
+	Statuses         []ApplicationStatus
+	CacheEvents      []CacheEvent
+	PluginExecutions []PluginExecution
 }
 
 // ListApplicationsResult is returned by list operations.
@@ -118,11 +132,12 @@ type ImageDiffResult struct {
 
 func renderResultFromBuild(result app.BuildResult) RenderResult {
 	return RenderResult{
-		Applications: applicationsFromInternal(result.Applications),
-		Manifests:    manifestsFromInternal(result.ApplicationManifests),
-		Diagnostics:  diagnosticsFromInternal(result.Diagnostics),
-		Statuses:     statusesFromInternal(result.Statuses),
-		CacheEvents:  cacheEventsFromInternal(result.CacheEvents),
+		Applications:     applicationsFromInternal(result.Applications),
+		Manifests:        manifestsFromInternal(result.ApplicationManifests),
+		Diagnostics:      diagnosticsFromInternal(result.Diagnostics),
+		Statuses:         statusesFromInternal(result.Statuses),
+		CacheEvents:      cacheEventsFromInternal(result.CacheEvents),
+		PluginExecutions: pluginExecutionsFromInternal(result.PluginExecutions),
 	}
 }
 
@@ -218,6 +233,27 @@ func cacheEventsFromInternal(events []cacheevent.Event) []CacheEvent {
 			Offline:  event.Offline,
 			Refresh:  event.Refresh,
 			Error:    event.Error,
+		})
+	}
+	return out
+}
+
+func pluginExecutionsFromInternal(executions []app.PluginExecution) []PluginExecution {
+	out := make([]PluginExecution, 0, len(executions))
+	for _, execution := range executions {
+		out = append(out, PluginExecution{
+			Application: Application{
+				Namespace: execution.AppNamespace,
+				Name:      execution.AppName,
+			},
+			SourceIndex: execution.SourceIndex,
+			SourceName:  execution.SourceName,
+			SourcePath:  execution.SourcePath,
+			PluginName:  execution.PluginName,
+			Engine:      execution.Engine,
+			Phase:       execution.Phase,
+			Command:     execution.Command,
+			Duration:    execution.Duration,
 		})
 	}
 	return out

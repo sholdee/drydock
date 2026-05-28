@@ -83,6 +83,19 @@ type ApplicationStatusEvent struct {
 
 type ApplicationStatusCallback func(ApplicationStatusEvent) error
 
+type PluginExecution struct {
+	AppNamespace string `json:"appNamespace" yaml:"appNamespace"`
+	AppName      string `json:"appName" yaml:"appName"`
+	SourceIndex  int    `json:"sourceIndex" yaml:"sourceIndex"`
+	SourceName   string `json:"sourceName,omitempty" yaml:"sourceName,omitempty"`
+	SourcePath   string `json:"sourcePath,omitempty" yaml:"sourcePath,omitempty"`
+	PluginName   string `json:"pluginName" yaml:"pluginName"`
+	Engine       string `json:"engine" yaml:"engine"`
+	Phase        string `json:"phase" yaml:"phase"`
+	Command      string `json:"command" yaml:"command"`
+	Duration     string `json:"duration" yaml:"duration"`
+}
+
 type BuildResult struct {
 	Applications            []argoappv1.Application
 	ApplicationInputs       []ApplicationSelectionInput
@@ -93,6 +106,7 @@ type BuildResult struct {
 	Settings                config.ArgoSettings
 	Statuses                []ApplicationStatus
 	CacheEvents             []cacheevent.Event
+	PluginExecutions        []PluginExecution
 	renderCache             *applicationRenderCache
 	renderSettingsSignature string
 }
@@ -100,10 +114,11 @@ type BuildResult struct {
 type DiagRequest = BuildRequest
 
 type DiagResult struct {
-	Applications []argoappv1.Application
-	Diagnostics  []diagnostic.Diagnostic
-	Settings     config.ArgoSettings
-	CacheEvents  []cacheevent.Event
+	Applications     []argoappv1.Application
+	Diagnostics      []diagnostic.Diagnostic
+	Settings         config.ArgoSettings
+	CacheEvents      []cacheevent.Event
+	PluginExecutions []PluginExecution
 }
 
 type Orchestrator struct {
@@ -116,10 +131,11 @@ type Orchestrator struct {
 func (o Orchestrator) Diag(ctx context.Context, request DiagRequest) (DiagResult, error) {
 	result, err := o.Build(ctx, request)
 	diagResult := DiagResult{
-		Applications: result.Applications,
-		Diagnostics:  result.Diagnostics,
-		Settings:     result.Settings,
-		CacheEvents:  result.CacheEvents,
+		Applications:     result.Applications,
+		Diagnostics:      result.Diagnostics,
+		Settings:         result.Settings,
+		CacheEvents:      result.CacheEvents,
+		PluginExecutions: result.PluginExecutions,
 	}
 	if err != nil {
 		return diagResult, err
@@ -297,6 +313,7 @@ type renderApplicationsResult struct {
 	diagnostics          []diagnostic.Diagnostic
 	statuses             []ApplicationStatus
 	cacheEvents          []cacheevent.Event
+	pluginExecutions     []PluginExecution
 }
 
 type applicationRenderResult struct {
@@ -377,12 +394,15 @@ func appendApplicationRenderResult(out *renderApplicationsResult, result applica
 	out.diagnostics = append(out.diagnostics, result.diagnostics...)
 	out.statuses = append(out.statuses, result.statuses...)
 	out.cacheEvents = append(out.cacheEvents, result.cacheEvents...)
+	out.pluginExecutions = append(out.pluginExecutions, result.pluginExecutions...)
 }
 
 func renderOneApplication(ctx context.Context, application argoappv1.Application, request renderApplicationsRequest) applicationRenderResult {
 	provider := request.provider
 	recorder := cacheevent.NewRecorder(request.recordEvents)
+	var pluginExecutions []PluginExecution
 	provider.cacheEvents = recorder
+	provider.pluginExecutions = &pluginExecutions
 	out := applicationRenderResult{set: true}
 
 	rendered, err := renderApplicationCached(renderContext{
@@ -393,6 +413,7 @@ func renderOneApplication(ctx context.Context, application argoappv1.Application
 		request:           request.request,
 	}, application)
 	if err != nil {
+		out.pluginExecutions = append(out.pluginExecutions, pluginExecutions...)
 		out.diagnostics = append(out.diagnostics, normalizeDiagnostics(rendered.Diagnostics, request.strict, false)...)
 		out.diagnostics = append(out.diagnostics, renderFailureDiagnostic(application, err))
 		out.statuses = append(out.statuses, applicationStatus(application, ApplicationStatusFail, err.Error()))
@@ -404,6 +425,7 @@ func renderOneApplication(ctx context.Context, application argoappv1.Application
 	}
 
 	rendered.Diagnostics = normalizeDiagnostics(rendered.Diagnostics, request.strict, false)
+	out.pluginExecutions = append(out.pluginExecutions, pluginExecutions...)
 	out.diagnostics = append(out.diagnostics, rendered.Diagnostics...)
 	if err := diagnosticFailure(rendered.Diagnostics, request.strict); err != nil {
 		out.statuses = append(out.statuses, applicationStatus(application, ApplicationStatusFail, err.Error()))

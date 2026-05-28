@@ -109,6 +109,7 @@ func (session *buildSession) Build(ctx context.Context) (BuildResult, error) {
 	result.Diagnostics = append(result.Diagnostics, rendered.diagnostics...)
 	result.Statuses = append(result.Statuses, rendered.statuses...)
 	result.CacheEvents = append(result.CacheEvents, rendered.cacheEvents...)
+	result.PluginExecutions = append(result.PluginExecutions, rendered.pluginExecutions...)
 	result.Diagnostics = dedupeDiagnostics(result.Diagnostics)
 	if renderErr != nil {
 		return result, renderErr

@@ -23,6 +23,8 @@ type ResolvedSource struct {
 type RenderOptions struct {
 	AppName                      string
 	AppNamespace                 string
+	SourceIndex                  int
+	SourceName                   string
 	Project                      string
 	Namespace                    string
 	EnableAVPCompat              bool

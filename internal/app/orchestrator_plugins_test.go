@@ -263,6 +263,9 @@ data:
 	if hasDiagnosticCode(result.Diagnostics, "plugin.avp-compat-substituted") {
 		t.Fatalf("Diagnostics = %#v, policy AVP should be quiet", result.Diagnostics)
 	}
+	if len(result.PluginExecutions) != 0 {
+		t.Fatalf("PluginExecutions = %#v, native AVP policy should not record exec metadata", result.PluginExecutions)
+	}
 }
 
 func TestOrchestratorBuildRejectsAVPCompatPolicyPluginEnv(t *testing.T) {
@@ -369,9 +372,18 @@ func TestOrchestratorBuildRendersTrustedExecPolicyPlugin(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Build() error = %v\nDiagnostics: %#v", err, result.Diagnostics)
 	}
-	manifest, ok := manifestByName(result.Manifests, "exec-rendered")
+	assertExecPolicyManifestData(t, result.Manifests)
+	if _, err := os.Stat(filepath.Join(root, "manifests", "plugin", "generated.txt")); !os.IsNotExist(err) {
+		t.Fatalf("original source generated.txt exists or unexpected stat error: %v", err)
+	}
+	assertExecPolicyPluginExecution(t, result.PluginExecutions)
+}
+
+func assertExecPolicyManifestData(t *testing.T, manifests []render.Manifest) {
+	t.Helper()
+	manifest, ok := manifestByName(manifests, "exec-rendered")
 	if !ok {
-		t.Fatalf("Manifests = %#v, want exec-rendered", result.Manifests)
+		t.Fatalf("Manifests = %#v, want exec-rendered", manifests)
 	}
 	data, ok := manifest.Object.Object["data"].(map[string]any)
 	if !ok {
@@ -380,8 +392,46 @@ func TestOrchestratorBuildRendersTrustedExecPolicyPlugin(t *testing.T) {
 	if data["marker"] != "from-source" || data["env"] != "allowed-value" {
 		t.Fatalf("data = %#v, want source marker and allowed env", data)
 	}
-	if _, err := os.Stat(filepath.Join(root, "manifests", "plugin", "generated.txt")); !os.IsNotExist(err) {
-		t.Fatalf("original source generated.txt exists or unexpected stat error: %v", err)
+}
+
+func assertExecPolicyPluginExecution(t *testing.T, executions []PluginExecution) {
+	t.Helper()
+	if len(executions) != 1 {
+		t.Fatalf("PluginExecutions = %#v, want one generate execution", executions)
+	}
+	execution := executions[0]
+	if execution.AppNamespace != "argocd" || execution.AppName != "plugin" || execution.PluginName != "exec-renderer" {
+		t.Fatalf("PluginExecution app/plugin = %#v, want argocd/plugin exec-renderer", execution)
+	}
+	if execution.Engine != "exec" || execution.Phase != "generate" || execution.Command == "" || execution.Duration == "" {
+		t.Fatalf("PluginExecution = %#v, want exec generate metadata", execution)
+	}
+	if execution.SourceIndex != 0 || execution.SourcePath != "manifests/plugin" {
+		t.Fatalf("PluginExecution source = %#v, want source index 0 path manifests/plugin", execution)
+	}
+}
+
+func TestOrchestratorDiagReturnsExecPolicyPluginMetadata(t *testing.T) {
+	root := t.TempDir()
+	writePluginBuildApplication(t, root, "plugin", "exec-renderer")
+	t.Setenv("DRYDOCK_APP_EXEC_HELPER", "1")
+	policy, fingerprint := testExecPluginPolicy(t, "exec-renderer", appExecCommand(t, "manifest"))
+
+	result, err := (Orchestrator{}).Diag(context.Background(), DiagRequest{
+		Path: root,
+		PluginOptions: PluginOptions{
+			EnablePlugins:           true,
+			pluginPolicyLoaded:      true,
+			pluginPolicy:            policy,
+			pluginPolicyFingerprint: fingerprint,
+			pluginPolicyExecTrusted: true,
+		},
+	})
+	if err != nil {
+		t.Fatalf("Diag() error = %v\nDiagnostics: %#v", err, result.Diagnostics)
+	}
+	if len(result.PluginExecutions) != 1 {
+		t.Fatalf("PluginExecutions = %#v, want one generate execution", result.PluginExecutions)
 	}
 }
 

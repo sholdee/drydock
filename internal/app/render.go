@@ -16,8 +16,9 @@ import (
 )
 
 type RenderResult struct {
-	Manifests   []render.Manifest
-	Diagnostics []diagnostic.Diagnostic
+	Manifests        []render.Manifest
+	Diagnostics      []diagnostic.Diagnostic
+	PluginExecutions []PluginExecution
 }
 
 type StaticRenderers map[string][]render.Manifest
@@ -46,6 +47,8 @@ func RenderApplication(ctx context.Context, application argoappv1.Application, p
 		}
 		opts.EnableAVPCompat = pluginOpts.EnableAVPCompat
 		opts.EnablePlugins = pluginOpts.EnablePlugins
+		opts.SourceIndex = sourcePlan.Index
+		opts.SourceName = sourcePlan.Name
 		refRoots, refSources, err := renderRefsForSource(plan, sourcePlan, opts.ValueFiles)
 		if err != nil {
 			return result, fmt.Errorf("%s: %w", renderSourceContext(application, sourcePlan), err)

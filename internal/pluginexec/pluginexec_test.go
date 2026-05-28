@@ -43,6 +43,16 @@ func TestDefaultRunnerRunsGenerateFromTempSource(t *testing.T) {
 	if !strings.Contains(string(result.Stdout), "kind: ConfigMap") {
 		t.Fatalf("Stdout = %q, want manifest", result.Stdout)
 	}
+	if len(result.Executions) != 1 {
+		t.Fatalf("Executions = %#v, want one generate execution", result.Executions)
+	}
+	execution := result.Executions[0]
+	if execution.Phase != "generate" || execution.Command == "" || strings.Contains(execution.Command, string(filepath.Separator)) {
+		t.Fatalf("Execution = %#v, want generate with command basename", execution)
+	}
+	if execution.Duration <= 0 {
+		t.Fatalf("Execution.Duration = %s, want positive duration", execution.Duration)
+	}
 	if _, err := os.Stat(filepath.Join(source, "generated.txt")); !os.IsNotExist(err) {
 		t.Fatalf("original source generated.txt exists or unexpected stat error: %v", err)
 	}
@@ -141,6 +151,9 @@ func TestDefaultRunnerRejectsMissingCommand(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "not found on controlled PATH") {
 		t.Fatalf("Run() error = %v, want controlled PATH lookup failure", err)
+	}
+	if !strings.Contains(err.Error(), ControlledPath) || !strings.Contains(err.Error(), "install the executable") || !strings.Contains(err.Error(), "absolute trusted executable path") {
+		t.Fatalf("Run() error = %v, want actionable missing executable guidance", err)
 	}
 }
 
@@ -251,6 +264,15 @@ func TestDefaultRunnerChainsPostRenderers(t *testing.T) {
 	for _, want := range []string{"base", "first", "second"} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("Stdout = %q, want %q", got, want)
+		}
+	}
+	if len(result.Executions) != 3 {
+		t.Fatalf("Executions = %#v, want generate plus two post-renderers", result.Executions)
+	}
+	wantPhases := []string{"generate", "post-renderer 0", "post-renderer 1"}
+	for index, want := range wantPhases {
+		if result.Executions[index].Phase != want {
+			t.Fatalf("Executions[%d].Phase = %q, want %q", index, result.Executions[index].Phase, want)
 		}
 	}
 }

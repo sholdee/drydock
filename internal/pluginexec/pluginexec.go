@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/sholdee/drydock/internal/filecopy"
 	"github.com/sholdee/drydock/internal/pathsafety"
@@ -35,7 +36,14 @@ type Request struct {
 }
 
 type Result struct {
-	Stdout []byte
+	Stdout     []byte
+	Executions []Execution
+}
+
+type Execution struct {
+	Phase    string
+	Command  string
+	Duration time.Duration
 }
 
 type Error struct {
@@ -92,34 +100,47 @@ func (DefaultRunner) Run(ctx context.Context, request Request) (Result, error) {
 	if err != nil {
 		return Result{}, err
 	}
+	var executions []Execution
 	if request.Config.Init != nil {
-		if _, err := runConfiguredCommand(ctx, "init", *request.Config.Init, nil, workdir, protectedRoots, env, request.Config.Output); err != nil {
-			return Result{}, err
-		}
-	}
-	stdout, err := runConfiguredCommand(ctx, "generate", request.Config.Generate, nil, workdir, protectedRoots, env, request.Config.Output)
-	if err != nil {
-		return Result{}, err
-	}
-	for index, command := range request.Config.PostRenderers {
-		stdout, err = runConfiguredCommand(ctx, fmt.Sprintf("post-renderer %d", index), command, stdout, workdir, protectedRoots, env, request.Config.Output)
+		result, err := runConfiguredCommand(ctx, "init", *request.Config.Init, nil, workdir, protectedRoots, env, request.Config.Output)
 		if err != nil {
 			return Result{}, err
 		}
+		executions = append(executions, result.Execution)
 	}
-	return Result{Stdout: stdout}, nil
+	result, err := runConfiguredCommand(ctx, "generate", request.Config.Generate, nil, workdir, protectedRoots, env, request.Config.Output)
+	if err != nil {
+		return Result{}, err
+	}
+	stdout := result.Stdout
+	executions = append(executions, result.Execution)
+	for index, command := range request.Config.PostRenderers {
+		result, err := runConfiguredCommand(ctx, fmt.Sprintf("post-renderer %d", index), command, stdout, workdir, protectedRoots, env, request.Config.Output)
+		if err != nil {
+			return Result{}, err
+		}
+		stdout = result.Stdout
+		executions = append(executions, result.Execution)
+	}
+	return Result{Stdout: stdout, Executions: executions}, nil
 }
 
-func runConfiguredCommand(ctx context.Context, phase string, command pluginpolicy.ExecCommand, stdin []byte, workdir string, protectedRoots []string, env []string, output pluginpolicy.ExecOutput) ([]byte, error) {
+type commandResult struct {
+	Stdout    []byte
+	Execution Execution
+}
+
+func runConfiguredCommand(ctx context.Context, phase string, command pluginpolicy.ExecCommand, stdin []byte, workdir string, protectedRoots []string, env []string, output pluginpolicy.ExecOutput) (commandResult, error) {
 	resolved, err := resolveCommand(command.Command[0], protectedRoots)
 	if err != nil {
-		return nil, &Error{Phase: phase, Command: safeCommandName(command.Command[0]), Reason: "invalid command", Err: err}
+		return commandResult{}, &Error{Phase: phase, Command: safeCommandName(command.Command[0]), Reason: "invalid command", Err: err}
 	}
 	if err := validateArguments(command.Command[1:], workdir, protectedRoots); err != nil {
-		return nil, &Error{Phase: phase, Command: safeCommandName(resolved), Reason: "invalid arguments", Err: err}
+		return commandResult{}, &Error{Phase: phase, Command: safeCommandName(resolved), Reason: "invalid arguments", Err: err}
 	}
 	stdout := &limitBuffer{limit: output.MaxStdoutBytes}
 	stderr := &limitBuffer{limit: output.MaxStderrBytes}
+	started := time.Now()
 	err = runProcess(ctx, processRequest{
 		Path:    resolved,
 		Args:    append([]string{resolved}, command.Command[1:]...),
@@ -130,27 +151,32 @@ func runConfiguredCommand(ctx context.Context, phase string, command pluginpolic
 		Stdout:  stdout,
 		Stderr:  stderr,
 	})
+	execution := Execution{
+		Phase:    phase,
+		Command:  safeCommandName(resolved),
+		Duration: time.Since(started),
+	}
 	if err != nil {
 		if errors.Is(err, context.Canceled) {
-			return nil, err
+			return commandResult{}, err
 		}
 		if errors.Is(err, context.DeadlineExceeded) {
-			return nil, &Error{Phase: phase, Command: safeCommandName(resolved), Reason: "command timed out"}
+			return commandResult{}, &Error{Phase: phase, Command: safeCommandName(resolved), Reason: "command timed out"}
 		}
 		var exitErr exitError
 		if errors.As(err, &exitErr) {
 			code := exitErr.Code
-			return nil, &Error{Phase: phase, Command: safeCommandName(resolved), Reason: "command failed; stderr omitted to avoid leaking secrets", ExitCode: &code}
+			return commandResult{}, &Error{Phase: phase, Command: safeCommandName(resolved), Reason: "command failed; stderr omitted to avoid leaking secrets", ExitCode: &code}
 		}
-		return nil, &Error{Phase: phase, Command: safeCommandName(resolved), Reason: "command failed; stderr omitted to avoid leaking secrets", Err: err}
+		return commandResult{}, &Error{Phase: phase, Command: safeCommandName(resolved), Reason: "command failed; stderr omitted to avoid leaking secrets", Err: err}
 	}
 	if stdout.overflow {
-		return nil, &Error{Phase: phase, Command: safeCommandName(resolved), Reason: "stdout limit exceeded"}
+		return commandResult{}, &Error{Phase: phase, Command: safeCommandName(resolved), Reason: "stdout limit exceeded"}
 	}
 	if stderr.overflow {
-		return nil, &Error{Phase: phase, Command: safeCommandName(resolved), Reason: "stderr limit exceeded; stderr omitted to avoid leaking secrets"}
+		return commandResult{}, &Error{Phase: phase, Command: safeCommandName(resolved), Reason: "stderr limit exceeded; stderr omitted to avoid leaking secrets"}
 	}
-	return stdout.Bytes(), nil
+	return commandResult{Stdout: stdout.Bytes(), Execution: execution}, nil
 }
 
 func copySourceDir(sourceDir string) (string, func(), error) {
@@ -223,7 +249,7 @@ func resolveCommand(command string, protectedRoots []string) (string, error) {
 			return validateResolvedCommand(candidate, protectedRoots)
 		}
 	}
-	return "", fmt.Errorf("command %q not found on controlled PATH", command)
+	return "", fmt.Errorf("command %q not found on controlled PATH %q; install the executable or configure an absolute trusted executable path in plugin policy", command, ControlledPath)
 }
 
 func validateResolvedCommand(command string, protectedRoots []string) (string, error) {

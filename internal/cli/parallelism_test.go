@@ -285,6 +285,8 @@ type recordingCLIOrchestrator struct {
 	diffAppError       error
 	diffImagesResult   app.ImageDiffResult
 	diffImagesError    error
+	diagResult         app.DiagResult
+	diagError          error
 }
 
 func (orchestrator *recordingCLIOrchestrator) Build(_ context.Context, request app.BuildRequest) (app.BuildResult, error) {
@@ -324,5 +326,5 @@ func (orchestrator *recordingCLIOrchestrator) DiffImages(_ context.Context, requ
 
 func (orchestrator *recordingCLIOrchestrator) Diag(_ context.Context, request app.DiagRequest) (app.DiagResult, error) {
 	orchestrator.diagRequests = append(orchestrator.diagRequests, request)
-	return app.DiagResult{}, nil
+	return orchestrator.diagResult, orchestrator.diagError
 }

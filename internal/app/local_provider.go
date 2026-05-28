@@ -43,6 +43,7 @@ type localProvider struct {
 	kustomizeBuildOptions        []string
 	configManagementPlugins      map[string]config.ConfigManagementPlugin
 	cacheEvents                  *cacheevent.Recorder
+	pluginExecutions             *[]PluginExecution
 	acquisition                  acquisition.Session
 }
 
