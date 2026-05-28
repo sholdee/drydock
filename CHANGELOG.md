@@ -1,5 +1,30 @@
 # Changelog
 
+## [0.1.6](https://github.com/sholdee/drydock/compare/v0.1.5...v0.1.6) (2026-05-28)
+
+
+### Features
+
+* add native avp compatibility ([84346ad](https://github.com/sholdee/drydock/commit/84346ada9a8bcf5330937e4f8f1d5c6042fbdc39))
+* add trusted exec plugin policy ([86546c4](https://github.com/sholdee/drydock/commit/86546c48fc429069a916651474efa1f07c945f31))
+* add trusted plugin policy ([aa5e81a](https://github.com/sholdee/drydock/commit/aa5e81a0a51cc3ad72a36c8934c6508eb7884d40))
+* add trusted plugin policy engines ([87966c4](https://github.com/sholdee/drydock/commit/87966c4cded5a2f797ad7edfa8e9c9c6eac9874f))
+* add trusted plugin policy engines ([42e0c43](https://github.com/sholdee/drydock/commit/42e0c432df623d35ccd633362bf26b3a5e023a53))
+* chain trusted exec post-renderers ([632371b](https://github.com/sholdee/drydock/commit/632371b0440b6996d2fbff9d97ca1b6ba1fdbd1e))
+* report runtime module versions ([#44](https://github.com/sholdee/drydock/issues/44)) ([bd4f5ee](https://github.com/sholdee/drydock/commit/bd4f5ee7f2e1124d44eb841193d001b76a058024))
+* report trusted exec plugin metadata ([c69ae4a](https://github.com/sholdee/drydock/commit/c69ae4a7394fc37a77b5fc170c7bb597b0473b06))
+
+
+### Bug Fixes
+
+* **deps:** update module github.com/argoproj/argo-cd/v3 to v3.4.3 ([#41](https://github.com/sholdee/drydock/issues/41)) ([3636af5](https://github.com/sholdee/drydock/commit/3636af5b3b606694a657de4a345b151d7e388740))
+
+
+### Documentation
+
+* gate selective native plugin engines ([5a2aade](https://github.com/sholdee/drydock/commit/5a2aade2a48278be0e4153f4928038ecf0769404))
+* harden plugin policy UX ([7586bec](https://github.com/sholdee/drydock/commit/7586becfcb2cee5f771097a32df57b660f46f6ad))
+
 ## [0.1.5](https://github.com/sholdee/drydock/compare/v0.1.4...v0.1.5) (2026-05-27)
 
 
