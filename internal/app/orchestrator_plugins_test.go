@@ -99,8 +99,11 @@ spec:
 			if len(result.Statuses) != 1 || result.Statuses[0].Status != ApplicationStatusFail {
 				t.Fatalf("statuses = %#v, want one FAIL", result.Statuses)
 			}
-			if !strings.Contains(result.Statuses[0].Message, "config management plugin cue is not supported without an injected plugin renderer") {
+			if !strings.Contains(result.Statuses[0].Message, "config management plugin cue is disabled in the default renderer") {
 				t.Fatalf("status message = %q, want unsupported plugin renderer", result.Statuses[0].Message)
+			}
+			if !strings.Contains(result.Statuses[0].Message, "trusted policy") {
+				t.Fatalf("status message = %q, want trusted policy guidance", result.Statuses[0].Message)
 			}
 			foundPluginDiagnostic := false
 			for _, diag := range result.Diagnostics {
@@ -112,6 +115,115 @@ spec:
 				t.Fatalf("diagnostics = %#v, want plugin diagnostic", result.Diagnostics)
 			}
 		})
+	}
+}
+
+func TestOrchestratorBuildFailsClosedForMultiSourcePluginWithoutRenderer(t *testing.T) {
+	root := t.TempDir()
+	writeBuildApplication(t, root, "ok", "ok")
+	writeTestFile(t, filepath.Join(root, "apps", "multi-plugin.yaml"), `apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: multi-plugin
+  namespace: argocd
+spec:
+  project: default
+  sources:
+    - repoURL: https://github.com/example/repo
+      path: manifests/plain
+      targetRevision: main
+    - repoURL: https://github.com/example/repo
+      path: manifests/multi-plugin
+      targetRevision: main
+      plugin:
+        name: cue
+  destination:
+    name: in-cluster
+    namespace: default
+`)
+	writeTestFile(t, filepath.Join(root, "manifests", "plain", "cm.yaml"), `apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: plain-source
+`)
+	writeTestFile(t, filepath.Join(root, "manifests", "multi-plugin", "cm.yaml"), `apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: should-not-render
+`)
+
+	result, err := (Orchestrator{}).Build(context.Background(), BuildRequest{Path: root})
+	if err == nil {
+		t.Fatal("Build() error = nil, want unsupported plugin error")
+	}
+	assertApplicationStatuses(t, result.Statuses, []ApplicationStatus{
+		{Namespace: "argocd", Name: "ok", Status: ApplicationStatusPass},
+		{Namespace: "argocd", Name: "multi-plugin", Status: ApplicationStatusFail},
+	})
+	if _, ok := manifestByName(result.Manifests, "should-not-render"); ok {
+		t.Fatalf("Manifests = %#v, plugin source rendered through fallback", result.Manifests)
+	}
+	if _, ok := manifestByName(result.Manifests, "plain-source"); ok {
+		t.Fatalf("Manifests = %#v, want no partial manifests from failed multi-source Application", result.Manifests)
+	}
+	if !hasDiagnosticCode(result.Diagnostics, diagnostic.CodePluginUnsupported) {
+		t.Fatalf("Diagnostics = %#v, want plugin.unsupported", result.Diagnostics)
+	}
+	if !hasDiagnosticMessage(result.Diagnostics, `source[1] path="manifests/multi-plugin"`) {
+		t.Fatalf("Diagnostics = %#v, want source[1] plugin diagnostic", result.Diagnostics)
+	}
+	if !hasDiagnosticMessage(result.Diagnostics, "trusted policy") {
+		t.Fatalf("Diagnostics = %#v, want trusted policy guidance", result.Diagnostics)
+	}
+}
+
+func TestOrchestratorBuildFailsClosedForApplicationSetGeneratedPluginWithoutRenderer(t *testing.T) {
+	root := t.TempDir()
+	writeBuildApplication(t, root, "ok", "ok")
+	writeTestFile(t, filepath.Join(root, "appset.yaml"), `apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: plugin-set
+  namespace: argocd
+spec:
+  generators:
+    - list:
+        elements:
+          - name: generated-plugin
+  template:
+    metadata:
+      name: '{{name}}'
+    spec:
+      project: default
+      source:
+        repoURL: https://github.com/example/repo
+        path: manifests/{{name}}
+        targetRevision: main
+        plugin:
+          name: cue
+      destination:
+        name: in-cluster
+        namespace: default
+`)
+	writeTestFile(t, filepath.Join(root, "manifests", "generated-plugin", "cm.yaml"), `apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: should-not-render
+`)
+
+	result, err := (Orchestrator{}).Build(context.Background(), BuildRequest{Path: root})
+	if err == nil {
+		t.Fatal("Build() error = nil, want unsupported plugin error")
+	}
+	assertApplicationStatuses(t, result.Statuses, []ApplicationStatus{
+		{Namespace: "argocd", Name: "generated-plugin", Status: ApplicationStatusFail},
+		{Namespace: "argocd", Name: "ok", Status: ApplicationStatusPass},
+	})
+	if _, ok := manifestByName(result.Manifests, "should-not-render"); ok {
+		t.Fatalf("Manifests = %#v, generated plugin source rendered through fallback", result.Manifests)
+	}
+	if !hasDiagnosticCode(result.Diagnostics, diagnostic.CodePluginUnsupported) {
+		t.Fatalf("Diagnostics = %#v, want plugin.unsupported", result.Diagnostics)
 	}
 }
 

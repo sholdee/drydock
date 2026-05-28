@@ -16,7 +16,7 @@ func (p localProvider) renderPluginSource(ctx context.Context, source render.Res
 		if manifests, diags, handled, err := p.renderNativeKustomizePluginSource(ctx, source, opts); handled {
 			return manifests, diags, err
 		}
-		message := fmt.Sprintf("config management plugin %s is not supported without an injected plugin renderer", pluginDisplayName(opts.Plugin.Name))
+		message := unsupportedPluginMessage(opts.Plugin.Name)
 		return nil, []diagnostic.Diagnostic{{
 			Code:     diagnostic.CodePluginUnsupported,
 			Severity: diagnostic.SeverityError,
@@ -70,6 +70,10 @@ func pluginDisplayName(name string) string {
 		return "<unnamed>"
 	}
 	return name
+}
+
+func unsupportedPluginMessage(name string) string {
+	return fmt.Sprintf("config management plugin %s is disabled in the default renderer; future plugin policy support will require an explicit trusted policy and plugin execution opt-in", pluginDisplayName(name))
 }
 
 func pluginFailedDiagnostic(message string) diagnostic.Diagnostic {

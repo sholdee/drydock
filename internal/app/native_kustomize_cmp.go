@@ -145,5 +145,5 @@ func unsupportedNativeKustomizePluginError(name string) error {
 }
 
 func unsupportedNativeKustomizePluginMessage(name string) string {
-	return fmt.Sprintf("config management plugin %s is not supported by the native Kustomize adapter without an injected plugin renderer", pluginDisplayName(name))
+	return fmt.Sprintf("config management plugin %s is not supported by the native Kustomize adapter; future plugin policy support will require an explicit trusted policy and plugin execution opt-in", pluginDisplayName(name))
 }

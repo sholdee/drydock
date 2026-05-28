@@ -59,6 +59,35 @@ func TestDiagPrintsUnsupportedApplicationSetWarning(t *testing.T) {
 	}
 }
 
+func TestDiagReportsPluginSourceFailure(t *testing.T) {
+	root := t.TempDir()
+	writePluginCLIApplication(t, root, "cue", "directory")
+
+	cmd := NewRootCommand(VersionInfo{})
+	cmd.SetArgs([]string{"diag", "--path", root})
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	cmd.SetOut(&stdout)
+	cmd.SetErr(&stderr)
+
+	err := cmd.Execute()
+	if code := commandErrorCode(err); code != 2 {
+		t.Fatalf("error code = %d, want 2; err = %v", code, err)
+	}
+	if stdout.String() != "" {
+		t.Fatalf("stdout = %q, want empty", stdout.String())
+	}
+	for _, want := range []string{
+		"error plugin:",
+		"config management plugin cue is disabled in the default renderer",
+		"trusted policy",
+	} {
+		if !strings.Contains(stderr.String(), want) {
+			t.Fatalf("stderr = %q, want %q", stderr.String(), want)
+		}
+	}
+}
+
 func TestRenderDiagnosticsWithColorColorsWarningAndErrorLabels(t *testing.T) {
 	diags := []diagnostic.Diagnostic{
 		{Severity: diagnostic.SeverityWarning, Category: "settings", Message: "metadata only"},
