@@ -45,7 +45,8 @@ type ApplicationSetOptions struct {
 }
 
 type PluginOptions struct {
-	PluginTimeout time.Duration
+	PluginTimeout   time.Duration
+	EnableAVPCompat bool
 }
 
 type ExecutionOptions struct {

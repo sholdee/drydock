@@ -43,6 +43,7 @@ type commonFlags struct {
 	remoteUsername       string
 	remotePassword       string
 	remoteBearerToken    string
+	enableAVPCompat      bool
 	appsetFixtures       []string
 	skipKinds            []string
 	skipCRDs             bool
@@ -80,6 +81,7 @@ func bindCommonFlags(cmd *cobra.Command, flags *commonFlags) {
 	bindAcquisitionCacheFlags(cmd, flags)
 	bindAuthFlags(cmd, flags)
 	bindRemoteAcquisitionCacheFlags(cmd, flags)
+	bindPluginFlags(cmd, flags)
 	bindApplicationSetFixtureFlags(cmd, flags)
 	bindFilterFlags(cmd, flags)
 	bindStrictExitFlags(cmd, flags)
@@ -125,6 +127,10 @@ func bindAuthFlags(cmd *cobra.Command, flags *commonFlags) {
 func bindRemoteAcquisitionCacheFlags(cmd *cobra.Command, flags *commonFlags) {
 	cmd.Flags().BoolVar(&flags.refreshRemotes, "refresh-remotes", flags.refreshRemotes, "refresh cached remote Kustomize resources before rendering")
 	cmd.Flags().StringVar(&flags.remoteCacheDir, "remote-cache-dir", flags.remoteCacheDir, "directory for cached remote Kustomize resources")
+}
+
+func bindPluginFlags(cmd *cobra.Command, flags *commonFlags) {
+	cmd.Flags().BoolVar(&flags.enableAVPCompat, "enable-avp-compat", flags.enableAVPCompat, "replace argocd-vault-plugin placeholders with deterministic redacted values")
 }
 
 func bindApplicationSetFixtureFlags(cmd *cobra.Command, flags *commonFlags) {
@@ -242,6 +248,7 @@ func requestOptionsFromFlags(flags commonFlags, repoMaps []source.RepoMap) reque
 		RemoteResourceCacheDir:         flags.remoteCacheDir,
 		RemoteResourceCredentials:      flags.remoteCredentials(),
 		RemoteResourceGitCredentials:   flags.remoteGitCredentials(),
+		EnableAVPCompat:                flags.enableAVPCompat,
 		Parallelism:                    flags.parallelism,
 		ApplicationSetProviderFixtures: append([]string(nil), flags.appsetFixtures...),
 		SkipKinds:                      append([]string(nil), flags.skipKinds...),

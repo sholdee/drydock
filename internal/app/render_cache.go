@@ -97,7 +97,7 @@ func renderApplicationCached(ctx renderContext, application argoappv1.Applicatio
 			return result, err
 		}
 	}
-	result, err := RenderApplication(ctx.context, application, ctx.provider)
+	result, err := RenderApplication(ctx.context, application, ctx.provider, ctx.request.PluginOptions)
 	if ctx.context.Err() == nil {
 		ctx.cache.set(key, result, err)
 	}
@@ -149,6 +149,7 @@ func applicationRenderCacheKey(ctx renderContext, application argoappv1.Applicat
 		RefreshRemoteResources  bool                        `json:"refreshRemoteResources"`
 		RemoteResourceCacheDir  string                      `json:"remoteResourceCacheDir,omitempty"`
 		PluginTimeout           string                      `json:"pluginTimeout,omitempty"`
+		EnableAVPCompat         bool                        `json:"enableAVPCompat,omitempty"`
 		HasInjectedPluginRender bool                        `json:"hasInjectedPluginRender"`
 	}{
 		Root:                    ctx.provider.repoRoot,
@@ -163,6 +164,7 @@ func applicationRenderCacheKey(ctx renderContext, application argoappv1.Applicat
 		RefreshRemoteResources:  ctx.request.RefreshRemoteResources,
 		RemoteResourceCacheDir:  ctx.request.RemoteResourceCacheDir,
 		PluginTimeout:           ctx.request.PluginTimeout.String(),
+		EnableAVPCompat:         ctx.request.EnableAVPCompat,
 		HasInjectedPluginRender: ctx.request.PluginRenderer != nil,
 	}
 	data, err := json.Marshal(input)

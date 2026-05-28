@@ -65,6 +65,42 @@ stringData:
 	}
 }
 
+func TestBuildAppsAVPCompatibilityFlagReplacesRenderedManifestPlaceholders(t *testing.T) {
+	root := t.TempDir()
+	writeSimpleAppForCLI(t, root, "kept")
+	writeCLITestFile(t, filepath.Join(root, "manifests", "demo", "secret-ref.yaml"), `apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: secret-ref
+data:
+  domain: argocd.<path:vaults/Kubernetes/items/cluster#domain>
+`)
+
+	cmd := NewRootCommand(VersionInfo{})
+	cmd.SetArgs([]string{"build", "apps", "--path", root, "--enable-avp-compat"})
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	cmd.SetOut(&stdout)
+	cmd.SetErr(&stderr)
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("Execute() error = %v\nstdout:\n%s\nstderr:\n%s", err, stdout.String(), stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "argocd.drydock-redacted-") {
+		t.Fatalf("stdout missing redacted AVP value:\n%s", stdout.String())
+	}
+	for _, forbidden := range []string{"vaults", "Kubernetes", "cluster", "<path:"} {
+		if strings.Contains(stdout.String(), forbidden) || strings.Contains(stderr.String(), forbidden) {
+			t.Fatalf("output leaked placeholder material %q\nstdout:\n%s\nstderr:\n%s", forbidden, stdout.String(), stderr.String())
+		}
+	}
+	for _, want := range []string{"warning plugin:", "argocd-vault-plugin placeholders were replaced with deterministic redacted values"} {
+		if !strings.Contains(stderr.String(), want) {
+			t.Fatalf("stderr = %q, want AVP compatibility diagnostic fragment %q", stderr.String(), want)
+		}
+	}
+}
+
 func TestBuildAppsPrintsUnsupportedApplicationSetDiagnosticToStderr(t *testing.T) {
 	root := t.TempDir()
 	writeCLITestFile(t, filepath.Join(root, "direct.yaml"), `apiVersion: argoproj.io/v1alpha1

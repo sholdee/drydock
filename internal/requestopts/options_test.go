@@ -35,6 +35,7 @@ func TestOptionsBuildCopiesSharedFields(t *testing.T) {
 	assertDeepEqual(t, "RemoteResourceForbiddenRoots", request.RemoteResourceForbiddenRoots, []string{"/repo"})
 	assertDeepEqual(t, "RemoteResourceCredentials", request.RemoteResourceCredentials, remote.Credentials{Username: "remote-user"})
 	assertDeepEqual(t, "RemoteResourceGitCredentials", request.RemoteResourceGitCredentials, remote.GitCredentials{Username: "remote-git-user"})
+	assertDeepEqual(t, "EnableAVPCompat", request.EnableAVPCompat, true)
 	assertDeepEqual(t, "PluginTimeout", request.PluginTimeout, time.Second)
 	assertDeepEqual(t, "Parallelism", request.Parallelism, 7)
 	assertDeepEqual(t, "SkipKinds", request.SkipKinds, []string{"Secret"})
@@ -85,6 +86,7 @@ func TestOptionsDiffCopiesSharedFields(t *testing.T) {
 	assertDeepEqual(t, "RemoteResourceCacheDir", request.RemoteResourceCacheDir, "remote-cache")
 	assertDeepEqual(t, "RemoteResourceCredentials", request.RemoteResourceCredentials, remote.Credentials{Username: "remote-user"})
 	assertDeepEqual(t, "RemoteResourceGitCredentials", request.RemoteResourceGitCredentials, remote.GitCredentials{Username: "remote-git-user"})
+	assertDeepEqual(t, "EnableAVPCompat", request.EnableAVPCompat, true)
 	assertDeepEqual(t, "PluginTimeout", request.PluginTimeout, time.Second)
 	assertDeepEqual(t, "Parallelism", request.Parallelism, 7)
 	assertDeepEqual(t, "SkipKinds", request.SkipKinds, []string{"Secret"})
@@ -140,6 +142,7 @@ func fixtureOptions() Options {
 		RemoteResourceForbiddenRoots: []string{"/repo"},
 		RemoteResourceCredentials:    remote.Credentials{Username: "remote-user"},
 		RemoteResourceGitCredentials: remote.GitCredentials{Username: "remote-git-user"},
+		EnableAVPCompat:              true,
 		PluginTimeout:                time.Second,
 		Parallelism:                  7,
 		SkipKinds:                    []string{"Secret"},

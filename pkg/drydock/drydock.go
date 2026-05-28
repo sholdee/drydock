@@ -41,6 +41,7 @@ type Config struct {
 	RemoteResourceCacheDir         string
 	RemoteResourceForbiddenRoots   []string
 	RemoteResourceCredentials      RemoteResourceCredentials
+	EnableAVPCompat                bool
 	PluginRenderer                 PluginRenderer
 	PluginTimeout                  time.Duration
 	Parallelism                    int
@@ -203,6 +204,7 @@ func (client *Client) requestOptions() requestopts.Options {
 		RemoteResourceForbiddenRoots:   append([]string(nil), client.config.RemoteResourceForbiddenRoots...),
 		RemoteResourceCredentials:      remoteResourceCredentialsToInternal(client.config.RemoteResourceCredentials),
 		RemoteResourceGitCredentials:   gitCredentialsToRemoteInternal(client.config.GitCredentials),
+		EnableAVPCompat:                client.config.EnableAVPCompat,
 		PluginTimeout:                  client.config.PluginTimeout,
 		Parallelism:                    client.config.Parallelism,
 		SkipKinds:                      append([]string(nil), client.config.SkipKinds...),

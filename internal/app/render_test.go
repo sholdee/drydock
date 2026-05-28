@@ -129,6 +129,114 @@ func TestRenderApplicationPassesHelmValues(t *testing.T) {
 	}
 }
 
+func TestRenderApplicationPassesAVPCompatibilityOption(t *testing.T) {
+	application := argoappv1.Application{
+		ObjectMeta: metav1.ObjectMeta{Namespace: "argocd", Name: "demo"},
+		Spec: argoappv1.ApplicationSpec{
+			Source: &argoappv1.ApplicationSource{
+				RepoURL: "https://repo",
+				Path:    "manifests/demo",
+			},
+		},
+	}
+	var got render.RenderOptions
+	provider := providerFunc(func(_ context.Context, _ render.ResolvedSource, opts render.RenderOptions) ([]render.Manifest, []diagnostic.Diagnostic, error) {
+		got = opts
+		return nil, nil, nil
+	})
+
+	if _, err := RenderApplication(context.Background(), application, provider, PluginOptions{EnableAVPCompat: true}); err != nil {
+		t.Fatalf("RenderApplication() error = %v", err)
+	}
+	if !got.EnableAVPCompat {
+		t.Fatal("RenderOptions.EnableAVPCompat = false, want true")
+	}
+}
+
+func TestRenderApplicationAVPCompatibilityReplacesRenderedManifestPlaceholders(t *testing.T) {
+	fixture := &unstructured.Unstructured{Object: map[string]any{
+		"apiVersion": "v1",
+		"kind":       "ConfigMap",
+		"metadata": map[string]any{
+			"name": "demo",
+		},
+		"data": map[string]any{
+			"domain": "argocd.<path:vaults/Kubernetes/items/cluster#domain>",
+		},
+	}}
+	application := argoappv1.Application{
+		ObjectMeta: metav1.ObjectMeta{Namespace: "argocd", Name: "demo"},
+		Spec: argoappv1.ApplicationSpec{
+			Source: &argoappv1.ApplicationSource{
+				RepoURL: "https://repo",
+				Path:    "manifests/demo",
+			},
+		},
+	}
+	renderers := StaticRenderers{
+		"manifests/demo": []render.Manifest{{Object: fixture}},
+	}
+
+	result, err := RenderApplication(context.Background(), application, renderers, PluginOptions{EnableAVPCompat: true})
+	if err != nil {
+		t.Fatalf("RenderApplication() error = %v", err)
+	}
+	value, _, _ := unstructured.NestedString(result.Manifests[0].Object.Object, "data", "domain")
+	if !strings.HasPrefix(value, "argocd.drydock-redacted-") {
+		t.Fatalf("data.domain = %q, want redacted AVP value", value)
+	}
+	for _, forbidden := range []string{"vaults", "Kubernetes", "cluster", "<path:"} {
+		if strings.Contains(value, forbidden) {
+			t.Fatalf("data.domain = %q contains forbidden placeholder material %q", value, forbidden)
+		}
+	}
+	originalValue, _, _ := unstructured.NestedString(fixture.Object, "data", "domain")
+	if originalValue != "argocd.<path:vaults/Kubernetes/items/cluster#domain>" {
+		t.Fatalf("fixture data.domain = %q, want provider object unchanged", originalValue)
+	}
+	if !hasDiagnosticCode(result.Diagnostics, "plugin.avp-compat-substituted") {
+		t.Fatalf("Diagnostics = %#v, want AVP compatibility diagnostic", result.Diagnostics)
+	}
+}
+
+func TestRenderApplicationLeavesAVPPlaceholdersUnchangedByDefault(t *testing.T) {
+	application := argoappv1.Application{
+		ObjectMeta: metav1.ObjectMeta{Namespace: "argocd", Name: "demo"},
+		Spec: argoappv1.ApplicationSpec{
+			Source: &argoappv1.ApplicationSource{
+				RepoURL: "https://repo",
+				Path:    "manifests/demo",
+			},
+		},
+	}
+	renderers := StaticRenderers{
+		"manifests/demo": []render.Manifest{{
+			Object: &unstructured.Unstructured{Object: map[string]any{
+				"apiVersion": "v1",
+				"kind":       "ConfigMap",
+				"metadata": map[string]any{
+					"name": "demo",
+				},
+				"data": map[string]any{
+					"domain": "argocd.<path:vaults/Kubernetes/items/cluster#domain>",
+				},
+			}},
+		}},
+	}
+
+	result, err := RenderApplication(context.Background(), application, renderers)
+	if err != nil {
+		t.Fatalf("RenderApplication() error = %v", err)
+	}
+	value, _, _ := unstructured.NestedString(result.Manifests[0].Object.Object, "data", "domain")
+	if value != "argocd.<path:vaults/Kubernetes/items/cluster#domain>" {
+		t.Fatalf("data.domain = %q, want raw placeholder", value)
+	}
+	if hasDiagnosticCode(result.Diagnostics, "plugin.avp-compat-substituted") {
+		t.Fatalf("Diagnostics = %#v, did not want AVP compatibility diagnostic", result.Diagnostics)
+	}
+}
+
 func TestRenderApplicationPassesDirectoryOptions(t *testing.T) {
 	application := argoappv1.Application{
 		ObjectMeta: metav1.ObjectMeta{Namespace: "argocd", Name: "demo"},
