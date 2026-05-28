@@ -79,8 +79,8 @@ func TestDiagReportsPluginSourceFailure(t *testing.T) {
 	}
 	for _, want := range []string{
 		"error plugin:",
-		"config management plugin cue is disabled in the default renderer",
-		"trusted policy",
+		"config management plugin cue is not supported by the default renderer",
+		"no compatible native renderer",
 	} {
 		if !strings.Contains(stderr.String(), want) {
 			t.Fatalf("stderr = %q, want %q", stderr.String(), want)

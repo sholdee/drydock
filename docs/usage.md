@@ -194,7 +194,9 @@ and statuses. `SkipKinds`, `SkipCRDs`, and `SkipSecrets` apply the same
 rendered-resource filters exposed by the CLI.
 
 Config management plugin sources are explicit. The CLI and default Go client do
-not execute plugin commands by default. Plugin sources fail closed with
+not execute plugin commands by default. Discovered Argo CD CMP definitions that
+normalize to a safe `kustomize build` command are interpreted through drydock's
+native Kustomize renderer. Other plugin sources fail closed with
 `plugin.unsupported` unless an embedding caller supplies
 `drydock.Config.PluginRenderer` or a trusted drydock plugin policy matches the
 plugin name. Exec policy requires trusted provenance and `--enable-plugins`;

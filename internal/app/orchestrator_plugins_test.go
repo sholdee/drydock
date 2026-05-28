@@ -104,11 +104,11 @@ spec:
 			if len(result.Statuses) != 1 || result.Statuses[0].Status != ApplicationStatusFail {
 				t.Fatalf("statuses = %#v, want one FAIL", result.Statuses)
 			}
-			if !strings.Contains(result.Statuses[0].Message, "config management plugin cue is disabled in the default renderer") {
+			if !strings.Contains(result.Statuses[0].Message, "config management plugin cue is not supported by the default renderer") {
 				t.Fatalf("status message = %q, want unsupported plugin renderer", result.Statuses[0].Message)
 			}
-			if !strings.Contains(result.Statuses[0].Message, "trusted policy") {
-				t.Fatalf("status message = %q, want trusted policy guidance", result.Statuses[0].Message)
+			if !strings.Contains(result.Statuses[0].Message, "no compatible native renderer") {
+				t.Fatalf("status message = %q, want native renderer guidance", result.Statuses[0].Message)
 			}
 			foundPluginDiagnostic := false
 			for _, diag := range result.Diagnostics {
@@ -177,8 +177,8 @@ metadata:
 	if !hasDiagnosticMessage(result.Diagnostics, `source[1] path="manifests/multi-plugin"`) {
 		t.Fatalf("Diagnostics = %#v, want source[1] plugin diagnostic", result.Diagnostics)
 	}
-	if !hasDiagnosticMessage(result.Diagnostics, "trusted policy") {
-		t.Fatalf("Diagnostics = %#v, want trusted policy guidance", result.Diagnostics)
+	if !hasDiagnosticMessage(result.Diagnostics, "no compatible native renderer") {
+		t.Fatalf("Diagnostics = %#v, want native renderer guidance", result.Diagnostics)
 	}
 }
 
@@ -313,6 +313,8 @@ func TestOrchestratorBuildRejectsExecPolicyWithoutEnablePlugins(t *testing.T) {
 	root := t.TempDir()
 	writePluginBuildApplication(t, root, "plugin", "exec-renderer")
 	writeExecPluginPolicy(t, root, "exec-renderer", appExecCommand(t, "manifest"))
+	writeNativeKustomizeCMPHelmValues(t, root, "exec-renderer", "", "kustomize, build", "")
+	writeNativeKustomizeSource(t, root, "plugin", "native-fallback")
 
 	result, err := (Orchestrator{}).Build(context.Background(), BuildRequest{Path: root})
 	if err == nil {
@@ -324,12 +326,17 @@ func TestOrchestratorBuildRejectsExecPolicyWithoutEnablePlugins(t *testing.T) {
 	if !hasDiagnosticMessage(result.Diagnostics, "requires --enable-plugins") {
 		t.Fatalf("Diagnostics = %#v, want enable-plugins guidance", result.Diagnostics)
 	}
+	if _, ok := manifestByName(result.Manifests, "native-fallback"); ok {
+		t.Fatalf("Manifests = %#v, exec policy failure fell through to auto-native Kustomize", result.Manifests)
+	}
 }
 
 func TestOrchestratorBuildRejectsExecPolicyWithoutTrustedRef(t *testing.T) {
 	root := t.TempDir()
 	writePluginBuildApplication(t, root, "plugin", "exec-renderer")
 	writeExecPluginPolicy(t, root, "exec-renderer", appExecCommand(t, "manifest"))
+	writeNativeKustomizeCMPHelmValues(t, root, "exec-renderer", "", "kustomize, build", "")
+	writeNativeKustomizeSource(t, root, "plugin", "native-fallback")
 
 	result, err := (Orchestrator{}).Build(context.Background(), BuildRequest{
 		Path: root,
@@ -348,6 +355,9 @@ func TestOrchestratorBuildRejectsExecPolicyWithoutTrustedRef(t *testing.T) {
 	}
 	if !hasDiagnosticMessage(result.Diagnostics, "diff baseline") || !hasDiagnosticMessage(result.Diagnostics, "--plugin-policy-ref") {
 		t.Fatalf("Diagnostics = %#v, want baseline or plugin-policy-ref guidance", result.Diagnostics)
+	}
+	if _, ok := manifestByName(result.Manifests, "native-fallback"); ok {
+		t.Fatalf("Manifests = %#v, untrusted exec policy failure fell through to auto-native Kustomize", result.Manifests)
 	}
 }
 
@@ -607,21 +617,44 @@ func TestOrchestratorBuildRendersNativeKustomizePluginFromHelmValues(t *testing.
 	})
 }
 
-func TestOrchestratorBuildDoesNotRenderNativeKustomizePluginWithoutPolicy(t *testing.T) {
+func TestOrchestratorBuildRendersNativeKustomizePluginWithoutPolicy(t *testing.T) {
 	root := t.TempDir()
 	writePluginBuildApplication(t, root, "plugin", "kustomize-build-with-helm")
 	writeNativeKustomizeCMPHelmValues(t, root, "kustomize-build-with-helm", "", "sh, -c", "kustomize build --enable-helm")
 	writeNativeKustomizeSource(t, root, "plugin", "native")
 
 	result, err := (Orchestrator{}).Build(context.Background(), BuildRequest{Path: root})
-	if err == nil {
-		t.Fatal("Build() error = nil, want trusted policy requirement")
+	if err != nil {
+		t.Fatalf("Build() error = %v", err)
 	}
-	if _, ok := manifestByName(result.Manifests, "native"); ok {
-		t.Fatalf("Manifests = %#v, native Kustomize CMP rendered without policy", result.Manifests)
+	if _, ok := manifestByName(result.Manifests, "native"); !ok {
+		t.Fatalf("Manifests = %#v, want native Kustomize CMP rendered without policy", result.Manifests)
 	}
-	if !hasDiagnosticCode(result.Diagnostics, diagnostic.CodePluginUnsupported) {
-		t.Fatalf("Diagnostics = %#v, want plugin.unsupported", result.Diagnostics)
+	assertApplicationStatuses(t, result.Statuses, []ApplicationStatus{
+		{Namespace: "argocd", Name: "plugin", Status: ApplicationStatusPass},
+	})
+}
+
+func TestOrchestratorBuildDisablePluginPolicyAllowsAutoNativeKustomize(t *testing.T) {
+	root := t.TempDir()
+	writePluginBuildApplication(t, root, "plugin", "kustomize-build-with-helm")
+	writeNativeKustomizeCMPHelmValues(t, root, "kustomize-build-with-helm", "", "kustomize, build", "--enable-helm")
+	writeNativeKustomizeSource(t, root, "plugin", "native")
+	writeTestFile(t, filepath.Join(root, ".drydock", "plugins.yaml"), `apiVersion: v1
+kind: PluginPolicy
+`)
+
+	result, err := (Orchestrator{}).Build(context.Background(), BuildRequest{
+		Path: root,
+		PluginOptions: PluginOptions{
+			DisablePluginPolicy: true,
+		},
+	})
+	if err != nil {
+		t.Fatalf("Build() error = %v", err)
+	}
+	if _, ok := manifestByName(result.Manifests, "native"); !ok {
+		t.Fatalf("Manifests = %#v, want auto-native Kustomize despite disabled policy", result.Manifests)
 	}
 }
 
@@ -697,8 +730,170 @@ func TestOrchestratorBuildRejectsNativeKustomizePluginWithInit(t *testing.T) {
 	if !hasDiagnosticCode(result.Diagnostics, diagnostic.CodePluginUnsupported) {
 		t.Fatalf("Diagnostics = %#v, want plugin.unsupported", result.Diagnostics)
 	}
+	if !hasDiagnosticMessage(result.Diagnostics, "plugin init is unsupported") {
+		t.Fatalf("Diagnostics = %#v, want init rejection reason", result.Diagnostics)
+	}
 	if len(result.Manifests) != 0 {
 		t.Fatalf("Manifests = %#v, want none", result.Manifests)
+	}
+}
+
+func TestOrchestratorBuildRejectsUnsafeAutoNativeKustomizePlugins(t *testing.T) {
+	tests := []struct {
+		name         string
+		writeApp     func(t *testing.T, root string)
+		writeCMP     func(t *testing.T, root string)
+		writeSource  func(t *testing.T, root string)
+		wantFragment string
+		wantAbsent   string
+	}{
+		{
+			name: "init",
+			writeApp: func(t *testing.T, root string) {
+				writePluginBuildApplication(t, root, "plugin", "kustomize-build")
+			},
+			writeCMP: func(t *testing.T, root string) {
+				writeTestFile(t, filepath.Join(root, "settings", "values.yaml"), `configs:
+  cmp:
+    plugins:
+      kustomize-build:
+        init:
+          command: [sh, -c]
+          args: [echo preparing]
+        generate:
+          command: [kustomize, build]
+`)
+			},
+			writeSource: func(t *testing.T, root string) {
+				writeNativeKustomizeSource(t, root, "plugin", "should-not-render")
+			},
+			wantFragment: "plugin init is unsupported",
+		},
+		{
+			name: "shell syntax",
+			writeApp: func(t *testing.T, root string) {
+				writePluginBuildApplication(t, root, "plugin", "kustomize-build")
+			},
+			writeCMP: func(t *testing.T, root string) {
+				writeNativeKustomizeCMPHelmValues(t, root, "kustomize-build", "", "sh, -c", "kustomize build | sed s/a/b/")
+			},
+			writeSource: func(t *testing.T, root string) {
+				writeNativeKustomizeSource(t, root, "plugin", "should-not-render")
+			},
+			wantFragment: "shell command uses unsupported syntax",
+		},
+		{
+			name: "remote operand",
+			writeApp: func(t *testing.T, root string) {
+				writePluginBuildApplication(t, root, "plugin", "kustomize-build")
+			},
+			writeCMP: func(t *testing.T, root string) {
+				writeNativeKustomizeCMPHelmValues(t, root, "kustomize-build", "", "kustomize, build", "https://user:secret-token@example.com/repo")
+			},
+			writeSource: func(t *testing.T, root string) {
+				writeNativeKustomizeSource(t, root, "plugin", "should-not-render")
+			},
+			wantFragment: "unsupported kustomize build path or remote operand",
+			wantAbsent:   "secret-token",
+		},
+		{
+			name: "unsupported option",
+			writeApp: func(t *testing.T, root string) {
+				writePluginBuildApplication(t, root, "plugin", "kustomize-build")
+			},
+			writeCMP: func(t *testing.T, root string) {
+				writeNativeKustomizeCMPHelmValues(t, root, "kustomize-build", "", "kustomize, build", "--enable-alpha-plugins")
+			},
+			writeSource: func(t *testing.T, root string) {
+				writeNativeKustomizeSource(t, root, "plugin", "should-not-render")
+			},
+			wantFragment: "unsupported kustomize build option",
+		},
+		{
+			name: "Application plugin env",
+			writeApp: func(t *testing.T, root string) {
+				writeTestFile(t, filepath.Join(root, "apps", "plugin.yaml"), `apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: plugin
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/example/repo
+    path: manifests/plugin
+    targetRevision: main
+    plugin:
+      name: kustomize-build
+      env:
+        - name: FEATURE
+          value: enabled
+  destination:
+    name: in-cluster
+    namespace: default
+`)
+			},
+			writeCMP: func(t *testing.T, root string) {
+				writeNativeKustomizeCMPHelmValues(t, root, "kustomize-build", "", "kustomize, build", "")
+			},
+			writeSource: func(t *testing.T, root string) {
+				writeNativeKustomizeSource(t, root, "plugin", "should-not-render")
+			},
+			wantFragment: "Application plugin env or parameters are unsupported",
+		},
+		{
+			name: "chart source",
+			writeApp: func(t *testing.T, root string) {
+				writeTestFile(t, filepath.Join(root, "apps", "plugin.yaml"), `apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: plugin
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: https://charts.example.test
+    chart: plugin
+    targetRevision: 1.0.0
+    plugin:
+      name: kustomize-build
+  destination:
+    name: in-cluster
+    namespace: default
+`)
+			},
+			writeCMP: func(t *testing.T, root string) {
+				writeNativeKustomizeCMPHelmValues(t, root, "kustomize-build", "", "kustomize, build", "")
+			},
+			writeSource:  func(t *testing.T, root string) {},
+			wantFragment: "chart sources are unsupported",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			root := t.TempDir()
+			tt.writeApp(t, root)
+			tt.writeCMP(t, root)
+			tt.writeSource(t, root)
+
+			result, err := (Orchestrator{}).Build(context.Background(), BuildRequest{Path: root})
+			if err == nil {
+				t.Fatal("Build() error = nil, want unsupported native Kustomize plugin")
+			}
+			if !hasDiagnosticCode(result.Diagnostics, diagnostic.CodePluginUnsupported) {
+				t.Fatalf("Diagnostics = %#v, want plugin.unsupported", result.Diagnostics)
+			}
+			if !hasDiagnosticMessage(result.Diagnostics, tt.wantFragment) {
+				t.Fatalf("Diagnostics = %#v, want %q", result.Diagnostics, tt.wantFragment)
+			}
+			if tt.wantAbsent != "" && hasDiagnosticMessage(result.Diagnostics, tt.wantAbsent) {
+				t.Fatalf("Diagnostics = %#v, did not want sensitive fragment %q", result.Diagnostics, tt.wantAbsent)
+			}
+			if _, ok := manifestByName(result.Manifests, "should-not-render"); ok {
+				t.Fatalf("Manifests = %#v, unsafe plugin rendered", result.Manifests)
+			}
+		})
 	}
 }
 

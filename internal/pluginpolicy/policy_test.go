@@ -3,6 +3,7 @@ package pluginpolicy
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -36,6 +37,50 @@ plugins:
 	}
 	if policy.Plugins["native"].Engine != EngineNativeKustomize {
 		t.Fatalf("native engine = %q", policy.Plugins["native"].Engine)
+	}
+}
+
+func TestPluginPolicySchemaMatchesCurrentContract(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join("..", "..", "schemas", "plugin-policy.schema.json"))
+	if err != nil {
+		t.Fatalf("ReadFile() error = %v", err)
+	}
+	var schema map[string]any
+	if err := json.Unmarshal(data, &schema); err != nil {
+		t.Fatalf("schema JSON is invalid: %v", err)
+	}
+
+	properties := schemaObject(t, schema, "properties")
+	assertSchemaConst(t, schemaObject(t, properties, "apiVersion"), apiVersion)
+	assertSchemaConst(t, schemaObject(t, properties, "kind"), kind)
+
+	defs := schemaObject(t, schema, "$defs")
+	for name, engine := range map[string]Engine{
+		"avpCompatPlugin":       EngineAVPCompat,
+		"nativeKustomizePlugin": EngineNativeKustomize,
+	} {
+		def := schemaObject(t, defs, name)
+		engineProp := schemaObject(t, schemaObject(t, def, "properties"), "engine")
+		assertSchemaConst(t, engineProp, string(engine))
+	}
+	execDef := schemaObject(t, defs, "execPlugin")
+	engineProp := schemaObject(t, schemaObject(t, execDef, "properties"), "engine")
+	assertSchemaConst(t, engineProp, string(EngineExec))
+
+	timeout := schemaObject(t, schemaObject(t, schemaObject(t, defs, "command"), "properties"), "timeout")
+	if _, ok := timeout["pattern"]; ok {
+		t.Fatalf("schema timeout has pattern %#v, want parser-authoritative Go duration string", timeout["pattern"])
+	}
+	if _, err := Parse("policy.yaml", []byte(`apiVersion: drydock.sholdee.dev/v1alpha1
+kind: PluginPolicy
+plugins:
+  exec:
+    engine: exec
+    generate:
+      command: ["renderer"]
+      timeout: 1.5s
+`)); err != nil {
+		t.Fatalf("Parse() fractional duration error = %v", err)
 	}
 }
 
@@ -194,10 +239,10 @@ func TestParseFixturePolicies(t *testing.T) {
 		},
 		{
 			path:           "exec-post-renderer.yaml",
-			plugin:         "avp-directory-include",
+			plugin:         "ytt-render",
 			engine:         EngineExec,
 			postRenderers:  1,
-			allowedEnvVars: []string{"AVP_TYPE", "OP_CONNECT_HOST", "OP_CONNECT_TOKEN"},
+			allowedEnvVars: []string{"CLUSTER_NAME", "ENVIRONMENT"},
 		},
 	}
 
@@ -1015,6 +1060,30 @@ func TestFingerprintRejectsInvalidInputPolicy(t *testing.T) {
 func sha256Hex(value string) string {
 	sum := sha256.Sum256([]byte(value))
 	return hex.EncodeToString(sum[:])
+}
+
+func schemaObject(t *testing.T, object map[string]any, name string) map[string]any {
+	t.Helper()
+	value, ok := object[name]
+	if !ok {
+		t.Fatalf("schema missing object %q", name)
+	}
+	child, ok := value.(map[string]any)
+	if !ok {
+		t.Fatalf("schema %q = %#v, want object", name, value)
+	}
+	return child
+}
+
+func assertSchemaConst(t *testing.T, object map[string]any, want string) {
+	t.Helper()
+	got, ok := object["const"].(string)
+	if !ok {
+		t.Fatalf("schema object = %#v, want string const", object)
+	}
+	if got != want {
+		t.Fatalf("schema const = %q, want %q", got, want)
+	}
 }
 
 func mustPolicyFingerprint(t *testing.T, data string) string {

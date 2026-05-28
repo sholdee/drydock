@@ -147,9 +147,12 @@ Supported render paths:
 - Kustomize `helmCharts` through the shared Helm library path.
 - Remote Helm chart sources from HTTP(S) and OCI repositories.
 - Remote Kustomize HTTP(S) files and Git refs.
-- Trusted plugin policy entries for native CMP compatibility and explicitly
-  enabled exec CMP compatibility. Policy provenance, schema, supported engines,
-  and exec security controls are owned by `docs/plugin-policy.md`.
+- Discovered Argo CD CMP definitions that normalize to a safe `kustomize
+  build` command, interpreted through drydock's native Kustomize renderer.
+- Trusted plugin policy entries for native AVP compatibility, native plugin
+  overrides, and explicitly enabled exec CMP compatibility. Policy provenance,
+  schema, supported engines, and exec security controls are owned by
+  `docs/plugin-policy.md`.
 - Deterministic in-process plugin renderers supplied by embedding callers.
 
 The default CLI and default Go client fail closed for other config management

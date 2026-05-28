@@ -19,12 +19,21 @@ func (p localProvider) renderNativeKustomizePluginSource(ctx context.Context, so
 	if !ok {
 		return nil, nil, false, nil
 	}
-	if source.Path == "" || source.Chart != "" || len(opts.Plugin.Env) != 0 || len(opts.Plugin.Parameters) != 0 {
-		return nil, unsupportedNativeKustomizePluginDiagnostic(opts.Plugin.Name), true, unsupportedNativeKustomizePluginError(opts.Plugin.Name)
+	if source.Chart != "" {
+		reason := "chart sources are unsupported by the native Kustomize adapter"
+		return nil, unsupportedNativeKustomizePluginDiagnostic(opts.Plugin.Name, reason), true, unsupportedNativeKustomizePluginError(opts.Plugin.Name, reason)
+	}
+	if source.Path == "" {
+		reason := "path source is required for the native Kustomize adapter"
+		return nil, unsupportedNativeKustomizePluginDiagnostic(opts.Plugin.Name, reason), true, unsupportedNativeKustomizePluginError(opts.Plugin.Name, reason)
+	}
+	if len(opts.Plugin.Env) != 0 || len(opts.Plugin.Parameters) != 0 {
+		reason := "Application plugin env or parameters are unsupported by the native Kustomize adapter"
+		return nil, unsupportedNativeKustomizePluginDiagnostic(opts.Plugin.Name, reason), true, unsupportedNativeKustomizePluginError(opts.Plugin.Name, reason)
 	}
 	buildOptions, err := nativeKustomizePluginBuildOptions(plugin)
 	if err != nil {
-		return nil, unsupportedNativeKustomizePluginDiagnostic(opts.Plugin.Name), true, unsupportedNativeKustomizePluginError(opts.Plugin.Name)
+		return nil, unsupportedNativeKustomizePluginDiagnostic(opts.Plugin.Name, err.Error()), true, unsupportedNativeKustomizePluginError(opts.Plugin.Name, err.Error())
 	}
 	nativeOptions := opts
 	nativeOptions.Plugin = nil
@@ -120,7 +129,10 @@ func normalizeNativeKustomizeBuildTokens(tokens []string) ([]string, error) {
 			}
 			options = append(options, token, value)
 		default:
-			return nil, fmt.Errorf("unsupported kustomize build command shape")
+			if strings.HasPrefix(token, "-") {
+				return nil, fmt.Errorf("unsupported kustomize build option")
+			}
+			return nil, fmt.Errorf("unsupported kustomize build path or remote operand")
 		}
 	}
 	if err := render.ValidateKustomizeBuildOptions(options); err != nil {
@@ -129,8 +141,8 @@ func normalizeNativeKustomizeBuildTokens(tokens []string) ([]string, error) {
 	return options, nil
 }
 
-func unsupportedNativeKustomizePluginDiagnostic(name string) []diagnostic.Diagnostic {
-	message := unsupportedNativeKustomizePluginMessage(name)
+func unsupportedNativeKustomizePluginDiagnostic(name, reason string) []diagnostic.Diagnostic {
+	message := unsupportedNativeKustomizePluginMessage(name, reason)
 	return []diagnostic.Diagnostic{{
 		Code:     diagnostic.CodePluginUnsupported,
 		Severity: diagnostic.SeverityError,
@@ -139,11 +151,15 @@ func unsupportedNativeKustomizePluginDiagnostic(name string) []diagnostic.Diagno
 	}}
 }
 
-func unsupportedNativeKustomizePluginError(name string) error {
-	message := unsupportedNativeKustomizePluginMessage(name)
+func unsupportedNativeKustomizePluginError(name, reason string) error {
+	message := unsupportedNativeKustomizePluginMessage(name, reason)
 	return fmt.Errorf("%s: %w", message, render.ErrUnsupportedPlugin)
 }
 
-func unsupportedNativeKustomizePluginMessage(name string) string {
-	return fmt.Sprintf("config management plugin %s is not supported by the native Kustomize adapter; use an explicit trusted policy, and pass --enable-plugins for exec policy entries", pluginDisplayName(name))
+func unsupportedNativeKustomizePluginMessage(name, reason string) string {
+	reason = strings.TrimSpace(reason)
+	if reason == "" {
+		reason = "the discovered CMP definition is incompatible"
+	}
+	return fmt.Sprintf("config management plugin %s is not supported by the native Kustomize adapter: %s", pluginDisplayName(name), reason)
 }

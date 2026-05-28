@@ -88,6 +88,38 @@ data:
 	}
 }
 
+func TestOrchestratorDiffAppsUsesSideSpecificAutoNativeKustomizeCMPSettings(t *testing.T) {
+	root := t.TempDir()
+	left := filepath.Join(root, "left")
+	right := filepath.Join(root, "right")
+	writePluginBuildApplication(t, left, "plugin", "kustomize-old")
+	writeNativeKustomizeCMPHelmValues(t, left, "kustomize-old", "", "kustomize, build", "")
+	writeNativeKustomizeSource(t, left, "plugin", "old")
+	writePluginBuildApplication(t, right, "plugin", "kustomize-new")
+	writeNativeKustomizeCMPHelmValues(t, right, "kustomize-new", "", "sh, -c", "kustomize build --enable-helm")
+	writeNativeKustomizeSource(t, right, "plugin", "new")
+
+	result, err := Orchestrator{}.DiffApps(context.Background(), DiffRequest{
+		LeftPath:    left,
+		RightPath:   right,
+		ChangedOnly: false,
+		Unified:     3,
+	})
+	if err != nil {
+		t.Fatalf("DiffApps() error = %v\nDiagnostics: %#v", err, result.Diagnostics)
+	}
+	found := false
+	for _, diff := range result.Results {
+		if diff.Parent.Namespace == "argocd" && diff.Parent.Name == "plugin" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("Results = %#v, want diff for plugin rendered with side-specific CMP settings", result.Results)
+	}
+}
+
 func TestOrchestratorDiffAppsHonorsApplicationJSONPointerIgnores(t *testing.T) {
 	root := t.TempDir()
 	left := filepath.Join(root, "left")

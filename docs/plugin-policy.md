@@ -1,13 +1,25 @@
 # Plugin Policy
 
 `drydock` plugin policy is the trusted, drydock-specific contract for Argo CD
-config management plugin compatibility. It is not Argo CD repo-server sidecar
-discovery, and it does not make discovered CMP commands ambiently trusted.
+config management plugin (CMP) compatibility beyond drydock's built-in native
+adapters. It is not Argo CD repo-server sidecar discovery, and it does not make
+arbitrary discovered CMP commands trusted for execution.
+
+Operators usually do not need a policy for Kustomize wrapper plugins. When
+drydock discovers a CMP command that safely normalizes to `kustomize build`, it
+uses the native Kustomize renderer automatically.
+
+Use plugin policy for these cases:
+
+- Deterministic argocd-vault-plugin (AVP) placeholder redaction with
+  `engine: avp-compat`.
+- Explicit native Kustomize overrides with `engine: native-kustomize`.
+- Trusted shellout compatibility with `engine: exec` and `--enable-plugins`.
 
 ## Runtime Gate
 
-Plugin sources fail closed by default. The CLI and default Go client do not run
-plugin commands unless all of these are true:
+The CLI and default Go client do not run plugin commands unless all of these
+are true:
 
 - The Application source names a plugin that matches a drydock plugin policy
   entry.
@@ -16,25 +28,26 @@ plugin commands unless all of these are true:
 - The exec policy came from trusted policy provenance.
 
 No plugin command execution occurs unless `--enable-plugins` is passed. Native
-engines are policy-gated interpretation paths; they do not execute plugin
-commands.
+rendering paths do not execute plugin commands.
 
-For native compatibility, `avp-compat` performs deterministic placeholder
-redaction with drydock native renderers, and `native-kustomize` routes
-compatible Kustomize build CMP definitions through drydock's native Kustomize
-renderer.
+Discovered Argo CD CMP definitions that normalize to a safe `kustomize build`
+command are interpreted by drydock's native Kustomize renderer by default.
+`native-kustomize` policy entries remain available as explicit overrides.
+For native argocd-vault-plugin (AVP) compatibility, `avp-compat` performs
+deterministic placeholder redaction with drydock native renderers.
 
 ## Trusted Provenance
 
 The default local policy path is `.drydock/plugins.yaml`. Use
 `--plugin-policy-path` to select a different policy path relative to the
 selected policy root. Missing default policy is ignored; an explicitly selected
-policy path must exist. `--disable-plugin-policy` disables policy loading and
-keeps plugin sources fail-closed.
+policy path must exist. `--disable-plugin-policy` disables drydock policy
+loading only; it does not disable built-in native Kustomize interpretation for
+safe discovered CMP definitions.
 
 Default local policy is trusted for native policy only. For single-tree
 commands such as `build`, `test`, and `diag`, a policy loaded from the current
-working tree may authorize `avp-compat` and `native-kustomize`, but it is not
+working tree may authorize `avp-compat` and `native-kustomize`. It is not
 trusted to execute `engine: exec` entries. Even with `--enable-plugins`, a
 matching exec entry from the current tree fails closed unless the caller also
 selects trusted policy provenance with `--plugin-policy-ref`.
@@ -57,6 +70,20 @@ root snapshot and may not escape it.
 Policy files are strict single-document YAML. Unknown fields, duplicate mapping
 keys, YAML aliases, merge keys, custom tags, invalid scalar types, and multiple
 documents are rejected.
+
+An editor JSON Schema is available at
+[`schemas/plugin-policy.schema.json`](../schemas/plugin-policy.schema.json).
+Use a YAML language-server comment rather than a top-level `$schema` field,
+because drydock rejects unknown policy fields:
+
+```yaml
+# yaml-language-server: $schema=https://raw.githubusercontent.com/sholdee/drydock/main/schemas/plugin-policy.schema.json
+apiVersion: drydock.sholdee.dev/v1alpha1
+kind: PluginPolicy
+```
+
+The schema is an authoring aid. The Go parser remains the authoritative
+security boundary and may enforce checks that JSON Schema cannot fully express.
 
 Top-level fields:
 
@@ -101,8 +128,7 @@ Command fields:
 ## Exec Security Model
 
 Exec policy is argv-only. `command` must be a YAML sequence of strings; shell
-strings such as `argocd-vault-plugin generate .` are rejected. Empty argv
-tokens are rejected.
+strings such as `ytt -f .` are rejected. Empty argv tokens are rejected.
 
 The command executable may be either:
 
@@ -141,14 +167,15 @@ path outside protected roots.
 ## Engines
 
 `avp-compat` renders the source with drydock's native renderer and replaces
-supported argocd-vault-plugin placeholders with deterministic redacted values.
-It does not contact a secret backend and does not execute the AVP binary.
+supported AVP placeholders with deterministic redacted values. It does not
+contact a secret backend and does not execute the AVP binary.
 
-`native-kustomize` permits a named plugin only when drydock has discovered a
-native-compatible Kustomize build CMP definition for that plugin from trusted
-Argo CD settings such as Helm values or rendered `argocd-cmp-cm` ConfigMaps.
-The configured CMP command is not executed; drydock uses its Go-native
-Kustomize renderer.
+`native-kustomize` explicitly permits a named plugin to use drydock's native
+Kustomize adapter. The same adapter also runs by default when drydock discovers
+a compatible Kustomize build CMP definition for that plugin from Argo CD
+settings such as Helm values or rendered `argocd-cmp-cm` ConfigMaps. The
+configured CMP command is not executed; drydock validates the command shape and
+uses its Go-native Kustomize renderer.
 
 `exec` runs the policy-defined `init`, `generate`, and optional
 `postRenderers` commands under the gates and process controls above. It
@@ -162,13 +189,14 @@ CUE or Jsonnet are the most plausible next candidates if stable Go APIs and
 real repository demand line up. ytt and Tanka need separate design review
 because their import, environment, and convention surfaces are broader.
 
-Native engines must remain optional, policy-gated compatibility paths. drydock
-must not treat discovered Argo CD CMP definitions as ambient permission to
-execute or emulate arbitrary plugin behavior.
+Native engines must remain narrow compatibility paths. drydock may interpret
+discovered CMP definitions only when they map to a known in-process renderer
+with a fail-closed validator. Discovered CMP definitions are never ambient
+permission to execute commands or emulate arbitrary plugin behavior.
 
 ## Examples
 
-Native AVP placeholder compatibility:
+Native argocd-vault-plugin (AVP) placeholder compatibility:
 
 ```yaml
 apiVersion: drydock.sholdee.dev/v1alpha1
@@ -178,22 +206,22 @@ plugins:
     engine: avp-compat
 ```
 
-Exec policy with a post-renderer:
+Exec policy for a trusted non-native renderer with a post-renderer:
 
 ```yaml
 apiVersion: drydock.sholdee.dev/v1alpha1
 kind: PluginPolicy
 plugins:
-  avp-directory-include:
+  ytt-render:
     engine: exec
     generate:
-      command: ["argocd-vault-plugin", "generate", "."]
+      command: ["/usr/local/bin/ytt", "-f", "."]
       timeout: 45s
     postRenderers:
-      - command: ["manifest-normalizer", "--mode", "ci"]
+      - command: ["/usr/local/bin/kbld", "-f", "-"]
         timeout: 15s
     env:
-      allow: ["AVP_TYPE", "OP_CONNECT_HOST"]
+      allow: ["CLUSTER_NAME", "ENVIRONMENT"]
     output:
       maxStdoutBytes: 10485760
       maxStderrBytes: 65536

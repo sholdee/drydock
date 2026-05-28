@@ -116,8 +116,8 @@ func TestTestAppsReportsPluginSourceFailure(t *testing.T) {
 	}
 	for _, want := range []string{
 		"FAIL argocd/plugin-app",
-		"config management plugin cue is disabled in the default renderer",
-		"trusted policy",
+		"config management plugin cue is not supported by the default renderer",
+		"no compatible native renderer",
 	} {
 		if !strings.Contains(stdout.String(), want) {
 			t.Fatalf("stdout = %q, want %q", stdout.String(), want)
@@ -145,8 +145,8 @@ func TestTestAppReportsPluginSourceFailure(t *testing.T) {
 	}
 	for _, want := range []string{
 		"FAIL argocd/plugin-app",
-		"config management plugin cue is disabled in the default renderer",
-		"trusted policy",
+		"config management plugin cue is not supported by the default renderer",
+		"no compatible native renderer",
 	} {
 		if !strings.Contains(stdout.String(), want) {
 			t.Fatalf("stdout = %q, want %q", stdout.String(), want)

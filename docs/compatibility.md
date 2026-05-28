@@ -132,8 +132,10 @@ Supported:
 - Kustomize root Git remote refs such as
   `https://github.com/org/repo?ref=v1` when they resolve to a repository-root
   Kustomization directory.
-- Trusted drydock plugin policy entries for native CMP compatibility and
-  explicitly enabled exec CMP compatibility.
+- Discovered safe Kustomize build CMP definitions interpreted by drydock's
+  native Kustomize renderer.
+- Trusted drydock plugin policy entries for native AVP compatibility, native
+  plugin overrides, and explicitly enabled exec CMP compatibility.
 - Config management plugin source detection with fail-closed diagnostics in
   the CLI and default Go client.
 - Injectable in-process plugin renderers, named plugin registry dispatch, and

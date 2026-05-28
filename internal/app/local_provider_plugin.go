@@ -22,6 +22,9 @@ func (p localProvider) renderPluginSource(ctx context.Context, source render.Res
 		if manifests, diags, handled, err := p.renderPolicyPluginSource(ctx, source, opts); handled {
 			return manifests, diags, err
 		}
+		if manifests, diags, handled, err := p.renderNativeKustomizePluginSource(ctx, source, opts); handled {
+			return manifests, diags, err
+		}
 		message := unsupportedPluginMessage(opts.Plugin.Name)
 		return nil, []diagnostic.Diagnostic{{
 			Code:     diagnostic.CodePluginUnsupported,
@@ -242,7 +245,7 @@ func pluginDisplayName(name string) string {
 }
 
 func unsupportedPluginMessage(name string) string {
-	return fmt.Sprintf("config management plugin %s is disabled in the default renderer; use an explicit trusted policy, and pass --enable-plugins for exec policy entries", pluginDisplayName(name))
+	return fmt.Sprintf("config management plugin %s is not supported by the default renderer; no compatible native renderer or trusted drydock plugin policy matched", pluginDisplayName(name))
 }
 
 func execPolicyDecodeTarget(name string, source render.ResolvedSource, hasPostRenderers bool) (string, string) {

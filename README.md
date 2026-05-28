@@ -148,9 +148,10 @@ drydock discovers and renders local Argo CD desired state, including:
 - Single-source and multi-source Applications.
 - Directory, Kustomize, local Helm chart, remote Helm chart, and remote
   Kustomize sources.
+- Discovered safe Kustomize build config management plugins rendered through
+  drydock's native Kustomize adapter, without executing plugin commands.
 - Trusted plugin policy entries for native `avp-compat` placeholder redaction
-  and native-compatible Kustomize build config management plugins, without
-  executing plugin commands by default.
+  and native plugin overrides.
 - Explicit trusted exec plugin policy support with `--enable-plugins` for
   operators who need shellout CMP compatibility, including policy-defined
   post-renderer chains.
@@ -195,10 +196,11 @@ Default commands do not reproduce:
 - CLI config management plugin execution or shellout plugin adapters unless an
   explicit trusted exec plugin policy is enabled.
 
-Plugin-backed sources fail closed unless an embedding caller injects an
-in-process renderer or a trusted drydock plugin policy matches the plugin name.
-Native policy engines do not execute plugin commands. Exec policy requires
-trusted provenance and `--enable-plugins`. See
+Plugin command execution fails closed unless an embedding caller injects an
+in-process renderer or a trusted drydock exec plugin policy matches the plugin
+name. Discovered safe Kustomize build CMP definitions and native policy
+engines do not execute plugin commands. Exec policy requires trusted
+provenance and `--enable-plugins`. See
 [`docs/plugin-policy.md`](docs/plugin-policy.md) for the policy schema,
 provenance rules, CMP compatibility model, and exec security controls.
 
@@ -265,7 +267,7 @@ Join the home-operations Discord at <https://discord.gg/home-operations>.
 - [`docs/source-acquisition.md`](docs/source-acquisition.md): Git, Helm,
   remote Kustomize, cache, and auth behavior.
 - [`docs/plugin-policy.md`](docs/plugin-policy.md): trusted plugin policy,
-  CMP compatibility, and exec plugin security.
+  editor schema, CMP compatibility, and exec plugin security.
 - [`docs/compatibility.md`](docs/compatibility.md): supported Argo CD behavior
   and intentional runtime boundaries.
 - [`docs/release.md`](docs/release.md): release and Argo CD dependency upgrade

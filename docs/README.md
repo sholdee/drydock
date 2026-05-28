@@ -14,7 +14,8 @@ copying the same rule into multiple files.
 | `docs/usage.md` | Operator CLI workflows and high-value command examples. |
 | `docs/applicationsets.md` | ApplicationSet generator behavior, fixture schema, and template parameters. |
 | `docs/source-acquisition.md` | Git, Helm, remote Kustomize, cache, and auth behavior. |
-| `docs/plugin-policy.md` | Trusted plugin policy provenance, CMP compatibility, and exec security. |
+| `docs/plugin-policy.md` | Trusted plugin policy provenance, editor schema, CMP compatibility, and exec security. |
+| `schemas/plugin-policy.schema.json` | Editor validation schema for `.drydock/plugins.yaml`; parser remains authoritative. |
 | `docs/compatibility.md` | Supported Argo CD behavior and runtime-boundary status. |
 | `docs/release.md` | Release and Argo CD dependency upgrade notes. |
 | `docs/logo/` | Project logo assets. |
