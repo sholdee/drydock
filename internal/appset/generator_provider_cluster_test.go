@@ -218,6 +218,56 @@ spec:
 	}
 }
 
+func TestGenerateClusterGeneratorValuesDoNotReferenceSiblings(t *testing.T) {
+	root := t.TempDir()
+	data := []byte(`
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: cluster-values
+spec:
+  generators:
+    - clusters:
+        values:
+          first: '{{name}}'
+          second: '{{values.first}}'
+  template:
+    metadata:
+      name: cluster-values
+      annotations:
+        first: '{{values.first}}'
+        second: '{{values.second}}'
+    spec:
+      project: default
+      source:
+        repoURL: https://github.com/example/repo
+        path: apps/static
+        targetRevision: main
+      destination:
+        server: '{{server}}'
+        namespace: default
+`)
+
+	apps, diags, err := GenerateFromYAMLWithOptions(root, "app-set.yaml", data, Options{Provider: ProviderOptions{Data: ProviderData{
+		Clusters: []ClusterInput{{Name: "prod-a", Server: "https://prod-a.example.invalid"}},
+	}}})
+	if err != nil {
+		t.Fatalf("GenerateFromYAMLWithOptions() error = %v", err)
+	}
+	if len(diags) != 0 {
+		t.Fatalf("diagnostics = %#v", diags)
+	}
+	if len(apps) != 1 {
+		t.Fatalf("len(apps) = %d, want 1", len(apps))
+	}
+	if apps[0].Application.Annotations["first"] != "prod-a" {
+		t.Fatalf("first annotation = %q, want prod-a", apps[0].Application.Annotations["first"])
+	}
+	if apps[0].Application.Annotations["second"] != "{{values.first}}" {
+		t.Fatalf("second annotation = %q, want unresolved sibling value placeholder", apps[0].Application.Annotations["second"])
+	}
+}
+
 func TestGenerateClusterGeneratorWithoutFixtureStaysUnsupported(t *testing.T) {
 	root := t.TempDir()
 	data := []byte(`

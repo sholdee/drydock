@@ -91,8 +91,8 @@ func Cases() []Case {
 			Phase:             "5",
 			Category:          "appset-template-patch",
 			FixturePath:       "testdata/semantic-remediation/appset-template-patch/basic",
-			Status:            StatusPending,
-			Reason:            "A17 templatePatch is not implemented yet.",
+			Status:            StatusActive,
+			Reason:            "A17 templatePatch rendering and strategic merge behavior are covered by Phase 5 tests.",
 			VerificationScope: "go test ./internal/appset -run TemplatePatch",
 		},
 		{
@@ -136,8 +136,8 @@ func Cases() []Case {
 			Phase:             "5",
 			Category:          "provider-fixtures",
 			FixturePath:       "testdata/semantic-remediation/provider-fixtures/all-provider",
-			Status:            StatusPending,
-			Reason:            "Provider-backed ApplicationSet CLI e2e coverage is incomplete.",
+			Status:            StatusActive,
+			Reason:            "Provider-backed ApplicationSet CLI fixture coverage spans every supported fixture family.",
 			VerificationScope: "go test ./internal/appset ./internal/cli -run ProviderFixture",
 		},
 		{

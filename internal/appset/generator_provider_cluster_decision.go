@@ -91,7 +91,8 @@ func clusterDecisionResourceInputParamSets(manifestPath string, generator *argoa
 }
 
 func clusterDecisionResourceDecisionParamSets(generator *argoappv1.DuckTypeGenerator, input ClusterDecisionInput, clustersByName map[string]ClusterInput, useGoTemplate bool, goTemplateOptions []string) ([]generatorParamSet, error) {
-	if input.StatusListKey != defaultClusterDecisionStatusListKey || input.MatchKey == "" {
+	statusListKey := clusterDecisionResourceStatusListKey(input)
+	if statusListKey == "" || input.MatchKey == "" {
 		return nil, nil
 	}
 	out := make([]generatorParamSet, 0, len(input.Decisions))
@@ -105,6 +106,13 @@ func clusterDecisionResourceDecisionParamSets(generator *argoappv1.DuckTypeGener
 		}
 	}
 	return out, nil
+}
+
+func clusterDecisionResourceStatusListKey(input ClusterDecisionInput) string {
+	if input.StatusListKey == "" {
+		return defaultClusterDecisionStatusListKey
+	}
+	return input.StatusListKey
 }
 
 func clusterDecisionResourceDecisionParamSet(generator *argoappv1.DuckTypeGenerator, matchKey string, decision map[string]any, clustersByName map[string]ClusterInput, useGoTemplate bool, goTemplateOptions []string) (generatorParamSet, bool, error) {

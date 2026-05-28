@@ -482,6 +482,102 @@ spec:
 		t.Fatalf("generated names = %#v, want beta", got)
 	}
 }
+
+func TestGenerateListGeneratorFlattensNestedValuesForFasttemplate(t *testing.T) {
+	root := t.TempDir()
+	data := []byte(`
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: list-values
+spec:
+  generators:
+    - list:
+        elements:
+          - name: alpha
+            values:
+              region: east
+  template:
+    metadata:
+      name: '{{name}}'
+      annotations:
+        region: '{{values.region}}'
+    spec:
+      project: default
+      source:
+        repoURL: https://github.com/example/repo
+        path: apps/{{name}}
+        targetRevision: main
+      destination:
+        name: in-cluster
+        namespace: default
+`)
+
+	apps, diags, err := GenerateFromYAML(root, "app-set.yaml", data)
+	if err != nil {
+		t.Fatalf("GenerateFromYAML() error = %v", err)
+	}
+	if len(diags) != 0 {
+		t.Fatalf("diagnostics = %#v", diags)
+	}
+	if got := generatedNames(apps); !slices.Equal(got, []string{"alpha"}) {
+		t.Fatalf("generated names = %#v, want alpha", got)
+	}
+	if apps[0].Application.Annotations["region"] != "east" {
+		t.Fatalf("region annotation = %q, want east", apps[0].Application.Annotations["region"])
+	}
+}
+
+func TestGenerateListGeneratorRejectsNonStringFasttemplateElements(t *testing.T) {
+	root := t.TempDir()
+	for _, tt := range []struct {
+		name     string
+		element  string
+		wantText string
+	}{
+		{
+			name: "scalar field",
+			element: `
+          - name: alpha
+            replicas: 2`,
+			wantText: `field "replicas" must be a string`,
+		},
+		{
+			name: "nested values",
+			element: `
+          - name: beta
+            values:
+              region: true`,
+			wantText: "values.region must be a string",
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			data := []byte(`
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: bad-list
+spec:
+  generators:
+    - list:
+        elements:
+` + tt.element + `
+  template:
+    metadata:
+      name: '{{name}}'
+`)
+
+			_, _, err := GenerateFromYAML(root, "app-set.yaml", data)
+			if err == nil {
+				t.Fatal("GenerateFromYAML() error = nil, want non-string list element failure")
+			}
+			if !strings.Contains(err.Error(), tt.wantText) {
+				t.Fatalf("error = %v, want %q", err, tt.wantText)
+			}
+		})
+	}
+}
+
 func TestGenerateListGeneratorTemplateOverridesBaseTemplate(t *testing.T) {
 	root := t.TempDir()
 	data := []byte(`
@@ -622,6 +718,52 @@ spec:
 		t.Fatalf("gamma namespace = %q, want extra", apps[2].Application.Spec.Destination.Namespace)
 	}
 }
+
+func TestGenerateListGeneratorElementsYamlStaysUnflattenedForFasttemplate(t *testing.T) {
+	root := t.TempDir()
+	data := []byte(`
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: list-yaml-values
+spec:
+  generators:
+    - list:
+        elementsYaml: |
+          - name: beta
+            values:
+              region: extra
+  template:
+    metadata:
+      name: '{{name}}'
+      annotations:
+        region: '{{values.region}}'
+    spec:
+      project: default
+      source:
+        repoURL: https://github.com/example/repo
+        path: apps/{{name}}
+        targetRevision: main
+      destination:
+        name: in-cluster
+        namespace: default
+`)
+
+	apps, diags, err := GenerateFromYAML(root, "app-set.yaml", data)
+	if err != nil {
+		t.Fatalf("GenerateFromYAML() error = %v", err)
+	}
+	if len(diags) != 0 {
+		t.Fatalf("diagnostics = %#v", diags)
+	}
+	if got := generatedNames(apps); !slices.Equal(got, []string{"beta"}) {
+		t.Fatalf("generated names = %#v, want beta", got)
+	}
+	if apps[0].Application.Annotations["region"] != "{{values.region}}" {
+		t.Fatalf("region annotation = %q, want unflattened placeholder", apps[0].Application.Annotations["region"])
+	}
+}
+
 func TestGenerateListGeneratorElementsYamlNonMappingReturnsDiagnostic(t *testing.T) {
 	root := t.TempDir()
 	data := []byte(`

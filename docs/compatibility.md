@@ -53,6 +53,8 @@ Supported:
   entrypoint.
 - ApplicationSet Git directories, Git files, list, matrix, and merge
   generators.
+- ApplicationSet `templatePatch` rendering and strategic merge patching, with
+  generated `spec.project` preserved.
 - ApplicationSet list `elementsYaml`, including matrix-interpolated
   `elementsYaml`.
 - Generator selectors and generator template overrides for supported
