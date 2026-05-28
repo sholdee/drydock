@@ -3,15 +3,17 @@ package app
 import (
 	"context"
 	"fmt"
-	"github.com/sholdee/drydock/internal/config"
-	"github.com/sholdee/drydock/internal/diagnostic"
-	"github.com/sholdee/drydock/internal/pluginpolicy"
-	"github.com/sholdee/drydock/internal/render"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/sholdee/drydock/internal/config"
+	"github.com/sholdee/drydock/internal/diagnostic"
+	"github.com/sholdee/drydock/internal/pluginpolicy"
+	"github.com/sholdee/drydock/internal/render"
 )
 
 func TestOrchestratorBuildFailsClosedForPluginSourceWithoutRenderer(t *testing.T) {
@@ -398,6 +400,62 @@ func TestOrchestratorBuildReportsInvalidExecPolicyOutput(t *testing.T) {
 	})
 	if err == nil {
 		t.Fatal("Build() error = nil, want invalid manifest output failure")
+	}
+	if !hasDiagnosticCode(result.Diagnostics, diagnostic.CodePluginFailed) {
+		t.Fatalf("Diagnostics = %#v, want plugin.failed", result.Diagnostics)
+	}
+	if !hasDiagnosticMessage(result.Diagnostics, "produced invalid manifests") {
+		t.Fatalf("Diagnostics = %#v, want invalid manifest diagnostic", result.Diagnostics)
+	}
+}
+
+func TestOrchestratorBuildRunsExecPolicyPostRenderer(t *testing.T) {
+	root := t.TempDir()
+	writePluginBuildApplication(t, root, "plugin", "exec-renderer")
+	t.Setenv("DRYDOCK_APP_EXEC_HELPER", "1")
+	policy, fingerprint := testExecPluginPolicyWithPostRenderer(t, "exec-renderer", appExecCommand(t, "manifest"), appExecCommand(t, "post-render"))
+
+	result, err := (Orchestrator{}).Build(context.Background(), BuildRequest{
+		Path: root,
+		PluginOptions: PluginOptions{
+			EnablePlugins:           true,
+			pluginPolicyLoaded:      true,
+			pluginPolicy:            policy,
+			pluginPolicyFingerprint: fingerprint,
+			pluginPolicyExecTrusted: true,
+		},
+	})
+	if err != nil {
+		t.Fatalf("Build() error = %v\nDiagnostics: %#v", err, result.Diagnostics)
+	}
+	manifest, ok := manifestByName(result.Manifests, "exec-rendered")
+	if !ok {
+		t.Fatalf("Manifests = %#v, want exec-rendered", result.Manifests)
+	}
+	data, ok := manifest.Object.Object["data"].(map[string]any)
+	if !ok || data["post"] != "rendered" {
+		t.Fatalf("data = %#v, want post-rendered marker", manifest.Object.Object["data"])
+	}
+}
+
+func TestOrchestratorBuildReportsInvalidExecPolicyPostRendererOutput(t *testing.T) {
+	root := t.TempDir()
+	writePluginBuildApplication(t, root, "plugin", "exec-renderer")
+	t.Setenv("DRYDOCK_APP_EXEC_HELPER", "1")
+	policy, fingerprint := testExecPluginPolicyWithPostRenderer(t, "exec-renderer", appExecCommand(t, "manifest"), appExecCommand(t, "invalid"))
+
+	result, err := (Orchestrator{}).Build(context.Background(), BuildRequest{
+		Path: root,
+		PluginOptions: PluginOptions{
+			EnablePlugins:           true,
+			pluginPolicyLoaded:      true,
+			pluginPolicy:            policy,
+			pluginPolicyFingerprint: fingerprint,
+			pluginPolicyExecTrusted: true,
+		},
+	})
+	if err == nil {
+		t.Fatal("Build() error = nil, want invalid post-render output failure")
 	}
 	if !hasDiagnosticCode(result.Diagnostics, diagnostic.CodePluginFailed) {
 		t.Fatalf("Diagnostics = %#v, want plugin.failed", result.Diagnostics)
@@ -797,6 +855,18 @@ func testExecPluginPolicy(t *testing.T, name string, command []string) (pluginpo
 	t.Helper()
 	root := t.TempDir()
 	writeExecPluginPolicy(t, root, name, command)
+	return readTestPluginPolicy(t, root)
+}
+
+func testExecPluginPolicyWithPostRenderer(t *testing.T, name string, command, postRenderer []string) (pluginpolicy.Policy, string) {
+	t.Helper()
+	root := t.TempDir()
+	writeExecPluginPolicyWithPostRenderer(t, root, name, command, postRenderer)
+	return readTestPluginPolicy(t, root)
+}
+
+func readTestPluginPolicy(t *testing.T, root string) (pluginpolicy.Policy, string) {
+	t.Helper()
 	data, err := os.ReadFile(filepath.Join(root, ".drydock", "plugins.yaml"))
 	if err != nil {
 		t.Fatalf("ReadFile() error = %v", err)
@@ -810,6 +880,32 @@ func testExecPluginPolicy(t *testing.T, name string, command []string) (pluginpo
 		t.Fatalf("Fingerprint() error = %v", err)
 	}
 	return policy, fingerprint
+}
+
+func writeExecPluginPolicyWithPostRenderer(t *testing.T, root, name string, command, postRenderer []string) {
+	t.Helper()
+	quotedCommand := make([]string, 0, len(command))
+	for _, arg := range command {
+		quotedCommand = append(quotedCommand, yamlSingleQuoted(arg))
+	}
+	quotedPostRenderer := make([]string, 0, len(postRenderer))
+	for _, arg := range postRenderer {
+		quotedPostRenderer = append(quotedPostRenderer, yamlSingleQuoted(arg))
+	}
+	writeTestFile(t, filepath.Join(root, ".drydock", "plugins.yaml"), `apiVersion: drydock.sholdee.dev/v1alpha1
+kind: PluginPolicy
+plugins:
+  `+name+`:
+    engine: exec
+    generate:
+      command: [`+strings.Join(quotedCommand, ", ")+`]
+      timeout: 2s
+    postRenderers:
+      - command: [`+strings.Join(quotedPostRenderer, ", ")+`]
+        timeout: 2s
+    env:
+      allow: ["DRYDOCK_APP_EXEC_HELPER", "DRYDOCK_APP_EXEC_VALUE"]
+`)
 }
 
 func appExecCommand(t *testing.T, mode string) []string {
@@ -854,6 +950,11 @@ func TestAppExecPluginHelperProcess(t *testing.T) {
 		os.Exit(0)
 	case "invalid":
 		fmt.Println("metadata: [")
+		os.Exit(0)
+	case "post-render":
+		input, _ := io.ReadAll(os.Stdin)
+		fmt.Print(string(input))
+		fmt.Println("  post: rendered")
 		os.Exit(0)
 	default:
 		os.Exit(2)

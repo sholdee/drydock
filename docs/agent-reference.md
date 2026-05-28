@@ -55,10 +55,12 @@ plugin name to `engine: exec` and the caller explicitly sets
 plugin policy maps the plugin name to a native engine such as `avp-compat` or
 `native-kustomize`; discovered Kustomize CMP definitions are not ambiently
 trusted. Exec command definitions must come from baseline/trusted policy
-provenance, not from the current PR tree. Public API plugin rendering is allowed
-only through explicit in-process `Config.PluginRenderer` or registry injection.
-Preserve `plugin.unsupported`, `plugin.failed`, and `plugin.unspecified`
-diagnostics, and do not reclassify caller cancellation as plugin timeout.
+provenance, not from the current PR tree. Policy-defined exec post-renderers
+share the same trust and process controls as exec generate commands. Public API
+plugin rendering is allowed only through explicit in-process
+`Config.PluginRenderer` or registry injection. Preserve `plugin.unsupported`,
+`plugin.failed`, and `plugin.unspecified` diagnostics, and do not reclassify
+caller cancellation as plugin timeout.
 
 ## Settings And Project Discovery
 

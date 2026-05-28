@@ -24,11 +24,12 @@ const (
 
 	NoPolicyFingerprint = ""
 
-	ExecWorkdirSource      = "source"
-	DefaultInitTimeout     = 10 * time.Second
-	DefaultGenerateTimeout = 60 * time.Second
-	DefaultMaxStdoutBytes  = int64(10 * 1024 * 1024)
-	DefaultMaxStderrBytes  = int64(64 * 1024)
+	ExecWorkdirSource          = "source"
+	DefaultInitTimeout         = 10 * time.Second
+	DefaultGenerateTimeout     = 60 * time.Second
+	DefaultPostRendererTimeout = 30 * time.Second
+	DefaultMaxStdoutBytes      = int64(10 * 1024 * 1024)
+	DefaultMaxStderrBytes      = int64(64 * 1024)
 
 	maxEnvAllowCount = 64
 )
@@ -51,11 +52,12 @@ type Plugin struct {
 }
 
 type ExecConfig struct {
-	Workdir  string
-	Init     *ExecCommand
-	Generate ExecCommand
-	Env      ExecEnv
-	Output   ExecOutput
+	Workdir       string
+	Init          *ExecCommand
+	Generate      ExecCommand
+	PostRenderers []ExecCommand
+	Env           ExecEnv
+	Output        ExecOutput
 }
 
 type ExecCommand struct {
@@ -146,11 +148,12 @@ type fingerprintPlugin struct {
 }
 
 type fingerprintExecConfig struct {
-	Workdir  string              `json:"workdir"`
-	Init     *fingerprintCommand `json:"init,omitempty"`
-	Generate fingerprintCommand  `json:"generate"`
-	Env      ExecEnv             `json:"env"`
-	Output   ExecOutput          `json:"output"`
+	Workdir       string               `json:"workdir"`
+	Init          *fingerprintCommand  `json:"init,omitempty"`
+	Generate      fingerprintCommand   `json:"generate"`
+	PostRenderers []fingerprintCommand `json:"postRenderers,omitempty"`
+	Env           ExecEnv              `json:"env"`
+	Output        ExecOutput           `json:"output"`
 }
 
 type fingerprintCommand struct {
@@ -181,6 +184,15 @@ func newFingerprintPlugin(plugin Plugin) (fingerprintPlugin, error) {
 		out.Exec.Init = &fingerprintCommand{
 			Command: append([]string(nil), plugin.Exec.Init.Command...),
 			Timeout: plugin.Exec.Init.Timeout.String(),
+		}
+	}
+	if len(plugin.Exec.PostRenderers) > 0 {
+		out.Exec.PostRenderers = make([]fingerprintCommand, 0, len(plugin.Exec.PostRenderers))
+		for _, command := range plugin.Exec.PostRenderers {
+			out.Exec.PostRenderers = append(out.Exec.PostRenderers, fingerprintCommand{
+				Command: append([]string(nil), command.Command...),
+				Timeout: command.Timeout.String(),
+			})
 		}
 	}
 	return out, nil
@@ -336,12 +348,13 @@ func rejectUnknownFields(fields map[string]*yaml.Node, allowed map[string]bool, 
 
 func parseExecConfig(fields map[string]*yaml.Node, path, pointer string) (ExecConfig, error) {
 	allowed := map[string]bool{
-		"engine":   true,
-		"workdir":  true,
-		"init":     true,
-		"generate": true,
-		"env":      true,
-		"output":   true,
+		"engine":        true,
+		"workdir":       true,
+		"init":          true,
+		"generate":      true,
+		"postRenderers": true,
+		"env":           true,
+		"output":        true,
 	}
 	if err := rejectUnknownFields(fields, allowed, pointer); err != nil {
 		return ExecConfig{}, fmt.Errorf("parse plugin policy %s: %w", path, err)
@@ -373,6 +386,10 @@ func parseExecConfig(fields map[string]*yaml.Node, path, pointer string) (ExecCo
 	if err != nil {
 		return ExecConfig{}, err
 	}
+	postRenderers, err := parsePostRenderers(fields["postRenderers"], path, pointer+".postRenderers")
+	if err != nil {
+		return ExecConfig{}, err
+	}
 	env, err := parseExecEnv(fields["env"], path, pointer+".env")
 	if err != nil {
 		return ExecConfig{}, err
@@ -382,12 +399,34 @@ func parseExecConfig(fields map[string]*yaml.Node, path, pointer string) (ExecCo
 		return ExecConfig{}, err
 	}
 	return ExecConfig{
-		Workdir:  workdir,
-		Init:     init,
-		Generate: generate,
-		Env:      env,
-		Output:   output,
+		Workdir:       workdir,
+		Init:          init,
+		Generate:      generate,
+		PostRenderers: postRenderers,
+		Env:           env,
+		Output:        output,
 	}, nil
+}
+
+func parsePostRenderers(node *yaml.Node, path, pointer string) ([]ExecCommand, error) {
+	if node == nil {
+		return nil, nil
+	}
+	if node.Kind != yaml.SequenceNode {
+		return nil, fmt.Errorf("parse plugin policy %s: %s must be a sequence", path, pointer)
+	}
+	if len(node.Content) == 0 {
+		return nil, fmt.Errorf("parse plugin policy %s: %s must not be empty", path, pointer)
+	}
+	out := make([]ExecCommand, 0, len(node.Content))
+	for index, child := range node.Content {
+		command, err := parseExecCommand(child, path, fmt.Sprintf("%s[%d]", pointer, index), DefaultPostRendererTimeout)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, command)
+	}
+	return out, nil
 }
 
 func parseExecCommand(node *yaml.Node, path, pointer string, defaultTimeout time.Duration) (ExecCommand, error) {

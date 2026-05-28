@@ -140,8 +140,9 @@ Supported:
   command.
 - Trusted `.drydock/plugins.yaml` policy entries with `engine: exec` when
   callers explicitly pass `--enable-plugins`. Exec plugins run local commands
-  from a copied source workspace and are never discovered from Argo CD
-  repo-server sidecars or ambient CMP configuration.
+  from a copied source workspace and may chain policy-defined post-renderers.
+  They are never discovered from Argo CD repo-server sidecars or ambient CMP
+  configuration.
 - Config management plugin source detection with fail-closed diagnostics in
   the CLI and default Go client.
 - Injectable in-process plugin renderers, named plugin registry dispatch, and

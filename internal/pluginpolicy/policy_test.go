@@ -138,6 +138,9 @@ plugins:
     generate:
       command: ["argocd-vault-plugin", "generate", "."]
       timeout: 3s
+    postRenderers:
+      - command: ["post-render", "--add-labels"]
+        timeout: 4s
     env:
       allow: [" OP_CONNECT_HOST ", "AVP_TYPE"]
     output:
@@ -157,11 +160,84 @@ plugins:
 	if got := plugin.Exec.Generate.Timeout.String(); got != "3s" {
 		t.Fatalf("Generate timeout = %s, want 3s", got)
 	}
+	if len(plugin.Exec.PostRenderers) != 1 {
+		t.Fatalf("len(PostRenderers) = %d, want 1", len(plugin.Exec.PostRenderers))
+	}
+	if got := strings.Join(plugin.Exec.PostRenderers[0].Command, " "); got != "post-render --add-labels" {
+		t.Fatalf("PostRenderers[0].Command = %q, want post-render --add-labels", got)
+	}
+	if got := plugin.Exec.PostRenderers[0].Timeout.String(); got != "4s" {
+		t.Fatalf("PostRenderers[0].Timeout = %s, want 4s", got)
+	}
 	if got := strings.Join(plugin.Exec.Env.Allow, ","); got != "AVP_TYPE,OP_CONNECT_HOST" {
 		t.Fatalf("Env allow = %q, want AVP_TYPE,OP_CONNECT_HOST", got)
 	}
 	if plugin.Exec.Output.MaxStdoutBytes != 1024 || plugin.Exec.Output.MaxStderrBytes != 128 {
 		t.Fatalf("Output = %#v, want explicit limits", plugin.Exec.Output)
+	}
+}
+
+func TestParseExecPolicyPostRendererDefaultTimeout(t *testing.T) {
+	policy, err := Parse("policy.yaml", []byte(`apiVersion: drydock.sholdee.dev/v1alpha1
+kind: PluginPolicy
+plugins:
+  renderer:
+    engine: exec
+    generate:
+      command: ["argocd-vault-plugin", "generate", "."]
+    postRenderers:
+      - command: ["post-render", "normalize"]
+`))
+	if err != nil {
+		t.Fatalf("Parse() error = %v", err)
+	}
+	plugin, ok := policy.Plugin("renderer")
+	if !ok || plugin.Exec == nil {
+		t.Fatalf("Plugin(renderer) = %#v, want exec plugin", plugin)
+	}
+	if got := len(plugin.Exec.PostRenderers); got != 1 {
+		t.Fatalf("len(PostRenderers) = %d, want 1", got)
+	}
+	if got := plugin.Exec.PostRenderers[0].Timeout; got != DefaultPostRendererTimeout {
+		t.Fatalf("PostRenderers[0].Timeout = %s, want %s", got, DefaultPostRendererTimeout)
+	}
+}
+
+func TestParseExecPolicyPostRenderers(t *testing.T) {
+	policy, err := Parse("policy.yaml", []byte(`apiVersion: drydock.sholdee.dev/v1alpha1
+kind: PluginPolicy
+plugins:
+  renderer:
+    engine: exec
+    generate:
+      command: ["argocd-vault-plugin", "generate", "."]
+    postRenderers:
+      - command: ["post-render", "normalize"]
+        timeout: 4s
+      - command: ["/usr/local/bin/post-filter", "--strict"]
+        timeout: 5s
+`))
+	if err != nil {
+		t.Fatalf("Parse() error = %v", err)
+	}
+	plugin, ok := policy.Plugin("renderer")
+	if !ok || plugin.Exec == nil {
+		t.Fatalf("Plugin(renderer) = %#v, want exec plugin", plugin)
+	}
+	if got := len(plugin.Exec.PostRenderers); got != 2 {
+		t.Fatalf("len(PostRenderers) = %d, want 2", got)
+	}
+	if got := strings.Join(plugin.Exec.PostRenderers[0].Command, " "); got != "post-render normalize" {
+		t.Fatalf("PostRenderers[0].Command = %q, want post-render normalize", got)
+	}
+	if got := plugin.Exec.PostRenderers[0].Timeout.String(); got != "4s" {
+		t.Fatalf("PostRenderers[0].Timeout = %s, want 4s", got)
+	}
+	if got := strings.Join(plugin.Exec.PostRenderers[1].Command, " "); got != "/usr/local/bin/post-filter --strict" {
+		t.Fatalf("PostRenderers[1].Command = %q, want /usr/local/bin/post-filter --strict", got)
+	}
+	if got := plugin.Exec.PostRenderers[1].Timeout.String(); got != "5s" {
+		t.Fatalf("PostRenderers[1].Timeout = %s, want 5s", got)
 	}
 }
 
@@ -284,9 +360,47 @@ func TestParseExecPolicyRejectsUnsafeFields(t *testing.T) {
 			want: "must be a string",
 		},
 		{
-			name: "unknown exec field",
+			name: "empty post renderers",
 			body: `    engine: exec
     postRenderers: []
+    generate:
+      command: ["argocd-vault-plugin"]
+`,
+			want: "must not be empty",
+		},
+		{
+			name: "null post renderers",
+			body: `    engine: exec
+    generate:
+      command: ["argocd-vault-plugin"]
+    postRenderers: null
+`,
+			want: "postRenderers must be a sequence",
+		},
+		{
+			name: "invalid post renderer item",
+			body: `    engine: exec
+    generate:
+      command: ["argocd-vault-plugin"]
+    postRenderers:
+      - post-render normalize
+`,
+			want: "postRenderers[0] must be a mapping",
+		},
+		{
+			name: "invalid post renderer",
+			body: `    engine: exec
+    generate:
+      command: ["argocd-vault-plugin"]
+    postRenderers:
+      - command: ["sh", "-c", "cat"]
+`,
+			want: "not permitted",
+		},
+		{
+			name: "unknown exec field",
+			body: `    engine: exec
+    random: true
     generate:
       command: ["argocd-vault-plugin"]
 `,
@@ -371,6 +485,52 @@ plugins:
 	}
 }
 
+func TestFingerprintExecPostRenderersAreDeterministic(t *testing.T) {
+	left, err := Parse("policy.yaml", []byte(`apiVersion: drydock.sholdee.dev/v1alpha1
+kind: PluginPolicy
+plugins:
+  renderer:
+    engine: exec
+    generate:
+      command: ["argocd-vault-plugin", "generate", "."]
+    postRenderers:
+      - timeout: 2s
+        command: ["post-render", "normalize"]
+      - command: ["post-render", "filter"]
+        timeout: 3s
+`))
+	if err != nil {
+		t.Fatalf("Parse(left) error = %v", err)
+	}
+	right, err := Parse("policy.yaml", []byte(`kind: PluginPolicy
+apiVersion: drydock.sholdee.dev/v1alpha1
+plugins:
+  renderer:
+    postRenderers:
+      - command: ["post-render", "normalize"]
+        timeout: 2s
+      - timeout: 3s
+        command: ["post-render", "filter"]
+    generate:
+      command: ["argocd-vault-plugin", "generate", "."]
+    engine: exec
+`))
+	if err != nil {
+		t.Fatalf("Parse(right) error = %v", err)
+	}
+	leftFingerprint, err := Fingerprint(left)
+	if err != nil {
+		t.Fatalf("Fingerprint(left) error = %v", err)
+	}
+	rightFingerprint, err := Fingerprint(right)
+	if err != nil {
+		t.Fatalf("Fingerprint(right) error = %v", err)
+	}
+	if leftFingerprint != rightFingerprint {
+		t.Fatalf("fingerprints differ:\nleft:  %s\nright: %s", leftFingerprint, rightFingerprint)
+	}
+}
+
 func TestFingerprintIncludesExecFields(t *testing.T) {
 	left, err := Parse("policy.yaml", []byte(`apiVersion: drydock.sholdee.dev/v1alpha1
 kind: PluginPolicy
@@ -406,6 +566,41 @@ plugins:
 	}
 	if leftFingerprint == rightFingerprint {
 		t.Fatalf("fingerprints match for different exec timeouts: %s", leftFingerprint)
+	}
+}
+
+func TestFingerprintChangesForExecPostRenderers(t *testing.T) {
+	base := `apiVersion: drydock.sholdee.dev/v1alpha1
+kind: PluginPolicy
+plugins:
+  renderer:
+    engine: exec
+    generate:
+      command: ["argocd-vault-plugin", "generate", "."]
+    postRenderers:
+      - command: ["post-render", "--mode", "default"]
+        timeout: 5s
+`
+	baseFingerprint := mustPolicyFingerprint(t, base)
+	for _, tt := range []struct {
+		name string
+		data string
+	}{
+		{
+			name: "command argv",
+			data: strings.Replace(base, `"default"`, `"changed"`, 1),
+		},
+		{
+			name: "timeout",
+			data: strings.Replace(base, `timeout: 5s`, `timeout: 6s`, 1),
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			fingerprint := mustPolicyFingerprint(t, tt.data)
+			if fingerprint == baseFingerprint {
+				t.Fatalf("fingerprint did not change for %s: %s", tt.name, fingerprint)
+			}
+		})
 	}
 }
 

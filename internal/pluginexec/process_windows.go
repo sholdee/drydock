@@ -16,6 +16,7 @@ type processRequest struct {
 	Dir     string
 	Env     []string
 	Timeout time.Duration
+	Stdin   io.Reader
 	Stdout  io.Writer
 	Stderr  io.Writer
 }
@@ -40,6 +41,7 @@ func runProcess(ctx context.Context, request processRequest) error {
 	cmd.Args = append([]string(nil), request.Args...)
 	cmd.Dir = request.Dir
 	cmd.Env = append([]string(nil), request.Env...)
+	cmd.Stdin = request.Stdin
 	cmd.Stdout = request.Stdout
 	cmd.Stderr = request.Stderr
 	if err := cmd.Start(); err != nil {

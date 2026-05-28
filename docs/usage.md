@@ -221,6 +221,9 @@ even when a default policy file is present.
 Exec plugin policy is intentionally stricter than Argo CD CMP sidecars:
 commands are argv arrays, resolved from a controlled local path or absolute
 trusted executable, and run from a temporary copy of the resolved source path.
+Optional `postRenderers` run in policy order, receive the previous manifest
+bytes on stdin, and pass their stdout to the next renderer or final manifest
+decoder.
 Application-authored plugin env and parameters are rejected for exec policy in
 this phase. For PR diffs, command definitions come from the baseline policy or
 an explicit `--plugin-policy-ref`, not from the proposed tree.

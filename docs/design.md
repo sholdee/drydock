@@ -154,9 +154,10 @@ Supported render paths:
   `argocd-cmp-cm` ConfigMaps, but only when the trusted policy explicitly
   permits that plugin name.
 - Trusted exec plugin policy entries for shellout CMP compatibility, executed
-  only when the caller sets `--enable-plugins`. Exec command definitions are
-  never sourced from discovered Argo CD CMP config and are not enabled by
-  default.
+  only when the caller sets `--enable-plugins`. Exec policy may define an
+  ordered post-renderer chain that transforms generated manifest bytes before
+  decode. Exec command definitions and post-renderers are never sourced from
+  discovered Argo CD CMP config and are not enabled by default.
 - Deterministic in-process plugin renderers supplied by embedding callers.
 
 The default CLI and default Go client fail closed for other config management

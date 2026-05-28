@@ -93,18 +93,24 @@ func (DefaultRunner) Run(ctx context.Context, request Request) (Result, error) {
 		return Result{}, err
 	}
 	if request.Config.Init != nil {
-		if _, err := runConfiguredCommand(ctx, "init", *request.Config.Init, workdir, protectedRoots, env, request.Config.Output); err != nil {
+		if _, err := runConfiguredCommand(ctx, "init", *request.Config.Init, nil, workdir, protectedRoots, env, request.Config.Output); err != nil {
 			return Result{}, err
 		}
 	}
-	stdout, err := runConfiguredCommand(ctx, "generate", request.Config.Generate, workdir, protectedRoots, env, request.Config.Output)
+	stdout, err := runConfiguredCommand(ctx, "generate", request.Config.Generate, nil, workdir, protectedRoots, env, request.Config.Output)
 	if err != nil {
 		return Result{}, err
+	}
+	for index, command := range request.Config.PostRenderers {
+		stdout, err = runConfiguredCommand(ctx, fmt.Sprintf("post-renderer %d", index), command, stdout, workdir, protectedRoots, env, request.Config.Output)
+		if err != nil {
+			return Result{}, err
+		}
 	}
 	return Result{Stdout: stdout}, nil
 }
 
-func runConfiguredCommand(ctx context.Context, phase string, command pluginpolicy.ExecCommand, workdir string, protectedRoots []string, env []string, output pluginpolicy.ExecOutput) ([]byte, error) {
+func runConfiguredCommand(ctx context.Context, phase string, command pluginpolicy.ExecCommand, stdin []byte, workdir string, protectedRoots []string, env []string, output pluginpolicy.ExecOutput) ([]byte, error) {
 	resolved, err := resolveCommand(command.Command[0], protectedRoots)
 	if err != nil {
 		return nil, &Error{Phase: phase, Command: safeCommandName(command.Command[0]), Reason: "invalid command", Err: err}
@@ -120,6 +126,7 @@ func runConfiguredCommand(ctx context.Context, phase string, command pluginpolic
 		Dir:     workdir,
 		Env:     env,
 		Timeout: command.Timeout,
+		Stdin:   bytes.NewReader(stdin),
 		Stdout:  stdout,
 		Stderr:  stderr,
 	})

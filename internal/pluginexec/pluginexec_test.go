@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -214,6 +215,77 @@ func TestDefaultRunnerEnforcesOutputLimit(t *testing.T) {
 	}
 }
 
+func TestDefaultRunnerChainsPostRenderers(t *testing.T) {
+	source := t.TempDir()
+	t.Setenv("DRYDOCK_PLUGINEXEC_HELPER", "1")
+	result, err := (DefaultRunner{}).Run(context.Background(), Request{
+		SourceDir: source,
+		Config: pluginpolicy.ExecConfig{
+			Workdir: pluginpolicy.ExecWorkdirSource,
+			Generate: pluginpolicy.ExecCommand{
+				Command: []string{helperPath(t), "-test.run=TestHelperProcess", "--", "raw"},
+				Timeout: time.Second,
+			},
+			PostRenderers: []pluginpolicy.ExecCommand{
+				{
+					Command: []string{helperPath(t), "-test.run=TestHelperProcess", "--", "append", "first"},
+					Timeout: time.Second,
+				},
+				{
+					Command: []string{helperPath(t), "-test.run=TestHelperProcess", "--", "append", "second"},
+					Timeout: time.Second,
+				},
+			},
+			Env: pluginpolicy.ExecEnv{Allow: []string{"DRYDOCK_PLUGINEXEC_HELPER"}},
+			Output: pluginpolicy.ExecOutput{
+				MaxStdoutBytes: pluginpolicy.DefaultMaxStdoutBytes,
+				MaxStderrBytes: pluginpolicy.DefaultMaxStderrBytes,
+			},
+		},
+		ProtectedRoots: []string{source},
+	})
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	got := string(result.Stdout)
+	for _, want := range []string{"base", "first", "second"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("Stdout = %q, want %q", got, want)
+		}
+	}
+}
+
+func TestDefaultRunnerReportsPostRendererFailure(t *testing.T) {
+	source := t.TempDir()
+	t.Setenv("DRYDOCK_PLUGINEXEC_HELPER", "1")
+	_, err := (DefaultRunner{}).Run(context.Background(), Request{
+		SourceDir: source,
+		Config: pluginpolicy.ExecConfig{
+			Workdir: pluginpolicy.ExecWorkdirSource,
+			Generate: pluginpolicy.ExecCommand{
+				Command: []string{helperPath(t), "-test.run=TestHelperProcess", "--", "raw"},
+				Timeout: time.Second,
+			},
+			PostRenderers: []pluginpolicy.ExecCommand{{
+				Command: []string{helperPath(t), "-test.run=TestHelperProcess", "--", "fail"},
+				Timeout: time.Second,
+			}},
+			Env: pluginpolicy.ExecEnv{Allow: []string{"DRYDOCK_PLUGINEXEC_HELPER"}},
+			Output: pluginpolicy.ExecOutput{
+				MaxStdoutBytes: pluginpolicy.DefaultMaxStdoutBytes,
+				MaxStderrBytes: pluginpolicy.DefaultMaxStderrBytes,
+			},
+		},
+		ProtectedRoots: []string{source},
+	})
+	if err == nil {
+		t.Fatal("Run() error = nil, want post-renderer failure")
+	}
+	if !strings.Contains(err.Error(), "post-renderer 0") {
+		t.Fatalf("Run() error = %v, want post-renderer phase", err)
+	}
+}
+
 func TestDefaultRunnerRejectsSymlinkSourceAndSourceCommand(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("symlink and executable mode behavior differs on Windows test hosts")
@@ -286,6 +358,16 @@ func TestHelperProcess(t *testing.T) {
 		fmt.Println("kind: ConfigMap")
 		fmt.Println("metadata:")
 		fmt.Println("  name: rendered")
+		os.Exit(0)
+	case "raw":
+		fmt.Println("base")
+		os.Exit(0)
+	case "append":
+		input, _ := io.ReadAll(os.Stdin)
+		fmt.Print(string(input))
+		if len(args) > 2 {
+			fmt.Println(args[2])
+		}
 		os.Exit(0)
 	case "sleep":
 		time.Sleep(5 * time.Second)
