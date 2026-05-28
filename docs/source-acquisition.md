@@ -113,10 +113,15 @@ Offline render/build/diff commands require cache hits, repo maps, local files,
 or local chart availability. Populate caches with a prior non-offline render
 using the relevant auth, cache-dir, and refresh flags.
 
-Caches must stay outside Git repository trees. Cache entries include hidden
-`.drydock-cache/metadata.json` sidecars with redacted target metadata. Older
-hash-only entries are listed as legacy entries when their filesystem layout is
-recognized.
+Render-time Git, chart, and remote-resource caches must stay outside the
+current repository tree, compared repository trees, repo-map roots, and
+symlink-resolved equivalents. drydock validates these roots before cache reads,
+fetches, or writes so a repository cannot double as its own mutable source
+cache.
+
+Cache entries include hidden `.drydock-cache/metadata.json` sidecars with
+redacted target metadata. Older hash-only entries are listed as legacy entries
+when their filesystem layout is recognized.
 
 ## Credentials
 

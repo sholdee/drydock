@@ -119,6 +119,12 @@ See `docs/source-acquisition.md` for cache, auth, and remote source details.
 
 Supported:
 
+- Argo CD resource tracking metadata injection after rendering and destination
+  namespace normalization, without contacting a live application controller.
+  The default tracking method is `annotation`, the default instance label key
+  is `app.kubernetes.io/instance`, `annotation`, `label`, and
+  `annotation+label` modes are supported, `installationID` is applied for
+  annotation-based tracking, and CRDs are not stamped.
 - Directory rendering that skips values-like YAML documents only when both
   `apiVersion` and `kind` are absent, and fails clearly when exactly one is
   present.
