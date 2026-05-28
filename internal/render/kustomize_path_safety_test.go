@@ -611,7 +611,7 @@ metadata:
 	}
 
 	dst := filepath.Join(t.TempDir(), "repo")
-	if err := copyPreparedKustomizeWorkspaceTree(root, sourceRoot, dst, graph); err != nil {
+	if err := copyPreparedKustomizeWorkspaceTree(context.Background(), root, sourceRoot, dst, graph, RenderOptions{}); err != nil {
 		t.Fatalf("copyPreparedKustomizeWorkspaceTree() error = %v", err)
 	}
 
@@ -646,7 +646,7 @@ metadata:
 	}
 
 	dst := filepath.Join(t.TempDir(), "repo")
-	if err := copyPreparedKustomizeWorkspaceTree(root, sourceRoot, dst, graph); err != nil {
+	if err := copyPreparedKustomizeWorkspaceTree(context.Background(), root, sourceRoot, dst, graph, RenderOptions{}); err != nil {
 		t.Fatalf("copyPreparedKustomizeWorkspaceTree() error = %v", err)
 	}
 

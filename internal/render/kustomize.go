@@ -24,6 +24,7 @@ func (KustomizeRenderer) Render(ctx context.Context, source ResolvedSource, opts
 	if err := ctx.Err(); err != nil {
 		return nil, nil, err
 	}
+	diags := sourceKustomizeDiagnostics(opts)
 	buildSettings, err := parseKustomizeBuildOptions(opts.BuildOptions)
 	if err != nil {
 		return nil, nil, err
@@ -42,10 +43,16 @@ func (KustomizeRenderer) Render(ctx context.Context, source ResolvedSource, opts
 		return nil, nil, err
 	}
 	if kustomizeGraphHasHelmCharts(graph) || hasAcquirableRemoteKustomizeGraphRefs(graph) {
-		return renderKustomizeWithPreparedWorkspace(ctx, source, graph, opts, buildSettings)
+		manifests, renderDiags, err := renderKustomizeWithPreparedWorkspace(ctx, source, graph, opts, buildSettings)
+		return manifests, append(diags, renderDiags...), err
+	}
+	if hasKustomizeSourceMutations(opts) {
+		manifests, renderDiags, err := renderKustomizeWithPreparedWorkspace(ctx, source, graph, opts, buildSettings)
+		return manifests, append(diags, renderDiags...), err
 	}
 
-	return renderPlainKustomize(ctx, source, root, buildSettings)
+	manifests, renderDiags, err := renderPlainKustomize(ctx, source, root, buildSettings)
+	return manifests, append(diags, renderDiags...), err
 }
 
 var kustomizationFileNames = []string{"kustomization.yaml", "kustomization.yml", "Kustomization"}
@@ -374,7 +381,7 @@ func renderOptionsForKustomizeHelmChart(helmChart types.HelmChart, tempRepoRoot,
 		AppName:                helmChart.Name,
 		ReleaseName:            helmChart.ReleaseName,
 		Namespace:              namespace,
-		KubeVersion:            helmChart.KubeVersion,
+		KubeVersion:            kustomizeHelmKubeVersion(helmChart, opts),
 		APIVersions:            append(append([]string(nil), opts.APIVersions...), helmChart.ApiVersions...),
 		ValueFiles:             valueFiles,
 		ValueFilesBaseDir:      valueFilesBaseDir,
@@ -393,6 +400,13 @@ func renderOptionsForKustomizeHelmChart(helmChart types.HelmChart, tempRepoRoot,
 		SkipHooks:              helmChart.SkipHooks,
 		SkipTests:              helmChart.SkipTests,
 	}, nil
+}
+
+func kustomizeHelmKubeVersion(helmChart types.HelmChart, opts RenderOptions) string {
+	if helmChart.KubeVersion != "" {
+		return helmChart.KubeVersion
+	}
+	return opts.KubeVersion
 }
 
 func writeKustomizeHelmGeneratedValuesFile(tempRepoRoot, tempSourceRoot, chartRel, valueFilesBaseDir, generatedName string, helmChart types.HelmChart) (string, error) {

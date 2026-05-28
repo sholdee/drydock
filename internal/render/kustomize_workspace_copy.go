@@ -1,6 +1,7 @@
 package render
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -39,8 +40,13 @@ type preparedKustomizeWorkspaceCopier struct {
 	forceCopy  map[string]struct{}
 }
 
-func copyPreparedKustomizeWorkspaceTree(repoRoot, sourceRoot, dstRoot string, graph []kustomizeGraphNode) error {
-	forceCopy, err := mutableKustomizationFiles(sourceRoot, graph)
+func copyPreparedKustomizeWorkspaceTree(ctx context.Context, repoRoot, sourceRoot, dstRoot string, graph []kustomizeGraphNode, opts RenderOptions) error {
+	sourceOptionGraph, sourceOptionPaths, err := sourceKustomizeWorkspaceAdditions(ctx, repoRoot, sourceRoot, opts)
+	if err != nil {
+		return err
+	}
+	graph = append(append([]kustomizeGraphNode(nil), graph...), sourceOptionGraph...)
+	forceCopy, err := mutableKustomizationFiles(sourceRoot, graph, sourceOptionPaths)
 	if err != nil {
 		return err
 	}
@@ -61,6 +67,11 @@ func copyPreparedKustomizeWorkspaceTree(repoRoot, sourceRoot, dstRoot string, gr
 			if err := copier.copyPath(path); err != nil {
 				return err
 			}
+		}
+	}
+	for _, path := range sourceOptionPaths {
+		if err := copier.copyPath(path); err != nil {
+			return err
 		}
 	}
 	return nil
@@ -104,12 +115,29 @@ func (c *preparedKustomizeWorkspaceCopier) copyPath(path string) error {
 	return nil
 }
 
-func mutableKustomizationFiles(sourceRoot string, graph []kustomizeGraphNode) (map[string]struct{}, error) {
+func mutableKustomizationFiles(sourceRoot string, graph []kustomizeGraphNode, extraPaths []string) (map[string]struct{}, error) {
 	out := map[string]struct{}{}
 	for _, dir := range append([]string{sourceRoot}, kustomizeGraphDirs(graph)...) {
 		file, err := findKustomizationFile(dir)
 		if err != nil {
 			return nil, err
+		}
+		out[filepath.Clean(file)] = struct{}{}
+	}
+	for _, path := range extraPaths {
+		info, err := os.Lstat(path)
+		if err != nil {
+			if os.IsNotExist(err) {
+				continue
+			}
+			return nil, err
+		}
+		if !info.IsDir() {
+			continue
+		}
+		file, err := findKustomizationFile(path)
+		if err != nil {
+			continue
 		}
 		out[filepath.Clean(file)] = struct{}{}
 	}
@@ -204,6 +232,46 @@ func referencedKustomizeWorkspacePaths(dir string, kustomization types.Kustomiza
 		appendGeneratorWorkspaceRefs(appendLocalRef, generator.KvPairSources)
 	}
 	return refs
+}
+
+func sourceKustomizeWorkspaceAdditions(ctx context.Context, repoRoot, sourceRoot string, opts RenderOptions) ([]kustomizeGraphNode, []string, error) {
+	if opts.Kustomize == nil {
+		return nil, nil, nil
+	}
+	refs := make([]string, 0, len(opts.Kustomize.Components)+len(opts.Kustomize.Patches))
+	graph := make([]kustomizeGraphNode, 0)
+	appendLocalRef := func(ref string) {
+		ref = strings.TrimSpace(ref)
+		if ref == "" || isRemoteKustomizeRef(ref) || filepath.IsAbs(ref) {
+			return
+		}
+		refs = append(refs, filepath.Clean(filepath.Join(sourceRoot, filepath.FromSlash(ref))))
+	}
+	for _, component := range opts.Kustomize.Components {
+		appendLocalRef(component)
+		componentPath := filepath.Clean(filepath.Join(sourceRoot, filepath.FromSlash(component)))
+		if isRemoteKustomizeRef(component) || filepath.IsAbs(component) {
+			continue
+		}
+		if _, err := os.Lstat(componentPath); err != nil {
+			if os.IsNotExist(err) && opts.Kustomize.IgnoreMissingComponents {
+				continue
+			}
+			if os.IsNotExist(err) {
+				continue
+			}
+			return nil, nil, err
+		}
+		_, componentGraph, err := collectKustomizeGraphForPreparation(ctx, repoRoot, componentPath)
+		if err != nil {
+			return nil, nil, err
+		}
+		graph = append(graph, componentGraph...)
+	}
+	for _, patch := range opts.Kustomize.Patches {
+		appendLocalRef(patch.Path)
+	}
+	return graph, refs, nil
 }
 
 func appendGeneratorWorkspaceRefs(appendLocalRef func(string), sources types.KvPairSources) {

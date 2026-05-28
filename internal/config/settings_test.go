@@ -198,6 +198,55 @@ func TestLoadConfigMapSettings(t *testing.T) {
 	}
 }
 
+func TestLoadConfigMapKustomizeVersionedBuildOptionsAndPathWarn(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "argocd-cm.yaml")
+	if err := os.WriteFile(path, []byte(`apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: argocd-cm
+data:
+  kustomize.buildOptions: --enable-helm
+  kustomize.buildOptions.v4.5.7: --enable-alpha-plugins
+  kustomize.path.v4.5.7: /custom-tools/kustomize_4_5_7
+`), 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	settings, diags, err := LoadFromConfigMap(path)
+	if err != nil {
+		t.Fatalf("LoadFromConfigMap() error = %v", err)
+	}
+	if got := settings.KustomizeBuildOptions; len(got) != 1 || got[0].Value != "--enable-helm" {
+		t.Fatalf("KustomizeBuildOptions = %#v", got)
+	}
+	if len(diags) != 2 {
+		t.Fatalf("diagnostics = %#v, want two warnings", diags)
+	}
+	assertSettingWarning(t, diags, "kustomize.buildOptions.v4.5.7 parsed but not applied", "data.kustomize.buildOptions.v4.5.7")
+	assertSettingWarning(t, diags, "kustomize.path.v4.5.7 parsed but not applied", "data.kustomize.path.v4.5.7")
+	assertDiagnosticStableCode(t, diags, "kustomize.buildOptions.v4.5.7", "settings.metadata-only")
+	assertDiagnosticStableCode(t, diags, "kustomize.path.v4.5.7", "settings.metadata-only")
+}
+
+func TestLoadHelmValuesKustomizeVersionedPathWarns(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "values.yaml")
+	if err := os.WriteFile(path, []byte(`configs:
+  cm:
+    kustomize.path.v5.0.0: /custom-tools/kustomize_5_0_0
+`), 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	_, diags, err := LoadFromHelmValues(path)
+	if err != nil {
+		t.Fatalf("LoadFromHelmValues() error = %v", err)
+	}
+	if len(diags) != 1 {
+		t.Fatalf("diagnostics = %#v, want one warning", diags)
+	}
+	assertSettingWarning(t, diags, "kustomize.path.v5.0.0 parsed but not applied", "configs.cm.kustomize.path.v5.0.0")
+}
+
 func TestLoadFromConfigMapDocumentLoadsLaterDocument(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "multi.yaml")
 	if err := os.WriteFile(path, []byte(`apiVersion: v1
@@ -1476,6 +1525,23 @@ func assertDiagnosticStableCode(t *testing.T, diags []diagnostic.Diagnostic, fra
 		}
 	}
 	t.Fatalf("diagnostics = %#v, missing message containing %q", diags, fragment)
+}
+
+func assertSettingWarning(t *testing.T, diags []diagnostic.Diagnostic, fragment, pointer string) {
+	t.Helper()
+	for _, diag := range diags {
+		if !strings.Contains(diag.Message, fragment) {
+			continue
+		}
+		if diag.Severity != diagnostic.SeverityWarning || diag.Category != "settings" {
+			t.Fatalf("diagnostic = %#v, want settings warning", diag)
+		}
+		if diag.Provenance.Pointer != pointer {
+			t.Fatalf("diagnostic provenance = %#v, want pointer %q", diag.Provenance, pointer)
+		}
+		return
+	}
+	t.Fatalf("diagnostics = %#v, missing settings warning containing %q", diags, fragment)
 }
 
 func assertJSONDoesNotContain(t *testing.T, value any, forbidden string) {

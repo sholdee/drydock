@@ -14,6 +14,7 @@ import (
 type kustomizeWorkspace struct {
 	originalRepoRoot string
 	tempRepoRoot     string
+	sourceRoot       string
 	opts             RenderOptions
 	visited          map[string]struct{}
 	nextGraphIndex   int
@@ -32,7 +33,7 @@ func renderKustomizeWithPreparedWorkspace(ctx context.Context, source ResolvedSo
 	if err != nil {
 		return nil, nil, err
 	}
-	if err := copyPreparedKustomizeWorkspaceTree(source.RepoRoot, root, tempRepoRoot, graph); err != nil {
+	if err := copyPreparedKustomizeWorkspaceTree(ctx, source.RepoRoot, root, tempRepoRoot, graph, opts); err != nil {
 		return nil, nil, fmt.Errorf("copy repository to temp workspace: %w", err)
 	}
 
@@ -48,6 +49,7 @@ func renderKustomizeWithPreparedWorkspace(ctx context.Context, source ResolvedSo
 	workspace := &kustomizeWorkspace{
 		originalRepoRoot: filepath.Clean(source.RepoRoot),
 		tempRepoRoot:     tempRepoRoot,
+		sourceRoot:       filepath.Clean(tempRoot),
 		opts:             opts,
 		visited:          make(map[string]struct{}),
 	}
@@ -89,6 +91,11 @@ func (w *kustomizeWorkspace) prepareKustomizationDir(ctx context.Context, dir, b
 	var kustomization types.Kustomization
 	if err := goyaml.Unmarshal(content, &kustomization); err != nil {
 		return fmt.Errorf("decode kustomization %s: %w", manifestPath, err)
+	}
+	if dir == w.sourceRoot {
+		if err := applySourceKustomizeOptions(&kustomization, dir, boundaryRoot, w.opts); err != nil {
+			return fmt.Errorf("%s: %w", manifestPath, err)
+		}
 	}
 
 	graphIndex := w.nextGraphIndex

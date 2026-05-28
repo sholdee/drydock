@@ -64,8 +64,8 @@ func Cases() []Case {
 			Phase:             "2",
 			Category:          "source-kustomize",
 			FixturePath:       "testdata/semantic-remediation/source-kustomize/options",
-			Status:            StatusPending,
-			Reason:            "R29/R30/R31/R34/B12 source Kustomize options are not fully mapped yet.",
+			Status:            StatusActive,
+			Reason:            "R29/R30/R31/R34/B12 source Kustomize options and versioned settings diagnostics are covered by Phase 2 tests.",
 			VerificationScope: "go test ./internal/app ./internal/render -run SourceKustomize",
 		},
 		{

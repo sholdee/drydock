@@ -121,6 +121,9 @@ Supported:
 - Local Kustomize rendering with supported `kustomize.buildOptions`:
   `--enable-helm`, `--helm-api-versions`, and
   `--load-restrictor=LoadRestrictionsRootOnly|LoadRestrictionsNone`.
+  Kustomize `helmCharts` render through drydock's Go-library Helm path, so
+  chart inflation does not require an external Kustomize binary or CLI
+  `--enable-helm`.
 - Kustomize Helm `valuesFile` and `additionalValuesFiles` entries outside the
   kustomization directory when the resolved file remains inside the repository
   root.
@@ -211,6 +214,9 @@ Supported:
   against rendered desired manifests.
 - Health and action customization parsing and diagnostics, including
   `useOpenLibs` metadata and redacted SHA-256 Lua summaries.
+- Warning diagnostics for version-specific `kustomize.buildOptions.<version>`
+  and `kustomize.path.<version>` settings because drydock does not select
+  external Kustomize binaries.
 
 Not supported:
 

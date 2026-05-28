@@ -35,6 +35,8 @@ type RenderOptions struct {
 	KubeVersion                  string
 	APIVersions                  []string
 	BuildOptions                 []string
+	Kustomize                    *argoappv1.ApplicationSourceKustomize
+	ArgoEnv                      argoappv1.Env
 	RefRoots                     map[string]string
 	RefSources                   map[string]ResolvedSource
 	ReleaseName                  string

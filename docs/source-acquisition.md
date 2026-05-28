@@ -33,6 +33,12 @@ For local Kustomize sources, drydock applies the supported subset of Argo CD
 - `--load-restrictor=LoadRestrictionsNone`
 
 Unsupported build options fail explicitly instead of being ignored.
+Version-specific `kustomize.buildOptions.<version>` and
+`kustomize.path.<version>` settings produce warnings because drydock uses
+embedded Go libraries instead of selecting external Kustomize binaries.
+Kustomize `helmCharts` render natively through the same Helm library path used
+for Argo CD chart sources; no external Kustomize CLI is required for chart
+inflation.
 
 Supported Kustomize remote refs include:
 

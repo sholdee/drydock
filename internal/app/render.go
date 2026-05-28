@@ -126,6 +126,16 @@ func renderOptions(application argoappv1.Application, source argoappv1.Applicati
 		Project:      application.Spec.Project,
 		Namespace:    application.Spec.Destination.Namespace,
 	}
+	if source.Kustomize != nil {
+		opts.Kustomize = source.Kustomize.DeepCopy()
+		opts.ArgoEnv = argoRenderEnv(application, source)
+		if source.Kustomize.KubeVersion != "" {
+			opts.KubeVersion = source.Kustomize.KubeVersion
+		}
+		if len(source.Kustomize.APIVersions) != 0 {
+			opts.APIVersions = append(opts.APIVersions, source.Kustomize.APIVersions...)
+		}
+	}
 	if source.Directory != nil {
 		opts.DirectoryRecurse = source.Directory.Recurse
 		opts.DirectoryInclude = source.Directory.Include
@@ -160,6 +170,29 @@ func renderOptions(application argoappv1.Application, source argoappv1.Applicati
 	}
 	opts.ValuesObject = valuesObject
 	return opts, nil
+}
+
+func argoRenderEnv(application argoappv1.Application, source argoappv1.ApplicationSource) argoappv1.Env {
+	revision := source.TargetRevision
+	shortRevision := revision
+	if len(shortRevision) > 7 {
+		shortRevision = shortRevision[:7]
+	}
+	shortRevision8 := revision
+	if len(shortRevision8) > 8 {
+		shortRevision8 = shortRevision8[:8]
+	}
+	return argoappv1.Env{
+		{Name: "ARGOCD_APP_NAME", Value: application.Name},
+		{Name: "ARGOCD_APP_NAMESPACE", Value: application.Namespace},
+		{Name: "ARGOCD_APP_PROJECT_NAME", Value: application.Spec.Project},
+		{Name: "ARGOCD_APP_REVISION", Value: revision},
+		{Name: "ARGOCD_APP_REVISION_SHORT", Value: shortRevision},
+		{Name: "ARGOCD_APP_REVISION_SHORT_8", Value: shortRevision8},
+		{Name: "ARGOCD_APP_SOURCE_REPO_URL", Value: source.RepoURL},
+		{Name: "ARGOCD_APP_SOURCE_PATH", Value: source.Path},
+		{Name: "ARGOCD_APP_SOURCE_TARGET_REVISION", Value: source.TargetRevision},
+	}
 }
 
 func applyAVPCompatToManifest(manifest *render.Manifest, opts render.RenderOptions) bool {

@@ -1,8 +1,10 @@
 package config
 
 import (
-	"github.com/sholdee/drydock/internal/diagnostic"
+	"sort"
 	"strings"
+
+	"github.com/sholdee/drydock/internal/diagnostic"
 )
 
 func applyCMMap(settings *ArgoSettings, values map[string]string, path, basePointer string) []diagnostic.Diagnostic {
@@ -16,6 +18,7 @@ func applyCMMap(settings *ArgoSettings, values map[string]string, path, basePoin
 			Pointer: basePointer + ".kustomize.buildOptions",
 		})
 	}
+	diags = appendVersionedKustomizeDiagnostics(values, path, basePointer, diags)
 	if raw := values["application.resourceTrackingMethod"]; raw != "" {
 		settings.TrackingMethod = Value[string]{
 			Value: raw,
@@ -76,6 +79,41 @@ func applyCMMap(settings *ArgoSettings, values map[string]string, path, basePoin
 	diags = appendParsedSplitResourceCustomizations(settings, values, path, basePointer, diags)
 	return diags
 }
+
+func appendVersionedKustomizeDiagnostics(values map[string]string, path, basePointer string, diags []diagnostic.Diagnostic) []diagnostic.Diagnostic {
+	keys := make([]string, 0)
+	for key := range values {
+		if isVersionedKustomizeBuildOptionsKey(key) || isVersionedKustomizePathKey(key) {
+			keys = append(keys, key)
+		}
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		message := key + " parsed but not applied: drydock uses embedded Kustomize libraries and does not select external Kustomize versions"
+		if isVersionedKustomizePathKey(key) {
+			message = key + " parsed but not applied: drydock uses embedded Kustomize libraries and does not select external Kustomize binary paths"
+		}
+		diags = append(diags, diagnostic.Diagnostic{
+			Severity: diagnostic.SeverityWarning,
+			Category: "settings",
+			Message:  message,
+			Provenance: diagnostic.Provenance{
+				Path:    path,
+				Pointer: basePointer + "." + key,
+			},
+		})
+	}
+	return diags
+}
+
+func isVersionedKustomizeBuildOptionsKey(key string) bool {
+	return strings.HasPrefix(key, "kustomize.buildOptions.") && strings.TrimPrefix(key, "kustomize.buildOptions.") != ""
+}
+
+func isVersionedKustomizePathKey(key string) bool {
+	return strings.HasPrefix(key, "kustomize.path.") && strings.TrimPrefix(key, "kustomize.path.") != ""
+}
+
 func splitShellFields(raw string, provenance diagnostic.Provenance) []Value[string] {
 	fields := strings.Fields(raw)
 	out := make([]Value[string], 0, len(fields))

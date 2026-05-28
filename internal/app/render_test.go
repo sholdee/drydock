@@ -54,6 +54,47 @@ func TestRenderApplicationLastSourceWins(t *testing.T) {
 	}
 }
 
+func TestRenderOptionsCopiesSourceKustomizeAndArgoEnv(t *testing.T) {
+	application := argoappv1.Application{
+		ObjectMeta: metav1.ObjectMeta{Name: "demo", Namespace: "argocd"},
+		Spec: argoappv1.ApplicationSpec{
+			Project:     "k3s",
+			Destination: argoappv1.ApplicationDestination{Namespace: "workloads"},
+		},
+	}
+	source := argoappv1.ApplicationSource{
+		RepoURL:        "https://example.invalid/repo.git",
+		Path:           "apps/demo",
+		TargetRevision: "1234567890abcdef",
+		Kustomize: &argoappv1.ApplicationSourceKustomize{
+			NamePrefix:  "source-",
+			KubeVersion: "1.30.1",
+			APIVersions: []string{"example.com/v1/Foo"},
+		},
+	}
+
+	opts, err := renderOptions(application, source)
+	if err != nil {
+		t.Fatalf("renderOptions() error = %v", err)
+	}
+	if opts.Kustomize == source.Kustomize {
+		t.Fatal("renderOptions() reused source Kustomize pointer")
+	}
+	source.Kustomize.NamePrefix = "mutated-"
+	if opts.Kustomize.NamePrefix != "source-" {
+		t.Fatalf("Kustomize.NamePrefix = %q, want copied value", opts.Kustomize.NamePrefix)
+	}
+	if opts.KubeVersion != "1.30.1" {
+		t.Fatalf("KubeVersion = %q, want source kustomize kube version", opts.KubeVersion)
+	}
+	if len(opts.APIVersions) != 1 || opts.APIVersions[0] != "example.com/v1/Foo" {
+		t.Fatalf("APIVersions = %#v", opts.APIVersions)
+	}
+	if got := opts.ArgoEnv.Envsubst("$ARGOCD_APP_NAME:$ARGOCD_APP_NAMESPACE:$ARGOCD_APP_PROJECT_NAME:$ARGOCD_APP_SOURCE_PATH:$ARGOCD_APP_REVISION_SHORT_8"); got != "demo:argocd:k3s:apps/demo:12345678" {
+		t.Fatalf("ArgoEnv substitution = %q", got)
+	}
+}
+
 func TestRenderApplicationCopiesProviderObjectsBeforeMutation(t *testing.T) {
 	fixture := cm("shared", "fixture")
 	renderers := StaticRenderers{
