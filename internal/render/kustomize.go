@@ -273,10 +273,11 @@ func resolveKustomizeHelmChart(ctx context.Context, tempRepoRoot, tempSourceRoot
 		Kind:       ChartRepositoryKind(helmChart.Repo, opts.OCIChartRepositories),
 	}
 	result, err := acquirer.Acquire(ctx, request, chart.Options{
-		CacheDir:    opts.ChartCacheDir,
-		Offline:     opts.OfflineCharts,
-		Refresh:     opts.RefreshCharts,
-		Credentials: opts.ChartCredentials,
+		CacheDir:       opts.ChartCacheDir,
+		Offline:        opts.OfflineCharts,
+		Refresh:        opts.RefreshCharts,
+		ForbiddenRoots: append([]string(nil), opts.ChartForbiddenRoots...),
+		Credentials:    opts.ChartCredentials,
 	})
 	if err != nil {
 		recordKustomizeChartCacheEvent(opts, request, err, chart.Result{})
@@ -396,6 +397,7 @@ func renderOptionsForKustomizeHelmChart(ctx context.Context, helmChart types.Hel
 		ChartCacheDir:                opts.ChartCacheDir,
 		OfflineCharts:                opts.OfflineCharts,
 		RefreshCharts:                opts.RefreshCharts,
+		ChartForbiddenRoots:          append([]string(nil), opts.ChartForbiddenRoots...),
 		ChartCredentials:             opts.ChartCredentials,
 		ChartAcquirer:                acquirer,
 		RemoteResourceAcquirer:       opts.RemoteResourceAcquirer,

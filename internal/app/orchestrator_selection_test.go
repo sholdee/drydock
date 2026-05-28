@@ -7,6 +7,7 @@ import (
 	"github.com/sholdee/drydock/internal/diagnostic"
 	"os"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -203,7 +204,7 @@ func TestOrchestratorBuildAppRequiresName(t *testing.T) {
 func TestOrchestratorBuildAppPreservesBuildOptionsForSelectedApplication(t *testing.T) {
 	root := t.TempDir()
 	chartDir := filepath.Join(root, "cache", "demo")
-	cacheDir := filepath.Join(root, "chart-cache")
+	cacheDir := t.TempDir()
 	writeAppTestValueChart(t, chartDir)
 	writeBuildApplication(t, root, "plain", "plain")
 	writeChartOnlyBuildApplication(t, root, "chart-only")
@@ -230,10 +231,11 @@ func TestOrchestratorBuildAppPreservesBuildOptionsForSelectedApplication(t *test
 		t.Fatalf("chart acquire calls = %d, want 1", len(acquirer.requests))
 	}
 	if got, want := acquirer.options[0], (chart.Options{
-		CacheDir: cacheDir,
-		Offline:  true,
-		Refresh:  true,
-	}); got != want {
+		CacheDir:       cacheDir,
+		Offline:        true,
+		Refresh:        true,
+		ForbiddenRoots: []string{root},
+	}); !reflect.DeepEqual(got, want) {
 		t.Fatalf("chart options = %#v, want %#v", got, want)
 	}
 }

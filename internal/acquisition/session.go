@@ -287,13 +287,9 @@ func gitCacheLockKey(request source.GitRequest, opts source.GitOptions) (string,
 }
 
 func chartCacheLockKey(request chart.Request, opts chart.Options) (string, error) {
-	cacheDir := opts.CacheDir
-	if cacheDir == "" {
-		var err error
-		cacheDir, err = chart.DefaultCacheDir()
-		if err != nil {
-			return "", err
-		}
+	cacheDir, err := chart.ResolveCacheDir(opts.CacheDir, opts.ForbiddenRoots)
+	if err != nil {
+		return "", err
 	}
 	key, err := chart.NewCacheKey(request)
 	if err != nil {

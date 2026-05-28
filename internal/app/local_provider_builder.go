@@ -19,8 +19,7 @@ func newLocalProvider(orchestrator Orchestrator, root string, settings config.Ar
 	if gitAcquirer == nil {
 		gitAcquirer = sourcepkg.DefaultGitAcquirer{}
 	}
-	forbiddenRoots := append([]string(nil), request.RemoteResourceForbiddenRoots...)
-	forbiddenRoots = append(forbiddenRoots, root)
+	forbiddenRoots := requestForbiddenRoots(root, request.AcquisitionOptions)
 	provider := localProvider{
 		repoRoot:                     root,
 		sourceResolver:               sourcepkg.NewResolver(sourcepkg.Options{RepoMaps: request.RepoMaps, Offline: request.Offline}),
@@ -31,6 +30,7 @@ func newLocalProvider(orchestrator Orchestrator, root string, settings config.Ar
 		offline:                      request.Offline,
 		refreshCharts:                request.RefreshCharts,
 		chartCacheDir:                request.ChartCacheDir,
+		chartForbiddenRoots:          forbiddenRoots,
 		chartCredentials:             request.ChartCredentials,
 		ociChartRepositories:         ociChartRepositoriesFromSettings(settings),
 		gitCacheDir:                  request.GitCacheDir,

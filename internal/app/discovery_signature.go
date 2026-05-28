@@ -36,6 +36,9 @@ func renderSettingsSignature(settings config.ArgoSettings) (string, error) {
 		HelmRepositories         map[string]config.RepositorySettings   `json:"helmRepositories,omitempty"`
 		HelmValuesFileSchemes    []config.Value[string]                 `json:"helmValuesFileSchemes,omitempty"`
 		HelmValuesFileSchemesSet bool                                   `json:"helmValuesFileSchemesSet,omitempty"`
+		TrackingMethod           config.Value[string]                   `json:"trackingMethod,omitempty"`
+		InstanceLabelKey         config.Value[string]                   `json:"instanceLabelKey,omitempty"`
+		InstallationID           config.Value[string]                   `json:"installationID,omitempty"`
 		ConfigManagementPlugins  map[string]renderSettingsPlugin        `json:"configManagementPlugins,omitempty"`
 		ResourceCustomizations   map[string]renderSettingsCustomization `json:"resourceCustomizations,omitempty"`
 	}{
@@ -43,6 +46,9 @@ func renderSettingsSignature(settings config.ArgoSettings) (string, error) {
 		HelmRepositories:         settings.HelmRepositories,
 		HelmValuesFileSchemes:    settings.HelmValuesFileSchemes,
 		HelmValuesFileSchemesSet: settings.HelmValuesFileSchemesSet,
+		TrackingMethod:           settings.TrackingMethod,
+		InstanceLabelKey:         settings.InstanceLabelKey,
+		InstallationID:           settings.InstallationID,
 		ConfigManagementPlugins:  plugins,
 		ResourceCustomizations:   renderSettingsCustomizations(settings.ResourceCustomizations),
 	}

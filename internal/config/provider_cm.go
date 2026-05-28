@@ -46,6 +46,15 @@ func applyCMMap(settings *ArgoSettings, values map[string]string, path, basePoin
 			},
 		}
 	}
+	if raw := values["installationID"]; raw != "" {
+		settings.InstallationID = Value[string]{
+			Value: raw,
+			Provenance: diagnostic.Provenance{
+				Path:    path,
+				Pointer: basePointer + ".installationID",
+			},
+		}
+	}
 	if raw, ok := values["resource.ignoreResourceUpdatesEnabled"]; ok {
 		provenance := diagnostic.Provenance{
 			Path:    path,

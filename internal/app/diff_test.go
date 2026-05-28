@@ -882,6 +882,65 @@ func TestDiffAppsRejectsRemoteCacheInsideEitherRoot(t *testing.T) {
 	}
 }
 
+func TestDiffAppsRejectsChartCacheInsideEitherRoot(t *testing.T) {
+	left := t.TempDir()
+	right := t.TempDir()
+
+	for _, root := range []string{left, right} {
+		_, err := Orchestrator{}.DiffApps(context.Background(), DiffRequest{
+			LeftPath:  left,
+			RightPath: right,
+			AcquisitionOptions: AcquisitionOptions{
+				ChartCacheDir: filepath.Join(root, ".drydock", "charts"),
+			},
+		})
+		if err == nil {
+			t.Fatal("DiffApps() error = nil, want chart cache containment error")
+		}
+		if !strings.Contains(err.Error(), "chart cache dir") || !strings.Contains(err.Error(), "must not be inside repository root") {
+			t.Fatalf("DiffApps() error = %v, want chart cache containment error", err)
+		}
+	}
+}
+
+func TestDiffAppsPassesChartForbiddenRootsToBuilds(t *testing.T) {
+	left := t.TempDir()
+	right := t.TempDir()
+	explicitRoot := t.TempDir()
+	mappedRoot := t.TempDir()
+	chartRoot := t.TempDir()
+	writeTestChart(t, chartRoot, "demo")
+	writeChartOnlyBuildApplication(t, left, "charted")
+	writeChartOnlyBuildApplication(t, right, "charted")
+	acquirer := &recordingChartAcquirer{chartDir: filepath.Join(chartRoot, "demo")}
+
+	_, err := (Orchestrator{ChartAcquirer: acquirer}).DiffApps(context.Background(), DiffRequest{
+		LeftPath:    left,
+		RightPath:   right,
+		ChangedOnly: false,
+		AcquisitionOptions: AcquisitionOptions{
+			ChartCacheDir:                t.TempDir(),
+			RemoteResourceForbiddenRoots: []string{explicitRoot},
+			RepoMaps: []sourcepkg.RepoMap{{
+				URL:  "https://github.com/example/mapped.git",
+				Path: mappedRoot,
+			}},
+		},
+	})
+	if err != nil {
+		t.Fatalf("DiffApps() error = %v", err)
+	}
+	if len(acquirer.options) != 2 {
+		t.Fatalf("chart options = %d, want 2", len(acquirer.options))
+	}
+	wantRoots := []string{explicitRoot, left, right, mappedRoot}
+	for _, opts := range acquirer.options {
+		if !reflect.DeepEqual(opts.ForbiddenRoots, wantRoots) {
+			t.Fatalf("chart ForbiddenRoots = %#v, want %#v", opts.ForbiddenRoots, wantRoots)
+		}
+	}
+}
+
 func TestDiffAppsRefRejectsGitCacheInsideOriginalRepo(t *testing.T) {
 	root := t.TempDir()
 	repo, wt := initDiffGitRepo(t, root)
@@ -1405,6 +1464,30 @@ func TestDiffAppRejectsRemoteCacheInsideEitherRoot(t *testing.T) {
 		}
 		if !strings.Contains(err.Error(), "must not be inside repository root") {
 			t.Fatalf("DiffApp() error = %v, want cache containment error", err)
+		}
+	}
+}
+
+func TestDiffAppRejectsChartCacheInsideEitherRoot(t *testing.T) {
+	left := t.TempDir()
+	right := t.TempDir()
+
+	for _, root := range []string{left, right} {
+		_, err := Orchestrator{}.DiffApp(context.Background(), DiffAppRequest{
+			Name: "demo",
+			DiffRequest: DiffRequest{
+				LeftPath:  left,
+				RightPath: right,
+				AcquisitionOptions: AcquisitionOptions{
+					ChartCacheDir: filepath.Join(root, ".drydock", "charts"),
+				},
+			},
+		})
+		if err == nil {
+			t.Fatal("DiffApp() error = nil, want chart cache containment error")
+		}
+		if !strings.Contains(err.Error(), "chart cache dir") || !strings.Contains(err.Error(), "must not be inside repository root") {
+			t.Fatalf("DiffApp() error = %v, want chart cache containment error", err)
 		}
 	}
 }

@@ -539,6 +539,77 @@ func TestDefaultAcquirerOfflineRequiresCacheHit(t *testing.T) {
 	}
 }
 
+func TestDefaultAcquirerRejectsHTTPChartCacheInsideForbiddenRootBeforeCacheRead(t *testing.T) {
+	repoRoot := t.TempDir()
+	request := Request{
+		Repository: "https://charts.example.test",
+		Name:       "demo",
+		Version:    "1.2.3",
+		Kind:       RepositoryHTTP,
+	}
+	cacheDir := filepath.Join(repoRoot, ".drydock", "charts")
+	chartDir := filepath.Join(cacheDir, string(request.Kind), mustCacheKey(t, request), request.Name)
+	if err := os.MkdirAll(chartDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(chartDir, "Chart.yaml"), []byte("apiVersion: v2\nname: demo\nversion: 1.2.3\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	acquirer := DefaultAcquirer{Client: &http.Client{
+		Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+			t.Fatal("Acquire() made a network request for forbidden cache root")
+			return nil, errors.New("unexpected network request")
+		}),
+	}}
+	_, err := acquirer.Acquire(context.Background(), request, Options{
+		CacheDir:       cacheDir,
+		Offline:        true,
+		ForbiddenRoots: []string{repoRoot},
+	})
+	if err == nil || !strings.Contains(err.Error(), "chart cache dir") || !strings.Contains(err.Error(), "must not be inside repository root") {
+		t.Fatalf("Acquire() error = %v, want chart cache containment error", err)
+	}
+}
+
+func TestDefaultAcquirerRejectsOCIChartCacheInsideForbiddenRootBeforePull(t *testing.T) {
+	repoRoot := t.TempDir()
+	puller := &fakeOCIPuller{archive: chartArchive(t, "demo", map[string]string{
+		"Chart.yaml": "apiVersion: v2\nname: demo\nversion: 1.2.3\n",
+	})}
+	_, err := (DefaultAcquirer{OCIPuller: puller}).Acquire(context.Background(), Request{
+		Repository: "oci://registry.example.test/charts",
+		Name:       "demo",
+		Version:    "1.2.3",
+		Kind:       RepositoryOCI,
+	}, Options{
+		CacheDir:       filepath.Join(repoRoot, ".drydock", "charts"),
+		ForbiddenRoots: []string{repoRoot},
+	})
+	if err == nil || !strings.Contains(err.Error(), "chart cache dir") || !strings.Contains(err.Error(), "must not be inside repository root") {
+		t.Fatalf("Acquire() error = %v, want chart cache containment error", err)
+	}
+	if puller.pulls != 0 {
+		t.Fatalf("pull count = %d, want 0", puller.pulls)
+	}
+}
+
+func TestResolveCacheDirRejectsSymlinkIntoForbiddenRoot(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlink privileges are not guaranteed on Windows")
+	}
+	repoRoot := t.TempDir()
+	outside := t.TempDir()
+	link := filepath.Join(outside, "charts-link")
+	if err := os.Symlink(repoRoot, link); err != nil {
+		t.Skipf("create symlink: %v", err)
+	}
+	_, err := ResolveCacheDir(filepath.Join(link, "charts"), []string{repoRoot})
+	if err == nil || !strings.Contains(err.Error(), "chart cache dir") || !strings.Contains(err.Error(), "must not be inside repository root") {
+		t.Fatalf("ResolveCacheDir() error = %v, want symlink containment error", err)
+	}
+}
+
 func TestDefaultAcquirerMapsIndexAuthFailures(t *testing.T) {
 	for _, status := range []int{http.StatusUnauthorized, http.StatusForbidden} {
 		t.Run(http.StatusText(status), func(t *testing.T) {

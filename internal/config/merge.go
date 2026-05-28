@@ -15,6 +15,7 @@ func MergeDiscovered(candidates []ArgoSettings) (ArgoSettings, []diagnostic.Diag
 		diags = append(diags, mergeKustomizeBuildOptions(&merged, candidate)...)
 		diags = append(diags, mergeTrackingMethod(&merged, candidate)...)
 		diags = append(diags, mergeInstanceLabelKey(&merged, candidate)...)
+		diags = append(diags, mergeInstallationID(&merged, candidate)...)
 		diags = append(diags, mergeHelmValuesFileSchemes(&merged, candidate)...)
 		diags = append(diags, mergeHelmRepositories(&merged, candidate)...)
 		diags = append(diags, mergeCompareOptions(&merged, candidate)...)
@@ -67,6 +68,20 @@ func mergeInstanceLabelKey(merged *ArgoSettings, candidate ArgoSettings) []diagn
 		)}
 	}
 	merged.InstanceLabelKey = candidate.InstanceLabelKey
+	return nil
+}
+
+func mergeInstallationID(merged *ArgoSettings, candidate ArgoSettings) []diagnostic.Diagnostic {
+	if !hasProvenance(candidate.InstallationID) {
+		return nil
+	}
+	if hasProvenance(merged.InstallationID) && merged.InstallationID.Value != candidate.InstallationID.Value {
+		return []diagnostic.Diagnostic{conflictDiagnostic(
+			fmt.Sprintf("conflicting installationID values %q and %q", merged.InstallationID.Value, candidate.InstallationID.Value),
+			candidate.InstallationID.Provenance,
+		)}
+	}
+	merged.InstallationID = candidate.InstallationID
 	return nil
 }
 

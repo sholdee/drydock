@@ -58,6 +58,7 @@ type RenderOptions struct {
 	ChartCacheDir                string
 	OfflineCharts                bool
 	RefreshCharts                bool
+	ChartForbiddenRoots          []string
 	ChartCredentials             chart.ChartCredentials
 	ChartAcquirer                chart.Acquirer
 	OCIChartRepositories         map[string]bool

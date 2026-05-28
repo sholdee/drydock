@@ -32,12 +32,21 @@ type sourcePreparer interface {
 }
 
 func RenderApplication(ctx context.Context, application argoappv1.Application, provider render.Provider, pluginOptions ...PluginOptions) (RenderResult, error) {
+	options := ApplicationRenderOptions{TrackingOptions: defaultTrackingOptions()}
+	if len(pluginOptions) > 0 {
+		options.PluginOptions = pluginOptions[0]
+	}
+	return RenderApplicationWithOptions(ctx, application, provider, options)
+}
+
+func RenderApplicationWithOptions(ctx context.Context, application argoappv1.Application, provider render.Provider, options ApplicationRenderOptions) (RenderResult, error) {
 	plan, err := Plan(application)
 	if err != nil {
 		return RenderResult{}, err
 	}
 
-	pluginOpts := renderPluginOptions(pluginOptions)
+	pluginOpts := options.PluginOptions
+	trackingOpts := normalizeTrackingOptions(options.TrackingOptions)
 	byID := map[manifest.Identity]int{}
 	var result RenderResult
 	for _, sourcePlan := range plan.Sources {
@@ -90,6 +99,9 @@ func RenderApplication(ctx context.Context, application argoappv1.Application, p
 			rendered.SourceIndex = sourcePlan.Index
 			rendered.SourceName = sourcePlan.Name
 			ApplyDestinationNamespace(application, rendered.Object)
+			if err := applyTrackingMetadata(application, rendered.Object, trackingOpts); err != nil {
+				return result, fmt.Errorf("%s: %w", renderSourceContext(application, sourcePlan), err)
+			}
 
 			id := manifest.IdentityOf(rendered.Object)
 			if existing, ok := byID[id]; ok {
@@ -110,13 +122,6 @@ func RenderApplication(ctx context.Context, application argoappv1.Application, p
 		}
 	}
 	return result, nil
-}
-
-func renderPluginOptions(options []PluginOptions) PluginOptions {
-	if len(options) == 0 {
-		return PluginOptions{}
-	}
-	return options[0]
 }
 
 func renderOptions(application argoappv1.Application, source argoappv1.ApplicationSource) (render.RenderOptions, error) {

@@ -32,6 +32,19 @@ func TestLoadHelmValuesSettings(t *testing.T) {
 	}
 }
 
+func TestDefaultSettingsUseArgoTrackingDefaults(t *testing.T) {
+	settings := DefaultSettings()
+	if settings.TrackingMethod.Value != "annotation" {
+		t.Fatalf("TrackingMethod = %#v, want annotation", settings.TrackingMethod)
+	}
+	if settings.InstanceLabelKey.Value != "app.kubernetes.io/instance" {
+		t.Fatalf("InstanceLabelKey = %#v", settings.InstanceLabelKey)
+	}
+	if settings.InstallationID.Value != "" {
+		t.Fatalf("InstallationID = %#v, want empty default", settings.InstallationID)
+	}
+}
+
 func TestLoadHelmValuesConfigManagementPlugins(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "values.yaml")
 	if err := os.WriteFile(path, []byte(`configs:
@@ -198,6 +211,33 @@ func TestLoadConfigMapSettings(t *testing.T) {
 	}
 }
 
+func TestLoadConfigMapInstallationID(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "argocd-cm.yaml")
+	if err := os.WriteFile(path, []byte(`apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: argocd-cm
+data:
+  installationID: cluster-one
+`), 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	settings, diags, err := LoadFromConfigMap(path)
+	if err != nil {
+		t.Fatalf("LoadFromConfigMap() error = %v", err)
+	}
+	if len(diags) != 0 {
+		t.Fatalf("diagnostics = %#v", diags)
+	}
+	if settings.InstallationID.Value != "cluster-one" {
+		t.Fatalf("InstallationID = %#v", settings.InstallationID)
+	}
+	if got := settings.InstallationID.Provenance; got.Path != path || got.Pointer != "data.installationID" {
+		t.Fatalf("provenance = %#v", got)
+	}
+}
+
 func TestDefaultHelmValuesFileSchemes(t *testing.T) {
 	settings := DefaultSettings()
 	assertValueStrings(t, settings.HelmValuesFileSchemes, []string{"https", "http"})
@@ -282,6 +322,30 @@ func TestLoadHelmValuesHelmValuesFileSchemes(t *testing.T) {
 	}
 	assertValueStrings(t, settings.HelmValuesFileSchemes, []string{"s3", "git"})
 	if got := settings.HelmValuesFileSchemes[0].Provenance; got.Path != path || got.Pointer != "configs.cm.helm.valuesFileSchemes" {
+		t.Fatalf("provenance = %#v", got)
+	}
+}
+
+func TestLoadHelmValuesInstallationID(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "values.yaml")
+	if err := os.WriteFile(path, []byte(`configs:
+  cm:
+    installationID: cluster-two
+`), 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	settings, diags, err := LoadFromHelmValues(path)
+	if err != nil {
+		t.Fatalf("LoadFromHelmValues() error = %v", err)
+	}
+	if len(diags) != 0 {
+		t.Fatalf("diagnostics = %#v", diags)
+	}
+	if settings.InstallationID.Value != "cluster-two" {
+		t.Fatalf("InstallationID = %#v", settings.InstallationID)
+	}
+	if got := settings.InstallationID.Provenance; got.Path != path || got.Pointer != "configs.cm.installationID" {
 		t.Fatalf("provenance = %#v", got)
 	}
 }
@@ -1449,6 +1513,47 @@ func TestMergeSettingsDetectsHelmValuesFileSchemesConflict(t *testing.T) {
 		t.Fatalf("diagnostic = %#v", diags[0])
 	}
 	if diags[0].Provenance.Path != "right.yaml" || diags[0].Provenance.Pointer != "configs.cm.helm.valuesFileSchemes" {
+		t.Fatalf("provenance = %#v", diags[0].Provenance)
+	}
+}
+
+func TestMergeSettingsInstallationID(t *testing.T) {
+	left := DefaultSettings()
+	right := DefaultSettings()
+	right.InstallationID = Value[string]{
+		Value:      "cluster-one",
+		Provenance: Provenance{Path: "right.yaml", Pointer: "data.installationID"},
+	}
+
+	merged, diags := MergeDiscovered([]ArgoSettings{left, right})
+	if len(diags) != 0 {
+		t.Fatalf("diagnostics = %#v", diags)
+	}
+	if merged.InstallationID.Value != "cluster-one" {
+		t.Fatalf("InstallationID = %#v", merged.InstallationID)
+	}
+}
+
+func TestMergeSettingsDetectsInstallationIDConflict(t *testing.T) {
+	left := DefaultSettings()
+	left.InstallationID = Value[string]{
+		Value:      "cluster-one",
+		Provenance: Provenance{Path: "left.yaml", Pointer: "data.installationID"},
+	}
+	right := DefaultSettings()
+	right.InstallationID = Value[string]{
+		Value:      "cluster-two",
+		Provenance: Provenance{Path: "right.yaml", Pointer: "configs.cm.installationID"},
+	}
+
+	_, diags := MergeDiscovered([]ArgoSettings{left, right})
+	if len(diags) != 1 {
+		t.Fatalf("len(diags) = %d, want 1: %#v", len(diags), diags)
+	}
+	if diags[0].Category != "settings" || !strings.Contains(diags[0].Message, "installationID") {
+		t.Fatalf("diagnostic = %#v", diags[0])
+	}
+	if diags[0].Provenance.Path != "right.yaml" || diags[0].Provenance.Pointer != "configs.cm.installationID" {
 		t.Fatalf("provenance = %#v", diags[0].Provenance)
 	}
 }

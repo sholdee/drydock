@@ -61,6 +61,18 @@ type PluginOptions struct {
 	pluginPolicyExecTrusted bool
 }
 
+type TrackingOptions struct {
+	Method              string
+	InstanceLabelKey    string
+	InstallationID      string
+	ControllerNamespace string
+}
+
+type ApplicationRenderOptions struct {
+	PluginOptions   PluginOptions
+	TrackingOptions TrackingOptions
+}
+
 type ExecutionOptions struct {
 	Parallelism int
 }

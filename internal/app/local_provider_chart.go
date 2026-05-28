@@ -32,6 +32,7 @@ func (p localProvider) renderChartOnlySource(ctx context.Context, source render.
 		CacheDir:        p.chartCacheDir,
 		Offline:         p.offline,
 		Refresh:         p.refreshCharts,
+		ForbiddenRoots:  append([]string(nil), opts.ChartForbiddenRoots...),
 		PassCredentials: opts.PassCredentials,
 		Credentials:     p.chartCredentials,
 	})

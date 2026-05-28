@@ -97,6 +97,7 @@ type ArgoSettings struct {
 	HelmValuesFileSchemesSource  Provenance                        `json:"helmValuesFileSchemesSource,omitempty" yaml:"helmValuesFileSchemesSource,omitempty"`
 	TrackingMethod               Value[string]                     `json:"trackingMethod,omitempty" yaml:"trackingMethod,omitempty"`
 	InstanceLabelKey             Value[string]                     `json:"instanceLabelKey,omitempty" yaml:"instanceLabelKey,omitempty"`
+	InstallationID               Value[string]                     `json:"installationID,omitempty" yaml:"installationID,omitempty"`
 	ResourceExclusions           []ResourceFilterRule              `json:"resourceExclusions,omitempty" yaml:"resourceExclusions,omitempty"`
 	ResourceInclusions           []ResourceFilterRule              `json:"resourceInclusions,omitempty" yaml:"resourceInclusions,omitempty"`
 	CompareOptions               ResourceCompareOptions            `json:"compareOptions,omitempty" yaml:"compareOptions,omitempty"`
@@ -115,7 +116,7 @@ func DefaultSettings() ArgoSettings {
 			IgnoreResourceStatusField: "all",
 		},
 		TrackingMethod: Value[string]{
-			Value: "label",
+			Value: "annotation",
 		},
 		InstanceLabelKey: Value[string]{
 			Value: "app.kubernetes.io/instance",

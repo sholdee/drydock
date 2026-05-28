@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -584,7 +585,7 @@ helmCharts:
 	if len(acquirer.options) != 1 {
 		t.Fatalf("len(acquirer.options) = %d, want 1", len(acquirer.options))
 	}
-	if acquirer.options[0] != (chart.Options{
+	if got, want := acquirer.options[0], (chart.Options{
 		CacheDir: filepath.Join(root, "cache"),
 		Offline:  true,
 		Refresh:  true,
@@ -594,8 +595,8 @@ helmCharts:
 			BearerToken:    "helm-token",
 			RegistryConfig: filepath.Join(root, "registry.json"),
 		},
-	}) {
-		t.Fatalf("acquirer.options[0] = %#v", acquirer.options[0])
+	}); !reflect.DeepEqual(got, want) {
+		t.Fatalf("acquirer.options[0] = %#v, want %#v", got, want)
 	}
 }
 func TestKustomizeRendererUsesDiscoveredBareOCIChartRepository(t *testing.T) {

@@ -296,6 +296,7 @@ type renderApplicationsRequest struct {
 	provider          localProvider
 	renderCache       *applicationRenderCache
 	settingsSignature string
+	trackingOptions   TrackingOptions
 	request           BuildRequest
 	strict            bool
 	statusOnly        bool
@@ -410,6 +411,7 @@ func renderOneApplication(ctx context.Context, application argoappv1.Application
 		provider:          provider,
 		cache:             request.renderCache,
 		settingsSignature: request.settingsSignature,
+		trackingOptions:   request.trackingOptions,
 		request:           request.request,
 	}, application)
 	if err != nil {

@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"time"
 
 	"github.com/sholdee/drydock/internal/acquisition"
 	"github.com/sholdee/drydock/internal/cacheevent"
@@ -12,8 +13,6 @@ import (
 	"github.com/sholdee/drydock/internal/remote"
 	"github.com/sholdee/drydock/internal/render"
 	sourcepkg "github.com/sholdee/drydock/internal/source"
-
-	"time"
 )
 
 type localProvider struct {
@@ -26,6 +25,7 @@ type localProvider struct {
 	offline                      bool
 	refreshCharts                bool
 	chartCacheDir                string
+	chartForbiddenRoots          []string
 	chartCredentials             chart.ChartCredentials
 	ociChartRepositories         map[string]bool
 	gitCacheDir                  string
@@ -65,13 +65,15 @@ func (p localProvider) RenderSource(ctx context.Context, source render.ResolvedS
 	opts.ChartCacheDir = p.chartCacheDir
 	opts.OfflineCharts = p.offline
 	opts.RefreshCharts = p.refreshCharts
+	opts.ChartForbiddenRoots = append([]string(nil), p.chartForbiddenRoots...)
+	opts.ChartForbiddenRoots = appendUniqueString(opts.ChartForbiddenRoots, sourceRoot)
 	opts.ChartCredentials = p.chartCredentials
 	opts.OCIChartRepositories = p.ociChartRepositories
 	opts.RemoteResourceAcquirer = p.acquisition.RemoteAcquirer(p.remoteResourceAcquirer)
 	opts.RemoteResourceCacheDir = p.remoteResourceCacheDir
 	opts.OfflineRemoteResources = p.offline
 	opts.RefreshRemoteResources = p.refreshRemoteResources
-	opts.RemoteResourceForbiddenRoots = p.remoteResourceForbiddenRoots
+	opts.RemoteResourceForbiddenRoots = append([]string(nil), p.remoteResourceForbiddenRoots...)
 	opts.RemoteResourceForbiddenRoots = appendUniqueString(opts.RemoteResourceForbiddenRoots, sourceRoot)
 	opts.RemoteResourceCredentials = p.remoteResourceCredentials
 	opts.RemoteResourceGitCredentials = p.remoteResourceGitCredentials
