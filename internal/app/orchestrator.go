@@ -595,6 +595,14 @@ func settingsBuildOptions(settings config.ArgoSettings) []string {
 	return out
 }
 
+func settingsHelmValueFileSchemes(settings config.ArgoSettings) []string {
+	out := make([]string, 0, len(settings.HelmValuesFileSchemes))
+	for _, scheme := range settings.HelmValuesFileSchemes {
+		out = append(out, scheme.Value)
+	}
+	return out
+}
+
 func (request BuildRequest) resourceFilter() manifest.ResourceFilter {
 	return manifest.ResourceFilter{
 		SkipKinds:   append([]string(nil), request.SkipKinds...),

@@ -41,6 +41,8 @@ func newLocalProvider(orchestrator Orchestrator, root string, settings config.Ar
 		remoteResourceForbiddenRoots: forbiddenRoots,
 		remoteResourceCredentials:    request.RemoteResourceCredentials,
 		remoteResourceGitCredentials: request.RemoteResourceGitCredentials,
+		helmValueFileSchemes:         settingsHelmValueFileSchemes(settings),
+		helmValueFileSchemesSet:      settings.HelmValuesFileSchemesSet,
 		pluginTimeout:                request.PluginTimeout,
 		pluginPolicy:                 request.pluginPolicy,
 		pluginPolicyFingerprint:      request.pluginPolicyFingerprint,

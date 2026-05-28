@@ -36,6 +36,8 @@ type localProvider struct {
 	remoteResourceForbiddenRoots []string
 	remoteResourceCredentials    remote.Credentials
 	remoteResourceGitCredentials remote.GitCredentials
+	helmValueFileSchemes         []string
+	helmValueFileSchemesSet      bool
 	pluginTimeout                time.Duration
 	pluginPolicy                 pluginpolicy.Policy
 	pluginPolicyFingerprint      string
@@ -73,6 +75,10 @@ func (p localProvider) RenderSource(ctx context.Context, source render.ResolvedS
 	opts.RemoteResourceForbiddenRoots = appendUniqueString(opts.RemoteResourceForbiddenRoots, sourceRoot)
 	opts.RemoteResourceCredentials = p.remoteResourceCredentials
 	opts.RemoteResourceGitCredentials = p.remoteResourceGitCredentials
+	if !opts.HelmValueFileSchemesSet {
+		opts.HelmValueFileSchemes = append([]string(nil), p.helmValueFileSchemes...)
+		opts.HelmValueFileSchemesSet = p.helmValueFileSchemesSet
+	}
 	opts.CacheEventRecorder = p.cacheEvents
 	anchoredRefRoots, err := anchorLocalRefRoots(sourceRoot, opts.RefRoots)
 	if err != nil {

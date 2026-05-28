@@ -108,7 +108,7 @@ func writeChartMetadata(keyDir, key string, request Request) {
 func (acquirer DefaultAcquirer) fetchChart(ctx context.Context, request Request, opts Options) ([]byte, error) {
 	switch request.Kind {
 	case RepositoryHTTP:
-		return acquirer.fetchHTTPChart(ctx, request, opts.Credentials)
+		return acquirer.fetchHTTPChart(ctx, request, opts)
 	case RepositoryOCI:
 		return acquirer.fetchOCIChart(ctx, request, opts)
 	default:

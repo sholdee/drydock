@@ -46,6 +46,12 @@ type RenderOptions struct {
 	ValueFilesBaseDir            string
 	ValueFilesBoundaryRoot       string
 	IgnoreMissingValueFiles      bool
+	HelmParameters               []argoappv1.HelmParameter
+	HelmFileParameters           []argoappv1.HelmFileParameter
+	HelmValueFileSchemes         []string
+	HelmValueFileSchemesSet      bool
+	SkipSchemaValidation         bool
+	PassCredentials              bool
 	DirectoryRecurse             bool
 	DirectoryInclude             string
 	DirectoryExclude             string

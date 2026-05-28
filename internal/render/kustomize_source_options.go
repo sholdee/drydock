@@ -39,6 +39,7 @@ func hasKustomizeSourceMutations(opts RenderOptions) bool {
 		len(kustomize.Components) != 0
 }
 
+//nolint:gocyclo // Mirrors Argo CD's source-level Kustomize override surface explicitly.
 func applySourceKustomizeOptions(kustomization *types.Kustomization, dir, boundaryRoot string, opts RenderOptions) error {
 	kustomize := opts.Kustomize
 	if kustomize == nil {
@@ -200,6 +201,7 @@ func upsertReplicas(existing, overrides []types.Replica) []types.Replica {
 	return out
 }
 
+//nolint:staticcheck // CommonLabels remains part of the Kustomize API and Argo CD source override semantics.
 func applySourceKustomizeLabels(kustomization *types.Kustomization, labels map[string]string, kustomize *argoappv1.ApplicationSourceKustomize) error {
 	if err := mergeStringMap(kustomization.CommonLabels, labels, kustomize.ForceCommonLabels, "common label"); err != nil {
 		return err

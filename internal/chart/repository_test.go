@@ -219,6 +219,158 @@ func TestDefaultAcquirerFetchesAuthenticatedHTTPChart(t *testing.T) {
 	}
 }
 
+func TestDefaultAcquirerPassCredentialsWithholdsCredentialsForCrossHostChartArchive(t *testing.T) {
+	archive := chartArchive(t, "demo", map[string]string{
+		"Chart.yaml": "apiVersion: v2\nname: demo\nversion: 1.2.3\n",
+	})
+	wantAuth := "Basic " + base64.StdEncoding.EncodeToString([]byte("user:pass"))
+	archiveServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := r.Header.Get("Authorization"); got != "" {
+			t.Fatalf("archive Authorization = %q, want empty for cross-host archive", got)
+		}
+		if r.URL.Path != "/archives/demo-1.2.3.tgz" {
+			t.Fatalf("archive request path = %q, want /archives/demo-1.2.3.tgz", r.URL.Path)
+		}
+		if _, err := w.Write(archive); err != nil {
+			t.Fatalf("write archive response: %v", err)
+		}
+	}))
+	t.Cleanup(archiveServer.Close)
+	indexServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := r.Header.Get("Authorization"); got != wantAuth {
+			t.Fatalf("index Authorization = %q, want %q", got, wantAuth)
+		}
+		writeIndex(t, w, archiveServer.URL+"/archives/demo-1.2.3.tgz")
+	}))
+	t.Cleanup(indexServer.Close)
+
+	result, err := (DefaultAcquirer{Client: indexServer.Client()}).Acquire(context.Background(), Request{
+		Repository: indexServer.URL,
+		Name:       "demo",
+		Version:    "1.2.3",
+		Kind:       RepositoryHTTP,
+	}, Options{
+		CacheDir: t.TempDir(),
+		Credentials: ChartCredentials{
+			Username: "user",
+			Password: "pass",
+		},
+	})
+	if err != nil {
+		t.Fatalf("Acquire() error = %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(result.ChartDir, "Chart.yaml")); err != nil {
+		t.Fatalf("stat extracted Chart.yaml: %v", err)
+	}
+}
+
+func TestDefaultAcquirerPassCredentialsForwardsCredentialsForCrossHostChartArchive(t *testing.T) {
+	archive := chartArchive(t, "demo", map[string]string{
+		"Chart.yaml": "apiVersion: v2\nname: demo\nversion: 1.2.3\n",
+	})
+	wantAuth := "Basic " + base64.StdEncoding.EncodeToString([]byte("user:pass"))
+	archiveServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := r.Header.Get("Authorization"); got != wantAuth {
+			t.Fatalf("archive Authorization = %q, want %q", got, wantAuth)
+		}
+		if _, err := w.Write(archive); err != nil {
+			t.Fatalf("write archive response: %v", err)
+		}
+	}))
+	t.Cleanup(archiveServer.Close)
+	indexServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := r.Header.Get("Authorization"); got != wantAuth {
+			t.Fatalf("index Authorization = %q, want %q", got, wantAuth)
+		}
+		writeIndex(t, w, archiveServer.URL+"/demo-1.2.3.tgz")
+	}))
+	t.Cleanup(indexServer.Close)
+
+	result, err := (DefaultAcquirer{Client: indexServer.Client()}).Acquire(context.Background(), Request{
+		Repository: indexServer.URL,
+		Name:       "demo",
+		Version:    "1.2.3",
+		Kind:       RepositoryHTTP,
+	}, Options{
+		CacheDir:        t.TempDir(),
+		PassCredentials: true,
+		Credentials: ChartCredentials{
+			Username: "user",
+			Password: "pass",
+		},
+	})
+	if err != nil {
+		t.Fatalf("Acquire() error = %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(result.ChartDir, "Chart.yaml")); err != nil {
+		t.Fatalf("stat extracted Chart.yaml: %v", err)
+	}
+}
+
+func TestDefaultAcquirerUsesExactSemverChartVersion(t *testing.T) {
+	archive := chartArchive(t, "demo", map[string]string{
+		"Chart.yaml": "apiVersion: v2\nname: demo\nversion: 1.2.3\n",
+	})
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/index.yaml":
+			w.Header().Set("Content-Type", "application/yaml")
+			fmt.Fprint(w, `apiVersion: v1
+entries:
+  demo:
+    - version: 1.2.10
+      urls:
+        - demo-1.2.10.tgz
+    - version: 1.2.3
+      urls:
+        - demo-1.2.3.tgz
+`)
+		case "/demo-1.2.3.tgz":
+			if _, err := w.Write(archive); err != nil {
+				t.Fatalf("write archive response: %v", err)
+			}
+		case "/demo-1.2.10.tgz":
+			t.Fatal("Acquire() fetched 1.2.10, want exact 1.2.3")
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(server.Close)
+
+	_, err := (DefaultAcquirer{Client: server.Client()}).Acquire(context.Background(), Request{
+		Repository: server.URL,
+		Name:       "demo",
+		Version:    "1.2.3",
+		Kind:       RepositoryHTTP,
+	}, Options{CacheDir: t.TempDir()})
+	if err != nil {
+		t.Fatalf("Acquire() error = %v", err)
+	}
+}
+
+func TestDefaultAcquirerMissingVersionDiagnostic(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/index.yaml" {
+			t.Fatalf("request path = %q, want /index.yaml", r.URL.Path)
+		}
+		writeIndex(t, w, "demo-1.2.3.tgz")
+	}))
+	t.Cleanup(server.Close)
+
+	_, err := (DefaultAcquirer{Client: server.Client()}).Acquire(context.Background(), Request{
+		Repository: server.URL,
+		Name:       "demo",
+		Version:    "9.9.9",
+		Kind:       RepositoryHTTP,
+	}, Options{CacheDir: t.TempDir()})
+	if err == nil {
+		t.Fatal("Acquire() error = nil, want missing version error")
+	}
+	if !strings.Contains(err.Error(), "chart demo version 9.9.9 not found") {
+		t.Fatalf("Acquire() error = %q, want missing version diagnostic", err)
+	}
+}
+
 func TestDefaultAcquirerBearerTokenTakesPrecedenceOverBasicAuth(t *testing.T) {
 	archive := chartArchive(t, "demo", map[string]string{
 		"Chart.yaml": "apiVersion: v2\nname: demo\nversion: 1.2.3\n",

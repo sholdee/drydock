@@ -29,10 +29,11 @@ func (p localProvider) renderChartOnlySource(ctx context.Context, source render.
 		Version:    source.TargetRevision,
 		Kind:       kind,
 	}, chart.Options{
-		CacheDir:    p.chartCacheDir,
-		Offline:     p.offline,
-		Refresh:     p.refreshCharts,
-		Credentials: p.chartCredentials,
+		CacheDir:        p.chartCacheDir,
+		Offline:         p.offline,
+		Refresh:         p.refreshCharts,
+		PassCredentials: opts.PassCredentials,
+		Credentials:     p.chartCredentials,
 	})
 	if err != nil {
 		acquireError := cacheevent.NewAcquisitionError(cacheevent.AcquisitionEventInput{

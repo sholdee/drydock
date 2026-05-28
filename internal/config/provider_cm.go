@@ -18,6 +18,15 @@ func applyCMMap(settings *ArgoSettings, values map[string]string, path, basePoin
 			Pointer: basePointer + ".kustomize.buildOptions",
 		})
 	}
+	if raw, ok := values["helm.valuesFileSchemes"]; ok {
+		provenance := diagnostic.Provenance{
+			Path:    path,
+			Pointer: basePointer + ".helm.valuesFileSchemes",
+		}
+		settings.HelmValuesFileSchemes = splitCommaValues(raw, provenance)
+		settings.HelmValuesFileSchemesSet = true
+		settings.HelmValuesFileSchemesSource = provenance
+	}
 	diags = appendVersionedKustomizeDiagnostics(values, path, basePointer, diags)
 	if raw := values["application.resourceTrackingMethod"]; raw != "" {
 		settings.TrackingMethod = Value[string]{
@@ -119,6 +128,19 @@ func splitShellFields(raw string, provenance diagnostic.Provenance) []Value[stri
 	out := make([]Value[string], 0, len(fields))
 	for _, field := range fields {
 		out = append(out, Value[string]{Value: field, Provenance: provenance})
+	}
+	return out
+}
+
+func splitCommaValues(raw string, provenance diagnostic.Provenance) []Value[string] {
+	items := strings.Split(raw, ",")
+	out := make([]Value[string], 0, len(items))
+	for _, item := range items {
+		item = strings.TrimSpace(item)
+		if item == "" {
+			continue
+		}
+		out = append(out, Value[string]{Value: item, Provenance: provenance})
 	}
 	return out
 }

@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/sholdee/drydock/internal/chart"
+	"github.com/sholdee/drydock/internal/config"
 	"github.com/sholdee/drydock/internal/diagnostic"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 )
@@ -79,6 +80,27 @@ resources:
 	}
 	if len(result.Manifests) != 1 || result.Manifests[0].Object.GetName() != "shared" {
 		t.Fatalf("Manifests = %#v, want shared ConfigMap", result.Manifests)
+	}
+}
+
+func TestNewLocalProviderCarriesHelmValuesFileSchemes(t *testing.T) {
+	settings := config.DefaultSettings()
+	settings.HelmValuesFileSchemes = []config.Value[string]{
+		{Value: "https"},
+		{Value: "http"},
+	}
+	settings.HelmValuesFileSchemesSet = true
+
+	provider, cleanup, err := newLocalProvider(Orchestrator{}, t.TempDir(), settings, BuildRequest{}, nil, "drydock-test-*")
+	defer cleanup()
+	if err != nil {
+		t.Fatalf("newLocalProvider() error = %v", err)
+	}
+	if !provider.helmValueFileSchemesSet {
+		t.Fatal("helmValueFileSchemesSet = false, want true")
+	}
+	if strings.Join(provider.helmValueFileSchemes, ",") != "https,http" {
+		t.Fatalf("helmValueFileSchemes = %#v, want https,http", provider.helmValueFileSchemes)
 	}
 }
 

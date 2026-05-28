@@ -60,7 +60,7 @@ func RenderApplication(ctx context.Context, application argoappv1.Application, p
 		opts.EnablePlugins = pluginOpts.EnablePlugins
 		opts.SourceIndex = sourcePlan.Index
 		opts.SourceName = sourcePlan.Name
-		refRoots, refSources, err := renderRefsForSource(plan, sourcePlan, opts.ValueFiles)
+		refRoots, refSources, err := renderRefsForSource(plan, sourcePlan, helmRefInputPaths(opts))
 		if err != nil {
 			return result, fmt.Errorf("%s: %w", renderSourceContext(application, sourcePlan), err)
 		}
@@ -125,10 +125,10 @@ func renderOptions(application argoappv1.Application, source argoappv1.Applicati
 		AppNamespace: application.Namespace,
 		Project:      application.Spec.Project,
 		Namespace:    application.Spec.Destination.Namespace,
+		ArgoEnv:      argoRenderEnv(application, source),
 	}
 	if source.Kustomize != nil {
 		opts.Kustomize = source.Kustomize.DeepCopy()
-		opts.ArgoEnv = argoRenderEnv(application, source)
 		if source.Kustomize.KubeVersion != "" {
 			opts.KubeVersion = source.Kustomize.KubeVersion
 		}
@@ -160,7 +160,11 @@ func renderOptions(application argoappv1.Application, source argoappv1.Applicati
 	opts.KubeVersion = source.Helm.KubeVersion
 	opts.APIVersions = append(opts.APIVersions, source.Helm.APIVersions...)
 	opts.ValueFiles = append(opts.ValueFiles, source.Helm.ValueFiles...)
+	opts.HelmParameters = append(opts.HelmParameters, source.Helm.Parameters...)
+	opts.HelmFileParameters = append(opts.HelmFileParameters, source.Helm.FileParameters...)
 	opts.IgnoreMissingValueFiles = source.Helm.IgnoreMissingValueFiles
+	opts.SkipSchemaValidation = source.Helm.SkipSchemaValidation
+	opts.PassCredentials = source.Helm.PassCredentials
 	opts.IncludeCRDsSet = true
 	opts.IncludeCRDs = !source.Helm.SkipCrds
 	opts.SkipTests = source.Helm.SkipTests
@@ -257,15 +261,23 @@ func helmValuesObject(helm *argoappv1.ApplicationSourceHelm) (map[string]any, bo
 	return values, true, nil
 }
 
-func renderRefsForSource(plan PlanResult, sourcePlan SourcePlan, valueFiles []string) (map[string]string, map[string]render.ResolvedSource, error) {
-	if len(valueFiles) == 0 {
+func helmRefInputPaths(opts render.RenderOptions) []string {
+	paths := append([]string(nil), opts.ValueFiles...)
+	for _, parameter := range opts.HelmFileParameters {
+		paths = append(paths, parameter.Path)
+	}
+	return paths
+}
+
+func renderRefsForSource(plan PlanResult, sourcePlan SourcePlan, paths []string) (map[string]string, map[string]render.ResolvedSource, error) {
+	if len(paths) == 0 {
 		return map[string]string{}, map[string]render.ResolvedSource{}, nil
 	}
 
 	refRoots := map[string]string{}
 	refSources := map[string]render.ResolvedSource{}
-	for _, valueFile := range valueFiles {
-		refKey, ok, err := helmValueFileRefKey(valueFile)
+	for _, filePath := range paths {
+		refKey, ok, err := helmValueFileRefKey(filePath)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -275,7 +287,7 @@ func renderRefsForSource(plan PlanResult, sourcePlan SourcePlan, valueFiles []st
 
 		refSource, exists := plan.Refs[refKey]
 		if !exists {
-			return nil, nil, fmt.Errorf("helm value file %q references unknown ref %s", valueFile, refKey)
+			return nil, nil, fmt.Errorf("helm file reference %q references unknown ref %s", filePath, refKey)
 		}
 		if isSameSourceRevision(refSource.Source, sourcePlan.Source) {
 			refRoots[refKey] = "."

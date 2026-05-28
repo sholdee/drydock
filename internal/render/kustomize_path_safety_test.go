@@ -354,7 +354,7 @@ resources:
 		})
 	}
 }
-func TestKustomizeRendererRejectsRemoteHelmValueRefsWithoutLeakingSecrets(t *testing.T) {
+func TestKustomizeRendererSupportsRemoteHelmValueRefsWithoutLeakingSecrets(t *testing.T) {
 	for _, tt := range []struct {
 		name string
 		body string
@@ -382,7 +382,20 @@ resources:
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			root := t.TempDir()
+			remoteValues := filepath.Join(t.TempDir(), "values.yaml")
+			writeFile(t, remoteValues, "image: example/app:remote\n")
 			writeFile(t, filepath.Join(root, "app", "kustomization.yaml"), tt.body)
+			writeTestChart(t, filepath.Join(root, "app", "charts", "demo"), `
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: demo
+data:
+  image: {{ .Values.image | quote }}
+`)
+			paths := map[string]string{
+				"https://user:secret@example.test/values.yaml?token=secret": remoteValues,
+			}
 			if tt.name == "remote" {
 				remoteRepo := t.TempDir()
 				writeFile(t, filepath.Join(remoteRepo, "base", "kustomization.yaml"), `apiVersion: kustomize.config.k8s.io/v1beta1
@@ -393,23 +406,32 @@ helmCharts:
     additionalValuesFiles:
       - https://user:secret@example.test/values.yaml?token=secret
 `)
-				tt.opts.RemoteResourceAcquirer = &fakeRemoteAcquirer{path: remoteRepo}
+				writeTestChart(t, filepath.Join(remoteRepo, "base", "charts", "demo"), `
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: demo
+data:
+  image: {{ .Values.image | quote }}
+`)
+				paths["https://github.com/example/remote.git"] = remoteRepo
 			}
+			tt.opts.RemoteResourceAcquirer = &fakeRemoteAcquirer{paths: paths}
 
-			_, _, err := (KustomizeRenderer{}).Render(context.Background(), ResolvedSource{
+			result, _, err := (KustomizeRenderer{}).Render(context.Background(), ResolvedSource{
 				RepoRoot: root,
 				Path:     "app",
 			}, tt.opts)
-			if err == nil {
-				t.Fatal("Render() error = nil, want remote Helm values rejection")
-			}
-			if !strings.Contains(err.Error(), "remote") {
-				t.Fatalf("Render() error = %v, want remote ref rejection", err)
-			}
-			for _, secret := range []string{"user", "secret", "token=secret"} {
-				if strings.Contains(err.Error(), secret) {
-					t.Fatalf("Render() error = %q leaked %q", err.Error(), secret)
+			if err != nil {
+				for _, secret := range []string{"user", "secret", "token=secret"} {
+					if strings.Contains(err.Error(), secret) {
+						t.Fatalf("Render() error = %q leaked %q", err.Error(), secret)
+					}
 				}
+				t.Fatalf("Render() error = %v", err)
+			}
+			if !containsConfigMapData(result, "image", "example/app:remote") {
+				t.Fatalf("rendered manifests = %#v, want remote values image", result)
 			}
 		})
 	}

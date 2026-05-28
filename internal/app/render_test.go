@@ -382,6 +382,46 @@ func TestRenderApplicationPassesSameRepoRefRootsForHelmValueFiles(t *testing.T) 
 	}
 }
 
+func TestRenderApplicationPassesSameRepoRefRootsForHelmFileParameters(t *testing.T) {
+	application := argoappv1.Application{
+		ObjectMeta: metav1.ObjectMeta{Namespace: "argocd", Name: "demo"},
+		Spec: argoappv1.ApplicationSpec{
+			Sources: argoappv1.ApplicationSources{
+				{RepoURL: "https://example.com/repo", Path: "some/path", Ref: "values"},
+				{
+					RepoURL: "https://example.com/repo",
+					Path:    "chart",
+					Helm: &argoappv1.ApplicationSourceHelm{
+						FileParameters: []argoappv1.HelmFileParameter{
+							{Name: "fileValue", Path: "$values/foo.txt"},
+						},
+					},
+				},
+			},
+		},
+	}
+	var got render.RenderOptions
+	provider := providerFunc(func(_ context.Context, source render.ResolvedSource, opts render.RenderOptions) ([]render.Manifest, []diagnostic.Diagnostic, error) {
+		if source.Path == "chart" {
+			got = opts
+		}
+		return nil, nil, nil
+	})
+
+	if _, err := RenderApplication(context.Background(), application, provider); err != nil {
+		t.Fatalf("RenderApplication() error = %v", err)
+	}
+	if got.RefRoots["$values"] != "." {
+		t.Fatalf("RefRoots[$values] = %q, want .", got.RefRoots["$values"])
+	}
+	if len(got.RefSources) != 0 {
+		t.Fatalf("RefSources = %#v, want empty same-repo refs", got.RefSources)
+	}
+	if len(got.HelmFileParameters) != 1 || got.HelmFileParameters[0].Path != "$values/foo.txt" {
+		t.Fatalf("HelmFileParameters = %#v, want $values/foo.txt", got.HelmFileParameters)
+	}
+}
+
 func TestRenderApplicationPassesSameRepoSiblingPathRefSourceForChartOnlyHelmValueFiles(t *testing.T) {
 	application := argoappv1.Application{
 		ObjectMeta: metav1.ObjectMeta{Namespace: "argocd", Name: "demo"},
@@ -508,8 +548,16 @@ func TestRenderApplicationPassesHelmRenderSwitches(t *testing.T) {
 				RepoURL: "https://repo",
 				Path:    "chart",
 				Helm: &argoappv1.ApplicationSourceHelm{
-					SkipCrds:  true,
-					SkipTests: true,
+					Parameters: []argoappv1.HelmParameter{
+						{Name: "value", Value: "from-param", ForceString: true},
+					},
+					FileParameters: []argoappv1.HelmFileParameter{
+						{Name: "fileValue", Path: "message.txt"},
+					},
+					SkipCrds:             true,
+					SkipTests:            true,
+					SkipSchemaValidation: true,
+					PassCredentials:      true,
 				},
 			},
 		},
@@ -531,6 +579,18 @@ func TestRenderApplicationPassesHelmRenderSwitches(t *testing.T) {
 	}
 	if !got.SkipTests {
 		t.Fatalf("SkipTests = false, want true")
+	}
+	if !got.SkipSchemaValidation {
+		t.Fatalf("SkipSchemaValidation = false, want true")
+	}
+	if !got.PassCredentials {
+		t.Fatalf("PassCredentials = false, want true")
+	}
+	if len(got.HelmParameters) != 1 || got.HelmParameters[0].Name != "value" || !got.HelmParameters[0].ForceString {
+		t.Fatalf("HelmParameters = %#v, want force-string value parameter", got.HelmParameters)
+	}
+	if len(got.HelmFileParameters) != 1 || got.HelmFileParameters[0].Name != "fileValue" || got.HelmFileParameters[0].Path != "message.txt" {
+		t.Fatalf("HelmFileParameters = %#v, want fileValue file parameter", got.HelmFileParameters)
 	}
 }
 

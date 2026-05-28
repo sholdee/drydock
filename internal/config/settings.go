@@ -92,6 +92,9 @@ func (plugin ConfigManagementPlugin) EffectiveName() string {
 type ArgoSettings struct {
 	KustomizeBuildOptions        []Value[string]                   `json:"kustomizeBuildOptions,omitempty" yaml:"kustomizeBuildOptions,omitempty"`
 	HelmRepositories             map[string]RepositorySettings     `json:"helmRepositories,omitempty" yaml:"helmRepositories,omitempty"`
+	HelmValuesFileSchemes        []Value[string]                   `json:"helmValuesFileSchemes,omitempty" yaml:"helmValuesFileSchemes,omitempty"`
+	HelmValuesFileSchemesSet     bool                              `json:"helmValuesFileSchemesSet,omitempty" yaml:"helmValuesFileSchemesSet,omitempty"`
+	HelmValuesFileSchemesSource  Provenance                        `json:"helmValuesFileSchemesSource,omitempty" yaml:"helmValuesFileSchemesSource,omitempty"`
 	TrackingMethod               Value[string]                     `json:"trackingMethod,omitempty" yaml:"trackingMethod,omitempty"`
 	InstanceLabelKey             Value[string]                     `json:"instanceLabelKey,omitempty" yaml:"instanceLabelKey,omitempty"`
 	ResourceExclusions           []ResourceFilterRule              `json:"resourceExclusions,omitempty" yaml:"resourceExclusions,omitempty"`
@@ -105,6 +108,7 @@ type ArgoSettings struct {
 func DefaultSettings() ArgoSettings {
 	return ArgoSettings{
 		HelmRepositories:        map[string]RepositorySettings{},
+		HelmValuesFileSchemes:   valuesFromStrings([]string{"https", "http"}, Provenance{}),
 		ResourceCustomizations:  map[string]ResourceCustomization{},
 		ConfigManagementPlugins: map[string]ConfigManagementPlugin{},
 		CompareOptions: ResourceCompareOptions{
@@ -120,4 +124,12 @@ func DefaultSettings() ArgoSettings {
 			Value: true,
 		},
 	}
+}
+
+func valuesFromStrings(values []string, provenance Provenance) []Value[string] {
+	out := make([]Value[string], 0, len(values))
+	for _, value := range values {
+		out = append(out, Value[string]{Value: value, Provenance: provenance})
+	}
+	return out
 }

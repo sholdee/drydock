@@ -32,15 +32,19 @@ func renderSettingsSignature(settings config.ArgoSettings) (string, error) {
 		}
 	}
 	input := struct {
-		KustomizeBuildOptions   []config.Value[string]                 `json:"kustomizeBuildOptions,omitempty"`
-		HelmRepositories        map[string]config.RepositorySettings   `json:"helmRepositories,omitempty"`
-		ConfigManagementPlugins map[string]renderSettingsPlugin        `json:"configManagementPlugins,omitempty"`
-		ResourceCustomizations  map[string]renderSettingsCustomization `json:"resourceCustomizations,omitempty"`
+		KustomizeBuildOptions    []config.Value[string]                 `json:"kustomizeBuildOptions,omitempty"`
+		HelmRepositories         map[string]config.RepositorySettings   `json:"helmRepositories,omitempty"`
+		HelmValuesFileSchemes    []config.Value[string]                 `json:"helmValuesFileSchemes,omitempty"`
+		HelmValuesFileSchemesSet bool                                   `json:"helmValuesFileSchemesSet,omitempty"`
+		ConfigManagementPlugins  map[string]renderSettingsPlugin        `json:"configManagementPlugins,omitempty"`
+		ResourceCustomizations   map[string]renderSettingsCustomization `json:"resourceCustomizations,omitempty"`
 	}{
-		KustomizeBuildOptions:   settings.KustomizeBuildOptions,
-		HelmRepositories:        settings.HelmRepositories,
-		ConfigManagementPlugins: plugins,
-		ResourceCustomizations:  renderSettingsCustomizations(settings.ResourceCustomizations),
+		KustomizeBuildOptions:    settings.KustomizeBuildOptions,
+		HelmRepositories:         settings.HelmRepositories,
+		HelmValuesFileSchemes:    settings.HelmValuesFileSchemes,
+		HelmValuesFileSchemesSet: settings.HelmValuesFileSchemesSet,
+		ConfigManagementPlugins:  plugins,
+		ResourceCustomizations:   renderSettingsCustomizations(settings.ResourceCustomizations),
 	}
 	data, err := json.Marshal(input)
 	if err != nil {

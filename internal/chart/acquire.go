@@ -35,10 +35,11 @@ type Result struct {
 }
 
 type Options struct {
-	CacheDir    string
-	Offline     bool
-	Refresh     bool
-	Credentials ChartCredentials
+	CacheDir        string
+	Offline         bool
+	Refresh         bool
+	PassCredentials bool
+	Credentials     ChartCredentials
 }
 
 type ChartCredentials struct {

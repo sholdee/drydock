@@ -106,6 +106,97 @@ image: example/app:v1
 		t.Fatalf("deployment image = %q, want example/app:v1", image)
 	}
 }
+
+func TestKustomizeRendererPassesRemoteOptionsToNestedHelmValueFiles(t *testing.T) {
+	root := t.TempDir()
+	cacheDir := t.TempDir()
+	chartDir := filepath.Join(root, "charts", "demo")
+	remoteFile := filepath.Join(t.TempDir(), "values.yaml")
+	writeTestChart(t, chartDir, `
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Release.Name }}
+spec:
+  selector:
+    matchLabels:
+      app: demo
+  template:
+    metadata:
+      labels:
+        app: demo
+    spec:
+      containers:
+        - name: app
+          image: {{ .Values.image }}
+`)
+	writeFile(t, filepath.Join(root, "apps", "demo", "kustomization.yaml"), `
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+helmCharts:
+  - name: demo
+    repo: https://charts.example.test
+    version: 1.2.3
+    releaseName: demo
+    additionalValuesFiles:
+      - https://values.example.test/team/demo.yaml
+`)
+	writeFile(t, remoteFile, "image: example/app:remote\n")
+	chartAcquirer := &fakeChartAcquirer{chartDir: chartDir}
+	remoteAcquirer := &fakeRemoteAcquirer{path: remoteFile}
+
+	result, diags, err := (KustomizeRenderer{}).Render(context.Background(), ResolvedSource{
+		RepoRoot: root,
+		Path:     filepath.Join("apps", "demo"),
+	}, RenderOptions{
+		ChartAcquirer:                chartAcquirer,
+		RemoteResourceAcquirer:       remoteAcquirer,
+		RemoteResourceCacheDir:       cacheDir,
+		OfflineRemoteResources:       true,
+		RefreshRemoteResources:       true,
+		RemoteResourceForbiddenRoots: []string{root},
+	})
+	if err != nil {
+		t.Fatalf("Render() error = %v", err)
+	}
+	if len(diags) != 0 {
+		t.Fatalf("diagnostics = %#v", diags)
+	}
+	assertDeploymentContainerImage(t, result, "example/app:remote")
+	if len(remoteAcquirer.requests) != 1 || remoteAcquirer.requests[0].URL != "https://values.example.test/team/demo.yaml" {
+		t.Fatalf("remote requests = %#v", remoteAcquirer.requests)
+	}
+	if len(remoteAcquirer.options) != 1 {
+		t.Fatalf("remote options = %d, want 1", len(remoteAcquirer.options))
+	}
+	options := remoteAcquirer.options[0]
+	if options.CacheDir != cacheDir || !options.Offline || !options.Refresh {
+		t.Fatalf("remote options = %#v, want cache/offline/refresh propagated", options)
+	}
+	if strings.Join(options.ForbiddenRoots, ",") != root {
+		t.Fatalf("ForbiddenRoots = %#v, want root", options.ForbiddenRoots)
+	}
+}
+
+func assertDeploymentContainerImage(t *testing.T, manifests []Manifest, want string) {
+	t.Helper()
+	deployments := filterObjects(manifests, "Deployment")
+	if len(deployments) != 1 {
+		t.Fatalf("len(deployments) = %d, want 1", len(deployments))
+	}
+	containers, found, err := unstructured.NestedSlice(deployments[0].Object, "spec", "template", "spec", "containers")
+	if err != nil || !found || len(containers) != 1 {
+		t.Fatalf("containers lookup found=%v len=%d err=%v", found, len(containers), err)
+	}
+	container, ok := containers[0].(map[string]any)
+	if !ok {
+		t.Fatalf("container = %#v, want map", containers[0])
+	}
+	if image := container["image"]; image != want {
+		t.Fatalf("image = %#v, want %s", image, want)
+	}
+}
+
 func TestKustomizeRendererPassesBuildOptionHelmAPIVersionsToCharts(t *testing.T) {
 	root := t.TempDir()
 	chartDir := filepath.Join(root, "charts", "demo")

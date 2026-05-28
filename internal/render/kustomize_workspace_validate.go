@@ -92,12 +92,15 @@ func validateWorkspaceHelmChartPath(boundaryRoot, dir, chartHome string, helmCha
 }
 
 func validateWorkspaceHelmValueRefs(boundaryRoot, dir string, helmChart types.HelmChart) error {
-	if helmChart.ValuesFile != "" {
+	if helmChart.ValuesFile != "" && !isRemoteHelmValueFile(helmChart.ValuesFile) {
 		if err := validateWorkspacePathRef(boundaryRoot, dir, "helmCharts.valuesFile", helmChart.ValuesFile); err != nil {
 			return err
 		}
 	}
 	for _, valuesFile := range helmChart.AdditionalValuesFiles {
+		if isRemoteHelmValueFile(valuesFile) {
+			continue
+		}
 		if err := validateWorkspacePathRef(boundaryRoot, dir, "helmCharts.additionalValuesFiles", valuesFile); err != nil {
 			return err
 		}

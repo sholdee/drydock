@@ -198,6 +198,94 @@ func TestLoadConfigMapSettings(t *testing.T) {
 	}
 }
 
+func TestDefaultHelmValuesFileSchemes(t *testing.T) {
+	settings := DefaultSettings()
+	assertValueStrings(t, settings.HelmValuesFileSchemes, []string{"https", "http"})
+	if settings.HelmValuesFileSchemesSet {
+		t.Fatal("HelmValuesFileSchemesSet = true, want false for default settings")
+	}
+}
+
+func TestLoadConfigMapHelmValuesFileSchemes(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "argocd-cm.yaml")
+	if err := os.WriteFile(path, []byte(`apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: argocd-cm
+data:
+  helm.valuesFileSchemes: s3, git, https
+`), 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	settings, diags, err := LoadFromConfigMap(path)
+	if err != nil {
+		t.Fatalf("LoadFromConfigMap() error = %v", err)
+	}
+	if len(diags) != 0 {
+		t.Fatalf("diagnostics = %#v", diags)
+	}
+	assertValueStrings(t, settings.HelmValuesFileSchemes, []string{"s3", "git", "https"})
+	if !settings.HelmValuesFileSchemesSet {
+		t.Fatal("HelmValuesFileSchemesSet = false, want true")
+	}
+	if got := settings.HelmValuesFileSchemes[0].Provenance; got.Path != path || got.Pointer != "data.helm.valuesFileSchemes" {
+		t.Fatalf("provenance = %#v", got)
+	}
+}
+
+func TestLoadConfigMapHelmValuesFileSchemesEmptyDisablesRemoteURLs(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "argocd-cm.yaml")
+	if err := os.WriteFile(path, []byte(`apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: argocd-cm
+data:
+  helm.valuesFileSchemes: ""
+`), 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	settings, diags, err := LoadFromConfigMap(path)
+	if err != nil {
+		t.Fatalf("LoadFromConfigMap() error = %v", err)
+	}
+	if len(diags) != 0 {
+		t.Fatalf("diagnostics = %#v", diags)
+	}
+	if len(settings.HelmValuesFileSchemes) != 0 {
+		t.Fatalf("HelmValuesFileSchemes = %#v, want empty explicit setting", settings.HelmValuesFileSchemes)
+	}
+	if !settings.HelmValuesFileSchemesSet {
+		t.Fatal("HelmValuesFileSchemesSet = false, want true")
+	}
+	if got := settings.HelmValuesFileSchemesSource; got.Path != path || got.Pointer != "data.helm.valuesFileSchemes" {
+		t.Fatalf("HelmValuesFileSchemesSource = %#v", got)
+	}
+}
+
+func TestLoadHelmValuesHelmValuesFileSchemes(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "values.yaml")
+	if err := os.WriteFile(path, []byte(`configs:
+  cm:
+    helm.valuesFileSchemes: s3, git
+`), 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	settings, diags, err := LoadFromHelmValues(path)
+	if err != nil {
+		t.Fatalf("LoadFromHelmValues() error = %v", err)
+	}
+	if len(diags) != 0 {
+		t.Fatalf("diagnostics = %#v", diags)
+	}
+	assertValueStrings(t, settings.HelmValuesFileSchemes, []string{"s3", "git"})
+	if got := settings.HelmValuesFileSchemes[0].Provenance; got.Path != path || got.Pointer != "configs.cm.helm.valuesFileSchemes" {
+		t.Fatalf("provenance = %#v", got)
+	}
+}
+
 func TestLoadConfigMapKustomizeVersionedBuildOptionsAndPathWarn(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "argocd-cm.yaml")
 	if err := os.WriteFile(path, []byte(`apiVersion: v1
@@ -1324,6 +1412,47 @@ func TestMergeSettingsDetectsConflict(t *testing.T) {
 	}
 }
 
+func TestMergeSettingsHelmValuesFileSchemesExplicitEmptyOverridesDefault(t *testing.T) {
+	left := DefaultSettings()
+	right := DefaultSettings()
+	right.HelmValuesFileSchemes = nil
+	right.HelmValuesFileSchemesSet = true
+	right.HelmValuesFileSchemesSource = Provenance{Path: "right.yaml", Pointer: "data.helm.valuesFileSchemes"}
+
+	merged, diags := MergeDiscovered([]ArgoSettings{left, right})
+	if len(diags) != 0 {
+		t.Fatalf("diagnostics = %#v", diags)
+	}
+	if len(merged.HelmValuesFileSchemes) != 0 {
+		t.Fatalf("HelmValuesFileSchemes = %#v, want empty explicit setting", merged.HelmValuesFileSchemes)
+	}
+	if !merged.HelmValuesFileSchemesSet {
+		t.Fatal("HelmValuesFileSchemesSet = false, want true")
+	}
+}
+
+func TestMergeSettingsDetectsHelmValuesFileSchemesConflict(t *testing.T) {
+	left := DefaultSettings()
+	left.HelmValuesFileSchemes = valuesFromStrings([]string{"s3"}, Provenance{Path: "left.yaml"})
+	left.HelmValuesFileSchemesSet = true
+	left.HelmValuesFileSchemesSource = Provenance{Path: "left.yaml", Pointer: "data.helm.valuesFileSchemes"}
+	right := DefaultSettings()
+	right.HelmValuesFileSchemes = valuesFromStrings([]string{"https"}, Provenance{Path: "right.yaml"})
+	right.HelmValuesFileSchemesSet = true
+	right.HelmValuesFileSchemesSource = Provenance{Path: "right.yaml", Pointer: "configs.cm.helm.valuesFileSchemes"}
+
+	_, diags := MergeDiscovered([]ArgoSettings{left, right})
+	if len(diags) != 1 {
+		t.Fatalf("len(diags) = %d, want 1: %#v", len(diags), diags)
+	}
+	if diags[0].Category != "settings" || !strings.Contains(diags[0].Message, "helm.valuesFileSchemes") {
+		t.Fatalf("diagnostic = %#v", diags[0])
+	}
+	if diags[0].Provenance.Path != "right.yaml" || diags[0].Provenance.Pointer != "configs.cm.helm.valuesFileSchemes" {
+		t.Fatalf("provenance = %#v", diags[0].Provenance)
+	}
+}
+
 func TestMergeResourceCustomizationsIgnoresProvenance(t *testing.T) {
 	left := DefaultSettings()
 	left.ResourceCustomizations["apps/Deployment"] = ResourceCustomization{
@@ -1494,6 +1623,18 @@ func containsString(values []string, want string) bool {
 		}
 	}
 	return false
+}
+
+func assertValueStrings(t *testing.T, got []Value[string], want []string) {
+	t.Helper()
+	if len(got) != len(want) {
+		t.Fatalf("values = %#v, want %#v", valuesOnly(got), want)
+	}
+	for i := range want {
+		if got[i].Value != want[i] {
+			t.Fatalf("values = %#v, want %#v", valuesOnly(got), want)
+		}
+	}
 }
 
 func hasDiagnosticMessage(diags []diagnostic.Diagnostic, fragment string) bool {

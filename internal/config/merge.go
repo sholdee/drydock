@@ -15,6 +15,7 @@ func MergeDiscovered(candidates []ArgoSettings) (ArgoSettings, []diagnostic.Diag
 		diags = append(diags, mergeKustomizeBuildOptions(&merged, candidate)...)
 		diags = append(diags, mergeTrackingMethod(&merged, candidate)...)
 		diags = append(diags, mergeInstanceLabelKey(&merged, candidate)...)
+		diags = append(diags, mergeHelmValuesFileSchemes(&merged, candidate)...)
 		diags = append(diags, mergeHelmRepositories(&merged, candidate)...)
 		diags = append(diags, mergeCompareOptions(&merged, candidate)...)
 		diags = append(diags, mergeIgnoreResourceUpdatesEnabled(&merged, candidate)...)
@@ -66,6 +67,22 @@ func mergeInstanceLabelKey(merged *ArgoSettings, candidate ArgoSettings) []diagn
 		)}
 	}
 	merged.InstanceLabelKey = candidate.InstanceLabelKey
+	return nil
+}
+
+func mergeHelmValuesFileSchemes(merged *ArgoSettings, candidate ArgoSettings) []diagnostic.Diagnostic {
+	if !candidate.HelmValuesFileSchemesSet {
+		return nil
+	}
+	if merged.HelmValuesFileSchemesSet && !reflect.DeepEqual(valuesOnly(merged.HelmValuesFileSchemes), valuesOnly(candidate.HelmValuesFileSchemes)) {
+		return []diagnostic.Diagnostic{conflictDiagnostic(
+			"conflicting helm.valuesFileSchemes discovered; pass --argocd-cm or --argocd-values",
+			candidate.HelmValuesFileSchemesSource,
+		)}
+	}
+	merged.HelmValuesFileSchemes = candidate.HelmValuesFileSchemes
+	merged.HelmValuesFileSchemesSet = true
+	merged.HelmValuesFileSchemesSource = candidate.HelmValuesFileSchemesSource
 	return nil
 }
 
