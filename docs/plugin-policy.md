@@ -154,6 +154,18 @@ Kustomize renderer.
 `postRenderers` commands under the gates and process controls above. It
 supports path-based plugin sources only; chart plugin sources fail closed.
 
+## Selective Native Engines
+
+Additional native engines should be added only when they clearly improve speed,
+determinism, security, or setup burden compared with trusted `engine: exec`.
+CUE or Jsonnet are the most plausible next candidates if stable Go APIs and
+real repository demand line up. ytt and Tanka need separate design review
+because their import, environment, and convention surfaces are broader.
+
+Native engines must remain optional, policy-gated compatibility paths. drydock
+must not treat discovered Argo CD CMP definitions as ambient permission to
+execute or emulate arbitrary plugin behavior.
+
 ## Examples
 
 Native AVP placeholder compatibility:
