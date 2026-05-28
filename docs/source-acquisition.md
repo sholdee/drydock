@@ -20,7 +20,32 @@ Repository source resolution is deterministic:
 repositories and override declared revisions.
 
 Ref-only sources are allowed and render no manifests. `$ref/...` Helm value
-files resolve from the referenced source root, not from its `path`.
+files and file parameters resolve from the referenced source root, not from
+its `path`.
+
+## Helm Sources
+
+Chart-only HTTP(S) and OCI Helm sources may be fetched into the chart cache
+unless `--offline` is set. Local Helm chart sources render from the repository
+tree.
+
+Declared chart dependencies are an offline-runtime boundary: drydock renders
+dependencies already vendored under `charts/`, but it does not run
+`helm dependency build`. If `Chart.yaml` declares a dependency missing from
+`charts/`, rendering fails with a clear vendored-chart requirement.
+
+Helm `valueFiles` support local paths, `$ref/...` paths, glob expansion,
+HTTP(S) remote value files, and discovered `helm.valuesFileSchemes`. Remote
+value files use the remote-resource cache and `--remote-*` credentials, not
+the chart cache. Explicitly empty `helm.valuesFileSchemes` disables remote
+value-file URLs.
+
+`source.helm.passCredentials` affects only HTTP chart repositories with
+explicit `--helm-*` credentials. By default, drydock sends those credentials to
+the repository index and to chart archive URLs on the same host. When
+`passCredentials` is true, drydock also forwards them to cross-host chart
+archive URLs returned by the repository index. It does not enable ambient
+credential discovery.
 
 ## Kustomize Sources
 

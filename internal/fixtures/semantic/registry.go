@@ -73,9 +73,9 @@ func Cases() []Case {
 			Phase:             "3",
 			Category:          "helm-source-options",
 			FixturePath:       "testdata/semantic-remediation/helm-source-options/local-chart",
-			Status:            StatusPending,
-			Reason:            "R15/R18/R19/R22 Helm source options are not fully mapped yet.",
-			VerificationScope: "go test ./internal/render ./internal/app -run 'Helm.*(Value|Parameter|FileParameter|Schema|Glob)'",
+			Status:            StatusActive,
+			Reason:            "R15/R18/R19/R22 Helm source options, value files, file parameters, schema validation, passCredentials, and dependency boundaries are covered by Phase 3 tests.",
+			VerificationScope: "go test ./internal/render ./internal/app -run 'Helm.*(Value|Parameter|FileParameter|Schema|Glob|Dependency|PassCredentials)|CleanHelmSetParameter'",
 		},
 		{
 			ID:                "TRACKING-METADATA",

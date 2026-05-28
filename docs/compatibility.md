@@ -79,10 +79,11 @@ See `docs/applicationsets.md` for generator details and fixture schema.
 Supported:
 
 - Kustomize, directory, local Helm chart, and chart-only remote Helm sources.
-- HTTP(S) and OCI Helm chart fetching by default for declared chart
-  dependencies.
+- HTTP(S) and OCI Helm chart fetching by default for chart-only remote Helm
+  sources.
 - Kustomize `helmCharts` rendered through the shared Go-library Helm path.
-- Helm `$ref/...` external value files from Git sources.
+- Helm `$ref/...` external value files and file parameters from Git sources.
+- HTTP(S) remote Helm value files through the remote-resource cache.
 - Remote Kustomize HTTP(S) file refs and Git refs through the remote-resource
   cache.
 - Default Git clone/fetch into the Git cache for unmapped path sources missing
@@ -104,6 +105,9 @@ Important boundaries:
   availability.
 - `--repo-map` takes precedence over local fallback and network fetching.
 - Top-level `--repo` for Git ref diffs supports local repository paths only.
+- Helm chart dependencies must already be present under `charts/`; drydock
+  does not run `helm dependency build` and fails closed when declared
+  dependencies are missing.
 - Ambient Git credential helpers, ambient Helm registry config, and secret
   credential fields from discovered repository Secrets are not read.
 - Cache lifecycle commands are local filesystem operations only; they do not
@@ -127,6 +131,8 @@ Supported:
 - Kustomize Helm `valuesFile` and `additionalValuesFiles` entries outside the
   kustomization directory when the resolved file remains inside the repository
   root.
+- Kustomize Helm remote HTTP(S) value files through the same remote-resource
+  cache path used by Helm sources.
 - Remote Kustomize refs in `resources`, `bases`, `components`,
   `patches.path`, `patchesJson6902.path`, non-inline
   `patchesStrategicMerge`, `generators`, `transformers`, `validators`,
