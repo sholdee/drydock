@@ -137,6 +137,13 @@ func (o Orchestrator) ListApplications(ctx context.Context, request BuildRequest
 	}
 
 	var result BuildResult
+	loadedRequest, policyDiags, cleanup, err := ensureBuildPluginPolicy(ctx, request, root)
+	defer cleanup()
+	result.Diagnostics = append(result.Diagnostics, policyDiags...)
+	if err != nil {
+		return result, err
+	}
+	request = loadedRequest
 	discovered, discoveryDiags, cacheEvents, renderCache, renderSettingsSignature, err := o.discoverRepository(ctx, root, request)
 	result.renderCache = renderCache
 	result.renderSettingsSignature = renderSettingsSignature

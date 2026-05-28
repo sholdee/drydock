@@ -150,6 +150,7 @@ func applicationRenderCacheKey(ctx renderContext, application argoappv1.Applicat
 		RemoteResourceCacheDir  string                      `json:"remoteResourceCacheDir,omitempty"`
 		PluginTimeout           string                      `json:"pluginTimeout,omitempty"`
 		EnableAVPCompat         bool                        `json:"enableAVPCompat,omitempty"`
+		PluginPolicyFingerprint string                      `json:"pluginPolicyFingerprint,omitempty"`
 		HasInjectedPluginRender bool                        `json:"hasInjectedPluginRender"`
 	}{
 		Root:                    ctx.provider.repoRoot,
@@ -165,6 +166,7 @@ func applicationRenderCacheKey(ctx renderContext, application argoappv1.Applicat
 		RemoteResourceCacheDir:  ctx.request.RemoteResourceCacheDir,
 		PluginTimeout:           ctx.request.PluginTimeout.String(),
 		EnableAVPCompat:         ctx.request.EnableAVPCompat,
+		PluginPolicyFingerprint: ctx.request.pluginPolicyFingerprint,
 		HasInjectedPluginRender: ctx.request.PluginRenderer != nil,
 	}
 	data, err := json.Marshal(input)

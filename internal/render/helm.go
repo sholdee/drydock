@@ -271,6 +271,9 @@ func applyAVPCompatToHelmValues(values map[string]any, opts RenderOptions) []dia
 	for key, value := range replacedMap {
 		values[key] = value
 	}
+	if opts.QuietAVPCompat {
+		return nil
+	}
 	return []diagnostic.Diagnostic{{
 		Code:     "plugin.avp-compat-substituted",
 		Severity: diagnostic.SeverityWarning,

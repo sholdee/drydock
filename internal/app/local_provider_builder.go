@@ -42,6 +42,8 @@ func newLocalProvider(orchestrator Orchestrator, root string, settings config.Ar
 		remoteResourceCredentials:    request.RemoteResourceCredentials,
 		remoteResourceGitCredentials: request.RemoteResourceGitCredentials,
 		pluginTimeout:                request.PluginTimeout,
+		pluginPolicy:                 request.pluginPolicy,
+		pluginPolicyFingerprint:      request.pluginPolicyFingerprint,
 		kustomizeBuildOptions:        settingsBuildOptions(settings),
 		configManagementPlugins:      settings.ConfigManagementPlugins,
 		cacheEvents:                  recorder,

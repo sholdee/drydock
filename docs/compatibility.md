@@ -132,11 +132,12 @@ Supported:
 - Kustomize root Git remote refs such as
   `https://github.com/org/repo?ref=v1` when they resolve to a repository-root
   Kustomization directory.
-- Native-compatible Kustomize build config management plugin definitions
-  discovered from Argo CD Helm values or rendered `argocd-cmp-cm` ConfigMaps.
-  drydock parses those definitions as metadata and renders matched
-  Applications through the Go-native Kustomize renderer without executing the
-  plugin command.
+- Trusted `.drydock/plugins.yaml` policy entries that map plugin names to
+  native drydock engines. `avp-compat` performs deterministic placeholder
+  redaction without contacting a secret backend. `native-kustomize` allows
+  discovered native-compatible Kustomize build CMP definitions to render
+  through the Go-native Kustomize renderer without executing the plugin
+  command.
 - Config management plugin source detection with fail-closed diagnostics in
   the CLI and default Go client.
 - Injectable in-process plugin renderers, named plugin registry dispatch, and

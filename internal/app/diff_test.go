@@ -44,6 +44,50 @@ func TestOrchestratorDiffAppsReportsManifestChange(t *testing.T) {
 	}
 }
 
+func TestOrchestratorDiffAppsUsesLeftPluginPolicyForBothSides(t *testing.T) {
+	root := t.TempDir()
+	left := filepath.Join(root, "left")
+	right := filepath.Join(root, "right")
+	writePluginBuildApplication(t, left, "plugin", "avp-directory-include")
+	writePluginBuildApplication(t, right, "plugin", "avp-directory-include")
+	writePluginPolicy(t, left, "avp-directory-include", "avp-compat")
+	writeTestFile(t, filepath.Join(right, ".drydock", "plugins.yaml"), `apiVersion: v1
+kind: PluginPolicy
+`)
+	writeTestFile(t, filepath.Join(left, "manifests", "plugin", "cm.yaml"), `apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: plugin
+data:
+  version: old
+  domain: <path:vaults/Kubernetes/items/cluster#domain>
+`)
+	writeTestFile(t, filepath.Join(right, "manifests", "plugin", "cm.yaml"), `apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: plugin
+data:
+  version: new
+  domain: <path:vaults/Kubernetes/items/cluster#domain>
+`)
+
+	result, err := Orchestrator{}.DiffApps(context.Background(), DiffRequest{
+		LeftPath:    left,
+		RightPath:   right,
+		ChangedOnly: false,
+		Unified:     3,
+	})
+	if err != nil {
+		t.Fatalf("DiffApps() error = %v\nDiagnostics: %#v", err, result.Diagnostics)
+	}
+	if hasDiagnosticCode(result.Diagnostics, diagnostic.CodePluginPolicyInvalid) {
+		t.Fatalf("Diagnostics = %#v, right-side policy should be ignored", result.Diagnostics)
+	}
+	if len(result.Results) != 1 {
+		t.Fatalf("len(Results) = %d, want 1: %#v", len(result.Results), result.Results)
+	}
+}
+
 func TestOrchestratorDiffAppsHonorsApplicationJSONPointerIgnores(t *testing.T) {
 	root := t.TempDir()
 	left := filepath.Join(root, "left")

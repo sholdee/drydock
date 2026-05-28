@@ -148,9 +148,9 @@ drydock discovers and renders local Argo CD desired state, including:
 - Single-source and multi-source Applications.
 - Directory, Kustomize, local Helm chart, remote Helm chart, and remote
   Kustomize sources.
-- Native-compatible Kustomize build config management plugin definitions,
-  rendered through drydock's Go-native Kustomize path without executing plugin
-  commands.
+- Trusted plugin policy entries for native `avp-compat` placeholder redaction
+  and native-compatible Kustomize build config management plugins, without
+  executing plugin commands.
 - Declared Git, HTTP Helm, OCI Helm, and remote Kustomize source acquisition
   into local caches.
 - Fast cache-backed repeated runs for local development and CI.
@@ -190,6 +190,14 @@ Default commands do not reproduce:
 - Live-only managed-field ownership.
 - Full Argo CD RBAC authorization.
 - CLI config management plugin execution or shellout plugin adapters.
+
+Plugin-backed sources fail closed unless an embedding caller injects an
+in-process renderer or a trusted `.drydock/plugins.yaml` policy maps that
+plugin name to a native drydock engine. Native Kustomize CMP interpretation is
+policy-gated; drydock does not treat discovered CMP commands as ambiently
+trusted.
+Use `--plugin-policy-path`, `--plugin-policy-ref`, and `--plugin-policy-repo`
+when CI should load policy from a trusted path or Git ref.
 
 These behaviors are not silently approximated. The no-live-runtime boundary is
 an intentional product decision so the default cache-backed workflow stays

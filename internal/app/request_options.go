@@ -5,6 +5,7 @@ import (
 
 	"github.com/sholdee/drydock/internal/appset"
 	"github.com/sholdee/drydock/internal/chart"
+	"github.com/sholdee/drydock/internal/pluginpolicy"
 	"github.com/sholdee/drydock/internal/remote"
 	sourcepkg "github.com/sholdee/drydock/internal/source"
 )
@@ -45,8 +46,17 @@ type ApplicationSetOptions struct {
 }
 
 type PluginOptions struct {
-	PluginTimeout   time.Duration
-	EnableAVPCompat bool
+	PluginTimeout            time.Duration
+	EnableAVPCompat          bool
+	PluginPolicyPath         string
+	PluginPolicyPathExplicit bool
+	PluginPolicyRef          string
+	PluginPolicyRepo         string
+	DisablePluginPolicy      bool
+
+	pluginPolicyLoaded      bool
+	pluginPolicy            pluginpolicy.Policy
+	pluginPolicyFingerprint string
 }
 
 type ExecutionOptions struct {

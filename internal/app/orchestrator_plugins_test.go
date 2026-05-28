@@ -227,9 +227,100 @@ metadata:
 	}
 }
 
+func TestOrchestratorBuildRendersAVPCompatPolicyPluginQuietly(t *testing.T) {
+	root := t.TempDir()
+	writePluginBuildApplication(t, root, "plugin", "avp-directory-include")
+	writePluginPolicy(t, root, "avp-directory-include", "avp-compat")
+	writeTestFile(t, filepath.Join(root, "manifests", "plugin", "cm.yaml"), `apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: avp-redacted
+data:
+  domain: argocd.<path:vaults/Kubernetes/items/cluster#domain>
+`)
+
+	result, err := (Orchestrator{}).Build(context.Background(), BuildRequest{Path: root, Strict: true})
+	if err != nil {
+		t.Fatalf("Build() error = %v", err)
+	}
+	manifest, ok := manifestByName(result.Manifests, "avp-redacted")
+	if !ok {
+		t.Fatalf("Manifests = %#v, want avp-redacted", result.Manifests)
+	}
+	data, ok := manifest.Object.Object["data"].(map[string]any)
+	if !ok {
+		t.Fatalf("data = %#v, want map", manifest.Object.Object["data"])
+	}
+	value, ok := data["domain"].(string)
+	if !ok || !strings.HasPrefix(value, "argocd.drydock-redacted-") {
+		t.Fatalf("data.domain = %#v, want redacted AVP placeholder", data["domain"])
+	}
+	if hasDiagnosticCode(result.Diagnostics, "plugin.avp-compat-substituted") {
+		t.Fatalf("Diagnostics = %#v, policy AVP should be quiet", result.Diagnostics)
+	}
+}
+
+func TestOrchestratorBuildRejectsAVPCompatPolicyPluginEnv(t *testing.T) {
+	root := t.TempDir()
+	writePluginPolicy(t, root, "avp-directory-include", "avp-compat")
+	writeTestFile(t, filepath.Join(root, "apps", "plugin.yaml"), `apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: plugin
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/example/repo
+    path: manifests/plugin
+    targetRevision: main
+    plugin:
+      name: avp-directory-include
+      env:
+        - name: FEATURE
+          value: enabled
+  destination:
+    name: in-cluster
+    namespace: default
+`)
+	writeTestFile(t, filepath.Join(root, "manifests", "plugin", "cm.yaml"), `apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: should-not-render
+`)
+
+	result, err := (Orchestrator{}).Build(context.Background(), BuildRequest{Path: root})
+	if err == nil {
+		t.Fatal("Build() error = nil, want env rejection")
+	}
+	if !hasDiagnosticCode(result.Diagnostics, diagnostic.CodePluginUnsupported) {
+		t.Fatalf("Diagnostics = %#v, want plugin.unsupported", result.Diagnostics)
+	}
+	if !hasDiagnosticMessage(result.Diagnostics, "env or parameters") {
+		t.Fatalf("Diagnostics = %#v, want env/parameters rejection", result.Diagnostics)
+	}
+}
+
+func TestOrchestratorBuildRejectsInvalidPresentDefaultPluginPolicy(t *testing.T) {
+	root := t.TempDir()
+	writeBuildApplication(t, root, "ok", "ok")
+	writeTestFile(t, filepath.Join(root, ".drydock", "plugins.yaml"), `apiVersion: v1
+kind: PluginPolicy
+`)
+
+	result, err := (Orchestrator{}).Build(context.Background(), BuildRequest{Path: root})
+	if err == nil {
+		t.Fatal("Build() error = nil, want invalid policy error")
+	}
+	if !hasDiagnosticCode(result.Diagnostics, diagnostic.CodePluginPolicyInvalid) {
+		t.Fatalf("Diagnostics = %#v, want plugin.policy.invalid", result.Diagnostics)
+	}
+}
+
 func TestOrchestratorBuildRendersNativeKustomizePluginFromHelmValues(t *testing.T) {
 	root := t.TempDir()
 	writePluginBuildApplication(t, root, "plugin", "kustomize-build-with-helm")
+	writePluginPolicy(t, root, "kustomize-build-with-helm", "native-kustomize")
 	writeNativeKustomizeCMPHelmValues(t, root, "kustomize-build-with-helm", "", "sh, -c", "kustomize build --enable-helm")
 	writeNativeKustomizeSource(t, root, "plugin", "native")
 
@@ -245,9 +336,28 @@ func TestOrchestratorBuildRendersNativeKustomizePluginFromHelmValues(t *testing.
 	})
 }
 
+func TestOrchestratorBuildDoesNotRenderNativeKustomizePluginWithoutPolicy(t *testing.T) {
+	root := t.TempDir()
+	writePluginBuildApplication(t, root, "plugin", "kustomize-build-with-helm")
+	writeNativeKustomizeCMPHelmValues(t, root, "kustomize-build-with-helm", "", "sh, -c", "kustomize build --enable-helm")
+	writeNativeKustomizeSource(t, root, "plugin", "native")
+
+	result, err := (Orchestrator{}).Build(context.Background(), BuildRequest{Path: root})
+	if err == nil {
+		t.Fatal("Build() error = nil, want trusted policy requirement")
+	}
+	if _, ok := manifestByName(result.Manifests, "native"); ok {
+		t.Fatalf("Manifests = %#v, native Kustomize CMP rendered without policy", result.Manifests)
+	}
+	if !hasDiagnosticCode(result.Diagnostics, diagnostic.CodePluginUnsupported) {
+		t.Fatalf("Diagnostics = %#v, want plugin.unsupported", result.Diagnostics)
+	}
+}
+
 func TestOrchestratorBuildRendersNativeKustomizePluginFromRawHelmValues(t *testing.T) {
 	root := t.TempDir()
 	writePluginBuildApplication(t, root, "plugin", "kustomize-build-with-helm")
+	writePluginPolicy(t, root, "kustomize-build-with-helm", "native-kustomize")
 	writeNativeKustomizeCMPRawHelmValues(t, root, "kustomize-build-with-helm", "", "kustomize, build", "--enable-helm")
 	writeNativeKustomizeSource(t, root, "plugin", "raw-helm-values")
 
@@ -263,6 +373,7 @@ func TestOrchestratorBuildRendersNativeKustomizePluginFromRawHelmValues(t *testi
 func TestOrchestratorBuildRendersNativeKustomizePluginFromRenderedConfigMap(t *testing.T) {
 	root := t.TempDir()
 	writePluginBuildApplication(t, root, "plugin", "kustomize-build-with-helm")
+	writePluginPolicy(t, root, "kustomize-build-with-helm", "native-kustomize")
 	writeNativeKustomizeCMPConfigMap(t, root, "kustomize-build-with-helm", "", "kustomize, build", "--enable-helm")
 	writeNativeKustomizeSource(t, root, "plugin", "rendered-cmp")
 
@@ -278,6 +389,7 @@ func TestOrchestratorBuildRendersNativeKustomizePluginFromRenderedConfigMap(t *t
 func TestOrchestratorBuildMatchesVersionedNativeKustomizePlugin(t *testing.T) {
 	root := t.TempDir()
 	writePluginBuildApplication(t, root, "plugin", "kustomize-build-with-helm-v2")
+	writePluginPolicy(t, root, "kustomize-build-with-helm-v2", "native-kustomize")
 	writeNativeKustomizeCMPHelmValues(t, root, "kustomize-build-with-helm", "v2", "kustomize, build", "., --enable-helm")
 	writeNativeKustomizeSource(t, root, "plugin", "versioned")
 
@@ -293,6 +405,7 @@ func TestOrchestratorBuildMatchesVersionedNativeKustomizePlugin(t *testing.T) {
 func TestOrchestratorBuildRejectsNativeKustomizePluginWithInit(t *testing.T) {
 	root := t.TempDir()
 	writePluginBuildApplication(t, root, "plugin", "kustomize-build-with-helm")
+	writePluginPolicy(t, root, "kustomize-build-with-helm", "native-kustomize")
 	writeTestFile(t, filepath.Join(root, "settings", "values.yaml"), `configs:
   cmp:
     plugins:
@@ -321,6 +434,7 @@ func TestOrchestratorBuildRejectsNativeKustomizePluginWithInit(t *testing.T) {
 func TestOrchestratorNativeKustomizePluginDoesNotInheritGlobalBuildOptions(t *testing.T) {
 	root := t.TempDir()
 	writePluginBuildApplication(t, root, "plugin", "kustomize-build")
+	writePluginPolicy(t, root, "kustomize-build", "native-kustomize")
 	writeTestFile(t, filepath.Join(root, "settings", "values.yaml"), `configs:
   cm:
     kustomize.buildOptions: --load-restrictor=LoadRestrictionsNone
@@ -496,6 +610,16 @@ func writeNativeKustomizeCMPHelmValues(t *testing.T, root, name, version, comman
 `+versionBlock+`        generate:
           command: [`+command+`]
           args: [`+args+`]
+`)
+}
+
+func writePluginPolicy(t *testing.T, root, name, engine string) {
+	t.Helper()
+	writeTestFile(t, filepath.Join(root, ".drydock", "plugins.yaml"), `apiVersion: drydock.sholdee.dev/v1alpha1
+kind: PluginPolicy
+plugins:
+  `+name+`:
+    engine: `+engine+`
 `)
 }
 

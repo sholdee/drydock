@@ -194,17 +194,27 @@ and statuses. `SkipKinds`, `SkipCRDs`, and `SkipSecrets` apply the same
 rendered-resource filters exposed by the CLI.
 
 Config management plugin sources are explicit. The CLI and default Go client do
-not execute plugin commands. Native-compatible Kustomize build plugin
-definitions discovered from Argo CD Helm values or rendered `argocd-cmp-cm`
-ConfigMaps are rendered through drydock's Go-native Kustomize path; other
-plugin sources fail closed with `plugin.unsupported` unless an embedding caller supplies
-`drydock.Config.PluginRenderer`. Embedders can pass a renderer directly or use
+not execute plugin commands. Plugin sources fail closed with
+`plugin.unsupported` unless an embedding caller supplies
+`drydock.Config.PluginRenderer` or a trusted `.drydock/plugins.yaml` maps the
+plugin name to a native drydock engine. `avp-compat` replaces supported AVP
+placeholders with deterministic redacted values. `native-kustomize` permits
+native-compatible Kustomize build plugin definitions discovered from Argo CD
+Helm values or rendered `argocd-cmp-cm` ConfigMaps to render through drydock's
+Go-native Kustomize path. Embedders can pass a renderer directly or use
 `drydock.NewPluginRegistry(map[string]drydock.PluginRenderer{...})` to dispatch
 in-process renderers by `plugin.name`.
 
 Shellout plugin adapters, Argo CD repo-server sidecar plugin discovery, ambient
 plugin configuration, ambient plugin environment loading, and plugin credential
 injection are outside the default CLI/runtime contract.
+
+Trusted plugin policy is loaded from `.drydock/plugins.yaml` by default. Use
+`--plugin-policy-path` for a different relative policy path,
+`--plugin-policy-ref` to load policy from a trusted Git ref, and
+`--plugin-policy-repo` when that trusted ref lives in a different local Git
+checkout. Use `--disable-plugin-policy` to force plugin sources to fail closed
+even when a default policy file is present.
 
 ## Render Tests
 

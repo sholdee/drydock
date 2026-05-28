@@ -36,6 +36,11 @@ func TestOptionsBuildCopiesSharedFields(t *testing.T) {
 	assertDeepEqual(t, "RemoteResourceCredentials", request.RemoteResourceCredentials, remote.Credentials{Username: "remote-user"})
 	assertDeepEqual(t, "RemoteResourceGitCredentials", request.RemoteResourceGitCredentials, remote.GitCredentials{Username: "remote-git-user"})
 	assertDeepEqual(t, "EnableAVPCompat", request.EnableAVPCompat, true)
+	assertDeepEqual(t, "PluginPolicyPath", request.PluginPolicyPath, ".drydock/custom-plugins.yaml")
+	assertDeepEqual(t, "PluginPolicyPathExplicit", request.PluginPolicyPathExplicit, true)
+	assertDeepEqual(t, "PluginPolicyRef", request.PluginPolicyRef, "main")
+	assertDeepEqual(t, "PluginPolicyRepo", request.PluginPolicyRepo, "policy-repo")
+	assertDeepEqual(t, "DisablePluginPolicy", request.DisablePluginPolicy, false)
 	assertDeepEqual(t, "PluginTimeout", request.PluginTimeout, time.Second)
 	assertDeepEqual(t, "Parallelism", request.Parallelism, 7)
 	assertDeepEqual(t, "SkipKinds", request.SkipKinds, []string{"Secret"})
@@ -87,6 +92,11 @@ func TestOptionsDiffCopiesSharedFields(t *testing.T) {
 	assertDeepEqual(t, "RemoteResourceCredentials", request.RemoteResourceCredentials, remote.Credentials{Username: "remote-user"})
 	assertDeepEqual(t, "RemoteResourceGitCredentials", request.RemoteResourceGitCredentials, remote.GitCredentials{Username: "remote-git-user"})
 	assertDeepEqual(t, "EnableAVPCompat", request.EnableAVPCompat, true)
+	assertDeepEqual(t, "PluginPolicyPath", request.PluginPolicyPath, ".drydock/custom-plugins.yaml")
+	assertDeepEqual(t, "PluginPolicyPathExplicit", request.PluginPolicyPathExplicit, true)
+	assertDeepEqual(t, "PluginPolicyRef", request.PluginPolicyRef, "main")
+	assertDeepEqual(t, "PluginPolicyRepo", request.PluginPolicyRepo, "policy-repo")
+	assertDeepEqual(t, "DisablePluginPolicy", request.DisablePluginPolicy, false)
 	assertDeepEqual(t, "PluginTimeout", request.PluginTimeout, time.Second)
 	assertDeepEqual(t, "Parallelism", request.Parallelism, 7)
 	assertDeepEqual(t, "SkipKinds", request.SkipKinds, []string{"Secret"})
@@ -143,6 +153,10 @@ func fixtureOptions() Options {
 		RemoteResourceCredentials:    remote.Credentials{Username: "remote-user"},
 		RemoteResourceGitCredentials: remote.GitCredentials{Username: "remote-git-user"},
 		EnableAVPCompat:              true,
+		PluginPolicyPath:             ".drydock/custom-plugins.yaml",
+		PluginPolicyPathExplicit:     true,
+		PluginPolicyRef:              "main",
+		PluginPolicyRepo:             "policy-repo",
 		PluginTimeout:                time.Second,
 		Parallelism:                  7,
 		SkipKinds:                    []string{"Secret"},

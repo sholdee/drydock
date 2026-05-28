@@ -26,6 +26,7 @@ type RenderOptions struct {
 	Project                      string
 	Namespace                    string
 	EnableAVPCompat              bool
+	QuietAVPCompat               bool
 	Plugin                       *PluginConfig
 	KubeVersion                  string
 	APIVersions                  []string
