@@ -1,0 +1,4 @@
+labels:
+  source: chart-values
+message: from-chart-values
+fileMessage: from-chart-default

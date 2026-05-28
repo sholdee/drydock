@@ -1,0 +1,162 @@
+package semantic
+
+// Status describes how a semantic remediation fixture should be interpreted.
+type Status string
+
+const (
+	StatusPending            Status = "pending"
+	StatusActive             Status = "active"
+	StatusDocumentedBoundary Status = "documented-boundary"
+)
+
+// Case describes a fixture created for semantic remediation work.
+type Case struct {
+	ID                string
+	Phase             string
+	Category          string
+	FixturePath       string
+	Status            Status
+	Reason            string
+	VerificationScope string
+}
+
+// Cases returns the semantic remediation fixture inventory.
+func Cases() []Case {
+	return []Case{
+		{
+			ID:                "SRC-EXPLICIT-CONFLICT",
+			Phase:             "1",
+			Category:          "source-selection",
+			FixturePath:       "testdata/semantic-remediation/source-selection/explicit-conflict",
+			Status:            StatusPending,
+			Reason:            "R1 source conflict validation is not implemented yet.",
+			VerificationScope: "go test ./internal/app -run ExplicitSource",
+		},
+		{
+			ID:                "SRC-DIRECTORY-EXPLICIT",
+			Phase:             "1",
+			Category:          "source-selection",
+			FixturePath:       "testdata/semantic-remediation/source-selection/explicit-directory",
+			Status:            StatusPending,
+			Reason:            "R2 explicit directory source selection is not implemented yet.",
+			VerificationScope: "go test ./internal/app ./internal/render -run ExplicitSource",
+		},
+		{
+			ID:                "SRC-DISCOVERY-PRECEDENCE",
+			Phase:             "1",
+			Category:          "source-selection",
+			FixturePath:       "testdata/semantic-remediation/source-selection/discovery-precedence",
+			Status:            StatusPending,
+			Reason:            "R3 discovery precedence decision is unresolved.",
+			VerificationScope: "go test ./internal/app -run DiscoveryPrecedence",
+		},
+		{
+			ID:                "SRC-ARGOCD-SOURCE",
+			Phase:             "1",
+			Category:          "source-overrides",
+			FixturePath:       "testdata/semantic-remediation/source-overrides/basic",
+			Status:            StatusPending,
+			Reason:            "R5 source override loading is not implemented yet.",
+			VerificationScope: "go test ./internal/app -run ArgocdSource",
+		},
+		{
+			ID:                "KUST-SOURCE-OPTIONS",
+			Phase:             "2",
+			Category:          "source-kustomize",
+			FixturePath:       "testdata/semantic-remediation/source-kustomize/options",
+			Status:            StatusPending,
+			Reason:            "R29/R30/R31/R34/B12 source Kustomize options are not fully mapped yet.",
+			VerificationScope: "go test ./internal/app ./internal/render -run SourceKustomize",
+		},
+		{
+			ID:                "HELM-SOURCE-OPTIONS",
+			Phase:             "3",
+			Category:          "helm-source-options",
+			FixturePath:       "testdata/semantic-remediation/helm-source-options/local-chart",
+			Status:            StatusPending,
+			Reason:            "R15/R18/R19/R22 Helm source options are not fully mapped yet.",
+			VerificationScope: "go test ./internal/render ./internal/app -run 'Helm.*(Value|Parameter|FileParameter|Schema|Glob)'",
+		},
+		{
+			ID:                "TRACKING-METADATA",
+			Phase:             "4",
+			Category:          "tracking",
+			FixturePath:       "testdata/semantic-remediation/tracking/basic",
+			Status:            StatusPending,
+			Reason:            "B2/B5/B7/B8/B9 tracking injection and cache signatures are not implemented yet.",
+			VerificationScope: "go test ./internal/app ./internal/config -run Tracking",
+		},
+		{
+			ID:                "APPSET-TEMPLATE-PATCH",
+			Phase:             "5",
+			Category:          "appset-template-patch",
+			FixturePath:       "testdata/semantic-remediation/appset-template-patch/basic",
+			Status:            StatusPending,
+			Reason:            "A17 templatePatch is not implemented yet.",
+			VerificationScope: "go test ./internal/appset -run TemplatePatch",
+		},
+		{
+			ID:                "DIR-JSONNET-EDGES",
+			Phase:             "6",
+			Category:          "directory-jsonnet",
+			FixturePath:       "testdata/semantic-remediation/directory-jsonnet/edges",
+			Status:            StatusPending,
+			Reason:            "R6/R8/R9/R11/R12 directory/Jsonnet parity is incomplete.",
+			VerificationScope: "go test ./internal/render ./internal/app -run 'Directory|Jsonnet'",
+		},
+		{
+			ID:                "CACHE-ROOT-SAFETY",
+			Phase:             "4",
+			Category:          "cache-safety",
+			FixturePath:       "testdata/semantic-remediation/cache-safety/chart-remote",
+			Status:            StatusPending,
+			Reason:            "Chart/remote cache root validation coverage is incomplete.",
+			VerificationScope: "go test ./internal/app ./internal/chart ./internal/remote ./internal/cli -run Cache",
+		},
+		{
+			ID:                "PLUGIN-NATIVE-KUSTOMIZE",
+			Phase:             "7",
+			Category:          "plugin-boundaries",
+			FixturePath:       "testdata/semantic-remediation/plugin-boundaries/native-kustomize",
+			Status:            StatusDocumentedBoundary,
+			Reason:            "R35/R36 native plugin behavior is explicitly modeled without sidecar probing.",
+			VerificationScope: "go test ./internal/app ./internal/pluginpolicy -run Plugin",
+		},
+		{
+			ID:                "PLUGIN-AVP-COMPAT",
+			Phase:             "7",
+			Category:          "plugin-boundaries",
+			FixturePath:       "testdata/semantic-remediation/plugin-boundaries/avp-compat",
+			Status:            StatusDocumentedBoundary,
+			Reason:            "AVP compatibility is drydock-native redaction, not real AVP execution.",
+			VerificationScope: "go test ./internal/app -run AVP",
+		},
+		{
+			ID:                "PROVIDER-ALL",
+			Phase:             "5",
+			Category:          "provider-fixtures",
+			FixturePath:       "testdata/semantic-remediation/provider-fixtures/all-provider",
+			Status:            StatusPending,
+			Reason:            "Provider-backed ApplicationSet CLI e2e coverage is incomplete.",
+			VerificationScope: "go test ./internal/appset ./internal/cli -run ProviderFixture",
+		},
+		{
+			ID:                "SETTINGS-DIAGNOSTICS",
+			Phase:             "7",
+			Category:          "settings-diagnostics",
+			FixturePath:       "testdata/semantic-remediation/settings-diagnostics/runtime-boundaries",
+			Status:            StatusPending,
+			Reason:            "B15/B19 runtime-boundary diagnostics need focused coverage.",
+			VerificationScope: "go test ./internal/discovery ./internal/config ./internal/project ./internal/cli -run 'ClusterSecret|CmdParams|Settings|Diag'",
+		},
+		{
+			ID:                "REMOTE-KUSTOMIZE-CACHE",
+			Phase:             "8",
+			Category:          "remote-kustomize-cache",
+			FixturePath:       "testdata/semantic-remediation/remote-kustomize-cache/seeded-diff",
+			Status:            StatusPending,
+			Reason:            "Remote Kustomize A/B cache diff coverage is incomplete.",
+			VerificationScope: "go test ./internal/cli ./internal/remote ./internal/app -run RemoteKustomize",
+		},
+	}
+}

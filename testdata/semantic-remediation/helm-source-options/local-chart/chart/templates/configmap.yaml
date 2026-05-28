@@ -1,0 +1,10 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Release.Name }}-options
+  namespace: {{ .Release.Namespace }}
+  labels:
+    source: {{ .Values.labels.source | quote }}
+data:
+  message: {{ .Values.message | quote }}
+  fileMessage: {{ .Values.fileMessage | quote }}

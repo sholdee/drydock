@@ -1,0 +1,28 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: source-kustomize-options
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: https://example.invalid/source-kustomize.git
+    targetRevision: main
+    path: repo
+    kustomize:
+      namePrefix: source-
+      namespace: source-kustomize
+      commonLabels:
+        app.kubernetes.io/part-of: semantic-remediation
+      forceCommonLabels: true
+      images:
+        - nginx=registry.example.invalid/nginx:1.25.0
+      replicas:
+        - name: web
+          count: 2
+      components:
+        - ../component
+      ignoreMissingComponents: false
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: source-kustomize

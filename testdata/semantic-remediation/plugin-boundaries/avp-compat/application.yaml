@@ -1,0 +1,16 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: avp-compat
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: https://example.invalid/semantic-remediation.git
+    targetRevision: main
+    path: repo
+    plugin:
+      name: avp-directory-include
+  destination:
+    name: in-cluster
+    namespace: avp-compat

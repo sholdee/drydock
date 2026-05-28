@@ -1,0 +1,5 @@
+apiVersion: drydock.sholdee.dev/v1alpha1
+kind: PluginPolicy
+plugins:
+  kustomize-build:
+    engine: native-kustomize

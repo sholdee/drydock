@@ -1,0 +1,14 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: tracking-basic
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: https://example.invalid/tracking.git
+    targetRevision: main
+    path: repo
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: tracking-basic

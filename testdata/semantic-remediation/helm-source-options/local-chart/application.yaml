@@ -1,0 +1,31 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: helm-source-options
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: https://example.invalid/helm-source-options.git
+    targetRevision: main
+    path: chart
+    helm:
+      releaseName: local-options
+      valueFiles:
+        - ../values/alpha.yaml
+      valuesObject:
+        labels:
+          source: values-object
+        message: from-values-object
+      parameters:
+        - name: message
+          value: from-parameter
+          forceString: true
+      fileParameters:
+        - name: fileMessage
+          path: ../files/message.txt
+      ignoreMissingValueFiles: false
+      skipSchemaValidation: true
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: helm-source-options

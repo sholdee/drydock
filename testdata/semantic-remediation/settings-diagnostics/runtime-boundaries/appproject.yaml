@@ -1,0 +1,15 @@
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: runtime-boundary
+  namespace: argocd
+spec:
+  permitOnlyProjectScopedClusters: true
+  sourceRepos:
+    - https://example.invalid/semantic-remediation.git
+  destinations:
+    - name: edge-cluster
+      namespace: runtime-boundary
+  clusterResourceWhitelist:
+    - group: "*"
+      kind: "*"

@@ -253,3 +253,21 @@ worktrees.
 Use the smallest verification that covers the change. If a useful command is
 unavailable or approval-gated, skip it and report the gap rather than blocking
 the work.
+
+### Semantic Remediation Checks
+
+Use the semantic remediation fixtures in `testdata/semantic-remediation` as
+pending or active targets for Argo CD parity work. Keep normal checks portable
+and offline:
+
+```bash
+go test ./internal/fixtures/semantic
+go test ./internal/app ./internal/render -run 'ExplicitSource|ArgocdSource|SourceKustomize'
+go test ./internal/render ./internal/app -run 'Helm.*(Value|Parameter|FileParameter|Schema|Glob)|Directory|Jsonnet'
+go test ./internal/appset ./internal/app -run 'Git|List|Values|TemplatePatch|ClusterDecision'
+go test ./internal/discovery ./internal/config ./internal/project ./internal/cli -run 'ClusterSecret|CmdParams|Settings|Diag'
+```
+
+Do not run optional real-repository smokes from normal tests. Use isolated
+temporary worktrees and caches when a phase explicitly calls for a manual
+smoke.
