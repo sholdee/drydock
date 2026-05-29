@@ -18,6 +18,14 @@ inputs:
     description: Directory to install the drydock binary into.
     required: false
     default: /usr/local/bin
+  cache-binary:
+    description: Restore and save the verified drydock release archive when install is true.
+    required: false
+    default: "true"
+  cache-binary-key-suffix:
+    description: Suffix for generated drydock binary cache keys.
+    required: false
+    default: v1
   github-token:
     description: GitHub token for checkout, release downloads, and comments.
     required: false
@@ -276,17 +284,48 @@ runs:
           exit 1
         fi
 
+    - name: Resolve drydock release
+      id: setup-resolve
+      if: ${{ inputs.install == 'true' }}
+      shell: bash
+      env:
+        DRYDOCK_ALLOW_UNVERIFIED: "false"
+        DRYDOCK_CACHE_BINARY: ${{ inputs.cache-binary }}
+        DRYDOCK_CACHE_BINARY_KEY_SUFFIX: ${{ inputs.cache-binary-key-suffix }}
+        DRYDOCK_GITHUB_TOKEN: ${{ steps.app-token-client.outputs.token || steps.app-token-legacy.outputs.token || inputs.github-token || github.token }}
+        DRYDOCK_INSTALL_DIR: ${{ inputs.install-dir }}
+        DRYDOCK_RELEASE_REPOSITORY: ${{ inputs.release-repository }}
+        DRYDOCK_VERSION: ${{ inputs.version }}
+      run: '"${GITHUB_ACTION_PATH}/../setup-action/resolve.sh"'
+
+    - name: Restore drydock binary cache
+      id: setup-binary-cache-restore
+      if: ${{ inputs.install == 'true' && steps.setup-resolve.outputs.cache-enabled == 'true' }}
+      uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+      with:
+        key: ${{ steps.setup-resolve.outputs.cache-key }}
+        path: ${{ steps.setup-resolve.outputs.cache-path }}
+
     - name: Install drydock
       id: setup
       if: ${{ inputs.install == 'true' }}
       shell: bash
       env:
         DRYDOCK_ALLOW_UNVERIFIED: "false"
+        DRYDOCK_CACHE_ARCHIVE: ${{ steps.setup-resolve.outputs.cache-archive }}
+        DRYDOCK_EXPECTED_HASH: ${{ steps.setup-resolve.outputs.expected-hash }}
         DRYDOCK_GITHUB_TOKEN: ${{ steps.app-token-client.outputs.token || steps.app-token-legacy.outputs.token || inputs.github-token || github.token }}
         DRYDOCK_INSTALL_DIR: ${{ inputs.install-dir }}
         DRYDOCK_RELEASE_REPOSITORY: ${{ inputs.release-repository }}
-        DRYDOCK_VERSION: ${{ inputs.version }}
+        DRYDOCK_RESOLVED_VERSION: ${{ steps.setup-resolve.outputs.version }}
       run: '"${GITHUB_ACTION_PATH}/../setup-action/install.sh"'
+
+    - name: Save drydock binary cache
+      if: ${{ inputs.install == 'true' && steps.setup-resolve.outputs.cache-enabled == 'true' && steps.setup-binary-cache-restore.outputs.cache-hit != 'true' && steps.setup.outputs.cache-save == 'true' }}
+      uses: actions/cache/save@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+      with:
+        key: ${{ steps.setup-resolve.outputs.cache-key }}
+        path: ${{ steps.setup-resolve.outputs.cache-path }}
 
     - name: Prepare drydock action
       id: prepare

@@ -23,6 +23,13 @@ YAML:
 The action accepts `latest`, `vX.Y.Z`, or bare `X.Y.Z`. It verifies the release
 archive with `checksums.txt` unless `allow-unverified: "true"` is set.
 
+By default, the setup action caches the verified release archive by resolved
+version, runner OS/architecture, release repository, and checksum. `latest` is
+resolved to a concrete tag before cache lookup, so a new release receives a new
+cache key. Binary caching is skipped when `allow-unverified: "true"` is set.
+Disable it with `cache-binary: "false"` if a workflow wants every run to
+download the archive.
+
 ## Manual CLI Workflow
 
 Use `setup-action` directly when you want a minimal workflow and prefer to own
@@ -80,6 +87,8 @@ jobs:
 By default the action:
 
 - checks out the pull request head with credentials not persisted into Git;
+- restores or saves a verified drydock binary archive when installation is
+  enabled;
 - fetches the pull request base branch for ref-based diffs;
 - runs `drydock test apps --path .`;
 - runs `drydock diff apps --repo . --ref HEAD --ref-orig origin/<base>`;
@@ -120,6 +129,11 @@ The token is used for release downloads, checkout, baseline fetch, and PR
 comments. It is not exported to `drydock test`, `drydock diff`, cache contents,
 or uploaded artifacts.
 
+Binary caching is separate from drydock source caching. Binary cache entries
+contain only the released `drydock` archive and are keyed by release checksum.
+Source cache entries contain fetched Git, Helm, and remote Kustomize sources for
+the repository under test.
+
 ## Common Inputs
 
 | Input | Default | Purpose |
@@ -128,6 +142,8 @@ or uploaded artifacts.
 | `install` | `true` | Install drydock before running. |
 | `drydock-bin` | `drydock` | Preinstalled drydock binary when `install` is `false`. |
 | `release-repository` | `sholdee/drydock` | Repository that publishes drydock release artifacts. |
+| `cache-binary` | `true` | Restore and save the verified release archive when installing drydock. |
+| `cache-binary-key-suffix` | `v1` | Invalidate generated binary cache keys. |
 | `path` | `.` | Repository path for `drydock test apps`. |
 | `repo` | `.` | Local Git repository path for ref-based diffs. |
 | `base-ref` | PR base | Baseline branch name for diff commands. |
