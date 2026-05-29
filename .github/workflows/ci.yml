@@ -22,7 +22,63 @@ permissions:
   contents: read
 
 jobs:
-  test:
+  detect:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      docs: ${{ steps.paths.outputs.docs }}
+      go: ${{ steps.paths.outputs.go }}
+      image: ${{ steps.paths.outputs.image }}
+      lint: ${{ steps.paths.outputs.lint }}
+      renovate: ${{ steps.paths.outputs.renovate }}
+      workflow: ${{ steps.paths.outputs.workflow }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Detect changed paths
+        id: paths
+        uses: dorny/paths-filter@fbd0ab8f3e69293af611ebaee6363fc25e6d187d # v4.0.1
+        with:
+          filters: |
+            docs:
+              - '**/*.md'
+            go:
+              - '**/*.go'
+              - '**/testdata/**'
+              - 'go.mod'
+              - 'go.sum'
+              - 'mise.lock'
+              - 'mise.toml'
+              - 'schemas/**'
+              - 'scripts/**'
+            image:
+              - '.dockerignore'
+              - 'Dockerfile'
+              - '**/*.go'
+              - 'go.mod'
+              - 'go.sum'
+            lint:
+              - '.golangci.yml'
+              - '.gomarklint.json'
+              - 'lefthook.yml'
+              - 'mise.lock'
+              - 'mise.toml'
+            renovate:
+              - '.github/renovate.json5'
+            workflow:
+              - '.github/workflows/**'
+              - 'pr-action/**'
+              - 'setup-action/**'
+
+  go-test:
+    needs: detect
+    if: github.event_name != 'pull_request' || needs.detect.outputs.go == 'true' || needs.detect.outputs.workflow == 'true'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -49,17 +105,87 @@ jobs:
       - name: Vet
         run: mise run vet
 
+  go-lint:
+    needs: detect
+    if: github.event_name != 'pull_request' || needs.detect.outputs.go == 'true' || needs.detect.outputs.lint == 'true' || needs.detect.outputs.workflow == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Setup mise
+        uses: jdx/mise-action@1648a7812b9aeae629881980618f079932869151 # v4.0.1
+        with:
+          experimental: true
+          install_args: --locked
+
       - name: Lint Go
         run: mise run lint
 
+  markdownlint:
+    needs: detect
+    if: github.event_name != 'pull_request' || needs.detect.outputs.docs == 'true' || needs.detect.outputs.lint == 'true' || needs.detect.outputs.workflow == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Setup mise
+        uses: jdx/mise-action@1648a7812b9aeae629881980618f079932869151 # v4.0.1
+        with:
+          experimental: true
+          install_args: --locked
+
       - name: Lint Markdown
         run: mise run markdownlint
+
+  workflow-lint:
+    needs: detect
+    if: github.event_name != 'pull_request' || needs.detect.outputs.workflow == 'true' || needs.detect.outputs.lint == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Setup mise
+        uses: jdx/mise-action@1648a7812b9aeae629881980618f079932869151 # v4.0.1
+        with:
+          experimental: true
+          install_args: --locked
 
       - name: Lint GitHub Actions
         run: mise run actionlint
 
       - name: Audit GitHub Actions security
         run: mise run zizmor
+
+  renovate:
+    needs: detect
+    if: github.event_name != 'pull_request' || needs.detect.outputs.renovate == 'true' || needs.detect.outputs.workflow == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Validate Renovate config
+        run: npx --yes --package renovate@43.150.0 -- renovate-config-validator --strict
+
+  whitespace:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+          persist-credentials: false
 
       - name: Diff check
         shell: bash
@@ -78,6 +204,8 @@ jobs:
           fi
 
   image:
+    needs: detect
+    if: github.event_name != 'pull_request' || needs.detect.outputs.image == 'true' || needs.detect.outputs.workflow == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -117,3 +245,47 @@ jobs:
             COMMIT=${{ github.sha }}
           cache-from: type=gha,scope=drydock-ci
           cache-to: type=gha,scope=drydock-ci,mode=max,ignore-error=true
+
+  gate:
+    if: always()
+    needs:
+      - detect
+      - go-test
+      - go-lint
+      - markdownlint
+      - workflow-lint
+      - renovate
+      - whitespace
+      - image
+    runs-on: ubuntu-latest
+    permissions: {}
+    steps:
+      - name: Evaluate results
+        env:
+          DETECT: ${{ needs.detect.result }}
+          GO_TEST: ${{ needs.go-test.result }}
+          GO_LINT: ${{ needs.go-lint.result }}
+          MARKDOWNLINT: ${{ needs.markdownlint.result }}
+          WORKFLOW_LINT: ${{ needs.workflow-lint.result }}
+          RENOVATE: ${{ needs.renovate.result }}
+          WHITESPACE: ${{ needs.whitespace.result }}
+          IMAGE: ${{ needs.image.result }}
+        run: |
+          echo "detect=${DETECT} go-test=${GO_TEST} go-lint=${GO_LINT} markdownlint=${MARKDOWNLINT} workflow-lint=${WORKFLOW_LINT} renovate=${RENOVATE} whitespace=${WHITESPACE} image=${IMAGE}"
+
+          for result in \
+            "${DETECT}" \
+            "${GO_TEST}" \
+            "${GO_LINT}" \
+            "${MARKDOWNLINT}" \
+            "${WORKFLOW_LINT}" \
+            "${RENOVATE}" \
+            "${WHITESPACE}" \
+            "${IMAGE}"; do
+            if [[ "${result}" != "success" && "${result}" != "skipped" ]]; then
+              echo "CI failed: job returned ${result}"
+              exit 1
+            fi
+          done
+
+          echo "CI passed"
