@@ -86,6 +86,18 @@ extract_image_diff_json() {
   jq -r '((.added // []) | length) + ((.removed // []) | length)' "${json_file}" > "${count_file}"
 }
 
+workflow_run_url() {
+  local server_url="${GITHUB_SERVER_URL:-}"
+  local repository="${GITHUB_REPOSITORY:-}"
+  local run_id="${GITHUB_RUN_ID:-}"
+
+  if [[ -z "${server_url}" || -z "${repository}" || -z "${run_id}" ]]; then
+    return 0
+  fi
+
+  printf '%s/%s/actions/runs/%s\n' "${server_url%/}" "${repository}" "${run_id}"
+}
+
 capture_command() {
   local stdout_file="$1"
   local stderr_file="$2"
@@ -145,6 +157,7 @@ bool "${DRYDOCK_INPUT_FAIL_ON_RENDER_ERROR}" fail-on-render-error
 bool "${DRYDOCK_INPUT_FAIL_ON_DIFF}" fail-on-diff
 bool "${DRYDOCK_INPUT_FAIL_ON_IMAGE_DIFF}" fail-on-image-diff
 bool "${DRYDOCK_INPUT_COMMENT_EMPTY}" comment-empty
+bool "${DRYDOCK_INPUT_UPLOAD_ARTIFACTS}" upload-artifacts
 positive_int "${DRYDOCK_INPUT_DIFF_MAX_BYTES}" diff-max-bytes
 optional_int "${DRYDOCK_INPUT_PARALLELISM}" parallelism
 optional_int "${DRYDOCK_INPUT_MAX_DISCOVERY_DEPTH}" max-discovery-depth
@@ -188,6 +201,7 @@ repo="${DRYDOCK_INPUT_REPO:-.}"
 head_ref="${DRYDOCK_INPUT_HEAD_REF:-HEAD}"
 base_compare_ref="${DRYDOCK_BASE_COMPARE_REF:-}"
 drydock_bin="${DRYDOCK_BIN:-drydock}"
+run_url="$(workflow_run_url)"
 
 common_args=()
 if [[ -n "${cache_path}" ]]; then
@@ -333,8 +347,10 @@ if [[ "${diff_comment}" == "true" ]]; then
       echo '```diff'
       cat "${diff_snippet_path}"
       echo '```'
-      echo
-      echo "- Full output is available from the workflow artifacts when an artifact was uploaded."
+      if [[ "${DRYDOCK_INPUT_UPLOAD_ARTIFACTS}" == "true" && -n "${run_url}" ]]; then
+        echo
+        echo "- Full diff output: [${DRYDOCK_DIFF_ARTIFACT_NAME} artifact](${run_url})."
+      fi
     else
       echo "No rendered manifest differences detected."
     fi
@@ -350,6 +366,10 @@ if [[ "${images_comment}" == "true" ]]; then
         [[ -n "${image}" ]] || continue
         printf -- "- \`%s\`\n" "${image}"
       done < "${images_path}"
+      if [[ "${DRYDOCK_INPUT_UPLOAD_ARTIFACTS}" == "true" && "${diff_comment}" != "true" && -n "${run_url}" ]]; then
+        echo
+        echo "- Full added image output: [${DRYDOCK_IMAGE_ARTIFACT_NAME} artifact](${run_url})."
+      fi
     else
       echo "No added rendered images detected."
     fi
