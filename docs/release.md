@@ -29,7 +29,7 @@ redacted target, revision, cache hit, offline, refresh, and error fields.
 Events must not expose credentials, query tokens, SSH private keys,
 passphrases, or raw repository URLs with embedded secrets.
 
-## GitHub Action
+## GitHub Actions
 
 The repository includes an optional composite install action at `setup-action`.
 It is release metadata only; it does not change the default static binary,
@@ -67,12 +67,20 @@ Pinned example:
 ```yaml
 - uses: sholdee/drydock/setup-action@main
   with:
-    version: v0.1.0
+    version: v0.1.7
     install-dir: /usr/local/bin
 ```
 
 Public required CI should continue to build and test from source unless a
 workflow intentionally opts into installing a released binary.
+
+The repository also includes `pr-action`, a higher-level pull request wrapper
+around the released binary. It owns workflow ergonomics for render tests,
+manifest diffs, image diff comments, artifacts, and source cache restore/save.
+It must preserve the same token boundary as the CLI: GitHub tokens may be used
+for checkout, release downloads, baseline fetch, and comments, but they must
+not be exported to `drydock` subprocesses or stored in drydock caches or
+artifacts.
 
 ## Release Automation
 

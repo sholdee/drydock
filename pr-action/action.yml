@@ -1,0 +1,379 @@
+name: drydock PR
+description: Run drydock pull request validation, diffs, image reports, comments, and artifacts
+
+inputs:
+  version:
+    description: drydock release version to install. Defaults to latest.
+    required: false
+    default: latest
+  install-dir:
+    description: Directory to install the drydock binary into.
+    required: false
+    default: /usr/local/bin
+  github-token:
+    description: GitHub token for checkout, release downloads, and comments.
+    required: false
+  github-app-id:
+    description: Optional GitHub App ID. When set with github-app-private-key, the action mints an installation token.
+    required: false
+  github-app-private-key:
+    description: Optional GitHub App private key.
+    required: false
+  checkout:
+    description: Check out the pull request head before running drydock.
+    required: false
+    default: "true"
+  fetch-depth:
+    description: Fetch depth for the checkout step.
+    required: false
+    default: "1"
+  path:
+    description: Repository path to inspect for render tests.
+    required: false
+    default: .
+  repo:
+    description: Local Git repository path used for ref-based diffs.
+    required: false
+    default: .
+  base-ref:
+    description: Baseline branch name for diff commands. Defaults to the pull request base branch.
+    required: false
+  head-ref:
+    description: Current Git ref for diff commands. Defaults to HEAD after checkout.
+    required: false
+  run-test:
+    description: Run drydock test apps.
+    required: false
+    default: "true"
+  run-diff:
+    description: Run drydock diff apps.
+    required: false
+    default: "true"
+  run-image-diff:
+    description: Run drydock diff images.
+    required: false
+    default: "true"
+  skip-secrets:
+    description: Omit Secret resources from output and diffs.
+    required: false
+    default: "true"
+  offline:
+    description: Disable source network access and use local files, repo maps, or existing caches.
+    required: false
+    default: "false"
+  strict:
+    description: Promote diagnostics to errors.
+    required: false
+    default: "false"
+  strict-changed-only:
+    description: Fail when changed-only input ownership is ambiguous or incomplete.
+    required: false
+    default: "false"
+  changed-only:
+    description: Override changed-only behavior with true or false. Leave empty for drydock defaults.
+    required: false
+  show-ignored-fields:
+    description: Show drydock default ignored diff fields.
+    required: false
+    default: "false"
+  discover-kustomize:
+    description: Newline-delimited local Kustomize paths to render for Argo CD Application discovery.
+    required: false
+  repo-map:
+    description: Newline-delimited repository URL mappings in URL=PATH form.
+    required: false
+  parallelism:
+    description: Maximum number of Applications to render concurrently.
+    required: false
+  max-discovery-depth:
+    description: Maximum recursive rendered Application discovery depth.
+    required: false
+  enable-avp-compat:
+    description: Replace argocd-vault-plugin placeholders with deterministic redacted values.
+    required: false
+    default: "false"
+  enable-plugins:
+    description: Enable trusted exec plugin policy entries.
+    required: false
+    default: "false"
+  plugin-policy-path:
+    description: Trusted plugin policy path relative to the selected policy root.
+    required: false
+  plugin-policy-ref:
+    description: Git ref to use as the trusted plugin policy source.
+    required: false
+  plugin-policy-repo:
+    description: Local Git repository path used to resolve plugin-policy-ref.
+    required: false
+  disable-plugin-policy:
+    description: Disable trusted plugin policy loading.
+    required: false
+    default: "false"
+  extra-test-args:
+    description: Newline-delimited additional trusted arguments for drydock test apps.
+    required: false
+  extra-diff-args:
+    description: Newline-delimited additional trusted arguments for drydock diff apps.
+    required: false
+  extra-image-diff-args:
+    description: Newline-delimited additional trusted arguments for drydock diff images.
+    required: false
+  cache:
+    description: Restore and save drydock source caches for trusted runs.
+    required: false
+    default: "true"
+  save-cache:
+    description: Save drydock source caches after trusted runs.
+    required: false
+    default: "true"
+  cache-untrusted-restore:
+    description: Restore drydock source caches for fork pull requests. Cache save remains disabled for forks.
+    required: false
+    default: "false"
+  cache-path:
+    description: Local drydock cache root. Defaults to a runner temp directory.
+    required: false
+  cache-key-prefix:
+    description: Prefix for generated cache keys.
+    required: false
+    default: drydock
+  cache-key-suffix:
+    description: Suffix for generated cache keys.
+    required: false
+    default: v1
+  cache-key:
+    description: Full cache key override.
+    required: false
+  cache-restore-keys:
+    description: Newline-delimited cache restore key override.
+    required: false
+  comment-mode:
+    description: Pull request comment mode. One of none, diff, images, or both.
+    required: false
+    default: both
+  comment-empty:
+    description: Comment even when the corresponding diff is empty.
+    required: false
+    default: "false"
+  comment-continue-on-error:
+    description: Do not fail the workflow when pull request commenting fails.
+    required: false
+    default: "true"
+  diff-max-bytes:
+    description: Maximum rendered diff bytes to include in pull request comments.
+    required: false
+    default: "61000"
+  upload-artifacts:
+    description: Upload full diff and image report artifacts when they are non-empty.
+    required: false
+    default: "true"
+  artifact-retention-days:
+    description: Retention days for uploaded artifacts.
+    required: false
+    default: "30"
+  diff-artifact-name:
+    description: Artifact name override for rendered manifest diffs.
+    required: false
+  image-artifact-name:
+    description: Artifact name override for added image output.
+    required: false
+  fail-on-render-error:
+    description: Fail the action when drydock test apps fails.
+    required: false
+    default: "true"
+  fail-on-diff:
+    description: Fail the action when rendered manifest differences are detected.
+    required: false
+    default: "false"
+  fail-on-image-diff:
+    description: Fail the action when rendered image differences are detected.
+    required: false
+    default: "false"
+
+outputs:
+  has-diff:
+    description: Whether rendered manifest differences were detected.
+    value: ${{ steps.run.outputs.has-diff }}
+  has-images:
+    description: Whether current-only image references were detected.
+    value: ${{ steps.run.outputs.has-images }}
+  has-image-diff:
+    description: Whether any image reference difference was detected.
+    value: ${{ steps.run.outputs.has-image-diff }}
+  render-status:
+    description: "Render test status: passed, failed, or skipped."
+    value: ${{ steps.run.outputs.render-status }}
+  diff-path:
+    description: Local path to the rendered manifest diff file.
+    value: ${{ steps.run.outputs.diff-path }}
+  images-path:
+    description: Local path to the current-only image references file.
+    value: ${{ steps.run.outputs.images-path }}
+  diff-artifact-name:
+    description: Rendered manifest diff artifact name.
+    value: ${{ steps.run.outputs.diff-artifact-name }}
+  image-artifact-name:
+    description: Added image artifact name.
+    value: ${{ steps.run.outputs.image-artifact-name }}
+  trusted-context:
+    description: Whether the action considered this event trusted for cache save and comments.
+    value: ${{ steps.prepare.outputs.trusted-context }}
+
+runs:
+  using: composite
+  steps:
+    - name: Create GitHub App token
+      id: app-token
+      if: ${{ inputs.github-app-id != '' && inputs.github-app-private-key != '' }}
+      uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+      with:
+        app-id: ${{ inputs.github-app-id }}
+        permission-contents: read
+        permission-pull-requests: write
+        private-key: ${{ inputs.github-app-private-key }}
+
+    - name: Install drydock
+      id: setup
+      shell: bash
+      env:
+        DRYDOCK_ALLOW_UNVERIFIED: "false"
+        DRYDOCK_GITHUB_TOKEN: ${{ steps.app-token.outputs.token || inputs.github-token || github.token }}
+        DRYDOCK_INSTALL_DIR: ${{ inputs.install-dir }}
+        DRYDOCK_VERSION: ${{ inputs.version }}
+      run: '"${GITHUB_ACTION_PATH}/../setup-action/install.sh"'
+
+    - name: Prepare drydock action
+      id: prepare
+      shell: bash
+      env:
+        DRYDOCK_INPUT_ARTIFACT_RETENTION_DAYS: ${{ inputs.artifact-retention-days }}
+        DRYDOCK_INPUT_CACHE: ${{ inputs.cache }}
+        DRYDOCK_INPUT_CACHE_KEY: ${{ inputs.cache-key }}
+        DRYDOCK_INPUT_CACHE_KEY_PREFIX: ${{ inputs.cache-key-prefix }}
+        DRYDOCK_INPUT_CACHE_KEY_SUFFIX: ${{ inputs.cache-key-suffix }}
+        DRYDOCK_INPUT_CACHE_PATH: ${{ inputs.cache-path }}
+        DRYDOCK_INPUT_CACHE_RESTORE_KEYS: ${{ inputs.cache-restore-keys }}
+        DRYDOCK_INPUT_CACHE_UNTRUSTED_RESTORE: ${{ inputs.cache-untrusted-restore }}
+        DRYDOCK_INPUT_COMMENT_CONTINUE_ON_ERROR: ${{ inputs.comment-continue-on-error }}
+        DRYDOCK_INPUT_COMMENT_EMPTY: ${{ inputs.comment-empty }}
+        DRYDOCK_INPUT_COMMENT_MODE: ${{ inputs.comment-mode }}
+        DRYDOCK_INPUT_DIFF_ARTIFACT_NAME: ${{ inputs.diff-artifact-name }}
+        DRYDOCK_INPUT_DIFF_MAX_BYTES: ${{ inputs.diff-max-bytes }}
+        DRYDOCK_INPUT_IMAGE_ARTIFACT_NAME: ${{ inputs.image-artifact-name }}
+        DRYDOCK_INPUT_SAVE_CACHE: ${{ inputs.save-cache }}
+        DRYDOCK_INPUT_UPLOAD_ARTIFACTS: ${{ inputs.upload-artifacts }}
+        DRYDOCK_PR_HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+        DRYDOCK_RESOLVED_VERSION: ${{ steps.setup.outputs.version }}
+      run: '"${GITHUB_ACTION_PATH}/prepare.sh"'
+
+    - name: Check out pull request head
+      if: ${{ inputs.checkout == 'true' }}
+      uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      with:
+        fetch-depth: ${{ inputs.fetch-depth }}
+        persist-credentials: false
+        ref: ${{ inputs.head-ref || github.event.pull_request.head.sha || github.sha }}
+        token: ${{ steps.app-token.outputs.token || inputs.github-token || github.token }}
+
+    - name: Fetch baseline ref
+      id: fetch-base
+      if: ${{ inputs.run-diff == 'true' || inputs.run-image-diff == 'true' }}
+      shell: bash
+      env:
+        DRYDOCK_GITHUB_TOKEN: ${{ steps.app-token.outputs.token || inputs.github-token || github.token }}
+        DRYDOCK_INPUT_BASE_REF: ${{ inputs.base-ref }}
+        DRYDOCK_PR_BASE_REF: ${{ github.event.pull_request.base.ref }}
+      run: '"${GITHUB_ACTION_PATH}/fetch-base.sh"'
+
+    - name: Restore drydock source cache
+      id: cache-restore
+      if: ${{ steps.prepare.outputs.cache-restore == 'true' }}
+      uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+      with:
+        key: ${{ steps.prepare.outputs.cache-key }}
+        path: ${{ steps.prepare.outputs.cache-path }}
+        restore-keys: ${{ steps.prepare.outputs.restore-keys }}
+
+    - name: Run drydock
+      id: run
+      shell: bash
+      env:
+        DRYDOCK_ACTION_WORK_DIR: ${{ steps.prepare.outputs.work-dir }}
+        DRYDOCK_BASE_COMPARE_REF: ${{ steps.fetch-base.outputs.compare-ref }}
+        DRYDOCK_BIN: ${{ steps.setup.outputs.install-dir }}/drydock
+        DRYDOCK_CACHE_PATH: ${{ steps.prepare.outputs.cache-path }}
+        DRYDOCK_DIFF_ARTIFACT_NAME: ${{ steps.prepare.outputs.diff-artifact-name }}
+        DRYDOCK_IMAGE_ARTIFACT_NAME: ${{ steps.prepare.outputs.image-artifact-name }}
+        DRYDOCK_INPUT_CHANGED_ONLY: ${{ inputs.changed-only }}
+        DRYDOCK_INPUT_COMMENT_EMPTY: ${{ inputs.comment-empty }}
+        DRYDOCK_INPUT_COMMENT_MODE: ${{ inputs.comment-mode }}
+        DRYDOCK_INPUT_DIFF_MAX_BYTES: ${{ inputs.diff-max-bytes }}
+        DRYDOCK_INPUT_DISABLE_PLUGIN_POLICY: ${{ inputs.disable-plugin-policy }}
+        DRYDOCK_INPUT_DISCOVER_KUSTOMIZE: ${{ inputs.discover-kustomize }}
+        DRYDOCK_INPUT_ENABLE_AVP_COMPAT: ${{ inputs.enable-avp-compat }}
+        DRYDOCK_INPUT_ENABLE_PLUGINS: ${{ inputs.enable-plugins }}
+        DRYDOCK_INPUT_EXTRA_DIFF_ARGS: ${{ inputs.extra-diff-args }}
+        DRYDOCK_INPUT_EXTRA_IMAGE_DIFF_ARGS: ${{ inputs.extra-image-diff-args }}
+        DRYDOCK_INPUT_EXTRA_TEST_ARGS: ${{ inputs.extra-test-args }}
+        DRYDOCK_INPUT_FAIL_ON_DIFF: ${{ inputs.fail-on-diff }}
+        DRYDOCK_INPUT_FAIL_ON_IMAGE_DIFF: ${{ inputs.fail-on-image-diff }}
+        DRYDOCK_INPUT_FAIL_ON_RENDER_ERROR: ${{ inputs.fail-on-render-error }}
+        DRYDOCK_INPUT_HEAD_REF: ${{ inputs.head-ref }}
+        DRYDOCK_INPUT_MAX_DISCOVERY_DEPTH: ${{ inputs.max-discovery-depth }}
+        DRYDOCK_INPUT_OFFLINE: ${{ inputs.offline }}
+        DRYDOCK_INPUT_PARALLELISM: ${{ inputs.parallelism }}
+        DRYDOCK_INPUT_PATH: ${{ inputs.path }}
+        DRYDOCK_INPUT_PLUGIN_POLICY_PATH: ${{ inputs.plugin-policy-path }}
+        DRYDOCK_INPUT_PLUGIN_POLICY_REF: ${{ inputs.plugin-policy-ref }}
+        DRYDOCK_INPUT_PLUGIN_POLICY_REPO: ${{ inputs.plugin-policy-repo }}
+        DRYDOCK_INPUT_REPO: ${{ inputs.repo }}
+        DRYDOCK_INPUT_REPO_MAP: ${{ inputs.repo-map }}
+        DRYDOCK_INPUT_RUN_DIFF: ${{ inputs.run-diff }}
+        DRYDOCK_INPUT_RUN_IMAGE_DIFF: ${{ inputs.run-image-diff }}
+        DRYDOCK_INPUT_RUN_TEST: ${{ inputs.run-test }}
+        DRYDOCK_INPUT_SHOW_IGNORED_FIELDS: ${{ inputs.show-ignored-fields }}
+        DRYDOCK_INPUT_SKIP_SECRETS: ${{ inputs.skip-secrets }}
+        DRYDOCK_INPUT_STRICT: ${{ inputs.strict }}
+        DRYDOCK_INPUT_STRICT_CHANGED_ONLY: ${{ inputs.strict-changed-only }}
+      run: '"${GITHUB_ACTION_PATH}/run.sh"'
+
+    - name: Save drydock source cache
+      if: ${{ always() && steps.prepare.outputs.cache-save == 'true' && steps.cache-restore.outputs.cache-hit != 'true' }}
+      uses: actions/cache/save@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+      with:
+        key: ${{ steps.prepare.outputs.cache-key }}
+        path: ${{ steps.prepare.outputs.cache-path }}
+
+    - name: Comment rendered manifest diff
+      if: ${{ github.event_name == 'pull_request' && steps.prepare.outputs.trusted-context == 'true' && steps.run.outputs.diff-comment == 'true' }}
+      continue-on-error: ${{ inputs.comment-continue-on-error == 'true' }}
+      uses: mshick/add-pr-comment@8a9bc8b153160f781ebd22854f5789cd6a0cbe62 # v3.11
+      with:
+        message-id: ${{ github.event.pull_request.number }}/drydock-diff
+        message-path: ${{ steps.run.outputs.diff-comment-path }}
+        repo-token: ${{ steps.app-token.outputs.token || inputs.github-token || github.token }}
+
+    - name: Comment added images
+      if: ${{ github.event_name == 'pull_request' && steps.prepare.outputs.trusted-context == 'true' && steps.run.outputs.images-comment == 'true' }}
+      continue-on-error: ${{ inputs.comment-continue-on-error == 'true' }}
+      uses: mshick/add-pr-comment@8a9bc8b153160f781ebd22854f5789cd6a0cbe62 # v3.11
+      with:
+        message-id: ${{ github.event.pull_request.number }}/drydock-images
+        message-path: ${{ steps.run.outputs.images-comment-path }}
+        repo-token: ${{ steps.app-token.outputs.token || inputs.github-token || github.token }}
+
+    - name: Upload rendered manifest diff
+      if: ${{ inputs.upload-artifacts == 'true' && steps.run.outputs.has-diff == 'true' }}
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      with:
+        name: ${{ steps.run.outputs.diff-artifact-name }}
+        path: ${{ steps.run.outputs.diff-path }}
+        retention-days: ${{ inputs.artifact-retention-days }}
+
+    - name: Upload added images
+      if: ${{ inputs.upload-artifacts == 'true' && steps.run.outputs.has-images == 'true' }}
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      with:
+        name: ${{ steps.run.outputs.image-artifact-name }}
+        path: ${{ steps.run.outputs.images-path }}
+        retention-days: ${{ inputs.artifact-retention-days }}

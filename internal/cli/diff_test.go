@@ -780,23 +780,41 @@ func TestDiffImagesYAMLOutput(t *testing.T) {
 	assertStringSliceEqual(t, payload.Unchanged, []string{"example/sidecar:v1"})
 }
 
-func TestDiffImagesRejectsNameOutput(t *testing.T) {
+func TestDiffImagesNameOutputPrintsAddedImages(t *testing.T) {
+	root := t.TempDir()
+	left := filepath.Join(root, "left")
+	right := filepath.Join(root, "right")
+	writeTwoImageAppForCLI(t, left, "example/app:v1", "example/sidecar:v1")
+	writeTwoImageAppForCLI(t, right, "example/app:v2", "example/sidecar:v1")
+
+	result := runCLI(t, "diff", "images", "--path-orig", left, "--path", right, "-o", "name", "--exit-code=false")
+	if got, want := result.Stdout, "example/app:v2\n"; got != want {
+		t.Fatalf("diff images -o name output = %q, want %q", got, want)
+	}
+	assertStdoutExcludesAll(t, result, "example/app:v1", "example/sidecar:v1")
+	assertStderrEmpty(t, result)
+}
+
+func TestDiffImagesNameOutputKeepsRemovedOnlyExitDiff(t *testing.T) {
+	root := t.TempDir()
+	left := filepath.Join(root, "left")
+	right := filepath.Join(root, "right")
+	writeImageAppForCLI(t, left, "example/app:v1")
+	writeSimpleAppForCLI(t, right, "unchanged")
+
 	cmd := NewRootCommand(VersionInfo{})
-	cmd.SetArgs([]string{"diff", "images", "-o", "name"})
+	cmd.SetArgs([]string{"diff", "images", "--path-orig", left, "--path", right, "-o", "name"})
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
 	cmd.SetOut(&stdout)
 	cmd.SetErr(&stderr)
 
 	err := cmd.Execute()
-	if err == nil {
-		t.Fatal("Execute() error = nil, want unsupported output error")
-	}
-	if !strings.Contains(err.Error(), "name output is not supported for diff images") {
-		t.Fatalf("error = %v, want diff images name rejection", err)
+	if code := commandErrorCode(err); code != 1 {
+		t.Fatalf("error code = %d, want 1 for removed-only image diff; err = %v", code, err)
 	}
 	if stdout.String() != "" {
-		t.Fatalf("stdout = %q, want empty", stdout.String())
+		t.Fatalf("stdout = %q, want empty for removed-only image name output", stdout.String())
 	}
 	if stderr.String() != "" {
 		t.Fatalf("stderr = %q, want empty", stderr.String())

@@ -395,11 +395,13 @@ drydock diff images --path ./current --path-orig ../base
 
 This projection includes PodSpec container images plus scalar manifest fields
 whose key is exactly `image`. It does not scan arbitrary string content, Secret
-manifests, top-level metadata/status, or ConfigMap data payloads. Use `-o json`
-or `-o yaml` for machine-readable `added`, `removed`, and `unchanged` image
-lists. Diagnostics remain on stderr so stdout stays valid JSON or YAML.
-Text image diffs use the same `--color=auto|always|never` behavior as manifest
-diffs.
+manifests, top-level metadata/status, or ConfigMap data payloads. Use `-o name`
+to print current-only added image references, one per line. Removed-only image
+changes print no names but still return the diff exit code unless
+`--exit-code=false` is set. Use `-o json` or `-o yaml` for machine-readable
+`added`, `removed`, and `unchanged` image lists. Diagnostics remain on stderr so
+stdout stays valid JSON or YAML. Text image diffs use the same
+`--color=auto|always|never` behavior as manifest diffs.
 
 ## Diagnostics
 

@@ -26,6 +26,14 @@ func parseDiffOutput(value, command string) (string, error) {
 	}
 }
 
+func parseImageDiffOutput(value string) (string, error) {
+	output := strings.TrimSpace(value)
+	if output == string(cliformat.OutputName) {
+		return output, nil
+	}
+	return parseDiffOutput(value, "diff images")
+}
+
 func parseTestOutput(value string) (string, error) {
 	output := strings.TrimSpace(value)
 	switch output {

@@ -193,9 +193,11 @@ support without an approved design update.
 
 Manifest diff output supports unified diff, JSON, and YAML. Image diff output
 also supports unified diff, JSON, and YAML for `added`, `removed`, and
-`unchanged` image lists. Diagnostics stay on stderr for structured diff
-output. `-o name` is for list-style commands such as `get apps` and
-`get images`, not `diff apps`, `diff app`, or `diff images`.
+`unchanged` image lists. `diff images -o name` prints current-only added image
+references, one per line. Removed-only image changes print no names but still
+count as a diff for exit-code semantics unless `--exit-code=false`.
+Diagnostics stay on stderr for structured diff output. `-o name` remains
+unsupported for `diff apps` and `diff app`.
 
 Application-local and global ignore rules support `jsonPointers`,
 `jqPathExpressions`, and `managedFieldsManagers`. Apply the union from both
