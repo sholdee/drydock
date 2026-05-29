@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	argoappv1 "github.com/argoproj/argo-cd/v3/pkg/apis/application/v1alpha1"
+	"github.com/sholdee/drydock/internal/chart"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 )
 
@@ -1300,7 +1301,7 @@ version: 0.1.0
 dependencies:
   - name: child
     version: 0.1.0
-    repository: https://charts.example.test
+    repository: file://charts/child
 `)
 	writeFile(t, filepath.Join(root, "parent", "templates", "parent.yaml"), `
 apiVersion: v1
@@ -1325,6 +1326,266 @@ metadata:
 	}
 	if len(result) != 0 {
 		t.Fatalf("result = %#v, want no manifests", result)
+	}
+}
+
+func TestHelmRendererAcquiresMissingOCIChartDependency(t *testing.T) {
+	root := t.TempDir()
+	parent := filepath.Join(root, "parent")
+	child := filepath.Join(root, "acquired", "postgres")
+	writeFile(t, filepath.Join(parent, "Chart.yaml"), `
+apiVersion: v2
+name: parent
+version: 0.1.0
+dependencies:
+  - name: postgres
+    version: '>=0.12.0'
+    repository: oci://registry-1.docker.io/cloudpirates
+`)
+	writeFile(t, filepath.Join(parent, "Chart.lock"), `
+dependencies:
+  - name: postgres
+    repository: oci://registry-1.docker.io/cloudpirates
+    version: 0.12.4
+digest: sha256:example
+generated: "2026-01-01T00:00:00Z"
+`)
+	writeFile(t, filepath.Join(parent, "templates", "parent.yaml"), `
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: parent-config
+`)
+	writeNamedTestChart(t, child, "postgres", "0.12.4", `
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: postgres-config
+`)
+
+	acquirer := &fakeChartAcquirer{chartDir: child, fromCache: true}
+	result, diags, err := (HelmRenderer{}).Render(context.Background(), ResolvedSource{
+		RepoRoot: root,
+		Path:     "parent",
+		Chart:    "parent",
+	}, RenderOptions{
+		AppName:             "demo",
+		ChartAcquirer:       acquirer,
+		ChartCacheDir:       filepath.Join(root, "..", "chart-cache"),
+		OfflineCharts:       true,
+		RefreshCharts:       true,
+		ChartForbiddenRoots: []string{root},
+		ChartCredentials:    chart.ChartCredentials{Username: "helm-user"},
+		PassCredentials:     true,
+	})
+	if err != nil {
+		t.Fatalf("Render() error = %v", err)
+	}
+	if len(diags) != 0 {
+		t.Fatalf("diagnostics = %#v", diags)
+	}
+	assertHelmDependencyAcquireRequest(t, acquirer)
+	assertPathMissing(t, filepath.Join(parent, "charts", "postgres"))
+	configMaps := filterObjects(result, "ConfigMap")
+	if len(configMaps) != 2 {
+		t.Fatalf("ConfigMaps = %d, want parent and dependency manifests: %#v", len(configMaps), result)
+	}
+	if !containsManifest(result, "ConfigMap", "parent-config") || !containsManifest(result, "ConfigMap", "postgres-config") {
+		t.Fatalf("ConfigMaps = %#v, want parent-config and postgres-config", configMaps)
+	}
+}
+
+func TestHelmRendererAcquiresIncompatibleVendoredOCIChartDependency(t *testing.T) {
+	root := t.TempDir()
+	parent := filepath.Join(root, "parent")
+	child := filepath.Join(root, "acquired", "postgres")
+	writeFile(t, filepath.Join(parent, "Chart.yaml"), `
+apiVersion: v2
+name: parent
+version: 0.1.0
+dependencies:
+  - name: postgres
+    version: 0.12.4
+    repository: oci://registry-1.docker.io/cloudpirates
+`)
+	writeFile(t, filepath.Join(parent, "templates", "parent.yaml"), `
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: parent-config
+`)
+	writeNamedTestChart(t, filepath.Join(parent, "charts", "postgres"), "postgres", "0.1.0", `
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: stale-postgres-config
+`)
+	writeNamedTestChart(t, child, "postgres", "0.12.4", `
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: postgres-config
+`)
+
+	acquirer := &fakeChartAcquirer{chartDir: child, fromCache: true}
+	result, diags, err := (HelmRenderer{}).Render(context.Background(), ResolvedSource{
+		RepoRoot: root,
+		Path:     "parent",
+		Chart:    "parent",
+	}, RenderOptions{
+		AppName:       "demo",
+		ChartAcquirer: acquirer,
+	})
+	if err != nil {
+		t.Fatalf("Render() error = %v", err)
+	}
+	if len(diags) != 0 {
+		t.Fatalf("diagnostics = %#v", diags)
+	}
+	if got, want := len(acquirer.requests), 1; got != want {
+		t.Fatalf("chart acquire calls = %d, want %d", got, want)
+	}
+	if !containsManifest(result, "ConfigMap", "postgres-config") || containsManifest(result, "ConfigMap", "stale-postgres-config") {
+		t.Fatalf("manifests = %#v, want acquired compatible dependency only", manifestNames(result))
+	}
+}
+
+func TestHelmRendererUsesChartLockWhenVendoredVersionSatisfiesRange(t *testing.T) {
+	root := t.TempDir()
+	parent := filepath.Join(root, "parent")
+	child := filepath.Join(root, "acquired", "postgres")
+	writeFile(t, filepath.Join(parent, "Chart.yaml"), `
+apiVersion: v2
+name: parent
+version: 0.1.0
+dependencies:
+  - name: postgres
+    version: '>=0.12.0'
+    repository: oci://registry-1.docker.io/cloudpirates
+`)
+	writeFile(t, filepath.Join(parent, "Chart.lock"), `
+dependencies:
+  - name: postgres
+    repository: oci://registry-1.docker.io/cloudpirates
+    version: 0.12.4
+digest: sha256:example
+generated: "2026-01-01T00:00:00Z"
+`)
+	writeFile(t, filepath.Join(parent, "templates", "parent.yaml"), `
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: parent-config
+`)
+	writeNamedTestChart(t, filepath.Join(parent, "charts", "postgres"), "postgres", "0.12.5", `
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: unlocked-postgres-config
+`)
+	writeNamedTestChart(t, child, "postgres", "0.12.4", `
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: locked-postgres-config
+`)
+
+	acquirer := &fakeChartAcquirer{chartDir: child, fromCache: true}
+	result, diags, err := (HelmRenderer{}).Render(context.Background(), ResolvedSource{
+		RepoRoot: root,
+		Path:     "parent",
+		Chart:    "parent",
+	}, RenderOptions{
+		AppName:       "demo",
+		ChartAcquirer: acquirer,
+	})
+	if err != nil {
+		t.Fatalf("Render() error = %v", err)
+	}
+	if len(diags) != 0 {
+		t.Fatalf("diagnostics = %#v", diags)
+	}
+	if got, want := len(acquirer.requests), 1; got != want {
+		t.Fatalf("chart acquire calls = %d, want %d", got, want)
+	}
+	if !containsManifest(result, "ConfigMap", "locked-postgres-config") || containsManifest(result, "ConfigMap", "unlocked-postgres-config") {
+		t.Fatalf("manifests = %#v, want locked dependency only", manifestNames(result))
+	}
+}
+
+func TestHelmRendererRemovesIncompatibleVendoredChartArchive(t *testing.T) {
+	root := t.TempDir()
+	parent := filepath.Join(root, "parent")
+	child := filepath.Join(root, "acquired", "postgres")
+	writeFile(t, filepath.Join(parent, "Chart.yaml"), `
+apiVersion: v2
+name: parent
+version: 0.1.0
+dependencies:
+  - name: postgres
+    version: 0.12.4
+    repository: oci://registry-1.docker.io/cloudpirates
+`)
+	writeFile(t, filepath.Join(parent, "templates", "parent.yaml"), `
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: parent-config
+`)
+	writeArchivedTestChart(t, filepath.Join(parent, "charts"), "postgres", "0.1.0", `
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: archived-postgres-config
+`)
+	writeNamedTestChart(t, child, "postgres", "0.12.4", `
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: postgres-config
+`)
+
+	acquirer := &fakeChartAcquirer{chartDir: child, fromCache: true}
+	result, diags, err := (HelmRenderer{}).Render(context.Background(), ResolvedSource{
+		RepoRoot: root,
+		Path:     "parent",
+		Chart:    "parent",
+	}, RenderOptions{
+		AppName:       "demo",
+		ChartAcquirer: acquirer,
+	})
+	if err != nil {
+		t.Fatalf("Render() error = %v", err)
+	}
+	if len(diags) != 0 {
+		t.Fatalf("diagnostics = %#v", diags)
+	}
+	if got, want := len(acquirer.requests), 1; got != want {
+		t.Fatalf("chart acquire calls = %d, want %d", got, want)
+	}
+	if !containsManifest(result, "ConfigMap", "postgres-config") || containsManifest(result, "ConfigMap", "archived-postgres-config") {
+		t.Fatalf("manifests = %#v, want acquired dependency only", manifestNames(result))
+	}
+}
+
+func TestHelmDependencyChartPathRejectsUnsafeName(t *testing.T) {
+	for _, name := range []string{"", ".", "..", "../postgres", "nested/postgres", `nested\postgres`, "postgres*"} {
+		if got, err := helmDependencyChartPath(t.TempDir(), name); err == nil {
+			t.Fatalf("helmDependencyChartPath(%q) = %q, nil error; want unsafe name error", name, got)
+		}
+	}
+}
+
+func assertHelmDependencyAcquireRequest(t *testing.T, acquirer *fakeChartAcquirer) {
+	t.Helper()
+	if got, want := len(acquirer.requests), 1; got != want {
+		t.Fatalf("chart acquire calls = %d, want %d", got, want)
+	}
+	if got := acquirer.requests[0]; got.Repository != "oci://registry-1.docker.io/cloudpirates" || got.Name != "postgres" || got.Version != "0.12.4" || got.Kind != chart.RepositoryOCI {
+		t.Fatalf("chart request = %#v", got)
+	}
+	if got := acquirer.options[0]; !got.Offline || !got.Refresh || !got.PassCredentials || got.CacheDir == "" || len(got.ForbiddenRoots) != 1 || got.Credentials.Username != "helm-user" {
+		t.Fatalf("chart options = %#v", got)
 	}
 }
 

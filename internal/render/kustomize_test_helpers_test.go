@@ -2,14 +2,18 @@ package render
 
 import (
 	"context"
-	"github.com/sholdee/drydock/internal/cacheevent"
-	"github.com/sholdee/drydock/internal/chart"
-	"github.com/sholdee/drydock/internal/remote"
-	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/sholdee/drydock/internal/cacheevent"
+	"github.com/sholdee/drydock/internal/chart"
+	"github.com/sholdee/drydock/internal/remote"
+	helmchartcommon "helm.sh/helm/v4/pkg/chart/common"
+	helmchartv2 "helm.sh/helm/v4/pkg/chart/v2"
+	chartv2util "helm.sh/helm/v4/pkg/chart/v2/util"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 )
 
 type fakeChartAcquirer struct {
@@ -70,6 +74,23 @@ name: `+name+`
 version: `+version+`
 `)
 	writeFile(t, filepath.Join(chartDir, "templates", "manifest.yaml"), template)
+}
+func writeArchivedTestChart(t *testing.T, outDir, name, version, template string) {
+	t.Helper()
+	chart := &helmchartv2.Chart{
+		Metadata: &helmchartv2.Metadata{
+			APIVersion: "v2",
+			Name:       name,
+			Version:    version,
+		},
+		Templates: []*helmchartcommon.File{{
+			Name: "templates/manifest.yaml",
+			Data: []byte(template),
+		}},
+	}
+	if _, err := chartv2util.Save(chart, outDir); err != nil {
+		t.Fatalf("save archived chart: %v", err)
+	}
 }
 func writeTestChart(t *testing.T, chartDir, template string) {
 	t.Helper()

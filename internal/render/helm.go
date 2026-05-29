@@ -22,7 +22,6 @@ import (
 	chartutil "helm.sh/helm/v4/pkg/chart/common/util"
 	"helm.sh/helm/v4/pkg/chart/loader"
 	chartv2 "helm.sh/helm/v4/pkg/chart/v2"
-	chartv2util "helm.sh/helm/v4/pkg/chart/v2/util"
 	"helm.sh/helm/v4/pkg/engine"
 	"helm.sh/helm/v4/pkg/strvals"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -53,7 +52,14 @@ func (HelmRenderer) Render(ctx context.Context, source ResolvedSource, opts Rend
 	if err != nil {
 		return nil, nil, fmt.Errorf("load helm chart %s: %w", manifestPath, err)
 	}
-	pathMap, err := helmChartPathMap(source.RepoRoot, chartPath, chart)
+	chart, cleanup, err := prepareHelmDependencyWorkspace(ctx, chartPath, manifestPath, chart, opts)
+	if cleanup != nil {
+		defer cleanup()
+	}
+	if err != nil {
+		return nil, nil, err
+	}
+	pathMap, err := helmChartPathMap(manifestPath, chart)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -143,50 +149,6 @@ func validateHelmChartTree(root string) error {
 		}
 		return nil
 	})
-}
-
-func processHelmDependencies(chrt helmchart.Charter, values map[string]any, manifestPath string) error {
-	if err := checkHelmDependencies(chrt); err != nil {
-		return fmt.Errorf("helm chart dependencies %s require vendored charts: %w", manifestPath, err)
-	}
-	chart, ok := chrt.(*chartv2.Chart)
-	if !ok {
-		return nil
-	}
-	if err := chartv2util.ProcessDependencies(chart, common.Values(values)); err != nil {
-		return fmt.Errorf("helm chart dependencies %s: %w", manifestPath, err)
-	}
-	return nil
-}
-
-func checkHelmDependencies(chrt helmchart.Charter) error {
-	accessor, err := helmchart.NewAccessor(chrt)
-	if err != nil {
-		return err
-	}
-
-	var missing []string
-dependencies:
-	for _, required := range accessor.MetaDependencies() {
-		requiredAccessor, err := helmchart.NewDependencyAccessor(required)
-		if err != nil {
-			return err
-		}
-		for _, dependency := range accessor.Dependencies() {
-			dependencyAccessor, err := helmchart.NewAccessor(dependency)
-			if err != nil {
-				return err
-			}
-			if dependencyAccessor.Name() == requiredAccessor.Name() {
-				continue dependencies
-			}
-		}
-		missing = append(missing, requiredAccessor.Name())
-	}
-	if len(missing) > 0 {
-		return fmt.Errorf("found in Chart.yaml, but missing in charts/ directory: %s", strings.Join(missing, ", "))
-	}
-	return nil
 }
 
 func decodeHelmManifests(pathMap map[string]string, chrt helmchart.Charter, rendered map[string]string, opts RenderOptions) ([]Manifest, []diagnostic.Diagnostic, error) {
@@ -322,11 +284,7 @@ func applyAVPCompatToHelmValues(values map[string]any, opts RenderOptions) []dia
 	}}
 }
 
-func helmChartPathMap(repoRoot, chartPath string, chrt helmchart.Charter) (map[string]string, error) {
-	chartRel, err := relativeManifestPath(repoRoot, chartPath)
-	if err != nil {
-		return nil, err
-	}
+func helmChartPathMap(chartRel string, chrt helmchart.Charter) (map[string]string, error) {
 	root, err := helmchart.NewAccessor(chrt)
 	if err != nil {
 		return nil, err

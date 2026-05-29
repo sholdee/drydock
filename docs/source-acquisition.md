@@ -29,10 +29,13 @@ Chart-only HTTP(S) and OCI Helm sources may be fetched into the chart cache
 unless `--offline` is set. Local Helm chart sources render from the repository
 tree.
 
-Declared chart dependencies are an offline-runtime boundary: drydock renders
-dependencies already vendored under `charts/`, but it does not run
-`helm dependency build`. If `Chart.yaml` declares a dependency missing from
-`charts/`, rendering fails with a clear vendored-chart requirement.
+Missing HTTP(S) and OCI chart dependencies declared in `Chart.yaml` are
+resolved through drydock's native chart cache. With `--offline`, cache hits are
+allowed but network fetches are disabled. The source checkout is not mutated,
+and drydock does not shell out to `helm dependency build`. Local `file://`,
+repository-alias, or otherwise unresolved dependencies must already be
+available under `charts/`; missing local dependencies fail with a clear
+vendored-chart requirement.
 
 Helm `valueFiles` support local paths, `$ref/...` paths, glob expansion,
 HTTP(S) remote value files, and discovered `helm.valuesFileSchemes`. Remote

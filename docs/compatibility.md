@@ -108,9 +108,11 @@ Important boundaries:
   availability.
 - `--repo-map` takes precedence over local fallback and network fetching.
 - Top-level `--repo` for Git ref diffs supports local repository paths only.
-- Helm chart dependencies must already be present under `charts/`; drydock
-  does not run `helm dependency build` and fails closed when declared
-  dependencies are missing.
+- Missing HTTP(S) and OCI Helm chart dependencies declared in `Chart.yaml` are
+  acquired through drydock's native chart cache, without shelling out to
+  `helm dependency build` or mutating the source checkout. Local `file://`,
+  repository-alias, or otherwise unresolved dependencies must be available
+  under `charts/` and fail closed when missing.
 - Ambient Git credential helpers, ambient Helm registry config, and secret
   credential fields from discovered repository Secrets are not read.
 - Cache lifecycle commands are local filesystem operations only; they do not
