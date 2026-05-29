@@ -85,23 +85,6 @@ jobs:
           version: v0.1.7
 ```
 
-Minimal pull request check:
-
-```yaml
-jobs:
-  drydock:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v6
-        with:
-          fetch-depth: 0
-      - uses: sholdee/drydock/setup-action@main
-        with:
-          version: v0.1.7
-      - run: drydock test apps --path .
-      - run: drydock diff apps --path . --ref-orig origin/${{ github.base_ref }}
-```
-
 See [`docs/github-actions.md`](docs/github-actions.md) for full action inputs,
 GitHub App token support, cache behavior, comments, artifacts, and outputs.
 

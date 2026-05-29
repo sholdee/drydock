@@ -23,6 +23,35 @@ YAML:
 The action accepts `latest`, `vX.Y.Z`, or bare `X.Y.Z`. It verifies the release
 archive with `checksums.txt` unless `allow-unverified: "true"` is set.
 
+## Manual CLI Workflow
+
+Use `setup-action` directly when you want a minimal workflow and prefer to own
+the drydock commands yourself:
+
+```yaml
+name: drydock
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  drydock:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - uses: sholdee/drydock/setup-action@main
+        with:
+          version: v0.1.7
+      - run: drydock test apps --path .
+      - run: drydock diff apps --path . --ref-orig origin/${{ github.base_ref }}
+```
+
 ## Pull Request Action
 
 Use the PR action when you want the standard render test, manifest diff, image
