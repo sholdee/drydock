@@ -50,10 +50,13 @@ jobs:
               - '**/*.md'
             go:
               - '**/*.go'
+              - '**/testdata/**'
               - 'go.mod'
               - 'go.sum'
+              - 'mise.lock'
+              - 'mise.toml'
               - 'schemas/**'
-              - 'testdata/**'
+              - 'scripts/**'
             image:
               - '.dockerignore'
               - 'Dockerfile'
@@ -75,7 +78,7 @@ jobs:
 
   go-test:
     needs: detect
-    if: github.event_name != 'pull_request' || needs.detect.outputs.go == 'true'
+    if: github.event_name != 'pull_request' || needs.detect.outputs.go == 'true' || needs.detect.outputs.workflow == 'true'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -104,7 +107,7 @@ jobs:
 
   go-lint:
     needs: detect
-    if: github.event_name != 'pull_request' || needs.detect.outputs.go == 'true' || needs.detect.outputs.lint == 'true'
+    if: github.event_name != 'pull_request' || needs.detect.outputs.go == 'true' || needs.detect.outputs.lint == 'true' || needs.detect.outputs.workflow == 'true'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -123,7 +126,7 @@ jobs:
 
   markdownlint:
     needs: detect
-    if: github.event_name != 'pull_request' || needs.detect.outputs.docs == 'true' || needs.detect.outputs.lint == 'true'
+    if: github.event_name != 'pull_request' || needs.detect.outputs.docs == 'true' || needs.detect.outputs.lint == 'true' || needs.detect.outputs.workflow == 'true'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -164,7 +167,7 @@ jobs:
 
   renovate:
     needs: detect
-    if: github.event_name != 'pull_request' || needs.detect.outputs.renovate == 'true'
+    if: github.event_name != 'pull_request' || needs.detect.outputs.renovate == 'true' || needs.detect.outputs.workflow == 'true'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -202,7 +205,7 @@ jobs:
 
   image:
     needs: detect
-    if: github.event_name != 'pull_request' || needs.detect.outputs.image == 'true'
+    if: github.event_name != 'pull_request' || needs.detect.outputs.image == 'true' || needs.detect.outputs.workflow == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: read
