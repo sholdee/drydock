@@ -17,6 +17,7 @@ copying the same rule into multiple files.
 | `docs/plugin-policy.md` | Trusted plugin policy provenance, editor schema, CMP compatibility, and exec security. |
 | `schemas/plugin-policy.schema.json` | Editor validation schema for `.drydock/plugins.yaml`; parser remains authoritative. |
 | `docs/compatibility.md` | Supported Argo CD behavior and runtime-boundary status. |
+| `docs/github-actions.md` | Setup action and full PR action usage, permissions, cache, comments, and outputs. |
 | `docs/release.md` | Release and Argo CD dependency upgrade notes. |
 | `docs/logo/` | Project logo assets. |
 | `docs/reports/live-integration-design-gate.md` | No-live-runtime boundary and gate for exceptions. |

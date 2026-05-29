@@ -55,11 +55,55 @@ Pin a release when the workflow needs exact repeatability:
 ```yaml
 - uses: sholdee/drydock/setup-action@main
   with:
-    version: v0.1.0
+    version: v0.1.7
 ```
 
 The setup action accepts `latest`, `vX.Y.Z`, or bare `X.Y.Z` and verifies the
 selected archive with the release checksum manifest by default.
+
+For pull request validation, the PR action wraps the common drydock workflow:
+render tests, manifest diffs, added image reports, source caches, artifacts,
+and sticky PR comments.
+
+```yaml
+name: drydock
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  drydock:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: sholdee/drydock/pr-action@main
+        with:
+          version: v0.1.7
+```
+
+Minimal pull request check:
+
+```yaml
+jobs:
+  drydock:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - uses: sholdee/drydock/setup-action@main
+        with:
+          version: v0.1.7
+      - run: drydock test apps --path .
+      - run: drydock diff apps --path . --ref-orig origin/${{ github.base_ref }}
+```
+
+See [`docs/github-actions.md`](docs/github-actions.md) for full action inputs,
+GitHub App token support, cache behavior, comments, artifacts, and outputs.
 
 Release containers are published to GHCR for Linux `amd64` and `arm64`:
 
@@ -93,6 +137,10 @@ Compare a pull request checkout against a baseline tree:
 git worktree add ../baseline main
 drydock diff apps --path . --path-orig ../baseline
 ```
+
+Diff commands use changed-only selection by default. Use
+`--changed-only=false` when you want to render and compare every discovered
+Application.
 
 You can also compare against committed Git refs without creating a baseline
 worktree:
@@ -272,6 +320,8 @@ Join the home-operations Discord at <https://discord.gg/home-operations>.
   editor schema, CMP compatibility, and exec plugin security.
 - [`docs/compatibility.md`](docs/compatibility.md): supported Argo CD behavior
   and intentional runtime boundaries.
+- [`docs/github-actions.md`](docs/github-actions.md): setup action and PR
+  action usage.
 - [`docs/release.md`](docs/release.md): release and Argo CD dependency upgrade
   notes.
 - [`docs/reports/live-integration-design-gate.md`](docs/reports/live-integration-design-gate.md):

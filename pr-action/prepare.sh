@@ -1,0 +1,112 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+bool() {
+  case "$1" in
+    true | false) ;;
+    *)
+      echo "$2 must be true or false, got '$1'." >&2
+      exit 1
+      ;;
+  esac
+}
+
+positive_int() {
+  case "$1" in
+    '' ) return 0 ;;
+    *[!0-9]* )
+      echo "$2 must be a positive integer, got '$1'." >&2
+      exit 1
+      ;;
+    0 )
+      echo "$2 must be greater than zero." >&2
+      exit 1
+      ;;
+  esac
+}
+
+bool "${DRYDOCK_INPUT_CACHE}" cache
+bool "${DRYDOCK_INPUT_SAVE_CACHE}" save-cache
+bool "${DRYDOCK_INPUT_CACHE_UNTRUSTED_RESTORE}" cache-untrusted-restore
+bool "${DRYDOCK_INPUT_UPLOAD_ARTIFACTS}" upload-artifacts
+bool "${DRYDOCK_INPUT_COMMENT_EMPTY}" comment-empty
+bool "${DRYDOCK_INPUT_COMMENT_CONTINUE_ON_ERROR}" comment-continue-on-error
+positive_int "${DRYDOCK_INPUT_ARTIFACT_RETENTION_DAYS}" artifact-retention-days
+positive_int "${DRYDOCK_INPUT_DIFF_MAX_BYTES}" diff-max-bytes
+
+case "${DRYDOCK_INPUT_COMMENT_MODE}" in
+  none | diff | images | both) ;;
+  *)
+    echo "comment-mode must be none, diff, images, or both, got '${DRYDOCK_INPUT_COMMENT_MODE}'." >&2
+    exit 1
+    ;;
+esac
+
+runner_temp="${RUNNER_TEMP:-/tmp}"
+work_dir="$(mktemp -d "${runner_temp%/}/drydock-pr-action.XXXXXX")"
+cache_path="${DRYDOCK_INPUT_CACHE_PATH}"
+if [[ -z "${cache_path}" ]]; then
+  cache_path="${runner_temp%/}/drydock-cache"
+fi
+mkdir -p "${cache_path}"
+
+trusted_context=true
+case "${GITHUB_EVENT_NAME:-}" in
+  pull_request | pull_request_target)
+    if [[ -n "${DRYDOCK_PR_HEAD_REPO:-}" && "${DRYDOCK_PR_HEAD_REPO}" != "${GITHUB_REPOSITORY:-}" ]]; then
+      trusted_context=false
+    fi
+    ;;
+esac
+
+cache_restore=false
+cache_save=false
+if [[ "${DRYDOCK_INPUT_CACHE}" == "true" ]]; then
+  if [[ "${trusted_context}" == "true" || "${DRYDOCK_INPUT_CACHE_UNTRUSTED_RESTORE}" == "true" ]]; then
+    cache_restore=true
+  fi
+  if [[ "${trusted_context}" == "true" && "${DRYDOCK_INPUT_SAVE_CACHE}" == "true" ]]; then
+    cache_save=true
+  fi
+fi
+
+repo_key="${GITHUB_REPOSITORY:-repository}"
+repo_key="${repo_key//\//-}"
+prefix="${DRYDOCK_INPUT_CACHE_KEY_PREFIX:-drydock}"
+suffix="${DRYDOCK_INPUT_CACHE_KEY_SUFFIX:-v1}"
+version="${DRYDOCK_RESOLVED_VERSION:-unknown}"
+
+cache_key="${DRYDOCK_INPUT_CACHE_KEY}"
+if [[ -z "${cache_key}" ]]; then
+  cache_key="${prefix}-${RUNNER_OS:-unknown}-${RUNNER_ARCH:-unknown}-${repo_key}-${version}-${suffix}"
+fi
+
+restore_keys="${DRYDOCK_INPUT_CACHE_RESTORE_KEYS}"
+if [[ -z "${restore_keys}" ]]; then
+  restore_keys="${prefix}-${RUNNER_OS:-unknown}-${RUNNER_ARCH:-unknown}-${repo_key}-${version}-
+${prefix}-${RUNNER_OS:-unknown}-${RUNNER_ARCH:-unknown}-${repo_key}-
+${prefix}-${RUNNER_OS:-unknown}-${RUNNER_ARCH:-unknown}-"
+fi
+
+diff_artifact_name="${DRYDOCK_INPUT_DIFF_ARTIFACT_NAME}"
+if [[ -z "${diff_artifact_name}" ]]; then
+  diff_artifact_name="drydock-diff-${GITHUB_RUN_ID:-run}-${GITHUB_RUN_ATTEMPT:-1}"
+fi
+image_artifact_name="${DRYDOCK_INPUT_IMAGE_ARTIFACT_NAME}"
+if [[ -z "${image_artifact_name}" ]]; then
+  image_artifact_name="drydock-images-${GITHUB_RUN_ID:-run}-${GITHUB_RUN_ATTEMPT:-1}"
+fi
+
+{
+  echo "work-dir=${work_dir}"
+  echo "cache-path=${cache_path}"
+  echo "cache-key=${cache_key}"
+  echo "cache-restore=${cache_restore}"
+  echo "cache-save=${cache_save}"
+  echo "trusted-context=${trusted_context}"
+  echo "diff-artifact-name=${diff_artifact_name}"
+  echo "image-artifact-name=${image_artifact_name}"
+  echo "restore-keys<<EOF"
+  printf '%s\n' "${restore_keys}"
+  echo "EOF"
+} >> "${GITHUB_OUTPUT}"
