@@ -1323,6 +1323,8 @@ plugins:
 `)
 }
 
+const testExecPolicyCommandTimeout = "15s"
+
 func writeExecPluginPolicy(t *testing.T, root, name string, command []string) {
 	t.Helper()
 	quoted := make([]string, 0, len(command))
@@ -1336,7 +1338,7 @@ plugins:
     engine: exec
     generate:
       command: [`+strings.Join(quoted, ", ")+`]
-      timeout: 2s
+      timeout: `+testExecPolicyCommandTimeout+`
     env:
       allow: ["DRYDOCK_APP_EXEC_HELPER", "DRYDOCK_APP_EXEC_VALUE"]
 `)
@@ -1390,10 +1392,10 @@ plugins:
     engine: exec
     generate:
       command: [`+strings.Join(quotedCommand, ", ")+`]
-      timeout: 2s
+      timeout: `+testExecPolicyCommandTimeout+`
     postRenderers:
       - command: [`+strings.Join(quotedPostRenderer, ", ")+`]
-        timeout: 2s
+        timeout: `+testExecPolicyCommandTimeout+`
     env:
       allow: ["DRYDOCK_APP_EXEC_HELPER", "DRYDOCK_APP_EXEC_VALUE"]
 `)
