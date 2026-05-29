@@ -33,8 +33,6 @@ func evaluateGitGenerator(ctx generatorContext, generator argoappv1.ApplicationS
 }
 
 func gitGeneratorParamSets(repoRoot, manifestPath string, git *argoappv1.GitGenerator, useGoTemplate bool, goTemplateOptions []string) ([]generatorParamSet, []diagnostic.Diagnostic, bool, error) {
-	var out []generatorParamSet
-	var diags []diagnostic.Diagnostic
 	if len(git.Directories) == 0 && len(git.Files) == 0 {
 		return nil, unsupportedGeneratorDiagnostic(manifestPath), false, nil
 	}
@@ -50,9 +48,7 @@ func gitGeneratorParamSets(repoRoot, manifestPath string, git *argoappv1.GitGene
 	if err != nil {
 		return nil, fileDiags, true, err
 	}
-	diags = append(diags, fileDiags...)
-	out = append(out, fileSets...)
-	return out, diags, true, nil
+	return fileSets, fileDiags, true, nil
 }
 
 func gitDirectoryParamSets(repoRoot, manifestPath string, git *argoappv1.GitGenerator, useGoTemplate bool, goTemplateOptions []string) ([]generatorParamSet, error) {

@@ -66,7 +66,14 @@ spec:
 		t.Fatalf("len(apps) = %d, want 1", len(apps))
 	}
 
-	app := apps[0].Application
+	assertTemplatePatchMetadata(t, apps[0])
+	assertTemplatePatchSyncPolicy(t, apps[0])
+}
+
+func assertTemplatePatchMetadata(t *testing.T, generated GeneratedApplication) {
+	t.Helper()
+
+	app := generated.Application
 	if app.Namespace != "argocd" {
 		t.Fatalf("Application namespace = %q, want ApplicationSet namespace", app.Namespace)
 	}
@@ -82,6 +89,12 @@ spec:
 	if app.Spec.Destination.Namespace != "alpha-ns" {
 		t.Fatalf("destination namespace = %q, want patched namespace", app.Spec.Destination.Namespace)
 	}
+}
+
+func assertTemplatePatchSyncPolicy(t *testing.T, generated GeneratedApplication) {
+	t.Helper()
+
+	app := generated.Application
 	if app.Spec.SyncPolicy == nil {
 		t.Fatal("syncPolicy = nil, want patched syncPolicy")
 	}
