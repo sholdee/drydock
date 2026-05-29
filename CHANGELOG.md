@@ -1,5 +1,31 @@
 # Changelog
 
+## [0.1.7](https://github.com/sholdee/drydock/compare/v0.1.6...v0.1.7) (2026-05-29)
+
+
+### Features
+
+* report jsonnet module version ([2100c70](https://github.com/sholdee/drydock/commit/2100c7072e77f849ef7fd8e38dc90130889d93c1))
+
+
+### Bug Fixes
+
+* acquire helm chart dependencies ([4fed1e6](https://github.com/sholdee/drydock/commit/4fed1e6f1b7ca1669723a6a7da3e7ae87a649d1a))
+* align applicationset semantics ([88e3a1d](https://github.com/sholdee/drydock/commit/88e3a1d5b9cf99d64da8daa1be533e5fc1ea1c53))
+* align helm source semantics ([d735d1a](https://github.com/sholdee/drydock/commit/d735d1a3f3395ef431c44e22723a8e55d8061cbd))
+* align offline Argo CD rendering semantics ([005a14e](https://github.com/sholdee/drydock/commit/005a14efdc6df64e80fff0ae535520cc07d4a6aa))
+* align source selection semantics ([1414f6b](https://github.com/sholdee/drydock/commit/1414f6b53f18c6b176d69b7bd968e0a0bedf77b5))
+* apply source kustomize options ([d09d7c7](https://github.com/sholdee/drydock/commit/d09d7c7a50830b2455a26d7aa31dd2d2e9aedaf0))
+* apply tracking metadata and cache safety ([d1ac707](https://github.com/sholdee/drydock/commit/d1ac707bfda1b8ebdd4fdb6f10501a246ef62a1a))
+* clarify runtime boundary diagnostics ([a2e48e3](https://github.com/sholdee/drydock/commit/a2e48e3583f854405e7b947537c586c44c84832f))
+* render directory jsonnet safely ([788e1d3](https://github.com/sholdee/drydock/commit/788e1d38e93c06a73e57b746b21a2749c68df6c6))
+
+
+### Documentation
+
+* activate tracking and cache safety cases ([173b775](https://github.com/sholdee/drydock/commit/173b775594ca914b48c354e825053a6ef6cb1e1b))
+* document helm source boundaries ([92b9e66](https://github.com/sholdee/drydock/commit/92b9e66bcef664d5142929c0d8ec806085c5fabb))
+
 ## [0.1.6](https://github.com/sholdee/drydock/compare/v0.1.5...v0.1.6) (2026-05-28)
 
 
