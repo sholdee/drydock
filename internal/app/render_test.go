@@ -14,6 +14,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
+	sigsyaml "sigs.k8s.io/yaml"
 )
 
 func TestRenderApplicationLastSourceWins(t *testing.T) {
@@ -92,6 +93,39 @@ func TestRenderOptionsCopiesSourceKustomizeAndArgoEnv(t *testing.T) {
 	}
 	if got := opts.ArgoEnv.Envsubst("$ARGOCD_APP_NAME:$ARGOCD_APP_NAMESPACE:$ARGOCD_APP_PROJECT_NAME:$ARGOCD_APP_SOURCE_PATH:$ARGOCD_APP_REVISION_SHORT_8"); got != "demo:argocd:k3s:apps/demo:12345678" {
 		t.Fatalf("ArgoEnv substitution = %q", got)
+	}
+}
+
+func TestRenderOptionsCopiesDirectoryJsonnet(t *testing.T) {
+	application := argoappv1.Application{
+		ObjectMeta: metav1.ObjectMeta{Name: "demo", Namespace: "argocd"},
+	}
+	source := argoappv1.ApplicationSource{
+		Directory: &argoappv1.ApplicationSourceDirectory{
+			Jsonnet: argoappv1.ApplicationSourceJsonnet{
+				ExtVars: []argoappv1.JsonnetVar{{Name: "name", Value: "from-source"}},
+				TLAs:    []argoappv1.JsonnetVar{{Name: "namespace", Value: "default"}},
+				Libs:    []string{"lib"},
+			},
+		},
+	}
+
+	opts, err := renderOptions(application, source)
+	if err != nil {
+		t.Fatalf("renderOptions() error = %v", err)
+	}
+	source.Directory.Jsonnet.ExtVars[0].Value = "mutated"
+	source.Directory.Jsonnet.TLAs[0].Value = "mutated"
+	source.Directory.Jsonnet.Libs[0] = "mutated"
+
+	if opts.Jsonnet.ExtVars[0].Value != "from-source" {
+		t.Fatalf("Jsonnet.ExtVars[0].Value = %q, want from-source", opts.Jsonnet.ExtVars[0].Value)
+	}
+	if opts.Jsonnet.TLAs[0].Value != "default" {
+		t.Fatalf("Jsonnet.TLAs[0].Value = %q, want default", opts.Jsonnet.TLAs[0].Value)
+	}
+	if opts.Jsonnet.Libs[0] != "lib" {
+		t.Fatalf("Jsonnet.Libs[0] = %q, want lib", opts.Jsonnet.Libs[0])
 	}
 }
 
@@ -721,6 +755,33 @@ func TestRenderApplicationUsesExplicitDirectoryRenderer(t *testing.T) {
 	}
 	if _, ok := manifestByName(result.Manifests, "directory-only"); !ok {
 		t.Fatalf("manifests = %#v, want directory-only manifest from directory renderer", result.Manifests)
+	}
+}
+
+func TestRenderApplicationRendersDirectoryJsonnetSemanticFixture(t *testing.T) {
+	root := filepath.Join("..", "..", "testdata", "semantic-remediation", "directory-jsonnet", "edges")
+	data, err := os.ReadFile(filepath.Join(root, "application.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var application argoappv1.Application
+	if err := sigsyaml.Unmarshal(data, &application); err != nil {
+		t.Fatalf("yaml.Unmarshal() error = %v", err)
+	}
+
+	result, err := RenderApplication(context.Background(), application, localProvider{repoRoot: root})
+	if err != nil {
+		t.Fatalf("RenderApplication() error = %v", err)
+	}
+	for _, name := range []string{"hidden-edge", "jsonnet-edge"} {
+		if _, ok := manifestByName(result.Manifests, name); !ok {
+			t.Fatalf("manifests = %#v, want %s from semantic fixture", result.Manifests, name)
+		}
+	}
+	for _, unexpected := range []string{"skipped-edge", "generated-from-data"} {
+		if _, ok := manifestByName(result.Manifests, unexpected); ok {
+			t.Fatalf("manifests = %#v, did not expect %s", result.Manifests, unexpected)
+		}
 	}
 }
 

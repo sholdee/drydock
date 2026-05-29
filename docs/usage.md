@@ -116,11 +116,11 @@ to bounded host CPU parallelism; single-Application commands default to `1`.
 Parallel rendering preserves selected Application order for manifests,
 statuses, diagnostics, cache events, and structured output.
 
-Rendering supports directory sources, Kustomize sources, local Helm charts,
-Kustomize `helmCharts`, remote Kustomize HTTP(S) files and Git refs, and Argo CD
-chart-only remote Helm sources. Path-based Git sources use the local `--path`
-tree when the source path exists there. Use `--repo-map URL=PATH` to force a
-source repository URL to a local checkout.
+Rendering supports directory sources, directory Jsonnet, Kustomize sources,
+local Helm charts, Kustomize `helmCharts`, remote Kustomize HTTP(S) files and
+Git refs, and Argo CD chart-only remote Helm sources. Path-based Git sources
+use the local `--path` tree when the source path exists there. Use
+`--repo-map URL=PATH` to force a source repository URL to a local checkout.
 
 Repositories tagged with `argocd` or `gitops` are not always Argo CD
 Application fleet repositories. `drydock test apps` reports zero applications

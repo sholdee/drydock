@@ -36,6 +36,7 @@ type RenderOptions struct {
 	APIVersions                  []string
 	BuildOptions                 []string
 	Kustomize                    *argoappv1.ApplicationSourceKustomize
+	Jsonnet                      argoappv1.ApplicationSourceJsonnet
 	ArgoEnv                      argoappv1.Env
 	RefRoots                     map[string]string
 	RefSources                   map[string]ResolvedSource

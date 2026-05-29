@@ -11,8 +11,6 @@ spec:
     path: repo
     directory:
       recurse: true
-      include: '{*.yaml,*.json,*.jsonnet}'
-      exclude: skip.yaml
       jsonnet:
         extVars:
           - name: name

@@ -130,6 +130,10 @@ Supported:
 - Directory rendering that skips values-like YAML documents only when both
   `apiVersion` and `kind` are absent, and fails clearly when exactly one is
   present.
+- Directory rendering honors `+argocd:skip-file-rendering`, walks hidden
+  directories when `recurse` is enabled, renders Jsonnet through native Go
+  libraries with extVars, TLAs, code mode, env substitution, and repo-relative
+  libs, and skips drydock cache metadata sidecars.
 - Local Kustomize rendering with supported `kustomize.buildOptions`:
   `--enable-helm`, `--helm-api-versions`, and
   `--load-restrictor=LoadRestrictionsRootOnly|LoadRestrictionsNone`.
@@ -157,6 +161,12 @@ Supported:
   the CLI and default Go client.
 - Injectable in-process plugin renderers, named plugin registry dispatch, and
   plugin timeout controls for embedding callers.
+
+Documented runtime-offline safety boundary:
+
+- Directory rendering rejects symlinked source path components and skips
+  symlinked manifest files, even when an Argo CD repo-server could render an
+  in-repository symlink target.
 
 Not supported:
 

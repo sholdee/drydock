@@ -1,9 +1,9 @@
-{
+function(namespace) {
   apiVersion: 'v1',
   kind: 'ConfigMap',
   metadata: {
     name: std.extVar('name'),
-    namespace: std.extVar('namespace'),
+    namespace: namespace,
   },
   data: {
     source: 'jsonnet',

@@ -176,6 +176,42 @@ metadata:
 	}
 }
 
+func TestDirectoryRendererRecurseIncludesHiddenDirectoriesExceptDrydockCache(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "apps", "root.yaml"), `
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: root
+`)
+	writeFile(t, filepath.Join(root, "apps", ".hidden", "child.yaml"), `
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: hidden-child
+`)
+	writeFile(t, filepath.Join(root, "apps", drydockCacheMetadataDirName, "ignored.yaml"), `
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: cache-metadata
+`)
+
+	result, diags, err := (DirectoryRenderer{}).Render(context.Background(), ResolvedSource{
+		RepoRoot: root,
+		Path:     "apps",
+	}, RenderOptions{DirectoryRecurse: true})
+	if err != nil {
+		t.Fatalf("Render() error = %v", err)
+	}
+	if len(diags) != 0 {
+		t.Fatalf("diagnostics = %#v", diags)
+	}
+	if got := directoryManifestNames(result); !reflect.DeepEqual(got, []string{"hidden-child", "root"}) {
+		t.Fatalf("rendered names = %#v, want root and hidden-child", got)
+	}
+}
+
 func TestDirectoryRendererHonorsDirectoryInclude(t *testing.T) {
 	root := t.TempDir()
 	writeFile(t, filepath.Join(root, "apps", "root.yaml"), `
@@ -344,6 +380,42 @@ metadata:
 	}
 }
 
+func TestDirectoryRendererRecursivePreScanIncludesHiddenKustomizations(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "apps", ".hidden", "kustomization.yaml"), `
+configMapGenerator:
+  - name: generated-config
+    files:
+      - config/settings.yaml
+`)
+	writeFile(t, filepath.Join(root, "apps", ".hidden", "config", "settings.yaml"), `
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: generator-data
+`)
+	writeFile(t, filepath.Join(root, "apps", ".hidden", "visible.yaml"), `
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: visible
+`)
+
+	result, diags, err := (DirectoryRenderer{}).Render(context.Background(), ResolvedSource{
+		RepoRoot: root,
+		Path:     "apps",
+	}, RenderOptions{DirectoryRecurse: true})
+	if err != nil {
+		t.Fatalf("Render() error = %v", err)
+	}
+	if len(diags) != 0 {
+		t.Fatalf("diagnostics = %#v", diags)
+	}
+	if got := directoryManifestNames(result); !reflect.DeepEqual(got, []string{"visible"}) {
+		t.Fatalf("rendered names = %#v, want visible only", got)
+	}
+}
+
 func TestDirectoryRendererSkipsYAMLDocumentsWithoutAPIVersionAndKind(t *testing.T) {
 	root := t.TempDir()
 	writeFile(t, filepath.Join(root, "apps", "values.yaml"), `
@@ -369,6 +441,97 @@ metadata:
 	}
 	if len(result) != 1 || result[0].Object.GetName() != "visible" {
 		t.Fatalf("result = %#v, want visible ConfigMap only", result)
+	}
+}
+
+func TestDirectoryRendererSkipsArgocdSkipFileRenderingMarkerBeforeDecode(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "apps", "skip.yaml"), `
+# +argocd:skip-file-rendering
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: first
+metadata:
+  name: duplicate-would-fail
+`)
+	writeFile(t, filepath.Join(root, "apps", "skip.jsonnet"), `
+// +argocd:skip-file-rendering
+this is not valid jsonnet
+`)
+	writeFile(t, filepath.Join(root, "apps", "visible.yaml"), `
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: visible
+`)
+
+	result, diags, err := (DirectoryRenderer{}).Render(context.Background(), ResolvedSource{
+		RepoRoot: root,
+		Path:     "apps",
+	}, RenderOptions{})
+	if err != nil {
+		t.Fatalf("Render() error = %v", err)
+	}
+	if len(diags) != 0 {
+		t.Fatalf("diagnostics = %#v", diags)
+	}
+	if got := directoryManifestNames(result); !reflect.DeepEqual(got, []string{"visible"}) {
+		t.Fatalf("rendered names = %#v, want visible only", got)
+	}
+}
+
+func TestDirectoryRendererIgnoresNonKubernetesDecodeErrorsAndScalars(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "apps", "duplicate-values.yaml"), `
+image:
+  tag: one
+  tag: two
+`)
+	writeFile(t, filepath.Join(root, "apps", "scalar.yaml"), `plain scalar`)
+	writeFile(t, filepath.Join(root, "apps", "array.json"), `["plain", "array"]`)
+	writeFile(t, filepath.Join(root, "apps", "visible.yaml"), `
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: visible
+`)
+
+	result, diags, err := (DirectoryRenderer{}).Render(context.Background(), ResolvedSource{
+		RepoRoot: root,
+		Path:     "apps",
+	}, RenderOptions{})
+	if err != nil {
+		t.Fatalf("Render() error = %v", err)
+	}
+	if len(diags) != 0 {
+		t.Fatalf("diagnostics = %#v", diags)
+	}
+	if got := directoryManifestNames(result); !reflect.DeepEqual(got, []string{"visible"}) {
+		t.Fatalf("rendered names = %#v, want visible only", got)
+	}
+}
+
+func TestDirectoryRendererRejectsKubernetesLookingDecodeErrors(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "apps", "broken.yaml"), `
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: first
+metadata:
+  name: duplicate
+`)
+
+	_, _, err := (DirectoryRenderer{}).Render(context.Background(), ResolvedSource{
+		RepoRoot: root,
+		Path:     "apps",
+	}, RenderOptions{})
+	if err == nil {
+		t.Fatal("Render() error = nil, want Kubernetes-looking decode error")
+	}
+	if !strings.Contains(err.Error(), "decode YAML document failed") {
+		t.Fatalf("Render() error = %v, want decode YAML document failure", err)
 	}
 }
 

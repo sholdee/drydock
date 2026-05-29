@@ -214,9 +214,10 @@ Renderers implement `internal/render.Renderer`. The default implementation
 path must not shell out.
 
 Directory rendering parses YAML/JSON files, flattens Kubernetes `List`
-objects, stays within the resolved repository root, rejects escaping source
-paths and symlinked source path components, and skips symlinked files or
-directories while walking.
+objects, renders Jsonnet with native Go libraries, honors Argo CD's
+`+argocd:skip-file-rendering` marker, stays within the resolved repository
+root, rejects escaping source paths and symlinked source path components, and
+skips symlinked files or directories while walking.
 
 Kustomize rendering uses Go libraries. Do not enable Kustomize's Helm shellout
 plugin. Validate local graph references before rendering and reject unsupported

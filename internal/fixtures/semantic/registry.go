@@ -100,8 +100,8 @@ func Cases() []Case {
 			Phase:             "6",
 			Category:          "directory-jsonnet",
 			FixturePath:       "testdata/semantic-remediation/directory-jsonnet/edges",
-			Status:            StatusPending,
-			Reason:            "R6/R8/R9/R11/R12 directory/Jsonnet parity is incomplete.",
+			Status:            StatusActive,
+			Reason:            "R6/R8/R9/R11/R12 directory, skip marker, and Jsonnet behavior are covered by Phase 6 tests.",
 			VerificationScope: "go test ./internal/render ./internal/app -run 'Directory|Jsonnet'",
 		},
 		{
