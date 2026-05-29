@@ -12,7 +12,7 @@ When upgrading the Argo CD module:
 
 1. Review API changes for `Application`, `ApplicationSet`, `AppProject`,
    source rendering options, and diff customization semantics.
-2. Run `mise run test`, `mise run vet`, and `mise run lint`.
+2. Run `mise run test-race`, `mise run vet`, and `mise run lint`.
 3. Run focused compatibility tests for ApplicationSet generators, global
    settings parsing, AppProject validation, and source acquisition.
 4. Update `docs/compatibility.md` in the same change.

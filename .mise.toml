@@ -14,11 +14,11 @@ run = "go test ./..."
 
 [tasks.test-race]
 description = "Run Go tests with the race detector"
-run = "go test -race ./... -coverprofile=coverage.txt -covermode=atomic"
+run = "go test -race ./..."
 
 [tasks.coverage]
-description = "Print coverage summary for coverage.txt"
-run = "go tool cover -func=coverage.txt"
+description = "Generate and print Go coverage summary"
+run = "go test ./... -coverprofile=coverage.txt -covermode=atomic && go tool cover -func=coverage.txt"
 
 [tasks.vet]
 description = "Run go vet"
@@ -66,4 +66,4 @@ run = "lefthook install"
 
 [tasks.ci]
 description = "Run the main local CI checks"
-depends = ["mod-verify", "mod-tidy-check", "test", "vet", "lint", "markdownlint", "actionlint", "zizmor", "whitespace"]
+depends = ["mod-verify", "mod-tidy-check", "test-race", "vet", "lint", "markdownlint", "actionlint", "zizmor", "whitespace"]
