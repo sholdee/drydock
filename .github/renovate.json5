@@ -126,6 +126,12 @@
       automerge: true,
     },
     {
+      description: 'Automerge mise-managed tool minor/patch updates',
+      matchManagers: ['mise'],
+      matchUpdateTypes: ['minor', 'patch'],
+      automerge: true,
+    },
+    {
       description: 'Automerge minor/patch CI tool updates',
       matchPackageNames: [
         'rhysd/actionlint',
@@ -143,7 +149,7 @@
     {
       customType: 'regex',
       description: ['Process go run tool versions in mise tasks'],
-      managerFilePatterns: ['/^\\.mise\\.toml$/'],
+      managerFilePatterns: ['/^\\.?mise\\.toml$/'],
       matchStrings: [
         'go run github\\.com/(?<depName>[\\w-]+/[\\w-]+)/.+@v(?<currentValue>[\\d.]+)',
       ],
@@ -153,7 +159,7 @@
     {
       customType: 'regex',
       description: ['Process govulncheck version in mise tasks'],
-      managerFilePatterns: ['/^\\.mise\\.toml$/'],
+      managerFilePatterns: ['/^\\.?mise\\.toml$/'],
       matchStrings: [
         'go run golang\\.org/x/vuln/cmd/govulncheck@v(?<currentValue>[\\d.]+)',
       ],

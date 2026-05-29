@@ -6,7 +6,7 @@
   "include-component-in-tag": false,
   "skip-github-release": true,
   "exclude-paths": [
-    ".mise.toml",
+    "mise.toml",
     "mise.lock",
     ".github",
     ".devcontainer",
