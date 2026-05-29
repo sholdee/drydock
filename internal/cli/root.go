@@ -16,6 +16,7 @@ type VersionInfo struct {
 	GitOpsEngineModule string
 	HelmModule         string
 	KustomizeModule    string
+	JsonnetModule      string
 	KubernetesModule   string
 }
 

@@ -12,6 +12,7 @@ func TestModuleLabelIncludesRuntimeModuleVersions(t *testing.T) {
 		gitOpsEngineModulePath,
 		helmModulePath,
 		kustomizeModulePath,
+		jsonnetModulePath,
 		kubernetesModulePath,
 	} {
 		t.Run(modulePath, func(t *testing.T) {

@@ -29,6 +29,7 @@ func newVersionCommand(info VersionInfo) *cobra.Command {
 				{name: "gitopsEngineModule", value: info.GitOpsEngineModule},
 				{name: "helmModule", value: info.HelmModule},
 				{name: "kustomizeModule", value: info.KustomizeModule},
+				{name: "jsonnetModule", value: info.JsonnetModule},
 				{name: "kubernetesModule", value: info.KubernetesModule},
 			} {
 				if module.value == "" {
