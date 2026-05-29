@@ -420,6 +420,7 @@ runs:
         DRYDOCK_INPUT_SKIP_SECRETS: ${{ inputs.skip-secrets }}
         DRYDOCK_INPUT_STRICT: ${{ inputs.strict }}
         DRYDOCK_INPUT_STRICT_CHANGED_ONLY: ${{ inputs.strict-changed-only }}
+        DRYDOCK_INPUT_UPLOAD_ARTIFACTS: ${{ inputs.upload-artifacts }}
       run: '"${GITHUB_ACTION_PATH}/run.sh"'
 
     - name: Save drydock source cache
@@ -428,6 +429,14 @@ runs:
       with:
         key: ${{ steps.prepare.outputs.cache-key }}
         path: ${{ steps.prepare.outputs.cache-path }}
+
+    - name: Upload rendered manifest diff
+      if: ${{ inputs.upload-artifacts == 'true' && steps.run.outputs.has-diff == 'true' }}
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      with:
+        name: ${{ steps.run.outputs.diff-artifact-name }}
+        path: ${{ steps.run.outputs.diff-path }}
+        retention-days: ${{ inputs.artifact-retention-days }}
 
     - name: Comment rendered manifest diff
       if: ${{ github.event_name == 'pull_request' && steps.prepare.outputs.trusted-context == 'true' && steps.run.outputs.diff-comment == 'true' }}
@@ -438,6 +447,14 @@ runs:
         message-path: ${{ steps.run.outputs.diff-comment-path }}
         repo-token: ${{ steps.app-token-client.outputs.token || steps.app-token-legacy.outputs.token || inputs.github-token || github.token }}
 
+    - name: Upload added images
+      if: ${{ inputs.upload-artifacts == 'true' && steps.run.outputs.has-images == 'true' }}
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      with:
+        name: ${{ steps.run.outputs.image-artifact-name }}
+        path: ${{ steps.run.outputs.images-path }}
+        retention-days: ${{ inputs.artifact-retention-days }}
+
     - name: Comment added images
       if: ${{ github.event_name == 'pull_request' && steps.prepare.outputs.trusted-context == 'true' && steps.run.outputs.images-comment == 'true' }}
       continue-on-error: ${{ inputs.comment-continue-on-error == 'true' }}
@@ -446,19 +463,3 @@ runs:
         message-id: ${{ github.event.pull_request.number }}/drydock-images
         message-path: ${{ steps.run.outputs.images-comment-path }}
         repo-token: ${{ steps.app-token-client.outputs.token || steps.app-token-legacy.outputs.token || inputs.github-token || github.token }}
-
-    - name: Upload rendered manifest diff
-      if: ${{ inputs.upload-artifacts == 'true' && steps.run.outputs.has-diff == 'true' }}
-      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-      with:
-        name: ${{ steps.run.outputs.diff-artifact-name }}
-        path: ${{ steps.run.outputs.diff-path }}
-        retention-days: ${{ inputs.artifact-retention-days }}
-
-    - name: Upload added images
-      if: ${{ inputs.upload-artifacts == 'true' && steps.run.outputs.has-images == 'true' }}
-      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-      with:
-        name: ${{ steps.run.outputs.image-artifact-name }}
-        path: ${{ steps.run.outputs.images-path }}
-        retention-days: ${{ inputs.artifact-retention-days }}
