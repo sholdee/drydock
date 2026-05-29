@@ -43,8 +43,8 @@ jobs:
       - name: Check go.mod tidiness
         run: mise run mod-tidy-check
 
-      - name: Test
-        run: mise run test
+      - name: Test with race detector
+        run: mise run test-race
 
       - name: Vet
         run: mise run vet

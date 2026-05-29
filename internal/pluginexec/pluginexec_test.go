@@ -15,6 +15,8 @@ import (
 	"github.com/sholdee/drydock/internal/pluginpolicy"
 )
 
+const pluginExecCommandTimeout = 10 * time.Second
+
 func TestDefaultRunnerRunsGenerateFromTempSource(t *testing.T) {
 	source := t.TempDir()
 	if err := os.WriteFile(filepath.Join(source, "marker.txt"), []byte("ok"), 0o644); err != nil {
@@ -27,7 +29,7 @@ func TestDefaultRunnerRunsGenerateFromTempSource(t *testing.T) {
 			Workdir: pluginpolicy.ExecWorkdirSource,
 			Generate: pluginpolicy.ExecCommand{
 				Command: []string{helperPath(t), "-test.run=TestHelperProcess", "--", "manifest"},
-				Timeout: time.Second,
+				Timeout: pluginExecCommandTimeout,
 			},
 			Env: pluginpolicy.ExecEnv{Allow: []string{"DRYDOCK_PLUGINEXEC_HELPER"}},
 			Output: pluginpolicy.ExecOutput{
@@ -78,7 +80,7 @@ func TestDefaultRunnerRejectsProtectedArgumentsAndCredentialURLs(t *testing.T) {
 					Workdir: pluginpolicy.ExecWorkdirSource,
 					Generate: pluginpolicy.ExecCommand{
 						Command: []string{helperPath(t), "-test.run=TestHelperProcess", "--", "manifest", tt.arg},
-						Timeout: time.Second,
+						Timeout: pluginExecCommandTimeout,
 					},
 					Env: pluginpolicy.ExecEnv{Allow: []string{"DRYDOCK_PLUGINEXEC_HELPER"}},
 					Output: pluginpolicy.ExecOutput{
@@ -108,7 +110,7 @@ func TestDefaultRunnerOmitsStderrFromFailure(t *testing.T) {
 			Workdir: pluginpolicy.ExecWorkdirSource,
 			Generate: pluginpolicy.ExecCommand{
 				Command: []string{helperPath(t), "-test.run=TestHelperProcess", "--", "fail"},
-				Timeout: time.Second,
+				Timeout: pluginExecCommandTimeout,
 			},
 			Env: pluginpolicy.ExecEnv{Allow: []string{"DRYDOCK_PLUGINEXEC_HELPER", "DRYDOCK_PLUGINEXEC_SECRET"}},
 			Output: pluginpolicy.ExecOutput{
@@ -137,7 +139,7 @@ func TestDefaultRunnerRejectsMissingCommand(t *testing.T) {
 			Workdir: pluginpolicy.ExecWorkdirSource,
 			Generate: pluginpolicy.ExecCommand{
 				Command: []string{"drydock-missing-test-command"},
-				Timeout: time.Second,
+				Timeout: pluginExecCommandTimeout,
 			},
 			Output: pluginpolicy.ExecOutput{
 				MaxStdoutBytes: pluginpolicy.DefaultMaxStdoutBytes,
@@ -188,7 +190,7 @@ func TestDefaultRunnerHonorsTimeoutAndCallerCancellation(t *testing.T) {
 			Workdir: pluginpolicy.ExecWorkdirSource,
 			Generate: pluginpolicy.ExecCommand{
 				Command: []string{helperPath(t), "-test.run=TestHelperProcess", "--", "manifest"},
-				Timeout: time.Second,
+				Timeout: pluginExecCommandTimeout,
 			},
 			Env: pluginpolicy.ExecEnv{Allow: []string{"DRYDOCK_PLUGINEXEC_HELPER"}},
 			Output: pluginpolicy.ExecOutput{
@@ -214,7 +216,7 @@ func TestDefaultRunnerEnforcesOutputLimit(t *testing.T) {
 			Workdir: pluginpolicy.ExecWorkdirSource,
 			Generate: pluginpolicy.ExecCommand{
 				Command: []string{"printf", strings.Repeat("x", 1024)},
-				Timeout: time.Second,
+				Timeout: pluginExecCommandTimeout,
 			},
 			Output: pluginpolicy.ExecOutput{
 				MaxStdoutBytes: 8,
@@ -237,16 +239,16 @@ func TestDefaultRunnerChainsPostRenderers(t *testing.T) {
 			Workdir: pluginpolicy.ExecWorkdirSource,
 			Generate: pluginpolicy.ExecCommand{
 				Command: []string{helperPath(t), "-test.run=TestHelperProcess", "--", "raw"},
-				Timeout: time.Second,
+				Timeout: pluginExecCommandTimeout,
 			},
 			PostRenderers: []pluginpolicy.ExecCommand{
 				{
 					Command: []string{helperPath(t), "-test.run=TestHelperProcess", "--", "append", "first"},
-					Timeout: time.Second,
+					Timeout: pluginExecCommandTimeout,
 				},
 				{
 					Command: []string{helperPath(t), "-test.run=TestHelperProcess", "--", "append", "second"},
-					Timeout: time.Second,
+					Timeout: pluginExecCommandTimeout,
 				},
 			},
 			Env: pluginpolicy.ExecEnv{Allow: []string{"DRYDOCK_PLUGINEXEC_HELPER"}},
@@ -286,11 +288,11 @@ func TestDefaultRunnerReportsPostRendererFailure(t *testing.T) {
 			Workdir: pluginpolicy.ExecWorkdirSource,
 			Generate: pluginpolicy.ExecCommand{
 				Command: []string{helperPath(t), "-test.run=TestHelperProcess", "--", "raw"},
-				Timeout: time.Second,
+				Timeout: pluginExecCommandTimeout,
 			},
 			PostRenderers: []pluginpolicy.ExecCommand{{
 				Command: []string{helperPath(t), "-test.run=TestHelperProcess", "--", "fail"},
-				Timeout: time.Second,
+				Timeout: pluginExecCommandTimeout,
 			}},
 			Env: pluginpolicy.ExecEnv{Allow: []string{"DRYDOCK_PLUGINEXEC_HELPER"}},
 			Output: pluginpolicy.ExecOutput{
@@ -322,7 +324,7 @@ func TestDefaultRunnerRejectsSymlinkSourceAndSourceCommand(t *testing.T) {
 			Workdir: pluginpolicy.ExecWorkdirSource,
 			Generate: pluginpolicy.ExecCommand{
 				Command: []string{helperPath(t), "-test.run=TestHelperProcess", "--", "manifest"},
-				Timeout: time.Second,
+				Timeout: pluginExecCommandTimeout,
 			},
 			Output: pluginpolicy.ExecOutput{
 				MaxStdoutBytes: pluginpolicy.DefaultMaxStdoutBytes,
@@ -346,7 +348,7 @@ func TestDefaultRunnerRejectsSymlinkSourceAndSourceCommand(t *testing.T) {
 			Workdir: pluginpolicy.ExecWorkdirSource,
 			Generate: pluginpolicy.ExecCommand{
 				Command: []string{command},
-				Timeout: time.Second,
+				Timeout: pluginExecCommandTimeout,
 			},
 			Output: pluginpolicy.ExecOutput{
 				MaxStdoutBytes: pluginpolicy.DefaultMaxStdoutBytes,

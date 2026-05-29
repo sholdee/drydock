@@ -2,74 +2,65 @@
 
 ## Product Contract
 
-`drydock` is an independent Go CLI for Argo CD GitOps repository analysis that
-runs offline from live Argo CD and Kubernetes runtime. Its core job is offline
-desired-state analysis for Argo CD Applications: render local desired state,
-validate renderability, inspect images and diagnostics, and compare current and
-baseline trees for desired-vs-desired pull request diffs.
+`drydock` is an independent Go CLI and library for Argo CD GitOps repository
+analysis. Its job is offline desired-state analysis for Argo CD Applications:
+discover, render, test, diff, inspect images, and report diagnostics without a
+running Argo CD instance or Kubernetes cluster.
 
-The default workflow must remain a self-contained Go binary using checked-out
-files plus explicit local caches. It may fetch declared Git, HTTP Helm, OCI
-Helm, and remote Kustomize sources into those caches unless `--offline` is set.
-Do not require a Kubernetes cluster, `kubectl`, the `argocd` CLI, Helm CLI,
-Kustomize CLI, an external renderer, an Argo CD server, or any live runtime
-dependency for default render, diff, image, test, or diagnostic paths. Shellout
-config-management plugin execution is allowed only when a trusted drydock plugin
-policy matches and the caller explicitly passes `--enable-plugins`.
+Default render, diff, test, image, and diag paths must remain native Go
+execution in a single static binary. Do not require `kubectl`, `argocd`, Helm
+CLI, Kustomize CLI, a repo-server wrapper, an external renderer, or default
+config-management plugin shellouts.
 
-In this repository, "offline" means no running cluster or Argo CD instance is
-required; it does not mean source networks are disabled. Network-aware
-acquisition may exist only as declared source cache population. Live
-Kubernetes, live Argo CD, server-side diff, defaulting, admission, managed
-fields ownership prediction, SCM/cloud/provider API calls, and shellout
+In this repository, "offline" means offline from live Argo CD and Kubernetes
+runtime. It does not mean source networks are always disabled. `drydock` may
+fetch declared Git, HTTP Helm, OCI Helm, and remote Kustomize sources into
+explicit local caches unless `--offline` is set.
+
+Live Kubernetes, live Argo CD, server-side diff, defaulting, admission, managed
+fields ownership prediction, SCM/cloud/provider API calls, and new shellout
 renderers require an approved design update first.
+
+## Fresh Agent Workflow
+
+1. Read this file.
+2. Load only the relevant section of `docs/agent-reference.md`.
+3. Use `rg` first, then read the smallest relevant files.
+4. Make narrow, behavior-preserving changes unless the task asks otherwise.
+5. Run the smallest meaningful validation for the change.
+6. Report skipped or approval-gated checks explicitly.
 
 ## Read This First
 
-Use these entry points before substantive work:
-
-- `docs/agent-reference.md`: task-specific agent constraints and canonical
-  links.
+- `docs/agent-reference.md`: task-specific constraints and canonical links.
 - `docs/README.md`: documentation ownership map.
-- `docs/design.md`: canonical product architecture and behavior model.
-- `docs/compatibility.md`: supported Argo CD behavior and runtime-boundary
-  status.
-- `docs/source-acquisition.md`: Git, Helm, remote Kustomize, cache, and auth
-  behavior.
-- `docs/reports/live-integration-design-gate.md`: required before
-  proposing live runtime, server-side diff, defaulting, admission, or
-  managed-fields work.
-
-If a repo-local `CLAUDE.md` exists, read it alongside this file and resolve
-conflicts conservatively.
+- `docs/design.md`: product architecture and behavior model.
+- `docs/compatibility.md`: supported Argo CD behavior and runtime boundary.
+- `docs/source-acquisition.md`: Git, Helm, remote Kustomize, cache, and auth.
+- `docs/plugin-policy.md`: trusted plugin policy and opt-in exec rendering.
+- `docs/reports/live-integration-design-gate.md`: required before proposing
+  live runtime, server-side diff, defaulting, admission, or managed-fields work.
 
 ## Subagent Sandbox Rules
 
-Subagents must not request sandbox escalation for routine implementation,
-review, or verification. Run local, non-network commands that work inside the
-current sandbox. If a useful command would require escalation, network access,
-or approval, skip it, report the verification gap, and continue.
+Delegated workers and reviewers must not request sandbox escalation.
 
-Every worker and reviewer prompt for delegated phase work must include this
-exact constraint:
+Include this line in worker and reviewer prompts:
 
-> Do not request sandbox escalation. If a useful command would require
-> approval, network, or escalation, skip it and report it as skipped.
+> Do not request sandbox escalation. If a command needs approval, network
+> access, or broader filesystem access, skip it and report the verification gap.
 
-Treat approval-gated checks as skipped verification, not blockers. Do not wait
-on a subagent approval prompt before starting other independent work. If a
-spawned agent requests approval anyway, redirect it once with the constraint
-above or close/replace it. If a skipped command is required to prove
-correctness, record the gap and use another local check or a narrower review.
-Controller prompts for delegated phases should state that approval prompts from
-workers or reviewers are abandoned as skipped verification, never treated as
-human-blocking phase status.
+Treat approval-gated checks as skipped verification, not blockers. Continue
+independent work while skipped checks are reported. If a delegated agent asks
+for approval anyway, remind it once; if it still blocks, replace it or mark that
+check skipped. Only the controller agent should request escalation, and only
+when the user-facing task requires it.
 
 ## Hard Constraints
 
 - Do not add default shellouts to `helm`, `kustomize`, `kubectl`, `argocd`, or
-  config-management plugins. Exec plugin policy support must stay opt-in via
-  `--enable-plugins` and trusted policy provenance.
+  config-management plugins. Exec plugins require trusted policy provenance
+  plus explicit `--enable-plugins`.
 - Do not add live Kubernetes or Argo CD server behavior without updating the
   live runtime boundary document and preserving `--offline` behavior.
 - Do not hard-code `home-ops` paths, chart versions, branches, or repository
@@ -84,28 +75,28 @@ human-blocking phase status.
   Application-aware; overlapping Applications are not collapsed to one owner.
 - Do not dedupe repeated resources across Applications. Last-wins behavior
   applies only inside one Application and must emit a diagnostic.
-- Keep caches outside the current and baseline repository trees, protected
-  roots, and symlink-resolved equivalents.
-- Keep stdout machine-parseable for structured/list outputs; diagnostics and
+- Keep caches outside current and baseline repository trees, protected roots,
+  and symlink-resolved equivalents.
+- Keep stdout machine-parseable for structured/list outputs. Diagnostics and
   failure summaries belong on stderr unless status text is the primary output.
 
 ## Common Mistakes
 
-- Reintroducing a separate network-enabling flag. `--offline` is the
-  user-facing switch for disabling declared source acquisition.
+- Reintroducing `--allow-network`; `--offline` is the source-acquisition
+  switch.
+- Confusing runtime-offline analysis with source-network-disabled analysis.
+- Treating native plugin compatibility or argocd-vault-plugin compatibility as
+  permission for default shellouts.
 - Hiding Secrets or CRDs by default. `--skip-secrets`, `--skip-crds`, and
   `--skip-kind` are explicit opt-ins.
-- Treating all Lua customization as metadata-only. Custom health Lua is now
-  validated offline against rendered desired manifests during render tests;
-  resource action Lua remains metadata-only/deferred.
-- Adding provider generator network/API access. Provider-backed
-  ApplicationSet generators are fixture-backed offline.
-- Assuming old plans or reports describe current file sizes. Use `rg --files`,
-  `wc -l`, and current code before repeating historical claims.
+- Treating custom health Lua as metadata-only. Custom health Lua is validated
+  offline against rendered desired manifests during render tests; resource
+  action Lua remains metadata-only/deferred.
+- Adding provider generator network/API access. Provider-backed ApplicationSet
+  generators are fixture-backed offline.
+- Trusting old audit or report claims without checking the current code.
 
 ## Task Routing
-
-Use `rg` first, then read the smallest relevant files.
 
 | Task | Start Here |
 | --- | --- |
@@ -125,19 +116,16 @@ For detailed task constraints, read the matching section in
 
 ## Validation
 
-Run the smallest check that covers your change. Common checks:
+Run the smallest check that covers your change. Prefer focused package tests
+over full-suite checks when they prove the edited behavior.
 
 ```bash
 mise run ci
 go test ./...
-go vet ./...
-go test -race ./internal/app -run 'Parallelism|Parallel'
-golangci-lint run
-go run github.com/shinagawa-web/gomarklint/v3@v3.0.5
+mise run test-race
+mise run lint
+mise run markdownlint
 ```
-
-If a command is unavailable or approval-gated, skip it and record the gap
-rather than requesting sandbox escalation from a subagent.
 
 Portable integration fixtures should model real repository behavior without
 depending on a maintainer-provided `home-ops` checkout. Optional
@@ -147,5 +135,6 @@ mutate the real `home-ops` checkout from tests.
 ## Maintenance Rule
 
 - Use `docs/README.md` for documentation ownership decisions.
-- Update `AGENTS.md` only when mandatory agent rules, hard constraints,
-  validation expectations, or subagent coordination rules change.
+- Update this file only when changing mandatory agent behavior, hard product
+  constraints, validation expectations, or first-hop orientation. Put detailed
+  design notes in the relevant docs instead.

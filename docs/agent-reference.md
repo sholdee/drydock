@@ -262,9 +262,8 @@ directories. Do not use `git worktree add` inside implementation or normal
 tests; reserve it for optional smoke scripts that create and clean up temporary
 worktrees.
 
-Use the smallest verification that covers the change. If a useful command is
-unavailable or approval-gated, skip it and report the gap rather than blocking
-the work.
+Use the smallest verification that covers the change. Follow the subagent
+sandbox rule in `AGENTS.md` for approval-gated checks.
 
 ### Semantic Remediation Checks
 
