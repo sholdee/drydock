@@ -17,8 +17,14 @@ fi
 fetch_cmd=(git)
 if [[ -n "${DRYDOCK_GITHUB_TOKEN:-}" ]]; then
   server_url="${GITHUB_SERVER_URL:-https://github.com}"
-  basic_auth="$(printf 'x-access-token:%s' "${DRYDOCK_GITHUB_TOKEN}" | base64 | tr -d '\n')"
-  fetch_cmd+=(-c "http.${server_url}/.extraheader=AUTHORIZATION: basic ${basic_auth}")
+  existing_auth_header=false
+  if git config --get-all "http.${server_url}/.extraheader" >/dev/null 2>&1; then
+    existing_auth_header=true
+  fi
+  if [[ "${existing_auth_header}" == "false" ]]; then
+    basic_auth="$(printf 'x-access-token:%s' "${DRYDOCK_GITHUB_TOKEN}" | base64 | tr -d '\n')"
+    fetch_cmd+=(-c "http.${server_url}/.extraheader=AUTHORIZATION: basic ${basic_auth}")
+  fi
 fi
 fetch_cmd+=(fetch --no-tags --depth=1 origin "${base_ref}:refs/remotes/origin/${base_ref}")
 "${fetch_cmd[@]}"

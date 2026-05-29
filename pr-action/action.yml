@@ -11,7 +11,7 @@ inputs:
     required: false
     default: "true"
   drydock-bin:
-    description: drydock binary path or command to run when install is false.
+    description: drydock binary name or path to run when install is false.
     required: false
     default: drydock
   install-dir:

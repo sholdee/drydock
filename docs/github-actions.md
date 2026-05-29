@@ -83,7 +83,7 @@ By default the action:
 - fetches the pull request base branch for ref-based diffs;
 - runs `drydock test apps --path .`;
 - runs `drydock diff apps --repo . --ref HEAD --ref-orig origin/<base>`;
-- runs `drydock diff images --repo . --ref HEAD --ref-orig origin/<base> -o name`;
+- records current-only image additions from `drydock diff images`;
 - uses drydock source caches under the runner temp directory;
 - uploads full diff artifacts when differences are found;
 - writes sticky PR comments for trusted same-repository pull requests.

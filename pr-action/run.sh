@@ -68,6 +68,20 @@ append_extra_lines() {
   done <<< "${value}"
 }
 
+extract_image_diff_json() {
+  local json_file="$1"
+  local added_file="$2"
+  local count_file="$3"
+
+  if ! command -v jq >/dev/null 2>&1; then
+    echo "drydock diff images -o name is not supported by this drydock binary, and jq is required for JSON fallback parsing." >&2
+    return 2
+  fi
+
+  jq -r '(.added // [])[]' "${json_file}" > "${added_file}"
+  jq -r '((.added // []) | length) + ((.removed // []) | length)' "${json_file}" > "${count_file}"
+}
+
 capture_command() {
   local stdout_file="$1"
   local stderr_file="$2"
@@ -85,6 +99,14 @@ capture_command() {
     cat "${stderr_file}" >&2
   fi
   return "${status}"
+}
+
+capture_command_quiet() {
+  local stdout_file="$1"
+  local stderr_file="$2"
+  shift 2
+
+  "$@" > "${stdout_file}" 2> "${stderr_file}"
 }
 
 truncate_file() {
@@ -150,6 +172,8 @@ test_stderr="${work_dir}/test.err"
 diff_path="${work_dir}/diff.txt"
 diff_stderr="${work_dir}/diff.err"
 images_path="${work_dir}/added-images.txt"
+images_json_path="${work_dir}/images.json"
+images_count_path="${work_dir}/images.count"
 images_stderr="${work_dir}/images.err"
 diff_comment_path="${work_dir}/diff-comment.md"
 images_comment_path="${work_dir}/images-comment.md"
@@ -234,10 +258,34 @@ if [[ "${DRYDOCK_INPUT_RUN_IMAGE_DIFF}" == "true" ]]; then
   fi
   image_args=("${drydock_bin}" diff images --repo "${repo}" --ref "${head_ref}" --ref-orig "${base_compare_ref}" -o name "${common_args[@]}")
   append_extra_lines image_args "${DRYDOCK_INPUT_EXTRA_IMAGE_DIFF_ARGS}"
-  set +e
-  capture_command "${images_path}" "${images_stderr}" "${image_args[@]}"
-  image_status=$?
-  set -e
+  if capture_command_quiet "${images_path}" "${images_stderr}" "${image_args[@]}"; then
+    image_status=0
+  else
+    image_status=$?
+  fi
+  if [[ "${image_status}" -eq 2 ]] && grep -q "name output is not supported for diff images" "${images_stderr}"; then
+    image_args=("${drydock_bin}" diff images --repo "${repo}" --ref "${head_ref}" --ref-orig "${base_compare_ref}" -o json --exit-code=false "${common_args[@]}")
+    append_extra_lines image_args "${DRYDOCK_INPUT_EXTRA_IMAGE_DIFF_ARGS}"
+    if capture_command_quiet "${images_json_path}" "${images_stderr}" "${image_args[@]}"; then
+      image_status=0
+    else
+      image_status=$?
+    fi
+    if [[ "${image_status}" -eq 0 ]]; then
+      extract_image_diff_json "${images_json_path}" "${images_path}" "${images_count_path}"
+      if [[ "$(cat "${images_count_path}")" -gt 0 ]]; then
+        image_status=1
+      fi
+    fi
+  fi
+  if [[ "${image_status}" -ne 0 && "${image_status}" -ne 1 ]]; then
+    if [[ -s "${images_path}" ]]; then
+      cat "${images_path}"
+    fi
+    if [[ -s "${images_stderr}" ]]; then
+      cat "${images_stderr}" >&2
+    fi
+  fi
   case "${image_status}" in
     0) ;;
     1)
