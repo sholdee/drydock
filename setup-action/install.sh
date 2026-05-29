@@ -20,9 +20,14 @@ case "${RUNNER_OS}-${RUNNER_ARCH}" in
     ;;
 esac
 
-repo="${GITHUB_ACTION_REPOSITORY:-${GITHUB_REPOSITORY}}"
+repo="${DRYDOCK_RELEASE_REPOSITORY:-sholdee/drydock}"
 version="${DRYDOCK_VERSION:-latest}"
 token="${DRYDOCK_GITHUB_TOKEN:-}"
+
+if [[ ! "${repo}" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]]; then
+  echo "setup-action release-repository must be in owner/repo form, got '${repo}'." >&2
+  exit 1
+fi
 
 resolve_latest() {
   if [[ -n "${token}" ]]; then

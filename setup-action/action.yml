@@ -10,6 +10,10 @@ inputs:
     description: Directory to install the drydock binary into.
     required: false
     default: /usr/local/bin
+  release-repository:
+    description: Repository that publishes drydock release artifacts.
+    required: false
+    default: sholdee/drydock
   github-token:
     description: Optional GitHub token for downloading release artifacts.
     required: false
@@ -36,5 +40,6 @@ runs:
         DRYDOCK_ALLOW_UNVERIFIED: ${{ inputs.allow-unverified }}
         DRYDOCK_GITHUB_TOKEN: ${{ inputs.github-token }}
         DRYDOCK_INSTALL_DIR: ${{ inputs.install-dir }}
+        DRYDOCK_RELEASE_REPOSITORY: ${{ inputs.release-repository }}
         DRYDOCK_VERSION: ${{ inputs.version }}
       run: '"${GITHUB_ACTION_PATH}/install.sh"'

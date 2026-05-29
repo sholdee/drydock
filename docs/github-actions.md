@@ -109,9 +109,12 @@ The action accepts either a normal token or GitHub App credentials:
 - uses: sholdee/drydock/pr-action@main
   with:
     version: v0.1.7
-    github-app-id: ${{ secrets.DRYDOCK_APP_ID }}
+    github-app-client-id: ${{ secrets.DRYDOCK_APP_CLIENT_ID }}
     github-app-private-key: ${{ secrets.DRYDOCK_APP_PRIVATE_KEY }}
 ```
+
+`github-app-id` remains available as a legacy fallback for existing workflows,
+but new workflows should use the GitHub App client ID.
 
 The token is used for release downloads, checkout, baseline fetch, and PR
 comments. It is not exported to `drydock test`, `drydock diff`, cache contents,
@@ -122,6 +125,9 @@ or uploaded artifacts.
 | Input | Default | Purpose |
 | --- | --- | --- |
 | `version` | `latest` | Released drydock version to install. |
+| `install` | `true` | Install drydock before running. |
+| `drydock-bin` | `drydock` | Preinstalled drydock binary when `install` is `false`. |
+| `release-repository` | `sholdee/drydock` | Repository that publishes drydock release artifacts. |
 | `path` | `.` | Repository path for `drydock test apps`. |
 | `repo` | `.` | Local Git repository path for ref-based diffs. |
 | `base-ref` | PR base | Baseline branch name for diff commands. |
