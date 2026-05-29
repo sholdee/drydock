@@ -71,7 +71,7 @@ exit 2
 	}
 
 	outputPath := filepath.Join(tmp, "github-output")
-	cmd := exec.Command("bash", filepath.Join("fetch-base.sh"))
+	cmd := exec.Command("bash", "fetch-base.sh")
 	cmd.Dir = "."
 	cmd.Env = append(os.Environ(),
 		"PATH="+tmp+string(os.PathListSeparator)+os.Getenv("PATH"),
