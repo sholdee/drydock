@@ -36,6 +36,12 @@ command are interpreted by drydock's native Kustomize renderer by default.
 For native argocd-vault-plugin (AVP) compatibility, `avp-compat` performs
 deterministic placeholder redaction with drydock native renderers.
 
+When a discovered sidecar CMP has static discovery rules and an Application
+does not name a plugin, drydock may warn that Argo CD sidecar auto-discovery
+would be required. This check is intentionally bounded: drydock only evaluates
+`discover.fileName` and `discover.find.glob` against the local Application
+source directory. It never executes or emulates `discover.find.command`.
+
 ## Trusted Provenance
 
 The default local policy path is `.drydock/plugins.yaml`. Use

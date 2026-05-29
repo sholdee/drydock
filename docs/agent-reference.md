@@ -49,6 +49,10 @@ Public API rules:
   fails.
 - Stable diagnostic `Code` values are part of the CLI JSON/YAML and public API
   contract.
+- Public plugin requests expose only public value types. They include the
+  selected source metadata, `$ref` roots and source metadata, kube version, and
+  API versions so embedders can render deterministic in-process plugins without
+  reaching into `internal/...` packages.
 
 Config management plugin command execution fails closed by default. CLI/default
 paths do not execute plugin commands unless trusted drydock plugin policy
@@ -79,12 +83,15 @@ Repository Secrets may contribute non-sensitive metadata such as `url`, `type`,
 `name`, `project`, and `enableOCI`. They must not retain username, password,
 bearer tokens, SSH keys, TLS material, or other credential fields.
 
+Cluster Secrets may contribute only metadata fields `name`, `server`,
+`namespaces`, `clusterResources`, and `project`. Do not decode, retain, print,
+or fingerprint cluster credential/config fields.
+
 Local `AppProject` manifests may produce offline diagnostics for Application
 project references, source repositories, destinations, source namespaces,
-repository Secret metadata matches, RBAC role metadata, and deferred
-project-scoped cluster metadata. Do not simulate live cluster existence, full
-Argo CD RBAC/Casbin authorization, or project-scoped cluster Secret
-enforcement offline.
+repository Secret metadata matches, cluster Secret metadata matches, RBAC role
+metadata, and deferred project-scoped cluster metadata. Do not simulate live
+cluster existence or full Argo CD RBAC/Casbin authorization offline.
 
 ## Discovery And ApplicationSet Support
 

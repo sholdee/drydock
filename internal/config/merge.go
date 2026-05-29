@@ -18,9 +18,11 @@ func MergeDiscovered(candidates []ArgoSettings) (ArgoSettings, []diagnostic.Diag
 		diags = append(diags, mergeInstallationID(&merged, candidate)...)
 		diags = append(diags, mergeHelmValuesFileSchemes(&merged, candidate)...)
 		diags = append(diags, mergeHelmRepositories(&merged, candidate)...)
+		diags = append(diags, mergeClusters(&merged, candidate)...)
 		diags = append(diags, mergeCompareOptions(&merged, candidate)...)
 		diags = append(diags, mergeIgnoreResourceUpdatesEnabled(&merged, candidate)...)
 		diags = append(diags, mergeConfigManagementPlugins(&merged, candidate)...)
+		mergeCommandParameters(&merged, candidate)
 		merged.ResourceExclusions = append(merged.ResourceExclusions, candidate.ResourceExclusions...)
 		merged.ResourceInclusions = append(merged.ResourceInclusions, candidate.ResourceInclusions...)
 		diags = append(diags, mergeResourceCustomizations(&merged, candidate)...)
@@ -117,6 +119,22 @@ func mergeHelmRepositories(merged *ArgoSettings, candidate ArgoSettings) []diagn
 	return diags
 }
 
+func mergeClusters(merged *ArgoSettings, candidate ArgoSettings) []diagnostic.Diagnostic {
+	var diags []diagnostic.Diagnostic
+	for server, cluster := range candidate.Clusters {
+		existing, ok := merged.Clusters[server]
+		if ok && !sameClusterSettings(existing, cluster) {
+			diags = append(diags, conflictDiagnostic(
+				fmt.Sprintf("conflicting cluster settings discovered for %q", server),
+				cluster.Provenance,
+			))
+			continue
+		}
+		merged.Clusters[server] = cluster
+	}
+	return diags
+}
+
 func mergeCompareOptions(merged *ArgoSettings, candidate ArgoSettings) []diagnostic.Diagnostic {
 	if !hasProvenanceCompareOptions(candidate.CompareOptions) {
 		return nil
@@ -189,6 +207,35 @@ func mergeConfigManagementPlugins(merged *ArgoSettings, candidate ArgoSettings) 
 	return diags
 }
 
+func mergeCommandParameters(merged *ArgoSettings, candidate ArgoSettings) {
+	if len(candidate.CommandParameters) == 0 {
+		return
+	}
+	seen := make(map[string]struct{}, len(merged.CommandParameters)+len(candidate.CommandParameters))
+	for _, setting := range merged.CommandParameters {
+		seen[commandParameterSettingKey(setting)] = struct{}{}
+	}
+	for _, setting := range candidate.CommandParameters {
+		key := commandParameterSettingKey(setting)
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		merged.CommandParameters = append(merged.CommandParameters, setting)
+	}
+}
+
+func commandParameterSettingKey(setting CommandParameterSetting) string {
+	return fmt.Sprintf("%s\x00%s\x00%t\x00%s\x00%s\x00%s",
+		setting.Key,
+		setting.Value,
+		setting.ValueRedacted,
+		setting.Classification,
+		setting.Provenance.Path,
+		setting.Provenance.Pointer,
+	)
+}
+
 func valuesOnly(values []Value[string]) []string {
 	out := make([]string, 0, len(values))
 	for _, value := range values {
@@ -221,6 +268,14 @@ func sameRepositorySettings(left, right RepositorySettings) bool {
 		left.Type == right.Type &&
 		left.URL == right.URL &&
 		left.EnableOCI == right.EnableOCI &&
+		left.Project == right.Project
+}
+
+func sameClusterSettings(left, right ClusterSettings) bool {
+	return left.Name == right.Name &&
+		left.Server == right.Server &&
+		reflect.DeepEqual(left.Namespaces, right.Namespaces) &&
+		left.ClusterResources == right.ClusterResources &&
 		left.Project == right.Project
 }
 

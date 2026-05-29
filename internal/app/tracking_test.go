@@ -155,6 +155,29 @@ func TestRenderSettingsSignatureIncludesTrackingInputs(t *testing.T) {
 	}
 }
 
+func TestRenderSettingsSignatureIgnoresCommandParameters(t *testing.T) {
+	base := config.DefaultSettings()
+	baseSig, err := renderSettingsSignature(base)
+	if err != nil {
+		t.Fatalf("renderSettingsSignature(base) error = %v", err)
+	}
+
+	next := base
+	next.CommandParameters = []config.CommandParameterSetting{{
+		Key:            "reposerver.include.hidden.directories",
+		Value:          "true",
+		Classification: config.CommandParameterRuntimeOnly,
+		Provenance:     config.Provenance{Path: "argocd-cmd-params-cm.yaml", Pointer: "data.reposerver.include.hidden.directories"},
+	}}
+	nextSig, err := renderSettingsSignature(next)
+	if err != nil {
+		t.Fatalf("renderSettingsSignature(next) error = %v", err)
+	}
+	if nextSig != baseSig {
+		t.Fatalf("render settings signature changed for cmd-params metadata")
+	}
+}
+
 func trackingTestApplication(namespace, name string) argoappv1.Application {
 	return argoappv1.Application{
 		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: namespace},

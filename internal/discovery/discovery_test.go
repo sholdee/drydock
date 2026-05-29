@@ -8,6 +8,8 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 )
 
 func TestScanFindsDirectApplications(t *testing.T) {
@@ -146,6 +148,14 @@ metadata:
 data:
   application.instanceLabelKey: app.kubernetes.io/instance
 `)
+	mustWriteFile(t, filepath.Join(root, "settings", "argocd-cmd-params-cm.yaml"), `apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: argocd-cmd-params-cm
+  namespace: argocd
+data:
+  controller.diff.server.side: "true"
+`)
 	mustWriteFile(t, filepath.Join(root, "settings", "repo-secret.yaml"), `apiVersion: v1
 kind: Secret
 metadata:
@@ -156,6 +166,18 @@ metadata:
 stringData:
   url: https://github.com/example/repo
   password: super-secret
+`)
+	mustWriteFile(t, filepath.Join(root, "settings", "cluster-secret.yaml"), `apiVersion: v1
+kind: Secret
+metadata:
+  name: in-cluster
+  namespace: argocd
+  labels:
+    argocd.argoproj.io/secret-type: cluster
+stringData:
+  name: in-cluster
+  server: https://kubernetes.default.svc
+  config: '{"bearerToken":"cluster-super-secret"}'
 `)
 	mustWriteFile(t, filepath.Join(root, "settings", "values.yaml"), `configs:
   cm:
@@ -204,6 +226,8 @@ data:
 	}
 	wantSettings := []SettingsCandidate{
 		{Path: filepath.Join("settings", "argocd-cm.yaml"), DocumentIndex: 0, Kind: "argocd-cm", APIVersion: "v1", Namespace: "argocd", Name: "argocd-cm"},
+		{Path: filepath.Join("settings", "argocd-cmd-params-cm.yaml"), DocumentIndex: 0, Kind: "argocd-cmd-params-cm", APIVersion: "v1", Namespace: "argocd", Name: "argocd-cmd-params-cm"},
+		{Path: filepath.Join("settings", "cluster-secret.yaml"), DocumentIndex: 0, Kind: "cluster-secret", APIVersion: "v1", Namespace: "argocd", Name: "in-cluster"},
 		{Path: filepath.Join("settings", "cmp-configmap.yaml"), DocumentIndex: 0, Kind: "argocd-cmp-cm", APIVersion: "v1", Name: "argocd-cmp-cm"},
 		{Path: filepath.Join("settings", "cmp-values.yaml"), DocumentIndex: 0, Kind: "argocd-values"},
 		{Path: filepath.Join("settings", "compare-values.yaml"), DocumentIndex: 0, Kind: "argocd-values"},
@@ -215,6 +239,9 @@ data:
 	}
 	if strings.Contains(fmt.Sprintf("%#v", result), "super-secret") {
 		t.Fatalf("discovery result leaked Secret data: %#v", result)
+	}
+	if strings.Contains(fmt.Sprintf("%#v", result), "cluster-super-secret") {
+		t.Fatalf("discovery result leaked cluster Secret data: %#v", result)
 	}
 }
 
@@ -304,6 +331,35 @@ data:
 	}
 }
 
+func TestScanDiscoversCmdParamsConfigMapInMultiDocumentFile(t *testing.T) {
+	root := t.TempDir()
+	mustWriteFile(t, filepath.Join(root, "settings.yaml"), `apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: unrelated
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: argocd-cmd-params-cm
+  namespace: argocd
+data:
+  reposerver.include.hidden.directories: "true"
+`)
+
+	result, err := Scan(root, Options{})
+	if err != nil {
+		t.Fatalf("Scan() error = %v", err)
+	}
+	if len(result.SettingsCandidates) != 1 {
+		t.Fatalf("SettingsCandidates = %#v, want one cmd-params candidate", result.SettingsCandidates)
+	}
+	candidate := result.SettingsCandidates[0]
+	if candidate.Kind != "argocd-cmd-params-cm" || candidate.DocumentIndex != 1 || candidate.Name != "argocd-cmd-params-cm" || candidate.Namespace != "argocd" {
+		t.Fatalf("SettingsCandidate = %#v, want cmd-params document identity", candidate)
+	}
+}
+
 func TestScanDoesNotTreatWorkloadConfigMapWithCMPExampleAsSettings(t *testing.T) {
 	root := t.TempDir()
 	mustWriteFile(t, filepath.Join(root, "apps", "example-cmp.yaml"), `apiVersion: v1
@@ -357,6 +413,52 @@ spec:
 	}
 	if result.Projects[0].Project.Name != "platform" {
 		t.Fatalf("Project name = %q, want platform", result.Projects[0].Project.Name)
+	}
+}
+
+func TestScanObjectsSanitizesClusterSecretData(t *testing.T) {
+	obj := &unstructured.Unstructured{Object: map[string]any{
+		"apiVersion": "v1",
+		"kind":       "Secret",
+		"metadata": map[string]any{
+			"name":      "in-cluster",
+			"namespace": "argocd",
+			"labels": map[string]any{
+				"argocd.argoproj.io/secret-type": "cluster",
+			},
+		},
+		"stringData": map[string]any{
+			"name":        "in-cluster",
+			"server":      "https://kubernetes.default.svc",
+			"config":      `{"bearerToken":"should-not-be-read"}`,
+			"bearerToken": "should-not-be-read",
+		},
+	}}
+
+	result, err := ScanObjects("rendered.yaml", []*unstructured.Unstructured{obj})
+	if err != nil {
+		t.Fatalf("ScanObjects() error = %v", err)
+	}
+	if len(result.SettingsCandidates) != 1 {
+		t.Fatalf("SettingsCandidates = %#v, want one", result.SettingsCandidates)
+	}
+	candidate := result.SettingsCandidates[0]
+	if candidate.Kind != "cluster-secret" || candidate.Object == nil {
+		t.Fatalf("candidate = %#v", candidate)
+	}
+	rendered := fmt.Sprintf("%#v", result)
+	if strings.Contains(rendered, "should-not-be-read") || strings.Contains(rendered, "bearerToken") {
+		t.Fatalf("discovery result leaked cluster Secret data: %s", rendered)
+	}
+	stringData, ok, err := unstructured.NestedStringMap(candidate.Object.Object, "stringData")
+	if err != nil || !ok {
+		t.Fatalf("sanitized stringData missing: ok=%t err=%v object=%#v", ok, err, candidate.Object.Object)
+	}
+	if _, ok := stringData["server"]; !ok {
+		t.Fatalf("sanitized stringData = %#v, want server", stringData)
+	}
+	if _, ok := stringData["config"]; ok {
+		t.Fatalf("sanitized stringData retained config: %#v", stringData)
 	}
 }
 

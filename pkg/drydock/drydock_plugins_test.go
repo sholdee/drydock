@@ -6,6 +6,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	renderpkg "github.com/sholdee/drydock/internal/render"
 )
 
 func TestRenderUsesInjectedPluginRenderer(t *testing.T) {
@@ -39,6 +41,48 @@ func TestRenderUsesNamedPluginRegistry(t *testing.T) {
 		t.Fatalf("Render() error = %v", err)
 	}
 	assertRenderedPluginConfigMap(t, result)
+}
+
+func TestInjectedPublicPluginRendererReceivesRefsAndCapabilities(t *testing.T) {
+	called := false
+	renderer := publicPluginRendererFunc(func(_ context.Context, request PluginRequest) (PluginResult, error) {
+		called = true
+		if request.RefRoots["$values"] != "/repo/values" {
+			t.Fatalf("RefRoots[$values] = %q, want /repo/values", request.RefRoots["$values"])
+		}
+		refSource := request.RefSources["$values"]
+		if refSource.RepoRoot != "/repo" || refSource.Path != "values" || refSource.RepoURL != "https://github.com/example/values" || refSource.TargetRevision != "main" {
+			t.Fatalf("RefSources[$values] = %#v, want public ref source metadata", refSource)
+		}
+		if request.KubeVersion != "1.30.1" {
+			t.Fatalf("KubeVersion = %q, want 1.30.1", request.KubeVersion)
+		}
+		if len(request.APIVersions) != 1 || request.APIVersions[0] != "example.com/v1/Foo" {
+			t.Fatalf("APIVersions = %#v, want example.com/v1/Foo", request.APIVersions)
+		}
+		return PluginResult{}, nil
+	})
+	adapter := pluginRendererAdapter{renderer: renderer}
+
+	_, _, err := adapter.RenderPlugin(context.Background(), renderpkg.PluginRequest{
+		Source: renderpkg.ResolvedSource{
+			RepoRoot:       "/repo",
+			Path:           "apps/plugin",
+			RepoURL:        "https://github.com/example/repo",
+			TargetRevision: "main",
+		},
+		Plugin:      renderpkg.PluginConfig{Name: "cue"},
+		RefRoots:    map[string]string{"$values": "/repo/values"},
+		RefSources:  map[string]renderpkg.ResolvedSource{"$values": {RepoRoot: "/repo", Path: "values", RepoURL: "https://github.com/example/values", TargetRevision: "main"}},
+		KubeVersion: "1.30.1",
+		APIVersions: []string{"example.com/v1/Foo"},
+	})
+	if err != nil {
+		t.Fatalf("RenderPlugin() error = %v", err)
+	}
+	if !called {
+		t.Fatal("public plugin renderer was not called")
+	}
 }
 
 func TestRenderNamedPluginRegistryReportsMissingRenderer(t *testing.T) {

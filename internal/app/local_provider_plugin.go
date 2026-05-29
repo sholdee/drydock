@@ -51,6 +51,8 @@ func (p localProvider) renderPluginSource(ctx context.Context, source render.Res
 		Plugin:       *opts.Plugin,
 		RefRoots:     cloneStringMap(opts.RefRoots),
 		RefSources:   cloneResolvedSourceMap(opts.RefSources),
+		KubeVersion:  opts.KubeVersion,
+		APIVersions:  append([]string(nil), opts.APIVersions...),
 	}
 	manifests, diags, err := p.pluginRenderer.RenderPlugin(renderCtx, request)
 	diags = diagnostic.WithStableCodes(diags)

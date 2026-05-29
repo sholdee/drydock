@@ -100,7 +100,10 @@ func (p localProvider) RenderSource(ctx context.Context, source render.ResolvedS
 		if err != nil {
 			return nil, nil, err
 		}
-		return renderer.Render(ctx, source, opts)
+		guardrailDiags := p.cmpAutoDiscoveryDeferredDiagnostics(source, opts)
+		manifests, diags, err := renderer.Render(ctx, source, opts)
+		diags = append(guardrailDiags, diags...)
+		return manifests, diags, err
 	}
 	if source.Chart != "" {
 		return p.renderChartOnlySource(ctx, source, opts)

@@ -356,12 +356,24 @@ type helmValuesSettingsDocument struct {
 }
 
 type cmpPluginSpec struct {
-	Version  string     `yaml:"version"`
-	Init     cmpCommand `yaml:"init"`
-	Generate cmpCommand `yaml:"generate"`
+	Version  string      `yaml:"version"`
+	Init     cmpCommand  `yaml:"init"`
+	Generate cmpCommand  `yaml:"generate"`
+	Discover cmpDiscover `yaml:"discover"`
 }
 
 type cmpCommand struct {
+	Command []string `yaml:"command"`
+	Args    []string `yaml:"args"`
+}
+
+type cmpDiscover struct {
+	FileName string  `yaml:"fileName"`
+	Find     cmpFind `yaml:"find"`
+}
+
+type cmpFind struct {
+	Glob    string   `yaml:"glob"`
 	Command []string `yaml:"command"`
 	Args    []string `yaml:"args"`
 }
@@ -467,19 +479,33 @@ func configManagementPluginFromSpec(name string, spec cmpPluginSpec, path, point
 		GenerateCommand: append([]string(nil), spec.Generate.Command...),
 		GenerateArgs:    append([]string(nil), spec.Generate.Args...),
 		HasInit:         len(spec.Init.Command) > 0 || len(spec.Init.Args) > 0,
+		Discover:        configManagementPluginDiscoveryFromSpec(spec.Discover),
 		Provenance:      diagnostic.Provenance{Path: path, Pointer: pointer},
 	}
 	plugin.commandFingerprint = pluginCommandFingerprint(plugin)
 	return plugin
 }
 
+func configManagementPluginDiscoveryFromSpec(discover cmpDiscover) ConfigManagementPluginDiscovery {
+	return ConfigManagementPluginDiscovery{
+		FileName:    strings.TrimSpace(discover.FileName),
+		FindGlob:    strings.TrimSpace(discover.Find.Glob),
+		FindCommand: append([]string(nil), discover.Find.Command...),
+		FindArgs:    append([]string(nil), discover.Find.Args...),
+	}
+}
+
 func pluginCommandFingerprint(plugin ConfigManagementPlugin) string {
-	return fmt.Sprintf("name=%s\x00version=%s\x00init=%t\x00command=%q\x00args=%q",
+	return fmt.Sprintf("name=%s\x00version=%s\x00init=%t\x00command=%q\x00args=%q\x00discoverFileName=%s\x00discoverFindGlob=%s\x00discoverFindCommand=%q\x00discoverFindArgs=%q",
 		plugin.Name,
 		plugin.Version,
 		plugin.HasInit,
 		plugin.GenerateCommand,
 		plugin.GenerateArgs,
+		plugin.Discover.FileName,
+		plugin.Discover.FindGlob,
+		plugin.Discover.FindCommand,
+		plugin.Discover.FindArgs,
 	)
 }
 

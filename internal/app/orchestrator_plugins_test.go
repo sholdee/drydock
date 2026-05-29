@@ -365,6 +365,9 @@ func TestOrchestratorBuildRendersTrustedExecPolicyPlugin(t *testing.T) {
 	root := t.TempDir()
 	writePluginBuildApplication(t, root, "plugin", "exec-renderer")
 	writeTestFile(t, filepath.Join(root, "manifests", "plugin", "marker.txt"), "from-source")
+	writeCMPConfigMapSpec(t, root, "auto-cmp", `discover:
+  fileName: marker.txt
+`)
 	t.Setenv("DRYDOCK_APP_EXEC_HELPER", "1")
 	t.Setenv("DRYDOCK_APP_EXEC_VALUE", "allowed-value")
 	policy, fingerprint := testExecPluginPolicy(t, "exec-renderer", appExecCommand(t, "manifest"))
@@ -387,6 +390,9 @@ func TestOrchestratorBuildRendersTrustedExecPolicyPlugin(t *testing.T) {
 		t.Fatalf("original source generated.txt exists or unexpected stat error: %v", err)
 	}
 	assertExecPolicyPluginExecution(t, result.PluginExecutions)
+	if hasDiagnosticCode(result.Diagnostics, diagnostic.CodePluginAutoDiscovery) {
+		t.Fatalf("Diagnostics = %#v, did not want auto-discovery warning for trusted exec policy plugin", result.Diagnostics)
+	}
 }
 
 func assertExecPolicyManifestData(t *testing.T, manifests []render.Manifest) {
@@ -655,6 +661,158 @@ kind: PluginPolicy
 	}
 	if _, ok := manifestByName(result.Manifests, "native"); !ok {
 		t.Fatalf("Manifests = %#v, want auto-native Kustomize despite disabled policy", result.Manifests)
+	}
+}
+
+func TestOrchestratorBuildWarnsWhenSidecarCMPStaticDiscoveryMatchesImplicitNativeSource(t *testing.T) {
+	tests := []struct {
+		name     string
+		discover string
+	}{
+		{
+			name: "fileName",
+			discover: `discover:
+  fileName: cm.yaml
+`,
+		},
+		{
+			name: "find glob",
+			discover: `discover:
+  find:
+    glob: "**/cm.yaml"
+`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			root := t.TempDir()
+			writeBuildApplication(t, root, "implicit", "implicit-native")
+			writeCMPConfigMapSpec(t, root, "auto-cmp", tt.discover)
+
+			result, err := (Orchestrator{}).Build(context.Background(), BuildRequest{Path: root})
+			if err != nil {
+				t.Fatalf("Build() error = %v", err)
+			}
+			if _, ok := manifestByName(result.Manifests, "implicit-native"); !ok {
+				t.Fatalf("Manifests = %#v, want native rendered ConfigMap", result.Manifests)
+			}
+			if !hasDiagnosticCode(result.Diagnostics, diagnostic.CodePluginAutoDiscovery) {
+				t.Fatalf("Diagnostics = %#v, want %s", result.Diagnostics, diagnostic.CodePluginAutoDiscovery)
+			}
+			if !hasDiagnosticMessage(result.Diagnostics, "did not run sidecar CMP auto-discovery") {
+				t.Fatalf("Diagnostics = %#v, want auto-discovery boundary message", result.Diagnostics)
+			}
+		})
+	}
+}
+
+func TestOrchestratorBuildDoesNotWarnForNonMatchingOrUnprovableSidecarCMPDiscovery(t *testing.T) {
+	tests := []struct {
+		name     string
+		discover string
+	}{
+		{
+			name: "static glob does not match",
+			discover: `discover:
+  fileName: no-such.yaml
+`,
+		},
+		{
+			name: "find command only",
+			discover: `discover:
+  find:
+    command: [sh, -c]
+    args: [find . -name cm.yaml]
+`,
+		},
+		{
+			name: "fileName precedence suppresses matching find glob",
+			discover: `discover:
+  fileName: no-such.yaml
+  find:
+    glob: "**/cm.yaml"
+`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			root := t.TempDir()
+			writeBuildApplication(t, root, "implicit", "implicit-native")
+			writeCMPConfigMapSpec(t, root, "auto-cmp", tt.discover)
+
+			result, err := (Orchestrator{}).Build(context.Background(), BuildRequest{Path: root})
+			if err != nil {
+				t.Fatalf("Build() error = %v", err)
+			}
+			if hasDiagnosticCode(result.Diagnostics, diagnostic.CodePluginAutoDiscovery) {
+				t.Fatalf("Diagnostics = %#v, did not want auto-discovery warning", result.Diagnostics)
+			}
+		})
+	}
+}
+
+func TestOrchestratorBuildDoesNotWarnForExplicitPluginSourcesWhenSidecarCMPDiscoveryMatches(t *testing.T) {
+	root := t.TempDir()
+	writePluginBuildApplication(t, root, "plugin", "cue")
+	writeCMPConfigMapSpec(t, root, "auto-cmp", `discover:
+  fileName: .keep
+`)
+
+	result, err := (Orchestrator{}).Build(context.Background(), BuildRequest{Path: root})
+	if err == nil {
+		t.Fatal("Build() error = nil, want unsupported explicit plugin")
+	}
+	if hasDiagnosticCode(result.Diagnostics, diagnostic.CodePluginAutoDiscovery) {
+		t.Fatalf("Diagnostics = %#v, did not want auto-discovery warning for explicit plugin source", result.Diagnostics)
+	}
+}
+
+func TestOrchestratorBuildDoesNotWarnForNativeKustomizeCMPCompatibilityWhenDiscoveryMatches(t *testing.T) {
+	root := t.TempDir()
+	writePluginBuildApplication(t, root, "plugin", "kustomize-build-with-helm")
+	writeCMPConfigMapSpec(t, root, "kustomize-build-with-helm", `discover:
+  fileName: kustomization.yaml
+generate:
+  command: [kustomize, build]
+  args: [--enable-helm]
+`)
+	writeNativeKustomizeSource(t, root, "plugin", "native")
+
+	result, err := (Orchestrator{}).Build(context.Background(), BuildRequest{Path: root})
+	if err != nil {
+		t.Fatalf("Build() error = %v", err)
+	}
+	if _, ok := manifestByName(result.Manifests, "native"); !ok {
+		t.Fatalf("Manifests = %#v, want native Kustomize CMP rendered", result.Manifests)
+	}
+	if hasDiagnosticCode(result.Diagnostics, diagnostic.CodePluginAutoDiscovery) {
+		t.Fatalf("Diagnostics = %#v, did not want auto-discovery warning for explicit native CMP plugin", result.Diagnostics)
+	}
+}
+
+func TestOrchestratorBuildDoesNotWarnForAVPCompatPolicyWhenDiscoveryMatches(t *testing.T) {
+	root := t.TempDir()
+	writePluginBuildApplication(t, root, "plugin", "avp-directory-include")
+	writePluginPolicy(t, root, "avp-directory-include", "avp-compat")
+	writeCMPConfigMapSpec(t, root, "auto-cmp", `discover:
+  fileName: cm.yaml
+`)
+	writeTestFile(t, filepath.Join(root, "manifests", "plugin", "cm.yaml"), `apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: avp-redacted
+data:
+  domain: argocd.<path:vaults/Kubernetes/items/cluster#domain>
+`)
+
+	result, err := (Orchestrator{}).Build(context.Background(), BuildRequest{Path: root})
+	if err != nil {
+		t.Fatalf("Build() error = %v", err)
+	}
+	if hasDiagnosticCode(result.Diagnostics, diagnostic.CodePluginAutoDiscovery) {
+		t.Fatalf("Diagnostics = %#v, did not want auto-discovery warning for AVP policy plugin", result.Diagnostics)
 	}
 }
 
@@ -964,6 +1122,53 @@ func TestOrchestratorInjectedPluginRendererOverridesNativeKustomizePlugin(t *tes
 	}
 }
 
+func TestLocalProviderPassesPluginRefsAndCapabilitiesToInjectedRenderer(t *testing.T) {
+	root := t.TempDir()
+	writeTestFile(t, filepath.Join(root, "refs", "shared", "marker.txt"), "ref")
+	var got render.PluginRequest
+	provider := localProvider{
+		repoRoot: root,
+		pluginRenderer: internalPluginRendererFunc(func(_ context.Context, request render.PluginRequest) ([]render.Manifest, []diagnostic.Diagnostic, error) {
+			got = request
+			return nil, nil, nil
+		}),
+	}
+
+	_, diags, err := provider.RenderSource(context.Background(), render.ResolvedSource{
+		RepoRoot:       root,
+		Path:           "apps/plugin",
+		RepoURL:        "https://github.com/example/repo",
+		TargetRevision: "main",
+	}, render.RenderOptions{
+		Plugin:      &render.PluginConfig{Name: "cue"},
+		RefRoots:    map[string]string{"$values": "values"},
+		RefSources:  map[string]render.ResolvedSource{"$shared": {RepoURL: "https://github.com/example/repo", TargetRevision: "main", Path: "refs/shared"}},
+		KubeVersion: "1.30.1",
+		APIVersions: []string{"example.com/v1/Foo"},
+	})
+	if err != nil {
+		t.Fatalf("RenderSource() error = %v", err)
+	}
+	if len(diags) != 0 {
+		t.Fatalf("diagnostics = %#v, want none", diags)
+	}
+	if got.RefRoots["$values"] != filepath.Join(root, "values") {
+		t.Fatalf("RefRoots[$values] = %q, want anchored values root", got.RefRoots["$values"])
+	}
+	if got.RefRoots["$shared"] != root {
+		t.Fatalf("RefRoots[$shared] = %q, want resolved repo root", got.RefRoots["$shared"])
+	}
+	if got.RefSources["$shared"].Path != "refs/shared" || got.RefSources["$shared"].RepoURL != "https://github.com/example/repo" {
+		t.Fatalf("RefSources[$shared] = %#v, want ref source metadata", got.RefSources["$shared"])
+	}
+	if got.KubeVersion != "1.30.1" {
+		t.Fatalf("KubeVersion = %q, want 1.30.1", got.KubeVersion)
+	}
+	if len(got.APIVersions) != 1 || got.APIVersions[0] != "example.com/v1/Foo" {
+		t.Fatalf("APIVersions = %#v, want example.com/v1/Foo", got.APIVersions)
+	}
+}
+
 func TestNativeKustomizePluginBuildOptionsFailClosed(t *testing.T) {
 	tests := []struct {
 		name    string
@@ -1077,6 +1282,35 @@ func writeNativeKustomizeCMPHelmValues(t *testing.T, root, name, version, comman
           command: [`+command+`]
           args: [`+args+`]
 `)
+}
+
+func writeCMPConfigMapSpec(t *testing.T, root, name, spec string) {
+	t.Helper()
+	writeTestFile(t, filepath.Join(root, "settings", "argocd-cmp-cm.yaml"), `apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: argocd-cmp-cm
+data:
+  `+name+`.yaml: |
+    apiVersion: argoproj.io/v1alpha1
+    kind: ConfigManagementPlugin
+    metadata:
+      name: `+name+`
+    spec:
+`+indentYAMLBlock(spec, 6))
+}
+
+func indentYAMLBlock(input string, spaces int) string {
+	input = strings.Trim(input, "\n")
+	if input == "" {
+		return ""
+	}
+	prefix := strings.Repeat(" ", spaces)
+	lines := strings.Split(input, "\n")
+	for i := range lines {
+		lines[i] = prefix + lines[i]
+	}
+	return strings.Join(lines, "\n") + "\n"
 }
 
 func writePluginPolicy(t *testing.T, root, name, engine string) {

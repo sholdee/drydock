@@ -14,6 +14,7 @@ const (
 	CodePluginFailed        = "plugin.failed"
 	CodePluginUnspecified   = "plugin.unspecified"
 	CodePluginPolicyInvalid = "plugin.policy.invalid"
+	CodePluginAutoDiscovery = "plugin.auto-discovery-deferred"
 )
 
 type Provenance struct {

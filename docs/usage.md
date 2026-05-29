@@ -203,7 +203,9 @@ plugin name. Exec policy requires trusted provenance and `--enable-plugins`;
 native policy engines such as `avp-compat` and `native-kustomize` do not
 execute plugin commands. Embedders can pass a renderer directly or use
 `drydock.NewPluginRegistry(map[string]drydock.PluginRenderer{...})` to dispatch
-in-process renderers by `plugin.name`.
+in-process renderers by `plugin.name`. The public plugin request includes the
+resolved source, `$ref` roots and source metadata, kube version, and API
+versions.
 
 See [`plugin-policy.md`](plugin-policy.md) for `--plugin-policy-path`,
 `--plugin-policy-ref`, `--plugin-policy-repo`, `--disable-plugin-policy`, the

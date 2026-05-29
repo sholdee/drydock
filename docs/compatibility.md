@@ -32,7 +32,8 @@ Not reproduced offline:
 - Live destination cluster existence checks.
 - Sync window enforcement.
 - Source integrity signature verification.
-- Project-scoped cluster Secret enforcement.
+- Project-scoped cluster Secret enforcement when cluster Secret metadata is not
+  present in the analyzed desired state.
 - Full Argo CD RBAC/Casbin authorization simulation.
 
 These live-state behaviors must stay explicit runtime-boundary diagnostics, not
@@ -155,12 +156,17 @@ Supported:
   Kustomization directory.
 - Discovered safe Kustomize build CMP definitions interpreted by drydock's
   native Kustomize renderer.
+- Bounded warning diagnostics when a discovered sidecar CMP static
+  `discover.fileName` or `discover.find.glob` rule matches a native-rendered
+  source. drydock does not execute `discover.find.command`.
 - Trusted drydock plugin policy entries for native AVP compatibility, native
   plugin overrides, and explicitly enabled exec CMP compatibility.
 - Config management plugin source detection with fail-closed diagnostics in
   the CLI and default Go client.
 - Injectable in-process plugin renderers, named plugin registry dispatch, and
-  plugin timeout controls for embedding callers.
+  plugin timeout controls for embedding callers. Public plugin requests include
+  source metadata, `$ref` roots and source metadata, kube version, and API
+  versions.
 
 Documented runtime-offline safety boundary:
 
@@ -233,7 +239,12 @@ Supported:
 - Repository credential matching diagnostics based on discovered repository
   Secret metadata only, without reading secret credential fields.
 - Cluster Secret metadata parsing for offline named-cluster destination
-  diagnostics.
+  diagnostics and project-scoped cluster checks when the desired state includes
+  the relevant cluster Secret metadata. Only `name`, `server`, `namespaces`,
+  `clusterResources`, and `project` are decoded.
+- `argocd-cmd-params-cm` runtime-boundary diagnostics for settings that imply
+  live repo-server, controller, or ApplicationSet controller behavior. These
+  settings are parsed as metadata and do not mutate render behavior.
 - Custom health Lua validation in `test apps` and `test app`, executed offline
   against rendered desired manifests.
 - Health and action customization parsing and diagnostics, including

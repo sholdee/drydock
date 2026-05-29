@@ -92,6 +92,8 @@ type PluginRequest struct {
 	Plugin       PluginConfig
 	RefRoots     map[string]string
 	RefSources   map[string]ResolvedSource
+	KubeVersion  string
+	APIVersions  []string
 }
 
 type PluginRenderer interface {
