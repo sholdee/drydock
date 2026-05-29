@@ -2,8 +2,13 @@ package cli
 
 import (
 	"bytes"
+	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/sholdee/drydock/internal/app"
 )
 
 func TestRootHelp(t *testing.T) {
@@ -99,5 +104,88 @@ func TestVersionCommandRejectsOperands(t *testing.T) {
 
 	if err := cmd.Execute(); err == nil {
 		t.Fatalf("Execute() error = nil, want error")
+	}
+}
+
+func TestProfileWritesFileAndKeepsStructuredStdoutClean(t *testing.T) {
+	root := t.TempDir()
+	profileOut := filepath.Join(t.TempDir(), "profiles")
+	cmd := NewRootCommand(VersionInfo{})
+	cmd.SetArgs([]string{"--profile", "mem", "--profile-out", profileOut, "test", "apps", "--path", root, "-o", "json"})
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	cmd.SetOut(&stdout)
+	cmd.SetErr(&stderr)
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("Execute() error = %v\nstdout:\n%s\nstderr:\n%s", err, stdout.String(), stderr.String())
+	}
+	if got, want := strings.TrimSpace(stdout.String()), "[]"; got != want {
+		t.Fatalf("stdout = %q, want %q", stdout.String(), want)
+	}
+	if !strings.Contains(stderr.String(), "profile mem: wrote ") {
+		t.Fatalf("stderr = %q, want profile write message", stderr.String())
+	}
+	matches, err := filepath.Glob(filepath.Join(profileOut, "drydock-test-apps-*.mem.pprof"))
+	if err != nil {
+		t.Fatalf("glob profile files: %v", err)
+	}
+	if len(matches) != 1 {
+		t.Fatalf("profile files = %v, want one mem profile", matches)
+	}
+	info, err := os.Stat(matches[0])
+	if err != nil {
+		t.Fatalf("stat profile file: %v", err)
+	}
+	if info.Mode().Perm() != 0o600 {
+		t.Fatalf("profile file mode = %v, want 0600", info.Mode().Perm())
+	}
+}
+
+func TestProfileRejectsInvalidMode(t *testing.T) {
+	cmd := NewRootCommand(VersionInfo{})
+	cmd.SetArgs([]string{"--profile", "sometimes", "version"})
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	cmd.SetOut(&stdout)
+	cmd.SetErr(&stderr)
+
+	err := cmd.Execute()
+	if err == nil || !strings.Contains(err.Error(), `profile must be cpu, mem, block, mutex, or trace, got "sometimes"`) {
+		t.Fatalf("Execute() error = %v, want invalid profile mode", err)
+	}
+	if stdout.String() != "" {
+		t.Fatalf("stdout = %q, want empty", stdout.String())
+	}
+}
+
+func TestProfileStopErrorDoesNotReplaceCommandError(t *testing.T) {
+	profileOut := filepath.Join(t.TempDir(), "profiles")
+	originalErr := errors.New("original command failure")
+	recorder := &recordingCLIOrchestrator{
+		buildError: originalErr,
+		buildHook: func(_ app.BuildRequest) error {
+			if err := os.RemoveAll(profileOut); err != nil {
+				return err
+			}
+			if err := os.WriteFile(profileOut, []byte("not a directory"), 0o600); err != nil {
+				return err
+			}
+			return nil
+		},
+	}
+	cmd := NewRootCommandWithDependencies(VersionInfo{}, Dependencies{Orchestrator: recorder})
+	cmd.SetArgs([]string{"--profile", "mem", "--profile-out", profileOut, "build", "apps"})
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	cmd.SetOut(&stdout)
+	cmd.SetErr(&stderr)
+
+	err := cmd.Execute()
+	if !errors.Is(err, originalErr) {
+		t.Fatalf("Execute() error = %v, want original command error", err)
+	}
+	if !strings.Contains(stderr.String(), "warning profile:") {
+		t.Fatalf("stderr = %q, want profile warning", stderr.String())
 	}
 }

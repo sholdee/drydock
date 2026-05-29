@@ -47,12 +47,14 @@ func NewRootCommand(info VersionInfo) *cobra.Command {
 }
 
 func NewRootCommandWithDependencies(info VersionInfo, deps Dependencies) *cobra.Command {
+	profileFlags := defaultProfileFlags()
 	cmd := &cobra.Command{
 		Use:           "drydock",
 		Short:         "Inspect your Argo CD fleet without getting wet",
 		SilenceUsage:  true,
 		SilenceErrors: true,
 	}
+	bindProfileFlags(cmd, &profileFlags)
 	cmd.AddCommand(newGetCommand(deps))
 	cmd.AddCommand(newBuildCommand(deps))
 	cmd.AddCommand(newTestCommand(deps))
@@ -60,6 +62,7 @@ func NewRootCommandWithDependencies(info VersionInfo, deps Dependencies) *cobra.
 	cmd.AddCommand(newCacheCommand())
 	cmd.AddCommand(newDiagCommand(deps))
 	cmd.AddCommand(newVersionCommand(info))
+	installProfileWrapper(cmd, &profileFlags)
 	return cmd
 }
 

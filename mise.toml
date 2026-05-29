@@ -51,7 +51,7 @@ run = "go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.12"
 
 [tasks.shellcheck]
 description = "Lint shell scripts"
-run = "shellcheck setup-action/*.sh pr-action/*.sh"
+run = "shellcheck setup-action/*.sh pr-action/*.sh scripts/profile-smoke.sh"
 
 [tasks.vuln]
 description = "Run advisory govulncheck"
