@@ -154,8 +154,8 @@ func Cases() []Case {
 			Phase:             "8",
 			Category:          "remote-kustomize-cache",
 			FixturePath:       "testdata/semantic-remediation/remote-kustomize-cache/seeded-diff",
-			Status:            StatusPending,
-			Reason:            "Remote Kustomize A/B cache diff coverage is incomplete.",
+			Status:            StatusActive,
+			Reason:            "Seeded remote Kustomize cache A/B diff coverage is exercised by a portable offline CLI fixture test.",
 			VerificationScope: "go test ./internal/cli ./internal/remote ./internal/app -run RemoteKustomize",
 		},
 	}

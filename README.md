@@ -211,7 +211,9 @@ deterministic and safe for CI.
 Structured outputs keep stdout machine-parseable. Diagnostics and failure
 summaries are written to stderr where appropriate, and drydock avoids printing
 Secret values, repository credentials, tokens, SSH private keys, passphrases,
-registry credentials, or credential-bearing URLs.
+registry credentials, or credential-bearing URLs. Repository and cluster Secret
+diagnostics use non-sensitive metadata only, and `argocd-cmd-params-cm` is
+reported as runtime-boundary metadata rather than a render-behavior override.
 
 ## How It Works
 

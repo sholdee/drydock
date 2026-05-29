@@ -79,6 +79,10 @@ Canonical references:
 Settings flow into `internal/config.ArgoSettings`. Providers must record
 provenance and fail closed on conflicting discovered values.
 
+`argocd-cmd-params-cm` may be parsed only as command-parameter metadata for
+runtime-boundary diagnostics. Runtime-only repo-server, controller, and
+ApplicationSet-controller settings must not mutate render behavior.
+
 Repository Secrets may contribute non-sensitive metadata such as `url`, `type`,
 `name`, `project`, and `enableOCI`. They must not retain username, password,
 bearer tokens, SSH keys, TLS material, or other credential fields.

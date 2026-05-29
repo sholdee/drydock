@@ -431,7 +431,14 @@ and the Go API report source repository and destination validation diagnostics
 from those manifests. RBAC roles and policies are parsed and reported as
 metadata only; Argo CD authorization is not simulated. Repository credential
 matching diagnostics use discovered repository Secret metadata only and never
-read secret credential fields.
+read secret credential fields. Cluster Secret diagnostics likewise use only
+`name`, `server`, `namespaces`, `clusterResources`, and `project` metadata;
+credential/config fields are not decoded, retained, or printed.
+
+`argocd-cmd-params-cm` settings are parsed as runtime-boundary metadata when
+they imply live repo-server, controller, or ApplicationSet controller behavior.
+They may produce diagnostics and settings summaries, but they do not mutate
+drydock render behavior.
 
 ## Local Verification And Benchmarks
 
@@ -465,7 +472,8 @@ These source paths are outside the current default runtime contract:
   credential injection.
 - Live cluster and Argo CD API sources.
 - Live destination cluster existence, sync windows, source integrity
-  verification, project-scoped cluster Secrets, and full RBAC simulation.
+  verification, project-scoped cluster Secret enforcement beyond discovered
+  metadata, and full RBAC simulation.
 
 See [`plugin-policy.md`](plugin-policy.md) for the supported trusted CMP
 compatibility path.
