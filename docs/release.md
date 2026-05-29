@@ -56,6 +56,11 @@ runners where `shasum` is the available SHA-256 verifier. Only a 404 for
 artifact, and only when `allow-unverified: true` is set. By default, missing
 checksums and checksum download failures fail the action.
 
+By default, the setup action may restore and save the verified release archive
+through GitHub Actions cache. `latest` is resolved to a concrete release tag
+before cache lookup, and cache keys include the release checksum. Cache restore
+and save are skipped when `allow-unverified: true` is set.
+
 Example:
 
 ```yaml
