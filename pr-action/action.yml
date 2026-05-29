@@ -6,6 +6,14 @@ inputs:
     description: drydock release version to install. Defaults to latest.
     required: false
     default: latest
+  install:
+    description: Install drydock before running. Set to false when a pinned drydock binary is already on PATH.
+    required: false
+    default: "true"
+  drydock-bin:
+    description: drydock binary path or command to run when install is false.
+    required: false
+    default: drydock
   install-dir:
     description: Directory to install the drydock binary into.
     required: false
@@ -13,12 +21,19 @@ inputs:
   github-token:
     description: GitHub token for checkout, release downloads, and comments.
     required: false
+  github-app-client-id:
+    description: Optional GitHub App client ID. When set with github-app-private-key, the action mints an installation token.
+    required: false
   github-app-id:
-    description: Optional GitHub App ID. When set with github-app-private-key, the action mints an installation token.
+    description: Optional legacy GitHub App ID fallback. Prefer github-app-client-id.
     required: false
   github-app-private-key:
     description: Optional GitHub App private key.
     required: false
+  release-repository:
+    description: Repository that publishes drydock release artifacts.
+    required: false
+    default: sholdee/drydock
   checkout:
     description: Check out the pull request head before running drydock.
     required: false
@@ -223,8 +238,18 @@ runs:
   using: composite
   steps:
     - name: Create GitHub App token
-      id: app-token
-      if: ${{ inputs.github-app-id != '' && inputs.github-app-private-key != '' }}
+      id: app-token-client
+      if: ${{ inputs.github-app-client-id != '' && inputs.github-app-private-key != '' }}
+      uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+      with:
+        client-id: ${{ inputs.github-app-client-id }}
+        permission-contents: read
+        permission-pull-requests: write
+        private-key: ${{ inputs.github-app-private-key }}
+
+    - name: Create GitHub App token from legacy App ID
+      id: app-token-legacy
+      if: ${{ inputs.github-app-client-id == '' && inputs.github-app-id != '' && inputs.github-app-private-key != '' }}
       uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
       with:
         app-id: ${{ inputs.github-app-id }}
@@ -232,13 +257,34 @@ runs:
         permission-pull-requests: write
         private-key: ${{ inputs.github-app-private-key }}
 
+    - name: Validate drydock install mode
+      shell: bash
+      env:
+        DRYDOCK_INPUT_DRYDOCK_BIN: ${{ inputs.drydock-bin }}
+        DRYDOCK_INPUT_INSTALL: ${{ inputs.install }}
+      run: |
+        case "${DRYDOCK_INPUT_INSTALL}" in
+          true | false) ;;
+          *)
+            echo "install must be true or false, got '${DRYDOCK_INPUT_INSTALL}'." >&2
+            exit 1
+            ;;
+        esac
+
+        if [[ "${DRYDOCK_INPUT_INSTALL}" == "false" && -z "${DRYDOCK_INPUT_DRYDOCK_BIN}" ]]; then
+          echo "drydock-bin is required when install is false." >&2
+          exit 1
+        fi
+
     - name: Install drydock
       id: setup
+      if: ${{ inputs.install == 'true' }}
       shell: bash
       env:
         DRYDOCK_ALLOW_UNVERIFIED: "false"
-        DRYDOCK_GITHUB_TOKEN: ${{ steps.app-token.outputs.token || inputs.github-token || github.token }}
+        DRYDOCK_GITHUB_TOKEN: ${{ steps.app-token-client.outputs.token || steps.app-token-legacy.outputs.token || inputs.github-token || github.token }}
         DRYDOCK_INSTALL_DIR: ${{ inputs.install-dir }}
+        DRYDOCK_RELEASE_REPOSITORY: ${{ inputs.release-repository }}
         DRYDOCK_VERSION: ${{ inputs.version }}
       run: '"${GITHUB_ACTION_PATH}/../setup-action/install.sh"'
 
@@ -263,7 +309,7 @@ runs:
         DRYDOCK_INPUT_SAVE_CACHE: ${{ inputs.save-cache }}
         DRYDOCK_INPUT_UPLOAD_ARTIFACTS: ${{ inputs.upload-artifacts }}
         DRYDOCK_PR_HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
-        DRYDOCK_RESOLVED_VERSION: ${{ steps.setup.outputs.version }}
+        DRYDOCK_RESOLVED_VERSION: ${{ inputs.install == 'true' && steps.setup.outputs.version || inputs.version }}
       run: '"${GITHUB_ACTION_PATH}/prepare.sh"'
 
     - name: Check out pull request head
@@ -273,14 +319,14 @@ runs:
         fetch-depth: ${{ inputs.fetch-depth }}
         persist-credentials: false
         ref: ${{ inputs.head-ref || github.event.pull_request.head.sha || github.sha }}
-        token: ${{ steps.app-token.outputs.token || inputs.github-token || github.token }}
+        token: ${{ steps.app-token-client.outputs.token || steps.app-token-legacy.outputs.token || inputs.github-token || github.token }}
 
     - name: Fetch baseline ref
       id: fetch-base
       if: ${{ inputs.run-diff == 'true' || inputs.run-image-diff == 'true' }}
       shell: bash
       env:
-        DRYDOCK_GITHUB_TOKEN: ${{ steps.app-token.outputs.token || inputs.github-token || github.token }}
+        DRYDOCK_GITHUB_TOKEN: ${{ steps.app-token-client.outputs.token || steps.app-token-legacy.outputs.token || inputs.github-token || github.token }}
         DRYDOCK_INPUT_BASE_REF: ${{ inputs.base-ref }}
         DRYDOCK_PR_BASE_REF: ${{ github.event.pull_request.base.ref }}
       run: '"${GITHUB_ACTION_PATH}/fetch-base.sh"'
@@ -300,7 +346,7 @@ runs:
       env:
         DRYDOCK_ACTION_WORK_DIR: ${{ steps.prepare.outputs.work-dir }}
         DRYDOCK_BASE_COMPARE_REF: ${{ steps.fetch-base.outputs.compare-ref }}
-        DRYDOCK_BIN: ${{ steps.setup.outputs.install-dir }}/drydock
+        DRYDOCK_BIN: ${{ inputs.install == 'true' && format('{0}/drydock', steps.setup.outputs.install-dir) || inputs.drydock-bin }}
         DRYDOCK_CACHE_PATH: ${{ steps.prepare.outputs.cache-path }}
         DRYDOCK_DIFF_ARTIFACT_NAME: ${{ steps.prepare.outputs.diff-artifact-name }}
         DRYDOCK_IMAGE_ARTIFACT_NAME: ${{ steps.prepare.outputs.image-artifact-name }}
@@ -351,7 +397,7 @@ runs:
       with:
         message-id: ${{ github.event.pull_request.number }}/drydock-diff
         message-path: ${{ steps.run.outputs.diff-comment-path }}
-        repo-token: ${{ steps.app-token.outputs.token || inputs.github-token || github.token }}
+        repo-token: ${{ steps.app-token-client.outputs.token || steps.app-token-legacy.outputs.token || inputs.github-token || github.token }}
 
     - name: Comment added images
       if: ${{ github.event_name == 'pull_request' && steps.prepare.outputs.trusted-context == 'true' && steps.run.outputs.images-comment == 'true' }}
@@ -360,7 +406,7 @@ runs:
       with:
         message-id: ${{ github.event.pull_request.number }}/drydock-images
         message-path: ${{ steps.run.outputs.images-comment-path }}
-        repo-token: ${{ steps.app-token.outputs.token || inputs.github-token || github.token }}
+        repo-token: ${{ steps.app-token-client.outputs.token || steps.app-token-legacy.outputs.token || inputs.github-token || github.token }}
 
     - name: Upload rendered manifest diff
       if: ${{ inputs.upload-artifacts == 'true' && steps.run.outputs.has-diff == 'true' }}
