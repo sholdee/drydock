@@ -462,6 +462,46 @@ go test ./internal/app -run '^$' -bench 'BenchmarkOrchestrator(BuildManyLocalApp
 
 Benchmark numbers are trend signals, not hard pass/fail thresholds.
 
+Advanced profiling flags are available in release binaries and `go run` builds
+for maintainers diagnosing real repository performance:
+
+```bash
+drydock --profile cpu --profile-out ./drydock-profiles test apps --path .
+drydock --profile trace --profile-out ./drydock-profiles diff apps --path . --ref-orig main
+drydock --profile mem --profile-out ./drydock-profiles get images --path .
+```
+
+`--profile` accepts `cpu`, `mem`, `block`, `mutex`, or `trace`. Profile metadata
+is written to stderr, and profile artifacts are written under `--profile-out`.
+Normal stdout output remains unchanged for text, JSON, YAML, and diff formats.
+The `mem` mode writes a heap profile at command completion; it is not a memory
+timeline.
+
+Inspect pprof profiles with:
+
+```bash
+go tool pprof ./drydock-profiles/drydock-test-apps-*.cpu.pprof
+```
+
+Inspect traces with:
+
+```bash
+go tool trace ./drydock-profiles/drydock-diff-apps-*.trace.out
+```
+
+Profiles may include local paths, command arguments, symbols, and sampled
+in-memory strings. Review profile files before sharing them publicly.
+
+Use the optional maintainer script for repeated real-repository smokes:
+
+```bash
+scripts/profile-smoke.sh ~/git/home-ops --binary ./dist/drydock --profile cpu --warm-runs 3
+```
+
+The script is not a CI gate. It accepts explicit `--ref` and `--ref-orig`
+values, and otherwise tries to detect the baseline branch from `origin/HEAD`,
+`main`, or `master`.
+
 ## Runtime-Boundary Commands And Sources
 
 These source paths are outside the current default runtime contract:
