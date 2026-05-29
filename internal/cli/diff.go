@@ -127,7 +127,7 @@ func newDiffImagesCommand(deps Dependencies) *cobra.Command {
 		Short: "Diff rendered image references",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			output, err := parseDiffOutput(imagesFlags.output, "diff images")
+			output, err := parseImageDiffOutput(imagesFlags.output)
 			if err != nil {
 				return err
 			}
@@ -248,6 +248,10 @@ func renderImageDiffResult(cmd *cobra.Command, result app.ImageDiffResult, disab
 			Unchanged: cloneStringSlice(result.Unchanged),
 		}
 		if err := writeStructuredOutput(cmd.OutOrStdout(), output, payload); err != nil {
+			return err
+		}
+	case string(cliformat.OutputName):
+		if err := cliformat.Name(cmd.OutOrStdout(), result.Added); err != nil {
 			return err
 		}
 	default:
