@@ -10,11 +10,13 @@ import (
 var validRef = regexp.MustCompile(`^[A-Za-z0-9_-]+$`)
 
 type SourcePlan struct {
-	Index   int
-	Name    string
-	RefKey  string
-	Source  argoappv1.ApplicationSource
-	RefOnly bool
+	Index        int
+	Name         string
+	RefKey       string
+	Source       argoappv1.ApplicationSource
+	SourceRoot   string
+	RefOnly      bool
+	ExplicitType argoappv1.ApplicationSourceType
 }
 
 type PlanResult struct {
@@ -52,6 +54,19 @@ func Plan(application argoappv1.Application) (PlanResult, error) {
 			if _, exists := result.Refs[sourcePlan.RefKey]; exists {
 				return result, fmt.Errorf("duplicate source ref %s", sourcePlan.RefKey)
 			}
+		}
+
+		if !sourcePlan.RefOnly {
+			explicitType, err := source.ExplicitType()
+			if err != nil {
+				return result, fmt.Errorf("sources[%d]: %w", i, err)
+			}
+			if explicitType != nil {
+				sourcePlan.ExplicitType = *explicitType
+			}
+		}
+
+		if sourcePlan.RefKey != "" {
 			result.Refs[sourcePlan.RefKey] = sourcePlan
 		}
 

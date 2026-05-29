@@ -49,6 +49,10 @@ Public API rules:
   fails.
 - Stable diagnostic `Code` values are part of the CLI JSON/YAML and public API
   contract.
+- Public plugin requests expose only public value types. They include the
+  selected source metadata, `$ref` roots and source metadata, kube version, and
+  API versions so embedders can render deterministic in-process plugins without
+  reaching into `internal/...` packages.
 
 Config management plugin command execution fails closed by default. CLI/default
 paths do not execute plugin commands unless trusted drydock plugin policy
@@ -75,16 +79,23 @@ Canonical references:
 Settings flow into `internal/config.ArgoSettings`. Providers must record
 provenance and fail closed on conflicting discovered values.
 
+`argocd-cmd-params-cm` may be parsed only as command-parameter metadata for
+runtime-boundary diagnostics. Runtime-only repo-server, controller, and
+ApplicationSet-controller settings must not mutate render behavior.
+
 Repository Secrets may contribute non-sensitive metadata such as `url`, `type`,
 `name`, `project`, and `enableOCI`. They must not retain username, password,
 bearer tokens, SSH keys, TLS material, or other credential fields.
 
+Cluster Secrets may contribute only metadata fields `name`, `server`,
+`namespaces`, `clusterResources`, and `project`. Do not decode, retain, print,
+or fingerprint cluster credential/config fields.
+
 Local `AppProject` manifests may produce offline diagnostics for Application
 project references, source repositories, destinations, source namespaces,
-repository Secret metadata matches, RBAC role metadata, and deferred
-project-scoped cluster metadata. Do not simulate live cluster existence, full
-Argo CD RBAC/Casbin authorization, or project-scoped cluster Secret
-enforcement offline.
+repository Secret metadata matches, cluster Secret metadata matches, RBAC role
+metadata, and deferred project-scoped cluster metadata. Do not simulate live
+cluster existence or full Argo CD RBAC/Casbin authorization offline.
 
 ## Discovery And ApplicationSet Support
 
@@ -214,9 +225,10 @@ Renderers implement `internal/render.Renderer`. The default implementation
 path must not shell out.
 
 Directory rendering parses YAML/JSON files, flattens Kubernetes `List`
-objects, stays within the resolved repository root, rejects escaping source
-paths and symlinked source path components, and skips symlinked files or
-directories while walking.
+objects, renders Jsonnet with native Go libraries, honors Argo CD's
+`+argocd:skip-file-rendering` marker, stays within the resolved repository
+root, rejects escaping source paths and symlinked source path components, and
+skips symlinked files or directories while walking.
 
 Kustomize rendering uses Go libraries. Do not enable Kustomize's Helm shellout
 plugin. Validate local graph references before rendering and reject unsupported
@@ -253,3 +265,21 @@ worktrees.
 Use the smallest verification that covers the change. If a useful command is
 unavailable or approval-gated, skip it and report the gap rather than blocking
 the work.
+
+### Semantic Remediation Checks
+
+Use the semantic remediation fixtures in `testdata/semantic-remediation` as
+pending or active targets for Argo CD parity work. Keep normal checks portable
+and offline:
+
+```bash
+go test ./internal/fixtures/semantic
+go test ./internal/app ./internal/render -run 'ExplicitSource|ArgocdSource|SourceKustomize'
+go test ./internal/render ./internal/app -run 'Helm.*(Value|Parameter|FileParameter|Schema|Glob)|Directory|Jsonnet'
+go test ./internal/appset ./internal/app -run 'Git|List|Values|TemplatePatch|ClusterDecision'
+go test ./internal/discovery ./internal/config ./internal/project ./internal/cli -run 'ClusterSecret|CmdParams|Settings|Diag'
+```
+
+Do not run optional real-repository smokes from normal tests. Use isolated
+temporary worktrees and caches when a phase explicitly calls for a manual
+smoke.

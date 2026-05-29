@@ -20,7 +20,35 @@ Repository source resolution is deterministic:
 repositories and override declared revisions.
 
 Ref-only sources are allowed and render no manifests. `$ref/...` Helm value
-files resolve from the referenced source root, not from its `path`.
+files and file parameters resolve from the referenced source root, not from
+its `path`.
+
+## Helm Sources
+
+Chart-only HTTP(S) and OCI Helm sources may be fetched into the chart cache
+unless `--offline` is set. Local Helm chart sources render from the repository
+tree.
+
+Missing HTTP(S) and OCI chart dependencies declared in `Chart.yaml` are
+resolved through drydock's native chart cache. With `--offline`, cache hits are
+allowed but network fetches are disabled. The source checkout is not mutated,
+and drydock does not shell out to `helm dependency build`. Local `file://`,
+repository-alias, or otherwise unresolved dependencies must already be
+available under `charts/`; missing local dependencies fail with a clear
+vendored-chart requirement.
+
+Helm `valueFiles` support local paths, `$ref/...` paths, glob expansion,
+HTTP(S) remote value files, and discovered `helm.valuesFileSchemes`. Remote
+value files use the remote-resource cache and `--remote-*` credentials, not
+the chart cache. Explicitly empty `helm.valuesFileSchemes` disables remote
+value-file URLs.
+
+`source.helm.passCredentials` affects only HTTP chart repositories with
+explicit `--helm-*` credentials. By default, drydock sends those credentials to
+the repository index and to chart archive URLs on the same host. When
+`passCredentials` is true, drydock also forwards them to cross-host chart
+archive URLs returned by the repository index. It does not enable ambient
+credential discovery.
 
 ## Kustomize Sources
 
@@ -33,6 +61,12 @@ For local Kustomize sources, drydock applies the supported subset of Argo CD
 - `--load-restrictor=LoadRestrictionsNone`
 
 Unsupported build options fail explicitly instead of being ignored.
+Version-specific `kustomize.buildOptions.<version>` and
+`kustomize.path.<version>` settings produce warnings because drydock uses
+embedded Go libraries instead of selecting external Kustomize binaries.
+Kustomize `helmCharts` render natively through the same Helm library path used
+for Argo CD chart sources; no external Kustomize CLI is required for chart
+inflation.
 
 Supported Kustomize remote refs include:
 
@@ -82,10 +116,15 @@ Offline render/build/diff commands require cache hits, repo maps, local files,
 or local chart availability. Populate caches with a prior non-offline render
 using the relevant auth, cache-dir, and refresh flags.
 
-Caches must stay outside Git repository trees. Cache entries include hidden
-`.drydock-cache/metadata.json` sidecars with redacted target metadata. Older
-hash-only entries are listed as legacy entries when their filesystem layout is
-recognized.
+Render-time Git, chart, and remote-resource caches must stay outside the
+current repository tree, compared repository trees, repo-map roots, and
+symlink-resolved equivalents. drydock validates these roots before cache reads,
+fetches, or writes so a repository cannot double as its own mutable source
+cache.
+
+Cache entries include hidden `.drydock-cache/metadata.json` sidecars with
+redacted target metadata. Older hash-only entries are listed as legacy entries
+when their filesystem layout is recognized.
 
 ## Credentials
 

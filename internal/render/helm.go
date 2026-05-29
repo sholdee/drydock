@@ -4,23 +4,26 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"net/url"
 	"os"
 	"path"
 	"path/filepath"
 	"sort"
 	"strings"
 
+	"github.com/bmatcuk/doublestar/v4"
 	"github.com/sholdee/drydock/internal/avpcompat"
 	"github.com/sholdee/drydock/internal/diagnostic"
 	"github.com/sholdee/drydock/internal/manifest"
+	"github.com/sholdee/drydock/internal/remote"
 	"go.yaml.in/yaml/v4"
 	helmchart "helm.sh/helm/v4/pkg/chart"
 	"helm.sh/helm/v4/pkg/chart/common"
 	chartutil "helm.sh/helm/v4/pkg/chart/common/util"
 	"helm.sh/helm/v4/pkg/chart/loader"
 	chartv2 "helm.sh/helm/v4/pkg/chart/v2"
-	chartv2util "helm.sh/helm/v4/pkg/chart/v2/util"
 	"helm.sh/helm/v4/pkg/engine"
+	"helm.sh/helm/v4/pkg/strvals"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 )
 
@@ -49,7 +52,14 @@ func (HelmRenderer) Render(ctx context.Context, source ResolvedSource, opts Rend
 	if err != nil {
 		return nil, nil, fmt.Errorf("load helm chart %s: %w", manifestPath, err)
 	}
-	pathMap, err := helmChartPathMap(source.RepoRoot, chartPath, chart)
+	chart, cleanup, err := prepareHelmDependencyWorkspace(ctx, chartPath, manifestPath, chart, opts)
+	if cleanup != nil {
+		defer cleanup()
+	}
+	if err != nil {
+		return nil, nil, err
+	}
+	pathMap, err := helmChartPathMap(manifestPath, chart)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -76,13 +86,16 @@ func (HelmRenderer) Render(ctx context.Context, source ResolvedSource, opts Rend
 	}
 	fileValues := map[string]any{}
 	if loadValueFiles {
-		fileValues, err = loadHelmValueFiles(source.RepoRoot, helmValueFilesBaseDir(source, opts), helmValueFilesBoundaryRoot(source, opts), opts.RefRoots, opts.ValueFiles, opts.IgnoreMissingValueFiles)
+		fileValues, err = loadHelmValueFiles(ctx, source.RepoRoot, helmValueFilesBaseDir(source, opts), helmValueFilesBoundaryRoot(source, opts), opts.RefRoots, opts.ValueFiles, opts.IgnoreMissingValueFiles, opts)
 		if err != nil {
 			return nil, nil, err
 		}
 	}
 	inputValues, err := mergeHelmValues(fileValues, inlineValues, opts.ValuesMergeMode)
 	if err != nil {
+		return nil, nil, err
+	}
+	if err := applyHelmParameters(ctx, source, opts, inputValues); err != nil {
 		return nil, nil, err
 	}
 	avpDiags := applyAVPCompatToHelmValues(inputValues, opts)
@@ -96,7 +109,7 @@ func (HelmRenderer) Render(ctx context.Context, source ResolvedSource, opts Rend
 		Revision:  1,
 		IsInstall: true,
 		IsUpgrade: false,
-	}, capabilities, true)
+	}, capabilities, opts.SkipSchemaValidation)
 	if err != nil {
 		return nil, nil, fmt.Errorf("helm render values %s: %w", manifestPath, err)
 	}
@@ -136,17 +149,6 @@ func validateHelmChartTree(root string) error {
 		}
 		return nil
 	})
-}
-
-func processHelmDependencies(chrt helmchart.Charter, values map[string]any, manifestPath string) error {
-	chart, ok := chrt.(*chartv2.Chart)
-	if !ok {
-		return nil
-	}
-	if err := chartv2util.ProcessDependencies(chart, common.Values(values)); err != nil {
-		return fmt.Errorf("helm chart dependencies %s: %w", manifestPath, err)
-	}
-	return nil
 }
 
 func decodeHelmManifests(pathMap map[string]string, chrt helmchart.Charter, rendered map[string]string, opts RenderOptions) ([]Manifest, []diagnostic.Diagnostic, error) {
@@ -282,11 +284,7 @@ func applyAVPCompatToHelmValues(values map[string]any, opts RenderOptions) []dia
 	}}
 }
 
-func helmChartPathMap(repoRoot, chartPath string, chrt helmchart.Charter) (map[string]string, error) {
-	chartRel, err := relativeManifestPath(repoRoot, chartPath)
-	if err != nil {
-		return nil, err
-	}
+func helmChartPathMap(chartRel string, chrt helmchart.Charter) (map[string]string, error) {
 	root, err := helmchart.NewAccessor(chrt)
 	if err != nil {
 		return nil, err
@@ -443,36 +441,391 @@ func shouldLoadHelmValueFiles(mode string, inlineValues map[string]any) (bool, e
 	}
 }
 
-func loadHelmValueFiles(repoRoot, baseDir, boundaryDir string, refRoots map[string]string, files []string, ignoreMissing bool) (map[string]any, error) {
-	out := map[string]any{}
-	for _, file := range files {
-		root, resolved, err := resolveHelmValueFile(repoRoot, baseDir, boundaryDir, refRoots, file)
+func applyHelmParameters(ctx context.Context, source ResolvedSource, opts RenderOptions, values map[string]any) error {
+	for _, parameter := range opts.HelmParameters {
+		name := strings.TrimSpace(parameter.Name)
+		if name == "" {
+			return fmt.Errorf("helm parameter name is required")
+		}
+		rawValue := parameter.Value
+		value := opts.ArgoEnv.Envsubst(rawValue)
+		expression := name + "=" + cleanHelmSetParameter(value)
+		var err error
+		if parameter.ForceString {
+			err = strvals.ParseIntoString(expression, values)
+		} else {
+			err = strvals.ParseInto(expression, values)
+		}
+		if err != nil {
+			return fmt.Errorf("helm parameter %q failed to parse: %s", name, redactHelmParameterError(err.Error(), rawValue, value))
+		}
+	}
+
+	if len(opts.HelmFileParameters) == 0 {
+		return nil
+	}
+	reader := helmFileParameterReader(ctx, source, opts)
+	for _, parameter := range opts.HelmFileParameters {
+		name := strings.TrimSpace(parameter.Name)
+		if name == "" {
+			return fmt.Errorf("helm file parameter name is required")
+		}
+		rawPath := parameter.Path
+		filePath := envsubstHelmValueFilePath(rawPath, opts, opts.RefRoots)
+		if err := strvals.ParseIntoFile(name+"="+cleanHelmSetParameter(filePath), values, reader); err != nil {
+			return fmt.Errorf("helm file parameter %q failed to parse: %s", name, redactHelmParameterError(err.Error(), rawPath, filePath))
+		}
+	}
+	return nil
+}
+
+func helmFileParameterReader(ctx context.Context, source ResolvedSource, opts RenderOptions) strvals.RunesValueReader {
+	return func(input []rune) (any, error) {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		file := string(input)
+		if isRemoteHelmValueFile(file) {
+			return nil, fmt.Errorf("helm file parameter %q must reference a local or $ref file", remote.RedactURL(file))
+		}
+		root, resolved, err := resolveHelmValueFile(source.RepoRoot, helmValueFilesBaseDir(source, opts), helmValueFilesBoundaryRoot(source, opts), opts.RefRoots, file)
 		if err != nil {
 			return nil, err
 		}
 		if err := rejectSymlinkedPath(root, resolved); err != nil {
-			return nil, fmt.Errorf("helm value file %q: %w", file, err)
+			return nil, fmt.Errorf("helm file parameter %q: %w", file, err)
 		}
 		data, err := os.ReadFile(resolved)
 		if err != nil {
-			if ignoreMissing && os.IsNotExist(err) {
-				continue
-			}
-			return nil, fmt.Errorf("read helm value file %q: %w", file, err)
+			return nil, fmt.Errorf("read helm file parameter %q: %w", file, err)
 		}
+		return string(data), nil
+	}
+}
 
-		values := map[string]any{}
-		if err := yaml.Unmarshal(data, &values); err != nil {
-			return nil, fmt.Errorf("helm value file %q must be a YAML mapping: %w", file, err)
+func redactHelmParameterError(message string, sensitiveValues ...string) string {
+	for _, value := range sensitiveValues {
+		if value == "" {
+			continue
 		}
-		if values == nil {
-			values = map[string]any{}
+		message = strings.ReplaceAll(message, value, "[redacted]")
+	}
+	return message
+}
+
+func cleanHelmSetParameter(value string) string {
+	if strings.HasPrefix(value, "{") && strings.HasSuffix(value, "}") {
+		return value
+	}
+	return replaceRuneWithLookbehind(value, ',', `\,`, '\\')
+}
+
+func replaceRuneWithLookbehind(value string, old rune, replacement string, lookbehind rune) string {
+	var out strings.Builder
+	var previous rune
+	for _, current := range value {
+		if current == old {
+			if previous != lookbehind {
+				out.WriteString(replacement)
+			} else {
+				out.WriteRune(current)
+			}
+		} else {
+			out.WriteRune(current)
 		}
-		if err := mergeHelmValueMap(out, values); err != nil {
-			return nil, fmt.Errorf("merge helm value file %q: %w", file, err)
+		previous = current
+	}
+	return out.String()
+}
+
+func loadHelmValueFiles(ctx context.Context, repoRoot, baseDir, boundaryDir string, refRoots map[string]string, files []string, ignoreMissing bool, opts RenderOptions) (map[string]any, error) {
+	loader := helmValueFileLoader{
+		ctx:           ctx,
+		repoRoot:      repoRoot,
+		baseDir:       baseDir,
+		boundaryDir:   boundaryDir,
+		refRoots:      refRoots,
+		ignoreMissing: ignoreMissing,
+		opts:          opts,
+		explicit:      map[string]struct{}{},
+		globSeen:      map[string]struct{}{},
+	}
+	if err := loader.collectExplicitIdentities(files); err != nil {
+		return nil, err
+	}
+	out := map[string]any{}
+	for _, file := range files {
+		valuesList, err := loader.load(file)
+		if err != nil {
+			return nil, err
+		}
+		for _, values := range valuesList {
+			if err := mergeHelmValueMap(out, values.values); err != nil {
+				return nil, fmt.Errorf("merge helm value file %q: %w", values.display, err)
+			}
 		}
 	}
 	return out, nil
+}
+
+type helmValueFileLoader struct {
+	ctx           context.Context
+	repoRoot      string
+	baseDir       string
+	boundaryDir   string
+	refRoots      map[string]string
+	ignoreMissing bool
+	opts          RenderOptions
+	explicit      map[string]struct{}
+	globSeen      map[string]struct{}
+}
+
+type loadedHelmValueFile struct {
+	display string
+	values  map[string]any
+}
+
+func (l *helmValueFileLoader) collectExplicitIdentities(files []string) error {
+	for _, raw := range files {
+		file := envsubstHelmValueFilePath(raw, l.opts, l.refRoots)
+		if hasHelmValueGlob(file) || isRemoteHelmValueFile(file) {
+			continue
+		}
+		root, resolved, err := resolveHelmValueFile(l.repoRoot, l.baseDir, l.boundaryDir, l.refRoots, file)
+		if err != nil {
+			return err
+		}
+		if _, err := os.Lstat(resolved); err != nil {
+			if l.ignoreMissing && os.IsNotExist(err) {
+				continue
+			}
+			if os.IsNotExist(err) {
+				continue
+			}
+			return err
+		}
+		identity, err := localHelmValueFileIdentity(root, resolved, file)
+		if err != nil {
+			return err
+		}
+		l.explicit[identity] = struct{}{}
+	}
+	return nil
+}
+
+func (l *helmValueFileLoader) load(raw string) ([]loadedHelmValueFile, error) {
+	file := envsubstHelmValueFilePath(raw, l.opts, l.refRoots)
+	if isRemoteHelmValueFile(file) {
+		values, err := l.loadRemote(file)
+		if err != nil {
+			return nil, err
+		}
+		return []loadedHelmValueFile{values}, nil
+	}
+	if hasHelmValueGlob(file) {
+		return l.loadGlob(file)
+	}
+	values, ok, err := l.loadLocal(file, file)
+	if err != nil || !ok {
+		return nil, err
+	}
+	return []loadedHelmValueFile{values}, nil
+}
+
+func (l *helmValueFileLoader) loadGlob(pattern string) ([]loadedHelmValueFile, error) {
+	root, resolvedPattern, err := resolveHelmValueFile(l.repoRoot, l.baseDir, l.boundaryDir, l.refRoots, pattern)
+	if err != nil {
+		return nil, err
+	}
+	matches, err := doublestar.FilepathGlob(resolvedPattern)
+	if err != nil {
+		return nil, fmt.Errorf("helm value file glob %q: %w", pattern, err)
+	}
+	if len(matches) == 0 {
+		if l.ignoreMissing {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("helm value file glob %q matched no files", pattern)
+	}
+	out := make([]loadedHelmValueFile, 0, len(matches))
+	for _, match := range matches {
+		identity, err := localHelmValueFileIdentity(root, match, pattern)
+		if err != nil {
+			return nil, err
+		}
+		if _, ok := l.explicit[identity]; ok {
+			continue
+		}
+		if _, ok := l.globSeen[identity]; ok {
+			continue
+		}
+		l.globSeen[identity] = struct{}{}
+		display := displayHelmValueGlobMatch(root, match, pattern)
+		values, ok, err := l.loadLocalResolved(root, match, display)
+		if err != nil {
+			return nil, err
+		}
+		if ok {
+			out = append(out, values)
+		}
+	}
+	return out, nil
+}
+
+func (l *helmValueFileLoader) loadLocal(file, display string) (loadedHelmValueFile, bool, error) {
+	root, resolved, err := resolveHelmValueFile(l.repoRoot, l.baseDir, l.boundaryDir, l.refRoots, file)
+	if err != nil {
+		return loadedHelmValueFile{}, false, err
+	}
+	return l.loadLocalResolved(root, resolved, display)
+}
+
+func (l *helmValueFileLoader) loadLocalResolved(root, resolved, display string) (loadedHelmValueFile, bool, error) {
+	if err := rejectSymlinkedPath(root, resolved); err != nil {
+		return loadedHelmValueFile{}, false, fmt.Errorf("helm value file %q: %w", display, err)
+	}
+	data, err := os.ReadFile(resolved)
+	if err != nil {
+		if l.ignoreMissing && os.IsNotExist(err) {
+			return loadedHelmValueFile{}, false, nil
+		}
+		return loadedHelmValueFile{}, false, fmt.Errorf("read helm value file %q: %w", display, err)
+	}
+	values, err := parseHelmValueFile(display, data)
+	if err != nil {
+		return loadedHelmValueFile{}, false, err
+	}
+	return loadedHelmValueFile{display: display, values: values}, true, nil
+}
+
+func (l *helmValueFileLoader) loadRemote(file string) (loadedHelmValueFile, error) {
+	parsed, err := url.Parse(file)
+	if err != nil {
+		return loadedHelmValueFile{}, fmt.Errorf("parse helm value file URL %q: %w", remote.RedactURL(file), err)
+	}
+	if !helmValueFileSchemeAllowed(parsed.Scheme, l.opts) {
+		return loadedHelmValueFile{}, fmt.Errorf("helm value file URL scheme %q is not allowed", parsed.Scheme)
+	}
+	if parsed.Scheme != "http" && parsed.Scheme != "https" {
+		return loadedHelmValueFile{}, fmt.Errorf("helm value file URL scheme %q is configured but not supported by drydock", parsed.Scheme)
+	}
+	acquirer := l.opts.RemoteResourceAcquirer
+	if acquirer == nil {
+		acquirer = remote.DefaultAcquirer{}
+	}
+	forbiddenRoots := l.opts.RemoteResourceForbiddenRoots
+	if len(forbiddenRoots) == 0 {
+		forbiddenRoots = []string{l.repoRoot}
+	}
+	request := remote.Request{URL: file, Kind: remote.RequestHTTPFile}
+	acquired, err := acquirer.Acquire(l.ctx, request, remote.Options{
+		CacheDir:       l.opts.RemoteResourceCacheDir,
+		Offline:        l.opts.OfflineRemoteResources,
+		Refresh:        l.opts.RefreshRemoteResources,
+		ForbiddenRoots: forbiddenRoots,
+		Credentials:    l.opts.RemoteResourceCredentials,
+		GitCredentials: l.opts.RemoteResourceGitCredentials,
+	})
+	if err != nil {
+		recordRemoteCacheEvent(l.opts, request, err, remote.Result{})
+		return loadedHelmValueFile{}, fmt.Errorf("acquire helm value file %s: %s", remote.RedactURL(file), remote.RedactCredentialError(err.Error(), l.opts.RemoteResourceCredentials, l.opts.RemoteResourceGitCredentials))
+	}
+	release := acquired.Release
+	defer func() {
+		if release != nil {
+			release()
+		}
+	}()
+	recordRemoteCacheEvent(l.opts, request, nil, acquired)
+	if err := rejectSymlinkedPath(filepath.Dir(acquired.Path), acquired.Path); err != nil {
+		return loadedHelmValueFile{}, fmt.Errorf("helm value file %s: %w", remote.RedactURL(file), err)
+	}
+	data, err := os.ReadFile(acquired.Path)
+	if err != nil {
+		return loadedHelmValueFile{}, fmt.Errorf("read helm value file %s: %w", remote.RedactURL(file), err)
+	}
+	values, err := parseHelmValueFile(remote.RedactURL(file), data)
+	if err != nil {
+		return loadedHelmValueFile{}, err
+	}
+	return loadedHelmValueFile{display: remote.RedactURL(file), values: values}, nil
+}
+
+func parseHelmValueFile(display string, data []byte) (map[string]any, error) {
+	values := map[string]any{}
+	if err := yaml.Unmarshal(data, &values); err != nil {
+		return nil, fmt.Errorf("helm value file %q must be a YAML mapping: %w", display, err)
+	}
+	if values == nil {
+		values = map[string]any{}
+	}
+	return values, nil
+}
+
+func hasHelmValueGlob(file string) bool {
+	return strings.ContainsAny(file, "*?[")
+}
+
+func isRemoteHelmValueFile(file string) bool {
+	parsed, err := url.Parse(file)
+	return err == nil && parsed.IsAbs() && parsed.Scheme != ""
+}
+
+func envsubstHelmValueFilePath(raw string, opts RenderOptions, refRoots map[string]string) string {
+	ref, rest, ok := helmValueFileRefPrefix(raw, refRoots)
+	if !ok {
+		return opts.ArgoEnv.Envsubst(raw)
+	}
+	return ref + opts.ArgoEnv.Envsubst(rest)
+}
+
+func helmValueFileRefPrefix(raw string, refRoots map[string]string) (string, string, bool) {
+	if !strings.HasPrefix(raw, "$") {
+		return "", "", false
+	}
+	ref, rest, ok := strings.Cut(raw, "/")
+	if !ok || ref == "" || rest == "" {
+		return "", "", false
+	}
+	if _, ok := refRoots[ref]; ok {
+		return ref, "/" + rest, true
+	}
+	if _, ok := refRoots[strings.TrimPrefix(ref, "$")]; ok {
+		return ref, "/" + rest, true
+	}
+	return "", "", false
+}
+
+func localHelmValueFileIdentity(root, resolved, display string) (string, error) {
+	if err := rejectSymlinkedPath(root, resolved); err != nil {
+		return "", fmt.Errorf("helm value file %q: %w", display, err)
+	}
+	real, err := filepath.EvalSymlinks(resolved)
+	if err != nil {
+		return "", err
+	}
+	return filepath.Clean(real), nil
+}
+
+func displayHelmValueGlobMatch(root, match, pattern string) string {
+	rel, err := filepath.Rel(root, match)
+	if err != nil {
+		return pattern
+	}
+	return filepath.ToSlash(rel)
+}
+
+func helmValueFileSchemeAllowed(scheme string, opts RenderOptions) bool {
+	allowed := opts.HelmValueFileSchemes
+	if !opts.HelmValueFileSchemesSet {
+		allowed = []string{"https", "http"}
+	}
+	for _, candidate := range allowed {
+		if strings.EqualFold(strings.TrimSpace(candidate), scheme) {
+			return true
+		}
+	}
+	return false
 }
 
 func resolveHelmValueFile(repoRoot, baseDir, boundaryDir string, refRoots map[string]string, file string) (string, string, error) {

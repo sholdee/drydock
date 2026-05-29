@@ -106,6 +106,31 @@ func TestValidateApplicationsReportsNamedDestinationServerResolutionDeferred(t *
 	assertNoDiagnostic(t, diags, "destination is not permitted")
 }
 
+func TestValidateApplicationsResolvesDestinationNameToDiscoveredClusterSecretServer(t *testing.T) {
+	apps := []argoappv1.Application{application("cilium", "platform", argoappv1.ApplicationSource{
+		RepoURL: "https://github.com/example/repo",
+		Path:    "apps/cilium",
+	}, argoappv1.ApplicationDestination{
+		Name:      "in-cluster",
+		Namespace: "kube-system",
+	})}
+	projects := []argoappv1.AppProject{{
+		ObjectMeta: objectMeta("platform"),
+		Spec: argoappv1.AppProjectSpec{
+			SourceRepos: []string{"*"},
+			Destinations: []argoappv1.ApplicationDestination{{
+				Server:    "https://kubernetes.default.svc",
+				Namespace: "*",
+			}},
+		},
+	}}
+	settings := settingsWithCluster("in-cluster", "https://kubernetes.default.svc/", "")
+
+	diags := ValidateApplications(apps, projects, settings)
+	assertNoDiagnostic(t, diags, "destination name")
+	assertNoDiagnostic(t, diags, "destination is not permitted")
+}
+
 func TestValidateApplicationsDoesNotUseWildcardServerFallbackForDeniedDestinationName(t *testing.T) {
 	apps := []argoappv1.Application{application("prod-app", "platform", argoappv1.ApplicationSource{
 		RepoURL: "https://github.com/example/repo",
@@ -319,6 +344,47 @@ func TestValidateApplicationsReportsProjectScopedClusterPolicyAsDeferred(t *test
 	assertNoDiagnostic(t, diags, "destination is not permitted")
 }
 
+func TestValidateApplicationsAllowsProjectScopedClusterSecretDestination(t *testing.T) {
+	apps := []argoappv1.Application{application("demo", "platform", argoappv1.ApplicationSource{
+		RepoURL: "https://github.com/example/repo",
+		Path:    "apps/demo",
+	}, argoappv1.ApplicationDestination{Name: "in-cluster", Namespace: "workloads"})}
+	projects := []argoappv1.AppProject{{
+		ObjectMeta: objectMeta("platform"),
+		Spec: argoappv1.AppProjectSpec{
+			SourceRepos:                     []string{"*"},
+			Destinations:                    []argoappv1.ApplicationDestination{{Server: "*", Namespace: "*"}},
+			PermitOnlyProjectScopedClusters: true,
+		},
+	}}
+	settings := settingsWithCluster("in-cluster", "https://kubernetes.default.svc", "platform")
+
+	diags := ValidateApplications(apps, projects, settings)
+	assertNoDiagnostic(t, diags, "project-scoped cluster Secrets")
+	assertNoDiagnostic(t, diags, "destination is not permitted")
+}
+
+func TestValidateApplicationsDeniesDestinationOutsideProjectScopedClusterSecretList(t *testing.T) {
+	apps := []argoappv1.Application{application("demo", "platform", argoappv1.ApplicationSource{
+		RepoURL: "https://github.com/example/repo",
+		Path:    "apps/demo",
+	}, argoappv1.ApplicationDestination{Name: "prod", Namespace: "workloads"})}
+	projects := []argoappv1.AppProject{{
+		ObjectMeta: objectMeta("platform"),
+		Spec: argoappv1.AppProjectSpec{
+			SourceRepos:                     []string{"*"},
+			Destinations:                    []argoappv1.ApplicationDestination{{Server: "*", Namespace: "*"}},
+			PermitOnlyProjectScopedClusters: true,
+		},
+	}}
+	settings := settingsWithCluster("prod", "https://prod.example", "other")
+
+	diags := ValidateApplications(apps, projects, settings)
+	assertDiagnostic(t, diags, "destination is not permitted")
+	assertNoDiagnostic(t, diags, "project-scoped cluster Secrets")
+	assertNoDiagnostic(t, diags, "cannot be resolved")
+}
+
 func TestValidateApplicationsReportsRepositoryMetadataIssues(t *testing.T) {
 	settings := config.DefaultSettings()
 	settings.HelmRepositories["https://github.com/example/repo"] = config.RepositorySettings{
@@ -515,5 +581,16 @@ func applicationInNamespace(name, namespace, project string, source argoappv1.Ap
 func settingsWithRepository(repoURL, project string) config.ArgoSettings {
 	settings := config.DefaultSettings()
 	settings.HelmRepositories[repoURL] = config.RepositorySettings{URL: repoURL, Project: project}
+	return settings
+}
+
+func settingsWithCluster(name, server, project string) config.ArgoSettings {
+	settings := config.DefaultSettings()
+	normalizedServer := strings.TrimRight(strings.TrimSpace(server), "/")
+	settings.Clusters[normalizedServer] = config.ClusterSettings{
+		Name:    name,
+		Server:  normalizedServer,
+		Project: project,
+	}
 	return settings
 }

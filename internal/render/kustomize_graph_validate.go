@@ -165,12 +165,15 @@ func (v *kustomizeGraphValidator) validateHelmFields(dir string, kustomization *
 }
 
 func (v *kustomizeGraphValidator) validateHelmValueRefs(dir string, helmChart types.HelmChart) error {
-	if helmChart.ValuesFile != "" {
+	if helmChart.ValuesFile != "" && !isRemoteHelmValueFile(helmChart.ValuesFile) {
 		if err := v.validatePathRef(dir, "helmCharts.valuesFile", helmChart.ValuesFile); err != nil {
 			return err
 		}
 	}
 	for _, valuesFile := range helmChart.AdditionalValuesFiles {
+		if isRemoteHelmValueFile(valuesFile) {
+			continue
+		}
 		if err := v.validatePathRef(dir, "helmCharts.additionalValuesFiles", valuesFile); err != nil {
 			return err
 		}

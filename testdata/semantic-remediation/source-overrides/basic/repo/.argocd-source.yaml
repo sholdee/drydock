@@ -1,0 +1,5 @@
+helm:
+  releaseName: global-source-override
+  parameters:
+    - name: message
+      value: from-global-override

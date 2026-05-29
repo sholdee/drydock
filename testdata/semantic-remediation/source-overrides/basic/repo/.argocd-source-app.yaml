@@ -1,0 +1,5 @@
+helm:
+  valueFiles:
+    - values.yaml
+  valuesObject:
+    message: from-app-override

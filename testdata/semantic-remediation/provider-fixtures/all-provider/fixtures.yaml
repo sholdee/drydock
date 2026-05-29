@@ -1,0 +1,65 @@
+clusters:
+  - name: prod-a
+    server: https://prod-a.example.invalid
+    project: platform
+    labels:
+      environment: prod
+      region: edge
+    annotations:
+      owner: platform
+    values:
+      tier: edge
+
+clusterDecisions:
+  - configMapRef: placement-config
+    resourceName: placement-a
+    labels:
+      placement: edge
+    matchKey: name
+    statusListKey: clusters
+    decisions:
+      - name: prod-a
+        server: https://prod-a.example.invalid
+        placement: edge
+    values:
+      tier: edge
+
+scmRepositories:
+  - provider: github
+    organization: example-org
+    repository: platform-service
+    repositoryID: repo-123
+    branch: main
+    sha: abcdef1234567890
+    url: https://example.invalid/example-org/platform-service.git
+    labels:
+      - platform
+    paths:
+      - deploy/kustomization.yaml
+    values:
+      service: platform
+
+pullRequests:
+  - provider: github
+    organization: example-org
+    repository: platform-api
+    number: 42
+    title: Add platform API
+    branch: feature/platform-api
+    targetBranch: main
+    headSHA: 1234567890abcdef
+    author: contributor
+    state: open
+    labels:
+      - preview
+    values:
+      preview: enabled
+
+plugins:
+  - configMapRef: generator-plugin
+    outputs:
+      - environment: prod
+        cluster:
+          name: edge-a
+    values:
+      source: fixture

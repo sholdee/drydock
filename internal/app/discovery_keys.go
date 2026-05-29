@@ -122,9 +122,9 @@ func settingsDiscoveryKey(candidate discovery.SettingsCandidate) string {
 
 func settingsObjectKind(kind string) string {
 	switch kind {
-	case "argocd-cm", "argocd-cmp-cm":
+	case "argocd-cm", "argocd-cmd-params-cm", "argocd-cmp-cm":
 		return "ConfigMap"
-	case "repository-secret":
+	case "repository-secret", "cluster-secret":
 		return "Secret"
 	default:
 		return kind

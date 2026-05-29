@@ -1,0 +1,32 @@
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: template-patch-basic
+  namespace: argocd
+spec:
+  goTemplate: true
+  generators:
+    - list:
+        elements:
+          - name: alpha
+            path: apps/alpha
+            namespace: alpha
+  template:
+    metadata:
+      name: '{{ .name }}'
+    spec:
+      project: default
+      source:
+        repoURL: https://example.invalid/appset-template-patch.git
+        targetRevision: main
+        path: '{{ .path }}'
+      destination:
+        server: https://kubernetes.default.svc
+        namespace: default
+  templatePatch: |
+    spec:
+      destination:
+        namespace: '{{ .namespace }}'
+      syncPolicy:
+        syncOptions:
+          - CreateNamespace=true

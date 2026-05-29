@@ -1,0 +1,14 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: discovery-precedence
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: https://example.invalid/semantic-remediation.git
+    targetRevision: main
+    path: repo
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: discovery-precedence

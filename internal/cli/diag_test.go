@@ -14,6 +14,13 @@ import (
 	"github.com/sholdee/drydock/internal/diagnostic"
 )
 
+type diagCommandParameterJSON struct {
+	Key            string `json:"key"`
+	Value          string `json:"value"`
+	ValueRedacted  bool   `json:"valueRedacted"`
+	Classification string `json:"classification"`
+}
+
 func TestDiagCleanRepositoryPrintsNoManifests(t *testing.T) {
 	root := t.TempDir()
 	writeSimpleAppForCLI(t, root, "ok")
@@ -334,6 +341,49 @@ func TestDiagSettingsSummaryDoesNotLeakConfigManagementPluginCommands(t *testing
 	}
 }
 
+func TestDiagSettingsSummaryIncludesCmdParamsWithoutSecrets(t *testing.T) {
+	root := t.TempDir()
+	writeSimpleAppForCLI(t, root, "ok")
+	writeCLITestFile(t, filepath.Join(root, "settings", "argocd-cmd-params-cm.yaml"), `apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: argocd-cmd-params-cm
+data:
+  reposerver.include.hidden.directories: "true"
+  reposerver.git.askpass.enabled: SUPER_SECRET_GIT_TOKEN
+  unknown.cmd.param: SUPER_SECRET_UNKNOWN_VALUE
+  repo.server: argocd-repo-server:8081
+`)
+
+	result := runCLI(t, "diag", "--path", root, "-o", "json", "--settings")
+	assertStderrEmpty(t, result)
+	for _, forbidden := range []string{"SUPER_SECRET_GIT_TOKEN", "SUPER_SECRET_UNKNOWN_VALUE"} {
+		if strings.Contains(result.Stdout, forbidden) {
+			t.Fatalf("stdout leaked %q:\n%s", forbidden, result.Stdout)
+		}
+	}
+
+	var report struct {
+		Diagnostics []struct {
+			Code    string `json:"code"`
+			Message string `json:"message"`
+		} `json:"diagnostics"`
+		Settings struct {
+			CommandParameters []diagCommandParameterJSON `json:"commandParameters"`
+		} `json:"settings"`
+	}
+	if err := json.Unmarshal([]byte(result.Stdout), &report); err != nil {
+		t.Fatalf("json.Unmarshal() error = %v\nstdout:\n%s", err, result.Stdout)
+	}
+	if len(report.Diagnostics) != 1 || report.Diagnostics[0].Code != "settings.metadata-only" {
+		t.Fatalf("diagnostics = %#v, want one cmd-params metadata-only warning", report.Diagnostics)
+	}
+	assertDiagMessageOmits(t, report.Diagnostics[0].Message, []string{"unknown.cmd.param", "repo.server"})
+	assertDiagCommandParameter(t, report.Settings.CommandParameters, "reposerver.include.hidden.directories", "true", false, "runtime-only")
+	assertDiagCommandParameter(t, report.Settings.CommandParameters, "reposerver.git.askpass.enabled", "", true, "runtime-only")
+	assertDiagCommandParameter(t, report.Settings.CommandParameters, "unknown.cmd.param", "", false, "unknown")
+}
+
 func TestDiagJSONOutputCanIncludeCacheEvents(t *testing.T) {
 	root := t.TempDir()
 	chartDir := filepath.Join(t.TempDir(), "demo")
@@ -613,6 +663,34 @@ data:
               obj.metadata.annotations = { token = "SUPER_SECRET_ACTION_TOKEN" }
               return obj
 `)
+}
+
+func requireDiagCommandParameter(t *testing.T, parameters []diagCommandParameterJSON, key string) diagCommandParameterJSON {
+	t.Helper()
+	for _, parameter := range parameters {
+		if parameter.Key == key {
+			return parameter
+		}
+	}
+	t.Fatalf("commandParameters = %#v, missing %q", parameters, key)
+	return diagCommandParameterJSON{}
+}
+
+func assertDiagMessageOmits(t *testing.T, message string, values []string) {
+	t.Helper()
+	for _, value := range values {
+		if strings.Contains(message, value) {
+			t.Fatalf("diagnostic message = %q, did not want %q", message, value)
+		}
+	}
+}
+
+func assertDiagCommandParameter(t *testing.T, parameters []diagCommandParameterJSON, key, value string, redacted bool, classification string) {
+	t.Helper()
+	parameter := requireDiagCommandParameter(t, parameters, key)
+	if parameter.Value != value || parameter.ValueRedacted != redacted || parameter.Classification != classification {
+		t.Fatalf("command parameter %q = %#v, want value=%q redacted=%t classification=%s", key, parameter, value, redacted, classification)
+	}
 }
 
 type recordingDiagChartAcquirer struct {

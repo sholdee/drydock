@@ -24,6 +24,7 @@ func (KustomizeRenderer) Render(ctx context.Context, source ResolvedSource, opts
 	if err := ctx.Err(); err != nil {
 		return nil, nil, err
 	}
+	diags := sourceKustomizeDiagnostics(opts)
 	buildSettings, err := parseKustomizeBuildOptions(opts.BuildOptions)
 	if err != nil {
 		return nil, nil, err
@@ -42,10 +43,16 @@ func (KustomizeRenderer) Render(ctx context.Context, source ResolvedSource, opts
 		return nil, nil, err
 	}
 	if kustomizeGraphHasHelmCharts(graph) || hasAcquirableRemoteKustomizeGraphRefs(graph) {
-		return renderKustomizeWithPreparedWorkspace(ctx, source, graph, opts, buildSettings)
+		manifests, renderDiags, err := renderKustomizeWithPreparedWorkspace(ctx, source, graph, opts, buildSettings)
+		return manifests, append(diags, renderDiags...), err
+	}
+	if hasKustomizeSourceMutations(opts) {
+		manifests, renderDiags, err := renderKustomizeWithPreparedWorkspace(ctx, source, graph, opts, buildSettings)
+		return manifests, append(diags, renderDiags...), err
 	}
 
-	return renderPlainKustomize(ctx, source, root, buildSettings)
+	manifests, renderDiags, err := renderPlainKustomize(ctx, source, root, buildSettings)
+	return manifests, append(diags, renderDiags...), err
 }
 
 var kustomizationFileNames = []string{"kustomization.yaml", "kustomization.yml", "Kustomization"}
@@ -222,7 +229,7 @@ func renderKustomizeHelmCharts(ctx context.Context, tempRepoRoot, tempSourceRoot
 			return nil, err
 		}
 
-		helmOpts, err := renderOptionsForKustomizeHelmChart(helmChart, tempRepoRoot, tempSourceRoot, chartRel, valueFilesBaseDir, namespaceFallback, generatedName, opts, acquirer)
+		helmOpts, err := renderOptionsForKustomizeHelmChart(ctx, helmChart, tempRepoRoot, tempSourceRoot, chartRel, valueFilesBaseDir, namespaceFallback, generatedName, opts, acquirer)
 		if err != nil {
 			return nil, err
 		}
@@ -266,10 +273,11 @@ func resolveKustomizeHelmChart(ctx context.Context, tempRepoRoot, tempSourceRoot
 		Kind:       ChartRepositoryKind(helmChart.Repo, opts.OCIChartRepositories),
 	}
 	result, err := acquirer.Acquire(ctx, request, chart.Options{
-		CacheDir:    opts.ChartCacheDir,
-		Offline:     opts.OfflineCharts,
-		Refresh:     opts.RefreshCharts,
-		Credentials: opts.ChartCredentials,
+		CacheDir:       opts.ChartCacheDir,
+		Offline:        opts.OfflineCharts,
+		Refresh:        opts.RefreshCharts,
+		ForbiddenRoots: append([]string(nil), opts.ChartForbiddenRoots...),
+		Credentials:    opts.ChartCredentials,
 	})
 	if err != nil {
 		recordKustomizeChartCacheEvent(opts, request, err, chart.Result{})
@@ -347,7 +355,7 @@ func resolveLocalKustomizeHelmChart(repoRoot, kustomizationDir, chartHome string
 	return rel, true, nil
 }
 
-func renderOptionsForKustomizeHelmChart(helmChart types.HelmChart, tempRepoRoot, tempSourceRoot, chartRel, valueFilesBaseDir, namespaceFallback, generatedName string, opts RenderOptions, acquirer chart.Acquirer) (RenderOptions, error) {
+func renderOptionsForKustomizeHelmChart(ctx context.Context, helmChart types.HelmChart, tempRepoRoot, tempSourceRoot, chartRel, valueFilesBaseDir, namespaceFallback, generatedName string, opts RenderOptions, acquirer chart.Acquirer) (RenderOptions, error) {
 	valueFiles := make([]string, 0, 1+len(helmChart.AdditionalValuesFiles))
 	valuesObject := cloneValues(helmChart.ValuesInline)
 	valuesMergeMode := helmChart.ValuesMerge
@@ -356,7 +364,7 @@ func renderOptionsForKustomizeHelmChart(helmChart types.HelmChart, tempRepoRoot,
 	}
 	valueFiles = append(valueFiles, helmChart.AdditionalValuesFiles...)
 	if len(helmChart.ValuesInline) != 0 {
-		generatedValuesFile, err := writeKustomizeHelmGeneratedValuesFile(tempRepoRoot, tempSourceRoot, chartRel, valueFilesBaseDir, generatedName, helmChart)
+		generatedValuesFile, err := writeKustomizeHelmGeneratedValuesFile(ctx, tempRepoRoot, tempSourceRoot, chartRel, valueFilesBaseDir, generatedName, helmChart, opts)
 		if err != nil {
 			return RenderOptions{}, err
 		}
@@ -371,31 +379,50 @@ func renderOptionsForKustomizeHelmChart(helmChart types.HelmChart, tempRepoRoot,
 	}
 
 	return RenderOptions{
-		AppName:                helmChart.Name,
-		ReleaseName:            helmChart.ReleaseName,
-		Namespace:              namespace,
-		KubeVersion:            helmChart.KubeVersion,
-		APIVersions:            append(append([]string(nil), opts.APIVersions...), helmChart.ApiVersions...),
-		ValueFiles:             valueFiles,
-		ValueFilesBaseDir:      valueFilesBaseDir,
-		ValueFilesBoundaryRoot: ".",
-		ValuesObject:           valuesObject,
-		ValuesMergeMode:        valuesMergeMode,
-		EnableAVPCompat:        opts.EnableAVPCompat,
-		QuietAVPCompat:         opts.QuietAVPCompat,
-		ChartCacheDir:          opts.ChartCacheDir,
-		OfflineCharts:          opts.OfflineCharts,
-		RefreshCharts:          opts.RefreshCharts,
-		ChartCredentials:       opts.ChartCredentials,
-		ChartAcquirer:          acquirer,
-		IncludeCRDs:            helmChart.IncludeCRDs,
-		IncludeCRDsSet:         true,
-		SkipHooks:              helmChart.SkipHooks,
-		SkipTests:              helmChart.SkipTests,
+		AppName:                      helmChart.Name,
+		ReleaseName:                  helmChart.ReleaseName,
+		Namespace:                    namespace,
+		KubeVersion:                  kustomizeHelmKubeVersion(helmChart, opts),
+		APIVersions:                  append(append([]string(nil), opts.APIVersions...), helmChart.ApiVersions...),
+		ValueFiles:                   valueFiles,
+		ValueFilesBaseDir:            valueFilesBaseDir,
+		ValueFilesBoundaryRoot:       ".",
+		ArgoEnv:                      append(opts.ArgoEnv[:0:0], opts.ArgoEnv...),
+		ValuesObject:                 valuesObject,
+		ValuesMergeMode:              valuesMergeMode,
+		HelmValueFileSchemes:         append([]string(nil), opts.HelmValueFileSchemes...),
+		HelmValueFileSchemesSet:      opts.HelmValueFileSchemesSet,
+		EnableAVPCompat:              opts.EnableAVPCompat,
+		QuietAVPCompat:               opts.QuietAVPCompat,
+		ChartCacheDir:                opts.ChartCacheDir,
+		OfflineCharts:                opts.OfflineCharts,
+		RefreshCharts:                opts.RefreshCharts,
+		ChartForbiddenRoots:          append([]string(nil), opts.ChartForbiddenRoots...),
+		ChartCredentials:             opts.ChartCredentials,
+		ChartAcquirer:                acquirer,
+		RemoteResourceAcquirer:       opts.RemoteResourceAcquirer,
+		RemoteResourceCacheDir:       opts.RemoteResourceCacheDir,
+		OfflineRemoteResources:       opts.OfflineRemoteResources,
+		RefreshRemoteResources:       opts.RefreshRemoteResources,
+		RemoteResourceForbiddenRoots: append([]string(nil), opts.RemoteResourceForbiddenRoots...),
+		RemoteResourceCredentials:    opts.RemoteResourceCredentials,
+		RemoteResourceGitCredentials: opts.RemoteResourceGitCredentials,
+		CacheEventRecorder:           opts.CacheEventRecorder,
+		IncludeCRDs:                  helmChart.IncludeCRDs,
+		IncludeCRDsSet:               true,
+		SkipHooks:                    helmChart.SkipHooks,
+		SkipTests:                    helmChart.SkipTests,
 	}, nil
 }
 
-func writeKustomizeHelmGeneratedValuesFile(tempRepoRoot, tempSourceRoot, chartRel, valueFilesBaseDir, generatedName string, helmChart types.HelmChart) (string, error) {
+func kustomizeHelmKubeVersion(helmChart types.HelmChart, opts RenderOptions) string {
+	if helmChart.KubeVersion != "" {
+		return helmChart.KubeVersion
+	}
+	return opts.KubeVersion
+}
+
+func writeKustomizeHelmGeneratedValuesFile(ctx context.Context, tempRepoRoot, tempSourceRoot, chartRel, valueFilesBaseDir, generatedName string, helmChart types.HelmChart, opts RenderOptions) (string, error) {
 	primaryValues := map[string]any{}
 	loadPrimaryValues, err := shouldLoadHelmValueFiles(helmChart.ValuesMerge, helmChart.ValuesInline)
 	if err != nil {
@@ -414,7 +441,7 @@ func writeKustomizeHelmGeneratedValuesFile(tempRepoRoot, tempSourceRoot, chartRe
 		if valueFilesBase == chartRel {
 			valueFilesBoundary = chartRel
 		}
-		primaryValues, err = loadHelmValueFiles(tempRepoRoot, valueFilesBase, valueFilesBoundary, nil, []string{valueFile}, ignoreMissing)
+		primaryValues, err = loadHelmValueFiles(ctx, tempRepoRoot, valueFilesBase, valueFilesBoundary, nil, []string{valueFile}, ignoreMissing, opts)
 		if err != nil {
 			return "", err
 		}

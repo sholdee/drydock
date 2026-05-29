@@ -41,7 +41,7 @@ func ValidateApplications(apps []argoappv1.Application, projects []argoappv1.App
 		proj = effectiveProject(proj, settings)
 
 		diags = append(diags, validateSources(app, proj)...)
-		diags = append(diags, validateDestination(app, proj)...)
+		diags = append(diags, validateDestination(app, proj, settings)...)
 		diags = append(diags, validateSourceNamespace(app, proj)...)
 		diags = append(diags, rbacMetadataDiagnostics(proj)...)
 		if hasLocalProjects {
@@ -112,23 +112,33 @@ func validateSources(app argoappv1.Application, proj argoappv1.AppProject) []dia
 	return diags
 }
 
-func validateDestination(app argoappv1.Application, proj argoappv1.AppProject) []diagnostic.Diagnostic {
+func validateDestination(app argoappv1.Application, proj argoappv1.AppProject, settings config.ArgoSettings) []diagnostic.Diagnostic {
 	diags := make([]diagnostic.Diagnostic, 0, 2)
-	if proj.Spec.PermitOnlyProjectScopedClusters {
+	dest := app.Spec.Destination
+	destCluster, destinationClusterKnown := destinationCluster(dest, settings)
+	projectClusters, projectClusterMetadataAvailable := projectScopedClusters(proj.Name, settings)
+	projectScopedCheckAvailable := projectClusterMetadataAvailable || destinationClusterKnown
+	if proj.Spec.PermitOnlyProjectScopedClusters && !projectScopedCheckAvailable {
 		diags = append(diags, projectWarning(app, fmt.Sprintf("AppProject %q enables permitOnlyProjectScopedClusters; project-scoped cluster Secrets enforcement is deferred offline", proj.Name)))
 		proj.Spec.PermitOnlyProjectScopedClusters = false
 	}
+	projectScopedCheckApplied := proj.Spec.PermitOnlyProjectScopedClusters
 
-	dest := app.Spec.Destination
-	destCluster := &argoappv1.Cluster{Name: dest.Name, Server: dest.Server}
-	permitted, err := proj.IsDestinationPermitted(destCluster, dest.Namespace, func(string) ([]*argoappv1.Cluster, error) {
-		return nil, fmt.Errorf("project-scoped cluster lookup is unavailable offline")
+	permitted, err := proj.IsDestinationPermitted(destCluster, dest.Namespace, func(project string) ([]*argoappv1.Cluster, error) {
+		if project != proj.Name {
+			return nil, nil
+		}
+		return projectClusters, nil
 	})
 	if err != nil {
 		diags = append(diags, projectWarning(app, fmt.Sprintf("Application %s destination could not be validated against AppProject %q: %v", applicationName(app), proj.Name, err)))
 		return diags
 	}
 	if !permitted {
+		if projectScopedCheckApplied {
+			diags = append(diags, projectWarning(app, fmt.Sprintf("Application %s destination is not permitted by AppProject %q", applicationName(app), proj.Name)))
+			return diags
+		}
 		if nameOnlyDestinationExplicitlyDenied(dest, proj) {
 			diags = append(diags, projectWarning(app, fmt.Sprintf("Application %s destination is not permitted by AppProject %q", applicationName(app), proj.Name)))
 			return diags
@@ -151,6 +161,86 @@ func validateDestination(app argoappv1.Application, proj argoappv1.AppProject) [
 		diags = append(diags, projectWarning(app, fmt.Sprintf("Application %s destination is not permitted by AppProject %q", applicationName(app), proj.Name)))
 	}
 	return diags
+}
+
+func destinationCluster(dest argoappv1.ApplicationDestination, settings config.ArgoSettings) (*argoappv1.Cluster, bool) {
+	name := strings.TrimSpace(dest.Name)
+	server := normalizeClusterServer(strings.TrimSpace(dest.Server))
+	if server != "" {
+		if cluster, ok := settings.Clusters[server]; ok {
+			return argoClusterFromSettings(cluster, name), true
+		}
+		return &argoappv1.Cluster{Name: name, Server: server}, false
+	}
+	if name != "" {
+		if cluster, ok := clusterSettingsByName(name, settings); ok {
+			return argoClusterFromSettings(cluster, name), true
+		}
+	}
+	return &argoappv1.Cluster{Name: name, Server: server}, false
+}
+
+func clusterSettingsByName(name string, settings config.ArgoSettings) (config.ClusterSettings, bool) {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return config.ClusterSettings{}, false
+	}
+	var matched config.ClusterSettings
+	found := false
+	for _, cluster := range settings.Clusters {
+		if clusterDisplayName(cluster) != name {
+			continue
+		}
+		if found {
+			return config.ClusterSettings{}, false
+		}
+		matched = cluster
+		found = true
+	}
+	return matched, found
+}
+
+func projectScopedClusters(projectName string, settings config.ArgoSettings) ([]*argoappv1.Cluster, bool) {
+	servers := make([]string, 0, len(settings.Clusters))
+	for server := range settings.Clusters {
+		servers = append(servers, server)
+	}
+	sort.Strings(servers)
+
+	clusters := make([]*argoappv1.Cluster, 0)
+	for _, server := range servers {
+		cluster := settings.Clusters[server]
+		if cluster.Project != projectName {
+			continue
+		}
+		clusters = append(clusters, argoClusterFromSettings(cluster, ""))
+	}
+	return clusters, len(clusters) > 0
+}
+
+func argoClusterFromSettings(cluster config.ClusterSettings, preferredName string) *argoappv1.Cluster {
+	name := strings.TrimSpace(preferredName)
+	if name == "" {
+		name = clusterDisplayName(cluster)
+	}
+	return &argoappv1.Cluster{
+		Name:             name,
+		Server:           cluster.Server,
+		Namespaces:       append([]string(nil), cluster.Namespaces...),
+		ClusterResources: cluster.ClusterResources,
+		Project:          cluster.Project,
+	}
+}
+
+func clusterDisplayName(cluster config.ClusterSettings) string {
+	if strings.TrimSpace(cluster.Name) != "" {
+		return strings.TrimSpace(cluster.Name)
+	}
+	return cluster.Server
+}
+
+func normalizeClusterServer(raw string) string {
+	return strings.TrimRight(strings.TrimSpace(raw), "/")
 }
 
 func nameOnlyDestinationExplicitlyDenied(dest argoappv1.ApplicationDestination, proj argoappv1.AppProject) bool {

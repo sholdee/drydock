@@ -18,6 +18,7 @@ type ResolvedSource struct {
 	Chart          string
 	RepoURL        string
 	TargetRevision string
+	ExplicitType   argoappv1.ApplicationSourceType
 }
 
 type RenderOptions struct {
@@ -34,6 +35,9 @@ type RenderOptions struct {
 	KubeVersion                  string
 	APIVersions                  []string
 	BuildOptions                 []string
+	Kustomize                    *argoappv1.ApplicationSourceKustomize
+	Jsonnet                      argoappv1.ApplicationSourceJsonnet
+	ArgoEnv                      argoappv1.Env
 	RefRoots                     map[string]string
 	RefSources                   map[string]ResolvedSource
 	ReleaseName                  string
@@ -43,12 +47,19 @@ type RenderOptions struct {
 	ValueFilesBaseDir            string
 	ValueFilesBoundaryRoot       string
 	IgnoreMissingValueFiles      bool
+	HelmParameters               []argoappv1.HelmParameter
+	HelmFileParameters           []argoappv1.HelmFileParameter
+	HelmValueFileSchemes         []string
+	HelmValueFileSchemesSet      bool
+	SkipSchemaValidation         bool
+	PassCredentials              bool
 	DirectoryRecurse             bool
 	DirectoryInclude             string
 	DirectoryExclude             string
 	ChartCacheDir                string
 	OfflineCharts                bool
 	RefreshCharts                bool
+	ChartForbiddenRoots          []string
 	ChartCredentials             chart.ChartCredentials
 	ChartAcquirer                chart.Acquirer
 	OCIChartRepositories         map[string]bool
@@ -81,6 +92,8 @@ type PluginRequest struct {
 	Plugin       PluginConfig
 	RefRoots     map[string]string
 	RefSources   map[string]ResolvedSource
+	KubeVersion  string
+	APIVersions  []string
 }
 
 type PluginRenderer interface {

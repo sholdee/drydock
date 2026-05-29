@@ -1,0 +1,7 @@
+# +argocd:skip-file-rendering
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: skipped-edge
+data:
+  skipped: "true"

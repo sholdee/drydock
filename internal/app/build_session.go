@@ -94,6 +94,7 @@ func (session *buildSession) Build(ctx context.Context) (BuildResult, error) {
 		provider:          provider,
 		renderCache:       result.renderCache,
 		settingsSignature: result.renderSettingsSignature,
+		trackingOptions:   trackingOptionsFromSettings(result.Settings),
 		request:           session.request,
 		strict:            session.request.Strict,
 		statusOnly:        session.request.StatusOnly,

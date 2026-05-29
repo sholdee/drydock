@@ -39,13 +39,11 @@ func (acquirer DefaultAcquirer) Acquire(ctx context.Context, request Request, op
 			return Result{}, err
 		}
 	}
-	if opts.CacheDir == "" {
-		cacheDir, err := DefaultCacheDir()
-		if err != nil {
-			return Result{}, err
-		}
-		opts.CacheDir = cacheDir
+	cacheDir, err := ResolveCacheDir(opts.CacheDir, opts.ForbiddenRoots)
+	if err != nil {
+		return Result{}, err
 	}
+	opts.CacheDir = cacheDir
 	key, err := NewCacheKey(request)
 	if err != nil {
 		return Result{}, err
@@ -53,6 +51,9 @@ func (acquirer DefaultAcquirer) Acquire(ctx context.Context, request Request, op
 	keyParent := cache.ChartKindRoot(opts.CacheDir, string(request.Kind))
 	keyDir := cache.ChartEntryPath(opts.CacheDir, string(request.Kind), key)
 	chartDir := filepath.Join(keyDir, request.Name)
+	if err := rejectForbiddenCachePath(keyDir, opts.ForbiddenRoots); err != nil {
+		return Result{}, err
+	}
 	if !opts.Refresh && chartDirReady(chartDir) {
 		writeChartMetadata(keyDir, key, request)
 		return resultFor(request, chartDir, true), nil
@@ -69,6 +70,9 @@ func (acquirer DefaultAcquirer) Acquire(ctx context.Context, request Request, op
 		return Result{}, fmt.Errorf("chart archive for %s %s does not contain %s/Chart.yaml", request.Name, request.Version, request.Name)
 	}
 
+	if err := rejectForbiddenCachePath(keyDir, opts.ForbiddenRoots); err != nil {
+		return Result{}, err
+	}
 	if err := os.MkdirAll(keyParent, 0o755); err != nil {
 		return Result{}, fmt.Errorf("create chart cache parent %s: %w", keyParent, err)
 	}
@@ -108,7 +112,7 @@ func writeChartMetadata(keyDir, key string, request Request) {
 func (acquirer DefaultAcquirer) fetchChart(ctx context.Context, request Request, opts Options) ([]byte, error) {
 	switch request.Kind {
 	case RepositoryHTTP:
-		return acquirer.fetchHTTPChart(ctx, request, opts.Credentials)
+		return acquirer.fetchHTTPChart(ctx, request, opts)
 	case RepositoryOCI:
 		return acquirer.fetchOCIChart(ctx, request, opts)
 	default:

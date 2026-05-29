@@ -19,11 +19,12 @@ type repositoryChartVersion struct {
 }
 
 //nolint:gocyclo // Keeps index and chart archive request handling together for consistent URL redaction.
-func (acquirer DefaultAcquirer) fetchHTTPChart(ctx context.Context, request Request, credentials ChartCredentials) ([]byte, error) {
+func (acquirer DefaultAcquirer) fetchHTTPChart(ctx context.Context, request Request, opts Options) ([]byte, error) {
 	client := acquirer.Client
 	if client == nil {
 		client = http.DefaultClient
 	}
+	credentials := opts.Credentials
 	repository, err := NormalizeRepository(request.Repository, request.Kind)
 	if err != nil {
 		return nil, err
@@ -63,7 +64,9 @@ func (acquirer DefaultAcquirer) fetchHTTPChart(ctx context.Context, request Requ
 	if err != nil {
 		return nil, fmt.Errorf("create chart archive request %s: %s", redactedChartURL, redactedFetchError(err, chartURL, true))
 	}
-	applyChartAuth(archiveRequest, credentials)
+	if shouldPassChartCredentialsToArchive(repository, chartURL, opts.PassCredentials) {
+		applyChartAuth(archiveRequest, credentials)
+	}
 	archiveResponse, err := client.Do(archiveRequest)
 	if err != nil {
 		return nil, fmt.Errorf("fetch chart archive %s: %s", redactedChartURL, redactedChartCredentialError(redactedFetchError(err, chartURL, true), credentials))
@@ -81,6 +84,7 @@ func (acquirer DefaultAcquirer) fetchHTTPChart(ctx context.Context, request Requ
 	}
 	return data, nil
 }
+
 func applyChartAuth(request *http.Request, credentials ChartCredentials) {
 	if strings.TrimSpace(credentials.BearerToken) != "" {
 		request.Header.Set("Authorization", "Bearer "+credentials.BearerToken)
@@ -90,6 +94,22 @@ func applyChartAuth(request *http.Request, credentials ChartCredentials) {
 		request.SetBasicAuth(credentials.Username, credentials.Password)
 	}
 }
+
+func shouldPassChartCredentialsToArchive(repository, archiveURL string, passCredentials bool) bool {
+	if passCredentials {
+		return true
+	}
+	repositoryURL, err := url.Parse(repository)
+	if err != nil {
+		return false
+	}
+	parsedArchiveURL, err := url.Parse(archiveURL)
+	if err != nil {
+		return false
+	}
+	return strings.EqualFold(repositoryURL.Host, parsedArchiveURL.Host)
+}
+
 func repositoryIndexURL(repository string) (string, error) {
 	parsed, err := url.Parse(repository)
 	if err != nil {

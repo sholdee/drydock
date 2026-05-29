@@ -209,16 +209,31 @@ func scanDocument(rel string, documentIndex int, obj *unstructured.Unstructured,
 			return fmt.Errorf("%s: decode AppProject: %w", rel, err)
 		}
 		result.Projects = append(result.Projects, ProjectFile{Path: rel, DocumentIndex: documentIndex, Project: project})
-	case isCoreGVK(obj, "ConfigMap") && obj.GetName() == "argocd-cm":
-		result.SettingsCandidates = append(result.SettingsCandidates, settingsCandidate(rel, documentIndex, "argocd-cm", obj, includeObject))
-	case isCoreGVK(obj, "ConfigMap") && obj.GetName() == "argocd-cmp-cm" && isConfigManagementPluginConfigMap(obj):
-		result.SettingsCandidates = append(result.SettingsCandidates, settingsCandidate(rel, documentIndex, "argocd-cmp-cm", obj, includeObject))
-	case isCoreGVK(obj, "Secret") && obj.GetLabels()["argocd.argoproj.io/secret-type"] == "repository":
-		result.SettingsCandidates = append(result.SettingsCandidates, settingsCandidate(rel, documentIndex, "repository-secret", obj, includeObject))
-	case isArgoHelmValuesSettings(obj):
-		result.SettingsCandidates = append(result.SettingsCandidates, settingsCandidate(rel, documentIndex, "argocd-values", obj, includeObject))
+	default:
+		if kind, ok := settingsCandidateKind(obj); ok {
+			result.SettingsCandidates = append(result.SettingsCandidates, settingsCandidate(rel, documentIndex, kind, obj, includeObject))
+		}
 	}
 	return nil
+}
+
+func settingsCandidateKind(obj *unstructured.Unstructured) (string, bool) {
+	switch {
+	case isCoreGVK(obj, "ConfigMap") && obj.GetName() == "argocd-cm":
+		return "argocd-cm", true
+	case isCoreGVK(obj, "ConfigMap") && obj.GetName() == "argocd-cmd-params-cm":
+		return "argocd-cmd-params-cm", true
+	case isCoreGVK(obj, "ConfigMap") && obj.GetName() == "argocd-cmp-cm" && isConfigManagementPluginConfigMap(obj):
+		return "argocd-cmp-cm", true
+	case isCoreGVK(obj, "Secret") && obj.GetLabels()["argocd.argoproj.io/secret-type"] == "repository":
+		return "repository-secret", true
+	case isCoreGVK(obj, "Secret") && obj.GetLabels()["argocd.argoproj.io/secret-type"] == "cluster":
+		return "cluster-secret", true
+	case isArgoHelmValuesSettings(obj):
+		return "argocd-values", true
+	default:
+		return "", false
+	}
 }
 
 func settingsCandidate(rel string, documentIndex int, kind string, obj *unstructured.Unstructured, includeObject bool) SettingsCandidate {
@@ -234,9 +249,59 @@ func settingsCandidate(rel string, documentIndex int, kind string, obj *unstruct
 	candidate.Namespace = obj.GetNamespace()
 	candidate.Name = obj.GetName()
 	if includeObject {
-		candidate.Object = obj.DeepCopy()
+		candidate.Object = settingsCandidateObject(kind, obj)
 	}
 	return candidate
+}
+
+func settingsCandidateObject(kind string, obj *unstructured.Unstructured) *unstructured.Unstructured {
+	switch kind {
+	case "repository-secret":
+		return sanitizedSecretObject(obj, []string{"name", "type", "url", "enableOCI", "project"})
+	case "cluster-secret":
+		return sanitizedSecretObject(obj, []string{"name", "server", "namespaces", "clusterResources", "project"})
+	default:
+		return obj.DeepCopy()
+	}
+}
+
+func sanitizedSecretObject(obj *unstructured.Unstructured, allowedKeys []string) *unstructured.Unstructured {
+	allowed := make(map[string]struct{}, len(allowedKeys))
+	for _, key := range allowedKeys {
+		allowed[key] = struct{}{}
+	}
+
+	out := &unstructured.Unstructured{Object: map[string]any{
+		"apiVersion": obj.GetAPIVersion(),
+		"kind":       obj.GetKind(),
+		"metadata": map[string]any{
+			"name":      obj.GetName(),
+			"namespace": obj.GetNamespace(),
+			"labels":    obj.GetLabels(),
+		},
+	}}
+	if data := filteredNestedStringMap(obj, allowed, "data"); len(data) > 0 {
+		out.Object["data"] = data
+	}
+	if stringData := filteredNestedStringMap(obj, allowed, "stringData"); len(stringData) > 0 {
+		out.Object["stringData"] = stringData
+	}
+	return out
+}
+
+func filteredNestedStringMap(obj *unstructured.Unstructured, allowed map[string]struct{}, fields ...string) map[string]any {
+	values, ok, err := unstructured.NestedStringMap(obj.Object, fields...)
+	if err != nil || !ok {
+		return nil
+	}
+	filtered := make(map[string]any, len(values))
+	for key, value := range values {
+		if _, ok := allowed[key]; !ok {
+			continue
+		}
+		filtered[key] = value
+	}
+	return filtered
 }
 
 func isArgoGVK(obj *unstructured.Unstructured, kind string) bool {
@@ -356,6 +421,7 @@ func looksLikeCandidate(path string) (bool, error) {
 	text := string(data)
 	return strings.Contains(text, "argoproj.io/v1alpha1") ||
 		strings.Contains(text, "argocd-cm") ||
+		strings.Contains(text, "argocd-cmd-params-cm") ||
 		strings.Contains(text, "ConfigManagementPlugin") ||
 		strings.Contains(text, "argocd.argoproj.io/secret-type") ||
 		(strings.Contains(text, "configs:") && (strings.Contains(text, "cm:") || strings.Contains(text, "cmp:"))), nil

@@ -84,7 +84,7 @@ func (w *kustomizeWorkspace) acquireAndCopyKustomizeRef(ctx context.Context, dir
 			if err != nil {
 				return "", "", "", fmt.Errorf("collect remote kustomize graph %s: %w", redactKustomizeRef(ref.Original), err)
 			}
-			if err := copyPreparedKustomizeWorkspaceTree(repoRoot, acquiredPath, generatedRoot, graph); err != nil {
+			if err := copyPreparedKustomizeWorkspaceTree(ctx, repoRoot, acquiredPath, generatedRoot, graph, RenderOptions{}); err != nil {
 				return "", "", "", fmt.Errorf("copy remote kustomize resource %s: %w", redactKustomizeRef(ref.Original), err)
 			}
 			subpath := path.Clean(strings.TrimPrefix(ref.Subpath, "/"))

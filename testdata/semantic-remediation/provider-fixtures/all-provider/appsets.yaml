@@ -1,0 +1,138 @@
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: provider-clusters
+  namespace: argocd
+spec:
+  generators:
+    - clusters:
+        selector:
+          matchLabels:
+            environment: prod
+  template:
+    metadata:
+      name: '{{nameNormalized}}'
+      namespace: argocd
+      labels:
+        environment: '{{metadata.labels.environment}}'
+    spec:
+      project: '{{project}}'
+      source:
+        repoURL: https://example.invalid/semantic-remediation.git
+        targetRevision: main
+        path: apps/{{name}}
+      destination:
+        server: '{{server}}'
+        namespace: workloads
+---
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: provider-cluster-decisions
+  namespace: argocd
+spec:
+  generators:
+    - clusterDecisionResource:
+        configMapRef: placement-config
+        name: placement-a
+        requeueAfterSeconds: 180
+  template:
+    metadata:
+      name: '{{name}}-placement'
+      namespace: argocd
+    spec:
+      project: default
+      source:
+        repoURL: https://example.invalid/semantic-remediation.git
+        targetRevision: main
+        path: placements/{{name}}
+      destination:
+        server: '{{server}}'
+        namespace: placements
+---
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: provider-scm
+  namespace: argocd
+spec:
+  generators:
+    - scmProvider:
+        github:
+          organization: example-org
+        filters:
+          - repositoryMatch: '^platform-.*'
+  template:
+    metadata:
+      name: '{{repository}}'
+      namespace: argocd
+      annotations:
+        source-sha: '{{sha}}'
+    spec:
+      project: default
+      source:
+        repoURL: '{{url}}'
+        targetRevision: '{{branch}}'
+        path: deploy
+      destination:
+        name: in-cluster
+        namespace: scm
+---
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: provider-prs
+  namespace: argocd
+spec:
+  generators:
+    - pullRequest:
+        github:
+          owner: example-org
+          repo: platform-api
+        filters:
+          - branchMatch: '^feature/.*'
+  template:
+    metadata:
+      name: 'pr-{{number}}-{{branch_slug}}'
+      namespace: argocd
+      annotations:
+        title: '{{title}}'
+        author: '{{author}}'
+    spec:
+      project: default
+      source:
+        repoURL: https://example.invalid/example-org/platform-api.git
+        targetRevision: '{{branch}}'
+        path: apps/platform-api
+      destination:
+        name: in-cluster
+        namespace: pull-requests
+---
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: provider-plugin
+  namespace: argocd
+spec:
+  goTemplate: true
+  generators:
+    - plugin:
+        configMapRef:
+          name: generator-plugin
+        values:
+          summary: '{{.environment}}/{{.cluster.name}}'
+  template:
+    metadata:
+      name: '{{.environment}}-{{.cluster.name}}'
+      namespace: argocd
+      annotations:
+        summary: '{{.values.summary}}'
+    spec:
+      project: default
+      source:
+        repoURL: https://example.invalid/semantic-remediation.git
+        targetRevision: main
+        path: apps/{{.environment}}
+      destination:
+        name: in-cluster
+        namespace: '{{.cluster.name}}'

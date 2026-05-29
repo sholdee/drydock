@@ -1,0 +1,14 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: runtime-boundary
+  namespace: argocd
+spec:
+  project: runtime-boundary
+  source:
+    repoURL: https://example.invalid/semantic-remediation.git
+    targetRevision: main
+    path: workloads/runtime-boundary
+  destination:
+    name: edge-cluster
+    namespace: runtime-boundary

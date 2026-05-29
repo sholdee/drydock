@@ -210,10 +210,128 @@ spec:
 		t.Fatalf("values annotation = %q, want dev-team-one", app.Annotations["values"])
 	}
 }
+
+func TestGenerateGitGeneratorPrefersDirectoriesOverFiles(t *testing.T) {
+	root := t.TempDir()
+	writeAppsetTestFile(t, filepath.Join(root, "apps", "alpha", "kustomization.yaml"), `resources: []`)
+	writeAppsetTestFile(t, filepath.Join(root, "clusters", "prod.yaml"), `cluster:
+  name: prod
+`)
+	data := []byte(`
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: git-directories-precedence
+spec:
+  goTemplate: true
+  generators:
+    - git:
+        directories:
+          - path: apps/*
+        files:
+          - path: clusters/*.yaml
+  template:
+    metadata:
+      name: '{{.path.basename}}'
+`)
+
+	apps, diags, err := GenerateFromYAML(root, "app-set.yaml", data)
+	if err != nil {
+		t.Fatalf("GenerateFromYAML() error = %v", err)
+	}
+	if len(diags) != 0 {
+		t.Fatalf("diagnostics = %#v", diags)
+	}
+	if got := generatedNames(apps); !slices.Equal(got, []string{"alpha"}) {
+		t.Fatalf("generated names = %#v, want only directory result", got)
+	}
+}
+
+func TestGenerateGitFilesGeneratorAcceptsMappingArrayAndEmptyDocuments(t *testing.T) {
+	root := t.TempDir()
+	writeAppsetTestFile(t, filepath.Join(root, "root.yaml"), `name: root`)
+	writeAppsetTestFile(t, filepath.Join(root, "configs", "array.yaml"), `- name: alpha
+- name: beta
+`)
+	writeAppsetTestFile(t, filepath.Join(root, "configs", "empty.yaml"), ``)
+	writeAppsetTestFile(t, filepath.Join(root, "configs", "empty-object.yaml"), `{}`)
+	data := []byte(`
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: accepted-files
+spec:
+  goTemplate: true
+  generators:
+    - git:
+        files:
+          - path: '*.yaml'
+          - path: configs/*.yaml
+  template:
+    metadata:
+      name: '{{if .name}}{{.name}}{{else}}empty{{end}}-{{.path.filenameNormalized}}'
+      annotations:
+        source-path: '{{.path.path}}'
+`)
+
+	apps, diags, err := GenerateFromYAML(root, "app-set.yaml", data)
+	if err != nil {
+		t.Fatalf("GenerateFromYAML() error = %v", err)
+	}
+	if len(diags) != 0 {
+		t.Fatalf("diagnostics = %#v", diags)
+	}
+	if got := generatedNames(apps); !slices.Equal(got, []string{"alpha-array.yaml", "beta-array.yaml", "empty-empty-object.yaml", "empty-empty.yaml", "root-root.yaml"}) {
+		t.Fatalf("generated names = %#v, want mapping, array, empty object, and empty file results", got)
+	}
+	rootApp := apps[len(apps)-1].Application
+	if rootApp.Name != "root-root.yaml" || rootApp.Annotations["source-path"] != "." {
+		t.Fatalf("root app = %q annotations %#v, want dot source-path", rootApp.Name, rootApp.Annotations)
+	}
+}
+
+func TestGenerateGitFilesGeneratorUsesDotForRootFilePathParams(t *testing.T) {
+	root := t.TempDir()
+	writeAppsetTestFile(t, filepath.Join(root, "root.yaml"), `name: root`)
+	data := []byte(`
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: root-file-path
+spec:
+  generators:
+    - git:
+        files:
+          - path: '*.yaml'
+  template:
+    metadata:
+      name: '{{name}}'
+      annotations:
+        path: '{{path}}'
+        basename: '{{path.basename}}'
+        seg0: '{{path[0]}}'
+`)
+
+	apps, diags, err := GenerateFromYAML(root, "app-set.yaml", data)
+	if err != nil {
+		t.Fatalf("GenerateFromYAML() error = %v", err)
+	}
+	if len(diags) != 0 {
+		t.Fatalf("diagnostics = %#v", diags)
+	}
+	if len(apps) != 1 {
+		t.Fatalf("len(apps) = %d, want 1", len(apps))
+	}
+	annotations := apps[0].Application.Annotations
+	if annotations["path"] != "." || annotations["basename"] != "." || annotations["seg0"] != "." {
+		t.Fatalf("root path annotations = %#v, want dot path metadata", annotations)
+	}
+}
 func TestGenerateGitFilesGeneratorReportsInvalidFiles(t *testing.T) {
 	root := t.TempDir()
-	writeAppsetTestFile(t, filepath.Join(root, "files", "array.yaml"), `- item`)
-	writeAppsetTestFile(t, filepath.Join(root, "files", "empty.yaml"), ``)
+	writeAppsetTestFile(t, filepath.Join(root, "files", "bad-array.yaml"), `- name: ok
+- item
+`)
 	writeAppsetTestFile(t, filepath.Join(root, "files", "scalar.yaml"), `value`)
 	writeAppsetTestFile(t, filepath.Join(root, "files", "invalid.json"), `{"broken":`)
 	data := []byte(`
@@ -239,8 +357,8 @@ spec:
 	if len(apps) != 0 {
 		t.Fatalf("generated apps = %#v, want none", apps)
 	}
-	if len(diags) != 4 {
-		t.Fatalf("len(diags) = %d, want 4: %#v", len(diags), diags)
+	if len(diags) != 3 {
+		t.Fatalf("len(diags) = %d, want 3: %#v", len(diags), diags)
 	}
 }
 func TestGenerateGitFilesGeneratorReportsSymlinksAndRootEscapes(t *testing.T) {

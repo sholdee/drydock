@@ -108,7 +108,10 @@ func renderApplicationCached(ctx renderContext, application argoappv1.Applicatio
 			return result, err
 		}
 	}
-	result, err := RenderApplication(ctx.context, application, ctx.provider, ctx.request.PluginOptions)
+	result, err := RenderApplicationWithOptions(ctx.context, application, ctx.provider, ApplicationRenderOptions{
+		PluginOptions:   ctx.request.PluginOptions,
+		TrackingOptions: ctx.trackingOptions,
+	})
 	if ctx.context.Err() == nil {
 		ctx.cache.set(key, result, err)
 	}
@@ -121,6 +124,10 @@ func namespaceDefaultedApplicationRenderCacheKey(ctx renderContext, application 
 	}
 	fallback := application
 	fallback.Namespace = ""
+	trackingOpts := normalizeTrackingOptions(ctx.trackingOptions)
+	if application.InstanceName(trackingOpts.ControllerNamespace) != fallback.InstanceName(trackingOpts.ControllerNamespace) {
+		return "", false
+	}
 	key, err := applicationRenderCacheKey(ctx, fallback)
 	return key, err == nil
 }
@@ -143,6 +150,7 @@ type renderContext struct {
 	provider          localProvider
 	cache             *applicationRenderCache
 	settingsSignature string
+	trackingOptions   TrackingOptions
 	request           BuildRequest
 }
 
@@ -167,6 +175,7 @@ func applicationRenderCacheKey(ctx renderContext, application argoappv1.Applicat
 		EnablePlugins           bool                        `json:"enablePlugins,omitempty"`
 		PluginPolicyFingerprint string                      `json:"pluginPolicyFingerprint,omitempty"`
 		HasInjectedPluginRender bool                        `json:"hasInjectedPluginRender"`
+		TrackingOptions         TrackingOptions             `json:"trackingOptions,omitempty"`
 	}{
 		Root:                    ctx.provider.repoRoot,
 		Application:             newApplicationRenderCacheInput(application),
@@ -184,6 +193,7 @@ func applicationRenderCacheKey(ctx renderContext, application argoappv1.Applicat
 		EnablePlugins:           ctx.request.EnablePlugins,
 		PluginPolicyFingerprint: ctx.request.pluginPolicyFingerprint,
 		HasInjectedPluginRender: ctx.request.PluginRenderer != nil,
+		TrackingOptions:         normalizeTrackingOptions(ctx.trackingOptions),
 	}
 	data, err := json.Marshal(input)
 	if err != nil {

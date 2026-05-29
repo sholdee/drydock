@@ -1,0 +1,18 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: explicit-conflict
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: https://example.invalid/semantic-remediation.git
+    targetRevision: main
+    path: repo
+    helm:
+      releaseName: explicit-conflict
+    kustomize:
+      namePrefix: conflict-
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: explicit-conflict

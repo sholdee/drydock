@@ -1,0 +1,16 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: explicit-directory
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: https://example.invalid/semantic-remediation.git
+    targetRevision: main
+    path: repo
+    directory:
+      recurse: false
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: explicit-directory

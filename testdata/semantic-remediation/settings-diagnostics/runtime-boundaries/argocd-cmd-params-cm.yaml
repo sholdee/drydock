@@ -1,0 +1,9 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: argocd-cmd-params-cm
+  namespace: argocd
+data:
+  controller.diff.server.side: "true"
+  controller.status.processors: "10"
+  applicationsetcontroller.enable.progressive.syncs: "true"

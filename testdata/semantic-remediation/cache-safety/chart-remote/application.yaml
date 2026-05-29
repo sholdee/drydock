@@ -1,0 +1,19 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: cache-root-safety
+  namespace: argocd
+spec:
+  project: default
+  sources:
+    - repoURL: https://example.invalid/cache-safety.git
+      targetRevision: main
+      path: repo
+    - repoURL: https://charts.example.invalid/stable
+      targetRevision: 1.2.3
+      chart: cached-chart
+      helm:
+        releaseName: cached-chart
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: cache-root-safety

@@ -25,6 +25,8 @@ Supported template behavior:
 
 - `spec.goTemplate: true`
 - `spec.goTemplateOptions`, including `missingkey=error`
+- `spec.templatePatch` rendered from generator params, strategic-merge-applied
+  to the generated `Application`, with `spec.project` preserved
 - Sprig-compatible functions used by Argo CD, including `regexReplaceAll`
 - generator-level selectors
 - generator-level template overrides
@@ -39,10 +41,13 @@ Supported template behavior:
 Git directories and Git files matches are sorted by normalized relative path.
 Include and exclude patterns are deterministic, and `exclude: true` removes a
 path even when another pattern includes it.
+When a Git generator defines both `directories` and `files`, Argo CD's
+directory-first dispatch is used and `files` are ignored.
 
 Git files must remain under the repository root and must not traverse symlinks.
-YAML and JSON files must decode to non-empty mapping documents. Arrays,
-scalars, invalid YAML/JSON, and empty files produce diagnostics.
+YAML and JSON files may decode to a mapping document, an array of mapping
+documents, an empty mapping, or an empty file. Scalars, invalid YAML/JSON, and
+arrays with non-mapping entries produce diagnostics.
 
 Git files `values` use the same `values.*` and `.values.*` behavior as Git
 directories. `pathParamPrefix` applies to all path-related params. For example,
@@ -55,7 +60,10 @@ ApplicationSet declares `revision: master`.
 
 ## List, Matrix, And Merge
 
-List generators support `elements` and `elementsYaml`.
+List generators support `elements` and `elementsYaml`. For non-Go-template
+ApplicationSets, `elements` scalar fields must be strings and nested `values`
+are flattened to `values.<key>`. `elementsYaml` is kept unflattened so
+matrix-interpolated YAML follows Argo CD's behavior.
 
 Matrix generators combine exactly two child generators and interpolate the
 second child from first-child params, including templated `elementsYaml`.

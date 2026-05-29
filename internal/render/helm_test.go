@@ -6,6 +6,8 @@ import (
 	"strings"
 	"testing"
 
+	argoappv1 "github.com/argoproj/argo-cd/v3/pkg/apis/application/v1alpha1"
+	"github.com/sholdee/drydock/internal/chart"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 )
 
@@ -332,6 +334,130 @@ value: from-ref
 	}
 }
 
+func TestHelmRendererAppliesHelmParametersAndFileParameters(t *testing.T) {
+	root := t.TempDir()
+	writeParameterChart(t, filepath.Join(root, "chart"))
+	writeFile(t, filepath.Join(root, "chart", "message,one.txt"), "from-file")
+
+	result, diags, err := (HelmRenderer{}).Render(context.Background(), ResolvedSource{
+		RepoRoot: root,
+		Path:     "chart",
+	}, RenderOptions{
+		AppName: "demo",
+		ArgoEnv: argoappv1.Env{
+			{Name: "ARGOCD_APP_NAME", Value: "demo-app"},
+		},
+		HelmParameters: []argoappv1.HelmParameter{
+			{Name: "value", Value: "from,parameter"},
+			{Name: "flag", Value: "true", ForceString: true},
+			{Name: "appName", Value: "$ARGOCD_APP_NAME"},
+			{Name: "fileValue", Value: "from-parameter"},
+		},
+		HelmFileParameters: []argoappv1.HelmFileParameter{
+			{Name: "fileValue", Path: "message,one.txt"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Render() error = %v", err)
+	}
+	if len(diags) != 0 {
+		t.Fatalf("diagnostics = %#v", diags)
+	}
+	for key, want := range map[string]string{
+		"value":     "from,parameter",
+		"flag":      "string:true",
+		"appName":   "demo-app",
+		"fileValue": "from-file",
+	} {
+		got, _, _ := unstructured.NestedString(result[0].Object.Object, "data", key)
+		if got != want {
+			t.Fatalf("data[%q] = %#v, want %q", key, got, want)
+		}
+	}
+}
+
+func TestCleanHelmSetParameterMatchesArgoEscaping(t *testing.T) {
+	for input, want := range map[string]string{
+		"val":        "val",
+		"not, clean": `not\, clean`,
+		`a\,b,c`:     `a\,b\,c`,
+		"{a,b,c}":    "{a,b,c}",
+		`,,,,,\,`:    `\,\,\,\,\,\,`,
+		`\,,\\,,`:    `\,\,\\,\,`,
+	} {
+		if got := cleanHelmSetParameter(input); got != want {
+			t.Fatalf("cleanHelmSetParameter(%q) = %q, want %q", input, got, want)
+		}
+	}
+}
+
+func TestHelmRendererAppliesRefHelmFileParameters(t *testing.T) {
+	root := t.TempDir()
+	valuesRoot := t.TempDir()
+	writeParameterChart(t, filepath.Join(root, "chart"))
+	writeFile(t, filepath.Join(valuesRoot, "message.txt"), "from-ref-file")
+
+	result, diags, err := (HelmRenderer{}).Render(context.Background(), ResolvedSource{
+		RepoRoot: root,
+		Path:     "chart",
+	}, RenderOptions{
+		AppName: "demo",
+		RefRoots: map[string]string{
+			"$values": valuesRoot,
+		},
+		HelmFileParameters: []argoappv1.HelmFileParameter{
+			{Name: "fileValue", Path: "$values/message.txt"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Render() error = %v", err)
+	}
+	if len(diags) != 0 {
+		t.Fatalf("diagnostics = %#v", diags)
+	}
+	value, _, _ := unstructured.NestedString(result[0].Object.Object, "data", "fileValue")
+	if value != "from-ref-file" {
+		t.Fatalf("data.fileValue = %q, want from-ref-file", value)
+	}
+}
+
+func TestHelmRendererRejectsSymlinkedHelmFileParameters(t *testing.T) {
+	root := t.TempDir()
+	valuesRoot := t.TempDir()
+	outside := t.TempDir()
+	writeParameterChart(t, filepath.Join(root, "chart"))
+	writeFile(t, filepath.Join(outside, "message.txt"), "outside")
+	symlink(t, filepath.Join(outside, "message.txt"), filepath.Join(valuesRoot, "message.txt"))
+
+	result, diags, err := (HelmRenderer{}).Render(context.Background(), ResolvedSource{
+		RepoRoot: root,
+		Path:     "chart",
+	}, RenderOptions{
+		AppName: "demo",
+		RefRoots: map[string]string{
+			"$values": valuesRoot,
+		},
+		HelmFileParameters: []argoappv1.HelmFileParameter{
+			{Name: "fileValue", Path: "$values/message.txt"},
+		},
+	})
+	if err == nil {
+		t.Fatal("Render() error = nil, want symlink error")
+	}
+	if !strings.Contains(err.Error(), "symlink") {
+		t.Fatalf("Render() error = %v, want symlink error", err)
+	}
+	if strings.Contains(err.Error(), "outside") {
+		t.Fatalf("Render() error = %v leaked file contents", err)
+	}
+	if len(diags) != 0 {
+		t.Fatalf("diagnostics = %#v", diags)
+	}
+	if len(result) != 0 {
+		t.Fatalf("result = %#v, want no manifests", result)
+	}
+}
+
 func TestHelmRendererIgnoresMissingValueFilesWhenEnabled(t *testing.T) {
 	root := t.TempDir()
 	writeValueChart(t, filepath.Join(root, "chart"))
@@ -543,6 +669,171 @@ func TestHelmRendererValueFilePrecedence(t *testing.T) {
 			}
 			if value := renderedValue(t, result); value != tt.wantRenderedValue {
 				t.Fatalf("data.value = %q, want %q", value, tt.wantRenderedValue)
+			}
+		})
+	}
+}
+
+func TestHelmRendererAppliesValueFileGlobsInOrder(t *testing.T) {
+	for _, tt := range []struct {
+		name      string
+		files     map[string]string
+		valueRefs []string
+		want      string
+	}{
+		{
+			name: "later explicit value overrides expanded glob",
+			files: map[string]string{
+				"values/00.yaml": "value: zero\n",
+				"values/10.yaml": "value: ten\n",
+				"override.yaml":  "value: explicit\n",
+			},
+			valueRefs: []string{"values/*.yaml", "override.yaml"},
+			want:      "explicit",
+		},
+		{
+			name: "later expanded glob overrides earlier explicit value",
+			files: map[string]string{
+				"values/00.yaml": "value: zero\n",
+				"values/10.yaml": "value: ten\n",
+				"override.yaml":  "value: explicit\n",
+			},
+			valueRefs: []string{"override.yaml", "values/*.yaml"},
+			want:      "ten",
+		},
+		{
+			name: "recursive glob preserves flat before nested expansion",
+			files: map[string]string{
+				"values/root.yaml":         "value: root\n",
+				"values/nested/child.yaml": "value: nested\n",
+			},
+			valueRefs: []string{"values/**/*.yaml"},
+			want:      "nested",
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			root := t.TempDir()
+			writeValueChart(t, filepath.Join(root, "chart"))
+			for file, data := range tt.files {
+				writeFile(t, filepath.Join(root, "chart", file), data)
+			}
+
+			result, diags, err := (HelmRenderer{}).Render(context.Background(), ResolvedSource{
+				RepoRoot: root,
+				Path:     "chart",
+			}, RenderOptions{
+				AppName:    "demo",
+				ValueFiles: tt.valueRefs,
+			})
+			if err != nil {
+				t.Fatalf("Render() error = %v", err)
+			}
+			if len(diags) != 0 {
+				t.Fatalf("diagnostics = %#v", diags)
+			}
+			if value := renderedValue(t, result); value != tt.want {
+				t.Fatalf("data.value = %q, want %q", value, tt.want)
+			}
+		})
+	}
+}
+
+func TestHelmRendererLoadsRemoteValueFiles(t *testing.T) {
+	root := t.TempDir()
+	remoteFile := filepath.Join(t.TempDir(), "values.yaml")
+	writeValueChart(t, filepath.Join(root, "chart"))
+	writeFile(t, remoteFile, "value: from-remote\n")
+	acquirer := &fakeRemoteAcquirer{path: remoteFile}
+
+	result, diags, err := (HelmRenderer{}).Render(context.Background(), ResolvedSource{
+		RepoRoot: root,
+		Path:     "chart",
+	}, RenderOptions{
+		AppName:                "demo",
+		ValueFiles:             []string{"https://values.example.test/team/demo.yaml"},
+		RemoteResourceAcquirer: acquirer,
+		RemoteResourceCacheDir: t.TempDir(),
+		RefreshRemoteResources: true,
+	})
+	if err != nil {
+		t.Fatalf("Render() error = %v", err)
+	}
+	if len(diags) != 0 {
+		t.Fatalf("diagnostics = %#v", diags)
+	}
+	if value := renderedValue(t, result); value != "from-remote" {
+		t.Fatalf("data.value = %q, want from-remote", value)
+	}
+	if len(acquirer.requests) != 1 || acquirer.requests[0].URL != "https://values.example.test/team/demo.yaml" {
+		t.Fatalf("remote requests = %#v", acquirer.requests)
+	}
+	if len(acquirer.options) != 1 || !acquirer.options[0].Refresh {
+		t.Fatalf("remote options = %#v, want refresh option", acquirer.options)
+	}
+}
+
+func TestHelmRendererRejectsDisallowedRemoteValueFileSchemes(t *testing.T) {
+	for _, tt := range []struct {
+		name       string
+		opts       RenderOptions
+		valueFile  string
+		wantErr    string
+		wantNoCall bool
+	}{
+		{
+			name:       "default allows only http and https",
+			opts:       RenderOptions{},
+			valueFile:  "s3://bucket/values.yaml",
+			wantErr:    `scheme "s3" is not allowed`,
+			wantNoCall: true,
+		},
+		{
+			name: "explicit empty disables remote value file URLs",
+			opts: RenderOptions{
+				HelmValueFileSchemesSet: true,
+			},
+			valueFile:  "https://values.example.test/team/demo.yaml",
+			wantErr:    `scheme "https" is not allowed`,
+			wantNoCall: true,
+		},
+		{
+			name: "configured non-http schemes fail closed",
+			opts: RenderOptions{
+				HelmValueFileSchemes:    []string{"s3"},
+				HelmValueFileSchemesSet: true,
+			},
+			valueFile:  "s3://bucket/values.yaml",
+			wantErr:    `scheme "s3" is configured but not supported`,
+			wantNoCall: true,
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			root := t.TempDir()
+			writeValueChart(t, filepath.Join(root, "chart"))
+			acquirer := &fakeRemoteAcquirer{path: filepath.Join(t.TempDir(), "values.yaml")}
+			opts := tt.opts
+			opts.AppName = "demo"
+			opts.ValueFiles = []string{tt.valueFile}
+			opts.RemoteResourceAcquirer = acquirer
+
+			result, diags, err := (HelmRenderer{}).Render(context.Background(), ResolvedSource{
+				RepoRoot: root,
+				Path:     "chart",
+			}, opts)
+			if err == nil {
+				t.Fatal("Render() error = nil, want scheme error")
+			}
+			if !strings.Contains(err.Error(), tt.wantErr) {
+				t.Fatalf("Render() error = %v, want %q", err, tt.wantErr)
+			}
+			if len(diags) != 0 {
+				t.Fatalf("diagnostics = %#v", diags)
+			}
+			if len(result) != 0 {
+				t.Fatalf("result = %#v, want no manifests", result)
+			}
+			if tt.wantNoCall && len(acquirer.requests) != 0 {
+				t.Fatalf("remote requests = %#v, want none", acquirer.requests)
 			}
 		})
 	}
@@ -862,7 +1153,54 @@ metadata:
 	}
 }
 
-func TestHelmRendererSkipsSchemaValidationForOfflineSafety(t *testing.T) {
+func TestHelmRendererValidatesSchemaByDefault(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "simple", "Chart.yaml"), `
+apiVersion: v2
+name: simple
+version: 0.1.0
+`)
+	writeFile(t, filepath.Join(root, "simple", "values.yaml"), `
+value: not-an-integer
+`)
+	writeFile(t, filepath.Join(root, "simple", "values.schema.json"), `
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "properties": {
+    "value": {
+      "type": "integer"
+    }
+  }
+}
+`)
+	writeFile(t, filepath.Join(root, "simple", "templates", "configmap.yaml"), `
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Release.Name }}-config
+`)
+
+	result, diags, err := (HelmRenderer{}).Render(context.Background(), ResolvedSource{
+		RepoRoot: root,
+		Path:     "simple",
+		Chart:    "simple",
+	}, RenderOptions{AppName: "demo"})
+	if err == nil {
+		t.Fatal("Render() error = nil, want schema validation error")
+	}
+	if !strings.Contains(err.Error(), "schema") {
+		t.Fatalf("Render() error = %v, want schema context", err)
+	}
+	if len(diags) != 0 {
+		t.Fatalf("diagnostics = %#v", diags)
+	}
+	if len(result) != 0 {
+		t.Fatalf("result = %#v, want no manifests", result)
+	}
+}
+
+func TestHelmRendererSkipsSchemaValidationWhenRequested(t *testing.T) {
 	root := t.TempDir()
 	writeFile(t, filepath.Join(root, "simple", "Chart.yaml"), `
 apiVersion: v2
@@ -886,7 +1224,7 @@ metadata:
 		RepoRoot: root,
 		Path:     "simple",
 		Chart:    "simple",
-	}, RenderOptions{AppName: "demo"})
+	}, RenderOptions{AppName: "demo", SkipSchemaValidation: true})
 	if err != nil {
 		t.Fatalf("Render() error = %v", err)
 	}
@@ -951,6 +1289,303 @@ metadata:
 	}
 	if got, want := result[0].Object.GetName(), "parent-config"; got != want {
 		t.Fatalf("name = %q, want %q", got, want)
+	}
+}
+
+func TestHelmRendererRejectsDeclaredDependenciesMissingFromChartsDirectory(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "parent", "Chart.yaml"), `
+apiVersion: v2
+name: parent
+version: 0.1.0
+dependencies:
+  - name: child
+    version: 0.1.0
+    repository: file://charts/child
+`)
+	writeFile(t, filepath.Join(root, "parent", "templates", "parent.yaml"), `
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: parent-config
+`)
+
+	result, diags, err := (HelmRenderer{}).Render(context.Background(), ResolvedSource{
+		RepoRoot: root,
+		Path:     "parent",
+		Chart:    "parent",
+	}, RenderOptions{AppName: "demo"})
+	if err == nil {
+		t.Fatal("Render() error = nil, want missing dependency error")
+	}
+	if !strings.Contains(err.Error(), "missing in charts") || !strings.Contains(err.Error(), "require vendored charts") {
+		t.Fatalf("Render() error = %v, want vendored dependency context", err)
+	}
+	if len(diags) != 0 {
+		t.Fatalf("diagnostics = %#v", diags)
+	}
+	if len(result) != 0 {
+		t.Fatalf("result = %#v, want no manifests", result)
+	}
+}
+
+func TestHelmRendererAcquiresMissingOCIChartDependency(t *testing.T) {
+	root := t.TempDir()
+	parent := filepath.Join(root, "parent")
+	child := filepath.Join(root, "acquired", "postgres")
+	writeFile(t, filepath.Join(parent, "Chart.yaml"), `
+apiVersion: v2
+name: parent
+version: 0.1.0
+dependencies:
+  - name: postgres
+    version: '>=0.12.0'
+    repository: oci://registry-1.docker.io/cloudpirates
+`)
+	writeFile(t, filepath.Join(parent, "Chart.lock"), `
+dependencies:
+  - name: postgres
+    repository: oci://registry-1.docker.io/cloudpirates
+    version: 0.12.4
+digest: sha256:example
+generated: "2026-01-01T00:00:00Z"
+`)
+	writeFile(t, filepath.Join(parent, "templates", "parent.yaml"), `
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: parent-config
+`)
+	writeNamedTestChart(t, child, "postgres", "0.12.4", `
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: postgres-config
+`)
+
+	acquirer := &fakeChartAcquirer{chartDir: child, fromCache: true}
+	result, diags, err := (HelmRenderer{}).Render(context.Background(), ResolvedSource{
+		RepoRoot: root,
+		Path:     "parent",
+		Chart:    "parent",
+	}, RenderOptions{
+		AppName:             "demo",
+		ChartAcquirer:       acquirer,
+		ChartCacheDir:       filepath.Join(root, "..", "chart-cache"),
+		OfflineCharts:       true,
+		RefreshCharts:       true,
+		ChartForbiddenRoots: []string{root},
+		ChartCredentials:    chart.ChartCredentials{Username: "helm-user"},
+		PassCredentials:     true,
+	})
+	if err != nil {
+		t.Fatalf("Render() error = %v", err)
+	}
+	if len(diags) != 0 {
+		t.Fatalf("diagnostics = %#v", diags)
+	}
+	assertHelmDependencyAcquireRequest(t, acquirer)
+	assertPathMissing(t, filepath.Join(parent, "charts", "postgres"))
+	configMaps := filterObjects(result, "ConfigMap")
+	if len(configMaps) != 2 {
+		t.Fatalf("ConfigMaps = %d, want parent and dependency manifests: %#v", len(configMaps), result)
+	}
+	if !containsManifest(result, "ConfigMap", "parent-config") || !containsManifest(result, "ConfigMap", "postgres-config") {
+		t.Fatalf("ConfigMaps = %#v, want parent-config and postgres-config", configMaps)
+	}
+}
+
+func TestHelmRendererAcquiresIncompatibleVendoredOCIChartDependency(t *testing.T) {
+	root := t.TempDir()
+	parent := filepath.Join(root, "parent")
+	child := filepath.Join(root, "acquired", "postgres")
+	writeFile(t, filepath.Join(parent, "Chart.yaml"), `
+apiVersion: v2
+name: parent
+version: 0.1.0
+dependencies:
+  - name: postgres
+    version: 0.12.4
+    repository: oci://registry-1.docker.io/cloudpirates
+`)
+	writeFile(t, filepath.Join(parent, "templates", "parent.yaml"), `
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: parent-config
+`)
+	writeNamedTestChart(t, filepath.Join(parent, "charts", "postgres"), "postgres", "0.1.0", `
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: stale-postgres-config
+`)
+	writeNamedTestChart(t, child, "postgres", "0.12.4", `
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: postgres-config
+`)
+
+	acquirer := &fakeChartAcquirer{chartDir: child, fromCache: true}
+	result, diags, err := (HelmRenderer{}).Render(context.Background(), ResolvedSource{
+		RepoRoot: root,
+		Path:     "parent",
+		Chart:    "parent",
+	}, RenderOptions{
+		AppName:       "demo",
+		ChartAcquirer: acquirer,
+	})
+	if err != nil {
+		t.Fatalf("Render() error = %v", err)
+	}
+	if len(diags) != 0 {
+		t.Fatalf("diagnostics = %#v", diags)
+	}
+	if got, want := len(acquirer.requests), 1; got != want {
+		t.Fatalf("chart acquire calls = %d, want %d", got, want)
+	}
+	if !containsManifest(result, "ConfigMap", "postgres-config") || containsManifest(result, "ConfigMap", "stale-postgres-config") {
+		t.Fatalf("manifests = %#v, want acquired compatible dependency only", manifestNames(result))
+	}
+}
+
+func TestHelmRendererUsesChartLockWhenVendoredVersionSatisfiesRange(t *testing.T) {
+	root := t.TempDir()
+	parent := filepath.Join(root, "parent")
+	child := filepath.Join(root, "acquired", "postgres")
+	writeFile(t, filepath.Join(parent, "Chart.yaml"), `
+apiVersion: v2
+name: parent
+version: 0.1.0
+dependencies:
+  - name: postgres
+    version: '>=0.12.0'
+    repository: oci://registry-1.docker.io/cloudpirates
+`)
+	writeFile(t, filepath.Join(parent, "Chart.lock"), `
+dependencies:
+  - name: postgres
+    repository: oci://registry-1.docker.io/cloudpirates
+    version: 0.12.4
+digest: sha256:example
+generated: "2026-01-01T00:00:00Z"
+`)
+	writeFile(t, filepath.Join(parent, "templates", "parent.yaml"), `
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: parent-config
+`)
+	writeNamedTestChart(t, filepath.Join(parent, "charts", "postgres"), "postgres", "0.12.5", `
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: unlocked-postgres-config
+`)
+	writeNamedTestChart(t, child, "postgres", "0.12.4", `
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: locked-postgres-config
+`)
+
+	acquirer := &fakeChartAcquirer{chartDir: child, fromCache: true}
+	result, diags, err := (HelmRenderer{}).Render(context.Background(), ResolvedSource{
+		RepoRoot: root,
+		Path:     "parent",
+		Chart:    "parent",
+	}, RenderOptions{
+		AppName:       "demo",
+		ChartAcquirer: acquirer,
+	})
+	if err != nil {
+		t.Fatalf("Render() error = %v", err)
+	}
+	if len(diags) != 0 {
+		t.Fatalf("diagnostics = %#v", diags)
+	}
+	if got, want := len(acquirer.requests), 1; got != want {
+		t.Fatalf("chart acquire calls = %d, want %d", got, want)
+	}
+	if !containsManifest(result, "ConfigMap", "locked-postgres-config") || containsManifest(result, "ConfigMap", "unlocked-postgres-config") {
+		t.Fatalf("manifests = %#v, want locked dependency only", manifestNames(result))
+	}
+}
+
+func TestHelmRendererRemovesIncompatibleVendoredChartArchive(t *testing.T) {
+	root := t.TempDir()
+	parent := filepath.Join(root, "parent")
+	child := filepath.Join(root, "acquired", "postgres")
+	writeFile(t, filepath.Join(parent, "Chart.yaml"), `
+apiVersion: v2
+name: parent
+version: 0.1.0
+dependencies:
+  - name: postgres
+    version: 0.12.4
+    repository: oci://registry-1.docker.io/cloudpirates
+`)
+	writeFile(t, filepath.Join(parent, "templates", "parent.yaml"), `
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: parent-config
+`)
+	writeArchivedTestChart(t, filepath.Join(parent, "charts"), "postgres", "0.1.0", `
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: archived-postgres-config
+`)
+	writeNamedTestChart(t, child, "postgres", "0.12.4", `
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: postgres-config
+`)
+
+	acquirer := &fakeChartAcquirer{chartDir: child, fromCache: true}
+	result, diags, err := (HelmRenderer{}).Render(context.Background(), ResolvedSource{
+		RepoRoot: root,
+		Path:     "parent",
+		Chart:    "parent",
+	}, RenderOptions{
+		AppName:       "demo",
+		ChartAcquirer: acquirer,
+	})
+	if err != nil {
+		t.Fatalf("Render() error = %v", err)
+	}
+	if len(diags) != 0 {
+		t.Fatalf("diagnostics = %#v", diags)
+	}
+	if got, want := len(acquirer.requests), 1; got != want {
+		t.Fatalf("chart acquire calls = %d, want %d", got, want)
+	}
+	if !containsManifest(result, "ConfigMap", "postgres-config") || containsManifest(result, "ConfigMap", "archived-postgres-config") {
+		t.Fatalf("manifests = %#v, want acquired dependency only", manifestNames(result))
+	}
+}
+
+func TestHelmDependencyChartPathRejectsUnsafeName(t *testing.T) {
+	for _, name := range []string{"", ".", "..", "../postgres", "nested/postgres", `nested\postgres`, "postgres*"} {
+		if got, err := helmDependencyChartPath(t.TempDir(), name); err == nil {
+			t.Fatalf("helmDependencyChartPath(%q) = %q, nil error; want unsafe name error", name, got)
+		}
+	}
+}
+
+func assertHelmDependencyAcquireRequest(t *testing.T, acquirer *fakeChartAcquirer) {
+	t.Helper()
+	if got, want := len(acquirer.requests), 1; got != want {
+		t.Fatalf("chart acquire calls = %d, want %d", got, want)
+	}
+	if got := acquirer.requests[0]; got.Repository != "oci://registry-1.docker.io/cloudpirates" || got.Name != "postgres" || got.Version != "0.12.4" || got.Kind != chart.RepositoryOCI {
+		t.Fatalf("chart request = %#v", got)
+	}
+	if got := acquirer.options[0]; !got.Offline || !got.Refresh || !got.PassCredentials || got.CacheDir == "" || len(got.ForbiddenRoots) != 1 || got.Credentials.Username != "helm-user" {
+		t.Fatalf("chart options = %#v", got)
 	}
 }
 
@@ -1243,6 +1878,32 @@ metadata:
   name: demo
 data:
   value: {{ .Values.value | quote }}
+`)
+}
+
+func writeParameterChart(t *testing.T, chartDir string) {
+	t.Helper()
+	writeFile(t, filepath.Join(chartDir, "Chart.yaml"), `
+apiVersion: v2
+name: parameters
+version: 0.1.0
+`)
+	writeFile(t, filepath.Join(chartDir, "values.yaml"), `
+value: default
+flag: false
+appName: unset
+fileValue: unset
+`)
+	writeFile(t, filepath.Join(chartDir, "templates", "cm.yaml"), `
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: demo
+data:
+  value: {{ .Values.value | quote }}
+  flag: {{ printf "%T:%v" .Values.flag .Values.flag | quote }}
+  appName: {{ .Values.appName | quote }}
+  fileValue: {{ .Values.fileValue | quote }}
 `)
 }
 

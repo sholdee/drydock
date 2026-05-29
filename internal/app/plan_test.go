@@ -1,6 +1,7 @@
 package app
 
 import (
+	"strings"
 	"testing"
 
 	argoappv1 "github.com/argoproj/argo-cd/v3/pkg/apis/application/v1alpha1"
@@ -73,6 +74,29 @@ func TestPlanRejectsRefChart(t *testing.T) {
 	_, err := Plan(application)
 	if err == nil {
 		t.Fatalf("expected ref chart error")
+	}
+}
+
+func TestPlanRejectsMultipleExplicitSourceTypes(t *testing.T) {
+	application := argoappv1.Application{
+		Spec: argoappv1.ApplicationSpec{
+			Sources: argoappv1.ApplicationSources{
+				{
+					RepoURL:   "https://repo",
+					Path:      "apps/demo",
+					Helm:      &argoappv1.ApplicationSourceHelm{},
+					Directory: &argoappv1.ApplicationSourceDirectory{},
+				},
+			},
+		},
+	}
+
+	_, err := Plan(application)
+	if err == nil {
+		t.Fatalf("expected explicit source type conflict")
+	}
+	if !strings.Contains(err.Error(), "multiple application sources defined") {
+		t.Fatalf("Plan() error = %v, want Argo CD explicit type conflict", err)
 	}
 }
 

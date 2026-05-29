@@ -18,6 +18,15 @@ type RepositorySettings struct {
 	Provenance Provenance `json:"provenance,omitempty" yaml:"provenance,omitempty"`
 }
 
+type ClusterSettings struct {
+	Name             string     `json:"name,omitempty" yaml:"name,omitempty"`
+	Server           string     `json:"server,omitempty" yaml:"server,omitempty"`
+	Namespaces       []string   `json:"namespaces,omitempty" yaml:"namespaces,omitempty"`
+	ClusterResources bool       `json:"clusterResources,omitempty" yaml:"clusterResources,omitempty"`
+	Project          string     `json:"project,omitempty" yaml:"project,omitempty"`
+	Provenance       Provenance `json:"provenance,omitempty" yaml:"provenance,omitempty"`
+}
+
 type ResourceFilterRule struct {
 	APIGroups  []string   `json:"apiGroups,omitempty" yaml:"apiGroups,omitempty"`
 	Kinds      []string   `json:"kinds,omitempty" yaml:"kinds,omitempty"`
@@ -73,12 +82,13 @@ type ResourceCustomization struct {
 }
 
 type ConfigManagementPlugin struct {
-	Name               string     `json:"-" yaml:"-"`
-	Version            string     `json:"-" yaml:"-"`
-	GenerateCommand    []string   `json:"-" yaml:"-"`
-	GenerateArgs       []string   `json:"-" yaml:"-"`
-	HasInit            bool       `json:"-" yaml:"-"`
-	Provenance         Provenance `json:"-" yaml:"-"`
+	Name               string                          `json:"-" yaml:"-"`
+	Version            string                          `json:"-" yaml:"-"`
+	GenerateCommand    []string                        `json:"-" yaml:"-"`
+	GenerateArgs       []string                        `json:"-" yaml:"-"`
+	HasInit            bool                            `json:"-" yaml:"-"`
+	Discover           ConfigManagementPluginDiscovery `json:"-" yaml:"-"`
+	Provenance         Provenance                      `json:"-" yaml:"-"`
 	commandFingerprint string
 }
 
@@ -89,29 +99,60 @@ func (plugin ConfigManagementPlugin) EffectiveName() string {
 	return plugin.Name + "-" + plugin.Version
 }
 
+type ConfigManagementPluginDiscovery struct {
+	FileName    string
+	FindGlob    string
+	FindCommand []string
+	FindArgs    []string
+}
+
+type CommandParameterClassification string
+
+const (
+	CommandParameterRuntimeOnly   CommandParameterClassification = "runtime-only"
+	CommandParameterRuntimeWiring CommandParameterClassification = "runtime-wiring"
+	CommandParameterUnknown       CommandParameterClassification = "unknown"
+)
+
+type CommandParameterSetting struct {
+	Key            string                         `json:"key" yaml:"key"`
+	Value          string                         `json:"value,omitempty" yaml:"value,omitempty"`
+	ValueRedacted  bool                           `json:"valueRedacted,omitempty" yaml:"valueRedacted,omitempty"`
+	Classification CommandParameterClassification `json:"classification,omitempty" yaml:"classification,omitempty"`
+	Provenance     Provenance                     `json:"provenance,omitempty" yaml:"provenance,omitempty"`
+}
+
 type ArgoSettings struct {
 	KustomizeBuildOptions        []Value[string]                   `json:"kustomizeBuildOptions,omitempty" yaml:"kustomizeBuildOptions,omitempty"`
 	HelmRepositories             map[string]RepositorySettings     `json:"helmRepositories,omitempty" yaml:"helmRepositories,omitempty"`
+	Clusters                     map[string]ClusterSettings        `json:"clusters,omitempty" yaml:"clusters,omitempty"`
+	HelmValuesFileSchemes        []Value[string]                   `json:"helmValuesFileSchemes,omitempty" yaml:"helmValuesFileSchemes,omitempty"`
+	HelmValuesFileSchemesSet     bool                              `json:"helmValuesFileSchemesSet,omitempty" yaml:"helmValuesFileSchemesSet,omitempty"`
+	HelmValuesFileSchemesSource  Provenance                        `json:"helmValuesFileSchemesSource,omitempty" yaml:"helmValuesFileSchemesSource,omitempty"`
 	TrackingMethod               Value[string]                     `json:"trackingMethod,omitempty" yaml:"trackingMethod,omitempty"`
 	InstanceLabelKey             Value[string]                     `json:"instanceLabelKey,omitempty" yaml:"instanceLabelKey,omitempty"`
+	InstallationID               Value[string]                     `json:"installationID,omitempty" yaml:"installationID,omitempty"`
 	ResourceExclusions           []ResourceFilterRule              `json:"resourceExclusions,omitempty" yaml:"resourceExclusions,omitempty"`
 	ResourceInclusions           []ResourceFilterRule              `json:"resourceInclusions,omitempty" yaml:"resourceInclusions,omitempty"`
 	CompareOptions               ResourceCompareOptions            `json:"compareOptions,omitempty" yaml:"compareOptions,omitempty"`
 	ResourceCustomizations       map[string]ResourceCustomization  `json:"resourceCustomizations,omitempty" yaml:"resourceCustomizations,omitempty"`
 	IgnoreResourceUpdatesEnabled Value[bool]                       `json:"ignoreResourceUpdatesEnabled,omitempty" yaml:"ignoreResourceUpdatesEnabled,omitempty"`
 	ConfigManagementPlugins      map[string]ConfigManagementPlugin `json:"-" yaml:"-"`
+	CommandParameters            []CommandParameterSetting         `json:"commandParameters,omitempty" yaml:"commandParameters,omitempty"`
 }
 
 func DefaultSettings() ArgoSettings {
 	return ArgoSettings{
 		HelmRepositories:        map[string]RepositorySettings{},
+		Clusters:                map[string]ClusterSettings{},
+		HelmValuesFileSchemes:   valuesFromStrings([]string{"https", "http"}, Provenance{}),
 		ResourceCustomizations:  map[string]ResourceCustomization{},
 		ConfigManagementPlugins: map[string]ConfigManagementPlugin{},
 		CompareOptions: ResourceCompareOptions{
 			IgnoreResourceStatusField: "all",
 		},
 		TrackingMethod: Value[string]{
-			Value: "label",
+			Value: "annotation",
 		},
 		InstanceLabelKey: Value[string]{
 			Value: "app.kubernetes.io/instance",
@@ -120,4 +161,12 @@ func DefaultSettings() ArgoSettings {
 			Value: true,
 		},
 	}
+}
+
+func valuesFromStrings(values []string, provenance Provenance) []Value[string] {
+	out := make([]Value[string], 0, len(values))
+	for _, value := range values {
+		out = append(out, Value[string]{Value: value, Provenance: provenance})
+	}
+	return out
 }

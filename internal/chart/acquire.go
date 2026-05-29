@@ -9,6 +9,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/sholdee/drydock/internal/pathsafety"
 )
 
 type RepositoryKind string
@@ -35,10 +37,12 @@ type Result struct {
 }
 
 type Options struct {
-	CacheDir    string
-	Offline     bool
-	Refresh     bool
-	Credentials ChartCredentials
+	CacheDir        string
+	Offline         bool
+	Refresh         bool
+	ForbiddenRoots  []string
+	PassCredentials bool
+	Credentials     ChartCredentials
 }
 
 type ChartCredentials struct {
@@ -58,6 +62,44 @@ func DefaultCacheDir() (string, error) {
 		return "", err
 	}
 	return filepath.Join(root, "drydock", "charts"), nil
+}
+
+func ResolveCacheDir(cacheDir string, forbiddenRoots []string) (string, error) {
+	if cacheDir == "" {
+		defaultDir, err := DefaultCacheDir()
+		if err != nil {
+			return "", err
+		}
+		cacheDir = defaultDir
+	}
+	absCacheDir, err := filepath.Abs(cacheDir)
+	if err != nil {
+		return "", err
+	}
+	absCacheDir = filepath.Clean(absCacheDir)
+	inside, matchedRoot, err := IsPathInsideAny(absCacheDir, forbiddenRoots)
+	if err != nil {
+		return "", err
+	}
+	if inside {
+		return "", fmt.Errorf("chart cache dir %q must not be inside repository root %q", absCacheDir, matchedRoot)
+	}
+	return absCacheDir, nil
+}
+
+func rejectForbiddenCachePath(chartPath string, forbiddenRoots []string) error {
+	inside, matchedRoot, err := IsPathInsideAny(chartPath, forbiddenRoots)
+	if err != nil {
+		return err
+	}
+	if inside {
+		return fmt.Errorf("chart cache path %q must not be inside repository root %q", chartPath, matchedRoot)
+	}
+	return nil
+}
+
+func IsPathInsideAny(targetPath string, roots []string) (bool, string, error) {
+	return pathsafety.IsInsideAny(targetPath, roots)
 }
 
 func NewCacheKey(request Request) (string, error) {

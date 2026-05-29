@@ -13,12 +13,13 @@ import (
 	"github.com/argoproj/argo-cd/v3/util/glob"
 	"github.com/sholdee/drydock/internal/cacheevent"
 	"github.com/sholdee/drydock/internal/change"
+	"github.com/sholdee/drydock/internal/chart"
 	"github.com/sholdee/drydock/internal/config"
 	"github.com/sholdee/drydock/internal/diagnostic"
 	"github.com/sholdee/drydock/internal/diff"
 	"github.com/sholdee/drydock/internal/gitref"
 	"github.com/sholdee/drydock/internal/manifest"
-	"github.com/sholdee/drydock/internal/pathsafety"
+	"github.com/sholdee/drydock/internal/remote"
 	sourcepkg "github.com/sholdee/drydock/internal/source"
 	"go.yaml.in/yaml/v4"
 )
@@ -131,7 +132,7 @@ func (o Orchestrator) DiffApp(ctx context.Context, request DiffAppRequest) (Diff
 	request.DiffRequest = loadedRequest
 
 	forbiddenRoots := diffForbiddenRoots(request.DiffRequest)
-	if err := validateDiffRemoteCache(request.DiffRequest, forbiddenRoots); err != nil {
+	if err := validateDiffCacheRoots(request.DiffRequest, forbiddenRoots); err != nil {
 		return DiffResult{}, err
 	}
 
@@ -394,7 +395,9 @@ func (request DiffRequest) buildRequest(path string, forbiddenRoots []string) Bu
 
 func (request DiffRequest) buildAcquisitionOptions(forbiddenRoots []string) AcquisitionOptions {
 	options := cloneAcquisitionOptions(request.AcquisitionOptions)
-	options.RemoteResourceForbiddenRoots = append([]string(nil), forbiddenRoots...)
+	for _, root := range forbiddenRoots {
+		options.RemoteResourceForbiddenRoots = appendUniqueString(options.RemoteResourceForbiddenRoots, root)
+	}
 	return options
 }
 
@@ -429,23 +432,27 @@ func validateDiffPaths(request DiffRequest) error {
 	return nil
 }
 
-func validateDiffRemoteCache(request DiffRequest, forbiddenRoots []string) error {
-	if request.RemoteResourceCacheDir == "" {
-		return nil
-	}
-	inside, root, err := pathsafety.IsInsideAny(request.RemoteResourceCacheDir, forbiddenRoots)
-	if err != nil {
+func validateDiffCacheRoots(request DiffRequest, forbiddenRoots []string) error {
+	if _, err := chart.ResolveCacheDir(request.ChartCacheDir, forbiddenRoots); err != nil {
 		return err
 	}
-	if inside {
-		return fmt.Errorf("remote resource cache dir %q must not be inside repository root %q", request.RemoteResourceCacheDir, root)
+	if _, err := remote.ResolveCacheDir(request.RemoteResourceCacheDir, forbiddenRoots); err != nil {
+		return err
 	}
 	return nil
 }
 
 func diffForbiddenRoots(request DiffRequest) []string {
-	forbiddenRoots := []string{request.LeftPath, request.RightPath}
-	return appendUniqueString(forbiddenRoots, request.Repo)
+	forbiddenRoots := append([]string(nil), request.RemoteResourceForbiddenRoots...)
+	forbiddenRoots = appendUniqueString(forbiddenRoots, request.LeftPath)
+	forbiddenRoots = appendUniqueString(forbiddenRoots, request.RightPath)
+	forbiddenRoots = appendUniqueString(forbiddenRoots, request.Repo)
+	for _, repoMap := range request.RepoMaps {
+		if strings.TrimSpace(repoMap.Path) != "" {
+			forbiddenRoots = appendUniqueString(forbiddenRoots, repoMap.Path)
+		}
+	}
+	return forbiddenRoots
 }
 
 func selectedApplications(application argoappv1.Application, ok bool) []argoappv1.Application {
@@ -473,7 +480,7 @@ func hasRenderedDiffInput(leftBuild, rightBuild BuildResult) bool {
 
 func (o Orchestrator) buildDiffSides(ctx context.Context, request DiffRequest) (BuildResult, BuildResult, []diagnostic.Diagnostic, error) {
 	forbiddenRoots := diffForbiddenRoots(request)
-	if err := validateDiffRemoteCache(request, forbiddenRoots); err != nil {
+	if err := validateDiffCacheRoots(request, forbiddenRoots); err != nil {
 		return BuildResult{}, BuildResult{}, nil, err
 	}
 

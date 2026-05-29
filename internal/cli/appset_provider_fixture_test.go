@@ -29,6 +29,36 @@ func TestAppSetProviderFixtureFlagExpandsGetApps(t *testing.T) {
 	}
 }
 
+func TestAppSetProviderFixtureFlagExpandsAllProviderFamilies(t *testing.T) {
+	root := filepath.Join("..", "..", "testdata", "semantic-remediation", "provider-fixtures", "all-provider")
+	fixture := filepath.Join(root, "fixtures.yaml")
+
+	cmd := NewRootCommand(VersionInfo{})
+	cmd.SetArgs([]string{"get", "apps", "--path", root, "--appset-provider-fixture", fixture, "-o", "name"})
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	cmd.SetOut(&stdout)
+	cmd.SetErr(&stderr)
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("Execute() error = %v\nstdout:\n%s\nstderr:\n%s", err, stdout.String(), stderr.String())
+	}
+	for _, want := range []string{
+		"argocd/prod-a\n",
+		"argocd/prod-a-placement\n",
+		"argocd/platform-service\n",
+		"argocd/pr-42-feature-platform-api\n",
+		"argocd/prod-edge-a\n",
+	} {
+		if !strings.Contains(stdout.String(), want) {
+			t.Fatalf("stdout missing %q:\n%s", want, stdout.String())
+		}
+	}
+	if stderr.String() != "" {
+		t.Fatalf("stderr = %q, want empty", stderr.String())
+	}
+}
+
 func TestAppSetProviderFixtureFlagExpandsGetImages(t *testing.T) {
 	root, fixture := writeProviderBackedCLIRepo(t, "old", "ghcr.io/example/demo:1.0.0")
 

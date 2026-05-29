@@ -219,6 +219,158 @@ func TestDefaultAcquirerFetchesAuthenticatedHTTPChart(t *testing.T) {
 	}
 }
 
+func TestDefaultAcquirerPassCredentialsWithholdsCredentialsForCrossHostChartArchive(t *testing.T) {
+	archive := chartArchive(t, "demo", map[string]string{
+		"Chart.yaml": "apiVersion: v2\nname: demo\nversion: 1.2.3\n",
+	})
+	wantAuth := "Basic " + base64.StdEncoding.EncodeToString([]byte("user:pass"))
+	archiveServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := r.Header.Get("Authorization"); got != "" {
+			t.Fatalf("archive Authorization = %q, want empty for cross-host archive", got)
+		}
+		if r.URL.Path != "/archives/demo-1.2.3.tgz" {
+			t.Fatalf("archive request path = %q, want /archives/demo-1.2.3.tgz", r.URL.Path)
+		}
+		if _, err := w.Write(archive); err != nil {
+			t.Fatalf("write archive response: %v", err)
+		}
+	}))
+	t.Cleanup(archiveServer.Close)
+	indexServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := r.Header.Get("Authorization"); got != wantAuth {
+			t.Fatalf("index Authorization = %q, want %q", got, wantAuth)
+		}
+		writeIndex(t, w, archiveServer.URL+"/archives/demo-1.2.3.tgz")
+	}))
+	t.Cleanup(indexServer.Close)
+
+	result, err := (DefaultAcquirer{Client: indexServer.Client()}).Acquire(context.Background(), Request{
+		Repository: indexServer.URL,
+		Name:       "demo",
+		Version:    "1.2.3",
+		Kind:       RepositoryHTTP,
+	}, Options{
+		CacheDir: t.TempDir(),
+		Credentials: ChartCredentials{
+			Username: "user",
+			Password: "pass",
+		},
+	})
+	if err != nil {
+		t.Fatalf("Acquire() error = %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(result.ChartDir, "Chart.yaml")); err != nil {
+		t.Fatalf("stat extracted Chart.yaml: %v", err)
+	}
+}
+
+func TestDefaultAcquirerPassCredentialsForwardsCredentialsForCrossHostChartArchive(t *testing.T) {
+	archive := chartArchive(t, "demo", map[string]string{
+		"Chart.yaml": "apiVersion: v2\nname: demo\nversion: 1.2.3\n",
+	})
+	wantAuth := "Basic " + base64.StdEncoding.EncodeToString([]byte("user:pass"))
+	archiveServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := r.Header.Get("Authorization"); got != wantAuth {
+			t.Fatalf("archive Authorization = %q, want %q", got, wantAuth)
+		}
+		if _, err := w.Write(archive); err != nil {
+			t.Fatalf("write archive response: %v", err)
+		}
+	}))
+	t.Cleanup(archiveServer.Close)
+	indexServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := r.Header.Get("Authorization"); got != wantAuth {
+			t.Fatalf("index Authorization = %q, want %q", got, wantAuth)
+		}
+		writeIndex(t, w, archiveServer.URL+"/demo-1.2.3.tgz")
+	}))
+	t.Cleanup(indexServer.Close)
+
+	result, err := (DefaultAcquirer{Client: indexServer.Client()}).Acquire(context.Background(), Request{
+		Repository: indexServer.URL,
+		Name:       "demo",
+		Version:    "1.2.3",
+		Kind:       RepositoryHTTP,
+	}, Options{
+		CacheDir:        t.TempDir(),
+		PassCredentials: true,
+		Credentials: ChartCredentials{
+			Username: "user",
+			Password: "pass",
+		},
+	})
+	if err != nil {
+		t.Fatalf("Acquire() error = %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(result.ChartDir, "Chart.yaml")); err != nil {
+		t.Fatalf("stat extracted Chart.yaml: %v", err)
+	}
+}
+
+func TestDefaultAcquirerUsesExactSemverChartVersion(t *testing.T) {
+	archive := chartArchive(t, "demo", map[string]string{
+		"Chart.yaml": "apiVersion: v2\nname: demo\nversion: 1.2.3\n",
+	})
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/index.yaml":
+			w.Header().Set("Content-Type", "application/yaml")
+			fmt.Fprint(w, `apiVersion: v1
+entries:
+  demo:
+    - version: 1.2.10
+      urls:
+        - demo-1.2.10.tgz
+    - version: 1.2.3
+      urls:
+        - demo-1.2.3.tgz
+`)
+		case "/demo-1.2.3.tgz":
+			if _, err := w.Write(archive); err != nil {
+				t.Fatalf("write archive response: %v", err)
+			}
+		case "/demo-1.2.10.tgz":
+			t.Fatal("Acquire() fetched 1.2.10, want exact 1.2.3")
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(server.Close)
+
+	_, err := (DefaultAcquirer{Client: server.Client()}).Acquire(context.Background(), Request{
+		Repository: server.URL,
+		Name:       "demo",
+		Version:    "1.2.3",
+		Kind:       RepositoryHTTP,
+	}, Options{CacheDir: t.TempDir()})
+	if err != nil {
+		t.Fatalf("Acquire() error = %v", err)
+	}
+}
+
+func TestDefaultAcquirerMissingVersionDiagnostic(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/index.yaml" {
+			t.Fatalf("request path = %q, want /index.yaml", r.URL.Path)
+		}
+		writeIndex(t, w, "demo-1.2.3.tgz")
+	}))
+	t.Cleanup(server.Close)
+
+	_, err := (DefaultAcquirer{Client: server.Client()}).Acquire(context.Background(), Request{
+		Repository: server.URL,
+		Name:       "demo",
+		Version:    "9.9.9",
+		Kind:       RepositoryHTTP,
+	}, Options{CacheDir: t.TempDir()})
+	if err == nil {
+		t.Fatal("Acquire() error = nil, want missing version error")
+	}
+	if !strings.Contains(err.Error(), "chart demo version 9.9.9 not found") {
+		t.Fatalf("Acquire() error = %q, want missing version diagnostic", err)
+	}
+}
+
 func TestDefaultAcquirerBearerTokenTakesPrecedenceOverBasicAuth(t *testing.T) {
 	archive := chartArchive(t, "demo", map[string]string{
 		"Chart.yaml": "apiVersion: v2\nname: demo\nversion: 1.2.3\n",
@@ -384,6 +536,77 @@ func TestDefaultAcquirerOfflineRequiresCacheHit(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "offline cache miss") {
 		t.Fatalf("Acquire() error = %q, want offline cache miss", err)
+	}
+}
+
+func TestDefaultAcquirerRejectsHTTPChartCacheInsideForbiddenRootBeforeCacheRead(t *testing.T) {
+	repoRoot := t.TempDir()
+	request := Request{
+		Repository: "https://charts.example.test",
+		Name:       "demo",
+		Version:    "1.2.3",
+		Kind:       RepositoryHTTP,
+	}
+	cacheDir := filepath.Join(repoRoot, ".drydock", "charts")
+	chartDir := filepath.Join(cacheDir, string(request.Kind), mustCacheKey(t, request), request.Name)
+	if err := os.MkdirAll(chartDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(chartDir, "Chart.yaml"), []byte("apiVersion: v2\nname: demo\nversion: 1.2.3\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	acquirer := DefaultAcquirer{Client: &http.Client{
+		Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+			t.Fatal("Acquire() made a network request for forbidden cache root")
+			return nil, errors.New("unexpected network request")
+		}),
+	}}
+	_, err := acquirer.Acquire(context.Background(), request, Options{
+		CacheDir:       cacheDir,
+		Offline:        true,
+		ForbiddenRoots: []string{repoRoot},
+	})
+	if err == nil || !strings.Contains(err.Error(), "chart cache dir") || !strings.Contains(err.Error(), "must not be inside repository root") {
+		t.Fatalf("Acquire() error = %v, want chart cache containment error", err)
+	}
+}
+
+func TestDefaultAcquirerRejectsOCIChartCacheInsideForbiddenRootBeforePull(t *testing.T) {
+	repoRoot := t.TempDir()
+	puller := &fakeOCIPuller{archive: chartArchive(t, "demo", map[string]string{
+		"Chart.yaml": "apiVersion: v2\nname: demo\nversion: 1.2.3\n",
+	})}
+	_, err := (DefaultAcquirer{OCIPuller: puller}).Acquire(context.Background(), Request{
+		Repository: "oci://registry.example.test/charts",
+		Name:       "demo",
+		Version:    "1.2.3",
+		Kind:       RepositoryOCI,
+	}, Options{
+		CacheDir:       filepath.Join(repoRoot, ".drydock", "charts"),
+		ForbiddenRoots: []string{repoRoot},
+	})
+	if err == nil || !strings.Contains(err.Error(), "chart cache dir") || !strings.Contains(err.Error(), "must not be inside repository root") {
+		t.Fatalf("Acquire() error = %v, want chart cache containment error", err)
+	}
+	if puller.pulls != 0 {
+		t.Fatalf("pull count = %d, want 0", puller.pulls)
+	}
+}
+
+func TestResolveCacheDirRejectsSymlinkIntoForbiddenRoot(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlink privileges are not guaranteed on Windows")
+	}
+	repoRoot := t.TempDir()
+	outside := t.TempDir()
+	link := filepath.Join(outside, "charts-link")
+	if err := os.Symlink(repoRoot, link); err != nil {
+		t.Skipf("create symlink: %v", err)
+	}
+	_, err := ResolveCacheDir(filepath.Join(link, "charts"), []string{repoRoot})
+	if err == nil || !strings.Contains(err.Error(), "chart cache dir") || !strings.Contains(err.Error(), "must not be inside repository root") {
+		t.Fatalf("ResolveCacheDir() error = %v, want symlink containment error", err)
 	}
 }
 

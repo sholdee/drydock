@@ -16,6 +16,11 @@ import (
 
 type DirectoryRenderer struct{}
 
+const (
+	argocdSkipFileRenderingMarker = "+argocd:skip-file-rendering"
+	drydockCacheMetadataDirName   = ".drydock-cache"
+)
+
 //nolint:gocyclo // Directory rendering keeps walk, filtering, decode, and path provenance in one pass.
 func (DirectoryRenderer) Render(ctx context.Context, source ResolvedSource, opts RenderOptions) ([]Manifest, []diagnostic.Diagnostic, error) {
 	root, err := sourceRoot(source)
@@ -23,7 +28,7 @@ func (DirectoryRenderer) Render(ctx context.Context, source ResolvedSource, opts
 		return nil, nil, err
 	}
 	var out []Manifest
-	skipFiles, err := kustomizeGeneratorSkipSet(ctx, root)
+	skipFiles, err := kustomizeGeneratorSkipSet(ctx, root, opts)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -39,10 +44,7 @@ func (DirectoryRenderer) Render(ctx context.Context, source ResolvedSource, opts
 			return nil
 		}
 		if entry.IsDir() {
-			if path != root && strings.HasPrefix(entry.Name(), ".") {
-				return filepath.SkipDir
-			}
-			if path != root && !opts.DirectoryRecurse {
+			if shouldSkipDirectoryCandidate(root, path, entry, opts) {
 				return filepath.SkipDir
 			}
 			return nil
@@ -65,12 +67,30 @@ func (DirectoryRenderer) Render(ctx context.Context, source ResolvedSource, opts
 		if err != nil {
 			return err
 		}
+		if bytes.Contains(data, []byte(argocdSkipFileRenderingMarker)) {
+			return nil
+		}
+		if isJsonnetFile(path) {
+			rendered, err := renderJsonnetFile(root, source.RepoRoot, path, manifestPath, opts)
+			if err != nil {
+				return err
+			}
+			out = append(out, rendered...)
+			return nil
+		}
 		roots, err := manifest.DecodeDocumentRoots(manifestPath, bytes.NewReader(data))
+		if err != nil {
+			if shouldIgnoreDirectoryDecodeError(data) {
+				return nil
+			}
+			return err
+		}
+		hasCandidate, err := classifyDirectoryRoots(roots)
 		if err != nil {
 			return err
 		}
-		if err := classifyDirectoryRoots(roots); err != nil {
-			return err
+		if !hasCandidate {
+			return nil
 		}
 		docs, err := manifest.DecodeDocuments(manifestPath, bytes.NewReader(data))
 		if err != nil {
@@ -101,13 +121,18 @@ func (DirectoryRenderer) Render(ctx context.Context, source ResolvedSource, opts
 	return out, nil, err
 }
 
-func classifyDirectoryRoots(docs []manifest.Document) error {
+func classifyDirectoryRoots(docs []manifest.Document) (bool, error) {
+	hasCandidate := false
 	for _, doc := range docs {
-		if _, err := classifyDirectoryDocument(Manifest{Path: doc.Path, Object: doc.Object}); err != nil {
-			return err
+		include, err := classifyDirectoryDocument(Manifest{Path: doc.Path, Object: doc.Object})
+		if err != nil {
+			return false, err
+		}
+		if include {
+			hasCandidate = true
 		}
 	}
-	return nil
+	return hasCandidate, nil
 }
 
 func classifyDirectoryDocument(manifest Manifest) (bool, error) {
@@ -128,6 +153,33 @@ func classifyDirectoryDocument(manifest Manifest) (bool, error) {
 	return true, nil
 }
 
+func shouldIgnoreDirectoryDecodeError(data []byte) bool {
+	return !directoryDataLooksKubernetesManifest(data)
+}
+
+func directoryDataLooksKubernetesManifest(data []byte) bool {
+	text := string(data)
+	if strings.Contains(text, `"apiVersion"`) || strings.Contains(text, `"kind"`) {
+		return true
+	}
+	for _, line := range strings.Split(text, "\n") {
+		if strings.TrimSpace(line) == "" {
+			continue
+		}
+		trimmedLeft := strings.TrimLeft(line, " \t")
+		if strings.HasPrefix(trimmedLeft, "#") || strings.HasPrefix(trimmedLeft, "---") || strings.HasPrefix(trimmedLeft, "...") {
+			continue
+		}
+		if len(trimmedLeft) != len(line) {
+			continue
+		}
+		if strings.HasPrefix(trimmedLeft, "apiVersion:") || strings.HasPrefix(trimmedLeft, "kind:") {
+			return true
+		}
+	}
+	return false
+}
+
 func directoryManifestIncluded(root, filePath string, opts RenderOptions) bool {
 	rel, err := filepath.Rel(root, filePath)
 	if err != nil {
@@ -143,7 +195,17 @@ func directoryManifestIncluded(root, filePath string, opts RenderOptions) bool {
 	return true
 }
 
-func kustomizeGeneratorSkipSet(ctx context.Context, root string) (map[string]bool, error) {
+func shouldSkipDirectoryCandidate(root, path string, entry os.DirEntry, opts RenderOptions) bool {
+	if path == root {
+		return false
+	}
+	if entry.Name() == drydockCacheMetadataDirName {
+		return true
+	}
+	return !opts.DirectoryRecurse
+}
+
+func kustomizeGeneratorSkipSet(ctx context.Context, root string, opts RenderOptions) (map[string]bool, error) {
 	skipFiles := make(map[string]bool)
 	err := filepath.WalkDir(root, func(path string, entry os.DirEntry, err error) error {
 		if err != nil {
@@ -156,7 +218,7 @@ func kustomizeGeneratorSkipSet(ctx context.Context, root string) (map[string]boo
 			return nil
 		}
 		if entry.IsDir() {
-			if path != root && strings.HasPrefix(entry.Name(), ".") {
+			if shouldSkipDirectoryCandidate(root, path, entry, opts) {
 				return filepath.SkipDir
 			}
 			return nil
@@ -237,7 +299,11 @@ func isKustomizationFileName(name string) bool {
 
 func isManifestFile(path string) bool {
 	ext := strings.ToLower(filepath.Ext(path))
-	return ext == ".yaml" || ext == ".yml" || ext == ".json"
+	return ext == ".yaml" || ext == ".yml" || ext == ".json" || ext == ".jsonnet"
+}
+
+func isJsonnetFile(path string) bool {
+	return strings.EqualFold(filepath.Ext(path), ".jsonnet")
 }
 
 func sourceRoot(source ResolvedSource) (string, error) {

@@ -10,6 +10,7 @@ import (
 	sourcepkg "github.com/sholdee/drydock/internal/source"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -206,6 +207,70 @@ func TestOrchestratorBuildRejectsGitCacheInsideRepoMapRoot(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "git cache dir") || !strings.Contains(err.Error(), "must not be inside repository root") {
 		t.Fatalf("Build() error = %q, want git cache location error", err.Error())
+	}
+}
+
+func TestOrchestratorBuildRejectsChartCacheInsideRepoRoot(t *testing.T) {
+	root := t.TempDir()
+	writeChartOnlyBuildApplication(t, root, "chart-only")
+	acquirer := &recordingChartAcquirer{chartDir: t.TempDir()}
+
+	_, err := (Orchestrator{ChartAcquirer: acquirer}).Build(context.Background(), BuildRequest{
+		Path: root,
+		AcquisitionOptions: AcquisitionOptions{
+			ChartCacheDir: filepath.Join(root, ".drydock", "charts"),
+		},
+	})
+	if err == nil {
+		t.Fatal("Build() error = nil, want chart cache location error")
+	}
+	if !strings.Contains(err.Error(), "chart cache dir") || !strings.Contains(err.Error(), "must not be inside repository root") {
+		t.Fatalf("Build() error = %q, want chart cache location error", err.Error())
+	}
+	if len(acquirer.requests) != 0 {
+		t.Fatalf("chart acquire calls = %d, want 0", len(acquirer.requests))
+	}
+}
+
+func TestOrchestratorBuildStatusOnlyRejectsChartCacheInsideRepoMapRoot(t *testing.T) {
+	root := t.TempDir()
+	external := t.TempDir()
+	writeChartOnlyBuildApplication(t, root, "chart-only")
+
+	_, err := Orchestrator{}.Build(context.Background(), BuildRequest{
+		Path:       root,
+		StatusOnly: true,
+		AcquisitionOptions: AcquisitionOptions{
+			ChartCacheDir: filepath.Join(external, ".drydock", "charts"),
+			RepoMaps: []sourcepkg.RepoMap{{
+				URL:  "https://github.com/example/external.git",
+				Path: external,
+			}},
+		},
+	})
+	if err == nil {
+		t.Fatal("Build() error = nil, want chart cache location error")
+	}
+	if !strings.Contains(err.Error(), "chart cache dir") || !strings.Contains(err.Error(), "must not be inside repository root") {
+		t.Fatalf("Build() error = %q, want chart cache location error", err.Error())
+	}
+}
+
+func TestOrchestratorBuildRejectsRemoteCacheInsideRepoRoot(t *testing.T) {
+	root := t.TempDir()
+	writeBuildApplication(t, root, "plain", "plain")
+
+	_, err := Orchestrator{}.Build(context.Background(), BuildRequest{
+		Path: root,
+		AcquisitionOptions: AcquisitionOptions{
+			RemoteResourceCacheDir: filepath.Join(root, ".drydock", "remotes"),
+		},
+	})
+	if err == nil {
+		t.Fatal("Build() error = nil, want remote cache location error")
+	}
+	if !strings.Contains(err.Error(), "remote resource cache dir") || !strings.Contains(err.Error(), "must not be inside repository root") {
+		t.Fatalf("Build() error = %q, want remote cache location error", err.Error())
 	}
 }
 func TestOrchestratorBuildUsesRepoMappedHelmValueRef(t *testing.T) {
@@ -628,7 +693,7 @@ spec:
 func TestOrchestratorBuildRendersChartOnlyApplication(t *testing.T) {
 	root := t.TempDir()
 	chartDir := filepath.Join(root, "cache", "demo")
-	cacheDir := filepath.Join(root, "chart-cache")
+	cacheDir := t.TempDir()
 	writeTestFile(t, filepath.Join(root, "apps", "argocd", "chart-app.yaml"), `apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
@@ -687,10 +752,11 @@ data:
 		t.Fatalf("chart request = %#v, want %#v", got, want)
 	}
 	if got, want := acquirer.options[0], (chart.Options{
-		CacheDir: cacheDir,
-		Offline:  true,
-		Refresh:  true,
-	}); got != want {
+		CacheDir:       cacheDir,
+		Offline:        true,
+		Refresh:        true,
+		ForbiddenRoots: []string{root},
+	}); !reflect.DeepEqual(got, want) {
 		t.Fatalf("chart options = %#v, want %#v", got, want)
 	}
 	if len(result.Manifests) != 1 {

@@ -296,6 +296,7 @@ type renderApplicationsRequest struct {
 	provider          localProvider
 	renderCache       *applicationRenderCache
 	settingsSignature string
+	trackingOptions   TrackingOptions
 	request           BuildRequest
 	strict            bool
 	statusOnly        bool
@@ -410,6 +411,7 @@ func renderOneApplication(ctx context.Context, application argoappv1.Application
 		provider:          provider,
 		cache:             request.renderCache,
 		settingsSignature: request.settingsSignature,
+		trackingOptions:   request.trackingOptions,
 		request:           request.request,
 	}, application)
 	if err != nil {
@@ -542,38 +544,8 @@ func loadSettingsFromDiscovery(root string, discovered discovery.Result) (config
 			continue
 		}
 		seen[key] = struct{}{}
-		path := filepath.Join(root, candidate.Path)
-		var (
-			settings  config.ArgoSettings
-			nextDiags []diagnostic.Diagnostic
-			err       error
-		)
-		switch candidate.Kind {
-		case "argocd-cm":
-			if candidate.Object != nil {
-				settings, nextDiags, err = config.LoadFromConfigMapObject(candidate.Path, candidate.Object)
-			} else {
-				settings, nextDiags, err = config.LoadFromConfigMapDocument(path, candidate.DocumentIndex)
-			}
-		case "argocd-cmp-cm":
-			if candidate.Object != nil {
-				settings, nextDiags, err = config.LoadConfigManagementPluginConfigMapObject(candidate.Path, candidate.Object)
-			} else {
-				settings, nextDiags, err = config.LoadConfigManagementPluginConfigMapDocument(path, candidate.DocumentIndex)
-			}
-		case "argocd-values":
-			if candidate.Object != nil {
-				settings, nextDiags, err = config.LoadFromHelmValuesObject(candidate.Path, candidate.Object)
-			} else {
-				settings, nextDiags, err = config.LoadFromHelmValuesDocument(path, candidate.DocumentIndex)
-			}
-		case "repository-secret":
-			if candidate.Object != nil {
-				settings, nextDiags, err = config.LoadRepositorySecretObject(candidate.Path, candidate.Object)
-			} else {
-				settings, nextDiags, err = config.LoadRepositorySecretDocument(path, candidate.DocumentIndex)
-			}
-		default:
+		settings, nextDiags, handled, err := loadSettingsCandidate(root, candidate)
+		if !handled {
 			continue
 		}
 		if err != nil {
@@ -587,10 +559,68 @@ func loadSettingsFromDiscovery(root string, discovered discovery.Result) (config
 	return merged, diags, nil
 }
 
+func loadSettingsCandidate(root string, candidate discovery.SettingsCandidate) (config.ArgoSettings, []diagnostic.Diagnostic, bool, error) {
+	path := filepath.Join(root, candidate.Path)
+	switch candidate.Kind {
+	case "argocd-cm":
+		if candidate.Object != nil {
+			settings, diags, err := config.LoadFromConfigMapObject(candidate.Path, candidate.Object)
+			return settings, diags, true, err
+		}
+		settings, diags, err := config.LoadFromConfigMapDocument(path, candidate.DocumentIndex)
+		return settings, diags, true, err
+	case "argocd-cmd-params-cm":
+		if candidate.Object != nil {
+			settings, diags, err := config.LoadCommandParametersConfigMapObject(candidate.Path, candidate.Object)
+			return settings, diags, true, err
+		}
+		settings, diags, err := config.LoadCommandParametersConfigMapDocument(path, candidate.DocumentIndex)
+		return settings, diags, true, err
+	case "argocd-cmp-cm":
+		if candidate.Object != nil {
+			settings, diags, err := config.LoadConfigManagementPluginConfigMapObject(candidate.Path, candidate.Object)
+			return settings, diags, true, err
+		}
+		settings, diags, err := config.LoadConfigManagementPluginConfigMapDocument(path, candidate.DocumentIndex)
+		return settings, diags, true, err
+	case "argocd-values":
+		if candidate.Object != nil {
+			settings, diags, err := config.LoadFromHelmValuesObject(candidate.Path, candidate.Object)
+			return settings, diags, true, err
+		}
+		settings, diags, err := config.LoadFromHelmValuesDocument(path, candidate.DocumentIndex)
+		return settings, diags, true, err
+	case "repository-secret":
+		if candidate.Object != nil {
+			settings, diags, err := config.LoadRepositorySecretObject(candidate.Path, candidate.Object)
+			return settings, diags, true, err
+		}
+		settings, diags, err := config.LoadRepositorySecretDocument(path, candidate.DocumentIndex)
+		return settings, diags, true, err
+	case "cluster-secret":
+		if candidate.Object != nil {
+			settings, diags, err := config.LoadClusterSecretObject(candidate.Path, candidate.Object)
+			return settings, diags, true, err
+		}
+		settings, diags, err := config.LoadClusterSecretDocument(path, candidate.DocumentIndex)
+		return settings, diags, true, err
+	default:
+		return config.ArgoSettings{}, nil, false, nil
+	}
+}
+
 func settingsBuildOptions(settings config.ArgoSettings) []string {
 	out := make([]string, 0, len(settings.KustomizeBuildOptions))
 	for _, option := range settings.KustomizeBuildOptions {
 		out = append(out, option.Value)
+	}
+	return out
+}
+
+func settingsHelmValueFileSchemes(settings config.ArgoSettings) []string {
+	out := make([]string, 0, len(settings.HelmValuesFileSchemes))
+	for _, scheme := range settings.HelmValuesFileSchemes {
+		out = append(out, scheme.Value)
 	}
 	return out
 }

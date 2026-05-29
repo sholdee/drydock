@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"sort"
 	"strings"
 
 	"github.com/sholdee/drydock/internal/app"
@@ -22,6 +23,15 @@ type diagReport struct {
 
 type diagSettingsSummary struct {
 	ResourceCustomizations map[string]diagResourceCustomizationSummary `json:"resourceCustomizations,omitempty" yaml:"resourceCustomizations,omitempty"`
+	CommandParameters      []diagCommandParameterSummary               `json:"commandParameters,omitempty" yaml:"commandParameters,omitempty"`
+}
+
+type diagCommandParameterSummary struct {
+	Key            string                                `json:"key" yaml:"key"`
+	Value          string                                `json:"value,omitempty" yaml:"value,omitempty"`
+	ValueRedacted  bool                                  `json:"valueRedacted,omitempty" yaml:"valueRedacted,omitempty"`
+	Classification config.CommandParameterClassification `json:"classification,omitempty" yaml:"classification,omitempty"`
+	Provenance     diagnostic.Provenance                 `json:"provenance,omitempty" yaml:"provenance,omitempty"`
 }
 
 type diagResourceCustomizationSummary struct {
@@ -101,7 +111,33 @@ func settingsSummary(settings config.ArgoSettings) *diagSettingsSummary {
 	for key, customization := range settings.ResourceCustomizations {
 		summary.ResourceCustomizations[key] = resourceCustomizationSummary(customization)
 	}
+	if len(settings.CommandParameters) > 0 {
+		summary.CommandParameters = commandParameterSummary(settings.CommandParameters)
+	}
 	return summary
+}
+
+func commandParameterSummary(parameters []config.CommandParameterSetting) []diagCommandParameterSummary {
+	out := make([]diagCommandParameterSummary, 0, len(parameters))
+	for _, parameter := range parameters {
+		out = append(out, diagCommandParameterSummary{
+			Key:            parameter.Key,
+			Value:          parameter.Value,
+			ValueRedacted:  parameter.ValueRedacted,
+			Classification: parameter.Classification,
+			Provenance:     parameter.Provenance,
+		})
+	}
+	sort.SliceStable(out, func(i, j int) bool {
+		if out[i].Key != out[j].Key {
+			return out[i].Key < out[j].Key
+		}
+		if out[i].Provenance.Path != out[j].Provenance.Path {
+			return out[i].Provenance.Path < out[j].Provenance.Path
+		}
+		return out[i].Provenance.Pointer < out[j].Provenance.Pointer
+	})
+	return out
 }
 
 func resourceCustomizationSummary(customization config.ResourceCustomization) diagResourceCustomizationSummary {

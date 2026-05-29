@@ -36,6 +36,7 @@ func TestVersionCommand(t *testing.T) {
 		GitOpsEngineModule: "github.com/argoproj/argo-cd/gitops-engine@test-version",
 		HelmModule:         "helm.sh/helm/v4@test-version",
 		KustomizeModule:    "sigs.k8s.io/kustomize/api@test-version",
+		JsonnetModule:      "github.com/google/go-jsonnet@test-version",
 		KubernetesModule:   "k8s.io/apimachinery@test-version",
 	})
 	cmd.SetArgs([]string{"version"})
@@ -55,6 +56,7 @@ func TestVersionCommand(t *testing.T) {
 		"gitopsEngineModule: github.com/argoproj/argo-cd/gitops-engine@test-version",
 		"helmModule: helm.sh/helm/v4@test-version",
 		"kustomizeModule: sigs.k8s.io/kustomize/api@test-version",
+		"jsonnetModule: github.com/google/go-jsonnet@test-version",
 		"kubernetesModule: k8s.io/apimachinery@test-version",
 	} {
 		if !strings.Contains(got, want) {
@@ -78,7 +80,7 @@ func TestVersionCommandOmitsEmptyModuleFields(t *testing.T) {
 	}
 
 	got := out.String()
-	for _, unwanted := range []string{"argocdModule:", "gitopsEngineModule:", "helmModule:", "kustomizeModule:", "kubernetesModule:"} {
+	for _, unwanted := range []string{"argocdModule:", "gitopsEngineModule:", "helmModule:", "kustomizeModule:", "jsonnetModule:", "kubernetesModule:"} {
 		if strings.Contains(got, unwanted) {
 			t.Fatalf("version output included empty module field %q:\n%s", unwanted, got)
 		}

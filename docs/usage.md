@@ -116,11 +116,11 @@ to bounded host CPU parallelism; single-Application commands default to `1`.
 Parallel rendering preserves selected Application order for manifests,
 statuses, diagnostics, cache events, and structured output.
 
-Rendering supports directory sources, Kustomize sources, local Helm charts,
-Kustomize `helmCharts`, remote Kustomize HTTP(S) files and Git refs, and Argo CD
-chart-only remote Helm sources. Path-based Git sources use the local `--path`
-tree when the source path exists there. Use `--repo-map URL=PATH` to force a
-source repository URL to a local checkout.
+Rendering supports directory sources, directory Jsonnet, Kustomize sources,
+local Helm charts, Kustomize `helmCharts`, remote Kustomize HTTP(S) files and
+Git refs, and Argo CD chart-only remote Helm sources. Path-based Git sources
+use the local `--path` tree when the source path exists there. Use
+`--repo-map URL=PATH` to force a source repository URL to a local checkout.
 
 Repositories tagged with `argocd` or `gitops` are not always Argo CD
 Application fleet repositories. `drydock test apps` reports zero applications
@@ -203,7 +203,9 @@ plugin name. Exec policy requires trusted provenance and `--enable-plugins`;
 native policy engines such as `avp-compat` and `native-kustomize` do not
 execute plugin commands. Embedders can pass a renderer directly or use
 `drydock.NewPluginRegistry(map[string]drydock.PluginRenderer{...})` to dispatch
-in-process renderers by `plugin.name`.
+in-process renderers by `plugin.name`. The public plugin request includes the
+resolved source, `$ref` roots and source metadata, kube version, and API
+versions.
 
 See [`plugin-policy.md`](plugin-policy.md) for `--plugin-policy-path`,
 `--plugin-policy-ref`, `--plugin-policy-repo`, `--disable-plugin-policy`, the
@@ -429,7 +431,14 @@ and the Go API report source repository and destination validation diagnostics
 from those manifests. RBAC roles and policies are parsed and reported as
 metadata only; Argo CD authorization is not simulated. Repository credential
 matching diagnostics use discovered repository Secret metadata only and never
-read secret credential fields.
+read secret credential fields. Cluster Secret diagnostics likewise use only
+`name`, `server`, `namespaces`, `clusterResources`, and `project` metadata;
+credential/config fields are not decoded, retained, or printed.
+
+`argocd-cmd-params-cm` settings are parsed as runtime-boundary metadata when
+they imply live repo-server, controller, or ApplicationSet controller behavior.
+They may produce diagnostics and settings summaries, but they do not mutate
+drydock render behavior.
 
 ## Local Verification And Benchmarks
 
@@ -463,7 +472,8 @@ These source paths are outside the current default runtime contract:
   credential injection.
 - Live cluster and Argo CD API sources.
 - Live destination cluster existence, sync windows, source integrity
-  verification, project-scoped cluster Secrets, and full RBAC simulation.
+  verification, project-scoped cluster Secret enforcement beyond discovered
+  metadata, and full RBAC simulation.
 
 See [`plugin-policy.md`](plugin-policy.md) for the supported trusted CMP
 compatibility path.

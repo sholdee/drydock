@@ -1,10 +1,7 @@
 package appset
 
 import (
-	"bytes"
-	"encoding/json"
 	"fmt"
-	"io"
 	"os"
 	"path"
 	"path/filepath"
@@ -36,8 +33,6 @@ func evaluateGitGenerator(ctx generatorContext, generator argoappv1.ApplicationS
 }
 
 func gitGeneratorParamSets(repoRoot, manifestPath string, git *argoappv1.GitGenerator, useGoTemplate bool, goTemplateOptions []string) ([]generatorParamSet, []diagnostic.Diagnostic, bool, error) {
-	var out []generatorParamSet
-	var diags []diagnostic.Diagnostic
 	if len(git.Directories) == 0 && len(git.Files) == 0 {
 		return nil, unsupportedGeneratorDiagnostic(manifestPath), false, nil
 	}
@@ -46,17 +41,14 @@ func gitGeneratorParamSets(repoRoot, manifestPath string, git *argoappv1.GitGene
 		if err != nil {
 			return nil, nil, true, err
 		}
-		out = append(out, directorySets...)
+		return directorySets, nil, true, nil
 	}
-	if len(git.Files) > 0 {
-		fileSets, fileDiags, err := gitFileParamSets(repoRoot, manifestPath, git, useGoTemplate, goTemplateOptions)
-		if err != nil {
-			return nil, fileDiags, true, err
-		}
-		diags = append(diags, fileDiags...)
-		out = append(out, fileSets...)
+
+	fileSets, fileDiags, err := gitFileParamSets(repoRoot, manifestPath, git, useGoTemplate, goTemplateOptions)
+	if err != nil {
+		return nil, fileDiags, true, err
 	}
-	return out, diags, true, nil
+	return fileSets, fileDiags, true, nil
 }
 
 func gitDirectoryParamSets(repoRoot, manifestPath string, git *argoappv1.GitGenerator, useGoTemplate bool, goTemplateOptions []string) ([]generatorParamSet, error) {
@@ -148,20 +140,22 @@ func gitFileParamSets(repoRoot, manifestPath string, git *argoappv1.GitGenerator
 
 	out := make([]generatorParamSet, 0, len(matches))
 	for _, match := range matches {
-		params, decodeDiags, err := gitFileParams(repoRoot, match, git.PathParamPrefix, git.Values, useGoTemplate, goTemplateOptions, manifestPath)
+		paramObjects, decodeDiags, err := gitFileParams(repoRoot, match, git.PathParamPrefix, git.Values, useGoTemplate, goTemplateOptions, manifestPath)
 		diags = append(diags, decodeDiags...)
 		if err != nil {
 			return nil, diags, err
 		}
-		if params == nil {
+		if len(paramObjects) == 0 {
 			continue
 		}
-		out = append(out, generatorParamSet{
-			Params:      params,
-			SourcePath:  match,
-			SourcePaths: []string{match},
-			Generator:   "git-files",
-		})
+		for _, params := range paramObjects {
+			out = append(out, generatorParamSet{
+				Params:      params,
+				SourcePath:  match,
+				SourcePaths: []string{match},
+				Generator:   "git-files",
+			})
+		}
 	}
 	return out, diags, nil
 }
@@ -275,8 +269,8 @@ func matchesAny(patterns []string, rel string) (bool, error) {
 	return false, nil
 }
 
-func gitFileParams(repoRoot, rel, prefix string, values map[string]string, useGoTemplate bool, goTemplateOptions []string, manifestPath string) (map[string]any, []diagnostic.Diagnostic, error) {
-	fileValues, diag, err := decodeGitFileParams(filepath.Join(repoRoot, filepath.FromSlash(rel)), rel, manifestPath)
+func gitFileParams(repoRoot, rel, prefix string, values map[string]string, useGoTemplate bool, goTemplateOptions []string, manifestPath string) ([]map[string]any, []diagnostic.Diagnostic, error) {
+	fileObjects, diag, err := decodeGitFileParams(filepath.Join(repoRoot, filepath.FromSlash(rel)), rel, manifestPath)
 	if err != nil || diag != nil {
 		if diag == nil {
 			return nil, nil, err
@@ -284,51 +278,52 @@ func gitFileParams(repoRoot, rel, prefix string, values map[string]string, useGo
 		return nil, []diagnostic.Diagnostic{*diag}, nil
 	}
 
-	params := map[string]any{}
-	if useGoTemplate {
-		for key, value := range fileValues {
-			params[key] = value
+	paramObjects := make([]map[string]any, 0, len(fileObjects))
+	for _, fileValues := range fileObjects {
+		params := map[string]any{}
+		if useGoTemplate {
+			for key, value := range fileValues {
+				params[key] = value
+			}
+			addGoTemplateFilePathParams(params, rel, prefix)
+		} else {
+			flattenParams("", fileValues, params)
+			addFlatFilePathParams(params, rel, prefix)
 		}
-		addGoTemplateFilePathParams(params, rel, prefix)
-	} else {
-		flattenParams("", fileValues, params)
-		addFlatFilePathParams(params, rel, prefix)
-	}
 
-	if err := appendTemplatedValues(params, values, useGoTemplate, goTemplateOptions); err != nil {
-		return nil, nil, err
+		if err := appendTemplatedValues(params, values, useGoTemplate, goTemplateOptions); err != nil {
+			return nil, nil, err
+		}
+		paramObjects = append(paramObjects, params)
 	}
-	return params, nil, nil
+	return paramObjects, nil, nil
 }
 
-func decodeGitFileParams(absPath, rel, manifestPath string) (map[string]any, *diagnostic.Diagnostic, error) {
+func decodeGitFileParams(absPath, rel, manifestPath string) ([]map[string]any, *diagnostic.Diagnostic, error) {
 	data, err := os.ReadFile(absPath)
 	if err != nil {
 		return nil, nil, err
 	}
 
-	var decoded any
-	if strings.EqualFold(path.Ext(rel), ".json") {
-		decoder := json.NewDecoder(bytes.NewReader(data))
-		decoder.UseNumber()
-		if err := decoder.Decode(&decoded); err != nil {
-			diag := appsetDiagnostic(manifestPath, fmt.Sprintf("git files match %q is not valid JSON: %v", rel, err))
-			return nil, &diag, nil
+	mapping := map[string]any{}
+	if err := yaml.Unmarshal(data, &mapping); err == nil {
+		if mapping == nil {
+			mapping = map[string]any{}
 		}
-		if err := decoder.Decode(&struct{}{}); err != io.EOF {
-			diag := appsetDiagnostic(manifestPath, fmt.Sprintf("git files match %q contains multiple JSON documents", rel))
-			return nil, &diag, nil
-		}
-	} else if err := yaml.Unmarshal(data, &decoded); err != nil {
+		return []map[string]any{mapping}, nil, nil
+	}
+
+	var objects []map[string]any
+	if err := yaml.Unmarshal(data, &objects); err != nil {
 		diag := appsetDiagnostic(manifestPath, fmt.Sprintf("git files match %q is not valid YAML: %v", rel, err))
 		return nil, &diag, nil
 	}
-	mapping, ok := decoded.(map[string]any)
-	if !ok || len(mapping) == 0 {
-		diag := appsetDiagnostic(manifestPath, fmt.Sprintf("git files match %q must decode to a non-empty mapping document", rel))
-		return nil, &diag, nil
+	for i := range objects {
+		if objects[i] == nil {
+			objects[i] = map[string]any{}
+		}
 	}
-	return mapping, nil, nil
+	return objects, nil, nil
 }
 
 func pathParams(rel, prefix string, values map[string]string, useGoTemplate bool, goTemplateOptions []string) (map[string]any, error) {
@@ -372,9 +367,6 @@ func pathParams(rel, prefix string, values map[string]string, useGoTemplate bool
 
 func addGoTemplateFilePathParams(params map[string]any, rel, prefix string) {
 	dir := path.Dir(rel)
-	if dir == "." {
-		dir = ""
-	}
 	segments := splitPathSegments(dir)
 	filename := path.Base(rel)
 	pathFields := map[string]any{
@@ -394,9 +386,6 @@ func addGoTemplateFilePathParams(params map[string]any, rel, prefix string) {
 
 func addFlatFilePathParams(params map[string]any, rel, prefix string) {
 	dir := path.Dir(rel)
-	if dir == "." {
-		dir = ""
-	}
 	pathParamName := "path"
 	if prefix != "" {
 		pathParamName = prefix + "." + pathParamName

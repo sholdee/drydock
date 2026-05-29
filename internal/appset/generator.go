@@ -281,12 +281,16 @@ func appendTemplatedValues(params map[string]any, values map[string]string, useG
 		return nil
 	}
 
+	renderedParams := map[string]any{}
 	for key, value := range values {
 		rendered, err := renderer.Replace(value, params, useGoTemplate, goTemplateOptions)
 		if err != nil {
 			return fmt.Errorf("render value %q: %w", key, err)
 		}
-		params["values."+key] = rendered
+		renderedParams["values."+key] = rendered
+	}
+	for key, value := range renderedParams {
+		params[key] = value
 	}
 	return nil
 }

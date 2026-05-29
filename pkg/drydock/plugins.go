@@ -73,6 +73,10 @@ type PluginRequest struct {
 	DestinationNamespace string
 	Source               PluginSource
 	Plugin               PluginConfig
+	RefRoots             map[string]string
+	RefSources           map[string]PluginSource
+	KubeVersion          string
+	APIVersions          []string
 }
 
 // PluginSource describes the resolved source for a plugin render.
@@ -143,8 +147,25 @@ func pluginRequestFromInternal(request renderpkg.PluginRequest) PluginRequest {
 			RepoURL:        request.Source.RepoURL,
 			TargetRevision: request.Source.TargetRevision,
 		},
-		Plugin: pluginConfigFromInternal(request.Plugin),
+		Plugin:      pluginConfigFromInternal(request.Plugin),
+		RefRoots:    cloneStringMapPresent(request.RefRoots),
+		RefSources:  pluginSourcesFromInternal(request.RefSources),
+		KubeVersion: request.KubeVersion,
+		APIVersions: append([]string(nil), request.APIVersions...),
 	}
+}
+
+func pluginSourcesFromInternal(sources map[string]renderpkg.ResolvedSource) map[string]PluginSource {
+	out := make(map[string]PluginSource, len(sources))
+	for key, source := range sources {
+		out[key] = PluginSource{
+			RepoRoot:       source.RepoRoot,
+			Path:           source.Path,
+			RepoURL:        source.RepoURL,
+			TargetRevision: source.TargetRevision,
+		}
+	}
+	return out
 }
 
 func pluginConfigFromInternal(config renderpkg.PluginConfig) PluginConfig {
