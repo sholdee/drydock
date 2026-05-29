@@ -165,6 +165,25 @@ jobs:
       - name: Audit GitHub Actions security
         run: mise run zizmor
 
+  shellcheck:
+    needs: detect
+    if: github.event_name != 'pull_request' || needs.detect.outputs.workflow == 'true' || needs.detect.outputs.lint == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Setup mise
+        uses: jdx/mise-action@1648a7812b9aeae629881980618f079932869151 # v4.0.1
+        with:
+          experimental: true
+          install_args: --locked
+
+      - name: Lint shell scripts
+        run: mise run shellcheck
+
   renovate:
     needs: detect
     if: github.event_name != 'pull_request' || needs.detect.outputs.renovate == 'true' || needs.detect.outputs.workflow == 'true'
@@ -254,6 +273,7 @@ jobs:
       - go-lint
       - markdownlint
       - workflow-lint
+      - shellcheck
       - renovate
       - whitespace
       - image
@@ -267,11 +287,12 @@ jobs:
           GO_LINT: ${{ needs.go-lint.result }}
           MARKDOWNLINT: ${{ needs.markdownlint.result }}
           WORKFLOW_LINT: ${{ needs.workflow-lint.result }}
+          SHELLCHECK: ${{ needs.shellcheck.result }}
           RENOVATE: ${{ needs.renovate.result }}
           WHITESPACE: ${{ needs.whitespace.result }}
           IMAGE: ${{ needs.image.result }}
         run: |
-          echo "detect=${DETECT} go-test=${GO_TEST} go-lint=${GO_LINT} markdownlint=${MARKDOWNLINT} workflow-lint=${WORKFLOW_LINT} renovate=${RENOVATE} whitespace=${WHITESPACE} image=${IMAGE}"
+          echo "detect=${DETECT} go-test=${GO_TEST} go-lint=${GO_LINT} markdownlint=${MARKDOWNLINT} workflow-lint=${WORKFLOW_LINT} shellcheck=${SHELLCHECK} renovate=${RENOVATE} whitespace=${WHITESPACE} image=${IMAGE}"
 
           for result in \
             "${DETECT}" \
@@ -279,6 +300,7 @@ jobs:
             "${GO_LINT}" \
             "${MARKDOWNLINT}" \
             "${WORKFLOW_LINT}" \
+            "${SHELLCHECK}" \
             "${RENOVATE}" \
             "${WHITESPACE}" \
             "${IMAGE}"; do

@@ -30,6 +30,7 @@ positive_int() {
 }
 
 append_bool_flag() {
+  # shellcheck disable=SC2178
   local -n target="$1"
   local value="$2"
   local flag="$3"
@@ -39,6 +40,7 @@ append_bool_flag() {
 }
 
 append_value_flag() {
+  # shellcheck disable=SC2178
   local -n target="$1"
   local value="$2"
   local flag="$3"
@@ -48,6 +50,7 @@ append_value_flag() {
 }
 
 append_lines() {
+  # shellcheck disable=SC2178
   local -n target="$1"
   local value="$2"
   local flag="$3"
@@ -59,6 +62,7 @@ append_lines() {
 }
 
 append_extra_lines() {
+  # shellcheck disable=SC2178
   local -n target="$1"
   local value="$2"
   local line
@@ -344,7 +348,7 @@ if [[ "${images_comment}" == "true" ]]; then
     if [[ "${has_images}" == "true" ]]; then
       while IFS= read -r image; do
         [[ -n "${image}" ]] || continue
-        printf -- "- `%s`\n" "${image}"
+        printf -- "- \`%s\`\n" "${image}"
       done < "${images_path}"
     else
       echo "No added rendered images detected."
