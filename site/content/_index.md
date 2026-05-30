@@ -12,13 +12,13 @@ running Argo CD instance or Kubernetes cluster.
 
 ## Start Here
 
-- [Getting started](getting-started/) covers the first local commands and the
+- [Getting started](/getting-started/) covers the first local commands and the
   runtime-offline model.
-- [GitHub Actions](workflows/github-actions/) shows the current setup and pull
+- [GitHub Actions](/workflows/github-actions/) shows the current setup and pull
   request actions for CI.
-- [Local diffs](workflows/local-diffs/) covers local tree and Git ref
+- [Local diffs](/workflows/local-diffs/) covers local tree and Git ref
   comparisons.
-- [Troubleshooting](troubleshooting/) maps common operator symptoms to the
+- [Troubleshooting](/troubleshooting/) maps common operator symptoms to the
   first commands to run.
 
 ## Core Workflows
