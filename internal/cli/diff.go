@@ -284,41 +284,47 @@ func renderImageDiffResult(cmd *cobra.Command, result app.ImageDiffResult, disab
 			return err
 		}
 	}
+	if err := writeImageDiffOutput(cmd.OutOrStdout(), result, output, diffColor, markdownMaxBytes); err != nil {
+		return err
+	}
+	code := exitCode(nil, disableDiffExitCode, len(result.Added) > 0 || len(result.Removed) > 0)
+	if code != 0 {
+		return ExitError{Code: code}
+	}
+	return nil
+}
+
+func writeImageDiffOutput(w io.Writer, result app.ImageDiffResult, output string, diffColor bool, markdownMaxBytes int) error {
 	switch output {
 	case diffOutputUnified:
-		for _, image := range result.Removed {
-			if _, err := fmt.Fprint(cmd.OutOrStdout(), colorizeDiffLine(fmt.Sprintf("- %s\n", image), diffColor)); err != nil {
-				return err
-			}
-		}
-		for _, image := range result.Added {
-			if _, err := fmt.Fprint(cmd.OutOrStdout(), colorizeDiffLine(fmt.Sprintf("+ %s\n", image), diffColor)); err != nil {
-				return err
-			}
-		}
+		return writeUnifiedImageDiff(w, result, diffColor)
 	case string(cliformat.OutputJSON), string(cliformat.OutputYAML):
 		payload := imageDiffOutput{
 			Added:     cloneStringSlice(result.Added),
 			Removed:   cloneStringSlice(result.Removed),
 			Unchanged: cloneStringSlice(result.Unchanged),
 		}
-		if err := writeStructuredOutput(cmd.OutOrStdout(), output, payload); err != nil {
-			return err
-		}
+		return writeStructuredOutput(w, output, payload)
 	case string(cliformat.OutputName):
-		if err := cliformat.Name(cmd.OutOrStdout(), result.Added); err != nil {
-			return err
-		}
+		return cliformat.Name(w, result.Added)
 	case diffOutputMarkdown:
-		if _, err := report.WriteImageDiffMarkdown(cmd.OutOrStdout(), result, report.MarkdownOptions{MaxBytes: markdownMaxBytes}); err != nil {
-			return err
-		}
+		_, err := report.WriteImageDiffMarkdown(w, result, report.MarkdownOptions{MaxBytes: markdownMaxBytes})
+		return err
 	default:
 		return fmt.Errorf("unsupported output %q for diff images", output)
 	}
-	code := exitCode(nil, disableDiffExitCode, len(result.Added) > 0 || len(result.Removed) > 0)
-	if code != 0 {
-		return ExitError{Code: code}
+}
+
+func writeUnifiedImageDiff(w io.Writer, result app.ImageDiffResult, color bool) error {
+	for _, image := range result.Removed {
+		if _, err := fmt.Fprint(w, colorizeDiffLine(fmt.Sprintf("- %s\n", image), color)); err != nil {
+			return err
+		}
+	}
+	for _, image := range result.Added {
+		if _, err := fmt.Fprint(w, colorizeDiffLine(fmt.Sprintf("+ %s\n", image), color)); err != nil {
+			return err
+		}
 	}
 	return nil
 }

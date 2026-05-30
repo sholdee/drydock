@@ -167,6 +167,39 @@ validate_diff_comment_size() {
   fi
 }
 
+write_legacy_images_comment() {
+  local comment_file="$1"
+  {
+    echo "## drydock image diff"
+    echo
+    if [[ "${has_images}" == "true" ]]; then
+      echo "**Summary:** added images detected."
+      echo
+      echo "| Change | Image |"
+      echo "| --- | --- |"
+      while IFS= read -r image; do
+        [[ -n "${image}" ]] || continue
+        printf -- "| added | \`%s\` |\n" "${image}"
+      done < "${images_path}"
+    else
+      echo "**Summary:** 0 added, 0 removed."
+      echo
+      echo "No rendered image differences detected."
+    fi
+  } > "${comment_file}"
+}
+
+write_empty_images_comment() {
+  local comment_file="$1"
+  {
+    echo "## drydock image diff"
+    echo
+    echo "**Summary:** 0 added, 0 removed."
+    echo
+    echo "No rendered image differences detected."
+  } > "${comment_file}"
+}
+
 bool "${DRYDOCK_INPUT_RUN_TEST}" run-test
 bool "${DRYDOCK_INPUT_RUN_DIFF}" run-diff
 bool "${DRYDOCK_INPUT_RUN_IMAGE_DIFF}" run-image-diff
@@ -217,6 +250,7 @@ images_path="${work_dir}/added-images.txt"
 images_json_path="${work_dir}/images.json"
 images_count_path="${work_dir}/images.count"
 images_stderr="${work_dir}/images.err"
+images_comment_stderr="${work_dir}/images-comment.err"
 diff_comment_path="${work_dir}/diff-comment.md"
 images_comment_path="${work_dir}/images-comment.md"
 
@@ -305,16 +339,18 @@ if [[ "${DRYDOCK_INPUT_RUN_IMAGE_DIFF}" == "true" ]]; then
     echo "A base ref is required when run-image-diff is true." >&2
     exit 1
   fi
-  image_args=("${drydock_bin}" diff images --repo "${repo}" --ref "${head_ref}" --ref-orig "${base_compare_ref}" -o name "${common_args[@]}")
+  image_args=("${drydock_bin}" diff images --repo "${repo}" --ref "${head_ref}" --ref-orig "${base_compare_ref}" "${common_args[@]}")
   append_extra_lines image_args "${DRYDOCK_INPUT_EXTRA_IMAGE_DIFF_ARGS}"
+  image_args+=(-o name)
   if capture_command_quiet "${images_path}" "${images_stderr}" "${image_args[@]}"; then
     image_status=0
   else
     image_status=$?
   fi
   if [[ "${image_status}" -eq 2 ]] && grep -q "name output is not supported for diff images" "${images_stderr}"; then
-    image_args=("${drydock_bin}" diff images --repo "${repo}" --ref "${head_ref}" --ref-orig "${base_compare_ref}" -o json --exit-code=false "${common_args[@]}")
+    image_args=("${drydock_bin}" diff images --repo "${repo}" --ref "${head_ref}" --ref-orig "${base_compare_ref}" "${common_args[@]}")
     append_extra_lines image_args "${DRYDOCK_INPUT_EXTRA_IMAGE_DIFF_ARGS}"
+    image_args+=(-o json --exit-code=false)
     if capture_command_quiet "${images_json_path}" "${images_stderr}" "${image_args[@]}"; then
       image_status=0
     else
@@ -364,7 +400,7 @@ if [[ "${comment_mode}" == "diff" || "${comment_mode}" == "both" ]]; then
   fi
 fi
 if [[ "${comment_mode}" == "images" || "${comment_mode}" == "both" ]]; then
-  if [[ "${has_images}" == "true" || "${DRYDOCK_INPUT_COMMENT_EMPTY}" == "true" ]]; then
+  if [[ "${has_image_diff}" == "true" || "${DRYDOCK_INPUT_COMMENT_EMPTY}" == "true" ]]; then
     images_comment="true"
   fi
 fi
@@ -386,22 +422,33 @@ if [[ "${diff_comment}" == "true" ]]; then
 fi
 
 if [[ "${images_comment}" == "true" ]]; then
-  {
-    echo "### drydock added images"
-    echo
-    if [[ "${has_images}" == "true" ]]; then
-      while IFS= read -r image; do
-        [[ -n "${image}" ]] || continue
-        printf -- "- \`%s\`\n" "${image}"
-      done < "${images_path}"
-      if [[ "${DRYDOCK_INPUT_UPLOAD_ARTIFACTS}" == "true" && "${diff_comment}" != "true" && -n "${run_url}" ]]; then
-        echo
-        echo "- Full added image output: [${DRYDOCK_IMAGE_ARTIFACT_NAME} artifact](${run_url})."
+  if [[ "${DRYDOCK_INPUT_RUN_IMAGE_DIFF}" == "true" ]]; then
+    image_comment_args=("${drydock_bin}" diff images --repo "${repo}" --ref "${head_ref}" --ref-orig "${base_compare_ref}" "${common_args[@]}")
+    append_extra_lines image_comment_args "${DRYDOCK_INPUT_EXTRA_IMAGE_DIFF_ARGS}"
+    image_comment_args+=(
+      -o markdown
+      --markdown-max-bytes "$(diff_comment_budget "${DRYDOCK_INPUT_DIFF_MAX_BYTES}")"
+      --exit-code=false
+    )
+    if ! capture_command_quiet "${images_comment_path}" "${images_comment_stderr}" "${image_comment_args[@]}"; then
+      if grep -Eq 'unsupported output "markdown" for diff images|markdown output is not supported for diff images' "${images_comment_stderr}"; then
+        write_legacy_images_comment "${images_comment_path}"
+      else
+        if [[ -s "${images_comment_stderr}" ]]; then
+          cat "${images_comment_stderr}" >&2
+        fi
+        failed="true"
       fi
-    else
-      echo "No added rendered images detected."
     fi
-  } > "${images_comment_path}"
+  else
+    write_empty_images_comment "${images_comment_path}"
+  fi
+  if [[ "${has_images}" == "true" && "${DRYDOCK_INPUT_UPLOAD_ARTIFACTS}" == "true" && "${diff_comment}" != "true" && -n "${run_url}" ]]; then
+    {
+      echo
+      echo "- Full added image output: [${DRYDOCK_IMAGE_ARTIFACT_NAME} artifact](${run_url})."
+    } >> "${images_comment_path}"
+  fi
 fi
 
 if [[ -n "${GITHUB_STEP_SUMMARY:-}" ]]; then

@@ -191,13 +191,15 @@ replaces `--path`, and `--repo` defaults to `--path`. Do not add shellouts,
 `git worktree add`, checkout mutation, or top-level remote `--repo` URL
 support without an approved design update.
 
-Manifest diff output supports unified diff, JSON, and YAML. Image diff output
-also supports unified diff, JSON, and YAML for `added`, `removed`, and
-`unchanged` image lists. `diff images -o name` prints current-only added image
-references, one per line. Removed-only image changes print no names but still
-count as a diff for exit-code semantics unless `--exit-code=false`.
-Diagnostics stay on stderr for structured diff output. `-o name` remains
-unsupported for `diff apps` and `diff app`.
+Manifest diff output supports unified diff, markdown, JSON, and YAML. Image
+diff output supports unified diff, markdown, JSON, and YAML for `added`,
+`removed`, and `unchanged` image lists. Image markdown output is comment-facing
+and omits unchanged images by default. `diff images -o name` prints current-only
+added image references, one per line. Removed-only image changes print no names
+but still count as a diff for exit-code semantics unless `--exit-code=false`.
+Diagnostics stay on stderr for structured/name/unified diff output. Markdown
+diff output embeds successful diagnostics in the markdown document. `-o name`
+remains unsupported for `diff apps` and `diff app`.
 
 Application-local and global ignore rules support `jsonPointers`,
 `jqPathExpressions`, and `managedFieldsManagers`. Apply the union from both
