@@ -6,7 +6,7 @@ disableKinds:
   - term
 
 params:
-  description: "Offline desired-state analysis for Argo CD GitOps repositories."
+  description: "Runtime-offline desired-state analysis for Argo CD GitOps repositories."
 
 menus:
   docs:

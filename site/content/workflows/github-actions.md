@@ -74,7 +74,7 @@ The manifest diff comment is the main PR review surface. It summarizes changed
 Applications and resources, then expands each affected Application into a
 reviewable rendered diff:
 
-````text
+````markdown
 ## drydock desired state diff
 
 **Summary:** 1 app, 2 resources, +4/-2.
