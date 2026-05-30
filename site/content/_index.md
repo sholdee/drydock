@@ -2,18 +2,20 @@
 title: drydock
 ---
 
-Offline desired-state analysis for Argo CD GitOps repositories.
+Validate Argo CD pull requests before they sync.
 
-drydock discovers Argo CD Applications, renders desired manifests, compares
-Git refs, inspects image changes, and reports diagnostics without requiring a
-running Argo CD instance or Kubernetes cluster.
+drydock renders desired manifests before Argo CD sees them, catches render
+failures early, reviews manifest and image diffs, and runs in CI without
+Kubernetes credentials.
+
+**[Get Started](/getting-started/)** | **[Set Up PR Checks](/workflows/github-actions/)**
 
 ## Start Here
 
-- [Getting started](/getting-started/) covers the first local commands and the
-  runtime-offline model.
-- [GitHub Actions](/workflows/github-actions/) shows the current setup and pull
-  request actions for CI.
+- [Getting started](/getting-started/) installs drydock and runs the first
+  local render test.
+- [GitHub Actions](/workflows/github-actions/) sets up pull request checks
+  without Kubernetes or Argo CD credentials.
 - [Local diffs](/workflows/local-diffs/) covers local tree and Git ref
   comparisons.
 - [Troubleshooting](/troubleshooting/) maps common operator symptoms to the

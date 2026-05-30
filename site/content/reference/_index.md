@@ -2,8 +2,10 @@
 title: Reference
 ---
 
-Use these canonical pages for dense details. The curated site pages link here
-instead of copying long matrices or full flag inventories.
+Use these mounted `/docs/...` pages as the full reference and canonical detail
+set. They are for dense behavior, flag, compatibility, and maintenance details,
+not the beginner path. Start with [Getting started](/getting-started/) for the
+first local run.
 
 ## Operator Guides
 

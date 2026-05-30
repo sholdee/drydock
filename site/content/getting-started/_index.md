@@ -6,19 +6,34 @@ Use drydock when you want to inspect Argo CD desired state from repository
 contents before a controller sees it. The default commands do not call a live
 Argo CD server or Kubernetes cluster.
 
+## Install
+
+Install the CLI locally with Go:
+
+```bash
+go install github.com/sholdee/drydock/cmd/drydock@latest
+```
+
+For CI installs, use the drydock setup action in GitHub Actions instead of
+installing by hand in each workflow.
+
 ## First Commands
 
 Run these from the GitOps repository you want to inspect:
 
 ```bash
-drydock get apps --path .
 drydock test apps --path .
+drydock get apps --path .
 drydock diag --path .
 ```
 
-`get apps` shows discovered Applications. `test apps` renders them without
-printing manifest bodies. `diag` uses the same discovery and render validation
-path, then reports repository diagnostics.
+Start with `drydock test apps --path .`. It discovers Applications and renders
+them without printing manifest bodies, which makes it the fastest first check
+for render failures. `get apps` shows discovered Applications. `diag` uses the
+same discovery and render validation path, then reports repository diagnostics.
+
+If you are setting this up for CI, go to [GitHub Actions](/workflows/github-actions/)
+next.
 
 ## Compare Changes
 
