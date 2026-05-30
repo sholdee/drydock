@@ -365,12 +365,13 @@ a:hover {
 }
 
 .doc-content pre {
+  position: relative;
   overflow-x: auto;
   border: 1px solid #213149;
   border-radius: 8px;
   background: var(--code-bg);
   color: var(--code-ink);
-  padding: 1rem;
+  padding: 2.65rem 1rem 1rem;
 }
 
 .doc-content pre code {
@@ -378,6 +379,45 @@ a:hover {
   background: transparent;
   color: inherit;
   padding: 0;
+}
+
+.copy-button {
+  position: absolute;
+  top: 0.7rem;
+  right: 0.7rem;
+  border: 1px solid var(--line-strong);
+  border-radius: 6px;
+  background: rgba(20, 33, 51, 0.94);
+  color: var(--navy-deep);
+  cursor: pointer;
+  font: inherit;
+  font-size: 0.78rem;
+  font-weight: 800;
+  padding: 0.25rem 0.5rem;
+}
+
+.copy-button:hover {
+  border-color: var(--rust-bright);
+  color: var(--link-hover);
+}
+
+.highlight .c,
+.highlight .c1,
+.highlight .cm,
+.highlight .cp,
+.highlight .cs {
+  color: #a7b3c2 !important;
+}
+
+.highlight .k,
+.highlight .kc,
+.highlight .kd,
+.highlight .kn,
+.highlight .kp,
+.highlight .kr,
+.highlight .nt,
+.highlight .o {
+  color: #ff92b2 !important;
 }
 
 .doc-content blockquote {
@@ -409,6 +449,41 @@ a:hover {
 .doc-index a:hover {
   border-color: var(--rust);
   background: rgba(209, 115, 66, 0.12);
+}
+
+.next-links {
+  border-top: 1px solid var(--line);
+  padding: clamp(1.2rem, 4vw, 2.75rem);
+}
+
+.next-links p {
+  margin: 0 0 0.7rem;
+  color: var(--rust-bright);
+  font-size: 0.76rem;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.next-links div {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.7rem;
+}
+
+.next-links a {
+  border: 1px solid var(--line);
+  border-left: 4px solid var(--teal);
+  border-radius: 8px;
+  background: var(--surface-raised);
+  color: var(--navy-deep);
+  font-weight: 800;
+  padding: 0.72rem 0.9rem;
+  text-decoration: none;
+}
+
+.next-links a:hover {
+  border-color: var(--teal);
+  background: rgba(105, 215, 194, 0.1);
 }
 
 .site-footer {
@@ -455,7 +530,7 @@ a:hover {
     position: static;
     border-bottom: 1px solid var(--line);
     background: rgba(8, 17, 29, 0.94);
-    padding: 1rem;
+    padding: 0.85rem 1rem;
   }
 
   .docs-nav {
@@ -465,12 +540,21 @@ a:hover {
 
   .docs-nav ul {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(135px, 1fr));
+    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
     gap: 0.25rem;
   }
 
   .nav-section + .nav-section {
-    margin-top: 0.85rem;
+    margin-top: 0.65rem;
+  }
+
+  .docs-nav a {
+    font-size: 0.86rem;
+    padding: 0.34rem 0.42rem;
+  }
+
+  .nav-heading {
+    margin-bottom: 0.45rem;
   }
 
   .docs-nav li + li {
