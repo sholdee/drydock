@@ -63,14 +63,47 @@ jobs:
 ```
 
 The PR action checks out the pull request, fetches the base ref, runs
-`drydock test apps`, runs manifest and image diffs, writes artifacts when
-differences are found, and comments in trusted same-repository pull requests.
-Fork pull requests skip comments and source-cache save by default.
+`drydock test apps`, renders the desired-state manifest diff, writes full diff
+artifacts when differences are found, and comments in trusted same-repository
+pull requests. Image diff comments are available as a companion signal. Fork
+pull requests skip comments and source-cache save by default.
 
-## Image Diff Comment Shape
+## Manifest Diff Comment Shape
 
-The action uses drydock markdown output for image comments. A typical comment
-looks like this:
+The manifest diff comment is the main PR review surface. It summarizes changed
+Applications and resources, then expands each affected Application into a
+reviewable rendered diff:
+
+````text
+## drydock desired state diff
+
+**Summary:** 1 app, 2 resources, +4/-2.
+
+<details open>
+<summary>renovate (+4/-2, 2 resources)</summary>
+
+```diff
+--- Application: renovate apps/Deployment: renovate/renovate-operator
++++ Application: renovate apps/Deployment: renovate/renovate-operator
+@@ -47,7 +47,7 @@
+-          image: ghcr.io/example/renovate:1.0.0
++          image: ghcr.io/example/renovate:1.1.0
+```
+
+</details>
+````
+
+Use markdown output directly when building a custom workflow, or let
+`pr-action` produce the comment:
+
+```bash
+drydock diff apps --repo . --ref HEAD --ref-orig origin/main -o markdown
+```
+
+## Image Diff Companion Comment
+
+Image comments can be enabled alongside the manifest diff. They are useful for
+quickly scanning added and removed rendered image references:
 
 ```text
 ## drydock image diff
@@ -83,17 +116,7 @@ looks like this:
 | removed | `registry.example.com/app:v1` |
 ```
 
-For a no-change image diff, the comment keeps the same heading and stays
-compact:
-
-```text
-**Summary:** 0 added, 0 removed.
-
-No rendered image differences detected.
-```
-
-Use `-o markdown` directly when building a custom workflow, or let `pr-action`
-produce the comment:
+Run image diff markdown directly when building a custom workflow:
 
 ```bash
 drydock diff images --repo . --ref HEAD --ref-orig origin/main -o markdown
