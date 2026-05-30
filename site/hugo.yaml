@@ -5,6 +5,51 @@ disableKinds:
   - taxonomy
   - term
 
+params:
+  description: "Offline desired-state analysis for Argo CD GitOps repositories."
+
+menus:
+  docs:
+    - name: Overview
+      url: /
+      weight: 10
+    - name: Usage
+      url: /docs/usage/
+      weight: 20
+    - name: GitHub Actions
+      url: /docs/github-actions/
+      weight: 30
+    - name: ApplicationSets
+      url: /docs/applicationsets/
+      weight: 40
+    - name: Source Acquisition
+      url: /docs/source-acquisition/
+      weight: 50
+    - name: Plugin Policy
+      url: /docs/plugin-policy/
+      weight: 60
+    - name: Compatibility
+      url: /docs/compatibility/
+      weight: 70
+    - name: Design
+      url: /docs/design/
+      weight: 80
+    - name: Release Notes
+      url: /docs/release/
+      weight: 90
+    - name: Documentation Index
+      url: /docs/
+      weight: 100
+    - name: Live Runtime Boundary
+      url: /docs/reports/live-integration-design-gate/
+      weight: 110
+
+markup:
+  tableOfContents:
+    startLevel: 2
+    endLevel: 3
+    ordered: false
+
 module:
   mounts:
     - source: content

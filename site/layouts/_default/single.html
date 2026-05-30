@@ -1,0 +1,13 @@
+{{ define "main" }}
+  <article class="doc-page">
+    {{ if .Title }}
+      <header class="doc-header">
+        <p class="section-label">Documentation</p>
+        <h1>{{ .Title }}</h1>
+      </header>
+    {{ end }}
+    <div class="doc-content">
+      {{ .Content }}
+    </div>
+  </article>
+{{ end }}

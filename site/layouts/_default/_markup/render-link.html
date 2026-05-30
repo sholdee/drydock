@@ -1,0 +1,16 @@
+{{- $destination := .Destination -}}
+{{- $url := urls.Parse $destination -}}
+{{- $href := $destination -}}
+{{- if and (not $url.Scheme) (not $url.Host) (not (strings.HasPrefix $destination "/")) (strings.HasSuffix $url.Path ".md") -}}
+  {{- $path := strings.TrimSuffix ".md" $url.Path -}}
+  {{- $path = strings.TrimPrefix "./" $path -}}
+  {{- $clean := path.Clean (printf "%s/%s" .Page.File.Dir $path) -}}
+  {{- if eq $clean "." -}}
+    {{- $clean = "" -}}
+  {{- end -}}
+  {{- $href = relURL (printf "%s/" $clean) -}}
+  {{- with $url.Fragment -}}
+    {{- $href = printf "%s#%s" $href . -}}
+  {{- end -}}
+{{- end -}}
+<a href="{{ $href | safeURL }}"{{ with .Title }} title="{{ . }}"{{ end }}>{{ .Text | safeHTML }}</a>

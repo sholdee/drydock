@@ -1,0 +1,14 @@
+<nav class="docs-nav">
+  <p class="nav-heading">Docs</p>
+  <ul>
+    {{ range site.Menus.docs }}
+      {{- $entryURL := relURL .URL -}}
+      {{- $active := eq $entryURL $.RelPermalink -}}
+      <li>
+        <a href="{{ $entryURL }}"{{ if $active }} class="is-active" aria-current="page"{{ end }}>
+          {{ .Name }}
+        </a>
+      </li>
+    {{ end }}
+  </ul>
+</nav>
