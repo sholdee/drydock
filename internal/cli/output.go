@@ -34,9 +34,6 @@ func parseImageDiffOutput(value string) (string, error) {
 	if output == string(cliformat.OutputName) {
 		return output, nil
 	}
-	if output == diffOutputMarkdown {
-		return "", fmt.Errorf("markdown output is not supported for diff images")
-	}
 	return parseDiffOutput(value, "diff images")
 }
 

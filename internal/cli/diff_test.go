@@ -774,6 +774,35 @@ func TestDiffImagesColorAlwaysColorsImageDiff(t *testing.T) {
 	assertStderrEmpty(t, result)
 }
 
+func TestDiffImagesMarkdownOutput(t *testing.T) {
+	recorder := &recordingCLIOrchestrator{
+		diffImagesResult: app.ImageDiffResult{
+			Added:     []string{"example/app:v2"},
+			Removed:   []string{"example/app:v1"},
+			Unchanged: []string{"example/sidecar:v1"},
+			Diagnostics: []diagnostic.Diagnostic{{
+				Severity: diagnostic.SeverityWarning,
+				Category: "image",
+				Message:  "warning with <tag>",
+			}},
+		},
+	}
+
+	result := runCLIWithDependencies(t, Dependencies{Orchestrator: recorder}, "diff", "images", "--path-orig", "left", "--path", "right", "-o", "markdown", "--color=always", "--exit-code=false")
+
+	assertStdoutContainsAll(t, result,
+		"## drydock image diff",
+		"**Summary:** 1 added, 1 removed, 1 warning.",
+		"Diagnostics:",
+		"&lt;tag&gt;",
+		"| Change | Image |",
+		"| added | `example/app:v2` |",
+		"| removed | `example/app:v1` |",
+	)
+	assertStdoutExcludesAll(t, result, "example/sidecar:v1", "\x1b[")
+	assertStderrEmpty(t, result)
+}
+
 func TestDiffColorNeverLeavesDiagnosticsColorIndependent(t *testing.T) {
 	recorder := &recordingCLIOrchestrator{
 		diffAppsResult: app.DiffResult{
@@ -859,21 +888,32 @@ func TestDiffImagesYAMLOutput(t *testing.T) {
 	assertStringSliceEqual(t, payload.Unchanged, []string{"example/sidecar:v1"})
 }
 
-func TestDiffImagesRejectsMarkdownOutput(t *testing.T) {
-	cmd := NewRootCommandWithDependencies(VersionInfo{}, Dependencies{
-		Orchestrator: &recordingCLIOrchestrator{},
-	})
-	var stdout bytes.Buffer
-	var stderr bytes.Buffer
-	cmd.SetOut(&stdout)
-	cmd.SetErr(&stderr)
-	cmd.SetArgs([]string{"diff", "images", "--path-orig", "left", "--path", "right", "-o", "markdown"})
-	err := cmd.Execute()
-	if err == nil {
-		t.Fatal("Execute() error = nil, want markdown rejection")
-	}
-	if !strings.Contains(err.Error(), "markdown output is not supported for diff images") {
-		t.Fatalf("Execute() error = %v, want markdown rejection", err)
+func TestDiffImagesMarkdownRejectsInvalidMaxBytes(t *testing.T) {
+	for _, maxBytes := range []string{"-1", "1023"} {
+		t.Run(maxBytes, func(t *testing.T) {
+			recorder := &recordingCLIOrchestrator{}
+			cmd := NewRootCommandWithDependencies(VersionInfo{}, Dependencies{
+				Orchestrator: recorder,
+			})
+			var stdout bytes.Buffer
+			var stderr bytes.Buffer
+			cmd.SetOut(&stdout)
+			cmd.SetErr(&stderr)
+			cmd.SetArgs([]string{"diff", "images", "--path-orig", "left", "--path", "right", "-o", "markdown", "--markdown-max-bytes", maxBytes, "--exit-code=false"})
+			err := cmd.Execute()
+			if err == nil {
+				t.Fatal("Execute() error = nil, want invalid markdown max bytes error")
+			}
+			if !strings.Contains(err.Error(), "markdown max bytes") {
+				t.Fatalf("Execute() error = %v, want markdown max bytes", err)
+			}
+			if len(recorder.diffImagesRequests) != 0 {
+				t.Fatalf("DiffImages requests = %#v, want none before invalid markdown max bytes error", recorder.diffImagesRequests)
+			}
+			if stdout.String() != "" || stderr.String() != "" {
+				t.Fatalf("stdout=%q stderr=%q, want empty output", stdout.String(), stderr.String())
+			}
+		})
 	}
 }
 

@@ -136,6 +136,7 @@ func newDiffImagesCommand(deps Dependencies) *cobra.Command {
 	imagesFlags := defaultCommonFlags()
 	imagesFlags.parallelism = defaultRenderAppsParallelism()
 	imagesColor := diffColorAuto
+	imagesMarkdownMaxBytes := report.DefaultMaxBytes
 	images := &cobra.Command{
 		Use:   "images",
 		Short: "Diff rendered image references",
@@ -143,6 +144,9 @@ func newDiffImagesCommand(deps Dependencies) *cobra.Command {
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			output, err := parseImageDiffOutput(imagesFlags.output)
 			if err != nil {
+				return err
+			}
+			if err := validateDiffMarkdownFlags(output, imagesMarkdownMaxBytes); err != nil {
 				return err
 			}
 			colorMode, err := parseDiffColorMode(imagesColor)
@@ -162,12 +166,13 @@ func newDiffImagesCommand(deps Dependencies) *cobra.Command {
 				return err
 			}
 			diffColor := output == diffOutputUnified && shouldColorDiffOutput(colorMode, deps, cmd.OutOrStdout())
-			return renderImageDiffResult(cmd, result, !imagesFlags.exitCode, output, diffColor, diagnosticColor)
+			return renderImageDiffResult(cmd, result, !imagesFlags.exitCode, output, diffColor, diagnosticColor, imagesMarkdownMaxBytes)
 		},
 	}
 	bindCommonFlags(images, &imagesFlags)
 	bindDiffRefFlags(images, &imagesFlags)
 	bindDiffColorFlag(images, &imagesColor)
+	bindDiffMarkdownMaxBytesFlag(images, &imagesMarkdownMaxBytes)
 
 	return images
 }
@@ -187,9 +192,13 @@ func bindDiffColorFlag(cmd *cobra.Command, colorMode *string) {
 }
 
 func bindDiffMarkdownFlags(cmd *cobra.Command, markdownMaxBytes *int, rawOutputFile *string) {
+	bindDiffMarkdownMaxBytesFlag(cmd, markdownMaxBytes)
+	cmd.Flags().StringVar(rawOutputFile, "raw-output-file", *rawOutputFile, "write full uncolored unified diff output to this file")
+}
+
+func bindDiffMarkdownMaxBytesFlag(cmd *cobra.Command, markdownMaxBytes *int) {
 	cmd.Flags().IntVar(markdownMaxBytes, "markdown-max-bytes", *markdownMaxBytes,
 		fmt.Sprintf("maximum markdown output bytes; 0 disables the limit, positive values must be at least %d", report.MinPositiveMaxByte))
-	cmd.Flags().StringVar(rawOutputFile, "raw-output-file", *rawOutputFile, "write full uncolored unified diff output to this file")
 }
 
 func validateDiffMarkdownFlags(output string, markdownMaxBytes int) error {
@@ -269,9 +278,11 @@ func renderDiffResult(cmd *cobra.Command, result app.DiffResult, disableDiffExit
 	return nil
 }
 
-func renderImageDiffResult(cmd *cobra.Command, result app.ImageDiffResult, disableDiffExitCode bool, output string, diffColor, diagnosticColor bool) error {
-	if err := renderDiagnosticsWithColor(cmd.ErrOrStderr(), result.Diagnostics, diagnosticColor); err != nil {
-		return err
+func renderImageDiffResult(cmd *cobra.Command, result app.ImageDiffResult, disableDiffExitCode bool, output string, diffColor, diagnosticColor bool, markdownMaxBytes int) error {
+	if output != diffOutputMarkdown {
+		if err := renderDiagnosticsWithColor(cmd.ErrOrStderr(), result.Diagnostics, diagnosticColor); err != nil {
+			return err
+		}
 	}
 	switch output {
 	case diffOutputUnified:
@@ -296,6 +307,10 @@ func renderImageDiffResult(cmd *cobra.Command, result app.ImageDiffResult, disab
 		}
 	case string(cliformat.OutputName):
 		if err := cliformat.Name(cmd.OutOrStdout(), result.Added); err != nil {
+			return err
+		}
+	case diffOutputMarkdown:
+		if _, err := report.WriteImageDiffMarkdown(cmd.OutOrStdout(), result, report.MarkdownOptions{MaxBytes: markdownMaxBytes}); err != nil {
 			return err
 		}
 	default:
