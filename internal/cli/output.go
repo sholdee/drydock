@@ -8,7 +8,10 @@ import (
 	cliformat "github.com/sholdee/drydock/internal/format"
 )
 
-const diffOutputUnified = "diff"
+const (
+	diffOutputUnified  = "diff"
+	diffOutputMarkdown = "markdown"
+)
 
 const testOutputText = "text"
 
@@ -17,7 +20,7 @@ func parseDiffOutput(value, command string) (string, error) {
 	switch output {
 	case "", diffOutputUnified:
 		return diffOutputUnified, nil
-	case string(cliformat.OutputJSON), string(cliformat.OutputYAML):
+	case string(cliformat.OutputJSON), string(cliformat.OutputYAML), diffOutputMarkdown:
 		return output, nil
 	case string(cliformat.OutputName):
 		return "", fmt.Errorf("name output is not supported for %s", command)
@@ -30,6 +33,9 @@ func parseImageDiffOutput(value string) (string, error) {
 	output := strings.TrimSpace(value)
 	if output == string(cliformat.OutputName) {
 		return output, nil
+	}
+	if output == diffOutputMarkdown {
+		return "", fmt.Errorf("markdown output is not supported for diff images")
 	}
 	return parseDiffOutput(value, "diff images")
 }

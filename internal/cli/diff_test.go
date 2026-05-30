@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"io"
+	"os"
 	"path/filepath"
 	"slices"
 	"strconv"
@@ -141,6 +142,82 @@ func TestDiffAppsColorAlwaysColorsUnifiedOutput(t *testing.T) {
 		"\x1b[32m+  value: new\x1b[0m\n",
 	)
 	assertStderrEmpty(t, result)
+}
+
+func TestDiffAppsMarkdownOutput(t *testing.T) {
+	recorder := &recordingCLIOrchestrator{
+		diffAppsResult: app.DiffResult{
+			Results: []diff.Result{{
+				Parent: diff.Parent{Namespace: "argocd", Name: "demo"},
+				Diff:   sampleUnifiedDiffForCLI(),
+			}},
+			Diagnostics: []diagnostic.Diagnostic{{
+				Severity: diagnostic.SeverityWarning,
+				Category: "render",
+				Message:  "warning with <tag>",
+			}},
+		},
+	}
+
+	result := runCLIWithDependencies(t, Dependencies{Orchestrator: recorder}, "diff", "apps", "--path-orig", "left", "--path", "right", "-o", "markdown", "--color=always", "--exit-code=false")
+
+	assertStdoutContainsAll(t, result,
+		"## drydock diff preview",
+		"Applications changed: 1",
+		"Diagnostics:",
+		"&lt;tag&gt;",
+		"<summary>argocd/demo",
+		"```diff\n",
+		"-  value: old",
+		"+  value: new",
+	)
+	assertStdoutExcludesAll(t, result, "\x1b[")
+	assertStderrContainsAll(t, result, "warning render:")
+}
+
+func TestDiffAppsMarkdownRawOutputFilePreservesUnifiedDiff(t *testing.T) {
+	rawPath := filepath.Join(t.TempDir(), "diff.txt")
+	recorder := &recordingCLIOrchestrator{
+		diffAppsResult: app.DiffResult{
+			Results: []diff.Result{{Diff: sampleUnifiedDiffForCLI()}},
+		},
+	}
+
+	result := runCLIWithDependencies(t, Dependencies{Orchestrator: recorder}, "diff", "apps", "--path-orig", "left", "--path", "right", "-o", "markdown", "--raw-output-file", rawPath, "--exit-code=false")
+	assertStdoutContainsAll(t, result, "## drydock diff preview")
+	raw, err := os.ReadFile(rawPath)
+	if err != nil {
+		t.Fatalf("ReadFile(%s) error = %v", rawPath, err)
+	}
+	if got := string(raw); got != sampleUnifiedDiffForCLI() {
+		t.Fatalf("raw output = %q, want unified diff %q", got, sampleUnifiedDiffForCLI())
+	}
+}
+
+func TestDiffAppsMarkdownRejectsInvalidMaxBytes(t *testing.T) {
+	for _, maxBytes := range []string{"-1", "1023"} {
+		t.Run(maxBytes, func(t *testing.T) {
+			recorder := &recordingCLIOrchestrator{}
+			cmd := NewRootCommandWithDependencies(VersionInfo{}, Dependencies{
+				Orchestrator: recorder,
+			})
+			var stdout bytes.Buffer
+			var stderr bytes.Buffer
+			cmd.SetOut(&stdout)
+			cmd.SetErr(&stderr)
+			cmd.SetArgs([]string{"diff", "apps", "--path-orig", "left", "--path", "right", "-o", "markdown", "--markdown-max-bytes", maxBytes, "--exit-code=false"})
+			err := cmd.Execute()
+			if err == nil {
+				t.Fatal("Execute() error = nil, want invalid markdown max bytes error")
+			}
+			if !strings.Contains(err.Error(), "markdown max bytes") {
+				t.Fatalf("Execute() error = %v, want markdown max bytes", err)
+			}
+			if len(recorder.diffAppsRequests) != 0 {
+				t.Fatalf("DiffApps requests = %#v, want none before invalid markdown max bytes error", recorder.diffAppsRequests)
+			}
+		})
+	}
 }
 
 func TestDiffAppsColorNeverKeepsTTYOutputPlain(t *testing.T) {
@@ -778,6 +855,24 @@ func TestDiffImagesYAMLOutput(t *testing.T) {
 	assertStringSliceEqual(t, payload.Added, []string{"example/app:v2"})
 	assertStringSliceEqual(t, payload.Removed, []string{"example/app:v1"})
 	assertStringSliceEqual(t, payload.Unchanged, []string{"example/sidecar:v1"})
+}
+
+func TestDiffImagesRejectsMarkdownOutput(t *testing.T) {
+	cmd := NewRootCommandWithDependencies(VersionInfo{}, Dependencies{
+		Orchestrator: &recordingCLIOrchestrator{},
+	})
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	cmd.SetOut(&stdout)
+	cmd.SetErr(&stderr)
+	cmd.SetArgs([]string{"diff", "images", "--path-orig", "left", "--path", "right", "-o", "markdown"})
+	err := cmd.Execute()
+	if err == nil {
+		t.Fatal("Execute() error = nil, want markdown rejection")
+	}
+	if !strings.Contains(err.Error(), "markdown output is not supported for diff images") {
+		t.Fatalf("Execute() error = %v, want markdown rejection", err)
+	}
 }
 
 func TestDiffImagesNameOutputPrintsAddedImages(t *testing.T) {
