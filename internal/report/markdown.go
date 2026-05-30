@@ -74,7 +74,7 @@ func DiffMarkdown(result app.DiffResult, options MarkdownOptions) ([]byte, Markd
 	if len(groups) == 0 {
 		state.appendBounded(noDiffMarkdown())
 	} else {
-		state.appendAppDetails(groups)
+		state.appendAppDetails(groups, len(groups) == 1)
 	}
 	state.appendBounded(omittedMarkdown(groups[state.shownApps:]))
 	state.appendBounded(statsMarkdown(state.truncated, state.shownApps, len(groups)))
@@ -122,7 +122,7 @@ func (s *markdownState) appendBounded(text string) {
 	s.truncated = true
 }
 
-func (s *markdownState) appendAppDetails(groups []appGroup) {
+func (s *markdownState) appendAppDetails(groups []appGroup, openDetails bool) {
 	if len(groups) == 0 {
 		return
 	}
@@ -133,7 +133,7 @@ func (s *markdownState) appendAppDetails(groups []appGroup) {
 	}
 	allocations := allocateAppBudgets(groups, remaining, s.maxBytes == 0)
 	for i, group := range groups {
-		detail, truncated := appDetailMarkdown(group, allocations[i])
+		detail, truncated := appDetailMarkdown(group, allocations[i], openDetails)
 		if detail == "" {
 			s.truncated = true
 			return
@@ -377,7 +377,7 @@ func allocateAppBudgets(groups []appGroup, budget int, unlimited bool) []int {
 	return allocations
 }
 
-func appDetailMarkdown(group appGroup, budget int) (string, bool) {
+func appDetailMarkdown(group appGroup, budget int, openDetails bool) (string, bool) {
 	diffText := rawGroupDiff(group)
 	truncated := false
 	if budget > 0 {
@@ -385,7 +385,12 @@ func appDetailMarkdown(group appGroup, budget int) (string, bool) {
 	}
 	fence := codeFence(diffText)
 	var builder strings.Builder
-	fmt.Fprintf(&builder, "<details>\n<summary>%s (+%d/-%d, %d resources)</summary>\n\n",
+	detailsTag := "details"
+	if openDetails {
+		detailsTag = "details open"
+	}
+	fmt.Fprintf(&builder, "<%s>\n<summary>%s (+%d/-%d, %d resources)</summary>\n\n",
+		detailsTag,
 		escapeHTML(group.id), group.added, group.removed, len(group.resources))
 	builder.WriteString(fence)
 	builder.WriteString("diff\n")

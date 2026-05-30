@@ -85,6 +85,29 @@ func TestDiffMarkdownUnlimitedIncludesFullDiff(t *testing.T) {
 	if meta.Truncated {
 		t.Fatalf("meta.Truncated = true, want false")
 	}
+	text := string(out)
+	if !strings.Contains(text, "<details open>") {
+		t.Fatalf("single-app markdown did not expand details by default:\n%s", text)
+	}
+}
+
+func TestDiffMarkdownClosesDetailsForMultipleApplications(t *testing.T) {
+	out, _, err := DiffMarkdown(app.DiffResult{
+		Results: []diff.Result{
+			diffResult("argocd", "one", "cm-one", "-old\n+new\n"),
+			diffResult("argocd", "two", "cm-two", "-old\n+new\n"),
+		},
+	}, MarkdownOptions{MaxBytes: DefaultMaxBytes})
+	if err != nil {
+		t.Fatalf("DiffMarkdown() error = %v", err)
+	}
+	text := string(out)
+	if strings.Contains(text, "<details open>") {
+		t.Fatalf("multi-app markdown expanded details by default:\n%s", text)
+	}
+	if got := strings.Count(text, "<details>"); got != 2 {
+		t.Fatalf("closed details count = %d, want 2:\n%s", got, text)
+	}
 }
 
 func TestDiffMarkdownUsesDynamicFenceForBackticks(t *testing.T) {

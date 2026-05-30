@@ -166,6 +166,7 @@ func TestDiffAppsMarkdownOutput(t *testing.T) {
 		"**Summary:** 1 app, 1 resource, +1/-1, 1 warning.",
 		"Diagnostics:",
 		"&lt;tag&gt;",
+		"<details open>",
 		"<summary>argocd/demo",
 		"```diff\n",
 		"-  value: old",
