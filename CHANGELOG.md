@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.1.9](https://github.com/sholdee/drydock/compare/v0.1.8...v0.1.9) (2026-05-30)
+
+
+### Features
+
+* add markdown diff comments ([#63](https://github.com/sholdee/drydock/issues/63)) ([ecfa161](https://github.com/sholdee/drydock/commit/ecfa161cc04f2df2b1b6fe336f614770ec7c5c3a))
+* add markdown image diff output ([#65](https://github.com/sholdee/drydock/issues/65)) ([6838fde](https://github.com/sholdee/drydock/commit/6838fde3ec1082cc9d7146d178c0003d622d50b4))
+
 ## [0.1.8](https://github.com/sholdee/drydock/compare/v0.1.7...v0.1.8) (2026-05-30)
 
 
