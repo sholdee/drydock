@@ -21,6 +21,7 @@ copying the same rule into multiple files.
 | `docs/release.md` | Release and Argo CD dependency upgrade notes. |
 | `docs/logo/` | Project logo assets. |
 | `docs/reports/live-integration-design-gate.md` | No-live-runtime boundary and gate for exceptions. |
+| `site/` | Hugo docs site source, curated operator pages, local layouts, and GitHub Pages configuration. |
 
 ## Anti-Sprawl Rules
 
@@ -35,4 +36,6 @@ copying the same rule into multiple files.
   `docs/usage.md` or `docs/design.md`.
 - Keep `README.md`, `AGENTS.md`, and `docs/agent-reference.md` as routing
   surfaces; link to canonical docs instead of duplicating long explanations.
+- Keep `site/content` concise and operator-facing. It should summarize and
+  route to canonical docs rather than replacing them.
 - Update this file when adding, deleting, or changing ownership of docs.

@@ -72,7 +72,7 @@ Fork pull requests skip comments and source-cache save by default.
 The action uses drydock markdown output for image comments. A typical comment
 looks like this:
 
-```markdown
+```text
 ## drydock image diff
 
 **Summary:** 1 added, 1 removed.
@@ -83,11 +83,10 @@ looks like this:
 | removed | `registry.example.com/app:v1` |
 ```
 
-For a no-change image diff, the comment stays compact:
+For a no-change image diff, the comment keeps the same heading and stays
+compact:
 
-```markdown
-## drydock image diff
-
+```text
 **Summary:** 0 added, 0 removed.
 
 No rendered image differences detected.

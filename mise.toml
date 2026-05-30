@@ -84,4 +84,4 @@ run = "lefthook install"
 
 [tasks.ci]
 description = "Run the main local CI checks"
-depends = ["mod-verify", "mod-tidy-check", "test-race", "vet", "lint", "markdownlint", "actionlint", "shellcheck", "zizmor", "whitespace"]
+depends = ["mod-verify", "mod-tidy-check", "test-race", "vet", "lint", "markdownlint", "docs-check", "actionlint", "shellcheck", "zizmor", "whitespace"]

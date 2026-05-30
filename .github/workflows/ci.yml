@@ -29,6 +29,7 @@ jobs:
       pull-requests: read
     outputs:
       docs: ${{ steps.paths.outputs.docs }}
+      docs-site: ${{ steps.paths.outputs.docs-site }}
       go: ${{ steps.paths.outputs.go }}
       image: ${{ steps.paths.outputs.image }}
       lint: ${{ steps.paths.outputs.lint }}
@@ -48,6 +49,12 @@ jobs:
           filters: |
             docs:
               - '**/*.md'
+            docs-site:
+              - 'docs/**'
+              - 'schemas/**'
+              - 'site/**'
+              - 'mise.lock'
+              - 'mise.toml'
             go:
               - '**/*.go'
               - '**/testdata/**'
@@ -142,6 +149,25 @@ jobs:
 
       - name: Lint Markdown
         run: mise run markdownlint
+
+  docs-site:
+    needs: detect
+    if: github.event_name != 'pull_request' || needs.detect.outputs.docs-site == 'true' || needs.detect.outputs.workflow == 'true' || needs.detect.outputs.lint == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Setup mise
+        uses: jdx/mise-action@1648a7812b9aeae629881980618f079932869151 # v4.0.1
+        with:
+          experimental: true
+          install_args: --locked
+
+      - name: Build documentation site
+        run: mise run docs-check
 
   workflow-lint:
     needs: detect
@@ -272,6 +298,7 @@ jobs:
       - go-test
       - go-lint
       - markdownlint
+      - docs-site
       - workflow-lint
       - shellcheck
       - renovate
@@ -286,19 +313,21 @@ jobs:
           GO_TEST: ${{ needs.go-test.result }}
           GO_LINT: ${{ needs.go-lint.result }}
           MARKDOWNLINT: ${{ needs.markdownlint.result }}
+          DOCS_SITE: ${{ needs.docs-site.result }}
           WORKFLOW_LINT: ${{ needs.workflow-lint.result }}
           SHELLCHECK: ${{ needs.shellcheck.result }}
           RENOVATE: ${{ needs.renovate.result }}
           WHITESPACE: ${{ needs.whitespace.result }}
           IMAGE: ${{ needs.image.result }}
         run: |
-          echo "detect=${DETECT} go-test=${GO_TEST} go-lint=${GO_LINT} markdownlint=${MARKDOWNLINT} workflow-lint=${WORKFLOW_LINT} shellcheck=${SHELLCHECK} renovate=${RENOVATE} whitespace=${WHITESPACE} image=${IMAGE}"
+          echo "detect=${DETECT} go-test=${GO_TEST} go-lint=${GO_LINT} markdownlint=${MARKDOWNLINT} docs-site=${DOCS_SITE} workflow-lint=${WORKFLOW_LINT} shellcheck=${SHELLCHECK} renovate=${RENOVATE} whitespace=${WHITESPACE} image=${IMAGE}"
 
           for result in \
             "${DETECT}" \
             "${GO_TEST}" \
             "${GO_LINT}" \
             "${MARKDOWNLINT}" \
+            "${DOCS_SITE}" \
             "${WORKFLOW_LINT}" \
             "${SHELLCHECK}" \
             "${RENOVATE}" \
