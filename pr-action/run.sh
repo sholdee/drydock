@@ -125,20 +125,45 @@ capture_command_quiet() {
   "$@" > "${stdout_file}" 2> "${stderr_file}"
 }
 
-truncate_file() {
-  local input="$1"
-  local output="$2"
-  local max_bytes="$3"
+diff_comment_budget() {
+  local requested="$1"
+  local cap=60000
+  local reserve=512
+  local minimum=1024
+  local effective
 
-  if [[ "$(wc -c < "${input}")" -gt "${max_bytes}" ]]; then
-    if command -v iconv >/dev/null 2>&1; then
-      head -c "${max_bytes}" "${input}" | iconv -c -f utf-8 -t utf-8 > "${output}"
-    else
-      head -c "${max_bytes}" "${input}" > "${output}"
-    fi
-    printf "\n\n####### TRUNCATED -- see artifact for full output #######\n" >> "${output}"
-  else
-    cp "${input}" "${output}"
+  effective="$((10#${requested}))"
+  if [[ "${effective}" -gt "${cap}" ]]; then
+    effective="${cap}"
+  fi
+  if [[ "${effective}" -lt $((minimum + reserve)) ]]; then
+    effective=$((minimum + reserve))
+  fi
+  printf '%s\n' "$((effective - reserve))"
+}
+
+append_diff_artifact_footer() {
+  local comment_file="$1"
+  local max_bytes=60000
+  local footer
+  footer="- Full diff output: [${DRYDOCK_DIFF_ARTIFACT_NAME} artifact](${run_url})."
+  local current footer_bytes
+  current="$(wc -c < "${comment_file}")"
+  footer_bytes="$(printf '\n%s\n' "${footer}" | wc -c)"
+  if [[ $((current + footer_bytes)) -le "${max_bytes}" ]]; then
+    {
+      echo
+      echo "${footer}"
+    } >> "${comment_file}"
+  fi
+}
+
+validate_diff_comment_size() {
+  local comment_file="$1"
+  local max_bytes=60000
+  if [[ "$(wc -c < "${comment_file}")" -gt "${max_bytes}" ]]; then
+    echo "drydock diff comment exceeds ${max_bytes} bytes." >&2
+    exit 1
   fi
 }
 
@@ -194,7 +219,6 @@ images_count_path="${work_dir}/images.count"
 images_stderr="${work_dir}/images.err"
 diff_comment_path="${work_dir}/diff-comment.md"
 images_comment_path="${work_dir}/images-comment.md"
-diff_snippet_path="${work_dir}/diff-snippet.txt"
 
 path="${DRYDOCK_INPUT_PATH:-.}"
 repo="${DRYDOCK_INPUT_REPO:-.}"
@@ -253,10 +277,16 @@ if [[ "${DRYDOCK_INPUT_RUN_DIFF}" == "true" ]]; then
     echo "A base ref is required when run-diff is true." >&2
     exit 1
   fi
-  diff_args=("${drydock_bin}" diff apps --repo "${repo}" --ref "${head_ref}" --ref-orig "${base_compare_ref}" --exit-code=false "${common_args[@]}")
+  diff_args=("${drydock_bin}" diff apps --repo "${repo}" --ref "${head_ref}" --ref-orig "${base_compare_ref}" "${common_args[@]}")
   append_bool_flag diff_args "${DRYDOCK_INPUT_SHOW_IGNORED_FIELDS}" "--show-ignored-fields"
   append_extra_lines diff_args "${DRYDOCK_INPUT_EXTRA_DIFF_ARGS}"
-  if ! capture_command "${diff_path}" "${diff_stderr}" "${diff_args[@]}"; then
+  diff_args+=(
+    -o markdown
+    --markdown-max-bytes "$(diff_comment_budget "${DRYDOCK_INPUT_DIFF_MAX_BYTES}")"
+    --raw-output-file "${diff_path}"
+    --exit-code=false
+  )
+  if ! capture_command "${diff_comment_path}" "${diff_stderr}" "${diff_args[@]}"; then
     failed="true"
   fi
   if [[ -s "${diff_path}" ]]; then
@@ -267,6 +297,7 @@ if [[ "${DRYDOCK_INPUT_RUN_DIFF}" == "true" ]]; then
   fi
 else
   : > "${diff_path}"
+  : > "${diff_comment_path}"
 fi
 
 if [[ "${DRYDOCK_INPUT_RUN_IMAGE_DIFF}" == "true" ]]; then
@@ -339,22 +370,19 @@ if [[ "${comment_mode}" == "images" || "${comment_mode}" == "both" ]]; then
 fi
 
 if [[ "${diff_comment}" == "true" ]]; then
-  {
-    echo "### drydock rendered diff"
-    echo
-    if [[ "${has_diff}" == "true" ]]; then
-      truncate_file "${diff_path}" "${diff_snippet_path}" "${DRYDOCK_INPUT_DIFF_MAX_BYTES}"
-      echo '```diff'
-      cat "${diff_snippet_path}"
-      echo '```'
-      if [[ "${DRYDOCK_INPUT_UPLOAD_ARTIFACTS}" == "true" && -n "${run_url}" ]]; then
-        echo
-        echo "- Full diff output: [${DRYDOCK_DIFF_ARTIFACT_NAME} artifact](${run_url})."
-      fi
-    else
+  if [[ ! -s "${diff_comment_path}" ]]; then
+    {
+      echo "## drydock desired state diff"
+      echo
+      echo "**Summary:** 0 apps, 0 resources, +0/-0."
+      echo
       echo "No rendered manifest differences detected."
-    fi
-  } > "${diff_comment_path}"
+    } > "${diff_comment_path}"
+  fi
+  if [[ "${has_diff}" == "true" && "${DRYDOCK_INPUT_UPLOAD_ARTIFACTS}" == "true" && -n "${run_url}" ]]; then
+    append_diff_artifact_footer "${diff_comment_path}"
+  fi
+  validate_diff_comment_size "${diff_comment_path}"
 fi
 
 if [[ "${images_comment}" == "true" ]]; then

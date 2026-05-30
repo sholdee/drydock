@@ -183,9 +183,9 @@ inputs:
     required: false
     default: "true"
   diff-max-bytes:
-    description: Maximum rendered diff bytes to include in pull request comments.
+    description: Maximum rendered diff comment bytes. Values above 60000 are clamped to GitHub's comment budget.
     required: false
-    default: "61000"
+    default: "60000"
   upload-artifacts:
     description: Upload full diff and image report artifacts when they are non-empty.
     required: false

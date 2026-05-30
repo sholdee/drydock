@@ -104,7 +104,7 @@ func TestRunCommentsLinkWorkflowRunArtifactsWhenUploadEnabled(t *testing.T) {
 	diffComment := readFile(t, filepath.Join(workDir, "diff-comment.md"))
 	for _, want := range []string{
 		"Full diff output: [diff artifact](https://github.example.test/example/repo/actions/runs/12345).",
-		"```diff",
+		"~~~diff",
 	} {
 		if !strings.Contains(diffComment, want) {
 			t.Fatalf("diff comment = %q, want %q", diffComment, want)
@@ -224,6 +224,37 @@ func TestRunCommentEmptyDoesNotLinkArtifactsWithoutOutput(t *testing.T) {
 	}
 }
 
+func TestRunDiffUsesMarkdownOutputAfterExtraDiffArgs(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell action tests require bash")
+	}
+
+	workDir := runCommentScenario(t, commentScenario{
+		uploadArtifacts: true,
+		githubEnv:       true,
+		diffOutput:      true,
+		extraDiffArgs:   "-o json\n--raw-output-file /tmp/ignored\n--exit-code=true",
+	})
+
+	args := readFile(t, filepath.Join(workDir, "drydock-args.txt"))
+	for _, want := range []string{"-o json", "--raw-output-file /tmp/ignored", "-o markdown", "--markdown-max-bytes 59488", "--raw-output-file " + filepath.Join(workDir, "diff.txt"), "--exit-code=false"} {
+		if !strings.Contains(args, want) {
+			t.Fatalf("drydock args = %q, want %q", args, want)
+		}
+	}
+	if strings.Index(args, "-o json") > strings.Index(args, "-o markdown") {
+		t.Fatalf("forced markdown output did not come after extra diff args:\n%s", args)
+	}
+	rawDiff := readFile(t, filepath.Join(workDir, "diff.txt"))
+	if !strings.Contains(rawDiff, "diff --git a/apps/demo b/apps/demo") {
+		t.Fatalf("raw diff artifact = %q, want raw diff", rawDiff)
+	}
+	diffComment := readFile(t, filepath.Join(workDir, "diff-comment.md"))
+	if !strings.Contains(diffComment, "## drydock desired state diff") {
+		t.Fatalf("diff comment = %q, want markdown report", diffComment)
+	}
+}
+
 type commentScenario struct {
 	uploadArtifacts bool
 	githubEnv       bool
@@ -231,6 +262,7 @@ type commentScenario struct {
 	commentMode     string
 	diffOutput      bool
 	imageOutput     bool
+	extraDiffArgs   string
 }
 
 func runCommentScenario(t *testing.T, scenario commentScenario) string {
@@ -247,6 +279,7 @@ func runCommentScenario(t *testing.T, scenario commentScenario) string {
 	}
 	env := append(defaultRunEnv(tmp, workDir, outputPath),
 		"DRYDOCK_INPUT_COMMENT_MODE="+commentMode,
+		"DRYDOCK_INPUT_EXTRA_DIFF_ARGS="+scenario.extraDiffArgs,
 		"DRYDOCK_INPUT_RUN_DIFF=true",
 		"DRYDOCK_INPUT_RUN_IMAGE_DIFF=true",
 		"DRYDOCK_INPUT_UPLOAD_ARTIFACTS="+boolString(scenario.uploadArtifacts),
@@ -278,7 +311,7 @@ func writeCommentScenarioDrydock(t *testing.T, path string, scenario commentScen
 
 	diffOutput := ""
 	if scenario.diffOutput {
-		diffOutput = "printf 'diff --git a/apps/demo b/apps/demo\\n+kind: ConfigMap\\n'\n"
+		diffOutput = "diff_body='diff --git a/apps/demo b/apps/demo\n+kind: ConfigMap\n'\n"
 	}
 	imageOutput := ""
 	if scenario.imageOutput {
@@ -287,9 +320,45 @@ func writeCommentScenarioDrydock(t *testing.T, path string, scenario commentScen
 
 	writeExecutable(t, path, `#!/usr/bin/env bash
 set -euo pipefail
+mkdir -p "${DRYDOCK_ACTION_WORK_DIR}"
+printf '%s\n' "$*" >> "${DRYDOCK_ACTION_WORK_DIR}/drydock-args.txt"
 
 if [[ "$*" == *"diff apps"* ]]; then
-  `+diffOutput+`  exit 0
+  `+diffOutput+`
+  raw_output_file=""
+  output="diff"
+  while [[ "$#" -gt 0 ]]; do
+    case "$1" in
+      --raw-output-file)
+        raw_output_file="$2"
+        shift 2
+        ;;
+      -o | --output)
+        output="$2"
+        shift 2
+        ;;
+      --output=*)
+        output="${1#--output=}"
+        shift
+        ;;
+      *)
+        shift
+        ;;
+    esac
+  done
+  if [[ -n "${raw_output_file}" ]]; then
+    printf '%s' "${diff_body:-}" > "${raw_output_file}"
+  fi
+  if [[ "${output}" == "markdown" ]]; then
+    if [[ -n "${diff_body:-}" ]]; then
+      printf '## drydock desired state diff\n\n~~~diff\n%s~~~\n' "${diff_body}"
+    else
+      printf '## drydock desired state diff\n\n**Summary:** 0 apps, 0 resources, +0/-0.\n\nNo rendered manifest differences detected.\n'
+    fi
+  else
+    printf '%s' "${diff_body:-}"
+  fi
+  exit 0
 fi
 
 if [[ "$*" == *"diff images"* ]]; then
@@ -349,7 +418,7 @@ func defaultRunEnv(tmp, workDir, outputPath string) []string {
 		"DRYDOCK_INPUT_CHANGED_ONLY=",
 		"DRYDOCK_INPUT_COMMENT_EMPTY=false",
 		"DRYDOCK_INPUT_COMMENT_MODE=none",
-		"DRYDOCK_INPUT_DIFF_MAX_BYTES=61000",
+		"DRYDOCK_INPUT_DIFF_MAX_BYTES=60000",
 		"DRYDOCK_INPUT_DISABLE_PLUGIN_POLICY=false",
 		"DRYDOCK_INPUT_DISCOVER_KUSTOMIZE=",
 		"DRYDOCK_INPUT_ENABLE_AVP_COMPAT=false",
