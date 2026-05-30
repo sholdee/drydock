@@ -72,7 +72,7 @@ Pinned example:
 ```yaml
 - uses: sholdee/drydock/setup-action@main
   with:
-    version: v0.1.9
+    version: vX.Y.Z
     install-dir: /usr/local/bin
 ```
 

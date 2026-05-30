@@ -58,7 +58,7 @@ Pin a release when the workflow needs exact repeatability:
 ```yaml
 - uses: sholdee/drydock/setup-action@main
   with:
-    version: v0.1.9
+    version: vX.Y.Z
 ```
 
 The setup action accepts `latest`, `vX.Y.Z`, or bare `X.Y.Z` and verifies the
@@ -85,7 +85,7 @@ jobs:
     steps:
       - uses: sholdee/drydock/pr-action@main
         with:
-          version: v0.1.9
+          version: vX.Y.Z
 ```
 
 See [`docs/github-actions.md`](docs/github-actions.md) for full action inputs,
