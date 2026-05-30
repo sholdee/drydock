@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	argoglob "github.com/argoproj/argo-cd/v3/util/glob"
@@ -162,7 +163,7 @@ func directoryDataLooksKubernetesManifest(data []byte) bool {
 	if strings.Contains(text, `"apiVersion"`) || strings.Contains(text, `"kind"`) {
 		return true
 	}
-	for _, line := range strings.Split(text, "\n") {
+	for line := range strings.SplitSeq(text, "\n") {
 		if strings.TrimSpace(line) == "" {
 			continue
 		}
@@ -289,12 +290,7 @@ func addKustomizeGeneratorRefToSkipSet(skipFiles map[string]bool, root, dir, ref
 }
 
 func isKustomizationFileName(name string) bool {
-	for _, candidate := range kustomizationFileNames {
-		if name == candidate {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(kustomizationFileNames, name)
 }
 
 func isManifestFile(path string) bool {
@@ -335,7 +331,7 @@ func rejectSymlinkComponents(repoRoot, sourcePath string) error {
 	}
 
 	current := filepath.Clean(repoRoot)
-	for _, component := range strings.Split(sourcePath, string(filepath.Separator)) {
+	for component := range strings.SplitSeq(sourcePath, string(filepath.Separator)) {
 		if component == "" || component == "." {
 			continue
 		}

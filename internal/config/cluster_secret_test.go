@@ -61,7 +61,7 @@ func TestLoadClusterSecretDataDecodesAllowlistedFields(t *testing.T) {
 	encoded := func(value string) string {
 		return base64.StdEncoding.EncodeToString([]byte(value))
 	}
-	if err := os.WriteFile(path, []byte(fmt.Sprintf(`apiVersion: v1
+	if err := os.WriteFile(path, fmt.Appendf(nil, `apiVersion: v1
 kind: Secret
 metadata:
   name: prod
@@ -74,7 +74,7 @@ data:
   clusterResources: %s
   project: %s
   config: %s
-`, encoded("prod"), encoded("https://prod.example/"), encoded("prod,shared"), encoded("true"), encoded("platform"), encoded(`{"tlsClientConfig":{"certData":"should-not-be-read"}}`))), 0o600); err != nil {
+`, encoded("prod"), encoded("https://prod.example/"), encoded("prod,shared"), encoded("true"), encoded("platform"), encoded(`{"tlsClientConfig":{"certData":"should-not-be-read"}}`)), 0o600); err != nil {
 		t.Fatalf("WriteFile() error = %v", err)
 	}
 

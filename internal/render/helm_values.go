@@ -330,8 +330,8 @@ func helmValueFileSchemeAllowed(scheme string, opts RenderOptions) bool {
 }
 
 func resolveHelmValueFile(repoRoot, baseDir, boundaryDir string, refRoots map[string]string, file string) (string, string, error) {
-	if strings.HasPrefix(file, "$") {
-		ref, refPath, ok := strings.Cut(strings.TrimPrefix(file, "$"), "/")
+	if after, ok := strings.CutPrefix(file, "$"); ok {
+		ref, refPath, ok := strings.Cut(after, "/")
 		if !ok || ref == "" || refPath == "" {
 			return "", "", fmt.Errorf("helm value file %q must use $ref/path syntax", file)
 		}
@@ -389,7 +389,7 @@ func rejectHelmValueBaseDirSymlinkComponents(repoRoot, sourcePath string) error 
 	}
 
 	current := filepath.Clean(repoRoot)
-	for _, component := range strings.Split(sourcePath, string(filepath.Separator)) {
+	for component := range strings.SplitSeq(sourcePath, string(filepath.Separator)) {
 		if component == "" || component == "." {
 			continue
 		}

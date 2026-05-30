@@ -41,13 +41,8 @@ func TestTestAppsDefaultParallelismIsAuto(t *testing.T) {
 	recorder := &recordingCLIOrchestrator{}
 	executeParallelismCommand(t, recorder, "test", "apps")
 
-	want := runtime.GOMAXPROCS(0)
-	if want < 1 {
-		want = 1
-	}
-	if want > maxDefaultRenderAppsParallelism {
-		want = maxDefaultRenderAppsParallelism
-	}
+	want := max(runtime.GOMAXPROCS(0), 1)
+	want = min(want, maxDefaultRenderAppsParallelism)
 	if got := defaultRenderAppsParallelism(); got != want {
 		t.Fatalf("defaultRenderAppsParallelism() = %d, want %d", got, want)
 	}

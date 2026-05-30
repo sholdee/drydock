@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 
 	appsetutils "github.com/argoproj/argo-cd/v3/applicationset/utils"
 	argoappv1 "github.com/argoproj/argo-cd/v3/pkg/apis/application/v1alpha1"
@@ -289,8 +290,6 @@ func appendTemplatedValues(params map[string]any, values map[string]string, useG
 		}
 		renderedParams["values."+key] = rendered
 	}
-	for key, value := range renderedParams {
-		params[key] = value
-	}
+	maps.Copy(params, renderedParams)
 	return nil
 }

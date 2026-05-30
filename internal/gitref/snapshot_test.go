@@ -159,7 +159,7 @@ func TestSnapshotLocalRefMaterializesManyFiles(t *testing.T) {
 		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 			t.Fatalf("MkdirAll(%s) error = %v", name, err)
 		}
-		if err := os.WriteFile(path, []byte(fmt.Sprintf("value: %03d\n", i)), 0o644); err != nil {
+		if err := os.WriteFile(path, fmt.Appendf(nil, "value: %03d\n", i), 0o644); err != nil {
 			t.Fatalf("WriteFile(%s) error = %v", name, err)
 		}
 		if _, err := wt.Add(name); err != nil {

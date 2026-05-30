@@ -18,6 +18,7 @@ linters:
     - ineffassign
     - intrange
     - misspell
+    - modernize
     - nakedret
     - nilerr
     - nilnil
@@ -26,6 +27,7 @@ linters:
     - staticcheck
     - unconvert
     - unused
+    - usestdlibvars
     - wastedassign
     - whitespace
   settings:
@@ -39,6 +41,10 @@ linters:
   exclusions:
     presets:
       - std-error-handling
+    rules:
+      - linters:
+          - modernize
+        text: "omitzero:"
 
 formatters:
   enable:

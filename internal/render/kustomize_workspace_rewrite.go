@@ -105,8 +105,8 @@ func (w *kustomizeWorkspace) rewriteKustomizePatchRefs(ctx context.Context, node
 			kustomization.Patches[i].Path = rewritten
 		}
 	}
-	//nolint:staticcheck // Kustomize still accepts patchesJson6902; rewrite it for parity.
-	for i, patch := range kustomization.PatchesJson6902 {
+
+	for i, patch := range kustomization.PatchesJson6902 { //nolint:staticcheck // Kustomize still accepts patchesJson6902; rewrite remote refs for parity.
 		if patch.Path == "" {
 			continue
 		}
@@ -115,11 +115,11 @@ func (w *kustomizeWorkspace) rewriteKustomizePatchRefs(ctx context.Context, node
 			return err
 		}
 		if ok {
-			kustomization.PatchesJson6902[i].Path = rewritten
+			kustomization.PatchesJson6902[i].Path = rewritten //nolint:staticcheck // Kustomize still accepts patchesJson6902; rewrite remote refs for parity.
 		}
 	}
-	//nolint:staticcheck // Kustomize still accepts patchesStrategicMerge; rewrite it for parity.
-	for i, patch := range kustomization.PatchesStrategicMerge {
+
+	for i, patch := range kustomization.PatchesStrategicMerge { //nolint:staticcheck // Kustomize still accepts patchesStrategicMerge; rewrite remote refs for parity.
 		ref := string(patch)
 		if isInlineStrategicMergePatch(ref) {
 			continue
@@ -129,7 +129,7 @@ func (w *kustomizeWorkspace) rewriteKustomizePatchRefs(ctx context.Context, node
 			return err
 		}
 		if ok {
-			kustomization.PatchesStrategicMerge[i] = types.PatchStrategicMerge(rewritten)
+			kustomization.PatchesStrategicMerge[i] = types.PatchStrategicMerge(rewritten) //nolint:staticcheck // Kustomize still accepts patchesStrategicMerge; rewrite remote refs for parity.
 		}
 	}
 	return nil

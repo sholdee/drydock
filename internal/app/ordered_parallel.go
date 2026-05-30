@@ -44,10 +44,7 @@ func runOrderedParallel[T any](ctx context.Context, options orderedParallelOptio
 }
 
 func orderedParallelWorkerCount(total, parallelism int) int {
-	workerCount := parallelism
-	if workerCount > total {
-		workerCount = total
-	}
+	workerCount := min(parallelism, total)
 	if workerCount < 1 && total > 0 {
 		workerCount = 1
 	}
@@ -63,16 +60,14 @@ func launchOrderedParallelWorkers[T any](
 ) {
 	var wg sync.WaitGroup
 	for range workerCount {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			for index := range jobs {
 				resultsCh <- indexedOrderedResult[T]{
 					index:  index,
 					result: run(ctx, index),
 				}
 			}
-		}()
+		})
 	}
 
 	go func() {

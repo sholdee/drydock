@@ -165,7 +165,7 @@ func parseOCIChartRepository(repository string) (string, error) {
 	if cleanPath == "" {
 		return parsed.Host, nil
 	}
-	for _, segment := range strings.Split(cleanPath, "/") {
+	for segment := range strings.SplitSeq(cleanPath, "/") {
 		switch segment {
 		case "":
 			return "", fmt.Errorf("OCI chart repository path must not include empty path segment")

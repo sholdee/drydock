@@ -128,13 +128,12 @@ func (w *kustomizeWorkspace) prepareKustomizationDir(ctx context.Context, dir, b
 	}
 	kustomization.Resources = resources
 
-	//nolint:staticcheck // Kustomize still accepts bases; rewrite it for parity.
-	bases, err := w.prepareKustomizeRefs(ctx, dir, boundaryRoot, "bases", graphIndex, kustomization.Bases, childInheritedHelmNamespace, false)
+	bases, err := w.prepareKustomizeRefs(ctx, dir, boundaryRoot, "bases", graphIndex, kustomization.Bases, childInheritedHelmNamespace, false) //nolint:staticcheck // Kustomize still accepts bases; rewrite it for parity.
 	if err != nil {
 		return fmt.Errorf("%s: %w", manifestPath, err)
 	}
-	//nolint:staticcheck // Kustomize still accepts bases; rewrite it for parity.
-	kustomization.Bases = bases
+
+	kustomization.Bases = bases //nolint:staticcheck // Kustomize still accepts bases; rewrite it for parity.
 
 	components, err := w.prepareKustomizeRefs(ctx, dir, boundaryRoot, "components", graphIndex, kustomization.Components, childInheritedHelmNamespace, false)
 	if err != nil {

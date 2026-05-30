@@ -577,12 +577,7 @@ func hasStatus(statuses []ApplicationStatus, name, status string) bool {
 	return false
 }
 func containsString(items []string, want string) bool {
-	for _, item := range items {
-		if item == want {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(items, want)
 }
 func assertAPIMessageRedacted(t *testing.T, message string, secrets []string) {
 	t.Helper()
@@ -597,7 +592,4 @@ func assertAPIMessageRedacted(t *testing.T, message string, secrets []string) {
 	if message != "" {
 		t.Fatalf("message = %q, want redacted marker", message)
 	}
-}
-func boolPtr(value bool) *bool {
-	return &value
 }

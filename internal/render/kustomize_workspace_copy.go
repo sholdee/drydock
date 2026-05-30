@@ -185,8 +185,8 @@ func referencedKustomizeWorkspacePaths(dir string, kustomization types.Kustomiza
 	for _, ref := range kustomization.Resources {
 		appendLocalRef(ref)
 	}
-	//nolint:staticcheck // Kustomize still accepts bases; copy local refs for parity.
-	for _, ref := range kustomization.Bases {
+
+	for _, ref := range kustomization.Bases { //nolint:staticcheck // Kustomize still accepts bases; copy local refs for parity.
 		appendLocalRef(ref)
 	}
 	for _, ref := range kustomization.Components {
@@ -214,12 +214,12 @@ func referencedKustomizeWorkspacePaths(dir string, kustomization types.Kustomiza
 	for _, patch := range kustomization.Patches {
 		appendLocalRef(patch.Path)
 	}
-	//nolint:staticcheck // Kustomize still accepts patchesJson6902; copy local refs for parity.
-	for _, patch := range kustomization.PatchesJson6902 {
+
+	for _, patch := range kustomization.PatchesJson6902 { //nolint:staticcheck // Kustomize still accepts patchesJson6902; copy local refs for parity.
 		appendLocalRef(patch.Path)
 	}
-	//nolint:staticcheck // Kustomize still accepts patchesStrategicMerge; copy local refs for parity.
-	for _, patch := range kustomization.PatchesStrategicMerge {
+
+	for _, patch := range kustomization.PatchesStrategicMerge { //nolint:staticcheck // Kustomize still accepts patchesStrategicMerge; copy local refs for parity.
 		ref := string(patch)
 		if !isInlineStrategicMergePatch(ref) {
 			appendLocalRef(ref)

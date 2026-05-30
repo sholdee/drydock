@@ -1,6 +1,7 @@
 package requestopts
 
 import (
+	"maps"
 	"time"
 
 	"github.com/sholdee/drydock/internal/app"
@@ -242,9 +243,7 @@ func cloneStringMap(input map[string]string) map[string]string {
 		return nil
 	}
 	out := make(map[string]string, len(input))
-	for key, value := range input {
-		out[key] = value
-	}
+	maps.Copy(out, input)
 	return out
 }
 

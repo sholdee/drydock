@@ -41,7 +41,7 @@ func redactedConfigMapBinaryDataBodies(from, to string) (string, string, error) 
 }
 
 func hasTopLevelBinaryDataMarker(body string) bool {
-	for _, line := range strings.Split(body, "\n") {
+	for line := range strings.SplitSeq(body, "\n") {
 		if line == "" || line[0] == ' ' || line[0] == '\t' {
 			continue
 		}

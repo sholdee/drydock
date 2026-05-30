@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/sholdee/drydock/internal/cacheevent"
@@ -102,21 +103,15 @@ func kustomizeGraphHasHelmCharts(graph []kustomizeGraphNode) bool {
 
 func hasAcquirableRemoteKustomizeGraphRefs(graph []kustomizeGraphNode) bool {
 	for _, node := range graph {
-		for _, resource := range node.Kustomization.Resources {
-			if isAcquirableRemoteKustomizeResource(resource) {
-				return true
-			}
+		if slices.ContainsFunc(node.Kustomization.Resources, isAcquirableRemoteKustomizeResource) {
+			return true
 		}
-		//nolint:staticcheck // Kustomize still accepts bases; scan it for remote refs.
-		for _, base := range node.Kustomization.Bases {
-			if isAcquirableRemoteKustomizeResource(base) {
-				return true
-			}
+
+		if slices.ContainsFunc(node.Kustomization.Bases, isAcquirableRemoteKustomizeResource) { //nolint:staticcheck // Kustomize still accepts bases; scan it for remote refs.
+			return true
 		}
-		for _, component := range node.Kustomization.Components {
-			if isAcquirableRemoteKustomizeResource(component) {
-				return true
-			}
+		if slices.ContainsFunc(node.Kustomization.Components, isAcquirableRemoteKustomizeResource) {
+			return true
 		}
 		if hasAcquirableRemoteKustomizePathRefs(node.Kustomization) {
 			return true
@@ -130,30 +125,20 @@ func hasAcquirableRemoteKustomizePathRefs(kustomization types.Kustomization) boo
 	if isAcquirableRemoteKustomizePathRef(kustomization.OpenAPI["path"]) {
 		return true
 	}
-	for _, ref := range kustomization.Configurations {
-		if isAcquirableRemoteKustomizePathRef(ref) {
-			return true
-		}
+	if slices.ContainsFunc(kustomization.Configurations, isAcquirableRemoteKustomizePathRef) {
+		return true
 	}
-	for _, ref := range kustomization.Generators {
-		if isAcquirableRemoteKustomizePathRef(ref) {
-			return true
-		}
+	if slices.ContainsFunc(kustomization.Generators, isAcquirableRemoteKustomizePathRef) {
+		return true
 	}
-	for _, ref := range kustomization.Transformers {
-		if isAcquirableRemoteKustomizePathRef(ref) {
-			return true
-		}
+	if slices.ContainsFunc(kustomization.Transformers, isAcquirableRemoteKustomizePathRef) {
+		return true
 	}
-	for _, ref := range kustomization.Validators {
-		if isAcquirableRemoteKustomizePathRef(ref) {
-			return true
-		}
+	if slices.ContainsFunc(kustomization.Validators, isAcquirableRemoteKustomizePathRef) {
+		return true
 	}
-	for _, ref := range kustomization.Crds {
-		if isAcquirableRemoteKustomizePathRef(ref) {
-			return true
-		}
+	if slices.ContainsFunc(kustomization.Crds, isAcquirableRemoteKustomizePathRef) {
+		return true
 	}
 	for _, replacement := range kustomization.Replacements {
 		if isAcquirableRemoteKustomizePathRef(replacement.Path) {
@@ -165,14 +150,14 @@ func hasAcquirableRemoteKustomizePathRefs(kustomization types.Kustomization) boo
 			return true
 		}
 	}
-	//nolint:staticcheck // Kustomize still accepts patchesJson6902; scan it for remote refs.
-	for _, patch := range kustomization.PatchesJson6902 {
+
+	for _, patch := range kustomization.PatchesJson6902 { //nolint:staticcheck // Kustomize still accepts patchesJson6902; scan it for remote refs.
 		if isAcquirableRemoteKustomizePathRef(patch.Path) {
 			return true
 		}
 	}
-	//nolint:staticcheck // Kustomize still accepts patchesStrategicMerge; scan it for remote refs.
-	for _, patch := range kustomization.PatchesStrategicMerge {
+
+	for _, patch := range kustomization.PatchesStrategicMerge { //nolint:staticcheck // Kustomize still accepts patchesStrategicMerge; scan it for remote refs.
 		ref := string(patch)
 		if !isInlineStrategicMergePatch(ref) && isAcquirableRemoteKustomizePathRef(ref) {
 			return true
@@ -197,10 +182,8 @@ func hasAcquirableRemoteGeneratorRefs(sources types.KvPairSources) bool {
 			return true
 		}
 	}
-	for _, source := range sources.EnvSources {
-		if isAcquirableRemoteKustomizePathRef(source) {
-			return true
-		}
+	if slices.ContainsFunc(sources.EnvSources, isAcquirableRemoteKustomizePathRef) {
+		return true
 	}
 	return isAcquirableRemoteKustomizePathRef(sources.EnvSource)
 }

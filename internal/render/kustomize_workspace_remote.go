@@ -7,6 +7,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/sholdee/drydock/internal/cacheevent"
@@ -203,7 +204,7 @@ func rawKustomizeRemoteQueryValues(ref, key string) []string {
 	}
 	rawQuery, _, _ = strings.Cut(rawQuery, "#")
 	var out []string
-	for _, part := range strings.Split(rawQuery, "&") {
+	for part := range strings.SplitSeq(rawQuery, "&") {
 		rawKey, rawValue, hasValue := strings.Cut(part, "=")
 		decodedKey, err := url.QueryUnescape(rawKey)
 		if err != nil || decodedKey != key || !hasValue {
@@ -376,12 +377,7 @@ func isColonStyleKustomizeRemoteRef(ref string) bool {
 }
 
 func isKnownGitHost(host string) bool {
-	for _, known := range []string{"github.com", "gitlab.com", "bitbucket.org"} {
-		if host == known {
-			return true
-		}
-	}
-	return false
+	return slices.Contains([]string{"github.com", "gitlab.com", "bitbucket.org"}, host)
 }
 
 func looksLikeRemoteHost(host string) bool {

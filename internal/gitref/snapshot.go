@@ -168,16 +168,9 @@ func materializeTreeParallelism(fileCount int) int {
 	if fileCount <= 1 {
 		return fileCount
 	}
-	workers := runtime.GOMAXPROCS(0)
-	if workers < 1 {
-		workers = 1
-	}
-	if workers > maxMaterializeTreeWorkers {
-		workers = maxMaterializeTreeWorkers
-	}
-	if workers > fileCount {
-		workers = fileCount
-	}
+	workers := max(runtime.GOMAXPROCS(0), 1)
+	workers = min(workers, maxMaterializeTreeWorkers)
+	workers = min(workers, fileCount)
 	return workers
 }
 

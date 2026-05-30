@@ -435,7 +435,7 @@ func redactGitCredentialError(message string, credentials GitCredentials) string
 		message = strings.ReplaceAll(message, secret, "[redacted]")
 	}
 	if credentials.SSHPrivateKey != "" {
-		for _, line := range strings.Split(credentials.SSHPrivateKey, "\n") {
+		for line := range strings.SplitSeq(credentials.SSHPrivateKey, "\n") {
 			line = strings.TrimSpace(line)
 			if line == "" {
 				continue

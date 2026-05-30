@@ -2,6 +2,7 @@ package appset
 
 import (
 	"fmt"
+	"maps"
 	"os"
 	"path"
 	"path/filepath"
@@ -282,9 +283,7 @@ func gitFileParams(repoRoot, rel, prefix string, values map[string]string, useGo
 	for _, fileValues := range fileObjects {
 		params := map[string]any{}
 		if useGoTemplate {
-			for key, value := range fileValues {
-				params[key] = value
-			}
+			maps.Copy(params, fileValues)
 			addGoTemplateFilePathParams(params, rel, prefix)
 		} else {
 			flattenParams("", fileValues, params)

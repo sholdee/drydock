@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	argoappv1 "github.com/argoproj/argo-cd/v3/pkg/apis/application/v1alpha1"
@@ -268,8 +269,8 @@ func resolveDiffRequestPaths(ctx context.Context, request DiffRequest, computeCh
 	var cleanups []func() error
 	cleanup := func() error {
 		var err error
-		for i := len(cleanups) - 1; i >= 0; i-- {
-			err = errors.Join(err, cleanups[i]())
+		for _, v := range slices.Backward(cleanups) {
+			err = errors.Join(err, v())
 		}
 		return err
 	}

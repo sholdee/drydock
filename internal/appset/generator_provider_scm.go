@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
+	"slices"
 	"strings"
 
 	appsetutils "github.com/argoproj/argo-cd/v3/applicationset/utils"
@@ -303,13 +304,7 @@ func scmRepositoryMatchesLabelFilter(input SCMRepositoryInput, filter argoappv1.
 		if err != nil {
 			return false, fmt.Errorf("labelMatch %q: %w", *filter.LabelMatch, err)
 		}
-		found := false
-		for _, label := range input.Labels {
-			if labelRE.MatchString(label) {
-				found = true
-				break
-			}
-		}
+		found := slices.ContainsFunc(input.Labels, labelRE.MatchString)
 		if !found {
 			return false, nil
 		}

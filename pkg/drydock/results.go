@@ -1,6 +1,8 @@
 package drydock
 
 import (
+	"maps"
+
 	argoappv1 "github.com/argoproj/argo-cd/v3/pkg/apis/application/v1alpha1"
 	"github.com/sholdee/drydock/internal/app"
 	"github.com/sholdee/drydock/internal/cacheevent"
@@ -314,9 +316,7 @@ func cloneStringMap(input map[string]string) map[string]string {
 		return nil
 	}
 	out := make(map[string]string, len(input))
-	for key, value := range input {
-		out[key] = value
-	}
+	maps.Copy(out, input)
 	return out
 }
 

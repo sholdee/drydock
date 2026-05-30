@@ -90,7 +90,7 @@ func rejectLocalSymlinkComponents(repoRoot, sourcePath string) error {
 	}
 
 	current := filepath.Clean(repoRoot)
-	for _, component := range strings.Split(sourcePath, string(filepath.Separator)) {
+	for component := range strings.SplitSeq(sourcePath, string(filepath.Separator)) {
 		if component == "" || component == "." {
 			continue
 		}
