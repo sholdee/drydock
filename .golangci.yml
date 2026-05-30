@@ -5,13 +5,18 @@ run:
 
 linters:
   enable:
+    - asciicheck
+    - bidichk
     - bodyclose
+    - canonicalheader
     - copyloopvar
     - dupword
     - durationcheck
     - errcheck
+    - errchkjson
     - errorlint
     - exhaustive
+    - gocheckcompilerdirectives
     - gocritic
     - gocyclo
     - govet
@@ -19,14 +24,18 @@ linters:
     - intrange
     - misspell
     - modernize
+    - makezero
     - nakedret
     - nilerr
+    - nilnesserr
     - nilnil
     - nolintlint
     - prealloc
+    - reassign
     - staticcheck
     - unconvert
     - unused
+    - usetesting
     - usestdlibvars
     - wastedassign
     - whitespace
