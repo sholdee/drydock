@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -1693,12 +1694,7 @@ metadata:
 }
 
 func containsString(items []string, want string) bool {
-	for _, item := range items {
-		if item == want {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(items, want)
 }
 
 func diffResultText(results []diff.Result) string {
@@ -1749,10 +1745,8 @@ func checkoutDiffGitBranch(t *testing.T, wt *git.Worktree, name string) {
 
 func requireStringInSlice(t *testing.T, values []string, want string) {
 	t.Helper()
-	for _, value := range values {
-		if value == want {
-			return
-		}
+	if slices.Contains(values, want) {
+		return
 	}
 	t.Fatalf("values = %#v, want %q", values, want)
 }

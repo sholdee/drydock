@@ -12,7 +12,7 @@ func TestDiffApplications(t *testing.T) {
 	result, err := DiffApplications(context.Background(), Config{
 		PathOrig:    left,
 		Path:        right,
-		ChangedOnly: boolPtr(false),
+		ChangedOnly: new(false),
 	})
 	if err != nil {
 		t.Fatalf("DiffApplications() error = %v", err)
@@ -31,7 +31,7 @@ func TestDiffApplicationsShowIgnoredFields(t *testing.T) {
 	defaultResult, err := DiffApplications(context.Background(), Config{
 		PathOrig:    left,
 		Path:        right,
-		ChangedOnly: boolPtr(false),
+		ChangedOnly: new(false),
 	})
 	if err != nil {
 		t.Fatalf("DiffApplications(default) error = %v", err)
@@ -43,7 +43,7 @@ func TestDiffApplicationsShowIgnoredFields(t *testing.T) {
 	result, err := DiffApplications(context.Background(), Config{
 		PathOrig:          left,
 		Path:              right,
-		ChangedOnly:       boolPtr(false),
+		ChangedOnly:       new(false),
 		ShowIgnoredFields: true,
 	})
 	if err != nil {
@@ -63,7 +63,7 @@ func TestPublicDiffApplicationsParallelismPreservesResults(t *testing.T) {
 	result, err := DiffApplications(context.Background(), Config{
 		PathOrig:    left,
 		Path:        right,
-		ChangedOnly: boolPtr(false),
+		ChangedOnly: new(false),
 		Parallelism: 2,
 	})
 	if err != nil {
@@ -88,7 +88,7 @@ func TestPublicDiffApplicationsRefOrig(t *testing.T) {
 		Path:        root,
 		Repo:        root,
 		RefOrig:     "HEAD",
-		ChangedOnly: boolPtr(false),
+		ChangedOnly: new(false),
 	})
 	if err != nil {
 		t.Fatalf("DiffApplications() error = %v", err)
@@ -115,7 +115,7 @@ func TestPublicDiffApplicationsRefAndRefOrig(t *testing.T) {
 		Repo:        root,
 		RefOrig:     "master",
 		Ref:         "feature",
-		ChangedOnly: boolPtr(false),
+		ChangedOnly: new(false),
 	})
 	if err != nil {
 		t.Fatalf("DiffApplications() error = %v", err)
@@ -140,7 +140,7 @@ func TestDiffImages(t *testing.T) {
 	result, err := DiffImages(context.Background(), Config{
 		PathOrig:    left,
 		Path:        right,
-		ChangedOnly: boolPtr(false),
+		ChangedOnly: new(false),
 	})
 	if err != nil {
 		t.Fatalf("DiffImages() error = %v", err)
@@ -158,7 +158,7 @@ func TestPublicDiffImagesParallelismPreservesResults(t *testing.T) {
 	result, err := DiffImages(context.Background(), Config{
 		PathOrig:    left,
 		Path:        right,
-		ChangedOnly: boolPtr(false),
+		ChangedOnly: new(false),
 		Parallelism: 2,
 	})
 	if err != nil {

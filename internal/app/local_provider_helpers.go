@@ -1,6 +1,10 @@
 package app
 
 import (
+	"maps"
+
+	"slices"
+
 	"github.com/sholdee/drydock/internal/cacheevent"
 	"github.com/sholdee/drydock/internal/render"
 )
@@ -10,9 +14,7 @@ func cloneStringMap(in map[string]string) map[string]string {
 		return map[string]string{}
 	}
 	out := make(map[string]string, len(in))
-	for key, value := range in {
-		out[key] = value
-	}
+	maps.Copy(out, in)
 	return out
 }
 
@@ -21,9 +23,7 @@ func cloneResolvedSourceMap(in map[string]render.ResolvedSource) map[string]rend
 		return map[string]render.ResolvedSource{}
 	}
 	out := make(map[string]render.ResolvedSource, len(in))
-	for key, value := range in {
-		out[key] = value
-	}
+	maps.Copy(out, in)
 	return out
 }
 
@@ -31,10 +31,8 @@ func appendUniqueString(values []string, value string) []string {
 	if value == "" {
 		return values
 	}
-	for _, existing := range values {
-		if existing == value {
-			return values
-		}
+	if slices.Contains(values, value) {
+		return values
 	}
 	return append(values, value)
 }

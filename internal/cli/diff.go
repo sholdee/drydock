@@ -282,8 +282,8 @@ func colorizeDiffLine(line string, color bool) string {
 	}
 	body := line
 	trailingNewline := ""
-	if strings.HasSuffix(body, "\n") {
-		body = strings.TrimSuffix(body, "\n")
+	if before, ok := strings.CutSuffix(body, "\n"); ok {
+		body = before
 		trailingNewline = "\n"
 	}
 	if body == "" {

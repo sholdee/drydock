@@ -166,8 +166,8 @@ func validateWorkspacePatchRefs(boundaryRoot, dir string, kustomization *types.K
 			return err
 		}
 	}
-	//nolint:staticcheck // Kustomize still accepts patchesJson6902; validate it to block unsafe refs.
-	for _, patch := range kustomization.PatchesJson6902 {
+
+	for _, patch := range kustomization.PatchesJson6902 { //nolint:staticcheck // Kustomize still accepts patchesJson6902; validate it to block unsafe refs.
 		if patch.Path == "" {
 			continue
 		}
@@ -175,8 +175,8 @@ func validateWorkspacePatchRefs(boundaryRoot, dir string, kustomization *types.K
 			return err
 		}
 	}
-	//nolint:staticcheck // Kustomize still accepts patchesStrategicMerge; validate it to block unsafe refs.
-	for _, patch := range kustomization.PatchesStrategicMerge {
+
+	for _, patch := range kustomization.PatchesStrategicMerge { //nolint:staticcheck // Kustomize still accepts patchesStrategicMerge; validate it to block unsafe refs.
 		path := string(patch)
 		if isInlineStrategicMergePatch(path) {
 			continue
@@ -244,7 +244,7 @@ func rejectSymlinkedPath(root, path string) error {
 	}
 
 	current := filepath.Clean(root)
-	for _, component := range strings.Split(rel, string(filepath.Separator)) {
+	for component := range strings.SplitSeq(rel, string(filepath.Separator)) {
 		current = filepath.Join(current, component)
 		info, err := os.Lstat(current)
 		if err != nil {

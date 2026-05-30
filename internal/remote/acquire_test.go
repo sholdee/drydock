@@ -289,6 +289,7 @@ func TestDefaultRemoteAcquirerWritesHTTPMetadata(t *testing.T) {
 	}
 	if metadata == nil {
 		t.Fatal("metadata = nil, want metadata")
+		return
 	}
 	if metadata.Target != request.URL {
 		t.Fatalf("Target = %q, want %q", metadata.Target, request.URL)

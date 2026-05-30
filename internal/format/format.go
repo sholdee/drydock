@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"maps"
 	"sort"
 	"strings"
 	"text/tabwriter"
@@ -112,9 +113,7 @@ func cloneTableRows(rows []map[string]string) []map[string]string {
 	out := make([]map[string]string, len(rows))
 	for i, row := range rows {
 		cloned := make(map[string]string, len(row))
-		for key, value := range row {
-			cloned[key] = value
-		}
+		maps.Copy(cloned, row)
 		out[i] = cloned
 	}
 	return out

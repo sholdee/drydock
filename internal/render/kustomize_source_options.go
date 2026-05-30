@@ -2,6 +2,7 @@ package render
 
 import (
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
 	"strings"
@@ -85,9 +86,7 @@ func applySourceKustomizeOptions(kustomization *types.Kustomization, dir, bounda
 		if kustomization.CommonAnnotations == nil {
 			kustomization.CommonAnnotations = map[string]string{}
 		}
-		for key, value := range annotations {
-			kustomization.CommonAnnotations[key] = value
-		}
+		maps.Copy(kustomization.CommonAnnotations, annotations)
 	}
 	if len(kustomize.Patches) != 0 {
 		kustomization.Patches = append(kustomization.Patches, sourceKustomizePatches(kustomize.Patches)...)
@@ -201,9 +200,8 @@ func upsertReplicas(existing, overrides []types.Replica) []types.Replica {
 	return out
 }
 
-//nolint:staticcheck // CommonLabels remains part of the Kustomize API and Argo CD source override semantics.
 func applySourceKustomizeLabels(kustomization *types.Kustomization, labels map[string]string, kustomize *argoappv1.ApplicationSourceKustomize) error {
-	if err := mergeStringMap(kustomization.CommonLabels, labels, kustomize.ForceCommonLabels, "common label"); err != nil {
+	if err := mergeStringMap(kustomization.CommonLabels, labels, kustomize.ForceCommonLabels, "common label"); err != nil { //nolint:staticcheck // CommonLabels remains part of Argo CD source override semantics.
 		return err
 	}
 	for _, existing := range kustomization.Labels {
@@ -219,12 +217,10 @@ func applySourceKustomizeLabels(kustomization *types.Kustomization, labels map[s
 		})
 		return nil
 	}
-	if kustomization.CommonLabels == nil {
-		kustomization.CommonLabels = map[string]string{}
+	if kustomization.CommonLabels == nil { //nolint:staticcheck // CommonLabels remains part of Argo CD source override semantics.
+		kustomization.CommonLabels = map[string]string{} //nolint:staticcheck // CommonLabels remains part of Argo CD source override semantics.
 	}
-	for key, value := range labels {
-		kustomization.CommonLabels[key] = value
-	}
+	maps.Copy(kustomization.CommonLabels, labels) //nolint:staticcheck // CommonLabels remains part of Argo CD source override semantics.
 	return nil
 }
 
@@ -250,9 +246,7 @@ func envsubstStringMap(in map[string]string, env argoappv1.Env) map[string]strin
 
 func cloneStringMap(in map[string]string) map[string]string {
 	out := make(map[string]string, len(in))
-	for key, value := range in {
-		out[key] = value
-	}
+	maps.Copy(out, in)
 	return out
 }
 

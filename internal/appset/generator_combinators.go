@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 
 	"dario.cat/mergo"
 	appsetutils "github.com/argoproj/argo-cd/v3/applicationset/utils"
@@ -292,8 +293,6 @@ func mergeParams(base, override map[string]any, useGoTemplate bool) (map[string]
 		}
 		return out, nil
 	}
-	for key, value := range override {
-		out[key] = value
-	}
+	maps.Copy(out, override)
 	return out, nil
 }

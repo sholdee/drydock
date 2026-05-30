@@ -133,7 +133,7 @@ func readGitHubOutput(t *testing.T, path string) map[string]string {
 		t.Fatalf("read GITHUB_OUTPUT: %v", err)
 	}
 	outputs := make(map[string]string)
-	for _, line := range strings.Split(string(data), "\n") {
+	for line := range strings.SplitSeq(string(data), "\n") {
 		key, value, ok := strings.Cut(line, "=")
 		if !ok {
 			continue

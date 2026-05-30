@@ -983,7 +983,7 @@ data:
 
 func indentLua(lua string) string {
 	var out strings.Builder
-	for _, line := range strings.Split(lua, "\n") {
+	for line := range strings.SplitSeq(lua, "\n") {
 		out.WriteString("    ")
 		out.WriteString(line)
 		out.WriteByte('\n')

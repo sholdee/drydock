@@ -38,6 +38,7 @@ func TestWriteMetadataGoldenRedactsTarget(t *testing.T) {
 	}
 	if read == nil {
 		t.Fatal("ReadMetadata() = nil, want metadata")
+		return
 	}
 	if read.Target != "https://example.test/repo.git" {
 		t.Fatalf("ReadMetadata().Target = %q, want redacted target", read.Target)

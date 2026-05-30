@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -448,8 +449,8 @@ func resolvePathForContainment(targetPath string) (string, error) {
 	for {
 		resolved, err := filepath.EvalSymlinks(current)
 		if err == nil {
-			for i := len(missing) - 1; i >= 0; i-- {
-				resolved = filepath.Join(resolved, missing[i])
+			for _, v := range slices.Backward(missing) {
+				resolved = filepath.Join(resolved, v)
 			}
 			return filepath.Clean(resolved), nil
 		}

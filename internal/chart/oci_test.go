@@ -195,14 +195,14 @@ func TestHelmOCIPullerDoesNotReadCallerDockerCredentials(t *testing.T) {
 	const secret = "secret-password"
 	callerDockerConfig := t.TempDir()
 	auth := base64.StdEncoding.EncodeToString([]byte("user:" + secret))
-	if err := os.WriteFile(filepath.Join(callerDockerConfig, "config.json"), []byte(fmt.Sprintf(`{
+	if err := os.WriteFile(filepath.Join(callerDockerConfig, "config.json"), fmt.Appendf(nil, `{
   "auths": {
     "registry.example.test": {
       "auth": %q
     }
   }
 }
-`, auth)), 0o600); err != nil {
+`, auth), 0o600); err != nil {
 		t.Fatalf("write caller Docker config: %v", err)
 	}
 	t.Setenv("DOCKER_CONFIG", callerDockerConfig)

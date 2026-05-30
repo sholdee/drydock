@@ -122,6 +122,7 @@ entries:
 	}
 	if metadata == nil {
 		t.Fatal("metadata = nil, want metadata")
+		return
 	}
 	if strings.Contains(metadata.Target, "secret") || strings.Contains(metadata.Target, "?") || strings.Contains(metadata.Target, "#") {
 		t.Fatalf("metadata Target = %q, want redacted target", metadata.Target)

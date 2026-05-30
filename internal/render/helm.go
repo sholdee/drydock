@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"maps"
 	"os"
 	"path"
 	"path/filepath"
@@ -241,7 +242,7 @@ func shouldSkipHelmDocument(obj *unstructured.Unstructured, opts RenderOptions) 
 	if !opts.SkipTests {
 		return false
 	}
-	for _, part := range strings.Split(hook, ",") {
+	for part := range strings.SplitSeq(hook, ",") {
 		switch strings.TrimSpace(part) {
 		case "test", "test-success", "test-failure":
 			return true
@@ -265,9 +266,7 @@ func applyAVPCompatToHelmValues(values map[string]any, opts RenderOptions) []dia
 	for key := range values {
 		delete(values, key)
 	}
-	for key, value := range replacedMap {
-		values[key] = value
-	}
+	maps.Copy(values, replacedMap)
 	if opts.QuietAVPCompat {
 		return nil
 	}

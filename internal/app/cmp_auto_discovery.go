@@ -3,6 +3,7 @@ package app
 import (
 	"fmt"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 
@@ -117,10 +118,8 @@ func cleanCMPDiscoveryPattern(pattern string) (string, bool) {
 	if pattern == "" || filepath.IsAbs(pattern) {
 		return "", false
 	}
-	for _, part := range strings.Split(pattern, string(filepath.Separator)) {
-		if part == ".." {
-			return "", false
-		}
+	if slices.Contains(strings.Split(pattern, string(filepath.Separator)), "..") {
+		return "", false
 	}
 	clean := filepath.Clean(pattern)
 	if clean == "." || pathsafety.RelEscapes(clean) {

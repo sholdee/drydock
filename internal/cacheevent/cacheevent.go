@@ -305,7 +305,7 @@ func (c *variantCollector) addURLVariants(prefix string, rawURL string) {
 
 func parsedURLBases(parsed url.URL) []url.URL {
 	baseURLs := []url.URL{parsed}
-	if strippedPath := strings.TrimSuffix(parsed.Path, ".git"); strippedPath != parsed.Path {
+	if strippedPath, ok := strings.CutSuffix(parsed.Path, ".git"); ok {
 		stripped := parsed
 		stripped.Path = strippedPath
 		baseURLs = append(baseURLs, stripped)
@@ -379,7 +379,7 @@ func (c *variantCollector) addRawQueryAndFragment(raw string) {
 }
 
 func (c *variantCollector) addRawQueryValues(rawQuery string) {
-	for _, rawPart := range strings.Split(rawQuery, "&") {
+	for rawPart := range strings.SplitSeq(rawQuery, "&") {
 		_, rawValue, ok := strings.Cut(rawPart, "=")
 		if ok {
 			c.add(rawValue)

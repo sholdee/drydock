@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	argoappv1 "github.com/argoproj/argo-cd/v3/pkg/apis/application/v1alpha1"
@@ -165,8 +166,8 @@ func (i *boundedJsonnetImporter) importCandidates(importedFrom, importedPath str
 		seen[candidate] = true
 	}
 
-	for idx := len(i.roots) - 1; idx >= 0; idx-- {
-		root := i.roots[idx]
+	for _, v := range slices.Backward(i.roots) {
+		root := v
 		candidate := filepath.Clean(filepath.Join(root, importPath))
 		if err := rejectPathOutsideBoundary("jsonnet import", candidate, root); err != nil {
 			if len(candidates) == 0 {

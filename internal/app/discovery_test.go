@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"sync/atomic"
@@ -469,9 +470,9 @@ metadata:
   name: child
 `)
 
-	var calls int32
+	var calls atomic.Int32
 	renderer := internalPluginRendererFunc(func(_ context.Context, _ render.PluginRequest) ([]render.Manifest, []diagnostic.Diagnostic, error) {
-		atomic.AddInt32(&calls, 1)
+		calls.Add(1)
 		return []render.Manifest{{
 			Path: "templates/child.yaml",
 			Object: &unstructured.Unstructured{Object: map[string]any{
@@ -506,7 +507,7 @@ metadata:
 	if err != nil {
 		t.Fatalf("Build() error = %v", err)
 	}
-	if got := atomic.LoadInt32(&calls); got != 1 {
+	if got := calls.Load(); got != 1 {
 		t.Fatalf("plugin render calls = %d, want discovery result reused for final render", got)
 	}
 	if names := applicationNames(result.Applications); strings.Join(names, ",") != "child,root" {
@@ -718,10 +719,5 @@ func applicationInputPaths(inputs []ApplicationSelectionInput, name string) ([]s
 }
 
 func containsPath(values []string, want string) bool {
-	for _, value := range values {
-		if value == want {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(values, want)
 }

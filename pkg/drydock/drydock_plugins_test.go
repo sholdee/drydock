@@ -143,7 +143,7 @@ func TestDiffApplicationsPluginRendererHonorsConfiguredTimeout(t *testing.T) {
 	result, err := DiffApplications(context.Background(), Config{
 		PathOrig:       left,
 		Path:           right,
-		ChangedOnly:    boolPtr(false),
+		ChangedOnly:    new(false),
 		PluginRenderer: blockingPublicPluginRenderer{},
 		PluginTimeout:  time.Nanosecond,
 	})
@@ -164,7 +164,7 @@ func TestDiffImagesPluginRendererHonorsConfiguredTimeout(t *testing.T) {
 	result, err := DiffImages(context.Background(), Config{
 		PathOrig:       left,
 		Path:           right,
-		ChangedOnly:    boolPtr(false),
+		ChangedOnly:    new(false),
 		PluginRenderer: blockingPublicPluginRenderer{},
 		PluginTimeout:  time.Nanosecond,
 	})
@@ -187,7 +187,7 @@ func TestDiffApplicationsReturnsResultsFromSuccessfulAppsWithPluginFailure(t *te
 	result, err := DiffApplications(context.Background(), Config{
 		PathOrig:       left,
 		Path:           right,
-		ChangedOnly:    boolPtr(false),
+		ChangedOnly:    new(false),
 		PluginRenderer: failingPublicPluginRenderer{},
 	})
 	if err == nil {
@@ -215,7 +215,7 @@ func TestDiffImagesReturnsResultsFromSuccessfulAppsWithPluginFailure(t *testing.
 	result, err := DiffImages(context.Background(), Config{
 		PathOrig:       left,
 		Path:           right,
-		ChangedOnly:    boolPtr(false),
+		ChangedOnly:    new(false),
 		PluginRenderer: failingPublicPluginRenderer{},
 	})
 	if err == nil {
@@ -342,7 +342,7 @@ func TestDiffApplicationsUsesInjectedPluginRenderer(t *testing.T) {
 	result, err := DiffApplications(context.Background(), Config{
 		PathOrig:       left,
 		Path:           right,
-		ChangedOnly:    boolPtr(false),
+		ChangedOnly:    new(false),
 		PluginRenderer: renderer,
 	})
 	if err != nil {
@@ -381,7 +381,7 @@ func TestDiffImagesUsesInjectedPluginRenderer(t *testing.T) {
 	result, err := DiffImages(context.Background(), Config{
 		PathOrig:       left,
 		Path:           right,
-		ChangedOnly:    boolPtr(false),
+		ChangedOnly:    new(false),
 		PluginRenderer: renderer,
 	})
 	if err != nil {

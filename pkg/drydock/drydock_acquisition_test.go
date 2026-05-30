@@ -48,7 +48,7 @@ metadata:
 	result, err := DiffApplications(context.Background(), Config{
 		PathOrig:          left,
 		Path:              right,
-		ChangedOnly:       boolPtr(false),
+		ChangedOnly:       new(false),
 		RecordCacheEvents: true,
 		ChartAcquirer:     &recordingChartAcquirer{chartDir: chartDir, fromCache: true},
 	})
@@ -92,7 +92,7 @@ spec:
 	result, err := DiffImages(context.Background(), Config{
 		PathOrig:          left,
 		Path:              right,
-		ChangedOnly:       boolPtr(false),
+		ChangedOnly:       new(false),
 		RecordCacheEvents: true,
 		ChartAcquirer:     &recordingChartAcquirer{chartDir: chartDir, fromCache: true},
 	})

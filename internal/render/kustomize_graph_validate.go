@@ -191,8 +191,8 @@ func (v *kustomizeGraphValidator) validateOperandRefs(ctx context.Context, dir s
 			return err
 		}
 	}
-	//nolint:staticcheck // Kustomize still accepts bases; validate it to block unsafe refs.
-	for _, base := range kustomization.Bases {
+
+	for _, base := range kustomization.Bases { //nolint:staticcheck // Kustomize still accepts bases; validate it to block unsafe refs.
 		if err := v.validateKustomizationRef(ctx, dir, "bases", base, childInheritedHelmNamespace); err != nil {
 			return err
 		}
@@ -256,8 +256,8 @@ func (v *kustomizeGraphValidator) validatePatchRefs(dir string, kustomization *t
 			return err
 		}
 	}
-	//nolint:staticcheck // Kustomize still accepts patchesJson6902; validate it to block unsafe refs.
-	for _, patch := range kustomization.PatchesJson6902 {
+
+	for _, patch := range kustomization.PatchesJson6902 { //nolint:staticcheck // Kustomize still accepts patchesJson6902; validate it to block unsafe refs.
 		if patch.Path == "" {
 			continue
 		}
@@ -265,8 +265,8 @@ func (v *kustomizeGraphValidator) validatePatchRefs(dir string, kustomization *t
 			return err
 		}
 	}
-	//nolint:staticcheck // Kustomize still accepts patchesStrategicMerge; validate it to block unsafe refs.
-	for _, patch := range kustomization.PatchesStrategicMerge {
+
+	for _, patch := range kustomization.PatchesStrategicMerge { //nolint:staticcheck // Kustomize still accepts patchesStrategicMerge; validate it to block unsafe refs.
 		path := string(patch)
 		if isInlineStrategicMergePatch(path) {
 			continue

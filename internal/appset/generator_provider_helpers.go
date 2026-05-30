@@ -1,6 +1,7 @@
 package appset
 
 import (
+	"slices"
 	"strings"
 )
 
@@ -64,12 +65,7 @@ func providerProjectFromPR(input PullRequestInput) string {
 }
 
 func stringSliceContains(values []string, value string) bool {
-	for _, candidate := range values {
-		if candidate == value {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(values, value)
 }
 
 func shortString(value string, limit int) string {

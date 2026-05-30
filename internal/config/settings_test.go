@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -1254,7 +1255,7 @@ func TestLoadRepositorySecretDataParsesEnableOCI(t *testing.T) {
 	encoded := func(value string) string {
 		return base64.StdEncoding.EncodeToString([]byte(value))
 	}
-	if err := os.WriteFile(path, []byte(fmt.Sprintf(`apiVersion: v1
+	if err := os.WriteFile(path, fmt.Appendf(nil, `apiVersion: v1
 kind: Secret
 metadata:
   name: charts
@@ -1265,7 +1266,7 @@ data:
   type: %s
   url: %s
   enableOCI: %s
-`, encoded("charts"), encoded("helm"), encoded("ghcr.io/example/charts"), encoded("true"))), 0o600); err != nil {
+`, encoded("charts"), encoded("helm"), encoded("ghcr.io/example/charts"), encoded("true")), 0o600); err != nil {
 		t.Fatalf("WriteFile() error = %v", err)
 	}
 
@@ -1722,12 +1723,7 @@ func TestMergeCompareOptionsIgnoresProvenance(t *testing.T) {
 }
 
 func containsString(values []string, want string) bool {
-	for _, value := range values {
-		if value == want {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(values, want)
 }
 
 func assertValueStrings(t *testing.T, got []Value[string], want []string) {

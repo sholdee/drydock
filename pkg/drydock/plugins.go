@@ -3,6 +3,7 @@ package drydock
 import (
 	"context"
 	"fmt"
+	"maps"
 	"strings"
 
 	argoappv1 "github.com/argoproj/argo-cd/v3/pkg/apis/application/v1alpha1"
@@ -216,9 +217,7 @@ func pluginManifestsToInternal(manifests []PluginManifest) []renderpkg.Manifest 
 
 func cloneStringMapPresent(input map[string]string) map[string]string {
 	out := make(map[string]string, len(input))
-	for key, value := range input {
-		out[key] = value
-	}
+	maps.Copy(out, input)
 	return out
 }
 

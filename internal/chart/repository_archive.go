@@ -9,6 +9,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"slices"
 	"strings"
 )
 
@@ -61,10 +62,8 @@ func safeChartArchivePath(name, chartName string) (string, error) {
 	if name == "" || path.IsAbs(normalized) || filepath.IsAbs(name) {
 		return "", fmt.Errorf("unsafe chart archive path %q", name)
 	}
-	for _, segment := range strings.Split(normalized, "/") {
-		if segment == ".." {
-			return "", fmt.Errorf("unsafe chart archive path %q", name)
-		}
+	if slices.Contains(strings.Split(normalized, "/"), "..") {
+		return "", fmt.Errorf("unsafe chart archive path %q", name)
 	}
 	cleaned := path.Clean(normalized)
 	if cleaned == "." || cleaned == ".." || strings.HasPrefix(cleaned, "../") {
