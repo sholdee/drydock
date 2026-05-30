@@ -24,8 +24,8 @@ func unified(doc Document, from, to string, opts Options) (string, error) {
 	return diff, nil
 }
 func displayBodies(doc Document, from, to string) (string, string, error) {
-	if doc.Resource.Kind != "Secret" {
-		return from, to, nil
+	if doc.Resource.Kind == "Secret" {
+		return redactedSecretBodies(from, to)
 	}
-	return redactedSecretBodies(from, to)
+	return from, to, nil
 }
