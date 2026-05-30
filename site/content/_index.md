@@ -2,11 +2,16 @@
 title: drydock
 ---
 
-Validate Argo CD pull requests before they sync.
+Inspect your Argo CD fleet without getting wet.
 
-drydock renders desired manifests before Argo CD sees them, catches render
-failures early, reviews manifest and image diffs, and runs in CI without
-Kubernetes credentials.
+drydock is a fast, single static Go binary and embeddable Go module for
+runtime-offline Argo CD desired-state analysis. It discovers, renders, tests,
+diffs, and diagnoses GitOps Applications with native Go renderers, no live
+cluster, no Argo CD server, and no default shellouts.
+
+Use it locally or in CI to review rendered manifest diffs, catch render
+failures, inspect image changes, and validate GitOps repositories before Argo CD
+syncs them.
 
 **[Get Started](/getting-started/)** | **[Set Up PR Checks](/workflows/github-actions/)**
 
