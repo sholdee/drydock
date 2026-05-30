@@ -372,7 +372,9 @@ fi
 if [[ "${diff_comment}" == "true" ]]; then
   if [[ ! -s "${diff_comment_path}" ]]; then
     {
-      echo "## drydock diff preview"
+      echo "## drydock desired state diff"
+      echo
+      echo "**Summary:** 0 apps, 0 resources, +0/-0."
       echo
       echo "No rendered manifest differences detected."
     } > "${diff_comment_path}"

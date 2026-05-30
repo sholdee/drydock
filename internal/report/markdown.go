@@ -62,7 +62,7 @@ func DiffMarkdown(result app.DiffResult, options MarkdownOptions) ([]byte, Markd
 		options.DiagnosticLimit = defaultDiagLimit
 	}
 	if strings.TrimSpace(options.Title) == "" {
-		options.Title = "drydock diff preview"
+		options.Title = "drydock desired state diff"
 	}
 
 	groups := groupedDiffs(result.Results)
@@ -71,8 +71,11 @@ func DiffMarkdown(result app.DiffResult, options MarkdownOptions) ([]byte, Markd
 	state.appendRequired(fmt.Sprintf("## %s\n\n", escapeMarkdownText(options.Title)))
 	state.appendRequired(summaryMarkdown(len(result.Results), len(groups), totalAdded, totalRemoved, result.Diagnostics))
 	state.appendBounded(diagnosticsMarkdown(result.Diagnostics, options.DiagnosticLimit))
-	state.appendBounded(changedAppsMarkdown(groups))
-	state.appendAppDetails(groups)
+	if len(groups) == 0 {
+		state.appendBounded(noDiffMarkdown())
+	} else {
+		state.appendAppDetails(groups)
+	}
 	state.appendBounded(omittedMarkdown(groups[state.shownApps:]))
 	state.appendBounded(statsMarkdown(state.truncated, state.shownApps, len(groups)))
 
@@ -229,8 +232,25 @@ func lineChanges(text string) (int, int) {
 
 func summaryMarkdown(results, apps, added, removed int, diagnostics []diagnostic.Diagnostic) string {
 	warnings, errors := diagnosticCounts(diagnostics)
-	return fmt.Sprintf("Summary:\n\n```yaml\nApplications changed: %d\nResources changed: %d\nLines: +%d/-%d\nDiagnostics: %d warnings, %d errors\n```\n\n",
-		apps, results, added, removed, warnings, errors)
+	parts := []string{
+		plural(apps, "app", "apps"),
+		plural(results, "resource", "resources"),
+		fmt.Sprintf("+%d/-%d", added, removed),
+	}
+	if warnings > 0 {
+		parts = append(parts, plural(warnings, "warning", "warnings"))
+	}
+	if errors > 0 {
+		parts = append(parts, plural(errors, "error", "errors"))
+	}
+	return fmt.Sprintf("**Summary:** %s.\n\n", strings.Join(parts, ", "))
+}
+
+func plural(count int, singular, multiple string) string {
+	if count == 1 {
+		return fmt.Sprintf("%d %s", count, singular)
+	}
+	return fmt.Sprintf("%d %s", count, multiple)
 }
 
 func diagnosticCounts(diagnostics []diagnostic.Diagnostic) (int, int) {
@@ -253,7 +273,7 @@ func diagnosticsMarkdown(diagnostics []diagnostic.Diagnostic, limit int) string 
 		return ""
 	}
 	var builder strings.Builder
-	builder.WriteString("Diagnostics:\n\n")
+	builder.WriteString("Diagnostics:\n")
 	shown := min(limit, len(diagnostics))
 	for _, diag := range diagnostics[:shown] {
 		builder.WriteString("- ")
@@ -283,22 +303,8 @@ func diagnosticsMarkdown(diagnostics []diagnostic.Diagnostic, limit int) string 
 	return builder.String()
 }
 
-func changedAppsMarkdown(groups []appGroup) string {
-	if len(groups) == 0 {
-		return "No rendered manifest differences detected.\n\n"
-	}
-	var builder strings.Builder
-	builder.WriteString("Changed Applications:\n\n")
-	limit := min(len(groups), 50)
-	for _, group := range groups[:limit] {
-		fmt.Fprintf(&builder, "- `%s` (+%d/-%d, %d resources)\n",
-			escapeCodeSpan(group.id), group.added, group.removed, len(group.resources))
-	}
-	if omitted := len(groups) - limit; omitted > 0 {
-		fmt.Fprintf(&builder, "_... and %d more changed applications omitted from this summary._\n", omitted)
-	}
-	builder.WriteByte('\n')
-	return builder.String()
+func noDiffMarkdown() string {
+	return "No rendered manifest differences detected.\n\n"
 }
 
 func omittedMarkdown(groups []appGroup) string {
@@ -306,23 +312,35 @@ func omittedMarkdown(groups []appGroup) string {
 		return ""
 	}
 	var builder strings.Builder
-	builder.WriteString("Omitted Application Details:\n\n")
+	builder.WriteString("_Omitted details: ")
 	limit := min(len(groups), 25)
-	for _, group := range groups[:limit] {
-		fmt.Fprintf(&builder, "- `%s`\n", escapeCodeSpan(group.id))
+	for index, group := range groups[:limit] {
+		if index > 0 {
+			builder.WriteString(", ")
+		}
+		fmt.Fprintf(&builder, "`%s`", escapeCodeSpan(group.id))
 	}
 	if omitted := len(groups) - limit; omitted > 0 {
-		fmt.Fprintf(&builder, "_... and %d more omitted applications not listed._\n", omitted)
+		fmt.Fprintf(&builder, ", and %d more", omitted)
 	}
-	builder.WriteByte('\n')
+	builder.WriteString("._\n\n")
 	return builder.String()
 }
 
 func statsMarkdown(truncated bool, shown, total int) string {
-	if !truncated {
-		return fmt.Sprintf("_Stats_: [Applications shown: %d/%d]\n", shown, total)
+	if !truncated && shown == total {
+		return ""
 	}
-	return fmt.Sprintf("_Stats_: [Applications shown: %d/%d], [Comment truncated]\n", shown, total)
+	if total == 0 {
+		if truncated {
+			return "_Comment truncated._\n"
+		}
+		return ""
+	}
+	if truncated {
+		return fmt.Sprintf("_Details shown: %d/%d applications; comment truncated._\n", shown, total)
+	}
+	return fmt.Sprintf("_Details shown: %d/%d applications._\n", shown, total)
 }
 
 func allocateAppBudgets(groups []appGroup, budget int, unlimited bool) []int {

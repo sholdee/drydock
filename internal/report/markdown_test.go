@@ -1,6 +1,7 @@
 package report
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 	"unicode/utf8"
@@ -23,10 +24,13 @@ func TestDiffMarkdownGroupsByApplicationIdentity(t *testing.T) {
 		t.Fatalf("DiffMarkdown() error = %v", err)
 	}
 	text := string(out)
-	for _, want := range []string{"`argocd/demo`", "`other/demo`", "<summary>other/demo", "<summary>argocd/demo"} {
+	for _, want := range []string{"## drydock desired state diff", "**Summary:** 2 apps, 2 resources, +3/-3.", "<summary>other/demo", "<summary>argocd/demo"} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("markdown missing %q:\n%s", want, text)
 		}
+	}
+	if strings.Contains(text, "Changed Applications") || strings.Contains(text, "_Stats_") {
+		t.Fatalf("markdown contains redundant app inventory or stats:\n%s", text)
 	}
 	if strings.Index(text, "<summary>other/demo") > strings.Index(text, "<summary>argocd/demo") {
 		t.Fatalf("markdown did not sort larger diff first:\n%s", text)
@@ -112,6 +116,35 @@ func TestDiffMarkdownEscapesDiagnostics(t *testing.T) {
 	}
 	if !strings.Contains(text, "&lt;tag&gt;") {
 		t.Fatalf("diagnostic HTML escape missing:\n%s", text)
+	}
+	if !strings.Contains(text, "**Summary:** 0 apps, 0 resources, +0/-0, 1 warning.") {
+		t.Fatalf("summary did not include compact diagnostic count:\n%s", text)
+	}
+	if !strings.Contains(text, "No rendered manifest differences detected.") {
+		t.Fatalf("no-diff message missing:\n%s", text)
+	}
+}
+
+func TestDiffMarkdownShowsOmittedDetailsOnlyWhenTruncated(t *testing.T) {
+	results := make([]diff.Result, 0, 8)
+	for i := range 8 {
+		results = append(results, diffResult("argocd", fmt.Sprintf("app-%d", i), "cm", strings.Repeat("- old\n+ new\n", 80)))
+	}
+	out, meta, err := DiffMarkdown(app.DiffResult{Results: results}, MarkdownOptions{MaxBytes: MinPositiveMaxByte})
+	if err != nil {
+		t.Fatalf("DiffMarkdown() error = %v", err)
+	}
+	text := string(out)
+	if !meta.Truncated {
+		t.Fatalf("meta.Truncated = false, want true")
+	}
+	if meta.ShownApps >= len(results) {
+		t.Fatalf("meta.ShownApps = %d, want fewer than %d", meta.ShownApps, len(results))
+	}
+	for _, want := range []string{"_Omitted details:", "_Details shown:"} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("markdown missing %q:\n%s", want, text)
+		}
 	}
 }
 

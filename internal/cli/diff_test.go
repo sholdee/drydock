@@ -162,8 +162,8 @@ func TestDiffAppsMarkdownOutput(t *testing.T) {
 	result := runCLIWithDependencies(t, Dependencies{Orchestrator: recorder}, "diff", "apps", "--path-orig", "left", "--path", "right", "-o", "markdown", "--color=always", "--exit-code=false")
 
 	assertStdoutContainsAll(t, result,
-		"## drydock diff preview",
-		"Applications changed: 1",
+		"## drydock desired state diff",
+		"**Summary:** 1 app, 1 resource, +1/-1, 1 warning.",
 		"Diagnostics:",
 		"&lt;tag&gt;",
 		"<summary>argocd/demo",
@@ -172,6 +172,7 @@ func TestDiffAppsMarkdownOutput(t *testing.T) {
 		"+  value: new",
 	)
 	assertStdoutExcludesAll(t, result, "\x1b[")
+	assertStdoutExcludesAll(t, result, "Changed Applications", "_Stats_")
 	assertStderrEmpty(t, result)
 }
 
@@ -184,7 +185,7 @@ func TestDiffAppsMarkdownRawOutputFilePreservesUnifiedDiff(t *testing.T) {
 	}
 
 	result := runCLIWithDependencies(t, Dependencies{Orchestrator: recorder}, "diff", "apps", "--path-orig", "left", "--path", "right", "-o", "markdown", "--raw-output-file", rawPath, "--exit-code=false")
-	assertStdoutContainsAll(t, result, "## drydock diff preview")
+	assertStdoutContainsAll(t, result, "## drydock desired state diff")
 	raw, err := os.ReadFile(rawPath)
 	if err != nil {
 		t.Fatalf("ReadFile(%s) error = %v", rawPath, err)
