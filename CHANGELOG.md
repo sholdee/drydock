@@ -1,5 +1,47 @@
 # Changelog
 
+## [0.1.8](https://github.com/sholdee/drydock/compare/v0.1.7...v0.1.8) (2026-05-30)
+
+
+### Features
+
+* add CLI profiling diagnostics ([05ef4a8](https://github.com/sholdee/drydock/commit/05ef4a85a234e5ad6826dbf16de4c89a79110d86))
+* add CLI profiling support ([8892efe](https://github.com/sholdee/drydock/commit/8892efe6fc9da295e374ea9b288a19967403edbf))
+* add drydock pull request action ([#50](https://github.com/sholdee/drydock/issues/50)) ([a38b632](https://github.com/sholdee/drydock/commit/a38b6320a031392c8e4656010c396fb384cf916e))
+* allow pr action to use existing drydock binary ([#55](https://github.com/sholdee/drydock/issues/55)) ([644ecb0](https://github.com/sholdee/drydock/commit/644ecb02a807260739f7a658f6b40a7e00569b92))
+* cache drydock action installs ([#57](https://github.com/sholdee/drydock/issues/57)) ([92dae70](https://github.com/sholdee/drydock/commit/92dae7051f53c12517982c7647e513a582ad3998))
+
+
+### Bug Fixes
+
+* align mise config with renovate lock updates ([#52](https://github.com/sholdee/drydock/issues/52)) ([15eb089](https://github.com/sholdee/drydock/commit/15eb089a6fbb59a989d5ca9ee19f3e20bee88a65))
+* avoid duplicate git auth headers in pr action ([4f9701f](https://github.com/sholdee/drydock/commit/4f9701fc89fdcc809626420cbb69aab0de0e813a))
+* avoid duplicate git auth headers in PR action ([#56](https://github.com/sholdee/drydock/issues/56)) ([f8612e7](https://github.com/sholdee/drydock/commit/f8612e78899a1db21618f17200457c21424d4ad4))
+* link pr action artifact comments ([#60](https://github.com/sholdee/drydock/issues/60)) ([bfee8e8](https://github.com/sholdee/drydock/commit/bfee8e8364c21b9025cf49cacd523e220a8aaf2a))
+* summarize ConfigMap binaryData diffs ([cb1d9c4](https://github.com/sholdee/drydock/commit/cb1d9c4fb551611e6a3132c72394fbae5bb6b045))
+* summarize ConfigMap binaryData diffs ([16ad2ff](https://github.com/sholdee/drydock/commit/16ad2ff0f68b641489b62e2f7a11aa732390b3d4))
+* support older image diff output in pr action ([c224269](https://github.com/sholdee/drydock/commit/c22426938622f0d345fa2897756c89955eb79e32))
+
+
+### Documentation
+
+* document profiling workflow ([940cf61](https://github.com/sholdee/drydock/commit/940cf612495266a20e2028ef93632a0d4d8d031c))
+
+
+### Miscellaneous Chores
+
+* **deps:** update dependency lefthook to v2.1.9 ([#49](https://github.com/sholdee/drydock/issues/49)) ([1b612c0](https://github.com/sholdee/drydock/commit/1b612c0571b9bb43b574d2892db7974d3dbed4b8))
+* **deps:** update mshick/add-pr-comment digest to 8e49278 ([#51](https://github.com/sholdee/drydock/issues/51)) ([dce3e72](https://github.com/sholdee/drydock/commit/dce3e72f1864a7958feb53485b36799b454d3d95))
+* modernize Go lint rules ([#62](https://github.com/sholdee/drydock/issues/62)) ([e50094f](https://github.com/sholdee/drydock/commit/e50094fcbe46f8d8ef69f1662c0f3557124c0d2e))
+
+
+### Code Refactoring
+
+* improve code locality and CI guardrails ([8399c50](https://github.com/sholdee/drydock/commit/8399c50ac081cefd9355aa8060a8a35586ecc7b4))
+* split app settings and diff helpers ([305351a](https://github.com/sholdee/drydock/commit/305351a7b9b884ec8b9a1bcb453fb4f34a6b960f))
+* split helm renderer helpers ([740675c](https://github.com/sholdee/drydock/commit/740675c9b9fe301b3684fb3e9190990427a9dea1))
+* split plugin policy parser helpers ([abfe213](https://github.com/sholdee/drydock/commit/abfe213f11cb6c3750982b5c90007f5f3d71b615))
+
 ## [0.1.7](https://github.com/sholdee/drydock/compare/v0.1.6...v0.1.7) (2026-05-29)
 
 
