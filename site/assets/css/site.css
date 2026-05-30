@@ -178,6 +178,18 @@ a:hover {
   text-transform: uppercase;
 }
 
+.nav-section + .nav-section {
+  margin-top: 1rem;
+}
+
+.nav-section-heading {
+  margin: 0 0 0.22rem;
+  color: var(--quiet);
+  font-size: 0.68rem;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
 .docs-nav ul,
 .toc-panel ul {
   list-style: none;
@@ -455,6 +467,10 @@ a:hover {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(135px, 1fr));
     gap: 0.25rem;
+  }
+
+  .nav-section + .nav-section {
+    margin-top: 0.85rem;
   }
 
   .docs-nav li + li {
