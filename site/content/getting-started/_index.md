@@ -41,6 +41,7 @@ next.
 Compare the current tree against a baseline worktree:
 
 ```bash
+git worktree add ../baseline main
 drydock diff apps --path . --path-orig ../baseline
 drydock diff images --path . --path-orig ../baseline -o markdown
 ```

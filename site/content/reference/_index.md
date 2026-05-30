@@ -2,10 +2,10 @@
 title: Reference
 ---
 
-Use these mounted `/docs/...` pages as the full reference and canonical detail
-set. They are for dense behavior, flag, compatibility, and maintenance details,
-not the beginner path. Start with [Getting started](/getting-started/) for the
-first local run.
+Use these `/docs/...` pages as the full reference and canonical detail set.
+They are for dense behavior, flag, compatibility, and maintenance details, not
+the beginner path. Start with [Getting started](/getting-started/) for the first
+local run.
 
 ## Operator Guides
 
@@ -25,7 +25,7 @@ first local run.
 - [Design](/docs/design/): architecture and behavior model.
 - [ApplicationSets](/docs/applicationsets/): supported generators, fixtures,
   and template parameters.
-- [Documentation index](/docs/): documentation ownership and anti-sprawl
+- [Documentation index](/docs/readme/): documentation ownership and anti-sprawl
   rules.
 - [Release notes](/docs/release/): release process and Argo CD dependency
   upgrade notes.

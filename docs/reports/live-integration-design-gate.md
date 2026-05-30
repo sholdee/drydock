@@ -12,7 +12,7 @@ cluster, Argo CD server, `kubectl`, `argocd`, Helm/Kustomize command-line
 tools, or any external render service to analyze desired state or produce pull
 request diffs.
 
-This offline-runtime contract is separate from network source acquisition.
+This runtime-offline contract is separate from network source acquisition.
 Declared Git, HTTP Helm, OCI Helm, and remote Kustomize sources may be fetched
 into explicit caches unless `--offline` is set. Future live behavior may be
 researched only behind an explicit design update, and that work must not weaken
@@ -42,7 +42,7 @@ Live runtime access changes the threat model and correctness model:
 - Argo CD server-side diff behavior is coupled to repo-server, cluster cache,
   Kubernetes discovery, and Argo CD settings.
 
-The offline-runtime engine should report these as outside its boundary rather
+The runtime-offline engine should report these as outside its boundary rather
 than silently approximating them.
 
 ## Exception Guardrails
@@ -65,7 +65,7 @@ Future live-runtime exceptions must pass these checks before code changes:
 
 ## Default Mode Contract
 
-Default commands and package-level public APIs are offline-runtime
+Default commands and package-level public APIs are runtime-offline
 desired-vs-desired workflows:
 
 - They read the current tree, the baseline tree, and explicit local caches.

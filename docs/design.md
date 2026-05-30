@@ -5,7 +5,7 @@ repository analysis. It discovers Argo CD Applications, renders desired
 manifests, validates renderability, inspects images and diagnostics, and
 compares current and baseline desired state for pull request diffs.
 
-The core design target is offline-runtime analysis: default workflows require
+The core design target is runtime-offline analysis: default workflows require
 no running Kubernetes cluster, Argo CD instance, `kubectl`, `argocd`, Helm CLI,
 Kustomize CLI, repo-server, or external render service. Declared Git, HTTP
 Helm, OCI Helm, and remote Kustomize sources may be fetched into explicit

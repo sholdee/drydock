@@ -17,7 +17,7 @@ YAML:
 ```yaml
 - uses: sholdee/drydock/setup-action@main
   with:
-    version: v0.1.7
+    version: v0.1.9
 ```
 
 The action accepts `latest`, `vX.Y.Z`, or bare `X.Y.Z`. It verifies the release
@@ -54,7 +54,7 @@ jobs:
           fetch-depth: 0
       - uses: sholdee/drydock/setup-action@main
         with:
-          version: v0.1.7
+          version: v0.1.9
       - run: drydock test apps --path .
       - run: drydock diff apps --path . --ref-orig origin/${{ github.base_ref }}
 ```
@@ -81,7 +81,7 @@ jobs:
     steps:
       - uses: sholdee/drydock/pr-action@main
         with:
-          version: v0.1.7
+          version: v0.1.9
 ```
 
 By default the action:
@@ -113,14 +113,14 @@ The action accepts either a normal token or GitHub App credentials:
 ```yaml
 - uses: sholdee/drydock/pr-action@main
   with:
-    version: v0.1.7
+    version: v0.1.9
     github-token: ${{ secrets.DRYDOCK_TOKEN }}
 ```
 
 ```yaml
 - uses: sholdee/drydock/pr-action@main
   with:
-    version: v0.1.7
+    version: v0.1.9
     github-app-client-id: ${{ secrets.DRYDOCK_APP_CLIENT_ID }}
     github-app-private-key: ${{ secrets.DRYDOCK_APP_PRIVATE_KEY }}
 ```

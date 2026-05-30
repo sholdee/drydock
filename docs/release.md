@@ -1,7 +1,7 @@
 # Release And Upgrade Notes
 
 `drydock` is a single static Go binary and embeddable Go module. Release
-artifacts should preserve the offline-runtime core contract: render and diff
+artifacts should preserve the runtime-offline core contract: render and diff
 from checked-out files plus explicit caches, without requiring a cluster,
 Argo CD server, `kubectl`, `argocd`, Helm/Kustomize command-line tools, or
 external rendering processes.
@@ -33,7 +33,7 @@ passphrases, or raw repository URLs with embedded secrets.
 
 The repository includes an optional composite install action at `setup-action`.
 It is release metadata only; it does not change the default static binary,
-`--offline` behavior, or offline-runtime render/diff contract.
+`--offline` behavior, or runtime-offline render/diff contract.
 
 The action accepts `latest`, `vX.Y.Z`, or bare `X.Y.Z` inputs. `latest` is
 resolved from the latest GitHub Release before download. Bare versions are
@@ -72,7 +72,7 @@ Pinned example:
 ```yaml
 - uses: sholdee/drydock/setup-action@main
   with:
-    version: v0.1.7
+    version: v0.1.9
     install-dir: /usr/local/bin
 ```
 

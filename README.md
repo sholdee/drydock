@@ -12,12 +12,12 @@ Inspect your Argo CD fleet without getting wet.
 [![Go Version](https://img.shields.io/github/go-mod/go-version/sholdee/drydock)](go.mod)
 
 `drydock` is a fast, single static Go binary and embeddable library for
-offline Argo CD desired-state analysis. It discovers, renders, tests, diffs,
-and diagnoses GitOps Applications without requiring a live Argo CD instance or
-Kubernetes cluster.
+runtime-offline Argo CD desired-state analysis. It discovers, renders, tests,
+diffs, and diagnoses GitOps Applications without requiring a live Argo CD
+instance or Kubernetes cluster.
 
 It is built for operators who want quick, deterministic feedback before a
-change reaches the cluster. Pull request diffing is the primary workflow, but
+change reaches the cluster. Pull request diffing is a key workflow, but
 the same native engine also supports render validation, image inventory,
 repository diagnostics, cache inspection, and Go API embedding.
 
@@ -58,15 +58,15 @@ Pin a release when the workflow needs exact repeatability:
 ```yaml
 - uses: sholdee/drydock/setup-action@main
   with:
-    version: v0.1.7
+    version: v0.1.9
 ```
 
 The setup action accepts `latest`, `vX.Y.Z`, or bare `X.Y.Z` and verifies the
 selected archive with the release checksum manifest by default.
 
 For pull request validation, the PR action wraps the common drydock workflow:
-render tests, manifest diffs, added image reports, source caches, artifacts,
-and sticky PR comments.
+render tests, manifest diffs, companion image diff reports, source caches,
+artifacts, and sticky PR comments.
 
 ```yaml
 name: drydock
@@ -85,7 +85,7 @@ jobs:
     steps:
       - uses: sholdee/drydock/pr-action@main
         with:
-          version: v0.1.7
+          version: v0.1.9
 ```
 
 See [`docs/github-actions.md`](docs/github-actions.md) for full action inputs,

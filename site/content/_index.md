@@ -29,11 +29,11 @@ syncs them.
 ## Core Workflows
 
 ```bash
-drydock get apps --path ./gitops
-drydock test apps --path ./gitops
-drydock diff apps --repo . --ref main --ref-orig HEAD~1
-drydock diff images --repo . --ref main --ref-orig HEAD~1
-drydock diag --path ./gitops
+drydock get apps --path .
+drydock test apps --path .
+drydock diff apps --repo . --ref HEAD --ref-orig main
+drydock diff images --repo . --ref HEAD --ref-orig main
+drydock diag --path .
 ```
 
 ## Operating Model
@@ -43,6 +43,6 @@ do not call live Kubernetes or Argo CD. Declared Git, HTTP Helm, OCI Helm, and
 remote Kustomize sources can still be fetched into explicit caches unless
 `--offline` is set.
 
-Use these curated pages for day-to-day operation. Use the mounted reference
-docs when you need dense details such as full compatibility notes, action
-inputs, source acquisition flags, or plugin policy schema.
+Use these curated pages for day-to-day operation. Use the reference docs when
+you need dense details such as full compatibility notes, action inputs, source
+acquisition flags, or plugin policy schema.

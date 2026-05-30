@@ -28,10 +28,10 @@ copying the same rule into multiple files.
 - Do not add plan files for completed implementation work. Use git history for
   closed plans and audits.
 - Keep `docs/reports` for active design gates only.
-- Put durable product behavior in `docs/design.md`, `docs/usage.md`,
-  `docs/applicationsets.md`, `docs/source-acquisition.md`, or
-  `docs/plugin-policy.md`, or `docs/compatibility.md`, depending on ownership
-  above.
+- Put durable product behavior in the canonical owner above, usually
+  `docs/design.md`, `docs/usage.md`, `docs/applicationsets.md`,
+  `docs/source-acquisition.md`, `docs/plugin-policy.md`, or
+  `docs/compatibility.md`.
 - Split a focused reference page only when it removes dense detail from
   `docs/usage.md` or `docs/design.md`.
 - Keep `README.md`, `AGENTS.md`, and `docs/agent-reference.md` as routing
