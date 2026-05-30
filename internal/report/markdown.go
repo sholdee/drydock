@@ -42,8 +42,22 @@ type appGroup struct {
 	diffBytes int
 }
 
+type imageDiffRow struct {
+	change string
+	image  string
+}
+
 func WriteDiffMarkdown(w io.Writer, result app.DiffResult, options MarkdownOptions) (MarkdownResult, error) {
 	data, meta, err := DiffMarkdown(result, options)
+	if err != nil {
+		return MarkdownResult{}, err
+	}
+	_, err = w.Write(data)
+	return meta, err
+}
+
+func WriteImageDiffMarkdown(w io.Writer, result app.ImageDiffResult, options MarkdownOptions) (MarkdownResult, error) {
+	data, meta, err := ImageDiffMarkdown(result, options)
 	if err != nil {
 		return MarkdownResult{}, err
 	}
@@ -85,6 +99,38 @@ func DiffMarkdown(result app.DiffResult, options MarkdownOptions) ([]byte, Markd
 		Truncated:   state.truncated,
 		ShownApps:   state.shownApps,
 		OmittedApps: len(groups) - state.shownApps,
+	}, nil
+}
+
+func ImageDiffMarkdown(result app.ImageDiffResult, options MarkdownOptions) ([]byte, MarkdownResult, error) {
+	if options.MaxBytes < 0 {
+		return nil, MarkdownResult{}, fmt.Errorf("markdown max bytes must be greater than or equal to zero")
+	}
+	if options.MaxBytes > 0 && options.MaxBytes < MinPositiveMaxByte {
+		return nil, MarkdownResult{}, fmt.Errorf("markdown max bytes must be zero or at least %d", MinPositiveMaxByte)
+	}
+	if options.DiagnosticLimit <= 0 {
+		options.DiagnosticLimit = defaultDiagLimit
+	}
+	if strings.TrimSpace(options.Title) == "" {
+		options.Title = "drydock image diff"
+	}
+
+	rows := imageDiffRows(result)
+	state := markdownState{maxBytes: options.MaxBytes}
+	state.appendRequired(fmt.Sprintf("## %s\n\n", escapeMarkdownText(options.Title)))
+	state.appendRequired(imageSummaryMarkdown(len(result.Added), len(result.Removed), result.Diagnostics))
+	state.appendBounded(diagnosticsMarkdown(result.Diagnostics, options.DiagnosticLimit))
+	if len(rows) == 0 {
+		state.appendBounded(noImageDiffMarkdown())
+	} else {
+		state.appendImageRows(rows)
+	}
+
+	out := state.bytes()
+	return out, MarkdownResult{
+		Bytes:     len(out),
+		Truncated: state.truncated,
 	}, nil
 }
 
@@ -150,6 +196,39 @@ func (s *markdownState) appendAppDetails(groups []appGroup, openDetails bool) {
 	}
 }
 
+func (s *markdownState) appendImageRows(rows []imageDiffRow) {
+	table := "| Change | Image |\n| --- | --- |\n"
+	finalNote := imageRowsOmittedMarkdown(0, len(rows), true)
+	if s.maxBytes != 0 && s.buffer.Len()+len(table)+len(finalNote) > s.maxBytes {
+		s.truncated = true
+		s.appendBounded(finalNote)
+		return
+	}
+	s.buffer.WriteString(table)
+
+	shown := 0
+	for index, row := range rows {
+		line := imageDiffRowMarkdown(row)
+		remainingRows := len(rows) - index - 1
+		omittedNote := imageRowsOmittedMarkdown(shown+1, len(rows), true)
+		requiredAfterRow := 1
+		if remainingRows > 0 {
+			requiredAfterRow += len(omittedNote)
+		}
+		if s.maxBytes != 0 && s.buffer.Len()+len(line)+requiredAfterRow > s.maxBytes {
+			s.truncated = true
+			break
+		}
+		s.buffer.WriteString(line)
+		shown++
+	}
+	s.buffer.WriteByte('\n')
+	if omitted := len(rows) - shown; omitted > 0 {
+		s.truncated = true
+		s.appendBounded(imageRowsOmittedMarkdown(shown, len(rows), true))
+	}
+}
+
 func (s *markdownState) remaining() int {
 	if s.maxBytes == 0 {
 		return 0
@@ -200,6 +279,17 @@ func groupedDiffs(results []diff.Result) []appGroup {
 	return groups
 }
 
+func imageDiffRows(result app.ImageDiffResult) []imageDiffRow {
+	rows := make([]imageDiffRow, 0, len(result.Added)+len(result.Removed))
+	for _, image := range result.Added {
+		rows = append(rows, imageDiffRow{change: "added", image: image})
+	}
+	for _, image := range result.Removed {
+		rows = append(rows, imageDiffRow{change: "removed", image: image})
+	}
+	return rows
+}
+
 func applicationID(parent diff.Parent) string {
 	if parent.Namespace != "" {
 		return parent.Namespace + "/" + parent.Name
@@ -236,6 +326,21 @@ func summaryMarkdown(results, apps, added, removed int, diagnostics []diagnostic
 		plural(apps, "app", "apps"),
 		plural(results, "resource", "resources"),
 		fmt.Sprintf("+%d/-%d", added, removed),
+	}
+	if warnings > 0 {
+		parts = append(parts, plural(warnings, "warning", "warnings"))
+	}
+	if errors > 0 {
+		parts = append(parts, plural(errors, "error", "errors"))
+	}
+	return fmt.Sprintf("**Summary:** %s.\n\n", strings.Join(parts, ", "))
+}
+
+func imageSummaryMarkdown(added, removed int, diagnostics []diagnostic.Diagnostic) string {
+	warnings, errors := diagnosticCounts(diagnostics)
+	parts := []string{
+		plural(added, "added", "added"),
+		plural(removed, "removed", "removed"),
 	}
 	if warnings > 0 {
 		parts = append(parts, plural(warnings, "warning", "warnings"))
@@ -305,6 +410,27 @@ func diagnosticsMarkdown(diagnostics []diagnostic.Diagnostic, limit int) string 
 
 func noDiffMarkdown() string {
 	return "No rendered manifest differences detected.\n\n"
+}
+
+func noImageDiffMarkdown() string {
+	return "No rendered image differences detected.\n\n"
+}
+
+func imageDiffRowMarkdown(row imageDiffRow) string {
+	return fmt.Sprintf("| %s | %s |\n", row.change, markdownCodeSpan(tableCellText(row.image)))
+}
+
+func imageRowsOmittedMarkdown(shown, total int, truncated bool) string {
+	if total == 0 {
+		if truncated {
+			return "_Comment truncated._\n"
+		}
+		return ""
+	}
+	if truncated {
+		return fmt.Sprintf("_Image rows shown: %d/%d; comment truncated._\n", shown, total)
+	}
+	return fmt.Sprintf("_Image rows shown: %d/%d._\n", shown, total)
 }
 
 func omittedMarkdown(groups []appGroup) string {
@@ -489,6 +615,30 @@ func escapeMarkdownText(text string) string {
 
 func escapeCodeSpan(text string) string {
 	return strings.ReplaceAll(text, "`", "\\`")
+}
+
+func markdownCodeSpan(text string) string {
+	longest := 0
+	current := 0
+	for _, r := range text {
+		if r == '`' {
+			current++
+			longest = max(longest, current)
+			continue
+		}
+		current = 0
+	}
+	delimiter := strings.Repeat("`", longest+1)
+	if strings.HasPrefix(text, "`") || strings.HasSuffix(text, "`") || strings.Contains(text, delimiter) {
+		text = " " + text + " "
+	}
+	return delimiter + text + delimiter
+}
+
+func tableCellText(text string) string {
+	text = singleLine(text)
+	text = strings.ReplaceAll(text, "|", `\|`)
+	return text
 }
 
 func escapeHTML(text string) string {

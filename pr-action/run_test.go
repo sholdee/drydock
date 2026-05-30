@@ -42,6 +42,9 @@ case "$1" in
   '(.added // [])[]')
     printf 'example/app:v2\n'
     ;;
+  '(.removed // [])[]')
+    printf 'example/app:v1\n'
+    ;;
   '((.added // []) | length) + ((.removed // []) | length)')
     printf '2\n'
     ;;
@@ -115,8 +118,10 @@ func TestRunCommentsLinkWorkflowRunArtifactsWhenUploadEnabled(t *testing.T) {
 	}
 
 	imagesComment := readFile(t, filepath.Join(workDir, "images-comment.md"))
-	if !strings.Contains(imagesComment, "`example/app:v2`") {
-		t.Fatalf("images comment = %q, want added image", imagesComment)
+	for _, want := range []string{"## drydock image diff", "| added | `example/app:v2` |", "| removed | `example/app:v1` |"} {
+		if !strings.Contains(imagesComment, want) {
+			t.Fatalf("images comment = %q, want %q", imagesComment, want)
+		}
 	}
 	if strings.Contains(imagesComment, "Full added image output") || strings.Contains(imagesComment, "actions/runs/12345") {
 		t.Fatalf("images comment repeated artifact link while diff comment has one:\n%s", imagesComment)
@@ -142,7 +147,8 @@ func TestRunImagesOnlyCommentLinksWorkflowRunArtifact(t *testing.T) {
 	imagesComment := readFile(t, filepath.Join(workDir, "images-comment.md"))
 	for _, want := range []string{
 		"Full added image output: [images artifact](https://github.example.test/example/repo/actions/runs/12345).",
-		"`example/app:v2`",
+		"| added | `example/app:v2` |",
+		"| removed | `example/app:v1` |",
 	} {
 		if !strings.Contains(imagesComment, want) {
 			t.Fatalf("images comment = %q, want %q", imagesComment, want)
@@ -214,13 +220,34 @@ func TestRunCommentEmptyDoesNotLinkArtifactsWithoutOutput(t *testing.T) {
 		t.Fatalf("diff comment = %q, want empty diff text", diffComment)
 	}
 	imagesComment := readFile(t, filepath.Join(workDir, "images-comment.md"))
-	if !strings.Contains(imagesComment, "No added rendered images detected.") {
+	if !strings.Contains(imagesComment, "No rendered image differences detected.") {
 		t.Fatalf("images comment = %q, want empty images text", imagesComment)
 	}
 	for _, comment := range []string{diffComment, imagesComment} {
 		if strings.Contains(comment, "artifact](") || strings.Contains(comment, "actions/runs/12345") {
 			t.Fatalf("empty comment contains artifact link:\n%s", comment)
 		}
+	}
+}
+
+func TestRunCommentEmptyDoesNotRunImageDiffWhenImageDiffDisabled(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell action tests require bash")
+	}
+
+	workDir := runCommentScenario(t, commentScenario{
+		commentMode:   "images",
+		commentEmpty:  true,
+		skipImageDiff: true,
+	})
+
+	args := readFile(t, filepath.Join(workDir, "drydock-args.txt"))
+	if strings.Contains(args, "diff images") {
+		t.Fatalf("drydock args = %q, did not expect diff images call", args)
+	}
+	imagesComment := readFile(t, filepath.Join(workDir, "images-comment.md"))
+	if !strings.Contains(imagesComment, "No rendered image differences detected.") {
+		t.Fatalf("images comment = %q, want empty images text", imagesComment)
 	}
 }
 
@@ -255,14 +282,161 @@ func TestRunDiffUsesMarkdownOutputAfterExtraDiffArgs(t *testing.T) {
 	}
 }
 
+func TestRunImageCommentsUseMarkdownAfterExtraImageArgs(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell action tests require bash")
+	}
+
+	workDir := runCommentScenario(t, commentScenario{
+		uploadArtifacts: true,
+		githubEnv:       true,
+		commentMode:     "images",
+		imageOutput:     true,
+		extraImageArgs:  "-o json\n--exit-code=true",
+	})
+
+	args := readFile(t, filepath.Join(workDir, "drydock-args.txt"))
+	for _, want := range []string{"-o json", "--exit-code=true", "-o name", "-o markdown", "--markdown-max-bytes 59488", "--exit-code=false"} {
+		if !strings.Contains(args, want) {
+			t.Fatalf("drydock args = %q, want %q", args, want)
+		}
+	}
+	if strings.Index(args, "-o json") > strings.Index(args, "-o name") {
+		t.Fatalf("forced name output did not come after extra image args:\n%s", args)
+	}
+	if strings.LastIndex(args, "-o json") > strings.LastIndex(args, "-o markdown") {
+		t.Fatalf("forced markdown output did not come after extra image args:\n%s", args)
+	}
+	imagesComment := readFile(t, filepath.Join(workDir, "images-comment.md"))
+	for _, want := range []string{"## drydock image diff", "| added | `example/app:v2` |", "| removed | `example/app:v1` |"} {
+		if !strings.Contains(imagesComment, want) {
+			t.Fatalf("images comment = %q, want %q", imagesComment, want)
+		}
+	}
+}
+
+func TestRunRemovedOnlyImageDiffCommentsWithoutAddedImagesArtifact(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell action tests require bash")
+	}
+
+	workDir := runCommentScenario(t, commentScenario{
+		uploadArtifacts: true,
+		githubEnv:       true,
+		commentMode:     "images",
+		imageRemoved:    true,
+	})
+
+	output := readFile(t, filepath.Join(filepath.Dir(workDir), "github-output"))
+	for _, want := range []string{"has-images=false", "has-image-diff=true", "images-comment=true"} {
+		if !strings.Contains(output, want) {
+			t.Fatalf("GITHUB_OUTPUT = %q, want %q", output, want)
+		}
+	}
+	addedImages := readFile(t, filepath.Join(workDir, "added-images.txt"))
+	if addedImages != "" {
+		t.Fatalf("added-images.txt = %q, want empty for removed-only diff", addedImages)
+	}
+	imagesComment := readFile(t, filepath.Join(workDir, "images-comment.md"))
+	if !strings.Contains(imagesComment, "| removed | `example/app:v1` |") {
+		t.Fatalf("images comment = %q, want removed image markdown", imagesComment)
+	}
+	if strings.Contains(imagesComment, "Full added image output") {
+		t.Fatalf("removed-only comment linked added image artifact:\n%s", imagesComment)
+	}
+}
+
+func TestRunFallsBackToLegacyImageCommentWhenMarkdownUnsupported(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell action tests require bash")
+	}
+
+	workDir := runCommentScenario(t, commentScenario{
+		uploadArtifacts:       true,
+		githubEnv:             true,
+		commentMode:           "images",
+		imageOutput:           true,
+		imageMarkdownDisabled: true,
+	})
+
+	imagesComment := readFile(t, filepath.Join(workDir, "images-comment.md"))
+	for _, want := range []string{"## drydock image diff", "**Summary:** 1 added, 1 removed.", "| added | `example/app:v2` |", "| removed | `example/app:v1` |"} {
+		if !strings.Contains(imagesComment, want) {
+			t.Fatalf("images comment = %q, want %q", imagesComment, want)
+		}
+	}
+}
+
+func TestRunFallsBackToLegacyImageCommentForRemovedOnlyImageDiff(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell action tests require bash")
+	}
+
+	workDir := runCommentScenario(t, commentScenario{
+		uploadArtifacts:       true,
+		githubEnv:             true,
+		commentMode:           "images",
+		imageRemoved:          true,
+		imageMarkdownDisabled: true,
+	})
+
+	imagesComment := readFile(t, filepath.Join(workDir, "images-comment.md"))
+	for _, want := range []string{"## drydock image diff", "**Summary:** 0 added, 1 removed.", "| removed | `example/app:v1` |"} {
+		if !strings.Contains(imagesComment, want) {
+			t.Fatalf("images comment = %q, want %q", imagesComment, want)
+		}
+	}
+	for _, notWant := range []string{"No rendered image differences detected.", "Full added image output"} {
+		if strings.Contains(imagesComment, notWant) {
+			t.Fatalf("images comment = %q, did not want %q", imagesComment, notWant)
+		}
+	}
+}
+
+func TestRunFallsBackToGenericImageCommentWhenLegacyJSONFails(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell action tests require bash")
+	}
+
+	workDir := runCommentScenario(t, commentScenario{
+		uploadArtifacts:       true,
+		githubEnv:             true,
+		commentMode:           "images",
+		imageRemoved:          true,
+		imageMarkdownDisabled: true,
+		imageJSONDisabled:     true,
+	})
+
+	imagesComment := readFile(t, filepath.Join(workDir, "images-comment.md"))
+	for _, want := range []string{
+		"## drydock image diff",
+		"**Summary:** image differences detected.",
+		"Image differences detected, but detailed image rows are unavailable because this drydock binary does not support markdown image output.",
+	} {
+		if !strings.Contains(imagesComment, want) {
+			t.Fatalf("images comment = %q, want %q", imagesComment, want)
+		}
+	}
+	for _, notWant := range []string{"**Summary:** 0 added, 0 removed.", "No rendered image differences detected.", "| removed |"} {
+		if strings.Contains(imagesComment, notWant) {
+			t.Fatalf("images comment = %q, did not want %q", imagesComment, notWant)
+		}
+	}
+}
+
 type commentScenario struct {
-	uploadArtifacts bool
-	githubEnv       bool
-	commentEmpty    bool
-	commentMode     string
-	diffOutput      bool
-	imageOutput     bool
-	extraDiffArgs   string
+	uploadArtifacts       bool
+	githubEnv             bool
+	commentEmpty          bool
+	commentMode           string
+	diffOutput            bool
+	imageOutput           bool
+	imageRemoved          bool
+	imageMarkdownDisabled bool
+	imageJSONDisabled     bool
+	skipImageDiff         bool
+	extraDiffArgs         string
+	extraImageArgs        string
 }
 
 func runCommentScenario(t *testing.T, scenario commentScenario) string {
@@ -280,8 +454,9 @@ func runCommentScenario(t *testing.T, scenario commentScenario) string {
 	env := append(defaultRunEnv(tmp, workDir, outputPath),
 		"DRYDOCK_INPUT_COMMENT_MODE="+commentMode,
 		"DRYDOCK_INPUT_EXTRA_DIFF_ARGS="+scenario.extraDiffArgs,
+		"DRYDOCK_INPUT_EXTRA_IMAGE_DIFF_ARGS="+scenario.extraImageArgs,
 		"DRYDOCK_INPUT_RUN_DIFF=true",
-		"DRYDOCK_INPUT_RUN_IMAGE_DIFF=true",
+		"DRYDOCK_INPUT_RUN_IMAGE_DIFF="+boolString(!scenario.skipImageDiff),
 		"DRYDOCK_INPUT_UPLOAD_ARTIFACTS="+boolString(scenario.uploadArtifacts),
 		"DRYDOCK_INPUT_COMMENT_EMPTY="+boolString(scenario.commentEmpty),
 		"GITHUB_SERVER_URL=",
@@ -313,9 +488,21 @@ func writeCommentScenarioDrydock(t *testing.T, path string, scenario commentScen
 	if scenario.diffOutput {
 		diffOutput = "diff_body='diff --git a/apps/demo b/apps/demo\n+kind: ConfigMap\n'\n"
 	}
-	imageOutput := ""
+	imageAdded := ""
 	if scenario.imageOutput {
-		imageOutput = "printf 'example/app:v2\\n'\n"
+		imageAdded = "example/app:v2"
+	}
+	imageRemoved := ""
+	if scenario.imageOutput || scenario.imageRemoved {
+		imageRemoved = "example/app:v1"
+	}
+	imageMarkdownSupport := "true"
+	if scenario.imageMarkdownDisabled {
+		imageMarkdownSupport = "false"
+	}
+	imageJSONSupport := "true"
+	if scenario.imageJSONDisabled {
+		imageJSONSupport = "false"
 	}
 
 	writeExecutable(t, path, `#!/usr/bin/env bash
@@ -362,7 +549,87 @@ if [[ "$*" == *"diff apps"* ]]; then
 fi
 
 if [[ "$*" == *"diff images"* ]]; then
-  `+imageOutput+`  exit 0
+  output="diff"
+  while [[ "$#" -gt 0 ]]; do
+    case "$1" in
+      -o | --output)
+        output="$2"
+        shift 2
+        ;;
+      --output=*)
+        output="${1#--output=}"
+        shift
+        ;;
+      *)
+        shift
+        ;;
+    esac
+  done
+  image_added="`+imageAdded+`"
+  image_removed="`+imageRemoved+`"
+  image_markdown_support="`+imageMarkdownSupport+`"
+  image_json_support="`+imageJSONSupport+`"
+  case "${output}" in
+    name)
+      if [[ -n "${image_added}" ]]; then
+        printf '%s\n' "${image_added}"
+      fi
+      if [[ -n "${image_added}" || -n "${image_removed}" ]]; then
+        exit 1
+      fi
+      exit 0
+      ;;
+    markdown)
+      if [[ "${image_markdown_support}" != "true" ]]; then
+        echo 'markdown output is not supported for diff images' >&2
+        exit 2
+      fi
+      printf '## drydock image diff\n\n'
+      if [[ -n "${image_added}" || -n "${image_removed}" ]]; then
+        printf '**Summary:**'
+        if [[ -n "${image_added}" ]]; then
+          printf ' 1 added'
+        else
+          printf ' 0 added'
+        fi
+        if [[ -n "${image_removed}" ]]; then
+          printf ', 1 removed'
+        else
+          printf ', 0 removed'
+        fi
+        printf '.\n\n| Change | Image |\n| --- | --- |\n'
+        if [[ -n "${image_added}" ]]; then
+          printf '| added | \x60%s\x60 |\n' "${image_added}"
+        fi
+        if [[ -n "${image_removed}" ]]; then
+          printf '| removed | \x60%s\x60 |\n' "${image_removed}"
+        fi
+      else
+        printf '**Summary:** 0 added, 0 removed.\n\nNo rendered image differences detected.\n'
+      fi
+      exit 0
+      ;;
+    json)
+      if [[ "${image_json_support}" != "true" ]]; then
+        echo 'json output failed' >&2
+        exit 2
+      fi
+      printf '{"added":['
+      if [[ -n "${image_added}" ]]; then
+        printf '"%s"' "${image_added}"
+      fi
+      printf '],"removed":['
+      if [[ -n "${image_removed}" ]]; then
+        printf '"%s"' "${image_removed}"
+      fi
+      printf '],"unchanged":[]}\n'
+      exit 0
+      ;;
+    *)
+      echo "unexpected image output: ${output}" >&2
+      exit 2
+      ;;
+  esac
 fi
 
 echo "unexpected drydock invocation: $*" >&2

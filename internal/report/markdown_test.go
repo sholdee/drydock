@@ -181,6 +181,151 @@ func TestRawUnifiedDiffPreservesResultOrder(t *testing.T) {
 	}
 }
 
+func TestImageDiffMarkdownRendersAddedRemovedAndOmitsUnchanged(t *testing.T) {
+	out, meta, err := ImageDiffMarkdown(app.ImageDiffResult{
+		Added:     []string{"registry.example.com/app:new", "registry.example.com/app:`tick`", "registry.example.com/app:pipe|line\nbreak"},
+		Removed:   []string{"registry.example.com/app:old"},
+		Unchanged: []string{"registry.example.com/app:same"},
+	}, MarkdownOptions{MaxBytes: DefaultMaxBytes})
+	if err != nil {
+		t.Fatalf("ImageDiffMarkdown() error = %v", err)
+	}
+	text := string(out)
+	for _, want := range []string{
+		"## drydock image diff",
+		"**Summary:** 3 added, 1 removed.",
+		"| Change | Image |",
+		"| added | `registry.example.com/app:new` |",
+		"| added | `` registry.example.com/app:`tick` `` |",
+		"| added | `registry.example.com/app:pipe\\|line break` |",
+		"| removed | `registry.example.com/app:old` |",
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("markdown missing %q:\n%s", want, text)
+		}
+	}
+	if strings.Contains(text, "registry.example.com/app:same") {
+		t.Fatalf("unchanged image rendered:\n%s", text)
+	}
+	if meta.Truncated || meta.ShownApps != 0 || meta.OmittedApps != 0 {
+		t.Fatalf("meta = %#v, want untruncated with app counts unset", meta)
+	}
+}
+
+func TestImageDiffMarkdownNoChangeOutputCompact(t *testing.T) {
+	out, meta, err := ImageDiffMarkdown(app.ImageDiffResult{
+		Unchanged: []string{"registry.example.com/app:same"},
+	}, MarkdownOptions{MaxBytes: DefaultMaxBytes})
+	if err != nil {
+		t.Fatalf("ImageDiffMarkdown() error = %v", err)
+	}
+	text := string(out)
+	for _, want := range []string{
+		"**Summary:** 0 added, 0 removed.",
+		"No rendered image differences detected.",
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("markdown missing %q:\n%s", want, text)
+		}
+	}
+	if strings.Contains(text, "| Change | Image |") || strings.Contains(text, "registry.example.com/app:same") {
+		t.Fatalf("no-change markdown was not compact:\n%s", text)
+	}
+	if meta.Truncated {
+		t.Fatalf("meta.Truncated = true, want false")
+	}
+}
+
+func TestImageDiffMarkdownEscapesDiagnosticsAndCountsSummary(t *testing.T) {
+	out, _, err := ImageDiffMarkdown(app.ImageDiffResult{
+		Diagnostics: []diagnostic.Diagnostic{
+			{
+				Severity: diagnostic.SeverityWarning,
+				Category: "render",
+				Message:  "message with <tag> and [link](bad)",
+			},
+			{
+				Severity: diagnostic.SeverityError,
+				Category: "image",
+				Message:  "error with <secret>",
+			},
+		},
+	}, MarkdownOptions{MaxBytes: DefaultMaxBytes})
+	if err != nil {
+		t.Fatalf("ImageDiffMarkdown() error = %v", err)
+	}
+	text := string(out)
+	if strings.Contains(text, "<tag>") || strings.Contains(text, "[link](bad)") || strings.Contains(text, "<secret>") {
+		t.Fatalf("diagnostic was not escaped:\n%s", text)
+	}
+	if !strings.Contains(text, "&lt;tag&gt;") || !strings.Contains(text, "\\[link\\]\\(bad\\)") {
+		t.Fatalf("diagnostic escape missing:\n%s", text)
+	}
+	if !strings.Contains(text, "**Summary:** 0 added, 0 removed, 1 warning, 1 error.") {
+		t.Fatalf("summary did not include diagnostic counts:\n%s", text)
+	}
+}
+
+func TestImageDiffMarkdownRejectsInvalidLimits(t *testing.T) {
+	for _, maxBytes := range []int{-1, MinPositiveMaxByte - 1} {
+		_, _, err := ImageDiffMarkdown(app.ImageDiffResult{}, MarkdownOptions{MaxBytes: maxBytes})
+		if err == nil {
+			t.Fatalf("ImageDiffMarkdown(MaxBytes=%d) error = nil, want error", maxBytes)
+		}
+	}
+}
+
+func TestImageDiffMarkdownCapsOutputAndPreservesUTF8(t *testing.T) {
+	images := make([]string, 0, 80)
+	for i := range 80 {
+		images = append(images, fmt.Sprintf("registry.example.com/team/image-%02d:%s", i, strings.Repeat("snowman-☃-", 8)))
+	}
+
+	out, meta, err := ImageDiffMarkdown(app.ImageDiffResult{Added: images}, MarkdownOptions{MaxBytes: MinPositiveMaxByte})
+	if err != nil {
+		t.Fatalf("ImageDiffMarkdown() error = %v", err)
+	}
+	if len(out) > MinPositiveMaxByte {
+		t.Fatalf("markdown length = %d, want <= %d", len(out), MinPositiveMaxByte)
+	}
+	if !utf8.Valid(out) {
+		t.Fatalf("markdown is not valid UTF-8:\n%s", string(out))
+	}
+	if !meta.Truncated {
+		t.Fatalf("meta.Truncated = false, want true")
+	}
+	if !strings.Contains(string(out), "Image rows shown:") || !strings.Contains(string(out), "comment truncated") {
+		t.Fatalf("truncation note missing:\n%s", string(out))
+	}
+}
+
+func TestImageDiffMarkdownUnlimitedIncludesAllRows(t *testing.T) {
+	images := make([]string, 0, 300)
+	for i := range 300 {
+		images = append(images, fmt.Sprintf("registry.example.com/team/image-%03d:tag", i))
+	}
+
+	out, meta, err := ImageDiffMarkdown(app.ImageDiffResult{Added: images}, MarkdownOptions{MaxBytes: 0})
+	if err != nil {
+		t.Fatalf("ImageDiffMarkdown() error = %v", err)
+	}
+	text := string(out)
+	for _, want := range []string{
+		"`registry.example.com/team/image-000:tag`",
+		"`registry.example.com/team/image-299:tag`",
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("unlimited markdown missing %q", want)
+		}
+	}
+	if meta.Truncated {
+		t.Fatalf("meta.Truncated = true, want false")
+	}
+	if strings.Contains(text, "Image rows shown:") {
+		t.Fatalf("unlimited markdown included omitted note:\n%s", text)
+	}
+}
+
 func diffResult(namespace, appName, resourceName, body string) diff.Result {
 	return diff.Result{
 		Parent: diff.Parent{
