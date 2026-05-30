@@ -215,7 +215,7 @@ func totalLineChanges(groups []appGroup) (int, int) {
 
 func lineChanges(text string) (int, int) {
 	var added, removed int
-	for _, line := range strings.Split(text, "\n") {
+	for line := range strings.SplitSeq(text, "\n") {
 		switch {
 		case strings.HasPrefix(line, "+++") || strings.HasPrefix(line, "---"):
 		case strings.HasPrefix(line, "+"):
@@ -239,6 +239,8 @@ func diagnosticCounts(diagnostics []diagnostic.Diagnostic) (int, int) {
 		switch diag.Severity {
 		case diagnostic.SeverityError:
 			errors++
+		case diagnostic.SeverityWarning:
+			warnings++
 		default:
 			warnings++
 		}
@@ -275,7 +277,7 @@ func diagnosticsMarkdown(diagnostics []diagnostic.Diagnostic, limit int) string 
 		builder.WriteByte('\n')
 	}
 	if omitted := len(diagnostics) - shown; omitted > 0 {
-		builder.WriteString(fmt.Sprintf("_... and %d more diagnostics omitted._\n", omitted))
+		fmt.Fprintf(&builder, "_... and %d more diagnostics omitted._\n", omitted)
 	}
 	builder.WriteByte('\n')
 	return builder.String()
@@ -289,11 +291,11 @@ func changedAppsMarkdown(groups []appGroup) string {
 	builder.WriteString("Changed Applications:\n\n")
 	limit := min(len(groups), 50)
 	for _, group := range groups[:limit] {
-		builder.WriteString(fmt.Sprintf("- `%s` (+%d/-%d, %d resources)\n",
-			escapeCodeSpan(group.id), group.added, group.removed, len(group.resources)))
+		fmt.Fprintf(&builder, "- `%s` (+%d/-%d, %d resources)\n",
+			escapeCodeSpan(group.id), group.added, group.removed, len(group.resources))
 	}
 	if omitted := len(groups) - limit; omitted > 0 {
-		builder.WriteString(fmt.Sprintf("_... and %d more changed applications omitted from this summary._\n", omitted))
+		fmt.Fprintf(&builder, "_... and %d more changed applications omitted from this summary._\n", omitted)
 	}
 	builder.WriteByte('\n')
 	return builder.String()
@@ -307,10 +309,10 @@ func omittedMarkdown(groups []appGroup) string {
 	builder.WriteString("Omitted Application Details:\n\n")
 	limit := min(len(groups), 25)
 	for _, group := range groups[:limit] {
-		builder.WriteString(fmt.Sprintf("- `%s`\n", escapeCodeSpan(group.id)))
+		fmt.Fprintf(&builder, "- `%s`\n", escapeCodeSpan(group.id))
 	}
 	if omitted := len(groups) - limit; omitted > 0 {
-		builder.WriteString(fmt.Sprintf("_... and %d more omitted applications not listed._\n", omitted))
+		fmt.Fprintf(&builder, "_... and %d more omitted applications not listed._\n", omitted)
 	}
 	builder.WriteByte('\n')
 	return builder.String()
@@ -365,8 +367,8 @@ func appDetailMarkdown(group appGroup, budget int) (string, bool) {
 	}
 	fence := codeFence(diffText)
 	var builder strings.Builder
-	builder.WriteString(fmt.Sprintf("<details>\n<summary>%s (+%d/-%d, %d resources)</summary>\n\n",
-		escapeHTML(group.id), group.added, group.removed, len(group.resources)))
+	fmt.Fprintf(&builder, "<details>\n<summary>%s (+%d/-%d, %d resources)</summary>\n\n",
+		escapeHTML(group.id), group.added, group.removed, len(group.resources))
 	builder.WriteString(fence)
 	builder.WriteString("diff\n")
 	builder.WriteString(diffText)
