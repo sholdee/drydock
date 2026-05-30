@@ -15,7 +15,11 @@ var errEmptyDiffBody = errors.New("empty diff body")
 
 func normalizedDocumentBodies(left, right Document, hasLeft, hasRight bool, opts Options) (string, string, error) {
 	if hasLeft && hasRight && len(left.Normalization.ManagedFieldsManagers) > 0 {
-		return normalizedDocumentPairBodies(left, right, opts)
+		leftBody, rightBody, err := normalizedDocumentPairBodies(left, right, opts)
+		if err != nil {
+			return "", "", err
+		}
+		return summarizeConfigMapBinaryDataDocumentBodies(leftBody, rightBody, left, right, hasLeft, hasRight)
 	}
 
 	var leftBody string
@@ -36,7 +40,7 @@ func normalizedDocumentBodies(left, right Document, hasLeft, hasRight bool, opts
 		rightBody = body
 	}
 
-	return leftBody, rightBody, nil
+	return summarizeConfigMapBinaryDataDocumentBodies(leftBody, rightBody, left, right, hasLeft, hasRight)
 }
 func normalizedDocumentPairBodies(left, right Document, opts Options) (string, string, error) {
 	leftObject, leftRemoved, err := normalizeDiffObject(left.Body, opts, left.Normalization, left.Resource)

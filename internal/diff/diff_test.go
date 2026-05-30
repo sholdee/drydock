@@ -225,6 +225,241 @@ func TestRunRedactsSecretBinaryDataValues(t *testing.T) {
 	}
 }
 
+func TestRunSummarizesConfigMapBinaryDataValues(t *testing.T) {
+	left := []Document{configMapBinaryDataDocument("cfg", "archive.bin", "YmluYXJ5LW9sZA==")}
+	right := []Document{configMapBinaryDataDocument("cfg", "archive.bin", "YmluYXJ5LW5ldw==")}
+
+	results, err := Run(left, right, Options{Unified: 3})
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if len(results) != 1 {
+		t.Fatalf("len(results) = %d, want 1", len(results))
+	}
+	diff := results[0].Diff
+	for _, forbidden := range []string{"YmluYXJ5LW9sZA==", "YmluYXJ5LW5ldw=="} {
+		if strings.Contains(diff, forbidden) {
+			t.Fatalf("Diff leaked ConfigMap binaryData value %q:\n%s", forbidden, diff)
+		}
+	}
+	for _, want := range []string{
+		"archive.bin:",
+		binaryDataSummary("YmluYXJ5LW9sZA=="),
+		binaryDataSummary("YmluYXJ5LW5ldw=="),
+	} {
+		if !strings.Contains(diff, want) {
+			t.Fatalf("Diff = %q, want substring %q", diff, want)
+		}
+	}
+}
+
+func TestRunConfigMapBinaryDataEquivalentDecodedBytesDoNotDiff(t *testing.T) {
+	left := []Document{configMapBinaryDataDocument("cfg", "archive.bin", "aGVsbG8=")}
+	right := []Document{{
+		Parent:   testParent(),
+		Resource: Resource{Kind: "ConfigMap", Namespace: "default", Name: "cfg"},
+		Body:     "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: cfg\n  namespace: default\nbinaryData:\n  archive.bin: |-\n    aGVs\n    bG8=\n",
+	}}
+
+	results, err := Run(left, right, Options{Unified: 3})
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if len(results) != 0 {
+		t.Fatalf("len(results) = %d, want equivalent decoded binaryData to suppress diff: %#v", len(results), results)
+	}
+}
+
+func TestRunConfigMapBinaryDataAddedAndRemovedKeysRemainVisible(t *testing.T) {
+	left := []Document{{
+		Parent:   testParent(),
+		Resource: Resource{Kind: "ConfigMap", Namespace: "default", Name: "cfg"},
+		Body:     "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: cfg\n  namespace: default\nbinaryData:\n  keep.bin: a2VlcA==\n  removed.bin: cmVtb3ZlZA==\n",
+	}}
+	right := []Document{{
+		Parent:   testParent(),
+		Resource: Resource{Kind: "ConfigMap", Namespace: "default", Name: "cfg"},
+		Body:     "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: cfg\n  namespace: default\nbinaryData:\n  keep.bin: a2VlcA==\n  added.bin: YWRkZWQ=\n",
+	}}
+
+	results, err := Run(left, right, Options{Unified: 3})
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if len(results) != 1 {
+		t.Fatalf("len(results) = %d, want 1", len(results))
+	}
+	diff := results[0].Diff
+	for _, want := range []string{
+		"removed.bin:",
+		binaryDataSummary("cmVtb3ZlZA=="),
+		"added.bin:",
+		binaryDataSummary("YWRkZWQ="),
+	} {
+		if !strings.Contains(diff, want) {
+			t.Fatalf("Diff = %q, want substring %q", diff, want)
+		}
+	}
+	if strings.Contains(diff, "cmVtb3ZlZA==") || strings.Contains(diff, "YWRkZWQ=") {
+		t.Fatalf("Diff leaked added/removed binaryData values:\n%s", diff)
+	}
+}
+
+func TestRunSummarizesAddedConfigMapBinaryDataResource(t *testing.T) {
+	right := []Document{configMapBinaryDataDocument("cfg", "archive.bin", "YWRkZWQ=")}
+
+	results, err := Run(nil, right, Options{Unified: 3})
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if len(results) != 1 {
+		t.Fatalf("len(results) = %d, want 1", len(results))
+	}
+	diff := results[0].Diff
+	if strings.Contains(diff, "YWRkZWQ=") {
+		t.Fatalf("Diff leaked added ConfigMap binaryData value:\n%s", diff)
+	}
+	if want := binaryDataSummary("YWRkZWQ="); !strings.Contains(diff, want) {
+		t.Fatalf("Diff = %q, want substring %q", diff, want)
+	}
+}
+
+func TestRunSummarizesRemovedConfigMapBinaryDataResource(t *testing.T) {
+	left := []Document{configMapBinaryDataDocument("cfg", "archive.bin", "cmVtb3ZlZA==")}
+
+	results, err := Run(left, nil, Options{Unified: 3})
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if len(results) != 1 {
+		t.Fatalf("len(results) = %d, want 1", len(results))
+	}
+	diff := results[0].Diff
+	if strings.Contains(diff, "cmVtb3ZlZA==") {
+		t.Fatalf("Diff leaked removed ConfigMap binaryData value:\n%s", diff)
+	}
+	if want := binaryDataSummary("cmVtb3ZlZA=="); !strings.Contains(diff, want) {
+		t.Fatalf("Diff = %q, want substring %q", diff, want)
+	}
+}
+
+func TestRunSummarizesMalformedConfigMapBinaryData(t *testing.T) {
+	left := []Document{configMapBinaryDataDocument("cfg", "archive.bin", "not-base64-left")}
+	right := []Document{configMapBinaryDataDocument("cfg", "archive.bin", "not-base64-right")}
+
+	results, err := Run(left, right, Options{Unified: 3})
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if len(results) != 1 {
+		t.Fatalf("len(results) = %d, want 1", len(results))
+	}
+	diff := results[0].Diff
+	for _, forbidden := range []string{"not-base64-left", "not-base64-right"} {
+		if strings.Contains(diff, forbidden) {
+			t.Fatalf("Diff leaked malformed ConfigMap binaryData value %q:\n%s", forbidden, diff)
+		}
+	}
+	for _, want := range []string{
+		"archive.bin:",
+		binaryDataSummary("not-base64-left"),
+		binaryDataSummary("not-base64-right"),
+		"invalid-base64",
+	} {
+		if !strings.Contains(diff, want) {
+			t.Fatalf("Diff = %q, want substring %q", diff, want)
+		}
+	}
+}
+
+func TestRunKeepsConfigMapDataVisibleWhenBinaryDataIsSummarized(t *testing.T) {
+	left := []Document{{
+		Parent:   testParent(),
+		Resource: Resource{Kind: "ConfigMap", Namespace: "default", Name: "cfg"},
+		Body:     "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: cfg\n  namespace: default\ndata:\n  script.sh: echo old\nbinaryData:\n  archive.bin: YmluYXJ5\n",
+	}}
+	right := []Document{{
+		Parent:   testParent(),
+		Resource: Resource{Kind: "ConfigMap", Namespace: "default", Name: "cfg"},
+		Body:     "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: cfg\n  namespace: default\ndata:\n  script.sh: echo new\nbinaryData:\n  archive.bin: YmluYXJ5\n",
+	}}
+
+	results, err := Run(left, right, Options{Unified: 3})
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if len(results) != 1 {
+		t.Fatalf("len(results) = %d, want 1", len(results))
+	}
+	diff := results[0].Diff
+	for _, want := range []string{"script.sh: echo old", "script.sh: echo new"} {
+		if !strings.Contains(diff, want) {
+			t.Fatalf("Diff = %q, want visible ConfigMap.data substring %q", diff, want)
+		}
+	}
+	if strings.Contains(diff, "YmluYXJ5") {
+		t.Fatalf("Diff leaked ConfigMap binaryData while data stayed visible:\n%s", diff)
+	}
+}
+
+func TestRunDoesNotDecodeDataOnlyConfigMapForBinaryDataSummary(t *testing.T) {
+	left := []Document{{
+		Parent:        testParent(),
+		Resource:      Resource{Kind: "ConfigMap", Namespace: "default", Name: "cfg"},
+		Body:          "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: cfg\n  namespace: default\ndata:\n  value: old\n",
+		Normalization: Normalization{CompareOptions: CompareOptions{IgnoreResourceStatusField: IgnoreResourceStatusNone}},
+	}}
+	right := []Document{{
+		Parent:        testParent(),
+		Resource:      Resource{Kind: "ConfigMap", Namespace: "default", Name: "cfg"},
+		Body:          "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: cfg\n  namespace: default\ndata:\n  value: [unterminated\n",
+		Normalization: Normalization{CompareOptions: CompareOptions{IgnoreResourceStatusField: IgnoreResourceStatusNone}},
+	}}
+
+	results, err := Run(left, right, Options{Unified: 3})
+	if err != nil {
+		t.Fatalf("Run() error = %v, want data-only ConfigMap bodies to skip binaryData summary decoding", err)
+	}
+	if len(results) != 1 {
+		t.Fatalf("len(results) = %d, want raw data-only ConfigMap diff preserved", len(results))
+	}
+	if diff := results[0].Diff; !strings.Contains(diff, "[unterminated") {
+		t.Fatalf("Diff = %q, want raw data-only ConfigMap body retained", diff)
+	}
+}
+
+func TestRunRedactsMalformedConfigMapBinaryDataShapes(t *testing.T) {
+	left := []Document{{
+		Parent:   testParent(),
+		Resource: Resource{Kind: "ConfigMap", Namespace: "default", Name: "cfg"},
+		Body:     "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: cfg\n  namespace: default\nbinaryData: raw-scalar-left\n",
+	}}
+	right := []Document{{
+		Parent:   testParent(),
+		Resource: Resource{Kind: "ConfigMap", Namespace: "default", Name: "cfg"},
+		Body:     "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: cfg\n  namespace: default\nbinaryData:\n  archive.bin: 12345\n",
+	}}
+
+	results, err := Run(left, right, Options{Unified: 3})
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if len(results) != 1 {
+		t.Fatalf("len(results) = %d, want 1", len(results))
+	}
+	diff := results[0].Diff
+	for _, forbidden := range []string{"raw-scalar-left", "12345"} {
+		if strings.Contains(diff, forbidden) {
+			t.Fatalf("Diff leaked malformed ConfigMap binaryData shape value %q:\n%s", forbidden, diff)
+		}
+	}
+	for _, want := range []string{"invalid-field", "invalid-value", "archive.bin:"} {
+		if !strings.Contains(diff, want) {
+			t.Fatalf("Diff = %q, want substring %q", diff, want)
+		}
+	}
+}
+
 func TestRunRedactsMalformedSecretBearingFields(t *testing.T) {
 	left := []Document{{
 		Parent: Parent{
@@ -1254,6 +1489,21 @@ rules:
     verbs: ["get"]
 `,
 		Normalization: normalization,
+	}
+}
+
+func configMapBinaryDataDocument(name, key, value string) Document {
+	return Document{
+		Parent:   testParent(),
+		Resource: Resource{Kind: "ConfigMap", Namespace: "default", Name: name},
+		Body: `apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ` + name + `
+  namespace: default
+binaryData:
+  ` + key + `: ` + value + `
+`,
 	}
 }
 
