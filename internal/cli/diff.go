@@ -230,8 +230,10 @@ func shouldColorDiffOutput(mode string, deps Dependencies, w io.Writer) bool {
 }
 
 func renderDiffResult(cmd *cobra.Command, result app.DiffResult, disableDiffExitCode bool, output string, diffColor, diagnosticColor bool, rawOutputFile string, markdownMaxBytes int) error {
-	if err := renderDiagnosticsWithColor(cmd.ErrOrStderr(), result.Diagnostics, diagnosticColor); err != nil {
-		return err
+	if output != diffOutputMarkdown {
+		if err := renderDiagnosticsWithColor(cmd.ErrOrStderr(), result.Diagnostics, diagnosticColor); err != nil {
+			return err
+		}
 	}
 	if rawOutputFile != "" {
 		if err := os.WriteFile(rawOutputFile, []byte(report.RawUnifiedDiff(result.Results)), 0o644); err != nil {

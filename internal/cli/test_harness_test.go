@@ -57,15 +57,6 @@ func assertStdoutExcludesAll(t *testing.T, result cliCommandResult, forbidden ..
 	}
 }
 
-func assertStderrContainsAll(t *testing.T, result cliCommandResult, wants ...string) {
-	t.Helper()
-	for _, want := range wants {
-		if !strings.Contains(result.Stderr, want) {
-			t.Fatalf("stderr missing %q:\nstdout:\n%s\nstderr:\n%s", want, result.Stdout, result.Stderr)
-		}
-	}
-}
-
 func assertStderrEmpty(t *testing.T, result cliCommandResult) {
 	t.Helper()
 	if result.Stderr != "" {

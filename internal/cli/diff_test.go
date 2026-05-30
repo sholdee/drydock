@@ -172,7 +172,7 @@ func TestDiffAppsMarkdownOutput(t *testing.T) {
 		"+  value: new",
 	)
 	assertStdoutExcludesAll(t, result, "\x1b[")
-	assertStderrContainsAll(t, result, "warning render:")
+	assertStderrEmpty(t, result)
 }
 
 func TestDiffAppsMarkdownRawOutputFilePreservesUnifiedDiff(t *testing.T) {
