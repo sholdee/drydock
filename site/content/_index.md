@@ -2,8 +2,6 @@
 title: drydock
 ---
 
-# drydock
-
 Offline desired-state analysis for Argo CD GitOps repositories.
 
 drydock discovers Argo CD Applications, renders desired manifests, compares

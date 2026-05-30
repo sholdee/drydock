@@ -1,20 +1,25 @@
 :root {
-  color-scheme: light;
-  --ink: #172033;
-  --muted: #4a5568;
-  --quiet: #667085;
-  --line: #cad5e1;
-  --line-strong: #8fa1b7;
-  --paper: #f7fafc;
-  --surface: #ffffff;
-  --surface-cool: #edf4f8;
-  --navy: #263244;
-  --navy-deep: #172033;
-  --rust: #a84a22;
-  --rust-bright: #c45a2c;
-  --focus: #0b63ce;
-  --code-bg: #111827;
-  --code-ink: #f8fafc;
+  color-scheme: dark;
+  --ink: #e7edf5;
+  --muted: #a5b4c6;
+  --quiet: #8190a3;
+  --line: #26354a;
+  --line-strong: #45617f;
+  --paper: #07111d;
+  --surface: #101b29;
+  --surface-raised: #142133;
+  --surface-cool: #17263a;
+  --navy: #c6d4e3;
+  --navy-deep: #f3f7fb;
+  --rust: #d17342;
+  --rust-bright: #f08a51;
+  --teal: #69d7c2;
+  --focus: #69b8ff;
+  --link: #8ec8ff;
+  --link-hover: #ffad73;
+  --code-bg: #050b12;
+  --code-ink: #edf5ff;
+  --shadow: rgba(0, 0, 0, 0.32);
   --max-width: 1480px;
   --header-height: 72px;
 }
@@ -32,22 +37,33 @@ html {
 }
 
 body {
+  position: relative;
+  isolation: isolate;
   margin: 0;
   min-height: 100vh;
-  background:
-    linear-gradient(rgba(38, 50, 68, 0.045) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(38, 50, 68, 0.045) 1px, transparent 1px),
-    linear-gradient(180deg, #f8fbfd 0%, #edf4f8 100%);
-  background-size: 32px 32px, 32px 32px, auto;
+  background: linear-gradient(180deg, #07111d 0%, #0a1421 46%, #101827 100%);
+}
+
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='1440' height='960' viewBox='0 0 1440 960'%3E%3Cg fill='none' stroke-linecap='round'%3E%3Cg stroke='%2369d7c2' stroke-opacity='.12' stroke-width='1.8'%3E%3Cpath d='M-120 110C28 42 156 30 282 88s224 82 358 8 250-108 390-32 264 100 530 28'/%3E%3Cpath d='M-132 158C22 76 168 76 310 138s236 74 382-4 266-112 424-28 270 96 468 22'/%3E%3Cpath d='M-140 218C38 118 194 112 342 176s246 86 396 4 282-126 446-34 264 112 396 54'/%3E%3Cpath d='M-96 374C54 298 192 286 326 348s246 78 404-22 308-118 482-30 286 92 404 18'/%3E%3Cpath d='M-118 466C36 386 198 398 352 462s286 58 438-34 300-108 480-18 280 92 398 24'/%3E%3Cpath d='M-128 548C48 434 214 438 368 510s292 54 438-52 296-116 476-20 280 86 390 6'/%3E%3Cpath d='M-150 744C20 636 188 614 360 704s318 88 496-20 310-140 500-46 270 118 420 48'/%3E%3Cpath d='M-116 888C58 806 232 810 394 872s304 42 454-46 310-88 486-18 286 72 420 10'/%3E%3C/g%3E%3Cg stroke='%23d17342' stroke-opacity='.065' stroke-width='1.4'%3E%3Cpath d='M-100 164C58 94 196 100 334 156s242 60 386-18 266-82 418-8 286 74 424 2'/%3E%3Cpath d='M-126 296C40 220 198 228 348 290s278 54 426-32 292-92 460-14 274 84 420 18'/%3E%3Cpath d='M-116 456C42 382 204 382 358 450s286 52 438-36 298-92 468-10 272 78 390 10'/%3E%3Cpath d='M-120 820C46 746 210 742 376 812s316 58 486-24 308-100 480-24 274 84 426 16'/%3E%3C/g%3E%3C/g%3E%3C/svg%3E");
+  background-position: center top;
+  background-repeat: no-repeat;
+  background-size: cover;
+  opacity: 0.62;
 }
 
 a {
-  color: #174f9a;
+  color: var(--link);
   text-underline-offset: 0.18em;
 }
 
 a:hover {
-  color: var(--rust);
+  color: var(--link-hover);
 }
 
 :focus-visible {
@@ -61,9 +77,9 @@ a:hover {
   top: 1rem;
   z-index: 20;
   transform: translateY(-160%);
-  border: 2px solid var(--navy-deep);
+  border: 2px solid var(--rust-bright);
   border-radius: 6px;
-  background: var(--surface);
+  background: var(--surface-raised);
   color: var(--navy-deep);
   padding: 0.6rem 0.8rem;
   font-weight: 700;
@@ -78,7 +94,7 @@ a:hover {
   top: 0;
   z-index: 10;
   border-bottom: 1px solid var(--line);
-  background: rgba(255, 255, 255, 0.95);
+  background: rgba(8, 17, 29, 0.92);
   backdrop-filter: blur(10px);
 }
 
@@ -115,7 +131,7 @@ a:hover {
 
 .header-links a {
   border-radius: 6px;
-  color: var(--navy-deep);
+  color: var(--muted);
   font-size: 0.92rem;
   font-weight: 700;
   padding: 0.45rem 0.62rem;
@@ -123,8 +139,8 @@ a:hover {
 }
 
 .header-links a:hover {
-  background: var(--surface-cool);
-  color: var(--rust);
+  background: rgba(105, 215, 194, 0.09);
+  color: var(--navy-deep);
 }
 
 .site-shell {
@@ -156,7 +172,7 @@ a:hover {
 .nav-heading,
 .section-label {
   margin: 0 0 0.65rem;
-  color: var(--rust);
+  color: var(--rust-bright);
   font-size: 0.76rem;
   font-weight: 800;
   text-transform: uppercase;
@@ -178,7 +194,7 @@ a:hover {
 .toc-panel a {
   display: block;
   border-radius: 6px;
-  color: var(--navy);
+  color: var(--muted);
   font-size: 0.92rem;
   line-height: 1.3;
   padding: 0.42rem 0.5rem;
@@ -187,13 +203,13 @@ a:hover {
 
 .docs-nav a:hover,
 .toc-panel a:hover {
-  background: rgba(202, 213, 225, 0.42);
-  color: var(--rust);
+  background: rgba(105, 215, 194, 0.08);
+  color: var(--navy-deep);
 }
 
 .docs-nav a.is-active {
-  background: var(--navy);
-  color: #ffffff;
+  background: linear-gradient(90deg, rgba(209, 115, 66, 0.28), rgba(105, 215, 194, 0.14));
+  color: var(--navy-deep);
   font-weight: 800;
 }
 
@@ -213,9 +229,9 @@ a:hover {
 
 .doc-page {
   border: 1px solid var(--line);
-  border-top: 4px solid var(--navy);
-  background: rgba(255, 255, 255, 0.96);
-  box-shadow: 0 16px 40px rgba(23, 32, 51, 0.08);
+  border-top: 4px solid var(--rust);
+  background: rgba(16, 27, 41, 0.94);
+  box-shadow: 0 18px 48px var(--shadow);
 }
 
 .home-page {
@@ -225,21 +241,21 @@ a:hover {
 .home-mark {
   border-bottom: 1px solid var(--line);
   background:
-    repeating-linear-gradient(90deg, transparent 0 18px, rgba(38, 50, 68, 0.08) 18px 19px),
-    linear-gradient(135deg, #f8fbfd 0%, #edf4f8 100%);
-  padding: 1.25rem clamp(1.1rem, 4vw, 2.5rem);
+    linear-gradient(135deg, rgba(209, 115, 66, 0.16), rgba(105, 215, 194, 0.06) 52%, transparent),
+    var(--surface-raised);
+  padding: 1.35rem clamp(1.1rem, 4vw, 2.5rem);
 }
 
 .home-mark img {
   display: block;
-  width: min(320px, 100%);
+  width: min(380px, 100%);
   height: auto;
 }
 
 .doc-header {
   border-bottom: 1px solid var(--line);
   background:
-    linear-gradient(90deg, rgba(168, 74, 34, 0.09), transparent 42%),
+    linear-gradient(90deg, rgba(209, 115, 66, 0.16), transparent 44%),
     var(--surface-cool);
   padding: clamp(1.35rem, 4vw, 2.5rem) clamp(1.1rem, 4vw, 2.75rem);
 }
@@ -247,7 +263,7 @@ a:hover {
 .doc-header h1 {
   margin: 0;
   color: var(--navy-deep);
-  font-size: clamp(2rem, 5vw, 3.4rem);
+  font-size: 2.35rem;
   line-height: 1.05;
 }
 
@@ -281,7 +297,7 @@ a:hover {
 
 .doc-content h1 {
   margin: 0 0 1rem;
-  font-size: clamp(2.15rem, 5vw, 3.8rem);
+  font-size: 2.15rem;
   line-height: 1.05;
 }
 
@@ -289,7 +305,7 @@ a:hover {
   border-top: 1px solid var(--line);
   margin-top: 2.2rem;
   padding-top: 1.3rem;
-  font-size: clamp(1.45rem, 3vw, 2rem);
+  font-size: 1.55rem;
 }
 
 .doc-content h3 {
@@ -329,8 +345,8 @@ a:hover {
 .doc-content code {
   border: 1px solid var(--line);
   border-radius: 5px;
-  background: #eef3f7;
-  color: #243044;
+  background: rgba(5, 11, 18, 0.72);
+  color: #dcecff;
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
   font-size: 0.92em;
   padding: 0.08rem 0.28rem;
@@ -338,6 +354,7 @@ a:hover {
 
 .doc-content pre {
   overflow-x: auto;
+  border: 1px solid #213149;
   border-radius: 8px;
   background: var(--code-bg);
   color: var(--code-ink);
@@ -354,7 +371,7 @@ a:hover {
 .doc-content blockquote {
   margin-left: 0;
   border-left: 4px solid var(--rust-bright);
-  background: #fff7f2;
+  background: rgba(209, 115, 66, 0.11);
   padding: 0.65rem 1rem;
 }
 
@@ -370,7 +387,7 @@ a:hover {
   border: 1px solid var(--line);
   border-left: 4px solid var(--rust);
   border-radius: 8px;
-  background: var(--surface);
+  background: var(--surface-raised);
   color: var(--navy-deep);
   font-weight: 800;
   padding: 0.85rem 1rem;
@@ -379,7 +396,7 @@ a:hover {
 
 .doc-index a:hover {
   border-color: var(--rust);
-  background: #fff7f2;
+  background: rgba(209, 115, 66, 0.12);
 }
 
 .site-footer {
@@ -425,7 +442,7 @@ a:hover {
   .site-sidebar {
     position: static;
     border-bottom: 1px solid var(--line);
-    background: rgba(255, 255, 255, 0.96);
+    background: rgba(8, 17, 29, 0.94);
     padding: 1rem;
   }
 
@@ -457,4 +474,22 @@ a:hover {
   .site-footer span {
     display: block;
   }
+
+  .doc-header h1 {
+    font-size: 1.85rem;
+  }
+
+  .doc-content h1 {
+    font-size: 1.75rem;
+  }
+}
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
+  white-space: nowrap;
 }
