@@ -4,7 +4,8 @@ title: Getting Started
 
 Use drydock when you want to inspect Argo CD desired state from repository
 contents before a controller sees it. The default commands do not call a live
-Argo CD server or Kubernetes cluster.
+Argo CD server or Kubernetes cluster, and use native renderers for the common
+directory, Kustomize, Helm, and Jsonnet paths.
 
 ## Install
 

@@ -3,8 +3,9 @@ title: Local Diffs
 ---
 
 Use local diffs to compare desired state before opening or merging a pull
-request. drydock renders both sides and compares desired manifests; it does not
-ask live Argo CD or Kubernetes for current state.
+request, or any time you want to inspect repository changes before Argo CD sees
+them. drydock renders both sides and compares desired manifests; it does not ask
+live Argo CD or Kubernetes for current state.
 
 ## Compare Two Trees
 
@@ -46,19 +47,29 @@ drydock diff apps --path . --path-orig ../baseline -o markdown
 drydock diff images --path . --path-orig ../baseline -o markdown
 ```
 
-Image markdown is comment-facing and omits unchanged images by default:
+Manifest markdown is the primary review surface:
 
-```markdown
-## drydock image diff
+````markdown
+## drydock desired state diff
 
-**Summary:** 2 added, 1 removed.
+**Summary:** 1 app, 2 resources, +4/-2.
 
-| Change | Image |
-| --- | --- |
-| added | `registry.example.com/api:v2` |
-| added | `registry.example.com/worker:v2` |
-| removed | `registry.example.com/api:v1` |
+<details open>
+<summary>renovate (+4/-2, 2 resources)</summary>
+
+```diff
+--- Application: renovate apps/Deployment: renovate/renovate-operator
++++ Application: renovate apps/Deployment: renovate/renovate-operator
+@@ -47,7 +47,7 @@
+-          image: ghcr.io/example/renovate:1.0.0
++          image: ghcr.io/example/renovate:1.1.0
 ```
+
+</details>
+````
+
+Image markdown is a companion view for scanning rendered image reference
+changes, and omits unchanged images by default.
 
 For the full diff behavior, output formats, ignore rules, and exit codes, see
 the [CLI usage guide](/docs/usage/).

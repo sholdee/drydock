@@ -3,8 +3,8 @@ title: Compatibility
 ---
 
 drydock targets Argo CD desired-state analysis that can run without live Argo
-CD or Kubernetes. It supports the common offline paths operators need for pull
-request validation and local inspection.
+CD or Kubernetes. It supports the common runtime-offline paths operators need
+for local inspection, CI validation, and pull request review.
 
 ## Supported At A Glance
 
