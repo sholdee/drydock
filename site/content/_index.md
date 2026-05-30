@@ -12,12 +12,14 @@ running Argo CD instance or Kubernetes cluster.
 
 ## Start Here
 
-- [Usage](docs/usage/) covers discovery, rendering, diffs, image reports,
-  diagnostics, and local verification commands.
-- [GitHub Actions](docs/github-actions/) shows the setup action and pull
-  request action inputs, permissions, comments, and outputs.
-- [Compatibility](docs/compatibility/) defines the supported Argo CD behavior
-  and runtime boundary.
+- [Getting started](getting-started/) covers the first local commands and the
+  runtime-offline model.
+- [GitHub Actions](workflows/github-actions/) shows the current setup and pull
+  request actions for CI.
+- [Local diffs](workflows/local-diffs/) covers local tree and Git ref
+  comparisons.
+- [Troubleshooting](troubleshooting/) maps common operator symptoms to the
+  first commands to run.
 
 ## Core Workflows
 
@@ -31,7 +33,11 @@ drydock diag --path ./gitops
 
 ## Operating Model
 
-drydock is built for offline desired-state inspection. It can fetch declared
-Git, Helm, OCI Helm, and remote Kustomize sources into explicit caches unless
-`--offline` is set, but default analysis does not depend on live Kubernetes or
-Argo CD APIs.
+drydock is runtime-offline: render, test, diff, image, and diagnostic commands
+do not call live Kubernetes or Argo CD. Declared Git, HTTP Helm, OCI Helm, and
+remote Kustomize sources can still be fetched into explicit caches unless
+`--offline` is set.
+
+Use these curated pages for day-to-day operation. Use the mounted reference
+docs when you need dense details such as full compatibility notes, action
+inputs, source acquisition flags, or plugin policy schema.

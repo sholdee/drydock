@@ -13,35 +13,35 @@ menus:
     - name: Overview
       url: /
       weight: 10
-    - name: Usage
-      url: /docs/usage/
+    - name: Getting Started
+      url: /getting-started/
       weight: 20
     - name: GitHub Actions
-      url: /docs/github-actions/
+      url: /workflows/github-actions/
       weight: 30
-    - name: ApplicationSets
-      url: /docs/applicationsets/
+    - name: Local Diffs
+      url: /workflows/local-diffs/
       weight: 40
-    - name: Source Acquisition
-      url: /docs/source-acquisition/
+    - name: Troubleshooting
+      url: /troubleshooting/
       weight: 50
-    - name: Plugin Policy
-      url: /docs/plugin-policy/
+    - name: Runtime Offline
+      url: /concepts/runtime-offline/
       weight: 60
-    - name: Compatibility
-      url: /docs/compatibility/
+    - name: Source Acquisition
+      url: /concepts/source-acquisition/
       weight: 70
-    - name: Design
-      url: /docs/design/
+    - name: Changed-Only Diffs
+      url: /concepts/changed-only/
       weight: 80
-    - name: Release Notes
-      url: /docs/release/
+    - name: Compatibility
+      url: /compatibility/
       weight: 90
-    - name: Documentation Index
-      url: /docs/
+    - name: Plugin Policy
+      url: /plugin-policy/
       weight: 100
-    - name: Live Runtime Boundary
-      url: /docs/reports/live-integration-design-gate/
+    - name: Reference
+      url: /reference/
       weight: 110
 
 markup:
@@ -64,3 +64,5 @@ module:
       target: static
     - source: ../docs/logo
       target: static/logo
+    - source: ../schemas
+      target: static/schemas

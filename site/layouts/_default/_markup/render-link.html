@@ -1,14 +1,27 @@
 {{- $destination := .Destination -}}
 {{- $url := urls.Parse $destination -}}
 {{- $href := $destination -}}
-{{- if and (not $url.Scheme) (not $url.Host) (not (strings.HasPrefix $destination "/")) (strings.HasSuffix $url.Path ".md") -}}
-  {{- $path := strings.TrimSuffix ".md" $url.Path -}}
-  {{- $path = strings.TrimPrefix "./" $path -}}
-  {{- $clean := path.Clean (printf "%s/%s" .Page.File.Dir $path) -}}
-  {{- if eq $clean "." -}}
-    {{- $clean = "" -}}
+{{- if and (not $url.Scheme) (not $url.Host) $url.Path -}}
+  {{- if strings.HasPrefix $url.Path "/" -}}
+    {{- $href = relURL (strings.TrimPrefix "/" $url.Path) -}}
+  {{- else -}}
+    {{- $path := $url.Path -}}
+    {{- if strings.HasSuffix $path ".md" -}}
+      {{- $path = strings.TrimSuffix ".md" $path -}}
+    {{- end -}}
+    {{- $path = strings.TrimPrefix "./" $path -}}
+    {{- $clean := path.Clean (printf "%s/%s" .Page.File.Dir $path) -}}
+    {{- if eq $clean "." -}}
+      {{- $clean = "" -}}
+    {{- end -}}
+    {{- if or (strings.HasSuffix $url.Path ".md") (strings.HasSuffix $url.Path "/") -}}
+      {{- $clean = printf "%s/" $clean -}}
+    {{- end -}}
+    {{- $href = relURL $clean -}}
   {{- end -}}
-  {{- $href = relURL (printf "%s/" $clean) -}}
+  {{- with $url.RawQuery -}}
+    {{- $href = printf "%s?%s" $href . -}}
+  {{- end -}}
   {{- with $url.Fragment -}}
     {{- $href = printf "%s#%s" $href . -}}
   {{- end -}}
