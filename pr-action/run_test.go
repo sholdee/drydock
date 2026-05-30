@@ -42,6 +42,9 @@ case "$1" in
   '(.added // [])[]')
     printf 'example/app:v2\n'
     ;;
+  '(.removed // [])[]')
+    printf 'example/app:v1\n'
+    ;;
   '((.added // []) | length) + ((.removed // []) | length)')
     printf '2\n'
     ;;
@@ -357,13 +360,67 @@ func TestRunFallsBackToLegacyImageCommentWhenMarkdownUnsupported(t *testing.T) {
 	})
 
 	imagesComment := readFile(t, filepath.Join(workDir, "images-comment.md"))
-	for _, want := range []string{"## drydock image diff", "**Summary:** added images detected.", "| added | `example/app:v2` |"} {
+	for _, want := range []string{"## drydock image diff", "**Summary:** 1 added, 1 removed.", "| added | `example/app:v2` |", "| removed | `example/app:v1` |"} {
 		if !strings.Contains(imagesComment, want) {
 			t.Fatalf("images comment = %q, want %q", imagesComment, want)
 		}
 	}
-	if strings.Contains(imagesComment, "| removed |") {
-		t.Fatalf("legacy fallback should only report added images:\n%s", imagesComment)
+}
+
+func TestRunFallsBackToLegacyImageCommentForRemovedOnlyImageDiff(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell action tests require bash")
+	}
+
+	workDir := runCommentScenario(t, commentScenario{
+		uploadArtifacts:       true,
+		githubEnv:             true,
+		commentMode:           "images",
+		imageRemoved:          true,
+		imageMarkdownDisabled: true,
+	})
+
+	imagesComment := readFile(t, filepath.Join(workDir, "images-comment.md"))
+	for _, want := range []string{"## drydock image diff", "**Summary:** 0 added, 1 removed.", "| removed | `example/app:v1` |"} {
+		if !strings.Contains(imagesComment, want) {
+			t.Fatalf("images comment = %q, want %q", imagesComment, want)
+		}
+	}
+	for _, notWant := range []string{"No rendered image differences detected.", "Full added image output"} {
+		if strings.Contains(imagesComment, notWant) {
+			t.Fatalf("images comment = %q, did not want %q", imagesComment, notWant)
+		}
+	}
+}
+
+func TestRunFallsBackToGenericImageCommentWhenLegacyJSONFails(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell action tests require bash")
+	}
+
+	workDir := runCommentScenario(t, commentScenario{
+		uploadArtifacts:       true,
+		githubEnv:             true,
+		commentMode:           "images",
+		imageRemoved:          true,
+		imageMarkdownDisabled: true,
+		imageJSONDisabled:     true,
+	})
+
+	imagesComment := readFile(t, filepath.Join(workDir, "images-comment.md"))
+	for _, want := range []string{
+		"## drydock image diff",
+		"**Summary:** image differences detected.",
+		"Image differences detected, but detailed image rows are unavailable because this drydock binary does not support markdown image output.",
+	} {
+		if !strings.Contains(imagesComment, want) {
+			t.Fatalf("images comment = %q, want %q", imagesComment, want)
+		}
+	}
+	for _, notWant := range []string{"**Summary:** 0 added, 0 removed.", "No rendered image differences detected.", "| removed |"} {
+		if strings.Contains(imagesComment, notWant) {
+			t.Fatalf("images comment = %q, did not want %q", imagesComment, notWant)
+		}
 	}
 }
 
@@ -376,6 +433,7 @@ type commentScenario struct {
 	imageOutput           bool
 	imageRemoved          bool
 	imageMarkdownDisabled bool
+	imageJSONDisabled     bool
 	skipImageDiff         bool
 	extraDiffArgs         string
 	extraImageArgs        string
@@ -442,6 +500,10 @@ func writeCommentScenarioDrydock(t *testing.T, path string, scenario commentScen
 	if scenario.imageMarkdownDisabled {
 		imageMarkdownSupport = "false"
 	}
+	imageJSONSupport := "true"
+	if scenario.imageJSONDisabled {
+		imageJSONSupport = "false"
+	}
 
 	writeExecutable(t, path, `#!/usr/bin/env bash
 set -euo pipefail
@@ -506,6 +568,7 @@ if [[ "$*" == *"diff images"* ]]; then
   image_added="`+imageAdded+`"
   image_removed="`+imageRemoved+`"
   image_markdown_support="`+imageMarkdownSupport+`"
+  image_json_support="`+imageJSONSupport+`"
   case "${output}" in
     name)
       if [[ -n "${image_added}" ]]; then
@@ -547,6 +610,10 @@ if [[ "$*" == *"diff images"* ]]; then
       exit 0
       ;;
     json)
+      if [[ "${image_json_support}" != "true" ]]; then
+        echo 'json output failed' >&2
+        exit 2
+      fi
       printf '{"added":['
       if [[ -n "${image_added}" ]]; then
         printf '"%s"' "${image_added}"

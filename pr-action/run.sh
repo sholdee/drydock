@@ -75,7 +75,8 @@ append_extra_lines() {
 extract_image_diff_json() {
   local json_file="$1"
   local added_file="$2"
-  local count_file="$3"
+  local removed_file="$3"
+  local count_file="$4"
 
   if ! command -v jq >/dev/null 2>&1; then
     echo "drydock diff images -o name is not supported by this drydock binary, and jq is required for JSON fallback parsing." >&2
@@ -83,7 +84,33 @@ extract_image_diff_json() {
   fi
 
   jq -r '(.added // [])[]' "${json_file}" > "${added_file}"
+  jq -r '(.removed // [])[]' "${json_file}" > "${removed_file}"
   jq -r '((.added // []) | length) + ((.removed // []) | length)' "${json_file}" > "${count_file}"
+}
+
+count_nonempty_lines() {
+  local file="$1"
+  if [[ ! -s "${file}" ]]; then
+    echo "0"
+    return 0
+  fi
+  awk 'NF { count++ } END { print count + 0 }' "${file}"
+}
+
+capture_image_diff_json() {
+  local stderr_file="$1"
+  local -a image_args
+
+  image_args=("${drydock_bin}" diff images --repo "${repo}" --ref "${head_ref}" --ref-orig "${base_compare_ref}" "${common_args[@]}")
+  append_extra_lines image_args "${DRYDOCK_INPUT_EXTRA_IMAGE_DIFF_ARGS}"
+  image_args+=(-o json --exit-code=false)
+  if capture_command_quiet "${images_json_path}" "${stderr_file}" "${image_args[@]}"; then
+    extract_image_diff_json "${images_json_path}" "${images_path}" "${images_removed_path}" "${images_count_path}"
+    return $?
+  else
+    local status=$?
+    return "${status}"
+  fi
 }
 
 workflow_run_url() {
@@ -169,18 +196,42 @@ validate_diff_comment_size() {
 
 write_legacy_images_comment() {
   local comment_file="$1"
+  local added_count
+  local removed_count
+
+  added_count="$(count_nonempty_lines "${images_path}")"
+  removed_count="$(count_nonempty_lines "${images_removed_path}")"
+
   {
     echo "## drydock image diff"
     echo
-    if [[ "${has_images}" == "true" ]]; then
-      echo "**Summary:** added images detected."
+    if [[ "${has_image_diff}" == "true" ]]; then
+      if [[ "${image_diff_details_complete}" == "true" ]]; then
+        echo "**Summary:** ${added_count} added, ${removed_count} removed."
+      elif [[ "${has_images}" == "true" ]]; then
+        echo "**Summary:** added image differences detected."
+      else
+        echo "**Summary:** image differences detected."
+      fi
       echo
-      echo "| Change | Image |"
-      echo "| --- | --- |"
-      while IFS= read -r image; do
-        [[ -n "${image}" ]] || continue
-        printf -- "| added | \`%s\` |\n" "${image}"
-      done < "${images_path}"
+      if [[ "${added_count}" -gt 0 || "${removed_count}" -gt 0 ]]; then
+        echo "| Change | Image |"
+        echo "| --- | --- |"
+        while IFS= read -r image; do
+          [[ -n "${image}" ]] || continue
+          printf -- "| added | \`%s\` |\n" "${image}"
+        done < "${images_path}"
+        while IFS= read -r image; do
+          [[ -n "${image}" ]] || continue
+          printf -- "| removed | \`%s\` |\n" "${image}"
+        done < "${images_removed_path}"
+        if [[ "${image_diff_details_complete}" != "true" ]]; then
+          echo
+          echo "Detailed removed-image rows are unavailable because this drydock binary does not support markdown image output."
+        fi
+      else
+        echo "Image differences detected, but detailed image rows are unavailable because this drydock binary does not support markdown image output."
+      fi
     else
       echo "**Summary:** 0 added, 0 removed."
       echo
@@ -247,12 +298,14 @@ test_stderr="${work_dir}/test.err"
 diff_path="${work_dir}/diff.txt"
 diff_stderr="${work_dir}/diff.err"
 images_path="${work_dir}/added-images.txt"
+images_removed_path="${work_dir}/removed-images.txt"
 images_json_path="${work_dir}/images.json"
 images_count_path="${work_dir}/images.count"
 images_stderr="${work_dir}/images.err"
 images_comment_stderr="${work_dir}/images-comment.err"
 diff_comment_path="${work_dir}/diff-comment.md"
 images_comment_path="${work_dir}/images-comment.md"
+: > "${images_removed_path}"
 
 path="${DRYDOCK_INPUT_PATH:-.}"
 repo="${DRYDOCK_INPUT_REPO:-.}"
@@ -291,6 +344,7 @@ render_status="skipped"
 has_diff="false"
 has_images="false"
 has_image_diff="false"
+image_diff_details_complete="false"
 failed="false"
 
 if [[ "${DRYDOCK_INPUT_RUN_TEST}" == "true" ]]; then
@@ -348,16 +402,13 @@ if [[ "${DRYDOCK_INPUT_RUN_IMAGE_DIFF}" == "true" ]]; then
     image_status=$?
   fi
   if [[ "${image_status}" -eq 2 ]] && grep -q "name output is not supported for diff images" "${images_stderr}"; then
-    image_args=("${drydock_bin}" diff images --repo "${repo}" --ref "${head_ref}" --ref-orig "${base_compare_ref}" "${common_args[@]}")
-    append_extra_lines image_args "${DRYDOCK_INPUT_EXTRA_IMAGE_DIFF_ARGS}"
-    image_args+=(-o json --exit-code=false)
-    if capture_command_quiet "${images_json_path}" "${images_stderr}" "${image_args[@]}"; then
+    if capture_image_diff_json "${images_stderr}"; then
       image_status=0
+      image_diff_details_complete="true"
     else
       image_status=$?
     fi
     if [[ "${image_status}" -eq 0 ]]; then
-      extract_image_diff_json "${images_json_path}" "${images_path}" "${images_count_path}"
       if [[ "$(cat "${images_count_path}")" -gt 0 ]]; then
         image_status=1
       fi
@@ -389,6 +440,7 @@ if [[ "${DRYDOCK_INPUT_RUN_IMAGE_DIFF}" == "true" ]]; then
   fi
 else
   : > "${images_path}"
+  : > "${images_removed_path}"
 fi
 
 comment_mode="${DRYDOCK_INPUT_COMMENT_MODE}"
@@ -432,6 +484,11 @@ if [[ "${images_comment}" == "true" ]]; then
     )
     if ! capture_command_quiet "${images_comment_path}" "${images_comment_stderr}" "${image_comment_args[@]}"; then
       if grep -Eq 'unsupported output "markdown" for diff images|markdown output is not supported for diff images' "${images_comment_stderr}"; then
+        if [[ "${image_diff_details_complete}" != "true" ]]; then
+          if capture_image_diff_json "${images_comment_stderr}"; then
+            image_diff_details_complete="true"
+          fi
+        fi
         write_legacy_images_comment "${images_comment_path}"
       else
         if [[ -s "${images_comment_stderr}" ]]; then
