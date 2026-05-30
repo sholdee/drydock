@@ -4,6 +4,7 @@ golangci-lint = "2.12.2"
 lefthook = "2.1.9"
 shellcheck = "0.11.0"
 zizmor = "1.25.2"
+hugo = "0.162.1"
 
 [tasks.fmt]
 description = "Run go fmt against Go code"
@@ -60,6 +61,18 @@ run = "go run golang.org/x/vuln/cmd/govulncheck@v1.1.4 ./..."
 [tasks.whitespace]
 description = "Check for whitespace errors in changed lines"
 run = "git diff --check"
+
+[tasks.docs-serve]
+description = "Serve the Hugo documentation site locally"
+run = "hugo server --source site --disableFastRender"
+
+[tasks.docs-build]
+description = "Build the Hugo documentation site into site/public"
+run = "hugo --source site --destination public"
+
+[tasks.docs-check]
+description = "Build the Hugo documentation site into a temporary directory"
+run = "hugo --source site --destination /tmp/drydock-docs-site --cleanDestinationDir --minify"
 
 [tasks.zizmor]
 description = "Audit GitHub Actions workflow security"

@@ -1,0 +1,21 @@
+baseURL: "https://sholdee.github.io/drydock/"
+title: "drydock"
+locale: "en-US"
+disableKinds:
+  - taxonomy
+  - term
+
+module:
+  mounts:
+    - source: content
+      target: content
+    - source: ../docs
+      target: content/docs
+    - source: layouts
+      target: layouts
+    - source: assets
+      target: assets
+    - source: static
+      target: static
+    - source: ../docs/logo
+      target: static/logo

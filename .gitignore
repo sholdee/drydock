@@ -1,2 +1,6 @@
 .worktrees/
 drydock-profiles/
+site/.hugo_build.lock
+site/public/
+site/resources/_gen/
+resources/_gen/
