@@ -1,0 +1,17 @@
+{{- $title := .Title -}}
+{{- if not $title -}}
+  {{- range site.Menus.docs -}}
+    {{- if eq (relURL .URL) $.RelPermalink -}}
+      {{- $title = .Name -}}
+    {{- end -}}
+  {{- end -}}
+{{- end -}}
+{{- if not $title -}}
+  {{- with .File -}}
+    {{- $title = replace .TranslationBaseName "-" " " | title -}}
+  {{- end -}}
+{{- end -}}
+{{- if not $title -}}
+  {{- $title = site.Title -}}
+{{- end -}}
+{{- return $title -}}

@@ -1,0 +1,90 @@
+baseURL: "https://sholdee.github.io/drydock/"
+title: "drydock"
+locale: "en-US"
+disableKinds:
+  - taxonomy
+  - term
+
+params:
+  description: "Runtime-offline desired-state analysis for Argo CD GitOps repositories."
+
+menus:
+  docs:
+    - name: Overview
+      url: /
+      params:
+        group: Start
+      weight: 10
+    - name: Getting Started
+      url: /getting-started/
+      params:
+        group: Start
+      weight: 20
+    - name: Troubleshooting
+      url: /troubleshooting/
+      params:
+        group: Start
+      weight: 30
+    - name: GitHub Actions
+      url: /workflows/github-actions/
+      params:
+        group: Workflows
+      weight: 40
+    - name: Local Diffs
+      url: /workflows/local-diffs/
+      params:
+        group: Workflows
+      weight: 50
+    - name: Runtime Offline
+      url: /concepts/runtime-offline/
+      params:
+        group: Concepts
+      weight: 60
+    - name: Source Acquisition
+      url: /concepts/source-acquisition/
+      params:
+        group: Concepts
+      weight: 70
+    - name: Changed-Only Diffs
+      url: /concepts/changed-only/
+      params:
+        group: Concepts
+      weight: 80
+    - name: Compatibility
+      url: /compatibility/
+      params:
+        group: Reference
+      weight: 90
+    - name: Plugin Policy
+      url: /plugin-policy/
+      params:
+        group: Reference
+      weight: 100
+    - name: Reference
+      url: /reference/
+      params:
+        group: Reference
+      weight: 110
+
+markup:
+  tableOfContents:
+    startLevel: 2
+    endLevel: 3
+    ordered: false
+
+module:
+  mounts:
+    - source: content
+      target: content
+    - source: ../docs
+      target: content/docs
+    - source: layouts
+      target: layouts
+    - source: assets
+      target: assets
+    - source: static
+      target: static
+    - source: ../docs/logo
+      target: static/logo
+    - source: ../schemas
+      target: static/schemas

@@ -1,0 +1,71 @@
+{{- $links := slice -}}
+{{- if .IsHome -}}
+  {{- $links = slice
+    (dict "label" "Get Started" "url" "/getting-started/")
+    (dict "label" "Set Up PR Checks" "url" "/workflows/github-actions/")
+  -}}
+{{- else -}}
+  {{- $current := .RelPermalink -}}
+  {{- if eq $current (relURL "getting-started/") -}}
+    {{- $links = slice
+      (dict "label" "Set Up PR Checks" "url" "/workflows/github-actions/")
+      (dict "label" "Compare Local Diffs" "url" "/workflows/local-diffs/")
+    -}}
+  {{- else if eq $current (relURL "workflows/github-actions/") -}}
+    {{- $links = slice
+      (dict "label" "Compare Local Diffs" "url" "/workflows/local-diffs/")
+      (dict "label" "Troubleshoot" "url" "/troubleshooting/")
+    -}}
+  {{- else if eq $current (relURL "workflows/local-diffs/") -}}
+    {{- $links = slice
+      (dict "label" "Understand Changed-Only" "url" "/concepts/changed-only/")
+      (dict "label" "Source Acquisition" "url" "/concepts/source-acquisition/")
+    -}}
+  {{- else if eq $current (relURL "troubleshooting/") -}}
+    {{- $links = slice
+      (dict "label" "Compatibility" "url" "/compatibility/")
+      (dict "label" "Full Reference" "url" "/reference/")
+    -}}
+  {{- else if eq $current (relURL "concepts/runtime-offline/") -}}
+    {{- $links = slice
+      (dict "label" "Source Acquisition" "url" "/concepts/source-acquisition/")
+      (dict "label" "Compatibility" "url" "/compatibility/")
+    -}}
+  {{- else if eq $current (relURL "concepts/source-acquisition/") -}}
+    {{- $links = slice
+      (dict "label" "Changed-Only Diffs" "url" "/concepts/changed-only/")
+      (dict "label" "Full Source Reference" "url" "/docs/source-acquisition/")
+    -}}
+  {{- else if eq $current (relURL "concepts/changed-only/") -}}
+    {{- $links = slice
+      (dict "label" "Local Diffs" "url" "/workflows/local-diffs/")
+      (dict "label" "Full CLI Reference" "url" "/docs/usage/")
+    -}}
+  {{- else if eq $current (relURL "compatibility/") -}}
+    {{- $links = slice
+      (dict "label" "Plugin Policy" "url" "/plugin-policy/")
+      (dict "label" "Full Compatibility Notes" "url" "/docs/compatibility/")
+    -}}
+  {{- else if eq $current (relURL "plugin-policy/") -}}
+    {{- $links = slice
+      (dict "label" "Full Plugin Policy" "url" "/docs/plugin-policy/")
+      (dict "label" "Reference" "url" "/reference/")
+    -}}
+  {{- else if eq $current (relURL "reference/") -}}
+    {{- $links = slice
+      (dict "label" "CLI Usage" "url" "/docs/usage/")
+      (dict "label" "Compatibility" "url" "/docs/compatibility/")
+    -}}
+  {{- end -}}
+{{- end -}}
+{{- with $links -}}
+  <nav class="next-links" aria-label="Next steps">
+    <p>Next</p>
+    <div>
+      {{- range . -}}
+        {{- $url := strings.TrimPrefix "/" .url -}}
+        <a href="{{ relURL $url }}">{{ .label }}</a>
+      {{- end -}}
+    </div>
+  </nav>
+{{- end -}}

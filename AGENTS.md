@@ -3,9 +3,9 @@
 ## Product Contract
 
 `drydock` is an independent Go CLI and library for Argo CD GitOps repository
-analysis. Its job is offline desired-state analysis for Argo CD Applications:
-discover, render, test, diff, inspect images, and report diagnostics without a
-running Argo CD instance or Kubernetes cluster.
+analysis. Its job is runtime-offline desired-state analysis for Argo CD
+Applications: discover, render, test, diff, inspect images, and report
+diagnostics without a running Argo CD instance or Kubernetes cluster.
 
 Default render, diff, test, image, and diag paths must remain native Go
 execution in a single static binary. Do not require `kubectl`, `argocd`, Helm
@@ -40,6 +40,7 @@ renderers require an approved design update first.
 - `docs/plugin-policy.md`: trusted plugin policy and opt-in exec rendering.
 - `docs/reports/live-integration-design-gate.md`: required before proposing
   live runtime, server-side diff, defaulting, admission, or managed-fields work.
+- `site/`: Hugo docs site source and curated operator-facing pages.
 
 ## Subagent Sandbox Rules
 
@@ -110,6 +111,7 @@ when the user-facing task requires it.
 | Manifest diffs and image extraction | `internal/diff`, `internal/manifest` |
 | Cache lifecycle and cache events | `internal/cache`, `internal/cacheevent`, `internal/cli/cache.go` |
 | Path containment and symlink rules | `internal/pathsafety`, then caller-specific checks |
+| Documentation site | `site/`, `docs/README.md`, then canonical `docs/*.md` owner |
 
 For detailed task constraints, read the matching section in
 `docs/agent-reference.md`.

@@ -5,7 +5,7 @@
     "heading-level": false,
     "max-line-length": { "enabled": false }
   },
-  "include": ["README.md", "AGENTS.md", "docs"],
+  "include": ["README.md", "AGENTS.md", "docs", "site/content"],
   "ignore": [".worktrees"],
   "output": "text"
 }

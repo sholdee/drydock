@@ -71,6 +71,38 @@ checksum = "sha256:bd42e3ebc8cb4ececb86941983baaf1dc221bbb04d838e94ce63b49cc91e0
 url = "https://github.com/golangci/golangci-lint/releases/download/v2.12.2/golangci-lint-2.12.2-windows-amd64.zip"
 provenance = "github-attestations"
 
+[[tools.hugo]]
+version = "0.162.1"
+backend = "aqua:gohugoio/hugo"
+
+[tools.hugo."platforms.linux-arm64"]
+checksum = "sha256:ed2a4dcdc4149b575693b35d0f7220fe5248b70179097bed4cdbf98a238cbdca"
+url = "https://github.com/gohugoio/hugo/releases/download/v0.162.1/hugo_0.162.1_linux-arm64.tar.gz"
+
+[tools.hugo."platforms.linux-arm64-musl"]
+checksum = "sha256:ed2a4dcdc4149b575693b35d0f7220fe5248b70179097bed4cdbf98a238cbdca"
+url = "https://github.com/gohugoio/hugo/releases/download/v0.162.1/hugo_0.162.1_linux-arm64.tar.gz"
+
+[tools.hugo."platforms.linux-x64"]
+checksum = "sha256:4bfcdb092d0306586f1b72e5687787ead053faab2d71f09951d3c5fecde66873"
+url = "https://github.com/gohugoio/hugo/releases/download/v0.162.1/hugo_0.162.1_linux-amd64.tar.gz"
+
+[tools.hugo."platforms.linux-x64-musl"]
+checksum = "sha256:4bfcdb092d0306586f1b72e5687787ead053faab2d71f09951d3c5fecde66873"
+url = "https://github.com/gohugoio/hugo/releases/download/v0.162.1/hugo_0.162.1_linux-amd64.tar.gz"
+
+[tools.hugo."platforms.macos-arm64"]
+checksum = "sha256:869eedf30c7aeede11060f130b803a72d06b88b598c8f26a408b64edd268b818"
+url = "https://github.com/gohugoio/hugo/releases/download/v0.162.1/hugo_0.162.1_darwin-universal.pkg"
+
+[tools.hugo."platforms.macos-x64"]
+checksum = "sha256:869eedf30c7aeede11060f130b803a72d06b88b598c8f26a408b64edd268b818"
+url = "https://github.com/gohugoio/hugo/releases/download/v0.162.1/hugo_0.162.1_darwin-universal.pkg"
+
+[tools.hugo."platforms.windows-x64"]
+checksum = "sha256:c0f4ffa937218cc1781aa9d422d14570b5054e7254a10d0b7a0844b2d4ba14f4"
+url = "https://github.com/gohugoio/hugo/releases/download/v0.162.1/hugo_0.162.1_windows-amd64.zip"
+
 [[tools.lefthook]]
 version = "2.1.9"
 backend = "aqua:evilmartians/lefthook"

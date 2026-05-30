@@ -1,6 +1,6 @@
 # Argo CD Compatibility Notes
 
-`drydock` tracks Argo CD compatibility for offline-runtime desired-state
+`drydock` tracks Argo CD compatibility for runtime-offline desired-state
 analysis. Default commands discover, render, test, diff, inspect images, and
 diagnose local Argo CD desired state without contacting live Argo CD or
 Kubernetes runtime. Declared sources may be fetched into explicit caches unless

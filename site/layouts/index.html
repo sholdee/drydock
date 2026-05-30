@@ -1,0 +1,12 @@
+{{ define "main" }}
+  <article class="doc-page home-page">
+    <h1 class="visually-hidden">{{ .Title }}</h1>
+    <div class="home-mark">
+      <img src="{{ "logo/drydock-display-dark.svg" | relURL }}" alt="drydock" width="480" height="128">
+    </div>
+    <div class="doc-content">
+      {{ .Content }}
+    </div>
+    {{ partial "next-links.html" . }}
+  </article>
+{{ end }}

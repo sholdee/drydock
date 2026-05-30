@@ -1,6 +1,6 @@
 # Usage
 
-`drydock` is an offline-runtime CLI for Argo CD GitOps repositories. Default
+`drydock` is a runtime-offline CLI for Argo CD GitOps repositories. Default
 commands render and compare desired state from checked-out files plus explicit
 local caches. They do not contact a Kubernetes cluster or Argo CD server, and
 they do not require `kubectl`, `argocd`, Helm CLI, or Kustomize CLI.
