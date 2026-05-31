@@ -1,6 +1,21 @@
 <nav class="docs-nav">
   <p class="nav-heading">Docs</p>
   {{ $groups := slice "Start" "Workflows" "Cookbook" "Concepts" "Reference" }}
+  {{ $referencePages := slice
+    (dict "name" "Usage" "url" "docs/usage/")
+    (dict "name" "GitHub Actions" "url" "docs/github-actions/")
+    (dict "name" "Source Acquisition" "url" "docs/source-acquisition/")
+    (dict "name" "Repository Topologies" "url" "docs/topologies/")
+    (dict "name" "ApplicationSets" "url" "docs/applicationsets/")
+    (dict "name" "Plugin Policy" "url" "docs/plugin-policy/")
+    (dict "name" "Compatibility" "url" "docs/compatibility/")
+    (dict "name" "Design" "url" "docs/design/")
+    (dict "name" "Release" "url" "docs/release/")
+    (dict "name" "Documentation Index" "url" "docs/readme/")
+    (dict "name" "Live Runtime Gate" "url" "docs/reports/live-integration-design-gate/")
+  }}
+  {{ $referenceURL := relURL "reference/" }}
+  {{ $isReferenceContext := or (eq $.Section "docs") (eq $.RelPermalink $referenceURL) }}
   {{ range $group := $groups }}
     <div class="nav-section">
       <p class="nav-section-heading">{{ $group }}</p>
@@ -17,6 +32,22 @@
           {{ end }}
         {{ end }}
       </ul>
+      {{ if eq $group "Reference" }}
+        <details class="nav-reference-index"{{ if $isReferenceContext }} open{{ end }}>
+          <summary>Full Reference</summary>
+          <ul>
+            {{ range $referencePages }}
+              {{- $entryURL := relURL .url -}}
+              {{- $active := eq $entryURL $.RelPermalink -}}
+              <li>
+                <a href="{{ $entryURL }}"{{ if $active }} class="is-active" aria-current="page"{{ end }}>
+                  {{ .name }}
+                </a>
+              </li>
+            {{ end }}
+          </ul>
+        </details>
+      {{ end }}
     </div>
   {{ end }}
 </nav>

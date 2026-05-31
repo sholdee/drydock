@@ -265,6 +265,38 @@ a:hover {
   text-transform: uppercase;
 }
 
+.nav-reference-index {
+  margin-top: 0.35rem;
+}
+
+.nav-reference-index summary {
+  border-radius: 6px;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 0.86rem;
+  font-weight: 800;
+  line-height: 1.3;
+  padding: 0.42rem 0.5rem;
+}
+
+.nav-reference-index summary:hover {
+  background: rgba(105, 215, 194, 0.08);
+  color: var(--navy-deep);
+}
+
+.nav-reference-index[open] summary {
+  color: var(--navy-deep);
+}
+
+.docs-nav .nav-reference-index ul {
+  margin-top: 0.2rem;
+  padding-left: 0.65rem;
+}
+
+.docs-nav .nav-reference-index a {
+  font-size: 0.84rem;
+}
+
 .docs-nav ul,
 .toc-panel ul {
   list-style: none;
