@@ -1,0 +1,8 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: parity-list-alpha
+  namespace: parity-list-alpha
+data:
+  generator: list
+  element: alpha

@@ -1,0 +1,19 @@
+apiVersion: v1
+kind: List
+items:
+  - apiVersion: v1
+    kind: ConfigMap
+    metadata:
+      name: parity-directory-edges-list-a
+      namespace: parity-directory-edges
+    data:
+      source: directory-edges
+      fixture: list-a
+  - apiVersion: v1
+    kind: ConfigMap
+    metadata:
+      name: parity-directory-edges-list-b
+      namespace: parity-directory-edges
+    data:
+      source: directory-edges
+      fixture: list-b

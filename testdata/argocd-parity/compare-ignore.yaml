@@ -1,0 +1,3 @@
+jsonPointers:
+  - /metadata/annotations/argocd.argoproj.io~1tracking-id
+  - /metadata/labels/app.kubernetes.io~1instance

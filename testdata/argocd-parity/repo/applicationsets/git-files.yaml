@@ -1,0 +1,27 @@
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: parity-git-files
+  namespace: argocd
+spec:
+  goTemplate: true
+  goTemplateOptions: ["missingkey=error"]
+  generators:
+    - git:
+        repoURL: git://argocd-parity-git.argocd-parity.svc.cluster.local/repo.git
+        revision: HEAD
+        pathParamPrefix: repo
+        files:
+          - path: workloads/appset/files/configs/*/*
+  template:
+    metadata:
+      name: 'parity-git-file-{{.cluster.name}}'
+    spec:
+      project: default
+      source:
+        repoURL: git://argocd-parity-git.argocd-parity.svc.cluster.local/repo.git
+        targetRevision: HEAD
+        path: '{{.app.path}}'
+      destination:
+        name: in-cluster
+        namespace: 'parity-git-file-{{.cluster.env}}'

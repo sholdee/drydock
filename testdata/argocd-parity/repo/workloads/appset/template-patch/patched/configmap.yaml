@@ -1,0 +1,7 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: parity-template-patch
+data:
+  generator: template-patch
+  selected: patched

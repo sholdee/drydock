@@ -1,0 +1,4 @@
+nested:
+  message: from-default-values
+stringBoolean: true
+stringNumber: 0

@@ -171,6 +171,28 @@ Container usage example:
 docker run --rm -v "$PWD:/workspace:ro" ghcr.io/sholdee/drydock:latest test apps --path /workspace
 ```
 
-Helm charts and live-cluster release smoke tests remain outside the release
-shape because drydock is intentionally independent of live Argo CD and
-Kubernetes runtime.
+## Argo CD Render Parity Smoke
+
+The `Argo CD Render Parity Smoke` workflow is a manual upstream-oracle check
+for maintainers. It builds the candidate `drydock` binary, creates an isolated
+kind cluster through the pinned `helm/kind-action`, installs the pinned
+upstream Argo CD version from `go.mod`, serves the local
+`testdata/argocd-parity` fixture repository to Argo CD, and compares Argo CD
+generated desired manifests with drydock generated manifests. The workflow
+installs `kubectl` through the pinned `Azure/setup-kubectl` action; Renovate
+manages both action digests and the kind/kubectl input versions.
+
+This workflow is intentionally outside ordinary pull request CI. It always runs
+when manually dispatched, and CI calls it as a reusable workflow only when
+render parity fixtures change or `go.mod` changes touch semantic-rendering
+modules such as Argo CD, Helm, Kustomize, Jsonnet, or Kubernetes libraries.
+When CI calls it, the result is included in the composite CI gate. It is not a
+runtime dependency for drydock. The comparison is against Argo CD generated
+desired state, not synced Kubernetes objects, so Kubernetes API defaulting,
+admission mutation, managed fields, and controller reconciliation stay outside
+the smoke's scope.
+
+The workflow uploads only whitelisted parity artifacts: Argo CD manifest
+output, drydock manifest output, canonical comparison output, diffs, and
+selected sanitized logs on failure. It does not upload kubeconfig, Argo CD CLI
+config, Secrets, or full cluster dumps.

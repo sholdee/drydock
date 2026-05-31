@@ -1,0 +1,12 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: {{ .Release.Name }}-test
+  namespace: {{ .Release.Namespace }}
+  annotations:
+    helm.sh/hook: test
+spec:
+  containers:
+    - name: test
+      image: registry.example.invalid/test:1.0.0
+  restartPolicy: Never

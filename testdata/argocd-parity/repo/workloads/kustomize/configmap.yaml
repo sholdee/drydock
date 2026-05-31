@@ -1,0 +1,7 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: kustomize
+data:
+  source: kustomize
+  fixture: argocd-parity

@@ -1,0 +1,7 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: parity-git-file-beta
+data:
+  generator: git-files
+  app: beta

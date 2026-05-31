@@ -1,0 +1,8 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: parity-sources-precedence-ignored
+  namespace: parity-sources-precedence
+data:
+  source: spec.source
+  expected: ignored

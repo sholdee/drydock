@@ -1,0 +1,5 @@
+cluster:
+  name: alpha
+  env: dev
+app:
+  path: workloads/appset/files/rendered/alpha

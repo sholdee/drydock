@@ -33,6 +33,7 @@ jobs:
       go: ${{ steps.paths.outputs.go }}
       image: ${{ steps.paths.outputs.image }}
       lint: ${{ steps.paths.outputs.lint }}
+      render-parity-smoke: ${{ steps.render_parity_smoke.outputs.run }}
       renovate: ${{ steps.paths.outputs.renovate }}
       workflow: ${{ steps.paths.outputs.workflow }}
     steps:
@@ -82,6 +83,36 @@ jobs:
               - '.github/workflows/**'
               - 'pr-action/**'
               - 'setup-action/**'
+
+      - name: Detect Argo CD render parity smoke relevance
+        id: render_parity_smoke
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          EVENT_NAME: ${{ github.event_name }}
+        shell: bash
+        run: |
+          run_smoke="false"
+          reason="not a pull request"
+
+          if [[ "${EVENT_NAME}" == "pull_request" ]]; then
+            changed_files="$(git diff --name-only "${BASE_SHA}...HEAD")"
+
+            if grep -Eq '^(\.github/workflows/argocd-parity-smoke\.yml|internal/paritycompare/|scripts/argocd-parity-compare/|scripts/argocd-parity-smoke\.sh|testdata/argocd-parity/)' <<<"${changed_files}"; then
+              run_smoke="true"
+              reason="render parity files changed"
+            elif grep -qx 'go.mod' <<<"${changed_files}"; then
+              go_mod_diff="$(git diff --unified=0 "${BASE_SHA}...HEAD" -- go.mod)"
+              semantic_modules='(github\.com/argoproj/argo-cd/v3|github\.com/argoproj/argo-cd/gitops-engine|github\.com/google/go-jsonnet|helm\.sh/helm/|k8s\.io/|sigs\.k8s\.io/controller-runtime|sigs\.k8s\.io/json|sigs\.k8s\.io/kustomize/|sigs\.k8s\.io/structured-merge-diff/|sigs\.k8s\.io/yaml)'
+              if grep -Eq "^[+-][[:space:]]*((require|replace)[[:space:]]+)?${semantic_modules}\\b" <<<"${go_mod_diff}"; then
+                run_smoke="true"
+                reason="semantic rendering module changed"
+              fi
+            fi
+          fi
+
+          echo "run=${run_smoke}" >> "${GITHUB_OUTPUT}"
+          echo "reason=${reason}" >> "${GITHUB_OUTPUT}"
+          echo "Argo CD render parity smoke: ${run_smoke} (${reason})"
 
   go-test:
     needs: detect
@@ -291,6 +322,13 @@ jobs:
           cache-from: type=gha,scope=drydock-ci
           cache-to: type=gha,scope=drydock-ci,mode=max,ignore-error=true
 
+  argocd-render-parity-smoke:
+    needs: detect
+    if: needs.detect.outputs.render-parity-smoke == 'true'
+    permissions:
+      contents: read
+    uses: ./.github/workflows/argocd-parity-smoke.yml
+
   gate:
     if: always()
     needs:
@@ -304,6 +342,7 @@ jobs:
       - renovate
       - whitespace
       - image
+      - argocd-render-parity-smoke
     runs-on: ubuntu-latest
     permissions: {}
     steps:
@@ -319,8 +358,9 @@ jobs:
           RENOVATE: ${{ needs.renovate.result }}
           WHITESPACE: ${{ needs.whitespace.result }}
           IMAGE: ${{ needs.image.result }}
+          ARGOCD_RENDER_PARITY_SMOKE: ${{ needs.argocd-render-parity-smoke.result }}
         run: |
-          echo "detect=${DETECT} go-test=${GO_TEST} go-lint=${GO_LINT} markdownlint=${MARKDOWNLINT} docs-site=${DOCS_SITE} workflow-lint=${WORKFLOW_LINT} shellcheck=${SHELLCHECK} renovate=${RENOVATE} whitespace=${WHITESPACE} image=${IMAGE}"
+          echo "detect=${DETECT} go-test=${GO_TEST} go-lint=${GO_LINT} markdownlint=${MARKDOWNLINT} docs-site=${DOCS_SITE} workflow-lint=${WORKFLOW_LINT} shellcheck=${SHELLCHECK} renovate=${RENOVATE} whitespace=${WHITESPACE} image=${IMAGE} argocd-render-parity-smoke=${ARGOCD_RENDER_PARITY_SMOKE}"
 
           for result in \
             "${DETECT}" \
@@ -332,7 +372,8 @@ jobs:
             "${SHELLCHECK}" \
             "${RENOVATE}" \
             "${WHITESPACE}" \
-            "${IMAGE}"; do
+            "${IMAGE}" \
+            "${ARGOCD_RENDER_PARITY_SMOKE}"; do
             if [[ "${result}" != "success" && "${result}" != "skipped" ]]; then
               echo "CI failed: job returned ${result}"
               exit 1

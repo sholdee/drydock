@@ -1,0 +1,9 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: parity-matrix-prod-api
+  namespace: parity-matrix-prod
+data:
+  generator: matrix
+  component: api
+  env: prod

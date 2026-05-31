@@ -1,0 +1,11 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Release.Name }}
+  namespace: {{ .Release.Namespace }}
+data:
+  nestedMessage: {{ .Values.nested.message | quote }}
+  stringBoolean: {{ .Values.stringBoolean | quote }}
+  stringBooleanKind: {{ kindOf .Values.stringBoolean | quote }}
+  stringNumber: {{ .Values.stringNumber | quote }}
+  stringNumberKind: {{ kindOf .Values.stringNumber | quote }}

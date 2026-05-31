@@ -134,6 +134,11 @@ depending on a maintainer-provided `home-ops` checkout. Optional
 real-repository smokes must use temporary worktrees and clean them up. Never
 mutate the real `home-ops` checkout from tests.
 
+The Argo CD render parity smoke is optional maintainer validation and selective
+CI-gated PR validation for semantic-rendering module updates. See
+`docs/agent-reference.md` before changing its kind/kubectl setup, fixture
+inventory, module detector, or Renovate-managed tool versions.
+
 ## Maintenance Rule
 
 - Use `docs/README.md` for documentation ownership decisions.

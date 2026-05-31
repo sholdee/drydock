@@ -1,0 +1,37 @@
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: parity-merge
+  namespace: argocd
+spec:
+  goTemplate: true
+  goTemplateOptions: ["missingkey=error"]
+  generators:
+    - merge:
+        mergeKeys: ["name"]
+        generators:
+          - list:
+              elements:
+                - name: alpha
+                  path: workloads/appset/merge/base-alpha
+                  namespace: merge-base
+                - name: beta
+                  path: workloads/appset/merge/base-beta
+                  namespace: merge-base
+          - list:
+              elements:
+                - name: beta
+                  path: workloads/appset/merge/override-beta
+                  namespace: merge-override
+  template:
+    metadata:
+      name: 'parity-merge-{{.name}}'
+    spec:
+      project: default
+      source:
+        repoURL: git://argocd-parity-git.argocd-parity.svc.cluster.local/repo.git
+        targetRevision: HEAD
+        path: '{{.path}}'
+      destination:
+        name: in-cluster
+        namespace: 'parity-{{.namespace}}'

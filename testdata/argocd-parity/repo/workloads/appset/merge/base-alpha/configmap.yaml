@@ -1,0 +1,7 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: parity-merge-alpha
+data:
+  generator: merge
+  selected: base-alpha

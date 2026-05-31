@@ -1,0 +1,7 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: parity-kustomize-helm-base
+data:
+  source: kustomize-base
+  fixture: argocd-parity
