@@ -76,6 +76,10 @@ fail() {
   exit 2
 }
 
+log_step() {
+  echo "==> $*" >&2
+}
+
 require_value() {
   local flag="$1"
   local value="${2:-}"
@@ -353,6 +357,7 @@ capture_drydock_manifests() {
 }
 
 compare_manifests() {
+  log_step "Comparing Argo CD and drydock rendered manifests"
   (cd "${REPO_ROOT}" && go run ./scripts/argocd-parity-compare \
     --argocd-dir "${OUT_DIR}/argocd-manifests" \
     --drydock-dir "${OUT_DIR}/drydock-manifests" \
@@ -362,6 +367,7 @@ compare_manifests() {
 
 compare_tracking_manifests() {
   local app argocd_dir drydock_dir
+  log_step "Comparing tracking metadata without ignore rules"
   argocd_dir="$(artifact_dir argocd-tracking-manifests)"
   drydock_dir="$(artifact_dir drydock-tracking-manifests)"
   for app in "${TRACKING_APPLICATIONS[@]}"; do
@@ -378,20 +384,30 @@ main() {
   local argocd_version
   argocd_version="$(resolve_argocd_version)"
   echo "Argo CD render parity smoke: ${argocd_version}" >&2
+  log_step "Installing Argo CD CLI ${argocd_version}"
   install_argocd_cli "${argocd_version}"
   if [[ "${CREATE_CLUSTER}" == "true" ]]; then
+    log_step "Creating kind cluster ${CLUSTER_NAME}"
     kind create cluster --name "${CLUSTER_NAME}"
   else
+    log_step "Using existing kind cluster ${CLUSTER_NAME}"
     kind export kubeconfig --name "${CLUSTER_NAME}"
   fi
+  log_step "Preparing fixture Git server"
   prepare_fixture_git_image
   install_fixture_git_server
+  log_step "Installing Argo CD ${argocd_version}"
   install_argocd "${argocd_version}"
+  log_step "Logging in to Argo CD"
   login_argocd
+  log_step "Applying parity fixture Applications"
   apply_fixture_apps
+  log_step "Waiting for expected Applications"
   wait_for_applications
   assert_application_inventory
+  log_step "Capturing Argo CD rendered manifests"
   capture_argocd_manifests
+  log_step "Capturing drydock rendered manifests"
   capture_drydock_manifests
   compare_manifests
   compare_tracking_manifests

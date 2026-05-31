@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"maps"
 	"os"
 	"path/filepath"
 	"sort"
@@ -141,9 +142,7 @@ func loadDir(root string, ignores []string) (map[string]appResources, error) {
 		if out[app] == nil {
 			out[app] = make(appResources)
 		}
-		for key, body := range resources {
-			out[app][key] = body
-		}
+		maps.Copy(out[app], resources)
 		return nil
 	})
 	if err != nil {
@@ -240,8 +239,7 @@ func validateJSONPointer(pointer string) error {
 	if !strings.HasPrefix(pointer, "/") {
 		return fmt.Errorf("JSON pointer %q must start with /", pointer)
 	}
-	parts := strings.Split(pointer[1:], "/")
-	for _, part := range parts {
+	for part := range strings.SplitSeq(pointer[1:], "/") {
 		if _, err := unescapeJSONPointer(part); err != nil {
 			return err
 		}
