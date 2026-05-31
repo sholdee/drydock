@@ -1,0 +1,9 @@
+# +argocd:skip-file-rendering
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: parity-skip-file-skipped
+  namespace: parity-skip-file
+data:
+  rendered: "false"
+  source: skip-file

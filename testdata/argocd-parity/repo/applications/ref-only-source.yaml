@@ -1,0 +1,19 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: parity-ref-only-source
+  namespace: argocd
+spec:
+  project: default
+  sources:
+    - repoURL: http://argocd-parity-git.argocd-parity.svc.cluster.local/repo.git
+      targetRevision: HEAD
+      ref: shared
+    - repoURL: http://argocd-parity-git.argocd-parity.svc.cluster.local/repo.git
+      targetRevision: HEAD
+      path: workloads/ref-only-source
+      directory:
+        recurse: true
+  destination:
+    name: in-cluster
+    namespace: parity-ref-only-source

@@ -1,0 +1,22 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: parity-sources-precedence
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: http://argocd-parity-git.argocd-parity.svc.cluster.local/repo.git
+    targetRevision: HEAD
+    path: workloads/sources-precedence/ignored
+    directory:
+      recurse: true
+  sources:
+    - repoURL: http://argocd-parity-git.argocd-parity.svc.cluster.local/repo.git
+      targetRevision: HEAD
+      path: workloads/sources-precedence/winner
+      directory:
+        recurse: true
+  destination:
+    name: in-cluster
+    namespace: parity-sources-precedence

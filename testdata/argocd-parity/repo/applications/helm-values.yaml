@@ -1,0 +1,21 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: parity-helm-values
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: http://argocd-parity-git.argocd-parity.svc.cluster.local/repo.git
+    targetRevision: HEAD
+    path: charts/values-chart
+    helm:
+      releaseName: parity-helm-values
+      valueFiles:
+        - values/override.yaml
+      valuesObject:
+        extra: from-values-object
+        message: from-values-object
+  destination:
+    name: in-cluster
+    namespace: parity-helm-values

@@ -1,0 +1,21 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: parity-multi-source-ref-values
+  namespace: argocd
+spec:
+  project: default
+  sources:
+    - repoURL: http://argocd-parity-git.argocd-parity.svc.cluster.local/repo.git
+      targetRevision: HEAD
+      ref: values
+    - repoURL: http://argocd-parity-git.argocd-parity.svc.cluster.local/repo.git
+      targetRevision: HEAD
+      path: charts/ref-values
+      helm:
+        releaseName: parity-multi-source-ref-values
+        valueFiles:
+          - $values/values/ref-values.yaml
+  destination:
+    name: in-cluster
+    namespace: parity-multi-source-ref-values

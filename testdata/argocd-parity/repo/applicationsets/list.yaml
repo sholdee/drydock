@@ -1,0 +1,27 @@
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: parity-list
+  namespace: argocd
+spec:
+  goTemplate: true
+  goTemplateOptions: ["missingkey=error"]
+  generators:
+    - list:
+        elements:
+          - name: alpha
+            path: workloads/appset/list/alpha
+          - name: beta
+            path: workloads/appset/list/beta
+  template:
+    metadata:
+      name: "parity-list-{{.name}}"
+    spec:
+      project: default
+      source:
+        repoURL: http://argocd-parity-git.argocd-parity.svc.cluster.local/repo.git
+        targetRevision: HEAD
+        path: "{{.path}}"
+      destination:
+        name: in-cluster
+        namespace: "parity-list-{{.name}}"

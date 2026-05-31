@@ -1,0 +1,8 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: parity-ref-only-source
+  namespace: parity-ref-only-source
+data:
+  source: non-ref-source
+  refOnlySource: no-manifest

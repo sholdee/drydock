@@ -1,0 +1,9 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Release.Name }}
+  namespace: {{ .Release.Namespace }}
+data:
+  chart: {{ .Chart.Name | quote }}
+  message: {{ .Values.message | quote }}
+  source: multi-source-ref

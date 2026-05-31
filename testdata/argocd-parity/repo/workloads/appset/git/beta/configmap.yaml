@@ -1,0 +1,8 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: parity-git-beta
+  namespace: parity-git-beta
+data:
+  generator: git-directories
+  basename: beta

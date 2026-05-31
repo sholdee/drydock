@@ -1,0 +1,10 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Release.Name }}
+  namespace: {{ .Release.Namespace }}
+data:
+  chart: {{ .Chart.Name | quote }}
+  marker: {{ .Values.marker | quote }}
+  releaseName: {{ .Release.Name | quote }}
+  releaseNamespace: {{ .Release.Namespace | quote }}
