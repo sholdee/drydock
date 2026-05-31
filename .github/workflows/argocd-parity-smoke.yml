@@ -1,0 +1,67 @@
+---
+# yaml-language-server: $schema=https://json.schemastore.org/github-workflow.json
+name: Argo CD Parity Smoke
+
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: argocd-parity-smoke-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  KIND_VERSION: v0.30.0
+  KUBECTL_VERSION: v1.36.1
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Setup mise
+        uses: jdx/mise-action@1648a7812b9aeae629881980618f079932869151 # v4.0.1
+        with:
+          experimental: true
+          install_args: --locked
+
+      - name: Install kind
+        shell: bash
+        run: |
+          mkdir -p "${RUNNER_TEMP}/bin"
+          GOBIN="${RUNNER_TEMP}/bin" go install "sigs.k8s.io/kind@${KIND_VERSION}"
+          echo "${RUNNER_TEMP}/bin" >> "${GITHUB_PATH}"
+
+      - name: Install kubectl
+        shell: bash
+        run: |
+          mkdir -p "${RUNNER_TEMP}/bin"
+          curl -fsSLo "${RUNNER_TEMP}/bin/kubectl" \
+            "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/amd64/kubectl"
+          chmod 0755 "${RUNNER_TEMP}/bin/kubectl"
+          echo "${RUNNER_TEMP}/bin" >> "${GITHUB_PATH}"
+
+      - name: Build drydock
+        run: go build -trimpath -o dist/drydock ./cmd/drydock
+
+      - name: Run Argo CD parity smoke
+        run: scripts/argocd-parity-smoke.sh --binary ./dist/drydock --out "${RUNNER_TEMP}/argocd-parity-smoke"
+
+      - name: Upload parity artifacts
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: argocd-parity-smoke
+          path: |
+            ${{ runner.temp }}/argocd-parity-smoke/argocd-manifests
+            ${{ runner.temp }}/argocd-parity-smoke/drydock-manifests
+            ${{ runner.temp }}/argocd-parity-smoke/compare
+            ${{ runner.temp }}/argocd-parity-smoke/logs
+          if-no-files-found: ignore

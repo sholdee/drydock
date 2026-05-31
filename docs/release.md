@@ -171,6 +171,21 @@ Container usage example:
 docker run --rm -v "$PWD:/workspace:ro" ghcr.io/sholdee/drydock:latest test apps --path /workspace
 ```
 
-Helm charts and live-cluster release smoke tests remain outside the release
-shape because drydock is intentionally independent of live Argo CD and
-Kubernetes runtime.
+## Argo CD Parity Smoke
+
+The `Argo CD Parity Smoke` workflow is a manual upstream-oracle check for
+maintainers. It builds the candidate `drydock` binary, creates an isolated kind
+cluster, installs the pinned upstream Argo CD version from `go.mod`, serves the
+local `testdata/argocd-parity` fixture repository to Argo CD, and compares
+Argo CD generated desired manifests with drydock generated manifests.
+
+This workflow is intentionally `workflow_dispatch` only. It is not part of
+normal pull request CI, and it is not a runtime dependency for drydock. The
+comparison is against Argo CD generated desired state, not synced Kubernetes
+objects, so Kubernetes API defaulting, admission mutation, managed fields, and
+controller reconciliation stay outside the smoke's scope.
+
+The workflow uploads only whitelisted parity artifacts: Argo CD manifest
+output, drydock manifest output, canonical comparison output, diffs, and
+selected sanitized logs on failure. It does not upload kubeconfig, Argo CD CLI
+config, Secrets, or full cluster dumps.
