@@ -401,6 +401,26 @@ a:hover {
   color: var(--link-hover);
 }
 
+.mermaid-figure {
+  overflow-x: auto;
+  margin: 1.5rem 0;
+  border: 1px solid #213149;
+  border-radius: 8px;
+  background: rgba(5, 11, 18, 0.7);
+  padding: 1rem;
+}
+
+.mermaid-figure .mermaid {
+  min-width: min(680px, 100%);
+}
+
+.mermaid-figure svg {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  margin: 0 auto;
+}
+
 .highlight .c,
 .highlight .c1,
 .highlight .cm,
