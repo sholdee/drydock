@@ -11,6 +11,11 @@ Use it locally or in CI to answer operator questions that are hard to review in
 raw Git: which Applications render, which desired resources changed, which
 images moved, and which repository inputs need attention.
 
+Argo CD remains the semantic reference for generated desired state. drydock
+front-loads that validation into an isolated render parity smoke for covered
+fixtures and semantic-rendering changes, while normal operator commands stay
+runtime-offline from Argo CD and Kubernetes.
+
 **[Get Started](/getting-started/)** | **[Set Up PR Checks](/workflows/github-actions/)**
 
 ## Start Here

@@ -34,6 +34,10 @@ and supported chart-only Helm sources. Config management plugin execution is
 disabled by default; trusted plugin policy and explicit opt-in are required for
 exec plugins.
 
+Argo CD remains the semantic reference for generated desired manifests. drydock
+keeps this rendering path runtime-offline, then validates covered fixture
+semantics against real Argo CD through the render parity smoke.
+
 ## Normalization
 
 Rendered manifests pass through Argo-aware normalization before diff and image
