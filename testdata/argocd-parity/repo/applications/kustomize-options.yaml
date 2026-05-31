@@ -1,0 +1,35 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: parity-kustomize-options
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: git://argocd-parity-git.argocd-parity.svc.cluster.local/repo.git
+    targetRevision: HEAD
+    path: workloads/kustomize-options/base
+    kustomize:
+      namespace: parity-kustomize-options
+      images:
+        - nginx=registry.example.invalid/nginx:1.30.1
+      replicas:
+        - name: web
+          count: 3
+      commonLabels:
+        parity-label: from-source-option
+      commonAnnotations:
+        parity-annotation: from-source-option
+      components:
+        - ../components/sidecar-config
+      patches:
+        - target:
+            kind: Deployment
+            name: web
+          patch: |-
+            - op: add
+              path: /spec/template/metadata/annotations/patched
+              value: "true"
+  destination:
+    name: in-cluster
+    namespace: parity-kustomize-options

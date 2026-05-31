@@ -1,0 +1,8 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: parity-multi-source-last-wins
+  namespace: parity-multi-source-last-wins
+data:
+  source: second
+  winner: second

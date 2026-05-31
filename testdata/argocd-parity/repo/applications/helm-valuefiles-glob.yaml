@@ -1,0 +1,20 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: parity-helm-valuefiles-glob
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: git://argocd-parity-git.argocd-parity.svc.cluster.local/repo.git
+    targetRevision: HEAD
+    path: charts/helm-valuefiles-glob
+    helm:
+      releaseName: parity-helm-valuefiles-glob
+      valueFiles:
+        - values/*.yaml
+        - values/missing-optional.yaml
+      ignoreMissingValueFiles: true
+  destination:
+    name: in-cluster
+    namespace: parity-helm-valuefiles-glob

@@ -17,7 +17,12 @@ PORT_FORWARD_PID=""
 APPLICATIONS=(
   parity-directory
   parity-helm-release-namespace
+  parity-helm-capabilities
+  parity-helm-file-parameters
+  parity-helm-parameters
+  parity-helm-render-options
   parity-helm-values
+  parity-helm-valuefiles-glob
   parity-jsonnet
   parity-kustomize
   parity-kustomize-helm
@@ -38,6 +43,8 @@ APPLICATIONS=(
   parity-matrix-dev-worker
   parity-matrix-prod-api
   parity-matrix-prod-worker
+  parity-multi-source-last-wins
+  parity-kustomize-options
   parity-selector-beta-prod
   parity-template-patch
 )

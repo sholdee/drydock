@@ -1,0 +1,21 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: parity-multi-source-last-wins
+  namespace: argocd
+spec:
+  project: default
+  sources:
+    - repoURL: git://argocd-parity-git.argocd-parity.svc.cluster.local/repo.git
+      targetRevision: HEAD
+      path: workloads/multi-source-last-wins/first
+      directory:
+        recurse: true
+    - repoURL: git://argocd-parity-git.argocd-parity.svc.cluster.local/repo.git
+      targetRevision: HEAD
+      path: workloads/multi-source-last-wins/second
+      directory:
+        recurse: true
+  destination:
+    name: in-cluster
+    namespace: parity-multi-source-last-wins

@@ -1,0 +1,25 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: parity-helm-parameters
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: git://argocd-parity-git.argocd-parity.svc.cluster.local/repo.git
+    targetRevision: HEAD
+    path: charts/helm-parameters
+    helm:
+      releaseName: parity-helm-parameters
+      parameters:
+        - name: stringBoolean
+          value: "false"
+          forceString: true
+        - name: stringNumber
+          value: "0123"
+          forceString: true
+        - name: nested.message
+          value: from-parameter
+  destination:
+    name: in-cluster
+    namespace: parity-helm-parameters
