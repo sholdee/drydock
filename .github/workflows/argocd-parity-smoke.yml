@@ -1,9 +1,10 @@
 ---
 # yaml-language-server: $schema=https://json.schemastore.org/github-workflow.json
-name: Argo CD Parity Smoke
+name: Argo CD Render Parity Smoke
 
 on:
   workflow_dispatch:
+  workflow_call:
 
 concurrency:
   group: argocd-parity-smoke-${{ github.ref }}
@@ -11,10 +12,6 @@ concurrency:
 
 permissions:
   contents: read
-
-env:
-  KIND_VERSION: v0.30.0
-  KUBECTL_VERSION: v1.36.1
 
 jobs:
   smoke:
@@ -32,27 +29,29 @@ jobs:
           experimental: true
           install_args: --locked
 
-      - name: Install kind
-        shell: bash
-        run: |
-          mkdir -p "${RUNNER_TEMP}/bin"
-          GOBIN="${RUNNER_TEMP}/bin" go install "sigs.k8s.io/kind@${KIND_VERSION}"
-          echo "${RUNNER_TEMP}/bin" >> "${GITHUB_PATH}"
+      - name: Set up kubectl
+        uses: Azure/setup-kubectl@829323503d1be3d00ca8346e5391ca0b07a9ab0d # v5.1.0
+        with:
+          version: v1.36.1
 
-      - name: Install kubectl
-        shell: bash
-        run: |
-          mkdir -p "${RUNNER_TEMP}/bin"
-          curl -fsSLo "${RUNNER_TEMP}/bin/kubectl" \
-            "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/amd64/kubectl"
-          chmod 0755 "${RUNNER_TEMP}/bin/kubectl"
-          echo "${RUNNER_TEMP}/bin" >> "${GITHUB_PATH}"
+      - name: Create kind cluster
+        uses: helm/kind-action@ef37e7f390d99f746eb8b610417061a60e82a6cc # v1.14.0
+        with:
+          version: v0.31.0
+          kubectl_version: v1.36.1
+          cluster_name: drydock-argocd-parity-smoke
+          wait: 120s
 
       - name: Build drydock
         run: go build -trimpath -o dist/drydock ./cmd/drydock
 
-      - name: Run Argo CD parity smoke
-        run: scripts/argocd-parity-smoke.sh --binary ./dist/drydock --out "${RUNNER_TEMP}/argocd-parity-smoke"
+      - name: Run Argo CD render parity smoke
+        run: >-
+          scripts/argocd-parity-smoke.sh
+          --binary ./dist/drydock
+          --out "${RUNNER_TEMP}/argocd-parity-smoke"
+          --cluster-name drydock-argocd-parity-smoke
+          --existing-cluster
 
       - name: Upload parity artifacts
         if: always()

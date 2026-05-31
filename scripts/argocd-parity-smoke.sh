@@ -10,6 +10,7 @@ FIXTURE_REPO_PATH="${REPO_ROOT}/testdata/argocd-parity/repo"
 IGNORE_FILE="${REPO_ROOT}/testdata/argocd-parity/compare-ignore.yaml"
 OUT_DIR="${REPO_ROOT}/argocd-parity-smoke"
 KEEP_CLUSTER="false"
+CREATE_CLUSTER="true"
 CLUSTER_NAME="drydock-argocd-parity-${GITHUB_RUN_ID:-$$}"
 DRYDOCK_CMD=(go run ./cmd/drydock)
 PORT_FORWARD_PID=""
@@ -64,13 +65,14 @@ Options:
   --binary <path>        drydock binary to run instead of go run ./cmd/drydock
   --out <dir>           output artifact directory (default: ./argocd-parity-smoke)
   --cluster-name <name> kind cluster name
+  --existing-cluster    use an already-created kind cluster with --cluster-name
   --keep-cluster        leave the kind cluster running for debugging
   -h, --help            show this help
 USAGE
 }
 
 fail() {
-  echo "argocd parity smoke: $*" >&2
+  echo "argocd render parity smoke: $*" >&2
   exit 2
 }
 
@@ -96,6 +98,10 @@ while [[ "$#" -gt 0 ]]; do
       require_value "$1" "${2:-}"
       CLUSTER_NAME="$2"
       shift 2
+      ;;
+    --existing-cluster)
+      CREATE_CLUSTER="false"
+      shift
       ;;
     --keep-cluster)
       KEEP_CLUSTER="true"
@@ -139,7 +145,7 @@ cleanup() {
     collect_logs || true
   fi
   rm -rf "${WORK_DIR}"
-  if [[ "${KEEP_CLUSTER}" != "true" ]]; then
+  if [[ "${CREATE_CLUSTER}" == "true" && "${KEEP_CLUSTER}" != "true" ]]; then
     kind delete cluster --name "${CLUSTER_NAME}" >/dev/null 2>&1 || true
   fi
 }
@@ -192,7 +198,7 @@ prepare_fixture_git_image() {
   cp -R "${FIXTURE_REPO_PATH}/." "${git_work}/"
   git -C "${git_work}" init --initial-branch=main >/dev/null
   git -C "${git_work}" config user.email "drydock@example.invalid"
-  git -C "${git_work}" config user.name "drydock parity smoke"
+  git -C "${git_work}" config user.name "drydock render parity smoke"
   git -C "${git_work}" add .
   git -C "${git_work}" commit -m "seed argocd parity fixture" >/dev/null
   git clone --bare "${git_work}" "${bare}" >/dev/null
@@ -371,9 +377,13 @@ compare_tracking_manifests() {
 main() {
   local argocd_version
   argocd_version="$(resolve_argocd_version)"
-  echo "Argo CD parity smoke: ${argocd_version}" >&2
+  echo "Argo CD render parity smoke: ${argocd_version}" >&2
   install_argocd_cli "${argocd_version}"
-  kind create cluster --name "${CLUSTER_NAME}"
+  if [[ "${CREATE_CLUSTER}" == "true" ]]; then
+    kind create cluster --name "${CLUSTER_NAME}"
+  else
+    kind export kubeconfig --name "${CLUSTER_NAME}"
+  fi
   prepare_fixture_git_image
   install_fixture_git_server
   install_argocd "${argocd_version}"
@@ -385,7 +395,7 @@ main() {
   capture_drydock_manifests
   compare_manifests
   compare_tracking_manifests
-  echo "Argo CD parity smoke complete: ${OUT_DIR}" >&2
+  echo "Argo CD render parity smoke complete: ${OUT_DIR}" >&2
 }
 
 main

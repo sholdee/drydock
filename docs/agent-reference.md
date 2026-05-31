@@ -288,3 +288,13 @@ go test ./internal/discovery ./internal/config ./internal/project ./internal/cli
 Do not run optional real-repository smokes from normal tests. Use isolated
 temporary worktrees and caches when a phase explicitly calls for a manual
 smoke.
+
+The Argo CD render parity smoke is the upstream-rendering oracle for fixture
+coverage. It runs manually and as a reusable workflow called by CI for selected
+pull requests that modify render parity fixtures or semantic-rendering Go
+modules. In
+GitHub Actions, `.github/workflows/argocd-parity-smoke.yml` provisions
+`kubectl` and kind with pinned setup actions and then calls
+`scripts/argocd-parity-smoke.sh --existing-cluster`. Keep the CI module
+detector small and keep setup input versions covered by
+`.github/renovate.json5` custom managers.
