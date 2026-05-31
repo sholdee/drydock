@@ -30,6 +30,27 @@ intentional product boundaries:
 Future live-runtime work must remain explicitly opt-in and pass the design gate
 in `docs/reports/live-integration-design-gate.md`.
 
+## Argo CD As Semantic Reference
+
+Argo CD is the semantic reference for generated desired manifests. drydock does
+not treat Argo CD rendering behavior as trivial or static; it implements a
+runtime-offline renderer so operators can get fast local and CI feedback
+without standing up Argo CD for every render, test, diff, image, or diagnostic
+command.
+
+Compatibility work is validated against upstream Argo CD through the render
+parity smoke. That smoke installs the pinned Argo CD version into an isolated
+kind cluster, serves the fixture repository to Argo CD, renders the same inputs
+with drydock, and compares the generated desired manifests. The smoke is
+manual maintainer validation and a selective CI gate for render parity fixture
+changes or semantic-rendering dependency changes. It is not a runtime
+dependency for normal drydock commands.
+
+The parity smoke is scoped to desired-state generation. Kubernetes API
+defaulting, admission mutation, server-side diff, managed fields, health
+aggregation, sync behavior, and controller state remain live-runtime
+boundaries.
+
 ## Architecture
 
 The production path is a native local engine using Argo CD API types and

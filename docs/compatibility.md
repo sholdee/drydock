@@ -8,6 +8,24 @@ diagnose local Argo CD desired state without contacting live Argo CD or
 Kubernetes runtime. Declared sources may be fetched into explicit caches unless
 `--offline` is set.
 
+## Render Parity Validation
+
+Argo CD remains the semantic reference for generated desired manifests. drydock
+keeps normal commands runtime-offline, then validates compatibility work with
+an isolated Argo CD render parity smoke.
+
+The smoke installs the pinned Argo CD version into kind, serves the
+`testdata/argocd-parity` fixture repository to Argo CD, renders the same
+Applications with drydock, and compares generated desired manifests. It runs
+manually for maintainer validation and selectively in CI when render parity
+fixtures or semantic-rendering dependencies change. See `docs/release.md` for
+maintainer workflow details.
+
+This check is scoped to generated desired state. Live-only runtime behavior
+such as Kubernetes defaulting, admission mutation, server-side diff, managed
+fields, health aggregation, sync behavior, and controller state remains outside
+drydock's runtime-offline boundary.
+
 ## Runtime Model
 
 Supported:

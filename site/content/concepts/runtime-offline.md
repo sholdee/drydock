@@ -11,6 +11,21 @@ Runtime-offline does not mean every source network request is disabled.
 Declared Git, HTTP Helm, OCI Helm, and remote Kustomize sources can still be
 fetched into explicit caches unless `--offline` is set.
 
+## Why Not Call Argo CD Every Time?
+
+Argo CD is the semantic reference for generated desired manifests, but calling
+it for every local render, PR diff, or diagnostic run requires a running Argo
+CD instance, Kubernetes access, runtime credentials, and more CI setup.
+
+drydock chooses a different tradeoff. Normal commands stay runtime-offline and
+fast, while maintainer validation compares covered fixture output against real
+Argo CD through an isolated render parity smoke. That front-loads compatibility
+checks without making every operator command depend on live runtime services.
+
+This does not change source acquisition behavior. Runtime-offline commands may
+still fetch declared Git, Helm, OCI, or remote Kustomize sources unless
+`--offline` is set.
+
 ## What drydock Does Not Call
 
 - Live Kubernetes APIs.
