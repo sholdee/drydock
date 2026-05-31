@@ -88,8 +88,9 @@ jobs:
           version: vX.Y.Z
 ```
 
-See [`docs/github-actions.md`](docs/github-actions.md) for full action inputs,
-GitHub App token support, cache behavior, comments, artifacts, and outputs.
+See the [GitHub Actions reference](https://sholdee.github.io/drydock/docs/github-actions/)
+for full action inputs, GitHub App token support, cache behavior, comments,
+artifacts, and outputs.
 
 Release containers are published to GHCR for Linux `amd64` and `arm64`:
 
@@ -168,7 +169,8 @@ drydock diff apps --path . --path-orig ../baseline --offline
 | List cache entries | `drydock cache list -o json` |
 
 `drydock <command> --help` lists command-specific flags. See
-[`docs/usage.md`](docs/usage.md) for the full CLI guide.
+the [CLI usage guide](https://sholdee.github.io/drydock/docs/usage/) for the
+full command reference.
 
 ## What It Supports
 
@@ -207,9 +209,11 @@ drydock discovers and renders local Argo CD desired state, including:
   cache acquisition events.
 - Cache lifecycle commands for Git, chart, and remote Kustomize caches.
 
-See [`docs/compatibility.md`](docs/compatibility.md) for the detailed Argo CD
-support matrix. See [`docs/applicationsets.md`](docs/applicationsets.md) for
-ApplicationSet details and [`docs/source-acquisition.md`](docs/source-acquisition.md)
+See the [compatibility notes](https://sholdee.github.io/drydock/docs/compatibility/)
+for the detailed Argo CD support matrix. See
+[ApplicationSets](https://sholdee.github.io/drydock/docs/applicationsets/) for
+generator details and
+[source acquisition](https://sholdee.github.io/drydock/docs/source-acquisition/)
 for remote source, cache, and auth behavior.
 
 ## Offline Runtime Model
@@ -235,8 +239,9 @@ in-process renderer or a trusted drydock exec plugin policy matches the plugin
 name. Discovered safe Kustomize build CMP definitions and native policy
 engines do not execute plugin commands. Exec policy requires trusted
 provenance and `--enable-plugins`. See
-[`docs/plugin-policy.md`](docs/plugin-policy.md) for the policy schema,
-provenance rules, CMP compatibility model, and exec security controls.
+the [plugin policy guide](https://sholdee.github.io/drydock/docs/plugin-policy/)
+for the policy schema, provenance rules, CMP compatibility model, and exec
+security controls.
 
 These behaviors are not silently approximated. The no-live-runtime boundary is
 an intentional product decision so the default cache-backed workflow stays
@@ -267,8 +272,9 @@ flowchart TD
 ```
 
 The render path imports Argo CD API types and selected reusable helpers, but
-drydock owns offline orchestration. See [`docs/design.md`](docs/design.md) for
-the architecture and behavior model.
+drydock owns offline orchestration. See the
+[design notes](https://sholdee.github.io/drydock/docs/design/) for the
+architecture and behavior model.
 
 ## Go API
 
@@ -295,23 +301,22 @@ Join the home-operations Discord at <https://discord.gg/home-operations>.
 
 ## Documentation
 
-- [`docs/README.md`](docs/README.md): documentation ownership and routing.
-- [`docs/usage.md`](docs/usage.md): operator CLI workflows and high-value
-  command examples.
-- [`docs/applicationsets.md`](docs/applicationsets.md): ApplicationSet
-  generator behavior, fixture schema, and template parameters.
-- [`docs/source-acquisition.md`](docs/source-acquisition.md): Git, Helm,
-  remote Kustomize, cache, and auth behavior.
-- [`docs/plugin-policy.md`](docs/plugin-policy.md): trusted plugin policy,
-  editor schema, CMP compatibility, and exec plugin security.
-- [`docs/compatibility.md`](docs/compatibility.md): supported Argo CD behavior
-  and intentional runtime boundaries.
-- [`docs/github-actions.md`](docs/github-actions.md): setup action and PR
-  action usage.
-- [`docs/release.md`](docs/release.md): release and Argo CD dependency upgrade
-  notes.
-- [`docs/reports/live-integration-design-gate.md`](docs/reports/live-integration-design-gate.md):
-  the no-live-runtime boundary decision and gate for exceptions.
+- [Documentation site](https://sholdee.github.io/drydock/): curated operator
+  docs and full reference pages.
+- [Getting started](https://sholdee.github.io/drydock/getting-started/): first
+  local render test and comparison commands.
+- [GitHub Actions](https://sholdee.github.io/drydock/workflows/github-actions/):
+  setup action, PR action, comments, artifacts, and caches.
+- [CLI usage](https://sholdee.github.io/drydock/docs/usage/): command
+  workflows, outputs, diagnostics, and diff flags.
+- [Compatibility](https://sholdee.github.io/drydock/compatibility/): supported
+  Argo CD behavior and intentional runtime boundaries.
+- [Plugin policy](https://sholdee.github.io/drydock/plugin-policy/): trusted
+  policy engines, schema, CMP compatibility, and exec security.
+- [Source acquisition](https://sholdee.github.io/drydock/concepts/source-acquisition/):
+  Git, Helm, remote Kustomize, cache, and auth behavior.
+- [Release notes](https://sholdee.github.io/drydock/docs/release/): release
+  and Argo CD dependency upgrade notes.
 
 ## License
 
