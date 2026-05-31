@@ -16,6 +16,7 @@ PORT_FORWARD_PID=""
 
 APPLICATIONS=(
   parity-directory
+  parity-directory-edges
   parity-helm-release-namespace
   parity-helm-capabilities
   parity-helm-file-parameters
@@ -24,6 +25,7 @@ APPLICATIONS=(
   parity-helm-values
   parity-helm-valuefiles-glob
   parity-jsonnet
+  parity-jsonnet-edges
   parity-kustomize
   parity-kustomize-helm
   parity-multi-source-ref-values
@@ -31,6 +33,7 @@ APPLICATIONS=(
   parity-repeated-resource
   parity-skip-file
   parity-sources-precedence
+  parity-tracking
   parity-git-alpha
   parity-git-beta
   parity-git-file-alpha
@@ -47,6 +50,10 @@ APPLICATIONS=(
   parity-kustomize-options
   parity-selector-beta-prod
   parity-template-patch
+)
+
+TRACKING_APPLICATIONS=(
+  parity-tracking
 )
 
 usage() {
@@ -347,6 +354,20 @@ compare_manifests() {
     --ignore-file "${IGNORE_FILE}")
 }
 
+compare_tracking_manifests() {
+  local app argocd_dir drydock_dir
+  argocd_dir="$(artifact_dir argocd-tracking-manifests)"
+  drydock_dir="$(artifact_dir drydock-tracking-manifests)"
+  for app in "${TRACKING_APPLICATIONS[@]}"; do
+    cp "${OUT_DIR}/argocd-manifests/${app}.yaml" "${argocd_dir}/${app}.yaml"
+    cp "${OUT_DIR}/drydock-manifests/${app}.yaml" "${drydock_dir}/${app}.yaml"
+  done
+  (cd "${REPO_ROOT}" && go run ./scripts/argocd-parity-compare \
+    --argocd-dir "${argocd_dir}" \
+    --drydock-dir "${drydock_dir}" \
+    --out-dir "${OUT_DIR}/compare-tracking")
+}
+
 main() {
   local argocd_version
   argocd_version="$(resolve_argocd_version)"
@@ -363,6 +384,7 @@ main() {
   capture_argocd_manifests
   capture_drydock_manifests
   compare_manifests
+  compare_tracking_manifests
   echo "Argo CD parity smoke complete: ${OUT_DIR}" >&2
 }
 
