@@ -1,4 +1,6 @@
-# GitHub Actions
+---
+title: GitHub Actions
+---
 
 drydock publishes two repository-local composite actions:
 

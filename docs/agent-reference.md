@@ -1,4 +1,6 @@
-# Agent Reference
+---
+title: Agent Reference
+---
 
 This file contains task-specific drydock agent guidance. Read `AGENTS.md`
 first; load this file only for the sections relevant to the work in front of

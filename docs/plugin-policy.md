@@ -1,4 +1,6 @@
-# Plugin Policy
+---
+title: Plugin Policy
+---
 
 `drydock` plugin policy is the trusted, drydock-specific contract for Argo CD
 config management plugin (CMP) compatibility beyond drydock's built-in native

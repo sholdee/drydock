@@ -2,10 +2,10 @@
 title: Local Diffs
 ---
 
-Use local diffs to compare desired state before opening or merging a pull
-request, or any time you want to inspect repository changes before Argo CD sees
-them. drydock renders both sides and compares desired manifests; it does not ask
-live Argo CD or Kubernetes for current state.
+Use local diffs to review desired-state changes before opening or merging a
+pull request. drydock renders both sides and compares Argo CD desired
+manifests, so operators can review resource and image changes from repository
+inputs alone.
 
 ## Compare Two Trees
 
@@ -16,7 +16,8 @@ drydock diff images --path . --path-orig ../baseline -o markdown
 ```
 
 Use this when you already have a separate baseline checkout or want to inspect
-uncommitted changes in the current working tree.
+uncommitted changes in the current working tree. Add `--offline` when the
+review must use only local files, repo maps, and existing drydock cache entries.
 
 ## Compare Git Refs
 
@@ -47,29 +48,34 @@ drydock diff apps --path . --path-orig ../baseline -o markdown
 drydock diff images --path . --path-orig ../baseline -o markdown
 ```
 
-Manifest markdown is the primary review surface:
+Manifest markdown is the primary review surface. It keeps the operator summary
+near the top and puts rendered resource patches behind per-Application details:
 
 ````markdown
 ## drydock desired state diff
 
-**Summary:** 1 app, 2 resources, +4/-2.
+**Summary:** 2 apps, 3 resources, +12/-5.
 
 <details open>
-<summary>renovate (+4/-2, 2 resources)</summary>
+<summary>payments-api (+9/-3, 2 resources)</summary>
 
 ```diff
---- Application: renovate apps/Deployment: renovate/renovate-operator
-+++ Application: renovate apps/Deployment: renovate/renovate-operator
-@@ -47,7 +47,7 @@
--          image: ghcr.io/example/renovate:1.0.0
-+          image: ghcr.io/example/renovate:1.1.0
+--- Application: payments-api apps/Deployment: payments/payments-api
++++ Application: payments-api apps/Deployment: payments/payments-api
+@@ -31,7 +31,7 @@
+-        app.kubernetes.io/version: 2026.05.0
++        app.kubernetes.io/version: 2026.05.1
+@@ -48,7 +48,7 @@
+-          image: registry.example.com/payments-api:2026.05.0
++          image: registry.example.com/payments-api:2026.05.1
 ```
 
 </details>
 ````
 
 Image markdown is a companion view for scanning rendered image reference
-changes, and omits unchanged images by default.
+changes. It omits unchanged images by default so the comment stays focused on
+added and removed references.
 
 For the full diff behavior, output formats, ignore rules, and exit codes, see
 the [CLI usage guide](/docs/usage/).

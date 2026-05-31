@@ -1,4 +1,6 @@
-# Usage
+---
+title: Usage
+---
 
 `drydock` is a runtime-offline CLI for Argo CD GitOps repositories. Default
 commands render and compare desired state from checked-out files plus explicit
@@ -302,9 +304,16 @@ uncommitted changes, against committed `main`. `--repo . --ref feature
 are not supported yet; clone the repository locally and pass the local path.
 
 Manifest diffs default to unified diff output. `diff apps` and `diff app` also
-support `-o json` and `-o yaml`, which serialize the structured `[]diff.Result`
-payload. Diagnostics remain on stderr so stdout stays valid JSON or YAML.
-`-o name` is not supported for manifest diffs.
+support `-o markdown`, `-o json`, and `-o yaml`. Markdown output is intended for
+review comments: it includes a summary plus expandable per-Application rendered
+manifest patches, and embeds successful diagnostics in the document. JSON and
+YAML serialize the structured `[]diff.Result` payload. Diagnostics remain on
+stderr for unified, JSON, and YAML output so stdout stays parseable. `-o name`
+is not supported for manifest diffs.
+
+```bash
+drydock diff apps --path ./current --path-orig ../base -o markdown
+```
 
 Unified diff output supports git-style ANSI color with
 `--color=auto|always|never`. The default, `auto`, colors only when writing to a
@@ -398,10 +407,11 @@ whose key is exactly `image`. It does not scan arbitrary string content, Secret
 manifests, top-level metadata/status, or ConfigMap data payloads. Use `-o name`
 to print current-only added image references, one per line. Removed-only image
 changes print no names but still return the diff exit code unless
-`--exit-code=false` is set. Use `-o json` or `-o yaml` for machine-readable
-`added`, `removed`, and `unchanged` image lists. Diagnostics remain on stderr so
-stdout stays valid JSON or YAML. Text image diffs use the same
-`--color=auto|always|never` behavior as manifest diffs.
+`--exit-code=false` is set. Use `-o markdown` for pull request comments, or
+`-o json` / `-o yaml` for machine-readable `added`, `removed`, and `unchanged`
+image lists. Diagnostics remain on stderr so stdout stays valid JSON or YAML.
+Text image diffs use the same `--color=auto|always|never` behavior as manifest
+diffs.
 
 ## Diagnostics
 

@@ -1,0 +1,21 @@
+title: drydock architecture path
+steps:
+  - title: Repository
+    text: Read a checked-out GitOps repository or a temporary Git ref snapshot.
+  - title: Discovery
+    text: Build the local Application, ApplicationSet, settings, project, repository, and cluster metadata model.
+  - title: Source Planning
+    text: Apply Argo CD source precedence, multi-source ordering, repo maps, refs, and cache policy.
+  - title: Acquisition
+    text: Fetch or reuse declared Git, HTTP Helm, OCI Helm, and remote Kustomize sources according to offline policy.
+  - title: Rendering
+    text: Render desired manifests with Go libraries and explicit plugin policy hooks.
+    outputs:
+      - Render tests
+      - Lua health validation
+      - Diagnostics
+  - title: Normalization
+    text: Apply compare settings, resource filters, repeated-resource behavior, and default diff noise suppression.
+    outputs:
+      - Manifest diffs
+      - Image reports

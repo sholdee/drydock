@@ -1,0 +1,29 @@
+{{- $name := .Get "name" -}}
+{{- $workflow := index hugo.Data.workflows $name -}}
+{{- if not $workflow -}}
+  {{- errorf "workflow shortcode could not find site/data/workflows/%s.yaml" $name -}}
+{{- end -}}
+<section class="workflow-map" aria-label="{{ $workflow.title }}">
+  <ol class="workflow-steps">
+    {{- range $index, $step := $workflow.steps }}
+      <li class="workflow-step">
+        <span class="workflow-node" aria-hidden="true">{{ printf "%02d" (add $index 1) }}</span>
+        <div class="workflow-copy">
+          {{- if $step.href }}
+            <a class="workflow-heading" href="{{ $step.href }}">{{ $step.title }}</a>
+          {{- else }}
+            <p class="workflow-heading">{{ $step.title }}</p>
+          {{- end }}
+          <p>{{ $step.text }}</p>
+          {{- with $step.outputs }}
+            <ul class="workflow-tags" aria-label="{{ $step.title }} outputs">
+              {{- range . }}
+                <li>{{ . }}</li>
+              {{- end }}
+            </ul>
+          {{- end }}
+        </div>
+      </li>
+    {{- end }}
+  </ol>
+</section>

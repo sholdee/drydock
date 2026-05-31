@@ -1,4 +1,6 @@
-# Argo CD Compatibility Notes
+---
+title: Argo CD Compatibility Notes
+---
 
 `drydock` tracks Argo CD compatibility for runtime-offline desired-state
 analysis. Default commands discover, render, test, diff, inspect images, and

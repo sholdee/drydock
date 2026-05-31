@@ -1,4 +1,6 @@
-# ApplicationSet Reference
+---
+title: ApplicationSet Reference
+---
 
 `drydock` expands a deterministic local subset of Argo CD `ApplicationSet`
 generators. Unsupported generators emit diagnostics; non-strict commands keep

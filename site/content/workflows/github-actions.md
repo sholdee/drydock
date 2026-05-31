@@ -9,8 +9,8 @@ drydock publishes two repository-local composite actions:
   artifacts, and optionally maintain sticky PR comments.
 
 Use `setup-action` when you want to own the CLI commands. Use `pr-action` when
-you want the standard render test, manifest diff, image diff, source cache, and
-comment workflow.
+you want the standard render test, markdown manifest diff, image diff, source
+cache, artifacts, and pull request comment workflow.
 
 ## Manual CLI Workflow
 
@@ -66,7 +66,7 @@ The PR action checks out the pull request, fetches the base ref, runs
 `drydock test apps`, renders the desired-state manifest diff, writes full diff
 artifacts when differences are found, and comments in trusted same-repository
 pull requests. Image diff comments are available as a companion signal. Fork
-pull requests skip comments and source-cache save by default.
+pull requests skip comments and source-cache restore/save by default.
 
 ## Manifest Diff Comment Shape
 
@@ -77,17 +77,20 @@ reviewable rendered diff:
 ````markdown
 ## drydock desired state diff
 
-**Summary:** 1 app, 2 resources, +4/-2.
+**Summary:** 2 apps, 3 resources, +12/-5.
 
 <details open>
-<summary>renovate (+4/-2, 2 resources)</summary>
+<summary>payments-api (+9/-3, 2 resources)</summary>
 
 ```diff
---- Application: renovate apps/Deployment: renovate/renovate-operator
-+++ Application: renovate apps/Deployment: renovate/renovate-operator
-@@ -47,7 +47,7 @@
--          image: ghcr.io/example/renovate:1.0.0
-+          image: ghcr.io/example/renovate:1.1.0
+--- Application: payments-api apps/Deployment: payments/payments-api
++++ Application: payments-api apps/Deployment: payments/payments-api
+@@ -31,7 +31,7 @@
+-        app.kubernetes.io/version: 2026.05.0
++        app.kubernetes.io/version: 2026.05.1
+@@ -48,7 +48,7 @@
+-          image: registry.example.com/payments-api:2026.05.0
++          image: registry.example.com/payments-api:2026.05.1
 ```
 
 </details>
@@ -112,8 +115,8 @@ quickly scanning added and removed rendered image references:
 
 | Change | Image |
 | --- | --- |
-| added | `registry.example.com/app:v2` |
-| removed | `registry.example.com/app:v1` |
+| added | `registry.example.com/payments-api:2026.05.1` |
+| removed | `registry.example.com/payments-api:2026.05.0` |
 ```
 
 Run image diff markdown directly when building a custom workflow:

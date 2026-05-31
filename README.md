@@ -4,7 +4,7 @@
 
 # drydock
 
-Inspect your Argo CD fleet without getting wet.
+Inspect your Argo CD fleet without getting wet
 
 [![Go Report Card](https://goreportcard.com/badge/github.com/sholdee/drydock)](https://goreportcard.com/report/github.com/sholdee/drydock)
 [![CI](https://github.com/sholdee/drydock/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/sholdee/drydock/actions/workflows/ci.yml)

@@ -1,4 +1,6 @@
-# Live Runtime Boundary
+---
+title: Live Runtime Boundary
+---
 
 Date: 2026-05-24
 
