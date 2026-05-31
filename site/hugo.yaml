@@ -7,6 +7,20 @@ disableKinds:
 
 params:
   description: "Runtime-offline desired-state analysis for Argo CD GitOps repositories."
+  repositoryURL: "https://github.com/sholdee/drydock"
+  editBranch: "main"
+
+outputs:
+  home:
+    - html
+    - search
+
+outputFormats:
+  search:
+    mediaType: application/json
+    baseName: index.search
+    isPlainText: true
+    notAlternative: true
 
 menus:
   docs:
@@ -25,6 +39,11 @@ menus:
       params:
         group: Start
       weight: 30
+    - name: Operator Cookbook
+      url: /cookbook/
+      params:
+        group: Cookbook
+      weight: 35
     - name: GitHub Actions
       url: /workflows/github-actions/
       params:
@@ -35,11 +54,21 @@ menus:
       params:
         group: Workflows
       weight: 50
+    - name: Output Controls
+      url: /workflows/output/
+      params:
+        group: Workflows
+      weight: 55
     - name: Runtime Offline
       url: /concepts/runtime-offline/
       params:
         group: Concepts
       weight: 60
+    - name: How It Works
+      url: /concepts/how-it-works/
+      params:
+        group: Concepts
+      weight: 65
     - name: Source Acquisition
       url: /concepts/source-acquisition/
       params:
@@ -50,6 +79,11 @@ menus:
       params:
         group: Concepts
       weight: 80
+    - name: Repository Topologies
+      url: /concepts/topologies/
+      params:
+        group: Concepts
+      weight: 85
     - name: Compatibility
       url: /compatibility/
       params:

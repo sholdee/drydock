@@ -1,0 +1,19 @@
+{{- $repoURL := strings.TrimSuffix "/" (site.Params.repositoryURL | default "") -}}
+{{- $branch := site.Params.editBranch | default "main" -}}
+{{- $sourcePath := "" -}}
+{{- with .File -}}
+  {{- $filename := replace .Filename "\\" "/" -}}
+  {{- if in $filename "/site/content/" -}}
+    {{- $sourcePath = printf "site/content/%s" (index (last 1 (split $filename "/site/content/")) 0) -}}
+  {{- else if in $filename "/docs/" -}}
+    {{- $sourcePath = printf "docs/%s" (index (last 1 (split $filename "/docs/")) 0) -}}
+  {{- end -}}
+{{- end -}}
+{{- if and $repoURL $sourcePath (not (in $sourcePath "site/public/")) -}}
+  {{- $sourceURL := printf "%s/blob/%s/%s" $repoURL $branch $sourcePath -}}
+  {{- $editURL := printf "%s/edit/%s/%s" $repoURL $branch $sourcePath -}}
+  <nav class="page-actions" aria-label="Page actions">
+    <a href="{{ $editURL }}">Edit this page</a>
+    <a href="{{ $sourceURL }}">View source</a>
+  </nav>
+{{- end -}}

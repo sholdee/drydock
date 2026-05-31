@@ -1,9 +1,13 @@
 {{ define "main" }}
   <article class="doc-page">
-    {{ if .Title }}
+    {{- $actions := partial "page-actions.html" . -}}
+    {{ if or .Title $actions }}
       <header class="doc-header">
-        <p class="section-label">Documentation</p>
-        <h1>{{ .Title }}</h1>
+        {{ if .Title }}
+          <p class="section-label">Documentation</p>
+          <h1>{{ .Title }}</h1>
+        {{ end }}
+        {{ $actions }}
       </header>
     {{ end }}
     <div class="doc-content">

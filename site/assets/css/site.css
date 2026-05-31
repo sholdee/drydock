@@ -121,6 +121,81 @@ a:hover {
   height: auto;
 }
 
+.site-search {
+  position: relative;
+  flex: 1 1 220px;
+  max-width: 360px;
+}
+
+.site-search input {
+  width: 100%;
+  border: 1px solid var(--line-strong);
+  border-radius: 6px;
+  background: rgba(5, 11, 18, 0.78);
+  color: var(--ink);
+  font: inherit;
+  font-size: 0.92rem;
+  padding: 0.45rem 0.65rem;
+}
+
+.site-search input::placeholder {
+  color: var(--quiet);
+}
+
+.search-panel {
+  position: absolute;
+  top: calc(100% + 0.45rem);
+  right: 0;
+  left: 0;
+  z-index: 30;
+  overflow: hidden;
+  border: 1px solid var(--line-strong);
+  border-radius: 8px;
+  background: var(--surface-raised);
+  box-shadow: 0 16px 42px var(--shadow);
+}
+
+.search-panel ul {
+  margin: 0;
+  padding: 0.35rem;
+  list-style: none;
+}
+
+.search-panel li + li {
+  margin-top: 0.15rem;
+}
+
+.search-panel a {
+  display: block;
+  border-radius: 6px;
+  color: var(--ink);
+  padding: 0.55rem 0.65rem;
+  text-decoration: none;
+}
+
+.search-panel li[aria-selected="true"] a,
+.search-panel a:hover {
+  background: rgba(105, 215, 194, 0.1);
+  color: var(--navy-deep);
+}
+
+.search-panel span {
+  display: block;
+  font-size: 0.9rem;
+  font-weight: 800;
+  line-height: 1.3;
+}
+
+.search-panel small {
+  display: -webkit-box;
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 0.78rem;
+  line-height: 1.35;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
 .header-links {
   display: flex;
   align-items: center;
@@ -279,6 +354,28 @@ a:hover {
   line-height: 1.05;
 }
 
+.page-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.55rem;
+  margin-top: 1rem;
+}
+
+.page-actions a {
+  border: 1px solid var(--line-strong);
+  border-radius: 6px;
+  color: var(--navy-deep);
+  font-size: 0.82rem;
+  font-weight: 800;
+  padding: 0.38rem 0.56rem;
+  text-decoration: none;
+}
+
+.page-actions a:hover {
+  border-color: var(--rust-bright);
+  color: var(--link-hover);
+}
+
 .lead {
   max-width: 64ch;
   margin: 0.9rem 0 0;
@@ -323,6 +420,24 @@ a:hover {
 .doc-content h3 {
   margin-top: 1.65rem;
   font-size: 1.2rem;
+}
+
+.heading-permalink {
+  opacity: 0;
+  color: var(--quiet);
+  font-size: 0.82em;
+  text-decoration: none;
+}
+
+.doc-content h2:hover .heading-permalink,
+.doc-content h2:focus-within .heading-permalink,
+.doc-content h3:hover .heading-permalink,
+.doc-content h3:focus-within .heading-permalink {
+  opacity: 1;
+}
+
+.heading-permalink:focus-visible {
+  opacity: 1;
 }
 
 .doc-content p,
@@ -447,6 +562,37 @@ a:hover {
   padding: 0.65rem 1rem;
 }
 
+.doc-content blockquote p:first-child {
+  margin-top: 0;
+}
+
+.doc-content blockquote p:last-child {
+  margin-bottom: 0;
+}
+
+.doc-content details {
+  border: 1px solid var(--line);
+  border-left: 4px solid var(--teal);
+  border-radius: 8px;
+  background: rgba(20, 33, 51, 0.78);
+  margin: 1rem 0;
+  padding: 0.8rem 1rem;
+}
+
+.doc-content summary {
+  color: var(--navy-deep);
+  cursor: pointer;
+  font-weight: 800;
+}
+
+.doc-content details[open] summary {
+  margin-bottom: 0.65rem;
+}
+
+.doc-content details > :last-child {
+  margin-bottom: 0;
+}
+
 .doc-index {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
@@ -539,6 +685,11 @@ a:hover {
 
   .header-links {
     justify-content: flex-start;
+  }
+
+  .site-search {
+    width: 100%;
+    max-width: none;
   }
 
   .site-shell {
