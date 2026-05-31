@@ -1,4 +1,6 @@
-# Usage
+---
+title: Usage
+---
 
 `drydock` is a runtime-offline CLI for Argo CD GitOps repositories. Default
 commands render and compare desired state from checked-out files plus explicit

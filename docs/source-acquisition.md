@@ -1,4 +1,6 @@
-# Source Acquisition
+---
+title: Source Acquisition
+---
 
 `drydock` renders from local files and explicit source caches. Declared Git,
 HTTP Helm, OCI Helm, and remote Kustomize sources may be fetched into those

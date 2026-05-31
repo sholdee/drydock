@@ -2,10 +2,6 @@
 title: drydock
 ---
 
-Review Argo CD repository changes before they become controller work.
-
-Inspect your Argo CD fleet without getting wet.
-
 drydock is a fast, single static Go binary and embeddable Go module for
 runtime-offline Argo CD desired-state analysis. It discovers, renders, tests,
 diffs, and diagnoses GitOps Applications with native Go renderers, no Argo CD

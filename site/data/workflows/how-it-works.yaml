@@ -1,0 +1,19 @@
+title: drydock render pipeline
+steps:
+  - title: Repository Input
+    text: Start from a checked-out repository, local path, or Git ref snapshot.
+  - title: Discovery
+    href: "#discovery"
+    text: Find Argo CD Applications, ApplicationSets, AppProjects, settings, repository metadata, and cluster metadata.
+  - title: Source Resolution
+    href: "#source-resolution"
+    text: Resolve local paths, repo maps, Git sources, Helm chart sources, remote Kustomize inputs, and caches.
+  - title: Rendering
+    href: "#rendering"
+    text: Inflate desired manifests with native Go renderers for directory, Kustomize, Helm, Jsonnet, and supported plugin policy flows.
+  - title: Normalization
+    href: "#normalization"
+    text: Apply Argo-aware normalization, resource filters, ignore settings, and diff noise controls.
+  - title: Reporting
+    href: "#reporting"
+    text: Return render tests, desired-state diffs, image movement, cache events, and diagnostics.

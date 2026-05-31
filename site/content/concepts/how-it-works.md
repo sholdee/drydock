@@ -6,14 +6,7 @@ drydock turns repository inputs into reviewable Argo CD desired-state reports.
 It uses the same pipeline for `get`, `test`, `diff`, image inspection, and
 diagnostics, with two repository snapshots for diff commands.
 
-```mermaid
-flowchart LR
-  repo[Repository tree or local Git ref] --> discover[Discover Applications and settings]
-  discover --> acquire[Resolve declared sources and caches]
-  acquire --> render[Render desired manifests with native Go renderers]
-  render --> normalize[Normalize resources and apply filters]
-  normalize --> report[Report tests, diffs, images, and diagnostics]
-```
+{{< workflow name="how-it-works" >}}
 
 ## Discovery
 
@@ -40,6 +33,13 @@ Jsonnet, Kustomize, Helm, Kustomize `helmCharts`, remote Kustomize resources,
 and supported chart-only Helm sources. Config management plugin execution is
 disabled by default; trusted plugin policy and explicit opt-in are required for
 exec plugins.
+
+## Normalization
+
+Rendered manifests pass through Argo-aware normalization before diff and image
+inspection. drydock applies supported resource filters, ignore settings, known
+type handling, repeated-resource behavior, and default noise suppression for
+common chart metadata.
 
 ## Reporting
 

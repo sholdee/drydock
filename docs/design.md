@@ -1,4 +1,6 @@
-# drydock Design
+---
+title: drydock Design
+---
 
 `drydock` is an independent Go CLI and embeddable library for Argo CD GitOps
 repository analysis. It discovers Argo CD Applications, renders desired
@@ -35,18 +37,7 @@ selected reusable helpers where they are decoupled from live runtime services.
 drydock owns discovery, source planning, cache use, rendering orchestration,
 diagnostics, and output shaping.
 
-```mermaid
-flowchart LR
-  Repo[Checked-out repository] --> Discover[Discover Applications, ApplicationSets, settings]
-  Discover --> Plan[Plan sources and inputs]
-  Plan --> Acquire[Acquire declared sources into caches]
-  Acquire --> Render[Render desired manifests with Go libraries]
-  Render --> Normalize[Apply Argo-aware normalization]
-  Normalize --> Diffs[Manifest diffs]
-  Normalize --> Images[Image diffs and inventory]
-  Render --> Tests[Render tests and Lua health validation]
-  Render --> Diag[Diagnostics]
-```
+{{< workflow name="architecture" >}}
 
 Primary packages:
 

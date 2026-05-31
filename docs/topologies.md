@@ -1,4 +1,6 @@
-# Repository Topologies
+---
+title: Repository Topologies
+---
 
 This page helps operators map common GitOps repository shapes to drydock
 commands. It is not a second behavior spec; detailed command, source,

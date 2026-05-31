@@ -25,29 +25,40 @@
             {{- $entryURL := relURL .URL -}}
             {{- $active := eq $entryURL $.RelPermalink -}}
             <li>
-              <a href="{{ $entryURL }}"{{ if $active }} class="is-active" aria-current="page"{{ end }}>
-                {{ .Name }}
-              </a>
+              {{ if and (eq $group "Reference") (eq .Name "Reference") }}
+                <div class="nav-reference-row">
+                  <a href="{{ $entryURL }}"{{ if or $active $isReferenceContext }} class="is-active"{{ end }}{{ if $active }} aria-current="page"{{ end }}>
+                    {{ .Name }}
+                  </a>
+                  <button
+                    type="button"
+                    class="nav-reference-toggle"
+                    aria-label="Toggle reference index"
+                    aria-controls="nav-reference-index"
+                    aria-expanded="{{ if $isReferenceContext }}true{{ else }}false{{ end }}"
+                    data-reference-context="{{ if $isReferenceContext }}true{{ else }}false{{ end }}"
+                  ></button>
+                </div>
+                <ul id="nav-reference-index" class="nav-reference-index"{{ if not $isReferenceContext }} hidden{{ end }}>
+                  {{ range $referencePages }}
+                    {{- $referenceEntryURL := relURL .url -}}
+                    {{- $referenceActive := eq $referenceEntryURL $.RelPermalink -}}
+                    <li>
+                      <a href="{{ $referenceEntryURL }}"{{ if $referenceActive }} class="is-active" aria-current="page"{{ end }}>
+                        {{ .name }}
+                      </a>
+                    </li>
+                  {{ end }}
+                </ul>
+              {{ else }}
+                <a href="{{ $entryURL }}"{{ if $active }} class="is-active" aria-current="page"{{ end }}>
+                  {{ .Name }}
+                </a>
+              {{ end }}
             </li>
           {{ end }}
         {{ end }}
       </ul>
-      {{ if eq $group "Reference" }}
-        <details class="nav-reference-index"{{ if $isReferenceContext }} open{{ end }}>
-          <summary>Full Reference</summary>
-          <ul>
-            {{ range $referencePages }}
-              {{- $entryURL := relURL .url -}}
-              {{- $active := eq $entryURL $.RelPermalink -}}
-              <li>
-                <a href="{{ $entryURL }}"{{ if $active }} class="is-active" aria-current="page"{{ end }}>
-                  {{ .name }}
-                </a>
-              </li>
-            {{ end }}
-          </ul>
-        </details>
-      {{ end }}
     </div>
   {{ end }}
 </nav>

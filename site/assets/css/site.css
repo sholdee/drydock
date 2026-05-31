@@ -196,6 +196,13 @@ a:hover {
   -webkit-line-clamp: 2;
 }
 
+.search-match {
+  border-radius: 3px;
+  background: rgba(240, 138, 81, 0.28);
+  color: var(--navy-deep);
+  padding: 0 0.08em;
+}
+
 .header-links {
   display: flex;
   align-items: center;
@@ -238,6 +245,12 @@ a:hover {
   top: calc(var(--header-height) + 1rem);
 }
 
+.site-sidebar {
+  max-height: calc(100vh - var(--header-height) - 2rem);
+  overflow-y: auto;
+  scrollbar-gutter: stable;
+}
+
 .docs-nav,
 .toc-panel {
   border-left: 3px solid var(--line-strong);
@@ -265,43 +278,65 @@ a:hover {
   text-transform: uppercase;
 }
 
-.nav-reference-index {
-  margin-top: 0.35rem;
-}
-
-.nav-reference-index summary {
-  border-radius: 6px;
-  color: var(--muted);
-  cursor: pointer;
-  font-size: 0.86rem;
-  font-weight: 800;
-  line-height: 1.3;
-  padding: 0.42rem 0.5rem;
-}
-
-.nav-reference-index summary:hover {
-  background: rgba(105, 215, 194, 0.08);
-  color: var(--navy-deep);
-}
-
-.nav-reference-index[open] summary {
-  color: var(--navy-deep);
-}
-
-.docs-nav .nav-reference-index ul {
-  margin-top: 0.2rem;
-  padding-left: 0.65rem;
-}
-
-.docs-nav .nav-reference-index a {
-  font-size: 0.84rem;
-}
-
 .docs-nav ul,
 .toc-panel ul {
   list-style: none;
   margin: 0;
   padding: 0;
+}
+
+.nav-reference-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: stretch;
+}
+
+.nav-reference-row a {
+  border-bottom-right-radius: 0;
+  border-top-right-radius: 0;
+}
+
+.nav-reference-toggle {
+  border: 0;
+  border-bottom-right-radius: 6px;
+  border-top-right-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  font: inherit;
+  font-size: 0.92rem;
+  font-weight: 800;
+  min-width: 2.1rem;
+  padding: 0.42rem 0.5rem;
+}
+
+.nav-reference-toggle::before {
+  content: "+";
+}
+
+.nav-reference-toggle[aria-expanded="true"]::before {
+  content: "-";
+}
+
+.nav-reference-row:hover a,
+.nav-reference-row:hover .nav-reference-toggle,
+.nav-reference-toggle:hover {
+  background: rgba(105, 215, 194, 0.08);
+  color: var(--navy-deep);
+}
+
+.docs-nav .nav-reference-index {
+  display: block;
+  margin-top: 0.2rem;
+  padding-left: 0.65rem;
+}
+
+.docs-nav .nav-reference-index[hidden] {
+  display: none;
+}
+
+.docs-nav .nav-reference-index a {
+  font-size: 0.84rem;
 }
 
 .docs-nav li + li,
@@ -369,6 +404,14 @@ a:hover {
   display: block;
   width: min(380px, 100%);
   height: auto;
+}
+
+.home-tagline {
+  max-width: 34rem;
+  margin: 0.35rem 0 0 clamp(0.35rem, 1vw, 0.85rem);
+  color: var(--quiet);
+  font-size: 0.98rem;
+  font-weight: 650;
 }
 
 .doc-header {
@@ -549,7 +592,9 @@ a:hover {
 }
 
 .mermaid-figure {
+  display: inline-block;
   overflow-x: auto;
+  max-width: 100%;
   margin: 1.5rem 0;
   border: 1px solid #213149;
   border-radius: 8px;
@@ -565,7 +610,106 @@ a:hover {
   display: block;
   max-width: 100%;
   height: auto;
-  margin: 0 auto;
+  margin: 0;
+}
+
+.workflow-map {
+  max-width: 58rem;
+  margin: 1.6rem 0 2rem;
+}
+
+.workflow-steps {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.workflow-step {
+  position: relative;
+  display: grid;
+  grid-template-columns: 3rem minmax(0, 1fr);
+  gap: 0.85rem;
+  align-items: start;
+}
+
+.workflow-step + .workflow-step {
+  margin-top: 0.65rem;
+}
+
+.workflow-step::before {
+  content: "";
+  position: absolute;
+  top: 2.45rem;
+  bottom: -0.85rem;
+  left: 1.08rem;
+  width: 2px;
+  background: linear-gradient(180deg, rgba(105, 215, 194, 0.52), rgba(209, 115, 66, 0.22));
+}
+
+.workflow-step:last-child::before {
+  display: none;
+}
+
+.workflow-node {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  place-items: center;
+  width: 2.2rem;
+  height: 2.2rem;
+  border: 1px solid rgba(105, 215, 194, 0.58);
+  border-radius: 999px;
+  background: var(--surface-raised);
+  color: var(--teal);
+  font-size: 0.72rem;
+  font-weight: 900;
+  line-height: 1;
+}
+
+.workflow-copy {
+  min-width: 0;
+  padding: 0.04rem 0 0.5rem;
+}
+
+.workflow-heading {
+  display: inline-block;
+  margin: 0;
+  color: var(--navy-deep);
+  font-size: 1rem;
+  font-weight: 850;
+  line-height: 1.25;
+  text-decoration: none;
+}
+
+a.workflow-heading:hover {
+  color: var(--link-hover);
+}
+
+.workflow-copy p:not(.workflow-heading) {
+  margin: 0.18rem 0 0;
+  color: var(--muted);
+  font-size: 0.92rem;
+  line-height: 1.5;
+}
+
+.workflow-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  margin: 0.55rem 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.workflow-tags li {
+  border: 1px solid rgba(105, 215, 194, 0.28);
+  border-radius: 999px;
+  background: rgba(105, 215, 194, 0.08);
+  color: var(--navy-deep);
+  font-size: 0.76rem;
+  font-weight: 800;
+  line-height: 1.2;
+  padding: 0.22rem 0.48rem;
 }
 
 .highlight .c,
@@ -731,6 +875,8 @@ a:hover {
 
   .site-sidebar {
     position: static;
+    max-height: none;
+    overflow: visible;
     border-bottom: 1px solid var(--line);
     background: rgba(8, 17, 29, 0.94);
     padding: 0.85rem 1rem;
