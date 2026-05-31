@@ -28,12 +28,18 @@ APPLICATIONS=(
   parity-sources-precedence
   parity-git-alpha
   parity-git-beta
+  parity-git-file-alpha
+  parity-git-file-beta
   parity-list-alpha
   parity-list-beta
+  parity-merge-alpha
+  parity-merge-beta
   parity-matrix-dev-api
   parity-matrix-dev-worker
   parity-matrix-prod-api
   parity-matrix-prod-worker
+  parity-selector-beta-prod
+  parity-template-patch
 )
 
 usage() {
@@ -281,6 +287,22 @@ wait_for_applications() {
   done
 }
 
+assert_application_inventory() {
+  local expected actual
+  expected="$(printf '%s\n' "${APPLICATIONS[@]}" | sort)"
+  actual="$(kubectl -n argocd get applications.argoproj.io -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}' | sort)"
+  if [[ "${actual}" != "${expected}" ]]; then
+    {
+      echo "expected Applications:"
+      printf '%s\n' "${expected}"
+      echo
+      echo "actual Applications:"
+      printf '%s\n' "${actual}"
+    } > "${OUT_DIR}/application-inventory.diff"
+    fail "Argo CD Application inventory did not match expected list; see ${OUT_DIR}/application-inventory.diff"
+  fi
+}
+
 capture_argocd_manifests() {
   local app output_dir
   output_dir="$(artifact_dir argocd-manifests)"
@@ -330,6 +352,7 @@ main() {
   login_argocd
   apply_fixture_apps
   wait_for_applications
+  assert_application_inventory
   capture_argocd_manifests
   capture_drydock_manifests
   compare_manifests

@@ -1,0 +1,7 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: parity-selector-beta-prod
+data:
+  generator: selector-template-override
+  selected: base

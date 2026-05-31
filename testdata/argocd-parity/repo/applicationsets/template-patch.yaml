@@ -1,0 +1,32 @@
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: parity-template-patch
+  namespace: argocd
+spec:
+  goTemplate: true
+  goTemplateOptions: ["missingkey=error"]
+  generators:
+    - list:
+        elements:
+          - name: parity-template-patch
+            patchedPath: workloads/appset/template-patch/patched
+            patchedNamespace: parity-template-patched
+  template:
+    metadata:
+      name: '{{.name}}'
+    spec:
+      project: default
+      source:
+        repoURL: git://argocd-parity-git.argocd-parity.svc.cluster.local/repo.git
+        targetRevision: HEAD
+        path: workloads/appset/template-patch/base
+      destination:
+        name: in-cluster
+        namespace: parity-template-base
+  templatePatch: |
+    spec:
+      source:
+        path: '{{.patchedPath}}'
+      destination:
+        namespace: '{{.patchedNamespace}}'

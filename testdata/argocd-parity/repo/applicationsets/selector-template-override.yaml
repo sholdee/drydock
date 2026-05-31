@@ -1,0 +1,41 @@
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: parity-selector-template-override
+  namespace: argocd
+spec:
+  goTemplate: true
+  goTemplateOptions: ["missingkey=error"]
+  generators:
+    - list:
+        elements:
+          - name: alpha
+            env: dev
+          - name: beta
+            env: prod
+        template:
+          metadata: {}
+          spec:
+            project: default
+            source:
+              repoURL: git://argocd-parity-git.argocd-parity.svc.cluster.local/repo.git
+              targetRevision: HEAD
+              path: 'workloads/appset/selector/override/{{.name}}-{{.env}}'
+            destination:
+              name: in-cluster
+              namespace: parity-selector-override
+      selector:
+        matchLabels:
+          env: prod
+  template:
+    metadata:
+      name: 'parity-selector-{{.name}}-{{.env}}'
+    spec:
+      project: default
+      source:
+        repoURL: git://argocd-parity-git.argocd-parity.svc.cluster.local/repo.git
+        targetRevision: HEAD
+        path: 'workloads/appset/selector/base/{{.name}}-{{.env}}'
+      destination:
+        name: in-cluster
+        namespace: parity-selector-base

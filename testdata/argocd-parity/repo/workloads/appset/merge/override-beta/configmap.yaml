@@ -1,0 +1,7 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: parity-merge-beta
+data:
+  generator: merge
+  selected: override-beta

@@ -1,0 +1,9 @@
+{
+  "cluster": {
+    "name": "beta",
+    "env": "prod"
+  },
+  "app": {
+    "path": "workloads/appset/files/rendered/beta"
+  }
+}
