@@ -6,10 +6,10 @@ metadata:
 spec:
   project: default
   sources:
-    - repoURL: http://argocd-parity-git.argocd-parity.svc.cluster.local/repo.git
+    - repoURL: git://argocd-parity-git.argocd-parity.svc.cluster.local/repo.git
       targetRevision: HEAD
       ref: shared
-    - repoURL: http://argocd-parity-git.argocd-parity.svc.cluster.local/repo.git
+    - repoURL: git://argocd-parity-git.argocd-parity.svc.cluster.local/repo.git
       targetRevision: HEAD
       path: workloads/ref-only-source
       directory:

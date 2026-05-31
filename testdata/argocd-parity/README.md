@@ -7,7 +7,7 @@ remote chart, OCI, or remote Kustomize fetches.
 Application and ApplicationSet specs use the canonical placeholder repository
 URL:
 
-`http://argocd-parity-git.argocd-parity.svc.cluster.local/repo.git`
+`git://argocd-parity-git.argocd-parity.svc.cluster.local/repo.git`
 
 The smoke harness maps that URL back to this local fixture repository with
 `--repo-map` so drydock and Argo CD render the same source tree.

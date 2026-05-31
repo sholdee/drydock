@@ -6,7 +6,7 @@ metadata:
 spec:
   project: default
   source:
-    repoURL: http://argocd-parity-git.argocd-parity.svc.cluster.local/repo.git
+    repoURL: git://argocd-parity-git.argocd-parity.svc.cluster.local/repo.git
     targetRevision: HEAD
     path: charts/release-namespace
     helm:

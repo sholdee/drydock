@@ -5,7 +5,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 
 ARGOCD_MODULE="github.com/argoproj/argo-cd/v3"
-FIXTURE_REPO_URL="http://argocd-parity-git.argocd-parity.svc.cluster.local/repo.git"
+FIXTURE_REPO_URL="git://argocd-parity-git.argocd-parity.svc.cluster.local/repo.git"
 FIXTURE_REPO_PATH="${REPO_ROOT}/testdata/argocd-parity/repo"
 IGNORE_FILE="${REPO_ROOT}/testdata/argocd-parity/compare-ignore.yaml"
 OUT_DIR="${REPO_ROOT}/argocd-parity-smoke"
@@ -180,8 +180,13 @@ prepare_fixture_git_image() {
 
   dockerfile="${WORK_DIR}/Dockerfile.git"
   cat > "${dockerfile}" <<'DOCKERFILE'
-FROM nginx:1.29-alpine
-COPY repo.git /usr/share/nginx/html/repo.git
+FROM alpine:3.23
+RUN apk add --no-cache git-daemon
+COPY --chown=65534:65534 repo.git /srv/git/repo.git
+RUN touch /srv/git/repo.git/git-daemon-export-ok && chmod -R a+rX /srv/git
+EXPOSE 9418
+USER 65534:65534
+ENTRYPOINT ["git", "daemon", "--verbose", "--export-all", "--base-path=/srv/git", "--reuseaddr", "--informative-errors", "/srv/git"]
 DOCKERFILE
   docker build -q -t "${image}" -f "${dockerfile}" "${WORK_DIR}" >/dev/null
   kind load docker-image "${image}" --name "${CLUSTER_NAME}"
@@ -209,8 +214,8 @@ spec:
           image: drydock-argocd-parity-git:${CLUSTER_NAME}
           imagePullPolicy: Never
           ports:
-            - containerPort: 80
-              name: http
+            - containerPort: 9418
+              name: git
 ---
 apiVersion: v1
 kind: Service
@@ -220,9 +225,9 @@ spec:
   selector:
     app.kubernetes.io/name: argocd-parity-git
   ports:
-    - name: http
-      port: 80
-      targetPort: http
+    - name: git
+      port: 9418
+      targetPort: git
 YAML
   kubectl -n argocd-parity rollout status deployment/argocd-parity-git --timeout=120s
 }
@@ -230,7 +235,7 @@ YAML
 install_argocd() {
   local version="$1"
   kubectl create namespace argocd >/dev/null
-  kubectl -n argocd apply -f "https://raw.githubusercontent.com/argoproj/argo-cd/${version}/manifests/install.yaml" >/dev/null
+  kubectl -n argocd apply --server-side --force-conflicts -f "https://raw.githubusercontent.com/argoproj/argo-cd/${version}/manifests/install.yaml" >/dev/null
   kubectl wait --for=condition=Established crd/applications.argoproj.io --timeout=120s
   kubectl wait --for=condition=Established crd/applicationsets.argoproj.io --timeout=120s
   kubectl -n argocd patch configmap argocd-cm --type merge -p '{"data":{"kustomize.buildOptions":"--enable-helm"}}' >/dev/null

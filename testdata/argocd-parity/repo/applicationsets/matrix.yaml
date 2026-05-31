@@ -14,7 +14,7 @@ spec:
                 - env: dev
                 - env: prod
           - git:
-              repoURL: http://argocd-parity-git.argocd-parity.svc.cluster.local/repo.git
+              repoURL: git://argocd-parity-git.argocd-parity.svc.cluster.local/repo.git
               revision: HEAD
               directories:
                 - path: workloads/appset/matrix/components/*
@@ -24,7 +24,7 @@ spec:
     spec:
       project: default
       source:
-        repoURL: http://argocd-parity-git.argocd-parity.svc.cluster.local/repo.git
+        repoURL: git://argocd-parity-git.argocd-parity.svc.cluster.local/repo.git
         targetRevision: HEAD
         path: "{{.path.path}}/overlays/{{.env}}"
       destination:

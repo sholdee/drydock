@@ -6,13 +6,13 @@ metadata:
 spec:
   project: default
   source:
-    repoURL: http://argocd-parity-git.argocd-parity.svc.cluster.local/repo.git
+    repoURL: git://argocd-parity-git.argocd-parity.svc.cluster.local/repo.git
     targetRevision: HEAD
     path: workloads/sources-precedence/ignored
     directory:
       recurse: true
   sources:
-    - repoURL: http://argocd-parity-git.argocd-parity.svc.cluster.local/repo.git
+    - repoURL: git://argocd-parity-git.argocd-parity.svc.cluster.local/repo.git
       targetRevision: HEAD
       path: workloads/sources-precedence/winner
       directory:
