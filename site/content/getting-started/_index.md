@@ -9,7 +9,15 @@ directory, Kustomize, Helm, and Jsonnet paths.
 
 ## Install
 
-Install the latest Linux/macOS release:
+Install the latest Linux/macOS release with Homebrew:
+
+```bash
+brew install sholdee/tap/drydock
+```
+
+Homebrew installs shell completions automatically.
+
+{{< details summary="Install Script" >}}
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/sholdee/drydock/main/scripts/install-drydock.sh -o install-drydock.sh
@@ -19,6 +27,22 @@ bash install-drydock.sh --yes
 The script verifies release checksums, verifies Sigstore bundles when
 available, installs the `drydock` binary, and attempts shell completion
 installation. Pin a release with `--version vX.Y.Z`.
+
+Pipe form:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/sholdee/drydock/main/scripts/install-drydock.sh | bash -s -- --yes
+```
+
+Pinned pipe form:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/sholdee/drydock/main/scripts/install-drydock.sh | bash -s -- --version vX.Y.Z --yes
+```
+
+Use `--no-completions` when completions should be installed manually.
+
+{{< /details >}}
 
 For GitOps repository and CI pinning, use `mise` with the GitHub backend:
 
@@ -40,32 +64,6 @@ Use `setup-action` when your workflow owns the drydock commands:
 Use `pr-action` for the standard pull request render test, manifest diff,
 image diff, artifacts, cache, and comment workflow. See
 [GitHub Actions](/workflows/github-actions/) for inputs and permissions.
-
-{{< /details >}}
-
-{{< details summary="Homebrew" >}}
-
-```bash
-brew install sholdee/tap/drydock
-```
-
-Homebrew installs completions automatically.
-
-{{< /details >}}
-
-{{< details summary="Install Script Options" >}}
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/sholdee/drydock/main/scripts/install-drydock.sh | bash -s -- --yes
-```
-
-Pinned pipe form:
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/sholdee/drydock/main/scripts/install-drydock.sh | bash -s -- --version vX.Y.Z --yes
-```
-
-Use `--no-completions` when completions should be installed manually.
 
 {{< /details >}}
 
