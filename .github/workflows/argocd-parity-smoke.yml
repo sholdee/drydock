@@ -4,7 +4,27 @@ name: Argo CD Render Parity Smoke
 
 on:
   workflow_dispatch:
+    inputs:
+      drydock_archive_name:
+        description: Release archive inside the artifact to smoke test.
+        required: false
+        default: drydock_linux-amd64.tar.gz
+      drydock_artifact_name:
+        description: Optional uploaded artifact containing release archives.
+        required: false
+        default: ""
   workflow_call:
+    inputs:
+      drydock_archive_name:
+        description: Release archive inside the artifact to smoke test.
+        required: false
+        type: string
+        default: drydock_linux-amd64.tar.gz
+      drydock_artifact_name:
+        description: Optional uploaded artifact containing release archives.
+        required: false
+        type: string
+        default: ""
 
 concurrency:
   group: argocd-parity-smoke-${{ github.ref }}
@@ -43,12 +63,60 @@ jobs:
           wait: 120s
 
       - name: Build drydock
+        if: inputs.drydock_artifact_name == ''
         run: go build -trimpath -o dist/drydock ./cmd/drydock
 
+      - name: Download release artifacts
+        if: inputs.drydock_artifact_name != ''
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: ${{ inputs.drydock_artifact_name }}
+          path: dist/
+
+      - name: Extract release drydock
+        if: inputs.drydock_artifact_name != ''
+        id: release-binary
+        env:
+          ARCHIVE: ${{ inputs.drydock_archive_name }}
+        shell: bash
+        run: |
+          archive_path="dist/${ARCHIVE}"
+          checksums_path="dist/checksums.txt"
+          binary_dir="${RUNNER_TEMP}/drydock-release-binary"
+          binary_path="${binary_dir}/drydock"
+
+          if [[ ! -f "${archive_path}" ]]; then
+            echo "Release archive not found: ${archive_path}" >&2
+            exit 1
+          fi
+          if [[ ! -f "${checksums_path}" ]]; then
+            echo "Release checksum manifest not found: ${checksums_path}" >&2
+            exit 1
+          fi
+
+          checksum="$(awk -v archive="${ARCHIVE}" '$2 == archive { print $1 }' "${checksums_path}")"
+          if [[ -z "${checksum}" ]]; then
+            echo "checksums.txt does not contain ${ARCHIVE}" >&2
+            exit 1
+          fi
+          printf '%s  %s\n' "${checksum}" "${archive_path}" | sha256sum --check --status
+
+          mkdir -p "${binary_dir}"
+          tar -xzf "${archive_path}" -C "${binary_dir}" drydock
+          if [[ ! -x "${binary_path}" ]]; then
+            echo "Extracted drydock binary is missing or not executable: ${binary_path}" >&2
+            exit 1
+          fi
+
+          echo "path=${binary_path}" >> "${GITHUB_OUTPUT}"
+
       - name: Run Argo CD render parity smoke
+        env:
+          RELEASE_BINARY: ${{ steps.release-binary.outputs.path }}
+        shell: bash
         run: >-
           scripts/argocd-parity-smoke.sh
-          --binary ./dist/drydock
+          --binary "${RELEASE_BINARY:-./dist/drydock}"
           --out "${RUNNER_TEMP}/argocd-parity-smoke"
           --cluster-name drydock-argocd-parity-smoke
           --existing-cluster

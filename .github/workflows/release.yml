@@ -84,7 +84,7 @@ jobs:
             echo "tag=${tag}"
           } >> "${GITHUB_OUTPUT}"
 
-  source-checks:
+  source-go-test:
     needs:
       - release-meta
     if: needs.release-meta.outputs.publish == 'true'
@@ -116,17 +116,132 @@ jobs:
       - name: Vet
         run: mise run vet
 
+  source-go-lint:
+    needs:
+      - release-meta
+    if: needs.release-meta.outputs.publish == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Setup mise
+        uses: jdx/mise-action@1648a7812b9aeae629881980618f079932869151 # v4.0.1
+        with:
+          experimental: true
+          install_args: --locked
+
       - name: Lint Go
         run: mise run lint
 
+  source-markdownlint:
+    needs:
+      - release-meta
+    if: needs.release-meta.outputs.publish == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Setup mise
+        uses: jdx/mise-action@1648a7812b9aeae629881980618f079932869151 # v4.0.1
+        with:
+          experimental: true
+          install_args: --locked
+
       - name: Lint Markdown
         run: mise run markdownlint
+
+  source-docs-site:
+    needs:
+      - release-meta
+    if: needs.release-meta.outputs.publish == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Setup mise
+        uses: jdx/mise-action@1648a7812b9aeae629881980618f079932869151 # v4.0.1
+        with:
+          experimental: true
+          install_args: --locked
+
+      - name: Build documentation site
+        run: mise run docs-check
+
+  source-workflow-lint:
+    needs:
+      - release-meta
+    if: needs.release-meta.outputs.publish == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Setup mise
+        uses: jdx/mise-action@1648a7812b9aeae629881980618f079932869151 # v4.0.1
+        with:
+          experimental: true
+          install_args: --locked
 
       - name: Lint GitHub Actions
         run: mise run actionlint
 
       - name: Audit GitHub Actions security
         run: mise run zizmor
+
+  source-shellcheck:
+    needs:
+      - release-meta
+    if: needs.release-meta.outputs.publish == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Setup mise
+        uses: jdx/mise-action@1648a7812b9aeae629881980618f079932869151 # v4.0.1
+        with:
+          experimental: true
+          install_args: --locked
+
+      - name: Lint shell scripts
+        run: mise run shellcheck
+
+  source-whitespace:
+    needs:
+      - release-meta
+    if: needs.release-meta.outputs.publish == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+          persist-credentials: false
 
       - name: Diff check
         shell: bash
@@ -144,10 +259,57 @@ jobs:
             fi
           fi
 
+  source-checks:
+    needs:
+      - release-meta
+      - source-docs-site
+      - source-go-lint
+      - source-go-test
+      - source-markdownlint
+      - source-shellcheck
+      - source-whitespace
+      - source-workflow-lint
+    if: always() && needs.release-meta.outputs.publish == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Verify source checks
+        env:
+          SOURCE_DOCS_SITE: ${{ needs.source-docs-site.result }}
+          SOURCE_GO_LINT: ${{ needs.source-go-lint.result }}
+          SOURCE_GO_TEST: ${{ needs.source-go-test.result }}
+          SOURCE_MARKDOWNLINT: ${{ needs.source-markdownlint.result }}
+          SOURCE_SHELLCHECK: ${{ needs.source-shellcheck.result }}
+          SOURCE_WHITESPACE: ${{ needs.source-whitespace.result }}
+          SOURCE_WORKFLOW_LINT: ${{ needs.source-workflow-lint.result }}
+        shell: bash
+        run: |
+          failed="false"
+          for check in \
+            "source-docs-site=${SOURCE_DOCS_SITE}" \
+            "source-go-lint=${SOURCE_GO_LINT}" \
+            "source-go-test=${SOURCE_GO_TEST}" \
+            "source-markdownlint=${SOURCE_MARKDOWNLINT}" \
+            "source-shellcheck=${SOURCE_SHELLCHECK}" \
+            "source-whitespace=${SOURCE_WHITESPACE}" \
+            "source-workflow-lint=${SOURCE_WORKFLOW_LINT}"; do
+            name="${check%%=*}"
+            result="${check#*=}"
+            echo "${name}: ${result}"
+            if [[ "${result}" != "success" ]]; then
+              failed="true"
+            fi
+          done
+
+          if [[ "${failed}" == "true" ]]; then
+            echo "One or more release source checks failed." >&2
+            exit 1
+          fi
+
   binaries:
     needs:
       - release-meta
-      - source-checks
     if: needs.release-meta.outputs.publish == 'true'
     runs-on: ubuntu-latest
     permissions:
@@ -197,7 +359,6 @@ jobs:
   image:
     needs:
       - release-meta
-      - source-checks
     if: needs.release-meta.outputs.publish == 'true'
     runs-on: ubuntu-latest
     permissions:
@@ -239,11 +400,25 @@ jobs:
           cache-from: type=gha,scope=drydock
           cache-to: type=gha,scope=drydock,mode=max,ignore-error=true
 
+  argocd-render-parity-smoke:
+    needs:
+      - binaries
+      - release-meta
+    if: needs.release-meta.outputs.publish == 'true'
+    permissions:
+      contents: read
+    uses: ./.github/workflows/argocd-parity-smoke.yml
+    with:
+      drydock_archive_name: drydock_linux-amd64.tar.gz
+      drydock_artifact_name: release-artifacts
+
   stage-release:
     needs:
+      - argocd-render-parity-smoke
       - binaries
       - image
       - release-meta
+      - source-checks
     if: needs.release-meta.outputs.publish == 'true'
     runs-on: ubuntu-latest
     permissions:
