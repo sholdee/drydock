@@ -33,28 +33,23 @@ func TestHomebrewFormulaGeneration(t *testing.T) {
 		`  version "0.1.9"`,
 		`  license "Apache-2.0"`,
 		"",
-		"  on_macos do",
-		"    on_intel do",
-		`      url "https://github.com/sholdee/drydock/releases/download/v#{version}/drydock_darwin-amd64.tar.gz"`,
-		`      sha256 "1111111111111111111111111111111111111111111111111111111111111111"`,
-		"    end",
+		`  host_cpu = RbConfig::CONFIG.fetch("host_cpu")`,
+		`  host_os = RbConfig::CONFIG.fetch("host_os")`,
 		"",
-		"    on_arm do",
-		`      url "https://github.com/sholdee/drydock/releases/download/v#{version}/drydock_darwin-arm64.tar.gz"`,
-		`      sha256 "2222222222222222222222222222222222222222222222222222222222222222"`,
-		"    end",
-		"  end",
-		"",
-		"  on_linux do",
-		"    on_intel do",
-		`      url "https://github.com/sholdee/drydock/releases/download/v#{version}/drydock_linux-amd64.tar.gz"`,
-		`      sha256 "3333333333333333333333333333333333333333333333333333333333333333"`,
-		"    end",
-		"",
-		"    on_arm do",
-		`      url "https://github.com/sholdee/drydock/releases/download/v#{version}/drydock_linux-arm64.tar.gz"`,
-		`      sha256 "4444444444444444444444444444444444444444444444444444444444444444"`,
-		"    end",
+		`  if host_os.include?("linux") && ["aarch64", "arm64"].include?(host_cpu)`,
+		`    url "https://github.com/sholdee/drydock/releases/download/v#{version}/drydock_linux-arm64.tar.gz"`,
+		`    sha256 "4444444444444444444444444444444444444444444444444444444444444444"`,
+		`  elsif host_os.include?("linux") && ["amd64", "x86_64"].include?(host_cpu)`,
+		`    url "https://github.com/sholdee/drydock/releases/download/v#{version}/drydock_linux-amd64.tar.gz"`,
+		`    sha256 "3333333333333333333333333333333333333333333333333333333333333333"`,
+		`  elsif ["aarch64", "arm64"].include?(host_cpu)`,
+		`    url "https://github.com/sholdee/drydock/releases/download/v#{version}/drydock_darwin-arm64.tar.gz"`,
+		`    sha256 "2222222222222222222222222222222222222222222222222222222222222222"`,
+		`  elsif ["amd64", "x86_64"].include?(host_cpu)`,
+		`    url "https://github.com/sholdee/drydock/releases/download/v#{version}/drydock_darwin-amd64.tar.gz"`,
+		`    sha256 "1111111111111111111111111111111111111111111111111111111111111111"`,
+		"  else",
+		`    odie "drydock supports macOS and Linux on amd64 or arm64"`,
 		"  end",
 		"",
 		"  def install",
@@ -85,10 +80,12 @@ func TestHomebrewFormulaGeneration(t *testing.T) {
 	assertContains(t, got, `sha256 "2222222222222222222222222222222222222222222222222222222222222222"`)
 	assertContains(t, got, `sha256 "3333333333333333333333333333333333333333333333333333333333333333"`)
 	assertContains(t, got, `sha256 "4444444444444444444444444444444444444444444444444444444444444444"`)
-	assertContains(t, got, `on_macos do`)
-	assertContains(t, got, `on_linux do`)
-	assertContains(t, got, `on_intel do`)
-	assertContains(t, got, `on_arm do`)
+	assertContains(t, got, `host_cpu = RbConfig::CONFIG.fetch("host_cpu")`)
+	assertContains(t, got, `host_os = RbConfig::CONFIG.fetch("host_os")`)
+	assertContains(t, got, `if host_os.include?("linux") && ["aarch64", "arm64"].include?(host_cpu)`)
+	assertContains(t, got, `elsif host_os.include?("linux") && ["amd64", "x86_64"].include?(host_cpu)`)
+	assertContains(t, got, `elsif ["aarch64", "arm64"].include?(host_cpu)`)
+	assertContains(t, got, `elsif ["amd64", "x86_64"].include?(host_cpu)`)
 	assertContains(t, got, `bin.install "drydock"`)
 	assertContains(t, got, `generate_completions_from_executable bin/"drydock", "completion"`)
 	assertContains(t, got, `test do`)

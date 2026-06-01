@@ -140,16 +140,18 @@ func generateFormula(tag string, checksums map[string]string) (string, error) {
 	fmt.Fprintf(&builder, "  version \"%s\"\n", version)
 	builder.WriteString("  license \"Apache-2.0\"\n\n")
 
-	builder.WriteString("  on_macos do\n")
-	writeArchiveBlock(&builder, "on_intel", "drydock_darwin-amd64.tar.gz", checksums)
-	builder.WriteByte('\n')
-	writeArchiveBlock(&builder, "on_arm", "drydock_darwin-arm64.tar.gz", checksums)
-	builder.WriteString("  end\n\n")
-
-	builder.WriteString("  on_linux do\n")
-	writeArchiveBlock(&builder, "on_intel", "drydock_linux-amd64.tar.gz", checksums)
-	builder.WriteByte('\n')
-	writeArchiveBlock(&builder, "on_arm", "drydock_linux-arm64.tar.gz", checksums)
+	builder.WriteString("  host_cpu = RbConfig::CONFIG.fetch(\"host_cpu\")\n")
+	builder.WriteString("  host_os = RbConfig::CONFIG.fetch(\"host_os\")\n\n")
+	builder.WriteString("  if host_os.include?(\"linux\") && [\"aarch64\", \"arm64\"].include?(host_cpu)\n")
+	writeArchive(&builder, "drydock_linux-arm64.tar.gz", checksums)
+	builder.WriteString("  elsif host_os.include?(\"linux\") && [\"amd64\", \"x86_64\"].include?(host_cpu)\n")
+	writeArchive(&builder, "drydock_linux-amd64.tar.gz", checksums)
+	builder.WriteString("  elsif [\"aarch64\", \"arm64\"].include?(host_cpu)\n")
+	writeArchive(&builder, "drydock_darwin-arm64.tar.gz", checksums)
+	builder.WriteString("  elsif [\"amd64\", \"x86_64\"].include?(host_cpu)\n")
+	writeArchive(&builder, "drydock_darwin-amd64.tar.gz", checksums)
+	builder.WriteString("  else\n")
+	builder.WriteString("    odie \"drydock supports macOS and Linux on amd64 or arm64\"\n")
 	builder.WriteString("  end\n\n")
 
 	builder.WriteString("  def install\n")
@@ -174,9 +176,7 @@ func homebrewVersion(tag string) (string, error) {
 	return strings.TrimPrefix(tag, "v"), nil
 }
 
-func writeArchiveBlock(builder *strings.Builder, condition, archive string, checksums map[string]string) {
-	fmt.Fprintf(builder, "    %s do\n", condition)
-	fmt.Fprintf(builder, "      url \"%s/%s\"\n", releaseBase, archive)
-	fmt.Fprintf(builder, "      sha256 \"%s\"\n", checksums[archive])
-	builder.WriteString("    end\n")
+func writeArchive(builder *strings.Builder, archive string, checksums map[string]string) {
+	fmt.Fprintf(builder, "    url \"%s/%s\"\n", releaseBase, archive)
+	fmt.Fprintf(builder, "    sha256 \"%s\"\n", checksums[archive])
 }
