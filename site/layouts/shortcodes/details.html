@@ -1,0 +1,8 @@
+{{- $summary := .Get "summary" | default (.Get 0) -}}
+{{- if not $summary -}}
+  {{- errorf "details shortcode requires a summary" -}}
+{{- end -}}
+<details>
+  <summary>{{ $summary }}</summary>
+  {{ .Page.RenderString .Inner }}
+</details>

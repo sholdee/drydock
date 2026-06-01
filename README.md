@@ -39,20 +39,18 @@ charts, or existing cache hits only.
 
 ## Install
 
-Install from source with Go:
+For local shells and GitOps repository pinning, use `mise` with the GitHub
+backend:
 
-```bash
-go install github.com/sholdee/drydock/cmd/drydock@latest
+```toml
+[tools]
+"github:sholdee/drydock[exe=drydock]" = "vX.Y.Z"
 ```
 
-Workflows that install a released binary can use the setup action. It installs
-the latest release by default:
+<details>
+<summary>GitHub Actions</summary>
 
-```yaml
-- uses: sholdee/drydock/setup-action@main
-```
-
-Pin a release when the workflow needs exact repeatability:
+Workflows that install a released binary can use the setup action:
 
 ```yaml
 - uses: sholdee/drydock/setup-action@main
@@ -60,12 +58,8 @@ Pin a release when the workflow needs exact repeatability:
     version: vX.Y.Z
 ```
 
-The setup action accepts `latest`, `vX.Y.Z`, or bare `X.Y.Z` and verifies the
-selected archive with the release checksum manifest by default.
-
-For pull request validation, the PR action wraps the common drydock workflow:
-render tests, manifest diffs, companion image diff reports, source caches,
-artifacts, and sticky PR comments.
+For pull request validation, the PR action wraps render tests, manifest diffs,
+image diff reports, source caches, artifacts, and sticky PR comments:
 
 ```yaml
 name: drydock
@@ -87,9 +81,58 @@ jobs:
           version: vX.Y.Z
 ```
 
+The setup action accepts `latest`, `vX.Y.Z`, or bare `X.Y.Z` and verifies the
+selected archive with the release checksum manifest by default.
+
 See the [GitHub Actions reference](https://sholdee.github.io/drydock/docs/github-actions/)
 for full action inputs, GitHub App token support, cache behavior, comments,
 artifacts, and outputs.
+
+</details>
+
+<details>
+<summary>Homebrew</summary>
+
+```bash
+brew install sholdee/tap/drydock
+```
+
+Homebrew installs shell completions automatically.
+
+</details>
+
+<details>
+<summary>Install Script</summary>
+
+Download and inspect the script:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/sholdee/drydock/main/scripts/install-drydock.sh -o install-drydock.sh
+bash install-drydock.sh --version vX.Y.Z --yes
+```
+
+Pipe form:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/sholdee/drydock/main/scripts/install-drydock.sh | bash -s -- --version vX.Y.Z --yes
+```
+
+The script verifies release checksums, attempts shell completion installation
+by default, and supports `--no-completions`.
+
+</details>
+
+<details>
+<summary>Download A Binary</summary>
+
+Download Linux and macOS `amd64` or `arm64` archives from the
+[latest release](https://github.com/sholdee/drydock/releases/latest). Verify
+the archive with `checksums.txt` before installing the `drydock` binary.
+
+</details>
+
+<details>
+<summary>Docker / GHCR</summary>
 
 Release containers are published to GHCR for Linux `amd64` and `arm64`:
 
@@ -98,6 +141,27 @@ docker run --rm -v "$PWD:/workspace:ro" ghcr.io/sholdee/drydock:latest test apps
 ```
 
 For repeatable automation, pin `ghcr.io/sholdee/drydock:vX.Y.Z`.
+
+</details>
+
+<details>
+<summary>Go Install</summary>
+
+Build from source with Go:
+
+```bash
+go install github.com/sholdee/drydock/cmd/drydock@latest
+```
+
+</details>
+
+Manual binary installs can generate shell completions with:
+
+```bash
+drydock completion zsh
+drydock completion bash
+drydock completion fish
+```
 
 ## Quick Start
 
