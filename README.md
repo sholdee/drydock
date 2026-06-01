@@ -39,7 +39,16 @@ charts, or existing cache hits only.
 
 ## Install
 
-Install the latest Linux/macOS release:
+Install the latest Linux/macOS release with Homebrew:
+
+```bash
+brew install sholdee/tap/drydock
+```
+
+Homebrew installs shell completions automatically.
+
+<details>
+<summary>Install Script</summary>
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/sholdee/drydock/main/scripts/install-drydock.sh -o install-drydock.sh
@@ -49,6 +58,22 @@ bash install-drydock.sh --yes
 The script verifies release checksums, verifies Sigstore bundles when
 available, installs the `drydock` binary, and attempts shell completion
 installation. Pin a release with `--version vX.Y.Z`.
+
+Pipe form:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/sholdee/drydock/main/scripts/install-drydock.sh | bash -s -- --yes
+```
+
+Pinned pipe form:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/sholdee/drydock/main/scripts/install-drydock.sh | bash -s -- --version vX.Y.Z --yes
+```
+
+Use `--no-completions` when completions should be installed manually.
+
+</details>
 
 For GitOps repository and CI pinning, use `mise` with the GitHub backend:
 
@@ -97,36 +122,6 @@ selected archive with the release checksum manifest by default.
 See the [GitHub Actions reference](https://sholdee.github.io/drydock/docs/github-actions/)
 for full action inputs, GitHub App token support, cache behavior, comments,
 artifacts, and outputs.
-
-</details>
-
-<details>
-<summary>Homebrew</summary>
-
-```bash
-brew install sholdee/tap/drydock
-```
-
-Homebrew installs shell completions automatically.
-
-</details>
-
-<details>
-<summary>Install Script Options</summary>
-
-Pipe form:
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/sholdee/drydock/main/scripts/install-drydock.sh | bash -s -- --yes
-```
-
-Pinned pipe form:
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/sholdee/drydock/main/scripts/install-drydock.sh | bash -s -- --version vX.Y.Z --yes
-```
-
-Use `--no-completions` when completions should be installed manually.
 
 </details>
 
