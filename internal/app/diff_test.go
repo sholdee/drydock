@@ -1179,6 +1179,142 @@ func TestOrchestratorDiffAppsChangedOnlyFallsBackOnUnownedCurrentPath(t *testing
 	}
 }
 
+func TestOrchestratorDiffAppsChangedOnlyIgnoresUnownedPaths(t *testing.T) {
+	root := t.TempDir()
+	left := filepath.Join(root, "left")
+	right := filepath.Join(root, "right")
+	writeSimpleApp(t, left, "old")
+	writeSimpleApp(t, right, "new")
+	writeTestFile(t, filepath.Join(left, "README.md"), "left\n")
+	writeTestFile(t, filepath.Join(right, "README.md"), "right\n")
+
+	result, err := Orchestrator{}.DiffApps(context.Background(), DiffRequest{
+		LeftPath:               left,
+		RightPath:              right,
+		ChangedOnly:            true,
+		StrictChangedOnly:      true,
+		ChangedOnlyIgnoreGlobs: []string{"README.md"},
+		Unified:                3,
+	})
+	if err != nil {
+		t.Fatalf("DiffApps() error = %v", err)
+	}
+	if len(result.Diagnostics) != 0 {
+		t.Fatalf("Diagnostics = %#v, want none", result.Diagnostics)
+	}
+	if len(result.Results) != 1 {
+		t.Fatalf("len(Results) = %d, want 1", len(result.Results))
+	}
+}
+
+func TestOrchestratorDiffAppsChangedOnlyIncludesConsideredPaths(t *testing.T) {
+	root := t.TempDir()
+	left := filepath.Join(root, "left")
+	right := filepath.Join(root, "right")
+	writeSimpleApp(t, left, "old")
+	writeSimpleApp(t, right, "new")
+	writeTestFile(t, filepath.Join(left, "README.md"), "left\n")
+	writeTestFile(t, filepath.Join(right, "README.md"), "right\n")
+
+	result, err := Orchestrator{}.DiffApps(context.Background(), DiffRequest{
+		LeftPath:                left,
+		RightPath:               right,
+		ChangedOnly:             true,
+		StrictChangedOnly:       true,
+		ChangedOnlyIncludeGlobs: []string{"manifests/**"},
+		Unified:                 3,
+	})
+	if err != nil {
+		t.Fatalf("DiffApps() error = %v", err)
+	}
+	if len(result.Diagnostics) != 0 {
+		t.Fatalf("Diagnostics = %#v, want none", result.Diagnostics)
+	}
+	if len(result.Results) != 1 {
+		t.Fatalf("len(Results) = %d, want 1", len(result.Results))
+	}
+}
+
+func TestOrchestratorDiffAppsChangedOnlyAllPathsFilteredReturnsEmptyDiff(t *testing.T) {
+	root := t.TempDir()
+	left := filepath.Join(root, "left")
+	right := filepath.Join(root, "right")
+	writeTestFile(t, filepath.Join(left, "README.md"), "left\n")
+	writeTestFile(t, filepath.Join(right, "README.md"), "right\n")
+	writeTestFile(t, filepath.Join(left, "apps", "broken.yaml"), `apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+`)
+	writeTestFile(t, filepath.Join(right, "apps", "broken.yaml"), `apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+`)
+
+	result, err := Orchestrator{}.DiffApps(context.Background(), DiffRequest{
+		LeftPath:                left,
+		RightPath:               right,
+		ChangedOnly:             true,
+		StrictChangedOnly:       true,
+		ChangedOnlyIncludeGlobs: []string{"apps/**"},
+		Unified:                 3,
+	})
+	if err != nil {
+		t.Fatalf("DiffApps() error = %v", err)
+	}
+	if len(result.Diagnostics) != 0 {
+		t.Fatalf("Diagnostics = %#v, want none", result.Diagnostics)
+	}
+	if len(result.Results) != 0 {
+		t.Fatalf("Results = %#v, want none", result.Results)
+	}
+}
+
+func TestOrchestratorDiffImagesHonorsChangedOnlyFilters(t *testing.T) {
+	root := t.TempDir()
+	left := filepath.Join(root, "left")
+	right := filepath.Join(root, "right")
+	writeSimpleApp(t, left, "same")
+	writeSimpleApp(t, right, "same")
+	writeTestFile(t, filepath.Join(left, "README.md"), "left\n")
+	writeTestFile(t, filepath.Join(right, "README.md"), "right\n")
+
+	result, err := Orchestrator{}.DiffImages(context.Background(), DiffRequest{
+		LeftPath:               left,
+		RightPath:              right,
+		ChangedOnly:            true,
+		StrictChangedOnly:      true,
+		ChangedOnlyIgnoreGlobs: []string{"README.md"},
+	})
+	if err != nil {
+		t.Fatalf("DiffImages() error = %v", err)
+	}
+	if len(result.Diagnostics) != 0 {
+		t.Fatalf("Diagnostics = %#v, want none", result.Diagnostics)
+	}
+}
+
+func TestOrchestratorDiffAppsChangedOnlyRejectsInvalidFilterGlob(t *testing.T) {
+	root := t.TempDir()
+	left := filepath.Join(root, "left")
+	right := filepath.Join(root, "right")
+	writeSimpleApp(t, left, "old")
+	writeSimpleApp(t, right, "new")
+
+	_, err := Orchestrator{}.DiffApps(context.Background(), DiffRequest{
+		LeftPath:                left,
+		RightPath:               right,
+		ChangedOnly:             true,
+		ChangedOnlyIncludeGlobs: []string{"apps/["},
+		Unified:                 3,
+	})
+	if err == nil {
+		t.Fatal("DiffApps() error = nil, want invalid glob error")
+	}
+	if !strings.Contains(err.Error(), "changed-only include glob") {
+		t.Fatalf("DiffApps() error = %v, want changed-only include glob message", err)
+	}
+}
+
 func TestOrchestratorDiffAppsStrictChangedOnlyOwnsApplicationManifestChanges(t *testing.T) {
 	root := t.TempDir()
 	left := filepath.Join(root, "left")

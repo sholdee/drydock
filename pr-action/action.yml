@@ -95,6 +95,12 @@ inputs:
   changed-only:
     description: Override changed-only behavior with true or false. Leave empty for drydock defaults.
     required: false
+  changed-only-include:
+    description: Newline-delimited repository-relative glob patterns that define changed paths considered by changed-only selection.
+    required: false
+  changed-only-ignore:
+    description: Newline-delimited repository-relative glob patterns ignored by changed-only selection.
+    required: false
   show-ignored-fields:
     description: Show drydock default ignored diff fields.
     required: false
@@ -390,6 +396,8 @@ runs:
         DRYDOCK_DIFF_ARTIFACT_NAME: ${{ steps.prepare.outputs.diff-artifact-name }}
         DRYDOCK_IMAGE_ARTIFACT_NAME: ${{ steps.prepare.outputs.image-artifact-name }}
         DRYDOCK_INPUT_CHANGED_ONLY: ${{ inputs.changed-only }}
+        DRYDOCK_INPUT_CHANGED_ONLY_INCLUDE: ${{ inputs.changed-only-include }}
+        DRYDOCK_INPUT_CHANGED_ONLY_IGNORE: ${{ inputs.changed-only-ignore }}
         DRYDOCK_INPUT_COMMENT_EMPTY: ${{ inputs.comment-empty }}
         DRYDOCK_INPUT_COMMENT_MODE: ${{ inputs.comment-mode }}
         DRYDOCK_INPUT_DIFF_MAX_BYTES: ${{ inputs.diff-max-bytes }}

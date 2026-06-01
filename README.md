@@ -126,7 +126,9 @@ drydock diff apps --path . --path-orig ../baseline
 
 Diff commands use changed-only selection by default. Use
 `--changed-only=false` when you want to render and compare every discovered
-Application.
+Application. Use repeatable `--changed-only-include` and
+`--changed-only-ignore` globs when CI should ignore known non-GitOps paths
+before changed-only ownership is evaluated.
 
 You can also compare against committed Git refs without creating a baseline
 worktree:

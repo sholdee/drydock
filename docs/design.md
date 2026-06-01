@@ -197,6 +197,14 @@ be mapped, only affected Applications render. If any path is unowned,
 non-strict mode warns and renders all Applications; `--strict-changed-only`
 fails instead.
 
+Operators can scope the changed path set with explicit include and ignore
+globs before ownership is evaluated. Include globs define the considered path
+universe; ignore globs remove paths from that universe and take precedence. If
+no paths remain after filtering, no Applications render and the diff is empty.
+This is intentionally CLI/API/action-provided policy, not an automatically
+loaded ignore file, so hidden repository policy cannot silently change local
+diff semantics.
+
 Argo CD permits overlapping Applications, so drydock keeps every affected
 Application instead of collapsing ownership to one most-specific owner.
 

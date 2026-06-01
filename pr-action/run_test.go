@@ -17,6 +17,8 @@ func TestRunFallsBackToJSONWhenImageNameOutputIsUnsupported(t *testing.T) {
 	tmp := t.TempDir()
 	writeExecutable(t, filepath.Join(tmp, "drydock"), `#!/usr/bin/env bash
 set -euo pipefail
+mkdir -p "${DRYDOCK_ACTION_WORK_DIR}"
+printf '%s\n' "$*" >> "${DRYDOCK_ACTION_WORK_DIR}/drydock-args.txt"
 
 if [[ "$*" == *"diff images"* && "$*" == *"-o name"* ]]; then
   echo "name output is not supported for diff images" >&2
@@ -61,6 +63,8 @@ esac
 	cmd.Dir = "."
 	cmd.Env = append(defaultRunEnv(tmp, workDir, outputPath),
 		"DRYDOCK_INPUT_RUN_IMAGE_DIFF=true",
+		"DRYDOCK_INPUT_CHANGED_ONLY_INCLUDE=apps/**",
+		"DRYDOCK_INPUT_CHANGED_ONLY_IGNORE=.github/**",
 	)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
@@ -88,6 +92,13 @@ esac
 	for _, want := range []string{"has-images=true", "has-image-diff=true"} {
 		if !strings.Contains(string(output), want) {
 			t.Fatalf("GITHUB_OUTPUT = %q, want %q", output, want)
+		}
+	}
+
+	args := readFile(t, filepath.Join(workDir, "drydock-args.txt"))
+	for _, want := range []string{"-o name", "-o json", "--changed-only-include apps/**", "--changed-only-ignore .github/**"} {
+		if !strings.Contains(args, want) {
+			t.Fatalf("drydock args = %q, want %q", args, want)
 		}
 	}
 }
@@ -282,6 +293,45 @@ func TestRunDiffUsesMarkdownOutputAfterExtraDiffArgs(t *testing.T) {
 	}
 }
 
+func TestRunPassesChangedOnlyPathFiltersOnlyToDiffCommands(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell action tests require bash")
+	}
+
+	workDir := runCommentScenario(t, commentScenario{
+		commentMode:        "both",
+		diffOutput:         true,
+		imageOutput:        true,
+		runTest:            true,
+		changedOnlyInclude: "apps/**\nclusters/**",
+		changedOnlyIgnore:  ".github/**\nmise.lock",
+	})
+
+	args := readFile(t, filepath.Join(workDir, "drydock-args.txt"))
+	lines := strings.Split(strings.TrimSpace(args), "\n")
+	if len(lines) != 4 {
+		t.Fatalf("drydock invocations = %q, want test, diff apps, diff images name, diff images markdown", args)
+	}
+	for _, line := range lines {
+		hasFilters := strings.Contains(line, "--changed-only-include apps/**") &&
+			strings.Contains(line, "--changed-only-include clusters/**") &&
+			strings.Contains(line, "--changed-only-ignore .github/**") &&
+			strings.Contains(line, "--changed-only-ignore mise.lock")
+		switch {
+		case strings.Contains(line, "test apps"):
+			if hasFilters {
+				t.Fatalf("test apps received diff-only changed path filters:\n%s", line)
+			}
+		case strings.Contains(line, "diff apps") || strings.Contains(line, "diff images"):
+			if !hasFilters {
+				t.Fatalf("diff command missing changed path filters:\n%s", line)
+			}
+		default:
+			t.Fatalf("unexpected drydock invocation:\n%s", line)
+		}
+	}
+}
+
 func TestRunImageCommentsUseMarkdownAfterExtraImageArgs(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("shell action tests require bash")
@@ -435,8 +485,11 @@ type commentScenario struct {
 	imageMarkdownDisabled bool
 	imageJSONDisabled     bool
 	skipImageDiff         bool
+	runTest               bool
 	extraDiffArgs         string
 	extraImageArgs        string
+	changedOnlyInclude    string
+	changedOnlyIgnore     string
 }
 
 func runCommentScenario(t *testing.T, scenario commentScenario) string {
@@ -455,8 +508,11 @@ func runCommentScenario(t *testing.T, scenario commentScenario) string {
 		"DRYDOCK_INPUT_COMMENT_MODE="+commentMode,
 		"DRYDOCK_INPUT_EXTRA_DIFF_ARGS="+scenario.extraDiffArgs,
 		"DRYDOCK_INPUT_EXTRA_IMAGE_DIFF_ARGS="+scenario.extraImageArgs,
+		"DRYDOCK_INPUT_CHANGED_ONLY_INCLUDE="+scenario.changedOnlyInclude,
+		"DRYDOCK_INPUT_CHANGED_ONLY_IGNORE="+scenario.changedOnlyIgnore,
 		"DRYDOCK_INPUT_RUN_DIFF=true",
 		"DRYDOCK_INPUT_RUN_IMAGE_DIFF="+boolString(!scenario.skipImageDiff),
+		"DRYDOCK_INPUT_RUN_TEST="+boolString(scenario.runTest),
 		"DRYDOCK_INPUT_UPLOAD_ARTIFACTS="+boolString(scenario.uploadArtifacts),
 		"DRYDOCK_INPUT_COMMENT_EMPTY="+boolString(scenario.commentEmpty),
 		"GITHUB_SERVER_URL=",
@@ -509,6 +565,10 @@ func writeCommentScenarioDrydock(t *testing.T, path string, scenario commentScen
 set -euo pipefail
 mkdir -p "${DRYDOCK_ACTION_WORK_DIR}"
 printf '%s\n' "$*" >> "${DRYDOCK_ACTION_WORK_DIR}/drydock-args.txt"
+
+if [[ "$*" == *"test apps"* ]]; then
+  exit 0
+fi
 
 if [[ "$*" == *"diff apps"* ]]; then
   `+diffOutput+`
@@ -683,6 +743,8 @@ func defaultRunEnv(tmp, workDir, outputPath string) []string {
 		"DRYDOCK_DIFF_ARTIFACT_NAME=diff",
 		"DRYDOCK_IMAGE_ARTIFACT_NAME=images",
 		"DRYDOCK_INPUT_CHANGED_ONLY=",
+		"DRYDOCK_INPUT_CHANGED_ONLY_INCLUDE=",
+		"DRYDOCK_INPUT_CHANGED_ONLY_IGNORE=",
 		"DRYDOCK_INPUT_COMMENT_EMPTY=false",
 		"DRYDOCK_INPUT_COMMENT_MODE=none",
 		"DRYDOCK_INPUT_DIFF_MAX_BYTES=60000",

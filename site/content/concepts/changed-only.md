@@ -29,6 +29,22 @@ Fail when ownership cannot be proven:
 drydock diff apps --repo . --ref HEAD --ref-orig main --strict-changed-only
 ```
 
+Scope the changed paths considered by ownership mapping:
+
+```bash
+drydock diff apps \
+  --repo . \
+  --ref HEAD \
+  --ref-orig main \
+  --changed-only-include 'apps/**' \
+  --changed-only-ignore '.github/**'
+```
+
+Include and ignore globs are repository-relative. If no include globs are set,
+all changed paths are considered. Ignore globs are applied after includes, so
+ignore wins. When every changed path is filtered out, drydock reports an empty
+diff instead of rendering the fleet.
+
 `diff app` selects one requested Application directly and does not use
 changed-only Git path filtering.
 
@@ -37,6 +53,10 @@ changed-only Git path filtering.
 Changed-only behavior is Argo Application-aware. Shared resources from
 different Applications remain separate diff identities; drydock does not
 collapse overlapping Applications into one owner.
+
+Path filters are explicit command or workflow policy. Keep filters narrow in
+repositories that use plugins or unusual generation paths, because an ignored
+file is no longer eligible to trigger a render.
 
 For detailed diff semantics and exit codes, see the [CLI usage guide](/docs/usage/)
 and [compatibility notes](/docs/compatibility/).

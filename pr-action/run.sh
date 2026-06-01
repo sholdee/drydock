@@ -101,7 +101,7 @@ capture_image_diff_json() {
   local stderr_file="$1"
   local -a image_args
 
-  image_args=("${drydock_bin}" diff images --repo "${repo}" --ref "${head_ref}" --ref-orig "${base_compare_ref}" "${common_args[@]}")
+  image_args=("${drydock_bin}" diff images --repo "${repo}" --ref "${head_ref}" --ref-orig "${base_compare_ref}" "${diff_common_args[@]}")
   append_extra_lines image_args "${DRYDOCK_INPUT_EXTRA_IMAGE_DIFF_ARGS}"
   image_args+=(-o json --exit-code=false)
   if capture_command_quiet "${images_json_path}" "${stderr_file}" "${image_args[@]}"; then
@@ -340,6 +340,10 @@ if [[ -n "${DRYDOCK_INPUT_CHANGED_ONLY}" ]]; then
   common_args+=("--changed-only=${DRYDOCK_INPUT_CHANGED_ONLY}")
 fi
 
+diff_common_args=("${common_args[@]}")
+append_lines diff_common_args "${DRYDOCK_INPUT_CHANGED_ONLY_INCLUDE}" "--changed-only-include"
+append_lines diff_common_args "${DRYDOCK_INPUT_CHANGED_ONLY_IGNORE}" "--changed-only-ignore"
+
 render_status="skipped"
 has_diff="false"
 has_images="false"
@@ -365,7 +369,7 @@ if [[ "${DRYDOCK_INPUT_RUN_DIFF}" == "true" ]]; then
     echo "A base ref is required when run-diff is true." >&2
     exit 1
   fi
-  diff_args=("${drydock_bin}" diff apps --repo "${repo}" --ref "${head_ref}" --ref-orig "${base_compare_ref}" "${common_args[@]}")
+  diff_args=("${drydock_bin}" diff apps --repo "${repo}" --ref "${head_ref}" --ref-orig "${base_compare_ref}" "${diff_common_args[@]}")
   append_bool_flag diff_args "${DRYDOCK_INPUT_SHOW_IGNORED_FIELDS}" "--show-ignored-fields"
   append_extra_lines diff_args "${DRYDOCK_INPUT_EXTRA_DIFF_ARGS}"
   diff_args+=(
@@ -393,7 +397,7 @@ if [[ "${DRYDOCK_INPUT_RUN_IMAGE_DIFF}" == "true" ]]; then
     echo "A base ref is required when run-image-diff is true." >&2
     exit 1
   fi
-  image_args=("${drydock_bin}" diff images --repo "${repo}" --ref "${head_ref}" --ref-orig "${base_compare_ref}" "${common_args[@]}")
+  image_args=("${drydock_bin}" diff images --repo "${repo}" --ref "${head_ref}" --ref-orig "${base_compare_ref}" "${diff_common_args[@]}")
   append_extra_lines image_args "${DRYDOCK_INPUT_EXTRA_IMAGE_DIFF_ARGS}"
   image_args+=(-o name)
   if capture_command_quiet "${images_path}" "${images_stderr}" "${image_args[@]}"; then
@@ -475,7 +479,7 @@ fi
 
 if [[ "${images_comment}" == "true" ]]; then
   if [[ "${DRYDOCK_INPUT_RUN_IMAGE_DIFF}" == "true" ]]; then
-    image_comment_args=("${drydock_bin}" diff images --repo "${repo}" --ref "${head_ref}" --ref-orig "${base_compare_ref}" "${common_args[@]}")
+    image_comment_args=("${drydock_bin}" diff images --repo "${repo}" --ref "${head_ref}" --ref-orig "${base_compare_ref}" "${diff_common_args[@]}")
     append_extra_lines image_comment_args "${DRYDOCK_INPUT_EXTRA_IMAGE_DIFF_ARGS}"
     image_comment_args+=(
       -o markdown

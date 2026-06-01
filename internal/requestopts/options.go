@@ -23,6 +23,8 @@ type Options struct {
 	MaxDiscoveryDepthSet           bool
 	DiscoverKustomizePaths         []string
 	ChangedOnly                    *bool
+	ChangedOnlyIncludes            []string
+	ChangedOnlyIgnores             []string
 	StrictChangedOnly              bool
 	Strict                         bool
 	ValidateLuaHealth              bool
@@ -79,23 +81,25 @@ func (options Options) Diff() app.DiffRequest {
 		changedOnly = *options.ChangedOnly
 	}
 	return app.DiffRequest{
-		LeftPath:              options.LeftPath,
-		RightPath:             options.RightPath,
-		Repo:                  options.Repo,
-		Ref:                   options.Ref,
-		RefOrig:               options.RefOrig,
-		DiscoveryOptions:      options.discoveryOptions(),
-		ChangedOnly:           changedOnly,
-		StrictChangedOnly:     options.StrictChangedOnly,
-		Strict:                options.Strict,
-		Unified:               options.Unified,
-		StripAttrs:            append([]string(nil), options.StripAttrs...),
-		ShowIgnoredFields:     options.ShowIgnoredFields,
-		AcquisitionOptions:    options.acquisitionOptions(),
-		PluginOptions:         options.pluginOptions(),
-		ExecutionOptions:      options.executionOptions(),
-		FilterOptions:         options.filterOptions(),
-		ApplicationSetOptions: options.applicationSetOptions(),
+		LeftPath:                options.LeftPath,
+		RightPath:               options.RightPath,
+		Repo:                    options.Repo,
+		Ref:                     options.Ref,
+		RefOrig:                 options.RefOrig,
+		DiscoveryOptions:        options.discoveryOptions(),
+		ChangedOnly:             changedOnly,
+		ChangedOnlyIncludeGlobs: append([]string(nil), options.ChangedOnlyIncludes...),
+		ChangedOnlyIgnoreGlobs:  append([]string(nil), options.ChangedOnlyIgnores...),
+		StrictChangedOnly:       options.StrictChangedOnly,
+		Strict:                  options.Strict,
+		Unified:                 options.Unified,
+		StripAttrs:              append([]string(nil), options.StripAttrs...),
+		ShowIgnoredFields:       options.ShowIgnoredFields,
+		AcquisitionOptions:      options.acquisitionOptions(),
+		PluginOptions:           options.pluginOptions(),
+		ExecutionOptions:        options.executionOptions(),
+		FilterOptions:           options.filterOptions(),
+		ApplicationSetOptions:   options.applicationSetOptions(),
 	}
 }
 

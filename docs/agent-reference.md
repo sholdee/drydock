@@ -193,6 +193,14 @@ replaces `--path`, and `--repo` defaults to `--path`. Do not add shellouts,
 `git worktree add`, checkout mutation, or top-level remote `--repo` URL
 support without an approved design update.
 
+Changed-only include and ignore globs apply before ownership mapping for
+`diff apps` and `diff images`. Patterns are repository-relative and
+slash-normalized; ignore wins over include. No include globs means all changed
+paths are considered. If filtering leaves zero paths, return an empty diff
+without rendering. Strict changed-only diagnostics apply only to the remaining
+considered paths. Do not auto-load implicit policy files without a design
+update; explicit CLI/API/action policy is intentional.
+
 Manifest diff output supports unified diff, markdown, JSON, and YAML. Image
 diff output supports unified diff, markdown, JSON, and YAML for `added`,
 `removed`, and `unchanged` image lists. Image markdown output is comment-facing

@@ -88,6 +88,117 @@ func TestIndexRootInputOwnsAllChangedPaths(t *testing.T) {
 	}
 }
 
+func TestPathFilterEmptyIncludesKeepsAllPaths(t *testing.T) {
+	filter, err := NewPathFilter(PathFilterConfig{})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	got := filter.Apply([]string{"apps/a/cm.yaml", "docs/readme.md"})
+
+	want := []string{"apps/a/cm.yaml", "docs/readme.md"}
+	if !equal(got.Paths, want) {
+		t.Fatalf("Paths = %v, want %v", got.Paths, want)
+	}
+}
+
+func TestPathFilterIncludesMatchingPaths(t *testing.T) {
+	filter, err := NewPathFilter(PathFilterConfig{Includes: []string{"apps/**"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	got := filter.Apply([]string{"apps/a/cm.yaml", "docs/readme.md"})
+
+	want := []string{"apps/a/cm.yaml"}
+	if !equal(got.Paths, want) {
+		t.Fatalf("Paths = %v, want %v", got.Paths, want)
+	}
+	wantIncluded := []string{"apps/a/cm.yaml"}
+	if !equal(got.Included, wantIncluded) {
+		t.Fatalf("Included = %v, want %v", got.Included, wantIncluded)
+	}
+}
+
+func TestPathFilterIgnoresMatchingPaths(t *testing.T) {
+	filter, err := NewPathFilter(PathFilterConfig{Ignores: []string{".github/**", "mise.lock"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	got := filter.Apply([]string{"apps/a/cm.yaml", ".github/workflows/ci.yaml", "mise.lock"})
+
+	want := []string{"apps/a/cm.yaml"}
+	if !equal(got.Paths, want) {
+		t.Fatalf("Paths = %v, want %v", got.Paths, want)
+	}
+	wantIgnored := []string{".github/workflows/ci.yaml", "mise.lock"}
+	if !equal(got.Ignored, wantIgnored) {
+		t.Fatalf("Ignored = %v, want %v", got.Ignored, wantIgnored)
+	}
+}
+
+func TestPathFilterIgnoreWinsOverInclude(t *testing.T) {
+	filter, err := NewPathFilter(PathFilterConfig{
+		Includes: []string{"apps/**"},
+		Ignores:  []string{"apps/generated/**"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	got := filter.Apply([]string{"apps/a/cm.yaml", "apps/generated/cm.yaml"})
+
+	want := []string{"apps/a/cm.yaml"}
+	if !equal(got.Paths, want) {
+		t.Fatalf("Paths = %v, want %v", got.Paths, want)
+	}
+}
+
+func TestPathFilterNormalizesPatternsAndChangedPaths(t *testing.T) {
+	filter, err := NewPathFilter(PathFilterConfig{Includes: []string{`.\apps\**`}})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	got := filter.Apply([]string{`.\apps\a\cm.yaml`, "./docs/readme.md"})
+
+	want := []string{"apps/a/cm.yaml"}
+	if !equal(got.Paths, want) {
+		t.Fatalf("Paths = %v, want %v", got.Paths, want)
+	}
+}
+
+func TestPathFilterRejectsInvalidPatterns(t *testing.T) {
+	_, err := NewPathFilter(PathFilterConfig{Includes: []string{"apps/["}})
+	if err == nil {
+		t.Fatal("NewPathFilter() error = nil, want invalid glob error")
+	}
+}
+
+func TestPathFilterRejectsBlankPatterns(t *testing.T) {
+	_, err := NewPathFilter(PathFilterConfig{Ignores: []string{"  "}})
+	if err == nil {
+		t.Fatal("NewPathFilter() error = nil, want blank glob error")
+	}
+}
+
+func TestPathFilterRepresentsNoRemainingPaths(t *testing.T) {
+	filter, err := NewPathFilter(PathFilterConfig{Includes: []string{"apps/**"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	got := filter.Apply([]string{".github/workflows/ci.yaml"})
+
+	if len(got.Paths) != 0 {
+		t.Fatalf("Paths = %v, want none", got.Paths)
+	}
+	if len(got.Included) != 0 {
+		t.Fatalf("Included = %v, want none", got.Included)
+	}
+}
+
 func TestDetectChangedPaths(t *testing.T) {
 	base := t.TempDir()
 	current := t.TempDir()
