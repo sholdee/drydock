@@ -9,8 +9,18 @@ directory, Kustomize, Helm, and Jsonnet paths.
 
 ## Install
 
-For local shells and GitOps repository pinning, use `mise` with the GitHub
-backend:
+Install the latest Linux/macOS release:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/sholdee/drydock/main/scripts/install-drydock.sh -o install-drydock.sh
+bash install-drydock.sh --yes
+```
+
+The script verifies release checksums, verifies Sigstore bundles when
+available, installs the `drydock` binary, and attempts shell completion
+installation. Pin a release with `--version vX.Y.Z`.
+
+For GitOps repository and CI pinning, use `mise` with the GitHub backend:
 
 ```toml
 [tools]
@@ -43,21 +53,19 @@ Homebrew installs completions automatically.
 
 {{< /details >}}
 
-{{< details summary="Install Script" >}}
+{{< details summary="Install Script Options" >}}
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/sholdee/drydock/main/scripts/install-drydock.sh -o install-drydock.sh
-bash install-drydock.sh --version vX.Y.Z --yes
+curl -fsSL https://raw.githubusercontent.com/sholdee/drydock/main/scripts/install-drydock.sh | bash -s -- --yes
 ```
 
-Pipe form:
+Pinned pipe form:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/sholdee/drydock/main/scripts/install-drydock.sh | bash -s -- --version vX.Y.Z --yes
 ```
 
-The script verifies release checksums and attempts completion installation
-unless `--no-completions` is set.
+Use `--no-completions` when completions should be installed manually.
 
 {{< /details >}}
 

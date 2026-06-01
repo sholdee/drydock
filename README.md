@@ -39,8 +39,18 @@ charts, or existing cache hits only.
 
 ## Install
 
-For local shells and GitOps repository pinning, use `mise` with the GitHub
-backend:
+Install the latest Linux/macOS release:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/sholdee/drydock/main/scripts/install-drydock.sh -o install-drydock.sh
+bash install-drydock.sh --yes
+```
+
+The script verifies release checksums, verifies Sigstore bundles when
+available, installs the `drydock` binary, and attempts shell completion
+installation. Pin a release with `--version vX.Y.Z`.
+
+For GitOps repository and CI pinning, use `mise` with the GitHub backend:
 
 ```toml
 [tools]
@@ -102,23 +112,21 @@ Homebrew installs shell completions automatically.
 </details>
 
 <details>
-<summary>Install Script</summary>
-
-Download and inspect the script:
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/sholdee/drydock/main/scripts/install-drydock.sh -o install-drydock.sh
-bash install-drydock.sh --version vX.Y.Z --yes
-```
+<summary>Install Script Options</summary>
 
 Pipe form:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/sholdee/drydock/main/scripts/install-drydock.sh | bash -s -- --yes
+```
+
+Pinned pipe form:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/sholdee/drydock/main/scripts/install-drydock.sh | bash -s -- --version vX.Y.Z --yes
 ```
 
-The script verifies release checksums, attempts shell completion installation
-by default, and supports `--no-completions`.
+Use `--no-completions` when completions should be installed manually.
 
 </details>
 
