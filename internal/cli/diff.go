@@ -76,6 +76,7 @@ func newDiffAppsCommand(deps Dependencies) *cobra.Command {
 	}
 	bindCommonFlags(apps, &appsFlags)
 	bindDiffRefFlags(apps, &appsFlags)
+	bindChangedOnlyPathFilterFlags(apps, &appsFlags)
 	bindShowIgnoredFieldsFlag(apps, &appsFlags)
 	bindDiffColorFlag(apps, &appsColor)
 	bindDiffMarkdownFlags(apps, &appsMarkdownMaxBytes, &appsRawOutputFile)
@@ -171,6 +172,7 @@ func newDiffImagesCommand(deps Dependencies) *cobra.Command {
 	}
 	bindCommonFlags(images, &imagesFlags)
 	bindDiffRefFlags(images, &imagesFlags)
+	bindChangedOnlyPathFilterFlags(images, &imagesFlags)
 	bindDiffColorFlag(images, &imagesColor)
 	bindDiffMarkdownMaxBytesFlag(images, &imagesMarkdownMaxBytes)
 

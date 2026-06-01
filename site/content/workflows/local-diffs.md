@@ -34,10 +34,16 @@ URLs are not supported.
 
 - `--changed-only=false` renders all discovered Applications.
 - `--strict-changed-only` fails if changed-file ownership is incomplete.
+- `--changed-only-include 'apps/**'` considers only matching changed paths.
+- `--changed-only-ignore '.github/**'` removes matching paths before ownership.
 - `--skip-secrets` omits Secret resources from output and diffs.
 - `--skip-crds` omits CRDs from output and diffs.
 - `--show-ignored-fields` shows drydock default ignored metadata fields.
 - `--exit-code=false` keeps the command successful when differences exist.
+
+Changed-only filters are repository-relative and repeatable. They are useful
+when local commits include known non-GitOps files, but they should stay narrow:
+ignored files cannot trigger an Application render.
 
 ## Markdown For Reviews
 

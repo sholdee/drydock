@@ -27,12 +27,14 @@ type DiffRequest struct {
 	Ref       string
 	RefOrig   string
 	DiscoveryOptions
-	ChangedOnly       bool
-	StrictChangedOnly bool
-	Strict            bool
-	Unified           int
-	StripAttrs        []string
-	ShowIgnoredFields bool
+	ChangedOnly             bool
+	StrictChangedOnly       bool
+	ChangedOnlyIncludeGlobs []string
+	ChangedOnlyIgnoreGlobs  []string
+	Strict                  bool
+	Unified                 int
+	StripAttrs              []string
+	ShowIgnoredFields       bool
 	AcquisitionOptions
 	PluginOptions
 	ExecutionOptions
@@ -425,6 +427,9 @@ func validateDiffPaths(request DiffRequest) error {
 	if request.RightPath == "" {
 		return fmt.Errorf("--path is required")
 	}
+	if _, err := changedOnlyPathFilter(request); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -485,6 +490,14 @@ func (o Orchestrator) buildDiffSides(ctx context.Context, request DiffRequest) (
 
 	var diagnostics []diagnostic.Diagnostic
 	if request.ChangedOnly {
+		changedPaths, err := filteredChangedOnlyPaths(request)
+		if err != nil {
+			return BuildResult{}, BuildResult{}, diagnostics, err
+		}
+		if len(changedPaths) == 0 {
+			return BuildResult{}, BuildResult{}, diagnostics, nil
+		}
+
 		leftList, err := o.ListApplications(ctx, leftBuildRequest)
 		diagnostics = append(diagnostics, leftList.Diagnostics...)
 		if err != nil {
@@ -500,14 +513,6 @@ func (o Orchestrator) buildDiffSides(ctx context.Context, request DiffRequest) (
 		rightBuildRequest.renderCache = rightList.renderCache
 		rightBuildRequest.renderSettingsSignature = rightList.renderSettingsSignature
 
-		changedPaths := request.changedPaths
-		if changedPaths == nil {
-			var err error
-			changedPaths, err = change.Detect(request.LeftPath, request.RightPath)
-			if err != nil {
-				return BuildResult{}, BuildResult{}, diagnostics, err
-			}
-		}
 		leftSelected, leftUnowned := SelectChangedApplicationInputs(leftList.ApplicationInputs, changedPaths)
 		rightSelected, rightUnowned := SelectChangedApplicationInputs(rightList.ApplicationInputs, changedPaths)
 		unowned := unownedByNeitherSide(leftUnowned, rightUnowned)
@@ -540,6 +545,28 @@ func (o Orchestrator) buildDiffSides(ctx context.Context, request DiffRequest) (
 		return leftBuild, rightBuild, diagnostics, err
 	}
 	return leftBuild, rightBuild, diagnostics, nil
+}
+
+func filteredChangedOnlyPaths(request DiffRequest) ([]string, error) {
+	filter, err := changedOnlyPathFilter(request)
+	if err != nil {
+		return nil, err
+	}
+	changedPaths := request.changedPaths
+	if changedPaths == nil {
+		changedPaths, err = change.Detect(request.LeftPath, request.RightPath)
+		if err != nil {
+			return nil, err
+		}
+	}
+	return filter.Apply(changedPaths).Paths, nil
+}
+
+func changedOnlyPathFilter(request DiffRequest) (change.PathFilter, error) {
+	return change.NewPathFilter(change.PathFilterConfig{
+		Includes: request.ChangedOnlyIncludeGlobs,
+		Ignores:  request.ChangedOnlyIgnoreGlobs,
+	})
 }
 
 func unownedByNeitherSide(leftUnowned, rightUnowned []string) []string {

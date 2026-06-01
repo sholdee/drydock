@@ -60,6 +60,10 @@ jobs:
         with:
           comment-mode: both
           skip-secrets: "true"
+          changed-only-include: |
+            apps/**
+          changed-only-ignore: |
+            .github/**
 ```
 
 The PR action checks out the pull request, fetches the base ref, runs
@@ -67,6 +71,10 @@ The PR action checks out the pull request, fetches the base ref, runs
 artifacts when differences are found, and comments in trusted same-repository
 pull requests. Image diff comments are available as a companion signal. Fork
 pull requests skip comments and source-cache restore/save by default.
+
+`changed-only-include` and `changed-only-ignore` are optional newline-delimited
+globs passed to manifest and image diffs. They keep known non-GitOps paths from
+forcing a full-fleet changed-only fallback. They do not affect `test apps`.
 
 ## Manifest Diff Comment Shape
 

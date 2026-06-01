@@ -57,6 +57,8 @@ type Config struct {
 	ApplicationSetProviderFixtures []string
 	ApplicationSetProviderData     ApplicationSetProviderData
 	ChangedOnly                    *bool
+	ChangedOnlyIncludes            []string
+	ChangedOnlyIgnores             []string
 	StrictChangedOnly              bool
 	Unified                        int
 	StripAttrs                     []string
@@ -192,6 +194,8 @@ func (client *Client) requestOptions() requestopts.Options {
 		MaxDiscoveryDepthSet:           maxDiscoveryDepthSet,
 		DiscoverKustomizePaths:         append([]string(nil), client.config.DiscoverKustomizePaths...),
 		ChangedOnly:                    client.config.ChangedOnly,
+		ChangedOnlyIncludes:            append([]string(nil), client.config.ChangedOnlyIncludes...),
+		ChangedOnlyIgnores:             append([]string(nil), client.config.ChangedOnlyIgnores...),
 		StrictChangedOnly:              client.config.StrictChangedOnly,
 		Strict:                         client.config.Strict,
 		Unified:                        unified,

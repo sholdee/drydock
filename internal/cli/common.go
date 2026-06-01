@@ -56,6 +56,8 @@ type commonFlags struct {
 	skipSecrets              bool
 	skipLuaHealth            bool
 	changedOnly              bool
+	changedOnlyIncludes      []string
+	changedOnlyIgnores       []string
 	strictChangedOnly        bool
 	strict                   bool
 	exitCode                 bool
@@ -156,6 +158,11 @@ func bindFilterFlags(cmd *cobra.Command, flags *commonFlags) {
 	cmd.Flags().BoolVar(&flags.strictChangedOnly, "strict-changed-only", flags.strictChangedOnly, "fail when changed-only input ownership is ambiguous or incomplete")
 }
 
+func bindChangedOnlyPathFilterFlags(cmd *cobra.Command, flags *commonFlags) {
+	cmd.Flags().StringArrayVar(&flags.changedOnlyIncludes, "changed-only-include", flags.changedOnlyIncludes, "repository-relative glob for changed paths considered by changed-only selection")
+	cmd.Flags().StringArrayVar(&flags.changedOnlyIgnores, "changed-only-ignore", flags.changedOnlyIgnores, "repository-relative glob ignored by changed-only selection")
+}
+
 func bindStrictExitFlags(cmd *cobra.Command, flags *commonFlags) {
 	cmd.Flags().BoolVar(&flags.strict, "strict", flags.strict, "promote diagnostics to errors")
 	cmd.Flags().BoolVar(&flags.exitCode, "exit-code", flags.exitCode, "return exit code 1 when a diff is found")
@@ -242,6 +249,8 @@ func requestOptionsFromFlags(flags commonFlags, repoMaps []source.RepoMap) reque
 		MaxDiscoveryDepthSet:           flags.maxDiscoveryDepthSet,
 		DiscoverKustomizePaths:         append([]string(nil), flags.discoverKustomize...),
 		ChangedOnly:                    &flags.changedOnly,
+		ChangedOnlyIncludes:            append([]string(nil), flags.changedOnlyIncludes...),
+		ChangedOnlyIgnores:             append([]string(nil), flags.changedOnlyIgnores...),
 		StrictChangedOnly:              flags.strictChangedOnly,
 		Strict:                         flags.strict,
 		Unified:                        flags.unified,

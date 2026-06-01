@@ -285,6 +285,26 @@ renders all Applications.
 Use `--changed-only=false` to render all Applications explicitly, or
 `--strict-changed-only` to fail on incomplete input ownership.
 
+Use repeatable `--changed-only-include GLOB` and `--changed-only-ignore GLOB`
+to scope the changed paths considered by changed-only selection before
+Application ownership is evaluated:
+
+```bash
+drydock diff apps \
+  --path . \
+  --ref-orig main \
+  --changed-only-include 'apps/**' \
+  --changed-only-ignore 'apps/**/README.md'
+```
+
+Globs are repository-relative and slash-normalized. When no include globs are
+provided, every changed path is considered. Ignore globs remove paths after
+include filtering, so ignore wins. If filtering removes every changed path, the
+diff is empty and no Applications render. `--strict-changed-only` applies only
+to the remaining considered paths. Broad ignores can hide real render inputs in
+plugin-heavy or unconventional repositories, so prefer narrow patterns owned by
+the workflow.
+
 ### Git Ref Diffs
 
 Diff commands can compare local Git refs without creating a separate baseline
@@ -412,6 +432,9 @@ changes print no names but still return the diff exit code unless
 image lists. Diagnostics remain on stderr so stdout stays valid JSON or YAML.
 Text image diffs use the same `--color=auto|always|never` behavior as manifest
 diffs.
+
+`diff images` uses the same changed-only defaults and
+`--changed-only-include` / `--changed-only-ignore` path filters as `diff apps`.
 
 ## Diagnostics
 

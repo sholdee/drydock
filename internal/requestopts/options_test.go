@@ -75,6 +75,8 @@ func TestOptionsDiffCopiesSharedFields(t *testing.T) {
 	assertDeepEqual(t, "MaxDiscoveryDepthSet", request.MaxDiscoveryDepthSet, true)
 	assertDeepEqual(t, "DiscoverKustomizePaths", request.DiscoverKustomizePaths, []string{"argocd/overlays/prod"})
 	assertDeepEqual(t, "ChangedOnly", request.ChangedOnly, true)
+	assertDeepEqual(t, "ChangedOnlyIncludeGlobs", request.ChangedOnlyIncludeGlobs, []string{"apps/**"})
+	assertDeepEqual(t, "ChangedOnlyIgnoreGlobs", request.ChangedOnlyIgnoreGlobs, []string{".github/**"})
 	assertDeepEqual(t, "StrictChangedOnly", request.StrictChangedOnly, true)
 	assertDeepEqual(t, "Strict", request.Strict, true)
 	assertDeepEqual(t, "Unified", request.Unified, 0)
@@ -110,6 +112,8 @@ func TestOptionsDiffCopiesSharedFields(t *testing.T) {
 
 	mutateOptions(&options)
 	assertDeepEqual(t, "copied DiscoverKustomizePaths", request.DiscoverKustomizePaths, []string{"argocd/overlays/prod"})
+	assertDeepEqual(t, "copied ChangedOnlyIncludeGlobs", request.ChangedOnlyIncludeGlobs, []string{"apps/**"})
+	assertDeepEqual(t, "copied ChangedOnlyIgnoreGlobs", request.ChangedOnlyIgnoreGlobs, []string{".github/**"})
 	assertDeepEqual(t, "copied StripAttrs", request.StripAttrs, []string{"metadata.annotations.checksum/config"})
 	assertDeepEqual(t, "copied RepoMaps", request.RepoMaps, []source.RepoMap{{URL: "https://example.test/repo.git", Path: "/repo"}})
 	assertDeepEqual(t, "copied SkipKinds", request.SkipKinds, []string{"Secret"})
@@ -137,6 +141,8 @@ func fixtureOptions() Options {
 		MaxDiscoveryDepth:            2,
 		MaxDiscoveryDepthSet:         true,
 		DiscoverKustomizePaths:       []string{"argocd/overlays/prod"},
+		ChangedOnlyIncludes:          []string{"apps/**"},
+		ChangedOnlyIgnores:           []string{".github/**"},
 		StrictChangedOnly:            true,
 		Strict:                       true,
 		StripAttrs:                   []string{"metadata.annotations.checksum/config"},
@@ -185,6 +191,8 @@ func providerDataFixture() appset.ProviderData {
 func mutateOptions(options *Options) {
 	options.StripAttrs[0] = "mutated"
 	options.DiscoverKustomizePaths[0] = "mutated"
+	options.ChangedOnlyIncludes[0] = "mutated"
+	options.ChangedOnlyIgnores[0] = "mutated"
 	options.RepoMaps[0].Path = "/mutated"
 	options.RemoteResourceForbiddenRoots[0] = "/mutated"
 	options.SkipKinds[0] = "ConfigMap"

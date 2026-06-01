@@ -774,6 +774,84 @@ func TestDiffImagesColorAlwaysColorsImageDiff(t *testing.T) {
 	assertStderrEmpty(t, result)
 }
 
+func TestDiffAppsChangedOnlyPathFilterFlags(t *testing.T) {
+	recorder := &recordingCLIOrchestrator{}
+	result := runCLIWithDependencies(t, Dependencies{Orchestrator: recorder},
+		"diff", "apps",
+		"--path-orig", "left",
+		"--path", "right",
+		"--changed-only-include", "apps/**",
+		"--changed-only-include", "clusters/**",
+		"--changed-only-ignore", ".github/**",
+		"--exit-code=false",
+	)
+	assertStderrEmpty(t, result)
+	if len(recorder.diffAppsRequests) != 1 {
+		t.Fatalf("DiffApps requests = %#v, want one request", recorder.diffAppsRequests)
+	}
+	request := recorder.diffAppsRequests[0]
+	assertStringSliceEqual(t, request.ChangedOnlyIncludeGlobs, []string{"apps/**", "clusters/**"})
+	assertStringSliceEqual(t, request.ChangedOnlyIgnoreGlobs, []string{".github/**"})
+}
+
+func TestDiffImagesChangedOnlyPathFilterFlags(t *testing.T) {
+	recorder := &recordingCLIOrchestrator{}
+	result := runCLIWithDependencies(t, Dependencies{Orchestrator: recorder},
+		"diff", "images",
+		"--path-orig", "left",
+		"--path", "right",
+		"--changed-only-include", "apps/**",
+		"--changed-only-ignore", ".github/**",
+		"--exit-code=false",
+	)
+	assertStderrEmpty(t, result)
+	if len(recorder.diffImagesRequests) != 1 {
+		t.Fatalf("DiffImages requests = %#v, want one request", recorder.diffImagesRequests)
+	}
+	request := recorder.diffImagesRequests[0]
+	assertStringSliceEqual(t, request.ChangedOnlyIncludeGlobs, []string{"apps/**"})
+	assertStringSliceEqual(t, request.ChangedOnlyIgnoreGlobs, []string{".github/**"})
+}
+
+func TestDiffAppDoesNotExposeChangedOnlyPathFilterFlags(t *testing.T) {
+	recorder := &recordingCLIOrchestrator{}
+	cmd := NewRootCommandWithDependencies(VersionInfo{}, Dependencies{Orchestrator: recorder})
+	cmd.SetArgs([]string{"diff", "app", "demo", "--path-orig", "left", "--path", "right", "--changed-only-include", "apps/**"})
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	cmd.SetOut(&stdout)
+	cmd.SetErr(&stderr)
+
+	err := cmd.Execute()
+	if err == nil {
+		t.Fatal("Execute() error = nil, want unknown flag error")
+	}
+	if !strings.Contains(err.Error(), "unknown flag: --changed-only-include") {
+		t.Fatalf("error = %v, want unknown changed-only include flag", err)
+	}
+	if len(recorder.diffAppRequests) != 0 {
+		t.Fatalf("DiffApp requests = %#v, want none", recorder.diffAppRequests)
+	}
+}
+
+func TestNonDiffCommandsDoNotExposeChangedOnlyPathFilterFlags(t *testing.T) {
+	recorder := &recordingCLIOrchestrator{}
+	cmd := NewRootCommandWithDependencies(VersionInfo{}, Dependencies{Orchestrator: recorder})
+	cmd.SetArgs([]string{"test", "apps", "--path", "repo", "--changed-only-ignore", ".github/**"})
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	cmd.SetOut(&stdout)
+	cmd.SetErr(&stderr)
+
+	err := cmd.Execute()
+	if err == nil {
+		t.Fatal("Execute() error = nil, want unknown flag error")
+	}
+	if !strings.Contains(err.Error(), "unknown flag: --changed-only-ignore") {
+		t.Fatalf("error = %v, want unknown changed-only ignore flag", err)
+	}
+}
+
 func TestDiffImagesMarkdownOutput(t *testing.T) {
 	recorder := &recordingCLIOrchestrator{
 		diffImagesResult: app.ImageDiffResult{

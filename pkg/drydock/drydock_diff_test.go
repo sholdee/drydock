@@ -2,6 +2,7 @@ package drydock
 
 import (
 	"context"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -22,6 +23,30 @@ func TestDiffApplications(t *testing.T) {
 	}
 	if result.Results[0].Change != "modified" {
 		t.Fatalf("Change = %q, want modified", result.Results[0].Change)
+	}
+}
+
+func TestDiffApplicationsChangedOnlyPathFilters(t *testing.T) {
+	left, right := writeDiffTrees(t, "v1", "v2")
+	writeAPIFile(t, filepath.Join(left, "README.md"), "left\n")
+	writeAPIFile(t, filepath.Join(right, "README.md"), "right\n")
+
+	result, err := DiffApplications(context.Background(), Config{
+		PathOrig:            left,
+		Path:                right,
+		ChangedOnly:         new(true),
+		StrictChangedOnly:   true,
+		ChangedOnlyIncludes: []string{"manifests/**"},
+		ChangedOnlyIgnores:  []string{"README.md"},
+	})
+	if err != nil {
+		t.Fatalf("DiffApplications() error = %v", err)
+	}
+	if len(result.Diagnostics) != 0 {
+		t.Fatalf("Diagnostics = %#v, want none", result.Diagnostics)
+	}
+	if len(result.Results) != 1 {
+		t.Fatalf("Results = %d, want 1", len(result.Results))
 	}
 }
 

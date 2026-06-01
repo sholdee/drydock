@@ -157,6 +157,8 @@ the repository under test.
 | `strict` | `false` | Promote diagnostics to errors. |
 | `strict-changed-only` | `false` | Fail ambiguous changed-only ownership. |
 | `changed-only` | drydock default | Override changed-only with `true` or `false`. |
+| `changed-only-include` | unset | Newline-delimited changed-only include globs. |
+| `changed-only-ignore` | unset | Newline-delimited changed-only ignore globs. |
 | `show-ignored-fields` | `false` | Show default ignored diff fields. |
 | `comment-mode` | `both` | One of `none`, `diff`, `images`, or `both`. |
 | `fail-on-diff` | `false` | Fail when manifest differences are detected. |
@@ -164,11 +166,18 @@ the repository under test.
 
 Newline-delimited inputs are passed as repeated drydock flags:
 
+- `changed-only-include`
+- `changed-only-ignore`
 - `discover-kustomize`
 - `repo-map`
 - `extra-test-args`
 - `extra-diff-args`
 - `extra-image-diff-args`
+
+`changed-only-include` and `changed-only-ignore` apply only to `diff apps` and
+`diff images`; `test apps` still validates the selected repository path. Use
+them to keep non-GitOps workflow churn from forcing full-fleet diffs, while
+keeping patterns narrow enough that real render inputs are not hidden.
 
 Only use `extra-*` inputs with trusted workflow configuration. The action
 passes them as arguments without `eval`, but they still change drydock behavior.
