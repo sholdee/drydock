@@ -1,5 +1,29 @@
 # Changelog
 
+## [0.1.10](https://github.com/sholdee/drydock/compare/v0.1.9...v0.1.10) (2026-06-01)
+
+
+### Features
+
+* add changed-only path filters ([#78](https://github.com/sholdee/drydock/issues/78)) ([f2f13a2](https://github.com/sholdee/drydock/commit/f2f13a210529514c46b7224714923a9884d2b732))
+* add GitHub Pages documentation site ([#66](https://github.com/sholdee/drydock/issues/66)) ([9914930](https://github.com/sholdee/drydock/commit/991493085d7b812df119549e5d924927ba223d75))
+* improve install distribution UX ([#79](https://github.com/sholdee/drydock/issues/79)) ([82759d1](https://github.com/sholdee/drydock/commit/82759d1fa5adcef179ac1316501bc498183e3e3e))
+
+
+### Bug Fixes
+
+* compact docs header navigation ([#75](https://github.com/sholdee/drydock/issues/75)) ([57cd7fc](https://github.com/sholdee/drydock/commit/57cd7fcf315fb54750bba1119a4eaa0b29463ac9))
+
+
+### Documentation
+
+* add community files ([#77](https://github.com/sholdee/drydock/issues/77)) ([36d8127](https://github.com/sholdee/drydock/commit/36d81278630410d064fbca92ce92760d1ec7c060))
+* explain render parity strategy ([#76](https://github.com/sholdee/drydock/issues/76)) ([be47ebe](https://github.com/sholdee/drydock/commit/be47ebea9208caa66d53ecdab5ca6789f5065fce))
+* improve compatibility page readability ([#73](https://github.com/sholdee/drydock/issues/73)) ([4e2e45c](https://github.com/sholdee/drydock/commit/4e2e45cad1c42b1c0075219546862bd4e6f8ea53))
+* polish operator documentation site ([#72](https://github.com/sholdee/drydock/issues/72)) ([66ffd6e](https://github.com/sholdee/drydock/commit/66ffd6e862616c963ee39a3254919cf95d906bc6))
+* render Mermaid diagrams on docs site ([#71](https://github.com/sholdee/drydock/issues/71)) ([d53b79e](https://github.com/sholdee/drydock/commit/d53b79ef4bad4853a8e10737f94c2378a750f0a1))
+* route README links to docs site ([#70](https://github.com/sholdee/drydock/issues/70)) ([736279b](https://github.com/sholdee/drydock/commit/736279b2fbddf35902384c7709cfa296dcf82542))
+
 ## [0.1.9](https://github.com/sholdee/drydock/compare/v0.1.8...v0.1.9) (2026-05-30)
 
 
