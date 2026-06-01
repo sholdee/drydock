@@ -21,8 +21,7 @@ change reaches the cluster. Pull request diffing is a key workflow, but
 the same native engine also supports render validation, image inventory,
 repository diagnostics, cache inspection, and Go API embedding.
 
-Full documentation is available at
-[sholdee.github.io/drydock](https://sholdee.github.io/drydock/).
+**Full documentation:** [sholdee.github.io/drydock](https://sholdee.github.io/drydock/).
 
 Core properties:
 
