@@ -1,0 +1,85 @@
+name: Bug Report
+description: Report a bug or unexpected behavior
+labels: [bug]
+body:
+  - type: textarea
+    id: description
+    attributes:
+      label: Describe the bug
+      description: What happened?
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: drydock version
+      placeholder: drydock version
+    validations:
+      required: false
+
+  - type: input
+    id: argocd-version
+    attributes:
+      label: Argo CD version, if relevant
+      placeholder: v3.4.3
+    validations:
+      required: false
+
+  - type: textarea
+    id: command
+    attributes:
+      label: Command
+      description: The drydock command you ran.
+      render: shell
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: Include the smallest reproducible repository shape, fixture, or manifests you can share.
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+      description: What did you expect drydock to do?
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+      description: What did drydock do instead?
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: repo-shape
+    attributes:
+      label: Repository shape
+      description: Select any areas that may be involved.
+      options:
+        - label: ApplicationSet generation
+        - label: Multi-source Application
+        - label: Helm or OCI chart source
+        - label: Kustomize or remote Kustomize source
+        - label: Jsonnet source
+        - label: Config management plugin or PluginPolicy
+        - label: Private Git, Helm, OCI, or remote source
+        - label: Git ref or path diff
+        - label: GitHub Action or PR comment
+
+  - type: textarea
+    id: output
+    attributes:
+      label: Output or logs
+      description: Redact credentials, tokens, Secret values, and private URLs.
+      render: shell
+    validations:
+      required: false
