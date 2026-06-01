@@ -163,7 +163,7 @@ func TestInstallDrydockRequiresCosignBundleWhenRequested(t *testing.T) {
 		t.Fatalf("installer succeeded, want missing Sigstore bundle failure\nstdout:\n%s\nstderr:\n%s", result.stdout, result.stderr)
 	}
 	if !strings.Contains(result.stderr, "sigstore.json was not found") {
-		t.Fatalf("stderr missing missing bundle error:\n%s", result.stderr)
+		t.Fatalf("stderr missing bundle error:\n%s", result.stderr)
 	}
 }
 
@@ -185,7 +185,7 @@ func TestInstallDrydockRequiresCosignBinaryWhenRequested(t *testing.T) {
 		t.Fatalf("installer succeeded, want missing cosign failure\nstdout:\n%s\nstderr:\n%s", result.stdout, result.stderr)
 	}
 	if !strings.Contains(result.stderr, "cosign is not installed") {
-		t.Fatalf("stderr missing missing cosign error:\n%s", result.stderr)
+		t.Fatalf("stderr missing cosign error:\n%s", result.stderr)
 	}
 }
 
@@ -805,7 +805,7 @@ func readFile(t *testing.T, path string) string {
 func countLinesContaining(t *testing.T, path, needle string) int {
 	t.Helper()
 	count := 0
-	for _, line := range strings.Split(readFile(t, path), "\n") {
+	for line := range strings.SplitSeq(readFile(t, path), "\n") {
 		if strings.Contains(line, needle) {
 			count++
 		}
