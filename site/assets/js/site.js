@@ -14,6 +14,8 @@ document.addEventListener("DOMContentLoaded", () => {
   }
 
   document.querySelectorAll(".doc-content pre").forEach((block, index) => {
+    enhanceShellCommands(block);
+
     const button = document.createElement("button");
     button.type = "button";
     button.className = "copy-button";
@@ -47,6 +49,107 @@ document.addEventListener("DOMContentLoaded", () => {
     heading.append(" ", link);
   });
 });
+
+const shellCommandNames = new Set([
+  "bash",
+  "brew",
+  "curl",
+  "docker",
+  "drydock",
+  "git",
+  "go",
+  "helm",
+  "hugo",
+  "kind",
+  "kubectl",
+  "mise",
+]);
+
+function enhanceShellCommands(block) {
+  const code = block.querySelector("code.language-bash, code.language-sh, code.language-zsh");
+  if (!code || code.dataset.shellCommandsEnhanced === "true") {
+    return;
+  }
+
+  code.dataset.shellCommandsEnhanced = "true";
+  const lines = Array.from(code.children).filter((child) => child.tagName === "SPAN");
+  if (lines.length === 0) {
+    wrapShellCommandRanges(code, shellCommandRanges(code.textContent || ""));
+    return;
+  }
+
+  lines.forEach((line) => {
+    const ranges = shellCommandRanges(line.textContent || "");
+    wrapShellCommandRanges(line, ranges);
+  });
+}
+
+function shellCommandRanges(line) {
+  const ranges = [];
+  const commandPattern = /(^\s*(?:[$%]\s*)?|\|\s*|&&\s*|\|\|\s*|;\s*|\(\s*)([A-Za-z][A-Za-z0-9_-]*)\b/g;
+
+  let match = commandPattern.exec(line);
+  while (match) {
+    const command = match[2];
+    if (shellCommandNames.has(command)) {
+      const start = match.index + match[1].length;
+      ranges.push({ start, end: start + command.length });
+    }
+    match = commandPattern.exec(line);
+  }
+
+  return ranges;
+}
+
+function wrapShellCommandRanges(root, ranges) {
+  if (ranges.length === 0) {
+    return;
+  }
+
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+  const nodes = [];
+  let offset = 0;
+  let node = walker.nextNode();
+  while (node) {
+    const length = node.nodeValue.length;
+    nodes.push({ node, start: offset, end: offset + length });
+    offset += length;
+    node = walker.nextNode();
+  }
+
+  nodes.forEach(({ node: textNode, start, end }) => {
+    const overlappingRanges = ranges
+      .map((range) => ({
+        start: Math.max(range.start, start) - start,
+        end: Math.min(range.end, end) - start,
+      }))
+      .filter((range) => range.start < range.end);
+
+    if (overlappingRanges.length === 0) {
+      return;
+    }
+
+    const fragment = document.createDocumentFragment();
+    let cursor = 0;
+    overlappingRanges.forEach((range) => {
+      if (range.start > cursor) {
+        fragment.append(document.createTextNode(textNode.nodeValue.slice(cursor, range.start)));
+      }
+
+      const command = document.createElement("span");
+      command.className = "shell-command";
+      command.textContent = textNode.nodeValue.slice(range.start, range.end);
+      fragment.append(command);
+      cursor = range.end;
+    });
+
+    if (cursor < textNode.nodeValue.length) {
+      fragment.append(document.createTextNode(textNode.nodeValue.slice(cursor)));
+    }
+
+    textNode.replaceWith(fragment);
+  });
+}
 
 function initNavReferenceToggle(button) {
   const storageKey = "drydock.nav.reference.expanded";

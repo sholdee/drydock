@@ -589,6 +589,11 @@ a:hover {
   padding: 0;
 }
 
+.doc-content pre code .shell-command {
+  color: var(--teal);
+  font-weight: 850;
+}
+
 .copy-button {
   position: absolute;
   top: 0.7rem;
