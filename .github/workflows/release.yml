@@ -438,8 +438,61 @@ jobs:
           cosign sign --yes "${FULL_IMAGE}:${TAG}@${DIGEST}"
           cosign sign --yes "${FULL_IMAGE}:latest@${DIGEST}"
 
+  homebrew-tap-preflight:
+    needs:
+      - release-meta
+    if: >-
+      needs.release-meta.outputs.publish == 'true' ||
+      needs.release-meta.outputs.bookkeep == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      default-branch: ${{ steps.branch.outputs.default-branch }}
+    steps:
+      - name: Resolve Homebrew tap branch
+        id: branch
+        env:
+          GH_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+        shell: bash
+        run: |
+          if [[ -z "${HOMEBREW_TAP_TOKEN}" ]]; then
+            echo "HOMEBREW_TAP_TOKEN is required to publish drydock releases and update sholdee/homebrew-tap." >&2
+            exit 1
+          fi
+
+          default_branch="$(gh api repos/sholdee/homebrew-tap --jq '.default_branch')"
+          if [[ -z "${default_branch}" ]]; then
+            echo "Failed to resolve sholdee/homebrew-tap default branch." >&2
+            exit 1
+          fi
+
+          echo "default-branch=${default_branch}" >> "${GITHUB_OUTPUT}"
+
+      - name: Checkout Homebrew tap
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          repository: sholdee/homebrew-tap
+          ref: ${{ steps.branch.outputs.default-branch }}
+          path: tap
+          token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          persist-credentials: false
+
+      - name: Verify Homebrew tap push access
+        env:
+          DEFAULT_BRANCH: ${{ steps.branch.outputs.default-branch }}
+          GIT_TERMINAL_PROMPT: "0"
+          HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+        shell: bash
+        run: |
+          git -C tap push --dry-run \
+            "https://x-access-token:${HOMEBREW_TAP_TOKEN}@github.com/sholdee/homebrew-tap.git" \
+            "HEAD:refs/heads/${DEFAULT_BRANCH}"
+
   publish-release:
     needs:
+      - homebrew-tap-preflight
       - publish-image
       - release-meta
       - stage-release
@@ -520,6 +573,79 @@ jobs:
             echo "Published tag ${TAG} points to ${published_sha}, expected ${GITHUB_SHA}" >&2
             exit 1
           fi
+
+  update-homebrew-tap:
+    needs:
+      - homebrew-tap-preflight
+      - publish-release
+      - release-meta
+    if: >-
+      always() &&
+      needs.homebrew-tap-preflight.result == 'success' &&
+      (needs.publish-release.result == 'success' ||
+      needs.release-meta.outputs.bookkeep == 'true')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          path: source
+          persist-credentials: false
+
+      - name: Checkout Homebrew tap
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          repository: sholdee/homebrew-tap
+          ref: ${{ needs.homebrew-tap-preflight.outputs.default-branch }}
+          path: tap
+          token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          persist-credentials: false
+
+      - name: Setup Go
+        uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
+        with:
+          go-version-file: source/go.mod
+          cache: false
+
+      - name: Update Homebrew formula
+        env:
+          TAG: ${{ needs.release-meta.outputs.tag }}
+        shell: bash
+        working-directory: source
+        run: |
+          curl -fsSL \
+            "https://github.com/sholdee/drydock/releases/download/${TAG}/checksums.txt" \
+            -o checksums.txt
+
+          go run ./scripts/generate-homebrew-formula \
+            --version "${TAG}" \
+            --checksums checksums.txt \
+            --output ../tap/Formula/drydock.rb
+
+      - name: Commit and push Homebrew formula
+        env:
+          DEFAULT_BRANCH: ${{ needs.homebrew-tap-preflight.outputs.default-branch }}
+          GIT_TERMINAL_PROMPT: "0"
+          HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          TAG: ${{ needs.release-meta.outputs.tag }}
+        shell: bash
+        working-directory: tap
+        run: |
+          if [[ -z "$(git status --porcelain -- Formula/drydock.rb)" ]]; then
+            echo "Homebrew formula already up to date for ${TAG}."
+            exit 0
+          fi
+
+          git diff -- Formula/drydock.rb
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add Formula/drydock.rb
+          git commit -m "chore: update drydock to ${TAG}"
+          git push \
+            "https://x-access-token:${HOMEBREW_TAP_TOKEN}@github.com/sholdee/homebrew-tap.git" \
+            "HEAD:${DEFAULT_BRANCH}"
 
   release-please-bookkeeping:
     needs:
