@@ -9,14 +9,97 @@ directory, Kustomize, Helm, and Jsonnet paths.
 
 ## Install
 
-Install the CLI locally with Go:
+Install the latest Linux/macOS release:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/sholdee/drydock/main/scripts/install-drydock.sh -o install-drydock.sh
+bash install-drydock.sh --yes
+```
+
+The script verifies release checksums, verifies Sigstore bundles when
+available, installs the `drydock` binary, and attempts shell completion
+installation. Pin a release with `--version vX.Y.Z`.
+
+For GitOps repository and CI pinning, use `mise` with the GitHub backend:
+
+```toml
+[tools]
+"github:sholdee/drydock[exe=drydock]" = "vX.Y.Z"
+```
+
+{{< details summary="GitHub Actions" >}}
+
+Use `setup-action` when your workflow owns the drydock commands:
+
+```yaml
+- uses: sholdee/drydock/setup-action@main
+  with:
+    version: vX.Y.Z
+```
+
+Use `pr-action` for the standard pull request render test, manifest diff,
+image diff, artifacts, cache, and comment workflow. See
+[GitHub Actions](/workflows/github-actions/) for inputs and permissions.
+
+{{< /details >}}
+
+{{< details summary="Homebrew" >}}
+
+```bash
+brew install sholdee/tap/drydock
+```
+
+Homebrew installs completions automatically.
+
+{{< /details >}}
+
+{{< details summary="Install Script Options" >}}
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/sholdee/drydock/main/scripts/install-drydock.sh | bash -s -- --yes
+```
+
+Pinned pipe form:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/sholdee/drydock/main/scripts/install-drydock.sh | bash -s -- --version vX.Y.Z --yes
+```
+
+Use `--no-completions` when completions should be installed manually.
+
+{{< /details >}}
+
+{{< details summary="Download A Binary" >}}
+
+Download Linux and macOS `amd64` or `arm64` archives from
+[GitHub Releases](https://github.com/sholdee/drydock/releases/latest). Verify
+the archive with `checksums.txt`, then place `drydock` on `PATH`.
+
+{{< /details >}}
+
+{{< details summary="Docker / GHCR" >}}
+
+```bash
+docker run --rm -v "$PWD:/workspace:ro" ghcr.io/sholdee/drydock:vX.Y.Z test apps --path /workspace
+```
+
+{{< /details >}}
+
+{{< details summary="Go Install" >}}
 
 ```bash
 go install github.com/sholdee/drydock/cmd/drydock@latest
 ```
 
-For CI installs, use the drydock setup action in GitHub Actions instead of
-installing by hand in each workflow.
+{{< /details >}}
+
+Manual binary installs can generate completions with:
+
+```bash
+drydock completion zsh
+drydock completion bash
+drydock completion fish
+```
 
 ## First Commands
 
