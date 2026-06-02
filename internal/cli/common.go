@@ -92,15 +92,14 @@ func bindCommonFlags(cmd *cobra.Command, flags *commonFlags) {
 	bindPluginFlags(cmd, flags)
 	bindApplicationSetFixtureFlags(cmd, flags)
 	bindFilterFlags(cmd, flags)
-	bindStrictExitFlags(cmd, flags)
-	bindOutputDiffFormattingFlags(cmd, flags)
+	bindStrictFlag(cmd, flags)
+	bindOutputFlags(cmd, flags)
 	bindDiagnosticsCacheEventFlags(cmd, flags)
 	bindParallelismFlags(cmd, flags)
 }
 
 func bindPathDiscoveryFlags(cmd *cobra.Command, flags *commonFlags) {
 	cmd.Flags().StringVar(&flags.path, "path", flags.path, "repository path to inspect")
-	cmd.Flags().StringVar(&flags.pathOrig, "path-orig", flags.pathOrig, "baseline repository path for diffs")
 	cmd.Flags().StringVarP(&flags.selector, "selector", "l", flags.selector, "label selector for Applications")
 	cmd.Flags().StringVar(&flags.discoveryMode, "discovery-mode", flags.discoveryMode, "Application discovery mode: fleet or static")
 	cmd.Flags().IntVar(&flags.maxDiscoveryDepth, "max-discovery-depth", flags.maxDiscoveryDepth, "maximum recursive rendered Application discovery depth")
@@ -154,6 +153,13 @@ func bindFilterFlags(cmd *cobra.Command, flags *commonFlags) {
 	cmd.Flags().StringArrayVar(&flags.skipKinds, "skip-kind", flags.skipKinds, "rendered resource kind to omit from output and diffs")
 	cmd.Flags().BoolVar(&flags.skipCRDs, "skip-crds", flags.skipCRDs, "omit CustomResourceDefinition resources from output and diffs")
 	cmd.Flags().BoolVar(&flags.skipSecrets, "skip-secrets", flags.skipSecrets, "omit Secret resources from output and diffs")
+}
+
+func bindDiffPathFlag(cmd *cobra.Command, flags *commonFlags) {
+	cmd.Flags().StringVar(&flags.pathOrig, "path-orig", flags.pathOrig, "baseline repository path for diffs")
+}
+
+func bindChangedOnlyFlags(cmd *cobra.Command, flags *commonFlags) {
 	cmd.Flags().BoolVar(&flags.changedOnly, "changed-only", flags.changedOnly, "limit work to Applications affected by changed files")
 	cmd.Flags().BoolVar(&flags.strictChangedOnly, "strict-changed-only", flags.strictChangedOnly, "fail when changed-only input ownership is ambiguous or incomplete")
 }
@@ -163,16 +169,22 @@ func bindChangedOnlyPathFilterFlags(cmd *cobra.Command, flags *commonFlags) {
 	cmd.Flags().StringArrayVar(&flags.changedOnlyIgnores, "changed-only-ignore", flags.changedOnlyIgnores, "repository-relative glob ignored by changed-only selection")
 }
 
-func bindStrictExitFlags(cmd *cobra.Command, flags *commonFlags) {
+func bindStrictFlag(cmd *cobra.Command, flags *commonFlags) {
 	cmd.Flags().BoolVar(&flags.strict, "strict", flags.strict, "promote diagnostics to errors")
+}
+
+func bindDiffExitFlag(cmd *cobra.Command, flags *commonFlags) {
 	cmd.Flags().BoolVar(&flags.exitCode, "exit-code", flags.exitCode, "return exit code 1 when a diff is found")
 }
 
-func bindOutputDiffFormattingFlags(cmd *cobra.Command, flags *commonFlags) {
+func bindOutputFlags(cmd *cobra.Command, flags *commonFlags) {
 	cmd.Flags().StringVarP(&flags.output, "output", "o", flags.output, "output format")
+	cmd.Flags().IntVar(&flags.limitBytes, "limit-bytes", flags.limitBytes, "maximum bytes of rendered output per object")
+}
+
+func bindDiffFormattingFlags(cmd *cobra.Command, flags *commonFlags) {
 	cmd.Flags().IntVarP(&flags.unified, "unified", "u", flags.unified, "number of unified diff context lines")
 	cmd.Flags().StringArrayVar(&flags.stripAttrs, "strip-attr", flags.stripAttrs, "metadata label or annotation key to strip before diffing")
-	cmd.Flags().IntVar(&flags.limitBytes, "limit-bytes", flags.limitBytes, "maximum bytes of rendered output per object")
 }
 
 func bindDiagnosticsCacheEventFlags(cmd *cobra.Command, flags *commonFlags) {

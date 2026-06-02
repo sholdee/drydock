@@ -21,7 +21,6 @@ const (
 )
 
 func newDiffCommand(deps Dependencies) *cobra.Command {
-	flags := defaultCommonFlags()
 	cmd := &cobra.Command{
 		Use:   "diff",
 		Short: "Diff rendered desired manifests",
@@ -30,7 +29,6 @@ func newDiffCommand(deps Dependencies) *cobra.Command {
 			return fmt.Errorf("%s requires a subcommand", cmd.CommandPath())
 		},
 	}
-	bindCommonFlags(cmd, &flags)
 
 	cmd.AddCommand(newDiffAppsCommand(deps), newDiffAppCommand(deps), newDiffImagesCommand(deps))
 	return cmd
@@ -75,6 +73,10 @@ func newDiffAppsCommand(deps Dependencies) *cobra.Command {
 		},
 	}
 	bindCommonFlags(apps, &appsFlags)
+	bindDiffPathFlag(apps, &appsFlags)
+	bindChangedOnlyFlags(apps, &appsFlags)
+	bindDiffExitFlag(apps, &appsFlags)
+	bindDiffFormattingFlags(apps, &appsFlags)
 	bindDiffRefFlags(apps, &appsFlags)
 	bindChangedOnlyPathFilterFlags(apps, &appsFlags)
 	bindShowIgnoredFieldsFlag(apps, &appsFlags)
@@ -125,6 +127,10 @@ func newDiffAppCommand(deps Dependencies) *cobra.Command {
 		},
 	}
 	bindCommonFlags(appCmd, &appFlags)
+	bindDiffPathFlag(appCmd, &appFlags)
+	bindChangedOnlyFlags(appCmd, &appFlags)
+	bindDiffExitFlag(appCmd, &appFlags)
+	bindDiffFormattingFlags(appCmd, &appFlags)
 	bindDiffRefFlags(appCmd, &appFlags)
 	bindShowIgnoredFieldsFlag(appCmd, &appFlags)
 	bindDiffColorFlag(appCmd, &appColor)
@@ -171,6 +177,10 @@ func newDiffImagesCommand(deps Dependencies) *cobra.Command {
 		},
 	}
 	bindCommonFlags(images, &imagesFlags)
+	bindDiffPathFlag(images, &imagesFlags)
+	bindChangedOnlyFlags(images, &imagesFlags)
+	bindDiffExitFlag(images, &imagesFlags)
+	bindDiffFormattingFlags(images, &imagesFlags)
 	bindDiffRefFlags(images, &imagesFlags)
 	bindChangedOnlyPathFilterFlags(images, &imagesFlags)
 	bindDiffColorFlag(images, &imagesColor)
