@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.1.11](https://github.com/sholdee/drydock/compare/v0.1.10...v0.1.11) (2026-06-02)
+
+
+### Bug Fixes
+
+* improve diag success and trash handling ([#84](https://github.com/sholdee/drydock/issues/84)) ([e6697ab](https://github.com/sholdee/drydock/commit/e6697aba7cf2b7485c86fbd0699e3b9a7d19ab05))
+* polish operator-facing CLI and release UX ([#83](https://github.com/sholdee/drydock/issues/83)) ([bacc1ab](https://github.com/sholdee/drydock/commit/bacc1ab9913bdb4926f8878fb52ac83e06852180))
+
+
+### Documentation
+
+* clarify render parity and README routing ([#81](https://github.com/sholdee/drydock/issues/81)) ([b952da5](https://github.com/sholdee/drydock/commit/b952da5d024284f385034fd45417fd55a4cfcbd3))
+
 ## [0.1.10](https://github.com/sholdee/drydock/compare/v0.1.9...v0.1.10) (2026-06-01)
 
 
