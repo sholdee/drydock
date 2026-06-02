@@ -72,9 +72,17 @@ artifacts when differences are found, and comments in trusted same-repository
 pull requests. Image diff comments are available as a companion signal. Fork
 pull requests skip comments and source-cache restore/save by default.
 
+## Reporting And Gating
+
+By default, `pr-action` fails render errors and reports manifest or image diffs
+through comments and artifacts without failing the workflow. To make diffs a
+gate, set `strict`, `strict-changed-only`, `fail-on-diff`, and optionally
+`fail-on-image-diff`.
+
 `changed-only-include` and `changed-only-ignore` are optional newline-delimited
 globs passed to manifest and image diffs. They keep known non-GitOps paths from
-forcing a full-fleet changed-only fallback. They do not affect `test apps`.
+forcing a full-fleet changed-only fallback. Keep them narrow; ignored paths
+cannot trigger Application renders. They do not affect `test apps`.
 
 ## Manifest Diff Comment Shape
 

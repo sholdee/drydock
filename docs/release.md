@@ -108,7 +108,8 @@ flowchart TD
   Merge --> Version[Read manifest version]
   Version --> Checks[Run source checks]
   Checks --> Build[Build archives and container]
-  Build --> Draft[Create draft immutable GitHub Release]
+  Build --> Parity[Run Argo CD render parity smoke]
+  Parity --> Draft[Create draft immutable GitHub Release]
   Draft --> PushImage[Push and sign GHCR image tags]
   PushImage --> TapAuth[Verify Homebrew tap write access]
   TapAuth --> Publish[Publish release and mark latest]
@@ -118,7 +119,9 @@ flowchart TD
 
 This preserves the normal operator workflow of marking the release PR ready,
 waiting for CI, and merging it. The publishing workflow then builds, signs, and
-checks all release artifacts before it creates a public GitHub Release.
+checks all release artifacts before it creates a public GitHub Release. It also
+runs the Argo CD render parity smoke against the release archive before
+publication.
 
 If the manifest version already has a matching remote tag and published GitHub
 Release, the publish workflow exits without creating another release. If the
