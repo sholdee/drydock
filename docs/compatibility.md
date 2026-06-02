@@ -246,9 +246,13 @@ Not supported:
 
 Supported:
 
-- `diag --path` repository diagnostics through the render validation path.
+- `diag --path` repository diagnostics through static discovery, ApplicationSet
+  expansion, and settings metadata.
+- `diag --render` render-backed diagnostic reports.
 - `diag -o json|yaml` structured diagnostic reports.
-- `diag --cache-events` optional cache acquisition event reporting.
+- `diag --cache-events` optional render-backed cache acquisition event
+  reporting.
+- `diag --plugin-executions` optional render-backed plugin execution metadata.
 - `diag --settings -o json|yaml` redacted settings summaries for parsed Argo
   CD settings metadata.
 - Local AppProject manifest discovery.

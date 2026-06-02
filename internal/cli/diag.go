@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 
@@ -57,50 +59,134 @@ type diagResourceActions struct {
 
 func newDiagCommand(deps Dependencies) *cobra.Command {
 	flags := defaultCommonFlags()
-	includeSettings := false
+	options := diagCommandOptions{}
 	cmd := &cobra.Command{
 		Use:   "diag",
 		Short: "Report repository diagnostics",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			output, parseErr := parseDiagOutput(flags.output)
-			if parseErr != nil {
-				return parseErr
-			}
-			repoMaps, err := parseRepoMaps(flags.repoMaps)
-			if err != nil {
-				return err
-			}
-			request := buildRequestFromFlags(cmd, flags, repoMaps)
-			request.RecordCacheEvents = flags.cacheEvents
-			result, err := deps.Orchestrator.Diag(context.Background(), request)
-			result.Diagnostics = diagnostic.WithStableCodes(result.Diagnostics)
-			report := diagReport{
-				Diagnostics:      result.Diagnostics,
-				CacheEvents:      result.CacheEvents,
-				PluginExecutions: result.PluginExecutions,
-			}
-			if includeSettings {
-				report.Settings = settingsSummary(result.Settings)
-			}
-			switch output {
-			case "text":
-				if renderErr := renderDiagnostics(cmd.ErrOrStderr(), result.Diagnostics); renderErr != nil {
-					return renderErr
-				}
-			case "json", "yaml":
-				if renderErr := writeStructuredOutput(cmd.OutOrStdout(), output, report); renderErr != nil {
-					return renderErr
-				}
-			default:
-				return fmt.Errorf("unsupported output %q for diag", output)
-			}
-			return err
+			return runDiagCommand(cmd, deps, flags, options)
 		},
 	}
 	bindCommonFlags(cmd, &flags)
-	cmd.Flags().BoolVar(&includeSettings, "settings", false, "include redacted Argo CD settings summary in structured diagnostic output")
+	cmd.Flags().BoolVar(&options.includeSettings, "settings", false, "include redacted Argo CD settings summary in structured diagnostic output")
+	cmd.Flags().BoolVar(&options.includeRender, "render", false, "include render-backed diagnostics by rendering Applications")
+	cmd.Flags().BoolVar(&options.includePluginExecutions, "plugin-executions", false, "include plugin execution metadata in structured diagnostic output; renders Applications")
 	return cmd
+}
+
+type diagCommandOptions struct {
+	includeSettings         bool
+	includeRender           bool
+	includePluginExecutions bool
+}
+
+func runDiagCommand(cmd *cobra.Command, deps Dependencies, flags commonFlags, options diagCommandOptions) error {
+	output, parseErr := parseDiagOutput(flags.output)
+	if parseErr != nil {
+		return parseErr
+	}
+	repoMaps, err := parseRepoMaps(flags.repoMaps)
+	if err != nil {
+		return err
+	}
+	request := buildRequestFromFlags(cmd, flags, repoMaps)
+	if err := rejectBroadDiagPath(request.Path); err != nil {
+		return err
+	}
+	request.RecordCacheEvents = flags.cacheEvents
+	result, err := runDiag(context.Background(), deps.Orchestrator, request, diagMode{
+		Render: options.includeRender || flags.cacheEvents || options.includePluginExecutions,
+	})
+	result.Diagnostics = diagnostic.WithStableCodes(result.Diagnostics)
+	if err != nil && len(result.Diagnostics) == 0 {
+		return err
+	}
+	report := diagReport{
+		Diagnostics: nonNilDiagnostics(result.Diagnostics),
+	}
+	if flags.cacheEvents {
+		report.CacheEvents = result.CacheEvents
+	}
+	if options.includePluginExecutions {
+		report.PluginExecutions = result.PluginExecutions
+	}
+	if options.includeSettings {
+		report.Settings = settingsSummary(result.Settings)
+	}
+	return renderDiagCommandResult(cmd, output, report, result.Diagnostics, err)
+}
+
+func renderDiagCommandResult(cmd *cobra.Command, output string, report diagReport, diagnostics []diagnostic.Diagnostic, runErr error) error {
+	switch output {
+	case "text":
+		if renderErr := renderDiagnostics(cmd.ErrOrStderr(), diagnostics); renderErr != nil {
+			return renderErr
+		}
+		if runErr == nil && len(diagnostics) == 0 {
+			if _, renderErr := fmt.Fprintln(cmd.OutOrStdout(), "No diagnostics found."); renderErr != nil {
+				return renderErr
+			}
+		}
+	case "json", "yaml":
+		if renderErr := writeStructuredOutput(cmd.OutOrStdout(), output, report); renderErr != nil {
+			return renderErr
+		}
+	default:
+		return fmt.Errorf("unsupported output %q for diag", output)
+	}
+	return runErr
+}
+
+func rejectBroadDiagPath(path string) error {
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return err
+	}
+	abs = filepath.Clean(abs)
+	if filepath.Dir(abs) == abs {
+		return fmt.Errorf("refusing to recursively scan filesystem root %q; pass --path to a GitOps repository directory", abs)
+	}
+	home, err := os.UserHomeDir()
+	if err == nil && home != "" {
+		homeAbs, homeErr := filepath.Abs(home)
+		if homeErr == nil && sameCleanPath(abs, homeAbs) {
+			return fmt.Errorf("refusing to recursively scan home directory %q; run from a GitOps repository root or pass --path to that repository", abs)
+		}
+	}
+	return nil
+}
+
+func sameCleanPath(left, right string) bool {
+	return filepath.Clean(left) == filepath.Clean(right)
+}
+
+type diagMode struct {
+	Render bool
+}
+
+func runDiag(ctx context.Context, orchestrator Orchestrator, request app.DiagRequest, mode diagMode) (app.DiagResult, error) {
+	if mode.Render {
+		return orchestrator.Diag(ctx, request)
+	}
+	request.DiscoveryMode = app.DiscoveryModeStatic
+	request.MaxDiscoveryDepth = 0
+	request.MaxDiscoveryDepthSet = true
+	result, err := orchestrator.ListApplications(ctx, request)
+	diagResult := app.DiagResult{
+		Applications: result.Applications,
+		Diagnostics:  result.Diagnostics,
+		Settings:     result.Settings,
+		CacheEvents:  result.CacheEvents,
+	}
+	return diagResult, err
+}
+
+func nonNilDiagnostics(diagnostics []diagnostic.Diagnostic) []diagnostic.Diagnostic {
+	if diagnostics == nil {
+		return []diagnostic.Diagnostic{}
+	}
+	return diagnostics
 }
 
 func settingsSummary(settings config.ArgoSettings) *diagSettingsSummary {

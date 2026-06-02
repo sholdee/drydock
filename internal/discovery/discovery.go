@@ -432,7 +432,12 @@ func looksLikeConfigManagementPluginYAML(value string) bool {
 }
 
 func shouldSkipDir(name string) bool {
-	return name == ".git" || name == ".out" || strings.HasPrefix(name, ".cache")
+	switch name {
+	case ".git", ".out", ".Trash", ".Trashes", ".Spotlight-V100", ".DocumentRevisions-V100", ".TemporaryItems", ".fseventsd":
+		return true
+	default:
+		return strings.HasPrefix(name, ".cache")
+	}
 }
 
 func isHelmTemplateYAML(root, path string) bool {

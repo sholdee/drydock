@@ -29,8 +29,8 @@ drydock diag --path . --cache-events -o json
 drydock cache list -o json
 ```
 
-Use cache events to see which source acquisitions were used during diagnostics,
-then inspect recognized cache entries.
+Use cache events to see which source acquisitions were used while rendering
+Applications for diagnostics, then inspect recognized cache entries.
 
 ## Pass Explicit Credentials
 
