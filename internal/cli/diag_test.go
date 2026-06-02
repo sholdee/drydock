@@ -21,7 +21,7 @@ type diagCommandParameterJSON struct {
 	Classification string `json:"classification"`
 }
 
-func TestDiagCleanRepositoryPrintsNoManifests(t *testing.T) {
+func TestDiagCleanRepositoryReportsNoDiagnostics(t *testing.T) {
 	root := t.TempDir()
 	writeSimpleAppForCLI(t, root, "ok")
 
@@ -35,11 +35,86 @@ func TestDiagCleanRepositoryPrintsNoManifests(t *testing.T) {
 	if err := cmd.Execute(); err != nil {
 		t.Fatalf("Execute() error = %v", err)
 	}
-	if stdout.String() != "" {
-		t.Fatalf("stdout = %q, want empty", stdout.String())
+	if got, want := stdout.String(), "No diagnostics found.\n"; got != want {
+		t.Fatalf("stdout = %q, want %q", got, want)
 	}
 	if stderr.String() != "" {
 		t.Fatalf("stderr = %q, want empty", stderr.String())
+	}
+}
+
+func TestDiagJSONCleanRepositoryUsesEmptyDiagnosticsArray(t *testing.T) {
+	root := t.TempDir()
+	writeSimpleAppForCLI(t, root, "ok")
+
+	cmd := NewRootCommand(VersionInfo{})
+	cmd.SetArgs([]string{"diag", "--path", root, "-o", "json"})
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	cmd.SetOut(&stdout)
+	cmd.SetErr(&stderr)
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("Execute() error = %v\nstdout:\n%s\nstderr:\n%s", err, stdout.String(), stderr.String())
+	}
+	if stderr.String() != "" {
+		t.Fatalf("stderr = %q, want empty for structured diag output", stderr.String())
+	}
+	if !strings.Contains(stdout.String(), `"diagnostics": []`) {
+		t.Fatalf("stdout = %q, want empty diagnostics array", stdout.String())
+	}
+}
+
+func TestDiagStructuredFatalErrorDoesNotWritePartialReport(t *testing.T) {
+	root := t.TempDir()
+	missing := filepath.Join(root, "missing")
+
+	cmd := NewRootCommand(VersionInfo{})
+	cmd.SetArgs([]string{"diag", "--path", missing, "-o", "json", "--settings"})
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	cmd.SetOut(&stdout)
+	cmd.SetErr(&stderr)
+
+	err := cmd.Execute()
+	if err == nil {
+		t.Fatal("Execute() error = nil, want missing path error")
+	}
+	if stdout.String() != "" {
+		t.Fatalf("stdout = %q, want empty on fatal prediagnostic error", stdout.String())
+	}
+	if stderr.String() != "" {
+		t.Fatalf("stderr = %q, want empty", stderr.String())
+	}
+}
+
+func TestDiagRejectsHomeDirectoryPathBeforeScanning(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	orchestrator := &recordingCLIOrchestrator{}
+	cmd := NewRootCommandWithDependencies(VersionInfo{}, Dependencies{Orchestrator: orchestrator})
+	cmd.SetArgs([]string{"diag", "--path", ".", "--settings", "-o", "json"})
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	cmd.SetOut(&stdout)
+	cmd.SetErr(&stderr)
+
+	t.Chdir(home)
+	err := cmd.Execute()
+	if err == nil {
+		t.Fatal("Execute() error = nil, want broad home directory path error")
+	}
+	if !strings.Contains(err.Error(), "refusing to recursively scan home directory") {
+		t.Fatalf("Execute() error = %v, want home directory refusal", err)
+	}
+	if stdout.String() != "" {
+		t.Fatalf("stdout = %q, want empty on broad path error", stdout.String())
+	}
+	if stderr.String() != "" {
+		t.Fatalf("stderr = %q, want empty", stderr.String())
+	}
+	if len(orchestrator.listRequests) != 0 || len(orchestrator.diagRequests) != 0 {
+		t.Fatalf("orchestrator called: list=%d diag=%d", len(orchestrator.listRequests), len(orchestrator.diagRequests))
 	}
 }
 
@@ -71,7 +146,7 @@ func TestDiagReportsPluginSourceFailure(t *testing.T) {
 	writePluginCLIApplication(t, root, "cue", "directory")
 
 	cmd := NewRootCommand(VersionInfo{})
-	cmd.SetArgs([]string{"diag", "--path", root})
+	cmd.SetArgs([]string{"diag", "--path", root, "--render"})
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
 	cmd.SetOut(&stdout)
@@ -92,6 +167,28 @@ func TestDiagReportsPluginSourceFailure(t *testing.T) {
 		if !strings.Contains(stderr.String(), want) {
 			t.Fatalf("stderr = %q, want %q", stderr.String(), want)
 		}
+	}
+}
+
+func TestDiagDefaultDoesNotRenderApplications(t *testing.T) {
+	root := t.TempDir()
+	writePluginCLIApplication(t, root, "cue", "directory")
+
+	cmd := NewRootCommand(VersionInfo{})
+	cmd.SetArgs([]string{"diag", "--path", root})
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	cmd.SetOut(&stdout)
+	cmd.SetErr(&stderr)
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("Execute() error = %v\nstdout:\n%s\nstderr:\n%s", err, stdout.String(), stderr.String())
+	}
+	if got, want := stdout.String(), "No diagnostics found.\n"; got != want {
+		t.Fatalf("stdout = %q, want %q", got, want)
+	}
+	if stderr.String() != "" {
+		t.Fatalf("stderr = %q, want empty", stderr.String())
 	}
 }
 
@@ -457,7 +554,7 @@ func TestDiagJSONOutputIncludesPluginExecutions(t *testing.T) {
 		},
 	}
 	cmd := NewRootCommandWithDependencies(VersionInfo{}, Dependencies{Orchestrator: orchestrator})
-	cmd.SetArgs([]string{"diag", "--path", "ignored", "-o", "json"})
+	cmd.SetArgs([]string{"diag", "--path", "ignored", "-o", "json", "--plugin-executions"})
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
 	cmd.SetOut(&stdout)
@@ -484,6 +581,67 @@ func TestDiagJSONOutputIncludesPluginExecutions(t *testing.T) {
 	execution := report.PluginExecutions[0]
 	if execution.AppName != "plugin-app" || execution.PluginName != "exec-renderer" || execution.Phase != "generate" || execution.Command != "argocd-vault-plugin" || execution.Duration != "12ms" {
 		t.Fatalf("pluginExecutions[0] = %#v, want exec metadata", execution)
+	}
+}
+
+func TestDiagDefaultUsesApplicationListing(t *testing.T) {
+	orchestrator := &recordingCLIOrchestrator{}
+	cmd := NewRootCommandWithDependencies(VersionInfo{}, Dependencies{Orchestrator: orchestrator})
+	cmd.SetArgs([]string{"diag", "--path", "repo"})
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	cmd.SetOut(&stdout)
+	cmd.SetErr(&stderr)
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("Execute() error = %v\nstdout:\n%s\nstderr:\n%s", err, stdout.String(), stderr.String())
+	}
+	if len(orchestrator.listRequests) != 1 {
+		t.Fatalf("list requests = %d, want 1", len(orchestrator.listRequests))
+	}
+	request := orchestrator.listRequests[0]
+	if request.DiscoveryMode != app.DiscoveryModeStatic || request.MaxDiscoveryDepth != 0 || !request.MaxDiscoveryDepthSet {
+		t.Fatalf("list request discovery = mode=%q depth=%d set=%t, want static depth 0", request.DiscoveryMode, request.MaxDiscoveryDepth, request.MaxDiscoveryDepthSet)
+	}
+	if len(orchestrator.diagRequests) != 0 {
+		t.Fatalf("diag requests = %d, want 0", len(orchestrator.diagRequests))
+	}
+}
+
+func TestDiagRenderBackedFlagsUseDiag(t *testing.T) {
+	tests := []struct {
+		name string
+		args []string
+	}{
+		{name: "render", args: []string{"diag", "--path", "repo", "--render"}},
+		{name: "cache events", args: []string{"diag", "--path", "repo", "--cache-events"}},
+		{name: "plugin executions", args: []string{"diag", "--path", "repo", "--plugin-executions"}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			orchestrator := &recordingCLIOrchestrator{}
+			cmd := NewRootCommandWithDependencies(VersionInfo{}, Dependencies{Orchestrator: orchestrator})
+			cmd.SetArgs(tt.args)
+			var stdout bytes.Buffer
+			var stderr bytes.Buffer
+			cmd.SetOut(&stdout)
+			cmd.SetErr(&stderr)
+
+			if err := cmd.Execute(); err != nil {
+				t.Fatalf("Execute() error = %v\nstdout:\n%s\nstderr:\n%s", err, stdout.String(), stderr.String())
+			}
+			if len(orchestrator.diagRequests) != 1 {
+				t.Fatalf("diag requests = %d, want 1", len(orchestrator.diagRequests))
+			}
+			request := orchestrator.diagRequests[0]
+			if request.DiscoveryMode != app.DiscoveryModeFleet {
+				t.Fatalf("diag request discovery mode = %q, want fleet", request.DiscoveryMode)
+			}
+			if len(orchestrator.listRequests) != 0 {
+				t.Fatalf("list requests = %d, want 0", len(orchestrator.listRequests))
+			}
+		})
 	}
 }
 

@@ -444,10 +444,19 @@ Run repository diagnostics without printing rendered manifests:
 drydock diag --path .
 ```
 
-`diag` uses the same discovery, ApplicationSet expansion, source resolution,
-and render validation path as `build apps`. It prints diagnostics to stderr and
-returns an error when runtime failures or error-severity diagnostics are found.
-Use `--strict` to promote warnings to errors.
+By default, `diag` uses static repository discovery, ApplicationSet expansion,
+and settings metadata without rendering Applications. It prints diagnostics to
+stderr and returns an error when runtime failures or error-severity diagnostics
+are found. Use `--strict` to promote warnings to errors.
+
+`diag` refuses broad roots such as the filesystem root or the current user's
+home directory. Run it from the GitOps repository root or pass `--path` to that
+repository.
+
+Use `--render` when the diagnostic report should include render-backed
+diagnostics. `--cache-events` and `--plugin-executions` also opt into the
+render-backed path so source-acquisition and plugin execution metadata reflect
+Application rendering.
 
 Structured diagnostic output can include a redacted settings summary:
 
@@ -461,13 +470,15 @@ metadata such as action names, `useOpenLibs`, and SHA-256 hashes for
 health/action Lua. It does not print raw Lua bodies, embedded secret-looking
 strings, or any live-cluster state.
 
-When local `AppProject` manifests are present, `diag`, `build`, `test`, `diff`,
-and the Go API report source repository and destination validation diagnostics
-from those manifests. RBAC roles and policies are parsed and reported as
-metadata only; Argo CD authorization is not simulated. Repository credential
-matching diagnostics use discovered repository Secret metadata only and never
-read secret credential fields. Cluster Secret diagnostics likewise use only
-`name`, `server`, `namespaces`, `clusterResources`, and `project` metadata;
+When local `AppProject` manifests are present, `build`, `test`, `diff`, and the
+Go API report source repository and destination validation diagnostics from
+those manifests. `diag --render` includes the same render-backed project
+diagnostics; default `diag` reports project and repository metadata discovered
+without rendering every Application. RBAC roles and policies are parsed and
+reported as metadata only; Argo CD authorization is not simulated. Repository
+credential matching diagnostics use discovered repository Secret metadata only
+and never read secret credential fields. Cluster Secret diagnostics likewise use
+only `name`, `server`, `namespaces`, `clusterResources`, and `project` metadata;
 credential/config fields are not decoded, retained, or printed.
 
 `argocd-cmd-params-cm` settings are parsed as runtime-boundary metadata when

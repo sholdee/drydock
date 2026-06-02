@@ -85,6 +85,31 @@ func TestScanSkipsInternalDirectories(t *testing.T) {
 	}
 }
 
+func TestScanSkipsUnreadableTrashDirectory(t *testing.T) {
+	root := t.TempDir()
+	fixture := filepath.Join("..", "..", "testdata", "applications", "direct-app.yaml")
+	mustCopy(t, fixture, filepath.Join(root, "visible", "app.yaml"))
+	trash := filepath.Join(root, ".Trash")
+	mustCopy(t, fixture, filepath.Join(trash, "app.yaml"))
+	if err := os.Chmod(trash, 0); err != nil {
+		t.Fatalf("chmod trash directory: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = os.Chmod(trash, 0o700)
+	})
+
+	result, err := Scan(root, Options{})
+	if err != nil {
+		t.Fatalf("Scan() error = %v", err)
+	}
+	if len(result.Applications) != 1 {
+		t.Fatalf("Applications = %d, want 1", len(result.Applications))
+	}
+	if result.Applications[0].Path != filepath.Join("visible", "app.yaml") {
+		t.Fatalf("Path = %s", result.Applications[0].Path)
+	}
+}
+
 func TestScanSkipsSymlinkedYAML(t *testing.T) {
 	root := t.TempDir()
 	outside := t.TempDir()

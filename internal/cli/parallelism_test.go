@@ -128,7 +128,7 @@ func TestNonTestCommandsDoNotRequestStatusOnlyBuild(t *testing.T) {
 			name: "diag",
 			args: []string{"diag"},
 			statusOnly: func(recorder *recordingCLIOrchestrator) bool {
-				return recorder.diagRequests[0].StatusOnly
+				return recorder.listRequests[0].StatusOnly
 			},
 		},
 	}
@@ -225,8 +225,8 @@ func TestDiagParallelismFlag(t *testing.T) {
 	recorder := &recordingCLIOrchestrator{}
 	executeParallelismCommand(t, recorder, "diag", "--parallelism", "7")
 
-	if got := recorder.diagRequests[0].Parallelism; got != 7 {
-		t.Fatalf("DiagRequest.Parallelism = %d, want 7", got)
+	if got := recorder.listRequests[0].Parallelism; got != 7 {
+		t.Fatalf("ListApplications BuildRequest.Parallelism = %d, want 7", got)
 	}
 }
 
@@ -280,6 +280,8 @@ type recordingCLIOrchestrator struct {
 	diffAppError       error
 	diffImagesResult   app.ImageDiffResult
 	diffImagesError    error
+	listResult         app.BuildResult
+	listError          error
 	diagResult         app.DiagResult
 	diagError          error
 }
@@ -301,7 +303,7 @@ func (orchestrator *recordingCLIOrchestrator) BuildApp(_ context.Context, reques
 
 func (orchestrator *recordingCLIOrchestrator) ListApplications(_ context.Context, request app.BuildRequest) (app.BuildResult, error) {
 	orchestrator.listRequests = append(orchestrator.listRequests, request)
-	return app.BuildResult{}, nil
+	return orchestrator.listResult, orchestrator.listError
 }
 
 func (orchestrator *recordingCLIOrchestrator) DiffApps(_ context.Context, request app.DiffRequest) (app.DiffResult, error) {

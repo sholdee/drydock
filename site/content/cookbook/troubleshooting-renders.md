@@ -11,7 +11,9 @@ drydock diag --path .
 ```
 
 `get apps` checks discovery. `test apps` checks render health without manifest
-output. `diag` reports diagnostics from the same discovery and render path.
+output. `diag` reports repository and settings diagnostics without rendering
+every Application; add `--render` when the diagnostic report needs render-backed
+diagnostics.
 
 ## Isolate One Application
 

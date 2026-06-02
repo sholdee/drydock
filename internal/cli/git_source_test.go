@@ -64,8 +64,8 @@ data:
 	if err := cmd.Execute(); err != nil {
 		t.Fatalf("Execute() error = %v", err)
 	}
-	if stdout.String() != "" {
-		t.Fatalf("stdout = %q, want empty", stdout.String())
+	if got, want := stdout.String(), "No diagnostics found.\n"; got != want {
+		t.Fatalf("stdout = %q, want %q", got, want)
 	}
 	if stderr.String() != "" {
 		t.Fatalf("stderr = %q, want empty", stderr.String())
@@ -126,8 +126,8 @@ data:
 	if err := cmd.Execute(); err != nil {
 		t.Fatalf("Execute() error = %v\nstdout:\n%s\nstderr:\n%s", err, stdout.String(), stderr.String())
 	}
-	if stdout.String() != "" {
-		t.Fatalf("stdout = %q, want empty", stdout.String())
+	if got, want := stdout.String(), "No diagnostics found.\n"; got != want {
+		t.Fatalf("stdout = %q, want %q", got, want)
 	}
 	if stderr.String() != "" {
 		t.Fatalf("stderr = %q, want empty", stderr.String())

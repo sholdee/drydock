@@ -38,6 +38,9 @@ drydock test apps --path . --offline
 drydock diag --path . --cache-events
 ```
 
+`--cache-events` renders Applications so source-acquisition events match the
+rendering path.
+
 ## Symptom: Changed-Only Falls Back To All Apps
 
 Multi-Application diffs use changed-only selection by default. If a changed
