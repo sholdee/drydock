@@ -73,8 +73,12 @@ Rendering intentionally does not call live Argo CD, Kubernetes, `kubectl`,
 `argocd`, Helm CLI, or Kustomize CLI. That keeps local and CI analysis fast,
 portable, and reproducible.
 
-See [source acquisition](/docs/source-acquisition/) and
-[runtime-offline design](/concepts/runtime-offline/).
+Covered rendering semantics are validated against real Argo CD through the
+[render parity smoke](/concepts/argocd-render-parity/).
+
+See [source acquisition](/docs/source-acquisition/),
+[runtime-offline design](/concepts/runtime-offline/), and
+[Argo CD render parity](/concepts/argocd-render-parity/).
 
 ### Plugins
 

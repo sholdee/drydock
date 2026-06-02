@@ -36,7 +36,9 @@ exec plugins.
 
 Argo CD remains the semantic reference for generated desired manifests. drydock
 keeps this rendering path runtime-offline, then validates covered fixture
-semantics against real Argo CD through the render parity smoke.
+semantics against real Argo CD through the render parity smoke. See
+[Argo CD Render Parity](/concepts/argocd-render-parity/) for the validation
+strategy.
 
 ## Normalization
 

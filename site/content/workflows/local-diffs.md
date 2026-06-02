@@ -12,18 +12,20 @@ inputs alone.
 ```bash
 git worktree add ../baseline main
 drydock diff apps --path . --path-orig ../baseline
-drydock diff images --path . --path-orig ../baseline -o markdown
+drydock diff images --path . --path-orig ../baseline
 ```
 
 Use this when you already have a separate baseline checkout or want to inspect
 uncommitted changes in the current working tree. Add `--offline` when the
 review must use only local files, repo maps, and existing drydock cache entries.
+Default output is intended for terminal review and uses TTY-appropriate
+color and syntax highlighting when available.
 
 ## Compare Git Refs
 
 ```bash
 drydock diff apps --repo . --ref HEAD --ref-orig main
-drydock diff images --repo . --ref HEAD --ref-orig main -o json
+drydock diff images --repo . --ref HEAD --ref-orig main
 ```
 
 `--repo` is a local Git repository path. `--ref-orig` selects the baseline
@@ -45,9 +47,9 @@ Changed-only filters are repository-relative and repeatable. They are useful
 when local commits include known non-GitOps files, but they should stay narrow:
 ignored files cannot trigger an Application render.
 
-## Markdown For Reviews
+## Markdown For Pull Request Comments
 
-Manifest and image diffs support markdown output:
+Manifest and image diffs support markdown output for pull request comments:
 
 ```bash
 drydock diff apps --path . --path-orig ../baseline -o markdown

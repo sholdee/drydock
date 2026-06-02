@@ -21,9 +21,10 @@ drydock get apps --path .
 drydock test apps --path .
 ```
 
-Fleet commands render bootstrap Applications to discover rendered child
-Applications and settings. Add `--discovery-mode static` when only committed
-objects should count.
+By default, fleet commands recursively render bootstrap Applications and
+app-of-apps sources to discover rendered `Application`, `ApplicationSet`,
+`AppProject`, and Argo CD settings objects until discovery converges. Add
+`--discovery-mode static` when only committed objects should count.
 
 ## Kustomize Bootstrap
 

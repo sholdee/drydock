@@ -64,6 +64,11 @@ menus:
       params:
         group: Concepts
       weight: 60
+    - name: Argo CD Render Parity
+      url: /concepts/argocd-render-parity/
+      params:
+        group: Concepts
+      weight: 62
     - name: How It Works
       url: /concepts/how-it-works/
       params:
