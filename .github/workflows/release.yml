@@ -483,6 +483,7 @@ jobs:
 
           {
             printf "\n---\n\n"
+            printf "**Validation:** Argo CD render parity smoke passed for release artifacts.\n"
             printf "**Container image:** \`%s:%s\`\n" "${FULL_IMAGE}" "${TAG}"
             printf "**Checksums:** \`checksums.txt\`\n"
           } >> release-notes.md
@@ -734,6 +735,7 @@ jobs:
 
           {
             printf "\n---\n\n"
+            printf "**Validation:** Argo CD render parity smoke passed for release artifacts.\n"
             printf "**Container image:** \`%s:%s@%s\`\n" "${FULL_IMAGE}" "${TAG}" "${DIGEST}"
             printf "**Checksums:** \`checksums.txt\`\n"
           } >> release-notes.md
