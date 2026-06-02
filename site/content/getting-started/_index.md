@@ -17,6 +17,13 @@ brew install sholdee/tap/drydock
 
 Homebrew installs shell completions automatically.
 
+For GitOps repository and CI pinning, use `mise` with the GitHub backend:
+
+```toml
+[tools]
+"github:sholdee/drydock[exe=drydock]" = "vX.Y.Z"
+```
+
 {{< details summary="Install Script" >}}
 
 ```bash
@@ -43,13 +50,6 @@ curl -fsSL https://raw.githubusercontent.com/sholdee/drydock/main/scripts/instal
 Use `--no-completions` when completions should be installed manually.
 
 {{< /details >}}
-
-For GitOps repository and CI pinning, use `mise` with the GitHub backend:
-
-```toml
-[tools]
-"github:sholdee/drydock[exe=drydock]" = "vX.Y.Z"
-```
 
 {{< details summary="GitHub Actions" >}}
 
@@ -104,15 +104,13 @@ drydock completion fish
 Run these from the GitOps repository you want to inspect:
 
 ```bash
-drydock test apps --path .
 drydock get apps --path .
-drydock diag --path .
+drydock test apps --path .
 ```
 
-Start with `drydock test apps --path .`. It discovers Applications and renders
-them without printing manifest bodies, which makes it the fastest first check
-for render failures. `get apps` shows discovered Applications. `diag` uses the
-same discovery and render validation path, then reports repository diagnostics.
+Start with `drydock get apps --path .` to confirm which Applications drydock
+discovers. Then run `drydock test apps --path .` to render them without
+printing manifest bodies and surface warnings or errors.
 
 If you are setting this up for CI, go to [GitHub Actions](/workflows/github-actions/)
 next.
@@ -124,15 +122,19 @@ Compare the current tree against a baseline worktree:
 ```bash
 git worktree add ../baseline main
 drydock diff apps --path . --path-orig ../baseline
-drydock diff images --path . --path-orig ../baseline -o markdown
+drydock diff images --path . --path-orig ../baseline
 ```
 
 Or compare local Git refs without creating a second checkout:
 
 ```bash
 drydock diff apps --repo . --ref HEAD --ref-orig main
-drydock diff images --repo . --ref HEAD --ref-orig main -o markdown
+drydock diff images --repo . --ref HEAD --ref-orig main
 ```
+
+Default diff output is intended for terminal review and uses TTY-appropriate
+color and syntax highlighting when available. Use markdown output for pull
+request comments.
 
 ## Runtime Offline Does Not Mean Source Offline
 

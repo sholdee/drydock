@@ -25,6 +25,7 @@ copying the same rule into multiple files.
 | `docs/logo/` | Project logo assets. |
 | `docs/reports/live-integration-design-gate.md` | No-live-runtime boundary and gate for exceptions. |
 | `site/` | Hugo docs site source, curated operator pages, local layouts, and GitHub Pages configuration. |
+| `site/content/concepts/argocd-render-parity.md` | Curated operator explanation of Argo CD render parity and drydock's validation strategy. |
 
 ## Anti-Sprawl Rules
 

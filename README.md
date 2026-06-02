@@ -21,21 +21,13 @@ change reaches the cluster. Pull request diffing is a key workflow, but
 the same native engine also supports render validation, image inventory,
 repository diagnostics, cache inspection, and Go API embedding.
 
+Default commands use native Go renderers and do not shell out to `kubectl`,
+`argocd`, Helm CLI, Kustomize CLI, or repo-server wrappers. Runtime-offline
+does not mean network-disconnected: declared Git, HTTP Helm, OCI Helm, and
+remote Kustomize sources may still be fetched into explicit drydock caches
+unless `--offline` is set.
+
 **Full documentation:** [sholdee.github.io/drydock](https://sholdee.github.io/drydock/).
-
-Core properties:
-
-- Single static Go binary for local use and CI.
-- Native Go renderers and public Go APIs; no repo-server wrapper.
-- No default shellouts to `kubectl`, `argocd`, Helm, Kustomize, or config
-  management plugin commands.
-- Runtime-offline analysis: no running cluster or Argo CD server is required.
-- Cache-backed source acquisition for fast repeatable validation.
-
-Runtime-offline does not mean network-disconnected. Declared Git, HTTP Helm,
-OCI Helm, and remote Kustomize sources may be fetched into explicit drydock
-caches when needed. Use `--offline` to require local files, repo maps, local
-charts, or existing cache hits only.
 
 ## Install
 
@@ -46,6 +38,13 @@ brew install sholdee/tap/drydock
 ```
 
 Homebrew installs shell completions automatically.
+
+For GitOps repository and CI pinning, use `mise` with the GitHub backend:
+
+```toml
+[tools]
+"github:sholdee/drydock[exe=drydock]" = "vX.Y.Z"
+```
 
 <details>
 <summary>Install Script</summary>
@@ -74,13 +73,6 @@ curl -fsSL https://raw.githubusercontent.com/sholdee/drydock/main/scripts/instal
 Use `--no-completions` when completions should be installed manually.
 
 </details>
-
-For GitOps repository and CI pinning, use `mise` with the GitHub backend:
-
-```toml
-[tools]
-"github:sholdee/drydock[exe=drydock]" = "vX.Y.Z"
-```
 
 <details>
 <summary>GitHub Actions</summary>
@@ -170,6 +162,12 @@ drydock completion fish
 
 Run drydock from the root of an Argo CD GitOps repository.
 
+List discovered Applications:
+
+```bash
+drydock get apps --path .
+```
+
 Test every discovered Application without printing rendered manifests:
 
 ```bash
@@ -242,85 +240,49 @@ full command reference.
 
 ## What It Supports
 
-drydock discovers and renders local Argo CD desired state, including:
+drydock covers the common Argo CD GitOps repository shapes operators need to
+inspect locally and in CI:
 
-- Static `Application` resources, supported `ApplicationSet` generators, and
-  rendered child `Application`, `ApplicationSet`, `AppProject`, and settings
-  objects from app-of-apps/bootstrap sources.
-- Optional additional rendered discovery from explicit local Kustomize
-  entrypoints with `--discover-kustomize`.
-- Single-source and multi-source Applications.
-- Directory, Kustomize, local Helm chart, remote Helm chart, and remote
-  Kustomize sources.
-- Discovered safe Kustomize build config management plugins rendered through
-  drydock's native Kustomize adapter, without executing plugin commands.
-- Trusted plugin policy entries for native `avp-compat` placeholder redaction
-  and native plugin overrides.
-- Explicit trusted exec plugin policy support with `--enable-plugins` for
-  operators who need shellout CMP compatibility, including policy-defined
-  post-renderer chains.
-- Declared Git, HTTP Helm, OCI Helm, and remote Kustomize source acquisition
-  into local caches.
-- Fast cache-backed repeated runs for local development and CI.
-- Repository maps with `--repo-map URL=PATH` for adjacent local checkouts.
-- Changed-only desired-vs-desired PR diffs, with strict diagnostics available
-  when a safe ownership decision cannot be made.
-- Default diff noise filtering for common Helm chart/version labels and
-  pod-template checksum annotations, with `--show-ignored-fields` when those
-  fields need inspection.
-- Argo CD diff customizations such as `ignoreDifferences`,
-  `knownTypeFields`, selected compare options, and resource filters.
-- Per-Application render test status as `PASS`, `FAIL`, or `SKIPPED`, including
-  structured JSON and YAML output.
-- Offline validation of configured custom health Lua during render tests.
-- Redacted diagnostics for settings, source repositories, AppProjects, and
-  cache acquisition events.
-- Cache lifecycle commands for Git, chart, and remote Kustomize caches.
+- **Application discovery:** committed Applications, supported ApplicationSets,
+  rendered app-of-apps/bootstrap children, explicit Kustomize discovery
+  entrypoints, AppProjects, and settings objects.
+- **Rendering:** directory, Kustomize, Helm, Jsonnet, single-source and
+  multi-source Applications, Kustomize Helm charts, remote Helm charts, and
+  remote Kustomize sources.
+- **Source acquisition:** declared Git, HTTP Helm, OCI Helm, and remote
+  Kustomize inputs through explicit drydock caches, plus `--repo-map` for
+  adjacent local checkouts.
+- **Diffs and images:** desired-vs-desired manifest and image diffs,
+  changed-only selection, default noisy-field filtering, and structured or
+  markdown output.
+- **Plugins:** native safe Kustomize compatibility, `avp-compat` placeholder
+  redaction, native policy overrides, and explicit trusted exec policy with
+  `--enable-plugins`.
+- **Diagnostics:** render status, custom health Lua validation, redacted
+  settings/repository/AppProject checks, source acquisition diagnostics, and
+  cache lifecycle commands.
 
-See the [compatibility notes](https://sholdee.github.io/drydock/docs/compatibility/)
-for the detailed Argo CD support matrix. See
-[ApplicationSets](https://sholdee.github.io/drydock/docs/applicationsets/) for
-generator details and
-[source acquisition](https://sholdee.github.io/drydock/docs/source-acquisition/)
-for remote source, cache, and auth behavior.
+See the [compatibility overview](https://sholdee.github.io/drydock/compatibility/)
+for the support matrix and links to detailed reference docs.
 
 ## Offline Runtime Model
 
-drydock is desired-vs-desired analysis. It renders the desired Kubernetes
-manifests from a current tree and, for diff commands, a baseline tree. It does
-not ask a live cluster or Argo CD server what is currently running. Network
-source acquisition, when enabled, is limited to populating explicit drydock
-caches for declared repository, chart, and remote Kustomize inputs.
+drydock performs desired-vs-desired analysis. It renders Kubernetes manifests
+from repository inputs, explicit mappings, and drydock caches. Diff commands
+compare a current snapshot to a baseline snapshot.
 
-Default commands do not reproduce:
+Default commands do not ask a live Kubernetes cluster or Argo CD server what is
+currently running. They also do not reproduce runtime behavior such as API
+defaulting, admission mutation, server-side diff, live health aggregation,
+managed-fields ownership, or full RBAC authorization.
 
-- Kubernetes API defaulting or admission mutation.
-- Argo CD server-side diff.
-- Live Argo CD Application health aggregation.
-- Live-only managed-field ownership.
-- Full Argo CD RBAC authorization.
-- CLI config management plugin execution or shellout plugin adapters unless an
-  explicit trusted exec plugin policy is enabled.
+This boundary is intentional: normal workflows stay fast, deterministic, and
+safe for local use and CI. Source acquisition may still fetch declared Git,
+Helm, OCI, or remote Kustomize inputs unless `--offline` is set.
 
-Plugin command execution fails closed unless an embedding caller injects an
-in-process renderer or a trusted drydock exec plugin policy matches the plugin
-name. Discovered safe Kustomize build CMP definitions and native policy
-engines do not execute plugin commands. Exec policy requires trusted
-provenance and `--enable-plugins`. See
-the [plugin policy guide](https://sholdee.github.io/drydock/docs/plugin-policy/)
-for the policy schema, provenance rules, CMP compatibility model, and exec
-security controls.
-
-These behaviors are not silently approximated. The no-live-runtime boundary is
-an intentional product decision so the default cache-backed workflow stays
-deterministic and safe for CI.
-
-Structured outputs keep stdout machine-parseable. Diagnostics and failure
-summaries are written to stderr where appropriate, and drydock avoids printing
-Secret values, repository credentials, tokens, SSH private keys, passphrases,
-registry credentials, or credential-bearing URLs. Repository and cluster Secret
-diagnostics use non-sensitive metadata only, and `argocd-cmd-params-cm` is
-reported as runtime-boundary metadata rather than a render-behavior override.
+See [Runtime Offline](https://sholdee.github.io/drydock/concepts/runtime-offline/)
+and [Argo CD Render Parity](https://sholdee.github.io/drydock/concepts/argocd-render-parity/)
+for the design model and validation strategy.
 
 ## How It Works
 
@@ -361,9 +323,8 @@ manifests, diagnostics, and per-Application statuses from the partial build.
 
 ## Community
 
-drydock is independently implemented, but its offline GitOps desired-state workflow
-was inspired by [home-operations/flate](https://github.com/home-operations/flate)
-and the home-operations community.
+drydock is inspired by [Flate](https://github.com/home-operations/flate), a
+Flux resource inflator, and the home-operations community.
 
 Join the home-operations Discord at <https://discord.gg/home-operations>.
 
@@ -371,20 +332,24 @@ Join the home-operations Discord at <https://discord.gg/home-operations>.
 
 - [Documentation site](https://sholdee.github.io/drydock/): curated operator
   docs and full reference pages.
-- [Getting started](https://sholdee.github.io/drydock/getting-started/): first
-  local render test and comparison commands.
+- [Getting started](https://sholdee.github.io/drydock/getting-started/):
+  first local discovery, render test, and comparison commands.
 - [GitHub Actions](https://sholdee.github.io/drydock/workflows/github-actions/):
   setup action, PR action, comments, artifacts, and caches.
-- [CLI usage](https://sholdee.github.io/drydock/docs/usage/): command
-  workflows, outputs, diagnostics, and diff flags.
+- [Local diffs](https://sholdee.github.io/drydock/workflows/local-diffs/):
+  terminal manifest and image diff workflows.
 - [Compatibility](https://sholdee.github.io/drydock/compatibility/): supported
   Argo CD behavior and intentional runtime boundaries.
+- [Runtime Offline](https://sholdee.github.io/drydock/concepts/runtime-offline/):
+  what drydock does without live Argo CD or Kubernetes.
+- [Argo CD Render Parity](https://sholdee.github.io/drydock/concepts/argocd-render-parity/):
+  how covered render semantics are validated against real Argo CD.
 - [Plugin policy](https://sholdee.github.io/drydock/plugin-policy/): trusted
   policy engines, schema, CMP compatibility, and exec security.
 - [Source acquisition](https://sholdee.github.io/drydock/concepts/source-acquisition/):
   Git, Helm, remote Kustomize, cache, and auth behavior.
-- [Release notes](https://sholdee.github.io/drydock/docs/release/): release
-  and Argo CD dependency upgrade notes.
+- [Reference](https://sholdee.github.io/drydock/reference/): full command and
+  behavior reference.
 
 ## License
 
