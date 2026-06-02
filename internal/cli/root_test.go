@@ -33,6 +33,57 @@ func TestRootHelp(t *testing.T) {
 	}
 }
 
+func TestNonDiffLeafHelpOmitsDiffOnlyFlags(t *testing.T) {
+	for _, args := range [][]string{
+		{"test", "apps", "--help"},
+		{"get", "apps", "--help"},
+	} {
+		result := runCLI(t, args...)
+		assertStdoutExcludesAll(t, result,
+			"--path-orig",
+			"--changed-only",
+			"--strict-changed-only",
+			"--exit-code",
+			"--strip-attr",
+			"--unified",
+			"--show-ignored-fields",
+			"--color",
+			"--markdown-max-bytes",
+			"--raw-output-file",
+			"--ref-orig",
+		)
+	}
+}
+
+func TestSubcommandParentHelpOmitsOperationalFlags(t *testing.T) {
+	result := runCLI(t, "test", "--help")
+	assertStdoutExcludesAll(t, result,
+		"--path",
+		"--offline",
+		"--output",
+		"--path-orig",
+		"--changed-only",
+		"--exit-code",
+	)
+}
+
+func TestDiffAppsHelpIncludesDiffFlags(t *testing.T) {
+	result := runCLI(t, "diff", "apps", "--help")
+	assertStdoutContainsAll(t, result,
+		"--path-orig",
+		"--changed-only",
+		"--strict-changed-only",
+		"--exit-code",
+		"--strip-attr",
+		"--unified",
+		"--show-ignored-fields",
+		"--color",
+		"--markdown-max-bytes",
+		"--raw-output-file",
+		"--ref-orig",
+	)
+}
+
 func TestVersionCommand(t *testing.T) {
 	cmd := NewRootCommand(VersionInfo{
 		Version:            "test",

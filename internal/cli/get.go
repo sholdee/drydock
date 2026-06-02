@@ -17,7 +17,6 @@ import (
 )
 
 func newGetCommand(deps Dependencies) *cobra.Command {
-	flags := defaultCommonFlags()
 	cmd := &cobra.Command{
 		Use:   "get",
 		Short: "List discovered Argo CD objects",
@@ -26,7 +25,6 @@ func newGetCommand(deps Dependencies) *cobra.Command {
 			return fmt.Errorf("%s requires a subcommand", cmd.CommandPath())
 		},
 	}
-	bindCommonFlags(cmd, &flags)
 
 	appsFlags := defaultCommonFlags()
 	appsFlags.output = string(cliformat.OutputTable)

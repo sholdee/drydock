@@ -108,6 +108,16 @@ also skip PR comments by default. Set `cache-untrusted-restore: "true"` only if
 restoring cache contents into fork PR runs is acceptable for that repository.
 Cache save remains disabled for fork PRs.
 
+### Reporting and gating
+
+By default, `pr-action` fails render errors and reports manifest or image diffs
+through comments and artifacts without failing the workflow. To make diffs a
+gate, set `strict`, `strict-changed-only`, `fail-on-diff`, and optionally
+`fail-on-image-diff`.
+
+Keep `changed-only-include` and `changed-only-ignore` narrow; ignored paths
+cannot trigger Application renders.
+
 ## Authentication
 
 The action accepts either a normal token or GitHub App credentials:
