@@ -196,6 +196,83 @@ func TestDiffAppsMarkdownRawOutputFilePreservesUnifiedDiff(t *testing.T) {
 	}
 }
 
+func TestDiffAppsHTMLOutputFilePreservesSelectedStdout(t *testing.T) {
+	htmlPath := filepath.Join(t.TempDir(), "diff.html")
+	recorder := &recordingCLIOrchestrator{
+		diffAppsResult: app.DiffResult{
+			Results: []diff.Result{{
+				Parent: diff.Parent{Namespace: "argocd", Name: "demo"},
+				Resource: diff.Resource{
+					Kind:      "ConfigMap",
+					Namespace: "default",
+					Name:      "demo",
+				},
+				Change: diff.ChangeModified,
+				Diff:   sampleUnifiedDiffForCLI(),
+			}},
+		},
+	}
+
+	result := runCLIWithDependencies(t, Dependencies{Orchestrator: recorder}, "diff", "apps", "--path-orig", "left", "--path", "right", "-o", "markdown", "--html-output-file", htmlPath, "--exit-code=false")
+
+	assertStdoutContainsAll(t, result, "## drydock desired state diff", "```diff\n", "-  value: old", "+  value: new")
+	assertStdoutExcludesAll(t, result, "<!doctype html>", `data-view="side-by-side"`)
+	assertHTMLFileContainsAll(t, htmlPath,
+		"<!doctype html>",
+		"<title>drydock desired state diff</title>",
+		"argocd/demo",
+		"ConfigMap default/demo",
+		`data-view="side-by-side"`,
+	)
+}
+
+func TestDiffAppHTMLOutputFile(t *testing.T) {
+	htmlPath := filepath.Join(t.TempDir(), "diff.html")
+	recorder := &recordingCLIOrchestrator{
+		diffAppResult: app.DiffResult{
+			Results: []diff.Result{{
+				Parent: diff.Parent{Namespace: "argocd", Name: "demo"},
+				Resource: diff.Resource{
+					Kind:      "ConfigMap",
+					Namespace: "default",
+					Name:      "demo",
+				},
+				Change: diff.ChangeModified,
+				Diff:   sampleUnifiedDiffForCLI(),
+			}},
+		},
+	}
+
+	result := runCLIWithDependencies(t, Dependencies{Orchestrator: recorder}, "diff", "app", "demo", "--path-orig", "left", "--path", "right", "--html-output-file", htmlPath, "--exit-code=false")
+
+	assertStdoutContainsAll(t, result, "--- Application: argocd/demo source[0]", "-  value: old", "+  value: new")
+	assertStdoutExcludesAll(t, result, "<!doctype html>")
+	assertHTMLFileContainsAll(t, htmlPath, "ConfigMap default/demo")
+}
+
+func TestDiffAppsHTMLOutputFileWriteError(t *testing.T) {
+	htmlPath := t.TempDir()
+	recorder := &recordingCLIOrchestrator{
+		diffAppsResult: app.DiffResult{
+			Results: []diff.Result{{Diff: sampleUnifiedDiffForCLI()}},
+		},
+	}
+	cmd := NewRootCommandWithDependencies(VersionInfo{}, Dependencies{Orchestrator: recorder})
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	cmd.SetOut(&stdout)
+	cmd.SetErr(&stderr)
+	cmd.SetArgs([]string{"diff", "apps", "--path-orig", "left", "--path", "right", "--html-output-file", htmlPath, "--exit-code=false"})
+
+	err := cmd.Execute()
+	if err == nil {
+		t.Fatal("Execute() error = nil, want HTML output write error")
+	}
+	if !strings.Contains(err.Error(), "write HTML diff output") {
+		t.Fatalf("Execute() error = %v, want write HTML diff output", err)
+	}
+}
+
 func TestDiffAppsMarkdownRejectsInvalidMaxBytes(t *testing.T) {
 	for _, maxBytes := range []string{"-1", "1023"} {
 		t.Run(maxBytes, func(t *testing.T) {
@@ -1249,6 +1326,20 @@ func sampleUnifiedDiffForCLI() string {
 		" kind: ConfigMap\n" +
 		"-  value: old\n" +
 		"+  value: new\n"
+}
+
+func assertHTMLFileContainsAll(t *testing.T, path string, wants ...string) {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("ReadFile(%s) error = %v", path, err)
+	}
+	text := string(data)
+	for _, want := range wants {
+		if !strings.Contains(text, want) {
+			t.Fatalf("HTML output missing %q:\n%s", want, text)
+		}
+	}
 }
 
 func writeSimpleAppForCLI(t *testing.T, root, value string) {

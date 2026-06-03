@@ -235,12 +235,18 @@ outputs:
   diff-path:
     description: Local path to the rendered manifest diff file.
     value: ${{ steps.run.outputs.diff-path }}
+  diff-html-path:
+    description: Local path to the rendered manifest diff HTML file.
+    value: ${{ steps.run.outputs.diff-html-path }}
   images-path:
     description: Local path to the current-only image references file.
     value: ${{ steps.run.outputs.images-path }}
   diff-artifact-name:
     description: Rendered manifest diff artifact name.
     value: ${{ steps.run.outputs.diff-artifact-name }}
+  diff-html-artifact-name:
+    description: Rendered manifest diff HTML artifact name.
+    value: ${{ steps.run.outputs.diff-html-artifact-name }}
   image-artifact-name:
     description: Added image artifact name.
     value: ${{ steps.run.outputs.image-artifact-name }}
@@ -394,6 +400,7 @@ runs:
         DRYDOCK_BIN: ${{ inputs.install == 'true' && format('{0}/drydock', steps.setup.outputs.install-dir) || inputs.drydock-bin }}
         DRYDOCK_CACHE_PATH: ${{ steps.prepare.outputs.cache-path }}
         DRYDOCK_DIFF_ARTIFACT_NAME: ${{ steps.prepare.outputs.diff-artifact-name }}
+        DRYDOCK_DIFF_HTML_ARTIFACT_NAME: ${{ steps.prepare.outputs.diff-html-artifact-name }}
         DRYDOCK_IMAGE_ARTIFACT_NAME: ${{ steps.prepare.outputs.image-artifact-name }}
         DRYDOCK_INPUT_CHANGED_ONLY: ${{ inputs.changed-only }}
         DRYDOCK_INPUT_CHANGED_ONLY_INCLUDE: ${{ inputs.changed-only-include }}
@@ -445,6 +452,27 @@ runs:
         name: ${{ steps.run.outputs.diff-artifact-name }}
         path: ${{ steps.run.outputs.diff-path }}
         retention-days: ${{ inputs.artifact-retention-days }}
+
+    - name: Upload rendered manifest diff HTML
+      id: upload-diff-html
+      if: ${{ inputs.upload-artifacts == 'true' && steps.run.outputs.has-diff == 'true' }}
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      with:
+        path: ${{ steps.run.outputs.diff-html-path }}
+        retention-days: ${{ inputs.artifact-retention-days }}
+        if-no-files-found: error
+        archive: false
+
+    - name: Add rendered manifest diff HTML link
+      if: ${{ github.event_name == 'pull_request' && steps.prepare.outputs.trusted-context == 'true' && steps.run.outputs.diff-comment == 'true' && inputs.upload-artifacts == 'true' && steps.run.outputs.has-diff == 'true' }}
+      shell: bash
+      env:
+        DRYDOCK_DIFF_COMMENT_PATH: ${{ steps.run.outputs.diff-comment-path }}
+        DRYDOCK_DIFF_HTML_ARTIFACT_URL: ${{ steps.upload-diff-html.outputs.artifact-url }}
+      run: |
+        if [[ -n "${DRYDOCK_DIFF_HTML_ARTIFACT_URL}" ]]; then
+          printf '%s\n' "- [Full Diff Report](${DRYDOCK_DIFF_HTML_ARTIFACT_URL})" >> "${DRYDOCK_DIFF_COMMENT_PATH}"
+        fi
 
     - name: Comment rendered manifest diff
       if: ${{ github.event_name == 'pull_request' && steps.prepare.outputs.trusted-context == 'true' && steps.run.outputs.diff-comment == 'true' }}

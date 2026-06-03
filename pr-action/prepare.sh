@@ -92,6 +92,10 @@ diff_artifact_name="${DRYDOCK_INPUT_DIFF_ARTIFACT_NAME}"
 if [[ -z "${diff_artifact_name}" ]]; then
   diff_artifact_name="drydock-diff-${GITHUB_RUN_ID:-run}-${GITHUB_RUN_ATTEMPT:-1}"
 fi
+diff_html_artifact_name="${DRYDOCK_INPUT_DIFF_HTML_ARTIFACT_NAME:-}"
+if [[ -z "${diff_html_artifact_name}" ]]; then
+  diff_html_artifact_name="drydock-diff-${GITHUB_RUN_ID:-run}-${GITHUB_RUN_ATTEMPT:-1}.html"
+fi
 image_artifact_name="${DRYDOCK_INPUT_IMAGE_ARTIFACT_NAME}"
 if [[ -z "${image_artifact_name}" ]]; then
   image_artifact_name="drydock-images-${GITHUB_RUN_ID:-run}-${GITHUB_RUN_ATTEMPT:-1}"
@@ -105,6 +109,7 @@ fi
   echo "cache-save=${cache_save}"
   echo "trusted-context=${trusted_context}"
   echo "diff-artifact-name=${diff_artifact_name}"
+  echo "diff-html-artifact-name=${diff_html_artifact_name}"
   echo "image-artifact-name=${image_artifact_name}"
   echo "restore-keys<<EOF"
   printf '%s\n' "${restore_keys}"

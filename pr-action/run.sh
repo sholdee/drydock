@@ -169,22 +169,6 @@ diff_comment_budget() {
   printf '%s\n' "$((effective - reserve))"
 }
 
-append_diff_artifact_footer() {
-  local comment_file="$1"
-  local max_bytes=60000
-  local footer
-  footer="- Full diff output: [${DRYDOCK_DIFF_ARTIFACT_NAME} artifact](${run_url})."
-  local current footer_bytes
-  current="$(wc -c < "${comment_file}")"
-  footer_bytes="$(printf '\n%s\n' "${footer}" | wc -c)"
-  if [[ $((current + footer_bytes)) -le "${max_bytes}" ]]; then
-    {
-      echo
-      echo "${footer}"
-    } >> "${comment_file}"
-  fi
-}
-
 validate_diff_comment_size() {
   local comment_file="$1"
   local max_bytes=60000
@@ -292,10 +276,15 @@ cache_path="${DRYDOCK_CACHE_PATH:-}"
 if [[ -n "${cache_path}" ]]; then
   mkdir -p "${cache_path}/git" "${cache_path}/charts" "${cache_path}/remotes"
 fi
+diff_html_artifact_name="${DRYDOCK_DIFF_HTML_ARTIFACT_NAME:-}"
+if [[ -z "${diff_html_artifact_name}" ]]; then
+  diff_html_artifact_name="drydock-diff-${GITHUB_RUN_ID:-run}-${GITHUB_RUN_ATTEMPT:-1}.html"
+fi
 
 test_stdout="${work_dir}/test.out"
 test_stderr="${work_dir}/test.err"
 diff_path="${work_dir}/diff.txt"
+diff_html_path="${work_dir}/${diff_html_artifact_name}"
 diff_stderr="${work_dir}/diff.err"
 images_path="${work_dir}/added-images.txt"
 images_removed_path="${work_dir}/removed-images.txt"
@@ -376,6 +365,7 @@ if [[ "${DRYDOCK_INPUT_RUN_DIFF}" == "true" ]]; then
     -o markdown
     --markdown-max-bytes "$(diff_comment_budget "${DRYDOCK_INPUT_DIFF_MAX_BYTES}")"
     --raw-output-file "${diff_path}"
+    --html-output-file "${diff_html_path}"
     --exit-code=false
   )
   if ! capture_command "${diff_comment_path}" "${diff_stderr}" "${diff_args[@]}"; then
@@ -389,6 +379,7 @@ if [[ "${DRYDOCK_INPUT_RUN_DIFF}" == "true" ]]; then
   fi
 else
   : > "${diff_path}"
+  : > "${diff_html_path}"
   : > "${diff_comment_path}"
 fi
 
@@ -471,9 +462,6 @@ if [[ "${diff_comment}" == "true" ]]; then
       echo "No rendered manifest differences detected."
     } > "${diff_comment_path}"
   fi
-  if [[ "${has_diff}" == "true" && "${DRYDOCK_INPUT_UPLOAD_ARTIFACTS}" == "true" && -n "${run_url}" ]]; then
-    append_diff_artifact_footer "${diff_comment_path}"
-  fi
   validate_diff_comment_size "${diff_comment_path}"
 fi
 
@@ -534,12 +522,14 @@ fi
   echo "has-image-diff=${has_image_diff}"
   echo "render-status=${render_status}"
   echo "diff-path=${diff_path}"
+  echo "diff-html-path=${diff_html_path}"
   echo "images-path=${images_path}"
   echo "diff-comment-path=${diff_comment_path}"
   echo "images-comment-path=${images_comment_path}"
   echo "diff-comment=${diff_comment}"
   echo "images-comment=${images_comment}"
   echo "diff-artifact-name=${DRYDOCK_DIFF_ARTIFACT_NAME}"
+  echo "diff-html-artifact-name=${diff_html_artifact_name}"
   echo "image-artifact-name=${DRYDOCK_IMAGE_ARTIFACT_NAME}"
 } >> "${GITHUB_OUTPUT}"
 
