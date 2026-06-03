@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.1.12](https://github.com/sholdee/drydock/compare/v0.1.11...v0.1.12) (2026-06-03)
+
+
+### Features
+
+* add HTML diff artifact review UI ([#93](https://github.com/sholdee/drydock/issues/93)) ([b0ece3c](https://github.com/sholdee/drydock/commit/b0ece3cc18524b7fa40052e59dccd13443477a0b))
+
+
+### Miscellaneous Chores
+
+* **deps:** update actions/checkout action to v6.0.3 ([#85](https://github.com/sholdee/drydock/issues/85)) ([8842a65](https://github.com/sholdee/drydock/commit/8842a65abc1d6559b0694b8d058ceda008c60644))
+* **deps:** update dependency go to v1.26.4 ([#88](https://github.com/sholdee/drydock/issues/88)) ([0043ff6](https://github.com/sholdee/drydock/commit/0043ff628c6aac997a601718cfdbdbd7561d41cc))
+* **deps:** update dependency shinagawa-web/gomarklint to v3.2.3 ([#91](https://github.com/sholdee/drydock/issues/91)) ([332155c](https://github.com/sholdee/drydock/commit/332155c48422f8c0f19099cee8f0a175f42f6830))
+* **deps:** update go module directive to v1.26.4 ([#89](https://github.com/sholdee/drydock/issues/89)) ([e23e66a](https://github.com/sholdee/drydock/commit/e23e66aa2ee286ea107e95c37e5c56225ce074fc))
+* **deps:** update golang docker tag to v1.26.4 ([#90](https://github.com/sholdee/drydock/issues/90)) ([33094a0](https://github.com/sholdee/drydock/commit/33094a0e7542d6d70e1aeefffe43091f9fb2da89))
+* **deps:** update golang:1.26.4 docker digest to 68cb6d6 ([#92](https://github.com/sholdee/drydock/issues/92)) ([ea3c46c](https://github.com/sholdee/drydock/commit/ea3c46c38c982e77aad3436f352440cc53ece6ec))
+
 ## [0.1.11](https://github.com/sholdee/drydock/compare/v0.1.10...v0.1.11) (2026-06-02)
 
 
