@@ -116,13 +116,13 @@ func TestRunCommentsLinkWorkflowRunArtifactsWhenUploadEnabled(t *testing.T) {
 	})
 
 	diffComment := readFile(t, filepath.Join(workDir, "diff-comment.md"))
-	for _, want := range []string{
-		"Full diff output: [diff artifact](https://github.example.test/example/repo/actions/runs/12345).",
-		"~~~diff",
-	} {
+	for _, want := range []string{"~~~diff"} {
 		if !strings.Contains(diffComment, want) {
 			t.Fatalf("diff comment = %q, want %q", diffComment, want)
 		}
+	}
+	if strings.Contains(diffComment, "Full diff output") || strings.Contains(diffComment, "actions/runs/12345") {
+		t.Fatalf("diff comment contains raw artifact footer from run.sh:\n%s", diffComment)
 	}
 	if strings.Contains(diffComment, "Full output is available from the workflow artifacts") {
 		t.Fatalf("diff comment still has vague artifact text:\n%s", diffComment)
@@ -275,7 +275,7 @@ func TestRunDiffUsesMarkdownOutputAfterExtraDiffArgs(t *testing.T) {
 	})
 
 	args := readFile(t, filepath.Join(workDir, "drydock-args.txt"))
-	for _, want := range []string{"-o json", "--raw-output-file /tmp/ignored", "-o markdown", "--markdown-max-bytes 59488", "--raw-output-file " + filepath.Join(workDir, "diff.txt"), "--exit-code=false"} {
+	for _, want := range []string{"-o json", "--raw-output-file /tmp/ignored", "-o markdown", "--markdown-max-bytes 59488", "--raw-output-file " + filepath.Join(workDir, "diff.txt"), "--html-output-file " + filepath.Join(workDir, "diff.html"), "--exit-code=false"} {
 		if !strings.Contains(args, want) {
 			t.Fatalf("drydock args = %q, want %q", args, want)
 		}
@@ -290,6 +290,36 @@ func TestRunDiffUsesMarkdownOutputAfterExtraDiffArgs(t *testing.T) {
 	diffComment := readFile(t, filepath.Join(workDir, "diff-comment.md"))
 	if !strings.Contains(diffComment, "## drydock desired state diff") {
 		t.Fatalf("diff comment = %q, want markdown report", diffComment)
+	}
+	if strings.Contains(diffComment, "Full diff output") || strings.Contains(diffComment, "actions/runs/12345") {
+		t.Fatalf("diff comment contains raw artifact footer from run.sh:\n%s", diffComment)
+	}
+}
+
+func TestRunOutputsHTMLDiffArtifactPath(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell action tests require bash")
+	}
+
+	workDir := runCommentScenario(t, commentScenario{
+		diffOutput:                      true,
+		omitDiffHTMLArtifactNameFromEnv: true,
+	})
+
+	htmlPath := filepath.Join(workDir, "drydock-diff-run-1.html")
+	html := readFile(t, htmlPath)
+	if !strings.Contains(html, "<html><body>drydock diff</body></html>") {
+		t.Fatalf("diff.html = %q, want HTML diff artifact", html)
+	}
+
+	output := readFile(t, filepath.Join(filepath.Dir(workDir), "github-output"))
+	for _, want := range []string{
+		"diff-html-path=" + htmlPath,
+		"diff-html-artifact-name=drydock-diff-run-1.html",
+	} {
+		if !strings.Contains(output, want) {
+			t.Fatalf("GITHUB_OUTPUT = %q, want %q", output, want)
+		}
 	}
 }
 
@@ -475,21 +505,22 @@ func TestRunFallsBackToGenericImageCommentWhenLegacyJSONFails(t *testing.T) {
 }
 
 type commentScenario struct {
-	uploadArtifacts       bool
-	githubEnv             bool
-	commentEmpty          bool
-	commentMode           string
-	diffOutput            bool
-	imageOutput           bool
-	imageRemoved          bool
-	imageMarkdownDisabled bool
-	imageJSONDisabled     bool
-	skipImageDiff         bool
-	runTest               bool
-	extraDiffArgs         string
-	extraImageArgs        string
-	changedOnlyInclude    string
-	changedOnlyIgnore     string
+	uploadArtifacts                 bool
+	githubEnv                       bool
+	commentEmpty                    bool
+	commentMode                     string
+	diffOutput                      bool
+	imageOutput                     bool
+	imageRemoved                    bool
+	imageMarkdownDisabled           bool
+	imageJSONDisabled               bool
+	skipImageDiff                   bool
+	runTest                         bool
+	extraDiffArgs                   string
+	extraImageArgs                  string
+	changedOnlyInclude              string
+	changedOnlyIgnore               string
+	omitDiffHTMLArtifactNameFromEnv bool
 }
 
 func runCommentScenario(t *testing.T, scenario commentScenario) string {
@@ -525,6 +556,9 @@ func runCommentScenario(t *testing.T, scenario commentScenario) string {
 			"GITHUB_REPOSITORY=example/repo",
 			"GITHUB_RUN_ID=12345",
 		)
+	}
+	if scenario.omitDiffHTMLArtifactNameFromEnv {
+		env = withoutEnv(env, "DRYDOCK_DIFF_HTML_ARTIFACT_NAME")
 	}
 
 	cmd := exec.Command("bash", "run.sh")
@@ -573,11 +607,16 @@ fi
 if [[ "$*" == *"diff apps"* ]]; then
   `+diffOutput+`
   raw_output_file=""
+  html_output_file=""
   output="diff"
   while [[ "$#" -gt 0 ]]; do
     case "$1" in
       --raw-output-file)
         raw_output_file="$2"
+        shift 2
+        ;;
+      --html-output-file)
+        html_output_file="$2"
         shift 2
         ;;
       -o | --output)
@@ -595,6 +634,9 @@ if [[ "$*" == *"diff apps"* ]]; then
   done
   if [[ -n "${raw_output_file}" ]]; then
     printf '%s' "${diff_body:-}" > "${raw_output_file}"
+  fi
+  if [[ -n "${html_output_file}" ]]; then
+    printf '<html><body>drydock diff</body></html>\n' > "${html_output_file}"
   fi
   if [[ "${output}" == "markdown" ]]; then
     if [[ -n "${diff_body:-}" ]]; then
@@ -704,6 +746,18 @@ func boolString(value bool) string {
 	return "false"
 }
 
+func withoutEnv(env []string, key string) []string {
+	prefix := key + "="
+	filtered := env[:0]
+	for _, entry := range env {
+		if strings.HasPrefix(entry, prefix) {
+			continue
+		}
+		filtered = append(filtered, entry)
+	}
+	return filtered
+}
+
 func readFile(t *testing.T, path string) string {
 	t.Helper()
 
@@ -741,6 +795,7 @@ func defaultRunEnv(tmp, workDir, outputPath string) []string {
 		"DRYDOCK_BIN=drydock",
 		"DRYDOCK_CACHE_PATH=",
 		"DRYDOCK_DIFF_ARTIFACT_NAME=diff",
+		"DRYDOCK_DIFF_HTML_ARTIFACT_NAME=diff.html",
 		"DRYDOCK_IMAGE_ARTIFACT_NAME=images",
 		"DRYDOCK_INPUT_CHANGED_ONLY=",
 		"DRYDOCK_INPUT_CHANGED_ONLY_INCLUDE=",

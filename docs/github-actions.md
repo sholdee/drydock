@@ -99,8 +99,13 @@ By default the action:
 - writes image diff comments with drydock markdown output, including removed
   image references when present;
 - uses drydock source caches under the runner temp directory;
-- uploads full diff artifacts when differences are found;
+- uploads full raw diff and browser-openable HTML diff artifacts when manifest
+  differences are found;
 - writes sticky PR comments for trusted same-repository pull requests.
+
+The manifest diff comment links to the HTML diff report artifact when artifact
+upload is enabled. The raw unified diff artifact remains available for scripts
+and archival workflows.
 
 Fork pull requests do not restore or save drydock source caches by default,
 because source caches can contain private repository or chart material. They
@@ -201,5 +206,7 @@ passes them as arguments without `eval`, but they still change drydock behavior.
 | `has-image-diff` | Any image difference was detected, including removed-only diffs. |
 | `render-status` | `passed`, `failed`, or `skipped`. |
 | `diff-path` | Local path to the rendered manifest diff file. |
+| `diff-html-path` | Local path to the rendered manifest diff HTML report. |
 | `images-path` | Local path to the current-only image list. |
+| `diff-html-artifact-name` | Filename used for the rendered manifest diff HTML artifact. |
 | `trusted-context` | Whether cache save and PR comments were allowed. |

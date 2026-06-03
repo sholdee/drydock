@@ -245,6 +245,17 @@ function initSearch(form) {
     closeResults();
   };
 
+  const clearOrBlurSearch = () => {
+    if (input.value) {
+      clearSearch();
+      return;
+    }
+    closeResults();
+    if (document.activeElement === input) {
+      input.blur();
+    }
+  };
+
   const setActive = (nextIndex) => {
     const items = Array.from(resultsList.querySelectorAll("[role='option']"));
     if (items.length === 0) {
@@ -329,7 +340,7 @@ function initSearch(form) {
     }
     if (event.key === "Escape" && (document.activeElement === input || input.value || !panel.hidden)) {
       event.preventDefault();
-      clearSearch();
+      clearOrBlurSearch();
     }
   });
 
@@ -350,7 +361,8 @@ function initSearch(form) {
     const items = Array.from(resultsList.querySelectorAll("[role='option'] a"));
     if (event.key === "Escape") {
       event.preventDefault();
-      clearSearch();
+      event.stopPropagation();
+      clearOrBlurSearch();
       return;
     }
     if (event.key === "ArrowDown" && items.length > 0) {
