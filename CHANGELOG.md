@@ -1,5 +1,23 @@
 # Changelog
 
+## [0.1.13](https://github.com/sholdee/drydock/compare/v0.1.12...v0.1.13) (2026-06-04)
+
+
+### Features
+
+* refine full rendered diff view ([6218029](https://github.com/sholdee/drydock/commit/6218029b87e1c4942c7fa0539580f512370c4a83))
+
+
+### Bug Fixes
+
+* align rendered diff artifact action metadata ([bf77135](https://github.com/sholdee/drydock/commit/bf77135ca9c34d6c991562438d57bbb26e7e906b))
+
+
+### Documentation
+
+* document full rendered diff view workflow ([41d96c0](https://github.com/sholdee/drydock/commit/41d96c03eb17d00af46b0c7e74e9dca6b5be54f7))
+* document full rendered diff workflow ([08a4b46](https://github.com/sholdee/drydock/commit/08a4b46df19bf4357f3d53a4340d9057bdc7697d))
+
 ## [0.1.12](https://github.com/sholdee/drydock/compare/v0.1.11...v0.1.12) (2026-06-03)
 
 
