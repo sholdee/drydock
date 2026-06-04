@@ -3,6 +3,7 @@ package plugincontainer
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"os"
@@ -259,6 +260,292 @@ func TestDefaultRunnerRejectsCredentialBearingArguments(t *testing.T) {
 	}
 }
 
+func TestDefaultRunnerAddsDeterministicCacheMountArgsAfterWorkMount(t *testing.T) {
+	source := t.TempDir()
+	cacheRoot := filepath.Join(t.TempDir(), "plugin-cache")
+	fingerprint := strings.Repeat("a", 64)
+	process := &recordingProcessRunner{}
+	config := basicContainerConfig()
+	config.CacheMounts = []pluginpolicy.ContainerCacheMount{
+		{Name: "z-cache", Target: "/drydock-cache/z"},
+		{Name: "a-cache", Target: "/drydock-cache/a"},
+	}
+
+	_, err := (DefaultRunner{ProcessRunner: process, DockerPath: "/usr/bin/docker"}).Run(context.Background(), Request{
+		SourceDir:         source,
+		PluginName:        "team/plugin",
+		PolicyFingerprint: fingerprint,
+		Config:            config,
+		CacheRoot:         cacheRoot,
+	})
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if len(process.requests) != 1 {
+		t.Fatalf("process requests = %d, want 1", len(process.requests))
+	}
+	args := process.requests[0].Args
+	mounts := mountArgs(args)
+	if len(mounts) != 3 {
+		t.Fatalf("mounts = %#v, want work plus two cache mounts", mounts)
+	}
+	if !strings.Contains(mounts[0], "dst=/work") {
+		t.Fatalf("first mount = %q, want /work", mounts[0])
+	}
+	pluginHash := sha256Hex("team/plugin")
+	wantA := filepath.Join(cacheRoot, fingerprint, pluginHash, "a-cache")
+	wantZ := filepath.Join(cacheRoot, fingerprint, pluginHash, "z-cache")
+	if mounts[1] != "type=bind,src="+wantA+",target=/drydock-cache/a" {
+		t.Fatalf("second mount = %q, want a-cache bind", mounts[1])
+	}
+	if mounts[2] != "type=bind,src="+wantZ+",target=/drydock-cache/z" {
+		t.Fatalf("third mount = %q, want z-cache bind", mounts[2])
+	}
+	if indexOfArg(args, "--workdir") < indexOfMount(args, mounts[2]) {
+		t.Fatalf("args = %#v, want cache mounts before --workdir", args)
+	}
+	if strings.Contains(strings.Join(mounts, "\x00"), "team/plugin") {
+		t.Fatalf("cache mount used raw plugin name: %#v", mounts)
+	}
+	metadata := readCacheMetadata(t, wantA)
+	if metadata.PolicyFingerprint != fingerprint || metadata.PluginNameSHA256 != pluginHash || metadata.CacheName != "a-cache" || metadata.Target != "/drydock-cache/a" {
+		t.Fatalf("metadata = %#v, want cache identity", metadata)
+	}
+	if mode := statMode(t, wantA); mode != 0o700 {
+		t.Fatalf("cache directory mode = %o, want 700", mode)
+	}
+	if _, err := os.Stat(filepath.Join(wantA, containerCacheLockSuffix)); !os.IsNotExist(err) {
+		t.Fatalf("cache lock stat = %v, want lock outside mounted cache directory", err)
+	}
+	if _, err := os.Stat(containerCacheLockPath(wantA)); err != nil {
+		t.Fatalf("cache lock stat = %v, want sibling lock file", err)
+	}
+}
+
+func TestDefaultRunnerUsesDefaultUserCacheRootForCacheMounts(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CACHE_HOME", filepath.Join(home, "xdg-cache"))
+	userCacheDir, err := os.UserCacheDir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	source := t.TempDir()
+	fingerprint := strings.Repeat("0", 64)
+	config := basicContainerConfig()
+	config.CacheMounts = []pluginpolicy.ContainerCacheMount{{Name: "tool-cache", Target: "/drydock-cache/tool"}}
+
+	_, err = (DefaultRunner{ProcessRunner: &recordingProcessRunner{}, DockerPath: "/usr/bin/docker"}).Run(context.Background(), Request{
+		SourceDir:         source,
+		PluginName:        "plugin",
+		PolicyFingerprint: fingerprint,
+		Config:            config,
+	})
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	want := filepath.Join(userCacheDir, "drydock", "plugin-cache", fingerprint, sha256Hex("plugin"), "tool-cache")
+	if _, err := os.Stat(want); err != nil {
+		t.Fatalf("default cache dir stat = %v, want %s", err, want)
+	}
+}
+
+func TestDefaultRunnerRejectsOfflineDefaultNetworkBeforeCacheCreation(t *testing.T) {
+	source := t.TempDir()
+	cacheRoot := filepath.Join(t.TempDir(), "plugin-cache")
+	config := basicContainerConfig()
+	config.Network = pluginpolicy.ContainerNetworkDefault
+	config.CacheMounts = []pluginpolicy.ContainerCacheMount{{Name: "tool-cache", Target: "/drydock-cache/tool"}}
+
+	_, err := (DefaultRunner{ProcessRunner: &recordingProcessRunner{}, DockerPath: "/usr/bin/docker"}).Run(context.Background(), Request{
+		SourceDir:         source,
+		PluginName:        "plugin",
+		PolicyFingerprint: strings.Repeat("b", 64),
+		Config:            config,
+		Offline:           true,
+		CacheRoot:         cacheRoot,
+	})
+	if err == nil || !strings.Contains(err.Error(), "network default") {
+		t.Fatalf("Run() error = %v, want network default rejection", err)
+	}
+	if _, statErr := os.Stat(cacheRoot); !os.IsNotExist(statErr) {
+		t.Fatalf("cache root stat = %v, want not created", statErr)
+	}
+}
+
+func TestDefaultRunnerRejectsCacheInsideProtectedRootBeforeCreation(t *testing.T) {
+	source := t.TempDir()
+	protected := t.TempDir()
+	cacheRoot := filepath.Join(protected, "plugin-cache")
+	config := basicContainerConfig()
+	config.CacheMounts = []pluginpolicy.ContainerCacheMount{{Name: "tool-cache", Target: "/drydock-cache/tool"}}
+
+	_, err := (DefaultRunner{ProcessRunner: &recordingProcessRunner{}, DockerPath: "/usr/bin/docker"}).Run(context.Background(), Request{
+		SourceDir:         source,
+		PluginName:        "plugin",
+		PolicyFingerprint: strings.Repeat("c", 64),
+		Config:            config,
+		ForbiddenRoots:    []string{protected},
+		CacheRoot:         cacheRoot,
+	})
+	if err == nil || !strings.Contains(err.Error(), "protected root") {
+		t.Fatalf("Run() error = %v, want protected root rejection", err)
+	}
+	if _, statErr := os.Stat(cacheRoot); !os.IsNotExist(statErr) {
+		t.Fatalf("cache root stat = %v, want not created", statErr)
+	}
+}
+
+func TestDefaultRunnerRejectsFinalCacheDirectorySymlink(t *testing.T) {
+	source := t.TempDir()
+	cacheRoot := filepath.Join(t.TempDir(), "plugin-cache")
+	fingerprint := strings.Repeat("d", 64)
+	finalDir := filepath.Join(cacheRoot, fingerprint, sha256Hex("plugin"), "tool-cache")
+	if err := os.MkdirAll(filepath.Dir(finalDir), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	target := t.TempDir()
+	if err := os.Symlink(target, finalDir); err != nil {
+		t.Fatal(err)
+	}
+	config := basicContainerConfig()
+	config.CacheMounts = []pluginpolicy.ContainerCacheMount{{Name: "tool-cache", Target: "/drydock-cache/tool"}}
+
+	_, err := (DefaultRunner{ProcessRunner: &recordingProcessRunner{}, DockerPath: "/usr/bin/docker"}).Run(context.Background(), Request{
+		SourceDir:         source,
+		PluginName:        "plugin",
+		PolicyFingerprint: fingerprint,
+		Config:            config,
+		CacheRoot:         cacheRoot,
+	})
+	if err == nil || !strings.Contains(err.Error(), "symlink") {
+		t.Fatalf("Run() error = %v, want symlink rejection", err)
+	}
+}
+
+func TestValidateContainerCacheMountsForDockerRechecksPreparedSource(t *testing.T) {
+	cacheRoot := filepath.Join(t.TempDir(), "plugin-cache")
+	protected := t.TempDir()
+	fingerprint := strings.Repeat("1", 64)
+	config := basicContainerConfig()
+	config.CacheMounts = []pluginpolicy.ContainerCacheMount{{Name: "tool-cache", Target: "/drydock-cache/tool"}}
+	mounts, release, err := prepareContainerCacheMounts(context.Background(), Request{
+		SourceDir:         t.TempDir(),
+		PluginName:        "plugin",
+		PolicyFingerprint: fingerprint,
+		Config:            config,
+		CacheRoot:         cacheRoot,
+	})
+	if err != nil {
+		t.Fatalf("prepareContainerCacheMounts() error = %v", err)
+	}
+	defer release()
+	if len(mounts) != 1 {
+		t.Fatalf("mounts = %#v, want one mount", mounts)
+	}
+	if err := os.RemoveAll(mounts[0].Source); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(protected, mounts[0].Source); err != nil {
+		t.Fatal(err)
+	}
+
+	err = validateContainerCacheMountsForDocker(mounts, []string{protected})
+	if err == nil || !strings.Contains(err.Error(), "symlink") {
+		t.Fatalf("validateContainerCacheMountsForDocker() error = %v, want symlink recheck", err)
+	}
+}
+
+func TestDefaultRunnerRejectsCacheMetadataMismatch(t *testing.T) {
+	source := t.TempDir()
+	cacheRoot := filepath.Join(t.TempDir(), "plugin-cache")
+	fingerprint := strings.Repeat("e", 64)
+	finalDir := filepath.Join(cacheRoot, fingerprint, sha256Hex("plugin"), "tool-cache")
+	if err := os.MkdirAll(finalDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeContainerCacheMetadata(filepath.Join(finalDir, containerCacheMetadataFile), containerCacheMetadata{
+		Version:           containerCacheMetadataV1,
+		PolicyFingerprint: fingerprint,
+		PluginNameSHA256:  sha256Hex("other-plugin"),
+		CacheName:         "tool-cache",
+		Target:            "/drydock-cache/tool",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	config := basicContainerConfig()
+	config.CacheMounts = []pluginpolicy.ContainerCacheMount{{Name: "tool-cache", Target: "/drydock-cache/tool"}}
+
+	_, err := (DefaultRunner{ProcessRunner: &recordingProcessRunner{}, DockerPath: "/usr/bin/docker"}).Run(context.Background(), Request{
+		SourceDir:         source,
+		PluginName:        "plugin",
+		PolicyFingerprint: fingerprint,
+		Config:            config,
+		CacheRoot:         cacheRoot,
+	})
+	if err == nil || !strings.Contains(err.Error(), "metadata mismatch") {
+		t.Fatalf("Run() error = %v, want metadata mismatch", err)
+	}
+}
+
+func TestDefaultRunnerRejectsExistingCacheDirectoryMissingMetadata(t *testing.T) {
+	source := t.TempDir()
+	cacheRoot := filepath.Join(t.TempDir(), "plugin-cache")
+	fingerprint := strings.Repeat("e", 64)
+	finalDir := filepath.Join(cacheRoot, fingerprint, sha256Hex("plugin"), "tool-cache")
+	if err := os.MkdirAll(finalDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	config := basicContainerConfig()
+	config.CacheMounts = []pluginpolicy.ContainerCacheMount{{Name: "tool-cache", Target: "/drydock-cache/tool"}}
+
+	_, err := (DefaultRunner{ProcessRunner: &recordingProcessRunner{}, DockerPath: "/usr/bin/docker"}).Run(context.Background(), Request{
+		SourceDir:         source,
+		PluginName:        "plugin",
+		PolicyFingerprint: fingerprint,
+		Config:            config,
+		CacheRoot:         cacheRoot,
+	})
+	if err == nil || !strings.Contains(err.Error(), "missing metadata") {
+		t.Fatalf("Run() error = %v, want missing metadata", err)
+	}
+}
+
+func TestDefaultRunnerHoldsCacheLockDuringContainerLifecycle(t *testing.T) {
+	source := t.TempDir()
+	cacheRoot := filepath.Join(t.TempDir(), "plugin-cache")
+	fingerprint := strings.Repeat("f", 64)
+	finalDir := filepath.Join(cacheRoot, fingerprint, sha256Hex("plugin"), "tool-cache")
+	process := &recordingProcessRunner{
+		onRun: func() error {
+			ctx, cancel := context.WithTimeout(context.Background(), 75*time.Millisecond)
+			defer cancel()
+			lock, err := lockContainerCacheDirectory(ctx, finalDir)
+			if err == nil {
+				lock.Close()
+				return errors.New("cache lock was available during container run")
+			}
+			if !strings.Contains(err.Error(), "context deadline exceeded") {
+				return err
+			}
+			return nil
+		},
+	}
+	config := basicContainerConfig()
+	config.CacheMounts = []pluginpolicy.ContainerCacheMount{{Name: "tool-cache", Target: "/drydock-cache/tool"}}
+
+	_, err := (DefaultRunner{ProcessRunner: process, DockerPath: "/usr/bin/docker"}).Run(context.Background(), Request{
+		SourceDir:         source,
+		PluginName:        "plugin",
+		PolicyFingerprint: fingerprint,
+		Config:            config,
+		CacheRoot:         cacheRoot,
+	})
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+}
+
 type recordingProcessRunner struct {
 	requests              []ProcessRequest
 	stdout                []byte
@@ -269,10 +556,14 @@ type recordingProcessRunner struct {
 	cidFileAlreadyExist   bool
 	dockerConfigHadConfig bool
 	envFileData           []byte
+	onRun                 func() error
 }
 
 func (r *recordingProcessRunner) Run(_ context.Context, request ProcessRequest) error {
 	r.requests = append(r.requests, cloneProcessRequest(request))
+	if r.onRun != nil {
+		return r.onRun()
+	}
 	if dockerConfig := envMap(request.Env)["DOCKER_CONFIG"]; dockerConfig != "" {
 		if _, err := os.Stat(filepath.Join(dockerConfig, "config.json")); err == nil {
 			r.dockerConfigHadConfig = true
@@ -355,6 +646,56 @@ func mountSrc(t *testing.T, args []string) string {
 	}
 	t.Fatalf("mount = %q, missing src", value)
 	return ""
+}
+
+func mountArgs(args []string) []string {
+	var mounts []string
+	for index := 0; index+1 < len(args); index++ {
+		if args[index] == "--mount" {
+			mounts = append(mounts, args[index+1])
+		}
+	}
+	return mounts
+}
+
+func indexOfArg(args []string, arg string) int {
+	for index, value := range args {
+		if value == arg {
+			return index
+		}
+	}
+	return -1
+}
+
+func indexOfMount(args []string, mount string) int {
+	for index := 0; index+1 < len(args); index++ {
+		if args[index] == "--mount" && args[index+1] == mount {
+			return index
+		}
+	}
+	return -1
+}
+
+func readCacheMetadata(t *testing.T, dir string) containerCacheMetadata {
+	t.Helper()
+	data, err := os.ReadFile(filepath.Join(dir, containerCacheMetadataFile))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var metadata containerCacheMetadata
+	if err := json.Unmarshal(data, &metadata); err != nil {
+		t.Fatal(err)
+	}
+	return metadata
+}
+
+func statMode(t *testing.T, path string) os.FileMode {
+	t.Helper()
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return info.Mode().Perm()
 }
 
 func TestDefaultRunnerReportsProcessExit(t *testing.T) {

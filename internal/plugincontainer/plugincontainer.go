@@ -34,14 +34,18 @@ type DefaultRunner struct {
 }
 
 type Request struct {
-	SourceDir       string
-	RepositoryDir   string
-	SourceRelPath   string
-	Config          pluginpolicy.ContainerConfig
-	Offline         bool
-	EnvLookup       func(string) (string, bool)
-	ExtraEnv        []string
-	SensitiveValues []string
+	SourceDir         string
+	RepositoryDir     string
+	SourceRelPath     string
+	PluginName        string
+	PolicyFingerprint string
+	Config            pluginpolicy.ContainerConfig
+	Offline           bool
+	ForbiddenRoots    []string
+	CacheRoot         string
+	EnvLookup         func(string) (string, bool)
+	ExtraEnv          []string
+	SensitiveValues   []string
 }
 
 type ProcessRequest struct {
@@ -53,6 +57,11 @@ type ProcessRequest struct {
 	Stdin   io.Reader
 	Stdout  io.Writer
 	Stderr  io.Writer
+}
+
+type containerCacheMount struct {
+	Source string
+	Target string
 }
 
 func (r DefaultRunner) Run(ctx context.Context, request Request) (pluginexec.Result, error) {
@@ -72,6 +81,11 @@ func runWithProcess(ctx context.Context, request Request, processRunner ProcessR
 	if request.Offline && request.Config.Network == pluginpolicy.ContainerNetworkDefault {
 		return pluginexec.Result{}, &pluginexec.Error{Reason: "container network default is not allowed when offline"}
 	}
+	cacheMounts, releaseCacheMounts, err := prepareContainerCacheMounts(ctx, request)
+	if err != nil {
+		return pluginexec.Result{}, &pluginexec.Error{Reason: "invalid container cache mounts", Err: err}
+	}
+	defer releaseCacheMounts()
 	dockerClientConfigDir, cleanupDockerClientConfig, err := prepareDockerClientConfig(request)
 	if err != nil {
 		return pluginexec.Result{}, err
@@ -94,7 +108,7 @@ func runWithProcess(ctx context.Context, request Request, processRunner ProcessR
 	if err != nil {
 		return pluginexec.Result{}, err
 	}
-	return runContainerLifecycle(ctx, request, processRunner, dockerPath, workspace, dockerEnv, containerEnv)
+	return runContainerLifecycle(ctx, request, processRunner, dockerPath, workspace, cacheMounts, dockerEnv, containerEnv)
 }
 
 func prepareDockerClientConfig(request Request) (string, func(), error) {
@@ -120,23 +134,23 @@ func containerProcessEnv(request Request, dockerClientConfigDir string) ([]strin
 	return containerEnv, dockerEnv, nil
 }
 
-func runContainerLifecycle(ctx context.Context, request Request, processRunner ProcessRunner, dockerPath string, workspace pluginexec.Workspace, dockerEnv, containerEnv []string) (pluginexec.Result, error) {
+func runContainerLifecycle(ctx context.Context, request Request, processRunner ProcessRunner, dockerPath string, workspace pluginexec.Workspace, cacheMounts []containerCacheMount, dockerEnv, containerEnv []string) (pluginexec.Result, error) {
 	var executions []pluginexec.Execution
 	if request.Config.Lifecycle.Init != nil {
-		result, err := runConfiguredContainerCommand(ctx, processRunner, dockerPath, "init", *request.Config.Lifecycle.Init, nil, workspace, request.Config, request.Offline, dockerEnv, containerEnv)
+		result, err := runConfiguredContainerCommand(ctx, processRunner, dockerPath, "init", *request.Config.Lifecycle.Init, nil, workspace, request.Config, cacheMounts, request.ForbiddenRoots, request.Offline, dockerEnv, containerEnv)
 		if err != nil {
 			return pluginexec.Result{}, err
 		}
 		executions = append(executions, result.Execution)
 	}
-	result, err := runConfiguredContainerCommand(ctx, processRunner, dockerPath, "generate", request.Config.Lifecycle.Generate, nil, workspace, request.Config, request.Offline, dockerEnv, containerEnv)
+	result, err := runConfiguredContainerCommand(ctx, processRunner, dockerPath, "generate", request.Config.Lifecycle.Generate, nil, workspace, request.Config, cacheMounts, request.ForbiddenRoots, request.Offline, dockerEnv, containerEnv)
 	if err != nil {
 		return pluginexec.Result{}, err
 	}
 	stdout := result.Stdout
 	executions = append(executions, result.Execution)
 	for index, command := range request.Config.Lifecycle.PostRenderers {
-		result, err := runConfiguredContainerCommand(ctx, processRunner, dockerPath, fmt.Sprintf("post-renderer %d", index), command, stdout, workspace, request.Config, request.Offline, dockerEnv, containerEnv)
+		result, err := runConfiguredContainerCommand(ctx, processRunner, dockerPath, fmt.Sprintf("post-renderer %d", index), command, stdout, workspace, request.Config, cacheMounts, request.ForbiddenRoots, request.Offline, dockerEnv, containerEnv)
 		if err != nil {
 			return pluginexec.Result{}, err
 		}
@@ -160,6 +174,8 @@ func runConfiguredContainerCommand(
 	stdin []byte,
 	workspace pluginexec.Workspace,
 	config pluginpolicy.ContainerConfig,
+	cacheMounts []containerCacheMount,
+	forbiddenRoots []string,
 	offline bool,
 	dockerEnv []string,
 	containerEnv []string,
@@ -183,7 +199,10 @@ func runConfiguredContainerCommand(
 	}
 	stdout := &limitBuffer{limit: config.Lifecycle.Output.MaxStdoutBytes}
 	stderr := &limitBuffer{limit: config.Lifecycle.Output.MaxStderrBytes}
-	args := dockerRunArgs(config, workspace, offline, envFile, cidFile, command.Command)
+	if err := validateContainerCacheMountsForDocker(cacheMounts, forbiddenRoots); err != nil {
+		return commandResult{}, &pluginexec.Error{Phase: phase, Command: safeCommandName(command.Command), Reason: "invalid container cache mounts", Err: err}
+	}
+	args := dockerRunArgs(config, workspace, cacheMounts, offline, envFile, cidFile, command.Command)
 	started := time.Now()
 	err = processRunner.Run(ctx, ProcessRequest{
 		Path:    docker,
@@ -225,7 +244,7 @@ func runConfiguredContainerCommand(
 	return commandResult{Stdout: stdout.Bytes(), Execution: execution}, nil
 }
 
-func dockerRunArgs(config pluginpolicy.ContainerConfig, workspace pluginexec.Workspace, offline bool, envFile string, cidFile string, command []string) []string {
+func dockerRunArgs(config pluginpolicy.ContainerConfig, workspace pluginexec.Workspace, cacheMounts []containerCacheMount, offline bool, envFile string, cidFile string, command []string) []string {
 	network := string(config.Network)
 	if network == "" {
 		network = string(pluginpolicy.DefaultContainerNetwork)
@@ -237,8 +256,11 @@ func dockerRunArgs(config pluginpolicy.ContainerConfig, workspace pluginexec.Wor
 		"--cidfile", cidFile,
 		"--network", network,
 		"--mount", "type=bind,src=" + workspace.ArgumentRoot + ",dst=" + workMount,
-		"--workdir", containerWorkdir(workspace),
 	}
+	for _, mount := range cacheMounts {
+		args = append(args, "--mount", "type=bind,src="+mount.Source+",target="+mount.Target)
+	}
+	args = append(args, "--workdir", containerWorkdir(workspace))
 	if offline {
 		args = append(args, "--pull", "never")
 	}
