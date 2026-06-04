@@ -313,13 +313,16 @@ func (p localProvider) renderContainerPolicyPluginSource(ctx context.Context, so
 		extraEnv = append(extraEnv, "DRYDOCK_OFFLINE=true")
 	}
 	result, err := p.pluginContainerRunner.Run(ctx, plugincontainer.Request{
-		SourceDir:       sourceDir,
-		RepositoryDir:   source.RepoRoot,
-		SourceRelPath:   sourcePath,
-		Config:          containerConfig,
-		Offline:         p.offline,
-		ExtraEnv:        extraEnv,
-		SensitiveValues: sensitive,
+		SourceDir:         sourceDir,
+		RepositoryDir:     source.RepoRoot,
+		SourceRelPath:     sourcePath,
+		PluginName:        name,
+		PolicyFingerprint: p.pluginPolicyFingerprint,
+		Config:            containerConfig,
+		Offline:           p.offline,
+		ForbiddenRoots:    p.execProtectedRoots(source.RepoRoot),
+		ExtraEnv:          extraEnv,
+		SensitiveValues:   sensitive,
 	})
 	if err != nil {
 		if ctxErr := ctx.Err(); ctxErr != nil {

@@ -92,7 +92,13 @@ type fingerprintContainerConfig struct {
 	Image                string                     `json:"image"`
 	AllowMutableImageTag bool                       `json:"allowMutableImageTag"`
 	Network              ContainerNetwork           `json:"network"`
+	CacheMounts          []fingerprintCacheMount    `json:"cacheMounts,omitempty"`
 	Lifecycle            fingerprintLifecycleConfig `json:"lifecycle"`
+}
+
+type fingerprintCacheMount struct {
+	Name   string `json:"name"`
+	Target string `json:"target"`
 }
 
 func newFingerprintPlugin(plugin Plugin) (fingerprintPlugin, error) {
@@ -121,12 +127,27 @@ func newFingerprintPlugin(plugin Plugin) (fingerprintPlugin, error) {
 			Image:                plugin.Container.Image,
 			AllowMutableImageTag: plugin.Container.AllowMutableImageTag,
 			Network:              plugin.Container.Network,
+			CacheMounts:          newFingerprintContainerCacheMounts(plugin.Container.CacheMounts),
 			Lifecycle:            *newFingerprintLifecycleConfig(&plugin.Container.Lifecycle),
 		}
 	default:
 		return fingerprintPlugin{}, fmt.Errorf("unsupported engine %q", plugin.Engine)
 	}
 	return out, nil
+}
+
+func newFingerprintContainerCacheMounts(input []ContainerCacheMount) []fingerprintCacheMount {
+	if len(input) == 0 {
+		return nil
+	}
+	out := make([]fingerprintCacheMount, 0, len(input))
+	for _, mount := range input {
+		out = append(out, fingerprintCacheMount(mount))
+	}
+	sort.Slice(out, func(i, j int) bool {
+		return out[i].Name < out[j].Name
+	})
+	return out
 }
 
 func newFingerprintLifecycleConfig(config *ExecConfig) *fingerprintLifecycleConfig {

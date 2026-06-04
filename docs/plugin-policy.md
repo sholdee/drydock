@@ -262,6 +262,7 @@ Plugin entry fields:
 | `image` | Yes | None | Fully qualified image reference. Digest required unless `allowMutableImageTag: true`. |
 | `allowMutableImageTag` | No | `false` | Allows tag-only image references for local/trusted workflows. |
 | `network` | No | `none` | `none` or `default`. `default` is rejected when `--offline` is set. |
+| `cacheMounts` | No | `[]` | Policy-managed durable cache mounts under reserved container paths below `/drydock-cache`. |
 
 Command fields:
 
@@ -344,6 +345,14 @@ remote Docker client configuration such as non-local `DOCKER_HOST`,
 `DOCKER_CONTEXT`, `DOCKER_CONFIG`, `DOCKER_TLS_VERIFY`, or
 `DOCKER_CERT_PATH`. Timed-out or canceled container commands are removed with
 `docker rm -f` when a container ID is available.
+
+Container `cacheMounts` let trusted plugins keep durable tool caches without
+granting policy authors a host path escape hatch. Each entry names a cache and
+chooses only a container target path under reserved `/drydock-cache`, not
+`/drydock-cache` itself. drydock selects the host cache directory under its user
+cache root and scopes it by policy fingerprint, plugin name, and cache name.
+Targets cannot overlap `/work`, contain traversal, commas, control characters,
+backslashes, duplicate paths, or ancestor/descendant overlaps.
 
 For `engine: exec`, the command environment starts with only drydock's
 controlled `PATH`. `env.allow` names additional caller environment variables
@@ -518,10 +527,13 @@ plugins:
       include:
         - packages/**
         - personal-cluster/**
+    cacheMounts:
+      - name: pkl-cache
+        target: /drydock-cache/pkl-cache
     init:
-      command: ["pkl", "project", "resolve", "--cache-dir", ".drydock-pkl-cache"]
+      command: ["pkl", "project", "resolve", "--cache-dir", "/drydock-cache/pkl-cache"]
     generate:
-      command: ["pkl", "eval", "--cache-dir", ".drydock-pkl-cache", "{{param:path}}"]
+      command: ["pkl", "eval", "--cache-dir", "/drydock-cache/pkl-cache", "{{param:path}}"]
     parameters:
       allow:
         - name: path

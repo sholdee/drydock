@@ -31,11 +31,13 @@ const (
 	DefaultMaxStderrBytes      = int64(64 * 1024)
 	DefaultContainerRuntime    = ContainerRuntimeDocker
 	DefaultContainerNetwork    = ContainerNetworkNone
+	ContainerCacheTargetRoot   = "/drydock-cache"
 
 	maxEnvAllowCount = 64
 
-	maxExecParameterAllowCount = 64
-	maxExecCopyIncludeCount    = 64
+	maxExecParameterAllowCount  = 64
+	maxExecCopyIncludeCount     = 64
+	maxContainerCacheMountCount = 16
 )
 
 type Engine string
@@ -182,7 +184,13 @@ type ContainerConfig struct {
 	Image                string
 	AllowMutableImageTag bool
 	Network              ContainerNetwork
+	CacheMounts          []ContainerCacheMount
 	Lifecycle            ExecConfig
+}
+
+type ContainerCacheMount struct {
+	Name   string
+	Target string
 }
 
 func Parse(path string, data []byte) (Policy, error) {
