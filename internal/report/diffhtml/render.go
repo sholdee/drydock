@@ -16,7 +16,17 @@ import (
 const defaultTitle = "drydock desired state diff"
 
 type Options struct {
-	Title string
+	Title           string
+	DefaultResource DefaultResourceSelector
+}
+
+type DefaultResourceSelector struct {
+	ParentNamespace string
+	ParentName      string
+	Group           string
+	Kind            string
+	Namespace       string
+	Name            string
 }
 
 type appGroup struct {
@@ -39,6 +49,7 @@ func Render(result app.DiffResult, options Options) ([]byte, error) {
 
 	groups := groupedResults(result.Results)
 	added, removed := totalLineChanges(groups)
+	defaultResourceID := selectDefaultResourceID(groups, options.DefaultResource)
 
 	var builder bytes.Buffer
 	builder.WriteString("<!doctype html>\n<html lang=\"en\">\n<head>\n<meta charset=\"utf-8\">\n")
@@ -46,7 +57,8 @@ func Render(result app.DiffResult, options Options) ([]byte, error) {
 	fmt.Fprintf(&builder, "<link rel=\"icon\" type=\"image/svg+xml\" href=\"%s\">\n", drydockFaviconHref)
 	builder.WriteString("<style>")
 	builder.WriteString(reviewStyles)
-	builder.WriteString("</style>\n</head>\n<body data-view=\"side-by-side\">\n")
+	builder.WriteString("</style>\n</head>\n")
+	renderBodyOpen(&builder, defaultResourceID)
 	builder.WriteString("<header class=\"report-header\">\n")
 	builder.WriteString("<div>\n")
 	fmt.Fprintf(&builder, "<h1>%s</h1>\n", escape(title))
@@ -61,7 +73,6 @@ func Render(result app.DiffResult, options Options) ([]byte, error) {
 	if len(groups) == 0 {
 		builder.WriteString("<p class=\"no-diff\">No rendered manifest differences detected.</p>\n")
 	} else {
-		renderToolbar(&builder)
 		renderGroups(&builder, groups)
 	}
 	renderDiagnostics(&builder, result.Diagnostics)
@@ -69,6 +80,14 @@ func Render(result app.DiffResult, options Options) ([]byte, error) {
 	builder.WriteString(reviewScript)
 	builder.WriteString("</script>\n</body>\n</html>\n")
 	return builder.Bytes(), nil
+}
+
+func renderBodyOpen(builder *bytes.Buffer, defaultResourceID string) {
+	builder.WriteString("<body data-view=\"side-by-side\"")
+	if defaultResourceID != "" {
+		fmt.Fprintf(builder, " data-default-resource=\"%s\"", escape(defaultResourceID))
+	}
+	builder.WriteString(">\n")
 }
 
 func Write(w io.Writer, result app.DiffResult, options Options) error {
@@ -108,6 +127,201 @@ func groupedResults(results []diff.Result) []appGroup {
 		return strings.Compare(left.id, right.id)
 	})
 	return groups
+}
+
+func selectDefaultResourceID(groups []appGroup, selector DefaultResourceSelector) string {
+	entries := renderedEntries(groups)
+	if len(entries) == 0 {
+		return ""
+	}
+	if hasDefaultResourceSelector(selector) {
+		for _, entry := range entries {
+			if matchesDefaultResourceSelector(selector, entry.result) {
+				return resourceID(entry)
+			}
+		}
+	}
+	if entry, ok := heuristicDefaultResource(entries); ok {
+		return resourceID(entry)
+	}
+	return resourceID(entries[0])
+}
+
+func renderedEntries(groups []appGroup) []groupEntry {
+	entries := make([]groupEntry, 0)
+	for _, group := range groups {
+		entries = append(entries, group.entries...)
+	}
+	return entries
+}
+
+func resourceID(entry groupEntry) string {
+	return fmt.Sprintf("resource-%d", entry.index)
+}
+
+func hasDefaultResourceSelector(selector DefaultResourceSelector) bool {
+	return selector.ParentNamespace != "" ||
+		selector.ParentName != "" ||
+		selector.Group != "" ||
+		selector.Kind != "" ||
+		selector.Namespace != "" ||
+		selector.Name != ""
+}
+
+func matchesDefaultResourceSelector(selector DefaultResourceSelector, result diff.Result) bool {
+	return selectorMatches(selector.ParentNamespace, result.Parent.Namespace) &&
+		selectorMatches(selector.ParentName, result.Parent.Name) &&
+		selectorMatches(selector.Group, result.Resource.Group) &&
+		selectorMatches(selector.Kind, result.Resource.Kind) &&
+		selectorMatches(selector.Namespace, result.Resource.Namespace) &&
+		selectorMatches(selector.Name, result.Resource.Name)
+}
+
+func selectorMatches(want, got string) bool {
+	return want == "" || want == got
+}
+
+func heuristicDefaultResource(entries []groupEntry) (groupEntry, bool) {
+	var best groupEntry
+	var bestScore defaultResourceScore
+	var found bool
+	for _, entry := range entries {
+		score := scoreDefaultResource(entry.result)
+		if score.rank == 0 {
+			continue
+		}
+		added, removed := lineChanges(entry.result.Diff)
+		score.changed = added + removed
+		if !found || score.beats(bestScore) {
+			best = entry
+			bestScore = score
+			found = true
+		}
+	}
+	return best, found
+}
+
+type defaultResourceScore struct {
+	rank    int
+	signal  bool
+	changed int
+}
+
+func (score defaultResourceScore) beats(other defaultResourceScore) bool {
+	if score.rank != other.rank {
+		return score.rank < other.rank
+	}
+	if score.signal != other.signal {
+		return score.signal
+	}
+	return score.changed > other.changed
+}
+
+func scoreDefaultResource(result diff.Result) defaultResourceScore {
+	switch result.Change {
+	case diff.ChangeModified:
+		score := defaultResourceScore{signal: hasRolloutImpactSignal(result.Diff)}
+		switch {
+		case isWorkloadController(result.Resource.Kind):
+			score.rank = 1
+		case isTrafficExposureResource(result.Resource.Kind):
+			score.rank = 2
+		case isAutoscalingPolicyResource(result.Resource.Kind):
+			score.rank = 3
+		case isConfigResource(result.Resource.Kind):
+			score.rank = 4
+		default:
+			score.rank = 5
+		}
+		return score
+	case diff.ChangeAdded:
+		return defaultResourceScore{rank: 6}
+	case diff.ChangeRemoved:
+		return defaultResourceScore{rank: 7}
+	default:
+		return defaultResourceScore{}
+	}
+}
+
+func isWorkloadController(kind string) bool {
+	switch kind {
+	case "Deployment", "StatefulSet", "DaemonSet", "Job", "CronJob":
+		return true
+	default:
+		return false
+	}
+}
+
+func hasRolloutImpactSignal(text string) bool {
+	lower := strings.ToLower(text)
+	for _, signal := range []string{
+		"helm.sh/chart",
+		"checksum/",
+	} {
+		if strings.Contains(lower, signal) {
+			return true
+		}
+	}
+	for _, signal := range []string{
+		"image:",
+		"replicas:",
+		"resources:",
+		"env:",
+	} {
+		if containsFieldSignal(lower, signal) {
+			return true
+		}
+	}
+	return false
+}
+
+func containsFieldSignal(text, signal string) bool {
+	for offset := 0; offset < len(text); {
+		index := strings.Index(text[offset:], signal)
+		if index == -1 {
+			return false
+		}
+		index += offset
+		if index == 0 || !isFieldNameCharacter(text[index-1]) {
+			return true
+		}
+		offset = index + len(signal)
+	}
+	return false
+}
+
+func isFieldNameCharacter(char byte) bool {
+	return char >= 'a' && char <= 'z' ||
+		char >= '0' && char <= '9' ||
+		char == '_' ||
+		char == '-'
+}
+
+func isTrafficExposureResource(kind string) bool {
+	switch kind {
+	case "Service", "Ingress", "Gateway", "HTTPRoute", "TLSRoute", "TCPRoute", "UDPRoute", "GatewayClass":
+		return true
+	default:
+		return false
+	}
+}
+
+func isAutoscalingPolicyResource(kind string) bool {
+	switch kind {
+	case "HorizontalPodAutoscaler", "VerticalPodAutoscaler", "PodDisruptionBudget", "NetworkPolicy":
+		return true
+	default:
+		return false
+	}
+}
+
+func isConfigResource(kind string) bool {
+	switch kind {
+	case "ConfigMap", "Secret":
+		return true
+	default:
+		return false
+	}
 }
 
 func applicationID(parent diff.Parent) string {
@@ -173,22 +387,105 @@ func renderTree(builder *bytes.Buffer, groups []appGroup) {
 	for _, group := range groups {
 		fmt.Fprintf(builder, "<section data-tree-app=\"%s\">\n", escape(group.id))
 		fmt.Fprintf(builder, "<h2>%s</h2>\n", escape(group.id))
+		treeLabelCounts := treeResourceLabelCounts(group.entries)
 		for _, entry := range group.entries {
 			label := resourceLabel(entry.result.Resource)
+			treeLabel := treeResourceLabel(entry.result.Resource, treeLabelCounts)
+			added, removed := lineChanges(entry.result.Diff)
 			searchText := strings.ToLower(strings.Join([]string{
 				group.id,
 				label,
 				string(entry.result.Change),
 			}, " "))
-			fmt.Fprintf(builder, "<button class=\"tree-resource\" type=\"button\" data-target-resource=\"resource-%d\" data-search-text=\"%s\">%s</button>\n",
+			fmt.Fprintf(builder, "<button class=\"tree-resource\" type=\"button\" data-target-resource=\"resource-%d\" data-search-text=\"%s\" title=\"%s\" aria-label=\"%s\"><span class=\"tree-resource-label\">%s</span>%s</button>\n",
 				entry.index,
 				escape(searchText),
 				escape(label),
+				escape(treeResourceAriaLabel(label, added, removed)),
+				escape(treeLabel),
+				treeDeltaMarkup(added, removed),
 			)
 		}
 		builder.WriteString("</section>\n")
 	}
 	builder.WriteString("</aside>\n")
+}
+
+func treeResourceLabelCounts(entries []groupEntry) map[string]int {
+	counts := make(map[string]int, len(entries))
+	for _, entry := range entries {
+		counts[treeResourceBaseLabel(entry.result.Resource)]++
+	}
+	return counts
+}
+
+func treeResourceLabel(resource diff.Resource, labelCounts map[string]int) string {
+	label := treeResourceBaseLabel(resource)
+	if labelCounts[label] <= 1 {
+		return label
+	}
+	return treeResourceNamespacedLabel(resource)
+}
+
+func treeResourceBaseLabel(resource diff.Resource) string {
+	return treeResourceLabelWithName(resource.Name, resource.Kind)
+}
+
+func treeResourceNamespacedLabel(resource diff.Resource) string {
+	name := resource.Name
+	if resource.Namespace != "" {
+		name = resource.Namespace + "/" + name
+	}
+	return treeResourceLabelWithName(name, resource.Kind)
+}
+
+func treeResourceLabelWithName(name, kind string) string {
+	kind = shortTreeResourceKind(kind)
+	if name == "" {
+		return kind
+	}
+	if kind == "" {
+		return name
+	}
+	return kind + " · " + name
+}
+
+func shortTreeResourceKind(kind string) string {
+	switch kind {
+	case "HorizontalPodAutoscaler":
+		return "HPA"
+	case "PodDisruptionBudget":
+		return "PDB"
+	default:
+		return kind
+	}
+}
+
+func treeResourceAriaLabel(label string, added, removed int) string {
+	parts := []string{label}
+	if added > 0 {
+		parts = append(parts, fmt.Sprintf("plus %d", added))
+	}
+	if removed > 0 {
+		parts = append(parts, fmt.Sprintf("minus %d", removed))
+	}
+	return strings.Join(parts, ", ")
+}
+
+func treeDeltaMarkup(added, removed int) string {
+	if added == 0 && removed == 0 {
+		return ""
+	}
+	var builder bytes.Buffer
+	builder.WriteString("<span class=\"tree-delta\" aria-hidden=\"true\">")
+	if added > 0 {
+		fmt.Fprintf(&builder, "<span class=\"tree-delta-added\">+%d</span>", added)
+	}
+	if removed > 0 {
+		fmt.Fprintf(&builder, "<span class=\"tree-delta-removed\">-%d</span>", removed)
+	}
+	builder.WriteString("</span>")
+	return builder.String()
 }
 
 func renderToolbar(builder *bytes.Buffer) {
@@ -216,11 +513,47 @@ func renderResource(builder *bytes.Buffer, appID string, entry groupEntry) {
 		entry.index,
 		escape(string(result.Change)),
 	)
+	builder.WriteString("<header class=\"resource-header\">\n")
+	builder.WriteString("<div class=\"resource-title\">\n")
 	fmt.Fprintf(builder, "<h3>%s</h3>\n", escape(resourceLabel(result.Resource)))
 	fmt.Fprintf(builder, "<p class=\"resource-meta\">%s &middot; %s</p>\n", escape(appID), escape(string(result.Change)))
-	renderSideBySideTable(builder, hunks)
-	renderUnifiedTable(builder, hunks)
+	builder.WriteString("</div>\n")
+	renderToolbar(builder)
+	builder.WriteString("</header>\n")
+	if result.Change == diff.ChangeAdded || result.Change == diff.ChangeRemoved {
+		renderOneSidedTable(builder, hunks, result.Change, "side-by-side")
+		renderOneSidedTable(builder, hunks, result.Change, "unified")
+	} else {
+		renderSideBySideTable(builder, hunks)
+		renderUnifiedTable(builder, hunks)
+	}
 	builder.WriteString("</article>\n")
+}
+
+func renderOneSidedTable(builder *bytes.Buffer, hunks []diffHunk, change diff.Change, viewClass string) {
+	rowKind := string(change)
+	fmt.Fprintf(builder, "<table class=\"diff-table %s one-sided\">\n<tbody>\n", escape(viewClass))
+	for _, hunk := range hunks {
+		fmt.Fprintf(builder, "<tr class=\"hunk-header\"><th colspan=\"2\">%s</th></tr>\n", escape(hunk.Header))
+		for _, row := range hunk.Rows {
+			if row.Kind != rowKind {
+				continue
+			}
+			number := row.LeftNumber
+			text := row.LeftText
+			if change == diff.ChangeAdded {
+				number = row.RightNumber
+				text = row.RightText
+			}
+			fmt.Fprintf(builder, "<tr class=\"diff-row %s\">", escape(row.Kind))
+			renderLineNumberCell(builder, number)
+			builder.WriteString("<td class=\"line-code\">")
+			renderHighlightedText(builder, text, nil, rowKind)
+			builder.WriteString("</td>")
+			builder.WriteString("</tr>\n")
+		}
+	}
+	builder.WriteString("</tbody>\n</table>\n")
 }
 
 func renderSideBySideTable(builder *bytes.Buffer, hunks []diffHunk) {

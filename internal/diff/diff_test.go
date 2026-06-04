@@ -61,6 +61,54 @@ func TestRunParentAwareDiff(t *testing.T) {
 	}
 }
 
+func TestRunUsesZeroLineRangeForAddedAndRemovedResources(t *testing.T) {
+	doc := configMapDocument("new", nil)
+	tests := []struct {
+		name       string
+		left       []Document
+		right      []Document
+		change     Change
+		wantHeader string
+	}{
+		{
+			name:       "added",
+			right:      []Document{doc},
+			change:     ChangeAdded,
+			wantHeader: "@@ -0,0 +1,7 @@",
+		},
+		{
+			name:       "removed",
+			left:       []Document{doc},
+			change:     ChangeRemoved,
+			wantHeader: "@@ -1,7 +0,0 @@",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			results, err := Run(test.left, test.right, Options{Unified: 3})
+			if err != nil {
+				t.Fatalf("Run() error = %v", err)
+			}
+			if len(results) != 1 {
+				t.Fatalf("len(results) = %d, want 1", len(results))
+			}
+			if results[0].Change != test.change {
+				t.Fatalf("Change = %q, want %q", results[0].Change, test.change)
+			}
+			if !strings.Contains(results[0].Diff, test.wantHeader) {
+				t.Fatalf("Diff = %q, want header %q", results[0].Diff, test.wantHeader)
+			}
+			if strings.Contains(results[0].Diff, "\n \n") {
+				t.Fatalf("Diff contains phantom blank context line:\n%s", results[0].Diff)
+			}
+			if strings.Contains(results[0].Diff, "\n-\n") || strings.Contains(results[0].Diff, "\n+\n") {
+				t.Fatalf("Diff contains phantom blank add/remove line:\n%s", results[0].Diff)
+			}
+		})
+	}
+}
+
 func TestRunIgnoresSourceMetadataInIdentity(t *testing.T) {
 	left := []Document{{
 		Parent: Parent{

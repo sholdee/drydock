@@ -29,6 +29,14 @@ unless `--offline` is set.
 
 **Full documentation:** [sholdee.github.io/drydock](https://sholdee.github.io/drydock/).
 
+## Pull Request Review
+
+The PR action posts a markdown summary and links a standalone Full Rendered
+Diff View so Argo CD/GitOps reviewers can inspect rendered Kubernetes resources
+before merge.
+
+[Open an example Full Rendered Diff View](https://sholdee.github.io/drydock/examples/full-rendered-diff-view.html)
+
 ## Install
 
 Install the latest Linux/macOS release with Homebrew:

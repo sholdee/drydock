@@ -34,6 +34,21 @@ drydock diff apps --repo . --ref HEAD --ref-orig origin/main -o markdown
 drydock diff images --repo . --ref HEAD --ref-orig origin/main -o markdown
 ```
 
+For local browser review, manifest diff commands can also write the standalone
+Full Rendered Diff View used by the PR action artifact:
+
+```bash
+drydock diff apps \
+  --repo . \
+  --ref HEAD \
+  --ref-orig origin/main \
+  -o markdown \
+  --html-output-file rendered-diff.html
+```
+
+Markdown remains the PR-comment stdout format. `--html-output-file` writes an
+additional HTML file with the same standalone review view.
+
 ## Exit Codes
 
 Diff commands use fixed exit codes:

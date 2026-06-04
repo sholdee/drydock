@@ -7,9 +7,11 @@ runtime-offline Argo CD desired-state analysis. It discovers, renders, tests,
 diffs, and diagnoses GitOps Applications with native Go renderers, no Argo CD
 server, no Kubernetes credentials, and no default shellouts.
 
-Use it locally or in CI to answer operator questions that are hard to review in
-raw Git: which Applications render, which desired resources changed, which
-images moved, and which repository inputs need attention.
+Use it locally or in CI to see the rendered Kubernetes resources behind raw Git
+changes. For pull request review, drydock compares desired state rendered from
+the PR against desired state rendered from the base ref, then posts an inline
+diff and a link to a standalone
+[Full Rendered Diff View](/examples/full-rendered-diff-view.html) artifact.
 
 **[Get Started](/getting-started/)** | **[Set Up PR Checks](/workflows/github-actions/)**
 
@@ -41,7 +43,7 @@ drydock diag --path .
 | Need | Start with | Read next |
 | --- | --- | --- |
 | Confirm the fleet renders | `drydock test apps --path .` | [Getting started](/getting-started/) |
-| Review manifest changes | `drydock diff apps --repo . --ref HEAD --ref-orig main -o markdown` | [GitHub Actions](/workflows/github-actions/) |
+| Review Argo CD desired state before merge | `drydock diff apps --repo . --ref HEAD --ref-orig main -o markdown` | [GitHub Actions](/workflows/github-actions/) |
 | Scan image movement | `drydock diff images --repo . --ref HEAD --ref-orig main` | [Local diffs](/workflows/local-diffs/) |
 | Explain warnings or failures | `drydock diag --path . --cache-events` | [Troubleshooting](/troubleshooting/) |
 | Validate cache-only operation | `drydock test apps --path . --offline` | [Source acquisition](/concepts/source-acquisition/) |

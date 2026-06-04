@@ -2,7 +2,7 @@
 title: GitHub Actions
 ---
 
-drydock publishes two repository-local composite actions:
+drydock publishes two composite GitHub Actions:
 
 - `sholdee/drydock/setup-action`: install a released drydock binary.
 - `sholdee/drydock/pr-action`: install drydock, run PR validation, upload
@@ -58,6 +58,7 @@ jobs:
     steps:
       - uses: sholdee/drydock/pr-action@main
         with:
+          version: v0.1.12
           comment-mode: both
           skip-secrets: "true"
           changed-only-include: |
@@ -72,6 +73,22 @@ artifacts when differences are found, and comments in trusted same-repository
 pull requests. Image diff comments are available as a companion signal. Fork
 pull requests skip comments and source-cache restore/save by default.
 
+## Full Rendered Diff View
+
+The PR action posts a compact markdown summary in the pull request. When a
+manifest diff exists and artifact upload is enabled, the summary links
+reviewers to a standalone Full Rendered Diff View artifact:
+
+{{< pr-comment-example >}}
+
+Use it to review the desired state Argo CD would reconcile after merge. drydock
+renders the PR and base refs, then compares the results without requiring Argo
+CD or Kubernetes credentials.
+
+Artifacts follow the workflow's retention settings. For a permanent sample:
+
+[Full Rendered Diff View](/examples/full-rendered-diff-view.html)
+
 ## Reporting And Gating
 
 By default, `pr-action` fails render errors and reports manifest or image diffs
@@ -83,34 +100,6 @@ gate, set `strict`, `strict-changed-only`, `fail-on-diff`, and optionally
 globs passed to manifest and image diffs. They keep known non-GitOps paths from
 forcing a full-fleet changed-only fallback. Keep them narrow; ignored paths
 cannot trigger Application renders. They do not affect `test apps`.
-
-## Manifest Diff Comment Shape
-
-The manifest diff comment is the main PR review surface. It summarizes changed
-Applications and resources, then expands each affected Application into a
-reviewable rendered diff:
-
-````markdown
-## drydock desired state diff
-
-**Summary:** 2 apps, 3 resources, +12/-5.
-
-<details open>
-<summary>payments-api (+9/-3, 2 resources)</summary>
-
-```diff
---- Application: payments-api apps/Deployment: payments/payments-api
-+++ Application: payments-api apps/Deployment: payments/payments-api
-@@ -31,7 +31,7 @@
--        app.kubernetes.io/version: 2026.05.0
-+        app.kubernetes.io/version: 2026.05.1
-@@ -48,7 +48,7 @@
--          image: registry.example.com/payments-api:2026.05.0
-+          image: registry.example.com/payments-api:2026.05.1
-```
-
-</details>
-````
 
 Use markdown output directly when building a custom workflow, or let
 `pr-action` produce the comment:
@@ -124,16 +113,7 @@ drydock diff apps --repo . --ref HEAD --ref-orig origin/main -o markdown
 Image comments can be enabled alongside the manifest diff. They are useful for
 quickly scanning added and removed rendered image references:
 
-```text
-## drydock image diff
-
-**Summary:** 1 added, 1 removed.
-
-| Change | Image |
-| --- | --- |
-| added | `registry.example.com/payments-api:2026.05.1` |
-| removed | `registry.example.com/payments-api:2026.05.0` |
-```
+{{< image-comment-example >}}
 
 Run image diff markdown directly when building a custom workflow:
 

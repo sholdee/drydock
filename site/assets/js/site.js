@@ -13,14 +13,21 @@ document.addEventListener("DOMContentLoaded", () => {
     initSidebarPersistence(sidebar);
   }
 
-  document.querySelectorAll(".doc-content pre").forEach((block, index) => {
+  let copyButtonIndex = 0;
+  document.querySelectorAll(".doc-content pre").forEach((block) => {
+    if (block.closest(".github-comment-preview")) {
+      return;
+    }
+    copyButtonIndex += 1;
+    const copyButtonNumber = copyButtonIndex;
+
     enhanceShellCommands(block);
 
     const button = document.createElement("button");
     button.type = "button";
     button.className = "copy-button";
     button.textContent = "Copy";
-    button.setAttribute("aria-label", `Copy code block ${index + 1}`);
+    button.setAttribute("aria-label", `Copy code block ${copyButtonNumber}`);
 
     button.addEventListener("click", async () => {
       const code = block.querySelector("code");
@@ -30,10 +37,10 @@ document.addEventListener("DOMContentLoaded", () => {
 
       await navigator.clipboard.writeText(code.innerText);
       button.textContent = "Copied";
-      button.setAttribute("aria-label", `Copied code block ${index + 1}`);
+      button.setAttribute("aria-label", `Copied code block ${copyButtonNumber}`);
       window.setTimeout(() => {
         button.textContent = "Copy";
-        button.setAttribute("aria-label", `Copy code block ${index + 1}`);
+        button.setAttribute("aria-label", `Copy code block ${copyButtonNumber}`);
       }, 1500);
     });
 

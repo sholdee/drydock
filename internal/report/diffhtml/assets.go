@@ -3,7 +3,7 @@ package diffhtml
 const reviewStyles = `
 :root {
 	color-scheme: dark;
-	font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+	font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
 	--ink: #e7edf5;
 	--muted: #a5b4c6;
 	--quiet: #8190a3;
@@ -28,6 +28,8 @@ body {
 	min-height: 100vh;
 	background: linear-gradient(180deg, #07111d 0%, #0a1421 46%, #101827 100%);
 	color: var(--ink);
+	font-size: 14px;
+	line-height: 1.45;
 }
 :focus-visible {
 	outline: 3px solid var(--focus);
@@ -54,18 +56,19 @@ body {
 }
 .brand-logo {
 	display: block;
-	width: clamp(132px, 16vw, 180px);
+	width: clamp(186px, 18vw, 210px);
 	height: auto;
 }
 .summary, .resource-meta {
 	margin: 0;
 	color: var(--muted);
-	font-size: 13px;
+	font-size: 14px;
+	line-height: 1.45;
 }
 .review-layout {
 	display: grid;
 	grid-template-columns: minmax(240px, 320px) minmax(0, 1fr);
-	min-height: calc(100vh - 73px);
+	min-height: calc(100vh - 82px);
 }
 .tree {
 	border-right: 1px solid var(--line);
@@ -89,12 +92,16 @@ body {
 }
 .tree h2 {
 	margin: 16px 0 6px;
-	font-size: 12px;
+	font-size: 14px;
+	line-height: 1.45;
 	text-transform: uppercase;
 	color: var(--quiet);
 }
 .tree-resource {
-	display: block;
+	display: grid;
+	grid-template-columns: minmax(0, 1fr) auto;
+	align-items: baseline;
+	column-gap: 8px;
 	width: 100%;
 	margin: 3px 0;
 	padding: 7px 8px;
@@ -103,9 +110,32 @@ body {
 	background: transparent;
 	color: var(--ink);
 	font: inherit;
-	font-size: 13px;
+	font-size: 14px;
+	line-height: 1.45;
 	text-align: left;
 	cursor: pointer;
+}
+.tree-resource-label {
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+.tree-delta {
+	display: inline-flex;
+	gap: 6px;
+	align-items: baseline;
+	font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+	font-size: 12px;
+	font-variant-numeric: tabular-nums;
+	line-height: 1;
+	white-space: nowrap;
+}
+.tree-delta-added {
+	color: #9ce8a8;
+}
+.tree-delta-removed {
+	color: #ffb4ae;
 }
 .tree-resource[aria-current="true"] {
 	background: rgba(105, 215, 194, 0.12);
@@ -116,23 +146,38 @@ body {
 	padding: 18px 22px 34px;
 	overflow: auto;
 }
-.toolbar {
+.resource-header {
 	position: sticky;
 	top: 0;
 	z-index: 3;
+	display: grid;
+	grid-template-columns: minmax(0, 1fr) auto;
+	align-items: start;
+	gap: 14px;
+	margin: 0 0 8px;
+	padding: 0 0 6px;
+	background: linear-gradient(180deg, #0a1421 74%, rgba(10, 20, 33, 0));
+}
+.resource-title {
+	min-width: 0;
+}
+.toolbar {
 	display: flex;
+	justify-content: flex-end;
 	gap: 8px;
-	margin: 0 0 16px;
-	padding: 0 0 12px;
-	background: linear-gradient(180deg, #0a1421 70%, rgba(10, 20, 33, 0));
+	margin: 0;
+	padding: 0;
+	white-space: nowrap;
 }
 .toolbar button {
-	padding: 7px 10px;
+	padding: 5px 9px;
 	border: 1px solid var(--line-strong);
 	border-radius: 6px;
 	background: var(--surface-raised);
 	color: var(--ink);
 	font: inherit;
+	font-size: 14px;
+	line-height: 1.45;
 	cursor: pointer;
 }
 .toolbar button[aria-pressed="true"] {
@@ -153,17 +198,18 @@ body {
 .resource h3 {
 	margin: 0 0 4px;
 	font-size: 18px;
+	line-height: 1.25;
 	color: var(--navy-deep);
 }
 .diff-table {
 	width: 100%;
 	border-collapse: collapse;
-	margin-top: 14px;
+	margin-top: 0;
 	background: var(--code-bg);
 	border: 1px solid var(--line);
 	font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-	font-size: 12px;
-	line-height: 1.5;
+	font-size: 13px;
+	line-height: 1.45;
 }
 .diff-table th {
 	text-align: left;
@@ -194,8 +240,19 @@ body {
 .diff-row.added .line-code {
 	background: rgba(63, 185, 80, 0.13);
 }
+.diff-row.added .line-number {
+	background: rgba(63, 185, 80, 0.14);
+	color: #9ce8a8;
+}
 .diff-row.removed .line-code {
 	background: rgba(248, 81, 73, 0.13);
+}
+.diff-row.removed .line-number {
+	background: rgba(248, 81, 73, 0.14);
+	color: #ffb4ae;
+}
+.diff-table.one-sided .line-code {
+	width: 100%;
 }
 .inline-change {
 	border-radius: 3px;
@@ -246,7 +303,7 @@ body[data-view="unified"] .diff-table.side-by-side {
 		grid-template-columns: 1fr;
 	}
 	.brand-logo {
-		width: 132px;
+		width: 186px;
 	}
 	.review-layout {
 		grid-template-columns: 1fr;
@@ -255,6 +312,14 @@ body[data-view="unified"] .diff-table.side-by-side {
 		max-height: 280px;
 		border-right: 0;
 		border-bottom: 1px solid var(--line);
+	}
+	.resource-header {
+		grid-template-columns: 1fr;
+		gap: 8px;
+	}
+	.toolbar {
+		justify-content: flex-start;
+		white-space: normal;
 	}
 }
 `
@@ -271,7 +336,7 @@ const drydockLogo = `<svg class="brand-logo" aria-label="drydock" xmlns="http://
   <path d="M35 32 L93 32 L93 58 C93 80 77 90 64 90 C51 90 35 80 35 58 Z" fill="url(#hull-grad)"/>
   <line x1="36" y1="58" x2="92" y2="58" stroke="#ffad73" stroke-width="1.5"/>
   <path d="M64 12 L87 22 L87 32 L41 32 L41 22 Z" fill="#e6a15f"/>
-  <text x="144" y="76" font-family="'Inter', 'Helvetica Neue', Arial, sans-serif" font-size="52" font-weight="600" fill="#f3f7fb" letter-spacing="2">drydock</text>
+  <text x="144" y="76" font-family="Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="52" font-weight="600" fill="#f3f7fb" letter-spacing="2">drydock</text>
 </svg>`
 
 const drydockFaviconHref = "data:image/svg+xml;base64," +
@@ -284,6 +349,7 @@ const reviewScript = `
 	const treeButtons = Array.from(document.querySelectorAll('[data-target-resource]'));
 	const viewButtons = Array.from(document.querySelectorAll('.toolbar button[data-view]'));
 	const searchInput = document.querySelector('[data-tree-search]');
+	const resourceIds = new Set(resources.map((resource) => resource.dataset.resourceId));
 	const isEditable = (target) => {
 		if (!(target instanceof HTMLElement)) {
 			return false;
@@ -292,18 +358,50 @@ const reviewScript = `
 		return target.isContentEditable || tagName === 'input' || tagName === 'textarea' || tagName === 'select';
 	};
 
-	const selectResource = (id) => {
+	const resourceIdFromHash = () => {
+		const id = window.location.hash.slice(1);
+		return resourceIds.has(id) ? id : '';
+	};
+
+	const defaultResourceId = () => {
+		if (resourceIds.has(body.dataset.defaultResource)) {
+			return body.dataset.defaultResource;
+		}
+		return resources[0].dataset.resourceId;
+	};
+
+	const updateHash = (id) => {
+		if (!resourceIds.has(id) || window.location.hash.slice(1) === id) {
+			return;
+		}
+		history.replaceState(null, '', ` + "`#${id}`" + `);
+	};
+
+	const selectResource = (id, options = {}) => {
+		if (!resourceIds.has(id)) {
+			return;
+		}
+		let activeButton = null;
 		resources.forEach((resource) => {
 			resource.classList.toggle('is-active', resource.dataset.resourceId === id);
 		});
 		treeButtons.forEach((button) => {
 			const selected = button.dataset.targetResource === id;
 			button.setAttribute('aria-current', selected ? 'true' : 'false');
+			if (selected) {
+				activeButton = button;
+			}
 		});
+		if (activeButton) {
+			activeButton.scrollIntoView({ block: 'nearest' });
+		}
+		if (options.updateHash) {
+			updateHash(id);
+		}
 	};
 
 	treeButtons.forEach((button) => {
-		button.addEventListener('click', () => selectResource(button.dataset.targetResource));
+		button.addEventListener('click', () => selectResource(button.dataset.targetResource, { updateHash: true }));
 	});
 
 	viewButtons.forEach((button) => {
@@ -380,7 +478,7 @@ const reviewScript = `
 	}
 
 	if (resources.length > 0) {
-		selectResource(resources[0].dataset.resourceId);
+		selectResource(resourceIdFromHash() || defaultResourceId());
 	}
 })();
 `

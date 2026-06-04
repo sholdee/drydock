@@ -34,6 +34,7 @@ func TestActionUploadsHTMLDiffBeforeCommentAndAppendsURL(t *testing.T) {
 	htmlUploadBlock := actionYAML[htmlUpload:htmlLink]
 	for _, want := range []string{
 		"id: upload-diff-html",
+		"name: ${{ steps.run.outputs.diff-html-artifact-name }}",
 		"path: ${{ steps.run.outputs.diff-html-path }}",
 		"archive: false",
 	} {
@@ -46,7 +47,7 @@ func TestActionUploadsHTMLDiffBeforeCommentAndAppendsURL(t *testing.T) {
 	for _, want := range []string{
 		"DRYDOCK_DIFF_COMMENT_PATH: ${{ steps.run.outputs.diff-comment-path }}",
 		"DRYDOCK_DIFF_HTML_ARTIFACT_URL: ${{ steps.upload-diff-html.outputs.artifact-url }}",
-		"[Full Diff Report](${DRYDOCK_DIFF_HTML_ARTIFACT_URL})",
+		"[Full Rendered Diff View](${DRYDOCK_DIFF_HTML_ARTIFACT_URL})",
 		"artifact-url",
 	} {
 		if !strings.Contains(linkBlock, want) {
@@ -56,7 +57,10 @@ func TestActionUploadsHTMLDiffBeforeCommentAndAppendsURL(t *testing.T) {
 	if strings.Contains(linkBlock, "[${DRYDOCK_DIFF_HTML_ARTIFACT_NAME}]") {
 		t.Fatalf("HTML link block should not use artifact filename as link text:\n%s", linkBlock)
 	}
-	if strings.Contains(linkBlock, "[Full Diff Report](${DRYDOCK_DIFF_HTML_ARTIFACT_URL}).") {
+	if strings.Contains(linkBlock, "[Full Rendered Diff View](${DRYDOCK_DIFF_HTML_ARTIFACT_URL}).") {
 		t.Fatalf("HTML link block should not append punctuation to link:\n%s", linkBlock)
+	}
+	if strings.Contains(linkBlock, "Full Diff Report") {
+		t.Fatalf("HTML link block should use Full Rendered Diff View label:\n%s", linkBlock)
 	}
 }

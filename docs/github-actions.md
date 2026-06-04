@@ -2,7 +2,7 @@
 title: GitHub Actions
 ---
 
-drydock publishes two repository-local composite actions:
+drydock publishes two composite GitHub Actions:
 
 - `sholdee/drydock/setup-action`: install a released `drydock` binary.
 - `sholdee/drydock/pr-action`: install `drydock`, run PR validation, publish
@@ -99,13 +99,18 @@ By default the action:
 - writes image diff comments with drydock markdown output, including removed
   image references when present;
 - uses drydock source caches under the runner temp directory;
-- uploads full raw diff and browser-openable HTML diff artifacts when manifest
-  differences are found;
+- uploads full raw diff and browser-openable Full Rendered Diff View artifacts
+  when manifest differences are found;
 - writes sticky PR comments for trusted same-repository pull requests.
 
-The manifest diff comment links to the HTML diff report artifact when artifact
-upload is enabled. The raw unified diff artifact remains available for scripts
-and archival workflows.
+The manifest diff comment links to the Full Rendered Diff View when
+`upload-artifacts: "true"` and a manifest diff exists. The raw unified diff
+artifact remains available for scripts and archival workflows. Artifact
+availability follows `artifact-retention-days`; GitHub controls whether the
+artifact link opens in the current tab or a new tab.
+
+Open a public sample:
+[Full Rendered Diff View](https://sholdee.github.io/drydock/examples/full-rendered-diff-view.html).
 
 Fork pull requests do not restore or save drydock source caches by default,
 because source caches can contain private repository or chart material. They
@@ -169,6 +174,8 @@ the repository under test.
 | `base-ref` | PR base | Baseline branch name for diff commands. |
 | `head-ref` | `HEAD` | Current ref for diff commands after checkout. |
 | `skip-secrets` | `true` | Omit Secret resources from output and diffs. |
+| `upload-artifacts` | `true` | Upload raw diff, Full Rendered Diff View, and image artifacts when they are non-empty. |
+| `artifact-retention-days` | `30` | Retention days for uploaded artifacts. |
 | `strict` | `false` | Promote diagnostics to errors. |
 | `strict-changed-only` | `false` | Fail ambiguous changed-only ownership. |
 | `changed-only` | drydock default | Override changed-only with `true` or `false`. |
@@ -206,7 +213,7 @@ passes them as arguments without `eval`, but they still change drydock behavior.
 | `has-image-diff` | Any image difference was detected, including removed-only diffs. |
 | `render-status` | `passed`, `failed`, or `skipped`. |
 | `diff-path` | Local path to the rendered manifest diff file. |
-| `diff-html-path` | Local path to the rendered manifest diff HTML report. |
+| `diff-html-path` | Local path to the Full Rendered Diff View file. |
 | `images-path` | Local path to the current-only image list. |
-| `diff-html-artifact-name` | Filename used for the rendered manifest diff HTML artifact. |
+| `diff-html-artifact-name` | Filename used for the Full Rendered Diff View artifact. |
 | `trusted-context` | Whether cache save and PR comments were allowed. |
