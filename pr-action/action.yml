@@ -458,6 +458,7 @@ runs:
       if: ${{ inputs.upload-artifacts == 'true' && steps.run.outputs.has-diff == 'true' }}
       uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
       with:
+        name: ${{ steps.run.outputs.diff-html-artifact-name }}
         path: ${{ steps.run.outputs.diff-html-path }}
         retention-days: ${{ inputs.artifact-retention-days }}
         if-no-files-found: error
@@ -471,7 +472,7 @@ runs:
         DRYDOCK_DIFF_HTML_ARTIFACT_URL: ${{ steps.upload-diff-html.outputs.artifact-url }}
       run: |
         if [[ -n "${DRYDOCK_DIFF_HTML_ARTIFACT_URL}" ]]; then
-          printf '%s\n' "- [Full Diff Report](${DRYDOCK_DIFF_HTML_ARTIFACT_URL})" >> "${DRYDOCK_DIFF_COMMENT_PATH}"
+          printf '%s\n' "- [Full Rendered Diff View](${DRYDOCK_DIFF_HTML_ARTIFACT_URL})" >> "${DRYDOCK_DIFF_COMMENT_PATH}"
         fi
 
     - name: Comment rendered manifest diff
