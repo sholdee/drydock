@@ -143,13 +143,30 @@ func assertContainerPluginSchema(t *testing.T, defs map[string]any) {
 	assertSchemaRef(t, schemaObject(t, containerProps, "generate"), "#/$defs/command")
 	assertSchemaRef(t, schemaObject(t, containerProps, "parameters"), "#/$defs/parameters")
 	cacheMounts := schemaObject(t, defs, "containerCacheMounts")
+	if got, ok := cacheMounts["minItems"].(float64); !ok || int(got) != 1 {
+		t.Fatalf("container cacheMounts minItems = %#v, want 1", cacheMounts["minItems"])
+	}
 	if got, ok := cacheMounts["maxItems"].(float64); !ok || int(got) != maxContainerCacheMountCount {
 		t.Fatalf("container cacheMounts maxItems = %#v, want %d", cacheMounts["maxItems"], maxContainerCacheMountCount)
+	}
+	cacheMountsDescription, _ := cacheMounts["description"].(string)
+	if !strings.Contains(cacheMountsDescription, "Host paths are selected by drydock") {
+		t.Fatalf("container cacheMounts description = %q, want host path ownership note", cacheMountsDescription)
 	}
 	cacheMount := schemaObject(t, defs, "containerCacheMount")
 	assertSchemaRequired(t, cacheMount, "name", "target")
 	cacheMountProps := schemaObject(t, cacheMount, "properties")
 	assertSchemaRef(t, schemaObject(t, cacheMountProps, "name"), "#/$defs/containerCacheMountName")
+	cacheMountTarget := schemaObject(t, cacheMountProps, "target")
+	targetDescription, _ := cacheMountTarget["description"].(string)
+	for _, want := range []string{"/drydock-cache", "Host paths are not accepted", "backslashes", "overlapping targets"} {
+		if !strings.Contains(targetDescription, want) {
+			t.Fatalf("container cache mount target description = %q, want substring %q", targetDescription, want)
+		}
+	}
+	if got, ok := cacheMountTarget["pattern"].(string); !ok || got != "^/drydock-cache/.+" {
+		t.Fatalf("container cache mount target pattern = %#v, want reserved cache root prefix", cacheMountTarget["pattern"])
+	}
 	cacheMountName := schemaObject(t, defs, "containerCacheMountName")
 	if got, ok := cacheMountName["maxLength"].(float64); !ok || int(got) != 63 {
 		t.Fatalf("container cache mount name maxLength = %#v, want 63", cacheMountName["maxLength"])
@@ -1414,6 +1431,18 @@ func TestParseContainerPolicyRejectsUnsafeFields(t *testing.T) {
 			want: "leading or trailing whitespace",
 		},
 		{
+			name: "cache mount name rejects nul",
+			body: `    engine: container
+    image: ` + digestImage + `
+    cacheMounts:
+      - name: "pkl\u0000cache"
+        target: /drydock-cache/pkl-cache
+    generate:
+      command: ["renderer"]
+`,
+			want: "DNS-label-like cache name",
+		},
+		{
 			name: "cache mount duplicate name",
 			body: `    engine: container
     image: ` + digestImage + `
@@ -1426,6 +1455,20 @@ func TestParseContainerPolicyRejectsUnsafeFields(t *testing.T) {
       command: ["renderer"]
 `,
 			want: "duplicate cache mount name",
+		},
+		{
+			name: "cache mount duplicate normalized target",
+			body: `    engine: container
+    image: ` + digestImage + `
+    cacheMounts:
+      - name: pkl-cache
+        target: /drydock-cache/pkl-cache
+      - name: pkl-cache-2
+        target: /drydock-cache/pkl-cache//
+    generate:
+      command: ["renderer"]
+`,
+			want: "duplicate cache mount target",
 		},
 		{
 			name: "cache mount target must be absolute",
@@ -1462,6 +1505,18 @@ func TestParseContainerPolicyRejectsUnsafeFields(t *testing.T) {
       command: ["renderer"]
 `,
 			want: "without using the root itself",
+		},
+		{
+			name: "cache mount target rejects work root",
+			body: `    engine: container
+    image: ` + digestImage + `
+    cacheMounts:
+      - name: pkl-cache
+        target: /work
+    generate:
+      command: ["renderer"]
+`,
+			want: "must not overlap the /work source mount",
 		},
 		{
 			name: "cache mount target rejects work mount",
@@ -1518,6 +1573,18 @@ func TestParseContainerPolicyRejectsUnsafeFields(t *testing.T) {
     cacheMounts:
       - name: pkl-cache
         target: "/drydock-cache/pkl\u0085cache"
+    generate:
+      command: ["renderer"]
+`,
+			want: "must not contain commas or control characters",
+		},
+		{
+			name: "cache mount target rejects nul",
+			body: `    engine: container
+    image: ` + digestImage + `
+    cacheMounts:
+      - name: pkl-cache
+        target: "/drydock-cache/pkl\u0000cache"
     generate:
       command: ["renderer"]
 `,
@@ -2303,6 +2370,54 @@ plugins:
     generate:
       command: ["argocd-vault-plugin", "generate", "."]
     engine: exec
+`))
+	if err != nil {
+		t.Fatalf("Parse(right) error = %v", err)
+	}
+	leftFingerprint, err := Fingerprint(left)
+	if err != nil {
+		t.Fatalf("Fingerprint(left) error = %v", err)
+	}
+	rightFingerprint, err := Fingerprint(right)
+	if err != nil {
+		t.Fatalf("Fingerprint(right) error = %v", err)
+	}
+	if leftFingerprint != rightFingerprint {
+		t.Fatalf("fingerprints differ:\nleft:  %s\nright: %s", leftFingerprint, rightFingerprint)
+	}
+}
+
+func TestFingerprintContainerCacheMountsAreDeterministic(t *testing.T) {
+	left, err := Parse("policy.yaml", []byte(`apiVersion: drydock.sholdee.dev/v1alpha1
+kind: PluginPolicy
+plugins:
+  renderer:
+    engine: container
+    image: registry.example.com/drydock/renderer@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+    cacheMounts:
+      - name: z-cache
+        target: /drydock-cache/z-cache
+      - name: pkl-cache
+        target: /drydock-cache/pkl-cache//module
+    generate:
+      command: ["renderer", "generate"]
+`))
+	if err != nil {
+		t.Fatalf("Parse(left) error = %v", err)
+	}
+	right, err := Parse("policy.yaml", []byte(`kind: PluginPolicy
+apiVersion: drydock.sholdee.dev/v1alpha1
+plugins:
+  renderer:
+    cacheMounts:
+      - target: /drydock-cache/pkl-cache/module
+        name: pkl-cache
+      - target: /drydock-cache/z-cache/
+        name: z-cache
+    generate:
+      command: ["renderer", "generate"]
+    image: registry.example.com/drydock/renderer@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+    engine: container
 `))
 	if err != nil {
 		t.Fatalf("Parse(right) error = %v", err)
