@@ -443,6 +443,7 @@ data:
 
 func TestOrchestratorBuildRendersTrustedContainerPolicyPlugin(t *testing.T) {
 	root := t.TempDir()
+	pluginCacheDir := filepath.Join(t.TempDir(), "plugin-cache")
 	writePluginBuildApplication(t, root, "plugin", "container-renderer")
 	writeTestFile(t, filepath.Join(root, "manifests", "plugin", "marker.txt"), "from-source")
 	policy, fingerprint := testContainerPluginPolicy(t, "container-renderer")
@@ -467,6 +468,7 @@ data:
 		Path: root,
 		PluginOptions: PluginOptions{
 			EnablePlugins:           true,
+			PluginCacheDir:          pluginCacheDir,
 			pluginPolicyLoaded:      true,
 			pluginPolicy:            policy,
 			pluginPolicyFingerprint: fingerprint,
@@ -478,6 +480,9 @@ data:
 	}
 	if runner.calls != 1 {
 		t.Fatalf("runner calls = %d, want 1", runner.calls)
+	}
+	if runner.lastRequest.CacheRoot != pluginCacheDir {
+		t.Fatalf("container CacheRoot = %q, want %q", runner.lastRequest.CacheRoot, pluginCacheDir)
 	}
 	if len(result.Manifests) != 1 || result.Manifests[0].Object.GetName() != "container-runner" {
 		t.Fatalf("Manifests = %#v, want container runner manifest", result.Manifests)
@@ -1190,13 +1195,15 @@ func (r *recordingExecRunner) Run(context.Context, pluginexec.Request) (pluginex
 }
 
 type recordingContainerRunner struct {
-	calls  int
-	result pluginexec.Result
-	err    error
+	calls       int
+	lastRequest plugincontainer.Request
+	result      pluginexec.Result
+	err         error
 }
 
-func (r *recordingContainerRunner) Run(context.Context, plugincontainer.Request) (pluginexec.Result, error) {
+func (r *recordingContainerRunner) Run(_ context.Context, request plugincontainer.Request) (pluginexec.Result, error) {
 	r.calls++
+	r.lastRequest = request
 	return r.result, r.err
 }
 

@@ -42,22 +42,22 @@ func TestRepresentativeCommandsExposeFocusedFlagGroups(t *testing.T) {
 		{
 			name:    "build apps common acquisition discovery fixtures filters",
 			command: []string{"build", "apps"},
-			flags:   []string{"offline", "repo-map", "enable-avp-compat", "enable-plugins", "plugin-policy-path", "plugin-policy-ref", "plugin-policy-repo", "appset-provider-fixture", "skip-kind"},
+			flags:   []string{"offline", "repo-map", "enable-avp-compat", "enable-plugins", "plugin-cache-dir", "plugin-policy-path", "plugin-policy-ref", "plugin-policy-repo", "appset-provider-fixture", "skip-kind"},
 		},
 		{
 			name:    "diff apps common specialized diff flags",
 			command: []string{"diff", "apps"},
-			flags:   []string{"offline", "repo-map", "appset-provider-fixture", "skip-kind", "ref-orig", "show-ignored-fields"},
+			flags:   []string{"offline", "repo-map", "plugin-cache-dir", "appset-provider-fixture", "skip-kind", "ref-orig", "show-ignored-fields"},
 		},
 		{
 			name:    "test apps common specialized lua flag",
 			command: []string{"test", "apps"},
-			flags:   []string{"offline", "repo-map", "appset-provider-fixture", "skip-kind", "skip-lua-health"},
+			flags:   []string{"offline", "repo-map", "plugin-cache-dir", "appset-provider-fixture", "skip-kind", "skip-lua-health"},
 		},
 		{
 			name:    "diag common flags",
 			command: []string{"diag"},
-			flags:   []string{"offline", "repo-map", "appset-provider-fixture", "skip-kind"},
+			flags:   []string{"offline", "repo-map", "plugin-cache-dir", "appset-provider-fixture", "skip-kind"},
 		},
 	}
 

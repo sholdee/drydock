@@ -9,7 +9,7 @@ drydock publishes two composite GitHub Actions:
   artifacts, and optionally maintain sticky PR comments.
 
 Use `setup-action` when you want to own the CLI commands. Use `pr-action` when
-you want the standard render test, markdown manifest diff, image diff, source
+you want the standard render test, markdown manifest diff, image diff, render
 cache, artifacts, and pull request comment workflow.
 
 ## Manual CLI Workflow
@@ -71,7 +71,12 @@ The PR action checks out the pull request, fetches the base ref, runs
 `drydock test apps`, renders the desired-state manifest diff, writes full diff
 artifacts when differences are found, and comments in trusted same-repository
 pull requests. Image diff comments are available as a companion signal. Fork
-pull requests skip comments and source-cache restore/save by default.
+pull requests skip comments and render-cache restore/save by default.
+
+When trusted container plugins are enabled, policy-managed plugin cache mounts
+live under the PR action cache root as `${cache-path}/plugin` and are restored
+or saved with that render cache. `drydock cache` lifecycle commands still manage
+only Git, chart, and remote-resource cache entry roots for now.
 
 ## Full Rendered Diff View
 

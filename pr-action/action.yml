@@ -122,7 +122,7 @@ inputs:
     required: false
     default: "false"
   enable-plugins:
-    description: Enable trusted exec plugin policy entries.
+    description: Enable trusted exec and container plugin policy entries.
     required: false
     default: "false"
   plugin-policy-path:
@@ -148,15 +148,15 @@ inputs:
     description: Newline-delimited additional trusted arguments for drydock diff images.
     required: false
   cache:
-    description: Restore and save drydock source caches for trusted runs.
+    description: Restore and save drydock render caches for trusted runs.
     required: false
     default: "true"
   save-cache:
-    description: Save drydock source caches after trusted runs.
+    description: Save drydock render caches after trusted runs.
     required: false
     default: "true"
   cache-untrusted-restore:
-    description: Restore drydock source caches for fork pull requests. Cache save remains disabled for forks.
+    description: Restore drydock render caches for fork pull requests. Cache save remains disabled for forks.
     required: false
     default: "false"
   cache-path:
@@ -382,7 +382,7 @@ runs:
         DRYDOCK_PR_BASE_REF: ${{ github.event.pull_request.base.ref }}
       run: '"${GITHUB_ACTION_PATH}/fetch-base.sh"'
 
-    - name: Restore drydock source cache
+    - name: Restore drydock render cache
       id: cache-restore
       if: ${{ steps.prepare.outputs.cache-restore == 'true' }}
       uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
@@ -438,7 +438,7 @@ runs:
         DRYDOCK_INPUT_UPLOAD_ARTIFACTS: ${{ inputs.upload-artifacts }}
       run: '"${GITHUB_ACTION_PATH}/run.sh"'
 
-    - name: Save drydock source cache
+    - name: Save drydock render cache
       if: ${{ always() && steps.prepare.outputs.cache-save == 'true' && steps.cache-restore.outputs.cache-hit != 'true' }}
       uses: actions/cache/save@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
       with:

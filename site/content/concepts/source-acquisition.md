@@ -42,6 +42,10 @@ drydock cache list -o json
 drydock cache prune --older-than 720h --dry-run
 ```
 
+`--plugin-cache-dir` is separate: it is a render-time override for
+policy-managed container plugin cache mounts. Cache lifecycle commands still
+manage only Git, chart, and remote-resource cache entry roots for now.
+
 ## Credentials
 
 Credentials are explicit and non-interactive. drydock does not read ambient Git
