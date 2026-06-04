@@ -349,6 +349,45 @@ entries:
 	}
 }
 
+func TestDefaultAcquirerAcceptsLeadingVSemverChartVersion(t *testing.T) {
+	archive := chartArchive(t, "demo", map[string]string{
+		"Chart.yaml": "apiVersion: v2\nname: demo\nversion: 1.2.3\n",
+	})
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/index.yaml":
+			w.Header().Set("Content-Type", "application/yaml")
+			fmt.Fprint(w, `apiVersion: v1
+entries:
+  demo:
+    - version: 1.2.3
+      urls:
+        - demo-1.2.3.tgz
+`)
+		case "/demo-1.2.3.tgz":
+			if _, err := w.Write(archive); err != nil {
+				t.Fatalf("write archive response: %v", err)
+			}
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(server.Close)
+
+	result, err := (DefaultAcquirer{Client: server.Client()}).Acquire(context.Background(), Request{
+		Repository: server.URL,
+		Name:       "demo",
+		Version:    "v1.2.3",
+		Kind:       RepositoryHTTP,
+	}, Options{CacheDir: t.TempDir()})
+	if err != nil {
+		t.Fatalf("Acquire() error = %v", err)
+	}
+	if result.Version != "v1.2.3" {
+		t.Fatalf("Result.Version = %q, want requested version", result.Version)
+	}
+}
+
 func TestDefaultAcquirerMissingVersionDiagnostic(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/index.yaml" {
