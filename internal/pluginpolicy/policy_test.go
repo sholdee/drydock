@@ -142,6 +142,11 @@ func assertContainerPluginSchema(t *testing.T, defs map[string]any) {
 	assertSchemaRef(t, schemaObject(t, containerProps, "cacheMounts"), "#/$defs/containerCacheMounts")
 	assertSchemaRef(t, schemaObject(t, containerProps, "generate"), "#/$defs/command")
 	assertSchemaRef(t, schemaObject(t, containerProps, "parameters"), "#/$defs/parameters")
+	assertContainerCacheMountSchema(t, defs)
+}
+
+func assertContainerCacheMountSchema(t *testing.T, defs map[string]any) {
+	t.Helper()
 	cacheMounts := schemaObject(t, defs, "containerCacheMounts")
 	if got, ok := cacheMounts["minItems"].(float64); !ok || int(got) != 1 {
 		t.Fatalf("container cacheMounts minItems = %#v, want 1", cacheMounts["minItems"])

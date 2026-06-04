@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"unicode"
@@ -41,8 +42,8 @@ func prepareContainerCacheMounts(ctx context.Context, request Request) ([]contai
 	mounts := make([]containerCacheMount, 0, len(plan.entries))
 	var locks []*containerCacheLock
 	cleanup := func() {
-		for index := len(locks) - 1; index >= 0; index-- {
-			locks[index].Close()
+		for _, lock := range slices.Backward(locks) {
+			lock.Close()
 		}
 	}
 	for _, entry := range plan.entries {
@@ -333,7 +334,7 @@ func isPolicyFingerprint(value string) bool {
 		return false
 	}
 	for _, char := range value {
-		if !(char >= '0' && char <= '9' || char >= 'a' && char <= 'f') {
+		if (char < '0' || char > '9') && (char < 'a' || char > 'f') {
 			return false
 		}
 	}

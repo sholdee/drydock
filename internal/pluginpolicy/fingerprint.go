@@ -142,7 +142,7 @@ func newFingerprintContainerCacheMounts(input []ContainerCacheMount) []fingerpri
 	}
 	out := make([]fingerprintCacheMount, 0, len(input))
 	for _, mount := range input {
-		out = append(out, fingerprintCacheMount{Name: mount.Name, Target: mount.Target})
+		out = append(out, fingerprintCacheMount(mount))
 	}
 	sort.Slice(out, func(i, j int) bool {
 		return out[i].Name < out[j].Name

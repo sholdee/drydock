@@ -285,6 +285,14 @@ func TestDefaultRunnerAddsDeterministicCacheMountArgsAfterWorkMount(t *testing.T
 		t.Fatalf("process requests = %d, want 1", len(process.requests))
 	}
 	args := process.requests[0].Args
+	wantA := filepath.Join(cacheRoot, fingerprint, sha256Hex("team/plugin"), "a-cache")
+	wantZ := filepath.Join(cacheRoot, fingerprint, sha256Hex("team/plugin"), "z-cache")
+	assertDeterministicCacheMountArgs(t, args, wantA, wantZ)
+	assertCacheMountMetadataAndLock(t, wantA, fingerprint, sha256Hex("team/plugin"))
+}
+
+func assertDeterministicCacheMountArgs(t *testing.T, args []string, wantA, wantZ string) {
+	t.Helper()
 	mounts := mountArgs(args)
 	if len(mounts) != 3 {
 		t.Fatalf("mounts = %#v, want work plus two cache mounts", mounts)
@@ -292,9 +300,6 @@ func TestDefaultRunnerAddsDeterministicCacheMountArgsAfterWorkMount(t *testing.T
 	if !strings.Contains(mounts[0], "dst=/work") {
 		t.Fatalf("first mount = %q, want /work", mounts[0])
 	}
-	pluginHash := sha256Hex("team/plugin")
-	wantA := filepath.Join(cacheRoot, fingerprint, pluginHash, "a-cache")
-	wantZ := filepath.Join(cacheRoot, fingerprint, pluginHash, "z-cache")
 	if mounts[1] != "type=bind,src="+wantA+",target=/drydock-cache/a" {
 		t.Fatalf("second mount = %q, want a-cache bind", mounts[1])
 	}
@@ -307,6 +312,10 @@ func TestDefaultRunnerAddsDeterministicCacheMountArgsAfterWorkMount(t *testing.T
 	if strings.Contains(strings.Join(mounts, "\x00"), "team/plugin") {
 		t.Fatalf("cache mount used raw plugin name: %#v", mounts)
 	}
+}
+
+func assertCacheMountMetadataAndLock(t *testing.T, wantA, fingerprint, pluginHash string) {
+	t.Helper()
 	metadata := readCacheMetadata(t, wantA)
 	if metadata.PolicyFingerprint != fingerprint || metadata.PluginNameSHA256 != pluginHash || metadata.CacheName != "a-cache" || metadata.Target != "/drydock-cache/a" {
 		t.Fatalf("metadata = %#v, want cache identity", metadata)

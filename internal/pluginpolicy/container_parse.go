@@ -3,6 +3,7 @@ package pluginpolicy
 import (
 	"fmt"
 	pathpkg "path"
+	"slices"
 	"sort"
 	"strings"
 	"unicode"
@@ -222,7 +223,7 @@ func parseContainerCacheMountName(fields map[string]*yaml.Node, policyPath, poin
 		return "", fmt.Errorf("parse plugin policy %s: %s.name must not contain leading or trailing whitespace", policyPath, pointer)
 	}
 	if name == "" || name == "." || name == ".." {
-		return "", fmt.Errorf("parse plugin policy %s: %s.name must not be empty, . or ..", policyPath, pointer)
+		return "", fmt.Errorf("parse plugin policy %s: %s.name must not be empty or use a dot path segment", policyPath, pointer)
 	}
 	if len(name) > 63 || !bootstrapEntrypointNamePattern.MatchString(name) || hasCommaOrControl(name) {
 		return "", fmt.Errorf("parse plugin policy %s: %s.name %q must be a DNS-label-like cache name", policyPath, pointer, name)
@@ -290,10 +291,5 @@ func hasCommaOrControl(value string) bool {
 }
 
 func hasDotDotPathComponent(value string) bool {
-	for _, component := range strings.Split(value, "/") {
-		if component == ".." {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(strings.Split(value, "/"), "..")
 }
