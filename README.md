@@ -264,8 +264,8 @@ inspect locally and in CI:
   changed-only selection, default noisy-field filtering, and structured or
   markdown output.
 - **Plugins:** native safe Kustomize compatibility, `avp-compat` placeholder
-  redaction, native policy overrides, and explicit trusted exec policy with
-  `--enable-plugins`.
+  redaction, native policy overrides, trusted exec/container policy with
+  `--enable-plugins`, and policy bootstrap entrypoints.
 - **Diagnostics:** render status, custom health Lua validation, redacted
   settings/repository/AppProject checks, source acquisition diagnostics, and
   cache lifecycle commands.
@@ -353,7 +353,8 @@ Join the home-operations Discord at <https://discord.gg/home-operations>.
 - [Argo CD Render Parity](https://sholdee.github.io/drydock/concepts/argocd-render-parity/):
   how covered render semantics are validated against real Argo CD.
 - [Plugin policy](https://sholdee.github.io/drydock/plugin-policy/): trusted
-  policy engines, schema, CMP compatibility, and exec security.
+  policy engines, schema, CMP compatibility, bootstrap discovery, and command
+  security.
 - [Source acquisition](https://sholdee.github.io/drydock/concepts/source-acquisition/):
   Git, Helm, remote Kustomize, cache, and auth behavior.
 - [Reference](https://sholdee.github.io/drydock/reference/): full command and

@@ -64,8 +64,10 @@ drydock test apps --path .
 drydock test apps --path . --plugin-policy-ref main --enable-plugins
 ```
 
-Start without plugin execution. Add trusted policy flags only when the
-repository depends on non-native plugin rendering.
+Start with native compatibility paths. Add trusted policy flags only when the
+repository depends on exec or container plugin rendering. Use
+`bootstrap.entrypoints` when plugin-rendered output contains bootstrap
+`Application` or `ApplicationSet` objects for fleet discovery.
 
 For deeper guidance, see the canonical
 [repository topology guide](/docs/topologies/),

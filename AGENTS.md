@@ -60,8 +60,8 @@ when the user-facing task requires it.
 ## Hard Constraints
 
 - Do not add default shellouts to `helm`, `kustomize`, `kubectl`, `argocd`, or
-  config-management plugins. Exec plugins require trusted policy provenance
-  plus explicit `--enable-plugins`.
+  config-management plugins. Exec and container plugin engines require trusted
+  policy provenance plus explicit `--enable-plugins`.
 - Do not add live Kubernetes or Argo CD server behavior without updating the
   live runtime boundary document and preserving `--offline` behavior.
 - Do not hard-code `home-ops` paths, chart versions, branches, or repository

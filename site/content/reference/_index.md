@@ -15,8 +15,8 @@ local run.
   permissions, comments, outputs, and caches.
 - [Source acquisition](/docs/source-acquisition/): Git, Helm, remote
   Kustomize, caches, offline behavior, and auth.
-- [Plugin policy](/docs/plugin-policy/): trusted policy provenance, engines,
-  schema, and exec security.
+- [Plugin policy](/docs/plugin-policy/): trusted policy provenance, native
+  engines, the exec/container command gate, bootstrap entrypoints, and schema.
 - [Compatibility](/docs/compatibility/): supported Argo CD behavior and
   runtime-boundary status.
 

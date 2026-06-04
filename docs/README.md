@@ -17,7 +17,7 @@ copying the same rule into multiple files.
 | `docs/topologies.md` | Repository topology guidance and command patterns. |
 | `docs/applicationsets.md` | ApplicationSet generator behavior, fixture schema, and template parameters. |
 | `docs/source-acquisition.md` | Git, Helm, remote Kustomize, cache, and auth behavior. |
-| `docs/plugin-policy.md` | Trusted plugin policy provenance, editor schema, CMP compatibility, and exec security. |
+| `docs/plugin-policy.md` | Trusted plugin policy provenance, editor schema, CMP compatibility, bootstrap discovery, and command security. |
 | `schemas/plugin-policy.schema.json` | Editor validation schema for `.drydock/plugins.yaml`; parser remains authoritative. |
 | `docs/compatibility.md` | Supported Argo CD behavior and runtime-boundary status. |
 | `docs/github-actions.md` | Setup action and full PR action usage, permissions, cache, comments, and outputs. |
