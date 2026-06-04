@@ -139,8 +139,21 @@ func assertContainerPluginSchema(t *testing.T, defs map[string]any) {
 	assertSchemaDefault(t, schemaObject(t, containerProps, "allowMutableImageTag"), false)
 	assertSchemaEnum(t, schemaObject(t, containerProps, "network"), "none", "default")
 	assertSchemaDefault(t, schemaObject(t, containerProps, "network"), "none")
+	assertSchemaRef(t, schemaObject(t, containerProps, "cacheMounts"), "#/$defs/containerCacheMounts")
 	assertSchemaRef(t, schemaObject(t, containerProps, "generate"), "#/$defs/command")
 	assertSchemaRef(t, schemaObject(t, containerProps, "parameters"), "#/$defs/parameters")
+	cacheMounts := schemaObject(t, defs, "containerCacheMounts")
+	if got, ok := cacheMounts["maxItems"].(float64); !ok || int(got) != maxContainerCacheMountCount {
+		t.Fatalf("container cacheMounts maxItems = %#v, want %d", cacheMounts["maxItems"], maxContainerCacheMountCount)
+	}
+	cacheMount := schemaObject(t, defs, "containerCacheMount")
+	assertSchemaRequired(t, cacheMount, "name", "target")
+	cacheMountProps := schemaObject(t, cacheMount, "properties")
+	assertSchemaRef(t, schemaObject(t, cacheMountProps, "name"), "#/$defs/containerCacheMountName")
+	cacheMountName := schemaObject(t, defs, "containerCacheMountName")
+	if got, ok := cacheMountName["maxLength"].(float64); !ok || int(got) != 63 {
+		t.Fatalf("container cache mount name maxLength = %#v, want 63", cacheMountName["maxLength"])
+	}
 }
 
 func assertCMPAndParameterSchemas(t *testing.T, defs map[string]any) {
@@ -1145,6 +1158,9 @@ plugins:
 	if got := plugin.Container.Network; got != DefaultContainerNetwork {
 		t.Fatalf("Network = %q, want %q", got, DefaultContainerNetwork)
 	}
+	if len(plugin.Container.CacheMounts) != 0 {
+		t.Fatalf("CacheMounts = %#v, want none by default", plugin.Container.CacheMounts)
+	}
 	if plugin.Container.AllowMutableImageTag {
 		t.Fatal("AllowMutableImageTag = true, want default false")
 	}
@@ -1190,6 +1206,43 @@ plugins:
 	}
 	if plugin.Container.Network != ContainerNetworkDefault {
 		t.Fatalf("Network = %q, want %q", plugin.Container.Network, ContainerNetworkDefault)
+	}
+}
+
+func TestParseContainerPolicyCacheMounts(t *testing.T) {
+	image := "registry.example.com/drydock/renderer@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	policy, err := Parse("policy.yaml", []byte(`apiVersion: drydock.sholdee.dev/v1alpha1
+kind: PluginPolicy
+plugins:
+  renderer:
+    engine: container
+    image: `+image+`
+    cacheMounts:
+      - name: z-cache
+        target: /drydock-cache/z-cache
+      - name: pkl-cache
+        target: /drydock-cache/pkl-cache//module
+    generate:
+      command: ["renderer", "generate"]
+`))
+	if err != nil {
+		t.Fatalf("Parse() error = %v", err)
+	}
+	plugin, ok := policy.Plugin("renderer")
+	if !ok || plugin.Container == nil {
+		t.Fatalf("Plugin(renderer) = %#v, want container plugin", plugin)
+	}
+	want := []ContainerCacheMount{
+		{Name: "pkl-cache", Target: "/drydock-cache/pkl-cache/module"},
+		{Name: "z-cache", Target: "/drydock-cache/z-cache"},
+	}
+	if len(plugin.Container.CacheMounts) != len(want) {
+		t.Fatalf("CacheMounts = %#v, want %#v", plugin.Container.CacheMounts, want)
+	}
+	for index, mount := range want {
+		if plugin.Container.CacheMounts[index] != mount {
+			t.Fatalf("CacheMounts[%d] = %#v, want %#v", index, plugin.Container.CacheMounts[index], mount)
+		}
 	}
 }
 
@@ -1304,6 +1357,185 @@ func TestParseContainerPolicyRejectsUnsafeFields(t *testing.T) {
       command: ["renderer"]
 `,
 			want: "unknown field",
+		},
+		{
+			name: "cache mounts must be sequence",
+			body: `    engine: container
+    image: ` + digestImage + `
+    cacheMounts: {}
+    generate:
+      command: ["renderer"]
+`,
+			want: "cacheMounts must be a sequence",
+		},
+		{
+			name: "cache mounts must not be empty",
+			body: `    engine: container
+    image: ` + digestImage + `
+    cacheMounts: []
+    generate:
+      command: ["renderer"]
+`,
+			want: "cacheMounts must not be empty",
+		},
+		{
+			name: "cache mount item must be mapping",
+			body: `    engine: container
+    image: ` + digestImage + `
+    cacheMounts:
+      - pkl-cache
+    generate:
+      command: ["renderer"]
+`,
+			want: "cacheMounts[0] must be a mapping",
+		},
+		{
+			name: "cache mount name must be path safe",
+			body: `    engine: container
+    image: ` + digestImage + `
+    cacheMounts:
+      - name: Pkl_Cache
+        target: /drydock-cache/pkl-cache
+    generate:
+      command: ["renderer"]
+`,
+			want: "DNS-label-like cache name",
+		},
+		{
+			name: "cache mount name rejects whitespace",
+			body: `    engine: container
+    image: ` + digestImage + `
+    cacheMounts:
+      - name: " pkl-cache"
+        target: /drydock-cache/pkl-cache
+    generate:
+      command: ["renderer"]
+`,
+			want: "leading or trailing whitespace",
+		},
+		{
+			name: "cache mount duplicate name",
+			body: `    engine: container
+    image: ` + digestImage + `
+    cacheMounts:
+      - name: pkl-cache
+        target: /drydock-cache/pkl-cache
+      - name: pkl-cache
+        target: /drydock-cache/pkl-cache-2
+    generate:
+      command: ["renderer"]
+`,
+			want: "duplicate cache mount name",
+		},
+		{
+			name: "cache mount target must be absolute",
+			body: `    engine: container
+    image: ` + digestImage + `
+    cacheMounts:
+      - name: pkl-cache
+        target: drydock-cache/pkl-cache
+    generate:
+      command: ["renderer"]
+`,
+			want: "absolute Linux container path",
+		},
+		{
+			name: "cache mount target must be under drydock cache root",
+			body: `    engine: container
+    image: ` + digestImage + `
+    cacheMounts:
+      - name: pkl-cache
+        target: /cache/pkl-cache
+    generate:
+      command: ["renderer"]
+`,
+			want: "target must be under /drydock-cache",
+		},
+		{
+			name: "cache mount target rejects drydock cache root",
+			body: `    engine: container
+    image: ` + digestImage + `
+    cacheMounts:
+      - name: pkl-cache
+        target: /drydock-cache
+    generate:
+      command: ["renderer"]
+`,
+			want: "without using the root itself",
+		},
+		{
+			name: "cache mount target rejects work mount",
+			body: `    engine: container
+    image: ` + digestImage + `
+    cacheMounts:
+      - name: pkl-cache
+        target: /work/.cache
+    generate:
+      command: ["renderer"]
+`,
+			want: "must not overlap the /work source mount",
+		},
+		{
+			name: "cache mount target rejects traversal",
+			body: `    engine: container
+    image: ` + digestImage + `
+    cacheMounts:
+      - name: pkl-cache
+        target: /drydock-cache/pkl-cache/../other
+    generate:
+      command: ["renderer"]
+`,
+			want: "must not contain .. path components",
+		},
+		{
+			name: "cache mount target rejects backslash",
+			body: `    engine: container
+    image: ` + digestImage + `
+    cacheMounts:
+      - name: pkl-cache
+        target: /drydock-cache\pkl-cache
+    generate:
+      command: ["renderer"]
+`,
+			want: "must use Linux container paths",
+		},
+		{
+			name: "cache mount target rejects comma",
+			body: `    engine: container
+    image: ` + digestImage + `
+    cacheMounts:
+      - name: pkl-cache
+        target: /drydock-cache/pkl,cache
+    generate:
+      command: ["renderer"]
+`,
+			want: "must not contain commas",
+		},
+		{
+			name: "cache mount target rejects unicode control",
+			body: `    engine: container
+    image: ` + digestImage + `
+    cacheMounts:
+      - name: pkl-cache
+        target: "/drydock-cache/pkl\u0085cache"
+    generate:
+      command: ["renderer"]
+`,
+			want: "must not contain commas or control characters",
+		},
+		{
+			name: "cache mount targets must not overlap",
+			body: `    engine: container
+    image: ` + digestImage + `
+    cacheMounts:
+      - name: pkl-cache
+        target: /drydock-cache/pkl-cache
+      - name: nested
+        target: /drydock-cache/pkl-cache/nested
+    generate:
+      command: ["renderer"]
+`,
+			want: "overlapping cache mount targets",
 		},
 		{
 			name: "missing generate",
@@ -2382,6 +2614,10 @@ plugins:
 		{
 			name: "lifecycle",
 			data: strings.Replace(base, "timeout: 3s", "timeout: 4s", 1),
+		},
+		{
+			name: "cache mounts",
+			data: strings.Replace(base, "    generate:\n", "    cacheMounts:\n      - name: pkl-cache\n        target: /drydock-cache/pkl-cache\n    generate:\n", 1),
 		},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
