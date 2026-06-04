@@ -64,7 +64,7 @@ jobs:
 ## Pull Request Action
 
 Use the PR action when you want the standard render test, manifest diff, image
-diff, source cache, artifacts, and sticky comments:
+diff, render cache, artifacts, and sticky comments:
 
 ```yaml
 name: drydock
@@ -98,7 +98,7 @@ By default the action:
   image artifact;
 - writes image diff comments with drydock markdown output, including removed
   image references when present;
-- uses drydock source caches under the runner temp directory;
+- uses drydock render caches under the runner temp directory;
 - uploads full raw diff and browser-openable Full Rendered Diff View artifacts
   when manifest differences are found;
 - writes sticky PR comments for trusted same-repository pull requests.
@@ -112,8 +112,9 @@ artifact link opens in the current tab or a new tab.
 Open a public sample:
 [Full Rendered Diff View](https://sholdee.github.io/drydock/examples/full-rendered-diff-view.html).
 
-Fork pull requests do not restore or save drydock source caches by default,
-because source caches can contain private repository or chart material. They
+Fork pull requests do not restore or save drydock render caches by default,
+because render caches can contain private repository, chart, remote source, or
+plugin cache material. They
 also skip PR comments by default. Set `cache-untrusted-restore: "true"` only if
 restoring cache contents into fork PR runs is acceptable for that repository.
 Cache save remains disabled for fork PRs.
@@ -154,10 +155,14 @@ The token is used for release downloads, checkout, baseline fetch, and PR
 comments. It is not exported to `drydock test`, `drydock diff`, cache contents,
 or uploaded artifacts.
 
-Binary caching is separate from drydock source caching. Binary cache entries
+Binary caching is separate from drydock render caching. Binary cache entries
 contain only the released `drydock` archive and are keyed by release checksum.
-Source cache entries contain fetched Git, Helm, and remote Kustomize sources for
-the repository under test.
+Render cache entries contain fetched Git, Helm, and remote Kustomize sources for
+the repository under test. When trusted container plugins are enabled, the PR
+action also places policy-managed plugin cache mounts under the action cache
+root as `${cache-path}/plugin` and restores or saves them with the same cache
+entry. `drydock cache` lifecycle commands still manage only Git, chart, and
+remote-resource cache entry roots for now.
 
 ## Common Inputs
 

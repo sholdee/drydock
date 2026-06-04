@@ -112,6 +112,7 @@ shorthand, a `.git` repository path, or explicit Git syntax such as `git::`,
 | `--chart-cache-dir PATH` | Override the default chart cache root. |
 | `--refresh-remotes` | Refresh cached remote Kustomize resources before rendering. |
 | `--remote-cache-dir PATH` | Override the default remote-resource cache root. |
+| `--plugin-cache-dir PATH` | Runtime override for policy-managed container plugin cache mounts. |
 | `--registry-config PATH` | Supply the only Helm OCI registry credentials. |
 
 Offline render/build/diff commands require cache hits, repo maps, local files,
@@ -127,6 +128,11 @@ cache.
 Cache entries include hidden `.drydock-cache/metadata.json` sidecars with
 redacted target metadata. Older hash-only entries are listed as legacy entries
 when their filesystem layout is recognized.
+
+`--plugin-cache-dir` is a render-time override for trusted container plugin
+`cacheMounts`, not a source-acquisition cache. It selects the host root for
+policy-managed durable plugin mounts while policy still controls which plugins
+may use mounts and which container paths they target.
 
 ## Credentials
 
@@ -172,8 +178,10 @@ Cache lifecycle commands are local filesystem operations only. They do not:
 - read credential flags
 - retry failed network or authentication acquisitions
 
-`cache prune` and `cache delete` operate only on recognized drydock cache entry
-roots. They reject cache roots that resolve inside the current working
+`cache prune` and `cache delete` operate only on recognized drydock Git, chart,
+and remote-resource cache entry roots for now. They do not list, prune, or
+delete plugin cache mount roots selected with `--plugin-cache-dir`. Cache
+lifecycle commands reject cache roots that resolve inside the current working
 directory, selected repository roots, Git repository trees, or symlink-resolved
 equivalents. Non-dry-run deletion requires `--yes`; dry-runs never require
 confirmation.

@@ -46,6 +46,17 @@ For pull request diffs, drydock loads policy from the trusted baseline side:
 drydock diff apps --path-orig ../baseline --path . --enable-plugins
 ```
 
+## Container Cache Mounts
+
+Container `cacheMounts` are policy-managed durable tool caches mounted only
+under reserved `/drydock-cache` paths. `--plugin-cache-dir` is a render-time
+override for the host root backing those mounts; it does not change trusted
+policy target paths. Cache lifecycle commands still manage only Git, chart, and
+remote-resource cache entry roots for now.
+
+In the GitHub PR action, trusted plugin cache mounts live under the action cache
+root as `${cache-path}/plugin` when trusted plugins are enabled.
+
 ## Bootstrap Entrypoints
 
 `bootstrap.entrypoints` are fleet discovery inputs for repositories whose

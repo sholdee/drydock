@@ -362,6 +362,68 @@ func TestRunPassesChangedOnlyPathFiltersOnlyToDiffCommands(t *testing.T) {
 	}
 }
 
+func TestRunPassesPluginCacheDirToEveryInvocationWhenCachePathSet(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell action tests require bash")
+	}
+
+	tmp := t.TempDir()
+	cachePath := filepath.Join(tmp, "cache")
+	workDir := runCommentScenario(t, commentScenario{
+		commentMode: "both",
+		diffOutput:  true,
+		imageOutput: true,
+		runTest:     true,
+		cachePath:   cachePath,
+	})
+
+	args := readFile(t, filepath.Join(workDir, "drydock-args.txt"))
+	lines := strings.Split(strings.TrimSpace(args), "\n")
+	if len(lines) != 4 {
+		t.Fatalf("drydock invocations = %q, want test, diff apps, diff images name, diff images markdown", args)
+	}
+	want := "--plugin-cache-dir " + filepath.Join(cachePath, "plugin")
+	for _, line := range lines {
+		if !strings.Contains(line, want) {
+			t.Fatalf("drydock invocation missing plugin cache dir %q:\n%s", want, line)
+		}
+	}
+	for _, name := range []string{"git", "charts", "remotes", "plugin"} {
+		path := filepath.Join(cachePath, name)
+		info, err := os.Stat(path)
+		if err != nil {
+			t.Fatalf("stat %s: %v", path, err)
+		}
+		if !info.IsDir() {
+			t.Fatalf("%s is not a directory", path)
+		}
+	}
+}
+
+func TestRunOmitsPluginCacheDirWhenCachePathEmpty(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell action tests require bash")
+	}
+
+	workDir := runCommentScenario(t, commentScenario{
+		commentMode: "both",
+		diffOutput:  true,
+		imageOutput: true,
+		runTest:     true,
+	})
+
+	args := readFile(t, filepath.Join(workDir, "drydock-args.txt"))
+	lines := strings.Split(strings.TrimSpace(args), "\n")
+	if len(lines) != 4 {
+		t.Fatalf("drydock invocations = %q, want test, diff apps, diff images name, diff images markdown", args)
+	}
+	for _, line := range lines {
+		if strings.Contains(line, "--plugin-cache-dir") {
+			t.Fatalf("drydock invocation included plugin cache dir with empty DRYDOCK_CACHE_PATH:\n%s", line)
+		}
+	}
+}
+
 func TestRunImageCommentsUseMarkdownAfterExtraImageArgs(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("shell action tests require bash")
@@ -521,6 +583,7 @@ type commentScenario struct {
 	changedOnlyInclude              string
 	changedOnlyIgnore               string
 	omitDiffHTMLArtifactNameFromEnv bool
+	cachePath                       string
 }
 
 func runCommentScenario(t *testing.T, scenario commentScenario) string {
@@ -559,6 +622,9 @@ func runCommentScenario(t *testing.T, scenario commentScenario) string {
 	}
 	if scenario.omitDiffHTMLArtifactNameFromEnv {
 		env = withoutEnv(env, "DRYDOCK_DIFF_HTML_ARTIFACT_NAME")
+	}
+	if scenario.cachePath != "" {
+		env = append(withoutEnv(env, "DRYDOCK_CACHE_PATH"), "DRYDOCK_CACHE_PATH="+scenario.cachePath)
 	}
 
 	cmd := exec.Command("bash", "run.sh")
