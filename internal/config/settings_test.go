@@ -480,6 +480,9 @@ func TestLoadHelmValuesResourceSettings(t *testing.T) {
     resource.customizations.ignoreDifferences.apps_Deployment: |
       jsonPointers:
         - /spec/replicas
+    resource.customizations.ignoreDifferences._PersistentVolumeClaim: |
+      jsonPointers:
+        - /spec/volumeName
 `), 0o600); err != nil {
 		t.Fatalf("WriteFile() error = %v", err)
 	}
@@ -497,6 +500,10 @@ func TestLoadHelmValuesResourceSettings(t *testing.T) {
 	customization := settings.ResourceCustomizations["apps/Deployment"]
 	if len(customization.IgnoreDifferences.JSONPointers) != 1 || customization.IgnoreDifferences.JSONPointers[0] != "/spec/replicas" {
 		t.Fatalf("Deployment customization = %#v", customization)
+	}
+	pvcCustomization := settings.ResourceCustomizations["/PersistentVolumeClaim"]
+	if len(pvcCustomization.IgnoreDifferences.JSONPointers) != 1 || pvcCustomization.IgnoreDifferences.JSONPointers[0] != "/spec/volumeName" {
+		t.Fatalf("PersistentVolumeClaim customization = %#v", pvcCustomization)
 	}
 }
 

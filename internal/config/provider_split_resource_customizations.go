@@ -147,7 +147,7 @@ func splitResourceCustomizationKey(suffix string, provenance diagnostic.Provenan
 		return "", invalidSplitResourceCustomizationKeyDiagnostic(provenance)
 	}
 	if idx := strings.Index(suffix, "_"); idx >= 0 {
-		if idx == 0 || idx == len(suffix)-1 {
+		if idx == len(suffix)-1 {
 			return "", invalidSplitResourceCustomizationKeyDiagnostic(provenance)
 		}
 		return suffix[:idx] + "/" + suffix[idx+1:], nil
