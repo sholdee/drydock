@@ -1,5 +1,28 @@
 # Changelog
 
+## [0.1.14](https://github.com/sholdee/drydock/compare/v0.1.13...v0.1.14) (2026-06-04)
+
+
+### Features
+
+* **plugin-policy:** add container cache mounts ([#100](https://github.com/sholdee/drydock/issues/100)) ([2f640a5](https://github.com/sholdee/drydock/commit/2f640a504bebc3d72646e2ddd40d4914702a47cd))
+* **plugin-policy:** add plugin cache dir option ([1e1c95b](https://github.com/sholdee/drydock/commit/1e1c95b6aa0b0b54da0a88f4881ddd1ef0121bce))
+* **plugin-policy:** support trusted command-backed rendering ([9e1a37c](https://github.com/sholdee/drydock/commit/9e1a37cacdf407872946dceb405d3ab740e54445))
+* **plugin-policy:** support trusted container bootstrap rendering ([7b4e7d9](https://github.com/sholdee/drydock/commit/7b4e7d99832a8694a64c12185ea68f8a55f736e9))
+* **pr-action:** cache plugin mounts ([dc9ebcc](https://github.com/sholdee/drydock/commit/dc9ebccf85d283ab024622df6065fdfbda997ce5))
+* **pr-action:** cache plugin mounts ([e25139e](https://github.com/sholdee/drydock/commit/e25139e6c221988d82ff69df35017735f96dc995))
+
+
+### Bug Fixes
+
+* accept core resource customization split keys ([#96](https://github.com/sholdee/drydock/issues/96)) ([13f07c0](https://github.com/sholdee/drydock/commit/13f07c0c66c03f1941ef744ca1358bc97b6b968b))
+* **chart:** accept v-prefixed Helm chart versions ([ed2daca](https://github.com/sholdee/drydock/commit/ed2daca3d9f5bc56e2f3be751ed6266b1a5a5b0d))
+
+
+### Documentation
+
+* **plugin-policy:** document trusted container workflows ([08474d0](https://github.com/sholdee/drydock/commit/08474d041eb96371b1632f1fb0d75a879920318f))
+
 ## [0.1.13](https://github.com/sholdee/drydock/compare/v0.1.12...v0.1.13) (2026-06-04)
 
 
