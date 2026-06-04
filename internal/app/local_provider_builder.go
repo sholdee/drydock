@@ -54,6 +54,7 @@ func newLocalProvider(orchestrator Orchestrator, root string, settings config.Ar
 		helmValueFileSchemes:         settingsHelmValueFileSchemes(settings),
 		helmValueFileSchemesSet:      settings.HelmValuesFileSchemesSet,
 		pluginTimeout:                request.PluginTimeout,
+		pluginCacheDir:               request.PluginCacheDir,
 		pluginPolicy:                 request.pluginPolicy,
 		pluginPolicyFingerprint:      request.pluginPolicyFingerprint,
 		pluginPolicyExecTrusted:      request.pluginPolicyExecTrusted,

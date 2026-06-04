@@ -45,6 +45,7 @@ type commonFlags struct {
 	remoteBearerToken        string
 	enableAVPCompat          bool
 	enablePlugins            bool
+	pluginCacheDir           string
 	pluginPolicyPath         string
 	pluginPolicyPathExplicit bool
 	pluginPolicyRef          string
@@ -139,6 +140,7 @@ func bindRemoteAcquisitionCacheFlags(cmd *cobra.Command, flags *commonFlags) {
 func bindPluginFlags(cmd *cobra.Command, flags *commonFlags) {
 	cmd.Flags().BoolVar(&flags.enableAVPCompat, "enable-avp-compat", flags.enableAVPCompat, "replace argocd-vault-plugin placeholders with deterministic redacted values")
 	cmd.Flags().BoolVar(&flags.enablePlugins, "enable-plugins", flags.enablePlugins, "enable trusted exec/container plugin policy entries")
+	cmd.Flags().StringVar(&flags.pluginCacheDir, "plugin-cache-dir", flags.pluginCacheDir, "directory for policy-managed container plugin caches")
 	cmd.Flags().StringVar(&flags.pluginPolicyPath, "plugin-policy-path", flags.pluginPolicyPath, "trusted plugin policy path relative to the selected policy root")
 	cmd.Flags().StringVar(&flags.pluginPolicyRef, "plugin-policy-ref", flags.pluginPolicyRef, "Git ref to use as the trusted plugin policy source")
 	cmd.Flags().StringVar(&flags.pluginPolicyRepo, "plugin-policy-repo", flags.pluginPolicyRepo, "local Git repository path used to resolve --plugin-policy-ref")
@@ -282,6 +284,7 @@ func requestOptionsFromFlags(flags commonFlags, repoMaps []source.RepoMap) reque
 		RemoteResourceGitCredentials:   flags.remoteGitCredentials(),
 		EnableAVPCompat:                flags.enableAVPCompat,
 		EnablePlugins:                  flags.enablePlugins,
+		PluginCacheDir:                 flags.pluginCacheDir,
 		PluginPolicyPath:               flags.pluginPolicyPath,
 		PluginPolicyPathExplicit:       flags.pluginPolicyPathExplicit,
 		PluginPolicyRef:                flags.pluginPolicyRef,

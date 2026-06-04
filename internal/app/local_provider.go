@@ -41,6 +41,7 @@ type localProvider struct {
 	helmValueFileSchemes         []string
 	helmValueFileSchemesSet      bool
 	pluginTimeout                time.Duration
+	pluginCacheDir               string
 	pluginPolicy                 pluginpolicy.Policy
 	pluginPolicyFingerprint      string
 	pluginPolicyExecTrusted      bool

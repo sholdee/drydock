@@ -49,6 +49,7 @@ type PluginOptions struct {
 	PluginTimeout            time.Duration
 	EnableAVPCompat          bool
 	EnablePlugins            bool
+	PluginCacheDir           string
 	PluginPolicyPath         string
 	PluginPolicyPathExplicit bool
 	PluginPolicyRef          string

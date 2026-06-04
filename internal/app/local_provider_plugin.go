@@ -321,6 +321,7 @@ func (p localProvider) renderContainerPolicyPluginSource(ctx context.Context, so
 		Config:            containerConfig,
 		Offline:           p.offline,
 		ForbiddenRoots:    p.execProtectedRoots(source.RepoRoot),
+		CacheRoot:         p.pluginCacheDir,
 		ExtraEnv:          extraEnv,
 		SensitiveValues:   sensitive,
 	})
