@@ -335,6 +335,19 @@ is not supported for manifest diffs.
 drydock diff apps --path ./current --path-orig ../base -o markdown
 ```
 
+Use `--html-output-file` to write an additional standalone Full Rendered Diff
+View for local browser review. The selected stdout format remains unified,
+markdown, JSON, or YAML; the HTML file does not change stdout.
+
+```bash
+drydock diff apps \
+  --repo . \
+  --ref HEAD \
+  --ref-orig main \
+  -o markdown \
+  --html-output-file rendered-diff.html
+```
+
 Unified diff output supports git-style ANSI color with
 `--color=auto|always|never`. The default, `auto`, colors only when writing to a
 terminal. `always` forces ANSI color for text diff output, while `never`

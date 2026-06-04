@@ -1,0 +1,99 @@
+{{- $exampleURL := "examples/full-rendered-diff-view.html" | relURL -}}
+{{- $logoURL := "logo/drydock-logo-dark.svg" | relURL -}}
+<figure class="github-comment-preview" aria-label="Rendered GitHub pull request comment example">
+  <figcaption class="visually-hidden">Example PR comment</figcaption>
+  <div class="github-comment-shell">
+    <div class="github-comment-avatar" aria-hidden="true">
+      <img src="{{ $logoURL }}" alt="">
+    </div>
+    <div class="github-comment-box">
+      <div class="github-comment-header">
+        <span class="github-comment-author">drydock</span>
+        <span class="github-comment-bot-badge">Bot</span>
+        <span>commented now</span>
+      </div>
+      <div class="github-markdown-body">
+        <h2>drydock desired state diff</h2>
+        <p><strong>Summary:</strong> 2 apps, 3 resources, +9/-9.</p>
+        <details>
+          <summary>renovate (+5/-5, 1 resources)</summary>
+          <div class="github-comment-highlight">
+            <div class="github-comment-code" aria-label="Diff excerpt">
+              <div class="github-comment-code-row pl-md">--- Application: renovate Source: 0 apps/renovate/kustomization.yaml renovate-operator.mogenius.com/RenovateJob: renovate/renovate</div>
+              <div class="github-comment-code-row pl-mi1">+++ Application: renovate Source: 0 apps/renovate/kustomization.yaml renovate-operator.mogenius.com/RenovateJob: renovate/renovate</div>
+              <div class="github-comment-code-row pl-mdr">@@ -34,18 +34,18 @@</div>
+              <div class="github-comment-code-row diff-context">      value: http://10.2.0.110:3900</div>
+              <div class="github-comment-code-row diff-context">    - name: S3_FORCE_PATH_STYLE</div>
+              <div class="github-comment-code-row diff-context">      value: "true"</div>
+              <div class="github-comment-code-row pl-md"><span class="diff-marker pl-md">-</span>  image: renovate/renovate:43.205.3@sha256:53a36e2d4da0fea960e6d4ebac3da152233532c0be1c14313086011e7c4bb551</div>
+              <div class="github-comment-code-row pl-md"><span class="diff-marker pl-md">-</span>  parallelism: 3</div>
+              <div class="github-comment-code-row pl-mi1"><span class="diff-marker pl-mi1">+</span>  image: renovate/renovate:43.207.4@sha256:087bab575172b1926bbc57124d988015d899b0a82d45028514377b10a392f69d</div>
+              <div class="github-comment-code-row pl-mi1"><span class="diff-marker pl-mi1">+</span>  parallelism: 2</div>
+              <div class="github-comment-code-row diff-context">  provider:</div>
+              <div class="github-comment-code-row diff-context">    name: github</div>
+              <div class="github-comment-code-row diff-context">  resources:</div>
+              <div class="github-comment-code-row diff-context">    limits:</div>
+              <div class="github-comment-code-row pl-md"><span class="diff-marker pl-md">-</span>      cpu: 500m</div>
+              <div class="github-comment-code-row pl-mi1"><span class="diff-marker pl-mi1">+</span>      cpu: 750m</div>
+              <div class="github-comment-code-row diff-context">      memory: 2048Mi</div>
+              <div class="github-comment-code-row diff-context">    requests:</div>
+              <div class="github-comment-code-row pl-md"><span class="diff-marker pl-md">-</span>      cpu: 500m</div>
+              <div class="github-comment-code-row pl-mi1"><span class="diff-marker pl-mi1">+</span>      cpu: 750m</div>
+              <div class="github-comment-code-row diff-context">      memory: 2048Mi</div>
+              <div class="github-comment-code-row pl-md"><span class="diff-marker pl-md">-</span>  schedule: 0 * * * *</div>
+              <div class="github-comment-code-row pl-mi1"><span class="diff-marker pl-mi1">+</span>  schedule: 15 * * * *</div>
+              <div class="github-comment-code-row diff-context">  secretRef: renovate-secret</div>
+              <div class="github-comment-code-row diff-context">  webhook:</div>
+              <div class="github-comment-code-row diff-context">    authentication:</div>
+            </div>
+          </div>
+        </details>
+        <details>
+          <summary>envoy-gateway-system (+4/-4, 2 resources)</summary>
+          <div class="github-comment-highlight">
+            <div class="github-comment-code" aria-label="Diff excerpt">
+              <div class="github-comment-code-row pl-md">--- Application: envoy-gateway-system Source: 0 apps/envoy-gateway-system/kustomization.yaml apps/Deployment: envoy-gateway-system/envoy-gateway</div>
+              <div class="github-comment-code-row pl-mi1">+++ Application: envoy-gateway-system Source: 0 apps/envoy-gateway-system/kustomization.yaml apps/Deployment: envoy-gateway-system/envoy-gateway</div>
+              <div class="github-comment-code-row pl-mdr">@@ -11,7 +11,7 @@</div>
+              <div class="github-comment-code-row diff-context">  name: envoy-gateway</div>
+              <div class="github-comment-code-row diff-context">  namespace: envoy-gateway-system</div>
+              <div class="github-comment-code-row diff-context">spec:</div>
+              <div class="github-comment-code-row pl-md"><span class="diff-marker pl-md">-</span>  replicas: 3</div>
+              <div class="github-comment-code-row pl-mi1"><span class="diff-marker pl-mi1">+</span>  replicas: 2</div>
+              <div class="github-comment-code-row diff-context">  selector:</div>
+              <div class="github-comment-code-row diff-context">    matchLabels:</div>
+              <div class="github-comment-code-row diff-context">      app.kubernetes.io/instance: envoy-gateway</div>
+              <div class="github-comment-code-row pl-mdr">@@ -67,10 +67,10 @@</div>
+              <div class="github-comment-code-row diff-context">            periodSeconds: 10</div>
+              <div class="github-comment-code-row diff-context">          resources:</div>
+              <div class="github-comment-code-row diff-context">            limits:</div>
+              <div class="github-comment-code-row pl-md"><span class="diff-marker pl-md">-</span>              cpu: 100m</div>
+              <div class="github-comment-code-row pl-mi1"><span class="diff-marker pl-mi1">+</span>              cpu: 150m</div>
+              <div class="github-comment-code-row diff-context">              memory: 150Mi</div>
+              <div class="github-comment-code-row diff-context">            requests:</div>
+              <div class="github-comment-code-row pl-md"><span class="diff-marker pl-md">-</span>              cpu: 10m</div>
+              <div class="github-comment-code-row pl-mi1"><span class="diff-marker pl-mi1">+</span>              cpu: 25m</div>
+              <div class="github-comment-code-row diff-context">              memory: 150Mi</div>
+              <div class="github-comment-code-row diff-context">          securityContext:</div>
+              <div class="github-comment-code-row diff-context">            allowPrivilegeEscalation: false</div>
+              <div class="github-comment-code-row pl-md">--- Application: envoy-gateway-system Source: 0 apps/envoy-gateway-system/kustomization.yaml policy/PodDisruptionBudget: envoy-gateway-system/envoy-gateway</div>
+              <div class="github-comment-code-row pl-mi1">+++ Application: envoy-gateway-system Source: 0 apps/envoy-gateway-system/kustomization.yaml policy/PodDisruptionBudget: envoy-gateway-system/envoy-gateway</div>
+              <div class="github-comment-code-row pl-mdr">@@ -6,7 +6,7 @@</div>
+              <div class="github-comment-code-row diff-context">  name: envoy-gateway</div>
+              <div class="github-comment-code-row diff-context">  namespace: envoy-gateway-system</div>
+              <div class="github-comment-code-row diff-context">spec:</div>
+              <div class="github-comment-code-row pl-md"><span class="diff-marker pl-md">-</span>  minAvailable: 1</div>
+              <div class="github-comment-code-row pl-mi1"><span class="diff-marker pl-mi1">+</span>  minAvailable: 2</div>
+              <div class="github-comment-code-row diff-context">  selector:</div>
+              <div class="github-comment-code-row diff-context">    matchLabels:</div>
+              <div class="github-comment-code-row diff-context">      app.kubernetes.io/instance: envoy-gateway</div>
+            </div>
+          </div>
+        </details>
+        <ul>
+          <li><a href="{{ $exampleURL }}">Full Rendered Diff View</a></li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</figure>
