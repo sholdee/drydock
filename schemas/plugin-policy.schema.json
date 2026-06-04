@@ -11,9 +11,11 @@
   ],
   "properties": {
     "apiVersion": {
+      "description": "PluginPolicy API version. Must be drydock.sholdee.dev/v1alpha1.",
       "const": "drydock.sholdee.dev/v1alpha1"
     },
     "kind": {
+      "description": "Policy document kind. Must be PluginPolicy.",
       "const": "PluginPolicy"
     },
     "plugins": {
@@ -28,12 +30,14 @@
       }
     },
     "bootstrap": {
+      "description": "Trusted plugin-rendered discovery entrypoints for bootstrap Applications or ApplicationSets.",
       "$ref": "#/$defs/bootstrap"
     }
   },
   "$defs": {
     "bootstrap": {
       "type": "object",
+      "description": "Plugin-rendered discovery inputs for repositories that generate Argo CD bootstrap objects.",
       "additionalProperties": false,
       "required": [
         "entrypoints"
@@ -41,6 +45,7 @@
       "properties": {
         "entrypoints": {
           "type": "array",
+          "description": "Non-empty list of trusted plugin sources to render during fleet discovery.",
           "minItems": 1,
           "items": {
             "$ref": "#/$defs/bootstrapEntrypoint"
@@ -50,6 +55,7 @@
     },
     "bootstrapEntrypoint": {
       "type": "object",
+      "description": "One trusted plugin source used to discover rendered Applications or ApplicationSets.",
       "additionalProperties": false,
       "required": [
         "name",
@@ -58,33 +64,40 @@
       ],
       "properties": {
         "name": {
+          "description": "DNS-label-like identifier for this bootstrap entrypoint.",
           "$ref": "#/$defs/bootstrapEntrypointName"
         },
         "plugin": {
           "type": "string",
+          "description": "Plugin policy key to render for this entrypoint.",
           "pattern": "\\S"
         },
         "sourcePath": {
+          "description": "Repository-relative source path rendered by the selected plugin. Use . for the repository root.",
           "$ref": "#/$defs/repoRelativePath"
         },
         "parameters": {
+          "description": "Trusted Argo-style plugin parameters supplied to this bootstrap render.",
           "$ref": "#/$defs/bootstrapEntrypointParameters"
         }
       }
     },
     "bootstrapEntrypointName": {
       "type": "string",
+      "description": "Lowercase DNS-label-like name, up to 63 characters.",
       "maxLength": 63,
       "pattern": "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$"
     },
     "bootstrapEntrypointParameters": {
       "type": "array",
+      "description": "Argo-style plugin parameters supplied by trusted policy.",
       "items": {
         "$ref": "#/$defs/bootstrapEntrypointParameter"
       }
     },
     "bootstrapEntrypointParameter": {
       "type": "object",
+      "description": "One trusted bootstrap plugin parameter with exactly one string, array, or map value.",
       "additionalProperties": false,
       "required": [
         "name"
@@ -92,19 +105,23 @@
       "properties": {
         "name": {
           "type": "string",
+          "description": "Parameter name exposed to the plugin.",
           "pattern": "^[A-Za-z0-9_.-]+$"
         },
         "string": {
-          "type": "string"
+          "type": "string",
+          "description": "String parameter value."
         },
         "array": {
           "type": "array",
+          "description": "Array parameter value.",
           "items": {
             "type": "string"
           }
         },
         "map": {
           "type": "object",
+          "description": "Map parameter value.",
           "additionalProperties": {
             "type": "string"
           }
@@ -130,9 +147,11 @@
     },
     "repoRelativePath": {
       "type": "string",
+      "description": "Repository-relative path. Absolute paths, backslashes, .git, and parent traversal are rejected.",
       "pattern": "^(?:\\.|(?!/)(?!.*\\\\)(?!.*//)(?!.*(^|/)\\.($|/))(?!.*(^|/)\\.git($|/))(?!.*(^|/)\\.\\.($|/))[^/]+(?:/[^/]+)*)$"
     },
     "plugin": {
+      "description": "Trusted behavior for one Argo CD config management plugin name.",
       "oneOf": [
         {
           "$ref": "#/$defs/avpCompatPlugin"
@@ -150,42 +169,51 @@
     },
     "avpCompatPlugin": {
       "type": "object",
+      "description": "Native argocd-vault-plugin placeholder compatibility without running AVP.",
       "additionalProperties": false,
       "required": [
         "engine"
       ],
       "properties": {
         "engine": {
+          "description": "Use drydock's built-in AVP placeholder compatibility engine.",
           "const": "avp-compat"
         },
         "match": {
+          "description": "Static discovery rule for unnamed Application plugin sources.",
           "$ref": "#/$defs/match"
         },
         "configManagementPlugin": {
+          "description": "Optional trusted Argo CD CMP seed for matching or fingerprinting.",
           "$ref": "#/$defs/configManagementPluginSeed"
         }
       }
     },
     "nativeKustomizePlugin": {
       "type": "object",
+      "description": "Use drydock's native Kustomize renderer for a compatible named plugin.",
       "additionalProperties": false,
       "required": [
         "engine"
       ],
       "properties": {
         "engine": {
+          "description": "Use drydock's native Kustomize compatibility engine.",
           "const": "native-kustomize"
         },
         "match": {
+          "description": "Static discovery rule for unnamed Application plugin sources.",
           "$ref": "#/$defs/match"
         },
         "configManagementPlugin": {
+          "description": "Optional trusted Argo CD CMP seed for matching or Kustomize options.",
           "$ref": "#/$defs/configManagementPluginSeed"
         }
       }
     },
     "execPlugin": {
       "type": "object",
+      "description": "Trusted host-process plugin execution. Requires --enable-plugins at runtime.",
       "additionalProperties": false,
       "required": [
         "engine",
@@ -193,47 +221,58 @@
       ],
       "properties": {
         "engine": {
+          "description": "Run trusted commands directly on the host.",
           "const": "exec"
         },
         "match": {
+          "description": "Static discovery rule for unnamed Application plugin sources.",
           "$ref": "#/$defs/match"
         },
         "configManagementPlugin": {
+          "description": "Optional trusted Argo CD CMP seed for matching or fingerprinting.",
           "$ref": "#/$defs/configManagementPluginSeed"
         },
         "workdir": {
           "const": "source",
-          "description": "Only source workdir is supported."
+          "description": "Command working directory. Only source is supported."
         },
         "copy": {
+          "description": "Controls which repository files are copied into the temporary plugin workspace.",
           "$ref": "#/$defs/copy"
         },
         "init": {
+          "description": "Optional command run before generate.",
           "$ref": "#/$defs/command"
         },
         "generate": {
+          "description": "Required command that writes Kubernetes manifests to stdout.",
           "$ref": "#/$defs/command"
         },
         "postRenderers": {
           "type": "array",
+          "description": "Commands that transform rendered manifests by reading stdin and writing stdout.",
           "minItems": 1,
           "items": {
             "$ref": "#/$defs/command"
           }
         },
         "env": {
+          "description": "Caller environment variables the plugin may receive.",
           "$ref": "#/$defs/env"
         },
         "parameters": {
+          "description": "Application-authored plugin parameters accepted by this policy.",
           "$ref": "#/$defs/parameters"
         },
         "output": {
+          "description": "Per-command stdout and stderr byte limits.",
           "$ref": "#/$defs/output"
         }
       }
     },
     "containerPlugin": {
       "type": "object",
+      "description": "Trusted container plugin execution. Requires --enable-plugins at runtime.",
       "additionalProperties": false,
       "required": [
         "engine",
@@ -242,15 +281,19 @@
       ],
       "properties": {
         "engine": {
+          "description": "Run trusted commands in a container runtime.",
           "const": "container"
         },
         "match": {
+          "description": "Static discovery rule for unnamed Application plugin sources.",
           "$ref": "#/$defs/match"
         },
         "configManagementPlugin": {
+          "description": "Optional trusted Argo CD CMP seed for matching or fingerprinting.",
           "$ref": "#/$defs/configManagementPluginSeed"
         },
         "runtime": {
+          "description": "Container runtime used to execute this plugin. Only docker is supported.",
           "enum": [
             "docker"
           ],
@@ -258,13 +301,15 @@
         },
         "image": {
           "type": "string",
-          "description": "Fully qualified container image reference. The drydock parser requires a registry host and a digest unless allowMutableImageTag is true."
+          "description": "Fully qualified plugin image. A digest is required unless allowMutableImageTag is true."
         },
         "allowMutableImageTag": {
           "type": "boolean",
+          "description": "Allow a tag-only image reference for trusted local workflows.",
           "default": false
         },
         "network": {
+          "description": "Container network mode. default is rejected when drydock runs with --offline.",
           "enum": [
             "none",
             "default"
@@ -272,42 +317,50 @@
           "default": "none"
         },
         "cacheMounts": {
+          "description": "Policy-managed durable tool caches mounted under /drydock-cache.",
           "$ref": "#/$defs/containerCacheMounts"
         },
         "workdir": {
           "const": "source",
-          "description": "Only source workdir is supported."
+          "description": "Command working directory. Only source is supported."
         },
         "copy": {
+          "description": "Controls which repository files are copied into the temporary plugin workspace.",
           "$ref": "#/$defs/copy"
         },
         "init": {
+          "description": "Optional command run before generate.",
           "$ref": "#/$defs/command"
         },
         "generate": {
+          "description": "Required command that writes Kubernetes manifests to stdout.",
           "$ref": "#/$defs/command"
         },
         "postRenderers": {
           "type": "array",
+          "description": "Commands that transform rendered manifests by reading stdin and writing stdout.",
           "minItems": 1,
           "items": {
             "$ref": "#/$defs/command"
           }
         },
         "env": {
+          "description": "Caller environment variables the plugin may receive.",
           "$ref": "#/$defs/env"
         },
         "parameters": {
+          "description": "Application-authored plugin parameters accepted by this policy.",
           "$ref": "#/$defs/parameters"
         },
         "output": {
+          "description": "Per-command stdout and stderr byte limits.",
           "$ref": "#/$defs/output"
         }
       }
     },
     "containerCacheMounts": {
       "type": "array",
-      "description": "Policy-managed durable cache mounts for trusted container plugins. Host paths are selected by drydock under its user cache root; policy supplies only cache names and container target paths.",
+      "description": "Durable caches for trusted container plugins. Host paths are selected by drydock; policy supplies names and container targets.",
       "minItems": 1,
       "maxItems": 16,
       "items": {
@@ -316,6 +369,7 @@
     },
     "containerCacheMount": {
       "type": "object",
+      "description": "One durable cache mount for a trusted container plugin.",
       "additionalProperties": false,
       "required": [
         "name",
@@ -323,40 +377,47 @@
       ],
       "properties": {
         "name": {
+          "description": "Stable cache name used under drydock's plugin cache root.",
           "$ref": "#/$defs/containerCacheMountName"
         },
         "target": {
           "type": "string",
-          "description": "Absolute Linux container path under reserved /drydock-cache. Host paths are not accepted in policy. The drydock Go parser rejects /drydock-cache itself, /work, traversal, commas, control characters, backslashes, duplicate targets, and overlapping targets.",
+          "description": "Absolute Linux path below /drydock-cache. Host paths are not accepted; backslashes, traversal, /work, and overlapping targets are rejected.",
           "pattern": "^/drydock-cache/.+"
         }
       }
     },
     "containerCacheMountName": {
       "type": "string",
+      "description": "DNS-label-like cache name, up to 63 characters.",
       "maxLength": 63,
       "pattern": "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$"
     },
     "match": {
       "type": "object",
+      "description": "Trusted static discovery rule used to match unnamed plugin sources.",
       "additionalProperties": false,
       "required": [
         "discover"
       ],
       "properties": {
         "discover": {
+          "description": "Exactly one static discovery rule.",
           "$ref": "#/$defs/discoverMatch"
         }
       }
     },
     "discoverMatch": {
       "type": "object",
+      "description": "Static source-tree discovery rule. Command discovery is not supported in policy.",
       "additionalProperties": false,
       "properties": {
         "fileName": {
+          "description": "Source-relative glob matched against files in the plugin source tree.",
           "$ref": "#/$defs/sourceRelativeGlob"
         },
         "find": {
+          "description": "Find-style static glob discovery rule.",
           "$ref": "#/$defs/discoverFindMatch"
         }
       },
@@ -375,18 +436,21 @@
     },
     "discoverFindMatch": {
       "type": "object",
+      "description": "Find-style static discovery rule.",
       "additionalProperties": false,
       "required": [
         "glob"
       ],
       "properties": {
         "glob": {
+          "description": "Source-relative glob matched against files in the plugin source tree.",
           "$ref": "#/$defs/sourceRelativeGlob"
         }
       }
     },
     "sourceRelativeGlob": {
       "type": "string",
+      "description": "Source-relative glob. Absolute paths, backslashes, .git, and parent traversal are rejected.",
       "pattern": "^(?!/)(?!.*\\\\)(?!.*(^|/)\\.git($|/))(?!.*(^|/)\\.\\.($|/)).+$"
     },
     "configManagementPluginSeed": {
@@ -395,9 +459,11 @@
       "additionalProperties": false,
       "properties": {
         "discover": {
+          "description": "Static discovery rule copied from the trusted CMP seed.",
           "$ref": "#/$defs/discoverMatch"
         },
         "generate": {
+          "description": "Generate command and args copied for fingerprinting and compatibility checks.",
           "$ref": "#/$defs/configManagementPluginGenerateSeed"
         }
       },
@@ -416,11 +482,12 @@
     },
     "configManagementPluginGenerateSeed": {
       "type": "object",
+      "description": "Trusted generate command shape copied from an Argo CD ConfigManagementPlugin.",
       "additionalProperties": false,
       "properties": {
         "command": {
           "type": "array",
-          "description": "Argv sequence from a ConfigManagementPlugin seed. It is fingerprinted but not executed by seed code.",
+          "description": "Argv command from a CMP seed. It is fingerprinted but not executed by seed code.",
           "minItems": 1,
           "items": {
             "type": "string",
@@ -429,7 +496,7 @@
         },
         "args": {
           "type": "array",
-          "description": "Argv arguments from a ConfigManagementPlugin seed. They are fingerprinted but not executed by seed code.",
+          "description": "Argv arguments from a CMP seed. They are fingerprinted but not executed by seed code.",
           "items": {
             "type": "string",
             "pattern": "\\S"
@@ -451,9 +518,11 @@
     },
     "copy": {
       "type": "object",
+      "description": "Controls which files drydock copies into the temporary plugin workspace.",
       "additionalProperties": false,
       "properties": {
         "scope": {
+          "description": "source copies only the Application source path; repository permits allowlisted sibling paths.",
           "enum": [
             "source",
             "repository"
@@ -462,6 +531,7 @@
         },
         "include": {
           "type": "array",
+          "description": "Repository-relative glob allowlist required when copy.scope is repository.",
           "maxItems": 64,
           "uniqueItems": true,
           "items": {
@@ -518,6 +588,7 @@
     },
     "command": {
       "type": "object",
+      "description": "One trusted command invocation.",
       "additionalProperties": false,
       "required": [
         "command"
@@ -525,7 +596,7 @@
       "properties": {
         "command": {
           "type": "array",
-          "description": "Argv sequence. Shell strings and empty tokens are rejected by drydock.",
+          "description": "Argv sequence. Shell strings and empty tokens are rejected.",
           "minItems": 1,
           "items": {
             "type": "string",
@@ -534,16 +605,18 @@
         },
         "timeout": {
           "type": "string",
-          "description": "Go duration such as 2s, 500ms, 1.5s, or 1m30s. The drydock parser is authoritative."
+          "description": "Go duration such as 2s, 500ms, 1.5s, or 1m30s."
         }
       }
     },
     "env": {
       "type": "object",
+      "description": "Environment variables allowed from the caller environment.",
       "additionalProperties": false,
       "properties": {
         "allow": {
           "type": "array",
+          "description": "Variable names the plugin may receive from the caller environment.",
           "maxItems": 64,
           "uniqueItems": true,
           "items": {
@@ -555,10 +628,12 @@
     },
     "parameters": {
       "type": "object",
+      "description": "Application-authored plugin parameters accepted by policy.",
       "additionalProperties": false,
       "properties": {
         "allow": {
           "type": "array",
+          "description": "Allowed Application plugin parameters.",
           "maxItems": 64,
           "items": {
             "$ref": "#/$defs/parameter"
@@ -568,6 +643,7 @@
     },
     "parameter": {
       "type": "object",
+      "description": "One allowed Application plugin parameter.",
       "additionalProperties": false,
       "required": [
         "name",
@@ -576,9 +652,11 @@
       "properties": {
         "name": {
           "type": "string",
+          "description": "Application plugin parameter name.",
           "pattern": "^[A-Za-z0-9_.-]+$"
         },
         "type": {
+          "description": "Expected parameter value kind.",
           "enum": [
             "string",
             "array",
@@ -586,18 +664,22 @@
           ]
         },
         "required": {
-          "type": "boolean"
+          "type": "boolean",
+          "description": "Require the Application to supply this parameter."
         },
         "path": {
+          "description": "Treat a string parameter as a constrained path.",
           "$ref": "#/$defs/parameterPath"
         }
       }
     },
     "parameterPath": {
       "type": "object",
+      "description": "Path constraints for a string Application parameter.",
       "additionalProperties": false,
       "properties": {
         "base": {
+          "description": "Base directory used to validate the path: source or repository.",
           "enum": [
             "source",
             "repository"
@@ -606,6 +688,7 @@
         },
         "allow": {
           "type": "array",
+          "description": "Allowed path patterns relative to the selected base.",
           "uniqueItems": true,
           "items": {
             "type": "string",
@@ -616,15 +699,18 @@
     },
     "output": {
       "type": "object",
+      "description": "Per-command output byte limits.",
       "additionalProperties": false,
       "properties": {
         "maxStdoutBytes": {
           "type": "integer",
+          "description": "Maximum stdout bytes accepted from each command.",
           "minimum": 1,
           "default": 10485760
         },
         "maxStderrBytes": {
           "type": "integer",
+          "description": "Maximum stderr bytes retained from each command.",
           "minimum": 1,
           "default": 65536
         }
