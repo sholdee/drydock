@@ -473,6 +473,53 @@ func TestOrchestratorDiffAppsHonorsSplitGlobalResourceCustomizationJSONPointers(
 	}
 }
 
+func TestOrchestratorDiffAppsHonorsSplitCoreResourceCustomizationJSONPointers(t *testing.T) {
+	root := t.TempDir()
+	left := filepath.Join(root, "left")
+	right := filepath.Join(root, "right")
+	writePersistentVolumeClaimApp(t, left, "left-pv")
+	writePersistentVolumeClaimApp(t, right, "right-pv")
+
+	baseline, err := Orchestrator{}.DiffApps(context.Background(), DiffRequest{
+		LeftPath:  left,
+		RightPath: right,
+		Unified:   3,
+	})
+	if err != nil {
+		t.Fatalf("baseline DiffApps() error = %v", err)
+	}
+	if len(baseline.Diagnostics) != 0 {
+		t.Fatalf("baseline diagnostics = %#v, want none", baseline.Diagnostics)
+	}
+	if len(baseline.Results) != 1 {
+		t.Fatalf("baseline len(Results) = %d, want volumeName diff: %#v", len(baseline.Results), baseline.Results)
+	}
+	baselineDiff := diffResultText(baseline.Results)
+	if !strings.Contains(baselineDiff, "left-pv") || !strings.Contains(baselineDiff, "right-pv") {
+		t.Fatalf("baseline diff missing volumeName values:\n%s", baselineDiff)
+	}
+
+	writeGlobalCustomization(t, right, `resource.customizations.ignoreDifferences._PersistentVolumeClaim: |
+    jsonPointers:
+      - /spec/volumeName
+`)
+
+	result, err := Orchestrator{}.DiffApps(context.Background(), DiffRequest{
+		LeftPath:  left,
+		RightPath: right,
+		Unified:   3,
+	})
+	if err != nil {
+		t.Fatalf("DiffApps() error = %v", err)
+	}
+	if len(result.Diagnostics) != 0 {
+		t.Fatalf("diagnostics = %#v, want none", result.Diagnostics)
+	}
+	if len(result.Results) != 0 {
+		t.Fatalf("len(Results) = %d, want volumeName-only diff ignored: %#v", len(result.Results), result.Results)
+	}
+}
+
 func TestOrchestratorDiffAppliesKnownTypeFields(t *testing.T) {
 	left := t.TempDir()
 	right := t.TempDir()
@@ -1826,6 +1873,37 @@ metadata:
       containers:
         - name: app
           image: example/app:v1
+`)
+}
+
+func writePersistentVolumeClaimApp(t *testing.T, root, volumeName string) {
+	t.Helper()
+	writeTestFile(t, filepath.Join(root, "apps", "pvc.yaml"), `apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: pvc
+  namespace: argocd
+spec:
+  source:
+    repoURL: https://github.com/example/repo
+    path: manifests/pvc
+    targetRevision: main
+  destination:
+    name: in-cluster
+    namespace: demo
+`)
+	writeTestFile(t, filepath.Join(root, "manifests", "pvc", "pvc.yaml"), `apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: data
+  namespace: demo
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Gi
+  volumeName: `+volumeName+`
 `)
 }
 

@@ -480,6 +480,9 @@ func TestLoadHelmValuesResourceSettings(t *testing.T) {
     resource.customizations.ignoreDifferences.apps_Deployment: |
       jsonPointers:
         - /spec/replicas
+    resource.customizations.ignoreDifferences._PersistentVolumeClaim: |
+      jsonPointers:
+        - /spec/volumeName
 `), 0o600); err != nil {
 		t.Fatalf("WriteFile() error = %v", err)
 	}
@@ -497,6 +500,10 @@ func TestLoadHelmValuesResourceSettings(t *testing.T) {
 	customization := settings.ResourceCustomizations["apps/Deployment"]
 	if len(customization.IgnoreDifferences.JSONPointers) != 1 || customization.IgnoreDifferences.JSONPointers[0] != "/spec/replicas" {
 		t.Fatalf("Deployment customization = %#v", customization)
+	}
+	pvcCustomization := settings.ResourceCustomizations["/PersistentVolumeClaim"]
+	if len(pvcCustomization.IgnoreDifferences.JSONPointers) != 1 || pvcCustomization.IgnoreDifferences.JSONPointers[0] != "/spec/volumeName" {
+		t.Fatalf("PersistentVolumeClaim customization = %#v", pvcCustomization)
 	}
 }
 
@@ -1206,6 +1213,62 @@ data:
 	}
 	if len(settings.ResourceCustomizations) != 0 {
 		t.Fatalf("ResourceCustomizations = %#v, want none", settings.ResourceCustomizations)
+	}
+}
+
+func TestLoadConfigMapSplitResourceCustomizationKeys(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		suffix  string
+		want    string
+		wantErr bool
+	}{
+		{name: "all", suffix: "all", want: "*/*"},
+		{name: "bare kind", suffix: "ConfigMap", want: "ConfigMap"},
+		{name: "group kind", suffix: "apps_Deployment", want: "apps/Deployment"},
+		{name: "core group kind", suffix: "_PersistentVolumeClaim", want: "/PersistentVolumeClaim"},
+		{name: "empty", suffix: "", wantErr: true},
+		{name: "empty kind", suffix: "apps_", wantErr: true},
+		{name: "extra separator", suffix: "apps_Deployment_extra", wantErr: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "argocd-cm.yaml")
+			if err := os.WriteFile(path, []byte(`apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: argocd-cm
+data:
+  resource.customizations.ignoreDifferences.`+tc.suffix+`: |
+    jsonPointers:
+      - /spec/test
+`), 0o600); err != nil {
+				t.Fatalf("WriteFile() error = %v", err)
+			}
+
+			settings, diags, err := LoadFromConfigMap(path)
+			if err != nil {
+				t.Fatalf("LoadFromConfigMap() error = %v", err)
+			}
+			if tc.wantErr {
+				if len(diags) != 1 || diags[0].Severity != "error" {
+					t.Fatalf("diagnostics = %#v, want one error", diags)
+				}
+				if len(settings.ResourceCustomizations) != 0 {
+					t.Fatalf("ResourceCustomizations = %#v, want none", settings.ResourceCustomizations)
+				}
+				return
+			}
+			if len(diags) != 0 {
+				t.Fatalf("diagnostics = %#v, want none", diags)
+			}
+			customization, ok := settings.ResourceCustomizations[tc.want]
+			if !ok {
+				t.Fatalf("ResourceCustomizations missing key %q: %#v", tc.want, settings.ResourceCustomizations)
+			}
+			if len(customization.IgnoreDifferences.JSONPointers) != 1 || customization.IgnoreDifferences.JSONPointers[0] != "/spec/test" {
+				t.Fatalf("customization = %#v, want /spec/test pointer", customization)
+			}
+		})
 	}
 }
 

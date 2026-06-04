@@ -83,6 +83,38 @@ func TestEvaluatorReportsRuntimeErrorForMatchingResource(t *testing.T) {
 	assertMessageContains(t, diags[0], "runtime error")
 }
 
+func TestEvaluatorMatchesCoreResourceHealthLuaByBareKind(t *testing.T) {
+	evaluator := New(config.ArgoSettings{ResourceCustomizations: map[string]config.ResourceCustomization{
+		"Secret": {
+			HasHealthLua: true,
+			HealthLua:    `error("bare core key matched")`,
+		},
+	}})
+
+	diags := evaluator.Validate(context.Background(), Request{
+		Application: ApplicationRef{Name: "demo", Namespace: "argocd"},
+		Manifests:   []render.Manifest{{Object: object("v1", "Secret", "default", "demo")}},
+	})
+	assertOneHealthDiagnostic(t, diags, "health.lua-failed", "health Lua failed for Application argocd/demo resource Secret default/demo")
+}
+
+func TestEvaluatorDoesNotMatchSlashPrefixedCoreResourceHealthLua(t *testing.T) {
+	evaluator := New(config.ArgoSettings{ResourceCustomizations: map[string]config.ResourceCustomization{
+		"/Secret": {
+			HasHealthLua: true,
+			HealthLua:    `error("slash-prefixed core key should not match Argo CD lua health key")`,
+		},
+	}})
+
+	diags := evaluator.Validate(context.Background(), Request{
+		Application: ApplicationRef{Name: "demo", Namespace: "argocd"},
+		Manifests:   []render.Manifest{{Object: object("v1", "Secret", "default", "demo")}},
+	})
+	if len(diags) != 0 {
+		t.Fatalf("diagnostics = %#v, want slash-prefixed core key not to match", diags)
+	}
+}
+
 func TestEvaluatorReportsInvalidReturnType(t *testing.T) {
 	evaluator := New(config.ArgoSettings{ResourceCustomizations: map[string]config.ResourceCustomization{
 		"example.com/Widget": {
