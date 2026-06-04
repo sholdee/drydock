@@ -27,7 +27,7 @@ behavior, edge cases, and regression expectations.
 | ApplicationSets | Native and supported with input | Git directories, Git files, list, matrix, merge, template overrides, `templatePatch`, and fixture-backed provider generators. | No live Kubernetes, SCM, pull-request, cloud, or plugin provider API calls. |
 | Sources | Native and supported with input | Local paths, Git cache/fetch, `--repo-map`, HTTP(S) Helm, OCI Helm, remote Kustomize, external Helm value files, and cache lifecycle commands. | `--offline` requires local files, repo maps, or cache hits. Ambient Git helpers and Helm registry config are not read. |
 | Rendering | Native | Directory, Kustomize, Helm, Jsonnet, Kustomize Helm charts, Argo CD tracking metadata, namespace normalization, and custom health Lua validation. | No `kubectl`, `argocd`, Helm CLI, Kustomize CLI, repo-server wrapper, or live API defaulting. |
-| Plugins | Supported with input | Native safe Kustomize CMP compatibility, argocd-vault-plugin placeholder compatibility, in-process public API renderers, and trusted exec policy with `--enable-plugins`. | No default sidecar plugin execution, ambient plugin loading, or plugin credential injection. |
+| Plugins | Supported with input | Native safe Kustomize CMP compatibility, argocd-vault-plugin placeholder compatibility, in-process public API renderers, trusted exec or container policy with `--enable-plugins`, and `bootstrap.entrypoints` for plugin-rendered app discovery. | No default sidecar plugin execution, ambient plugin loading, or plugin credential injection. |
 | Diffs and images | Native | Desired-vs-desired manifest diffs, Git ref diffs, ignored-field normalization, markdown diff previews, and image extraction from PodSpecs and exact `image` keys. | No live managed-fields prediction, server-side diff, or arbitrary string image scanning. |
 | Projects and settings | Native and supported with input | Local `AppProject` checks, rendered project discovery, repository Secret metadata, cluster Secret metadata, Argo CD settings metadata, and structured diagnostics. | No full RBAC/Casbin simulation, live cluster existence checks, or secret credential reads. |
 | API and release shape | Native | Public Go API, stable diagnostics, cache event hooks, cache commands, static binary, setup action, PR action, and container image. | Argo CD dependency updates are deliberate compatibility work. |
@@ -38,12 +38,12 @@ behavior, edge cases, and regression expectations.
 | --- | --- |
 | Direct committed `Application` manifests | Run `drydock test apps` from the repository root. |
 | ApplicationSet-generated Applications | Use native supported generators; provide fixtures for provider-backed generators. |
-| App-of-apps or bootstrap manifests | Let recursive rendered fleet discovery find rendered Applications, or use `--discover-kustomize PATH` for explicit bootstrap entrypoints. |
+| App-of-apps or bootstrap manifests | Let recursive rendered fleet discovery find rendered Applications, use `--discover-kustomize PATH` for explicit Kustomize entrypoints, or use trusted PluginPolicy `bootstrap.entrypoints` when bootstrap apps are plugin-rendered. |
 | Multi-source Applications | Use normal commands; add `--repo-map URL=PATH` when external Git sources are already checked out locally. |
 | Remote Helm or OCI charts | Let drydock fetch into its chart cache, or pre-populate the cache and use `--offline`. |
 | Private Git, Helm, or remote Kustomize sources | Pass explicit auth flags or local repo maps. drydock does not read ambient credential helpers. |
 | Kustomize with Helm charts | Use the native renderer. `kustomize.buildOptions: --enable-helm` is honored without shelling out to Kustomize. |
-| Config management plugins | Prefer native compatibility paths. Use trusted plugin policy plus `--enable-plugins` only when an exec simulation is truly needed. |
+| Config management plugins | Prefer native compatibility paths. Use trusted plugin policy plus `--enable-plugins` only when exec or container command simulation is truly needed. |
 | Pull request review | Use `diff apps`, `diff images`, or the GitHub PR action for markdown comments and artifacts. |
 
 ## Detail By Area
@@ -83,12 +83,15 @@ See [source acquisition](/docs/source-acquisition/),
 ### Plugins
 
 Native compatibility paths cover safe Kustomize CMP definitions and
-argocd-vault-plugin placeholder redaction. For other plugin-dependent repos,
-drydock can use trusted plugin policy entries when the operator explicitly
-enables plugin execution.
+argocd-vault-plugin placeholder redaction. Policy can also declare trusted
+exec or container entries, explicit native overrides, and
+`bootstrap.entrypoints` for plugin-rendered fleet discovery inputs.
 
 This is a validation compatibility layer, not Argo CD sidecar auto-discovery.
-Plugin command execution is never enabled by default.
+Plugin command execution is never enabled by default. Bootstrap entrypoints are
+disabled by static discovery mode, are not disabled by
+`--max-discovery-depth 0`, and require trusted static discovery for the
+referenced plugin.
 
 See [plugin policy](/plugin-policy/) and
 [plugin policy reference](/docs/plugin-policy/).

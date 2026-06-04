@@ -182,7 +182,16 @@ Supported:
   `discover.fileName` or `discover.find.glob` rule matches a native-rendered
   source. drydock does not execute `discover.find.command`.
 - Trusted drydock plugin policy entries for native AVP compatibility, native
-  plugin overrides, and explicitly enabled exec CMP compatibility.
+  plugin overrides, and explicitly enabled exec/container CMP compatibility.
+- Trusted plugin policy bootstrap entrypoints for plugin-rendered Argo CD
+  bootstrap objects.
+- Trusted plugin policy `configManagementPlugin` seeds for static
+  `discover.fileName` / `discover.find.glob` metadata and optional
+  `generate.command` / `generate.args` compatibility metadata. Unnamed
+  Application plugin sources may match these trusted static rules.
+- Trusted exec/container plugin policies that gate Application plugin
+  parameters through `parameters.allow`, including string argv substitution and
+  constrained path parameters.
 - Config management plugin source detection with fail-closed diagnostics in
   the CLI and default Go client.
 - Injectable in-process plugin renderers, named plugin registry dispatch, and
@@ -199,14 +208,16 @@ Documented runtime-offline safety boundary:
 Not supported:
 
 - Arbitrary CLI config management plugin execution outside trusted
-  `engine: exec` policy plus `--enable-plugins`.
+  `engine: exec` or `engine: container` policy plus `--enable-plugins`.
 - Shellout plugin adapters or plugin command execution by default.
 - Argo CD repo-server sidecar plugin discovery.
 - Ambient plugin configuration or environment loading.
+- Untrusted CMP descriptor execution, unallowlisted Application plugin
+  parameters, or Application plugin env for policy-backed native engines.
 - Plugin credential injection.
 
 See `docs/plugin-policy.md` for trusted policy provenance, supported engines,
-schema, and exec security controls.
+schema, and command security controls.
 
 ## Diff, Images, And Output
 

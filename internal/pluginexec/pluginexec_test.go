@@ -60,14 +60,50 @@ func TestDefaultRunnerRunsGenerateFromTempSource(t *testing.T) {
 	}
 }
 
+func TestDefaultRunnerSourceCopyScopeSkipsGitMetadata(t *testing.T) {
+	source := t.TempDir()
+	if err := os.WriteFile(filepath.Join(source, "marker.txt"), []byte("ok"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(source, ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(source, ".git", "config"), []byte("private\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("DRYDOCK_PLUGINEXEC_HELPER", "1")
+	_, err := (DefaultRunner{}).Run(context.Background(), Request{
+		SourceDir: source,
+		Config:    sourceCopyTestConfig(t, ".git/config"),
+		ProtectedRoots: []string{
+			source,
+		},
+	})
+	if err == nil {
+		t.Fatal("Run() error = nil, want skipped .git/config read failure")
+	}
+	if strings.Contains(err.Error(), ".git metadata") {
+		t.Fatalf("Run() error = %v, want .git metadata skipped rather than rejected during copy", err)
+	}
+	var pluginErr *Error
+	if !errors.As(err, &pluginErr) || pluginErr.ExitCode == nil || *pluginErr.ExitCode != 3 {
+		t.Fatalf("Run() error = %v, want helper exit code 3 for missing staged .git/config", err)
+	}
+}
+
 func TestDefaultRunnerRejectsProtectedArgumentsAndCredentialURLs(t *testing.T) {
 	source := t.TempDir()
+	outside := filepath.Join(t.TempDir(), "outside.yaml")
+	if err := os.WriteFile(outside, []byte("outside"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	for _, tt := range []struct {
 		name string
 		arg  string
 		want string
 	}{
 		{name: "protected absolute", arg: filepath.Join(source, "secret.yaml"), want: "protected root"},
+		{name: "unprotected absolute", arg: outside, want: "escapes plugin workdir"},
 		{name: "relative escape", arg: "../escape.yaml", want: "escapes plugin workdir"},
 		{name: "flag protected", arg: "--config=" + filepath.Join(source, "secret.yaml"), want: "protected root"},
 		{name: "credential url", arg: "https://user:pass@example.test/repo", want: "credential-bearing URL"},
@@ -97,6 +133,262 @@ func TestDefaultRunnerRejectsProtectedArgumentsAndCredentialURLs(t *testing.T) {
 				t.Fatalf("Run() error = %v, want %q", err, tt.want)
 			}
 		})
+	}
+}
+
+func TestDefaultRunnerAddsExtraEnv(t *testing.T) {
+	source := t.TempDir()
+	t.Setenv("DRYDOCK_PLUGINEXEC_HELPER", "1")
+	result, err := (DefaultRunner{}).Run(context.Background(), Request{
+		SourceDir: source,
+		Config: pluginpolicy.ExecConfig{
+			Workdir: pluginpolicy.ExecWorkdirSource,
+			Generate: pluginpolicy.ExecCommand{
+				Command: []string{helperPath(t), "-test.run=TestHelperProcess", "--", "env"},
+				Timeout: pluginExecCommandTimeout,
+			},
+			Env: pluginpolicy.ExecEnv{Allow: []string{"DRYDOCK_PLUGINEXEC_HELPER"}},
+			Output: pluginpolicy.ExecOutput{
+				MaxStdoutBytes: pluginpolicy.DefaultMaxStdoutBytes,
+				MaxStderrBytes: pluginpolicy.DefaultMaxStderrBytes,
+			},
+		},
+		ProtectedRoots: []string{source},
+		ExtraEnv:       []string{"PARAM_PATH=components/app.pkl"},
+	})
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if !strings.Contains(string(result.Stdout), "components/app.pkl") {
+		t.Fatalf("Stdout = %q, want extra env value", result.Stdout)
+	}
+}
+
+func TestDefaultRunnerRepositoryCopyScopeAllowsIncludedRepositoryFileArgument(t *testing.T) {
+	repository := t.TempDir()
+	source := filepath.Join(repository, "app")
+	if err := os.MkdirAll(source, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(repository, "shared.txt"), []byte("shared\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("DRYDOCK_PLUGINEXEC_HELPER", "1")
+	result, err := (DefaultRunner{}).Run(context.Background(), Request{
+		SourceDir:     source,
+		RepositoryDir: repository,
+		SourceRelPath: "app",
+		Config:        repositoryCopyTestConfig(t, []string{"shared.txt"}, "../shared.txt"),
+		ProtectedRoots: []string{
+			repository,
+		},
+	})
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if got := string(result.Stdout); got != "shared\n" {
+		t.Fatalf("Stdout = %q, want included repository file", got)
+	}
+}
+
+func TestDefaultRunnerSourceCopyScopeRejectsRepositoryRelativeArgument(t *testing.T) {
+	repository := t.TempDir()
+	source := filepath.Join(repository, "app")
+	if err := os.MkdirAll(source, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(repository, "shared.txt"), []byte("shared\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("DRYDOCK_PLUGINEXEC_HELPER", "1")
+	_, err := (DefaultRunner{}).Run(context.Background(), Request{
+		SourceDir: source,
+		Config:    sourceCopyTestConfig(t, "../shared.txt"),
+		ProtectedRoots: []string{
+			repository,
+		},
+	})
+	if err == nil {
+		t.Fatal("Run() error = nil, want source-scope argument rejection")
+	}
+	if !strings.Contains(err.Error(), "escapes plugin workdir") {
+		t.Fatalf("Run() error = %v, want workdir escape rejection", err)
+	}
+}
+
+func TestDefaultRunnerRepositoryCopyScopeRejectsArgumentEscapingRepository(t *testing.T) {
+	repository := t.TempDir()
+	source := filepath.Join(repository, "app")
+	if err := os.MkdirAll(source, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("DRYDOCK_PLUGINEXEC_HELPER", "1")
+	_, err := (DefaultRunner{}).Run(context.Background(), Request{
+		SourceDir:     source,
+		RepositoryDir: repository,
+		SourceRelPath: "app",
+		Config:        repositoryCopyTestConfig(t, nil, "../../escape.txt"),
+		ProtectedRoots: []string{
+			repository,
+		},
+	})
+	if err == nil {
+		t.Fatal("Run() error = nil, want repository-scope argument rejection")
+	}
+	if !strings.Contains(err.Error(), "escapes plugin repository") {
+		t.Fatalf("Run() error = %v, want repository escape rejection", err)
+	}
+}
+
+func TestDefaultRunnerRepositoryCopyScopeRejectsIncludedFileSymlink(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlink behavior differs on Windows test hosts")
+	}
+	repository := t.TempDir()
+	source := filepath.Join(repository, "app")
+	if err := os.MkdirAll(source, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(repository, "target.txt"), []byte("target\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("target.txt", filepath.Join(repository, "shared.txt")); err != nil {
+		t.Skipf("Symlink() unavailable: %v", err)
+	}
+	t.Setenv("DRYDOCK_PLUGINEXEC_HELPER", "1")
+	_, err := (DefaultRunner{}).Run(context.Background(), Request{
+		SourceDir:     source,
+		RepositoryDir: repository,
+		SourceRelPath: "app",
+		Config:        repositoryCopyTestConfig(t, []string{"shared.txt"}, "../shared.txt"),
+		ProtectedRoots: []string{
+			repository,
+		},
+	})
+	if err == nil {
+		t.Fatal("Run() error = nil, want included symlink rejection")
+	}
+	if !strings.Contains(err.Error(), "symlink") {
+		t.Fatalf("Run() error = %v, want symlink rejection", err)
+	}
+}
+
+func TestDefaultRunnerRepositoryCopyScopeRejectsIncludedDirectorySymlink(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlink behavior differs on Windows test hosts")
+	}
+	repository := t.TempDir()
+	source := filepath.Join(repository, "app")
+	if err := os.MkdirAll(source, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(repository, "real"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("real", filepath.Join(repository, "linked")); err != nil {
+		t.Skipf("Symlink() unavailable: %v", err)
+	}
+	t.Setenv("DRYDOCK_PLUGINEXEC_HELPER", "1")
+	_, err := (DefaultRunner{}).Run(context.Background(), Request{
+		SourceDir:     source,
+		RepositoryDir: repository,
+		SourceRelPath: "app",
+		Config:        repositoryCopyTestConfig(t, []string{"linked/**"}, "../linked/file.txt"),
+		ProtectedRoots: []string{
+			repository,
+		},
+	})
+	if err == nil {
+		t.Fatal("Run() error = nil, want included directory symlink rejection")
+	}
+	if !strings.Contains(err.Error(), "symlink") {
+		t.Fatalf("Run() error = %v, want symlink rejection", err)
+	}
+}
+
+func TestDefaultRunnerRepositoryCopyScopeRejectsIncludedGitMetadata(t *testing.T) {
+	repository := t.TempDir()
+	source := filepath.Join(repository, "app")
+	if err := os.MkdirAll(source, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(repository, ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(repository, ".git", "config"), []byte("private\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("DRYDOCK_PLUGINEXEC_HELPER", "1")
+	_, err := (DefaultRunner{}).Run(context.Background(), Request{
+		SourceDir:     source,
+		RepositoryDir: repository,
+		SourceRelPath: "app",
+		Config:        repositoryCopyTestConfig(t, []string{"**"}, "../shared.txt"),
+		ProtectedRoots: []string{
+			repository,
+		},
+	})
+	if err == nil {
+		t.Fatal("Run() error = nil, want .git metadata rejection")
+	}
+	if !strings.Contains(err.Error(), ".git metadata") {
+		t.Fatalf("Run() error = %v, want .git metadata rejection", err)
+	}
+}
+
+func TestDefaultRunnerRepositoryCopyScopeRejectsBackslashInclude(t *testing.T) {
+	repository := t.TempDir()
+	source := filepath.Join(repository, "app")
+	if err := os.MkdirAll(source, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("DRYDOCK_PLUGINEXEC_HELPER", "1")
+	_, err := (DefaultRunner{}).Run(context.Background(), Request{
+		SourceDir:     source,
+		RepositoryDir: repository,
+		SourceRelPath: "app",
+		Config:        repositoryCopyTestConfig(t, []string{`shared\**`}, "../shared/file.txt"),
+		ProtectedRoots: []string{
+			repository,
+		},
+	})
+	if err == nil {
+		t.Fatal("Run() error = nil, want backslash include rejection")
+	}
+	if !strings.Contains(err.Error(), "slash-normalized") {
+		t.Fatalf("Run() error = %v, want slash-normalized rejection", err)
+	}
+}
+
+func TestDefaultRunnerRedactsSensitiveArguments(t *testing.T) {
+	source := t.TempDir()
+	t.Setenv("DRYDOCK_PLUGINEXEC_HELPER", "1")
+	const secret = "top-secret-argument"
+	_, err := (DefaultRunner{}).Run(context.Background(), Request{
+		SourceDir: source,
+		Config: pluginpolicy.ExecConfig{
+			Workdir: pluginpolicy.ExecWorkdirSource,
+			Generate: pluginpolicy.ExecCommand{
+				Command: []string{helperPath(t), "-test.run=TestHelperProcess", "--", "manifest", "../" + secret},
+				Timeout: pluginExecCommandTimeout,
+			},
+			Env: pluginpolicy.ExecEnv{Allow: []string{"DRYDOCK_PLUGINEXEC_HELPER"}},
+			Output: pluginpolicy.ExecOutput{
+				MaxStdoutBytes: pluginpolicy.DefaultMaxStdoutBytes,
+				MaxStderrBytes: pluginpolicy.DefaultMaxStderrBytes,
+			},
+		},
+		ProtectedRoots:  []string{source},
+		SensitiveValues: []string{secret},
+	})
+	if err == nil {
+		t.Fatal("Run() error = nil, want argument rejection")
+	}
+	if strings.Contains(err.Error(), secret) {
+		t.Fatalf("Run() error leaked sensitive argument: %v", err)
+	}
+	if !strings.Contains(err.Error(), "<redacted>") {
+		t.Fatalf("Run() error = %v, want redacted marker", err)
 	}
 }
 
@@ -366,42 +658,91 @@ func TestHelperProcess(t *testing.T) {
 	if os.Getenv("DRYDOCK_PLUGINEXEC_HELPER") != "1" {
 		return
 	}
-	args := os.Args
-	for len(args) > 0 && args[0] != "--" {
-		args = args[1:]
-	}
+	args := helperProcessArgs(os.Args)
 	if len(args) < 2 {
 		os.Exit(2)
 	}
+	os.Exit(runHelperProcess(args))
+}
+
+func helperProcessArgs(args []string) []string {
+	for len(args) > 0 && args[0] != "--" {
+		args = args[1:]
+	}
+	return args
+}
+
+func runHelperProcess(args []string) int {
 	switch args[1] {
 	case "manifest":
-		if _, err := os.Stat("marker.txt"); err == nil {
-			_ = os.WriteFile("generated.txt", []byte("temp"), 0o644)
-		}
-		fmt.Println("apiVersion: v1")
-		fmt.Println("kind: ConfigMap")
-		fmt.Println("metadata:")
-		fmt.Println("  name: rendered")
-		os.Exit(0)
+		return runHelperManifest()
 	case "raw":
-		fmt.Println("base")
-		os.Exit(0)
+		return runHelperRaw()
 	case "append":
-		input, _ := io.ReadAll(os.Stdin)
-		fmt.Print(string(input))
-		if len(args) > 2 {
-			fmt.Println(args[2])
-		}
-		os.Exit(0)
+		return runHelperAppend(args)
+	case "env":
+		return runHelperEnv()
+	case "read":
+		return runHelperRead(args)
 	case "sleep":
-		time.Sleep(5 * time.Second)
-		os.Exit(0)
+		return runHelperSleep()
 	case "fail":
-		fmt.Fprintln(os.Stderr, "stderr secret:", os.Getenv("DRYDOCK_PLUGINEXEC_SECRET"))
-		os.Exit(7)
+		return runHelperFail()
 	default:
-		os.Exit(2)
+		return 2
 	}
+}
+
+func runHelperManifest() int {
+	if _, err := os.Stat("marker.txt"); err == nil {
+		_ = os.WriteFile("generated.txt", []byte("temp"), 0o644)
+	}
+	fmt.Println("apiVersion: v1")
+	fmt.Println("kind: ConfigMap")
+	fmt.Println("metadata:")
+	fmt.Println("  name: rendered")
+	return 0
+}
+
+func runHelperRaw() int {
+	fmt.Println("base")
+	return 0
+}
+
+func runHelperAppend(args []string) int {
+	input, _ := io.ReadAll(os.Stdin)
+	fmt.Print(string(input))
+	if len(args) > 2 {
+		fmt.Println(args[2])
+	}
+	return 0
+}
+
+func runHelperEnv() int {
+	fmt.Println(os.Getenv("PARAM_PATH"))
+	return 0
+}
+
+func runHelperRead(args []string) int {
+	for _, name := range args[2:] {
+		data, err := os.ReadFile(name)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			return 3
+		}
+		fmt.Print(string(data))
+	}
+	return 0
+}
+
+func runHelperSleep() int {
+	time.Sleep(5 * time.Second)
+	return 0
+}
+
+func runHelperFail() int {
+	fmt.Fprintln(os.Stderr, "stderr secret:", os.Getenv("DRYDOCK_PLUGINEXEC_SECRET"))
+	return 7
 }
 
 func helperPath(t *testing.T) string {
@@ -411,4 +752,30 @@ func helperPath(t *testing.T) string {
 		t.Fatal(err)
 	}
 	return path
+}
+
+func sourceCopyTestConfig(t *testing.T, readPath string) pluginpolicy.ExecConfig {
+	t.Helper()
+	return pluginpolicy.ExecConfig{
+		Workdir: pluginpolicy.ExecWorkdirSource,
+		Generate: pluginpolicy.ExecCommand{
+			Command: []string{helperPath(t), "-test.run=TestHelperProcess", "--", "read", readPath},
+			Timeout: pluginExecCommandTimeout,
+		},
+		Env: pluginpolicy.ExecEnv{Allow: []string{"DRYDOCK_PLUGINEXEC_HELPER"}},
+		Output: pluginpolicy.ExecOutput{
+			MaxStdoutBytes: pluginpolicy.DefaultMaxStdoutBytes,
+			MaxStderrBytes: pluginpolicy.DefaultMaxStderrBytes,
+		},
+	}
+}
+
+func repositoryCopyTestConfig(t *testing.T, include []string, readPath string) pluginpolicy.ExecConfig {
+	t.Helper()
+	config := sourceCopyTestConfig(t, readPath)
+	config.Copy = pluginpolicy.ExecCopy{
+		Scope:   pluginpolicy.ExecCopyScopeRepository,
+		Include: include,
+	}
+	return config
 }

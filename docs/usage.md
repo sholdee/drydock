@@ -201,17 +201,20 @@ normalize to a safe `kustomize build` command are interpreted through drydock's
 native Kustomize renderer. Other plugin sources fail closed with
 `plugin.unsupported` unless an embedding caller supplies
 `drydock.Config.PluginRenderer` or a trusted drydock plugin policy matches the
-plugin name. Exec policy requires trusted provenance and `--enable-plugins`;
-native policy engines such as `avp-compat` and `native-kustomize` do not
-execute plugin commands. Embedders can pass a renderer directly or use
-`drydock.NewPluginRegistry(map[string]drydock.PluginRenderer{...})` to dispatch
-in-process renderers by `plugin.name`. The public plugin request includes the
-resolved source, `$ref` roots and source metadata, kube version, and API
-versions.
+plugin name or trusted static discovery for an unnamed plugin source. Exec and
+container policy require trusted provenance and `--enable-plugins`; Application
+plugin parameters for command-backed engines must be allowlisted by policy.
+Native policy engines such as `avp-compat` and `native-kustomize` do not
+execute plugin commands and reject Application plugin env and parameters.
+Embedders can pass a renderer directly or
+use `drydock.NewPluginRegistry(map[string]drydock.PluginRenderer{...})` to
+dispatch in-process renderers by `plugin.name`. The public plugin request
+includes the resolved source, `$ref` roots and source metadata, kube version,
+and API versions.
 
 See [`plugin-policy.md`](plugin-policy.md) for `--plugin-policy-path`,
 `--plugin-policy-ref`, `--plugin-policy-repo`, `--disable-plugin-policy`, the
-policy schema, CMP compatibility behavior, and exec security model.
+policy schema, CMP compatibility behavior, and command security model.
 
 ## Render Tests
 
@@ -565,10 +568,10 @@ These source paths are outside the current default runtime contract:
 
 - Live provider API calls for cluster, clusterDecisionResource, SCM provider,
   pull-request, and plugin ApplicationSet generators.
-- Arbitrary CLI config management plugin execution outside trusted exec policy
-  plus `--enable-plugins`, Argo CD repo-server sidecar plugin discovery,
-  ambient plugin configuration, ambient plugin environment loading, and plugin
-  credential injection.
+- Arbitrary CLI config management plugin execution outside trusted exec or
+  container policy plus `--enable-plugins`, Argo CD repo-server sidecar plugin
+  discovery, ambient plugin configuration, ambient plugin environment loading,
+  and plugin credential injection.
 - Live cluster and Argo CD API sources.
 - Live destination cluster existence, sync windows, source integrity
   verification, project-scoped cluster Secret enforcement beyond discovered

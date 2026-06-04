@@ -54,13 +54,18 @@ drydock diff apps --repo . --ref HEAD --ref-orig main --strict-changed-only
 ## Symptom: Plugin Source Fails Closed
 
 The CLI and default Go client do not execute config management plugin commands
-by default. Safe Kustomize wrapper plugins may render natively. Other plugin
-sources need trusted drydock plugin policy, and exec policy also needs
+by default. Safe Kustomize wrapper plugins and argocd-vault-plugin
+compatibility may render natively. Exec or container plugin rendering needs
+trusted drydock plugin policy, trusted policy provenance, and
 `--enable-plugins`.
 
 ```bash
 drydock test apps --path . --plugin-policy-ref main --enable-plugins
 ```
+
+If plugin-rendered bootstrap apps are missing, check PluginPolicy
+`bootstrap.entrypoints`. Static discovery mode disables those entrypoints;
+`--max-discovery-depth 0` does not.
 
 See [Plugin policy](/plugin-policy/) for the operator gate.
 

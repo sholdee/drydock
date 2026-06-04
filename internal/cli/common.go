@@ -138,7 +138,7 @@ func bindRemoteAcquisitionCacheFlags(cmd *cobra.Command, flags *commonFlags) {
 
 func bindPluginFlags(cmd *cobra.Command, flags *commonFlags) {
 	cmd.Flags().BoolVar(&flags.enableAVPCompat, "enable-avp-compat", flags.enableAVPCompat, "replace argocd-vault-plugin placeholders with deterministic redacted values")
-	cmd.Flags().BoolVar(&flags.enablePlugins, "enable-plugins", flags.enablePlugins, "enable trusted exec plugin policy entries")
+	cmd.Flags().BoolVar(&flags.enablePlugins, "enable-plugins", flags.enablePlugins, "enable trusted exec/container plugin policy entries")
 	cmd.Flags().StringVar(&flags.pluginPolicyPath, "plugin-policy-path", flags.pluginPolicyPath, "trusted plugin policy path relative to the selected policy root")
 	cmd.Flags().StringVar(&flags.pluginPolicyRef, "plugin-policy-ref", flags.pluginPolicyRef, "Git ref to use as the trusted plugin policy source")
 	cmd.Flags().StringVar(&flags.pluginPolicyRepo, "plugin-policy-repo", flags.pluginPolicyRepo, "local Git repository path used to resolve --plugin-policy-ref")

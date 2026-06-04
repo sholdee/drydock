@@ -7,6 +7,7 @@ require (
 	github.com/argoproj/argo-cd/gitops-engine v0.7.1-0.20250908182407-97ad5b59a627
 	github.com/argoproj/argo-cd/v3 v3.4.3
 	github.com/bmatcuk/doublestar/v4 v4.10.0
+	github.com/distribution/reference v0.6.0
 	github.com/evanphx/json-patch v5.9.11+incompatible
 	github.com/go-git/go-git/v5 v5.19.1
 	github.com/google/go-jsonnet v0.22.0
@@ -54,7 +55,6 @@ require (
 	github.com/cloudflare/circl v1.6.3 // indirect
 	github.com/cyphar/filepath-securejoin v0.6.1 // indirect
 	github.com/davecgh/go-spew v1.1.2-0.20180830191138-d8f796af33cc // indirect
-	github.com/distribution/reference v0.6.0 // indirect
 	github.com/dlclark/regexp2 v1.12.0 // indirect
 	github.com/emicklei/go-restful/v3 v3.13.0 // indirect
 	github.com/emirpasic/gods v1.18.1 // indirect

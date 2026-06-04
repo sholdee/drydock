@@ -162,14 +162,15 @@ Supported render paths:
 - Discovered Argo CD CMP definitions that normalize to a safe `kustomize
   build` command, interpreted through drydock's native Kustomize renderer.
 - Trusted plugin policy entries for native AVP compatibility, native plugin
-  overrides, and explicitly enabled exec CMP compatibility. Policy provenance,
-  schema, supported engines, and exec security controls are owned by
+  overrides, explicitly enabled exec/container CMP compatibility, and
+  plugin-rendered bootstrap discovery. Policy provenance, schema, supported
+  engines, and command security controls are owned by
   `docs/plugin-policy.md`.
 - Deterministic in-process plugin renderers supplied by embedding callers.
 
 The default CLI and default Go client fail closed for other config management
 plugin sources unless an embedding caller injects a plugin renderer or the
-caller explicitly enables a trusted exec policy.
+caller explicitly enables trusted command-backed policy.
 
 ## Diff Semantics
 

@@ -112,14 +112,24 @@ drydock test apps --path .
 
 Safe Kustomize wrapper plugins may render through drydock's native Kustomize
 path. Other plugin sources fail closed unless a drydock plugin policy matches
-the plugin. Trusted exec policy also requires `--enable-plugins`:
+the plugin. Trusted exec and container policy also require `--enable-plugins`:
 
 ```bash
 drydock test apps --path . --plugin-policy-ref main --enable-plugins
 drydock diff apps --path-orig ../baseline --path . --enable-plugins
 ```
 
-Plugin policy provenance, native plugin compatibility, and exec security
+For Docker sidecar CMP repositories, copy only safe descriptor metadata into the
+trusted `PluginPolicy`: the plugin name as the policy key, static discovery, and
+optional generate argv metadata. Prefer `engine: native-kustomize` when the
+descriptor is a Kustomize wrapper. Otherwise use `engine: exec` with a direct
+argv command or `engine: container` with a digest-pinned image, explicit
+Application parameter allowlists, and repository-copy includes for any trusted
+sibling paths the plugin must read. If Argo CD bootstrap objects are generated
+by the plugin, add `bootstrap.entrypoints` so fleet discovery can render and
+scan those generated `Application` or `ApplicationSet` objects.
+
+Plugin policy provenance, native plugin compatibility, and command security
 controls are owned by [`plugin-policy.md`](plugin-policy.md).
 
 ## Pull Request Topologies

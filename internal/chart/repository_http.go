@@ -120,29 +120,39 @@ func repositoryIndexURL(repository string) (string, error) {
 }
 func findChartURL(repository string, request Request, index repositoryIndex) (string, error) {
 	versions := index.Entries[request.Name]
-	for _, version := range versions {
-		if version.Version != request.Version {
-			continue
-		}
-		if len(version.URLs) == 0 {
-			return "", fmt.Errorf("chart %s version %s has no archive URLs", request.Name, request.Version)
-		}
-		archiveURL, err := url.Parse(version.URLs[0])
-		if err != nil {
-			return "", fmt.Errorf("parse chart archive URL %q: %w", version.URLs[0], err)
-		}
-		if archiveURL.IsAbs() {
-			if archiveURL.Scheme != "http" && archiveURL.Scheme != "https" {
-				return "", fmt.Errorf("absolute chart URL %s must use http or https", redactedFetchURL(archiveURL.String(), true))
+	for _, candidate := range chartVersionCandidates(request.Version) {
+		for _, version := range versions {
+			if version.Version != candidate {
+				continue
 			}
-			return archiveURL.String(), nil
+			if len(version.URLs) == 0 {
+				return "", fmt.Errorf("chart %s version %s has no archive URLs", request.Name, candidate)
+			}
+			archiveURL, err := url.Parse(version.URLs[0])
+			if err != nil {
+				return "", fmt.Errorf("parse chart archive URL %q: %w", version.URLs[0], err)
+			}
+			if archiveURL.IsAbs() {
+				if archiveURL.Scheme != "http" && archiveURL.Scheme != "https" {
+					return "", fmt.Errorf("absolute chart URL %s must use http or https", redactedFetchURL(archiveURL.String(), true))
+				}
+				return archiveURL.String(), nil
+			}
+			base, err := url.Parse(repository)
+			if err != nil {
+				return "", err
+			}
+			base.Path = strings.TrimRight(base.Path, "/") + "/"
+			return base.ResolveReference(archiveURL).String(), nil
 		}
-		base, err := url.Parse(repository)
-		if err != nil {
-			return "", err
-		}
-		base.Path = strings.TrimRight(base.Path, "/") + "/"
-		return base.ResolveReference(archiveURL).String(), nil
 	}
 	return "", fmt.Errorf("chart %s version %s not found in repository index", request.Name, request.Version)
+}
+
+func chartVersionCandidates(version string) []string {
+	version = strings.TrimSpace(version)
+	if len(version) > 1 && (version[0] == 'v' || version[0] == 'V') && version[1] >= '0' && version[1] <= '9' {
+		return []string{version, version[1:]}
+	}
+	return []string{version}
 }

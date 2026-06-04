@@ -9,6 +9,8 @@ import (
 	"github.com/sholdee/drydock/internal/chart"
 	"github.com/sholdee/drydock/internal/config"
 	"github.com/sholdee/drydock/internal/diagnostic"
+	"github.com/sholdee/drydock/internal/plugincontainer"
+	"github.com/sholdee/drydock/internal/pluginexec"
 	"github.com/sholdee/drydock/internal/pluginpolicy"
 	"github.com/sholdee/drydock/internal/remote"
 	"github.com/sholdee/drydock/internal/render"
@@ -42,6 +44,8 @@ type localProvider struct {
 	pluginPolicy                 pluginpolicy.Policy
 	pluginPolicyFingerprint      string
 	pluginPolicyExecTrusted      bool
+	pluginExecRunner             pluginexec.Runner
+	pluginContainerRunner        plugincontainer.Runner
 	kustomizeBuildOptions        []string
 	configManagementPlugins      map[string]config.ConfigManagementPlugin
 	cacheEvents                  *cacheevent.Recorder

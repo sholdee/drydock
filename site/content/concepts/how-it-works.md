@@ -12,8 +12,9 @@ diagnostics, with two repository snapshots for diff commands.
 
 drydock scans repository YAML for Argo CD `Application`, supported
 `ApplicationSet`, `AppProject`, and settings objects. It can also render
-explicit Kustomize discovery entrypoints when bootstrap inputs are not committed
-as inflated Argo CD objects.
+explicit Kustomize discovery entrypoints and trusted PluginPolicy bootstrap
+entrypoints when bootstrap inputs are not committed as inflated Argo CD
+objects.
 
 Supported ApplicationSet generators expand offline from local files, lists,
 matrix and merge combinations, or explicit provider fixtures. Unsupported
@@ -30,9 +31,9 @@ into explicit caches. `--offline` makes those source lookups cache-only.
 
 drydock renders desired manifests with native Go renderers for directory,
 Jsonnet, Kustomize, Helm, Kustomize `helmCharts`, remote Kustomize resources,
-and supported chart-only Helm sources. Config management plugin execution is
-disabled by default; trusted plugin policy and explicit opt-in are required for
-exec plugins.
+supported chart-only Helm sources, and native plugin compatibility paths.
+Config management plugin execution is disabled by default; trusted policy
+provenance and explicit opt-in are required for exec or container plugins.
 
 Argo CD remains the semantic reference for generated desired manifests. drydock
 keeps this rendering path runtime-offline, then validates covered fixture

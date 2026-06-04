@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"sync"
 
 	argoappv1 "github.com/argoproj/argo-cd/v3/pkg/apis/application/v1alpha1"
@@ -155,7 +156,7 @@ type renderContext struct {
 }
 
 func applicationRenderCacheKey(ctx renderContext, application argoappv1.Application) (string, error) {
-	if applicationUsesMatchedExecPolicy(application, ctx.request.pluginPolicy) {
+	if applicationUsesMatchedExternalPolicy(application, ctx.request.pluginPolicy) {
 		return "", nil
 	}
 	input := struct {
@@ -203,7 +204,7 @@ func applicationRenderCacheKey(ctx renderContext, application argoappv1.Applicat
 	return hex.EncodeToString(sum[:]), nil
 }
 
-func applicationUsesMatchedExecPolicy(application argoappv1.Application, policy pluginpolicy.Policy) bool {
+func applicationUsesMatchedExternalPolicy(application argoappv1.Application, policy pluginpolicy.Policy) bool {
 	sources := application.Spec.Sources
 	if len(sources) == 0 && application.Spec.Source != nil {
 		sources = argoappv1.ApplicationSources{*application.Spec.Source}
@@ -212,12 +213,34 @@ func applicationUsesMatchedExecPolicy(application argoappv1.Application, policy 
 		if source.Plugin == nil {
 			continue
 		}
+		if strings.TrimSpace(source.Plugin.Name) == "" {
+			if policyHasStaticExternalMatch(policy) {
+				return true
+			}
+			continue
+		}
 		plugin, ok := policy.Plugin(source.Plugin.Name)
-		if ok && plugin.Engine == pluginpolicy.EngineExec {
+		if ok && pluginEngineBypassesApplicationRenderCache(plugin.Engine) {
 			return true
 		}
 	}
 	return false
+}
+
+func policyHasStaticExternalMatch(policy pluginpolicy.Policy) bool {
+	for _, plugin := range policy.Plugins {
+		if !pluginEngineBypassesApplicationRenderCache(plugin.Engine) {
+			continue
+		}
+		if _, _, ok := policyPluginStaticDiscoverRule(plugin); ok {
+			return true
+		}
+	}
+	return false
+}
+
+func pluginEngineBypassesApplicationRenderCache(engine pluginpolicy.Engine) bool {
+	return engine == pluginpolicy.EngineExec || engine == pluginpolicy.EngineContainer
 }
 
 type applicationRenderCacheInput struct {
