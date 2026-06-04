@@ -61,7 +61,7 @@ type CacheEvent struct {
 	Error    string
 }
 
-// PluginExecution describes one trusted exec plugin command that ran.
+// PluginExecution describes one trusted plugin command that ran.
 type PluginExecution struct {
 	Application Application
 	SourceIndex int
@@ -69,6 +69,8 @@ type PluginExecution struct {
 	SourcePath  string
 	PluginName  string
 	Engine      string
+	Runtime     string
+	Image       string
 	Phase       string
 	Command     string
 	Duration    string
@@ -253,6 +255,8 @@ func pluginExecutionsFromInternal(executions []app.PluginExecution) []PluginExec
 			SourcePath:  execution.SourcePath,
 			PluginName:  execution.PluginName,
 			Engine:      execution.Engine,
+			Runtime:     execution.Runtime,
+			Image:       execution.Image,
 			Phase:       execution.Phase,
 			Command:     execution.Command,
 			Duration:    execution.Duration,

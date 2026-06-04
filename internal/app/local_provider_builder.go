@@ -7,6 +7,8 @@ import (
 	"github.com/sholdee/drydock/internal/cacheevent"
 	"github.com/sholdee/drydock/internal/chart"
 	"github.com/sholdee/drydock/internal/config"
+	"github.com/sholdee/drydock/internal/plugincontainer"
+	"github.com/sholdee/drydock/internal/pluginexec"
 	sourcepkg "github.com/sholdee/drydock/internal/source"
 )
 
@@ -18,6 +20,14 @@ func newLocalProvider(orchestrator Orchestrator, root string, settings config.Ar
 	gitAcquirer := orchestrator.GitAcquirer
 	if gitAcquirer == nil {
 		gitAcquirer = sourcepkg.DefaultGitAcquirer{}
+	}
+	pluginExecRunner := orchestrator.PluginExecRunner
+	if pluginExecRunner == nil {
+		pluginExecRunner = pluginexec.DefaultRunner{}
+	}
+	pluginContainerRunner := orchestrator.PluginContainerRunner
+	if pluginContainerRunner == nil {
+		pluginContainerRunner = plugincontainer.DefaultRunner{}
 	}
 	forbiddenRoots := requestForbiddenRoots(root, request.AcquisitionOptions)
 	provider := localProvider{
@@ -47,6 +57,8 @@ func newLocalProvider(orchestrator Orchestrator, root string, settings config.Ar
 		pluginPolicy:                 request.pluginPolicy,
 		pluginPolicyFingerprint:      request.pluginPolicyFingerprint,
 		pluginPolicyExecTrusted:      request.pluginPolicyExecTrusted,
+		pluginExecRunner:             pluginExecRunner,
+		pluginContainerRunner:        pluginContainerRunner,
 		kustomizeBuildOptions:        settingsBuildOptions(settings),
 		configManagementPlugins:      settings.ConfigManagementPlugins,
 		cacheEvents:                  recorder,

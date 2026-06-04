@@ -21,6 +21,7 @@ type SourceTier int
 const (
 	SourceTierStatic SourceTier = iota
 	SourceTierExplicitRendered
+	SourceTierPolicyBootstrap
 	SourceTierRenderedFleet
 )
 

@@ -294,8 +294,10 @@ func discoveryTierPriority(tier discovery.SourceTier) int {
 		return 0
 	case discovery.SourceTierStatic:
 		return 1
-	case discovery.SourceTierRenderedFleet:
+	case discovery.SourceTierPolicyBootstrap:
 		return 2
+	case discovery.SourceTierRenderedFleet:
+		return 3
 	default:
 		return 1
 	}
@@ -306,6 +308,11 @@ func resolveNamespaceDefaultedDiscoveryConflict(kind, existingKey, incomingKey s
 	incomingNamespace, incomingOK := discoveryKeyNamespace(incomingKey)
 	if !existingOK || !incomingOK || existingNamespace == incomingNamespace || (existingNamespace != "" && incomingNamespace != "") {
 		return resolveDiscoveryConflict(kind, incomingKey, existingTier, existingPath, existingDocument, incomingTier, incomingPath, incomingDocument)
+	}
+	existingPriority := discoveryTierPriority(existingTier)
+	incomingPriority := discoveryTierPriority(incomingTier)
+	if incomingPriority != existingPriority {
+		return incomingPriority < existingPriority, nil
 	}
 	replace := incomingNamespace != ""
 	return replace, nil

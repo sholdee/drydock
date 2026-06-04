@@ -78,6 +78,17 @@ func int64Value(node *yaml.Node, pointer string) (int64, error) {
 	return value, nil
 }
 
+func boolValue(node *yaml.Node, pointer string) (bool, error) {
+	if node.Kind != yaml.ScalarNode || node.Tag != "!!bool" {
+		return false, fmt.Errorf("%s must be a boolean", pointer)
+	}
+	value, err := strconv.ParseBool(node.Value)
+	if err != nil {
+		return false, fmt.Errorf("%s must be a boolean: %w", pointer, err)
+	}
+	return value, nil
+}
+
 func stringSequence(node *yaml.Node, pointer string) ([]string, error) {
 	if node == nil || isNullNode(node) {
 		return nil, nil

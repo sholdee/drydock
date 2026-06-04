@@ -56,6 +56,8 @@ func TestRenderResultFromBuildGoldenClonesManifestsAndStabilizesDiagnostics(t *t
 			SourcePath:   "apps/demo",
 			PluginName:   "exec-renderer",
 			Engine:       "exec",
+			Runtime:      "docker",
+			Image:        "registry.example.test/plugins/render@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
 			Phase:        "generate",
 			Command:      "renderer",
 			Duration:     "12ms",
@@ -147,5 +149,8 @@ func assertGoldenResultPluginExecution(t *testing.T, executions []PluginExecutio
 	}
 	if execution.PluginName != "exec-renderer" || execution.Engine != "exec" || execution.Phase != "generate" || execution.Command != "renderer" || execution.Duration != "12ms" {
 		t.Fatalf("PluginExecution = %#v, want exec metadata", execution)
+	}
+	if execution.Runtime != "docker" || execution.Image != "registry.example.test/plugins/render@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" {
+		t.Fatalf("PluginExecution = %#v, want runtime/image metadata", execution)
 	}
 }

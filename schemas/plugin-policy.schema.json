@@ -26,9 +26,112 @@
       "additionalProperties": {
         "$ref": "#/$defs/plugin"
       }
+    },
+    "bootstrap": {
+      "$ref": "#/$defs/bootstrap"
     }
   },
   "$defs": {
+    "bootstrap": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "entrypoints"
+      ],
+      "properties": {
+        "entrypoints": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/bootstrapEntrypoint"
+          }
+        }
+      }
+    },
+    "bootstrapEntrypoint": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "plugin",
+        "sourcePath"
+      ],
+      "properties": {
+        "name": {
+          "$ref": "#/$defs/bootstrapEntrypointName"
+        },
+        "plugin": {
+          "type": "string",
+          "pattern": "\\S"
+        },
+        "sourcePath": {
+          "$ref": "#/$defs/repoRelativePath"
+        },
+        "parameters": {
+          "$ref": "#/$defs/bootstrapEntrypointParameters"
+        }
+      }
+    },
+    "bootstrapEntrypointName": {
+      "type": "string",
+      "maxLength": 63,
+      "pattern": "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$"
+    },
+    "bootstrapEntrypointParameters": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/bootstrapEntrypointParameter"
+      }
+    },
+    "bootstrapEntrypointParameter": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "name"
+      ],
+      "properties": {
+        "name": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_.-]+$"
+        },
+        "string": {
+          "type": "string"
+        },
+        "array": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "map": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        }
+      },
+      "oneOf": [
+        {
+          "required": [
+            "string"
+          ]
+        },
+        {
+          "required": [
+            "array"
+          ]
+        },
+        {
+          "required": [
+            "map"
+          ]
+        }
+      ]
+    },
+    "repoRelativePath": {
+      "type": "string",
+      "pattern": "^(?:\\.|(?!/)(?!.*\\\\)(?!.*//)(?!.*(^|/)\\.($|/))(?!.*(^|/)\\.git($|/))(?!.*(^|/)\\.\\.($|/))[^/]+(?:/[^/]+)*)$"
+    },
     "plugin": {
       "oneOf": [
         {
@@ -39,6 +142,9 @@
         },
         {
           "$ref": "#/$defs/execPlugin"
+        },
+        {
+          "$ref": "#/$defs/containerPlugin"
         }
       ]
     },
@@ -51,6 +157,12 @@
       "properties": {
         "engine": {
           "const": "avp-compat"
+        },
+        "match": {
+          "$ref": "#/$defs/match"
+        },
+        "configManagementPlugin": {
+          "$ref": "#/$defs/configManagementPluginSeed"
         }
       }
     },
@@ -63,6 +175,12 @@
       "properties": {
         "engine": {
           "const": "native-kustomize"
+        },
+        "match": {
+          "$ref": "#/$defs/match"
+        },
+        "configManagementPlugin": {
+          "$ref": "#/$defs/configManagementPluginSeed"
         }
       }
     },
@@ -77,9 +195,18 @@
         "engine": {
           "const": "exec"
         },
+        "match": {
+          "$ref": "#/$defs/match"
+        },
+        "configManagementPlugin": {
+          "$ref": "#/$defs/configManagementPluginSeed"
+        },
         "workdir": {
           "const": "source",
           "description": "Only source workdir is supported."
+        },
+        "copy": {
+          "$ref": "#/$defs/copy"
         },
         "init": {
           "$ref": "#/$defs/command"
@@ -97,10 +224,262 @@
         "env": {
           "$ref": "#/$defs/env"
         },
+        "parameters": {
+          "$ref": "#/$defs/parameters"
+        },
         "output": {
           "$ref": "#/$defs/output"
         }
       }
+    },
+    "containerPlugin": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "engine",
+        "image",
+        "generate"
+      ],
+      "properties": {
+        "engine": {
+          "const": "container"
+        },
+        "match": {
+          "$ref": "#/$defs/match"
+        },
+        "configManagementPlugin": {
+          "$ref": "#/$defs/configManagementPluginSeed"
+        },
+        "runtime": {
+          "enum": [
+            "docker"
+          ],
+          "default": "docker"
+        },
+        "image": {
+          "type": "string",
+          "description": "Fully qualified container image reference. The drydock parser requires a registry host and a digest unless allowMutableImageTag is true."
+        },
+        "allowMutableImageTag": {
+          "type": "boolean",
+          "default": false
+        },
+        "network": {
+          "enum": [
+            "none",
+            "default"
+          ],
+          "default": "none"
+        },
+        "workdir": {
+          "const": "source",
+          "description": "Only source workdir is supported."
+        },
+        "copy": {
+          "$ref": "#/$defs/copy"
+        },
+        "init": {
+          "$ref": "#/$defs/command"
+        },
+        "generate": {
+          "$ref": "#/$defs/command"
+        },
+        "postRenderers": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/command"
+          }
+        },
+        "env": {
+          "$ref": "#/$defs/env"
+        },
+        "parameters": {
+          "$ref": "#/$defs/parameters"
+        },
+        "output": {
+          "$ref": "#/$defs/output"
+        }
+      }
+    },
+    "match": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "discover"
+      ],
+      "properties": {
+        "discover": {
+          "$ref": "#/$defs/discoverMatch"
+        }
+      }
+    },
+    "discoverMatch": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "fileName": {
+          "$ref": "#/$defs/sourceRelativeGlob"
+        },
+        "find": {
+          "$ref": "#/$defs/discoverFindMatch"
+        }
+      },
+      "oneOf": [
+        {
+          "required": [
+            "fileName"
+          ]
+        },
+        {
+          "required": [
+            "find"
+          ]
+        }
+      ]
+    },
+    "discoverFindMatch": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "glob"
+      ],
+      "properties": {
+        "glob": {
+          "$ref": "#/$defs/sourceRelativeGlob"
+        }
+      }
+    },
+    "sourceRelativeGlob": {
+      "type": "string",
+      "pattern": "^(?!/)(?!.*\\\\)(?!.*(^|/)\\.git($|/))(?!.*(^|/)\\.\\.($|/)).+$"
+    },
+    "configManagementPluginSeed": {
+      "type": "object",
+      "description": "Optional safe subset of the Argo CD ConfigManagementPlugin spec. The enclosing plugins map key is the CMP name.",
+      "additionalProperties": false,
+      "properties": {
+        "discover": {
+          "$ref": "#/$defs/discoverMatch"
+        },
+        "generate": {
+          "$ref": "#/$defs/configManagementPluginGenerateSeed"
+        }
+      },
+      "anyOf": [
+        {
+          "required": [
+            "discover"
+          ]
+        },
+        {
+          "required": [
+            "generate"
+          ]
+        }
+      ]
+    },
+    "configManagementPluginGenerateSeed": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "command": {
+          "type": "array",
+          "description": "Argv sequence from a ConfigManagementPlugin seed. It is fingerprinted but not executed by seed code.",
+          "minItems": 1,
+          "items": {
+            "type": "string",
+            "pattern": "\\S"
+          }
+        },
+        "args": {
+          "type": "array",
+          "description": "Argv arguments from a ConfigManagementPlugin seed. They are fingerprinted but not executed by seed code.",
+          "items": {
+            "type": "string",
+            "pattern": "\\S"
+          }
+        }
+      },
+      "anyOf": [
+        {
+          "required": [
+            "command"
+          ]
+        },
+        {
+          "required": [
+            "args"
+          ]
+        }
+      ]
+    },
+    "copy": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "scope": {
+          "enum": [
+            "source",
+            "repository"
+          ],
+          "default": "source"
+        },
+        "include": {
+          "type": "array",
+          "maxItems": 64,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "pattern": "^(?!.*\\\\)(?!.*(^|/)\\.git($|/))(?!.*(^|/)\\.\\.($|/)).+$"
+          }
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "scope": {
+                "const": "repository"
+              }
+            },
+            "required": [
+              "scope"
+            ]
+          },
+          "then": {
+            "required": [
+              "include"
+            ],
+            "properties": {
+              "include": {
+                "minItems": 1
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "not": {
+              "properties": {
+                "scope": {
+                  "const": "repository"
+                }
+              },
+              "required": [
+                "scope"
+              ]
+            }
+          },
+          "then": {
+            "properties": {
+              "include": {
+                "maxItems": 0
+              }
+            }
+          }
+        }
+      ]
     },
     "command": {
       "type": "object",
@@ -135,6 +514,67 @@
           "items": {
             "type": "string",
             "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
+          }
+        }
+      }
+    },
+    "parameters": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "allow": {
+          "type": "array",
+          "maxItems": 64,
+          "items": {
+            "$ref": "#/$defs/parameter"
+          }
+        }
+      }
+    },
+    "parameter": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "type"
+      ],
+      "properties": {
+        "name": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_.-]+$"
+        },
+        "type": {
+          "enum": [
+            "string",
+            "array",
+            "map"
+          ]
+        },
+        "required": {
+          "type": "boolean"
+        },
+        "path": {
+          "$ref": "#/$defs/parameterPath"
+        }
+      }
+    },
+    "parameterPath": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "base": {
+          "enum": [
+            "source",
+            "repository"
+          ],
+          "default": "source"
+        },
+        "allow": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "pattern": "^(?!.*\\\\)(?!.*(^|/)\\.git($|/))(?!.*(^|/)\\.\\.($|/)).+$"
           }
         }
       }

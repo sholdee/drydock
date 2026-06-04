@@ -547,6 +547,8 @@ func TestDiagJSONOutputIncludesPluginExecutions(t *testing.T) {
 				SourcePath:   "manifests/plugin",
 				PluginName:   "exec-renderer",
 				Engine:       "exec",
+				Runtime:      "docker",
+				Image:        "registry.example.test/plugins/render@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
 				Phase:        "generate",
 				Command:      "argocd-vault-plugin",
 				Duration:     "12ms",
@@ -567,6 +569,9 @@ func TestDiagJSONOutputIncludesPluginExecutions(t *testing.T) {
 		PluginExecutions []struct {
 			AppName    string `json:"appName"`
 			PluginName string `json:"pluginName"`
+			Engine     string `json:"engine"`
+			Runtime    string `json:"runtime"`
+			Image      string `json:"image"`
 			Phase      string `json:"phase"`
 			Command    string `json:"command"`
 			Duration   string `json:"duration"`
@@ -581,6 +586,9 @@ func TestDiagJSONOutputIncludesPluginExecutions(t *testing.T) {
 	execution := report.PluginExecutions[0]
 	if execution.AppName != "plugin-app" || execution.PluginName != "exec-renderer" || execution.Phase != "generate" || execution.Command != "argocd-vault-plugin" || execution.Duration != "12ms" {
 		t.Fatalf("pluginExecutions[0] = %#v, want exec metadata", execution)
+	}
+	if execution.Engine != "exec" || execution.Runtime != "docker" || execution.Image != "registry.example.test/plugins/render@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" {
+		t.Fatalf("pluginExecutions[0] = %#v, want engine/runtime/image metadata", execution)
 	}
 }
 

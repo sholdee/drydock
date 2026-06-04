@@ -8,6 +8,7 @@ import (
 
 	"github.com/sholdee/drydock/internal/config"
 	"github.com/sholdee/drydock/internal/diagnostic"
+	"github.com/sholdee/drydock/internal/pluginpolicy"
 	"github.com/sholdee/drydock/internal/render"
 )
 
@@ -19,27 +20,50 @@ func (p localProvider) renderNativeKustomizePluginSource(ctx context.Context, so
 	if !ok {
 		return nil, nil, false, nil
 	}
+	manifests, diags, err := p.renderNativeKustomizePluginSourceWithConfig(ctx, source, opts, opts.Plugin.Name, plugin)
+	return manifests, diags, true, err
+}
+
+func (p localProvider) renderNativeKustomizePluginSourceWithConfig(ctx context.Context, source render.ResolvedSource, opts render.RenderOptions, name string, plugin config.ConfigManagementPlugin) ([]render.Manifest, []diagnostic.Diagnostic, error) {
 	if source.Chart != "" {
 		reason := "chart sources are unsupported by the native Kustomize adapter"
-		return nil, unsupportedNativeKustomizePluginDiagnostic(opts.Plugin.Name, reason), true, unsupportedNativeKustomizePluginError(opts.Plugin.Name, reason)
+		return nil, unsupportedNativeKustomizePluginDiagnostic(name, reason), unsupportedNativeKustomizePluginError(name, reason)
 	}
 	if source.Path == "" {
 		reason := "path source is required for the native Kustomize adapter"
-		return nil, unsupportedNativeKustomizePluginDiagnostic(opts.Plugin.Name, reason), true, unsupportedNativeKustomizePluginError(opts.Plugin.Name, reason)
+		return nil, unsupportedNativeKustomizePluginDiagnostic(name, reason), unsupportedNativeKustomizePluginError(name, reason)
 	}
 	if len(opts.Plugin.Env) != 0 || len(opts.Plugin.Parameters) != 0 {
 		reason := "Application plugin env or parameters are unsupported by the native Kustomize adapter"
-		return nil, unsupportedNativeKustomizePluginDiagnostic(opts.Plugin.Name, reason), true, unsupportedNativeKustomizePluginError(opts.Plugin.Name, reason)
+		return nil, unsupportedNativeKustomizePluginDiagnostic(name, reason), unsupportedNativeKustomizePluginError(name, reason)
 	}
 	buildOptions, err := nativeKustomizePluginBuildOptions(plugin)
 	if err != nil {
-		return nil, unsupportedNativeKustomizePluginDiagnostic(opts.Plugin.Name, err.Error()), true, unsupportedNativeKustomizePluginError(opts.Plugin.Name, err.Error())
+		return nil, unsupportedNativeKustomizePluginDiagnostic(name, err.Error()), unsupportedNativeKustomizePluginError(name, err.Error())
 	}
 	nativeOptions := opts
 	nativeOptions.Plugin = nil
 	nativeOptions.BuildOptions = append([]string(nil), buildOptions...)
 	manifests, diags, err := (render.KustomizeRenderer{}).Render(ctx, source, nativeOptions)
-	return manifests, diags, true, err
+	return manifests, diags, err
+}
+
+func configManagementPluginSeed(name string, seed *pluginpolicy.ConfigManagementPluginSeed) config.ConfigManagementPlugin {
+	if seed == nil {
+		return config.ConfigManagementPlugin{Name: name}
+	}
+	plugin := config.ConfigManagementPlugin{Name: name}
+	if seed.Generate != nil {
+		plugin.GenerateCommand = append([]string(nil), seed.Generate.Command...)
+		plugin.GenerateArgs = append([]string(nil), seed.Generate.Args...)
+	}
+	if seed.Discover != nil {
+		plugin.Discover = config.ConfigManagementPluginDiscovery{
+			FileName: seed.Discover.FileName,
+			FindGlob: seed.Discover.FindGlob,
+		}
+	}
+	return plugin
 }
 
 func nativeKustomizePluginBuildOptions(plugin config.ConfigManagementPlugin) ([]string, error) {

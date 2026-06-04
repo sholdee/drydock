@@ -1,0 +1,26 @@
+apiVersion: drydock.sholdee.dev/v1alpha1
+kind: PluginPolicy
+plugins:
+  pkl:
+    engine: exec
+    configManagementPlugin:
+      discover:
+        fileName: PklProject
+    copy:
+      scope: repository
+      include:
+        - packages/**
+        - pkl-packages/**
+    init:
+      command: ["pkl", "project", "resolve", "--cache-dir", ".drydock-pkl-cache"]
+    generate:
+      command: ["pkl", "eval", "--cache-dir", ".drydock-pkl-cache", "{{param:path}}"]
+    parameters:
+      allow:
+        - name: path
+          type: string
+          required: true
+          path:
+            base: repository
+            allow:
+              - personal-cluster/**/*.pkl

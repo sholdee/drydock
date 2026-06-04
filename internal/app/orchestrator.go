@@ -13,6 +13,8 @@ import (
 	"github.com/sholdee/drydock/internal/discovery"
 	"github.com/sholdee/drydock/internal/luahealth"
 	"github.com/sholdee/drydock/internal/manifest"
+	"github.com/sholdee/drydock/internal/plugincontainer"
+	"github.com/sholdee/drydock/internal/pluginexec"
 	"github.com/sholdee/drydock/internal/remote"
 	"github.com/sholdee/drydock/internal/render"
 	sourcepkg "github.com/sholdee/drydock/internal/source"
@@ -91,6 +93,8 @@ type PluginExecution struct {
 	SourcePath   string `json:"sourcePath,omitempty" yaml:"sourcePath,omitempty"`
 	PluginName   string `json:"pluginName" yaml:"pluginName"`
 	Engine       string `json:"engine" yaml:"engine"`
+	Runtime      string `json:"runtime,omitempty" yaml:"runtime,omitempty"`
+	Image        string `json:"image,omitempty" yaml:"image,omitempty"`
 	Phase        string `json:"phase" yaml:"phase"`
 	Command      string `json:"command" yaml:"command"`
 	Duration     string `json:"duration" yaml:"duration"`
@@ -126,6 +130,8 @@ type Orchestrator struct {
 	GitAcquirer            sourcepkg.GitAcquirer
 	RemoteResourceAcquirer remote.Acquirer
 	PluginRenderer         render.PluginRenderer
+	PluginExecRunner       pluginexec.Runner
+	PluginContainerRunner  plugincontainer.Runner
 }
 
 func (o Orchestrator) Diag(ctx context.Context, request DiagRequest) (DiagResult, error) {

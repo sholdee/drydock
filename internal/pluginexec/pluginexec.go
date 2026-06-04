@@ -7,10 +7,13 @@ import (
 	"fmt"
 	"net/url"
 	"os"
+	"path"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
+	"github.com/bmatcuk/doublestar/v4"
 	"github.com/sholdee/drydock/internal/filecopy"
 	"github.com/sholdee/drydock/internal/pathsafety"
 	"github.com/sholdee/drydock/internal/pluginpolicy"
@@ -29,15 +32,26 @@ type Runner interface {
 type DefaultRunner struct{}
 
 type Request struct {
-	SourceDir      string
-	Config         pluginpolicy.ExecConfig
-	ProtectedRoots []string
-	EnvLookup      func(string) (string, bool)
+	SourceDir       string
+	RepositoryDir   string
+	SourceRelPath   string
+	Config          pluginpolicy.ExecConfig
+	ProtectedRoots  []string
+	EnvLookup       func(string) (string, bool)
+	ExtraEnv        []string
+	SensitiveValues []string
 }
 
 type Result struct {
 	Stdout     []byte
 	Executions []Execution
+}
+
+type Workspace struct {
+	Workdir        string
+	ArgumentRoot   string
+	ProtectedRoots []string
+	Cleanup        func()
 }
 
 type Execution struct {
@@ -88,34 +102,39 @@ func (DefaultRunner) Run(ctx context.Context, request Request) (Result, error) {
 	if strings.TrimSpace(request.SourceDir) == "" {
 		return Result{}, &Error{Reason: "source directory is required"}
 	}
-	workdir, cleanup, err := copySourceDir(request.SourceDir)
+	workspace, err := PrepareWorkspace(request)
 	if err != nil {
 		return Result{}, err
 	}
-	defer cleanup()
+	defer workspace.Cleanup()
 
 	protectedRoots := append([]string(nil), request.ProtectedRoots...)
-	protectedRoots = append(protectedRoots, request.SourceDir, workdir)
-	env, err := buildEnv(request.Config.Env, request.EnvLookup)
+	protectedRoots = append(protectedRoots, request.SourceDir)
+	protectedRoots = append(protectedRoots, workspace.ProtectedRoots...)
+	if request.RepositoryDir != "" {
+		protectedRoots = append(protectedRoots, request.RepositoryDir)
+	}
+	env, err := BuildEnv(request.Config.Env, request.EnvLookup, request.ExtraEnv)
 	if err != nil {
 		return Result{}, err
 	}
+	redactor := newRedactor(request.SensitiveValues)
 	var executions []Execution
 	if request.Config.Init != nil {
-		result, err := runConfiguredCommand(ctx, "init", *request.Config.Init, nil, workdir, protectedRoots, env, request.Config.Output)
+		result, err := runConfiguredCommand(ctx, "init", *request.Config.Init, nil, workspace.Workdir, workspace.ArgumentRoot, protectedRoots, env, request.Config.Output, redactor)
 		if err != nil {
 			return Result{}, err
 		}
 		executions = append(executions, result.Execution)
 	}
-	result, err := runConfiguredCommand(ctx, "generate", request.Config.Generate, nil, workdir, protectedRoots, env, request.Config.Output)
+	result, err := runConfiguredCommand(ctx, "generate", request.Config.Generate, nil, workspace.Workdir, workspace.ArgumentRoot, protectedRoots, env, request.Config.Output, redactor)
 	if err != nil {
 		return Result{}, err
 	}
 	stdout := result.Stdout
 	executions = append(executions, result.Execution)
 	for index, command := range request.Config.PostRenderers {
-		result, err := runConfiguredCommand(ctx, fmt.Sprintf("post-renderer %d", index), command, stdout, workdir, protectedRoots, env, request.Config.Output)
+		result, err := runConfiguredCommand(ctx, fmt.Sprintf("post-renderer %d", index), command, stdout, workspace.Workdir, workspace.ArgumentRoot, protectedRoots, env, request.Config.Output, redactor)
 		if err != nil {
 			return Result{}, err
 		}
@@ -130,12 +149,12 @@ type commandResult struct {
 	Execution Execution
 }
 
-func runConfiguredCommand(ctx context.Context, phase string, command pluginpolicy.ExecCommand, stdin []byte, workdir string, protectedRoots []string, env []string, output pluginpolicy.ExecOutput) (commandResult, error) {
+func runConfiguredCommand(ctx context.Context, phase string, command pluginpolicy.ExecCommand, stdin []byte, workdir string, argumentRoot string, protectedRoots []string, env []string, output pluginpolicy.ExecOutput, redactor redactor) (commandResult, error) {
 	resolved, err := resolveCommand(command.Command[0], protectedRoots)
 	if err != nil {
 		return commandResult{}, &Error{Phase: phase, Command: safeCommandName(command.Command[0]), Reason: "invalid command", Err: err}
 	}
-	if err := validateArguments(command.Command[1:], workdir, protectedRoots); err != nil {
+	if err := validateArguments(command.Command[1:], workdir, argumentRoot, protectedRoots, redactor); err != nil {
 		return commandResult{}, &Error{Phase: phase, Command: safeCommandName(resolved), Reason: "invalid arguments", Err: err}
 	}
 	stdout := &limitBuffer{limit: output.MaxStdoutBytes}
@@ -179,14 +198,104 @@ func runConfiguredCommand(ctx context.Context, phase string, command pluginpolic
 	return commandResult{Stdout: stdout.Bytes(), Execution: execution}, nil
 }
 
-func copySourceDir(sourceDir string) (string, func(), error) {
+type workspace struct {
+	workdir        string
+	argumentRoot   string
+	protectedRoots []string
+}
+
+func PrepareWorkspace(request Request) (Workspace, error) {
 	tempRoot, err := os.MkdirTemp("", "drydock-plugin-*")
 	if err != nil {
-		return "", func() {}, err
+		return Workspace{}, err
 	}
 	cleanup := func() { _ = os.RemoveAll(tempRoot) }
-	workdir := filepath.Join(tempRoot, "source")
-	if err := filepath.WalkDir(sourceDir, func(path string, entry os.DirEntry, walkErr error) error {
+	staged, err := copyWorkspaceInto(tempRoot, request)
+	if err != nil {
+		cleanup()
+		return Workspace{}, err
+	}
+	return Workspace{
+		Workdir:        staged.workdir,
+		ArgumentRoot:   staged.argumentRoot,
+		ProtectedRoots: append([]string(nil), staged.protectedRoots...),
+		Cleanup:        cleanup,
+	}, nil
+}
+
+func copyWorkspaceInto(tempRoot string, request Request) (workspace, error) {
+	scope := request.Config.Copy.Scope
+	if scope == "" {
+		scope = pluginpolicy.ExecCopyScopeSource
+	}
+	switch scope {
+	case pluginpolicy.ExecCopyScopeSource:
+		if len(request.Config.Copy.Include) > 0 {
+			return workspace{}, fmt.Errorf("plugin copy.include requires copy.scope %q", pluginpolicy.ExecCopyScopeRepository)
+		}
+		workdir := filepath.Join(tempRoot, "source")
+		if err := copyTree(request.SourceDir, workdir); err != nil {
+			return workspace{}, err
+		}
+		return workspace{
+			workdir:        workdir,
+			argumentRoot:   workdir,
+			protectedRoots: []string{workdir},
+		}, nil
+	case pluginpolicy.ExecCopyScopeRepository:
+		if strings.TrimSpace(request.RepositoryDir) == "" {
+			return workspace{}, fmt.Errorf("repository directory is required for plugin copy.scope %q", scope)
+		}
+		sourceRel, err := requestSourceRelPath(request)
+		if err != nil {
+			return workspace{}, err
+		}
+		tempRepo := filepath.Join(tempRoot, "repository")
+		workdir := filepath.Join(tempRepo, filepath.FromSlash(sourceRel))
+		if err := copyTree(request.SourceDir, workdir); err != nil {
+			return workspace{}, err
+		}
+		if err := copyRepositoryIncludes(request.RepositoryDir, tempRepo, request.Config.Copy.Include); err != nil {
+			return workspace{}, err
+		}
+		return workspace{
+			workdir:        workdir,
+			argumentRoot:   tempRepo,
+			protectedRoots: []string{tempRepo, workdir},
+		}, nil
+	default:
+		return workspace{}, fmt.Errorf("plugin copy.scope %q is unsupported", request.Config.Copy.Scope)
+	}
+}
+
+func requestSourceRelPath(request Request) (string, error) {
+	if strings.TrimSpace(request.SourceRelPath) != "" {
+		return cleanSlashRelPath(request.SourceRelPath, "source path", true)
+	}
+	rel, err := filepath.Rel(request.RepositoryDir, request.SourceDir)
+	if err != nil {
+		return "", err
+	}
+	return cleanSlashRelPath(filepath.ToSlash(rel), "source path", true)
+}
+
+func cleanSlashRelPath(raw string, label string, allowDot bool) (string, error) {
+	normalized := strings.ReplaceAll(strings.TrimSpace(raw), "\\", "/")
+	clean := path.Clean(strings.Trim(normalized, "/"))
+	if clean == "." {
+		if allowDot {
+			return ".", nil
+		}
+		return "", fmt.Errorf("%s must not be empty", label)
+	}
+	if strings.HasPrefix(normalized, "/") || hasParentComponent(normalized) || pathsafety.SlashRelEscapes(clean) || hasDotGitComponent(clean) {
+		return "", fmt.Errorf("%s %q must be repository-relative and non-escaping", label, raw)
+	}
+	return clean, nil
+}
+
+func copyTree(sourceDir string, targetRoot string) error {
+	return filepath.WalkDir(sourceDir, func(path string, entry os.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
 		}
@@ -194,8 +303,14 @@ func copySourceDir(sourceDir string) (string, func(), error) {
 		if err != nil {
 			return err
 		}
-		target := filepath.Join(workdir, rel)
-		info, err := entry.Info()
+		if hasDotGitComponent(filepath.ToSlash(rel)) {
+			if entry.IsDir() {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		target := filepath.Join(targetRoot, rel)
+		info, err := os.Lstat(path)
 		if err != nil {
 			return err
 		}
@@ -210,14 +325,166 @@ func copySourceDir(sourceDir string) (string, func(), error) {
 			return filecopy.CopyRegularFile(path, target, mode.Perm())
 		}
 		return fmt.Errorf("plugin source path %q is not a regular file or directory", path)
-	}); err != nil {
-		cleanup()
-		return "", func() {}, err
-	}
-	return workdir, cleanup, nil
+	})
 }
 
-func buildEnv(policy pluginpolicy.ExecEnv, lookup func(string) (string, bool)) ([]string, error) {
+func copyRepositoryIncludes(repositoryDir string, tempRepo string, include []string) error {
+	patterns, err := normalizeIncludePatterns(include)
+	if err != nil {
+		return err
+	}
+	if len(patterns) == 0 {
+		return nil
+	}
+	copiedDirs := map[string]struct{}{}
+	return filepath.WalkDir(repositoryDir, func(path string, entry os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		rel, err := filepath.Rel(repositoryDir, path)
+		if err != nil {
+			return err
+		}
+		slashRel := filepath.ToSlash(rel)
+		if slashRel == "." {
+			return nil
+		}
+		return copyRepositoryIncludePath(path, rel, slashRel, entry, tempRepo, patterns, copiedDirs)
+	})
+}
+
+func copyRepositoryIncludePath(
+	path string,
+	rel string,
+	slashRel string,
+	entry os.DirEntry,
+	tempRepo string,
+	patterns []string,
+	copiedDirs map[string]struct{},
+) error {
+	if handled, err := handleRepositoryMetadataInclude(path, slashRel, entry, patterns); handled {
+		return err
+	}
+	info, err := os.Lstat(path)
+	if err != nil {
+		return err
+	}
+	if info.Mode()&os.ModeSymlink != 0 {
+		return handleRepositoryIncludeSymlink(path, slashRel, patterns)
+	}
+	if entry.IsDir() {
+		return copyRepositoryIncludeDir(path, rel, slashRel, tempRepo, patterns, copiedDirs)
+	}
+	if !info.Mode().IsRegular() || !includePatternsMatch(patterns, slashRel) {
+		return nil
+	}
+	if wasCopiedFromParentInclude(copiedDirs, slashRel) {
+		return nil
+	}
+	return filecopy.CopyRegularFile(path, filepath.Join(tempRepo, rel), info.Mode().Perm())
+}
+
+func handleRepositoryMetadataInclude(path string, slashRel string, entry os.DirEntry, patterns []string) (bool, error) {
+	if !hasDotGitComponent(slashRel) {
+		return false, nil
+	}
+	if includePatternsTouchPath(patterns, slashRel) {
+		return true, fmt.Errorf("plugin repository include path %q includes .git metadata", path)
+	}
+	if entry.IsDir() {
+		return true, filepath.SkipDir
+	}
+	return true, nil
+}
+
+func handleRepositoryIncludeSymlink(path string, slashRel string, patterns []string) error {
+	if includePatternsTouchPath(patterns, slashRel) {
+		return fmt.Errorf("plugin repository include path %q is a symlink", path)
+	}
+	return nil
+}
+
+func copyRepositoryIncludeDir(
+	path string,
+	rel string,
+	slashRel string,
+	tempRepo string,
+	patterns []string,
+	copiedDirs map[string]struct{},
+) error {
+	if !includePatternsMatch(patterns, slashRel) {
+		return nil
+	}
+	if err := copyTree(path, filepath.Join(tempRepo, rel)); err != nil {
+		return err
+	}
+	copiedDirs[slashRel] = struct{}{}
+	return filepath.SkipDir
+}
+
+func wasCopiedFromParentInclude(copiedDirs map[string]struct{}, slashRel string) bool {
+	for copied := range copiedDirs {
+		if slashRel == copied || strings.HasPrefix(slashRel, copied+"/") {
+			return true
+		}
+	}
+	return false
+}
+
+func normalizeIncludePatterns(include []string) ([]string, error) {
+	out := make([]string, 0, len(include))
+	seen := map[string]struct{}{}
+	for _, raw := range include {
+		if strings.Contains(raw, `\`) {
+			return nil, fmt.Errorf("plugin copy.include glob %q must use slash-normalized paths", raw)
+		}
+		clean, err := cleanSlashRelPath(raw, "plugin copy.include glob", false)
+		if err != nil {
+			return nil, err
+		}
+		if !doublestar.ValidatePattern(clean) {
+			return nil, fmt.Errorf("plugin copy.include glob %q is invalid", raw)
+		}
+		if _, ok := seen[clean]; ok {
+			continue
+		}
+		seen[clean] = struct{}{}
+		out = append(out, clean)
+	}
+	return out, nil
+}
+
+func includePatternsMatch(patterns []string, rel string) bool {
+	for _, pattern := range patterns {
+		if doublestar.MatchUnvalidated(pattern, rel) {
+			return true
+		}
+	}
+	return false
+}
+
+func includePatternsTouchPath(patterns []string, rel string) bool {
+	if includePatternsMatch(patterns, rel) {
+		return true
+	}
+	probe := rel + "/__drydock_probe__"
+	for _, pattern := range patterns {
+		if strings.HasPrefix(pattern, rel+"/") || doublestar.MatchUnvalidated(pattern, probe) {
+			return true
+		}
+	}
+	return false
+}
+
+func hasDotGitComponent(rel string) bool {
+	return slices.Contains(strings.Split(filepath.ToSlash(rel), "/"), ".git")
+}
+
+func hasParentComponent(rel string) bool {
+	return slices.Contains(strings.Split(filepath.ToSlash(rel), "/"), "..")
+}
+
+func BuildEnv(policy pluginpolicy.ExecEnv, lookup func(string) (string, bool), extraEnv []string) ([]string, error) {
 	if lookup == nil {
 		lookup = os.LookupEnv
 	}
@@ -231,6 +498,16 @@ func buildEnv(policy pluginpolicy.ExecEnv, lookup func(string) (string, bool)) (
 			return nil, fmt.Errorf("env value %s exceeds %d bytes", name, MaxEnvValueBytes)
 		}
 		env = append(env, name+"="+value)
+	}
+	for _, entry := range extraEnv {
+		name, value, ok := strings.Cut(entry, "=")
+		if !ok || name == "" {
+			return nil, fmt.Errorf("extra env entry is invalid")
+		}
+		if len(value) > MaxEnvValueBytes {
+			return nil, fmt.Errorf("env value %s exceeds %d bytes", name, MaxEnvValueBytes)
+		}
+		env = append(env, entry)
 	}
 	return env, nil
 }
@@ -272,13 +549,13 @@ func validateResolvedCommand(command string, protectedRoots []string) (string, e
 	return resolved, nil
 }
 
-func validateArguments(args []string, workdir string, protectedRoots []string) error {
+func validateArguments(args []string, workdir string, argumentRoot string, protectedRoots []string, redactor redactor) error {
 	for _, arg := range args {
-		if err := validateArgumentValue(arg, workdir, protectedRoots); err != nil {
+		if err := validateArgumentValue(arg, workdir, argumentRoot, protectedRoots, redactor); err != nil {
 			return err
 		}
 		if name, value, ok := strings.Cut(arg, "="); ok && strings.HasPrefix(name, "--") {
-			if err := validateArgumentValue(value, workdir, protectedRoots); err != nil {
+			if err := validateArgumentValue(value, workdir, argumentRoot, protectedRoots, redactor); err != nil {
 				return err
 			}
 		}
@@ -286,7 +563,7 @@ func validateArguments(args []string, workdir string, protectedRoots []string) e
 	return nil
 }
 
-func validateArgumentValue(value string, workdir string, protectedRoots []string) error {
+func validateArgumentValue(value string, workdir string, argumentRoot string, protectedRoots []string, redactor redactor) error {
 	if value == "" {
 		return nil
 	}
@@ -294,27 +571,85 @@ func validateArgumentValue(value string, workdir string, protectedRoots []string
 		return fmt.Errorf("argument contains credential-bearing URL")
 	}
 	if filepath.IsAbs(value) {
-		if inside, root, err := pathsafety.IsInsideAny(value, protectedRoots); err != nil {
-			return err
-		} else if inside {
-			return fmt.Errorf("argument path %q is inside protected root %q", value, root)
-		}
-		return nil
+		return validateAbsoluteArgumentPath(value, workdir, argumentRoot, protectedRoots, redactor)
 	}
 	if !isPathLikeArgument(value) {
 		return nil
 	}
-	clean := filepath.Clean(value)
-	if pathsafety.RelEscapes(clean) {
-		return fmt.Errorf("argument path %q escapes plugin workdir", value)
+	return validateRelativeArgumentPath(value, workdir, argumentRoot, protectedRoots, redactor)
+}
+
+func validateAbsoluteArgumentPath(value string, workdir string, argumentRoot string, protectedRoots []string, redactor redactor) error {
+	if inside, _, err := pathsafety.IsInsideAny(value, []string{argumentRoot}); err != nil {
+		return err
+	} else if inside {
+		return nil
 	}
+	if inside, root, err := pathsafety.IsInsideAny(value, protectedRoots); err != nil {
+		return err
+	} else if inside {
+		return fmt.Errorf("argument path %q is inside protected root %q", redactor.argument(value), root)
+	}
+	return escapedArgumentPathError(value, workdir, argumentRoot, redactor)
+}
+
+func validateRelativeArgumentPath(value string, workdir string, argumentRoot string, protectedRoots []string, redactor redactor) error {
+	clean := filepath.Clean(value)
 	target := filepath.Join(workdir, clean)
+	if inside, _, err := pathsafety.IsInsideAny(target, []string{argumentRoot}); err != nil {
+		return err
+	} else if !inside {
+		return escapedArgumentPathError(value, workdir, argumentRoot, redactor)
+	}
 	if inside, root, err := pathsafety.IsInsideAny(target, protectedRoots); err != nil {
 		return err
-	} else if inside && root != workdir {
-		return fmt.Errorf("argument path %q is inside protected root %q", value, root)
+	} else if inside && !samePath(root, argumentRoot) && !samePath(root, workdir) {
+		return fmt.Errorf("argument path %q is inside protected root %q", redactor.argument(value), root)
 	}
 	return nil
+}
+
+func escapedArgumentPathError(value string, workdir string, argumentRoot string, redactor redactor) error {
+	if samePath(argumentRoot, workdir) {
+		return fmt.Errorf("argument path %q escapes plugin workdir", redactor.argument(value))
+	}
+	return fmt.Errorf("argument path %q escapes plugin repository", redactor.argument(value))
+}
+
+func samePath(left string, right string) bool {
+	leftAbs, err := filepath.Abs(left)
+	if err != nil {
+		return filepath.Clean(left) == filepath.Clean(right)
+	}
+	rightAbs, err := filepath.Abs(right)
+	if err != nil {
+		return filepath.Clean(left) == filepath.Clean(right)
+	}
+	return filepath.Clean(leftAbs) == filepath.Clean(rightAbs)
+}
+
+type redactor struct {
+	values []string
+}
+
+func newRedactor(values []string) redactor {
+	out := redactor{}
+	for _, value := range values {
+		if value == "" {
+			continue
+		}
+		out.values = append(out.values, value)
+	}
+	return out
+}
+
+func (r redactor) argument(value string) string {
+	for _, sensitive := range r.values {
+		if strings.Contains(value, sensitive) {
+			return "<redacted>"
+		}
+	}
+	return value
 }
 
 func isPathLikeArgument(value string) bool {

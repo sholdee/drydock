@@ -56,6 +56,13 @@ func (o Orchestrator) discoverRepository(ctx context.Context, root string, reque
 		return discovered, allDiags, allEvents, renderCache, "", err
 	}
 
+	discovered, bootstrapDiags, bootstrapEvents, err := o.applyPolicyBootstrapDiscovery(ctx, root, request, discovered, appsetOptions, renderCache, mode)
+	allDiags = append(allDiags, bootstrapDiags...)
+	allEvents = append(allEvents, bootstrapEvents...)
+	if err != nil {
+		return discovered, allDiags, allEvents, renderCache, "", err
+	}
+
 	settings, _, err := loadSettingsFromDiscovery(root, discovered)
 	if err != nil {
 		return discovered, allDiags, allEvents, renderCache, "", err
