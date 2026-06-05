@@ -1198,6 +1198,45 @@ func TestRenderSearchKeyboardContract(t *testing.T) {
 	}
 }
 
+func TestRenderTreeKeyboardNavigationContract(t *testing.T) {
+	out, err := Render(app.DiffResult{
+		Results: []diff.Result{
+			diffResult("argocd", "demo", "cm-one", "@@ -1,1 +1,1 @@\n-old\n+new\n"),
+			diffResult("argocd", "demo", "cm-two", "@@ -1,1 +1,1 @@\n-old\n+new\n"),
+			diffResult("argocd", "other", "cm-three", "@@ -1,1 +1,1 @@\n-old\n+new\n"),
+		},
+	}, Options{})
+	if err != nil {
+		t.Fatalf("Render() error = %v", err)
+	}
+	text := string(out)
+	for _, want := range []string{
+		`let focusedTreeButton = null;`,
+		`const treeButtonIsVisible = (button) => {`,
+		`return !(app instanceof HTMLDetailsElement) || app.open;`,
+		`const visibleTreeButtons = () => treeButtons.filter(treeButtonIsVisible);`,
+		`const setTreeButtonTabStop = (button) => {`,
+		`candidate.tabIndex = candidate === button ? 0 : -1;`,
+		`const moveTreeFocus = (delta) => {`,
+		`const focusTreeEdge = (edge) => {`,
+		`const syncTreeFocusAfterFilter = () => {`,
+		`setTreeButtonTabStop(activeButton);`,
+		`button.addEventListener('keydown', (event) => {`,
+		`event.key === 'ArrowDown'`,
+		`event.key === 'ArrowUp'`,
+		`event.key === 'Home'`,
+		`event.key === 'End'`,
+		`event.key === 'Enter' || event.key === ' '`,
+		`button.click();`,
+		`syncTreeFocusAfterFilter();`,
+		`app.addEventListener('toggle', syncTreeFocusAfterFilter);`,
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("HTML missing tree keyboard contract %q:\n%s", want, text)
+		}
+	}
+}
+
 func TestRenderDefaultResourceScriptContract(t *testing.T) {
 	out, err := Render(app.DiffResult{
 		Results: []diff.Result{diffResult("argocd", "demo", "cm-one", "@@ -1,1 +1,1 @@\n-old\n+new\n")},
