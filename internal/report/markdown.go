@@ -76,7 +76,7 @@ func DiffMarkdown(result app.DiffResult, options MarkdownOptions) ([]byte, Markd
 		options.DiagnosticLimit = defaultDiagLimit
 	}
 	if strings.TrimSpace(options.Title) == "" {
-		options.Title = "drydock desired state diff"
+		options.Title = "drydock diff"
 	}
 
 	groups := groupedDiffs(result.Results)

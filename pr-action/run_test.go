@@ -288,7 +288,7 @@ func TestRunDiffUsesMarkdownOutputAfterExtraDiffArgs(t *testing.T) {
 		t.Fatalf("raw diff artifact = %q, want raw diff", rawDiff)
 	}
 	diffComment := readFile(t, filepath.Join(workDir, "diff-comment.md"))
-	if !strings.Contains(diffComment, "## drydock desired state diff") {
+	if !strings.Contains(diffComment, "## drydock diff") {
 		t.Fatalf("diff comment = %q, want markdown report", diffComment)
 	}
 	if strings.Contains(diffComment, "Full diff output") || strings.Contains(diffComment, "actions/runs/12345") {
@@ -706,9 +706,9 @@ if [[ "$*" == *"diff apps"* ]]; then
   fi
   if [[ "${output}" == "markdown" ]]; then
     if [[ -n "${diff_body:-}" ]]; then
-      printf '## drydock desired state diff\n\n~~~diff\n%s~~~\n' "${diff_body}"
+      printf '## drydock diff\n\n~~~diff\n%s~~~\n' "${diff_body}"
     else
-      printf '## drydock desired state diff\n\n**Summary:** 0 apps, 0 resources, +0/-0.\n\nNo rendered manifest differences detected.\n'
+      printf '## drydock diff\n\n**Summary:** 0 apps, 0 resources, +0/-0.\n\nNo rendered manifest differences detected.\n'
     fi
   else
     printf '%s' "${diff_body:-}"

@@ -456,7 +456,7 @@ fi
 if [[ "${diff_comment}" == "true" ]]; then
   if [[ ! -s "${diff_comment_path}" ]]; then
     {
-      echo "## drydock desired state diff"
+      echo "## drydock diff"
       echo
       echo "**Summary:** 0 apps, 0 resources, +0/-0."
       echo
