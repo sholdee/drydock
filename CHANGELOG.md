@@ -1,5 +1,29 @@
 # Changelog
 
+## [0.1.15](https://github.com/sholdee/drydock/compare/v0.1.14...v0.1.15) (2026-06-05)
+
+
+### Features
+
+* harden html diff default selection ([f2aa636](https://github.com/sholdee/drydock/commit/f2aa636f8a440436404a34e292de1469dff71992))
+* highlight yaml in html diff rows ([87ac277](https://github.com/sholdee/drydock/commit/87ac277ea5f527395116c3d2b0f494a19d7f752b))
+* highlight yaml in lazy html diffs ([8fd925c](https://github.com/sholdee/drydock/commit/8fd925ce9447ba8260ee19d34ee97e0e78f6c2f2))
+* lazily render large html diffs ([f21d32f](https://github.com/sholdee/drydock/commit/f21d32f53561c7d55f6df0710f13cc4cf3085eaf))
+* refine html diff view ([b9f6327](https://github.com/sholdee/drydock/commit/b9f632758eb19caa141757125a156816ae15edf6))
+* refine rendered html diff view ([8ff1636](https://github.com/sholdee/drydock/commit/8ff1636051995d15c6ace0ca08d1c16947b32b7c))
+
+
+### Documentation
+
+* describe plugin policy schema fields ([#102](https://github.com/sholdee/drydock/issues/102)) ([012c549](https://github.com/sholdee/drydock/commit/012c549216c278ebc22154a2de33a717ee35c71d))
+* refresh rendered diff example ([4399f87](https://github.com/sholdee/drydock/commit/4399f87ba9de244ee0b6f65f8734ae13b6055301))
+
+
+### Styles
+
+* mask sticky diff header background ([ae2a8ba](https://github.com/sholdee/drydock/commit/ae2a8ba78cf0fee744b63fe57328b0c79ed758a4))
+* tune rendered diff spacing ([604a2a2](https://github.com/sholdee/drydock/commit/604a2a29c5aec6fad4e42905cb02d7595bae9671))
+
 ## [0.1.14](https://github.com/sholdee/drydock/compare/v0.1.13...v0.1.14) (2026-06-04)
 
 
