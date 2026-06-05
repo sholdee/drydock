@@ -2,10 +2,12 @@ package diffhtml
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
 	"html"
 	"io"
 	"slices"
+	"strconv"
 	"strings"
 
 	"github.com/sholdee/drydock/internal/app"
@@ -17,6 +19,10 @@ const (
 	defaultTitle                     = "drydock diff"
 	defaultResourceRawBytesLimit     = 20 * 1024
 	defaultResourceChangedLinesLimit = 400
+	lazyResourceRawBytesThreshold    = 250 * 1024
+	lazyResourceParsedRowsThreshold  = 2000
+	hardResourceRawBytesLimit        = 500 * 1024
+	hardResourceParsedRowsLimit      = 20000
 )
 
 type Options struct {
@@ -60,6 +66,33 @@ type resourceDiffMetrics struct {
 	parsedRows   int
 }
 
+type lazyDiffPayload struct {
+	Change  string                 `json:"change"`
+	Metrics lazyDiffPayloadMetrics `json:"metrics"`
+	Hunks   []lazyDiffPayloadHunk  `json:"hunks"`
+}
+
+type lazyDiffPayloadMetrics struct {
+	RawBytes     int `json:"rawBytes"`
+	RawKiB       int `json:"rawKiB"`
+	AddedLines   int `json:"addedLines"`
+	RemovedLines int `json:"removedLines"`
+	ParsedRows   int `json:"parsedRows"`
+}
+
+type lazyDiffPayloadHunk struct {
+	Header string               `json:"header"`
+	Rows   []lazyDiffPayloadRow `json:"rows"`
+}
+
+type lazyDiffPayloadRow struct {
+	Kind        string `json:"kind"`
+	LeftNumber  int    `json:"leftNumber"`
+	RightNumber int    `json:"rightNumber"`
+	LeftText    string `json:"leftText"`
+	RightText   string `json:"rightText"`
+}
+
 func Render(result app.DiffResult, options Options) ([]byte, error) {
 	title := strings.TrimSpace(options.Title)
 	if title == "" {
@@ -99,7 +132,9 @@ func Render(result app.DiffResult, options Options) ([]byte, error) {
 	if len(groups) == 0 {
 		builder.WriteString("<p class=\"no-diff\">No rendered manifest differences detected.</p>\n")
 	} else {
-		renderGroups(&builder, groups)
+		if err := renderGroups(&builder, groups); err != nil {
+			return nil, err
+		}
 	}
 	renderDiagnostics(&builder, result.Diagnostics)
 	builder.WriteString("</main>\n</div>\n<script>")
@@ -450,6 +485,98 @@ func measureDiff(result diff.Result) resourceDiffMetrics {
 	}
 }
 
+func isLazyResource(metrics resourceDiffMetrics) bool {
+	return metrics.rawBytes >= lazyResourceRawBytesThreshold ||
+		metrics.parsedRows >= lazyResourceParsedRowsThreshold
+}
+
+func isHardGuardedResource(metrics resourceDiffMetrics) bool {
+	return metrics.rawBytes > hardResourceRawBytesLimit ||
+		metrics.parsedRows > hardResourceParsedRowsLimit
+}
+
+func diffRawKiB(rawBytes int) int {
+	if rawBytes == 0 {
+		return 0
+	}
+	return (rawBytes + 1023) / 1024
+}
+
+func lazyDiffMetricText(metrics resourceDiffMetrics) string {
+	return fmt.Sprintf("%s rows, +%s/-%s, %s KiB",
+		formatCount(metrics.parsedRows),
+		formatCount(metrics.addedLines),
+		formatCount(metrics.removedLines),
+		formatCount(diffRawKiB(metrics.rawBytes)),
+	)
+}
+
+func formatCount(count int) string {
+	text := strconv.Itoa(count)
+	if len(text) <= 3 {
+		return text
+	}
+	var builder strings.Builder
+	firstGroup := len(text) % 3
+	if firstGroup == 0 {
+		firstGroup = 3
+	}
+	builder.WriteString(text[:firstGroup])
+	for offset := firstGroup; offset < len(text); offset += 3 {
+		builder.WriteByte(',')
+		builder.WriteString(text[offset : offset+3])
+	}
+	return builder.String()
+}
+
+func lazyDiffPayloadJSON(result diff.Result, metrics resourceDiffMetrics, hunks []diffHunk) (string, error) {
+	payload := lazyDiffPayload{
+		Change: string(result.Change),
+		Metrics: lazyDiffPayloadMetrics{
+			RawBytes:     metrics.rawBytes,
+			RawKiB:       diffRawKiB(metrics.rawBytes),
+			AddedLines:   metrics.addedLines,
+			RemovedLines: metrics.removedLines,
+			ParsedRows:   metrics.parsedRows,
+		},
+		Hunks: lazyDiffPayloadHunks(hunks),
+	}
+	data, err := json.Marshal(payload)
+	if err != nil {
+		return "", err
+	}
+	return scriptDataSafeJSON(data), nil
+}
+
+func lazyDiffPayloadHunks(hunks []diffHunk) []lazyDiffPayloadHunk {
+	payloadHunks := make([]lazyDiffPayloadHunk, 0, len(hunks))
+	for _, hunk := range hunks {
+		payloadRows := make([]lazyDiffPayloadRow, 0, len(hunk.Rows))
+		for _, row := range hunk.Rows {
+			payloadRows = append(payloadRows, lazyDiffPayloadRow(row))
+		}
+		payloadHunks = append(payloadHunks, lazyDiffPayloadHunk{
+			Header: hunk.Header,
+			Rows:   payloadRows,
+		})
+	}
+	return payloadHunks
+}
+
+func scriptDataSafeJSON(data []byte) string {
+	replacer := strings.NewReplacer(
+		"<", `\u003c`,
+		">", `\u003e`,
+		"&", `\u0026`,
+		"'", `\u0027`,
+		"`", `\u0060`,
+		"=", `\u003d`,
+		"\u2028", `\u2028`,
+		"\u2029", `\u2029`,
+	)
+	return replacer.Replace(string(data))
+}
+
 func renderSummary(builder *bytes.Buffer, apps, resources int, resourceCounts resourceChangeCounts, addedLines, removedLines int) {
 	type badge struct {
 		class string
@@ -510,19 +637,24 @@ func renderTree(builder *bytes.Buffer, groups []appGroup) {
 			label := resourceLabel(entry.result.Resource)
 			treeLabel := treeResourceLabel(entry.result.Resource, treeLabelCounts)
 			added, removed := entry.metrics.addedLines, entry.metrics.removedLines
-			searchText := strings.ToLower(strings.Join([]string{
+			large := isLazyResource(entry.metrics)
+			searchParts := []string{
 				group.id,
 				label,
 				string(entry.result.Change),
-			}, " "))
+			}
+			if large {
+				searchParts = append(searchParts, "large")
+			}
+			searchText := strings.ToLower(strings.Join(searchParts, " "))
 			fmt.Fprintf(builder, "<button class=\"tree-resource\" type=\"button\" data-target-resource=\"resource-%d\" data-search-text=\"%s\" title=\"%s\" aria-label=\"%s\">%s<span class=\"tree-resource-label\">%s</span>%s</button>\n",
 				entry.index,
 				escape(searchText),
 				escape(label),
-				escape(treeResourceAriaLabel(label, entry.result.Change, added, removed)),
+				escape(treeResourceAriaLabel(label, entry.result.Change, added, removed, large)),
 				treeStatusDotMarkup(entry.result.Change),
 				escape(treeLabel),
-				treeDeltaMarkup(added, removed),
+				treeResourceMetaMarkup(added, removed, large),
 			)
 		}
 		builder.WriteString("</details>\n")
@@ -580,8 +712,11 @@ func shortTreeResourceKind(kind string) string {
 	}
 }
 
-func treeResourceAriaLabel(label string, change diff.Change, added, removed int) string {
+func treeResourceAriaLabel(label string, change diff.Change, added, removed int, large bool) string {
 	parts := []string{label, string(change)}
+	if large {
+		parts = append(parts, "large")
+	}
 	if added > 0 {
 		parts = append(parts, fmt.Sprintf("plus %d", added))
 	}
@@ -589,6 +724,14 @@ func treeResourceAriaLabel(label string, change diff.Change, added, removed int)
 		parts = append(parts, fmt.Sprintf("minus %d", removed))
 	}
 	return strings.Join(parts, ", ")
+}
+
+func treeResourceMetaMarkup(added, removed int, large bool) string {
+	delta := treeDeltaMarkup(added, removed)
+	if !large {
+		return delta
+	}
+	return "<span class=\"tree-resource-meta\"><span class=\"tree-large-badge\">large</span>" + delta + "</span>"
 }
 
 func treeDeltaMarkup(added, removed int) string {
@@ -624,23 +767,34 @@ func renderViewToggle(builder *bytes.Buffer) {
 	builder.WriteString("<button class=\"view-toggle\" type=\"button\" data-view-toggle aria-label=\"Toggle diff layout\">Unified</button>\n")
 }
 
-func renderGroups(builder *bytes.Buffer, groups []appGroup) {
+func renderGroups(builder *bytes.Buffer, groups []appGroup) error {
 	builder.WriteString("<section class=\"applications\">\n")
 	for _, group := range groups {
 		for _, entry := range group.entries {
-			renderResource(builder, entry)
+			if err := renderResource(builder, entry); err != nil {
+				return err
+			}
 		}
 	}
 	builder.WriteString("</section>\n")
+	return nil
 }
 
-func renderResource(builder *bytes.Buffer, entry groupEntry) {
+func renderResource(builder *bytes.Buffer, entry groupEntry) error {
 	result := entry.result
-	hunks := parseUnifiedDiff(result.Diff)
-	fmt.Fprintf(builder, "<article class=\"resource\" data-resource-id=\"resource-%d\" data-result-index=\"%d\" data-change=\"%s\">\n",
+	lazy := isLazyResource(entry.metrics)
+	hardGuarded := isHardGuardedResource(entry.metrics)
+	lazyAttributes := ""
+	if hardGuarded {
+		lazyAttributes = " data-lazy-diff=\"blocked\" data-lazy-state=\"blocked\""
+	} else if lazy {
+		lazyAttributes = " data-lazy-diff=\"true\" data-lazy-state=\"pending\""
+	}
+	fmt.Fprintf(builder, "<article class=\"resource\" data-resource-id=\"resource-%d\" data-result-index=\"%d\" data-change=\"%s\"%s>\n",
 		entry.index,
 		entry.index,
 		escape(string(result.Change)),
+		lazyAttributes,
 	)
 	builder.WriteString("<header class=\"resource-header\">\n")
 	builder.WriteString("<div class=\"resource-title\">\n")
@@ -648,14 +802,59 @@ func renderResource(builder *bytes.Buffer, entry groupEntry) {
 	builder.WriteString("</div>\n")
 	renderViewToggle(builder)
 	builder.WriteString("</header>\n")
-	if result.Change == diff.ChangeAdded || result.Change == diff.ChangeRemoved {
-		renderOneSidedTable(builder, hunks, result.Change, "side-by-side")
-		renderOneSidedTable(builder, hunks, result.Change, "unified")
-	} else {
-		renderSideBySideTable(builder, hunks)
-		renderUnifiedTable(builder, hunks)
+	switch {
+	case hardGuarded:
+		renderTooLargeResource(builder, entry)
+	default:
+		hunks := parseUnifiedDiff(result.Diff)
+		switch {
+		case lazy:
+			if err := renderLazyResource(builder, entry, hunks); err != nil {
+				return err
+			}
+		case result.Change == diff.ChangeAdded || result.Change == diff.ChangeRemoved:
+			renderOneSidedTable(builder, hunks, result.Change, "side-by-side")
+			renderOneSidedTable(builder, hunks, result.Change, "unified")
+		default:
+			renderSideBySideTable(builder, hunks)
+			renderUnifiedTable(builder, hunks)
+		}
 	}
 	builder.WriteString("</article>\n")
+	return nil
+}
+
+func renderLazyResource(builder *bytes.Buffer, entry groupEntry, hunks []diffHunk) error {
+	result := entry.result
+	metricsText := lazyDiffMetricText(entry.metrics)
+	label := resourceLabel(result.Resource)
+	fmt.Fprintf(builder, "<div class=\"lazy-diff-placeholder\" data-lazy-placeholder aria-live=\"polite\">\n")
+	fmt.Fprintf(builder, "<p>Large diff: %s.</p>\n", escape(metricsText))
+	fmt.Fprintf(builder, "<div class=\"lazy-diff-actions\"><button class=\"lazy-render-button\" type=\"button\" data-lazy-render aria-label=\"Render diff for %s. Large diff: %s.\">Render diff</button></div>\n",
+		escape(label),
+		escape(metricsText),
+	)
+	builder.WriteString("</div>\n")
+	payload, err := lazyDiffPayloadJSON(result, entry.metrics, hunks)
+	if err != nil {
+		return err
+	}
+	fmt.Fprintf(builder, "<script type=\"application/json\" data-diff-payload=\"resource-%d\">%s</script>\n", entry.index, payload)
+	return nil
+}
+
+func renderTooLargeResource(builder *bytes.Buffer, entry groupEntry) {
+	metricsText := lazyDiffMetricText(entry.metrics)
+	label := resourceLabel(entry.result.Resource)
+	reason := fmt.Sprintf("Diff too large for in-page rendering: %s.", metricsText)
+	builder.WriteString("<div class=\"lazy-diff-placeholder lazy-diff-placeholder-blocked\" data-lazy-placeholder>\n")
+	fmt.Fprintf(builder, "<p>%s</p>\n", escape(reason))
+	fmt.Fprintf(builder, "<div class=\"lazy-diff-actions\"><button class=\"lazy-render-button\" type=\"button\" disabled aria-disabled=\"true\" aria-label=\"Cannot render diff for %s. %s\" title=\"%s\">Render diff unavailable</button></div>\n",
+		escape(label),
+		escape(reason),
+		escape(reason),
+	)
+	builder.WriteString("</div>\n")
 }
 
 func renderOneSidedTable(builder *bytes.Buffer, hunks []diffHunk, change diff.Change, viewClass string) {

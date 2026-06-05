@@ -316,6 +316,24 @@ body.is-resizing-sidebar .sidebar-resizer::before {
 	text-overflow: ellipsis;
 	white-space: nowrap;
 }
+.tree-resource-meta {
+	display: inline-flex;
+	align-items: center;
+	justify-content: flex-end;
+	gap: 4px;
+	min-width: 0;
+}
+.tree-large-badge {
+	display: inline-block;
+	padding: 2px 5px;
+	border-radius: 999px;
+	background: rgba(129, 144, 163, 0.14);
+	color: var(--muted);
+	font-size: 11px;
+	font-weight: 700;
+	line-height: 1;
+	white-space: nowrap;
+}
 .tree-delta {
 	display: inline-flex;
 	gap: 4px;
@@ -471,6 +489,52 @@ body.is-resizing-sidebar .sidebar-resizer::before {
 .inline-change.removed {
 	background: rgba(248, 81, 73, 0.38);
 	box-shadow: 0 0 0 1px rgba(248, 81, 73, 0.2);
+}
+.lazy-diff-placeholder {
+	margin: 0;
+	padding: 12px 14px;
+	border: 1px solid var(--line);
+	border-radius: 6px;
+	background: rgba(16, 27, 41, 0.64);
+	color: var(--muted);
+}
+.lazy-diff-placeholder p {
+	margin: 0;
+}
+.lazy-diff-placeholder[aria-busy="true"] {
+	border-color: rgba(105, 184, 255, 0.42);
+}
+.lazy-diff-placeholder-blocked {
+	border-color: rgba(209, 115, 66, 0.34);
+	background: rgba(209, 115, 66, 0.08);
+}
+.lazy-diff-actions {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	margin-top: 10px;
+}
+.lazy-render-button {
+	border: 1px solid var(--line-strong);
+	border-radius: 6px;
+	background: var(--surface-raised);
+	color: var(--ink);
+	font: inherit;
+	font-size: 13px;
+	line-height: 1.35;
+	padding: 5px 10px;
+	cursor: pointer;
+}
+.lazy-render-button:hover:not(:disabled) {
+	border-color: var(--teal);
+}
+.lazy-render-button:disabled {
+	cursor: not-allowed;
+	opacity: 0.66;
+}
+.lazy-diff-error {
+	margin: 8px 0 0;
+	color: #ffb4ae;
 }
 body[data-view="side-by-side"] .diff-table.unified,
 body[data-view="unified"] .diff-table.side-by-side {
@@ -634,6 +698,7 @@ const reviewScript = `
 	const resources = Array.from(document.querySelectorAll('[data-resource-id]'));
 	const treeButtons = Array.from(document.querySelectorAll('[data-target-resource]'));
 	const viewToggles = Array.from(document.querySelectorAll('[data-view-toggle]'));
+	const lazyRenderButtons = Array.from(document.querySelectorAll('[data-lazy-render]'));
 	const sidebarToggle = document.querySelector('[data-sidebar-toggle]');
 	const sidebarResizer = document.querySelector('[data-sidebar-resizer]');
 	const sidebarBackdrop = document.querySelector('[data-sidebar-backdrop]');
@@ -769,13 +834,329 @@ const reviewScript = `
 		}
 	};
 
+	const activeResource = () => resources.find((resource) => resource.classList.contains('is-active')) || null;
+
+	const normalizedView = (view) => view === 'unified' ? 'unified' : 'side-by-side';
+
+	const currentView = () => normalizedView(body.dataset.view);
+
+	const renderedDataKey = (view) => normalizedView(view) === 'unified' ? 'renderedUnified' : 'renderedSideBySide';
+
+	const safeRowKind = (kind) => {
+		if (kind === 'added' || kind === 'removed' || kind === 'context') {
+			return kind;
+		}
+		return 'context';
+	};
+
+	const lazyPayloadScript = (resource) => resource?.querySelector('script[type="application/json"][data-diff-payload]') || null;
+
+	const lazyPlaceholder = (resource) => resource?.querySelector('[data-lazy-placeholder]') || null;
+
+	const setLazyBusy = (resource, busy) => {
+		if (!resource) {
+			return;
+		}
+		resource.setAttribute('aria-busy', busy ? 'true' : 'false');
+		lazyPlaceholder(resource)?.setAttribute('aria-busy', busy ? 'true' : 'false');
+		resource.querySelectorAll('[data-lazy-render]').forEach((button) => {
+			button.disabled = busy;
+		});
+	};
+
+	const changedRanges = (leftText, rightText) => {
+		const left = Array.from(String(leftText || ''));
+		const right = Array.from(String(rightText || ''));
+		if (left.join('') === right.join('')) {
+			return { left: [], right: [] };
+		}
+		let prefix = 0;
+		while (prefix < left.length && prefix < right.length && left[prefix] === right[prefix]) {
+			prefix++;
+		}
+		let suffix = 0;
+		while (
+			suffix < left.length - prefix &&
+			suffix < right.length - prefix &&
+			left[left.length - 1 - suffix] === right[right.length - 1 - suffix]
+		) {
+			suffix++;
+		}
+		const leftEnd = left.length - suffix;
+		const rightEnd = right.length - suffix;
+		return {
+			left: prefix < leftEnd ? [{ start: prefix, end: leftEnd }] : [],
+			right: prefix < rightEnd ? [{ start: prefix, end: rightEnd }] : [],
+		};
+	};
+
+	const pairedHighlights = (rows) => {
+		const left = Array.from({ length: rows.length }, () => []);
+		const right = Array.from({ length: rows.length }, () => []);
+		for (let index = 0; index < rows.length;) {
+			if (safeRowKind(rows[index]?.kind) !== 'removed') {
+				index++;
+				continue;
+			}
+			const removedStart = index;
+			while (index < rows.length && safeRowKind(rows[index]?.kind) === 'removed') {
+				index++;
+			}
+			const addedStart = index;
+			while (index < rows.length && safeRowKind(rows[index]?.kind) === 'added') {
+				index++;
+			}
+			const pairCount = Math.min(addedStart - removedStart, index - addedStart);
+			for (let offset = 0; offset < pairCount; offset++) {
+				const leftIndex = removedStart + offset;
+				const rightIndex = addedStart + offset;
+				const ranges = changedRanges(rows[leftIndex]?.leftText, rows[rightIndex]?.rightText);
+				left[leftIndex] = ranges.left;
+				right[rightIndex] = ranges.right;
+			}
+		}
+		return { left, right };
+	};
+
+	const appendHighlightedText = (cell, text, highlights, className) => {
+		const value = String(text || '');
+		if (!Array.isArray(highlights) || highlights.length === 0) {
+			cell.textContent = value;
+			return;
+		}
+		const runes = Array.from(value);
+		let cursor = 0;
+		highlights.forEach((highlight) => {
+			const start = Math.max(cursor, Math.min(Number(highlight.start) || 0, runes.length));
+			const end = Math.max(start, Math.min(Number(highlight.end) || 0, runes.length));
+			if (start > cursor) {
+				cell.appendChild(document.createTextNode(runes.slice(cursor, start).join('')));
+			}
+			if (start < end) {
+				const span = document.createElement('span');
+				span.classList.add('inline-change', className === 'removed' ? 'removed' : 'added');
+				span.textContent = runes.slice(start, end).join('');
+				cell.appendChild(span);
+			}
+			cursor = end;
+		});
+		if (cursor < runes.length) {
+			cell.appendChild(document.createTextNode(runes.slice(cursor).join('')));
+		}
+	};
+
+	const lineNumberCell = (number) => {
+		const cell = document.createElement('td');
+		cell.classList.add('line-number');
+		if (!number) {
+			cell.classList.add('line-number-blank');
+			return cell;
+		}
+		cell.textContent = String(number);
+		return cell;
+	};
+
+	const lineCodeCell = (text, options = {}) => {
+		const cell = document.createElement('td');
+		cell.classList.add('line-code');
+		if (options.blank) {
+			cell.classList.add('line-code-blank');
+			return cell;
+		}
+		appendHighlightedText(cell, text, options.highlights || [], options.highlightClass || 'added');
+		return cell;
+	};
+
+	const appendHunkHeader = (tbody, header, colspan) => {
+		const row = document.createElement('tr');
+		row.classList.add('hunk-header');
+		const cell = document.createElement('th');
+		cell.colSpan = colspan;
+		cell.textContent = String(header || '');
+		row.appendChild(cell);
+		tbody.appendChild(row);
+	};
+
+	const payloadHunks = (payload) => Array.isArray(payload?.hunks) ? payload.hunks : [];
+
+	const renderOneSidedLazyTable = (payload, view) => {
+		const change = payload?.change === 'added' ? 'added' : 'removed';
+		const table = document.createElement('table');
+		table.classList.add('diff-table', normalizedView(view), 'one-sided');
+		const tbody = document.createElement('tbody');
+		payloadHunks(payload).forEach((hunk) => {
+			appendHunkHeader(tbody, hunk.header, 2);
+			(Array.isArray(hunk.rows) ? hunk.rows : []).forEach((row) => {
+				if (safeRowKind(row?.kind) !== change) {
+					return;
+				}
+				const diffRow = document.createElement('tr');
+				diffRow.classList.add('diff-row', change);
+				diffRow.appendChild(lineNumberCell(change === 'added' ? row.rightNumber : row.leftNumber));
+				diffRow.appendChild(lineCodeCell(change === 'added' ? row.rightText : row.leftText, { highlightClass: change }));
+				tbody.appendChild(diffRow);
+			});
+		});
+		table.appendChild(tbody);
+		return table;
+	};
+
+	const renderSideBySideLazyTable = (payload) => {
+		const table = document.createElement('table');
+		table.classList.add('diff-table', 'side-by-side');
+		const tbody = document.createElement('tbody');
+		payloadHunks(payload).forEach((hunk) => {
+			const rows = Array.isArray(hunk.rows) ? hunk.rows : [];
+			const highlights = pairedHighlights(rows);
+			appendHunkHeader(tbody, hunk.header, 4);
+			rows.forEach((row, index) => {
+				const diffRow = document.createElement('tr');
+				diffRow.classList.add('diff-row', safeRowKind(row?.kind));
+				diffRow.appendChild(lineNumberCell(row?.leftNumber));
+				diffRow.appendChild(lineCodeCell(row?.leftText, {
+					blank: !row?.leftNumber,
+					highlights: highlights.left[index],
+					highlightClass: 'removed',
+				}));
+				diffRow.appendChild(lineNumberCell(row?.rightNumber));
+				diffRow.appendChild(lineCodeCell(row?.rightText, {
+					blank: !row?.rightNumber,
+					highlights: highlights.right[index],
+					highlightClass: 'added',
+				}));
+				tbody.appendChild(diffRow);
+			});
+		});
+		table.appendChild(tbody);
+		return table;
+	};
+
+	const renderUnifiedLazyTable = (payload) => {
+		const table = document.createElement('table');
+		table.classList.add('diff-table', 'unified');
+		const tbody = document.createElement('tbody');
+		payloadHunks(payload).forEach((hunk) => {
+			const rows = Array.isArray(hunk.rows) ? hunk.rows : [];
+			const highlights = pairedHighlights(rows);
+			appendHunkHeader(tbody, hunk.header, 2);
+			rows.forEach((row, index) => {
+				const kind = safeRowKind(row?.kind);
+				const removed = kind === 'removed';
+				const diffRow = document.createElement('tr');
+				diffRow.classList.add('diff-row', kind);
+				diffRow.appendChild(lineNumberCell(removed ? row?.leftNumber : row?.rightNumber));
+				diffRow.appendChild(lineCodeCell(removed ? row?.leftText : row?.rightText, {
+					highlights: removed ? highlights.left[index] : highlights.right[index],
+					highlightClass: removed ? 'removed' : 'added',
+				}));
+				tbody.appendChild(diffRow);
+			});
+		});
+		table.appendChild(tbody);
+		return table;
+	};
+
+	const renderLazyTable = (payload, view) => {
+		if (payload?.change === 'added' || payload?.change === 'removed') {
+			return renderOneSidedLazyTable(payload, view);
+		}
+		return normalizedView(view) === 'unified' ? renderUnifiedLazyTable(payload) : renderSideBySideLazyTable(payload);
+	};
+
+	const insertLazyTable = (resource, table, view) => {
+		const script = lazyPayloadScript(resource);
+		const unifiedTable = resource.querySelector('.diff-table.unified');
+		if (normalizedView(view) === 'side-by-side' && unifiedTable) {
+			resource.insertBefore(table, unifiedTable);
+			return;
+		}
+		if (script) {
+			resource.insertBefore(table, script);
+			return;
+		}
+		resource.appendChild(table);
+	};
+
+	const showLazyError = (resource, message) => {
+		let placeholder = lazyPlaceholder(resource);
+		if (!placeholder) {
+			placeholder = document.createElement('div');
+			placeholder.classList.add('lazy-diff-placeholder');
+			placeholder.dataset.lazyPlaceholder = '';
+			const script = lazyPayloadScript(resource);
+			resource.insertBefore(placeholder, script || null);
+		}
+		let error = placeholder.querySelector('[data-lazy-error]');
+		if (!error) {
+			error = document.createElement('p');
+			error.classList.add('lazy-diff-error');
+			error.dataset.lazyError = '';
+			error.setAttribute('role', 'alert');
+			placeholder.appendChild(error);
+		}
+		error.textContent = message;
+	};
+
+	const markLazyRendered = (resource, view) => {
+		resource.dataset[renderedDataKey(view)] = 'true';
+		lazyPlaceholder(resource)?.remove();
+		const renderedSideBySide = resource.dataset.renderedSideBySide === 'true';
+		const renderedUnified = resource.dataset.renderedUnified === 'true';
+		resource.dataset.lazyState = renderedSideBySide && renderedUnified ? 'rendered' : 'partial';
+		if (resource.dataset.lazyState === 'rendered') {
+			lazyPayloadScript(resource)?.remove();
+		}
+	};
+
+	const renderLazyResource = (resource, view) => {
+		if (!resource || resource.dataset.lazyDiff !== 'true') {
+			return;
+		}
+		view = normalizedView(view);
+		if (resource.dataset[renderedDataKey(view)] === 'true' || resource.dataset.lazyRendering === 'true') {
+			return;
+		}
+		const script = lazyPayloadScript(resource);
+		if (!script) {
+			showLazyError(resource, 'Unable to render diff payload.');
+			return;
+		}
+		resource.dataset.lazyRendering = 'true';
+		setLazyBusy(resource, true);
+		window.requestAnimationFrame(() => {
+			try {
+				const payload = JSON.parse(script.textContent || '{}');
+				const table = renderLazyTable(payload, view);
+				insertLazyTable(resource, table, view);
+				markLazyRendered(resource, view);
+			} catch {
+				showLazyError(resource, 'Unable to render diff.');
+			} finally {
+				delete resource.dataset.lazyRendering;
+				setLazyBusy(resource, false);
+			}
+		});
+	};
+
+	const renderActiveLazyView = () => {
+		const resource = activeResource();
+		if (resource?.dataset.lazyState === 'partial') {
+			renderLazyResource(resource, currentView());
+		}
+	};
+
 	const selectResource = (id, options = {}) => {
 		if (!resourceIds.has(id)) {
 			return;
 		}
 		let activeButton = null;
+		let selectedResource = null;
 		resources.forEach((resource) => {
-			resource.classList.toggle('is-active', resource.dataset.resourceId === id);
+			const selected = resource.dataset.resourceId === id;
+			resource.classList.toggle('is-active', selected);
+			if (selected) {
+				selectedResource = resource;
+			}
 		});
 		treeButtons.forEach((button) => {
 			const selected = button.dataset.targetResource === id;
@@ -789,6 +1170,9 @@ const reviewScript = `
 		}
 		if (options.updateHash) {
 			updateHash(id);
+		}
+		if (selectedResource?.dataset.lazyState === 'partial') {
+			renderLazyResource(selectedResource, currentView());
 		}
 	};
 
@@ -804,6 +1188,13 @@ const reviewScript = `
 	viewToggles.forEach((viewToggle) => {
 		viewToggle.addEventListener('click', () => {
 			setView(body.dataset.view === 'unified' ? 'side-by-side' : 'unified', { persist: true });
+			renderActiveLazyView();
+		});
+	});
+
+	lazyRenderButtons.forEach((button) => {
+		button.addEventListener('click', () => {
+			renderLazyResource(button.closest('[data-resource-id]'), currentView());
 		});
 	});
 

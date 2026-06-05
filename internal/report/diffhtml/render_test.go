@@ -1,6 +1,7 @@
 package diffhtml
 
 import (
+	"encoding/json"
 	"strconv"
 	"strings"
 	"testing"
@@ -791,6 +792,243 @@ func TestMeasureDiffCountsRawBytesChangedLinesAndParsedRows(t *testing.T) {
 	}
 }
 
+func TestLazyResourceThresholdBoundaries(t *testing.T) {
+	tests := []struct {
+		name     string
+		metrics  resourceDiffMetrics
+		wantLazy bool
+		wantHard bool
+	}{
+		{
+			name:     "raw bytes just below lazy threshold",
+			metrics:  resourceDiffMetrics{rawBytes: lazyResourceRawBytesThreshold - 1},
+			wantLazy: false,
+			wantHard: false,
+		},
+		{
+			name:     "raw bytes at lazy threshold",
+			metrics:  resourceDiffMetrics{rawBytes: lazyResourceRawBytesThreshold},
+			wantLazy: true,
+			wantHard: false,
+		},
+		{
+			name:     "raw bytes at hard guard limit",
+			metrics:  resourceDiffMetrics{rawBytes: hardResourceRawBytesLimit},
+			wantLazy: true,
+			wantHard: false,
+		},
+		{
+			name:     "raw bytes above hard guard limit",
+			metrics:  resourceDiffMetrics{rawBytes: hardResourceRawBytesLimit + 1},
+			wantLazy: true,
+			wantHard: true,
+		},
+		{
+			name:     "parsed rows at lazy threshold",
+			metrics:  resourceDiffMetrics{parsedRows: lazyResourceParsedRowsThreshold},
+			wantLazy: true,
+			wantHard: false,
+		},
+		{
+			name:     "parsed rows at hard guard limit",
+			metrics:  resourceDiffMetrics{parsedRows: hardResourceParsedRowsLimit},
+			wantLazy: true,
+			wantHard: false,
+		},
+		{
+			name:     "parsed rows above hard guard limit",
+			metrics:  resourceDiffMetrics{parsedRows: hardResourceParsedRowsLimit + 1},
+			wantLazy: true,
+			wantHard: true,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if got := isLazyResource(test.metrics); got != test.wantLazy {
+				t.Fatalf("isLazyResource(%+v) = %t, want %t", test.metrics, got, test.wantLazy)
+			}
+			if got := isHardGuardedResource(test.metrics); got != test.wantHard {
+				t.Fatalf("isHardGuardedResource(%+v) = %t, want %t", test.metrics, got, test.wantHard)
+			}
+		})
+	}
+}
+
+func TestRenderLargeRenderableResourceEmitsLazyPlaceholderAndPayload(t *testing.T) {
+	out, err := Render(app.DiffResult{
+		Results: []diff.Result{
+			resourceChange("demo", "", "ConfigMap", "", "cm-large", diff.ChangeModified, diffWithLineCounts(1000, 1000)),
+		},
+	}, Options{})
+	if err != nil {
+		t.Fatalf("Render() error = %v", err)
+	}
+	text := string(out)
+	article := resourceArticleByHeading(t, text, "ConfigMap cm-large")
+	for _, want := range []string{
+		`data-lazy-diff="true"`,
+		`data-lazy-state="pending"`,
+		`<div class="lazy-diff-placeholder" data-lazy-placeholder aria-live="polite">`,
+		`Large diff: 2,000 rows, +1,000/-1,000,`,
+		`<button class="lazy-render-button" type="button" data-lazy-render aria-label="Render diff for ConfigMap cm-large. Large diff: 2,000 rows, +1,000/-1,000,`,
+		`<script type="application/json" data-diff-payload="resource-0">`,
+		`"parsedRows":2000`,
+	} {
+		if !strings.Contains(article, want) {
+			t.Fatalf("large resource article missing %q:\n%s", want, article)
+		}
+	}
+	for _, forbidden := range []string{
+		`<table class="diff-table`,
+		`<tr class="diff-row`,
+	} {
+		if strings.Contains(article, forbidden) {
+			t.Fatalf("large resource article contains pre-rendered diff marker %q:\n%s", forbidden, article)
+		}
+	}
+	for _, want := range []string{
+		`data-search-text="argocd/demo configmap cm-large modified large"`,
+		`aria-label="ConfigMap cm-large, modified, large, plus 1000, minus 1000"`,
+		`<span class="tree-resource-meta"><span class="tree-large-badge">large</span><span class="tree-delta" aria-hidden="true"><span class="tree-delta-added">+1000</span><span class="tree-delta-removed">-1000</span></span></span>`,
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("large resource sidebar missing %q:\n%s", want, text)
+		}
+	}
+}
+
+func TestRenderTooLargeResourceEmitsBlockedPlaceholder(t *testing.T) {
+	out, err := Render(app.DiffResult{
+		Results: []diff.Result{
+			resourceChange("demo", "", "ConfigMap", "", "cm-too-large", diff.ChangeModified, diffWithLineCounts(10001, 10000)),
+		},
+	}, Options{})
+	if err != nil {
+		t.Fatalf("Render() error = %v", err)
+	}
+	text := string(out)
+	article := resourceArticleByHeading(t, text, "ConfigMap cm-too-large")
+	for _, want := range []string{
+		`data-lazy-diff="blocked"`,
+		`data-lazy-state="blocked"`,
+		`Diff too large for in-page rendering: 20,001 rows, +10,000/-10,001,`,
+		`<button class="lazy-render-button" type="button" disabled aria-disabled="true" aria-label="Cannot render diff for ConfigMap cm-too-large.`,
+		`Render diff unavailable`,
+	} {
+		if !strings.Contains(article, want) {
+			t.Fatalf("too-large resource article missing %q:\n%s", want, article)
+		}
+	}
+	for _, forbidden := range []string{
+		`data-lazy-render`,
+		`data-diff-payload`,
+		`<table class="diff-table`,
+		`<tr class="diff-row`,
+	} {
+		if strings.Contains(article, forbidden) {
+			t.Fatalf("too-large resource article contains forbidden marker %q:\n%s", forbidden, article)
+		}
+	}
+}
+
+func TestRenderLazyPayloadScriptDataEscapesHostileContent(t *testing.T) {
+	hostile := "</script><script>alert(\"x\")</script><img src=x onerror=alert(1)> \"quote\" 'single' `backtick` & " + "\u2028" + "\u2029"
+	out, err := Render(app.DiffResult{
+		Results: []diff.Result{
+			resourceChange("demo", "", "ConfigMap", "", "cm-hostile", diff.ChangeModified, largeDiffWithHostileContent(hostile)),
+		},
+	}, Options{})
+	if err != nil {
+		t.Fatalf("Render() error = %v", err)
+	}
+	text := string(out)
+	payload := payloadScriptData(t, text, "resource-0")
+	for _, forbidden := range []string{
+		"</script",
+		"<script",
+		"<",
+		">",
+		"&",
+		"alert(\"x\")",
+		"src=x",
+		"onerror=alert",
+		"'single'",
+		"`backtick`",
+		"\u2028",
+		"\u2029",
+	} {
+		if strings.Contains(payload, forbidden) {
+			t.Fatalf("lazy payload contains raw hostile marker %q:\n%s", forbidden, payload)
+		}
+	}
+	for _, want := range []string{
+		`\u003c/script`,
+		`\u003cscript`,
+		`\u003d`,
+		`\u0026`,
+		`\u0027single\u0027`,
+		`\u0060backtick\u0060`,
+		`\u2028`,
+		`\u2029`,
+	} {
+		if !strings.Contains(payload, want) {
+			t.Fatalf("lazy payload missing escaped marker %q:\n%s", want, payload)
+		}
+	}
+	var decoded lazyDiffPayload
+	if err := json.Unmarshal([]byte(payload), &decoded); err != nil {
+		t.Fatalf("lazy payload is not valid JSON: %v\n%s", err, payload)
+	}
+	if len(decoded.Hunks) == 0 || len(decoded.Hunks[0].Rows) == 0 {
+		t.Fatalf("decoded lazy payload missing rows: %+v", decoded)
+	}
+	if decoded.Hunks[0].Rows[0].LeftText != hostile {
+		t.Fatalf("decoded hostile text = %q, want %q", decoded.Hunks[0].Rows[0].LeftText, hostile)
+	}
+}
+
+func TestRenderLazyScriptContract(t *testing.T) {
+	out, err := Render(app.DiffResult{
+		Results: []diff.Result{
+			resourceChange("demo", "", "ConfigMap", "", "cm-large", diff.ChangeModified, diffWithLineCounts(1000, 1000)),
+		},
+	}, Options{})
+	if err != nil {
+		t.Fatalf("Render() error = %v", err)
+	}
+	text := string(out)
+	for _, want := range []string{
+		`const lazyRenderButtons = Array.from(document.querySelectorAll('[data-lazy-render]'));`,
+		`const currentView = () => normalizedView(body.dataset.view);`,
+		`const lazyPayloadScript = (resource) => resource?.querySelector('script[type="application/json"][data-diff-payload]') || null;`,
+		`resource.dataset[renderedDataKey(view)] === 'true'`,
+		`JSON.parse(script.textContent || '{}')`,
+		`const table = renderLazyTable(payload, view);`,
+		`renderLazyResource(button.closest('[data-resource-id]'), currentView());`,
+		`if (resource?.dataset.lazyState === 'partial')`,
+		`renderLazyResource(resource, currentView());`,
+		`document.createElement('table')`,
+		`document.createTextNode`,
+		`error.setAttribute('role', 'alert');`,
+		`setLazyBusy(resource, true);`,
+		`lazyPayloadScript(resource)?.remove();`,
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("HTML missing lazy JS contract %q:\n%s", want, text)
+		}
+	}
+	for _, forbidden := range []string{
+		"eval(",
+		"innerHTML",
+		"new Function",
+	} {
+		if strings.Contains(text, forbidden) {
+			t.Fatalf("HTML contains forbidden JS contract marker %q:\n%s", forbidden, text)
+		}
+	}
+}
+
 func TestRenderSearchKeyboardContract(t *testing.T) {
 	out, err := Render(app.DiffResult{
 		Results: []diff.Result{diffResult("argocd", "demo", "cm-one", "@@ -1,1 +1,1 @@\n-old\n+new\n")},
@@ -1259,6 +1497,35 @@ func diffWithRawByteCount(t *testing.T, rawBytes int) string {
 		t.Fatalf("raw byte diff length %d is smaller than minimum %d", rawBytes, len(prefix)+len(suffix))
 	}
 	return prefix + strings.Repeat("b", rawBytes-len(prefix)-len(suffix)) + suffix
+}
+
+func largeDiffWithHostileContent(hostile string) string {
+	var builder strings.Builder
+	builder.WriteString("--- old\n+++ new\n@@ -1,1000 +1,1000 @@\n")
+	builder.WriteString("-")
+	builder.WriteString(hostile)
+	builder.WriteString("\n+")
+	builder.WriteString(hostile)
+	builder.WriteString("\n")
+	for range 999 {
+		builder.WriteString("-old\n+new\n")
+	}
+	return builder.String()
+}
+
+func payloadScriptData(t *testing.T, text, resourceID string) string {
+	t.Helper()
+	prefix := `<script type="application/json" data-diff-payload="` + resourceID + `">`
+	start := strings.Index(text, prefix)
+	if start == -1 {
+		t.Fatalf("HTML missing lazy payload script for %s:\n%s", resourceID, text)
+	}
+	start += len(prefix)
+	end := strings.Index(text[start:], "</script>")
+	if end == -1 {
+		t.Fatalf("HTML has unterminated lazy payload script for %s:\n%s", resourceID, text[start:])
+	}
+	return text[start : start+end]
 }
 
 func diffResult(namespace, appName, resourceName, diffText string) diff.Result {
