@@ -61,9 +61,10 @@ func TestFullRenderedDiffViewExampleMatchesRenderedDemo(t *testing.T) {
 		`<span class="tree-delta-added">+5</span><span class="tree-delta-removed">-5</span>`,
 		`data-change="removed"`,
 		`data-change="added"`,
-		`<h3>policy PodDisruptionBudget envoy-gateway-system/envoy-gateway</h3>`,
-		`<h3>monitoring.coreos.com ServiceMonitor renovate/renovate</h3>`,
-		`<h3>renovate-operator.mogenius.com RenovateJob renovate/renovate</h3>`,
+		`<h3 class="resource-heading" title="apps Deployment envoy-gateway-system/envoy-gateway" aria-label="apps Deployment envoy-gateway-system/envoy-gateway"><span class="resource-primary"><span class="resource-kind">Deployment</span> <span class="resource-name">envoy-gateway</span></span> <span class="resource-meta"><span class="resource-namespace">envoy-gateway-system</span> <span class="resource-meta-separator" aria-hidden="true">·</span> <span class="resource-api-group">apps</span></span></h3>`,
+		`<h3 class="resource-heading" title="policy PodDisruptionBudget envoy-gateway-system/envoy-gateway" aria-label="policy PodDisruptionBudget envoy-gateway-system/envoy-gateway"><span class="resource-primary"><span class="resource-kind">PodDisruptionBudget</span> <span class="resource-name">envoy-gateway</span></span> <span class="resource-meta"><span class="resource-namespace">envoy-gateway-system</span> <span class="resource-meta-separator" aria-hidden="true">·</span> <span class="resource-api-group">policy</span></span></h3>`,
+		`<h3 class="resource-heading" title="monitoring.coreos.com ServiceMonitor renovate/renovate" aria-label="monitoring.coreos.com ServiceMonitor renovate/renovate"><span class="resource-primary"><span class="resource-kind">ServiceMonitor</span> <span class="resource-name">renovate</span></span> <span class="resource-meta"><span class="resource-namespace">renovate</span> <span class="resource-meta-separator" aria-hidden="true">·</span> <span class="resource-api-group">monitoring.coreos.com</span></span></h3>`,
+		`<h3 class="resource-heading" title="renovate-operator.mogenius.com RenovateJob renovate/renovate" aria-label="renovate-operator.mogenius.com RenovateJob renovate/renovate"><span class="resource-primary"><span class="resource-kind">RenovateJob</span> <span class="resource-name">renovate</span></span> <span class="resource-meta"><span class="resource-namespace">renovate</span> <span class="resource-meta-separator" aria-hidden="true">·</span> <span class="resource-api-group">renovate-operator.mogenius.com</span></span></h3>`,
 		`<td class="line-code">  <span class="yaml-key">replicas</span><span class="yaml-punctuation">:</span> <span class="inline-change removed"><span class="yaml-number">3</span></span></td>`,
 		`<td class="line-code">  <span class="yaml-key">replicas</span><span class="yaml-punctuation">:</span> <span class="inline-change added"><span class="yaml-number">2</span></span></td>`,
 		`<td class="line-code">            <span class="yaml-punctuation">-</span> --gateway-class-name=<span class="inline-change removed">envoy</span>-gateway</td>`,
@@ -268,7 +269,7 @@ func renderFullRenderedDiffViewDemo(t *testing.T) []byte {
 
 func resourceIDByHeading(t *testing.T, text, heading string) string {
 	t.Helper()
-	article := resourceArticleByHeading(t, text, heading)
+	article := resourceArticleByCanonicalTitle(t, text, heading)
 	prefix := `<article class="resource" data-resource-id="`
 	start := strings.Index(article, prefix)
 	if start == -1 {
@@ -282,9 +283,9 @@ func resourceIDByHeading(t *testing.T, text, heading string) string {
 	return remaining[:end]
 }
 
-func resourceArticleByHeading(t *testing.T, text, heading string) string {
+func resourceArticleByCanonicalTitle(t *testing.T, text, heading string) string {
 	t.Helper()
-	headingHTML := "<h3>" + heading + "</h3>"
+	headingHTML := `<h3 class="resource-heading" title="` + heading + `"`
 	headingIndex := strings.Index(text, headingHTML)
 	if headingIndex == -1 {
 		t.Fatalf("HTML missing resource heading %q:\n%s", heading, text)

@@ -162,7 +162,7 @@ func TestDiffAppsMarkdownOutput(t *testing.T) {
 	result := runCLIWithDependencies(t, Dependencies{Orchestrator: recorder}, "diff", "apps", "--path-orig", "left", "--path", "right", "-o", "markdown", "--color=always", "--exit-code=false")
 
 	assertStdoutContainsAll(t, result,
-		"## drydock desired state diff",
+		"## drydock diff",
 		"**Summary:** 1 app, 1 resource, +1/-1, 1 warning.",
 		"Diagnostics:",
 		"&lt;tag&gt;",
@@ -186,7 +186,7 @@ func TestDiffAppsMarkdownRawOutputFilePreservesUnifiedDiff(t *testing.T) {
 	}
 
 	result := runCLIWithDependencies(t, Dependencies{Orchestrator: recorder}, "diff", "apps", "--path-orig", "left", "--path", "right", "-o", "markdown", "--raw-output-file", rawPath, "--exit-code=false")
-	assertStdoutContainsAll(t, result, "## drydock desired state diff")
+	assertStdoutContainsAll(t, result, "## drydock diff")
 	raw, err := os.ReadFile(rawPath)
 	if err != nil {
 		t.Fatalf("ReadFile(%s) error = %v", rawPath, err)
@@ -215,7 +215,7 @@ func TestDiffAppsHTMLOutputFilePreservesSelectedStdout(t *testing.T) {
 
 	result := runCLIWithDependencies(t, Dependencies{Orchestrator: recorder}, "diff", "apps", "--path-orig", "left", "--path", "right", "-o", "markdown", "--html-output-file", htmlPath, "--exit-code=false")
 
-	assertStdoutContainsAll(t, result, "## drydock desired state diff", "```diff\n", "-  value: old", "+  value: new")
+	assertStdoutContainsAll(t, result, "## drydock diff", "```diff\n", "-  value: old", "+  value: new")
 	assertStdoutExcludesAll(t, result, "<!doctype html>", `data-view="side-by-side"`)
 	assertHTMLFileContainsAll(t, htmlPath,
 		"<!doctype html>",

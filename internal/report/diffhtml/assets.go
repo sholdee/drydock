@@ -409,6 +409,57 @@ body.is-resizing-sidebar .sidebar-resizer::before {
 	line-height: 1.25;
 	color: var(--navy-deep);
 }
+.resource-heading {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	min-width: 0;
+	flex-wrap: wrap;
+}
+.resource-primary {
+	display: inline-flex;
+	gap: 5px;
+	min-width: 0;
+	font-weight: 750;
+}
+.resource-name {
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+.resource-meta {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	min-width: 0;
+	color: var(--quiet);
+	font-size: 13px;
+	font-weight: 650;
+}
+.resource-namespace {
+	min-width: 0;
+	max-width: min(32vw, 260px);
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+.resource-meta-separator {
+	color: var(--line-strong);
+}
+.resource-api-group {
+	display: inline-flex;
+	align-items: center;
+	min-height: 18px;
+	padding: 0 7px;
+	border: 1px solid rgba(129, 144, 163, 0.24);
+	border-radius: 999px;
+	background: rgba(129, 144, 163, 0.13);
+	color: var(--muted);
+	font-size: 12px;
+	font-weight: 750;
+	line-height: 1;
+}
 .diff-table {
 	width: 100%;
 	border-collapse: collapse;
@@ -1291,6 +1342,74 @@ const reviewScript = `
 		}
 	};
 
+	let focusedTreeButton = null;
+	const treeButtonApp = (button) => button.closest('[data-tree-app]');
+	const treeButtonIsVisible = (button) => {
+		const app = treeButtonApp(button);
+		if (button.hidden || app?.hidden) {
+			return false;
+		}
+		return !(app instanceof HTMLDetailsElement) || app.open;
+	};
+	const visibleTreeButtons = () => treeButtons.filter(treeButtonIsVisible);
+	const setTreeButtonTabStop = (button) => {
+		treeButtons.forEach((candidate) => {
+			candidate.tabIndex = candidate === button ? 0 : -1;
+		});
+		focusedTreeButton = button || null;
+	};
+	const selectedTreeButton = () => treeButtons.find((button) => button.getAttribute('aria-current') === 'true') || null;
+	const currentTreeButton = () => {
+		const visible = visibleTreeButtons();
+		if (focusedTreeButton && visible.includes(focusedTreeButton)) {
+			return focusedTreeButton;
+		}
+		const selected = selectedTreeButton();
+		if (selected && visible.includes(selected)) {
+			return selected;
+		}
+		return visible[0] || null;
+	};
+	const focusTreeButton = (button) => {
+		if (!button) {
+			return;
+		}
+		setTreeButtonTabStop(button);
+		button.focus();
+		button.scrollIntoView({ block: 'nearest' });
+	};
+	const moveTreeFocus = (delta) => {
+		const visible = visibleTreeButtons();
+		if (visible.length === 0) {
+			return;
+		}
+		const current = currentTreeButton();
+		const currentIndex = Math.max(0, visible.indexOf(current));
+		const nextIndex = clamp(currentIndex + delta, 0, visible.length - 1);
+		focusTreeButton(visible[nextIndex]);
+	};
+	const focusTreeEdge = (edge) => {
+		const visible = visibleTreeButtons();
+		if (visible.length === 0) {
+			return;
+		}
+		focusTreeButton(edge === 'end' ? visible[visible.length - 1] : visible[0]);
+	};
+	const syncTreeFocusAfterFilter = () => {
+		const visible = visibleTreeButtons();
+		if (visible.length === 0) {
+			setTreeButtonTabStop(null);
+			return;
+		}
+		const selected = selectedTreeButton();
+		const next = selected && visible.includes(selected) ? selected : visible[0];
+		const activeElement = document.activeElement;
+		setTreeButtonTabStop(next);
+		if (activeElement instanceof HTMLElement && activeElement.matches('[data-target-resource]') && !visible.includes(activeElement)) {
+			next.focus();
+		}
+	};
+
 	const selectResource = (id, options = {}) => {
 		if (!resourceIds.has(id)) {
 			return;
@@ -1312,6 +1431,7 @@ const reviewScript = `
 			}
 		});
 		if (activeButton) {
+			setTreeButtonTabStop(activeButton);
 			activeButton.scrollIntoView({ block: 'nearest' });
 		}
 		if (options.updateHash) {
@@ -1327,6 +1447,32 @@ const reviewScript = `
 			selectResource(button.dataset.targetResource, { updateHash: true });
 			if (mobileQuery.matches) {
 				setSidebar('closed');
+			}
+		});
+		button.addEventListener('keydown', (event) => {
+			if (event.key === 'ArrowDown') {
+				event.preventDefault();
+				moveTreeFocus(1);
+				return;
+			}
+			if (event.key === 'ArrowUp') {
+				event.preventDefault();
+				moveTreeFocus(-1);
+				return;
+			}
+			if (event.key === 'Home') {
+				event.preventDefault();
+				focusTreeEdge('start');
+				return;
+			}
+			if (event.key === 'End') {
+				event.preventDefault();
+				focusTreeEdge('end');
+				return;
+			}
+			if (event.key === 'Enter' || event.key === ' ') {
+				event.preventDefault();
+				button.click();
 			}
 		});
 	});
@@ -1436,7 +1582,12 @@ const reviewScript = `
 				app.open = true;
 			}
 		});
+		syncTreeFocusAfterFilter();
 	};
+
+	document.querySelectorAll('[data-tree-app]').forEach((app) => {
+		app.addEventListener('toggle', syncTreeFocusAfterFilter);
+	});
 
 	const clearSearch = () => {
 		if (!searchInput) {

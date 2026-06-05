@@ -60,7 +60,7 @@ Manifest markdown is the primary review surface. It keeps the operator summary
 near the top and puts rendered resource patches behind per-Application details:
 
 ````markdown
-## drydock desired state diff
+## drydock diff
 
 **Summary:** 2 apps, 3 resources, +12/-5.
 

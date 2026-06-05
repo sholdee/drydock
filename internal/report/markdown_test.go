@@ -24,7 +24,7 @@ func TestDiffMarkdownGroupsByApplicationIdentity(t *testing.T) {
 		t.Fatalf("DiffMarkdown() error = %v", err)
 	}
 	text := string(out)
-	for _, want := range []string{"## drydock desired state diff", "**Summary:** 2 apps, 2 resources, +3/-3.", "<summary>other/demo", "<summary>argocd/demo"} {
+	for _, want := range []string{"## drydock diff", "**Summary:** 2 apps, 2 resources, +3/-3.", "<summary>other/demo", "<summary>argocd/demo"} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("markdown missing %q:\n%s", want, text)
 		}
