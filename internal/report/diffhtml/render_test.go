@@ -392,6 +392,14 @@ func TestRenderIncludesTypographyAndLogoContract(t *testing.T) {
 		`align-items: start;`,
 		`margin: 0 0 7px;`,
 		`padding: 0 0 5px;`,
+		`background: #0a1421;`,
+	)
+	assertStyleRuleContains(t, text, ".resource-header::before",
+		`content: "";`,
+		`position: absolute;`,
+		`z-index: -1;`,
+		`inset: -14px 0 0;`,
+		`background: #0a1421;`,
 	)
 	assertStyleRuleContains(t, text, ".resource h3", `margin: 0;`, `font-size: 16px;`, `line-height: 1.25;`)
 	assertStyleRuleContains(t, text, ".diff-table", `margin-top: 0;`, `font-size: 13.5px;`, `line-height: 20px;`)

@@ -386,7 +386,14 @@ body.is-resizing-sidebar .sidebar-resizer::before {
 	gap: 12px;
 	margin: 0 0 7px;
 	padding: 0 0 5px;
-	background: linear-gradient(180deg, #0a1421 74%, rgba(10, 20, 33, 0));
+	background: #0a1421;
+}
+.resource-header::before {
+	content: "";
+	position: absolute;
+	z-index: -1;
+	inset: -14px 0 0;
+	background: #0a1421;
 }
 .resource-title {
 	min-width: 0;
