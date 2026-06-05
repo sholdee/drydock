@@ -219,7 +219,7 @@ func TestDiffAppsHTMLOutputFilePreservesSelectedStdout(t *testing.T) {
 	assertStdoutExcludesAll(t, result, "<!doctype html>", `data-view="side-by-side"`)
 	assertHTMLFileContainsAll(t, htmlPath,
 		"<!doctype html>",
-		"<title>drydock desired state diff</title>",
+		"<title>drydock diff</title>",
 		"argocd/demo",
 		"ConfigMap default/demo",
 		`data-view="side-by-side"`,

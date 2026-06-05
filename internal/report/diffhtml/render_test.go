@@ -72,10 +72,13 @@ func TestRenderGroupsAndSummarizesChanges(t *testing.T) {
 	}
 	text := string(out)
 	for _, want := range []string{
-		"<title>drydock desired state diff</title>",
+		"<title>drydock diff</title>",
 		"2 apps",
 		"3 resources",
-		"+3/-3",
+		`<div class="summary" aria-label="2 apps, 3 resources, 3 changed, +3, -3">`,
+		`<span class="summary-badge summary-badge-modified summary-badge-detail">3 changed</span>`,
+		`<span class="summary-badge summary-badge-added">+3</span>`,
+		`<span class="summary-badge summary-badge-removed">-3</span>`,
 		"argocd/large",
 		"argocd/small",
 		"cm-one",
@@ -113,29 +116,43 @@ func TestRenderIncludesStaticReviewUI(t *testing.T) {
 	text := string(out)
 	for _, want := range []string{
 		"<style>",
-		`<body data-view="side-by-side" data-default-resource="resource-0">`,
+		`<meta name="viewport" content="width=device-width, initial-scale=1">`,
+		`<body data-view="side-by-side" data-sidebar="auto" data-default-resource="resource-0">`,
 		"<header",
+		`<div class="summary" aria-label="1 app, 1 resource, 1 changed, +1, -1"><span class="summary-badge summary-badge-neutral">1 app</span><span class="summary-badge summary-badge-neutral">1 resource</span><span class="summary-badge summary-badge-modified summary-badge-detail">1 changed</span><span class="summary-badge summary-badge-added">+1</span><span class="summary-badge summary-badge-removed">-1</span></div>`,
+		`class="nav-toggle"`,
+		`data-sidebar-toggle`,
+		`aria-controls="diff-tree"`,
+		`class="view-toggle"`,
+		`data-view-toggle`,
 		`class="brand-logo"`,
-		`class="tree"`,
+		`class="tree" id="diff-tree"`,
+		`class="sidebar-resizer"`,
+		`data-sidebar-resizer`,
+		`role="separator"`,
+		`aria-orientation="vertical"`,
+		`aria-label="Resize changed resources sidebar"`,
 		`class="tree-search"`,
 		`data-tree-search`,
-		`placeholder="Search changes"`,
-		`aria-label="Search changed resources"`,
-		`data-tree-app`,
+		`placeholder="Search resources (/)"`,
+		`aria-label="Search resources"`,
+		`<details class="tree-app" data-tree-app="argocd/demo" open>`,
+		`<summary><span class="tree-app-name">argocd/demo</span><span class="tree-delta" aria-hidden="true"><span class="tree-delta-added">+1</span><span class="tree-delta-removed">-1</span></span></summary>`,
 		`data-target-resource="resource-0"`,
 		`data-search-text="argocd/demo configmap cm-one modified"`,
 		`title="ConfigMap cm-one"`,
-		`aria-label="ConfigMap cm-one, plus 1, minus 1"`,
+		`aria-label="ConfigMap cm-one, modified, plus 1, minus 1"`,
+		`<span class="tree-status-dot tree-status-modified" aria-hidden="true"></span>`,
 		`<span class="tree-resource-label">ConfigMap · cm-one</span>`,
 		`<span class="tree-delta" aria-hidden="true"><span class="tree-delta-added">+1</span><span class="tree-delta-removed">-1</span></span>`,
-		`class="toolbar"`,
-		`data-view="side-by-side"`,
-		`data-view="unified"`,
+		`class="sidebar-backdrop"`,
 		`data-resource-id="resource-0"`,
 		`class="diff-table side-by-side"`,
 		`class="diff-table unified"`,
 		`class="line-number"`,
 		`class="line-code"`,
+		`class="line-number line-number-blank"`,
+		`class="line-code line-code-blank"`,
 		`class="inline-change added"`,
 		`[data-resource-id]`,
 		`[data-tree-search]`,
@@ -172,7 +189,33 @@ func TestRenderTreeLabelsPreferKindAndName(t *testing.T) {
 	}
 }
 
-func TestRenderPlacesToolbarInResourceHeader(t *testing.T) {
+func TestRenderTreeStatusDotsReflectResourceChange(t *testing.T) {
+	out, err := Render(app.DiffResult{
+		Results: []diff.Result{
+			resourceChange("demo", "", "ConfigMap", "default", "changed", diff.ChangeModified, diffWithChangedLines("-old", "+new")),
+			resourceChange("demo", "", "ConfigMap", "default", "created", diff.ChangeAdded, diffWithChangedLines("+new")),
+			resourceChange("demo", "", "ConfigMap", "default", "deleted", diff.ChangeRemoved, diffWithChangedLines("-old")),
+		},
+	}, Options{})
+	if err != nil {
+		t.Fatalf("Render() error = %v", err)
+	}
+	text := string(out)
+	for _, want := range []string{
+		`tree-status-dot tree-status-modified`,
+		`tree-status-dot tree-status-added`,
+		`tree-status-dot tree-status-removed`,
+		`<span class="summary-badge summary-badge-modified summary-badge-detail">1 changed</span>`,
+		`<span class="summary-badge summary-badge-added summary-badge-detail">1 added</span>`,
+		`<span class="summary-badge summary-badge-removed summary-badge-detail">1 deleted</span>`,
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("HTML missing %q:\n%s", want, text)
+		}
+	}
+}
+
+func TestRenderPlacesGlobalControlsInHeaderAndResourceHeaderBeforeDiff(t *testing.T) {
 	out, err := Render(app.DiffResult{
 		Results: []diff.Result{diffResult("argocd", "demo", "cm-one", "@@ -1,1 +1,1 @@\n-old\n+new\n")},
 	}, Options{})
@@ -180,24 +223,33 @@ func TestRenderPlacesToolbarInResourceHeader(t *testing.T) {
 		t.Fatalf("Render() error = %v", err)
 	}
 	text := string(out)
+	reportHeaderIndex := strings.Index(text, `<header class="report-header">`)
+	navIndex := strings.Index(text, `data-sidebar-toggle`)
+	viewIndex := strings.Index(text, `data-view-toggle`)
+	logoIndex := strings.Index(text, `class="brand-logo"`)
 	articleIndex := strings.Index(text, `<article class="resource"`)
 	headerIndex := strings.Index(text, `<header class="resource-header">`)
 	titleIndex := strings.Index(text, `<div class="resource-title">`)
-	toolbarIndex := strings.Index(text, `<div class="toolbar" role="toolbar" aria-label="Diff view">`)
 	tableIndex := strings.Index(text, `<table class="diff-table side-by-side">`)
 	for label, index := range map[string]int{
-		"article":   articleIndex,
-		"header":    headerIndex,
-		"title":     titleIndex,
-		"toolbar":   toolbarIndex,
-		"diffTable": tableIndex,
+		"reportHeader": reportHeaderIndex,
+		"navToggle":    navIndex,
+		"viewToggle":   viewIndex,
+		"logo":         logoIndex,
+		"article":      articleIndex,
+		"header":       headerIndex,
+		"title":        titleIndex,
+		"diffTable":    tableIndex,
 	} {
 		if index == -1 {
 			t.Fatalf("HTML missing %s:\n%s", label, text)
 		}
 	}
-	if articleIndex >= headerIndex || headerIndex >= titleIndex || titleIndex >= toolbarIndex || toolbarIndex >= tableIndex {
-		t.Fatalf("resource header should place title and toolbar before the diff table:\n%s", text)
+	if reportHeaderIndex >= navIndex || navIndex >= logoIndex || logoIndex >= articleIndex || articleIndex >= viewIndex {
+		t.Fatalf("view toggle should be outside the report header and inside the active resource header:\n%s", text)
+	}
+	if articleIndex >= headerIndex || headerIndex >= titleIndex || titleIndex >= viewIndex || viewIndex >= tableIndex {
+		t.Fatalf("resource header should place title and view toggle before the diff table:\n%s", text)
 	}
 }
 
@@ -222,47 +274,186 @@ func TestRenderIncludesTypographyAndLogoContract(t *testing.T) {
 	text := string(out)
 	assertStyleRuleContains(t, text, ":root",
 		`font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;`,
+		`--topbar-height: 48px;`,
+		`--sidebar-width: 320px;`,
+		`--sidebar-width-default: 320px;`,
+		`--sidebar-width-min: 240px;`,
+		`--sidebar-width-max: 480px;`,
+		`--sidebar-resizer-hit: 18px;`,
+		`--main-pane-padding-x: 18px;`,
+		`--header-padding-x: 14px;`,
+		`--header-gap: 12px;`,
+		`--header-nav-width: 32px;`,
+		`--header-title-gap: 18px;`,
 	)
-	assertStyleRuleContains(t, text, "body", `font-size: 14px;`, `line-height: 1.45;`)
-	assertStyleRuleContains(t, text, ".report-header h1", `font-size: 20px;`)
-	assertStyleRuleContains(t, text, ".brand-logo", `width: clamp(186px, 18vw, 210px);`)
-	assertStyleRuleContains(t, text, ".summary, .resource-meta", `font-size: 14px;`)
-	assertStyleRuleContains(t, text, ".tree h2", `font-size: 14px;`)
-	assertStyleRuleContains(t, text, ".tree-resource", `font-size: 14px;`)
+	assertStyleRuleContains(t, text, "html", `-webkit-text-size-adjust: 100%;`, `text-size-adjust: 100%;`)
+	assertStyleRuleContains(t, text, "body", `overflow: hidden;`, `font-size: 14px;`, `line-height: 1.45;`)
+	assertStyleRuleContains(t, text, "body.is-resizing-sidebar", `cursor: col-resize;`)
+	assertStyleRuleContains(t, text, "body.is-resizing-sidebar *", `user-select: none;`)
+	assertStyleRuleContains(t, text, ".report-header",
+		`grid-template-columns: var(--header-nav-width) minmax(0, 1fr) auto;`,
+		`gap: var(--header-gap);`,
+		`box-sizing: border-box;`,
+		`height: var(--topbar-height);`,
+		`padding: 2px var(--header-padding-x);`,
+	)
+	assertStyleRuleContains(t, text, ".report-header h1", `min-width: 0;`, `font-size: 17px;`, `line-height: 1.2;`)
+	assertStyleRuleContains(t, text, ".header-copy",
+		`grid-column: 2;`,
+		`display: inline-flex;`,
+		`align-items: center;`,
+		`gap: var(--header-title-gap);`,
+	)
+	assertStyleRuleContains(t, text, ".report-header h1", `overflow: hidden;`, `text-overflow: ellipsis;`, `white-space: nowrap;`)
+	assertStyleRuleContains(t, text, ".nav-toggle",
+		`width: var(--header-nav-width);`,
+		`height: 32px;`,
+	)
+	assertStyleRuleContains(t, text, ".view-toggle",
+		`min-width: 96px;`,
+		`font-size: 13px;`,
+	)
+	assertStyleRuleContains(t, text, ".header-actions",
+		`grid-column: 3;`,
+		`align-items: center;`,
+	)
+	assertStyleRuleContains(t, text, ".brand-logo", `width: 44px;`, `height: 44px;`, `margin: -3px 0;`)
+	assertStyleRuleContains(t, text, ".summary", `font-size: 12px;`)
+	assertStyleRuleContains(t, text, ".summary", `display: inline-flex;`, `align-items: center;`, `flex: 0 1 auto;`, `gap: 5px;`, `flex-wrap: wrap;`, `line-height: 1;`)
+	assertStyleRuleContains(t, text, ".summary-badge",
+		`display: inline-flex;`,
+		`align-items: center;`,
+		`min-height: 18px;`,
+		`padding: 2px 6px;`,
+		`font-size: 11px;`,
+		`vertical-align: middle;`,
+	)
+	assertStyleRuleContains(t, text, ".summary-badge-modified", `background: rgba(240, 179, 90, 0.14);`, `color: #ffd596;`)
+	assertStyleRuleContains(t, text, ".summary-badge-added", `background: rgba(63, 185, 80, 0.13);`, `color: #9ce8a8;`)
+	assertStyleRuleContains(t, text, ".summary-badge-removed", `background: rgba(248, 81, 73, 0.13);`, `color: #ffb4ae;`)
+	assertStyleRuleContains(t, text, ".review-layout",
+		`grid-template-columns: var(--sidebar-width) 0 minmax(0, 1fr);`,
+		`height: calc(100vh - var(--topbar-height));`,
+		`min-height: 0;`,
+	)
+	assertStyleRuleContains(t, text, ".tree", `grid-column: 1;`, `min-height: 0;`, `overflow: auto;`)
+	assertStyleRuleContains(t, text, ".sidebar-resizer",
+		`grid-column: 2;`,
+		`width: var(--sidebar-resizer-hit);`,
+		`margin-left: calc(var(--sidebar-resizer-hit) / -2);`,
+		`cursor: col-resize;`,
+		`touch-action: none;`,
+	)
+	assertStyleRuleContains(t, text, ".sidebar-resizer::before",
+		`left: calc(var(--sidebar-resizer-hit) / 2);`,
+		`width: 1px;`,
+		`transition: background 120ms ease 180ms, box-shadow 120ms ease 180ms;`,
+	)
+	if want := ".sidebar-resizer:focus-visible::before,\nbody.is-resizing-sidebar .sidebar-resizer::before {\n\ttransition-delay: 0ms;\n}"; !strings.Contains(text, want) {
+		t.Fatalf("HTML missing immediate sidebar-resizer activation contract %q:\n%s", want, text)
+	}
+	assertStyleRuleContains(t, text, ".review-main", `grid-column: 3;`, `min-height: 0;`, `overflow: auto;`)
+	assertStyleRuleContains(t, text, ".tree-app summary",
+		`display: grid;`,
+		`grid-template-columns: auto minmax(0, 1fr) auto;`,
+		`font-size: 13px;`,
+	)
+	assertStyleRuleContains(t, text, ".tree-resource", `font-size: 13px;`)
 	assertStyleRuleContains(t, text, ".tree-resource",
 		`display: grid;`,
-		`grid-template-columns: minmax(0, 1fr) auto;`,
+		`grid-template-columns: auto minmax(0, 1fr) auto;`,
 	)
+	assertStyleRuleContains(t, text, ".tree-status-modified", `background: #f0b35a;`)
+	assertStyleRuleContains(t, text, ".tree-status-added", `background: #3fb950;`)
+	assertStyleRuleContains(t, text, ".tree-status-removed", `background: #f85149;`)
 	assertStyleRuleContains(t, text, ".tree-resource-label",
 		`overflow: hidden;`,
 		`text-overflow: ellipsis;`,
 		`white-space: nowrap;`,
 	)
 	assertStyleRuleContains(t, text, ".tree-delta",
-		`font-size: 12px;`,
+		`font-size: 11px;`,
 		`font-variant-numeric: tabular-nums;`,
 		`white-space: nowrap;`,
+	)
+	assertStyleRuleContains(t, text, ".tree-delta-added",
+		`border-radius: 999px;`,
+		`background: rgba(63, 185, 80, 0.13);`,
+	)
+	assertStyleRuleContains(t, text, ".tree-delta-removed",
+		`border-radius: 999px;`,
+		`background: rgba(248, 81, 73, 0.13);`,
 	)
 	assertStyleRuleContains(t, text, ".resource-header",
 		`display: grid;`,
 		`grid-template-columns: minmax(0, 1fr) auto;`,
 		`align-items: start;`,
+		`margin: 0 0 7px;`,
+		`padding: 0 0 5px;`,
 	)
-	assertStyleRuleContains(t, text, ".toolbar",
-		`justify-content: flex-end;`,
-		`white-space: nowrap;`,
+	assertStyleRuleContains(t, text, ".resource h3", `margin: 0;`, `font-size: 16px;`, `line-height: 1.25;`)
+	assertStyleRuleContains(t, text, ".diff-table", `margin-top: 0;`, `font-size: 13.5px;`, `line-height: 20px;`)
+	blankGutterSelector := strings.Join([]string{
+		".line-number-blank,",
+		".diff-row.added .line-number-blank,",
+		".diff-row.removed .line-number-blank",
+	}, "\n")
+	assertStyleRuleContains(t, text, blankGutterSelector,
+		`background-color: rgba(16, 27, 41, 0.78);`,
+		`background-image: none;`,
 	)
-	assertStyleRuleContains(t, text, ".toolbar button", `padding: 5px 9px;`, `font-size: 14px;`)
-	assertStyleRuleContains(t, text, ".resource h3", `font-size: 18px;`, `line-height: 1.25;`)
-	assertStyleRuleContains(t, text, ".diff-table", `margin-top: 0;`, `font-size: 13px;`)
+	blankStripeSelector := strings.Join([]string{
+		".line-code-blank,",
+		".diff-row.added .line-code-blank,",
+		".diff-row.removed .line-code-blank",
+	}, "\n")
+	assertStyleRuleContains(t, text, blankStripeSelector,
+		`background-size: 10px 10px;`,
+		`background-repeat: repeat;`,
+		`rgba(129, 144, 163, 0.34) 46%,`,
+		`rgba(129, 144, 163, 0.34) 54%,`,
+		`linear-gradient(`,
+	)
+	if strings.Contains(text, `background-attachment: fixed;`) {
+		t.Fatalf("blank-cell stripe rule uses fixed attachment, which creates Chrome raster artifacts:\n%s", text)
+	}
+	if strings.Contains(text, `--blank-stripe-y`) {
+		t.Fatalf("blank-cell stripe rule uses row-local offsets, which disconnect at row seams:\n%s", text)
+	}
+	if strings.Contains(text, `linear-gradient(rgba(16, 27, 41, 0.78), rgba(16, 27, 41, 0.78))`) {
+		t.Fatalf("blank-cell stripe rule contains opaque overlay that hides diagonal lines:\n%s", text)
+	}
+	for _, want := range []string{
+		"body[data-sidebar=\"closed\"] .tree {\n\t\tdisplay: none;",
+		"body[data-sidebar=\"closed\"] .sidebar-resizer {\n\t\tdisplay: none;",
+		"body[data-sidebar=\"closed\"] .review-main {\n\t\tgrid-column: 1;",
+		"body.is-resizing-sidebar .sidebar-resizer::before {\n\tbackground: var(--teal);",
+		"body[data-view=\"side-by-side\"] .diff-table.unified,\nbody[data-view=\"unified\"] .diff-table.side-by-side {\n\tdisplay: none;",
+		"body[data-view=\"side-by-side\"] .diff-table.unified {\n\t\tdisplay: table;",
+		"@media (max-width: 800px) {\n\t:root {\n\t\t--topbar-height: 50px;",
+		".report-header {\n\t\tgrid-template-columns: auto minmax(0, 1fr) auto;",
+		".summary {\n\t\tdisplay: none;",
+		".sidebar-resizer {\n\t\tdisplay: none;",
+		".diff-table {\n\t\tfont-size: 14px;\n\t\tline-height: 21px;",
+		"@media (max-width: 520px) {\n\t:root {\n\t\t--topbar-height: 46px;",
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("HTML missing responsive style contract %q:\n%s", want, text)
+		}
+	}
 
-	if want := `font-family="Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif"`; !strings.Contains(text, want) {
-		t.Fatalf("HTML missing SVG typography contract %q:\n%s", want, text)
+	if want := `viewBox="0 0 128 128"`; !strings.Contains(text, want) {
+		t.Fatalf("HTML missing icon-only logo contract %q:\n%s", want, text)
 	}
 	for _, old := range []string{
 		`width: clamp(132px, 16vw, 180px);`,
+		`width: clamp(186px, 18vw, 210px);`,
+		`width: clamp(168px, 16vw, 188px);`,
 		`width: 132px;`,
+		`viewBox="0 0 480 128"`,
 		`font-family="'Inter', 'Helvetica Neue', Arial, sans-serif"`,
+		`<text x=`,
+		`class="toolbar"`,
 	} {
 		if strings.Contains(text, old) {
 			t.Fatalf("HTML contains stale typography contract %q:\n%s", old, text)
@@ -488,6 +679,34 @@ func TestRenderDefaultResourceScriptContract(t *testing.T) {
 	}
 }
 
+func TestRenderSidebarResizeScriptContract(t *testing.T) {
+	out, err := Render(app.DiffResult{
+		Results: []diff.Result{diffResult("argocd", "demo", "cm-one", "@@ -1,1 +1,1 @@\n-old\n+new\n")},
+	}, Options{})
+	if err != nil {
+		t.Fatalf("Render() error = %v", err)
+	}
+	text := string(out)
+	for _, want := range []string{
+		`const sidebarResizer = document.querySelector('[data-sidebar-resizer]');`,
+		`localStorage.removeItem(key);`,
+		`const sidebarBounds = () => {`,
+		`--sidebar-width-min`,
+		`--sidebar-width-max`,
+		`setSidebarWidth(dragStartWidth + event.clientX - dragStartX, { persist: true });`,
+		`store.set('drydock-sidebar-width', String(next));`,
+		`store.remove('drydock-sidebar-width');`,
+		`sidebarResizer.addEventListener('dblclick'`,
+		`body.classList.add('is-resizing-sidebar');`,
+		`body.classList.remove('is-resizing-sidebar');`,
+		`restoreSidebarWidth();`,
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("HTML missing sidebar resize JS contract %q:\n%s", want, text)
+		}
+	}
+}
+
 func TestRenderUsesDarkDocsThemeAndInlineLogo(t *testing.T) {
 	out, err := Render(app.DiffResult{}, Options{})
 	if err != nil {
@@ -502,11 +721,18 @@ func TestRenderUsesDarkDocsThemeAndInlineLogo(t *testing.T) {
 		`--rust-bright: #f08a51;`,
 		`.resource h3 {`,
 		`aria-label="drydock"`,
-		`viewBox="0 0 480 128"`,
-		`>drydock</text>`,
+		`viewBox="0 0 128 128"`,
 	} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("HTML missing %q:\n%s", want, text)
+		}
+	}
+	for _, stale := range []string{
+		`viewBox="0 0 480 128"`,
+		`>drydock</text>`,
+	} {
+		if strings.Contains(text, stale) {
+			t.Fatalf("HTML contains stale wordmark marker %q:\n%s", stale, text)
 		}
 	}
 }
@@ -579,12 +805,13 @@ func TestRenderDiffViewportOnlyContainsResourceArticles(t *testing.T) {
 	for _, want := range []string{
 		`<article class="resource" data-resource-id="resource-0"`,
 		`<article class="resource" data-resource-id="resource-1"`,
-		`<p class="resource-meta">argocd/one &middot; modified</p>`,
-		`<p class="resource-meta">argocd/two &middot; modified</p>`,
 	} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("HTML missing %q:\n%s", want, text)
 		}
+	}
+	if strings.Contains(text, `class="resource-meta"`) || strings.Contains(text, `&middot; modified`) {
+		t.Fatalf("main diff viewport should not render secondary resource metadata:\n%s", text)
 	}
 }
 
@@ -656,8 +883,8 @@ func TestRenderSideBySideRowsFromHunks(t *testing.T) {
 		`<tr class="hunk-header"><th colspan="4">@@ -10,2 +10,2 @@</th></tr>`,
 		`<tr class="hunk-header"><th colspan="2">@@ -10,2 +10,2 @@</th></tr>`,
 		`<td class="line-number">10</td><td class="line-code">context</td><td class="line-number">10</td><td class="line-code">context</td>`,
-		`<td class="line-number">11</td><td class="line-code"><span class="inline-change removed">remov</span>ed</td><td class="line-number"></td><td class="line-code"></td>`,
-		`<td class="line-number"></td><td class="line-code"></td><td class="line-number">11</td><td class="line-code"><span class="inline-change added">add</span>ed</td>`,
+		`<td class="line-number">11</td><td class="line-code"><span class="inline-change removed">remov</span>ed</td><td class="line-number line-number-blank"></td><td class="line-code line-code-blank"></td>`,
+		`<td class="line-number line-number-blank"></td><td class="line-code line-code-blank"></td><td class="line-number">11</td><td class="line-code"><span class="inline-change added">add</span>ed</td>`,
 	} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("HTML missing %q:\n%s", want, text)
@@ -735,13 +962,21 @@ func TestRenderEmptyDiff(t *testing.T) {
 	}
 	text := string(out)
 	for _, want := range []string{
-		"0 apps",
-		"0 resources",
-		"+0/-0",
 		"No rendered manifest differences detected.",
 	} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("HTML missing %q:\n%s", want, text)
+		}
+	}
+	for _, forbidden := range []string{
+		`class="summary"`,
+		`+0`,
+		`-0`,
+		`0 apps`,
+		`0 resources`,
+	} {
+		if strings.Contains(text, forbidden) {
+			t.Fatalf("empty HTML contains zero summary marker %q:\n%s", forbidden, text)
 		}
 	}
 	if strings.Contains(text, `data-default-resource=`) {
@@ -767,9 +1002,18 @@ func defaultResourceFromBody(t *testing.T, text string) string {
 func assertStyleRuleContains(t *testing.T, text, selector string, declarations ...string) {
 	t.Helper()
 	prefix := selector + " {\n"
-	start := strings.Index(text, prefix)
+	start := -1
+	for _, leading := range []string{"", "\t", "\t\t"} {
+		if index := strings.Index(text, "\n"+leading+prefix); index != -1 {
+			start = index + 1 + len(leading)
+			break
+		}
+	}
 	if start == -1 {
-		t.Fatalf("HTML missing style rule %q:\n%s", selector, text)
+		if !strings.HasPrefix(text, prefix) {
+			t.Fatalf("HTML missing style rule %q:\n%s", selector, text)
+		}
+		start = 0
 	}
 	bodyStart := start + len(prefix)
 	end := strings.Index(text[bodyStart:], "\n}")

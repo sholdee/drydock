@@ -5,7 +5,29 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/sholdee/drydock/internal/app"
+	"github.com/sholdee/drydock/internal/diff"
 )
+
+func TestFullRenderedDiffViewExampleIsCurrent(t *testing.T) {
+	path := fullRenderedDiffViewExamplePath()
+	rendered := renderFullRenderedDiffViewDemo(t)
+	if os.Getenv("UPDATE_DIFFHTML_EXAMPLE") == "1" {
+		if err := os.WriteFile(path, rendered, 0o644); err != nil {
+			t.Fatalf("WriteFile(%s) error = %v", path, err)
+		}
+		return
+	}
+
+	current, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("ReadFile(%s) error = %v", path, err)
+	}
+	if string(current) != string(rendered) {
+		t.Fatalf("example HTML is stale; run UPDATE_DIFFHTML_EXAMPLE=1 go test ./internal/report/diffhtml -run TestFullRenderedDiffViewExampleIsCurrent")
+	}
+}
 
 func TestFullRenderedDiffViewExampleMatchesRenderedDemo(t *testing.T) {
 	text := readFullRenderedDiffViewExample(t)
@@ -16,8 +38,13 @@ func TestFullRenderedDiffViewExampleMatchesRenderedDemo(t *testing.T) {
 	}
 
 	for _, want := range []string{
-		`<title>drydock desired state diff</title>`,
-		`<p class="summary">2 apps, 3 resources, +9/-9</p>`,
+		`<title>drydock diff</title>`,
+		`<div class="summary" aria-label="2 apps, 3 resources, 3 changed, +9, -9">`,
+		`<span class="summary-badge summary-badge-neutral">2 apps</span>`,
+		`<span class="summary-badge summary-badge-neutral">3 resources</span>`,
+		`<span class="summary-badge summary-badge-modified summary-badge-detail">3 changed</span>`,
+		`<span class="summary-badge summary-badge-added">+9</span>`,
+		`<span class="summary-badge summary-badge-removed">-9</span>`,
 		`data-tree-app="envoy-gateway-system"`,
 		`data-tree-app="renovate"`,
 		`<span class="tree-resource-label">Deployment · envoy-gateway</span>`,
@@ -57,12 +84,130 @@ func TestFullRenderedDiffViewExampleMatchesRenderedDemo(t *testing.T) {
 
 func readFullRenderedDiffViewExample(t *testing.T) string {
 	t.Helper()
-	path := filepath.Join("..", "..", "..", "site", "static", "examples", "full-rendered-diff-view.html")
+	path := fullRenderedDiffViewExamplePath()
 	text, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatalf("read %s: %v", path, err)
 	}
 	return string(text)
+}
+
+func fullRenderedDiffViewExamplePath() string {
+	return filepath.Join("..", "..", "..", "site", "static", "examples", "full-rendered-diff-view.html")
+}
+
+func renderFullRenderedDiffViewDemo(t *testing.T) []byte {
+	t.Helper()
+	rendered, err := Render(app.DiffResult{
+		Results: []diff.Result{
+			{
+				Parent: diff.Parent{Name: "envoy-gateway-system"},
+				Resource: diff.Resource{
+					Group:     "apps",
+					Kind:      "Deployment",
+					Namespace: "envoy-gateway-system",
+					Name:      "envoy-gateway",
+				},
+				Change: diff.ChangeModified,
+				Diff: `--- Application: envoy-gateway-system Source: 0 apps/envoy-gateway-system/kustomization.yaml apps/Deployment: envoy-gateway-system/envoy-gateway
++++ Application: envoy-gateway-system Source: 0 apps/envoy-gateway-system/kustomization.yaml apps/Deployment: envoy-gateway-system/envoy-gateway
+@@ -11,7 +11,7 @@
+   name: envoy-gateway
+   namespace: envoy-gateway-system
+ spec:
+-  replicas: 3
++  replicas: 2
+   selector:
+     matchLabels:
+       app.kubernetes.io/instance: envoy-gateway
+@@ -67,10 +67,10 @@
+             periodSeconds: 10
+           resources:
+             limits:
+-              cpu: 100m
++              cpu: 150m
+               memory: 150Mi
+             requests:
+-              cpu: 10m
++              cpu: 25m
+               memory: 150Mi
+           securityContext:
+             allowPrivilegeEscalation: false
+`,
+			},
+			{
+				Parent: diff.Parent{Name: "envoy-gateway-system"},
+				Resource: diff.Resource{
+					Group:     "policy",
+					Kind:      "PodDisruptionBudget",
+					Namespace: "envoy-gateway-system",
+					Name:      "envoy-gateway",
+				},
+				Change: diff.ChangeModified,
+				Diff: `--- Application: envoy-gateway-system Source: 0 apps/envoy-gateway-system/kustomization.yaml policy/PodDisruptionBudget: envoy-gateway-system/envoy-gateway
++++ Application: envoy-gateway-system Source: 0 apps/envoy-gateway-system/kustomization.yaml policy/PodDisruptionBudget: envoy-gateway-system/envoy-gateway
+@@ -6,7 +6,7 @@
+   name: envoy-gateway
+   namespace: envoy-gateway-system
+ spec:
+-  minAvailable: 1
++  minAvailable: 2
+   selector:
+     matchLabels:
+       app.kubernetes.io/instance: envoy-gateway
+`,
+			},
+			{
+				Parent: diff.Parent{Name: "renovate"},
+				Resource: diff.Resource{
+					Group:     "renovate-operator.mogenius.com",
+					Kind:      "RenovateJob",
+					Namespace: "renovate",
+					Name:      "renovate",
+				},
+				Change: diff.ChangeModified,
+				Diff: `--- Application: renovate Source: 0 apps/renovate/kustomization.yaml renovate-operator.mogenius.com/RenovateJob: renovate/renovate
++++ Application: renovate Source: 0 apps/renovate/kustomization.yaml renovate-operator.mogenius.com/RenovateJob: renovate/renovate
+@@ -34,18 +34,18 @@
+       value: http://10.2.0.110:3900
+     - name: S3_FORCE_PATH_STYLE
+       value: "true"
+-  image: renovate/renovate:43.205.3@sha256:53a36e2d4da0fea960e6d4ebac3da152233532c0be1c14313086011e7c4bb551
+-  parallelism: 3
++  image: renovate/renovate:43.207.4@sha256:087bab575172b1926bbc57124d988015d899b0a82d45028514377b10a392f69d
++  parallelism: 2
+   provider:
+     name: github
+   resources:
+     limits:
+-      cpu: 500m
++      cpu: 750m
+       memory: 2048Mi
+     requests:
+-      cpu: 500m
++      cpu: 750m
+       memory: 2048Mi
+-  schedule: 0 * * * *
++  schedule: 15 * * * *
+   secretRef: renovate-secret
+   webhook:
+     authentication:
+`,
+			},
+		},
+	}, Options{
+		DefaultResource: DefaultResourceSelector{
+			ParentName: "envoy-gateway-system",
+			Group:      "apps",
+			Kind:       "Deployment",
+			Namespace:  "envoy-gateway-system",
+			Name:       "envoy-gateway",
+		},
+	})
+	if err != nil {
+		t.Fatalf("Render() error = %v", err)
+	}
+	return rendered
 }
 
 func resourceIDByHeading(t *testing.T, text, heading string) string {

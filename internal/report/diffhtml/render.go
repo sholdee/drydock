@@ -13,7 +13,7 @@ import (
 	"github.com/sholdee/drydock/internal/diff"
 )
 
-const defaultTitle = "drydock desired state diff"
+const defaultTitle = "drydock diff"
 
 type Options struct {
 	Title           string
@@ -41,6 +41,12 @@ type groupEntry struct {
 	result diff.Result
 }
 
+type resourceChangeCounts struct {
+	changed int
+	added   int
+	removed int
+}
+
 func Render(result app.DiffResult, options Options) ([]byte, error) {
 	title := strings.TrimSpace(options.Title)
 	if title == "" {
@@ -49,10 +55,12 @@ func Render(result app.DiffResult, options Options) ([]byte, error) {
 
 	groups := groupedResults(result.Results)
 	added, removed := totalLineChanges(groups)
+	resourceCounts := countResourceChanges(result.Results)
 	defaultResourceID := selectDefaultResourceID(groups, options.DefaultResource)
 
 	var builder bytes.Buffer
 	builder.WriteString("<!doctype html>\n<html lang=\"en\">\n<head>\n<meta charset=\"utf-8\">\n")
+	builder.WriteString("<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n")
 	fmt.Fprintf(&builder, "<title>%s</title>\n", escape(title))
 	fmt.Fprintf(&builder, "<link rel=\"icon\" type=\"image/svg+xml\" href=\"%s\">\n", drydockFaviconHref)
 	builder.WriteString("<style>")
@@ -60,15 +68,20 @@ func Render(result app.DiffResult, options Options) ([]byte, error) {
 	builder.WriteString("</style>\n</head>\n")
 	renderBodyOpen(&builder, defaultResourceID)
 	builder.WriteString("<header class=\"report-header\">\n")
-	builder.WriteString("<div>\n")
+	builder.WriteString("<button class=\"nav-toggle\" type=\"button\" data-sidebar-toggle aria-controls=\"diff-tree\" aria-expanded=\"true\" aria-label=\"Toggle changed resources\"><span aria-hidden=\"true\">☰</span></button>\n")
+	builder.WriteString("<div class=\"header-copy\">\n")
 	fmt.Fprintf(&builder, "<h1>%s</h1>\n", escape(title))
-	renderSummary(&builder, len(groups), len(result.Results), added, removed)
+	renderSummary(&builder, len(groups), len(result.Results), resourceCounts, added, removed)
 	builder.WriteString("</div>\n")
+	builder.WriteString("<div class=\"header-actions\">\n")
 	builder.WriteString(drydockLogo)
 	builder.WriteString("\n")
+	builder.WriteString("</div>\n")
 	builder.WriteString("</header>\n")
 	builder.WriteString("<div class=\"review-layout\">\n")
 	renderTree(&builder, groups)
+	builder.WriteString("<div class=\"sidebar-resizer\" data-sidebar-resizer role=\"separator\" aria-orientation=\"vertical\" aria-label=\"Resize changed resources sidebar\" aria-valuemin=\"240\" aria-valuemax=\"480\" aria-valuenow=\"320\" tabindex=\"0\"></div>\n")
+	builder.WriteString("<div class=\"sidebar-backdrop\" data-sidebar-backdrop></div>\n")
 	builder.WriteString("<main class=\"review-main\">\n")
 	if len(groups) == 0 {
 		builder.WriteString("<p class=\"no-diff\">No rendered manifest differences detected.</p>\n")
@@ -83,7 +96,7 @@ func Render(result app.DiffResult, options Options) ([]byte, error) {
 }
 
 func renderBodyOpen(builder *bytes.Buffer, defaultResourceID string) {
-	builder.WriteString("<body data-view=\"side-by-side\"")
+	builder.WriteString("<body data-view=\"side-by-side\" data-sidebar=\"auto\"")
 	if defaultResourceID != "" {
 		fmt.Fprintf(builder, " data-default-resource=\"%s\"", escape(defaultResourceID))
 	}
@@ -340,6 +353,23 @@ func totalLineChanges(groups []appGroup) (int, int) {
 	return added, removed
 }
 
+func countResourceChanges(results []diff.Result) resourceChangeCounts {
+	var counts resourceChangeCounts
+	for _, result := range results {
+		switch result.Change {
+		case diff.ChangeAdded:
+			counts.added++
+		case diff.ChangeRemoved:
+			counts.removed++
+		case diff.ChangeModified:
+			counts.changed++
+		default:
+			counts.changed++
+		}
+	}
+	return counts
+}
+
 func lineChanges(text string) (int, int) {
 	var added, removed int
 	for line := range strings.SplitSeq(text, "\n") {
@@ -354,13 +384,35 @@ func lineChanges(text string) (int, int) {
 	return added, removed
 }
 
-func renderSummary(builder *bytes.Buffer, apps, resources, added, removed int) {
-	fmt.Fprintf(builder, "<p class=\"summary\">%s, %s, +%d/-%d</p>\n",
-		escape(plural(apps, "app", "apps")),
-		escape(plural(resources, "resource", "resources")),
-		added,
-		removed,
-	)
+func renderSummary(builder *bytes.Buffer, apps, resources int, resourceCounts resourceChangeCounts, addedLines, removedLines int) {
+	type badge struct {
+		class string
+		label string
+	}
+	var badges []badge
+	var ariaParts []string
+	appendBadge := func(count int, class, label string) {
+		if count == 0 {
+			return
+		}
+		badges = append(badges, badge{class: class, label: label})
+		ariaParts = append(ariaParts, label)
+	}
+	appendBadge(apps, "summary-badge-neutral", plural(apps, "app", "apps"))
+	appendBadge(resources, "summary-badge-neutral", plural(resources, "resource", "resources"))
+	appendBadge(resourceCounts.changed, "summary-badge-modified summary-badge-detail", fmt.Sprintf("%d changed", resourceCounts.changed))
+	appendBadge(resourceCounts.added, "summary-badge-added summary-badge-detail", fmt.Sprintf("%d added", resourceCounts.added))
+	appendBadge(resourceCounts.removed, "summary-badge-removed summary-badge-detail", fmt.Sprintf("%d deleted", resourceCounts.removed))
+	appendBadge(addedLines, "summary-badge-added", fmt.Sprintf("+%d", addedLines))
+	appendBadge(removedLines, "summary-badge-removed", fmt.Sprintf("-%d", removedLines))
+	if len(badges) == 0 {
+		return
+	}
+	fmt.Fprintf(builder, "<div class=\"summary\" aria-label=\"%s\">", escape(strings.Join(ariaParts, ", ")))
+	for _, badge := range badges {
+		fmt.Fprintf(builder, "<span class=\"summary-badge %s\">%s</span>", escape(badge.class), escape(badge.label))
+	}
+	builder.WriteString("</div>\n")
 }
 
 func renderDiagnostics(builder *bytes.Buffer, diagnostics []diagnostic.Diagnostic) {
@@ -382,11 +434,11 @@ func renderDiagnostics(builder *bytes.Buffer, diagnostics []diagnostic.Diagnosti
 }
 
 func renderTree(builder *bytes.Buffer, groups []appGroup) {
-	builder.WriteString("<aside class=\"tree\">\n")
-	builder.WriteString("<input class=\"tree-search\" data-tree-search type=\"search\" placeholder=\"Search changes\" aria-label=\"Search changed resources\">\n")
+	builder.WriteString("<aside class=\"tree\" id=\"diff-tree\">\n")
+	builder.WriteString("<input class=\"tree-search\" data-tree-search type=\"search\" placeholder=\"Search resources (/)\" aria-label=\"Search resources\">\n")
 	for _, group := range groups {
-		fmt.Fprintf(builder, "<section data-tree-app=\"%s\">\n", escape(group.id))
-		fmt.Fprintf(builder, "<h2>%s</h2>\n", escape(group.id))
+		fmt.Fprintf(builder, "<details class=\"tree-app\" data-tree-app=\"%s\" open>\n", escape(group.id))
+		fmt.Fprintf(builder, "<summary><span class=\"tree-app-name\">%s</span>%s</summary>\n", escape(group.id), treeDeltaMarkup(group.added, group.removed))
 		treeLabelCounts := treeResourceLabelCounts(group.entries)
 		for _, entry := range group.entries {
 			label := resourceLabel(entry.result.Resource)
@@ -397,16 +449,17 @@ func renderTree(builder *bytes.Buffer, groups []appGroup) {
 				label,
 				string(entry.result.Change),
 			}, " "))
-			fmt.Fprintf(builder, "<button class=\"tree-resource\" type=\"button\" data-target-resource=\"resource-%d\" data-search-text=\"%s\" title=\"%s\" aria-label=\"%s\"><span class=\"tree-resource-label\">%s</span>%s</button>\n",
+			fmt.Fprintf(builder, "<button class=\"tree-resource\" type=\"button\" data-target-resource=\"resource-%d\" data-search-text=\"%s\" title=\"%s\" aria-label=\"%s\">%s<span class=\"tree-resource-label\">%s</span>%s</button>\n",
 				entry.index,
 				escape(searchText),
 				escape(label),
-				escape(treeResourceAriaLabel(label, added, removed)),
+				escape(treeResourceAriaLabel(label, entry.result.Change, added, removed)),
+				treeStatusDotMarkup(entry.result.Change),
 				escape(treeLabel),
 				treeDeltaMarkup(added, removed),
 			)
 		}
-		builder.WriteString("</section>\n")
+		builder.WriteString("</details>\n")
 	}
 	builder.WriteString("</aside>\n")
 }
@@ -461,8 +514,8 @@ func shortTreeResourceKind(kind string) string {
 	}
 }
 
-func treeResourceAriaLabel(label string, added, removed int) string {
-	parts := []string{label}
+func treeResourceAriaLabel(label string, change diff.Change, added, removed int) string {
+	parts := []string{label, string(change)}
 	if added > 0 {
 		parts = append(parts, fmt.Sprintf("plus %d", added))
 	}
@@ -488,24 +541,34 @@ func treeDeltaMarkup(added, removed int) string {
 	return builder.String()
 }
 
-func renderToolbar(builder *bytes.Buffer) {
-	builder.WriteString("<div class=\"toolbar\" role=\"toolbar\" aria-label=\"Diff view\">\n")
-	builder.WriteString("<button type=\"button\" data-view=\"side-by-side\" aria-pressed=\"true\">Side-by-side</button>\n")
-	builder.WriteString("<button type=\"button\" data-view=\"unified\" aria-pressed=\"false\">Unified</button>\n")
-	builder.WriteString("</div>\n")
+func treeStatusDotMarkup(change diff.Change) string {
+	switch change {
+	case diff.ChangeAdded:
+		return "<span class=\"tree-status-dot tree-status-added\" aria-hidden=\"true\"></span>"
+	case diff.ChangeRemoved:
+		return "<span class=\"tree-status-dot tree-status-removed\" aria-hidden=\"true\"></span>"
+	case diff.ChangeModified:
+		return "<span class=\"tree-status-dot tree-status-modified\" aria-hidden=\"true\"></span>"
+	default:
+		return "<span class=\"tree-status-dot tree-status-modified\" aria-hidden=\"true\"></span>"
+	}
+}
+
+func renderViewToggle(builder *bytes.Buffer) {
+	builder.WriteString("<button class=\"view-toggle\" type=\"button\" data-view-toggle aria-label=\"Toggle diff layout\">Unified</button>\n")
 }
 
 func renderGroups(builder *bytes.Buffer, groups []appGroup) {
 	builder.WriteString("<section class=\"applications\">\n")
 	for _, group := range groups {
 		for _, entry := range group.entries {
-			renderResource(builder, group.id, entry)
+			renderResource(builder, entry)
 		}
 	}
 	builder.WriteString("</section>\n")
 }
 
-func renderResource(builder *bytes.Buffer, appID string, entry groupEntry) {
+func renderResource(builder *bytes.Buffer, entry groupEntry) {
 	result := entry.result
 	hunks := parseUnifiedDiff(result.Diff)
 	fmt.Fprintf(builder, "<article class=\"resource\" data-resource-id=\"resource-%d\" data-result-index=\"%d\" data-change=\"%s\">\n",
@@ -516,9 +579,8 @@ func renderResource(builder *bytes.Buffer, appID string, entry groupEntry) {
 	builder.WriteString("<header class=\"resource-header\">\n")
 	builder.WriteString("<div class=\"resource-title\">\n")
 	fmt.Fprintf(builder, "<h3>%s</h3>\n", escape(resourceLabel(result.Resource)))
-	fmt.Fprintf(builder, "<p class=\"resource-meta\">%s &middot; %s</p>\n", escape(appID), escape(string(result.Change)))
 	builder.WriteString("</div>\n")
-	renderToolbar(builder)
+	renderViewToggle(builder)
 	builder.WriteString("</header>\n")
 	if result.Change == diff.ChangeAdded || result.Change == diff.ChangeRemoved {
 		renderOneSidedTable(builder, hunks, result.Change, "side-by-side")
@@ -564,11 +626,11 @@ func renderSideBySideTable(builder *bytes.Buffer, hunks []diffHunk) {
 		for index, row := range hunk.Rows {
 			fmt.Fprintf(builder, "<tr class=\"diff-row %s\">", escape(row.Kind))
 			renderLineNumberCell(builder, row.LeftNumber)
-			builder.WriteString("<td class=\"line-code\">")
+			renderLineCodeOpen(builder, row.LeftNumber == 0)
 			renderHighlightedText(builder, row.LeftText, leftHighlights[index], "removed")
 			builder.WriteString("</td>")
 			renderLineNumberCell(builder, row.RightNumber)
-			builder.WriteString("<td class=\"line-code\">")
+			renderLineCodeOpen(builder, row.RightNumber == 0)
 			renderHighlightedText(builder, row.RightText, rightHighlights[index], "added")
 			builder.WriteString("</td>")
 			builder.WriteString("</tr>\n")
@@ -606,10 +668,18 @@ func renderUnifiedTable(builder *bytes.Buffer, hunks []diffHunk) {
 
 func renderLineNumberCell(builder *bytes.Buffer, number int) {
 	if number == 0 {
-		builder.WriteString("<td class=\"line-number\"></td>")
+		builder.WriteString("<td class=\"line-number line-number-blank\"></td>")
 		return
 	}
 	fmt.Fprintf(builder, "<td class=\"line-number\">%d</td>", number)
+}
+
+func renderLineCodeOpen(builder *bytes.Buffer, blank bool) {
+	if blank {
+		builder.WriteString("<td class=\"line-code line-code-blank\">")
+		return
+	}
+	builder.WriteString("<td class=\"line-code\">")
 }
 
 type highlightRange struct {
