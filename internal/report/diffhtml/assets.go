@@ -409,6 +409,57 @@ body.is-resizing-sidebar .sidebar-resizer::before {
 	line-height: 1.25;
 	color: var(--navy-deep);
 }
+.resource-heading {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	min-width: 0;
+	flex-wrap: wrap;
+}
+.resource-primary {
+	display: inline-flex;
+	gap: 5px;
+	min-width: 0;
+	font-weight: 750;
+}
+.resource-name {
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+.resource-meta {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	min-width: 0;
+	color: var(--quiet);
+	font-size: 13px;
+	font-weight: 650;
+}
+.resource-namespace {
+	min-width: 0;
+	max-width: min(32vw, 260px);
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+.resource-meta-separator {
+	color: var(--line-strong);
+}
+.resource-api-group {
+	display: inline-flex;
+	align-items: center;
+	min-height: 18px;
+	padding: 0 7px;
+	border: 1px solid rgba(129, 144, 163, 0.24);
+	border-radius: 999px;
+	background: rgba(129, 144, 163, 0.13);
+	color: var(--muted);
+	font-size: 12px;
+	font-weight: 750;
+	line-height: 1;
+}
 .diff-table {
 	width: 100%;
 	border-collapse: collapse;

@@ -256,6 +256,28 @@ func TestRenderPlacesGlobalControlsInHeaderAndResourceHeaderBeforeDiff(t *testin
 	}
 }
 
+func TestRenderResourceHeaderUsesReadableIdentityWithAPIGroupBadge(t *testing.T) {
+	out, err := Render(app.DiffResult{
+		Results: []diff.Result{
+			resourceChange("demo", "apps", "Deployment", "envoy-gateway-system", "envoy-gateway", diff.ChangeModified, diffWithChangedLines("-old", "+new")),
+			resourceChange("demo", "", "ConfigMap", "default", "app-config", diff.ChangeModified, diffWithChangedLines("-old", "+new")),
+		},
+	}, Options{})
+	if err != nil {
+		t.Fatalf("Render() error = %v", err)
+	}
+	text := string(out)
+	for _, want := range []string{
+		`<h3 class="resource-heading" title="apps Deployment envoy-gateway-system/envoy-gateway" aria-label="apps Deployment envoy-gateway-system/envoy-gateway"><span class="resource-primary"><span class="resource-kind">Deployment</span> <span class="resource-name">envoy-gateway</span></span> <span class="resource-meta"><span class="resource-namespace">envoy-gateway-system</span> <span class="resource-meta-separator" aria-hidden="true">·</span> <span class="resource-api-group">apps</span></span></h3>`,
+		`<h3 class="resource-heading" title="ConfigMap default/app-config" aria-label="ConfigMap default/app-config"><span class="resource-primary"><span class="resource-kind">ConfigMap</span> <span class="resource-name">app-config</span></span> <span class="resource-meta"><span class="resource-namespace">default</span></span></h3>`,
+		`title="apps Deployment envoy-gateway-system/envoy-gateway"`,
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("HTML missing resource header marker %q:\n%s", want, text)
+		}
+	}
+}
+
 func TestRenderIncludesTypographyAndLogoContract(t *testing.T) {
 	out, err := Render(app.DiffResult{
 		Results: []diff.Result{{
@@ -403,6 +425,22 @@ func TestRenderIncludesTypographyAndLogoContract(t *testing.T) {
 		`background: #0a1421;`,
 	)
 	assertStyleRuleContains(t, text, ".resource h3", `margin: 0;`, `font-size: 16px;`, `line-height: 1.25;`)
+	assertStyleRuleContains(t, text, ".resource-heading",
+		`display: flex;`,
+		`align-items: center;`,
+		`gap: 8px;`,
+		`flex-wrap: wrap;`,
+	)
+	assertStyleRuleContains(t, text, ".resource-meta",
+		`display: inline-flex;`,
+		`font-size: 13px;`,
+		`color: var(--quiet);`,
+	)
+	assertStyleRuleContains(t, text, ".resource-api-group",
+		`border-radius: 999px;`,
+		`background: rgba(129, 144, 163, 0.13);`,
+		`color: var(--muted);`,
+	)
 	assertStyleRuleContains(t, text, ".diff-table", `margin-top: 0;`, `font-size: 13.5px;`, `line-height: 20px;`)
 	blankGutterSelector := strings.Join([]string{
 		".line-number-blank,",
@@ -575,7 +613,7 @@ func TestRenderCRDRemainsRenderedAndSelectableWhenHeuristicDefaultSkipsIt(t *tes
 	for _, want := range []string{
 		`data-target-resource="resource-0"`,
 		`<article class="resource" data-resource-id="resource-0"`,
-		`<h3>apiextensions.k8s.io CustomResourceDefinition widgets.example.io</h3>`,
+		`<h3 class="resource-heading" title="apiextensions.k8s.io CustomResourceDefinition widgets.example.io" aria-label="apiextensions.k8s.io CustomResourceDefinition widgets.example.io"><span class="resource-primary"><span class="resource-kind">CustomResourceDefinition</span> <span class="resource-name">widgets.example.io</span></span> <span class="resource-meta"><span class="resource-api-group">apiextensions.k8s.io</span></span></h3>`,
 	} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("HTML missing rendered/selectable CRD marker %q:\n%s", want, text)
@@ -883,7 +921,7 @@ func TestRenderLargeRenderableResourceEmitsLazyPlaceholderAndPayload(t *testing.
 		t.Fatalf("Render() error = %v", err)
 	}
 	text := string(out)
-	article := resourceArticleByHeading(t, text, "ConfigMap cm-large")
+	article := resourceArticleByCanonicalTitle(t, text, "ConfigMap cm-large")
 	for _, want := range []string{
 		`data-lazy-diff="true"`,
 		`data-lazy-state="pending"`,
@@ -998,7 +1036,7 @@ func TestRenderTooLargeResourceEmitsBlockedPlaceholder(t *testing.T) {
 		t.Fatalf("Render() error = %v", err)
 	}
 	text := string(out)
-	article := resourceArticleByHeading(t, text, "ConfigMap cm-too-large")
+	article := resourceArticleByCanonicalTitle(t, text, "ConfigMap cm-too-large")
 	for _, want := range []string{
 		`data-lazy-diff="blocked"`,
 		`data-lazy-state="blocked"`,

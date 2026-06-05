@@ -835,7 +835,7 @@ func renderResource(builder *bytes.Buffer, entry groupEntry) error {
 	)
 	builder.WriteString("<header class=\"resource-header\">\n")
 	builder.WriteString("<div class=\"resource-title\">\n")
-	fmt.Fprintf(builder, "<h3>%s</h3>\n", escape(resourceLabel(result.Resource)))
+	renderResourceHeading(builder, result.Resource)
 	builder.WriteString("</div>\n")
 	renderViewToggle(builder)
 	builder.WriteString("</header>\n")
@@ -1200,6 +1200,52 @@ func clampOffset(offset, textLength int) int {
 		return textLength
 	}
 	return offset
+}
+
+func renderResourceHeading(builder *bytes.Buffer, resource diff.Resource) {
+	label := resourceLabel(resource)
+	fmt.Fprintf(builder, "<h3 class=\"resource-heading\" title=\"%s\" aria-label=\"%s\">",
+		escape(label),
+		escape(label),
+	)
+	renderResourcePrimary(builder, resource, label)
+	renderResourceMeta(builder, resource)
+	builder.WriteString("</h3>\n")
+}
+
+func renderResourcePrimary(builder *bytes.Buffer, resource diff.Resource, fallback string) {
+	builder.WriteString("<span class=\"resource-primary\">")
+	switch {
+	case resource.Kind != "" && resource.Name != "":
+		fmt.Fprintf(builder, "<span class=\"resource-kind\">%s</span> <span class=\"resource-name\">%s</span>",
+			escape(resource.Kind),
+			escape(resource.Name),
+		)
+	case resource.Kind != "":
+		fmt.Fprintf(builder, "<span class=\"resource-kind\">%s</span>", escape(resource.Kind))
+	case resource.Name != "":
+		fmt.Fprintf(builder, "<span class=\"resource-name\">%s</span>", escape(resource.Name))
+	default:
+		fmt.Fprintf(builder, "<span class=\"resource-name\">%s</span>", escape(fallback))
+	}
+	builder.WriteString("</span>")
+}
+
+func renderResourceMeta(builder *bytes.Buffer, resource diff.Resource) {
+	if resource.Namespace == "" && resource.Group == "" {
+		return
+	}
+	builder.WriteString(" <span class=\"resource-meta\">")
+	if resource.Namespace != "" {
+		fmt.Fprintf(builder, "<span class=\"resource-namespace\">%s</span>", escape(resource.Namespace))
+	}
+	if resource.Namespace != "" && resource.Group != "" {
+		builder.WriteString(" <span class=\"resource-meta-separator\" aria-hidden=\"true\">·</span> ")
+	}
+	if resource.Group != "" {
+		fmt.Fprintf(builder, "<span class=\"resource-api-group\">%s</span>", escape(resource.Group))
+	}
+	builder.WriteString("</span>")
 }
 
 func resourceLabel(resource diff.Resource) string {
