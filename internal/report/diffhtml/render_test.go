@@ -1,6 +1,7 @@
 package diffhtml
 
 import (
+	"strconv"
 	"strings"
 	"testing"
 
@@ -522,6 +523,154 @@ func TestRenderDefaultResourceSelectorMissFallsBack(t *testing.T) {
 	}
 }
 
+func TestRenderDefaultResourceHeuristicCRDLosesToModifiedFallback(t *testing.T) {
+	out, err := Render(app.DiffResult{
+		Results: []diff.Result{
+			resourceChange("demo", "apiextensions.k8s.io", "CustomResourceDefinition", "", "widgets.example.io", diff.ChangeModified, diffWithChangedLines("-spec: old", "+spec: new", "-schema: old", "+schema: new")),
+			resourceChange("demo", "example.io", "Widget", "default", "runtime", diff.ChangeModified, diffWithChangedLines("-value: old", "+value: new")),
+		},
+	}, Options{})
+	if err != nil {
+		t.Fatalf("Render() error = %v", err)
+	}
+	text := string(out)
+	if got := defaultResourceFromBody(t, text); got != "resource-1" {
+		t.Fatalf("default resource = %q, want non-CRD fallback resource-1\n%s", got, text)
+	}
+}
+
+func TestRenderCRDRemainsRenderedAndSelectableWhenHeuristicDefaultSkipsIt(t *testing.T) {
+	out, err := Render(app.DiffResult{
+		Results: []diff.Result{
+			resourceChange("demo", "apiextensions.k8s.io", "CustomResourceDefinition", "", "widgets.example.io", diff.ChangeModified, diffWithChangedLines("-spec: old", "+spec: new", "-schema: old", "+schema: new")),
+			resourceChange("demo", "example.io", "Widget", "default", "runtime", diff.ChangeModified, diffWithChangedLines("-value: old", "+value: new")),
+		},
+	}, Options{})
+	if err != nil {
+		t.Fatalf("Render() error = %v", err)
+	}
+	text := string(out)
+	if got := defaultResourceFromBody(t, text); got != "resource-1" {
+		t.Fatalf("default resource = %q, want non-CRD fallback resource-1\n%s", got, text)
+	}
+	for _, want := range []string{
+		`data-target-resource="resource-0"`,
+		`<article class="resource" data-resource-id="resource-0"`,
+		`<h3>apiextensions.k8s.io CustomResourceDefinition widgets.example.io</h3>`,
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("HTML missing rendered/selectable CRD marker %q:\n%s", want, text)
+		}
+	}
+}
+
+func TestRenderDefaultResourceHeuristicOversizedModifiedLosesToReadableSameRank(t *testing.T) {
+	out, err := Render(app.DiffResult{
+		Results: []diff.Result{
+			resourceChange("demo", "", "ConfigMap", "default", "oversized", diff.ChangeModified, diffWithRawByteCount(t, defaultResourceRawBytesLimit+1)),
+			resourceChange("demo", "", "Secret", "default", "readable", diff.ChangeModified, diffWithChangedLines("-mode: old", "+mode: new")),
+		},
+	}, Options{})
+	if err != nil {
+		t.Fatalf("Render() error = %v", err)
+	}
+	text := string(out)
+	if got := defaultResourceFromBody(t, text); got != "resource-1" {
+		t.Fatalf("default resource = %q, want readable same-rank resource-1\n%s", got, text)
+	}
+}
+
+func TestRenderDefaultResourceSelectorCanPickOversizedCRD(t *testing.T) {
+	out, err := Render(app.DiffResult{
+		Results: []diff.Result{
+			resourceChange("demo", "apps", "Deployment", "default", "api", diff.ChangeModified, diffWithChangedLines("-replicas: 2", "+replicas: 3")),
+			resourceChange("demo", "apiextensions.k8s.io", "CustomResourceDefinition", "", "widgets.example.io", diff.ChangeModified, diffWithRawByteCount(t, defaultResourceRawBytesLimit+1)),
+		},
+	}, Options{
+		DefaultResource: DefaultResourceSelector{
+			Kind: "CustomResourceDefinition",
+			Name: "widgets.example.io",
+		},
+	})
+	if err != nil {
+		t.Fatalf("Render() error = %v", err)
+	}
+	text := string(out)
+	if got := defaultResourceFromBody(t, text); got != "resource-1" {
+		t.Fatalf("default resource = %q, want explicit oversized CRD resource-1\n%s", got, text)
+	}
+}
+
+func TestRenderDefaultResourceHeuristicThresholdBoundaries(t *testing.T) {
+	tests := []struct {
+		name    string
+		results []diff.Result
+	}{
+		{
+			name: "raw bytes at 20 KiB are readable and 20 KiB plus one is oversized",
+			results: []diff.Result{
+				resourceChange("demo", "", "ConfigMap", "default", "over-raw", diff.ChangeModified, diffWithRawByteCount(t, defaultResourceRawBytesLimit+1)),
+				resourceChange("demo", "", "Secret", "default", "at-raw", diff.ChangeModified, diffWithRawByteCount(t, defaultResourceRawBytesLimit)),
+			},
+		},
+		{
+			name: "400 changed lines are readable and 401 changed lines are oversized",
+			results: []diff.Result{
+				resourceChange("demo", "", "ConfigMap", "default", "over-lines", diff.ChangeModified, diffWithChangedLineCount(defaultResourceChangedLinesLimit+1)),
+				resourceChange("demo", "", "Secret", "default", "at-lines", diff.ChangeModified, diffWithChangedLineCount(defaultResourceChangedLinesLimit)),
+			},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			out, err := Render(app.DiffResult{Results: test.results}, Options{})
+			if err != nil {
+				t.Fatalf("Render() error = %v", err)
+			}
+			text := string(out)
+			if got := defaultResourceFromBody(t, text); got != "resource-1" {
+				t.Fatalf("default resource = %q, want threshold-readable resource-1\n%s", got, text)
+			}
+		})
+	}
+}
+
+func TestRenderDefaultResourceHeuristicFallbackPrefersSmallerDiffWhenAllCandidatesNoisyOrOversized(t *testing.T) {
+	tests := []struct {
+		name    string
+		results []diff.Result
+	}{
+		{
+			name: "all oversized",
+			results: []diff.Result{
+				resourceChange("demo", "", "ConfigMap", "default", "larger", diff.ChangeModified, diffWithRawByteCount(t, defaultResourceRawBytesLimit+2048)),
+				resourceChange("demo", "", "Secret", "default", "smaller", diff.ChangeModified, diffWithRawByteCount(t, defaultResourceRawBytesLimit+1)),
+			},
+		},
+		{
+			name: "all CRDs",
+			results: []diff.Result{
+				resourceChange("demo", "apiextensions.k8s.io", "CustomResourceDefinition", "", "large.example.io", diff.ChangeModified, diffWithRawByteCount(t, 10*1024)),
+				resourceChange("demo", "apiextensions.k8s.io", "CustomResourceDefinition", "", "small.example.io", diff.ChangeModified, diffWithRawByteCount(t, 2*1024)),
+			},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			out, err := Render(app.DiffResult{Results: test.results}, Options{})
+			if err != nil {
+				t.Fatalf("Render() error = %v", err)
+			}
+			text := string(out)
+			if got := defaultResourceFromBody(t, text); got != "resource-1" {
+				t.Fatalf("default resource = %q, want smaller nonpreferred resource-1\n%s", got, text)
+			}
+		})
+	}
+}
+
 func TestRenderDefaultResourceHeuristic(t *testing.T) {
 	tests := []struct {
 		name    string
@@ -622,6 +771,23 @@ func TestRenderDefaultResourceHeuristic(t *testing.T) {
 				t.Fatalf("default resource = %q, want %s\n%s", got, test.want, text)
 			}
 		})
+	}
+}
+
+func TestMeasureDiffCountsRawBytesChangedLinesAndParsedRows(t *testing.T) {
+	result := diff.Result{
+		Diff: "--- old\n+++ new\n@@ -10,3 +10,3 @@\n context\n-old\n+new\n",
+	}
+	got := measureDiff(result)
+	want := resourceDiffMetrics{
+		rawBytes:     len(result.Diff),
+		addedLines:   1,
+		removedLines: 1,
+		changedLines: 2,
+		parsedRows:   3,
+	}
+	if got != want {
+		t.Fatalf("measureDiff() = %+v, want %+v", got, want)
 	}
 }
 
@@ -1061,6 +1227,38 @@ func resourceChange(parentName, group, kind, namespace, name string, change diff
 
 func diffWithChangedLines(lines ...string) string {
 	return "--- old\n+++ new\n@@ -1,1 +1,1 @@\n" + strings.Join(lines, "\n") + "\n"
+}
+
+func diffWithChangedLineCount(changedLines int) string {
+	removed := changedLines / 2
+	added := changedLines - removed
+	return diffWithLineCounts(removed, added)
+}
+
+func diffWithLineCounts(removed, added int) string {
+	var builder strings.Builder
+	builder.WriteString("--- old\n+++ new\n@@ -1,")
+	builder.WriteString(strconv.Itoa(removed))
+	builder.WriteString(" +1,")
+	builder.WriteString(strconv.Itoa(added))
+	builder.WriteString(" @@\n")
+	for range removed {
+		builder.WriteString("-old\n")
+	}
+	for range added {
+		builder.WriteString("+new\n")
+	}
+	return builder.String()
+}
+
+func diffWithRawByteCount(t *testing.T, rawBytes int) string {
+	t.Helper()
+	prefix := "--- old\n+++ new\n@@ -1,1 +1,1 @@\n-a\n+"
+	suffix := "\n"
+	if rawBytes < len(prefix)+len(suffix) {
+		t.Fatalf("raw byte diff length %d is smaller than minimum %d", rawBytes, len(prefix)+len(suffix))
+	}
+	return prefix + strings.Repeat("b", rawBytes-len(prefix)-len(suffix)) + suffix
 }
 
 func diffResult(namespace, appName, resourceName, diffText string) diff.Result {

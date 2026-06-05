@@ -13,7 +13,11 @@ import (
 	"github.com/sholdee/drydock/internal/diff"
 )
 
-const defaultTitle = "drydock diff"
+const (
+	defaultTitle                     = "drydock diff"
+	defaultResourceRawBytesLimit     = 20 * 1024
+	defaultResourceChangedLinesLimit = 400
+)
 
 type Options struct {
 	Title           string
@@ -37,14 +41,23 @@ type appGroup struct {
 }
 
 type groupEntry struct {
-	index  int
-	result diff.Result
+	index   int
+	result  diff.Result
+	metrics resourceDiffMetrics
 }
 
 type resourceChangeCounts struct {
 	changed int
 	added   int
 	removed int
+}
+
+type resourceDiffMetrics struct {
+	rawBytes     int
+	addedLines   int
+	removedLines int
+	changedLines int
+	parsedRows   int
 }
 
 func Render(result app.DiffResult, options Options) ([]byte, error) {
@@ -121,10 +134,10 @@ func groupedResults(results []diff.Result) []appGroup {
 			group = &appGroup{id: id}
 			byID[id] = group
 		}
-		group.entries = append(group.entries, groupEntry{index: index, result: result})
-		added, removed := lineChanges(result.Diff)
-		group.added += added
-		group.removed += removed
+		metrics := measureDiff(result)
+		group.entries = append(group.entries, groupEntry{index: index, result: result, metrics: metrics})
+		group.added += metrics.addedLines
+		group.removed += metrics.removedLines
 	}
 
 	groups := make([]appGroup, 0, len(byID))
@@ -199,12 +212,10 @@ func heuristicDefaultResource(entries []groupEntry) (groupEntry, bool) {
 	var bestScore defaultResourceScore
 	var found bool
 	for _, entry := range entries {
-		score := scoreDefaultResource(entry.result)
+		score := scoreDefaultResource(entry.result, entry.metrics)
 		if score.rank == 0 {
 			continue
 		}
-		added, removed := lineChanges(entry.result.Diff)
-		score.changed = added + removed
 		if !found || score.beats(bestScore) {
 			best = entry
 			bestScore = score
@@ -215,25 +226,49 @@ func heuristicDefaultResource(entries []groupEntry) (groupEntry, bool) {
 }
 
 type defaultResourceScore struct {
-	rank    int
-	signal  bool
-	changed int
+	rank         int
+	readable     bool
+	signal       bool
+	rawBytes     int
+	changedLines int
+	parsedRows   int
 }
 
 func (score defaultResourceScore) beats(other defaultResourceScore) bool {
 	if score.rank != other.rank {
 		return score.rank < other.rank
 	}
-	if score.signal != other.signal {
-		return score.signal
+	if score.readable != other.readable {
+		return score.readable
 	}
-	return score.changed > other.changed
+	if score.readable {
+		if score.signal != other.signal {
+			return score.signal
+		}
+		return score.changedLines > other.changedLines
+	}
+	if score.rawBytes != other.rawBytes {
+		return score.rawBytes < other.rawBytes
+	}
+	if score.changedLines != other.changedLines {
+		return score.changedLines < other.changedLines
+	}
+	if score.parsedRows != other.parsedRows {
+		return score.parsedRows < other.parsedRows
+	}
+	return score.signal && !other.signal
 }
 
-func scoreDefaultResource(result diff.Result) defaultResourceScore {
+func scoreDefaultResource(result diff.Result, metrics resourceDiffMetrics) defaultResourceScore {
+	score := defaultResourceScore{
+		readable:     isReadableDefaultResource(result, metrics),
+		rawBytes:     metrics.rawBytes,
+		changedLines: metrics.changedLines,
+		parsedRows:   metrics.parsedRows,
+	}
 	switch result.Change {
 	case diff.ChangeModified:
-		score := defaultResourceScore{signal: hasRolloutImpactSignal(result.Diff)}
+		score.signal = hasRolloutImpactSignal(result.Diff)
 		switch {
 		case isWorkloadController(result.Resource.Kind):
 			score.rank = 1
@@ -248,12 +283,27 @@ func scoreDefaultResource(result diff.Result) defaultResourceScore {
 		}
 		return score
 	case diff.ChangeAdded:
-		return defaultResourceScore{rank: 6}
+		score.rank = 6
+		return score
 	case diff.ChangeRemoved:
-		return defaultResourceScore{rank: 7}
+		score.rank = 7
+		return score
 	default:
 		return defaultResourceScore{}
 	}
+}
+
+func isReadableDefaultResource(result diff.Result, metrics resourceDiffMetrics) bool {
+	return !isNoisyDefaultResource(result) && !isOversizedDefaultResource(metrics)
+}
+
+func isNoisyDefaultResource(result diff.Result) bool {
+	return result.Resource.Kind == "CustomResourceDefinition"
+}
+
+func isOversizedDefaultResource(metrics resourceDiffMetrics) bool {
+	return metrics.rawBytes > defaultResourceRawBytesLimit ||
+		metrics.changedLines > defaultResourceChangedLinesLimit
 }
 
 func isWorkloadController(kind string) bool {
@@ -384,6 +434,22 @@ func lineChanges(text string) (int, int) {
 	return added, removed
 }
 
+func measureDiff(result diff.Result) resourceDiffMetrics {
+	added, removed := lineChanges(result.Diff)
+	hunks := parseUnifiedDiff(result.Diff)
+	var parsedRows int
+	for _, hunk := range hunks {
+		parsedRows += len(hunk.Rows)
+	}
+	return resourceDiffMetrics{
+		rawBytes:     len(result.Diff),
+		addedLines:   added,
+		removedLines: removed,
+		changedLines: added + removed,
+		parsedRows:   parsedRows,
+	}
+}
+
 func renderSummary(builder *bytes.Buffer, apps, resources int, resourceCounts resourceChangeCounts, addedLines, removedLines int) {
 	type badge struct {
 		class string
@@ -443,7 +509,7 @@ func renderTree(builder *bytes.Buffer, groups []appGroup) {
 		for _, entry := range group.entries {
 			label := resourceLabel(entry.result.Resource)
 			treeLabel := treeResourceLabel(entry.result.Resource, treeLabelCounts)
-			added, removed := lineChanges(entry.result.Diff)
+			added, removed := entry.metrics.addedLines, entry.metrics.removedLines
 			searchText := strings.ToLower(strings.Join([]string{
 				group.id,
 				label,
