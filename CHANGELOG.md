@@ -1,5 +1,24 @@
 # Changelog
 
+## [0.1.16](https://github.com/sholdee/drydock/compare/v0.1.15...v0.1.16) (2026-06-05)
+
+
+### Features
+
+* add diff sidebar keyboard navigation ([9026622](https://github.com/sholdee/drydock/commit/9026622fb3d74ced17df57226dea0df01201ee81))
+* clarify html diff resource headings ([2bdfc3b](https://github.com/sholdee/drydock/commit/2bdfc3ba768068b6122535ae77ce7da2fc740dd1))
+* refine HTML diff report UX ([41cae90](https://github.com/sholdee/drydock/commit/41cae90fbff19cb9d27c60fabe2ea264354a60d3))
+
+
+### Bug Fixes
+
+* shorten diff comment heading ([1ab2eeb](https://github.com/sholdee/drydock/commit/1ab2eeb9b74854b0ccbfe20bc2cc52275643abb2))
+
+
+### Documentation
+
+* refresh pr comment example ([a06aa67](https://github.com/sholdee/drydock/commit/a06aa675fe30de2a8a0b779d620de296ff3104ef))
+
 ## [0.1.15](https://github.com/sholdee/drydock/compare/v0.1.14...v0.1.15) (2026-06-05)
 
 
