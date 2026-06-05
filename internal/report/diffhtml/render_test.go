@@ -274,7 +274,7 @@ func TestRenderIncludesTypographyAndLogoContract(t *testing.T) {
 	text := string(out)
 	assertStyleRuleContains(t, text, ":root",
 		`font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;`,
-		`--topbar-height: 48px;`,
+		`--topbar-height: 50px;`,
 		`--sidebar-width: 320px;`,
 		`--sidebar-width-default: 320px;`,
 		`--sidebar-width-min: 240px;`,
@@ -408,7 +408,7 @@ func TestRenderIncludesTypographyAndLogoContract(t *testing.T) {
 		".diff-row.removed .line-code-blank",
 	}, "\n")
 	assertStyleRuleContains(t, text, blankStripeSelector,
-		`background-size: 10px 10px;`,
+		`background-size: 6.67px 6.67px;`,
 		`background-repeat: repeat;`,
 		`rgba(129, 144, 163, 0.34) 46%,`,
 		`rgba(129, 144, 163, 0.34) 54%,`,

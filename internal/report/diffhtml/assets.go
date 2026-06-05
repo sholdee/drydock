@@ -20,7 +20,7 @@ const reviewStyles = `
 	--focus: #69b8ff;
 	--code-bg: #050b12;
 	--shadow: rgba(0, 0, 0, 0.32);
-	--topbar-height: 48px;
+	--topbar-height: 50px;
 	--sidebar-width: 320px;
 	--sidebar-width-default: 320px;
 	--sidebar-width-min: 240px;
@@ -454,7 +454,7 @@ body.is-resizing-sidebar .sidebar-resizer::before {
 			transparent 54%,
 			transparent 100%
 		);
-	background-size: 10px 10px;
+	background-size: 6.67px 6.67px;
 	background-repeat: repeat;
 }
 .diff-table.one-sided .line-code {
