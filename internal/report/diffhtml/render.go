@@ -86,11 +86,19 @@ type lazyDiffPayloadHunk struct {
 }
 
 type lazyDiffPayloadRow struct {
-	Kind        string `json:"kind"`
-	LeftNumber  int    `json:"leftNumber"`
-	RightNumber int    `json:"rightNumber"`
-	LeftText    string `json:"leftText"`
-	RightText   string `json:"rightText"`
+	Kind        string                       `json:"kind"`
+	LeftNumber  int                          `json:"leftNumber"`
+	RightNumber int                          `json:"rightNumber"`
+	LeftText    string                       `json:"leftText"`
+	RightText   string                       `json:"rightText"`
+	LeftSyntax  []lazyDiffPayloadSyntaxRange `json:"leftSyntax,omitempty"`
+	RightSyntax []lazyDiffPayloadSyntaxRange `json:"rightSyntax,omitempty"`
+}
+
+type lazyDiffPayloadSyntaxRange struct {
+	Start int    `json:"start"`
+	End   int    `json:"end"`
+	Class string `json:"class"`
 }
 
 func Render(result app.DiffResult, options Options) ([]byte, error) {
@@ -553,7 +561,7 @@ func lazyDiffPayloadHunks(hunks []diffHunk) []lazyDiffPayloadHunk {
 	for _, hunk := range hunks {
 		payloadRows := make([]lazyDiffPayloadRow, 0, len(hunk.Rows))
 		for _, row := range hunk.Rows {
-			payloadRows = append(payloadRows, lazyDiffPayloadRow(row))
+			payloadRows = append(payloadRows, lazyDiffPayloadRowFromDiffRow(row))
 		}
 		payloadHunks = append(payloadHunks, lazyDiffPayloadHunk{
 			Header: hunk.Header,
@@ -561,6 +569,35 @@ func lazyDiffPayloadHunks(hunks []diffHunk) []lazyDiffPayloadHunk {
 		})
 	}
 	return payloadHunks
+}
+
+func lazyDiffPayloadRowFromDiffRow(row diffRow) lazyDiffPayloadRow {
+	return lazyDiffPayloadRow{
+		Kind:        row.Kind,
+		LeftNumber:  row.LeftNumber,
+		RightNumber: row.RightNumber,
+		LeftText:    row.LeftText,
+		RightText:   row.RightText,
+		LeftSyntax:  lazyDiffPayloadSyntaxRanges(row.LeftText),
+		RightSyntax: lazyDiffPayloadSyntaxRanges(row.RightText),
+	}
+}
+
+func lazyDiffPayloadSyntaxRanges(text string) []lazyDiffPayloadSyntaxRange {
+	runes := []rune(text)
+	syntax := normalizedSyntaxRanges(lexYAMLLine(text), len(runes))
+	if len(syntax) == 0 {
+		return nil
+	}
+	payload := make([]lazyDiffPayloadSyntaxRange, 0, len(syntax))
+	for _, token := range syntax {
+		payload = append(payload, lazyDiffPayloadSyntaxRange{
+			Start: token.start,
+			End:   token.end,
+			Class: token.class,
+		})
+	}
+	return payload
 }
 
 func scriptDataSafeJSON(data []byte) string {

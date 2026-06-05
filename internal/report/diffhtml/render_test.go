@@ -916,6 +916,78 @@ func TestRenderLargeRenderableResourceEmitsLazyPlaceholderAndPayload(t *testing.
 	}
 }
 
+func TestRenderLazyPayloadRowsIncludeYAMLSyntaxMetadata(t *testing.T) {
+	var diffBuilder strings.Builder
+	diffBuilder.WriteString("--- old\n+++ new\n@@ -1,2000 +1,2000 @@\n")
+	diffBuilder.WriteString(" replicas: 3\n")
+	diffBuilder.WriteString("-enabled: false\n")
+	diffBuilder.WriteString("+enabled: true\n")
+	for range 1998 {
+		diffBuilder.WriteString(" filler: plain\n")
+	}
+	out, err := Render(app.DiffResult{
+		Results: []diff.Result{
+			resourceChange("demo", "", "ConfigMap", "", "cm-large-yaml", diff.ChangeModified, diffBuilder.String()),
+		},
+	}, Options{})
+	if err != nil {
+		t.Fatalf("Render() error = %v", err)
+	}
+
+	payload := payloadScriptData(t, string(out), "resource-0")
+	var decoded lazyDiffPayload
+	if err := json.Unmarshal([]byte(payload), &decoded); err != nil {
+		t.Fatalf("lazy payload is not valid JSON: %v\n%s", err, payload)
+	}
+	if len(decoded.Hunks) != 1 || len(decoded.Hunks[0].Rows) < 3 {
+		t.Fatalf("decoded lazy payload missing expected rows: %+v", decoded)
+	}
+
+	contextRow := decoded.Hunks[0].Rows[0]
+	if contextRow.LeftText != "replicas: 3" || contextRow.RightText != "replicas: 3" {
+		t.Fatalf("decoded context row text = %#v", contextRow)
+	}
+	assertLazySyntaxRanges(t, contextRow.LeftSyntax,
+		lazyDiffPayloadSyntaxRange{Start: 0, End: 8, Class: yamlKeyClass},
+		lazyDiffPayloadSyntaxRange{Start: 8, End: 9, Class: yamlPunctuationClass},
+		lazyDiffPayloadSyntaxRange{Start: 10, End: 11, Class: yamlNumberClass},
+	)
+	assertLazySyntaxRanges(t, contextRow.RightSyntax,
+		lazyDiffPayloadSyntaxRange{Start: 0, End: 8, Class: yamlKeyClass},
+		lazyDiffPayloadSyntaxRange{Start: 8, End: 9, Class: yamlPunctuationClass},
+		lazyDiffPayloadSyntaxRange{Start: 10, End: 11, Class: yamlNumberClass},
+	)
+
+	removedRow := decoded.Hunks[0].Rows[1]
+	addedRow := decoded.Hunks[0].Rows[2]
+	assertLazySyntaxRanges(t, removedRow.LeftSyntax,
+		lazyDiffPayloadSyntaxRange{Start: 0, End: 7, Class: yamlKeyClass},
+		lazyDiffPayloadSyntaxRange{Start: 7, End: 8, Class: yamlPunctuationClass},
+		lazyDiffPayloadSyntaxRange{Start: 9, End: 14, Class: yamlBoolClass},
+	)
+	if len(removedRow.RightSyntax) != 0 {
+		t.Fatalf("removed-only row right syntax = %+v, want none", removedRow.RightSyntax)
+	}
+	assertLazySyntaxRanges(t, addedRow.RightSyntax,
+		lazyDiffPayloadSyntaxRange{Start: 0, End: 7, Class: yamlKeyClass},
+		lazyDiffPayloadSyntaxRange{Start: 7, End: 8, Class: yamlPunctuationClass},
+		lazyDiffPayloadSyntaxRange{Start: 9, End: 13, Class: yamlBoolClass},
+	)
+	if len(addedRow.LeftSyntax) != 0 {
+		t.Fatalf("added-only row left syntax = %+v, want none", addedRow.LeftSyntax)
+	}
+
+	syntaxJSON, err := json.Marshal(contextRow.LeftSyntax)
+	if err != nil {
+		t.Fatalf("Marshal(left syntax) error = %v", err)
+	}
+	for _, forbidden := range []string{"replicas", "enabled", "plain"} {
+		if strings.Contains(string(syntaxJSON), forbidden) {
+			t.Fatalf("syntax metadata duplicated row text marker %q: %s", forbidden, syntaxJSON)
+		}
+	}
+}
+
 func TestRenderTooLargeResourceEmitsBlockedPlaceholder(t *testing.T) {
 	out, err := Render(app.DiffResult{
 		Results: []diff.Result{
@@ -951,7 +1023,7 @@ func TestRenderTooLargeResourceEmitsBlockedPlaceholder(t *testing.T) {
 }
 
 func TestRenderLazyPayloadScriptDataEscapesHostileContent(t *testing.T) {
-	hostile := "</script><script>alert(\"x\")</script><img src=x onerror=alert(1)> \"quote\" 'single' `backtick` & " + "\u2028" + "\u2029"
+	hostile := "message: </script><script>alert(\"x\")</script><img src=x onerror=alert(1)> \"quote\" 'single' `backtick` & " + "\u2028" + "\u2029"
 	out, err := Render(app.DiffResult{
 		Results: []diff.Result{
 			resourceChange("demo", "", "ConfigMap", "", "cm-hostile", diff.ChangeModified, largeDiffWithHostileContent(hostile)),
@@ -1004,6 +1076,10 @@ func TestRenderLazyPayloadScriptDataEscapesHostileContent(t *testing.T) {
 	if decoded.Hunks[0].Rows[0].LeftText != hostile {
 		t.Fatalf("decoded hostile text = %q, want %q", decoded.Hunks[0].Rows[0].LeftText, hostile)
 	}
+	assertLazySyntaxRangePrefix(t, decoded.Hunks[0].Rows[0].LeftSyntax,
+		lazyDiffPayloadSyntaxRange{Start: 0, End: 7, Class: yamlKeyClass},
+		lazyDiffPayloadSyntaxRange{Start: 7, End: 8, Class: yamlPunctuationClass},
+	)
 }
 
 func TestRenderLazyScriptContract(t *testing.T) {
@@ -1026,6 +1102,16 @@ func TestRenderLazyScriptContract(t *testing.T) {
 		`renderLazyResource(button.closest('[data-resource-id]'), currentView());`,
 		`if (resource?.dataset.lazyState === 'partial')`,
 		`renderLazyResource(resource, currentView());`,
+		`const syntaxClassWhitelist = new Set([`,
+		`'yaml-key'`,
+		`'yaml-punctuation'`,
+		`const normalizeSyntaxRanges = (syntax, length) => {`,
+		`syntaxClassWhitelist.has(className)`,
+		`const appendSyntaxSegment = (parent, runes, start, end, syntax) => {`,
+		`span.classList.add(range.className);`,
+		`appendHighlightedText(cell, text, options.highlights || [], options.highlightClass || 'added', options.syntax || []);`,
+		`syntax: row?.leftSyntax`,
+		`syntax: row?.rightSyntax`,
 		`document.createElement('table')`,
 		`document.createTextNode`,
 		`error.setAttribute('role', 'alert');`,
@@ -1574,6 +1660,30 @@ func assertCount(t *testing.T, text, needle string, want int) {
 	t.Helper()
 	if got := strings.Count(text, needle); got != want {
 		t.Fatalf("strings.Count(%q) = %d, want %d\n%s", needle, got, want, text)
+	}
+}
+
+func assertLazySyntaxRanges(t *testing.T, got []lazyDiffPayloadSyntaxRange, want ...lazyDiffPayloadSyntaxRange) {
+	t.Helper()
+	if len(got) != len(want) {
+		t.Fatalf("syntax ranges = %+v, want %+v", got, want)
+	}
+	for index := range want {
+		if got[index] != want[index] {
+			t.Fatalf("syntax range[%d] = %+v, want %+v\nall ranges: %+v", index, got[index], want[index], got)
+		}
+	}
+}
+
+func assertLazySyntaxRangePrefix(t *testing.T, got []lazyDiffPayloadSyntaxRange, want ...lazyDiffPayloadSyntaxRange) {
+	t.Helper()
+	if len(got) < len(want) {
+		t.Fatalf("syntax ranges = %+v, want prefix %+v", got, want)
+	}
+	for index := range want {
+		if got[index] != want[index] {
+			t.Fatalf("syntax range prefix[%d] = %+v, want %+v\nall ranges: %+v", index, got[index], want[index], got)
+		}
 	}
 }
 

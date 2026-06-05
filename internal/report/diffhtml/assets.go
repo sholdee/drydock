@@ -954,30 +954,134 @@ const reviewScript = `
 		return { left, right };
 	};
 
-	const appendHighlightedText = (cell, text, highlights, className) => {
+	const syntaxClassWhitelist = new Set([
+		'yaml-key',
+		'yaml-string',
+		'yaml-number',
+		'yaml-bool',
+		'yaml-null',
+		'yaml-comment',
+		'yaml-doc',
+		'yaml-anchor',
+		'yaml-alias',
+		'yaml-tag',
+		'yaml-punctuation',
+	]);
+
+	const clampOffset = (value, length) => {
+		const number = Math.trunc(Number(value));
+		if (!Number.isFinite(number) || number < 0) {
+			return 0;
+		}
+		return Math.min(number, length);
+	};
+
+	const normalizeInlineRanges = (ranges, length) => {
+		if (!Array.isArray(ranges) || !length) {
+			return [];
+		}
+		const sorted = ranges
+			.map((range) => ({
+				start: clampOffset(range?.start, length),
+				end: clampOffset(range?.end, length),
+			}))
+			.sort((left, right) => left.start - right.start || left.end - right.end);
+		const normalized = [];
+		let cursor = 0;
+		sorted.forEach((range) => {
+			const start = Math.max(range.start, cursor);
+			const end = range.end;
+			if (start < end) {
+				normalized.push({ start, end });
+				cursor = end;
+			}
+		});
+		return normalized;
+	};
+
+	const normalizeSyntaxRanges = (syntax, length) => {
+		if (!Array.isArray(syntax) || !length) {
+			return [];
+		}
+		const sorted = syntax
+			.map((range) => {
+				const className = String(range?.class || '');
+				if (!syntaxClassWhitelist.has(className)) {
+					return null;
+				}
+				return {
+					start: clampOffset(range?.start, length),
+					end: clampOffset(range?.end, length),
+					className,
+				};
+			})
+			.filter(Boolean)
+			.sort((left, right) => left.start - right.start || left.end - right.end);
+		const normalized = [];
+		let cursor = 0;
+		sorted.forEach((range) => {
+			const start = Math.max(range.start, cursor);
+			const end = range.end;
+			if (start < end) {
+				normalized.push({ start, end, className: range.className });
+				cursor = end;
+			}
+		});
+		return normalized;
+	};
+
+	const appendTextRunes = (parent, runes, start, end) => {
+		if (start < end) {
+			parent.appendChild(document.createTextNode(runes.slice(start, end).join('')));
+		}
+	};
+
+	const appendSyntaxSegment = (parent, runes, start, end, syntax) => {
+		let cursor = start;
+		syntax.forEach((range) => {
+			if (range.end <= start || range.start >= end) {
+				return;
+			}
+			const tokenStart = Math.max(range.start, start);
+			const tokenEnd = Math.min(range.end, end);
+			appendTextRunes(parent, runes, cursor, tokenStart);
+			if (tokenStart < tokenEnd) {
+				const span = document.createElement('span');
+				span.classList.add(range.className);
+				appendTextRunes(span, runes, tokenStart, tokenEnd);
+				parent.appendChild(span);
+				cursor = tokenEnd;
+			}
+		});
+		appendTextRunes(parent, runes, cursor, end);
+	};
+
+	const appendHighlightedText = (cell, text, highlights, className, syntax) => {
 		const value = String(text || '');
-		if (!Array.isArray(highlights) || highlights.length === 0) {
-			cell.textContent = value;
+		const runes = Array.from(value);
+		const inlineRanges = normalizeInlineRanges(highlights, runes.length);
+		const syntaxRanges = normalizeSyntaxRanges(syntax, runes.length);
+		if (inlineRanges.length === 0) {
+			appendSyntaxSegment(cell, runes, 0, runes.length, syntaxRanges);
 			return;
 		}
-		const runes = Array.from(value);
 		let cursor = 0;
-		highlights.forEach((highlight) => {
-			const start = Math.max(cursor, Math.min(Number(highlight.start) || 0, runes.length));
-			const end = Math.max(start, Math.min(Number(highlight.end) || 0, runes.length));
+		inlineRanges.forEach((highlight) => {
+			const start = highlight.start;
+			const end = highlight.end;
 			if (start > cursor) {
-				cell.appendChild(document.createTextNode(runes.slice(cursor, start).join('')));
+				appendSyntaxSegment(cell, runes, cursor, start, syntaxRanges);
 			}
 			if (start < end) {
 				const span = document.createElement('span');
 				span.classList.add('inline-change', className === 'removed' ? 'removed' : 'added');
-				span.textContent = runes.slice(start, end).join('');
+				appendSyntaxSegment(span, runes, start, end, syntaxRanges);
 				cell.appendChild(span);
+				cursor = end;
 			}
-			cursor = end;
 		});
 		if (cursor < runes.length) {
-			cell.appendChild(document.createTextNode(runes.slice(cursor).join('')));
+			appendSyntaxSegment(cell, runes, cursor, runes.length, syntaxRanges);
 		}
 	};
 
@@ -999,7 +1103,7 @@ const reviewScript = `
 			cell.classList.add('line-code-blank');
 			return cell;
 		}
-		appendHighlightedText(cell, text, options.highlights || [], options.highlightClass || 'added');
+		appendHighlightedText(cell, text, options.highlights || [], options.highlightClass || 'added', options.syntax || []);
 		return cell;
 	};
 
@@ -1029,7 +1133,10 @@ const reviewScript = `
 				const diffRow = document.createElement('tr');
 				diffRow.classList.add('diff-row', change);
 				diffRow.appendChild(lineNumberCell(change === 'added' ? row.rightNumber : row.leftNumber));
-				diffRow.appendChild(lineCodeCell(change === 'added' ? row.rightText : row.leftText, { highlightClass: change }));
+				diffRow.appendChild(lineCodeCell(change === 'added' ? row.rightText : row.leftText, {
+					highlightClass: change,
+					syntax: change === 'added' ? row.rightSyntax : row.leftSyntax,
+				}));
 				tbody.appendChild(diffRow);
 			});
 		});
@@ -1053,12 +1160,14 @@ const reviewScript = `
 					blank: !row?.leftNumber,
 					highlights: highlights.left[index],
 					highlightClass: 'removed',
+					syntax: row?.leftSyntax,
 				}));
 				diffRow.appendChild(lineNumberCell(row?.rightNumber));
 				diffRow.appendChild(lineCodeCell(row?.rightText, {
 					blank: !row?.rightNumber,
 					highlights: highlights.right[index],
 					highlightClass: 'added',
+					syntax: row?.rightSyntax,
 				}));
 				tbody.appendChild(diffRow);
 			});
@@ -1084,6 +1193,7 @@ const reviewScript = `
 				diffRow.appendChild(lineCodeCell(removed ? row?.leftText : row?.rightText, {
 					highlights: removed ? highlights.left[index] : highlights.right[index],
 					highlightClass: removed ? 'removed' : 'added',
+					syntax: removed ? row?.leftSyntax : row?.rightSyntax,
 				}));
 				tbody.appendChild(diffRow);
 			});
