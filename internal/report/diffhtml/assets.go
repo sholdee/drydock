@@ -20,16 +20,38 @@ const reviewStyles = `
 	--focus: #69b8ff;
 	--code-bg: #050b12;
 	--shadow: rgba(0, 0, 0, 0.32);
+	--topbar-height: 50px;
+	--sidebar-width: 320px;
+	--sidebar-width-default: 320px;
+	--sidebar-width-min: 240px;
+	--sidebar-width-max: 480px;
+	--sidebar-resizer-hit: 18px;
+	--main-pane-padding-x: 18px;
+	--header-padding-x: 14px;
+	--header-gap: 12px;
+	--header-nav-width: 32px;
+	--header-title-gap: 18px;
 	background: var(--paper);
 	color: var(--ink);
+}
+html {
+	-webkit-text-size-adjust: 100%;
+	text-size-adjust: 100%;
 }
 body {
 	margin: 0;
 	min-height: 100vh;
+	overflow: hidden;
 	background: linear-gradient(180deg, #07111d 0%, #0a1421 46%, #101827 100%);
 	color: var(--ink);
 	font-size: 14px;
 	line-height: 1.45;
+}
+body.is-resizing-sidebar {
+	cursor: col-resize;
+}
+body.is-resizing-sidebar * {
+	user-select: none;
 }
 :focus-visible {
 	outline: 3px solid var(--focus);
@@ -40,80 +62,253 @@ body {
 	top: 0;
 	z-index: 5;
 	display: grid;
-	grid-template-columns: minmax(0, 1fr) auto;
+	grid-template-columns: var(--header-nav-width) minmax(0, 1fr) auto;
 	align-items: center;
-	gap: 18px;
-	padding: 12px 22px;
+	gap: var(--header-gap);
+	box-sizing: border-box;
+	height: var(--topbar-height);
+	padding: 2px var(--header-padding-x);
 	border-bottom: 1px solid var(--line);
 	background: rgba(8, 17, 29, 0.94);
 	backdrop-filter: blur(10px);
 }
+.header-copy {
+	grid-column: 2;
+	display: inline-flex;
+	align-items: center;
+	gap: var(--header-title-gap);
+	min-width: 0;
+}
 .report-header h1 {
-	margin: 0 0 6px;
-	font-size: 20px;
-	line-height: 1.25;
+	margin: 0;
+	min-width: 0;
+	font-size: 17px;
+	line-height: 1.2;
 	color: var(--navy-deep);
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+.header-actions {
+	display: flex;
+	grid-column: 3;
+	align-items: center;
+	justify-content: center;
+}
+.nav-toggle, .view-toggle {
+	border: 1px solid var(--line-strong);
+	border-radius: 6px;
+	background: var(--surface-raised);
+	color: var(--ink);
+	font: inherit;
+	cursor: pointer;
+}
+.nav-toggle {
+	display: inline-grid;
+	place-items: center;
+	width: var(--header-nav-width);
+	height: 32px;
+	padding: 0;
+	font-size: 18px;
+	line-height: 1;
+}
+.view-toggle {
+	min-width: 96px;
+	padding: 4px 9px;
+	font-size: 13px;
+	line-height: 1.35;
+	white-space: nowrap;
+}
+.nav-toggle:hover, .view-toggle:hover {
+	border-color: var(--teal);
 }
 .brand-logo {
 	display: block;
-	width: clamp(186px, 18vw, 210px);
-	height: auto;
+	width: 44px;
+	height: 44px;
+	margin: -3px 0;
 }
-.summary, .resource-meta {
+.summary {
+	display: inline-flex;
+	align-items: center;
+	flex: 0 1 auto;
+	gap: 5px;
+	flex-wrap: wrap;
 	margin: 0;
 	color: var(--muted);
-	font-size: 14px;
-	line-height: 1.45;
+	font-size: 12px;
+	line-height: 1;
+}
+.summary-badge {
+	display: inline-flex;
+	align-items: center;
+	min-height: 18px;
+	padding: 2px 6px;
+	border-radius: 999px;
+	font-size: 11px;
+	font-weight: 700;
+	vertical-align: middle;
+	white-space: nowrap;
+}
+.summary-badge-neutral {
+	background: rgba(129, 144, 163, 0.13);
+	color: var(--muted);
+}
+.summary-badge-modified {
+	background: rgba(240, 179, 90, 0.14);
+	color: #ffd596;
+}
+.summary-badge-added {
+	background: rgba(63, 185, 80, 0.13);
+	color: #9ce8a8;
+}
+.summary-badge-removed {
+	background: rgba(248, 81, 73, 0.13);
+	color: #ffb4ae;
 }
 .review-layout {
 	display: grid;
-	grid-template-columns: minmax(240px, 320px) minmax(0, 1fr);
-	min-height: calc(100vh - 82px);
+	grid-template-columns: var(--sidebar-width) 0 minmax(0, 1fr);
+	height: calc(100vh - var(--topbar-height));
+	min-height: 0;
+}
+@media (min-width: 801px) {
+	body[data-sidebar="closed"] .review-layout {
+		grid-template-columns: minmax(0, 1fr);
+	}
+	body[data-sidebar="closed"] .tree {
+		display: none;
+	}
+	body[data-sidebar="closed"] .sidebar-resizer {
+		display: none;
+	}
+	body[data-sidebar="closed"] .review-main {
+		grid-column: 1;
+	}
 }
 .tree {
+	grid-column: 1;
+	min-height: 0;
 	border-right: 1px solid var(--line);
 	background: rgba(16, 27, 41, 0.86);
-	padding: 16px;
+	padding: 10px 10px 14px;
 	overflow: auto;
+	scrollbar-width: thin;
+	scrollbar-color: var(--line-strong) transparent;
+}
+.sidebar-resizer {
+	position: relative;
+	z-index: 4;
+	grid-column: 2;
+	width: var(--sidebar-resizer-hit);
+	margin-left: calc(var(--sidebar-resizer-hit) / -2);
+	cursor: col-resize;
+	touch-action: none;
+}
+.sidebar-resizer::before {
+	content: "";
+	position: absolute;
+	top: 0;
+	bottom: 0;
+	left: calc(var(--sidebar-resizer-hit) / 2);
+	width: 1px;
+	background: transparent;
+	transition: background 120ms ease 180ms, box-shadow 120ms ease 180ms;
+}
+.sidebar-resizer:hover::before,
+.sidebar-resizer:focus-visible::before,
+body.is-resizing-sidebar .sidebar-resizer::before {
+	background: var(--teal);
+	box-shadow: 0 0 12px rgba(105, 215, 194, 0.72);
+}
+.sidebar-resizer:focus-visible::before,
+body.is-resizing-sidebar .sidebar-resizer::before {
+	transition-delay: 0ms;
 }
 .tree-search {
 	box-sizing: border-box;
 	width: 100%;
-	margin: 0 0 14px;
-	padding: 9px 10px;
+	margin: 0 0 10px;
+	padding: 7px 9px;
 	border: 1px solid var(--line-strong);
 	border-radius: 6px;
 	background: rgba(5, 11, 18, 0.78);
 	color: var(--ink);
 	font: inherit;
+	font-size: 13px;
 }
 .tree-search::placeholder {
 	color: var(--quiet);
 }
-.tree h2 {
-	margin: 16px 0 6px;
-	font-size: 14px;
-	line-height: 1.45;
-	text-transform: uppercase;
+.tree-app {
+	margin: 2px 0 8px;
+}
+.tree-app summary {
+	display: grid;
+	grid-template-columns: auto minmax(0, 1fr) auto;
+	align-items: center;
+	gap: 4px;
+	padding: 5px 6px;
+	border-radius: 6px;
+	color: var(--muted);
+	cursor: pointer;
+	font-size: 13px;
+	font-weight: 700;
+	line-height: 1.25;
+	list-style: none;
+}
+.tree-app summary:hover {
+	background: rgba(255, 255, 255, 0.04);
+	color: var(--navy-deep);
+}
+.tree-app summary::-webkit-details-marker {
+	display: none;
+}
+.tree-app summary::before {
+	content: "▸";
 	color: var(--quiet);
+}
+.tree-app[open] > summary::before {
+	content: "▾";
+}
+.tree-app-name {
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
 }
 .tree-resource {
 	display: grid;
-	grid-template-columns: minmax(0, 1fr) auto;
-	align-items: baseline;
-	column-gap: 8px;
+	grid-template-columns: auto minmax(0, 1fr) auto;
+	align-items: center;
+	column-gap: 7px;
 	width: 100%;
-	margin: 3px 0;
-	padding: 7px 8px;
+	margin: 2px 0;
+	padding: 5px 7px 5px 18px;
 	border: 0;
 	border-radius: 6px;
 	background: transparent;
 	color: var(--ink);
 	font: inherit;
-	font-size: 14px;
-	line-height: 1.45;
+	font-size: 13px;
+	line-height: 1.35;
 	text-align: left;
 	cursor: pointer;
+}
+.tree-status-dot {
+	width: 7px;
+	height: 7px;
+	border-radius: 999px;
+	box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.1);
+}
+.tree-status-modified {
+	background: #f0b35a;
+}
+.tree-status-added {
+	background: #3fb950;
+}
+.tree-status-removed {
+	background: #f85149;
 }
 .tree-resource-label {
 	min-width: 0;
@@ -121,20 +316,46 @@ body {
 	text-overflow: ellipsis;
 	white-space: nowrap;
 }
+.tree-resource-meta {
+	display: inline-flex;
+	align-items: center;
+	justify-content: flex-end;
+	gap: 4px;
+	min-width: 0;
+}
+.tree-large-badge {
+	display: inline-block;
+	padding: 2px 5px;
+	border-radius: 999px;
+	background: rgba(129, 144, 163, 0.14);
+	color: var(--muted);
+	font-size: 11px;
+	font-weight: 700;
+	line-height: 1;
+	white-space: nowrap;
+}
 .tree-delta {
 	display: inline-flex;
-	gap: 6px;
-	align-items: baseline;
+	gap: 4px;
+	align-items: center;
 	font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-	font-size: 12px;
+	font-size: 11px;
 	font-variant-numeric: tabular-nums;
 	line-height: 1;
 	white-space: nowrap;
 }
 .tree-delta-added {
+	display: inline-block;
+	padding: 2px 5px;
+	border-radius: 999px;
+	background: rgba(63, 185, 80, 0.13);
 	color: #9ce8a8;
 }
 .tree-delta-removed {
+	display: inline-block;
+	padding: 2px 5px;
+	border-radius: 999px;
+	background: rgba(248, 81, 73, 0.13);
 	color: #ffb4ae;
 }
 .tree-resource[aria-current="true"] {
@@ -142,9 +363,13 @@ body {
 	color: var(--navy-deep);
 }
 .review-main {
+	grid-column: 3;
 	min-width: 0;
-	padding: 18px 22px 34px;
+	min-height: 0;
+	padding: 14px 18px 32px;
 	overflow: auto;
+	scrollbar-width: thin;
+	scrollbar-color: var(--line-strong) transparent;
 }
 .resource-header {
 	position: sticky;
@@ -153,37 +378,20 @@ body {
 	display: grid;
 	grid-template-columns: minmax(0, 1fr) auto;
 	align-items: start;
-	gap: 14px;
-	margin: 0 0 8px;
-	padding: 0 0 6px;
-	background: linear-gradient(180deg, #0a1421 74%, rgba(10, 20, 33, 0));
+	gap: 12px;
+	margin: 0 0 7px;
+	padding: 0 0 5px;
+	background: #0a1421;
+}
+.resource-header::before {
+	content: "";
+	position: absolute;
+	z-index: -1;
+	inset: -14px 0 0;
+	background: #0a1421;
 }
 .resource-title {
 	min-width: 0;
-}
-.toolbar {
-	display: flex;
-	justify-content: flex-end;
-	gap: 8px;
-	margin: 0;
-	padding: 0;
-	white-space: nowrap;
-}
-.toolbar button {
-	padding: 5px 9px;
-	border: 1px solid var(--line-strong);
-	border-radius: 6px;
-	background: var(--surface-raised);
-	color: var(--ink);
-	font: inherit;
-	font-size: 14px;
-	line-height: 1.45;
-	cursor: pointer;
-}
-.toolbar button[aria-pressed="true"] {
-	background: rgba(105, 215, 194, 0.13);
-	border-color: var(--teal);
-	color: var(--navy-deep);
 }
 .applications {
 	min-width: 0;
@@ -196,8 +404,8 @@ body {
 	display: block;
 }
 .resource h3 {
-	margin: 0 0 4px;
-	font-size: 18px;
+	margin: 0;
+	font-size: 16px;
 	line-height: 1.25;
 	color: var(--navy-deep);
 }
@@ -208,8 +416,8 @@ body {
 	background: var(--code-bg);
 	border: 1px solid var(--line);
 	font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-	font-size: 13px;
-	line-height: 1.45;
+	font-size: 13.5px;
+	line-height: 20px;
 }
 .diff-table th {
 	text-align: left;
@@ -223,7 +431,7 @@ body {
 .line-number {
 	width: 1%;
 	min-width: 44px;
-	padding: 2px 8px;
+	padding: 0 8px;
 	border-right: 1px solid var(--line);
 	background: rgba(16, 27, 41, 0.8);
 	color: var(--quiet);
@@ -232,7 +440,7 @@ body {
 	vertical-align: top;
 }
 .line-code {
-	padding: 2px 8px;
+	padding: 0 9px;
 	white-space: pre-wrap;
 	word-break: break-word;
 	vertical-align: top;
@@ -251,6 +459,29 @@ body {
 	background: rgba(248, 81, 73, 0.14);
 	color: #ffb4ae;
 }
+.line-number-blank,
+.diff-row.added .line-number-blank,
+.diff-row.removed .line-number-blank {
+	background-color: rgba(16, 27, 41, 0.78);
+	background-image: none;
+}
+.line-code-blank,
+.diff-row.added .line-code-blank,
+.diff-row.removed .line-code-blank {
+	background-color: rgba(16, 27, 41, 0.78);
+	background-image:
+		linear-gradient(
+			135deg,
+			transparent 0,
+			transparent 46%,
+			rgba(129, 144, 163, 0.34) 46%,
+			rgba(129, 144, 163, 0.34) 54%,
+			transparent 54%,
+			transparent 100%
+		);
+	background-size: 6.67px 6.67px;
+	background-repeat: repeat;
+}
 .diff-table.one-sided .line-code {
 	width: 100%;
 }
@@ -266,8 +497,86 @@ body {
 	background: rgba(248, 81, 73, 0.38);
 	box-shadow: 0 0 0 1px rgba(248, 81, 73, 0.2);
 }
+.yaml-key {
+	color: #8ec8ff;
+}
+.yaml-string {
+	color: #ce9178;
+}
+.yaml-number {
+	color: #b5cea8;
+}
+.yaml-bool,
+.yaml-null {
+	color: #7fb4ff;
+}
+.yaml-comment {
+	color: #7aa36f;
+}
+.yaml-doc {
+	color: #d7a2ff;
+}
+.yaml-anchor,
+.yaml-alias {
+	color: #dcdcaa;
+}
+.yaml-tag {
+	color: #c586c0;
+}
+.yaml-punctuation {
+	color: #b9c7d8;
+}
+.lazy-diff-placeholder {
+	margin: 0;
+	padding: 12px 14px;
+	border: 1px solid var(--line);
+	border-radius: 6px;
+	background: rgba(16, 27, 41, 0.64);
+	color: var(--muted);
+}
+.lazy-diff-placeholder p {
+	margin: 0;
+}
+.lazy-diff-placeholder[aria-busy="true"] {
+	border-color: rgba(105, 184, 255, 0.42);
+}
+.lazy-diff-placeholder-blocked {
+	border-color: rgba(209, 115, 66, 0.34);
+	background: rgba(209, 115, 66, 0.08);
+}
+.lazy-diff-actions {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	margin-top: 10px;
+}
+.lazy-render-button {
+	border: 1px solid var(--line-strong);
+	border-radius: 6px;
+	background: var(--surface-raised);
+	color: var(--ink);
+	font: inherit;
+	font-size: 13px;
+	line-height: 1.35;
+	padding: 5px 10px;
+	cursor: pointer;
+}
+.lazy-render-button:hover:not(:disabled) {
+	border-color: var(--teal);
+}
+.lazy-render-button:disabled {
+	cursor: not-allowed;
+	opacity: 0.66;
+}
+.lazy-diff-error {
+	margin: 8px 0 0;
+	color: #ffb4ae;
+}
 body[data-view="side-by-side"] .diff-table.unified,
 body[data-view="unified"] .diff-table.side-by-side {
+	display: none;
+}
+.sidebar-backdrop {
 	display: none;
 }
 .diagnostics {
@@ -298,33 +607,111 @@ body[data-view="unified"] .diff-table.side-by-side {
 	color: var(--muted);
 }
 @media (max-width: 800px) {
+	:root {
+		--topbar-height: 50px;
+	}
 	.report-header {
-		position: static;
-		grid-template-columns: 1fr;
+		grid-template-columns: auto minmax(0, 1fr) auto;
+		gap: 8px;
+		padding: 4px 10px;
+	}
+	.header-copy {
+		grid-column: 2;
+	}
+	.summary {
+		display: none;
+	}
+	.header-actions {
+		grid-column: 3;
+	}
+	.report-header h1 {
+		font-size: 16px;
+	}
+	.header-actions {
+		gap: 6px;
 	}
 	.brand-logo {
-		width: 186px;
+		width: 38px;
+		height: 38px;
+		margin: -2px 0;
+	}
+	.view-toggle {
+		min-width: 82px;
+		padding: 4px 7px;
+		font-size: 12px;
 	}
 	.review-layout {
-		grid-template-columns: 1fr;
+		display: block;
+		height: calc(100vh - var(--topbar-height));
+		min-height: 0;
+		overflow: hidden;
 	}
 	.tree {
-		max-height: 280px;
-		border-right: 0;
-		border-bottom: 1px solid var(--line);
+		position: fixed;
+		top: var(--topbar-height);
+		bottom: 0;
+		left: 0;
+		z-index: 20;
+		width: min(82vw, 320px);
+		max-height: none;
+		border-right: 1px solid var(--line);
+		transform: translateX(calc(-100% - 1px));
+		transition: transform 160ms ease;
+	}
+	.sidebar-resizer {
+		display: none;
+	}
+	body[data-sidebar="open"] .tree {
+		transform: none;
+		box-shadow: 10px 0 30px rgba(0, 0, 0, 0.34);
+	}
+	body[data-sidebar="open"] .sidebar-backdrop {
+		display: block;
+		position: fixed;
+		inset: var(--topbar-height) 0 0;
+		z-index: 15;
+		background: rgba(0, 0, 0, 0.42);
+	}
+	.review-main {
+		height: 100%;
+		box-sizing: border-box;
+		padding: 12px 10px 26px;
 	}
 	.resource-header {
-		grid-template-columns: 1fr;
-		gap: 8px;
+		position: static;
 	}
-	.toolbar {
-		justify-content: flex-start;
-		white-space: normal;
+	body[data-view="side-by-side"] .diff-table.side-by-side {
+		display: none;
+	}
+	body[data-view="side-by-side"] .diff-table.unified {
+		display: table;
+	}
+	.diff-table {
+		font-size: 14px;
+		line-height: 21px;
+	}
+	.line-number {
+		min-width: 36px;
+		padding: 0 5px;
+	}
+	.line-code {
+		padding: 0 7px;
+	}
+}
+@media (max-width: 520px) {
+	:root {
+		--topbar-height: 46px;
+	}
+	.summary {
+		display: none;
+	}
+	.view-toggle {
+		min-width: 92px;
 	}
 }
 `
 
-const drydockLogo = `<svg class="brand-logo" aria-label="drydock" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 480 128" width="480" height="128">
+const drydockLogo = `<svg class="brand-logo" aria-label="drydock" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" width="128" height="128">
   <defs>
     <linearGradient id="hull-grad" x1="0" y1="0" x2="1" y2="0">
       <stop offset="0%" stop-color="#b95a2d"/>
@@ -336,7 +723,6 @@ const drydockLogo = `<svg class="brand-logo" aria-label="drydock" xmlns="http://
   <path d="M35 32 L93 32 L93 58 C93 80 77 90 64 90 C51 90 35 80 35 58 Z" fill="url(#hull-grad)"/>
   <line x1="36" y1="58" x2="92" y2="58" stroke="#ffad73" stroke-width="1.5"/>
   <path d="M64 12 L87 22 L87 32 L41 32 L41 22 Z" fill="#e6a15f"/>
-  <text x="144" y="76" font-family="Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="52" font-weight="600" fill="#f3f7fb" letter-spacing="2">drydock</text>
 </svg>`
 
 const drydockFaviconHref = "data:image/svg+xml;base64," +
@@ -347,9 +733,34 @@ const reviewScript = `
 	const body = document.body;
 	const resources = Array.from(document.querySelectorAll('[data-resource-id]'));
 	const treeButtons = Array.from(document.querySelectorAll('[data-target-resource]'));
-	const viewButtons = Array.from(document.querySelectorAll('.toolbar button[data-view]'));
+	const viewToggles = Array.from(document.querySelectorAll('[data-view-toggle]'));
+	const lazyRenderButtons = Array.from(document.querySelectorAll('[data-lazy-render]'));
+	const sidebarToggle = document.querySelector('[data-sidebar-toggle]');
+	const sidebarResizer = document.querySelector('[data-sidebar-resizer]');
+	const sidebarBackdrop = document.querySelector('[data-sidebar-backdrop]');
 	const searchInput = document.querySelector('[data-tree-search]');
+	const reviewLayout = document.querySelector('.review-layout');
 	const resourceIds = new Set(resources.map((resource) => resource.dataset.resourceId));
+	const mobileQuery = window.matchMedia('(max-width: 800px)');
+	const store = {
+		get: (key) => {
+			try {
+				return localStorage.getItem(key);
+			} catch {
+				return null;
+			}
+		},
+		set: (key, value) => {
+			try {
+				localStorage.setItem(key, value);
+			} catch {}
+		},
+		remove: (key) => {
+			try {
+				localStorage.removeItem(key);
+			} catch {}
+		},
+	};
 	const isEditable = (target) => {
 		if (!(target instanceof HTMLElement)) {
 			return false;
@@ -377,13 +788,521 @@ const reviewScript = `
 		history.replaceState(null, '', ` + "`#${id}`" + `);
 	};
 
+	const effectiveSidebarState = () => {
+		if (body.dataset.sidebar === 'open') {
+			return 'open';
+		}
+		if (body.dataset.sidebar === 'closed') {
+			return 'closed';
+		}
+		return mobileQuery.matches ? 'closed' : 'open';
+	};
+
+	const syncSidebarToggle = () => {
+		if (!sidebarToggle) {
+			return;
+		}
+		const open = effectiveSidebarState() === 'open';
+		sidebarToggle.setAttribute('aria-expanded', open ? 'true' : 'false');
+		sidebarToggle.title = open ? 'Hide changed resources' : 'Show changed resources';
+	};
+
+	const setSidebar = (state) => {
+		body.dataset.sidebar = state;
+		syncSidebarToggle();
+	};
+
+	const cssPixels = (name, fallback) => {
+		const value = Number.parseFloat(getComputedStyle(document.documentElement).getPropertyValue(name));
+		return Number.isFinite(value) ? value : fallback;
+	};
+
+	const sidebarBounds = () => {
+		const min = cssPixels('--sidebar-width-min', 240);
+		const preferredMax = cssPixels('--sidebar-width-max', 480);
+		const defaultWidth = cssPixels('--sidebar-width-default', 320);
+		const layoutWidth = reviewLayout?.getBoundingClientRect().width || window.innerWidth;
+		const max = Math.max(min, Math.min(preferredMax, layoutWidth - 360));
+		return { min, max, defaultWidth };
+	};
+
+	const clamp = (value, min, max) => Math.min(max, Math.max(min, value));
+
+	const setSidebarWidth = (width, options = {}) => {
+		const { min, max } = sidebarBounds();
+		const next = Math.round(clamp(width, min, max));
+		document.documentElement.style.setProperty('--sidebar-width', String(next) + 'px');
+		if (sidebarResizer) {
+			sidebarResizer.setAttribute('aria-valuenow', String(next));
+			sidebarResizer.setAttribute('aria-valuemin', String(Math.round(min)));
+			sidebarResizer.setAttribute('aria-valuemax', String(Math.round(max)));
+		}
+		if (options.persist) {
+			store.set('drydock-sidebar-width', String(next));
+		}
+		return next;
+	};
+
+	const resetSidebarWidth = () => {
+		store.remove('drydock-sidebar-width');
+		setSidebarWidth(sidebarBounds().defaultWidth);
+	};
+
+	const restoreSidebarWidth = () => {
+		const stored = Number.parseFloat(store.get('drydock-sidebar-width') || '');
+		setSidebarWidth(Number.isFinite(stored) ? stored : sidebarBounds().defaultWidth);
+	};
+
+	const defaultView = () => mobileQuery.matches ? 'unified' : 'side-by-side';
+
+	const setView = (view, options = {}) => {
+		if (view !== 'unified' && view !== 'side-by-side') {
+			view = defaultView();
+		}
+		body.dataset.view = view;
+		viewToggles.forEach((viewToggle) => {
+			viewToggle.textContent = view === 'unified' ? 'Side-by-side' : 'Unified';
+			viewToggle.setAttribute('aria-pressed', view === 'unified' ? 'true' : 'false');
+			viewToggle.title = view === 'unified' ? 'Switch to side-by-side view' : 'Switch to unified view';
+		});
+		if (options.persist) {
+			store.set('drydock-diff-view', view);
+		}
+	};
+
+	const activeResource = () => resources.find((resource) => resource.classList.contains('is-active')) || null;
+
+	const normalizedView = (view) => view === 'unified' ? 'unified' : 'side-by-side';
+
+	const currentView = () => normalizedView(body.dataset.view);
+
+	const renderedDataKey = (view) => normalizedView(view) === 'unified' ? 'renderedUnified' : 'renderedSideBySide';
+
+	const safeRowKind = (kind) => {
+		if (kind === 'added' || kind === 'removed' || kind === 'context') {
+			return kind;
+		}
+		return 'context';
+	};
+
+	const lazyPayloadScript = (resource) => resource?.querySelector('script[type="application/json"][data-diff-payload]') || null;
+
+	const lazyPlaceholder = (resource) => resource?.querySelector('[data-lazy-placeholder]') || null;
+
+	const setLazyBusy = (resource, busy) => {
+		if (!resource) {
+			return;
+		}
+		resource.setAttribute('aria-busy', busy ? 'true' : 'false');
+		lazyPlaceholder(resource)?.setAttribute('aria-busy', busy ? 'true' : 'false');
+		resource.querySelectorAll('[data-lazy-render]').forEach((button) => {
+			button.disabled = busy;
+		});
+	};
+
+	const changedRanges = (leftText, rightText) => {
+		const left = Array.from(String(leftText || ''));
+		const right = Array.from(String(rightText || ''));
+		if (left.join('') === right.join('')) {
+			return { left: [], right: [] };
+		}
+		let prefix = 0;
+		while (prefix < left.length && prefix < right.length && left[prefix] === right[prefix]) {
+			prefix++;
+		}
+		let suffix = 0;
+		while (
+			suffix < left.length - prefix &&
+			suffix < right.length - prefix &&
+			left[left.length - 1 - suffix] === right[right.length - 1 - suffix]
+		) {
+			suffix++;
+		}
+		const leftEnd = left.length - suffix;
+		const rightEnd = right.length - suffix;
+		return {
+			left: prefix < leftEnd ? [{ start: prefix, end: leftEnd }] : [],
+			right: prefix < rightEnd ? [{ start: prefix, end: rightEnd }] : [],
+		};
+	};
+
+	const pairedHighlights = (rows) => {
+		const left = Array.from({ length: rows.length }, () => []);
+		const right = Array.from({ length: rows.length }, () => []);
+		for (let index = 0; index < rows.length;) {
+			if (safeRowKind(rows[index]?.kind) !== 'removed') {
+				index++;
+				continue;
+			}
+			const removedStart = index;
+			while (index < rows.length && safeRowKind(rows[index]?.kind) === 'removed') {
+				index++;
+			}
+			const addedStart = index;
+			while (index < rows.length && safeRowKind(rows[index]?.kind) === 'added') {
+				index++;
+			}
+			const pairCount = Math.min(addedStart - removedStart, index - addedStart);
+			for (let offset = 0; offset < pairCount; offset++) {
+				const leftIndex = removedStart + offset;
+				const rightIndex = addedStart + offset;
+				const ranges = changedRanges(rows[leftIndex]?.leftText, rows[rightIndex]?.rightText);
+				left[leftIndex] = ranges.left;
+				right[rightIndex] = ranges.right;
+			}
+		}
+		return { left, right };
+	};
+
+	const syntaxClassWhitelist = new Set([
+		'yaml-key',
+		'yaml-string',
+		'yaml-number',
+		'yaml-bool',
+		'yaml-null',
+		'yaml-comment',
+		'yaml-doc',
+		'yaml-anchor',
+		'yaml-alias',
+		'yaml-tag',
+		'yaml-punctuation',
+	]);
+
+	const clampOffset = (value, length) => {
+		const number = Math.trunc(Number(value));
+		if (!Number.isFinite(number) || number < 0) {
+			return 0;
+		}
+		return Math.min(number, length);
+	};
+
+	const normalizeInlineRanges = (ranges, length) => {
+		if (!Array.isArray(ranges) || !length) {
+			return [];
+		}
+		const sorted = ranges
+			.map((range) => ({
+				start: clampOffset(range?.start, length),
+				end: clampOffset(range?.end, length),
+			}))
+			.sort((left, right) => left.start - right.start || left.end - right.end);
+		const normalized = [];
+		let cursor = 0;
+		sorted.forEach((range) => {
+			const start = Math.max(range.start, cursor);
+			const end = range.end;
+			if (start < end) {
+				normalized.push({ start, end });
+				cursor = end;
+			}
+		});
+		return normalized;
+	};
+
+	const normalizeSyntaxRanges = (syntax, length) => {
+		if (!Array.isArray(syntax) || !length) {
+			return [];
+		}
+		const sorted = syntax
+			.map((range) => {
+				const className = String(range?.class || '');
+				if (!syntaxClassWhitelist.has(className)) {
+					return null;
+				}
+				return {
+					start: clampOffset(range?.start, length),
+					end: clampOffset(range?.end, length),
+					className,
+				};
+			})
+			.filter(Boolean)
+			.sort((left, right) => left.start - right.start || left.end - right.end);
+		const normalized = [];
+		let cursor = 0;
+		sorted.forEach((range) => {
+			const start = Math.max(range.start, cursor);
+			const end = range.end;
+			if (start < end) {
+				normalized.push({ start, end, className: range.className });
+				cursor = end;
+			}
+		});
+		return normalized;
+	};
+
+	const appendTextRunes = (parent, runes, start, end) => {
+		if (start < end) {
+			parent.appendChild(document.createTextNode(runes.slice(start, end).join('')));
+		}
+	};
+
+	const appendSyntaxSegment = (parent, runes, start, end, syntax) => {
+		let cursor = start;
+		syntax.forEach((range) => {
+			if (range.end <= start || range.start >= end) {
+				return;
+			}
+			const tokenStart = Math.max(range.start, start);
+			const tokenEnd = Math.min(range.end, end);
+			appendTextRunes(parent, runes, cursor, tokenStart);
+			if (tokenStart < tokenEnd) {
+				const span = document.createElement('span');
+				span.classList.add(range.className);
+				appendTextRunes(span, runes, tokenStart, tokenEnd);
+				parent.appendChild(span);
+				cursor = tokenEnd;
+			}
+		});
+		appendTextRunes(parent, runes, cursor, end);
+	};
+
+	const appendHighlightedText = (cell, text, highlights, className, syntax) => {
+		const value = String(text || '');
+		const runes = Array.from(value);
+		const inlineRanges = normalizeInlineRanges(highlights, runes.length);
+		const syntaxRanges = normalizeSyntaxRanges(syntax, runes.length);
+		if (inlineRanges.length === 0) {
+			appendSyntaxSegment(cell, runes, 0, runes.length, syntaxRanges);
+			return;
+		}
+		let cursor = 0;
+		inlineRanges.forEach((highlight) => {
+			const start = highlight.start;
+			const end = highlight.end;
+			if (start > cursor) {
+				appendSyntaxSegment(cell, runes, cursor, start, syntaxRanges);
+			}
+			if (start < end) {
+				const span = document.createElement('span');
+				span.classList.add('inline-change', className === 'removed' ? 'removed' : 'added');
+				appendSyntaxSegment(span, runes, start, end, syntaxRanges);
+				cell.appendChild(span);
+				cursor = end;
+			}
+		});
+		if (cursor < runes.length) {
+			appendSyntaxSegment(cell, runes, cursor, runes.length, syntaxRanges);
+		}
+	};
+
+	const lineNumberCell = (number) => {
+		const cell = document.createElement('td');
+		cell.classList.add('line-number');
+		if (!number) {
+			cell.classList.add('line-number-blank');
+			return cell;
+		}
+		cell.textContent = String(number);
+		return cell;
+	};
+
+	const lineCodeCell = (text, options = {}) => {
+		const cell = document.createElement('td');
+		cell.classList.add('line-code');
+		if (options.blank) {
+			cell.classList.add('line-code-blank');
+			return cell;
+		}
+		appendHighlightedText(cell, text, options.highlights || [], options.highlightClass || 'added', options.syntax || []);
+		return cell;
+	};
+
+	const appendHunkHeader = (tbody, header, colspan) => {
+		const row = document.createElement('tr');
+		row.classList.add('hunk-header');
+		const cell = document.createElement('th');
+		cell.colSpan = colspan;
+		cell.textContent = String(header || '');
+		row.appendChild(cell);
+		tbody.appendChild(row);
+	};
+
+	const payloadHunks = (payload) => Array.isArray(payload?.hunks) ? payload.hunks : [];
+
+	const renderOneSidedLazyTable = (payload, view) => {
+		const change = payload?.change === 'added' ? 'added' : 'removed';
+		const table = document.createElement('table');
+		table.classList.add('diff-table', normalizedView(view), 'one-sided');
+		const tbody = document.createElement('tbody');
+		payloadHunks(payload).forEach((hunk) => {
+			appendHunkHeader(tbody, hunk.header, 2);
+			(Array.isArray(hunk.rows) ? hunk.rows : []).forEach((row) => {
+				if (safeRowKind(row?.kind) !== change) {
+					return;
+				}
+				const diffRow = document.createElement('tr');
+				diffRow.classList.add('diff-row', change);
+				diffRow.appendChild(lineNumberCell(change === 'added' ? row.rightNumber : row.leftNumber));
+				diffRow.appendChild(lineCodeCell(change === 'added' ? row.rightText : row.leftText, {
+					highlightClass: change,
+					syntax: change === 'added' ? row.rightSyntax : row.leftSyntax,
+				}));
+				tbody.appendChild(diffRow);
+			});
+		});
+		table.appendChild(tbody);
+		return table;
+	};
+
+	const renderSideBySideLazyTable = (payload) => {
+		const table = document.createElement('table');
+		table.classList.add('diff-table', 'side-by-side');
+		const tbody = document.createElement('tbody');
+		payloadHunks(payload).forEach((hunk) => {
+			const rows = Array.isArray(hunk.rows) ? hunk.rows : [];
+			const highlights = pairedHighlights(rows);
+			appendHunkHeader(tbody, hunk.header, 4);
+			rows.forEach((row, index) => {
+				const diffRow = document.createElement('tr');
+				diffRow.classList.add('diff-row', safeRowKind(row?.kind));
+				diffRow.appendChild(lineNumberCell(row?.leftNumber));
+				diffRow.appendChild(lineCodeCell(row?.leftText, {
+					blank: !row?.leftNumber,
+					highlights: highlights.left[index],
+					highlightClass: 'removed',
+					syntax: row?.leftSyntax,
+				}));
+				diffRow.appendChild(lineNumberCell(row?.rightNumber));
+				diffRow.appendChild(lineCodeCell(row?.rightText, {
+					blank: !row?.rightNumber,
+					highlights: highlights.right[index],
+					highlightClass: 'added',
+					syntax: row?.rightSyntax,
+				}));
+				tbody.appendChild(diffRow);
+			});
+		});
+		table.appendChild(tbody);
+		return table;
+	};
+
+	const renderUnifiedLazyTable = (payload) => {
+		const table = document.createElement('table');
+		table.classList.add('diff-table', 'unified');
+		const tbody = document.createElement('tbody');
+		payloadHunks(payload).forEach((hunk) => {
+			const rows = Array.isArray(hunk.rows) ? hunk.rows : [];
+			const highlights = pairedHighlights(rows);
+			appendHunkHeader(tbody, hunk.header, 2);
+			rows.forEach((row, index) => {
+				const kind = safeRowKind(row?.kind);
+				const removed = kind === 'removed';
+				const diffRow = document.createElement('tr');
+				diffRow.classList.add('diff-row', kind);
+				diffRow.appendChild(lineNumberCell(removed ? row?.leftNumber : row?.rightNumber));
+				diffRow.appendChild(lineCodeCell(removed ? row?.leftText : row?.rightText, {
+					highlights: removed ? highlights.left[index] : highlights.right[index],
+					highlightClass: removed ? 'removed' : 'added',
+					syntax: removed ? row?.leftSyntax : row?.rightSyntax,
+				}));
+				tbody.appendChild(diffRow);
+			});
+		});
+		table.appendChild(tbody);
+		return table;
+	};
+
+	const renderLazyTable = (payload, view) => {
+		if (payload?.change === 'added' || payload?.change === 'removed') {
+			return renderOneSidedLazyTable(payload, view);
+		}
+		return normalizedView(view) === 'unified' ? renderUnifiedLazyTable(payload) : renderSideBySideLazyTable(payload);
+	};
+
+	const insertLazyTable = (resource, table, view) => {
+		const script = lazyPayloadScript(resource);
+		const unifiedTable = resource.querySelector('.diff-table.unified');
+		if (normalizedView(view) === 'side-by-side' && unifiedTable) {
+			resource.insertBefore(table, unifiedTable);
+			return;
+		}
+		if (script) {
+			resource.insertBefore(table, script);
+			return;
+		}
+		resource.appendChild(table);
+	};
+
+	const showLazyError = (resource, message) => {
+		let placeholder = lazyPlaceholder(resource);
+		if (!placeholder) {
+			placeholder = document.createElement('div');
+			placeholder.classList.add('lazy-diff-placeholder');
+			placeholder.dataset.lazyPlaceholder = '';
+			const script = lazyPayloadScript(resource);
+			resource.insertBefore(placeholder, script || null);
+		}
+		let error = placeholder.querySelector('[data-lazy-error]');
+		if (!error) {
+			error = document.createElement('p');
+			error.classList.add('lazy-diff-error');
+			error.dataset.lazyError = '';
+			error.setAttribute('role', 'alert');
+			placeholder.appendChild(error);
+		}
+		error.textContent = message;
+	};
+
+	const markLazyRendered = (resource, view) => {
+		resource.dataset[renderedDataKey(view)] = 'true';
+		lazyPlaceholder(resource)?.remove();
+		const renderedSideBySide = resource.dataset.renderedSideBySide === 'true';
+		const renderedUnified = resource.dataset.renderedUnified === 'true';
+		resource.dataset.lazyState = renderedSideBySide && renderedUnified ? 'rendered' : 'partial';
+		if (resource.dataset.lazyState === 'rendered') {
+			lazyPayloadScript(resource)?.remove();
+		}
+	};
+
+	const renderLazyResource = (resource, view) => {
+		if (!resource || resource.dataset.lazyDiff !== 'true') {
+			return;
+		}
+		view = normalizedView(view);
+		if (resource.dataset[renderedDataKey(view)] === 'true' || resource.dataset.lazyRendering === 'true') {
+			return;
+		}
+		const script = lazyPayloadScript(resource);
+		if (!script) {
+			showLazyError(resource, 'Unable to render diff payload.');
+			return;
+		}
+		resource.dataset.lazyRendering = 'true';
+		setLazyBusy(resource, true);
+		window.requestAnimationFrame(() => {
+			try {
+				const payload = JSON.parse(script.textContent || '{}');
+				const table = renderLazyTable(payload, view);
+				insertLazyTable(resource, table, view);
+				markLazyRendered(resource, view);
+			} catch {
+				showLazyError(resource, 'Unable to render diff.');
+			} finally {
+				delete resource.dataset.lazyRendering;
+				setLazyBusy(resource, false);
+			}
+		});
+	};
+
+	const renderActiveLazyView = () => {
+		const resource = activeResource();
+		if (resource?.dataset.lazyState === 'partial') {
+			renderLazyResource(resource, currentView());
+		}
+	};
+
 	const selectResource = (id, options = {}) => {
 		if (!resourceIds.has(id)) {
 			return;
 		}
 		let activeButton = null;
+		let selectedResource = null;
 		resources.forEach((resource) => {
-			resource.classList.toggle('is-active', resource.dataset.resourceId === id);
+			const selected = resource.dataset.resourceId === id;
+			resource.classList.toggle('is-active', selected);
+			if (selected) {
+				selectedResource = resource;
+			}
 		});
 		treeButtons.forEach((button) => {
 			const selected = button.dataset.targetResource === id;
@@ -398,19 +1317,106 @@ const reviewScript = `
 		if (options.updateHash) {
 			updateHash(id);
 		}
+		if (selectedResource?.dataset.lazyState === 'partial') {
+			renderLazyResource(selectedResource, currentView());
+		}
 	};
 
 	treeButtons.forEach((button) => {
-		button.addEventListener('click', () => selectResource(button.dataset.targetResource, { updateHash: true }));
+		button.addEventListener('click', () => {
+			selectResource(button.dataset.targetResource, { updateHash: true });
+			if (mobileQuery.matches) {
+				setSidebar('closed');
+			}
+		});
 	});
 
-	viewButtons.forEach((button) => {
-		button.addEventListener('click', () => {
-			body.dataset.view = button.dataset.view;
-			viewButtons.forEach((candidate) => {
-				candidate.setAttribute('aria-pressed', candidate === button ? 'true' : 'false');
-			});
+	viewToggles.forEach((viewToggle) => {
+		viewToggle.addEventListener('click', () => {
+			setView(body.dataset.view === 'unified' ? 'side-by-side' : 'unified', { persist: true });
+			renderActiveLazyView();
 		});
+	});
+
+	lazyRenderButtons.forEach((button) => {
+		button.addEventListener('click', () => {
+			renderLazyResource(button.closest('[data-resource-id]'), currentView());
+		});
+	});
+
+	sidebarToggle?.addEventListener('click', () => {
+		setSidebar(effectiveSidebarState() === 'open' ? 'closed' : 'open');
+	});
+
+	if (sidebarResizer) {
+		let dragStartX = 0;
+		let dragStartWidth = 0;
+
+		sidebarResizer.addEventListener('pointerdown', (event) => {
+			if (mobileQuery.matches) {
+				return;
+			}
+			event.preventDefault();
+			dragStartX = event.clientX;
+			dragStartWidth = cssPixels('--sidebar-width', sidebarBounds().defaultWidth);
+			sidebarResizer.setPointerCapture?.(event.pointerId);
+			body.classList.add('is-resizing-sidebar');
+		});
+		sidebarResizer.addEventListener('pointermove', (event) => {
+			if (!body.classList.contains('is-resizing-sidebar')) {
+				return;
+			}
+			setSidebarWidth(dragStartWidth + event.clientX - dragStartX, { persist: true });
+		});
+		const stopSidebarResize = (event) => {
+			if (!body.classList.contains('is-resizing-sidebar')) {
+				return;
+			}
+			sidebarResizer.releasePointerCapture?.(event.pointerId);
+			body.classList.remove('is-resizing-sidebar');
+		};
+		sidebarResizer.addEventListener('pointerup', stopSidebarResize);
+		sidebarResizer.addEventListener('pointercancel', stopSidebarResize);
+		sidebarResizer.addEventListener('dblclick', (event) => {
+			event.preventDefault();
+			resetSidebarWidth();
+		});
+		sidebarResizer.addEventListener('keydown', (event) => {
+			if (event.key === 'Home') {
+				event.preventDefault();
+				setSidebarWidth(sidebarBounds().min, { persist: true });
+				return;
+			}
+			if (event.key === 'End') {
+				event.preventDefault();
+				setSidebarWidth(sidebarBounds().max, { persist: true });
+				return;
+			}
+			if (event.key === 'Escape') {
+				event.preventDefault();
+				resetSidebarWidth();
+				return;
+			}
+			if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') {
+				return;
+			}
+			event.preventDefault();
+			const direction = event.key === 'ArrowLeft' ? -1 : 1;
+			const step = event.shiftKey ? 40 : 16;
+			setSidebarWidth(cssPixels('--sidebar-width', sidebarBounds().defaultWidth) + direction * step, { persist: true });
+		});
+	}
+
+	sidebarBackdrop?.addEventListener('click', () => setSidebar('closed'));
+
+	mobileQuery.addEventListener?.('change', () => {
+		if (body.dataset.sidebar === 'auto') {
+			syncSidebarToggle();
+		}
+		if (!store.get('drydock-diff-view')) {
+			setView(defaultView());
+		}
+		restoreSidebarWidth();
 	});
 
 	const runSearch = () => {
@@ -426,6 +1432,9 @@ const reviewScript = `
 				visible = visible || matches;
 			});
 			app.hidden = !visible;
+			if (query && visible && app instanceof HTMLDetailsElement) {
+				app.open = true;
+			}
 		});
 	};
 
@@ -477,6 +1486,9 @@ const reviewScript = `
 		});
 	}
 
+	setView(store.get('drydock-diff-view') || defaultView());
+	restoreSidebarWidth();
+	syncSidebarToggle();
 	if (resources.length > 0) {
 		selectResource(resourceIdFromHash() || defaultResourceId());
 	}
