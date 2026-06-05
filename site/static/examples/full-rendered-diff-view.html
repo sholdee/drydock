@@ -621,7 +621,7 @@ body[data-view="unified"] .diff-table.side-by-side {
 <button class="nav-toggle" type="button" data-sidebar-toggle aria-controls="diff-tree" aria-expanded="true" aria-label="Toggle changed resources"><span aria-hidden="true">☰</span></button>
 <div class="header-copy">
 <h1>drydock diff</h1>
-<div class="summary" aria-label="2 apps, 3 resources, 3 changed, +9, -9"><span class="summary-badge summary-badge-neutral">2 apps</span><span class="summary-badge summary-badge-neutral">3 resources</span><span class="summary-badge summary-badge-modified summary-badge-detail">3 changed</span><span class="summary-badge summary-badge-added">+9</span><span class="summary-badge summary-badge-removed">-9</span></div>
+<div class="summary" aria-label="2 apps, 4 resources, 2 changed, 1 added, 1 deleted, +30, -26"><span class="summary-badge summary-badge-neutral">2 apps</span><span class="summary-badge summary-badge-neutral">4 resources</span><span class="summary-badge summary-badge-modified summary-badge-detail">2 changed</span><span class="summary-badge summary-badge-added summary-badge-detail">1 added</span><span class="summary-badge summary-badge-removed summary-badge-detail">1 deleted</span><span class="summary-badge summary-badge-added">+30</span><span class="summary-badge summary-badge-removed">-26</span></div>
 </div>
 <div class="header-actions">
 <svg class="brand-logo" aria-label="drydock" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" width="128" height="128">
@@ -642,84 +642,21 @@ body[data-view="unified"] .diff-table.side-by-side {
 <div class="review-layout">
 <aside class="tree" id="diff-tree">
 <input class="tree-search" data-tree-search type="search" placeholder="Search resources (/)" aria-label="Search resources">
-<details class="tree-app" data-tree-app="renovate" open>
-<summary><span class="tree-app-name">renovate</span><span class="tree-delta" aria-hidden="true"><span class="tree-delta-added">+5</span><span class="tree-delta-removed">-5</span></span></summary>
-<button class="tree-resource" type="button" data-target-resource="resource-2" data-search-text="renovate renovate-operator.mogenius.com renovatejob renovate/renovate modified" title="renovate-operator.mogenius.com RenovateJob renovate/renovate" aria-label="renovate-operator.mogenius.com RenovateJob renovate/renovate, modified, plus 5, minus 5"><span class="tree-status-dot tree-status-modified" aria-hidden="true"></span><span class="tree-resource-label">RenovateJob · renovate</span><span class="tree-delta" aria-hidden="true"><span class="tree-delta-added">+5</span><span class="tree-delta-removed">-5</span></span></button>
+<details class="tree-app" data-tree-app="argocd/envoy-gateway-system" open>
+<summary><span class="tree-app-name">argocd/envoy-gateway-system</span><span class="tree-delta" aria-hidden="true"><span class="tree-delta-added">+9</span><span class="tree-delta-removed">-21</span></span></summary>
+<button class="tree-resource" type="button" data-target-resource="resource-0" data-search-text="argocd/envoy-gateway-system apps deployment envoy-gateway-system/envoy-gateway modified" title="apps Deployment envoy-gateway-system/envoy-gateway" aria-label="apps Deployment envoy-gateway-system/envoy-gateway, modified, plus 9, minus 9"><span class="tree-status-dot tree-status-modified" aria-hidden="true"></span><span class="tree-resource-label">Deployment · envoy-gateway</span><span class="tree-delta" aria-hidden="true"><span class="tree-delta-added">+9</span><span class="tree-delta-removed">-9</span></span></button>
+<button class="tree-resource" type="button" data-target-resource="resource-1" data-search-text="argocd/envoy-gateway-system policy poddisruptionbudget envoy-gateway-system/envoy-gateway removed" title="policy PodDisruptionBudget envoy-gateway-system/envoy-gateway" aria-label="policy PodDisruptionBudget envoy-gateway-system/envoy-gateway, removed, minus 12"><span class="tree-status-dot tree-status-removed" aria-hidden="true"></span><span class="tree-resource-label">PDB · envoy-gateway</span><span class="tree-delta" aria-hidden="true"><span class="tree-delta-removed">-12</span></span></button>
 </details>
-<details class="tree-app" data-tree-app="envoy-gateway-system" open>
-<summary><span class="tree-app-name">envoy-gateway-system</span><span class="tree-delta" aria-hidden="true"><span class="tree-delta-added">+4</span><span class="tree-delta-removed">-4</span></span></summary>
-<button class="tree-resource" type="button" data-target-resource="resource-0" data-search-text="envoy-gateway-system apps deployment envoy-gateway-system/envoy-gateway modified" title="apps Deployment envoy-gateway-system/envoy-gateway" aria-label="apps Deployment envoy-gateway-system/envoy-gateway, modified, plus 3, minus 3"><span class="tree-status-dot tree-status-modified" aria-hidden="true"></span><span class="tree-resource-label">Deployment · envoy-gateway</span><span class="tree-delta" aria-hidden="true"><span class="tree-delta-added">+3</span><span class="tree-delta-removed">-3</span></span></button>
-<button class="tree-resource" type="button" data-target-resource="resource-1" data-search-text="envoy-gateway-system policy poddisruptionbudget envoy-gateway-system/envoy-gateway modified" title="policy PodDisruptionBudget envoy-gateway-system/envoy-gateway" aria-label="policy PodDisruptionBudget envoy-gateway-system/envoy-gateway, modified, plus 1, minus 1"><span class="tree-status-dot tree-status-modified" aria-hidden="true"></span><span class="tree-resource-label">PDB · envoy-gateway</span><span class="tree-delta" aria-hidden="true"><span class="tree-delta-added">+1</span><span class="tree-delta-removed">-1</span></span></button>
+<details class="tree-app" data-tree-app="argocd/renovate" open>
+<summary><span class="tree-app-name">argocd/renovate</span><span class="tree-delta" aria-hidden="true"><span class="tree-delta-added">+21</span><span class="tree-delta-removed">-5</span></span></summary>
+<button class="tree-resource" type="button" data-target-resource="resource-2" data-search-text="argocd/renovate monitoring.coreos.com servicemonitor renovate/renovate added" title="monitoring.coreos.com ServiceMonitor renovate/renovate" aria-label="monitoring.coreos.com ServiceMonitor renovate/renovate, added, plus 16"><span class="tree-status-dot tree-status-added" aria-hidden="true"></span><span class="tree-resource-label">ServiceMonitor · renovate</span><span class="tree-delta" aria-hidden="true"><span class="tree-delta-added">+16</span></span></button>
+<button class="tree-resource" type="button" data-target-resource="resource-3" data-search-text="argocd/renovate renovate-operator.mogenius.com renovatejob renovate/renovate modified" title="renovate-operator.mogenius.com RenovateJob renovate/renovate" aria-label="renovate-operator.mogenius.com RenovateJob renovate/renovate, modified, plus 5, minus 5"><span class="tree-status-dot tree-status-modified" aria-hidden="true"></span><span class="tree-resource-label">RenovateJob · renovate</span><span class="tree-delta" aria-hidden="true"><span class="tree-delta-added">+5</span><span class="tree-delta-removed">-5</span></span></button>
 </details>
 </aside>
 <div class="sidebar-resizer" data-sidebar-resizer role="separator" aria-orientation="vertical" aria-label="Resize changed resources sidebar" aria-valuemin="240" aria-valuemax="480" aria-valuenow="320" tabindex="0"></div>
 <div class="sidebar-backdrop" data-sidebar-backdrop></div>
 <main class="review-main">
 <section class="applications">
-<article class="resource" data-resource-id="resource-2" data-result-index="2" data-change="modified">
-<header class="resource-header">
-<div class="resource-title">
-<h3>renovate-operator.mogenius.com RenovateJob renovate/renovate</h3>
-</div>
-<button class="view-toggle" type="button" data-view-toggle aria-label="Toggle diff layout">Unified</button>
-</header>
-<table class="diff-table side-by-side">
-<tbody>
-<tr class="hunk-header"><th colspan="4">@@ -34,18 +34,18 @@</th></tr>
-<tr class="diff-row context"><td class="line-number">34</td><td class="line-code">      value: http://10.2.0.110:3900</td><td class="line-number">34</td><td class="line-code">      value: http://10.2.0.110:3900</td></tr>
-<tr class="diff-row context"><td class="line-number">35</td><td class="line-code">    - name: S3_FORCE_PATH_STYLE</td><td class="line-number">35</td><td class="line-code">    - name: S3_FORCE_PATH_STYLE</td></tr>
-<tr class="diff-row context"><td class="line-number">36</td><td class="line-code">      value: &#34;true&#34;</td><td class="line-number">36</td><td class="line-code">      value: &#34;true&#34;</td></tr>
-<tr class="diff-row removed"><td class="line-number">37</td><td class="line-code">  image: renovate/renovate:43.20<span class="inline-change removed">5.3@sha256:53a36e2d4da0fea960e6d4ebac3da152233532c0be1c14313086011e7c4bb551</span></td><td class="line-number line-number-blank"></td><td class="line-code line-code-blank"></td></tr>
-<tr class="diff-row removed"><td class="line-number">38</td><td class="line-code">  parallelism: <span class="inline-change removed">3</span></td><td class="line-number line-number-blank"></td><td class="line-code line-code-blank"></td></tr>
-<tr class="diff-row added"><td class="line-number line-number-blank"></td><td class="line-code line-code-blank"></td><td class="line-number">37</td><td class="line-code">  image: renovate/renovate:43.20<span class="inline-change added">7.4@sha256:087bab575172b1926bbc57124d988015d899b0a82d45028514377b10a392f69d</span></td></tr>
-<tr class="diff-row added"><td class="line-number line-number-blank"></td><td class="line-code line-code-blank"></td><td class="line-number">38</td><td class="line-code">  parallelism: <span class="inline-change added">2</span></td></tr>
-<tr class="diff-row context"><td class="line-number">39</td><td class="line-code">  provider:</td><td class="line-number">39</td><td class="line-code">  provider:</td></tr>
-<tr class="diff-row context"><td class="line-number">40</td><td class="line-code">    name: github</td><td class="line-number">40</td><td class="line-code">    name: github</td></tr>
-<tr class="diff-row context"><td class="line-number">41</td><td class="line-code">  resources:</td><td class="line-number">41</td><td class="line-code">  resources:</td></tr>
-<tr class="diff-row context"><td class="line-number">42</td><td class="line-code">    limits:</td><td class="line-number">42</td><td class="line-code">    limits:</td></tr>
-<tr class="diff-row removed"><td class="line-number">43</td><td class="line-code">      cpu: <span class="inline-change removed">50</span>0m</td><td class="line-number line-number-blank"></td><td class="line-code line-code-blank"></td></tr>
-<tr class="diff-row added"><td class="line-number line-number-blank"></td><td class="line-code line-code-blank"></td><td class="line-number">43</td><td class="line-code">      cpu: <span class="inline-change added">75</span>0m</td></tr>
-<tr class="diff-row context"><td class="line-number">44</td><td class="line-code">      memory: 2048Mi</td><td class="line-number">44</td><td class="line-code">      memory: 2048Mi</td></tr>
-<tr class="diff-row context"><td class="line-number">45</td><td class="line-code">    requests:</td><td class="line-number">45</td><td class="line-code">    requests:</td></tr>
-<tr class="diff-row removed"><td class="line-number">46</td><td class="line-code">      cpu: <span class="inline-change removed">50</span>0m</td><td class="line-number line-number-blank"></td><td class="line-code line-code-blank"></td></tr>
-<tr class="diff-row added"><td class="line-number line-number-blank"></td><td class="line-code line-code-blank"></td><td class="line-number">46</td><td class="line-code">      cpu: <span class="inline-change added">75</span>0m</td></tr>
-<tr class="diff-row context"><td class="line-number">47</td><td class="line-code">      memory: 2048Mi</td><td class="line-number">47</td><td class="line-code">      memory: 2048Mi</td></tr>
-<tr class="diff-row removed"><td class="line-number">48</td><td class="line-code">  schedule: <span class="inline-change removed">0</span> * * * *</td><td class="line-number line-number-blank"></td><td class="line-code line-code-blank"></td></tr>
-<tr class="diff-row added"><td class="line-number line-number-blank"></td><td class="line-code line-code-blank"></td><td class="line-number">48</td><td class="line-code">  schedule: <span class="inline-change added">15</span> * * * *</td></tr>
-<tr class="diff-row context"><td class="line-number">49</td><td class="line-code">  secretRef: renovate-secret</td><td class="line-number">49</td><td class="line-code">  secretRef: renovate-secret</td></tr>
-<tr class="diff-row context"><td class="line-number">50</td><td class="line-code">  webhook:</td><td class="line-number">50</td><td class="line-code">  webhook:</td></tr>
-<tr class="diff-row context"><td class="line-number">51</td><td class="line-code">    authentication:</td><td class="line-number">51</td><td class="line-code">    authentication:</td></tr>
-</tbody>
-</table>
-<table class="diff-table unified">
-<tbody>
-<tr class="hunk-header"><th colspan="2">@@ -34,18 +34,18 @@</th></tr>
-<tr class="diff-row context"><td class="line-number">34</td><td class="line-code">      value: http://10.2.0.110:3900</td></tr>
-<tr class="diff-row context"><td class="line-number">35</td><td class="line-code">    - name: S3_FORCE_PATH_STYLE</td></tr>
-<tr class="diff-row context"><td class="line-number">36</td><td class="line-code">      value: &#34;true&#34;</td></tr>
-<tr class="diff-row removed"><td class="line-number">37</td><td class="line-code">  image: renovate/renovate:43.20<span class="inline-change removed">5.3@sha256:53a36e2d4da0fea960e6d4ebac3da152233532c0be1c14313086011e7c4bb551</span></td></tr>
-<tr class="diff-row removed"><td class="line-number">38</td><td class="line-code">  parallelism: <span class="inline-change removed">3</span></td></tr>
-<tr class="diff-row added"><td class="line-number">37</td><td class="line-code">  image: renovate/renovate:43.20<span class="inline-change added">7.4@sha256:087bab575172b1926bbc57124d988015d899b0a82d45028514377b10a392f69d</span></td></tr>
-<tr class="diff-row added"><td class="line-number">38</td><td class="line-code">  parallelism: <span class="inline-change added">2</span></td></tr>
-<tr class="diff-row context"><td class="line-number">39</td><td class="line-code">  provider:</td></tr>
-<tr class="diff-row context"><td class="line-number">40</td><td class="line-code">    name: github</td></tr>
-<tr class="diff-row context"><td class="line-number">41</td><td class="line-code">  resources:</td></tr>
-<tr class="diff-row context"><td class="line-number">42</td><td class="line-code">    limits:</td></tr>
-<tr class="diff-row removed"><td class="line-number">43</td><td class="line-code">      cpu: <span class="inline-change removed">50</span>0m</td></tr>
-<tr class="diff-row added"><td class="line-number">43</td><td class="line-code">      cpu: <span class="inline-change added">75</span>0m</td></tr>
-<tr class="diff-row context"><td class="line-number">44</td><td class="line-code">      memory: 2048Mi</td></tr>
-<tr class="diff-row context"><td class="line-number">45</td><td class="line-code">    requests:</td></tr>
-<tr class="diff-row removed"><td class="line-number">46</td><td class="line-code">      cpu: <span class="inline-change removed">50</span>0m</td></tr>
-<tr class="diff-row added"><td class="line-number">46</td><td class="line-code">      cpu: <span class="inline-change added">75</span>0m</td></tr>
-<tr class="diff-row context"><td class="line-number">47</td><td class="line-code">      memory: 2048Mi</td></tr>
-<tr class="diff-row removed"><td class="line-number">48</td><td class="line-code">  schedule: <span class="inline-change removed">0</span> * * * *</td></tr>
-<tr class="diff-row added"><td class="line-number">48</td><td class="line-code">  schedule: <span class="inline-change added">15</span> * * * *</td></tr>
-<tr class="diff-row context"><td class="line-number">49</td><td class="line-code">  secretRef: renovate-secret</td></tr>
-<tr class="diff-row context"><td class="line-number">50</td><td class="line-code">  webhook:</td></tr>
-<tr class="diff-row context"><td class="line-number">51</td><td class="line-code">    authentication:</td></tr>
-</tbody>
-</table>
-</article>
 <article class="resource" data-resource-id="resource-0" data-result-index="0" data-change="modified">
 <header class="resource-header">
 <div class="resource-title">
@@ -729,88 +666,236 @@ body[data-view="unified"] .diff-table.side-by-side {
 </header>
 <table class="diff-table side-by-side">
 <tbody>
-<tr class="hunk-header"><th colspan="4">@@ -11,7 +11,7 @@</th></tr>
-<tr class="diff-row context"><td class="line-number">11</td><td class="line-code">  name: envoy-gateway</td><td class="line-number">11</td><td class="line-code">  name: envoy-gateway</td></tr>
-<tr class="diff-row context"><td class="line-number">12</td><td class="line-code">  namespace: envoy-gateway-system</td><td class="line-number">12</td><td class="line-code">  namespace: envoy-gateway-system</td></tr>
-<tr class="diff-row context"><td class="line-number">13</td><td class="line-code">spec:</td><td class="line-number">13</td><td class="line-code">spec:</td></tr>
-<tr class="diff-row removed"><td class="line-number">14</td><td class="line-code">  replicas: <span class="inline-change removed">3</span></td><td class="line-number line-number-blank"></td><td class="line-code line-code-blank"></td></tr>
-<tr class="diff-row added"><td class="line-number line-number-blank"></td><td class="line-code line-code-blank"></td><td class="line-number">14</td><td class="line-code">  replicas: <span class="inline-change added">2</span></td></tr>
-<tr class="diff-row context"><td class="line-number">15</td><td class="line-code">  selector:</td><td class="line-number">15</td><td class="line-code">  selector:</td></tr>
-<tr class="diff-row context"><td class="line-number">16</td><td class="line-code">    matchLabels:</td><td class="line-number">16</td><td class="line-code">    matchLabels:</td></tr>
-<tr class="diff-row context"><td class="line-number">17</td><td class="line-code">      app.kubernetes.io/instance: envoy-gateway</td><td class="line-number">17</td><td class="line-code">      app.kubernetes.io/instance: envoy-gateway</td></tr>
-<tr class="hunk-header"><th colspan="4">@@ -67,10 +67,10 @@</th></tr>
-<tr class="diff-row context"><td class="line-number">67</td><td class="line-code">            periodSeconds: 10</td><td class="line-number">67</td><td class="line-code">            periodSeconds: 10</td></tr>
-<tr class="diff-row context"><td class="line-number">68</td><td class="line-code">          resources:</td><td class="line-number">68</td><td class="line-code">          resources:</td></tr>
-<tr class="diff-row context"><td class="line-number">69</td><td class="line-code">            limits:</td><td class="line-number">69</td><td class="line-code">            limits:</td></tr>
-<tr class="diff-row removed"><td class="line-number">70</td><td class="line-code">              cpu: 1<span class="inline-change removed">0</span>0m</td><td class="line-number line-number-blank"></td><td class="line-code line-code-blank"></td></tr>
-<tr class="diff-row added"><td class="line-number line-number-blank"></td><td class="line-code line-code-blank"></td><td class="line-number">70</td><td class="line-code">              cpu: 1<span class="inline-change added">5</span>0m</td></tr>
-<tr class="diff-row context"><td class="line-number">71</td><td class="line-code">              memory: 150Mi</td><td class="line-number">71</td><td class="line-code">              memory: 150Mi</td></tr>
-<tr class="diff-row context"><td class="line-number">72</td><td class="line-code">            requests:</td><td class="line-number">72</td><td class="line-code">            requests:</td></tr>
-<tr class="diff-row removed"><td class="line-number">73</td><td class="line-code">              cpu: <span class="inline-change removed">10</span>m</td><td class="line-number line-number-blank"></td><td class="line-code line-code-blank"></td></tr>
-<tr class="diff-row added"><td class="line-number line-number-blank"></td><td class="line-code line-code-blank"></td><td class="line-number">73</td><td class="line-code">              cpu: <span class="inline-change added">25</span>m</td></tr>
-<tr class="diff-row context"><td class="line-number">74</td><td class="line-code">              memory: 150Mi</td><td class="line-number">74</td><td class="line-code">              memory: 150Mi</td></tr>
-<tr class="diff-row context"><td class="line-number">75</td><td class="line-code">          securityContext:</td><td class="line-number">75</td><td class="line-code">          securityContext:</td></tr>
-<tr class="diff-row context"><td class="line-number">76</td><td class="line-code">            allowPrivilegeEscalation: false</td><td class="line-number">76</td><td class="line-code">            allowPrivilegeEscalation: false</td></tr>
+<tr class="hunk-header"><th colspan="4">@@ -8,7 +8,7 @@</th></tr>
+<tr class="diff-row context"><td class="line-number">8</td><td class="line-code">  name: envoy-gateway</td><td class="line-number">8</td><td class="line-code">  name: envoy-gateway</td></tr>
+<tr class="diff-row context"><td class="line-number">9</td><td class="line-code">  namespace: envoy-gateway-system</td><td class="line-number">9</td><td class="line-code">  namespace: envoy-gateway-system</td></tr>
+<tr class="diff-row context"><td class="line-number">10</td><td class="line-code">spec:</td><td class="line-number">10</td><td class="line-code">spec:</td></tr>
+<tr class="diff-row removed"><td class="line-number">11</td><td class="line-code">  replicas: <span class="inline-change removed">3</span></td><td class="line-number line-number-blank"></td><td class="line-code line-code-blank"></td></tr>
+<tr class="diff-row added"><td class="line-number line-number-blank"></td><td class="line-code line-code-blank"></td><td class="line-number">11</td><td class="line-code">  replicas: <span class="inline-change added">2</span></td></tr>
+<tr class="diff-row context"><td class="line-number">12</td><td class="line-code">  selector:</td><td class="line-number">12</td><td class="line-code">  selector:</td></tr>
+<tr class="diff-row context"><td class="line-number">13</td><td class="line-code">    matchLabels:</td><td class="line-number">13</td><td class="line-code">    matchLabels:</td></tr>
+<tr class="diff-row context"><td class="line-number">14</td><td class="line-code">      app.kubernetes.io/instance: envoy-gateway</td><td class="line-number">14</td><td class="line-code">      app.kubernetes.io/instance: envoy-gateway</td></tr>
+<tr class="hunk-header"><th colspan="4">@@ -19,17 +19,17 @@</th></tr>
+<tr class="diff-row context"><td class="line-number">19</td><td class="line-code">    spec:</td><td class="line-number">19</td><td class="line-code">    spec:</td></tr>
+<tr class="diff-row context"><td class="line-number">20</td><td class="line-code">      containers:</td><td class="line-number">20</td><td class="line-code">      containers:</td></tr>
+<tr class="diff-row context"><td class="line-number">21</td><td class="line-code">        - args:</td><td class="line-number">21</td><td class="line-code">        - args:</td></tr>
+<tr class="diff-row removed"><td class="line-number">22</td><td class="line-code">            - --gateway-class-name=<span class="inline-change removed">envoy</span>-gateway</td><td class="line-number line-number-blank"></td><td class="line-code line-code-blank"></td></tr>
+<tr class="diff-row removed"><td class="line-number">23</td><td class="line-code">            - --metrics-bind-address=0.0.0.0:1900<span class="inline-change removed">1</span></td><td class="line-number line-number-blank"></td><td class="line-code line-code-blank"></td></tr>
+<tr class="diff-row removed"><td class="line-number">24</td><td class="line-code">            - --enable-wasm-extension=<span class="inline-change removed">fals</span>e</td><td class="line-number line-number-blank"></td><td class="line-code line-code-blank"></td></tr>
+<tr class="diff-row removed"><td class="line-number">25</td><td class="line-code">          image: docker.io/envoyproxy/gateway:v1.<span class="inline-change removed">3.2</span></td><td class="line-number line-number-blank"></td><td class="line-code line-code-blank"></td></tr>
+<tr class="diff-row added"><td class="line-number line-number-blank"></td><td class="line-code line-code-blank"></td><td class="line-number">22</td><td class="line-code">            - --gateway-class-name=<span class="inline-change added">platform</span>-gateway</td></tr>
+<tr class="diff-row added"><td class="line-number line-number-blank"></td><td class="line-code line-code-blank"></td><td class="line-number">23</td><td class="line-code">            - --metrics-bind-address=0.0.0.0:1900<span class="inline-change added">2</span></td></tr>
+<tr class="diff-row added"><td class="line-number line-number-blank"></td><td class="line-code line-code-blank"></td><td class="line-number">24</td><td class="line-code">            - --enable-wasm-extension=<span class="inline-change added">tru</span>e</td></tr>
+<tr class="diff-row added"><td class="line-number line-number-blank"></td><td class="line-code line-code-blank"></td><td class="line-number">25</td><td class="line-code">          image: docker.io/envoyproxy/gateway:v1.<span class="inline-change added">4.0</span></td></tr>
+<tr class="diff-row context"><td class="line-number">26</td><td class="line-code">          name: envoy-gateway</td><td class="line-number">26</td><td class="line-code">          name: envoy-gateway</td></tr>
+<tr class="diff-row context"><td class="line-number">27</td><td class="line-code">          resources:</td><td class="line-number">27</td><td class="line-code">          resources:</td></tr>
+<tr class="diff-row context"><td class="line-number">28</td><td class="line-code">            limits:</td><td class="line-number">28</td><td class="line-code">            limits:</td></tr>
+<tr class="diff-row removed"><td class="line-number">29</td><td class="line-code">              cpu: 1<span class="inline-change removed">0</span>0m</td><td class="line-number line-number-blank"></td><td class="line-code line-code-blank"></td></tr>
+<tr class="diff-row removed"><td class="line-number">30</td><td class="line-code">              memory: 1<span class="inline-change removed">50</span>Mi</td><td class="line-number line-number-blank"></td><td class="line-code line-code-blank"></td></tr>
+<tr class="diff-row added"><td class="line-number line-number-blank"></td><td class="line-code line-code-blank"></td><td class="line-number">29</td><td class="line-code">              cpu: 1<span class="inline-change added">5</span>0m</td></tr>
+<tr class="diff-row added"><td class="line-number line-number-blank"></td><td class="line-code line-code-blank"></td><td class="line-number">30</td><td class="line-code">              memory: 1<span class="inline-change added">92</span>Mi</td></tr>
+<tr class="diff-row context"><td class="line-number">31</td><td class="line-code">            requests:</td><td class="line-number">31</td><td class="line-code">            requests:</td></tr>
+<tr class="diff-row removed"><td class="line-number">32</td><td class="line-code">              cpu: <span class="inline-change removed">10</span>m</td><td class="line-number line-number-blank"></td><td class="line-code line-code-blank"></td></tr>
+<tr class="diff-row removed"><td class="line-number">33</td><td class="line-code">              memory: 1<span class="inline-change removed">50</span>Mi</td><td class="line-number line-number-blank"></td><td class="line-code line-code-blank"></td></tr>
+<tr class="diff-row added"><td class="line-number line-number-blank"></td><td class="line-code line-code-blank"></td><td class="line-number">32</td><td class="line-code">              cpu: <span class="inline-change added">25</span>m</td></tr>
+<tr class="diff-row added"><td class="line-number line-number-blank"></td><td class="line-code line-code-blank"></td><td class="line-number">33</td><td class="line-code">              memory: 1<span class="inline-change added">92</span>Mi</td></tr>
+<tr class="diff-row context"><td class="line-number">34</td><td class="line-code">          securityContext:</td><td class="line-number">34</td><td class="line-code">          securityContext:</td></tr>
+<tr class="diff-row context"><td class="line-number">35</td><td class="line-code">            allowPrivilegeEscalation: false</td><td class="line-number">35</td><td class="line-code">            allowPrivilegeEscalation: false</td></tr>
 </tbody>
 </table>
 <table class="diff-table unified">
 <tbody>
-<tr class="hunk-header"><th colspan="2">@@ -11,7 +11,7 @@</th></tr>
-<tr class="diff-row context"><td class="line-number">11</td><td class="line-code">  name: envoy-gateway</td></tr>
-<tr class="diff-row context"><td class="line-number">12</td><td class="line-code">  namespace: envoy-gateway-system</td></tr>
-<tr class="diff-row context"><td class="line-number">13</td><td class="line-code">spec:</td></tr>
-<tr class="diff-row removed"><td class="line-number">14</td><td class="line-code">  replicas: <span class="inline-change removed">3</span></td></tr>
-<tr class="diff-row added"><td class="line-number">14</td><td class="line-code">  replicas: <span class="inline-change added">2</span></td></tr>
-<tr class="diff-row context"><td class="line-number">15</td><td class="line-code">  selector:</td></tr>
-<tr class="diff-row context"><td class="line-number">16</td><td class="line-code">    matchLabels:</td></tr>
-<tr class="diff-row context"><td class="line-number">17</td><td class="line-code">      app.kubernetes.io/instance: envoy-gateway</td></tr>
-<tr class="hunk-header"><th colspan="2">@@ -67,10 +67,10 @@</th></tr>
-<tr class="diff-row context"><td class="line-number">67</td><td class="line-code">            periodSeconds: 10</td></tr>
-<tr class="diff-row context"><td class="line-number">68</td><td class="line-code">          resources:</td></tr>
-<tr class="diff-row context"><td class="line-number">69</td><td class="line-code">            limits:</td></tr>
-<tr class="diff-row removed"><td class="line-number">70</td><td class="line-code">              cpu: 1<span class="inline-change removed">0</span>0m</td></tr>
-<tr class="diff-row added"><td class="line-number">70</td><td class="line-code">              cpu: 1<span class="inline-change added">5</span>0m</td></tr>
-<tr class="diff-row context"><td class="line-number">71</td><td class="line-code">              memory: 150Mi</td></tr>
-<tr class="diff-row context"><td class="line-number">72</td><td class="line-code">            requests:</td></tr>
-<tr class="diff-row removed"><td class="line-number">73</td><td class="line-code">              cpu: <span class="inline-change removed">10</span>m</td></tr>
-<tr class="diff-row added"><td class="line-number">73</td><td class="line-code">              cpu: <span class="inline-change added">25</span>m</td></tr>
-<tr class="diff-row context"><td class="line-number">74</td><td class="line-code">              memory: 150Mi</td></tr>
-<tr class="diff-row context"><td class="line-number">75</td><td class="line-code">          securityContext:</td></tr>
-<tr class="diff-row context"><td class="line-number">76</td><td class="line-code">            allowPrivilegeEscalation: false</td></tr>
+<tr class="hunk-header"><th colspan="2">@@ -8,7 +8,7 @@</th></tr>
+<tr class="diff-row context"><td class="line-number">8</td><td class="line-code">  name: envoy-gateway</td></tr>
+<tr class="diff-row context"><td class="line-number">9</td><td class="line-code">  namespace: envoy-gateway-system</td></tr>
+<tr class="diff-row context"><td class="line-number">10</td><td class="line-code">spec:</td></tr>
+<tr class="diff-row removed"><td class="line-number">11</td><td class="line-code">  replicas: <span class="inline-change removed">3</span></td></tr>
+<tr class="diff-row added"><td class="line-number">11</td><td class="line-code">  replicas: <span class="inline-change added">2</span></td></tr>
+<tr class="diff-row context"><td class="line-number">12</td><td class="line-code">  selector:</td></tr>
+<tr class="diff-row context"><td class="line-number">13</td><td class="line-code">    matchLabels:</td></tr>
+<tr class="diff-row context"><td class="line-number">14</td><td class="line-code">      app.kubernetes.io/instance: envoy-gateway</td></tr>
+<tr class="hunk-header"><th colspan="2">@@ -19,17 +19,17 @@</th></tr>
+<tr class="diff-row context"><td class="line-number">19</td><td class="line-code">    spec:</td></tr>
+<tr class="diff-row context"><td class="line-number">20</td><td class="line-code">      containers:</td></tr>
+<tr class="diff-row context"><td class="line-number">21</td><td class="line-code">        - args:</td></tr>
+<tr class="diff-row removed"><td class="line-number">22</td><td class="line-code">            - --gateway-class-name=<span class="inline-change removed">envoy</span>-gateway</td></tr>
+<tr class="diff-row removed"><td class="line-number">23</td><td class="line-code">            - --metrics-bind-address=0.0.0.0:1900<span class="inline-change removed">1</span></td></tr>
+<tr class="diff-row removed"><td class="line-number">24</td><td class="line-code">            - --enable-wasm-extension=<span class="inline-change removed">fals</span>e</td></tr>
+<tr class="diff-row removed"><td class="line-number">25</td><td class="line-code">          image: docker.io/envoyproxy/gateway:v1.<span class="inline-change removed">3.2</span></td></tr>
+<tr class="diff-row added"><td class="line-number">22</td><td class="line-code">            - --gateway-class-name=<span class="inline-change added">platform</span>-gateway</td></tr>
+<tr class="diff-row added"><td class="line-number">23</td><td class="line-code">            - --metrics-bind-address=0.0.0.0:1900<span class="inline-change added">2</span></td></tr>
+<tr class="diff-row added"><td class="line-number">24</td><td class="line-code">            - --enable-wasm-extension=<span class="inline-change added">tru</span>e</td></tr>
+<tr class="diff-row added"><td class="line-number">25</td><td class="line-code">          image: docker.io/envoyproxy/gateway:v1.<span class="inline-change added">4.0</span></td></tr>
+<tr class="diff-row context"><td class="line-number">26</td><td class="line-code">          name: envoy-gateway</td></tr>
+<tr class="diff-row context"><td class="line-number">27</td><td class="line-code">          resources:</td></tr>
+<tr class="diff-row context"><td class="line-number">28</td><td class="line-code">            limits:</td></tr>
+<tr class="diff-row removed"><td class="line-number">29</td><td class="line-code">              cpu: 1<span class="inline-change removed">0</span>0m</td></tr>
+<tr class="diff-row removed"><td class="line-number">30</td><td class="line-code">              memory: 1<span class="inline-change removed">50</span>Mi</td></tr>
+<tr class="diff-row added"><td class="line-number">29</td><td class="line-code">              cpu: 1<span class="inline-change added">5</span>0m</td></tr>
+<tr class="diff-row added"><td class="line-number">30</td><td class="line-code">              memory: 1<span class="inline-change added">92</span>Mi</td></tr>
+<tr class="diff-row context"><td class="line-number">31</td><td class="line-code">            requests:</td></tr>
+<tr class="diff-row removed"><td class="line-number">32</td><td class="line-code">              cpu: <span class="inline-change removed">10</span>m</td></tr>
+<tr class="diff-row removed"><td class="line-number">33</td><td class="line-code">              memory: 1<span class="inline-change removed">50</span>Mi</td></tr>
+<tr class="diff-row added"><td class="line-number">32</td><td class="line-code">              cpu: <span class="inline-change added">25</span>m</td></tr>
+<tr class="diff-row added"><td class="line-number">33</td><td class="line-code">              memory: 1<span class="inline-change added">92</span>Mi</td></tr>
+<tr class="diff-row context"><td class="line-number">34</td><td class="line-code">          securityContext:</td></tr>
+<tr class="diff-row context"><td class="line-number">35</td><td class="line-code">            allowPrivilegeEscalation: false</td></tr>
 </tbody>
 </table>
 </article>
-<article class="resource" data-resource-id="resource-1" data-result-index="1" data-change="modified">
+<article class="resource" data-resource-id="resource-1" data-result-index="1" data-change="removed">
 <header class="resource-header">
 <div class="resource-title">
 <h3>policy PodDisruptionBudget envoy-gateway-system/envoy-gateway</h3>
 </div>
 <button class="view-toggle" type="button" data-view-toggle aria-label="Toggle diff layout">Unified</button>
 </header>
+<table class="diff-table side-by-side one-sided">
+<tbody>
+<tr class="hunk-header"><th colspan="2">@@ -1,12 +0,0 @@</th></tr>
+<tr class="diff-row removed"><td class="line-number">1</td><td class="line-code">apiVersion: policy/v1</td></tr>
+<tr class="diff-row removed"><td class="line-number">2</td><td class="line-code">kind: PodDisruptionBudget</td></tr>
+<tr class="diff-row removed"><td class="line-number">3</td><td class="line-code">metadata:</td></tr>
+<tr class="diff-row removed"><td class="line-number">4</td><td class="line-code">  annotations:</td></tr>
+<tr class="diff-row removed"><td class="line-number">5</td><td class="line-code">    argocd.argoproj.io/tracking-id: envoy-gateway-system:policy/PodDisruptionBudget:envoy-gateway-system/envoy-gateway</td></tr>
+<tr class="diff-row removed"><td class="line-number">6</td><td class="line-code">  name: envoy-gateway</td></tr>
+<tr class="diff-row removed"><td class="line-number">7</td><td class="line-code">  namespace: envoy-gateway-system</td></tr>
+<tr class="diff-row removed"><td class="line-number">8</td><td class="line-code">spec:</td></tr>
+<tr class="diff-row removed"><td class="line-number">9</td><td class="line-code">  minAvailable: 1</td></tr>
+<tr class="diff-row removed"><td class="line-number">10</td><td class="line-code">  selector:</td></tr>
+<tr class="diff-row removed"><td class="line-number">11</td><td class="line-code">    matchLabels:</td></tr>
+<tr class="diff-row removed"><td class="line-number">12</td><td class="line-code">      app.kubernetes.io/instance: envoy-gateway</td></tr>
+</tbody>
+</table>
+<table class="diff-table unified one-sided">
+<tbody>
+<tr class="hunk-header"><th colspan="2">@@ -1,12 +0,0 @@</th></tr>
+<tr class="diff-row removed"><td class="line-number">1</td><td class="line-code">apiVersion: policy/v1</td></tr>
+<tr class="diff-row removed"><td class="line-number">2</td><td class="line-code">kind: PodDisruptionBudget</td></tr>
+<tr class="diff-row removed"><td class="line-number">3</td><td class="line-code">metadata:</td></tr>
+<tr class="diff-row removed"><td class="line-number">4</td><td class="line-code">  annotations:</td></tr>
+<tr class="diff-row removed"><td class="line-number">5</td><td class="line-code">    argocd.argoproj.io/tracking-id: envoy-gateway-system:policy/PodDisruptionBudget:envoy-gateway-system/envoy-gateway</td></tr>
+<tr class="diff-row removed"><td class="line-number">6</td><td class="line-code">  name: envoy-gateway</td></tr>
+<tr class="diff-row removed"><td class="line-number">7</td><td class="line-code">  namespace: envoy-gateway-system</td></tr>
+<tr class="diff-row removed"><td class="line-number">8</td><td class="line-code">spec:</td></tr>
+<tr class="diff-row removed"><td class="line-number">9</td><td class="line-code">  minAvailable: 1</td></tr>
+<tr class="diff-row removed"><td class="line-number">10</td><td class="line-code">  selector:</td></tr>
+<tr class="diff-row removed"><td class="line-number">11</td><td class="line-code">    matchLabels:</td></tr>
+<tr class="diff-row removed"><td class="line-number">12</td><td class="line-code">      app.kubernetes.io/instance: envoy-gateway</td></tr>
+</tbody>
+</table>
+</article>
+<article class="resource" data-resource-id="resource-2" data-result-index="2" data-change="added">
+<header class="resource-header">
+<div class="resource-title">
+<h3>monitoring.coreos.com ServiceMonitor renovate/renovate</h3>
+</div>
+<button class="view-toggle" type="button" data-view-toggle aria-label="Toggle diff layout">Unified</button>
+</header>
+<table class="diff-table side-by-side one-sided">
+<tbody>
+<tr class="hunk-header"><th colspan="2">@@ -0,0 +1,16 @@</th></tr>
+<tr class="diff-row added"><td class="line-number">1</td><td class="line-code">apiVersion: monitoring.coreos.com/v1</td></tr>
+<tr class="diff-row added"><td class="line-number">2</td><td class="line-code">kind: ServiceMonitor</td></tr>
+<tr class="diff-row added"><td class="line-number">3</td><td class="line-code">metadata:</td></tr>
+<tr class="diff-row added"><td class="line-number">4</td><td class="line-code">  annotations:</td></tr>
+<tr class="diff-row added"><td class="line-number">5</td><td class="line-code">    argocd.argoproj.io/tracking-id: renovate:monitoring.coreos.com/ServiceMonitor:renovate/renovate</td></tr>
+<tr class="diff-row added"><td class="line-number">6</td><td class="line-code">  name: renovate</td></tr>
+<tr class="diff-row added"><td class="line-number">7</td><td class="line-code">  namespace: renovate</td></tr>
+<tr class="diff-row added"><td class="line-number">8</td><td class="line-code">spec:</td></tr>
+<tr class="diff-row added"><td class="line-number">9</td><td class="line-code">  endpoints:</td></tr>
+<tr class="diff-row added"><td class="line-number">10</td><td class="line-code">    - interval: 30s</td></tr>
+<tr class="diff-row added"><td class="line-number">11</td><td class="line-code">      path: /metrics</td></tr>
+<tr class="diff-row added"><td class="line-number">12</td><td class="line-code">      port: metrics</td></tr>
+<tr class="diff-row added"><td class="line-number">13</td><td class="line-code">      scrapeTimeout: 10s</td></tr>
+<tr class="diff-row added"><td class="line-number">14</td><td class="line-code">  selector:</td></tr>
+<tr class="diff-row added"><td class="line-number">15</td><td class="line-code">    matchLabels:</td></tr>
+<tr class="diff-row added"><td class="line-number">16</td><td class="line-code">      app.kubernetes.io/name: renovate</td></tr>
+</tbody>
+</table>
+<table class="diff-table unified one-sided">
+<tbody>
+<tr class="hunk-header"><th colspan="2">@@ -0,0 +1,16 @@</th></tr>
+<tr class="diff-row added"><td class="line-number">1</td><td class="line-code">apiVersion: monitoring.coreos.com/v1</td></tr>
+<tr class="diff-row added"><td class="line-number">2</td><td class="line-code">kind: ServiceMonitor</td></tr>
+<tr class="diff-row added"><td class="line-number">3</td><td class="line-code">metadata:</td></tr>
+<tr class="diff-row added"><td class="line-number">4</td><td class="line-code">  annotations:</td></tr>
+<tr class="diff-row added"><td class="line-number">5</td><td class="line-code">    argocd.argoproj.io/tracking-id: renovate:monitoring.coreos.com/ServiceMonitor:renovate/renovate</td></tr>
+<tr class="diff-row added"><td class="line-number">6</td><td class="line-code">  name: renovate</td></tr>
+<tr class="diff-row added"><td class="line-number">7</td><td class="line-code">  namespace: renovate</td></tr>
+<tr class="diff-row added"><td class="line-number">8</td><td class="line-code">spec:</td></tr>
+<tr class="diff-row added"><td class="line-number">9</td><td class="line-code">  endpoints:</td></tr>
+<tr class="diff-row added"><td class="line-number">10</td><td class="line-code">    - interval: 30s</td></tr>
+<tr class="diff-row added"><td class="line-number">11</td><td class="line-code">      path: /metrics</td></tr>
+<tr class="diff-row added"><td class="line-number">12</td><td class="line-code">      port: metrics</td></tr>
+<tr class="diff-row added"><td class="line-number">13</td><td class="line-code">      scrapeTimeout: 10s</td></tr>
+<tr class="diff-row added"><td class="line-number">14</td><td class="line-code">  selector:</td></tr>
+<tr class="diff-row added"><td class="line-number">15</td><td class="line-code">    matchLabels:</td></tr>
+<tr class="diff-row added"><td class="line-number">16</td><td class="line-code">      app.kubernetes.io/name: renovate</td></tr>
+</tbody>
+</table>
+</article>
+<article class="resource" data-resource-id="resource-3" data-result-index="3" data-change="modified">
+<header class="resource-header">
+<div class="resource-title">
+<h3>renovate-operator.mogenius.com RenovateJob renovate/renovate</h3>
+</div>
+<button class="view-toggle" type="button" data-view-toggle aria-label="Toggle diff layout">Unified</button>
+</header>
 <table class="diff-table side-by-side">
 <tbody>
-<tr class="hunk-header"><th colspan="4">@@ -6,7 +6,7 @@</th></tr>
-<tr class="diff-row context"><td class="line-number">6</td><td class="line-code">  name: envoy-gateway</td><td class="line-number">6</td><td class="line-code">  name: envoy-gateway</td></tr>
-<tr class="diff-row context"><td class="line-number">7</td><td class="line-code">  namespace: envoy-gateway-system</td><td class="line-number">7</td><td class="line-code">  namespace: envoy-gateway-system</td></tr>
-<tr class="diff-row context"><td class="line-number">8</td><td class="line-code">spec:</td><td class="line-number">8</td><td class="line-code">spec:</td></tr>
-<tr class="diff-row removed"><td class="line-number">9</td><td class="line-code">  minAvailable: <span class="inline-change removed">1</span></td><td class="line-number line-number-blank"></td><td class="line-code line-code-blank"></td></tr>
-<tr class="diff-row added"><td class="line-number line-number-blank"></td><td class="line-code line-code-blank"></td><td class="line-number">9</td><td class="line-code">  minAvailable: <span class="inline-change added">2</span></td></tr>
-<tr class="diff-row context"><td class="line-number">10</td><td class="line-code">  selector:</td><td class="line-number">10</td><td class="line-code">  selector:</td></tr>
-<tr class="diff-row context"><td class="line-number">11</td><td class="line-code">    matchLabels:</td><td class="line-number">11</td><td class="line-code">    matchLabels:</td></tr>
-<tr class="diff-row context"><td class="line-number">12</td><td class="line-code">      app.kubernetes.io/instance: envoy-gateway</td><td class="line-number">12</td><td class="line-code">      app.kubernetes.io/instance: envoy-gateway</td></tr>
+<tr class="hunk-header"><th colspan="4">@@ -11,18 +11,18 @@</th></tr>
+<tr class="diff-row context"><td class="line-number">11</td><td class="line-code">      value: http://10.2.0.110:3900</td><td class="line-number">11</td><td class="line-code">      value: http://10.2.0.110:3900</td></tr>
+<tr class="diff-row context"><td class="line-number">12</td><td class="line-code">    - name: S3_FORCE_PATH_STYLE</td><td class="line-number">12</td><td class="line-code">    - name: S3_FORCE_PATH_STYLE</td></tr>
+<tr class="diff-row context"><td class="line-number">13</td><td class="line-code">      value: &#34;true&#34;</td><td class="line-number">13</td><td class="line-code">      value: &#34;true&#34;</td></tr>
+<tr class="diff-row removed"><td class="line-number">14</td><td class="line-code">  image: renovate/renovate:43.20<span class="inline-change removed">5.3@sha256:53a36e2d4da0fea960e6d4ebac3da152233532c0be1c14313086011e7c4bb551</span></td><td class="line-number line-number-blank"></td><td class="line-code line-code-blank"></td></tr>
+<tr class="diff-row removed"><td class="line-number">15</td><td class="line-code">  parallelism: <span class="inline-change removed">3</span></td><td class="line-number line-number-blank"></td><td class="line-code line-code-blank"></td></tr>
+<tr class="diff-row added"><td class="line-number line-number-blank"></td><td class="line-code line-code-blank"></td><td class="line-number">14</td><td class="line-code">  image: renovate/renovate:43.20<span class="inline-change added">7.4@sha256:087bab575172b1926bbc57124d988015d899b0a82d45028514377b10a392f69d</span></td></tr>
+<tr class="diff-row added"><td class="line-number line-number-blank"></td><td class="line-code line-code-blank"></td><td class="line-number">15</td><td class="line-code">  parallelism: <span class="inline-change added">2</span></td></tr>
+<tr class="diff-row context"><td class="line-number">16</td><td class="line-code">  provider:</td><td class="line-number">16</td><td class="line-code">  provider:</td></tr>
+<tr class="diff-row context"><td class="line-number">17</td><td class="line-code">    name: github</td><td class="line-number">17</td><td class="line-code">    name: github</td></tr>
+<tr class="diff-row context"><td class="line-number">18</td><td class="line-code">  resources:</td><td class="line-number">18</td><td class="line-code">  resources:</td></tr>
+<tr class="diff-row context"><td class="line-number">19</td><td class="line-code">    limits:</td><td class="line-number">19</td><td class="line-code">    limits:</td></tr>
+<tr class="diff-row removed"><td class="line-number">20</td><td class="line-code">      cpu: <span class="inline-change removed">50</span>0m</td><td class="line-number line-number-blank"></td><td class="line-code line-code-blank"></td></tr>
+<tr class="diff-row added"><td class="line-number line-number-blank"></td><td class="line-code line-code-blank"></td><td class="line-number">20</td><td class="line-code">      cpu: <span class="inline-change added">75</span>0m</td></tr>
+<tr class="diff-row context"><td class="line-number">21</td><td class="line-code">      memory: 2048Mi</td><td class="line-number">21</td><td class="line-code">      memory: 2048Mi</td></tr>
+<tr class="diff-row context"><td class="line-number">22</td><td class="line-code">    requests:</td><td class="line-number">22</td><td class="line-code">    requests:</td></tr>
+<tr class="diff-row removed"><td class="line-number">23</td><td class="line-code">      cpu: <span class="inline-change removed">50</span>0m</td><td class="line-number line-number-blank"></td><td class="line-code line-code-blank"></td></tr>
+<tr class="diff-row added"><td class="line-number line-number-blank"></td><td class="line-code line-code-blank"></td><td class="line-number">23</td><td class="line-code">      cpu: <span class="inline-change added">75</span>0m</td></tr>
+<tr class="diff-row context"><td class="line-number">24</td><td class="line-code">      memory: 2048Mi</td><td class="line-number">24</td><td class="line-code">      memory: 2048Mi</td></tr>
+<tr class="diff-row removed"><td class="line-number">25</td><td class="line-code">  schedule: <span class="inline-change removed">0</span> * * * *</td><td class="line-number line-number-blank"></td><td class="line-code line-code-blank"></td></tr>
+<tr class="diff-row added"><td class="line-number line-number-blank"></td><td class="line-code line-code-blank"></td><td class="line-number">25</td><td class="line-code">  schedule: <span class="inline-change added">15</span> * * * *</td></tr>
+<tr class="diff-row context"><td class="line-number">26</td><td class="line-code">  secretRef: renovate-secret</td><td class="line-number">26</td><td class="line-code">  secretRef: renovate-secret</td></tr>
+<tr class="diff-row context"><td class="line-number">27</td><td class="line-code">  webhook:</td><td class="line-number">27</td><td class="line-code">  webhook:</td></tr>
+<tr class="diff-row context"><td class="line-number">28</td><td class="line-code">    authentication:</td><td class="line-number">28</td><td class="line-code">    authentication:</td></tr>
 </tbody>
 </table>
 <table class="diff-table unified">
 <tbody>
-<tr class="hunk-header"><th colspan="2">@@ -6,7 +6,7 @@</th></tr>
-<tr class="diff-row context"><td class="line-number">6</td><td class="line-code">  name: envoy-gateway</td></tr>
-<tr class="diff-row context"><td class="line-number">7</td><td class="line-code">  namespace: envoy-gateway-system</td></tr>
-<tr class="diff-row context"><td class="line-number">8</td><td class="line-code">spec:</td></tr>
-<tr class="diff-row removed"><td class="line-number">9</td><td class="line-code">  minAvailable: <span class="inline-change removed">1</span></td></tr>
-<tr class="diff-row added"><td class="line-number">9</td><td class="line-code">  minAvailable: <span class="inline-change added">2</span></td></tr>
-<tr class="diff-row context"><td class="line-number">10</td><td class="line-code">  selector:</td></tr>
-<tr class="diff-row context"><td class="line-number">11</td><td class="line-code">    matchLabels:</td></tr>
-<tr class="diff-row context"><td class="line-number">12</td><td class="line-code">      app.kubernetes.io/instance: envoy-gateway</td></tr>
+<tr class="hunk-header"><th colspan="2">@@ -11,18 +11,18 @@</th></tr>
+<tr class="diff-row context"><td class="line-number">11</td><td class="line-code">      value: http://10.2.0.110:3900</td></tr>
+<tr class="diff-row context"><td class="line-number">12</td><td class="line-code">    - name: S3_FORCE_PATH_STYLE</td></tr>
+<tr class="diff-row context"><td class="line-number">13</td><td class="line-code">      value: &#34;true&#34;</td></tr>
+<tr class="diff-row removed"><td class="line-number">14</td><td class="line-code">  image: renovate/renovate:43.20<span class="inline-change removed">5.3@sha256:53a36e2d4da0fea960e6d4ebac3da152233532c0be1c14313086011e7c4bb551</span></td></tr>
+<tr class="diff-row removed"><td class="line-number">15</td><td class="line-code">  parallelism: <span class="inline-change removed">3</span></td></tr>
+<tr class="diff-row added"><td class="line-number">14</td><td class="line-code">  image: renovate/renovate:43.20<span class="inline-change added">7.4@sha256:087bab575172b1926bbc57124d988015d899b0a82d45028514377b10a392f69d</span></td></tr>
+<tr class="diff-row added"><td class="line-number">15</td><td class="line-code">  parallelism: <span class="inline-change added">2</span></td></tr>
+<tr class="diff-row context"><td class="line-number">16</td><td class="line-code">  provider:</td></tr>
+<tr class="diff-row context"><td class="line-number">17</td><td class="line-code">    name: github</td></tr>
+<tr class="diff-row context"><td class="line-number">18</td><td class="line-code">  resources:</td></tr>
+<tr class="diff-row context"><td class="line-number">19</td><td class="line-code">    limits:</td></tr>
+<tr class="diff-row removed"><td class="line-number">20</td><td class="line-code">      cpu: <span class="inline-change removed">50</span>0m</td></tr>
+<tr class="diff-row added"><td class="line-number">20</td><td class="line-code">      cpu: <span class="inline-change added">75</span>0m</td></tr>
+<tr class="diff-row context"><td class="line-number">21</td><td class="line-code">      memory: 2048Mi</td></tr>
+<tr class="diff-row context"><td class="line-number">22</td><td class="line-code">    requests:</td></tr>
+<tr class="diff-row removed"><td class="line-number">23</td><td class="line-code">      cpu: <span class="inline-change removed">50</span>0m</td></tr>
+<tr class="diff-row added"><td class="line-number">23</td><td class="line-code">      cpu: <span class="inline-change added">75</span>0m</td></tr>
+<tr class="diff-row context"><td class="line-number">24</td><td class="line-code">      memory: 2048Mi</td></tr>
+<tr class="diff-row removed"><td class="line-number">25</td><td class="line-code">  schedule: <span class="inline-change removed">0</span> * * * *</td></tr>
+<tr class="diff-row added"><td class="line-number">25</td><td class="line-code">  schedule: <span class="inline-change added">15</span> * * * *</td></tr>
+<tr class="diff-row context"><td class="line-number">26</td><td class="line-code">  secretRef: renovate-secret</td></tr>
+<tr class="diff-row context"><td class="line-number">27</td><td class="line-code">  webhook:</td></tr>
+<tr class="diff-row context"><td class="line-number">28</td><td class="line-code">    authentication:</td></tr>
 </tbody>
 </table>
 </article>

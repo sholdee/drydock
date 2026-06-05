@@ -39,26 +39,41 @@ func TestFullRenderedDiffViewExampleMatchesRenderedDemo(t *testing.T) {
 
 	for _, want := range []string{
 		`<title>drydock diff</title>`,
-		`<div class="summary" aria-label="2 apps, 3 resources, 3 changed, +9, -9">`,
+		`<div class="summary" aria-label="2 apps, 4 resources, 2 changed, 1 added, 1 deleted, +30, -26">`,
 		`<span class="summary-badge summary-badge-neutral">2 apps</span>`,
-		`<span class="summary-badge summary-badge-neutral">3 resources</span>`,
-		`<span class="summary-badge summary-badge-modified summary-badge-detail">3 changed</span>`,
-		`<span class="summary-badge summary-badge-added">+9</span>`,
-		`<span class="summary-badge summary-badge-removed">-9</span>`,
-		`data-tree-app="envoy-gateway-system"`,
-		`data-tree-app="renovate"`,
+		`<span class="summary-badge summary-badge-neutral">4 resources</span>`,
+		`<span class="summary-badge summary-badge-modified summary-badge-detail">2 changed</span>`,
+		`<span class="summary-badge summary-badge-added summary-badge-detail">1 added</span>`,
+		`<span class="summary-badge summary-badge-removed summary-badge-detail">1 deleted</span>`,
+		`<span class="summary-badge summary-badge-added">+30</span>`,
+		`<span class="summary-badge summary-badge-removed">-26</span>`,
+		`data-tree-app="argocd/envoy-gateway-system"`,
+		`data-tree-app="argocd/renovate"`,
 		`<span class="tree-resource-label">Deployment · envoy-gateway</span>`,
 		`<span class="tree-resource-label">PDB · envoy-gateway</span>`,
+		`<span class="tree-resource-label">ServiceMonitor · renovate</span>`,
 		`<span class="tree-resource-label">RenovateJob · renovate</span>`,
-		`<span class="tree-delta-added">+3</span><span class="tree-delta-removed">-3</span>`,
-		`<span class="tree-delta-added">+1</span><span class="tree-delta-removed">-1</span>`,
+		`tree-status-dot tree-status-added`,
+		`tree-status-dot tree-status-removed`,
+		`<span class="tree-delta-added">+9</span><span class="tree-delta-removed">-9</span>`,
+		`<span class="tree-delta-removed">-12</span>`,
+		`<span class="tree-delta-added">+16</span>`,
 		`<span class="tree-delta-added">+5</span><span class="tree-delta-removed">-5</span>`,
+		`data-change="removed"`,
+		`data-change="added"`,
 		`<h3>policy PodDisruptionBudget envoy-gateway-system/envoy-gateway</h3>`,
+		`<h3>monitoring.coreos.com ServiceMonitor renovate/renovate</h3>`,
 		`<h3>renovate-operator.mogenius.com RenovateJob renovate/renovate</h3>`,
 		`<td class="line-code">  replicas: <span class="inline-change removed">3</span></td>`,
 		`<td class="line-code">  replicas: <span class="inline-change added">2</span></td>`,
-		`<td class="line-code">  minAvailable: <span class="inline-change removed">1</span></td>`,
-		`<td class="line-code">  minAvailable: <span class="inline-change added">2</span></td>`,
+		`<td class="line-code">            - --gateway-class-name=<span class="inline-change removed">envoy</span>-gateway</td>`,
+		`<td class="line-code">            - --gateway-class-name=<span class="inline-change added">platform</span>-gateway</td>`,
+		`<td class="line-code">            - --enable-wasm-extension=<span class="inline-change removed">fals</span>e</td>`,
+		`<td class="line-code">            - --enable-wasm-extension=<span class="inline-change added">tru</span>e</td>`,
+		`<td class="line-code">          image: docker.io/envoyproxy/gateway:v1.<span class="inline-change removed">3.2</span></td>`,
+		`<td class="line-code">          image: docker.io/envoyproxy/gateway:v1.<span class="inline-change added">4.0</span></td>`,
+		`<td class="line-code">apiVersion: policy/v1</td>`,
+		`<td class="line-code">apiVersion: monitoring.coreos.com/v1</td>`,
 		`<td class="line-code">  schedule: <span class="inline-change removed">0</span> * * * *</td>`,
 		`<td class="line-code">  schedule: <span class="inline-change added">15</span> * * * *</td>`,
 		`<td class="line-code">  image: renovate/renovate:43.20<span class="inline-change removed">5.3@sha256:53a36e2d4da0fea960e6d4ebac3da152233532c0be1c14313086011e7c4bb551</span></td>`,
@@ -101,7 +116,7 @@ func renderFullRenderedDiffViewDemo(t *testing.T) []byte {
 	rendered, err := Render(app.DiffResult{
 		Results: []diff.Result{
 			{
-				Parent: diff.Parent{Name: "envoy-gateway-system"},
+				Parent: diff.Parent{Namespace: "argocd", Name: "envoy-gateway-system"},
 				Resource: diff.Resource{
 					Group:     "apps",
 					Kind:      "Deployment",
@@ -109,9 +124,9 @@ func renderFullRenderedDiffViewDemo(t *testing.T) []byte {
 					Name:      "envoy-gateway",
 				},
 				Change: diff.ChangeModified,
-				Diff: `--- Application: envoy-gateway-system Source: 0 apps/envoy-gateway-system/kustomization.yaml apps/Deployment: envoy-gateway-system/envoy-gateway
-+++ Application: envoy-gateway-system Source: 0 apps/envoy-gateway-system/kustomization.yaml apps/Deployment: envoy-gateway-system/envoy-gateway
-@@ -11,7 +11,7 @@
+				Diff: `--- Application: argocd/envoy-gateway-system Source: 0 platform/envoy-gateway/kustomization.yaml apps/Deployment: envoy-gateway-system/envoy-gateway
++++ Application: argocd/envoy-gateway-system Source: 0 platform/envoy-gateway/kustomization.yaml apps/Deployment: envoy-gateway-system/envoy-gateway
+@@ -8,7 +8,7 @@
    name: envoy-gateway
    namespace: envoy-gateway-system
  spec:
@@ -120,45 +135,92 @@ func renderFullRenderedDiffViewDemo(t *testing.T) []byte {
    selector:
      matchLabels:
        app.kubernetes.io/instance: envoy-gateway
-@@ -67,10 +67,10 @@
-             periodSeconds: 10
+@@ -19,17 +19,17 @@
+     spec:
+       containers:
+         - args:
+-            - --gateway-class-name=envoy-gateway
+-            - --metrics-bind-address=0.0.0.0:19001
+-            - --enable-wasm-extension=false
+-          image: docker.io/envoyproxy/gateway:v1.3.2
++            - --gateway-class-name=platform-gateway
++            - --metrics-bind-address=0.0.0.0:19002
++            - --enable-wasm-extension=true
++          image: docker.io/envoyproxy/gateway:v1.4.0
+           name: envoy-gateway
            resources:
              limits:
 -              cpu: 100m
+-              memory: 150Mi
 +              cpu: 150m
-               memory: 150Mi
++              memory: 192Mi
              requests:
 -              cpu: 10m
+-              memory: 150Mi
 +              cpu: 25m
-               memory: 150Mi
++              memory: 192Mi
            securityContext:
              allowPrivilegeEscalation: false
 `,
 			},
 			{
-				Parent: diff.Parent{Name: "envoy-gateway-system"},
+				Parent: diff.Parent{Namespace: "argocd", Name: "envoy-gateway-system"},
 				Resource: diff.Resource{
 					Group:     "policy",
 					Kind:      "PodDisruptionBudget",
 					Namespace: "envoy-gateway-system",
 					Name:      "envoy-gateway",
 				},
-				Change: diff.ChangeModified,
-				Diff: `--- Application: envoy-gateway-system Source: 0 apps/envoy-gateway-system/kustomization.yaml policy/PodDisruptionBudget: envoy-gateway-system/envoy-gateway
-+++ Application: envoy-gateway-system Source: 0 apps/envoy-gateway-system/kustomization.yaml policy/PodDisruptionBudget: envoy-gateway-system/envoy-gateway
-@@ -6,7 +6,7 @@
-   name: envoy-gateway
-   namespace: envoy-gateway-system
- spec:
+				Change: diff.ChangeRemoved,
+				Diff: `--- Application: argocd/envoy-gateway-system Source: 0 platform/envoy-gateway/kustomization.yaml policy/PodDisruptionBudget: envoy-gateway-system/envoy-gateway
++++ Application: argocd/envoy-gateway-system Source: 0 platform/envoy-gateway/kustomization.yaml policy/PodDisruptionBudget: envoy-gateway-system/envoy-gateway
+@@ -1,12 +0,0 @@
+-apiVersion: policy/v1
+-kind: PodDisruptionBudget
+-metadata:
+-  annotations:
+-    argocd.argoproj.io/tracking-id: envoy-gateway-system:policy/PodDisruptionBudget:envoy-gateway-system/envoy-gateway
+-  name: envoy-gateway
+-  namespace: envoy-gateway-system
+-spec:
 -  minAvailable: 1
-+  minAvailable: 2
-   selector:
-     matchLabels:
-       app.kubernetes.io/instance: envoy-gateway
+-  selector:
+-    matchLabels:
+-      app.kubernetes.io/instance: envoy-gateway
 `,
 			},
 			{
-				Parent: diff.Parent{Name: "renovate"},
+				Parent: diff.Parent{Namespace: "argocd", Name: "renovate"},
+				Resource: diff.Resource{
+					Group:     "monitoring.coreos.com",
+					Kind:      "ServiceMonitor",
+					Namespace: "renovate",
+					Name:      "renovate",
+				},
+				Change: diff.ChangeAdded,
+				Diff: `--- Application: argocd/renovate Source: 0 apps/renovate/templates/servicemonitor.yaml monitoring.coreos.com/ServiceMonitor: renovate/renovate
++++ Application: argocd/renovate Source: 0 apps/renovate/templates/servicemonitor.yaml monitoring.coreos.com/ServiceMonitor: renovate/renovate
+@@ -0,0 +1,16 @@
++apiVersion: monitoring.coreos.com/v1
++kind: ServiceMonitor
++metadata:
++  annotations:
++    argocd.argoproj.io/tracking-id: renovate:monitoring.coreos.com/ServiceMonitor:renovate/renovate
++  name: renovate
++  namespace: renovate
++spec:
++  endpoints:
++    - interval: 30s
++      path: /metrics
++      port: metrics
++      scrapeTimeout: 10s
++  selector:
++    matchLabels:
++      app.kubernetes.io/name: renovate
+`,
+			},
+			{
+				Parent: diff.Parent{Namespace: "argocd", Name: "renovate"},
 				Resource: diff.Resource{
 					Group:     "renovate-operator.mogenius.com",
 					Kind:      "RenovateJob",
@@ -166,9 +228,9 @@ func renderFullRenderedDiffViewDemo(t *testing.T) []byte {
 					Name:      "renovate",
 				},
 				Change: diff.ChangeModified,
-				Diff: `--- Application: renovate Source: 0 apps/renovate/kustomization.yaml renovate-operator.mogenius.com/RenovateJob: renovate/renovate
-+++ Application: renovate Source: 0 apps/renovate/kustomization.yaml renovate-operator.mogenius.com/RenovateJob: renovate/renovate
-@@ -34,18 +34,18 @@
+				Diff: `--- Application: argocd/renovate Source: 0 apps/renovate/templates/renovatejob.yaml renovate-operator.mogenius.com/RenovateJob: renovate/renovate
++++ Application: argocd/renovate Source: 0 apps/renovate/templates/renovatejob.yaml renovate-operator.mogenius.com/RenovateJob: renovate/renovate
+@@ -11,18 +11,18 @@
        value: http://10.2.0.110:3900
      - name: S3_FORCE_PATH_STYLE
        value: "true"
@@ -195,15 +257,7 @@ func renderFullRenderedDiffViewDemo(t *testing.T) []byte {
 `,
 			},
 		},
-	}, Options{
-		DefaultResource: DefaultResourceSelector{
-			ParentName: "envoy-gateway-system",
-			Group:      "apps",
-			Kind:       "Deployment",
-			Namespace:  "envoy-gateway-system",
-			Name:       "envoy-gateway",
-		},
-	})
+	}, Options{})
 	if err != nil {
 		t.Fatalf("Render() error = %v", err)
 	}
