@@ -952,6 +952,20 @@ type highlightRange struct {
 	end   int
 }
 
+var allowedSyntaxClasses = map[string]struct{}{
+	yamlKeyClass:         {},
+	yamlStringClass:      {},
+	yamlNumberClass:      {},
+	yamlBoolClass:        {},
+	yamlNullClass:        {},
+	yamlCommentClass:     {},
+	yamlDocClass:         {},
+	yamlAnchorClass:      {},
+	yamlAliasClass:       {},
+	yamlTagClass:         {},
+	yamlPunctuationClass: {},
+}
+
 func pairedHighlights(rows []diffRow) (map[int][]highlightRange, map[int][]highlightRange) {
 	leftHighlights := make(map[int][]highlightRange)
 	rightHighlights := make(map[int][]highlightRange)
@@ -1018,33 +1032,137 @@ func changedRanges(left, right string) ([]highlightRange, []highlightRange) {
 }
 
 func renderHighlightedText(builder *bytes.Buffer, text string, highlights []highlightRange, class string) {
+	renderComposedHighlightedText(builder, text, highlights, class, lexYAMLLine(text))
+}
+
+func renderComposedHighlightedText(builder *bytes.Buffer, text string, highlights []highlightRange, class string, syntax []syntaxRange) {
+	runes := []rune(text)
+	highlights = normalizedHighlightRanges(highlights, len(runes))
+	syntax = normalizedSyntaxRanges(syntax, len(runes))
+
 	if len(highlights) == 0 {
-		builder.WriteString(escape(text))
+		renderSyntaxSegment(builder, runes, 0, len(runes), syntax)
 		return
 	}
-	runes := []rune(text)
+
 	cursor := 0
 	for _, highlight := range highlights {
-		if highlight.start < cursor {
-			highlight.start = cursor
-		}
-		if highlight.end > len(runes) {
-			highlight.end = len(runes)
-		}
 		if highlight.start > cursor {
-			builder.WriteString(escape(string(runes[cursor:highlight.start])))
+			renderSyntaxSegment(builder, runes, cursor, highlight.start, syntax)
 		}
 		if highlight.start < highlight.end {
-			fmt.Fprintf(builder, "<span class=\"inline-change %s\">%s</span>",
-				escape(class),
-				escape(string(runes[highlight.start:highlight.end])),
-			)
+			fmt.Fprintf(builder, "<span class=\"inline-change %s\">", escape(class))
+			renderSyntaxSegment(builder, runes, highlight.start, highlight.end, syntax)
+			builder.WriteString("</span>")
 			cursor = highlight.end
 		}
 	}
 	if cursor < len(runes) {
-		builder.WriteString(escape(string(runes[cursor:])))
+		renderSyntaxSegment(builder, runes, cursor, len(runes), syntax)
 	}
+}
+
+func normalizedHighlightRanges(highlights []highlightRange, textLength int) []highlightRange {
+	if len(highlights) == 0 || textLength == 0 {
+		return nil
+	}
+	ranges := append([]highlightRange(nil), highlights...)
+	slices.SortFunc(ranges, func(left, right highlightRange) int {
+		if left.start != right.start {
+			return left.start - right.start
+		}
+		return left.end - right.end
+	})
+
+	normalized := make([]highlightRange, 0, len(ranges))
+	cursor := 0
+	for _, current := range ranges {
+		current.start = clampOffset(current.start, textLength)
+		current.end = clampOffset(current.end, textLength)
+		if current.start < cursor {
+			current.start = cursor
+		}
+		if current.start >= current.end {
+			continue
+		}
+		normalized = append(normalized, current)
+		cursor = current.end
+	}
+	return normalized
+}
+
+func normalizedSyntaxRanges(syntax []syntaxRange, textLength int) []syntaxRange {
+	if len(syntax) == 0 || textLength == 0 {
+		return nil
+	}
+	ranges := append([]syntaxRange(nil), syntax...)
+	slices.SortFunc(ranges, func(left, right syntaxRange) int {
+		if left.start != right.start {
+			return left.start - right.start
+		}
+		return left.end - right.end
+	})
+
+	normalized := make([]syntaxRange, 0, len(ranges))
+	cursor := 0
+	for _, current := range ranges {
+		if !isAllowedSyntaxClass(current.class) {
+			continue
+		}
+		current.start = clampOffset(current.start, textLength)
+		current.end = clampOffset(current.end, textLength)
+		if current.start < cursor {
+			current.start = cursor
+		}
+		if current.start >= current.end {
+			continue
+		}
+		normalized = append(normalized, current)
+		cursor = current.end
+	}
+	return normalized
+}
+
+func renderSyntaxSegment(builder *bytes.Buffer, runes []rune, start, end int, syntax []syntaxRange) {
+	cursor := start
+	for _, token := range syntax {
+		if token.end <= start {
+			continue
+		}
+		if token.start >= end {
+			break
+		}
+		tokenStart := max(token.start, start)
+		tokenEnd := min(token.end, end)
+		if tokenStart > cursor {
+			builder.WriteString(escape(string(runes[cursor:tokenStart])))
+		}
+		if tokenStart < tokenEnd {
+			fmt.Fprintf(builder, "<span class=\"%s\">%s</span>",
+				escape(token.class),
+				escape(string(runes[tokenStart:tokenEnd])),
+			)
+			cursor = tokenEnd
+		}
+	}
+	if cursor < end {
+		builder.WriteString(escape(string(runes[cursor:end])))
+	}
+}
+
+func isAllowedSyntaxClass(class string) bool {
+	_, ok := allowedSyntaxClasses[class]
+	return ok
+}
+
+func clampOffset(offset, textLength int) int {
+	if offset < 0 {
+		return 0
+	}
+	if offset > textLength {
+		return textLength
+	}
+	return offset
 }
 
 func resourceLabel(resource diff.Resource) string {

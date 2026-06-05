@@ -1,6 +1,7 @@
 package diffhtml
 
 import (
+	"bytes"
 	"encoding/json"
 	"strconv"
 	"strings"
@@ -433,6 +434,15 @@ func TestRenderIncludesTypographyAndLogoContract(t *testing.T) {
 	if strings.Contains(text, `linear-gradient(rgba(16, 27, 41, 0.78), rgba(16, 27, 41, 0.78))`) {
 		t.Fatalf("blank-cell stripe rule contains opaque overlay that hides diagonal lines:\n%s", text)
 	}
+	assertStyleRuleContains(t, text, ".yaml-key", `color: #8ec8ff;`)
+	assertStyleRuleContains(t, text, ".yaml-string", `color: #ce9178;`)
+	assertStyleRuleContains(t, text, ".yaml-number", `color: #b5cea8;`)
+	assertStyleRuleContains(t, text, ".yaml-bool,\n.yaml-null", `color: #7fb4ff;`)
+	assertStyleRuleContains(t, text, ".yaml-comment", `color: #7aa36f;`)
+	assertStyleRuleContains(t, text, ".yaml-doc", `color: #d7a2ff;`)
+	assertStyleRuleContains(t, text, ".yaml-anchor,\n.yaml-alias", `color: #dcdcaa;`)
+	assertStyleRuleContains(t, text, ".yaml-tag", `color: #c586c0;`)
+	assertStyleRuleContains(t, text, ".yaml-punctuation", `color: #b9c7d8;`)
 	for _, want := range []string{
 		"body[data-sidebar=\"closed\"] .tree {\n\t\tdisplay: none;",
 		"body[data-sidebar=\"closed\"] .sidebar-resizer {\n\t\tdisplay: none;",
@@ -1241,12 +1251,125 @@ func TestRenderHighlightsChangedCharactersInsidePairedRows(t *testing.T) {
 	}
 	text := string(out)
 	for _, want := range []string{
-		`image: app:v<span class="inline-change removed">1</span>`,
-		`image: app:v<span class="inline-change added">2</span>`,
+		`<span class="yaml-key">image</span><span class="yaml-punctuation">:</span> app:v<span class="inline-change removed">1</span>`,
+		`<span class="yaml-key">image</span><span class="yaml-punctuation">:</span> app:v<span class="inline-change added">2</span>`,
 	} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("HTML missing inline highlight %q:\n%s", want, text)
 		}
+	}
+}
+
+func TestRenderHighlightsYAMLSyntaxInEagerRows(t *testing.T) {
+	out, err := Render(app.DiffResult{
+		Results: []diff.Result{{
+			Parent:   diff.Parent{Name: "demo"},
+			Resource: diff.Resource{Kind: "ConfigMap", Name: "cm-one"},
+			Change:   diff.ChangeModified,
+			Diff: strings.Join([]string{
+				"--- old",
+				"+++ new",
+				"@@ -1,5 +1,5 @@",
+				" apiVersion: v1",
+				" kind: ConfigMap",
+				" metadata:",
+				"   labels:",
+				"     app.kubernetes.io/name: api",
+				"",
+			}, "\n"),
+		}},
+	}, Options{})
+	if err != nil {
+		t.Fatalf("Render() error = %v", err)
+	}
+	text := string(out)
+	for _, want := range []string{
+		`<span class="yaml-key">apiVersion</span><span class="yaml-punctuation">:</span> v1`,
+		`<span class="yaml-key">app.kubernetes.io/name</span><span class="yaml-punctuation">:</span> api`,
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("HTML missing YAML syntax %q:\n%s", want, text)
+		}
+	}
+	if strings.Contains(text, `<span class="yaml-string">v1</span>`) || strings.Contains(text, `<span class="yaml-string">api</span>`) {
+		t.Fatalf("plain scalar values should remain unstyled:\n%s", text)
+	}
+}
+
+func TestRenderNestsYAMLSyntaxInsideInlineDiffSpans(t *testing.T) {
+	out, err := Render(app.DiffResult{
+		Results: []diff.Result{{
+			Parent:   diff.Parent{Name: "demo"},
+			Resource: diff.Resource{Kind: "ConfigMap", Name: "cm-one"},
+			Change:   diff.ChangeModified,
+			Diff:     "--- old\n+++ new\n@@ -1,1 +1,1 @@\n-value: \"alpha\"\n+value: \"omega\"\n",
+		}},
+	}, Options{})
+	if err != nil {
+		t.Fatalf("Render() error = %v", err)
+	}
+	text := string(out)
+	for _, want := range []string{
+		`<span class="yaml-key">value</span><span class="yaml-punctuation">:</span> <span class="yaml-string">&#34;</span><span class="inline-change removed"><span class="yaml-string">alph</span></span><span class="yaml-string">a&#34;</span>`,
+		`<span class="yaml-key">value</span><span class="yaml-punctuation">:</span> <span class="yaml-string">&#34;</span><span class="inline-change added"><span class="yaml-string">omeg</span></span><span class="yaml-string">a&#34;</span>`,
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("HTML missing nested inline/YAML highlight %q:\n%s", want, text)
+		}
+	}
+}
+
+func TestRenderDoesNotSyntaxHighlightHunkOrFileHeaders(t *testing.T) {
+	out, err := Render(app.DiffResult{
+		Results: []diff.Result{{
+			Parent:   diff.Parent{Name: "demo"},
+			Resource: diff.Resource{Kind: "ConfigMap", Name: "cm-one"},
+			Change:   diff.ChangeModified,
+			Diff:     "--- file: old\n+++ file: new\n@@ -1,1 +1,1 @@ header: value\n-name: old\n+name: new\n",
+		}},
+	}, Options{})
+	if err != nil {
+		t.Fatalf("Render() error = %v", err)
+	}
+	text := string(out)
+	for _, want := range []string{
+		`<tr class="hunk-header"><th colspan="4">@@ -1,1 +1,1 @@ header: value</th></tr>`,
+		`<tr class="hunk-header"><th colspan="2">@@ -1,1 +1,1 @@ header: value</th></tr>`,
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("HTML missing unhighlighted hunk header %q:\n%s", want, text)
+		}
+	}
+	for _, unwanted := range []string{
+		`--- file: old`,
+		`+++ file: new`,
+		`<th colspan="4"><span class="yaml`,
+		`<th colspan="2"><span class="yaml`,
+	} {
+		if strings.Contains(text, unwanted) {
+			t.Fatalf("HTML should not syntax-highlight or render file/hunk header marker %q:\n%s", unwanted, text)
+		}
+	}
+}
+
+func TestRenderComposedHighlightedTextNormalizesRangesAndIgnoresUnknownSyntax(t *testing.T) {
+	var builder bytes.Buffer
+	renderComposedHighlightedText(&builder, "ab: cd",
+		[]highlightRange{
+			{start: 4, end: 20},
+			{start: 2, end: 2},
+			{start: -4, end: 2},
+		},
+		"added",
+		[]syntaxRange{
+			{start: 2, end: 4, class: "yaml-not-real"},
+			{start: 0, end: 2, class: yamlKeyClass},
+			{start: 4, end: 6, class: yamlStringClass},
+		},
+	)
+	want := `<span class="inline-change added"><span class="yaml-key">ab</span></span>: <span class="inline-change added"><span class="yaml-string">cd</span></span>`
+	if got := builder.String(); got != want {
+		t.Fatalf("composed highlighted text = %q, want %q", got, want)
 	}
 }
 

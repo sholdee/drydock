@@ -502,6 +502,35 @@ body.is-resizing-sidebar .sidebar-resizer::before {
 	background: rgba(248, 81, 73, 0.38);
 	box-shadow: 0 0 0 1px rgba(248, 81, 73, 0.2);
 }
+.yaml-key {
+	color: #8ec8ff;
+}
+.yaml-string {
+	color: #ce9178;
+}
+.yaml-number {
+	color: #b5cea8;
+}
+.yaml-bool,
+.yaml-null {
+	color: #7fb4ff;
+}
+.yaml-comment {
+	color: #7aa36f;
+}
+.yaml-doc {
+	color: #d7a2ff;
+}
+.yaml-anchor,
+.yaml-alias {
+	color: #dcdcaa;
+}
+.yaml-tag {
+	color: #c586c0;
+}
+.yaml-punctuation {
+	color: #b9c7d8;
+}
 .lazy-diff-placeholder {
 	margin: 0;
 	padding: 12px 14px;
@@ -738,79 +767,79 @@ body[data-view="unified"] .diff-table.side-by-side {
 <table class="diff-table side-by-side">
 <tbody>
 <tr class="hunk-header"><th colspan="4">@@ -8,7 +8,7 @@</th></tr>
-<tr class="diff-row context"><td class="line-number">8</td><td class="line-code">  name: envoy-gateway</td><td class="line-number">8</td><td class="line-code">  name: envoy-gateway</td></tr>
-<tr class="diff-row context"><td class="line-number">9</td><td class="line-code">  namespace: envoy-gateway-system</td><td class="line-number">9</td><td class="line-code">  namespace: envoy-gateway-system</td></tr>
-<tr class="diff-row context"><td class="line-number">10</td><td class="line-code">spec:</td><td class="line-number">10</td><td class="line-code">spec:</td></tr>
-<tr class="diff-row removed"><td class="line-number">11</td><td class="line-code">  replicas: <span class="inline-change removed">3</span></td><td class="line-number line-number-blank"></td><td class="line-code line-code-blank"></td></tr>
-<tr class="diff-row added"><td class="line-number line-number-blank"></td><td class="line-code line-code-blank"></td><td class="line-number">11</td><td class="line-code">  replicas: <span class="inline-change added">2</span></td></tr>
-<tr class="diff-row context"><td class="line-number">12</td><td class="line-code">  selector:</td><td class="line-number">12</td><td class="line-code">  selector:</td></tr>
-<tr class="diff-row context"><td class="line-number">13</td><td class="line-code">    matchLabels:</td><td class="line-number">13</td><td class="line-code">    matchLabels:</td></tr>
-<tr class="diff-row context"><td class="line-number">14</td><td class="line-code">      app.kubernetes.io/instance: envoy-gateway</td><td class="line-number">14</td><td class="line-code">      app.kubernetes.io/instance: envoy-gateway</td></tr>
+<tr class="diff-row context"><td class="line-number">8</td><td class="line-code">  <span class="yaml-key">name</span><span class="yaml-punctuation">:</span> envoy-gateway</td><td class="line-number">8</td><td class="line-code">  <span class="yaml-key">name</span><span class="yaml-punctuation">:</span> envoy-gateway</td></tr>
+<tr class="diff-row context"><td class="line-number">9</td><td class="line-code">  <span class="yaml-key">namespace</span><span class="yaml-punctuation">:</span> envoy-gateway-system</td><td class="line-number">9</td><td class="line-code">  <span class="yaml-key">namespace</span><span class="yaml-punctuation">:</span> envoy-gateway-system</td></tr>
+<tr class="diff-row context"><td class="line-number">10</td><td class="line-code"><span class="yaml-key">spec</span><span class="yaml-punctuation">:</span></td><td class="line-number">10</td><td class="line-code"><span class="yaml-key">spec</span><span class="yaml-punctuation">:</span></td></tr>
+<tr class="diff-row removed"><td class="line-number">11</td><td class="line-code">  <span class="yaml-key">replicas</span><span class="yaml-punctuation">:</span> <span class="inline-change removed"><span class="yaml-number">3</span></span></td><td class="line-number line-number-blank"></td><td class="line-code line-code-blank"></td></tr>
+<tr class="diff-row added"><td class="line-number line-number-blank"></td><td class="line-code line-code-blank"></td><td class="line-number">11</td><td class="line-code">  <span class="yaml-key">replicas</span><span class="yaml-punctuation">:</span> <span class="inline-change added"><span class="yaml-number">2</span></span></td></tr>
+<tr class="diff-row context"><td class="line-number">12</td><td class="line-code">  <span class="yaml-key">selector</span><span class="yaml-punctuation">:</span></td><td class="line-number">12</td><td class="line-code">  <span class="yaml-key">selector</span><span class="yaml-punctuation">:</span></td></tr>
+<tr class="diff-row context"><td class="line-number">13</td><td class="line-code">    <span class="yaml-key">matchLabels</span><span class="yaml-punctuation">:</span></td><td class="line-number">13</td><td class="line-code">    <span class="yaml-key">matchLabels</span><span class="yaml-punctuation">:</span></td></tr>
+<tr class="diff-row context"><td class="line-number">14</td><td class="line-code">      <span class="yaml-key">app.kubernetes.io/instance</span><span class="yaml-punctuation">:</span> envoy-gateway</td><td class="line-number">14</td><td class="line-code">      <span class="yaml-key">app.kubernetes.io/instance</span><span class="yaml-punctuation">:</span> envoy-gateway</td></tr>
 <tr class="hunk-header"><th colspan="4">@@ -19,17 +19,17 @@</th></tr>
-<tr class="diff-row context"><td class="line-number">19</td><td class="line-code">    spec:</td><td class="line-number">19</td><td class="line-code">    spec:</td></tr>
-<tr class="diff-row context"><td class="line-number">20</td><td class="line-code">      containers:</td><td class="line-number">20</td><td class="line-code">      containers:</td></tr>
-<tr class="diff-row context"><td class="line-number">21</td><td class="line-code">        - args:</td><td class="line-number">21</td><td class="line-code">        - args:</td></tr>
-<tr class="diff-row removed"><td class="line-number">22</td><td class="line-code">            - --gateway-class-name=<span class="inline-change removed">envoy</span>-gateway</td><td class="line-number line-number-blank"></td><td class="line-code line-code-blank"></td></tr>
-<tr class="diff-row removed"><td class="line-number">23</td><td class="line-code">            - --metrics-bind-address=0.0.0.0:1900<span class="inline-change removed">1</span></td><td class="line-number line-number-blank"></td><td class="line-code line-code-blank"></td></tr>
-<tr class="diff-row removed"><td class="line-number">24</td><td class="line-code">            - --enable-wasm-extension=<span class="inline-change removed">fals</span>e</td><td class="line-number line-number-blank"></td><td class="line-code line-code-blank"></td></tr>
-<tr class="diff-row removed"><td class="line-number">25</td><td class="line-code">          image: docker.io/envoyproxy/gateway:v1.<span class="inline-change removed">3.2</span></td><td class="line-number line-number-blank"></td><td class="line-code line-code-blank"></td></tr>
-<tr class="diff-row added"><td class="line-number line-number-blank"></td><td class="line-code line-code-blank"></td><td class="line-number">22</td><td class="line-code">            - --gateway-class-name=<span class="inline-change added">platform</span>-gateway</td></tr>
-<tr class="diff-row added"><td class="line-number line-number-blank"></td><td class="line-code line-code-blank"></td><td class="line-number">23</td><td class="line-code">            - --metrics-bind-address=0.0.0.0:1900<span class="inline-change added">2</span></td></tr>
-<tr class="diff-row added"><td class="line-number line-number-blank"></td><td class="line-code line-code-blank"></td><td class="line-number">24</td><td class="line-code">            - --enable-wasm-extension=<span class="inline-change added">tru</span>e</td></tr>
-<tr class="diff-row added"><td class="line-number line-number-blank"></td><td class="line-code line-code-blank"></td><td class="line-number">25</td><td class="line-code">          image: docker.io/envoyproxy/gateway:v1.<span class="inline-change added">4.0</span></td></tr>
-<tr class="diff-row context"><td class="line-number">26</td><td class="line-code">          name: envoy-gateway</td><td class="line-number">26</td><td class="line-code">          name: envoy-gateway</td></tr>
-<tr class="diff-row context"><td class="line-number">27</td><td class="line-code">          resources:</td><td class="line-number">27</td><td class="line-code">          resources:</td></tr>
-<tr class="diff-row context"><td class="line-number">28</td><td class="line-code">            limits:</td><td class="line-number">28</td><td class="line-code">            limits:</td></tr>
-<tr class="diff-row removed"><td class="line-number">29</td><td class="line-code">              cpu: 1<span class="inline-change removed">0</span>0m</td><td class="line-number line-number-blank"></td><td class="line-code line-code-blank"></td></tr>
-<tr class="diff-row removed"><td class="line-number">30</td><td class="line-code">              memory: 1<span class="inline-change removed">50</span>Mi</td><td class="line-number line-number-blank"></td><td class="line-code line-code-blank"></td></tr>
-<tr class="diff-row added"><td class="line-number line-number-blank"></td><td class="line-code line-code-blank"></td><td class="line-number">29</td><td class="line-code">              cpu: 1<span class="inline-change added">5</span>0m</td></tr>
-<tr class="diff-row added"><td class="line-number line-number-blank"></td><td class="line-code line-code-blank"></td><td class="line-number">30</td><td class="line-code">              memory: 1<span class="inline-change added">92</span>Mi</td></tr>
-<tr class="diff-row context"><td class="line-number">31</td><td class="line-code">            requests:</td><td class="line-number">31</td><td class="line-code">            requests:</td></tr>
-<tr class="diff-row removed"><td class="line-number">32</td><td class="line-code">              cpu: <span class="inline-change removed">10</span>m</td><td class="line-number line-number-blank"></td><td class="line-code line-code-blank"></td></tr>
-<tr class="diff-row removed"><td class="line-number">33</td><td class="line-code">              memory: 1<span class="inline-change removed">50</span>Mi</td><td class="line-number line-number-blank"></td><td class="line-code line-code-blank"></td></tr>
-<tr class="diff-row added"><td class="line-number line-number-blank"></td><td class="line-code line-code-blank"></td><td class="line-number">32</td><td class="line-code">              cpu: <span class="inline-change added">25</span>m</td></tr>
-<tr class="diff-row added"><td class="line-number line-number-blank"></td><td class="line-code line-code-blank"></td><td class="line-number">33</td><td class="line-code">              memory: 1<span class="inline-change added">92</span>Mi</td></tr>
-<tr class="diff-row context"><td class="line-number">34</td><td class="line-code">          securityContext:</td><td class="line-number">34</td><td class="line-code">          securityContext:</td></tr>
-<tr class="diff-row context"><td class="line-number">35</td><td class="line-code">            allowPrivilegeEscalation: false</td><td class="line-number">35</td><td class="line-code">            allowPrivilegeEscalation: false</td></tr>
+<tr class="diff-row context"><td class="line-number">19</td><td class="line-code">    <span class="yaml-key">spec</span><span class="yaml-punctuation">:</span></td><td class="line-number">19</td><td class="line-code">    <span class="yaml-key">spec</span><span class="yaml-punctuation">:</span></td></tr>
+<tr class="diff-row context"><td class="line-number">20</td><td class="line-code">      <span class="yaml-key">containers</span><span class="yaml-punctuation">:</span></td><td class="line-number">20</td><td class="line-code">      <span class="yaml-key">containers</span><span class="yaml-punctuation">:</span></td></tr>
+<tr class="diff-row context"><td class="line-number">21</td><td class="line-code">        <span class="yaml-punctuation">-</span> <span class="yaml-key">args</span><span class="yaml-punctuation">:</span></td><td class="line-number">21</td><td class="line-code">        <span class="yaml-punctuation">-</span> <span class="yaml-key">args</span><span class="yaml-punctuation">:</span></td></tr>
+<tr class="diff-row removed"><td class="line-number">22</td><td class="line-code">            <span class="yaml-punctuation">-</span> --gateway-class-name=<span class="inline-change removed">envoy</span>-gateway</td><td class="line-number line-number-blank"></td><td class="line-code line-code-blank"></td></tr>
+<tr class="diff-row removed"><td class="line-number">23</td><td class="line-code">            <span class="yaml-punctuation">-</span> --metrics-bind-address=0.0.0.0:1900<span class="inline-change removed">1</span></td><td class="line-number line-number-blank"></td><td class="line-code line-code-blank"></td></tr>
+<tr class="diff-row removed"><td class="line-number">24</td><td class="line-code">            <span class="yaml-punctuation">-</span> --enable-wasm-extension=<span class="inline-change removed">fals</span>e</td><td class="line-number line-number-blank"></td><td class="line-code line-code-blank"></td></tr>
+<tr class="diff-row removed"><td class="line-number">25</td><td class="line-code">          <span class="yaml-key">image</span><span class="yaml-punctuation">:</span> docker.io/envoyproxy/gateway:v1.<span class="inline-change removed">3.2</span></td><td class="line-number line-number-blank"></td><td class="line-code line-code-blank"></td></tr>
+<tr class="diff-row added"><td class="line-number line-number-blank"></td><td class="line-code line-code-blank"></td><td class="line-number">22</td><td class="line-code">            <span class="yaml-punctuation">-</span> --gateway-class-name=<span class="inline-change added">platform</span>-gateway</td></tr>
+<tr class="diff-row added"><td class="line-number line-number-blank"></td><td class="line-code line-code-blank"></td><td class="line-number">23</td><td class="line-code">            <span class="yaml-punctuation">-</span> --metrics-bind-address=0.0.0.0:1900<span class="inline-change added">2</span></td></tr>
+<tr class="diff-row added"><td class="line-number line-number-blank"></td><td class="line-code line-code-blank"></td><td class="line-number">24</td><td class="line-code">            <span class="yaml-punctuation">-</span> --enable-wasm-extension=<span class="inline-change added">tru</span>e</td></tr>
+<tr class="diff-row added"><td class="line-number line-number-blank"></td><td class="line-code line-code-blank"></td><td class="line-number">25</td><td class="line-code">          <span class="yaml-key">image</span><span class="yaml-punctuation">:</span> docker.io/envoyproxy/gateway:v1.<span class="inline-change added">4.0</span></td></tr>
+<tr class="diff-row context"><td class="line-number">26</td><td class="line-code">          <span class="yaml-key">name</span><span class="yaml-punctuation">:</span> envoy-gateway</td><td class="line-number">26</td><td class="line-code">          <span class="yaml-key">name</span><span class="yaml-punctuation">:</span> envoy-gateway</td></tr>
+<tr class="diff-row context"><td class="line-number">27</td><td class="line-code">          <span class="yaml-key">resources</span><span class="yaml-punctuation">:</span></td><td class="line-number">27</td><td class="line-code">          <span class="yaml-key">resources</span><span class="yaml-punctuation">:</span></td></tr>
+<tr class="diff-row context"><td class="line-number">28</td><td class="line-code">            <span class="yaml-key">limits</span><span class="yaml-punctuation">:</span></td><td class="line-number">28</td><td class="line-code">            <span class="yaml-key">limits</span><span class="yaml-punctuation">:</span></td></tr>
+<tr class="diff-row removed"><td class="line-number">29</td><td class="line-code">              <span class="yaml-key">cpu</span><span class="yaml-punctuation">:</span> 1<span class="inline-change removed">0</span>0m</td><td class="line-number line-number-blank"></td><td class="line-code line-code-blank"></td></tr>
+<tr class="diff-row removed"><td class="line-number">30</td><td class="line-code">              <span class="yaml-key">memory</span><span class="yaml-punctuation">:</span> 1<span class="inline-change removed">50</span>Mi</td><td class="line-number line-number-blank"></td><td class="line-code line-code-blank"></td></tr>
+<tr class="diff-row added"><td class="line-number line-number-blank"></td><td class="line-code line-code-blank"></td><td class="line-number">29</td><td class="line-code">              <span class="yaml-key">cpu</span><span class="yaml-punctuation">:</span> 1<span class="inline-change added">5</span>0m</td></tr>
+<tr class="diff-row added"><td class="line-number line-number-blank"></td><td class="line-code line-code-blank"></td><td class="line-number">30</td><td class="line-code">              <span class="yaml-key">memory</span><span class="yaml-punctuation">:</span> 1<span class="inline-change added">92</span>Mi</td></tr>
+<tr class="diff-row context"><td class="line-number">31</td><td class="line-code">            <span class="yaml-key">requests</span><span class="yaml-punctuation">:</span></td><td class="line-number">31</td><td class="line-code">            <span class="yaml-key">requests</span><span class="yaml-punctuation">:</span></td></tr>
+<tr class="diff-row removed"><td class="line-number">32</td><td class="line-code">              <span class="yaml-key">cpu</span><span class="yaml-punctuation">:</span> <span class="inline-change removed">10</span>m</td><td class="line-number line-number-blank"></td><td class="line-code line-code-blank"></td></tr>
+<tr class="diff-row removed"><td class="line-number">33</td><td class="line-code">              <span class="yaml-key">memory</span><span class="yaml-punctuation">:</span> 1<span class="inline-change removed">50</span>Mi</td><td class="line-number line-number-blank"></td><td class="line-code line-code-blank"></td></tr>
+<tr class="diff-row added"><td class="line-number line-number-blank"></td><td class="line-code line-code-blank"></td><td class="line-number">32</td><td class="line-code">              <span class="yaml-key">cpu</span><span class="yaml-punctuation">:</span> <span class="inline-change added">25</span>m</td></tr>
+<tr class="diff-row added"><td class="line-number line-number-blank"></td><td class="line-code line-code-blank"></td><td class="line-number">33</td><td class="line-code">              <span class="yaml-key">memory</span><span class="yaml-punctuation">:</span> 1<span class="inline-change added">92</span>Mi</td></tr>
+<tr class="diff-row context"><td class="line-number">34</td><td class="line-code">          <span class="yaml-key">securityContext</span><span class="yaml-punctuation">:</span></td><td class="line-number">34</td><td class="line-code">          <span class="yaml-key">securityContext</span><span class="yaml-punctuation">:</span></td></tr>
+<tr class="diff-row context"><td class="line-number">35</td><td class="line-code">            <span class="yaml-key">allowPrivilegeEscalation</span><span class="yaml-punctuation">:</span> <span class="yaml-bool">false</span></td><td class="line-number">35</td><td class="line-code">            <span class="yaml-key">allowPrivilegeEscalation</span><span class="yaml-punctuation">:</span> <span class="yaml-bool">false</span></td></tr>
 </tbody>
 </table>
 <table class="diff-table unified">
 <tbody>
 <tr class="hunk-header"><th colspan="2">@@ -8,7 +8,7 @@</th></tr>
-<tr class="diff-row context"><td class="line-number">8</td><td class="line-code">  name: envoy-gateway</td></tr>
-<tr class="diff-row context"><td class="line-number">9</td><td class="line-code">  namespace: envoy-gateway-system</td></tr>
-<tr class="diff-row context"><td class="line-number">10</td><td class="line-code">spec:</td></tr>
-<tr class="diff-row removed"><td class="line-number">11</td><td class="line-code">  replicas: <span class="inline-change removed">3</span></td></tr>
-<tr class="diff-row added"><td class="line-number">11</td><td class="line-code">  replicas: <span class="inline-change added">2</span></td></tr>
-<tr class="diff-row context"><td class="line-number">12</td><td class="line-code">  selector:</td></tr>
-<tr class="diff-row context"><td class="line-number">13</td><td class="line-code">    matchLabels:</td></tr>
-<tr class="diff-row context"><td class="line-number">14</td><td class="line-code">      app.kubernetes.io/instance: envoy-gateway</td></tr>
+<tr class="diff-row context"><td class="line-number">8</td><td class="line-code">  <span class="yaml-key">name</span><span class="yaml-punctuation">:</span> envoy-gateway</td></tr>
+<tr class="diff-row context"><td class="line-number">9</td><td class="line-code">  <span class="yaml-key">namespace</span><span class="yaml-punctuation">:</span> envoy-gateway-system</td></tr>
+<tr class="diff-row context"><td class="line-number">10</td><td class="line-code"><span class="yaml-key">spec</span><span class="yaml-punctuation">:</span></td></tr>
+<tr class="diff-row removed"><td class="line-number">11</td><td class="line-code">  <span class="yaml-key">replicas</span><span class="yaml-punctuation">:</span> <span class="inline-change removed"><span class="yaml-number">3</span></span></td></tr>
+<tr class="diff-row added"><td class="line-number">11</td><td class="line-code">  <span class="yaml-key">replicas</span><span class="yaml-punctuation">:</span> <span class="inline-change added"><span class="yaml-number">2</span></span></td></tr>
+<tr class="diff-row context"><td class="line-number">12</td><td class="line-code">  <span class="yaml-key">selector</span><span class="yaml-punctuation">:</span></td></tr>
+<tr class="diff-row context"><td class="line-number">13</td><td class="line-code">    <span class="yaml-key">matchLabels</span><span class="yaml-punctuation">:</span></td></tr>
+<tr class="diff-row context"><td class="line-number">14</td><td class="line-code">      <span class="yaml-key">app.kubernetes.io/instance</span><span class="yaml-punctuation">:</span> envoy-gateway</td></tr>
 <tr class="hunk-header"><th colspan="2">@@ -19,17 +19,17 @@</th></tr>
-<tr class="diff-row context"><td class="line-number">19</td><td class="line-code">    spec:</td></tr>
-<tr class="diff-row context"><td class="line-number">20</td><td class="line-code">      containers:</td></tr>
-<tr class="diff-row context"><td class="line-number">21</td><td class="line-code">        - args:</td></tr>
-<tr class="diff-row removed"><td class="line-number">22</td><td class="line-code">            - --gateway-class-name=<span class="inline-change removed">envoy</span>-gateway</td></tr>
-<tr class="diff-row removed"><td class="line-number">23</td><td class="line-code">            - --metrics-bind-address=0.0.0.0:1900<span class="inline-change removed">1</span></td></tr>
-<tr class="diff-row removed"><td class="line-number">24</td><td class="line-code">            - --enable-wasm-extension=<span class="inline-change removed">fals</span>e</td></tr>
-<tr class="diff-row removed"><td class="line-number">25</td><td class="line-code">          image: docker.io/envoyproxy/gateway:v1.<span class="inline-change removed">3.2</span></td></tr>
-<tr class="diff-row added"><td class="line-number">22</td><td class="line-code">            - --gateway-class-name=<span class="inline-change added">platform</span>-gateway</td></tr>
-<tr class="diff-row added"><td class="line-number">23</td><td class="line-code">            - --metrics-bind-address=0.0.0.0:1900<span class="inline-change added">2</span></td></tr>
-<tr class="diff-row added"><td class="line-number">24</td><td class="line-code">            - --enable-wasm-extension=<span class="inline-change added">tru</span>e</td></tr>
-<tr class="diff-row added"><td class="line-number">25</td><td class="line-code">          image: docker.io/envoyproxy/gateway:v1.<span class="inline-change added">4.0</span></td></tr>
-<tr class="diff-row context"><td class="line-number">26</td><td class="line-code">          name: envoy-gateway</td></tr>
-<tr class="diff-row context"><td class="line-number">27</td><td class="line-code">          resources:</td></tr>
-<tr class="diff-row context"><td class="line-number">28</td><td class="line-code">            limits:</td></tr>
-<tr class="diff-row removed"><td class="line-number">29</td><td class="line-code">              cpu: 1<span class="inline-change removed">0</span>0m</td></tr>
-<tr class="diff-row removed"><td class="line-number">30</td><td class="line-code">              memory: 1<span class="inline-change removed">50</span>Mi</td></tr>
-<tr class="diff-row added"><td class="line-number">29</td><td class="line-code">              cpu: 1<span class="inline-change added">5</span>0m</td></tr>
-<tr class="diff-row added"><td class="line-number">30</td><td class="line-code">              memory: 1<span class="inline-change added">92</span>Mi</td></tr>
-<tr class="diff-row context"><td class="line-number">31</td><td class="line-code">            requests:</td></tr>
-<tr class="diff-row removed"><td class="line-number">32</td><td class="line-code">              cpu: <span class="inline-change removed">10</span>m</td></tr>
-<tr class="diff-row removed"><td class="line-number">33</td><td class="line-code">              memory: 1<span class="inline-change removed">50</span>Mi</td></tr>
-<tr class="diff-row added"><td class="line-number">32</td><td class="line-code">              cpu: <span class="inline-change added">25</span>m</td></tr>
-<tr class="diff-row added"><td class="line-number">33</td><td class="line-code">              memory: 1<span class="inline-change added">92</span>Mi</td></tr>
-<tr class="diff-row context"><td class="line-number">34</td><td class="line-code">          securityContext:</td></tr>
-<tr class="diff-row context"><td class="line-number">35</td><td class="line-code">            allowPrivilegeEscalation: false</td></tr>
+<tr class="diff-row context"><td class="line-number">19</td><td class="line-code">    <span class="yaml-key">spec</span><span class="yaml-punctuation">:</span></td></tr>
+<tr class="diff-row context"><td class="line-number">20</td><td class="line-code">      <span class="yaml-key">containers</span><span class="yaml-punctuation">:</span></td></tr>
+<tr class="diff-row context"><td class="line-number">21</td><td class="line-code">        <span class="yaml-punctuation">-</span> <span class="yaml-key">args</span><span class="yaml-punctuation">:</span></td></tr>
+<tr class="diff-row removed"><td class="line-number">22</td><td class="line-code">            <span class="yaml-punctuation">-</span> --gateway-class-name=<span class="inline-change removed">envoy</span>-gateway</td></tr>
+<tr class="diff-row removed"><td class="line-number">23</td><td class="line-code">            <span class="yaml-punctuation">-</span> --metrics-bind-address=0.0.0.0:1900<span class="inline-change removed">1</span></td></tr>
+<tr class="diff-row removed"><td class="line-number">24</td><td class="line-code">            <span class="yaml-punctuation">-</span> --enable-wasm-extension=<span class="inline-change removed">fals</span>e</td></tr>
+<tr class="diff-row removed"><td class="line-number">25</td><td class="line-code">          <span class="yaml-key">image</span><span class="yaml-punctuation">:</span> docker.io/envoyproxy/gateway:v1.<span class="inline-change removed">3.2</span></td></tr>
+<tr class="diff-row added"><td class="line-number">22</td><td class="line-code">            <span class="yaml-punctuation">-</span> --gateway-class-name=<span class="inline-change added">platform</span>-gateway</td></tr>
+<tr class="diff-row added"><td class="line-number">23</td><td class="line-code">            <span class="yaml-punctuation">-</span> --metrics-bind-address=0.0.0.0:1900<span class="inline-change added">2</span></td></tr>
+<tr class="diff-row added"><td class="line-number">24</td><td class="line-code">            <span class="yaml-punctuation">-</span> --enable-wasm-extension=<span class="inline-change added">tru</span>e</td></tr>
+<tr class="diff-row added"><td class="line-number">25</td><td class="line-code">          <span class="yaml-key">image</span><span class="yaml-punctuation">:</span> docker.io/envoyproxy/gateway:v1.<span class="inline-change added">4.0</span></td></tr>
+<tr class="diff-row context"><td class="line-number">26</td><td class="line-code">          <span class="yaml-key">name</span><span class="yaml-punctuation">:</span> envoy-gateway</td></tr>
+<tr class="diff-row context"><td class="line-number">27</td><td class="line-code">          <span class="yaml-key">resources</span><span class="yaml-punctuation">:</span></td></tr>
+<tr class="diff-row context"><td class="line-number">28</td><td class="line-code">            <span class="yaml-key">limits</span><span class="yaml-punctuation">:</span></td></tr>
+<tr class="diff-row removed"><td class="line-number">29</td><td class="line-code">              <span class="yaml-key">cpu</span><span class="yaml-punctuation">:</span> 1<span class="inline-change removed">0</span>0m</td></tr>
+<tr class="diff-row removed"><td class="line-number">30</td><td class="line-code">              <span class="yaml-key">memory</span><span class="yaml-punctuation">:</span> 1<span class="inline-change removed">50</span>Mi</td></tr>
+<tr class="diff-row added"><td class="line-number">29</td><td class="line-code">              <span class="yaml-key">cpu</span><span class="yaml-punctuation">:</span> 1<span class="inline-change added">5</span>0m</td></tr>
+<tr class="diff-row added"><td class="line-number">30</td><td class="line-code">              <span class="yaml-key">memory</span><span class="yaml-punctuation">:</span> 1<span class="inline-change added">92</span>Mi</td></tr>
+<tr class="diff-row context"><td class="line-number">31</td><td class="line-code">            <span class="yaml-key">requests</span><span class="yaml-punctuation">:</span></td></tr>
+<tr class="diff-row removed"><td class="line-number">32</td><td class="line-code">              <span class="yaml-key">cpu</span><span class="yaml-punctuation">:</span> <span class="inline-change removed">10</span>m</td></tr>
+<tr class="diff-row removed"><td class="line-number">33</td><td class="line-code">              <span class="yaml-key">memory</span><span class="yaml-punctuation">:</span> 1<span class="inline-change removed">50</span>Mi</td></tr>
+<tr class="diff-row added"><td class="line-number">32</td><td class="line-code">              <span class="yaml-key">cpu</span><span class="yaml-punctuation">:</span> <span class="inline-change added">25</span>m</td></tr>
+<tr class="diff-row added"><td class="line-number">33</td><td class="line-code">              <span class="yaml-key">memory</span><span class="yaml-punctuation">:</span> 1<span class="inline-change added">92</span>Mi</td></tr>
+<tr class="diff-row context"><td class="line-number">34</td><td class="line-code">          <span class="yaml-key">securityContext</span><span class="yaml-punctuation">:</span></td></tr>
+<tr class="diff-row context"><td class="line-number">35</td><td class="line-code">            <span class="yaml-key">allowPrivilegeEscalation</span><span class="yaml-punctuation">:</span> <span class="yaml-bool">false</span></td></tr>
 </tbody>
 </table>
 </article>
@@ -824,35 +853,35 @@ body[data-view="unified"] .diff-table.side-by-side {
 <table class="diff-table side-by-side one-sided">
 <tbody>
 <tr class="hunk-header"><th colspan="2">@@ -1,12 +0,0 @@</th></tr>
-<tr class="diff-row removed"><td class="line-number">1</td><td class="line-code">apiVersion: policy/v1</td></tr>
-<tr class="diff-row removed"><td class="line-number">2</td><td class="line-code">kind: PodDisruptionBudget</td></tr>
-<tr class="diff-row removed"><td class="line-number">3</td><td class="line-code">metadata:</td></tr>
-<tr class="diff-row removed"><td class="line-number">4</td><td class="line-code">  annotations:</td></tr>
-<tr class="diff-row removed"><td class="line-number">5</td><td class="line-code">    argocd.argoproj.io/tracking-id: envoy-gateway-system:policy/PodDisruptionBudget:envoy-gateway-system/envoy-gateway</td></tr>
-<tr class="diff-row removed"><td class="line-number">6</td><td class="line-code">  name: envoy-gateway</td></tr>
-<tr class="diff-row removed"><td class="line-number">7</td><td class="line-code">  namespace: envoy-gateway-system</td></tr>
-<tr class="diff-row removed"><td class="line-number">8</td><td class="line-code">spec:</td></tr>
-<tr class="diff-row removed"><td class="line-number">9</td><td class="line-code">  minAvailable: 1</td></tr>
-<tr class="diff-row removed"><td class="line-number">10</td><td class="line-code">  selector:</td></tr>
-<tr class="diff-row removed"><td class="line-number">11</td><td class="line-code">    matchLabels:</td></tr>
-<tr class="diff-row removed"><td class="line-number">12</td><td class="line-code">      app.kubernetes.io/instance: envoy-gateway</td></tr>
+<tr class="diff-row removed"><td class="line-number">1</td><td class="line-code"><span class="yaml-key">apiVersion</span><span class="yaml-punctuation">:</span> policy/v1</td></tr>
+<tr class="diff-row removed"><td class="line-number">2</td><td class="line-code"><span class="yaml-key">kind</span><span class="yaml-punctuation">:</span> PodDisruptionBudget</td></tr>
+<tr class="diff-row removed"><td class="line-number">3</td><td class="line-code"><span class="yaml-key">metadata</span><span class="yaml-punctuation">:</span></td></tr>
+<tr class="diff-row removed"><td class="line-number">4</td><td class="line-code">  <span class="yaml-key">annotations</span><span class="yaml-punctuation">:</span></td></tr>
+<tr class="diff-row removed"><td class="line-number">5</td><td class="line-code">    <span class="yaml-key">argocd.argoproj.io/tracking-id</span><span class="yaml-punctuation">:</span> envoy-gateway-system:policy/PodDisruptionBudget:envoy-gateway-system/envoy-gateway</td></tr>
+<tr class="diff-row removed"><td class="line-number">6</td><td class="line-code">  <span class="yaml-key">name</span><span class="yaml-punctuation">:</span> envoy-gateway</td></tr>
+<tr class="diff-row removed"><td class="line-number">7</td><td class="line-code">  <span class="yaml-key">namespace</span><span class="yaml-punctuation">:</span> envoy-gateway-system</td></tr>
+<tr class="diff-row removed"><td class="line-number">8</td><td class="line-code"><span class="yaml-key">spec</span><span class="yaml-punctuation">:</span></td></tr>
+<tr class="diff-row removed"><td class="line-number">9</td><td class="line-code">  <span class="yaml-key">minAvailable</span><span class="yaml-punctuation">:</span> <span class="yaml-number">1</span></td></tr>
+<tr class="diff-row removed"><td class="line-number">10</td><td class="line-code">  <span class="yaml-key">selector</span><span class="yaml-punctuation">:</span></td></tr>
+<tr class="diff-row removed"><td class="line-number">11</td><td class="line-code">    <span class="yaml-key">matchLabels</span><span class="yaml-punctuation">:</span></td></tr>
+<tr class="diff-row removed"><td class="line-number">12</td><td class="line-code">      <span class="yaml-key">app.kubernetes.io/instance</span><span class="yaml-punctuation">:</span> envoy-gateway</td></tr>
 </tbody>
 </table>
 <table class="diff-table unified one-sided">
 <tbody>
 <tr class="hunk-header"><th colspan="2">@@ -1,12 +0,0 @@</th></tr>
-<tr class="diff-row removed"><td class="line-number">1</td><td class="line-code">apiVersion: policy/v1</td></tr>
-<tr class="diff-row removed"><td class="line-number">2</td><td class="line-code">kind: PodDisruptionBudget</td></tr>
-<tr class="diff-row removed"><td class="line-number">3</td><td class="line-code">metadata:</td></tr>
-<tr class="diff-row removed"><td class="line-number">4</td><td class="line-code">  annotations:</td></tr>
-<tr class="diff-row removed"><td class="line-number">5</td><td class="line-code">    argocd.argoproj.io/tracking-id: envoy-gateway-system:policy/PodDisruptionBudget:envoy-gateway-system/envoy-gateway</td></tr>
-<tr class="diff-row removed"><td class="line-number">6</td><td class="line-code">  name: envoy-gateway</td></tr>
-<tr class="diff-row removed"><td class="line-number">7</td><td class="line-code">  namespace: envoy-gateway-system</td></tr>
-<tr class="diff-row removed"><td class="line-number">8</td><td class="line-code">spec:</td></tr>
-<tr class="diff-row removed"><td class="line-number">9</td><td class="line-code">  minAvailable: 1</td></tr>
-<tr class="diff-row removed"><td class="line-number">10</td><td class="line-code">  selector:</td></tr>
-<tr class="diff-row removed"><td class="line-number">11</td><td class="line-code">    matchLabels:</td></tr>
-<tr class="diff-row removed"><td class="line-number">12</td><td class="line-code">      app.kubernetes.io/instance: envoy-gateway</td></tr>
+<tr class="diff-row removed"><td class="line-number">1</td><td class="line-code"><span class="yaml-key">apiVersion</span><span class="yaml-punctuation">:</span> policy/v1</td></tr>
+<tr class="diff-row removed"><td class="line-number">2</td><td class="line-code"><span class="yaml-key">kind</span><span class="yaml-punctuation">:</span> PodDisruptionBudget</td></tr>
+<tr class="diff-row removed"><td class="line-number">3</td><td class="line-code"><span class="yaml-key">metadata</span><span class="yaml-punctuation">:</span></td></tr>
+<tr class="diff-row removed"><td class="line-number">4</td><td class="line-code">  <span class="yaml-key">annotations</span><span class="yaml-punctuation">:</span></td></tr>
+<tr class="diff-row removed"><td class="line-number">5</td><td class="line-code">    <span class="yaml-key">argocd.argoproj.io/tracking-id</span><span class="yaml-punctuation">:</span> envoy-gateway-system:policy/PodDisruptionBudget:envoy-gateway-system/envoy-gateway</td></tr>
+<tr class="diff-row removed"><td class="line-number">6</td><td class="line-code">  <span class="yaml-key">name</span><span class="yaml-punctuation">:</span> envoy-gateway</td></tr>
+<tr class="diff-row removed"><td class="line-number">7</td><td class="line-code">  <span class="yaml-key">namespace</span><span class="yaml-punctuation">:</span> envoy-gateway-system</td></tr>
+<tr class="diff-row removed"><td class="line-number">8</td><td class="line-code"><span class="yaml-key">spec</span><span class="yaml-punctuation">:</span></td></tr>
+<tr class="diff-row removed"><td class="line-number">9</td><td class="line-code">  <span class="yaml-key">minAvailable</span><span class="yaml-punctuation">:</span> <span class="yaml-number">1</span></td></tr>
+<tr class="diff-row removed"><td class="line-number">10</td><td class="line-code">  <span class="yaml-key">selector</span><span class="yaml-punctuation">:</span></td></tr>
+<tr class="diff-row removed"><td class="line-number">11</td><td class="line-code">    <span class="yaml-key">matchLabels</span><span class="yaml-punctuation">:</span></td></tr>
+<tr class="diff-row removed"><td class="line-number">12</td><td class="line-code">      <span class="yaml-key">app.kubernetes.io/instance</span><span class="yaml-punctuation">:</span> envoy-gateway</td></tr>
 </tbody>
 </table>
 </article>
@@ -866,43 +895,43 @@ body[data-view="unified"] .diff-table.side-by-side {
 <table class="diff-table side-by-side one-sided">
 <tbody>
 <tr class="hunk-header"><th colspan="2">@@ -0,0 +1,16 @@</th></tr>
-<tr class="diff-row added"><td class="line-number">1</td><td class="line-code">apiVersion: monitoring.coreos.com/v1</td></tr>
-<tr class="diff-row added"><td class="line-number">2</td><td class="line-code">kind: ServiceMonitor</td></tr>
-<tr class="diff-row added"><td class="line-number">3</td><td class="line-code">metadata:</td></tr>
-<tr class="diff-row added"><td class="line-number">4</td><td class="line-code">  annotations:</td></tr>
-<tr class="diff-row added"><td class="line-number">5</td><td class="line-code">    argocd.argoproj.io/tracking-id: renovate:monitoring.coreos.com/ServiceMonitor:renovate/renovate</td></tr>
-<tr class="diff-row added"><td class="line-number">6</td><td class="line-code">  name: renovate</td></tr>
-<tr class="diff-row added"><td class="line-number">7</td><td class="line-code">  namespace: renovate</td></tr>
-<tr class="diff-row added"><td class="line-number">8</td><td class="line-code">spec:</td></tr>
-<tr class="diff-row added"><td class="line-number">9</td><td class="line-code">  endpoints:</td></tr>
-<tr class="diff-row added"><td class="line-number">10</td><td class="line-code">    - interval: 30s</td></tr>
-<tr class="diff-row added"><td class="line-number">11</td><td class="line-code">      path: /metrics</td></tr>
-<tr class="diff-row added"><td class="line-number">12</td><td class="line-code">      port: metrics</td></tr>
-<tr class="diff-row added"><td class="line-number">13</td><td class="line-code">      scrapeTimeout: 10s</td></tr>
-<tr class="diff-row added"><td class="line-number">14</td><td class="line-code">  selector:</td></tr>
-<tr class="diff-row added"><td class="line-number">15</td><td class="line-code">    matchLabels:</td></tr>
-<tr class="diff-row added"><td class="line-number">16</td><td class="line-code">      app.kubernetes.io/name: renovate</td></tr>
+<tr class="diff-row added"><td class="line-number">1</td><td class="line-code"><span class="yaml-key">apiVersion</span><span class="yaml-punctuation">:</span> monitoring.coreos.com/v1</td></tr>
+<tr class="diff-row added"><td class="line-number">2</td><td class="line-code"><span class="yaml-key">kind</span><span class="yaml-punctuation">:</span> ServiceMonitor</td></tr>
+<tr class="diff-row added"><td class="line-number">3</td><td class="line-code"><span class="yaml-key">metadata</span><span class="yaml-punctuation">:</span></td></tr>
+<tr class="diff-row added"><td class="line-number">4</td><td class="line-code">  <span class="yaml-key">annotations</span><span class="yaml-punctuation">:</span></td></tr>
+<tr class="diff-row added"><td class="line-number">5</td><td class="line-code">    <span class="yaml-key">argocd.argoproj.io/tracking-id</span><span class="yaml-punctuation">:</span> renovate:monitoring.coreos.com/ServiceMonitor:renovate/renovate</td></tr>
+<tr class="diff-row added"><td class="line-number">6</td><td class="line-code">  <span class="yaml-key">name</span><span class="yaml-punctuation">:</span> renovate</td></tr>
+<tr class="diff-row added"><td class="line-number">7</td><td class="line-code">  <span class="yaml-key">namespace</span><span class="yaml-punctuation">:</span> renovate</td></tr>
+<tr class="diff-row added"><td class="line-number">8</td><td class="line-code"><span class="yaml-key">spec</span><span class="yaml-punctuation">:</span></td></tr>
+<tr class="diff-row added"><td class="line-number">9</td><td class="line-code">  <span class="yaml-key">endpoints</span><span class="yaml-punctuation">:</span></td></tr>
+<tr class="diff-row added"><td class="line-number">10</td><td class="line-code">    <span class="yaml-punctuation">-</span> <span class="yaml-key">interval</span><span class="yaml-punctuation">:</span> 30s</td></tr>
+<tr class="diff-row added"><td class="line-number">11</td><td class="line-code">      <span class="yaml-key">path</span><span class="yaml-punctuation">:</span> /metrics</td></tr>
+<tr class="diff-row added"><td class="line-number">12</td><td class="line-code">      <span class="yaml-key">port</span><span class="yaml-punctuation">:</span> metrics</td></tr>
+<tr class="diff-row added"><td class="line-number">13</td><td class="line-code">      <span class="yaml-key">scrapeTimeout</span><span class="yaml-punctuation">:</span> 10s</td></tr>
+<tr class="diff-row added"><td class="line-number">14</td><td class="line-code">  <span class="yaml-key">selector</span><span class="yaml-punctuation">:</span></td></tr>
+<tr class="diff-row added"><td class="line-number">15</td><td class="line-code">    <span class="yaml-key">matchLabels</span><span class="yaml-punctuation">:</span></td></tr>
+<tr class="diff-row added"><td class="line-number">16</td><td class="line-code">      <span class="yaml-key">app.kubernetes.io/name</span><span class="yaml-punctuation">:</span> renovate</td></tr>
 </tbody>
 </table>
 <table class="diff-table unified one-sided">
 <tbody>
 <tr class="hunk-header"><th colspan="2">@@ -0,0 +1,16 @@</th></tr>
-<tr class="diff-row added"><td class="line-number">1</td><td class="line-code">apiVersion: monitoring.coreos.com/v1</td></tr>
-<tr class="diff-row added"><td class="line-number">2</td><td class="line-code">kind: ServiceMonitor</td></tr>
-<tr class="diff-row added"><td class="line-number">3</td><td class="line-code">metadata:</td></tr>
-<tr class="diff-row added"><td class="line-number">4</td><td class="line-code">  annotations:</td></tr>
-<tr class="diff-row added"><td class="line-number">5</td><td class="line-code">    argocd.argoproj.io/tracking-id: renovate:monitoring.coreos.com/ServiceMonitor:renovate/renovate</td></tr>
-<tr class="diff-row added"><td class="line-number">6</td><td class="line-code">  name: renovate</td></tr>
-<tr class="diff-row added"><td class="line-number">7</td><td class="line-code">  namespace: renovate</td></tr>
-<tr class="diff-row added"><td class="line-number">8</td><td class="line-code">spec:</td></tr>
-<tr class="diff-row added"><td class="line-number">9</td><td class="line-code">  endpoints:</td></tr>
-<tr class="diff-row added"><td class="line-number">10</td><td class="line-code">    - interval: 30s</td></tr>
-<tr class="diff-row added"><td class="line-number">11</td><td class="line-code">      path: /metrics</td></tr>
-<tr class="diff-row added"><td class="line-number">12</td><td class="line-code">      port: metrics</td></tr>
-<tr class="diff-row added"><td class="line-number">13</td><td class="line-code">      scrapeTimeout: 10s</td></tr>
-<tr class="diff-row added"><td class="line-number">14</td><td class="line-code">  selector:</td></tr>
-<tr class="diff-row added"><td class="line-number">15</td><td class="line-code">    matchLabels:</td></tr>
-<tr class="diff-row added"><td class="line-number">16</td><td class="line-code">      app.kubernetes.io/name: renovate</td></tr>
+<tr class="diff-row added"><td class="line-number">1</td><td class="line-code"><span class="yaml-key">apiVersion</span><span class="yaml-punctuation">:</span> monitoring.coreos.com/v1</td></tr>
+<tr class="diff-row added"><td class="line-number">2</td><td class="line-code"><span class="yaml-key">kind</span><span class="yaml-punctuation">:</span> ServiceMonitor</td></tr>
+<tr class="diff-row added"><td class="line-number">3</td><td class="line-code"><span class="yaml-key">metadata</span><span class="yaml-punctuation">:</span></td></tr>
+<tr class="diff-row added"><td class="line-number">4</td><td class="line-code">  <span class="yaml-key">annotations</span><span class="yaml-punctuation">:</span></td></tr>
+<tr class="diff-row added"><td class="line-number">5</td><td class="line-code">    <span class="yaml-key">argocd.argoproj.io/tracking-id</span><span class="yaml-punctuation">:</span> renovate:monitoring.coreos.com/ServiceMonitor:renovate/renovate</td></tr>
+<tr class="diff-row added"><td class="line-number">6</td><td class="line-code">  <span class="yaml-key">name</span><span class="yaml-punctuation">:</span> renovate</td></tr>
+<tr class="diff-row added"><td class="line-number">7</td><td class="line-code">  <span class="yaml-key">namespace</span><span class="yaml-punctuation">:</span> renovate</td></tr>
+<tr class="diff-row added"><td class="line-number">8</td><td class="line-code"><span class="yaml-key">spec</span><span class="yaml-punctuation">:</span></td></tr>
+<tr class="diff-row added"><td class="line-number">9</td><td class="line-code">  <span class="yaml-key">endpoints</span><span class="yaml-punctuation">:</span></td></tr>
+<tr class="diff-row added"><td class="line-number">10</td><td class="line-code">    <span class="yaml-punctuation">-</span> <span class="yaml-key">interval</span><span class="yaml-punctuation">:</span> 30s</td></tr>
+<tr class="diff-row added"><td class="line-number">11</td><td class="line-code">      <span class="yaml-key">path</span><span class="yaml-punctuation">:</span> /metrics</td></tr>
+<tr class="diff-row added"><td class="line-number">12</td><td class="line-code">      <span class="yaml-key">port</span><span class="yaml-punctuation">:</span> metrics</td></tr>
+<tr class="diff-row added"><td class="line-number">13</td><td class="line-code">      <span class="yaml-key">scrapeTimeout</span><span class="yaml-punctuation">:</span> 10s</td></tr>
+<tr class="diff-row added"><td class="line-number">14</td><td class="line-code">  <span class="yaml-key">selector</span><span class="yaml-punctuation">:</span></td></tr>
+<tr class="diff-row added"><td class="line-number">15</td><td class="line-code">    <span class="yaml-key">matchLabels</span><span class="yaml-punctuation">:</span></td></tr>
+<tr class="diff-row added"><td class="line-number">16</td><td class="line-code">      <span class="yaml-key">app.kubernetes.io/name</span><span class="yaml-punctuation">:</span> renovate</td></tr>
 </tbody>
 </table>
 </article>
@@ -916,57 +945,57 @@ body[data-view="unified"] .diff-table.side-by-side {
 <table class="diff-table side-by-side">
 <tbody>
 <tr class="hunk-header"><th colspan="4">@@ -11,18 +11,18 @@</th></tr>
-<tr class="diff-row context"><td class="line-number">11</td><td class="line-code">      value: http://10.2.0.110:3900</td><td class="line-number">11</td><td class="line-code">      value: http://10.2.0.110:3900</td></tr>
-<tr class="diff-row context"><td class="line-number">12</td><td class="line-code">    - name: S3_FORCE_PATH_STYLE</td><td class="line-number">12</td><td class="line-code">    - name: S3_FORCE_PATH_STYLE</td></tr>
-<tr class="diff-row context"><td class="line-number">13</td><td class="line-code">      value: &#34;true&#34;</td><td class="line-number">13</td><td class="line-code">      value: &#34;true&#34;</td></tr>
-<tr class="diff-row removed"><td class="line-number">14</td><td class="line-code">  image: renovate/renovate:43.20<span class="inline-change removed">5.3@sha256:53a36e2d4da0fea960e6d4ebac3da152233532c0be1c14313086011e7c4bb551</span></td><td class="line-number line-number-blank"></td><td class="line-code line-code-blank"></td></tr>
-<tr class="diff-row removed"><td class="line-number">15</td><td class="line-code">  parallelism: <span class="inline-change removed">3</span></td><td class="line-number line-number-blank"></td><td class="line-code line-code-blank"></td></tr>
-<tr class="diff-row added"><td class="line-number line-number-blank"></td><td class="line-code line-code-blank"></td><td class="line-number">14</td><td class="line-code">  image: renovate/renovate:43.20<span class="inline-change added">7.4@sha256:087bab575172b1926bbc57124d988015d899b0a82d45028514377b10a392f69d</span></td></tr>
-<tr class="diff-row added"><td class="line-number line-number-blank"></td><td class="line-code line-code-blank"></td><td class="line-number">15</td><td class="line-code">  parallelism: <span class="inline-change added">2</span></td></tr>
-<tr class="diff-row context"><td class="line-number">16</td><td class="line-code">  provider:</td><td class="line-number">16</td><td class="line-code">  provider:</td></tr>
-<tr class="diff-row context"><td class="line-number">17</td><td class="line-code">    name: github</td><td class="line-number">17</td><td class="line-code">    name: github</td></tr>
-<tr class="diff-row context"><td class="line-number">18</td><td class="line-code">  resources:</td><td class="line-number">18</td><td class="line-code">  resources:</td></tr>
-<tr class="diff-row context"><td class="line-number">19</td><td class="line-code">    limits:</td><td class="line-number">19</td><td class="line-code">    limits:</td></tr>
-<tr class="diff-row removed"><td class="line-number">20</td><td class="line-code">      cpu: <span class="inline-change removed">50</span>0m</td><td class="line-number line-number-blank"></td><td class="line-code line-code-blank"></td></tr>
-<tr class="diff-row added"><td class="line-number line-number-blank"></td><td class="line-code line-code-blank"></td><td class="line-number">20</td><td class="line-code">      cpu: <span class="inline-change added">75</span>0m</td></tr>
-<tr class="diff-row context"><td class="line-number">21</td><td class="line-code">      memory: 2048Mi</td><td class="line-number">21</td><td class="line-code">      memory: 2048Mi</td></tr>
-<tr class="diff-row context"><td class="line-number">22</td><td class="line-code">    requests:</td><td class="line-number">22</td><td class="line-code">    requests:</td></tr>
-<tr class="diff-row removed"><td class="line-number">23</td><td class="line-code">      cpu: <span class="inline-change removed">50</span>0m</td><td class="line-number line-number-blank"></td><td class="line-code line-code-blank"></td></tr>
-<tr class="diff-row added"><td class="line-number line-number-blank"></td><td class="line-code line-code-blank"></td><td class="line-number">23</td><td class="line-code">      cpu: <span class="inline-change added">75</span>0m</td></tr>
-<tr class="diff-row context"><td class="line-number">24</td><td class="line-code">      memory: 2048Mi</td><td class="line-number">24</td><td class="line-code">      memory: 2048Mi</td></tr>
-<tr class="diff-row removed"><td class="line-number">25</td><td class="line-code">  schedule: <span class="inline-change removed">0</span> * * * *</td><td class="line-number line-number-blank"></td><td class="line-code line-code-blank"></td></tr>
-<tr class="diff-row added"><td class="line-number line-number-blank"></td><td class="line-code line-code-blank"></td><td class="line-number">25</td><td class="line-code">  schedule: <span class="inline-change added">15</span> * * * *</td></tr>
-<tr class="diff-row context"><td class="line-number">26</td><td class="line-code">  secretRef: renovate-secret</td><td class="line-number">26</td><td class="line-code">  secretRef: renovate-secret</td></tr>
-<tr class="diff-row context"><td class="line-number">27</td><td class="line-code">  webhook:</td><td class="line-number">27</td><td class="line-code">  webhook:</td></tr>
-<tr class="diff-row context"><td class="line-number">28</td><td class="line-code">    authentication:</td><td class="line-number">28</td><td class="line-code">    authentication:</td></tr>
+<tr class="diff-row context"><td class="line-number">11</td><td class="line-code">      <span class="yaml-key">value</span><span class="yaml-punctuation">:</span> http://10.2.0.110:3900</td><td class="line-number">11</td><td class="line-code">      <span class="yaml-key">value</span><span class="yaml-punctuation">:</span> http://10.2.0.110:3900</td></tr>
+<tr class="diff-row context"><td class="line-number">12</td><td class="line-code">    <span class="yaml-punctuation">-</span> <span class="yaml-key">name</span><span class="yaml-punctuation">:</span> S3_FORCE_PATH_STYLE</td><td class="line-number">12</td><td class="line-code">    <span class="yaml-punctuation">-</span> <span class="yaml-key">name</span><span class="yaml-punctuation">:</span> S3_FORCE_PATH_STYLE</td></tr>
+<tr class="diff-row context"><td class="line-number">13</td><td class="line-code">      <span class="yaml-key">value</span><span class="yaml-punctuation">:</span> <span class="yaml-string">&#34;true&#34;</span></td><td class="line-number">13</td><td class="line-code">      <span class="yaml-key">value</span><span class="yaml-punctuation">:</span> <span class="yaml-string">&#34;true&#34;</span></td></tr>
+<tr class="diff-row removed"><td class="line-number">14</td><td class="line-code">  <span class="yaml-key">image</span><span class="yaml-punctuation">:</span> renovate/renovate:43.20<span class="inline-change removed">5.3@sha256:53a36e2d4da0fea960e6d4ebac3da152233532c0be1c14313086011e7c4bb551</span></td><td class="line-number line-number-blank"></td><td class="line-code line-code-blank"></td></tr>
+<tr class="diff-row removed"><td class="line-number">15</td><td class="line-code">  <span class="yaml-key">parallelism</span><span class="yaml-punctuation">:</span> <span class="inline-change removed"><span class="yaml-number">3</span></span></td><td class="line-number line-number-blank"></td><td class="line-code line-code-blank"></td></tr>
+<tr class="diff-row added"><td class="line-number line-number-blank"></td><td class="line-code line-code-blank"></td><td class="line-number">14</td><td class="line-code">  <span class="yaml-key">image</span><span class="yaml-punctuation">:</span> renovate/renovate:43.20<span class="inline-change added">7.4@sha256:087bab575172b1926bbc57124d988015d899b0a82d45028514377b10a392f69d</span></td></tr>
+<tr class="diff-row added"><td class="line-number line-number-blank"></td><td class="line-code line-code-blank"></td><td class="line-number">15</td><td class="line-code">  <span class="yaml-key">parallelism</span><span class="yaml-punctuation">:</span> <span class="inline-change added"><span class="yaml-number">2</span></span></td></tr>
+<tr class="diff-row context"><td class="line-number">16</td><td class="line-code">  <span class="yaml-key">provider</span><span class="yaml-punctuation">:</span></td><td class="line-number">16</td><td class="line-code">  <span class="yaml-key">provider</span><span class="yaml-punctuation">:</span></td></tr>
+<tr class="diff-row context"><td class="line-number">17</td><td class="line-code">    <span class="yaml-key">name</span><span class="yaml-punctuation">:</span> github</td><td class="line-number">17</td><td class="line-code">    <span class="yaml-key">name</span><span class="yaml-punctuation">:</span> github</td></tr>
+<tr class="diff-row context"><td class="line-number">18</td><td class="line-code">  <span class="yaml-key">resources</span><span class="yaml-punctuation">:</span></td><td class="line-number">18</td><td class="line-code">  <span class="yaml-key">resources</span><span class="yaml-punctuation">:</span></td></tr>
+<tr class="diff-row context"><td class="line-number">19</td><td class="line-code">    <span class="yaml-key">limits</span><span class="yaml-punctuation">:</span></td><td class="line-number">19</td><td class="line-code">    <span class="yaml-key">limits</span><span class="yaml-punctuation">:</span></td></tr>
+<tr class="diff-row removed"><td class="line-number">20</td><td class="line-code">      <span class="yaml-key">cpu</span><span class="yaml-punctuation">:</span> <span class="inline-change removed">50</span>0m</td><td class="line-number line-number-blank"></td><td class="line-code line-code-blank"></td></tr>
+<tr class="diff-row added"><td class="line-number line-number-blank"></td><td class="line-code line-code-blank"></td><td class="line-number">20</td><td class="line-code">      <span class="yaml-key">cpu</span><span class="yaml-punctuation">:</span> <span class="inline-change added">75</span>0m</td></tr>
+<tr class="diff-row context"><td class="line-number">21</td><td class="line-code">      <span class="yaml-key">memory</span><span class="yaml-punctuation">:</span> 2048Mi</td><td class="line-number">21</td><td class="line-code">      <span class="yaml-key">memory</span><span class="yaml-punctuation">:</span> 2048Mi</td></tr>
+<tr class="diff-row context"><td class="line-number">22</td><td class="line-code">    <span class="yaml-key">requests</span><span class="yaml-punctuation">:</span></td><td class="line-number">22</td><td class="line-code">    <span class="yaml-key">requests</span><span class="yaml-punctuation">:</span></td></tr>
+<tr class="diff-row removed"><td class="line-number">23</td><td class="line-code">      <span class="yaml-key">cpu</span><span class="yaml-punctuation">:</span> <span class="inline-change removed">50</span>0m</td><td class="line-number line-number-blank"></td><td class="line-code line-code-blank"></td></tr>
+<tr class="diff-row added"><td class="line-number line-number-blank"></td><td class="line-code line-code-blank"></td><td class="line-number">23</td><td class="line-code">      <span class="yaml-key">cpu</span><span class="yaml-punctuation">:</span> <span class="inline-change added">75</span>0m</td></tr>
+<tr class="diff-row context"><td class="line-number">24</td><td class="line-code">      <span class="yaml-key">memory</span><span class="yaml-punctuation">:</span> 2048Mi</td><td class="line-number">24</td><td class="line-code">      <span class="yaml-key">memory</span><span class="yaml-punctuation">:</span> 2048Mi</td></tr>
+<tr class="diff-row removed"><td class="line-number">25</td><td class="line-code">  <span class="yaml-key">schedule</span><span class="yaml-punctuation">:</span> <span class="inline-change removed"><span class="yaml-number">0</span></span> * * * *</td><td class="line-number line-number-blank"></td><td class="line-code line-code-blank"></td></tr>
+<tr class="diff-row added"><td class="line-number line-number-blank"></td><td class="line-code line-code-blank"></td><td class="line-number">25</td><td class="line-code">  <span class="yaml-key">schedule</span><span class="yaml-punctuation">:</span> <span class="inline-change added"><span class="yaml-number">15</span></span> * * * *</td></tr>
+<tr class="diff-row context"><td class="line-number">26</td><td class="line-code">  <span class="yaml-key">secretRef</span><span class="yaml-punctuation">:</span> renovate-secret</td><td class="line-number">26</td><td class="line-code">  <span class="yaml-key">secretRef</span><span class="yaml-punctuation">:</span> renovate-secret</td></tr>
+<tr class="diff-row context"><td class="line-number">27</td><td class="line-code">  <span class="yaml-key">webhook</span><span class="yaml-punctuation">:</span></td><td class="line-number">27</td><td class="line-code">  <span class="yaml-key">webhook</span><span class="yaml-punctuation">:</span></td></tr>
+<tr class="diff-row context"><td class="line-number">28</td><td class="line-code">    <span class="yaml-key">authentication</span><span class="yaml-punctuation">:</span></td><td class="line-number">28</td><td class="line-code">    <span class="yaml-key">authentication</span><span class="yaml-punctuation">:</span></td></tr>
 </tbody>
 </table>
 <table class="diff-table unified">
 <tbody>
 <tr class="hunk-header"><th colspan="2">@@ -11,18 +11,18 @@</th></tr>
-<tr class="diff-row context"><td class="line-number">11</td><td class="line-code">      value: http://10.2.0.110:3900</td></tr>
-<tr class="diff-row context"><td class="line-number">12</td><td class="line-code">    - name: S3_FORCE_PATH_STYLE</td></tr>
-<tr class="diff-row context"><td class="line-number">13</td><td class="line-code">      value: &#34;true&#34;</td></tr>
-<tr class="diff-row removed"><td class="line-number">14</td><td class="line-code">  image: renovate/renovate:43.20<span class="inline-change removed">5.3@sha256:53a36e2d4da0fea960e6d4ebac3da152233532c0be1c14313086011e7c4bb551</span></td></tr>
-<tr class="diff-row removed"><td class="line-number">15</td><td class="line-code">  parallelism: <span class="inline-change removed">3</span></td></tr>
-<tr class="diff-row added"><td class="line-number">14</td><td class="line-code">  image: renovate/renovate:43.20<span class="inline-change added">7.4@sha256:087bab575172b1926bbc57124d988015d899b0a82d45028514377b10a392f69d</span></td></tr>
-<tr class="diff-row added"><td class="line-number">15</td><td class="line-code">  parallelism: <span class="inline-change added">2</span></td></tr>
-<tr class="diff-row context"><td class="line-number">16</td><td class="line-code">  provider:</td></tr>
-<tr class="diff-row context"><td class="line-number">17</td><td class="line-code">    name: github</td></tr>
-<tr class="diff-row context"><td class="line-number">18</td><td class="line-code">  resources:</td></tr>
-<tr class="diff-row context"><td class="line-number">19</td><td class="line-code">    limits:</td></tr>
-<tr class="diff-row removed"><td class="line-number">20</td><td class="line-code">      cpu: <span class="inline-change removed">50</span>0m</td></tr>
-<tr class="diff-row added"><td class="line-number">20</td><td class="line-code">      cpu: <span class="inline-change added">75</span>0m</td></tr>
-<tr class="diff-row context"><td class="line-number">21</td><td class="line-code">      memory: 2048Mi</td></tr>
-<tr class="diff-row context"><td class="line-number">22</td><td class="line-code">    requests:</td></tr>
-<tr class="diff-row removed"><td class="line-number">23</td><td class="line-code">      cpu: <span class="inline-change removed">50</span>0m</td></tr>
-<tr class="diff-row added"><td class="line-number">23</td><td class="line-code">      cpu: <span class="inline-change added">75</span>0m</td></tr>
-<tr class="diff-row context"><td class="line-number">24</td><td class="line-code">      memory: 2048Mi</td></tr>
-<tr class="diff-row removed"><td class="line-number">25</td><td class="line-code">  schedule: <span class="inline-change removed">0</span> * * * *</td></tr>
-<tr class="diff-row added"><td class="line-number">25</td><td class="line-code">  schedule: <span class="inline-change added">15</span> * * * *</td></tr>
-<tr class="diff-row context"><td class="line-number">26</td><td class="line-code">  secretRef: renovate-secret</td></tr>
-<tr class="diff-row context"><td class="line-number">27</td><td class="line-code">  webhook:</td></tr>
-<tr class="diff-row context"><td class="line-number">28</td><td class="line-code">    authentication:</td></tr>
+<tr class="diff-row context"><td class="line-number">11</td><td class="line-code">      <span class="yaml-key">value</span><span class="yaml-punctuation">:</span> http://10.2.0.110:3900</td></tr>
+<tr class="diff-row context"><td class="line-number">12</td><td class="line-code">    <span class="yaml-punctuation">-</span> <span class="yaml-key">name</span><span class="yaml-punctuation">:</span> S3_FORCE_PATH_STYLE</td></tr>
+<tr class="diff-row context"><td class="line-number">13</td><td class="line-code">      <span class="yaml-key">value</span><span class="yaml-punctuation">:</span> <span class="yaml-string">&#34;true&#34;</span></td></tr>
+<tr class="diff-row removed"><td class="line-number">14</td><td class="line-code">  <span class="yaml-key">image</span><span class="yaml-punctuation">:</span> renovate/renovate:43.20<span class="inline-change removed">5.3@sha256:53a36e2d4da0fea960e6d4ebac3da152233532c0be1c14313086011e7c4bb551</span></td></tr>
+<tr class="diff-row removed"><td class="line-number">15</td><td class="line-code">  <span class="yaml-key">parallelism</span><span class="yaml-punctuation">:</span> <span class="inline-change removed"><span class="yaml-number">3</span></span></td></tr>
+<tr class="diff-row added"><td class="line-number">14</td><td class="line-code">  <span class="yaml-key">image</span><span class="yaml-punctuation">:</span> renovate/renovate:43.20<span class="inline-change added">7.4@sha256:087bab575172b1926bbc57124d988015d899b0a82d45028514377b10a392f69d</span></td></tr>
+<tr class="diff-row added"><td class="line-number">15</td><td class="line-code">  <span class="yaml-key">parallelism</span><span class="yaml-punctuation">:</span> <span class="inline-change added"><span class="yaml-number">2</span></span></td></tr>
+<tr class="diff-row context"><td class="line-number">16</td><td class="line-code">  <span class="yaml-key">provider</span><span class="yaml-punctuation">:</span></td></tr>
+<tr class="diff-row context"><td class="line-number">17</td><td class="line-code">    <span class="yaml-key">name</span><span class="yaml-punctuation">:</span> github</td></tr>
+<tr class="diff-row context"><td class="line-number">18</td><td class="line-code">  <span class="yaml-key">resources</span><span class="yaml-punctuation">:</span></td></tr>
+<tr class="diff-row context"><td class="line-number">19</td><td class="line-code">    <span class="yaml-key">limits</span><span class="yaml-punctuation">:</span></td></tr>
+<tr class="diff-row removed"><td class="line-number">20</td><td class="line-code">      <span class="yaml-key">cpu</span><span class="yaml-punctuation">:</span> <span class="inline-change removed">50</span>0m</td></tr>
+<tr class="diff-row added"><td class="line-number">20</td><td class="line-code">      <span class="yaml-key">cpu</span><span class="yaml-punctuation">:</span> <span class="inline-change added">75</span>0m</td></tr>
+<tr class="diff-row context"><td class="line-number">21</td><td class="line-code">      <span class="yaml-key">memory</span><span class="yaml-punctuation">:</span> 2048Mi</td></tr>
+<tr class="diff-row context"><td class="line-number">22</td><td class="line-code">    <span class="yaml-key">requests</span><span class="yaml-punctuation">:</span></td></tr>
+<tr class="diff-row removed"><td class="line-number">23</td><td class="line-code">      <span class="yaml-key">cpu</span><span class="yaml-punctuation">:</span> <span class="inline-change removed">50</span>0m</td></tr>
+<tr class="diff-row added"><td class="line-number">23</td><td class="line-code">      <span class="yaml-key">cpu</span><span class="yaml-punctuation">:</span> <span class="inline-change added">75</span>0m</td></tr>
+<tr class="diff-row context"><td class="line-number">24</td><td class="line-code">      <span class="yaml-key">memory</span><span class="yaml-punctuation">:</span> 2048Mi</td></tr>
+<tr class="diff-row removed"><td class="line-number">25</td><td class="line-code">  <span class="yaml-key">schedule</span><span class="yaml-punctuation">:</span> <span class="inline-change removed"><span class="yaml-number">0</span></span> * * * *</td></tr>
+<tr class="diff-row added"><td class="line-number">25</td><td class="line-code">  <span class="yaml-key">schedule</span><span class="yaml-punctuation">:</span> <span class="inline-change added"><span class="yaml-number">15</span></span> * * * *</td></tr>
+<tr class="diff-row context"><td class="line-number">26</td><td class="line-code">  <span class="yaml-key">secretRef</span><span class="yaml-punctuation">:</span> renovate-secret</td></tr>
+<tr class="diff-row context"><td class="line-number">27</td><td class="line-code">  <span class="yaml-key">webhook</span><span class="yaml-punctuation">:</span></td></tr>
+<tr class="diff-row context"><td class="line-number">28</td><td class="line-code">    <span class="yaml-key">authentication</span><span class="yaml-punctuation">:</span></td></tr>
 </tbody>
 </table>
 </article>

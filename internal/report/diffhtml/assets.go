@@ -497,6 +497,35 @@ body.is-resizing-sidebar .sidebar-resizer::before {
 	background: rgba(248, 81, 73, 0.38);
 	box-shadow: 0 0 0 1px rgba(248, 81, 73, 0.2);
 }
+.yaml-key {
+	color: #8ec8ff;
+}
+.yaml-string {
+	color: #ce9178;
+}
+.yaml-number {
+	color: #b5cea8;
+}
+.yaml-bool,
+.yaml-null {
+	color: #7fb4ff;
+}
+.yaml-comment {
+	color: #7aa36f;
+}
+.yaml-doc {
+	color: #d7a2ff;
+}
+.yaml-anchor,
+.yaml-alias {
+	color: #dcdcaa;
+}
+.yaml-tag {
+	color: #c586c0;
+}
+.yaml-punctuation {
+	color: #b9c7d8;
+}
 .lazy-diff-placeholder {
 	margin: 0;
 	padding: 12px 14px;
