@@ -166,24 +166,15 @@ func (o Orchestrator) ListApplications(ctx context.Context, request BuildRequest
 		return result, err
 	}
 	request = loadedRequest
-	discovered, discoveryDiags, cacheEvents, renderCache, renderSettingsSignature, err := o.discoverRepository(ctx, root, request)
-	result.renderCache = renderCache
-	result.renderSettingsSignature = renderSettingsSignature
-	result.CacheEvents = append(result.CacheEvents, cacheEvents...)
-	discoveryDiags = normalizeDiagnostics(discoveryDiags, request.Strict, false)
-	result.Diagnostics = append(result.Diagnostics, discoveryDiags...)
+	discovered, discoveryDiags, err := o.loadBuildSideDiscovery(ctx, root, request, &result)
 	if err != nil {
 		return result, diagnosticsError(discoveryDiags, err)
 	}
-
-	settings, settingsDiags, err := loadSettingsFromDiscovery(root, discovered)
+	_, err = loadBuildSideSettings(root, request, discovered, &result)
 	if err != nil {
 		return result, err
 	}
 
-	result.Settings = settings
-	settingsDiags = normalizeDiagnostics(settingsDiags, request.Strict, false)
-	result.Diagnostics = append(result.Diagnostics, settingsDiags...)
 	result.Projects = appendDiscoveredProjects(result.Projects, discovered)
 	if err := appendDiscoveredApplications(discovered, &result); err != nil {
 		return result, err
@@ -507,25 +498,17 @@ func (o Orchestrator) prepareBuildResult(ctx context.Context, request BuildReque
 
 	var result BuildResult
 	result.Applications = append(result.Applications, request.Applications...)
-	discovered, discoveryDiags, cacheEvents, renderCache, renderSettingsSignature, err := o.discoverRepository(ctx, root, request)
-	result.renderCache = renderCache
-	result.renderSettingsSignature = renderSettingsSignature
-	result.CacheEvents = append(result.CacheEvents, cacheEvents...)
-	discoveryDiags = normalizeDiagnostics(discoveryDiags, request.Strict, false)
-	result.Diagnostics = append(result.Diagnostics, discoveryDiags...)
+	discovered, discoveryDiags, err := o.loadBuildSideDiscovery(ctx, root, request, &result)
 	if err != nil {
 		result.Statuses = skippedApplicationStatuses(result.Applications, err)
 		return result, diagnosticsError(discoveryDiags, err)
 	}
 	result.Projects = appendDiscoveredProjects(result.Projects, discovered)
-	settings, diags, err := loadSettingsFromDiscovery(root, discovered)
+	diags, err := loadBuildSideSettings(root, request, discovered, &result)
 	if err != nil {
 		result.Statuses = skippedApplicationStatuses(result.Applications, err)
 		return result, err
 	}
-	result.Settings = settings
-	diags = normalizeDiagnostics(diags, request.Strict, false)
-	result.Diagnostics = append(result.Diagnostics, diags...)
 	if err := diagnosticFailure(diags, request.Strict); err != nil {
 		result.Statuses = skippedApplicationStatuses(result.Applications, err)
 		return result, err
