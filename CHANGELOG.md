@@ -1,5 +1,25 @@
 # Changelog
 
+## [0.1.17](https://github.com/sholdee/drydock/compare/v0.1.16...v0.1.17) (2026-06-06)
+
+
+### Bug Fixes
+
+* size diff view to mobile viewport ([b344c76](https://github.com/sholdee/drydock/commit/b344c760c55d1e26151a369fd821e31f9a6e5379))
+
+
+### Documentation
+
+* add drydock domain context ([50dfc72](https://github.com/sholdee/drydock/commit/50dfc7253baa9d3852a10b1ad9a88f40a7f0439a))
+
+
+### Code Refactoring
+
+* clarify desired-state render orchestration ([a51bc07](https://github.com/sholdee/drydock/commit/a51bc07c57d0cdfe6ea92b3a171bc226576923a0))
+* isolate build and diff side orchestration ([cba90d7](https://github.com/sholdee/drydock/commit/cba90d79475284ff6d034db6e32a986dcda3ae65))
+* isolate policy plugin render planning ([12058e5](https://github.com/sholdee/drydock/commit/12058e5e538e4a5a18dc996dcd0e92958c1b9d33))
+* split html diff report internals ([de02a93](https://github.com/sholdee/drydock/commit/de02a938890494ea7f840b52a873ee8d4c478c5a))
+
 ## [0.1.16](https://github.com/sholdee/drydock/compare/v0.1.15...v0.1.16) (2026-06-05)
 
 
