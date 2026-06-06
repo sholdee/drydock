@@ -46,6 +46,7 @@ html {
 body {
 	margin: 0;
 	min-height: 100vh;
+	min-height: 100dvh;
 	overflow: hidden;
 	background: linear-gradient(180deg, #07111d 0%, #0a1421 46%, #101827 100%);
 	color: var(--ink);
@@ -175,6 +176,7 @@ body.is-resizing-sidebar * {
 	display: grid;
 	grid-template-columns: var(--sidebar-width) 0 minmax(0, 1fr);
 	height: calc(100vh - var(--topbar-height));
+	height: calc(100dvh - var(--topbar-height));
 	min-height: 0;
 }
 @media (min-width: 801px) {
@@ -699,6 +701,7 @@ body[data-view="unified"] .diff-table.side-by-side {
 	.review-layout {
 		display: block;
 		height: calc(100vh - var(--topbar-height));
+		height: calc(100dvh - var(--topbar-height));
 		min-height: 0;
 		overflow: hidden;
 	}
