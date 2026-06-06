@@ -312,7 +312,7 @@ func TestRenderIncludesTypographyAndLogoContract(t *testing.T) {
 		`--header-title-gap: 18px;`,
 	)
 	assertStyleRuleContains(t, text, "html", `-webkit-text-size-adjust: 100%;`, `text-size-adjust: 100%;`)
-	assertStyleRuleContains(t, text, "body", `overflow: hidden;`, `font-size: 14px;`, `line-height: 1.45;`)
+	assertStyleRuleContains(t, text, "body", `min-height: 100vh;`, `min-height: 100dvh;`, `overflow: hidden;`, `font-size: 14px;`, `line-height: 1.45;`)
 	assertStyleRuleContains(t, text, "body.is-resizing-sidebar", `cursor: col-resize;`)
 	assertStyleRuleContains(t, text, "body.is-resizing-sidebar *", `user-select: none;`)
 	assertStyleRuleContains(t, text, ".report-header",
@@ -359,6 +359,7 @@ func TestRenderIncludesTypographyAndLogoContract(t *testing.T) {
 	assertStyleRuleContains(t, text, ".review-layout",
 		`grid-template-columns: var(--sidebar-width) 0 minmax(0, 1fr);`,
 		`height: calc(100vh - var(--topbar-height));`,
+		`height: calc(100dvh - var(--topbar-height));`,
 		`min-height: 0;`,
 	)
 	assertStyleRuleContains(t, text, ".tree", `grid-column: 1;`, `min-height: 0;`, `overflow: auto;`)
