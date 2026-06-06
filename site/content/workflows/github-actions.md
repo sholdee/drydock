@@ -12,6 +12,17 @@ Use `setup-action` when you want to own the CLI commands. Use `pr-action` when
 you want the standard render test, markdown manifest diff, image diff, render
 cache, artifacts, and pull request comment workflow.
 
+## Full Rendered Diff View
+
+The PR action turns rendered manifest changes into a compact pull request
+comment and a standalone Full Rendered Diff View artifact:
+
+{{< pr-comment-example >}}
+
+Artifacts follow the workflow's retention settings. For a permanent sample:
+
+[Full Rendered Diff View](/examples/full-rendered-diff-view.html)
+
 ## Manual CLI Workflow
 
 ```yaml
@@ -77,22 +88,6 @@ When trusted container plugins are enabled, policy-managed plugin cache mounts
 live under the PR action cache root as `${cache-path}/plugin` and are restored
 or saved with that render cache. `drydock cache` lifecycle commands still manage
 only Git, chart, and remote-resource cache entry roots for now.
-
-## Full Rendered Diff View
-
-The PR action posts a compact markdown summary in the pull request. When a
-manifest diff exists and artifact upload is enabled, the summary links
-reviewers to a standalone Full Rendered Diff View artifact:
-
-{{< pr-comment-example >}}
-
-Use it to review the desired state Argo CD would reconcile after merge. drydock
-renders the PR and base refs, then compares the results without requiring Argo
-CD or Kubernetes credentials.
-
-Artifacts follow the workflow's retention settings. For a permanent sample:
-
-[Full Rendered Diff View](/examples/full-rendered-diff-view.html)
 
 ## Reporting And Gating
 

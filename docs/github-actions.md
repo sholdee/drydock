@@ -11,6 +11,21 @@ drydock publishes two composite GitHub Actions:
 The PR action is a convenience wrapper around the CLI. It does not run image
 pull verification and does not pass GitHub tokens to the `drydock` subprocess.
 
+## Full Rendered Diff View
+
+The PR action turns rendered manifest changes into a compact pull request
+comment and a browser-openable Full Rendered Diff View artifact. Use it to
+review the desired state Argo CD would reconcile after merge.
+
+When `upload-artifacts: "true"` and a manifest diff exists, the manifest diff
+comment links to the Full Rendered Diff View. The raw unified diff artifact
+remains available for scripts and archival workflows. Artifact availability
+follows `artifact-retention-days`; GitHub controls whether the artifact link
+opens in the current tab or a new tab.
+
+Open a public sample:
+[Full Rendered Diff View](https://sholdee.github.io/drydock/examples/full-rendered-diff-view.html).
+
 ## Setup Action
 
 Use the setup action when you want to own every drydock command in workflow
@@ -102,15 +117,6 @@ By default the action:
 - uploads full raw diff and browser-openable Full Rendered Diff View artifacts
   when manifest differences are found;
 - writes sticky PR comments for trusted same-repository pull requests.
-
-The manifest diff comment links to the Full Rendered Diff View when
-`upload-artifacts: "true"` and a manifest diff exists. The raw unified diff
-artifact remains available for scripts and archival workflows. Artifact
-availability follows `artifact-retention-days`; GitHub controls whether the
-artifact link opens in the current tab or a new tab.
-
-Open a public sample:
-[Full Rendered Diff View](https://sholdee.github.io/drydock/examples/full-rendered-diff-view.html).
 
 Fork pull requests do not restore or save drydock render caches by default,
 because render caches can contain private repository, chart, remote source, or
