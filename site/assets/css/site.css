@@ -668,8 +668,9 @@ a:hover {
 
 .github-comment-header {
   display: flex;
-  gap: 0.35rem;
   align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
   min-height: 40px;
   border-bottom: 1px solid #30363d;
   border-top-left-radius: 6px;
@@ -677,6 +678,22 @@ a:hover {
   background: #161b22;
   color: #8b949e;
   padding: 0 16px;
+}
+
+.github-comment-header-left,
+.github-comment-header-actions {
+  display: flex;
+  align-items: center;
+}
+
+.github-comment-header-left {
+  min-width: 0;
+  gap: 0.35rem;
+}
+
+.github-comment-header-actions {
+  flex: none;
+  gap: 0.4rem;
 }
 
 .github-comment-author {
@@ -692,6 +709,38 @@ a:hover {
   font-weight: 500;
   line-height: 18px;
   padding: 0 7px;
+}
+
+.github-comment-timestamp {
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.github-comment-role-badge {
+  border: 1px solid #3d444d;
+  border-radius: 2em;
+  color: #8b949e;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 18px;
+  padding: 0 6px;
+}
+
+.github-comment-menu-dots {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  width: 20px;
+  height: 20px;
+  margin-left: 2px;
+}
+
+.github-comment-menu-dots span {
+  width: 3px;
+  height: 3px;
+  border-radius: 999px;
+  background: #8b949e;
 }
 
 .github-markdown-body {
@@ -918,6 +967,10 @@ a:hover {
   .github-comment-avatar,
   .github-comment-box::before,
   .github-comment-box::after {
+    display: none;
+  }
+
+  .github-comment-header-actions {
     display: none;
   }
 }
