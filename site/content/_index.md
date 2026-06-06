@@ -9,6 +9,8 @@ server, no Kubernetes credentials, and no default shellouts.
 
 **[Get Started](/getting-started/)** | **[Set Up PR Checks](/workflows/github-actions/)**
 
+Use drydock to review rendered PR diffs automatically:
+
 {{< pr-comment-example >}}
 
 ## Start Here
