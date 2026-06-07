@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.1.18](https://github.com/sholdee/drydock/compare/v0.1.17...v0.1.18) (2026-06-07)
+
+
+### Features
+
+* validate appproject policy semantics ([8dd2468](https://github.com/sholdee/drydock/commit/8dd2468dd1876adb347f819d30a810aecec55e1c))
+* validate AppProject policy semantics ([bd2ed62](https://github.com/sholdee/drydock/commit/bd2ed62498203c239df5505809b15515fcd37009))
+
+
+### Documentation
+
+* align image comment header ([#112](https://github.com/sholdee/drydock/issues/112)) ([a80fe18](https://github.com/sholdee/drydock/commit/a80fe18f7e722039e054bb4ead6ff490a14ae83b))
+* document appproject compatibility semantics ([e7a1b18](https://github.com/sholdee/drydock/commit/e7a1b186e425c398ed1a38c4428b2669053f8ec9))
+* showcase rendered diff view ([#110](https://github.com/sholdee/drydock/issues/110)) ([fb97574](https://github.com/sholdee/drydock/commit/fb97574bec230abc35f5723697a4dcd50c6bb313))
+
 ## [0.1.17](https://github.com/sholdee/drydock/compare/v0.1.16...v0.1.17) (2026-06-06)
 
 
