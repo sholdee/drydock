@@ -3,6 +3,8 @@ package app
 import (
 	"context"
 	"fmt"
+	"path/filepath"
+	"strings"
 
 	argoappv1 "github.com/argoproj/argo-cd/v3/pkg/apis/application/v1alpha1"
 	"github.com/sholdee/drydock/internal/appset"
@@ -15,12 +17,10 @@ import (
 	"github.com/sholdee/drydock/internal/manifest"
 	"github.com/sholdee/drydock/internal/plugincontainer"
 	"github.com/sholdee/drydock/internal/pluginexec"
+	"github.com/sholdee/drydock/internal/project"
 	"github.com/sholdee/drydock/internal/remote"
 	"github.com/sholdee/drydock/internal/render"
 	sourcepkg "github.com/sholdee/drydock/internal/source"
-
-	"path/filepath"
-	"strings"
 )
 
 const (
@@ -31,8 +31,9 @@ const (
 )
 
 type BuildRequest struct {
-	Path   string
-	Strict bool
+	Path                   string
+	Strict                 bool
+	ProjectDiagnosticsMode diagnostic.ProjectDiagnosticsMode
 	// StatusOnly renders Applications for validation without retaining manifests.
 	StatusOnly bool
 	DiscoveryOptions
@@ -153,6 +154,9 @@ func (o Orchestrator) Diag(ctx context.Context, request DiagRequest) (DiagResult
 }
 
 func (o Orchestrator) ListApplications(ctx context.Context, request BuildRequest) (BuildResult, error) {
+	if err := request.ProjectDiagnosticsMode.Validate(); err != nil {
+		return BuildResult{}, err
+	}
 	root := request.Path
 	if root == "" {
 		root = "."
@@ -161,8 +165,10 @@ func (o Orchestrator) ListApplications(ctx context.Context, request BuildRequest
 	var result BuildResult
 	loadedRequest, policyDiags, cleanup, err := ensureBuildPluginPolicy(ctx, request, root)
 	defer cleanup()
+	policyDiags = request.filterProjectDiagnostics(policyDiags)
 	result.Diagnostics = append(result.Diagnostics, policyDiags...)
 	if err != nil {
+		result.Diagnostics = request.filterProjectDiagnostics(result.Diagnostics)
 		return result, err
 	}
 	request = loadedRequest
@@ -180,7 +186,7 @@ func (o Orchestrator) ListApplications(ctx context.Context, request BuildRequest
 		return result, err
 	}
 
-	result.Diagnostics = dedupeDiagnostics(result.Diagnostics)
+	result.Diagnostics = request.filterProjectDiagnostics(dedupeDiagnostics(result.Diagnostics))
 	if err := diagnosticFailure(result.Diagnostics, request.Strict); err != nil {
 		return result, err
 	}
@@ -295,6 +301,8 @@ type renderApplicationsRequest struct {
 	settingsSignature string
 	trackingOptions   TrackingOptions
 	request           BuildRequest
+	projects          []argoappv1.AppProject
+	settings          config.ArgoSettings
 	strict            bool
 	statusOnly        bool
 	settingsFilter    manifest.SettingsResourceFilter
@@ -413,7 +421,7 @@ func renderOneApplication(ctx context.Context, application argoappv1.Application
 	}, application)
 	if err != nil {
 		out.pluginExecutions = append(out.pluginExecutions, pluginExecutions...)
-		out.diagnostics = append(out.diagnostics, normalizeDiagnostics(rendered.Diagnostics, request.strict, false)...)
+		out.diagnostics = append(out.diagnostics, request.request.normalizeDiagnostics(rendered.Diagnostics, false)...)
 		out.diagnostics = append(out.diagnostics, renderFailureDiagnostic(application, err))
 		out.statuses = append(out.statuses, applicationStatus(application, ApplicationStatusFail, err.Error()))
 		out.cacheEvents = append(out.cacheEvents, recorder.Events()...)
@@ -423,7 +431,7 @@ func renderOneApplication(ctx context.Context, application argoappv1.Application
 		return out
 	}
 
-	rendered.Diagnostics = normalizeDiagnostics(rendered.Diagnostics, request.strict, false)
+	rendered.Diagnostics = request.request.normalizeDiagnostics(rendered.Diagnostics, false)
 	out.pluginExecutions = append(out.pluginExecutions, pluginExecutions...)
 	out.diagnostics = append(out.diagnostics, rendered.Diagnostics...)
 	if err := diagnosticFailure(rendered.Diagnostics, request.strict); err != nil {
@@ -433,11 +441,16 @@ func renderOneApplication(ctx context.Context, application argoappv1.Application
 	}
 	cluster := applicationDestinationCluster(application)
 	filteredManifests := make([]render.Manifest, 0, len(rendered.Manifests))
+	policyResources := make([]project.RenderedResource, 0, len(rendered.Manifests))
 	for _, renderedManifest := range rendered.Manifests {
 		id := manifest.IdentityOf(renderedManifest.Object)
 		if request.settingsFilter.Drop(id, cluster) {
 			continue
 		}
+		policyResources = append(policyResources, project.RenderedResource{
+			Object:                       renderedManifest.Object,
+			NamespaceBeforeNormalization: renderedManifest.NamespaceBeforeNormalization,
+		})
 		if request.resourceFilter.Drop(renderedManifest.Object) {
 			continue
 		}
@@ -452,13 +465,22 @@ func renderOneApplication(ctx context.Context, application argoappv1.Application
 			},
 			Manifests: filteredManifests,
 		})
-		healthDiags = normalizeDiagnostics(healthDiags, request.strict, false)
+		healthDiags = request.request.normalizeDiagnostics(healthDiags, false)
 		out.diagnostics = append(out.diagnostics, healthDiags...)
 		if err := diagnosticFailure(healthDiags, request.strict); err != nil {
 			out.statuses = append(out.statuses, applicationStatus(application, ApplicationStatusFail, err.Error()))
 			out.cacheEvents = append(out.cacheEvents, recorder.Events()...)
 			return out
 		}
+	}
+
+	resourcePolicyDiags := project.ValidateRenderedResourcePolicyResources(application, policyResources, request.projects, request.settings)
+	resourcePolicyDiags = request.request.normalizeDiagnostics(resourcePolicyDiags, false)
+	out.diagnostics = append(out.diagnostics, resourcePolicyDiags...)
+	if err := diagnosticFailure(resourcePolicyDiags, request.strict); err != nil {
+		out.statuses = append(out.statuses, applicationStatus(application, ApplicationStatusFail, err.Error()))
+		out.cacheEvents = append(out.cacheEvents, recorder.Events()...)
+		return out
 	}
 
 	if request.statusOnly {
@@ -509,7 +531,7 @@ func (o Orchestrator) prepareBuildResult(ctx context.Context, request BuildReque
 		result.Statuses = skippedApplicationStatuses(result.Applications, err)
 		return result, err
 	}
-	if err := diagnosticFailure(diags, request.Strict); err != nil {
+	if err := diagnosticFailure(request.filterProjectDiagnostics(diags), request.Strict); err != nil {
 		result.Statuses = skippedApplicationStatuses(result.Applications, err)
 		return result, err
 	}
@@ -571,7 +593,7 @@ func (o Orchestrator) BuildApp(ctx context.Context, request BuildAppRequest) (Bu
 	buildResult, err := o.Build(ctx, buildRequest)
 	buildResult.ApplicationInputs = selectApplicationInputsForApplication(listResult.ApplicationInputs, selected)
 	buildResult.Diagnostics = append(append([]diagnostic.Diagnostic(nil), listResult.Diagnostics...), buildResult.Diagnostics...)
-	buildResult.Diagnostics = dedupeDiagnostics(buildResult.Diagnostics)
+	buildResult.Diagnostics = buildRequest.filterProjectDiagnostics(dedupeDiagnostics(buildResult.Diagnostics))
 	return buildResult, err
 }
 

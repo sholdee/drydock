@@ -103,10 +103,11 @@ type PluginRenderer interface {
 var ErrUnsupportedPlugin = errors.New("unsupported config management plugin")
 
 type Manifest struct {
-	SourceIndex int
-	SourceName  string
-	Path        string
-	Object      *unstructured.Unstructured
+	SourceIndex                  int
+	SourceName                   string
+	Path                         string
+	NamespaceBeforeNormalization string
+	Object                       *unstructured.Unstructured
 }
 
 type Renderer interface {

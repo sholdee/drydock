@@ -29,7 +29,7 @@ behavior, edge cases, and regression expectations.
 | Rendering | Native | Directory, Kustomize, Helm, Jsonnet, Kustomize Helm charts, Argo CD tracking metadata, namespace normalization, and custom health Lua validation. | No `kubectl`, `argocd`, Helm CLI, Kustomize CLI, repo-server wrapper, or live API defaulting. |
 | Plugins | Supported with input | Native safe Kustomize CMP compatibility, argocd-vault-plugin placeholder compatibility, in-process public API renderers, trusted exec or container policy with `--enable-plugins`, and `bootstrap.entrypoints` for plugin-rendered app discovery. | No default sidecar plugin execution, ambient plugin loading, or plugin credential injection. |
 | Diffs and images | Native | Desired-vs-desired manifest diffs, Git ref diffs, ignored-field normalization, markdown diff previews, and image extraction from PodSpecs and exact `image` keys. | No live managed-fields prediction, server-side diff, or arbitrary string image scanning. |
-| Projects and settings | Native and supported with input | Local `AppProject` checks, rendered project discovery, repository Secret metadata, cluster Secret metadata, Argo CD settings metadata, and structured diagnostics. | No full RBAC/Casbin simulation, live cluster existence checks, or secret credential reads. |
+| Projects and settings | Native and supported with input | Local `AppProject` checks, rendered project discovery, rendered-resource project policy checks, repository Secret metadata, cluster Secret metadata, Argo CD settings metadata, and structured diagnostics. | No full RBAC/Casbin simulation, sync-window scheduling, orphan detection, source signature verification, sync impersonation, live cluster existence checks, or secret credential reads. |
 | API and release shape | Native | Public Go API, stable diagnostics, cache event hooks, cache commands, static binary, setup action, PR action, and container image. | Argo CD dependency updates are deliberate compatibility work. |
 
 ## Can drydock handle my repo?
@@ -100,11 +100,23 @@ See [plugin policy](/plugin-policy/) and
 
 drydock compares desired state to desired state. It supports manifest diffs,
 image diffs, markdown output for review comments, structured diagnostics,
-AppProject checks from local manifests, and redacted Argo CD settings metadata.
+AppProject checks from local manifests, rendered-resource project policy
+checks, and redacted Argo CD settings metadata.
+
+Project diagnostics are render-aware when they need rendered resources. The
+default `--project-diagnostics=actionable` mode keeps known local denials
+visible and hides AppProject findings that cannot be conclusively enforced
+offline. Use `--project-diagnostics=all` for full audit output, or
+`--project-diagnostics=off` to suppress AppProject diagnostics. `test` and
+`build` print visible AppProject warnings and strict failures on stderr. `diff`
+uses stderr for non-markdown output and embeds successful diagnostics in
+markdown reports; `diag --render -o json` exposes the same visible findings with
+stable diagnostic codes for CI.
 
 It does not predict live API defaulting, admission mutation, server-side apply
-ownership, live health aggregation, sync windows, source signature
-verification, or full RBAC authorization.
+ownership, live health aggregation, sync windows, orphaned resources, source
+signature verification, destination service account impersonation, or full RBAC
+authorization.
 
 See [output workflows](/workflows/output/), [local diffs](/workflows/local-diffs/),
 and [troubleshooting](/troubleshooting/).

@@ -65,6 +65,79 @@ func TestDiagJSONCleanRepositoryUsesEmptyDiagnosticsArray(t *testing.T) {
 	}
 }
 
+func TestDiagStructuredProjectDiagnosticsModeFiltersStaticAndRenderDiagnostics(t *testing.T) {
+	tests := []struct {
+		name       string
+		args       []string
+		listResult app.BuildResult
+		diagResult app.DiagResult
+		want       string
+		forbid     string
+	}{
+		{
+			name: "default static json hides deferred project diagnostics",
+			args: []string{"diag", "--path", "repo", "-o", "json"},
+			listResult: app.BuildResult{Diagnostics: []diagnostic.Diagnostic{{
+				Severity: diagnostic.SeverityWarning,
+				Category: "project",
+				Code:     diagnostic.CodeProjectResourceScopeDeferred,
+				Message:  "Application argocd/demo rendered resource example.com/Widget custom has unknown scope offline; AppProject resource policy validation is deferred",
+			}}},
+			forbid: diagnostic.CodeProjectResourceScopeDeferred,
+		},
+		{
+			name: "all static yaml keeps deferred project diagnostics",
+			args: []string{"diag", "--path", "repo", "-o", "yaml", "--project-diagnostics", "all"},
+			listResult: app.BuildResult{Diagnostics: []diagnostic.Diagnostic{{
+				Severity: diagnostic.SeverityWarning,
+				Category: "project",
+				Code:     diagnostic.CodeProjectResourceScopeDeferred,
+				Message:  "Application argocd/demo rendered resource example.com/Widget custom has unknown scope offline; AppProject resource policy validation is deferred",
+			}}},
+			want: diagnostic.CodeProjectResourceScopeDeferred,
+		},
+		{
+			name: "off render json hides actionable project diagnostics",
+			args: []string{"diag", "--path", "repo", "-o", "json", "--render", "--project-diagnostics", "off"},
+			diagResult: app.DiagResult{Diagnostics: []diagnostic.Diagnostic{{
+				Severity: diagnostic.SeverityWarning,
+				Category: "project",
+				Code:     diagnostic.CodeProjectSourceRepositoryDenied,
+				Message:  "Application argocd/demo source repository is not permitted by AppProject \"platform\"",
+			}}},
+			forbid: diagnostic.CodeProjectSourceRepositoryDenied,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			orchestrator := &recordingCLIOrchestrator{
+				listResult: tt.listResult,
+				diagResult: tt.diagResult,
+			}
+			cmd := NewRootCommandWithDependencies(VersionInfo{}, Dependencies{Orchestrator: orchestrator})
+			cmd.SetArgs(tt.args)
+			var stdout bytes.Buffer
+			var stderr bytes.Buffer
+			cmd.SetOut(&stdout)
+			cmd.SetErr(&stderr)
+
+			if err := cmd.Execute(); err != nil {
+				t.Fatalf("Execute() error = %v\nstdout:\n%s\nstderr:\n%s", err, stdout.String(), stderr.String())
+			}
+			if stderr.String() != "" {
+				t.Fatalf("stderr = %q, want empty for structured diag output", stderr.String())
+			}
+			if tt.want != "" && !strings.Contains(stdout.String(), tt.want) {
+				t.Fatalf("stdout = %q, want %q", stdout.String(), tt.want)
+			}
+			if tt.forbid != "" && strings.Contains(stdout.String(), tt.forbid) {
+				t.Fatalf("stdout = %q, did not want %q", stdout.String(), tt.forbid)
+			}
+		})
+	}
+}
+
 func TestDiagStructuredFatalErrorDoesNotWritePartialReport(t *testing.T) {
 	root := t.TempDir()
 	missing := filepath.Join(root, "missing")

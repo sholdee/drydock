@@ -250,6 +250,29 @@ func TestDiffAppHTMLOutputFile(t *testing.T) {
 	assertHTMLFileContainsAll(t, htmlPath, "ConfigMap default/demo")
 }
 
+func TestDiffAppsMarkdownAndHTMLHideQuietProjectDiagnostics(t *testing.T) {
+	root := t.TempDir()
+	left := filepath.Join(root, "left")
+	right := filepath.Join(root, "right")
+	htmlPath := filepath.Join(root, "diff.html")
+	writeDeferredResourcePolicyForCLI(t, left)
+	writeDeferredResourcePolicyForCLI(t, right)
+
+	result := runCLI(t,
+		"diff", "apps",
+		"--path-orig", left,
+		"--path", right,
+		"--changed-only=false",
+		"--strict",
+		"-o", "markdown",
+		"--html-output-file", htmlPath,
+		"--exit-code=false",
+	)
+	assertStdoutExcludesAll(t, result, "Diagnostics:", "project.resource-scope-deferred", "AppProject resource policy validation is deferred")
+	assertStderrEmpty(t, result)
+	assertHTMLFileExcludesAll(t, htmlPath, "Diagnostics:", "project.resource-scope-deferred", "AppProject resource policy validation is deferred")
+}
+
 func TestDiffAppsHTMLOutputFileWriteError(t *testing.T) {
 	htmlPath := t.TempDir()
 	recorder := &recordingCLIOrchestrator{
@@ -1342,6 +1365,20 @@ func assertHTMLFileContainsAll(t *testing.T, path string, wants ...string) {
 	}
 }
 
+func assertHTMLFileExcludesAll(t *testing.T, path string, forbidden ...string) {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("ReadFile(%s) error = %v", path, err)
+	}
+	text := string(data)
+	for _, item := range forbidden {
+		if strings.Contains(text, item) {
+			t.Fatalf("HTML output contains forbidden %q:\n%s", item, text)
+		}
+	}
+}
+
 func writeSimpleAppForCLI(t *testing.T, root, value string) {
 	t.Helper()
 	writeCLITestFile(t, filepath.Join(root, "apps", "demo.yaml"), `apiVersion: argoproj.io/v1alpha1
@@ -1364,6 +1401,41 @@ metadata:
   name: demo
 data:
   value: `+value+`
+`)
+}
+
+func writeDeferredResourcePolicyForCLI(t *testing.T, root string) {
+	t.Helper()
+	writeCLITestFile(t, filepath.Join(root, "apps", "demo.yaml"), `apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: demo
+  namespace: argocd
+spec:
+  project: platform
+  source:
+    repoURL: https://github.com/example/repo
+    path: manifests/demo
+    targetRevision: main
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: workloads
+`)
+	writeCLITestFile(t, filepath.Join(root, "manifests", "demo", "widget.yaml"), `apiVersion: example.com/v1
+kind: Widget
+metadata:
+  name: custom
+`)
+	writeCLITestFile(t, filepath.Join(root, "projects", "platform.yaml"), `apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: platform
+spec:
+  sourceRepos:
+    - https://github.com/example/repo
+  destinations:
+    - server: https://kubernetes.default.svc
+      namespace: workloads
 `)
 }
 

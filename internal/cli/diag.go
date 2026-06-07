@@ -94,11 +94,14 @@ func runDiagCommand(cmd *cobra.Command, deps Dependencies, flags commonFlags, op
 	if err := rejectBroadDiagPath(request.Path); err != nil {
 		return err
 	}
+	if err := request.ProjectDiagnosticsMode.Validate(); err != nil {
+		return err
+	}
 	request.RecordCacheEvents = flags.cacheEvents
 	result, err := runDiag(context.Background(), deps.Orchestrator, request, diagMode{
 		Render: options.includeRender || flags.cacheEvents || options.includePluginExecutions,
 	})
-	result.Diagnostics = diagnostic.WithStableCodes(result.Diagnostics)
+	result.Diagnostics = diagnostic.FilterProjectDiagnostics(diagnostic.WithStableCodes(result.Diagnostics), request.ProjectDiagnosticsMode)
 	if err != nil && len(result.Diagnostics) == 0 {
 		return err
 	}

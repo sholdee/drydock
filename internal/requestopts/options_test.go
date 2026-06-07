@@ -7,6 +7,7 @@ import (
 
 	"github.com/sholdee/drydock/internal/appset"
 	"github.com/sholdee/drydock/internal/chart"
+	"github.com/sholdee/drydock/internal/diagnostic"
 	"github.com/sholdee/drydock/internal/remote"
 	"github.com/sholdee/drydock/internal/source"
 )
@@ -18,6 +19,7 @@ func TestOptionsBuildCopiesSharedFields(t *testing.T) {
 
 	assertDeepEqual(t, "Path", request.Path, "repo")
 	assertDeepEqual(t, "Strict", request.Strict, true)
+	assertDeepEqual(t, "ProjectDiagnosticsMode", request.ProjectDiagnosticsMode, diagnostic.ProjectDiagnosticsModeAll)
 	assertDeepEqual(t, "DiscoveryMode", request.DiscoveryMode, "fleet")
 	assertDeepEqual(t, "MaxDiscoveryDepth", request.MaxDiscoveryDepth, 2)
 	assertDeepEqual(t, "MaxDiscoveryDepthSet", request.MaxDiscoveryDepthSet, true)
@@ -80,6 +82,7 @@ func TestOptionsDiffCopiesSharedFields(t *testing.T) {
 	assertDeepEqual(t, "ChangedOnlyIgnoreGlobs", request.ChangedOnlyIgnoreGlobs, []string{".github/**"})
 	assertDeepEqual(t, "StrictChangedOnly", request.StrictChangedOnly, true)
 	assertDeepEqual(t, "Strict", request.Strict, true)
+	assertDeepEqual(t, "ProjectDiagnosticsMode", request.ProjectDiagnosticsMode, diagnostic.ProjectDiagnosticsModeAll)
 	assertDeepEqual(t, "Unified", request.Unified, 0)
 	assertDeepEqual(t, "StripAttrs", request.StripAttrs, []string{"metadata.annotations.checksum/config"})
 	assertDeepEqual(t, "ShowIgnoredFields", request.ShowIgnoredFields, true)
@@ -147,6 +150,7 @@ func fixtureOptions() Options {
 		ChangedOnlyIgnores:           []string{".github/**"},
 		StrictChangedOnly:            true,
 		Strict:                       true,
+		ProjectDiagnosticsMode:       diagnostic.ProjectDiagnosticsModeAll,
 		StripAttrs:                   []string{"metadata.annotations.checksum/config"},
 		ShowIgnoredFields:            true,
 		Offline:                      true,

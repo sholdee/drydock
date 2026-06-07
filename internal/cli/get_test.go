@@ -334,16 +334,20 @@ func TestGetImagesIncludesExactImageKey(t *testing.T) {
 
 	cmd := NewRootCommand(VersionInfo{})
 	cmd.SetArgs([]string{"get", "images", "--path", root, "-o", "name"})
-	var out bytes.Buffer
-	cmd.SetOut(&out)
-	cmd.SetErr(&out)
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	cmd.SetOut(&stdout)
+	cmd.SetErr(&stderr)
 
 	if err := cmd.Execute(); err != nil {
 		t.Fatalf("Execute() error = %v", err)
 	}
 	want := "renovate/renovate:43.195.6@sha256:72d184865d505d5badc5c3b32a48410096e0d9d7e0d875dae28ee97832178f47\n"
-	if got := out.String(); got != want {
+	if got := stdout.String(); got != want {
 		t.Fatalf("get images -o name output = %q, want %q", got, want)
+	}
+	if got := stderr.String(); got != "" {
+		t.Fatalf("get images stderr = %q, want empty", got)
 	}
 }
 

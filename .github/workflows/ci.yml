@@ -97,9 +97,9 @@ jobs:
           if [[ "${EVENT_NAME}" == "pull_request" ]]; then
             changed_files="$(git diff --name-only "${BASE_SHA}...HEAD")"
 
-            if grep -Eq '^(\.github/workflows/argocd-parity-smoke\.yml|internal/paritycompare/|scripts/argocd-parity-compare/|scripts/argocd-parity-smoke\.sh|testdata/argocd-parity/)' <<<"${changed_files}"; then
+            if grep -Eq '^(\.github/workflows/argocd-parity-smoke\.yml|internal/app/|internal/diagnostic/|internal/paritycompare/|internal/project/|scripts/argocd-parity-compare/|scripts/argocd-project-policy-smoke/|scripts/argocd-parity-smoke\.sh|testdata/argocd-parity/|testdata/argocd-project-policy/)' <<<"${changed_files}"; then
               run_smoke="true"
-              reason="render parity files changed"
+              reason="render parity, project policy, or diagnostic files changed"
             elif grep -qx 'go.mod' <<<"${changed_files}"; then
               go_mod_diff="$(git diff --unified=0 "${BASE_SHA}...HEAD" -- go.mod)"
               semantic_modules='(github\.com/argoproj/argo-cd/v3|github\.com/argoproj/argo-cd/gitops-engine|github\.com/google/go-jsonnet|helm\.sh/helm/|k8s\.io/|sigs\.k8s\.io/controller-runtime|sigs\.k8s\.io/json|sigs\.k8s\.io/kustomize/|sigs\.k8s\.io/structured-merge-diff/|sigs\.k8s\.io/yaml)'

@@ -7,6 +7,7 @@ import (
 	"github.com/sholdee/drydock/internal/app"
 	"github.com/sholdee/drydock/internal/appset"
 	"github.com/sholdee/drydock/internal/chart"
+	"github.com/sholdee/drydock/internal/diagnostic"
 	"github.com/sholdee/drydock/internal/remote"
 	"github.com/sholdee/drydock/internal/source"
 )
@@ -27,6 +28,7 @@ type Options struct {
 	ChangedOnlyIgnores             []string
 	StrictChangedOnly              bool
 	Strict                         bool
+	ProjectDiagnosticsMode         diagnostic.ProjectDiagnosticsMode
 	ValidateLuaHealth              bool
 	Unified                        int
 	StripAttrs                     []string
@@ -64,15 +66,16 @@ type Options struct {
 
 func (options Options) Build() app.BuildRequest {
 	return app.BuildRequest{
-		Path:                  options.Path,
-		Strict:                options.Strict,
-		DiscoveryOptions:      options.discoveryOptions(),
-		ValidateLuaHealth:     options.ValidateLuaHealth,
-		AcquisitionOptions:    options.acquisitionOptions(),
-		PluginOptions:         options.pluginOptions(),
-		ExecutionOptions:      options.executionOptions(),
-		FilterOptions:         options.filterOptions(),
-		ApplicationSetOptions: options.applicationSetOptions(),
+		Path:                   options.Path,
+		Strict:                 options.Strict,
+		ProjectDiagnosticsMode: options.ProjectDiagnosticsMode,
+		DiscoveryOptions:       options.discoveryOptions(),
+		ValidateLuaHealth:      options.ValidateLuaHealth,
+		AcquisitionOptions:     options.acquisitionOptions(),
+		PluginOptions:          options.pluginOptions(),
+		ExecutionOptions:       options.executionOptions(),
+		FilterOptions:          options.filterOptions(),
+		ApplicationSetOptions:  options.applicationSetOptions(),
 	}
 }
 
@@ -93,6 +96,7 @@ func (options Options) Diff() app.DiffRequest {
 		ChangedOnlyIgnoreGlobs:  append([]string(nil), options.ChangedOnlyIgnores...),
 		StrictChangedOnly:       options.StrictChangedOnly,
 		Strict:                  options.Strict,
+		ProjectDiagnosticsMode:  options.ProjectDiagnosticsMode,
 		Unified:                 options.Unified,
 		StripAttrs:              append([]string(nil), options.StripAttrs...),
 		ShowIgnoredFields:       options.ShowIgnoredFields,

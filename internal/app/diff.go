@@ -31,6 +31,7 @@ type DiffRequest struct {
 	ChangedOnlyIncludeGlobs []string
 	ChangedOnlyIgnoreGlobs  []string
 	Strict                  bool
+	ProjectDiagnosticsMode  diagnostic.ProjectDiagnosticsMode
 	Unified                 int
 	StripAttrs              []string
 	ShowIgnoredFields       bool
@@ -76,15 +77,18 @@ func (o Orchestrator) DiffApps(ctx context.Context, request DiffRequest) (DiffRe
 	if err := validateDiffPaths(request); err != nil {
 		return DiffResult{}, err
 	}
+	if err := request.ProjectDiagnosticsMode.Validate(); err != nil {
+		return DiffResult{}, err
+	}
 	loadedRequest, policyDiags, policyCleanup, err := ensureDiffPluginPolicy(ctx, request)
 	defer policyCleanup()
 	if err != nil {
-		return DiffResult{Diagnostics: policyDiags}, err
+		return DiffResult{Diagnostics: request.filterProjectDiagnostics(policyDiags)}, err
 	}
 	request = loadedRequest
 
 	leftBuild, rightBuild, diagnostics, err := o.buildDiffSides(ctx, request)
-	diagnostics = append(policyDiags, diagnostics...)
+	diagnostics = request.filterProjectDiagnostics(append(policyDiags, diagnostics...))
 	cacheEvents := cacheEventsFromBuilds(leftBuild, rightBuild)
 	buildErr := err
 	if buildErr != nil && !hasRenderedDiffInput(leftBuild, rightBuild) {
@@ -121,10 +125,13 @@ func (o Orchestrator) DiffApp(ctx context.Context, request DiffAppRequest) (Diff
 	if err := validateDiffPaths(request.DiffRequest); err != nil {
 		return DiffResult{}, err
 	}
+	if err := request.ProjectDiagnosticsMode.Validate(); err != nil {
+		return DiffResult{}, err
+	}
 	loadedRequest, policyDiags, policyCleanup, err := ensureDiffPluginPolicy(ctx, request.DiffRequest)
 	defer policyCleanup()
 	if err != nil {
-		return DiffResult{Diagnostics: policyDiags}, err
+		return DiffResult{Diagnostics: request.filterProjectDiagnostics(policyDiags)}, err
 	}
 	request.DiffRequest = loadedRequest
 
@@ -140,28 +147,28 @@ func (o Orchestrator) DiffApp(ctx context.Context, request DiffAppRequest) (Diff
 	leftList, err := o.ListApplications(ctx, leftBuildRequest)
 	diagnostics = append(diagnostics, leftList.Diagnostics...)
 	if err != nil {
-		return DiffResult{Diagnostics: diagnostics}, err
+		return DiffResult{Diagnostics: request.filterProjectDiagnostics(diagnostics)}, err
 	}
 	leftBuildRequest.renderCache = leftList.renderCache
 	leftBuildRequest.renderSettingsSignature = leftList.renderSettingsSignature
 	rightList, err := o.ListApplications(ctx, rightBuildRequest)
 	diagnostics = append(diagnostics, rightList.Diagnostics...)
 	if err != nil {
-		return DiffResult{Diagnostics: diagnostics}, err
+		return DiffResult{Diagnostics: request.filterProjectDiagnostics(diagnostics)}, err
 	}
 	rightBuildRequest.renderCache = rightList.renderCache
 	rightBuildRequest.renderSettingsSignature = rightList.renderSettingsSignature
 
 	leftApp, leftOK, err := SelectOptionalApplicationByName(leftList.Applications, name)
 	if err != nil {
-		return DiffResult{Diagnostics: diagnostics}, err
+		return DiffResult{Diagnostics: request.filterProjectDiagnostics(diagnostics)}, err
 	}
 	rightApp, rightOK, err := SelectOptionalApplicationByName(rightList.Applications, name)
 	if err != nil {
-		return DiffResult{Diagnostics: diagnostics}, err
+		return DiffResult{Diagnostics: request.filterProjectDiagnostics(diagnostics)}, err
 	}
 	if !leftOK && !rightOK {
-		return DiffResult{Diagnostics: diagnostics}, fmt.Errorf("application %q not found in either tree", name)
+		return DiffResult{Diagnostics: request.filterProjectDiagnostics(diagnostics)}, fmt.Errorf("application %q not found in either tree", name)
 	}
 
 	leftBuildRequest.Applications = selectedApplications(leftApp, leftOK)
@@ -175,7 +182,7 @@ func (o Orchestrator) DiffApp(ctx context.Context, request DiffAppRequest) (Diff
 	rightErr := err
 	cacheEvents := cacheEventsFromBuilds(leftBuild, rightBuild)
 	if err := errors.Join(leftErr, rightErr); err != nil {
-		return DiffResult{Diagnostics: diagnostics, CacheEvents: cacheEvents}, err
+		return DiffResult{Diagnostics: request.filterProjectDiagnostics(diagnostics), CacheEvents: cacheEvents}, err
 	}
 
 	results, err := diffBuildResults(leftBuild, rightBuild, diff.Options{
@@ -184,9 +191,9 @@ func (o Orchestrator) DiffApp(ctx context.Context, request DiffAppRequest) (Diff
 		ShowIgnoredFields: request.ShowIgnoredFields,
 	})
 	if err != nil {
-		return DiffResult{Diagnostics: diagnostics, CacheEvents: cacheEvents}, err
+		return DiffResult{Diagnostics: request.filterProjectDiagnostics(diagnostics), CacheEvents: cacheEvents}, err
 	}
-	return DiffResult{Results: results, Diagnostics: diagnostics, CacheEvents: cacheEvents}, nil
+	return DiffResult{Results: results, Diagnostics: request.filterProjectDiagnostics(diagnostics), CacheEvents: cacheEvents}, nil
 }
 
 func (o Orchestrator) DiffImages(ctx context.Context, request DiffRequest) (ImageDiffResult, error) {
@@ -203,15 +210,18 @@ func (o Orchestrator) DiffImages(ctx context.Context, request DiffRequest) (Imag
 	if err := validateDiffPaths(request); err != nil {
 		return ImageDiffResult{}, err
 	}
+	if err := request.ProjectDiagnosticsMode.Validate(); err != nil {
+		return ImageDiffResult{}, err
+	}
 	loadedRequest, policyDiags, policyCleanup, err := ensureDiffPluginPolicy(ctx, request)
 	defer policyCleanup()
 	if err != nil {
-		return ImageDiffResult{Diagnostics: policyDiags}, err
+		return ImageDiffResult{Diagnostics: request.filterProjectDiagnostics(policyDiags)}, err
 	}
 	request = loadedRequest
 
 	leftBuild, rightBuild, diagnostics, err := o.buildDiffSides(ctx, request)
-	diagnostics = append(policyDiags, diagnostics...)
+	diagnostics = request.filterProjectDiagnostics(append(policyDiags, diagnostics...))
 	cacheEvents := cacheEventsFromBuilds(leftBuild, rightBuild)
 	buildErr := err
 	if buildErr != nil && !hasRenderedDiffInput(leftBuild, rightBuild) {
@@ -379,14 +389,15 @@ func sameLocalPath(left, right string) bool {
 
 func (request DiffRequest) buildRequest(path string, forbiddenRoots []string) BuildRequest {
 	return BuildRequest{
-		Path:                  path,
-		Strict:                request.Strict,
-		DiscoveryOptions:      cloneDiscoveryOptions(request.DiscoveryOptions),
-		AcquisitionOptions:    request.buildAcquisitionOptions(forbiddenRoots),
-		PluginOptions:         request.PluginOptions,
-		ExecutionOptions:      request.ExecutionOptions,
-		FilterOptions:         cloneFilterOptions(request.FilterOptions),
-		ApplicationSetOptions: cloneApplicationSetOptions(request.ApplicationSetOptions),
+		Path:                   path,
+		Strict:                 request.Strict,
+		ProjectDiagnosticsMode: request.ProjectDiagnosticsMode,
+		DiscoveryOptions:       cloneDiscoveryOptions(request.DiscoveryOptions),
+		AcquisitionOptions:     request.buildAcquisitionOptions(forbiddenRoots),
+		PluginOptions:          request.PluginOptions,
+		ExecutionOptions:       request.ExecutionOptions,
+		FilterOptions:          cloneFilterOptions(request.FilterOptions),
+		ApplicationSetOptions:  cloneApplicationSetOptions(request.ApplicationSetOptions),
 	}
 }
 

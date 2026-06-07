@@ -16,18 +16,18 @@ func expandApplicationSetDiscovery(root string, request BuildRequest, discovered
 		apps, diags, err := appset.GenerateWithOptions(root, appSetFile.Path, appSetFile.ApplicationSet, appsetOptions)
 		if err != nil {
 			if errors.Is(err, appset.ErrUnsupportedGenerator) && len(diags) > 0 {
-				allDiags = append(allDiags, normalizeDiagnostics(diags, request.Strict, true)...)
+				allDiags = append(allDiags, request.normalizeDiagnostics(diags, true)...)
 				continue
 			}
 			allDiags = append(allDiags, diags...)
 			return discovered, allDiags, diagnosticsError(diags, err)
 		}
-		allDiags = append(allDiags, normalizeDiagnostics(diags, request.Strict, false)...)
+		allDiags = append(allDiags, request.normalizeDiagnostics(diags, false)...)
 		if len(apps) == 0 {
 			if len(diags) != 0 {
 				continue
 			}
-			diags := normalizeDiagnostics([]diagnostic.Diagnostic{emptyApplicationSetDiagnostic(appSetFile)}, request.Strict, false)
+			diags := request.normalizeDiagnostics([]diagnostic.Diagnostic{emptyApplicationSetDiagnostic(appSetFile)}, false)
 			allDiags = append(allDiags, diags...)
 			if err := diagnosticFailure(diags, request.Strict); err != nil {
 				return discovered, allDiags, err

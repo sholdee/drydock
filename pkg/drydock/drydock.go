@@ -7,7 +7,18 @@ import (
 	"time"
 
 	"github.com/sholdee/drydock/internal/app"
+	"github.com/sholdee/drydock/internal/diagnostic"
 	"github.com/sholdee/drydock/internal/requestopts"
+)
+
+// ProjectDiagnosticsMode controls which AppProject-adjacent diagnostics are
+// returned and allowed to affect strict render/test/diff outcomes.
+type ProjectDiagnosticsMode string
+
+const (
+	ProjectDiagnosticsModeActionable ProjectDiagnosticsMode = "actionable"
+	ProjectDiagnosticsModeAll        ProjectDiagnosticsMode = "all"
+	ProjectDiagnosticsModeOff        ProjectDiagnosticsMode = "off"
 )
 
 // Config controls render, list, and diff operations.
@@ -25,6 +36,7 @@ type Config struct {
 	MaxDiscoveryDepth      *int
 	DiscoverKustomizePaths []string
 	Strict                 bool
+	ProjectDiagnosticsMode ProjectDiagnosticsMode
 	Offline                bool
 	RefreshCharts          bool
 	ChartCacheDir          string
@@ -198,6 +210,7 @@ func (client *Client) requestOptions() requestopts.Options {
 		ChangedOnlyIgnores:             append([]string(nil), client.config.ChangedOnlyIgnores...),
 		StrictChangedOnly:              client.config.StrictChangedOnly,
 		Strict:                         client.config.Strict,
+		ProjectDiagnosticsMode:         projectDiagnosticsModeToInternal(client.config.ProjectDiagnosticsMode),
 		Unified:                        unified,
 		StripAttrs:                     append([]string(nil), client.config.StripAttrs...),
 		ShowIgnoredFields:              client.config.ShowIgnoredFields,
@@ -230,4 +243,8 @@ func (client *Client) requestOptions() requestopts.Options {
 		ApplicationSetProviderData:     applicationSetProviderDataToInternal(client.config.ApplicationSetProviderData),
 		RecordCacheEvents:              client.config.RecordCacheEvents,
 	}
+}
+
+func projectDiagnosticsModeToInternal(mode ProjectDiagnosticsMode) diagnostic.ProjectDiagnosticsMode {
+	return diagnostic.ProjectDiagnosticsMode(mode)
 }

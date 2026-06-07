@@ -98,6 +98,7 @@ func RenderApplicationWithOptions(ctx context.Context, application argoappv1.App
 			}
 			rendered.SourceIndex = sourcePlan.Index
 			rendered.SourceName = sourcePlan.Name
+			recordNamespaceBeforeNormalization(&rendered)
 			ApplyDestinationNamespace(application, rendered.Object)
 			if err := applyTrackingMetadata(application, rendered.Object, trackingOpts); err != nil {
 				return result, fmt.Errorf("%s: %w", renderSourceContext(application, sourcePlan), err)
@@ -122,6 +123,13 @@ func RenderApplicationWithOptions(ctx context.Context, application argoappv1.App
 		}
 	}
 	return result, nil
+}
+
+func recordNamespaceBeforeNormalization(rendered *render.Manifest) {
+	if rendered.Object == nil {
+		return
+	}
+	rendered.NamespaceBeforeNormalization = strings.TrimSpace(rendered.Object.GetNamespace())
 }
 
 func renderOptions(application argoappv1.Application, source argoappv1.ApplicationSource) (render.RenderOptions, error) {

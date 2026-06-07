@@ -96,8 +96,12 @@ or fingerprint cluster credential/config fields.
 Local `AppProject` manifests may produce offline diagnostics for Application
 project references, source repositories, destinations, source namespaces,
 repository Secret metadata matches, cluster Secret metadata matches, RBAC role
-metadata, and deferred project-scoped cluster metadata. Do not simulate live
-cluster existence or full Argo CD RBAC/Casbin authorization offline.
+metadata, rendered-resource policy, and deferred project-scoped cluster
+metadata. Do not simulate live cluster existence, full Argo CD RBAC/Casbin
+authorization, sync-window scheduling, orphaned-resource detection, source
+signature verification, or destination service account sync impersonation
+offline. Implementing any of those runtime AppProject semantics requires a new
+explicit design gate.
 
 ## Discovery And ApplicationSet Support
 
