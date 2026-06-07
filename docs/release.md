@@ -17,7 +17,16 @@ When upgrading the Argo CD module:
 2. Run `mise run test-race`, `mise run vet`, and `mise run lint`.
 3. Run focused compatibility tests for ApplicationSet generators, global
    settings parsing, AppProject validation, and source acquisition.
-4. Update `docs/compatibility.md` in the same change.
+4. Run the focused AppProject parity smoke with `go test ./internal/project`.
+   This covers source repository, destination, source namespace, redacted
+   metadata, and rendered-resource policy semantics against imported Argo CD
+   helper behavior. It is intentionally not a live authorization, sync-window,
+   orphan, signature, or sync-impersonation smoke.
+5. Check whether new AppProject diagnostics belong in the default
+   `--project-diagnostics=actionable` path. Diagnostics that require live Argo
+   CD or cluster context should remain available through
+   `--project-diagnostics=all` without failing default strict render tests.
+6. Update `docs/compatibility.md` in the same change.
 
 ## Cache Compatibility
 
@@ -216,6 +225,12 @@ generated desired manifests with drydock generated manifests. The workflow
 installs `kubectl` through the pinned `Azure/setup-kubectl` action; Renovate
 manages both action digests and the kind/kubectl input versions.
 
+The same `scripts/argocd-parity-smoke.sh` run also checks thin live AppProject
+Application-spec policy sanity for source repository, destination, and source
+namespace outcomes against the real Argo CD instance. It is not broad live
+authorization parity and excludes RBAC/Casbin, sync windows, orphaning,
+signatures, sync impersonation, and rendered-resource policy.
+
 This workflow is intentionally outside ordinary pull request CI. It always runs
 when manually dispatched, and CI calls it as a reusable workflow only when
 render parity fixtures change or `go.mod` changes touch semantic-rendering
@@ -227,6 +242,7 @@ admission mutation, managed fields, and controller reconciliation stay outside
 the smoke's scope.
 
 The workflow uploads only whitelisted parity artifacts: Argo CD manifest
-output, drydock manifest output, canonical comparison output, diffs, and
-selected sanitized logs on failure. It does not upload kubeconfig, Argo CD CLI
-config, Secrets, or full cluster dumps.
+output, drydock manifest output, canonical comparison output, AppProject policy
+status and diagnostic evidence, diffs, and selected sanitized logs on failure.
+It does not upload kubeconfig, Argo CD CLI config, Secrets, or full cluster
+dumps.

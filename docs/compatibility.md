@@ -21,10 +21,16 @@ manually for maintainer validation and selectively in CI when render parity
 fixtures or semantic-rendering dependencies change. See `docs/release.md` for
 maintainer workflow details.
 
+It also runs a thin live AppProject Application-spec policy sanity check for
+source repository, destination, and source namespace outcomes against the real
+Argo CD instance.
+
 This check is scoped to generated desired state. Live-only runtime behavior
 such as Kubernetes defaulting, admission mutation, server-side diff, managed
 fields, health aggregation, sync behavior, and controller state remains outside
-drydock's runtime-offline boundary.
+drydock's runtime-offline boundary. It is not broad live authorization parity
+and excludes RBAC/Casbin, sync windows, orphaning, signatures, sync
+impersonation, and rendered-resource policy.
 
 ## Runtime Model
 
@@ -51,13 +57,17 @@ Not reproduced offline:
 - Live Argo CD Application health aggregation.
 - Live destination cluster existence checks.
 - Sync window enforcement.
+- Orphaned resource detection.
 - Source integrity signature verification.
+- Destination service account sync impersonation.
 - Project-scoped cluster Secret enforcement when cluster Secret metadata is not
   present in the analyzed desired state.
 - Full Argo CD RBAC/Casbin authorization simulation.
 
-These live-state behaviors must stay explicit runtime-boundary diagnostics, not
-silent approximations.
+These live-state behaviors must stay explicit runtime boundaries, not silent
+approximations. drydock may report deferred diagnostics when it can identify a
+specific unevaluated policy decision without creating strict-mode noise for
+valid runtime-only configuration.
 
 ## Applications And ApplicationSets
 
@@ -279,6 +289,11 @@ Supported:
   diagnostics and project-scoped cluster checks when the desired state includes
   the relevant cluster Secret metadata. Only `name`, `server`, `namespaces`,
   `clusterResources`, and `project` are decoded.
+- Project diagnostic modes. The default `actionable` mode reports local
+  AppProject denials that drydock can enforce offline and hides deferred or
+  metadata-only AppProject diagnostics. Use `--project-diagnostics=all` for full
+  compatibility audits, or `--project-diagnostics=off` to suppress AppProject
+  diagnostics.
 - `argocd-cmd-params-cm` runtime-boundary diagnostics for settings that imply
   live repo-server, controller, or ApplicationSet controller behavior. These
   settings are parsed as metadata and do not mutate render behavior.
@@ -289,6 +304,52 @@ Supported:
 - Warning diagnostics for version-specific `kustomize.buildOptions.<version>`
   and `kustomize.path.<version>` settings because drydock does not select
   external Kustomize binaries.
+
+### AppProject Field Semantics
+
+This matrix is audited against Argo CD `v3.4.3`
+(`1801122b4391cad4961301f787006dc9a88c2dd3`). It records current drydock
+behavior. Strict render tests promote visible project and repository warnings
+after the selected project diagnostic mode is applied.
+
+| Field | Upstream owner | drydock status | Current diagnostic | Offline input and next phase |
+| --- | --- | --- | --- | --- |
+| `spec.sourceRepos` | `types.go`, `IsSourcePermitted`, Argo repo metadata merge | Supported | `project` warning for denied sources; `repository` warning for mismatched repository Secret project metadata | Application sources plus redacted repository metadata; parity fixtures present, future gaps Phase 3 |
+| `spec.destinations` | `types.go`, `IsDestinationPermitted`, `isDestinationMatched` | Supported with named-cluster metadata caveats | `project` warning for denied destinations or unresolved name-only server policy | Application destination plus redacted cluster metadata; parity fixtures present, deferred metadata cases Phase 3 |
+| `spec.description` | `types.go` | Metadata-only | None | Decoded as typed metadata |
+| `spec.sourceNamespaces` | `types.go`, `IsAppNamespacePermitted` | Supported | `project` warning for denied Application source namespace | Application namespace plus controller namespace assumption; parity fixtures present |
+| `spec.permitOnlyProjectScopedClusters` | `types.go`, `IsDestinationPermitted` project-cluster check | Deferred when cluster metadata is unavailable; supported when redacted project-scoped cluster metadata is present | `project` warning for deferred metadata or known denial | Redacted cluster Secret `project` metadata; without it drydock reports a runtime-boundary deferral rather than a hard decision |
+| `spec.clusterResourceWhitelist` | `types.go`, `IsGroupKindNamePermitted`, `IsResourcePermitted` | Supported for render-backed workflows | `project.resource-denied` warning for denied rendered resources | Rendered objects plus offline scope knowledge; unknown custom-resource scope defers with `project.resource-scope-deferred` only when possible scopes change or defer the policy outcome |
+| `spec.clusterResourceBlacklist` | `types.go`, `IsGroupKindNamePermitted`, `IsResourcePermitted` | Supported for render-backed workflows | `project.resource-denied` warning for denied rendered resources | Rendered objects plus offline scope knowledge; unknown custom-resource scope defers with `project.resource-scope-deferred` only when possible scopes change or defer the policy outcome |
+| `spec.namespaceResourceWhitelist` | `types.go`, `IsGroupKindNamePermitted`, `IsResourcePermitted` | Supported for render-backed workflows | `project.resource-denied` warning for denied rendered resources; `project.resource-destination-denied` for rendered object namespace denials | Rendered objects plus destination namespace normalization; discovery-only workflows do not evaluate rendered resource policy |
+| `spec.namespaceResourceBlacklist` | `types.go`, `IsGroupKindNamePermitted`, `IsResourcePermitted` | Supported for render-backed workflows | `project.resource-denied` warning for denied rendered resources; `project.resource-destination-denied` for rendered object namespace denials | Rendered objects plus destination namespace normalization; discovery-only workflows do not evaluate rendered resource policy |
+| `spec.roles` | `types.go`, `ValidateProject`, `ProjectPoliciesString`, Argo RBAC runtime | Metadata-only | `project.rbac-metadata-only` warning when roles are present | Role presence only; no Casbin authorization, claims, scopes, or token-status simulation |
+| `spec.syncWindows` | `types.go`, `SyncWindow.Matches`, `SyncWindows.CanSync`, Argo sync runtime | Runtime-bound; documented only | None | Depends on clock, timezone, destination, and manual vs automated operation context |
+| `spec.orphanedResources` | `types.go`, Argo application controller live orphan scan | Unsupported live-cluster behavior | None | Requires live namespace inventory, ownership graph, orphan exclusions, and controller state |
+| `spec.signatureKeys` | `types.go`, Argo GPG verification in `controller/state.go` and repo-server verification | Unsupported runtime verification | None | Requires GPG keyring state, repo-server verification result, and resolved commit metadata |
+| `spec.destinationServiceAccounts` | `types.go`, `ValidateProject`, `controller/sync.go` sync impersonation runtime | Runtime-bound metadata | None | Sync impersonation is applied during controller sync; drydock does not mutate REST config or validate live service account authorization |
+
+### AppProject Current Behavior Traceability
+
+This table maps the current drydock code paths and tests to the semantics above.
+Future audit phases may replace current-behavior tests as deferred fields are
+implemented or documented as runtime boundaries.
+
+| Behavior | Current code path | Test coverage | Disposition |
+| --- | --- | --- | --- |
+| Local AppProject discovery | `discovery.Scan`, `appendDiscoveredProjects` | `TestScanDiscoversAppProjects`, `TestScanPreservesDocumentIdentityForTypedObjects` | No follow-up |
+| Rendered AppProject discovery | `applyExplicitKustomizeDiscovery`, `discoverRenderedFleet`, bootstrap discovery | Existing explicit-rendered and fleet discovery tests | Phase 2 fixture expansion |
+| Duplicate or conflicting projects | `mergeProjects`, `resolveDiscoveryConflict`, same-scan `projectIndex` last-wins | Existing rendered precedence coverage | Discovery-focused follow-up |
+| Implicit default project | `effectiveProject`, `implicitDefaultProject` | `TestValidateApplicationsAllowsImplicitDefaultProject`, `TestValidateApplicationsCurrentBehaviorAllowsImplicitDefaultProjectWhenOtherLocalProjectsExist` | No follow-up |
+| Missing non-default project | `ValidateApplications`, `projectIndex`, `applicationProject` | `TestValidateApplicationsCurrentBehaviorReportsMissingNonDefaultProject` | No follow-up |
+| Source repository matching | `validateSources`, Argo `IsSourcePermitted` | Existing source policy tests, source parity fixtures, `TestValidateApplicationsCurrentBehaviorReportsDeniedMultiSourceRepository` | Phase 3 remediation for any future parity gaps |
+| Destination matching | `validateDestination`, `destinationCluster`, Argo `IsDestinationPermitted` | Existing destination and project-scoped cluster tests, destination parity fixtures | Phase 3 remediation for deferred metadata cases |
+| Cluster Secret metadata | `clusterSecretSettings`, `projectScopedClusters` | Cluster parser tests, project-scoped destination tests, metadata integration fixtures | Phase 3 remediation for deferred metadata cases |
+| Repository Secret project metadata | `repositorySecretSettings`, `effectiveProject`, `repositoryMetadataDiagnostics` | Repository metadata tests, project-scoped repository tests, metadata integration fixtures | No follow-up |
+| Source namespace checks | `validateSourceNamespace` | Existing source namespace tests, source namespace parity fixtures, `TestValidateApplicationsCurrentBehaviorPhase3SourceNamespacesEmptyListDeniesNonControllerNamespace` | No follow-up |
+| RBAC role metadata | `rbacMetadataDiagnostics` | Existing source namespace and RBAC metadata test | Metadata-only warning; authorization is not simulated |
+| Resource policy fields | `ValidateRenderedResourcePolicy`, `renderOneApplication`, shared manifest scope helpers | Resource policy evaluator tests and `orchestrator_project_resource_policy_test.go` | Supported for render-backed workflows; discovery-only paths remain unevaluated |
+| Runtime-bound fields | No sync window, orphan, signature, or impersonation simulation | `TestValidateApplicationsRuntimeBoundFieldsDoNotSimulateLivePolicy` | Intentionally documented runtime boundary |
 
 Not supported:
 

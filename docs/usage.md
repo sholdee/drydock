@@ -489,13 +489,83 @@ strings, or any live-cluster state.
 When local `AppProject` manifests are present, `build`, `test`, `diff`, and the
 Go API report source repository and destination validation diagnostics from
 those manifests. `diag --render` includes the same render-backed project
-diagnostics; default `diag` reports project and repository metadata discovered
-without rendering every Application. RBAC roles and policies are parsed and
-reported as metadata only; Argo CD authorization is not simulated. Repository
-credential matching diagnostics use discovered repository Secret metadata only
-and never read secret credential fields. Cluster Secret diagnostics likewise use
-only `name`, `server`, `namespaces`, `clusterResources`, and `project` metadata;
-credential/config fields are not decoded, retained, or printed.
+diagnostics, including rendered-resource allow/deny policy; default `diag`
+reports project and repository metadata discovered without rendering every
+Application.
+
+Project diagnostics default to `--project-diagnostics=actionable`. In this
+mode, drydock keeps known local denials visible, including missing projects,
+denied source repositories, denied destinations, denied source namespaces, and
+denied rendered resources. AppProject diagnostics that cannot be conclusively
+enforced offline are hidden by default, so strict render tests fail only on
+diagnostics drydock can act on locally. Use `--project-diagnostics=all` for full
+AppProject audit output during compatibility investigations, or
+`--project-diagnostics=off` to suppress AppProject diagnostics entirely.
+
+RBAC roles and policies are parsed and reported as metadata only when full
+project diagnostics are enabled; Argo CD authorization is not simulated. Sync
+windows, orphaned-resource tracking, source signature verification, and
+destination service account impersonation are runtime-bound and are not
+evaluated offline. Repository credential matching diagnostics use discovered
+repository Secret metadata only and never read secret credential fields. Cluster
+Secret diagnostics likewise use only `name`, `server`, `namespaces`,
+`clusterResources`, and `project` metadata; credential/config fields are not
+decoded, retained, or printed. Project-scoped cluster checks require the
+relevant redacted cluster Secret metadata; without it drydock treats the check
+as an offline boundary instead of inventing a hard allow or deny.
+
+Project diagnostics appear in the command path that has enough input to make
+the check. Text commands print diagnostics to stderr:
+
+```bash
+drydock test apps --path . --strict
+```
+
+```text
+error project: Application argocd/payments-api source repository "https://github.com/example/repo" is not permitted by AppProject "platform" (path: argocd/payments-api)
+```
+
+Rendered workflows can also report resource-policy diagnostics:
+
+```bash
+drydock build apps --path .
+```
+
+```text
+warning project: Application argocd/payments-api rendered resource ConfigMap kube-system/settings namespace "kube-system" is not permitted by AppProject "platform" (path: argocd/payments-api)
+```
+
+For non-markdown outputs, diff commands keep the same diagnostics separate from
+the diff body. Markdown output embeds successful diagnostics in the generated
+report. Use `--project-diagnostics=all` when you want deferred offline-boundary
+diagnostics as part of an audit:
+
+```bash
+drydock diff apps --path ./current --path-orig ./base --project-diagnostics=all
+```
+
+```text
+warning project: Application argocd/payments-api rendered resource example.com/Widget workloads/custom has unknown scope offline; AppProject resource policy validation is deferred (path: argocd/payments-api)
+```
+
+Use rendered structured diagnostics when CI needs stable diagnostic codes:
+
+```bash
+drydock diag --path . --render -o json
+```
+
+```json
+{
+  "diagnostics": [
+    {
+      "severity": "warning",
+      "category": "project",
+      "code": "project.resource-destination-denied",
+      "message": "Application argocd/payments-api rendered resource ConfigMap kube-system/settings namespace \"kube-system\" is not permitted by AppProject \"platform\""
+    }
+  ]
+}
+```
 
 `argocd-cmd-params-cm` settings are parsed as runtime-boundary metadata when
 they imply live repo-server, controller, or ApplicationSet controller behavior.

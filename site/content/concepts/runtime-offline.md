@@ -22,6 +22,8 @@ command runs. It does not call:
 - Kubernetes defaulting or admission webhooks.
 - Live managed-fields ownership data.
 - Live Application health aggregation.
+- Argo CD RBAC/Casbin authorization, sync-window scheduling, orphan-resource
+  detection, source signature verification, or sync impersonation.
 
 Those behaviors stay runtime-boundary diagnostics or documented gaps; drydock
 does not silently approximate them from live state.
