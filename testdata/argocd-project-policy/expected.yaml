@@ -1,0 +1,25 @@
+cases:
+  - name: project-policy-source-allowed
+    namespace: argocd
+    argocdCondition: none
+    drydockDiagnosticCode: ""
+  - name: project-policy-source-denied
+    namespace: argocd
+    argocdCondition: source
+    drydockDiagnosticCode: project.source-repository-denied
+  - name: project-policy-destination-allowed
+    namespace: argocd
+    argocdCondition: none
+    drydockDiagnosticCode: ""
+  - name: project-policy-destination-denied
+    namespace: argocd
+    argocdCondition: destination
+    drydockDiagnosticCode: project.destination-denied
+  - name: project-policy-source-namespace-allowed
+    namespace: project-policy-tenant
+    argocdCondition: none
+    drydockDiagnosticCode: ""
+  - name: project-policy-source-namespace-denied
+    namespace: project-policy-tenant
+    argocdCondition: source-namespace
+    drydockDiagnosticCode: project.source-namespace-denied

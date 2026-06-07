@@ -1,0 +1,83 @@
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: project-policy-source-allowed
+  namespace: argocd
+spec:
+  sourceRepos:
+    - git://argocd-parity-git.argocd-parity.svc.cluster.local/repo.git
+  destinations:
+    - server: https://kubernetes.default.svc
+      namespace: project-policy-workloads
+  sourceNamespaces:
+    - argocd
+---
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: project-policy-source-denied
+  namespace: argocd
+spec:
+  sourceRepos:
+    - https://example.invalid/not-the-fixture.git
+  destinations:
+    - server: https://kubernetes.default.svc
+      namespace: project-policy-workloads
+  sourceNamespaces:
+    - argocd
+---
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: project-policy-destination-allowed
+  namespace: argocd
+spec:
+  sourceRepos:
+    - git://argocd-parity-git.argocd-parity.svc.cluster.local/repo.git
+  destinations:
+    - server: https://kubernetes.default.svc
+      namespace: project-policy-workloads
+  sourceNamespaces:
+    - argocd
+---
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: project-policy-destination-denied
+  namespace: argocd
+spec:
+  sourceRepos:
+    - git://argocd-parity-git.argocd-parity.svc.cluster.local/repo.git
+  destinations:
+    - server: https://kubernetes.default.svc
+      namespace: project-policy-other
+  sourceNamespaces:
+    - argocd
+---
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: project-policy-source-namespace-allowed
+  namespace: argocd
+spec:
+  sourceRepos:
+    - git://argocd-parity-git.argocd-parity.svc.cluster.local/repo.git
+  destinations:
+    - server: https://kubernetes.default.svc
+      namespace: project-policy-workloads
+  sourceNamespaces:
+    - project-policy-tenant
+---
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: project-policy-source-namespace-denied
+  namespace: argocd
+spec:
+  sourceRepos:
+    - git://argocd-parity-git.argocd-parity.svc.cluster.local/repo.git
+  destinations:
+    - server: https://kubernetes.default.svc
+      namespace: project-policy-workloads
+  sourceNamespaces:
+    - argocd

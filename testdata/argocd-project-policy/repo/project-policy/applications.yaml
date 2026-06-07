@@ -1,0 +1,101 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: project-policy-source-allowed
+  namespace: argocd
+spec:
+  project: project-policy-source-allowed
+  source:
+    repoURL: git://argocd-parity-git.argocd-parity.svc.cluster.local/repo.git
+    targetRevision: HEAD
+    path: project-policy/workloads/source-allowed
+    directory:
+      recurse: true
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: project-policy-workloads
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: project-policy-source-denied
+  namespace: argocd
+spec:
+  project: project-policy-source-denied
+  source:
+    repoURL: git://argocd-parity-git.argocd-parity.svc.cluster.local/repo.git
+    targetRevision: HEAD
+    path: project-policy/workloads/source-denied
+    directory:
+      recurse: true
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: project-policy-workloads
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: project-policy-destination-allowed
+  namespace: argocd
+spec:
+  project: project-policy-destination-allowed
+  source:
+    repoURL: git://argocd-parity-git.argocd-parity.svc.cluster.local/repo.git
+    targetRevision: HEAD
+    path: project-policy/workloads/destination-allowed
+    directory:
+      recurse: true
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: project-policy-workloads
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: project-policy-destination-denied
+  namespace: argocd
+spec:
+  project: project-policy-destination-denied
+  source:
+    repoURL: git://argocd-parity-git.argocd-parity.svc.cluster.local/repo.git
+    targetRevision: HEAD
+    path: project-policy/workloads/destination-denied
+    directory:
+      recurse: true
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: project-policy-workloads
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: project-policy-source-namespace-allowed
+  namespace: project-policy-tenant
+spec:
+  project: project-policy-source-namespace-allowed
+  source:
+    repoURL: git://argocd-parity-git.argocd-parity.svc.cluster.local/repo.git
+    targetRevision: HEAD
+    path: project-policy/workloads/source-namespace-allowed
+    directory:
+      recurse: true
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: project-policy-workloads
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: project-policy-source-namespace-denied
+  namespace: project-policy-tenant
+spec:
+  project: project-policy-source-namespace-denied
+  source:
+    repoURL: git://argocd-parity-git.argocd-parity.svc.cluster.local/repo.git
+    targetRevision: HEAD
+    path: project-policy/workloads/source-namespace-denied
+    directory:
+      recurse: true
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: project-policy-workloads

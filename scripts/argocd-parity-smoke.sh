@@ -8,9 +8,12 @@ ARGOCD_MODULE="github.com/argoproj/argo-cd/v3"
 FIXTURE_REPO_URL="git://argocd-parity-git.argocd-parity.svc.cluster.local/repo.git"
 FIXTURE_REPO_PATH="${REPO_ROOT}/testdata/argocd-parity/repo"
 IGNORE_FILE="${REPO_ROOT}/testdata/argocd-parity/compare-ignore.yaml"
+PROJECT_POLICY_REPO_PATH="${REPO_ROOT}/testdata/argocd-project-policy/repo"
+PROJECT_POLICY_EXPECTED="${REPO_ROOT}/testdata/argocd-project-policy/expected.yaml"
 OUT_DIR="${REPO_ROOT}/argocd-parity-smoke"
 KEEP_CLUSTER="false"
 CREATE_CLUSTER="true"
+RUN_PROJECT_POLICY_SMOKE="true"
 CLUSTER_NAME="drydock-argocd-parity-${GITHUB_RUN_ID:-$$}"
 DRYDOCK_CMD=(go run ./cmd/drydock)
 PORT_FORWARD_PID=""
@@ -57,6 +60,15 @@ TRACKING_APPLICATIONS=(
   parity-tracking
 )
 
+PROJECT_POLICY_CASES=(
+  "argocd|project-policy-source-allowed|none"
+  "argocd|project-policy-source-denied|source"
+  "argocd|project-policy-destination-allowed|none"
+  "argocd|project-policy-destination-denied|destination"
+  "project-policy-tenant|project-policy-source-namespace-allowed|none"
+  "project-policy-tenant|project-policy-source-namespace-denied|source-namespace"
+)
+
 usage() {
   cat <<'USAGE'
 Usage: scripts/argocd-parity-smoke.sh [options]
@@ -66,6 +78,8 @@ Options:
   --out <dir>           output artifact directory (default: ./argocd-parity-smoke)
   --cluster-name <name> kind cluster name
   --existing-cluster    use an already-created kind cluster with --cluster-name
+  --skip-project-policy-smoke
+                        skip default project-policy smoke after parity checks
   --keep-cluster        leave the kind cluster running for debugging
   -h, --help            show this help
 USAGE
@@ -107,6 +121,10 @@ while [[ "$#" -gt 0 ]]; do
       CREATE_CLUSTER="false"
       shift
       ;;
+    --skip-project-policy-smoke)
+      RUN_PROJECT_POLICY_SMOKE="false"
+      shift
+      ;;
     --keep-cluster)
       KEEP_CLUSTER="true"
       shift
@@ -131,6 +149,8 @@ done
 
 [[ -d "${FIXTURE_REPO_PATH}" ]] || fail "fixture repo not found: ${FIXTURE_REPO_PATH}"
 [[ -f "${IGNORE_FILE}" ]] || fail "compare ignore file not found: ${IGNORE_FILE}"
+[[ -d "${PROJECT_POLICY_REPO_PATH}" ]] || fail "project policy fixture repo not found: ${PROJECT_POLICY_REPO_PATH}"
+[[ -f "${PROJECT_POLICY_EXPECTED}" ]] || fail "project policy expected file not found: ${PROJECT_POLICY_EXPECTED}"
 
 OUT_DIR="$(mkdir -p "${OUT_DIR}" && cd "${OUT_DIR}" && pwd)"
 WORK_DIR="$(mktemp -d)"
@@ -200,6 +220,7 @@ prepare_fixture_git_image() {
   image="drydock-argocd-parity-git:${CLUSTER_NAME}"
   mkdir -p "${git_work}"
   cp -R "${FIXTURE_REPO_PATH}/." "${git_work}/"
+  cp -R "${PROJECT_POLICY_REPO_PATH}/." "${git_work}/"
   git -C "${git_work}" init --initial-branch=main >/dev/null
   git -C "${git_work}" config user.email "drydock@example.invalid"
   git -C "${git_work}" config user.name "drydock render parity smoke"
@@ -380,6 +401,159 @@ compare_tracking_manifests() {
     --out-dir "${OUT_DIR}/compare-tracking")
 }
 
+ensure_namespace() {
+  local namespace="$1"
+  kubectl get namespace "${namespace}" >/dev/null 2>&1 || kubectl create namespace "${namespace}" >/dev/null
+}
+
+configure_project_policy_application_namespaces() {
+  kubectl -n argocd patch configmap argocd-cmd-params-cm --type merge \
+    -p '{"data":{"application.namespaces":"project-policy-tenant"}}' >/dev/null
+  kubectl -n argocd rollout restart deployment/argocd-server >/dev/null
+  kubectl -n argocd rollout restart statefulset/argocd-application-controller >/dev/null
+  kubectl -n argocd rollout status deployment/argocd-server --timeout=300s
+  kubectl -n argocd rollout status statefulset/argocd-application-controller --timeout=300s
+}
+
+prepare_project_policy_namespaces() {
+  ensure_namespace project-policy-tenant
+  ensure_namespace project-policy-workloads
+}
+
+apply_project_policy_apps() {
+  kubectl apply -f "${PROJECT_POLICY_REPO_PATH}/project-policy/projects.yaml" >/dev/null
+  kubectl apply -f "${PROJECT_POLICY_REPO_PATH}/project-policy/applications.yaml" >/dev/null
+}
+
+project_policy_condition_categories() {
+  local namespace="$1"
+  local app="$2"
+  local conditions condition_type message normalized category
+  conditions="$(kubectl -n "${namespace}" get application "${app}" -o jsonpath='{range .status.conditions[*]}{.type}{"\t"}{.message}{"\n"}{end}' 2>/dev/null || true)"
+  while IFS=$'\t' read -r condition_type message; do
+    [[ -n "${message}" ]] || continue
+    normalized="$(printf '%s' "${message}" | tr '[:upper:]' '[:lower:]')"
+    category="unknown"
+    if [[ "${condition_type}" == "UnknownError" && "${normalized}" == *" in namespace "* && "${normalized}" == *" is not permitted to use project "* ]]; then
+      category="source-namespace"
+    elif [[ "${condition_type}" == "InvalidSpecError" ]]; then
+      if [[ "${normalized}" == *"source namespace"* ]]; then
+        category="source-namespace"
+      elif [[ "${normalized}" == *destination* ]]; then
+        category="destination"
+      elif [[ "${normalized}" == *source* || "${normalized}" == *repo* ]]; then
+        category="source"
+      fi
+    else
+      continue
+    fi
+    printf '%s\n' "${category}"
+  done <<< "${conditions}"
+}
+
+project_policy_has_condition_category() {
+  local namespace="$1"
+  local app="$2"
+  local expected="$3"
+  local category
+  while IFS= read -r category; do
+    [[ "${category}" == "${expected}" ]] && return 0
+  done < <(project_policy_condition_categories "${namespace}" "${app}")
+  return 1
+}
+
+project_policy_has_condition() {
+  local namespace="$1"
+  local app="$2"
+  [[ -n "$(project_policy_condition_categories "${namespace}" "${app}")" ]]
+}
+
+wait_for_project_policy_application() {
+  local namespace="$1"
+  local app="$2"
+  local expected_category="$3"
+  local reconciled_at
+  for _ in {1..180}; do
+    if ! kubectl -n "${namespace}" get application "${app}" >/dev/null 2>&1; then
+      sleep 2
+      continue
+    fi
+    if [[ "${expected_category}" == "none" ]]; then
+      reconciled_at="$(kubectl -n "${namespace}" get application "${app}" -o jsonpath='{.status.reconciledAt}' 2>/dev/null || true)"
+      if [[ -n "${reconciled_at}" ]] && ! project_policy_has_condition "${namespace}" "${app}"; then
+        return 0
+      fi
+    elif project_policy_has_condition_category "${namespace}" "${app}" "${expected_category}"; then
+      return 0
+    fi
+    sleep 2
+  done
+  local failure_dir
+  failure_dir="$(artifact_dir project-policy)"
+  kubectl -n "${namespace}" get application "${app}" -o yaml > "${failure_dir}/${app}.yaml" 2>&1 || true
+  fail "project-policy Application ${namespace}/${app} did not reach expected policy condition category ${expected_category}; see ${failure_dir}/${app}.yaml"
+}
+
+wait_for_project_policy_applications() {
+  local case_entry namespace app expected_category
+  for case_entry in "${PROJECT_POLICY_CASES[@]}"; do
+    IFS='|' read -r namespace app expected_category <<< "${case_entry}"
+    wait_for_project_policy_application "${namespace}" "${app}" "${expected_category}"
+  done
+}
+
+capture_project_policy_argocd_applications() {
+  local case_entry namespace app expected_category output_dir
+  output_dir="$(artifact_dir project-policy/argocd-applications)"
+  for case_entry in "${PROJECT_POLICY_CASES[@]}"; do
+    IFS='|' read -r namespace app expected_category <<< "${case_entry}"
+    kubectl -n "${namespace}" get application "${app}" -o json > "${output_dir}/${app}.json"
+  done
+}
+
+capture_project_policy_drydock_diagnostics() {
+  local output_dir stderr_file
+  output_dir="$(artifact_dir project-policy)"
+  stderr_file="${output_dir}/drydock-diagnostics.stderr"
+  (cd "${REPO_ROOT}" && "${DRYDOCK_CMD[@]}" diag \
+    --path "${PROJECT_POLICY_REPO_PATH}" \
+    --repo-map "${FIXTURE_REPO_URL}=${PROJECT_POLICY_REPO_PATH}" \
+    --offline \
+    --render \
+    --project-diagnostics all \
+    -o json > "${output_dir}/drydock-diagnostics.json" 2> "${stderr_file}")
+  rm -f "${stderr_file}"
+}
+
+compare_project_policy_smoke() {
+  local output_dir stderr_file
+  output_dir="$(artifact_dir project-policy)"
+  stderr_file="${output_dir}/summary.stderr"
+  (cd "${REPO_ROOT}" && go run ./scripts/argocd-project-policy-smoke \
+    --argocd-app-dir "${output_dir}/argocd-applications" \
+    --drydock-diagnostics "${output_dir}/drydock-diagnostics.json" \
+    --expected "${PROJECT_POLICY_EXPECTED}" \
+    --out "${output_dir}/summary.txt" 2> "${stderr_file}")
+  rm -f "${stderr_file}"
+}
+
+run_project_policy_smoke() {
+  log_step "Configuring Argo CD project-policy Application namespaces"
+  configure_project_policy_application_namespaces
+  log_step "Preparing project-policy namespaces"
+  prepare_project_policy_namespaces
+  log_step "Applying project-policy AppProjects and Applications"
+  apply_project_policy_apps
+  log_step "Waiting for project-policy Application policy outcomes"
+  wait_for_project_policy_applications
+  log_step "Capturing project-policy Argo CD Application status"
+  capture_project_policy_argocd_applications
+  log_step "Capturing project-policy drydock diagnostics"
+  capture_project_policy_drydock_diagnostics
+  log_step "Comparing project-policy outcomes"
+  compare_project_policy_smoke
+}
+
 main() {
   local argocd_version
   argocd_version="$(resolve_argocd_version)"
@@ -411,6 +585,11 @@ main() {
   capture_drydock_manifests
   compare_manifests
   compare_tracking_manifests
+  if [[ "${RUN_PROJECT_POLICY_SMOKE}" == "true" ]]; then
+    run_project_policy_smoke
+  else
+    log_step "Skipping project-policy smoke"
+  fi
   echo "Argo CD render parity smoke complete: ${OUT_DIR}" >&2
 }
 

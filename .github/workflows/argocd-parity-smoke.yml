@@ -130,5 +130,6 @@ jobs:
             ${{ runner.temp }}/argocd-parity-smoke/argocd-manifests
             ${{ runner.temp }}/argocd-parity-smoke/drydock-manifests
             ${{ runner.temp }}/argocd-parity-smoke/compare
+            ${{ runner.temp }}/argocd-parity-smoke/project-policy
             ${{ runner.temp }}/argocd-parity-smoke/logs
           if-no-files-found: ignore
