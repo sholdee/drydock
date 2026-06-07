@@ -12,7 +12,7 @@ func (o Orchestrator) loadBuildSideDiscovery(ctx context.Context, root string, r
 	result.renderCache = renderCache
 	result.renderSettingsSignature = renderSettingsSignature
 	result.CacheEvents = append(result.CacheEvents, cacheEvents...)
-	discoveryDiags = normalizeDiagnostics(discoveryDiags, request.Strict, false)
+	discoveryDiags = request.normalizeDiagnostics(discoveryDiags, false)
 	result.Diagnostics = append(result.Diagnostics, discoveryDiags...)
 	return discovered, discoveryDiags, err
 }
@@ -23,7 +23,7 @@ func loadBuildSideSettings(root string, request BuildRequest, discovered discove
 		return nil, err
 	}
 	result.Settings = settings
-	settingsDiags = normalizeDiagnostics(settingsDiags, request.Strict, false)
+	settingsDiags = request.normalizeDiagnostics(settingsDiags, false)
 	result.Diagnostics = append(result.Diagnostics, settingsDiags...)
 	return settingsDiags, nil
 }

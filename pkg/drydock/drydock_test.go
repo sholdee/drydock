@@ -215,6 +215,91 @@ spec:
 		t.Fatalf("Diagnostics = %#v, want project source warning", result.Diagnostics)
 	}
 }
+
+func TestRenderProjectDiagnosticsDefaultHidesDeferredDiagnostics(t *testing.T) {
+	root := t.TempDir()
+	writeAPIDeferredResourcePolicyTree(t, root)
+
+	result, err := Render(context.Background(), Config{
+		Path:   root,
+		Strict: true,
+	})
+	if err != nil {
+		t.Fatalf("Render() error = %v; diagnostics = %#v", err, result.Diagnostics)
+	}
+	if hasDiagnosticCode(result.Diagnostics, "project.resource-scope-deferred") {
+		t.Fatalf("Diagnostics = %#v, want deferred project diagnostic hidden by default", result.Diagnostics)
+	}
+	if !hasStatus(result.Statuses, "demo", "PASS") {
+		t.Fatalf("Statuses = %#v, want PASS", result.Statuses)
+	}
+}
+
+func TestRenderProjectDiagnosticsAllRestoresDeferredStrictFailure(t *testing.T) {
+	root := t.TempDir()
+	writeAPIDeferredResourcePolicyTree(t, root)
+
+	result, err := Render(context.Background(), Config{
+		Path:                   root,
+		Strict:                 true,
+		ProjectDiagnosticsMode: ProjectDiagnosticsModeAll,
+	})
+	if err == nil {
+		t.Fatal("Render() error = nil, want strict deferred project diagnostic failure")
+	}
+	if !hasDiagnosticCode(result.Diagnostics, "project.resource-scope-deferred") {
+		t.Fatalf("Diagnostics = %#v, want deferred project diagnostic in all mode", result.Diagnostics)
+	}
+	if !hasStatus(result.Statuses, "demo", "FAIL") {
+		t.Fatalf("Statuses = %#v, want FAIL", result.Statuses)
+	}
+}
+
+func TestRenderProjectDiagnosticsOffHidesActionableDiagnostics(t *testing.T) {
+	root := t.TempDir()
+	writeAPIAppTreeWithProject(t, root, "demo", "platform", "https://github.com/example/denied")
+	writeAPIFile(t, filepath.Join(root, "projects", "platform.yaml"), `apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: platform
+spec:
+  sourceRepos:
+    - https://github.com/example/allowed
+  destinations:
+    - server: https://kubernetes.default.svc
+      namespace: default
+`)
+
+	result, err := Render(context.Background(), Config{
+		Path:                   root,
+		Strict:                 true,
+		ProjectDiagnosticsMode: ProjectDiagnosticsModeOff,
+	})
+	if err != nil {
+		t.Fatalf("Render() error = %v; diagnostics = %#v", err, result.Diagnostics)
+	}
+	if hasDiagnostic(result.Diagnostics, "project", "source repository") {
+		t.Fatalf("Diagnostics = %#v, want actionable project diagnostic hidden in off mode", result.Diagnostics)
+	}
+}
+
+func TestRenderRejectsInvalidPublicProjectDiagnosticsModeAtOperationTime(t *testing.T) {
+	root := t.TempDir()
+	writeAPIAppTree(t, root, "demo", configMapBody("demo", "v1"))
+	client := NewClient(Config{
+		Path:                   root,
+		ProjectDiagnosticsMode: ProjectDiagnosticsMode("verbose"),
+	})
+
+	_, err := client.Render(context.Background())
+	if err == nil {
+		t.Fatal("Render() error = nil, want invalid project diagnostics mode error")
+	}
+	if !strings.Contains(err.Error(), `project diagnostics mode`) {
+		t.Fatalf("Render() error = %v, want project diagnostics mode validation", err)
+	}
+}
+
 func TestRenderReturnsDiagnosticCodes(t *testing.T) {
 	root := t.TempDir()
 	writeAPIFile(t, filepath.Join(root, "appset.yaml"), `apiVersion: argoproj.io/v1alpha1

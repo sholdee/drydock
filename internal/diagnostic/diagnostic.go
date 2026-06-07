@@ -104,6 +104,8 @@ func StableCode(diag Diagnostic) string {
 		return projectCode(diag.Message)
 	case "repository":
 		return repositoryCode(diag.Message)
+	case "cluster":
+		return clusterCode(diag.Message)
 	case "plugin":
 		return CodePluginUnspecified
 	case "render":
@@ -168,30 +170,47 @@ func settingsCode(message string) string {
 func projectCode(message string) string {
 	switch {
 	case strings.Contains(message, "source repository") && strings.Contains(message, "not permitted"):
-		return "project.source-repository-denied"
+		return CodeProjectSourceRepositoryDenied
 	case strings.Contains(message, "destination is not permitted"):
-		return "project.destination-denied"
+		return CodeProjectDestinationDenied
 	case strings.Contains(message, "source namespace"):
-		return "project.source-namespace-denied"
+		return CodeProjectSourceNamespaceDenied
+	case strings.Contains(message, "rendered resource") && strings.Contains(message, "namespace") && strings.Contains(message, "not permitted"):
+		return CodeProjectResourceDestinationDenied
+	case strings.Contains(message, "rendered resource") && strings.Contains(message, "not permitted"):
+		return CodeProjectResourceDenied
+	case strings.Contains(message, "unknown scope offline"):
+		return CodeProjectResourceScopeDeferred
 	case strings.Contains(message, "RBAC roles"):
-		return "project.rbac-metadata-only"
+		return CodeProjectRBACMetadataOnly
 	case strings.Contains(message, "permitOnlyProjectScopedClusters"):
-		return "project.project-scoped-clusters-deferred"
+		return CodeProjectScopedClustersDeferred
 	case strings.Contains(message, "references missing AppProject"):
-		return "project.missing"
+		return CodeProjectMissing
 	default:
-		return "project.unspecified"
+		return CodeProjectUnspecified
 	}
 }
 
 func repositoryCode(message string) string {
 	switch {
 	case strings.Contains(message, "missing repository metadata"):
-		return "repository.metadata-missing"
+		return CodeRepositoryMetadataMissing
 	case strings.Contains(message, "repository metadata"):
-		return "repository.project-mismatch"
+		return CodeRepositoryProjectMismatch
 	default:
 		return "repository.unspecified"
+	}
+}
+
+func clusterCode(message string) string {
+	switch {
+	case strings.Contains(message, "missing cluster metadata"):
+		return CodeClusterMetadataMissing
+	case strings.Contains(message, "cluster metadata"):
+		return CodeClusterProjectMismatch
+	default:
+		return "cluster.unspecified"
 	}
 }
 

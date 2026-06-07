@@ -32,6 +32,9 @@ func newBuildSession(orchestrator Orchestrator, request BuildRequest) (*buildSes
 	if _, err := normalizeMaxDiscoveryDepth(request.MaxDiscoveryDepth, request.MaxDiscoveryDepthSet); err != nil {
 		return nil, err
 	}
+	if err := request.ProjectDiagnosticsMode.Validate(); err != nil {
+		return nil, err
+	}
 	return &buildSession{
 		orchestrator:  orchestrator,
 		request:       request,
@@ -45,6 +48,7 @@ func (session *buildSession) Build(ctx context.Context) (BuildResult, error) {
 	loadedRequest, policyDiags, cleanup, err := ensureBuildPluginPolicy(ctx, session.request, session.root)
 	defer cleanup()
 	session.request = loadedRequest
+	policyDiags = session.request.filterProjectDiagnostics(policyDiags)
 	if err != nil {
 		return BuildResult{Diagnostics: policyDiags, CacheEvents: session.cacheRecorder.Events()}, err
 	}
@@ -55,7 +59,7 @@ func (session *buildSession) Build(ctx context.Context) (BuildResult, error) {
 		return result, err
 	}
 	projectDiags := project.ValidateApplications(result.Applications, result.Projects, result.Settings)
-	projectDiags = normalizeDiagnostics(projectDiags, session.request.Strict, false)
+	projectDiags = session.request.normalizeDiagnostics(projectDiags, false)
 	result.Diagnostics = append(result.Diagnostics, projectDiags...)
 	if err := diagnosticFailure(projectDiags, session.request.Strict); err != nil {
 		result.Statuses = skippedApplicationStatuses(result.Applications, err)
@@ -96,6 +100,8 @@ func (session *buildSession) Build(ctx context.Context) (BuildResult, error) {
 		settingsSignature: result.renderSettingsSignature,
 		trackingOptions:   trackingOptionsFromSettings(result.Settings),
 		request:           session.request,
+		projects:          result.Projects,
+		settings:          result.Settings,
 		strict:            session.request.Strict,
 		statusOnly:        session.request.StatusOnly,
 		settingsFilter:    settingsFilter,
@@ -111,7 +117,7 @@ func (session *buildSession) Build(ctx context.Context) (BuildResult, error) {
 	result.Statuses = append(result.Statuses, rendered.statuses...)
 	result.CacheEvents = append(result.CacheEvents, rendered.cacheEvents...)
 	result.PluginExecutions = append(result.PluginExecutions, rendered.pluginExecutions...)
-	result.Diagnostics = dedupeDiagnostics(result.Diagnostics)
+	result.Diagnostics = session.request.filterProjectDiagnostics(dedupeDiagnostics(result.Diagnostics))
 	if renderErr != nil {
 		return result, renderErr
 	}

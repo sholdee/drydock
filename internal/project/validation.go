@@ -97,6 +97,10 @@ func implicitDefaultProject() argoappv1.AppProject {
 				Server:    "*",
 				Namespace: "*",
 			}},
+			ClusterResourceWhitelist: []argoappv1.ClusterResourceRestrictionItem{{
+				Group: "*",
+				Kind:  "*",
+			}},
 		},
 	}
 }
@@ -369,7 +373,7 @@ func destinationPatternMatch(pattern, value string) bool {
 }
 
 func validateSourceNamespace(app argoappv1.Application, proj argoappv1.AppProject) []diagnostic.Diagnostic {
-	if len(proj.Spec.SourceNamespaces) == 0 || proj.IsAppNamespacePermitted(&app, controllerNamespace(proj)) {
+	if proj.IsAppNamespacePermitted(&app, controllerNamespace(proj)) {
 		return nil
 	}
 	return []diagnostic.Diagnostic{projectWarning(app, fmt.Sprintf("Application %s source namespace %q is not permitted by AppProject %q", applicationName(app), app.Namespace, proj.Name))}

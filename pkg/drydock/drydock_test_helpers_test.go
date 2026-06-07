@@ -430,6 +430,42 @@ spec:
 `)
 	writeAPIFile(t, filepath.Join(root, "manifests", appName, "cm.yaml"), configMapBody(appName, "v1"))
 }
+
+func writeAPIDeferredResourcePolicyTree(t *testing.T, root string) {
+	t.Helper()
+	writeAPIFile(t, filepath.Join(root, "apps", "demo.yaml"), `apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: demo
+  namespace: argocd
+spec:
+  project: platform
+  source:
+    repoURL: https://github.com/example/repo
+    path: manifests/demo
+    targetRevision: main
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: workloads
+`)
+	writeAPIFile(t, filepath.Join(root, "manifests", "demo", "widget.yaml"), `apiVersion: example.com/v1
+kind: Widget
+metadata:
+  name: custom
+`)
+	writeAPIFile(t, filepath.Join(root, "projects", "platform.yaml"), `apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: platform
+spec:
+  sourceRepos:
+    - https://github.com/example/repo
+  destinations:
+    - server: https://kubernetes.default.svc
+      namespace: workloads
+`)
+}
+
 func configMapBody(name, version string) string {
 	return `apiVersion: v1
 kind: ConfigMap

@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/sholdee/drydock/internal/chart"
+	"github.com/sholdee/drydock/internal/diagnostic"
 	"github.com/sholdee/drydock/internal/remote"
 	"github.com/sholdee/drydock/internal/requestopts"
 	"github.com/sholdee/drydock/internal/source"
@@ -61,6 +62,7 @@ type commonFlags struct {
 	changedOnlyIgnores       []string
 	strictChangedOnly        bool
 	strict                   bool
+	projectDiagnostics       string
 	exitCode                 bool
 	output                   string
 	unified                  int
@@ -73,15 +75,16 @@ type commonFlags struct {
 
 func defaultCommonFlags() commonFlags {
 	return commonFlags{
-		path:              ".",
-		changedOnly:       true,
-		exitCode:          true,
-		output:            "diff",
-		unified:           3,
-		limitBytes:        65536,
-		parallelism:       1,
-		discoveryMode:     "fleet",
-		maxDiscoveryDepth: 4,
+		path:               ".",
+		changedOnly:        true,
+		exitCode:           true,
+		output:             "diff",
+		unified:            3,
+		limitBytes:         65536,
+		parallelism:        1,
+		discoveryMode:      "fleet",
+		maxDiscoveryDepth:  4,
+		projectDiagnostics: string(diagnostic.ProjectDiagnosticsModeActionable),
 	}
 }
 
@@ -94,6 +97,7 @@ func bindCommonFlags(cmd *cobra.Command, flags *commonFlags) {
 	bindApplicationSetFixtureFlags(cmd, flags)
 	bindFilterFlags(cmd, flags)
 	bindStrictFlag(cmd, flags)
+	bindProjectDiagnosticsFlag(cmd, flags)
 	bindOutputFlags(cmd, flags)
 	bindDiagnosticsCacheEventFlags(cmd, flags)
 	bindParallelismFlags(cmd, flags)
@@ -173,6 +177,10 @@ func bindChangedOnlyPathFilterFlags(cmd *cobra.Command, flags *commonFlags) {
 
 func bindStrictFlag(cmd *cobra.Command, flags *commonFlags) {
 	cmd.Flags().BoolVar(&flags.strict, "strict", flags.strict, "promote diagnostics to errors")
+}
+
+func bindProjectDiagnosticsFlag(cmd *cobra.Command, flags *commonFlags) {
+	cmd.Flags().StringVar(&flags.projectDiagnostics, "project-diagnostics", flags.projectDiagnostics, "AppProject diagnostics mode: actionable, all, or off")
 }
 
 func bindDiffExitFlag(cmd *cobra.Command, flags *commonFlags) {
@@ -267,6 +275,7 @@ func requestOptionsFromFlags(flags commonFlags, repoMaps []source.RepoMap) reque
 		ChangedOnlyIgnores:             append([]string(nil), flags.changedOnlyIgnores...),
 		StrictChangedOnly:              flags.strictChangedOnly,
 		Strict:                         flags.strict,
+		ProjectDiagnosticsMode:         diagnostic.ProjectDiagnosticsMode(flags.projectDiagnostics),
 		Unified:                        flags.unified,
 		StripAttrs:                     append([]string(nil), flags.stripAttrs...),
 		ShowIgnoredFields:              flags.showIgnoredFields,
