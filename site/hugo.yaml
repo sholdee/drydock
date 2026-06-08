@@ -8,6 +8,10 @@ disableKinds:
 params:
   description: "Runtime-offline desired-state analysis for Argo CD GitOps repositories."
   repositoryURL: "https://github.com/sholdee/drydock"
+  repositoryName: "sholdee/drydock"
+  repositoryLatestVersion: "0.1.19"
+  repositoryStars: "9"
+  repositoryForks: "0"
   editBranch: "main"
 
 outputs:
