@@ -609,16 +609,11 @@ func runCommentScenario(t *testing.T, scenario commentScenario) string {
 		"DRYDOCK_INPUT_RUN_TEST="+boolString(scenario.runTest),
 		"DRYDOCK_INPUT_UPLOAD_ARTIFACTS="+boolString(scenario.uploadArtifacts),
 		"DRYDOCK_INPUT_COMMENT_EMPTY="+boolString(scenario.commentEmpty),
-		"GITHUB_SERVER_URL=",
-		"GITHUB_REPOSITORY=",
-		"GITHUB_RUN_ID=",
 	)
 	if scenario.githubEnv {
-		env = append(env,
-			"GITHUB_SERVER_URL=https://github.example.test",
-			"GITHUB_REPOSITORY=example/repo",
-			"GITHUB_RUN_ID=12345",
-		)
+		env = setEnv(env, "GITHUB_SERVER_URL", "https://github.example.test")
+		env = setEnv(env, "GITHUB_REPOSITORY", "example/repo")
+		env = setEnv(env, "GITHUB_RUN_ID", "12345")
 	}
 	if scenario.omitDiffHTMLArtifactNameFromEnv {
 		env = withoutEnv(env, "DRYDOCK_DIFF_HTML_ARTIFACT_NAME")
@@ -824,6 +819,57 @@ func withoutEnv(env []string, key string) []string {
 	return filtered
 }
 
+func setEnv(env []string, key, value string) []string {
+	return append(withoutEnv(env, key), key+"="+value)
+}
+
+func TestDefaultRunEnvFiltersAmbientActionVariables(t *testing.T) {
+	t.Setenv("GITHUB_RUN_ID", "ambient-run")
+	t.Setenv("GITHUB_RUN_ATTEMPT", "99")
+	t.Setenv("GITHUB_SERVER_URL", "https://ambient.example.test")
+	t.Setenv("GITHUB_REPOSITORY", "ambient/repo")
+	t.Setenv("GITHUB_OUTPUT", "/ambient/output")
+	t.Setenv("GITHUB_STEP_SUMMARY", "/ambient/summary")
+	t.Setenv("DRYDOCK_DIFF_HTML_ARTIFACT_NAME", "ambient.html")
+	t.Setenv("DRYDOCK_INPUT_RUN_DIFF", "ambient")
+
+	env := defaultRunEnv(t.TempDir(), "/test/work", "/test/output")
+
+	for key, want := range map[string]string{
+		"DRYDOCK_ACTION_WORK_DIR":             "/test/work",
+		"DRYDOCK_DIFF_HTML_ARTIFACT_NAME":     "diff.html",
+		"DRYDOCK_INPUT_DISABLE_PLUGIN_POLICY": "false",
+		"DRYDOCK_INPUT_ENABLE_AVP_COMPAT":     "false",
+		"DRYDOCK_INPUT_RUN_DIFF":              "false",
+		"DRYDOCK_INPUT_UPLOAD_ARTIFACTS":      "true",
+		"GITHUB_OUTPUT":                       "/test/output",
+		"GITHUB_REPOSITORY":                   "",
+		"GITHUB_RUN_ATTEMPT":                  "",
+		"GITHUB_RUN_ID":                       "",
+		"GITHUB_SERVER_URL":                   "",
+		"GITHUB_STEP_SUMMARY":                 "",
+	} {
+		values := envValues(env, key)
+		if len(values) != 1 {
+			t.Fatalf("%s values = %#v, want exactly one", key, values)
+		}
+		if values[0] != want {
+			t.Fatalf("%s = %q, want %q", key, values[0], want)
+		}
+	}
+}
+
+func envValues(env []string, key string) []string {
+	prefix := key + "="
+	var values []string
+	for _, entry := range env {
+		if value, ok := strings.CutPrefix(entry, prefix); ok {
+			values = append(values, value)
+		}
+	}
+	return values
+}
+
 func readFile(t *testing.T, path string) string {
 	t.Helper()
 
@@ -853,10 +899,31 @@ func runDebugOutput(t *testing.T, workDir string) string {
 }
 
 func defaultRunEnv(tmp, workDir, outputPath string) []string {
-	env := append(os.Environ(),
-		"PATH="+tmp+string(os.PathListSeparator)+os.Getenv("PATH"),
-		"GITHUB_OUTPUT="+outputPath,
-		"DRYDOCK_ACTION_WORK_DIR="+workDir,
+	env := withoutEnvKeys(os.Environ(),
+		"DRYDOCK_ACTION_WORK_DIR",
+		"DRYDOCK_BASE_COMPARE_REF",
+		"DRYDOCK_BIN",
+		"DRYDOCK_CACHE_PATH",
+		"DRYDOCK_DIFF_ARTIFACT_NAME",
+		"DRYDOCK_DIFF_HTML_ARTIFACT_NAME",
+		"DRYDOCK_IMAGE_ARTIFACT_NAME",
+		"GITHUB_OUTPUT",
+		"GITHUB_REPOSITORY",
+		"GITHUB_RUN_ATTEMPT",
+		"GITHUB_RUN_ID",
+		"GITHUB_SERVER_URL",
+		"GITHUB_STEP_SUMMARY",
+		"PATH",
+	)
+	for _, entry := range []string{
+		"PATH=" + tmp + string(os.PathListSeparator) + os.Getenv("PATH"),
+		"GITHUB_OUTPUT=" + outputPath,
+		"GITHUB_REPOSITORY=",
+		"GITHUB_RUN_ATTEMPT=",
+		"GITHUB_RUN_ID=",
+		"GITHUB_SERVER_URL=",
+		"GITHUB_STEP_SUMMARY=",
+		"DRYDOCK_ACTION_WORK_DIR=" + workDir,
 		"DRYDOCK_BASE_COMPARE_REF=origin/main",
 		"DRYDOCK_BIN=drydock",
 		"DRYDOCK_CACHE_PATH=",
@@ -897,8 +964,19 @@ func defaultRunEnv(tmp, workDir, outputPath string) []string {
 		"DRYDOCK_INPUT_STRICT=false",
 		"DRYDOCK_INPUT_STRICT_CHANGED_ONLY=false",
 		"DRYDOCK_INPUT_UPLOAD_ARTIFACTS=true",
-	)
+	} {
+		key, _, _ := strings.Cut(entry, "=")
+		env = setEnv(env, key, strings.TrimPrefix(entry, key+"="))
+	}
 	return env
+}
+
+func withoutEnvKeys(env []string, keys ...string) []string {
+	filtered := env
+	for _, key := range keys {
+		filtered = withoutEnv(filtered, key)
+	}
+	return filtered
 }
 
 func writeExecutable(t *testing.T, path, body string) {
