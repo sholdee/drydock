@@ -17,8 +17,24 @@
   --focus: #69b8ff;
   --link: #8ec8ff;
   --link-hover: #ffad73;
-  --code-bg: #050b12;
-  --code-ink: #edf5ff;
+  --code-bg: #0d1117;
+  --code-ink: #e6edf3;
+  --inline-code-bg: rgba(110, 118, 129, 0.18);
+  --inline-code-border: rgba(240, 246, 252, 0.1);
+  --inline-code-ink: #e6edf3;
+  --syntax-text: #e6edf3;
+  --syntax-comment: #8190a3;
+  --syntax-keyword: #f08a51;
+  --syntax-markup: #f08a51;
+  --syntax-constant: #f5c56f;
+  --syntax-function: #69d7c2;
+  --syntax-string: #8ec8ff;
+  --syntax-number: #f5c56f;
+  --syntax-type: #a7e8dc;
+  --syntax-property: #69d7c2;
+  --syntax-variable: #c6d4e3;
+  --syntax-operator: #a5b4c6;
+  --syntax-escape: #ffad73;
   --shadow: rgba(0, 0, 0, 0.32);
   --max-width: 1480px;
   --header-height: 72px;
@@ -645,10 +661,10 @@ a:hover {
 }
 
 .doc-content code {
-  border: 1px solid var(--line);
+  border: 1px solid var(--inline-code-border);
   border-radius: 5px;
-  background: rgba(5, 11, 18, 0.72);
-  color: #dcecff;
+  background: var(--inline-code-bg);
+  color: var(--inline-code-ink);
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
   font-size: 0.92em;
   padding: 0.08rem 0.28rem;
@@ -657,8 +673,8 @@ a:hover {
 .doc-content pre {
   position: relative;
   overflow-x: auto;
-  border: 1px solid #213149;
-  border-radius: 8px;
+  border: 1px solid #30363d;
+  border-radius: 6px;
   background: var(--code-bg);
   color: var(--code-ink);
   padding: 2.65rem 1rem 1rem;
@@ -667,13 +683,13 @@ a:hover {
 .doc-content pre code {
   border: 0;
   background: transparent;
-  color: inherit;
+  color: var(--syntax-text);
   padding: 0;
 }
 
 .doc-content pre code .shell-command {
-  color: var(--teal);
-  font-weight: 850;
+  color: var(--syntax-function);
+  font-weight: 700;
 }
 
 .github-comment-preview {
@@ -1061,20 +1077,21 @@ a:hover {
   position: absolute;
   top: 0.7rem;
   right: 0.7rem;
-  border: 1px solid var(--line-strong);
+  border: 1px solid #30363d;
   border-radius: 6px;
-  background: rgba(20, 33, 51, 0.94);
-  color: var(--navy-deep);
+  background: #161b22;
+  color: #8b949e;
   cursor: pointer;
   font: inherit;
   font-size: 0.78rem;
-  font-weight: 800;
+  font-weight: 700;
   padding: 0.25rem 0.5rem;
 }
 
 .copy-button:hover {
-  border-color: var(--rust-bright);
-  color: var(--link-hover);
+  border-color: #58a6ff;
+  background: #0d1117;
+  color: #58a6ff;
 }
 
 .mermaid-figure {
@@ -1198,23 +1215,142 @@ a.workflow-heading:hover {
   padding: 0.22rem 0.48rem;
 }
 
-.highlight .c,
-.highlight .c1,
-.highlight .cm,
-.highlight .cp,
-.highlight .cs {
-  color: #a7b3c2 !important;
+:is(.highlight, .chroma) .c,
+:is(.highlight, .chroma) .c1,
+:is(.highlight, .chroma) .ch,
+:is(.highlight, .chroma) .cm,
+:is(.highlight, .chroma) .cp,
+:is(.highlight, .chroma) .cpf,
+:is(.highlight, .chroma) .cs {
+  color: var(--syntax-comment);
+  font-style: italic;
 }
 
-.highlight .k,
-.highlight .kc,
-.highlight .kd,
-.highlight .kn,
-.highlight .kp,
-.highlight .kr,
-.highlight .nt,
-.highlight .o {
-  color: #ff92b2 !important;
+:is(.highlight, .chroma) .k,
+:is(.highlight, .chroma) .kd,
+:is(.highlight, .chroma) .kn,
+:is(.highlight, .chroma) .kp,
+:is(.highlight, .chroma) .kr {
+  color: var(--syntax-keyword);
+}
+
+:is(.highlight, .chroma) .kc,
+:is(.highlight, .chroma) .l,
+:is(.highlight, .chroma) .nb {
+  color: var(--syntax-constant);
+}
+
+:is(.highlight, .chroma) .kt,
+:is(.highlight, .chroma) .nc,
+:is(.highlight, .chroma) .ne {
+  color: var(--syntax-type);
+}
+
+:is(.highlight, .chroma) .nf,
+:is(.highlight, .chroma) .fm,
+:is(.highlight, .chroma) .shell-command {
+  color: var(--syntax-function);
+  font-weight: 700;
+}
+
+:is(.highlight, .chroma) .s,
+:is(.highlight, .chroma) .s1,
+:is(.highlight, .chroma) .s2,
+:is(.highlight, .chroma) .sb,
+:is(.highlight, .chroma) .sc,
+:is(.highlight, .chroma) .sd,
+:is(.highlight, .chroma) .sh,
+:is(.highlight, .chroma) .sx,
+:is(.highlight, .chroma) .dl {
+  color: var(--syntax-string);
+}
+
+:is(.highlight, .chroma) .se,
+:is(.highlight, .chroma) .si {
+  color: var(--syntax-escape);
+}
+
+:is(.highlight, .chroma) .m,
+:is(.highlight, .chroma) .mb,
+:is(.highlight, .chroma) .mf,
+:is(.highlight, .chroma) .mh,
+:is(.highlight, .chroma) .mi,
+:is(.highlight, .chroma) .il,
+:is(.highlight, .chroma) .mo {
+  color: var(--syntax-number);
+}
+
+:is(.highlight, .chroma) .na,
+:is(.highlight, .chroma) .nt,
+:is(.highlight, .chroma) .nv,
+:is(.highlight, .chroma) .vc,
+:is(.highlight, .chroma) .vg,
+:is(.highlight, .chroma) .vi,
+:is(.highlight, .chroma) .vm {
+  color: var(--syntax-variable);
+}
+
+:is(.highlight, .chroma) .o,
+:is(.highlight, .chroma) .ow,
+:is(.highlight, .chroma) .p {
+  color: var(--syntax-operator);
+}
+
+:is(.highlight, .chroma) code.language-yaml .na,
+:is(.highlight, .chroma) code.language-yaml .nt {
+  color: var(--syntax-property);
+}
+
+:is(.highlight, .chroma) code.language-yaml .l {
+  color: var(--syntax-string);
+}
+
+:is(.highlight, .chroma) code:is(.language-bash, .language-sh, .language-zsh) .nb {
+  color: var(--syntax-text);
+  font-weight: 400;
+}
+
+:is(.highlight, .chroma) code:is(.language-bash, .language-sh, .language-zsh) .shell-command {
+  color: var(--syntax-function);
+  font-weight: 700;
+}
+
+:is(.highlight, .chroma) code.language-markdown .gh,
+:is(.highlight, .chroma) code.language-markdown .gu,
+:is(.highlight, .chroma) code.language-md .gh,
+:is(.highlight, .chroma) code.language-md .gu {
+  color: var(--syntax-markup);
+  font-weight: 700;
+}
+
+:is(.highlight, .chroma) code.language-markdown .k,
+:is(.highlight, .chroma) code.language-md .k {
+  color: var(--syntax-operator);
+  font-weight: 600;
+}
+
+:is(.highlight, .chroma) code.language-markdown .sb,
+:is(.highlight, .chroma) code.language-md .sb {
+  color: var(--syntax-function);
+  font-weight: 600;
+}
+
+:is(.highlight, .chroma) code.language-markdown .ge,
+:is(.highlight, .chroma) code.language-md .ge {
+  color: var(--syntax-text);
+  font-style: italic;
+}
+
+:is(.highlight, .chroma) code.language-markdown .gs,
+:is(.highlight, .chroma) code.language-md .gs {
+  color: var(--syntax-text);
+  font-weight: 700;
+}
+
+:is(.highlight, .chroma) code.language-markdown .gt,
+:is(.highlight, .chroma) code.language-md .gt {
+  color: var(--syntax-comment);
+  font-style: italic;
 }
 
 .doc-content blockquote {
