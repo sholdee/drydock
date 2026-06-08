@@ -13,6 +13,8 @@ document.addEventListener("DOMContentLoaded", () => {
     initSidebarPersistence(sidebar);
   }
 
+  initGitHubCard();
+
   let copyButtonIndex = 0;
   document.querySelectorAll(".doc-content pre").forEach((block) => {
     if (block.closest(".github-comment-preview")) {
@@ -71,6 +73,113 @@ const shellCommandNames = new Set([
   "kubectl",
   "mise",
 ]);
+
+const GITHUB_CARD_CACHE_TTL_MS = 6 * 60 * 60 * 1000;
+
+function initGitHubCard() {
+  const card = document.querySelector(".github-card");
+  if (!card || !card.dataset.githubRepo || !card.dataset.githubRepositoryApi || !window.fetch) {
+    return;
+  }
+
+  const cacheKey = `drydock.github-card.${card.dataset.githubRepo}`;
+  const cached = githubCardCachedData(cacheKey);
+  if (cached && Date.now() - cached.cachedAt < GITHUB_CARD_CACHE_TTL_MS) {
+    renderGitHubCard(card, cached);
+    return;
+  }
+
+  refreshGitHubCard(card, cacheKey);
+}
+
+async function refreshGitHubCard(card, cacheKey) {
+  try {
+    const repo = await fetchGitHubJSON(card.dataset.githubRepositoryApi);
+    let release = null;
+    if (card.dataset.githubReleaseApi) {
+      try {
+        release = await fetchGitHubJSON(card.dataset.githubReleaseApi);
+      } catch {
+        release = null;
+      }
+    }
+
+    const data = {
+      repo: repo.full_name || card.dataset.githubRepo,
+      stars: normalizeGitHubCount(repo.stargazers_count),
+      forks: normalizeGitHubCount(repo.forks_count),
+      version: normalizeGitHubVersion(release?.tag_name || githubFieldText(card, "version")),
+      cachedAt: Date.now(),
+    };
+    renderGitHubCard(card, data);
+    storageSet("localStorage", cacheKey, JSON.stringify(data));
+  } catch {
+    // The fallback card remains useful when GitHub is unavailable or rate-limited.
+  }
+}
+
+async function fetchGitHubJSON(url) {
+  const response = await fetch(url, {
+    headers: { Accept: "application/vnd.github+json" },
+  });
+  if (!response.ok) {
+    throw new Error(`GitHub API unavailable: ${response.status}`);
+  }
+  return response.json();
+}
+
+function githubCardCachedData(cacheKey) {
+  try {
+    const parsed = JSON.parse(storageGet("localStorage", cacheKey) || "null");
+    if (!parsed || typeof parsed !== "object" || !Number.isFinite(parsed.cachedAt)) {
+      return null;
+    }
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+function renderGitHubCard(card, data) {
+  const repo = data.repo || card.dataset.githubRepo || githubFieldText(card, "repo");
+  const version = normalizeGitHubVersion(data.version || githubFieldText(card, "version"));
+  const stars = formatGitHubCount(data.stars ?? githubFieldText(card, "stars"));
+  const forks = formatGitHubCount(data.forks ?? githubFieldText(card, "forks"));
+
+  setGitHubFieldText(card, "repo", repo);
+  setGitHubFieldText(card, "version", version);
+  setGitHubFieldText(card, "stars", stars);
+  setGitHubFieldText(card, "forks", forks);
+  card.setAttribute("aria-label", `${repo} on GitHub, latest release ${version}, ${stars} stars, ${forks} forks`);
+}
+
+function setGitHubFieldText(card, field, value) {
+  const target = card.querySelector(`[data-github-field='${field}']`);
+  if (target) {
+    target.textContent = value;
+  }
+}
+
+function githubFieldText(card, field) {
+  return card.querySelector(`[data-github-field='${field}']`)?.textContent.trim() || "";
+}
+
+function normalizeGitHubVersion(value) {
+  return String(value || "").trim().replace(/^v(?=\d)/i, "");
+}
+
+function normalizeGitHubCount(value) {
+  const number = Number(value);
+  return Number.isFinite(number) && number >= 0 ? number : 0;
+}
+
+function formatGitHubCount(value) {
+  const number = Number(value);
+  if (Number.isFinite(number) && number >= 0) {
+    return number.toLocaleString("en-US");
+  }
+  return String(value || "0");
+}
 
 function enhanceShellCommands(block) {
   const code = block.querySelector("code.language-bash, code.language-sh, code.language-zsh");
@@ -280,6 +389,11 @@ function initSearch(form) {
 
   const renderResults = (matches, terms) => {
     resultsList.replaceChildren();
+    if (matches.length === 0) {
+      renderStatusResult("No results");
+      return;
+    }
+
     matches.forEach((match, index) => {
       const page = match.page;
       const item = document.createElement("li");
@@ -297,8 +411,24 @@ function initSearch(form) {
       resultsList.append(item);
     });
 
-    panel.hidden = matches.length === 0;
-    input.setAttribute("aria-expanded", matches.length === 0 ? "false" : "true");
+    panel.hidden = false;
+    input.setAttribute("aria-expanded", "true");
+    input.removeAttribute("aria-activedescendant");
+    activeIndex = -1;
+  };
+
+  const renderStatusResult = (message) => {
+    resultsList.replaceChildren();
+    const item = document.createElement("li");
+    const status = document.createElement("span");
+    item.className = "search-status";
+    item.setAttribute("role", "option");
+    item.setAttribute("aria-selected", "false");
+    status.textContent = message;
+    item.append(status);
+    resultsList.append(item);
+    panel.hidden = false;
+    input.setAttribute("aria-expanded", "true");
     input.removeAttribute("aria-activedescendant");
     activeIndex = -1;
   };
@@ -330,7 +460,7 @@ function initSearch(form) {
 
       renderResults(matches, terms);
     } catch {
-      closeResults();
+      renderStatusResult("Search unavailable");
     }
   };
 
