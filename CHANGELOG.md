@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.1.19](https://github.com/sholdee/drydock/compare/v0.1.18...v0.1.19) (2026-06-08)
+
+
+### Bug Fixes
+
+* **deps:** update module golang.org/x/sys to v0.46.0 ([#115](https://github.com/sholdee/drydock/issues/115)) ([fd6c2fc](https://github.com/sholdee/drydock/commit/fd6c2fc2dbe3f3bd64c7da62bd11e75c35f82a51))
+* **deps:** update module golang.org/x/term to v0.44.0 ([#119](https://github.com/sholdee/drydock/issues/119)) ([5b6d231](https://github.com/sholdee/drydock/commit/5b6d231d26ac95296a0004397d993e6fcd4c24a6))
+* support native AVP plugin compatibility ([#120](https://github.com/sholdee/drydock/issues/120)) ([5a35fb8](https://github.com/sholdee/drydock/commit/5a35fb8b3e25445436d9aaa249efa0c1ce9daaed))
+
+
+### Miscellaneous Chores
+
+* **deps:** update dependency hugo to v0.163.0 ([#117](https://github.com/sholdee/drydock/issues/117)) ([1f677f6](https://github.com/sholdee/drydock/commit/1f677f67917b3b15ec829bf2381d71681f6bde39))
+* **deps:** update module golang.org/x/sync to v0.21.0 ([#114](https://github.com/sholdee/drydock/issues/114)) ([f3956e1](https://github.com/sholdee/drydock/commit/f3956e138f2a8283cbe832f0280034569b4ef4de))
+* **deps:** update module golang.org/x/text to v0.38.0 ([#118](https://github.com/sholdee/drydock/issues/118)) ([50d1dde](https://github.com/sholdee/drydock/commit/50d1ddec2553810891cf5f42239cf6bc3202eb8c))
+
 ## [0.1.18](https://github.com/sholdee/drydock/compare/v0.1.17...v0.1.18) (2026-06-07)
 
 
