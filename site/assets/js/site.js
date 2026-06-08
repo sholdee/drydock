@@ -14,6 +14,7 @@ document.addEventListener("DOMContentLoaded", () => {
   }
 
   initGitHubCard();
+  initShellCommandHighlighting();
 
   let copyButtonIndex = 0;
   document.querySelectorAll(".doc-content pre").forEach((block) => {
@@ -22,8 +23,6 @@ document.addEventListener("DOMContentLoaded", () => {
     }
     copyButtonIndex += 1;
     const copyButtonNumber = copyButtonIndex;
-
-    enhanceShellCommands(block);
 
     const button = document.createElement("button");
     button.type = "button";
@@ -58,21 +57,6 @@ document.addEventListener("DOMContentLoaded", () => {
     heading.append(" ", link);
   });
 });
-
-const shellCommandNames = new Set([
-  "bash",
-  "brew",
-  "curl",
-  "docker",
-  "drydock",
-  "git",
-  "go",
-  "helm",
-  "hugo",
-  "kind",
-  "kubectl",
-  "mise",
-]);
 
 const GITHUB_CARD_CACHE_TTL_MS = 6 * 60 * 60 * 1000;
 
@@ -181,43 +165,148 @@ function formatGitHubCount(value) {
   return String(value || "0");
 }
 
-function enhanceShellCommands(block) {
-  const code = block.querySelector("code.language-bash, code.language-sh, code.language-zsh");
-  if (!code || code.dataset.shellCommandsEnhanced === "true") {
-    return;
-  }
+function initShellCommandHighlighting() {
+  document.querySelectorAll(".doc-content code.language-bash, .doc-content code.language-sh, .doc-content code.language-zsh").forEach((block) => {
+    if (block.closest(".github-comment-preview") || block.dataset.shellCommandsEnhanced === "true") {
+      return;
+    }
 
-  code.dataset.shellCommandsEnhanced = "true";
-  const lines = Array.from(code.children).filter((child) => child.tagName === "SPAN");
-  if (lines.length === 0) {
-    wrapShellCommandRanges(code, shellCommandRanges(code.textContent || ""));
-    return;
-  }
+    block.dataset.shellCommandsEnhanced = "true";
+    const chromaLines = Array.from(block.querySelectorAll(".cl"));
+    const legacyLines = Array.from(block.children).filter((child) => child.tagName === "SPAN");
+    const targets = chromaLines.length > 0 ? chromaLines : legacyLines.length > 0 ? legacyLines : [block];
 
-  lines.forEach((line) => {
-    const ranges = shellCommandRanges(line.textContent || "");
-    wrapShellCommandRanges(line, ranges);
+    targets.forEach((line) => {
+      wrapTextRanges(line, shellCommandRanges(line.textContent || ""), "shell-command");
+    });
   });
 }
 
-function shellCommandRanges(line) {
+function shellCommandRanges(text) {
   const ranges = [];
-  const commandPattern = /(^\s*(?:[$%]\s*)?|\|\s*|&&\s*|\|\|\s*|;\s*|\(\s*)([A-Za-z][A-Za-z0-9_-]*)\b/g;
+  let index = 0;
+  let expectingCommand = true;
 
-  let match = commandPattern.exec(line);
-  while (match) {
-    const command = match[2];
-    if (shellCommandNames.has(command)) {
-      const start = match.index + match[1].length;
-      ranges.push({ start, end: start + command.length });
+  while (index < text.length) {
+    const skipped = skipShellWhitespace(text, index);
+    if (skipped > index && text.slice(index, skipped).includes("\n")) {
+      expectingCommand = true;
     }
-    match = commandPattern.exec(line);
+    index = skipped;
+
+    if (index >= text.length) {
+      break;
+    }
+
+    if (text[index] === "#") {
+      const nextLine = text.indexOf("\n", index);
+      if (nextLine === -1) {
+        break;
+      }
+      expectingCommand = true;
+      index = nextLine + 1;
+      continue;
+    }
+
+    if (expectingCommand) {
+      if (isShellPromptToken(text, index)) {
+        index += 1;
+        continue;
+      }
+
+      const assignmentEnd = shellAssignmentEnd(text, index);
+      if (assignmentEnd > index) {
+        index = assignmentEnd;
+        continue;
+      }
+
+      const end = shellTokenEnd(text, index);
+      const token = text.slice(index, end);
+      if (isShellCommandToken(token)) {
+        ranges.push({ start: index, end });
+      }
+      expectingCommand = false;
+      index = end;
+      continue;
+    }
+
+    const separatorEnd = shellSeparatorEnd(text, index);
+    if (separatorEnd > index) {
+      expectingCommand = true;
+      index = separatorEnd;
+      continue;
+    }
+
+    index += 1;
   }
 
   return ranges;
 }
 
-function wrapShellCommandRanges(root, ranges) {
+function skipShellWhitespace(text, index) {
+  let next = index;
+  while (next < text.length && /\s/.test(text[next])) {
+    next += 1;
+  }
+  return next;
+}
+
+function isShellPromptToken(text, index) {
+  return (text[index] === "$" || text[index] === "%") && /\s/.test(text[index + 1] || "");
+}
+
+function shellAssignmentEnd(text, index) {
+  const match = text.slice(index).match(/^[A-Za-z_][A-Za-z0-9_]*=/);
+  if (!match) {
+    return index;
+  }
+  return shellTokenEnd(text, index + match[0].length);
+}
+
+function shellTokenEnd(text, index) {
+  let next = index;
+  let quote = "";
+  while (next < text.length) {
+    const char = text[next];
+    if (quote) {
+      if (char === "\\" && quote !== "'") {
+        next += 2;
+        continue;
+      }
+      if (char === quote) {
+        quote = "";
+      }
+      next += 1;
+      continue;
+    }
+
+    if (char === "'" || char === "\"") {
+      quote = char;
+      next += 1;
+      continue;
+    }
+
+    if (/\s/.test(char) || /[|;&]/.test(char)) {
+      break;
+    }
+    next += 1;
+  }
+  return next;
+}
+
+function shellSeparatorEnd(text, index) {
+  const nextTwo = text.slice(index, index + 2);
+  if (nextTwo === "&&" || nextTwo === "||") {
+    return index + 2;
+  }
+  return /[|;]/.test(text[index] || "") ? index + 1 : index;
+}
+
+function isShellCommandToken(token) {
+  return /^[A-Za-z_./][A-Za-z0-9_./:-]*$/.test(token) && !token.startsWith("-");
+}
+
+function wrapTextRanges(root, ranges, className) {
   if (ranges.length === 0) {
     return;
   }
@@ -252,10 +341,10 @@ function wrapShellCommandRanges(root, ranges) {
         fragment.append(document.createTextNode(textNode.nodeValue.slice(cursor, range.start)));
       }
 
-      const command = document.createElement("span");
-      command.className = "shell-command";
-      command.textContent = textNode.nodeValue.slice(range.start, range.end);
-      fragment.append(command);
+      const span = document.createElement("span");
+      span.className = className;
+      span.textContent = textNode.nodeValue.slice(range.start, range.end);
+      fragment.append(span);
       cursor = range.end;
     });
 
