@@ -17,7 +17,7 @@ require (
 	go.yaml.in/yaml/v4 v4.0.0-rc.4
 	golang.org/x/crypto v0.52.0
 	golang.org/x/sys v0.46.0
-	golang.org/x/term v0.43.0
+	golang.org/x/term v0.44.0
 	helm.sh/helm/v4 v4.2.0
 	k8s.io/apimachinery v0.36.1
 	sigs.k8s.io/kustomize/api v0.21.1
