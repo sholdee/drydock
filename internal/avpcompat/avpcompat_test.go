@@ -65,6 +65,47 @@ func TestReplaceStringIgnoresUnsupportedAngleTokens(t *testing.T) {
 	}
 }
 
+func TestReplaceStringWithPathSubstitutesGenericPlaceholder(t *testing.T) {
+	got, changed := ReplaceStringWithPath("<CLOUDFLARE_TUNNEL_ID>.cfargotunnel.com", "vaults/K8s/items/cloudflare-tunnel-secret")
+	if !changed {
+		t.Fatal("ReplaceStringWithPath() changed = false, want true")
+	}
+	if !strings.HasPrefix(got, redactedPrefix) || !strings.HasSuffix(got, ".cfargotunnel.com") {
+		t.Fatalf("ReplaceStringWithPath() = %q, want redacted prefix and preserved suffix", got)
+	}
+	assertNoSecretMaterial(t, got)
+
+	again, againChanged := ReplaceStringWithPath("<CLOUDFLARE_TUNNEL_ID>.cfargotunnel.com", "vaults/K8s/items/cloudflare-tunnel-secret")
+	if !againChanged {
+		t.Fatal("ReplaceStringWithPath() second call changed = false, want true")
+	}
+	if again != got {
+		t.Fatalf("ReplaceStringWithPath() = %q, want deterministic %q", again, got)
+	}
+}
+
+func TestReplaceStringLeavesGenericPlaceholderWithoutPath(t *testing.T) {
+	const input = "<CLOUDFLARE_TUNNEL_ID>.cfargotunnel.com"
+	got, changed := ReplaceStringWithPath(input, "")
+	if changed {
+		t.Fatal("ReplaceStringWithPath() changed = true, want false")
+	}
+	if got != input {
+		t.Fatalf("ReplaceStringWithPath() = %q, want unchanged %q", got, input)
+	}
+}
+
+func TestReplaceStringWithPathIgnoresUnsaneGenericPlaceholder(t *testing.T) {
+	const input = "keep <not an avp token>"
+	got, changed := ReplaceStringWithPath(input, "vaults/K8s/items/demo")
+	if changed {
+		t.Fatal("ReplaceStringWithPath() changed = true, want false")
+	}
+	if got != input {
+		t.Fatalf("ReplaceStringWithPath() = %q, want unchanged %q", got, input)
+	}
+}
+
 func TestContainsPlaceholder(t *testing.T) {
 	if !ContainsPlaceholder("value=<path:secret/data/app#password>") {
 		t.Fatal("ContainsPlaceholder() = false, want true")

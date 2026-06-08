@@ -16,7 +16,20 @@ func ContainsPlaceholder(value string) bool {
 
 // ReplaceString replaces supported AVP placeholders with stable redacted values.
 func ReplaceString(value string) (string, bool) {
-	if !strings.Contains(value, "<") || !strings.Contains(value, "path:") {
+	return replaceString(value, "")
+}
+
+// ReplaceStringWithPath replaces inline path placeholders and annotation-scoped
+// generic placeholders with stable redacted values.
+func ReplaceStringWithPath(value string, defaultPath string) (string, bool) {
+	return replaceString(value, strings.TrimSpace(defaultPath))
+}
+
+func replaceString(value string, defaultPath string) (string, bool) {
+	if !strings.Contains(value, "<") || !strings.Contains(value, ">") {
+		return value, false
+	}
+	if defaultPath == "" && !strings.Contains(value, "path:") {
 		return value, false
 	}
 
@@ -38,7 +51,7 @@ func ReplaceString(value string) (string, bool) {
 		end := start + 1 + endRel
 		token := value[start : end+1]
 
-		identity, ok := pathPlaceholderIdentity(token)
+		identity, ok := placeholderIdentity(token, defaultPath)
 		if ok {
 			if !changed {
 				out.Grow(len(value))
@@ -61,29 +74,40 @@ func ReplaceString(value string) (string, bool) {
 
 // ReplaceValue replaces supported AVP placeholders through decoded YAML/JSON values.
 func ReplaceValue(value any) (any, bool) {
+	return replaceValue(value, "")
+}
+
+// ReplaceValueWithPath replaces supported AVP placeholders through decoded
+// YAML/JSON values, including generic placeholders scoped to an AVP path
+// annotation.
+func ReplaceValueWithPath(value any, defaultPath string) (any, bool) {
+	return replaceValue(value, strings.TrimSpace(defaultPath))
+}
+
+func replaceValue(value any, defaultPath string) (any, bool) {
 	switch typed := value.(type) {
 	case string:
-		return ReplaceString(typed)
+		return replaceString(typed, defaultPath)
 	case []any:
-		return replaceAnySlice(typed)
+		return replaceAnySlice(typed, defaultPath)
 	case []string:
-		return replaceStringSlice(typed)
+		return replaceStringSlice(typed, defaultPath)
 	case map[string]any:
-		return replaceStringAnyMap(typed)
+		return replaceStringAnyMap(typed, defaultPath)
 	case map[string]string:
-		return replaceStringStringMap(typed)
+		return replaceStringStringMap(typed, defaultPath)
 	case map[any]any:
-		return replaceAnyMap(typed)
+		return replaceAnyMap(typed, defaultPath)
 	default:
 		return value, false
 	}
 }
 
-func replaceAnySlice(values []any) (any, bool) {
+func replaceAnySlice(values []any, defaultPath string) (any, bool) {
 	replaced := make([]any, len(values))
 	changed := false
 	for i, item := range values {
-		next, itemChanged := ReplaceValue(item)
+		next, itemChanged := replaceValue(item, defaultPath)
 		replaced[i] = next
 		changed = changed || itemChanged
 	}
@@ -93,11 +117,11 @@ func replaceAnySlice(values []any) (any, bool) {
 	return replaced, true
 }
 
-func replaceStringSlice(values []string) (any, bool) {
+func replaceStringSlice(values []string, defaultPath string) (any, bool) {
 	replaced := make([]string, len(values))
 	changed := false
 	for i, item := range values {
-		next, itemChanged := ReplaceString(item)
+		next, itemChanged := replaceString(item, defaultPath)
 		replaced[i] = next
 		changed = changed || itemChanged
 	}
@@ -107,11 +131,11 @@ func replaceStringSlice(values []string) (any, bool) {
 	return replaced, true
 }
 
-func replaceStringAnyMap(values map[string]any) (any, bool) {
+func replaceStringAnyMap(values map[string]any, defaultPath string) (any, bool) {
 	replaced := make(map[string]any, len(values))
 	changed := false
 	for key, item := range values {
-		next, itemChanged := ReplaceValue(item)
+		next, itemChanged := replaceValue(item, defaultPath)
 		replaced[key] = next
 		changed = changed || itemChanged
 	}
@@ -121,11 +145,11 @@ func replaceStringAnyMap(values map[string]any) (any, bool) {
 	return replaced, true
 }
 
-func replaceStringStringMap(values map[string]string) (any, bool) {
+func replaceStringStringMap(values map[string]string, defaultPath string) (any, bool) {
 	replaced := make(map[string]string, len(values))
 	changed := false
 	for key, item := range values {
-		next, itemChanged := ReplaceString(item)
+		next, itemChanged := replaceString(item, defaultPath)
 		replaced[key] = next
 		changed = changed || itemChanged
 	}
@@ -135,11 +159,11 @@ func replaceStringStringMap(values map[string]string) (any, bool) {
 	return replaced, true
 }
 
-func replaceAnyMap(values map[any]any) (any, bool) {
+func replaceAnyMap(values map[any]any, defaultPath string) (any, bool) {
 	replaced := make(map[any]any, len(values))
 	changed := false
 	for key, item := range values {
-		next, itemChanged := ReplaceValue(item)
+		next, itemChanged := replaceValue(item, defaultPath)
 		replaced[key] = next
 		changed = changed || itemChanged
 	}
@@ -147,6 +171,20 @@ func replaceAnyMap(values map[any]any) (any, bool) {
 		return values, false
 	}
 	return replaced, true
+}
+
+func placeholderIdentity(token string, defaultPath string) (string, bool) {
+	if identity, ok := pathPlaceholderIdentity(token); ok {
+		return identity, true
+	}
+	if defaultPath == "" {
+		return "", false
+	}
+	key, ok := genericPlaceholderKey(token)
+	if !ok {
+		return "", false
+	}
+	return "path:" + defaultPath + "#" + key, true
 }
 
 func pathPlaceholderIdentity(token string) (string, bool) {
@@ -165,6 +203,32 @@ func pathPlaceholderIdentity(token string) (string, bool) {
 		return "", false
 	}
 	return "path:" + selector, true
+}
+
+func genericPlaceholderKey(token string) (string, bool) {
+	if len(token) < len("<a>") || token[0] != '<' || token[len(token)-1] != '>' {
+		return "", false
+	}
+	key := strings.TrimSpace(token[1 : len(token)-1])
+	if key == "" || strings.HasPrefix(key, "path:") {
+		return "", false
+	}
+	for _, r := range key {
+		if !isGenericPlaceholderKeyRune(r) {
+			return "", false
+		}
+	}
+	return key, true
+}
+
+func isGenericPlaceholderKeyRune(r rune) bool {
+	return r >= 'a' && r <= 'z' ||
+		r >= 'A' && r <= 'Z' ||
+		r >= '0' && r <= '9' ||
+		r == '_' ||
+		r == '-' ||
+		r == '.' ||
+		r == '/'
 }
 
 func redactedValue(identity string) string {

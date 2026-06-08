@@ -219,7 +219,11 @@ func applyAVPCompatToManifest(manifest *render.Manifest, opts render.RenderOptio
 	if !opts.EnableAVPCompat || manifest == nil || manifest.Object == nil {
 		return false
 	}
-	value, changed := avpcompat.ReplaceValue(manifest.Object.Object)
+	defaultPath := ""
+	if annotations := manifest.Object.GetAnnotations(); annotations != nil {
+		defaultPath = annotations["avp.kubernetes.io/path"]
+	}
+	value, changed := avpcompat.ReplaceValueWithPath(manifest.Object.Object, defaultPath)
 	if !changed {
 		return false
 	}
