@@ -17,6 +17,9 @@ func (p localProvider) renderPluginSource(ctx context.Context, source render.Res
 		if manifests, diags, handled, err := p.renderPolicyPluginSource(ctx, source, opts); handled {
 			return manifests, diags, err
 		}
+		if manifests, diags, handled, err := p.renderDefaultAVPCompatPluginSource(ctx, source, opts); handled {
+			return manifests, diags, err
+		}
 		if manifests, diags, handled, err := p.renderNativeKustomizePluginSource(ctx, source, opts); handled {
 			return manifests, diags, err
 		}

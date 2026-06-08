@@ -124,6 +124,22 @@ Git refs, and Argo CD chart-only remote Helm sources. Path-based Git sources
 use the local `--path` tree when the source path exists there. Use
 `--repo-map URL=PATH` to force a source repository URL to a local checkout.
 
+Use `--enable-avp-compat` when an Application explicitly names the
+`argocd-vault-plugin` plugin and you want drydock to render it without running
+AVP. drydock renders the source through its native renderers, then replaces
+supported AVP placeholders with deterministic redacted values. Native renderer
+selection follows normal drydock source detection: Kustomize when a
+`kustomization` file exists, Helm when `Chart.yaml` exists, and Directory
+otherwise. Chart-only AVP plugin sources use native chart rendering.
+
+AVP compatibility does not execute the AVP binary, a config-management plugin
+command, a shell, the Helm CLI, or the Kustomize CLI. Generic `<KEY>`
+placeholders are redacted only when the rendered manifest has
+`metadata.annotations["avp.kubernetes.io/path"]`; inline `<path:...#...>`
+placeholders remain supported. For trusted command-backed plugins, use
+[`plugin-policy.md`](plugin-policy.md) with `engine: exec` or
+`engine: container` and `--enable-plugins`.
+
 Repositories tagged with `argocd` or `gitops` are not always Argo CD
 Application fleet repositories. `drydock test apps` reports zero applications
 when no `Application` or supported `ApplicationSet` objects are discovered.
@@ -205,7 +221,9 @@ plugin name or trusted static discovery for an unnamed plugin source. Exec and
 container policy require trusted provenance and `--enable-plugins`; Application
 plugin parameters for command-backed engines must be allowlisted by policy.
 Native policy engines such as `avp-compat` and `native-kustomize` do not
-execute plugin commands and reject Application plugin env and parameters.
+execute plugin commands and reject Application plugin env and parameters. The
+`--enable-avp-compat` flag for explicit `argocd-vault-plugin` sources also
+does not execute plugin commands.
 Embedders can pass a renderer directly or
 use `drydock.NewPluginRegistry(map[string]drydock.PluginRenderer{...})` to
 dispatch in-process renderers by `plugin.name`. The public plugin request
@@ -641,7 +659,9 @@ These source paths are outside the current default runtime contract:
 - Arbitrary CLI config management plugin execution outside trusted exec or
   container policy plus `--enable-plugins`, Argo CD repo-server sidecar plugin
   discovery, ambient plugin configuration, ambient plugin environment loading,
-  and plugin credential injection.
+  and plugin credential injection. `--enable-avp-compat` is limited to native
+  rendering and deterministic redaction for explicit `argocd-vault-plugin`
+  sources; it is not a general sidecar CMP or plugin-command executor.
 - Live cluster and Argo CD API sources.
 - Live destination cluster existence, sync windows, source integrity
   verification, project-scoped cluster Secret enforcement beyond discovered

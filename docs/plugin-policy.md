@@ -14,7 +14,9 @@ uses the native Kustomize renderer automatically.
 Use plugin policy for these cases:
 
 - Deterministic argocd-vault-plugin (AVP) placeholder redaction with
-  `engine: avp-compat`.
+  `engine: avp-compat`. For explicit Application plugin sources named
+  `argocd-vault-plugin`, the CLI can use the same native compatibility behavior
+  with `--enable-avp-compat` and no policy.
 - Explicit native Kustomize overrides with `engine: native-kustomize`.
 - Trusted host-process compatibility with `engine: exec` and
   `--enable-plugins`.
@@ -35,13 +37,16 @@ are true:
 - The command-backed policy came from trusted policy provenance.
 
 No plugin command execution occurs unless `--enable-plugins` is passed. Native
-rendering paths do not execute plugin commands.
+rendering paths, including `engine: avp-compat`, `engine: native-kustomize`,
+and `--enable-avp-compat`, do not execute plugin commands.
 
 Discovered Argo CD CMP definitions that normalize to a safe `kustomize build`
 command are interpreted by drydock's native Kustomize renderer by default.
 `native-kustomize` policy entries remain available as explicit overrides.
 For native argocd-vault-plugin (AVP) compatibility, `avp-compat` performs
-deterministic placeholder redaction with drydock native renderers.
+deterministic placeholder redaction with drydock native renderers. The
+`--enable-avp-compat` flag enables the same behavior only for explicit
+Application plugin sources named `argocd-vault-plugin`.
 
 When a discovered sidecar CMP has static discovery rules and an Application
 does not name a plugin, drydock may warn that Argo CD sidecar auto-discovery
@@ -415,8 +420,19 @@ roots.
 ## Engines
 
 `avp-compat` renders the source with drydock's native renderer and replaces
-supported AVP placeholders with deterministic redacted values. It does not
-contact a secret backend and does not execute the AVP binary.
+supported AVP placeholders with deterministic redacted values. For explicit
+Application plugin sources named `argocd-vault-plugin`, `--enable-avp-compat`
+uses the same native compatibility path without requiring a policy entry.
+
+Native renderer selection follows drydock's normal source detection: Kustomize
+when a `kustomization` file exists, Helm when `Chart.yaml` exists, and
+Directory otherwise. Chart-only plugin sources use native chart rendering.
+
+AVP compatibility does not contact a secret backend and does not execute the
+AVP binary, the config-management plugin command, a shell, the Helm CLI, or the
+Kustomize CLI. Generic `<KEY>` placeholders are redacted only when the rendered
+manifest has `metadata.annotations["avp.kubernetes.io/path"]`; inline
+`<path:...#...>` placeholders remain supported.
 
 `native-kustomize` explicitly permits a named plugin to use drydock's native
 Kustomize adapter. The same adapter also runs by default when drydock discovers
@@ -445,6 +461,9 @@ Native engines must remain narrow compatibility paths. drydock may interpret
 discovered CMP definitions only when they map to a known in-process renderer
 with a fail-closed validator. Discovered CMP definitions are never ambient
 permission to execute commands or emulate arbitrary plugin behavior.
+`--enable-avp-compat` has the same boundary: it is not support for arbitrary
+sidecar CMPs or arbitrary plugin commands. Use `engine: exec` or
+`engine: container` for trusted command-backed plugins.
 
 ## Examples
 
@@ -454,7 +473,7 @@ Native argocd-vault-plugin (AVP) placeholder compatibility:
 apiVersion: drydock.sholdee.dev/v1alpha1
 kind: PluginPolicy
 plugins:
-  avp-directory-include:
+  argocd-vault-plugin:
     engine: avp-compat
 ```
 

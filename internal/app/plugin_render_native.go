@@ -3,10 +3,54 @@ package app
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/sholdee/drydock/internal/diagnostic"
 	"github.com/sholdee/drydock/internal/render"
 )
+
+const argocdVaultPluginName = "argocd-vault-plugin"
+
+func (p localProvider) renderDefaultAVPCompatPluginSource(ctx context.Context, source render.ResolvedSource, opts render.RenderOptions) ([]render.Manifest, []diagnostic.Diagnostic, bool, error) {
+	if opts.Plugin == nil || !isArgocdVaultPluginName(opts.Plugin.Name) {
+		return nil, nil, false, nil
+	}
+	if !opts.EnableAVPCompat {
+		message := fmt.Sprintf("config management plugin %s requires --enable-avp-compat for native AVP placeholder redaction, or a trusted PluginPolicy for command-backed rendering", pluginDisplayName(opts.Plugin.Name))
+		return nil, unsupportedPluginDiagnostic(message), true, unsupportedPolicyPluginError(message)
+	}
+	if len(opts.Plugin.Env) != 0 || len(opts.Plugin.Parameters) != 0 {
+		message := fmt.Sprintf("config management plugin %s uses env or parameters, which are unsupported by AVP compatibility", pluginDisplayName(opts.Plugin.Name))
+		return nil, unsupportedPluginDiagnostic(message), true, unsupportedPolicyPluginError(message)
+	}
+	if source.Path == "" && source.Chart == "" {
+		message := fmt.Sprintf("config management plugin %s must define path or chart for AVP compatibility", pluginDisplayName(opts.Plugin.Name))
+		return nil, unsupportedPluginDiagnostic(message), true, unsupportedPolicyPluginError(message)
+	}
+	if source.Path != "" && source.Chart != "" {
+		message := fmt.Sprintf("config management plugin %s cannot define both path and chart for AVP compatibility", pluginDisplayName(opts.Plugin.Name))
+		return nil, unsupportedPluginDiagnostic(message), true, unsupportedPolicyPluginError(message)
+	}
+
+	nativeOptions := opts
+	nativeOptions.Plugin = nil
+	nativeOptions.EnableAVPCompat = false
+	nativeOptions.QuietAVPCompat = false
+	if source.Path != "" {
+		renderer, err := selectLocalRenderer(source)
+		if err != nil {
+			return nil, nil, true, err
+		}
+		manifests, diags, err := renderer.Render(ctx, source, nativeOptions)
+		return manifests, diags, true, err
+	}
+	manifests, diags, err := p.renderChartOnlySource(ctx, source, nativeOptions)
+	return manifests, diags, true, err
+}
+
+func isArgocdVaultPluginName(name string) bool {
+	return strings.TrimSpace(name) == argocdVaultPluginName
+}
 
 func (p localProvider) renderAVPCompatPolicyPluginSource(ctx context.Context, source render.ResolvedSource, opts render.RenderOptions) ([]render.Manifest, []diagnostic.Diagnostic, bool, error) {
 	nativeOptions := opts
