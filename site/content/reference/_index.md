@@ -1,11 +1,16 @@
 ---
 title: Reference
-aliases:
-  - /docs/usage/
 ---
 
 Use this hub when you need the operator-facing details behind the quickstart.
 Start with [Getting started](/getting-started/) for the first local run.
+
+## Command And API Reference
+
+- [CLI Reference](/reference/cli/): command behavior for discovery, build,
+  render tests, diagnostics, and cache lifecycle.
+- [Go API](/reference/go-api/): embedding defaults, result contracts, and
+  plugin renderer integration.
 
 ## Workflows
 

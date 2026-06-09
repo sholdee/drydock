@@ -104,8 +104,8 @@ Any future live-runtime implementation plan must include:
 7. Redaction tests for server URLs, bearer tokens, client certificates, cluster
    names when sensitive, and returned API errors.
 8. Exit-code and diagnostic behavior that keeps CI output parseable.
-9. Documentation updates in `AGENTS.md`, `README.md`, `docs/usage.md`, and
-   `docs/compatibility.md`.
+9. Documentation updates in `AGENTS.md`, `README.md`,
+   `site/content/reference/cli.md`, and `docs/compatibility.md`.
 10. Review-agent approval that confirms default behavior still has no
     cluster, Argo CD server, or shellout dependency.
 

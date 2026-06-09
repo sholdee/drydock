@@ -69,6 +69,35 @@ API plugin rendering is allowed only through explicit in-process
 `plugin.failed`, and `plugin.unspecified` diagnostics, and do not reclassify
 caller cancellation as plugin timeout.
 
+## Validation, Benchmarks, And Profiling
+
+Run the normal local verification suite before merging:
+
+```bash
+go test ./...
+go vet ./...
+golangci-lint run --allow-parallel-runners
+git diff --check main..HEAD
+```
+
+Run render and ApplicationSet benchmarks when changing discovery, rendering,
+ApplicationSet expansion, cache event recording, or diagnostics on hot paths:
+
+```bash
+go test ./internal/app -run '^$' -bench 'BenchmarkOrchestrator(BuildManyLocalApplications|ExpandApplicationSetList)' -benchmem -count=1
+```
+
+Benchmark numbers are trend signals, not hard pass/fail thresholds.
+
+Advanced profiling flags are available in release binaries and `go run` builds
+for maintainers diagnosing real repository performance:
+
+```bash
+drydock --profile cpu --profile-out ./drydock-profiles test apps --path .
+drydock --profile trace --profile-out ./drydock-profiles diff apps --path . --ref-orig main
+drydock --profile mem --profile-out ./drydock-profiles get images --path .
+```
+
 ## Settings And Project Discovery
 
 Canonical references:

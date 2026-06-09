@@ -13,7 +13,8 @@ copying the same rule into multiple files.
 | `AGENTS.md` | Mandatory agent operating rules and hard constraints. |
 | `docs/agent-reference.md` | Task-specific agent constraints and code-area notes. |
 | `docs/design.md` | Product architecture and behavior model. |
-| `docs/usage.md` | Operator CLI workflows and high-value command examples. |
+| `site/content/reference/cli.md` | CLI command behavior for discovery, build, render tests, diagnostics, and cache lifecycle. |
+| `site/content/reference/go-api.md` | Public Go API embedding defaults, result contracts, and plugin renderer integration. |
 | `site/content/concepts/topologies.md` | Repository topology guidance and command patterns. |
 | `site/content/docs/applicationsets.md` | ApplicationSet generator behavior, fixture schema, and template parameters. |
 | `site/content/concepts/source-acquisition.md` | Git, Helm, remote Kustomize, cache, and auth behavior. |
@@ -33,13 +34,14 @@ copying the same rule into multiple files.
   closed plans and audits.
 - Keep `docs/reports` for active design gates only.
 - Put durable product behavior in the canonical owner above, usually
-  `docs/design.md`, `docs/usage.md`,
+  `docs/design.md`, `site/content/reference/cli.md`,
+  `site/content/reference/go-api.md`,
   `site/content/docs/applicationsets.md`,
   `site/content/concepts/source-acquisition.md`,
   `site/content/docs/plugin-policy/`, or
   `docs/compatibility.md`.
 - Split a focused reference page only when it removes dense detail from
-  `docs/usage.md` or `docs/design.md`.
+  `site/content/reference/cli.md` or `docs/design.md`.
 - Keep `README.md`, `AGENTS.md`, and `docs/agent-reference.md` as routing
   surfaces; link to canonical docs instead of duplicating long explanations.
 - Keep most `site/content` pages concise and operator-facing. Detailed public
