@@ -99,7 +99,8 @@ drydock get apps --path . \
 ```
 
 Supported generators, fixture schema, template parameters, and strict-mode
-diagnostics are owned by [`applicationsets.md`](applicationsets.md).
+diagnostics are owned by
+[`site/content/docs/applicationsets.md`](../site/content/docs/applicationsets.md).
 
 ## Config Management Plugin Sources
 

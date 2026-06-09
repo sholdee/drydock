@@ -105,7 +105,7 @@ when the user-facing task requires it.
 | CLI flags, output, exit codes | `internal/cli`, `internal/requestopts` |
 | Public Go API | `pkg/drydock`, then matching `internal/app` request types |
 | Discovery and Argo settings | `internal/discovery`, `internal/config` |
-| ApplicationSet generation | `docs/applicationsets.md`, then `internal/appset` |
+| ApplicationSet generation | `site/content/docs/applicationsets.md`, then `internal/appset` |
 | Application planning and orchestration | `internal/app` |
 | Kustomize, Helm, directory rendering | `internal/render` |
 | Git, chart, remote acquisition | `docs/source-acquisition.md`, then `internal/source`, `internal/chart`, `internal/remote`, `internal/acquisition` |

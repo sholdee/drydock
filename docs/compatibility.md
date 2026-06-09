@@ -105,7 +105,8 @@ Not supported:
   service API calls for ApplicationSet generation.
 - Unsupported generators without diagnostics.
 
-See `docs/applicationsets.md` for generator details and fixture schema.
+See `site/content/docs/applicationsets.md` for generator details and fixture
+schema.
 
 ## Sources And Acquisition
 

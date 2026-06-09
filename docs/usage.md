@@ -61,7 +61,7 @@ Unsupported generators emit diagnostics; non-strict commands keep supported
 Applications, while `--strict` promotes the diagnostics to errors.
 
 For generator details, fixture schemas, and stable template parameters, see
-[`applicationsets.md`](applicationsets.md).
+[`site/content/docs/applicationsets.md`](../site/content/docs/applicationsets.md).
 
 Committed and rendered `AppProject` manifests are discovered for offline
 diagnostics only. Discovery does not contact a Kubernetes cluster or Argo CD

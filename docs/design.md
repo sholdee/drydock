@@ -116,7 +116,7 @@ diff path.
 
 ApplicationSet support is deterministic and local. Git, list, matrix, merge,
 and fixture-backed provider generators are documented in
-`docs/applicationsets.md`.
+`site/content/docs/applicationsets.md`.
 
 Unsupported generators or unsupported fields produce diagnostics. Non-strict
 commands keep supported Applications where possible; `--strict` promotes those

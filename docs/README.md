@@ -15,7 +15,7 @@ copying the same rule into multiple files.
 | `docs/design.md` | Product architecture and behavior model. |
 | `docs/usage.md` | Operator CLI workflows and high-value command examples. |
 | `docs/topologies.md` | Repository topology guidance and command patterns. |
-| `docs/applicationsets.md` | ApplicationSet generator behavior, fixture schema, and template parameters. |
+| `site/content/docs/applicationsets.md` | ApplicationSet generator behavior, fixture schema, and template parameters. |
 | `docs/source-acquisition.md` | Git, Helm, remote Kustomize, cache, and auth behavior. |
 | `site/content/docs/plugin-policy/` | Trusted plugin policy provenance, editor schema, CMP compatibility, bootstrap discovery, and command security. |
 | `schemas/plugin-policy.schema.json` | Editor validation schema for `.drydock/plugins.yaml`; parser remains authoritative. |
@@ -33,7 +33,8 @@ copying the same rule into multiple files.
   closed plans and audits.
 - Keep `docs/reports` for active design gates only.
 - Put durable product behavior in the canonical owner above, usually
-  `docs/design.md`, `docs/usage.md`, `docs/applicationsets.md`,
+  `docs/design.md`, `docs/usage.md`,
+  `site/content/docs/applicationsets.md`,
   `docs/source-acquisition.md`, `site/content/docs/plugin-policy/`, or
   `docs/compatibility.md`.
 - Split a focused reference page only when it removes dense detail from

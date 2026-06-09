@@ -22,16 +22,19 @@ while generating Applications.
 | Merge | Native for two or more child generators over `mergeKeys`. |
 | Provider-backed generators | Fixture-backed for clusters, clusterDecisionResource, SCM provider, pull requests, and plugin generators. |
 
-Supported template behavior includes:
+Supported ApplicationSet behavior includes:
 
 - `spec.goTemplate: true`
 - `spec.goTemplateOptions`, including `missingkey=error`
 - generator-level selectors and template overrides
-- `spec.templatePatch` applied to generated Applications
-- Sprig-compatible functions used by Argo CD, including `regexReplaceAll`
+- `spec.templatePatch` rendered from generator params and strategic-merge-applied
+  to generated Applications, with `spec.project` preserved
+- Sprig-compatible template functions used by Argo CD
 - generated `Application.metadata.namespace` set to the ApplicationSet
   namespace
 - Argo CD's default generated Application finalizer where applicable
+- multiple supported top-level generators evaluated independently and
+  concatenated in manifest order
 
 ## Git Generators
 
@@ -47,10 +50,36 @@ YAML and JSON files may decode to a mapping document, an array of mapping
 documents, an empty mapping, or an empty file. Scalars, invalid YAML/JSON, and
 arrays with non-mapping entries produce diagnostics.
 
+Git files `values` use the same `values.*` and `.values.*` behavior as Git
+directories. `pathParamPrefix` applies to all path-related params. For example,
+`pathParamPrefix: myRepo` produces `.myRepo.path.path` in Go templates and
+`myRepo.path` in non-Go-template mode.
+
+In PR diff mode, mapped repository URLs use the local `--path` or
+`--path-orig` trees for directory discovery and rendering, even when the
+ApplicationSet declares `revision: master`.
+
+## List, Matrix, And Merge
+
+List generators support `elements` and `elementsYaml`. For non-Go-template
+ApplicationSets, `elements` scalar fields must be strings and nested `values`
+are flattened to `values.<key>`. `elementsYaml` stays unflattened so
+matrix-interpolated YAML follows Argo CD behavior.
+
+Matrix generators combine exactly two child generators and interpolate the
+second child from first-child params, including templated `elementsYaml`.
+
+Merge generators overlay two or more child generators by `mergeKeys` in base
+generator order.
+
+Matrix and merge children may use list, Git directories, Git files,
+fixture-backed provider generators, and nested matrix/merge combinations where
+the Argo CD v3 nested JSON API permits them.
+
 ## Provider Fixtures
 
-Use `--appset-provider-fixture` to provide deterministic local data for
-provider-backed generators:
+Use the repeatable `--appset-provider-fixture` flag to provide deterministic
+local data for provider-backed generators:
 
 ```bash
 drydock get apps --path . --appset-provider-fixture fixtures/appset-providers.yaml
@@ -58,9 +87,11 @@ drydock diff apps --path . --path-orig ../base --appset-provider-fixture fixture
 ```
 
 Fixture files are strict YAML or JSON documents. Unknown fields, duplicate
-identities, URL-like fixture paths, and malformed files produce diagnostics. If
-fixtures are supplied but no entries match a provider generator, drydock reports
-that no fixture matched.
+identities, URL-like fixture paths, and malformed files produce
+`appset.provider-fixture-invalid`. If fixtures are supplied but no entries match
+a provider generator, drydock emits `appset.provider-no-match`. Filters that
+cannot be evaluated from fixture data fail closed with
+`appset.provider-unsupported-filter`.
 
 ```yaml
 clusters:
@@ -69,29 +100,77 @@ clusters:
     project: platform
     labels:
       environment: prod
+    annotations:
+      owner: platform
     values:
       region: home
+
+clusterDecisions:
+  - configMapRef: placement-config
+    resourceName: placement-a
+    labels:
+      placement: edge
+    matchKey: clusterName
+    statusListKey: clusters
+    decisions:
+      - clusterName: prod-a
+        placement: edge
+    values:
+      tier: edge
 
 scmRepositories:
   - provider: github
     organization: example-org
+    project: platform
+    region: us-east-1
     repository: example-repo
+    repositoryID: repo-123
     branch: main
     sha: abcdef1234567890
     url: https://github.com/example-org/example-repo
     labels:
       - ops
+    tags:
+      owner: platform
+    paths:
+      - deploy/app.yaml
+    values:
+      tier: ops
 
 pullRequests:
   - provider: github
     organization: example-org
+    project: platform
     repository: example-repo
     number: 42
+    title: Update chart
     branch: renovate/chart
     targetBranch: main
     headSHA: abcdef1234567890
     author: renovate
+    state: open
+    labels:
+      - dependencies
+    values:
+      kind: renovate
+
+plugins:
+  - configMapRef: generator-plugin
+    outputs:
+      - environment: prod
+        cluster:
+          name: prod-a
+    values:
+      source: fixture
 ```
+
+Additional provider-specific fixture fields are available where Argo provider
+configuration needs scope data that should not alter emitted template params.
+SCM repositories accept `project`, `region`, and `tags`; pull requests accept
+`project` and `state`. For example, Azure DevOps uses `organization` plus
+`project`, AWS CodeCommit requires explicit `region` and can evaluate
+`tagFilters` from `tags`, and GitLab `pullRequestState` is evaluated from
+`state`.
 
 ## Template Parameters
 
@@ -107,5 +186,9 @@ uses for each supported provider family:
 | `plugin` | fixture output fields, `generator.input.parameters`, `values` |
 
 For non-Go-template ApplicationSets, nested maps are flattened with dot
-notation. For Go-template ApplicationSets, nested values remain available as
-maps or arrays.
+notation, including `metadata.labels.<key>`, `metadata.annotations.<key>`, and
+`values.<key>`.
+
+For Go-template ApplicationSets, nested values remain available as maps or
+arrays, such as `.metadata.labels`, `.metadata.annotations`, `.labels`, and
+`.values`.
