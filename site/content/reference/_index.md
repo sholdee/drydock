@@ -1,33 +1,36 @@
 ---
 title: Reference
+aliases:
+  - /docs/usage/
 ---
 
-Use these `/docs/...` pages as the full reference and canonical detail set.
-They are for dense behavior, flag, compatibility, and maintenance details, not
-the beginner path. Start with [Getting started](/getting-started/) for the first
-local run.
+Use this hub when you need the operator-facing details behind the quickstart.
+Start with [Getting started](/getting-started/) for the first local run.
 
-## Operator Guides
+## Workflows
 
-- [CLI usage](/docs/usage/): commands, outputs, diff flags, diagnostics, and
-  local verification.
-- [GitHub Actions](/docs/github-actions/): setup action, PR action, inputs,
-  permissions, comments, outputs, and caches.
-- [Source acquisition](/docs/source-acquisition/): Git, Helm, remote
+- [GitHub Actions](/workflows/github-actions/): setup action, PR action,
+  permissions, comments, artifacts, outputs, and caches.
+- [Local diffs](/workflows/local-diffs/): compare rendered desired state from a
+  current tree against a baseline tree.
+- [Output controls](/workflows/output/): text, JSON, markdown, raw diff, and
+  HTML diff outputs.
+
+## Concepts
+
+- [Source acquisition](/concepts/source-acquisition/): Git, Helm, remote
   Kustomize, caches, offline behavior, and auth.
-- [Plugin policy](/docs/plugin-policy/): trusted policy provenance, native
-  engines, the exec/container command gate, bootstrap entrypoints, and schema.
-- [Compatibility](/docs/compatibility/): supported Argo CD behavior and
+- [Repository topologies](/concepts/topologies/): committed Applications,
+  app-of-apps, bootstrap manifests, multi-repository sources, and plugins.
+- [Changed-only diffs](/concepts/changed-only/): PR-focused selection and
+  dependency-aware rendering.
+
+## Detailed References
+
+- [Compatibility](/compatibility/): supported Argo CD behavior and
   runtime-boundary status.
-
-## Design And Maintenance
-
-- [Design](/docs/design/): architecture and behavior model.
 - [ApplicationSets](/docs/applicationsets/): supported generators, fixtures,
   and template parameters.
-- [Documentation index](/docs/readme/): documentation ownership and anti-sprawl
-  rules.
-- [Release notes](/docs/release/): release process and Argo CD dependency
-  upgrade notes.
-- [Live runtime design gate](/docs/reports/live-integration-design-gate/):
-  required context before proposing live runtime behavior.
+- [Plugin policy](/docs/plugin-policy/): trusted policy provenance, native
+  engines, exec/container rendering, bootstrap entrypoints, cache mounts, and
+  schema.

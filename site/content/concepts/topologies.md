@@ -1,5 +1,7 @@
 ---
 title: Repository Topologies
+aliases:
+  - /docs/topologies/
 ---
 
 Match the command to the shape of the repository before tuning flags.
@@ -69,8 +71,8 @@ repository depends on exec or container plugin rendering. Use
 `bootstrap.entrypoints` when plugin-rendered output contains bootstrap
 `Application` or `ApplicationSet` objects for fleet discovery.
 
-For deeper guidance, see the canonical
-[repository topology guide](/docs/topologies/),
-[source acquisition](/docs/source-acquisition/),
+For deeper guidance, see
+[repository topologies](/concepts/topologies/),
+[source acquisition](/concepts/source-acquisition/),
 [ApplicationSet reference](/docs/applicationsets/), and
 [plugin policy](/docs/plugin-policy/).

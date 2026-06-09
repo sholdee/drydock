@@ -46,4 +46,4 @@ drydock test apps --path . --registry-config ./ci/registry-config.json
 
 Credential handling is explicit and non-interactive. Complete cache, auth,
 Helm, Git, and remote Kustomize behavior is in
-[source acquisition](/docs/source-acquisition/).
+[source acquisition](/concepts/source-acquisition/).

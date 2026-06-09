@@ -58,4 +58,4 @@ artifacts, source cache, and sticky comments. Use `setup-action` when workflow
 YAML should own every drydock command.
 
 Full inputs, outputs, permissions, and token behavior are in the
-[GitHub Actions guide](/docs/github-actions/).
+[GitHub Actions guide](/workflows/github-actions/).

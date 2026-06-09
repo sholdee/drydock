@@ -62,5 +62,5 @@ Diff commands use fixed exit codes:
 Use `--exit-code=false` for local inspection when a diff should not fail the
 command.
 
-For the full command reference, see the [CLI usage guide](/docs/usage/). For
-action outputs and PR comment controls, see the [GitHub Actions guide](/docs/github-actions/).
+For related operator guides, see the [reference hub](/reference/). For action
+outputs and PR comment controls, see the [GitHub Actions guide](/workflows/github-actions/).

@@ -226,8 +226,8 @@ Not supported:
   parameters, or Application plugin env for policy-backed native engines.
 - Plugin credential injection.
 
-See `docs/plugin-policy.md` for trusted policy provenance, supported engines,
-schema, and command security controls.
+See `site/content/docs/plugin-policy/` for trusted policy provenance, supported
+engines, schema, and command security controls.
 
 ## Diff, Images, And Output
 

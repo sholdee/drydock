@@ -37,7 +37,8 @@ renderers require an approved design update first.
 - `docs/design.md`: product architecture and behavior model.
 - `docs/compatibility.md`: supported Argo CD behavior and runtime boundary.
 - `docs/source-acquisition.md`: Git, Helm, remote Kustomize, cache, and auth.
-- `docs/plugin-policy.md`: trusted plugin policy and opt-in exec rendering.
+- `site/content/docs/plugin-policy/`: trusted plugin policy and opt-in exec
+  rendering.
 - `docs/reports/live-integration-design-gate.md`: required before proposing
   live runtime, server-side diff, defaulting, admission, or managed-fields work.
 - `site/`: Hugo docs site source and curated operator-facing pages.

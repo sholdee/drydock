@@ -1,5 +1,7 @@
 ---
 title: GitHub Actions
+aliases:
+  - /docs/github-actions/
 ---
 
 drydock publishes two composite GitHub Actions:
@@ -122,4 +124,4 @@ drydock diff images --repo . --ref HEAD --ref-orig origin/main -o markdown
 ```
 
 For all inputs, outputs, permissions, token behavior, and cache details, see
-the canonical [GitHub Actions guide](/docs/github-actions/).
+this page.

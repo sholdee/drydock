@@ -20,8 +20,8 @@ Canonical references:
 - `internal/requestopts` for shared option parsing.
 - `pkg/drydock` for the public embedding API.
 - `docs/design.md` for architecture and behavior contracts.
-- `docs/plugin-policy.md` for trusted plugin policy provenance, schema,
-  bootstrap discovery, and command security controls.
+- `site/content/docs/plugin-policy/` for trusted plugin policy provenance,
+  schema, bootstrap discovery, and command security controls.
 
 Current command groups are:
 
@@ -62,12 +62,12 @@ provenance matches `engine: exec` or `engine: container` and the caller
 explicitly sets `--enable-plugins`. Discovered Argo CD CMP definitions that
 normalize to a safe `kustomize build` command may be interpreted through
 drydock's native Kustomize renderer without shelling out. Other native engines
-must remain narrow, in-process compatibility paths with fail-closed validators. Keep
-detailed policy behavior in `docs/plugin-policy.md`. Public API plugin
-rendering is allowed only through explicit in-process `Config.PluginRenderer`
-or registry injection. Preserve `plugin.unsupported`, `plugin.failed`, and
-`plugin.unspecified` diagnostics, and do not reclassify caller cancellation as
-plugin timeout.
+must remain narrow, in-process compatibility paths with fail-closed validators.
+Keep detailed policy behavior in `site/content/docs/plugin-policy/`. Public
+API plugin rendering is allowed only through explicit in-process
+`Config.PluginRenderer` or registry injection. Preserve `plugin.unsupported`,
+`plugin.failed`, and `plugin.unspecified` diagnostics, and do not reclassify
+caller cancellation as plugin timeout.
 
 ## Settings And Project Discovery
 

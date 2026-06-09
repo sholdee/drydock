@@ -1,5 +1,7 @@
 ---
 title: Source Acquisition
+aliases:
+  - /docs/source-acquisition/
 ---
 
 drydock renders from local files and explicit source caches. It may fetch
@@ -52,6 +54,5 @@ Credentials are explicit and non-interactive. drydock does not read ambient Git
 credential helpers, ambient Helm registry config, or credential fields from
 discovered repository Secrets.
 
-Use the canonical [source acquisition guide](/docs/source-acquisition/) for
-the complete flag list, Helm dependency behavior, remote Kustomize forms, and
-credential details.
+Use `drydock <command> --help` for the complete flag list. See the
+[reference hub](/reference/) for related workflows and compatibility notes.

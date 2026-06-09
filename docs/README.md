@@ -17,7 +17,7 @@ copying the same rule into multiple files.
 | `docs/topologies.md` | Repository topology guidance and command patterns. |
 | `docs/applicationsets.md` | ApplicationSet generator behavior, fixture schema, and template parameters. |
 | `docs/source-acquisition.md` | Git, Helm, remote Kustomize, cache, and auth behavior. |
-| `docs/plugin-policy.md` | Trusted plugin policy provenance, editor schema, CMP compatibility, bootstrap discovery, and command security. |
+| `site/content/docs/plugin-policy/` | Trusted plugin policy provenance, editor schema, CMP compatibility, bootstrap discovery, and command security. |
 | `schemas/plugin-policy.schema.json` | Editor validation schema for `.drydock/plugins.yaml`; parser remains authoritative. |
 | `docs/compatibility.md` | Supported Argo CD behavior and runtime-boundary status. |
 | `docs/github-actions.md` | Setup action and full PR action usage, permissions, cache, comments, and outputs. |
@@ -34,12 +34,13 @@ copying the same rule into multiple files.
 - Keep `docs/reports` for active design gates only.
 - Put durable product behavior in the canonical owner above, usually
   `docs/design.md`, `docs/usage.md`, `docs/applicationsets.md`,
-  `docs/source-acquisition.md`, `docs/plugin-policy.md`, or
+  `docs/source-acquisition.md`, `site/content/docs/plugin-policy/`, or
   `docs/compatibility.md`.
 - Split a focused reference page only when it removes dense detail from
   `docs/usage.md` or `docs/design.md`.
 - Keep `README.md`, `AGENTS.md`, and `docs/agent-reference.md` as routing
   surfaces; link to canonical docs instead of duplicating long explanations.
-- Keep `site/content` concise and operator-facing. It should summarize and
-  route to canonical docs rather than replacing them.
+- Keep most `site/content` pages concise and operator-facing. Detailed public
+  reference pages under `site/content/docs` may own operator behavior when a
+  source-only doc would be too dense for the site.
 - Update this file when adding, deleting, or changing ownership of docs.

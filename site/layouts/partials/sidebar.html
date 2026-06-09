@@ -2,17 +2,14 @@
   <p class="nav-heading">Docs</p>
   {{ $groups := slice "Start" "Workflows" "Cookbook" "Concepts" "Reference" }}
   {{ $referencePages := slice
-    (dict "name" "Usage" "url" "docs/usage/")
-    (dict "name" "GitHub Actions" "url" "docs/github-actions/")
-    (dict "name" "Source Acquisition" "url" "docs/source-acquisition/")
-    (dict "name" "Repository Topologies" "url" "docs/topologies/")
+    (dict "name" "GitHub Actions" "url" "workflows/github-actions/")
+    (dict "name" "Local Diffs" "url" "workflows/local-diffs/")
+    (dict "name" "Output Controls" "url" "workflows/output/")
+    (dict "name" "Source Acquisition" "url" "concepts/source-acquisition/")
+    (dict "name" "Repository Topologies" "url" "concepts/topologies/")
     (dict "name" "ApplicationSets" "url" "docs/applicationsets/")
     (dict "name" "Plugin Policy" "url" "docs/plugin-policy/")
-    (dict "name" "Compatibility" "url" "docs/compatibility/")
-    (dict "name" "Design" "url" "docs/design/")
-    (dict "name" "Release" "url" "docs/release/")
-    (dict "name" "Documentation Index" "url" "docs/readme/")
-    (dict "name" "Live Runtime Gate" "url" "docs/reports/live-integration-design-gate/")
+    (dict "name" "Compatibility" "url" "compatibility/")
   }}
   {{ $referenceURL := relURL "reference/" }}
   {{ $isReferenceContext := or (eq $.Section "docs") (eq $.RelPermalink $referenceURL) }}

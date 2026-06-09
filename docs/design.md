@@ -165,7 +165,7 @@ Supported render paths:
   overrides, explicitly enabled exec/container CMP compatibility, and
   plugin-rendered bootstrap discovery. Policy provenance, schema, supported
   engines, and command security controls are owned by
-  `docs/plugin-policy.md`.
+  `site/content/docs/plugin-policy/`.
 - Deterministic in-process plugin renderers supplied by embedding callers.
 
 The default CLI and default Go client fail closed for other config management

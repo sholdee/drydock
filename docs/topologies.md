@@ -130,7 +130,8 @@ by the plugin, add `bootstrap.entrypoints` so fleet discovery can render and
 scan those generated `Application` or `ApplicationSet` objects.
 
 Plugin policy provenance, native plugin compatibility, and command security
-controls are owned by [`plugin-policy.md`](plugin-policy.md).
+controls are owned by the
+[plugin policy reference](../site/content/docs/plugin-policy/_index.md).
 
 ## Pull Request Topologies
 

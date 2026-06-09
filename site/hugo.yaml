@@ -121,8 +121,6 @@ module:
   mounts:
     - source: content
       target: content
-    - source: ../docs
-      target: content/docs
     - source: layouts
       target: layouts
     - source: assets

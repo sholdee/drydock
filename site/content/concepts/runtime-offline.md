@@ -44,6 +44,5 @@ drydock diff apps --path . --path-orig ../baseline --offline
 With `--offline`, source resolution must use local files, `--repo-map`, or
 existing cache entries.
 
-For the complete support boundary, see the canonical
-[compatibility notes](/docs/compatibility/) and the
-[live runtime design gate](/docs/reports/live-integration-design-gate/).
+For the complete support boundary, see [Compatibility](/compatibility/) and
+[Argo CD Render Parity](/concepts/argocd-render-parity/).

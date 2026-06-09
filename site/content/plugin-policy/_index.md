@@ -64,6 +64,12 @@ plugin-rendered output contains Argo CD `Application` or `ApplicationSet`
 objects. Static discovery mode disables them; `--max-discovery-depth 0` does
 not. Each entrypoint must match trusted static discovery for its plugin.
 
-For schema, provenance rules, native engines, command execution controls, and
-bootstrap details, see the canonical
-[plugin policy guide](/docs/plugin-policy/).
+## Detailed Reference
+
+- [Reference overview](/docs/plugin-policy/)
+- [Trust and command execution](/docs/plugin-policy/trust/)
+- [Engines](/docs/plugin-policy/engines/)
+- [Bootstrap entrypoints](/docs/plugin-policy/bootstrap/)
+- [Container plugin caches](/docs/plugin-policy/cache/)
+- [Schema and CMP descriptors](/docs/plugin-policy/schema/)
+- [Examples](/docs/plugin-policy/examples/)

@@ -150,5 +150,5 @@ drydock test apps --path . --offline
 drydock diff apps --path . --path-orig ../baseline --offline
 ```
 
-For full command coverage, see the [CLI usage guide](/docs/usage/). For source
-fetching, cache, and auth details, see [Source acquisition](/docs/source-acquisition/).
+For more operator guides, see the [reference hub](/reference/). For source
+fetching, cache, and auth details, see [Source acquisition](/concepts/source-acquisition/).

@@ -119,7 +119,7 @@ jobs:
 The setup action accepts `latest`, `vX.Y.Z`, or bare `X.Y.Z` and verifies the
 selected archive with the release checksum manifest by default.
 
-See the [GitHub Actions reference](https://sholdee.github.io/drydock/docs/github-actions/)
+See the [GitHub Actions reference](https://sholdee.github.io/drydock/workflows/github-actions/)
 for full action inputs, GitHub App token support, cache behavior, comments,
 artifacts, and outputs.
 
@@ -243,8 +243,8 @@ drydock diff apps --path . --path-orig ../baseline --offline
 | List cache entries | `drydock cache list -o json` |
 
 `drydock <command> --help` lists command-specific flags. See
-the [CLI usage guide](https://sholdee.github.io/drydock/docs/usage/) for the
-full command reference.
+the [docs reference](https://sholdee.github.io/drydock/reference/) for the
+operator guide index.
 
 ## What It Supports
 
@@ -310,9 +310,10 @@ flowchart TD
 ```
 
 The render path imports Argo CD API types and selected reusable helpers, but
-drydock owns offline orchestration. See the
-[design notes](https://sholdee.github.io/drydock/docs/design/) for the
-architecture and behavior model.
+drydock owns offline orchestration. See
+[How It Works](https://sholdee.github.io/drydock/concepts/how-it-works/) and
+[Argo CD Render Parity](https://sholdee.github.io/drydock/concepts/argocd-render-parity/)
+for the architecture and validation model.
 
 ## Go API
 
@@ -352,13 +353,13 @@ Join the home-operations Discord at <https://discord.gg/home-operations>.
   what drydock does without live Argo CD or Kubernetes.
 - [Argo CD Render Parity](https://sholdee.github.io/drydock/concepts/argocd-render-parity/):
   how covered render semantics are validated against real Argo CD.
-- [Plugin policy](https://sholdee.github.io/drydock/plugin-policy/): trusted
-  policy engines, schema, CMP compatibility, bootstrap discovery, and command
-  security.
+- [Plugin policy](https://sholdee.github.io/drydock/docs/plugin-policy/):
+  trusted policy engines, schema, CMP compatibility, bootstrap discovery, and
+  command security.
 - [Source acquisition](https://sholdee.github.io/drydock/concepts/source-acquisition/):
   Git, Helm, remote Kustomize, cache, and auth behavior.
-- [Reference](https://sholdee.github.io/drydock/reference/): full command and
-  behavior reference.
+- [Reference](https://sholdee.github.io/drydock/reference/): operator guide
+  index.
 
 ## License
 

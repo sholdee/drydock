@@ -86,4 +86,4 @@ changes. It omits unchanged images by default so the comment stays focused on
 added and removed references.
 
 For the full diff behavior, output formats, ignore rules, and exit codes, see
-the [CLI usage guide](/docs/usage/).
+the [reference hub](/reference/).
