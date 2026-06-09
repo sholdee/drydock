@@ -6,6 +6,8 @@
     'helpers:pinGitHubActionDigests',
   ],
   platformAutomerge: true,
+  minimumReleaseAge: '3 days',
+  internalChecksFilter: 'strict',
   ignorePaths: ['testdata/**'],
   ignoreDeps: ['github.com/argoproj/argo-cd/gitops-engine'],
   postUpdateOptions: ['gomodTidy'],
@@ -20,6 +22,11 @@
     fileFilters: ['go.mod', 'go.sum'],
   },
   packageRules: [
+    {
+      description: 'Wait longer before GitHub Actions updates',
+      matchManagers: ['github-actions'],
+      minimumReleaseAge: '7 days',
+    },
     {
       description: 'Automerge minor/patch GitHub Actions updates',
       matchManagers: ['github-actions'],
