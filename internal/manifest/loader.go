@@ -8,7 +8,7 @@ import (
 	"reflect"
 	"time"
 
-	"go.yaml.in/yaml/v4"
+	"go.yaml.in/yaml/v3"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 )
 

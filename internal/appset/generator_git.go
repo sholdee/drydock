@@ -15,7 +15,7 @@ import (
 	"github.com/bmatcuk/doublestar/v4"
 	"github.com/sholdee/drydock/internal/diagnostic"
 	"github.com/sholdee/drydock/internal/pathsafety"
-	"go.yaml.in/yaml/v4"
+	"go.yaml.in/yaml/v3"
 )
 
 func evaluateGitGenerator(ctx generatorContext, generator argoappv1.ApplicationSetGenerator) ([]generatorParamSet, []diagnostic.Diagnostic, bool, error) {
@@ -303,6 +303,9 @@ func decodeGitFileParams(absPath, rel, manifestPath string) ([]map[string]any, *
 	if err != nil {
 		return nil, nil, err
 	}
+	if isEmptyGitFileParamsContent(data) {
+		return []map[string]any{{}}, nil, nil
+	}
 
 	mapping := map[string]any{}
 	if err := yaml.Unmarshal(data, &mapping); err == nil {
@@ -323,6 +326,11 @@ func decodeGitFileParams(absPath, rel, manifestPath string) ([]map[string]any, *
 		}
 	}
 	return objects, nil, nil
+}
+
+func isEmptyGitFileParamsContent(data []byte) bool {
+	trimmed := strings.TrimSpace(string(data))
+	return trimmed == "" || trimmed == "---" || trimmed == "..."
 }
 
 func pathParams(rel, prefix string, values map[string]string, useGoTemplate bool, goTemplateOptions []string) (map[string]any, error) {

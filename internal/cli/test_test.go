@@ -11,7 +11,7 @@ import (
 	"testing"
 
 	"github.com/sholdee/drydock/internal/app"
-	"go.yaml.in/yaml/v4"
+	"go.yaml.in/yaml/v3"
 )
 
 func TestTestAppsPassesAllApplications(t *testing.T) {

@@ -10,7 +10,7 @@ import (
 
 	"github.com/bmatcuk/doublestar/v4"
 	"github.com/sholdee/drydock/internal/remote"
-	"go.yaml.in/yaml/v4"
+	"go.yaml.in/yaml/v3"
 	"helm.sh/helm/v4/pkg/chart/common"
 )
 

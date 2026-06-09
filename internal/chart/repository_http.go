@@ -3,7 +3,7 @@ package chart
 import (
 	"context"
 	"fmt"
-	"go.yaml.in/yaml/v4"
+	"go.yaml.in/yaml/v3"
 	"io"
 	"net/http"
 	"net/url"

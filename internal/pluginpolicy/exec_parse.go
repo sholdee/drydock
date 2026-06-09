@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"go.yaml.in/yaml/v4"
+	"go.yaml.in/yaml/v3"
 )
 
 func parseExecConfig(fields map[string]*yaml.Node, path, pointer string) (ExecConfig, error) {

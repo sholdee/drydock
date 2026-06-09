@@ -12,7 +12,7 @@ import (
 	"github.com/sholdee/drydock/internal/manifest"
 	"github.com/sholdee/drydock/internal/render"
 	sourcepkg "github.com/sholdee/drydock/internal/source"
-	"go.yaml.in/yaml/v4"
+	"go.yaml.in/yaml/v3"
 )
 
 type RenderResult struct {

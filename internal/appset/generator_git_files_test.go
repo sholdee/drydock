@@ -254,7 +254,9 @@ func TestGenerateGitFilesGeneratorAcceptsMappingArrayAndEmptyDocuments(t *testin
 - name: beta
 `)
 	writeAppsetTestFile(t, filepath.Join(root, "configs", "empty.yaml"), ``)
+	writeAppsetTestFile(t, filepath.Join(root, "configs", "empty-document.yaml"), "---\n")
 	writeAppsetTestFile(t, filepath.Join(root, "configs", "empty-object.yaml"), `{}`)
+	writeAppsetTestFile(t, filepath.Join(root, "configs", "whitespace.yaml"), " \n\t\n")
 	data := []byte(`
 apiVersion: argoproj.io/v1alpha1
 kind: ApplicationSet
@@ -281,8 +283,8 @@ spec:
 	if len(diags) != 0 {
 		t.Fatalf("diagnostics = %#v", diags)
 	}
-	if got := generatedNames(apps); !slices.Equal(got, []string{"alpha-array.yaml", "beta-array.yaml", "empty-empty-object.yaml", "empty-empty.yaml", "root-root.yaml"}) {
-		t.Fatalf("generated names = %#v, want mapping, array, empty object, and empty file results", got)
+	if got := generatedNames(apps); !slices.Equal(got, []string{"alpha-array.yaml", "beta-array.yaml", "empty-empty-document.yaml", "empty-empty-object.yaml", "empty-empty.yaml", "empty-whitespace.yaml", "root-root.yaml"}) {
+		t.Fatalf("generated names = %#v, want mapping, array, empty object, empty document, whitespace, and empty file results", got)
 	}
 	rootApp := apps[len(apps)-1].Application
 	if rootApp.Name != "root-root.yaml" || rootApp.Annotations["source-path"] != "." {

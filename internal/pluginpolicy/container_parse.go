@@ -9,7 +9,7 @@ import (
 	"unicode"
 
 	"github.com/distribution/reference"
-	"go.yaml.in/yaml/v4"
+	"go.yaml.in/yaml/v3"
 )
 
 func parseContainerPlugin(fields map[string]*yaml.Node, path, pointer string) (Plugin, error) {

@@ -12,7 +12,7 @@ import (
 	"github.com/sholdee/drydock/internal/diff"
 	cliformat "github.com/sholdee/drydock/internal/format"
 	"github.com/spf13/cobra"
-	"go.yaml.in/yaml/v4"
+	"go.yaml.in/yaml/v3"
 	"k8s.io/apimachinery/pkg/labels"
 )
 

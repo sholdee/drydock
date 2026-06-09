@@ -8,7 +8,7 @@ import (
 	"strconv"
 	"time"
 
-	"go.yaml.in/yaml/v4"
+	"go.yaml.in/yaml/v3"
 )
 
 func decodeDocuments(data []byte) ([]yaml.Node, error) {
@@ -135,8 +135,6 @@ func validateYAMLTree(node *yaml.Node, pointer string) error {
 		return validateYAMLSequence(node, pointer)
 	case yaml.ScalarNode:
 		return nil
-	case yaml.StreamNode:
-		return fmt.Errorf("%s stream nodes are not allowed", pointer)
 	default:
 		return fmt.Errorf("%s has unsupported YAML node kind %d", pointer, node.Kind)
 	}
@@ -200,8 +198,6 @@ func validateTag(node *yaml.Node, pointer string) error {
 			return nil
 		}
 	case yaml.AliasNode:
-		return nil
-	case yaml.StreamNode:
 		return nil
 	}
 	return fmt.Errorf("%s custom YAML tag %q is not allowed", pointer, node.Tag)
