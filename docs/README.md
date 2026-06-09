@@ -1,6 +1,4 @@
----
-title: Documentation Index
----
+# Documentation Index
 
 This page owns documentation routing. Update the canonical owner instead of
 copying the same rule into multiple files.

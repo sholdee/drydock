@@ -1,6 +1,4 @@
----
-title: drydock Design
----
+# drydock Design
 
 `drydock` is an independent Go CLI and embeddable library for Argo CD GitOps
 repository analysis. It discovers Argo CD Applications, renders desired
