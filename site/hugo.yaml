@@ -98,16 +98,16 @@ menus:
       params:
         group: Reference
       weight: 90
+    - name: ApplicationSets
+      url: /docs/applicationsets/
+      params:
+        group: Reference
+      weight: 95
     - name: Plugin Policy
       url: /plugin-policy/
       params:
         group: Reference
       weight: 100
-    - name: Reference
-      url: /reference/
-      params:
-        group: Reference
-      weight: 110
 
 markup:
   tableOfContents:

@@ -11,6 +11,11 @@
         {{ $actions }}
       </header>
     {{ end }}
+    {{ if gt (len .Fragments.Headings) 0 }}
+      <aside class="site-toc-inline" aria-label="Page table of contents">
+        {{ partial "toc.html" (dict "page" . "id" "TableOfContentsInline") }}
+      </aside>
+    {{ end }}
     <div class="doc-content">
       {{ .Content }}
     </div>

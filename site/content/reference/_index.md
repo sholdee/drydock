@@ -31,6 +31,6 @@ Start with [Getting started](/getting-started/) for the first local run.
   runtime-boundary status.
 - [ApplicationSets](/docs/applicationsets/): supported generators, fixtures,
   and template parameters.
-- [Plugin policy](/docs/plugin-policy/): trusted policy provenance, native
+- [Plugin policy](/plugin-policy/): trusted policy provenance, native
   engines, exec/container rendering, bootstrap entrypoints, cache mounts, and
   schema.

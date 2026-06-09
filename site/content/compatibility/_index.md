@@ -94,8 +94,7 @@ disabled by static discovery mode, are not disabled by
 `--max-discovery-depth 0`, and require trusted static discovery for the
 referenced plugin.
 
-See [plugin policy](/plugin-policy/) and
-[plugin policy reference](/docs/plugin-policy/).
+See [plugin policy](/plugin-policy/).
 
 ### Diffs, images, diagnostics, and settings
 

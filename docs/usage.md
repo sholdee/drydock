@@ -137,7 +137,7 @@ command, a shell, the Helm CLI, or the Kustomize CLI. Generic `<KEY>`
 placeholders are redacted only when the rendered manifest has
 `metadata.annotations["avp.kubernetes.io/path"]`; inline `<path:...#...>`
 placeholders remain supported. For trusted command-backed plugins, use the
-[plugin policy reference](../site/content/docs/plugin-policy/_index.md) with
+[plugin policy guide](../site/content/plugin-policy/_index.md) with
 `engine: exec` or `engine: container` and `--enable-plugins`.
 
 Repositories tagged with `argocd` or `gitops` are not always Argo CD
@@ -230,7 +230,7 @@ dispatch in-process renderers by `plugin.name`. The public plugin request
 includes the resolved source, `$ref` roots and source metadata, kube version,
 and API versions.
 
-See the [plugin policy reference](../site/content/docs/plugin-policy/_index.md)
+See the [plugin policy guide](../site/content/plugin-policy/_index.md)
 for `--plugin-policy-path`, `--plugin-policy-ref`, `--plugin-policy-repo`,
 `--disable-plugin-policy`, the policy schema, CMP compatibility behavior, and
 command security model.
@@ -668,7 +668,7 @@ These source paths are outside the current default runtime contract:
   verification, project-scoped cluster Secret enforcement beyond discovered
   metadata, and full RBAC simulation.
 
-See the [plugin policy reference](../site/content/docs/plugin-policy/_index.md)
+See the [plugin policy guide](../site/content/plugin-policy/_index.md)
 for the supported trusted CMP compatibility path.
 
 See

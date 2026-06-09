@@ -131,7 +131,7 @@ scan those generated `Application` or `ApplicationSet` objects.
 
 Plugin policy provenance, native plugin compatibility, and command security
 controls are owned by the
-[plugin policy reference](../site/content/docs/plugin-policy/_index.md).
+[plugin policy guide](../site/content/plugin-policy/_index.md).
 
 ## Pull Request Topologies
 

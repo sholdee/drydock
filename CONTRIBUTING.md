@@ -56,7 +56,7 @@ implementation. Start with the design and compatibility docs:
 - [Design](docs/design.md)
 - [Compatibility](docs/compatibility.md)
 - [Source acquisition](docs/source-acquisition.md)
-- [Plugin policy](site/content/docs/plugin-policy/_index.md)
+- [Plugin policy](site/content/plugin-policy/_index.md)
 
 ## Maintainer Workflows
 

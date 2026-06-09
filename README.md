@@ -353,7 +353,7 @@ Join the home-operations Discord at <https://discord.gg/home-operations>.
   what drydock does without live Argo CD or Kubernetes.
 - [Argo CD Render Parity](https://sholdee.github.io/drydock/concepts/argocd-render-parity/):
   how covered render semantics are validated against real Argo CD.
-- [Plugin policy](https://sholdee.github.io/drydock/docs/plugin-policy/):
+- [Plugin policy](https://sholdee.github.io/drydock/plugin-policy/):
   trusted policy engines, schema, CMP compatibility, bootstrap discovery, and
   command security.
 - [Source acquisition](https://sholdee.github.io/drydock/concepts/source-acquisition/):

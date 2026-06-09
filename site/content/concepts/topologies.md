@@ -75,4 +75,4 @@ For deeper guidance, see
 [repository topologies](/concepts/topologies/),
 [source acquisition](/concepts/source-acquisition/),
 [ApplicationSet reference](/docs/applicationsets/), and
-[plugin policy](/docs/plugin-policy/).
+[plugin policy](/plugin-policy/).

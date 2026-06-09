@@ -48,8 +48,8 @@
     -}}
   {{- else if eq $current (relURL "plugin-policy/") -}}
     {{- $links = slice
-      (dict "label" "Plugin Policy Reference" "url" "/docs/plugin-policy/")
-      (dict "label" "Reference" "url" "/reference/")
+      (dict "label" "Trust And Execution" "url" "/docs/plugin-policy/trust/")
+      (dict "label" "Examples" "url" "/docs/plugin-policy/examples/")
     -}}
   {{- else if eq $current (relURL "reference/") -}}
     {{- $links = slice

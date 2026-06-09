@@ -401,58 +401,15 @@ a:hover {
   padding: 0;
 }
 
-.nav-reference-row {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  align-items: stretch;
+.docs-nav .nav-section-children {
+  margin: 0.18rem 0 0.25rem;
+  padding-left: 0.7rem;
 }
 
-.nav-reference-row a {
-  border-bottom-right-radius: 0;
-  border-top-right-radius: 0;
-}
-
-.nav-reference-toggle {
-  border: 0;
-  border-bottom-right-radius: 6px;
-  border-top-right-radius: 6px;
-  background: transparent;
-  color: var(--muted);
-  cursor: pointer;
-  font: inherit;
-  font-size: 0.92rem;
-  font-weight: 800;
-  min-width: 2.1rem;
-  padding: 0.42rem 0.5rem;
-}
-
-.nav-reference-toggle::before {
-  content: "+";
-}
-
-.nav-reference-toggle[aria-expanded="true"]::before {
-  content: "-";
-}
-
-.nav-reference-row:hover a,
-.nav-reference-row:hover .nav-reference-toggle,
-.nav-reference-toggle:hover {
-  background: rgba(105, 215, 194, 0.08);
-  color: var(--navy-deep);
-}
-
-.docs-nav .nav-reference-index {
-  display: block;
-  margin-top: 0.2rem;
-  padding-left: 0.65rem;
-}
-
-.docs-nav .nav-reference-index[hidden] {
-  display: none;
-}
-
-.docs-nav .nav-reference-index a {
-  font-size: 0.84rem;
+.docs-nav .nav-section-children a {
+  color: var(--quiet);
+  font-size: 0.79rem;
+  padding-block: 0.28rem;
 }
 
 .docs-nav li + li,
@@ -495,6 +452,17 @@ a:hover {
 
 .site-main {
   min-width: 0;
+}
+
+.site-toc-inline {
+  display: none;
+  border-bottom: 1px solid var(--line);
+  background: rgba(8, 17, 29, 0.38);
+  padding: 1rem clamp(1.1rem, 4vw, 2.75rem);
+}
+
+.site-toc-inline .toc-panel {
+  border-left: 3px solid var(--line-strong);
 }
 
 .doc-page {
@@ -1500,6 +1468,10 @@ a.workflow-heading:hover {
   .site-toc {
     display: none;
   }
+
+  .site-toc-inline {
+    display: block;
+  }
 }
 
 @media (max-width: 720px) {
@@ -1564,10 +1536,17 @@ a.workflow-heading:hover {
     padding-left: 0;
   }
 
-  .docs-nav ul {
+  .nav-section > ul {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
     gap: 0.25rem;
+  }
+
+  .docs-nav .nav-section-children {
+    display: block;
+    grid-column: 1 / -1;
+    margin-top: 0.25rem;
+    padding-left: 0.35rem;
   }
 
   .nav-section + .nav-section {
@@ -1581,6 +1560,15 @@ a.workflow-heading:hover {
 
   .nav-heading {
     margin-bottom: 0.45rem;
+  }
+
+  .site-toc-inline {
+    padding-block: 0.9rem;
+  }
+
+  .site-toc-inline .toc-panel {
+    border-left: 0;
+    padding-left: 0;
   }
 
   .docs-nav li + li {

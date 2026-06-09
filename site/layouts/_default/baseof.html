@@ -16,7 +16,7 @@
       </main>
       {{ if $hasToc }}
         <aside class="site-toc" aria-label="Page table of contents">
-          {{ partial "toc.html" . }}
+          {{ partial "toc.html" (dict "page" . "id" "TableOfContents") }}
         </aside>
       {{ end }}
     </div>
