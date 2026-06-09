@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	goyaml "go.yaml.in/yaml/v4"
+	goyaml "go.yaml.in/yaml/v3"
 	"sigs.k8s.io/kustomize/api/types"
 )
 

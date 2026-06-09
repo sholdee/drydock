@@ -13,7 +13,7 @@ import (
 	"strings"
 
 	"github.com/sholdee/drydock/internal/diagnostic"
-	"go.yaml.in/yaml/v4"
+	"go.yaml.in/yaml/v3"
 )
 
 type ProviderOptions struct {

@@ -17,7 +17,7 @@ import (
 	"github.com/sholdee/drydock/internal/app"
 	"github.com/sholdee/drydock/internal/diagnostic"
 	"github.com/sholdee/drydock/internal/diff"
-	"go.yaml.in/yaml/v4"
+	"go.yaml.in/yaml/v3"
 )
 
 type assertErr struct{}
