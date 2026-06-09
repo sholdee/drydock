@@ -145,7 +145,7 @@ Application fleet repositories. `drydock test apps` reports zero applications
 when no `Application` or supported `ApplicationSet` objects are discovered.
 
 For acquisition, cache, auth, and remote source details, see
-[`source-acquisition.md`](source-acquisition.md).
+[`site/content/concepts/source-acquisition.md`](../site/content/concepts/source-acquisition.md).
 
 ## Cache Lifecycle
 

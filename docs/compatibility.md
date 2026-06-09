@@ -149,7 +149,8 @@ Important boundaries:
 - Cache lifecycle commands are local filesystem operations only; they do not
   render, fetch, read credential flags, or retry failed acquisitions.
 
-See `docs/source-acquisition.md` for cache, auth, and remote source details.
+See `site/content/concepts/source-acquisition.md` for cache, auth, and remote
+source details.
 
 ## Rendering
 

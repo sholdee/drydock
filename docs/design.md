@@ -136,7 +136,7 @@ the same resource identity inside one Application, the later source wins and a
 repeated-resource diagnostic is emitted.
 
 Repository resolution and cache behavior are documented in
-`docs/source-acquisition.md`. Important invariants:
+`site/content/concepts/source-acquisition.md`. Important invariants:
 
 - `--repo-map URL=PATH` wins over local source fallback and network fetching.
 - PR diff roots are authoritative for mapped repositories.

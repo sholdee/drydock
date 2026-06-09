@@ -36,7 +36,8 @@ renderers require an approved design update first.
 - `docs/README.md`: documentation ownership map.
 - `docs/design.md`: product architecture and behavior model.
 - `docs/compatibility.md`: supported Argo CD behavior and runtime boundary.
-- `docs/source-acquisition.md`: Git, Helm, remote Kustomize, cache, and auth.
+- `site/content/concepts/source-acquisition.md`: Git, Helm, remote Kustomize,
+  cache, and auth.
 - `site/content/docs/plugin-policy/`: trusted plugin policy and opt-in exec
   rendering.
 - `docs/reports/live-integration-design-gate.md`: required before proposing
@@ -108,7 +109,7 @@ when the user-facing task requires it.
 | ApplicationSet generation | `site/content/docs/applicationsets.md`, then `internal/appset` |
 | Application planning and orchestration | `internal/app` |
 | Kustomize, Helm, directory rendering | `internal/render` |
-| Git, chart, remote acquisition | `docs/source-acquisition.md`, then `internal/source`, `internal/chart`, `internal/remote`, `internal/acquisition` |
+| Git, chart, remote acquisition | `site/content/concepts/source-acquisition.md`, then `internal/source`, `internal/chart`, `internal/remote`, `internal/acquisition` |
 | Manifest diffs and image extraction | `internal/diff`, `internal/manifest` |
 | Cache lifecycle and cache events | `internal/cache`, `internal/cacheevent`, `internal/cli/cache.go` |
 | Path containment and symlink rules | `internal/pathsafety`, then caller-specific checks |
