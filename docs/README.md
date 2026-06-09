@@ -14,7 +14,7 @@ copying the same rule into multiple files.
 | `docs/agent-reference.md` | Task-specific agent constraints and code-area notes. |
 | `docs/design.md` | Product architecture and behavior model. |
 | `docs/usage.md` | Operator CLI workflows and high-value command examples. |
-| `docs/topologies.md` | Repository topology guidance and command patterns. |
+| `site/content/concepts/topologies.md` | Repository topology guidance and command patterns. |
 | `site/content/docs/applicationsets.md` | ApplicationSet generator behavior, fixture schema, and template parameters. |
 | `docs/source-acquisition.md` | Git, Helm, remote Kustomize, cache, and auth behavior. |
 | `site/content/docs/plugin-policy/` | Trusted plugin policy provenance, editor schema, CMP compatibility, bootstrap discovery, and command security. |
