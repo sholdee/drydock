@@ -26,6 +26,11 @@
       (dict "label" "Compatibility" "url" "/compatibility/")
       (dict "label" "Full Reference" "url" "/reference/")
     -}}
+  {{- else if eq $current (relURL "cookbook/") -}}
+    {{- $links = slice
+      (dict "label" "Pull Request Checks" "url" "/cookbook/pr-checks/")
+      (dict "label" "Source Access" "url" "/cookbook/source-access/")
+    -}}
   {{- else if eq $current (relURL "concepts/runtime-offline/") -}}
     {{- $links = slice
       (dict "label" "Source Acquisition" "url" "/concepts/source-acquisition/")

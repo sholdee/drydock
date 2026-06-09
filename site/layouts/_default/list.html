@@ -18,6 +18,7 @@
         {{ . }}
       </div>
     {{ end }}
+    {{ partial "next-links.html" . }}
     {{ if not $isPluginPolicySection }}
       <nav class="doc-index" aria-label="Documentation pages">
         {{ range site.Menus.docs }}
