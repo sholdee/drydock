@@ -27,58 +27,128 @@ const (
 // side for diff operations. PathOrig is the left side for diff operations. Use
 // keyed struct literals; new fields may be added as drydock gains parity.
 type Config struct {
-	Path                   string
-	PathOrig               string
-	Repo                   string
-	Ref                    string
-	RefOrig                string
-	DiscoveryMode          string
-	MaxDiscoveryDepth      *int
+	// Path is the working tree to inspect for render/list operations and the
+	// right side for diff operations.
+	Path string
+	// PathOrig is the left-side working tree for diff operations when comparing
+	// two checked-out trees.
+	PathOrig string
+	// Repo is a local Git repository used with Ref or RefOrig when drydock should
+	// materialize comparison worktrees from Git refs.
+	Repo string
+	// Ref is the right-side Git ref for diff operations.
+	Ref string
+	// RefOrig is the left-side Git ref for diff operations.
+	RefOrig string
+	// DiscoveryMode selects the Application discovery strategy. Empty uses the
+	// CLI/default discovery behavior.
+	DiscoveryMode string
+	// MaxDiscoveryDepth limits recursive rendered Application discovery. Nil uses
+	// the default; a pointer to zero disables recursive depth.
+	MaxDiscoveryDepth *int
+	// DiscoverKustomizePaths adds explicit Kustomize entrypoints to rendered
+	// bootstrap discovery.
 	DiscoverKustomizePaths []string
-	Strict                 bool
+	// Strict promotes supported diagnostics that are warnings by default to
+	// operation errors.
+	Strict bool
+	// ProjectDiagnosticsMode controls AppProject-adjacent diagnostics.
 	ProjectDiagnosticsMode ProjectDiagnosticsMode
-	Offline                bool
-	RefreshCharts          bool
-	ChartCacheDir          string
-	ChartCredentials       ChartCredentials
-	RepoMaps               []RepoMap
+	// Offline disables source-network acquisition and requires local inputs,
+	// explicit repo maps, or cache hits.
+	Offline bool
+	// RefreshCharts refreshes chart cache entries instead of reusing cached
+	// charts when network acquisition is allowed.
+	RefreshCharts bool
+	// ChartCacheDir overrides the Helm chart cache root.
+	ChartCacheDir string
+	// ChartCredentials supplies credentials for chart repository acquisition.
+	ChartCredentials ChartCredentials
+	// RepoMaps map declared source repository URLs to local checkout paths.
+	RepoMaps []RepoMap
 	// Deprecated: Git, chart, and remote resource acquisition are enabled by
 	// default. Set Offline to true to disable network acquisition. Offline is
 	// authoritative when both fields are set.
-	AllowNetwork                   bool
-	GitCacheDir                    string
-	RefreshGit                     bool
-	GitCredentials                 GitCredentials
-	RefreshRemoteResources         bool
-	RemoteResourceCacheDir         string
-	RemoteResourceForbiddenRoots   []string
-	RemoteResourceCredentials      RemoteResourceCredentials
-	EnableAVPCompat                bool
-	EnablePlugins                  bool
-	PluginPolicyPath               string
-	PluginPolicyPathExplicit       bool
-	PluginPolicyRef                string
-	PluginPolicyRepo               string
-	DisablePluginPolicy            bool
-	PluginRenderer                 PluginRenderer
-	PluginTimeout                  time.Duration
-	Parallelism                    int
-	SkipKinds                      []string
-	SkipCRDs                       bool
-	SkipSecrets                    bool
+	AllowNetwork bool
+	// GitCacheDir overrides the Git source cache root.
+	GitCacheDir string
+	// RefreshGit refreshes Git cache entries instead of reusing cached checkouts
+	// when network acquisition is allowed.
+	RefreshGit bool
+	// GitCredentials supplies credentials for Git source acquisition.
+	GitCredentials GitCredentials
+	// RefreshRemoteResources refreshes remote Kustomize resource cache entries
+	// instead of reusing cached resources when network acquisition is allowed.
+	RefreshRemoteResources bool
+	// RemoteResourceCacheDir overrides the remote Kustomize resource cache root.
+	RemoteResourceCacheDir string
+	// RemoteResourceForbiddenRoots rejects remote-resource cache locations under
+	// protected roots.
+	RemoteResourceForbiddenRoots []string
+	// RemoteResourceCredentials supplies credentials for remote Kustomize HTTP
+	// resources.
+	RemoteResourceCredentials RemoteResourceCredentials
+	// EnableAVPCompat enables argocd-vault-plugin placeholder redaction
+	// compatibility without executing plugin commands.
+	EnableAVPCompat bool
+	// EnablePlugins allows trusted PluginPolicy exec or container engines to run
+	// when policy provenance matches.
+	EnablePlugins bool
+	// PluginPolicyPath points to a drydock PluginPolicy file.
+	PluginPolicyPath string
+	// PluginPolicyPathExplicit records whether PluginPolicyPath was explicitly
+	// configured by the caller.
+	PluginPolicyPathExplicit bool
+	// PluginPolicyRef is the Git ref used to load repository-local plugin policy.
+	PluginPolicyRef string
+	// PluginPolicyRepo is the repository root used to load repository-local
+	// plugin policy.
+	PluginPolicyRepo string
+	// DisablePluginPolicy disables repository-local plugin policy loading.
+	DisablePluginPolicy bool
+	// PluginRenderer injects an in-process plugin renderer for embedded callers.
+	PluginRenderer PluginRenderer
+	// PluginTimeout limits each plugin render request. Zero uses the default.
+	PluginTimeout time.Duration
+	// Parallelism limits concurrent Application rendering. Zero uses the default.
+	Parallelism int
+	// SkipKinds omits rendered resources with matching kind names.
+	SkipKinds []string
+	// SkipCRDs omits rendered CustomResourceDefinition resources.
+	SkipCRDs bool
+	// SkipSecrets omits rendered Secret resources.
+	SkipSecrets bool
+	// ApplicationSetProviderFixtures loads provider-backed ApplicationSet fixture
+	// data from files.
 	ApplicationSetProviderFixtures []string
-	ApplicationSetProviderData     ApplicationSetProviderData
-	ChangedOnly                    *bool
-	ChangedOnlyIncludes            []string
-	ChangedOnlyIgnores             []string
-	StrictChangedOnly              bool
-	Unified                        int
-	StripAttrs                     []string
-	ShowIgnoredFields              bool
-	GitAcquirer                    GitAcquirer
-	ChartAcquirer                  ChartAcquirer
-	RemoteResourceAcquirer         RemoteResourceAcquirer
-	RecordCacheEvents              bool
+	// ApplicationSetProviderData supplies provider-backed ApplicationSet fixture
+	// data directly.
+	ApplicationSetProviderData ApplicationSetProviderData
+	// ChangedOnly controls PR-focused changed-only selection. Nil uses the
+	// operation default.
+	ChangedOnly *bool
+	// ChangedOnlyIncludes adds changed-only include globs.
+	ChangedOnlyIncludes []string
+	// ChangedOnlyIgnores adds changed-only ignore globs.
+	ChangedOnlyIgnores []string
+	// StrictChangedOnly turns changed-only selection diagnostics into operation
+	// errors.
+	StrictChangedOnly bool
+	// Unified controls unified diff context lines. Zero uses the default.
+	Unified int
+	// StripAttrs removes matching manifest attributes before diffing.
+	StripAttrs []string
+	// ShowIgnoredFields includes Argo CD ignored-field differences in diffs.
+	ShowIgnoredFields bool
+	// GitAcquirer injects Git source acquisition for deterministic embedding.
+	GitAcquirer GitAcquirer
+	// ChartAcquirer injects Helm chart acquisition for deterministic embedding.
+	ChartAcquirer ChartAcquirer
+	// RemoteResourceAcquirer injects remote Kustomize resource acquisition for
+	// deterministic embedding.
+	RemoteResourceAcquirer RemoteResourceAcquirer
+	// RecordCacheEvents includes source acquisition cache events in results.
+	RecordCacheEvents bool
 }
 
 // Client runs drydock operations with a reusable Config and optional

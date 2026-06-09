@@ -15,6 +15,11 @@ client := drydock.NewClient(drydock.Config{
 result, err := client.Render(ctx)
 ```
 
+## API Reference
+
+For exported types, functions, and field-level comments, use the maintained
+[pkg.go.dev reference](https://pkg.go.dev/github.com/sholdee/drydock/pkg/drydock).
+
 ## Defaults
 
 Package-level `Render`, `ListApplications`, `DiffApplications`, and
