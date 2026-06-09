@@ -1,21 +1,16 @@
 <nav class="docs-nav">
   <p class="nav-heading">Docs</p>
   {{ $groups := slice "Start" "Workflows" "Cookbook" "Concepts" "Reference" }}
-  {{ $referencePages := slice
-    (dict "name" "Usage" "url" "docs/usage/")
-    (dict "name" "GitHub Actions" "url" "docs/github-actions/")
-    (dict "name" "Source Acquisition" "url" "docs/source-acquisition/")
-    (dict "name" "Repository Topologies" "url" "docs/topologies/")
-    (dict "name" "ApplicationSets" "url" "docs/applicationsets/")
-    (dict "name" "Plugin Policy" "url" "docs/plugin-policy/")
-    (dict "name" "Compatibility" "url" "docs/compatibility/")
-    (dict "name" "Design" "url" "docs/design/")
-    (dict "name" "Release" "url" "docs/release/")
-    (dict "name" "Documentation Index" "url" "docs/readme/")
-    (dict "name" "Live Runtime Gate" "url" "docs/reports/live-integration-design-gate/")
+  {{ $pluginPolicyPages := slice
+    (dict "name" "Overview" "url" "plugin-policy/")
+    (dict "name" "Trust And Execution" "url" "docs/plugin-policy/trust/")
+    (dict "name" "Engines" "url" "docs/plugin-policy/engines/")
+    (dict "name" "Bootstrap" "url" "docs/plugin-policy/bootstrap/")
+    (dict "name" "Cache" "url" "docs/plugin-policy/cache/")
+    (dict "name" "Schema" "url" "docs/plugin-policy/schema/")
+    (dict "name" "Examples" "url" "docs/plugin-policy/examples/")
   }}
-  {{ $referenceURL := relURL "reference/" }}
-  {{ $isReferenceContext := or (eq $.Section "docs") (eq $.RelPermalink $referenceURL) }}
+  {{ $isPluginPolicyContext := or (in $.RelPermalink "/plugin-policy/") (in $.RelPermalink "/docs/plugin-policy/") }}
   {{ range $group := $groups }}
     <div class="nav-section">
       <p class="nav-section-heading">{{ $group }}</p>
@@ -23,37 +18,23 @@
         {{ range site.Menus.docs }}
           {{ if eq (.Params.group | default "Reference") $group }}
             {{- $entryURL := relURL .URL -}}
-            {{- $active := eq $entryURL $.RelPermalink -}}
+            {{- $active := or (eq $entryURL $.RelPermalink) (and (eq .Name "Plugin Policy") $isPluginPolicyContext) -}}
             <li>
-              {{ if and (eq $group "Reference") (eq .Name "Reference") }}
-                <div class="nav-reference-row">
-                  <a href="{{ $entryURL }}"{{ if or $active $isReferenceContext }} class="is-active"{{ end }}{{ if $active }} aria-current="page"{{ end }}>
-                    {{ .Name }}
-                  </a>
-                  <button
-                    type="button"
-                    class="nav-reference-toggle"
-                    aria-label="Toggle reference index"
-                    aria-controls="nav-reference-index"
-                    aria-expanded="{{ if $isReferenceContext }}true{{ else }}false{{ end }}"
-                    data-reference-context="{{ if $isReferenceContext }}true{{ else }}false{{ end }}"
-                  ></button>
-                </div>
-                <ul id="nav-reference-index" class="nav-reference-index"{{ if not $isReferenceContext }} hidden{{ end }}>
-                  {{ range $referencePages }}
-                    {{- $referenceEntryURL := relURL .url -}}
-                    {{- $referenceActive := eq $referenceEntryURL $.RelPermalink -}}
+              <a href="{{ $entryURL }}"{{ if $active }} class="is-active"{{ end }}{{ if eq $entryURL $.RelPermalink }} aria-current="page"{{ end }}>
+                {{ .Name }}
+              </a>
+              {{ if and (eq .Name "Plugin Policy") $isPluginPolicyContext }}
+                <ul class="nav-section-children">
+                  {{ range $pluginPolicyPages }}
+                    {{- $childURL := relURL .url -}}
+                    {{- $childActive := eq $childURL $.RelPermalink -}}
                     <li>
-                      <a href="{{ $referenceEntryURL }}"{{ if $referenceActive }} class="is-active" aria-current="page"{{ end }}>
+                      <a href="{{ $childURL }}"{{ if $childActive }} class="is-active" aria-current="page"{{ end }}>
                         {{ .name }}
                       </a>
                     </li>
                   {{ end }}
                 </ul>
-              {{ else }}
-                <a href="{{ $entryURL }}"{{ if $active }} class="is-active" aria-current="page"{{ end }}>
-                  {{ .Name }}
-                </a>
               {{ end }}
             </li>
           {{ end }}

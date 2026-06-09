@@ -1,6 +1,4 @@
----
-title: Release And Upgrade Notes
----
+# Release And Upgrade Notes
 
 `drydock` is a single static Go binary and embeddable Go module. Release
 artifacts should preserve the runtime-offline core contract: render and diff

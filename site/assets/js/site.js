@@ -4,10 +4,6 @@ document.addEventListener("DOMContentLoaded", () => {
     initSearch(searchForm);
   }
 
-  document.querySelectorAll(".nav-reference-toggle").forEach((button) => {
-    initNavReferenceToggle(button);
-  });
-
   const sidebar = document.querySelector(".site-sidebar");
   if (sidebar) {
     initSidebarPersistence(sidebar);
@@ -354,36 +350,6 @@ function wrapTextRanges(root, ranges, className) {
 
     textNode.replaceWith(fragment);
   });
-}
-
-function initNavReferenceToggle(button) {
-  const storageKey = "drydock.nav.reference.expanded";
-  const targetID = button.getAttribute("aria-controls");
-  if (!targetID) {
-    return;
-  }
-  const target = document.getElementById(targetID);
-  if (!target) {
-    return;
-  }
-
-  const referenceContext = button.dataset.referenceContext === "true";
-  const storedExpanded = referenceContext ? null : storageGet("localStorage", storageKey);
-  if (storedExpanded !== null) {
-    setNavReferenceExpanded(button, target, storedExpanded === "true");
-  }
-
-  button.addEventListener("click", () => {
-    const expanded = button.getAttribute("aria-expanded") === "true";
-    const nextExpanded = !expanded;
-    setNavReferenceExpanded(button, target, nextExpanded);
-    storageSet("localStorage", storageKey, String(nextExpanded));
-  });
-}
-
-function setNavReferenceExpanded(button, target, expanded) {
-  button.setAttribute("aria-expanded", expanded ? "true" : "false");
-  target.hidden = !expanded;
 }
 
 function initSidebarPersistence(sidebar) {

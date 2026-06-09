@@ -55,4 +55,4 @@ Use `--show-ignored-fields` to inspect default ignored fields, and
 `--strip-attr` for extra label or annotation noise.
 
 For symptom-based routing, see [Troubleshooting](/troubleshooting/). For full
-command behavior, see the [usage guide](/docs/usage/).
+command behavior, see the [reference hub](/reference/).

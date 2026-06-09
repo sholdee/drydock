@@ -1,14 +1,15 @@
 ---
 title: Compatibility
+aliases:
+  - /docs/compatibility/
 ---
 
 drydock analyzes Argo CD desired state without a running Argo CD instance or
 Kubernetes cluster. It can still fetch declared Git, Helm, OCI, and remote
 Kustomize sources unless `--offline` is set.
 
-Use this page to quickly judge whether drydock fits your repository shape. Use
-the canonical [Argo CD compatibility notes](/docs/compatibility/) for exact
-behavior, edge cases, and regression expectations.
+Use this page to quickly judge whether drydock fits your repository shape and
+which boundaries are intentionally runtime-offline.
 
 ## Status Legend
 
@@ -60,7 +61,7 @@ generators are fixture-backed so CI can validate generated output without
 calling live provider APIs.
 
 See [ApplicationSet support](/docs/applicationsets/) and
-[repository topologies](/docs/topologies/).
+[repository topologies](/concepts/topologies/).
 
 ### Sources and rendering
 
@@ -76,7 +77,7 @@ portable, and reproducible.
 Covered rendering semantics are validated against real Argo CD through the
 [render parity smoke](/concepts/argocd-render-parity/).
 
-See [source acquisition](/docs/source-acquisition/),
+See [source acquisition](/concepts/source-acquisition/),
 [runtime-offline design](/concepts/runtime-offline/), and
 [Argo CD render parity](/concepts/argocd-render-parity/).
 
@@ -93,8 +94,7 @@ disabled by static discovery mode, are not disabled by
 `--max-discovery-depth 0`, and require trusted static discovery for the
 referenced plugin.
 
-See [plugin policy](/plugin-policy/) and
-[plugin policy reference](/docs/plugin-policy/).
+See [plugin policy](/plugin-policy/).
 
 ### Diffs, images, diagnostics, and settings
 

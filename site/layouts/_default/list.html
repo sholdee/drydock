@@ -1,4 +1,5 @@
 {{ define "main" }}
+  {{- $isPluginPolicySection := eq .RelPermalink (relURL "plugin-policy/") -}}
   <article class="doc-page">
     <header class="doc-header">
       <p class="section-label">Documentation</p>
@@ -7,19 +8,27 @@
         <p class="lead">{{ . }}</p>
       {{ end }}
     </header>
+    {{ if gt (len .Fragments.Headings) 0 }}
+      <aside class="site-toc-inline" aria-label="Page table of contents">
+        {{ partial "toc.html" (dict "page" . "id" "TableOfContentsInline") }}
+      </aside>
+    {{ end }}
     {{ with .Content }}
       <div class="doc-content">
         {{ . }}
       </div>
     {{ end }}
-    <nav class="doc-index" aria-label="Documentation pages">
-      {{ range site.Menus.docs }}
-        {{ if ne .URL "/" }}
-          <a href="{{ relURL .URL }}">
-            <span>{{ .Name }}</span>
-          </a>
+    {{ partial "next-links.html" . }}
+    {{ if not $isPluginPolicySection }}
+      <nav class="doc-index" aria-label="Documentation pages">
+        {{ range site.Menus.docs }}
+          {{ if ne .URL "/" }}
+            <a href="{{ relURL .URL }}">
+              <span>{{ .Name }}</span>
+            </a>
+          {{ end }}
         {{ end }}
-      {{ end }}
-    </nav>
+      </nav>
+    {{ end }}
   </article>
 {{ end }}

@@ -1,6 +1,4 @@
----
-title: drydock Design
----
+# drydock Design
 
 `drydock` is an independent Go CLI and embeddable library for Argo CD GitOps
 repository analysis. It discovers Argo CD Applications, renders desired
@@ -116,7 +114,7 @@ diff path.
 
 ApplicationSet support is deterministic and local. Git, list, matrix, merge,
 and fixture-backed provider generators are documented in
-`docs/applicationsets.md`.
+`site/content/docs/applicationsets.md`.
 
 Unsupported generators or unsupported fields produce diagnostics. Non-strict
 commands keep supported Applications where possible; `--strict` promotes those
@@ -136,7 +134,7 @@ the same resource identity inside one Application, the later source wins and a
 repeated-resource diagnostic is emitted.
 
 Repository resolution and cache behavior are documented in
-`docs/source-acquisition.md`. Important invariants:
+`site/content/concepts/source-acquisition.md`. Important invariants:
 
 - `--repo-map URL=PATH` wins over local source fallback and network fetching.
 - PR diff roots are authoritative for mapped repositories.
@@ -165,7 +163,7 @@ Supported render paths:
   overrides, explicitly enabled exec/container CMP compatibility, and
   plugin-rendered bootstrap discovery. Policy provenance, schema, supported
   engines, and command security controls are owned by
-  `docs/plugin-policy.md`.
+  `site/content/docs/plugin-policy/`.
 - Deterministic in-process plugin renderers supplied by embedding callers.
 
 The default CLI and default Go client fail closed for other config management

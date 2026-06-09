@@ -21,6 +21,15 @@ Use `-o` or `--output` to select the format supported by each command:
 diffs, and removed-only image changes print no names while still counting as a
 diff for exit-code behavior.
 
+Diagnostics remain on stderr for unified, JSON, YAML, and name output so stdout
+stays parseable. Markdown manifest diff output embeds successful diagnostics in
+the generated report because the markdown document is the review surface.
+
+`test apps` text output prints `PASS`, `FAIL`, or `SKIPPED` status lines. When
+stdout and stderr are terminals, status lines stream as Applications complete
+and stderr shows an in-place progress counter. Redirected text output stays
+plain and buffered.
+
 ## Diff Controls
 
 Unified manifest and image diffs support terminal color with
@@ -49,6 +58,10 @@ drydock diff apps \
 Markdown remains the PR-comment stdout format. `--html-output-file` writes an
 additional HTML file with the same standalone review view.
 
+Manifest markdown includes a summary plus expandable per-Application rendered
+manifest patches. Image markdown is a companion view for scanning rendered
+image reference changes and omits unchanged images by default.
+
 ## Exit Codes
 
 Diff commands use fixed exit codes:
@@ -62,5 +75,5 @@ Diff commands use fixed exit codes:
 Use `--exit-code=false` for local inspection when a diff should not fail the
 command.
 
-For the full command reference, see the [CLI usage guide](/docs/usage/). For
-action outputs and PR comment controls, see the [GitHub Actions guide](/docs/github-actions/).
+For related operator guides, see the [reference hub](/reference/). For action
+outputs and PR comment controls, see the [GitHub Actions guide](/workflows/github-actions/).

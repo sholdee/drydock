@@ -2,36 +2,34 @@
 title: ApplicationSet Reference
 ---
 
-`drydock` expands a deterministic local subset of Argo CD `ApplicationSet`
+drydock expands a deterministic local subset of Argo CD `ApplicationSet`
 generators. Unsupported generators emit diagnostics; non-strict commands keep
-supported generated Applications, while `--strict` promotes those diagnostics
-to errors.
+supported generated Applications, while `--strict` promotes those diagnostics to
+errors.
 
-Provider-backed generators are fixture-backed only. The CLI never contacts
+Provider-backed generators are fixture-backed only. drydock does not contact
 Kubernetes, Argo CD, SCM provider, pull-request, cloud, or plugin-service APIs
-for ApplicationSet generation.
+while generating Applications.
 
 ## Supported Generators
 
-Supported local generators:
+| Generator | Support |
+| --- | --- |
+| Git directories | Native. Matches are sorted by normalized relative path. |
+| Git files | Native. YAML and JSON mapping documents are decoded into params. |
+| List | Native, including `elementsYaml`. |
+| Matrix | Native for two child generators, including interpolated child params. |
+| Merge | Native for two or more child generators over `mergeKeys`. |
+| Provider-backed generators | Fixture-backed for clusters, clusterDecisionResource, SCM provider, pull requests, and plugin generators. |
 
-- Git directories
-- Git files
-- List, including `elementsYaml`
-- Matrix
-- Merge
-- Fixture-backed provider generators for clusters, clusterDecisionResource,
-  SCM provider, pull requests, and plugin generators
-
-Supported template behavior:
+Supported ApplicationSet behavior includes:
 
 - `spec.goTemplate: true`
 - `spec.goTemplateOptions`, including `missingkey=error`
-- `spec.templatePatch` rendered from generator params, strategic-merge-applied
-  to the generated `Application`, with `spec.project` preserved
-- Sprig-compatible functions used by Argo CD, including `regexReplaceAll`
-- generator-level selectors
-- generator-level template overrides
+- generator-level selectors and template overrides
+- `spec.templatePatch` rendered from generator params and strategic-merge-applied
+  to generated Applications, with `spec.project` preserved
+- Sprig-compatible template functions used by Argo CD
 - generated `Application.metadata.namespace` set to the ApplicationSet
   namespace
 - Argo CD's default generated Application finalizer where applicable
@@ -40,13 +38,14 @@ Supported template behavior:
 
 ## Git Generators
 
-Git directories and Git files matches are sorted by normalized relative path.
-Include and exclude patterns are deterministic, and `exclude: true` removes a
-path even when another pattern includes it.
+Git directory and file matches are sorted by normalized relative path. Include
+and exclude patterns are deterministic, and `exclude: true` removes a path even
+when another pattern includes it.
+
 When a Git generator defines both `directories` and `files`, Argo CD's
 directory-first dispatch is used and `files` are ignored.
 
-Git files must remain under the repository root and must not traverse symlinks.
+Git files must stay under the repository root and must not traverse symlinks.
 YAML and JSON files may decode to a mapping document, an array of mapping
 documents, an empty mapping, or an empty file. Scalars, invalid YAML/JSON, and
 arrays with non-mapping entries produce diagnostics.
@@ -64,8 +63,8 @@ ApplicationSet declares `revision: master`.
 
 List generators support `elements` and `elementsYaml`. For non-Go-template
 ApplicationSets, `elements` scalar fields must be strings and nested `values`
-are flattened to `values.<key>`. `elementsYaml` is kept unflattened so
-matrix-interpolated YAML follows Argo CD's behavior.
+are flattened to `values.<key>`. `elementsYaml` stays unflattened so
+matrix-interpolated YAML follows Argo CD behavior.
 
 Matrix generators combine exactly two child generators and interpolate the
 second child from first-child params, including templated `elementsYaml`.
@@ -79,8 +78,8 @@ the Argo CD v3 nested JSON API permits them.
 
 ## Provider Fixtures
 
-Provider-backed generators use explicit local fixture files supplied with the
-repeatable `--appset-provider-fixture` flag:
+Use the repeatable `--appset-provider-fixture` flag to provide deterministic
+local data for provider-backed generators:
 
 ```bash
 drydock get apps --path . --appset-provider-fixture fixtures/appset-providers.yaml
@@ -89,12 +88,10 @@ drydock diff apps --path . --path-orig ../base --appset-provider-fixture fixture
 
 Fixture files are strict YAML or JSON documents. Unknown fields, duplicate
 identities, URL-like fixture paths, and malformed files produce
-`appset.provider-fixture-invalid`. If fixtures are supplied but no entries
-match a provider generator, drydock emits `appset.provider-no-match`. Filters
-that cannot be evaluated from fixture data fail closed with
+`appset.provider-fixture-invalid`. If fixtures are supplied but no entries match
+a provider generator, drydock emits `appset.provider-no-match`. Filters that
+cannot be evaluated from fixture data fail closed with
 `appset.provider-unsupported-filter`.
-
-### Fixture Schema
 
 ```yaml
 clusters:
@@ -124,6 +121,8 @@ clusterDecisions:
 scmRepositories:
   - provider: github
     organization: example-org
+    project: platform
+    region: us-east-1
     repository: example-repo
     repositoryID: repo-123
     branch: main
@@ -131,6 +130,8 @@ scmRepositories:
     url: https://github.com/example-org/example-repo
     labels:
       - ops
+    tags:
+      owner: platform
     paths:
       - deploy/app.yaml
     values:
@@ -139,6 +140,7 @@ scmRepositories:
 pullRequests:
   - provider: github
     organization: example-org
+    project: platform
     repository: example-repo
     number: 42
     title: Update chart
@@ -146,6 +148,7 @@ pullRequests:
     targetBranch: main
     headSHA: abcdef1234567890
     author: renovate
+    state: open
     labels:
       - dependencies
     values:

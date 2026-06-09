@@ -1,6 +1,4 @@
----
-title: Agent Reference
----
+# Agent Reference
 
 This file contains task-specific drydock agent guidance. Read `AGENTS.md`
 first; load this file only for the sections relevant to the work in front of
@@ -20,8 +18,8 @@ Canonical references:
 - `internal/requestopts` for shared option parsing.
 - `pkg/drydock` for the public embedding API.
 - `docs/design.md` for architecture and behavior contracts.
-- `docs/plugin-policy.md` for trusted plugin policy provenance, schema,
-  bootstrap discovery, and command security controls.
+- `site/content/docs/plugin-policy/` for trusted plugin policy provenance,
+  schema, bootstrap discovery, and command security controls.
 
 Current command groups are:
 
@@ -62,12 +60,41 @@ provenance matches `engine: exec` or `engine: container` and the caller
 explicitly sets `--enable-plugins`. Discovered Argo CD CMP definitions that
 normalize to a safe `kustomize build` command may be interpreted through
 drydock's native Kustomize renderer without shelling out. Other native engines
-must remain narrow, in-process compatibility paths with fail-closed validators. Keep
-detailed policy behavior in `docs/plugin-policy.md`. Public API plugin
-rendering is allowed only through explicit in-process `Config.PluginRenderer`
-or registry injection. Preserve `plugin.unsupported`, `plugin.failed`, and
-`plugin.unspecified` diagnostics, and do not reclassify caller cancellation as
-plugin timeout.
+must remain narrow, in-process compatibility paths with fail-closed validators.
+Keep detailed policy behavior in `site/content/docs/plugin-policy/`. Public
+API plugin rendering is allowed only through explicit in-process
+`Config.PluginRenderer` or registry injection. Preserve `plugin.unsupported`,
+`plugin.failed`, and `plugin.unspecified` diagnostics, and do not reclassify
+caller cancellation as plugin timeout.
+
+## Validation, Benchmarks, And Profiling
+
+Run the normal local verification suite before merging:
+
+```bash
+go test ./...
+go vet ./...
+golangci-lint run --allow-parallel-runners
+git diff --check main..HEAD
+```
+
+Run render and ApplicationSet benchmarks when changing discovery, rendering,
+ApplicationSet expansion, cache event recording, or diagnostics on hot paths:
+
+```bash
+go test ./internal/app -run '^$' -bench 'BenchmarkOrchestrator(BuildManyLocalApplications|ExpandApplicationSetList)' -benchmem -count=1
+```
+
+Benchmark numbers are trend signals, not hard pass/fail thresholds.
+
+Advanced profiling flags are available in release binaries and `go run` builds
+for maintainers diagnosing real repository performance:
+
+```bash
+drydock --profile cpu --profile-out ./drydock-profiles test apps --path .
+drydock --profile trace --profile-out ./drydock-profiles diff apps --path . --ref-orig main
+drydock --profile mem --profile-out ./drydock-profiles get images --path .
+```
 
 ## Settings And Project Discovery
 

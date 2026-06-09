@@ -11,5 +11,5 @@ Short command recipes for common drydock operations.
 - [Generated Applications](generated-apps/)
 - [Troubleshooting renders](troubleshooting-renders/)
 
-For the full CLI reference, use the [usage guide](/docs/usage/). For choosing
+For related operator guides, use the [reference hub](/reference/). For choosing
 commands by repository layout, use [repository topologies](/concepts/topologies/).

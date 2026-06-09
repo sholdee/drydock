@@ -1,6 +1,4 @@
----
-title: Argo CD Compatibility Notes
----
+# Argo CD Compatibility Notes
 
 `drydock` tracks Argo CD compatibility for runtime-offline desired-state
 analysis. Default commands discover, render, test, diff, inspect images, and
@@ -105,7 +103,8 @@ Not supported:
   service API calls for ApplicationSet generation.
 - Unsupported generators without diagnostics.
 
-See `docs/applicationsets.md` for generator details and fixture schema.
+See `site/content/docs/applicationsets.md` for generator details and fixture
+schema.
 
 ## Sources And Acquisition
 
@@ -148,7 +147,8 @@ Important boundaries:
 - Cache lifecycle commands are local filesystem operations only; they do not
   render, fetch, read credential flags, or retry failed acquisitions.
 
-See `docs/source-acquisition.md` for cache, auth, and remote source details.
+See `site/content/concepts/source-acquisition.md` for cache, auth, and remote
+source details.
 
 ## Rendering
 
@@ -226,8 +226,8 @@ Not supported:
   parameters, or Application plugin env for policy-backed native engines.
 - Plugin credential injection.
 
-See `docs/plugin-policy.md` for trusted policy provenance, supported engines,
-schema, and command security controls.
+See `site/content/docs/plugin-policy/` for trusted policy provenance, supported
+engines, schema, and command security controls.
 
 ## Diff, Images, And Output
 

@@ -36,8 +36,10 @@ renderers require an approved design update first.
 - `docs/README.md`: documentation ownership map.
 - `docs/design.md`: product architecture and behavior model.
 - `docs/compatibility.md`: supported Argo CD behavior and runtime boundary.
-- `docs/source-acquisition.md`: Git, Helm, remote Kustomize, cache, and auth.
-- `docs/plugin-policy.md`: trusted plugin policy and opt-in exec rendering.
+- `site/content/concepts/source-acquisition.md`: Git, Helm, remote Kustomize,
+  cache, and auth.
+- `site/content/docs/plugin-policy/`: trusted plugin policy and opt-in exec
+  rendering.
 - `docs/reports/live-integration-design-gate.md`: required before proposing
   live runtime, server-side diff, defaulting, admission, or managed-fields work.
 - `site/`: Hugo docs site source and curated operator-facing pages.
@@ -104,10 +106,10 @@ when the user-facing task requires it.
 | CLI flags, output, exit codes | `internal/cli`, `internal/requestopts` |
 | Public Go API | `pkg/drydock`, then matching `internal/app` request types |
 | Discovery and Argo settings | `internal/discovery`, `internal/config` |
-| ApplicationSet generation | `docs/applicationsets.md`, then `internal/appset` |
+| ApplicationSet generation | `site/content/docs/applicationsets.md`, then `internal/appset` |
 | Application planning and orchestration | `internal/app` |
 | Kustomize, Helm, directory rendering | `internal/render` |
-| Git, chart, remote acquisition | `docs/source-acquisition.md`, then `internal/source`, `internal/chart`, `internal/remote`, `internal/acquisition` |
+| Git, chart, remote acquisition | `site/content/concepts/source-acquisition.md`, then `internal/source`, `internal/chart`, `internal/remote`, `internal/acquisition` |
 | Manifest diffs and image extraction | `internal/diff`, `internal/manifest` |
 | Cache lifecycle and cache events | `internal/cache`, `internal/cacheevent`, `internal/cli/cache.go` |
 | Path containment and symlink rules | `internal/pathsafety`, then caller-specific checks |

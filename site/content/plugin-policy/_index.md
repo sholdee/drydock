@@ -1,5 +1,7 @@
 ---
 title: Plugin Policy
+aliases:
+  - /docs/plugin-policy/
 ---
 
 drydock plugin policy is the trusted, drydock-specific gate for config
@@ -10,6 +12,19 @@ arbitrary discovered commands safe to execute.
 Operators usually do not need policy for Kustomize wrapper plugins. If drydock
 discovers a config management plugin command that safely normalizes to
 `kustomize build`, it uses the native Kustomize renderer without shelling out.
+
+## Start Here
+
+- Need to run a trusted plugin command? Use
+  [Trust and Command Execution](/docs/plugin-policy/trust/).
+- Choosing between native, exec, and container engines? Use
+  [Engines](/docs/plugin-policy/engines/).
+- Need plugin-rendered bootstrap Applications or ApplicationSets? Use
+  [Bootstrap Entrypoints](/docs/plugin-policy/bootstrap/).
+- Need Docker package or tool caches? Use
+  [Container Plugin Caches](/docs/plugin-policy/cache/).
+- Need field names and defaults? Use [Schema](/docs/plugin-policy/schema/).
+- Need working YAML? Use [Examples](/docs/plugin-policy/examples/).
 
 ## Use Policy For
 
@@ -64,6 +79,11 @@ plugin-rendered output contains Argo CD `Application` or `ApplicationSet`
 objects. Static discovery mode disables them; `--max-discovery-depth 0` does
 not. Each entrypoint must match trusted static discovery for its plugin.
 
-For schema, provenance rules, native engines, command execution controls, and
-bootstrap details, see the canonical
-[plugin policy guide](/docs/plugin-policy/).
+## Detailed Reference
+
+- [Trust and command execution](/docs/plugin-policy/trust/)
+- [Engines](/docs/plugin-policy/engines/)
+- [Bootstrap entrypoints](/docs/plugin-policy/bootstrap/)
+- [Container plugin caches](/docs/plugin-policy/cache/)
+- [Schema and CMP descriptors](/docs/plugin-policy/schema/)
+- [Examples](/docs/plugin-policy/examples/)

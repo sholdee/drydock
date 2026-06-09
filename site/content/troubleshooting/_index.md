@@ -89,5 +89,5 @@ drydock diff images --repo . --ref HEAD --ref-orig main -o markdown
 For sensitive or noisy resource classes, use explicit filters such as
 `--skip-secrets`, `--skip-crds`, or repeatable `--strip-attr KEY`.
 
-For deeper reference, see the [CLI usage guide](/docs/usage/), [Compatibility](/compatibility/),
+For deeper reference, see the [reference hub](/reference/), [Compatibility](/compatibility/),
 and [Source acquisition](/concepts/source-acquisition/).

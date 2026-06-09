@@ -32,6 +32,10 @@ drydock diff images --repo . --ref HEAD --ref-orig main
 snapshot, and `--ref` selects the current snapshot. Top-level remote `--repo`
 URLs are not supported.
 
+`--path . --ref-orig main` compares the current working tree, including tracked
+uncommitted changes, against committed `main`. `--repo . --ref feature
+--ref-orig main` compares committed refs only.
+
 ## Useful Diff Flags
 
 - `--changed-only=false` renders all discovered Applications.
@@ -43,9 +47,85 @@ URLs are not supported.
 - `--show-ignored-fields` shows drydock default ignored metadata fields.
 - `--exit-code=false` keeps the command successful when differences exist.
 
-Changed-only filters are repository-relative and repeatable. They are useful
-when local commits include known non-GitOps files, but they should stay narrow:
+Changed-only filters are repository-relative, slash-normalized, and
+repeatable. When no include globs are set, every changed path is considered.
+Ignore globs remove paths after include filtering, so ignore wins.
+
+If filtering removes every changed path, the diff is empty and no Applications
+render. `--strict-changed-only` applies only to the remaining considered paths.
+Keep broad ignores out of plugin-heavy or unconventional repositories, because
 ignored files cannot trigger an Application render.
+
+`diff app` selects one requested Application directly in each tree and does not
+use changed-only Git path filtering. If the Application exists only in current,
+the diff shows additions; if it exists only in baseline, the diff shows
+deletions.
+
+## Manifest Diff Semantics
+
+Manifest diffs hide common Helm-rendered metadata noise by default:
+
+- `metadata.labels.helm.sh/chart`
+- `metadata.labels.chart`
+- `metadata.labels.app.kubernetes.io/version`
+- `spec.template.metadata.labels.helm.sh/chart`
+- `spec.template.metadata.labels.chart`
+- `spec.template.metadata.labels.app.kubernetes.io/version`
+- `spec.template.metadata.annotations.checksum/*`
+
+Use `--show-ignored-fields` on `diff apps` or `diff app` to include these
+drydock-default ignored fields again. This flag does not disable Argo CD
+`ignoreDifferences`, compare options, or explicit `--strip-attr` filters.
+
+Use repeatable `--strip-attr KEY` to remove matching keys from
+`metadata.labels` and `metadata.annotations` before comparing rendered
+manifests:
+
+```bash
+drydock diff apps \
+  --path-orig ../base \
+  --path ./current \
+  --strip-attr helm.sh/chart \
+  --strip-attr app.kubernetes.io/version
+```
+
+Application-level `spec.ignoreDifferences[]` rules and global
+`resource.customizations.ignoreDifferences.*` settings are honored for rendered
+resource diffs. Supported ignore fields are `jsonPointers`,
+`jqPathExpressions`, and `managedFieldsManagers`. When a matching resource
+exists on both sides, drydock applies the union of matching Application-local
+and global settings from the baseline and current trees.
+
+By default status is ignored for all resources. Use
+`ignoreResourceStatusField: none`, `off`, or `false` in discovered Argo CD
+compare options when rendered status fields should remain visible in PR diffs.
+
+Rendered-resource filters run before diff comparison. Argo CD core exclusions
+and discovered `resource.exclusions`/`resource.inclusions` are applied
+automatically. Omit CRDs and Secrets from a pull request diff with:
+
+```bash
+drydock diff apps \
+  --path-orig ../base \
+  --path ./current \
+  --skip-crds \
+  --skip-secrets
+```
+
+## Image Diff Semantics
+
+`diff images` projects image references from rendered manifests. The projection
+includes PodSpec container images plus scalar manifest fields whose key is
+exactly `image`.
+
+It does not scan arbitrary string content, Secret manifests, top-level
+metadata/status, or ConfigMap data payloads. Use `-o name` to print
+current-only added image references, one per line. Removed-only image changes
+print no names but still return the diff exit code unless `--exit-code=false`
+is set.
+
+`diff images` uses the same changed-only defaults and path filters as
+`diff apps`.
 
 ## Markdown For Pull Request Comments
 
@@ -85,5 +165,5 @@ Image markdown is a companion view for scanning rendered image reference
 changes. It omits unchanged images by default so the comment stays focused on
 added and removed references.
 
-For the full diff behavior, output formats, ignore rules, and exit codes, see
-the [CLI usage guide](/docs/usage/).
+For output formats and exit codes, see [Output controls](/workflows/output/).
+For command behavior outside diffs, see the [CLI Reference](/reference/cli/).

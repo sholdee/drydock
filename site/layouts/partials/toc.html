@@ -1,6 +1,12 @@
-{{- with .Fragments.Headings -}}
+{{- $page := .page -}}
+{{- $tocID := .id | default "TableOfContents" -}}
+{{- with $page.Fragments.Headings -}}
   <div class="toc-panel">
     <p class="nav-heading">On This Page</p>
-    {{ $.TableOfContents }}
+    {{- $toc := $page.TableOfContents -}}
+    {{- if ne $tocID "TableOfContents" -}}
+      {{- $toc = replace $toc `id="TableOfContents"` (printf `id="%s"` $tocID) -}}
+    {{- end -}}
+    {{ $toc | safeHTML }}
   </div>
 {{- end -}}

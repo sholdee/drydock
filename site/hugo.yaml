@@ -98,16 +98,26 @@ menus:
       params:
         group: Reference
       weight: 90
+    - name: CLI Reference
+      url: /reference/cli/
+      params:
+        group: Reference
+      weight: 92
+    - name: ApplicationSets
+      url: /docs/applicationsets/
+      params:
+        group: Reference
+      weight: 95
     - name: Plugin Policy
       url: /plugin-policy/
       params:
         group: Reference
       weight: 100
-    - name: Reference
-      url: /reference/
+    - name: Go API
+      url: /reference/go-api/
       params:
         group: Reference
-      weight: 110
+      weight: 105
 
 markup:
   tableOfContents:
@@ -121,8 +131,6 @@ module:
   mounts:
     - source: content
       target: content
-    - source: ../docs
-      target: content/docs
     - source: layouts
       target: layouts
     - source: assets

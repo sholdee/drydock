@@ -41,5 +41,5 @@ drydock get apps --path . --max-discovery-depth 0
 
 Use static discovery when only committed Argo CD objects should be considered.
 
-Details live in [repository topologies](/docs/topologies/) and the
+Details live in [repository topologies](/concepts/topologies/) and the
 [ApplicationSet reference](/docs/applicationsets/).

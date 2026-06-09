@@ -58,5 +58,5 @@ Path filters are explicit command or workflow policy. Keep filters narrow in
 repositories that use plugins or unusual generation paths, because an ignored
 file is no longer eligible to trigger a render.
 
-For detailed diff semantics and exit codes, see the [CLI usage guide](/docs/usage/)
-and [compatibility notes](/docs/compatibility/).
+For diff outputs and exit codes, see [Output controls](/workflows/output/) and
+[Compatibility](/compatibility/).
