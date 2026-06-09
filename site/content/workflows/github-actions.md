@@ -98,7 +98,7 @@ jobs:
     steps:
       - uses: sholdee/drydock/pr-action@main
         with:
-          version: v0.1.12
+          version: vX.Y.Z
           comment-mode: both
           skip-secrets: "true"
           changed-only-include: |
