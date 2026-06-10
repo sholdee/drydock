@@ -1,5 +1,45 @@
 # Changelog
 
+## [0.1.20](https://github.com/sholdee/drydock/compare/v0.1.19...v0.1.20) (2026-06-10)
+
+
+### Features
+
+* add plugin policy onboarding ([73aa4ec](https://github.com/sholdee/drydock/commit/73aa4ecbd4d55ce9c47f27d34f5e6d7f7fcd76fe))
+* add plugin policy onboarding ([01e2348](https://github.com/sholdee/drydock/commit/01e2348e53aae7d53beec82cf3ff8b1da2deef14))
+* default avp compatibility for plugin sources ([024cbaf](https://github.com/sholdee/drydock/commit/024cbaf10aeae7cecf96970f44e1112f6890e145))
+* infer native plugin policy engines ([54cd073](https://github.com/sholdee/drydock/commit/54cd0734a262f1462e85c5418af7aa14eb3807ac))
+
+
+### Bug Fixes
+
+* **deps:** update module golang.org/x/crypto to v0.53.0 ([#121](https://github.com/sholdee/drydock/issues/121)) ([5c08df0](https://github.com/sholdee/drydock/commit/5c08df0a42bfe6bb348d60321e1e30db701c208d))
+
+
+### Documentation
+
+* clarify plugin policy onboarding ([842059c](https://github.com/sholdee/drydock/commit/842059ce56a64457d20919b089b88bf9a48d4eb2))
+* consolidate applicationset reference ([bb5ac89](https://github.com/sholdee/drydock/commit/bb5ac89612293b94b0667724292b82080edebce2))
+* consolidate github actions reference ([3afb243](https://github.com/sholdee/drydock/commit/3afb243f5cf2c461151bd7638bf13ee96d594393))
+* consolidate reference documentation ([c64f644](https://github.com/sholdee/drydock/commit/c64f64430ca07eef3f1f8e84cb7ea482e1503f20))
+* consolidate source acquisition reference ([6994709](https://github.com/sholdee/drydock/commit/6994709a35f2f6be80bb89b4460b3c7acc7e34de))
+* consolidate topology reference ([13a48cc](https://github.com/sholdee/drydock/commit/13a48cca98c7c973f8fedb0881b1895f5431ae7d))
+* consolidate usage reference ([c0c471b](https://github.com/sholdee/drydock/commit/c0c471b03b35295c05b57d5cd4c0e29dbd0ee875))
+* improve docs code block highlighting ([#125](https://github.com/sholdee/drydock/issues/125)) ([017d3bb](https://github.com/sholdee/drydock/commit/017d3bb51799f44d319d9a6c298e9f8299e3275b))
+* link maintained go api reference ([f9a6928](https://github.com/sholdee/drydock/commit/f9a6928fe9b7dc5b68eddfd43fb2daec69a336ef))
+* normalize maintainer doc headings ([84f2eff](https://github.com/sholdee/drydock/commit/84f2eff70ed663a50bf52d5afe0f920e8af8bbb3))
+* port docs header github card ([#124](https://github.com/sholdee/drydock/issues/124)) ([93615f1](https://github.com/sholdee/drydock/commit/93615f12896cb03fba2b70ed73bdae872b881b56))
+* publish curated site reference ([560dade](https://github.com/sholdee/drydock/commit/560dade79641a4ad06f515f508a4069db01ac57e))
+* show list page next links ([caee47a](https://github.com/sholdee/drydock/commit/caee47a4f13d2eaffc30d91ff40427a41ed6c841))
+* simplify reference navigation ([cb102d7](https://github.com/sholdee/drydock/commit/cb102d73845d947e1c653f6229f780bc31622757))
+* use placeholder pr action version ([10680ea](https://github.com/sholdee/drydock/commit/10680eaacf1a35d478b05b6a610e8e6e1a205bbb))
+
+
+### Miscellaneous Chores
+
+* **deps:** update golang:1.26.4 docker digest to 11fd8f7 ([#130](https://github.com/sholdee/drydock/issues/130)) ([5ae2b9c](https://github.com/sholdee/drydock/commit/5ae2b9cdd0df06709e8f911ac61d01fe77742851))
+* migrate yaml parser to v3 ([#128](https://github.com/sholdee/drydock/issues/128)) ([d1bfa82](https://github.com/sholdee/drydock/commit/d1bfa82aad66814ff7b558bd40556270ab00834a))
+
 ## [0.1.19](https://github.com/sholdee/drydock/compare/v0.1.18...v0.1.19) (2026-06-08)
 
 
