@@ -185,6 +185,34 @@ plugins:
 The checked fixtures in `testdata/plugin-policy/` are parsed and fingerprinted
 by unit tests; keep documentation examples aligned with those parser rules.
 
+Scaffold a starting policy from committed Applications and CMP settings:
+
+```bash
+drydock plugin-policy init --path .
+drydock plugin-policy init --path . --write
+drydock plugin-policy init --path . --engine exec --output .drydock/plugins.exec.yaml
+```
+
+`init` prints YAML to stdout by default. `--write` writes
+`.drydock/plugins.yaml`; `--output` writes a repository-relative path. Existing
+files require `--overwrite`. The generated YAML includes the schema modeline.
+`container` is the default scaffold engine, and digest-pinned sidecar images
+may be inferred. Tag-only image candidates stay as placeholders unless
+`--allow-mutable-image-tags` is passed.
+
+Check onboarding gates without executing plugins:
+
+```bash
+drydock plugin-policy doctor --path .
+drydock plugin-policy doctor --path . --plugin-policy-ref main --enable-plugins -o json
+drydock plugin-policy doctor --path . --plugin-policy-ref main --enable-plugins --strict
+```
+
+`doctor` reports readiness for policy presence, trust provenance,
+`--enable-plugins`, image placeholders, mutable image tags, parameters, env,
+and bootstrap hints. A missing default policy is a readiness failure; an
+explicit missing `--plugin-policy-path` is a command error.
+
 For a single-tree command, run command-backed plugins from an explicit trusted
 ref:
 

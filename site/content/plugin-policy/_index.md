@@ -15,6 +15,9 @@ discovers a config management plugin command that safely normalizes to
 
 ## Start Here
 
+- Onboarding an existing repo? Start with
+  [`plugin-policy init`](#onboard-existing-repositories), then check readiness
+  with `plugin-policy doctor`.
 - Need to run a trusted plugin command? Use
   [Trust and Command Execution](/docs/plugin-policy/trust/).
 - Choosing between native, exec, and container engines? Use
@@ -25,6 +28,50 @@ discovers a config management plugin command that safely normalizes to
   [Container Plugin Caches](/docs/plugin-policy/cache/).
 - Need field names and defaults? Use [Schema](/docs/plugin-policy/schema/).
 - Need working YAML? Use [Examples](/docs/plugin-policy/examples/).
+
+## Onboard Existing Repositories
+
+`drydock plugin-policy init` is a static scaffold. It inspects Applications,
+supported static ApplicationSet inputs, Argo CD CMP settings, and sidecar image
+candidates that drydock can read from the repository. It does not render
+Applications, run plugins, or make the generated policy trusted.
+
+If a repository's Applications are visible only after plugin-rendered
+bootstrap, `init` may have no static Application evidence to scaffold from.
+Start from the matching engine example or existing sidecar/CMP policy, then
+use `plugin-policy doctor` to check the policy gates.
+
+Review YAML on stdout:
+
+```bash
+drydock plugin-policy init --path .
+```
+
+Write the default policy or a repository-relative path:
+
+```bash
+drydock plugin-policy init --path . --write
+drydock plugin-policy init --path . --output .drydock/plugins.container.yaml
+```
+
+Existing files require `--overwrite`. Generated YAML includes the
+`yaml-language-server` schema modeline. The default scaffold engine is
+`container`; use `--engine exec` only when you intend trusted host-process
+execution. Digest-pinned sidecar images may be inferred. Tag-only image
+candidates remain placeholders unless `--allow-mutable-image-tags` is passed.
+
+Check readiness before using command-backed plugins:
+
+```bash
+drydock plugin-policy doctor --path .
+drydock plugin-policy doctor --path . --plugin-policy-ref main --enable-plugins -o json
+```
+
+`doctor` is also static: it reports policy, trust, image, parameter, env, and
+execution gates without running plugin commands. A missing default
+`.drydock/plugins.yaml` is a readiness `FAIL`; an explicitly selected missing
+`--plugin-policy-path` is a command error. Use `--strict` when CI should exit
+nonzero on readiness `FAIL` after the report is rendered.
 
 ## Use Policy For
 

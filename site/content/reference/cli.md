@@ -20,6 +20,8 @@ For task-oriented examples, start with [Getting started](/getting-started/),
 | Compare rendered images | `drydock diff images --repo . --ref HEAD --ref-orig main` |
 | Inspect diagnostics | `drydock diag --path .` |
 | Inspect cache roots and entries | `drydock cache path`, `drydock cache list -o json` |
+| Scaffold plugin policy | `drydock plugin-policy init --path .` |
+| Check plugin policy readiness | `drydock plugin-policy doctor --path .` |
 
 All render-backed commands are runtime-offline: they do not contact live Argo
 CD or Kubernetes. Declared Git, HTTP Helm, OCI Helm, and remote Kustomize
@@ -140,6 +142,49 @@ when no `Application` or supported `ApplicationSet` objects are discovered.
 
 For acquisition, cache, auth, and remote source details, see
 [Source acquisition](/concepts/source-acquisition/).
+
+## Plugin Policy Onboarding
+
+`drydock plugin-policy init` statically inspects Applications, supported static
+ApplicationSet inputs, Argo CD CMP settings, and readable sidecar image
+candidates. It disables plugin policy loading for the inspection and does not
+render Applications or run plugin commands.
+
+For repositories whose Applications are visible only after plugin-rendered
+bootstrap, start from the matching plugin policy example or existing CMP
+policy, then use `plugin-policy doctor` to check readiness.
+
+By default, `init` writes YAML to stdout:
+
+```bash
+drydock plugin-policy init --path .
+```
+
+Use `--write` for `.drydock/plugins.yaml`, or `--output` for another
+repository-relative policy path. Existing files require `--overwrite`.
+
+```bash
+drydock plugin-policy init --path . --write
+drydock plugin-policy init --path . --output .drydock/plugins.container.yaml
+```
+
+Generated YAML includes the `yaml-language-server` schema modeline. The default
+scaffold engine is `container`; pass `--engine exec` explicitly for host-process
+policy. Digest-pinned sidecar images may be inferred. Tag-only image candidates
+remain placeholders unless `--allow-mutable-image-tags` is passed.
+
+`drydock plugin-policy doctor` reports onboarding readiness and gate failures
+without executing plugins:
+
+```bash
+drydock plugin-policy doctor --path .
+drydock plugin-policy doctor --path . --plugin-policy-ref main --enable-plugins -o json
+```
+
+Default missing `.drydock/plugins.yaml` is reported as readiness `FAIL`; an
+explicit missing `--plugin-policy-path` is a command error. `-o json` provides
+deterministic `status` and issue `code` fields. `--strict` exits nonzero on
+readiness `FAIL` after rendering the report.
 
 ## Render Tests
 

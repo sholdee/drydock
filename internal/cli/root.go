@@ -61,6 +61,7 @@ func NewRootCommandWithDependencies(info VersionInfo, deps Dependencies) *cobra.
 	cmd.AddCommand(newDiffCommand(deps))
 	cmd.AddCommand(newCacheCommand())
 	cmd.AddCommand(newDiagCommand(deps))
+	cmd.AddCommand(newPluginPolicyCommand(deps))
 	cmd.AddCommand(newCompletionCommand())
 	cmd.AddCommand(newVersionCommand(info))
 	installProfileWrapper(cmd, &profileFlags)
