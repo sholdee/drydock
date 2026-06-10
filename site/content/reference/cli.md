@@ -126,10 +126,13 @@ Git refs, and Argo CD chart-only remote Helm sources. Path-based Git sources
 use the local `--path` tree when the source path exists there. Use
 `--repo-map URL=PATH` to force a source repository URL to a local checkout.
 
-Use `--enable-avp-compat` when an Application explicitly names the
-`argocd-vault-plugin` plugin and you want drydock to render it without running
-AVP. drydock renders the source through its native renderers, then replaces
-supported AVP placeholders with deterministic redacted values.
+Application sources that explicitly name the `argocd-vault-plugin` plugin use
+native AVP compatibility by default. The same native path is used for
+discovered CMP aliases whose generate command safely normalizes to
+`argocd-vault-plugin generate .`. drydock renders the source through its native
+renderers, then replaces supported AVP placeholders with deterministic redacted
+values. Use `--enable-avp-compat` to force the same placeholder redaction for
+ordinary native-rendered sources that are not modeled as plugin sources.
 
 AVP compatibility does not execute the AVP binary, a config-management plugin
 command, a shell, the Helm CLI, or the Kustomize CLI. For trusted

@@ -191,8 +191,10 @@ Supported:
 - Bounded warning diagnostics when a discovered sidecar CMP static
   `discover.fileName` or `discover.find.glob` rule matches a native-rendered
   source. drydock does not execute `discover.find.command`.
-- Trusted drydock plugin policy entries for native AVP compatibility, native
-  plugin overrides, and explicitly enabled exec/container CMP compatibility.
+- Native AVP compatibility for explicit `argocd-vault-plugin` sources and
+  discovered simple AVP CMP aliases.
+- Trusted drydock plugin policy entries for native plugin overrides and
+  explicitly enabled exec/container CMP compatibility.
 - Trusted plugin policy bootstrap entrypoints for plugin-rendered Argo CD
   bootstrap objects.
 - Trusted plugin policy `configManagementPlugin` seeds for static

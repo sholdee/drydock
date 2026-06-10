@@ -6,9 +6,10 @@ title: Engines
 
 `avp-compat` renders the source with drydock's native renderer and replaces
 supported argocd-vault-plugin placeholders with deterministic redacted values.
-For explicit Application plugin sources named `argocd-vault-plugin`,
-`--enable-avp-compat` uses the same native compatibility path without requiring
-a policy entry.
+Explicit Application plugin sources named `argocd-vault-plugin` use the same
+native compatibility path by default and do not require a policy entry.
+Discovered CMP aliases also use this path by default when their generate
+command safely normalizes to `argocd-vault-plugin generate .`.
 
 Native renderer selection follows drydock's normal source detection: Kustomize
 when a `kustomization` file exists, Helm when `Chart.yaml` exists, and
@@ -47,6 +48,7 @@ Native engines must remain narrow compatibility paths. drydock may interpret
 discovered CMP definitions only when they map to a known in-process renderer
 with a fail-closed validator. Discovered CMP definitions are never ambient
 permission to execute commands or emulate arbitrary plugin behavior.
-`--enable-avp-compat` has the same boundary: it is not support for arbitrary
-sidecar CMPs or arbitrary plugin commands. Use `engine: exec` or
+`--enable-avp-compat` forces the same redaction pass for ordinary native
+rendered sources, but it is not support for arbitrary sidecar CMPs or
+arbitrary plugin commands. Use `engine: exec` or
 `engine: container` for trusted command-backed plugins.
