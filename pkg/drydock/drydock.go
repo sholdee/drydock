@@ -88,8 +88,9 @@ type Config struct {
 	// RemoteResourceCredentials supplies credentials for remote Kustomize HTTP
 	// resources.
 	RemoteResourceCredentials RemoteResourceCredentials
-	// EnableAVPCompat enables argocd-vault-plugin placeholder redaction
-	// compatibility without executing plugin commands.
+	// EnableAVPCompat forces argocd-vault-plugin placeholder redaction for
+	// native-rendered sources. Explicit argocd-vault-plugin sources use native
+	// compatibility by default.
 	EnableAVPCompat bool
 	// EnablePlugins allows trusted PluginPolicy exec or container engines to run
 	// when policy provenance matches.

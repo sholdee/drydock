@@ -38,11 +38,13 @@ cache-only CI runs to pass.
 
 ```bash
 drydock test apps --path .
+drydock plugin-policy doctor --path .
 drydock test apps --path . --plugin-policy-ref main --enable-plugins
 ```
 
-Run without plugin execution first. Add trusted plugin policy flags only when
-the failing source requires them.
+Run without plugin execution first, then use `plugin-policy doctor` to check
+policy readiness. Add trusted plugin policy flags only when the failing source
+requires exec or container plugin commands.
 
 ## Remove Diff Noise
 

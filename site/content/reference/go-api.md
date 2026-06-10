@@ -57,8 +57,9 @@ Exec and container policy require trusted provenance and `--enable-plugins`.
 Application plugin parameters for command-backed engines must be allowlisted by
 policy. Native policy engines such as `avp-compat` and `native-kustomize` do
 not execute plugin commands and reject Application plugin env and parameters.
-The `--enable-avp-compat` flag for explicit `argocd-vault-plugin` sources also
-does not execute plugin commands.
+Explicit `argocd-vault-plugin` sources and discovered simple AVP CMP aliases
+use native AVP compatibility by default. `Config.EnableAVPCompat` forces the
+same placeholder redaction pass for ordinary native-rendered sources.
 
 Embedders can pass a renderer directly or use
 `drydock.NewPluginRegistry(map[string]drydock.PluginRenderer{...})` to dispatch

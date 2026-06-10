@@ -60,8 +60,14 @@ trusted drydock plugin policy, trusted policy provenance, and
 `--enable-plugins`.
 
 ```bash
+drydock plugin-policy doctor --path .
 drydock test apps --path . --plugin-policy-ref main --enable-plugins
 ```
+
+Use `plugin-policy doctor` to check whether drydock sees the plugin policy,
+native compatibility options, trusted provenance, and command execution gates.
+Then add trusted plugin flags only when the render actually needs exec or
+container plugin commands.
 
 If plugin-rendered bootstrap apps are missing, check PluginPolicy
 `bootstrap.entrypoints`. Static discovery mode disables those entrypoints;

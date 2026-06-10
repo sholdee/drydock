@@ -284,13 +284,13 @@ data:
   target: <CLOUDFLARE_TUNNEL_ID>.cfargotunnel.com
 `)
 
-	result, err := (Orchestrator{}).Build(context.Background(), BuildRequest{Path: root, PluginOptions: PluginOptions{EnableAVPCompat: true}})
+	result, err := (Orchestrator{}).Build(context.Background(), BuildRequest{Path: root})
 	if err != nil {
 		t.Fatalf("Build() error = %v", err)
 	}
 	assertRedactedDataValue(t, result.Manifests, "avp-directory", "target", ".cfargotunnel.com")
-	if !hasDiagnosticCode(result.Diagnostics, "plugin.avp-compat-substituted") {
-		t.Fatalf("Diagnostics = %#v, want AVP compatibility diagnostic", result.Diagnostics)
+	if hasDiagnosticCode(result.Diagnostics, "plugin.avp-compat-substituted") {
+		t.Fatalf("Diagnostics = %#v, default AVP plugin compatibility should be quiet", result.Diagnostics)
 	}
 }
 
@@ -312,13 +312,13 @@ data:
   address: <COMPARTILHADO_IP>:2049
 `)
 
-	result, err := (Orchestrator{}).Build(context.Background(), BuildRequest{Path: root, PluginOptions: PluginOptions{EnableAVPCompat: true}})
+	result, err := (Orchestrator{}).Build(context.Background(), BuildRequest{Path: root})
 	if err != nil {
 		t.Fatalf("Build() error = %v", err)
 	}
 	assertRedactedDataValue(t, result.Manifests, "avp-kustomize", "address", ":2049")
-	if !hasDiagnosticCode(result.Diagnostics, "plugin.avp-compat-substituted") {
-		t.Fatalf("Diagnostics = %#v, want AVP compatibility diagnostic", result.Diagnostics)
+	if hasDiagnosticCode(result.Diagnostics, "plugin.avp-compat-substituted") {
+		t.Fatalf("Diagnostics = %#v, default AVP plugin compatibility should be quiet", result.Diagnostics)
 	}
 }
 
@@ -339,13 +339,13 @@ data:
   value: <CHART_VALUE>
 `)
 
-	result, err := (Orchestrator{}).Build(context.Background(), BuildRequest{Path: root, PluginOptions: PluginOptions{EnableAVPCompat: true}})
+	result, err := (Orchestrator{}).Build(context.Background(), BuildRequest{Path: root})
 	if err != nil {
 		t.Fatalf("Build() error = %v", err)
 	}
 	assertRedactedDataValue(t, result.Manifests, "avp-chart-path", "value", "")
-	if !hasDiagnosticCode(result.Diagnostics, "plugin.avp-compat-substituted") {
-		t.Fatalf("Diagnostics = %#v, want AVP compatibility diagnostic", result.Diagnostics)
+	if hasDiagnosticCode(result.Diagnostics, "plugin.avp-compat-substituted") {
+		t.Fatalf("Diagnostics = %#v, default AVP plugin compatibility should be quiet", result.Diagnostics)
 	}
 }
 
@@ -383,19 +383,79 @@ data:
   value: <CHART_ONLY_VALUE>
 `)
 
-	result, err := (Orchestrator{ChartAcquirer: &recordingChartAcquirer{chartDir: chartDir}}).Build(context.Background(), BuildRequest{Path: root, PluginOptions: PluginOptions{EnableAVPCompat: true}})
+	result, err := (Orchestrator{ChartAcquirer: &recordingChartAcquirer{chartDir: chartDir}}).Build(context.Background(), BuildRequest{Path: root})
 	if err != nil {
 		t.Fatalf("Build() error = %v", err)
 	}
 	assertRedactedDataValue(t, result.Manifests, "avp-chart-only", "value", "")
-	if !hasDiagnosticCode(result.Diagnostics, "plugin.avp-compat-substituted") {
-		t.Fatalf("Diagnostics = %#v, want AVP compatibility diagnostic", result.Diagnostics)
+	if hasDiagnosticCode(result.Diagnostics, "plugin.avp-compat-substituted") {
+		t.Fatalf("Diagnostics = %#v, default AVP plugin compatibility should be quiet", result.Diagnostics)
 	}
 }
 
-func TestOrchestratorBuildFailsClosedForAVPPluginWithoutCompatFlag(t *testing.T) {
+func TestOrchestratorBuildRendersDefaultAVPCompatPluginWithoutCompatFlag(t *testing.T) {
 	root := t.TempDir()
 	writePluginBuildApplication(t, root, "plugin", argocdVaultPluginName)
+	writeTestFile(t, filepath.Join(root, "manifests", "plugin", "cm.yaml"), `apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: avp-without-flag
+data:
+  value: <path:vaults/K8s/items/demo#value>
+`)
+
+	result, err := (Orchestrator{}).Build(context.Background(), BuildRequest{Path: root})
+	if err != nil {
+		t.Fatalf("Build() error = %v", err)
+	}
+	assertRedactedDataValue(t, result.Manifests, "avp-without-flag", "value", "")
+	if hasDiagnosticCode(result.Diagnostics, diagnostic.CodePluginUnsupported) {
+		t.Fatalf("Diagnostics = %#v, did not want plugin.unsupported", result.Diagnostics)
+	}
+	if hasDiagnosticCode(result.Diagnostics, "plugin.avp-compat-substituted") {
+		t.Fatalf("Diagnostics = %#v, default AVP plugin compatibility should be quiet", result.Diagnostics)
+	}
+}
+
+func TestOrchestratorBuildRendersDiscoveredAVPCompatAliasWithoutPolicy(t *testing.T) {
+	root := t.TempDir()
+	writePluginBuildApplication(t, root, "plugin", "avp-directory-include")
+	writeCMPConfigMapSpec(t, root, "avp-directory-include", `
+generate:
+  command: ["bash", "-c"]
+  args: ["argocd-vault-plugin generate ./"]
+`)
+	writeTestFile(t, filepath.Join(root, "manifests", "plugin", "cm.yaml"), `apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: avp-alias
+  annotations:
+    avp.kubernetes.io/path: vaults/K8s/items/cloudflare-tunnel-secret
+data:
+  target: <CLOUDFLARE_TUNNEL_ID>.cfargotunnel.com
+`)
+
+	result, err := (Orchestrator{}).Build(context.Background(), BuildRequest{Path: root})
+	if err != nil {
+		t.Fatalf("Build() error = %v", err)
+	}
+	assertRedactedDataValue(t, result.Manifests, "avp-alias", "target", ".cfargotunnel.com")
+	if hasDiagnosticCode(result.Diagnostics, diagnostic.CodePluginUnsupported) {
+		t.Fatalf("Diagnostics = %#v, did not want plugin.unsupported", result.Diagnostics)
+	}
+	if hasDiagnosticCode(result.Diagnostics, "plugin.avp-compat-substituted") {
+		t.Fatalf("Diagnostics = %#v, discovered AVP alias compatibility should be quiet", result.Diagnostics)
+	}
+}
+
+func TestOrchestratorBuildRejectsDiscoveredAVPCompatAliasWithUnsafeCommand(t *testing.T) {
+	root := t.TempDir()
+	writePluginBuildApplication(t, root, "plugin", "avp-directory-include")
+	writeCMPConfigMapSpec(t, root, "avp-directory-include", `
+generate:
+  command: ["bash", "-c"]
+  args: ["echo before && argocd-vault-plugin generate ./"]
+`)
 	writeTestFile(t, filepath.Join(root, "manifests", "plugin", "cm.yaml"), `apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -409,16 +469,65 @@ data:
 		t.Fatal("Build() error = nil, want unsupported plugin error")
 	}
 	if _, ok := manifestByName(result.Manifests, "should-not-render"); ok {
-		t.Fatalf("Manifests = %#v, AVP plugin source rendered without --enable-avp-compat", result.Manifests)
+		t.Fatalf("Manifests = %#v, unsafe AVP alias command rendered through compatibility", result.Manifests)
 	}
 	if !hasDiagnosticCode(result.Diagnostics, diagnostic.CodePluginUnsupported) {
 		t.Fatalf("Diagnostics = %#v, want plugin.unsupported", result.Diagnostics)
 	}
-	if !hasDiagnosticMessage(result.Diagnostics, "--enable-avp-compat") {
-		t.Fatalf("Diagnostics = %#v, want --enable-avp-compat guidance", result.Diagnostics)
+}
+
+func TestOrchestratorBuildRejectsDiscoveredAVPCompatAliasWithoutPathOperand(t *testing.T) {
+	root := t.TempDir()
+	writePluginBuildApplication(t, root, "plugin", "avp-directory-include")
+	writeCMPConfigMapSpec(t, root, "avp-directory-include", `
+generate:
+  command: ["argocd-vault-plugin", "generate"]
+`)
+	writeTestFile(t, filepath.Join(root, "manifests", "plugin", "cm.yaml"), `apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: should-not-render
+data:
+  value: <path:vaults/K8s/items/demo#value>
+`)
+
+	result, err := (Orchestrator{}).Build(context.Background(), BuildRequest{Path: root})
+	if err == nil {
+		t.Fatal("Build() error = nil, want unsupported plugin error")
 	}
-	if hasDiagnosticMessage(result.Diagnostics, "native Kustomize adapter") {
-		t.Fatalf("Diagnostics = %#v, did not want native Kustomize adapter guidance", result.Diagnostics)
+	if _, ok := manifestByName(result.Manifests, "should-not-render"); ok {
+		t.Fatalf("Manifests = %#v, pathless AVP alias command rendered through compatibility", result.Manifests)
+	}
+	if !hasDiagnosticCode(result.Diagnostics, diagnostic.CodePluginUnsupported) {
+		t.Fatalf("Diagnostics = %#v, want plugin.unsupported", result.Diagnostics)
+	}
+}
+
+func TestOrchestratorBuildRejectsDiscoveredAVPCompatAliasShellWithoutPathOperand(t *testing.T) {
+	root := t.TempDir()
+	writePluginBuildApplication(t, root, "plugin", "avp-directory-include")
+	writeCMPConfigMapSpec(t, root, "avp-directory-include", `
+generate:
+  command: ["bash", "-c"]
+  args: ["argocd-vault-plugin generate"]
+`)
+	writeTestFile(t, filepath.Join(root, "manifests", "plugin", "cm.yaml"), `apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: should-not-render
+data:
+  value: <path:vaults/K8s/items/demo#value>
+`)
+
+	result, err := (Orchestrator{}).Build(context.Background(), BuildRequest{Path: root})
+	if err == nil {
+		t.Fatal("Build() error = nil, want unsupported plugin error")
+	}
+	if _, ok := manifestByName(result.Manifests, "should-not-render"); ok {
+		t.Fatalf("Manifests = %#v, pathless shell AVP alias command rendered through compatibility", result.Manifests)
+	}
+	if !hasDiagnosticCode(result.Diagnostics, diagnostic.CodePluginUnsupported) {
+		t.Fatalf("Diagnostics = %#v, want plugin.unsupported", result.Diagnostics)
 	}
 }
 

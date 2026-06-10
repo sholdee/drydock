@@ -118,7 +118,7 @@ inputs:
     description: Maximum recursive rendered Application discovery depth.
     required: false
   enable-avp-compat:
-    description: Replace argocd-vault-plugin placeholders with deterministic redacted values.
+    description: Force argocd-vault-plugin placeholder redaction for native-rendered sources.
     required: false
     default: "false"
   enable-plugins:

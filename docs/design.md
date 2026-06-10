@@ -159,8 +159,9 @@ Supported render paths:
 - Remote Kustomize HTTP(S) files and Git refs.
 - Discovered Argo CD CMP definitions that normalize to a safe `kustomize
   build` command, interpreted through drydock's native Kustomize renderer.
-- Trusted plugin policy entries for native AVP compatibility, native plugin
-  overrides, explicitly enabled exec/container CMP compatibility, and
+- Native AVP compatibility for explicit `argocd-vault-plugin` sources and
+  discovered simple AVP CMP aliases, trusted plugin policy entries for native
+  plugin overrides, explicitly enabled exec/container CMP compatibility, and
   plugin-rendered bootstrap discovery. Policy provenance, schema, supported
   engines, and command security controls are owned by
   `site/content/docs/plugin-policy/`.

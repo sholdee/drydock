@@ -16,21 +16,41 @@ are true:
 
 No plugin command execution occurs unless `--enable-plugins` is passed. Native
 rendering paths, including `engine: avp-compat`, `engine: native-kustomize`,
-and `--enable-avp-compat`, do not execute plugin commands.
+explicit `argocd-vault-plugin` sources, and `--enable-avp-compat`, do not
+execute plugin commands.
 
 Discovered Argo CD CMP definitions that normalize to a safe `kustomize build`
 command are interpreted by drydock's native Kustomize renderer by default.
 `native-kustomize` policy entries remain available as explicit overrides.
 For native argocd-vault-plugin (AVP) compatibility, `avp-compat` performs
-deterministic placeholder redaction with drydock native renderers. The
-`--enable-avp-compat` flag enables the same behavior only for explicit
-Application plugin sources named `argocd-vault-plugin`.
+deterministic placeholder redaction with drydock native renderers. Explicit
+Application plugin sources named `argocd-vault-plugin` use the same native
+compatibility path by default. Discovered CMP aliases use it when their
+generate command safely normalizes to `argocd-vault-plugin generate .`. The
+`--enable-avp-compat` flag forces the same redaction pass for ordinary
+native-rendered sources.
 
 When a discovered sidecar CMP has static discovery rules and an Application
 does not name a plugin, drydock may warn that Argo CD sidecar auto-discovery
 would be required. drydock evaluates only `discover.fileName` and
 `discover.find.glob` against the local Application source directory. It never
 executes or emulates `discover.find.command`.
+
+## Onboarding Commands
+
+`drydock plugin-policy init` and `drydock plugin-policy doctor` are static
+onboarding commands. They inspect Applications, CMP settings, and readable
+sidecar image candidates, but they do not render Applications or execute
+plugin commands. Passing `--plugin-policy-ref` and `--enable-plugins` to
+`doctor` checks whether those gates are satisfied for future command-backed
+rendering; it does not run the command-backed policy.
+
+For normal render commands, a missing default `.drydock/plugins.yaml` is
+ignored. For `plugin-policy doctor`, the same missing default policy is a
+readiness `FAIL` with code `policy.missing`; an explicitly selected missing
+`--plugin-policy-path` is a command error. Use `-o json` for deterministic
+`status` and issue `code` fields, and `--strict` when readiness `FAIL` should
+exit nonzero after the report is rendered.
 
 ## Trusted Provenance
 
@@ -130,8 +150,9 @@ Common validation failures:
   `configManagementPlugin.discover` metadata.
 - `Application plugin parameter ... is not allowed`: add a narrow
   `parameters.allow` entry with the expected type and path allowlist.
-- `container command failed` during `init`: check copied sibling paths,
-  package/cache requirements, and whether the policy needs `network: default`.
+- `container command failed` during the policy lifecycle `init` phase: check
+  copied sibling paths, package/cache requirements, and whether the policy
+  needs `network: default`.
 - `network: default` with `--offline`: container network access is rejected in
   offline mode; use local caches or run without `--offline`.
 

@@ -302,7 +302,7 @@ passes them as arguments without `eval`, but they still change drydock behavior.
 | `repo-map` | unset | Newline-delimited repository URL mappings in `URL=PATH` form. |
 | `parallelism` | unset | Maximum number of Applications to render concurrently. |
 | `max-discovery-depth` | unset | Maximum recursive rendered Application discovery depth. |
-| `enable-avp-compat` | `false` | Replace argocd-vault-plugin placeholders with deterministic redacted values. |
+| `enable-avp-compat` | `false` | Force argocd-vault-plugin placeholder redaction for native-rendered sources. |
 
 ### Plugins And Extra Arguments
 
