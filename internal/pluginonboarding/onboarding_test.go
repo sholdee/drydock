@@ -247,6 +247,172 @@ func TestGenerateShellCommandUsesPlaceholder(t *testing.T) {
 	}
 }
 
+func TestGenerateInfersAVPCompatForAlias(t *testing.T) {
+	root := t.TempDir()
+	app := pluginApp("argocd", "demo", "apps/demo", "avp-directory-include")
+	settings := settingsWithCMP("avp-directory-include", config.ConfigManagementPlugin{
+		Name:            "avp-directory-include",
+		GenerateCommand: []string{"bash"},
+		GenerateArgs:    []string{"-c", "argocd-vault-plugin generate ./"},
+	})
+	report, err := Analyze(root, []ApplicationInput{{Application: app}}, settings, nil, AnalyzeOptions{})
+	if err != nil {
+		t.Fatalf("Analyze() error = %v", err)
+	}
+	data, err := Generate(report, GenerateOptions{Comments: false})
+	if err != nil {
+		t.Fatalf("Generate() error = %v", err)
+	}
+	text := string(data)
+	if !strings.Contains(text, `engine: avp-compat`) {
+		t.Fatalf("generated policy did not infer avp-compat:\n%s", text)
+	}
+	for _, unwanted := range []string{PlaceholderImage, PlaceholderCommand, `copy:`, `generate:`} {
+		if strings.Contains(text, unwanted) {
+			t.Fatalf("generated avp-compat policy contains %q:\n%s", unwanted, text)
+		}
+	}
+}
+
+func TestGenerateExplicitEngineOverridesInferredEngine(t *testing.T) {
+	root := t.TempDir()
+	app := pluginApp("argocd", "demo", "apps/demo", "avp-directory-include")
+	settings := settingsWithCMP("avp-directory-include", config.ConfigManagementPlugin{
+		Name:            "avp-directory-include",
+		GenerateCommand: []string{"bash"},
+		GenerateArgs:    []string{"-c", "argocd-vault-plugin generate ./"},
+	})
+	report, err := Analyze(root, []ApplicationInput{{Application: app}}, settings, nil, AnalyzeOptions{})
+	if err != nil {
+		t.Fatalf("Analyze() error = %v", err)
+	}
+	data, err := Generate(report, GenerateOptions{Engine: pluginpolicy.EngineExec, EngineExplicit: true})
+	if err != nil {
+		t.Fatalf("Generate() error = %v", err)
+	}
+	text := string(data)
+	if !strings.Contains(text, `engine: exec`) || strings.Contains(text, `engine: avp-compat`) {
+		t.Fatalf("explicit engine was not respected:\n%s", text)
+	}
+}
+
+func TestAnalyzeExtractsEmbeddedHelmValuesCMPForAVPCompat(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "apps", "argocd-conf", "argocd-apps.yml"), `apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: argo
+spec:
+  source:
+    helm:
+      valuesObject:
+        repoServer:
+          extraObjects:
+            - apiVersion: v1
+              kind: ConfigMap
+              metadata:
+                name: cmp-plugin
+              data:
+                avp-directory-include.yaml: |
+                  apiVersion: argoproj.io/v1alpha1
+                  kind: ConfigManagementPlugin
+                  metadata:
+                    name: avp-directory-include
+                  spec:
+                    generate:
+                      command:
+                        - bash
+                        - "-c"
+                      args:
+                        - argocd-vault-plugin generate ./
+`)
+	app := pluginApp("argocd", "demo", "apps/demo", "avp-directory-include")
+	report, err := Analyze(root, []ApplicationInput{{Application: app}}, config.DefaultSettings(), nil, AnalyzeOptions{})
+	if err != nil {
+		t.Fatalf("Analyze() error = %v", err)
+	}
+	data, err := Generate(report, GenerateOptions{Comments: false})
+	if err != nil {
+		t.Fatalf("Generate() error = %v", err)
+	}
+	text := string(data)
+	if !strings.Contains(text, `"avp-directory-include":`) || !strings.Contains(text, `engine: avp-compat`) {
+		t.Fatalf("generated policy did not use embedded AVP CMP evidence:\n%s", text)
+	}
+}
+
+func TestGenerateInfersNativeKustomize(t *testing.T) {
+	root := t.TempDir()
+	app := pluginApp("argocd", "demo", "apps/demo", "kustomize-build-with-helm")
+	settings := settingsWithCMP("kustomize-build-with-helm", config.ConfigManagementPlugin{
+		Name:            "kustomize-build-with-helm",
+		GenerateCommand: []string{"sh", "-c"},
+		GenerateArgs:    []string{"kustomize build --enable-helm"},
+		Discover:        config.ConfigManagementPluginDiscovery{FileName: "kustomization.yaml"},
+	})
+	report, err := Analyze(root, []ApplicationInput{{Application: app}}, settings, nil, AnalyzeOptions{})
+	if err != nil {
+		t.Fatalf("Analyze() error = %v", err)
+	}
+	data, err := Generate(report, GenerateOptions{Comments: false})
+	if err != nil {
+		t.Fatalf("Generate() error = %v", err)
+	}
+	text := string(data)
+	for _, want := range []string{`engine: native-kustomize`, `fileName: "kustomization.yaml"`, `command: ["kustomize", "build"]`, `args: ["--enable-helm"]`} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("generated policy missing %q:\n%s", want, text)
+		}
+	}
+	for _, unwanted := range []string{PlaceholderImage, PlaceholderCommand, `copy:`, `command: ["sh", "-c"]`} {
+		if strings.Contains(text, unwanted) {
+			t.Fatalf("generated native-kustomize policy contains %q:\n%s", unwanted, text)
+		}
+	}
+}
+
+func TestAnalyzeUsesEmbeddedCMPForUnnamedStaticDiscovery(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "apps", "demo", "kustomization.yaml"), "resources: []\n")
+	writeFile(t, filepath.Join(root, "argocd", "values.yaml"), `repoServer:
+  extraObjects:
+    - apiVersion: v1
+      kind: ConfigMap
+      metadata:
+        name: cmp-plugin
+      data:
+        kustomize-build-with-helm.yaml: |
+          apiVersion: argoproj.io/v1alpha1
+          kind: ConfigManagementPlugin
+          metadata:
+            name: kustomize-build-with-helm
+          spec:
+            discover:
+              fileName: kustomization.yaml
+            generate:
+              command: [sh, -c]
+              args: [kustomize build --enable-helm]
+`)
+	app := sourceApp("argocd", "demo", "apps/demo")
+	report, err := Analyze(root, []ApplicationInput{{Application: app}}, config.DefaultSettings(), nil, AnalyzeOptions{})
+	if err != nil {
+		t.Fatalf("Analyze() error = %v", err)
+	}
+	if len(report.Plugins) != 1 || report.Plugins[0].Name != "kustomize-build-with-helm" || len(report.Plugins[0].Uses) != 1 || !report.Plugins[0].Uses[0].StaticMatch {
+		t.Fatalf("Plugins = %#v, want embedded CMP static match", report.Plugins)
+	}
+	data, err := Generate(report, GenerateOptions{Comments: false})
+	if err != nil {
+		t.Fatalf("Generate() error = %v", err)
+	}
+	text := string(data)
+	for _, want := range []string{`engine: native-kustomize`, `command: ["kustomize", "build"]`, `args: ["--enable-helm"]`} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("generated policy missing %q:\n%s", want, text)
+		}
+	}
+}
+
 func TestGenerateBootstrapEntrypoint(t *testing.T) {
 	root := t.TempDir()
 	writeFile(t, filepath.Join(root, "apps", "bootstrap", "PklProject"), "package bootstrap\n")

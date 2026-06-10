@@ -127,6 +127,7 @@ func runPluginPolicyInit(cmd *cobra.Command, deps Dependencies, flags pluginPoli
 	}
 	data, err := pluginonboarding.Generate(report, pluginonboarding.GenerateOptions{
 		Engine:                pluginpolicy.Engine(strings.TrimSpace(flags.engine)),
+		EngineExplicit:        cmd.Flags().Changed("engine"),
 		Comments:              !flags.noComments,
 		AllowMutableImageTags: flags.allowMutableImageTags,
 	})

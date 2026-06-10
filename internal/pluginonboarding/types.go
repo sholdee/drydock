@@ -53,6 +53,7 @@ type AnalyzeOptions struct {
 
 type GenerateOptions struct {
 	Engine                pluginpolicy.Engine
+	EngineExplicit        bool
 	Comments              bool
 	AllowMutableImageTags bool
 }
@@ -72,16 +73,17 @@ type Report struct {
 }
 
 type PluginReport struct {
-	Name         string
-	Used         bool
-	Uses         []PluginUse
-	CMP          *config.ConfigManagementPlugin
-	Discover     *pluginpolicy.PluginDiscoverMatch
-	Generate     []string
-	GenerateSafe bool
-	Parameters   []ParameterEvidence
-	Env          []string
-	Sidecar      SidecarMatch
+	Name            string
+	Used            bool
+	Uses            []PluginUse
+	CMP             *config.ConfigManagementPlugin
+	Discover        *pluginpolicy.PluginDiscoverMatch
+	Generate        []string
+	GenerateSafe    bool
+	SuggestedEngine pluginpolicy.Engine
+	Parameters      []ParameterEvidence
+	Env             []string
+	Sidecar         SidecarMatch
 }
 
 type PluginUse struct {

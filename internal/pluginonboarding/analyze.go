@@ -1,6 +1,7 @@
 package pluginonboarding
 
 import (
+	"maps"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -32,26 +33,24 @@ func Analyze(root string, inputs []ApplicationInput, settings config.ArgoSetting
 	}
 	report.Sidecars = sidecars
 
+	embeddedCMPs, err := collectEmbeddedConfigManagementPlugins(absRoot)
+	if err != nil {
+		return report, err
+	}
+
 	plugins := map[string]*PluginReport{}
 	for name, plugin := range settings.ConfigManagementPlugins {
-		effectiveName := plugin.EffectiveName()
-		if effectiveName == "" {
-			effectiveName = strings.TrimSpace(name)
-		}
-		if effectiveName == "" {
-			continue
-		}
-		entry := ensurePluginReport(plugins, effectiveName)
-		copied := plugin
-		entry.CMP = &copied
-		entry.Discover = discoverMatchFromCMP(plugin)
-		entry.Generate, entry.GenerateSafe = lifecycleCommandFromCMP(plugin)
+		seedPluginReportFromCMP(plugins, name, plugin)
 	}
+	for name, plugin := range embeddedCMPs {
+		seedPluginReportFromCMP(plugins, name, plugin)
+	}
+	discoverySettings := settingsWithEmbeddedCMPs(settings, embeddedCMPs)
 
 	seedExistingPolicyReports(existing, plugins)
 
 	for _, input := range inputs {
-		recordApplicationUses(absRoot, input, settings, plugins)
+		recordApplicationUses(absRoot, input, discoverySettings, plugins)
 	}
 	for _, hint := range opts.BootstrapEntrypoints {
 		name := strings.TrimSpace(hint.Plugin)
@@ -70,10 +69,45 @@ func Analyze(root string, inputs []ApplicationInput, settings config.ArgoSetting
 	commandBackedCount := len(names)
 	for _, name := range names {
 		plugin := plugins[name]
+		plugin.SuggestedEngine = suggestedEngineForPlugin(*plugin)
 		plugin.Sidecar = matchSidecar(name, commandBackedCount, sidecars)
 		report.Plugins = append(report.Plugins, *plugin)
 	}
 	return report, nil
+}
+
+func settingsWithEmbeddedCMPs(settings config.ArgoSettings, embedded map[string]config.ConfigManagementPlugin) config.ArgoSettings {
+	if len(embedded) == 0 {
+		return settings
+	}
+	settings.ConfigManagementPlugins = maps.Clone(settings.ConfigManagementPlugins)
+	for name, plugin := range embedded {
+		if _, exists := settings.ConfigManagementPlugins[name]; !exists {
+			settings.ConfigManagementPlugins[name] = plugin
+		}
+	}
+	return settings
+}
+
+func seedPluginReportFromCMP(plugins map[string]*PluginReport, name string, plugin config.ConfigManagementPlugin) {
+	effectiveName := plugin.EffectiveName()
+	if effectiveName == "" {
+		effectiveName = strings.TrimSpace(name)
+	}
+	if effectiveName == "" {
+		return
+	}
+	entry := ensurePluginReport(plugins, effectiveName)
+	copied := plugin
+	if entry.CMP == nil {
+		entry.CMP = &copied
+	}
+	if entry.Discover == nil {
+		entry.Discover = discoverMatchFromCMP(plugin)
+	}
+	if len(entry.Generate) == 0 {
+		entry.Generate, entry.GenerateSafe = lifecycleCommandFromCMP(plugin)
+	}
 }
 
 func seedExistingPolicyReports(policy *pluginpolicy.Policy, plugins map[string]*PluginReport) {

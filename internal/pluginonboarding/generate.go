@@ -107,15 +107,20 @@ func writePlugin(b *strings.Builder, plugin PluginReport, opts GenerateOptions) 
 	if opts.Comments && len(plugin.Uses) > 0 {
 		b.WriteString("    # Used by " + quote(commentUseSummary(plugin.Uses)) + ".\n")
 	}
-	b.WriteString("    engine: " + string(opts.Engine) + "\n")
+	engine := generatedPluginEngine(plugin, opts)
+	b.WriteString("    engine: " + string(engine) + "\n")
 	if plugin.Discover != nil {
 		writeMatchDiscover(b, plugin.Discover)
 	}
 	if plugin.CMP != nil {
-		writeCMPSeed(b, plugin)
+		writeCMPSeed(b, plugin, engine)
 	}
-	if opts.Engine == pluginpolicy.EngineContainer {
+	switch engine {
+	case pluginpolicy.EngineAVPCompat, pluginpolicy.EngineNativeKustomize:
+		return
+	case pluginpolicy.EngineContainer:
 		writeContainerFields(b, plugin, opts)
+	case pluginpolicy.EngineExec:
 	}
 	b.WriteString("    copy:\n")
 	b.WriteString("      scope: source\n")
@@ -124,12 +129,27 @@ func writePlugin(b *strings.Builder, plugin PluginReport, opts GenerateOptions) 
 	writeParameters(b, plugin)
 }
 
-func writeCMPSeed(b *strings.Builder, plugin PluginReport) {
+func generatedPluginEngine(plugin PluginReport, opts GenerateOptions) pluginpolicy.Engine {
+	if !opts.EngineExplicit && plugin.SuggestedEngine != "" {
+		return plugin.SuggestedEngine
+	}
+	return opts.Engine
+}
+
+func writeCMPSeed(b *strings.Builder, plugin PluginReport, engine pluginpolicy.Engine) {
 	if plugin.CMP == nil {
 		return
 	}
 	command := cleanArgv(plugin.CMP.GenerateCommand)
 	args := cleanArgv(plugin.CMP.GenerateArgs)
+	generateSafe := plugin.GenerateSafe
+	if engine == pluginpolicy.EngineNativeKustomize {
+		if seedCommand, seedArgs, ok := nativeKustomizeGenerateSeed(*plugin.CMP); ok {
+			command = seedCommand
+			args = seedArgs
+			generateSafe = true
+		}
+	}
 	if plugin.Discover == nil && len(command) == 0 && len(args) == 0 {
 		return
 	}
@@ -137,7 +157,7 @@ func writeCMPSeed(b *strings.Builder, plugin PluginReport) {
 	if plugin.Discover != nil {
 		writeDirectDiscover(&seed, "      ", plugin.Discover)
 	}
-	if plugin.GenerateSafe && (len(command) > 0 || len(args) > 0) {
+	if generateSafe && (len(command) > 0 || len(args) > 0) {
 		seed.WriteString("      generate:\n")
 		if len(command) > 0 {
 			seed.WriteString("        command: " + yamlStringSequence(command) + "\n")
