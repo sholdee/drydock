@@ -146,9 +146,14 @@ For acquisition, cache, auth, and remote source details, see
 ## Plugin Policy Onboarding
 
 `drydock plugin-policy init` statically inspects Applications, supported static
-ApplicationSet inputs, Argo CD CMP settings, and readable sidecar image
+ApplicationSet inputs, readable Argo CD CMP settings, and sidecar image
 candidates. It disables plugin policy loading for the inspection and does not
 render Applications or run plugin commands.
+
+When trusted CMP evidence is clear, `init` can scaffold native policy entries:
+AVP CMP aliases become `engine: avp-compat`, and compatible `kustomize build`
+CMPs become `engine: native-kustomize`. Other plugins use the fallback
+scaffold engine.
 
 For repositories whose Applications are visible only after plugin-rendered
 bootstrap, start from the matching plugin policy example or existing CMP
@@ -168,10 +173,11 @@ drydock plugin-policy init --path . --write
 drydock plugin-policy init --path . --output .drydock/plugins.container.yaml
 ```
 
-Generated YAML includes the `yaml-language-server` schema modeline. The default
-scaffold engine is `container`; pass `--engine exec` explicitly for host-process
-policy. Digest-pinned sidecar images may be inferred. Tag-only image candidates
-remain placeholders unless `--allow-mutable-image-tags` is passed.
+Generated YAML includes the `yaml-language-server` schema modeline. The
+fallback scaffold engine is `container`; pass `--engine exec` explicitly for
+host-process policy. An explicit `--engine` overrides native engine
+suggestions. Digest-pinned sidecar images may be inferred. Tag-only image
+candidates remain placeholders unless `--allow-mutable-image-tags` is passed.
 
 `drydock plugin-policy doctor` reports onboarding readiness and gate failures
 without executing plugins:

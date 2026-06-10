@@ -43,6 +43,7 @@ drydock diag --path .
 | Confirm the fleet renders | `drydock test apps --path .` | [Getting started](/getting-started/) |
 | Review Argo CD desired state before merge | `drydock diff apps --repo . --ref HEAD --ref-orig main -o markdown` | [GitHub Actions](/workflows/github-actions/) |
 | Scan image movement | `drydock diff images --repo . --ref HEAD --ref-orig main` | [Local diffs](/workflows/local-diffs/) |
+| Set up plugin support | `drydock plugin-policy init --path .` | [Plugin policy](/plugin-policy/) |
 | Explain warnings or failures | `drydock diag --path . --cache-events` | [Troubleshooting](/troubleshooting/) |
 | Validate cache-only operation | `drydock test apps --path . --offline` | [Source acquisition](/concepts/source-acquisition/) |
 

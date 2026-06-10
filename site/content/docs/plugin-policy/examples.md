@@ -14,6 +14,16 @@ plugins:
     engine: avp-compat
 ```
 
+AVP CMP aliases use the same native compatibility engine:
+
+```yaml
+apiVersion: drydock.sholdee.dev/v1alpha1
+kind: PluginPolicy
+plugins:
+  avp-directory-include:
+    engine: avp-compat
+```
+
 Native Kustomize compatibility copied from trusted Docker or sidecar CMP
 descriptor metadata:
 
@@ -27,8 +37,8 @@ plugins:
       discover:
         fileName: kustomization.yaml
       generate:
-        command: ["kustomize"]
-        args: ["build", "--enable-helm", "."]
+        command: ["kustomize", "build"]
+        args: ["--enable-helm"]
 ```
 
 The policy keeps only trusted static descriptor metadata. drydock uses the
@@ -196,9 +206,10 @@ drydock plugin-policy init --path . --engine exec --output .drydock/plugins.exec
 `init` prints YAML to stdout by default. `--write` writes
 `.drydock/plugins.yaml`; `--output` writes a repository-relative path. Existing
 files require `--overwrite`. The generated YAML includes the schema modeline.
-`container` is the default scaffold engine, and digest-pinned sidecar images
-may be inferred. Tag-only image candidates stay as placeholders unless
-`--allow-mutable-image-tags` is passed.
+When trusted CMP evidence is clear, `init` can scaffold `avp-compat` or
+`native-kustomize` entries. Other plugins use `container` as the fallback
+scaffold engine. Digest-pinned sidecar images may be inferred. Tag-only image
+candidates stay as placeholders unless `--allow-mutable-image-tags` is passed.
 
 Check onboarding gates without executing plugins:
 

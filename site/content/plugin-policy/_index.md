@@ -32,9 +32,14 @@ discovers a config management plugin command that safely normalizes to
 ## Onboard Existing Repositories
 
 `drydock plugin-policy init` is a static scaffold. It inspects Applications,
-supported static ApplicationSet inputs, Argo CD CMP settings, and sidecar image
-candidates that drydock can read from the repository. It does not render
-Applications, run plugins, or make the generated policy trusted.
+supported static ApplicationSet inputs, readable Argo CD CMP settings, and
+sidecar image candidates that drydock can read from the repository. It does not
+render Applications, run plugins, or make the generated policy trusted.
+
+When trusted CMP evidence is clear, `init` scaffolds native engines instead of
+command-backed placeholders. AVP CMP aliases can scaffold to
+`engine: avp-compat`, and compatible `kustomize build` CMPs can scaffold to
+`engine: native-kustomize`. Other plugins use the fallback scaffold engine.
 
 If a repository's Applications are visible only after plugin-rendered
 bootstrap, `init` may have no static Application evidence to scaffold from.
@@ -55,10 +60,11 @@ drydock plugin-policy init --path . --output .drydock/plugins.container.yaml
 ```
 
 Existing files require `--overwrite`. Generated YAML includes the
-`yaml-language-server` schema modeline. The default scaffold engine is
+`yaml-language-server` schema modeline. The fallback scaffold engine is
 `container`; use `--engine exec` only when you intend trusted host-process
-execution. Digest-pinned sidecar images may be inferred. Tag-only image
-candidates remain placeholders unless `--allow-mutable-image-tags` is passed.
+execution. An explicit `--engine` overrides native engine suggestions.
+Digest-pinned sidecar images may be inferred. Tag-only image candidates remain
+placeholders unless `--allow-mutable-image-tags` is passed.
 
 Check readiness before using command-backed plugins:
 
