@@ -69,10 +69,11 @@ func newLocalProvider(orchestrator Orchestrator, root string, settings config.Ar
 		return provider, func() {}, err
 	}
 	provider.acquisition = acquisition.Session{
-		Locks:              processCacheTargetLocks,
-		SnapshotRoot:       snapshotRoot,
-		SnapshotCacheReads: true,
-		SnapshotCache:      acquisition.NewSnapshotCache(),
+		Locks:                     processCacheTargetLocks,
+		SnapshotRoot:              snapshotRoot,
+		SnapshotCacheReads:        true,
+		SnapshotCache:             acquisition.NewSnapshotCache(),
+		PreserveGitDirInSnapshots: request.EnablePlugins,
 	}
 	return provider, func() { _ = os.RemoveAll(snapshotRoot) }, nil
 }

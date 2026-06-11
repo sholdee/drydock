@@ -105,6 +105,19 @@ func TestNewLocalProviderCarriesHelmValuesFileSchemes(t *testing.T) {
 	}
 }
 
+func TestNewLocalProviderPreservesGitDirInSnapshotsWhenPluginsEnabled(t *testing.T) {
+	provider, cleanup, err := newLocalProvider(Orchestrator{}, t.TempDir(), config.DefaultSettings(), BuildRequest{
+		PluginOptions: PluginOptions{EnablePlugins: true},
+	}, nil, "drydock-test-*")
+	defer cleanup()
+	if err != nil {
+		t.Fatalf("newLocalProvider() error = %v", err)
+	}
+	if !provider.acquisition.PreserveGitDirInSnapshots {
+		t.Fatal("PreserveGitDirInSnapshots = false, want true when plugins are enabled")
+	}
+}
+
 func TestOrchestratorReportsMissingSourcePathClearly(t *testing.T) {
 	root := t.TempDir()
 	writeTestFile(t, filepath.Join(root, "apps", "missing", "app.yaml"), `apiVersion: argoproj.io/v1alpha1

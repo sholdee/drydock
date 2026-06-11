@@ -2,7 +2,9 @@ package acquisition
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"sync"
@@ -200,6 +202,48 @@ func TestSessionGitSnapshotCopiesRegularFiles(t *testing.T) {
 		t.Fatalf("Acquire() error = %v", err)
 	}
 	assertDifferentSnapshotFile(t, manifestPath, filepath.Join(result.Path, "manifest.yaml"))
+}
+
+func TestGitSnapshotExcludesDotGit(t *testing.T) {
+	src := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(src, ".git", "objects"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(src, ".git", "objects", "pack"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(src, "app.yaml"), []byte("kind: ConfigMap\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	snapshot, err := snapshotCachePath(t.TempDir(), "git", src, snapshotCopyOptions{skipDirNames: map[string]struct{}{".git": {}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(snapshot, "app.yaml")); err != nil {
+		t.Fatalf("worktree file missing from snapshot: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(snapshot, ".git")); !errors.Is(err, fs.ErrNotExist) {
+		t.Fatalf(".git present in snapshot, want excluded (stat err = %v)", err)
+	}
+}
+
+func TestGitSnapshotPreservesDotGitWhenNotSkipped(t *testing.T) {
+	src := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(src, ".git", "objects"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(src, ".git", "objects", "pack"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	snapshot, err := snapshotCachePath(t.TempDir(), "git", src, snapshotCopyOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(snapshot, ".git", "objects", "pack")); err != nil {
+		t.Fatalf(".git file missing from snapshot: %v", err)
+	}
 }
 
 type countingChartAcquirer struct {

@@ -19,6 +19,10 @@ type Session struct {
 	SnapshotRoot       string
 	SnapshotCacheReads bool
 	SnapshotCache      *SnapshotCache
+	// PreserveGitDirInSnapshots keeps .git directories in Git source
+	// snapshots for plugin-enabled runs whose trusted plugins may inspect
+	// repository metadata. Built-in renderers use only worktree files.
+	PreserveGitDirInSnapshots bool
 }
 
 type TargetLocks struct {
@@ -121,11 +125,12 @@ func (session Session) GitAcquirer(delegate source.GitAcquirer) source.GitAcquir
 		return delegate
 	}
 	return cacheSafeGitAcquirer{
-		delegate:      delegate,
-		locks:         session.Locks,
-		snapshotRoot:  session.SnapshotRoot,
-		snapshot:      session.SnapshotCacheReads,
-		snapshotCache: session.SnapshotCache,
+		delegate:       delegate,
+		locks:          session.Locks,
+		snapshotRoot:   session.SnapshotRoot,
+		snapshot:       session.SnapshotCacheReads,
+		snapshotCache:  session.SnapshotCache,
+		preserveGitDir: session.PreserveGitDirInSnapshots,
 	}
 }
 
@@ -161,11 +166,12 @@ func (session Session) RemoteAcquirer(delegate remote.Acquirer) remote.Acquirer 
 }
 
 type cacheSafeGitAcquirer struct {
-	delegate      source.GitAcquirer
-	locks         *TargetLocks
-	snapshotRoot  string
-	snapshot      bool
-	snapshotCache *SnapshotCache
+	delegate       source.GitAcquirer
+	locks          *TargetLocks
+	snapshotRoot   string
+	snapshot       bool
+	snapshotCache  *SnapshotCache
+	preserveGitDir bool
 }
 
 func (acquirer cacheSafeGitAcquirer) Acquire(ctx context.Context, request source.GitRequest, opts source.GitOptions) (source.GitResult, error) {
@@ -186,7 +192,11 @@ func (acquirer cacheSafeGitAcquirer) Acquire(ctx context.Context, request source
 	if err != nil || !acquirer.snapshot {
 		return result, err
 	}
-	snapshot, err := snapshotCachePath(acquirer.snapshotRoot, "git", result.Path, false)
+	gitCopyOptions := snapshotCopyOptions{}
+	if !acquirer.preserveGitDir {
+		gitCopyOptions.skipDirNames = map[string]struct{}{".git": {}}
+	}
+	snapshot, err := snapshotCachePath(acquirer.snapshotRoot, "git", result.Path, gitCopyOptions)
 	if err != nil {
 		return source.GitResult{}, err
 	}
@@ -221,7 +231,7 @@ func (acquirer cacheSafeChartAcquirer) Acquire(ctx context.Context, request char
 	if err != nil || !acquirer.snapshot {
 		return result, err
 	}
-	snapshot, err := snapshotCachePath(acquirer.snapshotRoot, "chart", result.ChartDir, true)
+	snapshot, err := snapshotCachePath(acquirer.snapshotRoot, "chart", result.ChartDir, snapshotCopyOptions{linkRegularFiles: true})
 	if err != nil {
 		return chart.Result{}, err
 	}
@@ -266,7 +276,7 @@ func (acquirer cacheSafeRemoteAcquirer) Acquire(ctx context.Context, request rem
 	if !acquirer.snapshot {
 		return result, nil
 	}
-	snapshot, err := snapshotCachePath(acquirer.snapshotRoot, "remote", result.Path, false)
+	snapshot, err := snapshotCachePath(acquirer.snapshotRoot, "remote", result.Path, snapshotCopyOptions{})
 	if err != nil {
 		return remote.Result{}, err
 	}
@@ -321,7 +331,12 @@ func absoluteCacheLockKey(prefix, path string) (string, error) {
 	return prefix + ":" + filepath.Clean(abs), nil
 }
 
-func snapshotCachePath(root, prefix, sourcePath string, linkRegularFiles bool) (string, error) {
+type snapshotCopyOptions struct {
+	linkRegularFiles bool
+	skipDirNames     map[string]struct{}
+}
+
+func snapshotCachePath(root, prefix, sourcePath string, opts snapshotCopyOptions) (string, error) {
 	if strings.TrimSpace(root) == "" || strings.TrimSpace(sourcePath) == "" {
 		return sourcePath, nil
 	}
@@ -330,14 +345,14 @@ func snapshotCachePath(root, prefix, sourcePath string, linkRegularFiles bool) (
 		return "", err
 	}
 	snapshotPath := filepath.Join(snapshotRoot, filepath.Base(sourcePath))
-	if err := copyCachePath(sourcePath, snapshotPath, linkRegularFiles); err != nil {
+	if err := copyCachePath(sourcePath, snapshotPath, opts); err != nil {
 		_ = os.RemoveAll(snapshotRoot)
 		return "", err
 	}
 	return snapshotPath, nil
 }
 
-func copyCachePath(src, dst string, linkRegularFiles bool) error {
+func copyCachePath(src, dst string, opts snapshotCopyOptions) error {
 	info, err := os.Lstat(src)
 	if err != nil {
 		return err
@@ -358,7 +373,12 @@ func copyCachePath(src, dst string, linkRegularFiles bool) error {
 			return err
 		}
 		for _, entry := range entries {
-			if err := copyCachePath(filepath.Join(src, entry.Name()), filepath.Join(dst, entry.Name()), linkRegularFiles); err != nil {
+			if entry.IsDir() {
+				if _, skip := opts.skipDirNames[entry.Name()]; skip {
+					continue
+				}
+			}
+			if err := copyCachePath(filepath.Join(src, entry.Name()), filepath.Join(dst, entry.Name()), opts); err != nil {
 				return err
 			}
 		}
@@ -367,7 +387,7 @@ func copyCachePath(src, dst string, linkRegularFiles bool) error {
 		if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
 			return err
 		}
-		return copyRegularCacheFile(src, dst, info.Mode().Perm(), linkRegularFiles)
+		return copyRegularCacheFile(src, dst, info.Mode().Perm(), opts.linkRegularFiles)
 	default:
 		return fmt.Errorf("cache path %q is not a regular file, directory, or symlink", src)
 	}
