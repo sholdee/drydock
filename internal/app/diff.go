@@ -305,6 +305,18 @@ func resolveDiffRequestPaths(ctx context.Context, request DiffRequest, computeCh
 		}
 		if ok {
 			request.changedPaths = changedPaths
+			filtered, err := filteredChangedOnlyPaths(request)
+			if err != nil {
+				return request, cleanup, err
+			}
+			if len(filtered) == 0 {
+				// Nothing relevant changed between the refs. Point both sides
+				// at the repository tree and skip snapshot materialization;
+				// buildDiffSides returns before any discovery or render.
+				request.LeftPath = repoPath
+				request.RightPath = repoPath
+				return request, cleanup, nil
+			}
 		}
 	}
 

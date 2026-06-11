@@ -712,6 +712,35 @@ func TestDiffAppsRefAndRefOrigCompareCommittedRefs(t *testing.T) {
 	}
 }
 
+func TestResolveDiffRequestPathsSkipsSnapshotsWhenChangedOnlyIsEmpty(t *testing.T) {
+	repoPath := t.TempDir()
+	repo, wt := initDiffGitRepo(t, repoPath)
+	writeTestFile(t, filepath.Join(repoPath, "app.yaml"), "kind: ConfigMap\n")
+	hash := commitDiffGitRepo(t, repo, wt, "init")
+
+	request := DiffRequest{
+		RightPath:   repoPath,
+		Ref:         hash.String(),
+		RefOrig:     hash.String(),
+		ChangedOnly: true,
+	}
+	resolved, cleanup, err := resolveDiffRequestPaths(context.Background(), request, true)
+	if err != nil {
+		t.Fatalf("resolveDiffRequestPaths() error = %v", err)
+	}
+	defer func() { _ = cleanup() }()
+
+	if resolved.LeftPath != repoPath {
+		t.Fatalf("LeftPath = %q, want repo path %q (snapshot must be skipped)", resolved.LeftPath, repoPath)
+	}
+	if resolved.RightPath != repoPath {
+		t.Fatalf("RightPath = %q, want repo path %q (snapshot must be skipped)", resolved.RightPath, repoPath)
+	}
+	if resolved.changedPaths == nil {
+		t.Fatal("changedPaths = nil, want empty non-nil so change.Detect is skipped")
+	}
+}
+
 func TestDiffAppsRefOrigChangedOnlyUsesGitTrackedPaths(t *testing.T) {
 	root := t.TempDir()
 	repo, wt := initDiffGitRepo(t, root)
