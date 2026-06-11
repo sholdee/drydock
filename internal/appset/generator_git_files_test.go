@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"sort"
 	"testing"
 )
 
@@ -62,6 +63,24 @@ spec:
 		t.Fatalf("generated names = %#v, want prod", got)
 	}
 }
+
+func TestMatchGitFilesSkipsDotGitDirectory(t *testing.T) {
+	root := t.TempDir()
+	writeAppsetTestFile(t, filepath.Join(root, ".git", "config.json"), `{}`)
+	writeAppsetTestFile(t, filepath.Join(root, ".github", "config.json"), `{}`)
+	writeAppsetTestFile(t, filepath.Join(root, "apps", "config.json"), `{}`)
+
+	matches, _, err := matchGitFiles(root, []string{"**/config.json"}, nil, "appset.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	sort.Strings(matches)
+	want := []string{".github/config.json", "apps/config.json"}
+	if !slices.Equal(matches, want) {
+		t.Fatalf("matches = %v, want %v", matches, want)
+	}
+}
+
 func TestGenerateGitFilesGeneratorOrdersExcludesAndSetsGoTemplateParams(t *testing.T) {
 	root := t.TempDir()
 	writeAppsetTestFile(t, filepath.Join(root, "configs", "b", "app.yaml"), `cluster:

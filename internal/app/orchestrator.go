@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"strings"
+	"sync"
 
 	argoappv1 "github.com/argoproj/argo-cd/v3/pkg/apis/application/v1alpha1"
 	"github.com/sholdee/drydock/internal/acquisition"
@@ -51,6 +52,8 @@ type BuildRequest struct {
 	renderSettingsSignature string
 	discovered              *discovery.Result
 	snapshotSession         *acquisition.SnapshotSession
+	discoveryPathMemo       *sync.Map
+	appsetGenerationMemo    *sync.Map
 }
 
 type BuildAppRequest struct {

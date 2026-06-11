@@ -217,6 +217,9 @@ func matchGitFiles(repoRoot string, includes, excludes []string, manifestPath st
 			return nil
 		}
 		if entry.IsDir() {
+			if entry.Name() == ".git" {
+				return filepath.SkipDir
+			}
 			return nil
 		}
 		candidates = append(candidates, rel)
