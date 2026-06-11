@@ -842,7 +842,7 @@ func TestRunIgnoreJSONPointerInvalidPointersReturnClearError(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			left := []Document{deploymentDocument("1", []string{tt.pointer})}
-			right := []Document{deploymentDocument("1", nil)}
+			right := []Document{deploymentDocument("2", nil)}
 
 			_, err := Run(left, right, Options{Unified: 3})
 			if err == nil {
