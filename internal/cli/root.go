@@ -28,6 +28,7 @@ type Dependencies struct {
 type Orchestrator interface {
 	Build(context.Context, app.BuildRequest) (app.BuildResult, error)
 	BuildApp(context.Context, app.BuildAppRequest) (app.BuildResult, error)
+	BuildSelection(context.Context, app.BuildRequest, app.ApplicationSelector) (app.BuildResult, error)
 	ListApplications(context.Context, app.BuildRequest) (app.BuildResult, error)
 	DiffApps(context.Context, app.DiffRequest) (app.DiffResult, error)
 	DiffApp(context.Context, app.DiffAppRequest) (app.DiffResult, error)

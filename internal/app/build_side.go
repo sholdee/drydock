@@ -12,6 +12,7 @@ func (o Orchestrator) loadBuildSideDiscovery(ctx context.Context, root string, r
 	result.renderCache = renderCache
 	result.renderSettingsSignature = renderSettingsSignature
 	result.discovered = &discovered
+	result.pluginOptions = request.PluginOptions
 	result.CacheEvents = append(result.CacheEvents, cacheEvents...)
 	discoveryDiags = request.normalizeDiagnostics(discoveryDiags, false)
 	result.Diagnostics = append(result.Diagnostics, discoveryDiags...)

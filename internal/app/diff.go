@@ -157,9 +157,11 @@ func (o Orchestrator) DiffApp(ctx context.Context, request DiffAppRequest) (Diff
 	if err := errors.Join(leftList.err, rightList.err); err != nil {
 		return DiffResult{Diagnostics: request.filterProjectDiagnostics(diagnostics)}, err
 	}
+	leftBuildRequest.PluginOptions = leftList.result.pluginOptions
 	leftBuildRequest.renderCache = leftList.result.renderCache
 	leftBuildRequest.renderSettingsSignature = leftList.result.renderSettingsSignature
 	leftBuildRequest.discovered = leftList.result.discovered
+	rightBuildRequest.PluginOptions = rightList.result.pluginOptions
 	rightBuildRequest.renderCache = rightList.result.renderCache
 	rightBuildRequest.renderSettingsSignature = rightList.result.renderSettingsSignature
 	rightBuildRequest.discovered = rightList.result.discovered

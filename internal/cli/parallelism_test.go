@@ -7,7 +7,9 @@ import (
 	"strings"
 	"testing"
 
+	argoappv1 "github.com/argoproj/argo-cd/v3/pkg/apis/application/v1alpha1"
 	"github.com/sholdee/drydock/internal/app"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 func TestBuildAppsParallelismFlag(t *testing.T) {
@@ -81,14 +83,20 @@ func TestTestAppsRequestsStatusOnlyBuild(t *testing.T) {
 }
 
 func TestTestAppsSelectorRequestsStatusOnlyBuild(t *testing.T) {
-	recorder := &recordingCLIOrchestrator{}
+	recorder := &recordingCLIOrchestrator{listResult: app.BuildResult{Applications: []argoappv1.Application{
+		{ObjectMeta: metav1.ObjectMeta{Name: "selected", Labels: map[string]string{"app": "demo"}}},
+		{ObjectMeta: metav1.ObjectMeta{Name: "unselected", Labels: map[string]string{"app": "other"}}},
+	}}}
 	executeParallelismCommand(t, recorder, "test", "apps", "--selector", "app=demo")
 
-	if got := len(recorder.buildRequests); got != 1 {
-		t.Fatalf("build requests = %d, want 1", got)
+	if got := len(recorder.buildSelectionRequests); got != 1 {
+		t.Fatalf("build selection requests = %d, want 1", got)
 	}
-	if got := recorder.buildRequests[0].StatusOnly; !got {
-		t.Fatalf("BuildRequest.StatusOnly = %t, want true", got)
+	if got := recorder.buildSelectionRequests[0].StatusOnly; !got {
+		t.Fatalf("BuildSelection BuildRequest.StatusOnly = %t, want true", got)
+	}
+	if got := recorder.buildSelectionResultApplications; len(got) != 1 || got[0].Name != "selected" {
+		t.Fatalf("BuildSelection selected applications = %#v, want selected", got)
 	}
 }
 
@@ -151,7 +159,7 @@ func TestNonTestCommandsDoNotRequestStatusOnlyBuild(t *testing.T) {
 			name: "get images",
 			args: []string{"get", "images"},
 			statusOnly: func(recorder *recordingCLIOrchestrator) bool {
-				return recorder.listRequests[0].StatusOnly || recorder.buildRequests[0].StatusOnly
+				return recorder.buildSelectionRequests[0].StatusOnly
 			},
 		},
 		{
@@ -244,11 +252,8 @@ func TestGetImagesParallelismFlag(t *testing.T) {
 	recorder := &recordingCLIOrchestrator{}
 	executeParallelismCommand(t, recorder, "get", "images", "--parallelism", "7")
 
-	if got := recorder.listRequests[0].Parallelism; got != 7 {
-		t.Fatalf("ListApplications BuildRequest.Parallelism = %d, want 7", got)
-	}
-	if got := recorder.buildRequests[0].Parallelism; got != 7 {
-		t.Fatalf("BuildRequest.Parallelism = %d, want 7", got)
+	if got := recorder.buildSelectionRequests[0].Parallelism; got != 7 {
+		t.Fatalf("BuildSelection BuildRequest.Parallelism = %d, want 7", got)
 	}
 }
 
@@ -305,26 +310,28 @@ func executeParallelismCommand(t *testing.T, recorder *recordingCLIOrchestrator,
 }
 
 type recordingCLIOrchestrator struct {
-	buildRequests      []app.BuildRequest
-	buildAppRequests   []app.BuildAppRequest
-	listRequests       []app.BuildRequest
-	diffAppsRequests   []app.DiffRequest
-	diffAppRequests    []app.DiffAppRequest
-	diffImagesRequests []app.DiffRequest
-	diagRequests       []app.DiagRequest
-	buildResult        app.BuildResult
-	buildError         error
-	buildHook          func(app.BuildRequest) error
-	diffAppsResult     app.DiffResult
-	diffAppsError      error
-	diffAppResult      app.DiffResult
-	diffAppError       error
-	diffImagesResult   app.ImageDiffResult
-	diffImagesError    error
-	listResult         app.BuildResult
-	listError          error
-	diagResult         app.DiagResult
-	diagError          error
+	buildRequests                    []app.BuildRequest
+	buildAppRequests                 []app.BuildAppRequest
+	buildSelectionRequests           []app.BuildRequest
+	buildSelectionResultApplications []argoappv1.Application
+	listRequests                     []app.BuildRequest
+	diffAppsRequests                 []app.DiffRequest
+	diffAppRequests                  []app.DiffAppRequest
+	diffImagesRequests               []app.DiffRequest
+	diagRequests                     []app.DiagRequest
+	buildResult                      app.BuildResult
+	buildError                       error
+	buildHook                        func(app.BuildRequest) error
+	diffAppsResult                   app.DiffResult
+	diffAppsError                    error
+	diffAppResult                    app.DiffResult
+	diffAppError                     error
+	diffImagesResult                 app.ImageDiffResult
+	diffImagesError                  error
+	listResult                       app.BuildResult
+	listError                        error
+	diagResult                       app.DiagResult
+	diagError                        error
 }
 
 func (orchestrator *recordingCLIOrchestrator) Build(_ context.Context, request app.BuildRequest) (app.BuildResult, error) {
@@ -340,6 +347,16 @@ func (orchestrator *recordingCLIOrchestrator) Build(_ context.Context, request a
 func (orchestrator *recordingCLIOrchestrator) BuildApp(_ context.Context, request app.BuildAppRequest) (app.BuildResult, error) {
 	orchestrator.buildAppRequests = append(orchestrator.buildAppRequests, request)
 	return app.BuildResult{}, nil
+}
+
+func (orchestrator *recordingCLIOrchestrator) BuildSelection(_ context.Context, request app.BuildRequest, selectApps app.ApplicationSelector) (app.BuildResult, error) {
+	orchestrator.buildSelectionRequests = append(orchestrator.buildSelectionRequests, request)
+	result := orchestrator.buildResult
+	if selectApps != nil {
+		result.Applications = selectApps(orchestrator.listResult.Applications)
+		orchestrator.buildSelectionResultApplications = result.Applications
+	}
+	return result, orchestrator.buildError
 }
 
 func (orchestrator *recordingCLIOrchestrator) ListApplications(_ context.Context, request app.BuildRequest) (app.BuildResult, error) {

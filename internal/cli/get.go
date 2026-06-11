@@ -3,7 +3,6 @@ package cli
 import (
 	"context"
 	"fmt"
-	"slices"
 	"sort"
 	"strings"
 
@@ -82,18 +81,10 @@ func newGetCommand(deps Dependencies) *cobra.Command {
 				return err
 			}
 			buildRequest := buildRequestFromFlags(cmd, imagesFlags, repoMaps)
-			listResult, err := deps.Orchestrator.ListApplications(context.Background(), buildRequest)
-			if err != nil {
-				if renderErr := renderDiagnostics(cmd.ErrOrStderr(), listResult.Diagnostics); renderErr != nil {
-					return renderErr
-				}
-				return err
-			}
-			buildRequest.Applications = filterApplicationsBySelector(listResult.Applications, selector)
-			buildResult, err := deps.Orchestrator.Build(context.Background(), buildRequest)
-			diagnostics := slices.Clone(listResult.Diagnostics)
-			diagnostics = append(diagnostics, buildResult.Diagnostics...)
-			if renderErr := renderDiagnostics(cmd.ErrOrStderr(), diagnostics); renderErr != nil {
+			buildResult, err := deps.Orchestrator.BuildSelection(context.Background(), buildRequest, func(apps []argoappv1.Application) []argoappv1.Application {
+				return filterApplicationsBySelector(apps, selector)
+			})
+			if renderErr := renderDiagnostics(cmd.ErrOrStderr(), buildResult.Diagnostics); renderErr != nil {
 				return renderErr
 			}
 			if err != nil {
