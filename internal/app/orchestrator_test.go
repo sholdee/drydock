@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -150,6 +151,37 @@ func TestOrchestratorBuildStatusOnlyDoesNotCollectManifests(t *testing.T) {
 	assertApplicationStatuses(t, result.Statuses, []ApplicationStatus{
 		{Namespace: "argocd", Name: "demo", Status: ApplicationStatusPass},
 	})
+}
+
+func TestPrepareBuildResultReusesProvidedDiscovery(t *testing.T) {
+	root := t.TempDir()
+	writeBuildApplication(t, root, "demo", "demo")
+
+	orchestrator := Orchestrator{}
+	listResult, err := orchestrator.ListApplications(context.Background(), BuildRequest{Path: root})
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := BuildRequest{Path: root}
+	request.Applications = listResult.Applications
+	request.renderCache = listResult.renderCache
+	request.renderSettingsSignature = listResult.renderSettingsSignature
+	request.discovered = listResult.discovered
+
+	if err := os.RemoveAll(root); err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := orchestrator.prepareBuildResult(context.Background(), request, root)
+	if err != nil {
+		t.Fatalf("prepareBuildResult must reuse provided discovery without re-scanning: %v", err)
+	}
+	if result.renderCache != listResult.renderCache {
+		t.Fatal("prepareBuildResult must reuse the provided render cache")
+	}
+	if len(result.Projects) != len(listResult.Projects) {
+		t.Fatalf("Projects = %d, want %d", len(result.Projects), len(listResult.Projects))
+	}
 }
 
 func TestOrchestratorDiagIncludesSettings(t *testing.T) {

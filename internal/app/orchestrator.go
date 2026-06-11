@@ -48,6 +48,7 @@ type BuildRequest struct {
 	StatusCallback          ApplicationStatusCallback
 	renderCache             *applicationRenderCache
 	renderSettingsSignature string
+	discovered              *discovery.Result
 }
 
 type BuildAppRequest struct {
@@ -114,6 +115,7 @@ type BuildResult struct {
 	PluginExecutions        []PluginExecution
 	renderCache             *applicationRenderCache
 	renderSettingsSignature string
+	discovered              *discovery.Result
 }
 
 type DiagRequest = BuildRequest
@@ -520,6 +522,23 @@ func (o Orchestrator) prepareBuildResult(ctx context.Context, request BuildReque
 
 	var result BuildResult
 	result.Applications = append(result.Applications, request.Applications...)
+	if request.discovered != nil {
+		discovered := *request.discovered
+		result.renderCache = request.renderCache
+		result.renderSettingsSignature = request.renderSettingsSignature
+		result.discovered = request.discovered
+		result.Projects = appendDiscoveredProjects(result.Projects, discovered)
+		diags, err := loadBuildSideSettings(root, request, discovered, &result)
+		if err != nil {
+			result.Statuses = skippedApplicationStatuses(result.Applications, err)
+			return result, err
+		}
+		if err := diagnosticFailure(request.filterProjectDiagnostics(diags), request.Strict); err != nil {
+			result.Statuses = skippedApplicationStatuses(result.Applications, err)
+			return result, err
+		}
+		return result, nil
+	}
 	discovered, discoveryDiags, err := o.loadBuildSideDiscovery(ctx, root, request, &result)
 	if err != nil {
 		result.Statuses = skippedApplicationStatuses(result.Applications, err)
@@ -590,10 +609,12 @@ func (o Orchestrator) BuildApp(ctx context.Context, request BuildAppRequest) (Bu
 	buildRequest.Applications = []argoappv1.Application{selected}
 	buildRequest.renderCache = listResult.renderCache
 	buildRequest.renderSettingsSignature = listResult.renderSettingsSignature
+	buildRequest.discovered = listResult.discovered
 	buildResult, err := o.Build(ctx, buildRequest)
 	buildResult.ApplicationInputs = selectApplicationInputsForApplication(listResult.ApplicationInputs, selected)
 	buildResult.Diagnostics = append(append([]diagnostic.Diagnostic(nil), listResult.Diagnostics...), buildResult.Diagnostics...)
 	buildResult.Diagnostics = buildRequest.filterProjectDiagnostics(dedupeDiagnostics(buildResult.Diagnostics))
+	buildResult.CacheEvents = append(append([]cacheevent.Event(nil), listResult.CacheEvents...), buildResult.CacheEvents...)
 	return buildResult, err
 }
 

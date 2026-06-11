@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/sholdee/drydock/internal/cacheevent"
 	"github.com/sholdee/drydock/internal/change"
 	"github.com/sholdee/drydock/internal/diagnostic"
 )
@@ -27,6 +28,7 @@ func (o Orchestrator) buildDiffSides(ctx context.Context, request DiffRequest) (
 	rightBuildRequest.Parallelism = rightParallelism
 
 	var diagnostics []diagnostic.Diagnostic
+	var leftList, rightList diffSideOutcome
 	if request.ChangedOnly {
 		changedPaths, err := filteredChangedOnlyPaths(request)
 		if err != nil {
@@ -36,7 +38,7 @@ func (o Orchestrator) buildDiffSides(ctx context.Context, request DiffRequest) (
 			return BuildResult{}, BuildResult{}, diagnostics, nil
 		}
 
-		leftList, rightList := runDiffSidePair(ctx, concurrent, o.ListApplications, leftBuildRequest, rightBuildRequest)
+		leftList, rightList = runDiffSidePair(ctx, concurrent, o.ListApplications, leftBuildRequest, rightBuildRequest)
 		diagnostics = append(diagnostics, leftList.result.Diagnostics...)
 		diagnostics = append(diagnostics, rightList.result.Diagnostics...)
 		if err := errors.Join(leftList.err, rightList.err); err != nil {
@@ -44,8 +46,10 @@ func (o Orchestrator) buildDiffSides(ctx context.Context, request DiffRequest) (
 		}
 		leftBuildRequest.renderCache = leftList.result.renderCache
 		leftBuildRequest.renderSettingsSignature = leftList.result.renderSettingsSignature
+		leftBuildRequest.discovered = leftList.result.discovered
 		rightBuildRequest.renderCache = rightList.result.renderCache
 		rightBuildRequest.renderSettingsSignature = rightList.result.renderSettingsSignature
+		rightBuildRequest.discovered = rightList.result.discovered
 
 		leftSelected, leftUnowned := SelectChangedApplicationInputs(leftList.result.ApplicationInputs, changedPaths)
 		rightSelected, rightUnowned := SelectChangedApplicationInputs(rightList.result.ApplicationInputs, changedPaths)
@@ -70,6 +74,8 @@ func (o Orchestrator) buildDiffSides(ctx context.Context, request DiffRequest) (
 	}
 
 	leftBuild, rightBuild := runDiffSidePair(ctx, concurrent, o.Build, leftBuildRequest, rightBuildRequest)
+	leftBuild.result.CacheEvents = append(append([]cacheevent.Event(nil), leftList.result.CacheEvents...), leftBuild.result.CacheEvents...)
+	rightBuild.result.CacheEvents = append(append([]cacheevent.Event(nil), rightList.result.CacheEvents...), rightBuild.result.CacheEvents...)
 	diagnostics = append(diagnostics, leftBuild.result.Diagnostics...)
 	diagnostics = append(diagnostics, rightBuild.result.Diagnostics...)
 	if err := errors.Join(leftBuild.err, rightBuild.err); err != nil {
