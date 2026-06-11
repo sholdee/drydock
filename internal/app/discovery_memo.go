@@ -15,8 +15,9 @@ func pathMayContainDiscoveryObjectsCached(memo *sync.Map, root string) (bool, er
 		return pathMayContainDiscoveryObjects(root)
 	}
 	if cached, ok := memo.Load(root); ok {
-		verdict := cached.(discoveryPathVerdict)
-		return verdict.matches, verdict.err
+		if verdict, ok := cached.(discoveryPathVerdict); ok {
+			return verdict.matches, verdict.err
+		}
 	}
 	matches, err := pathMayContainDiscoveryObjects(root)
 	memo.Store(root, discoveryPathVerdict{matches: matches, err: err})

@@ -174,16 +174,9 @@ func (o Orchestrator) DiffApp(ctx context.Context, request DiffAppRequest) (Diff
 	rightBuildRequest.renderSettingsSignature = rightList.result.renderSettingsSignature
 	rightBuildRequest.discovered = rightList.result.discovered
 
-	leftApp, leftOK, err := SelectOptionalApplicationByName(leftList.result.Applications, name)
+	leftApp, leftOK, rightApp, rightOK, err := selectDiffAppApplications(leftList.result.Applications, rightList.result.Applications, name)
 	if err != nil {
 		return DiffResult{Diagnostics: request.filterProjectDiagnostics(diagnostics)}, err
-	}
-	rightApp, rightOK, err := SelectOptionalApplicationByName(rightList.result.Applications, name)
-	if err != nil {
-		return DiffResult{Diagnostics: request.filterProjectDiagnostics(diagnostics)}, err
-	}
-	if !leftOK && !rightOK {
-		return DiffResult{Diagnostics: request.filterProjectDiagnostics(diagnostics)}, fmt.Errorf("application %q not found in either tree", name)
 	}
 
 	leftBuildRequest.Applications = selectedApplications(leftApp, leftOK)
@@ -313,24 +306,13 @@ func resolveDiffRequestPaths(ctx context.Context, request DiffRequest, computeCh
 	}
 
 	if computeChangedPaths && request.ChangedOnly {
-		changedPaths, ok, err := gitRefChangedPaths(ctx, request, repoPath)
+		resolved, done, err := resolveEmptyChangedOnlyRefDiff(ctx, request, repoPath)
 		if err != nil {
 			return request, cleanup, err
 		}
-		if ok {
-			request.changedPaths = changedPaths
-			filtered, err := filteredChangedOnlyPaths(request)
-			if err != nil {
-				return request, cleanup, err
-			}
-			if len(filtered) == 0 {
-				// Nothing relevant changed between the refs. Point both sides
-				// at the repository tree and skip snapshot materialization;
-				// buildDiffSides returns before any discovery or render.
-				request.LeftPath = repoPath
-				request.RightPath = repoPath
-				return request, cleanup, nil
-			}
+		request = resolved
+		if done {
+			return request, cleanup, nil
 		}
 	}
 
@@ -361,6 +343,27 @@ func resolveDiffRequestPaths(ctx context.Context, request DiffRequest, computeCh
 		cleanups = append(cleanups, result.Cleanup)
 	}
 	return request, cleanup, nil
+}
+
+func resolveEmptyChangedOnlyRefDiff(ctx context.Context, request DiffRequest, repoPath string) (DiffRequest, bool, error) {
+	changedPaths, ok, err := gitRefChangedPaths(ctx, request, repoPath)
+	if err != nil || !ok {
+		return request, false, err
+	}
+	request.changedPaths = changedPaths
+	filtered, err := filteredChangedOnlyPaths(request)
+	if err != nil {
+		return request, false, err
+	}
+	if len(filtered) > 0 {
+		return request, false, nil
+	}
+	// Nothing relevant changed between the refs. Point both sides at the
+	// repository tree and skip snapshot materialization; buildDiffSides returns
+	// before any discovery or render.
+	request.LeftPath = repoPath
+	request.RightPath = repoPath
+	return request, true, nil
 }
 
 func validateDiffRefOptions(request DiffRequest, hasRef bool) error {
@@ -497,6 +500,21 @@ func selectedApplications(application argoappv1.Application, ok bool) []argoappv
 		return []argoappv1.Application{}
 	}
 	return []argoappv1.Application{application}
+}
+
+func selectDiffAppApplications(leftApps, rightApps []argoappv1.Application, name string) (argoappv1.Application, bool, argoappv1.Application, bool, error) {
+	leftApp, leftOK, err := SelectOptionalApplicationByName(leftApps, name)
+	if err != nil {
+		return argoappv1.Application{}, false, argoappv1.Application{}, false, err
+	}
+	rightApp, rightOK, err := SelectOptionalApplicationByName(rightApps, name)
+	if err != nil {
+		return argoappv1.Application{}, false, argoappv1.Application{}, false, err
+	}
+	if !leftOK && !rightOK {
+		return argoappv1.Application{}, false, argoappv1.Application{}, false, fmt.Errorf("application %q not found in either tree", name)
+	}
+	return leftApp, leftOK, rightApp, rightOK, nil
 }
 
 func diffBuildResults(leftBuild, rightBuild BuildResult, opts diff.Options) ([]diff.Result, error) {

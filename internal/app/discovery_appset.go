@@ -64,8 +64,9 @@ func generateApplicationSetCached(memo *sync.Map, root string, appSetFile discov
 		return appset.GenerateWithOptions(root, appSetFile.Path, appSetFile.ApplicationSet, appsetOptions)
 	}
 	if cached, ok := memo.Load(key); ok {
-		outcome := cached.(appsetGenerationOutcome)
-		return copyGeneratedApplications(outcome.apps), copyDiagnostics(outcome.diags), outcome.err
+		if outcome, ok := cached.(appsetGenerationOutcome); ok {
+			return copyGeneratedApplications(outcome.apps), copyDiagnostics(outcome.diags), outcome.err
+		}
 	}
 	apps, diags, err := appset.GenerateWithOptions(root, appSetFile.Path, appSetFile.ApplicationSet, appsetOptions)
 	memo.Store(key, appsetGenerationOutcome{
