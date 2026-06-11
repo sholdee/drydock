@@ -1,5 +1,42 @@
 # Changelog
 
+## [0.1.21](https://github.com/sholdee/drydock/compare/v0.1.20...v0.1.21) (2026-06-11)
+
+
+### Bug Fixes
+
+* **diff:** broaden identical document normalization fast path ([4d787b2](https://github.com/sholdee/drydock/commit/4d787b2feaf0897966f0b52c0558ffe92655080e))
+
+
+### Performance Improvements
+
+* **acquisition:** exclude .git from git snapshot copies ([ebbfaf0](https://github.com/sholdee/drydock/commit/ebbfaf02b0c6ce481df78885877da51468992518))
+* **acquisition:** share one snapshot session across build phases ([ed3ee79](https://github.com/sholdee/drydock/commit/ed3ee796abf0896b8bcbb46e8eb4a02ad506b707))
+* **app:** build diff sides concurrently ([c7abba7](https://github.com/sholdee/drydock/commit/c7abba7cac654339c895fed3659a3656fda6d0f3))
+* **app:** clone render cache entries outside the cache mutex ([cb35acd](https://github.com/sholdee/drydock/commit/cb35acd7641902cfd544d8d0237e6226ff52dda5))
+* **app:** memoize discovery scans and appset generation ([a4932bc](https://github.com/sholdee/drydock/commit/a4932bc6cba2314683f95e03bc1cc5f0e666549f))
+* **app:** reuse list-phase caches in selector builds ([4c70fe9](https://github.com/sholdee/drydock/commit/4c70fe9f6b293ff4adf13fc7c0c0508bbd91e0bc))
+* **app:** reuse list-phase discovery in the build phase ([cbebde1](https://github.com/sholdee/drydock/commit/cbebde1073523264097c3ad8dc6247957b142e9b))
+* **app:** skip git ref snapshots when changed-only finds no paths ([0db576c](https://github.com/sholdee/drydock/commit/0db576cb3b0871215943c79aca8919e9b4c8d955))
+* **change:** parallelize content comparisons in change detection ([1e9d05d](https://github.com/sholdee/drydock/commit/1e9d05d5a4038a69c0aec9b03929a980addc99a9))
+* **change:** refine parallel change helpers ([3eb60b5](https://github.com/sholdee/drydock/commit/3eb60b5e8a3387c383ed10696e1868362e5b8dd5))
+* **cli:** default render commands to parallel application rendering ([b6777fe](https://github.com/sholdee/drydock/commit/b6777fec6c02af7ad9639f0299dd0b5663e351a2))
+* **diff:** skip normalization for byte-identical document pairs ([c2a72ad](https://github.com/sholdee/drydock/commit/c2a72addac5f884930fed00ca19ca36ec4a52cc8))
+* remediate render hot paths ([d952785](https://github.com/sholdee/drydock/commit/d9527853e08a1641a7bf924abe431195a6281eb2))
+* **render:** cache loaded helm charts within a render session ([1ab0cb3](https://github.com/sholdee/drydock/commit/1ab0cb3046e9fb819a750d4949509e28ba56a34e))
+
+
+### Miscellaneous Chores
+
+* **deps:** update golang:1.26.4 docker digest to 87a41d2 ([#136](https://github.com/sholdee/drydock/issues/136)) ([d407dd3](https://github.com/sholdee/drydock/commit/d407dd38c4eebdc37e0484e53e54310ac7f80576))
+* **deps:** update golang:1.26.4 docker digest to d184d9b ([#135](https://github.com/sholdee/drydock/issues/135)) ([e1c6582](https://github.com/sholdee/drydock/commit/e1c65821ae1f96ef4794f39e82c607558c9fc87e))
+* **deps:** update golang:1.26.4 docker digest to d47ca13 ([#132](https://github.com/sholdee/drydock/issues/132)) ([f7cd362](https://github.com/sholdee/drydock/commit/f7cd36239cd31086f84492c6acc6abda023567d6))
+
+
+### Code Refactoring
+
+* **app:** split diff orchestration helpers ([7e68d4e](https://github.com/sholdee/drydock/commit/7e68d4eb0d27430b2f8e4b5328ff4ca064ec4971))
+
 ## [0.1.20](https://github.com/sholdee/drydock/compare/v0.1.19...v0.1.20) (2026-06-10)
 
 
