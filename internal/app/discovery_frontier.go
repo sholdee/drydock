@@ -146,7 +146,7 @@ func applicationMayRenderDiscoveryObjects(root string, request BuildRequest, dis
 		if !ok {
 			continue
 		}
-		matches, err := pathMayContainDiscoveryObjects(sourceRoot)
+		matches, err := pathMayContainDiscoveryObjectsCached(request.discoveryPathMemo, sourceRoot)
 		if err != nil || matches {
 			if localSourceAlreadyDiscovered(root, sourceRoot, discovered) && !sourceRootHasLocalChart(sourceRoot) {
 				continue

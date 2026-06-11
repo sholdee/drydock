@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/sholdee/drydock/internal/remote"
@@ -150,7 +151,8 @@ func TestDiffAppsRemoteKustomizePatternFixture(t *testing.T) {
 		"+  value: current",
 	)
 	assertStderrEmpty(t, result)
-	if got, want := len(acquirer.requests), 8; got != want {
+	requests, options := acquirer.records()
+	if got, want := len(requests), 8; got != want {
 		t.Fatalf("remote acquire calls = %d, want %d", got, want)
 	}
 	for _, want := range []string{
@@ -159,12 +161,12 @@ func TestDiffAppsRemoteKustomizePatternFixture(t *testing.T) {
 		"https://github.com/example/remote-patch.git",
 		"https://raw.githubusercontent.com/example/remote/resource.yaml",
 	} {
-		if !recordedRemoteRequest(acquirer.requests, want) {
-			t.Fatalf("remote acquire requests missing %q: %#v", want, acquirer.requests)
+		if !recordedRemoteRequest(requests, want) {
+			t.Fatalf("remote acquire requests missing %q: %#v", want, requests)
 		}
 	}
-	if !recordedHTTPRemoteCredential(acquirer.requests, acquirer.options, "https://raw.githubusercontent.com/example/remote/resource.yaml", "fixture-token") {
-		t.Fatalf("remote HTTP credential was not passed to fake acquirer: requests=%#v options=%#v", acquirer.requests, acquirer.options)
+	if !recordedHTTPRemoteCredential(requests, options, "https://raw.githubusercontent.com/example/remote/resource.yaml", "fixture-token") {
+		t.Fatalf("remote HTTP credential was not passed to fake acquirer: requests=%#v options=%#v", requests, options)
 	}
 }
 
@@ -190,14 +192,17 @@ func TestDiffAppsApplicationSetCombinationPatternFixture(t *testing.T) {
 }
 
 type recordingCLIRemoteAcquirer struct {
+	mu       sync.Mutex
 	paths    map[string]string
 	requests []remote.Request
 	options  []remote.Options
 }
 
 func (acquirer *recordingCLIRemoteAcquirer) Acquire(_ context.Context, request remote.Request, opts remote.Options) (remote.Result, error) {
+	acquirer.mu.Lock()
 	acquirer.requests = append(acquirer.requests, request)
 	acquirer.options = append(acquirer.options, opts)
+	acquirer.mu.Unlock()
 	for _, key := range []string{request.RepoURL, request.URL} {
 		if key == "" {
 			continue
@@ -207,6 +212,14 @@ func (acquirer *recordingCLIRemoteAcquirer) Acquire(_ context.Context, request r
 		}
 	}
 	return remote.Result{}, &remoteFixtureMiss{request: request}
+}
+
+func (acquirer *recordingCLIRemoteAcquirer) records() ([]remote.Request, []remote.Options) {
+	acquirer.mu.Lock()
+	defer acquirer.mu.Unlock()
+	requests := append([]remote.Request(nil), acquirer.requests...)
+	options := append([]remote.Options(nil), acquirer.options...)
+	return requests, options
 }
 
 type remoteFixtureMiss struct {

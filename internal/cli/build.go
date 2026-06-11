@@ -20,6 +20,7 @@ func newBuildCommand(deps Dependencies) *cobra.Command {
 	}
 
 	appsFlags := defaultCommonFlags()
+	appsFlags.parallelism = defaultRenderAppsParallelism()
 	apps := &cobra.Command{
 		Use:   "apps",
 		Short: "Render all Applications",
@@ -42,6 +43,7 @@ func newBuildCommand(deps Dependencies) *cobra.Command {
 	bindCommonFlags(apps, &appsFlags)
 
 	appFlags := defaultCommonFlags()
+	appFlags.parallelism = defaultRenderAppsParallelism()
 	appCmd := &cobra.Command{
 		Use:   "app NAME",
 		Short: "Render one Application",

@@ -2,10 +2,13 @@ package app
 
 import (
 	"context"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/sholdee/drydock/internal/acquisition"
+	"github.com/sholdee/drydock/internal/cacheevent"
 	"github.com/sholdee/drydock/internal/chart"
 	"github.com/sholdee/drydock/internal/config"
 	"github.com/sholdee/drydock/internal/diagnostic"
@@ -104,6 +107,45 @@ func TestNewLocalProviderCarriesHelmValuesFileSchemes(t *testing.T) {
 	}
 }
 
+func TestNewLocalProviderPreservesGitDirInSnapshotsWhenPluginsEnabled(t *testing.T) {
+	provider, cleanup, err := newLocalProvider(Orchestrator{}, t.TempDir(), config.DefaultSettings(), BuildRequest{
+		PluginOptions: PluginOptions{EnablePlugins: true},
+	}, nil, "drydock-test-*")
+	defer cleanup()
+	if err != nil {
+		t.Fatalf("newLocalProvider() error = %v", err)
+	}
+	if !provider.acquisition.PreserveGitDirInSnapshots {
+		t.Fatal("PreserveGitDirInSnapshots = false, want true when plugins are enabled")
+	}
+}
+
+func TestNewLocalProviderReusesRequestSnapshotSession(t *testing.T) {
+	session, err := acquisition.NewSnapshotSession("drydock-test-snapshots-*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer session.Close()
+	request := BuildRequest{}
+	request.snapshotSession = session
+
+	provider, cleanup, err := newLocalProvider(Orchestrator{}, t.TempDir(), config.DefaultSettings(), request, cacheevent.NewRecorder(false), "unused-*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cleanup()
+	if provider.acquisition.SnapshotRoot != session.Root {
+		t.Fatalf("SnapshotRoot = %q, want shared session root %q", provider.acquisition.SnapshotRoot, session.Root)
+	}
+	if provider.acquisition.SnapshotCache != session.Cache {
+		t.Fatal("SnapshotCache does not reuse request snapshot session cache")
+	}
+	cleanup()
+	if _, statErr := os.Stat(session.Root); statErr != nil {
+		t.Fatalf("shared session root must survive provider cleanup: %v", statErr)
+	}
+}
+
 func TestOrchestratorReportsMissingSourcePathClearly(t *testing.T) {
 	root := t.TempDir()
 	writeTestFile(t, filepath.Join(root, "apps", "missing", "app.yaml"), `apiVersion: argoproj.io/v1alpha1
@@ -150,6 +192,37 @@ func TestOrchestratorBuildStatusOnlyDoesNotCollectManifests(t *testing.T) {
 	assertApplicationStatuses(t, result.Statuses, []ApplicationStatus{
 		{Namespace: "argocd", Name: "demo", Status: ApplicationStatusPass},
 	})
+}
+
+func TestPrepareBuildResultReusesProvidedDiscovery(t *testing.T) {
+	root := t.TempDir()
+	writeBuildApplication(t, root, "demo", "demo")
+
+	orchestrator := Orchestrator{}
+	listResult, err := orchestrator.ListApplications(context.Background(), BuildRequest{Path: root})
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := BuildRequest{Path: root}
+	request.Applications = listResult.Applications
+	request.renderCache = listResult.renderCache
+	request.renderSettingsSignature = listResult.renderSettingsSignature
+	request.discovered = listResult.discovered
+
+	if err := os.RemoveAll(root); err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := orchestrator.prepareBuildResult(context.Background(), request, root)
+	if err != nil {
+		t.Fatalf("prepareBuildResult must reuse provided discovery without re-scanning: %v", err)
+	}
+	if result.renderCache != listResult.renderCache {
+		t.Fatal("prepareBuildResult must reuse the provided render cache")
+	}
+	if len(result.Projects) != len(listResult.Projects) {
+		t.Fatalf("Projects = %d, want %d", len(result.Projects), len(listResult.Projects))
+	}
 }
 
 func TestOrchestratorDiagIncludesSettings(t *testing.T) {

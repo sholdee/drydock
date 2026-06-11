@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 
 	git "github.com/go-git/go-git/v5"
 	"github.com/go-git/go-git/v5/plumbing/filemode"
@@ -117,23 +118,73 @@ func addTrackedWorktreeChanges(repo *git.Repository, headTree *object.Tree, path
 	if err != nil {
 		return err
 	}
-	root := wt.Filesystem.Root()
-	headPaths := make(map[string]object.File)
-	if err := headTree.Files().ForEach(func(file *object.File) error {
-		name := filepath.ToSlash(file.Name)
-		headPaths[name] = *file
-		changed, err := worktreeFileChanged(root, file)
-		if err != nil {
-			return err
-		}
-		if changed {
-			paths[name] = struct{}{}
-		}
-		return nil
-	}); err != nil {
+	files, err := headTreeFiles(headTree)
+	if err != nil {
 		return err
 	}
+	changed, err := changedWorktreeFiles(wt.Filesystem.Root(), files)
+	if err != nil {
+		return err
+	}
+	headPaths := recordChangedHeadPaths(paths, files, changed)
+	return addIndexChanges(repo, headPaths, paths)
+}
 
+func headTreeFiles(headTree *object.Tree) ([]object.File, error) {
+	files := make([]object.File, 0)
+	if err := headTree.Files().ForEach(func(file *object.File) error {
+		files = append(files, *file)
+		return nil
+	}); err != nil {
+		return nil, err
+	}
+	sort.Slice(files, func(i, j int) bool { return files[i].Name < files[j].Name })
+	return files, nil
+}
+
+func changedWorktreeFiles(root string, files []object.File) ([]bool, error) {
+	changed := make([]bool, len(files))
+	errs := make([]error, len(files))
+	workers := materializeTreeParallelism(len(files))
+	if workers > 0 {
+		jobs := make(chan int)
+		var wg sync.WaitGroup
+		wg.Add(workers)
+		for range workers {
+			go func() {
+				defer wg.Done()
+				for i := range jobs {
+					changed[i], errs[i] = worktreeFileChanged(root, &files[i])
+				}
+			}()
+		}
+		for i := range files {
+			jobs <- i
+		}
+		close(jobs)
+		wg.Wait()
+	}
+	for i := range files {
+		if errs[i] != nil {
+			return nil, errs[i]
+		}
+	}
+	return changed, nil
+}
+
+func recordChangedHeadPaths(paths map[string]struct{}, files []object.File, changed []bool) map[string]object.File {
+	headPaths := make(map[string]object.File, len(files))
+	for i := range files {
+		name := filepath.ToSlash(files[i].Name)
+		headPaths[name] = files[i]
+		if changed[i] {
+			paths[name] = struct{}{}
+		}
+	}
+	return headPaths
+}
+
+func addIndexChanges(repo *git.Repository, headPaths map[string]object.File, paths map[string]struct{}) error {
 	idx, err := repo.Storer.Index()
 	if err != nil {
 		return err

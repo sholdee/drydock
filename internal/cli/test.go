@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	argoappv1 "github.com/argoproj/argo-cd/v3/pkg/apis/application/v1alpha1"
 	"github.com/sholdee/drydock/internal/app"
 	cliformat "github.com/sholdee/drydock/internal/format"
 	"github.com/sholdee/drydock/internal/source"
@@ -49,21 +50,18 @@ func newTestCommand(deps Dependencies) *cobra.Command {
 				liveReporter = newTestLiveReporter(cmd.OutOrStdout(), cmd.ErrOrStderr(), deps.isTerminal(cmd.ErrOrStderr()))
 				buildRequest.StatusCallback = liveReporter.Handle
 			}
+			var result app.BuildResult
 			if strings.TrimSpace(appsFlags.selector) != "" {
-				selector, err := parseApplicationSelector(appsFlags.selector)
-				if err != nil {
-					return err
+				selector, parseErr := parseApplicationSelector(appsFlags.selector)
+				if parseErr != nil {
+					return parseErr
 				}
-				listResult, err := deps.Orchestrator.ListApplications(context.Background(), buildRequest)
-				if err != nil {
-					if renderErr := renderDiagnostics(cmd.ErrOrStderr(), listResult.Diagnostics); renderErr != nil {
-						return renderErr
-					}
-					return err
-				}
-				buildRequest.Applications = filterApplicationsBySelector(listResult.Applications, selector)
+				result, err = deps.Orchestrator.BuildSelection(context.Background(), buildRequest, func(apps []argoappv1.Application) []argoappv1.Application {
+					return filterApplicationsBySelector(apps, selector)
+				})
+			} else {
+				result, err = deps.Orchestrator.Build(context.Background(), buildRequest)
 			}
-			result, err := deps.Orchestrator.Build(context.Background(), buildRequest)
 			if liveReporter != nil {
 				var liveErr liveTestOutputError
 				if errors.As(err, &liveErr) {
@@ -96,6 +94,7 @@ func newTestCommand(deps Dependencies) *cobra.Command {
 
 	appFlags := defaultCommonFlags()
 	appFlags.output = testOutputText
+	appFlags.parallelism = defaultRenderAppsParallelism()
 	appCmd := &cobra.Command{
 		Use:   "app NAME",
 		Short: "Test one Application",

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"sync"
 
 	"github.com/sholdee/drydock/internal/appset"
 	"github.com/sholdee/drydock/internal/cacheevent"
@@ -27,6 +28,8 @@ func (o Orchestrator) discoverRepository(ctx context.Context, root string, reque
 	if renderCache == nil {
 		renderCache = newApplicationRenderCache()
 	}
+	request.discoveryPathMemo = &sync.Map{}
+	request.appsetGenerationMemo = &sync.Map{}
 
 	discovered, err := discovery.Scan(root, discovery.Options{})
 	if err != nil {

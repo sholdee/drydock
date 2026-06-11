@@ -9,6 +9,7 @@ import (
 	"github.com/sholdee/drydock/internal/config"
 	"github.com/sholdee/drydock/internal/plugincontainer"
 	"github.com/sholdee/drydock/internal/pluginexec"
+	"github.com/sholdee/drydock/internal/render"
 	sourcepkg "github.com/sholdee/drydock/internal/source"
 )
 
@@ -53,6 +54,7 @@ func newLocalProvider(orchestrator Orchestrator, root string, settings config.Ar
 		remoteResourceGitCredentials: request.RemoteResourceGitCredentials,
 		helmValueFileSchemes:         settingsHelmValueFileSchemes(settings),
 		helmValueFileSchemesSet:      settings.HelmValuesFileSchemesSet,
+		helmChartLoadCache:           render.NewHelmChartLoadCache(),
 		pluginTimeout:                request.PluginTimeout,
 		pluginCacheDir:               request.PluginCacheDir,
 		pluginPolicy:                 request.pluginPolicy,
@@ -64,15 +66,26 @@ func newLocalProvider(orchestrator Orchestrator, root string, settings config.Ar
 		configManagementPlugins:      settings.ConfigManagementPlugins,
 		cacheEvents:                  recorder,
 	}
+	if request.snapshotSession != nil {
+		provider.acquisition = acquisition.Session{
+			Locks:                     processCacheTargetLocks,
+			SnapshotRoot:              request.snapshotSession.Root,
+			SnapshotCacheReads:        true,
+			SnapshotCache:             request.snapshotSession.Cache,
+			PreserveGitDirInSnapshots: request.EnablePlugins,
+		}
+		return provider, func() {}, nil
+	}
 	snapshotRoot, err := os.MkdirTemp("", snapshotPrefix)
 	if err != nil {
 		return provider, func() {}, err
 	}
 	provider.acquisition = acquisition.Session{
-		Locks:              processCacheTargetLocks,
-		SnapshotRoot:       snapshotRoot,
-		SnapshotCacheReads: true,
-		SnapshotCache:      acquisition.NewSnapshotCache(),
+		Locks:                     processCacheTargetLocks,
+		SnapshotRoot:              snapshotRoot,
+		SnapshotCacheReads:        true,
+		SnapshotCache:             acquisition.NewSnapshotCache(),
+		PreserveGitDirInSnapshots: request.EnablePlugins,
 	}
 	return provider, func() { _ = os.RemoveAll(snapshotRoot) }, nil
 }

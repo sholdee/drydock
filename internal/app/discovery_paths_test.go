@@ -3,6 +3,7 @@ package app
 import (
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 )
 
@@ -27,5 +28,24 @@ metadata:
 	}
 	if found {
 		t.Fatal("pathMayContainDiscoveryObjects() = true, want false for skipped trash directory")
+	}
+}
+
+func TestPathMayContainDiscoveryObjectsCachedMemoizes(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "app.yaml"), []byte("kind: Application\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	memo := &sync.Map{}
+	first, err := pathMayContainDiscoveryObjectsCached(memo, root)
+	if err != nil || !first {
+		t.Fatalf("first = %t, %v; want true, nil", first, err)
+	}
+	if err := os.RemoveAll(root); err != nil {
+		t.Fatal(err)
+	}
+	second, err := pathMayContainDiscoveryObjectsCached(memo, root)
+	if err != nil || !second {
+		t.Fatalf("second = %t, %v; want memoized true, nil", second, err)
 	}
 }

@@ -2,15 +2,20 @@ package app
 
 import (
 	"context"
-	"github.com/sholdee/drydock/internal/appset"
-	"github.com/sholdee/drydock/internal/chart"
-	"github.com/sholdee/drydock/internal/diagnostic"
 	"os"
 	"path/filepath"
 	"reflect"
 	"slices"
 	"strings"
+	"sync/atomic"
 	"testing"
+
+	argoappv1 "github.com/argoproj/argo-cd/v3/pkg/apis/application/v1alpha1"
+	"github.com/sholdee/drydock/internal/appset"
+	"github.com/sholdee/drydock/internal/chart"
+	"github.com/sholdee/drydock/internal/diagnostic"
+	"github.com/sholdee/drydock/internal/render"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 )
 
 func TestOrchestratorBuildAppRendersOnlyNamedApplication(t *testing.T) {
@@ -66,6 +71,115 @@ func TestOrchestratorBuildAppPreservesSelectedApplicationInputs(t *testing.T) {
 	}
 	if strings.Contains(strings.Join(input.Paths, ","), "first") {
 		t.Fatalf("ApplicationInputs[0].Paths = %#v, want no first app paths", input.Paths)
+	}
+}
+
+func TestOrchestratorBuildSelectionRendersSelectedApplications(t *testing.T) {
+	root := t.TempDir()
+	writeBuildApplication(t, root, "first", "one")
+	writeBuildApplication(t, root, "second", "two")
+
+	result, err := Orchestrator{}.BuildSelection(context.Background(), BuildRequest{Path: root}, func(apps []argoappv1.Application) []argoappv1.Application {
+		for _, application := range apps {
+			if application.Name == "second" {
+				return []argoappv1.Application{application}
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("BuildSelection() error = %v", err)
+	}
+	if len(result.Applications) != 1 || result.Applications[0].Name != "second" {
+		t.Fatalf("Applications = %#v, want only second", result.Applications)
+	}
+	if len(result.ApplicationManifests) != 1 {
+		t.Fatalf("ApplicationManifests = %d, want 1", len(result.ApplicationManifests))
+	}
+	if result.ApplicationManifests[0].Manifest.Object.GetName() != "two" {
+		t.Fatalf("rendered object name = %q, want two", result.ApplicationManifests[0].Manifest.Object.GetName())
+	}
+	if len(result.ApplicationInputs) != 1 {
+		t.Fatalf("ApplicationInputs = %#v, want one selected input", result.ApplicationInputs)
+	}
+	wantPath := filepath.ToSlash(filepath.Join("apps", "second.yaml"))
+	if got := result.ApplicationInputs[0].Paths; len(got) != 1 || got[0] != wantPath {
+		t.Fatalf("ApplicationInputs[0].Paths = %#v, want [%q]", got, wantPath)
+	}
+}
+
+func TestOrchestratorBuildSelectionReusesListPhaseRenderCache(t *testing.T) {
+	root := t.TempDir()
+	writeTestFile(t, filepath.Join(root, "apps", "root.yaml"), `apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: root
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/example/repo
+    targetRevision: main
+    path: manifests/root
+    plugin:
+      name: app-of-apps
+  destination:
+    name: in-cluster
+    namespace: argocd
+`)
+	writeTestFile(t, filepath.Join(root, "manifests", "root", "marker.yaml"), `apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: child
+`)
+
+	var calls atomic.Int32
+	renderer := internalPluginRendererFunc(func(_ context.Context, _ render.PluginRequest) ([]render.Manifest, []diagnostic.Diagnostic, error) {
+		calls.Add(1)
+		return []render.Manifest{{
+			Path: "templates/child.yaml",
+			Object: &unstructured.Unstructured{Object: map[string]any{
+				"apiVersion": "argoproj.io/v1alpha1",
+				"kind":       "Application",
+				"metadata": map[string]any{
+					"name":      "child",
+					"namespace": "argocd",
+				},
+				"spec": map[string]any{
+					"project": "default",
+					"source": map[string]any{
+						"repoURL":        "https://github.com/example/repo",
+						"targetRevision": "main",
+						"path":           "workloads/child",
+					},
+					"destination": map[string]any{
+						"name":      "in-cluster",
+						"namespace": "child",
+					},
+				},
+			}},
+		}}, nil, nil
+	})
+
+	result, err := (Orchestrator{PluginRenderer: renderer}).BuildSelection(context.Background(), BuildRequest{Path: root}, func(apps []argoappv1.Application) []argoappv1.Application {
+		for _, application := range apps {
+			if application.Name == "root" {
+				return []argoappv1.Application{application}
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("BuildSelection() error = %v", err)
+	}
+	if got := calls.Load(); got != 1 {
+		t.Fatalf("plugin render calls = %d, want list-phase render cache reused for selected build", got)
+	}
+	if len(result.Applications) != 1 || result.Applications[0].Name != "root" {
+		t.Fatalf("Applications = %#v, want only root", result.Applications)
+	}
+	if len(result.Manifests) != 1 || result.Manifests[0].Object.GetKind() != "Application" || result.Manifests[0].Object.GetName() != "child" {
+		t.Fatalf("Manifests = %#v, want cached child Application manifest", result.Manifests)
 	}
 }
 

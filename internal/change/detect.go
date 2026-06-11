@@ -5,7 +5,9 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sort"
+	"sync"
 
 	"github.com/sholdee/drydock/internal/streamcmp"
 )
@@ -19,33 +21,72 @@ func Detect(baseRoot, currentRoot string) ([]string, error) {
 		return nil, err
 	}
 
-	var changed []string
+	relPaths := make([]string, 0, len(paths))
 	for rel := range paths {
-		basePath := filepath.Join(baseRoot, filepath.FromSlash(rel))
-		currentPath := filepath.Join(currentRoot, filepath.FromSlash(rel))
-		baseInfo, baseErr := os.Lstat(basePath)
-		if baseErr != nil && !errors.Is(baseErr, fs.ErrNotExist) {
-			return nil, baseErr
+		relPaths = append(relPaths, rel)
+	}
+	sort.Strings(relPaths)
+
+	changed := make([]bool, len(relPaths))
+	errs := make([]error, len(relPaths))
+	workers := detectParallelism(len(relPaths))
+	jobs := make(chan int)
+	var wg sync.WaitGroup
+	wg.Add(workers)
+	for range workers {
+		go func() {
+			defer wg.Done()
+			for i := range jobs {
+				changed[i], errs[i] = pathChanged(baseRoot, currentRoot, relPaths[i])
+			}
+		}()
+	}
+	for i := range relPaths {
+		jobs <- i
+	}
+	close(jobs)
+	wg.Wait()
+
+	var out []string
+	for i, rel := range relPaths {
+		if errs[i] != nil {
+			return nil, errs[i]
 		}
-		currentInfo, currentErr := os.Lstat(currentPath)
-		if currentErr != nil && !errors.Is(currentErr, fs.ErrNotExist) {
-			return nil, currentErr
-		}
-		if baseErr != nil || currentErr != nil {
-			changed = append(changed, rel)
-			continue
-		}
-		fileChanged, err := pathsChanged(basePath, currentPath, baseInfo, currentInfo)
-		if err != nil {
-			return nil, err
-		}
-		if fileChanged {
-			changed = append(changed, rel)
+		if changed[i] {
+			out = append(out, rel)
 		}
 	}
+	return out, nil
+}
 
-	sort.Strings(changed)
-	return changed, nil
+const maxDetectWorkers = 16
+
+func detectParallelism(pathCount int) int {
+	if pathCount <= 1 {
+		return 1
+	}
+	workers := max(runtime.GOMAXPROCS(0), 1)
+	workers = min(workers, maxDetectWorkers)
+	return min(workers, pathCount)
+}
+
+func pathChanged(baseRoot, currentRoot, rel string) (bool, error) {
+	basePath := filepath.Join(baseRoot, filepath.FromSlash(rel))
+	currentPath := filepath.Join(currentRoot, filepath.FromSlash(rel))
+	baseInfo, baseErr := os.Lstat(basePath)
+	baseMissing := errors.Is(baseErr, fs.ErrNotExist)
+	if baseErr != nil && !baseMissing {
+		return false, baseErr
+	}
+	currentInfo, currentErr := os.Lstat(currentPath)
+	currentMissing := errors.Is(currentErr, fs.ErrNotExist)
+	if currentErr != nil && !currentMissing {
+		return false, currentErr
+	}
+	if baseMissing || currentMissing {
+		return true, nil
+	}
+	return pathsChanged(basePath, currentPath, baseInfo, currentInfo)
 }
 
 func collectFiles(root string, paths map[string]struct{}) error {

@@ -1,6 +1,7 @@
 package gitref
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -108,6 +109,30 @@ func TestChangedPathsFromRefToWorktreeReportsStagedDeletionWithRestoredFile(t *t
 	}
 
 	want := []string{"apps/demo/cm.yaml"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("ChangedPathsFromRefToWorktree() = %#v, want %#v", got, want)
+	}
+}
+
+func TestChangedPathsFromRefToWorktreeReportsManyTrackedWorktreeChanges(t *testing.T) {
+	repoPath, _, wt := newSnapshotRepo(t)
+	for i := range maxMaterializeTreeWorkers * 2 {
+		rel := filepath.Join("apps", "many", fmt.Sprintf("cm-%02d.yaml", i))
+		writeChangedPathFileForTest(t, filepath.Join(repoPath, rel), fmt.Sprintf("value: old-%02d\n", i))
+	}
+	base := commitAllSnapshotFiles(t, wt, "baseline")
+
+	want := make([]string, 0, maxMaterializeTreeWorkers*2)
+	for i := range maxMaterializeTreeWorkers * 2 {
+		rel := filepath.Join("apps", "many", fmt.Sprintf("cm-%02d.yaml", i))
+		writeChangedPathFileForTest(t, filepath.Join(repoPath, rel), fmt.Sprintf("value: new-%02d\n", i))
+		want = append(want, filepath.ToSlash(rel))
+	}
+
+	got, err := ChangedPathsFromRefToWorktree(t.Context(), repoPath, base)
+	if err != nil {
+		t.Fatalf("ChangedPathsFromRefToWorktree() error = %v", err)
+	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("ChangedPathsFromRefToWorktree() = %#v, want %#v", got, want)
 	}

@@ -17,7 +17,7 @@ import (
 )
 
 type applicationRenderCache struct {
-	mu      sync.Mutex
+	mu      sync.RWMutex
 	entries map[string]applicationRenderCacheEntry
 }
 
@@ -34,12 +34,14 @@ func (cache *applicationRenderCache) get(key string) (RenderResult, error, bool)
 	if cache == nil || key == "" {
 		return RenderResult{}, nil, false
 	}
-	cache.mu.Lock()
-	defer cache.mu.Unlock()
+	cache.mu.RLock()
 	entry, ok := cache.entries[key]
+	cache.mu.RUnlock()
 	if !ok {
 		return RenderResult{}, nil, false
 	}
+	// Clone outside the lock: entries are write-once, and DeepCopy of large
+	// manifest sets must not serialize parallel render workers.
 	return cloneRenderResult(entry.result), entry.err, true
 }
 
@@ -47,12 +49,13 @@ func (cache *applicationRenderCache) set(key string, result RenderResult, err er
 	if cache == nil || key == "" {
 		return
 	}
-	cache.mu.Lock()
-	defer cache.mu.Unlock()
-	cache.entries[key] = applicationRenderCacheEntry{
+	entry := applicationRenderCacheEntry{
 		result: cloneRenderResult(result),
 		err:    err,
 	}
+	cache.mu.Lock()
+	cache.entries[key] = entry
+	cache.mu.Unlock()
 }
 
 func cloneRenderResult(result RenderResult) RenderResult {

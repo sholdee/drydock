@@ -1,8 +1,11 @@
 package app
 
 import (
+	"crypto/sha256"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"sync"
 
 	"github.com/sholdee/drydock/internal/appset"
 	"github.com/sholdee/drydock/internal/diagnostic"
@@ -13,7 +16,7 @@ func expandApplicationSetDiscovery(root string, request BuildRequest, discovered
 	var generated discovery.Result
 	var allDiags []diagnostic.Diagnostic
 	for _, appSetFile := range discovered.ApplicationSets {
-		apps, diags, err := appset.GenerateWithOptions(root, appSetFile.Path, appSetFile.ApplicationSet, appsetOptions)
+		apps, diags, err := generateApplicationSetCached(request.appsetGenerationMemo, root, appSetFile, appsetOptions)
 		if err != nil {
 			if errors.Is(err, appset.ErrUnsupportedGenerator) && len(diags) > 0 {
 				allDiags = append(allDiags, request.normalizeDiagnostics(diags, true)...)
@@ -47,6 +50,70 @@ func expandApplicationSetDiscovery(root string, request BuildRequest, discovered
 	merged, mergeDiags := mergeDiscoveryResultsWithDiagnostics(discovered, generated)
 	allDiags = append(allDiags, mergeDiags...)
 	return merged, allDiags, nil
+}
+
+type appsetGenerationOutcome struct {
+	apps  []appset.GeneratedApplication
+	diags []diagnostic.Diagnostic
+	err   error
+}
+
+func generateApplicationSetCached(memo *sync.Map, root string, appSetFile discovery.ApplicationSetFile, appsetOptions appset.Options) ([]appset.GeneratedApplication, []diagnostic.Diagnostic, error) {
+	key, keyErr := appsetGenerationMemoKey(appSetFile, appsetOptions)
+	if memo == nil || keyErr != nil {
+		return appset.GenerateWithOptions(root, appSetFile.Path, appSetFile.ApplicationSet, appsetOptions)
+	}
+	if cached, ok := memo.Load(key); ok {
+		if outcome, ok := cached.(appsetGenerationOutcome); ok {
+			return copyGeneratedApplications(outcome.apps), copyDiagnostics(outcome.diags), outcome.err
+		}
+	}
+	apps, diags, err := appset.GenerateWithOptions(root, appSetFile.Path, appSetFile.ApplicationSet, appsetOptions)
+	memo.Store(key, appsetGenerationOutcome{
+		apps:  copyGeneratedApplications(apps),
+		diags: copyDiagnostics(diags),
+		err:   err,
+	})
+	return copyGeneratedApplications(apps), copyDiagnostics(diags), err
+}
+
+func appsetGenerationMemoKey(appSetFile discovery.ApplicationSetFile, appsetOptions appset.Options) (string, error) {
+	content, err := json.Marshal(struct {
+		ApplicationSet any            `json:"applicationSet"`
+		Options        appset.Options `json:"options"`
+	}{
+		ApplicationSet: appSetFile.ApplicationSet,
+		Options:        appsetOptions,
+	})
+	if err != nil {
+		return "", err
+	}
+	sum := sha256.Sum256(content)
+	return fmt.Sprintf("%s|%d|%x", appSetFile.Path, appSetFile.DocumentIndex, sum[:]), nil
+}
+
+func copyGeneratedApplications(apps []appset.GeneratedApplication) []appset.GeneratedApplication {
+	if len(apps) == 0 {
+		return nil
+	}
+	out := make([]appset.GeneratedApplication, len(apps))
+	for i, app := range apps {
+		out[i] = app
+		if copy := app.Application.DeepCopy(); copy != nil {
+			out[i].Application = *copy
+		}
+		out[i].SourcePaths = append([]string(nil), app.SourcePaths...)
+	}
+	return out
+}
+
+func copyDiagnostics(diags []diagnostic.Diagnostic) []diagnostic.Diagnostic {
+	if len(diags) == 0 {
+		return nil
+	}
+	out := make([]diagnostic.Diagnostic, len(diags))
+	copy(out, diags)
+	return out
 }
 
 func emptyApplicationSetDiagnostic(appSetFile discovery.ApplicationSetFile) diagnostic.Diagnostic {

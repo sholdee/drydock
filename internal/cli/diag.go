@@ -59,6 +59,7 @@ type diagResourceActions struct {
 
 func newDiagCommand(deps Dependencies) *cobra.Command {
 	flags := defaultCommonFlags()
+	flags.parallelism = defaultRenderAppsParallelism()
 	options := diagCommandOptions{}
 	cmd := &cobra.Command{
 		Use:   "diag",

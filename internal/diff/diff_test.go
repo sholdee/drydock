@@ -109,6 +109,21 @@ func TestRunUsesZeroLineRangeForAddedAndRemovedResources(t *testing.T) {
 	}
 }
 
+func TestRunSkipsNormalizationForIdenticalBodies(t *testing.T) {
+	body := "kind: ConfigMap\nmetadata:\n  labels:\n    helm.sh/chart: demo-1.0.0\n  name: demo\n\t: invalid"
+	doc := Document{
+		Resource: Resource{Kind: "ConfigMap", Name: "demo", Namespace: "default"},
+		Body:     body,
+	}
+	results, err := Run([]Document{doc}, []Document{doc}, Options{})
+	if err != nil {
+		t.Fatalf("Run() error = %v, want nil (identical bodies must short-circuit before normalization)", err)
+	}
+	if len(results) != 0 {
+		t.Fatalf("Run() results = %d, want 0", len(results))
+	}
+}
+
 func TestRunIgnoresSourceMetadataInIdentity(t *testing.T) {
 	left := []Document{{
 		Parent: Parent{
@@ -827,7 +842,7 @@ func TestRunIgnoreJSONPointerInvalidPointersReturnClearError(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			left := []Document{deploymentDocument("1", []string{tt.pointer})}
-			right := []Document{deploymentDocument("1", nil)}
+			right := []Document{deploymentDocument("2", nil)}
 
 			_, err := Run(left, right, Options{Unified: 3})
 			if err == nil {

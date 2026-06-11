@@ -5,8 +5,10 @@ import (
 	"fmt"
 	"path/filepath"
 	"strings"
+	"sync"
 
 	argoappv1 "github.com/argoproj/argo-cd/v3/pkg/apis/application/v1alpha1"
+	"github.com/sholdee/drydock/internal/acquisition"
 	"github.com/sholdee/drydock/internal/appset"
 	"github.com/sholdee/drydock/internal/cacheevent"
 	"github.com/sholdee/drydock/internal/chart"
@@ -48,6 +50,10 @@ type BuildRequest struct {
 	StatusCallback          ApplicationStatusCallback
 	renderCache             *applicationRenderCache
 	renderSettingsSignature string
+	discovered              *discovery.Result
+	snapshotSession         *acquisition.SnapshotSession
+	discoveryPathMemo       *sync.Map
+	appsetGenerationMemo    *sync.Map
 }
 
 type BuildAppRequest struct {
@@ -64,6 +70,8 @@ type ApplicationSelectionInput struct {
 	Application argoappv1.Application
 	Paths       []string
 }
+
+type ApplicationSelector func([]argoappv1.Application) []argoappv1.Application
 
 const (
 	ApplicationStatusPass    = "PASS"
@@ -114,6 +122,8 @@ type BuildResult struct {
 	PluginExecutions        []PluginExecution
 	renderCache             *applicationRenderCache
 	renderSettingsSignature string
+	discovered              *discovery.Result
+	pluginOptions           PluginOptions
 }
 
 type DiagRequest = BuildRequest
@@ -135,6 +145,18 @@ type Orchestrator struct {
 	PluginContainerRunner  plugincontainer.Runner
 }
 
+func ensureSnapshotSession(request BuildRequest) (BuildRequest, func(), error) {
+	if request.snapshotSession != nil {
+		return request, func() {}, nil
+	}
+	session, err := acquisition.NewSnapshotSession("drydock-cache-snapshots-*")
+	if err != nil {
+		return request, func() {}, err
+	}
+	request.snapshotSession = session
+	return request, session.Close, nil
+}
+
 func (o Orchestrator) Diag(ctx context.Context, request DiagRequest) (DiagResult, error) {
 	result, err := o.Build(ctx, request)
 	diagResult := DiagResult{
@@ -154,6 +176,12 @@ func (o Orchestrator) Diag(ctx context.Context, request DiagRequest) (DiagResult
 }
 
 func (o Orchestrator) ListApplications(ctx context.Context, request BuildRequest) (BuildResult, error) {
+	request, releaseSnapshots, err := ensureSnapshotSession(request)
+	if err != nil {
+		return BuildResult{}, err
+	}
+	defer releaseSnapshots()
+
 	if err := request.ProjectDiagnosticsMode.Validate(); err != nil {
 		return BuildResult{}, err
 	}
@@ -172,6 +200,7 @@ func (o Orchestrator) ListApplications(ctx context.Context, request BuildRequest
 		return result, err
 	}
 	request = loadedRequest
+	result.pluginOptions = request.PluginOptions
 	discovered, discoveryDiags, err := o.loadBuildSideDiscovery(ctx, root, request, &result)
 	if err != nil {
 		return result, diagnosticsError(discoveryDiags, err)
@@ -254,6 +283,12 @@ func applicationSetOptionsForRequest(request BuildRequest) (appset.Options, []di
 }
 
 func (o Orchestrator) Build(ctx context.Context, request BuildRequest) (BuildResult, error) {
+	request, releaseSnapshots, err := ensureSnapshotSession(request)
+	if err != nil {
+		return BuildResult{}, err
+	}
+	defer releaseSnapshots()
+
 	session, err := newBuildSession(o, request)
 	if err != nil {
 		return BuildResult{}, err
@@ -520,6 +555,24 @@ func (o Orchestrator) prepareBuildResult(ctx context.Context, request BuildReque
 
 	var result BuildResult
 	result.Applications = append(result.Applications, request.Applications...)
+	if request.discovered != nil {
+		discovered := *request.discovered
+		result.renderCache = request.renderCache
+		result.renderSettingsSignature = request.renderSettingsSignature
+		result.discovered = request.discovered
+		result.pluginOptions = request.PluginOptions
+		result.Projects = appendDiscoveredProjects(result.Projects, discovered)
+		diags, err := loadBuildSideSettings(root, request, discovered, &result)
+		if err != nil {
+			result.Statuses = skippedApplicationStatuses(result.Applications, err)
+			return result, err
+		}
+		if err := diagnosticFailure(request.filterProjectDiagnostics(diags), request.Strict); err != nil {
+			result.Statuses = skippedApplicationStatuses(result.Applications, err)
+			return result, err
+		}
+		return result, nil
+	}
 	discovered, discoveryDiags, err := o.loadBuildSideDiscovery(ctx, root, request, &result)
 	if err != nil {
 		result.Statuses = skippedApplicationStatuses(result.Applications, err)
@@ -576,6 +629,12 @@ func (o Orchestrator) BuildApp(ctx context.Context, request BuildAppRequest) (Bu
 	}
 
 	buildRequest := request.BuildRequest
+	buildRequest, releaseSnapshots, err := ensureSnapshotSession(buildRequest)
+	if err != nil {
+		return BuildResult{}, err
+	}
+	defer releaseSnapshots()
+
 	listResult, err := o.ListApplications(ctx, buildRequest)
 	if err != nil {
 		listResult.Statuses = skippedStatusesForRequestedApplication(listResult.Applications, name, err)
@@ -588,12 +647,51 @@ func (o Orchestrator) BuildApp(ctx context.Context, request BuildAppRequest) (Bu
 	}
 
 	buildRequest.Applications = []argoappv1.Application{selected}
+	buildRequest.PluginOptions = listResult.pluginOptions
 	buildRequest.renderCache = listResult.renderCache
 	buildRequest.renderSettingsSignature = listResult.renderSettingsSignature
+	buildRequest.discovered = listResult.discovered
 	buildResult, err := o.Build(ctx, buildRequest)
 	buildResult.ApplicationInputs = selectApplicationInputsForApplication(listResult.ApplicationInputs, selected)
 	buildResult.Diagnostics = append(append([]diagnostic.Diagnostic(nil), listResult.Diagnostics...), buildResult.Diagnostics...)
 	buildResult.Diagnostics = buildRequest.filterProjectDiagnostics(dedupeDiagnostics(buildResult.Diagnostics))
+	buildResult.CacheEvents = append(append([]cacheevent.Event(nil), listResult.CacheEvents...), buildResult.CacheEvents...)
+	return buildResult, err
+}
+
+// BuildSelection lists Applications, narrows them with selectApps, and builds
+// the selection while reusing the list phase's discovery and render caches.
+func (o Orchestrator) BuildSelection(ctx context.Context, request BuildRequest, selectApps ApplicationSelector) (BuildResult, error) {
+	request, releaseSnapshots, err := ensureSnapshotSession(request)
+	if err != nil {
+		return BuildResult{}, err
+	}
+	defer releaseSnapshots()
+
+	listResult, err := o.ListApplications(ctx, request)
+	if err != nil {
+		listResult.Statuses = skippedApplicationStatuses(listResult.Applications, err)
+		return listResult, err
+	}
+
+	buildRequest := request
+	buildRequest.PluginOptions = listResult.pluginOptions
+	if selectApps != nil {
+		buildRequest.Applications = selectApps(listResult.Applications)
+	} else {
+		buildRequest.Applications = append([]argoappv1.Application(nil), listResult.Applications...)
+	}
+	if buildRequest.Applications == nil {
+		buildRequest.Applications = []argoappv1.Application{}
+	}
+	buildRequest.renderCache = listResult.renderCache
+	buildRequest.renderSettingsSignature = listResult.renderSettingsSignature
+	buildRequest.discovered = listResult.discovered
+	buildResult, err := o.Build(ctx, buildRequest)
+	buildResult.ApplicationInputs = selectApplicationInputsForApplications(listResult.ApplicationInputs, buildRequest.Applications)
+	buildResult.Diagnostics = append(append([]diagnostic.Diagnostic(nil), listResult.Diagnostics...), buildResult.Diagnostics...)
+	buildResult.Diagnostics = buildRequest.filterProjectDiagnostics(dedupeDiagnostics(buildResult.Diagnostics))
+	buildResult.CacheEvents = append(append([]cacheevent.Event(nil), listResult.CacheEvents...), buildResult.CacheEvents...)
 	return buildResult, err
 }
 
@@ -672,6 +770,27 @@ func selectApplicationInputsForApplication(inputs []ApplicationSelectionInput, s
 		}
 	}
 	return nil
+}
+
+func selectApplicationInputsForApplications(inputs []ApplicationSelectionInput, selected []argoappv1.Application) []ApplicationSelectionInput {
+	if len(inputs) == 0 || len(selected) == 0 {
+		return nil
+	}
+	selectedByKey := make(map[string]struct{}, len(selected))
+	for _, application := range selected {
+		selectedByKey[applicationKey(application)] = struct{}{}
+	}
+	out := make([]ApplicationSelectionInput, 0, len(selected))
+	for _, input := range inputs {
+		if _, ok := selectedByKey[applicationKey(input.Application)]; ok {
+			out = append(out, cloneApplicationSelectionInput(input))
+		}
+	}
+	return out
+}
+
+func applicationKey(application argoappv1.Application) string {
+	return application.Namespace + "\x00" + application.Name
 }
 
 func cloneApplicationSelectionInput(input ApplicationSelectionInput) ApplicationSelectionInput {

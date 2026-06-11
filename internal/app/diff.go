@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	argoappv1 "github.com/argoproj/argo-cd/v3/pkg/apis/application/v1alpha1"
+	"github.com/sholdee/drydock/internal/acquisition"
 	"github.com/sholdee/drydock/internal/cacheevent"
 	"github.com/sholdee/drydock/internal/chart"
 	"github.com/sholdee/drydock/internal/diagnostic"
@@ -142,50 +143,56 @@ func (o Orchestrator) DiffApp(ctx context.Context, request DiffAppRequest) (Diff
 
 	leftBuildRequest := request.buildRequest(request.LeftPath, forbiddenRoots)
 	rightBuildRequest := request.buildRequest(request.RightPath, forbiddenRoots)
+	parallelism, err := normalizeParallelism(request.Parallelism)
+	if err != nil {
+		return DiffResult{Diagnostics: request.filterProjectDiagnostics(policyDiags)}, err
+	}
+	leftParallelism, rightParallelism, concurrent := splitSideParallelism(parallelism)
+	leftBuildRequest.Parallelism = leftParallelism
+	rightBuildRequest.Parallelism = rightParallelism
+	snapshotSession, err := acquisition.NewSnapshotSession("drydock-cache-snapshots-*")
+	if err != nil {
+		return DiffResult{Diagnostics: request.filterProjectDiagnostics(policyDiags)}, err
+	}
+	defer snapshotSession.Close()
+	leftBuildRequest.snapshotSession = snapshotSession
+	rightBuildRequest.snapshotSession = snapshotSession
 
 	diagnostics := append([]diagnostic.Diagnostic(nil), policyDiags...)
-	leftList, err := o.ListApplications(ctx, leftBuildRequest)
-	diagnostics = append(diagnostics, leftList.Diagnostics...)
-	if err != nil {
+	leftList, rightList := runDiffSidePair(ctx, concurrent, o.ListApplications, leftBuildRequest, rightBuildRequest)
+	diagnostics = append(diagnostics, leftList.result.Diagnostics...)
+	diagnostics = append(diagnostics, rightList.result.Diagnostics...)
+	if err := errors.Join(leftList.err, rightList.err); err != nil {
 		return DiffResult{Diagnostics: request.filterProjectDiagnostics(diagnostics)}, err
 	}
-	leftBuildRequest.renderCache = leftList.renderCache
-	leftBuildRequest.renderSettingsSignature = leftList.renderSettingsSignature
-	rightList, err := o.ListApplications(ctx, rightBuildRequest)
-	diagnostics = append(diagnostics, rightList.Diagnostics...)
-	if err != nil {
-		return DiffResult{Diagnostics: request.filterProjectDiagnostics(diagnostics)}, err
-	}
-	rightBuildRequest.renderCache = rightList.renderCache
-	rightBuildRequest.renderSettingsSignature = rightList.renderSettingsSignature
+	leftBuildRequest.PluginOptions = leftList.result.pluginOptions
+	leftBuildRequest.renderCache = leftList.result.renderCache
+	leftBuildRequest.renderSettingsSignature = leftList.result.renderSettingsSignature
+	leftBuildRequest.discovered = leftList.result.discovered
+	rightBuildRequest.PluginOptions = rightList.result.pluginOptions
+	rightBuildRequest.renderCache = rightList.result.renderCache
+	rightBuildRequest.renderSettingsSignature = rightList.result.renderSettingsSignature
+	rightBuildRequest.discovered = rightList.result.discovered
 
-	leftApp, leftOK, err := SelectOptionalApplicationByName(leftList.Applications, name)
+	leftApp, leftOK, rightApp, rightOK, err := selectDiffAppApplications(leftList.result.Applications, rightList.result.Applications, name)
 	if err != nil {
 		return DiffResult{Diagnostics: request.filterProjectDiagnostics(diagnostics)}, err
-	}
-	rightApp, rightOK, err := SelectOptionalApplicationByName(rightList.Applications, name)
-	if err != nil {
-		return DiffResult{Diagnostics: request.filterProjectDiagnostics(diagnostics)}, err
-	}
-	if !leftOK && !rightOK {
-		return DiffResult{Diagnostics: request.filterProjectDiagnostics(diagnostics)}, fmt.Errorf("application %q not found in either tree", name)
 	}
 
 	leftBuildRequest.Applications = selectedApplications(leftApp, leftOK)
 	rightBuildRequest.Applications = selectedApplications(rightApp, rightOK)
 
-	leftBuild, err := o.Build(ctx, leftBuildRequest)
-	diagnostics = append(diagnostics, leftBuild.Diagnostics...)
-	leftErr := err
-	rightBuild, err := o.Build(ctx, rightBuildRequest)
-	diagnostics = append(diagnostics, rightBuild.Diagnostics...)
-	rightErr := err
-	cacheEvents := cacheEventsFromBuilds(leftBuild, rightBuild)
-	if err := errors.Join(leftErr, rightErr); err != nil {
+	leftBuild, rightBuild := runDiffSidePair(ctx, concurrent, o.Build, leftBuildRequest, rightBuildRequest)
+	leftBuild.result.CacheEvents = append(append([]cacheevent.Event(nil), leftList.result.CacheEvents...), leftBuild.result.CacheEvents...)
+	rightBuild.result.CacheEvents = append(append([]cacheevent.Event(nil), rightList.result.CacheEvents...), rightBuild.result.CacheEvents...)
+	diagnostics = append(diagnostics, leftBuild.result.Diagnostics...)
+	diagnostics = append(diagnostics, rightBuild.result.Diagnostics...)
+	cacheEvents := cacheEventsFromBuilds(leftBuild.result, rightBuild.result)
+	if err := errors.Join(leftBuild.err, rightBuild.err); err != nil {
 		return DiffResult{Diagnostics: request.filterProjectDiagnostics(diagnostics), CacheEvents: cacheEvents}, err
 	}
 
-	results, err := diffBuildResults(leftBuild, rightBuild, diff.Options{
+	results, err := diffBuildResults(leftBuild.result, rightBuild.result, diff.Options{
 		Unified:           request.Unified,
 		StripAttrs:        request.StripAttrs,
 		ShowIgnoredFields: request.ShowIgnoredFields,
@@ -299,12 +306,13 @@ func resolveDiffRequestPaths(ctx context.Context, request DiffRequest, computeCh
 	}
 
 	if computeChangedPaths && request.ChangedOnly {
-		changedPaths, ok, err := gitRefChangedPaths(ctx, request, repoPath)
+		resolved, done, err := resolveEmptyChangedOnlyRefDiff(ctx, request, repoPath)
 		if err != nil {
 			return request, cleanup, err
 		}
-		if ok {
-			request.changedPaths = changedPaths
+		request = resolved
+		if done {
+			return request, cleanup, nil
 		}
 	}
 
@@ -335,6 +343,27 @@ func resolveDiffRequestPaths(ctx context.Context, request DiffRequest, computeCh
 		cleanups = append(cleanups, result.Cleanup)
 	}
 	return request, cleanup, nil
+}
+
+func resolveEmptyChangedOnlyRefDiff(ctx context.Context, request DiffRequest, repoPath string) (DiffRequest, bool, error) {
+	changedPaths, ok, err := gitRefChangedPaths(ctx, request, repoPath)
+	if err != nil || !ok {
+		return request, false, err
+	}
+	request.changedPaths = changedPaths
+	filtered, err := filteredChangedOnlyPaths(request)
+	if err != nil {
+		return request, false, err
+	}
+	if len(filtered) > 0 {
+		return request, false, nil
+	}
+	// Nothing relevant changed between the refs. Point both sides at the
+	// repository tree and skip snapshot materialization; buildDiffSides returns
+	// before any discovery or render.
+	request.LeftPath = repoPath
+	request.RightPath = repoPath
+	return request, true, nil
 }
 
 func validateDiffRefOptions(request DiffRequest, hasRef bool) error {
@@ -471,6 +500,21 @@ func selectedApplications(application argoappv1.Application, ok bool) []argoappv
 		return []argoappv1.Application{}
 	}
 	return []argoappv1.Application{application}
+}
+
+func selectDiffAppApplications(leftApps, rightApps []argoappv1.Application, name string) (argoappv1.Application, bool, argoappv1.Application, bool, error) {
+	leftApp, leftOK, err := SelectOptionalApplicationByName(leftApps, name)
+	if err != nil {
+		return argoappv1.Application{}, false, argoappv1.Application{}, false, err
+	}
+	rightApp, rightOK, err := SelectOptionalApplicationByName(rightApps, name)
+	if err != nil {
+		return argoappv1.Application{}, false, argoappv1.Application{}, false, err
+	}
+	if !leftOK && !rightOK {
+		return argoappv1.Application{}, false, argoappv1.Application{}, false, fmt.Errorf("application %q not found in either tree", name)
+	}
+	return leftApp, leftOK, rightApp, rightOK, nil
 }
 
 func diffBuildResults(leftBuild, rightBuild BuildResult, opts diff.Options) ([]diff.Result, error) {
