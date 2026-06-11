@@ -12,7 +12,7 @@ func BenchmarkDetectLargeIdenticalTrees(b *testing.B) {
 	current := b.TempDir()
 	for i := range 400 {
 		rel := filepath.Join(fmt.Sprintf("dir-%02d", i%20), fmt.Sprintf("file-%03d.yaml", i))
-		content := []byte(fmt.Sprintf("kind: ConfigMap\nmetadata:\n  name: f-%03d\n", i))
+		content := fmt.Appendf(nil, "kind: ConfigMap\nmetadata:\n  name: f-%03d\n", i)
 		for _, root := range []string{base, current} {
 			if err := os.MkdirAll(filepath.Dir(filepath.Join(root, rel)), 0o755); err != nil {
 				b.Fatal(err)

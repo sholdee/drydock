@@ -74,14 +74,16 @@ func pathChanged(baseRoot, currentRoot, rel string) (bool, error) {
 	basePath := filepath.Join(baseRoot, filepath.FromSlash(rel))
 	currentPath := filepath.Join(currentRoot, filepath.FromSlash(rel))
 	baseInfo, baseErr := os.Lstat(basePath)
-	if baseErr != nil && !errors.Is(baseErr, fs.ErrNotExist) {
+	baseMissing := errors.Is(baseErr, fs.ErrNotExist)
+	if baseErr != nil && !baseMissing {
 		return false, baseErr
 	}
 	currentInfo, currentErr := os.Lstat(currentPath)
-	if currentErr != nil && !errors.Is(currentErr, fs.ErrNotExist) {
+	currentMissing := errors.Is(currentErr, fs.ErrNotExist)
+	if currentErr != nil && !currentMissing {
 		return false, currentErr
 	}
-	if baseErr != nil || currentErr != nil {
+	if baseMissing || currentMissing {
 		return true, nil
 	}
 	return pathsChanged(basePath, currentPath, baseInfo, currentInfo)
