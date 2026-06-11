@@ -90,6 +90,7 @@ func newDiffAppsCommand(deps Dependencies) *cobra.Command {
 
 func newDiffAppCommand(deps Dependencies) *cobra.Command {
 	appFlags := defaultCommonFlags()
+	appFlags.parallelism = defaultRenderAppsParallelism()
 	appColor := diffColorAuto
 	appMarkdownMaxBytes := report.DefaultMaxBytes
 	appRawOutputFile := ""

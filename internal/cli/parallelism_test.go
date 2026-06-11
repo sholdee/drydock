@@ -19,12 +19,32 @@ func TestBuildAppsParallelismFlag(t *testing.T) {
 	}
 }
 
+func TestBuildAppsDefaultParallelismIsAuto(t *testing.T) {
+	recorder := &recordingCLIOrchestrator{}
+	executeParallelismCommand(t, recorder, "build", "apps")
+
+	want := defaultRenderAppsParallelism()
+	if got := recorder.buildRequests[0].Parallelism; got != want {
+		t.Fatalf("BuildRequest.Parallelism = %d, want %d", got, want)
+	}
+}
+
 func TestBuildAppParallelismFlag(t *testing.T) {
 	recorder := &recordingCLIOrchestrator{}
 	executeParallelismCommand(t, recorder, "build", "app", "demo", "--parallelism", "7")
 
 	if got := recorder.buildAppRequests[0].Parallelism; got != 7 {
 		t.Fatalf("BuildAppRequest.Parallelism = %d, want 7", got)
+	}
+}
+
+func TestBuildAppDefaultParallelismIsAuto(t *testing.T) {
+	recorder := &recordingCLIOrchestrator{}
+	executeParallelismCommand(t, recorder, "build", "app", "demo")
+
+	want := defaultRenderAppsParallelism()
+	if got := recorder.buildAppRequests[0].Parallelism; got != want {
+		t.Fatalf("BuildAppRequest.Parallelism = %d, want %d", got, want)
 	}
 }
 
@@ -78,6 +98,16 @@ func TestTestAppParallelismFlag(t *testing.T) {
 
 	if got := recorder.buildAppRequests[0].Parallelism; got != 7 {
 		t.Fatalf("BuildAppRequest.Parallelism = %d, want 7", got)
+	}
+}
+
+func TestTestAppDefaultParallelismIsAuto(t *testing.T) {
+	recorder := &recordingCLIOrchestrator{}
+	executeParallelismCommand(t, recorder, "test", "app", "demo")
+
+	want := defaultRenderAppsParallelism()
+	if got := recorder.buildAppRequests[0].Parallelism; got != want {
+		t.Fatalf("BuildAppRequest.Parallelism = %d, want %d", got, want)
 	}
 }
 
@@ -172,12 +202,13 @@ func TestDiffAppParallelismFlag(t *testing.T) {
 	}
 }
 
-func TestDiffAppDefaultParallelismRemainsSingleApplication(t *testing.T) {
+func TestDiffAppDefaultParallelismIsAuto(t *testing.T) {
 	recorder := &recordingCLIOrchestrator{}
 	executeParallelismCommand(t, recorder, "diff", "app", "demo", "--path-orig", "left", "--path", "right")
 
-	if got := recorder.diffAppRequests[0].Parallelism; got != 1 {
-		t.Fatalf("DiffAppRequest.Parallelism = %d, want 1", got)
+	want := defaultRenderAppsParallelism()
+	if got := recorder.diffAppRequests[0].Parallelism; got != want {
+		t.Fatalf("DiffAppRequest.Parallelism = %d, want %d", got, want)
 	}
 }
 
@@ -227,6 +258,16 @@ func TestDiagParallelismFlag(t *testing.T) {
 
 	if got := recorder.listRequests[0].Parallelism; got != 7 {
 		t.Fatalf("ListApplications BuildRequest.Parallelism = %d, want 7", got)
+	}
+}
+
+func TestDiagDefaultParallelismIsAuto(t *testing.T) {
+	recorder := &recordingCLIOrchestrator{}
+	executeParallelismCommand(t, recorder, "diag")
+
+	want := defaultRenderAppsParallelism()
+	if got := recorder.listRequests[0].Parallelism; got != want {
+		t.Fatalf("ListApplications BuildRequest.Parallelism = %d, want %d", got, want)
 	}
 }
 

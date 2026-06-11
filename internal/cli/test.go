@@ -96,6 +96,7 @@ func newTestCommand(deps Dependencies) *cobra.Command {
 
 	appFlags := defaultCommonFlags()
 	appFlags.output = testOutputText
+	appFlags.parallelism = defaultRenderAppsParallelism()
 	appCmd := &cobra.Command{
 		Use:   "app NAME",
 		Short: "Test one Application",
