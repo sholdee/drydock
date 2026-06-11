@@ -109,6 +109,21 @@ func TestRunUsesZeroLineRangeForAddedAndRemovedResources(t *testing.T) {
 	}
 }
 
+func TestRunSkipsNormalizationForIdenticalBodies(t *testing.T) {
+	body := "kind: ConfigMap\nmetadata:\n  labels:\n    helm.sh/chart: demo-1.0.0\n  name: demo\n\t: invalid"
+	doc := Document{
+		Resource: Resource{Kind: "ConfigMap", Name: "demo", Namespace: "default"},
+		Body:     body,
+	}
+	results, err := Run([]Document{doc}, []Document{doc}, Options{})
+	if err != nil {
+		t.Fatalf("Run() error = %v, want nil (identical bodies must short-circuit before normalization)", err)
+	}
+	if len(results) != 0 {
+		t.Fatalf("Run() results = %d, want 0", len(results))
+	}
+}
+
 func TestRunIgnoresSourceMetadataInIdentity(t *testing.T) {
 	left := []Document{{
 		Parent: Parent{

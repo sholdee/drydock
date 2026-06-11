@@ -72,6 +72,11 @@ func diffResultForKey(leftByKey, rightByKey map[string]Document, key string, opt
 	left, hasLeft := leftByKey[key]
 	right, hasRight := rightByKey[key]
 	left, right = documentsWithSharedNormalization(left, right, hasLeft, hasRight)
+	if hasLeft && hasRight && left.Body == right.Body && canSkipNormalizationForIdentical(left.Normalization, opts) {
+		// Both sides share one merged normalization, so identical bodies always
+		// normalize identically and can never produce a diff.
+		return Result{}, false, nil
+	}
 	leftBody, rightBody, err := normalizedDocumentBodies(left, right, hasLeft, hasRight, opts)
 	if err != nil {
 		return Result{}, false, err
@@ -83,6 +88,16 @@ func diffResultForKey(leftByKey, rightByKey map[string]Document, key string, opt
 	result, err := resultFor(doc, change, leftBody, rightBody, opts)
 	return result, true, err
 }
+
+func canSkipNormalizationForIdentical(normalization Normalization, opts Options) bool {
+	return len(stripAttrSet(opts.StripAttrs)) == 0 &&
+		len(normalization.JSONPointers) == 0 &&
+		len(normalization.JQPathExpressions) == 0 &&
+		len(normalization.KnownTypeFields) == 0 &&
+		len(normalization.ManagedFieldsManagers) == 0 &&
+		!normalization.CompareOptions.IgnoreAggregatedRoles
+}
+
 func documentsWithSharedNormalization(left, right Document, hasLeft, hasRight bool) (Document, Document) {
 	normalization := Normalization{}
 	var compareOptions CompareOptions
