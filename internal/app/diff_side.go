@@ -18,6 +18,13 @@ func (o Orchestrator) buildDiffSides(ctx context.Context, request DiffRequest) (
 
 	leftBuildRequest := request.buildRequest(request.LeftPath, forbiddenRoots)
 	rightBuildRequest := request.buildRequest(request.RightPath, forbiddenRoots)
+	parallelism, err := normalizeParallelism(request.Parallelism)
+	if err != nil {
+		return BuildResult{}, BuildResult{}, nil, err
+	}
+	leftParallelism, rightParallelism, concurrent := splitSideParallelism(parallelism)
+	leftBuildRequest.Parallelism = leftParallelism
+	rightBuildRequest.Parallelism = rightParallelism
 
 	var diagnostics []diagnostic.Diagnostic
 	if request.ChangedOnly {
@@ -29,23 +36,19 @@ func (o Orchestrator) buildDiffSides(ctx context.Context, request DiffRequest) (
 			return BuildResult{}, BuildResult{}, diagnostics, nil
 		}
 
-		leftList, err := o.ListApplications(ctx, leftBuildRequest)
-		diagnostics = append(diagnostics, leftList.Diagnostics...)
-		if err != nil {
+		leftList, rightList := runDiffSidePair(ctx, concurrent, o.ListApplications, leftBuildRequest, rightBuildRequest)
+		diagnostics = append(diagnostics, leftList.result.Diagnostics...)
+		diagnostics = append(diagnostics, rightList.result.Diagnostics...)
+		if err := errors.Join(leftList.err, rightList.err); err != nil {
 			return BuildResult{}, BuildResult{}, diagnostics, err
 		}
-		leftBuildRequest.renderCache = leftList.renderCache
-		leftBuildRequest.renderSettingsSignature = leftList.renderSettingsSignature
-		rightList, err := o.ListApplications(ctx, rightBuildRequest)
-		diagnostics = append(diagnostics, rightList.Diagnostics...)
-		if err != nil {
-			return BuildResult{}, BuildResult{}, diagnostics, err
-		}
-		rightBuildRequest.renderCache = rightList.renderCache
-		rightBuildRequest.renderSettingsSignature = rightList.renderSettingsSignature
+		leftBuildRequest.renderCache = leftList.result.renderCache
+		leftBuildRequest.renderSettingsSignature = leftList.result.renderSettingsSignature
+		rightBuildRequest.renderCache = rightList.result.renderCache
+		rightBuildRequest.renderSettingsSignature = rightList.result.renderSettingsSignature
 
-		leftSelected, leftUnowned := SelectChangedApplicationInputs(leftList.ApplicationInputs, changedPaths)
-		rightSelected, rightUnowned := SelectChangedApplicationInputs(rightList.ApplicationInputs, changedPaths)
+		leftSelected, leftUnowned := SelectChangedApplicationInputs(leftList.result.ApplicationInputs, changedPaths)
+		rightSelected, rightUnowned := SelectChangedApplicationInputs(rightList.result.ApplicationInputs, changedPaths)
 		unowned := unownedByNeitherSide(leftUnowned, rightUnowned)
 		if len(unowned) > 0 {
 			diag := diagnostic.Diagnostic{
@@ -58,24 +61,21 @@ func (o Orchestrator) buildDiffSides(ctx context.Context, request DiffRequest) (
 				diagnostics[len(diagnostics)-1].Severity = diagnostic.SeverityError
 				return BuildResult{}, BuildResult{}, diagnostics, fmt.Errorf("changed-only input ownership incomplete")
 			}
-			leftBuildRequest.Applications = leftList.Applications
-			rightBuildRequest.Applications = rightList.Applications
+			leftBuildRequest.Applications = leftList.result.Applications
+			rightBuildRequest.Applications = rightList.result.Applications
 		} else {
 			leftBuildRequest.Applications = leftSelected
 			rightBuildRequest.Applications = rightSelected
 		}
 	}
 
-	leftBuild, err := o.Build(ctx, leftBuildRequest)
-	diagnostics = append(diagnostics, leftBuild.Diagnostics...)
-	leftErr := err
-	rightBuild, err := o.Build(ctx, rightBuildRequest)
-	diagnostics = append(diagnostics, rightBuild.Diagnostics...)
-	rightErr := err
-	if err := errors.Join(leftErr, rightErr); err != nil {
-		return leftBuild, rightBuild, diagnostics, err
+	leftBuild, rightBuild := runDiffSidePair(ctx, concurrent, o.Build, leftBuildRequest, rightBuildRequest)
+	diagnostics = append(diagnostics, leftBuild.result.Diagnostics...)
+	diagnostics = append(diagnostics, rightBuild.result.Diagnostics...)
+	if err := errors.Join(leftBuild.err, rightBuild.err); err != nil {
+		return leftBuild.result, rightBuild.result, diagnostics, err
 	}
-	return leftBuild, rightBuild, diagnostics, nil
+	return leftBuild.result, rightBuild.result, diagnostics, nil
 }
 
 func filteredChangedOnlyPaths(request DiffRequest) ([]string, error) {
