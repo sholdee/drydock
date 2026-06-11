@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 
 	git "github.com/go-git/go-git/v5"
 	"github.com/go-git/go-git/v5/plumbing/filemode"
@@ -118,20 +119,47 @@ func addTrackedWorktreeChanges(repo *git.Repository, headTree *object.Tree, path
 		return err
 	}
 	root := wt.Filesystem.Root()
-	headPaths := make(map[string]object.File)
+	files := make([]object.File, 0)
 	if err := headTree.Files().ForEach(func(file *object.File) error {
-		name := filepath.ToSlash(file.Name)
-		headPaths[name] = *file
-		changed, err := worktreeFileChanged(root, file)
-		if err != nil {
-			return err
-		}
-		if changed {
-			paths[name] = struct{}{}
-		}
+		files = append(files, *file)
 		return nil
 	}); err != nil {
 		return err
+	}
+	sort.Slice(files, func(i, j int) bool { return files[i].Name < files[j].Name })
+
+	changed := make([]bool, len(files))
+	errs := make([]error, len(files))
+	workers := materializeTreeParallelism(len(files))
+	if workers > 0 {
+		jobs := make(chan int)
+		var wg sync.WaitGroup
+		wg.Add(workers)
+		for range workers {
+			go func() {
+				defer wg.Done()
+				for i := range jobs {
+					changed[i], errs[i] = worktreeFileChanged(root, &files[i])
+				}
+			}()
+		}
+		for i := range files {
+			jobs <- i
+		}
+		close(jobs)
+		wg.Wait()
+	}
+
+	headPaths := make(map[string]object.File, len(files))
+	for i := range files {
+		if errs[i] != nil {
+			return errs[i]
+		}
+		name := filepath.ToSlash(files[i].Name)
+		headPaths[name] = files[i]
+		if changed[i] {
+			paths[name] = struct{}{}
+		}
 	}
 
 	idx, err := repo.Storer.Index()

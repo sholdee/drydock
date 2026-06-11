@@ -217,6 +217,35 @@ func TestDetectChangedPaths(t *testing.T) {
 	}
 }
 
+func TestDetectParallelismBounds(t *testing.T) {
+	tests := []struct {
+		name  string
+		paths int
+	}{
+		{name: "empty", paths: 0},
+		{name: "one", paths: 1},
+		{name: "two", paths: 2},
+		{name: "many", paths: maxDetectWorkers * 4},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := detectParallelism(tt.paths)
+			if got < 1 {
+				t.Fatalf("detectParallelism(%d) = %d, want at least 1", tt.paths, got)
+			}
+			if got > tt.paths && tt.paths > 0 {
+				t.Fatalf("detectParallelism(%d) = %d, want no more than path count", tt.paths, got)
+			}
+			if got > maxDetectWorkers {
+				t.Fatalf("detectParallelism(%d) = %d, want no more than %d", tt.paths, got, maxDetectWorkers)
+			}
+			if tt.paths <= 1 && got != 1 {
+				t.Fatalf("detectParallelism(%d) = %d, want 1", tt.paths, got)
+			}
+		})
+	}
+}
+
 func TestDetectReportsDeletedPaths(t *testing.T) {
 	base := t.TempDir()
 	current := t.TempDir()
