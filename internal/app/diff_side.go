@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/sholdee/drydock/internal/acquisition"
 	"github.com/sholdee/drydock/internal/cacheevent"
 	"github.com/sholdee/drydock/internal/change"
 	"github.com/sholdee/drydock/internal/diagnostic"
@@ -26,6 +27,13 @@ func (o Orchestrator) buildDiffSides(ctx context.Context, request DiffRequest) (
 	leftParallelism, rightParallelism, concurrent := splitSideParallelism(parallelism)
 	leftBuildRequest.Parallelism = leftParallelism
 	rightBuildRequest.Parallelism = rightParallelism
+	snapshotSession, err := acquisition.NewSnapshotSession("drydock-cache-snapshots-*")
+	if err != nil {
+		return BuildResult{}, BuildResult{}, nil, err
+	}
+	defer snapshotSession.Close()
+	leftBuildRequest.snapshotSession = snapshotSession
+	rightBuildRequest.snapshotSession = snapshotSession
 
 	var diagnostics []diagnostic.Diagnostic
 	var leftList, rightList diffSideOutcome

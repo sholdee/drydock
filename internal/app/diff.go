@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	argoappv1 "github.com/argoproj/argo-cd/v3/pkg/apis/application/v1alpha1"
+	"github.com/sholdee/drydock/internal/acquisition"
 	"github.com/sholdee/drydock/internal/cacheevent"
 	"github.com/sholdee/drydock/internal/chart"
 	"github.com/sholdee/drydock/internal/diagnostic"
@@ -149,6 +150,13 @@ func (o Orchestrator) DiffApp(ctx context.Context, request DiffAppRequest) (Diff
 	leftParallelism, rightParallelism, concurrent := splitSideParallelism(parallelism)
 	leftBuildRequest.Parallelism = leftParallelism
 	rightBuildRequest.Parallelism = rightParallelism
+	snapshotSession, err := acquisition.NewSnapshotSession("drydock-cache-snapshots-*")
+	if err != nil {
+		return DiffResult{Diagnostics: request.filterProjectDiagnostics(policyDiags)}, err
+	}
+	defer snapshotSession.Close()
+	leftBuildRequest.snapshotSession = snapshotSession
+	rightBuildRequest.snapshotSession = snapshotSession
 
 	diagnostics := append([]diagnostic.Diagnostic(nil), policyDiags...)
 	leftList, rightList := runDiffSidePair(ctx, concurrent, o.ListApplications, leftBuildRequest, rightBuildRequest)

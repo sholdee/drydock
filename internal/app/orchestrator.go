@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	argoappv1 "github.com/argoproj/argo-cd/v3/pkg/apis/application/v1alpha1"
+	"github.com/sholdee/drydock/internal/acquisition"
 	"github.com/sholdee/drydock/internal/appset"
 	"github.com/sholdee/drydock/internal/cacheevent"
 	"github.com/sholdee/drydock/internal/chart"
@@ -49,6 +50,7 @@ type BuildRequest struct {
 	renderCache             *applicationRenderCache
 	renderSettingsSignature string
 	discovered              *discovery.Result
+	snapshotSession         *acquisition.SnapshotSession
 }
 
 type BuildAppRequest struct {
@@ -140,6 +142,18 @@ type Orchestrator struct {
 	PluginContainerRunner  plugincontainer.Runner
 }
 
+func ensureSnapshotSession(request BuildRequest) (BuildRequest, func(), error) {
+	if request.snapshotSession != nil {
+		return request, func() {}, nil
+	}
+	session, err := acquisition.NewSnapshotSession("drydock-cache-snapshots-*")
+	if err != nil {
+		return request, func() {}, err
+	}
+	request.snapshotSession = session
+	return request, session.Close, nil
+}
+
 func (o Orchestrator) Diag(ctx context.Context, request DiagRequest) (DiagResult, error) {
 	result, err := o.Build(ctx, request)
 	diagResult := DiagResult{
@@ -159,6 +173,12 @@ func (o Orchestrator) Diag(ctx context.Context, request DiagRequest) (DiagResult
 }
 
 func (o Orchestrator) ListApplications(ctx context.Context, request BuildRequest) (BuildResult, error) {
+	request, releaseSnapshots, err := ensureSnapshotSession(request)
+	if err != nil {
+		return BuildResult{}, err
+	}
+	defer releaseSnapshots()
+
 	if err := request.ProjectDiagnosticsMode.Validate(); err != nil {
 		return BuildResult{}, err
 	}
@@ -260,6 +280,12 @@ func applicationSetOptionsForRequest(request BuildRequest) (appset.Options, []di
 }
 
 func (o Orchestrator) Build(ctx context.Context, request BuildRequest) (BuildResult, error) {
+	request, releaseSnapshots, err := ensureSnapshotSession(request)
+	if err != nil {
+		return BuildResult{}, err
+	}
+	defer releaseSnapshots()
+
 	session, err := newBuildSession(o, request)
 	if err != nil {
 		return BuildResult{}, err
@@ -600,6 +626,12 @@ func (o Orchestrator) BuildApp(ctx context.Context, request BuildAppRequest) (Bu
 	}
 
 	buildRequest := request.BuildRequest
+	buildRequest, releaseSnapshots, err := ensureSnapshotSession(buildRequest)
+	if err != nil {
+		return BuildResult{}, err
+	}
+	defer releaseSnapshots()
+
 	listResult, err := o.ListApplications(ctx, buildRequest)
 	if err != nil {
 		listResult.Statuses = skippedStatusesForRequestedApplication(listResult.Applications, name, err)
@@ -627,6 +659,12 @@ func (o Orchestrator) BuildApp(ctx context.Context, request BuildAppRequest) (Bu
 // BuildSelection lists Applications, narrows them with selectApps, and builds
 // the selection while reusing the list phase's discovery and render caches.
 func (o Orchestrator) BuildSelection(ctx context.Context, request BuildRequest, selectApps ApplicationSelector) (BuildResult, error) {
+	request, releaseSnapshots, err := ensureSnapshotSession(request)
+	if err != nil {
+		return BuildResult{}, err
+	}
+	defer releaseSnapshots()
+
 	listResult, err := o.ListApplications(ctx, request)
 	if err != nil {
 		listResult.Statuses = skippedApplicationStatuses(listResult.Applications, err)

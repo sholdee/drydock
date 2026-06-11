@@ -7,6 +7,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/sholdee/drydock/internal/acquisition"
+	"github.com/sholdee/drydock/internal/cacheevent"
 	"github.com/sholdee/drydock/internal/chart"
 	"github.com/sholdee/drydock/internal/config"
 	"github.com/sholdee/drydock/internal/diagnostic"
@@ -115,6 +117,32 @@ func TestNewLocalProviderPreservesGitDirInSnapshotsWhenPluginsEnabled(t *testing
 	}
 	if !provider.acquisition.PreserveGitDirInSnapshots {
 		t.Fatal("PreserveGitDirInSnapshots = false, want true when plugins are enabled")
+	}
+}
+
+func TestNewLocalProviderReusesRequestSnapshotSession(t *testing.T) {
+	session, err := acquisition.NewSnapshotSession("drydock-test-snapshots-*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer session.Close()
+	request := BuildRequest{}
+	request.snapshotSession = session
+
+	provider, cleanup, err := newLocalProvider(Orchestrator{}, t.TempDir(), config.DefaultSettings(), request, cacheevent.NewRecorder(false), "unused-*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cleanup()
+	if provider.acquisition.SnapshotRoot != session.Root {
+		t.Fatalf("SnapshotRoot = %q, want shared session root %q", provider.acquisition.SnapshotRoot, session.Root)
+	}
+	if provider.acquisition.SnapshotCache != session.Cache {
+		t.Fatal("SnapshotCache does not reuse request snapshot session cache")
+	}
+	cleanup()
+	if _, statErr := os.Stat(session.Root); statErr != nil {
+		t.Fatalf("shared session root must survive provider cleanup: %v", statErr)
 	}
 }
 

@@ -1007,8 +1007,8 @@ func TestDiffAppsPassesChartForbiddenRootsToBuilds(t *testing.T) {
 	if err != nil {
 		t.Fatalf("DiffApps() error = %v", err)
 	}
-	if len(acquirer.options) != 2 {
-		t.Fatalf("chart options = %d, want 2", len(acquirer.options))
+	if len(acquirer.options) != 1 {
+		t.Fatalf("chart options = %d, want 1", len(acquirer.options))
 	}
 	wantRoots := []string{explicitRoot, left, right, mappedRoot}
 	for _, opts := range acquirer.options {

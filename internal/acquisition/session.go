@@ -25,6 +25,14 @@ type Session struct {
 	PreserveGitDirInSnapshots bool
 }
 
+// SnapshotSession owns one snapshot root and cache shared by every provider
+// in a single command invocation.
+type SnapshotSession struct {
+	Root      string
+	Cache     *SnapshotCache
+	closeOnce sync.Once
+}
+
 type TargetLocks struct {
 	mu    sync.Mutex
 	locks map[string]*targetLock
@@ -50,6 +58,21 @@ func NewSnapshotCache() *SnapshotCache {
 		gits:   map[string]source.GitResult{},
 		charts: map[string]chart.Result{},
 	}
+}
+
+func NewSnapshotSession(prefix string) (*SnapshotSession, error) {
+	root, err := os.MkdirTemp("", prefix)
+	if err != nil {
+		return nil, err
+	}
+	return &SnapshotSession{Root: root, Cache: NewSnapshotCache()}, nil
+}
+
+func (session *SnapshotSession) Close() {
+	if session == nil {
+		return
+	}
+	session.closeOnce.Do(func() { _ = os.RemoveAll(session.Root) })
 }
 
 func (cache *SnapshotCache) git(key string) (source.GitResult, bool) {

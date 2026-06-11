@@ -25,6 +25,28 @@ type blockingGitAcquirer struct {
 	calls         int
 }
 
+func TestSnapshotSessionCloseRemovesRootOnce(t *testing.T) {
+	session, err := NewSnapshotSession("drydock-test-snapshots-*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if session.Root == "" {
+		t.Fatal("Root = empty")
+	}
+	if session.Cache == nil {
+		t.Fatal("Cache = nil")
+	}
+	if _, err := os.Stat(session.Root); err != nil {
+		t.Fatalf("snapshot root does not exist: %v", err)
+	}
+
+	session.Close()
+	if _, err := os.Stat(session.Root); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("snapshot root still exists after Close: %v", err)
+	}
+	session.Close()
+}
+
 func (a *blockingGitAcquirer) Acquire(_ context.Context, request source.GitRequest, _ source.GitOptions) (source.GitResult, error) {
 	a.mu.Lock()
 	a.calls++

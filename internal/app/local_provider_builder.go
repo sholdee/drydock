@@ -64,6 +64,16 @@ func newLocalProvider(orchestrator Orchestrator, root string, settings config.Ar
 		configManagementPlugins:      settings.ConfigManagementPlugins,
 		cacheEvents:                  recorder,
 	}
+	if request.snapshotSession != nil {
+		provider.acquisition = acquisition.Session{
+			Locks:                     processCacheTargetLocks,
+			SnapshotRoot:              request.snapshotSession.Root,
+			SnapshotCacheReads:        true,
+			SnapshotCache:             request.snapshotSession.Cache,
+			PreserveGitDirInSnapshots: request.EnablePlugins,
+		}
+		return provider, func() {}, nil
+	}
 	snapshotRoot, err := os.MkdirTemp("", snapshotPrefix)
 	if err != nil {
 		return provider, func() {}, err
