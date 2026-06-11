@@ -17,7 +17,6 @@ import (
 	helmchart "helm.sh/helm/v4/pkg/chart"
 	"helm.sh/helm/v4/pkg/chart/common"
 	chartutil "helm.sh/helm/v4/pkg/chart/common/util"
-	"helm.sh/helm/v4/pkg/chart/loader"
 	chartv2 "helm.sh/helm/v4/pkg/chart/v2"
 	"helm.sh/helm/v4/pkg/engine"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -40,11 +39,7 @@ func (HelmRenderer) Render(ctx context.Context, source ResolvedSource, opts Rend
 		return nil, nil, err
 	}
 
-	if err := validateHelmChartTree(chartPath); err != nil {
-		return nil, nil, err
-	}
-
-	chart, err := loader.Load(chartPath)
+	chart, err := opts.HelmChartLoadCache.Load(chartPath)
 	if err != nil {
 		return nil, nil, fmt.Errorf("load helm chart %s: %w", manifestPath, err)
 	}

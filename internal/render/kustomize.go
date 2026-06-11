@@ -383,6 +383,7 @@ func renderOptionsForKustomizeHelmChart(ctx context.Context, helmChart types.Hel
 		ChartForbiddenRoots:          append([]string(nil), opts.ChartForbiddenRoots...),
 		ChartCredentials:             opts.ChartCredentials,
 		ChartAcquirer:                acquirer,
+		HelmChartLoadCache:           opts.HelmChartLoadCache,
 		RemoteResourceAcquirer:       opts.RemoteResourceAcquirer,
 		RemoteResourceCacheDir:       opts.RemoteResourceCacheDir,
 		OfflineRemoteResources:       opts.OfflineRemoteResources,

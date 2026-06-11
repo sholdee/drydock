@@ -9,6 +9,7 @@ import (
 	"github.com/sholdee/drydock/internal/config"
 	"github.com/sholdee/drydock/internal/plugincontainer"
 	"github.com/sholdee/drydock/internal/pluginexec"
+	"github.com/sholdee/drydock/internal/render"
 	sourcepkg "github.com/sholdee/drydock/internal/source"
 )
 
@@ -53,6 +54,7 @@ func newLocalProvider(orchestrator Orchestrator, root string, settings config.Ar
 		remoteResourceGitCredentials: request.RemoteResourceGitCredentials,
 		helmValueFileSchemes:         settingsHelmValueFileSchemes(settings),
 		helmValueFileSchemesSet:      settings.HelmValuesFileSchemesSet,
+		helmChartLoadCache:           render.NewHelmChartLoadCache(),
 		pluginTimeout:                request.PluginTimeout,
 		pluginCacheDir:               request.PluginCacheDir,
 		pluginPolicy:                 request.pluginPolicy,

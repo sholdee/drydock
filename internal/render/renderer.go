@@ -62,6 +62,7 @@ type RenderOptions struct {
 	ChartForbiddenRoots          []string
 	ChartCredentials             chart.ChartCredentials
 	ChartAcquirer                chart.Acquirer
+	HelmChartLoadCache           *HelmChartLoadCache
 	OCIChartRepositories         map[string]bool
 	RemoteResourceCacheDir       string
 	OfflineRemoteResources       bool

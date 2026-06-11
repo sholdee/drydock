@@ -40,6 +40,7 @@ type localProvider struct {
 	remoteResourceGitCredentials remote.GitCredentials
 	helmValueFileSchemes         []string
 	helmValueFileSchemesSet      bool
+	helmChartLoadCache           *render.HelmChartLoadCache
 	pluginTimeout                time.Duration
 	pluginCacheDir               string
 	pluginPolicy                 pluginpolicy.Policy
@@ -73,6 +74,7 @@ func (p localProvider) RenderSource(ctx context.Context, source render.ResolvedS
 	opts.ChartForbiddenRoots = append([]string(nil), p.chartForbiddenRoots...)
 	opts.ChartForbiddenRoots = appendUniqueString(opts.ChartForbiddenRoots, sourceRoot)
 	opts.ChartCredentials = p.chartCredentials
+	opts.HelmChartLoadCache = p.helmChartLoadCache
 	opts.OCIChartRepositories = p.ociChartRepositories
 	opts.RemoteResourceAcquirer = p.acquisition.RemoteAcquirer(p.remoteResourceAcquirer)
 	opts.RemoteResourceCacheDir = p.remoteResourceCacheDir
