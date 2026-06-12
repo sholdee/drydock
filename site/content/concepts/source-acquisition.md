@@ -238,9 +238,13 @@ Use `--cache-events` when diagnosing render-cache behavior. For `build` and
 machine-parseable (manifests for `build`, status lines for `test`). For `diag`,
 cache events are included in structured output alongside diagnostics. Render
 cache events report `hit`, `miss`, `store`, `skipped`, and `error` actions.
-`skipped` reasons include `input-graph-unsupported`, `input-digest-error`,
-`ineligible-source`, and `inputs-changed`. All of these mean drydock rendered
-normally without persisting the result. `inputs-changed` indicates drydock
+`skipped` reasons include `input-graph-unsupported` (the source's input graph
+is unsupported or cannot be fully enumerated), `helm-glob-inputs` (a dirty
+worktree where Helm value-file globs make the input set unprovable from
+committed content), `duplicate-application` (two discovered Applications share
+the same namespace and name, so neither input set is authoritative),
+`input-digest-error`, `ineligible-source`, and `inputs-changed`. All of these
+mean drydock rendered normally without persisting the result. `inputs-changed` indicates drydock
 could not prove the render inputs still match the cache key at store time —
 usually because source files changed between cache-key computation and the end
 of rendering (a TOCTOU guard), and always for sources whose inputs cannot be

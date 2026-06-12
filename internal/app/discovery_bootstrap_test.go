@@ -37,7 +37,7 @@ metadata:
 	if names := applicationNames(result.Applications); strings.Join(names, ",") != "bootstrap-child" {
 		t.Fatalf("Applications = %#v, want bootstrap-rendered Application", names)
 	}
-	inputs, ok := applicationInputPaths(result.ApplicationInputs, "bootstrap-child")
+	inputs, ok := applicationInputPathsForName(result.ApplicationInputs, "bootstrap-child")
 	if !ok {
 		t.Fatalf("ApplicationInputs = %#v, missing bootstrap-child", result.ApplicationInputs)
 	}
@@ -64,7 +64,7 @@ func TestListApplicationsUsesCustomPluginPolicyPathForBootstrapInputs(t *testing
 	if err != nil {
 		t.Fatalf("ListApplications() error = %v\nDiagnostics: %#v", err, result.Diagnostics)
 	}
-	inputs, ok := applicationInputPaths(result.ApplicationInputs, "custom-policy")
+	inputs, ok := applicationInputPathsForName(result.ApplicationInputs, "custom-policy")
 	if !ok {
 		t.Fatalf("ApplicationInputs = %#v, missing custom-policy", result.ApplicationInputs)
 	}
@@ -154,7 +154,7 @@ func TestListApplicationsExpandsPluginPolicyBootstrapApplicationSetsWhenMaxDisco
 	if names := applicationNames(result.Applications); strings.Join(names, ",") != "generated" {
 		t.Fatalf("Applications = %#v, want Application generated from bootstrap-rendered ApplicationSet", names)
 	}
-	inputs, ok := applicationInputPaths(result.ApplicationInputs, "generated")
+	inputs, ok := applicationInputPathsForName(result.ApplicationInputs, "generated")
 	if !ok {
 		t.Fatalf("ApplicationInputs = %#v, missing generated", result.ApplicationInputs)
 	}

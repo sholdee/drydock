@@ -53,7 +53,7 @@ type indexedDiscoveryRenderResult struct {
 	err    error
 }
 
-func renderDiscoveryFrontierParallel(ctx context.Context, root string, request BuildRequest, discovered discovery.Result, inputs map[string][]string, provider localProvider, settingsSig string, renderCache *applicationRenderCache, parallelism int) (discovery.Result, []diagnostic.Diagnostic, error) {
+func renderDiscoveryFrontierParallel(ctx context.Context, root string, request BuildRequest, discovered discovery.Result, inputs map[string]applicationInputPaths, provider localProvider, settingsSig string, renderCache *applicationRenderCache, parallelism int) (discovery.Result, []diagnostic.Diagnostic, error) {
 	applications := discovered.Applications
 	results, completed, parallelErr := runOrderedParallel(ctx, orderedParallelOptions[indexedDiscoveryRenderResult]{
 		total:       len(applications),
@@ -87,20 +87,22 @@ func renderDiscoveryFrontierParallel(ctx context.Context, root string, request B
 	return out, allDiags, nil
 }
 
-func renderDiscoveryApplication(ctx context.Context, root string, request BuildRequest, provider localProvider, settingsSig string, renderCache *applicationRenderCache, inputs map[string][]string, discovered discovery.Result, appFile discovery.ApplicationFile) (discovery.Result, []diagnostic.Diagnostic, error) {
+func renderDiscoveryApplication(ctx context.Context, root string, request BuildRequest, provider localProvider, settingsSig string, renderCache *applicationRenderCache, inputs map[string]applicationInputPaths, discovered discovery.Result, appFile discovery.ApplicationFile) (discovery.Result, []diagnostic.Diagnostic, error) {
 	application := appFile.Application
 	if !applicationMayRenderDiscoveryObjects(root, request, discovered, application) {
 		return discovery.Result{}, nil, nil
 	}
-	parentInputs := inputs[applicationDiscoveryKey(application)]
+	entry := inputs[applicationDiscoveryKey(application)]
+	parentInputs := entry.Paths
 	rendered, err := renderApplicationCached(renderContext{
-		context:                ctx,
-		provider:               provider,
-		cache:                  renderCache,
-		settingsSignature:      settingsSig,
-		request:                request,
-		applicationInputPaths:  parentInputs,
-		applicationInputsKnown: inputs != nil,
+		context:                    ctx,
+		provider:                   provider,
+		cache:                      renderCache,
+		settingsSignature:          settingsSig,
+		request:                    request,
+		applicationInputPaths:      parentInputs,
+		applicationInputsKnown:     inputs != nil,
+		applicationInputsDuplicate: entry.Duplicate,
 	}, application)
 	if err != nil {
 		return skippedRenderedDiscovery()
@@ -175,23 +177,24 @@ func renderedInputPaths(parentInputs []string, renderedManifest render.Manifest)
 	return uniqueStrings(inputs)
 }
 
-func applicationInputsByKey(discovered discovery.Result) map[string][]string {
-	out := make(map[string][]string, len(discovered.Applications))
-	seen := make(map[string]bool, len(discovered.Applications))
+func applicationInputsByKey(discovered discovery.Result) map[string]applicationInputPaths {
+	out := make(map[string]applicationInputPaths, len(discovered.Applications))
 	for _, appFile := range discovered.Applications {
 		key := applicationDiscoveryKey(appFile.Application)
-		if seen[key] {
+		if existing, ok := out[key]; ok {
 			// Two discovered Applications share namespace/name; neither input
-			// set is authoritative for the render, so nil paths make the
-			// persistent key collection reject the app (input-graph reason)
-			// instead of digesting the wrong file.
-			out[key] = nil
+			// set is authoritative for the render, so the duplicate marker
+			// makes the persistent key collection reject the app
+			// (duplicate-application reason) instead of digesting the wrong
+			// file.
+			existing.Paths = nil
+			existing.Duplicate = true
+			out[key] = existing
 			continue
 		}
-		seen[key] = true
 		inputs := discoveredApplicationInputPaths(appFile)
 		inputs = applicationSelectionPaths(ApplicationSelectionInput{Application: appFile.Application, Paths: inputs})
-		out[key] = uniqueStrings(inputs)
+		out[key] = applicationInputPaths{Paths: uniqueStrings(inputs)}
 	}
 	return out
 }

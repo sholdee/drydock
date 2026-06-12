@@ -1080,14 +1080,15 @@ func TestApplicationInputPathsByKeyDuplicateAppsAreCacheIneligible(t *testing.T)
 
 	byKey := applicationInputPathsByKey(inputs)
 
-	if got := byKey[applicationKey(app("api"))]; !reflect.DeepEqual(got, []string{"apps/api/app.yaml"}) {
-		t.Fatalf("unique app paths = %#v, want preserved", got)
+	if got := byKey[applicationKey(app("api"))]; !reflect.DeepEqual(got.Paths, []string{"apps/api/app.yaml"}) || got.Duplicate {
+		t.Fatalf("unique app entry = %#v, want preserved paths without duplicate flag", got)
 	}
-	if got := byKey[applicationKey(app("web"))]; got != nil {
-		t.Fatalf("duplicate app paths = %#v, want nil (cache-ineligible)", got)
+	if got := byKey[applicationKey(app("web"))]; got.Paths != nil || !got.Duplicate {
+		t.Fatalf("duplicate app entry = %#v, want nil paths and Duplicate: true (cache-ineligible)", got)
 	}
-	if got := applicationInputPathsForRender(byKey, app("web")); got != nil {
-		t.Fatalf("applicationInputPathsForRender for duplicate = %#v, want nil", got)
+	gotPaths, gotDuplicate := applicationInputPathsForRender(byKey, app("web"))
+	if gotPaths != nil || !gotDuplicate {
+		t.Fatalf("applicationInputPathsForRender for duplicate = %#v/%t, want nil paths and duplicate flag", gotPaths, gotDuplicate)
 	}
 }
 
@@ -1113,10 +1114,10 @@ func TestApplicationInputsByKeyDuplicateAppsAreCacheIneligible(t *testing.T) {
 
 	byKey := applicationInputsByKey(discovered)
 
-	if got := byKey[applicationDiscoveryKey(app("api"))]; !reflect.DeepEqual(got, []string{"apps/api/app.yaml"}) {
-		t.Fatalf("unique app paths = %#v, want preserved", got)
+	if got := byKey[applicationDiscoveryKey(app("api"))]; !reflect.DeepEqual(got.Paths, []string{"apps/api/app.yaml"}) || got.Duplicate {
+		t.Fatalf("unique app entry = %#v, want preserved paths without duplicate flag", got)
 	}
-	if got := byKey[applicationDiscoveryKey(app("web"))]; got != nil {
-		t.Fatalf("duplicate app paths = %#v, want nil (cache-ineligible)", got)
+	if got := byKey[applicationDiscoveryKey(app("web"))]; got.Paths != nil || !got.Duplicate {
+		t.Fatalf("duplicate app entry = %#v, want nil paths and Duplicate: true (cache-ineligible)", got)
 	}
 }

@@ -121,11 +121,12 @@ func renderApplicationCached(ctx renderContext, application argoappv1.Applicatio
 	}
 	if key != "" {
 		options.persistent = persistentRenderOptions{
-			cache:                   ctx.request.persistentRenderCache,
-			settingsSignature:       ctx.settingsSignature,
-			hasInjectedPluginRender: ctx.request.PluginRenderer != nil,
-			applicationInputPaths:   append([]string(nil), ctx.applicationInputPaths...),
-			applicationInputsKnown:  ctx.applicationInputsKnown,
+			cache:                      ctx.request.persistentRenderCache,
+			settingsSignature:          ctx.settingsSignature,
+			hasInjectedPluginRender:    ctx.request.PluginRenderer != nil,
+			applicationInputPaths:      append([]string(nil), ctx.applicationInputPaths...),
+			applicationInputsKnown:     ctx.applicationInputsKnown,
+			applicationInputsDuplicate: ctx.applicationInputsDuplicate,
 		}
 	}
 	result, err := RenderApplicationWithOptions(ctx.context, application, provider, options)
@@ -163,14 +164,15 @@ func applicationUsesPluginSource(application argoappv1.Application) bool {
 }
 
 type renderContext struct {
-	context                context.Context
-	provider               localProvider
-	cache                  *applicationRenderCache
-	settingsSignature      string
-	trackingOptions        TrackingOptions
-	request                BuildRequest
-	applicationInputPaths  []string
-	applicationInputsKnown bool
+	context                    context.Context
+	provider                   localProvider
+	cache                      *applicationRenderCache
+	settingsSignature          string
+	trackingOptions            TrackingOptions
+	request                    BuildRequest
+	applicationInputPaths      []string
+	applicationInputsKnown     bool
+	applicationInputsDuplicate bool
 }
 
 func applicationRenderCacheKey(ctx renderContext, application argoappv1.Application) (string, error) {
