@@ -75,6 +75,11 @@ func newTestCommand(info VersionInfo, deps Dependencies) *cobra.Command {
 			if renderErr := renderDiagnostics(cmd.ErrOrStderr(), result.Diagnostics); renderErr != nil {
 				return renderErr
 			}
+			if appsFlags.cacheEvents {
+				if eventsErr := renderCacheEventsText(cmd.ErrOrStderr(), result.CacheEvents); eventsErr != nil {
+					return eventsErr
+				}
+			}
 			if liveReporter != nil {
 				if renderErr := liveReporter.RenderMissingStatuses(result.Statuses); renderErr != nil {
 					return renderErr
@@ -119,6 +124,11 @@ func newTestCommand(info VersionInfo, deps Dependencies) *cobra.Command {
 			})
 			if renderErr := renderDiagnostics(cmd.ErrOrStderr(), result.Diagnostics); renderErr != nil {
 				return renderErr
+			}
+			if appFlags.cacheEvents {
+				if eventsErr := renderCacheEventsText(cmd.ErrOrStderr(), result.CacheEvents); eventsErr != nil {
+					return eventsErr
+				}
 			}
 			if renderErr := renderTestResult(cmd, result.Statuses, output, deps.isTerminal(cmd.OutOrStdout()), false); renderErr != nil {
 				return renderErr

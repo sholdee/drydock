@@ -233,19 +233,21 @@ stamping is active (the default in a git checkout — `go build -buildvcs=true`
 forces it) or persistence silently stays off. `--cache-events` with `diag`
 shows a `disabled` event with reason `dev-build` when this applies.
 
-Use `--cache-events` with `diag` or structured command output when diagnosing
-render-cache behavior. Render cache events report `hit`, `miss`, `store`,
-`skipped`, and `error` actions. `skipped` reasons include
-`input-graph-unsupported`, `input-digest-error`, `ineligible-source`, and
-`inputs-changed`. All of these mean drydock rendered normally without
-persisting the result. `inputs-changed` indicates drydock could not prove the
-render inputs still match the cache key at store time — usually because source
-files changed between cache-key computation and the end of rendering (a TOCTOU
-guard), and always for sources whose inputs cannot be re-verified, such as
-symlinks. When verification failed with an error, the event carries the error
-text. One inherent limit: an edit that is reverted to its original content
-before the render completes is indistinguishable from no edit, so the
-verification cannot catch it.
+Use `--cache-events` when diagnosing render-cache behavior. For `build` and
+`test`, cache events are written to stderr so that stdout stays
+machine-parseable (manifests for `build`, status lines for `test`). For `diag`,
+cache events are included in structured output alongside diagnostics. Render
+cache events report `hit`, `miss`, `store`, `skipped`, and `error` actions.
+`skipped` reasons include `input-graph-unsupported`, `input-digest-error`,
+`ineligible-source`, and `inputs-changed`. All of these mean drydock rendered
+normally without persisting the result. `inputs-changed` indicates drydock
+could not prove the render inputs still match the cache key at store time —
+usually because source files changed between cache-key computation and the end
+of rendering (a TOCTOU guard), and always for sources whose inputs cannot be
+re-verified, such as symlinks. When verification failed with an error, the
+event carries the error text. One inherent limit: an edit that is reverted to
+its original content before the render completes is indistinguishable from no
+edit, so the verification cannot catch it.
 
 Chart-backed renders key on the exact chart name and version. If a registry
 republishes an existing version, for example a mutable OCI chart version, use
