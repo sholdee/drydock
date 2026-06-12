@@ -14,6 +14,16 @@ import (
 	"github.com/sholdee/drydock/internal/pathsafety"
 )
 
+// EntryFile describes one persisted render cache entry on disk. Lifecycle
+// listing is stat-only: reading version/commit metadata would require
+// decompressing each entry, which cache commands must not pay.
+type EntryFile struct {
+	Key        string
+	Path       string
+	SizeBytes  int64
+	ModifiedAt time.Time
+}
+
 // FormatVersion is the entry schema version. It rotates together with the
 // "v1" path segment on any entry-schema change and participates in the
 // persistent render cache key.
@@ -271,4 +281,62 @@ func deleteEntryFile(path string) error {
 		return nil
 	}
 	return err
+}
+
+// Entries lists the persisted entries under dir without creating anything.
+// A missing or empty store yields an empty result.
+func Entries(dir string) ([]EntryFile, error) {
+	store, ok, err := openExisting(dir, 0)
+	if err != nil || !ok {
+		return nil, err
+	}
+	listed, _, err := store.listEntries()
+	if err != nil {
+		return nil, err
+	}
+	out := make([]EntryFile, 0, len(listed))
+	for _, entry := range listed {
+		out = append(out, EntryFile{
+			Key:        entry.key,
+			Path:       entry.path,
+			SizeBytes:  entry.size,
+			ModifiedAt: entry.modTime,
+		})
+	}
+	return out, nil
+}
+
+// SweepDir enforces the size cap and removes stale orphaned temp files
+// without creating the store. A non-positive maxSizeBytes uses the default
+// cap. A missing store yields a zero result.
+func SweepDir(dir string, maxSizeBytes int64) (SweepResult, error) {
+	store, ok, err := openExisting(dir, maxSizeBytes)
+	if err != nil || !ok {
+		return SweepResult{}, err
+	}
+	return store.Sweep()
+}
+
+// openExisting resolves dir like Open but never creates directories; ok is
+// false when the versioned store root does not exist yet.
+func openExisting(dir string, maxSizeBytes int64) (*Store, bool, error) {
+	resolved, err := ResolveDir(dir, nil)
+	if err != nil {
+		return nil, false, err
+	}
+	if maxSizeBytes <= 0 {
+		maxSizeBytes = DefaultMaxSizeBytes
+	}
+	root := filepath.Join(resolved, storeVersionSegment)
+	info, err := os.Stat(root)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, false, nil
+	}
+	if err != nil {
+		return nil, false, err
+	}
+	if !info.IsDir() {
+		return nil, false, fmt.Errorf("render cache root %q is not a directory", root)
+	}
+	return &Store{root: root, maxSizeBytes: maxSizeBytes}, true, nil
 }
