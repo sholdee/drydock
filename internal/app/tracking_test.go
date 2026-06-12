@@ -178,6 +178,62 @@ func TestRenderSettingsSignatureIgnoresCommandParameters(t *testing.T) {
 	}
 }
 
+func TestRenderSettingsSignatureIgnoresProvenance(t *testing.T) {
+	base := config.DefaultSettings()
+	base.KustomizeBuildOptions = []config.Value[string]{{Value: "--enable-helm", Provenance: config.Provenance{Path: "/tmp/left/argocd-cm.yaml"}}}
+	base.HelmValuesFileSchemes = []config.Value[string]{{Value: "https", Provenance: config.Provenance{Path: "/tmp/left/argocd-cm.yaml"}}}
+	base.TrackingMethod = config.Value[string]{Value: string(argoappv1.TrackingMethodAnnotation), Provenance: config.Provenance{Path: "/tmp/left/argocd-cm.yaml"}}
+	base.InstanceLabelKey = config.Value[string]{Value: "app.kubernetes.io/instance", Provenance: config.Provenance{Path: "/tmp/left/argocd-cm.yaml"}}
+	base.InstallationID = config.Value[string]{Value: "cluster-one", Provenance: config.Provenance{Path: "/tmp/left/argocd-cm.yaml"}}
+	base.HelmRepositories = map[string]config.RepositorySettings{
+		"https://charts.example.test": {
+			Name:       "example",
+			URL:        "https://charts.example.test",
+			Provenance: config.Provenance{Path: "/tmp/left/repositories.yaml"},
+		},
+	}
+	base.ResourceCustomizations = map[string]config.ResourceCustomization{
+		"apps/Deployment": {
+			HasHealthLua:    true,
+			HealthLuaSHA256: "abc123",
+			Provenance:      config.Provenance{Path: "/tmp/left/argocd-cm.yaml"},
+		},
+	}
+
+	next := config.DefaultSettings()
+	next.KustomizeBuildOptions = []config.Value[string]{{Value: "--enable-helm", Provenance: config.Provenance{Path: "/tmp/right/argocd-cm.yaml"}}}
+	next.HelmValuesFileSchemes = []config.Value[string]{{Value: "https", Provenance: config.Provenance{Path: "/tmp/right/argocd-cm.yaml"}}}
+	next.TrackingMethod = config.Value[string]{Value: string(argoappv1.TrackingMethodAnnotation), Provenance: config.Provenance{Path: "/tmp/right/argocd-cm.yaml"}}
+	next.InstanceLabelKey = config.Value[string]{Value: "app.kubernetes.io/instance", Provenance: config.Provenance{Path: "/tmp/right/argocd-cm.yaml"}}
+	next.InstallationID = config.Value[string]{Value: "cluster-one", Provenance: config.Provenance{Path: "/tmp/right/argocd-cm.yaml"}}
+	next.HelmRepositories = map[string]config.RepositorySettings{
+		"https://charts.example.test": {
+			Name:       "example",
+			URL:        "https://charts.example.test",
+			Provenance: config.Provenance{Path: "/tmp/right/repositories.yaml"},
+		},
+	}
+	next.ResourceCustomizations = map[string]config.ResourceCustomization{
+		"apps/Deployment": {
+			HasHealthLua:    true,
+			HealthLuaSHA256: "abc123",
+			Provenance:      config.Provenance{Path: "/tmp/right/argocd-cm.yaml"},
+		},
+	}
+
+	baseSig, err := renderSettingsSignature(base)
+	if err != nil {
+		t.Fatalf("renderSettingsSignature(base) error = %v", err)
+	}
+	nextSig, err := renderSettingsSignature(next)
+	if err != nil {
+		t.Fatalf("renderSettingsSignature(next) error = %v", err)
+	}
+	if nextSig != baseSig {
+		t.Fatalf("render settings signature changed for provenance-only metadata")
+	}
+}
+
 func trackingTestApplication(namespace, name string) argoappv1.Application {
 	return argoappv1.Application{
 		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: namespace},

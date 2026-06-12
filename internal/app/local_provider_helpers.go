@@ -42,3 +42,9 @@ func (p localProvider) recordCacheEvent(event cacheevent.Event) {
 		p.cacheEvents.Record(event)
 	}
 }
+
+func (p localProvider) recordAcquisition(record cacheevent.AcquisitionRecord) {
+	if p.acquisitions != nil {
+		p.acquisitions.Record(record)
+	}
+}

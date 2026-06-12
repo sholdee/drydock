@@ -35,13 +35,13 @@ func (o Orchestrator) applyPolicyBootstrapDiscovery(ctx context.Context, root st
 	if err != nil {
 		return discovered, nil, nil, err
 	}
-	settingsSig, err := settingsSignature(settings)
+	renderSig, err := renderSettingsSignature(settings)
 	if err != nil {
 		return discovered, nil, nil, err
 	}
 
 	recorder := cacheevent.NewRecorder(request.RecordCacheEvents)
-	provider, cleanup, err := o.discoveryProvider(root, settings, request, recorder)
+	provider, cleanup, err := o.discoveryProvider(ctx, root, settings, request, recorder)
 	if err != nil {
 		return discovered, nil, recorder.Events(), err
 	}
@@ -50,7 +50,7 @@ func (o Orchestrator) applyPolicyBootstrapDiscovery(ctx context.Context, root st
 	var rendered discovery.Result
 	var allDiags []diagnostic.Diagnostic
 	for _, entrypoint := range request.pluginPolicy.Bootstrap.Entrypoints {
-		next, diags, err := renderPolicyBootstrapEntrypoint(ctx, root, request, provider, settingsSig, renderCache, entrypoint)
+		next, diags, err := renderPolicyBootstrapEntrypoint(ctx, root, request, provider, renderSig, renderCache, entrypoint)
 		allDiags = append(allDiags, diags...)
 		if err != nil {
 			return discovered, allDiags, recorder.Events(), err

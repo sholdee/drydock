@@ -60,3 +60,20 @@ func applicationDisplayName(application argoappv1.Application) string {
 	}
 	return application.Namespace + "/" + application.Name
 }
+
+// renderEventTarget returns the namespace/name label when it is safe to embed
+// in cache events verbatim. Application names come from unvalidated YAML; a
+// URL-shaped (credential-bearing) name is replaced wholesale, because routing
+// render targets through URL redaction would mangle every legitimate label.
+func renderEventTarget(application argoappv1.Application) string {
+	target := applicationDisplayName(application)
+	for _, r := range target {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9':
+		case r == '-' || r == '.' || r == '_' || r == '/':
+		default:
+			return "[invalid-name]"
+		}
+	}
+	return target
+}

@@ -111,7 +111,7 @@ func (o Orchestrator) applyExplicitKustomizeDiscovery(ctx context.Context, root 
 
 func (o Orchestrator) discoverRenderedKustomize(ctx context.Context, root string, settings config.ArgoSettings, request BuildRequest) (discovery.Result, []diagnostic.Diagnostic, []cacheevent.Event, error) {
 	recorder := cacheevent.NewRecorder(request.RecordCacheEvents)
-	provider, cleanup, err := o.discoveryProvider(root, settings, request, recorder)
+	provider, cleanup, err := o.discoveryProvider(ctx, root, settings, request, recorder)
 	if err != nil {
 		return discovery.Result{}, nil, recorder.Events(), err
 	}
@@ -223,6 +223,6 @@ func (o Orchestrator) discoverRenderedFleet(ctx context.Context, root string, re
 	return current, settingsSig, renderSig, allDiags, allEvents, nil
 }
 
-func (o Orchestrator) discoveryProvider(root string, settings config.ArgoSettings, request BuildRequest, recorder *cacheevent.Recorder) (localProvider, func(), error) {
-	return newLocalProvider(o, root, settings, request, recorder, "drydock-discovery-cache-snapshots-*")
+func (o Orchestrator) discoveryProvider(ctx context.Context, root string, settings config.ArgoSettings, request BuildRequest, recorder *cacheevent.Recorder) (localProvider, func(), error) {
+	return newLocalProvider(ctx, o, root, settings, request, recorder, "drydock-discovery-cache-snapshots-*")
 }

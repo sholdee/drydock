@@ -7,6 +7,7 @@ import (
 	"github.com/sholdee/drydock/internal/chart"
 	"github.com/sholdee/drydock/internal/pluginpolicy"
 	"github.com/sholdee/drydock/internal/remote"
+	"github.com/sholdee/drydock/internal/rendercache"
 	sourcepkg "github.com/sholdee/drydock/internal/source"
 )
 
@@ -32,6 +33,16 @@ type AcquisitionOptions struct {
 	RemoteResourceCredentials    remote.Credentials
 	RemoteResourceGitCredentials remote.GitCredentials
 	RecordCacheEvents            bool
+}
+
+// RenderCacheOptions controls the persistent render-output cache. The zero
+// value leaves the persistent tier off; CLI and pkg/drydock default it on.
+type RenderCacheOptions struct {
+	RenderCacheEnabled  bool
+	RenderCacheDir      string
+	RenderCacheMaxBytes int64
+	RefreshRenders      bool
+	EngineFingerprint   rendercache.EngineFingerprint
 }
 
 type FilterOptions struct {
@@ -72,6 +83,8 @@ type TrackingOptions struct {
 type ApplicationRenderOptions struct {
 	PluginOptions   PluginOptions
 	TrackingOptions TrackingOptions
+
+	persistent persistentRenderOptions
 }
 
 type ExecutionOptions struct {

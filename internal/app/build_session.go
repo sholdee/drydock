@@ -87,7 +87,7 @@ func (session *buildSession) Build(ctx context.Context) (BuildResult, error) {
 		Inclusions: result.Settings.ResourceInclusions,
 	}
 
-	provider, cleanup, err := newLocalProvider(session.orchestrator, session.root, result.Settings, session.request, session.cacheRecorder, "drydock-cache-snapshots-*")
+	provider, cleanup, err := newLocalProvider(ctx, session.orchestrator, session.root, result.Settings, session.request, session.cacheRecorder, "drydock-cache-snapshots-*")
 	if err != nil {
 		return result, err
 	}
@@ -95,6 +95,7 @@ func (session *buildSession) Build(ctx context.Context) (BuildResult, error) {
 
 	rendered, renderErr := renderApplications(ctx, renderApplicationsRequest{
 		applications:      result.Applications,
+		applicationInputs: applicationInputPathsByKey(result.ApplicationInputs),
 		provider:          provider,
 		renderCache:       result.renderCache,
 		settingsSignature: result.renderSettingsSignature,

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"maps"
 	"strings"
 
 	argoappv1 "github.com/argoproj/argo-cd/v3/pkg/apis/application/v1alpha1"
@@ -45,84 +46,145 @@ func RenderApplicationWithOptions(ctx context.Context, application argoappv1.App
 		return RenderResult{}, err
 	}
 
+	plan, prepareFailedAt, prepareErr := preparePlanSourcesForRender(ctx, application, provider, plan)
+
+	var persist persistentRenderState
+	if prepareErr == nil {
+		persist = preparePersistentRender(ctx, application, plan, provider, options)
+		if cached, ok := persist.lookup(); ok {
+			return cached, nil
+		}
+	}
+
 	pluginOpts := options.PluginOptions
 	trackingOpts := normalizeTrackingOptions(options.TrackingOptions)
 	byID := map[manifest.Identity]int{}
 	var result RenderResult
-	for _, sourcePlan := range plan.Sources {
+	for i, sourcePlan := range plan.Sources {
+		if prepareErr != nil && i == prepareFailedAt {
+			// Render the prepared prefix, then surface the prepare failure
+			// with the partial diagnostics, matching the historical
+			// lazy-prepare behavior.
+			return result, prepareErr
+		}
 		if sourcePlan.RefOnly {
 			continue
 		}
-		if preparer, ok := provider.(sourcePreparer); ok {
-			prepared, err := preparer.PrepareSource(ctx, application, sourcePlan)
-			if err != nil {
-				return result, fmt.Errorf("%s: %w", renderSourceContext(application, sourcePlan), err)
-			}
-			sourcePlan = prepared
+		if sourcePlan.Source.Plugin != nil {
+			persist.skip(renderCacheReasonIneligibleSource)
 		}
 
-		opts, err := renderOptions(application, sourcePlan.Source)
-		if err != nil {
-			return result, fmt.Errorf("%s: %w", renderSourceContext(application, sourcePlan), err)
-		}
-		opts.EnableAVPCompat = pluginOpts.EnableAVPCompat
-		opts.EnablePlugins = pluginOpts.EnablePlugins
-		opts.SourceIndex = sourcePlan.Index
-		opts.SourceName = sourcePlan.Name
-		refRoots, refSources, err := renderRefsForSource(plan, sourcePlan, helmRefInputPaths(opts))
-		if err != nil {
-			return result, fmt.Errorf("%s: %w", renderSourceContext(application, sourcePlan), err)
-		}
-		opts.RefRoots = mergeRefRoots(opts.RefRoots, refRoots)
-		opts.RefSources = refSources
-		manifests, diags, err := provider.RenderSource(ctx, render.ResolvedSource{
-			RepoRoot:       sourcePlan.SourceRoot,
-			Path:           sourcePlan.Source.Path,
-			Chart:          sourcePlan.Source.Chart,
-			RepoURL:        sourcePlan.Source.RepoURL,
-			TargetRevision: sourcePlan.Source.TargetRevision,
-			ExplicitType:   sourcePlan.ExplicitType,
-		}, opts)
-		result.Diagnostics = append(result.Diagnostics, sourceDiagnostics(application, sourcePlan, diags)...)
-		if err != nil {
-			return result, fmt.Errorf("%s: %w", renderSourceContext(application, sourcePlan), err)
-		}
-		avpCompatSubstituted := false
-
-		for _, rendered := range manifests {
-			if rendered.Object != nil {
-				rendered.Object = rendered.Object.DeepCopy()
-			}
-			if applyAVPCompatToManifest(&rendered, opts) {
-				avpCompatSubstituted = true
-			}
-			rendered.SourceIndex = sourcePlan.Index
-			rendered.SourceName = sourcePlan.Name
-			recordNamespaceBeforeNormalization(&rendered)
-			ApplyDestinationNamespace(application, rendered.Object)
-			if err := applyTrackingMetadata(application, rendered.Object, trackingOpts); err != nil {
-				return result, fmt.Errorf("%s: %w", renderSourceContext(application, sourcePlan), err)
-			}
-
-			id := manifest.IdentityOf(rendered.Object)
-			if existing, ok := byID[id]; ok {
-				result.Manifests[existing] = rendered
-				result.Diagnostics = append(result.Diagnostics, diagnostic.Diagnostic{
-					Severity: diagnostic.SeverityWarning,
-					Category: "repeated-resource",
-					Message:  fmt.Sprintf("resource %s repeated in Application %s; later source wins", id.String(), application.Name),
-				})
-				continue
-			}
-
-			byID[id] = len(result.Manifests)
-			result.Manifests = append(result.Manifests, rendered)
-		}
-		if avpCompatSubstituted {
-			result.Diagnostics = append(result.Diagnostics, sourceDiagnostics(application, sourcePlan, []diagnostic.Diagnostic{avpCompatDiagnostic()})...)
+		if err := renderSourcePlan(ctx, application, provider, plan, sourcePlan, pluginOpts, trackingOpts, byID, &result); err != nil {
+			return result, err
 		}
 	}
+	persist.store(ctx, result)
 	return result, nil
+}
+
+func renderSourcePlan(ctx context.Context, application argoappv1.Application, provider render.Provider, plan PlanResult, sourcePlan SourcePlan, pluginOpts PluginOptions, trackingOpts TrackingOptions, byID map[manifest.Identity]int, result *RenderResult) error {
+	opts, err := renderOptions(application, sourcePlan.Source)
+	if err != nil {
+		return fmt.Errorf("%s: %w", renderSourceContext(application, sourcePlan), err)
+	}
+	opts.EnableAVPCompat = pluginOpts.EnableAVPCompat
+	opts.EnablePlugins = pluginOpts.EnablePlugins
+	opts.SourceIndex = sourcePlan.Index
+	opts.SourceName = sourcePlan.Name
+	refRoots, refSources, err := renderRefsForSource(plan, sourcePlan, helmRefInputPaths(opts))
+	if err != nil {
+		return fmt.Errorf("%s: %w", renderSourceContext(application, sourcePlan), err)
+	}
+	opts.RefRoots = mergeRefRoots(opts.RefRoots, refRoots)
+	opts.RefSources = refSources
+
+	manifests, diags, err := provider.RenderSource(ctx, resolvedSourceForPlan(sourcePlan), opts)
+	result.Diagnostics = append(result.Diagnostics, sourceDiagnostics(application, sourcePlan, diags)...)
+	if err != nil {
+		return fmt.Errorf("%s: %w", renderSourceContext(application, sourcePlan), err)
+	}
+	avpCompatSubstituted, err := appendRenderedManifests(application, sourcePlan, opts, trackingOpts, manifests, byID, result)
+	if err != nil {
+		return err
+	}
+	if avpCompatSubstituted {
+		result.Diagnostics = append(result.Diagnostics, sourceDiagnostics(application, sourcePlan, []diagnostic.Diagnostic{avpCompatDiagnostic()})...)
+	}
+	return nil
+}
+
+func resolvedSourceForPlan(sourcePlan SourcePlan) render.ResolvedSource {
+	return render.ResolvedSource{
+		RepoRoot:       sourcePlan.SourceRoot,
+		Path:           sourcePlan.Source.Path,
+		Chart:          sourcePlan.Source.Chart,
+		RepoURL:        sourcePlan.Source.RepoURL,
+		TargetRevision: sourcePlan.Source.TargetRevision,
+		ExplicitType:   sourcePlan.ExplicitType,
+	}
+}
+
+func appendRenderedManifests(application argoappv1.Application, sourcePlan SourcePlan, opts render.RenderOptions, trackingOpts TrackingOptions, manifests []render.Manifest, byID map[manifest.Identity]int, result *RenderResult) (bool, error) {
+	avpCompatSubstituted := false
+	for _, rendered := range manifests {
+		if rendered.Object != nil {
+			rendered.Object = rendered.Object.DeepCopy()
+		}
+		if applyAVPCompatToManifest(&rendered, opts) {
+			avpCompatSubstituted = true
+		}
+		rendered.SourceIndex = sourcePlan.Index
+		rendered.SourceName = sourcePlan.Name
+		recordNamespaceBeforeNormalization(&rendered)
+		ApplyDestinationNamespace(application, rendered.Object)
+		if err := applyTrackingMetadata(application, rendered.Object, trackingOpts); err != nil {
+			return false, fmt.Errorf("%s: %w", renderSourceContext(application, sourcePlan), err)
+		}
+
+		id := manifest.IdentityOf(rendered.Object)
+		if existing, ok := byID[id]; ok {
+			result.Manifests[existing] = rendered
+			result.Diagnostics = append(result.Diagnostics, diagnostic.Diagnostic{
+				Severity: diagnostic.SeverityWarning,
+				Category: "repeated-resource",
+				Message:  fmt.Sprintf("resource %s repeated in Application %s; later source wins", id.String(), application.Name),
+			})
+			continue
+		}
+
+		byID[id] = len(result.Manifests)
+		result.Manifests = append(result.Manifests, rendered)
+	}
+	return avpCompatSubstituted, nil
+}
+
+// preparePlanSourcesForRender prepares every render source up front. On a
+// prepare failure it returns the plan with all earlier sources prepared, the
+// failing source's position, and the error; the caller renders the prepared
+// prefix first so partial diagnostics match the historical lazy-prepare path.
+func preparePlanSourcesForRender(ctx context.Context, application argoappv1.Application, provider render.Provider, plan PlanResult) (PlanResult, int, error) {
+	preparer, ok := provider.(sourcePreparer)
+	if !ok {
+		return plan, -1, nil
+	}
+	preparedPlan := plan
+	preparedPlan.Sources = append([]SourcePlan(nil), plan.Sources...)
+	preparedPlan.Refs = make(map[string]SourcePlan, len(plan.Refs))
+	maps.Copy(preparedPlan.Refs, plan.Refs)
+	for i, sourcePlan := range preparedPlan.Sources {
+		if sourcePlan.RefOnly {
+			continue
+		}
+		prepared, err := preparer.PrepareSource(ctx, application, sourcePlan)
+		if err != nil {
+			return preparedPlan, i, fmt.Errorf("%s: %w", renderSourceContext(application, sourcePlan), err)
+		}
+		preparedPlan.Sources[i] = prepared
+		if prepared.RefKey != "" {
+			preparedPlan.Refs[prepared.RefKey] = prepared
+		}
+	}
+	return preparedPlan, -1, nil
 }
 
 func recordNamespaceBeforeNormalization(rendered *render.Manifest) {

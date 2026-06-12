@@ -9,6 +9,7 @@ import (
 	"github.com/sholdee/drydock/internal/render"
 	sourcepkg "github.com/sholdee/drydock/internal/source"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"os"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -271,6 +272,55 @@ func TestOrchestratorBuildRejectsRemoteCacheInsideRepoRoot(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "remote resource cache dir") || !strings.Contains(err.Error(), "must not be inside repository root") {
 		t.Fatalf("Build() error = %q, want remote cache location error", err.Error())
+	}
+}
+
+func TestOrchestratorBuildRejectsRenderCacheInsideRepoRoot(t *testing.T) {
+	root := t.TempDir()
+	writeBuildApplication(t, root, "plain", "plain")
+	cacheDir := filepath.Join(root, ".drydock", "render")
+
+	_, err := Orchestrator{}.Build(context.Background(), BuildRequest{
+		Path: root,
+		RenderCacheOptions: RenderCacheOptions{
+			RenderCacheEnabled: true,
+			RenderCacheDir:     cacheDir,
+		},
+	})
+	if err == nil {
+		t.Fatal("Build() error = nil, want render cache location error")
+	}
+	if !strings.Contains(err.Error(), "render cache dir") || !strings.Contains(err.Error(), "must not be inside repository root") {
+		t.Fatalf("Build() error = %q, want render cache location error", err.Error())
+	}
+	if _, statErr := os.Stat(cacheDir); !os.IsNotExist(statErr) {
+		t.Fatalf("render cache dir stat error = %v, want not created", statErr)
+	}
+}
+
+func TestOrchestratorBuildRejectsRenderCacheInsideRepoMapRoot(t *testing.T) {
+	root := t.TempDir()
+	external := t.TempDir()
+	writeBuildApplication(t, root, "plain", "plain")
+
+	_, err := Orchestrator{}.Build(context.Background(), BuildRequest{
+		Path: root,
+		AcquisitionOptions: AcquisitionOptions{
+			RepoMaps: []sourcepkg.RepoMap{{
+				URL:  "https://github.com/example/external.git",
+				Path: external,
+			}},
+		},
+		RenderCacheOptions: RenderCacheOptions{
+			RenderCacheEnabled: true,
+			RenderCacheDir:     filepath.Join(external, ".drydock", "render"),
+		},
+	})
+	if err == nil {
+		t.Fatal("Build() error = nil, want render cache location error")
+	}
+	if !strings.Contains(err.Error(), "render cache dir") || !strings.Contains(err.Error(), "must not be inside repository root") {
+		t.Fatalf("Build() error = %q, want render cache location error", err.Error())
 	}
 }
 func TestOrchestratorBuildUsesRepoMappedHelmValueRef(t *testing.T) {

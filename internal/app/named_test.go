@@ -93,3 +93,28 @@ func namedApplication(namespace, name string) argoappv1.Application {
 		},
 	}
 }
+
+func TestRenderEventTargetCharset(t *testing.T) {
+	cases := []struct {
+		name      string
+		namespace string
+		appName   string
+		want      string
+	}{
+		{"dns-name", "argocd", "demo-app.v2", "argocd/demo-app.v2"},
+		{"no-namespace", "", "demo", "demo"},
+		{"permissive-extras", "argocd", "My_App", "argocd/My_App"},
+		{"scp-url", "argocd", "git@host:repo", "[invalid-name]"},
+		{"space", "argocd", "demo app", "[invalid-name]"},
+		{"unicode-colon", "argocd", "demo：app", "[invalid-name]"},
+		{"empty", "", "", ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			application := argoappv1.Application{ObjectMeta: metav1.ObjectMeta{Namespace: tc.namespace, Name: tc.appName}}
+			if got := renderEventTarget(application); got != tc.want {
+				t.Fatalf("renderEventTarget(%q/%q) = %q, want %q", tc.namespace, tc.appName, got, tc.want)
+			}
+		})
+	}
+}

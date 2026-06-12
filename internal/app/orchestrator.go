@@ -41,6 +41,7 @@ type BuildRequest struct {
 	DiscoveryOptions
 	ValidateLuaHealth bool
 	AcquisitionOptions
+	RenderCacheOptions
 	PluginOptions
 	ExecutionOptions
 	FilterOptions
@@ -52,6 +53,8 @@ type BuildRequest struct {
 	renderSettingsSignature string
 	discovered              *discovery.Result
 	snapshotSession         *acquisition.SnapshotSession
+	persistentRenderCache   *persistentRenderCache
+	rootRevision            string
 	discoveryPathMemo       *sync.Map
 	appsetGenerationMemo    *sync.Map
 }
@@ -143,6 +146,10 @@ type Orchestrator struct {
 	PluginRenderer         render.PluginRenderer
 	PluginExecRunner       pluginexec.Runner
 	PluginContainerRunner  plugincontainer.Runner
+
+	// renderObserver is a test seam invoked immediately before local
+	// render-engine invocations. It is nil in production.
+	renderObserver func(render.ResolvedSource)
 }
 
 func ensureSnapshotSession(request BuildRequest) (BuildRequest, func(), error) {
@@ -175,12 +182,20 @@ func (o Orchestrator) Diag(ctx context.Context, request DiagRequest) (DiagResult
 	return diagResult, nil
 }
 
-func (o Orchestrator) ListApplications(ctx context.Context, request BuildRequest) (BuildResult, error) {
+func (o Orchestrator) ListApplications(ctx context.Context, request BuildRequest) (result BuildResult, err error) {
 	request, releaseSnapshots, err := ensureSnapshotSession(request)
 	if err != nil {
 		return BuildResult{}, err
 	}
 	defer releaseSnapshots()
+
+	if err := validateBuildRenderCacheRoot(request); err != nil {
+		return BuildResult{}, err
+	}
+	request, releaseRenderCache := ensurePersistentRenderCache(request)
+	defer func() {
+		result.CacheEvents = append(result.CacheEvents, releaseRenderCache()...)
+	}()
 
 	if err := request.ProjectDiagnosticsMode.Validate(); err != nil {
 		return BuildResult{}, err
@@ -190,7 +205,6 @@ func (o Orchestrator) ListApplications(ctx context.Context, request BuildRequest
 		root = "."
 	}
 
-	var result BuildResult
 	loadedRequest, policyDiags, cleanup, err := ensureBuildPluginPolicy(ctx, request, root)
 	defer cleanup()
 	policyDiags = request.filterProjectDiagnostics(policyDiags)
@@ -231,6 +245,17 @@ func appendDiscoveredApplications(discovered discovery.Result, result *BuildResu
 		})
 	}
 	return nil
+}
+
+func discoveredApplicationSelectionInputs(discovered discovery.Result) []ApplicationSelectionInput {
+	inputs := make([]ApplicationSelectionInput, 0, len(discovered.Applications))
+	for _, appFile := range discovered.Applications {
+		inputs = append(inputs, ApplicationSelectionInput{
+			Application: appFile.Application,
+			Paths:       discoveredApplicationInputPaths(appFile),
+		})
+	}
+	return inputs
 }
 
 func discoveredApplicationInputPaths(appFile discovery.ApplicationFile) []string {
@@ -282,18 +307,27 @@ func applicationSetOptionsForRequest(request BuildRequest) (appset.Options, []di
 	}, diags, nil
 }
 
-func (o Orchestrator) Build(ctx context.Context, request BuildRequest) (BuildResult, error) {
+func (o Orchestrator) Build(ctx context.Context, request BuildRequest) (result BuildResult, err error) {
 	request, releaseSnapshots, err := ensureSnapshotSession(request)
 	if err != nil {
 		return BuildResult{}, err
 	}
 	defer releaseSnapshots()
 
+	if err := validateBuildRenderCacheRoot(request); err != nil {
+		return BuildResult{}, err
+	}
+	request, releaseRenderCache := ensurePersistentRenderCache(request)
+	defer func() {
+		result.CacheEvents = append(result.CacheEvents, releaseRenderCache()...)
+	}()
+
 	session, err := newBuildSession(o, request)
 	if err != nil {
 		return BuildResult{}, err
 	}
-	return session.Build(ctx)
+	result, err = session.Build(ctx)
+	return result, err
 }
 
 func normalizeParallelism(value int) (int, error) {
@@ -331,6 +365,7 @@ func normalizeMaxDiscoveryDepth(value int, explicitlySet bool) (int, error) {
 
 type renderApplicationsRequest struct {
 	applications      []argoappv1.Application
+	applicationInputs map[string][]string
 	provider          localProvider
 	renderCache       *applicationRenderCache
 	settingsSignature string
@@ -453,6 +488,11 @@ func renderOneApplication(ctx context.Context, application argoappv1.Application
 		settingsSignature: request.settingsSignature,
 		trackingOptions:   request.trackingOptions,
 		request:           request.request,
+		applicationInputPaths: applicationInputPathsForRender(
+			request.applicationInputs,
+			application,
+		),
+		applicationInputsKnown: request.applicationInputs != nil,
 	}, application)
 	if err != nil {
 		out.pluginExecutions = append(out.pluginExecutions, pluginExecutions...)
@@ -562,6 +602,7 @@ func (o Orchestrator) prepareBuildResult(ctx context.Context, request BuildReque
 		result.discovered = request.discovered
 		result.pluginOptions = request.PluginOptions
 		result.Projects = appendDiscoveredProjects(result.Projects, discovered)
+		result.ApplicationInputs = selectApplicationInputsForApplications(discoveredApplicationSelectionInputs(discovered), result.Applications)
 		diags, err := loadBuildSideSettings(root, request, discovered, &result)
 		if err != nil {
 			result.Statuses = skippedApplicationStatuses(result.Applications, err)
@@ -635,14 +676,21 @@ func (o Orchestrator) BuildApp(ctx context.Context, request BuildAppRequest) (Bu
 	}
 	defer releaseSnapshots()
 
+	if err := validateBuildRenderCacheRoot(buildRequest); err != nil {
+		return BuildResult{}, err
+	}
+	buildRequest, releaseRenderCache := ensurePersistentRenderCache(buildRequest)
+
 	listResult, err := o.ListApplications(ctx, buildRequest)
 	if err != nil {
 		listResult.Statuses = skippedStatusesForRequestedApplication(listResult.Applications, name, err)
+		listResult.CacheEvents = append(listResult.CacheEvents, releaseRenderCache()...)
 		return listResult, err
 	}
 
 	selected, err := SelectApplicationByName(listResult.Applications, name)
 	if err != nil {
+		listResult.CacheEvents = append(listResult.CacheEvents, releaseRenderCache()...)
 		return listResult, err
 	}
 
@@ -656,6 +704,7 @@ func (o Orchestrator) BuildApp(ctx context.Context, request BuildAppRequest) (Bu
 	buildResult.Diagnostics = append(append([]diagnostic.Diagnostic(nil), listResult.Diagnostics...), buildResult.Diagnostics...)
 	buildResult.Diagnostics = buildRequest.filterProjectDiagnostics(dedupeDiagnostics(buildResult.Diagnostics))
 	buildResult.CacheEvents = append(append([]cacheevent.Event(nil), listResult.CacheEvents...), buildResult.CacheEvents...)
+	buildResult.CacheEvents = append(buildResult.CacheEvents, releaseRenderCache()...)
 	return buildResult, err
 }
 
@@ -668,9 +717,15 @@ func (o Orchestrator) BuildSelection(ctx context.Context, request BuildRequest, 
 	}
 	defer releaseSnapshots()
 
+	if err := validateBuildRenderCacheRoot(request); err != nil {
+		return BuildResult{}, err
+	}
+	request, releaseRenderCache := ensurePersistentRenderCache(request)
+
 	listResult, err := o.ListApplications(ctx, request)
 	if err != nil {
 		listResult.Statuses = skippedApplicationStatuses(listResult.Applications, err)
+		listResult.CacheEvents = append(listResult.CacheEvents, releaseRenderCache()...)
 		return listResult, err
 	}
 
@@ -692,6 +747,7 @@ func (o Orchestrator) BuildSelection(ctx context.Context, request BuildRequest, 
 	buildResult.Diagnostics = append(append([]diagnostic.Diagnostic(nil), listResult.Diagnostics...), buildResult.Diagnostics...)
 	buildResult.Diagnostics = buildRequest.filterProjectDiagnostics(dedupeDiagnostics(buildResult.Diagnostics))
 	buildResult.CacheEvents = append(append([]cacheevent.Event(nil), listResult.CacheEvents...), buildResult.CacheEvents...)
+	buildResult.CacheEvents = append(buildResult.CacheEvents, releaseRenderCache()...)
 	return buildResult, err
 }
 
@@ -787,6 +843,35 @@ func selectApplicationInputsForApplications(inputs []ApplicationSelectionInput, 
 		}
 	}
 	return out
+}
+
+func applicationInputPathsByKey(inputs []ApplicationSelectionInput) map[string][]string {
+	if len(inputs) == 0 {
+		return nil
+	}
+	out := make(map[string][]string, len(inputs))
+	seen := make(map[string]bool, len(inputs))
+	for _, input := range inputs {
+		key := applicationKey(input.Application)
+		if seen[key] {
+			// Two discovered Applications share namespace/name; neither input
+			// set is authoritative for the render, so nil paths make the
+			// persistent key collection reject the app (input-graph reason)
+			// instead of digesting the wrong file.
+			out[key] = nil
+			continue
+		}
+		seen[key] = true
+		out[key] = append([]string(nil), input.Paths...)
+	}
+	return out
+}
+
+func applicationInputPathsForRender(inputs map[string][]string, application argoappv1.Application) []string {
+	if inputs == nil {
+		return nil
+	}
+	return append([]string(nil), inputs[applicationKey(application)]...)
 }
 
 func applicationKey(application argoappv1.Application) string {

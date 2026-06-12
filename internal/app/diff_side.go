@@ -20,6 +20,8 @@ func (o Orchestrator) buildDiffSides(ctx context.Context, request DiffRequest) (
 
 	leftBuildRequest := request.buildRequest(request.LeftPath, forbiddenRoots)
 	rightBuildRequest := request.buildRequest(request.RightPath, forbiddenRoots)
+	leftBuildRequest.rootRevision = request.leftPathRevision
+	rightBuildRequest.rootRevision = request.rightPathRevision
 	parallelism, err := normalizeParallelism(request.Parallelism)
 	if err != nil {
 		return BuildResult{}, BuildResult{}, nil, err

@@ -7,6 +7,7 @@ import (
 	"github.com/sholdee/drydock/internal/chart"
 	"github.com/sholdee/drydock/internal/pathsafety"
 	"github.com/sholdee/drydock/internal/remote"
+	"github.com/sholdee/drydock/internal/rendercache"
 	sourcepkg "github.com/sholdee/drydock/internal/source"
 )
 
@@ -25,7 +26,35 @@ func validateBuildNetworkOptions(request BuildRequest) error {
 	if _, err := remote.ResolveCacheDir(request.RemoteResourceCacheDir, forbiddenRoots); err != nil {
 		return err
 	}
+	if err := validateBuildRenderCacheRoot(request); err != nil {
+		return err
+	}
 	return nil
+}
+
+func validateBuildRenderCacheRoot(request BuildRequest) error {
+	if !request.RenderCacheEnabled {
+		return nil
+	}
+	root := request.Path
+	if root == "" {
+		root = "."
+	}
+	forbiddenRoots := requestForbiddenRoots(root, request.AcquisitionOptions)
+	dir, err := rendercache.ResolveDir(request.RenderCacheDir, forbiddenRoots)
+	if err != nil {
+		return err
+	}
+	if !request.EngineFingerprint.Known() {
+		// Dev builds never open the store (persistence is disabled with
+		// reason "dev-build"), so don't create or probe it here either.
+		return nil
+	}
+	// Opening here makes an unwritable cache dir a hard configuration error,
+	// consistent with the git and chart cache dirs, instead of a silent
+	// cache-disabled run.
+	_, err = rendercache.Open(dir, request.RenderCacheMaxBytes)
+	return err
 }
 
 func validateGitCacheDir(configured string, forbiddenRoots []string) error {
