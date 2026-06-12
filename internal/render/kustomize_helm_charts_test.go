@@ -11,6 +11,7 @@ import (
 	"github.com/sholdee/drydock/internal/cacheevent"
 	"github.com/sholdee/drydock/internal/chart"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"sigs.k8s.io/kustomize/api/types"
 )
 
 func TestKustomizeRendererRendersHelmChartsWithoutShellout(t *testing.T) {
@@ -290,9 +291,11 @@ helmCharts:
     version: 1.2.3
 `)
 	recorder := cacheevent.NewRecorder(true)
+	collector := cacheevent.NewAcquisitionCollector()
 	_, diags, err := (KustomizeRenderer{}).Render(context.Background(), ResolvedSource{RepoRoot: root, Path: "."}, RenderOptions{
-		ChartAcquirer:      &fakeChartAcquirer{chartDir: chartDir, fromCache: true},
-		CacheEventRecorder: recorder,
+		ChartAcquirer:        &fakeChartAcquirer{chartDir: chartDir, fromCache: true},
+		CacheEventRecorder:   recorder,
+		AcquisitionCollector: collector,
 	})
 	if err != nil {
 		t.Fatalf("Render() error = %v, diagnostics = %#v", err, diags)
@@ -300,7 +303,38 @@ helmCharts:
 	if !hasRenderCacheEvent(recorder.Events(), "chart", "hit", "https://charts.example.test") {
 		t.Fatalf("Cache events = %#v, want chart hit", recorder.Events())
 	}
+	want := []cacheevent.AcquisitionRecord{{
+		Kind:              cacheevent.AcquisitionChart,
+		RequestedRevision: "1.2.3",
+		ResolvedRevision:  "1.2.3",
+	}}
+	if got := collector.Records(); !reflect.DeepEqual(got, want) {
+		t.Fatalf("Acquisition records = %#v, want %#v", got, want)
+	}
 }
+
+func TestKustomizeHelmChartRenderOptionsForwardAcquisitionCollector(t *testing.T) {
+	collector := cacheevent.NewAcquisitionCollector()
+	opts, err := renderOptionsForKustomizeHelmChart(
+		context.Background(),
+		types.HelmChart{Name: "demo", Version: "1.2.3"},
+		t.TempDir(),
+		t.TempDir(),
+		"charts/demo",
+		".",
+		"default",
+		"demo",
+		RenderOptions{AcquisitionCollector: collector},
+		&fakeChartAcquirer{chartDir: t.TempDir()},
+	)
+	if err != nil {
+		t.Fatalf("renderOptionsForKustomizeHelmChart() error = %v", err)
+	}
+	if opts.AcquisitionCollector != collector {
+		t.Fatalf("AcquisitionCollector was not forwarded to nested Helm options")
+	}
+}
+
 func TestKustomizeRendererRecordsHelmChartRefreshCacheEvent(t *testing.T) {
 	root := t.TempDir()
 	chartDir := filepath.Join(t.TempDir(), "demo")

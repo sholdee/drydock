@@ -72,6 +72,7 @@ type RenderOptions struct {
 	RemoteResourceGitCredentials remote.GitCredentials
 	RemoteResourceAcquirer       remote.Acquirer
 	CacheEventRecorder           *cacheevent.Recorder
+	AcquisitionCollector         *cacheevent.AcquisitionCollector
 	IncludeCRDs                  bool
 	IncludeCRDsSet               bool
 	SkipHooks                    bool
