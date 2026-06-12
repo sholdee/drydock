@@ -216,9 +216,10 @@ PRs.
 When trusted container plugins are enabled, policy-managed plugin cache mounts
 live under the PR action cache root as `${cache-path}/plugin`. Persisted render
 outputs live under `${cache-path}/renders`. Both are restored or saved with the
-same action cache entry. `drydock cache` lifecycle commands still manage only
-Git, chart, and remote-resource cache entry roots; they do not manage plugin
-cache mount roots or render output entries.
+same action cache entry. `drydock cache` lifecycle commands manage Git,
+chart, remote-resource, and render output cache entry roots (use
+`--render-cache-dir ${cache-path}/renders` to target the action's persisted
+renders); they do not manage plugin cache mount roots.
 
 ## Input Behavior
 

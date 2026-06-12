@@ -164,7 +164,7 @@ when their filesystem layout is recognized.
 policy-managed container plugin cache mounts. Plugin cache mount roots remain
 excluded from cache lifecycle commands (policy-managed).
 
-Cache lifecycle commands now also list, prune, and delete persisted render
+Cache lifecycle commands also list, prune, and delete persisted render
 output entries via `--source render` and `--render-cache-dir`. During prune,
 when render entries are in scope (either because `--source render` is set or
 because no `--source` filter is used), `cache prune` additionally enforces the
@@ -311,10 +311,9 @@ They do not:
 - read credential flags
 - retry failed network or authentication acquisitions
 
-`cache prune` and `cache delete` operate only on recognized drydock Git, chart,
-and remote-resource cache entry roots. They do not list, prune, or delete
-render output entries or plugin cache mount roots selected with
-`--plugin-cache-dir`.
+`cache prune` and `cache delete` operate only on recognized drydock Git,
+chart, remote-resource, and render output cache entry roots. They do not
+manage plugin cache mount roots selected with `--plugin-cache-dir`.
 
 Cache lifecycle commands reject cache roots that resolve inside the current
 working directory, selected repository roots, Git repository trees, or
