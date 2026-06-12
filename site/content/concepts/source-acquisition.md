@@ -161,9 +161,22 @@ redacted target metadata. Older hash-only entries are listed as legacy entries
 when their filesystem layout is recognized.
 
 `--plugin-cache-dir` is separate: it is a render-time override for
-policy-managed container plugin cache mounts. Cache lifecycle commands manage
-Git, chart, and remote-resource cache entry roots. They do not list, prune, or
-delete render output entries or plugin cache mount roots.
+policy-managed container plugin cache mounts. Plugin cache mount roots remain
+excluded from cache lifecycle commands (policy-managed).
+
+Cache lifecycle commands now also list, prune, and delete persisted render
+output entries via `--source render` and `--render-cache-dir`. During prune,
+when render entries are in scope (either because `--source render` is set or
+because no `--source` filter is used), `cache prune` additionally enforces the
+render cache size cap and removes stale orphaned temp files. A `--source
+git`, `--source chart`, or `--source remote` prune scopes only to that source
+and skips the render sweep entirely.
+
+> **Warning:** The render cache size cap is a runtime flag (`--render-cache-max-size`)
+> that `cache prune` cannot discover automatically. If your builds use a custom
+> `--render-cache-max-size`, pass the same value to `cache prune` — otherwise
+> the sweep enforces the 512Mi default and may evict entries your runtime cap
+> would keep.
 
 ### Render Output Cache
 
