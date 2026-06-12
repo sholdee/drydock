@@ -16,7 +16,7 @@ import (
 )
 
 //nolint:gocyclo // CLI flag binding and output-mode branching stay together for command readability.
-func newTestCommand(deps Dependencies) *cobra.Command {
+func newTestCommand(info VersionInfo, deps Dependencies) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "test",
 		Short: "Test whether Applications render",
@@ -29,6 +29,7 @@ func newTestCommand(deps Dependencies) *cobra.Command {
 	appsFlags := defaultCommonFlags()
 	appsFlags.output = testOutputText
 	appsFlags.parallelism = defaultRenderAppsParallelism()
+	appsFlags.engineFingerprint = engineFingerprintFromVersionInfo(info)
 	apps := &cobra.Command{
 		Use:   "apps",
 		Short: "Test all Applications",
@@ -95,6 +96,7 @@ func newTestCommand(deps Dependencies) *cobra.Command {
 	appFlags := defaultCommonFlags()
 	appFlags.output = testOutputText
 	appFlags.parallelism = defaultRenderAppsParallelism()
+	appFlags.engineFingerprint = engineFingerprintFromVersionInfo(info)
 	appCmd := &cobra.Command{
 		Use:   "app NAME",
 		Short: "Test one Application",

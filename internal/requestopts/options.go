@@ -9,6 +9,7 @@ import (
 	"github.com/sholdee/drydock/internal/chart"
 	"github.com/sholdee/drydock/internal/diagnostic"
 	"github.com/sholdee/drydock/internal/remote"
+	"github.com/sholdee/drydock/internal/rendercache"
 	"github.com/sholdee/drydock/internal/source"
 )
 
@@ -62,6 +63,11 @@ type Options struct {
 	ApplicationSetProviderFixtures []string
 	ApplicationSetProviderData     appset.ProviderData
 	RecordCacheEvents              bool
+	RenderCacheEnabled             bool
+	RenderCacheDir                 string
+	RenderCacheMaxBytes            int64
+	RefreshRenders                 bool
+	EngineFingerprint              rendercache.EngineFingerprint
 }
 
 func (options Options) Build() app.BuildRequest {
@@ -72,6 +78,7 @@ func (options Options) Build() app.BuildRequest {
 		DiscoveryOptions:       options.discoveryOptions(),
 		ValidateLuaHealth:      options.ValidateLuaHealth,
 		AcquisitionOptions:     options.acquisitionOptions(),
+		RenderCacheOptions:     options.renderCacheOptions(),
 		PluginOptions:          options.pluginOptions(),
 		ExecutionOptions:       options.executionOptions(),
 		FilterOptions:          options.filterOptions(),
@@ -101,6 +108,7 @@ func (options Options) Diff() app.DiffRequest {
 		StripAttrs:              append([]string(nil), options.StripAttrs...),
 		ShowIgnoredFields:       options.ShowIgnoredFields,
 		AcquisitionOptions:      options.acquisitionOptions(),
+		RenderCacheOptions:      options.renderCacheOptions(),
 		PluginOptions:           options.pluginOptions(),
 		ExecutionOptions:        options.executionOptions(),
 		FilterOptions:           options.filterOptions(),
@@ -133,6 +141,16 @@ func (options Options) acquisitionOptions() app.AcquisitionOptions {
 		RemoteResourceCredentials:    options.RemoteResourceCredentials,
 		RemoteResourceGitCredentials: options.RemoteResourceGitCredentials,
 		RecordCacheEvents:            options.RecordCacheEvents,
+	}
+}
+
+func (options Options) renderCacheOptions() app.RenderCacheOptions {
+	return app.RenderCacheOptions{
+		RenderCacheEnabled:  options.RenderCacheEnabled,
+		RenderCacheDir:      options.RenderCacheDir,
+		RenderCacheMaxBytes: options.RenderCacheMaxBytes,
+		RefreshRenders:      options.RefreshRenders,
+		EngineFingerprint:   options.EngineFingerprint,
 	}
 }
 

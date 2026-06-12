@@ -9,6 +9,7 @@ import (
 	"github.com/sholdee/drydock/internal/chart"
 	"github.com/sholdee/drydock/internal/diagnostic"
 	"github.com/sholdee/drydock/internal/remote"
+	"github.com/sholdee/drydock/internal/rendercache"
 	"github.com/sholdee/drydock/internal/source"
 )
 
@@ -53,6 +54,11 @@ func TestOptionsBuildCopiesSharedFields(t *testing.T) {
 	assertDeepEqual(t, "ApplicationSetProviderFixtures", request.ApplicationSetProviderFixtures, []string{"fixtures.yaml"})
 	assertDeepEqual(t, "ApplicationSetProviderData", request.ApplicationSetProviderData, providerDataFixture())
 	assertDeepEqual(t, "RecordCacheEvents", request.RecordCacheEvents, true)
+	assertDeepEqual(t, "RenderCacheEnabled", request.RenderCacheEnabled, true)
+	assertDeepEqual(t, "RenderCacheDir", request.RenderCacheDir, "render-cache")
+	assertDeepEqual(t, "RenderCacheMaxBytes", request.RenderCacheMaxBytes, int64(123456))
+	assertDeepEqual(t, "RefreshRenders", request.RefreshRenders, true)
+	assertDeepEqual(t, "EngineFingerprint", request.EngineFingerprint, rendercache.EngineFingerprint{Version: "1.2.3", Commit: "abc"})
 
 	mutateOptions(&options)
 	assertDeepEqual(t, "copied DiscoverKustomizePaths", request.DiscoverKustomizePaths, []string{"argocd/overlays/prod"})
@@ -114,6 +120,11 @@ func TestOptionsDiffCopiesSharedFields(t *testing.T) {
 	assertDeepEqual(t, "ApplicationSetProviderFixtures", request.ApplicationSetProviderFixtures, []string{"fixtures.yaml"})
 	assertDeepEqual(t, "ApplicationSetProviderData", request.ApplicationSetProviderData, providerDataFixture())
 	assertDeepEqual(t, "RecordCacheEvents", request.RecordCacheEvents, true)
+	assertDeepEqual(t, "RenderCacheEnabled", request.RenderCacheEnabled, true)
+	assertDeepEqual(t, "RenderCacheDir", request.RenderCacheDir, "render-cache")
+	assertDeepEqual(t, "RenderCacheMaxBytes", request.RenderCacheMaxBytes, int64(123456))
+	assertDeepEqual(t, "RefreshRenders", request.RefreshRenders, true)
+	assertDeepEqual(t, "EngineFingerprint", request.EngineFingerprint, rendercache.EngineFingerprint{Version: "1.2.3", Commit: "abc"})
 
 	mutateOptions(&options)
 	assertDeepEqual(t, "copied DiscoverKustomizePaths", request.DiscoverKustomizePaths, []string{"argocd/overlays/prod"})
@@ -183,6 +194,11 @@ func fixtureOptions() Options {
 		},
 		ApplicationSetProviderData: providerDataFixture(),
 		RecordCacheEvents:          true,
+		RenderCacheEnabled:         true,
+		RenderCacheDir:             "render-cache",
+		RenderCacheMaxBytes:        123456,
+		RefreshRenders:             true,
+		EngineFingerprint:          rendercache.EngineFingerprint{Version: "1.2.3", Commit: "abc"},
 	}
 }
 

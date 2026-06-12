@@ -57,9 +57,10 @@ type diagResourceActions struct {
 	MergeBuiltinActions bool                           `json:"mergeBuiltinActions,omitempty" yaml:"mergeBuiltinActions,omitempty"`
 }
 
-func newDiagCommand(deps Dependencies) *cobra.Command {
+func newDiagCommand(info VersionInfo, deps Dependencies) *cobra.Command {
 	flags := defaultCommonFlags()
 	flags.parallelism = defaultRenderAppsParallelism()
+	flags.engineFingerprint = engineFingerprintFromVersionInfo(info)
 	options := diagCommandOptions{}
 	cmd := &cobra.Command{
 		Use:   "diag",

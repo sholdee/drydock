@@ -36,6 +36,7 @@ metadata:
 func TestPublicDiffApplicationsReturnsCacheEventsWhenEnabled(t *testing.T) {
 	left := t.TempDir()
 	right := t.TempDir()
+	renderCacheDisabled := false
 	chartDir := filepath.Join(t.TempDir(), "demo")
 	writeAPIChart(t, chartDir, "demo", "1.2.3", `apiVersion: v1
 kind: ConfigMap
@@ -50,6 +51,7 @@ metadata:
 		Path:              right,
 		ChangedOnly:       new(false),
 		RecordCacheEvents: true,
+		RenderCache:       RenderCacheOptions{Enabled: &renderCacheDisabled},
 		ChartAcquirer:     &recordingChartAcquirer{chartDir: chartDir, fromCache: true},
 	})
 	if err != nil {
@@ -68,6 +70,7 @@ metadata:
 func TestPublicDiffImagesReturnsCacheEventsWhenEnabled(t *testing.T) {
 	left := t.TempDir()
 	right := t.TempDir()
+	renderCacheDisabled := false
 	chartDir := filepath.Join(t.TempDir(), "demo")
 	writeAPIChart(t, chartDir, "demo", "1.2.3", `apiVersion: apps/v1
 kind: Deployment
@@ -94,6 +97,7 @@ spec:
 		Path:              right,
 		ChangedOnly:       new(false),
 		RecordCacheEvents: true,
+		RenderCache:       RenderCacheOptions{Enabled: &renderCacheDisabled},
 		ChartAcquirer:     &recordingChartAcquirer{chartDir: chartDir, fromCache: true},
 	})
 	if err != nil {

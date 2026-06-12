@@ -8,6 +8,7 @@ import (
 
 	"github.com/sholdee/drydock/internal/app"
 	"github.com/sholdee/drydock/internal/diagnostic"
+	"github.com/sholdee/drydock/internal/rendercache"
 	"github.com/sholdee/drydock/internal/requestopts"
 )
 
@@ -20,6 +21,23 @@ const (
 	ProjectDiagnosticsModeAll        ProjectDiagnosticsMode = "all"
 	ProjectDiagnosticsModeOff        ProjectDiagnosticsMode = "off"
 )
+
+// RenderCacheOptions controls the persistent render-output cache, which
+// reuses successful Application render outputs across processes.
+type RenderCacheOptions struct {
+	// Enabled toggles the persistent render cache. Nil defaults to enabled.
+	// Persistence additionally requires a provable engine fingerprint; builds
+	// without VCS stamping disable themselves automatically.
+	Enabled *bool
+	// Dir overrides the cache directory. Empty uses
+	// <user cache dir>/drydock/render.
+	Dir string
+	// MaxSizeBytes caps the on-disk cache size before LRU eviction. Zero uses
+	// the 512 MiB default.
+	MaxSizeBytes int64
+	// Refresh ignores existing entries and overwrites them after rendering.
+	Refresh bool
+}
 
 // Config controls render, list, and diff operations.
 //
@@ -150,6 +168,8 @@ type Config struct {
 	RemoteResourceAcquirer RemoteResourceAcquirer
 	// RecordCacheEvents includes source acquisition cache events in results.
 	RecordCacheEvents bool
+	// RenderCache controls the persistent render-output cache.
+	RenderCache RenderCacheOptions
 }
 
 // Client runs drydock operations with a reusable Config and optional
@@ -265,6 +285,10 @@ func (client *Client) requestOptions() requestopts.Options {
 		maxDiscoveryDepth = *client.config.MaxDiscoveryDepth
 		maxDiscoveryDepthSet = true
 	}
+	renderCacheEnabled := true
+	if client.config.RenderCache.Enabled != nil {
+		renderCacheEnabled = *client.config.RenderCache.Enabled
+	}
 	return requestopts.Options{
 		Path:                           client.config.Path,
 		LeftPath:                       client.config.PathOrig,
@@ -313,6 +337,11 @@ func (client *Client) requestOptions() requestopts.Options {
 		ApplicationSetProviderFixtures: append([]string(nil), client.config.ApplicationSetProviderFixtures...),
 		ApplicationSetProviderData:     applicationSetProviderDataToInternal(client.config.ApplicationSetProviderData),
 		RecordCacheEvents:              client.config.RecordCacheEvents,
+		RenderCacheEnabled:             renderCacheEnabled,
+		RenderCacheDir:                 client.config.RenderCache.Dir,
+		RenderCacheMaxBytes:            client.config.RenderCache.MaxSizeBytes,
+		RefreshRenders:                 client.config.RenderCache.Refresh,
+		EngineFingerprint:              rendercache.FingerprintFromBuildInfo(),
 	}
 }
 

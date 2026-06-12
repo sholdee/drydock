@@ -15,7 +15,7 @@ import (
 	"k8s.io/apimachinery/pkg/labels"
 )
 
-func newGetCommand(deps Dependencies) *cobra.Command {
+func newGetCommand(info VersionInfo, deps Dependencies) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "get",
 		Short: "List discovered Argo CD objects",
@@ -28,6 +28,7 @@ func newGetCommand(deps Dependencies) *cobra.Command {
 	appsFlags := defaultCommonFlags()
 	appsFlags.output = string(cliformat.OutputTable)
 	appsFlags.parallelism = defaultRenderAppsParallelism()
+	appsFlags.engineFingerprint = engineFingerprintFromVersionInfo(info)
 	apps := &cobra.Command{
 		Use:   "apps",
 		Short: "List Applications",
@@ -63,6 +64,7 @@ func newGetCommand(deps Dependencies) *cobra.Command {
 	imagesFlags := defaultCommonFlags()
 	imagesFlags.output = string(cliformat.OutputTable)
 	imagesFlags.parallelism = defaultRenderAppsParallelism()
+	imagesFlags.engineFingerprint = engineFingerprintFromVersionInfo(info)
 	images := &cobra.Command{
 		Use:   "images",
 		Short: "List rendered image references",

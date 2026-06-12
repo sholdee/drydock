@@ -21,7 +21,7 @@ const (
 	diffColorNever  = "never"
 )
 
-func newDiffCommand(deps Dependencies) *cobra.Command {
+func newDiffCommand(info VersionInfo, deps Dependencies) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "diff",
 		Short: "Diff rendered desired manifests",
@@ -31,13 +31,14 @@ func newDiffCommand(deps Dependencies) *cobra.Command {
 		},
 	}
 
-	cmd.AddCommand(newDiffAppsCommand(deps), newDiffAppCommand(deps), newDiffImagesCommand(deps))
+	cmd.AddCommand(newDiffAppsCommand(info, deps), newDiffAppCommand(info, deps), newDiffImagesCommand(info, deps))
 	return cmd
 }
 
-func newDiffAppsCommand(deps Dependencies) *cobra.Command {
+func newDiffAppsCommand(info VersionInfo, deps Dependencies) *cobra.Command {
 	appsFlags := defaultCommonFlags()
 	appsFlags.parallelism = defaultRenderAppsParallelism()
+	appsFlags.engineFingerprint = engineFingerprintFromVersionInfo(info)
 	appsColor := diffColorAuto
 	appsMarkdownMaxBytes := report.DefaultMaxBytes
 	appsRawOutputFile := ""
@@ -88,9 +89,10 @@ func newDiffAppsCommand(deps Dependencies) *cobra.Command {
 	return apps
 }
 
-func newDiffAppCommand(deps Dependencies) *cobra.Command {
+func newDiffAppCommand(info VersionInfo, deps Dependencies) *cobra.Command {
 	appFlags := defaultCommonFlags()
 	appFlags.parallelism = defaultRenderAppsParallelism()
+	appFlags.engineFingerprint = engineFingerprintFromVersionInfo(info)
 	appColor := diffColorAuto
 	appMarkdownMaxBytes := report.DefaultMaxBytes
 	appRawOutputFile := ""
@@ -143,9 +145,10 @@ func newDiffAppCommand(deps Dependencies) *cobra.Command {
 	return appCmd
 }
 
-func newDiffImagesCommand(deps Dependencies) *cobra.Command {
+func newDiffImagesCommand(info VersionInfo, deps Dependencies) *cobra.Command {
 	imagesFlags := defaultCommonFlags()
 	imagesFlags.parallelism = defaultRenderAppsParallelism()
+	imagesFlags.engineFingerprint = engineFingerprintFromVersionInfo(info)
 	imagesColor := diffColorAuto
 	imagesMarkdownMaxBytes := report.DefaultMaxBytes
 	images := &cobra.Command{
