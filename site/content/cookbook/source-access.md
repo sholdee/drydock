@@ -25,12 +25,20 @@ local files, repo maps, or existing cache entries.
 ## Inspect Cache Events
 
 ```bash
-drydock diag --path . --cache-events -o json
+drydock diag --path . --render --cache-events -o json
 drydock cache list -o json
 ```
 
 Use cache events to see which source acquisitions were used while rendering
-Applications for diagnostics, then inspect recognized cache entries.
+Applications for diagnostics, then inspect recognized cache entries. Render
+cache `skipped` events explain why an Application rendered normally instead of
+using a persisted render output.
+
+Dirty local worktrees can still hit persisted render outputs for Applications
+whose proven inputs did not change. In `diag --render --cache-events` output,
+look for render cache `hit`, `miss`, `store`, and `skipped` actions. Dirty
+inputs that are unsafe to hash, such as symlinks or unsupported file types,
+render normally and report a `skipped` event for the affected Application.
 
 ## Pass Explicit Credentials
 
