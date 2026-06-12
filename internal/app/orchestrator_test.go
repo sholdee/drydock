@@ -4,14 +4,18 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
+	argoappv1 "github.com/argoproj/argo-cd/v3/pkg/apis/application/v1alpha1"
 	"github.com/sholdee/drydock/internal/acquisition"
 	"github.com/sholdee/drydock/internal/cacheevent"
 	"github.com/sholdee/drydock/internal/chart"
 	"github.com/sholdee/drydock/internal/config"
 	"github.com/sholdee/drydock/internal/diagnostic"
+	"github.com/sholdee/drydock/internal/discovery"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 )
 
@@ -94,7 +98,7 @@ func TestNewLocalProviderCarriesHelmValuesFileSchemes(t *testing.T) {
 	}
 	settings.HelmValuesFileSchemesSet = true
 
-	provider, cleanup, err := newLocalProvider(Orchestrator{}, t.TempDir(), settings, BuildRequest{}, nil, "drydock-test-*")
+	provider, cleanup, err := newLocalProvider(context.Background(), Orchestrator{}, t.TempDir(), settings, BuildRequest{}, nil, "drydock-test-*")
 	defer cleanup()
 	if err != nil {
 		t.Fatalf("newLocalProvider() error = %v", err)
@@ -108,7 +112,7 @@ func TestNewLocalProviderCarriesHelmValuesFileSchemes(t *testing.T) {
 }
 
 func TestNewLocalProviderPreservesGitDirInSnapshotsWhenPluginsEnabled(t *testing.T) {
-	provider, cleanup, err := newLocalProvider(Orchestrator{}, t.TempDir(), config.DefaultSettings(), BuildRequest{
+	provider, cleanup, err := newLocalProvider(context.Background(), Orchestrator{}, t.TempDir(), config.DefaultSettings(), BuildRequest{
 		PluginOptions: PluginOptions{EnablePlugins: true},
 	}, nil, "drydock-test-*")
 	defer cleanup()
@@ -129,7 +133,7 @@ func TestNewLocalProviderReusesRequestSnapshotSession(t *testing.T) {
 	request := BuildRequest{}
 	request.snapshotSession = session
 
-	provider, cleanup, err := newLocalProvider(Orchestrator{}, t.TempDir(), config.DefaultSettings(), request, cacheevent.NewRecorder(false), "unused-*")
+	provider, cleanup, err := newLocalProvider(context.Background(), Orchestrator{}, t.TempDir(), config.DefaultSettings(), request, cacheevent.NewRecorder(false), "unused-*")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1062,4 +1066,57 @@ func indentLua(lua string) string {
 		out.WriteByte('\n')
 	}
 	return out.String()
+}
+
+func TestApplicationInputPathsByKeyDuplicateAppsAreCacheIneligible(t *testing.T) {
+	app := func(name string) argoappv1.Application {
+		return argoappv1.Application{ObjectMeta: metav1.ObjectMeta{Namespace: "argocd", Name: name}}
+	}
+	inputs := []ApplicationSelectionInput{
+		{Application: app("web"), Paths: []string{"apps/web/app.yaml"}},
+		{Application: app("api"), Paths: []string{"apps/api/app.yaml"}},
+		{Application: app("web"), Paths: []string{"overlays/prod/web.yaml"}},
+	}
+
+	byKey := applicationInputPathsByKey(inputs)
+
+	if got := byKey[applicationKey(app("api"))]; !reflect.DeepEqual(got, []string{"apps/api/app.yaml"}) {
+		t.Fatalf("unique app paths = %#v, want preserved", got)
+	}
+	if got := byKey[applicationKey(app("web"))]; got != nil {
+		t.Fatalf("duplicate app paths = %#v, want nil (cache-ineligible)", got)
+	}
+	if got := applicationInputPathsForRender(byKey, app("web")); got != nil {
+		t.Fatalf("applicationInputPathsForRender for duplicate = %#v, want nil", got)
+	}
+}
+
+func TestApplicationInputsByKeyDuplicateAppsAreCacheIneligible(t *testing.T) {
+	app := func(name string) argoappv1.Application {
+		return argoappv1.Application{ObjectMeta: metav1.ObjectMeta{Namespace: "argocd", Name: name}}
+	}
+	appFile := func(application argoappv1.Application, paths []string) discovery.ApplicationFile {
+		return discovery.ApplicationFile{
+			Path:          "test.yaml",
+			DocumentIndex: 0,
+			Application:   application,
+			InputPaths:    paths,
+		}
+	}
+	discovered := discovery.Result{
+		Applications: []discovery.ApplicationFile{
+			appFile(app("web"), []string{"apps/web/app.yaml"}),
+			appFile(app("api"), []string{"apps/api/app.yaml"}),
+			appFile(app("web"), []string{"overlays/prod/web.yaml"}),
+		},
+	}
+
+	byKey := applicationInputsByKey(discovered)
+
+	if got := byKey[applicationDiscoveryKey(app("api"))]; !reflect.DeepEqual(got, []string{"apps/api/app.yaml"}) {
+		t.Fatalf("unique app paths = %#v, want preserved", got)
+	}
+	if got := byKey[applicationDiscoveryKey(app("web"))]; got != nil {
+		t.Fatalf("duplicate app paths = %#v, want nil (cache-ineligible)", got)
+	}
 }

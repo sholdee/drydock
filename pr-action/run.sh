@@ -274,7 +274,7 @@ work_dir="${DRYDOCK_ACTION_WORK_DIR}"
 mkdir -p "${work_dir}"
 cache_path="${DRYDOCK_CACHE_PATH:-}"
 if [[ -n "${cache_path}" ]]; then
-  mkdir -p "${cache_path}/git" "${cache_path}/charts" "${cache_path}/remotes" "${cache_path}/plugin"
+  mkdir -p "${cache_path}/git" "${cache_path}/charts" "${cache_path}/remotes" "${cache_path}/plugin" "${cache_path}/renders"
 fi
 diff_html_artifact_name="${DRYDOCK_DIFF_HTML_ARTIFACT_NAME:-}"
 if [[ -z "${diff_html_artifact_name}" ]]; then
@@ -310,6 +310,7 @@ if [[ -n "${cache_path}" ]]; then
     "--chart-cache-dir" "${cache_path}/charts"
     "--remote-cache-dir" "${cache_path}/remotes"
     "--plugin-cache-dir" "${cache_path}/plugin"
+    "--render-cache-dir" "${cache_path}/renders"
   )
 fi
 append_bool_flag common_args "${DRYDOCK_INPUT_SKIP_SECRETS}" "--skip-secrets"

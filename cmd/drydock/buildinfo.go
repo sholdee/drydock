@@ -1,14 +1,18 @@
 package main
 
-import "runtime/debug"
+import (
+	"runtime/debug"
+
+	"github.com/sholdee/drydock/internal/rendercache"
+)
 
 const (
-	argoCDModulePath       = "github.com/argoproj/argo-cd/v3"
-	gitOpsEngineModulePath = "github.com/argoproj/argo-cd/gitops-engine"
-	helmModulePath         = "helm.sh/helm/v4"
-	kustomizeModulePath    = "sigs.k8s.io/kustomize/api"
-	jsonnetModulePath      = "github.com/google/go-jsonnet"
-	kubernetesModulePath   = "k8s.io/apimachinery"
+	argoCDModulePath       = rendercache.ArgoCDModulePath
+	gitOpsEngineModulePath = rendercache.GitOpsEngineModulePath
+	helmModulePath         = rendercache.HelmModulePath
+	kustomizeModulePath    = rendercache.KustomizeModulePath
+	jsonnetModulePath      = rendercache.JsonnetModulePath
+	kubernetesModulePath   = rendercache.KubernetesModulePath
 )
 
 func moduleLabel(modulePath string) string {
@@ -16,21 +20,5 @@ func moduleLabel(modulePath string) string {
 	if !ok {
 		return modulePath
 	}
-	for _, dep := range info.Deps {
-		if dep.Path == modulePath {
-			return formatModuleLabel(*dep)
-		}
-	}
-	return modulePath
-}
-
-func formatModuleLabel(module debug.Module) string {
-	label := module.Path
-	if module.Version != "" {
-		label += "@" + module.Version
-	}
-	if module.Replace != nil {
-		label += " => " + formatModuleLabel(*module.Replace)
-	}
-	return label
+	return rendercache.ModuleLabel(info, modulePath)
 }

@@ -15,6 +15,7 @@ const (
 	SourceGit    Source = "git"
 	SourceChart  Source = "chart"
 	SourceRemote Source = "remote"
+	SourceRender Source = "render"
 )
 
 type Action string
@@ -28,6 +29,9 @@ const (
 	ActionMiss     Action = "miss"
 	ActionError    Action = "error"
 	ActionDisabled Action = "disabled"
+	ActionStore    Action = "store"
+	ActionEvict    Action = "evict"
+	ActionSkipped  Action = "skipped"
 )
 
 type Event struct {
@@ -39,6 +43,7 @@ type Event struct {
 	Offline         bool     `json:"offline,omitempty" yaml:"offline,omitempty"`
 	Refresh         bool     `json:"refresh,omitempty" yaml:"refresh,omitempty"`
 	Error           string   `json:"error,omitempty" yaml:"error,omitempty"`
+	Reason          string   `json:"reason,omitempty" yaml:"reason,omitempty"`
 	RawTargets      []string `json:"-" yaml:"-"`
 	SensitiveValues []string `json:"-" yaml:"-"`
 }
@@ -81,8 +86,15 @@ func (r *Recorder) Record(event Event) {
 	if !r.Enabled() {
 		return
 	}
-	rawTargets := append([]string{event.Target}, event.RawTargets...)
-	event.Target = RedactTarget(event.Target)
+	rawTargets := append([]string(nil), event.RawTargets...)
+	// Render event targets are namespace/name labels, not URLs; URL redaction
+	// would mangle them, so they are sanitized at creation instead (see
+	// renderEventTarget in internal/app) and excluded from error-text
+	// substitution for the same reason.
+	if event.Source != SourceRender {
+		rawTargets = append([]string{event.Target}, rawTargets...)
+		event.Target = RedactTarget(event.Target)
+	}
 	event.Error = RedactEventError(event.Error, event.Target, rawTargets, event.SensitiveValues...)
 	event.RawTargets = nil
 	event.SensitiveValues = nil

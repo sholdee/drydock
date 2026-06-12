@@ -17,6 +17,7 @@ import (
 	"github.com/sholdee/drydock/internal/gitref"
 	"github.com/sholdee/drydock/internal/manifest"
 	"github.com/sholdee/drydock/internal/remote"
+	"github.com/sholdee/drydock/internal/rendercache"
 	sourcepkg "github.com/sholdee/drydock/internal/source"
 )
 
@@ -37,12 +38,16 @@ type DiffRequest struct {
 	StripAttrs              []string
 	ShowIgnoredFields       bool
 	AcquisitionOptions
+	RenderCacheOptions
 	PluginOptions
 	ExecutionOptions
 	FilterOptions
 	ApplicationSetOptions
 
-	changedPaths []string
+	changedPaths          []string
+	persistentRenderCache *persistentRenderCache
+	leftPathRevision      string
+	rightPathRevision     string
 }
 
 type DiffAppRequest struct {
@@ -64,7 +69,7 @@ type ImageDiffResult struct {
 	CacheEvents []cacheevent.Event
 }
 
-func (o Orchestrator) DiffApps(ctx context.Context, request DiffRequest) (DiffResult, error) {
+func (o Orchestrator) DiffApps(ctx context.Context, request DiffRequest) (result DiffResult, err error) {
 	request, cleanup, err := resolveDiffRequestPaths(ctx, request, true)
 	if err != nil {
 		return DiffResult{}, err
@@ -81,12 +86,19 @@ func (o Orchestrator) DiffApps(ctx context.Context, request DiffRequest) (DiffRe
 	if err := request.ProjectDiagnosticsMode.Validate(); err != nil {
 		return DiffResult{}, err
 	}
+	if err := validateDiffRenderCacheRoot(request); err != nil {
+		return DiffResult{}, err
+	}
 	loadedRequest, policyDiags, policyCleanup, err := ensureDiffPluginPolicy(ctx, request)
 	defer policyCleanup()
 	if err != nil {
 		return DiffResult{Diagnostics: request.filterProjectDiagnostics(policyDiags)}, err
 	}
 	request = loadedRequest
+	request, releaseRenderCache := ensureDiffPersistentRenderCache(request)
+	defer func() {
+		result.CacheEvents = append(result.CacheEvents, releaseRenderCache()...)
+	}()
 
 	leftBuild, rightBuild, diagnostics, err := o.buildDiffSides(ctx, request)
 	diagnostics = request.filterProjectDiagnostics(append(policyDiags, diagnostics...))
@@ -107,7 +119,7 @@ func (o Orchestrator) DiffApps(ctx context.Context, request DiffRequest) (DiffRe
 	return DiffResult{Results: results, Diagnostics: diagnostics, CacheEvents: cacheEvents}, nil
 }
 
-func (o Orchestrator) DiffApp(ctx context.Context, request DiffAppRequest) (DiffResult, error) {
+func (o Orchestrator) DiffApp(ctx context.Context, request DiffAppRequest) (result DiffResult, err error) {
 	name := strings.TrimSpace(request.Name)
 	if name == "" {
 		return DiffResult{}, fmt.Errorf("application name is required")
@@ -129,12 +141,19 @@ func (o Orchestrator) DiffApp(ctx context.Context, request DiffAppRequest) (Diff
 	if err := request.ProjectDiagnosticsMode.Validate(); err != nil {
 		return DiffResult{}, err
 	}
+	if err := validateDiffRenderCacheRoot(request.DiffRequest); err != nil {
+		return DiffResult{}, err
+	}
 	loadedRequest, policyDiags, policyCleanup, err := ensureDiffPluginPolicy(ctx, request.DiffRequest)
 	defer policyCleanup()
 	if err != nil {
 		return DiffResult{Diagnostics: request.filterProjectDiagnostics(policyDiags)}, err
 	}
-	request.DiffRequest = loadedRequest
+	preparedDiffRequest, releaseRenderCache := ensureDiffPersistentRenderCache(loadedRequest)
+	request.DiffRequest = preparedDiffRequest
+	defer func() {
+		result.CacheEvents = append(result.CacheEvents, releaseRenderCache()...)
+	}()
 
 	forbiddenRoots := diffForbiddenRoots(request.DiffRequest)
 	if err := validateDiffCacheRoots(request.DiffRequest, forbiddenRoots); err != nil {
@@ -143,6 +162,8 @@ func (o Orchestrator) DiffApp(ctx context.Context, request DiffAppRequest) (Diff
 
 	leftBuildRequest := request.buildRequest(request.LeftPath, forbiddenRoots)
 	rightBuildRequest := request.buildRequest(request.RightPath, forbiddenRoots)
+	leftBuildRequest.rootRevision = request.leftPathRevision
+	rightBuildRequest.rootRevision = request.rightPathRevision
 	parallelism, err := normalizeParallelism(request.Parallelism)
 	if err != nil {
 		return DiffResult{Diagnostics: request.filterProjectDiagnostics(policyDiags)}, err
@@ -203,7 +224,7 @@ func (o Orchestrator) DiffApp(ctx context.Context, request DiffAppRequest) (Diff
 	return DiffResult{Results: results, Diagnostics: request.filterProjectDiagnostics(diagnostics), CacheEvents: cacheEvents}, nil
 }
 
-func (o Orchestrator) DiffImages(ctx context.Context, request DiffRequest) (ImageDiffResult, error) {
+func (o Orchestrator) DiffImages(ctx context.Context, request DiffRequest) (result ImageDiffResult, err error) {
 	request, cleanup, err := resolveDiffRequestPaths(ctx, request, true)
 	if err != nil {
 		return ImageDiffResult{}, err
@@ -220,12 +241,19 @@ func (o Orchestrator) DiffImages(ctx context.Context, request DiffRequest) (Imag
 	if err := request.ProjectDiagnosticsMode.Validate(); err != nil {
 		return ImageDiffResult{}, err
 	}
+	if err := validateDiffRenderCacheRoot(request); err != nil {
+		return ImageDiffResult{}, err
+	}
 	loadedRequest, policyDiags, policyCleanup, err := ensureDiffPluginPolicy(ctx, request)
 	defer policyCleanup()
 	if err != nil {
 		return ImageDiffResult{Diagnostics: request.filterProjectDiagnostics(policyDiags)}, err
 	}
 	request = loadedRequest
+	request, releaseRenderCache := ensureDiffPersistentRenderCache(request)
+	defer func() {
+		result.CacheEvents = append(result.CacheEvents, releaseRenderCache()...)
+	}()
 
 	leftBuild, rightBuild, diagnostics, err := o.buildDiffSides(ctx, request)
 	diagnostics = request.filterProjectDiagnostics(append(policyDiags, diagnostics...))
@@ -327,6 +355,7 @@ func resolveDiffRequestPaths(ctx context.Context, request DiffRequest, computeCh
 			return request, cleanup, err
 		}
 		request.LeftPath = result.Path
+		request.leftPathRevision = result.Revision
 		cleanups = append(cleanups, result.Cleanup)
 		forbiddenRoots = append(forbiddenRoots, result.Path)
 	}
@@ -340,6 +369,7 @@ func resolveDiffRequestPaths(ctx context.Context, request DiffRequest, computeCh
 			return request, cleanup, errors.Join(err, cleanup())
 		}
 		request.RightPath = result.Path
+		request.rightPathRevision = result.Revision
 		cleanups = append(cleanups, result.Cleanup)
 	}
 	return request, cleanup, nil
@@ -423,10 +453,12 @@ func (request DiffRequest) buildRequest(path string, forbiddenRoots []string) Bu
 		ProjectDiagnosticsMode: request.ProjectDiagnosticsMode,
 		DiscoveryOptions:       cloneDiscoveryOptions(request.DiscoveryOptions),
 		AcquisitionOptions:     request.buildAcquisitionOptions(forbiddenRoots),
+		RenderCacheOptions:     request.RenderCacheOptions,
 		PluginOptions:          request.PluginOptions,
 		ExecutionOptions:       request.ExecutionOptions,
 		FilterOptions:          cloneFilterOptions(request.FilterOptions),
 		ApplicationSetOptions:  cloneApplicationSetOptions(request.ApplicationSetOptions),
+		persistentRenderCache:  request.persistentRenderCache,
 	}
 }
 
@@ -479,7 +511,25 @@ func validateDiffCacheRoots(request DiffRequest, forbiddenRoots []string) error 
 	if _, err := remote.ResolveCacheDir(request.RemoteResourceCacheDir, forbiddenRoots); err != nil {
 		return err
 	}
+	if err := validateDiffRenderCacheRoot(request); err != nil {
+		return err
+	}
 	return nil
+}
+
+func validateDiffRenderCacheRoot(request DiffRequest) error {
+	if !request.RenderCacheEnabled {
+		return nil
+	}
+	dir, err := rendercache.ResolveDir(request.RenderCacheDir, diffForbiddenRoots(request))
+	if err != nil {
+		return err
+	}
+	if !request.EngineFingerprint.Known() {
+		return nil
+	}
+	_, err = rendercache.Open(dir, request.RenderCacheMaxBytes)
+	return err
 }
 
 func diffForbiddenRoots(request DiffRequest) []string {

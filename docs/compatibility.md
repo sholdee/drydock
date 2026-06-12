@@ -128,7 +128,8 @@ Supported:
 - Cache event API/reporting for Git, Helm, and remote Kustomize acquisition,
   with redacted targets and errors.
 - Local cache lifecycle commands for recognized Git, chart, and remote
-  Kustomize cache layouts.
+  Kustomize cache layouts; render output entries are not listed, pruned, or
+  deleted.
 
 Important boundaries:
 

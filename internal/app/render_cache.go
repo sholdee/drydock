@@ -10,6 +10,7 @@ import (
 	"sync"
 
 	argoappv1 "github.com/argoproj/argo-cd/v3/pkg/apis/application/v1alpha1"
+	"github.com/sholdee/drydock/internal/cacheevent"
 	"github.com/sholdee/drydock/internal/diagnostic"
 	"github.com/sholdee/drydock/internal/pluginpolicy"
 	"github.com/sholdee/drydock/internal/render"
@@ -112,10 +113,22 @@ func renderApplicationCached(ctx renderContext, application argoappv1.Applicatio
 			return result, err
 		}
 	}
-	result, err := RenderApplicationWithOptions(ctx.context, application, ctx.provider, ApplicationRenderOptions{
+	provider := ctx.provider
+	provider.acquisitions = cacheevent.NewAcquisitionCollector()
+	options := ApplicationRenderOptions{
 		PluginOptions:   ctx.request.PluginOptions,
 		TrackingOptions: ctx.trackingOptions,
-	})
+	}
+	if key != "" {
+		options.persistent = persistentRenderOptions{
+			cache:                   ctx.request.persistentRenderCache,
+			settingsSignature:       ctx.settingsSignature,
+			hasInjectedPluginRender: ctx.request.PluginRenderer != nil,
+			applicationInputPaths:   append([]string(nil), ctx.applicationInputPaths...),
+			applicationInputsKnown:  ctx.applicationInputsKnown,
+		}
+	}
+	result, err := RenderApplicationWithOptions(ctx.context, application, provider, options)
 	if ctx.context.Err() == nil {
 		ctx.cache.set(key, result, err)
 	}
@@ -150,12 +163,14 @@ func applicationUsesPluginSource(application argoappv1.Application) bool {
 }
 
 type renderContext struct {
-	context           context.Context
-	provider          localProvider
-	cache             *applicationRenderCache
-	settingsSignature string
-	trackingOptions   TrackingOptions
-	request           BuildRequest
+	context                context.Context
+	provider               localProvider
+	cache                  *applicationRenderCache
+	settingsSignature      string
+	trackingOptions        TrackingOptions
+	request                BuildRequest
+	applicationInputPaths  []string
+	applicationInputsKnown bool
 }
 
 func applicationRenderCacheKey(ctx renderContext, application argoappv1.Application) (string, error) {

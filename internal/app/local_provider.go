@@ -51,8 +51,23 @@ type localProvider struct {
 	kustomizeBuildOptions        []string
 	configManagementPlugins      map[string]config.ConfigManagementPlugin
 	cacheEvents                  *cacheevent.Recorder
-	pluginExecutions             *[]PluginExecution
-	acquisition                  acquisition.Session
+	acquisitions                 *cacheevent.AcquisitionCollector
+	// inputVerifier accumulates the digest path sets behind one application's
+	// persistent key so store() can re-check them after the render. nil for
+	// renders without the persistent tier.
+	inputVerifier *renderInputVerifier
+	rootIdentity  SourceIdentity
+	rootInputMode rootInputMode
+	// rootDirtyPaths is the sorted complete dirty-path enumeration for the
+	// repo root when rootInputMode is dirty; empty otherwise. Per-path-set
+	// keying uses it to keep committed keys for untouched applications. An
+	// empty list in dirty mode disables the committed shortcut (fail-safe
+	// for hand-built providers). Aliases the run-scoped handle memo — treat
+	// as read-only; never sort, append to, or mutate it in place.
+	rootDirtyPaths   []string
+	renderObserver   func(render.ResolvedSource)
+	pluginExecutions *[]PluginExecution
+	acquisition      acquisition.Session
 }
 
 var processCacheTargetLocks = acquisition.NewTargetLocks()
@@ -89,6 +104,7 @@ func (p localProvider) RenderSource(ctx context.Context, source render.ResolvedS
 		opts.HelmValueFileSchemesSet = p.helmValueFileSchemesSet
 	}
 	opts.CacheEventRecorder = p.cacheEvents
+	opts.AcquisitionCollector = p.acquisitions
 	anchoredRefRoots, err := anchorLocalRefRoots(sourceRoot, opts.RefRoots)
 	if err != nil {
 		return nil, nil, err
@@ -108,6 +124,9 @@ func (p localProvider) RenderSource(ctx context.Context, source render.ResolvedS
 			return nil, nil, err
 		}
 		guardrailDiags := p.cmpAutoDiscoveryDeferredDiagnostics(source, opts)
+		if p.renderObserver != nil {
+			p.renderObserver(source)
+		}
 		manifests, diags, err := renderer.Render(ctx, source, opts)
 		diags = append(guardrailDiags, diags...)
 		return manifests, diags, err

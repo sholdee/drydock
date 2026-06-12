@@ -54,7 +54,7 @@ func selectLocalRenderer(source render.ResolvedSource) (render.Renderer, error) 
 		return nil, fmt.Errorf("unsupported explicit source type %q", source.ExplicitType)
 	}
 
-	for _, name := range []string{"kustomization.yaml", "kustomization.yml", "Kustomization"} {
+	for _, name := range render.KustomizationFileNames {
 		if exists, err := localPathExists(filepath.Join(root, name)); err != nil {
 			return nil, err
 		} else if exists {

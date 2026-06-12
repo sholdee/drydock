@@ -16,8 +16,8 @@ backslashes, duplicate paths, or ancestor/descendant overlaps.
 `--plugin-cache-dir PATH` overrides the host root for these policy-managed
 container plugin cache mounts at render time. It does not change the trusted
 policy target paths, and it does not make plugin caches part of `drydock cache`
-lifecycle commands; those commands still manage only Git, chart, and
-remote-resource cache entry roots for now.
+lifecycle commands; those commands manage only Git, chart, and remote-resource
+cache entry roots.
 
 The GitHub PR action sets the plugin cache directory under the action cache
 root, so trusted plugin cache mounts can be restored and saved with the render

@@ -6,6 +6,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/bmatcuk/doublestar/v4"
@@ -13,6 +14,247 @@ import (
 	"go.yaml.in/yaml/v3"
 	"helm.sh/helm/v4/pkg/chart/common"
 )
+
+type HelmLocalInputPath struct {
+	Path     string
+	Optional bool
+}
+
+type HelmLocalInputOptions struct {
+	RepoRoot string
+	Source   ResolvedSource
+	Options  RenderOptions
+}
+
+// CollectHelmLocalInputPaths mirrors Helm value-file path resolution for the
+// persistent render cache. It returns repository-relative committed paths only;
+// callers should skip persistence when collection fails.
+func CollectHelmLocalInputPaths(input HelmLocalInputOptions) ([]HelmLocalInputPath, error) {
+	repoRoot := filepath.Clean(input.RepoRoot)
+	if repoRoot == "" || repoRoot == "." {
+		return nil, fmt.Errorf("repository root is required")
+	}
+	opts := input.Options
+	opts.RefRoots = anchorHelmLocalInputRefRoots(repoRoot, opts.RefRoots)
+	sourcePath, err := cleanSourcePath(input.Source.Path)
+	if err != nil {
+		return nil, err
+	}
+	out := &helmLocalInputCollector{
+		repoRoot: repoRoot,
+		source:   input.Source,
+		opts:     opts,
+		paths:    map[string]bool{},
+		explicit: map[string]struct{}{},
+		globSeen: map[string]struct{}{},
+	}
+	if err := out.addRequiredRepoPath(sourcePath); err != nil {
+		return nil, err
+	}
+	paths := append([]string(nil), opts.ValueFiles...)
+	for _, parameter := range opts.HelmFileParameters {
+		paths = append(paths, parameter.Path)
+	}
+	if err := out.collectExplicitIdentities(paths); err != nil {
+		return nil, err
+	}
+	for _, raw := range opts.ValueFiles {
+		if err := out.collectValueFile(raw); err != nil {
+			return nil, err
+		}
+	}
+	for _, parameter := range opts.HelmFileParameters {
+		if err := out.collectFileParameter(parameter.Path); err != nil {
+			return nil, err
+		}
+	}
+	return out.result(), nil
+}
+
+func anchorHelmLocalInputRefRoots(repoRoot string, refRoots map[string]string) map[string]string {
+	if len(refRoots) == 0 {
+		return map[string]string{}
+	}
+	out := make(map[string]string, len(refRoots))
+	for key, root := range refRoots {
+		if filepath.IsAbs(root) {
+			out[key] = filepath.Clean(root)
+			continue
+		}
+		out[key] = filepath.Join(repoRoot, filepath.Clean(root))
+	}
+	return out
+}
+
+type helmLocalInputCollector struct {
+	repoRoot string
+	source   ResolvedSource
+	opts     RenderOptions
+	paths    map[string]bool
+	explicit map[string]struct{}
+	globSeen map[string]struct{}
+}
+
+func (c *helmLocalInputCollector) collectExplicitIdentities(files []string) error {
+	for _, raw := range files {
+		file, err := c.resolvedInput(raw)
+		if err != nil {
+			return err
+		}
+		if hasHelmValueGlob(file) || isRemoteHelmValueFile(file) {
+			continue
+		}
+		root, resolved, err := resolveHelmValueFile(c.repoRoot, helmValueFilesBaseDir(c.source, c.opts), helmValueFilesBoundaryRoot(c.source, c.opts), c.opts.RefRoots, file)
+		if err != nil {
+			return err
+		}
+		if _, err := os.Lstat(resolved); err != nil {
+			if os.IsNotExist(err) {
+				continue
+			}
+			return err
+		}
+		identity, err := localHelmValueFileIdentity(root, resolved, file)
+		if err != nil {
+			return err
+		}
+		c.explicit[identity] = struct{}{}
+	}
+	return nil
+}
+
+func (c *helmLocalInputCollector) collectValueFile(raw string) error {
+	file, err := c.resolvedInput(raw)
+	if err != nil {
+		return err
+	}
+	if isRemoteHelmValueFile(file) {
+		return fmt.Errorf("remote Helm value file %q is not persistent-cache eligible", remote.RedactURL(file))
+	}
+	if hasHelmValueGlob(file) {
+		return c.collectGlob(file)
+	}
+	return c.collectLocal(file, c.opts.IgnoreMissingValueFiles)
+}
+
+func (c *helmLocalInputCollector) collectFileParameter(raw string) error {
+	file, err := c.resolvedInput(raw)
+	if err != nil {
+		return err
+	}
+	if isRemoteHelmValueFile(file) {
+		return fmt.Errorf("remote Helm file parameter %q is not persistent-cache eligible", remote.RedactURL(file))
+	}
+	if hasHelmValueGlob(file) {
+		return fmt.Errorf("helm file parameter %q uses an unsupported glob", file)
+	}
+	return c.collectLocal(file, false)
+}
+
+func (c *helmLocalInputCollector) collectGlob(pattern string) error {
+	root, resolvedPattern, err := resolveHelmValueFile(c.repoRoot, helmValueFilesBaseDir(c.source, c.opts), helmValueFilesBoundaryRoot(c.source, c.opts), c.opts.RefRoots, pattern)
+	if err != nil {
+		return err
+	}
+	matches, err := doublestar.FilepathGlob(resolvedPattern)
+	if err != nil {
+		return fmt.Errorf("helm value file glob %q: %w", pattern, err)
+	}
+	if len(matches) == 0 {
+		if c.opts.IgnoreMissingValueFiles {
+			return fmt.Errorf("optional missing Helm value file glob %q cannot be represented in committed path digest", pattern)
+		}
+		return fmt.Errorf("helm value file glob %q matched no files", pattern)
+	}
+	for _, match := range matches {
+		identity, err := localHelmValueFileIdentity(root, match, pattern)
+		if err != nil {
+			return err
+		}
+		if _, ok := c.explicit[identity]; ok {
+			continue
+		}
+		if _, ok := c.globSeen[identity]; ok {
+			continue
+		}
+		c.globSeen[identity] = struct{}{}
+		if err := c.addResolvedRepoPath(root, match, false); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (c *helmLocalInputCollector) collectLocal(file string, optional bool) error {
+	root, resolved, err := resolveHelmValueFile(c.repoRoot, helmValueFilesBaseDir(c.source, c.opts), helmValueFilesBoundaryRoot(c.source, c.opts), c.opts.RefRoots, file)
+	if err != nil {
+		return err
+	}
+	if _, err := os.Lstat(resolved); err != nil {
+		if optional && os.IsNotExist(err) {
+			return c.addResolvedRepoPath(root, resolved, true)
+		}
+		return err
+	}
+	if err := rejectSymlinkedPath(root, resolved); err != nil {
+		return err
+	}
+	return c.addResolvedRepoPath(root, resolved, false)
+}
+
+func (c *helmLocalInputCollector) resolvedInput(raw string) (string, error) {
+	if strings.Contains(raw, "$") {
+		ref, rest, ok := helmValueFileRefPrefix(raw, c.opts.RefRoots)
+		if !ok || ref == "" {
+			return "", fmt.Errorf("helm input path %q uses unsupported env substitution", raw)
+		}
+		if strings.Contains(rest, "$") {
+			return "", fmt.Errorf("helm input path %q uses unsupported env substitution", raw)
+		}
+	}
+	return envsubstHelmValueFilePath(raw, c.opts, c.opts.RefRoots), nil
+}
+
+func (c *helmLocalInputCollector) addResolvedRepoPath(root, resolved string, optional bool) error {
+	rel, err := filepath.Rel(c.repoRoot, filepath.Clean(resolved))
+	if err != nil {
+		return err
+	}
+	if rel == "." || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) || filepath.IsAbs(rel) {
+		return fmt.Errorf("helm input path %q escapes repository root", resolved)
+	}
+	rootRel, err := filepath.Rel(c.repoRoot, filepath.Clean(root))
+	if err != nil {
+		return err
+	}
+	if rootRel == ".." || strings.HasPrefix(rootRel, ".."+string(filepath.Separator)) || filepath.IsAbs(rootRel) {
+		return fmt.Errorf("helm input root %q escapes repository root", root)
+	}
+	return c.addPath(filepath.ToSlash(rel), optional)
+}
+
+func (c *helmLocalInputCollector) addRequiredRepoPath(path string) error {
+	return c.addPath(filepath.ToSlash(path), false)
+}
+
+func (c *helmLocalInputCollector) addPath(path string, optional bool) error {
+	clean := filepath.ToSlash(filepath.Clean(path))
+	if existingOptional, ok := c.paths[clean]; ok {
+		c.paths[clean] = existingOptional && optional
+		return nil
+	}
+	c.paths[clean] = optional
+	return nil
+}
+
+func (c *helmLocalInputCollector) result() []HelmLocalInputPath {
+	paths := make([]HelmLocalInputPath, 0, len(c.paths))
+	for path, optional := range c.paths {
+		paths = append(paths, HelmLocalInputPath{Path: path, Optional: optional})
+	}
+	sort.Slice(paths, func(i, j int) bool { return paths[i].Path < paths[j].Path })
+	return paths
+}
 
 func helmValueFilesBaseDir(source ResolvedSource, opts RenderOptions) string {
 	if opts.ValueFilesBaseDir != "" {

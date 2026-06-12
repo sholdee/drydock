@@ -7,6 +7,7 @@ import (
 	"github.com/sholdee/drydock/internal/chart"
 	"github.com/sholdee/drydock/internal/diagnostic"
 	"github.com/sholdee/drydock/internal/remote"
+	"github.com/sholdee/drydock/internal/rendercache"
 	"github.com/sholdee/drydock/internal/requestopts"
 	"github.com/sholdee/drydock/internal/source"
 	"github.com/spf13/cobra"
@@ -71,6 +72,11 @@ type commonFlags struct {
 	limitBytes               int
 	cacheEvents              bool
 	parallelism              int
+	renderCache              bool
+	renderCacheDir           string
+	renderCacheMaxSize       quantityFlag
+	refreshRenders           bool
+	engineFingerprint        rendercache.EngineFingerprint
 }
 
 func defaultCommonFlags() commonFlags {
@@ -82,6 +88,8 @@ func defaultCommonFlags() commonFlags {
 		unified:            3,
 		limitBytes:         65536,
 		parallelism:        1,
+		renderCache:        true,
+		renderCacheMaxSize: defaultRenderCacheMaxSize(),
 		discoveryMode:      "fleet",
 		maxDiscoveryDepth:  4,
 		projectDiagnostics: string(diagnostic.ProjectDiagnosticsModeActionable),
@@ -101,6 +109,7 @@ func bindCommonFlags(cmd *cobra.Command, flags *commonFlags) {
 	bindOutputFlags(cmd, flags)
 	bindDiagnosticsCacheEventFlags(cmd, flags)
 	bindParallelismFlags(cmd, flags)
+	bindRenderCacheFlags(cmd, flags)
 }
 
 func bindPathDiscoveryFlags(cmd *cobra.Command, flags *commonFlags) {
@@ -305,6 +314,11 @@ func requestOptionsFromFlags(flags commonFlags, repoMaps []source.RepoMap) reque
 		SkipCRDs:                       flags.skipCRDs,
 		SkipSecrets:                    flags.skipSecrets,
 		RecordCacheEvents:              flags.cacheEvents,
+		RenderCacheEnabled:             flags.renderCache,
+		RenderCacheDir:                 flags.renderCacheDir,
+		RenderCacheMaxBytes:            flags.renderCacheMaxSize.bytes,
+		RefreshRenders:                 flags.refreshRenders,
+		EngineFingerprint:              flags.engineFingerprint,
 	}
 }
 

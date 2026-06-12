@@ -59,7 +59,15 @@ func (p localProvider) renderChartOnlySource(ctx context.Context, source render.
 		Offline:           p.offline,
 		Refresh:           p.refreshCharts,
 	}))
+	p.recordAcquisition(cacheevent.AcquisitionRecord{
+		Kind:              cacheevent.AcquisitionChart,
+		RequestedRevision: source.TargetRevision,
+		ResolvedRevision:  acquired.Version,
+	})
 
+	if p.renderObserver != nil {
+		p.renderObserver(source)
+	}
 	return (render.HelmRenderer{}).Render(ctx, render.ResolvedSource{
 		RepoRoot:       acquired.ChartDir,
 		Path:           ".",

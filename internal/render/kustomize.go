@@ -56,7 +56,17 @@ func (KustomizeRenderer) Render(ctx context.Context, source ResolvedSource, opts
 	return manifests, append(diags, renderDiags...), err
 }
 
-var kustomizationFileNames = []string{"kustomization.yaml", "kustomization.yml", "Kustomization"}
+// KustomizationFileNames is the ordered list of kustomization file name
+// variants that kustomize recognizes, in resolution precedence order.
+// selectLocalRenderer in the app package uses this list for source-type
+// classification; kustomize_input_digest uses it for the optional-variant
+// digest paths. The two lists must stay identical — this export is the
+// single source of truth.
+var KustomizationFileNames = []string{"kustomization.yaml", "kustomization.yml", "Kustomization"}
+
+// kustomizationFileNames is the package-internal alias retained for callers
+// within this package.
+var kustomizationFileNames = KustomizationFileNames
 
 func renderPlainKustomize(ctx context.Context, source ResolvedSource, root string, settings kustomizeBuildSettings) ([]Manifest, []diagnostic.Diagnostic, error) {
 	manifestPath, err := validateKustomizeGraph(ctx, source.RepoRoot, root)
@@ -280,6 +290,13 @@ func resolveKustomizeHelmChart(ctx context.Context, tempRepoRoot, tempSourceRoot
 }
 
 func recordKustomizeChartCacheEvent(opts RenderOptions, request chart.Request, acquireErr error, acquired chart.Result) {
+	if acquireErr == nil && opts.AcquisitionCollector != nil {
+		opts.AcquisitionCollector.Record(cacheevent.AcquisitionRecord{
+			Kind:              cacheevent.AcquisitionChart,
+			RequestedRevision: request.Version,
+			ResolvedRevision:  acquired.Version,
+		})
+	}
 	if opts.CacheEventRecorder == nil {
 		return
 	}
@@ -315,12 +332,7 @@ func redactKustomizeChartAcquireError(err error, repository string, credentials 
 }
 
 func resolveLocalKustomizeHelmChart(repoRoot, kustomizationDir, chartHome string, helmChart types.HelmChart) (string, bool, error) {
-	chartPath := filepath.FromSlash(helmChart.Name)
-	if helmChart.Repo != "" && helmChart.Version != "" {
-		chartPath = filepath.Join(filepath.FromSlash(helmChart.Name+"-"+helmChart.Version), filepath.FromSlash(helmChart.Name))
-	}
-
-	path := filepath.Join(kustomizationDir, filepath.FromSlash(chartHome), chartPath)
+	path := localKustomizeHelmChartPath(kustomizationDir, chartHome, helmChart)
 	info, err := os.Stat(path)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -336,6 +348,14 @@ func resolveLocalKustomizeHelmChart(repoRoot, kustomizationDir, chartHome string
 		return "", false, err
 	}
 	return rel, true, nil
+}
+
+func localKustomizeHelmChartPath(kustomizationDir, chartHome string, helmChart types.HelmChart) string {
+	chartPath := filepath.FromSlash(helmChart.Name)
+	if helmChart.Repo != "" && helmChart.Version != "" {
+		chartPath = filepath.Join(filepath.FromSlash(helmChart.Name+"-"+helmChart.Version), filepath.FromSlash(helmChart.Name))
+	}
+	return filepath.Join(kustomizationDir, filepath.FromSlash(chartHome), chartPath)
 }
 
 func renderOptionsForKustomizeHelmChart(ctx context.Context, helmChart types.HelmChart, tempRepoRoot, tempSourceRoot, chartRel, valueFilesBaseDir, namespaceFallback, generatedName string, opts RenderOptions, acquirer chart.Acquirer) (RenderOptions, error) {
@@ -392,6 +412,7 @@ func renderOptionsForKustomizeHelmChart(ctx context.Context, helmChart types.Hel
 		RemoteResourceCredentials:    opts.RemoteResourceCredentials,
 		RemoteResourceGitCredentials: opts.RemoteResourceGitCredentials,
 		CacheEventRecorder:           opts.CacheEventRecorder,
+		AcquisitionCollector:         opts.AcquisitionCollector,
 		IncludeCRDs:                  helmChart.IncludeCRDs,
 		IncludeCRDsSet:               true,
 		SkipHooks:                    helmChart.SkipHooks,

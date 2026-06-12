@@ -32,23 +32,23 @@ func renderSettingsSignature(settings config.ArgoSettings) (string, error) {
 		}
 	}
 	input := struct {
-		KustomizeBuildOptions    []config.Value[string]                 `json:"kustomizeBuildOptions,omitempty"`
-		HelmRepositories         map[string]config.RepositorySettings   `json:"helmRepositories,omitempty"`
-		HelmValuesFileSchemes    []config.Value[string]                 `json:"helmValuesFileSchemes,omitempty"`
+		KustomizeBuildOptions    []string                               `json:"kustomizeBuildOptions,omitempty"`
+		HelmRepositories         map[string]renderSettingsRepository    `json:"helmRepositories,omitempty"`
+		HelmValuesFileSchemes    []string                               `json:"helmValuesFileSchemes,omitempty"`
 		HelmValuesFileSchemesSet bool                                   `json:"helmValuesFileSchemesSet,omitempty"`
-		TrackingMethod           config.Value[string]                   `json:"trackingMethod,omitempty"`
-		InstanceLabelKey         config.Value[string]                   `json:"instanceLabelKey,omitempty"`
-		InstallationID           config.Value[string]                   `json:"installationID,omitempty"`
+		TrackingMethod           string                                 `json:"trackingMethod,omitempty"`
+		InstanceLabelKey         string                                 `json:"instanceLabelKey,omitempty"`
+		InstallationID           string                                 `json:"installationID,omitempty"`
 		ConfigManagementPlugins  map[string]renderSettingsPlugin        `json:"configManagementPlugins,omitempty"`
 		ResourceCustomizations   map[string]renderSettingsCustomization `json:"resourceCustomizations,omitempty"`
 	}{
-		KustomizeBuildOptions:    settings.KustomizeBuildOptions,
-		HelmRepositories:         settings.HelmRepositories,
-		HelmValuesFileSchemes:    settings.HelmValuesFileSchemes,
+		KustomizeBuildOptions:    renderSettingsValues(settings.KustomizeBuildOptions),
+		HelmRepositories:         renderSettingsRepositories(settings.HelmRepositories),
+		HelmValuesFileSchemes:    renderSettingsValues(settings.HelmValuesFileSchemes),
 		HelmValuesFileSchemesSet: settings.HelmValuesFileSchemesSet,
-		TrackingMethod:           settings.TrackingMethod,
-		InstanceLabelKey:         settings.InstanceLabelKey,
-		InstallationID:           settings.InstallationID,
+		TrackingMethod:           settings.TrackingMethod.Value,
+		InstanceLabelKey:         settings.InstanceLabelKey.Value,
+		InstallationID:           settings.InstallationID.Value,
 		ConfigManagementPlugins:  plugins,
 		ResourceCustomizations:   renderSettingsCustomizations(settings.ResourceCustomizations),
 	}
@@ -68,11 +68,47 @@ type renderSettingsPlugin struct {
 	HasInit         bool     `json:"hasInit,omitempty"`
 }
 
+type renderSettingsRepository struct {
+	Name      string `json:"name,omitempty"`
+	Type      string `json:"type,omitempty"`
+	URL       string `json:"url,omitempty"`
+	EnableOCI bool   `json:"enableOCI,omitempty"`
+	Project   string `json:"project,omitempty"`
+}
+
 type renderSettingsCustomization struct {
 	HasHealthLua    bool   `json:"hasHealthLua,omitempty"`
 	HealthLuaSHA256 string `json:"healthLuaSHA256,omitempty"`
 	HasUseOpenLibs  bool   `json:"hasUseOpenLibs,omitempty"`
 	UseOpenLibs     bool   `json:"useOpenLibs,omitempty"`
+}
+
+func renderSettingsValues[T comparable](input []config.Value[T]) []T {
+	if len(input) == 0 {
+		return nil
+	}
+	out := make([]T, 0, len(input))
+	for _, value := range input {
+		out = append(out, value.Value)
+	}
+	return out
+}
+
+func renderSettingsRepositories(input map[string]config.RepositorySettings) map[string]renderSettingsRepository {
+	if len(input) == 0 {
+		return nil
+	}
+	out := make(map[string]renderSettingsRepository, len(input))
+	for key, repository := range input {
+		out[key] = renderSettingsRepository{
+			Name:      repository.Name,
+			Type:      repository.Type,
+			URL:       repository.URL,
+			EnableOCI: repository.EnableOCI,
+			Project:   repository.Project,
+		}
+	}
+	return out
 }
 
 func renderSettingsCustomizations(input map[string]config.ResourceCustomization) map[string]renderSettingsCustomization {

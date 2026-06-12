@@ -362,7 +362,7 @@ func TestRunPassesChangedOnlyPathFiltersOnlyToDiffCommands(t *testing.T) {
 	}
 }
 
-func TestRunPassesPluginCacheDirToEveryInvocationWhenCachePathSet(t *testing.T) {
+func TestRunPassesCacheDirsToEveryInvocationWhenCachePathSet(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("shell action tests require bash")
 	}
@@ -382,13 +382,17 @@ func TestRunPassesPluginCacheDirToEveryInvocationWhenCachePathSet(t *testing.T) 
 	if len(lines) != 4 {
 		t.Fatalf("drydock invocations = %q, want test, diff apps, diff images name, diff images markdown", args)
 	}
-	want := "--plugin-cache-dir " + filepath.Join(cachePath, "plugin")
+	wantPlugin := "--plugin-cache-dir " + filepath.Join(cachePath, "plugin")
+	wantRender := "--render-cache-dir " + filepath.Join(cachePath, "renders")
 	for _, line := range lines {
-		if !strings.Contains(line, want) {
-			t.Fatalf("drydock invocation missing plugin cache dir %q:\n%s", want, line)
+		if !strings.Contains(line, wantPlugin) {
+			t.Fatalf("drydock invocation missing plugin cache dir %q:\n%s", wantPlugin, line)
+		}
+		if !strings.Contains(line, wantRender) {
+			t.Fatalf("drydock invocation missing render cache dir %q:\n%s", wantRender, line)
 		}
 	}
-	for _, name := range []string{"git", "charts", "remotes", "plugin"} {
+	for _, name := range []string{"git", "charts", "remotes", "plugin", "renders"} {
 		path := filepath.Join(cachePath, name)
 		info, err := os.Stat(path)
 		if err != nil {
@@ -420,6 +424,9 @@ func TestRunOmitsPluginCacheDirWhenCachePathEmpty(t *testing.T) {
 	for _, line := range lines {
 		if strings.Contains(line, "--plugin-cache-dir") {
 			t.Fatalf("drydock invocation included plugin cache dir with empty DRYDOCK_CACHE_PATH:\n%s", line)
+		}
+		if strings.Contains(line, "--render-cache-dir") {
+			t.Fatalf("drydock invocation included render cache dir with empty DRYDOCK_CACHE_PATH:\n%s", line)
 		}
 	}
 }

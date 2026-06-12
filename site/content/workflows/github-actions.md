@@ -197,10 +197,14 @@ artifacts.
 
 ## Caching
 
-Binary caching is separate from drydock render caching. Binary cache entries
+Binary caching is separate from drydock repository caches. Binary cache entries
 contain only the released `drydock` archive and are keyed by release checksum.
-Render cache entries contain fetched Git, Helm, and remote Kustomize sources for
+The PR action cache root contains fetched Git, Helm, and remote Kustomize
+sources, policy-managed plugin cache mounts, and persisted render outputs for
 the repository under test.
+
+Dirty-worktree render output reuse uses the existing render cache behavior. No
+new PR action input is required.
 
 Fork pull requests do not restore or save drydock render caches by default,
 because render caches can contain private repository, chart, remote source, or
@@ -210,9 +214,11 @@ runs is acceptable for that repository. Cache save remains disabled for fork
 PRs.
 
 When trusted container plugins are enabled, policy-managed plugin cache mounts
-live under the PR action cache root as `${cache-path}/plugin` and are restored
-or saved with that render cache. `drydock cache` lifecycle commands still manage
-only Git, chart, and remote-resource cache entry roots for now.
+live under the PR action cache root as `${cache-path}/plugin`. Persisted render
+outputs live under `${cache-path}/renders`. Both are restored or saved with the
+same action cache entry. `drydock cache` lifecycle commands still manage only
+Git, chart, and remote-resource cache entry roots; they do not manage plugin
+cache mount roots or render output entries.
 
 ## Input Behavior
 

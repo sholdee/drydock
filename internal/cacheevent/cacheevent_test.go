@@ -46,6 +46,23 @@ func TestRecorderRedactsTargetsAndCopiesEvents(t *testing.T) {
 	}
 }
 
+func TestRecorderPassesRenderTargetThroughVerbatim(t *testing.T) {
+	recorder := NewRecorder(true)
+	recorder.Record(Event{Source: SourceRender, Action: ActionSkipped, Target: "argocd/urlvalues", Reason: "pin-unstable"})
+	recorder.Record(Event{Source: SourceGit, Action: ActionFetch, Target: "https://user:secret@example.test/repo.git"})
+
+	events := recorder.Events()
+	if len(events) != 2 {
+		t.Fatalf("Events = %#v, want two events", events)
+	}
+	if got := events[0].Target; got != "argocd/urlvalues" {
+		t.Fatalf("render Target = %q, want application name passed through verbatim", got)
+	}
+	if got := events[1].Target; got != "https://example.test/repo.git" {
+		t.Fatalf("git Target = %q, want redacted URL", got)
+	}
+}
+
 func TestRecorderRedactsErrorTargetVariants(t *testing.T) {
 	recorder := NewRecorder(true)
 	recorder.Record(Event{
@@ -263,6 +280,15 @@ func TestNewAcquisitionErrorRedactsEventAndReturnedMessage(t *testing.T) {
 	}
 	if strings.Contains(events[0].Error, "secret") || strings.Contains(events[0].Error, "abc") {
 		t.Fatalf("Event error = %q leaked credentials", events[0].Error)
+	}
+}
+
+func TestRecordRenderEventErrorKeepsApplicationLabel(t *testing.T) {
+	recorder := NewRecorder(true)
+	recorder.Record(Event{Source: SourceRender, Action: ActionError, Target: "argocd/demo", Error: "render argocd/demo failed"})
+	events := recorder.Events()
+	if len(events) != 1 || events[0].Error != "render argocd/demo failed" {
+		t.Fatalf("render event = %#v, want the namespace/name label preserved in Error", events)
 	}
 }
 

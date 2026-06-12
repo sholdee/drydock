@@ -9,7 +9,7 @@ import (
 	"go.yaml.in/yaml/v3"
 )
 
-func newBuildCommand(deps Dependencies) *cobra.Command {
+func newBuildCommand(info VersionInfo, deps Dependencies) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "build",
 		Short: "Render Applications",
@@ -21,6 +21,7 @@ func newBuildCommand(deps Dependencies) *cobra.Command {
 
 	appsFlags := defaultCommonFlags()
 	appsFlags.parallelism = defaultRenderAppsParallelism()
+	appsFlags.engineFingerprint = engineFingerprintFromVersionInfo(info)
 	apps := &cobra.Command{
 		Use:   "apps",
 		Short: "Render all Applications",
@@ -44,6 +45,7 @@ func newBuildCommand(deps Dependencies) *cobra.Command {
 
 	appFlags := defaultCommonFlags()
 	appFlags.parallelism = defaultRenderAppsParallelism()
+	appFlags.engineFingerprint = engineFingerprintFromVersionInfo(info)
 	appCmd := &cobra.Command{
 		Use:   "app NAME",
 		Short: "Render one Application",

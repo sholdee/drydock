@@ -116,6 +116,17 @@ func (w *kustomizeWorkspace) acquireAndCopyKustomizeRef(ctx context.Context, dir
 }
 
 func recordRemoteCacheEvent(opts RenderOptions, request remote.Request, acquireErr error, acquired remote.Result) {
+	if acquireErr == nil && opts.AcquisitionCollector != nil {
+		kind := cacheevent.AcquisitionRemoteHTTP
+		if request.Kind == remote.RequestGitRepo {
+			kind = cacheevent.AcquisitionRemoteGit
+		}
+		opts.AcquisitionCollector.Record(cacheevent.AcquisitionRecord{
+			Kind:              kind,
+			RequestedRevision: request.Revision,
+			ResolvedRevision:  acquired.Revision,
+		})
+	}
 	if opts.CacheEventRecorder == nil {
 		return
 	}

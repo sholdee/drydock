@@ -326,6 +326,13 @@ func helmChartVersion(chrt helmchart.Charter) string {
 }
 
 func recordHelmDependencyChartCacheEvent(opts RenderOptions, request chart.Request, acquireErr error, acquired chart.Result) {
+	if acquireErr == nil && opts.AcquisitionCollector != nil {
+		opts.AcquisitionCollector.Record(cacheevent.AcquisitionRecord{
+			Kind:              cacheevent.AcquisitionChart,
+			RequestedRevision: request.Version,
+			ResolvedRevision:  acquired.Version,
+		})
+	}
 	if opts.CacheEventRecorder == nil {
 		return
 	}

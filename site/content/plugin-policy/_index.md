@@ -119,8 +119,9 @@ drydock diff apps --path-orig ../baseline --path . --enable-plugins
 Container `cacheMounts` are policy-managed durable tool caches mounted only
 under reserved `/drydock-cache` paths. `--plugin-cache-dir` is a render-time
 override for the host root backing those mounts; it does not change trusted
-policy target paths. Cache lifecycle commands still manage only Git, chart, and
-remote-resource cache entry roots for now.
+policy target paths. Cache lifecycle commands manage only Git, chart, and
+remote-resource cache entry roots, not plugin cache mount roots or render
+output entries.
 
 In the GitHub PR action, trusted plugin cache mounts live under the action cache
 root as `${cache-path}/plugin` when trusted plugins are enabled.

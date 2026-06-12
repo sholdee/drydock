@@ -56,12 +56,12 @@ func NewRootCommandWithDependencies(info VersionInfo, deps Dependencies) *cobra.
 		SilenceErrors: true,
 	}
 	bindProfileFlags(cmd, &profileFlags)
-	cmd.AddCommand(newGetCommand(deps))
-	cmd.AddCommand(newBuildCommand(deps))
-	cmd.AddCommand(newTestCommand(deps))
-	cmd.AddCommand(newDiffCommand(deps))
+	cmd.AddCommand(newGetCommand(info, deps))
+	cmd.AddCommand(newBuildCommand(info, deps))
+	cmd.AddCommand(newTestCommand(info, deps))
+	cmd.AddCommand(newDiffCommand(info, deps))
 	cmd.AddCommand(newCacheCommand())
-	cmd.AddCommand(newDiagCommand(deps))
+	cmd.AddCommand(newDiagCommand(info, deps))
 	cmd.AddCommand(newPluginPolicyCommand(deps))
 	cmd.AddCommand(newCompletionCommand())
 	cmd.AddCommand(newVersionCommand(info))

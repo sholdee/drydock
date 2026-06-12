@@ -4,18 +4,21 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
 	"sync"
+	"syscall"
 
 	git "github.com/go-git/go-git/v5"
+	"github.com/go-git/go-git/v5/plumbing"
 	"github.com/go-git/go-git/v5/plumbing/filemode"
 	"github.com/go-git/go-git/v5/plumbing/object"
 	"github.com/go-git/go-git/v5/utils/merkletrie"
 	"github.com/sholdee/drydock/internal/source"
-	"github.com/sholdee/drydock/internal/streamcmp"
 )
 
 func ChangedPathsBetweenRefs(ctx context.Context, repoPath, leftRef, rightRef string) ([]string, error) {
@@ -223,6 +226,14 @@ func worktreeFileChanged(root string, file *object.File) (bool, error) {
 	if errors.Is(err, os.ErrNotExist) {
 		return true, nil
 	}
+	// ENOTDIR fires when a path component that was a directory in HEAD has been
+	// replaced by a regular file in the worktree. The tracked file is
+	// unquestionably gone; the replacing file is caught as an extra by the
+	// walk in addWorktreeExtraFiles. Treat it as changed rather than hard-failing
+	// the whole scan (errors.Is(syscall.ENOTDIR, os.ErrNotExist) is false in Go).
+	if errors.Is(err, syscall.ENOTDIR) {
+		return true, nil
+	}
 	if err != nil {
 		return false, err
 	}
@@ -257,24 +268,41 @@ func regularWorktreeFileChanged(path string, file *object.File) (bool, error) {
 	if err != nil {
 		return false, err
 	}
+	if regularWorktreeModeChanged(info.Mode(), file.Mode) {
+		return true, nil
+	}
 	if info.Size() != file.Size {
 		return true, nil
 	}
-	reader, err := file.Reader()
-	if err != nil {
-		return false, err
-	}
-	defer reader.Close()
+	// Hash the worktree file with git's blob framing and compare against the
+	// known blob hash: exact equality without decompressing the blob.
 	worktreeFile, err := os.Open(path)
 	if err != nil {
 		return false, err
 	}
 	defer worktreeFile.Close()
-	equal, err := streamcmp.Equal(worktreeFile, reader)
-	if err != nil {
+	hasher := plumbing.NewHasher(plumbing.BlobObject, info.Size())
+	if _, err := io.Copy(hasher, worktreeFile); err != nil {
 		return false, err
 	}
-	return !equal, nil
+	return hasher.Sum() != file.Hash, nil
+}
+
+func regularWorktreeModeChanged(worktreeMode os.FileMode, gitMode filemode.FileMode) bool {
+	if runtime.GOOS == "windows" {
+		return false
+	}
+	executable := worktreeMode&0o111 != 0
+	switch comparableGitFileMode(gitMode) {
+	case filemode.Regular, filemode.Deprecated:
+		return executable
+	case filemode.Executable:
+		return !executable
+	case filemode.Empty, filemode.Dir, filemode.Symlink, filemode.Submodule:
+		return true
+	default:
+		return true
+	}
 }
 
 func stringSet(values []string) map[string]struct{} {

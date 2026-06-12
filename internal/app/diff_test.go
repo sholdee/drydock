@@ -19,6 +19,7 @@ import (
 	"github.com/sholdee/drydock/internal/diagnostic"
 	"github.com/sholdee/drydock/internal/diff"
 	"github.com/sholdee/drydock/internal/remote"
+	"github.com/sholdee/drydock/internal/rendercache"
 	sourcepkg "github.com/sholdee/drydock/internal/source"
 )
 
@@ -980,6 +981,32 @@ func TestDiffAppsRejectsChartCacheInsideEitherRoot(t *testing.T) {
 	}
 }
 
+func TestDiffAppsRejectsRenderCacheInsideEitherRoot(t *testing.T) {
+	left := t.TempDir()
+	right := t.TempDir()
+
+	for _, root := range []string{left, right} {
+		cacheDir := filepath.Join(root, ".drydock", "render")
+		_, err := Orchestrator{}.DiffApps(context.Background(), DiffRequest{
+			LeftPath:  left,
+			RightPath: right,
+			RenderCacheOptions: RenderCacheOptions{
+				RenderCacheEnabled: true,
+				RenderCacheDir:     cacheDir,
+			},
+		})
+		if err == nil {
+			t.Fatal("DiffApps() error = nil, want render cache containment error")
+		}
+		if !strings.Contains(err.Error(), "render cache dir") || !strings.Contains(err.Error(), "must not be inside repository root") {
+			t.Fatalf("DiffApps() error = %v, want render cache containment error", err)
+		}
+		if _, statErr := os.Stat(cacheDir); !os.IsNotExist(statErr) {
+			t.Fatalf("render cache dir stat error = %v, want not created", statErr)
+		}
+	}
+}
+
 func TestDiffAppsPassesChartForbiddenRootsToBuilds(t *testing.T) {
 	left := t.TempDir()
 	right := t.TempDir()
@@ -1115,6 +1142,34 @@ func TestDiffAppsRefRejectsRemoteCacheInsideOriginalRepo(t *testing.T) {
 				t.Fatalf("DiffApps() error = %v, want original repo remote cache containment error", err)
 			}
 		})
+	}
+}
+
+func TestDiffAppsRefRejectsRenderCacheInsideOriginalRepo(t *testing.T) {
+	root := t.TempDir()
+	repo, wt := initDiffGitRepo(t, root)
+	writeDeploymentAppWithDataValue(t, root, "baseline")
+	commitDiffGitRepo(t, repo, wt, "baseline")
+	cacheDir := filepath.Join(root, ".drydock", "render")
+
+	_, err := Orchestrator{}.DiffApps(context.Background(), DiffRequest{
+		Repo:        root,
+		RefOrig:     "HEAD",
+		Ref:         "HEAD",
+		ChangedOnly: false,
+		RenderCacheOptions: RenderCacheOptions{
+			RenderCacheEnabled: true,
+			RenderCacheDir:     cacheDir,
+		},
+	})
+	if err == nil {
+		t.Fatal("DiffApps() error = nil, want render cache containment error")
+	}
+	if !strings.Contains(err.Error(), "render cache dir") || !strings.Contains(err.Error(), "must not be inside repository root") {
+		t.Fatalf("DiffApps() error = %v, want original repo render cache containment error", err)
+	}
+	if _, statErr := os.Stat(cacheDir); !os.IsNotExist(statErr) {
+		t.Fatalf("render cache dir stat error = %v, want not created", statErr)
 	}
 }
 
@@ -1613,6 +1668,13 @@ func TestDiffRequestCarriesProviderFixtureConfig(t *testing.T) {
 		},
 		PluginOptions:    PluginOptions{PluginTimeout: time.Second},
 		ExecutionOptions: ExecutionOptions{Parallelism: 3},
+		RenderCacheOptions: RenderCacheOptions{
+			RenderCacheEnabled:  true,
+			RenderCacheDir:      "render-cache",
+			RenderCacheMaxBytes: 1234,
+			RefreshRenders:      true,
+			EngineFingerprint:   rendercache.EngineFingerprint{Version: "1.2.3", Commit: "abc123"},
+		},
 		FilterOptions: FilterOptions{
 			SkipKinds:   []string{"Secret"},
 			SkipCRDs:    true,
@@ -1639,6 +1701,9 @@ func TestDiffRequestCarriesProviderFixtureConfig(t *testing.T) {
 		}
 		if !reflect.DeepEqual(buildRequest.ExecutionOptions, request.ExecutionOptions) {
 			t.Fatalf("%s ExecutionOptions = %#v, want %#v", side, buildRequest.ExecutionOptions, request.ExecutionOptions)
+		}
+		if !reflect.DeepEqual(buildRequest.RenderCacheOptions, request.RenderCacheOptions) {
+			t.Fatalf("%s RenderCacheOptions = %#v, want %#v", side, buildRequest.RenderCacheOptions, request.RenderCacheOptions)
 		}
 		if !reflect.DeepEqual(buildRequest.FilterOptions, request.FilterOptions) {
 			t.Fatalf("%s FilterOptions = %#v, want %#v", side, buildRequest.FilterOptions, request.FilterOptions)
@@ -1701,6 +1766,35 @@ func TestDiffAppRejectsChartCacheInsideEitherRoot(t *testing.T) {
 		}
 		if !strings.Contains(err.Error(), "chart cache dir") || !strings.Contains(err.Error(), "must not be inside repository root") {
 			t.Fatalf("DiffApp() error = %v, want chart cache containment error", err)
+		}
+	}
+}
+
+func TestDiffAppRejectsRenderCacheInsideEitherRoot(t *testing.T) {
+	left := t.TempDir()
+	right := t.TempDir()
+
+	for _, root := range []string{left, right} {
+		cacheDir := filepath.Join(root, ".drydock", "render")
+		_, err := Orchestrator{}.DiffApp(context.Background(), DiffAppRequest{
+			Name: "demo",
+			DiffRequest: DiffRequest{
+				LeftPath:  left,
+				RightPath: right,
+				RenderCacheOptions: RenderCacheOptions{
+					RenderCacheEnabled: true,
+					RenderCacheDir:     cacheDir,
+				},
+			},
+		})
+		if err == nil {
+			t.Fatal("DiffApp() error = nil, want render cache containment error")
+		}
+		if !strings.Contains(err.Error(), "render cache dir") || !strings.Contains(err.Error(), "must not be inside repository root") {
+			t.Fatalf("DiffApp() error = %v, want render cache containment error", err)
+		}
+		if _, statErr := os.Stat(cacheDir); !os.IsNotExist(statErr) {
+			t.Fatalf("render cache dir stat error = %v, want not created", statErr)
 		}
 	}
 }
@@ -2274,4 +2368,24 @@ metadata:
 data:
   value: `+value+`
 `)
+}
+
+func TestDiffImagesValidatesRenderCacheRootBeforeOpeningStore(t *testing.T) {
+	left := t.TempDir()
+	right := t.TempDir()
+	cacheDir := filepath.Join(right, "renders")
+	request := DiffRequest{LeftPath: left, RightPath: right}
+	request.RenderCacheOptions = RenderCacheOptions{
+		RenderCacheEnabled: true,
+		RenderCacheDir:     cacheDir,
+		EngineFingerprint:  testEngineFingerprint(),
+	}
+
+	_, err := Orchestrator{}.DiffImages(context.Background(), request)
+	if err == nil || !strings.Contains(err.Error(), "must not be inside") {
+		t.Fatalf("DiffImages() error = %v, want render cache root rejection", err)
+	}
+	if _, statErr := os.Stat(cacheDir); !os.IsNotExist(statErr) {
+		t.Fatalf("render cache dir %q was created inside the diff tree before validation", cacheDir)
+	}
 }

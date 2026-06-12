@@ -196,6 +196,48 @@ Authenticated source handling is explicit and non-interactive:
 Never print password, bearer token, SSH private key, SSH passphrase, remote
 resource credential, registry credential, or credential-bearing URL values.
 
+## Persistent Render Cache
+
+Canonical references:
+
+- `internal/rendercache` (store, eviction, engine fingerprint)
+- `internal/app/render_cache_persistent.go` (keying, eligibility, store-time
+  verification)
+- `internal/filedigest`, `internal/gitref`, `internal/digestpath` (the two
+  digest schemes and their shared canonicalization)
+- `site/content/concepts/source-acquisition.md` (operator-facing behavior)
+
+The cache key is a model of every input the renderers read. The load-bearing
+invariants:
+
+- Any new render input (a new kustomize field, Helm option, override file, or
+  classification probe) must be added to the digest enumerators, and the
+  read-coverage tripwires in `internal/app/render_input_coverage_test.go`
+  should gain a fixture exercising it.
+- Tool classification for digest paths derives from `selectLocalRenderer`;
+  never fork it. The kustomization filename list is shared via
+  `render.KustomizationFileNames`.
+- Refactors of digest internals must prove digest byte-identity: existing
+  digest-sensitive suites pass unmodified, or the change rotates keys and says
+  so in the commit body.
+- Every eligibility decision fails closed: errors, globs in dirty worktrees,
+  symlinks, gitlinks, nested `.git`, duplicate Application keys, and unknown
+  roots degrade to re-rendering without persistence, never to serving
+  unverified content.
+- Stores are re-verified at store time (`renderInputsUnchanged`); committed
+  keys verify the worktree against the pinned revision, filesystem keys
+  re-digest with the run-scoped memo bypassed. The sabotage-validated tests in
+  `internal/app/render_cache_verify_test.go` pin this wiring — never weaken
+  them.
+- Engine fingerprint module paths live only in `internal/rendercache`
+  (`FingerprintFromBuildInfo`); dev builds without VCS stamping or ldflags
+  disable persistence by design.
+
+Changes to keying or verification follow a written implementation plan with an
+independent review before code and per-change review after; new guard tests
+are sabotage-validated (break the guarded property, confirm the test fails,
+restore exactly).
+
 ## Application Planning And Diff Semantics
 
 Canonical references:

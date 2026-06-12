@@ -16,7 +16,7 @@ import (
 
 func (o Orchestrator) renderDiscoveryFrontier(ctx context.Context, root string, request BuildRequest, discovered discovery.Result, settings config.ArgoSettings, settingsSig string, renderCache *applicationRenderCache) (discovery.Result, []diagnostic.Diagnostic, []cacheevent.Event, error) {
 	recorder := cacheevent.NewRecorder(request.RecordCacheEvents)
-	provider, cleanup, err := o.discoveryProvider(root, settings, request, recorder)
+	provider, cleanup, err := o.discoveryProvider(ctx, root, settings, request, recorder)
 	if err != nil {
 		return discovery.Result{}, nil, recorder.Events(), err
 	}
@@ -92,17 +92,19 @@ func renderDiscoveryApplication(ctx context.Context, root string, request BuildR
 	if !applicationMayRenderDiscoveryObjects(root, request, discovered, application) {
 		return discovery.Result{}, nil, nil
 	}
+	parentInputs := inputs[applicationDiscoveryKey(application)]
 	rendered, err := renderApplicationCached(renderContext{
-		context:           ctx,
-		provider:          provider,
-		cache:             renderCache,
-		settingsSignature: settingsSig,
-		request:           request,
+		context:                ctx,
+		provider:               provider,
+		cache:                  renderCache,
+		settingsSignature:      settingsSig,
+		request:                request,
+		applicationInputPaths:  parentInputs,
+		applicationInputsKnown: inputs != nil,
 	}, application)
 	if err != nil {
 		return skippedRenderedDiscovery()
 	}
-	parentInputs := inputs[applicationDiscoveryKey(application)]
 	return scanRenderedApplicationObjects(application, parentInputs, rendered.Manifests)
 }
 
@@ -175,10 +177,21 @@ func renderedInputPaths(parentInputs []string, renderedManifest render.Manifest)
 
 func applicationInputsByKey(discovered discovery.Result) map[string][]string {
 	out := make(map[string][]string, len(discovered.Applications))
+	seen := make(map[string]bool, len(discovered.Applications))
 	for _, appFile := range discovered.Applications {
+		key := applicationDiscoveryKey(appFile.Application)
+		if seen[key] {
+			// Two discovered Applications share namespace/name; neither input
+			// set is authoritative for the render, so nil paths make the
+			// persistent key collection reject the app (input-graph reason)
+			// instead of digesting the wrong file.
+			out[key] = nil
+			continue
+		}
+		seen[key] = true
 		inputs := discoveredApplicationInputPaths(appFile)
 		inputs = applicationSelectionPaths(ApplicationSelectionInput{Application: appFile.Application, Paths: inputs})
-		out[applicationDiscoveryKey(appFile.Application)] = uniqueStrings(inputs)
+		out[key] = uniqueStrings(inputs)
 	}
 	return out
 }

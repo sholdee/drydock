@@ -12,31 +12,41 @@ import (
 )
 
 func (p localProvider) resolveSourceRoot(ctx context.Context, source render.ResolvedSource) (string, error) {
+	root, _, err := p.resolveSourceRootIdentity(ctx, source)
+	return root, err
+}
+
+// resolveSourceRootIdentity resolves the source root exactly as
+// resolveSourceRoot always has, and additionally reports the source's resolved
+// SourceIdentity for the persistent render cache key. A zero identity marks
+// the source persistence-ineligible.
+func (p localProvider) resolveSourceRootIdentity(ctx context.Context, source render.ResolvedSource) (string, SourceIdentity, error) {
 	if source.Path == "" && source.Chart != "" {
-		return p.repoRoot, nil
+		return p.repoRoot, chartOnlySourceIdentity(source), nil
 	}
 	if p.sourceResolver != nil {
 		if mappedPath, ok := p.sourceResolver.MappedPath(source.RepoURL); ok {
 			p.recordCacheEvent(cacheevent.Event{Source: cacheevent.SourceGit, Action: cacheevent.ActionMapped, Target: source.RepoURL, Revision: source.TargetRevision})
-			return filepath.Abs(mappedPath)
+			abs, err := filepath.Abs(mappedPath)
+			return abs, SourceIdentity{}, err
 		}
 	}
 	if source.Path != "" {
 		if exists, err := sourcePathExists(p.repoRoot, source.Path); err != nil {
-			return "", err
+			return "", SourceIdentity{}, err
 		} else if exists {
 			p.recordCacheEvent(cacheevent.Event{Source: cacheevent.SourceGit, Action: cacheevent.ActionLocal, Target: source.RepoURL, Revision: source.TargetRevision})
-			return p.repoRoot, nil
+			return p.repoRoot, p.rootIdentity, nil
 		}
 	}
 	if strings.TrimSpace(source.RepoURL) == "" {
-		return p.repoRoot, nil
+		return p.repoRoot, p.rootIdentity, nil
 	}
 	if p.sourceResolver == nil {
-		return p.repoRoot, nil
+		return p.repoRoot, p.rootIdentity, nil
 	}
 	if _, err := p.sourceResolver.Resolve(source.RepoURL, source.TargetRevision); err != nil {
-		return "", fmt.Errorf("source path %q is not present under local repository root and %w", source.Path, err)
+		return "", SourceIdentity{}, fmt.Errorf("source path %q is not present under local repository root and %w", source.Path, err)
 	}
 	acquirer := p.gitAcquirer
 	if acquirer == nil {
@@ -64,7 +74,7 @@ func (p localProvider) resolveSourceRoot(ctx context.Context, source render.Reso
 			SensitiveValues:   sourceGitSensitiveValues(p.gitCredentials),
 		})
 		p.recordCacheEvent(acquireError.Event)
-		return "", fmt.Errorf("%s", acquireError.RedactedError)
+		return "", SourceIdentity{}, fmt.Errorf("%s", acquireError.RedactedError)
 	}
 	p.recordCacheEvent(cacheevent.NewAcquisitionEvent(cacheevent.AcquisitionEventInput{
 		Source:            cacheevent.SourceGit,
@@ -76,7 +86,31 @@ func (p localProvider) resolveSourceRoot(ctx context.Context, source render.Reso
 		Offline:           p.offline,
 		Refresh:           p.refreshGit,
 	}))
-	return acquired.Path, nil
+	p.recordAcquisition(cacheevent.AcquisitionRecord{
+		Kind:              cacheevent.AcquisitionGit,
+		RequestedRevision: source.TargetRevision,
+		ResolvedRevision:  acquired.Revision,
+	})
+	return acquired.Path, SourceIdentity{
+		Kind:     sourceIdentityKindGit,
+		Locator:  sourcepkg.NormalizeURL(source.RepoURL),
+		Revision: acquired.Revision,
+	}, nil
+}
+
+// chartOnlySourceIdentity derives the identity from the spec alone: drydock
+// supports exact chart versions only, so name+version fully determine content
+// per registry contract.
+func chartOnlySourceIdentity(source render.ResolvedSource) SourceIdentity {
+	version := strings.TrimSpace(source.TargetRevision)
+	if version == "" {
+		return SourceIdentity{}
+	}
+	return SourceIdentity{
+		Kind:     sourceIdentityKindChart,
+		Locator:  strings.TrimSpace(source.RepoURL) + "::" + strings.TrimSpace(source.Chart),
+		Revision: version,
+	}
 }
 
 func (p localProvider) resolveRefRoots(ctx context.Context, refSources map[string]render.ResolvedSource) (map[string]string, error) {
