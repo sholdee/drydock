@@ -27,18 +27,7 @@ func newBuildCommand(info VersionInfo, deps Dependencies) *cobra.Command {
 		Short: "Render all Applications",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			repoMaps, err := parseRepoMaps(appsFlags.repoMaps)
-			if err != nil {
-				return err
-			}
-			result, err := deps.Orchestrator.Build(context.Background(), buildRequestFromFlags(cmd, appsFlags, repoMaps))
-			if err != nil {
-				if renderErr := renderDiagnostics(cmd.ErrOrStderr(), result.Diagnostics); renderErr != nil {
-					return renderErr
-				}
-				return err
-			}
-			return renderBuildResult(cmd, result)
+			return runBuildApps(cmd, deps, appsFlags)
 		},
 	}
 	bindCommonFlags(apps, &appsFlags)
@@ -51,27 +40,68 @@ func newBuildCommand(info VersionInfo, deps Dependencies) *cobra.Command {
 		Short: "Render one Application",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			repoMaps, err := parseRepoMaps(appFlags.repoMaps)
-			if err != nil {
-				return err
-			}
-			result, err := deps.Orchestrator.BuildApp(context.Background(), app.BuildAppRequest{
-				Name:         args[0],
-				BuildRequest: buildRequestFromFlags(cmd, appFlags, repoMaps),
-			})
-			if err != nil {
-				if renderErr := renderDiagnostics(cmd.ErrOrStderr(), result.Diagnostics); renderErr != nil {
-					return renderErr
-				}
-				return err
-			}
-			return renderBuildResult(cmd, result)
+			return runBuildApp(cmd, deps, appFlags, args[0])
 		},
 	}
 	bindCommonFlags(appCmd, &appFlags)
 
 	cmd.AddCommand(apps, appCmd)
 	return cmd
+}
+
+func runBuildApps(cmd *cobra.Command, deps Dependencies, flags commonFlags) error {
+	repoMaps, err := parseRepoMaps(flags.repoMaps)
+	if err != nil {
+		return err
+	}
+	result, err := deps.Orchestrator.Build(context.Background(), buildRequestFromFlags(cmd, flags, repoMaps))
+	if err != nil {
+		if renderErr := renderDiagnostics(cmd.ErrOrStderr(), result.Diagnostics); renderErr != nil {
+			return renderErr
+		}
+		if flags.cacheEvents {
+			if eventsErr := renderCacheEventsText(cmd.ErrOrStderr(), result.CacheEvents); eventsErr != nil {
+				return eventsErr
+			}
+		}
+		return err
+	}
+	if err := renderBuildResult(cmd, result); err != nil {
+		return err
+	}
+	if flags.cacheEvents {
+		return renderCacheEventsText(cmd.ErrOrStderr(), result.CacheEvents)
+	}
+	return nil
+}
+
+func runBuildApp(cmd *cobra.Command, deps Dependencies, flags commonFlags, name string) error {
+	repoMaps, err := parseRepoMaps(flags.repoMaps)
+	if err != nil {
+		return err
+	}
+	result, err := deps.Orchestrator.BuildApp(context.Background(), app.BuildAppRequest{
+		Name:         name,
+		BuildRequest: buildRequestFromFlags(cmd, flags, repoMaps),
+	})
+	if err != nil {
+		if renderErr := renderDiagnostics(cmd.ErrOrStderr(), result.Diagnostics); renderErr != nil {
+			return renderErr
+		}
+		if flags.cacheEvents {
+			if eventsErr := renderCacheEventsText(cmd.ErrOrStderr(), result.CacheEvents); eventsErr != nil {
+				return eventsErr
+			}
+		}
+		return err
+	}
+	if err := renderBuildResult(cmd, result); err != nil {
+		return err
+	}
+	if flags.cacheEvents {
+		return renderCacheEventsText(cmd.ErrOrStderr(), result.CacheEvents)
+	}
+	return nil
 }
 
 func renderBuildResult(cmd *cobra.Command, result app.BuildResult) error {

@@ -2,8 +2,10 @@ package cli
 
 import (
 	"fmt"
+	"io"
 	"strings"
 
+	"github.com/sholdee/drydock/internal/cacheevent"
 	"github.com/sholdee/drydock/internal/chart"
 	"github.com/sholdee/drydock/internal/diagnostic"
 	"github.com/sholdee/drydock/internal/remote"
@@ -207,7 +209,42 @@ func bindDiffFormattingFlags(cmd *cobra.Command, flags *commonFlags) {
 }
 
 func bindDiagnosticsCacheEventFlags(cmd *cobra.Command, flags *commonFlags) {
-	cmd.Flags().BoolVar(&flags.cacheEvents, "cache-events", flags.cacheEvents, "include cache acquisition events in structured diagnostic output")
+	cmd.Flags().BoolVar(&flags.cacheEvents, "cache-events", flags.cacheEvents, "report cache events (stderr for build/test, structured output for diag)")
+}
+
+// renderCacheEventsText writes one stderr line per cache event. Events are
+// observability output: they never belong on stdout, which stays
+// machine-parseable for manifests and statuses.
+func renderCacheEventsText(w io.Writer, events []cacheevent.Event) error {
+	for _, event := range events {
+		if _, err := fmt.Fprintf(w, "cache %s %s", event.Source, event.Action); err != nil {
+			return err
+		}
+		if event.Target != "" {
+			if _, err := fmt.Fprintf(w, " target=%s", event.Target); err != nil {
+				return err
+			}
+		}
+		if event.Revision != "" {
+			if _, err := fmt.Fprintf(w, " revision=%s", event.Revision); err != nil {
+				return err
+			}
+		}
+		if event.Reason != "" {
+			if _, err := fmt.Fprintf(w, " reason=%s", event.Reason); err != nil {
+				return err
+			}
+		}
+		if event.Error != "" {
+			if _, err := fmt.Fprintf(w, " error=%q", event.Error); err != nil {
+				return err
+			}
+		}
+		if _, err := fmt.Fprintln(w); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func bindParallelismFlags(cmd *cobra.Command, flags *commonFlags) {

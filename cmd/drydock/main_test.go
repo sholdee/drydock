@@ -3,16 +3,18 @@ package main
 import (
 	"strings"
 	"testing"
+
+	"github.com/sholdee/drydock/internal/rendercache"
 )
 
 func TestModuleLabelIncludesRuntimeModuleVersions(t *testing.T) {
 	for _, modulePath := range []string{
-		argoCDModulePath,
-		gitOpsEngineModulePath,
-		helmModulePath,
-		kustomizeModulePath,
-		jsonnetModulePath,
-		kubernetesModulePath,
+		rendercache.ArgoCDModulePath,
+		rendercache.GitOpsEngineModulePath,
+		rendercache.HelmModulePath,
+		rendercache.KustomizeModulePath,
+		rendercache.JsonnetModulePath,
+		rendercache.KubernetesModulePath,
 	} {
 		t.Run(modulePath, func(t *testing.T) {
 			label := moduleLabel(modulePath)

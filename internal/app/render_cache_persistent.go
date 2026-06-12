@@ -431,14 +431,16 @@ func ensureDiffPersistentRenderCache(request DiffRequest) (DiffRequest, func() [
 }
 
 const (
-	renderCacheReasonIneligibleSource = "ineligible-source"
-	renderCacheReasonDirtyWorktree    = "dirty-worktree"
-	renderCacheReasonInputGraph       = "input-graph-unsupported"
-	renderCacheReasonInputDigest      = "input-digest-error"
-	renderCacheReasonPinUnstable      = "pin-unstable"
-	renderCacheReasonRecordsInactive  = "records-inactive"
-	renderCacheReasonRefresh          = "refresh"
-	renderCacheReasonInputsChanged    = "inputs-changed"
+	renderCacheReasonIneligibleSource     = "ineligible-source"
+	renderCacheReasonDirtyWorktree        = "dirty-worktree"
+	renderCacheReasonInputGraph           = "input-graph-unsupported"
+	renderCacheReasonHelmGlobInputs       = "helm-glob-inputs"
+	renderCacheReasonDuplicateApplication = "duplicate-application"
+	renderCacheReasonInputDigest          = "input-digest-error"
+	renderCacheReasonPinUnstable          = "pin-unstable"
+	renderCacheReasonRecordsInactive      = "records-inactive"
+	renderCacheReasonRefresh              = "refresh"
+	renderCacheReasonInputsChanged        = "inputs-changed"
 )
 
 // collectSourceIdentities is the prepare phase: resolve every source and
@@ -580,7 +582,7 @@ func worktreeInputSourceIdentity(ctx context.Context, handle *persistentRenderCa
 		// the current worktree and is not provable from committed content
 		// alone — a new untracked file matching the glob would be invisible
 		// to the path-set intersection above.
-		return SourceIdentity{}, renderCacheReasonInputGraph, false
+		return SourceIdentity{}, renderCacheReasonHelmGlobInputs, false
 	}
 	result, err := handle.filesystemPathDigest(ctx, provider.repoRoot, filesystemInputDigestPaths(paths), filesystemDigestForbiddenRoots(provider))
 	if err != nil {
@@ -975,11 +977,12 @@ func normalizePersistentSourceIdentity(input SourceIdentity) SourceIdentity {
 // into RenderApplicationWithOptions. Exported direct callers leave them zero,
 // which keeps persistence off.
 type persistentRenderOptions struct {
-	cache                   *persistentRenderCache
-	settingsSignature       string
-	hasInjectedPluginRender bool
-	applicationInputPaths   []string
-	applicationInputsKnown  bool
+	cache                      *persistentRenderCache
+	settingsSignature          string
+	hasInjectedPluginRender    bool
+	applicationInputPaths      []string
+	applicationInputsKnown     bool
+	applicationInputsDuplicate bool
 }
 
 // persistentRenderState carries one application render's persistent-tier
@@ -1044,7 +1047,7 @@ func preparePersistentRender(ctx context.Context, application argoappv1.Applicat
 		state.event(cacheevent.ActionSkipped, reason, "")
 		return state
 	}
-	inputIdentity, reason, ok := collectApplicationInputIdentity(ctx, handle, local, options.persistent.applicationInputPaths, options.persistent.applicationInputsKnown)
+	inputIdentity, reason, ok := collectApplicationInputIdentity(ctx, handle, local, options.persistent.applicationInputPaths, options.persistent.applicationInputsKnown, options.persistent.applicationInputsDuplicate)
 	if !ok {
 		state.event(cacheevent.ActionSkipped, reason, "")
 		return state
@@ -1072,9 +1075,12 @@ func preparePersistentRender(ctx context.Context, application argoappv1.Applicat
 	return state
 }
 
-func collectApplicationInputIdentity(ctx context.Context, handle *persistentRenderCache, provider localProvider, inputPaths []string, known bool) (SourceIdentity, string, bool) {
+func collectApplicationInputIdentity(ctx context.Context, handle *persistentRenderCache, provider localProvider, inputPaths []string, known bool, duplicate bool) (SourceIdentity, string, bool) {
 	if !known {
 		return SourceIdentity{}, "", true
+	}
+	if duplicate {
+		return SourceIdentity{}, renderCacheReasonDuplicateApplication, false
 	}
 	switch provider.rootInputMode {
 	case rootInputModeSnapshot:

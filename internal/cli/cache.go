@@ -11,29 +11,33 @@ import (
 	"github.com/sholdee/drydock/internal/chart"
 	cliformat "github.com/sholdee/drydock/internal/format"
 	"github.com/sholdee/drydock/internal/remote"
+	"github.com/sholdee/drydock/internal/rendercache"
 	"github.com/sholdee/drydock/internal/source"
 	"github.com/spf13/cobra"
 )
 
 type cacheFlags struct {
-	path           string
-	pathOrig       string
-	gitCacheDir    string
-	chartCacheDir  string
-	remoteCacheDir string
-	source         string
-	output         string
-	olderThan      string
-	dryRun         bool
-	yes            bool
-	key            string
-	all            bool
+	path               string
+	pathOrig           string
+	gitCacheDir        string
+	chartCacheDir      string
+	remoteCacheDir     string
+	renderCacheDir     string
+	renderCacheMaxSize quantityFlag
+	source             string
+	output             string
+	olderThan          string
+	dryRun             bool
+	yes                bool
+	key                string
+	all                bool
 }
 
 func defaultCacheFlags() cacheFlags {
 	return cacheFlags{
-		path:   ".",
-		output: string(cliformat.OutputTable),
+		path:               ".",
+		output:             string(cliformat.OutputTable),
+		renderCacheMaxSize: defaultRenderCacheMaxSize(),
 	}
 }
 
@@ -61,6 +65,7 @@ func newCacheCommand() *cobra.Command {
 				cache.SourceGit:    opts.GitCacheDir,
 				cache.SourceChart:  opts.ChartCacheDir,
 				cache.SourceRemote: opts.RemoteCacheDir,
+				cache.SourceRender: opts.RenderCacheDir,
 			})
 		},
 	}
@@ -116,6 +121,7 @@ func newCacheCommand() *cobra.Command {
 	bindCacheSourceFlag(pruneCmd, &pruneFlags)
 	bindCacheOperationFlags(pruneCmd, &pruneFlags)
 	pruneCmd.Flags().StringVar(&pruneFlags.olderThan, "older-than", pruneFlags.olderThan, "remove cache entries older than this duration")
+	pruneCmd.Flags().Var(&pruneFlags.renderCacheMaxSize, "render-cache-max-size", "size cap enforced by the render cache sweep during prune (Kubernetes quantity, default 512Mi)")
 
 	deleteFlags := defaultCacheFlags()
 	deleteCmd := &cobra.Command{
@@ -157,10 +163,11 @@ func bindCacheRootFlags(cmd *cobra.Command, flags *cacheFlags) {
 	cmd.Flags().StringVar(&flags.gitCacheDir, "git-cache-dir", flags.gitCacheDir, "directory for cached Git repositories")
 	cmd.Flags().StringVar(&flags.chartCacheDir, "chart-cache-dir", flags.chartCacheDir, "directory for cached Helm charts")
 	cmd.Flags().StringVar(&flags.remoteCacheDir, "remote-cache-dir", flags.remoteCacheDir, "directory for cached remote Kustomize resources")
+	cmd.Flags().StringVar(&flags.renderCacheDir, "render-cache-dir", flags.renderCacheDir, "directory for persisted Application render outputs")
 }
 
 func bindCacheSourceFlag(cmd *cobra.Command, flags *cacheFlags) {
-	cmd.Flags().StringVar(&flags.source, "source", flags.source, "cache source to select: git, chart, or remote")
+	cmd.Flags().StringVar(&flags.source, "source", flags.source, "cache source to select: git, chart, remote, or render")
 }
 
 func bindCacheOperationFlags(cmd *cobra.Command, flags *cacheFlags) {
@@ -186,6 +193,7 @@ func cacheListOptions(flags cacheFlags) (cache.Options, error) {
 		GitCacheDir:    roots[cache.SourceGit],
 		ChartCacheDir:  roots[cache.SourceChart],
 		RemoteCacheDir: roots[cache.SourceRemote],
+		RenderCacheDir: roots[cache.SourceRender],
 		Sources:        sources,
 		ForbiddenRoots: forbiddenRoots,
 	}, nil
@@ -208,13 +216,14 @@ func cacheOperationOptions(flags cacheFlags) (cache.OperationOptions, error) {
 		selectedSource = opts.Sources[0]
 	}
 	return cache.OperationOptions{
-		Options:   opts,
-		OlderThan: olderThan,
-		DryRun:    flags.dryRun,
-		Yes:       flags.yes,
-		Source:    selectedSource,
-		Key:       strings.TrimSpace(flags.key),
-		All:       flags.all,
+		Options:             opts,
+		OlderThan:           olderThan,
+		DryRun:              flags.dryRun,
+		Yes:                 flags.yes,
+		Source:              selectedSource,
+		Key:                 strings.TrimSpace(flags.key),
+		All:                 flags.all,
+		RenderCacheMaxBytes: flags.renderCacheMaxSize.bytes,
 	}, nil
 }
 
@@ -250,10 +259,19 @@ func cacheRoots(flags cacheFlags) (map[cache.Source]string, error) {
 			return nil, err
 		}
 	}
+	renderCacheDir := flags.renderCacheDir
+	if renderCacheDir == "" {
+		var err error
+		renderCacheDir, err = rendercache.DefaultDir()
+		if err != nil {
+			return nil, err
+		}
+	}
 	return map[cache.Source]string{
 		cache.SourceGit:    gitCacheDir,
 		cache.SourceChart:  chartCacheDir,
 		cache.SourceRemote: remoteCacheDir,
+		cache.SourceRender: renderCacheDir,
 	}, nil
 }
 
@@ -279,10 +297,10 @@ func parseCacheSources(raw string) ([]cache.Source, error) {
 	}
 	source := cache.Source(raw)
 	switch source {
-	case cache.SourceGit, cache.SourceChart, cache.SourceRemote:
+	case cache.SourceGit, cache.SourceChart, cache.SourceRemote, cache.SourceRender:
 		return []cache.Source{source}, nil
 	default:
-		return nil, fmt.Errorf("unsupported cache source %q", raw)
+		return nil, fmt.Errorf("unsupported cache source %q: valid sources are git, chart, remote, render", raw)
 	}
 }
 
@@ -309,6 +327,7 @@ func renderCachePaths(cmd *cobra.Command, roots map[cache.Source]string) error {
 		{"source": string(cache.SourceGit), "path": roots[cache.SourceGit]},
 		{"source": string(cache.SourceChart), "path": roots[cache.SourceChart]},
 		{"source": string(cache.SourceRemote), "path": roots[cache.SourceRemote]},
+		{"source": string(cache.SourceRender), "path": roots[cache.SourceRender]},
 	})
 }
 

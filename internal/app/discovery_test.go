@@ -290,7 +290,7 @@ func TestListApplicationsDiscoversRenderedFleetApplicationsByDefault(t *testing.
 	if strings.Join(names, ",") != "child,root" {
 		t.Fatalf("Applications = %#v, want child and root", names)
 	}
-	inputs, ok := applicationInputPaths(result.ApplicationInputs, "child")
+	inputs, ok := applicationInputPathsForName(result.ApplicationInputs, "child")
 	if !ok {
 		t.Fatalf("ApplicationInputs = %#v, missing child", result.ApplicationInputs)
 	}
@@ -709,7 +709,7 @@ func applicationNames(applications []argoappv1.Application) []string {
 	return names
 }
 
-func applicationInputPaths(inputs []ApplicationSelectionInput, name string) ([]string, bool) {
+func applicationInputPathsForName(inputs []ApplicationSelectionInput, name string) ([]string, bool) {
 	for _, input := range inputs {
 		if input.Application.Name == name {
 			return input.Paths, true

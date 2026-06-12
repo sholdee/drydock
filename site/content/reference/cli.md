@@ -338,7 +338,8 @@ Print resolved cache roots:
 drydock cache path
 ```
 
-List recognized Git, chart, and remote Kustomize cache entries:
+List recognized Git, chart, remote Kustomize, and render output cache
+entries:
 
 ```bash
 drydock cache list
@@ -364,11 +365,12 @@ Dry-runs never require confirmation and leave cache files in place.
 Cache lifecycle commands are local filesystem operations only. They do not
 render Applications, clone or fetch Git repositories, fetch Helm charts, fetch
 remote Kustomize resources, or read credential flags. They operate only on
-recognized drydock Git, chart, and remote-resource cache entry roots and reject
-cache roots that resolve inside the current working directory, selected
-repository roots, Git repository trees, or symlink-resolved equivalents. They
-do not list, prune, or delete persistent render output entries or plugin cache
-mount roots.
+recognized drydock Git, chart, remote-resource, and render output cache entry
+roots and reject cache roots that resolve inside the current working
+directory, selected repository roots, Git repository trees, or
+symlink-resolved equivalents. Render output entries are selected with
+`--source render` and `--render-cache-dir`; plugin cache mount roots remain
+excluded (policy-managed).
 
 For cache boundaries, offline behavior, and credentials, see
 [Source acquisition](/concepts/source-acquisition/).

@@ -365,7 +365,7 @@ func normalizeMaxDiscoveryDepth(value int, explicitlySet bool) (int, error) {
 
 type renderApplicationsRequest struct {
 	applications      []argoappv1.Application
-	applicationInputs map[string][]string
+	applicationInputs map[string]applicationInputPaths
 	provider          localProvider
 	renderCache       *applicationRenderCache
 	settingsSignature string
@@ -481,18 +481,17 @@ func renderOneApplication(ctx context.Context, application argoappv1.Application
 	provider.pluginExecutions = &pluginExecutions
 	out := applicationRenderResult{set: true}
 
+	inputPaths, inputsDuplicate := applicationInputPathsForRender(request.applicationInputs, application)
 	rendered, err := renderApplicationCached(renderContext{
-		context:           ctx,
-		provider:          provider,
-		cache:             request.renderCache,
-		settingsSignature: request.settingsSignature,
-		trackingOptions:   request.trackingOptions,
-		request:           request.request,
-		applicationInputPaths: applicationInputPathsForRender(
-			request.applicationInputs,
-			application,
-		),
-		applicationInputsKnown: request.applicationInputs != nil,
+		context:                    ctx,
+		provider:                   provider,
+		cache:                      request.renderCache,
+		settingsSignature:          request.settingsSignature,
+		trackingOptions:            request.trackingOptions,
+		request:                    request.request,
+		applicationInputPaths:      inputPaths,
+		applicationInputsKnown:     request.applicationInputs != nil,
+		applicationInputsDuplicate: inputsDuplicate,
 	}, application)
 	if err != nil {
 		out.pluginExecutions = append(out.pluginExecutions, pluginExecutions...)
@@ -845,33 +844,39 @@ func selectApplicationInputsForApplications(inputs []ApplicationSelectionInput, 
 	return out
 }
 
-func applicationInputPathsByKey(inputs []ApplicationSelectionInput) map[string][]string {
+// applicationInputPaths carries one Application's discovery input paths plus
+// whether its namespace/name key collided with another Application (in which
+// case neither path set is authoritative and the app is cache-ineligible
+// with a distinct reason).
+type applicationInputPaths struct {
+	Paths     []string
+	Duplicate bool
+}
+
+func applicationInputPathsByKey(inputs []ApplicationSelectionInput) map[string]applicationInputPaths {
 	if len(inputs) == 0 {
 		return nil
 	}
-	out := make(map[string][]string, len(inputs))
-	seen := make(map[string]bool, len(inputs))
+	out := make(map[string]applicationInputPaths, len(inputs))
 	for _, input := range inputs {
 		key := applicationKey(input.Application)
-		if seen[key] {
-			// Two discovered Applications share namespace/name; neither input
-			// set is authoritative for the render, so nil paths make the
-			// persistent key collection reject the app (input-graph reason)
-			// instead of digesting the wrong file.
-			out[key] = nil
+		if existing, ok := out[key]; ok {
+			existing.Paths = nil
+			existing.Duplicate = true
+			out[key] = existing
 			continue
 		}
-		seen[key] = true
-		out[key] = append([]string(nil), input.Paths...)
+		out[key] = applicationInputPaths{Paths: append([]string(nil), input.Paths...)}
 	}
 	return out
 }
 
-func applicationInputPathsForRender(inputs map[string][]string, application argoappv1.Application) []string {
+func applicationInputPathsForRender(inputs map[string]applicationInputPaths, application argoappv1.Application) ([]string, bool) {
 	if inputs == nil {
-		return nil
+		return nil, false
 	}
-	return append([]string(nil), inputs[applicationKey(application)]...)
+	entry := inputs[applicationKey(application)]
+	return append([]string(nil), entry.Paths...), entry.Duplicate
 }
 
 func applicationKey(application argoappv1.Application) string {

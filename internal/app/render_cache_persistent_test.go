@@ -639,8 +639,8 @@ func TestPersistentRenderCacheCollectSourceIdentitiesDirtyHelmGlobSkips(t *testi
 	if ok {
 		t.Fatalf("collectSourceIdentities() ok = true, want dirty Helm glob to skip persistence")
 	}
-	if reason != renderCacheReasonInputGraph {
-		t.Fatalf("reason = %q, want input graph", reason)
+	if reason != renderCacheReasonHelmGlobInputs {
+		t.Fatalf("reason = %q, want helm glob inputs", reason)
 	}
 }
 
@@ -1147,7 +1147,7 @@ func TestPersistentRenderCacheCollectApplicationInputIdentityRootModes(t *testin
 		repoRoot:      repoRoot,
 		rootIdentity:  SourceIdentity{Kind: sourceIdentityKindRoot, Revision: revision},
 		rootInputMode: rootInputModeClean,
-	}, []string{"apps/demo.yaml"}, true)
+	}, []string{"apps/demo.yaml"}, true, false)
 	if !ok {
 		t.Fatalf("clean collectApplicationInputIdentity() ok = false, reason = %s", reason)
 	}
@@ -1159,7 +1159,7 @@ func TestPersistentRenderCacheCollectApplicationInputIdentityRootModes(t *testin
 		repoRoot:      repoRoot,
 		rootIdentity:  SourceIdentity{Kind: sourceIdentityKindRoot, Revision: revision},
 		rootInputMode: rootInputModeSnapshot,
-	}, []string{"apps/demo.yaml"}, true)
+	}, []string{"apps/demo.yaml"}, true, false)
 	if !ok || reason != "" || snapshotIdentity != (SourceIdentity{}) {
 		t.Fatalf("snapshot collectApplicationInputIdentity() = %#v/%q/%t, want empty ok", snapshotIdentity, reason, ok)
 	}
@@ -1168,7 +1168,7 @@ func TestPersistentRenderCacheCollectApplicationInputIdentityRootModes(t *testin
 		repoRoot:      repoRoot,
 		rootIdentity:  SourceIdentity{Kind: sourceIdentityKindRoot, Revision: revision},
 		rootInputMode: rootInputModeDirty,
-	}, []string{"apps/demo.yaml"}, true)
+	}, []string{"apps/demo.yaml"}, true, false)
 	if !ok {
 		t.Fatalf("dirty collectApplicationInputIdentity() ok = false, reason = %s", reason)
 	}
@@ -1180,9 +1180,29 @@ func TestPersistentRenderCacheCollectApplicationInputIdentityRootModes(t *testin
 		repoRoot:      repoRoot,
 		rootIdentity:  SourceIdentity{Kind: sourceIdentityKindRoot},
 		rootInputMode: rootInputModeUnknown,
-	}, []string{"apps/demo.yaml"}, true)
+	}, []string{"apps/demo.yaml"}, true, false)
 	if ok || reason != renderCacheReasonIneligibleSource {
 		t.Fatalf("unknown collectApplicationInputIdentity() ok=%t reason=%q, want ineligible skip", ok, reason)
+	}
+}
+
+func TestCollectApplicationInputIdentityDuplicateApplicationReason(t *testing.T) {
+	repoRoot := t.TempDir()
+	writeTestFile(t, repoRoot+"/apps/alpha/cm.yaml", "a: 1\n")
+	revision := gitCommitAll(t, repoRoot, "initial")
+	handle := &persistentRenderCache{
+		digests:           map[string]gitref.PathDigestResult{},
+		filesystemDigests: map[string]filedigest.PathDigestResult{},
+	}
+	provider := localProvider{
+		repoRoot:       repoRoot,
+		sourceResolver: sourcepkg.NewResolver(sourcepkg.Options{}),
+		rootIdentity:   SourceIdentity{Kind: sourceIdentityKindRoot, Revision: revision},
+		rootInputMode:  rootInputModeClean,
+	}
+	_, reason, ok := collectApplicationInputIdentity(context.Background(), handle, provider, nil, true, true)
+	if ok || reason != renderCacheReasonDuplicateApplication {
+		t.Fatalf("ok/reason = %v/%s, want duplicate-application skip", ok, reason)
 	}
 }
 
@@ -1192,7 +1212,7 @@ func mustCollectApplicationInputIdentity(t *testing.T, provider localProvider, i
 		digests:           map[string]gitref.PathDigestResult{},
 		filesystemDigests: map[string]filedigest.PathDigestResult{},
 	}
-	identity, reason, ok := collectApplicationInputIdentity(context.Background(), handle, provider, inputPaths, true)
+	identity, reason, ok := collectApplicationInputIdentity(context.Background(), handle, provider, inputPaths, true, false)
 	if !ok {
 		t.Fatalf("collectApplicationInputIdentity() ok = false, reason = %s", reason)
 	}
@@ -1239,7 +1259,7 @@ func TestPersistentRenderCacheCollectApplicationInputIdentityDirtyMissingRequire
 		repoRoot:      repoRoot,
 		rootIdentity:  SourceIdentity{Kind: sourceIdentityKindRoot, Revision: rootRevision},
 		rootInputMode: rootInputModeDirty,
-	}, []string{"apps/missing.yaml"}, true)
+	}, []string{"apps/missing.yaml"}, true, false)
 	if ok {
 		t.Fatalf("collectApplicationInputIdentity() ok = true, want missing required app input to skip persistence")
 	}
@@ -1257,7 +1277,7 @@ func TestPersistentRenderCacheCollectApplicationInputIdentityEmptyKnownInputSkip
 		repoRoot:      repoRoot,
 		rootIdentity:  SourceIdentity{Kind: sourceIdentityKindRoot, Revision: rootRevision},
 		rootInputMode: rootInputModeDirty,
-	}, nil, true)
+	}, nil, true, false)
 	if ok {
 		t.Fatalf("collectApplicationInputIdentity() ok = true, want empty known app inputs to skip persistence")
 	}
@@ -1278,7 +1298,7 @@ func TestPersistentRenderCacheCollectApplicationInputIdentityDirtySymlinkSkips(t
 		repoRoot:      repoRoot,
 		rootIdentity:  SourceIdentity{Kind: sourceIdentityKindRoot, Revision: rootRevision},
 		rootInputMode: rootInputModeDirty,
-	}, []string{"apps/link.yaml"}, true)
+	}, []string{"apps/link.yaml"}, true, false)
 	if ok {
 		t.Fatalf("collectApplicationInputIdentity() ok = true, want symlink app input to skip persistence")
 	}
@@ -1920,7 +1940,7 @@ func TestDirtyModeUntouchedHelmGlobSourceStaysIneligible(t *testing.T) {
 		filesystemDigests: map[string]filedigest.PathDigestResult{},
 	}
 	_, reason, ok := collectSourceIdentities(context.Background(), handle, provider, plan)
-	if ok || reason != renderCacheReasonInputGraph {
+	if ok || reason != renderCacheReasonHelmGlobInputs {
 		t.Fatalf("ok/reason = %v/%s, want glob-bearing dirty source ineligible even when untouched (a new file matching the glob is invisible to the path-set intersection)", ok, reason)
 	}
 }

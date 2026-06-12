@@ -8,6 +8,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/sholdee/drydock/internal/rendercache"
 )
 
 type Source string
@@ -16,12 +18,14 @@ const (
 	SourceGit    Source = "git"
 	SourceChart  Source = "chart"
 	SourceRemote Source = "remote"
+	SourceRender Source = "render"
 )
 
 type Options struct {
 	GitCacheDir    string
 	ChartCacheDir  string
 	RemoteCacheDir string
+	RenderCacheDir string
 	Sources        []Source
 	ForbiddenRoots []string
 }
@@ -41,19 +45,21 @@ type Entry struct {
 
 type OperationOptions struct {
 	Options
-	OlderThan time.Duration
-	DryRun    bool
-	Yes       bool
-	Source    Source
-	Kind      string
-	Key       string
-	All       bool
+	OlderThan           time.Duration
+	DryRun              bool
+	Yes                 bool
+	Source              Source
+	Kind                string
+	Key                 string
+	All                 bool
+	RenderCacheMaxBytes int64
 }
 
 type OperationResult struct {
-	Entries      []Entry `json:"entries" yaml:"entries"`
-	RemovedCount int     `json:"removedCount" yaml:"removedCount"`
-	DryRun       bool    `json:"dryRun" yaml:"dryRun"`
+	Entries      []Entry                  `json:"entries" yaml:"entries"`
+	RemovedCount int                      `json:"removedCount" yaml:"removedCount"`
+	DryRun       bool                     `json:"dryRun" yaml:"dryRun"`
+	RenderSweep  *rendercache.SweepResult `json:"renderSweep,omitempty" yaml:"renderSweep,omitempty"`
 }
 
 func List(opts Options) ([]Entry, error) {
@@ -80,6 +86,13 @@ func List(opts Options) ([]Entry, error) {
 		}
 		entries = append(entries, remoteEntries...)
 	}
+	if enabled[SourceRender] {
+		renderEntries, err := listRenderEntries(opts.RenderCacheDir, opts.ForbiddenRoots)
+		if err != nil {
+			return nil, err
+		}
+		entries = append(entries, renderEntries...)
+	}
 	sortEntries(entries)
 	return entries, nil
 }
@@ -96,18 +109,7 @@ func Prune(opts OperationOptions) (OperationResult, error) {
 		return OperationResult{}, err
 	}
 	cutoff := time.Now().Add(-opts.OlderThan)
-	selected := make([]Entry, 0, len(entries))
-	for _, entry := range entries {
-		if opts.Source != "" && entry.Source != opts.Source {
-			continue
-		}
-		if opts.Kind != "" && entry.Kind != opts.Kind {
-			continue
-		}
-		if entryAgeTime(entry).Before(cutoff) {
-			selected = append(selected, entry)
-		}
-	}
+	selected := selectPruneEntries(entries, opts.Source, opts.Kind, cutoff)
 	result := OperationResult{Entries: selected, DryRun: opts.DryRun}
 	if opts.DryRun {
 		return result, nil
@@ -116,7 +118,45 @@ func Prune(opts OperationOptions) (OperationResult, error) {
 		return OperationResult{}, err
 	}
 	result.RemovedCount = len(selected)
+	if enabledSources(opts.Sources)[SourceRender] && (opts.Source == "" || opts.Source == SourceRender) {
+		sweep, err := pruneRenderSweep(opts.RenderCacheDir, opts.RenderCacheMaxBytes, opts.ForbiddenRoots)
+		if err != nil {
+			return OperationResult{}, err
+		}
+		result.RenderSweep = sweep
+	}
 	return result, nil
+}
+
+func selectPruneEntries(entries []Entry, source Source, kind string, cutoff time.Time) []Entry {
+	selected := make([]Entry, 0, len(entries))
+	for _, entry := range entries {
+		if source != "" && entry.Source != source {
+			continue
+		}
+		if kind != "" && entry.Kind != kind {
+			continue
+		}
+		if entryAgeTime(entry).Before(cutoff) {
+			selected = append(selected, entry)
+		}
+	}
+	return selected
+}
+
+func pruneRenderSweep(dir string, maxBytes int64, forbiddenRoots []string) (*rendercache.SweepResult, error) {
+	root, ok, err := resolveCacheRoot(dir, forbiddenRoots)
+	if err != nil {
+		return nil, err
+	}
+	if !ok {
+		return nil, nil //nolint:nilnil // no render root configured; nil sweep pointer signals "sweep not run"
+	}
+	sweep, err := rendercache.SweepDir(root, maxBytes)
+	if err != nil {
+		return nil, err
+	}
+	return &sweep, nil
 }
 
 func Delete(opts OperationOptions) (OperationResult, error) {
@@ -241,6 +281,30 @@ func listRemoteEntries(root string, forbiddenRoots []string) ([]Entry, error) {
 	return entries, nil
 }
 
+func listRenderEntries(root string, forbiddenRoots []string) ([]Entry, error) {
+	root, ok, err := resolveCacheRoot(root, forbiddenRoots)
+	if err != nil || !ok {
+		return nil, err
+	}
+	files, err := rendercache.Entries(root)
+	if err != nil {
+		return nil, err
+	}
+	entries := make([]Entry, 0, len(files))
+	for _, file := range files {
+		entries = append(entries, Entry{
+			Source:     SourceRender,
+			Kind:       "output",
+			Key:        file.Key,
+			Path:       file.Path,
+			SizeBytes:  file.SizeBytes,
+			ModifiedAt: file.ModifiedAt,
+			cacheRoot:  root,
+		})
+	}
+	return entries, nil
+}
+
 func buildEntry(source Source, kind, key, entryPath, root string) (Entry, bool) {
 	info, err := os.Lstat(entryPath)
 	if err != nil || !info.IsDir() {
@@ -336,6 +400,7 @@ func enabledSources(sources []Source) map[Source]bool {
 		out[SourceGit] = true
 		out[SourceChart] = true
 		out[SourceRemote] = true
+		out[SourceRender] = true
 		return out
 	}
 	for _, source := range sources {

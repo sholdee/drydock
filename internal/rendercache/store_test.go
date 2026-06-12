@@ -359,3 +359,81 @@ func TestStoreConcurrentGetNeverSeesPartialEntry(t *testing.T) {
 	}()
 	wg.Wait()
 }
+
+func TestEntriesListsPersistedEntriesWithoutCreatingStore(t *testing.T) {
+	dir := t.TempDir() + "/render"
+
+	// Missing store: empty result, and the directory must NOT be created.
+	entries, err := Entries(dir)
+	if err != nil {
+		t.Fatalf("Entries(missing) error = %v", err)
+	}
+	if len(entries) != 0 {
+		t.Fatalf("Entries(missing) = %#v, want empty", entries)
+	}
+	if _, statErr := os.Stat(dir); !os.IsNotExist(statErr) {
+		t.Fatalf("Entries must not create the store directory")
+	}
+
+	store, err := Open(dir, 0)
+	if err != nil {
+		t.Fatalf("Open() error = %v", err)
+	}
+	keyA := testKey("entries-a")
+	keyB := testKey("entries-b")
+	for _, key := range []string{keyA, keyB} {
+		if err := store.Put(key, []byte(`{"manifests":[]}`), EntryMeta{Version: "v", Commit: "c"}); err != nil {
+			t.Fatalf("Put(%s) error = %v", key, err)
+		}
+	}
+
+	entries, err = Entries(dir)
+	if err != nil {
+		t.Fatalf("Entries() error = %v", err)
+	}
+	if len(entries) != 2 {
+		t.Fatalf("Entries() = %d entries, want 2", len(entries))
+	}
+	seen := map[string]bool{}
+	for _, entry := range entries {
+		seen[entry.Key] = true
+		if entry.SizeBytes <= 0 || entry.ModifiedAt.IsZero() || entry.Path == "" {
+			t.Fatalf("entry = %+v, want populated size/mtime/path", entry)
+		}
+	}
+	if !seen[keyA] || !seen[keyB] {
+		t.Fatalf("entries missing keys: %#v", seen)
+	}
+}
+
+func TestSweepDirWithoutStoreCreation(t *testing.T) {
+	dir := t.TempDir() + "/render"
+	result, err := SweepDir(dir, 0)
+	if err != nil {
+		t.Fatalf("SweepDir(missing) error = %v", err)
+	}
+	if result.TotalBytes != 0 || len(result.EvictedKeys) != 0 {
+		t.Fatalf("SweepDir(missing) = %+v, want zero result", result)
+	}
+	if _, statErr := os.Stat(dir); !os.IsNotExist(statErr) {
+		t.Fatalf("SweepDir must not create the store directory")
+	}
+
+	store, err := Open(dir, 0)
+	if err != nil {
+		t.Fatalf("Open() error = %v", err)
+	}
+	payload := []byte(`{"manifests":[{"sourceIndex":0,"pad":"` + strings.Repeat("x", 4096) + `"}]}`)
+	for i := range 4 {
+		if err := store.Put(testKey(fmt.Sprintf("sweepdir-%d", i)), payload, EntryMeta{}); err != nil {
+			t.Fatalf("Put() error = %v", err)
+		}
+	}
+	result, err = SweepDir(dir, 1) // 1-byte cap forces eviction
+	if err != nil {
+		t.Fatalf("SweepDir() error = %v", err)
+	}
+	if len(result.EvictedKeys) == 0 {
+		t.Fatalf("SweepDir over cap evicted nothing: %+v", result)
+	}
+}

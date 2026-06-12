@@ -161,9 +161,22 @@ redacted target metadata. Older hash-only entries are listed as legacy entries
 when their filesystem layout is recognized.
 
 `--plugin-cache-dir` is separate: it is a render-time override for
-policy-managed container plugin cache mounts. Cache lifecycle commands manage
-Git, chart, and remote-resource cache entry roots. They do not list, prune, or
-delete render output entries or plugin cache mount roots.
+policy-managed container plugin cache mounts. Plugin cache mount roots remain
+excluded from cache lifecycle commands (policy-managed).
+
+Cache lifecycle commands also list, prune, and delete persisted render
+output entries via `--source render` and `--render-cache-dir`. During prune,
+when render entries are in scope (either because `--source render` is set or
+because no `--source` filter is used), `cache prune` additionally enforces the
+render cache size cap and removes stale orphaned temp files. A `--source
+git`, `--source chart`, or `--source remote` prune scopes only to that source
+and skips the render sweep entirely.
+
+> **Warning:** The render cache size cap is a runtime flag (`--render-cache-max-size`)
+> that `cache prune` cannot discover automatically. If your builds use a custom
+> `--render-cache-max-size`, pass the same value to `cache prune` — otherwise
+> the sweep enforces the 512Mi default and may evict entries your runtime cap
+> would keep.
 
 ### Render Output Cache
 
@@ -220,19 +233,25 @@ stamping is active (the default in a git checkout — `go build -buildvcs=true`
 forces it) or persistence silently stays off. `--cache-events` with `diag`
 shows a `disabled` event with reason `dev-build` when this applies.
 
-Use `--cache-events` with `diag` or structured command output when diagnosing
-render-cache behavior. Render cache events report `hit`, `miss`, `store`,
-`skipped`, and `error` actions. `skipped` reasons include
-`input-graph-unsupported`, `input-digest-error`, `ineligible-source`, and
-`inputs-changed`. All of these mean drydock rendered normally without
-persisting the result. `inputs-changed` indicates drydock could not prove the
-render inputs still match the cache key at store time — usually because source
-files changed between cache-key computation and the end of rendering (a TOCTOU
-guard), and always for sources whose inputs cannot be re-verified, such as
-symlinks. When verification failed with an error, the event carries the error
-text. One inherent limit: an edit that is reverted to its original content
-before the render completes is indistinguishable from no edit, so the
-verification cannot catch it.
+Use `--cache-events` when diagnosing render-cache behavior. For `build` and
+`test`, cache events are written to stderr so that stdout stays
+machine-parseable (manifests for `build`, status lines for `test`). For `diag`,
+cache events are included in structured output alongside diagnostics. Render
+cache events report `hit`, `miss`, `store`, `skipped`, and `error` actions.
+`skipped` reasons include `input-graph-unsupported` (the source's input graph
+is unsupported or cannot be fully enumerated), `helm-glob-inputs` (a dirty
+worktree where Helm value-file globs make the input set unprovable from
+committed content), `duplicate-application` (two discovered Applications share
+the same namespace and name, so neither input set is authoritative),
+`input-digest-error`, `ineligible-source`, and `inputs-changed`. All of these
+mean drydock rendered normally without persisting the result. `inputs-changed` indicates drydock
+could not prove the render inputs still match the cache key at store time —
+usually because source files changed between cache-key computation and the end
+of rendering (a TOCTOU guard), and always for sources whose inputs cannot be
+re-verified, such as symlinks. When verification failed with an error, the
+event carries the error text. One inherent limit: an edit that is reverted to
+its original content before the render completes is indistinguishable from no
+edit, so the verification cannot catch it.
 
 Chart-backed renders key on the exact chart name and version. If a registry
 republishes an existing version, for example a mutable OCI chart version, use
@@ -292,10 +311,9 @@ They do not:
 - read credential flags
 - retry failed network or authentication acquisitions
 
-`cache prune` and `cache delete` operate only on recognized drydock Git, chart,
-and remote-resource cache entry roots. They do not list, prune, or delete
-render output entries or plugin cache mount roots selected with
-`--plugin-cache-dir`.
+`cache prune` and `cache delete` operate only on recognized drydock Git,
+chart, remote-resource, and render output cache entry roots. They do not
+manage plugin cache mount roots selected with `--plugin-cache-dir`.
 
 Cache lifecycle commands reject cache roots that resolve inside the current
 working directory, selected repository roots, Git repository trees, or
