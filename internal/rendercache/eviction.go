@@ -20,11 +20,11 @@ const orphanTempMaxAge = time.Hour
 // SweepResult reports what one eviction sweep did.
 type SweepResult struct {
 	// TotalBytes is the post-sweep sum of entry sizes.
-	TotalBytes int64
+	TotalBytes int64 `json:"totalBytes" yaml:"totalBytes"`
 	// EvictedBytes is the sum of deleted entry sizes.
-	EvictedBytes int64
+	EvictedBytes int64 `json:"evictedBytes" yaml:"evictedBytes"`
 	// EvictedKeys lists deleted entry keys in eviction order.
-	EvictedKeys []string
+	EvictedKeys []string `json:"evictedKeys" yaml:"evictedKeys"`
 }
 
 type storeEntry struct {

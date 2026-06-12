@@ -279,7 +279,7 @@ func parseCacheSources(raw string) ([]cache.Source, error) {
 	}
 	source := cache.Source(raw)
 	switch source {
-	case cache.SourceGit, cache.SourceChart, cache.SourceRemote:
+	case cache.SourceGit, cache.SourceChart, cache.SourceRemote, cache.SourceRender:
 		return []cache.Source{source}, nil
 	default:
 		return nil, fmt.Errorf("unsupported cache source %q", raw)

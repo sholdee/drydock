@@ -1,6 +1,8 @@
 package cache
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"os"
 	"path/filepath"
@@ -8,6 +10,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/sholdee/drydock/internal/rendercache"
 )
 
 const (
@@ -385,5 +389,130 @@ func assertNotExists(t *testing.T, path string) {
 	t.Helper()
 	if _, err := os.Stat(path); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("Stat(%s) error = %v, want not exist", path, err)
+	}
+}
+
+func seedRenderEntries(t *testing.T, dir string, keys ...string) {
+	t.Helper()
+	store, err := rendercache.Open(dir, 0)
+	if err != nil {
+		t.Fatalf("rendercache.Open() error = %v", err)
+	}
+	for _, key := range keys {
+		if err := store.Put(key, []byte(`{"manifests":[]}`), rendercache.EntryMeta{Version: "v", Commit: "c"}); err != nil {
+			t.Fatalf("Put(%s) error = %v", key, err)
+		}
+	}
+}
+
+func renderTestKey(seed string) string {
+	sum := sha256.Sum256([]byte(seed))
+	return hex.EncodeToString(sum[:])
+}
+
+func TestListIncludesRenderEntries(t *testing.T) {
+	dir := t.TempDir() + "/render"
+	keyA := renderTestKey("list-a")
+	seedRenderEntries(t, dir, keyA)
+
+	entries, err := List(Options{RenderCacheDir: dir, Sources: []Source{SourceRender}})
+	if err != nil {
+		t.Fatalf("List() error = %v", err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("List() = %d entries, want 1", len(entries))
+	}
+	entry := entries[0]
+	if entry.Source != SourceRender || entry.Kind != "output" || entry.Key != keyA {
+		t.Fatalf("entry = %+v, want render/output/%s", entry, keyA)
+	}
+	if entry.Legacy || entry.Metadata != nil || entry.MetadataPath != "" {
+		t.Fatalf("render entries are self-describing, not legacy: %+v", entry)
+	}
+	if entry.SizeBytes <= 0 {
+		t.Fatalf("entry size = %d, want > 0", entry.SizeBytes)
+	}
+}
+
+func TestListDefaultSourcesIncludeRender(t *testing.T) {
+	dir := t.TempDir() + "/render"
+	seedRenderEntries(t, dir, renderTestKey("default-a"))
+	entries, err := List(Options{RenderCacheDir: dir}) // no Sources filter
+	if err != nil {
+		t.Fatalf("List() error = %v", err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("default sources must include render, got %#v", entries)
+	}
+}
+
+func TestDeleteRenderEntryByKey(t *testing.T) {
+	dir := t.TempDir() + "/render"
+	keep := renderTestKey("delete-keep")
+	remove := renderTestKey("delete-remove")
+	seedRenderEntries(t, dir, keep, remove)
+
+	result, err := Delete(OperationOptions{
+		Options: Options{RenderCacheDir: dir, Sources: []Source{SourceRender}},
+		Source:  SourceRender,
+		Key:     remove,
+		Yes:     true,
+	})
+	if err != nil {
+		t.Fatalf("Delete() error = %v", err)
+	}
+	if result.RemovedCount != 1 {
+		t.Fatalf("RemovedCount = %d, want 1", result.RemovedCount)
+	}
+	remaining, err := List(Options{RenderCacheDir: dir, Sources: []Source{SourceRender}})
+	if err != nil || len(remaining) != 1 || remaining[0].Key != keep {
+		t.Fatalf("remaining = %#v, %v, want only %s", remaining, err, keep)
+	}
+}
+
+func TestPruneRenderEntriesByAgeAndSweep(t *testing.T) {
+	dir := t.TempDir() + "/render"
+	old := renderTestKey("prune-old")
+	fresh := renderTestKey("prune-fresh")
+	seedRenderEntries(t, dir, old, fresh)
+	entries, err := rendercache.Entries(dir)
+	if err != nil {
+		t.Fatalf("Entries() error = %v", err)
+	}
+	for _, entry := range entries {
+		if entry.Key == old {
+			stale := time.Now().Add(-48 * time.Hour)
+			if err := os.Chtimes(entry.Path, stale, stale); err != nil {
+				t.Fatalf("Chtimes() error = %v", err)
+			}
+		}
+	}
+
+	result, err := Prune(OperationOptions{
+		Options:   Options{RenderCacheDir: dir, Sources: []Source{SourceRender}},
+		OlderThan: 24 * time.Hour,
+		Yes:       true,
+	})
+	if err != nil {
+		t.Fatalf("Prune() error = %v", err)
+	}
+	if result.RemovedCount != 1 || len(result.Entries) != 1 || result.Entries[0].Key != old {
+		t.Fatalf("prune result = %+v, want exactly the old entry", result)
+	}
+	if result.RenderSweep == nil {
+		t.Fatalf("prune with render enabled must run the size-cap sweep, got nil RenderSweep")
+	}
+
+	// Dry-run: no removal, no sweep.
+	dry, err := Prune(OperationOptions{
+		Options:   Options{RenderCacheDir: dir, Sources: []Source{SourceRender}},
+		OlderThan: time.Hour,
+		DryRun:    true,
+	})
+	if err != nil {
+		t.Fatalf("Prune(dry) error = %v", err)
+	}
+	if dry.RemovedCount != 0 || dry.RenderSweep != nil {
+		t.Fatalf("dry-run must not remove or sweep: %+v", dry)
 	}
 }
