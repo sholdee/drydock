@@ -80,6 +80,10 @@ when the user-facing task requires it.
   applies only inside one Application and must emit a diagnostic.
 - Keep caches outside current and baseline repository trees, protected roots,
   and symlink-resolved equivalents.
+- Persistent render cache keys must cover every input the renderers read.
+  Extend the digest enumerators and the read-coverage tripwire together, prove
+  digest byte-identity when refactoring digest internals, and degrade to
+  re-rendering — never to serving unverified cached content.
 - Keep stdout machine-parseable for structured/list outputs. Diagnostics and
   failure summaries belong on stderr unless status text is the primary output.
 
@@ -112,6 +116,7 @@ when the user-facing task requires it.
 | Git, chart, remote acquisition | `site/content/concepts/source-acquisition.md`, then `internal/source`, `internal/chart`, `internal/remote`, `internal/acquisition` |
 | Manifest diffs and image extraction | `internal/diff`, `internal/manifest` |
 | Cache lifecycle and cache events | `internal/cache`, `internal/cacheevent`, `internal/cli/cache.go` |
+| Persistent render cache and input digests | `docs/agent-reference.md` render-cache section, then `internal/rendercache`, `internal/app/render_cache_persistent.go`, `internal/filedigest`, `internal/gitref`, `internal/digestpath` |
 | Path containment and symlink rules | `internal/pathsafety`, then caller-specific checks |
 | Documentation site | `site/`, `docs/README.md`, then canonical `docs/*.md` owner |
 
@@ -130,6 +135,16 @@ mise run test-race
 mise run lint
 mise run markdownlint
 ```
+
+Render-cache changes must keep the guard suite green: the sabotage-validated
+tests in `internal/app/render_cache_verify_test.go`, the read-coverage
+tripwires in `internal/app/render_input_coverage_test.go`, and the integration
+matrix in `internal/app/persistent_cache_integration_test.go`. Never weaken a
+guard assertion to make a change pass; a red guard means the change is unsafe.
+Changes that touch cache keying or verification follow a written implementation
+plan reviewed independently before code, with per-change review after, and any
+new guard test is validated by deliberate sabotage (break the guarded property,
+confirm the test fails, restore).
 
 Portable integration fixtures should model real repository behavior without
 depending on a maintainer-provided `home-ops` checkout. Optional
