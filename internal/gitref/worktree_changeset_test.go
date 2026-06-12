@@ -7,6 +7,7 @@ import (
 	"reflect"
 	"runtime"
 	"testing"
+	"time"
 
 	git "github.com/go-git/go-git/v5"
 	"github.com/go-git/go-git/v5/plumbing/object"
@@ -137,16 +138,17 @@ func TestWorktreeChangeSetParentDirReplacedByFile(t *testing.T) {
 	}
 }
 
-func TestWorktreeChangeSetNestedGitDirIsDirtWhereStatusIsClean(t *testing.T) {
+// TestWorktreeChangeSetNestedGitDirIsDirt pins the fail-closed divergence:
+// nested .git directories are recorded as dirty paths and not descended into,
+// because their content is unverifiable repository metadata. WorktreeChangeSet
+// must mark the worktree dirty even when standard status tooling would skip
+// nested .git directories silently.
+func TestWorktreeChangeSetNestedGitDirIsDirt(t *testing.T) {
 	dir, _ := changeSetFixtureRepo(t)
 	writeChangeSetFile(t, filepath.Join(dir, "apps", "alpha", ".git", "config"), "g\n")
-	status, err := WorktreeStatus(context.Background(), dir)
-	if err != nil || status.State != WorktreeStateClean {
-		t.Fatalf("WorktreeStatus = %+v, %v — this pin assumes status skips nested .git; if status changed, update the divergence comment", status, err)
-	}
 	result, err := WorktreeChangeSet(context.Background(), dir)
 	if err != nil || result.State != WorktreeStateDirty {
-		t.Fatalf("WorktreeChangeSet = %+v, %v, want dirty (fail-closed divergence from WorktreeStatus)", result, err)
+		t.Fatalf("WorktreeChangeSet = %+v, %v, want dirty (nested .git is fail-closed dirt)", result, err)
 	}
 }
 
@@ -165,6 +167,34 @@ func TestWorktreeChangeSetDetectsModeFlip(t *testing.T) {
 	}
 	if result.State != WorktreeStateDirty || len(result.DirtyPaths) != 1 || result.DirtyPaths[0] != "apps/alpha/cm.yaml" {
 		t.Fatalf("result = %+v, want exactly the mode-flipped file", result)
+	}
+}
+
+func TestWorktreeChangeSetCleanAfterMtimeTouch(t *testing.T) {
+	dir, revision := changeSetFixtureRepo(t)
+	now := time.Now()
+	if err := os.Chtimes(filepath.Join(dir, "apps", "alpha", "cm.yaml"), now, now); err != nil {
+		t.Fatalf("chtimes: %v", err)
+	}
+	result, err := WorktreeChangeSet(context.Background(), dir)
+	if err != nil || result.State != WorktreeStateClean || result.Revision != revision {
+		t.Fatalf("result = %+v, %v, want clean (content identical; no stat-cache heuristics)", result, err)
+	}
+}
+
+func TestWorktreeChangeSetNonRepositoryIsUnknown(t *testing.T) {
+	result, err := WorktreeChangeSet(context.Background(), t.TempDir())
+	if err != nil || result.State != WorktreeStateUnknown {
+		t.Fatalf("result = %+v, %v, want unknown without error", result, err)
+	}
+}
+
+func TestWorktreeChangeSetCanceledContext(t *testing.T) {
+	dir, _ := changeSetFixtureRepo(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := WorktreeChangeSet(ctx, dir); err == nil {
+		t.Fatalf("WorktreeChangeSet(canceled) error = nil, want context error")
 	}
 }
 

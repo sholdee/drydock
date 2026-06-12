@@ -4,8 +4,10 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"runtime/debug"
 
 	"github.com/sholdee/drydock/internal/cli"
+	"github.com/sholdee/drydock/internal/rendercache"
 )
 
 var (
@@ -13,16 +15,24 @@ var (
 	commit  = "none"
 )
 
+func moduleLabel(modulePath string) string {
+	info, ok := debug.ReadBuildInfo()
+	if !ok {
+		return modulePath
+	}
+	return rendercache.ModuleLabel(info, modulePath)
+}
+
 func main() {
 	cmd := cli.NewRootCommand(cli.VersionInfo{
 		Version:            version,
 		Commit:             commit,
-		ArgoCDModule:       moduleLabel(argoCDModulePath),
-		GitOpsEngineModule: moduleLabel(gitOpsEngineModulePath),
-		HelmModule:         moduleLabel(helmModulePath),
-		KustomizeModule:    moduleLabel(kustomizeModulePath),
-		JsonnetModule:      moduleLabel(jsonnetModulePath),
-		KubernetesModule:   moduleLabel(kubernetesModulePath),
+		ArgoCDModule:       moduleLabel(rendercache.ArgoCDModulePath),
+		GitOpsEngineModule: moduleLabel(rendercache.GitOpsEngineModulePath),
+		HelmModule:         moduleLabel(rendercache.HelmModulePath),
+		KustomizeModule:    moduleLabel(rendercache.KustomizeModulePath),
+		JsonnetModule:      moduleLabel(rendercache.JsonnetModulePath),
+		KubernetesModule:   moduleLabel(rendercache.KubernetesModulePath),
 	})
 	if err := cmd.Execute(); err != nil {
 		var exitErr cli.ExitError

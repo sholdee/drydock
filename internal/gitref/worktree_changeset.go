@@ -12,8 +12,19 @@ import (
 	"github.com/sholdee/drydock/internal/source"
 )
 
-// WorktreeChangeSetResult is WorktreeStatus plus the complete dirty-path
-// enumeration. DirtyPaths lists every repository-relative path whose worktree
+// WorktreeState classifies the worktree relative to HEAD.
+type WorktreeState string
+
+const (
+	WorktreeStateClean   WorktreeState = "clean"
+	WorktreeStateDirty   WorktreeState = "dirty"
+	WorktreeStateUnknown WorktreeState = "unknown"
+)
+
+const gitDirName = ".git"
+
+// WorktreeChangeSetResult holds the complete dirty-path enumeration for a
+// worktree. DirtyPaths lists every repository-relative path whose worktree
 // state differs from HEAD: modified, deleted, mode-flipped, or type-changed
 // tracked files, plus every extra file (untracked, ignored, and files under
 // untracked directories). A nested .git directory is recorded as a single
@@ -27,10 +38,9 @@ type WorktreeChangeSetResult struct {
 	DirtyPaths []string
 }
 
-// WorktreeChangeSet classifies repoPath like WorktreeStatus and additionally
-// enumerates every dirty path. Unlike WorktreeStatus it cannot short-circuit
-// at the first difference: callers need the full set. Non-repository roots
-// report unknown without failing.
+// WorktreeChangeSet classifies repoPath and enumerates every dirty path. It
+// cannot short-circuit at the first difference because callers need the full
+// set. Non-repository roots report unknown without failing.
 func WorktreeChangeSet(ctx context.Context, repoPath string) (WorktreeChangeSetResult, error) {
 	if err := ctx.Err(); err != nil {
 		return WorktreeChangeSetResult{State: WorktreeStateUnknown}, err
@@ -90,11 +100,8 @@ func WorktreeChangeSet(ctx context.Context, repoPath string) (WorktreeChangeSetR
 
 // addWorktreeExtraFiles records every worktree file that is not in the HEAD
 // tree. Nested .git directories are recorded as a single dirty path and not
-// descended into (their content is repository metadata the cache layers treat
-// fail-closed). This deliberately diverges from worktreeHasOnlyHeadFiles,
-// which silently skips all .git directories: here the fail-closed side is
-// taken so that a nested .git always marks the worktree dirty even when
-// WorktreeStatus considers it clean. The root .git is still skipped.
+// descended into — their content is unverifiable repository metadata; only
+// the root .git is repository plumbing and is skipped.
 func addWorktreeExtraFiles(ctx context.Context, root string, files []object.File, dirtySet map[string]struct{}) error {
 	headSet := make(map[string]struct{}, len(files))
 	for i := range files {
