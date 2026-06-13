@@ -96,6 +96,92 @@ func TestRenderOptionsCopiesSourceKustomizeAndArgoEnv(t *testing.T) {
 	}
 }
 
+func TestParseKubeVersionNormalizesHelmSuffix(t *testing.T) {
+	application := argoappv1.Application{
+		ObjectMeta: metav1.ObjectMeta{Name: "demo", Namespace: "argocd"},
+		Spec: argoappv1.ApplicationSpec{
+			Destination: argoappv1.ApplicationDestination{Namespace: "default"},
+		},
+	}
+	source := argoappv1.ApplicationSource{
+		Helm: &argoappv1.ApplicationSourceHelm{
+			KubeVersion: "1.32.1+parity",
+		},
+	}
+
+	opts, err := renderOptions(application, source)
+	if err != nil {
+		t.Fatalf("renderOptions() error = %v", err)
+	}
+	if opts.KubeVersion != "1.32.1" {
+		t.Fatalf("KubeVersion = %q, want 1.32.1", opts.KubeVersion)
+	}
+}
+
+func TestParseKubeVersionNormalizesKustomizeSuffix(t *testing.T) {
+	application := argoappv1.Application{
+		ObjectMeta: metav1.ObjectMeta{Name: "demo", Namespace: "argocd"},
+		Spec: argoappv1.ApplicationSpec{
+			Destination: argoappv1.ApplicationDestination{Namespace: "default"},
+		},
+	}
+	source := argoappv1.ApplicationSource{
+		Kustomize: &argoappv1.ApplicationSourceKustomize{
+			KubeVersion: "1.30.11+IKS",
+		},
+	}
+
+	opts, err := renderOptions(application, source)
+	if err != nil {
+		t.Fatalf("renderOptions() error = %v", err)
+	}
+	if opts.KubeVersion != "1.30.11" {
+		t.Fatalf("KubeVersion = %q, want 1.30.11", opts.KubeVersion)
+	}
+}
+
+func TestParseKubeVersionEmptyStaysEmpty(t *testing.T) {
+	application := argoappv1.Application{
+		ObjectMeta: metav1.ObjectMeta{Name: "demo", Namespace: "argocd"},
+		Spec: argoappv1.ApplicationSpec{
+			Destination: argoappv1.ApplicationDestination{Namespace: "default"},
+		},
+	}
+	source := argoappv1.ApplicationSource{
+		Helm: &argoappv1.ApplicationSourceHelm{},
+	}
+
+	opts, err := renderOptions(application, source)
+	if err != nil {
+		t.Fatalf("renderOptions() error = %v", err)
+	}
+	if opts.KubeVersion != "" {
+		t.Fatalf("KubeVersion = %q, want empty", opts.KubeVersion)
+	}
+}
+
+func TestParseKubeVersionInvalidReturnsError(t *testing.T) {
+	application := argoappv1.Application{
+		ObjectMeta: metav1.ObjectMeta{Name: "demo", Namespace: "argocd"},
+		Spec: argoappv1.ApplicationSpec{
+			Destination: argoappv1.ApplicationDestination{Namespace: "default"},
+		},
+	}
+	source := argoappv1.ApplicationSource{
+		Helm: &argoappv1.ApplicationSourceHelm{
+			KubeVersion: "not-a-version",
+		},
+	}
+
+	_, err := renderOptions(application, source)
+	if err == nil {
+		t.Fatal("renderOptions() error = nil, want kube version parse error")
+	}
+	if !strings.Contains(err.Error(), "not-a-version") {
+		t.Fatalf("renderOptions() error = %v, want version string in error", err)
+	}
+}
+
 func TestRenderOptionsCopiesDirectoryJsonnet(t *testing.T) {
 	application := argoappv1.Application{
 		ObjectMeta: metav1.ObjectMeta{Name: "demo", Namespace: "argocd"},

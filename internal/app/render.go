@@ -14,6 +14,7 @@ import (
 	"github.com/sholdee/drydock/internal/render"
 	sourcepkg "github.com/sholdee/drydock/internal/source"
 	"go.yaml.in/yaml/v3"
+	version "k8s.io/apimachinery/pkg/util/version"
 )
 
 type RenderResult struct {
@@ -205,7 +206,11 @@ func renderOptions(application argoappv1.Application, source argoappv1.Applicati
 	if source.Kustomize != nil {
 		opts.Kustomize = source.Kustomize.DeepCopy()
 		if source.Kustomize.KubeVersion != "" {
-			opts.KubeVersion = source.Kustomize.KubeVersion
+			normalized, err := parseKubeVersion(source.Kustomize.KubeVersion)
+			if err != nil {
+				return render.RenderOptions{}, err
+			}
+			opts.KubeVersion = normalized
 		}
 		if len(source.Kustomize.APIVersions) != 0 {
 			opts.APIVersions = append(opts.APIVersions, source.Kustomize.APIVersions...)
@@ -235,7 +240,11 @@ func renderOptions(application argoappv1.Application, source argoappv1.Applicati
 	if source.Helm.Namespace != "" {
 		opts.Namespace = source.Helm.Namespace
 	}
-	opts.KubeVersion = source.Helm.KubeVersion
+	normalizedHelm, err := parseKubeVersion(source.Helm.KubeVersion)
+	if err != nil {
+		return render.RenderOptions{}, err
+	}
+	opts.KubeVersion = normalizedHelm
 	opts.APIVersions = append(opts.APIVersions, source.Helm.APIVersions...)
 	opts.ValueFiles = append(opts.ValueFiles, source.Helm.ValueFiles...)
 	opts.HelmParameters = append(opts.HelmParameters, source.Helm.Parameters...)
@@ -252,6 +261,19 @@ func renderOptions(application argoappv1.Application, source argoappv1.Applicati
 	}
 	opts.ValuesObject = valuesObject
 	return opts, nil
+}
+
+// parseKubeVersion mirrors Argo CD repo-server: spec kube versions are
+// normalized before renderers see them.
+func parseKubeVersion(kubeVersion string) (string, error) {
+	if kubeVersion == "" {
+		return "", nil
+	}
+	v, err := version.ParseGeneric(kubeVersion)
+	if err != nil {
+		return "", fmt.Errorf("parse kube version %q: %w", kubeVersion, err)
+	}
+	return v.String(), nil
 }
 
 func argoRenderEnv(application argoappv1.Application, source argoappv1.ApplicationSource) argoappv1.Env {
