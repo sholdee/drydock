@@ -66,6 +66,13 @@ jobs:
           --ref-orig origin/${{ github.base_ref }} -o markdown
 ```
 
+This lower-level example diffs against the base branch tip. When the pull
+request branch is behind its base, that surfaces changes already merged into
+the base as spurious differences. With full history checked out
+(`fetch-depth: 0`), diff against the merge base instead — for example
+`--ref-orig "$(git merge-base origin/${{ github.base_ref }} HEAD)"`. The PR
+action resolves this merge base automatically.
+
 The setup action accepts `latest`, `vX.Y.Z`, or bare `X.Y.Z`. It verifies the
 release archive with `checksums.txt` unless `allow-unverified: "true"` is set.
 
@@ -118,9 +125,13 @@ By default the action:
 - checks out the pull request head with credentials not persisted into Git;
 - restores or saves a verified drydock binary archive when installation is
   enabled;
-- fetches the pull request base branch for ref-based diffs;
+- fetches the pull request base branch and resolves its merge base with the
+  head for ref-based diffs, deepening a shallow checkout as needed;
 - runs `drydock test apps --path .`;
-- runs `drydock diff apps --repo . --ref HEAD --ref-orig origin/<base>`;
+- runs `drydock diff apps --repo . --ref HEAD --ref-orig <merge-base>`, where
+  `<merge-base>` is the common ancestor of the base branch and the pull request
+  head, so changes already merged into the base branch are not surfaced as
+  spurious differences;
 - runs `drydock diff images` to report rendered image reference changes;
 - records current-only image additions for the added image artifact;
 - uses drydock render caches under the runner temp directory;
