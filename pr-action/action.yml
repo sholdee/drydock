@@ -151,6 +151,14 @@ inputs:
     description: Restore and save drydock render caches for trusted runs.
     required: false
     default: "true"
+  cache-mode:
+    description: >-
+      Cache backend. auto (default) and github use the remote actions/cache
+      backend on any runner. local persists the cache on the runner filesystem
+      at cache-path and skips actions/cache, for self-hosted runners with
+      durable storage. off keeps no cache between runs. cache "false" forces off.
+    required: false
+    default: auto
   save-cache:
     description: Save drydock render caches after trusted runs.
     required: false
@@ -345,6 +353,7 @@ runs:
       env:
         DRYDOCK_INPUT_ARTIFACT_RETENTION_DAYS: ${{ inputs.artifact-retention-days }}
         DRYDOCK_INPUT_CACHE: ${{ inputs.cache }}
+        DRYDOCK_INPUT_CACHE_MODE: ${{ inputs.cache-mode }}
         DRYDOCK_INPUT_CACHE_KEY: ${{ inputs.cache-key }}
         DRYDOCK_INPUT_CACHE_KEY_PREFIX: ${{ inputs.cache-key-prefix }}
         DRYDOCK_INPUT_CACHE_KEY_SUFFIX: ${{ inputs.cache-key-suffix }}
