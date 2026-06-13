@@ -217,6 +217,12 @@ the repository under test.
 Dirty-worktree render output reuse uses the existing render cache behavior. No
 new PR action input is required.
 
+Bump `cache-key-suffix` to start a fresh cache namespace (for example after a
+renderer change you do not want served from older entries). Because render
+outputs are content-addressed by Application input digests, serving a stale
+entry is already safe — a suffix bump is a deliberate clean-slate switch rather
+than a correctness control.
+
 Fork pull requests do not restore or save drydock render caches by default,
 because render caches can contain private repository, chart, remote source, or
 plugin cache material. They also skip PR comments by default. Set
