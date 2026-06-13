@@ -6,13 +6,11 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"slices"
 	"strings"
 
 	argoglob "github.com/argoproj/argo-cd/v3/util/glob"
 	"github.com/sholdee/drydock/internal/diagnostic"
 	"github.com/sholdee/drydock/internal/manifest"
-	"sigs.k8s.io/kustomize/api/types"
 )
 
 type DirectoryRenderer struct{}
@@ -29,10 +27,6 @@ func (DirectoryRenderer) Render(ctx context.Context, source ResolvedSource, opts
 		return nil, nil, err
 	}
 	var out []Manifest
-	skipFiles, err := kustomizeGeneratorSkipSet(ctx, root, opts)
-	if err != nil {
-		return nil, nil, err
-	}
 
 	err = filepath.WalkDir(root, func(path string, entry os.DirEntry, err error) error {
 		if err != nil {
@@ -51,9 +45,6 @@ func (DirectoryRenderer) Render(ctx context.Context, source ResolvedSource, opts
 			return nil
 		}
 		if !isManifestFile(path) {
-			return nil
-		}
-		if skipFiles[filepath.Clean(path)] {
 			return nil
 		}
 		if !directoryManifestIncluded(root, path, opts) {
@@ -204,93 +195,6 @@ func shouldSkipDirectoryCandidate(root, path string, entry os.DirEntry, opts Ren
 		return true
 	}
 	return !opts.DirectoryRecurse
-}
-
-func kustomizeGeneratorSkipSet(ctx context.Context, root string, opts RenderOptions) (map[string]bool, error) {
-	skipFiles := make(map[string]bool)
-	err := filepath.WalkDir(root, func(path string, entry os.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		if err := ctx.Err(); err != nil {
-			return err
-		}
-		if entry.Type()&os.ModeSymlink != 0 {
-			return nil
-		}
-		if entry.IsDir() {
-			if shouldSkipDirectoryCandidate(root, path, entry, opts) {
-				return filepath.SkipDir
-			}
-			return nil
-		}
-		if !isKustomizationFileName(entry.Name()) {
-			return nil
-		}
-		skipFiles[filepath.Clean(path)] = true
-
-		content, readErr := os.ReadFile(path)
-		if readErr != nil {
-			return readErr
-		}
-		var kustomization types.Kustomization
-		if !unmarshalKustomizationForDirectorySkip(content, &kustomization) {
-			return nil
-		}
-		for _, generator := range kustomization.ConfigMapGenerator {
-			addKvPairSourcesToSkipSet(skipFiles, root, filepath.Dir(path), generator.KvPairSources)
-		}
-		for _, generator := range kustomization.SecretGenerator {
-			addKvPairSourcesToSkipSet(skipFiles, root, filepath.Dir(path), generator.KvPairSources)
-		}
-		return nil
-	})
-	if err != nil {
-		return nil, err
-	}
-	return skipFiles, nil
-}
-
-func unmarshalKustomizationForDirectorySkip(content []byte, kustomization *types.Kustomization) bool {
-	return kustomization.Unmarshal(content) == nil
-}
-
-func addKvPairSourcesToSkipSet(skipFiles map[string]bool, root, dir string, sources types.KvPairSources) {
-	for _, source := range sources.FileSources {
-		addKustomizeGeneratorRefToSkipSet(skipFiles, root, dir, generatorFileSourcePath(source))
-	}
-	for _, source := range sources.EnvSources {
-		addKustomizeGeneratorRefToSkipSet(skipFiles, root, dir, source)
-	}
-	if sources.EnvSource != "" {
-		addKustomizeGeneratorRefToSkipSet(skipFiles, root, dir, sources.EnvSource)
-	}
-}
-
-func addKustomizeGeneratorRefToSkipSet(skipFiles map[string]bool, root, dir, ref string) {
-	ref = strings.TrimSpace(ref)
-	if ref == "" || filepath.IsAbs(ref) {
-		return
-	}
-	if isRemoteKustomizeRef(ref) {
-		return
-	}
-	cleanRef := filepath.Clean(filepath.FromSlash(ref))
-	if filepath.IsAbs(cleanRef) {
-		return
-	}
-	path := filepath.Clean(filepath.Join(dir, cleanRef))
-	if rel, err := filepath.Rel(root, path); err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-		return
-	}
-	if err := rejectSymlinkedPath(root, path); err != nil {
-		return
-	}
-	skipFiles[path] = true
-}
-
-func isKustomizationFileName(name string) bool {
-	return slices.Contains(kustomizationFileNames, name)
 }
 
 func isManifestFile(path string) bool {
