@@ -75,16 +75,25 @@ repo_key="${repo_key//\//-}"
 prefix="${DRYDOCK_INPUT_CACHE_KEY_PREFIX:-drydock}"
 suffix="${DRYDOCK_INPUT_CACHE_KEY_SUFFIX:-v1}"
 version="${DRYDOCK_RESOLVED_VERSION:-unknown}"
+key_stem="${prefix}-${RUNNER_OS:-unknown}-${RUNNER_ARCH:-unknown}-${repo_key}"
+key_base="${key_stem}-${version}-${suffix}"
 
 cache_key="${DRYDOCK_INPUT_CACHE_KEY}"
 if [[ -z "${cache_key}" ]]; then
-  cache_key="${prefix}-${RUNNER_OS:-unknown}-${RUNNER_ARCH:-unknown}-${repo_key}-${version}-${suffix}"
+  # actions/cache keys are immutable, so a static key is written once and then
+  # frozen. Rotate the primary key per commit so the cache refreshes; the
+  # restore-key prefixes below fall back to the most recent matching cache.
+  cache_key="${key_base}"
+  if [[ -n "${GITHUB_SHA:-}" ]]; then
+    cache_key="${key_base}-${GITHUB_SHA}"
+  fi
 fi
 
 restore_keys="${DRYDOCK_INPUT_CACHE_RESTORE_KEYS}"
 if [[ -z "${restore_keys}" ]]; then
-  restore_keys="${prefix}-${RUNNER_OS:-unknown}-${RUNNER_ARCH:-unknown}-${repo_key}-${version}-
-${prefix}-${RUNNER_OS:-unknown}-${RUNNER_ARCH:-unknown}-${repo_key}-
+  restore_keys="${key_base}-
+${key_stem}-${version}-
+${key_stem}-
 ${prefix}-${RUNNER_OS:-unknown}-${RUNNER_ARCH:-unknown}-"
 fi
 
