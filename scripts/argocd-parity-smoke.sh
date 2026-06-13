@@ -226,7 +226,7 @@ prepare_fixture_git_image() {
   git -C "${git_work}" config user.name "drydock render parity smoke"
   git -C "${git_work}" add .
   git -C "${git_work}" commit -m "seed argocd parity fixture" >/dev/null
-  git clone --bare "${git_work}" "${bare}" >/dev/null
+  git clone --bare --no-hardlinks "${git_work}" "${bare}" >/dev/null
   git --git-dir="${bare}" update-server-info
 
   dockerfile="${WORK_DIR}/Dockerfile.git"
