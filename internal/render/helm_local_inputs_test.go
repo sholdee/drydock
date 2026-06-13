@@ -128,3 +128,101 @@ func TestCollectHelmLocalInputPathsRejectsEnvSubstitutedValueFile(t *testing.T) 
 		t.Fatalf("CollectHelmLocalInputPaths() error = nil, want env substitution rejection")
 	}
 }
+
+// TestCollectHelmLocalInputPathsIncludesOutOfChartDirValueFileWithinRepoRoot
+// verifies that a valueFile using a relative path traversing above the chart
+// directory is reported as a local input path when the resolved location
+// remains inside the repository root.  This pins the Argo CD parity behaviour
+// where the boundary is the repo root, not the chart directory.
+func TestCollectHelmLocalInputPathsIncludesOutOfChartDirValueFileWithinRepoRoot(t *testing.T) {
+	root := t.TempDir()
+	writeHelmInputTestFile(t, filepath.Join(root, "charts", "demo", "Chart.yaml"), "apiVersion: v2\nname: demo\nversion: 0.1.0\n")
+	writeHelmInputTestFile(t, filepath.Join(root, "values", "shared.yaml"), "value: shared\n")
+
+	got, err := CollectHelmLocalInputPaths(HelmLocalInputOptions{
+		RepoRoot: root,
+		Source:   ResolvedSource{Path: "charts/demo"},
+		Options: RenderOptions{
+			ValueFiles: []string{"../../values/shared.yaml"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("CollectHelmLocalInputPaths() error = %v", err)
+	}
+	want := []HelmLocalInputPath{
+		{Path: "charts/demo"},
+		{Path: "values/shared.yaml"},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("paths = %#v, want %#v", got, want)
+	}
+}
+
+// TestCollectHelmLocalInputPathsIncludesOutOfChartDirFileParameterWithinRepoRoot
+// verifies that a fileParameter path traversing above the chart directory is
+// reported as a local input path when the resolved location remains inside the
+// repository root.
+func TestCollectHelmLocalInputPathsIncludesOutOfChartDirFileParameterWithinRepoRoot(t *testing.T) {
+	root := t.TempDir()
+	writeHelmInputTestFile(t, filepath.Join(root, "charts", "demo", "Chart.yaml"), "apiVersion: v2\nname: demo\nversion: 0.1.0\n")
+	writeHelmInputTestFile(t, filepath.Join(root, "shared-files", "message.txt"), "hello\n")
+
+	got, err := CollectHelmLocalInputPaths(HelmLocalInputOptions{
+		RepoRoot: root,
+		Source:   ResolvedSource{Path: "charts/demo"},
+		Options: RenderOptions{
+			HelmFileParameters: []argoappv1.HelmFileParameter{
+				{Name: "msg", Path: "../../shared-files/message.txt"},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("CollectHelmLocalInputPaths() error = %v", err)
+	}
+	want := []HelmLocalInputPath{
+		{Path: "charts/demo"},
+		{Path: "shared-files/message.txt"},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("paths = %#v, want %#v", got, want)
+	}
+}
+
+// TestCollectHelmLocalInputPathsRejectsValueFileEscapingRepoRoot verifies that
+// a valueFile whose resolved path escapes the repository root is rejected.
+func TestCollectHelmLocalInputPathsRejectsValueFileEscapingRepoRoot(t *testing.T) {
+	root := t.TempDir()
+	writeHelmInputTestFile(t, filepath.Join(root, "charts", "demo", "Chart.yaml"), "apiVersion: v2\nname: demo\nversion: 0.1.0\n")
+
+	_, err := CollectHelmLocalInputPaths(HelmLocalInputOptions{
+		RepoRoot: root,
+		Source:   ResolvedSource{Path: "charts/demo"},
+		Options: RenderOptions{
+			ValueFiles: []string{"../../../outside.yaml"},
+		},
+	})
+	if err == nil {
+		t.Fatalf("CollectHelmLocalInputPaths() error = nil, want repo root escape rejection")
+	}
+}
+
+// TestCollectHelmLocalInputPathsRejectsFileParameterEscapingRepoRoot verifies
+// that a fileParameter path whose resolved location escapes the repository root
+// is rejected.
+func TestCollectHelmLocalInputPathsRejectsFileParameterEscapingRepoRoot(t *testing.T) {
+	root := t.TempDir()
+	writeHelmInputTestFile(t, filepath.Join(root, "charts", "demo", "Chart.yaml"), "apiVersion: v2\nname: demo\nversion: 0.1.0\n")
+
+	_, err := CollectHelmLocalInputPaths(HelmLocalInputOptions{
+		RepoRoot: root,
+		Source:   ResolvedSource{Path: "charts/demo"},
+		Options: RenderOptions{
+			HelmFileParameters: []argoappv1.HelmFileParameter{
+				{Name: "msg", Path: "../../../outside.txt"},
+			},
+		},
+	})
+	if err == nil {
+		t.Fatalf("CollectHelmLocalInputPaths() error = nil, want repo root escape rejection")
+	}
+}
