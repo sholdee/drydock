@@ -232,6 +232,65 @@ chart, remote-resource, and render output cache entry roots (use
 `--render-cache-dir ${cache-path}/renders` to target the action's persisted
 renders); they do not manage plugin cache mount roots.
 
+### Cache Scope And Warming
+
+GitHub Actions scopes every cache to the Git ref that created it. A run can
+restore caches created in its own ref, the pull request base branch, and the
+repository default branch. Caches created on the default branch are readable by
+all branches and pull requests, but a cache saved during a pull request run is
+scoped to that pull request and is reused only by later runs of the same pull
+request — never by other pull requests.
+
+A workflow that triggers only on `pull_request` therefore never populates a
+shared cache. Every pull request misses on restore, renders cold, and saves a
+cache that no other pull request can read. To make the render cache effective
+across pull requests, warm it from the default branch: run the action on pushes
+to the default branch with `save-cache: "true"`. The action rotates the cache
+key per commit (it appends the commit SHA), and `actions/cache` keys are
+immutable, so each push writes a fresh entry rather than freezing the first one.
+Pull request runs restore the most recent matching entry through the generated
+`cache-restore-keys` prefixes and re-render only the Applications whose inputs
+changed.
+
+```yaml
+name: drydock cache warm
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  warm:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: sholdee/drydock/pr-action@main
+        with:
+          version: vX.Y.Z
+          run-diff: "false"
+          run-image-diff: "false"
+          comment-mode: none
+          save-cache: "true"
+```
+
+The warm run renders the default branch's desired state with `drydock test
+apps`; diffs are disabled because they need a base ref that a push event does
+not provide. Leave `path` at its default (the repository root) so discovery
+covers every Application your pull requests render. Keep `version`,
+`cache-key-prefix`, and `cache-key-suffix` the same as the pull request workflow
+so both runs share the same restore-key prefix; the action appends the commit
+SHA to the primary key, so the keys differ per commit but resolve through that
+prefix. Add a `paths:` filter to the `push` trigger if you only want to warm
+when manifests change.
+
+To keep pull request runs from consuming the cache budget and evicting the
+shared default-branch entry, set `save-cache: "false"` on the pull request
+action so those runs restore only. The render cache is content-addressed by
+Application input digests, so a default-branch warm covers every unchanged
+Application regardless of which commit a pull request branched from.
+
 ## Input Behavior
 
 Newline-delimited inputs are passed as repeated drydock flags:
