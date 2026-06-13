@@ -1,5 +1,52 @@
 # Changelog
 
+## [0.2.0](https://github.com/sholdee/drydock/compare/v0.1.21...v0.2.0) (2026-06-13)
+
+
+### Features
+
+* **cache:** acquisition records and render cache events ([66aaaf0](https://github.com/sholdee/drydock/commit/66aaaf0bcf67e0fc733944a7d93058d89bc48a55))
+* **cache:** content digest engines for committed and worktree inputs ([1acc4f1](https://github.com/sholdee/drydock/commit/1acc4f16493f6391f89541cef1ad92ff9ddd5864))
+* **cache:** distinct skip reasons for helm globs and duplicate applications ([4110915](https://github.com/sholdee/drydock/commit/41109155e04e7f8864f0613e1cc66f75ca9a97a8))
+* **cache:** emit cache events on build and test ([5a006a5](https://github.com/sholdee/drydock/commit/5a006a531df9c6f3e9b73efd93b19074b547758b))
+* **cache:** non-creating render store listing and sweep for lifecycle commands ([21fb6ec](https://github.com/sholdee/drydock/commit/21fb6ec77ec28a09e02b0eb1983810602ebb48e1))
+* **cache:** per-application render caching with store-time verification ([fc5dde0](https://github.com/sholdee/drydock/commit/fc5dde01bd689b7754f65ba80e29cdadaaeb7e63))
+* **cache:** per-tool render input enumeration ([0669925](https://github.com/sholdee/drydock/commit/0669925f23267aabc80797a0cad52b784c5c4a8c))
+* **cache:** persistent render output cache with per-application keying ([0ce9ca8](https://github.com/sholdee/drydock/commit/0ce9ca84f1a48b2aa6a2ff8d7a5d8573060b51ea))
+* **cache:** persistent render output store with eviction and engine fingerprint ([fc68a4a](https://github.com/sholdee/drydock/commit/fc68a4a64c3e5fe9664cecb24d4a540235a33600))
+* **cache:** render cache options, validation, and CI wiring ([abd7337](https://github.com/sholdee/drydock/commit/abd7337675701dec1709f92de7903c2b60bb0a28))
+* **cache:** render entries in cache lifecycle commands and cache events on build/test ([6170e82](https://github.com/sholdee/drydock/commit/6170e82d0fcf303f46eaf2880a91a619c2c41e13))
+* **cache:** render entries in cache path, list, prune, and delete commands ([ff9a30d](https://github.com/sholdee/drydock/commit/ff9a30d1043f66751c3c2c85c3270675530c36b1))
+* **cache:** render output entries in the cache lifecycle layer ([ae23299](https://github.com/sholdee/drydock/commit/ae23299fc401dc6ca4ad42a6cf89d99e34c5efc5))
+* **pr-action:** add cache-mode for local caching on self-hosted runners ([#144](https://github.com/sholdee/drydock/issues/144)) ([a06f3ce](https://github.com/sholdee/drydock/commit/a06f3ce0a9be26b674b2f58af96d8dc098d84409))
+
+
+### Bug Fixes
+
+* **app:** exclude hook resources from desired manifests ([de113f2](https://github.com/sholdee/drydock/commit/de113f2a0cf80aa4cb5de91bb9c501b8dd380dff))
+* **ci:** avoid hardlinked objects in parity smoke fixture clone ([b2f34a5](https://github.com/sholdee/drydock/commit/b2f34a531f3f741e7ea7fce9e560165f0e312389))
+* **manifest:** flatten list documents by items shape ([03ad209](https://github.com/sholdee/drydock/commit/03ad2090f68830d79f09fa5c7d3cb087e9e27b97))
+* **pr-action:** diff against the merge base instead of the base branch tip ([#142](https://github.com/sholdee/drydock/issues/142)) ([15240d6](https://github.com/sholdee/drydock/commit/15240d655dfa9fdde9c9c8fdb4e41f95691743ec))
+* **pr-action:** rotate the render cache key per commit so warm caches refresh ([#143](https://github.com/sholdee/drydock/issues/143)) ([5be0fad](https://github.com/sholdee/drydock/commit/5be0fadcec873cfe1b03e0f56fceafce8506b193))
+* **render:** bound helm value files at the repository root ([0e071db](https://github.com/sholdee/drydock/commit/0e071dbf540f9f465f87b27dd0470cfd07006f24))
+* **render:** normalize spec kube versions ([48ba5aa](https://github.com/sholdee/drydock/commit/48ba5aa8af975a3ce96472da0816da0edee9da38))
+* **render:** render kustomization files in directory sources ([d5dfe8a](https://github.com/sholdee/drydock/commit/d5dfe8ab0b2ea66f8445e5f6768a68e1832224a9))
+
+
+### Documentation
+
+* **actions:** note cache-key-suffix for cache namespacing ([#146](https://github.com/sholdee/drydock/issues/146)) ([05ad4c2](https://github.com/sholdee/drydock/commit/05ad4c287ebae75de473fd421e329ae46e2e4325))
+* **agents:** render cache invariants and review expectations for agents ([fa8614f](https://github.com/sholdee/drydock/commit/fa8614f1072f44f2662bb76b7dd0374f1e2c1d15))
+* **cache:** align lifecycle command docs with render entry support ([717244d](https://github.com/sholdee/drydock/commit/717244d3b4e9013dde3ddd66211f52f36ab79fcf))
+* **cache:** operator documentation for the persistent render cache ([24cdfd9](https://github.com/sholdee/drydock/commit/24cdfd9b85cbdbd86b9b5ce5c5ebcc525cc4d981))
+* **parity:** document expanded render-parity coverage ([fb8f6b9](https://github.com/sholdee/drydock/commit/fb8f6b968b39c9876f3535e5df49e31511e82914))
+
+
+### Miscellaneous Chores
+
+* **deps:** update module golang.org/x/net to v0.56.0 ([#137](https://github.com/sholdee/drydock/issues/137)) ([e229156](https://github.com/sholdee/drydock/commit/e2291564bc572906ba919f21ff2a12f2a4dd3e3f))
+* remove unused worktree status API and buildinfo aliases ([9f008f4](https://github.com/sholdee/drydock/commit/9f008f477700c01d987d15b3c4ac2cc43ff85da7))
+
 ## [0.1.21](https://github.com/sholdee/drydock/compare/v0.1.20...v0.1.21) (2026-06-11)
 
 
