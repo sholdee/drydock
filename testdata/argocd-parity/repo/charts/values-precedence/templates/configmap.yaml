@@ -1,0 +1,11 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Release.Name }}
+  namespace: {{ .Release.Namespace }}
+data:
+  a: {{ .Values.a }}
+  b: {{ .Values.b }}
+  c: {{ .Values.c }}
+  d: {{ .Values.d }}
+  e: {{ .Values.e }}

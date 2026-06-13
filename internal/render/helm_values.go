@@ -40,9 +40,13 @@ func CollectHelmLocalInputPaths(input HelmLocalInputOptions) ([]HelmLocalInputPa
 	if err != nil {
 		return nil, err
 	}
+	source := input.Source
+	if source.RepoRoot == "" {
+		source.RepoRoot = repoRoot
+	}
 	out := &helmLocalInputCollector{
 		repoRoot: repoRoot,
-		source:   input.Source,
+		source:   source,
 		opts:     opts,
 		paths:    map[string]bool{},
 		explicit: map[string]struct{}{},
@@ -266,6 +270,9 @@ func helmValueFilesBaseDir(source ResolvedSource, opts RenderOptions) string {
 func helmValueFilesBoundaryRoot(source ResolvedSource, opts RenderOptions) string {
 	if opts.ValueFilesBoundaryRoot != "" {
 		return opts.ValueFilesBoundaryRoot
+	}
+	if source.RepoRoot != "" {
+		return "."
 	}
 	return helmValueFilesBaseDir(source, opts)
 }

@@ -1,0 +1,7 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: directory-forced-cm
+  namespace: parity-directory-forced
+data:
+  mode: raw

@@ -507,24 +507,24 @@ func TestHelmRendererRejectsMissingValueFilesByDefault(t *testing.T) {
 }
 
 func TestHelmRendererRejectsValueFilePathEscape(t *testing.T) {
+	// A path that escapes the repository root must be rejected even though it is
+	// within the repository root's parent directory.  The chart lives at
+	// root/charts/demo so ../../.. exits root entirely.
 	root := t.TempDir()
-	writeValueChart(t, filepath.Join(root, "chart"))
-	writeFile(t, filepath.Join(root, "outside.yaml"), `
-value: outside
-`)
+	writeValueChart(t, filepath.Join(root, "charts", "demo"))
 
 	result, diags, err := (HelmRenderer{}).Render(context.Background(), ResolvedSource{
 		RepoRoot: root,
-		Path:     "chart",
+		Path:     "charts/demo",
 	}, RenderOptions{
 		AppName:    "demo",
-		ValueFiles: []string{"../outside.yaml"},
+		ValueFiles: []string{"../../../outside.yaml"},
 	})
 	if err == nil {
 		t.Fatal("Render() error = nil, want path escape error")
 	}
-	if !strings.Contains(err.Error(), "escapes value files root") {
-		t.Fatalf("Render() error = %v, want value files root escape", err)
+	if !strings.Contains(err.Error(), "escapes value files") {
+		t.Fatalf("Render() error = %v, want value files escape", err)
 	}
 	if len(diags) != 0 {
 		t.Fatalf("diagnostics = %#v", diags)
@@ -1958,4 +1958,106 @@ func manifestNames(result []Manifest) []string {
 		names = append(names, manifest.Object.GetName())
 	}
 	return names
+}
+
+// TestHelmRendererAllowsValueFileOutsideChartDirWithinRepoRoot verifies that a
+// valueFile using a relative path that traverses above the chart directory is
+// accepted when the resolved path remains inside the repository root.  This
+// mirrors Argo CD v3 behaviour where the boundary is the repo root, not the
+// chart directory.
+func TestHelmRendererAllowsValueFileOutsideChartDirWithinRepoRoot(t *testing.T) {
+	root := t.TempDir()
+	writeValueChart(t, filepath.Join(root, "charts", "demo"))
+	writeFile(t, filepath.Join(root, "values", "shared.yaml"), "value: from-shared\n")
+
+	result, diags, err := (HelmRenderer{}).Render(context.Background(), ResolvedSource{
+		RepoRoot: root,
+		Path:     "charts/demo",
+	}, RenderOptions{
+		AppName:    "demo",
+		ValueFiles: []string{"../../values/shared.yaml"},
+	})
+	if err != nil {
+		t.Fatalf("Render() error = %v, want nil", err)
+	}
+	if len(diags) != 0 {
+		t.Fatalf("diagnostics = %#v", diags)
+	}
+	if value := renderedValue(t, result); value != "from-shared" {
+		t.Fatalf("data.value = %q, want from-shared", value)
+	}
+}
+
+// TestHelmRendererRejectsValueFileEscapingRepoRoot verifies that a valueFile
+// whose resolved path falls outside the repository root is rejected.
+func TestHelmRendererRejectsValueFileEscapingRepoRoot(t *testing.T) {
+	root := t.TempDir()
+	writeValueChart(t, filepath.Join(root, "charts", "demo"))
+
+	_, _, err := (HelmRenderer{}).Render(context.Background(), ResolvedSource{
+		RepoRoot: root,
+		Path:     "charts/demo",
+	}, RenderOptions{
+		AppName:    "demo",
+		ValueFiles: []string{"../../../outside.yaml"},
+	})
+	if err == nil {
+		t.Fatal("Render() error = nil, want repo root escape error")
+	}
+	if !strings.Contains(err.Error(), "escapes value files") {
+		t.Fatalf("Render() error = %v, want value files escape", err)
+	}
+}
+
+// TestHelmRendererAllowsFileParameterOutsideChartDirWithinRepoRoot verifies
+// that a fileParameter path traversing above the chart dir is accepted when
+// the resolved path stays inside the repository root.
+func TestHelmRendererAllowsFileParameterOutsideChartDirWithinRepoRoot(t *testing.T) {
+	root := t.TempDir()
+	writeParameterChart(t, filepath.Join(root, "charts", "demo"))
+	writeFile(t, filepath.Join(root, "shared-files", "message.txt"), "from-shared-file")
+
+	result, diags, err := (HelmRenderer{}).Render(context.Background(), ResolvedSource{
+		RepoRoot: root,
+		Path:     "charts/demo",
+	}, RenderOptions{
+		AppName: "demo",
+		HelmFileParameters: []argoappv1.HelmFileParameter{
+			{Name: "fileValue", Path: "../../shared-files/message.txt"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Render() error = %v, want nil", err)
+	}
+	if len(diags) != 0 {
+		t.Fatalf("diagnostics = %#v", diags)
+	}
+	got, _, _ := unstructured.NestedString(result[0].Object.Object, "data", "fileValue")
+	if got != "from-shared-file" {
+		t.Fatalf("data.fileValue = %q, want from-shared-file", got)
+	}
+}
+
+// TestHelmRendererRejectsFileParameterEscapingRepoRoot verifies that a
+// fileParameter path whose resolved location falls outside the repository root
+// is rejected.
+func TestHelmRendererRejectsFileParameterEscapingRepoRoot(t *testing.T) {
+	root := t.TempDir()
+	writeParameterChart(t, filepath.Join(root, "charts", "demo"))
+
+	_, _, err := (HelmRenderer{}).Render(context.Background(), ResolvedSource{
+		RepoRoot: root,
+		Path:     "charts/demo",
+	}, RenderOptions{
+		AppName: "demo",
+		HelmFileParameters: []argoappv1.HelmFileParameter{
+			{Name: "fileValue", Path: "../../../outside.txt"},
+		},
+	})
+	if err == nil {
+		t.Fatal("Render() error = nil, want repo root escape error")
+	}
+	if !strings.Contains(err.Error(), "escapes value files") {
+		t.Fatalf("Render() error = %v, want value files escape", err)
+	}
 }

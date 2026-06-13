@@ -96,6 +96,92 @@ func TestRenderOptionsCopiesSourceKustomizeAndArgoEnv(t *testing.T) {
 	}
 }
 
+func TestParseKubeVersionNormalizesHelmSuffix(t *testing.T) {
+	application := argoappv1.Application{
+		ObjectMeta: metav1.ObjectMeta{Name: "demo", Namespace: "argocd"},
+		Spec: argoappv1.ApplicationSpec{
+			Destination: argoappv1.ApplicationDestination{Namespace: "default"},
+		},
+	}
+	source := argoappv1.ApplicationSource{
+		Helm: &argoappv1.ApplicationSourceHelm{
+			KubeVersion: "1.32.1+parity",
+		},
+	}
+
+	opts, err := renderOptions(application, source)
+	if err != nil {
+		t.Fatalf("renderOptions() error = %v", err)
+	}
+	if opts.KubeVersion != "1.32.1" {
+		t.Fatalf("KubeVersion = %q, want 1.32.1", opts.KubeVersion)
+	}
+}
+
+func TestParseKubeVersionNormalizesKustomizeSuffix(t *testing.T) {
+	application := argoappv1.Application{
+		ObjectMeta: metav1.ObjectMeta{Name: "demo", Namespace: "argocd"},
+		Spec: argoappv1.ApplicationSpec{
+			Destination: argoappv1.ApplicationDestination{Namespace: "default"},
+		},
+	}
+	source := argoappv1.ApplicationSource{
+		Kustomize: &argoappv1.ApplicationSourceKustomize{
+			KubeVersion: "1.30.11+IKS",
+		},
+	}
+
+	opts, err := renderOptions(application, source)
+	if err != nil {
+		t.Fatalf("renderOptions() error = %v", err)
+	}
+	if opts.KubeVersion != "1.30.11" {
+		t.Fatalf("KubeVersion = %q, want 1.30.11", opts.KubeVersion)
+	}
+}
+
+func TestParseKubeVersionEmptyStaysEmpty(t *testing.T) {
+	application := argoappv1.Application{
+		ObjectMeta: metav1.ObjectMeta{Name: "demo", Namespace: "argocd"},
+		Spec: argoappv1.ApplicationSpec{
+			Destination: argoappv1.ApplicationDestination{Namespace: "default"},
+		},
+	}
+	source := argoappv1.ApplicationSource{
+		Helm: &argoappv1.ApplicationSourceHelm{},
+	}
+
+	opts, err := renderOptions(application, source)
+	if err != nil {
+		t.Fatalf("renderOptions() error = %v", err)
+	}
+	if opts.KubeVersion != "" {
+		t.Fatalf("KubeVersion = %q, want empty", opts.KubeVersion)
+	}
+}
+
+func TestParseKubeVersionInvalidReturnsError(t *testing.T) {
+	application := argoappv1.Application{
+		ObjectMeta: metav1.ObjectMeta{Name: "demo", Namespace: "argocd"},
+		Spec: argoappv1.ApplicationSpec{
+			Destination: argoappv1.ApplicationDestination{Namespace: "default"},
+		},
+	}
+	source := argoappv1.ApplicationSource{
+		Helm: &argoappv1.ApplicationSourceHelm{
+			KubeVersion: "not-a-version",
+		},
+	}
+
+	_, err := renderOptions(application, source)
+	if err == nil {
+		t.Fatal("renderOptions() error = nil, want kube version parse error")
+	}
+	if !strings.Contains(err.Error(), "not-a-version") {
+		t.Fatalf("renderOptions() error = %v, want version string in error", err)
+	}
+}
+
 func TestRenderOptionsCopiesDirectoryJsonnet(t *testing.T) {
 	application := argoappv1.Application{
 		ObjectMeta: metav1.ObjectMeta{Name: "demo", Namespace: "argocd"},
@@ -1068,6 +1154,224 @@ func TestRenderApplicationRendersSingleSourceFallback(t *testing.T) {
 	}
 	if result.Manifests[0].Object.GetNamespace() != "default" {
 		t.Fatalf("namespace = %q, want default", result.Manifests[0].Object.GetNamespace())
+	}
+}
+
+func TestRenderApplicationExcludesHelmTestHookPod(t *testing.T) {
+	// helm.sh/hook: test → IS a hook; excluded from the managed-resources view.
+	application := argoappv1.Application{
+		ObjectMeta: metav1.ObjectMeta{Name: "demo"},
+		Spec: argoappv1.ApplicationSpec{
+			Destination: argoappv1.ApplicationDestination{Namespace: "default"},
+			Source:      &argoappv1.ApplicationSource{RepoURL: "https://repo", Path: "chart"},
+		},
+	}
+	testPod := &unstructured.Unstructured{Object: map[string]any{
+		"apiVersion": "v1",
+		"kind":       "Pod",
+		"metadata": map[string]any{
+			"name": "test-pod",
+			"annotations": map[string]any{
+				"helm.sh/hook": "test",
+			},
+		},
+		"spec": map[string]any{"restartPolicy": "Never"},
+	}}
+	renderers := StaticRenderers{
+		"chart": []render.Manifest{
+			{Object: cm("keep", "yes")},
+			{Object: testPod},
+		},
+	}
+
+	result, err := RenderApplication(context.Background(), application, renderers)
+	if err != nil {
+		t.Fatalf("RenderApplication() error = %v", err)
+	}
+	if len(result.Manifests) != 1 {
+		t.Fatalf("len(Manifests) = %d, want 1 (hook excluded): %#v", len(result.Manifests), result.Manifests)
+	}
+	if result.Manifests[0].Object.GetName() != "keep" {
+		t.Fatalf("manifest name = %q, want keep", result.Manifests[0].Object.GetName())
+	}
+}
+
+func TestRenderApplicationExcludesArgoHookPostSync(t *testing.T) {
+	// argocd.argoproj.io/hook: PostSync in a directory source → IS a hook; excluded.
+	application := argoappv1.Application{
+		ObjectMeta: metav1.ObjectMeta{Name: "demo"},
+		Spec: argoappv1.ApplicationSpec{
+			Destination: argoappv1.ApplicationDestination{Namespace: "default"},
+			Source: &argoappv1.ApplicationSource{
+				RepoURL:   "https://repo",
+				Path:      "manifests",
+				Directory: &argoappv1.ApplicationSourceDirectory{},
+			},
+		},
+	}
+	hookJob := &unstructured.Unstructured{Object: map[string]any{
+		"apiVersion": "batch/v1",
+		"kind":       "Job",
+		"metadata": map[string]any{
+			"name": "post-sync-job",
+			"annotations": map[string]any{
+				"argocd.argoproj.io/hook": "PostSync",
+			},
+		},
+	}}
+	renderers := StaticRenderers{
+		"manifests": []render.Manifest{
+			{Object: cm("keep", "yes")},
+			{Object: hookJob},
+		},
+	}
+
+	result, err := RenderApplication(context.Background(), application, renderers)
+	if err != nil {
+		t.Fatalf("RenderApplication() error = %v", err)
+	}
+	if len(result.Manifests) != 1 {
+		t.Fatalf("len(Manifests) = %d, want 1 (argocd hook excluded): %#v", len(result.Manifests), result.Manifests)
+	}
+	if result.Manifests[0].Object.GetName() != "keep" {
+		t.Fatalf("manifest name = %q, want keep", result.Manifests[0].Object.GetName())
+	}
+}
+
+func TestRenderApplicationKeepsHelmCRDInstallHook(t *testing.T) {
+	// helm.sh/hook: crd-install → NOT treated as a hook (Argo CD exception); kept.
+	application := argoappv1.Application{
+		ObjectMeta: metav1.ObjectMeta{Name: "demo"},
+		Spec: argoappv1.ApplicationSpec{
+			Destination: argoappv1.ApplicationDestination{Namespace: "default"},
+			Source:      &argoappv1.ApplicationSource{RepoURL: "https://repo", Path: "chart"},
+		},
+	}
+	crdObj := &unstructured.Unstructured{Object: map[string]any{
+		"apiVersion": "apiextensions.k8s.io/v1",
+		"kind":       "CustomResourceDefinition",
+		"metadata": map[string]any{
+			"name": "my-crd",
+			"annotations": map[string]any{
+				"helm.sh/hook": "crd-install",
+			},
+		},
+	}}
+	renderers := StaticRenderers{
+		"chart": []render.Manifest{
+			{Object: cm("keep", "yes")},
+			{Object: crdObj},
+		},
+	}
+
+	result, err := RenderApplication(context.Background(), application, renderers)
+	if err != nil {
+		t.Fatalf("RenderApplication() error = %v", err)
+	}
+	if len(result.Manifests) != 2 {
+		t.Fatalf("len(Manifests) = %d, want 2 (crd-install kept): %#v", len(result.Manifests), result.Manifests)
+	}
+}
+
+func TestRenderApplicationKeepsArgoSkipOnlyHook(t *testing.T) {
+	// argocd.argoproj.io/hook: Skip → Skip-only is NOT treated as a hook; kept.
+	application := argoappv1.Application{
+		ObjectMeta: metav1.ObjectMeta{Name: "demo"},
+		Spec: argoappv1.ApplicationSpec{
+			Destination: argoappv1.ApplicationDestination{Namespace: "default"},
+			Source:      &argoappv1.ApplicationSource{RepoURL: "https://repo", Path: "manifests"},
+		},
+	}
+	skipObj := &unstructured.Unstructured{Object: map[string]any{
+		"apiVersion": "v1",
+		"kind":       "ConfigMap",
+		"metadata": map[string]any{
+			"name": "skip-cm",
+			"annotations": map[string]any{
+				// Repeated values de-duplicate upstream, so Skip,Skip is
+				// still Skip-only and kept.
+				"argocd.argoproj.io/hook": "Skip,Skip",
+			},
+		},
+	}}
+	renderers := StaticRenderers{
+		"manifests": []render.Manifest{
+			{Object: cm("keep", "yes")},
+			{Object: skipObj},
+		},
+	}
+
+	result, err := RenderApplication(context.Background(), application, renderers)
+	if err != nil {
+		t.Fatalf("RenderApplication() error = %v", err)
+	}
+	if len(result.Manifests) != 2 {
+		t.Fatalf("len(Manifests) = %d, want 2 (Skip-only kept): %#v", len(result.Manifests), result.Manifests)
+	}
+}
+
+func TestRenderApplicationExcludesUnrecognizedArgoHookValue(t *testing.T) {
+	// argocd.argoproj.io/hook with only unrecognized values is still a hook
+	// upstream (gitops-engine IsHook returns !Skip whenever the annotation is
+	// present, and unrecognized values yield no Skip); excluded.
+	application := argoappv1.Application{
+		ObjectMeta: metav1.ObjectMeta{Name: "demo"},
+		Spec: argoappv1.ApplicationSpec{
+			Destination: argoappv1.ApplicationDestination{Namespace: "default"},
+			Source:      &argoappv1.ApplicationSource{RepoURL: "https://repo", Path: "manifests"},
+		},
+	}
+	unrecognizedObj := &unstructured.Unstructured{Object: map[string]any{
+		"apiVersion": "v1",
+		"kind":       "ConfigMap",
+		"metadata": map[string]any{
+			"name": "unrecognized-cm",
+			"annotations": map[string]any{
+				"argocd.argoproj.io/hook": "Garbage",
+			},
+		},
+	}}
+	renderers := StaticRenderers{
+		"manifests": []render.Manifest{
+			{Object: cm("keep", "yes")},
+			{Object: unrecognizedObj},
+		},
+	}
+
+	result, err := RenderApplication(context.Background(), application, renderers)
+	if err != nil {
+		t.Fatalf("RenderApplication() error = %v", err)
+	}
+	if len(result.Manifests) != 1 {
+		t.Fatalf("len(Manifests) = %d, want 1 (unrecognized argo hook excluded): %#v", len(result.Manifests), result.Manifests)
+	}
+	if result.Manifests[0].Object.GetName() != "keep" {
+		t.Fatalf("kept object = %q, want keep", result.Manifests[0].Object.GetName())
+	}
+}
+
+func TestRenderApplicationKeepsNonHookResources(t *testing.T) {
+	// Resources with no hook annotations are included unchanged.
+	application := argoappv1.Application{
+		ObjectMeta: metav1.ObjectMeta{Name: "demo"},
+		Spec: argoappv1.ApplicationSpec{
+			Destination: argoappv1.ApplicationDestination{Namespace: "default"},
+			Source:      &argoappv1.ApplicationSource{RepoURL: "https://repo", Path: "manifests"},
+		},
+	}
+	renderers := StaticRenderers{
+		"manifests": []render.Manifest{
+			{Object: cm("first", "a")},
+			{Object: cm("second", "b")},
+		},
+	}
+
+	result, err := RenderApplication(context.Background(), application, renderers)
+	if err != nil {
+		t.Fatalf("RenderApplication() error = %v", err)
+	}
+	if len(result.Manifests) != 2 {
+		t.Fatalf("len(Manifests) = %d, want 2 (non-hook resources kept)", len(result.Manifests))
 	}
 }
 

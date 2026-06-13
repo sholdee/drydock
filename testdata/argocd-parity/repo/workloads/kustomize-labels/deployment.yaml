@@ -1,0 +1,22 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: labels-web
+  namespace: parity-kustomize-labels
+  labels:
+    conflict-label: original
+  annotations:
+    conflict-annotation: original
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: kustomize-labels-web
+  template:
+    metadata:
+      labels:
+        app: kustomize-labels-web
+    spec:
+      containers:
+        - name: web
+          image: registry.example.invalid/nginx:1.29.0

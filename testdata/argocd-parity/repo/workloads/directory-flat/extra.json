@@ -1,0 +1,11 @@
+{
+  "apiVersion": "v1",
+  "kind": "ConfigMap",
+  "metadata": {
+    "name": "flat-root-e",
+    "namespace": "parity-directory-flat"
+  },
+  "data": {
+    "extension": "json"
+  }
+}

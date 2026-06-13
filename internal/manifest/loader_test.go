@@ -244,6 +244,164 @@ items:
 	}
 }
 
+func TestDecodeDocumentsNullItemsListNoSpecStatusIsNoOp(t *testing.T) {
+	input := strings.NewReader(`
+apiVersion: v1
+kind: List
+items: null
+`)
+
+	docs, err := DecodeDocuments("null-list.yaml", input)
+	if err != nil {
+		t.Fatalf("DecodeDocuments() error = %v", err)
+	}
+	if len(docs) != 0 {
+		t.Fatalf("len(docs) = %d, want 0 (null-items list without spec/status is a no-op)", len(docs))
+	}
+}
+
+func TestDecodeDocumentsConfigMapListFlattensToItems(t *testing.T) {
+	input := strings.NewReader(`
+apiVersion: v1
+kind: ConfigMapList
+items:
+  - apiVersion: v1
+    kind: ConfigMap
+    metadata:
+      name: cm-one
+      namespace: default
+  - apiVersion: v1
+    kind: ConfigMap
+    metadata:
+      name: cm-two
+      namespace: default
+`)
+
+	docs, err := DecodeDocuments("configmap-list.yaml", input)
+	if err != nil {
+		t.Fatalf("DecodeDocuments() error = %v", err)
+	}
+	if len(docs) != 2 {
+		t.Fatalf("len(docs) = %d, want 2", len(docs))
+	}
+	if docs[0].Object.GetKind() != "ConfigMap" || docs[0].Object.GetName() != "cm-one" {
+		t.Fatalf("docs[0] = kind=%s name=%s, want ConfigMap cm-one", docs[0].Object.GetKind(), docs[0].Object.GetName())
+	}
+	if docs[1].Object.GetKind() != "ConfigMap" || docs[1].Object.GetName() != "cm-two" {
+		t.Fatalf("docs[1] = kind=%s name=%s, want ConfigMap cm-two", docs[1].Object.GetKind(), docs[1].Object.GetName())
+	}
+	if docs[0].RootObject == nil || docs[0].RootObject.GetKind() != "ConfigMapList" {
+		t.Fatalf("docs[0].RootObject kind = %q, want ConfigMapList", docs[0].RootObject.GetKind())
+	}
+}
+
+func TestDecodeDocumentsNonListKindWithItemsArrayFlattens(t *testing.T) {
+	input := strings.NewReader(`
+apiVersion: example.com/v1
+kind: Widget
+metadata:
+  name: my-widget
+items:
+  - apiVersion: v1
+    kind: ConfigMap
+    metadata:
+      name: child-one
+      namespace: default
+  - apiVersion: v1
+    kind: ConfigMap
+    metadata:
+      name: child-two
+      namespace: default
+`)
+
+	docs, err := DecodeDocuments("widget.yaml", input)
+	if err != nil {
+		t.Fatalf("DecodeDocuments() error = %v", err)
+	}
+	if len(docs) != 2 {
+		t.Fatalf("len(docs) = %d, want 2 (shape-based flatten regardless of kind)", len(docs))
+	}
+	if docs[0].Object.GetName() != "child-one" || docs[1].Object.GetName() != "child-two" {
+		t.Fatalf("unexpected names: %s, %s", docs[0].Object.GetName(), docs[1].Object.GetName())
+	}
+	if docs[0].RootObject == nil || docs[0].RootObject.GetKind() != "Widget" {
+		t.Fatalf("docs[0].RootObject kind = %q, want Widget", docs[0].RootObject.GetKind())
+	}
+}
+
+func TestDecodeDocumentsNullItemsWithSpecKeptWhole(t *testing.T) {
+	input := strings.NewReader(`
+apiVersion: example.com/v1
+kind: MyResource
+metadata:
+  name: has-spec
+spec:
+  replicas: 1
+items: null
+`)
+
+	docs, err := DecodeDocuments("has-spec.yaml", input)
+	if err != nil {
+		t.Fatalf("DecodeDocuments() error = %v", err)
+	}
+	if len(docs) != 1 {
+		t.Fatalf("len(docs) = %d, want 1 (null items with spec present: keep whole)", len(docs))
+	}
+	if docs[0].Object.GetKind() != "MyResource" || docs[0].Object.GetName() != "has-spec" {
+		t.Fatalf("unexpected doc: kind=%s name=%s", docs[0].Object.GetKind(), docs[0].Object.GetName())
+	}
+}
+
+func TestDecodeDocumentRootsUnchangedForAllListBranches(t *testing.T) {
+	input := strings.NewReader(`
+---
+apiVersion: v1
+kind: List
+items: null
+---
+apiVersion: v1
+kind: ConfigMapList
+items:
+  - apiVersion: v1
+    kind: ConfigMap
+    metadata:
+      name: cm-one
+      namespace: default
+---
+apiVersion: example.com/v1
+kind: Widget
+metadata:
+  name: my-widget
+items:
+  - apiVersion: v1
+    kind: ConfigMap
+    metadata:
+      name: child-one
+      namespace: default
+---
+apiVersion: example.com/v1
+kind: MyResource
+metadata:
+  name: has-spec
+spec:
+  replicas: 1
+items: null
+`)
+
+	docs, err := DecodeDocumentRoots("roots.yaml", input)
+	if err != nil {
+		t.Fatalf("DecodeDocumentRoots() error = %v", err)
+	}
+	if len(docs) != 4 {
+		t.Fatalf("len(docs) = %d, want 4 (DecodeDocumentRoots never flattens)", len(docs))
+	}
+	for i, doc := range docs {
+		if doc.Object != doc.RootObject {
+			t.Fatalf("docs[%d] Object and RootObject differ — DecodeDocumentRoots must not flatten", i)
+		}
+	}
+}
+
 func TestResourceIdentity(t *testing.T) {
 	doc := Document{
 		Object: mustUnstructured(t, map[string]any{

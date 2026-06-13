@@ -1,0 +1,27 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: parity-kustomize-variants
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: git://argocd-parity-git.argocd-parity.svc.cluster.local/repo.git
+    targetRevision: HEAD
+    path: workloads/kustomize-variants
+    kustomize:
+      namespace: parity-kustomize-variants
+      nameSuffix: -variant
+      images:
+        - nginx=registry.example.invalid/nginx@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+      patches:
+        - patch: |-
+            apiVersion: apps/v1
+            kind: Deployment
+            metadata:
+              name: variants-web
+            spec:
+              replicas: 3
+  destination:
+    name: in-cluster
+    namespace: parity-kustomize-variants

@@ -1,0 +1,6 @@
+helm:
+  parameters:
+    - name: fromRepoOverride
+      value: from-argocd-source
+    - name: both
+      value: from-argocd-source

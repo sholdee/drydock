@@ -14,6 +14,7 @@ import (
 	"github.com/sholdee/drydock/internal/render"
 	sourcepkg "github.com/sholdee/drydock/internal/source"
 	"go.yaml.in/yaml/v3"
+	version "k8s.io/apimachinery/pkg/util/version"
 )
 
 type RenderResult struct {
@@ -130,6 +131,9 @@ func appendRenderedManifests(application argoappv1.Application, sourcePlan Sourc
 		if rendered.Object != nil {
 			rendered.Object = rendered.Object.DeepCopy()
 		}
+		if rendered.Object != nil && isArgoHook(rendered.Object) {
+			continue
+		}
 		if applyAVPCompatToManifest(&rendered, opts) {
 			avpCompatSubstituted = true
 		}
@@ -156,6 +160,105 @@ func appendRenderedManifests(application argoappv1.Application, sourcePlan Sourc
 		result.Manifests = append(result.Manifests, rendered)
 	}
 	return avpCompatSubstituted, nil
+}
+
+// isArgoHook mirrors the Argo CD controller managed-resources view hook filter
+// (controller/hook.go isHook + gitops-engine pkg/sync/hook/hook.go IsHook).
+// Resources classified as hooks are excluded from the desired-state manifests
+// view that drydock produces.
+//
+// Rules (in evaluation order):
+//  1. argocd.argoproj.io/hook present → IS a hook, UNLESS its recognized hook
+//     types are exactly one "Skip" (Skip-only → NOT a hook). Recognized types
+//     fall back to helm hook types (pre/post-install/upgrade) when no argocd
+//     value is recognized; an annotation with only unrecognized values is
+//     still a hook. Skip-only resources carrying helm pre-delete/post-delete
+//     hooks remain hooks (controller supplement).
+//  2. Else helm.sh/hook present and the whole value is not exactly
+//     "crd-install" → IS a hook.
+func isArgoHook(obj interface{ GetAnnotations() map[string]string }) bool {
+	if obj == nil {
+		return false
+	}
+	annotations := obj.GetAnnotations()
+	if annotations == nil {
+		return false
+	}
+
+	argoHook, hasArgo := annotations["argocd.argoproj.io/hook"]
+	helmHook, hasHelm := annotations["helm.sh/hook"]
+
+	if hasArgo {
+		// The argocd hook annotation makes the resource a hook unless its only
+		// recognized hook type is Skip. Recognized types fall back to the helm
+		// hook annotation when no argocd value is recognized, and Skip-only
+		// resources carrying helm pre/post-delete hooks remain hooks.
+		recognized, skips := argoHookTypeCounts(argoHook, helmHook, hasHelm)
+		if skips > 0 && recognized == 1 {
+			return hasHelm && helmHookHasDeletePhase(helmHook)
+		}
+		return true
+	}
+
+	if hasHelm {
+		// crd-install is the one helm hook value that is NOT treated as a hook.
+		if strings.TrimSpace(helmHook) == "crd-install" {
+			return false
+		}
+		// Whole-value non-crd-install → hook.
+		return true
+	}
+
+	return false
+}
+
+// argoHookTypeCounts counts the recognized hook types on the argocd hook
+// annotation, falling back to helm hook types when no argocd value is
+// recognized (mirrors gitops-engine hook Types(), including its de-duplication
+// of repeated annotation values).
+func argoHookTypeCounts(argoHook, helmHook string, hasHelm bool) (recognized, skips int) {
+	seen := map[string]bool{}
+	for part := range strings.SplitSeq(argoHook, ",") {
+		v := strings.TrimSpace(part)
+		if seen[v] {
+			continue
+		}
+		seen[v] = true
+		switch v {
+		case "PreSync", "Sync", "PostSync", "SyncFail", "PreDelete", "PostDelete":
+			recognized++
+		case "Skip":
+			recognized++
+			skips++
+		}
+	}
+	if recognized == 0 && hasHelm {
+		clear(seen)
+		for part := range strings.SplitSeq(helmHook, ",") {
+			v := strings.TrimSpace(part)
+			if seen[v] {
+				continue
+			}
+			seen[v] = true
+			switch v {
+			case "pre-install", "pre-upgrade", "post-upgrade", "post-install":
+				recognized++
+			}
+		}
+	}
+	return recognized, skips
+}
+
+// helmHookHasDeletePhase reports whether the helm hook annotation includes a
+// pre-delete or post-delete phase (controller hook-type supplement).
+func helmHookHasDeletePhase(helmHook string) bool {
+	for part := range strings.SplitSeq(helmHook, ",") {
+		switch strings.TrimSpace(part) {
+		case "pre-delete", "post-delete":
+			return true
+		}
+	}
+	return false
 }
 
 // preparePlanSourcesForRender prepares every render source up front. On a
@@ -205,7 +308,11 @@ func renderOptions(application argoappv1.Application, source argoappv1.Applicati
 	if source.Kustomize != nil {
 		opts.Kustomize = source.Kustomize.DeepCopy()
 		if source.Kustomize.KubeVersion != "" {
-			opts.KubeVersion = source.Kustomize.KubeVersion
+			normalized, err := parseKubeVersion(source.Kustomize.KubeVersion)
+			if err != nil {
+				return render.RenderOptions{}, err
+			}
+			opts.KubeVersion = normalized
 		}
 		if len(source.Kustomize.APIVersions) != 0 {
 			opts.APIVersions = append(opts.APIVersions, source.Kustomize.APIVersions...)
@@ -235,7 +342,11 @@ func renderOptions(application argoappv1.Application, source argoappv1.Applicati
 	if source.Helm.Namespace != "" {
 		opts.Namespace = source.Helm.Namespace
 	}
-	opts.KubeVersion = source.Helm.KubeVersion
+	normalizedHelm, err := parseKubeVersion(source.Helm.KubeVersion)
+	if err != nil {
+		return render.RenderOptions{}, err
+	}
+	opts.KubeVersion = normalizedHelm
 	opts.APIVersions = append(opts.APIVersions, source.Helm.APIVersions...)
 	opts.ValueFiles = append(opts.ValueFiles, source.Helm.ValueFiles...)
 	opts.HelmParameters = append(opts.HelmParameters, source.Helm.Parameters...)
@@ -252,6 +363,19 @@ func renderOptions(application argoappv1.Application, source argoappv1.Applicati
 	}
 	opts.ValuesObject = valuesObject
 	return opts, nil
+}
+
+// parseKubeVersion mirrors Argo CD repo-server: spec kube versions are
+// normalized before renderers see them.
+func parseKubeVersion(kubeVersion string) (string, error) {
+	if kubeVersion == "" {
+		return "", nil
+	}
+	v, err := version.ParseGeneric(kubeVersion)
+	if err != nil {
+		return "", fmt.Errorf("parse kube version %q: %w", kubeVersion, err)
+	}
+	return v.String(), nil
 }
 
 func argoRenderEnv(application argoappv1.Application, source argoappv1.ApplicationSource) argoappv1.Env {

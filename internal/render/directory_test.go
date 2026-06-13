@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	cachepkg "github.com/sholdee/drydock/internal/cache"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 )
 
 func TestDirectoryRendererRendersYAML(t *testing.T) {
@@ -330,7 +331,12 @@ metadata:
 	}
 }
 
-func TestDirectoryRendererSkipsKustomizeGeneratorDataFiles(t *testing.T) {
+func TestDirectoryRendererEmitsKustomizeGeneratorDataFilesLikeArgoCDFindManifests(t *testing.T) {
+	// Argo CD findManifests has no kustomization awareness — every matching
+	// manifest file in a directory source is processed normally. Generator data
+	// files that are valid Kubernetes objects are emitted; the kustomization.yaml
+	// itself has no apiVersion/kind so it is silently skipped by the existing
+	// kind-less-document behavior.
 	root := t.TempDir()
 	writeFile(t, filepath.Join(root, "apps", "kustomization.yaml"), `
 configMapGenerator:
@@ -372,15 +378,24 @@ metadata:
 	if len(diags) != 0 {
 		t.Fatalf("diagnostics = %#v", diags)
 	}
+	// kustomization.yaml: no apiVersion/kind → silently skipped (kind-less behavior).
+	// config/settings.yaml and secrets/credentials.yaml are not in the top-level
+	// directory and non-recursive mode does not descend into subdirectories.
+	// Only visible.yaml is emitted.
 	if len(result) != 1 {
-		t.Fatalf("len(result) = %d, want 1", len(result))
+		t.Fatalf("len(result) = %d, want 1 (non-recursive; subdirs not walked): %#v", len(result), result)
 	}
 	if result[0].Object.GetName() != "visible" {
 		t.Fatalf("rendered object name = %q, want visible", result[0].Object.GetName())
 	}
 }
 
-func TestDirectoryRendererRecursivePreScanIncludesHiddenKustomizations(t *testing.T) {
+func TestDirectoryRendererRecursiveEmitsKustomizationDocsWithAPIVersionKind(t *testing.T) {
+	// Argo CD findManifests processes every matching manifest file without
+	// kustomization awareness. A kustomization.yaml that carries apiVersion/kind
+	// is emitted as a manifest. A generator data file that is a valid Kubernetes
+	// object is also emitted. A kustomization.yaml without apiVersion/kind is
+	// silently skipped by the existing kind-less-document behavior.
 	root := t.TempDir()
 	writeFile(t, filepath.Join(root, "apps", ".hidden", "kustomization.yaml"), `
 configMapGenerator:
@@ -411,8 +426,65 @@ metadata:
 	if len(diags) != 0 {
 		t.Fatalf("diagnostics = %#v", diags)
 	}
-	if got := directoryManifestNames(result); !reflect.DeepEqual(got, []string{"visible"}) {
-		t.Fatalf("rendered names = %#v, want visible only", got)
+	// kustomization.yaml has no apiVersion/kind → silently skipped.
+	// config/settings.yaml is a valid Kubernetes object → emitted.
+	// visible.yaml → emitted.
+	if got := directoryManifestNames(result); !reflect.DeepEqual(got, []string{"generator-data", "visible"}) {
+		t.Fatalf("rendered names = %#v, want generator-data and visible", got)
+	}
+}
+
+func TestDirectoryRendererEmitsKustomizationDocumentWithAPIVersionKind(t *testing.T) {
+	// A kustomization.yaml that carries apiVersion/kind/metadata is treated as a
+	// normal Kubernetes manifest and emitted — matching Argo CD findManifests
+	// behavior. The namePrefix/resources fields are preserved unchanged.
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "apps", "kustomization.yaml"), `
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+metadata:
+  name: test-kustomization
+resources:
+  - configmap.yaml
+namePrefix: prefix-
+`)
+	writeFile(t, filepath.Join(root, "apps", "configmap.yaml"), `
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: test-cm
+`)
+
+	renderer := DirectoryRenderer{}
+	result, diags, err := renderer.Render(context.Background(), ResolvedSource{
+		RepoRoot: root,
+		Path:     "apps",
+	}, RenderOptions{})
+	if err != nil {
+		t.Fatalf("Render() error = %v", err)
+	}
+	if len(diags) != 0 {
+		t.Fatalf("diagnostics = %#v", diags)
+	}
+	// Both the Kustomization doc (with apiVersion/kind) and the ConfigMap are emitted.
+	if got := directoryManifestNames(result); !reflect.DeepEqual(got, []string{"test-cm", "test-kustomization"}) {
+		t.Fatalf("rendered names = %#v, want test-cm and test-kustomization", got)
+	}
+	// Verify the Kustomization object preserves its fields.
+	var kustObj *unstructured.Unstructured
+	for _, m := range result {
+		if m.Object.GetName() == "test-kustomization" {
+			kustObj = m.Object
+		}
+	}
+	if kustObj == nil {
+		t.Fatal("kustomization object not found in result")
+	}
+	if kustObj.GetAPIVersion() != "kustomize.config.k8s.io/v1beta1" {
+		t.Fatalf("kustomization apiVersion = %q, want kustomize.config.k8s.io/v1beta1", kustObj.GetAPIVersion())
+	}
+	if kustObj.GetKind() != "Kustomization" {
+		t.Fatalf("kustomization kind = %q, want Kustomization", kustObj.GetKind())
 	}
 }
 

@@ -54,10 +54,28 @@ APPLICATIONS=(
   parity-kustomize-options
   parity-selector-beta-prod
   parity-template-patch
+  parity-helm-subchart
+  parity-helm-crds-default
+  parity-helm-values-precedence
+  parity-helm-options-edge
+  parity-source-overrides
+  parity-ref-fileparam
+  parity-helm-params-edge
+  parity-directory-flat
+  parity-directory-forced
+  parity-directory-glob
+  parity-kustomize-variants
+  parity-kustomize-labels
+  parity-kustomize-generators
+  parity-kustomize-helm-capabilities
+  parity-ft-alpha
+  parity-ft-beta
+  parity-fn-gamma-one
 )
 
 TRACKING_APPLICATIONS=(
   parity-tracking
+  parity-helm-crds-default
 )
 
 PROJECT_POLICY_CASES=(
@@ -226,7 +244,7 @@ prepare_fixture_git_image() {
   git -C "${git_work}" config user.name "drydock render parity smoke"
   git -C "${git_work}" add .
   git -C "${git_work}" commit -m "seed argocd parity fixture" >/dev/null
-  git clone --bare "${git_work}" "${bare}" >/dev/null
+  git clone --bare --no-hardlinks "${git_work}" "${bare}" >/dev/null
   git --git-dir="${bare}" update-server-info
 
   dockerfile="${WORK_DIR}/Dockerfile.git"

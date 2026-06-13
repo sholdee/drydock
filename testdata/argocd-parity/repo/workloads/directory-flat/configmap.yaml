@@ -1,0 +1,7 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: flat-root-a
+  namespace: parity-directory-flat
+data:
+  file: configmap.yaml

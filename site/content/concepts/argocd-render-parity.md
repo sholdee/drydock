@@ -47,13 +47,13 @@ treated as a rendering regression for the covered fixture set.
 
 | Area | Covered examples |
 | --- | --- |
-| Directory | recurse, include/exclude handling, skip files |
-| Helm | release name and namespace, values, parameters, file parameters, capabilities, value-file globs, skip CRDs/tests |
-| Kustomize | base rendering, namespace, images, replicas, labels, annotations, components, patches, Helm charts |
+| Directory | recurse, include/exclude handling, skip files, non-recursive auto-detected directories, multi-document YAML files, `.yml`/`.json` extensions, non-Kubernetes YAML silently skipped, null-items Lists as no-ops, shape-based (kind-agnostic) list flattening including `ConfigMapList`, explicit directory-mode forcing on a kustomize path, `**` include globs with path-scoped excludes |
+| Helm | release name and namespace, values, parameters, file parameters, capabilities, value-file globs, skip CRDs/tests, vendored subchart dependencies with `condition`/`alias`/global values propagation, default CRD inclusion, `values`/`valuesObject`/`valueFiles`/`parameters` precedence chain (`valuesObject` wholly replaces the `values` string), `helm.namespace` override distinct from destination namespace, `skipSchemaValidation`, `kubeVersion` `+suffix` normalization, env-var substitution in parameter values and valueFile names, value files and `fileParameters` outside the chart directory bounded at the repo root, comma in parameter values, `.argocd-source.yaml` and `.argocd-source-<app>.yaml` overrides (JSON merge patch, arrays replaced wholesale), `$ref` fileParameters |
+| Kustomize | base rendering, namespace, images, replicas, labels, annotations, components, patches, Helm charts, `kustomization.yml` and bare `Kustomization` filename variants, `nameSuffix`, image digest replacement, strategic-merge patches without explicit target, `labelWithoutSelector`, `labelIncludeTemplates`, `forceCommonLabels`, `forceCommonAnnotations`, `commonAnnotationsEnvsubst`, `configMapGenerator` hash suffixes, `ignoreMissingComponents`, `kubeVersion`/`apiVersions` pass-through to `helmCharts` inflation |
 | Jsonnet | ext vars, top-level arguments, code mode, libraries |
 | Multi-source | `$ref` values, ref-only sources, source precedence, last-wins resources |
-| ApplicationSet | git directories, git files, list, matrix, merge, Go templates, `missingkey=error`, selectors, generator template overrides, `templatePatch` |
-| Tracking and resources | Argo CD tracking metadata, repeated-resource behavior |
+| ApplicationSet | git directories, git files, list, matrix, merge, Go templates, `missingkey=error`, selectors, generator template overrides, `templatePatch`, fasttemplate (default) mode with `path`/`path.basename`/`path[N]`/`values.*` params, `elementsYaml` generator input, `normalize` and `upper` template functions |
+| Tracking and resources | Argo CD tracking metadata, repeated-resource last-wins behavior, CRDs excluded from tracking metadata, hook-annotated resources excluded from the manifests view across all source types (helm test hooks, Argo CD sync hooks; `crd-install` kept) |
 
 The source of truth for the active fixture inventory is the parity smoke script;
 this table summarizes the covered semantics rather than enumerating every

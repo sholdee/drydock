@@ -1,0 +1,7 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: glob-root
+  namespace: parity-directory-glob
+data:
+  level: root

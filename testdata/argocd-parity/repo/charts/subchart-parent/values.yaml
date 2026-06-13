@@ -1,0 +1,7 @@
+global:
+  marker: from-parent-global
+renamed-child:
+  enabled: true
+  message: from-alias-values
+child-off:
+  enabled: false

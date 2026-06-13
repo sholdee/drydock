@@ -202,3 +202,36 @@ func TestRenderInputCoverageHelmSource(t *testing.T) {
 	}
 	assertRenderInputCoverage(t, repoRoot, application)
 }
+
+// TestRenderInputCoverageHelmSourceOutOfChartDirValueFile pins that a valueFile
+// and a fileParameter whose paths traverse above the chart directory (but remain
+// within the repository root) are reported as local input paths and therefore
+// covered by the persistent render cache digest.  If either file's mutation
+// changes the render outcome without being covered, the cache would serve stale
+// content — this test catches that regression.
+func TestRenderInputCoverageHelmSourceOutOfChartDirValueFile(t *testing.T) {
+	repoRoot := t.TempDir()
+	writeTestFile(t, repoRoot+"/charts/demo/Chart.yaml", "apiVersion: v2\nname: demo\nversion: 0.1.0\n")
+	writeTestFile(t, repoRoot+"/charts/demo/values.yaml", "value: from-default\nfileValue: from-default\n")
+	writeTestFile(t, repoRoot+"/charts/demo/templates/cm.yaml",
+		"apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: {{ .Chart.Name }}\ndata:\n  value: {{ .Values.value }}\n  fileValue: {{ .Values.fileValue | quote }}\n")
+	writeTestFile(t, repoRoot+"/values/shared.yaml", "value: from-shared\n")
+	writeTestFile(t, repoRoot+"/shared-files/message.txt", "from-file\n")
+	writeTestFile(t, repoRoot+"/unrelated/README.md", "not a render input\n")
+	application := argoappv1.Application{
+		ObjectMeta: metav1.ObjectMeta{Name: "demo", Namespace: "argocd"},
+		Spec: argoappv1.ApplicationSpec{
+			Source: &argoappv1.ApplicationSource{
+				RepoURL: "https://git.example.test/org/repo.git", Path: "charts/demo", TargetRevision: "main",
+				Helm: &argoappv1.ApplicationSourceHelm{
+					ValueFiles: []string{"../../values/shared.yaml"},
+					FileParameters: []argoappv1.HelmFileParameter{
+						{Name: "fileValue", Path: "../../shared-files/message.txt"},
+					},
+				},
+			},
+			Destination: argoappv1.ApplicationDestination{Namespace: "default"},
+		},
+	}
+	assertRenderInputCoverage(t, repoRoot, application)
+}

@@ -1,0 +1,22 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: parity-ref-fileparam
+  namespace: argocd
+spec:
+  project: default
+  sources:
+    - repoURL: git://argocd-parity-git.argocd-parity.svc.cluster.local/repo.git
+      targetRevision: HEAD
+      ref: files
+    - repoURL: git://argocd-parity-git.argocd-parity.svc.cluster.local/repo.git
+      targetRevision: HEAD
+      path: charts/ref-fileparam
+      helm:
+        releaseName: parity-ref-fileparam
+        fileParameters:
+          - name: message
+            path: $files/shared-files/ref-message.txt
+  destination:
+    name: in-cluster
+    namespace: parity-ref-fileparam

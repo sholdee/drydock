@@ -311,8 +311,10 @@ Canonical references:
 Renderers implement `internal/render.Renderer`. The default implementation
 path must not shell out.
 
-Directory rendering parses YAML/JSON files, flattens Kubernetes `List`
-objects, renders Jsonnet with native Go libraries, honors Argo CD's
+Directory rendering parses YAML/JSON files, flattens any document with an
+`items` array into its items regardless of kind (matching Argo CD's
+shape-based detection) and drops `items: null` documents as no-ops, renders
+Jsonnet with native Go libraries, honors Argo CD's
 `+argocd:skip-file-rendering` marker, stays within the resolved repository
 root, rejects escaping source paths and symlinked source path components, and
 skips symlinked files or directories while walking.

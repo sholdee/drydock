@@ -1,0 +1,3 @@
+apiVersion: v2
+name: crds-default
+version: 0.1.0
