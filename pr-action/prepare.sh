@@ -42,11 +42,33 @@ case "${DRYDOCK_INPUT_COMMENT_MODE}" in
     ;;
 esac
 
+cache_mode="${DRYDOCK_INPUT_CACHE_MODE:-auto}"
+case "${cache_mode}" in
+  auto | github | local | off) ;;
+  *)
+    echo "cache-mode must be auto, github, local, or off, got '${cache_mode}'." >&2
+    exit 1
+    ;;
+esac
+# Back-compat: cache: false disables persistence regardless of cache-mode.
+if [[ "${DRYDOCK_INPUT_CACHE}" != "true" ]]; then
+  cache_mode="off"
+fi
+
+runner_environment="${RUNNER_ENVIRONMENT:-}"
+
 runner_temp="${RUNNER_TEMP:-/tmp}"
 work_dir="$(mktemp -d "${runner_temp%/}/drydock-pr-action.XXXXXX")"
 cache_path="${DRYDOCK_INPUT_CACHE_PATH}"
 if [[ -z "${cache_path}" ]]; then
-  cache_path="${runner_temp%/}/drydock-cache"
+  if [[ "${cache_mode}" == "local" ]]; then
+    # Prefer the persistent tool cache so a self-hosted runner keeps the cache
+    # across jobs; RUNNER_TEMP is cleaned each job.
+    cache_root="${RUNNER_TOOL_CACHE:-${runner_temp}}"
+    cache_path="${cache_root%/}/drydock-cache"
+  else
+    cache_path="${runner_temp%/}/drydock-cache"
+  fi
 fi
 mkdir -p "${cache_path}"
 
@@ -59,15 +81,34 @@ case "${GITHUB_EVENT_NAME:-}" in
     ;;
 esac
 
+# auto and github use the remote actions/cache backend; local and off do not
+# (local persists at cache_path on the runner, off keeps no cache between runs).
 cache_restore=false
 cache_save=false
-if [[ "${DRYDOCK_INPUT_CACHE}" == "true" ]]; then
-  if [[ "${trusted_context}" == "true" || "${DRYDOCK_INPUT_CACHE_UNTRUSTED_RESTORE}" == "true" ]]; then
-    cache_restore=true
-  fi
-  if [[ "${trusted_context}" == "true" && "${DRYDOCK_INPUT_SAVE_CACHE}" == "true" ]]; then
-    cache_save=true
-  fi
+case "${cache_mode}" in
+  auto | github)
+    if [[ "${trusted_context}" == "true" || "${DRYDOCK_INPUT_CACHE_UNTRUSTED_RESTORE}" == "true" ]]; then
+      cache_restore=true
+    fi
+    if [[ "${trusted_context}" == "true" && "${DRYDOCK_INPUT_SAVE_CACHE}" == "true" ]]; then
+      cache_save=true
+    fi
+    ;;
+  local | off) ;;
+esac
+
+# Guidance and guardrails keyed on the runner environment. runner.environment
+# distinguishes github-hosted from self-hosted, but not whether a self-hosted
+# runner has a persistent filesystem, so the default never switches modes on
+# its own.
+if [[ "${cache_mode}" == "auto" && "${runner_environment}" == "self-hosted" ]]; then
+  echo "::notice::drydock: self-hosted runner detected. If this runner has persistent storage, set cache-mode: local with a persistent cache-path to skip actions/cache round-trips and the cross-pull-request cache scope limits."
+fi
+if [[ "${cache_mode}" == "local" && "${runner_environment}" == "github-hosted" ]]; then
+  echo "::warning::drydock: cache-mode: local does not persist on a GitHub-hosted runner (its filesystem is ephemeral); use cache-mode: auto or github."
+fi
+if [[ "${cache_mode}" == "local" && "${cache_path}" == "${runner_temp%/}"/* ]]; then
+  echo "::warning::drydock: cache-mode: local cache-path is under RUNNER_TEMP, which is cleaned each job and will not persist; set cache-path to a directory that survives across jobs."
 fi
 
 repo_key="${GITHUB_REPOSITORY:-repository}"

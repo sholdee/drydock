@@ -291,6 +291,48 @@ action so those runs restore only. The render cache is content-addressed by
 Application input digests, so a default-branch warm covers every unchanged
 Application regardless of which commit a pull request branched from.
 
+### Self-Hosted Runners And Local Caching
+
+`actions/cache` is a remote, branch-scoped backend, so the scope limits above
+apply on self-hosted runners too. On a self-hosted runner with durable storage,
+persist the cache on the runner's own filesystem instead: it avoids the
+upload/download round-trips and the cross-pull-request scope limits entirely —
+every pull request and push on that runner shares one on-disk cache, which is
+safe because the render cache is content-addressed by Application input digests.
+
+Select the backend with `cache-mode`:
+
+| `cache-mode` | Backend | Use for |
+| --- | --- | --- |
+| `auto` (default) | `actions/cache` (remote) | any runner; works everywhere |
+| `github` | `actions/cache` (remote) | self-hosted that wants remote caching |
+| `local` | runner filesystem at `cache-path` | self-hosted with durable storage |
+| `off` | none | disable persistence |
+
+```yaml
+- uses: sholdee/drydock/pr-action@vX.Y.Z
+  with:
+    version: vX.Y.Z
+    cache-mode: local
+    cache-path: /var/lib/drydock-cache # a path that persists across jobs
+```
+
+`local` mode defaults `cache-path` to `${RUNNER_TOOL_CACHE}/drydock-cache`, which
+persists across jobs on a long-lived self-hosted runner. It cannot detect
+whether a runner is actually persistent: GitHub's `runner.environment` only
+distinguishes GitHub-hosted from self-hosted, not durable from ephemeral.
+Ephemeral self-hosted runners — actions-runner-controller pods and `--ephemeral`
+runners — get fresh storage each job, so `local` helps them only if you mount a
+durable volume at `cache-path`; otherwise keep `auto` so the remote backend
+repopulates the cache each run. The action emits a notice on self-hosted runners
+that suggests `local`, and warns when `local` is used on a GitHub-hosted runner
+(whose filesystem is always ephemeral).
+
+With `local`, eviction is yours to manage: drydock's render-cache size cap and
+`drydock cache prune` bound the directory rather than GitHub's cache budget. A
+shared on-disk cache is readable by every job on the runner, so use it only for
+trusted workloads.
+
 ## Input Behavior
 
 Newline-delimited inputs are passed as repeated drydock flags:
@@ -399,6 +441,7 @@ passes them as arguments without `eval`, but they still change drydock behavior.
 | Input | Default | Purpose |
 | --- | --- | --- |
 | `cache` | `true` | Restore and save drydock render caches for trusted runs. |
+| `cache-mode` | `auto` | Cache backend. `auto`/`github` use the remote `actions/cache` backend; `local` persists at `cache-path` on the runner and skips `actions/cache`; `off` disables persistence. `cache: "false"` forces `off`. |
 | `save-cache` | `true` | Save drydock render caches after trusted runs. |
 | `cache-untrusted-restore` | `false` | Restore drydock render caches for fork pull requests. Cache save remains disabled for forks. |
 | `cache-path` | runner temp directory | Local drydock cache root. |
