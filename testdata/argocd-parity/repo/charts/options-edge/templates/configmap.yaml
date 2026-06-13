@@ -1,0 +1,8 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Release.Name }}
+  namespace: {{ .Release.Namespace }}
+data:
+  kubeVersion: {{ .Capabilities.KubeVersion.Version }}
+  releaseNamespace: {{ .Release.Namespace }}

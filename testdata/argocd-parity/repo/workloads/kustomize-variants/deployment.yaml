@@ -1,0 +1,17 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: variants-web
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: kustomize-variants-web
+  template:
+    metadata:
+      labels:
+        app: kustomize-variants-web
+    spec:
+      containers:
+        - name: web
+          image: nginx:1.29.0

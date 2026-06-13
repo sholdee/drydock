@@ -1,0 +1,11 @@
+apiVersion: v2
+name: subchart-parent
+version: 0.1.0
+dependencies:
+  - name: child-on
+    version: 0.1.0
+    alias: renamed-child
+    condition: renamed-child.enabled
+  - name: child-off
+    version: 0.1.0
+    condition: child-off.enabled

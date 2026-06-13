@@ -1,0 +1,7 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: generators-extra
+  namespace: parity-kustomize-generators
+data:
+  from: component

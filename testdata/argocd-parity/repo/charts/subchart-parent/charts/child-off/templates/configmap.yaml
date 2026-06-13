@@ -1,0 +1,9 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Release.Name }}-child-off
+  namespace: {{ .Release.Namespace }}
+data:
+  chart: {{ .Chart.Name }}
+  global: {{ .Values.global.marker }}
+  message: {{ .Values.message }}

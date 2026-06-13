@@ -54,10 +54,28 @@ APPLICATIONS=(
   parity-kustomize-options
   parity-selector-beta-prod
   parity-template-patch
+  parity-helm-subchart
+  parity-helm-crds-default
+  parity-helm-values-precedence
+  parity-helm-options-edge
+  parity-source-overrides
+  parity-ref-fileparam
+  parity-helm-params-edge
+  parity-directory-flat
+  parity-directory-forced
+  parity-directory-glob
+  parity-kustomize-variants
+  parity-kustomize-labels
+  parity-kustomize-generators
+  parity-kustomize-helm-capabilities
+  parity-ft-alpha
+  parity-ft-beta
+  parity-fn-gamma-one
 )
 
 TRACKING_APPLICATIONS=(
   parity-tracking
+  parity-helm-crds-default
 )
 
 PROJECT_POLICY_CASES=(

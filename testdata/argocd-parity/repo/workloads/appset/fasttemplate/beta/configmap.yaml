@@ -1,0 +1,7 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ft-config
+  namespace: parity-ft-beta
+data:
+  flavor: beta

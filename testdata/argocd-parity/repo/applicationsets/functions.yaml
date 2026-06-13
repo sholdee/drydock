@@ -1,0 +1,29 @@
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: parity-functions
+  namespace: argocd
+spec:
+  goTemplate: true
+  goTemplateOptions: ["missingkey=error"]
+  generators:
+    - list:
+        elementsYaml: |
+          - name: Gamma_One
+            path: workloads/appset/functions/gamma
+  template:
+    metadata:
+      name: 'parity-fn-{{ .name | normalize }}'
+    spec:
+      project: default
+      source:
+        repoURL: git://argocd-parity-git.argocd-parity.svc.cluster.local/repo.git
+        targetRevision: HEAD
+        path: '{{ .path }}'
+        kustomize:
+          namePrefix: '{{ .name | normalize }}-'
+          commonAnnotations:
+            parity-upper: '{{ .name | upper }}'
+      destination:
+        name: in-cluster
+        namespace: parity-fn-gamma-one

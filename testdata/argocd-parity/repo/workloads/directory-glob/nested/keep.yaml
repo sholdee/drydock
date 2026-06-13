@@ -1,0 +1,7 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: glob-nested
+  namespace: parity-directory-glob
+data:
+  level: nested

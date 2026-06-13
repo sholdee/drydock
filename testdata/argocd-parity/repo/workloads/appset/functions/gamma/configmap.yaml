@@ -1,0 +1,7 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: fn-config
+  namespace: parity-fn-gamma-one
+data:
+  generator: elements-yaml

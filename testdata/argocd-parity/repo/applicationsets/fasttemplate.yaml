@@ -1,0 +1,29 @@
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: parity-fasttemplate
+  namespace: argocd
+spec:
+  generators:
+    - git:
+        repoURL: git://argocd-parity-git.argocd-parity.svc.cluster.local/repo.git
+        revision: HEAD
+        directories:
+          - path: workloads/appset/fasttemplate/*
+        values:
+          flavor: 'ft-{{path.basename}}'
+  template:
+    metadata:
+      name: 'parity-ft-{{path.basename}}'
+    spec:
+      project: default
+      source:
+        repoURL: git://argocd-parity-git.argocd-parity.svc.cluster.local/repo.git
+        targetRevision: HEAD
+        path: '{{path}}'
+        kustomize:
+          namePrefix: '{{values.flavor}}-'
+          nameSuffix: '-{{path[3]}}'
+      destination:
+        name: in-cluster
+        namespace: 'parity-ft-{{path.basename}}'

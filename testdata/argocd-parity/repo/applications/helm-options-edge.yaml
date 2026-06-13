@@ -1,0 +1,19 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: parity-helm-options-edge
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: git://argocd-parity-git.argocd-parity.svc.cluster.local/repo.git
+    targetRevision: HEAD
+    path: charts/options-edge
+    helm:
+      releaseName: parity-helm-options-edge
+      namespace: parity-helm-options-override
+      kubeVersion: 1.32.1+parity
+      skipSchemaValidation: true
+  destination:
+    name: in-cluster
+    namespace: parity-helm-options-edge

@@ -1,0 +1,27 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: parity-helm-params-edge
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: git://argocd-parity-git.argocd-parity.svc.cluster.local/repo.git
+    targetRevision: HEAD
+    path: charts/params-edge
+    helm:
+      releaseName: parity-helm-params-edge
+      valueFiles:
+        - values-$ARGOCD_APP_NAME.yaml
+        - ../../values/params-edge-shared.yaml
+      parameters:
+        - name: commaValue
+          value: alpha,beta
+        - name: appName
+          value: $ARGOCD_APP_NAME
+      fileParameters:
+        - name: fileMessage
+          path: ../../shared-files/params-edge-message.txt
+  destination:
+    name: in-cluster
+    namespace: parity-helm-params-edge

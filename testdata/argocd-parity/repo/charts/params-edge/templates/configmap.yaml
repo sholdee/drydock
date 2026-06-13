@@ -1,0 +1,11 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Release.Name }}
+  namespace: {{ .Release.Namespace }}
+data:
+  commaValue: {{ .Values.commaValue }}
+  appName: {{ .Values.appName }}
+  envFile: {{ .Values.envFile }}
+  shared: {{ .Values.shared }}
+  fileMessage: {{ .Values.fileMessage | quote }}

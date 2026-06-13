@@ -1,0 +1,19 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: parity-kustomize-helm-capabilities
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: git://argocd-parity-git.argocd-parity.svc.cluster.local/repo.git
+    targetRevision: HEAD
+    path: workloads/kustomize-helm-capabilities
+    kustomize:
+      namespace: parity-kustomize-helm-capabilities
+      kubeVersion: 1.31.0
+      apiVersions:
+        - parity.example.com/v1/Widget
+  destination:
+    name: in-cluster
+    namespace: parity-kustomize-helm-capabilities
