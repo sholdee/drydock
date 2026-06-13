@@ -379,6 +379,7 @@ runs:
       env:
         DRYDOCK_GITHUB_TOKEN: ${{ steps.app-token-client.outputs.token || steps.app-token-legacy.outputs.token || inputs.github-token || github.token }}
         DRYDOCK_INPUT_BASE_REF: ${{ inputs.base-ref }}
+        DRYDOCK_INPUT_HEAD_REF: ${{ inputs.head-ref }}
         DRYDOCK_PR_BASE_REF: ${{ github.event.pull_request.base.ref }}
       run: '"${GITHUB_ACTION_PATH}/fetch-base.sh"'
 
