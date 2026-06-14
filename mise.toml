@@ -4,7 +4,7 @@ golangci-lint = "2.12.2"
 lefthook = "2.1.9"
 shellcheck = "0.11.0"
 zizmor = "1.25.2"
-hugo = "0.163.0"
+hugo = "0.163.1"
 
 [tasks.fmt]
 description = "Run go fmt against Go code"
