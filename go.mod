@@ -18,7 +18,7 @@ require (
 	golang.org/x/crypto v0.53.0
 	golang.org/x/sys v0.46.0
 	golang.org/x/term v0.44.0
-	helm.sh/helm/v4 v4.2.0
+	helm.sh/helm/v4 v4.2.1
 	k8s.io/apimachinery v0.36.1
 	sigs.k8s.io/kustomize/api v0.21.1
 	sigs.k8s.io/kustomize/kyaml v0.21.1
@@ -171,23 +171,23 @@ require (
 	gopkg.in/warnings.v0 v0.1.2 // indirect
 	gopkg.in/yaml.v2 v2.4.0 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
-	k8s.io/api v0.36.0 // indirect
-	k8s.io/apiextensions-apiserver v0.36.0 // indirect
-	k8s.io/apiserver v0.36.0 // indirect
-	k8s.io/cli-runtime v0.36.0 // indirect
-	k8s.io/client-go v0.36.0 // indirect
-	k8s.io/component-base v0.36.0 // indirect
+	k8s.io/api v0.36.1 // indirect
+	k8s.io/apiextensions-apiserver v0.36.1 // indirect
+	k8s.io/apiserver v0.36.1 // indirect
+	k8s.io/cli-runtime v0.36.1 // indirect
+	k8s.io/client-go v0.36.1 // indirect
+	k8s.io/component-base v0.36.1 // indirect
 	k8s.io/component-helpers v0.36.0 // indirect
 	k8s.io/controller-manager v0.34.0 // indirect
 	k8s.io/klog/v2 v2.140.0 // indirect
 	k8s.io/kube-aggregator v0.34.0 // indirect
 	k8s.io/kube-openapi v0.0.0-20260317180543-43fb72c5454a // indirect
-	k8s.io/kubectl v0.36.0 // indirect
+	k8s.io/kubectl v0.36.1 // indirect
 	k8s.io/kubernetes v1.34.2 // indirect
 	k8s.io/utils v0.0.0-20260210185600-b8788abfbbc2 // indirect
 	layeh.com/gopher-json v0.0.0-20190114024228-97fed8db8427 // indirect
-	oras.land/oras-go/v2 v2.6.0 // indirect
-	sigs.k8s.io/controller-runtime v0.24.0 // indirect
+	oras.land/oras-go/v2 v2.6.1 // indirect
+	sigs.k8s.io/controller-runtime v0.24.1 // indirect
 	sigs.k8s.io/json v0.0.0-20250730193827-2d320260d730 // indirect
 	sigs.k8s.io/randfill v1.0.0 // indirect
 )
