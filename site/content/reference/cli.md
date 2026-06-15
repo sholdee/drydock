@@ -126,6 +126,21 @@ Git refs, and Argo CD chart-only remote Helm sources. Path-based Git sources
 use the local `--path` tree when the source path exists there. Use
 `--repo-map URL=PATH` to force a source repository URL to a local checkout.
 
+Capability-gated charts can render optional resources only when a Kubernetes
+version or API version is available. drydock derives a default Kubernetes
+version from its embedded Helm libraries, so the default already
+tracks a real cluster version. Use `--kube-version` to override the per-app
+`kubeVersion` with a specific version; the global override wins. Use repeatable
+`--api-versions` to add API versions for capability-gated rendering, unioned
+(deduped and sorted) with each app's per-app `apiVersions` rather than replacing
+them. Values accept the `group/version` form (`monitoring.coreos.com/v1`) or the
+full `group/version/Kind` form (`monitoring.coreos.com/v1/ServiceMonitor`); many
+charts check the `group/version/Kind` form against `.Capabilities.APIVersions`,
+so pass that form when a gated resource still does not render. Both flags are
+common render flags, available on the render-backed commands (`build`, `test`,
+`diff`, and `get`, in their `app`/`apps` forms). See
+[Troubleshooting renders](/cookbook/troubleshooting-renders/) for examples.
+
 Application sources that explicitly name the `argocd-vault-plugin` plugin use
 native AVP compatibility by default. The same native path is used for
 discovered CMP aliases whose generate command safely normalizes to

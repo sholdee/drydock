@@ -325,8 +325,10 @@ append_value_flag common_args "${DRYDOCK_INPUT_MAX_DISCOVERY_DEPTH}" "--max-disc
 append_value_flag common_args "${DRYDOCK_INPUT_PLUGIN_POLICY_PATH}" "--plugin-policy-path"
 append_value_flag common_args "${DRYDOCK_INPUT_PLUGIN_POLICY_REF}" "--plugin-policy-ref"
 append_value_flag common_args "${DRYDOCK_INPUT_PLUGIN_POLICY_REPO}" "--plugin-policy-repo"
+append_value_flag common_args "${DRYDOCK_INPUT_KUBE_VERSION}" "--kube-version"
 append_lines common_args "${DRYDOCK_INPUT_DISCOVER_KUSTOMIZE}" "--discover-kustomize"
 append_lines common_args "${DRYDOCK_INPUT_REPO_MAP}" "--repo-map"
+append_lines common_args "${DRYDOCK_INPUT_API_VERSIONS}" "--api-versions"
 if [[ -n "${DRYDOCK_INPUT_CHANGED_ONLY}" ]]; then
   common_args+=("--changed-only=${DRYDOCK_INPUT_CHANGED_ONLY}")
 fi

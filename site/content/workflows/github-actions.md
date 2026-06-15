@@ -425,6 +425,8 @@ passes them as arguments without `eval`, but they still change drydock behavior.
 | `show-ignored-fields` | `false` | Show drydock default ignored diff fields. |
 | `discover-kustomize` | unset | Newline-delimited local Kustomize paths to render during Application discovery. |
 | `repo-map` | unset | Newline-delimited repository URL mappings in `URL=PATH` form. |
+| `kube-version` | unset | Kubernetes version for rendering capabilities. Overrides per-app `kubeVersion`. |
+| `api-versions` | unset | Newline-delimited additional Kubernetes API versions for capability-gated rendering, unioned with per-app `apiVersions`. Accepts `group/version` or `group/version/Kind` form. |
 | `parallelism` | unset | Maximum number of Applications to render concurrently. |
 | `max-discovery-depth` | unset | Maximum recursive rendered Application discovery depth. |
 | `enable-avp-compat` | `false` | Force argocd-vault-plugin placeholder redaction for native-rendered sources. |

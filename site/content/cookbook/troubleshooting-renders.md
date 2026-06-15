@@ -46,6 +46,34 @@ Run without plugin execution first, then use `plugin-policy doctor` to check
 policy readiness. Add trusted plugin policy flags only when the failing source
 requires exec or container plugin commands.
 
+## Force Cluster Capabilities
+
+```bash
+drydock test apps --path . --api-versions monitoring.coreos.com/v1/ServiceMonitor
+drydock build apps --path . --kube-version 1.31 --api-versions monitoring.coreos.com/v1
+```
+
+Some charts gate optional resources on cluster capabilities, such as rendering a
+`ServiceMonitor` only when `monitoring.coreos.com/v1` is available. drydock
+already derives a default Kubernetes version from its embedded Helm
+libraries, so the default tracks a real cluster version without a
+flag. Use these capability flags when a render must target a specific cluster's
+capabilities:
+
+- `--kube-version` overrides the per-app `kubeVersion` with a specific
+  Kubernetes version. The global override wins over any per-app value.
+- `--api-versions` adds Kubernetes API versions for capability-gated rendering.
+  The flag is repeatable, and the values are unioned (deduped and sorted) with
+  each app's per-app `apiVersions` rather than replacing them. Accept either the
+  `group/version` form (`monitoring.coreos.com/v1`) or the full
+  `group/version/Kind` form (`monitoring.coreos.com/v1/ServiceMonitor`). Many
+  charts check the full `group/version/Kind` form against
+  `.Capabilities.APIVersions`, so pass the `group/version/Kind` form when a
+  capability-gated resource still does not render.
+
+Both flags are common render flags, available on the render-backed commands
+(`build`, `test`, `diff`, and `get`, in their `app`/`apps` forms).
+
 ## Remove Diff Noise
 
 ```bash
