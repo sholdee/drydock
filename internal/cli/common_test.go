@@ -95,11 +95,11 @@ func TestRequestOptionsFromFlagsCarriesNoCRDScope(t *testing.T) {
 	if !opts.NoCRDScope {
 		t.Fatal("opts.NoCRDScope = false, want true")
 	}
-	if buildReq := opts.Build(); !buildReq.CRDScopeOptions.Disabled {
-		t.Fatal("opts.Build().CRDScopeOptions.Disabled = false, want true")
+	if buildReq := opts.Build(); !buildReq.Disabled {
+		t.Fatal("opts.Build() CRD scope Disabled = false, want true")
 	}
-	if diffReq := opts.Diff(); !diffReq.CRDScopeOptions.Disabled {
-		t.Fatal("opts.Diff().CRDScopeOptions.Disabled = false, want true")
+	if diffReq := opts.Diff(); !diffReq.Disabled {
+		t.Fatal("opts.Diff() CRD scope Disabled = false, want true")
 	}
 }
 
