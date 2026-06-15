@@ -1,0 +1,3 @@
+apiVersion: v2
+name: cross-ns-widget
+version: 0.1.0

@@ -68,6 +68,7 @@ APPLICATIONS=(
   parity-kustomize-labels
   parity-kustomize-generators
   parity-kustomize-helm-capabilities
+  parity-kustomize-helm-cross-namespace
   parity-ft-alpha
   parity-ft-beta
   parity-fn-gamma-one

@@ -14,6 +14,7 @@ import (
 	"github.com/sholdee/drydock/internal/diagnostic"
 	"github.com/sholdee/drydock/internal/manifest"
 	goyaml "go.yaml.in/yaml/v3"
+	"sigs.k8s.io/kustomize/api/konfig"
 	"sigs.k8s.io/kustomize/api/krusty"
 	"sigs.k8s.io/kustomize/api/types"
 	"sigs.k8s.io/kustomize/kyaml/filesys"
@@ -495,11 +496,24 @@ func writeGeneratedHelmManifests(path string, manifests []Manifest) error {
 		return err
 	}
 	var buffer bytes.Buffer
-	for _, manifest := range manifests {
-		if manifest.Object == nil {
+	for _, m := range manifests {
+		if m.Object == nil {
 			continue
 		}
-		data, err := goyaml.Marshal(manifest.Object.Object)
+		// Mark drydock-pre-rendered helm manifests as helm-generated so kustomize's
+		// NamespaceTransformer skips them — matching the native HelmChartInflationGenerator,
+		// which preserves resources' explicit namespaces (e.g. chart RBAC pinned to
+		// kube-system) instead of rewriting them to the kustomization namespace. kustomize
+		// strips this build annotation from final output (resource.BuildAnnotations), and
+		// ApplyDestinationNamespace still defaults namespace-less resources downstream.
+		obj := m.Object.DeepCopy()
+		annotations := obj.GetAnnotations()
+		if annotations == nil {
+			annotations = map[string]string{}
+		}
+		annotations[konfig.HelmGeneratedAnnotation] = "true"
+		obj.SetAnnotations(annotations)
+		data, err := goyaml.Marshal(obj.Object)
 		if err != nil {
 			return fmt.Errorf("encode generated helm manifest: %w", err)
 		}
