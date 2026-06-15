@@ -86,6 +86,23 @@ func TestEnablePluginsHelpDescribesTrustedCommandPolicy(t *testing.T) {
 	}
 }
 
+func TestRequestOptionsFromFlagsCarriesNoCRDScope(t *testing.T) {
+	flags := defaultCommonFlags()
+	flags.noCRDScope = true
+
+	opts := requestOptionsFromFlags(flags, nil)
+
+	if !opts.NoCRDScope {
+		t.Fatal("opts.NoCRDScope = false, want true")
+	}
+	if buildReq := opts.Build(); !buildReq.CRDScopeOptions.Disabled {
+		t.Fatal("opts.Build().CRDScopeOptions.Disabled = false, want true")
+	}
+	if diffReq := opts.Diff(); !diffReq.CRDScopeOptions.Disabled {
+		t.Fatal("opts.Diff().CRDScopeOptions.Disabled = false, want true")
+	}
+}
+
 func findCLICommand(t *testing.T, args ...string) *cobra.Command {
 	t.Helper()
 
