@@ -38,10 +38,11 @@ KUBE_CONTEXT="${KUBE_CONTEXT:-default}"
 ARGOCD_NS="${ARGOCD_NS:-argocd}"
 HOME_OPS_ROOT="${HOME_OPS_ROOT:-${HOME}/git/home-ops}"
 HOME_OPS_REPO_URL="${HOME_OPS_REPO_URL:-https://github.com/sholdee/home-ops}"
-# Render the apps/argocd kustomization to discover the k3s-apps ApplicationSet (git
-# directory generator over apps/*) and literal Applications, so drydock finds every
-# app in namespace "argocd" exactly as the live cluster does.
-DISCOVER_KUSTOMIZE="${DISCOVER_KUSTOMIZE:-apps/argocd}"
+# Default app discovery resolves apps as argocd/<name> WITHOUT --discover-kustomize because
+# home-ops PR #3229 added explicit metadata.namespace: argocd to every Application/
+# ApplicationSet/AppProject. This holds only when the rendered SYNCED_REV includes #3229
+# (the live cluster must be synced at/after #3229 / current master); otherwise apps
+# under-resolve and surface as drydock capture failures (not silent wrong results).
 # Cluster capabilities to match live Argo CD's capability-gated renders (ServiceMonitors,
 # etc.). DRYDOCK_KUBE_VERSION = cluster server version (e.g. 1.35.5); DRYDOCK_API_VERSIONS_FILE
 # = file with one group/version or group/version/Kind per line, from
@@ -217,10 +218,11 @@ for app in "${APPS[@]}"; do
     continue
   fi
   # drydock render of the same Application, at the synced revision, Secret-free.
+  # NOTE: --repo-map points the home-ops repoURL at the local detached worktree; mapping a
+  # repoURL to a local worktree bypasses the git/remote caches and degrades render-cache coverage.
   if ! "${DRYDOCK_BIN}" build app "argocd/${app}" \
         --path "${WT}" \
         --repo-map "${HOME_OPS_REPO_URL}=${WT}" \
-        --discover-kustomize "${DISCOVER_KUSTOMIZE}" \
         --skip-secrets \
         "${CAP_ARGS[@]}" \
         --git-cache-dir "${CACHE}/git" --chart-cache-dir "${CACHE}/charts" \
