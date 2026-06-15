@@ -44,6 +44,7 @@ type DiffRequest struct {
 	FilterOptions
 	ApplicationSetOptions
 	CapabilityOptions
+	CRDScopeOptions
 
 	changedPaths          []string
 	persistentRenderCache *persistentRenderCache
@@ -460,6 +461,7 @@ func (request DiffRequest) buildRequest(path string, forbiddenRoots []string) Bu
 		FilterOptions:          cloneFilterOptions(request.FilterOptions),
 		ApplicationSetOptions:  cloneApplicationSetOptions(request.ApplicationSetOptions),
 		CapabilityOptions:      request.CapabilityOptions,
+		CRDScopeOptions:        request.CRDScopeOptions,
 		persistentRenderCache:  request.persistentRenderCache,
 	}
 }

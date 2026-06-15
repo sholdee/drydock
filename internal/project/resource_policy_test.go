@@ -7,6 +7,7 @@ import (
 	argoappv1 "github.com/argoproj/argo-cd/v3/pkg/apis/application/v1alpha1"
 	"github.com/sholdee/drydock/internal/config"
 	"github.com/sholdee/drydock/internal/diagnostic"
+	"github.com/sholdee/drydock/internal/manifest"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 )
@@ -388,6 +389,86 @@ func TestValidateRenderedResourcePolicyDefersUnknownCRNormalizedFromDestinationN
 	assertDiagnostic(t, diags, "unknown scope offline")
 	assertResourcePolicyScopeDeferred(t, diags)
 	assertNoResourcePolicyDenied(t, diags)
+}
+
+func TestValidateRenderedResourcePolicyResolvesClusterScopeFromRegistry(t *testing.T) {
+	// Widget is unknown to the built-in lists; the CRD declares it Cluster-scoped.
+	// With the registry, scope should be decided as cluster-scoped — no deferral,
+	// no denial (cluster resource policy allows it under the default project).
+	app := resourcePolicyApplication("demo", argoappv1.DefaultAppProjectName)
+	registry := manifest.BuildCRDScopeRegistry([]*unstructured.Unstructured{
+		crdObject("example.com", "Widget", "Cluster"),
+	})
+
+	diags := ValidateRenderedResourcePolicyResourcesWithRegistry(app, []RenderedResource{{
+		Object:                       renderedObject("example.com/v1", "Widget", "", "custom"),
+		NamespaceBeforeNormalization: "",
+	}}, nil, config.DefaultSettings(), registry)
+
+	assertNoDiagnostic(t, diags, "unknown scope offline")
+	assertNoResourcePolicyDenied(t, diags)
+	assertNoResourcePolicyDiagnostics(t, diags)
+}
+
+func TestValidateRenderedResourcePolicyResolvesNamespacedScopeFromRegistry(t *testing.T) {
+	// Widget is unknown to the built-in lists; the CRD declares it Namespaced.
+	// With the registry, scope should be decided as namespaced — no deferral,
+	// but the project's namespace whitelist excludes it, so it should be denied.
+	app := resourcePolicyApplication("demo", "platform")
+	project := resourcePolicyProject("platform")
+	project.Spec.NamespaceResourceWhitelist = []metav1.GroupKind{{Group: "", Kind: "ConfigMap"}}
+	registry := manifest.BuildCRDScopeRegistry([]*unstructured.Unstructured{
+		crdObject("example.com", "Widget", "Namespaced"),
+	})
+
+	diags := ValidateRenderedResourcePolicyResourcesWithRegistry(app, []RenderedResource{{
+		Object:                       renderedObject("example.com/v1", "Widget", "workloads", "custom"),
+		NamespaceBeforeNormalization: "workloads",
+	}}, []argoappv1.AppProject{project}, config.DefaultSettings(), registry)
+
+	assertNoDiagnostic(t, diags, "unknown scope offline")
+	assertResourcePolicyDenied(t, diags, "example.com/Widget workloads/custom")
+}
+
+func TestValidateRenderedResourcePolicyRegistryBeatsNamespaceBeforeNormalizationHeuristic(t *testing.T) {
+	// Regression: a cluster-scoped CR that carried a namespace in source sets
+	// NamespaceBeforeNormalization to a non-empty value. Under the old ordering
+	// the heuristic branch fired first and classified the resource namespaced,
+	// overriding the authoritative registry — which would cause a denial below
+	// because the project's NamespaceResourceWhitelist excludes Widget.
+	// With the fix, the registry wins and classifies it cluster-scoped, which
+	// the project's ClusterResourceWhitelist allows.
+	app := resourcePolicyApplication("demo", "platform")
+	project := resourcePolicyProject("platform")
+	// Namespace whitelist excludes Widget — if wrongly classified namespaced, denied.
+	project.Spec.NamespaceResourceWhitelist = []metav1.GroupKind{{Group: "", Kind: "ConfigMap"}}
+	// Cluster whitelist includes Widget — if correctly classified cluster-scoped, allowed.
+	project.Spec.ClusterResourceWhitelist = []argoappv1.ClusterResourceRestrictionItem{{Group: "example.com", Kind: "Widget"}}
+	registry := manifest.BuildCRDScopeRegistry([]*unstructured.Unstructured{
+		crdObject("example.com", "Widget", "Cluster"),
+	})
+
+	diags := ValidateRenderedResourcePolicyResourcesWithRegistry(app, []RenderedResource{{
+		Object:                       renderedObject("example.com/v1", "Widget", "", "my-widget"),
+		NamespaceBeforeNormalization: "workloads", // non-empty: simulates a source-set namespace stripped by normalization
+	}}, []argoappv1.AppProject{project}, config.DefaultSettings(), registry)
+
+	// Registry says Cluster-scoped → allowed by ClusterResourceWhitelist.
+	// Old ordering (heuristic first) would classify it namespaced → denied by NamespaceResourceWhitelist.
+	assertNoDiagnostic(t, diags, "unknown scope offline")
+	assertNoResourcePolicyDenied(t, diags)
+	assertNoResourcePolicyDiagnostics(t, diags)
+}
+
+func crdObject(group, kind, scope string) *unstructured.Unstructured {
+	obj := &unstructured.Unstructured{}
+	obj.SetAPIVersion("apiextensions.k8s.io/v1")
+	obj.SetKind("CustomResourceDefinition")
+	obj.SetName(strings.ToLower(kind) + "s." + group)
+	_ = unstructured.SetNestedField(obj.Object, group, "spec", "group")
+	_ = unstructured.SetNestedField(obj.Object, kind, "spec", "names", "kind")
+	_ = unstructured.SetNestedField(obj.Object, scope, "spec", "scope")
+	return obj
 }
 
 func resourcePolicyApplication(name, project string) argoappv1.Application {

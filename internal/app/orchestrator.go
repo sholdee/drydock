@@ -49,6 +49,7 @@ type BuildRequest struct {
 	PluginRenderer render.PluginRenderer
 	Applications   []argoappv1.Application
 	ApplicationSetOptions
+	CRDScopeOptions
 	StatusCallback          ApplicationStatusCallback
 	renderCache             *applicationRenderCache
 	renderSettingsSignature string
@@ -549,7 +550,8 @@ func renderOneApplication(ctx context.Context, application argoappv1.Application
 		}
 	}
 
-	resourcePolicyDiags := project.ValidateRenderedResourcePolicyResources(application, policyResources, request.projects, request.settings)
+	appScopeRegistry := manifest.BuildCRDScopeRegistry(manifestObjectPtrs(rendered.Manifests))
+	resourcePolicyDiags := project.ValidateRenderedResourcePolicyResourcesWithRegistry(application, policyResources, request.projects, request.settings, appScopeRegistry)
 	resourcePolicyDiags = request.request.normalizeDiagnostics(resourcePolicyDiags, false)
 	out.diagnostics = append(out.diagnostics, resourcePolicyDiags...)
 	if err := diagnosticFailure(resourcePolicyDiags, request.strict); err != nil {

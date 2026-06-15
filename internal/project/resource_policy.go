@@ -51,6 +51,7 @@ type renderedResourcePolicyValidator struct {
 	appDestinationChecked         bool
 	appDestinationPermitted       bool
 	appDestinationPermittedErr    error
+	crdScope                      manifest.CRDScopeRegistry
 }
 
 // ValidateRenderedResourcePolicy validates rendered Kubernetes objects for one Application against its effective AppProject resource policy.
@@ -71,6 +72,13 @@ func ValidateRenderedResourcePolicy(app argoappv1.Application, objects []*unstru
 
 // ValidateRenderedResourcePolicyResources validates rendered Kubernetes objects with pre-normalization metadata.
 func ValidateRenderedResourcePolicyResources(app argoappv1.Application, resources []RenderedResource, projects []argoappv1.AppProject, settings config.ArgoSettings) []diagnostic.Diagnostic {
+	return ValidateRenderedResourcePolicyResourcesWithRegistry(app, resources, projects, settings, nil)
+}
+
+// ValidateRenderedResourcePolicyResourcesWithRegistry validates rendered Kubernetes objects with pre-normalization
+// metadata, consulting the provided CRDScopeRegistry to resolve CR scope before falling back to deferral.
+// A nil registry is safe and preserves the existing deferral behavior.
+func ValidateRenderedResourcePolicyResourcesWithRegistry(app argoappv1.Application, resources []RenderedResource, projects []argoappv1.AppProject, settings config.ArgoSettings, registry manifest.CRDScopeRegistry) []diagnostic.Diagnostic {
 	if len(resources) == 0 {
 		return nil
 	}
@@ -79,6 +87,7 @@ func ValidateRenderedResourcePolicyResources(app argoappv1.Application, resource
 	if len(diags) > 0 {
 		return diags
 	}
+	validator.crdScope = registry
 	return validator.validate(resources)
 }
 
@@ -131,7 +140,7 @@ func (v *renderedResourcePolicyValidator) validateResource(resource RenderedReso
 
 	groupKind := obj.GroupVersionKind().GroupKind()
 	name := obj.GetName()
-	scope := renderedResourcePolicyScope(v.app, resource)
+	scope := v.renderedResourcePolicyScope(resource)
 	if scope.deferred {
 		return v.validateUnknownScopeResource(obj)
 	}
@@ -286,14 +295,20 @@ func renderedResourcePolicyProject(app argoappv1.Application, projects []argoapp
 	return effectiveProject(proj, settings), true
 }
 
-func renderedResourcePolicyScope(app argoappv1.Application, resource RenderedResource) renderedResourceScope {
+func (v *renderedResourcePolicyValidator) renderedResourcePolicyScope(resource RenderedResource) renderedResourceScope {
 	obj := resource.Object
 	gvk := obj.GroupVersionKind()
 	if manifest.IsBuiltInClusterScoped(gvk) {
 		return renderedResourceScope{}
 	}
 	if manifest.IsKnownNamespacedBuiltIn(gvk) {
-		return renderedResourceScope{namespaced: true, namespace: renderedResourceNamespace(app, obj)}
+		return renderedResourceScope{namespaced: true, namespace: renderedResourceNamespace(v.app, obj)}
+	}
+	if scope, ok := v.crdScope.Scope(gvk); ok {
+		if scope == manifest.CRDScopeCluster {
+			return renderedResourceScope{}
+		}
+		return renderedResourceScope{namespaced: true, namespace: renderedResourceNamespace(v.app, obj)}
 	}
 	if strings.TrimSpace(resource.NamespaceBeforeNormalization) != "" {
 		namespace := strings.TrimSpace(obj.GetNamespace())

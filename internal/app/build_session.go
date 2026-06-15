@@ -118,6 +118,10 @@ func (session *buildSession) Build(ctx context.Context) (BuildResult, error) {
 	result.Statuses = append(result.Statuses, rendered.statuses...)
 	result.CacheEvents = append(result.CacheEvents, rendered.cacheEvents...)
 	result.PluginExecutions = append(result.PluginExecutions, rendered.pluginExecutions...)
+	if !session.request.Disabled {
+		registry := manifest.BuildCRDScopeRegistry(manifestObjectPtrs(result.Manifests))
+		result.Diagnostics = append(result.Diagnostics, normalizeCRDScope(result.Manifests, registry)...)
+	}
 	result.Diagnostics = session.request.filterProjectDiagnostics(dedupeDiagnostics(result.Diagnostics))
 	if renderErr != nil {
 		return result, renderErr

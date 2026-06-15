@@ -70,6 +70,7 @@ type Options struct {
 	EngineFingerprint              rendercache.EngineFingerprint
 	KubeVersion                    string
 	APIVersions                    []string
+	NoCRDScope                     bool
 }
 
 func (options Options) Build() app.BuildRequest {
@@ -86,6 +87,7 @@ func (options Options) Build() app.BuildRequest {
 		FilterOptions:          options.filterOptions(),
 		ApplicationSetOptions:  options.applicationSetOptions(),
 		CapabilityOptions:      options.capabilityOptions(),
+		CRDScopeOptions:        app.CRDScopeOptions{Disabled: options.NoCRDScope},
 	}
 }
 
@@ -117,6 +119,7 @@ func (options Options) Diff() app.DiffRequest {
 		FilterOptions:           options.filterOptions(),
 		ApplicationSetOptions:   options.applicationSetOptions(),
 		CapabilityOptions:       options.capabilityOptions(),
+		CRDScopeOptions:         app.CRDScopeOptions{Disabled: options.NoCRDScope},
 	}
 }
 
