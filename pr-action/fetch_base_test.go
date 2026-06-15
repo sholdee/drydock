@@ -224,17 +224,7 @@ func TestFetchBaseResolvesMergeBaseForDivergedShallowClone(t *testing.T) {
 		t.Fatalf("fetch-base.sh failed: %v\n%s", err, out)
 	}
 
-	data, err := os.ReadFile(outputPath)
-	if err != nil {
-		t.Fatalf("read github output: %v", err)
-	}
-	compareRef := ""
-	for line := range strings.SplitSeq(strings.TrimSpace(string(data)), "\n") {
-		if key, value, found := strings.Cut(line, "="); found && key == "compare-ref" {
-			compareRef = value
-		}
-	}
-	if compareRef != wantMergeBase {
+	if compareRef := compareRefFromOutput(t, outputPath); compareRef != wantMergeBase {
 		t.Fatalf("compare-ref = %q, want the true merge base %q", compareRef, wantMergeBase)
 	}
 }
@@ -242,6 +232,22 @@ func TestFetchBaseResolvesMergeBaseForDivergedShallowClone(t *testing.T) {
 func fileExists(path string) bool {
 	_, err := os.Stat(path)
 	return err == nil
+}
+
+// compareRefFromOutput returns the compare-ref value fetch-base.sh wrote to a
+// GITHUB_OUTPUT file, or "" if absent.
+func compareRefFromOutput(t *testing.T, path string) string {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read github output: %v", err)
+	}
+	for line := range strings.SplitSeq(strings.TrimSpace(string(data)), "\n") {
+		if key, value, found := strings.Cut(line, "="); found && key == "compare-ref" {
+			return value
+		}
+	}
+	return ""
 }
 
 func TestFetchBaseFallsBackToBaseTipWithoutMergeBase(t *testing.T) {
@@ -350,4 +356,118 @@ func runFetchBaseScenario(t *testing.T, extraEnv map[string]string) fetchBaseRes
 		}
 	}
 	return result
+}
+
+// TestFetchBaseForceUpdatesStaleRemoteTrackingRef reproduces the persistent
+// self-hosted runner failure. A prior run leaves refs/remotes/origin/<base>
+// pinned to an old, shallow tip; the next run's depth-1 fetch downloads only
+// the new tip, so git cannot prove the update is a fast-forward. A refspec
+// without a leading '+' is then rejected ("! [rejected] ... non-fast-forward")
+// and the action exits 1. The remote-tracking ref must be force-updated, just
+// as git's default clone refspec (+refs/heads/*:refs/remotes/origin/*) does.
+//
+// Hosted runners never hit this because their workspace is fresh each run, so
+// the ref does not pre-exist; only the persistent runner exposes it. The fake
+// git cannot model it — the defect lives in real fetch fast-forward semantics,
+// not in the command arguments.
+func TestFetchBaseForceUpdatesStaleRemoteTrackingRef(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell action tests require bash")
+	}
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+
+	root := t.TempDir()
+	git := func(dir string, args ...string) string {
+		t.Helper()
+		full := append([]string{
+			"-c", "user.email=t@example.invalid",
+			"-c", "user.name=drydock test",
+			"-c", "init.defaultBranch=main",
+			"-c", "protocol.file.allow=always",
+		}, args...)
+		cmd := exec.Command("git", full...)
+		cmd.Dir = dir
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+		return strings.TrimSpace(string(out))
+	}
+
+	upstream := filepath.Join(root, "up.git")
+	work := filepath.Join(root, "work")
+	git(root, "init", "--bare", upstream)
+	git(root, "init", work)
+
+	commit := func(msg, file, content string) {
+		t.Helper()
+		if err := os.WriteFile(filepath.Join(work, file), []byte(content+"\n"), 0o600); err != nil {
+			t.Fatalf("write %s: %v", file, err)
+		}
+		git(work, "add", file)
+		git(work, "commit", "-m", msg)
+	}
+
+	// Base history, then a PR branch off the base tip.
+	for _, c := range []string{"c1", "c2", "c3"} {
+		commit(c, "f", c)
+	}
+	git(work, "branch", "feat")
+	git(work, "checkout", "feat")
+	commit("feat1", "g", "feat1")
+	git(work, "checkout", "main")
+	git(work, "remote", "add", "origin", upstream)
+	git(work, "push", "origin", "main", "feat")
+
+	staleMainSHA := git(work, "rev-parse", "main")
+
+	// Persistent runner workspace: a depth-1 checkout of the PR head plus a
+	// stale depth-1 remote-tracking ref for the base branch, exactly as a
+	// prior run on the same runner would have left it.
+	workspace := filepath.Join(root, "workspace")
+	git(root, "clone", "--depth=1", "--branch", "feat", "file://"+upstream, workspace)
+	git(workspace, "fetch", "--no-tags", "--depth=1", "origin", "main:refs/remotes/origin/main")
+	if got := git(workspace, "rev-parse", "refs/remotes/origin/main"); got != staleMainSHA {
+		t.Fatalf("setup: origin/main = %q, want stale tip %q", got, staleMainSHA)
+	}
+
+	// The base branch advances after the workspace captured the stale ref.
+	for _, m := range []string{"m4", "m5", "m6"} {
+		commit(m, "f", m)
+	}
+	git(work, "push", "origin", "main")
+	newMainSHA := git(work, "rev-parse", "main")
+	wantMergeBase := git(work, "merge-base", "main", "feat")
+
+	scriptPath, err := filepath.Abs("fetch-base.sh")
+	if err != nil {
+		t.Fatalf("resolve script path: %v", err)
+	}
+	outputPath := filepath.Join(root, "github-output")
+
+	cmd := exec.Command("bash", scriptPath)
+	cmd.Dir = workspace
+	cmd.Env = append(os.Environ(),
+		"DRYDOCK_PR_BASE_REF=main",
+		"GITHUB_OUTPUT="+outputPath,
+		"GITHUB_SERVER_URL=https://github.com",
+		"GIT_CONFIG_COUNT=1",
+		"GIT_CONFIG_KEY_0=protocol.file.allow",
+		"GIT_CONFIG_VALUE_0=always",
+	)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("fetch-base.sh failed against a stale shallow remote-tracking ref: %v\n%s", err, out)
+	}
+
+	// The stale remote-tracking ref must have been force-updated to the new tip.
+	if got := git(workspace, "rev-parse", "refs/remotes/origin/main"); got != newMainSHA {
+		t.Fatalf("origin/main = %q, want force-update to the new base tip %q", got, newMainSHA)
+	}
+
+	// And the compare ref should still resolve to the true merge base.
+	if compareRef := compareRefFromOutput(t, outputPath); compareRef != wantMergeBase {
+		t.Fatalf("compare-ref = %q, want the true merge base %q", compareRef, wantMergeBase)
+	}
 }

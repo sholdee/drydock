@@ -33,7 +33,12 @@ if [[ -n "${DRYDOCK_GITHUB_TOKEN:-}" ]]; then
   fi
 fi
 
-base_refspec="${base_ref}:refs/remotes/origin/${base_ref}"
+# Force-update (leading '+') the remote-tracking ref, mirroring git's default
+# clone refspec (+refs/heads/*:refs/remotes/origin/*). On a persistent runner a
+# prior run can leave refs/remotes/origin/<base> at a stale, shallow tip; a
+# depth-1 fetch then cannot prove a fast-forward and a non-forced refspec is
+# rejected as non-fast-forward. A remote-tracking ref is always safe to force.
+base_refspec="+${base_ref}:refs/remotes/origin/${base_ref}"
 
 # Bring the base branch tip into the local repository.
 "${git_cmd[@]}" fetch --no-tags --depth=1 origin "${base_refspec}"
