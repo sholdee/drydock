@@ -941,6 +941,8 @@ type persistentRenderKeyInput struct {
 	TrackingOptions         TrackingOptions               `json:"trackingOptions"`
 	Sources                 []SourceIdentity              `json:"sources"`
 	Engine                  rendercache.EngineFingerprint `json:"engine"`
+	KubeVersion             string                        `json:"kubeVersion,omitempty"`
+	APIVersions             []string                      `json:"apiVersions,omitempty"`
 }
 
 func persistentRenderCacheKey(input persistentRenderKeyInput) (string, error) {
@@ -983,6 +985,8 @@ type persistentRenderOptions struct {
 	applicationInputPaths      []string
 	applicationInputsKnown     bool
 	applicationInputsDuplicate bool
+	kubeVersion                string
+	apiVersions                []string
 }
 
 // persistentRenderState carries one application render's persistent-tier
@@ -1064,6 +1068,8 @@ func preparePersistentRender(ctx context.Context, application argoappv1.Applicat
 		TrackingOptions:         normalizeTrackingOptions(options.TrackingOptions),
 		Sources:                 identities,
 		Engine:                  handle.fingerprint,
+		KubeVersion:             options.persistent.kubeVersion,
+		APIVersions:             options.persistent.apiVersions,
 	})
 	if err != nil {
 		state.event(cacheevent.ActionError, "", err.Error())
