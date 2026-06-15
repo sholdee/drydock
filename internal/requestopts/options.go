@@ -68,6 +68,8 @@ type Options struct {
 	RenderCacheMaxBytes            int64
 	RefreshRenders                 bool
 	EngineFingerprint              rendercache.EngineFingerprint
+	KubeVersion                    string
+	APIVersions                    []string
 }
 
 func (options Options) Build() app.BuildRequest {
@@ -83,6 +85,7 @@ func (options Options) Build() app.BuildRequest {
 		ExecutionOptions:       options.executionOptions(),
 		FilterOptions:          options.filterOptions(),
 		ApplicationSetOptions:  options.applicationSetOptions(),
+		CapabilityOptions:      options.capabilityOptions(),
 	}
 }
 
@@ -113,6 +116,7 @@ func (options Options) Diff() app.DiffRequest {
 		ExecutionOptions:        options.executionOptions(),
 		FilterOptions:           options.filterOptions(),
 		ApplicationSetOptions:   options.applicationSetOptions(),
+		CapabilityOptions:       options.capabilityOptions(),
 	}
 }
 
@@ -178,6 +182,10 @@ func (options Options) filterOptions() app.FilterOptions {
 		SkipCRDs:    options.SkipCRDs,
 		SkipSecrets: options.SkipSecrets,
 	}
+}
+
+func (options Options) capabilityOptions() app.CapabilityOptions {
+	return app.CapabilityOptions{KubeVersion: options.KubeVersion, APIVersions: append([]string(nil), options.APIVersions...)}
 }
 
 func (options Options) applicationSetOptions() app.ApplicationSetOptions {

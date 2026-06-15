@@ -79,6 +79,8 @@ type commonFlags struct {
 	renderCacheMaxSize       quantityFlag
 	refreshRenders           bool
 	engineFingerprint        rendercache.EngineFingerprint
+	kubeVersion              string
+	apiVersions              []string
 }
 
 func defaultCommonFlags() commonFlags {
@@ -170,6 +172,8 @@ func bindFilterFlags(cmd *cobra.Command, flags *commonFlags) {
 	cmd.Flags().StringArrayVar(&flags.skipKinds, "skip-kind", flags.skipKinds, "rendered resource kind to omit from output and diffs")
 	cmd.Flags().BoolVar(&flags.skipCRDs, "skip-crds", flags.skipCRDs, "omit CustomResourceDefinition resources from output and diffs")
 	cmd.Flags().BoolVar(&flags.skipSecrets, "skip-secrets", flags.skipSecrets, "omit Secret resources from output and diffs")
+	cmd.Flags().StringVar(&flags.kubeVersion, "kube-version", flags.kubeVersion, "Kubernetes version for rendering capabilities (overrides per-app kubeVersion)")
+	cmd.Flags().StringArrayVar(&flags.apiVersions, "api-versions", flags.apiVersions, "additional Kubernetes API versions for capability-gated rendering, unioned with per-app apiVersions (e.g. monitoring.coreos.com/v1)")
 }
 
 func bindDiffPathFlag(cmd *cobra.Command, flags *commonFlags) {
@@ -356,6 +360,8 @@ func requestOptionsFromFlags(flags commonFlags, repoMaps []source.RepoMap) reque
 		RenderCacheMaxBytes:            flags.renderCacheMaxSize.bytes,
 		RefreshRenders:                 flags.refreshRenders,
 		EngineFingerprint:              flags.engineFingerprint,
+		KubeVersion:                    flags.kubeVersion,
+		APIVersions:                    append([]string(nil), flags.apiVersions...),
 	}
 }
 

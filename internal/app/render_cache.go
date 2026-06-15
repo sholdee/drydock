@@ -116,8 +116,9 @@ func renderApplicationCached(ctx renderContext, application argoappv1.Applicatio
 	provider := ctx.provider
 	provider.acquisitions = cacheevent.NewAcquisitionCollector()
 	options := ApplicationRenderOptions{
-		PluginOptions:   ctx.request.PluginOptions,
-		TrackingOptions: ctx.trackingOptions,
+		PluginOptions:     ctx.request.PluginOptions,
+		TrackingOptions:   ctx.trackingOptions,
+		CapabilityOptions: ctx.request.CapabilityOptions,
 	}
 	if key != "" {
 		options.persistent = persistentRenderOptions{
@@ -127,6 +128,8 @@ func renderApplicationCached(ctx renderContext, application argoappv1.Applicatio
 			applicationInputPaths:      append([]string(nil), ctx.applicationInputPaths...),
 			applicationInputsKnown:     ctx.applicationInputsKnown,
 			applicationInputsDuplicate: ctx.applicationInputsDuplicate,
+			kubeVersion:                ctx.request.KubeVersion,
+			apiVersions:                dedupeSortedStrings(ctx.request.APIVersions),
 		}
 	}
 	result, err := RenderApplicationWithOptions(ctx.context, application, provider, options)
@@ -197,6 +200,8 @@ func applicationRenderCacheKey(ctx renderContext, application argoappv1.Applicat
 		PluginPolicyFingerprint string                      `json:"pluginPolicyFingerprint,omitempty"`
 		HasInjectedPluginRender bool                        `json:"hasInjectedPluginRender"`
 		TrackingOptions         TrackingOptions             `json:"trackingOptions,omitempty"`
+		KubeVersion             string                      `json:"kubeVersion,omitempty"`
+		APIVersions             []string                    `json:"apiVersions,omitempty"`
 	}{
 		Root:                    ctx.provider.repoRoot,
 		Application:             newApplicationRenderCacheInput(application),
@@ -215,6 +220,8 @@ func applicationRenderCacheKey(ctx renderContext, application argoappv1.Applicat
 		PluginPolicyFingerprint: ctx.request.pluginPolicyFingerprint,
 		HasInjectedPluginRender: ctx.request.PluginRenderer != nil,
 		TrackingOptions:         normalizeTrackingOptions(ctx.trackingOptions),
+		KubeVersion:             ctx.request.KubeVersion,
+		APIVersions:             dedupeSortedStrings(ctx.request.APIVersions),
 	}
 	data, err := json.Marshal(input)
 	if err != nil {

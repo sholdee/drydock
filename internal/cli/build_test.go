@@ -438,6 +438,97 @@ func (acquirer *recordingCLIChartAcquirer) Acquire(_ context.Context, request ch
 	return chart.Result{ChartDir: acquirer.chartDir, Repository: request.Repository, Name: request.Name, Version: request.Version, Kind: request.Kind}, nil
 }
 
+func TestBuildAppsAPIVersionsFlagGatesCapabilityResources(t *testing.T) {
+	root := t.TempDir()
+
+	// Application pointing at a local Helm chart at manifests/cap-demo in the same repo root.
+	writeCLITestFile(t, filepath.Join(root, "apps", "cap-demo.yaml"), `apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: cap-demo
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/example/repo
+    path: manifests/cap-demo
+    targetRevision: main
+    helm:
+      releaseName: cap-demo
+  destination:
+    name: in-cluster
+    namespace: default
+`)
+
+	// Minimal Helm chart whose template emits a ServiceMonitor only when
+	// the monitoring.coreos.com/v1 API version is available.
+	chartDir := filepath.Join(root, "manifests", "cap-demo")
+	writeCLITestFile(t, filepath.Join(chartDir, "Chart.yaml"), `apiVersion: v2
+name: cap-demo
+version: 0.1.0
+`)
+	writeCLITestFile(t, filepath.Join(chartDir, "templates", "always.yaml"), `apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: always-present
+data:
+  value: present
+`)
+	writeCLITestFile(t, filepath.Join(chartDir, "templates", "gated.yaml"), `{{- if .Capabilities.APIVersions.Has "monitoring.coreos.com/v1" }}
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: gated-monitor
+spec:
+  selector: {}
+  endpoints: []
+{{- end }}
+`)
+
+	t.Run("with api-versions flag resource appears", func(t *testing.T) {
+		cmd := NewRootCommand(VersionInfo{})
+		cmd.SetArgs([]string{
+			"build", "apps",
+			"--path", root,
+			"--api-versions", "monitoring.coreos.com/v1",
+		})
+		var stdout, stderr bytes.Buffer
+		cmd.SetOut(&stdout)
+		cmd.SetErr(&stderr)
+
+		if err := cmd.Execute(); err != nil {
+			t.Fatalf("Execute() error = %v\nstdout:\n%s\nstderr:\n%s", err, stdout.String(), stderr.String())
+		}
+		if !strings.Contains(stdout.String(), "kind: ServiceMonitor") {
+			t.Fatalf("stdout missing gated ServiceMonitor with --api-versions set:\n%s", stdout.String())
+		}
+		if !strings.Contains(stdout.String(), "kind: ConfigMap") {
+			t.Fatalf("stdout missing always-present ConfigMap:\n%s", stdout.String())
+		}
+	})
+
+	t.Run("without api-versions flag resource is absent", func(t *testing.T) {
+		cmd := NewRootCommand(VersionInfo{})
+		cmd.SetArgs([]string{
+			"build", "apps",
+			"--path", root,
+		})
+		var stdout, stderr bytes.Buffer
+		cmd.SetOut(&stdout)
+		cmd.SetErr(&stderr)
+
+		if err := cmd.Execute(); err != nil {
+			t.Fatalf("Execute() error = %v\nstdout:\n%s\nstderr:\n%s", err, stdout.String(), stderr.String())
+		}
+		if strings.Contains(stdout.String(), "kind: ServiceMonitor") {
+			t.Fatalf("stdout included gated ServiceMonitor without --api-versions:\n%s", stdout.String())
+		}
+		if !strings.Contains(stdout.String(), "kind: ConfigMap") {
+			t.Fatalf("stdout missing always-present ConfigMap:\n%s", stdout.String())
+		}
+	})
+}
+
 func writeCLIFile(path, body string) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err

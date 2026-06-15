@@ -111,6 +111,12 @@ inputs:
   repo-map:
     description: Newline-delimited repository URL mappings in URL=PATH form.
     required: false
+  kube-version:
+    description: Kubernetes version for rendering capabilities. Overrides per-app kubeVersion.
+    required: false
+  api-versions:
+    description: Newline-delimited additional Kubernetes API versions for capability-gated rendering, unioned with per-app apiVersions. Accepts group/version or group/version/Kind form.
+    required: false
   parallelism:
     description: Maximum number of Applications to render concurrently.
     required: false
@@ -412,6 +418,7 @@ runs:
         DRYDOCK_DIFF_ARTIFACT_NAME: ${{ steps.prepare.outputs.diff-artifact-name }}
         DRYDOCK_DIFF_HTML_ARTIFACT_NAME: ${{ steps.prepare.outputs.diff-html-artifact-name }}
         DRYDOCK_IMAGE_ARTIFACT_NAME: ${{ steps.prepare.outputs.image-artifact-name }}
+        DRYDOCK_INPUT_API_VERSIONS: ${{ inputs.api-versions }}
         DRYDOCK_INPUT_CHANGED_ONLY: ${{ inputs.changed-only }}
         DRYDOCK_INPUT_CHANGED_ONLY_INCLUDE: ${{ inputs.changed-only-include }}
         DRYDOCK_INPUT_CHANGED_ONLY_IGNORE: ${{ inputs.changed-only-ignore }}
@@ -429,6 +436,7 @@ runs:
         DRYDOCK_INPUT_FAIL_ON_IMAGE_DIFF: ${{ inputs.fail-on-image-diff }}
         DRYDOCK_INPUT_FAIL_ON_RENDER_ERROR: ${{ inputs.fail-on-render-error }}
         DRYDOCK_INPUT_HEAD_REF: ${{ inputs.head-ref }}
+        DRYDOCK_INPUT_KUBE_VERSION: ${{ inputs.kube-version }}
         DRYDOCK_INPUT_MAX_DISCOVERY_DEPTH: ${{ inputs.max-discovery-depth }}
         DRYDOCK_INPUT_OFFLINE: ${{ inputs.offline }}
         DRYDOCK_INPUT_PARALLELISM: ${{ inputs.parallelism }}

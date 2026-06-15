@@ -45,6 +45,7 @@ type BuildRequest struct {
 	PluginOptions
 	ExecutionOptions
 	FilterOptions
+	CapabilityOptions
 	PluginRenderer render.PluginRenderer
 	Applications   []argoappv1.Application
 	ApplicationSetOptions

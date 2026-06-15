@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"maps"
+	"slices"
+	"sort"
 	"strings"
 
 	argoappv1 "github.com/argoproj/argo-cd/v3/pkg/apis/application/v1alpha1"
@@ -59,6 +61,7 @@ func RenderApplicationWithOptions(ctx context.Context, application argoappv1.App
 
 	pluginOpts := options.PluginOptions
 	trackingOpts := normalizeTrackingOptions(options.TrackingOptions)
+	capabilityOpts := options.CapabilityOptions
 	byID := map[manifest.Identity]int{}
 	var result RenderResult
 	for i, sourcePlan := range plan.Sources {
@@ -75,7 +78,7 @@ func RenderApplicationWithOptions(ctx context.Context, application argoappv1.App
 			persist.skip(renderCacheReasonIneligibleSource)
 		}
 
-		if err := renderSourcePlan(ctx, application, provider, plan, sourcePlan, pluginOpts, trackingOpts, byID, &result); err != nil {
+		if err := renderSourcePlan(ctx, application, provider, plan, sourcePlan, pluginOpts, trackingOpts, capabilityOpts, byID, &result); err != nil {
 			return result, err
 		}
 	}
@@ -83,8 +86,8 @@ func RenderApplicationWithOptions(ctx context.Context, application argoappv1.App
 	return result, nil
 }
 
-func renderSourcePlan(ctx context.Context, application argoappv1.Application, provider render.Provider, plan PlanResult, sourcePlan SourcePlan, pluginOpts PluginOptions, trackingOpts TrackingOptions, byID map[manifest.Identity]int, result *RenderResult) error {
-	opts, err := renderOptions(application, sourcePlan.Source)
+func renderSourcePlan(ctx context.Context, application argoappv1.Application, provider render.Provider, plan PlanResult, sourcePlan SourcePlan, pluginOpts PluginOptions, trackingOpts TrackingOptions, capabilityOpts CapabilityOptions, byID map[manifest.Identity]int, result *RenderResult) error {
+	opts, err := renderOptions(application, sourcePlan.Source, capabilityOpts)
 	if err != nil {
 		return fmt.Errorf("%s: %w", renderSourceContext(application, sourcePlan), err)
 	}
@@ -297,7 +300,7 @@ func recordNamespaceBeforeNormalization(rendered *render.Manifest) {
 	rendered.NamespaceBeforeNormalization = strings.TrimSpace(rendered.Object.GetNamespace())
 }
 
-func renderOptions(application argoappv1.Application, source argoappv1.ApplicationSource) (render.RenderOptions, error) {
+func renderOptions(application argoappv1.Application, source argoappv1.ApplicationSource, capabilities CapabilityOptions) (render.RenderOptions, error) {
 	opts := render.RenderOptions{
 		AppName:      application.Name,
 		AppNamespace: application.Namespace,
@@ -335,7 +338,7 @@ func renderOptions(application argoappv1.Application, source argoappv1.Applicati
 		}
 	}
 	if source.Helm == nil {
-		return opts, nil
+		return applyCapabilityOptions(opts, capabilities)
 	}
 
 	opts.ReleaseName = source.Helm.ReleaseName
@@ -362,7 +365,30 @@ func renderOptions(application argoappv1.Application, source argoappv1.Applicati
 		return render.RenderOptions{}, err
 	}
 	opts.ValuesObject = valuesObject
+	return applyCapabilityOptions(opts, capabilities)
+}
+
+// applyCapabilityOptions applies global capability overrides onto render opts.
+// KubeVersion overrides the per-app value; APIVersions are unioned (deduped, sorted).
+func applyCapabilityOptions(opts render.RenderOptions, capabilities CapabilityOptions) (render.RenderOptions, error) {
+	if len(capabilities.APIVersions) != 0 {
+		opts.APIVersions = dedupeSortedStrings(append(opts.APIVersions, capabilities.APIVersions...))
+	}
+	if capabilities.KubeVersion != "" {
+		normalized, err := parseKubeVersion(capabilities.KubeVersion)
+		if err != nil {
+			return render.RenderOptions{}, err
+		}
+		opts.KubeVersion = normalized
+	}
 	return opts, nil
+}
+
+// dedupeSortedStrings returns a sorted, deduplicated copy of the input slice.
+func dedupeSortedStrings(input []string) []string {
+	out := append([]string(nil), input...)
+	sort.Strings(out)
+	return slices.Compact(out)
 }
 
 // parseKubeVersion mirrors Argo CD repo-server: spec kube versions are
