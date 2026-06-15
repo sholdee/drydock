@@ -6,7 +6,23 @@ import (
 	"github.com/sholdee/drydock/internal/diagnostic"
 	"github.com/sholdee/drydock/internal/manifest"
 	"github.com/sholdee/drydock/internal/render"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 )
+
+// manifestObjectPtrs returns the non-nil object pointers backing a manifest slice
+// WITHOUT copying. Safe for read-only registry construction, which completes
+// before normalizeCRDScope mutates the objects in place. Prefer this over the
+// DeepCopy-ing manifestObjects when no snapshot is needed.
+func manifestObjectPtrs(manifests []render.Manifest) []*unstructured.Unstructured {
+	objects := make([]*unstructured.Unstructured, 0, len(manifests))
+	for _, item := range manifests {
+		if item.Object == nil {
+			continue
+		}
+		objects = append(objects, item.Object)
+	}
+	return objects
+}
 
 // normalizeCRDScope strips metadata.namespace from every manifest that is
 // cluster-scoped per the registry (or a built-in cluster-scoped kind), mirroring

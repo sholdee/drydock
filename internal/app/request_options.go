@@ -99,3 +99,10 @@ type ApplicationRenderOptions struct {
 type ExecutionOptions struct {
 	Parallelism int
 }
+
+// CRDScopeOptions controls post-render CRD scope normalization. The zero value
+// leaves normalization ON (it is a correctness fix); Disabled is the hidden
+// --no-crd-scope escape hatch for safety-revert and perf A/B testing.
+type CRDScopeOptions struct {
+	Disabled bool
+}

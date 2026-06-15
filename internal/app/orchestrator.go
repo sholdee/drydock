@@ -49,6 +49,7 @@ type BuildRequest struct {
 	PluginRenderer render.PluginRenderer
 	Applications   []argoappv1.Application
 	ApplicationSetOptions
+	CRDScopeOptions
 	StatusCallback          ApplicationStatusCallback
 	renderCache             *applicationRenderCache
 	renderSettingsSignature string
