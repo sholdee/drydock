@@ -116,8 +116,9 @@ func renderApplicationCached(ctx renderContext, application argoappv1.Applicatio
 	provider := ctx.provider
 	provider.acquisitions = cacheevent.NewAcquisitionCollector()
 	options := ApplicationRenderOptions{
-		PluginOptions:   ctx.request.PluginOptions,
-		TrackingOptions: ctx.trackingOptions,
+		PluginOptions:     ctx.request.PluginOptions,
+		TrackingOptions:   ctx.trackingOptions,
+		CapabilityOptions: ctx.request.CapabilityOptions,
 	}
 	if key != "" {
 		options.persistent = persistentRenderOptions{

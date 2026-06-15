@@ -813,7 +813,7 @@ func localToolInputDigestPaths(ctx context.Context, plan PlanResult, sourcePlan 
 }
 
 func localKustomizeInputDigestPaths(ctx context.Context, plan PlanResult, sourcePlan SourcePlan, repoRoot string) ([]gitref.PathDigestPath, error) {
-	opts, err := renderOptions(plan.Application, sourcePlan.Source)
+	opts, err := renderOptions(plan.Application, sourcePlan.Source, CapabilityOptions{})
 	if err != nil {
 		return nil, err
 	}
@@ -825,7 +825,7 @@ func localKustomizeInputDigestPaths(ctx context.Context, plan PlanResult, source
 }
 
 func localDirectoryInputDigestPaths(plan PlanResult, sourcePlan SourcePlan, repoRoot string) ([]gitref.PathDigestPath, error) {
-	opts, err := renderOptions(plan.Application, sourcePlan.Source)
+	opts, err := renderOptions(plan.Application, sourcePlan.Source, CapabilityOptions{})
 	if err != nil {
 		return nil, err
 	}
@@ -837,7 +837,7 @@ func localDirectoryInputDigestPaths(plan PlanResult, sourcePlan SourcePlan, repo
 }
 
 func localHelmInputDigestPaths(plan PlanResult, sourcePlan SourcePlan, repoRoot string) ([]gitref.PathDigestPath, bool, error) {
-	opts, err := renderOptions(plan.Application, sourcePlan.Source)
+	opts, err := renderOptions(plan.Application, sourcePlan.Source, CapabilityOptions{})
 	if err != nil {
 		return nil, false, err
 	}

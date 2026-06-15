@@ -80,9 +80,18 @@ type TrackingOptions struct {
 	ControllerNamespace string
 }
 
+// CapabilityOptions overrides Kubernetes capabilities for rendering so output
+// matches a target cluster. KubeVersion (when set) overrides per-app kubeVersion;
+// APIVersions are unioned (deduped, sorted) with per-app apiVersions.
+type CapabilityOptions struct {
+	KubeVersion string
+	APIVersions []string
+}
+
 type ApplicationRenderOptions struct {
-	PluginOptions   PluginOptions
-	TrackingOptions TrackingOptions
+	PluginOptions     PluginOptions
+	TrackingOptions   TrackingOptions
+	CapabilityOptions CapabilityOptions
 
 	persistent persistentRenderOptions
 }

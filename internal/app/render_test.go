@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -74,7 +75,7 @@ func TestRenderOptionsCopiesSourceKustomizeAndArgoEnv(t *testing.T) {
 		},
 	}
 
-	opts, err := renderOptions(application, source)
+	opts, err := renderOptions(application, source, CapabilityOptions{})
 	if err != nil {
 		t.Fatalf("renderOptions() error = %v", err)
 	}
@@ -109,7 +110,7 @@ func TestParseKubeVersionNormalizesHelmSuffix(t *testing.T) {
 		},
 	}
 
-	opts, err := renderOptions(application, source)
+	opts, err := renderOptions(application, source, CapabilityOptions{})
 	if err != nil {
 		t.Fatalf("renderOptions() error = %v", err)
 	}
@@ -131,7 +132,7 @@ func TestParseKubeVersionNormalizesKustomizeSuffix(t *testing.T) {
 		},
 	}
 
-	opts, err := renderOptions(application, source)
+	opts, err := renderOptions(application, source, CapabilityOptions{})
 	if err != nil {
 		t.Fatalf("renderOptions() error = %v", err)
 	}
@@ -151,7 +152,7 @@ func TestParseKubeVersionEmptyStaysEmpty(t *testing.T) {
 		Helm: &argoappv1.ApplicationSourceHelm{},
 	}
 
-	opts, err := renderOptions(application, source)
+	opts, err := renderOptions(application, source, CapabilityOptions{})
 	if err != nil {
 		t.Fatalf("renderOptions() error = %v", err)
 	}
@@ -173,7 +174,7 @@ func TestParseKubeVersionInvalidReturnsError(t *testing.T) {
 		},
 	}
 
-	_, err := renderOptions(application, source)
+	_, err := renderOptions(application, source, CapabilityOptions{})
 	if err == nil {
 		t.Fatal("renderOptions() error = nil, want kube version parse error")
 	}
@@ -196,7 +197,7 @@ func TestRenderOptionsCopiesDirectoryJsonnet(t *testing.T) {
 		},
 	}
 
-	opts, err := renderOptions(application, source)
+	opts, err := renderOptions(application, source, CapabilityOptions{})
 	if err != nil {
 		t.Fatalf("renderOptions() error = %v", err)
 	}
@@ -212,6 +213,45 @@ func TestRenderOptionsCopiesDirectoryJsonnet(t *testing.T) {
 	}
 	if opts.Jsonnet.Libs[0] != "lib" {
 		t.Fatalf("Jsonnet.Libs[0] = %q, want lib", opts.Jsonnet.Libs[0])
+	}
+}
+
+func TestRenderOptionsAppliesCapabilityOverride(t *testing.T) {
+	application := argoappv1.Application{
+		ObjectMeta: metav1.ObjectMeta{Name: "demo", Namespace: "argocd"},
+		Spec:       argoappv1.ApplicationSpec{Destination: argoappv1.ApplicationDestination{Namespace: "demo"}},
+	}
+	source := argoappv1.ApplicationSource{
+		Helm: &argoappv1.ApplicationSourceHelm{KubeVersion: "1.30.0", APIVersions: []string{"per-app.example.com/v1", "monitoring.coreos.com/v1"}},
+	}
+	opts, err := renderOptions(application, source, CapabilityOptions{
+		KubeVersion: "1.34.0",
+		APIVersions: []string{"monitoring.coreos.com/v1", "gateway.networking.k8s.io/v1"},
+	})
+	if err != nil {
+		t.Fatalf("renderOptions() error = %v", err)
+	}
+	if opts.KubeVersion != "1.34.0" {
+		t.Fatalf("KubeVersion = %q, want 1.34.0 (override wins)", opts.KubeVersion)
+	}
+	want := []string{"gateway.networking.k8s.io/v1", "monitoring.coreos.com/v1", "per-app.example.com/v1"}
+	if !reflect.DeepEqual(opts.APIVersions, want) {
+		t.Fatalf("APIVersions = %v, want deduped+sorted union %v", opts.APIVersions, want)
+	}
+}
+
+func TestRenderOptionsNoCapabilityOverrideLeavesKubeVersionEmpty(t *testing.T) {
+	application := argoappv1.Application{
+		ObjectMeta: metav1.ObjectMeta{Name: "demo", Namespace: "argocd"},
+		Spec:       argoappv1.ApplicationSpec{Destination: argoappv1.ApplicationDestination{Namespace: "demo"}},
+	}
+	source := argoappv1.ApplicationSource{Helm: &argoappv1.ApplicationSourceHelm{}}
+	opts, err := renderOptions(application, source, CapabilityOptions{})
+	if err != nil {
+		t.Fatalf("renderOptions() error = %v", err)
+	}
+	if opts.KubeVersion != "" {
+		t.Fatalf("KubeVersion = %q, want empty (no override, no forced default)", opts.KubeVersion)
 	}
 }
 
