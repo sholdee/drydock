@@ -1,5 +1,28 @@
 # Changelog
 
+## [0.2.1](https://github.com/sholdee/drydock/compare/v0.2.0...v0.2.1) (2026-06-16)
+
+
+### Features
+
+* global --kube-version/--api-versions capability flags ([#154](https://github.com/sholdee/drydock/issues/154)) ([caee390](https://github.com/sholdee/drydock/commit/caee390def2441beb5d1d8e3c4256b12cecf85fc))
+* normalize cluster-scoped custom resource namespaces from repo CRDs ([#156](https://github.com/sholdee/drydock/issues/156)) ([c970ad9](https://github.com/sholdee/drydock/commit/c970ad944cfb6eb9a1a139c4d627265fca7bee11))
+
+
+### Bug Fixes
+
+* **deps:** update kubernetes monorepo to v0.36.2 ([#150](https://github.com/sholdee/drydock/issues/150)) ([51c91af](https://github.com/sholdee/drydock/commit/51c91afbcb558cf5854baaff0c8db066229d96dd))
+* **deps:** update module helm.sh/helm/v4 to v4.2.1 ([#151](https://github.com/sholdee/drydock/issues/151)) ([76edf44](https://github.com/sholdee/drydock/commit/76edf44617c34fd3253da60c6d7ca5606e41c4f3))
+* **pr-action:** force-update base remote-tracking ref in fetch-base ([#153](https://github.com/sholdee/drydock/issues/153)) ([e6a1f17](https://github.com/sholdee/drydock/commit/e6a1f17889a7a480455f8e48451096011c8f2048))
+* **render:** preserve helm resources' explicit namespaces under a kustomize namespace transformer ([#152](https://github.com/sholdee/drydock/issues/152)) ([1c354e5](https://github.com/sholdee/drydock/commit/1c354e539cb0c31ae1584c5f87bedefaca3bf27f))
+* **render:** preserve null chart defaults so helm-guarded keys match Argo CD ([#157](https://github.com/sholdee/drydock/issues/157)) ([6c8f358](https://github.com/sholdee/drydock/commit/6c8f358ce983df6d1376cf714e9535a2c3a48ba2))
+
+
+### Miscellaneous Chores
+
+* **deps:** update dependency hugo to v0.163.1 ([#147](https://github.com/sholdee/drydock/issues/147)) ([81f04f8](https://github.com/sholdee/drydock/commit/81f04f89da0f986654e9f81a9e37670f159f7c99))
+* **deps:** update golang:1.26.4 docker digest to 792443b ([#155](https://github.com/sholdee/drydock/issues/155)) ([365dbeb](https://github.com/sholdee/drydock/commit/365dbebcb6d486cfafd586d5584a5471c33aede4))
+
 ## [0.2.0](https://github.com/sholdee/drydock/compare/v0.1.21...v0.2.0) (2026-06-13)
 
 
