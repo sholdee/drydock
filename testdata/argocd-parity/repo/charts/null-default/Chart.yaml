@@ -1,0 +1,6 @@
+apiVersion: v2
+name: null-default
+description: Local Helm chart for Argo CD parity null chart default preservation.
+type: application
+version: 0.1.0
+appVersion: "1.0.0"

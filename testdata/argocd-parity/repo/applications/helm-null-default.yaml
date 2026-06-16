@@ -1,0 +1,16 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: parity-helm-null-default
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: git://argocd-parity-git.argocd-parity.svc.cluster.local/repo.git
+    targetRevision: HEAD
+    path: charts/null-default
+    helm:
+      releaseName: parity-helm-null-default
+  destination:
+    name: in-cluster
+    namespace: parity-helm-null-default

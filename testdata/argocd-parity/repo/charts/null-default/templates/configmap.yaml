@@ -1,0 +1,14 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Release.Name }}
+  namespace: {{ .Release.Namespace }}
+data:
+  {{- if hasKey .Values "debugVerbose" }}
+  # Cilium-faithful pattern: literal surrounding quotes render a null chart
+  # default as an empty STRING (not YAML null).  Argo CD helm v3 keeps null
+  # defaults in .Values (hasKey → true, value renders as ""); helm v4 strips
+  # them (hasKey → false, key absent).  This asserts parity with the Argo CD
+  # helm v3 behaviour.  Revisit when Argo CD's repo-server moves to helm v4.
+  debug-verbose: "{{ .Values.debugVerbose }}"
+  {{- end }}

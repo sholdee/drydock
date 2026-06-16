@@ -72,6 +72,7 @@ APPLICATIONS=(
   parity-ft-alpha
   parity-ft-beta
   parity-fn-gamma-one
+  parity-helm-null-default
 )
 
 TRACKING_APPLICATIONS=(
