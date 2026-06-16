@@ -213,6 +213,38 @@ data:
 	}
 }
 
+func TestHelmRendererPreservesNullChartDefaultsBehindHasKeyGuard(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "simple", "Chart.yaml"), "apiVersion: v2\nname: simple\nversion: 0.1.0\n")
+	writeFile(t, filepath.Join(root, "simple", "values.yaml"), "debugVerbose:\n")
+	writeFile(t, filepath.Join(root, "simple", "templates", "configmap.yaml"),
+		"apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: {{ .Release.Name }}-config\n  namespace: {{ .Release.Namespace }}\ndata:\n{{- if hasKey .Values \"debugVerbose\" }}\n  debug-verbose: \"{{ .Values.debugVerbose }}\"\n{{- end }}\n")
+	result, diags, err := (HelmRenderer{}).Render(context.Background(),
+		ResolvedSource{RepoRoot: root, Path: "simple", Chart: "simple"},
+		RenderOptions{AppName: "demo", Namespace: "demo-ns"})
+	if err != nil {
+		t.Fatalf("Render() error = %v", err)
+	}
+	if len(diags) != 0 {
+		t.Fatalf("diagnostics = %#v", diags)
+	}
+	if len(result) != 1 {
+		t.Fatalf("len(result) = %d, want 1", len(result))
+	}
+	// Cilium's pattern is `key: "{{ .Values.x }}"` (literal quotes): with a null chart default
+	// the key renders as an empty STRING (matching Argo CD's helm v3), not YAML null.
+	val, found, err := unstructured.NestedString(result[0].Object.Object, "data", "debug-verbose")
+	if err != nil {
+		t.Fatalf("data.debug-verbose accessor error: %v", err)
+	}
+	if !found {
+		t.Fatalf("data.debug-verbose missing: helm stripped the null chart default behind the hasKey guard")
+	}
+	if val != "" {
+		t.Fatalf("data.debug-verbose = %q, want empty string", val)
+	}
+}
+
 func TestHelmRendererSplitsCompactTemplateSeparators(t *testing.T) {
 	for _, tt := range []struct {
 		name     string
