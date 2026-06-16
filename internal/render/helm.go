@@ -94,15 +94,31 @@ func (HelmRenderer) Render(ctx context.Context, source ResolvedSource, opts Rend
 		return nil, nil, err
 	}
 
-	values, err := chartutil.ToRenderValuesWithSchemaValidation(chart, inputValues, common.ReleaseOptions{
-		Name:      releaseName,
-		Namespace: opts.Namespace,
-		Revision:  1,
-		IsInstall: true,
-		IsUpgrade: false,
-	}, capabilities, opts.SkipSchemaValidation)
+	chartAccessor, err := helmchart.NewAccessor(chart)
 	if err != nil {
 		return nil, nil, fmt.Errorf("helm render values %s: %w", manifestPath, err)
+	}
+	// MergeValues (nil-preserving) instead of ToRenderValuesWithSchemaValidation's CoalesceValues,
+	// which strips null chart defaults. Helm v3 (Argo CD's bundled CLI) retains them so guarded
+	// keys ({{- if hasKey .Values "x" }}) render under Argo CD but vanish under helm v4. Verified
+	// vs helm v4.2.1 coalesce.go: the two differ ONLY in nil handling.
+	mergedValues, err := chartutil.MergeValues(chart, inputValues)
+	if err != nil {
+		return nil, nil, fmt.Errorf("helm render values %s: %w", manifestPath, err)
+	}
+	if !opts.SkipSchemaValidation {
+		if err := chartutil.ValidateAgainstSchema(chart, mergedValues); err != nil {
+			return nil, nil, fmt.Errorf("helm render values %s: values don't meet the chart schema(s): %w", manifestPath, err)
+		}
+	}
+	values := map[string]any{
+		"Chart":        chartAccessor.MetadataAsMap(),
+		"Capabilities": capabilities,
+		"Release": map[string]any{
+			"Name": releaseName, "Namespace": opts.Namespace, "IsUpgrade": false,
+			"IsInstall": true, "Revision": 1, "Service": "Helm",
+		},
+		"Values": mergedValues,
 	}
 
 	rendered, err := engine.Render(chart, values)

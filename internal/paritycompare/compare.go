@@ -183,6 +183,8 @@ func loadFile(path string, ignores []string) (appResources, error) {
 				return nil, fmt.Errorf("%s %s: %w", path, manifest.IdentityOf(obj), err)
 			}
 		}
+		cleanupEmptyMetaMaps(obj.Object)
+		_ = trimStringScalars(obj.Object)
 		key := manifest.IdentityOf(obj).String()
 		body, err := canonicalBody(obj)
 		if err != nil {
@@ -191,6 +193,51 @@ func loadFile(path string, ignores []string) (appResources, error) {
 		out[key] = body
 	}
 	return out, nil
+}
+
+// cleanupEmptyMetaMaps removes metadata.annotations and metadata.labels when nil or empty.
+// After the ignore rules strip the only entry (e.g. argocd.argoproj.io/tracking-id) an empty
+// {} remains and falsely diffs against a side that never had the map.
+func cleanupEmptyMetaMaps(root map[string]any) {
+	meta, ok := root["metadata"].(map[string]any)
+	if !ok {
+		return
+	}
+	for _, field := range []string{"annotations", "labels"} {
+		value, present := meta[field]
+		if !present {
+			continue
+		}
+		if value == nil {
+			delete(meta, field)
+			continue
+		}
+		if m, ok := value.(map[string]any); ok && len(m) == 0 {
+			delete(meta, field)
+		}
+	}
+}
+
+// trimStringScalars right-trims trailing newlines from every string leaf. The oracle pipes helm
+// output through yq, whose block-scalar re-serialization appends a trailing \n that drydock's
+// faithful helm-Go-engine value lacks (cert-manager .data.config.yaml, velero .data.global).
+func trimStringScalars(value any) any {
+	switch typed := value.(type) {
+	case map[string]any:
+		for k, v := range typed {
+			typed[k] = trimStringScalars(v)
+		}
+		return typed
+	case []any:
+		for i, v := range typed {
+			typed[i] = trimStringScalars(v)
+		}
+		return typed
+	case string:
+		return strings.TrimRight(typed, "\n")
+	default:
+		return value
+	}
 }
 
 func canonicalBody(obj *unstructured.Unstructured) (string, error) {

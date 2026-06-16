@@ -101,6 +101,57 @@ func TestCompareRejectsInvalidJSONPointerEscape(t *testing.T) {
 	}
 }
 
+func TestCompareStripsEmptyMetaMapsAfterIgnore(t *testing.T) {
+	root := t.TempDir()
+	argocdDir := filepath.Join(root, "argocd")
+	drydockDir := filepath.Join(root, "drydock")
+	ignoreFile := filepath.Join(root, "ignore.yaml")
+	writeFile(t, filepath.Join(argocdDir, "demo.yaml"), configMapWithTracking("demo", "argocd"))
+	writeFile(t, filepath.Join(drydockDir, "demo.yaml"), "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: demo\n  annotations: {}\n  labels: {}\ndata:\n  value: same\n")
+	writeFile(t, ignoreFile, "jsonPointers:\n  - /metadata/annotations/argocd.argoproj.io~1tracking-id\n")
+	result, err := Compare(Options{ArgoCDDir: argocdDir, DrydockDir: drydockDir, OutDir: filepath.Join(root, "out"), IgnoreFile: ignoreFile})
+	if err != nil {
+		t.Fatalf("Compare() error = %v", err)
+	}
+	if result.Differences != 0 {
+		t.Fatalf("Compare() differences = %d, want 0", result.Differences)
+	}
+}
+
+func TestCompareStripsNullMetaMaps(t *testing.T) {
+	root := t.TempDir()
+	argocdDir := filepath.Join(root, "argocd")
+	drydockDir := filepath.Join(root, "drydock")
+	writeFile(t, filepath.Join(argocdDir, "demo.yaml"), "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: demo\n  annotations:\n  labels:\ndata:\n  value: same\n")
+	writeFile(t, filepath.Join(drydockDir, "demo.yaml"), configMap("demo", "same"))
+	result, err := Compare(Options{ArgoCDDir: argocdDir, DrydockDir: drydockDir, OutDir: filepath.Join(root, "out")})
+	if err != nil {
+		t.Fatalf("Compare() error = %v", err)
+	}
+	if result.Differences != 0 {
+		t.Fatalf("Compare() differences = %d, want 0", result.Differences)
+	}
+}
+
+func TestCompareIgnoresTrailingNewlineOnStringScalars(t *testing.T) {
+	root := t.TempDir()
+	argocdDir := filepath.Join(root, "argocd")
+	drydockDir := filepath.Join(root, "drydock")
+	// oracle side: yq re-serialization adds trailing \n (block scalar with |)
+	oracleYAML := "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: demo\ndata:\n  config.yaml: |\n    key: value\n"
+	// drydock side: helm-Go-engine faithful value lacks trailing \n (block scalar with |-)
+	drydockYAML := "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: demo\ndata:\n  config.yaml: |-\n    key: value\n"
+	writeFile(t, filepath.Join(argocdDir, "demo.yaml"), oracleYAML)
+	writeFile(t, filepath.Join(drydockDir, "demo.yaml"), drydockYAML)
+	result, err := Compare(Options{ArgoCDDir: argocdDir, DrydockDir: drydockDir, OutDir: filepath.Join(root, "out")})
+	if err != nil {
+		t.Fatalf("Compare() error = %v", err)
+	}
+	if result.Differences != 0 {
+		t.Fatalf("Compare() differences = %d, want 0", result.Differences)
+	}
+}
+
 func writeFile(t *testing.T, path, body string) {
 	t.Helper()
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
