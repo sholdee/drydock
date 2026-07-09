@@ -227,6 +227,32 @@ body.is-resizing-sidebar .sidebar-resizer::before {
 body.is-resizing-sidebar .sidebar-resizer::before {
 	transition-delay: 0ms;
 }
+body.sidebar-will-close .sidebar-resizer::before {
+	background: var(--rust-bright);
+	box-shadow: 0 0 12px rgba(240, 138, 81, 0.72);
+	transition-delay: 0ms;
+}
+.sidebar-resizer-hint {
+	position: absolute;
+	top: 50%;
+	right: calc(var(--sidebar-resizer-hit) / 2 + 6px);
+	transform: translateY(-50%);
+	white-space: nowrap;
+	padding: 4px 8px;
+	border-radius: 5px;
+	background: var(--rust-bright);
+	color: #0a1421;
+	font-size: 9.5px;
+	font-weight: 700;
+	letter-spacing: 0.08em;
+	text-transform: uppercase;
+	opacity: 0;
+	pointer-events: none;
+	transition: opacity 150ms ease;
+}
+body.sidebar-will-close .sidebar-resizer-hint {
+	opacity: 1;
+}
 .tree-search {
 	box-sizing: border-box;
 	width: 100%;
@@ -1500,32 +1526,59 @@ const reviewScript = `
 	if (sidebarResizer) {
 		let dragStartX = 0;
 		let dragStartWidth = 0;
+		let resizing = false;
+		let willClose = false;
+
+		// Drag the handle a third past the minimum width to arm a snap-close.
+		const closeThreshold = () => sidebarBounds().min * (2 / 3);
+
+		const onSidebarPointerMove = (event) => {
+			if (!resizing) {
+				return;
+			}
+			const desired = dragStartWidth + event.clientX - dragStartX;
+			willClose = desired < closeThreshold();
+			body.classList.toggle('sidebar-will-close', willClose);
+			setSidebarWidth(desired);
+		};
+		const stopSidebarResize = (event) => {
+			if (!resizing) {
+				return;
+			}
+			resizing = false;
+			// Listeners live on window (not the handle) so the release is caught even
+			// when pointer capture is dropped mid-drag -- otherwise the handle sticks
+			// to the cursor after the button is released.
+			window.removeEventListener('pointermove', onSidebarPointerMove);
+			window.removeEventListener('pointerup', stopSidebarResize);
+			window.removeEventListener('pointercancel', stopSidebarResize);
+			sidebarResizer.releasePointerCapture?.(event.pointerId);
+			body.classList.remove('is-resizing-sidebar', 'sidebar-will-close');
+			if (willClose) {
+				// setSidebarWidth clamps, so persist the pre-drag width for the next open.
+				setSidebarWidth(dragStartWidth, { persist: true });
+				setSidebar('closed');
+			} else {
+				setSidebarWidth(cssPixels('--sidebar-width', sidebarBounds().defaultWidth), { persist: true });
+			}
+			willClose = false;
+		};
 
 		sidebarResizer.addEventListener('pointerdown', (event) => {
 			if (mobileQuery.matches) {
 				return;
 			}
 			event.preventDefault();
+			resizing = true;
+			willClose = false;
 			dragStartX = event.clientX;
 			dragStartWidth = cssPixels('--sidebar-width', sidebarBounds().defaultWidth);
 			sidebarResizer.setPointerCapture?.(event.pointerId);
 			body.classList.add('is-resizing-sidebar');
+			window.addEventListener('pointermove', onSidebarPointerMove);
+			window.addEventListener('pointerup', stopSidebarResize);
+			window.addEventListener('pointercancel', stopSidebarResize);
 		});
-		sidebarResizer.addEventListener('pointermove', (event) => {
-			if (!body.classList.contains('is-resizing-sidebar')) {
-				return;
-			}
-			setSidebarWidth(dragStartWidth + event.clientX - dragStartX, { persist: true });
-		});
-		const stopSidebarResize = (event) => {
-			if (!body.classList.contains('is-resizing-sidebar')) {
-				return;
-			}
-			sidebarResizer.releasePointerCapture?.(event.pointerId);
-			body.classList.remove('is-resizing-sidebar');
-		};
-		sidebarResizer.addEventListener('pointerup', stopSidebarResize);
-		sidebarResizer.addEventListener('pointercancel', stopSidebarResize);
 		sidebarResizer.addEventListener('dblclick', (event) => {
 			event.preventDefault();
 			resetSidebarWidth();

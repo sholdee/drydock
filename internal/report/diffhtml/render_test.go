@@ -135,6 +135,7 @@ func TestRenderIncludesStaticReviewUI(t *testing.T) {
 		`role="separator"`,
 		`aria-orientation="vertical"`,
 		`aria-label="Resize changed resources sidebar"`,
+		`<span class="sidebar-resizer-hint" aria-hidden="true">Release to close</span>`,
 		`class="tree-search"`,
 		`data-tree-search`,
 		`placeholder="Search resources (/)"`,
@@ -378,6 +379,17 @@ func TestRenderIncludesTypographyAndLogoContract(t *testing.T) {
 	if want := ".sidebar-resizer:focus-visible::before,\nbody.is-resizing-sidebar .sidebar-resizer::before {\n\ttransition-delay: 0ms;\n}"; !strings.Contains(text, want) {
 		t.Fatalf("HTML missing immediate sidebar-resizer activation contract %q:\n%s", want, text)
 	}
+	assertStyleRuleContains(t, text, "body.sidebar-will-close .sidebar-resizer::before",
+		`background: var(--rust-bright);`,
+	)
+	assertStyleRuleContains(t, text, ".sidebar-resizer-hint",
+		`position: absolute;`,
+		`pointer-events: none;`,
+		`opacity: 0;`,
+	)
+	assertStyleRuleContains(t, text, "body.sidebar-will-close .sidebar-resizer-hint",
+		`opacity: 1;`,
+	)
 	assertStyleRuleContains(t, text, ".review-main", `grid-column: 3;`, `min-height: 0;`, `overflow: auto;`)
 	assertStyleRuleContains(t, text, ".tree-app summary",
 		`display: grid;`,
@@ -1279,13 +1291,28 @@ func TestRenderSidebarResizeScriptContract(t *testing.T) {
 		`const sidebarBounds = () => {`,
 		`--sidebar-width-min`,
 		`--sidebar-width-max`,
-		`setSidebarWidth(dragStartWidth + event.clientX - dragStartX, { persist: true });`,
+		`const desired = dragStartWidth + event.clientX - dragStartX;`,
+		// Width persists on release, not on every move (move call omits persist).
+		`setSidebarWidth(desired);`,
 		`store.set('drydock-sidebar-width', String(next));`,
 		`store.remove('drydock-sidebar-width');`,
 		`sidebarResizer.addEventListener('dblclick'`,
 		`body.classList.add('is-resizing-sidebar');`,
-		`body.classList.remove('is-resizing-sidebar');`,
+		`body.classList.remove('is-resizing-sidebar', 'sidebar-will-close');`,
 		`restoreSidebarWidth();`,
+		// Drag past the close threshold arms a snap-close.
+		`const closeThreshold = () => sidebarBounds().min * (2 / 3);`,
+		`willClose = desired < closeThreshold();`,
+		`body.classList.toggle('sidebar-will-close', willClose);`,
+		`setSidebar('closed');`,
+		// Release is caught on window so a dropped pointer capture cannot leave the
+		// handle stuck to the cursor.
+		`window.addEventListener('pointermove', onSidebarPointerMove);`,
+		`window.addEventListener('pointerup', stopSidebarResize);`,
+		`window.addEventListener('pointercancel', stopSidebarResize);`,
+		`window.removeEventListener('pointermove', onSidebarPointerMove);`,
+		`window.removeEventListener('pointerup', stopSidebarResize);`,
+		`window.removeEventListener('pointercancel', stopSidebarResize);`,
 	} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("HTML missing sidebar resize JS contract %q:\n%s", want, text)

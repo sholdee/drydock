@@ -58,7 +58,7 @@ func Render(result app.DiffResult, options Options) ([]byte, error) {
 	builder.WriteString("</header>\n")
 	builder.WriteString("<div class=\"review-layout\">\n")
 	renderTree(&builder, groups)
-	builder.WriteString("<div class=\"sidebar-resizer\" data-sidebar-resizer role=\"separator\" aria-orientation=\"vertical\" aria-label=\"Resize changed resources sidebar\" aria-valuemin=\"240\" aria-valuemax=\"480\" aria-valuenow=\"320\" tabindex=\"0\"></div>\n")
+	builder.WriteString("<div class=\"sidebar-resizer\" data-sidebar-resizer role=\"separator\" aria-orientation=\"vertical\" aria-label=\"Resize changed resources sidebar\" aria-valuemin=\"240\" aria-valuemax=\"480\" aria-valuenow=\"320\" tabindex=\"0\"><span class=\"sidebar-resizer-hint\" aria-hidden=\"true\">Release to close</span></div>\n")
 	builder.WriteString("<div class=\"sidebar-backdrop\" data-sidebar-backdrop></div>\n")
 	builder.WriteString("<main class=\"review-main\">\n")
 	if len(groups) == 0 {
