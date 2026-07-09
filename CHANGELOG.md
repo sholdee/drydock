@@ -1,5 +1,37 @@
 # Changelog
 
+## [0.2.2](https://github.com/sholdee/drydock/compare/v0.2.1...v0.2.2) (2026-07-09)
+
+
+### Features
+
+* **diffhtml:** drag-to-close diff-view sidebar and fix sticking resize handle ([#163](https://github.com/sholdee/drydock/issues/163)) ([9aa1aa6](https://github.com/sholdee/drydock/commit/9aa1aa6f39d942b06af394d0456f9109a80d5d0a))
+
+
+### Bug Fixes
+
+* **deps:** update module github.com/argoproj/argo-cd/v3 to v3.4.4 ([#160](https://github.com/sholdee/drydock/issues/160)) ([e30f716](https://github.com/sholdee/drydock/commit/e30f716c488b519c2265da6d15169c7691040738))
+* **deps:** update module golang.org/x/sys to v0.47.0 ([#179](https://github.com/sholdee/drydock/issues/179)) ([97a2cc8](https://github.com/sholdee/drydock/commit/97a2cc868526905da43cd446272e98ce4ed7307e))
+* **deps:** update module helm.sh/helm/v4 to v4.2.2 ([#161](https://github.com/sholdee/drydock/issues/161)) ([201dcdb](https://github.com/sholdee/drydock/commit/201dcdba00102b1106f0815d63341ba50f7f9cdd))
+
+
+### Miscellaneous Chores
+
+* **deps:** update actions/cache action to v5.1.0 ([#168](https://github.com/sholdee/drydock/issues/168)) ([d1908e2](https://github.com/sholdee/drydock/commit/d1908e2bfa039a50b7c90b4b3f9a09b44986c2b7))
+* **deps:** update actions/cache action to v6 ([#180](https://github.com/sholdee/drydock/issues/180)) ([c35474e](https://github.com/sholdee/drydock/commit/c35474e3ade16cab7957435a5b3ea259c65e1b53))
+* **deps:** update actions/checkout action to v7 ([#181](https://github.com/sholdee/drydock/issues/181)) ([096985f](https://github.com/sholdee/drydock/commit/096985ff7761f6d6e7d63c582f3e674558dc1a95))
+* **deps:** update dependency hugo to v0.163.2 ([#158](https://github.com/sholdee/drydock/issues/158)) ([f97da60](https://github.com/sholdee/drydock/commit/f97da60e3e8cbca2364af745ccd5491fd996d3fe))
+* **deps:** update dependency hugo to v0.163.3 ([#166](https://github.com/sholdee/drydock/issues/166)) ([f1c7ee7](https://github.com/sholdee/drydock/commit/f1c7ee7c1d2a311938a880efbc3fc3a039abe362))
+* **deps:** update dependency hugo to v0.164.0 ([#183](https://github.com/sholdee/drydock/issues/183)) ([c61d7d2](https://github.com/sholdee/drydock/commit/c61d7d2effaf1f9d27c1237be0e35a197969dacb))
+* **deps:** update dependency shinagawa-web/gomarklint to v3.3.0 ([#170](https://github.com/sholdee/drydock/issues/170)) ([1987240](https://github.com/sholdee/drydock/commit/198724097bb4e24087cbd64443f280d6615f6324))
+* **deps:** update dependency zizmor to v1.26.1 ([#171](https://github.com/sholdee/drydock/issues/171)) ([5ca2058](https://github.com/sholdee/drydock/commit/5ca2058e98679aeef4cf51f027f353f18b835482))
+* **deps:** update docker/dockerfile docker tag to v1.25 ([#162](https://github.com/sholdee/drydock/issues/162)) ([7b4d4e4](https://github.com/sholdee/drydock/commit/7b4d4e45beb4cb38cd24a2bca32590b631faf1c2))
+* **deps:** update gcr.io/distroless/static:nonroot docker digest to d29e660 ([#164](https://github.com/sholdee/drydock/issues/164)) ([a4c5129](https://github.com/sholdee/drydock/commit/a4c51292253ddd39d37f861d6f285185ea33e373))
+* **deps:** update golang:1.26.4 docker digest to f96cc55 ([#165](https://github.com/sholdee/drydock/issues/165)) ([72665dd](https://github.com/sholdee/drydock/commit/72665ddff42a1e28229043f53e401005b1500f78))
+* **deps:** update module golang.org/x/sync to v0.22.0 ([#176](https://github.com/sholdee/drydock/issues/176)) ([16b8607](https://github.com/sholdee/drydock/commit/16b8607362ae2cd7ba0b78301610572fe1e0eff7))
+* **deps:** update module golang.org/x/text to v0.39.0 ([#177](https://github.com/sholdee/drydock/issues/177)) ([b0932dc](https://github.com/sholdee/drydock/commit/b0932dc857a206be10b0bcd67d95946cfa491b2b))
+* **deps:** update mshick/add-pr-comment action to v3.12 ([#178](https://github.com/sholdee/drydock/issues/178)) ([4af9fbf](https://github.com/sholdee/drydock/commit/4af9fbf1510afa19ab76dcd608058487c9c35397))
+
 ## [0.2.1](https://github.com/sholdee/drydock/compare/v0.2.0...v0.2.1) (2026-06-16)
 
 
