@@ -4,7 +4,7 @@ golangci-lint = "2.12.2"
 lefthook = "2.1.9"
 shellcheck = "0.11.0"
 zizmor = "1.25.2"
-hugo = "0.163.2"
+hugo = "0.163.3"
 
 [tasks.fmt]
 description = "Run go fmt against Go code"
@@ -44,7 +44,7 @@ run = "go mod tidy && git diff --exit-code go.mod go.sum"
 
 [tasks.markdownlint]
 description = "Lint Markdown files"
-run = "go run github.com/shinagawa-web/gomarklint/v3@v3.2.3"
+run = "go run github.com/shinagawa-web/gomarklint/v3@v3.3.0"
 
 [tasks.actionlint]
 description = "Lint GitHub Actions workflows"
