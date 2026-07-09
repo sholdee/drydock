@@ -327,7 +327,7 @@ runs:
     - name: Restore drydock binary cache
       id: setup-binary-cache-restore
       if: ${{ inputs.install == 'true' && steps.setup-resolve.outputs.cache-enabled == 'true' }}
-      uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+      uses: actions/cache/restore@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
       with:
         key: ${{ steps.setup-resolve.outputs.cache-key }}
         path: ${{ steps.setup-resolve.outputs.cache-path }}
@@ -348,7 +348,7 @@ runs:
 
     - name: Save drydock binary cache
       if: ${{ inputs.install == 'true' && steps.setup-resolve.outputs.cache-enabled == 'true' && steps.setup-binary-cache-restore.outputs.cache-hit != 'true' && steps.setup.outputs.cache-save == 'true' }}
-      uses: actions/cache/save@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+      uses: actions/cache/save@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
       with:
         key: ${{ steps.setup-resolve.outputs.cache-key }}
         path: ${{ steps.setup-resolve.outputs.cache-path }}
@@ -401,7 +401,7 @@ runs:
     - name: Restore drydock render cache
       id: cache-restore
       if: ${{ steps.prepare.outputs.cache-restore == 'true' }}
-      uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+      uses: actions/cache/restore@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
       with:
         key: ${{ steps.prepare.outputs.cache-key }}
         path: ${{ steps.prepare.outputs.cache-path }}
@@ -458,7 +458,7 @@ runs:
 
     - name: Save drydock render cache
       if: ${{ always() && steps.prepare.outputs.cache-save == 'true' && steps.cache-restore.outputs.cache-hit != 'true' }}
-      uses: actions/cache/save@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+      uses: actions/cache/save@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
       with:
         key: ${{ steps.prepare.outputs.cache-key }}
         path: ${{ steps.prepare.outputs.cache-path }}
