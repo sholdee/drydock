@@ -624,3 +624,219 @@ func writeCacheEntry(t *testing.T, path string) {
 	t.Helper()
 	writeCLITestFile(t, path, "cache")
 }
+
+// --- Chunk 2: --max-size flag tests ---
+
+// TestCachePruneMaxSizeFlagParsesOptions verifies that --max-size is wired into
+// MaxBytes on the OperationOptions produced by cacheOperationOptions.
+func TestCachePruneMaxSizeFlagParsesOptions(t *testing.T) {
+	flags := defaultCacheFlags()
+	if err := flags.maxSize.Set("1Gi"); err != nil {
+		t.Fatalf("maxSize.Set(1Gi) error = %v", err)
+	}
+	opts, err := cacheOperationOptions(flags)
+	if err != nil {
+		t.Fatalf("cacheOperationOptions() error = %v", err)
+	}
+	const want = 1 << 30
+	if opts.MaxBytes != want {
+		t.Fatalf("MaxBytes = %d, want %d", opts.MaxBytes, want)
+	}
+}
+
+// TestCachePruneMaxSizeZeroRejected verifies that quantityFlag.Set rejects "0".
+func TestCachePruneMaxSizeZeroRejected(t *testing.T) {
+	var q quantityFlag
+	if err := q.Set("0"); err == nil {
+		t.Fatal("quantityFlag.Set(0) error = nil, want error")
+	}
+}
+
+// TestCachePruneMaxSizeNegativeRejected verifies that quantityFlag.Set rejects
+// negative quantities (e.g. "-1").
+func TestCachePruneMaxSizeNegativeRejected(t *testing.T) {
+	var q quantityFlag
+	if err := q.Set("-1"); err == nil {
+		t.Fatal("quantityFlag.Set(-1) error = nil, want error")
+	}
+}
+
+// TestCachePruneMaxSizeDefaultEmpty verifies that the zero-value quantityFlag
+// has an empty String() so cobra help shows no default cap.
+func TestCachePruneMaxSizeDefaultEmpty(t *testing.T) {
+	flags := defaultCacheFlags()
+	if got := flags.maxSize.String(); got != "" {
+		t.Fatalf("defaultCacheFlags().maxSize.String() = %q, want empty string", got)
+	}
+	if flags.maxSize.bytes != 0 {
+		t.Fatalf("defaultCacheFlags().maxSize.bytes = %d, want 0", flags.maxSize.bytes)
+	}
+}
+
+// TestCachePruneHelpIncludesMaxSize verifies that cobra renders the --max-size
+// flag in the prune command help output.
+func TestCachePruneHelpIncludesMaxSize(t *testing.T) {
+	cmd := NewRootCommand(VersionInfo{})
+	cmd.SetArgs([]string{"cache", "prune", "--help"})
+	var out bytes.Buffer
+	cmd.SetOut(&out)
+	cmd.SetErr(&out)
+	// Help exits with a non-nil error on some cobra versions; ignore it.
+	_ = cmd.Execute()
+	if !strings.Contains(out.String(), "max-size") {
+		t.Fatalf("prune --help output missing 'max-size':\n%s", out.String())
+	}
+}
+
+// TestCachePruneMaxSizeOnlyAccepted verifies that prune with only --max-size
+// (no --older-than) succeeds end-to-end against a temp cache.
+func TestCachePruneMaxSizeOnlyAccepted(t *testing.T) {
+	root := t.TempDir()
+	gitCacheDir := filepath.Join(root, "git")
+	chartCacheDir := filepath.Join(root, "charts")
+	remoteCacheDir := filepath.Join(root, "remotes")
+	renderCacheDir := filepath.Join(root, "render")
+
+	// Seed a git entry with a known size so --max-size 1 forces eviction.
+	entryRoot := filepath.Join(gitCacheDir, cacheCLITestKey)
+	writeCacheEntry(t, filepath.Join(entryRoot, ".git", "HEAD"))
+
+	cmd := NewRootCommand(VersionInfo{})
+	cmd.SetArgs([]string{
+		"cache", "prune",
+		"--git-cache-dir", gitCacheDir,
+		"--chart-cache-dir", chartCacheDir,
+		"--remote-cache-dir", remoteCacheDir,
+		"--render-cache-dir", renderCacheDir,
+		"--max-size", "1", // 1 byte cap forces eviction
+		"--yes",
+	})
+	var stdout bytes.Buffer
+	cmd.SetOut(&stdout)
+	cmd.SetErr(&stdout)
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+	// Entry should have been removed.
+	if _, err := os.Stat(entryRoot); !os.IsNotExist(err) {
+		t.Fatalf("cache entry still exists after --max-size prune: %v", err)
+	}
+}
+
+// TestCachePruneNeitherFlagErrors verifies that prune with neither --older-than
+// nor --max-size returns an error naming both flags.
+func TestCachePruneNeitherFlagErrors(t *testing.T) {
+	root := t.TempDir()
+	gitCacheDir := filepath.Join(root, "git")
+	chartCacheDir := filepath.Join(root, "charts")
+	remoteCacheDir := filepath.Join(root, "remotes")
+	renderCacheDir := filepath.Join(root, "render")
+	writeCacheEntry(t, filepath.Join(gitCacheDir, cacheCLITestKey, ".git", "HEAD"))
+
+	cmd := NewRootCommand(VersionInfo{})
+	cmd.SetArgs([]string{
+		"cache", "prune",
+		"--git-cache-dir", gitCacheDir,
+		"--chart-cache-dir", chartCacheDir,
+		"--remote-cache-dir", remoteCacheDir,
+		"--render-cache-dir", renderCacheDir,
+		"--yes",
+	})
+	var stdout bytes.Buffer
+	cmd.SetOut(&stdout)
+	cmd.SetErr(&stdout)
+
+	err := cmd.Execute()
+	if err == nil {
+		t.Fatal("Execute() error = nil, want error when neither --older-than nor --max-size set")
+	}
+	if !strings.Contains(err.Error(), "older-than") || !strings.Contains(err.Error(), "max-size") {
+		t.Fatalf("error = %q, want message naming both flags", err.Error())
+	}
+}
+
+// TestRenderCacheOperationTableAgeOnly verifies that the legacy table line is
+// unchanged when only age entries are present (SizeEvictedBytes == 0).
+func TestRenderCacheOperationTableAgeOnly(t *testing.T) {
+	result := cache.OperationResult{
+		Entries:          []cache.Entry{{PruneReason: "age"}, {PruneReason: "age"}},
+		RemovedCount:     2,
+		DryRun:           false,
+		SizeEvictedBytes: 0,
+		TotalSizeBytes:   0,
+	}
+	cmd := NewRootCommand(VersionInfo{})
+	var out bytes.Buffer
+	cmd.SetOut(&out)
+
+	if err := renderCacheOperation(cmd, "table", result); err != nil {
+		t.Fatalf("renderCacheOperation() error = %v", err)
+	}
+	got := out.String()
+	if got != "removed 2 cache entries\n" {
+		t.Fatalf("got %q, want %q", got, "removed 2 cache entries\n")
+	}
+}
+
+// TestRenderCacheOperationTableSizePhaseReal verifies the extended line format
+// when the size phase ran (SizeEvictedBytes > 0) on a real (non-dry-run) run.
+func TestRenderCacheOperationTableSizePhaseReal(t *testing.T) {
+	result := cache.OperationResult{
+		Entries: []cache.Entry{
+			{PruneReason: "age"},
+			{PruneReason: "age"},
+			{PruneReason: "age"},
+			{PruneReason: "age"},
+			{PruneReason: "age"},
+			{PruneReason: "age"},
+			{PruneReason: "age"},
+			{PruneReason: "age"},
+			{PruneReason: "size"},
+			{PruneReason: "size"},
+			{PruneReason: "size"},
+			{PruneReason: "size"},
+		},
+		RemovedCount:     12,
+		DryRun:           false,
+		SizeEvictedBytes: 1234567,
+		TotalSizeBytes:   4096,
+	}
+	cmd := NewRootCommand(VersionInfo{})
+	var out bytes.Buffer
+	cmd.SetOut(&out)
+
+	if err := renderCacheOperation(cmd, "table", result); err != nil {
+		t.Fatalf("renderCacheOperation() error = %v", err)
+	}
+	want := "removed 12 cache entries (8 by age, 4 by size); freed 1234567 bytes by size, 4096 bytes remain\n"
+	if out.String() != want {
+		t.Fatalf("got %q, want %q", out.String(), want)
+	}
+}
+
+// TestRenderCacheOperationTableSizePhaseDryRun verifies the extended dry-run
+// line format when the size phase ran.
+func TestRenderCacheOperationTableSizePhaseDryRun(t *testing.T) {
+	result := cache.OperationResult{
+		Entries: []cache.Entry{
+			{PruneReason: "size"},
+			{PruneReason: "size"},
+		},
+		RemovedCount:     0, // dry-run: count stays 0
+		DryRun:           true,
+		SizeEvictedBytes: 999,
+		TotalSizeBytes:   1,
+	}
+	cmd := NewRootCommand(VersionInfo{})
+	var out bytes.Buffer
+	cmd.SetOut(&out)
+
+	if err := renderCacheOperation(cmd, "table", result); err != nil {
+		t.Fatalf("renderCacheOperation() error = %v", err)
+	}
+	want := "would remove 2 cache entries (0 by age, 2 by size); freed 999 bytes by size, 1 bytes remain\n"
+	if out.String() != want {
+		t.Fatalf("got %q, want %q", out.String(), want)
+	}
+}
