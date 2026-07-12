@@ -165,6 +165,17 @@ inputs:
       durable storage. off keeps no cache between runs. cache "false" forces off.
     required: false
     default: auto
+  cache-prune-max-size:
+    description: >-
+      Size cap for the on-runner drydock source and render caches when
+      cache-mode is local. After each run, least-recently-used cache entries
+      are pruned until the total cache size is at or below this cap (Kubernetes
+      quantity, e.g. 4Gi). Empty string disables pruning. Automatically
+      disabled when offline is true — evicted source cache entries would
+      hard-fail later offline runs with no self-heal path. An invalid quantity
+      surfaces as a per-run warning from the prune step, never a job failure.
+    required: false
+    default: "4Gi"
   save-cache:
     description: Save drydock render caches after trusted runs.
     required: false
@@ -372,6 +383,8 @@ runs:
         DRYDOCK_INPUT_DIFF_ARTIFACT_NAME: ${{ inputs.diff-artifact-name }}
         DRYDOCK_INPUT_DIFF_MAX_BYTES: ${{ inputs.diff-max-bytes }}
         DRYDOCK_INPUT_IMAGE_ARTIFACT_NAME: ${{ inputs.image-artifact-name }}
+        DRYDOCK_INPUT_CACHE_PRUNE_MAX_SIZE: ${{ inputs.cache-prune-max-size }}
+        DRYDOCK_INPUT_OFFLINE: ${{ inputs.offline }}
         DRYDOCK_INPUT_SAVE_CACHE: ${{ inputs.save-cache }}
         DRYDOCK_INPUT_UPLOAD_ARTIFACTS: ${{ inputs.upload-artifacts }}
         DRYDOCK_PR_HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
@@ -462,6 +475,16 @@ runs:
       with:
         key: ${{ steps.prepare.outputs.cache-key }}
         path: ${{ steps.prepare.outputs.cache-path }}
+
+    - name: Prune drydock local cache
+      if: ${{ always() && steps.prepare.outputs.cache-prune == 'true' }}
+      shell: bash
+      env:
+        DRYDOCK_BIN: ${{ inputs.install == 'true' && format('{0}/drydock', steps.setup.outputs.install-dir) || inputs.drydock-bin }}
+        DRYDOCK_CACHE_PATH: ${{ steps.prepare.outputs.cache-path }}
+        DRYDOCK_INPUT_CACHE_PRUNE_MAX_SIZE: ${{ steps.prepare.outputs.cache-prune-max-size }}
+        DRYDOCK_INPUT_PATH: ${{ inputs.path }}
+      run: '"${GITHUB_ACTION_PATH}/prune.sh"'
 
     - name: Upload rendered manifest diff
       if: ${{ inputs.upload-artifacts == 'true' && steps.run.outputs.has-diff == 'true' }}

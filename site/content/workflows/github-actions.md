@@ -334,10 +334,25 @@ repopulates the cache each run. The action emits a notice on self-hosted runners
 that suggests `local`, and warns when `local` is used on a GitHub-hosted runner
 (whose filesystem is always ephemeral).
 
-With `local`, eviction is yours to manage: drydock's render-cache size cap and
-`drydock cache prune` bound the directory rather than GitHub's cache budget. A
-shared on-disk cache is readable by every job on the runner, so use it only for
-trusted workloads.
+With `local`, drydock's render-cache size cap and `drydock cache prune` bound
+the directory rather than GitHub's cache budget; outside the action's own
+prune step, eviction is yours to manage. A shared on-disk cache is readable by
+every job on the runner, so use it only for trusted workloads.
+
+The action automatically prunes the on-runner cache after each run when
+`cache-mode: local` is in effect: the `cache-prune-max-size` input (default
+`4Gi`, any Kubernetes quantity) caps the cache, and the prune step evicts
+least-recently-used entries from the source and render caches until the total
+is at or below the cap.
+Pruning is automatically disabled when `offline: true` because evicting source
+cache entries would hard-fail later offline runs (the `"offline cache miss"`
+error has no self-heal path). Pruning is housekeeping and never fails the job:
+if the installed drydock version does not yet support `cache prune --max-size`,
+the step emits a notice and exits cleanly; any other prune failure emits a
+warning. The render sweep inside the prune command runs at its 512 Mi default,
+matching run-time behavior. Set `cache-prune-max-size: ""` to opt out entirely.
+Assume one job per `cache-path` at a time: concurrent jobs sharing a cache-path
+can race the prune step against in-flight renders.
 
 ## Input Behavior
 
@@ -450,6 +465,7 @@ passes them as arguments without `eval`, but they still change drydock behavior.
 | --- | --- | --- |
 | `cache` | `true` | Restore and save drydock render caches for trusted runs. |
 | `cache-mode` | `auto` | Cache backend. `auto`/`github` use the remote `actions/cache` backend; `local` persists at `cache-path` on the runner and skips `actions/cache`; `off` disables persistence. `cache: "false"` forces `off`. |
+| `cache-prune-max-size` | `4Gi` | Size cap for the on-runner drydock source and render caches when `cache-mode: local`. Least-recently-used entries are pruned after each run until the total is at or below this Kubernetes quantity. Empty string disables pruning. Automatically disabled when `offline: true` to protect load-bearing cache entries. The render sweep inside the prune command runs at its 512 Mi default. An invalid quantity surfaces as a per-run warning, never a job failure. |
 | `save-cache` | `true` | Save drydock render caches after trusted runs. |
 | `cache-untrusted-restore` | `false` | Restore drydock render caches for fork pull requests. Cache save remains disabled for forks. |
 | `cache-path` | runner temp directory | Local drydock cache root. |

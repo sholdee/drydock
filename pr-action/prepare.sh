@@ -31,6 +31,7 @@ bool "${DRYDOCK_INPUT_CACHE_UNTRUSTED_RESTORE}" cache-untrusted-restore
 bool "${DRYDOCK_INPUT_UPLOAD_ARTIFACTS}" upload-artifacts
 bool "${DRYDOCK_INPUT_COMMENT_EMPTY}" comment-empty
 bool "${DRYDOCK_INPUT_COMMENT_CONTINUE_ON_ERROR}" comment-continue-on-error
+bool "${DRYDOCK_INPUT_OFFLINE:-false}" offline
 positive_int "${DRYDOCK_INPUT_ARTIFACT_RETENTION_DAYS}" artifact-retention-days
 positive_int "${DRYDOCK_INPUT_DIFF_MAX_BYTES}" diff-max-bytes
 
@@ -151,6 +152,12 @@ if [[ -z "${image_artifact_name}" ]]; then
   image_artifact_name="drydock-images-${GITHUB_RUN_ID:-run}-${GITHUB_RUN_ATTEMPT:-1}"
 fi
 
+cache_prune_max_size="${DRYDOCK_INPUT_CACHE_PRUNE_MAX_SIZE:-}"
+cache_prune=false
+if [[ "${cache_mode}" == "local" && -n "${cache_prune_max_size}" && "${DRYDOCK_INPUT_OFFLINE:-false}" != "true" ]]; then
+  cache_prune=true
+fi
+
 {
   echo "work-dir=${work_dir}"
   echo "cache-path=${cache_path}"
@@ -161,6 +168,8 @@ fi
   echo "diff-artifact-name=${diff_artifact_name}"
   echo "diff-html-artifact-name=${diff_html_artifact_name}"
   echo "image-artifact-name=${image_artifact_name}"
+  echo "cache-prune=${cache_prune}"
+  echo "cache-prune-max-size=${cache_prune_max_size}"
   echo "restore-keys<<EOF"
   printf '%s\n' "${restore_keys}"
   echo "EOF"
