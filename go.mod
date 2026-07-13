@@ -5,7 +5,7 @@ go 1.26.5
 require (
 	dario.cat/mergo v1.0.2
 	github.com/argoproj/argo-cd/gitops-engine v0.7.1-0.20250908182407-97ad5b59a627
-	github.com/argoproj/argo-cd/v3 v3.4.4
+	github.com/argoproj/argo-cd/v3 v3.4.5
 	github.com/bmatcuk/doublestar/v4 v4.10.0
 	github.com/distribution/reference v0.6.0
 	github.com/evanphx/json-patch v5.9.11+incompatible
@@ -195,7 +195,7 @@ require (
 replace (
 	// Argo CD uses a local replace for GitOps Engine. Consumers do not inherit
 	// it, so this pseudo-version must track the selected Argo CD tag.
-	github.com/argoproj/argo-cd/gitops-engine => github.com/argoproj/argo-cd/gitops-engine v0.0.0-20260618084203-443415b5527a
+	github.com/argoproj/argo-cd/gitops-engine => github.com/argoproj/argo-cd/gitops-engine v0.0.0-20260709160802-564b94973b28
 
 	// Helm v4.2.0 requires Kubernetes v0.36 modules, but the pinned Argo CD
 	// stack still imports Kubernetes APIs removed from v0.36.
