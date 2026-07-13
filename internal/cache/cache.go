@@ -40,7 +40,11 @@ type Entry struct {
 	ModifiedAt   time.Time `json:"modifiedAt" yaml:"modifiedAt"`
 	Legacy       bool      `json:"legacy" yaml:"legacy"`
 	Metadata     *Metadata `json:"metadata,omitempty" yaml:"metadata,omitempty"`
-	cacheRoot    string
+	// PruneReason is set to "age" or "size" only on entries selected for removal
+	// by Prune(). Zero value is omitted from JSON/YAML output so that cache list
+	// output remains byte-identical to pre-prune output.
+	PruneReason string `json:"pruneReason,omitempty" yaml:"pruneReason,omitempty"`
+	cacheRoot   string
 }
 
 type OperationOptions struct {
@@ -53,6 +57,11 @@ type OperationOptions struct {
 	Key                 string
 	All                 bool
 	RenderCacheMaxBytes int64
+	// MaxBytes caps the summed SizeBytes of the entries selected by the source/kind
+	// filters. Evicts least-recently-used (oldest entryAgeTime) entries until the
+	// total is at or below this cap. 0 disables the size phase. Named to parallel
+	// RenderCacheMaxBytes.
+	MaxBytes int64
 }
 
 type OperationResult struct {
@@ -60,6 +69,15 @@ type OperationResult struct {
 	RemovedCount int                      `json:"removedCount" yaml:"removedCount"`
 	DryRun       bool                     `json:"dryRun" yaml:"dryRun"`
 	RenderSweep  *rendercache.SweepResult `json:"renderSweep,omitempty" yaml:"renderSweep,omitempty"`
+	// SizeEvictedBytes is the sum of SizeBytes for all entries removed by the size
+	// phase. Populated on both dry-run and real runs. Always present in JSON/YAML
+	// output (not omitempty) for a consistent numeric summary.
+	SizeEvictedBytes int64 `json:"sizeEvictedBytes" yaml:"sizeEvictedBytes"`
+	// TotalSizeBytes is the selected-set total after both age and size phases,
+	// BEFORE the render sweep. The sweep (which runs after removals on real runs,
+	// never on dry-run) can trim renders further; its effect is reported separately
+	// in RenderSweep. Always present in JSON/YAML output (not omitempty).
+	TotalSizeBytes int64 `json:"totalSizeBytes" yaml:"totalSizeBytes"`
 }
 
 func List(opts Options) ([]Entry, error) {
@@ -98,8 +116,8 @@ func List(opts Options) ([]Entry, error) {
 }
 
 func Prune(opts OperationOptions) (OperationResult, error) {
-	if opts.OlderThan <= 0 {
-		return OperationResult{}, fmt.Errorf("older-than must be greater than zero")
+	if opts.OlderThan <= 0 && opts.MaxBytes <= 0 {
+		return OperationResult{}, fmt.Errorf("at least one of older-than or max-size is required")
 	}
 	if !opts.DryRun && !opts.Yes {
 		return OperationResult{}, fmt.Errorf("--yes is required for non-dry-run cache prune")
@@ -108,9 +126,7 @@ func Prune(opts OperationOptions) (OperationResult, error) {
 	if err != nil {
 		return OperationResult{}, err
 	}
-	cutoff := time.Now().Add(-opts.OlderThan)
-	selected := selectPruneEntries(entries, opts.Source, opts.Kind, cutoff)
-	result := OperationResult{Entries: selected, DryRun: opts.DryRun}
+	selected, result := buildPruneResult(entries, opts)
 	if opts.DryRun {
 		return result, nil
 	}
@@ -128,6 +144,96 @@ func Prune(opts OperationOptions) (OperationResult, error) {
 	return result, nil
 }
 
+// buildPruneResult runs phase A (age) and phase B (size) selection and
+// assembles the OperationResult fields that are populated on both dry and real
+// runs. It is extracted from Prune to keep Prune's cyclomatic complexity low.
+func buildPruneResult(entries []Entry, opts OperationOptions) ([]Entry, OperationResult) {
+	ageSelected := selectAgeEntries(entries, opts)
+	sizeSelected := selectSizePhase(entries, ageSelected, opts)
+
+	// Merge: age-selected first, then size-selected.
+	selected := make([]Entry, 0, len(ageSelected)+len(sizeSelected))
+	selected = append(selected, ageSelected...)
+	selected = append(selected, sizeSelected...)
+
+	totalSizeBytes := computeTotalSizeBytes(entries, selected, opts)
+	sizeEvictedBytes := sumSizeBytes(sizeSelected)
+
+	result := OperationResult{
+		Entries:          selected,
+		DryRun:           opts.DryRun,
+		SizeEvictedBytes: sizeEvictedBytes,
+		TotalSizeBytes:   totalSizeBytes,
+	}
+	return selected, result
+}
+
+// selectAgeEntries runs phase A: selects entries older than opts.OlderThan and
+// tags them with PruneReason "age". Returns nil when OlderThan is not set.
+func selectAgeEntries(entries []Entry, opts OperationOptions) []Entry {
+	if opts.OlderThan <= 0 {
+		return nil
+	}
+	cutoff := time.Now().Add(-opts.OlderThan)
+	selected := selectPruneEntries(entries, opts.Source, opts.Kind, cutoff)
+	for i := range selected {
+		selected[i].PruneReason = "age"
+	}
+	return selected
+}
+
+// selectSizePhase runs phase B: LRU eviction until the filtered-source total
+// is at or below opts.MaxBytes, excluding entries already selected by the age
+// phase. Tags the selected (evicted) entries with PruneReason "size". Returns
+// nil when MaxBytes is not set.
+//
+// Note: the render cache already uses a 90% hysteresis target to avoid
+// re-triggering on every post-run write. We evict to exactly ≤ cap here
+// because this is a manual command with no re-trigger loop — predictability
+// wins over hysteresis.
+func selectSizePhase(entries []Entry, ageSelected []Entry, opts OperationOptions) []Entry {
+	if opts.MaxBytes <= 0 {
+		return nil
+	}
+	selected := selectSizeEntries(entries, ageSelected, opts.Source, opts.Kind, opts.MaxBytes)
+	for i := range selected {
+		selected[i].PruneReason = "size"
+	}
+	return selected
+}
+
+// computeTotalSizeBytes returns the sum of SizeBytes for all in-scope entries
+// that were NOT selected for removal (i.e. entries surviving both phases),
+// BEFORE the render sweep runs.
+func computeTotalSizeBytes(entries []Entry, selected []Entry, opts OperationOptions) int64 {
+	selectedPaths := make(map[string]struct{}, len(selected))
+	for _, e := range selected {
+		selectedPaths[e.Path] = struct{}{}
+	}
+	var total int64
+	for _, e := range entries {
+		if opts.Source != "" && e.Source != opts.Source {
+			continue
+		}
+		if opts.Kind != "" && e.Kind != opts.Kind {
+			continue
+		}
+		if _, removed := selectedPaths[e.Path]; !removed {
+			total += e.SizeBytes
+		}
+	}
+	return total
+}
+
+// sumSizeBytes returns the sum of SizeBytes across a slice of entries.
+func sumSizeBytes(entries []Entry) int64 {
+	var total int64
+	for _, e := range entries {
+		total += e.SizeBytes
+	}
+	return total
+}
+
 func selectPruneEntries(entries []Entry, source Source, kind string, cutoff time.Time) []Entry {
 	selected := make([]Entry, 0, len(entries))
 	for _, entry := range entries {
@@ -140,6 +246,69 @@ func selectPruneEntries(entries []Entry, source Source, kind string, cutoff time
 		if entryAgeTime(entry).Before(cutoff) {
 			selected = append(selected, entry)
 		}
+	}
+	return selected
+}
+
+// selectSizeEntries evicts oldest-first (by entryAgeTime) until the total size
+// of in-scope entries is at or below maxBytes. alreadySelected is the age-phase
+// result; its entries are excluded from the candidate pool and their sizes are
+// already subtracted from the total. Ties in entryAgeTime are broken by Source,
+// Kind, then Key for deterministic output.
+func selectSizeEntries(entries []Entry, alreadySelected []Entry, source Source, kind string, maxBytes int64) []Entry {
+	// Build a set of paths already removed by the age phase.
+	excludePaths := make(map[string]struct{}, len(alreadySelected))
+	for _, e := range alreadySelected {
+		excludePaths[e.Path] = struct{}{}
+	}
+
+	// Collect candidates (in scope, not yet age-selected) and compute current total.
+	var candidates []Entry
+	var total int64
+	for _, e := range entries {
+		if source != "" && e.Source != source {
+			continue
+		}
+		if kind != "" && e.Kind != kind {
+			continue
+		}
+		if _, excluded := excludePaths[e.Path]; excluded {
+			continue
+		}
+		candidates = append(candidates, e)
+		total += e.SizeBytes
+	}
+
+	if total <= maxBytes {
+		// Already at or below cap; nothing to evict.
+		return nil
+	}
+
+	// Sort candidates oldest-first (LRU) with deterministic tie-break:
+	// (entryAgeTime, Source, Kind, Key) ascending.
+	sort.Slice(candidates, func(i, j int) bool {
+		ti := entryAgeTime(candidates[i])
+		tj := entryAgeTime(candidates[j])
+		if !ti.Equal(tj) {
+			return ti.Before(tj)
+		}
+		if candidates[i].Source != candidates[j].Source {
+			return candidates[i].Source < candidates[j].Source
+		}
+		if candidates[i].Kind != candidates[j].Kind {
+			return candidates[i].Kind < candidates[j].Kind
+		}
+		return candidates[i].Key < candidates[j].Key
+	})
+
+	// Evict oldest first until total ≤ cap.
+	var selected []Entry
+	for _, e := range candidates {
+		if total <= maxBytes {
+			break
+		}
+		selected = append(selected, e)
+		total -= e.SizeBytes
 	}
 	return selected
 }

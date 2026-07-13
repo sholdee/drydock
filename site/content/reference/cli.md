@@ -365,6 +365,7 @@ Report stale entries without deleting them:
 
 ```bash
 drydock cache prune --older-than 720h --dry-run
+drydock cache prune --max-size 4Gi --dry-run
 ```
 
 Delete a specific entry or all selected entries:

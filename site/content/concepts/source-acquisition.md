@@ -300,6 +300,7 @@ Cache lifecycle commands are local filesystem operations only:
 drydock cache path
 drydock cache list -o json
 drydock cache prune --older-than 720h --dry-run
+drydock cache prune --max-size 4Gi --yes
 ```
 
 They do not:
@@ -319,6 +320,42 @@ Cache lifecycle commands reject cache roots that resolve inside the current
 working directory, selected repository roots, Git repository trees, or
 symlink-resolved equivalents. Non-dry-run deletion requires `--yes`; dry-runs
 never require confirmation.
+
+### Pruning by age
+
+`--older-than DURATION` removes cache entries whose last-used timestamp
+(`Metadata.UpdatedAt`, refreshed on every cache hit and fetch) predates the
+given duration. Legacy entries without metadata fall back to filesystem mtime.
+
+### Pruning by size (`--max-size`)
+
+`--max-size QUANTITY` evicts the least-recently-used entries from the selected
+sources until their total size is at or below the cap. Recency is measured by
+`Metadata.UpdatedAt`, which is refreshed on every cache use — not just the
+initial fetch. This means the oldest (least-recently-used) entries are evicted
+first. Eviction proceeds to at or below the cap exactly, not to a hysteresis
+target.
+
+`--max-size` composes with `--source` and `--older-than`. When both flags are
+set, age-based entries are removed first; the size cap is then applied to the
+survivors. The cap applies to the sum of `SizeBytes` across entries matching
+the selected source and kind filters — the same per-entry sizes `cache list`
+reports.
+
+> **Warning:** Evicted source cache entries hard-fail subsequent runs that use
+> `--offline`, because offline mode cannot re-fetch missing entries
+> (`"offline cache miss for ..."`). Do not use `--max-size` before an offline
+> run unless you are confident the remaining entries cover all sources that
+> offline run will need.
+
+### Automation
+
+The Cache Lifecycle Boundary is defined by explicit invocation with explicit
+caps — not by whether a human issued the command. Automation such as the
+pr-action's local-mode post-run prune step may invoke `cache prune` on the
+operator's behalf; the same boundary and `--offline` warning apply.
+
+### Deferred design
 
 A shared content-addressed store with ref tables, leases, and mark-sweep
 collection is intentionally deferred. It would be useful only after drydock has

@@ -158,6 +158,135 @@ func TestPrepareCacheModeInvalidFails(t *testing.T) {
 	}
 }
 
+func TestPrepareCachePruneTruthTable(t *testing.T) {
+	toolCache := t.TempDir()
+
+	tests := []struct {
+		name      string
+		overrides map[string]string
+		wantPrune string
+	}{
+		{
+			name: "local+set+offline-false → true",
+			overrides: map[string]string{
+				"DRYDOCK_INPUT_CACHE_MODE":           "local",
+				"DRYDOCK_INPUT_CACHE_PRUNE_MAX_SIZE": "4Gi",
+				"DRYDOCK_INPUT_OFFLINE":              "false",
+				"RUNNER_TOOL_CACHE":                  toolCache,
+			},
+			wantPrune: "true",
+		},
+		{
+			name: "local+empty → false",
+			overrides: map[string]string{
+				"DRYDOCK_INPUT_CACHE_MODE":           "local",
+				"DRYDOCK_INPUT_CACHE_PRUNE_MAX_SIZE": "",
+				"RUNNER_TOOL_CACHE":                  toolCache,
+			},
+			wantPrune: "false",
+		},
+		{
+			name: "auto+set → false",
+			overrides: map[string]string{
+				"DRYDOCK_INPUT_CACHE_MODE":           "auto",
+				"DRYDOCK_INPUT_CACHE_PRUNE_MAX_SIZE": "4Gi",
+			},
+			wantPrune: "false",
+		},
+		{
+			name: "github+set → false",
+			overrides: map[string]string{
+				"DRYDOCK_INPUT_CACHE_MODE":           "github",
+				"DRYDOCK_INPUT_CACHE_PRUNE_MAX_SIZE": "4Gi",
+			},
+			wantPrune: "false",
+		},
+		{
+			name: "off+set → false",
+			overrides: map[string]string{
+				"DRYDOCK_INPUT_CACHE_MODE":           "off",
+				"DRYDOCK_INPUT_CACHE_PRUNE_MAX_SIZE": "4Gi",
+			},
+			wantPrune: "false",
+		},
+		{
+			// DRYDOCK_INPUT_OFFLINE entirely unset: the ${VAR:-false} guard must
+			// default to false and still enable pruning.
+			name: "local+set+offline-unset → true",
+			overrides: map[string]string{
+				"DRYDOCK_INPUT_CACHE_MODE":           "local",
+				"DRYDOCK_INPUT_CACHE_PRUNE_MAX_SIZE": "4Gi",
+				"RUNNER_TOOL_CACHE":                  toolCache,
+			},
+			wantPrune: "true",
+		},
+		{
+			name: "local+set+offline-true → false",
+			overrides: map[string]string{
+				"DRYDOCK_INPUT_CACHE_MODE":           "local",
+				"DRYDOCK_INPUT_CACHE_PRUNE_MAX_SIZE": "4Gi",
+				"DRYDOCK_INPUT_OFFLINE":              "true",
+				"RUNNER_TOOL_CACHE":                  toolCache,
+			},
+			wantPrune: "false",
+		},
+		{
+			name: "cache:false+cache-mode:local+set → false via mode forced off",
+			overrides: map[string]string{
+				"DRYDOCK_INPUT_CACHE":                "false",
+				"DRYDOCK_INPUT_CACHE_MODE":           "local",
+				"DRYDOCK_INPUT_CACHE_PRUNE_MAX_SIZE": "4Gi",
+				"RUNNER_TOOL_CACHE":                  toolCache,
+			},
+			wantPrune: "false",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			res := runPrepare(t, tc.overrides)
+			if got := outputValue(t, res.output, "cache-prune"); got != tc.wantPrune {
+				t.Fatalf("cache-prune = %q, want %q", got, tc.wantPrune)
+			}
+		})
+	}
+}
+
+func TestPrepareCachePruneMaxSizePassthrough(t *testing.T) {
+	toolCache := t.TempDir()
+	res := runPrepare(t, map[string]string{
+		"DRYDOCK_INPUT_CACHE_MODE":           "local",
+		"DRYDOCK_INPUT_CACHE_PRUNE_MAX_SIZE": "8Gi",
+		"RUNNER_TOOL_CACHE":                  toolCache,
+	})
+
+	if got := outputValue(t, res.output, "cache-prune-max-size"); got != "8Gi" {
+		t.Fatalf("cache-prune-max-size = %q, want 8Gi", got)
+	}
+}
+
+func TestPrepareCachePruneMaxSizeEmptyPassthrough(t *testing.T) {
+	// Even when prune is disabled (empty max-size), the output value is passed through.
+	res := runPrepare(t, map[string]string{
+		"DRYDOCK_INPUT_CACHE_MODE":           "auto",
+		"DRYDOCK_INPUT_CACHE_PRUNE_MAX_SIZE": "",
+	})
+
+	if got := outputValue(t, res.output, "cache-prune-max-size"); got != "" {
+		t.Fatalf("cache-prune-max-size = %q, want empty", got)
+	}
+}
+
+func TestPrepareExistingTestsUnaffectedByNewEnvVars(t *testing.T) {
+	// Existing test harness does not set the new vars; verify prepare.sh
+	// handles their absence (via ${VAR:-} default-guards) without error.
+	res := runPrepare(t, map[string]string{})
+	// The default cache-mode is auto, so cache-prune must be false.
+	if got := outputValue(t, res.output, "cache-prune"); got != "false" {
+		t.Fatalf("cache-prune = %q, want false when new vars are unset", got)
+	}
+}
+
 func TestPrepareSelfHostedAutoEmitsNotice(t *testing.T) {
 	res := runPrepare(t, map[string]string{
 		"DRYDOCK_INPUT_CACHE_MODE": "auto",

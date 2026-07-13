@@ -24,6 +24,7 @@ type cacheFlags struct {
 	remoteCacheDir     string
 	renderCacheDir     string
 	renderCacheMaxSize quantityFlag
+	maxSize            quantityFlag
 	source             string
 	output             string
 	olderThan          string
@@ -122,6 +123,7 @@ func newCacheCommand() *cobra.Command {
 	bindCacheOperationFlags(pruneCmd, &pruneFlags)
 	pruneCmd.Flags().StringVar(&pruneFlags.olderThan, "older-than", pruneFlags.olderThan, "remove cache entries older than this duration")
 	pruneCmd.Flags().Var(&pruneFlags.renderCacheMaxSize, "render-cache-max-size", "size cap enforced by the render cache sweep during prune (Kubernetes quantity, default 512Mi)")
+	pruneCmd.Flags().Var(&pruneFlags.maxSize, "max-size", "evict least-recently-used cache entries from the selected sources until their total size is at or below this cap (Kubernetes quantity, e.g. 4Gi)")
 
 	deleteFlags := defaultCacheFlags()
 	deleteCmd := &cobra.Command{
@@ -224,6 +226,7 @@ func cacheOperationOptions(flags cacheFlags) (cache.OperationOptions, error) {
 		Key:                 strings.TrimSpace(flags.key),
 		All:                 flags.all,
 		RenderCacheMaxBytes: flags.renderCacheMaxSize.bytes,
+		MaxBytes:            flags.maxSize.bytes,
 	}, nil
 }
 
@@ -362,6 +365,24 @@ func renderCacheOperation(cmd *cobra.Command, output cliformat.Output, result ca
 		if result.DryRun {
 			verb = "would remove"
 			count = len(result.Entries)
+		}
+		if result.SizeEvictedBytes > 0 {
+			// Size phase ran: break down counts by reason, report bytes freed and
+			// the post-prune selected-set total.
+			ageCount := 0
+			sizeCount := 0
+			for _, e := range result.Entries {
+				switch e.PruneReason {
+				case "age":
+					ageCount++
+				case "size":
+					sizeCount++
+				}
+			}
+			_, err := fmt.Fprintf(cmd.OutOrStdout(),
+				"%s %d cache entries (%d by age, %d by size); freed %d bytes by size, %d bytes remain\n",
+				verb, count, ageCount, sizeCount, result.SizeEvictedBytes, result.TotalSizeBytes)
+			return err
 		}
 		_, err := fmt.Fprintf(cmd.OutOrStdout(), "%s %d cache entries\n", verb, count)
 		return err
