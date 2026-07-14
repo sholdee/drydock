@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1.25
 
-FROM --platform=$BUILDPLATFORM golang:1.26.5@sha256:0f70d7d828acd8456022127f31975364e58d792999a7e92af6fc972e124bb6b0 AS build
+FROM --platform=$BUILDPLATFORM golang:1.26.5@sha256:983a0823d3dab83604654972fe6bbda13142a7c57f987804fbdddb9d47dad9ec AS build
 
 ARG TARGETOS
 ARG TARGETARCH
