@@ -154,6 +154,24 @@ command, a shell, the Helm CLI, or the Kustomize CLI. For trusted
 command-backed plugins, use [Plugin policy](/plugin-policy/) with
 `engine: exec` or `engine: container` and `--enable-plugins`.
 
+Repositories using [KSOPS](https://github.com/viaduct-ai/kustomize-sops) can
+use `--enable-ksops-compat` to render `apiVersion: viaduct.ai/v1 / kind: ksops`
+kustomize generators as deterministic placeholder manifests without decryption.
+Secret structure and key names are preserved; encrypted values are replaced by
+a deterministic placeholder (`drydock-ksops-redacted-<12hex>`), with `data:`
+values encoded as valid base64. No decryption key, network call, or exec is
+involved. Pair with `--skip-secrets` to suppress placeholder Secrets from diff
+output.
+
+```bash
+drydock diff apps --repo . --ref HEAD --ref-orig origin/main --enable-ksops-compat --skip-secrets
+```
+
+Value-only sops rotations (changing only the ciphertext without renaming keys)
+render identically under `--enable-ksops-compat` because the placeholder
+derives from key identity, not ciphertext. "No diff" does not mean "no change"
+for rotated secrets.
+
 Repositories tagged with `argocd` or `gitops` are not always Argo CD
 Application fleet repositories. `drydock test apps` reports zero Applications
 when no `Application` or supported `ApplicationSet` objects are discovered.

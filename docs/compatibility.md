@@ -169,8 +169,13 @@ Supported:
   libraries with extVars, TLAs, code mode, env substitution, and repo-relative
   libs, and skips drydock cache metadata sidecars.
 - Local Kustomize rendering with supported `kustomize.buildOptions`:
-  `--enable-helm`, `--helm-api-versions`, and
-  `--load-restrictor=LoadRestrictionsRootOnly|LoadRestrictionsNone`.
+  `--enable-helm`, `--helm-api-versions`,
+  `--load-restrictor=LoadRestrictionsRootOnly|LoadRestrictionsNone`,
+  `--enable-alpha-plugins`, and `--enable-exec`. The latter two are accepted
+  without error — Argo CD sets them repo-wide in `argocd-cm`, so rejecting
+  the option would fail every app in such repositories, including ones with no
+  generators. They do NOT enable arbitrary exec: drydock never executes
+  generator commands.
   Kustomize `helmCharts` render through drydock's Go-library Helm path, so
   chart inflation does not require an external Kustomize binary or CLI
   `--enable-helm`.
@@ -194,6 +199,28 @@ Supported:
   source. drydock does not execute `discover.find.command`.
 - Native AVP compatibility for explicit `argocd-vault-plugin` sources and
   discovered simple AVP CMP aliases.
+- KSOPS kustomize generator compatibility under `--enable-ksops-compat`. When
+  the mode is active, `apiVersion: viaduct.ai/v1 / kind: ksops` generator
+  entries are rendered as deterministic placeholder manifests without
+  decryption: SOPS-encrypted file structure and key names are preserved; every
+  encrypted value is replaced by a deterministic placeholder
+  (`drydock-ksops-redacted-<12hex>` marker). Secret `data:` values are valid
+  base64 of the placeholder. The secret VALUES are never decrypted and no
+  decryption key, KMS network call, or exec is involved.
+  Builtin generator configs (`apiVersion: builtin`) are left for krusty and
+  render successfully with or without the flag. Exec transformers, exec
+  validators, container KRM functions, and other non-KSOPS generators remain
+  unsupported and fail closed. krusty's own errors surface for unsupported
+  transformer and validator kinds.
+  KSOPS manifests using `secretFrom`, `binaryFiles`, `envs`, or non-YAML sops
+  targets fail closed with explicit unsupported diagnostics. A KSOPS generator
+  encountered without `--enable-ksops-compat` fails the source with an
+  actionable error naming the flag.
+  Important: value-only sops rotations (changing only an `ENC[...]` ciphertext
+  without adding, removing, or renaming keys) render identically under
+  `--enable-ksops-compat`. The placeholder derives from key identity, not from
+  ciphertext, so a rotation produces no diff in drydock output even though the
+  live secret changes. "No diff" does not mean "no change" for rotated values.
 - Trusted drydock plugin policy entries for native plugin overrides and
   explicitly enabled exec/container CMP compatibility.
 - Trusted plugin policy bootstrap entrypoints for plugin-rendered Argo CD

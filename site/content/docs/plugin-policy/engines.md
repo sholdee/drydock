@@ -21,6 +21,18 @@ Kustomize CLI. Generic `<KEY>` placeholders are redacted only when the rendered
 manifest has `metadata.annotations["avp.kubernetes.io/path"]`; inline
 `<path:...#...>` placeholders remain supported.
 
+`ksops-compat` renders the source with drydock's native Kustomize renderer and
+replaces `apiVersion: viaduct.ai/v1 / kind: ksops` kustomize generator entries
+with deterministic placeholder manifests. Encrypted values become
+`drydock-ksops-redacted-<12hex>` markers (base64-encoded in `data:` fields).
+No decryption key, KMS network call, or exec is involved. Enable the mode
+globally with `--enable-ksops-compat` (CLI) or `enable-ksops-compat: true`
+(GitHub Action). Builtin generator configs render normally without this flag.
+Exec transformers and validators remain unsupported and fail closed.
+Note that `ksops-compat` is a native compatibility mode enabled only by the
+`--enable-ksops-compat` flag (or the action input); it is not a valid policy
+`engine:` value.
+
 `native-kustomize` explicitly permits a named plugin to use drydock's native
 Kustomize adapter. The same adapter also runs by default when drydock discovers
 a compatible Kustomize build CMP definition for that plugin from Argo CD
@@ -49,6 +61,7 @@ discovered CMP definitions only when they map to a known in-process renderer
 with a fail-closed validator. Discovered CMP definitions are never ambient
 permission to execute commands or emulate arbitrary plugin behavior.
 `--enable-avp-compat` forces the same redaction pass for ordinary native
-rendered sources, but it is not support for arbitrary sidecar CMPs or
+rendered sources, and `--enable-ksops-compat` enables the KSOPS generator
+placeholder path. Neither flag is support for arbitrary sidecar CMPs or
 arbitrary plugin commands. Use `engine: exec` or
 `engine: container` for trusted command-backed plugins.

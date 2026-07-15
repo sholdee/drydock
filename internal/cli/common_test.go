@@ -42,7 +42,7 @@ func TestRepresentativeCommandsExposeFocusedFlagGroups(t *testing.T) {
 		{
 			name:    "build apps common acquisition discovery fixtures filters",
 			command: []string{"build", "apps"},
-			flags:   []string{"offline", "repo-map", "enable-avp-compat", "enable-plugins", "plugin-cache-dir", "plugin-policy-path", "plugin-policy-ref", "plugin-policy-repo", "appset-provider-fixture", "skip-kind", "project-diagnostics"},
+			flags:   []string{"offline", "repo-map", "enable-avp-compat", "enable-ksops-compat", "enable-plugins", "plugin-cache-dir", "plugin-policy-path", "plugin-policy-ref", "plugin-policy-repo", "appset-provider-fixture", "skip-kind", "project-diagnostics"},
 		},
 		{
 			name:    "diff apps common specialized diff flags",
@@ -83,6 +83,33 @@ func TestEnablePluginsHelpDescribesTrustedCommandPolicy(t *testing.T) {
 		if !strings.Contains(flag.Usage, want) {
 			t.Fatalf("--enable-plugins usage = %q, want %q", flag.Usage, want)
 		}
+	}
+}
+
+func TestEnableKSOPSCompatHelpDescribesPlaceholderRendering(t *testing.T) {
+	cmd := findCLICommand(t, "build", "apps")
+	flag := cmd.Flags().Lookup("enable-ksops-compat")
+	if flag == nil {
+		t.Fatal("build apps missing --enable-ksops-compat")
+	}
+	for _, want := range []string{"KSOPS", "placeholder", "decryption"} {
+		if !strings.Contains(flag.Usage, want) {
+			t.Fatalf("--enable-ksops-compat usage = %q, want %q", flag.Usage, want)
+		}
+	}
+}
+
+func TestRequestOptionsFromFlagsCarriesKSOPSCompat(t *testing.T) {
+	flags := defaultCommonFlags()
+	flags.enableKSOPSCompat = true
+
+	opts := requestOptionsFromFlags(flags, nil)
+
+	if !opts.EnableKSOPSCompat {
+		t.Fatal("opts.EnableKSOPSCompat = false, want true")
+	}
+	if buildReq := opts.Build(); !buildReq.EnableKSOPSCompat {
+		t.Fatal("opts.Build() EnableKSOPSCompat = false, want true")
 	}
 }
 

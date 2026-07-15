@@ -60,6 +60,8 @@ not execute plugin commands and reject Application plugin env and parameters.
 Explicit `argocd-vault-plugin` sources and discovered simple AVP CMP aliases
 use native AVP compatibility by default. `Config.EnableAVPCompat` forces the
 same placeholder redaction pass for ordinary native-rendered sources.
+`Config.EnableKSOPSCompat` enables the KSOPS kustomize generator placeholder
+path for repositories that use KSOPS for secret management.
 
 Embedders can pass a renderer directly or use
 `drydock.NewPluginRegistry(map[string]drydock.PluginRenderer{...})` to dispatch

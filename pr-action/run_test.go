@@ -431,6 +431,95 @@ func TestRunOmitsPluginCacheDirWhenCachePathEmpty(t *testing.T) {
 	}
 }
 
+func TestRunPassesEnableKSOPSCompatFlagWhenInputTrue(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell action tests require bash")
+	}
+
+	tmp := t.TempDir()
+	workDir := filepath.Join(tmp, "work")
+	outputPath := filepath.Join(tmp, "github-output")
+	writeExecutable(t, filepath.Join(tmp, "drydock"), `#!/usr/bin/env bash
+set -euo pipefail
+mkdir -p "${DRYDOCK_ACTION_WORK_DIR}"
+printf '%s\n' "$*" >> "${DRYDOCK_ACTION_WORK_DIR}/drydock-args.txt"
+`)
+	cmd := exec.Command("bash", "run.sh")
+	cmd.Dir = "."
+	cmd.Env = append(defaultRunEnv(tmp, workDir, outputPath),
+		"DRYDOCK_INPUT_RUN_TEST=true",
+		"DRYDOCK_INPUT_RUN_DIFF=true",
+		"DRYDOCK_INPUT_RUN_IMAGE_DIFF=true",
+		"DRYDOCK_INPUT_ENABLE_KSOPS_COMPAT=true",
+	)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("run.sh failed: %v\n%s", err, out)
+	}
+	args := readFile(t, filepath.Join(workDir, "drydock-args.txt"))
+	for line := range strings.SplitSeq(strings.TrimSpace(args), "\n") {
+		if !strings.Contains(line, "--enable-ksops-compat") {
+			t.Fatalf("drydock invocation missing --enable-ksops-compat:\n%s", line)
+		}
+	}
+}
+
+func TestRunRejectsInvalidEnableKSOPSCompatValue(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell action tests require bash")
+	}
+
+	tmp := t.TempDir()
+	workDir := filepath.Join(tmp, "work")
+	outputPath := filepath.Join(tmp, "github-output")
+	writeExecutable(t, filepath.Join(tmp, "drydock"), `#!/usr/bin/env bash
+set -euo pipefail
+mkdir -p "${DRYDOCK_ACTION_WORK_DIR}"
+printf '%s\n' "$*" >> "${DRYDOCK_ACTION_WORK_DIR}/drydock-args.txt"
+`)
+	cmd := exec.Command("bash", "run.sh")
+	cmd.Dir = "."
+	cmd.Env = append(defaultRunEnv(tmp, workDir, outputPath),
+		"DRYDOCK_INPUT_ENABLE_KSOPS_COMPAT=maybe",
+	)
+	output, err := cmd.CombinedOutput()
+	if err == nil {
+		t.Fatalf("run.sh accepted invalid enable-ksops-compat value; output:\n%s", output)
+	}
+	if !strings.Contains(string(output), "enable-ksops-compat") {
+		t.Fatalf("run.sh error output = %q, want mention of enable-ksops-compat", output)
+	}
+}
+
+func TestRunOmitsEnableKSOPSCompatFlagWhenInputFalse(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell action tests require bash")
+	}
+
+	tmp := t.TempDir()
+	workDir := filepath.Join(tmp, "work")
+	outputPath := filepath.Join(tmp, "github-output")
+	writeExecutable(t, filepath.Join(tmp, "drydock"), `#!/usr/bin/env bash
+set -euo pipefail
+mkdir -p "${DRYDOCK_ACTION_WORK_DIR}"
+printf '%s\n' "$*" >> "${DRYDOCK_ACTION_WORK_DIR}/drydock-args.txt"
+`)
+	cmd := exec.Command("bash", "run.sh")
+	cmd.Dir = "."
+	cmd.Env = append(defaultRunEnv(tmp, workDir, outputPath),
+		"DRYDOCK_INPUT_RUN_TEST=true",
+		"DRYDOCK_INPUT_RUN_DIFF=true",
+		"DRYDOCK_INPUT_RUN_IMAGE_DIFF=true",
+		"DRYDOCK_INPUT_ENABLE_KSOPS_COMPAT=false",
+	)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("run.sh failed: %v\n%s", err, out)
+	}
+	args := readFile(t, filepath.Join(workDir, "drydock-args.txt"))
+	if strings.Contains(args, "--enable-ksops-compat") {
+		t.Fatalf("drydock args contain --enable-ksops-compat when input is false:\n%s", args)
+	}
+}
+
 func TestRunImageCommentsUseMarkdownAfterExtraImageArgs(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("shell action tests require bash")
@@ -947,6 +1036,7 @@ func defaultRunEnv(tmp, workDir, outputPath string) []string {
 		"DRYDOCK_INPUT_DISABLE_PLUGIN_POLICY=false",
 		"DRYDOCK_INPUT_DISCOVER_KUSTOMIZE=",
 		"DRYDOCK_INPUT_ENABLE_AVP_COMPAT=false",
+		"DRYDOCK_INPUT_ENABLE_KSOPS_COMPAT=false",
 		"DRYDOCK_INPUT_ENABLE_PLUGINS=false",
 		"DRYDOCK_INPUT_EXTRA_DIFF_ARGS=",
 		"DRYDOCK_INPUT_EXTRA_IMAGE_DIFF_ARGS=",

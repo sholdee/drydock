@@ -59,6 +59,7 @@ type ApplicationSetOptions struct {
 type PluginOptions struct {
 	PluginTimeout            time.Duration
 	EnableAVPCompat          bool
+	EnableKSOPSCompat        bool
 	EnablePlugins            bool
 	PluginCacheDir           string
 	PluginPolicyPath         string

@@ -1779,6 +1779,26 @@ func TestApplicationRenderCacheDisablesMatchedExecPolicy(t *testing.T) {
 	}
 }
 
+func TestApplicationRenderCacheKeyRotatesOnKSOPSCompat(t *testing.T) {
+	application := pluginApplication("plugin")
+	base, err := applicationRenderCacheKey(renderContext{request: BuildRequest{}}, application)
+	if err != nil {
+		t.Fatalf("applicationRenderCacheKey() error = %v", err)
+	}
+	if base == "" {
+		t.Fatal("applicationRenderCacheKey() = empty baseline key")
+	}
+	flagged, err := applicationRenderCacheKey(renderContext{
+		request: BuildRequest{PluginOptions: PluginOptions{EnableKSOPSCompat: true}},
+	}, application)
+	if err != nil {
+		t.Fatalf("applicationRenderCacheKey() error = %v", err)
+	}
+	if flagged == base {
+		t.Fatalf("applicationRenderCacheKey() did not rotate on EnableKSOPSCompat: %q", base)
+	}
+}
+
 func TestApplicationRenderCacheDisablesUnnamedStaticExecPolicyMatch(t *testing.T) {
 	policy, _ := testExecPluginPolicyWithMatch(t, "cue", appExecCommand(t, "manifest"), `    match:
       discover:
@@ -2233,7 +2253,7 @@ func TestOrchestratorBuildRejectsUnsafeAutoNativeKustomizePlugins(t *testing.T) 
 				writePluginBuildApplication(t, root, "plugin", "kustomize-build")
 			},
 			writeCMP: func(t *testing.T, root string) {
-				writeNativeKustomizeCMPHelmValues(t, root, "kustomize-build", "", "kustomize, build", "--enable-alpha-plugins")
+				writeNativeKustomizeCMPHelmValues(t, root, "kustomize-build", "", "kustomize, build", "--network")
 			},
 			writeSource: func(t *testing.T, root string) {
 				writeNativeKustomizeSource(t, root, "plugin", "should-not-render")
@@ -2496,9 +2516,17 @@ func TestNativeKustomizePluginBuildOptionsFailClosed(t *testing.T) {
 			plugin: config.ConfigManagementPlugin{
 				Name:            "kustomize-build",
 				GenerateCommand: []string{"kustomize", "build"},
-				GenerateArgs:    []string{"--enable-alpha-plugins"},
+				GenerateArgs:    []string{"--network"},
 			},
 			wantErr: true,
+		},
+		{
+			name: "plugin flags accepted",
+			plugin: config.ConfigManagementPlugin{
+				Name:            "kustomize-build",
+				GenerateCommand: []string{"kustomize", "build"},
+				GenerateArgs:    []string{"--enable-alpha-plugins", "--enable-exec"},
+			},
 		},
 	}
 

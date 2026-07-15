@@ -121,6 +121,11 @@ func validateWorkspacePathBearingRefs(boundaryRoot, dir string, kustomization *t
 		}
 	}
 	for _, generator := range kustomization.Generators {
+		// Inline generator entries (left for krusty by classification) are
+		// YAML documents, not paths.
+		if isInlineKustomizeGeneratorEntry(generator) {
+			continue
+		}
 		if err := validateWorkspacePathRef(boundaryRoot, dir, "generators", generator); err != nil {
 			return err
 		}
@@ -277,4 +282,44 @@ func generatedKustomizeWorkspacePath(root, rel string) (string, error) {
 		return "", fmt.Errorf("generated kustomize path %q: %w", rel, err)
 	}
 	return generatedPath, nil
+}
+
+// writeGeneratedKustomizeWorkspaceFile writes a drydock-generated file at rel
+// under root, failing closed when anything already exists at the destination.
+// Prepared workspace trees materialize repository files as hard links
+// (copyWorkspaceFile), so an O_TRUNC rewrite of a path the repository already
+// committed would write THROUGH the shared inode into the user's original
+// file. All generated-file writers (ksops-compat placeholders, generated helm
+// values, generated helm manifests) must route through this helper: the Lstat
+// produces the actionable error, and the O_EXCL open makes the rejection
+// race-free.
+func writeGeneratedKustomizeWorkspaceFile(root, rel string, data []byte) error {
+	path, err := generatedKustomizeWorkspacePath(root, rel)
+	if err != nil {
+		return err
+	}
+	if _, err := os.Lstat(path); err == nil {
+		return generatedKustomizeWorkspacePathExistsError(rel)
+	} else if !os.IsNotExist(err) {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+	file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
+	if err != nil {
+		if os.IsExist(err) {
+			return generatedKustomizeWorkspacePathExistsError(rel)
+		}
+		return err
+	}
+	if _, err := file.Write(data); err != nil {
+		_ = file.Close()
+		return err
+	}
+	return file.Close()
+}
+
+func generatedKustomizeWorkspacePathExistsError(rel string) error {
+	return fmt.Errorf("generated workspace path %q already exists in the source tree; the repository contains a file colliding with drydock's generated namespace — rename or remove it", rel)
 }

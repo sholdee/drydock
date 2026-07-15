@@ -354,6 +354,30 @@ func TestRenderApplicationPassesAVPCompatibilityOption(t *testing.T) {
 	}
 }
 
+func TestRenderApplicationPassesKSOPSCompatibilityOption(t *testing.T) {
+	application := argoappv1.Application{
+		ObjectMeta: metav1.ObjectMeta{Namespace: "argocd", Name: "demo"},
+		Spec: argoappv1.ApplicationSpec{
+			Source: &argoappv1.ApplicationSource{
+				RepoURL: "https://repo",
+				Path:    "manifests/demo",
+			},
+		},
+	}
+	var got render.RenderOptions
+	provider := providerFunc(func(_ context.Context, _ render.ResolvedSource, opts render.RenderOptions) ([]render.Manifest, []diagnostic.Diagnostic, error) {
+		got = opts
+		return nil, nil, nil
+	})
+
+	if _, err := RenderApplication(context.Background(), application, provider, PluginOptions{EnableKSOPSCompat: true}); err != nil {
+		t.Fatalf("RenderApplication() error = %v", err)
+	}
+	if !got.EnableKSOPSCompat {
+		t.Fatal("RenderOptions.EnableKSOPSCompat = false, want true")
+	}
+}
+
 func TestRenderApplicationAVPCompatibilityReplacesRenderedManifestPlaceholders(t *testing.T) {
 	fixture := &unstructured.Unstructured{Object: map[string]any{
 		"apiVersion": "v1",

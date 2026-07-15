@@ -1033,7 +1033,7 @@ func TestParseKustomizeBuildOptionsSupportsHelmAPIVersions(t *testing.T) {
 }
 
 func TestParseKustomizeBuildOptionsRejectsUnsupportedOptions(t *testing.T) {
-	_, err := parseKustomizeBuildOptions([]string{"--enable-alpha-plugins"})
+	_, err := parseKustomizeBuildOptions([]string{"--network"})
 	if err == nil {
 		t.Fatal("parseKustomizeBuildOptions() error = nil, want unsupported option error")
 	}

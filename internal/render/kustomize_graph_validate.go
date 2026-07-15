@@ -222,7 +222,7 @@ func (v *kustomizeGraphValidator) validateAuxiliaryRefs(dir string, kustomizatio
 		}
 	}
 	for _, generator := range kustomization.Generators {
-		if err := v.validatePathRef(dir, "generators", generator); err != nil {
+		if err := v.validateGeneratorManifestRef(dir, generator); err != nil {
 			return err
 		}
 	}
@@ -324,6 +324,43 @@ func (v *kustomizeGraphValidator) validatePathRef(dir, field, ref string) error 
 	}
 	_, _, err := v.validateLocalRef(dir, field, ref)
 	return err
+}
+
+// validateGeneratorManifestRef validates one generators: entry. Inline
+// entries (YAML documents, not paths — kustomize tries NewResMapFromBytes
+// before treating an entry as a path) have no manifest path to validate;
+// treating them as paths risks spurious ENAMETOOLONG failures. An inline
+// KSOPS document's files: referents ARE paths, though — render inputs read
+// during ksops-compat emulation, resolved relative to the kustomization
+// directory (matching prepareKustomizeGeneratorEntry) — so they are
+// boundary-validated here. Path entries are validated like other path refs,
+// and when the referenced manifest parses as a KSOPS generator its files:
+// referents are boundary-validated relative to the manifest's own directory.
+// Fork-PR content is attacker-influenced in both shapes.
+func (v *kustomizeGraphValidator) validateGeneratorManifestRef(dir, ref string) error {
+	if docs, inline := inlineKustomizeGeneratorDocuments(ref); inline {
+		for _, fileRef := range ksopsGeneratorFileRefsFromDocuments(docs) {
+			if _, _, err := v.validateLocalRef(dir, "generators.files", fileRef); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+	if v.allowAcquirableRemoteRefs {
+		if _, _, ok, err := remoteRequestForKustomizeRef(ref); err == nil && ok {
+			return nil
+		}
+	}
+	path, info, err := v.validateLocalRef(dir, "generators", ref)
+	if err != nil || info == nil || !info.Mode().IsRegular() {
+		return err
+	}
+	for _, fileRef := range ksopsGeneratorFileRefs(path) {
+		if _, _, err := v.validateLocalRef(filepath.Dir(path), "generators.files", fileRef); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (v *kustomizeGraphValidator) validateGeneratorRefs(dir, field string, sources types.KvPairSources) error {

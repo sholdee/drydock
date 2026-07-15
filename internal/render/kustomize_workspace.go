@@ -12,13 +12,24 @@ import (
 )
 
 type kustomizeWorkspace struct {
-	originalRepoRoot string
-	tempRepoRoot     string
-	sourceRoot       string
-	opts             RenderOptions
-	visited          map[string]struct{}
-	nextGraphIndex   int
-	nextPathIndex    int
+	originalRepoRoot      string
+	tempRepoRoot          string
+	sourceRoot            string
+	opts                  RenderOptions
+	visited               map[string]struct{}
+	nextGraphIndex        int
+	nextPathIndex         int
+	ksopsSubstitutedFiles int
+}
+
+// diagnostics surfaces warnings accumulated while preparing the workspace —
+// one ksops-compat substitution warning per source, mirroring the
+// avp-compat-substituted pattern.
+func (w *kustomizeWorkspace) diagnostics() []diagnostic.Diagnostic {
+	if w.ksopsSubstitutedFiles == 0 {
+		return nil
+	}
+	return []diagnostic.Diagnostic{ksopsCompatDiagnostic(w.ksopsSubstitutedFiles)}
 }
 
 func renderKustomizeWithPreparedWorkspace(ctx context.Context, source ResolvedSource, graph []kustomizeGraphNode, opts RenderOptions, buildSettings kustomizeBuildSettings) ([]Manifest, []diagnostic.Diagnostic, error) {
@@ -57,7 +68,11 @@ func renderKustomizeWithPreparedWorkspace(ctx context.Context, source ResolvedSo
 		return nil, nil, err
 	}
 
-	return renderPlainKustomize(ctx, tempSource, tempRoot, buildSettings)
+	manifests, renderDiags, err := renderPlainKustomize(ctx, tempSource, tempRoot, buildSettings)
+	if err != nil {
+		return nil, nil, err
+	}
+	return manifests, append(workspace.diagnostics(), renderDiags...), nil
 }
 
 //nolint:gocyclo // Coordinates helm inflation, remote graph rewriting, and validation.
@@ -147,6 +162,13 @@ func (w *kustomizeWorkspace) prepareKustomizationDir(ctx context.Context, dir, b
 		graphIndex:   graphIndex,
 	}
 	if err := w.rewriteKustomizePathBearingRefs(ctx, node, &kustomization); err != nil {
+		return fmt.Errorf("%s: %w", manifestPath, err)
+	}
+
+	// Generator classification runs after the path-ref rewrite above so
+	// remote-acquired generator manifests are materialized in the workspace
+	// before they are classified.
+	if err := w.prepareKustomizeGenerators(ctx, dir, boundaryRoot, graphIndex, &kustomization); err != nil {
 		return fmt.Errorf("%s: %w", manifestPath, err)
 	}
 

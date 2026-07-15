@@ -59,13 +59,19 @@ paths do not execute plugin commands unless trusted drydock plugin policy
 provenance matches `engine: exec` or `engine: container` and the caller
 explicitly sets `--enable-plugins`. Discovered Argo CD CMP definitions that
 normalize to a safe `kustomize build` command may be interpreted through
-drydock's native Kustomize renderer without shelling out. Other native engines
-must remain narrow, in-process compatibility paths with fail-closed validators.
-Keep detailed policy behavior in `site/content/docs/plugin-policy/`. Public
-API plugin rendering is allowed only through explicit in-process
-`Config.PluginRenderer` or registry injection. Preserve `plugin.unsupported`,
-`plugin.failed`, and `plugin.unspecified` diagnostics, and do not reclassify
-caller cancellation as plugin timeout.
+drydock's native Kustomize renderer without shelling out. Native compat paths
+include `avp-compat` (AVP placeholder redaction; default-on for AVP-shaped
+sources, flag-forced via `--enable-avp-compat` for ordinary ones) and
+`ksops-compat` (KSOPS generator placeholder rendering without decryption;
+opt-in via `--enable-ksops-compat`, and fail-closed — a KSOPS generator
+without the flag fails the source with an actionable error). Neither executes
+external commands or contacts secret backends. Other native engines must remain narrow,
+in-process compatibility paths with fail-closed validators. Keep detailed
+policy behavior in `site/content/docs/plugin-policy/`. Public API plugin
+rendering is allowed only through explicit in-process `Config.PluginRenderer`
+or registry injection. Preserve `plugin.unsupported`, `plugin.failed`, and
+`plugin.unspecified` diagnostics, and do not reclassify caller cancellation as
+plugin timeout.
 
 ## Validation, Benchmarks, And Profiling
 

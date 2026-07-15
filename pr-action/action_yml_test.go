@@ -176,6 +176,37 @@ func TestActionPruneStepIfGuardAndEnvWiring(t *testing.T) {
 	}
 }
 
+func TestActionKSOPSCompatInputDeclaredAndWiredToRunStep(t *testing.T) {
+	actionYAML := loadActionYAML(t)
+
+	// Input must be declared.
+	if !strings.Contains(actionYAML, "enable-ksops-compat:") {
+		t.Fatalf("action.yml missing enable-ksops-compat input declaration")
+	}
+	// Default must be "false".
+	inputIdx := strings.Index(actionYAML, "enable-ksops-compat:")
+	snippet := actionYAML[inputIdx:min(inputIdx+300, len(actionYAML))]
+	if !strings.Contains(snippet, `default: "false"`) {
+		t.Fatalf("enable-ksops-compat input block = %q, want default: \"false\"", snippet)
+	}
+
+	// Run step must wire the env var.
+	runIdx := strings.Index(actionYAML, "- name: Run drydock\n")
+	if runIdx == -1 {
+		t.Fatalf("action.yml missing 'Run drydock' step")
+	}
+	nextStep := strings.Index(actionYAML[runIdx+1:], "\n    - name: ")
+	var runBlock string
+	if nextStep == -1 {
+		runBlock = actionYAML[runIdx:]
+	} else {
+		runBlock = actionYAML[runIdx : runIdx+1+nextStep]
+	}
+	if !strings.Contains(runBlock, "DRYDOCK_INPUT_ENABLE_KSOPS_COMPAT: ${{ inputs.enable-ksops-compat }}") {
+		t.Fatalf("Run step env block missing DRYDOCK_INPUT_ENABLE_KSOPS_COMPAT wiring:\n%s", runBlock)
+	}
+}
+
 func TestActionNoPinnedActionRefsInPruneStep(t *testing.T) {
 	actionYAML := loadActionYAML(t)
 

@@ -200,7 +200,22 @@ func referencedKustomizeWorkspacePaths(dir string, kustomization types.Kustomiza
 		appendLocalRef(ref)
 	}
 	for _, ref := range kustomization.Generators {
+		// Inline generator entries are YAML documents, not paths — but their
+		// KSOPS files: referents (resolved from the kustomization dir, matching
+		// emulation/digest/validation) still need copying into the temp tree.
+		if isInlineKustomizeGeneratorEntry(ref) {
+			if docs, ok := inlineKustomizeGeneratorDocuments(ref); ok {
+				for _, fileRef := range ksopsGeneratorFileRefsFromDocuments(docs) {
+					appendLocalRef(fileRef)
+				}
+			}
+			continue
+		}
 		appendLocalRef(ref)
+		// KSOPS files: referents resolve relative to the generator manifest
+		// (which may sit outside every copied directory); copy them so
+		// ksops-compat emulation can read them from the temp tree.
+		refs = append(refs, ksopsGeneratorFilePaths(dir, ref)...)
 	}
 	for _, ref := range kustomization.Transformers {
 		appendLocalRef(ref)

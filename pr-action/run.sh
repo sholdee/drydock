@@ -244,6 +244,7 @@ bool "${DRYDOCK_INPUT_STRICT}" strict
 bool "${DRYDOCK_INPUT_STRICT_CHANGED_ONLY}" strict-changed-only
 bool "${DRYDOCK_INPUT_SHOW_IGNORED_FIELDS}" show-ignored-fields
 bool "${DRYDOCK_INPUT_ENABLE_AVP_COMPAT}" enable-avp-compat
+bool "${DRYDOCK_INPUT_ENABLE_KSOPS_COMPAT}" enable-ksops-compat
 bool "${DRYDOCK_INPUT_ENABLE_PLUGINS}" enable-plugins
 bool "${DRYDOCK_INPUT_DISABLE_PLUGIN_POLICY}" disable-plugin-policy
 bool "${DRYDOCK_INPUT_FAIL_ON_RENDER_ERROR}" fail-on-render-error
@@ -318,6 +319,7 @@ append_bool_flag common_args "${DRYDOCK_INPUT_OFFLINE}" "--offline"
 append_bool_flag common_args "${DRYDOCK_INPUT_STRICT}" "--strict"
 append_bool_flag common_args "${DRYDOCK_INPUT_STRICT_CHANGED_ONLY}" "--strict-changed-only"
 append_bool_flag common_args "${DRYDOCK_INPUT_ENABLE_AVP_COMPAT}" "--enable-avp-compat"
+append_bool_flag common_args "${DRYDOCK_INPUT_ENABLE_KSOPS_COMPAT}" "--enable-ksops-compat"
 append_bool_flag common_args "${DRYDOCK_INPUT_ENABLE_PLUGINS}" "--enable-plugins"
 append_bool_flag common_args "${DRYDOCK_INPUT_DISABLE_PLUGIN_POLICY}" "--disable-plugin-policy"
 append_value_flag common_args "${DRYDOCK_INPUT_PARALLELISM}" "--parallelism"

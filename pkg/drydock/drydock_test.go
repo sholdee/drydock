@@ -2,6 +2,7 @@ package drydock
 
 import (
 	"context"
+	"encoding/base64"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -48,6 +49,77 @@ data:
 	}
 	if !hasDiagnosticCode(result.Diagnostics, "plugin.avp-compat-substituted") {
 		t.Fatalf("Diagnostics = %#v, want AVP compatibility diagnostic", result.Diagnostics)
+	}
+}
+
+func TestRenderKSOPSCompatibilityReplacesGeneratorWithPlaceholder(t *testing.T) {
+	root := t.TempDir()
+
+	// Application pointing to a Kustomize source with a KSOPS generator.
+	writeAPIFile(t, filepath.Join(root, "apps", "demo.yaml"), `apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: demo
+  namespace: argocd
+spec:
+  source:
+    repoURL: https://github.com/example/repo
+    targetRevision: main
+    path: manifests/demo
+  destination:
+    name: in-cluster
+    namespace: default
+`)
+	// Kustomize entrypoint with a KSOPS generator reference.
+	writeAPIFile(t, filepath.Join(root, "manifests", "demo", "kustomization.yaml"), `apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+generators:
+  - ./secret-generator.yaml
+`)
+	// KSOPS generator manifest (apiVersion: viaduct.ai/v1, kind: ksops).
+	writeAPIFile(t, filepath.Join(root, "manifests", "demo", "secret-generator.yaml"), `apiVersion: viaduct.ai/v1
+kind: ksops
+metadata:
+  name: demo-secret-generator
+files:
+  - ./demo-secret.sops.yaml
+`)
+	// SOPS-encrypted Secret fixture with plaintext structure and ENC[...] values.
+	writeAPIFile(t, filepath.Join(root, "manifests", "demo", "demo-secret.sops.yaml"), `apiVersion: v1
+kind: Secret
+metadata:
+  name: demo-secret
+data:
+  TOKEN: ENC[AES256_GCM,data:NYI8Q9o3original,iv:aksv1mXYiMja9Guq9SCT6wPjrXTo2MHX6JMGGyYmIo8=,tag:IBjPwh9GgBEIClIjaXyyVQ==,type:str]
+sops:
+  encrypted_regex: ^(data|stringData)$
+  version: 3.10.2
+`)
+
+	result, err := Render(context.Background(), Config{Path: root, EnableKSOPSCompat: true})
+	if err != nil {
+		t.Fatalf("Render() error = %v", err)
+	}
+	if !hasDiagnosticCode(result.Diagnostics, "kustomize.ksops-compat-substituted") {
+		t.Fatalf("Diagnostics = %#v, want kustomize.ksops-compat-substituted diagnostic", result.Diagnostics)
+	}
+	if len(result.Manifests) != 1 {
+		t.Fatalf("Manifests = %d, want 1", len(result.Manifests))
+	}
+	data, ok := result.Manifests[0].Object["data"].(map[string]any)
+	if !ok {
+		t.Fatalf("Object[data] = %#v, want map", result.Manifests[0].Object["data"])
+	}
+	token, _ := data["TOKEN"].(string)
+	if strings.HasPrefix(token, "ENC[") {
+		t.Fatalf("data.TOKEN = %q, still contains the encrypted value", token)
+	}
+	decoded, err := base64.StdEncoding.DecodeString(token)
+	if err != nil {
+		t.Fatalf("data.TOKEN = %q, want valid base64: %v", token, err)
+	}
+	if !strings.HasPrefix(string(decoded), "drydock-ksops-redacted-") {
+		t.Fatalf("data.TOKEN decodes to %q, want drydock-ksops-redacted- placeholder", decoded)
 	}
 }
 

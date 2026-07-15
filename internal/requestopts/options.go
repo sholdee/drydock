@@ -48,6 +48,7 @@ type Options struct {
 	RemoteResourceCredentials      remote.Credentials
 	RemoteResourceGitCredentials   remote.GitCredentials
 	EnableAVPCompat                bool
+	EnableKSOPSCompat              bool
 	EnablePlugins                  bool
 	PluginCacheDir                 string
 	PluginPolicyPath               string
@@ -165,6 +166,7 @@ func (options Options) pluginOptions() app.PluginOptions {
 	return app.PluginOptions{
 		PluginTimeout:            options.PluginTimeout,
 		EnableAVPCompat:          options.EnableAVPCompat,
+		EnableKSOPSCompat:        options.EnableKSOPSCompat,
 		EnablePlugins:            options.EnablePlugins,
 		PluginCacheDir:           options.PluginCacheDir,
 		PluginPolicyPath:         options.PluginPolicyPath,

@@ -371,6 +371,31 @@ func TestGenerateInfersNativeKustomize(t *testing.T) {
 	}
 }
 
+func TestGenerateInfersNativeKustomizeWithPluginFlags(t *testing.T) {
+	root := t.TempDir()
+	app := pluginApp("argocd", "demo", "apps/demo", "kustomize-build-ksops")
+	settings := settingsWithCMP("kustomize-build-ksops", config.ConfigManagementPlugin{
+		Name:            "kustomize-build-ksops",
+		GenerateCommand: []string{"sh", "-c"},
+		GenerateArgs:    []string{"kustomize build --enable-helm --enable-alpha-plugins --enable-exec"},
+		Discover:        config.ConfigManagementPluginDiscovery{FileName: "kustomization.yaml"},
+	})
+	report, err := Analyze(root, []ApplicationInput{{Application: app}}, settings, nil, AnalyzeOptions{})
+	if err != nil {
+		t.Fatalf("Analyze() error = %v", err)
+	}
+	data, err := Generate(report, GenerateOptions{Comments: false})
+	if err != nil {
+		t.Fatalf("Generate() error = %v", err)
+	}
+	text := string(data)
+	for _, want := range []string{`engine: native-kustomize`, `args: ["--enable-helm", "--enable-alpha-plugins", "--enable-exec"]`} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("generated policy missing %q:\n%s", want, text)
+		}
+	}
+}
+
 func TestAnalyzeUsesEmbeddedCMPForUnnamedStaticDiscovery(t *testing.T) {
 	root := t.TempDir()
 	writeFile(t, filepath.Join(root, "apps", "demo", "kustomization.yaml"), "resources: []\n")

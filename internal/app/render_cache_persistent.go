@@ -935,6 +935,7 @@ type persistentRenderKeyInput struct {
 	SettingsSignature       string                        `json:"settingsSignature"`
 	PluginTimeout           string                        `json:"pluginTimeout,omitempty"`
 	EnableAVPCompat         bool                          `json:"enableAVPCompat"`
+	EnableKSOPSCompat       bool                          `json:"enableKSOPSCompat"`
 	EnablePlugins           bool                          `json:"enablePlugins"`
 	PluginPolicyFingerprint string                        `json:"pluginPolicyFingerprint,omitempty"`
 	HasInjectedPluginRender bool                          `json:"hasInjectedPluginRender"`
@@ -1062,6 +1063,7 @@ func preparePersistentRender(ctx context.Context, application argoappv1.Applicat
 		SettingsSignature:       options.persistent.settingsSignature,
 		PluginTimeout:           options.PluginOptions.PluginTimeout.String(),
 		EnableAVPCompat:         options.PluginOptions.EnableAVPCompat,
+		EnableKSOPSCompat:       options.PluginOptions.EnableKSOPSCompat,
 		EnablePlugins:           options.PluginOptions.EnablePlugins,
 		PluginPolicyFingerprint: options.PluginOptions.pluginPolicyFingerprint,
 		HasInjectedPluginRender: options.persistent.hasInjectedPluginRender,
