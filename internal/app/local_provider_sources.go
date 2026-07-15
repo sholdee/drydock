@@ -39,6 +39,17 @@ func (p localProvider) resolveSourceRootIdentity(ctx context.Context, source ren
 			return p.repoRoot, p.rootIdentity, nil
 		}
 	}
+	if p.isSelfRepoRef(source.RepoURL, source.TargetRevision) {
+		// The source names the repository under diff at a revision tracking the
+		// diffed tree. Resolve to this side's root: never consult the git
+		// acquirer, whose snapshot-memo and persistent-cache keys are side-blind
+		// (URL+revision string). rootIdentity is side-scoped (Revision =
+		// per-side rootRevision), so the app stays persistent-render-cache
+		// eligible with per-side keys — also fixing the side-blind identity for
+		// pure ref-only sources.
+		p.recordCacheEvent(cacheevent.Event{Source: cacheevent.SourceGit, Action: cacheevent.ActionLocal, Target: source.RepoURL, Revision: source.TargetRevision})
+		return p.repoRoot, p.rootIdentity, nil
+	}
 	if strings.TrimSpace(source.RepoURL) == "" {
 		return p.repoRoot, p.rootIdentity, nil
 	}

@@ -57,6 +57,7 @@ type BuildRequest struct {
 	snapshotSession         *acquisition.SnapshotSession
 	persistentRenderCache   *persistentRenderCache
 	rootRevision            string
+	selfRepo                selfRepoRefs
 	discoveryPathMemo       *sync.Map
 	appsetGenerationMemo    *sync.Map
 }
@@ -908,16 +909,27 @@ func normalizeDiagnostics(diags []diagnostic.Diagnostic, strict, forceWarning bo
 		if forceWarning {
 			out[i].Severity = diagnostic.SeverityWarning
 		}
-		if strict {
+		if strict && !strictExemptDiagnostic(out[i]) {
 			out[i].Severity = diagnostic.SeverityError
 		}
 	}
 	return out
 }
 
+// strictExemptDiagnostic reports whether a diagnostic is advisory-only:
+// --strict must neither escalate its severity nor fail the application on it.
+// The self-repo near-miss is a --repo-map remediation hint whose primary
+// audience is fork-topology checkouts running strict CI diffs — escalating it
+// would convert exactly those working diffs into hard failures. Rendering
+// stays unchanged when the hint fires (remote acquisition still happens), so
+// there is nothing for --strict to protect against.
+func strictExemptDiagnostic(diag diagnostic.Diagnostic) bool {
+	return diag.Code == selfRepoNearMissCode
+}
+
 func diagnosticFailure(diags []diagnostic.Diagnostic, strict bool) error {
 	for _, diag := range diags {
-		if strict || diag.Severity == diagnostic.SeverityError {
+		if diag.Severity == diagnostic.SeverityError || (strict && !strictExemptDiagnostic(diag)) {
 			return fmt.Errorf("diagnostic %s: %s", diag.Category, diag.Message)
 		}
 	}

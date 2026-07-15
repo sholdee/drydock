@@ -50,6 +50,7 @@ type DiffRequest struct {
 	persistentRenderCache *persistentRenderCache
 	leftPathRevision      string
 	rightPathRevision     string
+	selfRepo              selfRepoRefs
 }
 
 type DiffAppRequest struct {
@@ -374,6 +375,7 @@ func resolveDiffRequestPaths(ctx context.Context, request DiffRequest, computeCh
 		request.rightPathRevision = result.Revision
 		cleanups = append(cleanups, result.Cleanup)
 	}
+	request.selfRepo = detectSelfRepoRefs(request, repoPath)
 	return request, cleanup, nil
 }
 
@@ -449,12 +451,23 @@ func sameLocalPath(left, right string) bool {
 }
 
 func (request DiffRequest) buildRequest(path string, forbiddenRoots []string) BuildRequest {
+	options := request.buildAcquisitionOptions(forbiddenRoots)
+	// design.md: "PR diff roots are authoritative for mapped repositories."
+	// An explicit --repo-map pointing at the checkout under diff previously
+	// served ONE worktree to both sides (silent empty diff); rewrite per side.
+	// request.Repo is non-empty only for ref-based (or plugin-policy --repo)
+	// diffs; sameLocalPath("", x) is false, so pure path diffs are untouched.
+	for i, repoMap := range options.RepoMaps {
+		if sameLocalPath(repoMap.Path, request.Repo) {
+			options.RepoMaps[i].Path = path
+		}
+	}
 	return BuildRequest{
 		Path:                   path,
 		Strict:                 request.Strict,
 		ProjectDiagnosticsMode: request.ProjectDiagnosticsMode,
 		DiscoveryOptions:       cloneDiscoveryOptions(request.DiscoveryOptions),
-		AcquisitionOptions:     request.buildAcquisitionOptions(forbiddenRoots),
+		AcquisitionOptions:     options,
 		RenderCacheOptions:     request.RenderCacheOptions,
 		PluginOptions:          request.PluginOptions,
 		ExecutionOptions:       request.ExecutionOptions,
@@ -462,7 +475,9 @@ func (request DiffRequest) buildRequest(path string, forbiddenRoots []string) Bu
 		ApplicationSetOptions:  cloneApplicationSetOptions(request.ApplicationSetOptions),
 		CapabilityOptions:      request.CapabilityOptions,
 		CRDScopeOptions:        request.CRDScopeOptions,
-		persistentRenderCache:  request.persistentRenderCache,
+		// per-side deep copy: no shared mutable state across concurrent sides
+		selfRepo:              request.selfRepo.clone(),
+		persistentRenderCache: request.persistentRenderCache,
 	}
 }
 

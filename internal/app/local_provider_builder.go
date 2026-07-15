@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"strings"
+	"sync"
 
 	"github.com/sholdee/drydock/internal/acquisition"
 	"github.com/sholdee/drydock/internal/cacheevent"
@@ -70,6 +71,17 @@ func newLocalProvider(ctx context.Context, orchestrator Orchestrator, root strin
 		cacheEvents:                  recorder,
 	}
 	provider.rootIdentity, provider.rootInputMode, provider.rootDirtyPaths = rootIdentityForRequest(ctx, root, request)
+	if len(request.selfRepo.urlKeys) > 0 {
+		provider.selfRepoURLKeys = make(map[string]struct{}, len(request.selfRepo.urlKeys))
+		for _, key := range request.selfRepo.urlKeys {
+			provider.selfRepoURLKeys[key] = struct{}{}
+		}
+		provider.selfRepoRevisions = make(map[string]struct{}, len(request.selfRepo.revisions))
+		for _, revision := range request.selfRepo.revisions {
+			provider.selfRepoRevisions[revision] = struct{}{}
+		}
+		provider.selfRepoNearMissOnce = &sync.Map{}
+	}
 	provider.renderObserver = orchestrator.renderObserver
 	if request.snapshotSession != nil {
 		provider.acquisition = acquisition.Session{

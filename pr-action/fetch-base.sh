@@ -43,6 +43,13 @@ base_refspec="+${base_ref}:refs/remotes/origin/${base_ref}"
 # Bring the base branch tip into the local repository.
 "${git_cmd[@]}" fetch --no-tags --depth=1 origin "${base_refspec}"
 
+# Record the base branch as origin's HEAD symref (no network: the tracking ref
+# was just fetched). CI checkouts do not set origin/HEAD; drydock's diff
+# self-repo gate reads it so sources pinned to the base branch NAME (e.g.
+# targetRevision: main) resolve to the per-side trees instead of acquiring the
+# remote. Non-fatal: without it drydock degrades to remote acquisition.
+git remote set-head origin "${base_ref}" >/dev/null 2>&1 || true
+
 repo_is_shallow() {
   local git_dir
   git_dir="$(git rev-parse --git-dir 2>/dev/null)" || return 1

@@ -179,9 +179,14 @@ func TestResolveSourceRootIdentityVariants(t *testing.T) {
 		},
 		rootIdentity: rootIdentity,
 	}
+	selfProvider := provider
+	selfProvider.selfRepoURLKeys = map[string]struct{}{
+		sourcepkg.CanonicalGitURLKey("https://git.example.test/org/repo.git"): {},
+	}
 
 	cases := []struct {
 		name         string
+		provider     *localProvider
 		source       render.ResolvedSource
 		wantIdentity SourceIdentity
 	}{
@@ -210,15 +215,34 @@ func TestResolveSourceRootIdentityVariants(t *testing.T) {
 			source:       render.ResolvedSource{RepoURL: "https://git.example.test/other/repo.git", Path: "elsewhere", TargetRevision: "main"},
 			wantIdentity: SourceIdentity{Kind: sourceIdentityKindGit, Locator: sourcepkg.NormalizeURL("https://git.example.test/other/repo.git"), Revision: "2222222222222222222222222222222222222222"},
 		},
+		{
+			name:         "self-repo ref at HEAD uses provider root identity",
+			provider:     &selfProvider,
+			source:       render.ResolvedSource{RepoURL: "https://git.example.test/org/repo.git", TargetRevision: "HEAD"},
+			wantIdentity: rootIdentity,
+		},
+		{
+			name:         "self-repo URL pinned to a commit SHA is acquired",
+			provider:     &selfProvider,
+			source:       render.ResolvedSource{RepoURL: "https://git.example.test/org/repo.git", TargetRevision: "0123456789abcdef0123456789abcdef01234567"},
+			wantIdentity: SourceIdentity{Kind: sourceIdentityKindGit, Locator: sourcepkg.NormalizeURL("https://git.example.test/org/repo.git"), Revision: "2222222222222222222222222222222222222222"},
+		},
 	}
 	for _, testCase := range cases {
 		t.Run(testCase.name, func(t *testing.T) {
-			_, identity, err := provider.resolveSourceRootIdentity(context.Background(), testCase.source)
+			caseProvider := provider
+			if testCase.provider != nil {
+				caseProvider = *testCase.provider
+			}
+			root, identity, err := caseProvider.resolveSourceRootIdentity(context.Background(), testCase.source)
 			if err != nil {
 				t.Fatalf("resolveSourceRootIdentity() error = %v", err)
 			}
 			if identity != testCase.wantIdentity {
 				t.Fatalf("identity = %#v, want %#v", identity, testCase.wantIdentity)
+			}
+			if identity == rootIdentity && root != repoRoot {
+				t.Fatalf("root = %q, want provider root %q", root, repoRoot)
 			}
 		})
 	}

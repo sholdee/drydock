@@ -137,7 +137,16 @@ Repository resolution and cache behavior are documented in
 `site/content/concepts/source-acquisition.md`. Important invariants:
 
 - `--repo-map URL=PATH` wins over local source fallback and network fetching.
-- PR diff roots are authoritative for mapped repositories.
+- PR diff roots are authoritative for mapped repositories. During diffs, a
+  `--repo-map` entry pointing at the checkout under diff is rewritten to each
+  side's tree so one mapped worktree never serves both sides.
+- During diffs, a source naming the repository under diff at `""`/`HEAD`, a
+  diffed ref name, or the repository's default-branch name (from a remote
+  HEAD symref) resolves to the active side tree; full-commit-SHA revisions
+  still acquire remotely. Fork-shaped near misses (same host and repository
+  name, different owner) warn with `source.self-repo-near-miss` and keep
+  remote acquisition; the warning is advisory only and exempt from `--strict`
+  escalation and failure.
 - Unmapped external Git repositories fetch into the Git cache by default and
   require cache hits or repo maps under `--offline`.
 - Credential use is explicit, non-interactive, and redacted.
