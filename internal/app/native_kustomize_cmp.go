@@ -139,6 +139,8 @@ func normalizeNativeKustomizeBuildTokens(tokens []string) ([]string, error) {
 		}
 		switch {
 		case token == "--enable-helm",
+			token == "--enable-alpha-plugins",
+			token == "--enable-exec",
 			strings.HasPrefix(token, "--helm-api-versions="),
 			strings.HasPrefix(token, "--load-restrictor="):
 			options = append(options, token)

@@ -77,7 +77,7 @@ func renderCoverageFixtureProvider(repoRoot string) localProvider {
 // apiVersion/kind, and the directory renderer silently skips non-manifest
 // decode failures — a file that only produces decode errors when corrupted
 // will not register as an outcome change.
-func assertRenderInputCoverage(t *testing.T, repoRoot string, application argoappv1.Application) {
+func assertRenderInputCoverage(t *testing.T, repoRoot string, application argoappv1.Application, pluginOptions ...PluginOptions) {
 	t.Helper()
 	provider := renderCoverageFixtureProvider(repoRoot)
 	plan := mustPlan(t, application)
@@ -95,7 +95,7 @@ func assertRenderInputCoverage(t *testing.T, repoRoot string, application argoap
 		t.Fatalf("localInputDigestPathsForSource() error = %v", err)
 	}
 
-	baselineResult, baselineErr := RenderApplication(context.Background(), application, provider)
+	baselineResult, baselineErr := RenderApplication(context.Background(), application, provider, pluginOptions...)
 	if baselineErr != nil {
 		t.Fatalf("baseline render must succeed, got %v", baselineErr)
 	}
@@ -134,7 +134,7 @@ func assertRenderInputCoverage(t *testing.T, repoRoot string, application argoap
 			t.Fatalf("mutate %q: %v", file, err)
 		}
 
-		result, renderErr := RenderApplication(context.Background(), application, renderCoverageFixtureProvider(repoRoot))
+		result, renderErr := RenderApplication(context.Background(), application, renderCoverageFixtureProvider(repoRoot), pluginOptions...)
 		mutated := renderOutcomeSignature(t, result, renderErr)
 
 		if err := os.WriteFile(file, original, 0o600); err != nil {
@@ -201,6 +201,31 @@ func TestRenderInputCoverageHelmSource(t *testing.T) {
 		},
 	}
 	assertRenderInputCoverage(t, repoRoot, application)
+}
+
+// TestRenderInputCoverageKustomizeKSOPSGenerator pins that the sops files
+// referenced by a KSOPS generator manifest (including cross-directory targets
+// above the source path) AND by an inline KSOPS generators: entry are covered
+// by the persistent render cache digest — a sops edit must rotate the render
+// cache key under --enable-ksops-compat.
+func TestRenderInputCoverageKustomizeKSOPSGenerator(t *testing.T) {
+	repoRoot := t.TempDir()
+	writeTestFile(t, repoRoot+"/manifests/app/kustomization.yaml", "generators:\n  - ./secret-generator.yaml\n  - |\n    apiVersion: viaduct.ai/v1\n    kind: ksops\n    metadata:\n      name: inline-secret-generator\n    files:\n      - ./inline-secret.sops.yaml\n")
+	writeTestFile(t, repoRoot+"/manifests/app/secret-generator.yaml", "apiVersion: viaduct.ai/v1\nkind: ksops\nmetadata:\n  name: demo-secret-generator\nfiles:\n  - ./demo-secret.sops.yaml\n  - ../../secrets/shared.sops.yaml\n")
+	writeTestFile(t, repoRoot+"/manifests/app/demo-secret.sops.yaml", "apiVersion: v1\nkind: Secret\nmetadata:\n    name: demo-secret\ndata:\n    TOKEN: ENC[AES256_GCM,data:abc123,type:str]\nsops:\n    version: 3.10.2\n")
+	writeTestFile(t, repoRoot+"/manifests/app/inline-secret.sops.yaml", "apiVersion: v1\nkind: Secret\nmetadata:\n    name: inline-secret\ndata:\n    INLINE: ENC[AES256_GCM,data:ghi789,type:str]\nsops:\n    version: 3.10.2\n")
+	writeTestFile(t, repoRoot+"/secrets/shared.sops.yaml", "apiVersion: v1\nkind: Secret\nmetadata:\n    name: shared-secret\ndata:\n    SHARED: ENC[AES256_GCM,data:def456,type:str]\nsops:\n    version: 3.10.2\n")
+	writeTestFile(t, repoRoot+"/unrelated/README.md", "not a render input\n")
+	application := argoappv1.Application{
+		ObjectMeta: metav1.ObjectMeta{Name: "app", Namespace: "argocd"},
+		Spec: argoappv1.ApplicationSpec{
+			Source: &argoappv1.ApplicationSource{
+				RepoURL: "https://git.example.test/org/repo.git", Path: "manifests/app", TargetRevision: "main",
+			},
+			Destination: argoappv1.ApplicationDestination{Namespace: "default"},
+		},
+	}
+	assertRenderInputCoverage(t, repoRoot, application, PluginOptions{EnableKSOPSCompat: true})
 }
 
 // TestRenderInputCoverageHelmSourceOutOfChartDirValueFile pins that a valueFile

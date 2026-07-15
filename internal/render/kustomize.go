@@ -44,7 +44,10 @@ func (KustomizeRenderer) Render(ctx context.Context, source ResolvedSource, opts
 	if err != nil {
 		return nil, nil, err
 	}
-	if kustomizeGraphHasHelmCharts(graph) || hasAcquirableRemoteKustomizeGraphRefs(graph) {
+	// Generator-bearing kustomizations always take the prepared-workspace
+	// path: generator classification and ksops-compat emulation happen in
+	// prepareKustomizationDir, so the plain path must be unreachable for them.
+	if kustomizeGraphHasHelmCharts(graph) || hasAcquirableRemoteKustomizeGraphRefs(graph) || kustomizeGraphHasGenerators(graph) {
 		manifests, renderDiags, err := renderKustomizeWithPreparedWorkspace(ctx, source, graph, opts, buildSettings)
 		return manifests, append(diags, renderDiags...), err
 	}
@@ -240,11 +243,7 @@ func renderKustomizeHelmCharts(ctx context.Context, tempRepoRoot, tempSourceRoot
 		}
 
 		generatedResource := filepath.ToSlash(filepath.Join(".drydock", "helm", generatedName+".yaml"))
-		generatedPath, err := generatedKustomizeWorkspacePath(tempSourceRoot, generatedResource)
-		if err != nil {
-			return nil, err
-		}
-		if err := writeGeneratedHelmManifests(generatedPath, rendered); err != nil {
+		if err := writeGeneratedHelmManifests(tempSourceRoot, generatedResource, rendered); err != nil {
 			return nil, err
 		}
 		generatedResources = append(generatedResources, generatedResource)
@@ -458,18 +457,15 @@ func writeKustomizeHelmGeneratedValuesFile(ctx context.Context, tempRepoRoot, te
 	}
 
 	generatedRel := filepath.ToSlash(filepath.Join(".drydock", "values", generatedName+".yaml"))
-	generatedPath, err := generatedKustomizeWorkspacePath(tempSourceRoot, generatedRel)
-	if err != nil {
-		return "", err
-	}
-	if err := os.MkdirAll(filepath.Dir(generatedPath), 0o755); err != nil {
-		return "", err
-	}
 	data, err := goyaml.Marshal(values)
 	if err != nil {
 		return "", fmt.Errorf("encode generated helm values %s: %w", generatedRel, err)
 	}
-	if err := os.WriteFile(generatedPath, data, 0o644); err != nil {
+	// writeGeneratedKustomizeWorkspaceFile rejects pre-existing paths with an
+	// O_EXCL create: workspace files are hard links to the original repository
+	// tree, so a plain O_TRUNC write here could write through a repo-committed
+	// collision. Do not revert to os.WriteFile.
+	if err := writeGeneratedKustomizeWorkspaceFile(tempSourceRoot, generatedRel, data); err != nil {
 		return "", fmt.Errorf("write generated helm values %s: %w", generatedRel, err)
 	}
 	return generatedRel, nil
@@ -491,10 +487,7 @@ func kustomizationChartHome(kustomization types.Kustomization) string {
 	return types.HelmDefaultHome
 }
 
-func writeGeneratedHelmManifests(path string, manifests []Manifest) error {
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return err
-	}
+func writeGeneratedHelmManifests(root, rel string, manifests []Manifest) error {
 	var buffer bytes.Buffer
 	for _, m := range manifests {
 		if m.Object == nil {
@@ -524,8 +517,12 @@ func writeGeneratedHelmManifests(path string, manifests []Manifest) error {
 			return err
 		}
 	}
-	if err := os.WriteFile(path, buffer.Bytes(), 0o644); err != nil {
-		return fmt.Errorf("write generated helm manifests %s: %w", path, err)
+	// writeGeneratedKustomizeWorkspaceFile rejects pre-existing paths with an
+	// O_EXCL create: workspace files are hard links to the original repository
+	// tree, so a plain O_TRUNC write here could write through a repo-committed
+	// collision. Do not revert to os.WriteFile.
+	if err := writeGeneratedKustomizeWorkspaceFile(root, rel, buffer.Bytes()); err != nil {
+		return fmt.Errorf("write generated helm manifests %s: %w", rel, err)
 	}
 	return nil
 }

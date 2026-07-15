@@ -8,8 +8,10 @@ import (
 )
 
 type kustomizeBuildSettings struct {
-	LoadRestrictions types.LoadRestrictions
-	APIVersions      []string
+	LoadRestrictions   types.LoadRestrictions
+	APIVersions        []string
+	EnableAlphaPlugins bool
+	EnableExec         bool
 }
 
 func defaultKustomizeBuildSettings() kustomizeBuildSettings {
@@ -31,6 +33,17 @@ func parseKustomizeBuildOptions(options []string) (kustomizeBuildSettings, error
 		switch {
 		case option == "--enable-helm":
 			continue
+		// Argo CD accepts --enable-alpha-plugins and --enable-exec repo-wide via
+		// argocd-cm; rejecting the options failed every kustomize app in such
+		// repos, including apps with no generators at all. Accepting them does
+		// NOT enable arbitrary exec: drydock still executes nothing — generator
+		// entries are classified and either emulated natively (KSOPS under
+		// --enable-ksops-compat), left to krusty's statically linked builtins,
+		// or rejected with a diagnostic.
+		case option == "--enable-alpha-plugins":
+			settings.EnableAlphaPlugins = true
+		case option == "--enable-exec":
+			settings.EnableExec = true
 		case option == "--helm-api-versions":
 			if i+1 >= len(options) {
 				return settings, fmt.Errorf("kustomize build option %q requires a value", option)

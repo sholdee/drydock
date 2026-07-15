@@ -161,7 +161,7 @@ func (c *kustomizeInputCollector) collectAuxiliaryRefs(ctx context.Context, dir 
 		}
 	}
 	for _, ref := range kustomization.Generators {
-		if err := c.addKustomizeRef(ctx, dir, "generators", ref, false); err != nil {
+		if err := c.collectGeneratorManifestRef(ctx, dir, ref); err != nil {
 			return err
 		}
 	}
@@ -200,6 +200,42 @@ func (c *kustomizeInputCollector) collectPatchRefs(ctx context.Context, dir stri
 			continue
 		}
 		if err := c.addKustomizeRef(ctx, dir, "patchesStrategicMerge", ref, false); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// collectGeneratorManifestRef digests one generators: entry. Inline entries
+// are part of the kustomization file, which is always digested — but an
+// inline KSOPS document's files: referents are separate render inputs of
+// ksops-compat emulation, so they join the digest too, resolved relative to
+// the kustomization directory (the base directory emulation uses for inline
+// entries). Local path entries are digested by content, and when the manifest
+// parses as a KSOPS generator its files: referents join the digest too —
+// sops edits must rotate the render cache key.
+func (c *kustomizeInputCollector) collectGeneratorManifestRef(ctx context.Context, dir, ref string) error {
+	ref = strings.TrimSpace(ref)
+	if ref == "" {
+		return nil
+	}
+	if docs, inline := inlineKustomizeGeneratorDocuments(ref); inline {
+		for _, fileRef := range ksopsGeneratorFileRefsFromDocuments(docs) {
+			if err := c.addLocalRef(ctx, dir, "generators.files", fileRef, false); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+	if err := c.addKustomizeRef(ctx, dir, "generators", ref, false); err != nil {
+		return err
+	}
+	if _, _, ok, err := remoteRequestForKustomizeRef(ref); err != nil || ok {
+		return err
+	}
+	path := filepath.Clean(filepath.Join(dir, filepath.FromSlash(ref)))
+	for _, fileRef := range ksopsGeneratorFileRefs(path) {
+		if err := c.addLocalRef(ctx, filepath.Dir(path), "generators.files", fileRef, false); err != nil {
 			return err
 		}
 	}
