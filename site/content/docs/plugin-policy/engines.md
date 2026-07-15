@@ -24,7 +24,8 @@ manifest has `metadata.annotations["avp.kubernetes.io/path"]`; inline
 `ksops-compat` renders the source with drydock's native Kustomize renderer and
 replaces `apiVersion: viaduct.ai/v1 / kind: ksops` kustomize generator entries
 with deterministic placeholder manifests. Encrypted values become
-`drydock-ksops-redacted-<12hex>` markers (base64-encoded in `data:` fields).
+`drydock-ksops-redacted-<12hex>` markers (base64-encoded in Secret
+`data:`/`binaryData:` and ConfigMap `binaryData:` fields; plain elsewhere).
 No decryption key, KMS network call, or exec is involved. Enable the mode
 globally with `--enable-ksops-compat` (CLI) or `enable-ksops-compat: true`
 (GitHub Action). Builtin generator configs render normally without this flag.

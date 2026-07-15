@@ -8,8 +8,13 @@ import (
 )
 
 type kustomizeBuildSettings struct {
-	LoadRestrictions   types.LoadRestrictions
-	APIVersions        []string
+	LoadRestrictions types.LoadRestrictions
+	APIVersions      []string
+	// EnableAlphaPlugins and EnableExec are intentionally write-only: drydock
+	// accepts the Argo CD build options so option-bearing repos parse, but the
+	// booleans never reach krusty (which always runs builtins-only) and enable
+	// no execution. They exist to record parsed intent — do not delete as dead
+	// fields.
 	EnableAlphaPlugins bool
 	EnableExec         bool
 }
