@@ -110,6 +110,9 @@ type Config struct {
 	// native-rendered sources. Explicit argocd-vault-plugin sources use native
 	// compatibility by default.
 	EnableAVPCompat bool
+	// EnableKSOPSCompat renders KSOPS kustomize generators as deterministic
+	// placeholder manifests without decryption.
+	EnableKSOPSCompat bool
 	// EnablePlugins allows trusted PluginPolicy exec or container engines to run
 	// when policy provenance matches.
 	EnablePlugins bool
@@ -323,6 +326,7 @@ func (client *Client) requestOptions() requestopts.Options {
 		RemoteResourceCredentials:      remoteResourceCredentialsToInternal(client.config.RemoteResourceCredentials),
 		RemoteResourceGitCredentials:   gitCredentialsToRemoteInternal(client.config.GitCredentials),
 		EnableAVPCompat:                client.config.EnableAVPCompat,
+		EnableKSOPSCompat:              client.config.EnableKSOPSCompat,
 		EnablePlugins:                  client.config.EnablePlugins,
 		PluginPolicyPath:               client.config.PluginPolicyPath,
 		PluginPolicyPathExplicit:       client.config.PluginPolicyPathExplicit,

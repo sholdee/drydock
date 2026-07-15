@@ -16,8 +16,8 @@ are true:
 
 No plugin command execution occurs unless `--enable-plugins` is passed. Native
 rendering paths, including `engine: avp-compat`, `engine: native-kustomize`,
-explicit `argocd-vault-plugin` sources, and `--enable-avp-compat`, do not
-execute plugin commands.
+explicit `argocd-vault-plugin` sources, `--enable-avp-compat`, and
+`--enable-ksops-compat`, do not execute plugin commands.
 
 Discovered Argo CD CMP definitions that normalize to a safe `kustomize build`
 command are interpreted by drydock's native Kustomize renderer by default.
@@ -28,7 +28,8 @@ Application plugin sources named `argocd-vault-plugin` use the same native
 compatibility path by default. Discovered CMP aliases use it when their
 generate command safely normalizes to `argocd-vault-plugin generate .`. The
 `--enable-avp-compat` flag forces the same redaction pass for ordinary
-native-rendered sources.
+native-rendered sources. The `--enable-ksops-compat` flag enables the same
+opt-in, fail-closed native path for KSOPS kustomize generators.
 
 When a discovered sidecar CMP has static discovery rules and an Application
 does not name a plugin, drydock may warn that Argo CD sidecar auto-discovery

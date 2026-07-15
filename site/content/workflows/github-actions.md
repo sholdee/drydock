@@ -445,6 +445,22 @@ passes them as arguments without `eval`, but they still change drydock behavior.
 | `parallelism` | unset | Maximum number of Applications to render concurrently. |
 | `max-discovery-depth` | unset | Maximum recursive rendered Application discovery depth. |
 | `enable-avp-compat` | `false` | Force argocd-vault-plugin placeholder redaction for native-rendered sources. |
+| `enable-ksops-compat` | `false` | Render KSOPS kustomize generators as deterministic placeholder manifests without decryption. |
+
+### SOPS/KSOPS Repositories
+
+Repositories that use [KSOPS](https://github.com/viaduct-ai/kustomize-sops) for
+secret management can enable `enable-ksops-compat: true` to render KSOPS
+generator entries as placeholder manifests without any decryption keys or
+network access. Secret structure and key names are preserved; encrypted values
+become deterministic placeholders (`drydock-ksops-redacted-<12hex>`) that are
+grep-able and unmistakably synthetic. Pair with `skip-secrets: true` to exclude
+placeholder Secrets from diff comments entirely.
+
+Note: value-only sops rotations render identically under this mode because
+placeholders derive from key identity, not ciphertext. A rotation produces no
+diff in drydock output even though the live secret changes; use an out-of-band
+rotation audit rather than relying on drydock diff for this class of change.
 
 ### Plugins And Extra Arguments
 

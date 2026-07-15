@@ -264,7 +264,8 @@ inspect locally and in CI:
   changed-only selection, default noisy-field filtering, and structured or
   markdown output.
 - **Plugins:** native safe Kustomize compatibility, `avp-compat` placeholder
-  redaction, native policy overrides, static `plugin-policy init` and
+  redaction, `ksops-compat` placeholder rendering for KSOPS generators,
+  native policy overrides, static `plugin-policy init` and
   `plugin-policy doctor` onboarding, trusted exec/container policy with
   `--enable-plugins`, and policy bootstrap entrypoints.
 - **Diagnostics:** render status, custom health Lua validation, redacted

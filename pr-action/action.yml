@@ -127,6 +127,10 @@ inputs:
     description: Force argocd-vault-plugin placeholder redaction for native-rendered sources.
     required: false
     default: "false"
+  enable-ksops-compat:
+    description: Render KSOPS kustomize generators as deterministic placeholder manifests without decryption.
+    required: false
+    default: "false"
   enable-plugins:
     description: Enable trusted exec and container plugin policy entries.
     required: false
@@ -441,6 +445,7 @@ runs:
         DRYDOCK_INPUT_DISABLE_PLUGIN_POLICY: ${{ inputs.disable-plugin-policy }}
         DRYDOCK_INPUT_DISCOVER_KUSTOMIZE: ${{ inputs.discover-kustomize }}
         DRYDOCK_INPUT_ENABLE_AVP_COMPAT: ${{ inputs.enable-avp-compat }}
+        DRYDOCK_INPUT_ENABLE_KSOPS_COMPAT: ${{ inputs.enable-ksops-compat }}
         DRYDOCK_INPUT_ENABLE_PLUGINS: ${{ inputs.enable-plugins }}
         DRYDOCK_INPUT_EXTRA_DIFF_ARGS: ${{ inputs.extra-diff-args }}
         DRYDOCK_INPUT_EXTRA_IMAGE_DIFF_ARGS: ${{ inputs.extra-image-diff-args }}
