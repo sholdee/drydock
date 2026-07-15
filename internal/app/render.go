@@ -92,6 +92,7 @@ func renderSourcePlan(ctx context.Context, application argoappv1.Application, pr
 		return fmt.Errorf("%s: %w", renderSourceContext(application, sourcePlan), err)
 	}
 	opts.EnableAVPCompat = pluginOpts.EnableAVPCompat
+	opts.EnableKSOPSCompat = pluginOpts.EnableKSOPSCompat
 	opts.EnablePlugins = pluginOpts.EnablePlugins
 	opts.SourceIndex = sourcePlan.Index
 	opts.SourceName = sourcePlan.Name

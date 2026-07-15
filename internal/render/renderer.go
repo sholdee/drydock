@@ -30,6 +30,7 @@ type RenderOptions struct {
 	Namespace                    string
 	EnableAVPCompat              bool
 	QuietAVPCompat               bool
+	EnableKSOPSCompat            bool
 	EnablePlugins                bool
 	Plugin                       *PluginConfig
 	KubeVersion                  string

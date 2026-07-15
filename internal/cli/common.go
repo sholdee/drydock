@@ -48,6 +48,7 @@ type commonFlags struct {
 	remotePassword           string
 	remoteBearerToken        string
 	enableAVPCompat          bool
+	enableKSOPSCompat        bool
 	enablePlugins            bool
 	pluginCacheDir           string
 	pluginPolicyPath         string
@@ -157,6 +158,7 @@ func bindRemoteAcquisitionCacheFlags(cmd *cobra.Command, flags *commonFlags) {
 
 func bindPluginFlags(cmd *cobra.Command, flags *commonFlags) {
 	cmd.Flags().BoolVar(&flags.enableAVPCompat, "enable-avp-compat", flags.enableAVPCompat, "force argocd-vault-plugin placeholder redaction for native-rendered sources")
+	cmd.Flags().BoolVar(&flags.enableKSOPSCompat, "enable-ksops-compat", flags.enableKSOPSCompat, "render KSOPS kustomize generators as deterministic placeholder manifests without decryption")
 	cmd.Flags().BoolVar(&flags.enablePlugins, "enable-plugins", flags.enablePlugins, "enable trusted exec/container plugin policy entries")
 	cmd.Flags().StringVar(&flags.pluginCacheDir, "plugin-cache-dir", flags.pluginCacheDir, "directory for policy-managed container plugin caches")
 	cmd.Flags().StringVar(&flags.pluginPolicyPath, "plugin-policy-path", flags.pluginPolicyPath, "trusted plugin policy path relative to the selected policy root")
@@ -345,6 +347,7 @@ func requestOptionsFromFlags(flags commonFlags, repoMaps []source.RepoMap) reque
 		RemoteResourceCredentials:      flags.remoteCredentials(),
 		RemoteResourceGitCredentials:   flags.remoteGitCredentials(),
 		EnableAVPCompat:                flags.enableAVPCompat,
+		EnableKSOPSCompat:              flags.enableKSOPSCompat,
 		EnablePlugins:                  flags.enablePlugins,
 		PluginCacheDir:                 flags.pluginCacheDir,
 		PluginPolicyPath:               flags.pluginPolicyPath,

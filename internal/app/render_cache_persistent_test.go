@@ -981,6 +981,7 @@ func TestPersistentRenderCacheKeyRotatesOnEveryInput(t *testing.T) {
 		{"settings signature", func(input *persistentRenderKeyInput) { input.SettingsSignature = "other" }},
 		{"plugin timeout", func(input *persistentRenderKeyInput) { input.PluginTimeout = "2m0s" }},
 		{"avp compat", func(input *persistentRenderKeyInput) { input.EnableAVPCompat = true }},
+		{"ksops compat", func(input *persistentRenderKeyInput) { input.EnableKSOPSCompat = true }},
 		{"enable plugins", func(input *persistentRenderKeyInput) { input.EnablePlugins = true }},
 		{"policy fingerprint", func(input *persistentRenderKeyInput) { input.PluginPolicyFingerprint = "policy" }},
 		{"injected plugin render", func(input *persistentRenderKeyInput) { input.HasInjectedPluginRender = true }},

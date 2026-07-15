@@ -39,6 +39,7 @@ func TestOptionsBuildCopiesSharedFields(t *testing.T) {
 	assertDeepEqual(t, "RemoteResourceCredentials", request.RemoteResourceCredentials, remote.Credentials{Username: "remote-user"})
 	assertDeepEqual(t, "RemoteResourceGitCredentials", request.RemoteResourceGitCredentials, remote.GitCredentials{Username: "remote-git-user"})
 	assertDeepEqual(t, "EnableAVPCompat", request.EnableAVPCompat, true)
+	assertDeepEqual(t, "EnableKSOPSCompat", request.EnableKSOPSCompat, true)
 	assertDeepEqual(t, "EnablePlugins", request.EnablePlugins, true)
 	assertDeepEqual(t, "PluginCacheDir", request.PluginCacheDir, "plugin-cache")
 	assertDeepEqual(t, "PluginPolicyPath", request.PluginPolicyPath, ".drydock/custom-plugins.yaml")
@@ -105,6 +106,7 @@ func TestOptionsDiffCopiesSharedFields(t *testing.T) {
 	assertDeepEqual(t, "RemoteResourceCredentials", request.RemoteResourceCredentials, remote.Credentials{Username: "remote-user"})
 	assertDeepEqual(t, "RemoteResourceGitCredentials", request.RemoteResourceGitCredentials, remote.GitCredentials{Username: "remote-git-user"})
 	assertDeepEqual(t, "EnableAVPCompat", request.EnableAVPCompat, true)
+	assertDeepEqual(t, "EnableKSOPSCompat", request.EnableKSOPSCompat, true)
 	assertDeepEqual(t, "EnablePlugins", request.EnablePlugins, true)
 	assertDeepEqual(t, "PluginCacheDir", request.PluginCacheDir, "plugin-cache")
 	assertDeepEqual(t, "PluginPolicyPath", request.PluginPolicyPath, ".drydock/custom-plugins.yaml")
@@ -178,6 +180,7 @@ func fixtureOptions() Options {
 		RemoteResourceCredentials:    remote.Credentials{Username: "remote-user"},
 		RemoteResourceGitCredentials: remote.GitCredentials{Username: "remote-git-user"},
 		EnableAVPCompat:              true,
+		EnableKSOPSCompat:            true,
 		EnablePlugins:                true,
 		PluginCacheDir:               "plugin-cache",
 		PluginPolicyPath:             ".drydock/custom-plugins.yaml",
