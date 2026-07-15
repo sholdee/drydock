@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"sync"
 	"time"
 
 	"github.com/sholdee/drydock/internal/acquisition"
@@ -64,21 +65,34 @@ type localProvider struct {
 	// empty list in dirty mode disables the committed shortcut (fail-safe
 	// for hand-built providers). Aliases the run-scoped handle memo — treat
 	// as read-only; never sort, append to, or mutate it in place.
-	rootDirtyPaths   []string
-	renderObserver   func(render.ResolvedSource)
-	pluginExecutions *[]PluginExecution
-	acquisition      acquisition.Session
+	rootDirtyPaths []string
+	// selfRepoURLKeys holds the canonical remote URLs of the repository under
+	// diff; nil outside diffs. selfRepoRevisions holds the diffed ref names
+	// that self-map (beyond ""/HEAD). selfRepoNearMissOnce dedupes fork
+	// near-miss warnings; nil when keys are empty. All three are write-once in
+	// newLocalProvider (single-threaded, before any render goroutine starts)
+	// and read-only thereafter — no locking needed.
+	selfRepoURLKeys      map[string]struct{}
+	selfRepoRevisions    map[string]struct{}
+	selfRepoNearMissOnce *sync.Map
+	renderObserver       func(render.ResolvedSource)
+	pluginExecutions     *[]PluginExecution
+	acquisition          acquisition.Session
 }
 
 var processCacheTargetLocks = acquisition.NewTargetLocks()
 
 func (p localProvider) RenderSource(ctx context.Context, source render.ResolvedSource, opts render.RenderOptions) ([]render.Manifest, []diagnostic.Diagnostic, error) {
+	// Computed before any acquisition so the --repo-map remediation hint still
+	// reaches the user when the fork-shaped URL's own acquisition fails
+	// (offline cache miss, unreachable fork) — the moment it is most useful.
+	nearMissDiags := p.selfRepoNearMissDiagnostics(source, opts.RefSources)
 	sourceRoot := source.RepoRoot
 	var err error
 	if sourceRoot == "" {
 		sourceRoot, err = p.resolveSourceRoot(ctx, source)
 		if err != nil {
-			return nil, nil, err
+			return nil, nearMissDiags, err
 		}
 	}
 	source.RepoRoot = sourceRoot
@@ -91,7 +105,7 @@ func (p localProvider) RenderSource(ctx context.Context, source render.ResolvedS
 	opts.ChartCredentials = p.chartCredentials
 	opts.HelmChartLoadCache = p.helmChartLoadCache
 	opts.OCIChartRepositories = p.ociChartRepositories
-	opts.RemoteResourceAcquirer = p.acquisition.RemoteAcquirer(p.remoteResourceAcquirer)
+	opts.RemoteResourceAcquirer = p.selfMapRemote(p.acquisition.RemoteAcquirer(p.remoteResourceAcquirer))
 	opts.RemoteResourceCacheDir = p.remoteResourceCacheDir
 	opts.OfflineRemoteResources = p.offline
 	opts.RefreshRemoteResources = p.refreshRemoteResources
@@ -107,21 +121,22 @@ func (p localProvider) RenderSource(ctx context.Context, source render.ResolvedS
 	opts.AcquisitionCollector = p.acquisitions
 	anchoredRefRoots, err := anchorLocalRefRoots(sourceRoot, opts.RefRoots)
 	if err != nil {
-		return nil, nil, err
+		return nil, nearMissDiags, err
 	}
 	refRoots, err := p.resolveRefRoots(ctx, opts.RefSources)
 	if err != nil {
-		return nil, nil, err
+		return nil, nearMissDiags, err
 	}
 	opts.RefRoots = mergeRefRoots(anchoredRefRoots, refRoots)
 	if opts.Plugin != nil {
-		return p.renderPluginSource(ctx, source, opts)
+		manifests, diags, err := p.renderPluginSource(ctx, source, opts)
+		return manifests, append(nearMissDiags, diags...), err
 	}
 	opts.BuildOptions = append(opts.BuildOptions, p.kustomizeBuildOptions...)
 	if source.Path != "" {
 		renderer, err := selectLocalRenderer(source)
 		if err != nil {
-			return nil, nil, err
+			return nil, nearMissDiags, err
 		}
 		guardrailDiags := p.cmpAutoDiscoveryDeferredDiagnostics(source, opts)
 		if p.renderObserver != nil {
@@ -129,10 +144,11 @@ func (p localProvider) RenderSource(ctx context.Context, source render.ResolvedS
 		}
 		manifests, diags, err := renderer.Render(ctx, source, opts)
 		diags = append(guardrailDiags, diags...)
-		return manifests, diags, err
+		return manifests, append(nearMissDiags, diags...), err
 	}
 	if source.Chart != "" {
-		return p.renderChartOnlySource(ctx, source, opts)
+		manifests, diags, err := p.renderChartOnlySource(ctx, source, opts)
+		return manifests, append(nearMissDiags, diags...), err
 	}
-	return nil, nil, nil
+	return nil, nearMissDiags, nil
 }

@@ -209,6 +209,9 @@ func TestFetchBaseResolvesMergeBaseForDivergedShallowClone(t *testing.T) {
 	if shallowFile := filepath.Join(shallow, ".git", "shallow"); !fileExists(shallowFile) {
 		t.Fatalf("expected a shallow clone at %s", shallowFile)
 	}
+	// A single-branch shallow clone does not set origin/HEAD (matching
+	// actions/checkout), so the symref assertion below pins fetch-base's
+	// git remote set-head call.
 
 	scriptPath, err := filepath.Abs("fetch-base.sh")
 	if err != nil {
@@ -240,6 +243,13 @@ func TestFetchBaseResolvesMergeBaseForDivergedShallowClone(t *testing.T) {
 
 	if compareRef := compareRefFromOutput(t, outputPath); compareRef != wantMergeBase {
 		t.Fatalf("compare-ref = %q, want the true merge base %q", compareRef, wantMergeBase)
+	}
+
+	// fetch-base records the base branch as origin's HEAD symref so drydock's
+	// diff self-repo gate can map sources pinned to the base branch NAME
+	// (targetRevision: main) to the per-side trees.
+	if symref := git(shallow, "symbolic-ref", "refs/remotes/origin/HEAD"); symref != "refs/remotes/origin/main" {
+		t.Fatalf("origin/HEAD symref = %q, want refs/remotes/origin/main", symref)
 	}
 }
 

@@ -177,7 +177,15 @@ Canonical references:
 
 Repository URL maps are deterministic and preferred over network fetches. Path
 source resolution order is explicit repo map, existing local source path,
-declared Git cache/fetch behavior, then clear failure.
+diff-scoped self-repo resolution (during diffs, a source naming the repository
+under diff at `""`/`HEAD`, a diffed ref name, or the repository's
+default-branch name resolves to the active side tree; full-commit-SHA
+revisions still acquire remotely), declared Git
+cache/fetch behavior, then clear failure. Diff commands also rewrite
+`--repo-map` entries pointing at the diffed checkout to each side's tree and
+warn once per URL per side (`source.self-repo-near-miss`) for fork-shaped
+URLs that match a diffed remote's host and repository name but a different
+owner.
 
 `--offline` controls Git, Helm chart, and remote Kustomize network behavior.
 When it is set, source resolution must use local files, repo maps, or existing
