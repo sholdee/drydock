@@ -12,13 +12,18 @@ import (
 )
 
 type kustomizeWorkspace struct {
-	originalRepoRoot      string
-	tempRepoRoot          string
-	sourceRoot            string
-	opts                  RenderOptions
-	visited               map[string]struct{}
-	nextGraphIndex        int
-	nextPathIndex         int
+	originalRepoRoot string
+	tempRepoRoot     string
+	sourceRoot       string
+	opts             RenderOptions
+	visited          map[string]struct{}
+	nextGraphIndex   int
+	nextPathIndex    int
+	// ksopsSubstitutedFiles counts sops files substituted by ksops-compat
+	// emulation. Per-write counting equals unique-file counting: the same
+	// sops file referenced by two generators (or twice in one files: list)
+	// emits duplicate resource IDs, which kustomize accumulation rejects
+	// before any diagnostic is surfaced.
 	ksopsSubstitutedFiles int
 }
 

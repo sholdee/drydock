@@ -158,8 +158,9 @@ Repositories using [KSOPS](https://github.com/viaduct-ai/kustomize-sops) can
 use `--enable-ksops-compat` to render `apiVersion: viaduct.ai/v1 / kind: ksops`
 kustomize generators as deterministic placeholder manifests without decryption.
 Secret structure and key names are preserved; encrypted values are replaced by
-a deterministic placeholder (`drydock-ksops-redacted-<12hex>`), with `data:`
-values encoded as valid base64. No decryption key, network call, or exec is
+a deterministic placeholder (`drydock-ksops-redacted-<12hex>`), with Secret
+`data:`/`binaryData:` and ConfigMap `binaryData:` values encoded as valid
+base64 (plain elsewhere). No decryption key, network call, or exec is
 involved. Pair with `--skip-secrets` to suppress placeholder Secrets from diff
 output.
 

@@ -159,6 +159,12 @@ func TestFetchBaseResolvesMergeBaseForDivergedShallowClone(t *testing.T) {
 			"-c", "user.name=drydock test",
 			"-c", "init.defaultBranch=main",
 			"-c", "protocol.file.allow=always",
+			// Disable background maintenance: a detached auto-gc can still be
+			// writing .git/objects when t.TempDir cleanup runs (flaky
+			// "directory not empty" failures on CI).
+			"-c", "gc.auto=0",
+			"-c", "gc.autoDetach=false",
+			"-c", "maintenance.auto=false",
 		}, args...)
 		cmd := exec.Command("git", full...)
 		cmd.Dir = dir
@@ -216,9 +222,17 @@ func TestFetchBaseResolvesMergeBaseForDivergedShallowClone(t *testing.T) {
 		"DRYDOCK_PR_BASE_REF=main",
 		"GITHUB_OUTPUT="+outputPath,
 		"GITHUB_SERVER_URL=https://github.com",
-		"GIT_CONFIG_COUNT=1",
+		// gc.auto/autoDetach/maintenance.auto: keep git from detaching
+		// background maintenance that races t.TempDir cleanup.
+		"GIT_CONFIG_COUNT=4",
 		"GIT_CONFIG_KEY_0=protocol.file.allow",
 		"GIT_CONFIG_VALUE_0=always",
+		"GIT_CONFIG_KEY_1=gc.auto",
+		"GIT_CONFIG_VALUE_1=0",
+		"GIT_CONFIG_KEY_2=gc.autoDetach",
+		"GIT_CONFIG_VALUE_2=false",
+		"GIT_CONFIG_KEY_3=maintenance.auto",
+		"GIT_CONFIG_VALUE_3=false",
 	)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("fetch-base.sh failed: %v\n%s", err, out)
@@ -386,6 +400,12 @@ func TestFetchBaseForceUpdatesStaleRemoteTrackingRef(t *testing.T) {
 			"-c", "user.name=drydock test",
 			"-c", "init.defaultBranch=main",
 			"-c", "protocol.file.allow=always",
+			// Disable background maintenance: a detached auto-gc can still be
+			// writing .git/objects when t.TempDir cleanup runs (flaky
+			// "directory not empty" failures on CI).
+			"-c", "gc.auto=0",
+			"-c", "gc.autoDetach=false",
+			"-c", "maintenance.auto=false",
 		}, args...)
 		cmd := exec.Command("git", full...)
 		cmd.Dir = dir
@@ -453,9 +473,17 @@ func TestFetchBaseForceUpdatesStaleRemoteTrackingRef(t *testing.T) {
 		"DRYDOCK_PR_BASE_REF=main",
 		"GITHUB_OUTPUT="+outputPath,
 		"GITHUB_SERVER_URL=https://github.com",
-		"GIT_CONFIG_COUNT=1",
+		// gc.auto/autoDetach/maintenance.auto: keep git from detaching
+		// background maintenance that races t.TempDir cleanup.
+		"GIT_CONFIG_COUNT=4",
 		"GIT_CONFIG_KEY_0=protocol.file.allow",
 		"GIT_CONFIG_VALUE_0=always",
+		"GIT_CONFIG_KEY_1=gc.auto",
+		"GIT_CONFIG_VALUE_1=0",
+		"GIT_CONFIG_KEY_2=gc.autoDetach",
+		"GIT_CONFIG_VALUE_2=false",
+		"GIT_CONFIG_KEY_3=maintenance.auto",
+		"GIT_CONFIG_VALUE_3=false",
 	)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("fetch-base.sh failed against a stale shallow remote-tracking ref: %v\n%s", err, out)

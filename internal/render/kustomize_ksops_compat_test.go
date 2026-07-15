@@ -866,3 +866,161 @@ func TestKustomizeKSOPSCompatRenderDoesNotMutateOriginalTree(t *testing.T) {
 		}
 	}
 }
+
+// TestKustomizeKSOPSCompatConfigMapDataStaysPlain pins the kind-gated base64
+// rule: ConfigMap data: values are plain strings in Kubernetes, so the
+// placeholder stays the grep-able plain marker (only Secret data:/binaryData:
+// are base64-encoded).
+func TestKustomizeKSOPSCompatConfigMapDataStaysPlain(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "apps", "demo", "kustomization.yaml"), `
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+generators:
+  - ./secret-generator.yaml
+`)
+	writeFile(t, filepath.Join(root, "apps", "demo", "secret-generator.yaml"), `apiVersion: viaduct.ai/v1
+kind: ksops
+metadata:
+  name: cm-generator
+files:
+  - ./config.sops.yaml
+`)
+	writeFile(t, filepath.Join(root, "apps", "demo", "config.sops.yaml"), `apiVersion: v1
+kind: ConfigMap
+metadata:
+    name: demo-config
+data:
+    SETTING: ENC[AES256_GCM,data:cmCipher,iv:x,tag:y,type:str]
+sops:
+    encrypted_regex: ^(data)$
+    version: 3.10.2
+`)
+	manifests, _, err := renderKSOPSFixture(t, root, true)
+	if err != nil {
+		t.Fatalf("Render() error = %v", err)
+	}
+	cm := manifestNamed(t, manifests, "ConfigMap", "demo-config")
+	data, _, _ := unstructured.NestedStringMap(cm.Object, "data")
+	value := data["SETTING"]
+	if !strings.HasPrefix(value, "drydock-ksops-redacted-") {
+		t.Fatalf("ConfigMap data.SETTING = %q, want plain drydock-ksops-redacted- marker (not base64)", value)
+	}
+}
+
+// TestKustomizeKSOPSCompatSecretBinaryDataIsBase64 pins base64 encoding under
+// Secret binaryData: (Kubernetes requires valid base64 there, like data:).
+func TestKustomizeKSOPSCompatSecretBinaryDataIsBase64(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "apps", "demo", "kustomization.yaml"), `
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+generators:
+  - ./secret-generator.yaml
+`)
+	writeFile(t, filepath.Join(root, "apps", "demo", "secret-generator.yaml"), `apiVersion: viaduct.ai/v1
+kind: ksops
+metadata:
+  name: bin-generator
+files:
+  - ./binary.sops.yaml
+`)
+	writeFile(t, filepath.Join(root, "apps", "demo", "binary.sops.yaml"), `apiVersion: v1
+kind: Secret
+metadata:
+    name: demo-binary
+binaryData:
+    CERT: ENC[AES256_GCM,data:binCipher,iv:x,tag:y,type:str]
+sops:
+    encrypted_regex: ^(binaryData)$
+    version: 3.10.2
+`)
+	manifests, _, err := renderKSOPSFixture(t, root, true)
+	if err != nil {
+		t.Fatalf("Render() error = %v", err)
+	}
+	secret := manifestNamed(t, manifests, "Secret", "demo-binary")
+	binaryData, _, _ := unstructured.NestedStringMap(secret.Object, "binaryData")
+	decoded, err := base64.StdEncoding.DecodeString(binaryData["CERT"])
+	if err != nil {
+		t.Fatalf("binaryData.CERT = %q, want valid base64: %v", binaryData["CERT"], err)
+	}
+	if !strings.HasPrefix(string(decoded), "drydock-ksops-redacted-") {
+		t.Fatalf("binaryData.CERT decodes to %q, want drydock-ksops-redacted- marker", decoded)
+	}
+}
+
+// TestKustomizeKSOPSCompatDuplicateFileAcrossGeneratorsFailsInKustomize pins
+// why per-write substitution counting equals unique-file counting: the same
+// sops file referenced by two generators produces duplicate resource IDs,
+// which kustomize accumulation rejects — the render fails before any
+// substituted-count diagnostic could over-count.
+func TestKustomizeKSOPSCompatDuplicateFileAcrossGeneratorsFailsInKustomize(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "apps", "demo", "kustomization.yaml"), `
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+generators:
+  - ./generator-a.yaml
+  - ./generator-b.yaml
+`)
+	for _, name := range []string{"generator-a.yaml", "generator-b.yaml"} {
+		writeFile(t, filepath.Join(root, "apps", "demo", name), `apiVersion: viaduct.ai/v1
+kind: ksops
+metadata:
+  name: `+name+`
+files:
+  - ./shared-secret.sops.yaml
+`)
+	}
+	writeFile(t, filepath.Join(root, "apps", "demo", "shared-secret.sops.yaml"), ksopsTestSopsSecret("shared-secret", "TOKEN", "sharedCipher"))
+
+	_, _, err := renderKSOPSFixture(t, root, true)
+	if err == nil {
+		t.Fatalf("Render() error = nil, want kustomize duplicate-id rejection")
+	}
+	if !strings.Contains(err.Error(), "already registered id") {
+		t.Fatalf("Render() error = %v, want already-registered-id accumulation error", err)
+	}
+}
+
+// TestKustomizeKSOPSCompatNestedDataKeyStaysPlain pins the top-level
+// restriction in ksopsBase64Eligible: a nested data: key (e.g. inside a CRD
+// spec) does not trigger base64 — only a Secret's top-level data:/binaryData:
+// (and ConfigMap binaryData:) do.
+func TestKustomizeKSOPSCompatNestedDataKeyStaysPlain(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "apps", "demo", "kustomization.yaml"), `
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+generators:
+  - ./secret-generator.yaml
+`)
+	writeFile(t, filepath.Join(root, "apps", "demo", "secret-generator.yaml"), `apiVersion: viaduct.ai/v1
+kind: ksops
+metadata:
+  name: crd-generator
+files:
+  - ./custom.sops.yaml
+`)
+	writeFile(t, filepath.Join(root, "apps", "demo", "custom.sops.yaml"), `apiVersion: example.com/v1
+kind: Widget
+metadata:
+    name: demo-widget
+spec:
+    data:
+        NESTED: ENC[AES256_GCM,data:nestedCipher,iv:x,tag:y,type:str]
+sops:
+    encrypted_regex: ^(NESTED)$
+    version: 3.10.2
+`)
+	manifests, _, err := renderKSOPSFixture(t, root, true)
+	if err != nil {
+		t.Fatalf("Render() error = %v", err)
+	}
+	widget := manifestNamed(t, manifests, "Widget", "demo-widget")
+	value, _, _ := unstructured.NestedString(widget.Object, "spec", "data", "NESTED")
+	if !strings.HasPrefix(value, "drydock-ksops-redacted-") {
+		t.Fatalf("spec.data.NESTED = %q, want plain drydock-ksops-redacted- marker (nested data: must not base64)", value)
+	}
+}

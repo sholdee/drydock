@@ -204,8 +204,11 @@ Supported:
   entries are rendered as deterministic placeholder manifests without
   decryption: SOPS-encrypted file structure and key names are preserved; every
   encrypted value is replaced by a deterministic placeholder
-  (`drydock-ksops-redacted-<12hex>` marker). Secret `data:` values are valid
-  base64 of the placeholder. The secret VALUES are never decrypted and no
+  (`drydock-ksops-redacted-<12hex>` marker). Secret `data:`/`binaryData:` and
+  ConfigMap `binaryData:` values are valid base64 of the placeholder;
+  everywhere else — including ConfigMap `data:` — the plain grep-able marker
+  is emitted. The secret
+  VALUES are never decrypted and no
   decryption key, KMS network call, or exec is involved.
   Builtin generator configs (`apiVersion: builtin`) are left for krusty and
   render successfully with or without the flag. Exec transformers, exec

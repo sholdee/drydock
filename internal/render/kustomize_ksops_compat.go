@@ -296,7 +296,12 @@ func substituteKSOPSSopsFile(relPath string, content []byte) ([]byte, error) {
 			return nil, fmt.Errorf("generator option annotation %q is unsupported", annotation)
 		}
 		removeYAMLMappingKey(root, "sops")
-		substituteEncryptedYAMLValues(root, relPath, docIndex, nil, false)
+		// base64 applies only where Kubernetes requires it: Secret
+		// data:/binaryData: and ConfigMap binaryData: (ConfigMap data: values
+		// are plain strings — a base64'd marker there would be valid but not
+		// grep-able).
+		kind := yamlMappingString(root, "kind")
+		substituteEncryptedYAMLValues(root, relPath, docIndex, nil, kind, false)
 		data, err := goyaml.Marshal(doc)
 		if err != nil {
 			return nil, fmt.Errorf("encode placeholder manifest: %w", err)
@@ -313,35 +318,54 @@ func substituteKSOPSSopsFile(relPath string, content []byte) ([]byte, error) {
 
 // substituteEncryptedYAMLValues replaces every string leaf beginning with
 // ENC[ — sops repositories vary encrypted_regex, so replacement is by value
-// prefix, not by field name. Leaves under a data: map are base64-encoded
-// (kustomize and downstream consumers expect valid base64 there); everywhere
-// else the plain grep-able marker is emitted.
-func substituteEncryptedYAMLValues(node *goyaml.Node, relPath string, docIndex int, path []string, underData bool) {
+// prefix, not by field name. Leaves under a Secret's data: or binaryData: map
+// are base64-encoded (Kubernetes requires valid base64 there); everywhere
+// else — including ConfigMap data: — the plain grep-able marker is emitted.
+func substituteEncryptedYAMLValues(node *goyaml.Node, relPath string, docIndex int, path []string, kind string, underB64 bool) {
 	switch node.Kind {
 	case goyaml.DocumentNode:
 		for _, child := range node.Content {
-			substituteEncryptedYAMLValues(child, relPath, docIndex, path, underData)
+			substituteEncryptedYAMLValues(child, relPath, docIndex, path, kind, underB64)
 		}
 	case goyaml.MappingNode:
 		for i := 0; i+1 < len(node.Content); i += 2 {
 			key := node.Content[i].Value
-			substituteEncryptedYAMLValues(node.Content[i+1], relPath, docIndex, append(path, key), underData || key == "data")
+			childB64 := underB64 || ksopsBase64Eligible(kind, path, key)
+			substituteEncryptedYAMLValues(node.Content[i+1], relPath, docIndex, append(path, key), kind, childB64)
 		}
 	case goyaml.SequenceNode:
 		for i, child := range node.Content {
-			substituteEncryptedYAMLValues(child, relPath, docIndex, append(path, strconv.Itoa(i)), underData)
+			substituteEncryptedYAMLValues(child, relPath, docIndex, append(path, strconv.Itoa(i)), kind, underB64)
 		}
 	case goyaml.ScalarNode:
 		if node.Tag != "!!str" || !strings.HasPrefix(node.Value, ksopsEncryptedValuePrefix) {
 			return
 		}
 		marker := ksopsRedactedValue(relPath, docIndex, strings.Join(path, "."))
-		if underData {
+		if underB64 {
 			marker = base64.StdEncoding.EncodeToString([]byte(marker))
 		}
 		node.SetString(marker)
 	case goyaml.AliasNode:
 		// Alias targets are rewritten at their anchor definition.
+	}
+}
+
+// ksopsBase64Eligible reports whether values under a top-level mapping key
+// must be base64-encoded: Secret data: and binaryData:, and ConfigMap
+// binaryData: (Kubernetes requires valid base64 there); everywhere else the
+// plain marker stays grep-able.
+func ksopsBase64Eligible(kind string, path []string, key string) bool {
+	if len(path) != 0 {
+		return false
+	}
+	switch kind {
+	case "Secret":
+		return key == "data" || key == "binaryData"
+	case "ConfigMap":
+		return key == "binaryData"
+	default:
+		return false
 	}
 }
 
