@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.4](https://github.com/sholdee/drydock/compare/v0.2.3...v0.2.4) (2026-07-15)
+
+
+### Bug Fixes
+
+* **diff:** resolve self-repo sources to per-side trees during diffs ([#207](https://github.com/sholdee/drydock/issues/207)) ([8f9a9b1](https://github.com/sholdee/drydock/commit/8f9a9b17c1e4c2e09470e7c77cf1d260381a9368))
+
 ## [0.2.3](https://github.com/sholdee/drydock/compare/v0.2.2...v0.2.3) (2026-07-15)
 
 
