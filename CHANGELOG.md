@@ -1,5 +1,38 @@
 # Changelog
 
+## [0.2.3](https://github.com/sholdee/drydock/compare/v0.2.2...v0.2.3) (2026-07-15)
+
+
+### Features
+
+* **cache:** LRU max-size cache prune with pr-action local cache bounding ([#197](https://github.com/sholdee/drydock/issues/197)) ([50e3652](https://github.com/sholdee/drydock/commit/50e36529a1715449688897ec487d764616dcf38b))
+* **render:** native KSOPS placeholder rendering (--enable-ksops-compat) ([#204](https://github.com/sholdee/drydock/issues/204)) ([b2c1222](https://github.com/sholdee/drydock/commit/b2c1222a2df5696617726635b674f97ef34fc666))
+
+
+### Bug Fixes
+
+* **deps:** update module github.com/argoproj/argo-cd/v3 to v3.4.5 ([#196](https://github.com/sholdee/drydock/issues/196)) ([e464356](https://github.com/sholdee/drydock/commit/e46435698c731b2a7b07a4592526bc9604ad5610))
+* **deps:** update module golang.org/x/crypto to v0.54.0 ([#193](https://github.com/sholdee/drydock/issues/193)) ([5363354](https://github.com/sholdee/drydock/commit/53633540140a15752a9bc867e674a8ae3f63e05e))
+* **deps:** update module golang.org/x/term to v0.45.0 ([#192](https://github.com/sholdee/drydock/issues/192)) ([3bb61fa](https://github.com/sholdee/drydock/commit/3bb61fa5285d48133cc67b72004ad6ca5f67a69b))
+* **deps:** update module helm.sh/helm/v4 to v4.2.3 ([#198](https://github.com/sholdee/drydock/issues/198)) ([3f507b2](https://github.com/sholdee/drydock/commit/3f507b275ede8324e828873f8c51a87c1fa34771))
+* **deps:** update module sigs.k8s.io/structured-merge-diff/v6 to v6.4.1 ([#185](https://github.com/sholdee/drydock/issues/185)) ([eb65a45](https://github.com/sholdee/drydock/commit/eb65a45e3b5e06955fe08b9bb84a391e22eaf3d5))
+* **deps:** update module sigs.k8s.io/structured-merge-diff/v6 to v6.4.2 ([#189](https://github.com/sholdee/drydock/issues/189)) ([8e5d104](https://github.com/sholdee/drydock/commit/8e5d1043c1ac79d13b367255fb6429b3472400f2))
+* **render:** ksops-compat placeholder polish and fetch-base test deflake ([#205](https://github.com/sholdee/drydock/issues/205)) ([fe93349](https://github.com/sholdee/drydock/commit/fe933494d8cd59058ca5ef7af908ce012a7c8660))
+
+
+### Miscellaneous Chores
+
+* **deps:** update dependency go to v1.26.5 ([#188](https://github.com/sholdee/drydock/issues/188)) ([98ef3b0](https://github.com/sholdee/drydock/commit/98ef3b0e5fdc0f29c6ab4ddd98d0636f597fc3ac))
+* **deps:** update dependency lefthook to v2.1.10 ([#190](https://github.com/sholdee/drydock/issues/190)) ([494dcad](https://github.com/sholdee/drydock/commit/494dcad0577dc52fd9c892aa7f6e600dab664b43))
+* **deps:** update gcr.io/distroless/static:nonroot docker digest to f7f8f72 ([#201](https://github.com/sholdee/drydock/issues/201)) ([8d5386d](https://github.com/sholdee/drydock/commit/8d5386d0d366750b54b6e1b86d8209bad1a8f8b4))
+* **deps:** update go module directive to v1.26.5 ([#184](https://github.com/sholdee/drydock/issues/184)) ([b00e576](https://github.com/sholdee/drydock/commit/b00e576d75488ad8a40343d65b188789c29e8b4c))
+* **deps:** update golang docker tag to v1.26.5 ([#195](https://github.com/sholdee/drydock/issues/195)) ([13f461c](https://github.com/sholdee/drydock/commit/13f461c8c0a1de89116aa1b08b9d23bb2bfc39bb))
+* **deps:** update golang:1.26.5 docker digest to 0f70d7d ([#199](https://github.com/sholdee/drydock/issues/199)) ([69364d8](https://github.com/sholdee/drydock/commit/69364d897f481308a6c4030e79a0ceb6e91ae152))
+* **deps:** update golang:1.26.5 docker digest to 983a082 ([#200](https://github.com/sholdee/drydock/issues/200)) ([5d0fe28](https://github.com/sholdee/drydock/commit/5d0fe28938a000d8405cf84e5fc7d32c96382002))
+* **deps:** update golang:1.26.5 docker digest to d52df9c ([#202](https://github.com/sholdee/drydock/issues/202)) ([49a70d1](https://github.com/sholdee/drydock/commit/49a70d1ccff1f13524c232de14415335bb6b5918))
+* **deps:** update module golang.org/x/net to v0.57.0 ([#194](https://github.com/sholdee/drydock/issues/194)) ([8a0e0e1](https://github.com/sholdee/drydock/commit/8a0e0e13e11afd091f4534813819ed491cae88fc))
+* **deps:** update module golang.org/x/text to v0.40.0 ([#191](https://github.com/sholdee/drydock/issues/191)) ([dd62d61](https://github.com/sholdee/drydock/commit/dd62d6159014e9b9705a98a4cd564825d34fd1df))
+
 ## [0.2.2](https://github.com/sholdee/drydock/compare/v0.2.1...v0.2.2) (2026-07-09)
 
 
