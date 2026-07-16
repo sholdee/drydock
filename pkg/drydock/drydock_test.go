@@ -22,6 +22,41 @@ func TestRenderApplications(t *testing.T) {
 	}
 }
 
+func TestRenderDiscoverIgnoresExcludeUndecodableCandidates(t *testing.T) {
+	root := t.TempDir()
+	writeAPIAppTree(t, root, "demo", configMapBody("demo", "v1"))
+	// Scaffolding template that passes discovery's content sniff but fails
+	// typed decoding: requeueAfterSeconds expects int64.
+	writeAPIFile(t, filepath.Join(root, "templates", "scaffold.yaml"), `apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: scaffold
+spec:
+  generators:
+    - pullRequest:
+        requeueAfterSeconds: $PR_REQUEUE
+`)
+
+	_, err := Render(context.Background(), Config{Path: root})
+	if err == nil {
+		t.Fatal("Render() error = nil, want undecodable candidate error")
+	}
+	if want := "(use --discover-ignore to exclude non-deployable manifests from discovery)"; !strings.Contains(err.Error(), want) {
+		t.Fatalf("Render() error = %v, want remediation hint %q", err, want)
+	}
+
+	result, err := Render(context.Background(), Config{Path: root, DiscoverIgnores: []string{"templates/**"}})
+	if err != nil {
+		t.Fatalf("Render() error = %v", err)
+	}
+	if len(result.Applications) != 1 {
+		t.Fatalf("Applications = %d, want 1", len(result.Applications))
+	}
+	if len(result.Manifests) != 1 {
+		t.Fatalf("Manifests = %d, want 1", len(result.Manifests))
+	}
+}
+
 func TestRenderAVPCompatibilityReplacesPlaceholders(t *testing.T) {
 	root := t.TempDir()
 	writeAPIAppTree(t, root, "demo", `apiVersion: v1

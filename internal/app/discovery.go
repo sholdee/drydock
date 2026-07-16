@@ -31,7 +31,7 @@ func (o Orchestrator) discoverRepository(ctx context.Context, root string, reque
 	request.discoveryPathMemo = &sync.Map{}
 	request.appsetGenerationMemo = &sync.Map{}
 
-	discovered, err := discovery.Scan(root, discovery.Options{})
+	discovered, err := discovery.Scan(root, discovery.Options{IgnoreGlobs: request.DiscoverIgnoreGlobs})
 	if err != nil {
 		return discovery.Result{}, nil, nil, renderCache, "", err
 	}

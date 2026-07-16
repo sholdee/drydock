@@ -362,6 +362,50 @@ func TestRunPassesChangedOnlyPathFiltersOnlyToDiffCommands(t *testing.T) {
 	}
 }
 
+func TestRunPassesDiscoverIgnoreToAllCommands(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell action tests require bash")
+	}
+
+	workDir := runCommentScenario(t, commentScenario{
+		commentMode:    "both",
+		diffOutput:     true,
+		imageOutput:    true,
+		runTest:        true,
+		discoverIgnore: "templates/**\nscaffold/*.yaml",
+	})
+
+	args := readFile(t, filepath.Join(workDir, "drydock-args.txt"))
+	lines := strings.Split(strings.TrimSpace(args), "\n")
+	if len(lines) != 4 {
+		t.Fatalf("drydock invocations = %q, want test, diff apps, diff images name, diff images markdown", args)
+	}
+	for _, line := range lines {
+		if !strings.Contains(line, "--discover-ignore templates/**") ||
+			!strings.Contains(line, "--discover-ignore scaffold/*.yaml") {
+			t.Fatalf("drydock invocation missing discover-ignore globs:\n%s", line)
+		}
+	}
+}
+
+func TestRunOmitsDiscoverIgnoreWhenInputUnset(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell action tests require bash")
+	}
+
+	workDir := runCommentScenario(t, commentScenario{
+		commentMode: "both",
+		diffOutput:  true,
+		imageOutput: true,
+		runTest:     true,
+	})
+
+	args := readFile(t, filepath.Join(workDir, "drydock-args.txt"))
+	if strings.Contains(args, "--discover-ignore") {
+		t.Fatalf("drydock invocations = %q, want no --discover-ignore flag when input unset", args)
+	}
+}
+
 func TestRunPassesCacheDirsToEveryInvocationWhenCachePathSet(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("shell action tests require bash")
@@ -678,6 +722,7 @@ type commentScenario struct {
 	extraImageArgs                  string
 	changedOnlyInclude              string
 	changedOnlyIgnore               string
+	discoverIgnore                  string
 	omitDiffHTMLArtifactNameFromEnv bool
 	cachePath                       string
 }
@@ -700,6 +745,7 @@ func runCommentScenario(t *testing.T, scenario commentScenario) string {
 		"DRYDOCK_INPUT_EXTRA_IMAGE_DIFF_ARGS="+scenario.extraImageArgs,
 		"DRYDOCK_INPUT_CHANGED_ONLY_INCLUDE="+scenario.changedOnlyInclude,
 		"DRYDOCK_INPUT_CHANGED_ONLY_IGNORE="+scenario.changedOnlyIgnore,
+		"DRYDOCK_INPUT_DISCOVER_IGNORE="+scenario.discoverIgnore,
 		"DRYDOCK_INPUT_RUN_DIFF=true",
 		"DRYDOCK_INPUT_RUN_IMAGE_DIFF="+boolString(!scenario.skipImageDiff),
 		"DRYDOCK_INPUT_RUN_TEST="+boolString(scenario.runTest),
@@ -1034,6 +1080,7 @@ func defaultRunEnv(tmp, workDir, outputPath string) []string {
 		"DRYDOCK_INPUT_COMMENT_MODE=none",
 		"DRYDOCK_INPUT_DIFF_MAX_BYTES=60000",
 		"DRYDOCK_INPUT_DISABLE_PLUGIN_POLICY=false",
+		"DRYDOCK_INPUT_DISCOVER_IGNORE=",
 		"DRYDOCK_INPUT_DISCOVER_KUSTOMIZE=",
 		"DRYDOCK_INPUT_ENABLE_AVP_COMPAT=false",
 		"DRYDOCK_INPUT_ENABLE_KSOPS_COMPAT=false",

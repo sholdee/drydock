@@ -41,6 +41,30 @@ In one-sided diffs, the failing side's zero desired Applications appear as
 additions or deletions, while the live controller would abort reconciliation
 without pruning.
 
+## Symptom: Discovery Fails Decoding Non-Deployable YAML
+
+Discovery errors that end with
+`(use --discover-ignore to exclude non-deployable manifests from discovery)`
+mean the scan found YAML it could not decode, such as unrendered chart
+templates or scaffolding committed alongside real Argo CD objects:
+
+```text
+templates/scaffold.yaml: decode ApplicationSet: json: cannot unmarshal string
+into Go struct field ... of type int64 (use --discover-ignore to exclude
+non-deployable manifests from discovery)
+```
+
+If the file is not deployable Argo CD intent, exclude it from discovery with a
+repository-relative glob:
+
+```bash
+drydock test apps --path . --discover-ignore 'templates/**'
+```
+
+Matching files are skipped before decoding, even when named by explicit app
+manifest paths. If the failing file is a real Application manifest, fix the
+manifest instead; ignoring it hides it from every discovery-based command.
+
 ## Symptom: Render Fails In CI But Works Locally
 
 Confirm whether CI has the same source access and caches. Default runs may

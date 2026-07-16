@@ -491,6 +491,7 @@ func (request DiffRequest) buildAcquisitionOptions(forbiddenRoots []string) Acqu
 
 func cloneDiscoveryOptions(input DiscoveryOptions) DiscoveryOptions {
 	input.DiscoverKustomizePaths = append([]string(nil), input.DiscoverKustomizePaths...)
+	input.DiscoverIgnoreGlobs = append([]string(nil), input.DiscoverIgnoreGlobs...)
 	return input
 }
 

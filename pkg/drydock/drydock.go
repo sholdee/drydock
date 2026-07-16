@@ -67,6 +67,9 @@ type Config struct {
 	// DiscoverKustomizePaths adds explicit Kustomize entrypoints to rendered
 	// bootstrap discovery.
 	DiscoverKustomizePaths []string
+	// DiscoverIgnores removes repository-relative glob matches from repository
+	// discovery before decoding, including explicit path scans.
+	DiscoverIgnores []string
 	// Strict promotes supported diagnostics that are warnings by default to
 	// operation errors.
 	Strict bool
@@ -303,6 +306,7 @@ func (client *Client) requestOptions() requestopts.Options {
 		MaxDiscoveryDepth:              maxDiscoveryDepth,
 		MaxDiscoveryDepthSet:           maxDiscoveryDepthSet,
 		DiscoverKustomizePaths:         append([]string(nil), client.config.DiscoverKustomizePaths...),
+		DiscoverIgnores:                append([]string(nil), client.config.DiscoverIgnores...),
 		ChangedOnly:                    client.config.ChangedOnly,
 		ChangedOnlyIncludes:            append([]string(nil), client.config.ChangedOnlyIncludes...),
 		ChangedOnlyIgnores:             append([]string(nil), client.config.ChangedOnlyIgnores...),

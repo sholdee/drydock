@@ -42,6 +42,8 @@ uncommitted changes, against committed `main`. `--repo . --ref feature
 - `--strict-changed-only` fails if changed-file ownership is incomplete.
 - `--changed-only-include 'apps/**'` considers only matching changed paths.
 - `--changed-only-ignore '.github/**'` removes matching paths before ownership.
+- `--discover-ignore 'templates/**'` excludes matching files from discovery
+  before decoding.
 - `--skip-secrets` omits Secret resources from output and diffs.
 - `--skip-crds` omits CRDs from output and diffs.
 - `--show-ignored-fields` shows drydock default ignored metadata fields.

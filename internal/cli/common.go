@@ -26,6 +26,7 @@ type commonFlags struct {
 	maxDiscoveryDepth        int
 	maxDiscoveryDepthSet     bool
 	discoverKustomize        []string
+	discoverIgnore           []string
 	repoMaps                 []string
 	offline                  bool
 	refreshCharts            bool
@@ -124,6 +125,7 @@ func bindPathDiscoveryFlags(cmd *cobra.Command, flags *commonFlags) {
 	cmd.Flags().StringVar(&flags.discoveryMode, "discovery-mode", flags.discoveryMode, "Application discovery mode: fleet or static")
 	cmd.Flags().IntVar(&flags.maxDiscoveryDepth, "max-discovery-depth", flags.maxDiscoveryDepth, "maximum recursive rendered Application discovery depth")
 	cmd.Flags().StringArrayVar(&flags.discoverKustomize, "discover-kustomize", flags.discoverKustomize, "additional local Kustomize path to render for Argo CD Application discovery")
+	cmd.Flags().StringArrayVar(&flags.discoverIgnore, "discover-ignore", flags.discoverIgnore, "repository-relative glob excluded from discovery before decoding")
 	cmd.Flags().StringArrayVar(&flags.repoMaps, "repo-map", flags.repoMaps, "repository URL mapping in from=to form")
 }
 
@@ -325,6 +327,7 @@ func requestOptionsFromFlags(flags commonFlags, repoMaps []source.RepoMap) reque
 		MaxDiscoveryDepth:              flags.maxDiscoveryDepth,
 		MaxDiscoveryDepthSet:           flags.maxDiscoveryDepthSet,
 		DiscoverKustomizePaths:         append([]string(nil), flags.discoverKustomize...),
+		DiscoverIgnores:                append([]string(nil), flags.discoverIgnore...),
 		ChangedOnly:                    &flags.changedOnly,
 		ChangedOnlyIncludes:            append([]string(nil), flags.changedOnlyIncludes...),
 		ChangedOnlyIgnores:             append([]string(nil), flags.changedOnlyIgnores...),

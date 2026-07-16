@@ -207,6 +207,31 @@ func TestActionKSOPSCompatInputDeclaredAndWiredToRunStep(t *testing.T) {
 	}
 }
 
+func TestActionDiscoverIgnoreInputDeclaredAndWiredToRunStep(t *testing.T) {
+	actionYAML := loadActionYAML(t)
+
+	// Input must be declared.
+	if !strings.Contains(actionYAML, "discover-ignore:") {
+		t.Fatalf("action.yml missing discover-ignore input declaration")
+	}
+
+	// Run step must wire the env var.
+	runIdx := strings.Index(actionYAML, "- name: Run drydock\n")
+	if runIdx == -1 {
+		t.Fatalf("action.yml missing 'Run drydock' step")
+	}
+	nextStep := strings.Index(actionYAML[runIdx+1:], "\n    - name: ")
+	var runBlock string
+	if nextStep == -1 {
+		runBlock = actionYAML[runIdx:]
+	} else {
+		runBlock = actionYAML[runIdx : runIdx+1+nextStep]
+	}
+	if !strings.Contains(runBlock, "DRYDOCK_INPUT_DISCOVER_IGNORE: ${{ inputs.discover-ignore }}") {
+		t.Fatalf("Run step env block missing DRYDOCK_INPUT_DISCOVER_IGNORE wiring:\n%s", runBlock)
+	}
+}
+
 func TestActionNoPinnedActionRefsInPruneStep(t *testing.T) {
 	actionYAML := loadActionYAML(t)
 

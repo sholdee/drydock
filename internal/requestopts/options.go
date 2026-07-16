@@ -24,6 +24,7 @@ type Options struct {
 	MaxDiscoveryDepth              int
 	MaxDiscoveryDepthSet           bool
 	DiscoverKustomizePaths         []string
+	DiscoverIgnores                []string
 	ChangedOnly                    *bool
 	ChangedOnlyIncludes            []string
 	ChangedOnlyIgnores             []string
@@ -130,6 +131,7 @@ func (options Options) discoveryOptions() app.DiscoveryOptions {
 		MaxDiscoveryDepth:      options.MaxDiscoveryDepth,
 		MaxDiscoveryDepthSet:   options.MaxDiscoveryDepthSet,
 		DiscoverKustomizePaths: append([]string(nil), options.DiscoverKustomizePaths...),
+		DiscoverIgnoreGlobs:    append([]string(nil), options.DiscoverIgnores...),
 	}
 }
 

@@ -590,6 +590,165 @@ metadata:
 	}
 }
 
+const discoverIgnoreHintText = "(use --discover-ignore to exclude non-deployable manifests from discovery)"
+
+// Scaffolding template with a typed decode failure: requeueAfterSeconds is a
+// string placeholder where the ApplicationSet API expects int64.
+const typedDecodeScaffold = `apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: scaffold
+spec:
+  generators:
+    - pullRequest:
+        requeueAfterSeconds: $PR_REQUEUE
+`
+
+// Scaffolding template that passes the content sniff but is invalid raw YAML
+// (template braces outside a Helm chart).
+const rawYAMLScaffold = `{{- if .Values.enabled }}
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: {{ .Values.name }}
+{{- end }}
+`
+
+func TestScanFailsUndecodableCandidatesWithDiscoverIgnoreHint(t *testing.T) {
+	tests := []struct {
+		name     string
+		content  string
+		wantText string
+	}{
+		{name: "typed decode error", content: typedDecodeScaffold, wantText: "decode ApplicationSet"},
+		{name: "invalid raw YAML", content: rawYAMLScaffold, wantText: "decode YAML document failed"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			root := t.TempDir()
+			mustCopy(t, filepath.Join("..", "..", "testdata", "applications", "direct-app.yaml"), filepath.Join(root, "apps", "app.yaml"))
+			mustWriteFile(t, filepath.Join(root, "templates", "scaffold.yaml"), tt.content)
+
+			_, err := Scan(root, Options{})
+			if err == nil {
+				t.Fatal("Scan() error = nil, want undecodable candidate error")
+			}
+			if !strings.Contains(err.Error(), tt.wantText) {
+				t.Fatalf("Scan() error = %v, want %q", err, tt.wantText)
+			}
+			if !strings.Contains(err.Error(), discoverIgnoreHintText) {
+				t.Fatalf("Scan() error = %v, want remediation hint %q", err, discoverIgnoreHintText)
+			}
+		})
+	}
+}
+
+func TestScanIgnoreGlobsSkipUndecodableCandidatesBeforeDecode(t *testing.T) {
+	root := t.TempDir()
+	mustCopy(t, filepath.Join("..", "..", "testdata", "applications", "direct-app.yaml"), filepath.Join(root, "apps", "app.yaml"))
+	mustWriteFile(t, filepath.Join(root, "templates", "appset-scaffold.yaml"), typedDecodeScaffold)
+	mustWriteFile(t, filepath.Join(root, "templates", "raw-scaffold.yaml"), rawYAMLScaffold)
+
+	result, err := Scan(root, Options{IgnoreGlobs: []string{"templates/**"}})
+	if err != nil {
+		t.Fatalf("Scan() error = %v", err)
+	}
+	if len(result.Applications) != 1 {
+		t.Fatalf("Applications = %#v, want one", result.Applications)
+	}
+	if result.Applications[0].Path != filepath.Join("apps", "app.yaml") {
+		t.Fatalf("Path = %s", result.Applications[0].Path)
+	}
+	if len(result.ApplicationSets) != 0 {
+		t.Fatalf("ApplicationSets = %#v, want ignored scaffolding excluded", result.ApplicationSets)
+	}
+}
+
+func TestScanIgnoreGlobForms(t *testing.T) {
+	tests := []struct {
+		name string
+		glob string
+	}{
+		{name: "exact path", glob: "templates/scaffold.tmpl.yaml"},
+		{name: "directory doublestar", glob: "templates/**"},
+		{name: "extension doublestar", glob: "**/*.tmpl.yaml"},
+		{name: "dot-slash prefix normalized", glob: "./templates/**"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			root := t.TempDir()
+			mustCopy(t, filepath.Join("..", "..", "testdata", "applications", "direct-app.yaml"), filepath.Join(root, "apps", "app.yaml"))
+			mustWriteFile(t, filepath.Join(root, "templates", "scaffold.tmpl.yaml"), typedDecodeScaffold)
+
+			result, err := Scan(root, Options{IgnoreGlobs: []string{tt.glob}})
+			if err != nil {
+				t.Fatalf("Scan() error = %v", err)
+			}
+			if len(result.Applications) != 1 {
+				t.Fatalf("Applications = %#v, want one", result.Applications)
+			}
+		})
+	}
+}
+
+func TestScanNonMatchingIgnoreGlobChangesNothing(t *testing.T) {
+	root := t.TempDir()
+	mustCopy(t, filepath.Join("..", "..", "testdata", "applications", "direct-app.yaml"), filepath.Join(root, "apps", "app.yaml"))
+
+	result, err := Scan(root, Options{IgnoreGlobs: []string{"other/**"}})
+	if err != nil {
+		t.Fatalf("Scan() error = %v", err)
+	}
+	if len(result.Applications) != 1 {
+		t.Fatalf("Applications = %#v, want one", result.Applications)
+	}
+}
+
+func TestScanRejectsInvalidAndBlankIgnoreGlobs(t *testing.T) {
+	tests := []struct {
+		name     string
+		glob     string
+		wantText string
+	}{
+		{name: "invalid glob", glob: "templates/[", wantText: `discover-ignore glob "templates/[" is invalid`},
+		{name: "blank glob", glob: "  ", wantText: "discover-ignore glob must not be blank"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			root := t.TempDir()
+			mustCopy(t, filepath.Join("..", "..", "testdata", "applications", "direct-app.yaml"), filepath.Join(root, "apps", "app.yaml"))
+
+			_, err := Scan(root, Options{IgnoreGlobs: []string{tt.glob}})
+			if err == nil {
+				t.Fatal("Scan() error = nil, want glob validation error")
+			}
+			if !strings.Contains(err.Error(), tt.wantText) {
+				t.Fatalf("Scan() error = %v, want %q", err, tt.wantText)
+			}
+		})
+	}
+}
+
+func TestScanIgnoreGlobsWinOverExplicitAppManifestPaths(t *testing.T) {
+	root := t.TempDir()
+	scaffold := filepath.Join("templates", "scaffold.yaml")
+	mustWriteFile(t, filepath.Join(root, scaffold), typedDecodeScaffold)
+
+	result, err := Scan(root, Options{
+		AppManifestPaths: []string{scaffold},
+		IgnoreGlobs:      []string{"templates/**"},
+	})
+	if err != nil {
+		t.Fatalf("Scan() error = %v", err)
+	}
+	if len(result.Applications) != 0 || len(result.ApplicationSets) != 0 {
+		t.Fatalf("result = %#v, want ignored explicit path excluded", result)
+	}
+}
+
 func TestExplicitPathFailsMalformedYAML(t *testing.T) {
 	root := t.TempDir()
 	malformed := filepath.Join("apps", "bad-app.yaml")

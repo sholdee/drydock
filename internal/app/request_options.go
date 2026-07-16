@@ -16,6 +16,7 @@ type DiscoveryOptions struct {
 	MaxDiscoveryDepth      int
 	MaxDiscoveryDepthSet   bool
 	DiscoverKustomizePaths []string
+	DiscoverIgnoreGlobs    []string
 }
 
 type AcquisitionOptions struct {

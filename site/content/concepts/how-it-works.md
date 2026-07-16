@@ -20,6 +20,12 @@ Supported ApplicationSet generators expand offline from local files, lists,
 matrix and merge combinations, or explicit provider fixtures. Unsupported
 generators produce diagnostics instead of guessing.
 
+Repeatable `--discover-ignore` repository-relative globs exclude matching
+files from this repository scan before decoding, including files named by
+explicit app manifest paths. The flag does not filter ApplicationSet Git
+generator file matching, Helm value files, Kustomize inputs, changed-path
+selection, or rendered fleet discovery.
+
 ## Source Resolution
 
 Application sources resolve from repo maps, local paths, declared Git sources,

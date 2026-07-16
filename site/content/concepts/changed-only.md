@@ -48,6 +48,30 @@ diff instead of rendering the fleet.
 `diff app` selects one requested Application directly and does not use
 changed-only Git path filtering.
 
+## Changed-Only Ignore vs Discover Ignore
+
+`--changed-only-ignore` and `--discover-ignore` share glob syntax but act at
+different stages. `--changed-only-ignore` filters which changed paths are
+considered for changed-only ownership; the files themselves are still
+discovered and decoded. `--discover-ignore` removes matching files from
+repository discovery before decoding, on every command that discovers
+Applications.
+
+The two flag families stay independent under `--strict-changed-only`: a
+discover-ignored file that changes still surfaces as an unowned changed path
+unless it is also `--changed-only-ignore`d. Repositories that commit
+non-deployable YAML usually want the same glob in both flags:
+
+```bash
+drydock diff apps \
+  --repo . \
+  --ref HEAD \
+  --ref-orig main \
+  --strict-changed-only \
+  --discover-ignore 'templates/**' \
+  --changed-only-ignore 'templates/**'
+```
+
 ## Mental Model
 
 Changed-only behavior is Argo Application-aware. Shared resources from
