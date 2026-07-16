@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.2.5](https://github.com/sholdee/drydock/compare/v0.2.4...v0.2.5) (2026-07-16)
+
+
+### Features
+
+* **discovery:** add --discover-ignore globs for pre-decode exclusion ([#214](https://github.com/sholdee/drydock/issues/214)) ([a8f168a](https://github.com/sholdee/drydock/commit/a8f168acb4045ae850f937bddc68b8df16cb50dc)), closes [#211](https://github.com/sholdee/drydock/issues/211)
+
+
+### Bug Fixes
+
+* **appset:** scope template render errors to the failing ApplicationSet ([#213](https://github.com/sholdee/drydock/issues/213)) ([9568772](https://github.com/sholdee/drydock/commit/9568772d3f2d4e2bdf481cdbd5df91b6cfa221d9))
+
+
+### Miscellaneous Chores
+
+* **deps:** update golang:1.26.5 docker digest to ae5a231 ([#209](https://github.com/sholdee/drydock/issues/209)) ([049bddd](https://github.com/sholdee/drydock/commit/049bddd4df412bf93019b42d3fb8666be25e45ab))
+
 ## [0.2.4](https://github.com/sholdee/drydock/compare/v0.2.3...v0.2.4) (2026-07-15)
 
 
