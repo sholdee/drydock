@@ -462,6 +462,9 @@ func assertTemplateRenderFailedDiagnostic(t *testing.T, diag diagnostic.Diagnost
 	if diag.Category != "appset" {
 		t.Fatalf("diagnostic category = %q, want appset", diag.Category)
 	}
+	if diag.Provenance.Path != "app-set.yaml" {
+		t.Fatalf("diagnostic provenance path = %q, want app-set.yaml", diag.Provenance.Path)
+	}
 	if diag.Provenance.Pointer != "spec.template" {
 		t.Fatalf("diagnostic pointer = %q, want spec.template", diag.Provenance.Pointer)
 	}
