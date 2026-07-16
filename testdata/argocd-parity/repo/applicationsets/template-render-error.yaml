@@ -1,0 +1,26 @@
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: parity-template-render-error
+  namespace: argocd
+spec:
+  goTemplate: true
+  goTemplateOptions: ["missingkey=error"]
+  generators:
+    - git:
+        repoURL: git://argocd-parity-git.argocd-parity.svc.cluster.local/repo.git
+        revision: HEAD
+        files:
+          - path: workloads/appset/template-render-error/*.yaml
+  template:
+    metadata:
+      name: 'parity-render-error-{{ .name }}'
+    spec:
+      project: default
+      source:
+        repoURL: git://argocd-parity-git.argocd-parity.svc.cluster.local/repo.git
+        targetRevision: HEAD
+        path: 'workloads/appset/template-render-error'
+      destination:
+        name: in-cluster
+        namespace: parity-render-error

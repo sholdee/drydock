@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/sholdee/drydock/internal/diagnostic"
 )
 
 func TestGenerateTemplatePatchAppliesMetadataSyncPolicyAndPreservesProject(t *testing.T) {
@@ -106,7 +108,7 @@ func assertTemplatePatchSyncPolicy(t *testing.T, generated GeneratedApplication)
 	}
 }
 
-func TestGenerateTemplatePatchReturnsInvalidPatchError(t *testing.T) {
+func TestGenerateTemplatePatchInvalidPatchScopesErrorToAppSet(t *testing.T) {
 	root := t.TempDir()
 	data := []byte(`
 apiVersion: argoproj.io/v1alpha1
@@ -133,12 +135,21 @@ spec:
   templatePatch: hello world
 `)
 
-	_, _, err := GenerateFromYAML(root, "app-set.yaml", data)
-	if err == nil {
-		t.Fatal("GenerateFromYAML() error = nil, want invalid templatePatch error")
+	apps, diags, err := GenerateFromYAML(root, "app-set.yaml", data)
+	if err != nil {
+		t.Fatalf("GenerateFromYAML() error = %v, want appset-scoped warning", err)
 	}
-	if !strings.Contains(err.Error(), "invalid templatePatch") {
-		t.Fatalf("error = %v, want invalid templatePatch", err)
+	if len(apps) != 0 {
+		t.Fatalf("generated apps = %#v, want none", apps)
+	}
+	if len(diags) != 1 {
+		t.Fatalf("len(diags) = %d, want 1: %#v", len(diags), diags)
+	}
+	if diags[0].Severity != diagnostic.SeverityWarning {
+		t.Fatalf("diagnostic severity = %s, want warning", diags[0].Severity)
+	}
+	if !strings.Contains(diags[0].Message, "template render failed") || !strings.Contains(diags[0].Message, "invalid templatePatch") {
+		t.Fatalf("diagnostic message = %q, want template render failed with invalid templatePatch cause", diags[0].Message)
 	}
 }
 

@@ -50,6 +50,11 @@ YAML and JSON files may decode to a mapping document, an array of mapping
 documents, an empty mapping, or an empty file. Scalars, invalid YAML/JSON, and
 arrays with non-mapping entries produce diagnostics.
 
+Empty, comment-only, and bare `---` or `...` files decode to one empty param
+set, matching Argo CD. An empty list (`[]`) decodes to zero param sets; use it
+when a param file exists but should generate nothing yet. Multi-document files
+decode only the first document, also matching Argo CD.
+
 Git files `values` use the same `values.*` and `.values.*` behavior as Git
 directories. `pathParamPrefix` applies to all path-related params. For example,
 `pathParamPrefix: myRepo` produces `.myRepo.path.path` in Go templates and
@@ -75,6 +80,33 @@ generator order.
 Matrix and merge children may use list, Git directories, Git files,
 fixture-backed provider generators, and nested matrix/merge combinations where
 the Argo CD v3 nested JSON API permits them.
+
+## Template Render Errors
+
+Template execution failures, including `templatePatch` failures and
+`missingkey=error` misses, are scoped to the failing ApplicationSet. drydock
+emits one warning diagnostic per failing param set with stable code
+`appset.template-render-failed`, and that ApplicationSet contributes zero
+generated Applications, including param sets that rendered successfully. Other
+ApplicationSets and Applications render normally; `--strict` promotes the
+warning to an error and fails the run.
+
+This matches the Argo CD controller, which reports the same failure as an
+`ErrorOccurred` condition on the ApplicationSet and reconciles no Applications
+for it. A common trigger is a Git files generator matching an empty or
+comment-only param file while the template references file params under
+`missingkey=error`: the file decodes to one empty param set (Argo CD parity),
+and rendering the template against it fails. Use `[]` as the param file
+content when a match should generate nothing.
+
+Generator evaluation failures — file IO, source acquisition, invalid
+ApplicationSet YAML, and generator `values` templating — remain fatal to the
+run.
+
+In diffs, a failing ApplicationSet contributes zero desired Applications on
+that side. When the failure exists on only one side, the diff reports that
+ApplicationSet's Applications as additions or deletions and exits `1`, while
+the live controller would abort reconciliation without pruning.
 
 ## Provider Fixtures
 

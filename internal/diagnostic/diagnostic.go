@@ -147,6 +147,8 @@ func appSetCode(message string) string {
 		return "appset.provider-unsupported-filter"
 	case strings.Contains(message, "unsupported ApplicationSet generator"):
 		return "appset.unsupported-generator"
+	case strings.Contains(message, "template render failed"):
+		return "appset.template-render-failed"
 	case strings.Contains(message, "generated zero Applications"):
 		return "appset.generated-zero-applications"
 	default:

@@ -96,6 +96,15 @@ Supported:
   matches, and unsupported provider filters.
 - Warning diagnostics when a discovered ApplicationSet generates zero
   Applications; `--strict` promotes those diagnostics to errors.
+- Argo CD Git files param decoding for empty content: empty, comment-only, and
+  bare `---`/`...` files decode to one empty param set, `[]` decodes to zero
+  param sets, and multi-document files decode only the first document.
+- ApplicationSet template and `templatePatch` execution errors scoped to the
+  failing ApplicationSet as `appset.template-render-failed` warning
+  diagnostics; that ApplicationSet contributes zero Applications and
+  `--strict` promotes the warnings to errors, matching the Argo CD
+  controller's `ErrorOccurred` condition behavior. Generator evaluation
+  errors remain fatal.
 
 Not supported:
 

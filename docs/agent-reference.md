@@ -161,7 +161,17 @@ calls, plugin service calls, shellouts, or ambient credential discovery.
 
 Git files generator behavior is intentionally local and fail-closed. Keep path
 matching sorted, reject absolute paths and `..` escapes, do not follow
-symlinks, and decode only YAML/JSON mapping documents.
+symlinks, and decode only YAML/JSON mapping documents. Empty-content decoding
+is an Argo CD parity pin: empty, comment-only, and bare `---`/`...` files
+decode to one empty param set, `[]` decodes to zero, and multi-document files
+decode only the first document. Do not change it.
+
+Template and `templatePatch` execution errors are appset-scoped warning
+diagnostics (`appset.template-render-failed`), and the failing ApplicationSet
+contributes zero generated Applications, matching the Argo CD controller's
+`ErrorOccurred` condition scoping. Generator evaluation errors stay fatal. The
+"template render failed" message substring is the stable-code dispatch key in
+`internal/diagnostic`; keep the message and dispatch case in sync.
 
 ## Source Resolution, Cache, And Credentials
 

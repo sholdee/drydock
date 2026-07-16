@@ -66,6 +66,7 @@ func GenerateWithOptions(repoRoot, manifestPath string, appset argoappv1.Applica
 		BaseTemplate: appset.Spec.Template,
 		Options:      options,
 	}
+	templateRenderFailed := false
 	for _, generator := range appset.Spec.Generators {
 		paramSets, generatorDiags, supported, err := evaluateGenerator(ctx, generator)
 		if err != nil {
@@ -79,10 +80,15 @@ func GenerateWithOptions(repoRoot, manifestPath string, appset argoappv1.Applica
 		for _, paramSet := range paramSets {
 			rendered, err := renderApplicationTemplateWithTemplate(appset, paramSet.Template, paramSet.Params)
 			if err != nil {
-				return out, diags, fmt.Errorf("%s render %s: %w", manifestPath, paramSet.SourcePath, err)
+				templateRenderFailed = true
+				diags = append(diags, appsetTemplateRenderDiagnostic(manifestPath, paramSet.SourcePath, err))
+				continue
 			}
 			out = append(out, generatedApplication(appset, rendered, paramSet))
 		}
+	}
+	if templateRenderFailed {
+		return nil, diags, nil
 	}
 	if len(out) == 0 && unsupportedCount > 0 {
 		return nil, diags, fmt.Errorf("%w in %s", ErrUnsupportedGenerator, manifestPath)
@@ -238,6 +244,27 @@ func providerUnsupportedFilterDiagnostic(manifestPath, detail string) diagnostic
 	diag := appsetDiagnostic(manifestPath, fmt.Sprintf("provider filter cannot be evaluated from fixture data: %s", detail))
 	diag.Code = diagnostic.StableCode(diag)
 	return diag
+}
+
+// appsetTemplateRenderDiagnostic scopes template-execution failures (template
+// and templatePatch) to the failing ApplicationSet, matching the Argo CD
+// controller: it records the render error as an ErrorOccurred condition and
+// reconciles no Applications for that ApplicationSet. This is deliberately
+// narrower than Argo CD for now — upstream also scopes generator Transform
+// errors (values templating, nested matrix/merge interpolation) as
+// conditions, but drydock keeps evaluateGenerator failures fatal because
+// acquisition/IO failures are drydock-side limitations where silently
+// skipping would hide unknown desired state. The "template render failed"
+// message substring is the stable-code dispatch key
+// (appset.template-render-failed); keep it in sync with
+// internal/diagnostic.appSetCode.
+func appsetTemplateRenderDiagnostic(manifestPath, sourcePath string, err error) diagnostic.Diagnostic {
+	return diagnostic.Diagnostic{
+		Severity:   diagnostic.SeverityWarning,
+		Category:   "appset",
+		Message:    fmt.Sprintf("ApplicationSet template render failed for %q: %v; this ApplicationSet contributes no Applications (Argo CD reports the same failure as an ErrorOccurred condition and reconciles no Applications)", sourcePath, err),
+		Provenance: diagnostic.Provenance{Path: manifestPath, Pointer: "spec.template"},
+	}
 }
 
 func appsetDiagnostic(manifestPath, message string) diagnostic.Diagnostic {

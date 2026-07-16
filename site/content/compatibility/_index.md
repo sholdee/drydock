@@ -60,6 +60,10 @@ Supported ApplicationSet generators are local and deterministic. Provider-style
 generators are fixture-backed so CI can validate generated output without
 calling live provider APIs.
 
+Template render errors are scoped to the failing ApplicationSet as warning
+diagnostics, and that ApplicationSet contributes zero generated Applications,
+matching the Argo CD controller's `ErrorOccurred` condition behavior.
+
 See [ApplicationSet support](/docs/applicationsets/) and
 [repository topologies](/concepts/topologies/).
 

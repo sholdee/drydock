@@ -26,6 +26,21 @@ drydock get apps --path . --discover-kustomize clusters/prod/argocd
 If the repository uses ApplicationSet providers, make sure the workflow passes
 the same fixture inputs used for local verification.
 
+## Symptom: ApplicationSet Warns And Generates Zero Applications
+
+An `appset.template-render-failed` warning means template execution failed for
+that ApplicationSet, so it contributes no Applications — the same outcome the
+Argo CD controller reports as an `ErrorOccurred` condition. A common cause is
+a Git files generator matching an empty or comment-only param file while the
+template references file params under `missingkey=error`: an empty file
+decodes to one empty param set, matching Argo CD. If a matched file should
+generate nothing, make its content `[]`. Use `--strict` when the warning
+should fail the run.
+
+In one-sided diffs, the failing side's zero desired Applications appear as
+additions or deletions, while the live controller would abort reconciliation
+without pruning.
+
 ## Symptom: Render Fails In CI But Works Locally
 
 Confirm whether CI has the same source access and caches. Default runs may
