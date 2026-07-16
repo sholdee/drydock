@@ -203,6 +203,12 @@ Application. Use repeatable `--changed-only-include` and
 `--changed-only-ignore` globs when CI should ignore known non-GitOps paths
 before changed-only ownership is evaluated.
 
+Use repeatable `--discover-ignore` repository-relative globs to exclude
+non-deployable YAML, such as unrendered chart templates, from repository
+discovery before decoding. This is separate from `--changed-only-ignore`:
+discover-ignore removes files from discovery itself, while changed-only-ignore
+only filters changed-path selection for diffs.
+
 You can also compare against committed Git refs without creating a baseline
 worktree:
 

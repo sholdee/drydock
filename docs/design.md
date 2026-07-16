@@ -112,6 +112,16 @@ AppProjects, repository metadata, and cluster Secret metadata. Generated and
 direct Applications share the same downstream planning, rendering, test, and
 diff path.
 
+Repeatable `--discover-ignore` repository-relative globs (same doublestar
+semantics as `--changed-only-ignore`) exclude matching files from this scan
+before decoding, including files named by explicit app manifest paths. The
+flag scopes to top-level repository discovery only; it does not filter
+ApplicationSet Git generator file matching, Helm value files, Kustomize
+inputs, changed-path selection, or rendered fleet discovery. Fatal discovery
+decode errors carry a remediation hint naming the flag. Undecodable candidate
+files still fail loudly by default so corrupted real manifests are not
+silently skipped.
+
 ApplicationSet support is deterministic and local. Git, list, matrix, merge,
 and fixture-backed provider generators are documented in
 `site/content/docs/applicationsets.md`.

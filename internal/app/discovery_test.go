@@ -582,6 +582,118 @@ func TestListApplicationsRejectsUnsafeDiscoverKustomizePath(t *testing.T) {
 	}
 }
 
+func TestListApplicationsDiscoverIgnoreDoesNotFilterGitFilesGeneratorParams(t *testing.T) {
+	root := t.TempDir()
+	writeTestFile(t, filepath.Join(root, "params", "demo", "config.yaml"), `team: platform
+`)
+	writeTestFile(t, filepath.Join(root, "appsets", "generated.yaml"), `apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: generated
+  namespace: argocd
+spec:
+  goTemplate: true
+  generators:
+    - git:
+        repoURL: https://github.com/example/repo.git
+        revision: HEAD
+        files:
+          - path: params/*/config.yaml
+  template:
+    metadata:
+      name: '{{.path.basename}}'
+      namespace: argocd
+    spec:
+      project: default
+      source:
+        repoURL: https://github.com/example/repo.git
+        path: '{{.path.path}}'
+        targetRevision: HEAD
+      destination:
+        server: https://kubernetes.default.svc
+        namespace: '{{.path.basename}}'
+`)
+
+	result, err := Orchestrator{}.ListApplications(context.Background(), BuildRequest{
+		Path: root,
+		DiscoveryOptions: DiscoveryOptions{
+			// The generator param file matches the ignore glob; discover-ignore
+			// scopes to repository discovery only and must not filter appset git
+			// generator file matching.
+			DiscoverIgnoreGlobs: []string{"params/**"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("ListApplications() error = %v", err)
+	}
+	for _, app := range result.Applications {
+		if app.Name == "demo" {
+			return
+		}
+	}
+	t.Fatalf("Applications = %#v, want generated demo from ignored param file", result.Applications)
+}
+
+func TestListApplicationsDiscoverIgnoreDoesNotFilterExplicitRenderedKustomize(t *testing.T) {
+	root := t.TempDir()
+	writeTestFile(t, filepath.Join(root, "argocd", "base", "application.yaml"), `apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: demo
+  namespace: argocd
+spec:
+  project: default
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: default
+  source:
+    repoURL: https://github.com/example/repo
+    targetRevision: HEAD
+    path: apps/raw
+`)
+	writeTestFile(t, filepath.Join(root, "argocd", "base", "kustomization.yaml"), `resources:
+  - application.yaml
+`)
+	writeTestFile(t, filepath.Join(root, "argocd", "overlays", "prod", "kustomization.yaml"), `resources:
+  - ../../base
+patches:
+  - target:
+      group: argoproj.io
+      version: v1alpha1
+      kind: Application
+      name: demo
+    patch: |-
+      - op: replace
+        path: /spec/source/path
+        value: apps/rendered
+`)
+
+	result, err := Orchestrator{}.ListApplications(context.Background(), BuildRequest{
+		Path: root,
+		DiscoveryOptions: DiscoveryOptions{
+			DiscoverKustomizePaths: []string{filepath.Join("argocd", "overlays", "prod")},
+			// Every static file matches the ignore glob; rendered-tier discovery
+			// (ScanObjects with synthetic display paths under argocd/) must be
+			// unaffected.
+			DiscoverIgnoreGlobs: []string{"argocd/**"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("ListApplications() error = %v", err)
+	}
+	if len(result.Applications) != 1 {
+		t.Fatalf("Applications = %#v, want one rendered Application", result.Applications)
+	}
+	if got := result.Applications[0].Spec.Source.Path; got != "apps/rendered" {
+		t.Fatalf("Application source path = %q, want rendered path", got)
+	}
+	// The static duplicate was ignored, so the rendered Application must not
+	// produce a duplicate discovery warning.
+	if diag, ok := diagnosticByCategory(result.Diagnostics, "discovery"); ok && strings.Contains(diag.Message, "duplicate Application") {
+		t.Fatalf("Diagnostics = %#v, want no duplicate discovery warning", result.Diagnostics)
+	}
+}
+
 func TestListApplicationsWarnsWhenApplicationSetGeneratesZeroApplications(t *testing.T) {
 	root := t.TempDir()
 	writeZeroApplicationSet(t, root)

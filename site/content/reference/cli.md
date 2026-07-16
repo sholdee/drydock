@@ -82,6 +82,22 @@ The path is relative to `--path`, must not escape through `..`, and must not
 include symlinked path components. Explicitly rendered Kustomize objects take
 precedence over committed duplicates with the same identity.
 
+For repositories that also commit non-deployable YAML, such as unrendered
+chart templates that fail strict decoding, exclude those files from discovery
+with repeatable `--discover-ignore` globs:
+
+```bash
+drydock get apps --path . --discover-ignore 'templates/**'
+drydock test apps --path . --discover-ignore 'charts/**/templates/**'
+```
+
+Patterns are repository-relative, slash-normalized doublestar globs with the
+same syntax as `--changed-only-ignore`. Matching happens before any decoding,
+and ignored files are skipped even when named by explicit app manifest paths.
+The flag only affects top-level repository discovery of static manifests; it
+does not filter ApplicationSet Git generator file matching, Helm value files,
+Kustomize inputs, changed-path selection, or rendered fleet discovery.
+
 For generated ApplicationSet behavior, see [ApplicationSets](/docs/applicationsets/).
 For repository shapes, see [Repository topologies](/concepts/topologies/).
 

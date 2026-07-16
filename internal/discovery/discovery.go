@@ -8,12 +8,16 @@ import (
 	"strings"
 
 	argoappv1 "github.com/argoproj/argo-cd/v3/pkg/apis/application/v1alpha1"
+	"github.com/sholdee/drydock/internal/change"
 	"github.com/sholdee/drydock/internal/manifest"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 )
 
 type Options struct {
 	AppManifestPaths []string
+	// IgnoreGlobs removes matching repository-relative files from discovery
+	// before any decode, including explicit AppManifestPaths scans.
+	IgnoreGlobs []string
 }
 
 type SourceTier int
@@ -68,6 +72,10 @@ type Result struct {
 
 func Scan(root string, opts Options) (Result, error) {
 	var result Result
+	ignore, err := change.NewIgnoreMatcher(opts.IgnoreGlobs, "discover-ignore")
+	if err != nil {
+		return result, err
+	}
 	roots := opts.AppManifestPaths
 	explicit := len(roots) > 0
 	if !explicit {
@@ -85,7 +93,7 @@ func Scan(root string, opts Options) (Result, error) {
 				return result, err
 			}
 		}
-		if err := scanPath(root, start, explicit, seen, &result); err != nil {
+		if err := scanPath(root, start, explicit, ignore, seen, &result); err != nil {
 			return result, err
 		}
 	}
@@ -105,7 +113,7 @@ func ScanObjects(path string, objects []*unstructured.Unstructured) (Result, err
 	return result, nil
 }
 
-func scanPath(root, start string, explicit bool, seen map[string]struct{}, result *Result) error {
+func scanPath(root, start string, explicit bool, ignore change.IgnoreMatcher, seen map[string]struct{}, result *Result) error {
 	info, err := os.Lstat(start)
 	if err != nil {
 		return err
@@ -124,7 +132,7 @@ func scanPath(root, start string, explicit bool, seen map[string]struct{}, resul
 		if !isYAML(start) {
 			return nil
 		}
-		return scanYAMLFileOnce(root, start, explicit, seen, result)
+		return scanYAMLFileOnce(root, start, explicit, ignore, seen, result)
 	}
 
 	return filepath.WalkDir(start, func(path string, entry os.DirEntry, err error) error {
@@ -143,14 +151,19 @@ func scanPath(root, start string, explicit bool, seen map[string]struct{}, resul
 		if !isYAML(path) {
 			return nil
 		}
-		return scanYAMLFileOnce(root, path, explicit, seen, result)
+		return scanYAMLFileOnce(root, path, explicit, ignore, seen, result)
 	})
 }
 
-func scanYAMLFileOnce(root, path string, explicit bool, seen map[string]struct{}, result *Result) error {
+func scanYAMLFileOnce(root, path string, explicit bool, ignore change.IgnoreMatcher, seen map[string]struct{}, result *Result) error {
 	rel, err := relativePath(root, path)
 	if err != nil {
 		return err
+	}
+	// ignore wins everywhere, including explicit AppManifestPaths scans, and
+	// runs before any decode work.
+	if ignore.Matches(filepath.ToSlash(rel)) {
+		return nil
 	}
 	if _, ok := seen[rel]; ok {
 		return nil
@@ -171,6 +184,8 @@ func scanYAMLFileOnce(root, path string, explicit bool, seen map[string]struct{}
 	return scanYAMLFile(path, rel, result)
 }
 
+const discoverIgnoreHint = "(use --discover-ignore to exclude non-deployable manifests from discovery)"
+
 func scanYAMLFile(path, rel string, result *Result) error {
 	file, err := os.Open(path)
 	if err != nil {
@@ -180,11 +195,11 @@ func scanYAMLFile(path, rel string, result *Result) error {
 
 	docs, err := manifest.DecodeDocuments(path, file)
 	if err != nil {
-		return err
+		return fmt.Errorf("%w %s", err, discoverIgnoreHint)
 	}
 	for _, doc := range docs {
 		if err := scanDocument(rel, doc.Index, doc.Object, false, result); err != nil {
-			return err
+			return fmt.Errorf("%w %s", err, discoverIgnoreHint)
 		}
 	}
 	return nil

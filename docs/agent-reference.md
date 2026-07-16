@@ -148,6 +148,15 @@ Discovery scans YAML files by GVK. Keep scans generic; do not hard-code a
 specific user's repository layout. Default scans skip symlinks and tolerate
 unrelated YAML. Explicit app manifest paths reject symlinked components.
 
+`--discover-ignore` globs (repository-relative, doublestar semantics shared
+with `--changed-only-ignore` via `internal/change`) remove matching files from
+top-level repository discovery before any decode, including explicit app
+manifest paths. They must not filter ApplicationSet Git generator file
+matching, Helm value files, Kustomize inputs, changed-path selection, or
+rendered-tier discovery. Fatal discovery decode errors append a
+`--discover-ignore` remediation hint at the discovery call sites, not inside
+`internal/manifest`.
+
 Supported ApplicationSet generators are local and deterministic. The supported
 set includes Git directories, Git files, list, matrix, merge, and explicit
 fixture-backed provider generators. Preserve Go-template behavior such as

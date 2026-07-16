@@ -159,6 +159,14 @@ non-GitOps paths from forcing a full-fleet changed-only fallback. Keep them
 narrow; ignored paths cannot trigger Application renders. They do not affect
 `test apps`.
 
+`discover-ignore` is different: its newline-delimited globs exclude matching
+files from repository discovery before decoding, and it applies to `test apps`
+as well as both diff steps. Use it when the repository commits non-deployable
+YAML, such as unrendered chart templates, that fails strict discovery decoding.
+With `strict-changed-only`, a discover-ignored file that changes still counts
+as an unowned changed path unless it is also listed in `changed-only-ignore`;
+repositories usually want the same globs in both inputs.
+
 Use markdown output directly when building a custom workflow, or let
 `pr-action` produce the comment:
 
@@ -361,6 +369,7 @@ Newline-delimited inputs are passed as repeated drydock flags:
 - `changed-only-include`
 - `changed-only-ignore`
 - `discover-kustomize`
+- `discover-ignore`
 - `repo-map`
 - `cache-restore-keys`
 - `extra-test-args`
@@ -439,6 +448,7 @@ passes them as arguments without `eval`, but they still change drydock behavior.
 | `changed-only-ignore` | unset | Newline-delimited repository-relative globs ignored by changed-only selection. |
 | `show-ignored-fields` | `false` | Show drydock default ignored diff fields. |
 | `discover-kustomize` | unset | Newline-delimited local Kustomize paths to render during Application discovery. |
+| `discover-ignore` | unset | Newline-delimited repository-relative glob patterns excluded from discovery before decoding. Applies to test, diff, and image diff steps. |
 | `repo-map` | unset | Newline-delimited repository URL mappings in `URL=PATH` form. |
 | `kube-version` | unset | Kubernetes version for rendering capabilities. Overrides per-app `kubeVersion`. |
 | `api-versions` | unset | Newline-delimited additional Kubernetes API versions for capability-gated rendering, unioned with per-app `apiVersions`. Accepts `group/version` or `group/version/Kind` form. |

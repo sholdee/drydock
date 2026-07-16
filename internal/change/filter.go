@@ -25,15 +25,45 @@ type FilterResult struct {
 }
 
 func NewPathFilter(config PathFilterConfig) (PathFilter, error) {
-	includes, err := normalizePatterns(config.Includes, "include")
+	includes, err := normalizePatterns(config.Includes, "changed-only include")
 	if err != nil {
 		return PathFilter{}, err
 	}
-	ignores, err := normalizePatterns(config.Ignores, "ignore")
+	ignores, err := normalizePatterns(config.Ignores, "changed-only ignore")
 	if err != nil {
 		return PathFilter{}, err
 	}
 	return PathFilter{includes: includes, ignores: ignores}, nil
+}
+
+// IgnoreMatcher reports whether repository-relative paths match a validated
+// set of ignore globs, using the same normalization and doublestar semantics
+// as PathFilter. The zero value matches nothing.
+type IgnoreMatcher struct {
+	patterns []string
+}
+
+// NewIgnoreMatcher validates globs and returns a matcher. Validation errors
+// name the flag given by label (for example "discover-ignore").
+func NewIgnoreMatcher(globs []string, label string) (IgnoreMatcher, error) {
+	patterns, err := normalizePatterns(globs, label)
+	if err != nil {
+		return IgnoreMatcher{}, err
+	}
+	return IgnoreMatcher{patterns: patterns}, nil
+}
+
+func (matcher IgnoreMatcher) Matches(inputPath string) bool {
+	if len(matcher.patterns) == 0 {
+		return false
+	}
+	normalized := normalizeFilterPath(inputPath)
+	for _, pattern := range matcher.patterns {
+		if doublestar.MatchUnvalidated(pattern, normalized) {
+			return true
+		}
+	}
+	return false
 }
 
 func (filter PathFilter) Apply(paths []string) FilterResult {
@@ -79,10 +109,10 @@ func normalizePatterns(patterns []string, label string) ([]string, error) {
 	for _, pattern := range patterns {
 		normalized := normalizeFilterPath(pattern)
 		if normalized == "" {
-			return nil, fmt.Errorf("changed-only %s glob must not be blank", label)
+			return nil, fmt.Errorf("%s glob must not be blank", label)
 		}
 		if !doublestar.ValidatePattern(normalized) {
-			return nil, fmt.Errorf("changed-only %s glob %q is invalid", label, pattern)
+			return nil, fmt.Errorf("%s glob %q is invalid", label, pattern)
 		}
 		out = append(out, normalized)
 	}
