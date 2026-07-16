@@ -7,6 +7,8 @@ import (
 	"slices"
 	"strings"
 	"testing"
+
+	"github.com/sholdee/drydock/internal/diagnostic"
 )
 
 func TestGenerateGitDirectoriesApplications(t *testing.T) {
@@ -87,12 +89,28 @@ spec:
         namespace: default
 `)
 
-			_, _, err := GenerateFromYAML(root, "app-set.yaml", data)
-			if err == nil {
-				t.Fatalf("expected %s to be unavailable", fn.name)
+			apps, diags, err := GenerateFromYAML(root, "app-set.yaml", data)
+			if err != nil {
+				t.Fatalf("GenerateFromYAML() error = %v, want appset-scoped warning", err)
 			}
-			if !strings.Contains(err.Error(), `function "`+fn.name+`" not defined`) {
-				t.Fatalf("error = %v, want unavailable %s function", err, fn.name)
+			if len(apps) != 0 {
+				t.Fatalf("generated apps = %#v, want none", apps)
+			}
+			if len(diags) == 0 {
+				t.Fatalf("diagnostics empty, want unavailable %s function warning", fn.name)
+			}
+			foundNotDefined := false
+			for _, diag := range diags {
+				if diag.Severity != diagnostic.SeverityWarning {
+					t.Fatalf("diagnostic severity = %s, want warning: %#v", diag.Severity, diag)
+				}
+				if strings.Contains(diag.Message, "should-not-render") {
+					t.Fatalf("diagnostic leaked APPSET_SECRET value: %#v", diag)
+				}
+				foundNotDefined = foundNotDefined || strings.Contains(diag.Message, `function "`+fn.name+`" not defined`)
+			}
+			if !foundNotDefined {
+				t.Fatalf("diagnostics = %#v, want unavailable %s function message", diags, fn.name)
 			}
 		})
 	}
@@ -358,7 +376,7 @@ spec:
 		t.Fatalf("missing Argo CD truncated name, got %#v", byName)
 	}
 }
-func TestGenerateMissingKeyOptionReturnsTemplateError(t *testing.T) {
+func TestGenerateMissingKeyOptionScopesGitDirectoriesTemplateErrorToAppSet(t *testing.T) {
 	root := filepath.Join("..", "..", "testdata", "appset-git-directories")
 	data := []byte(`
 apiVersion: argoproj.io/v1alpha1
@@ -386,9 +404,62 @@ spec:
         namespace: default
 `)
 
-	_, _, err := GenerateFromYAML(root, "app-set.yaml", data)
-	if err == nil {
-		t.Fatalf("expected missing key template error")
+	apps, diags, err := GenerateFromYAML(root, "app-set.yaml", data)
+	if err != nil {
+		t.Fatalf("GenerateFromYAML() error = %v, want appset-scoped warning", err)
+	}
+	if len(apps) != 0 {
+		t.Fatalf("generated apps = %#v, want none", apps)
+	}
+	if len(diags) != 2 {
+		t.Fatalf("len(diags) = %d, want one per failing directory param set: %#v", len(diags), diags)
+	}
+	for _, diag := range diags {
+		if diag.Severity != diagnostic.SeverityWarning || !strings.Contains(diag.Message, "template render failed") {
+			t.Fatalf("diagnostic = %#v, want template render failed warning", diag)
+		}
+	}
+}
+func TestGenerateFlatModeTemplateErrorScopesToAppSet(t *testing.T) {
+	root := t.TempDir()
+	// fasttemplate never errors on missing params (unresolved {{name}} stays
+	// verbatim), so the flat-mode failure is an unclosed tag.
+	data := []byte(`
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: flat-template-error
+spec:
+  generators:
+    - list:
+        elements:
+          - name: alpha
+  template:
+    metadata:
+      name: '{{name}} {{'
+    spec:
+      project: default
+      source:
+        repoURL: https://github.com/example/repo
+        path: apps/{{name}}
+        targetRevision: main
+      destination:
+        name: in-cluster
+        namespace: default
+`)
+
+	apps, diags, err := GenerateFromYAML(root, "app-set.yaml", data)
+	if err != nil {
+		t.Fatalf("GenerateFromYAML() error = %v, want appset-scoped warning", err)
+	}
+	if len(apps) != 0 {
+		t.Fatalf("generated apps = %#v, want none", apps)
+	}
+	if len(diags) != 1 {
+		t.Fatalf("len(diags) = %d, want 1: %#v", len(diags), diags)
+	}
+	if diags[0].Severity != diagnostic.SeverityWarning || !strings.Contains(diags[0].Message, "template render failed") {
+		t.Fatalf("diagnostic = %#v, want template render failed warning", diags[0])
 	}
 }
 func TestGenerateListGeneratorsConcatenateInOrder(t *testing.T) {

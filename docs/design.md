@@ -120,6 +120,11 @@ Unsupported generators or unsupported fields produce diagnostics. Non-strict
 commands keep supported Applications where possible; `--strict` promotes those
 diagnostics to errors.
 
+Template and `templatePatch` execution errors are scoped to the failing
+ApplicationSet as warning diagnostics, and that ApplicationSet contributes
+zero generated Applications, matching the Argo CD controller's `ErrorOccurred`
+condition scoping. Generator evaluation errors remain fatal to the run.
+
 ## Source Planning And Acquisition
 
 Applications follow Argo CD source precedence:

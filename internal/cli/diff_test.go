@@ -1379,6 +1379,107 @@ func assertHTMLFileExcludesAll(t *testing.T, path string, forbidden ...string) {
 	}
 }
 
+func writeAppSetWithParamFileForCLI(t *testing.T, root, paramContent string) {
+	t.Helper()
+	writeCLITestFile(t, filepath.Join(root, "appset.yaml"), `apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: pipelines
+  namespace: argocd
+spec:
+  goTemplate: true
+  goTemplateOptions: ["missingkey=error"]
+  generators:
+    - git:
+        files:
+          - path: configs/*.yaml
+  template:
+    metadata:
+      name: "{{.name}}"
+    spec:
+      project: default
+      source:
+        repoURL: https://github.com/example/repo
+        path: manifests/{{.name}}
+        targetRevision: main
+      destination:
+        name: in-cluster
+        namespace: demo
+`)
+	writeCLITestFile(t, filepath.Join(root, "configs", "app.yaml"), paramContent)
+}
+
+func TestDiffAppsAppSetTemplateFailureOnBothSidesWarnsPerSideAndExitsZero(t *testing.T) {
+	root := t.TempDir()
+	left := filepath.Join(root, "left")
+	right := filepath.Join(root, "right")
+	writeSimpleAppForCLI(t, left, "same")
+	writeSimpleAppForCLI(t, right, "same")
+	writeAppSetWithParamFileForCLI(t, left, "# none yet\n")
+	writeAppSetWithParamFileForCLI(t, right, "# none yet\n")
+
+	cmd := NewRootCommand(VersionInfo{})
+	cmd.SetArgs([]string{"diff", "apps", "--path-orig", left, "--path", right, "--changed-only=false"})
+	var stdout, stderr bytes.Buffer
+	cmd.SetOut(&stdout)
+	cmd.SetErr(&stderr)
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("Execute() error = %v, want exit 0 with appset warnings\nstderr:\n%s", err, stderr.String())
+	}
+	if got := strings.Count(stderr.String(), "template render failed"); got != 2 {
+		t.Fatalf("stderr template render failed warnings = %d, want one per side:\n%s", got, stderr.String())
+	}
+	if strings.Contains(stdout.String(), "Application:") {
+		t.Fatalf("stdout = %q, want no diff hunks", stdout.String())
+	}
+
+	strictCmd := NewRootCommand(VersionInfo{})
+	strictCmd.SetArgs([]string{"diff", "apps", "--path-orig", left, "--path", right, "--changed-only=false", "--strict"})
+	var strictStdout, strictStderr bytes.Buffer
+	strictCmd.SetOut(&strictStdout)
+	strictCmd.SetErr(&strictStderr)
+	err := strictCmd.Execute()
+	if err == nil {
+		t.Fatal("Execute() error = nil, want strict escalation failure")
+	}
+	if !strings.Contains(err.Error(), "template render failed") {
+		t.Fatalf("error = %v, want template render failed diagnostic", err)
+	}
+}
+
+func TestDiffAppsAppSetTemplateFailureOnOneSideReportsDeletionsAndExitCode(t *testing.T) {
+	root := t.TempDir()
+	left := filepath.Join(root, "left")
+	right := filepath.Join(root, "right")
+	writeAppSetWithParamFileForCLI(t, left, "name: alpha\n")
+	writeCLITestFile(t, filepath.Join(left, "manifests", "alpha", "cm.yaml"), `apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: alpha
+data:
+  value: keep
+`)
+	writeAppSetWithParamFileForCLI(t, right, "# none yet\n")
+
+	cmd := NewRootCommand(VersionInfo{})
+	cmd.SetArgs([]string{"diff", "apps", "--path-orig", left, "--path", right, "--changed-only=false"})
+	var stdout, stderr bytes.Buffer
+	cmd.SetOut(&stdout)
+	cmd.SetErr(&stderr)
+	err := cmd.Execute()
+	if code := commandErrorCode(err); code != 1 {
+		t.Fatalf("error code = %d, want diff-found exit 1; err = %v\nstdout:\n%s\nstderr:\n%s", code, err, stdout.String(), stderr.String())
+	}
+	if got := strings.Count(stderr.String(), "template render failed"); got != 1 {
+		t.Fatalf("stderr template render failed warnings = %d, want exactly one:\n%s", got, stderr.String())
+	}
+	for _, want := range []string{"Application: argocd/alpha", "-  value: keep"} {
+		if !strings.Contains(stdout.String(), want) {
+			t.Fatalf("stdout missing %q:\nstdout:\n%s\nstderr:\n%s", want, stdout.String(), stderr.String())
+		}
+	}
+}
+
 func writeSimpleAppForCLI(t *testing.T, root, value string) {
 	t.Helper()
 	writeCLITestFile(t, filepath.Join(root, "apps", "demo.yaml"), `apiVersion: argoproj.io/v1alpha1
