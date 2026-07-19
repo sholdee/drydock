@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.2.6](https://github.com/sholdee/drydock/compare/v0.2.5...v0.2.6) (2026-07-19)
+
+
+### Bug Fixes
+
+* **render:** resolve self-repo sources to the local tree on render surfaces ([#217](https://github.com/sholdee/drydock/issues/217)) ([3645c6a](https://github.com/sholdee/drydock/commit/3645c6abb2e1d4eeccd2aa88509f7c50c31a5e39))
+
+
+### Miscellaneous Chores
+
+* **deps:** update dependency zizmor to v1.27.0 ([#215](https://github.com/sholdee/drydock/issues/215)) ([a69896d](https://github.com/sholdee/drydock/commit/a69896de31472c9384ca06c25069d2bbaf8b3edc))
+
 ## [0.2.5](https://github.com/sholdee/drydock/compare/v0.2.4...v0.2.5) (2026-07-16)
 
 
