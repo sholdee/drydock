@@ -15,9 +15,10 @@ For repository sources, drydock resolves deterministically:
 
 1. Explicit `--repo-map URL=PATH`.
 2. Existing local source path under the selected repository tree.
-3. During diffs, a source naming the repository under diff at `""`/`HEAD`, a
-   diffed ref name, or the repository's default-branch name resolves to the
-   active side tree (full-commit-SHA revisions still acquire remotely).
+3. A source naming the local checkout — a configured remote of the selected
+   repository — at `""`/`HEAD`, a diffed ref name (during diffs), or the
+   repository's default-branch name resolves to the local tree (during diffs,
+   the active side tree). Full-commit-SHA revisions still acquire remotely.
 4. Declared Git cache or fetch behavior for unmapped external repositories.
 5. Clear failure.
 
@@ -32,27 +33,55 @@ drydock test apps --path . \
 For mapped pull-request repositories, `--path` and `--path-orig` are
 authoritative source roots and override declared revisions.
 
-During `diff` commands, drydock detects when a source `repoURL` matches one of
-the configured remotes of the repository under diff. At `""`/`HEAD`, at the
-literal `--ref`/`--ref-orig` names, or at the repository's default-branch name
-(read from each remote's HEAD symref, `refs/remotes/<remote>/HEAD` — set by
-`git clone`; the pr-action's fetch-base step records the pull request's base
-branch there on CI checkouts), such sources resolve to the active side tree
-with no Git cache read or network fetch — including under `--offline`.
-Full-commit-SHA revisions, tags, and branches not named by the diff or a
-remote HEAD symref still acquire remotely. A `--repo-map` entry whose path is the checkout under diff
-is rewritten per side for ref diffs, so a single mapped path never serves one
-worktree to both sides. For path diffs of exported trees (no `.git` anywhere),
-detection finds no remotes; provide per-invocation side-correct maps rather
-than one static self-map. When a source merely resembles the diffed repository
-(same host and repository name, different owner — a fork layout), drydock
-emits a `source.self-repo-near-miss` warning and keeps remote acquisition; add
-`--repo-map URL=PATH` if they are the same repository. The warning is advisory
-only: `--strict` neither escalates it nor fails the diff on it.
+Self-references — sources naming the checkout's own repository at `HEAD` or
+its default-branch name — resolve to the local tree automatically on all
+surfaces, so they need no `--repo-map` entry. Keep `--repo-map` for forks,
+commit-SHA pins, and runs from a subdirectory of the checkout.
 
 Ref-only sources are allowed and render no manifests. `$ref/...` Helm value
 files and file parameters resolve from the referenced source root, not from its
 `path`.
+
+### Self-Repository Sources
+
+On every render surface — `get`, `build`, `test`, `diag`, and both sides of
+`diff` — drydock detects when a source `repoURL` matches one of the configured
+remotes of the local checkout. At `""`/`HEAD`, at the literal
+`--ref`/`--ref-orig` names (diffs only), or at the repository's default-branch
+name, such sources resolve to the local tree — the active side tree during
+diffs — with no Git cache read or network fetch, including under `--offline`.
+Full-commit-SHA revisions, tags, and branches not named by the diff or a
+remote HEAD symref still acquire remotely.
+
+Default-branch names come from remote HEAD symrefs only
+(`refs/remotes/<remote>/HEAD` — set by `git clone`; recreate it with
+`git remote set-head origin -a` after a bare `git init`/fetch checkout; the
+pr-action records the pull request's base branch there in all modes). There is
+no fallback guessing: without a symref, a source pinned to the default-branch
+name acquires remotely, because `init.defaultBranch` or the checked-out HEAD
+could wrongly treat a feature branch as the default.
+
+Because self-repository sources read the local tree, uncommitted working-tree
+edits flow into self-`$repo` value files on render surfaces, exactly as they do
+for the primary source path. The converse also holds: a self-repository source
+whose `path` was deleted locally but still exists on the remote tip fails with
+path-not-found instead of silently rendering stale remote content — the tree
+drydock is pointed at is the desired state.
+
+Detection opens the Git repository at the selected `--path`/`--repo` exactly;
+it does not walk up to a parent `.git`. Running `test apps --path <subdir>`
+from inside a checkout gets no self-resolution — run from the checkout root,
+or add `--repo-map`.
+
+A `--repo-map` entry whose path is the checkout under diff
+is rewritten per side for ref diffs, so a single mapped path never serves one
+worktree to both sides. For path diffs of exported trees (no `.git` anywhere),
+detection finds no remotes; provide per-invocation side-correct maps rather
+than one static self-map. When a source merely resembles the local checkout
+(same host and repository name, different owner — a fork layout), drydock
+emits a `source.self-repo-near-miss` warning and keeps remote acquisition; add
+`--repo-map URL=PATH` if they are the same repository. The warning is advisory
+only: `--strict` neither escalates it nor fails the run on it.
 
 ## Helm Sources
 

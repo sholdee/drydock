@@ -227,24 +227,6 @@ func TestSelfMapRemoteEmptyKeysReturnsDelegateUnchanged(t *testing.T) {
 	}
 }
 
-// Single-side control: Build never populates selfRepo, so a self-URL ref
-// source still acquires remotely even when the build root's own remotes match
-// the spec URL — the inertness pin for build/test/pkg/drydock.
-func TestBuildSelfRepoURLRefSourceStillAcquiresOutsideDiffs(t *testing.T) {
-	root, _ := initSelfRepoDiffGitRepo(t, selfRepoRemoteURL)
-	writeSelfRepoRefValuesApp(t, root, "demo", selfRepoSpecURL, "HEAD", "from-current-root")
-
-	fetchedRoot := t.TempDir()
-	writeSelfRepoRefValuesFile(t, fetchedRoot, "demo", "from-remote")
-	gitAcquirer := &countingGitAcquirer{path: fetchedRoot, revision: "6666666666666666666666666666666666666666"}
-	_, err := (Orchestrator{
-		GitAcquirer:   gitAcquirer,
-		ChartAcquirer: newSelfRepoValueChartAcquirer(t),
-	}).Build(context.Background(), BuildRequest{Path: root})
-	if err != nil {
-		t.Fatalf("Build() error = %v", err)
-	}
-	if got := gitAcquirer.calls(); got != 1 {
-		t.Fatalf("git acquire calls = %d, want 1 (self mapping must stay dead outside diffs): %#v", got, gitAcquirer.requests)
-	}
-}
+// The former single-side inertness pin (Build never populates selfRepo) was
+// deliberately removed: build/list surfaces now populate selfRepo via
+// ensureBuildSelfRepoRefs. Its replacements live in build_ref_sources_test.go.

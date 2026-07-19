@@ -232,6 +232,33 @@ func TestActionDiscoverIgnoreInputDeclaredAndWiredToRunStep(t *testing.T) {
 	}
 }
 
+// The Run step needs the base ref even when fetch-base is skipped
+// (render-test-only configs): run.sh writes the origin/HEAD symref from these
+// env vars so drydock's self-repo resolution works in ALL modes.
+func TestActionRunStepWiresBaseRefEnvForSymrefWrite(t *testing.T) {
+	actionYAML := loadActionYAML(t)
+
+	runIdx := strings.Index(actionYAML, "- name: Run drydock\n")
+	if runIdx == -1 {
+		t.Fatalf("action.yml missing 'Run drydock' step")
+	}
+	nextStep := strings.Index(actionYAML[runIdx+1:], "\n    - name: ")
+	var runBlock string
+	if nextStep == -1 {
+		runBlock = actionYAML[runIdx:]
+	} else {
+		runBlock = actionYAML[runIdx : runIdx+1+nextStep]
+	}
+	for _, want := range []string{
+		"DRYDOCK_INPUT_BASE_REF: ${{ inputs.base-ref }}",
+		"DRYDOCK_PR_BASE_REF: ${{ github.event.pull_request.base.ref }}",
+	} {
+		if !strings.Contains(runBlock, want) {
+			t.Fatalf("Run step env block missing %q:\n%s", want, runBlock)
+		}
+	}
+}
+
 func TestActionNoPinnedActionRefsInPruneStep(t *testing.T) {
 	actionYAML := loadActionYAML(t)
 

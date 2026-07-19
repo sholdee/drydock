@@ -439,6 +439,7 @@ runs:
         DRYDOCK_DIFF_HTML_ARTIFACT_NAME: ${{ steps.prepare.outputs.diff-html-artifact-name }}
         DRYDOCK_IMAGE_ARTIFACT_NAME: ${{ steps.prepare.outputs.image-artifact-name }}
         DRYDOCK_INPUT_API_VERSIONS: ${{ inputs.api-versions }}
+        DRYDOCK_INPUT_BASE_REF: ${{ inputs.base-ref }}
         DRYDOCK_INPUT_CHANGED_ONLY: ${{ inputs.changed-only }}
         DRYDOCK_INPUT_CHANGED_ONLY_INCLUDE: ${{ inputs.changed-only-include }}
         DRYDOCK_INPUT_CHANGED_ONLY_IGNORE: ${{ inputs.changed-only-ignore }}
@@ -476,6 +477,7 @@ runs:
         DRYDOCK_INPUT_STRICT: ${{ inputs.strict }}
         DRYDOCK_INPUT_STRICT_CHANGED_ONLY: ${{ inputs.strict-changed-only }}
         DRYDOCK_INPUT_UPLOAD_ARTIFACTS: ${{ inputs.upload-artifacts }}
+        DRYDOCK_PR_BASE_REF: ${{ github.event.pull_request.base.ref }}
       run: '"${GITHUB_ACTION_PATH}/run.sh"'
 
     - name: Save drydock render cache

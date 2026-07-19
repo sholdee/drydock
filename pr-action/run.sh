@@ -304,6 +304,31 @@ base_compare_ref="${DRYDOCK_BASE_COMPARE_REF:-}"
 drydock_bin="${DRYDOCK_BIN:-drydock}"
 run_url="$(workflow_run_url)"
 
+# Record the base branch as origin's HEAD symref when no earlier step has:
+# drydock's self-repo resolution reads refs/remotes/origin/HEAD to learn the
+# default-branch NAME, and render-test-only configs never run fetch-base (the
+# only other writer, gated on the diff inputs). Offline and tolerant:
+# symbolic-ref writes without validating that the target exists — required
+# because render-only mode never fetches the base branch, and drydock reads
+# the symref target name UNRESOLVED, so a dangling symref still yields the
+# branch name. An already-set origin/HEAD (fetch-base, a full clone) is never
+# overwritten.
+ensure_origin_head_symref() {
+  local base_ref="${DRYDOCK_INPUT_BASE_REF:-}"
+  if [[ -z "${base_ref}" ]]; then
+    base_ref="${DRYDOCK_PR_BASE_REF:-}"
+  fi
+  if [[ -z "${base_ref}" ]]; then
+    return 0
+  fi
+  git check-ref-format --branch "${base_ref}" >/dev/null 2>&1 || return 0
+  if git symbolic-ref -q refs/remotes/origin/HEAD >/dev/null 2>&1; then
+    return 0
+  fi
+  git symbolic-ref refs/remotes/origin/HEAD "refs/remotes/origin/${base_ref}" >/dev/null 2>&1 || true
+}
+ensure_origin_head_symref
+
 common_args=()
 if [[ -n "${cache_path}" ]]; then
   common_args+=(

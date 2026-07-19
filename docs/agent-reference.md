@@ -196,15 +196,29 @@ Canonical references:
 
 Repository URL maps are deterministic and preferred over network fetches. Path
 source resolution order is explicit repo map, existing local source path,
-diff-scoped self-repo resolution (during diffs, a source naming the repository
-under diff at `""`/`HEAD`, a diffed ref name, or the repository's
-default-branch name resolves to the active side tree; full-commit-SHA
-revisions still acquire remotely), declared Git
-cache/fetch behavior, then clear failure. Diff commands also rewrite
-`--repo-map` entries pointing at the diffed checkout to each side's tree and
-warn once per URL per side (`source.self-repo-near-miss`) for fork-shaped
-URLs that match a diffed remote's host and repository name but a different
-owner.
+self-repo resolution (on all render surfaces, a source naming a configured
+remote of the local checkout at `""`/`HEAD`, a diffed ref name during diffs,
+or the repository's default-branch name resolves to the local tree — the
+active side tree during diffs; full-commit-SHA revisions still acquire
+remotely), declared Git cache/fetch behavior, then clear failure.
+Default-branch names are read from remote HEAD symrefs only — symref-or-nothing,
+no `init.defaultBranch` or checked-out-HEAD fallback, and the symref target
+name is read unresolved (a dangling symref still yields the branch name).
+Build/list surfaces populate the self-repo refs in exactly two orchestrator
+leaves (`ListApplications` and `Build`), guarded so diff sides carrying
+pre-populated refs are never re-detected. Detection opens the Git repository
+at the given path without walking up, so `--path <subdir>` runs get no
+self-resolution (documented; use the checkout root or `--repo-map`).
+Consequent behavior: dirty working-tree edits flow into self-`$repo` values on
+renders, and a locally deleted `path` fails path-not-found even when the
+remote tip still has it. Diff commands also rewrite `--repo-map` entries
+pointing at the diffed checkout to each side's tree and warn once per URL per
+provider (`source.self-repo-near-miss`) for fork-shaped URLs that match a
+remote's host and repository name but a different owner. The pr-action's
+`run.sh` records the pull request's base branch as `refs/remotes/origin/HEAD`
+(`ensure_origin_head_symref`, tolerant and never overwriting an existing
+symref) so render-test-only configs — which never run fetch-base — still get
+default-branch self-resolution.
 
 `--offline` controls Git, Helm chart, and remote Kustomize network behavior.
 When it is set, source resolution must use local files, repo maps, or existing
