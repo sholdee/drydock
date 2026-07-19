@@ -56,7 +56,8 @@ remote HEAD symref still acquire remotely.
 Default-branch names come from remote HEAD symrefs only
 (`refs/remotes/<remote>/HEAD` — set by `git clone`; recreate it with
 `git remote set-head origin -a` after a bare `git init`/fetch checkout; the
-pr-action records the pull request's base branch there in all modes). There is
+pr-action records the pull request's base branch there whenever a base ref is
+known — pull-request events or an explicit `base-ref` input). There is
 no fallback guessing: without a symref, a source pinned to the default-branch
 name acquires remotely, because `init.defaultBranch` or the checked-out HEAD
 could wrongly treat a feature branch as the default.

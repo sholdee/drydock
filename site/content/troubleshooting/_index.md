@@ -94,7 +94,8 @@ Two remediations:
 1. Upgrade drydock (older releases resolved self-repository sources only
    during diffs) and make sure `refs/remotes/origin/HEAD` exists so drydock
    can learn the default-branch name — `git clone` sets it, and the pr-action
-   records the pull request's base branch there in all modes. For bare
+   records the pull request's base branch there whenever a base ref is known
+   (pull-request events, or an explicit `base-ref` input). For bare
    `actions/checkout`-style checkouts outside the pr-action, run:
 
    ```bash

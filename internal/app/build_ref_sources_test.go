@@ -340,6 +340,64 @@ func TestBuildPrepopulatedSelfRepoRefsPreservedOnGitlessRoot(t *testing.T) {
 	}
 }
 
+// The guard must key on urlKeys, not revisions: a ref diff whose --ref names
+// are commit SHAs (filtered from revisions) on a checkout without an
+// origin/HEAD symref hands each side urlKeys-only refs. Re-detecting on the
+// .git-less snapshot root would wipe them and send this HEAD-revision self
+// source to the remote — a #207 regression in the actions/checkout shape.
+func TestBuildPrepopulatedURLKeysOnlySelfRepoRefsPreservedOnGitlessRoot(t *testing.T) {
+	root := t.TempDir() // .git-less: models a materialized ref-diff side snapshot
+	writeSelfRepoRefValuesApp(t, root, "demo", selfRepoSpecURL, "HEAD", "from-snapshot")
+
+	gitAcquirer := &countingGitAcquirer{err: errors.New("prepopulated self ref must not be acquired")}
+	result, err := (Orchestrator{
+		GitAcquirer:   gitAcquirer,
+		ChartAcquirer: newSelfRepoValueChartAcquirer(t),
+	}).Build(context.Background(), BuildRequest{
+		Path: root,
+		selfRepo: selfRepoRefs{
+			urlKeys: []string{sourcepkg.CanonicalGitURLKey(selfRepoRemoteURL)},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Build() error = %v", err)
+	}
+	if got := buildConfigMapValue(t, result, "demo"); got != "from-snapshot" {
+		t.Fatalf("rendered value = %q, want from-snapshot", got)
+	}
+	if got := gitAcquirer.calls(); got != 0 {
+		t.Fatalf("git acquire calls = %d, want 0: %#v", got, gitAcquirer.requests)
+	}
+}
+
+// pkg/drydock passes Config.Path verbatim and the CLI's "--path ." default
+// only shields the CLI, so ensureBuildSelfRepoRefs' Path==""→"." fallback is
+// the only thing keeping empty-Path public-API builds self-resolved.
+func TestBuildEmptyPathDefaultsToCwdAndSelfResolves(t *testing.T) {
+	root := t.TempDir()
+	repo, _ := initDiffGitRepo(t, root)
+	if _, err := repo.CreateRemote(&gitconfig.RemoteConfig{Name: "origin", URLs: []string{selfRepoRemoteURL}}); err != nil {
+		t.Fatalf("CreateRemote() error = %v", err)
+	}
+	writeSelfRepoRefValuesApp(t, root, "demo", selfRepoSpecURL, "HEAD", "from-local-tree")
+	t.Chdir(root)
+
+	gitAcquirer := &countingGitAcquirer{err: errors.New("self ref must not be acquired")}
+	result, err := (Orchestrator{
+		GitAcquirer:   gitAcquirer,
+		ChartAcquirer: newSelfRepoValueChartAcquirer(t),
+	}).Build(context.Background(), BuildRequest{})
+	if err != nil {
+		t.Fatalf("Build() error = %v", err)
+	}
+	if got := buildConfigMapValue(t, result, "demo"); got != "from-local-tree" {
+		t.Fatalf("rendered value = %q, want from-local-tree", got)
+	}
+	if got := gitAcquirer.calls(); got != 0 {
+		t.Fatalf("git acquire calls = %d, want 0: %#v", got, gitAcquirer.requests)
+	}
+}
+
 // Test 6b — NO-CLOBBER, path-diff shape: both side checkouts carry a matching
 // remote, but the revision gate name ("sidebranch") is known only from the
 // LEFT checkout's HEAD symref. The per-side builds must preserve the

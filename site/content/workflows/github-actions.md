@@ -427,7 +427,7 @@ passes them as arguments without `eval`, but they still change drydock behavior.
 | --- | --- | --- |
 | `checkout` | `true` | Check out the pull request head before running drydock. |
 | `fetch-depth` | `1` | Fetch depth for checkout. |
-| `path` | `.` | Repository path to inspect for render tests. |
+| `path` | `.` | Repository path to inspect for render tests. Self-repository source resolution reads the checkout's git metadata, so pointing this at a subdirectory disables it — keep the checkout root and scope work with `changed-only-include`, or add `repo-map`. |
 | `repo` | `.` | Local Git repository path used for ref-based diffs. |
 | `base-ref` | PR base branch | Baseline branch name for diff commands. Required outside pull request events when diff steps run. |
 | `head-ref` | `HEAD` after checkout | Current Git ref for diff commands. |
