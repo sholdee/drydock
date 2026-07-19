@@ -12,6 +12,11 @@ drydock test apps --path . \
 Use `--repo-map` when CI or a developer workstation already checked out a
 source repository.
 
+Self-references need no mapping: a source naming the checkout's own repository
+at `HEAD` or its default-branch name resolves to the local tree automatically
+on all render surfaces. Keep `--repo-map` for forks, commit-SHA pins, and runs
+from a subdirectory of the checkout.
+
 ## Prove Cache-Only Runs
 
 ```bash

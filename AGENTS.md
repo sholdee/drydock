@@ -101,9 +101,11 @@ when the user-facing task requires it.
   action Lua remains metadata-only/deferred.
 - Adding provider generator network/API access. Provider-backed ApplicationSet
   generators are fixture-backed offline.
-- Expecting self-referential diff sources to fetch remotely. During diffs,
-  sources naming the repository under diff at `HEAD`, a diffed ref name, or the repository's default-branch name
-  resolve to the active side tree; commit-SHA pins still fetch.
+- Expecting self-referential sources to fetch remotely. On all render
+  surfaces, sources naming the local checkout at `HEAD`, a diffed ref name
+  (diffs only), or the repository's default-branch name (remote HEAD symref
+  only — no fallback guessing) resolve to the local tree; commit-SHA pins
+  still fetch. Working-tree edits therefore flow into self-`$repo` values.
 - Trusting old audit or report claims without checking the current code.
 
 ## Task Routing

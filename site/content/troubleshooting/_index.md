@@ -80,6 +80,41 @@ drydock diag --path . --cache-events
 `--cache-events` renders Applications so source-acquisition events match the
 rendering path.
 
+## Symptom: Self-Repo Values Render From The Remote / Values ENOENT On Renders
+
+A source whose `repoURL` is the checkout's own repository — commonly a
+ref-only `$repo` source supplying Helm value files — should resolve to the
+local tree on every render surface (`get`, `build`, `test`, `diag`, and both
+diff sides). If such a source instead fetches remotely, renders miss files
+that exist only locally (for example, a pull request's new values file fails
+with a not-found error, or edits are silently ignored).
+
+Two remediations:
+
+1. Upgrade drydock (older releases resolved self-repository sources only
+   during diffs) and make sure `refs/remotes/origin/HEAD` exists so drydock
+   can learn the default-branch name — `git clone` sets it, and the pr-action
+   records the pull request's base branch there whenever a base ref is known
+   (pull-request events, or an explicit `base-ref` input). For bare
+   `actions/checkout`-style checkouts outside the pr-action, run:
+
+   ```bash
+   git remote set-head origin -a
+   ```
+
+   Without that symref, sources pinned to the default-branch name acquire
+   remotely — drydock never guesses the default branch from
+   `init.defaultBranch` or the checked-out HEAD.
+
+2. Use `--repo-map URL=PATH` when detection cannot apply: fork-shaped URLs
+   (watch for the `source.self-repo-near-miss` warning), commit-SHA pins, or
+   runs from a subdirectory of the checkout (`--path <subdir>` does not walk
+   up to the enclosing `.git`).
+
+The flip side of local resolution: a self-repository source `path` that was
+deleted locally fails path-not-found even though the remote tip still has it —
+the local tree is the desired state.
+
 ## Symptom: Changed-Only Falls Back To All Apps
 
 Multi-Application diffs use changed-only selection by default. If a changed

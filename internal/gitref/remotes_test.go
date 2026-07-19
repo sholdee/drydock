@@ -102,6 +102,40 @@ func TestDefaultBranchNamesReadsRemoteHEADSymrefs(t *testing.T) {
 	}
 }
 
+// A DANGLING symref must still yield the branch name: pr-action render-only
+// mode writes refs/remotes/origin/HEAD without fetching the base branch, so
+// the symref target ref does not exist. DefaultBranchNames reads the target
+// NAME unresolved — resolving the symref would silently drop it.
+func TestDefaultBranchNamesDanglingSymrefStillReturnsBranchName(t *testing.T) {
+	repoPath := t.TempDir()
+	repo, err := git.PlainInit(repoPath, false)
+	if err != nil {
+		t.Fatalf("PlainInit() error = %v", err)
+	}
+	if _, err := repo.CreateRemote(&config.RemoteConfig{
+		Name: "origin",
+		URLs: []string{"https://github.com/me/repo.git"},
+	}); err != nil {
+		t.Fatalf("CreateRemote(origin) error = %v", err)
+	}
+	if err := repo.Storer.SetReference(plumbing.NewSymbolicReference(
+		plumbing.ReferenceName("refs/remotes/origin/HEAD"),
+		plumbing.ReferenceName("refs/remotes/origin/main"),
+	)); err != nil {
+		t.Fatalf("SetReference(origin/HEAD) error = %v", err)
+	}
+	// Fixture guard: the symref target must NOT resolve, or this test would
+	// silently degrade into the plain symref case.
+	if _, err := repo.Reference(plumbing.ReferenceName("refs/remotes/origin/HEAD"), true); err == nil {
+		t.Fatal("fixture error: origin/HEAD resolved; the symref is not dangling")
+	}
+
+	names := DefaultBranchNames(repoPath)
+	if !reflect.DeepEqual(names, []string{"main"}) {
+		t.Fatalf("DefaultBranchNames() = %#v, want [main] from the dangling symref", names)
+	}
+}
+
 func TestDefaultBranchNamesWithoutSymrefReturnsNil(t *testing.T) {
 	repoPath := t.TempDir()
 	repo, err := git.PlainInit(repoPath, false)

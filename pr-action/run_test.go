@@ -1049,6 +1049,8 @@ func defaultRunEnv(tmp, workDir, outputPath string) []string {
 		"DRYDOCK_DIFF_ARTIFACT_NAME",
 		"DRYDOCK_DIFF_HTML_ARTIFACT_NAME",
 		"DRYDOCK_IMAGE_ARTIFACT_NAME",
+		"DRYDOCK_INPUT_BASE_REF",
+		"DRYDOCK_PR_BASE_REF",
 		"GITHUB_OUTPUT",
 		"GITHUB_REPOSITORY",
 		"GITHUB_RUN_ATTEMPT",
@@ -1073,6 +1075,8 @@ func defaultRunEnv(tmp, workDir, outputPath string) []string {
 		"DRYDOCK_DIFF_HTML_ARTIFACT_NAME=diff.html",
 		"DRYDOCK_IMAGE_ARTIFACT_NAME=images",
 		"DRYDOCK_INPUT_API_VERSIONS=",
+		"DRYDOCK_INPUT_BASE_REF=",
+		"DRYDOCK_PR_BASE_REF=",
 		"DRYDOCK_INPUT_CHANGED_ONLY=",
 		"DRYDOCK_INPUT_CHANGED_ONLY_INCLUDE=",
 		"DRYDOCK_INPUT_CHANGED_ONLY_IGNORE=",
@@ -1129,5 +1133,113 @@ func writeExecutable(t *testing.T, path, body string) {
 	t.Helper()
 	if err := os.WriteFile(path, []byte(body), 0o700); err != nil {
 		t.Fatalf("write %s: %v", path, err)
+	}
+}
+
+// symrefProbeDrydock records the origin/HEAD symref target as observed at
+// drydock-invocation time, pinning that run.sh writes the symref BEFORE the
+// binary runs (not merely at some point during the step).
+const symrefProbeDrydock = `#!/usr/bin/env bash
+set -euo pipefail
+mkdir -p "${DRYDOCK_ACTION_WORK_DIR}"
+printf '%s\n' "$*" >> "${DRYDOCK_ACTION_WORK_DIR}/drydock-args.txt"
+if symref="$(git symbolic-ref -q refs/remotes/origin/HEAD)"; then
+  printf '%s\n' "${symref}" > "${DRYDOCK_ACTION_WORK_DIR}/symref-at-invocation.txt"
+else
+  printf 'unset\n' > "${DRYDOCK_ACTION_WORK_DIR}/symref-at-invocation.txt"
+fi
+`
+
+func runGit(t *testing.T, dir string, args ...string) {
+	t.Helper()
+	cmd := exec.Command("git", args...)
+	cmd.Dir = dir
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git %v: %v\n%s", args, err, out)
+	}
+}
+
+func runGitOriginHeadSymref(t *testing.T, repo string) string {
+	t.Helper()
+	cmd := exec.Command("git", "symbolic-ref", "-q", "refs/remotes/origin/HEAD")
+	cmd.Dir = repo
+	out, err := cmd.Output()
+	if err != nil {
+		return "" // unset
+	}
+	return strings.TrimSpace(string(out))
+}
+
+// The symref write must be available in ALL modes whenever a base ref is
+// known: render-test-only configs (diff inputs false) never run fetch-base,
+// which was previously the only origin/HEAD writer. The write is offline and
+// tolerant — the target may dangle because render-only mode never fetches the
+// base branch (drydock reads the symref target name unresolved).
+func TestRunEnsuresOriginHeadSymrefForRenderTestOnlyMode(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell action tests require bash")
+	}
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+	runShPath, err := filepath.Abs("run.sh")
+	if err != nil {
+		t.Fatalf("Abs(run.sh): %v", err)
+	}
+
+	for _, tt := range []struct {
+		name         string
+		inputBaseRef string
+		prBaseRef    string
+		existing     string // pre-set origin/HEAD target branch; "" = unset
+		wantSymref   string // expected origin/HEAD target after run; "" = unset
+	}{
+		{name: "render-only PR event writes dangling symref", prBaseRef: "main", wantSymref: "refs/remotes/origin/main"},
+		{name: "explicit base-ref input wins over PR event ref", inputBaseRef: "release", prBaseRef: "main", wantSymref: "refs/remotes/origin/release"},
+		{name: "existing symref is never overwritten", prBaseRef: "main", existing: "other", wantSymref: "refs/remotes/origin/other"},
+		{name: "no base ref leaves origin/HEAD unset", wantSymref: ""},
+		{name: "invalid base ref is skipped", prBaseRef: "bad..ref", wantSymref: ""},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			tmp := t.TempDir()
+			writeExecutable(t, filepath.Join(tmp, "drydock"), symrefProbeDrydock)
+			repo := filepath.Join(tmp, "checkout")
+			runGit(t, tmp, "init", "--quiet", repo)
+			runGit(t, repo, "remote", "add", "origin", "https://github.com/example/repo.git")
+			if tt.existing != "" {
+				runGit(t, repo, "symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/"+tt.existing)
+			}
+
+			workDir := filepath.Join(tmp, "work")
+			outputPath := filepath.Join(tmp, "github-output")
+			env := append(defaultRunEnv(tmp, workDir, outputPath),
+				"DRYDOCK_INPUT_RUN_TEST=true",
+			)
+			if tt.inputBaseRef != "" {
+				env = setEnv(env, "DRYDOCK_INPUT_BASE_REF", tt.inputBaseRef)
+			}
+			if tt.prBaseRef != "" {
+				env = setEnv(env, "DRYDOCK_PR_BASE_REF", tt.prBaseRef)
+			}
+
+			cmd := exec.Command("bash", runShPath)
+			cmd.Dir = repo
+			cmd.Env = env
+			if out, err := cmd.CombinedOutput(); err != nil {
+				t.Fatalf("run.sh failed: %v\n%s", err, out)
+			}
+
+			if got := runGitOriginHeadSymref(t, repo); got != tt.wantSymref {
+				t.Fatalf("origin/HEAD symref = %q, want %q", got, tt.wantSymref)
+			}
+			probe := strings.TrimSpace(readFile(t, filepath.Join(workDir, "symref-at-invocation.txt")))
+			wantProbe := tt.wantSymref
+			if wantProbe == "" {
+				wantProbe = "unset"
+			}
+			if probe != wantProbe {
+				t.Fatalf("symref at drydock invocation = %q, want %q", probe, wantProbe)
+			}
+		})
 	}
 }

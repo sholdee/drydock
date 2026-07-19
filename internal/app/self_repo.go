@@ -14,34 +14,37 @@ import (
 // selfRepoNearMissCode identifies the fork near-miss remediation hint. The
 // code is strict-exempt: normalizeDiagnostics and diagnosticFailure both skip
 // it under --strict (see strictExemptDiagnostic), so the warning stays a
-// warning and never fails the diff.
+// warning and never fails the run.
 const selfRepoNearMissCode = "source.self-repo-near-miss"
 
-// selfRepoRefs identifies "the repository under diff" for source resolution.
-// Populated ONLY by diff entry points; zero value disables everything.
+// selfRepoRefs identifies "the local repository under analysis" for source
+// resolution. Diff entry points populate it from the diff request and side
+// paths; ensureBuildSelfRepoRefs populates it for single-tree build/list
+// surfaces. The zero value disables everything.
 type selfRepoRefs struct {
-	urlKeys   []string // CanonicalGitURLKey of every remote URL of the diffed repo
-	revisions []string // symbolic revisions beyond ""/HEAD that track the diffed
-	// tree: the trimmed --ref and --ref-orig names (non-SHA)
+	urlKeys   []string // CanonicalGitURLKey of every remote URL of the local repo
+	revisions []string // symbolic revisions beyond ""/HEAD that track the local
+	// tree(s): the trimmed --ref/--ref-orig names on diffs plus the
+	// default-branch names read from remote HEAD symrefs (non-SHA)
 }
 
-// detectSelfRepoRefs identifies the repository under diff from the union of
-// the diff repo path and both side paths: ref diffs materialize .git-less
-// snapshots so the side paths contribute nil, while path diffs point at real
-// checkouts whose remotes all contribute. No all-or-nothing fallback — a
-// matching remote on either side is enough.
-func detectSelfRepoRefs(request DiffRequest, repoPath string) selfRepoRefs {
-	urls := gitref.RemoteURLs(repoPath)
-	urls = append(urls, gitref.RemoteURLs(request.LeftPath)...)
-	urls = append(urls, gitref.RemoteURLs(request.RightPath)...)
-	// The repo's default-branch NAME tracks the diffed tree exactly like a
-	// --ref/--ref-orig name does: a spec pinned to "main" diffed across any
-	// two trees of this repository should read the side trees (the post-merge
-	// argument), and a mixed remote-tree render would be less coherent. Real
-	// repos commonly write targetRevision: main rather than HEAD.
-	branchNames := gitref.DefaultBranchNames(repoPath)
-	branchNames = append(branchNames, gitref.DefaultBranchNames(request.LeftPath)...)
-	branchNames = append(branchNames, gitref.DefaultBranchNames(request.RightPath)...)
+// detectSelfRepoRefsFromPaths is the shared detector core: the union of every
+// path's configured remotes identifies the repository (non-git paths
+// contribute nothing), and extraRevisions plus every path's default-branch
+// names form the symbolic revisions. The default-branch NAME tracks the local
+// tree exactly like a --ref/--ref-orig name does: a spec pinned to "main"
+// should read the tree drydock is pointed at (the #207 post-merge argument),
+// and real repos commonly write targetRevision: main rather than HEAD. The
+// names come from remote HEAD symrefs ONLY — no fallback guessing:
+// init.defaultBranch or the checked-out HEAD would wrongly treat a PR branch
+// itself as the default branch.
+func detectSelfRepoRefsFromPaths(paths, extraRevisions []string) selfRepoRefs {
+	urls := make([]string, 0, len(paths))
+	branchNames := make([]string, 0, len(paths))
+	for _, path := range paths {
+		urls = append(urls, gitref.RemoteURLs(path)...)
+		branchNames = append(branchNames, gitref.DefaultBranchNames(path)...)
+	}
 	var refs selfRepoRefs
 	seenKeys := map[string]struct{}{}
 	for _, url := range urls {
@@ -56,7 +59,7 @@ func detectSelfRepoRefs(request DiffRequest, repoPath string) selfRepoRefs {
 		refs.urlKeys = append(refs.urlKeys, key)
 	}
 	seenRevisions := map[string]struct{}{}
-	for _, revision := range append([]string{request.Ref, request.RefOrig}, branchNames...) {
+	for _, revision := range append(append([]string(nil), extraRevisions...), branchNames...) {
 		revision = strings.TrimSpace(revision)
 		if revision == "" || sourcepkg.IsDefaultRevision(revision) || sourcepkg.IsCommitSHA(revision) {
 			continue
@@ -70,8 +73,27 @@ func detectSelfRepoRefs(request DiffRequest, repoPath string) selfRepoRefs {
 	return refs
 }
 
-// clone deep-copies both slices so concurrent diff sides never share mutable
-// state through their BuildRequests.
+// detectSelfRepoRefs identifies the repository under diff from the union of
+// the diff repo path and both side paths: ref diffs materialize .git-less
+// snapshots so the side paths contribute nil, while path diffs point at real
+// checkouts whose remotes all contribute. No all-or-nothing fallback — a
+// matching remote on either side is enough.
+func detectSelfRepoRefs(request DiffRequest, repoPath string) selfRepoRefs {
+	return detectSelfRepoRefsFromPaths(
+		[]string{repoPath, request.LeftPath, request.RightPath},
+		[]string{request.Ref, request.RefOrig},
+	)
+}
+
+// detectBuildSelfRepoRefs identifies the local checkout for single-tree
+// build/list surfaces. Revisions come from the checkout's remote HEAD
+// symrefs only — symref-or-nothing, exactly like the diff side.
+func detectBuildSelfRepoRefs(path string) selfRepoRefs {
+	return detectSelfRepoRefsFromPaths([]string{path}, nil)
+}
+
+// clone deep-copies both slices so concurrent consumers (diff sides in
+// particular) never share mutable state through their BuildRequests.
 func (r selfRepoRefs) clone() selfRepoRefs {
 	return selfRepoRefs{
 		urlKeys:   append([]string(nil), r.urlKeys...),
@@ -79,9 +101,10 @@ func (r selfRepoRefs) clone() selfRepoRefs {
 	}
 }
 
-// isSelfRepoRef reports whether the source names the repository under diff at
-// a revision tracking the diffed tree. Pinned commit SHAs always acquire;
-// tags and branches not named by --ref/--ref-orig always acquire.
+// isSelfRepoRef reports whether the source names the local repository at a
+// revision tracking its tree ("", HEAD, a diffed ref name, or a
+// symref-derived default-branch name). Pinned commit SHAs always acquire;
+// tags and branches beyond the tracked revisions always acquire.
 func (p localProvider) isSelfRepoRef(repoURL, revision string) bool {
 	if len(p.selfRepoURLKeys) == 0 {
 		return false
@@ -102,12 +125,12 @@ func (p localProvider) isSelfRepoRef(repoURL, revision string) bool {
 	return ok
 }
 
-// selfRepoNearMissDiagnostics warns when a source resembles the repository
-// under diff — same host and trailing repo segment as one of its remotes but
+// selfRepoNearMissDiagnostics warns when a source resembles the local
+// repository — same host and trailing repo segment as one of its remotes but
 // a different full canonical key (classic fork topology) — while the revision
 // gate would have passed and no explicit --repo-map covers the URL. The
 // previously silent survival mode is now loud. Warnings dedupe once per URL
-// per side via selfRepoNearMissOnce.
+// per provider via selfRepoNearMissOnce.
 func (p localProvider) selfRepoNearMissDiagnostics(source render.ResolvedSource, refSources map[string]render.ResolvedSource) []diagnostic.Diagnostic {
 	if len(p.selfRepoURLKeys) == 0 || p.selfRepoNearMissOnce == nil {
 		return nil
@@ -182,7 +205,7 @@ func (p localProvider) selfRepoNearMissDiagnostic(source render.ResolvedSource) 
 		Code:     selfRepoNearMissCode,
 		Severity: diagnostic.SeverityWarning,
 		Category: "source",
-		Message:  fmt.Sprintf("source repository %q resembles the repository under diff (remote %q) but matches none of its configured remotes; $ref value files are fetched from the remote repository and may not reflect this diff side — add --repo-map <url>=<path> if these are the same repository", sourcepkg.RedactURL(repoURL), matched),
+		Message:  fmt.Sprintf("source repository %q resembles a remote of the local checkout (remote %q) but matches none of its configured remotes; $ref value files are fetched from the remote repository and may not reflect the local tree — add --repo-map <url>=<path> if these are the same repository", sourcepkg.RedactURL(repoURL), matched),
 	}, true
 }
 

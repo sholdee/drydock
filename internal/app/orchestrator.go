@@ -155,6 +155,29 @@ type Orchestrator struct {
 	renderObserver func(render.ResolvedSource)
 }
 
+// ensureBuildSelfRepoRefs populates request.selfRepo for single-tree
+// build/list surfaces so sources naming the local checkout's own repository
+// at ""/HEAD or a symref-derived default-branch name resolve to the local
+// tree (the #207 diff behavior extended to render surfaces). It runs in
+// exactly the two leaves every caller reaches — ListApplications and Build —
+// never at delegating entries. Populating only when urlKeys is empty is THE
+// diff-path protection: per-side diff builds re-enter these leaves carrying
+// refs cloned from the diff request, and re-detection here would replace
+// them with side-local remotes. The inert edge — empty urlKeys with
+// non-empty revisions re-detects to zero — is harmless because isSelfRepoRef
+// short-circuits on empty urlKeys.
+func ensureBuildSelfRepoRefs(request BuildRequest) BuildRequest {
+	if len(request.selfRepo.urlKeys) > 0 {
+		return request
+	}
+	root := request.Path
+	if root == "" {
+		root = "."
+	}
+	request.selfRepo = detectBuildSelfRepoRefs(root)
+	return request
+}
+
 func ensureSnapshotSession(request BuildRequest) (BuildRequest, func(), error) {
 	if request.snapshotSession != nil {
 		return request, func() {}, nil
@@ -199,6 +222,7 @@ func (o Orchestrator) ListApplications(ctx context.Context, request BuildRequest
 	defer func() {
 		result.CacheEvents = append(result.CacheEvents, releaseRenderCache()...)
 	}()
+	request = ensureBuildSelfRepoRefs(request)
 
 	if err := request.ProjectDiagnosticsMode.Validate(); err != nil {
 		return BuildResult{}, err
@@ -324,6 +348,7 @@ func (o Orchestrator) Build(ctx context.Context, request BuildRequest) (result B
 	defer func() {
 		result.CacheEvents = append(result.CacheEvents, releaseRenderCache()...)
 	}()
+	request = ensureBuildSelfRepoRefs(request)
 
 	session, err := newBuildSession(o, request)
 	if err != nil {
@@ -919,10 +944,10 @@ func normalizeDiagnostics(diags []diagnostic.Diagnostic, strict, forceWarning bo
 // strictExemptDiagnostic reports whether a diagnostic is advisory-only:
 // --strict must neither escalate its severity nor fail the application on it.
 // The self-repo near-miss is a --repo-map remediation hint whose primary
-// audience is fork-topology checkouts running strict CI diffs — escalating it
-// would convert exactly those working diffs into hard failures. Rendering
-// stays unchanged when the hint fires (remote acquisition still happens), so
-// there is nothing for --strict to protect against.
+// audience is fork-topology checkouts running strict CI renders and diffs —
+// escalating it would convert exactly those working runs into hard failures.
+// Rendering stays unchanged when the hint fires (remote acquisition still
+// happens), so there is nothing for --strict to protect against.
 func strictExemptDiagnostic(diag diagnostic.Diagnostic) bool {
 	return diag.Code == selfRepoNearMissCode
 }

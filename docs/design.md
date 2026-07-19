@@ -155,10 +155,18 @@ Repository resolution and cache behavior are documented in
 - PR diff roots are authoritative for mapped repositories. During diffs, a
   `--repo-map` entry pointing at the checkout under diff is rewritten to each
   side's tree so one mapped worktree never serves both sides.
-- During diffs, a source naming the repository under diff at `""`/`HEAD`, a
-  diffed ref name, or the repository's default-branch name (from a remote
-  HEAD symref) resolves to the active side tree; full-commit-SHA revisions
-  still acquire remotely. Fork-shaped near misses (same host and repository
+- On all render surfaces, a source naming the local checkout at `""`/`HEAD`,
+  a diffed ref name (diffs only), or the repository's default-branch name
+  resolves to the local tree — during diffs, the active side tree.
+  Full-commit-SHA revisions, tags, and unrelated branches still acquire
+  remotely. Default-branch names come from remote HEAD symrefs only
+  (symref-or-nothing; no `init.defaultBranch` or checked-out-HEAD fallback).
+  Consequences: uncommitted working-tree edits flow into self-`$repo` value
+  files on build/test surfaces, and a self-repository source whose `path`
+  exists on the remote tip but was deleted locally fails path-not-found
+  instead of rendering remote content. Detection does not walk up from a
+  `--path` subdirectory to the enclosing `.git`; run from the checkout root
+  or use `--repo-map`. Fork-shaped near misses (same host and repository
   name, different owner) warn with `source.self-repo-near-miss` and keep
   remote acquisition; the warning is advisory only and exempt from `--strict`
   escalation and failure.

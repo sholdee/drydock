@@ -66,10 +66,13 @@ type localProvider struct {
 	// for hand-built providers). Aliases the run-scoped handle memo — treat
 	// as read-only; never sort, append to, or mutate it in place.
 	rootDirtyPaths []string
-	// selfRepoURLKeys holds the canonical remote URLs of the repository under
-	// diff; nil outside diffs. selfRepoRevisions holds the diffed ref names
-	// that self-map (beyond ""/HEAD). selfRepoNearMissOnce dedupes fork
-	// near-miss warnings; nil when keys are empty. All three are write-once in
+	// selfRepoURLKeys holds the canonical remote URLs of the local repository
+	// under analysis — populated by diff entry points and, on build/list
+	// surfaces, by ensureBuildSelfRepoRefs; nil for non-git roots or roots
+	// without remotes. selfRepoRevisions holds the symbolic revision names
+	// that self-map beyond ""/HEAD (diffed ref names plus symref-derived
+	// default-branch names). selfRepoNearMissOnce dedupes fork near-miss
+	// warnings; nil when keys are empty. All three are write-once in
 	// newLocalProvider (single-threaded, before any render goroutine starts)
 	// and read-only thereafter — no locking needed.
 	selfRepoURLKeys      map[string]struct{}
