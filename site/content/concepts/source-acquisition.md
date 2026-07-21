@@ -5,22 +5,27 @@ aliases:
 ---
 
 drydock renders from local files and explicit source caches. It may fetch
-declared Git, HTTP Helm, OCI Helm, and remote Kustomize inputs unless
-`--offline` is set. It does not read ambient Git credential helpers, ambient
-Helm registry config, or live Argo CD repository state.
+declared Git, HTTP Helm, OCI Helm, OCI artifact, and remote Kustomize inputs
+unless `--offline` is set. It does not read ambient Git credential helpers,
+ambient Helm registry config, or live Argo CD repository state.
 
 ## Resolution Order
 
 For repository sources, drydock resolves deterministically:
 
 1. Explicit `--repo-map URL=PATH`.
-2. Existing local source path under the selected repository tree.
-3. A source naming the local checkout — a configured remote of the selected
+2. `oci://` source classification. An `oci://` repository URL without `chart:`
+   is a first-class [OCI artifact source](#oci-artifact-sources) and is
+   acquired from the registry — it never falls through to a local source path
+   or Git acquisition, even when its `path:` (commonly `.`) exists in the
+   local tree.
+3. Existing local source path under the selected repository tree.
+4. A source naming the local checkout — a configured remote of the selected
    repository — at `""`/`HEAD`, a diffed ref name (during diffs), or the
    repository's default-branch name resolves to the local tree (during diffs,
    the active side tree). Full-commit-SHA revisions still acquire remotely.
-4. Declared Git cache or fetch behavior for unmapped external repositories.
-5. Clear failure.
+5. Declared Git cache or fetch behavior for unmapped external repositories.
+6. Clear failure.
 
 `--repo-map` wins over local fallback and network fetching. Use it for adjacent
 local checkouts or CI jobs that prepare dependencies explicitly:
@@ -90,6 +95,14 @@ Chart-only HTTP(S) and OCI Helm sources may be fetched into the chart cache
 unless `--offline` is set. Local Helm chart sources render from the repository
 tree.
 
+A source combining an `oci://` repository URL with `chart:` (and no `path:`)
+keeps drydock's existing Helm-chart flow. This is a deliberate, recorded
+divergence from strict Argo CD v3.4.5, which dispatches `oci://` URLs to its
+OCI handling before Helm handling and would reject that shape — fleets use it,
+and rendering the chart matches what their clusters run. An `oci://` source
+that sets both `chart:` and `path:` fails with a clear
+`unsupported source shape` error instead of falling into either flow.
+
 Drydock resolves missing HTTP(S) and OCI chart dependencies declared in
 `Chart.yaml` through its native chart cache. With `--offline`, cache hits are
 allowed but network fetches are disabled. The source checkout is not mutated,
@@ -111,6 +124,92 @@ the repository index and to chart archive URLs on the same host. When
 `passCredentials` is true, drydock also forwards them to cross-host chart
 archive URLs returned by the repository index. It does not enable ambient
 credential discovery.
+
+## OCI Artifact Sources
+
+Argo CD first-class OCI sources — `repoURL: oci://registry/repo`, a `path:`
+into the artifact content, and no `chart:` — are supported on every render
+surface. drydock resolves the revision to a digest, pulls the artifact from
+the registry, extracts its content, and renders the selected `path` with the
+normal directory, Kustomize, or Helm pipeline:
+
+```yaml
+source:
+  repoURL: oci://ghcr.io/example/config-artifact
+  targetRevision: 1.2.3
+  path: .
+```
+
+Classification is total over `oci://` URLs: an OCI source never resolves to a
+local source path, the self-repository branch, or Git acquisition, even when
+`path: .` exists in the local tree. Explicit `--repo-map` of the `oci://` URL
+still wins and renders the mapped local path instead of fetching.
+
+### Revisions
+
+`targetRevision` accepts:
+
+- A digest (`sha256:...`), used as-is with no resolution network call.
+- An exact tag, resolved to a digest via a registry HEAD request.
+- A semver constraint (for example `1.x`), resolved to the highest matching
+  tag from the registry tag list, then to that tag's digest.
+
+Matching Argo CD repo-server freshness semantics, online runs always
+re-resolve tags and constraints against the registry, so a re-pushed tag is
+reflected on the next online render; only the image content itself is served
+from the cache when its digest is already present. There is no `--refresh-oci`
+flag because nothing tag-shaped can go stale between online runs.
+
+### Extraction Guards
+
+Artifact extraction enforces the Argo CD repo-server defaults: at most 10
+layers, exactly one content layer, a layer media-type allowlist
+(`application/vnd.oci.image.layer.v1.tar`,
+`application/vnd.oci.image.layer.v1.tar+gzip`,
+`application/vnd.cncf.helm.chart.content.v1.tar+gzip`), and a 1G
+maximum extracted size. These limits are not yet configurable from the CLI.
+
+### Cache Layout
+
+OCI artifacts cache under `<user cache dir>/drydock/oci` (override with
+`--oci-cache-dir PATH`). Each entry is keyed by repository URL and digest and
+holds the pulled image tar plus metadata; `cache list` reports the entries as
+source `oci`, kind `image`, and `cache prune`/`cache delete` manage them like
+every other source cache (`--source oci` scopes to them). The cache root also
+holds a `tags/` records directory used for offline tag resolution; it is not
+an entry, so lifecycle commands list and prune around it.
+
+### Offline Behavior
+
+Under `--offline`:
+
+- Digest-pinned revisions pass through without resolution and render from the
+  cached image; a digest whose image was never pulled fails with an
+  `offline cache miss` error.
+- Tags and semver constraints resolve from records captured on earlier
+  successful online runs against the same cache directory. A tag or
+  constraint that no online run has resolved fails with an
+  `offline cache miss` error.
+
+The remediation for an offline cache miss is one online run of the same
+command (or any render covering the same source) to populate the image cache
+and tag records, then re-run with `--offline`.
+
+### Boundaries
+
+- `oci://` + `chart:` keeps the Helm-chart flow (see
+  [Helm Sources](#helm-sources)); `chart:` + `path:` on one `oci://` source
+  is an error.
+- OCI sources cannot be `$ref` value-file sources. Argo CD materializes
+  referenced sources from Git only, and drydock fails such refs with a clear
+  error instead of accidentally supporting them.
+- Changed-only diff selection treats OCI sources like chart-only Helm
+  sources: they re-render when the Application manifest changes, not on
+  arbitrary repository changes, and they never render discovery objects.
+- Private registries requiring authentication are not yet supported for OCI
+  artifact sources; `--registry-config` applies to OCI Helm chart sources
+  only. Loopback registries (localhost) use plain HTTP for local development
+  and testing; all other hosts use TLS.
 
 ## Kustomize Sources
 
@@ -183,7 +282,7 @@ drydock test apps --path . --offline
 
 | Flag | Behavior |
 | --- | --- |
-| `--offline` | Disable Git, Helm chart, and remote Kustomize network fetching. |
+| `--offline` | Disable Git, Helm chart, OCI artifact, and remote Kustomize network fetching. |
 | `--repo-map URL=PATH` | Map a source repository URL to a local checkout. |
 | `--refresh-git` | Fetch cached Git repositories and bypass persisted render outputs for those inputs. |
 | `--git-cache-dir PATH` | Override the default Git repository cache root. |
@@ -191,6 +290,7 @@ drydock test apps --path . --offline
 | `--chart-cache-dir PATH` | Override the default chart cache root. |
 | `--refresh-remotes` | Refresh cached remote Kustomize resources and bypass persisted render outputs for those inputs. |
 | `--remote-cache-dir PATH` | Override the default remote-resource cache root. |
+| `--oci-cache-dir PATH` | Override the default OCI artifact cache root. |
 | `--render-cache` | Reuse persisted Application render outputs across runs (default on). |
 | `--render-cache-dir PATH` | Override the default render-output cache root. |
 | `--render-cache-max-size QUANTITY` | Size cap before LRU eviction (default `512Mi`). |
@@ -198,7 +298,7 @@ drydock test apps --path . --offline
 | `--plugin-cache-dir PATH` | Runtime override for policy-managed container plugin cache mounts. |
 | `--registry-config PATH` | Supply the only Helm OCI registry credentials. |
 
-Render-time Git, chart, and remote-resource caches must stay outside the
+Render-time Git, chart, OCI artifact, and remote-resource caches must stay outside the
 current repository tree, compared repository trees, repo-map roots, and their
 symlink-resolved equivalents. Drydock validates these roots before cache reads,
 fetches, or writes so a repository cannot double as its own mutable source
@@ -220,8 +320,8 @@ output entries via `--source render` and `--render-cache-dir`. During prune,
 when render entries are in scope (either because `--source render` is set or
 because no `--source` filter is used), `cache prune` additionally enforces the
 render cache size cap and removes stale orphaned temp files. A `--source
-git`, `--source chart`, or `--source remote` prune scopes only to that source
-and skips the render sweep entirely.
+git`, `--source chart`, `--source remote`, or `--source oci` prune scopes only
+to that source and skips the render sweep entirely.
 
 > **Warning:** The render cache size cap is a runtime flag (`--render-cache-max-size`)
 > that `cache prune` cannot discover automatically. If your builds use a custom
@@ -364,8 +464,9 @@ They do not:
 - retry failed network or authentication acquisitions
 
 `cache prune` and `cache delete` operate only on recognized drydock Git,
-chart, remote-resource, and render output cache entry roots. They do not
-manage plugin cache mount roots selected with `--plugin-cache-dir`.
+chart, remote-resource, OCI artifact, and render output cache entry roots.
+They do not manage plugin cache mount roots selected with
+`--plugin-cache-dir`.
 
 Cache lifecycle commands reject cache roots that resolve inside the current
 working directory, selected repository roots, Git repository trees, or

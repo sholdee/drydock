@@ -16,6 +16,7 @@ const (
 	SourceChart  Source = "chart"
 	SourceRemote Source = "remote"
 	SourceRender Source = "render"
+	SourceOCI    Source = "oci"
 )
 
 type Action string

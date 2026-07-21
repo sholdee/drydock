@@ -37,6 +37,7 @@ const (
 	sourceIdentityKindRoot           = "root"
 	sourceIdentityKindGit            = "git"
 	sourceIdentityKindChart          = "chart"
+	sourceIdentityKindOCI            = "oci"
 	sourceIdentityKindLocalInputs    = "local-inputs"
 	sourceIdentityKindWorktreeInputs = "worktree-inputs"
 )
@@ -1277,6 +1278,9 @@ func acquisitionsPinStable(records []cacheevent.AcquisitionRecord) bool {
 		switch record.Kind {
 		case cacheevent.AcquisitionGit:
 			// Git source revisions are already key inputs.
+		case cacheevent.AcquisitionOCI:
+			// The resolved digest is already a key input
+			// (SourceIdentity.Revision), so moved tags rotate the key.
 		case cacheevent.AcquisitionChart:
 			if strings.TrimSpace(record.RequestedRevision) == "" {
 				return false

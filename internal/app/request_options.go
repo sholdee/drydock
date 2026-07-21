@@ -33,6 +33,7 @@ type AcquisitionOptions struct {
 	RemoteResourceForbiddenRoots []string
 	RemoteResourceCredentials    remote.Credentials
 	RemoteResourceGitCredentials remote.GitCredentials
+	OCICacheDir                  string
 	RecordCacheEvents            bool
 }
 

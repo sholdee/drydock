@@ -7,6 +7,7 @@ import (
 
 	"github.com/sholdee/drydock/internal/diagnostic"
 	"github.com/sholdee/drydock/internal/gitref"
+	"github.com/sholdee/drydock/internal/ociartifact"
 	"github.com/sholdee/drydock/internal/render"
 	sourcepkg "github.com/sholdee/drydock/internal/source"
 )
@@ -157,6 +158,12 @@ func (p localProvider) selfRepoNearMissDiagnostics(source render.ResolvedSource,
 func (p localProvider) selfRepoNearMissDiagnostic(source render.ResolvedSource) (diagnostic.Diagnostic, bool) {
 	repoURL := strings.TrimSpace(source.RepoURL)
 	if repoURL == "" {
+		return diagnostic.Diagnostic{}, false
+	}
+	// OCI sources never resolve to the local checkout (classification runs
+	// before the self-repo branch), so a scheme-stripped oci:// URL matching
+	// a git remote's host and repo name is not a fork near-miss.
+	if ociartifact.IsOCIURL(repoURL) {
 		return diagnostic.Diagnostic{}, false
 	}
 	rev := strings.TrimSpace(source.TargetRevision)

@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	argoappv1 "github.com/argoproj/argo-cd/v3/pkg/apis/application/v1alpha1"
+	"github.com/sholdee/drydock/internal/ociartifact"
 	sourcepkg "github.com/sholdee/drydock/internal/source"
 )
 
@@ -128,6 +129,9 @@ func refHelmValueFileInputPath(source argoappv1.ApplicationSource, refs map[stri
 	if !ok {
 		return "", false
 	}
+	if ociartifact.IsOCIURL(refSource.RepoURL) {
+		return "", false
+	}
 	if sourcepkg.NormalizeURL(refSource.RepoURL) != sourcepkg.NormalizeURL(source.RepoURL) {
 		return "", false
 	}
@@ -135,6 +139,9 @@ func refHelmValueFileInputPath(source argoappv1.ApplicationSource, refs map[stri
 }
 
 func localHelmValueFileInputPath(source argoappv1.ApplicationSource, valueFile string) (string, bool) {
+	if ociartifact.IsOCIURL(source.RepoURL) {
+		return "", false
+	}
 	if source.Path == "" {
 		return "", false
 	}
@@ -161,6 +168,13 @@ func splitHelmValueFileRef(valueFile string) (string, string, bool) {
 }
 
 func localSourcePath(source argoappv1.ApplicationSource) (string, bool) {
+	// An OCI source's path selects within the extracted artifact, never the
+	// local repository — treating `path: .` as local would intersect EVERY
+	// changed path. OCI sources re-render when the Application manifest
+	// changes, not on arbitrary repository changes.
+	if ociartifact.IsOCIURL(source.RepoURL) {
+		return "", false
+	}
 	if source.Path != "" {
 		return normalizeSelectPath(source.Path), true
 	}

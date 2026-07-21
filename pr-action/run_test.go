@@ -428,6 +428,7 @@ func TestRunPassesCacheDirsToEveryInvocationWhenCachePathSet(t *testing.T) {
 	}
 	wantPlugin := "--plugin-cache-dir " + filepath.Join(cachePath, "plugin")
 	wantRender := "--render-cache-dir " + filepath.Join(cachePath, "renders")
+	wantOCI := "--oci-cache-dir " + filepath.Join(cachePath, "oci")
 	for _, line := range lines {
 		if !strings.Contains(line, wantPlugin) {
 			t.Fatalf("drydock invocation missing plugin cache dir %q:\n%s", wantPlugin, line)
@@ -435,8 +436,11 @@ func TestRunPassesCacheDirsToEveryInvocationWhenCachePathSet(t *testing.T) {
 		if !strings.Contains(line, wantRender) {
 			t.Fatalf("drydock invocation missing render cache dir %q:\n%s", wantRender, line)
 		}
+		if !strings.Contains(line, wantOCI) {
+			t.Fatalf("drydock invocation missing oci cache dir %q:\n%s", wantOCI, line)
+		}
 	}
-	for _, name := range []string{"git", "charts", "remotes", "plugin", "renders"} {
+	for _, name := range []string{"git", "charts", "remotes", "plugin", "renders", "oci"} {
 		path := filepath.Join(cachePath, name)
 		info, err := os.Stat(path)
 		if err != nil {
@@ -471,6 +475,9 @@ func TestRunOmitsPluginCacheDirWhenCachePathEmpty(t *testing.T) {
 		}
 		if strings.Contains(line, "--render-cache-dir") {
 			t.Fatalf("drydock invocation included render cache dir with empty DRYDOCK_CACHE_PATH:\n%s", line)
+		}
+		if strings.Contains(line, "--oci-cache-dir") {
+			t.Fatalf("drydock invocation included oci cache dir with empty DRYDOCK_CACHE_PATH:\n%s", line)
 		}
 	}
 }

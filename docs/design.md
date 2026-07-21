@@ -8,8 +8,8 @@ compares current and baseline desired state for pull request diffs.
 The core design target is runtime-offline analysis: default workflows require
 no running Kubernetes cluster, Argo CD instance, `kubectl`, `argocd`, Helm CLI,
 Kustomize CLI, repo-server, or external render service. Declared Git, HTTP
-Helm, OCI Helm, and remote Kustomize sources may be fetched into explicit
-drydock caches unless `--offline` is set.
+Helm, OCI Helm, OCI artifact, and remote Kustomize sources may be fetched into
+explicit drydock caches unless `--offline` is set.
 
 ## Runtime Boundary
 
@@ -188,6 +188,10 @@ Supported render paths:
 - Local Helm charts.
 - Kustomize `helmCharts` through the shared Helm library path.
 - Remote Helm chart sources from HTTP(S) and OCI repositories.
+- First-class OCI artifact sources (`repoURL: oci://...` with `path:` and no
+  `chart:`): revision resolved to a digest, artifact content pulled into the
+  digest-keyed OCI cache, and the selected `path` rendered through the normal
+  directory, Kustomize, or Helm pipeline.
 - Remote Kustomize HTTP(S) files and Git refs.
 - Discovered Argo CD CMP definitions that normalize to a safe `kustomize
   build` command, interpreted through drydock's native Kustomize renderer.

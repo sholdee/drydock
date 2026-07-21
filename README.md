@@ -23,9 +23,9 @@ repository diagnostics, cache inspection, and Go API embedding.
 
 Default commands use native Go renderers and do not shell out to `kubectl`,
 `argocd`, Helm CLI, Kustomize CLI, or repo-server wrappers. Runtime-offline
-does not mean network-disconnected: declared Git, HTTP Helm, OCI Helm, and
-remote Kustomize sources may still be fetched into explicit drydock caches
-unless `--offline` is set.
+does not mean network-disconnected: declared Git, HTTP Helm, OCI Helm, OCI
+artifact, and remote Kustomize sources may still be fetched into explicit
+drydock caches unless `--offline` is set.
 
 **Full documentation:** [sholdee.github.io/drydock](https://sholdee.github.io/drydock/).
 
@@ -261,11 +261,12 @@ inspect locally and in CI:
   rendered app-of-apps/bootstrap children, explicit Kustomize discovery
   entrypoints, AppProjects, and settings objects.
 - **Rendering:** directory, Kustomize, Helm, Jsonnet, single-source and
-  multi-source Applications, Kustomize Helm charts, remote Helm charts, and
-  remote Kustomize sources.
-- **Source acquisition:** declared Git, HTTP Helm, OCI Helm, and remote
-  Kustomize inputs through explicit drydock caches, plus `--repo-map` for
-  adjacent local checkouts.
+  multi-source Applications, Kustomize Helm charts, remote Helm charts,
+  first-class OCI artifact sources (`oci://` + `path:`), and remote Kustomize
+  sources.
+- **Source acquisition:** declared Git, HTTP Helm, OCI Helm, OCI artifact,
+  and remote Kustomize inputs through explicit drydock caches, plus
+  `--repo-map` for adjacent local checkouts.
 - **Diffs and images:** desired-vs-desired manifest and image diffs,
   changed-only selection, default noisy-field filtering, and structured or
   markdown output.

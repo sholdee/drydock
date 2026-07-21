@@ -189,13 +189,19 @@ Canonical references:
 - `internal/source`
 - `internal/chart`
 - `internal/remote`
+- `internal/ociartifact`
 - `internal/acquisition`
 - `internal/cache`
 - `internal/cacheevent`
 - `docs/design.md`
 
 Repository URL maps are deterministic and preferred over network fetches. Path
-source resolution order is explicit repo map, existing local source path,
+source resolution order is explicit repo map, `oci://` classification (a
+first-class OCI artifact source — `oci://` URL, no `chart:` — acquires from
+the registry and never falls to the local-path, self-repo, or Git branches;
+`oci://` + `chart:` keeps the Helm-chart flow as a recorded divergence from
+strict Argo CD v3.4.5, and `chart:` + `path:` on one `oci://` source is an
+error), existing local source path,
 self-repo resolution (on all render surfaces, a source naming a configured
 remote of the local checkout at `""`/`HEAD`, a diffed ref name during diffs,
 or the repository's default-branch name resolves to the local tree — the
@@ -220,9 +226,12 @@ remote's host and repository name but a different owner. The pr-action's
 symref) so render-test-only configs — which never run fetch-base — still get
 default-branch self-resolution.
 
-`--offline` controls Git, Helm chart, and remote Kustomize network behavior.
-When it is set, source resolution must use local files, repo maps, or existing
-cache entries.
+`--offline` controls Git, Helm chart, OCI artifact, and remote Kustomize
+network behavior. When it is set, source resolution must use local files, repo
+maps, or existing cache entries. Offline OCI artifact resolution is seam-level:
+digests pass through to the digest-keyed image cache, and tags/constraints
+resolve from records written on online resolves; misses carry the literal
+`offline cache miss` contract string that `cacheevent.ActionForError` keys on.
 
 Caches live under user cache roots or explicit cache directories, never inside
 the current or baseline repository tree. Cache lifecycle commands are local

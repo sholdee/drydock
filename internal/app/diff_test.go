@@ -981,6 +981,46 @@ func TestDiffAppsRejectsChartCacheInsideEitherRoot(t *testing.T) {
 	}
 }
 
+// Direct pin for the diff-surface validation layer: per-build validation also
+// rejects a contained OCI cache dir, so only a direct call observes that
+// validateDiffCacheRoots itself carries the check (chart-pattern symmetry).
+func TestValidateDiffCacheRootsRejectsOCICacheDir(t *testing.T) {
+	root := t.TempDir()
+	request := DiffRequest{
+		AcquisitionOptions: AcquisitionOptions{
+			OCICacheDir: filepath.Join(root, ".drydock", "oci"),
+		},
+	}
+	err := validateDiffCacheRoots(request, []string{root})
+	if err == nil {
+		t.Fatal("validateDiffCacheRoots() error = nil, want oci cache containment error")
+	}
+	if !strings.Contains(err.Error(), "oci cache dir") || !strings.Contains(err.Error(), "must not be inside repository root") {
+		t.Fatalf("validateDiffCacheRoots() error = %v, want oci cache containment error", err)
+	}
+}
+
+func TestDiffAppsRejectsOCICacheInsideEitherRoot(t *testing.T) {
+	left := t.TempDir()
+	right := t.TempDir()
+
+	for _, root := range []string{left, right} {
+		_, err := Orchestrator{}.DiffApps(context.Background(), DiffRequest{
+			LeftPath:  left,
+			RightPath: right,
+			AcquisitionOptions: AcquisitionOptions{
+				OCICacheDir: filepath.Join(root, ".drydock", "oci"),
+			},
+		})
+		if err == nil {
+			t.Fatal("DiffApps() error = nil, want oci cache containment error")
+		}
+		if !strings.Contains(err.Error(), "oci cache dir") || !strings.Contains(err.Error(), "must not be inside repository root") {
+			t.Fatalf("DiffApps() error = %v, want oci cache containment error", err)
+		}
+	}
+}
+
 func TestDiffAppsRejectsRenderCacheInsideEitherRoot(t *testing.T) {
 	left := t.TempDir()
 	right := t.TempDir()

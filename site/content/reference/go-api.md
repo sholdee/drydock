@@ -24,8 +24,12 @@ For exported types, functions, and field-level comments, use the maintained
 
 Package-level `Render`, `ListApplications`, `DiffApplications`, and
 `DiffImages` functions use the same default network and cache behavior as the
-CLI. Declared Git, chart, and remote Kustomize inputs may be fetched unless
-the request is configured for offline/cache-only behavior.
+CLI. Declared Git, chart, OCI artifact, and remote Kustomize inputs may be
+fetched unless the request is configured for offline/cache-only behavior.
+
+`Config.OCICacheDir` overrides the OCI artifact source cache root, mirroring
+the CLI `--oci-cache-dir` flag. Like the other cache roots, it must resolve
+outside current and baseline repository trees.
 
 `NewClient` accepts public Git, chart, remote-resource, and plugin renderer
 interfaces so tests and embedding callers can provide deterministic fakes

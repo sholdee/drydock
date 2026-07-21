@@ -11,6 +11,7 @@ import (
 	"github.com/sholdee/drydock/internal/chart"
 	"github.com/sholdee/drydock/internal/config"
 	"github.com/sholdee/drydock/internal/gitref"
+	"github.com/sholdee/drydock/internal/ociartifact"
 	"github.com/sholdee/drydock/internal/plugincontainer"
 	"github.com/sholdee/drydock/internal/pluginexec"
 	"github.com/sholdee/drydock/internal/render"
@@ -25,6 +26,10 @@ func newLocalProvider(ctx context.Context, orchestrator Orchestrator, root strin
 	gitAcquirer := orchestrator.GitAcquirer
 	if gitAcquirer == nil {
 		gitAcquirer = sourcepkg.DefaultGitAcquirer{}
+	}
+	ociAcquirer := orchestrator.OCIArtifactAcquirer
+	if ociAcquirer == nil {
+		ociAcquirer = ociartifact.DefaultAcquirer{}
 	}
 	pluginExecRunner := orchestrator.PluginExecRunner
 	if pluginExecRunner == nil {
@@ -56,6 +61,9 @@ func newLocalProvider(ctx context.Context, orchestrator Orchestrator, root strin
 		remoteResourceForbiddenRoots: forbiddenRoots,
 		remoteResourceCredentials:    request.RemoteResourceCredentials,
 		remoteResourceGitCredentials: request.RemoteResourceGitCredentials,
+		ociArtifactAcquirer:          ociAcquirer,
+		ociCacheDir:                  request.OCICacheDir,
+		ociForbiddenRoots:            forbiddenRoots,
 		helmValueFileSchemes:         settingsHelmValueFileSchemes(settings),
 		helmValueFileSchemesSet:      settings.HelmValuesFileSchemesSet,
 		helmChartLoadCache:           render.NewHelmChartLoadCache(),

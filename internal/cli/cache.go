@@ -10,6 +10,7 @@ import (
 	"github.com/sholdee/drydock/internal/cache"
 	"github.com/sholdee/drydock/internal/chart"
 	cliformat "github.com/sholdee/drydock/internal/format"
+	"github.com/sholdee/drydock/internal/ociartifact"
 	"github.com/sholdee/drydock/internal/remote"
 	"github.com/sholdee/drydock/internal/rendercache"
 	"github.com/sholdee/drydock/internal/source"
@@ -23,6 +24,7 @@ type cacheFlags struct {
 	chartCacheDir      string
 	remoteCacheDir     string
 	renderCacheDir     string
+	ociCacheDir        string
 	renderCacheMaxSize quantityFlag
 	maxSize            quantityFlag
 	source             string
@@ -67,6 +69,7 @@ func newCacheCommand() *cobra.Command {
 				cache.SourceChart:  opts.ChartCacheDir,
 				cache.SourceRemote: opts.RemoteCacheDir,
 				cache.SourceRender: opts.RenderCacheDir,
+				cache.SourceOCI:    opts.OCICacheDir,
 			})
 		},
 	}
@@ -166,10 +169,11 @@ func bindCacheRootFlags(cmd *cobra.Command, flags *cacheFlags) {
 	cmd.Flags().StringVar(&flags.chartCacheDir, "chart-cache-dir", flags.chartCacheDir, "directory for cached Helm charts")
 	cmd.Flags().StringVar(&flags.remoteCacheDir, "remote-cache-dir", flags.remoteCacheDir, "directory for cached remote Kustomize resources")
 	cmd.Flags().StringVar(&flags.renderCacheDir, "render-cache-dir", flags.renderCacheDir, "directory for persisted Application render outputs")
+	cmd.Flags().StringVar(&flags.ociCacheDir, "oci-cache-dir", flags.ociCacheDir, "directory for cached OCI artifact sources")
 }
 
 func bindCacheSourceFlag(cmd *cobra.Command, flags *cacheFlags) {
-	cmd.Flags().StringVar(&flags.source, "source", flags.source, "cache source to select: git, chart, remote, or render")
+	cmd.Flags().StringVar(&flags.source, "source", flags.source, "cache source to select: git, chart, remote, render, or oci")
 }
 
 func bindCacheOperationFlags(cmd *cobra.Command, flags *cacheFlags) {
@@ -196,6 +200,7 @@ func cacheListOptions(flags cacheFlags) (cache.Options, error) {
 		ChartCacheDir:  roots[cache.SourceChart],
 		RemoteCacheDir: roots[cache.SourceRemote],
 		RenderCacheDir: roots[cache.SourceRender],
+		OCICacheDir:    roots[cache.SourceOCI],
 		Sources:        sources,
 		ForbiddenRoots: forbiddenRoots,
 	}, nil
@@ -270,11 +275,20 @@ func cacheRoots(flags cacheFlags) (map[cache.Source]string, error) {
 			return nil, err
 		}
 	}
+	ociCacheDir := flags.ociCacheDir
+	if ociCacheDir == "" {
+		var err error
+		ociCacheDir, err = ociartifact.DefaultCacheDir()
+		if err != nil {
+			return nil, err
+		}
+	}
 	return map[cache.Source]string{
 		cache.SourceGit:    gitCacheDir,
 		cache.SourceChart:  chartCacheDir,
 		cache.SourceRemote: remoteCacheDir,
 		cache.SourceRender: renderCacheDir,
+		cache.SourceOCI:    ociCacheDir,
 	}, nil
 }
 
@@ -300,10 +314,10 @@ func parseCacheSources(raw string) ([]cache.Source, error) {
 	}
 	source := cache.Source(raw)
 	switch source {
-	case cache.SourceGit, cache.SourceChart, cache.SourceRemote, cache.SourceRender:
+	case cache.SourceGit, cache.SourceChart, cache.SourceRemote, cache.SourceRender, cache.SourceOCI:
 		return []cache.Source{source}, nil
 	default:
-		return nil, fmt.Errorf("unsupported cache source %q: valid sources are git, chart, remote, render", raw)
+		return nil, fmt.Errorf("unsupported cache source %q: valid sources are git, chart, remote, render, oci", raw)
 	}
 }
 
@@ -331,6 +345,7 @@ func renderCachePaths(cmd *cobra.Command, roots map[cache.Source]string) error {
 		{"source": string(cache.SourceChart), "path": roots[cache.SourceChart]},
 		{"source": string(cache.SourceRemote), "path": roots[cache.SourceRemote]},
 		{"source": string(cache.SourceRender), "path": roots[cache.SourceRender]},
+		{"source": string(cache.SourceOCI), "path": roots[cache.SourceOCI]},
 	})
 }
 

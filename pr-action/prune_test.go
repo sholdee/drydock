@@ -70,6 +70,7 @@ printf '{"removedCount":3,"sizeEvictedBytes":1048576,"totalSizeBytes":2097152}\n
 		"--chart-cache-dir " + cachePath + "/charts",
 		"--remote-cache-dir " + cachePath + "/remotes",
 		"--render-cache-dir " + cachePath + "/renders",
+		"--oci-cache-dir " + cachePath + "/oci",
 		"-o json",
 	} {
 		if !strings.Contains(args, want) {

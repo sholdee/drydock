@@ -19,6 +19,11 @@ const (
 	SourceChart  Source = "chart"
 	SourceRemote Source = "remote"
 	SourceRender Source = "render"
+	// SourceOCI is the first-class OCI artifact image cache. The name does not
+	// collide with the chart cache's "oci" repository kind: Source and Kind are
+	// distinct fields on entries and metadata, and chart "oci" only appears as
+	// a Kind under SourceChart (listChartEntries below).
+	SourceOCI Source = "oci"
 )
 
 type Options struct {
@@ -26,6 +31,7 @@ type Options struct {
 	ChartCacheDir  string
 	RemoteCacheDir string
 	RenderCacheDir string
+	OCICacheDir    string
 	Sources        []Source
 	ForbiddenRoots []string
 }
@@ -103,6 +109,13 @@ func List(opts Options) ([]Entry, error) {
 			return nil, err
 		}
 		entries = append(entries, remoteEntries...)
+	}
+	if enabled[SourceOCI] {
+		ociEntries, err := listSimpleEntries(SourceOCI, "image", opts.OCICacheDir, opts.ForbiddenRoots)
+		if err != nil {
+			return nil, err
+		}
+		entries = append(entries, ociEntries...)
 	}
 	if enabled[SourceRender] {
 		renderEntries, err := listRenderEntries(opts.RenderCacheDir, opts.ForbiddenRoots)
@@ -570,6 +583,7 @@ func enabledSources(sources []Source) map[Source]bool {
 		out[SourceChart] = true
 		out[SourceRemote] = true
 		out[SourceRender] = true
+		out[SourceOCI] = true
 		return out
 	}
 	for _, source := range sources {

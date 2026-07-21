@@ -18,6 +18,10 @@ func RemoteEntryPath(root, key string) string {
 	return filepath.Join(root, key)
 }
 
+func OCIEntryPath(root, key string) string {
+	return filepath.Join(root, key)
+}
+
 func RemoteHTTPFilePath(root, key string) string {
 	return filepath.Join(RemoteEntryPath(root, key), "resource.yaml")
 }

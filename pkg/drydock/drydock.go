@@ -109,6 +109,8 @@ type Config struct {
 	// RemoteResourceCredentials supplies credentials for remote Kustomize HTTP
 	// resources.
 	RemoteResourceCredentials RemoteResourceCredentials
+	// OCICacheDir overrides the OCI artifact source cache root.
+	OCICacheDir string
 	// EnableAVPCompat forces argocd-vault-plugin placeholder redaction for
 	// native-rendered sources. Explicit argocd-vault-plugin sources use native
 	// compatibility by default.
@@ -329,6 +331,7 @@ func (client *Client) requestOptions() requestopts.Options {
 		RemoteResourceForbiddenRoots:   append([]string(nil), client.config.RemoteResourceForbiddenRoots...),
 		RemoteResourceCredentials:      remoteResourceCredentialsToInternal(client.config.RemoteResourceCredentials),
 		RemoteResourceGitCredentials:   gitCredentialsToRemoteInternal(client.config.GitCredentials),
+		OCICacheDir:                    client.config.OCICacheDir,
 		EnableAVPCompat:                client.config.EnableAVPCompat,
 		EnableKSOPSCompat:              client.config.EnableKSOPSCompat,
 		EnablePlugins:                  client.config.EnablePlugins,
