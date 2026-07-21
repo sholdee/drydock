@@ -218,7 +218,11 @@ redact the presented authorization material:
 
 Credentials affect only online acquisition. `--offline` runs never
 contact the registry, so the `--oci-*` credential flags have no effect on
-offline behavior.
+offline acquisition — with one caveat: credential validation (missing or
+non-PEM `--oci-ca-file`, incomplete or mismatched client cert/key pair)
+runs at request construction on every build and diff, including offline
+runs and runs with no OCI sources at all, and fails fast. Wrappers that
+pass `--oci-*` flags unconditionally should pass valid values or none.
 
 ### Extraction Guards
 

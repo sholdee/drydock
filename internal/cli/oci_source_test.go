@@ -2,6 +2,7 @@ package cli
 
 import (
 	"encoding/base64"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -116,9 +117,10 @@ func TestCLIOCIAuthFailureRedactsCredentials(t *testing.T) {
 	root := t.TempDir()
 	writeOCIAppForCLI(t, root, "demo", reg.RepoURL("manifests/app"), ".", "~1.0")
 
+	cacheDir := t.TempDir()
 	stdout, stderr, err := executeCLIExpectingError(t, "build", "apps",
 		"--path", root,
-		"--oci-cache-dir", t.TempDir(),
+		"--oci-cache-dir", cacheDir,
 		"--oci-username", "oci-user",
 		"--oci-password", "sekrit-wrong",
 		"--cache-events",
@@ -133,6 +135,24 @@ func TestCLIOCIAuthFailureRedactsCredentials(t *testing.T) {
 				t.Fatalf("%s leaked %q:\n%s", surface, leaked, text)
 			}
 		}
+	}
+	// Nothing on disk either: walk every file the run left in the OCI cache.
+	if walkErr := filepath.WalkDir(cacheDir, func(path string, entry fs.DirEntry, err error) error {
+		if err != nil || entry.IsDir() {
+			return err
+		}
+		data, readErr := os.ReadFile(path)
+		if readErr != nil {
+			return readErr
+		}
+		for _, leaked := range []string{"sekrit-wrong", basicForm} {
+			if strings.Contains(string(data), leaked) {
+				t.Fatalf("cache file %s leaked %q", path, leaked)
+			}
+		}
+		return nil
+	}); walkErr != nil {
+		t.Fatalf("walk cache dir: %v", walkErr)
 	}
 }
 
@@ -225,6 +245,48 @@ func TestCLIDiffRefBothSidesShareOCICredentials(t *testing.T) {
 	for i, opts := range recorded {
 		if opts.Credentials != want {
 			t.Fatalf("acquirer call %d credentials = %#v, want %#v (both diff sides must share the flag credentials)", i, opts.Credentials, want)
+		}
+	}
+}
+
+// Same invariant on the single-app surface: `diff app <name>` builds its
+// sides through the same shared AcquisitionOptions vehicle.
+func TestCLIDiffAppBothSidesShareOCICredentials(t *testing.T) {
+	root := t.TempDir()
+	repo, wt := initCLIGitRepo(t, root)
+	writeOCIAppForCLI(t, root, "demo", "oci://registry.example.test/org/app", ".", "v1")
+	commitCLIGitRepo(t, repo, wt, "baseline")
+	checkoutCLIGitBranch(t, wt, "feature")
+	writeOCIAppForCLI(t, root, "demo", "oci://registry.example.test/org/app", ".", "v2")
+	commitCLIGitRepo(t, repo, wt, "feature")
+
+	ociAcquirer := &recordingCLIOCIAcquirer{
+		digests: map[string]string{
+			"v1": "sha256:" + strings.Repeat("ab", 32),
+			"v2": "sha256:" + strings.Repeat("cd", 32),
+		},
+		files: map[string]string{"cm.yaml": "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: oci\ndata: {}\n"},
+	}
+	runCLIWithDependencies(t, Dependencies{
+		Orchestrator: app.Orchestrator{OCIArtifactAcquirer: ociAcquirer},
+	},
+		"diff", "app", "demo",
+		"--repo", root,
+		"--ref-orig", "master",
+		"--ref", "feature",
+		"--exit-code=false",
+		"--oci-username", "oci-user",
+		"--oci-password", "oci-pass",
+	)
+
+	recorded := ociAcquirer.recorded()
+	if len(recorded) < 4 {
+		t.Fatalf("recorded %d acquirer calls, want at least 4 (both sides resolve+extract)", len(recorded))
+	}
+	want := ociartifact.Credentials{Username: "oci-user", Password: "oci-pass"}
+	for i, opts := range recorded {
+		if opts.Credentials != want {
+			t.Fatalf("acquirer call %d credentials = %#v, want %#v (both diff-app sides must share the flag credentials)", i, opts.Credentials, want)
 		}
 	}
 }

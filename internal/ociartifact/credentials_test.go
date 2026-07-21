@@ -304,6 +304,11 @@ func TestCredentialsValidate(t *testing.T) {
 					t.Fatalf("Validate(%+v) error = %q, want substring %q", testCase.credentials, err, want)
 				}
 			}
+			// Errors must name paths, never echo file contents — a private
+			// key mistakenly passed to a file flag must not print.
+			if strings.Contains(err.Error(), "not pem data") {
+				t.Fatalf("Validate(%+v) error %q echoes file contents", testCase.credentials, err)
+			}
 		})
 	}
 	if err := (Credentials{}).Validate(); err != nil {
@@ -321,8 +326,22 @@ func TestCredentialsValidate(t *testing.T) {
 func TestURLUserinfoRejected(t *testing.T) {
 	acquirer := DefaultAcquirer{}
 	opts := Options{CacheDir: t.TempDir()}
-	repoURL := "oci://leak-user:leak-secret@127.0.0.1:1/org/app"
 
+	// The slash-shifted shapes bypassed the original authority-only scan: an
+	// unencoded "/" inside the embedded credentials moves the "@" past the
+	// first path cut, and the username variant also parses with a nil
+	// url.User, defeating parse-based redaction.
+	for _, repoURL := range []string{
+		"oci://leak-user:leak-secret@127.0.0.1:1/org/app",
+		"oci://leak-user:leak-se/cret-tail@127.0.0.1:1/org/app",
+		"oci://leak-us/er:leak-secret@127.0.0.1:1/org/app",
+	} {
+		testURLUserinfoRejected(t, acquirer, opts, repoURL)
+	}
+}
+
+func testURLUserinfoRejected(t *testing.T, acquirer DefaultAcquirer, opts Options, repoURL string) {
+	t.Helper()
 	for name, call := range map[string]func() error{
 		"resolve tag": func() error {
 			_, err := acquirer.Resolve(t.Context(), repoURL, "1.0.0", opts)
@@ -346,7 +365,7 @@ func TestURLUserinfoRejected(t *testing.T) {
 				t.Fatalf("%s: error %q should name %s", name, err, flag)
 			}
 		}
-		for _, leaked := range []string{"leak-secret", "leak-user"} {
+		for _, leaked := range []string{"leak-se", "leak-us"} {
 			if strings.Contains(err.Error(), leaked) {
 				t.Fatalf("%s: error %q leaks %q", name, err, leaked)
 			}

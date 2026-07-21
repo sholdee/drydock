@@ -130,8 +130,16 @@ func IsDigest(revision string) bool {
 // userinfo is dropped (mirroring remote.RedactURL), so credentials embedded
 // in a repoURL spelling never reach error text or cache metadata.
 func RedactURL(repoURL string) string {
-	parsed, err := url.Parse("oci://" + NormalizeURL(repoURL))
+	normalized := NormalizeURL(repoURL)
+	parsed, err := url.Parse("oci://" + normalized)
 	if err != nil {
+		return "[invalid-url]"
+	}
+	// Fail closed when an "@" survives parsing without being classified as
+	// userinfo: slash-shifted credentials (oci://us/er:secret@host/...)
+	// parse with a nil User, so stripping User alone would return the
+	// secret verbatim.
+	if parsed.User == nil && strings.Contains(normalized, "@") {
 		return "[invalid-url]"
 	}
 	parsed.User = nil
@@ -287,20 +295,23 @@ func isLoopbackURL(repoURL string) bool {
 }
 
 // rejectURLUserinfo rejects URL-carried credentials for OCI sources before
-// any client construction. The check is a raw @-in-authority scan (total —
-// no url.Parse dependency; a registry authority can never legitimately
-// contain "@"). Nothing functional is lost: oras rejects userinfo URLs
-// anyway (oras-go registry/reference.go:196) — but its error echoes the RAW
-// registry component ('invalid registry "user:pass@host"'), and the vendored
-// client logs c.repoURL through logrus on tag fetches (client.go:446-451),
-// so the secret must never reach either sink. The rejection error carries
-// only the redacted URL and names the flags to use instead.
+// any client construction. The check is a raw whole-URL "@" scan (total —
+// no url.Parse dependency): an authority-only scan is bypassable because an
+// unencoded "/" inside embedded credentials shifts the "@" past the first
+// path cut (oci://user:pa/ss@host/... or oci://us/er:secret@host/...), and
+// the same shapes defeat url.Parse-based redaction. OCI repository names
+// cannot contain "@" and drydock carries digests in targetRevision, so no
+// legitimate repoURL contains one. Nothing functional is lost: oras rejects
+// userinfo URLs anyway (oras-go registry/reference.go:196) — but its error
+// echoes the RAW registry component, and the vendored client logs c.repoURL
+// through logrus on tag fetches (client.go:446-451), so the secret must
+// never reach either sink. The rejection error carries only the redacted
+// URL and names the remediation for both mistake shapes.
 func rejectURLUserinfo(repoURL string) error {
-	authority, _, _ := strings.Cut(NormalizeURL(repoURL), "/")
-	if !strings.Contains(authority, "@") {
+	if !strings.Contains(NormalizeURL(repoURL), "@") {
 		return nil
 	}
-	return fmt.Errorf("OCI artifact %s: credentials in the repository URL are not supported; use --oci-username/--oci-password", RedactURL(repoURL))
+	return fmt.Errorf("OCI artifact %s: %q is not allowed in an OCI repository URL; put digests in targetRevision and credentials in --oci-username/--oci-password", RedactURL(repoURL), "@")
 }
 
 func (a DefaultAcquirer) newClient(repoURL string, cacheDir string, credentials Credentials, extraOpts ...oci.ClientOpts) (oci.Client, error) {
