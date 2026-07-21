@@ -135,11 +135,11 @@ func RedactURL(repoURL string) string {
 	if err != nil {
 		return "[invalid-url]"
 	}
-	// Fail closed when an "@" survives parsing without being classified as
-	// userinfo: slash-shifted credentials (oci://us/er:secret@host/...)
-	// parse with a nil User, so stripping User alone would return the
-	// secret verbatim.
-	if parsed.User == nil && strings.Contains(normalized, "@") {
+	// Fail closed when an "@" (or a percent escape that could encode one)
+	// survives parsing without being classified as userinfo: slash-shifted
+	// credentials (oci://us/er:secret@host/...) parse with a nil User, so
+	// stripping User alone would return the secret verbatim.
+	if parsed.User == nil && strings.ContainsAny(normalized, "@%") {
 		return "[invalid-url]"
 	}
 	parsed.User = nil
@@ -308,10 +308,16 @@ func isLoopbackURL(repoURL string) bool {
 // never reach either sink. The rejection error carries only the redacted
 // URL and names the remediation for both mistake shapes.
 func rejectURLUserinfo(repoURL string) error {
-	if !strings.Contains(NormalizeURL(repoURL), "@") {
+	// "%" is rejected alongside "@": NormalizeURL does not percent-decode,
+	// so a %40-encoded "@" would slip past an @-only scan and the secret
+	// would flow readably into the oras invalid-registry echo. OCI registry
+	// hosts and repository names can never legitimately contain either
+	// character.
+	normalized := NormalizeURL(repoURL)
+	if !strings.ContainsAny(normalized, "@%") {
 		return nil
 	}
-	return fmt.Errorf("OCI artifact %s: %q is not allowed in an OCI repository URL; put digests in targetRevision and credentials in --oci-username/--oci-password", RedactURL(repoURL), "@")
+	return fmt.Errorf("OCI artifact %s: %q and %q are not allowed in an OCI repository URL; put digests in targetRevision and credentials in --oci-username/--oci-password", RedactURL(repoURL), "@", "%")
 }
 
 func (a DefaultAcquirer) newClient(repoURL string, cacheDir string, credentials Credentials, extraOpts ...oci.ClientOpts) (oci.Client, error) {

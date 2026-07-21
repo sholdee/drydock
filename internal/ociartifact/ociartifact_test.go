@@ -532,6 +532,7 @@ func TestRedactURLStripsUserinfo(t *testing.T) {
 		// stripping User alone would return the secret verbatim.
 		{"oci://us/er:secret@ghcr.io/org/app", "[invalid-url]"},
 		{"oci://user:pa/ss@ghcr.io/org/app", "[invalid-url]"},
+		{"oci://user:secret%40ghcr.io/org/app", "[invalid-url]"},
 	} {
 		if got := RedactURL(testCase.input); got != testCase.want {
 			t.Fatalf("RedactURL(%q) = %q, want %q", testCase.input, got, testCase.want)

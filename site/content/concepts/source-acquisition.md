@@ -204,7 +204,7 @@ Credentials embedded in the repository URL are rejected early with a
 redacted error:
 
 ```text
-OCI artifact oci://registry.example.com/org/app: credentials in the repository URL are not supported; use --oci-username/--oci-password
+OCI artifact oci://registry.example.com/org/app: "@" and "%" are not allowed in an OCI repository URL; put digests in targetRevision and credentials in --oci-username/--oci-password
 ```
 
 Credential values never enter cache keys, cache metadata, cache events,

@@ -335,6 +335,7 @@ func TestURLUserinfoRejected(t *testing.T) {
 		"oci://leak-user:leak-secret@127.0.0.1:1/org/app",
 		"oci://leak-user:leak-se/cret-tail@127.0.0.1:1/org/app",
 		"oci://leak-us/er:leak-secret@127.0.0.1:1/org/app",
+		"oci://leak-user:leak-secret%40127.0.0.1:1/org/app",
 	} {
 		testURLUserinfoRejected(t, acquirer, opts, repoURL)
 	}
