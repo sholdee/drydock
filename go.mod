@@ -11,7 +11,7 @@ require (
 	github.com/distribution/reference v0.6.0
 	github.com/evanphx/json-patch v5.9.11+incompatible
 	github.com/go-git/go-git/v5 v5.19.1
-	github.com/google/go-containerregistry v0.20.6
+	github.com/google/go-containerregistry v0.21.7
 	github.com/google/go-jsonnet v0.22.0
 	github.com/itchyny/gojq v0.12.19
 	github.com/opencontainers/image-spec v1.1.1
@@ -106,7 +106,7 @@ require (
 	github.com/json-iterator/go v1.1.12 // indirect
 	github.com/kballard/go-shellquote v0.0.0-20180428030007-95032a82bc51 // indirect
 	github.com/kevinburke/ssh_config v1.2.0 // indirect
-	github.com/klauspost/compress v1.18.4 // indirect
+	github.com/klauspost/compress v1.18.6 // indirect
 	github.com/klauspost/cpuid/v2 v2.3.0 // indirect
 	github.com/kylelemons/godebug v1.1.0 // indirect
 	github.com/liggitt/tabwriter v0.0.0-20181228230101-89fcab3d43de // indirect
