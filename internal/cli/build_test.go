@@ -3,14 +3,18 @@ package cli
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"errors"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/sholdee/drydock/internal/app"
 	"github.com/sholdee/drydock/internal/chart"
+	"github.com/sholdee/drydock/internal/ociartifact"
+	"github.com/sholdee/drydock/internal/ociartifact/ocitest"
 	sourcepkg "github.com/sholdee/drydock/internal/source"
 )
 
@@ -323,12 +327,20 @@ metadata:
 data:
   source: chart
 `)
+	writeOCIAppForCLI(t, root, "oci-demo", "oci://registry.example.test/org/app", ".", "v1")
+	ociCertFile, ociKeyFile := ocitest.GenerateClientCertFiles(t)
+	ociCAFile, _ := ocitest.GenerateClientCertFiles(t)
 	gitAcquirer := &recordingCLIGitAcquirer{path: external}
 	chartAcquirer := &recordingCLIChartAcquirer{chartDir: chartDir}
+	ociAcquirer := &recordingCLIOCIAcquirer{
+		digests: map[string]string{"v1": "sha256:" + strings.Repeat("ab", 32)},
+		files:   map[string]string{"cm.yaml": "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: oci\ndata: {}\n"},
+	}
 	cmd := NewRootCommandWithDependencies(VersionInfo{}, Dependencies{
 		Orchestrator: app.Orchestrator{
-			GitAcquirer:   gitAcquirer,
-			ChartAcquirer: chartAcquirer,
+			GitAcquirer:         gitAcquirer,
+			ChartAcquirer:       chartAcquirer,
+			OCIArtifactAcquirer: ociAcquirer,
 		},
 	})
 	cmd.SetArgs([]string{
@@ -342,6 +354,12 @@ data:
 		"--helm-password", "helm-pass",
 		"--helm-bearer-token", "helm-token",
 		"--registry-config", registryConfig,
+		"--oci-username", "oci-user",
+		"--oci-password", "oci-pass",
+		"--oci-ca-file", ociCAFile,
+		"--oci-client-cert-file", ociCertFile,
+		"--oci-client-key-file", ociKeyFile,
+		"--oci-insecure-skip-verify",
 	})
 	var stdout, stderr bytes.Buffer
 	cmd.SetOut(&stdout)
@@ -361,6 +379,57 @@ data:
 	}
 	if got := chartAcquirer.options[0].Credentials; got.Username != "helm-user" || got.Password != "helm-pass" || got.BearerToken != "helm-token" || got.RegistryConfig != registryConfig {
 		t.Fatalf("chart credentials = %#v, want registry config %q", got, registryConfig)
+	}
+	wantOCICredentials := ociartifact.Credentials{
+		Username:           "oci-user",
+		Password:           "oci-pass",
+		CAFile:             ociCAFile,
+		ClientCertFile:     ociCertFile,
+		ClientKeyFile:      ociKeyFile,
+		InsecureSkipVerify: true,
+	}
+	recordedOCIOptions := ociAcquirer.recorded()
+	if len(recordedOCIOptions) == 0 {
+		t.Fatal("oci acquirer never invoked")
+	}
+	for i, opts := range recordedOCIOptions {
+		if opts.Credentials != wantOCICredentials {
+			t.Fatalf("oci credentials[%d] = %#v, want %#v", i, opts.Credentials, wantOCICredentials)
+		}
+	}
+}
+
+// TestBuildAppsRedactsOCICredentialFlagValuesFromErrors mirrors the chart
+// pin below: an acquisition error echoing the OCI credential flag values —
+// raw AND in the base64(user:pass) Basic-auth form that registry error
+// bodies echo back — must reach neither the command error nor stderr.
+func TestBuildAppsRedactsOCICredentialFlagValuesFromErrors(t *testing.T) {
+	root := t.TempDir()
+	writeOCIAppForCLI(t, root, "oci-demo", "oci://registry.example.test/org/app", ".", "v1")
+	basicForm := base64.StdEncoding.EncodeToString([]byte("oci-user:oci-pass"))
+	cmd := NewRootCommandWithDependencies(VersionInfo{}, Dependencies{
+		Orchestrator: app.Orchestrator{
+			OCIArtifactAcquirer: &recordingCLIOCIAcquirer{err: errors.New("boom oci-user oci-pass " + basicForm)},
+		},
+	})
+	cmd.SetArgs([]string{
+		"build", "apps",
+		"--path", root,
+		"--oci-username", "oci-user",
+		"--oci-password", "oci-pass",
+	})
+	var stdout, stderr bytes.Buffer
+	cmd.SetOut(&stdout)
+	cmd.SetErr(&stderr)
+
+	err := cmd.Execute()
+	if err == nil {
+		t.Fatal("Execute() error = nil, want oci acquisition error")
+	}
+	for _, leaked := range []string{"oci-pass", basicForm} {
+		if strings.Contains(err.Error(), leaked) || strings.Contains(stderr.String(), leaked) || strings.Contains(stdout.String(), leaked) {
+			t.Fatalf("error/output leaked %q: err=%q stderr=%q", leaked, err, stderr.String())
+		}
 	}
 }
 
@@ -420,6 +489,64 @@ func (acquirer *recordingCLIGitAcquirer) Acquire(_ context.Context, request sour
 		return sourcepkg.GitResult{}, acquirer.err
 	}
 	return sourcepkg.GitResult{Path: acquirer.path, Revision: "abc123"}, nil
+}
+
+// recordingCLIOCIAcquirer records the ociartifact.Options handed to every
+// Resolve and Extract call. Guarded by a mutex: diff sides can invoke it
+// concurrently.
+type recordingCLIOCIAcquirer struct {
+	mu      sync.Mutex
+	digests map[string]string
+	files   map[string]string
+	err     error
+	options []ociartifact.Options
+}
+
+func (acquirer *recordingCLIOCIAcquirer) record(opts ociartifact.Options) {
+	acquirer.mu.Lock()
+	defer acquirer.mu.Unlock()
+	acquirer.options = append(acquirer.options, opts)
+}
+
+func (acquirer *recordingCLIOCIAcquirer) recorded() []ociartifact.Options {
+	acquirer.mu.Lock()
+	defer acquirer.mu.Unlock()
+	return append([]ociartifact.Options(nil), acquirer.options...)
+}
+
+func (acquirer *recordingCLIOCIAcquirer) Resolve(_ context.Context, _, revision string, opts ociartifact.Options) (string, error) {
+	acquirer.record(opts)
+	if acquirer.err != nil {
+		return "", acquirer.err
+	}
+	if digest, ok := acquirer.digests[revision]; ok {
+		return digest, nil
+	}
+	return "sha256:" + strings.Repeat("cd", 32), nil
+}
+
+func (acquirer *recordingCLIOCIAcquirer) Extract(_ context.Context, _, _ string, opts ociartifact.Options) (string, func(), error) {
+	acquirer.record(opts)
+	if acquirer.err != nil {
+		return "", nil, acquirer.err
+	}
+	dir, err := os.MkdirTemp("", "drydock-cli-oci-*")
+	if err != nil {
+		return "", nil, err
+	}
+	for name, data := range acquirer.files {
+		path := filepath.Join(dir, filepath.FromSlash(name))
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			return "", nil, err
+		}
+		if err := os.WriteFile(path, []byte(data), 0o600); err != nil {
+			return "", nil, err
+		}
+	}
+	if opts.OnAcquired != nil {
+		opts.OnAcquired(false)
+	}
+	return dir, func() { _ = os.RemoveAll(dir) }, nil
 }
 
 type recordingCLIChartAcquirer struct {

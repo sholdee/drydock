@@ -8,6 +8,7 @@ import (
 	"github.com/sholdee/drydock/internal/appset"
 	"github.com/sholdee/drydock/internal/chart"
 	"github.com/sholdee/drydock/internal/diagnostic"
+	"github.com/sholdee/drydock/internal/ociartifact"
 	"github.com/sholdee/drydock/internal/remote"
 	"github.com/sholdee/drydock/internal/rendercache"
 	"github.com/sholdee/drydock/internal/source"
@@ -38,6 +39,7 @@ func TestOptionsBuildCopiesSharedFields(t *testing.T) {
 	assertDeepEqual(t, "RemoteResourceForbiddenRoots", request.RemoteResourceForbiddenRoots, []string{"/repo"})
 	assertDeepEqual(t, "RemoteResourceCredentials", request.RemoteResourceCredentials, remote.Credentials{Username: "remote-user"})
 	assertDeepEqual(t, "RemoteResourceGitCredentials", request.RemoteResourceGitCredentials, remote.GitCredentials{Username: "remote-git-user"})
+	assertDeepEqual(t, "OCICredentials", request.OCICredentials, ociCredentialsFixture())
 	assertDeepEqual(t, "EnableAVPCompat", request.EnableAVPCompat, true)
 	assertDeepEqual(t, "EnableKSOPSCompat", request.EnableKSOPSCompat, true)
 	assertDeepEqual(t, "EnablePlugins", request.EnablePlugins, true)
@@ -105,6 +107,7 @@ func TestOptionsDiffCopiesSharedFields(t *testing.T) {
 	assertDeepEqual(t, "RemoteResourceCacheDir", request.RemoteResourceCacheDir, "remote-cache")
 	assertDeepEqual(t, "RemoteResourceCredentials", request.RemoteResourceCredentials, remote.Credentials{Username: "remote-user"})
 	assertDeepEqual(t, "RemoteResourceGitCredentials", request.RemoteResourceGitCredentials, remote.GitCredentials{Username: "remote-git-user"})
+	assertDeepEqual(t, "OCICredentials", request.OCICredentials, ociCredentialsFixture())
 	assertDeepEqual(t, "EnableAVPCompat", request.EnableAVPCompat, true)
 	assertDeepEqual(t, "EnableKSOPSCompat", request.EnableKSOPSCompat, true)
 	assertDeepEqual(t, "EnablePlugins", request.EnablePlugins, true)
@@ -179,6 +182,7 @@ func fixtureOptions() Options {
 		RemoteResourceForbiddenRoots: []string{"/repo"},
 		RemoteResourceCredentials:    remote.Credentials{Username: "remote-user"},
 		RemoteResourceGitCredentials: remote.GitCredentials{Username: "remote-git-user"},
+		OCICredentials:               ociCredentialsFixture(),
 		EnableAVPCompat:              true,
 		EnableKSOPSCompat:            true,
 		EnablePlugins:                true,
@@ -202,6 +206,17 @@ func fixtureOptions() Options {
 		RenderCacheMaxBytes:        123456,
 		RefreshRenders:             true,
 		EngineFingerprint:          rendercache.EngineFingerprint{Version: "1.2.3", Commit: "abc"},
+	}
+}
+
+func ociCredentialsFixture() ociartifact.Credentials {
+	return ociartifact.Credentials{
+		Username:           "oci-user",
+		Password:           "oci-pass",
+		CAFile:             "/certs/ca.pem",
+		ClientCertFile:     "/certs/client-cert.pem",
+		ClientKeyFile:      "/certs/client-key.pem",
+		InsecureSkipVerify: true,
 	}
 }
 

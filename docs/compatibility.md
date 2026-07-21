@@ -140,6 +140,10 @@ Supported:
 - Explicit HTTP(S) Helm bearer/basic auth.
 - Explicit HTTP(S) remote Kustomize bearer/basic auth.
 - Explicit Helm OCI registry config path plumbing.
+- Explicit OCI artifact registry basic auth and TLS material
+  (`--oci-username`/`--oci-password`, `--oci-ca-file`,
+  `--oci-client-cert-file`/`--oci-client-key-file`,
+  `--oci-insecure-skip-verify`) as a single global credential set.
 - Cache event API/reporting for Git, Helm, OCI artifact, and remote Kustomize
   acquisition, with redacted targets and errors.
 - Local cache lifecycle commands for recognized Git, chart, OCI artifact, and
@@ -161,10 +165,15 @@ Important boundaries:
   clear unsupported-source-shape error.
 - `$ref` value-file sources are Git-only, matching upstream: an OCI `$ref`
   source fails with a clear error.
-- Private OCI registries are not yet supported for OCI artifact sources;
-  `--registry-config` credentials apply to OCI Helm chart sources only.
-  Reusing the Helm OCI credential machinery for artifact sources is a
-  recorded follow-up, as are CLI flags for the extraction media-type
+- Private OCI registries are supported for OCI artifact sources through the
+  explicit `--oci-*` credential flags; `--registry-config` credentials still
+  apply to OCI Helm chart sources only. The credential set is global: one
+  username/password pair and one TLS configuration for every OCI artifact
+  registry a run touches, and any TLS-implying `--oci-*` flag disables the
+  loopback plain-HTTP default for the whole run. Credentials embedded in
+  `oci://` repository URLs are rejected with a redacted error naming the
+  flags. Per-registry credential maps and Docker config ingestion are
+  recorded follow-ups, as are CLI flags for the extraction media-type
   allowlist and size cap, and an OCI fixture for the Argo CD render parity
   smoke (which needs an in-cluster registry).
 - `--repo-map` takes precedence over local fallback and network fetching.

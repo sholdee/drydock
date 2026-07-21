@@ -64,6 +64,7 @@ func newLocalProvider(ctx context.Context, orchestrator Orchestrator, root strin
 		ociArtifactAcquirer:          ociAcquirer,
 		ociCacheDir:                  request.OCICacheDir,
 		ociForbiddenRoots:            forbiddenRoots,
+		ociCredentials:               request.OCICredentials,
 		helmValueFileSchemes:         settingsHelmValueFileSchemes(settings),
 		helmValueFileSchemesSet:      settings.HelmValuesFileSchemesSet,
 		helmChartLoadCache:           render.NewHelmChartLoadCache(),

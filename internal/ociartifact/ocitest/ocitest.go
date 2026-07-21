@@ -9,14 +9,29 @@ import (
 	"bytes"
 	"compress/gzip"
 	"context"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/tls"
+	"crypto/x509"
+	"crypto/x509/pkix"
+	"encoding/base64"
 	"encoding/json"
+	"encoding/pem"
 	"io"
 	"log"
 	"maps"
+	"math/big"
+	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
+	"path/filepath"
 	"sort"
+	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/google/go-containerregistry/pkg/registry"
 	specs "github.com/opencontainers/image-spec/specs-go"
@@ -34,23 +49,217 @@ const (
 	plainConfigType     = "application/vnd.oci.empty.v1+json"
 )
 
-// Registry is a hermetic OCI distribution registry on a loopback port.
+// Registry is a hermetic OCI distribution registry on a loopback port. Every
+// registry wraps the distribution handler with mutable middleware: optional
+// Basic auth (EnableBasicAuth) and a /tags/list wire-request counter
+// (TagListRequests).
 type Registry struct {
 	Server *httptest.Server
 	Host   string
+
+	mu              sync.Mutex
+	authEnabled     bool
+	authUsername    string
+	authPassword    string
+	tagListRequests int
+	// pushTLS, when set, is used by the push helpers instead of plain HTTP
+	// (TLS/mTLS registries).
+	pushTLS *tls.Config
 }
 
 // StartRegistry starts an in-process distribution registry. It is closed with
 // the test.
 func StartRegistry(t *testing.T) *Registry {
 	t.Helper()
-	server := httptest.NewServer(registry.New(registry.Logger(log.New(io.Discard, "", 0))))
+	return newRegistry(t, httptest.NewServer)
+}
+
+// StartTLSRegistry starts an https loopback registry with the httptest
+// self-signed server certificate. Clients trust it via CAFilePath
+// (--oci-ca-file) or --oci-insecure-skip-verify; either flag also disables
+// drydock's loopback plain-HTTP default so the client actually negotiates
+// TLS against this server.
+func StartTLSRegistry(t *testing.T) *Registry {
+	t.Helper()
+	reg := newRegistry(t, httptest.NewTLSServer)
+	pool := x509.NewCertPool()
+	pool.AddCert(reg.Server.Certificate())
+	reg.pushTLS = &tls.Config{RootCAs: pool}
+	return reg
+}
+
+// StartMTLSRegistry starts an https loopback registry that requires and
+// verifies a client certificate (tls.RequireAndVerifyClientCert). It returns
+// PEM file paths for the accepted client cert/key pair
+// (--oci-client-cert-file/--oci-client-key-file); the push helpers present
+// the same pair.
+func StartMTLSRegistry(t *testing.T) (reg *Registry, certFile, keyFile string) {
+	t.Helper()
+	certFile, keyFile = GenerateClientCertFiles(t)
+	certPEM, err := os.ReadFile(certFile)
+	if err != nil {
+		t.Fatalf("read client cert: %v", err)
+	}
+	clientPool := x509.NewCertPool()
+	if !clientPool.AppendCertsFromPEM(certPEM) {
+		t.Fatal("client cert PEM did not parse")
+	}
+	reg = newRegistry(t, func(handler http.Handler) *httptest.Server {
+		server := httptest.NewUnstartedServer(handler)
+		server.TLS = &tls.Config{ClientAuth: tls.RequireAndVerifyClientCert, ClientCAs: clientPool}
+		server.StartTLS()
+		return server
+	})
+	serverPool := x509.NewCertPool()
+	serverPool.AddCert(reg.Server.Certificate())
+	clientCert, err := tls.LoadX509KeyPair(certFile, keyFile)
+	if err != nil {
+		t.Fatalf("load client key pair: %v", err)
+	}
+	reg.pushTLS = &tls.Config{RootCAs: serverPool, Certificates: []tls.Certificate{clientCert}}
+	return reg, certFile, keyFile
+}
+
+func newRegistry(t *testing.T, start func(http.Handler) *httptest.Server) *Registry {
+	t.Helper()
+	reg := &Registry{}
+	inner := registry.New(registry.Logger(log.New(io.Discard, "", 0)))
+	server := start(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		reg.serve(inner, w, req)
+	}))
 	t.Cleanup(server.Close)
 	parsed, err := url.Parse(server.URL)
 	if err != nil {
 		t.Fatalf("parse registry URL %q: %v", server.URL, err)
 	}
-	return &Registry{Server: server, Host: parsed.Host}
+	reg.Server = server
+	reg.Host = parsed.Host
+	return reg
+}
+
+// EnableBasicAuth requires the given Basic credentials on every subsequent
+// request. Seed artifacts BEFORE enabling: the push helpers are
+// uncredentialed.
+func (r *Registry) EnableBasicAuth(username, password string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.authEnabled = true
+	r.authUsername = username
+	r.authPassword = password
+}
+
+// TagListRequests reports how many wire requests hit a /tags/list path.
+func (r *Registry) TagListRequests() int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.tagListRequests
+}
+
+// CAFilePath writes the server certificate as a PEM file for --oci-ca-file.
+func (r *Registry) CAFilePath(t *testing.T) string {
+	t.Helper()
+	cert := r.Server.Certificate()
+	if cert == nil {
+		t.Fatal("registry has no TLS certificate (plain-HTTP registry)")
+	}
+	data := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: cert.Raw})
+	path := filepath.Join(t.TempDir(), "registry-ca.pem")
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		t.Fatalf("write CA file: %v", err)
+	}
+	return path
+}
+
+// GenerateClientCertFiles writes a self-signed client-auth cert/key PEM pair
+// (the cert is its own CA, so it verifies against a ClientCAs pool holding
+// itself). The cert PEM also doubles as generic valid-PEM-certificate input
+// for CA-file validation tests.
+func GenerateClientCertFiles(t *testing.T) (certFile, keyFile string) {
+	t.Helper()
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatalf("generate client key: %v", err)
+	}
+	template := x509.Certificate{
+		SerialNumber:          big.NewInt(1),
+		Subject:               pkix.Name{CommonName: "drydock-ocitest-client"},
+		NotBefore:             time.Now().Add(-time.Hour),
+		NotAfter:              time.Now().Add(24 * time.Hour),
+		KeyUsage:              x509.KeyUsageDigitalSignature | x509.KeyUsageCertSign,
+		ExtKeyUsage:           []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
+		BasicConstraintsValid: true,
+		IsCA:                  true,
+	}
+	der, err := x509.CreateCertificate(rand.Reader, &template, &template, &key.PublicKey, key)
+	if err != nil {
+		t.Fatalf("create client cert: %v", err)
+	}
+	keyDER, err := x509.MarshalECPrivateKey(key)
+	if err != nil {
+		t.Fatalf("marshal client key: %v", err)
+	}
+	dir := t.TempDir()
+	certFile = filepath.Join(dir, "client-cert.pem")
+	keyFile = filepath.Join(dir, "client-key.pem")
+	if err := os.WriteFile(certFile, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}), 0o600); err != nil {
+		t.Fatalf("write client cert: %v", err)
+	}
+	if err := os.WriteFile(keyFile, pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: keyDER}), 0o600); err != nil {
+		t.Fatalf("write client key: %v", err)
+	}
+	return certFile, keyFile
+}
+
+func (r *Registry) serve(inner http.Handler, w http.ResponseWriter, req *http.Request) {
+	if strings.HasSuffix(req.URL.Path, "/tags/list") {
+		r.mu.Lock()
+		r.tagListRequests++
+		r.mu.Unlock()
+	}
+	r.mu.Lock()
+	enabled, username, password := r.authEnabled, r.authUsername, r.authPassword
+	r.mu.Unlock()
+	if enabled {
+		gotUser, gotPass, ok := req.BasicAuth()
+		if !ok || gotUser != username || gotPass != password {
+			writeUnauthorized(w, req)
+			return
+		}
+	}
+	inner.ServeHTTP(w, req)
+}
+
+// writeUnauthorized answers 401. The Www-Authenticate: Basic header is
+// mandatory: the ORAS auth client only retries with credentials after parsing
+// it (oras-go v2.6.1 auth/client.go:308-323,380-390). The errcode-shaped JSON
+// body ECHOES the received Authorization header raw AND base64-decoded so a
+// leaked credential is observable in client error text — redaction tests bite
+// on real leak-shaped output instead of passing vacuously.
+func writeUnauthorized(w http.ResponseWriter, req *http.Request) {
+	w.Header().Set("Www-Authenticate", `Basic realm="drydock-ocitest"`)
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusUnauthorized)
+	message := "authentication required"
+	if authorization := req.Header.Get("Authorization"); authorization != "" {
+		message += "; received authorization " + authorization
+		if value, found := strings.CutPrefix(authorization, "Basic "); found {
+			if decoded, err := base64.StdEncoding.DecodeString(value); err == nil {
+				message += " decoded " + string(decoded)
+			}
+		}
+	}
+	type errcodeError struct {
+		Code    string `json:"code"`
+		Message string `json:"message"`
+	}
+	body := struct {
+		Errors []errcodeError `json:"errors"`
+	}{Errors: []errcodeError{{Code: "UNAUTHORIZED", Message: message}}}
+	data, err := json.Marshal(body)
+	if err != nil {
+		return
+	}
+	_, _ = w.Write(data)
 }
 
 // RepoURL returns the oci:// URL for a repository on this registry.
@@ -158,6 +367,10 @@ func remoteRepo(t *testing.T, reg *Registry, repoName string) *remote.Repository
 	repo, err := remote.NewRepository(reg.Host + "/" + repoName)
 	if err != nil {
 		t.Fatalf("new repository %s/%s: %v", reg.Host, repoName, err)
+	}
+	if reg.pushTLS != nil {
+		repo.Client = &http.Client{Transport: &http.Transport{TLSClientConfig: reg.pushTLS.Clone()}}
+		return repo
 	}
 	repo.PlainHTTP = true
 	return repo

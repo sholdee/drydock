@@ -29,7 +29,9 @@ fetched unless the request is configured for offline/cache-only behavior.
 
 `Config.OCICacheDir` overrides the OCI artifact source cache root, mirroring
 the CLI `--oci-cache-dir` flag. Like the other cache roots, it must resolve
-outside current and baseline repository trees.
+outside current and baseline repository trees. `Config.OCICredentials`
+mirrors the CLI `--oci-*` credential flags for private OCI artifact
+registries — a single global set, with TLS material given as file paths.
 
 `NewClient` accepts public Git, chart, remote-resource, and plugin renderer
 interfaces so tests and embedding callers can provide deterministic fakes

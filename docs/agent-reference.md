@@ -248,6 +248,11 @@ Authenticated source handling is explicit and non-interactive:
 - HTTP(S) Helm and remote Kustomize auth support bearer and basic auth; bearer
   wins.
 - OCI Helm auth is provided only through explicit registry config.
+- OCI artifact auth is provided only through the explicit `--oci-*` flags: one
+  global username/password and TLS set for every OCI artifact registry in a
+  run. Any TLS-implying `--oci-*` flag disables the loopback plain-HTTP
+  default. Credentials in `oci://` repository URLs are rejected with a
+  redacted error.
 
 Never print password, bearer token, SSH private key, SSH passphrase, remote
 resource credential, registry credential, or credential-bearing URL values.

@@ -30,6 +30,11 @@ func validateBuildNetworkOptions(request BuildRequest) error {
 	if _, err := ociartifact.ResolveCacheDir(request.OCICacheDir, forbiddenRoots); err != nil {
 		return err
 	}
+	// Fail fast on unusable OCI TLS material: the vendored client would
+	// otherwise degrade silently mid-render (see ociartifact.Credentials.Validate).
+	if err := request.OCICredentials.Validate(); err != nil {
+		return err
+	}
 	if err := validateBuildRenderCacheRoot(request); err != nil {
 		return err
 	}

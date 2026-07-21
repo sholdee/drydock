@@ -160,6 +160,70 @@ reflected on the next online render; only the image content itself is served
 from the cache when its digest is already present. There is no `--refresh-oci`
 flag because nothing tag-shaped can go stale between online runs.
 
+### Authentication And TLS
+
+Private OCI artifact registries authenticate with an explicit global
+credential family; `--registry-config` still applies to OCI Helm chart
+sources only:
+
+| Flag | Behavior |
+| --- | --- |
+| `--oci-username USER` | Username for authenticated OCI artifact registries. |
+| `--oci-password PASS` | Password for authenticated OCI artifact registries. |
+| `--oci-ca-file PATH` | PEM CA bundle for OCI artifact registry TLS (replaces the system pool for all OCI registries). |
+| `--oci-client-cert-file PATH` | Client certificate file for mutual-TLS OCI artifact registries (requires `--oci-client-key-file`). |
+| `--oci-client-key-file PATH` | Client key file for mutual-TLS OCI artifact registries (requires `--oci-client-cert-file`). |
+| `--oci-insecure-skip-verify` | Skip TLS certificate verification for OCI artifact registries (insecure; credentials are exposed to whoever answers). |
+
+The family is a single global set: the one username/password pair is
+presented to every OCI artifact registry the run touches, matching the
+Git and Helm credential flags. Per-registry credential maps and Docker
+config ingestion are recorded follow-ups.
+
+TLS behavior follows one deterministic rule. Loopback registries
+(localhost) default to plain HTTP for local development and testing; all
+other hosts always use TLS. Setting any TLS-implying flag —
+`--oci-ca-file`, `--oci-client-cert-file`, `--oci-client-key-file`, or
+`--oci-insecure-skip-verify` — disables the loopback plain-HTTP default.
+Because the family is global, one TLS-implying flag flips every loopback
+registry in the run to TLS; runs without those flags are unaffected. No
+flag can downgrade a non-loopback registry to plain HTTP.
+
+TLS caveats:
+
+- `--oci-ca-file` **replaces** the system trust pool for all OCI artifact
+  registries in the run; it does not append to it. A run mixing a
+  private-CA registry and a public-CA registry needs a bundle containing
+  both CAs (or per-registry maps, a recorded follow-up).
+- The CA file must exist and parse as PEM, and
+  `--oci-client-cert-file`/`--oci-client-key-file` must be set together
+  as a valid pair. Validation fails fast at request construction with an
+  error naming the flag.
+
+Credentials embedded in the repository URL are rejected early with a
+redacted error:
+
+```text
+OCI artifact oci://registry.example.com/org/app: "@" and "%" are not allowed in an OCI repository URL; put digests in targetRevision and credentials in --oci-username/--oci-password
+```
+
+Credential values never enter cache keys, cache metadata, cache events,
+diagnostics, or formatted errors. A credentialed run produces the same
+cache entries as an anonymous run, and registry authentication failures
+redact the presented authorization material:
+
+```text
+... response status code 401: unauthorized: authentication required; received authorization Basic [redacted] decoded [redacted]:[redacted]
+```
+
+Credentials affect only online acquisition. `--offline` runs never
+contact the registry, so the `--oci-*` credential flags have no effect on
+offline acquisition — with one caveat: credential validation (missing or
+non-PEM `--oci-ca-file`, incomplete or mismatched client cert/key pair)
+runs at request construction on every build and diff, including offline
+runs and runs with no OCI sources at all, and fails fast. Wrappers that
+pass `--oci-*` flags unconditionally should pass valid values or none.
+
 ### Extraction Guards
 
 Artifact extraction enforces the Argo CD repo-server defaults: at most 10
@@ -206,10 +270,12 @@ and tag records, then re-run with `--offline`.
 - Changed-only diff selection treats OCI sources like chart-only Helm
   sources: they re-render when the Application manifest changes, not on
   arbitrary repository changes, and they never render discovery objects.
-- Private registries requiring authentication are not yet supported for OCI
-  artifact sources; `--registry-config` applies to OCI Helm chart sources
-  only. Loopback registries (localhost) use plain HTTP for local development
-  and testing; all other hosts use TLS.
+- Private registries requiring authentication use the explicit `--oci-*`
+  credential flags (see
+  [Authentication And TLS](#authentication-and-tls));
+  `--registry-config` applies to OCI Helm chart sources only. Loopback
+  registries (localhost) use plain HTTP for local development and testing
+  unless a TLS-implying `--oci-*` flag is set; all other hosts use TLS.
 
 ## Kustomize Sources
 
@@ -296,7 +362,7 @@ drydock test apps --path . --offline
 | `--render-cache-max-size QUANTITY` | Size cap before LRU eviction (default `512Mi`). |
 | `--refresh-renders` | Ignore persisted render outputs and overwrite them after rendering. |
 | `--plugin-cache-dir PATH` | Runtime override for policy-managed container plugin cache mounts. |
-| `--registry-config PATH` | Supply the only Helm OCI registry credentials. |
+| `--registry-config PATH` | Supply the only Helm OCI chart registry credentials. OCI artifact sources use the `--oci-*` credential flags instead. |
 
 Render-time Git, chart, OCI artifact, and remote-resource caches must stay outside the
 current repository tree, compared repository trees, repo-map roots, and their
@@ -423,6 +489,8 @@ discovered repository Secrets, or live Argo CD repository state.
 | HTTP(S) Helm | Bearer token | `--helm-bearer-token TOKEN` |
 | HTTP(S) Helm | Basic auth | `--helm-username USER`, `--helm-password PASS` |
 | OCI Helm | Registry config | `--registry-config PATH` |
+| OCI artifact | Basic auth | `--oci-username USER`, `--oci-password PASS` |
+| OCI artifact | TLS material | `--oci-ca-file PATH`, `--oci-client-cert-file PATH`, `--oci-client-key-file PATH`, `--oci-insecure-skip-verify` |
 | HTTP(S) remote Kustomize | Bearer token | `--remote-bearer-token TOKEN` |
 | HTTP(S) remote Kustomize | Basic auth | `--remote-username USER`, `--remote-password PASS` |
 

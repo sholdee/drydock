@@ -150,6 +150,37 @@ data: {}
 	}
 }
 
+// TestBuildAndDiffFailFastOnInvalidOCICredentials pins the
+// request-construction validation wiring on both surfaces: unusable OCI TLS
+// material fails before any rendering starts, with the error naming the flag
+// (the vendored client would otherwise degrade silently mid-render).
+func TestBuildAndDiffFailFastOnInvalidOCICredentials(t *testing.T) {
+	root := t.TempDir()
+	writeOCIApplication(t, root, "demo", "oci://registry.example.test/org/app", ".", "v1", "")
+	nonPEM := filepath.Join(t.TempDir(), "not-a-cert.pem")
+	if err := os.WriteFile(nonPEM, []byte("not pem data"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	request := ociBuildRequest(t, root)
+	request.OCICredentials = ociartifact.Credentials{CAFile: nonPEM}
+	if _, err := (Orchestrator{}).Build(context.Background(), request); err == nil || !strings.Contains(err.Error(), "--oci-ca-file") {
+		t.Fatalf("Build() error = %v, want fail-fast validation naming --oci-ca-file", err)
+	}
+
+	diffRequest := DiffRequest{
+		LeftPath:  root,
+		RightPath: root,
+		AcquisitionOptions: AcquisitionOptions{
+			OCICacheDir:    t.TempDir(),
+			OCICredentials: ociartifact.Credentials{CAFile: nonPEM},
+		},
+	}
+	if _, err := (Orchestrator{}).DiffApps(context.Background(), diffRequest); err == nil || !strings.Contains(err.Error(), "--oci-ca-file") {
+		t.Fatalf("DiffApps() error = %v, want fail-fast validation naming --oci-ca-file", err)
+	}
+}
+
 // Issue #220 shape WITH a helm block: values flow into the artifact chart.
 func TestBuildRendersOCIArtifactWithHelmValues(t *testing.T) {
 	reg := ocitest.StartRegistry(t)

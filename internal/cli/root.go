@@ -5,6 +5,7 @@ import (
 	"io"
 
 	"github.com/sholdee/drydock/internal/app"
+	"github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
 )
@@ -48,6 +49,14 @@ func NewRootCommand(info VersionInfo) *cobra.Command {
 }
 
 func NewRootCommandWithDependencies(info VersionInfo, deps Dependencies) *cobra.Command {
+	// Quiet vendored logrus Info output: the vendored Argo CD OCI client logs
+	// a per-fetch `"took to get tags" repo=<url>` Info line straight to
+	// stderr (argo-cd v3.4.5 util/oci/client.go:446-448, unconfigured global
+	// logger), polluting drydock's diagnostics stream on every tag-list
+	// fetch. No drydock path relies on logrus output at any level (checked:
+	// zero logrus imports under internal/, pkg/, cmd/ outside this call);
+	// Warn and above stay visible.
+	logrus.SetLevel(logrus.WarnLevel)
 	profileFlags := defaultProfileFlags()
 	cmd := &cobra.Command{
 		Use:           "drydock",

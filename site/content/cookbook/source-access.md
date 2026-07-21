@@ -38,8 +38,47 @@ constraint such as `1.x`. Tags re-resolve against the registry on every online
 run, so a re-pushed tag is picked up automatically; pin a digest when the
 render must not move. For `--offline` runs, warm the cache with one online run
 first — digests render from the cached image, and tags or constraints resolve
-from records captured online. Private registries requiring authentication are
-not yet supported for OCI artifact sources.
+from records captured online. Private registries requiring authentication use
+the explicit `--oci-*` credential flags — see
+[Render Private OCI Artifact Registries](#render-private-oci-artifact-registries).
+
+## Render Private OCI Artifact Registries
+
+```bash
+drydock test apps --path . \
+  --oci-username "$OCI_USER" \
+  --oci-password "$OCI_PASSWORD"
+drydock test apps --path . \
+  --oci-username "$OCI_USER" \
+  --oci-password "$OCI_PASSWORD" \
+  --oci-ca-file ./ci/registry-ca.pem
+```
+
+The `--oci-*` flags are one global set: the same username/password pair and
+TLS configuration are presented to every OCI artifact registry the run
+touches. `--oci-ca-file` replaces the system trust pool for all OCI artifact
+registries in the run, and setting any TLS-implying flag (`--oci-ca-file`,
+`--oci-client-cert-file`, `--oci-client-key-file`,
+`--oci-insecure-skip-verify`) switches loopback registries from their
+plain-HTTP development default to TLS. Credentials embedded in the `oci://`
+repository URL are rejected; pass them through the flags. Details are in
+[source acquisition](/concepts/source-acquisition/#authentication-and-tls).
+
+In the GitHub PR action, pass the same flags through the trusted `extra-*`
+inputs with repository secrets. The action defines no OCI credential inputs;
+both diff sides share the extra diff arguments, and the action never echoes
+its argument list, so secret values stay out of workflow logs:
+
+```yaml
+- uses: sholdee/drydock/pr-action@main
+  with:
+    extra-test-args: |
+      --oci-username=${{ secrets.OCI_REGISTRY_USER }}
+      --oci-password=${{ secrets.OCI_REGISTRY_PASSWORD }}
+    extra-diff-args: |
+      --oci-username=${{ secrets.OCI_REGISTRY_USER }}
+      --oci-password=${{ secrets.OCI_REGISTRY_PASSWORD }}
+```
 
 ## Prove Cache-Only Runs
 
