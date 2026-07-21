@@ -29,9 +29,16 @@ selection, or rendered fleet discovery.
 ## Source Resolution
 
 Application sources resolve from repo maps, local paths, declared Git sources,
-Helm chart sources, remote Kustomize resources, and drydock caches. Default
-runs may fetch declared Git, HTTP Helm, OCI Helm, and remote Kustomize inputs
-into explicit caches. `--offline` makes those source lookups cache-only.
+Helm chart sources, OCI artifact sources, remote Kustomize resources, and
+drydock caches. Default runs may fetch declared Git, HTTP Helm, OCI Helm, OCI
+artifact, and remote Kustomize inputs into explicit caches. `--offline` makes
+those source lookups cache-only.
+
+First-class OCI artifact sources (`repoURL: oci://...` with `path:` and no
+`chart:`) are classified before local-path resolution: their revision resolves
+to a digest, the artifact content is pulled and extracted, and the selected
+`path` renders through the normal pipeline. `--repo-map` of the `oci://` URL
+still takes precedence.
 
 ## Rendering
 

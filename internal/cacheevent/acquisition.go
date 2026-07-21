@@ -12,6 +12,7 @@ const (
 	AcquisitionChart      AcquisitionKind = "chart"
 	AcquisitionRemoteGit  AcquisitionKind = "remote-git"
 	AcquisitionRemoteHTTP AcquisitionKind = "remote-http"
+	AcquisitionOCI        AcquisitionKind = "oci"
 )
 
 // AcquisitionRecord retains the pre-collapse requested and resolved revisions

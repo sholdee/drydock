@@ -22,6 +22,7 @@ prune_output="$(
     --chart-cache-dir "${cache_path}/charts" \
     --remote-cache-dir "${cache_path}/remotes" \
     --render-cache-dir "${cache_path}/renders" \
+    --oci-cache-dir "${cache_path}/oci" \
     -o json \
     2>"${stderr_tmp}"
 )" || prune_exit=$?

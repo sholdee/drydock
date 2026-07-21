@@ -17,6 +17,7 @@ import (
 	"github.com/sholdee/drydock/internal/discovery"
 	"github.com/sholdee/drydock/internal/luahealth"
 	"github.com/sholdee/drydock/internal/manifest"
+	"github.com/sholdee/drydock/internal/ociartifact"
 	"github.com/sholdee/drydock/internal/plugincontainer"
 	"github.com/sholdee/drydock/internal/pluginexec"
 	"github.com/sholdee/drydock/internal/project"
@@ -146,6 +147,7 @@ type Orchestrator struct {
 	ChartAcquirer          chart.Acquirer
 	GitAcquirer            sourcepkg.GitAcquirer
 	RemoteResourceAcquirer remote.Acquirer
+	OCIArtifactAcquirer    ociartifact.Acquirer
 	PluginRenderer         render.PluginRenderer
 	PluginExecRunner       pluginexec.Runner
 	PluginContainerRunner  plugincontainer.Runner

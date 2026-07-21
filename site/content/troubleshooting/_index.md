@@ -68,8 +68,8 @@ manifest instead; ignoring it hides it from every discovery-based command.
 ## Symptom: Render Fails In CI But Works Locally
 
 Confirm whether CI has the same source access and caches. Default runs may
-fetch declared Git, Helm, OCI Helm, and remote Kustomize sources into drydock
-caches. `--offline` disables those source network fetches and requires local
+fetch declared Git, Helm, OCI Helm, OCI artifact, and remote Kustomize
+sources into drydock caches. `--offline` disables those source network fetches and requires local
 files, repo maps, or existing cache entries.
 
 ```bash
@@ -114,6 +114,37 @@ Two remediations:
 The flip side of local resolution: a self-repository source `path` that was
 deleted locally fails path-not-found even though the remote tip still has it —
 the local tree is the desired state.
+
+## Symptom: OCI Source Renders The Local Checkout Or Fails With `load helm chart .`
+
+A first-class OCI artifact source — `repoURL: oci://...` with `path:` and no
+`chart:` — has two historical failure modes on older drydock releases, which
+did not classify `oci://` URLs:
+
+- With a `helm:` block, the render failed with an error like
+  `load helm chart .`, because the local repository root was treated as the
+  chart directory.
+- Without a `helm:` block, the run silently succeeded but rendered the LOCAL
+  checkout as plain manifests (`path: .` always exists locally), not the
+  artifact content.
+
+Upgrade drydock: current releases classify every `oci://` source before local
+path resolution, resolve the revision to a digest, and render the pulled
+artifact content. If you added `--repo-map` of the `oci://` URL as a
+workaround, it still wins over registry acquisition — remove it when you want
+the artifact fetched, keep it when a local checkout of the content should be
+rendered instead.
+
+Related shapes on current releases:
+
+- `oci://` + `chart:` (no `path:`) keeps the Helm-chart flow (recorded
+  divergence from strict Argo CD v3.4.5).
+- `oci://` + `chart:` + `path:` fails with `unsupported source shape`.
+- An OCI URL as a `$ref` value-file source fails clearly; Argo CD supports
+  Git-only `$ref` sources.
+- An `offline cache miss` error under `--offline` means the digest, tag, or
+  constraint was never resolved online against this cache directory — run
+  once without `--offline` to warm the image cache and tag records.
 
 ## Symptom: Changed-Only Falls Back To All Apps
 

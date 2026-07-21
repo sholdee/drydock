@@ -10,6 +10,7 @@ import (
 	"github.com/sholdee/drydock/internal/chart"
 	"github.com/sholdee/drydock/internal/config"
 	"github.com/sholdee/drydock/internal/diagnostic"
+	"github.com/sholdee/drydock/internal/ociartifact"
 	"github.com/sholdee/drydock/internal/plugincontainer"
 	"github.com/sholdee/drydock/internal/pluginexec"
 	"github.com/sholdee/drydock/internal/pluginpolicy"
@@ -39,6 +40,9 @@ type localProvider struct {
 	remoteResourceForbiddenRoots []string
 	remoteResourceCredentials    remote.Credentials
 	remoteResourceGitCredentials remote.GitCredentials
+	ociArtifactAcquirer          ociartifact.Acquirer
+	ociCacheDir                  string
+	ociForbiddenRoots            []string
 	helmValueFileSchemes         []string
 	helmValueFileSchemesSet      bool
 	helmChartLoadCache           *render.HelmChartLoadCache
@@ -99,6 +103,12 @@ func (p localProvider) RenderSource(ctx context.Context, source render.ResolvedS
 		}
 	}
 	source.RepoRoot = sourceRoot
+	if ociartifact.IsOCIURL(source.RepoURL) && source.Chart == "" && source.Path == "" {
+		// Argo CD renders the extraction root when an OCI source omits path
+		// (apppathutil.Path(ociPath, "") — vendored repository.go:415-418);
+		// "." selects the same root through the local-renderer dispatch below.
+		source.Path = "."
+	}
 	opts.ChartAcquirer = p.acquisition.ChartAcquirer(p.chartAcquirer)
 	opts.ChartCacheDir = p.chartCacheDir
 	opts.OfflineCharts = p.offline

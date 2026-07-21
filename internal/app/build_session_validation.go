@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/sholdee/drydock/internal/chart"
+	"github.com/sholdee/drydock/internal/ociartifact"
 	"github.com/sholdee/drydock/internal/pathsafety"
 	"github.com/sholdee/drydock/internal/remote"
 	"github.com/sholdee/drydock/internal/rendercache"
@@ -24,6 +25,9 @@ func validateBuildNetworkOptions(request BuildRequest) error {
 		return err
 	}
 	if _, err := remote.ResolveCacheDir(request.RemoteResourceCacheDir, forbiddenRoots); err != nil {
+		return err
+	}
+	if _, err := ociartifact.ResolveCacheDir(request.OCICacheDir, forbiddenRoots); err != nil {
 		return err
 	}
 	if err := validateBuildRenderCacheRoot(request); err != nil {

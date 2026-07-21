@@ -24,9 +24,9 @@ For task-oriented examples, start with [Getting started](/getting-started/),
 | Check plugin policy readiness | `drydock plugin-policy doctor --path .` |
 
 All render-backed commands are runtime-offline: they do not contact live Argo
-CD or Kubernetes. Declared Git, HTTP Helm, OCI Helm, and remote Kustomize
-sources may still be fetched into explicit drydock caches unless `--offline`
-is set.
+CD or Kubernetes. Declared Git, HTTP Helm, OCI Helm, OCI artifact, and remote
+Kustomize sources may still be fetched into explicit drydock caches unless
+`--offline` is set.
 
 ## Discovery Commands
 
@@ -138,9 +138,20 @@ statuses, diagnostics, cache events, and structured output.
 
 Rendering supports directory sources, directory Jsonnet, Kustomize sources,
 local Helm charts, Kustomize `helmCharts`, remote Kustomize HTTP(S) files and
-Git refs, and Argo CD chart-only remote Helm sources. Path-based Git sources
-use the local `--path` tree when the source path exists there. Use
-`--repo-map URL=PATH` to force a source repository URL to a local checkout.
+Git refs, Argo CD chart-only remote Helm sources, and first-class OCI
+artifact sources (`repoURL: oci://...` with `path:` and no `chart:`).
+Path-based Git sources use the local `--path` tree when the source path
+exists there. Use `--repo-map URL=PATH` to force a source repository URL to a
+local checkout.
+
+OCI artifact sources resolve digest, exact-tag, or semver-constraint
+revisions against the registry, cache the pulled image under the OCI cache
+root (`--oci-cache-dir PATH` overrides it), and render the extracted content
+at the source `path`. An `oci://` source with `chart:` and no `path:` keeps
+the Helm-chart flow; setting both `chart:` and `path:` is an error, and OCI
+sources cannot be `$ref` value-file sources. See
+[Source acquisition](/concepts/source-acquisition/#oci-artifact-sources) for
+revision, cache, and offline details.
 
 Capability-gated charts can render optional resources only when a Kubernetes
 version or API version is available. drydock derives a default Kubernetes
@@ -388,13 +399,18 @@ Print resolved cache roots:
 drydock cache path
 ```
 
-List recognized Git, chart, remote Kustomize, and render output cache
-entries:
+List recognized Git, chart, remote Kustomize, OCI artifact, and render output
+cache entries:
 
 ```bash
 drydock cache list
 drydock cache list --source chart -o json
+drydock cache list --source oci -o json
 ```
+
+`--source` accepts `git`, `chart`, `remote`, `render`, or `oci`. OCI artifact
+entries list with source `oci` and kind `image`, keyed by repository URL and
+resolved digest.
 
 Report stale entries without deleting them:
 
@@ -416,8 +432,9 @@ Dry-runs never require confirmation and leave cache files in place.
 Cache lifecycle commands are local filesystem operations only. They do not
 render Applications, clone or fetch Git repositories, fetch Helm charts, fetch
 remote Kustomize resources, or read credential flags. They operate only on
-recognized drydock Git, chart, remote-resource, and render output cache entry
-roots and reject cache roots that resolve inside the current working
+recognized drydock Git, chart, remote-resource, OCI artifact, and render
+output cache entry roots and reject cache roots that resolve inside the
+current working
 directory, selected repository roots, Git repository trees, or
 symlink-resolved equivalents. Render output entries are selected with
 `--source render` and `--render-cache-dir`; plugin cache mount roots remain

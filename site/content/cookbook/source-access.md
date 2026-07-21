@@ -17,6 +17,30 @@ at `HEAD` or its default-branch name resolves to the local tree automatically
 on all render surfaces. Keep `--repo-map` for forks, commit-SHA pins, and runs
 from a subdirectory of the checkout.
 
+## Render OCI Artifact Sources
+
+```yaml
+source:
+  repoURL: oci://ghcr.io/example/config-artifact
+  targetRevision: 1.2.3
+  path: .
+```
+
+First-class OCI artifact sources render with normal commands — no extra flags:
+
+```bash
+drydock test apps --path .
+drydock build apps --path . --oci-cache-dir /var/cache/drydock-oci
+```
+
+The revision may be a digest (`sha256:...`), an exact tag, or a semver
+constraint such as `1.x`. Tags re-resolve against the registry on every online
+run, so a re-pushed tag is picked up automatically; pin a digest when the
+render must not move. For `--offline` runs, warm the cache with one online run
+first — digests render from the cached image, and tags or constraints resolve
+from records captured online. Private registries requiring authentication are
+not yet supported for OCI artifact sources.
+
 ## Prove Cache-Only Runs
 
 ```bash

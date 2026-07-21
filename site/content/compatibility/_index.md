@@ -26,7 +26,7 @@ which boundaries are intentionally runtime-offline.
 | --- | --- | --- | --- |
 | Applications | Native | Direct `Application` manifests, single-source and multi-source apps, rendered app-of-apps discovery. | No live application-controller state or sync behavior. |
 | ApplicationSets | Native and supported with input | Git directories, Git files, list, matrix, merge, template overrides, `templatePatch`, and fixture-backed provider generators. | No live Kubernetes, SCM, pull-request, cloud, or plugin provider API calls. |
-| Sources | Native and supported with input | Local paths, Git cache/fetch, `--repo-map`, HTTP(S) Helm, OCI Helm, remote Kustomize, external Helm value files, and cache lifecycle commands. | `--offline` requires local files, repo maps, or cache hits. Ambient Git helpers and Helm registry config are not read. |
+| Sources | Native and supported with input | Local paths, Git cache/fetch, `--repo-map`, HTTP(S) Helm, OCI Helm, OCI artifact sources, remote Kustomize, external Helm value files, and cache lifecycle commands. | `--offline` requires local files, repo maps, or cache hits. Ambient Git helpers and Helm registry config are not read. Private OCI registries are not yet supported for OCI artifact sources. |
 | Rendering | Native | Directory, Kustomize, Helm, Jsonnet, Kustomize Helm charts, Argo CD tracking metadata, namespace normalization, and custom health Lua validation. | No `kubectl`, `argocd`, Helm CLI, Kustomize CLI, repo-server wrapper, or live API defaulting. |
 | Plugins | Supported with input | Native safe Kustomize CMP compatibility, argocd-vault-plugin placeholder compatibility, in-process public API renderers, trusted exec or container policy with `--enable-plugins`, and `bootstrap.entrypoints` for plugin-rendered app discovery. | No default sidecar plugin execution, ambient plugin loading, or plugin credential injection. |
 | Diffs and images | Native | Desired-vs-desired manifest diffs, Git ref diffs, ignored-field normalization, markdown diff previews, and image extraction from PodSpecs and exact `image` keys. | No live managed-fields prediction, server-side diff, or arbitrary string image scanning. |
@@ -42,6 +42,7 @@ which boundaries are intentionally runtime-offline.
 | App-of-apps or bootstrap manifests | Let recursive rendered fleet discovery find rendered Applications, use `--discover-kustomize PATH` for explicit Kustomize entrypoints, or use trusted PluginPolicy `bootstrap.entrypoints` when bootstrap apps are plugin-rendered. |
 | Multi-source Applications | Use normal commands; add `--repo-map URL=PATH` when external Git sources are already checked out locally. |
 | Remote Helm or OCI charts | Let drydock fetch into its chart cache, or pre-populate the cache and use `--offline`. |
+| First-class OCI artifact sources (`oci://` + `path:`) | Use normal commands; drydock resolves the tag or constraint to a digest and renders the artifact content. Warm the cache online before `--offline` runs. |
 | Private Git, Helm, or remote Kustomize sources | Pass explicit auth flags or local repo maps. drydock does not read ambient credential helpers. |
 | Kustomize with Helm charts | Use the native renderer. `kustomize.buildOptions: --enable-helm` is honored without shelling out to Kustomize. |
 | Config management plugins | Prefer native compatibility paths. Use trusted plugin policy plus `--enable-plugins` only when exec or container command simulation is truly needed. |
@@ -70,9 +71,9 @@ See [ApplicationSet support](/docs/applicationsets/) and
 ### Sources and rendering
 
 drydock renders directory, Kustomize, Helm, and Jsonnet sources through native
-Go paths. It can fetch declared Git, HTTP(S) Helm, OCI Helm, and remote
-Kustomize resources into explicit caches. `--offline` turns those source
-network fetches into cache/local-only requirements.
+Go paths. It can fetch declared Git, HTTP(S) Helm, OCI Helm, OCI artifact,
+and remote Kustomize resources into explicit caches. `--offline` turns those
+source network fetches into cache/local-only requirements.
 
 Rendering intentionally does not call live Argo CD, Kubernetes, `kubectl`,
 `argocd`, Helm CLI, or Kustomize CLI. That keeps local and CI analysis fast,

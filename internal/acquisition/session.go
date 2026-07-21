@@ -10,6 +10,7 @@ import (
 
 	"github.com/sholdee/drydock/internal/chart"
 	"github.com/sholdee/drydock/internal/filecopy"
+	"github.com/sholdee/drydock/internal/ociartifact"
 	"github.com/sholdee/drydock/internal/remote"
 	"github.com/sholdee/drydock/internal/source"
 )
@@ -39,9 +40,11 @@ type TargetLocks struct {
 }
 
 type SnapshotCache struct {
-	mu     sync.Mutex
-	gits   map[string]source.GitResult
-	charts map[string]chart.Result
+	mu          sync.Mutex
+	gits        map[string]source.GitResult
+	charts      map[string]chart.Result
+	ociResolves map[string]string
+	ociExtracts map[string]string
 }
 
 type targetLock struct {
@@ -55,8 +58,10 @@ func NewTargetLocks() *TargetLocks {
 
 func NewSnapshotCache() *SnapshotCache {
 	return &SnapshotCache{
-		gits:   map[string]source.GitResult{},
-		charts: map[string]chart.Result{},
+		gits:        map[string]source.GitResult{},
+		charts:      map[string]chart.Result{},
+		ociResolves: map[string]string{},
+		ociExtracts: map[string]string{},
 	}
 }
 
@@ -94,6 +99,44 @@ func (cache *SnapshotCache) storeGit(key string, result source.GitResult) {
 	cache.mu.Lock()
 	defer cache.mu.Unlock()
 	cache.gits[key] = result
+}
+
+func (cache *SnapshotCache) ociResolve(key string) (string, bool) {
+	if cache == nil {
+		return "", false
+	}
+	cache.mu.Lock()
+	defer cache.mu.Unlock()
+	digest, ok := cache.ociResolves[key]
+	return digest, ok
+}
+
+func (cache *SnapshotCache) storeOCIResolve(key, digest string) {
+	if cache == nil {
+		return
+	}
+	cache.mu.Lock()
+	defer cache.mu.Unlock()
+	cache.ociResolves[key] = digest
+}
+
+func (cache *SnapshotCache) ociExtract(key string) (string, bool) {
+	if cache == nil {
+		return "", false
+	}
+	cache.mu.Lock()
+	defer cache.mu.Unlock()
+	dir, ok := cache.ociExtracts[key]
+	return dir, ok
+}
+
+func (cache *SnapshotCache) storeOCIExtract(key, dir string) {
+	if cache == nil {
+		return
+	}
+	cache.mu.Lock()
+	defer cache.mu.Unlock()
+	cache.ociExtracts[key] = dir
 }
 
 func (cache *SnapshotCache) chart(key string) (chart.Result, bool) {
@@ -165,6 +208,28 @@ func (session Session) ChartAcquirer(delegate chart.Acquirer) chart.Acquirer {
 		return delegate
 	}
 	return cacheSafeChartAcquirer{
+		delegate:      delegate,
+		locks:         session.Locks,
+		snapshotRoot:  session.SnapshotRoot,
+		snapshot:      session.SnapshotCacheReads,
+		snapshotCache: session.SnapshotCache,
+	}
+}
+
+// OCIArtifactAcquirer decorates delegate with the session memo required by
+// the render-cache prepare phase: collectSourceIdentities re-invokes source
+// resolution before every render, so without memoization every OCI source
+// would resolve and extract twice with duplicated acquisition events.
+// Extractions are copied into the session snapshot area and released with the
+// session.
+func (session Session) OCIArtifactAcquirer(delegate ociartifact.Acquirer) ociartifact.Acquirer {
+	if delegate == nil {
+		delegate = ociartifact.DefaultAcquirer{}
+	}
+	if session.Locks == nil {
+		return delegate
+	}
+	return cacheSafeOCIArtifactAcquirer{
 		delegate:      delegate,
 		locks:         session.Locks,
 		snapshotRoot:  session.SnapshotRoot,
@@ -263,6 +328,65 @@ func (acquirer cacheSafeChartAcquirer) Acquire(ctx context.Context, request char
 	return result, nil
 }
 
+type cacheSafeOCIArtifactAcquirer struct {
+	delegate      ociartifact.Acquirer
+	locks         *TargetLocks
+	snapshotRoot  string
+	snapshot      bool
+	snapshotCache *SnapshotCache
+}
+
+func (acquirer cacheSafeOCIArtifactAcquirer) Resolve(ctx context.Context, repoURL, revision string, opts ociartifact.Options) (string, error) {
+	key := "oci-resolve:" + ociartifact.NormalizeURL(repoURL) + "\x00" + strings.TrimSpace(revision)
+	unlock := acquirer.locks.lock(key)
+	defer unlock()
+
+	if acquirer.snapshot {
+		if digest, ok := acquirer.snapshotCache.ociResolve(key); ok {
+			return digest, nil
+		}
+	}
+	digest, err := acquirer.delegate.Resolve(ctx, repoURL, revision, opts)
+	if err != nil || !acquirer.snapshot {
+		return digest, err
+	}
+	acquirer.snapshotCache.storeOCIResolve(key, digest)
+	return digest, nil
+}
+
+func (acquirer cacheSafeOCIArtifactAcquirer) Extract(ctx context.Context, repoURL, digest string, opts ociartifact.Options) (string, func(), error) {
+	key, keyErr := ociCacheLockKey(repoURL, digest, opts)
+	if keyErr != nil {
+		return acquirer.delegate.Extract(ctx, repoURL, digest, opts)
+	}
+	unlock := acquirer.locks.lock(key)
+	defer unlock()
+
+	if acquirer.snapshot {
+		if dir, ok := acquirer.snapshotCache.ociExtract(key); ok {
+			return dir, func() {}, nil
+		}
+	}
+
+	dir, release, err := acquirer.delegate.Extract(ctx, repoURL, digest, opts)
+	if err != nil || !acquirer.snapshot {
+		return dir, release, err
+	}
+	// Copy into the session snapshot area, then close argo's extraction
+	// closer immediately: the extraction lives under os.TempDir, so the copy
+	// never renames across the temp boundary (EXDEV) and the snapshot is
+	// released with the session.
+	snapshot, err := snapshotCachePath(acquirer.snapshotRoot, "oci", dir, snapshotCopyOptions{})
+	if release != nil {
+		release()
+	}
+	if err != nil {
+		return "", nil, err
+	}
+	acquirer.snapshotCache.storeOCIExtract(key, snapshot)
+	return snapshot, func() {}, nil
+}
+
 type cacheSafeRemoteAcquirer struct {
 	delegate     remote.Acquirer
 	locks        *TargetLocks
@@ -329,6 +453,14 @@ func chartCacheLockKey(request chart.Request, opts chart.Options) (string, error
 		return "", err
 	}
 	return absoluteCacheLockKey("chart", filepath.Join(cacheDir, string(request.Kind), key))
+}
+
+func ociCacheLockKey(repoURL, digest string, opts ociartifact.Options) (string, error) {
+	cacheDir, err := ociartifact.ResolveCacheDir(opts.CacheDir, opts.ForbiddenRoots)
+	if err != nil {
+		return "", err
+	}
+	return absoluteCacheLockKey("oci", ociartifact.EntryPath(cacheDir, repoURL, digest))
 }
 
 func remoteCacheLockKey(request remote.Request, opts remote.Options) (string, error) {

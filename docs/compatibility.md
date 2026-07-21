@@ -122,6 +122,12 @@ Supported:
 - Kustomize, directory, local Helm chart, and chart-only remote Helm sources.
 - HTTP(S) and OCI Helm chart fetching by default for chart-only remote Helm
   sources.
+- First-class Argo CD OCI artifact sources (`repoURL: oci://...` with `path:`
+  and no `chart:`): digest, exact tag, and semver-constraint revisions;
+  extraction with Argo CD repo-server default guards (layer media-type
+  allowlist, single content layer, at most 10 layers, 1G extracted-size cap);
+  digest-keyed image caching with offline tag/constraint records; and cache
+  lifecycle support as source `oci`.
 - Kustomize `helmCharts` rendered through the shared Go-library Helm path.
 - Helm `$ref/...` external value files and file parameters from Git sources.
 - HTTP(S) remote Helm value files through the remote-resource cache.
@@ -134,17 +140,33 @@ Supported:
 - Explicit HTTP(S) Helm bearer/basic auth.
 - Explicit HTTP(S) remote Kustomize bearer/basic auth.
 - Explicit Helm OCI registry config path plumbing.
-- Cache event API/reporting for Git, Helm, and remote Kustomize acquisition,
-  with redacted targets and errors.
-- Local cache lifecycle commands for recognized Git, chart, and remote
-  Kustomize cache layouts; render output entries are not listed, pruned, or
-  deleted.
+- Cache event API/reporting for Git, Helm, OCI artifact, and remote Kustomize
+  acquisition, with redacted targets and errors.
+- Local cache lifecycle commands for recognized Git, chart, OCI artifact, and
+  remote Kustomize cache layouts; render output entries are not listed,
+  pruned, or deleted.
 
 Important boundaries:
 
-- `--offline` disables Git, Helm chart, and remote Kustomize resource network
-  fetching and requires cache hits, repo maps, local files, or local chart
-  availability.
+- `--offline` disables Git, Helm chart, OCI artifact, and remote Kustomize
+  resource network fetching and requires cache hits, repo maps, local files,
+  or local chart availability. Offline OCI artifact renders use digest
+  passthrough plus the digest-keyed image cache; tags and semver constraints
+  resolve from records captured on earlier online runs.
+- Recorded divergence from strict Argo CD v3.4.5: a source combining an
+  `oci://` repository URL with `chart:` (no `path:`) keeps drydock's existing
+  Helm-chart flow instead of upstream's OCI-before-Helm dispatch, because
+  fleets use that shape and the chart flow renders what their clusters run.
+  An `oci://` source setting both `chart:` and `path:` is rejected with a
+  clear unsupported-source-shape error.
+- `$ref` value-file sources are Git-only, matching upstream: an OCI `$ref`
+  source fails with a clear error.
+- Private OCI registries are not yet supported for OCI artifact sources;
+  `--registry-config` credentials apply to OCI Helm chart sources only.
+  Reusing the Helm OCI credential machinery for artifact sources is a
+  recorded follow-up, as are CLI flags for the extraction media-type
+  allowlist and size cap, and an OCI fixture for the Argo CD render parity
+  smoke (which needs an in-cluster registry).
 - `--repo-map` takes precedence over local fallback and network fetching.
 - Top-level `--repo` for Git ref diffs supports local repository paths only.
 - Missing HTTP(S) and OCI Helm chart dependencies declared in `Chart.yaml` are

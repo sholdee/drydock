@@ -218,9 +218,9 @@ artifacts.
 
 Binary caching is separate from drydock repository caches. Binary cache entries
 contain only the released `drydock` archive and are keyed by release checksum.
-The PR action cache root contains fetched Git, Helm, and remote Kustomize
-sources, policy-managed plugin cache mounts, and persisted render outputs for
-the repository under test.
+The PR action cache root contains fetched Git, Helm, OCI artifact, and remote
+Kustomize sources, policy-managed plugin cache mounts, and persisted render
+outputs for the repository under test.
 
 Dirty-worktree render output reuse uses the existing render cache behavior. No
 new PR action input is required.
@@ -238,11 +238,19 @@ plugin cache material. They also skip PR comments by default. Set
 runs is acceptable for that repository. Cache save remains disabled for fork
 PRs.
 
+The action wires each source cache to its own subdirectory of the cache root:
+`${cache-path}/git`, `${cache-path}/charts`, `${cache-path}/remotes`, and
+`${cache-path}/oci` (passed to drydock as `--oci-cache-dir`). OCI artifact
+image entries are digest-keyed and can be large — one entry per pulled
+artifact version — so repositories with many OCI artifact sources should
+budget cache size accordingly (`cache-prune-max-size` bounds the local-mode
+cache, and the same subdirectories are covered by the action's prune step).
+
 When trusted container plugins are enabled, policy-managed plugin cache mounts
 live under the PR action cache root as `${cache-path}/plugin`. Persisted render
 outputs live under `${cache-path}/renders`. Both are restored or saved with the
 same action cache entry. `drydock cache` lifecycle commands manage Git,
-chart, remote-resource, and render output cache entry roots (use
+chart, remote-resource, OCI artifact, and render output cache entry roots (use
 `--render-cache-dir ${cache-path}/renders` to target the action's persisted
 renders); they do not manage plugin cache mount roots.
 

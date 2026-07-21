@@ -48,6 +48,7 @@ type Options struct {
 	RemoteResourceForbiddenRoots   []string
 	RemoteResourceCredentials      remote.Credentials
 	RemoteResourceGitCredentials   remote.GitCredentials
+	OCICacheDir                    string
 	EnableAVPCompat                bool
 	EnableKSOPSCompat              bool
 	EnablePlugins                  bool
@@ -150,6 +151,7 @@ func (options Options) acquisitionOptions() app.AcquisitionOptions {
 		RemoteResourceForbiddenRoots: append([]string(nil), options.RemoteResourceForbiddenRoots...),
 		RemoteResourceCredentials:    options.RemoteResourceCredentials,
 		RemoteResourceGitCredentials: options.RemoteResourceGitCredentials,
+		OCICacheDir:                  options.OCICacheDir,
 		RecordCacheEvents:            options.RecordCacheEvents,
 	}
 }

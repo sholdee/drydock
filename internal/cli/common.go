@@ -45,6 +45,7 @@ type commonFlags struct {
 	registryConfig           string
 	refreshRemotes           bool
 	remoteCacheDir           string
+	ociCacheDir              string
 	remoteUsername           string
 	remotePassword           string
 	remoteBearerToken        string
@@ -135,6 +136,7 @@ func bindAcquisitionCacheFlags(cmd *cobra.Command, flags *commonFlags) {
 	cmd.Flags().StringVar(&flags.chartCacheDir, "chart-cache-dir", flags.chartCacheDir, "directory for cached Helm charts")
 	cmd.Flags().StringVar(&flags.gitCacheDir, "git-cache-dir", flags.gitCacheDir, "directory for cached Git repositories")
 	cmd.Flags().BoolVar(&flags.refreshGit, "refresh-git", flags.refreshGit, "fetch cached Git repositories before rendering")
+	cmd.Flags().StringVar(&flags.ociCacheDir, "oci-cache-dir", flags.ociCacheDir, "directory for cached OCI artifact sources")
 }
 
 func bindAuthFlags(cmd *cobra.Command, flags *commonFlags) {
@@ -349,6 +351,7 @@ func requestOptionsFromFlags(flags commonFlags, repoMaps []source.RepoMap) reque
 		RemoteResourceCacheDir:         flags.remoteCacheDir,
 		RemoteResourceCredentials:      flags.remoteCredentials(),
 		RemoteResourceGitCredentials:   flags.remoteGitCredentials(),
+		OCICacheDir:                    flags.ociCacheDir,
 		EnableAVPCompat:                flags.enableAVPCompat,
 		EnableKSOPSCompat:              flags.enableKSOPSCompat,
 		EnablePlugins:                  flags.enablePlugins,
