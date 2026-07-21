@@ -275,6 +275,51 @@ spec:
 	}
 }
 
+// Empty-path normalization pin: an OCI Application with NO path line renders
+// the artifact manifests exactly like `path: .` — argo renders the extraction
+// root when an OCI source omits path (vendored repository.go:415-418).
+func TestBuildRendersOCIArtifactWithoutPath(t *testing.T) {
+	reg := ocitest.StartRegistry(t)
+	ocitest.PushHelmChartArtifact(t, reg, "charts/demo", "1.2.3", ocitest.HelmChartSpec{Name: "demo", Version: "1.2.3"})
+	root := t.TempDir()
+	writeOCIApplication(t, root, "demo", reg.RepoURL("charts/demo"), "", "1.2.3", "")
+
+	result, err := Orchestrator{}.Build(context.Background(), ociBuildRequest(t, root))
+	if err != nil {
+		t.Fatalf("Build() error = %v", err)
+	}
+	manifest := assertManifestNamed(t, result.Manifests, "demo-demo")
+	if marker, _, _ := unstructured.NestedString(manifest.Object.Object, "data", "marker"); marker != "oci-artifact-content" {
+		t.Fatalf("marker = %q, want artifact content", marker)
+	}
+}
+
+// The hybrid-shape error text goes through RedactURL: credentials embedded in
+// the repoURL spelling never appear in it.
+func TestBuildHybridOCIShapeErrorRedactsCredentials(t *testing.T) {
+	root := t.TempDir()
+	writeTestFile(t, filepath.Join(root, "apps", "hybrid.yaml"), `apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: hybrid
+  namespace: argocd
+spec:
+  source:
+    repoURL: oci://user:sekret@charts.example.test/org
+    targetRevision: 1.2.3
+    chart: demo
+    path: .
+  destination:
+    name: in-cluster
+    namespace: default
+`)
+	_, err := Orchestrator{}.Build(context.Background(), ociBuildRequest(t, root))
+	assertBuildErrorContains(t, err, "unsupported source shape")
+	if strings.Contains(err.Error(), "sekret") {
+		t.Fatalf("hybrid-shape error leaks URL credentials: %v", err)
+	}
+}
+
 // Offline phase split: online build populates the cache, the registry
 // closes, and a fresh orchestrator must render from cache — while an unseen
 // tag fails with the offline cache miss contract text.
@@ -567,6 +612,35 @@ func TestOCISourceSkippedInDiscoveryFrontier(t *testing.T) {
 	}
 }
 
+// Repo-map escape hatch at the frontier: a repo-mapped oci:// parent renders
+// from the mapped local tree, so it keeps frontier eligibility and discovers
+// child Applications; an unmapped oci:// parent stays skipped.
+func TestOCISourceRepoMappedEntersDiscoveryFrontier(t *testing.T) {
+	root := t.TempDir()
+	// A discovery-relevant file at the local `path: .` keeps the unmapped
+	// assertion honest: without the OCI skip it would enter the frontier.
+	writeBuildApplication(t, root, "decoy", "decoy-cm")
+	mapped := t.TempDir()
+	writeBuildApplication(t, mapped, "child", "child-cm")
+	app := argoappv1.Application{
+		Spec: argoappv1.ApplicationSpec{
+			Source: &argoappv1.ApplicationSource{
+				RepoURL:        "oci://registry.example/org/app",
+				TargetRevision: "1.2.3",
+				Path:           ".",
+			},
+		},
+	}
+	request := BuildRequest{}
+	request.RepoMaps = []sourcepkg.RepoMap{{URL: "oci://registry.example/org/app", Path: mapped}}
+	if !applicationMayRenderDiscoveryObjects(root, request, discovery.Result{}, app) {
+		t.Fatal("repo-mapped OCI parent lost frontier eligibility (its child Applications would be silently dropped)")
+	}
+	if applicationMayRenderDiscoveryObjects(root, BuildRequest{}, discovery.Result{}, app) {
+		t.Fatal("unmapped OCI source entered the discovery frontier")
+	}
+}
+
 // Changed-path selection: an OCI source with `path: .` must not claim every
 // changed path; its changes stay unowned.
 func TestOCISourceDoesNotClaimChangedPaths(t *testing.T) {
@@ -585,6 +659,55 @@ func TestOCISourceDoesNotClaimChangedPaths(t *testing.T) {
 		t.Fatalf("selected = %#v, want none", selected)
 	}
 	if len(unowned) != 1 || unowned[0] != "manifests/other/cm.yaml" {
+		t.Fatalf("unowned = %#v, want the changed path", unowned)
+	}
+}
+
+// Value-file guard pin (local shape): an OCI source's helm value files
+// resolve inside the extracted artifact, so a changed path at the value-file
+// location must stay unowned.
+func TestOCISourceLocalValueFilesDoNotClaimChangedPaths(t *testing.T) {
+	app := argoappv1.Application{
+		Spec: argoappv1.ApplicationSpec{
+			Source: &argoappv1.ApplicationSource{
+				RepoURL:        "oci://registry.example/org/app",
+				TargetRevision: "1.2.3",
+				Path:           "manifests",
+				Helm:           &argoappv1.ApplicationSourceHelm{ValueFiles: []string{"values.yaml"}},
+			},
+		},
+	}
+	selected, unowned := SelectChangedApplications([]argoappv1.Application{app}, []string{"manifests/values.yaml"})
+	if len(selected) != 0 {
+		t.Fatalf("selected = %#v, want none (OCI value files are artifact content)", selected)
+	}
+	if len(unowned) != 1 || unowned[0] != "manifests/values.yaml" {
+		t.Fatalf("unowned = %#v, want the changed path", unowned)
+	}
+}
+
+// Value-file guard pin ($ref shape): a $ref value file whose ref source is
+// OCI must not claim the changed path either, even when the consuming source
+// shares the repoURL spelling.
+func TestOCIRefValueFilesDoNotClaimChangedPaths(t *testing.T) {
+	app := argoappv1.Application{
+		Spec: argoappv1.ApplicationSpec{
+			Sources: argoappv1.ApplicationSources{
+				{RepoURL: "oci://registry.example/org/app", TargetRevision: "1.2.3", Ref: "values"},
+				{
+					RepoURL:        "oci://registry.example/org/app",
+					TargetRevision: "1.2.3",
+					Path:           "manifests",
+					Helm:           &argoappv1.ApplicationSourceHelm{ValueFiles: []string{"$values/values.yaml"}},
+				},
+			},
+		},
+	}
+	selected, unowned := SelectChangedApplications([]argoappv1.Application{app}, []string{"values.yaml"})
+	if len(selected) != 0 {
+		t.Fatalf("selected = %#v, want none (OCI $ref value files are artifact content)", selected)
+	}
+	if len(unowned) != 1 || unowned[0] != "values.yaml" {
 		t.Fatalf("unowned = %#v, want the changed path", unowned)
 	}
 }

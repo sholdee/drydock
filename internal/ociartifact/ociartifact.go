@@ -16,8 +16,10 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 
+	utilio "github.com/argoproj/argo-cd/v3/util/io"
 	"github.com/argoproj/argo-cd/v3/util/oci"
 	"github.com/argoproj/argo-cd/v3/util/versions"
 	"github.com/argoproj/pkg/sync"
@@ -29,8 +31,11 @@ import (
 // entries (source "oci", kind "image").
 const EntryKind = "image"
 
-// imageTarName is the per-entry tar file the argo client os.Create()s
-// (util/oci/client.go:521-530 createTarFile via saveCompressedImageToPath).
+// imageTarName is the committed per-entry tar file. The argo client
+// os.Create()s whatever path the TempPaths seam hands it (util/oci/client.go
+// :521-530 createTarFile via saveCompressedImageToPath), so fresh fetches are
+// staged at stagingImageTarPath and renamed here only after a fully
+// successful Extract — a committed image.tar is always a complete tar.
 const imageTarName = "image.tar"
 
 // Options carries per-call acquisition inputs, mirroring chart.Options.
@@ -118,9 +123,16 @@ func IsDigest(revision string) bool {
 	return digestPattern.MatchString(strings.TrimSpace(revision))
 }
 
-// RedactURL returns the URL form safe for errors and cache events.
+// RedactURL returns the URL form safe for errors and cache events: URL
+// userinfo is dropped (mirroring remote.RedactURL), so credentials embedded
+// in a repoURL spelling never reach error text or cache metadata.
 func RedactURL(repoURL string) string {
-	return "oci://" + NormalizeURL(repoURL)
+	parsed, err := url.Parse("oci://" + NormalizeURL(repoURL))
+	if err != nil {
+		return "[invalid-url]"
+	}
+	parsed.User = nil
+	return parsed.String()
 }
 
 func DefaultCacheDir() (string, error) {
@@ -173,11 +185,22 @@ func ImageTarPath(entryPath string) string {
 	return filepath.Join(entryPath, imageTarName)
 }
 
+// stagingImageTarPath is where the argo client writes a fresh fetch before
+// extractAttempt commits it. The name is deterministic, so the client's
+// per-path lock still serializes concurrent fetches of one entry.
+func stagingImageTarPath(entryPath string) string {
+	return filepath.Join(entryPath, "."+imageTarName+".partial")
+}
+
 // entryTempPaths adapts the drydock OCI cache layout to the argo client's
 // TempPaths seam. The client keys paths on the JSON document
 // {"url":…,"version":…} (util/oci/client.go:339-345 getCachedPath); the
-// adapter maps that key deterministically to <entry>/image.tar with the entry
-// directory pre-created so the client's os.Create succeeds.
+// adapter maps that key deterministically to the entry's committed
+// <entry>/image.tar when one exists, and to the entry's staging path
+// otherwise, with the entry directory pre-created so the client's os.Create
+// succeeds. Handing out the staging path is what makes the committed tar
+// atomic: the client fetches into it and extractAttempt renames it into place
+// only after a fully successful Extract.
 type entryTempPaths struct {
 	root string
 }
@@ -196,7 +219,16 @@ func (p entryTempPaths) GetPath(key string) (string, error) {
 	if err := os.MkdirAll(entry, 0o755); err != nil {
 		return "", err
 	}
-	return ImageTarPath(entry), nil
+	final := ImageTarPath(entry)
+	if _, err := os.Stat(final); err == nil {
+		return final, nil
+	}
+	// No committed tar: hand out the staging path, clearing any partial an
+	// interrupted earlier run left behind so the client's existence check
+	// never mistakes it for a complete tar.
+	staging := stagingImageTarPath(entry)
+	_ = os.Remove(staging)
+	return staging, nil
 }
 
 func (p entryTempPaths) GetPathIfExists(key string) string {
@@ -262,10 +294,11 @@ func (a DefaultAcquirer) newClient(repoURL string, cacheDir string) (oci.Client,
 
 // Resolve resolves revision to a digest. Digest-pinned revisions pass through
 // without network. Online, resolution mirrors argo-cd v3.4.5
-// util/oci/client.go:384-407: an exact revision resolves via a registry HEAD;
-// a semver constraint resolves MaxVersion over the tag list and then the
-// winning tag via HEAD. Offline, resolution is seam-level from records
-// captured on earlier online runs; the argo client is never constructed.
+// util/oci/client.go:384-407 exactly: the literal revision resolves first via
+// a registry HEAD, and only when that fails does a constraint-shaped revision
+// fall back to MaxVersion over the tag list. Offline, resolution is
+// seam-level from records captured on earlier online runs, in the same
+// exact-first order; the argo client is never constructed.
 func (a DefaultAcquirer) Resolve(ctx context.Context, repoURL, revision string, opts Options) (string, error) {
 	revision = strings.TrimSpace(revision)
 	if IsDigest(revision) {
@@ -286,29 +319,39 @@ func (a DefaultAcquirer) Resolve(ctx context.Context, repoURL, revision string, 
 }
 
 func resolveOnline(ctx context.Context, client oci.Client, cacheDir, repoURL, revision string) (string, error) {
+	// Match the argo-cd v3.4.5 resolution order exactly: ResolveRevision
+	// resolves the literal revision first and only falls back to MaxVersion
+	// over the tag list when the exact lookup fails and the revision parses
+	// as a semver constraint (util/oci/client.go:384-407 resolveRevision).
+	// Dispatching on IsConstraint before the exact lookup would resolve a
+	// literal constraint-shaped tag like "1.x" to the constraint winner
+	// instead of the tag's own digest.
+	digest, err := client.ResolveRevision(ctx, revision, true)
+	if err != nil {
+		return "", fmt.Errorf("resolve OCI artifact %s revision %q: %w", RedactURL(repoURL), revision, err)
+	}
 	if !versions.IsConstraint(revision) {
-		digest, err := client.ResolveRevision(ctx, revision, true)
-		if err != nil {
-			return "", fmt.Errorf("resolve OCI artifact %s revision %q: %w", RedactURL(repoURL), revision, err)
-		}
-		// Overwritten on every online resolve: tags never go stale, at the
-		// accepted cost of dropping older recorded tags.
-		writeTagRecord(cacheDir, repoURL, tagRecord{Digests: map[string]string{revision: digest}})
+		updateTagRecord(cacheDir, repoURL, nil, false, map[string]string{revision: digest})
 		return digest, nil
 	}
-	tags, err := client.GetTags(ctx, true)
-	if err != nil {
-		return "", fmt.Errorf("resolve OCI artifact %s constraint %q: %w", RedactURL(repoURL), revision, err)
+	// Constraint-shaped revisions also refresh the recorded tag list so other
+	// constraints keep resolving offline through MaxVersion. When the digest
+	// came from the constraint fallback (the literal revision is not a tag),
+	// it is recorded under the winning version too, so offline MaxVersion
+	// lookups land on it.
+	if tags, tagsErr := client.GetTags(ctx, true); tagsErr == nil {
+		digests := map[string]string{revision: digest}
+		if !slices.Contains(tags, revision) {
+			if version, versionErr := versions.MaxVersion(revision, tags); versionErr == nil {
+				digests[version] = digest
+			}
+		}
+		updateTagRecord(cacheDir, repoURL, tags, true, digests)
+		return digest, nil
 	}
-	version, err := versions.MaxVersion(revision, tags)
-	if err != nil {
-		return "", fmt.Errorf("resolve OCI artifact %s constraint %q: %w", RedactURL(repoURL), revision, err)
-	}
-	digest, err := client.ResolveRevision(ctx, version, true)
-	if err != nil {
-		return "", fmt.Errorf("resolve OCI artifact %s revision %q: %w", RedactURL(repoURL), version, err)
-	}
-	writeTagRecord(cacheDir, repoURL, tagRecord{Tags: tags, Digests: map[string]string{version: digest}})
+	// A failed tag-list fetch after a successful resolve records the digest
+	// alone: resolution itself already succeeded.
+	updateTagRecord(cacheDir, repoURL, nil, false, map[string]string{revision: digest})
 	return digest, nil
 }
 
@@ -317,10 +360,12 @@ func resolveOffline(cacheDir, repoURL, revision string) (string, error) {
 	if !ok {
 		return "", offlineResolveMiss(repoURL, revision)
 	}
+	// Exact-first mirrors the online resolution order: a digest recorded for
+	// the literal revision wins even when the revision parses as a constraint.
+	if digest, ok := record.Digests[revision]; ok {
+		return digest, nil
+	}
 	if !versions.IsConstraint(revision) {
-		if digest, ok := record.Digests[revision]; ok {
-			return digest, nil
-		}
 		return "", offlineResolveMiss(repoURL, revision)
 	}
 	version, err := versions.MaxVersion(revision, record.Tags)
@@ -340,10 +385,13 @@ func offlineResolveMiss(repoURL, revision string) error {
 	return fmt.Errorf("offline cache miss for OCI artifact %s revision %q", RedactURL(repoURL), revision)
 }
 
-// Extract materializes the artifact content for digest. With the image tar
-// cached, the argo client extracts locally without network; offline without a
-// cached tar it fails with the offline cache miss contract error instead of
-// letting the client reach the registry.
+// Extract materializes the artifact content for digest. With a committed
+// image tar cached, the argo client extracts locally without network; offline
+// without a cached tar it fails with the offline cache miss contract error
+// instead of letting the client reach the registry. Online, a cached tar that
+// fails to extract (truncated by an interrupted earlier run or corrupted
+// externally) is deleted and re-fetched once, so a bad tar never poisons
+// every future run.
 func (a DefaultAcquirer) Extract(ctx context.Context, repoURL, digest string, opts Options) (string, func(), error) {
 	cacheDir, err := ResolveCacheDir(opts.CacheDir, opts.ForbiddenRoots)
 	if err != nil {
@@ -361,11 +409,14 @@ func (a DefaultAcquirer) Extract(ctx context.Context, repoURL, digest string, op
 	if err != nil {
 		return "", nil, err
 	}
-	dir, closer, err := client.Extract(ctx, digest)
+	dir, closer, err := extractAttempt(ctx, client, entry, digest)
+	if err != nil && fromImageCache && !opts.Offline {
+		// Self-heal: drop the unusable cached tar and re-fetch once.
+		_ = os.Remove(ImageTarPath(entry))
+		fromImageCache = false
+		dir, closer, err = extractAttempt(ctx, client, entry, digest)
+	}
 	if err != nil {
-		if dir != "" {
-			_ = os.RemoveAll(dir)
-		}
 		return "", nil, fmt.Errorf("extract OCI artifact %s digest %s: %w", RedactURL(repoURL), digest, err)
 	}
 	writeEntryMetadata(entry, repoURL, digest)
@@ -378,6 +429,28 @@ func (a DefaultAcquirer) Extract(ctx context.Context, repoURL, digest string, op
 		}
 	}
 	return dir, release, nil
+}
+
+// extractAttempt runs one client extraction and commits the staged tar on
+// success: fresh fetches land at the staging path (entryTempPaths.GetPath)
+// and only the rename after a fully successful Extract publishes image.tar,
+// so a crash or failure can never leave a partial committed tar. Failed
+// attempts discard their partial along with the error-path extraction dir.
+func extractAttempt(ctx context.Context, client oci.Client, entry, digest string) (string, utilio.Closer, error) {
+	dir, closer, err := client.Extract(ctx, digest)
+	staging := stagingImageTarPath(entry)
+	if err != nil {
+		if dir != "" {
+			_ = os.RemoveAll(dir)
+		}
+		_ = os.Remove(staging)
+		return "", nil, err
+	}
+	if _, statErr := os.Stat(staging); statErr == nil {
+		// Best-effort commit: a failed rename only costs a re-fetch next run.
+		_ = os.Rename(staging, ImageTarPath(entry))
+	}
+	return dir, closer, nil
 }
 
 // writeEntryMetadata satisfies the cache lister contract (64-hex entry dir

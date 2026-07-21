@@ -16,6 +16,7 @@ import (
 	"github.com/sholdee/drydock/internal/diff"
 	"github.com/sholdee/drydock/internal/gitref"
 	"github.com/sholdee/drydock/internal/manifest"
+	"github.com/sholdee/drydock/internal/ociartifact"
 	"github.com/sholdee/drydock/internal/remote"
 	"github.com/sholdee/drydock/internal/rendercache"
 	sourcepkg "github.com/sholdee/drydock/internal/source"
@@ -529,6 +530,9 @@ func validateDiffCacheRoots(request DiffRequest, forbiddenRoots []string) error 
 		return err
 	}
 	if _, err := remote.ResolveCacheDir(request.RemoteResourceCacheDir, forbiddenRoots); err != nil {
+		return err
+	}
+	if _, err := ociartifact.ResolveCacheDir(request.OCICacheDir, forbiddenRoots); err != nil {
 		return err
 	}
 	if err := validateDiffRenderCacheRoot(request); err != nil {

@@ -123,6 +123,14 @@ func PushDisallowedMediaTypeArtifact(t *testing.T, reg *Registry, repoName, tag 
 	return pushArtifact(t, reg, repoName, tag, plainConfigType, []layerSpec{{mediaType: "application/vnd.drydock.test.blocked.tar+gzip", data: tgz}})
 }
 
+// PushCorruptContentLayerArtifact pushes an artifact whose single allowlisted
+// content layer is not valid gzip: fetch and image-tar save succeed, layer
+// extraction fails — the shape that exercises post-save failure handling.
+func PushCorruptContentLayerArtifact(t *testing.T, reg *Registry, repoName, tag string) string {
+	t.Helper()
+	return pushArtifact(t, reg, repoName, tag, plainConfigType, []layerSpec{{mediaType: plainLayerMediaType, data: []byte("not-a-gzip-stream")}})
+}
+
 // PushMultiContentLayerArtifact pushes an artifact with two allowlisted
 // content layers, violating the exactly-one-content-layer guard.
 func PushMultiContentLayerArtifact(t *testing.T, reg *Registry, repoName, tag string) string {

@@ -17,6 +17,9 @@ type fakeOCIAcquirer struct {
 	extractCalls int
 	digest       string
 	extractRoot  string
+	// symlinks are created inside the extraction dir (name -> target) to
+	// exercise the copy-into-session symlink guard.
+	symlinks map[string]string
 }
 
 func (a *fakeOCIAcquirer) Resolve(_ context.Context, _, _ string, _ ociartifact.Options) (string, error) {
@@ -36,6 +39,11 @@ func (a *fakeOCIAcquirer) Extract(_ context.Context, _, _ string, opts ociartifa
 	}
 	if err := os.WriteFile(filepath.Join(dir, "artifact.yaml"), []byte("kind: Fixture\n"), 0o600); err != nil {
 		return "", nil, err
+	}
+	for name, target := range a.symlinks {
+		if err := os.Symlink(target, filepath.Join(dir, name)); err != nil {
+			return "", nil, err
+		}
 	}
 	if opts.OnAcquired != nil {
 		opts.OnAcquired(false)
@@ -129,6 +137,74 @@ func TestOCIArtifactAcquirerClosesDelegateReleaseAfterSnapshot(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(dir, "artifact.yaml")); err != nil {
 		t.Fatalf("snapshot content missing after delegate release: %v", err)
+	}
+}
+
+// TestOCIArtifactAcquirerRejectsOutOfBoundsSymlinks pins the defense-in-depth
+// guard at the copy-into-session step: an extracted tree whose symlinks
+// escape it never enters the session snapshot area.
+func TestOCIArtifactAcquirerRejectsOutOfBoundsSymlinks(t *testing.T) {
+	digest := "sha256:" + strings.Repeat("aa", 32)
+	for name, target := range map[string]string{
+		"absolute-escape": "/etc/passwd",
+		"relative-escape": "../outside.yaml",
+		"nested-escape":   "sub/../../outside.yaml",
+	} {
+		fake := &fakeOCIAcquirer{digest: digest, extractRoot: t.TempDir(), symlinks: map[string]string{name: target}}
+		session, snapshotRoot := newOCITestSession(t)
+		acquirer := session.OCIArtifactAcquirer(fake)
+
+		_, _, err := acquirer.Extract(t.Context(), "oci://registry.example/org/app", digest, ociartifact.Options{CacheDir: t.TempDir()})
+		if err == nil || !strings.Contains(err.Error(), "out-of-bounds symlink") {
+			t.Fatalf("Extract() error = %v, want out-of-bounds symlink rejection (%s)", err, name)
+		}
+		entries, readErr := os.ReadDir(snapshotRoot)
+		if readErr != nil {
+			t.Fatal(readErr)
+		}
+		if len(entries) != 0 {
+			t.Fatalf("rejected extraction reached the session snapshot area (%s)", name)
+		}
+	}
+}
+
+// In-bounds symlinks are legitimate artifact content and survive the copy.
+func TestOCIArtifactAcquirerAllowsInBoundsSymlink(t *testing.T) {
+	digest := "sha256:" + strings.Repeat("bb", 32)
+	fake := &fakeOCIAcquirer{digest: digest, extractRoot: t.TempDir(), symlinks: map[string]string{"link.yaml": "artifact.yaml"}}
+	session, _ := newOCITestSession(t)
+	acquirer := session.OCIArtifactAcquirer(fake)
+
+	dir, _, err := acquirer.Extract(t.Context(), "oci://registry.example/org/app", digest, ociartifact.Options{CacheDir: t.TempDir()})
+	if err != nil {
+		t.Fatalf("Extract() error = %v", err)
+	}
+	target, err := os.Readlink(filepath.Join(dir, "link.yaml"))
+	if err != nil || target != "artifact.yaml" {
+		t.Fatalf("in-bounds symlink not preserved in snapshot: %q, %v", target, err)
+	}
+}
+
+// TestOCIArtifactAcquirerRejectsEmptySnapshotRoot pins the snapshot-root
+// guard: with snapshot reads on and no root, snapshotCachePath would pass the
+// extraction dir through unchanged, the delegate release would delete it, and
+// the deleted path would be memoized and returned.
+func TestOCIArtifactAcquirerRejectsEmptySnapshotRoot(t *testing.T) {
+	digest := "sha256:" + strings.Repeat("cc", 32)
+	fake := &fakeOCIAcquirer{digest: digest, extractRoot: t.TempDir()}
+	session := Session{
+		Locks:              NewTargetLocks(),
+		SnapshotCacheReads: true,
+		SnapshotCache:      NewSnapshotCache(),
+	}
+	acquirer := session.OCIArtifactAcquirer(fake)
+
+	_, _, err := acquirer.Extract(t.Context(), "oci://registry.example/org/app", digest, ociartifact.Options{CacheDir: t.TempDir()})
+	if err == nil || !strings.Contains(err.Error(), "snapshot root is empty") {
+		t.Fatalf("Extract() error = %v, want empty snapshot root rejection", err)
+	}
+	if fake.extractCalls != 0 {
+		t.Fatalf("delegate extract calls = %d, want 0 (guard fires before the doomed extraction)", fake.extractCalls)
 	}
 }
 

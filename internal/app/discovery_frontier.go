@@ -149,9 +149,14 @@ func applicationMayRenderDiscoveryObjects(root string, request BuildRequest, dis
 		}
 		// OCI artifact content comes from a registry exactly like chart-only
 		// sources: it never renders local discovery objects, and `path: .`
-		// must not pull the local repository into the discovery frontier.
+		// must not pull the local repository into the discovery frontier. A
+		// repo-mapped oci:// URL is the documented escape hatch, though: the
+		// mapped local tree stands in for the artifact content, so it keeps
+		// frontier eligibility through localDiscoverySourceRoot below.
 		if ociartifact.IsOCIURL(sourcePlan.Source.RepoURL) {
-			continue
+			if _, mapped := mappedRepositoryPath(request, sourcePlan.Source.RepoURL); !mapped {
+				continue
+			}
 		}
 		sourceRoot, ok := localDiscoverySourceRoot(root, request, sourcePlan.Source)
 		if !ok {

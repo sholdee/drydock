@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"maps"
 	"os"
 	"path/filepath"
 )
@@ -16,8 +17,9 @@ import (
 const recordsDirName = "tags"
 
 // tagRecord is one repository's offline resolution record: the tag list from
-// the last online constraint resolve plus the tag→digest pairs resolved
-// online. Each online resolve overwrites the whole record.
+// the last online tag-list fetch plus the revision→digest pairs resolved
+// online. Digest entries merge across resolves; the tag list is replaced
+// whole on each fresh fetch (see updateTagRecord).
 type tagRecord struct {
 	Tags    []string          `json:"tags,omitempty"`
 	Digests map[string]string `json:"digests,omitempty"`
@@ -38,6 +40,27 @@ func readTagRecord(cacheDir, repoURL string) (tagRecord, bool) {
 		return tagRecord{}, false
 	}
 	return record, true
+}
+
+// updateTagRecord read-merge-writes one repository's record under the package
+// key lock: digest entries accumulate across resolves (two Applications
+// pinning different tags of one repository must both resolve offline after
+// one online run), while the tag list is replaced only when this resolve
+// fetched a fresh list. The lock serializes in-process resolves of one
+// repository; cross-process merges stay best-effort like every record write.
+func updateTagRecord(cacheDir, repoURL string, freshTags []string, replaceTags bool, digests map[string]string) {
+	path := tagRecordPath(cacheDir, repoURL)
+	ociKeyLock.Lock(path)
+	defer ociKeyLock.Unlock(path)
+	record, _ := readTagRecord(cacheDir, repoURL)
+	if record.Digests == nil {
+		record.Digests = make(map[string]string, len(digests))
+	}
+	maps.Copy(record.Digests, digests)
+	if replaceTags {
+		record.Tags = freshTags
+	}
+	writeTagRecord(cacheDir, repoURL, record)
 }
 
 // writeTagRecord is best-effort: a failed record write only degrades a later

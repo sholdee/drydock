@@ -245,6 +245,9 @@ image entries are digest-keyed and can be large — one entry per pulled
 artifact version — so repositories with many OCI artifact sources should
 budget cache size accordingly (`cache-prune-max-size` bounds the local-mode
 cache, and the same subdirectories are covered by the action's prune step).
+Note the upgrade coupling: action refs that pass `--oci-cache-dir` require a
+drydock binary that understands it, so a workflow pinning `version` to a
+pre-0.2.7 release must pin a matching pre-0.2.7 action ref.
 
 When trusted container plugins are enabled, policy-managed plugin cache mounts
 live under the PR action cache root as `${cache-path}/plugin`. Persisted render

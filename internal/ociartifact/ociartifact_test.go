@@ -94,25 +94,35 @@ func TestEntryTempPathsAdapterMapsClientKeys(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	entry := EntryPath(root, "oci://127.0.0.1:5000/org/app", "sha256:"+strings.Repeat("ab", 32))
 	got, err := adapter.GetPath(string(key))
 	if err != nil {
 		t.Fatalf("GetPath() error = %v", err)
 	}
-	want := ImageTarPath(EntryPath(root, "oci://127.0.0.1:5000/org/app", "sha256:"+strings.Repeat("ab", 32)))
-	if got != want {
-		t.Fatalf("GetPath() = %q, want %q", got, want)
+	// No committed tar yet: the client must be handed the staging path (and
+	// never a leftover partial), so a fetch write cannot land at image.tar
+	// directly.
+	if want := stagingImageTarPath(entry); got != want {
+		t.Fatalf("GetPath() = %q, want staging path %q before a committed tar", got, want)
 	}
-	if info, err := os.Stat(filepath.Dir(got)); err != nil || !info.IsDir() {
+	if info, err := os.Stat(entry); err != nil || !info.IsDir() {
 		t.Fatalf("entry dir not pre-created: %v", err)
 	}
 	if adapter.GetPathIfExists(string(key)) != "" {
-		t.Fatal("GetPathIfExists() should be empty before the tar exists")
+		t.Fatal("GetPathIfExists() should be empty before the tar is committed")
 	}
-	if err := os.WriteFile(got, []byte("tar"), 0o600); err != nil {
+	if err := os.WriteFile(ImageTarPath(entry), []byte("tar"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if adapter.GetPathIfExists(string(key)) != want {
-		t.Fatal("GetPathIfExists() should return the tar path once present")
+	got, err = adapter.GetPath(string(key))
+	if err != nil {
+		t.Fatalf("GetPath() error = %v", err)
+	}
+	if want := ImageTarPath(entry); got != want {
+		t.Fatalf("GetPath() = %q, want committed tar %q once present", got, want)
+	}
+	if adapter.GetPathIfExists(string(key)) != ImageTarPath(entry) {
+		t.Fatal("GetPathIfExists() should return the tar path once committed")
 	}
 }
 
@@ -346,6 +356,224 @@ func TestOfflineFirstRunFails(t *testing.T) {
 		t.Fatal("first-run offline Resolve should fail")
 	} else if !strings.Contains(err.Error(), "offline cache miss") {
 		t.Fatalf("first-run offline Resolve error = %q, want offline cache miss contract text", err)
+	}
+}
+
+// TestExtractSelfHealsCorruptCachedImageTar pins the self-heal contract: a
+// pre-existing truncated/corrupt image.tar must not poison online runs — the
+// tar is dropped and re-fetched once, and the healed tar serves offline runs.
+func TestExtractSelfHealsCorruptCachedImageTar(t *testing.T) {
+	reg := ocitest.StartRegistry(t)
+	digest := ocitest.PushHelmChartArtifact(t, reg, "charts/heal", "1.2.3", ocitest.HelmChartSpec{Name: "heal", Version: "1.2.3"})
+	repoURL := reg.RepoURL("charts/heal")
+	opts := Options{CacheDir: t.TempDir()}
+	entry := EntryPath(opts.CacheDir, repoURL, digest)
+	if err := os.MkdirAll(entry, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(ImageTarPath(entry), []byte("truncated-tar-write"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	fromCache := true
+	opts.OnAcquired = func(fromImageCache bool) { fromCache = fromImageCache }
+	dir, release, err := DefaultAcquirer{}.Extract(t.Context(), repoURL, digest, opts)
+	if err != nil {
+		t.Fatalf("online Extract() with corrupt cached tar error = %v, want self-heal re-fetch", err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "Chart.yaml")); err != nil {
+		t.Fatalf("self-healed extract content missing: %v", err)
+	}
+	release()
+	if fromCache {
+		t.Fatal("OnAcquired reported fromImageCache = true for a self-heal re-fetch")
+	}
+
+	// The healed tar is committed: offline extraction now works.
+	reg.Server.Close()
+	opts.OnAcquired = nil
+	opts.Offline = true
+	dir, release, err = DefaultAcquirer{}.Extract(t.Context(), repoURL, digest, opts)
+	if err != nil {
+		t.Fatalf("offline Extract() after self-heal error = %v", err)
+	}
+	defer release()
+	if _, err := os.Stat(filepath.Join(dir, "Chart.yaml")); err != nil {
+		t.Fatalf("offline extract content missing after self-heal: %v", err)
+	}
+}
+
+// Offline, a corrupt cached tar cannot re-fetch: the error must be clear and
+// the tar must be left in place for a later online run to heal.
+func TestOfflineExtractCorruptCachedImageTarFails(t *testing.T) {
+	repoURL := "oci://127.0.0.1:1/none/app"
+	digest := "sha256:" + strings.Repeat("ab", 32)
+	opts := Options{CacheDir: t.TempDir(), Offline: true}
+	entry := EntryPath(opts.CacheDir, repoURL, digest)
+	if err := os.MkdirAll(entry, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(ImageTarPath(entry), []byte("truncated-tar-write"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	_, _, err := DefaultAcquirer{}.Extract(t.Context(), repoURL, digest, opts)
+	if err == nil {
+		t.Fatal("offline Extract() with corrupt cached tar should fail")
+	}
+	if !strings.Contains(err.Error(), "extract OCI artifact "+RedactURL(repoURL)) {
+		t.Fatalf("offline Extract() error = %q, want clear extract error naming the artifact", err)
+	}
+	if _, statErr := os.Stat(ImageTarPath(entry)); statErr != nil {
+		t.Fatalf("offline failure must leave the cached tar for a later online heal: %v", statErr)
+	}
+}
+
+// TestExtractFailureDoesNotCommitImageTar pins tar-write atomicity: an
+// extraction that fails after the client fetched and saved the image (corrupt
+// content layer) must leave neither a committed image.tar nor a staged
+// partial behind.
+func TestExtractFailureDoesNotCommitImageTar(t *testing.T) {
+	reg := ocitest.StartRegistry(t)
+	digest := ocitest.PushCorruptContentLayerArtifact(t, reg, "corrupt/app", "v1")
+	repoURL := reg.RepoURL("corrupt/app")
+	opts := Options{CacheDir: t.TempDir()}
+	entry := EntryPath(opts.CacheDir, repoURL, digest)
+
+	if _, _, err := (DefaultAcquirer{}).Extract(t.Context(), repoURL, digest, opts); err == nil {
+		t.Fatal("Extract() of a corrupt content layer should fail")
+	}
+	if _, err := os.Stat(ImageTarPath(entry)); !os.IsNotExist(err) {
+		t.Fatalf("failed extraction committed image.tar: %v", err)
+	}
+	if _, err := os.Stat(stagingImageTarPath(entry)); !os.IsNotExist(err) {
+		t.Fatalf("failed extraction left a staged partial behind: %v", err)
+	}
+}
+
+// TestOfflineRecordsAccumulateAcrossTags pins record merging: different tags
+// of one repository resolved online in one run (two apps pinning different
+// tags) must all resolve offline, and the recorded tag list must survive
+// later exact-tag resolves so other constraints still resolve via MaxVersion.
+func TestOfflineRecordsAccumulateAcrossTags(t *testing.T) {
+	reg := ocitest.StartRegistry(t)
+	firstDigest := ocitest.PushHelmChartArtifact(t, reg, "charts/multi", "1.0.0", ocitest.HelmChartSpec{Version: "1.0.0"})
+	secondDigest := ocitest.PushHelmChartArtifact(t, reg, "charts/multi", "2.0.0", ocitest.HelmChartSpec{Version: "2.0.0"})
+	repoURL := reg.RepoURL("charts/multi")
+	opts := Options{CacheDir: t.TempDir()}
+	acquirer := DefaultAcquirer{}
+
+	// Order matters: the constraint resolve records the tag list, then two
+	// exact resolves follow — whole-record overwrites would drop both the
+	// first tag's digest and the tag list.
+	if _, err := acquirer.Resolve(t.Context(), repoURL, "~1.0", opts); err != nil {
+		t.Fatalf("online Resolve(~1.0) error = %v", err)
+	}
+	if _, err := acquirer.Resolve(t.Context(), repoURL, "1.0.0", opts); err != nil {
+		t.Fatalf("online Resolve(1.0.0) error = %v", err)
+	}
+	if _, err := acquirer.Resolve(t.Context(), repoURL, "2.0.0", opts); err != nil {
+		t.Fatalf("online Resolve(2.0.0) error = %v", err)
+	}
+
+	reg.Server.Close()
+	opts.Offline = true
+	if digest, err := acquirer.Resolve(t.Context(), repoURL, "1.0.0", opts); err != nil || digest != firstDigest {
+		t.Fatalf("offline Resolve(1.0.0) = %q, %v; want %q (sibling tag record dropped)", digest, err, firstDigest)
+	}
+	if digest, err := acquirer.Resolve(t.Context(), repoURL, "2.0.0", opts); err != nil || digest != secondDigest {
+		t.Fatalf("offline Resolve(2.0.0) = %q, %v; want %q", digest, err, secondDigest)
+	}
+	// "^2.0" was never resolved online: it needs the preserved tag list plus
+	// the merged winner digest.
+	if digest, err := acquirer.Resolve(t.Context(), repoURL, "^2.0", opts); err != nil || digest != secondDigest {
+		t.Fatalf("offline Resolve(^2.0) = %q, %v; want %q (tag list dropped by a later exact resolve)", digest, err, secondDigest)
+	}
+}
+
+// TestResolveLiteralConstraintShapedTag pins argo-cd v3.4.5 resolution order:
+// a literal tag that parses as a semver constraint ("1.x") resolves to its
+// own digest via the exact lookup, never to the constraint's MaxVersion
+// winner — online and offline.
+func TestResolveLiteralConstraintShapedTag(t *testing.T) {
+	reg := ocitest.StartRegistry(t)
+	literalDigest := ocitest.PushHelmChartArtifact(t, reg, "charts/literal", "1.x", ocitest.HelmChartSpec{Version: "1.0.0"})
+	winnerDigest := ocitest.PushHelmChartArtifact(t, reg, "charts/literal", "1.9.9", ocitest.HelmChartSpec{Version: "1.9.9"})
+	if literalDigest == winnerDigest {
+		t.Fatal("fixture digests must differ")
+	}
+	repoURL := reg.RepoURL("charts/literal")
+	opts := Options{CacheDir: t.TempDir()}
+	acquirer := DefaultAcquirer{}
+
+	digest, err := acquirer.Resolve(t.Context(), repoURL, "1.x", opts)
+	if err != nil {
+		t.Fatalf("Resolve(1.x) error = %v", err)
+	}
+	if digest != literalDigest {
+		t.Fatalf("Resolve(1.x) = %q, want the literal tag's digest %q, not MaxVersion winner %q", digest, literalDigest, winnerDigest)
+	}
+
+	reg.Server.Close()
+	opts.Offline = true
+	if digest, err := acquirer.Resolve(t.Context(), repoURL, "1.x", opts); err != nil || digest != literalDigest {
+		t.Fatalf("offline Resolve(1.x) = %q, %v; want exact-first record hit %q", digest, err, literalDigest)
+	}
+}
+
+// TestRedactURLStripsUserinfo pins credential redaction (remote.RedactURL
+// parity): userinfo never survives into error/cache-event URL forms.
+func TestRedactURLStripsUserinfo(t *testing.T) {
+	for _, testCase := range []struct{ input, want string }{
+		{"oci://user:secret@ghcr.io/org/app", "oci://ghcr.io/org/app"},
+		{"oci://token@ghcr.io/org/app", "oci://ghcr.io/org/app"},
+		{"oci://ghcr.io/org/app", "oci://ghcr.io/org/app"},
+	} {
+		if got := RedactURL(testCase.input); got != testCase.want {
+			t.Fatalf("RedactURL(%q) = %q, want %q", testCase.input, got, testCase.want)
+		}
+	}
+}
+
+// Cache metadata goes through RedactURL: credentials embedded in a repoURL
+// spelling never land in metadata.json.
+func TestEntryMetadataTargetRedactsUserinfo(t *testing.T) {
+	entry := filepath.Join(t.TempDir(), strings.Repeat("ab", 32))
+	if err := os.MkdirAll(entry, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	digest := "sha256:" + strings.Repeat("cd", 32)
+	writeEntryMetadata(entry, "oci://user:secret@ghcr.io/org/app", digest)
+	metadata, err := cache.ReadMetadata(entry, cache.SourceOCI, EntryKind, filepath.Base(entry))
+	if err != nil || metadata == nil {
+		t.Fatalf("metadata = %v, %v; want valid metadata", metadata, err)
+	}
+	if strings.Contains(metadata.Target, "secret") || strings.Contains(metadata.Target, "user") {
+		t.Fatalf("metadata target %q leaks URL userinfo", metadata.Target)
+	}
+	if metadata.Target != "oci://ghcr.io/org/app" {
+		t.Fatalf("metadata target = %q, want redacted URL", metadata.Target)
+	}
+}
+
+// TestIsLoopbackURLPlainHTTPBoundary pins the plain-HTTP boundary: loopback
+// registries (the Docker localhost convention, hermetic fixtures) use plain
+// HTTP; every other host — including private-range IPs — stays TLS-only.
+func TestIsLoopbackURLPlainHTTPBoundary(t *testing.T) {
+	for _, testCase := range []struct {
+		url  string
+		want bool
+	}{
+		{"oci://localhost/org/app", true},
+		{"oci://localhost:5000/org/app", true},
+		{"oci://127.0.0.1:5000/org/app", true},
+		{"oci://[::1]:5000/org/app", true},
+		{"oci://ghcr.io/org/app", false},
+		{"oci://10.0.0.1:5000/org/app", false},
+	} {
+		if got := isLoopbackURL(testCase.url); got != testCase.want {
+			t.Fatalf("isLoopbackURL(%q) = %v, want %v", testCase.url, got, testCase.want)
+		}
 	}
 }
 
