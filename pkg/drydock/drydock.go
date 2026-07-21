@@ -111,6 +111,9 @@ type Config struct {
 	RemoteResourceCredentials RemoteResourceCredentials
 	// OCICacheDir overrides the OCI artifact source cache root.
 	OCICacheDir string
+	// OCICredentials supplies credentials for first-class OCI artifact source
+	// acquisition.
+	OCICredentials OCICredentials
 	// EnableAVPCompat forces argocd-vault-plugin placeholder redaction for
 	// native-rendered sources. Explicit argocd-vault-plugin sources use native
 	// compatibility by default.
@@ -332,6 +335,7 @@ func (client *Client) requestOptions() requestopts.Options {
 		RemoteResourceCredentials:      remoteResourceCredentialsToInternal(client.config.RemoteResourceCredentials),
 		RemoteResourceGitCredentials:   gitCredentialsToRemoteInternal(client.config.GitCredentials),
 		OCICacheDir:                    client.config.OCICacheDir,
+		OCICredentials:                 ociCredentialsToInternal(client.config.OCICredentials),
 		EnableAVPCompat:                client.config.EnableAVPCompat,
 		EnableKSOPSCompat:              client.config.EnableKSOPSCompat,
 		EnablePlugins:                  client.config.EnablePlugins,

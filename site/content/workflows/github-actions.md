@@ -394,6 +394,21 @@ renders.
 Only use `extra-*` inputs with trusted workflow configuration. The action
 passes them as arguments without `eval`, but they still change drydock behavior.
 
+The `extra-*` inputs are also the supported path for source credentials the
+action deliberately defines no inputs for, such as the `--oci-*` OCI artifact
+registry flags. Pass one `--flag=value` line per argument with repository
+secrets; both diff sides share the same extra diff arguments, and the action
+never echoes its argument list, so secret values stay out of workflow logs:
+
+```yaml
+extra-test-args: |
+  --oci-username=${{ secrets.OCI_REGISTRY_USER }}
+  --oci-password=${{ secrets.OCI_REGISTRY_PASSWORD }}
+extra-diff-args: |
+  --oci-username=${{ secrets.OCI_REGISTRY_USER }}
+  --oci-password=${{ secrets.OCI_REGISTRY_PASSWORD }}
+```
+
 ## Setup Action Inputs
 
 | Input | Default | Purpose |

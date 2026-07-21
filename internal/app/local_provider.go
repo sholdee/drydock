@@ -43,6 +43,7 @@ type localProvider struct {
 	ociArtifactAcquirer          ociartifact.Acquirer
 	ociCacheDir                  string
 	ociForbiddenRoots            []string
+	ociCredentials               ociartifact.Credentials
 	helmValueFileSchemes         []string
 	helmValueFileSchemesSet      bool
 	helmChartLoadCache           *render.HelmChartLoadCache

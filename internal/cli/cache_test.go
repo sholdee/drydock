@@ -44,6 +44,7 @@ func TestCachePathPrintsRoots(t *testing.T) {
 		"--chart-cache-dir", "/tmp/charts",
 		"--remote-cache-dir", "/tmp/remotes",
 		"--render-cache-dir", renderCacheDir,
+		"--oci-cache-dir", "/tmp/oci",
 	})
 	var stdout bytes.Buffer
 	cmd.SetOut(&stdout)
@@ -75,6 +76,7 @@ func TestCacheListJSON(t *testing.T) {
 		"--chart-cache-dir", chartCacheDir,
 		"--remote-cache-dir", remoteCacheDir,
 		"--render-cache-dir", renderCacheDir,
+		"--oci-cache-dir", filepath.Join(root, "oci"),
 	})
 	var stdout bytes.Buffer
 	cmd.SetOut(&stdout)
@@ -111,6 +113,7 @@ func TestCacheListTableReportsLegacyStatus(t *testing.T) {
 		"--chart-cache-dir", chartCacheDir,
 		"--remote-cache-dir", remoteCacheDir,
 		"--render-cache-dir", renderCacheDir,
+		"--oci-cache-dir", filepath.Join(root, "oci"),
 	})
 	var stdout bytes.Buffer
 	cmd.SetOut(&stdout)
@@ -147,6 +150,7 @@ func TestCachePruneDryRun(t *testing.T) {
 		"--chart-cache-dir", chartCacheDir,
 		"--remote-cache-dir", remoteCacheDir,
 		"--render-cache-dir", renderCacheDir,
+		"--oci-cache-dir", filepath.Join(root, "oci"),
 		"--older-than", "24h",
 		"--dry-run",
 	})
@@ -180,6 +184,7 @@ func TestCachePruneDryRunDoesNotRequireYes(t *testing.T) {
 		"--chart-cache-dir", chartCacheDir,
 		"--remote-cache-dir", remoteCacheDir,
 		"--render-cache-dir", renderCacheDir,
+		"--oci-cache-dir", filepath.Join(root, "oci"),
 		"--older-than", "24h",
 		"--dry-run",
 	})
@@ -208,6 +213,7 @@ func TestCachePruneRequiresYesBeforeMutation(t *testing.T) {
 		"--chart-cache-dir", chartCacheDir,
 		"--remote-cache-dir", remoteCacheDir,
 		"--render-cache-dir", renderCacheDir,
+		"--oci-cache-dir", filepath.Join(root, "oci"),
 		"--older-than", "24h",
 	})
 	var stdout bytes.Buffer
@@ -283,6 +289,7 @@ func TestCacheDeleteAllRequiresYes(t *testing.T) {
 		"--chart-cache-dir", chartCacheDir,
 		"--remote-cache-dir", remoteCacheDir,
 		"--render-cache-dir", renderCacheDir,
+		"--oci-cache-dir", filepath.Join(root, "oci"),
 	})
 	var stdout bytes.Buffer
 	cmd.SetOut(&stdout)
@@ -345,6 +352,7 @@ func TestCacheDeleteRejectsAllWithKeyBeforeMutation(t *testing.T) {
 				"--chart-cache-dir", chartCacheDir,
 				"--remote-cache-dir", remoteCacheDir,
 				"--render-cache-dir", renderCacheDir,
+				"--oci-cache-dir", filepath.Join(root, "oci"),
 			)
 			args = append(args, tc.extra...)
 			cmd.SetArgs(args)
@@ -435,6 +443,7 @@ func TestCacheRejectsInvalidOutputBeforeMutation(t *testing.T) {
 		"--chart-cache-dir", chartCacheDir,
 		"--remote-cache-dir", remoteCacheDir,
 		"--render-cache-dir", renderCacheDir,
+		"--oci-cache-dir", filepath.Join(root, "oci"),
 		"--yes",
 		"-o", "name",
 	})
@@ -708,6 +717,7 @@ func TestCachePruneMaxSizeOnlyAccepted(t *testing.T) {
 		"--chart-cache-dir", chartCacheDir,
 		"--remote-cache-dir", remoteCacheDir,
 		"--render-cache-dir", renderCacheDir,
+		"--oci-cache-dir", filepath.Join(root, "oci"),
 		"--max-size", "1", // 1 byte cap forces eviction
 		"--yes",
 	})
@@ -741,6 +751,7 @@ func TestCachePruneNeitherFlagErrors(t *testing.T) {
 		"--chart-cache-dir", chartCacheDir,
 		"--remote-cache-dir", remoteCacheDir,
 		"--render-cache-dir", renderCacheDir,
+		"--oci-cache-dir", filepath.Join(root, "oci"),
 		"--yes",
 	})
 	var stdout bytes.Buffer

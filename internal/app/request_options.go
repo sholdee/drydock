@@ -5,6 +5,7 @@ import (
 
 	"github.com/sholdee/drydock/internal/appset"
 	"github.com/sholdee/drydock/internal/chart"
+	"github.com/sholdee/drydock/internal/ociartifact"
 	"github.com/sholdee/drydock/internal/pluginpolicy"
 	"github.com/sholdee/drydock/internal/remote"
 	"github.com/sholdee/drydock/internal/rendercache"
@@ -34,6 +35,7 @@ type AcquisitionOptions struct {
 	RemoteResourceCredentials    remote.Credentials
 	RemoteResourceGitCredentials remote.GitCredentials
 	OCICacheDir                  string
+	OCICredentials               ociartifact.Credentials
 	RecordCacheEvents            bool
 }
 

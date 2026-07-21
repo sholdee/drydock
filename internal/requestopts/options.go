@@ -8,6 +8,7 @@ import (
 	"github.com/sholdee/drydock/internal/appset"
 	"github.com/sholdee/drydock/internal/chart"
 	"github.com/sholdee/drydock/internal/diagnostic"
+	"github.com/sholdee/drydock/internal/ociartifact"
 	"github.com/sholdee/drydock/internal/remote"
 	"github.com/sholdee/drydock/internal/rendercache"
 	"github.com/sholdee/drydock/internal/source"
@@ -49,6 +50,7 @@ type Options struct {
 	RemoteResourceCredentials      remote.Credentials
 	RemoteResourceGitCredentials   remote.GitCredentials
 	OCICacheDir                    string
+	OCICredentials                 ociartifact.Credentials
 	EnableAVPCompat                bool
 	EnableKSOPSCompat              bool
 	EnablePlugins                  bool
@@ -152,6 +154,7 @@ func (options Options) acquisitionOptions() app.AcquisitionOptions {
 		RemoteResourceCredentials:    options.RemoteResourceCredentials,
 		RemoteResourceGitCredentials: options.RemoteResourceGitCredentials,
 		OCICacheDir:                  options.OCICacheDir,
+		OCICredentials:               options.OCICredentials,
 		RecordCacheEvents:            options.RecordCacheEvents,
 	}
 }

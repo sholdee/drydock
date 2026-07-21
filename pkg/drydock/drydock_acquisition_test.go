@@ -3,12 +3,49 @@ package drydock
 import (
 	"context"
 	"errors"
-	"github.com/sholdee/drydock/internal/remote"
-	sourcepkg "github.com/sholdee/drydock/internal/source"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/sholdee/drydock/internal/ociartifact"
+	"github.com/sholdee/drydock/internal/remote"
+	sourcepkg "github.com/sholdee/drydock/internal/source"
 )
+
+// TestConfigOCICredentialsMapToInternal pins the public OCICredentials ->
+// internal ociartifact.Credentials mapping into request options (both Build
+// and Diff share requestOptions, which is what keeps diff sides identical).
+func TestConfigOCICredentialsMapToInternal(t *testing.T) {
+	client := NewClient(Config{
+		Path: ".",
+		OCICredentials: OCICredentials{
+			Username:           "oci-user",
+			Password:           "oci-pass",
+			CAFile:             "/certs/ca.pem",
+			ClientCertFile:     "/certs/client-cert.pem",
+			ClientKeyFile:      "/certs/client-key.pem",
+			InsecureSkipVerify: true,
+		},
+	})
+	want := ociartifact.Credentials{
+		Username:           "oci-user",
+		Password:           "oci-pass",
+		CAFile:             "/certs/ca.pem",
+		ClientCertFile:     "/certs/client-cert.pem",
+		ClientKeyFile:      "/certs/client-key.pem",
+		InsecureSkipVerify: true,
+	}
+	options := client.requestOptions()
+	if options.OCICredentials != want {
+		t.Fatalf("requestOptions().OCICredentials = %#v, want %#v", options.OCICredentials, want)
+	}
+	if got := options.Build().OCICredentials; got != want {
+		t.Fatalf("Build().OCICredentials = %#v, want %#v", got, want)
+	}
+	if got := options.Diff().OCICredentials; got != want {
+		t.Fatalf("Diff().OCICredentials = %#v, want %#v", got, want)
+	}
+}
 
 func TestPublicRenderReturnsCacheEventsWhenEnabled(t *testing.T) {
 	root := t.TempDir()

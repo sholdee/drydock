@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"github.com/sholdee/drydock/internal/chart"
+	"github.com/sholdee/drydock/internal/ociartifact"
 	"github.com/sholdee/drydock/internal/remote"
 	sourcepkg "github.com/sholdee/drydock/internal/source"
 )
@@ -128,6 +129,20 @@ type RemoteResourceCredentials struct {
 	BearerToken string
 }
 
+// OCICredentials supplies auth and TLS material for first-class OCI artifact
+// sources. All TLS fields are file paths. The single set applies to every
+// OCI registry a run touches; CAFile REPLACES the system CA pool for those
+// registries; setting any TLS field (or InsecureSkipVerify) also disables the
+// loopback plain-HTTP default.
+type OCICredentials struct {
+	Username           string
+	Password           string
+	CAFile             string
+	ClientCertFile     string
+	ClientKeyFile      string
+	InsecureSkipVerify bool
+}
+
 // RemoteResourceOptions controls remote Kustomize resource acquisition.
 type RemoteResourceOptions struct {
 	CacheDir       string
@@ -232,6 +247,17 @@ func remoteResourceKindFromInternal(kind remote.RequestKind) RemoteResourceKind 
 		return RemoteResourceGitRepo
 	default:
 		return RemoteResourceKind(kind)
+	}
+}
+
+func ociCredentialsToInternal(credentials OCICredentials) ociartifact.Credentials {
+	return ociartifact.Credentials{
+		Username:           credentials.Username,
+		Password:           credentials.Password,
+		CAFile:             credentials.CAFile,
+		ClientCertFile:     credentials.ClientCertFile,
+		ClientKeyFile:      credentials.ClientKeyFile,
+		InsecureSkipVerify: credentials.InsecureSkipVerify,
 	}
 }
 

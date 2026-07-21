@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"encoding/base64"
 	"fmt"
 	"path/filepath"
 	"strings"
@@ -153,6 +154,7 @@ func (p localProvider) resolveOCIArtifactSource(ctx context.Context, source rend
 		CacheDir:       p.ociCacheDir,
 		Offline:        p.offline,
 		ForbiddenRoots: append([]string(nil), p.ociForbiddenRoots...),
+		Credentials:    p.ociCredentials,
 		OnAcquired: func(fromImageCache bool) {
 			acquiredFromCache = &fromImageCache
 		},
@@ -176,6 +178,7 @@ func (p localProvider) resolveOCIArtifactSource(ctx context.Context, source rend
 			FromCache:         *acquiredFromCache,
 			Network:           !*acquiredFromCache,
 			Offline:           p.offline,
+			SensitiveValues:   ociSensitiveValues(p.ociCredentials),
 		}))
 		p.recordAcquisition(cacheevent.AcquisitionRecord{
 			Kind:              cacheevent.AcquisitionOCI,
@@ -200,6 +203,7 @@ func (p localProvider) recordOCIAcquisitionError(source render.ResolvedSource, e
 		RequestedRevision: source.TargetRevision,
 		Offline:           p.offline,
 		Err:               err,
+		SensitiveValues:   ociSensitiveValues(p.ociCredentials),
 	})
 	p.recordCacheEvent(acquireError.Event)
 	return fmt.Errorf("%s", acquireError.RedactedError)
@@ -258,4 +262,17 @@ func sourceGitSensitiveValues(credentials sourcepkg.GitCredentials) []string {
 		credentials.SSHPrivateKey,
 		credentials.SSHPassphrase,
 	)
+}
+
+// ociSensitiveValues mirrors the chart/git sensitive-value pattern
+// (chartSensitiveValues, sourceGitSensitiveValues). The base64(user:pass)
+// Basic-auth form is redacted alongside the literals: registry error bodies
+// and proxies can echo the received Authorization header, which carries the
+// secret in that encoding.
+func ociSensitiveValues(credentials ociartifact.Credentials) []string {
+	values := []string{credentials.Username, credentials.Password}
+	if credentials.Username != "" || credentials.Password != "" {
+		values = append(values, base64.StdEncoding.EncodeToString([]byte(credentials.Username+":"+credentials.Password)))
+	}
+	return cacheevent.CompactSensitiveValues(values...)
 }

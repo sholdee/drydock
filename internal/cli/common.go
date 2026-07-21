@@ -8,6 +8,7 @@ import (
 	"github.com/sholdee/drydock/internal/cacheevent"
 	"github.com/sholdee/drydock/internal/chart"
 	"github.com/sholdee/drydock/internal/diagnostic"
+	"github.com/sholdee/drydock/internal/ociartifact"
 	"github.com/sholdee/drydock/internal/remote"
 	"github.com/sholdee/drydock/internal/rendercache"
 	"github.com/sholdee/drydock/internal/requestopts"
@@ -46,6 +47,12 @@ type commonFlags struct {
 	refreshRemotes           bool
 	remoteCacheDir           string
 	ociCacheDir              string
+	ociUsername              string
+	ociPassword              string
+	ociCAFile                string
+	ociClientCertFile        string
+	ociClientKeyFile         string
+	ociInsecureSkipVerify    bool
 	remoteUsername           string
 	remotePassword           string
 	remoteBearerToken        string
@@ -150,6 +157,12 @@ func bindAuthFlags(cmd *cobra.Command, flags *commonFlags) {
 	cmd.Flags().StringVar(&flags.helmPassword, "helm-password", flags.helmPassword, "password for authenticated HTTP Helm repositories")
 	cmd.Flags().StringVar(&flags.helmBearerToken, "helm-bearer-token", flags.helmBearerToken, "bearer token for authenticated HTTP Helm repositories")
 	cmd.Flags().StringVar(&flags.registryConfig, "registry-config", flags.registryConfig, "Helm OCI registry config file")
+	cmd.Flags().StringVar(&flags.ociUsername, "oci-username", flags.ociUsername, "username for authenticated OCI artifact registries")
+	cmd.Flags().StringVar(&flags.ociPassword, "oci-password", flags.ociPassword, "password for authenticated OCI artifact registries")
+	cmd.Flags().StringVar(&flags.ociCAFile, "oci-ca-file", flags.ociCAFile, "PEM CA bundle for OCI artifact registry TLS (replaces the system pool for all OCI registries)")
+	cmd.Flags().StringVar(&flags.ociClientCertFile, "oci-client-cert-file", flags.ociClientCertFile, "client certificate file for mutual-TLS OCI artifact registries (requires --oci-client-key-file)")
+	cmd.Flags().StringVar(&flags.ociClientKeyFile, "oci-client-key-file", flags.ociClientKeyFile, "client key file for mutual-TLS OCI artifact registries (requires --oci-client-cert-file)")
+	cmd.Flags().BoolVar(&flags.ociInsecureSkipVerify, "oci-insecure-skip-verify", flags.ociInsecureSkipVerify, "skip TLS certificate verification for OCI artifact registries (insecure; credentials are exposed to whoever answers)")
 	cmd.Flags().StringVar(&flags.remoteUsername, "remote-username", flags.remoteUsername, "username for authenticated remote Kustomize HTTP resources")
 	cmd.Flags().StringVar(&flags.remotePassword, "remote-password", flags.remotePassword, "password for authenticated remote Kustomize HTTP resources")
 	cmd.Flags().StringVar(&flags.remoteBearerToken, "remote-bearer-token", flags.remoteBearerToken, "bearer token for authenticated remote Kustomize HTTP resources")
@@ -317,6 +330,17 @@ func (flags commonFlags) chartCredentials() chart.ChartCredentials {
 	}
 }
 
+func (flags commonFlags) ociCredentials() ociartifact.Credentials {
+	return ociartifact.Credentials{
+		Username:           flags.ociUsername,
+		Password:           flags.ociPassword,
+		CAFile:             flags.ociCAFile,
+		ClientCertFile:     flags.ociClientCertFile,
+		ClientKeyFile:      flags.ociClientKeyFile,
+		InsecureSkipVerify: flags.ociInsecureSkipVerify,
+	}
+}
+
 func requestOptionsFromFlags(flags commonFlags, repoMaps []source.RepoMap) requestopts.Options {
 	return requestopts.Options{
 		Path:                           flags.path,
@@ -352,6 +376,7 @@ func requestOptionsFromFlags(flags commonFlags, repoMaps []source.RepoMap) reque
 		RemoteResourceCredentials:      flags.remoteCredentials(),
 		RemoteResourceGitCredentials:   flags.remoteGitCredentials(),
 		OCICacheDir:                    flags.ociCacheDir,
+		OCICredentials:                 flags.ociCredentials(),
 		EnableAVPCompat:                flags.enableAVPCompat,
 		EnableKSOPSCompat:              flags.enableKSOPSCompat,
 		EnablePlugins:                  flags.enablePlugins,
