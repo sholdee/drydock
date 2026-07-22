@@ -128,8 +128,8 @@ spec:
 			t.Fatalf("DeepCopy() panic = %v", recovered)
 		}
 	}()
-	copy := docs[0].Object.DeepCopy()
-	replicas, found, err := unstructured.NestedInt64(copy.Object, "spec", "replicas")
+	clone := docs[0].Object.DeepCopy()
+	replicas, found, err := unstructured.NestedInt64(clone.Object, "spec", "replicas")
 	if err != nil {
 		t.Fatalf("NestedInt64() error = %v", err)
 	}
@@ -160,8 +160,8 @@ data:
 	if !found || value != "2026-05-23T00:00:00Z" {
 		t.Fatalf("releaseDate = %q, found %t; want 2026-05-23T00:00:00Z, true", value, found)
 	}
-	if copy := docs[0].Object.DeepCopy(); copy.GetName() != "release" {
-		t.Fatalf("DeepCopy().GetName() = %q, want release", copy.GetName())
+	if clone := docs[0].Object.DeepCopy(); clone.GetName() != "release" {
+		t.Fatalf("DeepCopy().GetName() = %q, want release", clone.GetName())
 	}
 }
 

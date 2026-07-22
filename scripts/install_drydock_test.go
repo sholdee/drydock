@@ -245,9 +245,9 @@ func TestInstallDrydockDefaultTargetResolution(t *testing.T) {
 				if err := os.MkdirAll(pathDir, 0o755); err != nil {
 					t.Fatal(err)
 				}
-				real := filepath.Join(t.TempDir(), "drydock-real")
-				writeExecutable(t, real, "#!/usr/bin/env bash\necho real\n")
-				if err := os.Symlink(real, filepath.Join(pathDir, "drydock")); err != nil {
+				realBinary := filepath.Join(t.TempDir(), "drydock-real")
+				writeExecutable(t, realBinary, "#!/usr/bin/env bash\necho real\n")
+				if err := os.Symlink(realBinary, filepath.Join(pathDir, "drydock")); err != nil {
 					t.Fatal(err)
 				}
 			},

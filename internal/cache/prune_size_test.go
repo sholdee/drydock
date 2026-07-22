@@ -217,7 +217,7 @@ func TestPruneDryRunParity(t *testing.T) {
 			t.Fatalf("dry-run Prune() error = %v", err)
 		}
 
-		real, err := Prune(OperationOptions{
+		realRun, err := Prune(OperationOptions{
 			Options:   opts.Options,
 			OlderThan: opts.OlderThan,
 			Yes:       true,
@@ -226,7 +226,7 @@ func TestPruneDryRunParity(t *testing.T) {
 			t.Fatalf("real Prune() error = %v", err)
 		}
 
-		assertEntrySetEqual(t, dry.Entries, real.Entries)
+		assertEntrySetEqual(t, dry.Entries, realRun.Entries)
 		if dry.RemovedCount != 0 {
 			t.Errorf("dry-run RemovedCount = %d, want 0", dry.RemovedCount)
 		}
@@ -267,7 +267,7 @@ func TestPruneDryRunParity(t *testing.T) {
 			t.Fatalf("dry-run Prune() error = %v", err)
 		}
 
-		real, err := Prune(OperationOptions{
+		realRun, err := Prune(OperationOptions{
 			Options:  opts.Options,
 			MaxBytes: opts.MaxBytes,
 			Yes:      true,
@@ -276,12 +276,12 @@ func TestPruneDryRunParity(t *testing.T) {
 			t.Fatalf("real Prune() error = %v", err)
 		}
 
-		assertEntrySetEqual(t, dry.Entries, real.Entries)
+		assertEntrySetEqual(t, dry.Entries, realRun.Entries)
 		if dry.RemovedCount != 0 {
 			t.Errorf("dry-run RemovedCount = %d, want 0", dry.RemovedCount)
 		}
-		if dry.SizeEvictedBytes != real.SizeEvictedBytes {
-			t.Errorf("dry SizeEvictedBytes %d != real %d", dry.SizeEvictedBytes, real.SizeEvictedBytes)
+		if dry.SizeEvictedBytes != realRun.SizeEvictedBytes {
+			t.Errorf("dry SizeEvictedBytes %d != real %d", dry.SizeEvictedBytes, realRun.SizeEvictedBytes)
 		}
 	})
 
@@ -323,7 +323,7 @@ func TestPruneDryRunParity(t *testing.T) {
 			t.Fatalf("dry-run Prune() error = %v", err)
 		}
 
-		real, err := Prune(OperationOptions{
+		realRun, err := Prune(OperationOptions{
 			Options:   opts.Options,
 			OlderThan: opts.OlderThan,
 			MaxBytes:  opts.MaxBytes,
@@ -333,7 +333,7 @@ func TestPruneDryRunParity(t *testing.T) {
 			t.Fatalf("real Prune() error = %v", err)
 		}
 
-		assertEntrySetEqual(t, dry.Entries, real.Entries)
+		assertEntrySetEqual(t, dry.Entries, realRun.Entries)
 		if dry.RemovedCount != 0 {
 			t.Errorf("dry-run RemovedCount = %d, want 0", dry.RemovedCount)
 		}

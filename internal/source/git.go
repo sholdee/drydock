@@ -6,7 +6,6 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
-	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -16,7 +15,9 @@ import (
 	"github.com/go-git/go-git/v5/plumbing/transport"
 	githttp "github.com/go-git/go-git/v5/plumbing/transport/http"
 	gitssh "github.com/go-git/go-git/v5/plumbing/transport/ssh"
+
 	"github.com/sholdee/drydock/internal/cache"
+	"github.com/sholdee/drydock/internal/giturl"
 )
 
 type GitRequest struct {
@@ -278,45 +279,15 @@ func gitSSHAuthMethod(credentials GitCredentials, repoURL string) (transport.Aut
 }
 
 func isSSHGitURL(repoURL string) bool {
-	repoURL = strings.TrimSpace(repoURL)
-	if repoURL == "" {
-		return false
-	}
-	if strings.HasPrefix(repoURL, "ssh://") {
-		return true
-	}
-	return isSCPStyleGitURL(repoURL)
+	return giturl.IsSSHURL(repoURL)
 }
 
 func isSCPStyleGitURL(repoURL string) bool {
-	if strings.Contains(repoURL, "://") || strings.HasPrefix(repoURL, "/") {
-		return false
-	}
-	colon := strings.Index(repoURL, ":")
-	if colon <= 0 {
-		return false
-	}
-	if slash := strings.IndexAny(repoURL, `/\`); slash >= 0 && slash < colon {
-		return false
-	}
-	return strings.Contains(repoURL[:colon], "@")
+	return giturl.IsSCPStyle(repoURL)
 }
 
 func sshGitUser(repoURL string) string {
-	repoURL = strings.TrimSpace(repoURL)
-	if isSCPStyleGitURL(repoURL) {
-		userHost, _, _ := strings.Cut(repoURL, ":")
-		if user, _, ok := strings.Cut(userHost, "@"); ok && user != "" {
-			return user
-		}
-		return "git"
-	}
-	if parsed, err := url.Parse(repoURL); err == nil && parsed.User != nil {
-		if user := parsed.User.Username(); user != "" {
-			return user
-		}
-	}
-	return "git"
+	return giturl.SSHUser(repoURL)
 }
 
 func checkoutGitRevision(repo *git.Repository, worktree *git.Worktree, revision string) (string, error) {
@@ -379,45 +350,7 @@ func GitRevisionCandidates(revision string) []plumbing.Revision {
 }
 
 func redactGitError(err error, repoURL string, credentials GitCredentials) string {
-	message := err.Error()
-	redacted := RedactURL(repoURL)
-	raw := strings.TrimSpace(repoURL)
-	replacements := []string{raw, strings.TrimSuffix(raw, ".git"), redacted}
-	if parsed, parseErr := url.Parse(raw); parseErr == nil && parsed.Scheme != "" {
-		withoutFragment := *parsed
-		withoutFragment.Fragment = ""
-		replacements = append(replacements, withoutFragment.String())
-
-		withoutQueryFragment := withoutFragment
-		withoutQueryFragment.RawQuery = ""
-		withoutQueryFragment.ForceQuery = false
-		replacements = append(replacements, withoutQueryFragment.String())
-
-		withoutUser := withoutQueryFragment
-		withoutUser.User = nil
-		replacements = append(replacements, withoutUser.String())
-
-		if parsed.User != nil {
-			username := parsed.User.Username()
-			replacements = append(replacements, parsed.User.String()+"@")
-			if username != "" {
-				replacements = append(replacements, username+":***@")
-				replacements = append(replacements, username+"@")
-			}
-		}
-		if parsed.RawQuery != "" {
-			replacements = append(replacements, parsed.RawQuery)
-		}
-		if parsed.Fragment != "" {
-			replacements = append(replacements, parsed.Fragment)
-		}
-	}
-	for _, replacement := range replacements {
-		if replacement == "" || replacement == redacted {
-			continue
-		}
-		message = strings.ReplaceAll(message, replacement, redacted)
-	}
+	message := giturl.RedactInMessage(err.Error(), repoURL, RedactURL(repoURL))
 	return redactGitCredentialError(message, credentials)
 }
 

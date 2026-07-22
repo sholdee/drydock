@@ -550,11 +550,11 @@ func localHelmValueFileIdentity(root, resolved, display string) (string, error) 
 	if err := rejectSymlinkedPath(root, resolved); err != nil {
 		return "", fmt.Errorf("helm value file %q: %w", display, err)
 	}
-	real, err := filepath.EvalSymlinks(resolved)
+	realPath, err := filepath.EvalSymlinks(resolved)
 	if err != nil {
 		return "", err
 	}
-	return filepath.Clean(real), nil
+	return filepath.Clean(realPath), nil
 }
 
 func displayHelmValueGlobMatch(root, match, pattern string) string {

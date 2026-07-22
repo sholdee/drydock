@@ -25,6 +25,15 @@ func TestHomeOpsRenovateSmokeScriptContract(t *testing.T) {
 	}
 	content := string(contentBytes)
 
+	libPath := filepath.Join("..", "..", "scripts", "lib", "home-ops-smoke.sh")
+	libBytes, err := os.ReadFile(libPath)
+	if err != nil {
+		t.Fatalf("read smoke lib: %v", err)
+	}
+	if want := `/^[[:space:]]*helmCharts:[[:space:]]*($|#)/`; !strings.Contains(string(libBytes), want) {
+		t.Fatalf("smoke lib missing %q:\n%s", want, string(libBytes))
+	}
+
 	for _, want := range []string{
 		"#!/usr/bin/env bash",
 		"set -euo pipefail",
@@ -32,7 +41,7 @@ func TestHomeOpsRenovateSmokeScriptContract(t *testing.T) {
 		`if [[ -z "${RENOVATE_CHART_TO:-}" ]]; then`,
 		"detect_renovate_chart_version()",
 		"update_renovate_chart_version()",
-		`/^[[:space:]]*helmCharts:[[:space:]]*($|#)/`,
+		`source "${SCRIPT_DIR}/lib/home-ops-smoke.sh"`,
 		`CURRENT_CHART_VERSION="$(detect_renovate_chart_version "${KUSTOMIZATION}" "${RENOVATE_CHART_NAME}")"`,
 		`if [[ "${CURRENT_CHART_VERSION}" == "${RENOVATE_CHART_TO}" ]]; then`,
 		`update_renovate_chart_version "${KUSTOMIZATION}" "${RENOVATE_CHART_NAME}" "${RENOVATE_CHART_TO}" "${KUSTOMIZATION}.tmp"`,

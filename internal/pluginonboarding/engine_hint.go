@@ -1,7 +1,6 @@
 package pluginonboarding
 
 import (
-	"fmt"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -93,43 +92,7 @@ func safeNativeKustomizeShellFields(command string) ([]string, bool) {
 }
 
 func normalizeNativeKustomizeTokens(tokens []string) ([]string, error) {
-	if len(tokens) < 2 || filepath.Base(tokens[0]) != "kustomize" || tokens[1] != "build" {
-		return nil, fmt.Errorf("generate command is not kustomize build")
-	}
-	options := make([]string, 0, len(tokens)-2)
-	for i := 2; i < len(tokens); i++ {
-		token := strings.TrimSpace(tokens[i])
-		if token == "" || token == "." {
-			continue
-		}
-		switch {
-		case token == "--enable-helm",
-			token == "--enable-alpha-plugins",
-			token == "--enable-exec",
-			strings.HasPrefix(token, "--helm-api-versions="),
-			strings.HasPrefix(token, "--load-restrictor="):
-			options = append(options, token)
-		case token == "--helm-api-versions" || token == "--load-restrictor":
-			if i+1 >= len(tokens) {
-				return nil, fmt.Errorf("kustomize build option requires a value")
-			}
-			i++
-			value := strings.TrimSpace(tokens[i])
-			if value == "" || strings.HasPrefix(value, "-") {
-				return nil, fmt.Errorf("kustomize build option requires a value")
-			}
-			options = append(options, token, value)
-		default:
-			if strings.HasPrefix(token, "-") {
-				return nil, fmt.Errorf("unsupported kustomize build option")
-			}
-			return nil, fmt.Errorf("unsupported kustomize build path or remote operand")
-		}
-	}
-	if err := render.ValidateKustomizeBuildOptions(options); err != nil {
-		return nil, fmt.Errorf("unsupported kustomize build option")
-	}
-	return options, nil
+	return render.NormalizeKustomizeBuildTokens(tokens)
 }
 
 func nativeKustomizeGenerateSeed(plugin config.ConfigManagementPlugin) (command []string, args []string, ok bool) {
