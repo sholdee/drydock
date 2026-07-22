@@ -529,7 +529,7 @@ rotation audit rather than relying on drydock diff for this class of change.
 | `comment-empty` | `false` | Comment even when the corresponding diff is empty. |
 | `comment-continue-on-error` | `true` | Do not fail the workflow when pull request commenting fails. |
 | `diff-max-bytes` | `60000` | Maximum rendered diff comment bytes; larger values are clamped to GitHub's comment budget. |
-| `markdown-diagnostics` | unset | Diagnostics detail embedded in PR comments: `all` (errors open, warnings collapsed), `errors`, or `none`. Unset omits the flag and uses the drydock default (`all`). |
+| `markdown-diagnostics` | unset | Diagnostics detail embedded in PR comments: `all` (errors open above the diffs, warnings collapsed below), `errors`, or `none`. Unset omits the flag and uses the drydock default (`all`). |
 | `upload-artifacts` | `true` | Upload full diff and image report artifacts when they are non-empty. |
 | `artifact-retention-days` | `30` | Retention days for uploaded artifacts. |
 | `diff-artifact-name` | generated | Artifact name override for rendered manifest diffs. |

@@ -774,3 +774,50 @@ func TestDiffMarkdownDropsWarningsWhenErrorsDoNotFit(t *testing.T) {
 		t.Fatal("meta.Truncated = false, want true when the errors block is dropped")
 	}
 }
+
+func TestDiffMarkdownRendersWarningsBelowAppDetails(t *testing.T) {
+	out, _, err := DiffMarkdown(app.DiffResult{
+		Results: []diff.Result{diffResult("argocd", "demo", "cm", "-  value: old\n+  value: new\n")},
+		Diagnostics: []diagnostic.Diagnostic{
+			{Code: "render.failed", Severity: diagnostic.SeverityError, Category: "render", Message: "render exploded"},
+			{Code: "kustomize.ksops-compat-substituted", Severity: diagnostic.SeverityWarning, Category: "kustomize", Message: "placeholder warning"},
+		},
+	}, MarkdownOptions{MaxBytes: DefaultMaxBytes})
+	if err != nil {
+		t.Fatalf("DiffMarkdown() error = %v", err)
+	}
+	text := string(out)
+	errorAt := strings.Index(text, "render exploded")
+	appAt := strings.Index(text, "<summary>argocd/demo")
+	warningsAt := strings.Index(text, "<summary>1 warning</summary>")
+	if errorAt == -1 || appAt == -1 || warningsAt == -1 {
+		t.Fatalf("expected error, app details, and warnings sections:\n%s", text)
+	}
+	if errorAt >= appAt || appAt >= warningsAt {
+		t.Fatalf("order = error@%d app@%d warnings@%d, want errors above diffs and warnings below:\n%s", errorAt, appAt, warningsAt, text)
+	}
+}
+
+func TestImageDiffMarkdownRendersWarningsBelowRows(t *testing.T) {
+	out, _, err := ImageDiffMarkdown(app.ImageDiffResult{
+		Added: []string{"registry.example.com/app:v2"},
+		Diagnostics: []diagnostic.Diagnostic{{
+			Code:     "kustomize.ksops-compat-substituted",
+			Severity: diagnostic.SeverityWarning,
+			Category: "kustomize",
+			Message:  "placeholder warning",
+		}},
+	}, MarkdownOptions{MaxBytes: DefaultMaxBytes})
+	if err != nil {
+		t.Fatalf("ImageDiffMarkdown() error = %v", err)
+	}
+	text := string(out)
+	rowsAt := strings.Index(text, "| Change | Image |")
+	warningsAt := strings.Index(text, "<summary>Diagnostics (1 warning)</summary>")
+	if rowsAt == -1 || warningsAt == -1 {
+		t.Fatalf("expected image table and warnings sections:\n%s", text)
+	}
+	if rowsAt > warningsAt {
+		t.Fatalf("order = rows@%d warnings@%d, want image rows above collapsed warnings:\n%s", rowsAt, warningsAt, text)
+	}
+}

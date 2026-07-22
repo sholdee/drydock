@@ -128,15 +128,16 @@ func DiffMarkdown(result app.DiffResult, options MarkdownOptions) ([]byte, Markd
 	state.appendRequired(fmt.Sprintf("## %s\n\n", escapeMarkdownText(options.Title)))
 	state.appendRequired(summaryMarkdown(len(result.Results), len(groups), totalAdded, totalRemoved, result.Diagnostics))
 	errorsPart, warningsPart := diagnosticsMarkdown(result.Diagnostics, options.DiagnosticLimit, diagnosticsMode)
-	if state.appendBounded(errorsPart) {
-		state.appendBounded(warningsPart)
-	}
+	errorsFit := state.appendBounded(errorsPart)
 	if len(groups) == 0 {
 		state.appendBounded(noDiffMarkdown())
 	} else {
 		state.appendAppDetails(groups, len(groups) == 1)
 	}
 	state.appendBounded(omittedMarkdown(groups[state.shownApps:]))
+	if errorsFit {
+		state.appendBounded(warningsPart)
+	}
 	state.appendBounded(statsMarkdown(state.truncated, state.shownApps, len(groups)))
 
 	out := state.bytes()
@@ -171,13 +172,14 @@ func ImageDiffMarkdown(result app.ImageDiffResult, options MarkdownOptions) ([]b
 	state.appendRequired(fmt.Sprintf("## %s\n\n", escapeMarkdownText(options.Title)))
 	state.appendRequired(imageSummaryMarkdown(len(result.Added), len(result.Removed), result.Diagnostics))
 	errorsPart, warningsPart := diagnosticsMarkdown(result.Diagnostics, options.DiagnosticLimit, diagnosticsMode)
-	if state.appendBounded(errorsPart) {
-		state.appendBounded(warningsPart)
-	}
+	errorsFit := state.appendBounded(errorsPart)
 	if len(rows) == 0 {
 		state.appendBounded(noImageDiffMarkdown())
 	} else {
 		state.appendImageRows(rows)
+	}
+	if errorsFit {
+		state.appendBounded(warningsPart)
 	}
 
 	out := state.bytes()
