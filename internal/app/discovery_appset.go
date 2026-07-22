@@ -99,8 +99,8 @@ func copyGeneratedApplications(apps []appset.GeneratedApplication) []appset.Gene
 	out := make([]appset.GeneratedApplication, len(apps))
 	for i, app := range apps {
 		out[i] = app
-		if copy := app.Application.DeepCopy(); copy != nil {
-			out[i].Application = *copy
+		if clone := app.Application.DeepCopy(); clone != nil {
+			out[i].Application = *clone
 		}
 		out[i].SourcePaths = append([]string(nil), app.SourcePaths...)
 	}
