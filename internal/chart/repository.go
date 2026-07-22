@@ -80,7 +80,7 @@ func (acquirer DefaultAcquirer) Acquire(ctx context.Context, request Request, op
 	if err != nil {
 		return Result{}, fmt.Errorf("create temporary chart cache %s: %w", keyParent, err)
 	}
-	defer os.RemoveAll(tmpKeyDir)
+	defer func() { _ = os.RemoveAll(tmpKeyDir) }()
 
 	tmpChartDir := filepath.Join(tmpKeyDir, request.Name)
 	if err := extractChartArchive(bytes.NewReader(archive), tmpChartDir, request.Name); err != nil {

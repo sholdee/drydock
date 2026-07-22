@@ -273,10 +273,10 @@ func resolveKustomizeHelmChart(ctx context.Context, tempRepoRoot, tempSourceRoot
 		Credentials:    opts.ChartCredentials,
 	})
 	if err != nil {
-		recordKustomizeChartCacheEvent(opts, request, err, chart.Result{})
+		recordChartCacheEvent(opts, request, err, chart.Result{})
 		return "", fmt.Errorf("acquire kustomize helm chart %s: %s", helmChart.Name, redactKustomizeChartAcquireError(err, request.Repository, opts.ChartCredentials))
 	}
-	recordKustomizeChartCacheEvent(opts, request, nil, result)
+	recordChartCacheEvent(opts, request, nil, result)
 
 	chartRel := filepath.ToSlash(filepath.Join(".drydock", "charts", generatedName))
 	chartDst, err := generatedKustomizeWorkspacePath(tempRepoRoot, chartRel)
@@ -287,36 +287,6 @@ func resolveKustomizeHelmChart(ctx context.Context, tempRepoRoot, tempSourceRoot
 		return "", fmt.Errorf("copy acquired helm chart %s: %w", helmChart.Name, err)
 	}
 	return chartRel, nil
-}
-
-func recordKustomizeChartCacheEvent(opts RenderOptions, request chart.Request, acquireErr error, acquired chart.Result) {
-	if acquireErr == nil && opts.AcquisitionCollector != nil {
-		opts.AcquisitionCollector.Record(cacheevent.AcquisitionRecord{
-			Kind:              cacheevent.AcquisitionChart,
-			RequestedRevision: request.Version,
-			ResolvedRevision:  acquired.Version,
-		})
-	}
-	if opts.CacheEventRecorder == nil {
-		return
-	}
-	input := cacheevent.AcquisitionEventInput{
-		Source:            cacheevent.SourceChart,
-		Target:            request.Repository,
-		RequestedRevision: request.Version,
-		Offline:           opts.OfflineCharts,
-		Refresh:           opts.RefreshCharts,
-		SensitiveValues:   chartSensitiveValues(opts.ChartCredentials),
-	}
-	if acquireErr != nil {
-		input.Err = acquireErr
-		opts.CacheEventRecorder.Record(cacheevent.NewAcquisitionError(input).Event)
-		return
-	}
-	input.Revision = acquired.Version
-	input.FromCache = acquired.FromCache
-	input.Network = !acquired.FromCache
-	opts.CacheEventRecorder.Record(cacheevent.NewAcquisitionEvent(input))
 }
 
 func redactKustomizeChartAcquireError(err error, repository string, credentials chart.ChartCredentials) string {

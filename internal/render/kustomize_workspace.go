@@ -42,7 +42,7 @@ func renderKustomizeWithPreparedWorkspace(ctx context.Context, source ResolvedSo
 	if err != nil {
 		return nil, nil, err
 	}
-	defer os.RemoveAll(tempDir)
+	defer func() { _ = os.RemoveAll(tempDir) }()
 
 	tempRepoRoot := filepath.Join(tempDir, "repo")
 	root, err := sourceRoot(source)

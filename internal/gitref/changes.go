@@ -280,7 +280,7 @@ func regularWorktreeFileChanged(path string, file *object.File) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	defer worktreeFile.Close()
+	defer func() { _ = worktreeFile.Close() }()
 	hasher := plumbing.NewHasher(plumbing.BlobObject, info.Size())
 	if _, err := io.Copy(hasher, worktreeFile); err != nil {
 		return false, err

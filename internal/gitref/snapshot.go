@@ -215,7 +215,7 @@ func writeSnapshotFile(target string, file *object.File) error {
 	if err != nil {
 		return err
 	}
-	defer reader.Close()
+	defer func() { _ = reader.Close() }()
 
 	mode := os.FileMode(0o644)
 	if file.Mode == filemode.Executable {

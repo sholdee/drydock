@@ -43,7 +43,7 @@ func (acquirer DefaultAcquirer) fetchHTTPChart(ctx context.Context, request Requ
 	if err != nil {
 		return nil, fmt.Errorf("fetch chart repository index %s: %s", redactedIndexURL, redactedChartCredentialError(redactedFetchError(err, indexURL, false), credentials))
 	}
-	defer indexResponse.Body.Close()
+	defer func() { _ = indexResponse.Body.Close() }()
 	if indexResponse.StatusCode == http.StatusUnauthorized || indexResponse.StatusCode == http.StatusForbidden {
 		return nil, fmt.Errorf("fetch chart repository index %s: HTTP %s", redactedIndexURL, indexResponse.Status)
 	}
@@ -71,7 +71,7 @@ func (acquirer DefaultAcquirer) fetchHTTPChart(ctx context.Context, request Requ
 	if err != nil {
 		return nil, fmt.Errorf("fetch chart archive %s: %s", redactedChartURL, redactedChartCredentialError(redactedFetchError(err, chartURL, true), credentials))
 	}
-	defer archiveResponse.Body.Close()
+	defer func() { _ = archiveResponse.Body.Close() }()
 	if archiveResponse.StatusCode == http.StatusUnauthorized || archiveResponse.StatusCode == http.StatusForbidden {
 		return nil, fmt.Errorf("fetch chart archive %s: HTTP %s", redactedChartURL, archiveResponse.Status)
 	}

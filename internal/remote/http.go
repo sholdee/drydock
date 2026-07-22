@@ -94,7 +94,7 @@ func (acquirer DefaultAcquirer) fetch(ctx context.Context, normalizedURL string,
 	if err != nil {
 		return nil, fmt.Errorf("fetch remote resource %s: %s", RedactURL(normalizedURL), redactFetchError(err, normalizedURL, credentials))
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("fetch remote resource %s: HTTP %s", RedactURL(normalizedURL), resp.Status)
 	}
@@ -124,7 +124,7 @@ func publishCacheFile(path string, data []byte) error {
 		return fmt.Errorf("create temporary remote resource cache file: %w", err)
 	}
 	tmpName := tmp.Name()
-	defer os.Remove(tmpName)
+	defer func() { _ = os.Remove(tmpName) }()
 	if _, err := tmp.Write(data); err != nil {
 		_ = tmp.Close()
 		return err

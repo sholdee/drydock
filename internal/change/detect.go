@@ -151,12 +151,12 @@ func regularFilesChanged(basePath, currentPath string, baseInfo, currentInfo fs.
 	if err != nil {
 		return false, err
 	}
-	defer base.Close()
+	defer func() { _ = base.Close() }()
 	current, err := os.Open(currentPath)
 	if err != nil {
 		return false, err
 	}
-	defer current.Close()
+	defer func() { _ = current.Close() }()
 	equal, err := streamcmp.Equal(base, current)
 	if err != nil {
 		return false, err

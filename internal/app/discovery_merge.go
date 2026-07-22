@@ -24,21 +24,32 @@ func mergeDiscoveryResultsWithDiagnostics(base, overlay discovery.Result) (disco
 	return out, diags
 }
 
-func mergeApplications(base, overlay []discovery.ApplicationFile) ([]discovery.ApplicationFile, []diagnostic.Diagnostic) {
-	out := append([]discovery.ApplicationFile(nil), base...)
+// mergeDiscoveryItems merges overlay into base, resolving key collisions via
+// the tier-priority conflict rules. kind is per-item because settings
+// candidates carry their object kind in the item itself.
+func mergeDiscoveryItems[T any](
+	base, overlay []T,
+	key func(T) string,
+	kind func(T) string,
+	same func(T, T) bool,
+	source func(T) (discovery.SourceTier, string, int),
+) ([]T, []diagnostic.Diagnostic) {
+	out := append([]T(nil), base...)
 	indexes := make(map[string]int, len(out))
 	looseIndexes := make(map[string]discoveryLooseIndex, len(out))
 	for i, item := range out {
-		addDiscoveryIndex(indexes, looseIndexes, applicationDiscoveryKey(item.Application), i)
+		addDiscoveryIndex(indexes, looseIndexes, key(item), i)
 	}
 	var diags []diagnostic.Diagnostic
 	for _, item := range overlay {
-		key := applicationDiscoveryKey(item.Application)
-		if index, ok := indexes[key]; ok {
-			if sameApplicationDiscoveryObject(out[index], item) {
+		itemKey := key(item)
+		incomingTier, incomingPath, incomingDocument := source(item)
+		if index, ok := indexes[itemKey]; ok {
+			if same(out[index], item) {
 				continue
 			}
-			replacement, diag := resolveDiscoveryConflict("Application", key, out[index].Tier, out[index].Path, out[index].DocumentIndex, item.Tier, item.Path, item.DocumentIndex)
+			existingTier, existingPath, existingDocument := source(out[index])
+			replacement, diag := resolveDiscoveryConflict(kind(item), itemKey, existingTier, existingPath, existingDocument, incomingTier, incomingPath, incomingDocument)
 			if diag != nil {
 				diags = append(diags, *diag)
 			}
@@ -47,8 +58,9 @@ func mergeApplications(base, overlay []discovery.ApplicationFile) ([]discovery.A
 			}
 			continue
 		}
-		if index, existingKey, ok := namespaceDefaultedConflict(indexes, looseIndexes, key); ok {
-			replacement, diag := resolveNamespaceDefaultedDiscoveryConflict("Application", existingKey, key, out[index].Tier, out[index].Path, out[index].DocumentIndex, item.Tier, item.Path, item.DocumentIndex)
+		if index, existingKey, ok := namespaceDefaultedConflict(indexes, looseIndexes, itemKey); ok {
+			existingTier, existingPath, existingDocument := source(out[index])
+			replacement, diag := resolveNamespaceDefaultedDiscoveryConflict(kind(item), existingKey, itemKey, existingTier, existingPath, existingDocument, incomingTier, incomingPath, incomingDocument)
 			if diag != nil {
 				diags = append(diags, *diag)
 			}
@@ -56,140 +68,54 @@ func mergeApplications(base, overlay []discovery.ApplicationFile) ([]discovery.A
 				delete(indexes, existingKey)
 				removeDiscoveryLooseIndex(looseIndexes, existingKey)
 				out[index] = item
-				addDiscoveryIndex(indexes, looseIndexes, key, index)
+				addDiscoveryIndex(indexes, looseIndexes, itemKey, index)
 			}
 			continue
 		}
-		addDiscoveryIndex(indexes, looseIndexes, key, len(out))
+		addDiscoveryIndex(indexes, looseIndexes, itemKey, len(out))
 		out = append(out, item)
 	}
 	return out, diags
+}
+
+func mergeApplications(base, overlay []discovery.ApplicationFile) ([]discovery.ApplicationFile, []diagnostic.Diagnostic) {
+	return mergeDiscoveryItems(base, overlay,
+		func(item discovery.ApplicationFile) string { return applicationDiscoveryKey(item.Application) },
+		func(discovery.ApplicationFile) string { return "Application" },
+		sameApplicationDiscoveryObject,
+		func(item discovery.ApplicationFile) (discovery.SourceTier, string, int) {
+			return item.Tier, item.Path, item.DocumentIndex
+		})
 }
 
 func mergeApplicationSets(base, overlay []discovery.ApplicationSetFile) ([]discovery.ApplicationSetFile, []diagnostic.Diagnostic) {
-	out := append([]discovery.ApplicationSetFile(nil), base...)
-	indexes := make(map[string]int, len(out))
-	looseIndexes := make(map[string]discoveryLooseIndex, len(out))
-	for i, item := range out {
-		addDiscoveryIndex(indexes, looseIndexes, applicationSetDiscoveryKey(item.ApplicationSet), i)
-	}
-	var diags []diagnostic.Diagnostic
-	for _, item := range overlay {
-		key := applicationSetDiscoveryKey(item.ApplicationSet)
-		if index, ok := indexes[key]; ok {
-			if sameApplicationSetDiscoveryObject(out[index], item) {
-				continue
-			}
-			replacement, diag := resolveDiscoveryConflict("ApplicationSet", key, out[index].Tier, out[index].Path, out[index].DocumentIndex, item.Tier, item.Path, item.DocumentIndex)
-			if diag != nil {
-				diags = append(diags, *diag)
-			}
-			if replacement {
-				out[index] = item
-			}
-			continue
-		}
-		if index, existingKey, ok := namespaceDefaultedConflict(indexes, looseIndexes, key); ok {
-			replacement, diag := resolveNamespaceDefaultedDiscoveryConflict("ApplicationSet", existingKey, key, out[index].Tier, out[index].Path, out[index].DocumentIndex, item.Tier, item.Path, item.DocumentIndex)
-			if diag != nil {
-				diags = append(diags, *diag)
-			}
-			if replacement {
-				delete(indexes, existingKey)
-				removeDiscoveryLooseIndex(looseIndexes, existingKey)
-				out[index] = item
-				addDiscoveryIndex(indexes, looseIndexes, key, index)
-			}
-			continue
-		}
-		addDiscoveryIndex(indexes, looseIndexes, key, len(out))
-		out = append(out, item)
-	}
-	return out, diags
+	return mergeDiscoveryItems(base, overlay,
+		func(item discovery.ApplicationSetFile) string { return applicationSetDiscoveryKey(item.ApplicationSet) },
+		func(discovery.ApplicationSetFile) string { return "ApplicationSet" },
+		sameApplicationSetDiscoveryObject,
+		func(item discovery.ApplicationSetFile) (discovery.SourceTier, string, int) {
+			return item.Tier, item.Path, item.DocumentIndex
+		})
 }
 
 func mergeProjects(base, overlay []discovery.ProjectFile) ([]discovery.ProjectFile, []diagnostic.Diagnostic) {
-	out := append([]discovery.ProjectFile(nil), base...)
-	indexes := make(map[string]int, len(out))
-	looseIndexes := make(map[string]discoveryLooseIndex, len(out))
-	for i, item := range out {
-		addDiscoveryIndex(indexes, looseIndexes, projectDiscoveryKey(item.Project), i)
-	}
-	var diags []diagnostic.Diagnostic
-	for _, item := range overlay {
-		key := projectDiscoveryKey(item.Project)
-		if index, ok := indexes[key]; ok {
-			if sameProjectDiscoveryObject(out[index], item) {
-				continue
-			}
-			replacement, diag := resolveDiscoveryConflict("AppProject", key, out[index].Tier, out[index].Path, out[index].DocumentIndex, item.Tier, item.Path, item.DocumentIndex)
-			if diag != nil {
-				diags = append(diags, *diag)
-			}
-			if replacement {
-				out[index] = item
-			}
-			continue
-		}
-		if index, existingKey, ok := namespaceDefaultedConflict(indexes, looseIndexes, key); ok {
-			replacement, diag := resolveNamespaceDefaultedDiscoveryConflict("AppProject", existingKey, key, out[index].Tier, out[index].Path, out[index].DocumentIndex, item.Tier, item.Path, item.DocumentIndex)
-			if diag != nil {
-				diags = append(diags, *diag)
-			}
-			if replacement {
-				delete(indexes, existingKey)
-				removeDiscoveryLooseIndex(looseIndexes, existingKey)
-				out[index] = item
-				addDiscoveryIndex(indexes, looseIndexes, key, index)
-			}
-			continue
-		}
-		addDiscoveryIndex(indexes, looseIndexes, key, len(out))
-		out = append(out, item)
-	}
-	return out, diags
+	return mergeDiscoveryItems(base, overlay,
+		func(item discovery.ProjectFile) string { return projectDiscoveryKey(item.Project) },
+		func(discovery.ProjectFile) string { return "AppProject" },
+		sameProjectDiscoveryObject,
+		func(item discovery.ProjectFile) (discovery.SourceTier, string, int) {
+			return item.Tier, item.Path, item.DocumentIndex
+		})
 }
 
 func mergeSettingsCandidates(base, overlay []discovery.SettingsCandidate) ([]discovery.SettingsCandidate, []diagnostic.Diagnostic) {
-	out := append([]discovery.SettingsCandidate(nil), base...)
-	indexes := make(map[string]int, len(out))
-	looseIndexes := make(map[string]discoveryLooseIndex, len(out))
-	for i, item := range out {
-		addDiscoveryIndex(indexes, looseIndexes, settingsDiscoveryKey(item), i)
-	}
-	var diags []diagnostic.Diagnostic
-	for _, item := range overlay {
-		key := settingsDiscoveryKey(item)
-		if index, ok := indexes[key]; ok {
-			if sameSettingsDiscoveryObject(out[index], item) {
-				continue
-			}
-			replacement, diag := resolveDiscoveryConflict(settingsObjectKind(item.Kind), key, out[index].Tier, out[index].Path, out[index].DocumentIndex, item.Tier, item.Path, item.DocumentIndex)
-			if diag != nil {
-				diags = append(diags, *diag)
-			}
-			if replacement {
-				out[index] = item
-			}
-			continue
-		}
-		if index, existingKey, ok := namespaceDefaultedConflict(indexes, looseIndexes, key); ok {
-			replacement, diag := resolveNamespaceDefaultedDiscoveryConflict(settingsObjectKind(item.Kind), existingKey, key, out[index].Tier, out[index].Path, out[index].DocumentIndex, item.Tier, item.Path, item.DocumentIndex)
-			if diag != nil {
-				diags = append(diags, *diag)
-			}
-			if replacement {
-				delete(indexes, existingKey)
-				removeDiscoveryLooseIndex(looseIndexes, existingKey)
-				out[index] = item
-				addDiscoveryIndex(indexes, looseIndexes, key, index)
-			}
-			continue
-		}
-		addDiscoveryIndex(indexes, looseIndexes, key, len(out))
-		out = append(out, item)
-	}
-	return out, diags
+	return mergeDiscoveryItems(base, overlay,
+		settingsDiscoveryKey,
+		func(item discovery.SettingsCandidate) string { return settingsObjectKind(item.Kind) },
+		sameSettingsDiscoveryObject,
+		func(item discovery.SettingsCandidate) (discovery.SourceTier, string, int) {
+			return item.Tier, item.Path, item.DocumentIndex
+		})
 }
 
 type discoveryLooseIndex struct {

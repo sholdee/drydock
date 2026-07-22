@@ -31,7 +31,7 @@ func TestDefaultAcquirerFetchesHTTPChartAndCachesIt(t *testing.T) {
 		switch r.URL.Path {
 		case "/index.yaml":
 			w.Header().Set("Content-Type", "application/yaml")
-			fmt.Fprintf(w, `apiVersion: v1
+			_, _ = fmt.Fprintf(w, `apiVersion: v1
 entries:
   demo:
     - version: 1.2.3
@@ -95,7 +95,7 @@ func TestDefaultAcquirerWritesChartMetadata(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/index.yaml":
-			fmt.Fprintf(w, `apiVersion: v1
+			_, _ = fmt.Fprintf(w, `apiVersion: v1
 entries:
   demo:
     - version: 1.2.3
@@ -139,7 +139,7 @@ func TestDefaultAcquirerWritesChartMetadataOnCacheHit(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/index.yaml":
-			fmt.Fprintf(w, `apiVersion: v1
+			_, _ = fmt.Fprintf(w, `apiVersion: v1
 entries:
   demo:
     - version: 1.2.3
@@ -316,7 +316,7 @@ func TestDefaultAcquirerUsesExactSemverChartVersion(t *testing.T) {
 		switch r.URL.Path {
 		case "/index.yaml":
 			w.Header().Set("Content-Type", "application/yaml")
-			fmt.Fprint(w, `apiVersion: v1
+			_, _ = fmt.Fprint(w, `apiVersion: v1
 entries:
   demo:
     - version: 1.2.10
@@ -357,7 +357,7 @@ func TestDefaultAcquirerAcceptsLeadingVSemverChartVersion(t *testing.T) {
 		switch r.URL.Path {
 		case "/index.yaml":
 			w.Header().Set("Content-Type", "application/yaml")
-			fmt.Fprint(w, `apiVersion: v1
+			_, _ = fmt.Fprint(w, `apiVersion: v1
 entries:
   demo:
     - version: 1.2.3
@@ -1151,7 +1151,7 @@ func writeIndex(t *testing.T, w http.ResponseWriter, chartURL string) {
 func writeIndexFor(t *testing.T, w http.ResponseWriter, chartName, chartURL string) {
 	t.Helper()
 	w.Header().Set("Content-Type", "application/yaml")
-	fmt.Fprintf(w, `apiVersion: v1
+	_, _ = fmt.Fprintf(w, `apiVersion: v1
 entries:
   %q:
     - version: 1.2.3
