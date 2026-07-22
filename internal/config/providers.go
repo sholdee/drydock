@@ -320,7 +320,7 @@ func decodeYAMLDocumentAt(path string, documentIndex int, out any) error {
 	if err != nil {
 		return err
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 
 	decoder := yaml.NewDecoder(file)
 	for index := 0; ; index++ {

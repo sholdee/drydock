@@ -6,7 +6,7 @@
 
 Inspect your Argo CD fleet without getting wet
 
-[![Go Report Card](https://goreportcard.com/badge/github.com/sholdee/drydock)](https://goreportcard.com/report/github.com/sholdee/drydock)
+[![CodeFactor](https://www.codefactor.io/repository/github/sholdee/drydock/badge)](https://www.codefactor.io/repository/github/sholdee/drydock)
 [![CI](https://github.com/sholdee/drydock/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/sholdee/drydock/actions/workflows/ci.yml)
 [![License: Apache-2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
 [![Go Version](https://img.shields.io/github/go-mod/go-version/sholdee/drydock)](go.mod)

@@ -191,7 +191,7 @@ func scanYAMLFile(path, rel string, result *Result) error {
 	if err != nil {
 		return err
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 
 	docs, err := manifest.DecodeDocuments(path, file)
 	if err != nil {

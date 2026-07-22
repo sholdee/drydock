@@ -83,7 +83,7 @@ func (puller HelmOCIPuller) Pull(ctx context.Context, request Request, opts Opti
 	if err != nil {
 		return nil, fmt.Errorf("create temporary OCI chart directory: %w", err)
 	}
-	defer os.RemoveAll(tempDir)
+	defer func() { _ = os.RemoveAll(tempDir) }()
 
 	registryConfig := strings.TrimSpace(opts.Credentials.RegistryConfig)
 	if registryConfig == "" {

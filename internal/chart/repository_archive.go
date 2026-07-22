@@ -18,7 +18,7 @@ func extractChartArchive(r io.Reader, dest, chartName string) error {
 	if err != nil {
 		return fmt.Errorf("open chart archive gzip: %w", err)
 	}
-	defer gz.Close()
+	defer func() { _ = gz.Close() }()
 
 	tr := tar.NewReader(gz)
 	for {
@@ -114,7 +114,7 @@ func chartArchiveContainsNamedChart(r io.Reader, name string) bool {
 	if err != nil {
 		return false
 	}
-	defer gz.Close()
+	defer func() { _ = gz.Close() }()
 	tr := tar.NewReader(gz)
 	want := path.Join(name, "Chart.yaml")
 	for {

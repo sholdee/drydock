@@ -60,11 +60,11 @@ func prepareHelmDependencyWorkspace(ctx context.Context, chartPath, chartSourceP
 			Credentials:     opts.ChartCredentials,
 		})
 		if err != nil {
-			recordHelmDependencyChartCacheEvent(opts, request, err, chart.Result{})
+			recordChartCacheEvent(opts, request, err, chart.Result{})
 			cleanup()
 			return nil, nil, fmt.Errorf("acquire helm chart dependency %s: %s", request.Name, redactKustomizeChartAcquireError(err, request.Repository, opts.ChartCredentials))
 		}
-		recordHelmDependencyChartCacheEvent(opts, request, nil, result)
+		recordChartCacheEvent(opts, request, nil, result)
 
 		dst, err := replaceHelmDependencyChartTargets(tempChartPath, request.Name)
 		if err != nil {
@@ -325,7 +325,7 @@ func helmChartVersion(chrt helmchart.Charter) string {
 	return chart.Metadata.Version
 }
 
-func recordHelmDependencyChartCacheEvent(opts RenderOptions, request chart.Request, acquireErr error, acquired chart.Result) {
+func recordChartCacheEvent(opts RenderOptions, request chart.Request, acquireErr error, acquired chart.Result) {
 	if acquireErr == nil && opts.AcquisitionCollector != nil {
 		opts.AcquisitionCollector.Record(cacheevent.AcquisitionRecord{
 			Kind:              cacheevent.AcquisitionChart,
