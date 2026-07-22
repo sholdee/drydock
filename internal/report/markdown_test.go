@@ -340,3 +340,484 @@ func diffResult(namespace, appName, resourceName, body string) diff.Result {
 		Diff:   "@@ Application modified: " + appName + " @@\n" + body,
 	}
 }
+
+func TestDiffMarkdownCollapsesWarningsInDetails(t *testing.T) {
+	out, _, err := DiffMarkdown(app.DiffResult{
+		Diagnostics: []diagnostic.Diagnostic{
+			{
+				Code:     "kustomize.ksops-compat-substituted",
+				Severity: diagnostic.SeverityWarning,
+				Category: "kustomize",
+				Message:  "first warning",
+			},
+			{
+				Code:     "source.self-repo-near-miss",
+				Severity: diagnostic.SeverityWarning,
+				Category: "source",
+				Message:  "second warning",
+			},
+		},
+	}, MarkdownOptions{MaxBytes: DefaultMaxBytes})
+	if err != nil {
+		t.Fatalf("DiffMarkdown() error = %v", err)
+	}
+	text := string(out)
+	for _, want := range []string{
+		"<details>\n<summary>Diagnostics (2 warnings)</summary>\n\n",
+		"- warning `kustomize` first warning\n",
+		"- warning `source` second warning\n",
+		"\n</details>\n",
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("markdown missing %q:\n%s", want, text)
+		}
+	}
+	if strings.Contains(text, "Diagnostics:") {
+		t.Fatalf("warnings-only report should not render the open Diagnostics list:\n%s", text)
+	}
+}
+
+func TestDiffMarkdownKeepsErrorsVisibleAndCollapsesWarnings(t *testing.T) {
+	out, _, err := DiffMarkdown(app.DiffResult{
+		Diagnostics: []diagnostic.Diagnostic{
+			{
+				Code:     "kustomize.ksops-compat-substituted",
+				Severity: diagnostic.SeverityWarning,
+				Category: "kustomize",
+				Message:  "placeholder warning",
+			},
+			{
+				Code:     "render.failed",
+				Severity: diagnostic.SeverityError,
+				Category: "render",
+				Message:  "render exploded",
+			},
+		},
+	}, MarkdownOptions{MaxBytes: DefaultMaxBytes})
+	if err != nil {
+		t.Fatalf("DiffMarkdown() error = %v", err)
+	}
+	text := string(out)
+	for _, want := range []string{
+		"Diagnostics:\n- error `render` render exploded\n",
+		"<details>\n<summary>1 warning</summary>\n\n",
+		"- warning `kustomize` placeholder warning\n",
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("markdown missing %q:\n%s", want, text)
+		}
+	}
+	errorAt := strings.Index(text, "render exploded")
+	detailsAt := strings.Index(text, "<details>")
+	if errorAt == -1 || detailsAt == -1 || errorAt > detailsAt {
+		t.Fatalf("error bullet should render before the collapsed warnings block:\n%s", text)
+	}
+}
+
+func TestDiffMarkdownErrorsOnlyRendersOpenList(t *testing.T) {
+	out, _, err := DiffMarkdown(app.DiffResult{
+		Diagnostics: []diagnostic.Diagnostic{{
+			Code:     "render.failed",
+			Severity: diagnostic.SeverityError,
+			Category: "render",
+			Message:  "render exploded",
+		}},
+	}, MarkdownOptions{MaxBytes: DefaultMaxBytes})
+	if err != nil {
+		t.Fatalf("DiffMarkdown() error = %v", err)
+	}
+	text := string(out)
+	if !strings.Contains(text, "Diagnostics:\n- error `render` render exploded\n") {
+		t.Fatalf("markdown missing open error list:\n%s", text)
+	}
+	if strings.Contains(text, "<details>\n<summary>") && strings.Contains(text, "warning") {
+		t.Fatalf("errors-only report should not render a warnings block:\n%s", text)
+	}
+}
+
+func TestDiffMarkdownAggregatesRepeatedDiagnosticCodes(t *testing.T) {
+	out, _, err := DiffMarkdown(app.DiffResult{
+		Diagnostics: []diagnostic.Diagnostic{
+			{
+				Code:     "kustomize.ksops-compat-substituted",
+				Severity: diagnostic.SeverityWarning,
+				Category: "kustomize",
+				Message:  "substituted 2 sops files",
+			},
+			{
+				Code:     "kustomize.ksops-compat-substituted",
+				Severity: diagnostic.SeverityWarning,
+				Category: "kustomize",
+				Message:  "substituted 2 sops files",
+			},
+			{
+				Code:     "kustomize.ksops-compat-substituted",
+				Severity: diagnostic.SeverityWarning,
+				Category: "kustomize",
+				Message:  "substituted 5 sops files",
+			},
+		},
+	}, MarkdownOptions{MaxBytes: DefaultMaxBytes})
+	if err != nil {
+		t.Fatalf("DiffMarkdown() error = %v", err)
+	}
+	text := string(out)
+	for _, want := range []string{
+		"- warning `kustomize.ksops-compat-substituted` × 3\n",
+		"  - substituted 2 sops files × 2\n",
+		"  - substituted 5 sops files\n",
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("markdown missing %q:\n%s", want, text)
+		}
+	}
+}
+
+func TestDiffMarkdownAggregatesEmptyCodeViaStableCode(t *testing.T) {
+	out, _, err := DiffMarkdown(app.DiffResult{
+		Diagnostics: []diagnostic.Diagnostic{
+			{
+				Severity:   diagnostic.SeverityWarning,
+				Category:   "appset",
+				Message:    "generator one skipped",
+				Provenance: diagnostic.Provenance{Path: "apps/one.yaml", Pointer: "spec.generators"},
+			},
+			{
+				Severity:   diagnostic.SeverityWarning,
+				Category:   "appset",
+				Message:    "generator two skipped",
+				Provenance: diagnostic.Provenance{Path: "apps/two.yaml", Pointer: "spec.generators"},
+			},
+		},
+	}, MarkdownOptions{MaxBytes: DefaultMaxBytes})
+	if err != nil {
+		t.Fatalf("DiffMarkdown() error = %v", err)
+	}
+	text := string(out)
+	if !strings.Contains(text, "× 2") {
+		t.Fatalf("empty-code diagnostics with a shared stable code should aggregate:\n%s", text)
+	}
+	for _, want := range []string{"generator one skipped", "generator two skipped"} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("markdown missing aggregated instance %q:\n%s", want, text)
+		}
+	}
+}
+
+func TestDiffMarkdownDiagnosticsModeErrors(t *testing.T) {
+	out, _, err := DiffMarkdown(app.DiffResult{
+		Diagnostics: []diagnostic.Diagnostic{
+			{
+				Code:     "kustomize.ksops-compat-substituted",
+				Severity: diagnostic.SeverityWarning,
+				Category: "kustomize",
+				Message:  "placeholder warning",
+			},
+			{
+				Code:     "render.failed",
+				Severity: diagnostic.SeverityError,
+				Category: "render",
+				Message:  "render exploded",
+			},
+		},
+	}, MarkdownOptions{MaxBytes: DefaultMaxBytes, Diagnostics: DiagnosticsModeErrors})
+	if err != nil {
+		t.Fatalf("DiffMarkdown() error = %v", err)
+	}
+	text := string(out)
+	if !strings.Contains(text, "- error `render` render exploded\n") {
+		t.Fatalf("errors mode should keep the error bullet:\n%s", text)
+	}
+	if strings.Contains(text, "placeholder warning") || strings.Contains(text, "<details>\n<summary>1 warning") {
+		t.Fatalf("errors mode should omit warnings entirely:\n%s", text)
+	}
+	if !strings.Contains(text, "**Summary:** 0 apps, 0 resources, +0/-0, 1 warning, 1 error.") {
+		t.Fatalf("summary counts should be unaffected by the diagnostics mode:\n%s", text)
+	}
+}
+
+func TestDiffMarkdownDiagnosticsModeNone(t *testing.T) {
+	out, _, err := DiffMarkdown(app.DiffResult{
+		Diagnostics: []diagnostic.Diagnostic{
+			{
+				Code:     "kustomize.ksops-compat-substituted",
+				Severity: diagnostic.SeverityWarning,
+				Category: "kustomize",
+				Message:  "placeholder warning",
+			},
+			{
+				Code:     "render.failed",
+				Severity: diagnostic.SeverityError,
+				Category: "render",
+				Message:  "render exploded",
+			},
+		},
+	}, MarkdownOptions{MaxBytes: DefaultMaxBytes, Diagnostics: DiagnosticsModeNone})
+	if err != nil {
+		t.Fatalf("DiffMarkdown() error = %v", err)
+	}
+	text := string(out)
+	for _, unwanted := range []string{"Diagnostics:", "placeholder warning", "render exploded", "<summary>"} {
+		if strings.Contains(text, unwanted) {
+			t.Fatalf("none mode should omit the diagnostics section, found %q:\n%s", unwanted, text)
+		}
+	}
+	if !strings.Contains(text, "**Summary:** 0 apps, 0 resources, +0/-0, 1 warning, 1 error.") {
+		t.Fatalf("summary counts should be unaffected by the diagnostics mode:\n%s", text)
+	}
+}
+
+func TestDiffMarkdownRejectsInvalidDiagnosticsMode(t *testing.T) {
+	_, _, err := DiffMarkdown(app.DiffResult{}, MarkdownOptions{MaxBytes: DefaultMaxBytes, Diagnostics: DiagnosticsMode("verbose")})
+	if err == nil {
+		t.Fatal("DiffMarkdown(Diagnostics=verbose) error = nil, want error")
+	}
+	_, _, err = ImageDiffMarkdown(app.ImageDiffResult{}, MarkdownOptions{MaxBytes: DefaultMaxBytes, Diagnostics: DiagnosticsMode("verbose")})
+	if err == nil {
+		t.Fatal("ImageDiffMarkdown(Diagnostics=verbose) error = nil, want error")
+	}
+}
+
+func TestDiffMarkdownDiagnosticLimitCountsOmittedInstances(t *testing.T) {
+	diags := make([]diagnostic.Diagnostic, 0, 6)
+	for i := range 6 {
+		diags = append(diags, diagnostic.Diagnostic{
+			Code:     fmt.Sprintf("discovery.duplicate-%d", i),
+			Severity: diagnostic.SeverityWarning,
+			Category: "discovery",
+			Message:  fmt.Sprintf("duplicate resource %d", i),
+		})
+	}
+	out, _, err := DiffMarkdown(app.DiffResult{Diagnostics: diags},
+		MarkdownOptions{MaxBytes: DefaultMaxBytes, DiagnosticLimit: 4})
+	if err != nil {
+		t.Fatalf("DiffMarkdown() error = %v", err)
+	}
+	text := string(out)
+	if !strings.Contains(text, "_... and 2 more diagnostics omitted._") {
+		t.Fatalf("omitted trailer missing or wrong:\n%s", text)
+	}
+	if !strings.Contains(text, "duplicate resource 3") || strings.Contains(text, "duplicate resource 4") {
+		t.Fatalf("limit should render the first 4 warnings only:\n%s", text)
+	}
+}
+
+func TestDiffMarkdownDiagnosticLimitSpansErrorsThenWarnings(t *testing.T) {
+	out, _, err := DiffMarkdown(app.DiffResult{
+		Diagnostics: []diagnostic.Diagnostic{
+			{Code: "render.failed-a", Severity: diagnostic.SeverityError, Category: "render", Message: "error one"},
+			{Code: "render.failed-b", Severity: diagnostic.SeverityError, Category: "render", Message: "error two"},
+			{Code: "discovery.duplicate-a", Severity: diagnostic.SeverityWarning, Category: "discovery", Message: "warning one"},
+			{Code: "discovery.duplicate-b", Severity: diagnostic.SeverityWarning, Category: "discovery", Message: "warning two"},
+		},
+	}, MarkdownOptions{MaxBytes: DefaultMaxBytes, DiagnosticLimit: 3})
+	if err != nil {
+		t.Fatalf("DiffMarkdown() error = %v", err)
+	}
+	text := string(out)
+	for _, want := range []string{"error one", "error two", "warning one"} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("markdown missing %q:\n%s", want, text)
+		}
+	}
+	if strings.Contains(text, "warning two") {
+		t.Fatalf("limit of 3 should omit the fourth diagnostic:\n%s", text)
+	}
+	if !strings.Contains(text, "_... and 1 more diagnostics omitted._") {
+		t.Fatalf("omitted trailer missing:\n%s", text)
+	}
+}
+
+func TestImageDiffMarkdownCollapsesWarningsInDetails(t *testing.T) {
+	out, _, err := ImageDiffMarkdown(app.ImageDiffResult{
+		Added: []string{"registry.example.com/app:v2"},
+		Diagnostics: []diagnostic.Diagnostic{{
+			Code:     "kustomize.ksops-compat-substituted",
+			Severity: diagnostic.SeverityWarning,
+			Category: "kustomize",
+			Message:  "placeholder warning",
+		}},
+	}, MarkdownOptions{MaxBytes: DefaultMaxBytes})
+	if err != nil {
+		t.Fatalf("ImageDiffMarkdown() error = %v", err)
+	}
+	text := string(out)
+	for _, want := range []string{
+		"<details>\n<summary>Diagnostics (1 warning)</summary>\n\n",
+		"- warning `kustomize` placeholder warning\n",
+		"\n</details>\n",
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("markdown missing %q:\n%s", want, text)
+		}
+	}
+}
+
+func TestImageDiffMarkdownDiagnosticsModeNone(t *testing.T) {
+	out, _, err := ImageDiffMarkdown(app.ImageDiffResult{
+		Diagnostics: []diagnostic.Diagnostic{{
+			Severity: diagnostic.SeverityWarning,
+			Category: "render",
+			Message:  "placeholder warning",
+		}},
+	}, MarkdownOptions{MaxBytes: DefaultMaxBytes, Diagnostics: DiagnosticsModeNone})
+	if err != nil {
+		t.Fatalf("ImageDiffMarkdown() error = %v", err)
+	}
+	if strings.Contains(string(out), "placeholder warning") {
+		t.Fatalf("none mode should omit diagnostics:\n%s", string(out))
+	}
+}
+
+func TestParseDiagnosticsMode(t *testing.T) {
+	for _, tc := range []struct {
+		value string
+		want  DiagnosticsMode
+	}{
+		{value: "", want: DiagnosticsModeAll},
+		{value: "all", want: DiagnosticsModeAll},
+		{value: " Errors", want: DiagnosticsModeErrors},
+		{value: "NONE", want: DiagnosticsModeNone},
+	} {
+		got, err := ParseDiagnosticsMode(tc.value)
+		if err != nil {
+			t.Fatalf("ParseDiagnosticsMode(%q) error = %v", tc.value, err)
+		}
+		if got != tc.want {
+			t.Fatalf("ParseDiagnosticsMode(%q) = %q, want %q", tc.value, got, tc.want)
+		}
+	}
+	if _, err := ParseDiagnosticsMode("verbose"); err == nil {
+		t.Fatal("ParseDiagnosticsMode(verbose) error = nil, want error")
+	}
+}
+
+func TestDiffMarkdownAggregatedParentLinesCountAgainstLimit(t *testing.T) {
+	diags := make([]diagnostic.Diagnostic, 0, 3)
+	for _, message := range []string{"first body", "second body", "third body"} {
+		diags = append(diags, diagnostic.Diagnostic{
+			Code:     "discovery.duplicate",
+			Severity: diagnostic.SeverityWarning,
+			Category: "discovery",
+			Message:  message,
+		})
+	}
+	out, _, err := DiffMarkdown(app.DiffResult{Diagnostics: diags},
+		MarkdownOptions{MaxBytes: DefaultMaxBytes, DiagnosticLimit: 2})
+	if err != nil {
+		t.Fatalf("DiffMarkdown() error = %v", err)
+	}
+	text := string(out)
+	for _, want := range []string{
+		"- warning `discovery.duplicate` × 3\n",
+		"  - first body\n",
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("markdown missing %q:\n%s", want, text)
+		}
+	}
+	if strings.Contains(text, "second body") || strings.Contains(text, "third body") {
+		t.Fatalf("parent line should consume one unit of the limit, leaving room for one entry only:\n%s", text)
+	}
+	if !strings.Contains(text, "_... and 2 more diagnostics omitted._") {
+		t.Fatalf("omitted trailer missing or wrong:\n%s", text)
+	}
+}
+
+func TestDiffMarkdownOmittedTrailerIsAStandaloneParagraph(t *testing.T) {
+	diags := make([]diagnostic.Diagnostic, 0, 3)
+	for i := range 3 {
+		diags = append(diags, diagnostic.Diagnostic{
+			Code:     fmt.Sprintf("discovery.duplicate-%d", i),
+			Severity: diagnostic.SeverityWarning,
+			Category: "discovery",
+			Message:  fmt.Sprintf("duplicate %d", i),
+		})
+	}
+	out, _, err := DiffMarkdown(app.DiffResult{Diagnostics: diags},
+		MarkdownOptions{MaxBytes: DefaultMaxBytes, DiagnosticLimit: 2})
+	if err != nil {
+		t.Fatalf("DiffMarkdown() error = %v", err)
+	}
+	if !strings.Contains(string(out), "\n\n_... and 1 more diagnostics omitted._\n") {
+		t.Fatalf("omitted trailer should be separated from the list by a blank line:\n%s", string(out))
+	}
+}
+
+func TestDiffMarkdownDropsWarningsWhenErrorsDoNotFit(t *testing.T) {
+	long := strings.Repeat("x", 200)
+	diags := make([]diagnostic.Diagnostic, 0, 9)
+	for i := range 8 {
+		diags = append(diags, diagnostic.Diagnostic{
+			Code:     fmt.Sprintf("render.failed-%d", i),
+			Severity: diagnostic.SeverityError,
+			Category: "render",
+			Message:  fmt.Sprintf("error %d %s", i, long),
+		})
+	}
+	diags = append(diags, diagnostic.Diagnostic{
+		Code:     "kustomize.ksops-compat-substituted",
+		Severity: diagnostic.SeverityWarning,
+		Category: "kustomize",
+		Message:  "short warning",
+	})
+	out, meta, err := DiffMarkdown(app.DiffResult{Diagnostics: diags},
+		MarkdownOptions{MaxBytes: MinPositiveMaxByte})
+	if err != nil {
+		t.Fatalf("DiffMarkdown() error = %v", err)
+	}
+	text := string(out)
+	if strings.Contains(text, "short warning") || strings.Contains(text, "<summary>1 warning</summary>") {
+		t.Fatalf("collapsed warnings must not render when the open errors list was dropped:\n%s", text)
+	}
+	if !meta.Truncated {
+		t.Fatal("meta.Truncated = false, want true when the errors block is dropped")
+	}
+}
+
+func TestDiffMarkdownRendersWarningsBelowAppDetails(t *testing.T) {
+	out, _, err := DiffMarkdown(app.DiffResult{
+		Results: []diff.Result{diffResult("argocd", "demo", "cm", "-  value: old\n+  value: new\n")},
+		Diagnostics: []diagnostic.Diagnostic{
+			{Code: "render.failed", Severity: diagnostic.SeverityError, Category: "render", Message: "render exploded"},
+			{Code: "kustomize.ksops-compat-substituted", Severity: diagnostic.SeverityWarning, Category: "kustomize", Message: "placeholder warning"},
+		},
+	}, MarkdownOptions{MaxBytes: DefaultMaxBytes})
+	if err != nil {
+		t.Fatalf("DiffMarkdown() error = %v", err)
+	}
+	text := string(out)
+	errorAt := strings.Index(text, "render exploded")
+	appAt := strings.Index(text, "<summary>argocd/demo")
+	warningsAt := strings.Index(text, "<summary>1 warning</summary>")
+	if errorAt == -1 || appAt == -1 || warningsAt == -1 {
+		t.Fatalf("expected error, app details, and warnings sections:\n%s", text)
+	}
+	if errorAt >= appAt || appAt >= warningsAt {
+		t.Fatalf("order = error@%d app@%d warnings@%d, want errors above diffs and warnings below:\n%s", errorAt, appAt, warningsAt, text)
+	}
+}
+
+func TestImageDiffMarkdownRendersWarningsBelowRows(t *testing.T) {
+	out, _, err := ImageDiffMarkdown(app.ImageDiffResult{
+		Added: []string{"registry.example.com/app:v2"},
+		Diagnostics: []diagnostic.Diagnostic{{
+			Code:     "kustomize.ksops-compat-substituted",
+			Severity: diagnostic.SeverityWarning,
+			Category: "kustomize",
+			Message:  "placeholder warning",
+		}},
+	}, MarkdownOptions{MaxBytes: DefaultMaxBytes})
+	if err != nil {
+		t.Fatalf("ImageDiffMarkdown() error = %v", err)
+	}
+	text := string(out)
+	rowsAt := strings.Index(text, "| Change | Image |")
+	warningsAt := strings.Index(text, "<summary>Diagnostics (1 warning)</summary>")
+	if rowsAt == -1 || warningsAt == -1 {
+		t.Fatalf("expected image table and warnings sections:\n%s", text)
+	}
+	if rowsAt > warningsAt {
+		t.Fatalf("order = rows@%d warnings@%d, want image rows above collapsed warnings:\n%s", rowsAt, warningsAt, text)
+	}
+}

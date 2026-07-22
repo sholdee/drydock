@@ -49,6 +49,7 @@ func TestNonDiffLeafHelpOmitsDiffOnlyFlags(t *testing.T) {
 			"--show-ignored-fields",
 			"--color",
 			"--markdown-max-bytes",
+			"--markdown-diagnostics",
 			"--raw-output-file",
 			"--ref-orig",
 		)
@@ -79,6 +80,7 @@ func TestDiffAppsHelpIncludesDiffFlags(t *testing.T) {
 		"--show-ignored-fields",
 		"--color",
 		"--markdown-max-bytes",
+		"--markdown-diagnostics",
 		"--raw-output-file",
 		"--ref-orig",
 	)

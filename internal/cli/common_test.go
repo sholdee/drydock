@@ -47,7 +47,7 @@ func TestRepresentativeCommandsExposeFocusedFlagGroups(t *testing.T) {
 		{
 			name:    "diff apps common specialized diff flags",
 			command: []string{"diff", "apps"},
-			flags:   []string{"offline", "repo-map", "plugin-cache-dir", "appset-provider-fixture", "skip-kind", "project-diagnostics", "ref-orig", "show-ignored-fields"},
+			flags:   []string{"offline", "repo-map", "plugin-cache-dir", "appset-provider-fixture", "skip-kind", "project-diagnostics", "ref-orig", "show-ignored-fields", "markdown-diagnostics"},
 		},
 		{
 			name:    "test apps common specialized lua flag",

@@ -22,8 +22,11 @@ diffs, and removed-only image changes print no names while still counting as a
 diff for exit-code behavior.
 
 Diagnostics remain on stderr for unified, JSON, YAML, and name output so stdout
-stays parseable. Markdown manifest diff output embeds successful diagnostics in
-the generated report because the markdown document is the review surface.
+stays parseable. Markdown diff output embeds successful diagnostics in the
+generated report because the markdown document is the review surface: errors
+are listed openly above the diffs, warnings collapse inside an expandable
+block rendered below the diffs, and repeated diagnostic codes aggregate into
+one entry with a count.
 
 `test apps` text output prints `PASS`, `FAIL`, or `SKIPPED` status lines. When
 stdout and stderr are terminals, status lines stream as Applications complete
@@ -41,6 +44,18 @@ Use markdown output when the result will be read in a pull request comment:
 ```bash
 drydock diff apps --repo . --ref HEAD --ref-orig origin/main -o markdown
 drydock diff images --repo . --ref HEAD --ref-orig origin/main -o markdown
+```
+
+`--markdown-diagnostics` controls how much of the diagnostics list the
+markdown report embeds. The default `all` lists errors openly above the diffs
+and collapses warnings inside an expandable block below them; `errors` omits
+warnings entirely; `none`
+omits the whole diagnostics section. Summary warning and error counts stay in
+the report in every mode, and the flag never changes stderr, JSON, or YAML
+diagnostics:
+
+```bash
+drydock diff apps --repo . --ref HEAD --ref-orig origin/main -o markdown --markdown-diagnostics errors
 ```
 
 For local browser review, manifest diff commands can also write the standalone

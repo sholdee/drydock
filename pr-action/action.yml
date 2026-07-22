@@ -224,6 +224,9 @@ inputs:
     description: Maximum rendered diff comment bytes. Values above 60000 are clamped to GitHub's comment budget.
     required: false
     default: "60000"
+  markdown-diagnostics:
+    description: Diagnostics detail embedded in PR comments with all, errors, or none. Leave empty for drydock defaults.
+    required: false
   upload-artifacts:
     description: Upload full diff and image report artifacts when they are non-empty.
     required: false
@@ -460,6 +463,7 @@ runs:
         DRYDOCK_INPUT_FAIL_ON_RENDER_ERROR: ${{ inputs.fail-on-render-error }}
         DRYDOCK_INPUT_HEAD_REF: ${{ inputs.head-ref }}
         DRYDOCK_INPUT_KUBE_VERSION: ${{ inputs.kube-version }}
+        DRYDOCK_INPUT_MARKDOWN_DIAGNOSTICS: ${{ inputs.markdown-diagnostics }}
         DRYDOCK_INPUT_MAX_DISCOVERY_DEPTH: ${{ inputs.max-discovery-depth }}
         DRYDOCK_INPUT_OFFLINE: ${{ inputs.offline }}
         DRYDOCK_INPUT_PARALLELISM: ${{ inputs.parallelism }}

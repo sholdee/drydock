@@ -342,7 +342,12 @@ and omits unchanged images by default. `diff images -o name` prints current-only
 added image references, one per line. Removed-only image changes print no names
 but still count as a diff for exit-code semantics unless `--exit-code=false`.
 Diagnostics stay on stderr for structured/name/unified diff output. Markdown
-diff output embeds successful diagnostics in the markdown document. `-o name`
+diff output embeds successful diagnostics in the markdown document: errors are
+listed openly above the diffs, warnings collapse inside a `<details>` block
+rendered below the diffs, and repeated
+diagnostic codes aggregate with counts. `--markdown-diagnostics all|errors|none`
+narrows or drops the embedded list without touching summary counts or
+non-markdown diagnostics surfaces. `-o name`
 remains unsupported for `diff apps` and `diff app`.
 
 Application-local and global ignore rules support `jsonPointers`,
