@@ -1,6 +1,15 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# The OCI registry bridge needs an /etc/hosts entry for
+# argocd-parity-registry.argocd-parity.svc.cluster.local. The script appends
+# it with sudo (passwordless on CI; an interactive prompt locally) and removes
+# its own marked line on exit. A pre-existing entry for that hostname —
+# however it got there — skips sudo entirely, which is the local escape hatch
+# for environments without sudo. On macOS the bridge uses local port 5443
+# (AirPlay owns 5000) and certificate generation sticks to the
+# LibreSSL-compatible config-file subjectAltName form.
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 
@@ -10,6 +19,17 @@ FIXTURE_REPO_PATH="${REPO_ROOT}/testdata/argocd-parity/repo"
 IGNORE_FILE="${REPO_ROOT}/testdata/argocd-parity/compare-ignore.yaml"
 PROJECT_POLICY_REPO_PATH="${REPO_ROOT}/testdata/argocd-project-policy/repo"
 PROJECT_POLICY_EXPECTED="${REPO_ROOT}/testdata/argocd-project-policy/expected.yaml"
+OCI_ARTIFACT_PATH="${REPO_ROOT}/testdata/argocd-parity/oci-artifact"
+OCI_REGISTRY_HOST="argocd-parity-registry.argocd-parity.svc.cluster.local"
+OCI_REGISTRY_PORT="5443"
+# Multi-arch index digest for registry:2.8.3 on the Docker-official ECR
+# mirror (covers CI amd64 and local darwin arm64; no Docker Hub 429 surface).
+OCI_REGISTRY_IMAGE="public.ecr.aws/docker/library/registry@sha256:a3d8aaa63ed8681a604f1dea0aa03f100d5895b6a58ace528858a7b332415373"
+OCI_ARTIFACT_REPOSITORY="parity/config"
+OCI_ARTIFACT_TAG="v1.0.0"
+OCI_APPLICATION="parity-oci-config"
+OCI_HOSTS_MARKER="drydock-argocd-parity-smoke"
+HOSTS_ENTRY_ADDED="false"
 OUT_DIR="${REPO_ROOT}/argocd-parity-smoke"
 KEEP_CLUSTER="false"
 CREATE_CLUSTER="true"
@@ -17,8 +37,10 @@ RUN_PROJECT_POLICY_SMOKE="true"
 CLUSTER_NAME="drydock-argocd-parity-${GITHUB_RUN_ID:-$$}"
 DRYDOCK_CMD=(go run ./cmd/drydock)
 PORT_FORWARD_PID=""
+REGISTRY_PORT_FORWARD_PID=""
 
 APPLICATIONS=(
+  parity-oci-config
   parity-directory
   parity-directory-edges
   parity-helm-release-namespace
@@ -78,6 +100,7 @@ APPLICATIONS=(
 TRACKING_APPLICATIONS=(
   parity-tracking
   parity-helm-crds-default
+  parity-oci-config
 )
 
 PROJECT_POLICY_CASES=(
@@ -163,12 +186,13 @@ require_tool() {
   command -v "$1" >/dev/null 2>&1 || fail "required tool not found: $1"
 }
 
-for tool in base64 curl docker git go kind kubectl; do
+for tool in base64 curl docker git go kind kubectl openssl oras; do
   require_tool "${tool}"
 done
 
 [[ -d "${FIXTURE_REPO_PATH}" ]] || fail "fixture repo not found: ${FIXTURE_REPO_PATH}"
 [[ -f "${IGNORE_FILE}" ]] || fail "compare ignore file not found: ${IGNORE_FILE}"
+[[ -d "${OCI_ARTIFACT_PATH}" ]] || fail "OCI artifact content directory not found: ${OCI_ARTIFACT_PATH}"
 [[ -d "${PROJECT_POLICY_REPO_PATH}" ]] || fail "project policy fixture repo not found: ${PROJECT_POLICY_REPO_PATH}"
 [[ -f "${PROJECT_POLICY_EXPECTED}" ]] || fail "project policy expected file not found: ${PROJECT_POLICY_EXPECTED}"
 
@@ -180,10 +204,31 @@ mkdir -p "${ARGOCD_CONFIG_DIR}"
 chmod 0700 "${ARGOCD_CONFIG_DIR}"
 export ARGOCD_CONFIG
 
+# The CA file is re-read at every drydock OCI client construction, so it must
+# outlive every drydock invocation: it lives in WORK_DIR (trap lifetime), and
+# the warm run and the offline per-app loop share these exact variables.
+OCI_TLS_DIR="${WORK_DIR}/registry-tls"
+OCI_CA_FILE="${OCI_TLS_DIR}/tls.crt"
+OCI_TLS_KEY_FILE="${OCI_TLS_DIR}/tls.key"
+OCI_CACHE_DIR="${WORK_DIR}/oci-cache"
+# Fresh, non-overlapping render cache dirs: the persistent render cache key
+# omits Offline, so sharing one dir would let the offline loop replay the
+# warm (non-offline) render instead of exercising offline resolve+extract.
+OCI_WARM_RENDER_CACHE_DIR="${WORK_DIR}/render-cache-warm"
+OCI_OFFLINE_RENDER_CACHE_DIR="${WORK_DIR}/render-cache-offline"
+
 cleanup() {
   local status="$?"
-  if [[ -n "${PORT_FORWARD_PID}" ]]; then
-    kill "${PORT_FORWARD_PID}" >/dev/null 2>&1 || true
+  local pid
+  for pid in "${PORT_FORWARD_PID}" "${REGISTRY_PORT_FORWARD_PID}"; do
+    if [[ -n "${pid}" ]]; then
+      kill "${pid}" >/dev/null 2>&1 || true
+    fi
+  done
+  if [[ "${HOSTS_ENTRY_ADDED}" == "true" ]] && sudo -n true 2>/dev/null; then
+    # Best-effort removal of only the marked line this script appended.
+    sudo -n sed -i".${OCI_HOSTS_MARKER}.bak" "/# ${OCI_HOSTS_MARKER}\$/d" /etc/hosts >/dev/null 2>&1 || true
+    sudo -n rm -f "/etc/hosts.${OCI_HOSTS_MARKER}.bak" >/dev/null 2>&1 || true
   fi
   if [[ "${status}" -ne 0 ]]; then
     collect_logs || true
@@ -206,6 +251,7 @@ collect_logs() {
   kubectl -n argocd logs deployment/argocd-repo-server --tail=300 > "${logs_dir}/argocd-repo-server.log" 2>&1 || true
   kubectl -n argocd logs statefulset/argocd-application-controller --tail=300 > "${logs_dir}/argocd-application-controller.log" 2>&1 || true
   kubectl -n argocd logs deployment/argocd-applicationset-controller --tail=300 > "${logs_dir}/argocd-applicationset-controller.log" 2>&1 || true
+  kubectl -n argocd-parity logs deployment/argocd-parity-registry --tail=300 > "${logs_dir}/argocd-parity-registry.log" 2>&1 || true
 }
 
 resolve_argocd_version() {
@@ -303,6 +349,211 @@ YAML
   kubectl -n argocd-parity rollout status deployment/argocd-parity-git --timeout=120s
 }
 
+ensure_registry_hosts_entry() {
+  if grep -qF "${OCI_REGISTRY_HOST}" /etc/hosts; then
+    return 0
+  fi
+  if [[ -n "${GITHUB_ACTIONS:-}" ]]; then
+    sudo -n true 2>/dev/null \
+      || fail "passwordless sudo is required on CI to append the ${OCI_REGISTRY_HOST} entry to /etc/hosts"
+  else
+    echo "sudo is required to append '127.0.0.1 ${OCI_REGISTRY_HOST}' to /etc/hosts (add that entry manually beforehand to skip sudo)" >&2
+    sudo -v \
+      || fail "sudo credentials are required to append the ${OCI_REGISTRY_HOST} entry to /etc/hosts; add '127.0.0.1 ${OCI_REGISTRY_HOST}' manually and rerun to skip sudo"
+  fi
+  printf '127.0.0.1 %s # %s\n' "${OCI_REGISTRY_HOST}" "${OCI_HOSTS_MARKER}" | sudo tee -a /etc/hosts >/dev/null \
+    || fail "could not append the ${OCI_REGISTRY_HOST} entry to /etc/hosts"
+  HOSTS_ENTRY_ADDED="true"
+}
+
+generate_registry_certificate() {
+  local config="${OCI_TLS_DIR}/openssl.cnf"
+  mkdir -p "${OCI_TLS_DIR}"
+  # Config-file subjectAltName form: works on LibreSSL (macOS /usr/bin/openssl)
+  # and OpenSSL 3.x alike; -addext does not. CA:TRUE + keyCertSign let Go
+  # clients (Argo CD repo-server and drydock) use the self-signed leaf as its
+  # own trust root.
+  cat > "${config}" <<CONFIG
+[req]
+distinguished_name = dn
+x509_extensions = v3_req
+prompt = no
+
+[dn]
+CN = ${OCI_REGISTRY_HOST}
+
+[v3_req]
+subjectAltName = DNS:${OCI_REGISTRY_HOST}
+basicConstraints = critical, CA:TRUE
+keyUsage = critical, digitalSignature, keyEncipherment, keyCertSign
+extendedKeyUsage = serverAuth
+CONFIG
+  openssl req -x509 -newkey rsa:2048 -nodes -sha256 -days 3 \
+    -keyout "${OCI_TLS_KEY_FILE}" -out "${OCI_CA_FILE}" \
+    -config "${config}" >/dev/null 2> "${OUT_DIR}/openssl-cert.stderr" \
+    || fail "openssl self-signed certificate generation for ${OCI_REGISTRY_HOST} failed; see ${OUT_DIR}/openssl-cert.stderr"
+  rm -f "${OUT_DIR}/openssl-cert.stderr"
+  [[ -s "${OCI_CA_FILE}" && -s "${OCI_TLS_KEY_FILE}" ]] \
+    || fail "generated OCI registry TLS certificate or key is missing or empty under ${OCI_TLS_DIR}"
+}
+
+prepare_registry_image() {
+  local image="drydock-argocd-parity-registry:${CLUSTER_NAME}"
+  docker pull "${OCI_REGISTRY_IMAGE}" >/dev/null \
+    || fail "docker pull of the pinned OCI registry image ${OCI_REGISTRY_IMAGE} failed"
+  # A digest pull has no tag; the Deployment matches on the image field with
+  # imagePullPolicy Never, so re-tag to the exact name:tag it references.
+  docker tag "${OCI_REGISTRY_IMAGE}" "${image}" \
+    || fail "docker tag of the pinned OCI registry image to ${image} failed"
+  if ! kind load docker-image "${image}" --name "${CLUSTER_NAME}"; then
+    # Under Docker's containerd image store a digest pull keeps the multi-arch
+    # index but only the host platform's blobs; kind's `ctr images import
+    # --all-platforms` of the docker-save stream then fails on the missing
+    # foreign-platform manifests ("content digest ...: not found"). Exporting
+    # just the host platform sidesteps the index entirely.
+    local arch archive
+    arch="$(uname -m)"
+    case "${arch}" in
+      x86_64 | amd64) arch="amd64" ;;
+      arm64 | aarch64) arch="arm64" ;;
+      *) fail "unsupported host architecture for single-platform registry image export: ${arch}" ;;
+    esac
+    archive="${WORK_DIR}/registry-image.tar"
+    docker save --platform "linux/${arch}" "${image}" -o "${archive}" \
+      || fail "single-platform docker save of ${image} for linux/${arch} failed"
+    kind load image-archive "${archive}" --name "${CLUSTER_NAME}" \
+      || fail "kind load of the OCI registry image ${image} into cluster ${CLUSTER_NAME} failed"
+  fi
+}
+
+install_fixture_registry() {
+  kubectl -n argocd-parity create secret tls argocd-parity-registry-tls \
+    --cert="${OCI_CA_FILE}" --key="${OCI_TLS_KEY_FILE}" >/dev/null \
+    || fail "could not create the argocd-parity-registry-tls secret in namespace argocd-parity"
+  kubectl -n argocd-parity apply -f - <<YAML >/dev/null || fail "could not apply the OCI registry Deployment and Service manifests"
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: argocd-parity-registry
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: argocd-parity-registry
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: argocd-parity-registry
+    spec:
+      containers:
+        - name: registry
+          image: drydock-argocd-parity-registry:${CLUSTER_NAME}
+          imagePullPolicy: Never
+          env:
+            - name: REGISTRY_HTTP_ADDR
+              value: ":${OCI_REGISTRY_PORT}"
+            - name: REGISTRY_HTTP_TLS_CERTIFICATE
+              value: /certs/tls.crt
+            - name: REGISTRY_HTTP_TLS_KEY
+              value: /certs/tls.key
+          ports:
+            - containerPort: ${OCI_REGISTRY_PORT}
+              name: registry
+          volumeMounts:
+            - name: registry-tls
+              mountPath: /certs
+              readOnly: true
+      volumes:
+        - name: registry-tls
+          secret:
+            secretName: argocd-parity-registry-tls
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: argocd-parity-registry
+spec:
+  selector:
+    app.kubernetes.io/name: argocd-parity-registry
+  ports:
+    - name: registry
+      port: ${OCI_REGISTRY_PORT}
+      targetPort: registry
+YAML
+  kubectl -n argocd-parity rollout status deployment/argocd-parity-registry --timeout=120s \
+    || fail "OCI registry deployment argocd-parity-registry did not become ready within 120s"
+}
+
+start_registry_port_forward() {
+  kubectl -n argocd-parity port-forward svc/argocd-parity-registry "${OCI_REGISTRY_PORT}:${OCI_REGISTRY_PORT}" >/dev/null 2>&1 &
+  REGISTRY_PORT_FORWARD_PID="$!"
+  # One probe validates the hosts entry, the forward, the TLS SAN, and
+  # registry liveness together.
+  for _ in {1..60}; do
+    if curl -fsS --cacert "${OCI_CA_FILE}" "https://${OCI_REGISTRY_HOST}:${OCI_REGISTRY_PORT}/v2/" >/dev/null 2>&1; then
+      return 0
+    fi
+    sleep 1
+  done
+  fail "OCI registry was not reachable at https://${OCI_REGISTRY_HOST}:${OCI_REGISTRY_PORT}/v2/ through the port-forward (check the /etc/hosts entry, the TLS SAN, and the registry pod)"
+}
+
+push_oci_artifact() {
+  local ref stderr_file
+  ref="${OCI_REGISTRY_HOST}:${OCI_REGISTRY_PORT}/${OCI_ARTIFACT_REPOSITORY}:${OCI_ARTIFACT_TAG}"
+  stderr_file="${OUT_DIR}/oras-push.stderr"
+  # Push the content directory from inside it so the tar entries sit at the
+  # extraction root (path: . in the fixture Application) as exactly one
+  # tar+gzip content layer. helm push or per-file oras push would change the
+  # media-type semantics.
+  (cd "${OCI_ARTIFACT_PATH}" && oras push --ca-file "${OCI_CA_FILE}" "${ref}" . >/dev/null 2> "${stderr_file}") \
+    || fail "oras push of the OCI parity artifact to ${ref} failed; see ${stderr_file}"
+  rm -f "${stderr_file}"
+}
+
+verify_oci_artifact_manifest() {
+  local ref manifest stderr_file layer_count media_type_count
+  ref="${OCI_REGISTRY_HOST}:${OCI_REGISTRY_PORT}/${OCI_ARTIFACT_REPOSITORY}:${OCI_ARTIFACT_TAG}"
+  stderr_file="${OUT_DIR}/oras-manifest-fetch.stderr"
+  manifest="$(oras manifest fetch --ca-file "${OCI_CA_FILE}" "${ref}" 2> "${stderr_file}")" \
+    || fail "oras manifest fetch for the pushed OCI parity artifact ${ref} failed; see ${stderr_file}"
+  rm -f "${stderr_file}"
+  layer_count="$(grep -o 'application/vnd\.oci\.image\.layer\.v1\.tar+gzip' <<< "${manifest}" | wc -l | tr -d ' ' || true)"
+  media_type_count="$(grep -o '"mediaType"' <<< "${manifest}" | wc -l | tr -d ' ' || true)"
+  # Expect exactly three mediaType entries (manifest, empty config, one
+  # layer) with the single layer being the tar+gzip content type.
+  if [[ "${layer_count}" != "1" || "${media_type_count}" != "3" ]]; then
+    printf '%s\n' "${manifest}" > "${OUT_DIR}/oci-artifact-manifest.json"
+    fail "pushed OCI parity artifact ${ref} has the wrong manifest shape: want exactly one application/vnd.oci.image.layer.v1.tar+gzip content layer, got ${layer_count} tar+gzip layers across ${media_type_count} mediaType entries; see ${OUT_DIR}/oci-artifact-manifest.json"
+  fi
+}
+
+wait_for_oci_application() {
+  local sync_status
+  for _ in {1..120}; do
+    sync_status="$(kubectl -n argocd get application "${OCI_APPLICATION}" -o jsonpath='{.status.sync.status}' 2>/dev/null || true)"
+    if [[ "${sync_status}" == "Synced" || "${sync_status}" == "OutOfSync" ]]; then
+      return 0
+    fi
+    sleep 2
+  done
+  kubectl -n argocd get application "${OCI_APPLICATION}" -o yaml > "${OUT_DIR}/oci-application.yaml" 2>&1 || true
+  fail "OCI Application ${OCI_APPLICATION} did not reach a comparable sync state (Argo CD could not fetch the artifact from ${OCI_REGISTRY_HOST}; check the argocd-tls-certs-cm CA and registry service); see ${OUT_DIR}/oci-application.yaml"
+}
+
+warm_drydock_oci_cache() {
+  local stderr_file="${OUT_DIR}/drydock-oci-warm.stderr"
+  (cd "${REPO_ROOT}" && "${DRYDOCK_CMD[@]}" build app "argocd/${OCI_APPLICATION}" \
+    --path "${FIXTURE_REPO_PATH}" \
+    --repo-map "${FIXTURE_REPO_URL}=${FIXTURE_REPO_PATH}" \
+    --oci-cache-dir "${OCI_CACHE_DIR}" \
+    --oci-ca-file "${OCI_CA_FILE}" \
+    --render-cache-dir "${OCI_WARM_RENDER_CACHE_DIR}" \
+    > /dev/null 2> "${stderr_file}") \
+    || fail "drydock OCI cache warm (non-offline build of ${OCI_APPLICATION} with --oci-cache-dir/--oci-ca-file) failed; see ${stderr_file}"
+  rm -f "${stderr_file}"
+}
+
 install_argocd() {
   local version="$1"
   kubectl create namespace argocd >/dev/null
@@ -310,6 +561,19 @@ install_argocd() {
   kubectl wait --for=condition=Established crd/applications.argoproj.io --timeout=120s
   kubectl wait --for=condition=Established crd/applicationsets.argoproj.io --timeout=120s
   kubectl -n argocd patch configmap argocd-cm --type merge -p '{"data":{"kustomize.buildOptions":"--enable-helm"}}' >/dev/null
+  # Argo CD derives the OCI registry CA from argocd-tls-certs-cm keyed by the
+  # bare hostname without port. The patch must land before the rollout
+  # restart below so repo-server pods mount the CA from the start (ConfigMap
+  # volume propagation to a running pod races the kubelet sync).
+  [[ -s "${OCI_CA_FILE}" ]] \
+    || fail "OCI registry CA certificate not found at ${OCI_CA_FILE} before Argo CD install; certificate generation must run first"
+  kubectl -n argocd create configmap argocd-tls-certs-cm \
+    --from-file="${OCI_REGISTRY_HOST}=${OCI_CA_FILE}" \
+    --dry-run=client -o json > "${WORK_DIR}/argocd-tls-certs-cm.patch.json" \
+    || fail "could not build the argocd-tls-certs-cm patch payload from ${OCI_CA_FILE}"
+  kubectl -n argocd patch configmap argocd-tls-certs-cm --type merge \
+    --patch-file "${WORK_DIR}/argocd-tls-certs-cm.patch.json" >/dev/null \
+    || fail "could not patch argocd-tls-certs-cm with the ${OCI_REGISTRY_HOST} CA bundle"
   kubectl -n argocd rollout restart deployment/argocd-repo-server >/dev/null
   kubectl -n argocd rollout status deployment/argocd-repo-server --timeout=300s
   kubectl -n argocd rollout status deployment/argocd-server --timeout=300s
@@ -392,6 +656,9 @@ capture_drydock_manifests() {
     (cd "${REPO_ROOT}" && "${DRYDOCK_CMD[@]}" build app "argocd/${app}" \
       --path "${FIXTURE_REPO_PATH}" \
       --repo-map "${FIXTURE_REPO_URL}=${FIXTURE_REPO_PATH}" \
+      --oci-cache-dir "${OCI_CACHE_DIR}" \
+      --oci-ca-file "${OCI_CA_FILE}" \
+      --render-cache-dir "${OCI_OFFLINE_RENDER_CACHE_DIR}" \
       --offline > "${output_dir}/${app}.yaml" 2> "${OUT_DIR}/drydock-${app}.stderr")
     rm -f "${OUT_DIR}/drydock-${app}.stderr"
   done
@@ -578,6 +845,10 @@ main() {
   local argocd_version
   argocd_version="$(resolve_argocd_version)"
   echo "Argo CD render parity smoke: ${argocd_version}" >&2
+  log_step "Ensuring /etc/hosts entry for the OCI registry"
+  ensure_registry_hosts_entry
+  log_step "Generating OCI registry TLS certificate"
+  generate_registry_certificate
   log_step "Installing Argo CD CLI ${argocd_version}"
   install_argocd_cli "${argocd_version}"
   if [[ "${CREATE_CLUSTER}" == "true" ]]; then
@@ -590,6 +861,14 @@ main() {
   log_step "Preparing fixture Git server"
   prepare_fixture_git_image
   install_fixture_git_server
+  log_step "Preparing fixture OCI registry"
+  prepare_registry_image
+  install_fixture_registry
+  log_step "Starting OCI registry port-forward"
+  start_registry_port_forward
+  log_step "Pushing OCI parity artifact"
+  push_oci_artifact
+  verify_oci_artifact_manifest
   log_step "Installing Argo CD ${argocd_version}"
   install_argocd "${argocd_version}"
   log_step "Logging in to Argo CD"
@@ -599,8 +878,12 @@ main() {
   log_step "Waiting for expected Applications"
   wait_for_applications
   assert_application_inventory
+  log_step "Waiting for the OCI Application comparison"
+  wait_for_oci_application
   log_step "Capturing Argo CD rendered manifests"
   capture_argocd_manifests
+  log_step "Warming drydock OCI artifact cache"
+  warm_drydock_oci_cache
   log_step "Capturing drydock rendered manifests"
   capture_drydock_manifests
   compare_manifests
