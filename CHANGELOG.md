@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.2.8](https://github.com/sholdee/drydock/compare/v0.2.7...v0.2.8) (2026-07-22)
+
+
+### Features
+
+* **report:** collapse markdown warnings, aggregate repeated codes, add --markdown-diagnostics ([#233](https://github.com/sholdee/drydock/issues/233)) ([0595ccb](https://github.com/sholdee/drydock/commit/0595ccb2c97be76b8afcb23cdd426c17da66168d))
+
+
+### Miscellaneous Chores
+
+* handle unchecked errors and collapse duplicated merge/record logic ([#229](https://github.com/sholdee/drydock/issues/229)) ([8d1491d](https://github.com/sholdee/drydock/commit/8d1491d767ce47228c681a97cf6a2cb4cb9ef8c4))
+* resolve CodeFactor findings — builtin shadowing and cross-file duplication ([#232](https://github.com/sholdee/drydock/issues/232)) ([b31ae97](https://github.com/sholdee/drydock/commit/b31ae97615156c8620221152b8273c187da223ce))
+
 ## [0.2.7](https://github.com/sholdee/drydock/compare/v0.2.6...v0.2.7) (2026-07-22)
 
 
