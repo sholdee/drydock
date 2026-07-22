@@ -1,5 +1,25 @@
 # Changelog
 
+## [0.2.7](https://github.com/sholdee/drydock/compare/v0.2.6...v0.2.7) (2026-07-22)
+
+
+### Features
+
+* **oci:** private OCI registry credentials ([#225](https://github.com/sholdee/drydock/issues/225)) ([e9e4743](https://github.com/sholdee/drydock/commit/e9e4743f610598ae3f93d49f918dd3b033da834f))
+* **source:** first-class OCI artifact sources ([#221](https://github.com/sholdee/drydock/issues/221)) ([12dd8c1](https://github.com/sholdee/drydock/commit/12dd8c147230f6eed53953aff720fb256d761a3a))
+
+
+### Bug Fixes
+
+* **deps:** update module github.com/google/go-containerregistry to v0.21.7 ([#223](https://github.com/sholdee/drydock/issues/223)) ([bf0e1b9](https://github.com/sholdee/drydock/commit/bf0e1b9a7116b884e616ced54cdab9c8b88c368d))
+* **deps:** update module oras.land/oras-go/v2 to v2.6.2 ([#222](https://github.com/sholdee/drydock/issues/222)) ([ed04c80](https://github.com/sholdee/drydock/commit/ed04c807dbfe7721df5400feaed4499dde7a8ca7))
+
+
+### Miscellaneous Chores
+
+* **deps:** update dependency oras to v1.3.3 ([#227](https://github.com/sholdee/drydock/issues/227)) ([51760eb](https://github.com/sholdee/drydock/commit/51760ebf72b6c0f88a88f9a7271851241beb4b21))
+* **deps:** update golang:1.26.5 docker digest to 3aff665 ([#218](https://github.com/sholdee/drydock/issues/218)) ([08ad0ad](https://github.com/sholdee/drydock/commit/08ad0ad57562723c587321fe033406faaa6a0176))
+
 ## [0.2.6](https://github.com/sholdee/drydock/compare/v0.2.5...v0.2.6) (2026-07-19)
 
 
