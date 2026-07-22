@@ -1,0 +1,14 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: parity-oci-config
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: oci://argocd-parity-registry.argocd-parity.svc.cluster.local:5443/parity/config
+    targetRevision: v1.0.0
+    path: .
+  destination:
+    name: in-cluster
+    namespace: parity-oci-config
