@@ -25,6 +25,45 @@ type MarkdownOptions struct {
 	MaxBytes        int
 	DiagnosticLimit int
 	Title           string
+	Diagnostics     DiagnosticsMode
+}
+
+// DiagnosticsMode controls how much of the diagnostics list the markdown
+// report embeds. Summary warning/error counts are always kept.
+type DiagnosticsMode string
+
+const (
+	// DiagnosticsModeAll lists errors openly and collapses warnings inside a
+	// <details> block.
+	DiagnosticsModeAll DiagnosticsMode = "all"
+	// DiagnosticsModeErrors lists errors openly and omits warnings entirely.
+	DiagnosticsModeErrors DiagnosticsMode = "errors"
+	// DiagnosticsModeNone omits the diagnostics section entirely.
+	DiagnosticsModeNone DiagnosticsMode = "none"
+)
+
+func ParseDiagnosticsMode(value string) (DiagnosticsMode, error) {
+	mode := DiagnosticsMode(strings.ToLower(strings.TrimSpace(value))).Normalize()
+	if err := mode.Validate(); err != nil {
+		return "", err
+	}
+	return mode, nil
+}
+
+func (mode DiagnosticsMode) Normalize() DiagnosticsMode {
+	if mode == "" {
+		return DiagnosticsModeAll
+	}
+	return mode
+}
+
+func (mode DiagnosticsMode) Validate() error {
+	switch mode.Normalize() {
+	case DiagnosticsModeAll, DiagnosticsModeErrors, DiagnosticsModeNone:
+		return nil
+	default:
+		return fmt.Errorf("markdown diagnostics must be all, errors, or none, got %q", string(mode))
+	}
 }
 
 type MarkdownResult struct {
@@ -78,13 +117,20 @@ func DiffMarkdown(result app.DiffResult, options MarkdownOptions) ([]byte, Markd
 	if strings.TrimSpace(options.Title) == "" {
 		options.Title = "drydock diff"
 	}
+	diagnosticsMode := options.Diagnostics.Normalize()
+	if err := diagnosticsMode.Validate(); err != nil {
+		return nil, MarkdownResult{}, err
+	}
 
 	groups := groupedDiffs(result.Results)
 	totalAdded, totalRemoved := totalLineChanges(groups)
 	state := markdownState{maxBytes: options.MaxBytes}
 	state.appendRequired(fmt.Sprintf("## %s\n\n", escapeMarkdownText(options.Title)))
 	state.appendRequired(summaryMarkdown(len(result.Results), len(groups), totalAdded, totalRemoved, result.Diagnostics))
-	state.appendBounded(diagnosticsMarkdown(result.Diagnostics, options.DiagnosticLimit))
+	errorsPart, warningsPart := diagnosticsMarkdown(result.Diagnostics, options.DiagnosticLimit, diagnosticsMode)
+	if state.appendBounded(errorsPart) {
+		state.appendBounded(warningsPart)
+	}
 	if len(groups) == 0 {
 		state.appendBounded(noDiffMarkdown())
 	} else {
@@ -115,12 +161,19 @@ func ImageDiffMarkdown(result app.ImageDiffResult, options MarkdownOptions) ([]b
 	if strings.TrimSpace(options.Title) == "" {
 		options.Title = "drydock image diff"
 	}
+	diagnosticsMode := options.Diagnostics.Normalize()
+	if err := diagnosticsMode.Validate(); err != nil {
+		return nil, MarkdownResult{}, err
+	}
 
 	rows := imageDiffRows(result)
 	state := markdownState{maxBytes: options.MaxBytes}
 	state.appendRequired(fmt.Sprintf("## %s\n\n", escapeMarkdownText(options.Title)))
 	state.appendRequired(imageSummaryMarkdown(len(result.Added), len(result.Removed), result.Diagnostics))
-	state.appendBounded(diagnosticsMarkdown(result.Diagnostics, options.DiagnosticLimit))
+	errorsPart, warningsPart := diagnosticsMarkdown(result.Diagnostics, options.DiagnosticLimit, diagnosticsMode)
+	if state.appendBounded(errorsPart) {
+		state.appendBounded(warningsPart)
+	}
 	if len(rows) == 0 {
 		state.appendBounded(noImageDiffMarkdown())
 	} else {
@@ -157,15 +210,16 @@ func (s *markdownState) appendRequired(text string) {
 	s.truncated = true
 }
 
-func (s *markdownState) appendBounded(text string) {
+func (s *markdownState) appendBounded(text string) bool {
 	if text == "" {
-		return
+		return true
 	}
 	if s.maxBytes == 0 || s.buffer.Len()+len(text) <= s.maxBytes {
 		s.buffer.WriteString(text)
-		return
+		return true
 	}
 	s.truncated = true
+	return false
 }
 
 func (s *markdownState) appendAppDetails(groups []appGroup, openDetails bool) {
@@ -373,38 +427,161 @@ func diagnosticCounts(diagnostics []diagnostic.Diagnostic) (int, int) {
 	return warnings, errors
 }
 
-func diagnosticsMarkdown(diagnostics []diagnostic.Diagnostic, limit int) string {
-	if len(diagnostics) == 0 {
-		return ""
+// diagnosticEntry is one distinct rendered diagnostic line; count carries how
+// many identical diagnostics it represents.
+type diagnosticEntry struct {
+	body  string
+	count int
+}
+
+// diagnosticGroup collects diagnostics sharing one stable code so repeated
+// codes render as a single aggregated bullet.
+type diagnosticGroup struct {
+	code     string
+	category string
+	severity diagnostic.Severity
+	entries  []diagnosticEntry
+	total    int
+}
+
+// diagnosticsMarkdown renders the diagnostics section as two independently
+// appendable parts: errors stay openly listed, warnings collapse inside a
+// <details> block so PR comments lead with the diffs.
+func diagnosticsMarkdown(diagnostics []diagnostic.Diagnostic, limit int, mode DiagnosticsMode) (string, string) {
+	if len(diagnostics) == 0 || mode == DiagnosticsModeNone {
+		return "", ""
 	}
-	var builder strings.Builder
-	builder.WriteString("Diagnostics:\n")
-	shown := min(limit, len(diagnostics))
-	for _, diag := range diagnostics[:shown] {
-		builder.WriteString("- ")
-		builder.WriteString(escapeMarkdownText(string(diag.Severity)))
-		builder.WriteString(" ")
-		if diag.Category != "" {
-			builder.WriteString("`")
-			builder.WriteString(escapeCodeSpan(diag.Category))
-			builder.WriteString("` ")
+	var errors, warnings []diagnostic.Diagnostic
+	for _, diag := range diagnostics {
+		if diag.Severity == diagnostic.SeverityError {
+			errors = append(errors, diag)
+		} else {
+			warnings = append(warnings, diag)
 		}
-		builder.WriteString(escapeMarkdownText(singleLine(diag.Message)))
-		if diag.Provenance.Path != "" {
-			builder.WriteString(" (")
-			builder.WriteString(escapeMarkdownText(diag.Provenance.Path))
-			if diag.Provenance.Pointer != "" {
-				builder.WriteString(" ")
-				builder.WriteString(escapeMarkdownText(diag.Provenance.Pointer))
-			}
-			builder.WriteString(")")
-		}
+	}
+
+	remaining := limit
+	var errorsPart string
+	if len(errors) > 0 {
+		var builder strings.Builder
+		builder.WriteString("Diagnostics:\n")
+		remaining = writeDiagnosticList(&builder, groupDiagnostics(errors), remaining)
 		builder.WriteByte('\n')
+		errorsPart = builder.String()
 	}
-	if omitted := len(diagnostics) - shown; omitted > 0 {
-		fmt.Fprintf(&builder, "_... and %d more diagnostics omitted._\n", omitted)
+	if mode == DiagnosticsModeErrors || len(warnings) == 0 {
+		return errorsPart, ""
 	}
+
+	var builder strings.Builder
+	summary := plural(len(warnings), "warning", "warnings")
+	if len(errors) == 0 {
+		summary = "Diagnostics (" + summary + ")"
+	}
+	fmt.Fprintf(&builder, "<details>\n<summary>%s</summary>\n\n", summary)
+	writeDiagnosticList(&builder, groupDiagnostics(warnings), remaining)
+	builder.WriteString("\n</details>\n\n")
+	return errorsPart, builder.String()
+}
+
+// groupDiagnostics buckets diagnostics by stable code in first-seen order and
+// dedupes identical rendered bodies within each bucket.
+func groupDiagnostics(diagnostics []diagnostic.Diagnostic) []diagnosticGroup {
+	groups := make([]diagnosticGroup, 0, len(diagnostics))
+	index := make(map[string]int, len(diagnostics))
+	for _, diag := range diagnostics {
+		code := diag.Code
+		if code == "" {
+			code = diagnostic.StableCode(diag)
+		}
+		at, ok := index[code]
+		if !ok {
+			at = len(groups)
+			index[code] = at
+			groups = append(groups, diagnosticGroup{code: code, category: diag.Category, severity: diag.Severity})
+		}
+		group := &groups[at]
+		group.total++
+		body := diagnosticBodyMarkdown(diag)
+		deduped := false
+		for i := range group.entries {
+			if group.entries[i].body == body {
+				group.entries[i].count++
+				deduped = true
+				break
+			}
+		}
+		if !deduped {
+			group.entries = append(group.entries, diagnosticEntry{body: body, count: 1})
+		}
+	}
+	return groups
+}
+
+// writeDiagnosticList renders grouped diagnostics as at most limit markdown
+// bullet lines (aggregated group headers included) and returns the unused
+// line budget. Diagnostic instances whose bodies never render are counted
+// into a trailing omitted note.
+func writeDiagnosticList(builder *strings.Builder, groups []diagnosticGroup, limit int) int {
+	remaining := limit
+	omitted := 0
+	for _, group := range groups {
+		if remaining <= 0 {
+			omitted += group.total
+			continue
+		}
+		if group.total == 1 {
+			writeDiagnosticBullet(builder, group)
+			remaining--
+			continue
+		}
+		fmt.Fprintf(builder, "- %s %s × %d\n", escapeMarkdownText(string(group.severity)), markdownCodeSpan(group.code), group.total)
+		remaining--
+		for _, entry := range group.entries {
+			if remaining <= 0 {
+				omitted += entry.count
+				continue
+			}
+			builder.WriteString("  - ")
+			builder.WriteString(entry.body)
+			if entry.count > 1 {
+				fmt.Fprintf(builder, " × %d", entry.count)
+			}
+			builder.WriteByte('\n')
+			remaining--
+		}
+	}
+	if omitted > 0 {
+		fmt.Fprintf(builder, "\n_... and %d more diagnostics omitted._\n", omitted)
+	}
+	return remaining
+}
+
+func writeDiagnosticBullet(builder *strings.Builder, group diagnosticGroup) {
+	builder.WriteString("- ")
+	builder.WriteString(escapeMarkdownText(string(group.severity)))
+	builder.WriteString(" ")
+	if group.category != "" {
+		builder.WriteString("`")
+		builder.WriteString(escapeCodeSpan(group.category))
+		builder.WriteString("` ")
+	}
+	builder.WriteString(group.entries[0].body)
 	builder.WriteByte('\n')
+}
+
+func diagnosticBodyMarkdown(diag diagnostic.Diagnostic) string {
+	var builder strings.Builder
+	builder.WriteString(escapeMarkdownText(singleLine(diag.Message)))
+	if diag.Provenance.Path != "" {
+		builder.WriteString(" (")
+		builder.WriteString(escapeMarkdownText(diag.Provenance.Path))
+		if diag.Provenance.Pointer != "" {
+			builder.WriteString(" ")
+			builder.WriteString(escapeMarkdownText(diag.Provenance.Pointer))
+		}
+		builder.WriteString(")")
+	}
 	return builder.String()
 }
 

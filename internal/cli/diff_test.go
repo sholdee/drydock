@@ -164,7 +164,7 @@ func TestDiffAppsMarkdownOutput(t *testing.T) {
 	assertStdoutContainsAll(t, result,
 		"## drydock diff",
 		"**Summary:** 1 app, 1 resource, +1/-1, 1 warning.",
-		"Diagnostics:",
+		"<summary>Diagnostics (1 warning)</summary>",
 		"&lt;tag&gt;",
 		"<details open>",
 		"<summary>argocd/demo",
@@ -320,6 +320,80 @@ func TestDiffAppsMarkdownRejectsInvalidMaxBytes(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestDiffAppsMarkdownDiagnosticsModeNone(t *testing.T) {
+	recorder := &recordingCLIOrchestrator{
+		diffAppsResult: app.DiffResult{
+			Results: []diff.Result{{
+				Parent: diff.Parent{Namespace: "argocd", Name: "demo"},
+				Diff:   sampleUnifiedDiffForCLI(),
+			}},
+			Diagnostics: []diagnostic.Diagnostic{{
+				Severity: diagnostic.SeverityWarning,
+				Category: "render",
+				Message:  "noisy placeholder warning",
+			}},
+		},
+	}
+
+	result := runCLIWithDependencies(t, Dependencies{Orchestrator: recorder}, "diff", "apps", "--path-orig", "left", "--path", "right", "-o", "markdown", "--markdown-diagnostics", "none", "--exit-code=false")
+
+	assertStdoutContainsAll(t, result,
+		"## drydock diff",
+		"**Summary:** 1 app, 1 resource, +1/-1, 1 warning.",
+	)
+	assertStdoutExcludesAll(t, result, "noisy placeholder warning", "<summary>Diagnostics")
+}
+
+func TestDiffAppsMarkdownRejectsInvalidDiagnosticsMode(t *testing.T) {
+	recorder := &recordingCLIOrchestrator{}
+	cmd := NewRootCommandWithDependencies(VersionInfo{}, Dependencies{
+		Orchestrator: recorder,
+	})
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	cmd.SetOut(&stdout)
+	cmd.SetErr(&stderr)
+	cmd.SetArgs([]string{"diff", "apps", "--path-orig", "left", "--path", "right", "-o", "markdown", "--markdown-diagnostics", "verbose", "--exit-code=false"})
+	err := cmd.Execute()
+	if err == nil {
+		t.Fatal("Execute() error = nil, want invalid markdown diagnostics error")
+	}
+	if !strings.Contains(err.Error(), "markdown diagnostics must be all, errors, or none") {
+		t.Fatalf("Execute() error = %v, want markdown diagnostics mode error", err)
+	}
+	if len(recorder.diffAppsRequests) != 0 {
+		t.Fatalf("DiffApps requests = %#v, want none before invalid markdown diagnostics error", recorder.diffAppsRequests)
+	}
+}
+
+func TestDiffImagesMarkdownDiagnosticsModeErrors(t *testing.T) {
+	recorder := &recordingCLIOrchestrator{
+		diffImagesResult: app.ImageDiffResult{
+			Added: []string{"example/app:v2"},
+			Diagnostics: []diagnostic.Diagnostic{
+				{
+					Severity: diagnostic.SeverityWarning,
+					Category: "render",
+					Message:  "noisy placeholder warning",
+				},
+				{
+					Severity: diagnostic.SeverityError,
+					Category: "render",
+					Message:  "render exploded",
+				},
+			},
+		},
+	}
+
+	result := runCLIWithDependencies(t, Dependencies{Orchestrator: recorder}, "diff", "images", "--path-orig", "left", "--path", "right", "-o", "markdown", "--markdown-diagnostics", "errors", "--exit-code=false")
+
+	assertStdoutContainsAll(t, result,
+		"## drydock image diff",
+		"render exploded",
+	)
+	assertStdoutExcludesAll(t, result, "noisy placeholder warning")
 }
 
 func TestDiffAppsColorNeverKeepsTTYOutputPlain(t *testing.T) {
@@ -971,7 +1045,7 @@ func TestDiffImagesMarkdownOutput(t *testing.T) {
 	assertStdoutContainsAll(t, result,
 		"## drydock image diff",
 		"**Summary:** 1 added, 1 removed, 1 warning.",
-		"Diagnostics:",
+		"<summary>Diagnostics (1 warning)</summary>",
 		"&lt;tag&gt;",
 		"| Change | Image |",
 		"| added | `example/app:v2` |",

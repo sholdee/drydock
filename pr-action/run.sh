@@ -270,6 +270,13 @@ case "${DRYDOCK_INPUT_CHANGED_ONLY}" in
     exit 1
     ;;
 esac
+case "${DRYDOCK_INPUT_MARKDOWN_DIAGNOSTICS}" in
+  '' | all | errors | none) ;;
+  *)
+    echo "markdown-diagnostics must be empty, all, errors, or none, got '${DRYDOCK_INPUT_MARKDOWN_DIAGNOSTICS}'." >&2
+    exit 1
+    ;;
+esac
 
 work_dir="${DRYDOCK_ACTION_WORK_DIR}"
 mkdir -p "${work_dir}"
@@ -401,6 +408,7 @@ if [[ "${DRYDOCK_INPUT_RUN_DIFF}" == "true" ]]; then
     --html-output-file "${diff_html_path}"
     --exit-code=false
   )
+  append_value_flag diff_args "${DRYDOCK_INPUT_MARKDOWN_DIAGNOSTICS}" "--markdown-diagnostics"
   if ! capture_command "${diff_comment_path}" "${diff_stderr}" "${diff_args[@]}"; then
     failed="true"
   fi
@@ -507,6 +515,7 @@ if [[ "${images_comment}" == "true" ]]; then
       --markdown-max-bytes "$(diff_comment_budget "${DRYDOCK_INPUT_DIFF_MAX_BYTES}")"
       --exit-code=false
     )
+    append_value_flag image_comment_args "${DRYDOCK_INPUT_MARKDOWN_DIAGNOSTICS}" "--markdown-diagnostics"
     if ! capture_command_quiet "${images_comment_path}" "${images_comment_stderr}" "${image_comment_args[@]}"; then
       if grep -Eq 'unsupported output "markdown" for diff images|markdown output is not supported for diff images' "${images_comment_stderr}"; then
         if [[ "${image_diff_details_complete}" != "true" ]]; then

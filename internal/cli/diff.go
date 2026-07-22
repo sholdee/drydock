@@ -41,6 +41,7 @@ func newDiffAppsCommand(info VersionInfo, deps Dependencies) *cobra.Command {
 	appsFlags.engineFingerprint = engineFingerprintFromVersionInfo(info)
 	appsColor := diffColorAuto
 	appsMarkdownMaxBytes := report.DefaultMaxBytes
+	appsMarkdownDiagnostics := string(report.DiagnosticsModeAll)
 	appsRawOutputFile := ""
 	appsHTMLOutputFile := ""
 	apps := &cobra.Command{
@@ -52,7 +53,8 @@ func newDiffAppsCommand(info VersionInfo, deps Dependencies) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if err := validateDiffMarkdownFlags(output, appsMarkdownMaxBytes); err != nil {
+			markdownDiagnostics, err := parseDiffMarkdownFlags(output, appsMarkdownMaxBytes, appsMarkdownDiagnostics)
+			if err != nil {
 				return err
 			}
 			colorMode, err := parseDiffColorMode(appsColor)
@@ -72,7 +74,7 @@ func newDiffAppsCommand(info VersionInfo, deps Dependencies) *cobra.Command {
 				return err
 			}
 			diffColor := output == diffOutputUnified && shouldColorDiffOutput(colorMode, deps, cmd.OutOrStdout())
-			return renderDiffResult(cmd, result, !appsFlags.exitCode, output, diffColor, diagnosticColor, appsRawOutputFile, appsHTMLOutputFile, appsMarkdownMaxBytes)
+			return renderDiffResult(cmd, result, !appsFlags.exitCode, output, diffColor, diagnosticColor, appsRawOutputFile, appsHTMLOutputFile, appsMarkdownMaxBytes, markdownDiagnostics)
 		},
 	}
 	bindCommonFlags(apps, &appsFlags)
@@ -84,7 +86,7 @@ func newDiffAppsCommand(info VersionInfo, deps Dependencies) *cobra.Command {
 	bindChangedOnlyPathFilterFlags(apps, &appsFlags)
 	bindShowIgnoredFieldsFlag(apps, &appsFlags)
 	bindDiffColorFlag(apps, &appsColor)
-	bindDiffReportFileFlags(apps, &appsMarkdownMaxBytes, &appsRawOutputFile, &appsHTMLOutputFile)
+	bindDiffReportFileFlags(apps, &appsMarkdownMaxBytes, &appsMarkdownDiagnostics, &appsRawOutputFile, &appsHTMLOutputFile)
 
 	return apps
 }
@@ -95,6 +97,7 @@ func newDiffAppCommand(info VersionInfo, deps Dependencies) *cobra.Command {
 	appFlags.engineFingerprint = engineFingerprintFromVersionInfo(info)
 	appColor := diffColorAuto
 	appMarkdownMaxBytes := report.DefaultMaxBytes
+	appMarkdownDiagnostics := string(report.DiagnosticsModeAll)
 	appRawOutputFile := ""
 	appHTMLOutputFile := ""
 	appCmd := &cobra.Command{
@@ -106,7 +109,8 @@ func newDiffAppCommand(info VersionInfo, deps Dependencies) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if err := validateDiffMarkdownFlags(output, appMarkdownMaxBytes); err != nil {
+			markdownDiagnostics, err := parseDiffMarkdownFlags(output, appMarkdownMaxBytes, appMarkdownDiagnostics)
+			if err != nil {
 				return err
 			}
 			colorMode, err := parseDiffColorMode(appColor)
@@ -129,7 +133,7 @@ func newDiffAppCommand(info VersionInfo, deps Dependencies) *cobra.Command {
 				return err
 			}
 			diffColor := output == diffOutputUnified && shouldColorDiffOutput(colorMode, deps, cmd.OutOrStdout())
-			return renderDiffResult(cmd, result, !appFlags.exitCode, output, diffColor, diagnosticColor, appRawOutputFile, appHTMLOutputFile, appMarkdownMaxBytes)
+			return renderDiffResult(cmd, result, !appFlags.exitCode, output, diffColor, diagnosticColor, appRawOutputFile, appHTMLOutputFile, appMarkdownMaxBytes, markdownDiagnostics)
 		},
 	}
 	bindCommonFlags(appCmd, &appFlags)
@@ -140,7 +144,7 @@ func newDiffAppCommand(info VersionInfo, deps Dependencies) *cobra.Command {
 	bindDiffRefFlags(appCmd, &appFlags)
 	bindShowIgnoredFieldsFlag(appCmd, &appFlags)
 	bindDiffColorFlag(appCmd, &appColor)
-	bindDiffReportFileFlags(appCmd, &appMarkdownMaxBytes, &appRawOutputFile, &appHTMLOutputFile)
+	bindDiffReportFileFlags(appCmd, &appMarkdownMaxBytes, &appMarkdownDiagnostics, &appRawOutputFile, &appHTMLOutputFile)
 
 	return appCmd
 }
@@ -151,6 +155,7 @@ func newDiffImagesCommand(info VersionInfo, deps Dependencies) *cobra.Command {
 	imagesFlags.engineFingerprint = engineFingerprintFromVersionInfo(info)
 	imagesColor := diffColorAuto
 	imagesMarkdownMaxBytes := report.DefaultMaxBytes
+	imagesMarkdownDiagnostics := string(report.DiagnosticsModeAll)
 	images := &cobra.Command{
 		Use:   "images",
 		Short: "Diff rendered image references",
@@ -160,7 +165,8 @@ func newDiffImagesCommand(info VersionInfo, deps Dependencies) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if err := validateDiffMarkdownFlags(output, imagesMarkdownMaxBytes); err != nil {
+			markdownDiagnostics, err := parseDiffMarkdownFlags(output, imagesMarkdownMaxBytes, imagesMarkdownDiagnostics)
+			if err != nil {
 				return err
 			}
 			colorMode, err := parseDiffColorMode(imagesColor)
@@ -180,7 +186,7 @@ func newDiffImagesCommand(info VersionInfo, deps Dependencies) *cobra.Command {
 				return err
 			}
 			diffColor := output == diffOutputUnified && shouldColorDiffOutput(colorMode, deps, cmd.OutOrStdout())
-			return renderImageDiffResult(cmd, result, !imagesFlags.exitCode, output, diffColor, diagnosticColor, imagesMarkdownMaxBytes)
+			return renderImageDiffResult(cmd, result, !imagesFlags.exitCode, output, diffColor, diagnosticColor, imagesMarkdownMaxBytes, markdownDiagnostics)
 		},
 	}
 	bindCommonFlags(images, &imagesFlags)
@@ -192,6 +198,7 @@ func newDiffImagesCommand(info VersionInfo, deps Dependencies) *cobra.Command {
 	bindChangedOnlyPathFilterFlags(images, &imagesFlags)
 	bindDiffColorFlag(images, &imagesColor)
 	bindDiffMarkdownMaxBytesFlag(images, &imagesMarkdownMaxBytes)
+	bindDiffMarkdownDiagnosticsFlag(images, &imagesMarkdownDiagnostics)
 
 	return images
 }
@@ -210,8 +217,9 @@ func bindDiffColorFlag(cmd *cobra.Command, colorMode *string) {
 	cmd.Flags().StringVar(colorMode, "color", *colorMode, "color diff output: auto, always, or never")
 }
 
-func bindDiffReportFileFlags(cmd *cobra.Command, markdownMaxBytes *int, rawOutputFile, htmlOutputFile *string) {
+func bindDiffReportFileFlags(cmd *cobra.Command, markdownMaxBytes *int, markdownDiagnostics *string, rawOutputFile, htmlOutputFile *string) {
 	bindDiffMarkdownMaxBytesFlag(cmd, markdownMaxBytes)
+	bindDiffMarkdownDiagnosticsFlag(cmd, markdownDiagnostics)
 	cmd.Flags().StringVar(rawOutputFile, "raw-output-file", *rawOutputFile, "write full uncolored unified diff output to this file")
 	cmd.Flags().StringVar(htmlOutputFile, "html-output-file", *htmlOutputFile, "write full static HTML diff report to this file")
 }
@@ -221,17 +229,25 @@ func bindDiffMarkdownMaxBytesFlag(cmd *cobra.Command, markdownMaxBytes *int) {
 		fmt.Sprintf("maximum markdown output bytes; 0 disables the limit, positive values must be at least %d", report.MinPositiveMaxByte))
 }
 
-func validateDiffMarkdownFlags(output string, markdownMaxBytes int) error {
+func bindDiffMarkdownDiagnosticsFlag(cmd *cobra.Command, markdownDiagnostics *string) {
+	cmd.Flags().StringVar(markdownDiagnostics, "markdown-diagnostics", *markdownDiagnostics,
+		"markdown report diagnostics detail: all (errors open, warnings collapsed), errors, or none")
+}
+
+// parseDiffMarkdownFlags validates the markdown-only flags and returns the
+// parsed diagnostics mode; non-markdown outputs skip validation and get the
+// default mode because the report is never rendered.
+func parseDiffMarkdownFlags(output string, markdownMaxBytes int, markdownDiagnostics string) (report.DiagnosticsMode, error) {
 	if output != diffOutputMarkdown {
-		return nil
+		return report.DiagnosticsModeAll, nil
 	}
 	if markdownMaxBytes < 0 {
-		return fmt.Errorf("markdown max bytes must be greater than or equal to zero")
+		return "", fmt.Errorf("markdown max bytes must be greater than or equal to zero")
 	}
 	if markdownMaxBytes > 0 && markdownMaxBytes < report.MinPositiveMaxByte {
-		return fmt.Errorf("markdown max bytes must be zero or at least %d", report.MinPositiveMaxByte)
+		return "", fmt.Errorf("markdown max bytes must be zero or at least %d", report.MinPositiveMaxByte)
 	}
-	return nil
+	return report.ParseDiagnosticsMode(markdownDiagnostics)
 }
 
 func parseDiffColorMode(value string) (string, error) {
@@ -258,11 +274,11 @@ func shouldColorDiffOutput(mode string, deps Dependencies, w io.Writer) bool {
 	}
 }
 
-func renderDiffResult(cmd *cobra.Command, result app.DiffResult, disableDiffExitCode bool, output string, diffColor, diagnosticColor bool, rawOutputFile, htmlOutputFile string, markdownMaxBytes int) error {
+func renderDiffResult(cmd *cobra.Command, result app.DiffResult, disableDiffExitCode bool, output string, diffColor, diagnosticColor bool, rawOutputFile, htmlOutputFile string, markdownMaxBytes int, markdownDiagnostics report.DiagnosticsMode) error {
 	if err := writeDiffSideOutputs(cmd.ErrOrStderr(), result, output, diagnosticColor, rawOutputFile, htmlOutputFile); err != nil {
 		return err
 	}
-	if err := writeDiffCommandOutput(cmd.OutOrStdout(), result, output, diffColor, markdownMaxBytes); err != nil {
+	if err := writeDiffCommandOutput(cmd.OutOrStdout(), result, output, diffColor, markdownMaxBytes, markdownDiagnostics); err != nil {
 		return err
 	}
 	return diffResultExitError(result, disableDiffExitCode)
@@ -287,12 +303,12 @@ func writeDiffSideOutputs(stderr io.Writer, result app.DiffResult, output string
 	return nil
 }
 
-func writeDiffCommandOutput(w io.Writer, result app.DiffResult, output string, diffColor bool, markdownMaxBytes int) error {
+func writeDiffCommandOutput(w io.Writer, result app.DiffResult, output string, diffColor bool, markdownMaxBytes int, markdownDiagnostics report.DiagnosticsMode) error {
 	switch output {
 	case diffOutputUnified:
 		return writeUnifiedDiffOutput(w, result, diffColor)
 	case diffOutputMarkdown:
-		_, err := report.WriteDiffMarkdown(w, result, report.MarkdownOptions{MaxBytes: markdownMaxBytes})
+		_, err := report.WriteDiffMarkdown(w, result, report.MarkdownOptions{MaxBytes: markdownMaxBytes, Diagnostics: markdownDiagnostics})
 		return err
 	case string(cliformat.OutputJSON), string(cliformat.OutputYAML):
 		return writeStructuredOutput(w, output, result.Results)
@@ -333,13 +349,13 @@ func writeHTMLDiffOutput(path string, result app.DiffResult) error {
 	return nil
 }
 
-func renderImageDiffResult(cmd *cobra.Command, result app.ImageDiffResult, disableDiffExitCode bool, output string, diffColor, diagnosticColor bool, markdownMaxBytes int) error {
+func renderImageDiffResult(cmd *cobra.Command, result app.ImageDiffResult, disableDiffExitCode bool, output string, diffColor, diagnosticColor bool, markdownMaxBytes int, markdownDiagnostics report.DiagnosticsMode) error {
 	if output != diffOutputMarkdown {
 		if err := renderDiagnosticsWithColor(cmd.ErrOrStderr(), result.Diagnostics, diagnosticColor); err != nil {
 			return err
 		}
 	}
-	if err := writeImageDiffOutput(cmd.OutOrStdout(), result, output, diffColor, markdownMaxBytes); err != nil {
+	if err := writeImageDiffOutput(cmd.OutOrStdout(), result, output, diffColor, markdownMaxBytes, markdownDiagnostics); err != nil {
 		return err
 	}
 	code := exitCode(nil, disableDiffExitCode, len(result.Added) > 0 || len(result.Removed) > 0)
@@ -349,7 +365,7 @@ func renderImageDiffResult(cmd *cobra.Command, result app.ImageDiffResult, disab
 	return nil
 }
 
-func writeImageDiffOutput(w io.Writer, result app.ImageDiffResult, output string, diffColor bool, markdownMaxBytes int) error {
+func writeImageDiffOutput(w io.Writer, result app.ImageDiffResult, output string, diffColor bool, markdownMaxBytes int, markdownDiagnostics report.DiagnosticsMode) error {
 	switch output {
 	case diffOutputUnified:
 		return writeUnifiedImageDiff(w, result, diffColor)
@@ -363,7 +379,7 @@ func writeImageDiffOutput(w io.Writer, result app.ImageDiffResult, output string
 	case string(cliformat.OutputName):
 		return cliformat.Name(w, result.Added)
 	case diffOutputMarkdown:
-		_, err := report.WriteImageDiffMarkdown(w, result, report.MarkdownOptions{MaxBytes: markdownMaxBytes})
+		_, err := report.WriteImageDiffMarkdown(w, result, report.MarkdownOptions{MaxBytes: markdownMaxBytes, Diagnostics: markdownDiagnostics})
 		return err
 	default:
 		return fmt.Errorf("unsupported output %q for diff images", output)

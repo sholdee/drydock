@@ -207,6 +207,29 @@ func TestActionKSOPSCompatInputDeclaredAndWiredToRunStep(t *testing.T) {
 	}
 }
 
+func TestActionMarkdownDiagnosticsInputDeclaredAndWiredToRunStep(t *testing.T) {
+	actionYAML := loadActionYAML(t)
+
+	if !strings.Contains(actionYAML, "markdown-diagnostics:") {
+		t.Fatalf("action.yml missing markdown-diagnostics input declaration")
+	}
+
+	runIdx := strings.Index(actionYAML, "- name: Run drydock\n")
+	if runIdx == -1 {
+		t.Fatalf("action.yml missing 'Run drydock' step")
+	}
+	nextStep := strings.Index(actionYAML[runIdx+1:], "\n    - name: ")
+	var runBlock string
+	if nextStep == -1 {
+		runBlock = actionYAML[runIdx:]
+	} else {
+		runBlock = actionYAML[runIdx : runIdx+1+nextStep]
+	}
+	if !strings.Contains(runBlock, "DRYDOCK_INPUT_MARKDOWN_DIAGNOSTICS: ${{ inputs.markdown-diagnostics }}") {
+		t.Fatalf("Run step env block missing DRYDOCK_INPUT_MARKDOWN_DIAGNOSTICS wiring:\n%s", runBlock)
+	}
+}
+
 func TestActionDiscoverIgnoreInputDeclaredAndWiredToRunStep(t *testing.T) {
 	actionYAML := loadActionYAML(t)
 
