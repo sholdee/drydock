@@ -9,7 +9,14 @@
   minimumReleaseAge: '3 days',
   internalChecksFilter: 'strict',
   ignorePaths: ['testdata/**'],
-  ignoreDeps: ['github.com/argoproj/argo-cd/gitops-engine'],
+  // argoproj/pkg's version must track the vendored argo-cd util/oci KeyLock
+  // signature (v0 today; v0 is frozen upstream, and MVS + gomodTidy track it
+  // upward automatically at argo-cd bumps). The v0→v2 migration happens only
+  // inside an argo-cd upgrade that changes the signature.
+  ignoreDeps: [
+    'github.com/argoproj/argo-cd/gitops-engine',
+    'github.com/argoproj/pkg',
+  ],
   postUpdateOptions: ['gomodTidy'],
   postUpgradeTasks: {
     commands: ['go run ./scripts/sync-argocd-gitops-engine.go'],
