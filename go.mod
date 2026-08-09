@@ -5,7 +5,7 @@ go 1.26.5
 require (
 	dario.cat/mergo v1.0.2
 	github.com/argoproj/argo-cd/gitops-engine v0.7.1-0.20250908182407-97ad5b59a627
-	github.com/argoproj/argo-cd/v3 v3.4.6
+	github.com/argoproj/argo-cd/v3 v3.5.0
 	github.com/argoproj/pkg v0.13.6
 	github.com/bmatcuk/doublestar/v4 v4.10.0
 	github.com/distribution/reference v0.6.0
