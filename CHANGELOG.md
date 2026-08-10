@@ -1,5 +1,27 @@
 # Changelog
 
+## [0.2.9](https://github.com/sholdee/drydock/compare/v0.2.8...v0.2.9) (2026-08-10)
+
+
+### Bug Fixes
+
+* **deps:** update module github.com/argoproj/argo-cd/v3 to v3.4.6 ([#248](https://github.com/sholdee/drydock/issues/248)) ([6cdb182](https://github.com/sholdee/drydock/commit/6cdb182ad32417bd8f58bc93686fb7ec6df2f48d))
+* **deps:** update module github.com/argoproj/argo-cd/v3 to v3.5.0 ([#253](https://github.com/sholdee/drydock/issues/253)) ([bbd2f79](https://github.com/sholdee/drydock/commit/bbd2f792fccf2d4d16e1c19a0a026541a39b2f46))
+* **deps:** update module github.com/go-git/go-git/v5 to v5.19.2 ([#246](https://github.com/sholdee/drydock/issues/246)) ([0710459](https://github.com/sholdee/drydock/commit/0710459559486850294aafbcee9223be7d69752b))
+* **deps:** update module github.com/google/go-containerregistry to v0.21.8 ([#249](https://github.com/sholdee/drydock/issues/249)) ([cb0198c](https://github.com/sholdee/drydock/commit/cb0198c1394c780cf291113ea41f2e21be4ab169))
+* **deps:** update module github.com/google/go-containerregistry to v0.21.9 ([#256](https://github.com/sholdee/drydock/issues/256)) ([30f28a9](https://github.com/sholdee/drydock/commit/30f28a9bd2a31a6f3c118a6c56a0559357dfdcdb))
+* **deps:** update module go.yaml.in/yaml/v3 to v3.0.5 ([#241](https://github.com/sholdee/drydock/issues/241)) ([7fc0c91](https://github.com/sholdee/drydock/commit/7fc0c9120c4cd77bdf31b1b36d286e03ad9161e5))
+* **deps:** update module k8s.io/apimachinery to v0.36.3 ([#239](https://github.com/sholdee/drydock/issues/239)) ([92131e8](https://github.com/sholdee/drydock/commit/92131e8818dbdf38ec4d0f32f9815b32eabd964f))
+
+
+### Miscellaneous Chores
+
+* **deps:** update actions/checkout action to v7.0.1 ([#240](https://github.com/sholdee/drydock/issues/240)) ([c71c32c](https://github.com/sholdee/drydock/commit/c71c32c8676baf113260556b27610fb54fd6b566))
+* **deps:** update dependency zizmor to v1.28.0 ([#236](https://github.com/sholdee/drydock/issues/236)) ([0450089](https://github.com/sholdee/drydock/commit/0450089952605baf7c308669daad0fb02b34f930))
+* **deps:** update dependency zizmor to v1.29.0 ([#251](https://github.com/sholdee/drydock/issues/251)) ([f476ef5](https://github.com/sholdee/drydock/commit/f476ef55900d0c62990a4c03ece2a60142b931b6))
+* **deps:** update docker/dockerfile docker tag to v1.26 ([#247](https://github.com/sholdee/drydock/issues/247)) ([d6e540e](https://github.com/sholdee/drydock/commit/d6e540e62558daa958111832c7531f1aa8bd006f))
+* **deps:** update golang:1.26.5 docker digest to 2005724 ([#255](https://github.com/sholdee/drydock/issues/255)) ([86bc96a](https://github.com/sholdee/drydock/commit/86bc96ad37a13b0f08bf88a862eb1a7412a0fe1c))
+
 ## [0.2.8](https://github.com/sholdee/drydock/compare/v0.2.7...v0.2.8) (2026-07-22)
 
 
