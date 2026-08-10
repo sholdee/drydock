@@ -5,10 +5,10 @@ metadata:
   namespace: {{ .Release.Namespace }}
 data:
   {{- if hasKey .Values "debugVerbose" }}
-  # Cilium-faithful pattern: literal surrounding quotes render a null chart
-  # default as an empty STRING (not YAML null).  Argo CD helm v3 keeps null
-  # defaults in .Values (hasKey → true, value renders as ""); helm v4 strips
-  # them (hasKey → false, key absent).  This asserts parity with the Argo CD
-  # helm v3 behaviour.  Revisit when Argo CD's repo-server moves to helm v4.
+  # Cilium-faithful pattern: literal surrounding quotes would render a null
+  # chart default as an empty STRING (not YAML null).  Helm v4 — Argo CD's
+  # repo-server CLI since v3.5 — strips null chart defaults (hasKey → false,
+  # key absent), so this block must NOT render.  This asserts parity with the
+  # Argo CD helm v4 behaviour; helm v3 kept the null and rendered "".
   debug-verbose: "{{ .Values.debugVerbose }}"
   {{- end }}

@@ -1,7 +1,6 @@
 # debugVerbose is intentionally null (bare key with no value).
-# Argo CD's helm v3 (repo-server) preserves this null in .Values, so hasKey
-# returns true and the key renders as an empty string via the literal-quote
-# pattern below.  Helm v4 strips null chart defaults, so the hasKey guard
-# would return false and the key would be absent entirely.
-# Revisit / retire this fixture when Argo CD's repo-server moves to helm v4.
+# Helm v4 — bundled by Argo CD's repo-server since v3.5 — strips null chart
+# defaults during coalescing, so hasKey returns false and the guarded key is
+# absent from the rendered output on both sides.  (Argo CD v3.4's helm v3
+# preserved the null: hasKey → true, rendering an empty string.)
 debugVerbose:

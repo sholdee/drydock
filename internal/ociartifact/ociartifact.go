@@ -439,7 +439,7 @@ func resolveOnline(ctx context.Context, client oci.Client, memo *prefetchedTagsC
 	if tagsFetched {
 		digests := map[string]string{revision: digest}
 		if !slices.Contains(tags, revision) {
-			if version, versionErr := versions.MaxVersion(revision, tags); versionErr == nil {
+			if version, versionErr := versions.MaxVersion(revision, tags, ""); versionErr == nil {
 				digests[version] = digest
 			}
 		}
@@ -465,7 +465,7 @@ func resolveOffline(cacheDir, repoURL, revision string) (string, error) {
 	if !versions.IsConstraint(revision) {
 		return "", offlineResolveMiss(repoURL, revision)
 	}
-	version, err := versions.MaxVersion(revision, record.Tags)
+	version, err := versions.MaxVersion(revision, record.Tags, "")
 	if err != nil {
 		return "", offlineResolveMiss(repoURL, revision)
 	}

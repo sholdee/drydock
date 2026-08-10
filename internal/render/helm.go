@@ -24,7 +24,6 @@ import (
 
 type HelmRenderer struct{}
 
-//nolint:gocyclo // Coordinates Helm loading, values, capabilities, and manifest decoding in render order.
 func (HelmRenderer) Render(ctx context.Context, source ResolvedSource, opts RenderOptions) ([]Manifest, []diagnostic.Diagnostic, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, nil, err
@@ -60,16 +59,43 @@ func (HelmRenderer) Render(ctx context.Context, source ResolvedSource, opts Rend
 		releaseName = opts.AppName
 	}
 
+	capabilities, err := helmCapabilities(opts)
+	if err != nil {
+		return nil, nil, err
+	}
+	inputValues, avpDiags, err := assembleHelmInputValues(ctx, source, opts, chart, manifestPath)
+	if err != nil {
+		return nil, nil, err
+	}
+	values, err := helmTemplateValues(chart, inputValues, capabilities, releaseName, opts, manifestPath)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	rendered, err := engine.Render(chart, values)
+	if err != nil {
+		return nil, nil, fmt.Errorf("helm template %s: %w", manifestPath, err)
+	}
+
+	manifests, diags, err := decodeHelmManifests(pathMap, chart, rendered, opts)
+	diags = append(avpDiags, diags...)
+	return manifests, diags, err
+}
+
+func helmCapabilities(opts RenderOptions) (*common.Capabilities, error) {
 	capabilities := common.DefaultCapabilities.Copy()
 	if opts.KubeVersion != "" {
 		kubeVersion, err := common.ParseKubeVersion(opts.KubeVersion)
 		if err != nil {
-			return nil, nil, fmt.Errorf("parse helm kube version %q: %w", opts.KubeVersion, err)
+			return nil, fmt.Errorf("parse helm kube version %q: %w", opts.KubeVersion, err)
 		}
 		capabilities.KubeVersion = *kubeVersion
 	}
 	capabilities.APIVersions = append(capabilities.APIVersions, opts.APIVersions...)
+	return capabilities, nil
+}
 
+func assembleHelmInputValues(ctx context.Context, source ResolvedSource, opts RenderOptions, chart helmchart.Charter, manifestPath string) (map[string]any, []diagnostic.Diagnostic, error) {
 	inlineValues := cloneValues(opts.ValuesObject)
 	loadValueFiles, err := shouldLoadHelmValueFiles(opts.ValuesMergeMode, inlineValues)
 	if err != nil {
@@ -93,25 +119,28 @@ func (HelmRenderer) Render(ctx context.Context, source ResolvedSource, opts Rend
 	if err := processHelmDependencies(chart, inputValues, manifestPath); err != nil {
 		return nil, nil, err
 	}
+	return inputValues, avpDiags, nil
+}
 
+func helmTemplateValues(chart helmchart.Charter, inputValues map[string]any, capabilities *common.Capabilities, releaseName string, opts RenderOptions, manifestPath string) (map[string]any, error) {
 	chartAccessor, err := helmchart.NewAccessor(chart)
 	if err != nil {
-		return nil, nil, fmt.Errorf("helm render values %s: %w", manifestPath, err)
+		return nil, fmt.Errorf("helm render values %s: %w", manifestPath, err)
 	}
-	// MergeValues (nil-preserving) instead of ToRenderValuesWithSchemaValidation's CoalesceValues,
-	// which strips null chart defaults. Helm v3 (Argo CD's bundled CLI) retains them so guarded
-	// keys ({{- if hasKey .Values "x" }}) render under Argo CD but vanish under helm v4. Verified
-	// vs helm v4.2.1 coalesce.go: the two differ ONLY in nil handling.
-	mergedValues, err := chartutil.MergeValues(chart, inputValues)
+	// CoalesceValues strips null chart defaults, matching the helm v4 CLI that Argo CD's
+	// repo-server bundles since v3.5: guarded keys ({{- if hasKey .Values "x" }}) with null
+	// defaults vanish on both sides. Argo CD v3.4 and earlier bundled helm v3, which retained
+	// them — the nil-preserving MergeValues sibling matched that era.
+	mergedValues, err := chartutil.CoalesceValues(chart, inputValues)
 	if err != nil {
-		return nil, nil, fmt.Errorf("helm render values %s: %w", manifestPath, err)
+		return nil, fmt.Errorf("helm render values %s: %w", manifestPath, err)
 	}
 	if !opts.SkipSchemaValidation {
 		if err := chartutil.ValidateAgainstSchema(chart, mergedValues); err != nil {
-			return nil, nil, fmt.Errorf("helm render values %s: values don't meet the chart schema(s): %w", manifestPath, err)
+			return nil, fmt.Errorf("helm render values %s: values don't meet the chart schema(s): %w", manifestPath, err)
 		}
 	}
-	values := map[string]any{
+	return map[string]any{
 		"Chart":        chartAccessor.MetadataAsMap(),
 		"Capabilities": capabilities,
 		"Release": map[string]any{
@@ -119,16 +148,7 @@ func (HelmRenderer) Render(ctx context.Context, source ResolvedSource, opts Rend
 			"IsInstall": true, "Revision": 1, "Service": "Helm",
 		},
 		"Values": mergedValues,
-	}
-
-	rendered, err := engine.Render(chart, values)
-	if err != nil {
-		return nil, nil, fmt.Errorf("helm template %s: %w", manifestPath, err)
-	}
-
-	manifests, diags, err := decodeHelmManifests(pathMap, chart, rendered, opts)
-	diags = append(avpDiags, diags...)
-	return manifests, diags, err
+	}, nil
 }
 
 type helmCRDProvider interface {
