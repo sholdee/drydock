@@ -131,7 +131,7 @@ func TestValidateApplicationsRuntimeBoundFieldsDoNotSimulateLivePolicy(t *testin
 					Name:  "ignored",
 				}},
 			},
-			SignatureKeys: []argoappv1.SignatureKey{{
+			SignatureKeys: []argoappv1.SignatureKey{{ //nolint:staticcheck // deprecated in Argo CD v3.5, but still appears on real AppProjects this test documents
 				KeyID: "0123456789ABCDEF",
 			}},
 			DestinationServiceAccounts: []argoappv1.ApplicationDestinationServiceAccount{{
