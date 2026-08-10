@@ -213,7 +213,7 @@ data:
 	}
 }
 
-func TestHelmRendererPreservesNullChartDefaultsBehindHasKeyGuard(t *testing.T) {
+func TestHelmRendererStripsNullChartDefaultsBehindHasKeyGuard(t *testing.T) {
 	root := t.TempDir()
 	writeFile(t, filepath.Join(root, "simple", "Chart.yaml"), "apiVersion: v2\nname: simple\nversion: 0.1.0\n")
 	writeFile(t, filepath.Join(root, "simple", "values.yaml"), "debugVerbose:\n")
@@ -231,17 +231,15 @@ func TestHelmRendererPreservesNullChartDefaultsBehindHasKeyGuard(t *testing.T) {
 	if len(result) != 1 {
 		t.Fatalf("len(result) = %d, want 1", len(result))
 	}
-	// Cilium's pattern is `key: "{{ .Values.x }}"` (literal quotes): with a null chart default
-	// the key renders as an empty STRING (matching Argo CD's helm v3), not YAML null.
+	// Helm v4 strips null chart defaults during coalescing, so the hasKey guard fails and
+	// the key is absent entirely — matching Argo CD v3.5+, whose repo-server bundles helm v4.
+	// (Argo CD v3.4's helm v3 preserved the null: hasKey → true, rendering an empty string.)
 	val, found, err := unstructured.NestedString(result[0].Object.Object, "data", "debug-verbose")
 	if err != nil {
 		t.Fatalf("data.debug-verbose accessor error: %v", err)
 	}
-	if !found {
-		t.Fatalf("data.debug-verbose missing: helm stripped the null chart default behind the hasKey guard")
-	}
-	if val != "" {
-		t.Fatalf("data.debug-verbose = %q, want empty string", val)
+	if found {
+		t.Fatalf("data.debug-verbose = %q, want key absent: helm v4 strips null chart defaults behind the hasKey guard", val)
 	}
 }
 

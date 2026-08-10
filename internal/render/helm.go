@@ -98,11 +98,11 @@ func (HelmRenderer) Render(ctx context.Context, source ResolvedSource, opts Rend
 	if err != nil {
 		return nil, nil, fmt.Errorf("helm render values %s: %w", manifestPath, err)
 	}
-	// MergeValues (nil-preserving) instead of ToRenderValuesWithSchemaValidation's CoalesceValues,
-	// which strips null chart defaults. Helm v3 (Argo CD's bundled CLI) retains them so guarded
-	// keys ({{- if hasKey .Values "x" }}) render under Argo CD but vanish under helm v4. Verified
-	// vs helm v4.2.1 coalesce.go: the two differ ONLY in nil handling.
-	mergedValues, err := chartutil.MergeValues(chart, inputValues)
+	// CoalesceValues strips null chart defaults, matching the helm v4 CLI that Argo CD's
+	// repo-server bundles since v3.5: guarded keys ({{- if hasKey .Values "x" }}) with null
+	// defaults vanish on both sides. Argo CD v3.4 and earlier bundled helm v3, which retained
+	// them — the nil-preserving MergeValues sibling matched that era.
+	mergedValues, err := chartutil.CoalesceValues(chart, inputValues)
 	if err != nil {
 		return nil, nil, fmt.Errorf("helm render values %s: %w", manifestPath, err)
 	}
