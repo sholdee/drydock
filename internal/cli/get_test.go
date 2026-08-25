@@ -460,8 +460,7 @@ func commandErrorCode(err error) int {
 	if err == nil {
 		return 0
 	}
-	var exitErr ExitError
-	if errors.As(err, &exitErr) {
+	if exitErr, ok := errors.AsType[ExitError](err); ok {
 		return exitErr.Code
 	}
 	return 2

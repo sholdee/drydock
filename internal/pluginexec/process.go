@@ -30,8 +30,7 @@ func processWaitError(err error) error {
 	if err == nil {
 		return nil
 	}
-	var exit *exec.ExitError
-	if errors.As(err, &exit) {
+	if exit, ok := errors.AsType[*exec.ExitError](err); ok {
 		return exitError{Code: exit.ExitCode()}
 	}
 	return err

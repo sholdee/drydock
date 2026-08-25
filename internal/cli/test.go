@@ -64,8 +64,7 @@ func newTestCommand(info VersionInfo, deps Dependencies) *cobra.Command {
 				result, err = deps.Orchestrator.Build(context.Background(), buildRequest)
 			}
 			if liveReporter != nil {
-				var liveErr liveTestOutputError
-				if errors.As(err, &liveErr) {
+				if _, ok := errors.AsType[liveTestOutputError](err); ok {
 					return err
 				}
 				if renderErr := liveReporter.Clear(); renderErr != nil {
