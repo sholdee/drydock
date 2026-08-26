@@ -35,8 +35,7 @@ func main() {
 		KubernetesModule:   moduleLabel(rendercache.KubernetesModulePath),
 	})
 	if err := cmd.Execute(); err != nil {
-		var exitErr cli.ExitError
-		if errors.As(err, &exitErr) {
+		if exitErr, ok := errors.AsType[cli.ExitError](err); ok {
 			os.Exit(exitErr.Code)
 		}
 		fmt.Fprintln(os.Stderr, err)

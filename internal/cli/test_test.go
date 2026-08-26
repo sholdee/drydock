@@ -665,8 +665,7 @@ func TestTestAppsTTYSetsLiveOutputWriteErrorApartFromTestFailure(t *testing.T) {
 	if err == nil || !errors.Is(err, writeErr) {
 		t.Fatalf("Execute() error = %v, want write error", err)
 	}
-	var exitErr ExitError
-	if errors.As(err, &exitErr) {
+	if _, ok := errors.AsType[ExitError](err); ok {
 		t.Fatalf("Execute() error = %v, must not be converted to ExitError", err)
 	}
 }

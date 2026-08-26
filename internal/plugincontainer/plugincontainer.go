@@ -228,8 +228,7 @@ func runConfiguredContainerCommand(
 			_ = cleanupContainer(ctx, processRunner, docker, dockerEnv, cidFile)
 			return commandResult{}, &pluginexec.Error{Phase: phase, Command: execution.Command, Reason: "command timed out"}
 		}
-		var exitErr exitError
-		if errors.As(err, &exitErr) {
+		if exitErr, ok := errors.AsType[exitError](err); ok {
 			code := exitErr.Code
 			return commandResult{}, &pluginexec.Error{Phase: phase, Command: execution.Command, Reason: "container command failed; stderr omitted to avoid leaking secrets", ExitCode: &code}
 		}

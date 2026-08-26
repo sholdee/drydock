@@ -182,8 +182,7 @@ func runConfiguredCommand(ctx context.Context, phase string, command pluginpolic
 		if errors.Is(err, context.DeadlineExceeded) {
 			return commandResult{}, &Error{Phase: phase, Command: safeCommandName(resolved), Reason: "command timed out"}
 		}
-		var exitErr exitError
-		if errors.As(err, &exitErr) {
+		if exitErr, ok := errors.AsType[exitError](err); ok {
 			code := exitErr.Code
 			return commandResult{}, &Error{Phase: phase, Command: safeCommandName(resolved), Reason: "command failed; stderr omitted to avoid leaking secrets", ExitCode: &code}
 		}
