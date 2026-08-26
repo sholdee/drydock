@@ -4,16 +4,17 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	argoappv1 "github.com/argoproj/argo-cd/v3/pkg/apis/application/v1alpha1"
-	"github.com/sholdee/drydock/internal/diagnostic"
-	"github.com/sholdee/drydock/internal/render"
-	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"os"
 	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
 	"time"
+
+	argoappv1 "github.com/argoproj/argo-cd/v3/pkg/apis/application/v1alpha1"
+	"github.com/sholdee/drydock/internal/diagnostic"
+	"github.com/sholdee/drydock/internal/render"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 )
 
 func TestBuildParallelismPreservesApplicationOrder(t *testing.T) {
@@ -30,10 +31,8 @@ func TestBuildParallelismPreservesApplicationOrder(t *testing.T) {
 	}, 1)
 	go func() {
 		result, err := (Orchestrator{ChartAcquirer: acquirer}).Build(context.Background(), BuildRequest{
-			Path: root,
-			ExecutionOptions: ExecutionOptions{
-				Parallelism: 3,
-			},
+			Path:        root,
+			Parallelism: 3,
 			Applications: []argoappv1.Application{
 				chartOnlyApplication("first", "first", "1.0.0"),
 				chartOnlyApplication("middle", "middle", "1.0.0"),
@@ -75,11 +74,9 @@ func TestBuildStatusCallbackReportsCompletionOrder(t *testing.T) {
 	errCh := make(chan error, 1)
 	go func() {
 		result, err := (Orchestrator{ChartAcquirer: acquirer}).Build(context.Background(), BuildRequest{
-			Path:       root,
-			StatusOnly: true,
-			ExecutionOptions: ExecutionOptions{
-				Parallelism: 2,
-			},
+			Path:        root,
+			StatusOnly:  true,
+			Parallelism: 2,
 			Applications: []argoappv1.Application{
 				chartOnlyApplication("slow", "slow", "1.0.0"),
 				chartOnlyApplication("fast", "fast", "1.0.0"),
@@ -132,11 +129,9 @@ func TestBuildStatusCallbackErrorStopsBuild(t *testing.T) {
 	writeBuildApplication(t, root, "demo", "demo")
 
 	result, err := Orchestrator{}.Build(context.Background(), BuildRequest{
-		Path:       root,
-		StatusOnly: true,
-		ExecutionOptions: ExecutionOptions{
-			Parallelism: 1,
-		},
+		Path:        root,
+		StatusOnly:  true,
+		Parallelism: 1,
 		StatusCallback: func(ApplicationStatusEvent) error {
 			return errors.New("write status")
 		},
@@ -161,11 +156,9 @@ func TestBuildStatusCallbackErrorStopsParallelCallbacks(t *testing.T) {
 	callbacks := 0
 	go func() {
 		result, err := (Orchestrator{ChartAcquirer: acquirer}).Build(context.Background(), BuildRequest{
-			Path:       root,
-			StatusOnly: true,
-			ExecutionOptions: ExecutionOptions{
-				Parallelism: 2,
-			},
+			Path:        root,
+			StatusOnly:  true,
+			Parallelism: 2,
 			Applications: []argoappv1.Application{
 				chartOnlyApplication("slow", "slow", "1.0.0"),
 				chartOnlyApplication("fast", "fast", "1.0.0"),
@@ -220,10 +213,8 @@ func TestBuildParallelismPreservesPartialFailureStatuses(t *testing.T) {
 	}, 1)
 	go func() {
 		result, err := (Orchestrator{ChartAcquirer: acquirer}).Build(context.Background(), BuildRequest{
-			Path: root,
-			ExecutionOptions: ExecutionOptions{
-				Parallelism: 3,
-			},
+			Path:        root,
+			Parallelism: 3,
 			Applications: []argoappv1.Application{
 				chartOnlyApplication("first", "first", "1.0.0"),
 				chartOnlyApplication("middle", "middle", "1.0.0"),
@@ -273,13 +264,9 @@ func TestBuildParallelismPreservesCacheEventOrder(t *testing.T) {
 	}, 1)
 	go func() {
 		result, err := (Orchestrator{ChartAcquirer: acquirer}).Build(context.Background(), BuildRequest{
-			Path: root,
-			ExecutionOptions: ExecutionOptions{
-				Parallelism: 3,
-			},
-			AcquisitionOptions: AcquisitionOptions{
-				RecordCacheEvents: true,
-			},
+			Path:              root,
+			Parallelism:       3,
+			RecordCacheEvents: true,
 			Applications: []argoappv1.Application{
 				chartOnlyApplication("first", "first", "1.0.0"),
 				chartOnlyApplication("middle", "middle", "2.0.0"),
@@ -321,10 +308,8 @@ func TestBuildParallelismSerializesSameCacheTargetAcquisition(t *testing.T) {
 	}, 1)
 	go func() {
 		result, err := (Orchestrator{ChartAcquirer: acquirer}).Build(context.Background(), BuildRequest{
-			Path: root,
-			ExecutionOptions: ExecutionOptions{
-				Parallelism: 2,
-			},
+			Path:        root,
+			Parallelism: 2,
 			Applications: []argoappv1.Application{
 				chartOnlyApplication("one", "shared", "1.0.0"),
 				chartOnlyApplication("two", "shared", "1.0.0"),
@@ -369,13 +354,9 @@ func TestBuildParallelismSerializesSameCacheTargetAcrossConcurrentBuilds(t *test
 		root := roots[name]
 		go func() {
 			result, err := (Orchestrator{ChartAcquirer: acquirer}).Build(context.Background(), BuildRequest{
-				Path: root,
-				AcquisitionOptions: AcquisitionOptions{
-					ChartCacheDir: cacheDir,
-				},
-				ExecutionOptions: ExecutionOptions{
-					Parallelism: 2,
-				},
+				Path:          root,
+				ChartCacheDir: cacheDir,
+				Parallelism:   2,
 				Applications: []argoappv1.Application{
 					chartOnlyApplication(name, "shared", "1.0.0"),
 				},
@@ -431,10 +412,8 @@ func TestBuildParallelismProtectsSameCacheTargetDuringRenderRead(t *testing.T) {
 			GitAcquirer:    staticGitAcquirer{path: cacheRoot},
 			PluginRenderer: renderer,
 		}).Build(context.Background(), BuildRequest{
-			Path: root,
-			ExecutionOptions: ExecutionOptions{
-				Parallelism: 2,
-			},
+			Path:        root,
+			Parallelism: 2,
 			Applications: []argoappv1.Application{
 				pluginApplication("snapshot"),
 			},
@@ -463,10 +442,8 @@ func TestBuildParallelismProtectsSameCacheTargetDuringRenderRead(t *testing.T) {
 }
 func TestBuildParallelismRejectsNegativeValue(t *testing.T) {
 	result, err := (Orchestrator{}).Build(context.Background(), BuildRequest{
-		Path: t.TempDir(),
-		ExecutionOptions: ExecutionOptions{
-			Parallelism: -1,
-		},
+		Path:        t.TempDir(),
+		Parallelism: -1,
 	})
 	if err == nil {
 		t.Fatal("Build() error = nil, want parallelism validation error")
@@ -492,10 +469,8 @@ func TestBuildParallelismHonorsCallerCancellation(t *testing.T) {
 	}, 1)
 	go func() {
 		result, err := (Orchestrator{PluginRenderer: renderer}).Build(ctx, BuildRequest{
-			Path: root,
-			ExecutionOptions: ExecutionOptions{
-				Parallelism: 2,
-			},
+			Path:        root,
+			Parallelism: 2,
 			Applications: []argoappv1.Application{
 				pluginApplication("cancelled"),
 			},
@@ -515,7 +490,7 @@ func TestBuildParallelismHonorsCallerCancellation(t *testing.T) {
 	assertApplicationStatusOrder(t, out.result.Statuses, []string{"argocd/cancelled:FAIL"})
 }
 func TestDiffRequestPropagatesParallelism(t *testing.T) {
-	request := DiffRequest{ExecutionOptions: ExecutionOptions{Parallelism: 4}}
+	request := DiffRequest{Parallelism: 4}
 
 	left := request.buildRequest("left", []string{"left", "right"})
 	right := request.buildRequest("right", []string{"left", "right"})

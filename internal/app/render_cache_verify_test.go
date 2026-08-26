@@ -12,7 +12,6 @@ import (
 	"github.com/sholdee/drydock/internal/filedigest"
 	"github.com/sholdee/drydock/internal/render"
 	sourcepkg "github.com/sholdee/drydock/internal/source"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 func testRenderCacheStoreKey(seed string) string {
@@ -150,7 +149,7 @@ func TestRenderApplicationStoreSkipsOnMidRenderEdit(t *testing.T) {
 	rev := gitCommitAll(t, repoRoot, "initial")
 
 	application := argoappv1.Application{
-		ObjectMeta: metav1.ObjectMeta{Name: "demo", Namespace: "argocd"},
+		Name: "demo", Namespace: "argocd",
 		Spec: argoappv1.ApplicationSpec{
 			Source: &argoappv1.ApplicationSource{
 				RepoURL:        "https://git.example.test/org/repo.git",
@@ -252,7 +251,7 @@ func TestRenderApplicationCleanModeStoreSkipsOnMidRenderEdit(t *testing.T) {
 	rev := gitCommitAll(t, repoRoot, "initial")
 
 	application := argoappv1.Application{
-		ObjectMeta: metav1.ObjectMeta{Name: "demo", Namespace: "argocd"},
+		Name: "demo", Namespace: "argocd",
 		Spec: argoappv1.ApplicationSpec{
 			Source: &argoappv1.ApplicationSource{
 				RepoURL:        "https://git.example.test/org/repo.git",
@@ -356,7 +355,7 @@ func TestDirtyWorktreeServesCommittedHitsForUntouchedApps(t *testing.T) {
 
 	application := func(name string) argoappv1.Application {
 		return argoappv1.Application{
-			ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: "argocd"},
+			Name: name, Namespace: "argocd",
 			Spec: argoappv1.ApplicationSpec{
 				Source: &argoappv1.ApplicationSource{
 					RepoURL:        "https://git.example.test/org/repo.git",
@@ -432,7 +431,7 @@ func TestRenderApplicationDirtyShortcutStoreSkipsOnMidRenderEdit(t *testing.T) {
 	writeTestFile(t, filepath.Join(repoRoot, "unrelated.txt"), "dirt2\n")
 
 	application := argoappv1.Application{
-		ObjectMeta: metav1.ObjectMeta{Name: "alpha", Namespace: "argocd"},
+		Name: "alpha", Namespace: "argocd",
 		Spec: argoappv1.ApplicationSpec{
 			Source: &argoappv1.ApplicationSource{
 				RepoURL:        "https://git.example.test/org/repo.git",

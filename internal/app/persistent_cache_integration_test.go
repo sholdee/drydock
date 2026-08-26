@@ -273,12 +273,10 @@ data:
 
 func persistentBuildRequest(root, cacheDir string) BuildRequest {
 	return BuildRequest{
-		Path: root,
-		RenderCacheOptions: RenderCacheOptions{
-			RenderCacheEnabled: true,
-			RenderCacheDir:     cacheDir,
-			EngineFingerprint:  testEngineFingerprint(),
-		},
+		Path:               root,
+		RenderCacheEnabled: true,
+		RenderCacheDir:     cacheDir,
+		EngineFingerprint:  testEngineFingerprint(),
 	}
 }
 
@@ -1201,15 +1199,13 @@ data:
 	gitCommitAll(t, root, "change alpha")
 	cacheDir := t.TempDir()
 	diffRequest := DiffRequest{
-		RightPath: root,
-		Repo:      root,
-		Ref:       "HEAD",
-		RefOrig:   baseline,
-		RenderCacheOptions: RenderCacheOptions{
-			RenderCacheEnabled: true,
-			RenderCacheDir:     cacheDir,
-			EngineFingerprint:  testEngineFingerprint(),
-		},
+		RightPath:          root,
+		Repo:               root,
+		Ref:                "HEAD",
+		RefOrig:            baseline,
+		RenderCacheEnabled: true,
+		RenderCacheDir:     cacheDir,
+		EngineFingerprint:  testEngineFingerprint(),
 	}
 
 	var coldRenders atomic.Int64
@@ -1249,14 +1245,12 @@ func TestPersistentCacheDirtyRepositoryDiffRefsUseSnapshotIdentities(t *testing.
 	gitCommitAll(t, root, "change alpha")
 	cacheDir := t.TempDir()
 	diffRequest := DiffRequest{
-		Repo:    root,
-		Ref:     "HEAD",
-		RefOrig: baseline,
-		RenderCacheOptions: RenderCacheOptions{
-			RenderCacheEnabled: true,
-			RenderCacheDir:     cacheDir,
-			EngineFingerprint:  testEngineFingerprint(),
-		},
+		Repo:               root,
+		Ref:                "HEAD",
+		RefOrig:            baseline,
+		RenderCacheEnabled: true,
+		RenderCacheDir:     cacheDir,
+		EngineFingerprint:  testEngineFingerprint(),
 	}
 
 	var coldRenders atomic.Int64
@@ -1308,13 +1302,11 @@ func TestPersistentCacheDirtyWorktreeDiffPathSidesHit(t *testing.T) {
 	}
 	cacheDir := t.TempDir()
 	diffRequest := DiffRequest{
-		LeftPath:  left,
-		RightPath: right,
-		RenderCacheOptions: RenderCacheOptions{
-			RenderCacheEnabled: true,
-			RenderCacheDir:     cacheDir,
-			EngineFingerprint:  testEngineFingerprint(),
-		},
+		LeftPath:           left,
+		RightPath:          right,
+		RenderCacheEnabled: true,
+		RenderCacheDir:     cacheDir,
+		EngineFingerprint:  testEngineFingerprint(),
 	}
 
 	var coldRenders atomic.Int64
@@ -1849,14 +1841,12 @@ func TestPersistentCacheDirtyWorktreeRefSideStillHits(t *testing.T) {
 	gitCommitAll(t, root, "change alpha")
 	cacheDir := t.TempDir()
 	diffRequest := DiffRequest{
-		RightPath: root,
-		Repo:      root,
-		RefOrig:   baseline,
-		RenderCacheOptions: RenderCacheOptions{
-			RenderCacheEnabled: true,
-			RenderCacheDir:     cacheDir,
-			EngineFingerprint:  testEngineFingerprint(),
-		},
+		RightPath:          root,
+		Repo:               root,
+		RefOrig:            baseline,
+		RenderCacheEnabled: true,
+		RenderCacheDir:     cacheDir,
+		EngineFingerprint:  testEngineFingerprint(),
 	}
 
 	var coldRenders atomic.Int64

@@ -97,9 +97,9 @@ func TestPruneSizePhaseEvictsOldestFirst(t *testing.T) {
 	capBytes := sizeByKey[keyC]
 
 	result, err := Prune(OperationOptions{
-		Options:  Options{GitCacheDir: filepath.Join(root, "git")},
-		MaxBytes: capBytes,
-		Yes:      true,
+		GitCacheDir: filepath.Join(root, "git"),
+		MaxBytes:    capBytes,
+		Yes:         true,
 	})
 	if err != nil {
 		t.Fatalf("Prune() error = %v", err)
@@ -169,9 +169,9 @@ func TestPruneSizePhaseStopsAtCapExactly(t *testing.T) {
 	capBytes := totalSize - sizeA
 
 	result, err := Prune(OperationOptions{
-		Options:  Options{GitCacheDir: filepath.Join(root, "git")},
-		MaxBytes: capBytes,
-		Yes:      true,
+		GitCacheDir: filepath.Join(root, "git"),
+		MaxBytes:    capBytes,
+		Yes:         true,
 	})
 	if err != nil {
 		t.Fatalf("Prune() error = %v", err)
@@ -204,8 +204,8 @@ func TestPruneDryRunParity(t *testing.T) {
 
 		gitDir := filepath.Join(root, "git")
 		opts := OperationOptions{
-			Options:   Options{GitCacheDir: gitDir},
-			OlderThan: 24 * time.Hour,
+			GitCacheDir: gitDir,
+			OlderThan:   24 * time.Hour,
 		}
 
 		dry, err := Prune(OperationOptions{
@@ -254,8 +254,8 @@ func TestPruneDryRunParity(t *testing.T) {
 		capBytes := sizeByKey[keyC]
 
 		opts := OperationOptions{
-			Options:  Options{GitCacheDir: gitDir},
-			MaxBytes: capBytes,
+			GitCacheDir: gitDir,
+			MaxBytes:    capBytes,
 		}
 
 		dry, err := Prune(OperationOptions{
@@ -308,9 +308,9 @@ func TestPruneDryRunParity(t *testing.T) {
 		capBytes := sizeByKey[keyC]
 
 		opts := OperationOptions{
-			Options:   Options{GitCacheDir: gitDir},
-			OlderThan: 24 * time.Hour,
-			MaxBytes:  capBytes,
+			GitCacheDir: gitDir,
+			OlderThan:   24 * time.Hour,
+			MaxBytes:    capBytes,
 		}
 
 		dry, err := Prune(OperationOptions{
@@ -367,10 +367,10 @@ func TestPruneCombinedPhasesNoCrossCount(t *testing.T) {
 	capBytes := sizeByKey[keyC]
 
 	result, err := Prune(OperationOptions{
-		Options:   Options{GitCacheDir: gitDir},
-		OlderThan: 24 * time.Hour,
-		MaxBytes:  capBytes,
-		Yes:       true,
+		GitCacheDir: gitDir,
+		OlderThan:   24 * time.Hour,
+		MaxBytes:    capBytes,
+		Yes:         true,
 	})
 	if err != nil {
 		t.Fatalf("Prune() error = %v", err)
@@ -433,13 +433,11 @@ func TestPruneSourceFilterScopesCapToFilteredSource(t *testing.T) {
 	capBytes := sizeByKey[keyB]
 
 	result, err := Prune(OperationOptions{
-		Options: Options{
-			GitCacheDir:    gitDir,
-			RemoteCacheDir: remoteDir,
-		},
-		Source:   SourceGit,
-		MaxBytes: capBytes,
-		Yes:      true,
+		GitCacheDir:    gitDir,
+		RemoteCacheDir: remoteDir,
+		Source:         SourceGit,
+		MaxBytes:       capBytes,
+		Yes:            true,
 	})
 	if err != nil {
 		t.Fatalf("Prune() error = %v", err)
@@ -502,9 +500,9 @@ func TestPruneLegacyEntriesFallBackToMtime(t *testing.T) {
 	capBytes := sizeByKey[keyB]
 
 	result, err := Prune(OperationOptions{
-		Options:  Options{GitCacheDir: gitDir},
-		MaxBytes: capBytes,
-		Yes:      true,
+		GitCacheDir: gitDir,
+		MaxBytes:    capBytes,
+		Yes:         true,
 	})
 	if err != nil {
 		t.Fatalf("Prune() error = %v", err)
@@ -530,8 +528,8 @@ func TestPruneNeitherConstraintErrors(t *testing.T) {
 	makeGitEntry(t, root, keyA, time.Now())
 
 	_, err := Prune(OperationOptions{
-		Options: Options{GitCacheDir: filepath.Join(root, "git")},
-		Yes:     true,
+		GitCacheDir: filepath.Join(root, "git"),
+		Yes:         true,
 	})
 	if err == nil {
 		t.Fatal("Prune() error = nil, want error for missing constraints")
@@ -567,9 +565,9 @@ func TestPruneSizeOnlyUnderCapIsNoop(t *testing.T) {
 	capBytes := totalSize
 
 	result, err := Prune(OperationOptions{
-		Options:  Options{GitCacheDir: gitDir},
-		MaxBytes: capBytes,
-		Yes:      true,
+		GitCacheDir: gitDir,
+		MaxBytes:    capBytes,
+		Yes:         true,
 	})
 	if err != nil {
 		t.Fatalf("Prune() error = %v", err)

@@ -5,7 +5,6 @@ import (
 	"testing"
 
 	argoappv1 "github.com/argoproj/argo-cd/v3/pkg/apis/application/v1alpha1"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 func TestSelectApplicationByNameMatchesMetadataName(t *testing.T) {
@@ -87,10 +86,8 @@ func TestSelectApplicationByNameRejectsEmptyTarget(t *testing.T) {
 
 func namedApplication(namespace, name string) argoappv1.Application {
 	return argoappv1.Application{
-		ObjectMeta: metav1.ObjectMeta{
-			Namespace: namespace,
-			Name:      name,
-		},
+		Namespace: namespace,
+		Name:      name,
 	}
 }
 
@@ -111,7 +108,7 @@ func TestRenderEventTargetCharset(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			application := argoappv1.Application{ObjectMeta: metav1.ObjectMeta{Namespace: tc.namespace, Name: tc.appName}}
+			application := argoappv1.Application{Namespace: tc.namespace, Name: tc.appName}
 			if got := renderEventTarget(application); got != tc.want {
 				t.Fatalf("renderEventTarget(%q/%q) = %q, want %q", tc.namespace, tc.appName, got, tc.want)
 			}

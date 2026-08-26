@@ -69,8 +69,10 @@ data:
 `)
 	}
 	orchestrator := Orchestrator{}
-	request := BuildRequest{Path: root}
-	request.Parallelism = 8
+	request := BuildRequest{
+		Path:        root,
+		Parallelism: 8,
+	}
 
 	b.ReportAllocs()
 	b.ResetTimer()
@@ -192,8 +194,8 @@ func gitCommitAllBench(b *testing.B, root string) {
 }
 
 func persistentCacheBenchmarkRequest(root, cacheDir string) BuildRequest {
-	request := BuildRequest{Path: root}
-	request.RenderCacheOptions = RenderCacheOptions{
+	request := BuildRequest{
+		Path:               root,
 		RenderCacheEnabled: true,
 		RenderCacheDir:     cacheDir,
 		EngineFingerprint: rendercache.EngineFingerprint{

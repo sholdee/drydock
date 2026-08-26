@@ -9,7 +9,6 @@ import (
 
 	argoappv1 "github.com/argoproj/argo-cd/v3/pkg/apis/application/v1alpha1"
 	"github.com/sholdee/drydock/internal/app"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 func TestBuildAppsParallelismFlag(t *testing.T) {
@@ -84,8 +83,8 @@ func TestTestAppsRequestsStatusOnlyBuild(t *testing.T) {
 
 func TestTestAppsSelectorRequestsStatusOnlyBuild(t *testing.T) {
 	recorder := &recordingCLIOrchestrator{listResult: app.BuildResult{Applications: []argoappv1.Application{
-		{ObjectMeta: metav1.ObjectMeta{Name: "selected", Labels: map[string]string{"app": "demo"}}},
-		{ObjectMeta: metav1.ObjectMeta{Name: "unselected", Labels: map[string]string{"app": "other"}}},
+		{Name: "selected", Labels: map[string]string{"app": "demo"}},
+		{Name: "unselected", Labels: map[string]string{"app": "other"}},
 	}}}
 	executeParallelismCommand(t, recorder, "test", "apps", "--selector", "app=demo")
 

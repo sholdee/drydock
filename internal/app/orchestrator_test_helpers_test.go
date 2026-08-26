@@ -3,6 +3,13 @@ package app
 import (
 	"context"
 	"errors"
+	"os"
+	"path/filepath"
+	"strings"
+	"sync"
+	"testing"
+	"time"
+
 	argoappv1 "github.com/argoproj/argo-cd/v3/pkg/apis/application/v1alpha1"
 	"github.com/sholdee/drydock/internal/cacheevent"
 	"github.com/sholdee/drydock/internal/chart"
@@ -10,13 +17,6 @@ import (
 	"github.com/sholdee/drydock/internal/remote"
 	"github.com/sholdee/drydock/internal/render"
 	sourcepkg "github.com/sholdee/drydock/internal/source"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"os"
-	"path/filepath"
-	"strings"
-	"sync"
-	"testing"
-	"time"
 )
 
 func writeTestFile(t *testing.T, path, content string) {
@@ -242,7 +242,7 @@ func (acquirer staticGitAcquirer) Acquire(_ context.Context, request sourcepkg.G
 }
 func chartOnlyApplication(appName, chartName, version string) argoappv1.Application {
 	return argoappv1.Application{
-		ObjectMeta: metav1.ObjectMeta{Name: appName, Namespace: "argocd"},
+		Name: appName, Namespace: "argocd",
 		Spec: argoappv1.ApplicationSpec{
 			Project:     "default",
 			Source:      &argoappv1.ApplicationSource{RepoURL: "https://charts.example.com", Chart: chartName, TargetRevision: version},
@@ -252,7 +252,7 @@ func chartOnlyApplication(appName, chartName, version string) argoappv1.Applicat
 }
 func pluginApplication(name string) argoappv1.Application {
 	return argoappv1.Application{
-		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: "argocd"},
+		Name: name, Namespace: "argocd",
 		Spec: argoappv1.ApplicationSpec{
 			Project: "default",
 			Source: &argoappv1.ApplicationSource{

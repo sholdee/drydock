@@ -85,12 +85,10 @@ func TestListApplicationsRunsPluginPolicyBootstrapWhenMaxDiscoveryDepthZero(t *t
 	}
 
 	result, err := (Orchestrator{PluginExecRunner: runner}).ListApplications(context.Background(), BuildRequest{
-		Path: root,
-		DiscoveryOptions: DiscoveryOptions{
-			MaxDiscoveryDepth:    0,
-			MaxDiscoveryDepthSet: true,
-		},
-		PluginOptions: trustedBootstrapPluginOptions(t, root),
+		Path:                 root,
+		MaxDiscoveryDepth:    0,
+		MaxDiscoveryDepthSet: true,
+		PluginOptions:        trustedBootstrapPluginOptions(t, root),
 	})
 	if err != nil {
 		t.Fatalf("ListApplications() error = %v\nDiagnostics: %#v", err, result.Diagnostics)
@@ -112,10 +110,8 @@ func TestListApplicationsDiscoveryModeStaticDisablesPluginPolicyBootstrap(t *tes
 	}
 
 	result, err := (Orchestrator{PluginExecRunner: runner}).ListApplications(context.Background(), BuildRequest{
-		Path: root,
-		DiscoveryOptions: DiscoveryOptions{
-			DiscoveryMode: DiscoveryModeStatic,
-		},
+		Path:          root,
+		DiscoveryMode: DiscoveryModeStatic,
 		PluginOptions: trustedBootstrapPluginOptions(t, root),
 	})
 	if err != nil {
@@ -138,12 +134,10 @@ func TestListApplicationsExpandsPluginPolicyBootstrapApplicationSetsWhenMaxDisco
 	}
 
 	result, err := (Orchestrator{PluginExecRunner: runner}).ListApplications(context.Background(), BuildRequest{
-		Path: root,
-		DiscoveryOptions: DiscoveryOptions{
-			MaxDiscoveryDepth:    0,
-			MaxDiscoveryDepthSet: true,
-		},
-		PluginOptions: trustedBootstrapPluginOptions(t, root),
+		Path:                 root,
+		MaxDiscoveryDepth:    0,
+		MaxDiscoveryDepthSet: true,
+		PluginOptions:        trustedBootstrapPluginOptions(t, root),
 	})
 	if err != nil {
 		t.Fatalf("ListApplications() error = %v\nDiagnostics: %#v", err, result.Diagnostics)

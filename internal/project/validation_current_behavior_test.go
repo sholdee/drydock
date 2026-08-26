@@ -189,7 +189,7 @@ func TestValidateApplicationsCurrentBehaviorReportsMissingNonDefaultProject(t *t
 
 func applicationWithSources(name, project string, sources argoappv1.ApplicationSources, destination argoappv1.ApplicationDestination) argoappv1.Application {
 	return argoappv1.Application{
-		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: "argocd"},
+		Name: name, Namespace: "argocd",
 		Spec: argoappv1.ApplicationSpec{
 			Project:     project,
 			Sources:     sources,

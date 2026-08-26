@@ -150,8 +150,8 @@ func TestOrchestratorBuildDisabledCRDScopeSkipsNormalization(t *testing.T) {
 	writeGatewayClassFixture(t, root)
 
 	result, err := Orchestrator{}.Build(context.Background(), BuildRequest{
-		Path:            root,
-		CRDScopeOptions: CRDScopeOptions{Disabled: true},
+		Path:     root,
+		Disabled: true,
 	})
 	if err != nil {
 		t.Fatalf("Build() error = %v", err)

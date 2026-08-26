@@ -12,7 +12,6 @@ import (
 	argoappv1 "github.com/argoproj/argo-cd/v3/pkg/apis/application/v1alpha1"
 	"github.com/sholdee/drydock/internal/diagnostic"
 	"github.com/sholdee/drydock/internal/render"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	sigsyaml "sigs.k8s.io/yaml"
@@ -20,7 +19,7 @@ import (
 
 func TestRenderApplicationLastSourceWins(t *testing.T) {
 	application := argoappv1.Application{
-		ObjectMeta: metav1.ObjectMeta{Name: "demo"},
+		Name: "demo",
 		Spec: argoappv1.ApplicationSpec{
 			Destination: argoappv1.ApplicationDestination{Namespace: "default"},
 			Sources: argoappv1.ApplicationSources{
@@ -58,7 +57,7 @@ func TestRenderApplicationLastSourceWins(t *testing.T) {
 
 func TestRenderOptionsCopiesSourceKustomizeAndArgoEnv(t *testing.T) {
 	application := argoappv1.Application{
-		ObjectMeta: metav1.ObjectMeta{Name: "demo", Namespace: "argocd"},
+		Name: "demo", Namespace: "argocd",
 		Spec: argoappv1.ApplicationSpec{
 			Project:     "k3s",
 			Destination: argoappv1.ApplicationDestination{Namespace: "workloads"},
@@ -99,7 +98,7 @@ func TestRenderOptionsCopiesSourceKustomizeAndArgoEnv(t *testing.T) {
 
 func TestParseKubeVersionNormalizesHelmSuffix(t *testing.T) {
 	application := argoappv1.Application{
-		ObjectMeta: metav1.ObjectMeta{Name: "demo", Namespace: "argocd"},
+		Name: "demo", Namespace: "argocd",
 		Spec: argoappv1.ApplicationSpec{
 			Destination: argoappv1.ApplicationDestination{Namespace: "default"},
 		},
@@ -121,7 +120,7 @@ func TestParseKubeVersionNormalizesHelmSuffix(t *testing.T) {
 
 func TestParseKubeVersionNormalizesKustomizeSuffix(t *testing.T) {
 	application := argoappv1.Application{
-		ObjectMeta: metav1.ObjectMeta{Name: "demo", Namespace: "argocd"},
+		Name: "demo", Namespace: "argocd",
 		Spec: argoappv1.ApplicationSpec{
 			Destination: argoappv1.ApplicationDestination{Namespace: "default"},
 		},
@@ -143,7 +142,7 @@ func TestParseKubeVersionNormalizesKustomizeSuffix(t *testing.T) {
 
 func TestParseKubeVersionEmptyStaysEmpty(t *testing.T) {
 	application := argoappv1.Application{
-		ObjectMeta: metav1.ObjectMeta{Name: "demo", Namespace: "argocd"},
+		Name: "demo", Namespace: "argocd",
 		Spec: argoappv1.ApplicationSpec{
 			Destination: argoappv1.ApplicationDestination{Namespace: "default"},
 		},
@@ -163,7 +162,7 @@ func TestParseKubeVersionEmptyStaysEmpty(t *testing.T) {
 
 func TestParseKubeVersionInvalidReturnsError(t *testing.T) {
 	application := argoappv1.Application{
-		ObjectMeta: metav1.ObjectMeta{Name: "demo", Namespace: "argocd"},
+		Name: "demo", Namespace: "argocd",
 		Spec: argoappv1.ApplicationSpec{
 			Destination: argoappv1.ApplicationDestination{Namespace: "default"},
 		},
@@ -185,7 +184,7 @@ func TestParseKubeVersionInvalidReturnsError(t *testing.T) {
 
 func TestRenderOptionsCopiesDirectoryJsonnet(t *testing.T) {
 	application := argoappv1.Application{
-		ObjectMeta: metav1.ObjectMeta{Name: "demo", Namespace: "argocd"},
+		Name: "demo", Namespace: "argocd",
 	}
 	source := argoappv1.ApplicationSource{
 		Directory: &argoappv1.ApplicationSourceDirectory{
@@ -218,8 +217,8 @@ func TestRenderOptionsCopiesDirectoryJsonnet(t *testing.T) {
 
 func TestRenderOptionsAppliesCapabilityOverride(t *testing.T) {
 	application := argoappv1.Application{
-		ObjectMeta: metav1.ObjectMeta{Name: "demo", Namespace: "argocd"},
-		Spec:       argoappv1.ApplicationSpec{Destination: argoappv1.ApplicationDestination{Namespace: "demo"}},
+		Name: "demo", Namespace: "argocd",
+		Spec: argoappv1.ApplicationSpec{Destination: argoappv1.ApplicationDestination{Namespace: "demo"}},
 	}
 	source := argoappv1.ApplicationSource{
 		Helm: &argoappv1.ApplicationSourceHelm{KubeVersion: "1.30.0", APIVersions: []string{"per-app.example.com/v1", "monitoring.coreos.com/v1"}},
@@ -242,8 +241,8 @@ func TestRenderOptionsAppliesCapabilityOverride(t *testing.T) {
 
 func TestRenderOptionsNoCapabilityOverrideLeavesKubeVersionEmpty(t *testing.T) {
 	application := argoappv1.Application{
-		ObjectMeta: metav1.ObjectMeta{Name: "demo", Namespace: "argocd"},
-		Spec:       argoappv1.ApplicationSpec{Destination: argoappv1.ApplicationDestination{Namespace: "demo"}},
+		Name: "demo", Namespace: "argocd",
+		Spec: argoappv1.ApplicationSpec{Destination: argoappv1.ApplicationDestination{Namespace: "demo"}},
 	}
 	source := argoappv1.ApplicationSource{Helm: &argoappv1.ApplicationSourceHelm{}}
 	opts, err := renderOptions(application, source, CapabilityOptions{})
@@ -262,14 +261,14 @@ func TestRenderApplicationCopiesProviderObjectsBeforeMutation(t *testing.T) {
 	}
 
 	first := argoappv1.Application{
-		ObjectMeta: metav1.ObjectMeta{Namespace: "argocd", Name: "first"},
+		Namespace: "argocd", Name: "first",
 		Spec: argoappv1.ApplicationSpec{
 			Destination: argoappv1.ApplicationDestination{Namespace: "first-ns"},
 			Source:      &argoappv1.ApplicationSource{RepoURL: "https://repo", Path: "manifests"},
 		},
 	}
 	second := argoappv1.Application{
-		ObjectMeta: metav1.ObjectMeta{Namespace: "argocd", Name: "second"},
+		Namespace: "argocd", Name: "second",
 		Spec: argoappv1.ApplicationSpec{
 			Destination: argoappv1.ApplicationDestination{Namespace: "second-ns"},
 			Source:      &argoappv1.ApplicationSource{RepoURL: "https://repo", Path: "manifests"},
@@ -298,7 +297,7 @@ func TestRenderApplicationCopiesProviderObjectsBeforeMutation(t *testing.T) {
 
 func TestRenderApplicationPassesHelmValues(t *testing.T) {
 	application := argoappv1.Application{
-		ObjectMeta: metav1.ObjectMeta{Namespace: "argocd", Name: "demo"},
+		Namespace: "argocd", Name: "demo",
 		Spec: argoappv1.ApplicationSpec{
 			Source: &argoappv1.ApplicationSource{
 				RepoURL: "https://repo",
@@ -332,7 +331,7 @@ func TestRenderApplicationPassesHelmValues(t *testing.T) {
 
 func TestRenderApplicationPassesAVPCompatibilityOption(t *testing.T) {
 	application := argoappv1.Application{
-		ObjectMeta: metav1.ObjectMeta{Namespace: "argocd", Name: "demo"},
+		Namespace: "argocd", Name: "demo",
 		Spec: argoappv1.ApplicationSpec{
 			Source: &argoappv1.ApplicationSource{
 				RepoURL: "https://repo",
@@ -356,7 +355,7 @@ func TestRenderApplicationPassesAVPCompatibilityOption(t *testing.T) {
 
 func TestRenderApplicationPassesKSOPSCompatibilityOption(t *testing.T) {
 	application := argoappv1.Application{
-		ObjectMeta: metav1.ObjectMeta{Namespace: "argocd", Name: "demo"},
+		Namespace: "argocd", Name: "demo",
 		Spec: argoappv1.ApplicationSpec{
 			Source: &argoappv1.ApplicationSource{
 				RepoURL: "https://repo",
@@ -390,7 +389,7 @@ func TestRenderApplicationAVPCompatibilityReplacesRenderedManifestPlaceholders(t
 		},
 	}}
 	application := argoappv1.Application{
-		ObjectMeta: metav1.ObjectMeta{Namespace: "argocd", Name: "demo"},
+		Namespace: "argocd", Name: "demo",
 		Spec: argoappv1.ApplicationSpec{
 			Source: &argoappv1.ApplicationSource{
 				RepoURL: "https://repo",
@@ -426,7 +425,7 @@ func TestRenderApplicationAVPCompatibilityReplacesRenderedManifestPlaceholders(t
 
 func TestRenderApplicationLeavesAVPPlaceholdersUnchangedByDefault(t *testing.T) {
 	application := argoappv1.Application{
-		ObjectMeta: metav1.ObjectMeta{Namespace: "argocd", Name: "demo"},
+		Namespace: "argocd", Name: "demo",
 		Spec: argoappv1.ApplicationSpec{
 			Source: &argoappv1.ApplicationSource{
 				RepoURL: "https://repo",
@@ -464,7 +463,7 @@ func TestRenderApplicationLeavesAVPPlaceholdersUnchangedByDefault(t *testing.T) 
 
 func TestRenderApplicationPassesDirectoryOptions(t *testing.T) {
 	application := argoappv1.Application{
-		ObjectMeta: metav1.ObjectMeta{Namespace: "argocd", Name: "demo"},
+		Namespace: "argocd", Name: "demo",
 		Spec: argoappv1.ApplicationSpec{
 			Source: &argoappv1.ApplicationSource{
 				RepoURL: "https://repo",
@@ -499,7 +498,7 @@ func TestRenderApplicationPassesDirectoryOptions(t *testing.T) {
 
 func TestRenderApplicationPassesHelmIgnoreMissingValueFiles(t *testing.T) {
 	application := argoappv1.Application{
-		ObjectMeta: metav1.ObjectMeta{Namespace: "argocd", Name: "demo"},
+		Namespace: "argocd", Name: "demo",
 		Spec: argoappv1.ApplicationSpec{
 			Source: &argoappv1.ApplicationSource{
 				RepoURL: "https://repo",
@@ -530,7 +529,7 @@ func TestRenderApplicationPassesHelmIgnoreMissingValueFiles(t *testing.T) {
 
 func TestRenderApplicationPassesSameRepoRefRootsForHelmValueFiles(t *testing.T) {
 	application := argoappv1.Application{
-		ObjectMeta: metav1.ObjectMeta{Namespace: "argocd", Name: "demo"},
+		Namespace: "argocd", Name: "demo",
 		Spec: argoappv1.ApplicationSpec{
 			Sources: argoappv1.ApplicationSources{
 				{RepoURL: " https://example.com/repo.git/ ", Path: "some/path", Ref: "values"},
@@ -568,7 +567,7 @@ func TestRenderApplicationPassesSameRepoRefRootsForHelmValueFiles(t *testing.T) 
 
 func TestRenderApplicationPassesSameRepoRefRootsForHelmFileParameters(t *testing.T) {
 	application := argoappv1.Application{
-		ObjectMeta: metav1.ObjectMeta{Namespace: "argocd", Name: "demo"},
+		Namespace: "argocd", Name: "demo",
 		Spec: argoappv1.ApplicationSpec{
 			Sources: argoappv1.ApplicationSources{
 				{RepoURL: "https://example.com/repo", Path: "some/path", Ref: "values"},
@@ -608,7 +607,7 @@ func TestRenderApplicationPassesSameRepoRefRootsForHelmFileParameters(t *testing
 
 func TestRenderApplicationPassesSameRepoSiblingPathRefSourceForChartOnlyHelmValueFiles(t *testing.T) {
 	application := argoappv1.Application{
-		ObjectMeta: metav1.ObjectMeta{Namespace: "argocd", Name: "demo"},
+		Namespace: "argocd", Name: "demo",
 		Spec: argoappv1.ApplicationSpec{
 			Sources: argoappv1.ApplicationSources{
 				{RepoURL: "https://example.com/repo", TargetRevision: "main", Ref: "values"},
@@ -652,7 +651,7 @@ func TestRenderApplicationPassesSameRepoSiblingPathRefSourceForChartOnlyHelmValu
 
 func TestRenderApplicationPassesCrossRepoHelmValueRef(t *testing.T) {
 	application := argoappv1.Application{
-		ObjectMeta: metav1.ObjectMeta{Namespace: "argocd", Name: "demo"},
+		Namespace: "argocd", Name: "demo",
 		Spec: argoappv1.ApplicationSpec{
 			Sources: argoappv1.ApplicationSources{
 				{RepoURL: "https://values-user:values-secret@example.com/values.git?token=values-token#values-frag", Ref: "values"},
@@ -693,7 +692,7 @@ func TestRenderApplicationPassesCrossRepoHelmValueRef(t *testing.T) {
 
 func TestRenderApplicationIgnoresUnusedCrossRepoRef(t *testing.T) {
 	application := argoappv1.Application{
-		ObjectMeta: metav1.ObjectMeta{Namespace: "argocd", Name: "demo"},
+		Namespace: "argocd", Name: "demo",
 		Spec: argoappv1.ApplicationSpec{
 			Sources: argoappv1.ApplicationSources{
 				{RepoURL: "https://example.com/values", Ref: "values"},
@@ -726,7 +725,7 @@ func TestRenderApplicationIgnoresUnusedCrossRepoRef(t *testing.T) {
 
 func TestRenderApplicationPassesHelmRenderSwitches(t *testing.T) {
 	application := argoappv1.Application{
-		ObjectMeta: metav1.ObjectMeta{Namespace: "argocd", Name: "demo"},
+		Namespace: "argocd", Name: "demo",
 		Spec: argoappv1.ApplicationSpec{
 			Source: &argoappv1.ApplicationSource{
 				RepoURL: "https://repo",
@@ -781,7 +780,7 @@ func TestRenderApplicationPassesHelmRenderSwitches(t *testing.T) {
 func TestRenderApplicationPassesPluginOptions(t *testing.T) {
 	stringValue := "fast"
 	application := argoappv1.Application{
-		ObjectMeta: metav1.ObjectMeta{Namespace: "argocd", Name: "plugin-app"},
+		Namespace: "argocd", Name: "plugin-app",
 		Spec: argoappv1.ApplicationSpec{
 			Project:     "platform",
 			Destination: argoappv1.ApplicationDestination{Namespace: "workloads"},
@@ -1039,7 +1038,7 @@ helm:
 
 func TestRenderApplicationValuesObjectOverridesHelmValues(t *testing.T) {
 	application := argoappv1.Application{
-		ObjectMeta: metav1.ObjectMeta{Namespace: "argocd", Name: "demo"},
+		Namespace: "argocd", Name: "demo",
 		Spec: argoappv1.ApplicationSpec{
 			Source: &argoappv1.ApplicationSource{
 				RepoURL: "https://repo",
@@ -1083,7 +1082,7 @@ func TestRenderApplicationValuesObjectOverridesHelmValues(t *testing.T) {
 
 func TestRenderApplicationRejectsNonMappingHelmValues(t *testing.T) {
 	application := argoappv1.Application{
-		ObjectMeta: metav1.ObjectMeta{Namespace: "argocd", Name: "demo"},
+		Namespace: "argocd", Name: "demo",
 		Spec: argoappv1.ApplicationSpec{
 			Source: &argoappv1.ApplicationSource{
 				RepoURL: "https://repo",
@@ -1109,7 +1108,7 @@ func TestRenderApplicationRejectsNonMappingHelmValues(t *testing.T) {
 
 func TestRenderApplicationProviderErrorIncludesSourceContext(t *testing.T) {
 	application := argoappv1.Application{
-		ObjectMeta: metav1.ObjectMeta{Namespace: "argocd", Name: "demo"},
+		Namespace: "argocd", Name: "demo",
 		Spec: argoappv1.ApplicationSpec{
 			Sources: argoappv1.ApplicationSources{
 				{RepoURL: "https://repo", Path: "apps/main", Name: "main"},
@@ -1133,7 +1132,7 @@ func TestRenderApplicationProviderErrorIncludesSourceContext(t *testing.T) {
 
 func TestRenderApplicationDiagnosticsIncludeSourceContextAndPreserveProvenance(t *testing.T) {
 	application := argoappv1.Application{
-		ObjectMeta: metav1.ObjectMeta{Namespace: "argocd", Name: "demo"},
+		Namespace: "argocd", Name: "demo",
 		Spec: argoappv1.ApplicationSpec{
 			Sources: argoappv1.ApplicationSources{
 				{RepoURL: "https://repo", Path: "apps/main", Name: "main"},
@@ -1175,7 +1174,7 @@ func TestRenderApplicationDiagnosticsIncludeSourceContextAndPreserveProvenance(t
 
 func TestRenderApplicationSkipsRefOnlySources(t *testing.T) {
 	application := argoappv1.Application{
-		ObjectMeta: metav1.ObjectMeta{Name: "demo"},
+		Name: "demo",
 		Spec: argoappv1.ApplicationSpec{
 			Sources: argoappv1.ApplicationSources{
 				{RepoURL: "https://values", Ref: "values"},
@@ -1199,7 +1198,7 @@ func TestRenderApplicationSkipsRefOnlySources(t *testing.T) {
 
 func TestRenderApplicationRendersSingleSourceFallback(t *testing.T) {
 	application := argoappv1.Application{
-		ObjectMeta: metav1.ObjectMeta{Name: "demo"},
+		Name: "demo",
 		Spec: argoappv1.ApplicationSpec{
 			Destination: argoappv1.ApplicationDestination{Namespace: "default"},
 			Source:      &argoappv1.ApplicationSource{RepoURL: "https://repo", Path: "single"},
@@ -1224,7 +1223,7 @@ func TestRenderApplicationRendersSingleSourceFallback(t *testing.T) {
 func TestRenderApplicationExcludesHelmTestHookPod(t *testing.T) {
 	// helm.sh/hook: test → IS a hook; excluded from the managed-resources view.
 	application := argoappv1.Application{
-		ObjectMeta: metav1.ObjectMeta{Name: "demo"},
+		Name: "demo",
 		Spec: argoappv1.ApplicationSpec{
 			Destination: argoappv1.ApplicationDestination{Namespace: "default"},
 			Source:      &argoappv1.ApplicationSource{RepoURL: "https://repo", Path: "chart"},
@@ -1263,7 +1262,7 @@ func TestRenderApplicationExcludesHelmTestHookPod(t *testing.T) {
 func TestRenderApplicationExcludesArgoHookPostSync(t *testing.T) {
 	// argocd.argoproj.io/hook: PostSync in a directory source → IS a hook; excluded.
 	application := argoappv1.Application{
-		ObjectMeta: metav1.ObjectMeta{Name: "demo"},
+		Name: "demo",
 		Spec: argoappv1.ApplicationSpec{
 			Destination: argoappv1.ApplicationDestination{Namespace: "default"},
 			Source: &argoappv1.ApplicationSource{
@@ -1305,7 +1304,7 @@ func TestRenderApplicationExcludesArgoHookPostSync(t *testing.T) {
 func TestRenderApplicationKeepsHelmCRDInstallHook(t *testing.T) {
 	// helm.sh/hook: crd-install → NOT treated as a hook (Argo CD exception); kept.
 	application := argoappv1.Application{
-		ObjectMeta: metav1.ObjectMeta{Name: "demo"},
+		Name: "demo",
 		Spec: argoappv1.ApplicationSpec{
 			Destination: argoappv1.ApplicationDestination{Namespace: "default"},
 			Source:      &argoappv1.ApplicationSource{RepoURL: "https://repo", Path: "chart"},
@@ -1340,7 +1339,7 @@ func TestRenderApplicationKeepsHelmCRDInstallHook(t *testing.T) {
 func TestRenderApplicationKeepsArgoSkipOnlyHook(t *testing.T) {
 	// argocd.argoproj.io/hook: Skip → Skip-only is NOT treated as a hook; kept.
 	application := argoappv1.Application{
-		ObjectMeta: metav1.ObjectMeta{Name: "demo"},
+		Name: "demo",
 		Spec: argoappv1.ApplicationSpec{
 			Destination: argoappv1.ApplicationDestination{Namespace: "default"},
 			Source:      &argoappv1.ApplicationSource{RepoURL: "https://repo", Path: "manifests"},
@@ -1379,7 +1378,7 @@ func TestRenderApplicationExcludesUnrecognizedArgoHookValue(t *testing.T) {
 	// upstream (gitops-engine IsHook returns !Skip whenever the annotation is
 	// present, and unrecognized values yield no Skip); excluded.
 	application := argoappv1.Application{
-		ObjectMeta: metav1.ObjectMeta{Name: "demo"},
+		Name: "demo",
 		Spec: argoappv1.ApplicationSpec{
 			Destination: argoappv1.ApplicationDestination{Namespace: "default"},
 			Source:      &argoappv1.ApplicationSource{RepoURL: "https://repo", Path: "manifests"},
@@ -1417,7 +1416,7 @@ func TestRenderApplicationExcludesUnrecognizedArgoHookValue(t *testing.T) {
 func TestRenderApplicationKeepsNonHookResources(t *testing.T) {
 	// Resources with no hook annotations are included unchanged.
 	application := argoappv1.Application{
-		ObjectMeta: metav1.ObjectMeta{Name: "demo"},
+		Name: "demo",
 		Spec: argoappv1.ApplicationSpec{
 			Destination: argoappv1.ApplicationDestination{Namespace: "default"},
 			Source:      &argoappv1.ApplicationSource{RepoURL: "https://repo", Path: "manifests"},
@@ -1480,7 +1479,7 @@ data:
 
 func rendererSelectionApplication(name string, source argoappv1.ApplicationSource) argoappv1.Application {
 	return argoappv1.Application{
-		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: "argocd"},
+		Name: name, Namespace: "argocd",
 		Spec: argoappv1.ApplicationSpec{
 			Source:      &source,
 			Destination: argoappv1.ApplicationDestination{Namespace: "default"},

@@ -170,9 +170,9 @@ func TestPruneUsesMetadataUpdatedAtThenMTime(t *testing.T) {
 	}
 
 	result, err := Prune(OperationOptions{
-		Options:   Options{GitCacheDir: filepath.Join(root, "git")},
-		OlderThan: 24 * time.Hour,
-		Yes:       true,
+		GitCacheDir: filepath.Join(root, "git"),
+		OlderThan:   24 * time.Hour,
+		Yes:         true,
 	})
 	if err != nil {
 		t.Fatalf("Prune() error = %v", err)
@@ -195,9 +195,9 @@ func TestPruneDryRunDoesNotRemoveEntries(t *testing.T) {
 	}
 
 	result, err := Prune(OperationOptions{
-		Options:   Options{GitCacheDir: filepath.Join(root, "git")},
-		OlderThan: 24 * time.Hour,
-		DryRun:    true,
+		GitCacheDir: filepath.Join(root, "git"),
+		OlderThan:   24 * time.Hour,
+		DryRun:      true,
 	})
 	if err != nil {
 		t.Fatalf("Prune() error = %v", err)
@@ -216,13 +216,11 @@ func TestDeleteRemovesOnlyMatchingSourceAndKey(t *testing.T) {
 	writeCacheFile(t, filepath.Join(remoteRoot, "resource.yaml"), "remote")
 
 	result, err := Delete(OperationOptions{
-		Options: Options{
-			GitCacheDir:    filepath.Join(root, "git"),
-			RemoteCacheDir: filepath.Join(root, "remotes"),
-		},
-		Source: SourceGit,
-		Key:    testGitKey,
-		Yes:    true,
+		GitCacheDir:    filepath.Join(root, "git"),
+		RemoteCacheDir: filepath.Join(root, "remotes"),
+		Source:         SourceGit,
+		Key:            testGitKey,
+		Yes:            true,
 	})
 	if err != nil {
 		t.Fatalf("Delete() error = %v", err)
@@ -240,8 +238,8 @@ func TestDeleteAllRequiresConfirmation(t *testing.T) {
 	writeCacheFile(t, filepath.Join(entryRoot, ".git", "HEAD"), "git")
 
 	_, err := Delete(OperationOptions{
-		Options: Options{GitCacheDir: filepath.Join(root, "git")},
-		All:     true,
+		GitCacheDir: filepath.Join(root, "git"),
+		All:         true,
 	})
 	if err == nil || !strings.Contains(err.Error(), "--yes") {
 		t.Fatalf("Delete() error = %v, want --yes confirmation error", err)
@@ -283,10 +281,10 @@ func TestDeleteRemovesRemoteEntryRootNotNestedResult(t *testing.T) {
 	}
 
 	result, err := Delete(OperationOptions{
-		Options: Options{RemoteCacheDir: filepath.Join(root, "remotes")},
-		Source:  SourceRemote,
-		Key:     testRemoteKey,
-		Yes:     true,
+		RemoteCacheDir: filepath.Join(root, "remotes"),
+		Source:         SourceRemote,
+		Key:            testRemoteKey,
+		Yes:            true,
 	})
 	if err != nil {
 		t.Fatalf("Delete() error = %v", err)
@@ -453,10 +451,10 @@ func TestDeleteRenderEntryByKey(t *testing.T) {
 	seedRenderEntries(t, dir, keep, remove)
 
 	result, err := Delete(OperationOptions{
-		Options: Options{RenderCacheDir: dir, Sources: []Source{SourceRender}},
-		Source:  SourceRender,
-		Key:     remove,
-		Yes:     true,
+		RenderCacheDir: dir, Sources: []Source{SourceRender},
+		Source: SourceRender,
+		Key:    remove,
+		Yes:    true,
 	})
 	if err != nil {
 		t.Fatalf("Delete() error = %v", err)
@@ -489,7 +487,7 @@ func TestPruneRenderEntriesByAgeAndSweep(t *testing.T) {
 	}
 
 	result, err := Prune(OperationOptions{
-		Options:   Options{RenderCacheDir: dir, Sources: []Source{SourceRender}},
+		RenderCacheDir: dir, Sources: []Source{SourceRender},
 		OlderThan: 24 * time.Hour,
 		Yes:       true,
 	})
@@ -505,7 +503,7 @@ func TestPruneRenderEntriesByAgeAndSweep(t *testing.T) {
 
 	// Dry-run: no removal, no sweep.
 	dry, err := Prune(OperationOptions{
-		Options:   Options{RenderCacheDir: dir, Sources: []Source{SourceRender}},
+		RenderCacheDir: dir, Sources: []Source{SourceRender},
 		OlderThan: time.Hour,
 		DryRun:    true,
 	})

@@ -542,7 +542,7 @@ data:
   value: <path:vaults/K8s/items/demo#value>
 `)
 
-	result, err := (Orchestrator{}).Build(context.Background(), BuildRequest{Path: root, PluginOptions: PluginOptions{EnableAVPCompat: true}})
+	result, err := (Orchestrator{}).Build(context.Background(), BuildRequest{Path: root, EnableAVPCompat: true})
 	if err == nil {
 		t.Fatal("Build() error = nil, want unsupported plugin error")
 	}
@@ -582,7 +582,7 @@ metadata:
   name: should-not-render
 `)
 
-	result, err := (Orchestrator{}).Build(context.Background(), BuildRequest{Path: root, PluginOptions: PluginOptions{EnableAVPCompat: true}})
+	result, err := (Orchestrator{}).Build(context.Background(), BuildRequest{Path: root, EnableAVPCompat: true})
 	if err == nil {
 		t.Fatal("Build() error = nil, want env rejection")
 	}
@@ -609,7 +609,7 @@ data:
   domain: argocd.<path:vaults/Kubernetes/items/cluster#domain>
 `)
 
-	result, err := (Orchestrator{}).Build(context.Background(), BuildRequest{Path: root, PluginOptions: PluginOptions{EnableAVPCompat: true}})
+	result, err := (Orchestrator{}).Build(context.Background(), BuildRequest{Path: root, EnableAVPCompat: true})
 	if err != nil {
 		t.Fatalf("Build() error = %v", err)
 	}
@@ -645,7 +645,7 @@ data:
 				},
 			}},
 		}}, nil, nil
-	})}).Build(context.Background(), BuildRequest{Path: root, PluginOptions: PluginOptions{EnableAVPCompat: true}})
+	})}).Build(context.Background(), BuildRequest{Path: root, EnableAVPCompat: true})
 	if err != nil {
 		t.Fatalf("Build() error = %v", err)
 	}
@@ -752,10 +752,8 @@ func TestOrchestratorBuildRejectsExecPolicyWithoutTrustedRef(t *testing.T) {
 	writeNativeKustomizeSource(t, root, "plugin", "native-fallback")
 
 	result, err := (Orchestrator{}).Build(context.Background(), BuildRequest{
-		Path: root,
-		PluginOptions: PluginOptions{
-			EnablePlugins: true,
-		},
+		Path:          root,
+		EnablePlugins: true,
 	})
 	if err == nil {
 		t.Fatal("Build() error = nil, want untrusted exec policy failure")
@@ -786,14 +784,12 @@ func TestOrchestratorBuildRendersTrustedExecPolicyPlugin(t *testing.T) {
 	policy, fingerprint := testExecPluginPolicy(t, "exec-renderer", appExecCommand(t, "manifest"))
 
 	result, err := (Orchestrator{}).Build(context.Background(), BuildRequest{
-		Path: root,
-		PluginOptions: PluginOptions{
-			EnablePlugins:           true,
-			pluginPolicyLoaded:      true,
-			pluginPolicy:            policy,
-			pluginPolicyFingerprint: fingerprint,
-			pluginPolicyExecTrusted: true,
-		},
+		Path:                    root,
+		EnablePlugins:           true,
+		pluginPolicyLoaded:      true,
+		pluginPolicy:            policy,
+		pluginPolicyFingerprint: fingerprint,
+		pluginPolicyExecTrusted: true,
 	})
 	if err != nil {
 		t.Fatalf("Build() error = %v\nDiagnostics: %#v", err, result.Diagnostics)
@@ -831,14 +827,12 @@ data:
 	}
 
 	result, err := (Orchestrator{PluginExecRunner: runner}).Build(context.Background(), BuildRequest{
-		Path: root,
-		PluginOptions: PluginOptions{
-			EnablePlugins:           true,
-			pluginPolicyLoaded:      true,
-			pluginPolicy:            policy,
-			pluginPolicyFingerprint: fingerprint,
-			pluginPolicyExecTrusted: true,
-		},
+		Path:                    root,
+		EnablePlugins:           true,
+		pluginPolicyLoaded:      true,
+		pluginPolicy:            policy,
+		pluginPolicyFingerprint: fingerprint,
+		pluginPolicyExecTrusted: true,
 	})
 	if err != nil {
 		t.Fatalf("Build() error = %v\nDiagnostics: %#v", err, result.Diagnostics)
@@ -876,15 +870,13 @@ data:
 	}
 
 	result, err := (Orchestrator{PluginContainerRunner: runner}).Build(context.Background(), BuildRequest{
-		Path: root,
-		PluginOptions: PluginOptions{
-			EnablePlugins:           true,
-			PluginCacheDir:          pluginCacheDir,
-			pluginPolicyLoaded:      true,
-			pluginPolicy:            policy,
-			pluginPolicyFingerprint: fingerprint,
-			pluginPolicyExecTrusted: true,
-		},
+		Path:                    root,
+		EnablePlugins:           true,
+		PluginCacheDir:          pluginCacheDir,
+		pluginPolicyLoaded:      true,
+		pluginPolicy:            policy,
+		pluginPolicyFingerprint: fingerprint,
+		pluginPolicyExecTrusted: true,
 	})
 	if err != nil {
 		t.Fatalf("Build() error = %v\nDiagnostics: %#v", err, result.Diagnostics)
@@ -913,13 +905,11 @@ func TestOrchestratorBuildRejectsContainerPolicyWithoutEnablePlugins(t *testing.
 	policy, fingerprint := testContainerPluginPolicy(t, "container-renderer")
 
 	result, err := (Orchestrator{PluginContainerRunner: &recordingContainerRunner{}}).Build(context.Background(), BuildRequest{
-		Path: root,
-		PluginOptions: PluginOptions{
-			pluginPolicyLoaded:      true,
-			pluginPolicy:            policy,
-			pluginPolicyFingerprint: fingerprint,
-			pluginPolicyExecTrusted: true,
-		},
+		Path:                    root,
+		pluginPolicyLoaded:      true,
+		pluginPolicy:            policy,
+		pluginPolicyFingerprint: fingerprint,
+		pluginPolicyExecTrusted: true,
 	})
 	if err == nil {
 		t.Fatal("Build() error = nil, want enable-plugins failure")
@@ -966,14 +956,12 @@ func TestOrchestratorBuildRendersTrustedExecPolicyUnnamedPluginMatch(t *testing.
 			policy, fingerprint := testExecPluginPolicyWithMatch(t, "exec-renderer", appExecCommand(t, "manifest"), tt.matchYAML)
 
 			result, err := (Orchestrator{}).Build(context.Background(), BuildRequest{
-				Path: root,
-				PluginOptions: PluginOptions{
-					EnablePlugins:           true,
-					pluginPolicyLoaded:      true,
-					pluginPolicy:            policy,
-					pluginPolicyFingerprint: fingerprint,
-					pluginPolicyExecTrusted: true,
-				},
+				Path:                    root,
+				EnablePlugins:           true,
+				pluginPolicyLoaded:      true,
+				pluginPolicy:            policy,
+				pluginPolicyFingerprint: fingerprint,
+				pluginPolicyExecTrusted: true,
 			})
 			if err != nil {
 				t.Fatalf("Build() error = %v\nDiagnostics: %#v", err, result.Diagnostics)
@@ -995,14 +983,12 @@ func TestOrchestratorBuildRejectsUnnamedPluginWithoutPolicyOwnedMatch(t *testing
 	policy, fingerprint := testExecPluginPolicy(t, "exec-renderer", appExecCommand(t, "manifest"))
 
 	result, err := (Orchestrator{}).Build(context.Background(), BuildRequest{
-		Path: root,
-		PluginOptions: PluginOptions{
-			EnablePlugins:           true,
-			pluginPolicyLoaded:      true,
-			pluginPolicy:            policy,
-			pluginPolicyFingerprint: fingerprint,
-			pluginPolicyExecTrusted: true,
-		},
+		Path:                    root,
+		EnablePlugins:           true,
+		pluginPolicyLoaded:      true,
+		pluginPolicy:            policy,
+		pluginPolicyFingerprint: fingerprint,
+		pluginPolicyExecTrusted: true,
 	})
 	if err == nil {
 		t.Fatal("Build() error = nil, want unnamed plugin match failure")
@@ -1049,14 +1035,12 @@ plugins:
 	policy, fingerprint := readTestPluginPolicy(t, policyRoot)
 
 	result, err := (Orchestrator{}).Build(context.Background(), BuildRequest{
-		Path: root,
-		PluginOptions: PluginOptions{
-			EnablePlugins:           true,
-			pluginPolicyLoaded:      true,
-			pluginPolicy:            policy,
-			pluginPolicyFingerprint: fingerprint,
-			pluginPolicyExecTrusted: true,
-		},
+		Path:                    root,
+		EnablePlugins:           true,
+		pluginPolicyLoaded:      true,
+		pluginPolicy:            policy,
+		pluginPolicyFingerprint: fingerprint,
+		pluginPolicyExecTrusted: true,
 	})
 	if err == nil {
 		t.Fatal("Build() error = nil, want ambiguous unnamed plugin match")
@@ -1083,14 +1067,12 @@ func TestOrchestratorBuildDoesNotSelectUnnamedPluginPolicyMatchThroughSymlink(t 
 `)
 
 	result, err := (Orchestrator{}).Build(context.Background(), BuildRequest{
-		Path: root,
-		PluginOptions: PluginOptions{
-			EnablePlugins:           true,
-			pluginPolicyLoaded:      true,
-			pluginPolicy:            policy,
-			pluginPolicyFingerprint: fingerprint,
-			pluginPolicyExecTrusted: true,
-		},
+		Path:                    root,
+		EnablePlugins:           true,
+		pluginPolicyLoaded:      true,
+		pluginPolicy:            policy,
+		pluginPolicyFingerprint: fingerprint,
+		pluginPolicyExecTrusted: true,
 	})
 	if err == nil {
 		t.Fatal("Build() error = nil, want symlink match to fail closed")
@@ -1127,14 +1109,12 @@ spec:
 	policy, fingerprint := testExecPluginPolicyWithParameters(t, "exec-renderer", append(appExecCommand(t, "params"), "{{param:path}}"))
 
 	result, err := (Orchestrator{}).Build(context.Background(), BuildRequest{
-		Path: root,
-		PluginOptions: PluginOptions{
-			EnablePlugins:           true,
-			pluginPolicyLoaded:      true,
-			pluginPolicy:            policy,
-			pluginPolicyFingerprint: fingerprint,
-			pluginPolicyExecTrusted: true,
-		},
+		Path:                    root,
+		EnablePlugins:           true,
+		pluginPolicyLoaded:      true,
+		pluginPolicy:            policy,
+		pluginPolicyFingerprint: fingerprint,
+		pluginPolicyExecTrusted: true,
 	})
 	if err != nil {
 		t.Fatalf("Build() error = %v\nDiagnostics: %#v", err, result.Diagnostics)
@@ -1180,14 +1160,12 @@ spec:
 	policy, fingerprint := testExecPluginPolicyWithRepositoryParameter(t, "exec-renderer", append(appExecCommand(t, "repo-param"), "{{param:path}}"))
 
 	result, err := (Orchestrator{}).Build(context.Background(), BuildRequest{
-		Path: root,
-		PluginOptions: PluginOptions{
-			EnablePlugins:           true,
-			pluginPolicyLoaded:      true,
-			pluginPolicy:            policy,
-			pluginPolicyFingerprint: fingerprint,
-			pluginPolicyExecTrusted: true,
-		},
+		Path:                    root,
+		EnablePlugins:           true,
+		pluginPolicyLoaded:      true,
+		pluginPolicy:            policy,
+		pluginPolicyFingerprint: fingerprint,
+		pluginPolicyExecTrusted: true,
 	})
 	if err != nil {
 		t.Fatalf("Build() error = %v", err)
@@ -1230,14 +1208,12 @@ spec:
 	policy, fingerprint := testExecPluginPolicyWithStringParameter(t, "exec-renderer", append(appExecCommand(t, "manifest"), "../{{param:token}}"))
 
 	result, err := (Orchestrator{}).Build(context.Background(), BuildRequest{
-		Path: root,
-		PluginOptions: PluginOptions{
-			EnablePlugins:           true,
-			pluginPolicyLoaded:      true,
-			pluginPolicy:            policy,
-			pluginPolicyFingerprint: fingerprint,
-			pluginPolicyExecTrusted: true,
-		},
+		Path:                    root,
+		EnablePlugins:           true,
+		pluginPolicyLoaded:      true,
+		pluginPolicy:            policy,
+		pluginPolicyFingerprint: fingerprint,
+		pluginPolicyExecTrusted: true,
 	})
 	if err == nil {
 		t.Fatal("Build() error = nil, want invalid argument failure")
@@ -1334,14 +1310,12 @@ spec:
 			policy, fingerprint := readTestPluginPolicy(t, policyRoot)
 
 			result, err := (Orchestrator{}).Build(context.Background(), BuildRequest{
-				Path: root,
-				PluginOptions: PluginOptions{
-					EnablePlugins:           true,
-					pluginPolicyLoaded:      true,
-					pluginPolicy:            policy,
-					pluginPolicyFingerprint: fingerprint,
-					pluginPolicyExecTrusted: true,
-				},
+				Path:                    root,
+				EnablePlugins:           true,
+				pluginPolicyLoaded:      true,
+				pluginPolicy:            policy,
+				pluginPolicyFingerprint: fingerprint,
+				pluginPolicyExecTrusted: true,
 			})
 			if err == nil {
 				t.Fatal("Build() error = nil, want repository parameter failure")
@@ -1388,14 +1362,12 @@ spec:
 	policy, fingerprint := testExecPluginPolicyWithRepositoryParameter(t, "exec-renderer", append(appExecCommand(t, "repo-param"), "{{param:path}}"))
 
 	result, err := (Orchestrator{}).Build(context.Background(), BuildRequest{
-		Path: root,
-		PluginOptions: PluginOptions{
-			EnablePlugins:           true,
-			pluginPolicyLoaded:      true,
-			pluginPolicy:            policy,
-			pluginPolicyFingerprint: fingerprint,
-			pluginPolicyExecTrusted: true,
-		},
+		Path:                    root,
+		EnablePlugins:           true,
+		pluginPolicyLoaded:      true,
+		pluginPolicy:            policy,
+		pluginPolicyFingerprint: fingerprint,
+		pluginPolicyExecTrusted: true,
 	})
 	if err == nil {
 		t.Fatal("Build() error = nil, want symlink staging failure")
@@ -1435,14 +1407,12 @@ spec:
 	policy, fingerprint := testExecPluginPolicyWithStringParameterName(t, "exec-renderer", []string{"{{param:tool}}"}, "tool")
 
 	result, err := (Orchestrator{}).Build(context.Background(), BuildRequest{
-		Path: root,
-		PluginOptions: PluginOptions{
-			EnablePlugins:           true,
-			pluginPolicyLoaded:      true,
-			pluginPolicy:            policy,
-			pluginPolicyFingerprint: fingerprint,
-			pluginPolicyExecTrusted: true,
-		},
+		Path:                    root,
+		EnablePlugins:           true,
+		pluginPolicyLoaded:      true,
+		pluginPolicy:            policy,
+		pluginPolicyFingerprint: fingerprint,
+		pluginPolicyExecTrusted: true,
 	})
 	if err == nil {
 		t.Fatal("Build() error = nil, want executable template rejection")
@@ -1493,14 +1463,12 @@ spec:
 	policy, fingerprint := readTestPluginPolicy(t, policyRoot)
 
 	result, err := (Orchestrator{}).Build(context.Background(), BuildRequest{
-		Path: root,
-		PluginOptions: PluginOptions{
-			EnablePlugins:           true,
-			pluginPolicyLoaded:      true,
-			pluginPolicy:            policy,
-			pluginPolicyFingerprint: fingerprint,
-			pluginPolicyExecTrusted: true,
-		},
+		Path:                    root,
+		EnablePlugins:           true,
+		pluginPolicyLoaded:      true,
+		pluginPolicy:            policy,
+		pluginPolicyFingerprint: fingerprint,
+		pluginPolicyExecTrusted: true,
 	})
 	if err == nil {
 		t.Fatal("Build() error = nil, want invalid output failure")
@@ -1539,14 +1507,12 @@ spec:
 	policy, fingerprint := testExecPluginPolicyWithParameters(t, "exec-renderer", append(appExecCommand(t, "params"), "{{param:path}}"))
 
 	result, err := (Orchestrator{}).Build(context.Background(), BuildRequest{
-		Path: root,
-		PluginOptions: PluginOptions{
-			EnablePlugins:           true,
-			pluginPolicyLoaded:      true,
-			pluginPolicy:            policy,
-			pluginPolicyFingerprint: fingerprint,
-			pluginPolicyExecTrusted: true,
-		},
+		Path:                    root,
+		EnablePlugins:           true,
+		pluginPolicyLoaded:      true,
+		pluginPolicy:            policy,
+		pluginPolicyFingerprint: fingerprint,
+		pluginPolicyExecTrusted: true,
 	})
 	if err == nil {
 		t.Fatal("Build() error = nil, want invalid parameter name")
@@ -1625,14 +1591,12 @@ func TestOrchestratorDiagReturnsExecPolicyPluginMetadata(t *testing.T) {
 	policy, fingerprint := testExecPluginPolicy(t, "exec-renderer", appExecCommand(t, "manifest"))
 
 	result, err := (Orchestrator{}).Diag(context.Background(), DiagRequest{
-		Path: root,
-		PluginOptions: PluginOptions{
-			EnablePlugins:           true,
-			pluginPolicyLoaded:      true,
-			pluginPolicy:            policy,
-			pluginPolicyFingerprint: fingerprint,
-			pluginPolicyExecTrusted: true,
-		},
+		Path:                    root,
+		EnablePlugins:           true,
+		pluginPolicyLoaded:      true,
+		pluginPolicy:            policy,
+		pluginPolicyFingerprint: fingerprint,
+		pluginPolicyExecTrusted: true,
 	})
 	if err != nil {
 		t.Fatalf("Diag() error = %v\nDiagnostics: %#v", err, result.Diagnostics)
@@ -1649,14 +1613,12 @@ func TestOrchestratorBuildReportsInvalidExecPolicyOutput(t *testing.T) {
 	policy, fingerprint := testExecPluginPolicy(t, "exec-renderer", appExecCommand(t, "invalid"))
 
 	result, err := (Orchestrator{}).Build(context.Background(), BuildRequest{
-		Path: root,
-		PluginOptions: PluginOptions{
-			EnablePlugins:           true,
-			pluginPolicyLoaded:      true,
-			pluginPolicy:            policy,
-			pluginPolicyFingerprint: fingerprint,
-			pluginPolicyExecTrusted: true,
-		},
+		Path:                    root,
+		EnablePlugins:           true,
+		pluginPolicyLoaded:      true,
+		pluginPolicy:            policy,
+		pluginPolicyFingerprint: fingerprint,
+		pluginPolicyExecTrusted: true,
 	})
 	if err == nil {
 		t.Fatal("Build() error = nil, want invalid manifest output failure")
@@ -1679,14 +1641,12 @@ func TestOrchestratorBuildRunsExecPolicyPostRenderer(t *testing.T) {
 	policy, fingerprint := testExecPluginPolicyWithPostRenderer(t, "exec-renderer", appExecCommand(t, "manifest"), appExecCommand(t, "post-render"))
 
 	result, err := (Orchestrator{}).Build(context.Background(), BuildRequest{
-		Path: root,
-		PluginOptions: PluginOptions{
-			EnablePlugins:           true,
-			pluginPolicyLoaded:      true,
-			pluginPolicy:            policy,
-			pluginPolicyFingerprint: fingerprint,
-			pluginPolicyExecTrusted: true,
-		},
+		Path:                    root,
+		EnablePlugins:           true,
+		pluginPolicyLoaded:      true,
+		pluginPolicy:            policy,
+		pluginPolicyFingerprint: fingerprint,
+		pluginPolicyExecTrusted: true,
 	})
 	if err != nil {
 		t.Fatalf("Build() error = %v\nDiagnostics: %#v", err, result.Diagnostics)
@@ -1708,14 +1668,12 @@ func TestOrchestratorBuildReportsInvalidExecPolicyPostRendererOutput(t *testing.
 	policy, fingerprint := testExecPluginPolicyWithPostRenderer(t, "exec-renderer", appExecCommand(t, "manifest"), appExecCommand(t, "invalid"))
 
 	result, err := (Orchestrator{}).Build(context.Background(), BuildRequest{
-		Path: root,
-		PluginOptions: PluginOptions{
-			EnablePlugins:           true,
-			pluginPolicyLoaded:      true,
-			pluginPolicy:            policy,
-			pluginPolicyFingerprint: fingerprint,
-			pluginPolicyExecTrusted: true,
-		},
+		Path:                    root,
+		EnablePlugins:           true,
+		pluginPolicyLoaded:      true,
+		pluginPolicy:            policy,
+		pluginPolicyFingerprint: fingerprint,
+		pluginPolicyExecTrusted: true,
 	})
 	if err == nil {
 		t.Fatal("Build() error = nil, want invalid post-render output failure")
@@ -1753,7 +1711,7 @@ kind: PluginPolicy
 		RightPath:     right,
 		ChangedOnly:   false,
 		Unified:       3,
-		PluginOptions: PluginOptions{EnablePlugins: true},
+		EnablePlugins: true,
 	})
 	if err != nil {
 		t.Fatalf("DiffApps() error = %v\nDiagnostics: %#v", err, result.Diagnostics)
@@ -1880,10 +1838,8 @@ kind: PluginPolicy
 `)
 
 	result, err := (Orchestrator{}).Build(context.Background(), BuildRequest{
-		Path: root,
-		PluginOptions: PluginOptions{
-			DisablePluginPolicy: true,
-		},
+		Path:                root,
+		DisablePluginPolicy: true,
 	})
 	if err != nil {
 		t.Fatalf("Build() error = %v", err)
@@ -2069,14 +2025,12 @@ func TestOrchestratorBuildExecPolicyUsesSeedDiscoveryButNotSeedGenerate(t *testi
 	policy, fingerprint := readTestPluginPolicy(t, policyRoot)
 
 	result, err := (Orchestrator{}).Build(context.Background(), BuildRequest{
-		Path: root,
-		PluginOptions: PluginOptions{
-			EnablePlugins:           true,
-			pluginPolicyLoaded:      true,
-			pluginPolicy:            policy,
-			pluginPolicyFingerprint: fingerprint,
-			pluginPolicyExecTrusted: true,
-		},
+		Path:                    root,
+		EnablePlugins:           true,
+		pluginPolicyLoaded:      true,
+		pluginPolicy:            policy,
+		pluginPolicyFingerprint: fingerprint,
+		pluginPolicyExecTrusted: true,
 	})
 	if err != nil {
 		t.Fatalf("Build() error = %v\nDiagnostics: %#v", err, result.Diagnostics)
@@ -2549,10 +2503,8 @@ func TestOrchestratorPluginTimeoutReturnsPartialStatus(t *testing.T) {
 	writePluginBuildApplication(t, root, "plugin", "cue")
 
 	result, err := (Orchestrator{PluginRenderer: blockingInternalPluginRenderer{}}).Build(context.Background(), BuildRequest{
-		Path: root,
-		PluginOptions: PluginOptions{
-			PluginTimeout: time.Nanosecond,
-		},
+		Path:          root,
+		PluginTimeout: time.Nanosecond,
 	})
 	if err == nil {
 		t.Fatal("Build() error = nil, want plugin timeout")

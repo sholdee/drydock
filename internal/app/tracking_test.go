@@ -9,7 +9,6 @@ import (
 	argoappv1 "github.com/argoproj/argo-cd/v3/pkg/apis/application/v1alpha1"
 	"github.com/sholdee/drydock/internal/config"
 	"github.com/sholdee/drydock/internal/render"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 )
 
@@ -236,7 +235,7 @@ func TestRenderSettingsSignatureIgnoresProvenance(t *testing.T) {
 
 func trackingTestApplication(namespace, name string) argoappv1.Application {
 	return argoappv1.Application{
-		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: namespace},
+		Name: name, Namespace: namespace,
 		Spec: argoappv1.ApplicationSpec{
 			Source:      &argoappv1.ApplicationSource{RepoURL: "https://repo", Path: "manifests"},
 			Destination: argoappv1.ApplicationDestination{Namespace: "workloads"},

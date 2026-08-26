@@ -13,7 +13,6 @@ import (
 	"github.com/sholdee/drydock/internal/cacheevent"
 	"github.com/sholdee/drydock/internal/gitref"
 	sourcepkg "github.com/sholdee/drydock/internal/source"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 // renderOutcomeSignature reduces a render to a comparable string: an error
@@ -153,7 +152,7 @@ func TestRenderInputCoverageDirectorySource(t *testing.T) {
 	writeTestFile(t, repoRoot+"/manifests/demo/extra.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: extra\n")
 	writeTestFile(t, repoRoot+"/unrelated/README.md", "not a render input\n")
 	application := argoappv1.Application{
-		ObjectMeta: metav1.ObjectMeta{Name: "demo", Namespace: "argocd"},
+		Name: "demo", Namespace: "argocd",
 		Spec: argoappv1.ApplicationSpec{
 			Source: &argoappv1.ApplicationSource{
 				RepoURL: "https://git.example.test/org/repo.git", Path: "manifests/demo", TargetRevision: "main",
@@ -173,7 +172,7 @@ func TestRenderInputCoverageKustomizeSourceWithBaseAndOverride(t *testing.T) {
 	writeTestFile(t, repoRoot+"/manifests/app/.argocd-source.yaml", "kustomize:\n  namePrefix: prod-\n")
 	writeTestFile(t, repoRoot+"/unrelated/README.md", "not a render input\n")
 	application := argoappv1.Application{
-		ObjectMeta: metav1.ObjectMeta{Name: "app", Namespace: "argocd"},
+		Name: "app", Namespace: "argocd",
 		Spec: argoappv1.ApplicationSpec{
 			Source: &argoappv1.ApplicationSource{
 				RepoURL: "https://git.example.test/org/repo.git", Path: "manifests/app", TargetRevision: "main",
@@ -191,7 +190,7 @@ func TestRenderInputCoverageHelmSource(t *testing.T) {
 	writeTestFile(t, repoRoot+"/charts/demo/templates/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: {{ .Chart.Name }}\ndata:\n  value: {{ .Values.value }}\n")
 	writeTestFile(t, repoRoot+"/unrelated/README.md", "not a render input\n")
 	application := argoappv1.Application{
-		ObjectMeta: metav1.ObjectMeta{Name: "demo", Namespace: "argocd"},
+		Name: "demo", Namespace: "argocd",
 		Spec: argoappv1.ApplicationSpec{
 			Source: &argoappv1.ApplicationSource{
 				RepoURL: "https://git.example.test/org/repo.git", Path: "charts/demo", TargetRevision: "main",
@@ -217,7 +216,7 @@ func TestRenderInputCoverageKustomizeKSOPSGenerator(t *testing.T) {
 	writeTestFile(t, repoRoot+"/secrets/shared.sops.yaml", "apiVersion: v1\nkind: Secret\nmetadata:\n    name: shared-secret\ndata:\n    SHARED: ENC[AES256_GCM,data:def456,type:str]\nsops:\n    version: 3.10.2\n")
 	writeTestFile(t, repoRoot+"/unrelated/README.md", "not a render input\n")
 	application := argoappv1.Application{
-		ObjectMeta: metav1.ObjectMeta{Name: "app", Namespace: "argocd"},
+		Name: "app", Namespace: "argocd",
 		Spec: argoappv1.ApplicationSpec{
 			Source: &argoappv1.ApplicationSource{
 				RepoURL: "https://git.example.test/org/repo.git", Path: "manifests/app", TargetRevision: "main",
@@ -244,7 +243,7 @@ func TestRenderInputCoverageHelmSourceOutOfChartDirValueFile(t *testing.T) {
 	writeTestFile(t, repoRoot+"/shared-files/message.txt", "from-file\n")
 	writeTestFile(t, repoRoot+"/unrelated/README.md", "not a render input\n")
 	application := argoappv1.Application{
-		ObjectMeta: metav1.ObjectMeta{Name: "demo", Namespace: "argocd"},
+		Name: "demo", Namespace: "argocd",
 		Spec: argoappv1.ApplicationSpec{
 			Source: &argoappv1.ApplicationSource{
 				RepoURL: "https://git.example.test/org/repo.git", Path: "charts/demo", TargetRevision: "main",

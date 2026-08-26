@@ -94,10 +94,8 @@ patches:
 `)
 
 	result, err := Orchestrator{}.ListApplications(context.Background(), BuildRequest{
-		Path: root,
-		DiscoveryOptions: DiscoveryOptions{
-			DiscoverKustomizePaths: []string{filepath.Join("argocd", "overlays", "prod")},
-		},
+		Path:                   root,
+		DiscoverKustomizePaths: []string{filepath.Join("argocd", "overlays", "prod")},
 	})
 	if err != nil {
 		t.Fatalf("ListApplications() error = %v", err)
@@ -182,10 +180,8 @@ destination:
 `)
 
 	result, err := Orchestrator{}.ListApplications(context.Background(), BuildRequest{
-		Path: root,
-		DiscoveryOptions: DiscoveryOptions{
-			DiscoverKustomizePaths: []string{"argocd/overlays/nuc10-cluster"},
-		},
+		Path:                   root,
+		DiscoverKustomizePaths: []string{"argocd/overlays/nuc10-cluster"},
 	})
 	if err != nil {
 		t.Fatalf("ListApplications() error = %v", err)
@@ -306,10 +302,8 @@ func TestListApplicationsStaticDiscoveryModeDisablesRenderedFleetExpansion(t *te
 	writeRenderedFleetFixture(t, root)
 
 	result, err := Orchestrator{}.ListApplications(context.Background(), BuildRequest{
-		Path: root,
-		DiscoveryOptions: DiscoveryOptions{
-			DiscoveryMode: DiscoveryModeStatic,
-		},
+		Path:          root,
+		DiscoveryMode: DiscoveryModeStatic,
 	})
 	if err != nil {
 		t.Fatalf("ListApplications() error = %v", err)
@@ -351,10 +345,8 @@ resources:
 `)
 
 	result, err := Orchestrator{}.ListApplications(context.Background(), BuildRequest{
-		Path: root,
-		DiscoveryOptions: DiscoveryOptions{
-			DiscoverKustomizePaths: []string{"overlays/argocd"},
-		},
+		Path:                   root,
+		DiscoverKustomizePaths: []string{"overlays/argocd"},
 	})
 	if err != nil {
 		t.Fatalf("ListApplications() error = %v", err)
@@ -375,10 +367,8 @@ func TestListApplicationsErrorsWhenRenderedFleetDiscoveryDoesNotConverge(t *test
 	writeRenderedFleetFixture(t, root)
 
 	_, err := Orchestrator{}.ListApplications(context.Background(), BuildRequest{
-		Path: root,
-		DiscoveryOptions: DiscoveryOptions{
-			MaxDiscoveryDepth: 1,
-		},
+		Path:              root,
+		MaxDiscoveryDepth: 1,
 	})
 	if err == nil || !strings.Contains(err.Error(), "maximum discovery depth 1") {
 		t.Fatalf("ListApplications() error = %v, want max discovery depth error", err)
@@ -499,10 +489,8 @@ metadata:
 	})
 
 	result, err := (Orchestrator{PluginRenderer: renderer}).Build(context.Background(), BuildRequest{
-		Path: root,
-		ExecutionOptions: ExecutionOptions{
-			Parallelism: 1,
-		},
+		Path:        root,
+		Parallelism: 1,
 	})
 	if err != nil {
 		t.Fatalf("Build() error = %v", err)
@@ -517,8 +505,8 @@ metadata:
 
 func TestApplicationMayRenderDiscoveryObjectsUsesLocalSourcePrefilter(t *testing.T) {
 	root := t.TempDir()
-	leaf := argoappv1.Application{}
-	leaf.Name = "leaf"
+	leaf := argoappv1.Application{
+		Name: "leaf"}
 	leaf.Spec.Source = &argoappv1.ApplicationSource{
 		RepoURL:        "https://github.com/example/repo",
 		TargetRevision: "main",
@@ -533,8 +521,8 @@ metadata:
 		t.Fatal("leaf Application prefilter = true, want false")
 	}
 
-	appOfApps := argoappv1.Application{}
-	appOfApps.Name = "app-of-apps"
+	appOfApps := argoappv1.Application{
+		Name: "app-of-apps"}
 	appOfApps.Spec.Source = &argoappv1.ApplicationSource{
 		RepoURL:        "https://github.com/example/repo",
 		TargetRevision: "main",
@@ -559,10 +547,8 @@ func TestListApplicationsRejectsUnsafeDiscoverKustomizePath(t *testing.T) {
 	writeTestFile(t, filepath.Join(root, "overlay", "kustomization.yaml"), "resources: []\n")
 
 	_, err := Orchestrator{}.ListApplications(context.Background(), BuildRequest{
-		Path: root,
-		DiscoveryOptions: DiscoveryOptions{
-			DiscoverKustomizePaths: []string{filepath.Join(root, "overlay")},
-		},
+		Path:                   root,
+		DiscoverKustomizePaths: []string{filepath.Join(root, "overlay")},
 	})
 	if err == nil || !strings.Contains(err.Error(), "must be relative") {
 		t.Fatalf("ListApplications() error = %v, want relative path error", err)
@@ -572,10 +558,8 @@ func TestListApplicationsRejectsUnsafeDiscoverKustomizePath(t *testing.T) {
 		t.Fatalf("Symlink() error = %v", err)
 	}
 	_, err = Orchestrator{}.ListApplications(context.Background(), BuildRequest{
-		Path: root,
-		DiscoveryOptions: DiscoveryOptions{
-			DiscoverKustomizePaths: []string{"linked-overlay"},
-		},
+		Path:                   root,
+		DiscoverKustomizePaths: []string{"linked-overlay"},
 	})
 	if err == nil || !strings.Contains(err.Error(), "symlink component") {
 		t.Fatalf("ListApplications() error = %v, want symlink path error", err)
@@ -616,12 +600,10 @@ spec:
 
 	result, err := Orchestrator{}.ListApplications(context.Background(), BuildRequest{
 		Path: root,
-		DiscoveryOptions: DiscoveryOptions{
-			// The generator param file matches the ignore glob; discover-ignore
-			// scopes to repository discovery only and must not filter appset git
-			// generator file matching.
-			DiscoverIgnoreGlobs: []string{"params/**"},
-		},
+		// The generator param file matches the ignore glob; discover-ignore
+		// scopes to repository discovery only and must not filter appset git
+		// generator file matching.
+		DiscoverIgnoreGlobs: []string{"params/**"},
 	})
 	if err != nil {
 		t.Fatalf("ListApplications() error = %v", err)
@@ -669,14 +651,12 @@ patches:
 `)
 
 	result, err := Orchestrator{}.ListApplications(context.Background(), BuildRequest{
-		Path: root,
-		DiscoveryOptions: DiscoveryOptions{
-			DiscoverKustomizePaths: []string{filepath.Join("argocd", "overlays", "prod")},
-			// Every static file matches the ignore glob; rendered-tier discovery
-			// (ScanObjects with synthetic display paths under argocd/) must be
-			// unaffected.
-			DiscoverIgnoreGlobs: []string{"argocd/**"},
-		},
+		Path:                   root,
+		DiscoverKustomizePaths: []string{filepath.Join("argocd", "overlays", "prod")},
+		// Every static file matches the ignore glob; rendered-tier discovery
+		// (ScanObjects with synthetic display paths under argocd/) must be
+		// unaffected.
+		DiscoverIgnoreGlobs: []string{"argocd/**"},
 	})
 	if err != nil {
 		t.Fatalf("ListApplications() error = %v", err)

@@ -15,7 +15,6 @@ import (
 	"github.com/sholdee/drydock/internal/pluginonboarding"
 	"github.com/sholdee/drydock/internal/pluginpolicy"
 	"github.com/spf13/cobra"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 func TestPluginPolicyInitPrintsScaffoldToStdout(t *testing.T) {
@@ -286,11 +285,9 @@ func pluginPolicyCLIListResult(root string) app.BuildResult {
 	}
 	value := "prod"
 	application := argoappv1.Application{
-		ObjectMeta: metav1.ObjectMeta{
-			Namespace: "argocd",
-			Name:      "demo",
-			Labels:    map[string]string{"app.kubernetes.io/name": "demo"},
-		},
+		Namespace: "argocd",
+		Name:      "demo",
+		Labels:    map[string]string{"app.kubernetes.io/name": "demo"},
 		Spec: argoappv1.ApplicationSpec{
 			Source: &argoappv1.ApplicationSource{
 				Path: "apps/demo",
