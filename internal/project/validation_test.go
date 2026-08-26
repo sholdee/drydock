@@ -569,7 +569,7 @@ func application(name, project string, source argoappv1.ApplicationSource, desti
 
 func applicationInNamespace(name, namespace, project string, source argoappv1.ApplicationSource, destination argoappv1.ApplicationDestination) argoappv1.Application {
 	return argoappv1.Application{
-		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: namespace},
+		Name: name, Namespace: namespace,
 		Spec: argoappv1.ApplicationSpec{
 			Project:     project,
 			Source:      &source,

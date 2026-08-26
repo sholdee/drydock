@@ -15,7 +15,6 @@ import (
 	"github.com/sholdee/drydock/internal/render"
 	"github.com/sholdee/drydock/internal/rendercache"
 	sourcepkg "github.com/sholdee/drydock/internal/source"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 func testEngineFingerprint() rendercache.EngineFingerprint {
@@ -85,7 +84,7 @@ func TestEnsurePersistentRenderCacheOpenFailureDegrades(t *testing.T) {
 	options.RenderCacheEnabled = true
 	request, release := ensurePersistentRenderCache(BuildRequest{
 		RenderCacheOptions: options,
-		AcquisitionOptions: AcquisitionOptions{RecordCacheEvents: true},
+		RecordCacheEvents:  true,
 	})
 	if request.persistentRenderCache.active() {
 		t.Fatalf("persistent cache active after open failure")
@@ -788,7 +787,7 @@ func TestPersistentRenderCachePrepareDirtyPluginSourceIneligible(t *testing.T) {
 		cacheEvents:    recorder,
 	}
 	application := argoappv1.Application{
-		ObjectMeta: metav1.ObjectMeta{Name: "plugin-app", Namespace: "argocd"},
+		Name: "plugin-app", Namespace: "argocd",
 		Spec: argoappv1.ApplicationSpec{Source: &argoappv1.ApplicationSource{
 			RepoURL:        "https://git.example.test/org/repo.git",
 			Path:           "manifests/demo",
@@ -1467,7 +1466,7 @@ metadata:
 		rootInputMode: rootInputModeSnapshot,
 	}
 	application := argoappv1.Application{
-		ObjectMeta: metav1.ObjectMeta{Name: "demo", Namespace: "argocd"},
+		Name: "demo", Namespace: "argocd",
 		Spec: argoappv1.ApplicationSpec{
 			Source: &argoappv1.ApplicationSource{
 				RepoURL:        "https://git.example.test/org/repo.git",
@@ -1532,8 +1531,8 @@ func TestValidateRenderCacheRootRejectsUnopenableStore(t *testing.T) {
 		t.Fatalf("validateBuildRenderCacheRoot() = nil, want store open failure")
 	}
 
-	diffRequest := DiffRequest{LeftPath: t.TempDir(), RightPath: t.TempDir()}
-	diffRequest.RenderCacheOptions = options
+	diffRequest := DiffRequest{LeftPath: t.TempDir(), RightPath: t.TempDir(),
+		RenderCacheOptions: options}
 	if err := validateDiffRenderCacheRoot(diffRequest); err == nil {
 		t.Fatalf("validateDiffRenderCacheRoot() = nil, want store open failure")
 	}
@@ -1564,9 +1563,9 @@ func TestEnsurePersistentRenderCacheAcquisitionRefreshFlagsBypassLookup(t *testi
 }
 
 func TestEnsureDiffPersistentRenderCacheAcquisitionRefreshFlagsBypassLookup(t *testing.T) {
-	request := DiffRequest{}
-	request.RenderCacheOptions = testRenderCacheOptions(t)
-	request.RefreshCharts = true
+	request := DiffRequest{
+		RenderCacheOptions: testRenderCacheOptions(t),
+		RefreshCharts:      true}
 	prepared, _ := ensureDiffPersistentRenderCache(request)
 	if !prepared.persistentRenderCache.refresh {
 		t.Fatalf("handle.refresh = false, want true with --refresh-charts")
@@ -1578,7 +1577,7 @@ func TestLocalInputDigestPathsIncludeArgocdSourceOverrides(t *testing.T) {
 	writeTestFile(t, repoRoot+"/manifests/demo/kustomization.yaml", "resources:\n  - cm.yaml\n")
 	writeTestFile(t, repoRoot+"/manifests/demo/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: demo\n")
 	application := argoappv1.Application{
-		ObjectMeta: metav1.ObjectMeta{Name: "demo-app"},
+		Name: "demo-app",
 		Spec: argoappv1.ApplicationSpec{Source: &argoappv1.ApplicationSource{
 			RepoURL: "https://git.example.test/org/repo.git", Path: "manifests/demo", TargetRevision: "main",
 		}},
@@ -1618,7 +1617,7 @@ func TestPersistentRenderCacheDirtyKustomizeDigestTracksSourceOverrides(t *testi
 		rootInputMode:  rootInputModeDirty,
 	}
 	application := argoappv1.Application{
-		ObjectMeta: metav1.ObjectMeta{Name: "demo-app"},
+		Name: "demo-app",
 		Spec: argoappv1.ApplicationSpec{Source: &argoappv1.ApplicationSource{
 			RepoURL: "https://git.example.test/org/repo.git", Path: "manifests/demo", TargetRevision: "main",
 		}},

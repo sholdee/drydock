@@ -102,11 +102,9 @@ func ociEventCount(events []cacheevent.Event) int {
 func ociBuildRequest(t *testing.T, root string) BuildRequest {
 	t.Helper()
 	return BuildRequest{
-		Path: root,
-		AcquisitionOptions: AcquisitionOptions{
-			OCICacheDir:       t.TempDir(),
-			RecordCacheEvents: true,
-		},
+		Path:              root,
+		OCICacheDir:       t.TempDir(),
+		RecordCacheEvents: true,
 	}
 }
 
@@ -169,12 +167,10 @@ func TestBuildAndDiffFailFastOnInvalidOCICredentials(t *testing.T) {
 	}
 
 	diffRequest := DiffRequest{
-		LeftPath:  root,
-		RightPath: root,
-		AcquisitionOptions: AcquisitionOptions{
-			OCICacheDir:    t.TempDir(),
-			OCICredentials: ociartifact.Credentials{CAFile: nonPEM},
-		},
+		LeftPath:       root,
+		RightPath:      root,
+		OCICacheDir:    t.TempDir(),
+		OCICredentials: ociartifact.Credentials{CAFile: nonPEM},
 	}
 	if _, err := (Orchestrator{}).DiffApps(context.Background(), diffRequest); err == nil || !strings.Contains(err.Error(), "--oci-ca-file") {
 		t.Fatalf("DiffApps() error = %v, want fail-fast validation naming --oci-ca-file", err)
@@ -362,7 +358,7 @@ func TestBuildOCIArtifactOffline(t *testing.T) {
 	writeOCIApplication(t, root, "demo", repoURL, ".", "1.2.3", "")
 	ociCacheDir := t.TempDir()
 
-	onlineRequest := BuildRequest{Path: root, AcquisitionOptions: AcquisitionOptions{OCICacheDir: ociCacheDir, RecordCacheEvents: true}}
+	onlineRequest := BuildRequest{Path: root, OCICacheDir: ociCacheDir, RecordCacheEvents: true}
 	onlineResult, err := Orchestrator{}.Build(context.Background(), onlineRequest)
 	if err != nil {
 		t.Fatalf("online Build() error = %v", err)
@@ -371,7 +367,7 @@ func TestBuildOCIArtifactOffline(t *testing.T) {
 
 	reg.Server.Close()
 
-	offlineRequest := BuildRequest{Path: root, AcquisitionOptions: AcquisitionOptions{OCICacheDir: ociCacheDir, Offline: true, RecordCacheEvents: true}}
+	offlineRequest := BuildRequest{Path: root, OCICacheDir: ociCacheDir, Offline: true, RecordCacheEvents: true}
 	offlineResult, err := Orchestrator{}.Build(context.Background(), offlineRequest)
 	if err != nil {
 		t.Fatalf("offline Build() error = %v", err)
@@ -396,7 +392,7 @@ func TestBuildOCIArtifactOffline(t *testing.T) {
 	// Unseen tag offline: clear offline cache miss error.
 	unseenRoot := t.TempDir()
 	writeOCIApplication(t, unseenRoot, "demo", repoURL, ".", "9.9.9", "")
-	_, err = Orchestrator{}.Build(context.Background(), BuildRequest{Path: unseenRoot, AcquisitionOptions: AcquisitionOptions{OCICacheDir: ociCacheDir, Offline: true}})
+	_, err = Orchestrator{}.Build(context.Background(), BuildRequest{Path: unseenRoot, OCICacheDir: ociCacheDir, Offline: true})
 	assertBuildErrorContains(t, err, "offline cache miss")
 }
 
@@ -412,13 +408,11 @@ func TestDiffTwoSidedOCISingleAcquisitionEvent(t *testing.T) {
 	writeOCIApplication(t, right, "demo", repoURL, ".", "1.2.3", "")
 
 	result, err := Orchestrator{}.DiffApps(context.Background(), DiffRequest{
-		LeftPath:  left,
-		RightPath: right,
-		Unified:   3,
-		AcquisitionOptions: AcquisitionOptions{
-			OCICacheDir:       t.TempDir(),
-			RecordCacheEvents: true,
-		},
+		LeftPath:          left,
+		RightPath:         right,
+		Unified:           3,
+		OCICacheDir:       t.TempDir(),
+		RecordCacheEvents: true,
 	})
 	if err != nil {
 		t.Fatalf("DiffApps() error = %v", err)
@@ -441,7 +435,7 @@ func TestBuildOCISameTagRepushReflectsNewContent(t *testing.T) {
 	root := t.TempDir()
 	writeOCIApplication(t, root, "demo", reg.RepoURL("manifests/app"), ".", "stable", "")
 	ociCacheDir := t.TempDir()
-	request := BuildRequest{Path: root, AcquisitionOptions: AcquisitionOptions{OCICacheDir: ociCacheDir}}
+	request := BuildRequest{Path: root, OCICacheDir: ociCacheDir}
 
 	first, err := Orchestrator{}.Build(context.Background(), request)
 	if err != nil {
@@ -476,7 +470,7 @@ func TestBuildOCITagAliasesShareImageCacheEntry(t *testing.T) {
 	for _, revision := range []string{"v1", "v1-alias"} {
 		root := t.TempDir()
 		writeOCIApplication(t, root, "demo", repoURL, ".", revision, "")
-		if _, err := (Orchestrator{}).Build(context.Background(), BuildRequest{Path: root, AcquisitionOptions: AcquisitionOptions{OCICacheDir: ociCacheDir}}); err != nil {
+		if _, err := (Orchestrator{}).Build(context.Background(), BuildRequest{Path: root, OCICacheDir: ociCacheDir}); err != nil {
 			t.Fatalf("Build(%s) error = %v", revision, err)
 		}
 	}
@@ -662,8 +656,8 @@ func TestOCISourceRepoMappedEntersDiscoveryFrontier(t *testing.T) {
 			},
 		},
 	}
-	request := BuildRequest{}
-	request.RepoMaps = []sourcepkg.RepoMap{{URL: "oci://registry.example/org/app", Path: mapped}}
+	request := BuildRequest{
+		RepoMaps: []sourcepkg.RepoMap{{URL: "oci://registry.example/org/app", Path: mapped}}}
 	if !applicationMayRenderDiscoveryObjects(root, request, discovery.Result{}, app) {
 		t.Fatal("repo-mapped OCI parent lost frontier eligibility (its child Applications would be silently dropped)")
 	}
@@ -781,10 +775,10 @@ func TestOCIExtractionLifecycleAndTwoSidedPaths(t *testing.T) {
 	writeOCIApplication(t, left, "demo", repoURL, "a", "v1", "")
 	writeOCIApplication(t, right, "demo", repoURL, "b", "v1", "")
 	diffResult, err := Orchestrator{}.DiffApps(context.Background(), DiffRequest{
-		LeftPath:           left,
-		RightPath:          right,
-		Unified:            3,
-		AcquisitionOptions: AcquisitionOptions{OCICacheDir: t.TempDir()},
+		LeftPath:    left,
+		RightPath:   right,
+		Unified:     3,
+		OCICacheDir: t.TempDir(),
 	})
 	if err != nil {
 		t.Fatalf("DiffApps() error = %v", err)

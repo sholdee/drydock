@@ -9,7 +9,6 @@ import (
 	argoappv1 "github.com/argoproj/argo-cd/v3/pkg/apis/application/v1alpha1"
 	"github.com/sholdee/drydock/internal/config"
 	"github.com/sholdee/drydock/internal/pluginpolicy"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 const digestImage = "registry.example.com/plugins/pkl@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
@@ -699,7 +698,7 @@ func pluginApp(namespace, name, sourcePath, plugin string) argoappv1.Application
 
 func sourceApp(namespace, name, sourcePath string) argoappv1.Application {
 	return argoappv1.Application{
-		ObjectMeta: metav1.ObjectMeta{Namespace: namespace, Name: name},
+		Namespace: namespace, Name: name,
 		Spec: argoappv1.ApplicationSpec{
 			Source: &argoappv1.ApplicationSource{
 				RepoURL: "https://example.com/repo.git",

@@ -7,7 +7,6 @@ import (
 	argoappv1 "github.com/argoproj/argo-cd/v3/pkg/apis/application/v1alpha1"
 	"github.com/sholdee/drydock/internal/config"
 	"github.com/sholdee/drydock/internal/diagnostic"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 func TestValidateApplicationsSourceNamespaceParityWithArgoCD(t *testing.T) {
@@ -63,7 +62,7 @@ func TestValidateApplicationsSourceNamespaceParityWithArgoCD(t *testing.T) {
 
 func sourceNamespaceParityApplication(namespace string) argoappv1.Application {
 	return argoappv1.Application{
-		ObjectMeta: metav1.ObjectMeta{Name: "demo", Namespace: namespace},
+		Name: "demo", Namespace: namespace,
 		Spec: argoappv1.ApplicationSpec{
 			Project: "platform",
 			Source: &argoappv1.ApplicationSource{
@@ -80,7 +79,7 @@ func sourceNamespaceParityApplication(namespace string) argoappv1.Application {
 
 func sourceNamespaceParityProject(sourceNamespaces []string) argoappv1.AppProject {
 	return argoappv1.AppProject{
-		ObjectMeta: metav1.ObjectMeta{Name: "platform"},
+		Name: "platform",
 		Spec: argoappv1.AppProjectSpec{
 			SourceRepos: []string{"*"},
 			Destinations: []argoappv1.ApplicationDestination{{

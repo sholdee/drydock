@@ -15,7 +15,6 @@ import (
 	"github.com/sholdee/drydock/internal/discovery"
 	"github.com/sholdee/drydock/internal/pluginpolicy"
 	"github.com/sholdee/drydock/internal/render"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 )
 
@@ -133,10 +132,8 @@ func validatePolicyBootstrapEntrypoint(root string, policy pluginpolicy.Policy, 
 
 func policyBootstrapEntrypointApplication(entrypoint pluginpolicy.BootstrapEntrypoint, sourcePath string) argoappv1.Application {
 	return argoappv1.Application{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      entrypoint.Name,
-			Namespace: policyBootstrapApplicationNamespace,
-		},
+		Name:      entrypoint.Name,
+		Namespace: policyBootstrapApplicationNamespace,
 		Spec: argoappv1.ApplicationSpec{
 			Project: policyBootstrapApplicationProject,
 			Source: &argoappv1.ApplicationSource{

@@ -204,18 +204,12 @@ func pluginPolicyOnboardingReport(cmd *cobra.Command, deps Dependencies, opts on
 		return pluginonboarding.Report{}, err
 	}
 	request := app.BuildRequest{
-		Path: opts.Path,
-		DiscoveryOptions: app.DiscoveryOptions{
-			DiscoveryMode:        app.DiscoveryModeStatic,
-			MaxDiscoveryDepth:    0,
-			MaxDiscoveryDepthSet: true,
-		},
-		ApplicationSetOptions: app.ApplicationSetOptions{
-			ApplicationSetProviderFixtures: append([]string(nil), opts.AppsetFixtures...),
-		},
-		PluginOptions: app.PluginOptions{
-			DisablePluginPolicy: true,
-		},
+		Path:                           opts.Path,
+		DiscoveryMode:                  app.DiscoveryModeStatic,
+		MaxDiscoveryDepth:              0,
+		MaxDiscoveryDepthSet:           true,
+		ApplicationSetProviderFixtures: append([]string(nil), opts.AppsetFixtures...),
+		DisablePluginPolicy:            true,
 	}
 	result, err := deps.Orchestrator.ListApplications(cmd.Context(), request)
 	if renderErr := renderDiagnostics(cmd.ErrOrStderr(), result.Diagnostics); renderErr != nil {

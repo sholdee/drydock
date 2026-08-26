@@ -7,7 +7,6 @@ import (
 	argoappv1 "github.com/argoproj/argo-cd/v3/pkg/apis/application/v1alpha1"
 	"github.com/sholdee/drydock/internal/config"
 	"github.com/sholdee/drydock/internal/diagnostic"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 func TestValidateApplicationsSourceRepositoryParityWithArgoCD(t *testing.T) {
@@ -73,7 +72,7 @@ func TestValidateApplicationsSourceRepositoryParityWithArgoCD(t *testing.T) {
 
 func sourceParityProject(sourceRepos []string) argoappv1.AppProject {
 	return argoappv1.AppProject{
-		ObjectMeta: metav1.ObjectMeta{Name: "platform", Namespace: "argocd"},
+		Name: "platform", Namespace: "argocd",
 		Spec: argoappv1.AppProjectSpec{
 			SourceRepos: append([]string(nil), sourceRepos...),
 			Destinations: []argoappv1.ApplicationDestination{{
@@ -86,7 +85,7 @@ func sourceParityProject(sourceRepos []string) argoappv1.AppProject {
 
 func sourceParityApplication(sources argoappv1.ApplicationSources) argoappv1.Application {
 	return argoappv1.Application{
-		ObjectMeta: metav1.ObjectMeta{Name: "source-parity", Namespace: "argocd"},
+		Name: "source-parity", Namespace: "argocd",
 		Spec: argoappv1.ApplicationSpec{
 			Project: "platform",
 			Sources: sources,

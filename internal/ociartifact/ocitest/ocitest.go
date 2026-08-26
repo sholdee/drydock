@@ -34,7 +34,6 @@ import (
 	"time"
 
 	"github.com/google/go-containerregistry/pkg/registry"
-	specs "github.com/opencontainers/image-spec/specs-go"
 	imagev1 "github.com/opencontainers/image-spec/specs-go/v1"
 	"oras.land/oras-go/v2"
 	"oras.land/oras-go/v2/content"
@@ -393,10 +392,10 @@ func pushArtifact(t *testing.T, reg *Registry, repoName, tag, configMediaType st
 	}
 
 	manifest := imagev1.Manifest{
-		Versioned: specs.Versioned{SchemaVersion: 2},
-		MediaType: imagev1.MediaTypeImageManifest,
-		Config:    configDesc,
-		Layers:    layerDescs,
+		SchemaVersion: 2,
+		MediaType:     imagev1.MediaTypeImageManifest,
+		Config:        configDesc,
+		Layers:        layerDescs,
 	}
 	manifestBytes, err := json.Marshal(manifest)
 	if err != nil {

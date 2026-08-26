@@ -92,7 +92,7 @@ func (options Options) Build() app.BuildRequest {
 		FilterOptions:          options.filterOptions(),
 		ApplicationSetOptions:  options.applicationSetOptions(),
 		CapabilityOptions:      options.capabilityOptions(),
-		CRDScopeOptions:        app.CRDScopeOptions{Disabled: options.NoCRDScope},
+		Disabled:               options.NoCRDScope,
 	}
 }
 
@@ -124,7 +124,7 @@ func (options Options) Diff() app.DiffRequest {
 		FilterOptions:           options.filterOptions(),
 		ApplicationSetOptions:   options.applicationSetOptions(),
 		CapabilityOptions:       options.capabilityOptions(),
-		CRDScopeOptions:         app.CRDScopeOptions{Disabled: options.NoCRDScope},
+		Disabled:                options.NoCRDScope,
 	}
 }
 

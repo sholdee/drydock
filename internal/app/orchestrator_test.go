@@ -15,7 +15,6 @@ import (
 	"github.com/sholdee/drydock/internal/config"
 	"github.com/sholdee/drydock/internal/diagnostic"
 	"github.com/sholdee/drydock/internal/discovery"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 )
 
@@ -113,7 +112,7 @@ func TestNewLocalProviderCarriesHelmValuesFileSchemes(t *testing.T) {
 
 func TestNewLocalProviderPreservesGitDirInSnapshotsWhenPluginsEnabled(t *testing.T) {
 	provider, cleanup, err := newLocalProvider(context.Background(), Orchestrator{}, t.TempDir(), config.DefaultSettings(), BuildRequest{
-		PluginOptions: PluginOptions{EnablePlugins: true},
+		EnablePlugins: true,
 	}, nil, "drydock-test-*")
 	defer cleanup()
 	if err != nil {
@@ -378,10 +377,8 @@ stringData:
 `)
 
 	result, err := Orchestrator{}.Build(context.Background(), BuildRequest{
-		Path: root,
-		FilterOptions: FilterOptions{
-			SkipSecrets: true,
-		},
+		Path:        root,
+		SkipSecrets: true,
 	})
 	if err != nil {
 		t.Fatalf("Build() error = %v", err)
@@ -505,9 +502,7 @@ stringData:
 		Path:              root,
 		StatusOnly:        true,
 		ValidateLuaHealth: true,
-		FilterOptions: FilterOptions{
-			SkipSecrets: true,
-		},
+		SkipSecrets:       true,
 	})
 	if err != nil {
 		t.Fatalf("Build() error = %v", err)
@@ -699,11 +694,9 @@ spec:
 `)
 
 	_, err := (Orchestrator{}).Build(context.Background(), BuildRequest{
-		Path: root,
-		AcquisitionOptions: AcquisitionOptions{
-			Offline:     true,
-			GitCacheDir: filepath.Join(root, ".drydock", "git"),
-		},
+		Path:        root,
+		Offline:     true,
+		GitCacheDir: filepath.Join(root, ".drydock", "git"),
 	})
 	if err == nil || !strings.Contains(err.Error(), "git cache dir") {
 		t.Fatalf("Build error = %v, want git cache validation error", err)
@@ -717,10 +710,8 @@ func TestOrchestratorBuildPreservesPartialResults(t *testing.T) {
 	fixture.writeExternalPathApplicationNamed(t, "invalid", "https://github.com/example/missing", "manifests/missing")
 
 	result, err := fixture.buildAllowError(t, Orchestrator{}, BuildRequest{
-		AcquisitionOptions: AcquisitionOptions{
-			GitCacheDir: cacheDir,
-			Offline:     true,
-		},
+		GitCacheDir: cacheDir,
+		Offline:     true,
 	})
 	assertBuildErrorContains(t, err, "1 Application failed", "argocd/invalid")
 	if len(result.Manifests) != 1 {
@@ -1070,7 +1061,7 @@ func indentLua(lua string) string {
 
 func TestApplicationInputPathsByKeyDuplicateAppsAreCacheIneligible(t *testing.T) {
 	app := func(name string) argoappv1.Application {
-		return argoappv1.Application{ObjectMeta: metav1.ObjectMeta{Namespace: "argocd", Name: name}}
+		return argoappv1.Application{Namespace: "argocd", Name: name}
 	}
 	inputs := []ApplicationSelectionInput{
 		{Application: app("web"), Paths: []string{"apps/web/app.yaml"}},
@@ -1094,7 +1085,7 @@ func TestApplicationInputPathsByKeyDuplicateAppsAreCacheIneligible(t *testing.T)
 
 func TestApplicationInputsByKeyDuplicateAppsAreCacheIneligible(t *testing.T) {
 	app := func(name string) argoappv1.Application {
-		return argoappv1.Application{ObjectMeta: metav1.ObjectMeta{Namespace: "argocd", Name: name}}
+		return argoappv1.Application{Namespace: "argocd", Name: name}
 	}
 	appFile := func(application argoappv1.Application, paths []string) discovery.ApplicationFile {
 		return discovery.ApplicationFile{

@@ -123,8 +123,8 @@ func TestListApplicationsSelfRepoRefAppOfAppsDiscoversLocalOnlyChild(t *testing.
 	result, err := (Orchestrator{
 		GitAcquirer: gitAcquirer,
 	}).ListApplications(context.Background(), BuildRequest{
-		Path:               root,
-		AcquisitionOptions: AcquisitionOptions{RecordCacheEvents: true},
+		Path:              root,
+		RecordCacheEvents: true,
 	})
 	if err != nil {
 		t.Fatalf("ListApplications() error = %v", err)
@@ -164,8 +164,8 @@ func TestBuildSelfRepoRefDefaultBranchValuesRenderLocally(t *testing.T) {
 		GitAcquirer:   gitAcquirer,
 		ChartAcquirer: newSelfRepoValueChartAcquirer(t),
 	}).Build(context.Background(), BuildRequest{
-		Path:               root,
-		AcquisitionOptions: AcquisitionOptions{RecordCacheEvents: true},
+		Path:              root,
+		RecordCacheEvents: true,
 	})
 	if err != nil {
 		t.Fatalf("Build() error = %v", err)
@@ -297,11 +297,9 @@ func TestBuildSelfRepoRefRendersOffline(t *testing.T) {
 	result, err := (Orchestrator{
 		ChartAcquirer: newSelfRepoValueChartAcquirer(t),
 	}).Build(context.Background(), BuildRequest{
-		Path: root,
-		AcquisitionOptions: AcquisitionOptions{
-			Offline:     true,
-			GitCacheDir: t.TempDir(),
-		},
+		Path:        root,
+		Offline:     true,
+		GitCacheDir: t.TempDir(),
 	})
 	if err != nil {
 		t.Fatalf("Build() error = %v", err)
@@ -429,10 +427,10 @@ func TestDiffPathSelfRepoBothSidesWithRemotesPreserveDiffDetectedRefs(t *testing
 		GitAcquirer:   gitAcquirer,
 		ChartAcquirer: newSelfRepoValueChartAcquirer(t),
 	}).DiffApps(context.Background(), DiffRequest{
-		LeftPath:         left,
-		RightPath:        right,
-		Unified:          3,
-		ExecutionOptions: ExecutionOptions{Parallelism: 1},
+		LeftPath:    left,
+		RightPath:   right,
+		Unified:     3,
+		Parallelism: 1,
 	})
 	if err != nil {
 		t.Fatalf("DiffApps() error = %v", err)
@@ -461,11 +459,9 @@ func TestBuildSelfRepoRepoMapPrecedesSelfResolution(t *testing.T) {
 		GitAcquirer:   gitAcquirer,
 		ChartAcquirer: newSelfRepoValueChartAcquirer(t),
 	}).Build(context.Background(), BuildRequest{
-		Path: root,
-		AcquisitionOptions: AcquisitionOptions{
-			RecordCacheEvents: true,
-			RepoMaps:          []sourcepkg.RepoMap{{URL: selfRepoRemoteURL, Path: mapped}},
-		},
+		Path:              root,
+		RecordCacheEvents: true,
+		RepoMaps:          []sourcepkg.RepoMap{{URL: selfRepoRemoteURL, Path: mapped}},
 	})
 	if err != nil {
 		t.Fatalf("Build() error = %v", err)
@@ -561,12 +557,10 @@ func TestBuildSelfRepoDirtyWorktreeEditReflectedWithPersistentCache(t *testing.T
 	commitDiffGitRepo(t, fixture.repo, fixture.wt, "baseline")
 
 	request := BuildRequest{
-		Path: root,
-		RenderCacheOptions: RenderCacheOptions{
-			RenderCacheEnabled: true,
-			RenderCacheDir:     t.TempDir(),
-			EngineFingerprint:  testEngineFingerprint(),
-		},
+		Path:               root,
+		RenderCacheEnabled: true,
+		RenderCacheDir:     t.TempDir(),
+		EngineFingerprint:  testEngineFingerprint(),
 	}
 	orchestrator := Orchestrator{
 		GitAcquirer:   &countingGitAcquirer{err: errors.New("self-repo ref must not be acquired")},

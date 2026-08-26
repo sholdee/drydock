@@ -147,12 +147,12 @@ func TestDiffRefSelfRepoRefValuesResolveToSideTrees(t *testing.T) {
 		GitAcquirer:   gitAcquirer,
 		ChartAcquirer: newSelfRepoValueChartAcquirer(t),
 	}).DiffApps(context.Background(), DiffRequest{
-		Repo:               root,
-		RefOrig:            "master",
-		Ref:                "feature",
-		Unified:            3,
-		ExecutionOptions:   ExecutionOptions{Parallelism: 1},
-		AcquisitionOptions: AcquisitionOptions{RecordCacheEvents: true},
+		Repo:              root,
+		RefOrig:           "master",
+		Ref:               "feature",
+		Unified:           3,
+		Parallelism:       1,
+		RecordCacheEvents: true,
 	})
 	if err != nil {
 		t.Fatalf("DiffApps() error = %v", err)
@@ -181,11 +181,11 @@ func TestDiffRefSelfRepoRefAddedApplicationRenders(t *testing.T) {
 		GitAcquirer:   gitAcquirer,
 		ChartAcquirer: newSelfRepoValueChartAcquirer(t),
 	}).DiffApps(context.Background(), DiffRequest{
-		Repo:             root,
-		RefOrig:          "master",
-		Ref:              "feature",
-		Unified:          3,
-		ExecutionOptions: ExecutionOptions{Parallelism: 1},
+		Repo:        root,
+		RefOrig:     "master",
+		Ref:         "feature",
+		Unified:     3,
+		Parallelism: 1,
 	})
 	if err != nil {
 		t.Fatalf("DiffApps() error = %v", err)
@@ -222,12 +222,12 @@ func TestDiffRefSelfRepoPinnedSHAStillSharesAcquisition(t *testing.T) {
 		GitAcquirer:   gitAcquirer,
 		ChartAcquirer: newSelfRepoValueChartAcquirer(t),
 	}).DiffApps(context.Background(), DiffRequest{
-		Repo:               root,
-		RefOrig:            "master",
-		Ref:                "feature",
-		Unified:            3,
-		ExecutionOptions:   ExecutionOptions{Parallelism: 1},
-		AcquisitionOptions: AcquisitionOptions{RecordCacheEvents: true},
+		Repo:              root,
+		RefOrig:           "master",
+		Ref:               "feature",
+		Unified:           3,
+		Parallelism:       1,
+		RecordCacheEvents: true,
 	})
 	if err != nil {
 		t.Fatalf("DiffApps() error = %v", err)
@@ -261,12 +261,12 @@ func TestDiffRefNonSelfRemoteURLStillSharesAcquisition(t *testing.T) {
 		GitAcquirer:   gitAcquirer,
 		ChartAcquirer: newSelfRepoValueChartAcquirer(t),
 	}).DiffApps(context.Background(), DiffRequest{
-		Repo:               root,
-		RefOrig:            "master",
-		Ref:                "feature",
-		Unified:            3,
-		ExecutionOptions:   ExecutionOptions{Parallelism: 1},
-		AcquisitionOptions: AcquisitionOptions{RecordCacheEvents: true},
+		Repo:              root,
+		RefOrig:           "master",
+		Ref:               "feature",
+		Unified:           3,
+		Parallelism:       1,
+		RecordCacheEvents: true,
 	})
 	if err != nil {
 		t.Fatalf("DiffApps() error = %v", err)
@@ -313,11 +313,11 @@ func TestDiffRefSelfRepoSymbolicRevisionGate(t *testing.T) {
 				GitAcquirer:   gitAcquirer,
 				ChartAcquirer: newSelfRepoValueChartAcquirer(t),
 			}).DiffApps(context.Background(), DiffRequest{
-				Repo:             root,
-				RefOrig:          "master",
-				Ref:              "feature",
-				Unified:          3,
-				ExecutionOptions: ExecutionOptions{Parallelism: 1},
+				Repo:        root,
+				RefOrig:     "master",
+				Ref:         "feature",
+				Unified:     3,
+				Parallelism: 1,
 			})
 			if err != nil {
 				t.Fatalf("DiffApps() error = %v", err)
@@ -382,11 +382,11 @@ func TestDiffRefSelfRepoDefaultBranchNameMapsViaSymref(t *testing.T) {
 				GitAcquirer:   gitAcquirer,
 				ChartAcquirer: newSelfRepoValueChartAcquirer(t),
 			}).DiffApps(context.Background(), DiffRequest{
-				Repo:             root,
-				RefOrig:          "master",
-				Ref:              "feature",
-				Unified:          3,
-				ExecutionOptions: ExecutionOptions{Parallelism: 1},
+				Repo:        root,
+				RefOrig:     "master",
+				Ref:         "feature",
+				Unified:     3,
+				Parallelism: 1,
 			})
 			if err != nil {
 				t.Fatalf("DiffApps() error = %v", err)
@@ -444,10 +444,10 @@ func TestDiffPathSelfRepoRemoteUnionResolvesPerSide(t *testing.T) {
 		GitAcquirer:   gitAcquirer,
 		ChartAcquirer: newSelfRepoValueChartAcquirer(t),
 	}).DiffApps(context.Background(), DiffRequest{
-		LeftPath:         left,
-		RightPath:        right,
-		Unified:          3,
-		ExecutionOptions: ExecutionOptions{Parallelism: 1},
+		LeftPath:    left,
+		RightPath:   right,
+		Unified:     3,
+		Parallelism: 1,
 	})
 	if err != nil {
 		t.Fatalf("DiffApps() error = %v", err)
@@ -474,15 +474,13 @@ func TestDiffRefRepoMapPointingAtDiffedRepoRewritesPerSide(t *testing.T) {
 		GitAcquirer:   gitAcquirer,
 		ChartAcquirer: newSelfRepoValueChartAcquirer(t),
 	}).DiffApps(context.Background(), DiffRequest{
-		Repo:             root,
-		RefOrig:          "master",
-		Ref:              "feature",
-		Unified:          3,
-		ExecutionOptions: ExecutionOptions{Parallelism: 1},
-		AcquisitionOptions: AcquisitionOptions{
-			RecordCacheEvents: true,
-			RepoMaps:          []sourcepkg.RepoMap{{URL: selfRepoRemoteURL, Path: root}},
-		},
+		Repo:              root,
+		RefOrig:           "master",
+		Ref:               "feature",
+		Unified:           3,
+		Parallelism:       1,
+		RecordCacheEvents: true,
+		RepoMaps:          []sourcepkg.RepoMap{{URL: selfRepoRemoteURL, Path: root}},
 	})
 	if err != nil {
 		t.Fatalf("DiffApps() error = %v", err)
@@ -526,12 +524,12 @@ func TestDiffRefSelfRepoForkNearMissWarnsOncePerSide(t *testing.T) {
 				GitAcquirer:   gitAcquirer,
 				ChartAcquirer: newSelfRepoValueChartAcquirer(t),
 			}).DiffApps(context.Background(), DiffRequest{
-				Repo:             root,
-				RefOrig:          "master",
-				Ref:              "feature",
-				Strict:           tt.strict,
-				Unified:          3,
-				ExecutionOptions: ExecutionOptions{Parallelism: 1},
+				Repo:        root,
+				RefOrig:     "master",
+				Ref:         "feature",
+				Strict:      tt.strict,
+				Unified:     3,
+				Parallelism: 1,
 			})
 			if err != nil {
 				t.Fatalf("DiffApps() error = %v", err)
@@ -579,11 +577,11 @@ func TestDiffRefSelfRepoForkNearMissAccompaniesAcquisitionFailure(t *testing.T) 
 		GitAcquirer:   gitAcquirer,
 		ChartAcquirer: newSelfRepoValueChartAcquirer(t),
 	}).DiffApps(context.Background(), DiffRequest{
-		Repo:             root,
-		RefOrig:          "master",
-		Ref:              "feature",
-		Unified:          3,
-		ExecutionOptions: ExecutionOptions{Parallelism: 1},
+		Repo:        root,
+		RefOrig:     "master",
+		Ref:         "feature",
+		Unified:     3,
+		Parallelism: 1,
 	})
 	if err == nil {
 		t.Fatal("DiffApps() error = nil, want acquisition failure")
@@ -615,15 +613,13 @@ func TestDiffRefSelfRepoRefRendersOffline(t *testing.T) {
 	result, err := (Orchestrator{
 		ChartAcquirer: newSelfRepoValueChartAcquirer(t),
 	}).DiffApps(context.Background(), DiffRequest{
-		Repo:             root,
-		RefOrig:          "master",
-		Ref:              "feature",
-		Unified:          3,
-		ExecutionOptions: ExecutionOptions{Parallelism: 1},
-		AcquisitionOptions: AcquisitionOptions{
-			Offline:     true,
-			GitCacheDir: t.TempDir(),
-		},
+		Repo:        root,
+		RefOrig:     "master",
+		Ref:         "feature",
+		Unified:     3,
+		Parallelism: 1,
+		Offline:     true,
+		GitCacheDir: t.TempDir(),
 	})
 	if err != nil {
 		t.Fatalf("DiffApps() error = %v", err)
@@ -687,10 +683,10 @@ spec:
 		GitAcquirer:   gitAcquirer,
 		ChartAcquirer: &recordingChartAcquirer{chartDir: chartRoot},
 	}).DiffImages(context.Background(), DiffRequest{
-		Repo:             root,
-		RefOrig:          "master",
-		Ref:              "feature",
-		ExecutionOptions: ExecutionOptions{Parallelism: 1},
+		Repo:        root,
+		RefOrig:     "master",
+		Ref:         "feature",
+		Parallelism: 1,
 	})
 	if err != nil {
 		t.Fatalf("DiffImages() error = %v", err)
@@ -748,12 +744,12 @@ resources:
 		GitAcquirer:            gitAcquirer,
 		RemoteResourceAcquirer: remoteAcquirer,
 	}).DiffApps(context.Background(), DiffRequest{
-		Repo:               root,
-		RefOrig:            "master",
-		Ref:                "feature",
-		Unified:            3,
-		ExecutionOptions:   ExecutionOptions{Parallelism: 1},
-		AcquisitionOptions: AcquisitionOptions{RecordCacheEvents: true},
+		Repo:              root,
+		RefOrig:           "master",
+		Ref:               "feature",
+		Unified:           3,
+		Parallelism:       1,
+		RecordCacheEvents: true,
 	})
 	if err != nil {
 		t.Fatalf("DiffApps() error = %v", err)

@@ -18,7 +18,6 @@ import (
 	argoappv1 "github.com/argoproj/argo-cd/v3/pkg/apis/application/v1alpha1"
 	"github.com/sholdee/drydock/internal/cacheevent"
 	sourcepkg "github.com/sholdee/drydock/internal/source"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 // writeCapabilityGatedHelmApp writes a Helm chart whose template conditionally
@@ -96,7 +95,7 @@ func TestInMemoryCacheKeyIncludesAPIVersions(t *testing.T) {
 	gitCommitAll(t, repoRoot, "initial")
 
 	application := argoappv1.Application{
-		ObjectMeta: metav1.ObjectMeta{Name: "demo", Namespace: "argocd"},
+		Name: "demo", Namespace: "argocd",
 		Spec: argoappv1.ApplicationSpec{
 			Source: &argoappv1.ApplicationSource{
 				RepoURL:        "https://github.com/example/repo",
@@ -120,9 +119,7 @@ func TestInMemoryCacheKeyIncludesAPIVersions(t *testing.T) {
 
 	// First render: with monitoring API → ServiceMonitor must appear.
 	withMonitoring := BuildRequest{
-		CapabilityOptions: CapabilityOptions{
-			APIVersions: []string{"monitoring.coreos.com/v1"},
-		},
+		APIVersions: []string{"monitoring.coreos.com/v1"},
 	}
 	ctx1 := renderContext{
 		context:  context.Background(),
@@ -203,7 +200,7 @@ data:
 	gitCommitAll(t, repoRoot, "initial")
 
 	application := argoappv1.Application{
-		ObjectMeta: metav1.ObjectMeta{Name: "kv", Namespace: "argocd"},
+		Name: "kv", Namespace: "argocd",
 		Spec: argoappv1.ApplicationSpec{
 			Source: &argoappv1.ApplicationSource{
 				RepoURL:        "https://github.com/example/repo",
@@ -385,17 +382,13 @@ func TestPersistentCacheKeyDiffPathIncludesAPIVersions(t *testing.T) {
 
 	// Diff run 1: with monitoring API — renders and stores.
 	diffReq1 := DiffRequest{
-		Repo:    root,
-		Ref:     "HEAD",
-		RefOrig: baseline,
-		RenderCacheOptions: RenderCacheOptions{
-			RenderCacheEnabled: true,
-			RenderCacheDir:     diffCacheDir,
-			EngineFingerprint:  testEngineFingerprint(),
-		},
-		CapabilityOptions: CapabilityOptions{
-			APIVersions: []string{"monitoring.coreos.com/v1"},
-		},
+		Repo:               root,
+		Ref:                "HEAD",
+		RefOrig:            baseline,
+		RenderCacheEnabled: true,
+		RenderCacheDir:     diffCacheDir,
+		EngineFingerprint:  testEngineFingerprint(),
+		APIVersions:        []string{"monitoring.coreos.com/v1"},
 	}
 	var run1Renders atomic.Int64
 	if _, err := countingOrchestrator(&run1Renders).DiffApps(context.Background(), diffReq1); err != nil {

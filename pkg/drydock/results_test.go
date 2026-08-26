@@ -25,8 +25,8 @@ func TestRenderResultFromBuildGoldenClonesManifestsAndStabilizesDiagnostics(t *t
 	}
 	result := renderResultFromBuild(app.BuildResult{
 		Applications: []argoappv1.Application{{
-			ObjectMeta: metav1.ObjectMeta{Name: "demo", Namespace: "argocd"},
-			Spec:       argoappv1.ApplicationSpec{Project: "default"},
+			Name: "demo", Namespace: "argocd",
+			Spec: argoappv1.ApplicationSpec{Project: "default"},
 		}},
 		ApplicationManifests: []app.ApplicationManifest{{
 			Application: argoappv1.Application{

@@ -11,7 +11,6 @@ import (
 	"github.com/sholdee/drydock/internal/config"
 	"github.com/sholdee/drydock/internal/diagnostic"
 	"github.com/sholdee/drydock/internal/remote"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 const (
@@ -89,7 +88,7 @@ func applicationProject(app argoappv1.Application) string {
 
 func implicitDefaultProject() argoappv1.AppProject {
 	return argoappv1.AppProject{
-		ObjectMeta: metav1.ObjectMeta{Name: argoappv1.DefaultAppProjectName},
+		Name: argoappv1.DefaultAppProjectName,
 		Spec: argoappv1.AppProjectSpec{
 			SourceRepos: []string{"*"},
 			Destinations: []argoappv1.ApplicationDestination{{

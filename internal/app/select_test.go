@@ -4,7 +4,6 @@ import (
 	"testing"
 
 	argoappv1 "github.com/argoproj/argo-cd/v3/pkg/apis/application/v1alpha1"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 func TestSelectChangedApplicationsKeepsIntersectingApps(t *testing.T) {
@@ -161,7 +160,7 @@ func TestSelectChangedApplicationsSkipsRemoteChartOnlyOrdinaryValueFiles(t *test
 
 func testApplication(name string, source *argoappv1.ApplicationSource, sources argoappv1.ApplicationSources) argoappv1.Application {
 	return argoappv1.Application{
-		ObjectMeta: metav1.ObjectMeta{Name: name},
+		Name: name,
 		Spec: argoappv1.ApplicationSpec{
 			Source:  source,
 			Sources: sources,

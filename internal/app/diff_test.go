@@ -789,14 +789,12 @@ func TestDiffAppRefOrigComparesWorkingTreeAgainstBaselineRef(t *testing.T) {
 	writeDeploymentAppWithDataValue(t, root, "working")
 
 	result, err := (Orchestrator{}).DiffApp(context.Background(), DiffAppRequest{
-		Name: "demo",
-		DiffRequest: DiffRequest{
-			RightPath:   root,
-			Repo:        root,
-			RefOrig:     "HEAD",
-			ChangedOnly: false,
-			Unified:     3,
-		},
+		Name:        "demo",
+		RightPath:   root,
+		Repo:        root,
+		RefOrig:     "HEAD",
+		ChangedOnly: false,
+		Unified:     3,
 	})
 	if err != nil {
 		t.Fatalf("DiffApp() error = %v", err)
@@ -819,14 +817,12 @@ func TestDiffAppRefOrigDoesNotRunChangedOnlyGitPathDetection(t *testing.T) {
 	writeTestFile(t, filepath.Join(root, ".git", "HEAD"), "ref: refs/heads/missing\n")
 
 	result, err := (Orchestrator{}).DiffApp(context.Background(), DiffAppRequest{
-		Name: "demo",
-		DiffRequest: DiffRequest{
-			RightPath:   root,
-			Repo:        root,
-			RefOrig:     baseline.String(),
-			ChangedOnly: true,
-			Unified:     3,
-		},
+		Name:        "demo",
+		RightPath:   root,
+		Repo:        root,
+		RefOrig:     baseline.String(),
+		ChangedOnly: true,
+		Unified:     3,
 	})
 	if err != nil {
 		t.Fatalf("DiffApp() error = %v", err)
@@ -946,11 +942,9 @@ func TestDiffAppsRejectsRemoteCacheInsideEitherRoot(t *testing.T) {
 	right := t.TempDir()
 
 	_, err := Orchestrator{}.DiffApps(context.Background(), DiffRequest{
-		LeftPath:  left,
-		RightPath: right,
-		AcquisitionOptions: AcquisitionOptions{
-			RemoteResourceCacheDir: filepath.Join(right, ".drydock", "remotes"),
-		},
+		LeftPath:               left,
+		RightPath:              right,
+		RemoteResourceCacheDir: filepath.Join(right, ".drydock", "remotes"),
 	})
 	if err == nil {
 		t.Fatal("DiffApps() error = nil, want cache containment error")
@@ -966,11 +960,9 @@ func TestDiffAppsRejectsChartCacheInsideEitherRoot(t *testing.T) {
 
 	for _, root := range []string{left, right} {
 		_, err := Orchestrator{}.DiffApps(context.Background(), DiffRequest{
-			LeftPath:  left,
-			RightPath: right,
-			AcquisitionOptions: AcquisitionOptions{
-				ChartCacheDir: filepath.Join(root, ".drydock", "charts"),
-			},
+			LeftPath:      left,
+			RightPath:     right,
+			ChartCacheDir: filepath.Join(root, ".drydock", "charts"),
 		})
 		if err == nil {
 			t.Fatal("DiffApps() error = nil, want chart cache containment error")
@@ -987,9 +979,7 @@ func TestDiffAppsRejectsChartCacheInsideEitherRoot(t *testing.T) {
 func TestValidateDiffCacheRootsRejectsOCICacheDir(t *testing.T) {
 	root := t.TempDir()
 	request := DiffRequest{
-		AcquisitionOptions: AcquisitionOptions{
-			OCICacheDir: filepath.Join(root, ".drydock", "oci"),
-		},
+		OCICacheDir: filepath.Join(root, ".drydock", "oci"),
 	}
 	err := validateDiffCacheRoots(request, []string{root})
 	if err == nil {
@@ -1006,11 +996,9 @@ func TestDiffAppsRejectsOCICacheInsideEitherRoot(t *testing.T) {
 
 	for _, root := range []string{left, right} {
 		_, err := Orchestrator{}.DiffApps(context.Background(), DiffRequest{
-			LeftPath:  left,
-			RightPath: right,
-			AcquisitionOptions: AcquisitionOptions{
-				OCICacheDir: filepath.Join(root, ".drydock", "oci"),
-			},
+			LeftPath:    left,
+			RightPath:   right,
+			OCICacheDir: filepath.Join(root, ".drydock", "oci"),
 		})
 		if err == nil {
 			t.Fatal("DiffApps() error = nil, want oci cache containment error")
@@ -1028,12 +1016,10 @@ func TestDiffAppsRejectsRenderCacheInsideEitherRoot(t *testing.T) {
 	for _, root := range []string{left, right} {
 		cacheDir := filepath.Join(root, ".drydock", "render")
 		_, err := Orchestrator{}.DiffApps(context.Background(), DiffRequest{
-			LeftPath:  left,
-			RightPath: right,
-			RenderCacheOptions: RenderCacheOptions{
-				RenderCacheEnabled: true,
-				RenderCacheDir:     cacheDir,
-			},
+			LeftPath:           left,
+			RightPath:          right,
+			RenderCacheEnabled: true,
+			RenderCacheDir:     cacheDir,
 		})
 		if err == nil {
 			t.Fatal("DiffApps() error = nil, want render cache containment error")
@@ -1059,17 +1045,15 @@ func TestDiffAppsPassesChartForbiddenRootsToBuilds(t *testing.T) {
 	acquirer := &recordingChartAcquirer{chartDir: filepath.Join(chartRoot, "demo")}
 
 	_, err := (Orchestrator{ChartAcquirer: acquirer}).DiffApps(context.Background(), DiffRequest{
-		LeftPath:    left,
-		RightPath:   right,
-		ChangedOnly: false,
-		AcquisitionOptions: AcquisitionOptions{
-			ChartCacheDir:                t.TempDir(),
-			RemoteResourceForbiddenRoots: []string{explicitRoot},
-			RepoMaps: []sourcepkg.RepoMap{{
-				URL:  "https://github.com/example/mapped.git",
-				Path: mappedRoot,
-			}},
-		},
+		LeftPath:                     left,
+		RightPath:                    right,
+		ChangedOnly:                  false,
+		ChartCacheDir:                t.TempDir(),
+		RemoteResourceForbiddenRoots: []string{explicitRoot},
+		RepoMaps: []sourcepkg.RepoMap{{
+			URL:  "https://github.com/example/mapped.git",
+			Path: mappedRoot,
+		}},
 	})
 	if err != nil {
 		t.Fatalf("DiffApps() error = %v", err)
@@ -1193,14 +1177,12 @@ func TestDiffAppsRefRejectsRenderCacheInsideOriginalRepo(t *testing.T) {
 	cacheDir := filepath.Join(root, ".drydock", "render")
 
 	_, err := Orchestrator{}.DiffApps(context.Background(), DiffRequest{
-		Repo:        root,
-		RefOrig:     "HEAD",
-		Ref:         "HEAD",
-		ChangedOnly: false,
-		RenderCacheOptions: RenderCacheOptions{
-			RenderCacheEnabled: true,
-			RenderCacheDir:     cacheDir,
-		},
+		Repo:               root,
+		RefOrig:            "HEAD",
+		Ref:                "HEAD",
+		ChangedOnly:        false,
+		RenderCacheEnabled: true,
+		RenderCacheDir:     cacheDir,
 	})
 	if err == nil {
 		t.Fatal("DiffApps() error = nil, want render cache containment error")
@@ -1594,13 +1576,11 @@ func TestOrchestratorDiffAppReportsOnlyNamedApplicationChange(t *testing.T) {
 	writeDiffApplication(t, right, "other", "other", "changed-but-not-selected")
 
 	result, err := Orchestrator{}.DiffApp(context.Background(), DiffAppRequest{
-		Name: "demo",
-		DiffRequest: DiffRequest{
-			LeftPath:    left,
-			RightPath:   right,
-			Unified:     3,
-			ChangedOnly: true,
-		},
+		Name:        "demo",
+		LeftPath:    left,
+		RightPath:   right,
+		Unified:     3,
+		ChangedOnly: true,
 	})
 	if err != nil {
 		t.Fatalf("DiffApp() error = %v", err)
@@ -1632,8 +1612,8 @@ func TestOrchestratorDiffAppShowsAddedApplication(t *testing.T) {
 	writeDiffApplication(t, right, "demo", "demo", "new")
 
 	result, err := Orchestrator{}.DiffApp(context.Background(), DiffAppRequest{
-		Name:        "demo",
-		DiffRequest: DiffRequest{LeftPath: left, RightPath: right},
+		Name:     "demo",
+		LeftPath: left, RightPath: right,
 	})
 	if err != nil {
 		t.Fatalf("DiffApp() error = %v", err)
@@ -1651,8 +1631,8 @@ func TestOrchestratorDiffAppShowsDeletedApplication(t *testing.T) {
 	writeTestFile(t, filepath.Join(right, ".keep"), "right\n")
 
 	result, err := Orchestrator{}.DiffApp(context.Background(), DiffAppRequest{
-		Name:        "demo",
-		DiffRequest: DiffRequest{LeftPath: left, RightPath: right},
+		Name:     "demo",
+		LeftPath: left, RightPath: right,
 	})
 	if err != nil {
 		t.Fatalf("DiffApp() error = %v", err)
@@ -1670,8 +1650,8 @@ func TestOrchestratorDiffAppReportsMissingBothSides(t *testing.T) {
 	writeDiffApplication(t, right, "other", "other", "right")
 
 	_, err := Orchestrator{}.DiffApp(context.Background(), DiffAppRequest{
-		Name:        "missing",
-		DiffRequest: DiffRequest{LeftPath: left, RightPath: right},
+		Name:     "missing",
+		LeftPath: left, RightPath: right,
 	})
 	if err == nil {
 		t.Fatal("DiffApp() error = nil, want missing error")
@@ -1683,47 +1663,37 @@ func TestOrchestratorDiffAppReportsMissingBothSides(t *testing.T) {
 
 func TestDiffRequestCarriesProviderFixtureConfig(t *testing.T) {
 	request := DiffRequest{
-		LeftPath:  "/tmp/left",
-		RightPath: "/tmp/right",
-		DiscoveryOptions: DiscoveryOptions{
-			DiscoveryMode:          DiscoveryModeFleet,
-			MaxDiscoveryDepth:      2,
-			MaxDiscoveryDepthSet:   true,
-			DiscoverKustomizePaths: []string{"argocd/overlays/prod"},
-		},
-		AcquisitionOptions: AcquisitionOptions{
-			Offline:                      true,
-			RefreshCharts:                true,
-			ChartCacheDir:                "chart-cache",
-			ChartCredentials:             chart.ChartCredentials{Username: "chart-user"},
-			RepoMaps:                     []sourcepkg.RepoMap{{URL: "https://example.test/repo.git", Path: "/repo"}},
-			GitCacheDir:                  "git-cache",
-			RefreshGit:                   true,
-			GitCredentials:               sourcepkg.GitCredentials{Username: "git-user"},
-			RefreshRemoteResources:       true,
-			RemoteResourceCacheDir:       "remote-cache",
-			RemoteResourceCredentials:    remote.Credentials{Username: "remote-user"},
-			RemoteResourceGitCredentials: remote.GitCredentials{Username: "remote-git-user"},
-			RecordCacheEvents:            true,
-		},
-		PluginOptions:    PluginOptions{PluginTimeout: time.Second},
-		ExecutionOptions: ExecutionOptions{Parallelism: 3},
-		RenderCacheOptions: RenderCacheOptions{
-			RenderCacheEnabled:  true,
-			RenderCacheDir:      "render-cache",
-			RenderCacheMaxBytes: 1234,
-			RefreshRenders:      true,
-			EngineFingerprint:   rendercache.EngineFingerprint{Version: "1.2.3", Commit: "abc123"},
-		},
-		FilterOptions: FilterOptions{
-			SkipKinds:   []string{"Secret"},
-			SkipCRDs:    true,
-			SkipSecrets: true,
-		},
-		ApplicationSetOptions: ApplicationSetOptions{
-			ApplicationSetProviderFixtures: []string{"clusters.yaml"},
-			ApplicationSetProviderData:     appset.ProviderData{Clusters: []appset.ClusterInput{{Name: "prod", Server: "https://prod.example.invalid"}}},
-		},
+		LeftPath:                       "/tmp/left",
+		RightPath:                      "/tmp/right",
+		DiscoveryMode:                  DiscoveryModeFleet,
+		MaxDiscoveryDepth:              2,
+		MaxDiscoveryDepthSet:           true,
+		DiscoverKustomizePaths:         []string{"argocd/overlays/prod"},
+		Offline:                        true,
+		RefreshCharts:                  true,
+		ChartCacheDir:                  "chart-cache",
+		ChartCredentials:               chart.ChartCredentials{Username: "chart-user"},
+		RepoMaps:                       []sourcepkg.RepoMap{{URL: "https://example.test/repo.git", Path: "/repo"}},
+		GitCacheDir:                    "git-cache",
+		RefreshGit:                     true,
+		GitCredentials:                 sourcepkg.GitCredentials{Username: "git-user"},
+		RefreshRemoteResources:         true,
+		RemoteResourceCacheDir:         "remote-cache",
+		RemoteResourceCredentials:      remote.Credentials{Username: "remote-user"},
+		RemoteResourceGitCredentials:   remote.GitCredentials{Username: "remote-git-user"},
+		RecordCacheEvents:              true,
+		PluginTimeout:                  time.Second,
+		Parallelism:                    3,
+		RenderCacheEnabled:             true,
+		RenderCacheDir:                 "render-cache",
+		RenderCacheMaxBytes:            1234,
+		RefreshRenders:                 true,
+		EngineFingerprint:              rendercache.EngineFingerprint{Version: "1.2.3", Commit: "abc123"},
+		SkipKinds:                      []string{"Secret"},
+		SkipCRDs:                       true,
+		SkipSecrets:                    true,
+		ApplicationSetProviderFixtures: []string{"clusters.yaml"},
+		ApplicationSetProviderData:     appset.ProviderData{Clusters: []appset.ClusterInput{{Name: "prod", Server: "https://prod.example.invalid"}}},
 	}
 
 	left := request.buildRequest(request.LeftPath, []string{request.LeftPath, request.RightPath})
@@ -1768,14 +1738,10 @@ func TestDiffAppRejectsRemoteCacheInsideEitherRoot(t *testing.T) {
 
 	for _, root := range []string{left, right} {
 		_, err := Orchestrator{}.DiffApp(context.Background(), DiffAppRequest{
-			Name: "demo",
-			DiffRequest: DiffRequest{
-				LeftPath:  left,
-				RightPath: right,
-				AcquisitionOptions: AcquisitionOptions{
-					RemoteResourceCacheDir: filepath.Join(root, ".drydock", "remotes"),
-				},
-			},
+			Name:                   "demo",
+			LeftPath:               left,
+			RightPath:              right,
+			RemoteResourceCacheDir: filepath.Join(root, ".drydock", "remotes"),
 		})
 		if err == nil {
 			t.Fatal("DiffApp() error = nil, want cache containment error")
@@ -1792,14 +1758,10 @@ func TestDiffAppRejectsChartCacheInsideEitherRoot(t *testing.T) {
 
 	for _, root := range []string{left, right} {
 		_, err := Orchestrator{}.DiffApp(context.Background(), DiffAppRequest{
-			Name: "demo",
-			DiffRequest: DiffRequest{
-				LeftPath:  left,
-				RightPath: right,
-				AcquisitionOptions: AcquisitionOptions{
-					ChartCacheDir: filepath.Join(root, ".drydock", "charts"),
-				},
-			},
+			Name:          "demo",
+			LeftPath:      left,
+			RightPath:     right,
+			ChartCacheDir: filepath.Join(root, ".drydock", "charts"),
 		})
 		if err == nil {
 			t.Fatal("DiffApp() error = nil, want chart cache containment error")
@@ -1817,15 +1779,11 @@ func TestDiffAppRejectsRenderCacheInsideEitherRoot(t *testing.T) {
 	for _, root := range []string{left, right} {
 		cacheDir := filepath.Join(root, ".drydock", "render")
 		_, err := Orchestrator{}.DiffApp(context.Background(), DiffAppRequest{
-			Name: "demo",
-			DiffRequest: DiffRequest{
-				LeftPath:  left,
-				RightPath: right,
-				RenderCacheOptions: RenderCacheOptions{
-					RenderCacheEnabled: true,
-					RenderCacheDir:     cacheDir,
-				},
-			},
+			Name:               "demo",
+			LeftPath:           left,
+			RightPath:          right,
+			RenderCacheEnabled: true,
+			RenderCacheDir:     cacheDir,
 		})
 		if err == nil {
 			t.Fatal("DiffApp() error = nil, want render cache containment error")
@@ -1846,16 +1804,12 @@ func TestDiffAppRefRejectsGitCacheInsideOriginalRepo(t *testing.T) {
 	commitDiffGitRepo(t, repo, wt, "baseline")
 
 	_, err := Orchestrator{}.DiffApp(context.Background(), DiffAppRequest{
-		Name: "demo",
-		DiffRequest: DiffRequest{
-			Repo:        root,
-			RefOrig:     "HEAD",
-			Ref:         "HEAD",
-			ChangedOnly: false,
-			AcquisitionOptions: AcquisitionOptions{
-				GitCacheDir: filepath.Join(root, ".drydock", "git"),
-			},
-		},
+		Name:        "demo",
+		Repo:        root,
+		RefOrig:     "HEAD",
+		Ref:         "HEAD",
+		ChangedOnly: false,
+		GitCacheDir: filepath.Join(root, ".drydock", "git"),
 	})
 	if err == nil {
 		t.Fatal("DiffApp() error = nil, want git cache containment error")
@@ -2414,8 +2368,9 @@ func TestDiffImagesValidatesRenderCacheRootBeforeOpeningStore(t *testing.T) {
 	left := t.TempDir()
 	right := t.TempDir()
 	cacheDir := filepath.Join(right, "renders")
-	request := DiffRequest{LeftPath: left, RightPath: right}
-	request.RenderCacheOptions = RenderCacheOptions{
+	request := DiffRequest{
+		LeftPath:           left,
+		RightPath:          right,
 		RenderCacheEnabled: true,
 		RenderCacheDir:     cacheDir,
 		EngineFingerprint:  testEngineFingerprint(),

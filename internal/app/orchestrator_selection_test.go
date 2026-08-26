@@ -25,9 +25,7 @@ func TestOrchestratorBuildAppRendersOnlyNamedApplication(t *testing.T) {
 
 	result, err := Orchestrator{}.BuildApp(context.Background(), BuildAppRequest{
 		Name: "second",
-		BuildRequest: BuildRequest{
-			Path: root,
-		},
+		Path: root,
 	})
 	if err != nil {
 		t.Fatalf("BuildApp() error = %v", err)
@@ -50,9 +48,7 @@ func TestOrchestratorBuildAppPreservesSelectedApplicationInputs(t *testing.T) {
 
 	result, err := Orchestrator{}.BuildApp(context.Background(), BuildAppRequest{
 		Name: "second",
-		BuildRequest: BuildRequest{
-			Path: root,
-		},
+		Path: root,
 	})
 	if err != nil {
 		t.Fatalf("BuildApp() error = %v", err)
@@ -210,8 +206,8 @@ spec:
 `)
 
 	result, err := Orchestrator{}.BuildApp(context.Background(), BuildAppRequest{
-		Name:         "selected",
-		BuildRequest: BuildRequest{Path: root, Strict: true},
+		Name: "selected",
+		Path: root, Strict: true,
 	})
 	if err != nil {
 		t.Fatalf("BuildApp() error = %v", err)
@@ -291,8 +287,8 @@ func TestOrchestratorBuildAppReportsMissingApplication(t *testing.T) {
 	writeBuildApplication(t, root, "demo", "demo")
 
 	_, err := Orchestrator{}.BuildApp(context.Background(), BuildAppRequest{
-		Name:         "missing",
-		BuildRequest: BuildRequest{Path: root},
+		Name: "missing",
+		Path: root,
 	})
 	if err == nil {
 		t.Fatal("BuildApp() error = nil, want missing application error")
@@ -304,8 +300,8 @@ func TestOrchestratorBuildAppReportsMissingApplication(t *testing.T) {
 
 func TestOrchestratorBuildAppRequiresName(t *testing.T) {
 	_, err := Orchestrator{}.BuildApp(context.Background(), BuildAppRequest{
-		Name:         " ",
-		BuildRequest: BuildRequest{Path: t.TempDir()},
+		Name: " ",
+		Path: t.TempDir(),
 	})
 	if err == nil {
 		t.Fatal("BuildApp() error = nil, want required name error")
@@ -325,15 +321,11 @@ func TestOrchestratorBuildAppPreservesBuildOptionsForSelectedApplication(t *test
 	acquirer := &recordingChartAcquirer{chartDir: chartDir}
 
 	result, err := (Orchestrator{ChartAcquirer: acquirer}).BuildApp(context.Background(), BuildAppRequest{
-		Name: "chart-only",
-		BuildRequest: BuildRequest{
-			Path: root,
-			AcquisitionOptions: AcquisitionOptions{
-				ChartCacheDir: cacheDir,
-				Offline:       true,
-				RefreshCharts: true,
-			},
-		},
+		Name:          "chart-only",
+		Path:          root,
+		ChartCacheDir: cacheDir,
+		Offline:       true,
+		RefreshCharts: true,
 	})
 	if err != nil {
 		t.Fatalf("BuildApp() error = %v", err)
@@ -360,8 +352,8 @@ func TestOrchestratorBuildAppPreservesListAndRenderDiagnostics(t *testing.T) {
 	writeDuplicateConfigMaps(t, filepath.Join(root, "manifests", "direct"))
 
 	result, err := Orchestrator{}.BuildApp(context.Background(), BuildAppRequest{
-		Name:         "direct",
-		BuildRequest: BuildRequest{Path: root},
+		Name: "direct",
+		Path: root,
 	})
 	if err != nil {
 		t.Fatalf("BuildApp() error = %v", err)
@@ -385,8 +377,8 @@ func TestOrchestratorBuildAppMarksSelectedApplicationSkippedWhenPreconditionFail
 	writeUnsupportedApplicationSetFixture(t, root)
 
 	result, err := Orchestrator{}.BuildApp(context.Background(), BuildAppRequest{
-		Name:         "direct",
-		BuildRequest: BuildRequest{Path: root, Strict: true},
+		Name: "direct",
+		Path: root, Strict: true,
 	})
 	if err == nil {
 		t.Fatal("BuildApp() error = nil, want strict ApplicationSet precondition error")
@@ -434,15 +426,13 @@ clusters:
 	writeUnsupportedApplicationSetFixture(t, root)
 
 	result, err := Orchestrator{}.ListApplications(context.Background(), BuildRequest{
-		Path: root,
-		ApplicationSetOptions: ApplicationSetOptions{
-			ApplicationSetProviderFixtures: []string{fixturePath},
-			ApplicationSetProviderData: appset.ProviderData{
-				Clusters: []appset.ClusterInput{{
-					Name:   "prod",
-					Server: "https://prod.example.invalid",
-				}},
-			},
+		Path:                           root,
+		ApplicationSetProviderFixtures: []string{fixturePath},
+		ApplicationSetProviderData: appset.ProviderData{
+			Clusters: []appset.ClusterInput{{
+				Name:   "prod",
+				Server: "https://prod.example.invalid",
+			}},
 		},
 	})
 	if err == nil {

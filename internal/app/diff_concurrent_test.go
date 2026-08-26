@@ -34,19 +34,19 @@ func TestDiffAppsParallelSideBuildsMatchSequential(t *testing.T) {
 	writeSimpleApp(t, right, "new")
 
 	sequential, err := Orchestrator{}.DiffApps(context.Background(), DiffRequest{
-		LeftPath:         left,
-		RightPath:        right,
-		ExecutionOptions: ExecutionOptions{Parallelism: 1},
-		Unified:          3,
+		LeftPath:    left,
+		RightPath:   right,
+		Parallelism: 1,
+		Unified:     3,
 	})
 	if err != nil {
 		t.Fatalf("sequential DiffApps() error = %v", err)
 	}
 	parallel, err := Orchestrator{}.DiffApps(context.Background(), DiffRequest{
-		LeftPath:         left,
-		RightPath:        right,
-		ExecutionOptions: ExecutionOptions{Parallelism: 8},
-		Unified:          3,
+		LeftPath:    left,
+		RightPath:   right,
+		Parallelism: 8,
+		Unified:     3,
 	})
 	if err != nil {
 		t.Fatalf("parallel DiffApps() error = %v", err)

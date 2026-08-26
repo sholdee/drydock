@@ -10,7 +10,6 @@ import (
 	argoappv1 "github.com/argoproj/argo-cd/v3/pkg/apis/application/v1alpha1"
 	"github.com/sholdee/drydock/internal/diagnostic"
 	"sigs.k8s.io/kustomize/api/types"
-	"sigs.k8s.io/kustomize/kyaml/resid"
 )
 
 func sourceKustomizeDiagnostics(opts RenderOptions) []diagnostic.Diagnostic {
@@ -268,15 +267,11 @@ func sourceKustomizePatchTarget(target *argoappv1.KustomizeSelector) *types.Sele
 		return nil
 	}
 	return &types.Selector{
-		ResId: resid.ResId{
-			Gvk: resid.Gvk{
-				Group:   target.Group,
-				Version: target.Version,
-				Kind:    target.Kind,
-			},
-			Name:      target.Name,
-			Namespace: target.Namespace,
-		},
+		Group:              target.Group,
+		Version:            target.Version,
+		Kind:               target.Kind,
+		Name:               target.Name,
+		Namespace:          target.Namespace,
 		AnnotationSelector: target.AnnotationSelector,
 		LabelSelector:      target.LabelSelector,
 	}
