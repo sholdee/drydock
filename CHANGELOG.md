@@ -1,5 +1,40 @@
 # Changelog
 
+## [0.2.10](https://github.com/sholdee/drydock/compare/v0.2.9...v0.2.10) (2026-08-26)
+
+
+### Bug Fixes
+
+* **deps:** update module github.com/argoproj/argo-cd/v3 to v3.5.1 ([#261](https://github.com/sholdee/drydock/issues/261)) ([9e8d399](https://github.com/sholdee/drydock/commit/9e8d39998879a324a781b3da8fd3447983b9680c))
+* **deps:** update module github.com/sirupsen/logrus to v1.10.0 ([#267](https://github.com/sholdee/drydock/issues/267)) ([eec0767](https://github.com/sholdee/drydock/commit/eec076789f53d89c626ed34f14f168ae86752a6c))
+* **deps:** update module github.com/sirupsen/logrus to v1.10.1 ([#272](https://github.com/sholdee/drydock/issues/272)) ([3048540](https://github.com/sholdee/drydock/commit/304854083be8fec1efa60c3d6ce5852ef7f3cace))
+* **deps:** update module golang.org/x/crypto to v0.55.0 ([#260](https://github.com/sholdee/drydock/issues/260)) ([c7b57ba](https://github.com/sholdee/drydock/commit/c7b57ba0888415e62a136a64d9091d38423bd630))
+* **deps:** update module helm.sh/helm/v4 to v4.2.4 ([#266](https://github.com/sholdee/drydock/issues/266)) ([fa7f7a4](https://github.com/sholdee/drydock/commit/fa7f7a432fed46a8c1ec30e6bd9139fcc5a9549b))
+* **deps:** update module k8s.io/apimachinery to v0.36.4 ([#278](https://github.com/sholdee/drydock/issues/278)) ([1a4a466](https://github.com/sholdee/drydock/commit/1a4a466d6f4faa9a67c83844415239d0919d68a7))
+
+
+### Miscellaneous Chores
+
+* **deps:** update dependency go to v1.26.6 ([#268](https://github.com/sholdee/drydock/issues/268)) ([150ff41](https://github.com/sholdee/drydock/commit/150ff41c52e2c0a326b31287deb56cf3f95e6912))
+* **deps:** update dependency go to v1.26.7 ([#273](https://github.com/sholdee/drydock/issues/273)) ([5120ca4](https://github.com/sholdee/drydock/commit/5120ca428dab6a5c45695a7cc826e575bdfcd23c))
+* **deps:** update dependency go to v1.27.0 ([#274](https://github.com/sholdee/drydock/issues/274)) ([6603daf](https://github.com/sholdee/drydock/commit/6603daf978618b7279fdba0e62a040435d16d8e8))
+* **deps:** update dependency golangci-lint to v2.13.0 ([#276](https://github.com/sholdee/drydock/issues/276)) ([6b3d988](https://github.com/sholdee/drydock/commit/6b3d9883f669bc310f85f0dedba197e33f7d7d32))
+* **deps:** update dependency hugo to v0.165.0 ([#262](https://github.com/sholdee/drydock/issues/262)) ([da9fce3](https://github.com/sholdee/drydock/commit/da9fce33cabb265f17473fa36717e5f1a4ab4355))
+* **deps:** update dependency lefthook to v2.1.11 ([#280](https://github.com/sholdee/drydock/issues/280)) ([c291384](https://github.com/sholdee/drydock/commit/c291384c4b114dddaf477ff609bf1ebb05da1cc9))
+* **deps:** update dependency shinagawa-web/gomarklint to v3.3.1 ([#279](https://github.com/sholdee/drydock/issues/279)) ([1b78215](https://github.com/sholdee/drydock/commit/1b78215bc13716ded613997fa4485727b414578b))
+* **deps:** update go module directive to v1.26.6 ([#264](https://github.com/sholdee/drydock/issues/264)) ([5fb2cfe](https://github.com/sholdee/drydock/commit/5fb2cfeb19bc8bc906da08fc18bf17ce63cf6a96))
+* **deps:** update go module directive to v1.27.0 ([#271](https://github.com/sholdee/drydock/issues/271)) ([f717d00](https://github.com/sholdee/drydock/commit/f717d0094c21eba259f9d0ea05473fa8f9e19b4a))
+* **deps:** update golang docker tag to v1.26.6 ([#269](https://github.com/sholdee/drydock/issues/269)) ([ce46eef](https://github.com/sholdee/drydock/commit/ce46eefe6f9592dce4edb2f2fa18ea7de2dfb677))
+* **deps:** update golang docker tag to v1.27.0 ([#275](https://github.com/sholdee/drydock/issues/275)) ([2e6fe09](https://github.com/sholdee/drydock/commit/2e6fe092810d6d53d378748903738ed6411b60ae))
+* **deps:** update golang:1.26.5 docker digest to 705e964 ([#265](https://github.com/sholdee/drydock/issues/265)) ([de05824](https://github.com/sholdee/drydock/commit/de0582425d2316b697087dedce0e682527fc1a6a))
+* **deps:** update module golang.org/x/net to v0.58.0 ([#263](https://github.com/sholdee/drydock/issues/263)) ([0d5aeba](https://github.com/sholdee/drydock/commit/0d5aebae0c085a3e717f9157c7212ca0ba3798f4))
+* **deps:** update module golang.org/x/text to v0.41.0 ([#258](https://github.com/sholdee/drydock/issues/258)) ([010ad9a](https://github.com/sholdee/drydock/commit/010ad9aca967aff3908c326637ff42a3673cc899))
+
+
+### Code Refactoring
+
+* replace errors.As with errors.AsType ([#281](https://github.com/sholdee/drydock/issues/281)) ([f9e4970](https://github.com/sholdee/drydock/commit/f9e4970b3f8ac7bd0ff6d4c6a3e4610187c8e8f6))
+
 ## [0.2.9](https://github.com/sholdee/drydock/compare/v0.2.8...v0.2.9) (2026-08-10)
 
 
