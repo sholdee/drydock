@@ -45,10 +45,10 @@ github.com/alicebob/miniredis/v2 v2.38.0/go.mod h1:TcL7YfarKPGDAthEtl5NBeHZfeUQj
 github.com/anmitsu/go-shlex v0.0.0-20200514113438-38f4b401e2be h1:9AeTilPcZAjCFIImctFaOjnTIavg87rW78vTPkQqLI8=
 github.com/anmitsu/go-shlex v0.0.0-20200514113438-38f4b401e2be/go.mod h1:ySMOLuWl6zY27l47sB3qLNK6tF2fkHG55UZxx8oIVo4=
 github.com/antihax/optional v1.0.0/go.mod h1:uupD/76wgC+ih3iEmQUL+0Ugr19nfwCT1kdvxnR2qWY=
-github.com/argoproj/argo-cd/gitops-engine v0.0.0-20260812112440-109ca7ca7113 h1:Datv/1guNla320d6ZaHTSaxB3bUVzO83NyeY6LaUjvM=
-github.com/argoproj/argo-cd/gitops-engine v0.0.0-20260812112440-109ca7ca7113/go.mod h1:RsOM4gdM/lsvAfIuzAhYrnHDTLA1AGooZRzVyxbVT3A=
-github.com/argoproj/argo-cd/v3 v3.5.1 h1:jtwPLEFX9mNj3jSq88ugFcScGnOZVs2DWaXFuZxrRT8=
-github.com/argoproj/argo-cd/v3 v3.5.1/go.mod h1:/248vUTcQHNW3fYkaSUc0PkCFA/+mnILl5b6rv+xG6Y=
+github.com/argoproj/argo-cd/gitops-engine v0.0.0-20260827090335-e258ee23c3e5 h1:8vyBhWiaNxZrYw1jN1Qznp6xOWHUTisseNKUPEV+HXM=
+github.com/argoproj/argo-cd/gitops-engine v0.0.0-20260827090335-e258ee23c3e5/go.mod h1:RsOM4gdM/lsvAfIuzAhYrnHDTLA1AGooZRzVyxbVT3A=
+github.com/argoproj/argo-cd/v3 v3.5.2 h1:vYtfW2pEBSL+smt8XdpVZHUg31uERINYH6eXzdiLCY4=
+github.com/argoproj/argo-cd/v3 v3.5.2/go.mod h1:/248vUTcQHNW3fYkaSUc0PkCFA/+mnILl5b6rv+xG6Y=
 github.com/argoproj/pkg v0.13.6 h1:36WPD9MNYECHcO1/R1pj6teYspiK7uMQLCgLGft2abM=
 github.com/argoproj/pkg v0.13.6/go.mod h1:I698DoJBKuvNFaixh4vFl2C88cNIT1WS7KCbz5ewyF8=
 github.com/argoproj/pkg/v2 v2.0.1 h1:O/gCETzB/3+/hyFL/7d/VM/6pSOIRWIiBOTb2xqAHvc=
