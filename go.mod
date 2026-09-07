@@ -1,6 +1,6 @@
 module github.com/sholdee/drydock
 
-go 1.27.0
+go 1.27.1
 
 require (
 	dario.cat/mergo v1.0.2
