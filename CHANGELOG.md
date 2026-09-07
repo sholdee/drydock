@@ -1,5 +1,25 @@
 # Changelog
 
+## [0.2.11](https://github.com/sholdee/drydock/compare/v0.2.10...v0.2.11) (2026-09-07)
+
+
+### Bug Fixes
+
+* **deps:** update module github.com/google/go-containerregistry to v0.22.0 ([#286](https://github.com/sholdee/drydock/issues/286)) ([0c7ea8d](https://github.com/sholdee/drydock/commit/0c7ea8d400f1d3bb59e7344eefd24ec93f4f938f))
+* **deps:** update module github.com/google/go-containerregistry to v0.22.1 ([#305](https://github.com/sholdee/drydock/issues/305)) ([76e34f0](https://github.com/sholdee/drydock/commit/76e34f042d46eea6a14218509c92055bed0eb6c0))
+* **deps:** update module github.com/sirupsen/logrus to v1.10.2 ([#285](https://github.com/sholdee/drydock/issues/285)) ([c07325a](https://github.com/sholdee/drydock/commit/c07325a49fc72209561597a2dade0fd11dcd67bf))
+* **deps:** update module golang.org/x/crypto to v0.56.0 ([#304](https://github.com/sholdee/drydock/issues/304)) ([3c7d8f9](https://github.com/sholdee/drydock/commit/3c7d8f96cd8fda359748d31f2445842028f7a94a))
+
+
+### Miscellaneous Chores
+
+* **deps:** update dependency go to v1.27.1 ([#301](https://github.com/sholdee/drydock/issues/301)) ([0f0bd07](https://github.com/sholdee/drydock/commit/0f0bd0707a572aa6f9f53aa2eb4a9150690df23c))
+* **deps:** update dependency golangci-lint to v2.13.2 ([#292](https://github.com/sholdee/drydock/issues/292)) ([7b9f718](https://github.com/sholdee/drydock/commit/7b9f718abaf03a3830aea5e45b03798a24013669))
+* **deps:** update dependency lefthook to v2.1.12 ([#293](https://github.com/sholdee/drydock/issues/293)) ([609931a](https://github.com/sholdee/drydock/commit/609931ad82baba1b656128e37d9faa05bac25558))
+* **deps:** update dependency oras to v1.3.4 ([#291](https://github.com/sholdee/drydock/issues/291)) ([e39fa69](https://github.com/sholdee/drydock/commit/e39fa69e55194c2de79ad8b874830a69a138ad23))
+* **deps:** update golang:1.27.0 docker digest to 0ecdc2a ([#283](https://github.com/sholdee/drydock/issues/283)) ([ac014f1](https://github.com/sholdee/drydock/commit/ac014f16196ff8e7076995e7d48444b863778506))
+* **deps:** update golang:1.27.0 docker digest to 4013ae0 ([#295](https://github.com/sholdee/drydock/issues/295)) ([1d9bf16](https://github.com/sholdee/drydock/commit/1d9bf16c6df71b1ee2b9ff277713a152110e29be))
+
 ## [0.2.10](https://github.com/sholdee/drydock/compare/v0.2.9...v0.2.10) (2026-08-26)
 
 
