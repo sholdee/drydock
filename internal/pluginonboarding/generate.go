@@ -125,7 +125,7 @@ func writePlugin(b *strings.Builder, plugin PluginReport, opts GenerateOptions) 
 	b.WriteString("    copy:\n")
 	b.WriteString("      scope: source\n")
 	writeLifecycle(b, plugin, opts)
-	writeEnv(b, plugin)
+	writeApplicationEnv(b, plugin, opts)
 	writeParameters(b, plugin)
 }
 
@@ -253,24 +253,28 @@ func writeLifecycle(b *strings.Builder, plugin PluginReport, opts GenerateOption
 	b.WriteString("      command: " + yamlStringSequence(command) + "\n")
 }
 
-func writeEnv(b *strings.Builder, plugin PluginReport) {
-	if len(plugin.Env) == 0 {
-		return
-	}
-	var env []string
+// writeApplicationEnv emits applicationEnv.allow from the Application env
+// names observed on plugin sources. Host env.allow is never generated from
+// Application evidence: it copies drydock's own process environment.
+func writeApplicationEnv(b *strings.Builder, plugin PluginReport, opts GenerateOptions) {
+	var names []string
 	for _, name := range plugin.Env {
 		name = strings.TrimSpace(name)
-		if envNameAccepted(name) {
-			env = append(env, name)
+		if pluginpolicy.IsValidEnvName(name) {
+			names = append(names, name)
 		}
 	}
-	if len(env) == 0 {
+	if len(names) == 0 {
 		return
 	}
-	sort.Strings(env)
-	b.WriteString("    env:\n")
+	sort.Strings(names)
+	if opts.Comments {
+		b.WriteString("    # applicationEnv.allow admits Application spec.source.plugin.env names, delivered as ARGOCD_ENV_<name>.\n")
+		b.WriteString("    # env.allow (not generated) copies variables from drydock's own process environment instead.\n")
+	}
+	b.WriteString("    applicationEnv:\n")
 	b.WriteString("      allow:\n")
-	for _, name := range env {
+	for _, name := range names {
 		b.WriteString("        - " + quote(name) + "\n")
 	}
 }
@@ -319,10 +323,6 @@ func commandAccepted(command []string) bool {
 		return false
 	}
 	return !isDeniedCommand(argv0)
-}
-
-func envNameAccepted(name string) bool {
-	return pluginpolicy.ValidateEnvName(name) == nil && !pluginpolicy.IsManagedEnvName(name)
 }
 
 var parameterNamePattern = regexp.MustCompile(`^[A-Za-z0-9_.-]+$`)
