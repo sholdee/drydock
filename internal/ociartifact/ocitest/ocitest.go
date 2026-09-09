@@ -235,7 +235,7 @@ func (r *Registry) serve(inner http.Handler, w http.ResponseWriter, req *http.Re
 // leaked credential is observable in client error text — redaction tests bite
 // on real leak-shaped output instead of passing vacuously.
 func writeUnauthorized(w http.ResponseWriter, req *http.Request) {
-	w.Header().Set("Www-Authenticate", `Basic realm="drydock-ocitest"`)
+	w.Header().Set("WWW-Authenticate", `Basic realm="drydock-ocitest"`)
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusUnauthorized)
 	message := "authentication required"
