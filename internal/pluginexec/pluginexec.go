@@ -483,30 +483,56 @@ func hasParentComponent(rel string) bool {
 	return slices.Contains(strings.Split(filepath.ToSlash(rel), "/"), "..")
 }
 
+// BuildEnv composes the environment for a command-backed plugin run in this
+// order: drydock's controlled PATH, caller-environment values for the names in
+// policy env.allow, then extraEnv, which the caller has already ordered (Argo
+// CD build environment, ARGOCD_APP_PARAMETERS and PARAM_*, drydock extras).
+// Every name must be an identifier and unique across the whole environment;
+// policy parsing already drops the names drydock manages, so a duplicate here
+// is a composition bug and fails loudly rather than relying on os/exec or
+// docker --env-file precedence. Names are compared exact-case (Windows, where
+// the OS folds case, is unsupported). Values must not contain NUL and are
+// capped at MaxEnvValueBytes.
 func BuildEnv(policy pluginpolicy.ExecEnv, lookup func(string) (string, bool), extraEnv []string) ([]string, error) {
 	if lookup == nil {
 		lookup = os.LookupEnv
 	}
 	env := []string{"PATH=" + ControlledPath}
+	seen := map[string]struct{}{"PATH": {}}
+	add := func(name, value string) error {
+		if !pluginpolicy.IsValidEnvName(name) {
+			return fmt.Errorf("env name %q is invalid", name)
+		}
+		if _, ok := seen[name]; ok {
+			return fmt.Errorf("env name %s is set twice", name)
+		}
+		if strings.ContainsRune(value, 0) {
+			return fmt.Errorf("env value %s contains a NUL byte", name)
+		}
+		if len(value) > MaxEnvValueBytes {
+			return fmt.Errorf("env value %s exceeds %d bytes", name, MaxEnvValueBytes)
+		}
+		seen[name] = struct{}{}
+		env = append(env, name+"="+value)
+		return nil
+	}
 	for _, name := range policy.Allow {
 		value, ok := lookup(name)
 		if !ok {
 			continue
 		}
-		if len(value) > MaxEnvValueBytes {
-			return nil, fmt.Errorf("env value %s exceeds %d bytes", name, MaxEnvValueBytes)
+		if err := add(name, value); err != nil {
+			return nil, err
 		}
-		env = append(env, name+"="+value)
 	}
 	for _, entry := range extraEnv {
 		name, value, ok := strings.Cut(entry, "=")
 		if !ok || name == "" {
 			return nil, fmt.Errorf("extra env entry is invalid")
 		}
-		if len(value) > MaxEnvValueBytes {
-			return nil, fmt.Errorf("env value %s exceeds %d bytes", name, MaxEnvValueBytes)
+		if err := add(name, value); err != nil {
+			return nil, err
 		}
-		env = append(env, entry)
 	}
 	return env, nil
 }
