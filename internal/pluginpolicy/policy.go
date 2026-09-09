@@ -52,6 +52,9 @@ const (
 type Policy struct {
 	Bootstrap Bootstrap
 	Plugins   map[string]Plugin
+	// Warnings are non-fatal findings from Parse, such as env.allow entries
+	// drydock manages itself; callers surface them as warning diagnostics.
+	Warnings []string
 }
 
 type Bootstrap struct {
@@ -212,7 +215,47 @@ func Parse(path string, data []byte) (Policy, error) {
 	if err := validateYAMLTree(root, "$"); err != nil {
 		return Policy{}, fmt.Errorf("parse plugin policy %s: %w", path, err)
 	}
-	return parsePolicy(root, path)
+	policy, err := parsePolicy(root, path)
+	if err != nil {
+		return Policy{}, err
+	}
+	policy.Warnings = dropManagedEnvNames(&policy)
+	return policy, nil
+}
+
+// dropManagedEnvNames removes env.allow entries drydock sets itself from every
+// exec and container lifecycle and returns one warning per dropped entry, in
+// plugin-name order so output is deterministic. Exec and Container are
+// pointers on Plugin, so the trimmed list is written in place.
+func dropManagedEnvNames(policy *Policy) []string {
+	names := make([]string, 0, len(policy.Plugins))
+	for name := range policy.Plugins {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	var warnings []string
+	for _, name := range names {
+		plugin := policy.Plugins[name]
+		var env *ExecEnv
+		switch {
+		case plugin.Exec != nil:
+			env = &plugin.Exec.Env
+		case plugin.Container != nil:
+			env = &plugin.Container.Lifecycle.Env
+		default:
+			continue
+		}
+		kept := env.Allow[:0:0]
+		for _, entry := range env.Allow {
+			if IsManagedEnvName(entry) {
+				warnings = append(warnings, fmt.Sprintf("plugins.%s.env.allow entry %q is ignored: drydock sets it for every command-backed plugin", name, entry))
+				continue
+			}
+			kept = append(kept, entry)
+		}
+		env.Allow = kept
+	}
+	return warnings
 }
 
 func (p Policy) Plugin(name string) (Plugin, bool) {
