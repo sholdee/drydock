@@ -288,6 +288,10 @@ Supported:
 - Trusted exec/container plugin policies that gate Application plugin
   parameters through `parameters.allow`, including string argv substitution and
   constrained path parameters.
+- The Argo CD build environment (`ARGOCD_APP_*`, `KUBE_VERSION`,
+  `KUBE_API_VERSIONS`) and an always-present `ARGOCD_APP_PARAMETERS` for
+  trusted exec/container plugins, in the repo-server's order. `env.allow`
+  entries naming those variables are ignored with a warning.
 - Config management plugin source detection with fail-closed diagnostics in
   the CLI and default Go client.
 - Injectable in-process plugin renderers, named plugin registry dispatch, and
@@ -309,7 +313,9 @@ Not supported:
 - Argo CD repo-server sidecar plugin discovery.
 - Ambient plugin configuration or environment loading.
 - Untrusted CMP descriptor execution, unallowlisted Application plugin
-  parameters, or Application plugin env for policy-backed native engines.
+  parameters, or Application plugin env (`spec.source.plugin.env`) for any
+  policy-backed engine; exec/container reject it with a message that names
+  the entries.
 - Plugin credential injection.
 
 See `site/content/docs/plugin-policy/` for trusted policy provenance, supported

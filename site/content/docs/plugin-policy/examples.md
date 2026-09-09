@@ -185,6 +185,7 @@ plugins:
     postRenderers:
       - command: ["/usr/local/bin/kbld", "-f", "-"]
         timeout: 15s
+    # env.allow copies drydock's own process variables; ARGOCD_APP_* and KUBE_* are set automatically.
     env:
       allow: ["CLUSTER_NAME", "ENVIRONMENT"]
     output:

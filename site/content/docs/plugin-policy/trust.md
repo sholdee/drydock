@@ -188,17 +188,36 @@ and rejects caller-provided remote Docker client configuration such as
 non-local `DOCKER_HOST`, `DOCKER_CONTEXT`, `DOCKER_CONFIG`,
 `DOCKER_TLS_VERIFY`, or `DOCKER_CERT_PATH`.
 
-For `engine: exec`, the command environment starts with only drydock's
-controlled `PATH`. For `engine: container`, the Docker client process uses a
-minimal controlled environment, while the process inside the image keeps the
-image-defined environment and receives policy-allowed environment values,
-Argo-style plugin parameter values, and drydock extras through `--env-file`.
+For both command-backed engines drydock composes the plugin environment in
+this order: the Argo CD build environment (`ARGOCD_APP_NAME`,
+`ARGOCD_APP_NAMESPACE`, `ARGOCD_APP_PROJECT_NAME`, `ARGOCD_APP_REVISION`,
+`ARGOCD_APP_REVISION_SHORT`, `ARGOCD_APP_REVISION_SHORT_8`,
+`ARGOCD_APP_SOURCE_REPO_URL`, `ARGOCD_APP_SOURCE_PATH`,
+`ARGOCD_APP_SOURCE_TARGET_REVISION`, then `KUBE_VERSION` and
+`KUBE_API_VERSIONS`, always present and empty without `--kube-version` /
+`--api-versions`), the Argo-style parameter environment
+(`ARGOCD_APP_PARAMETERS`, `null` when the Application declares none, then
+`PARAM_*`), and `DRYDOCK_OFFLINE=true` when offline. `ARGOCD_APP_REVISION*`
+carry the spec `targetRevision`, not a resolved commit SHA, and
+`KUBE_API_VERSIONS` is sorted and deduplicated where a repo-server sends
+discovery order. For `engine: exec` the process environment is exactly
+drydock's controlled `PATH`, then the `env.allow` copies from drydock's own
+process environment, then the drydock-composed values above. For
+`engine: container` the Docker client uses a minimal controlled environment,
+while the process inside the image keeps the image-defined environment and
+receives the `env.allow` copies and the same drydock-composed values through
+`--env-file` (the image `PATH` is kept).
 
-For both command-backed engines, allowed environment names must be valid
-environment identifiers, cannot be duplicated, and cannot be reserved
-loader/interpreter variables such as `PATH`, `LD_*`, `DYLD_*`, `PYTHONPATH`, or
-`NODE_OPTIONS`. Each copied value is capped at 16 KiB. Application-authored
-plugin env is rejected for policy-backed plugin sources.
+`env.allow` names must be valid environment identifiers, cannot be
+duplicated, and cannot be reserved loader/interpreter variables such as
+`PATH`, `LD_*`, `DYLD_*`, `PYTHONPATH`, or `NODE_OPTIONS`. Names drydock sets
+itself (`ARGOCD_APP_*`, `KUBE_VERSION`, `KUBE_API_VERSIONS`,
+`DRYDOCK_OFFLINE`, matched case-insensitively) are ignored with a
+`plugin.policy.env-ignored` warning. Names are otherwise compared exact-case;
+Windows, where the OS folds case, is unsupported. Each copied value is capped
+at 16 KiB. Application-authored plugin env (`spec.source.plugin.env`) is not
+forwarded yet for any engine; pass per-Application values through parameters
+allowlisted by `parameters.allow`.
 
 ### Application Parameters
 
