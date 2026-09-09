@@ -34,6 +34,8 @@ const (
 	IssueBootstrapMissing   = "bootstrap.missing"
 	IssueParamsMissingAllow = "params.missing_allow"
 	IssueEnvMissingAllow    = "env.missing_allow"
+	IssueEnvMisdirected     = "env.misdirected"
+	IssuePolicyEnvIgnored   = "policy.env_ignored"
 )
 
 type ApplicationInput struct {
@@ -82,8 +84,9 @@ type PluginReport struct {
 	GenerateSafe    bool
 	SuggestedEngine pluginpolicy.Engine
 	Parameters      []ParameterEvidence
-	Env             []string
-	Sidecar         SidecarMatch
+	// Env lists spec.source.plugin.env NAMES observed on Applications; init emits them under applicationEnv.allow.
+	Env     []string
+	Sidecar SidecarMatch
 }
 
 type PluginUse struct {

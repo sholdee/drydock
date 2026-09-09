@@ -195,6 +195,11 @@ plugins:
 		t.Fatal(err)
 	}
 	result := pluginPolicyCLIListResult(root)
+	// avp-compat policy accepts neither Application parameters nor env, and
+	// doctor fails them like build does; this test is about unused
+	// descriptors, so serve a plain plugin source.
+	result.Applications[0].Spec.Source.Plugin = &argoappv1.ApplicationSourcePlugin{Name: "pkl"}
+	result.ApplicationInputs[0].Application.Spec.Source.Plugin = &argoappv1.ApplicationSourcePlugin{Name: "pkl"}
 	result.Settings.ConfigManagementPlugins["unused-ytt"] = config.ConfigManagementPlugin{
 		Name:            "unused-ytt",
 		GenerateCommand: []string{"ytt"},
@@ -323,4 +328,64 @@ func executeCLIForPluginPolicyTest(cmd *cobra.Command, args ...string) (string, 
 	cmd.SetErr(&stderr)
 	err := cmd.Execute()
 	return stdout.String(), stderr.String(), err
+}
+
+func TestPluginPolicyInitAndDoctorRoundTripApplicationEnv(t *testing.T) {
+	root := t.TempDir()
+	// pluginPolicyCLIDependencies serves the pkl fixture whose Application sets
+	// spec.source.plugin.env PKL_ENV (plugin_policy_test.go:~299).
+	runCLIWithDependencies(t, pluginPolicyCLIDependencies(root), "plugin-policy", "init", "--path", root, "--write")
+	written, err := os.ReadFile(filepath.Join(root, ".drydock", "plugins.yaml"))
+	if err != nil {
+		t.Fatalf("read generated policy: %v", err)
+	}
+	if !strings.Contains(string(written), "applicationEnv:") || strings.Contains(string(written), "\n    env:\n") {
+		t.Fatalf("generated policy = \n%s\nwant applicationEnv.allow and no host env.allow", written)
+	}
+	result := runCLIWithDependencies(t, pluginPolicyCLIDependencies(root), "plugin-policy", "doctor", "--path", root, "-o", "json")
+	var readiness pluginonboarding.ReadinessReport
+	if err := json.Unmarshal([]byte(result.Stdout), &readiness); err != nil {
+		t.Fatalf("json unmarshal error = %v\n%s", err, result.Stdout)
+	}
+	for _, plugin := range readiness.Plugins {
+		for _, issue := range plugin.Issues {
+			if issue.Code == pluginonboarding.IssueEnvMissingAllow || issue.Code == pluginonboarding.IssueEnvMisdirected {
+				t.Fatalf("doctor reported %s on init's own output: %#v", issue.Code, plugin.Issues)
+			}
+		}
+	}
+}
+
+func TestPluginPolicyDoctorReportsIgnoredHostEnvAllowEntries(t *testing.T) {
+	root := t.TempDir()
+	policyPath := filepath.Join(root, ".drydock", "plugins.yaml")
+	if err := os.MkdirAll(filepath.Dir(policyPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(policyPath, []byte(`apiVersion: drydock.sholdee.dev/v1alpha1
+kind: PluginPolicy
+plugins:
+  pkl:
+    engine: exec
+    generate:
+      command: ["pkl"]
+    env:
+      allow: ["KUBE_VERSION"]
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	result := runCLIWithDependencies(t, pluginPolicyCLIDependencies(root), "plugin-policy", "doctor", "--path", root, "-o", "json")
+	var readiness pluginonboarding.ReadinessReport
+	if err := json.Unmarshal([]byte(result.Stdout), &readiness); err != nil {
+		t.Fatalf("json unmarshal error = %v\n%s", err, result.Stdout)
+	}
+	found := false
+	for _, rec := range readiness.Recommendations {
+		if rec.Code == pluginonboarding.IssuePolicyEnvIgnored {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("Recommendations = %#v, want %s", readiness.Recommendations, pluginonboarding.IssuePolicyEnvIgnored)
+	}
 }

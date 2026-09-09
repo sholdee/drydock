@@ -16,6 +16,13 @@ func Readiness(report Report, policy *pluginpolicy.Policy, opts DoctorOptions) R
 		out.Recommendations = append(out.Recommendations, issue(IssuePolicyMissing, StatusFail, "", "plugin policy is missing"))
 		return out
 	}
+	// Never FAIL under --strict: build and diff --strict exempt
+	// plugin.policy.env-ignored for the same policies (orchestrator.go
+	// strictExemptDiagnostic), because the entry is dropped either way and the
+	// policy often comes from a baseline the PR branch cannot fix.
+	for _, warning := range policy.Warnings {
+		out.Recommendations = append(out.Recommendations, issue(IssuePolicyEnvIgnored, StatusWarn, "", "plugin policy: "+warning))
+	}
 
 	for _, plugin := range report.Plugins {
 		pluginReadiness := PluginReadiness{Name: plugin.Name, Status: StatusPass}
@@ -93,7 +100,7 @@ func policyGateIssues(report PluginReport, plugin pluginpolicy.Plugin, opts Doct
 		if commandHasPlaceholder(plugin.Exec.Generate.Command) {
 			issues = append(issues, issue(IssueCommandPlaceholder, StatusFail, name, fmt.Sprintf("plugin %q generate command is still a placeholder", name)))
 		}
-		issues = append(issues, allowlistIssues(report, plugin.Exec.Parameters.Allow, plugin.Exec.Env.Allow)...)
+		issues = append(issues, allowlistIssues(report, plugin.Exec.Parameters.Allow, plugin.Exec.ApplicationEnv.Allow, plugin.Exec.Env.Allow, opts)...)
 	case pluginpolicy.EngineContainer:
 		issues = append(issues, commandBackedGateIssues(name, opts)...)
 		if plugin.Container == nil {
@@ -113,8 +120,14 @@ func policyGateIssues(report PluginReport, plugin pluginpolicy.Plugin, opts Doct
 		if commandHasPlaceholder(plugin.Container.Lifecycle.Generate.Command) {
 			issues = append(issues, issue(IssueCommandPlaceholder, StatusFail, name, fmt.Sprintf("plugin %q generate command is still a placeholder", name)))
 		}
-		issues = append(issues, allowlistIssues(report, plugin.Container.Lifecycle.Parameters.Allow, plugin.Container.Lifecycle.Env.Allow)...)
+		issues = append(issues, allowlistIssues(report, plugin.Container.Lifecycle.Parameters.Allow, plugin.Container.Lifecycle.ApplicationEnv.Allow, plugin.Container.Lifecycle.Env.Allow, opts)...)
 	case pluginpolicy.EngineAVPCompat, pluginpolicy.EngineNativeKustomize:
+		if len(report.Env) > 0 {
+			issues = append(issues, issue(IssueEnvMissingAllow, StatusFail, name, fmt.Sprintf("plugin %q observes Application env, which %s policy does not accept", name, plugin.Engine)))
+		}
+		if len(report.Parameters) > 0 {
+			issues = append(issues, issue(IssueParamsMissingAllow, StatusFail, name, fmt.Sprintf("plugin %q observes Application parameters, which %s policy does not accept", name, plugin.Engine)))
+		}
 	default:
 	}
 	return issues
@@ -131,7 +144,7 @@ func commandBackedGateIssues(name string, opts DoctorOptions) []ReadinessIssue {
 	return issues
 }
 
-func allowlistIssues(report PluginReport, allowedParams []pluginpolicy.ExecParameter, allowedEnv []string) []ReadinessIssue {
+func allowlistIssues(report PluginReport, allowedParams []pluginpolicy.ExecParameter, applicationEnv []string, hostEnv []string, opts DoctorOptions) []ReadinessIssue {
 	var issues []ReadinessIssue
 	params := map[string]struct{}{}
 	for _, allowed := range allowedParams {
@@ -142,13 +155,29 @@ func allowlistIssues(report PluginReport, allowedParams []pluginpolicy.ExecParam
 			issues = append(issues, issue(IssueParamsMissingAllow, StatusFail, report.Name, fmt.Sprintf("plugin %q observes Application parameter %q that is not allowed by policy", report.Name, observed.Name)))
 		}
 	}
-	env := map[string]struct{}{}
-	for _, allowed := range allowedEnv {
-		env[allowed] = struct{}{}
+	allowedEnv := map[string]struct{}{}
+	for _, allowed := range applicationEnv {
+		allowedEnv[allowed] = struct{}{}
+	}
+	misdirected := map[string]struct{}{}
+	for _, allowed := range hostEnv {
+		misdirected[allowed] = struct{}{}
 	}
 	for _, observed := range report.Env {
-		if _, ok := env[observed]; !ok {
-			issues = append(issues, issue(IssueEnvMissingAllow, StatusFail, report.Name, fmt.Sprintf("plugin %q observes Application env %q that is not allowed by policy", report.Name, observed)))
+		if !pluginpolicy.IsValidEnvName(observed) {
+			issues = append(issues, issue(IssueEnvMissingAllow, StatusFail, report.Name, fmt.Sprintf("plugin %q observes Application env %q, which is not a valid environment identifier and cannot be delivered as ARGOCD_ENV_*; rename it in the Application", report.Name, observed)))
+			continue
+		}
+		if _, ok := allowedEnv[observed]; ok {
+			continue
+		}
+		issues = append(issues, issue(IssueEnvMissingAllow, StatusFail, report.Name, fmt.Sprintf("plugin %q observes Application env %q that is not allowed by policy applicationEnv.allow", report.Name, observed)))
+		if _, ok := misdirected[observed]; ok {
+			status := StatusWarn
+			if opts.Strict {
+				status = StatusFail
+			}
+			issues = append(issues, issue(IssueEnvMisdirected, status, report.Name, fmt.Sprintf("plugin %q lists Application env %q under env.allow, which copies drydock's own process environment; move it to applicationEnv.allow", report.Name, observed)))
 		}
 	}
 	return issues
