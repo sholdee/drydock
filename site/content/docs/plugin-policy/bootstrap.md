@@ -24,7 +24,13 @@ Each bootstrap entrypoint creates an internal, hidden synthetic Application
 with namespace `argocd`, project `default`, destination name `in-cluster`, and
 destination namespace `argocd`. The synthetic Application is used only to
 render and scan the entrypoint output; it is not returned as a discovered
-Application.
+Application. Command-backed plugins therefore observe
+`ARGOCD_APP_NAME=<entrypoint name>`, `ARGOCD_APP_NAMESPACE=argocd`,
+`ARGOCD_APP_PROJECT_NAME=default`, empty `ARGOCD_APP_SOURCE_REPO_URL`,
+`ARGOCD_APP_REVISION*` and `ARGOCD_APP_SOURCE_TARGET_REVISION`, and
+`ARGOCD_APP_PARAMETERS` reflecting the entrypoint's declared parameters
+(`null` when none) during bootstrap discovery, which has no live Argo CD
+counterpart.
 
 Bootstrap entrypoints fail closed. The `sourcePath` must be repository-local,
 exist, be a directory, avoid symlink components, and match the referenced
