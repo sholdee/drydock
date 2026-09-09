@@ -624,7 +624,7 @@
       "properties": {
         "allow": {
           "type": "array",
-          "description": "Variable names the plugin may receive from the caller environment.",
+          "description": "Names of drydock's own process environment variables to copy into the plugin.",
           "maxItems": 64,
           "uniqueItems": true,
           "items": {

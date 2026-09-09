@@ -195,7 +195,8 @@ this order: the Argo CD build environment (`ARGOCD_APP_NAME`,
 `ARGOCD_APP_SOURCE_REPO_URL`, `ARGOCD_APP_SOURCE_PATH`,
 `ARGOCD_APP_SOURCE_TARGET_REVISION`, then `KUBE_VERSION` and
 `KUBE_API_VERSIONS`, always present and empty without `--kube-version` /
-`--api-versions`), the Argo-style parameter environment
+`--api-versions`), the Application env as `ARGOCD_ENV_<name>` entries in spec
+order, the Argo-style parameter environment
 (`ARGOCD_APP_PARAMETERS`, `null` when the Application declares none, then
 `PARAM_*`), and `DRYDOCK_OFFLINE=true` when offline. `ARGOCD_APP_REVISION*`
 carry the spec `targetRevision`, not a resolved commit SHA, and
@@ -212,14 +213,14 @@ receives the `env.allow` copies and the same drydock-composed values through
 duplicated, and cannot be reserved loader/interpreter variables such as
 `PATH`, `LD_*`, `DYLD_*`, `PYTHONPATH`, or `NODE_OPTIONS`. Names drydock sets
 itself (`ARGOCD_APP_*`, `KUBE_VERSION`, `KUBE_API_VERSIONS`,
-`DRYDOCK_OFFLINE`, matched case-insensitively) are ignored with a
+`DRYDOCK_OFFLINE`) and the `ARGOCD_ENV_*` delivery channel of
+`applicationEnv.allow`, all matched case-insensitively, are ignored with a
 `plugin.policy.env-ignored` warning. Names are otherwise compared exact-case;
 Windows, where the OS folds case, is unsupported. Each copied value is capped
-at 16 KiB. Application-authored plugin env (`spec.source.plugin.env`) is not
-forwarded yet for any engine; pass per-Application values through parameters
-allowlisted by `parameters.allow`.
+at 16 KiB. Application-authored plugin env (`spec.source.plugin.env`) is
+delivered only when allowlisted by `applicationEnv.allow` (see below).
 
-### Application Parameters
+### Application Parameters And Env
 
 Application plugin parameters are accepted only for `engine: exec` and
 `engine: container`, and only when allowlisted by trusted policy. Native engines
@@ -244,6 +245,28 @@ Path parameters may be constrained to paths under the Application source or the
 repository. Repository-scoped path parameters require `copy.scope: repository`.
 Values under the Application source are copied by default; trusted sibling
 repository paths must also match `copy.include`.
+
+`applicationEnv.allow` lists the `spec.source.plugin.env` names a policy
+accepts. Each allowed entry reaches the plugin as `ARGOCD_ENV_<name>` with its
+value substituted against the eleven build-environment variables only
+(`$ARGOCD_APP_*`, `$KUBE_VERSION`, `$KUBE_API_VERSIONS`; `$$` yields a literal
+`$`, unknown references expand to empty), exactly as a repo-server delivers
+it; host `env.allow` values and other Application entries are not
+substitutable. Names must be identifiers, duplicates are rejected, values are
+capped at 16 KiB and may not contain NUL (`engine: container` also rejects CR
+or LF, which cannot pass through `--env-file`). An entry that is not
+allowlisted fails the source before the plugin runs, naming the entry but
+never its value. The 16 KiB cap applies after substitution. Without
+`--kube-version` / `--api-versions`, `$KUBE_VERSION` and
+`$KUBE_API_VERSIONS` expand to empty strings. Application env values are not
+redacted from diagnostics; like a repo-server, drydock treats them as
+non-secret. Bootstrap entrypoints render a synthetic Application without
+`spec.source.plugin.env`, so they receive no `ARGOCD_ENV_*` entries; use
+entrypoint `parameters` instead. `plugin-policy init` generates
+`applicationEnv.allow` from the Applications it sees, and `doctor` reports
+`env.missing_allow` for names outside it and `env.misdirected` for
+Application names placed under host `env.allow` instead of
+`applicationEnv.allow`.
 
 Command-backed runs keep structured execution metadata per phase: phase name,
 engine, sanitized command basename, elapsed duration, and for container policy

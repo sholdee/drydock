@@ -70,8 +70,9 @@ and optional `configManagementPlugin`.
 | `init` | No | None | Optional command run before `generate`. |
 | `generate` | Yes | None | Command that writes Kubernetes manifests to stdout. |
 | `postRenderers` | No | None | Non-empty list when present. Chains stdout through stdin. |
-| `env.allow` | No | `[]` | Up to 64 names of variables copied from drydock's own process environment (CI or shell), not from the Application. Names drydock sets itself (`ARGOCD_APP_*`, `KUBE_VERSION`, `KUBE_API_VERSIONS`, `DRYDOCK_OFFLINE`, matched case-insensitively) are ignored with a warning. |
+| `env.allow` | No | `[]` | Up to 64 names of variables copied from drydock's own process environment (CI or shell), not from the Application. Names drydock sets itself (`ARGOCD_APP_*`, `ARGOCD_ENV_*`, `KUBE_VERSION`, `KUBE_API_VERSIONS`, `DRYDOCK_OFFLINE`, matched case-insensitively) are ignored with a warning. |
 | `parameters.allow` | No | `[]` | Application plugin parameter allowlist for `engine: exec` and `engine: container`. |
+| `applicationEnv.allow` | No | `[]` | Application `spec.source.plugin.env` names accepted for `engine: exec` and `engine: container`; delivered as `ARGOCD_ENV_<name>`. Identifier names only, up to 64. |
 | `output.maxStdoutBytes` | No | `10485760` | Per-command stdout limit. |
 | `output.maxStderrBytes` | No | `65536` | Per-command stderr limit. Stderr is not printed in failure messages. |
 
