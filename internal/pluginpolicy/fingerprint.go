@@ -78,8 +78,11 @@ type fingerprintLifecycleConfig struct {
 	Generate      fingerprintCommand   `json:"generate"`
 	PostRenderers []fingerprintCommand `json:"postRenderers,omitempty"`
 	Env           ExecEnv              `json:"env"`
-	Parameters    ExecParameters       `json:"parameters"`
-	Output        ExecOutput           `json:"output"`
+	// ApplicationEnv is a bare list rather than a struct so omitempty can drop
+	// it and pre-existing policies keep their fingerprint.
+	ApplicationEnv []string       `json:"applicationEnv,omitempty"`
+	Parameters     ExecParameters `json:"parameters"`
+	Output         ExecOutput     `json:"output"`
 }
 
 type fingerprintCommand struct {
@@ -164,8 +167,9 @@ func newFingerprintLifecycleConfig(config *ExecConfig) *fingerprintLifecycleConf
 		Env: ExecEnv{
 			Allow: append([]string(nil), config.Env.Allow...),
 		},
-		Parameters: cloneExecParameters(config.Parameters),
-		Output:     config.Output,
+		ApplicationEnv: append([]string(nil), config.ApplicationEnv.Allow...),
+		Parameters:     cloneExecParameters(config.Parameters),
+		Output:         config.Output,
 	}
 	if config.Init != nil {
 		out.Init = &fingerprintCommand{

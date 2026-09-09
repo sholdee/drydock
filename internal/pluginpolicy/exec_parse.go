@@ -48,6 +48,10 @@ func parseExecLifecycleConfig(fields map[string]*yaml.Node, path, pointer string
 	if err != nil {
 		return ExecConfig{}, err
 	}
+	applicationEnv, err := parseApplicationEnv(fields["applicationEnv"], path, pointer+".applicationEnv")
+	if err != nil {
+		return ExecConfig{}, err
+	}
 	parameters, err := parseExecParameters(fields["parameters"], copyConfig.Scope, path, pointer+".parameters")
 	if err != nil {
 		return ExecConfig{}, err
@@ -57,14 +61,15 @@ func parseExecLifecycleConfig(fields map[string]*yaml.Node, path, pointer string
 		return ExecConfig{}, err
 	}
 	return ExecConfig{
-		Workdir:       workdir,
-		Copy:          copyConfig,
-		Init:          init,
-		Generate:      generate,
-		PostRenderers: postRenderers,
-		Env:           env,
-		Parameters:    parameters,
-		Output:        output,
+		Workdir:        workdir,
+		Copy:           copyConfig,
+		Init:           init,
+		Generate:       generate,
+		PostRenderers:  postRenderers,
+		Env:            env,
+		ApplicationEnv: applicationEnv,
+		Parameters:     parameters,
+		Output:         output,
 	}, nil
 }
 
@@ -241,52 +246,85 @@ func parseExecCommand(node *yaml.Node, path, pointer string, defaultTimeout time
 	return ExecCommand{Command: command, Timeout: timeout}, nil
 }
 
-func parseExecEnv(node *yaml.Node, path, pointer string) (ExecEnv, error) {
+// parseEnvAllowList parses the {allow: [...]} block shared by env and
+// applicationEnv: entries are trimmed, none may be empty, each must pass
+// validate, exact-case duplicates are rejected, the result is sorted and
+// capped at maxEnvAllowCount. It returns nil when the block or its allow key
+// is absent and an empty non-nil list for allow: []; callers decide what an
+// empty list means.
+func parseEnvAllowList(node *yaml.Node, path, pointer string, validate func(string) error) ([]string, error) {
 	if node == nil || isNullNode(node) {
-		return ExecEnv{}, nil
+		return nil, nil
 	}
 	if node.Kind != yaml.MappingNode {
-		return ExecEnv{}, fmt.Errorf("parse plugin policy %s: %s must be a mapping", path, pointer)
+		return nil, fmt.Errorf("parse plugin policy %s: %s must be a mapping", path, pointer)
 	}
-	fields := map[string]*yaml.Node{}
-	for i := 0; i < len(node.Content); i += 2 {
-		name, err := stringKey(node.Content[i], pointer)
-		if err != nil {
-			return ExecEnv{}, fmt.Errorf("parse plugin policy %s: %w", path, err)
-		}
-		fields[name] = node.Content[i+1]
+	fields, err := mappingFields(node, pointer)
+	if err != nil {
+		return nil, fmt.Errorf("parse plugin policy %s: %w", path, err)
 	}
 	if err := rejectUnknownFields(fields, map[string]bool{"allow": true}, pointer); err != nil {
-		return ExecEnv{}, fmt.Errorf("parse plugin policy %s: %w", path, err)
+		return nil, fmt.Errorf("parse plugin policy %s: %w", path, err)
+	}
+	if fields["allow"] == nil {
+		return nil, nil
 	}
 	allow, err := stringSequence(fields["allow"], pointer+".allow")
-	if fields["allow"] == nil {
-		return ExecEnv{}, nil
-	}
 	if err != nil {
-		return ExecEnv{}, fmt.Errorf("parse plugin policy %s: %w", path, err)
+		return nil, fmt.Errorf("parse plugin policy %s: %w", path, err)
 	}
 	if len(allow) > maxEnvAllowCount {
-		return ExecEnv{}, fmt.Errorf("parse plugin policy %s: %s.allow has %d entries, maximum is %d", path, pointer, len(allow), maxEnvAllowCount)
+		return nil, fmt.Errorf("parse plugin policy %s: %s.allow has %d entries, maximum is %d", path, pointer, len(allow), maxEnvAllowCount)
 	}
 	seen := map[string]struct{}{}
 	normalized := make([]string, 0, len(allow))
 	for index, rawName := range allow {
 		name := strings.TrimSpace(rawName)
 		if name == "" {
-			return ExecEnv{}, fmt.Errorf("parse plugin policy %s: %s.allow[%d] must not be empty", path, pointer, index)
+			return nil, fmt.Errorf("parse plugin policy %s: %s.allow[%d] must not be empty", path, pointer, index)
 		}
-		if err := ValidateEnvName(name); err != nil {
-			return ExecEnv{}, fmt.Errorf("parse plugin policy %s: %s.allow: %w", path, pointer, err)
+		if err := validate(name); err != nil {
+			return nil, fmt.Errorf("parse plugin policy %s: %s.allow: %w", path, pointer, err)
 		}
 		if _, ok := seen[name]; ok {
-			return ExecEnv{}, fmt.Errorf("parse plugin policy %s: %s.allow contains duplicate env name %q", path, pointer, name)
+			return nil, fmt.Errorf("parse plugin policy %s: %s.allow contains duplicate env name %q", path, pointer, name)
 		}
 		seen[name] = struct{}{}
 		normalized = append(normalized, name)
 	}
 	sort.Strings(normalized)
-	return ExecEnv{Allow: normalized}, nil
+	return normalized, nil
+}
+
+// parseExecEnv parses env.allow: names forwarded from drydock's own process
+// environment, subject to the reserved-name rules.
+func parseExecEnv(node *yaml.Node, path, pointer string) (ExecEnv, error) {
+	allow, err := parseEnvAllowList(node, path, pointer, ValidateEnvName)
+	if err != nil {
+		return ExecEnv{}, err
+	}
+	return ExecEnv{Allow: allow}, nil
+}
+
+// parseApplicationEnv parses applicationEnv.allow: identifier names only, no
+// reserved-name rules (delivery is always ApplicationEnvPrefix-prefixed). An
+// empty list parses to nil so consumers see nil, not an empty slice.
+func parseApplicationEnv(node *yaml.Node, path, pointer string) (ApplicationEnv, error) {
+	allow, err := parseEnvAllowList(node, path, pointer, validateApplicationEnvName)
+	if err != nil {
+		return ApplicationEnv{}, err
+	}
+	if len(allow) == 0 {
+		return ApplicationEnv{}, nil
+	}
+	return ApplicationEnv{Allow: allow}, nil
+}
+
+func validateApplicationEnvName(name string) error {
+	if !IsValidEnvName(name) {
+		return fmt.Errorf("env name %q is invalid", name)
+	}
+	return nil
 }
 
 func parseExecParameters(node *yaml.Node, copyScope string, path, pointer string) (ExecParameters, error) {
@@ -658,14 +696,21 @@ func IsValidEnvName(name string) bool { return envNamePattern.MatchString(name) 
 // command-backed plugin run (the Argo CD build environment and drydock
 // extras). Listing them in env.allow is redundant and would let a
 // caller-environment value stand in for the value drydock computes, so Parse
-// drops them with a warning instead of forwarding them.
+// drops them with a warning instead of forwarding them. ARGOCD_ENV_* is the
+// delivery channel for applicationEnv.allow.
 var managedEnvNames = map[string]struct{}{
 	"KUBE_VERSION":      {},
 	"KUBE_API_VERSIONS": {},
 	"DRYDOCK_OFFLINE":   {},
 }
 
-var managedEnvPrefixes = []string{"ARGOCD_APP_"}
+var managedEnvPrefixes = []string{"ARGOCD_APP_", ApplicationEnvPrefix}
+
+// ApplicationEnvPrefix prefixes every Application env name on delivery: an
+// applicationEnv.allow entry NAME reaches the plugin as ARGOCD_ENV_NAME, the
+// way an Argo CD repo-server delivers spec.source.plugin.env. IsManagedEnvName,
+// managedEnvNameWarning, and the delivery code must agree on this prefix.
+const ApplicationEnvPrefix = "ARGOCD_ENV_"
 
 // IsManagedEnvName reports whether drydock sets name itself for command-backed
 // plugins (case-insensitive, like the reserved-name check).

@@ -120,6 +120,7 @@ func assertExecPluginSchema(t *testing.T, defs map[string]any) {
 	if ref, ok := parametersProp["$ref"].(string); !ok || ref != "#/$defs/parameters" {
 		t.Fatalf("exec parameters schema ref = %#v, want #/$defs/parameters", parametersProp["$ref"])
 	}
+	assertSchemaRef(t, schemaObject(t, execProps, "applicationEnv"), "#/$defs/applicationEnv")
 }
 
 func assertContainerPluginSchema(t *testing.T, defs map[string]any) {
@@ -144,6 +145,7 @@ func assertContainerPluginSchema(t *testing.T, defs map[string]any) {
 	assertSchemaRef(t, schemaObject(t, containerProps, "cacheMounts"), "#/$defs/containerCacheMounts")
 	assertSchemaRef(t, schemaObject(t, containerProps, "generate"), "#/$defs/command")
 	assertSchemaRef(t, schemaObject(t, containerProps, "parameters"), "#/$defs/parameters")
+	assertSchemaRef(t, schemaObject(t, containerProps, "applicationEnv"), "#/$defs/applicationEnv")
 	assertContainerCacheMountSchema(t, defs)
 }
 
@@ -3268,14 +3270,14 @@ plugins:
 }
 
 func TestManagedAndReservedEnvNames(t *testing.T) {
-	for _, name := range []string{"KUBE_VERSION", "KUBE_API_VERSIONS", "DRYDOCK_OFFLINE", "ARGOCD_APP_NAME", "argocd_app_source_path"} {
+	for _, name := range []string{"KUBE_VERSION", "KUBE_API_VERSIONS", "DRYDOCK_OFFLINE", "ARGOCD_APP_NAME", "argocd_app_source_path", "ARGOCD_ENV_MODE", "argocd_env_x"} {
 		t.Run("managed "+name, func(t *testing.T) {
 			if !IsManagedEnvName(name) {
 				t.Errorf("IsManagedEnvName(%q) = false, want true", name)
 			}
 		})
 	}
-	for _, name := range []string{"CLUSTER_NAME", "DRYDOCK_APP_EXEC_HELPER", "ARGOCD_ENV_MODE", "KUBECONFIG"} {
+	for _, name := range []string{"CLUSTER_NAME", "DRYDOCK_APP_EXEC_HELPER", "ARGOCD_ENVX", "KUBECONFIG"} {
 		t.Run("unmanaged "+name, func(t *testing.T) {
 			if IsManagedEnvName(name) {
 				t.Errorf("IsManagedEnvName(%q) = true, want false", name)
@@ -3303,5 +3305,164 @@ func TestManagedAndReservedEnvNames(t *testing.T) {
 				t.Errorf("IsValidEnvName(%q) = %v, want %v", tt.name, got, tt.want)
 			}
 		})
+	}
+}
+
+func TestParseApplicationEnvAllow(t *testing.T) {
+	policy, err := Parse("policy.yaml", []byte(`apiVersion: drydock.sholdee.dev/v1alpha1
+kind: PluginPolicy
+plugins:
+  pkl:
+    engine: exec
+    generate:
+      command: ["pkl"]
+    applicationEnv:
+      allow: ["SUFFIX", "MODE", " USE_TELEMETRY "]
+  render:
+    engine: container
+    image: registry.example.test/plugins/render@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+    generate:
+      command: ["render"]
+    applicationEnv:
+      allow: ["REGION"]
+`))
+	if err != nil {
+		t.Fatalf("Parse() error = %v", err)
+	}
+	if got := policy.Plugins["pkl"].Exec.ApplicationEnv.Allow; !reflect.DeepEqual(got, []string{"MODE", "SUFFIX", "USE_TELEMETRY"}) {
+		t.Fatalf("exec applicationEnv.allow = %#v, want trimmed and sorted", got)
+	}
+	if got := policy.Plugins["render"].Container.Lifecycle.ApplicationEnv.Allow; !reflect.DeepEqual(got, []string{"REGION"}) {
+		t.Fatalf("container applicationEnv.allow = %#v, want [REGION]", got)
+	}
+	if len(policy.Warnings) != 0 {
+		t.Fatalf("Warnings = %#v, want none", policy.Warnings)
+	}
+}
+
+func TestParseApplicationEnvRejectsInvalidEntries(t *testing.T) {
+	base := `apiVersion: drydock.sholdee.dev/v1alpha1
+kind: PluginPolicy
+plugins:
+  pkl:
+    engine: exec
+    generate:
+      command: ["pkl"]
+    applicationEnv:
+%s
+`
+	testCases := []struct {
+		name string
+		body string
+		want string
+	}{
+		{name: "invalid identifier", body: `      allow: ["9MODE"]`, want: "invalid"},
+		{name: "duplicate", body: `      allow: ["MODE", " MODE "]`, want: "duplicate"},
+		{name: "empty entry", body: `      allow: ["MODE", ""]`, want: "must not be empty"},
+		{name: "unknown field", body: `      deny: ["MODE"]`, want: "unknown"},
+		{name: "not a mapping", body: `      - MODE`, want: "must be a mapping"},
+	}
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			_, err := Parse("policy.yaml", []byte(fmt.Sprintf(base, testCase.body)))
+			if err == nil || !strings.Contains(err.Error(), testCase.want) {
+				t.Fatalf("Parse() error = %v, want %q", err, testCase.want)
+			}
+		})
+	}
+	tooMany := make([]string, 0, maxEnvAllowCount+1)
+	for i := 0; i <= maxEnvAllowCount; i++ {
+		tooMany = append(tooMany, fmt.Sprintf(`"V%d"`, i))
+	}
+	if _, err := Parse("policy.yaml", []byte(fmt.Sprintf(base, "      allow: ["+strings.Join(tooMany, ", ")+"]"))); err == nil || !strings.Contains(err.Error(), "maximum") {
+		t.Fatalf("Parse() error = %v, want maximum-entries error", err)
+	}
+	// Managed and reserved host names are legal Application env names: the
+	// prefix keeps them from colliding with anything drydock sets.
+	if _, err := Parse("policy.yaml", []byte(fmt.Sprintf(base, `      allow: ["KUBE_VERSION", "PATH", "ARGOCD_APP_NAME"]`))); err != nil {
+		t.Fatalf("Parse() error = %v, want managed/reserved host names accepted under applicationEnv", err)
+	}
+}
+
+func TestParseApplicationEnvRejectedForNativeEngines(t *testing.T) {
+	for _, engine := range []Engine{EngineAVPCompat, EngineNativeKustomize} {
+		_, err := Parse("policy.yaml", []byte(fmt.Sprintf(`apiVersion: drydock.sholdee.dev/v1alpha1
+kind: PluginPolicy
+plugins:
+  native:
+    engine: %s
+    applicationEnv:
+      allow: ["MODE"]
+`, engine)))
+		if err == nil || !strings.Contains(err.Error(), "applicationEnv") {
+			t.Fatalf("Parse(engine=%s) error = %v, want unknown-field error naming applicationEnv", engine, err)
+		}
+	}
+}
+
+func TestFingerprintChangesOnlyWhenApplicationEnvPresent(t *testing.T) {
+	base := `apiVersion: drydock.sholdee.dev/v1alpha1
+kind: PluginPolicy
+plugins:
+  pkl:
+    engine: exec
+    generate:
+      command: ["pkl"]
+%s
+`
+	without, err := Parse("policy.yaml", []byte(fmt.Sprintf(base, "")))
+	if err != nil {
+		t.Fatalf("Parse() error = %v", err)
+	}
+	emptyList, err := Parse("policy.yaml", []byte(fmt.Sprintf(base, "    applicationEnv:\n      allow: []")))
+	if err != nil {
+		t.Fatalf("Parse() error = %v", err)
+	}
+	withEnv, err := Parse("policy.yaml", []byte(fmt.Sprintf(base, "    applicationEnv:\n      allow: [\"MODE\"]")))
+	if err != nil {
+		t.Fatalf("Parse() error = %v", err)
+	}
+	a, _ := Fingerprint(without)
+	b, _ := Fingerprint(emptyList)
+	c, _ := Fingerprint(withEnv)
+	if a != b {
+		t.Fatalf("empty applicationEnv.allow must fingerprint like an absent block (%s vs %s)", a, b)
+	}
+	if a == c {
+		t.Fatalf("applicationEnv.allow entries must change the fingerprint")
+	}
+	// wantJSON is the canonical fingerprint input this policy produced before
+	// applicationEnv existed. It carries no applicationEnv key at all, and it
+	// must keep hashing identically: the fingerprint gates exec/container
+	// trust, so a mismatch here means every existing exec/container policy's
+	// recorded trust fingerprint would be invalidated.
+	wantJSON := `{"apiVersion":"drydock.sholdee.dev/v1alpha1","kind":"PluginPolicy","plugins":{"pkl":{"engine":"exec","exec":{"workdir":"source","copy":{"Scope":"source","Include":null},"generate":{"command":["pkl"],"timeout":"1m0s"},"env":{"Allow":null},"parameters":{"Allow":[]},"output":{"MaxStdoutBytes":10485760,"MaxStderrBytes":65536}}}}}`
+	if strings.Contains(wantJSON, "applicationEnv") {
+		t.Fatalf("wantJSON must be the pre-applicationEnv canonical form; it must not mention applicationEnv")
+	}
+	if want := sha256Hex(wantJSON); a != want {
+		t.Fatalf("Fingerprint(without applicationEnv) = %s, want %s: an absent applicationEnv block changed a pre-existing policy's fingerprint", a, want)
+	}
+}
+
+func TestParseDropsArgoEnvPrefixedNamesFromHostEnvAllow(t *testing.T) {
+	policy, err := Parse("policy.yaml", []byte(`apiVersion: drydock.sholdee.dev/v1alpha1
+kind: PluginPolicy
+plugins:
+  pkl:
+    engine: exec
+    generate:
+      command: ["pkl"]
+    env:
+      allow: ["ARGOCD_ENV_MODE", "CLUSTER_NAME"]
+`))
+	if err != nil {
+		t.Fatalf("Parse() error = %v", err)
+	}
+	if got := policy.Plugins["pkl"].Exec.Env.Allow; !reflect.DeepEqual(got, []string{"CLUSTER_NAME"}) {
+		t.Fatalf("env.allow = %#v, want ARGOCD_ENV_MODE dropped", got)
+	}
+	if len(policy.Warnings) != 1 || !strings.Contains(policy.Warnings[0], `"ARGOCD_ENV_MODE" is ignored`) || !strings.Contains(policy.Warnings[0], "applicationEnv.allow") {
+		t.Fatalf("Warnings = %#v, want one ARGOCD_ENV_MODE warning that points at applicationEnv.allow", policy.Warnings)
 	}
 }
