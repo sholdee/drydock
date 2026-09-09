@@ -950,8 +950,13 @@ func normalizeDiagnostics(diags []diagnostic.Diagnostic, strict, forceWarning bo
 // escalating it would convert exactly those working runs into hard failures.
 // Rendering stays unchanged when the hint fires (remote acquisition still
 // happens), so there is nothing for --strict to protect against.
+// The plugin-policy env-ignored warning has the same shape: the managed
+// env.allow entry is dropped whether or not the warning is shown, and the
+// policy is often read from the diff baseline or --plugin-policy-ref where the
+// PR branch cannot fix it, so diag/get --strict must accept the same policies
+// build/diff --strict accept.
 func strictExemptDiagnostic(diag diagnostic.Diagnostic) bool {
-	return diag.Code == selfRepoNearMissCode
+	return diag.Code == selfRepoNearMissCode || diag.Code == diagnostic.CodePluginPolicyEnvIgnored
 }
 
 func diagnosticFailure(diags []diagnostic.Diagnostic, strict bool) error {

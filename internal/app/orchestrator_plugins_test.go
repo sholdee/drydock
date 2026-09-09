@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -3154,4 +3155,102 @@ func TestOrchestratorInjectedPluginRendererErrorPreservesDiagnostics(t *testing.
 	if !hasDiagnosticCode(result.Diagnostics, diagnostic.CodePluginFailed) {
 		t.Fatalf("Diagnostics = %#v, want plugin.failed", result.Diagnostics)
 	}
+}
+
+func TestOrchestratorDiffAppsWarnsWhenPolicyEnvAllowListsManagedName(t *testing.T) {
+	root := t.TempDir()
+	left := filepath.Join(root, "left")
+	right := filepath.Join(root, "right")
+	writePluginBuildApplication(t, left, "plugin", "exec-renderer")
+	writePluginBuildApplication(t, right, "plugin", "exec-renderer")
+	writeTestFile(t, filepath.Join(left, "manifests", "plugin", "marker.txt"), "left")
+	writeTestFile(t, filepath.Join(right, "manifests", "plugin", "marker.txt"), "right")
+	// The policy is read from the diff baseline (LeftPath) through the real
+	// loader and is exec-trusted because LeftPath != RightPath.
+	writeTestFile(t, filepath.Join(left, ".drydock", "plugins.yaml"), `apiVersion: drydock.sholdee.dev/v1alpha1
+kind: PluginPolicy
+plugins:
+  exec-renderer:
+    engine: exec
+    generate:
+      command: ["renderer"]
+    env:
+      allow: ["KUBE_VERSION"]
+`)
+	t.Setenv("KUBE_VERSION", "from-host-shell")
+	runner := &recordingExecRunner{result: pluginexec.Result{Stdout: []byte("apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: injected\n")}}
+
+	result, err := (Orchestrator{PluginExecRunner: runner}).DiffApps(context.Background(), DiffRequest{
+		LeftPath:      left,
+		RightPath:     right,
+		ChangedOnly:   false,
+		Unified:       3,
+		EnablePlugins: true,
+		KubeVersion:   "v1.30.2",
+	})
+	if err != nil {
+		t.Fatalf("DiffApps() error = %v\nDiagnostics: %#v", err, result.Diagnostics)
+	}
+	if !hasDiagnosticCode(result.Diagnostics, diagnostic.CodePluginPolicyEnvIgnored) {
+		t.Fatalf("Diagnostics = %#v, want %s warning", result.Diagnostics, diagnostic.CodePluginPolicyEnvIgnored)
+	}
+	if runner.calls != 2 {
+		t.Fatalf("runner calls = %d, want both diff sides", runner.calls)
+	}
+	if got := runner.lastRequest.Config.Env.Allow; len(got) != 0 {
+		t.Fatalf("policy env.allow reaching the runner = %#v, want the managed name dropped", got)
+	}
+	if !slices.Contains(runner.lastRequest.ExtraEnv, "KUBE_VERSION=1.30.2") {
+		t.Fatalf("ExtraEnv = %#v, want drydock's KUBE_VERSION, not the host shell's", runner.lastRequest.ExtraEnv)
+	}
+}
+
+func TestOrchestratorStrictKeepsPolicyEnvIgnoredAsWarning(t *testing.T) {
+	root := t.TempDir()
+	writeBuildApplication(t, root, "plain", "plain-config")
+	writeTestFile(t, filepath.Join(root, ".drydock", "plugins.yaml"), `apiVersion: drydock.sholdee.dev/v1alpha1
+kind: PluginPolicy
+plugins:
+  exec-renderer:
+    engine: exec
+    generate:
+      command: ["renderer"]
+    env:
+      allow: ["KUBE_VERSION"]
+`)
+	request := BuildRequest{Path: root, Strict: true}
+	assertWarning := func(t *testing.T, diags []diagnostic.Diagnostic) {
+		t.Helper()
+		found := false
+		for _, diag := range diags {
+			if diag.Code != diagnostic.CodePluginPolicyEnvIgnored {
+				continue
+			}
+			found = true
+			if diag.Severity != diagnostic.SeverityWarning {
+				t.Fatalf("%s severity = %q, want warning under --strict", diag.Code, diag.Severity)
+			}
+		}
+		if !found {
+			t.Fatalf("Diagnostics = %#v, want %s", diags, diagnostic.CodePluginPolicyEnvIgnored)
+		}
+	}
+
+	// ListApplications and Diag both run diagnosticFailure over the policy
+	// diagnostics; Build and DiffApps do not, so a non-exempt warning would
+	// make get/diag --strict reject a policy build/diff --strict accept.
+	t.Run("ListApplications", func(t *testing.T) {
+		result, err := (Orchestrator{}).ListApplications(context.Background(), request)
+		if err != nil {
+			t.Fatalf("ListApplications() error = %v\nDiagnostics: %#v", err, result.Diagnostics)
+		}
+		assertWarning(t, result.Diagnostics)
+	})
+	t.Run("Diag", func(t *testing.T) {
+		result, err := (Orchestrator{}).Diag(context.Background(), request)
+		if err != nil {
+			t.Fatalf("Diag() error = %v\nDiagnostics: %#v", err, result.Diagnostics)
+		}
+		assertWarning(t, result.Diagnostics)
+	})
 }

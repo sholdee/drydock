@@ -10,11 +10,12 @@ const (
 )
 
 const (
-	CodePluginUnsupported   = "plugin.unsupported"
-	CodePluginFailed        = "plugin.failed"
-	CodePluginUnspecified   = "plugin.unspecified"
-	CodePluginPolicyInvalid = "plugin.policy.invalid"
-	CodePluginAutoDiscovery = "plugin.auto-discovery-deferred"
+	CodePluginUnsupported      = "plugin.unsupported"
+	CodePluginFailed           = "plugin.failed"
+	CodePluginUnspecified      = "plugin.unspecified"
+	CodePluginPolicyInvalid    = "plugin.policy.invalid"
+	CodePluginPolicyEnvIgnored = "plugin.policy.env-ignored"
+	CodePluginAutoDiscovery    = "plugin.auto-discovery-deferred"
 )
 
 type Provenance struct {

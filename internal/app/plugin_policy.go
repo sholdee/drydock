@@ -122,7 +122,20 @@ func loadPluginPolicyFromRoot(request BuildRequest, root string, requirePolicy b
 		request.pluginPolicyFingerprint = pluginpolicy.NoPolicyFingerprint
 		request.pluginPolicyExecTrusted = false
 	}
-	return request, nil, cleanup, nil
+	return request, pluginPolicyWarningDiagnostics(policy.Warnings), cleanup, nil
+}
+
+func pluginPolicyWarningDiagnostics(warnings []string) []diagnostic.Diagnostic {
+	out := make([]diagnostic.Diagnostic, 0, len(warnings))
+	for _, warning := range warnings {
+		out = append(out, diagnostic.Diagnostic{
+			Code:     diagnostic.CodePluginPolicyEnvIgnored,
+			Severity: diagnostic.SeverityWarning,
+			Category: "plugin",
+			Message:  "plugin policy: " + warning,
+		})
+	}
+	return out
 }
 
 func diffPluginPolicyExecTrusted(request DiffRequest) bool {

@@ -4,8 +4,10 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -2004,6 +2006,16 @@ func TestParseExecPolicyRejectsUnsafeFields(t *testing.T) {
 			want: "reserved",
 		},
 		{
+			name: "reserved parameter env takes precedence over managed drop",
+			body: `    engine: exec
+    generate:
+      command: ["argocd-vault-plugin"]
+    env:
+      allow: ["ARGOCD_APP_PARAMETERS"]
+`,
+			want: "reserved",
+		},
+		{
 			name: "duplicate env after trim",
 			body: `    engine: exec
     generate:
@@ -3168,4 +3180,128 @@ func mustPolicyFingerprint(t *testing.T, data string) string {
 		t.Fatalf("Fingerprint() error = %v", err)
 	}
 	return fingerprint
+}
+
+func TestParseDropsDrydockManagedEnvNamesWithWarning(t *testing.T) {
+	policy, err := Parse("policy.yaml", []byte(`apiVersion: drydock.sholdee.dev/v1alpha1
+kind: PluginPolicy
+plugins:
+  render:
+    engine: exec
+    generate:
+      command: ["/usr/local/bin/render"]
+    env:
+      allow: ["CLUSTER_NAME", "KUBE_VERSION", "ARGOCD_APP_NAME", "kube_api_versions", "DRYDOCK_OFFLINE"]
+`))
+	if err != nil {
+		t.Fatalf("Parse() error = %v", err)
+	}
+	got := policy.Plugins["render"].Exec.Env.Allow
+	if len(got) != 1 || got[0] != "CLUSTER_NAME" {
+		t.Fatalf("env.allow = %#v, want only CLUSTER_NAME", got)
+	}
+	want := []string{
+		`plugins.render.env.allow entry "ARGOCD_APP_NAME" is ignored: drydock sets it for every command-backed plugin`,
+		`plugins.render.env.allow entry "DRYDOCK_OFFLINE" is ignored: drydock sets it for every command-backed plugin`,
+		`plugins.render.env.allow entry "KUBE_VERSION" is ignored: drydock sets it for every command-backed plugin`,
+		`plugins.render.env.allow entry "kube_api_versions" is ignored: drydock sets it for every command-backed plugin`,
+	}
+	if !reflect.DeepEqual(policy.Warnings, want) {
+		t.Fatalf("Warnings = %#v, want %#v", policy.Warnings, want)
+	}
+}
+
+func TestParseDropsManagedEnvNamesForContainerLifecycle(t *testing.T) {
+	policy, err := Parse("policy.yaml", []byte(`apiVersion: drydock.sholdee.dev/v1alpha1
+kind: PluginPolicy
+plugins:
+  render:
+    engine: container
+    image: registry.example.test/plugins/render@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+    generate:
+      command: ["render"]
+    env:
+      allow: ["ARGOCD_APP_NAMESPACE", "REGION"]
+`))
+	if err != nil {
+		t.Fatalf("Parse() error = %v", err)
+	}
+	if got := policy.Plugins["render"].Container.Lifecycle.Env.Allow; len(got) != 1 || got[0] != "REGION" {
+		t.Fatalf("container env.allow = %#v, want only REGION", got)
+	}
+	if len(policy.Warnings) != 1 || !strings.Contains(policy.Warnings[0], `"ARGOCD_APP_NAMESPACE" is ignored`) {
+		t.Fatalf("Warnings = %#v, want one ARGOCD_APP_NAMESPACE warning", policy.Warnings)
+	}
+}
+
+func TestFingerprintIgnoresDroppedManagedEnvNames(t *testing.T) {
+	base := `apiVersion: drydock.sholdee.dev/v1alpha1
+kind: PluginPolicy
+plugins:
+  render:
+    engine: exec
+    generate:
+      command: ["/usr/local/bin/render"]
+`
+	withEnv := base + `    env:
+      allow: [%s]
+`
+	fingerprint := func(t *testing.T, text string) string {
+		t.Helper()
+		policy, err := Parse("policy.yaml", []byte(text))
+		if err != nil {
+			t.Fatalf("Parse() error = %v", err)
+		}
+		got, err := Fingerprint(policy)
+		if err != nil {
+			t.Fatalf("Fingerprint() error = %v", err)
+		}
+		return got
+	}
+	if a, b := fingerprint(t, fmt.Sprintf(withEnv, `"CLUSTER_NAME", "KUBE_VERSION"`)), fingerprint(t, fmt.Sprintf(withEnv, `"CLUSTER_NAME"`)); a != b {
+		t.Fatalf("fingerprints differ (%s vs %s); a dropped managed name must not change the fingerprint", a, b)
+	}
+	// A list made only of managed names fingerprints like a policy without an env block.
+	if a, b := fingerprint(t, fmt.Sprintf(withEnv, `"KUBE_VERSION"`)), fingerprint(t, base); a != b {
+		t.Fatalf("fingerprints differ (%s vs %s); an all-managed env.allow must fingerprint like no env block", a, b)
+	}
+}
+
+func TestManagedAndReservedEnvNames(t *testing.T) {
+	for _, name := range []string{"KUBE_VERSION", "KUBE_API_VERSIONS", "DRYDOCK_OFFLINE", "ARGOCD_APP_NAME", "argocd_app_source_path"} {
+		t.Run("managed "+name, func(t *testing.T) {
+			if !IsManagedEnvName(name) {
+				t.Errorf("IsManagedEnvName(%q) = false, want true", name)
+			}
+		})
+	}
+	for _, name := range []string{"CLUSTER_NAME", "DRYDOCK_APP_EXEC_HELPER", "ARGOCD_ENV_MODE", "KUBECONFIG"} {
+		t.Run("unmanaged "+name, func(t *testing.T) {
+			if IsManagedEnvName(name) {
+				t.Errorf("IsManagedEnvName(%q) = true, want false", name)
+			}
+		})
+	}
+	// Hard reservations stay parse errors and take precedence over the managed drop.
+	for _, name := range []string{"PATH", "ARGOCD_APP_PARAMETERS", "PARAM_X", "LD_PRELOAD"} {
+		t.Run("reserved "+name, func(t *testing.T) {
+			if err := ValidateEnvName(name); err == nil {
+				t.Errorf("ValidateEnvName(%q) = nil, want reserved error", name)
+			}
+		})
+	}
+	for _, tt := range []struct {
+		name string
+		want bool
+	}{
+		{name: "A_b9", want: true},
+		{name: "9A", want: false},
+		{name: "A-B", want: false},
+	} {
+		t.Run("identifier "+tt.name, func(t *testing.T) {
+			if got := IsValidEnvName(tt.name); got != tt.want {
+				t.Errorf("IsValidEnvName(%q) = %v, want %v", tt.name, got, tt.want)
+			}
+		})
+	}
 }

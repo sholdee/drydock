@@ -764,3 +764,22 @@ func hasIssue(issues []ReadinessIssue, code string) bool {
 	}
 	return false
 }
+
+func TestGenerateSkipsDrydockManagedEnvNames(t *testing.T) {
+	root := t.TempDir()
+	app := pluginApp("argocd", "demo", "apps/demo", "pkl")
+	app.Spec.Source.Plugin.Env = argoappv1.Env{{Name: "KUBE_VERSION", Value: "1.30.0"}, {Name: "ARGOCD_APP_NAME", Value: "x"}, {Name: "PKL_ENV", Value: "prod"}}
+	settings := settingsWithCMP("pkl", config.ConfigManagementPlugin{Name: "pkl", GenerateCommand: []string{"pkl"}, Discover: config.ConfigManagementPluginDiscovery{FileName: "PklProject"}})
+	report, err := Analyze(root, []ApplicationInput{{Application: app}}, settings, nil, AnalyzeOptions{})
+	if err != nil {
+		t.Fatalf("Analyze() error = %v", err)
+	}
+	data, err := Generate(report, GenerateOptions{})
+	if err != nil {
+		t.Fatalf("Generate() error = %v", err)
+	}
+	text := string(data)
+	if !strings.Contains(text, `- "PKL_ENV"`) || strings.Contains(text, "KUBE_VERSION") || strings.Contains(text, "ARGOCD_APP_NAME") {
+		t.Fatalf("generated policy = \n%s\nwant PKL_ENV only (managed names skipped)", text)
+	}
+}
