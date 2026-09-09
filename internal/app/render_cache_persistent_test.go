@@ -2003,3 +2003,40 @@ func TestDirtyModeKustomizeUntrackedVariantForcesWorktreeKey(t *testing.T) {
 		t.Fatalf("identity with untracked variant = %+v, want worktree-inputs (variant must intersect the digest path set)", variant)
 	}
 }
+
+// TestPersistentRenderCacheCollectSourceIdentitiesRejectsEnvSubstitutedHelmValueFiles pins
+// that a worktree-rooted Helm source whose value-file names need $ARGOCD_APP_*
+// substitution is never persistent-cache eligible, for any controller namespace:
+// the enumerator rejects the path (render/helm_values.go resolvedInput) instead of
+// digesting a substituted name, so the persistent key cannot depend on the Argo CD
+// build environment. (Revision-keyed sources never digest paths at all.)
+func TestPersistentRenderCacheCollectSourceIdentitiesRejectsEnvSubstitutedHelmValueFiles(t *testing.T) {
+	repoRoot := t.TempDir()
+	writeTestFile(t, repoRoot+"/charts/demo/Chart.yaml", "apiVersion: v2\nname: demo\nversion: 0.1.0\n")
+	writeTestFile(t, repoRoot+"/charts/demo/templates/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: demo\n")
+	writeTestFile(t, repoRoot+"/charts/demo/values-demo.yaml", "name: demo\n")
+	writeTestFile(t, repoRoot+"/charts/demo/values-team-a_demo.yaml", "name: team-a\n")
+	rootRevision := gitCommitAll(t, repoRoot, "initial")
+	handle := &persistentRenderCache{filesystemDigests: map[string]filedigest.PathDigestResult{}}
+	provider := localProvider{
+		repoRoot:       repoRoot,
+		sourceResolver: sourcepkg.NewResolver(sourcepkg.Options{}),
+		rootIdentity:   SourceIdentity{Kind: sourceIdentityKindRoot, Revision: rootRevision},
+		rootInputMode:  rootInputModeDirty,
+	}
+	application := argoappv1.Application{
+		Name: "demo", Namespace: "team-a",
+		Spec: argoappv1.ApplicationSpec{Source: &argoappv1.ApplicationSource{
+			RepoURL: "https://git.example.test/org/repo.git", Path: "charts/demo", TargetRevision: "main",
+			Helm: &argoappv1.ApplicationSourceHelm{ValueFiles: []string{"values-$ARGOCD_APP_NAME.yaml"}},
+		}},
+	}
+	plan := mustPlan(t, application)
+	_, reason, ok := collectSourceIdentities(context.Background(), handle, provider, plan)
+	if ok {
+		t.Fatal("collectSourceIdentities() ok = true, want env-substituted value file to skip persistence")
+	}
+	if reason != renderCacheReasonInputGraph {
+		t.Fatalf("reason = %q, want %q", reason, renderCacheReasonInputGraph)
+	}
+}

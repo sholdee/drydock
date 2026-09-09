@@ -10,6 +10,7 @@ package app
 
 import (
 	"context"
+	"os"
 	"path/filepath"
 	"strings"
 	"sync/atomic"
@@ -433,4 +434,119 @@ func kubeVersionFromBuildResult(result BuildResult, appName string) string {
 		return v
 	}
 	return ""
+}
+
+// writeArgoEnvHelmApp writes a chart whose ConfigMap echoes the Argo CD build
+// environment through Helm parameters, so rendered output reveals which
+// ARGOCD_APP_* values the renderer substituted.
+func writeArgoEnvHelmApp(t *testing.T, root, name string) {
+	t.Helper()
+	writeTestFile(t, filepath.Join(root, "charts", name, "Chart.yaml"), "apiVersion: v2\nname: "+name+"\nversion: 0.1.0\n")
+	writeTestFile(t, filepath.Join(root, "charts", name, "values.yaml"), "app: \"\"\nns: \"\"\n")
+	writeTestFile(t, filepath.Join(root, "charts", name, "templates", "cm.yaml"), `apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: `+name+`
+data:
+  app: {{ .Values.app | quote }}
+  ns: {{ .Values.ns | quote }}
+`)
+}
+
+func argoEnvConfigMapData(t *testing.T, result RenderResult) map[string]string {
+	t.Helper()
+	for _, m := range result.Manifests {
+		if m.Object == nil || m.Object.GetKind() != "ConfigMap" {
+			continue
+		}
+		raw, _ := m.Object.Object["data"].(map[string]any)
+		out := map[string]string{}
+		for key, value := range raw {
+			out[key], _ = value.(string)
+		}
+		return out
+	}
+	t.Fatal("rendered manifests contain no ConfigMap")
+	return nil
+}
+
+// TestNamespaceDefaultedCacheFallbackIsSoundForArgoEnv pins the invariant the
+// in-memory fallback in renderApplicationCached relies on: rendering an
+// Application with metadata.namespace "" and with the controller namespace
+// yields identical output, because ARGOCD_APP_NAME (instance name) and
+// ARGOCD_APP_NAMESPACE (destination namespace) do not depend on
+// metadata.namespace in that case. It then proves the fallback is taken and
+// serves the Argo-faithful values.
+func TestNamespaceDefaultedCacheFallbackIsSoundForArgoEnv(t *testing.T) {
+	repoRoot := t.TempDir()
+	writeArgoEnvHelmApp(t, repoRoot, "demo")
+	gitCommitAll(t, repoRoot, "initial")
+
+	newApplication := func(namespace string) argoappv1.Application {
+		return argoappv1.Application{
+			Name: "demo", Namespace: namespace,
+			Spec: argoappv1.ApplicationSpec{
+				Source: &argoappv1.ApplicationSource{
+					RepoURL:        "https://github.com/example/repo",
+					Path:           "charts/demo",
+					TargetRevision: "main",
+					Helm: &argoappv1.ApplicationSourceHelm{Parameters: []argoappv1.HelmParameter{
+						{Name: "app", Value: "$ARGOCD_APP_NAME"},
+						{Name: "ns", Value: "$ARGOCD_APP_NAMESPACE"},
+					}},
+				},
+				Destination: argoappv1.ApplicationDestination{Name: "in-cluster", Namespace: "workloads"},
+			},
+		}
+	}
+	// offline keeps the post-deletion negative path deterministic: without it
+	// drydock would attempt a real clone of the (nonexistent) RepoURL.
+	provider := localProvider{
+		repoRoot:       repoRoot,
+		sourceResolver: sourcepkg.NewResolver(sourcepkg.Options{}),
+		rootIdentity:   SourceIdentity{Kind: sourceIdentityKindRoot},
+		rootInputMode:  rootInputModeDirty,
+		offline:        true,
+		cacheEvents:    cacheevent.NewRecorder(false),
+		acquisitions:   cacheevent.NewAcquisitionCollector(),
+	}
+	newContext := func(cache *applicationRenderCache) renderContext {
+		return renderContext{
+			context:  context.Background(),
+			provider: provider,
+			cache:    cache,
+			request:  BuildRequest{},
+		}
+	}
+	want := map[string]string{"app": "demo", "ns": "workloads"}
+
+	// 1. Fresh renders (separate caches) must be identical and Argo-faithful.
+	for _, namespace := range []string{"", "argocd"} {
+		result, err := renderApplicationCached(newContext(newApplicationRenderCache()), newApplication(namespace))
+		if err != nil {
+			t.Fatalf("renderApplicationCached(namespace=%q) error = %v", namespace, err)
+		}
+		if got := argoEnvConfigMapData(t, result); got["app"] != want["app"] || got["ns"] != want["ns"] {
+			t.Fatalf("fresh render (namespace=%q) data = %v, want %v", namespace, got, want)
+		}
+	}
+
+	// 2. Shared cache: render the namespace-less Application, then delete the
+	// chart so a real render of the namespaced Application would fail. It can
+	// only succeed through the namespace-defaulted fallback, which must serve
+	// the same Argo-faithful values.
+	cache := newApplicationRenderCache()
+	if _, err := renderApplicationCached(newContext(cache), newApplication("")); err != nil {
+		t.Fatalf("first renderApplicationCached() error = %v", err)
+	}
+	if err := os.RemoveAll(filepath.Join(repoRoot, "charts", "demo")); err != nil {
+		t.Fatalf("remove chart: %v", err)
+	}
+	result, err := renderApplicationCached(newContext(cache), newApplication("argocd"))
+	if err != nil {
+		t.Fatalf("renderApplicationCached() via namespace-defaulted fallback error = %v (fallback not taken?)", err)
+	}
+	if got := argoEnvConfigMapData(t, result); got["app"] != want["app"] || got["ns"] != want["ns"] {
+		t.Fatalf("fallback render data = %v, want %v", got, want)
+	}
 }

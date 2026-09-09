@@ -87,7 +87,7 @@ func RenderApplicationWithOptions(ctx context.Context, application argoappv1.App
 }
 
 func renderSourcePlan(ctx context.Context, application argoappv1.Application, provider render.Provider, plan PlanResult, sourcePlan SourcePlan, pluginOpts PluginOptions, trackingOpts TrackingOptions, capabilityOpts CapabilityOptions, byID map[manifest.Identity]int, result *RenderResult) error {
-	opts, err := renderOptions(application, sourcePlan.Source, capabilityOpts)
+	opts, err := renderOptions(application, sourcePlan.Source, capabilityOpts, trackingOpts)
 	if err != nil {
 		return fmt.Errorf("%s: %w", renderSourceContext(application, sourcePlan), err)
 	}
@@ -301,13 +301,14 @@ func recordNamespaceBeforeNormalization(rendered *render.Manifest) {
 	rendered.NamespaceBeforeNormalization = strings.TrimSpace(rendered.Object.GetNamespace())
 }
 
-func renderOptions(application argoappv1.Application, source argoappv1.ApplicationSource, capabilities CapabilityOptions) (render.RenderOptions, error) {
+func renderOptions(application argoappv1.Application, source argoappv1.ApplicationSource, capabilities CapabilityOptions, trackingOpts TrackingOptions) (render.RenderOptions, error) {
+	trackingOpts = normalizeTrackingOptions(trackingOpts)
 	opts := render.RenderOptions{
 		AppName:      application.Name,
 		AppNamespace: application.Namespace,
 		Project:      application.Spec.Project,
 		Namespace:    application.Spec.Destination.Namespace,
-		ArgoEnv:      argoRenderEnv(application, source),
+		ArgoEnv:      argoRenderEnv(application, source, trackingOpts.ControllerNamespace),
 	}
 	if source.Kustomize != nil {
 		opts.Kustomize = source.Kustomize.DeepCopy()
@@ -405,7 +406,14 @@ func parseKubeVersion(kubeVersion string) (string, error) {
 	return v.String(), nil
 }
 
-func argoRenderEnv(application argoappv1.Application, source argoappv1.ApplicationSource) argoappv1.Env {
+// argoRenderEnv mirrors the Argo CD repo-server build environment
+// (reposerver/repository/repository.go newEnv): ARGOCD_APP_NAME is the
+// Application instance name (<namespace>_<name> outside the controller
+// namespace, bare name otherwise) and ARGOCD_APP_NAMESPACE is the
+// destination namespace, exactly as the application controller fills the
+// ManifestRequest. ARGOCD_APP_REVISION* carry the spec targetRevision because
+// drydock does not resolve a commit SHA at render time.
+func argoRenderEnv(application argoappv1.Application, source argoappv1.ApplicationSource, controllerNamespace string) argoappv1.Env {
 	revision := source.TargetRevision
 	shortRevision := revision
 	if len(shortRevision) > 7 {
@@ -416,8 +424,8 @@ func argoRenderEnv(application argoappv1.Application, source argoappv1.Applicati
 		shortRevision8 = shortRevision8[:8]
 	}
 	return argoappv1.Env{
-		{Name: "ARGOCD_APP_NAME", Value: application.Name},
-		{Name: "ARGOCD_APP_NAMESPACE", Value: application.Namespace},
+		{Name: "ARGOCD_APP_NAME", Value: application.InstanceName(controllerNamespace)},
+		{Name: "ARGOCD_APP_NAMESPACE", Value: application.Spec.Destination.Namespace},
 		{Name: "ARGOCD_APP_PROJECT_NAME", Value: application.Spec.Project},
 		{Name: "ARGOCD_APP_REVISION", Value: revision},
 		{Name: "ARGOCD_APP_REVISION_SHORT", Value: shortRevision},

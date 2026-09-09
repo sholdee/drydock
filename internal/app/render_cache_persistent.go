@@ -814,7 +814,12 @@ func localToolInputDigestPaths(ctx context.Context, plan PlanResult, sourcePlan 
 }
 
 func localKustomizeInputDigestPaths(ctx context.Context, plan PlanResult, sourcePlan SourcePlan, repoRoot string) ([]gitref.PathDigestPath, error) {
-	opts, err := renderOptions(plan.Application, sourcePlan.Source, CapabilityOptions{})
+	// The build environment never reaches the digest: CollectHelmLocalInputPaths
+	// rejects env-substituted inputs (pinned by
+	// TestPersistentRenderCacheCollectSourceIdentitiesRejectsEnvSubstitutedHelmValueFiles),
+	// and the Kustomize/Directory enumerators do not read ArgoEnv, so the
+	// default tracking options are sufficient here.
+	opts, err := renderOptions(plan.Application, sourcePlan.Source, CapabilityOptions{}, defaultTrackingOptions())
 	if err != nil {
 		return nil, err
 	}
@@ -826,7 +831,7 @@ func localKustomizeInputDigestPaths(ctx context.Context, plan PlanResult, source
 }
 
 func localDirectoryInputDigestPaths(plan PlanResult, sourcePlan SourcePlan, repoRoot string) ([]gitref.PathDigestPath, error) {
-	opts, err := renderOptions(plan.Application, sourcePlan.Source, CapabilityOptions{})
+	opts, err := renderOptions(plan.Application, sourcePlan.Source, CapabilityOptions{}, defaultTrackingOptions())
 	if err != nil {
 		return nil, err
 	}
@@ -838,7 +843,7 @@ func localDirectoryInputDigestPaths(plan PlanResult, sourcePlan SourcePlan, repo
 }
 
 func localHelmInputDigestPaths(plan PlanResult, sourcePlan SourcePlan, repoRoot string) ([]gitref.PathDigestPath, bool, error) {
-	opts, err := renderOptions(plan.Application, sourcePlan.Source, CapabilityOptions{})
+	opts, err := renderOptions(plan.Application, sourcePlan.Source, CapabilityOptions{}, defaultTrackingOptions())
 	if err != nil {
 		return nil, false, err
 	}

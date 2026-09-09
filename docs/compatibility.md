@@ -201,6 +201,19 @@ Supported:
   is `app.kubernetes.io/instance`, `annotation`, `label`, and
   `annotation+label` modes are supported, `installationID` is applied for
   annotation-based tracking, and CRDs are not stamped.
+- Argo CD build-environment substitution (`$ARGOCD_APP_NAME`,
+  `$ARGOCD_APP_NAMESPACE`, `$ARGOCD_APP_PROJECT_NAME`, `$ARGOCD_APP_SOURCE_*`)
+  in Helm parameters and value-file names, Kustomize images, labels, and
+  `commonAnnotationsEnvsubst` annotations, and Jsonnet ext vars and TLAs, with
+  the repo-server's values: `ARGOCD_APP_NAME` is the Application instance name
+  (`<namespace>_<name>` for Applications outside the controller namespace;
+  drydock assumes the Argo CD controller namespace is `argocd`) and
+  `ARGOCD_APP_NAMESPACE` is `spec.destination.namespace`.
+- Recorded divergence from strict Argo CD v3.5.2: `ARGOCD_APP_REVISION`,
+  `ARGOCD_APP_REVISION_SHORT`, and `ARGOCD_APP_REVISION_SHORT_8` carry the spec
+  `targetRevision` string; a repo-server reports the resolved revision
+  (commit SHA for Git sources, chart version for Helm repository sources,
+  manifest digest for OCI sources).
 - Directory rendering that skips values-like YAML documents only when both
   `apiVersion` and `kind` are absent, and fails clearly when exactly one is
   present.
