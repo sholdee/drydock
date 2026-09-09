@@ -21,8 +21,8 @@ func TestValidatePolicyPluginSourceMessages(t *testing.T) {
 		wantSubs []string
 		wantNot  []string
 	}{
-		{name: "env on exec", engine: pluginpolicy.EngineExec, plugin: render.PluginConfig{Name: "pkl", Env: env}, wantSubs: []string{"Application plugin env (MODE, SUFFIX)", "does not forward", "exec", "parameters.allow"}, wantNot: []string{"native", "secret-value"}},
-		{name: "env on container", engine: pluginpolicy.EngineContainer, plugin: render.PluginConfig{Name: "pkl", Env: env}, wantSubs: []string{"Application plugin env (MODE, SUFFIX)", "container", "parameters.allow"}, wantNot: []string{"native", "secret-value"}},
+		{name: "env on exec is validated later", engine: pluginpolicy.EngineExec, plugin: render.PluginConfig{Name: "pkl", Env: env}},
+		{name: "env on container is validated later", engine: pluginpolicy.EngineContainer, plugin: render.PluginConfig{Name: "pkl", Env: env}},
 		{name: "env on native engine", engine: pluginpolicy.EngineAVPCompat, plugin: render.PluginConfig{Name: "avp", Env: env}, wantSubs: []string{"Application plugin env", "trusted native plugin policy"}, wantNot: []string{"parameters.allow", "secret-value"}},
 		{name: "parameters on native engine", engine: pluginpolicy.EngineNativeKustomize, plugin: render.PluginConfig{Name: "k", Parameters: params}, wantSubs: []string{"Application plugin parameters", "trusted native plugin policy"}},
 		{name: "parameters on exec are fine here", engine: pluginpolicy.EngineExec, plugin: render.PluginConfig{Name: "pkl", Parameters: params}},
