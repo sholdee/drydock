@@ -92,10 +92,7 @@ func (p localProvider) renderPolicyPluginPlan(ctx context.Context, source render
 }
 
 func validatePolicyPluginSource(name string, source render.ResolvedSource, opts render.RenderOptions, policyPlugin pluginpolicy.Plugin) string {
-	if len(opts.Plugin.Env) > 0 {
-		if policyPlugin.Engine == pluginpolicy.EngineExec || policyPlugin.Engine == pluginpolicy.EngineContainer {
-			return fmt.Sprintf("config management plugin %s uses Application plugin env (%s), which drydock does not forward to %s plugins yet; pass per-Application values through parameters allowlisted by parameters.allow", pluginDisplayName(name), strings.Join(applicationPluginEnvNames(opts.Plugin.Env), ", "), policyPlugin.Engine)
-		}
+	if len(opts.Plugin.Env) > 0 && policyPlugin.Engine != pluginpolicy.EngineExec && policyPlugin.Engine != pluginpolicy.EngineContainer {
 		return fmt.Sprintf("config management plugin %s uses Application plugin env, which is unsupported by trusted native plugin policy", pluginDisplayName(name))
 	}
 	if len(opts.Plugin.Parameters) > 0 && policyPlugin.Engine != pluginpolicy.EngineExec && policyPlugin.Engine != pluginpolicy.EngineContainer {

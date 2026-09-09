@@ -309,24 +309,7 @@ data:
 }
 func writePluginBuildApplication(t *testing.T, root, appName, pluginName string) {
 	t.Helper()
-	writeTestFile(t, filepath.Join(root, "apps", appName+".yaml"), `apiVersion: argoproj.io/v1alpha1
-kind: Application
-metadata:
-  name: `+appName+`
-  namespace: argocd
-spec:
-  project: default
-  source:
-    repoURL: https://github.com/example/repo
-    path: manifests/`+appName+`
-    targetRevision: main
-    plugin:
-      name: `+pluginName+`
-  destination:
-    name: in-cluster
-    namespace: default
-`)
-	writeTestFile(t, filepath.Join(root, "manifests", appName, ".keep"), "")
+	writePluginBuildApplicationWithEnv(t, root, appName, pluginName, nil)
 }
 func writeBuildApplicationWithProject(t *testing.T, root, appName, configMapName, projectName, repoURL, destinationNamespace string) {
 	t.Helper()

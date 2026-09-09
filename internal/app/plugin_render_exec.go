@@ -39,11 +39,15 @@ func (p localProvider) renderExecPolicyPluginSource(ctx context.Context, source 
 	if message != "" {
 		return nil, unsupportedPluginDiagnostic(message), true, unsupportedPolicyPluginError(message)
 	}
+	applicationEnv, message := validateApplicationPluginEnv(name, policyPlugin.Exec.ApplicationEnv.Allow, opts.Plugin.Env, policyPluginBuildEnvEntries(opts))
+	if message != "" {
+		return nil, unsupportedPluginDiagnostic(message), true, unsupportedPolicyPluginError(message)
+	}
 	execConfig, sensitive, message := expandExecPluginCommandTemplates(*policyPlugin.Exec, params)
 	if message != "" {
 		return nil, unsupportedPluginDiagnostic(fmt.Sprintf("config management plugin %s %s", pluginDisplayName(name), message)), true, unsupportedPolicyPluginError(message)
 	}
-	extraEnv := composePolicyPluginExtraEnv(opts, params, p.offline)
+	extraEnv := composePolicyPluginExtraEnv(opts, applicationEnv, params, p.offline)
 	result, err := p.pluginExecRunner.Run(ctx, pluginexec.Request{
 		SourceDir:       sourceDir,
 		RepositoryDir:   source.RepoRoot,
