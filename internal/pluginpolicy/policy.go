@@ -111,14 +111,24 @@ type ConfigManagementPluginGenerate struct {
 }
 
 type ExecConfig struct {
-	Workdir       string
-	Copy          ExecCopy
-	Init          *ExecCommand
-	Generate      ExecCommand
-	PostRenderers []ExecCommand
-	Env           ExecEnv
-	Parameters    ExecParameters
-	Output        ExecOutput
+	Workdir        string
+	Copy           ExecCopy
+	Init           *ExecCommand
+	Generate       ExecCommand
+	PostRenderers  []ExecCommand
+	Env            ExecEnv
+	ApplicationEnv ApplicationEnv
+	Parameters     ExecParameters
+	Output         ExecOutput
+}
+
+// ApplicationEnv allowlists Application-authored spec.source.plugin.env NAMES
+// for command-backed engines. Allowed entries reach the plugin as
+// ARGOCD_ENV_<name> after substitution against the Argo CD build environment,
+// exactly as a repo-server delivers them; the prefix keeps them apart from
+// env.allow (drydock's own process environment) and from every reserved name.
+type ApplicationEnv struct {
+	Allow []string
 }
 
 type ExecCopy struct {
@@ -248,7 +258,7 @@ func dropManagedEnvNames(policy *Policy) []string {
 		kept := env.Allow[:0:0]
 		for _, entry := range env.Allow {
 			if IsManagedEnvName(entry) {
-				warnings = append(warnings, fmt.Sprintf("plugins.%s.env.allow entry %q is ignored: drydock sets it for every command-backed plugin", name, entry))
+				warnings = append(warnings, managedEnvNameWarning(name, entry))
 				continue
 			}
 			kept = append(kept, entry)
@@ -256,6 +266,16 @@ func dropManagedEnvNames(policy *Policy) []string {
 		env.Allow = kept
 	}
 	return warnings
+}
+
+// managedEnvNameWarning explains why an env.allow entry is dropped. The
+// ApplicationEnvPrefix names are not set by drydock itself: they are delivered
+// from spec.source.plugin.env for the names listed in applicationEnv.allow.
+func managedEnvNameWarning(plugin, entry string) string {
+	if strings.HasPrefix(strings.ToUpper(entry), ApplicationEnvPrefix) {
+		return fmt.Sprintf("plugins.%s.env.allow entry %q is ignored: %s* is delivered from spec.source.plugin.env for names listed in applicationEnv.allow", plugin, entry, ApplicationEnvPrefix)
+	}
+	return fmt.Sprintf("plugins.%s.env.allow entry %q is ignored: drydock sets it for every command-backed plugin", plugin, entry)
 }
 
 func (p Policy) Plugin(name string) (Plugin, bool) {
@@ -777,14 +797,15 @@ func execPluginAllowedFields() map[string]bool {
 
 func execLifecycleAllowedFields() map[string]bool {
 	return map[string]bool{
-		"workdir":       true,
-		"copy":          true,
-		"init":          true,
-		"generate":      true,
-		"postRenderers": true,
-		"env":           true,
-		"parameters":    true,
-		"output":        true,
+		"workdir":        true,
+		"copy":           true,
+		"init":           true,
+		"generate":       true,
+		"postRenderers":  true,
+		"env":            true,
+		"applicationEnv": true,
+		"parameters":     true,
+		"output":         true,
 	}
 }
 

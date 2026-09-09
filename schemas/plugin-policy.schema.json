@@ -257,8 +257,12 @@
           }
         },
         "env": {
-          "description": "Names of drydock's own process environment variables copied into the plugin (not Application env). ARGOCD_APP_*, KUBE_VERSION, KUBE_API_VERSIONS and DRYDOCK_OFFLINE are set automatically and ignored here.",
+          "description": "Names of drydock's own process environment variables copied into the plugin (not Application env). ARGOCD_APP_*, KUBE_VERSION, KUBE_API_VERSIONS and DRYDOCK_OFFLINE are set automatically and ignored here; ARGOCD_ENV_* is reserved for applicationEnv.allow delivery and ignored here too.",
           "$ref": "#/$defs/env"
+        },
+        "applicationEnv": {
+          "description": "Application-authored spec.source.plugin.env names accepted by this policy; delivered to the plugin as ARGOCD_ENV_<name> after Argo CD build-environment substitution.",
+          "$ref": "#/$defs/applicationEnv"
         },
         "parameters": {
           "description": "Application-authored plugin parameters accepted by this policy.",
@@ -345,8 +349,12 @@
           }
         },
         "env": {
-          "description": "Names of drydock's own process environment variables copied into the plugin (not Application env). ARGOCD_APP_*, KUBE_VERSION, KUBE_API_VERSIONS and DRYDOCK_OFFLINE are set automatically and ignored here.",
+          "description": "Names of drydock's own process environment variables copied into the plugin (not Application env). ARGOCD_APP_*, KUBE_VERSION, KUBE_API_VERSIONS and DRYDOCK_OFFLINE are set automatically and ignored here; ARGOCD_ENV_* is reserved for applicationEnv.allow delivery and ignored here too.",
           "$ref": "#/$defs/env"
+        },
+        "applicationEnv": {
+          "description": "Application-authored spec.source.plugin.env names accepted by this policy; delivered to the plugin as ARGOCD_ENV_<name> after Argo CD build-environment substitution.",
+          "$ref": "#/$defs/applicationEnv"
         },
         "parameters": {
           "description": "Application-authored plugin parameters accepted by this policy.",
@@ -611,12 +619,29 @@
     },
     "env": {
       "type": "object",
-      "description": "Names of drydock's own process environment variables copied into the plugin (not Application env). ARGOCD_APP_*, KUBE_VERSION, KUBE_API_VERSIONS and DRYDOCK_OFFLINE are set automatically and ignored here.",
+      "description": "Names of drydock's own process environment variables copied into the plugin (not Application env). ARGOCD_APP_*, KUBE_VERSION, KUBE_API_VERSIONS and DRYDOCK_OFFLINE are set automatically and ignored here; ARGOCD_ENV_* is reserved for applicationEnv.allow delivery and ignored here too.",
       "additionalProperties": false,
       "properties": {
         "allow": {
           "type": "array",
           "description": "Variable names the plugin may receive from the caller environment.",
+          "maxItems": 64,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
+          }
+        }
+      }
+    },
+    "applicationEnv": {
+      "type": "object",
+      "description": "Allowlist of Application spec.source.plugin.env names for exec and container engines.",
+      "additionalProperties": false,
+      "properties": {
+        "allow": {
+          "type": "array",
+          "description": "Application env names the plugin may receive as ARGOCD_ENV_<name>.",
           "maxItems": 64,
           "uniqueItems": true,
           "items": {
