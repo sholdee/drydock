@@ -161,12 +161,30 @@ plugins:
             base: repository
             allow:
               - personal-cluster/**/*.pkl
+    applicationEnv:
+      allow: ["MODE", "SUFFIX"]
 ```
 
 This replaces sidecar patterns such as `/tmp/pkl-cache`, `sh -c`, or Docker
 execution with trusted argv. `configManagementPlugin.generate`, if copied into
 the policy for compatibility metadata, still remains metadata only. The
 top-level exec `generate.command` is the command that runs.
+
+An Application that uses it:
+
+```yaml
+spec:
+  source:
+    plugin:
+      name: pkl
+      env:
+        - name: MODE
+          value: prod
+        - name: SUFFIX
+          value: $ARGOCD_APP_NAME
+```
+
+The plugin observes `ARGOCD_ENV_MODE=prod` and `ARGOCD_ENV_SUFFIX=<instance name>`.
 
 When an Application already supplies source-relative `path` values, use
 `path.base: source` with source-relative `path.allow` patterns instead.
@@ -185,7 +203,7 @@ plugins:
     postRenderers:
       - command: ["/usr/local/bin/kbld", "-f", "-"]
         timeout: 15s
-    # env.allow copies drydock's own process variables; ARGOCD_APP_* and KUBE_* are set automatically.
+    # env.allow copies drydock's own process variables; ARGOCD_APP_* and KUBE_* are set automatically, ARGOCD_ENV_* is reserved for applicationEnv.allow.
     env:
       allow: ["CLUSTER_NAME", "ENVIRONMENT"]
     output:
@@ -221,9 +239,10 @@ drydock plugin-policy doctor --path . --plugin-policy-ref main --enable-plugins 
 ```
 
 `doctor` reports readiness for policy presence, trust provenance,
-`--enable-plugins`, image placeholders, mutable image tags, parameters, env,
-and bootstrap hints. A missing default policy is a readiness failure; an
-explicit missing `--plugin-policy-path` is a command error.
+`--enable-plugins`, image placeholders, mutable image tags, parameters,
+Application env (`applicationEnv.allow`), misdirected host `env.allow`
+entries, and bootstrap hints. A missing default policy is a readiness
+failure; an explicit missing `--plugin-policy-path` is a command error.
 
 For a single-tree command, run command-backed plugins from an explicit trusted
 ref:

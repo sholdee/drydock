@@ -203,8 +203,9 @@ Supported:
   annotation-based tracking, and CRDs are not stamped.
 - Argo CD build-environment substitution (`$ARGOCD_APP_NAME`,
   `$ARGOCD_APP_NAMESPACE`, `$ARGOCD_APP_PROJECT_NAME`, `$ARGOCD_APP_SOURCE_*`)
-  in Helm parameters and value-file names, Kustomize images, labels, and
-  `commonAnnotationsEnvsubst` annotations, and Jsonnet ext vars and TLAs, with
+  in Helm parameters, value-file names, and `fileParameters` paths, Kustomize
+  images, labels, and `commonAnnotationsEnvsubst` annotations, and Jsonnet ext
+  vars and TLAs, with
   the repo-server's values: `ARGOCD_APP_NAME` is the Application instance name
   (`<namespace>_<name>` for Applications outside the controller namespace;
   drydock assumes the Argo CD controller namespace is `argocd`) and
@@ -292,6 +293,10 @@ Supported:
   `KUBE_API_VERSIONS`) and an always-present `ARGOCD_APP_PARAMETERS` for
   trusted exec/container plugins, in the repo-server's order. `env.allow`
   entries naming those variables are ignored with a warning.
+- Application `spec.source.plugin.env` for trusted exec/container plugins when
+  allowlisted by `applicationEnv.allow`, delivered as `ARGOCD_ENV_<name>` after
+  build-environment substitution in the repo-server's order and position. Host
+  `env.allow` entries naming `ARGOCD_ENV_*` are ignored with a warning.
 - Config management plugin source detection with fail-closed diagnostics in
   the CLI and default Go client.
 - Injectable in-process plugin renderers, named plugin registry dispatch, and
@@ -313,9 +318,8 @@ Not supported:
 - Argo CD repo-server sidecar plugin discovery.
 - Ambient plugin configuration or environment loading.
 - Untrusted CMP descriptor execution, unallowlisted Application plugin
-  parameters, or Application plugin env (`spec.source.plugin.env`) for any
-  policy-backed engine; exec/container reject it with a message that names
-  the entries.
+  parameters or env (`parameters.allow` / `applicationEnv.allow`), or
+  Application plugin env for policy-backed native engines.
 - Plugin credential injection.
 
 See `site/content/docs/plugin-policy/` for trusted policy provenance, supported
