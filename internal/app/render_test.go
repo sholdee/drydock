@@ -74,7 +74,7 @@ func TestRenderOptionsCopiesSourceKustomizeAndArgoEnv(t *testing.T) {
 		},
 	}
 
-	opts, err := renderOptions(application, source, CapabilityOptions{})
+	opts, err := renderOptions(application, source, CapabilityOptions{}, defaultTrackingOptions())
 	if err != nil {
 		t.Fatalf("renderOptions() error = %v", err)
 	}
@@ -91,7 +91,7 @@ func TestRenderOptionsCopiesSourceKustomizeAndArgoEnv(t *testing.T) {
 	if len(opts.APIVersions) != 1 || opts.APIVersions[0] != "example.com/v1/Foo" {
 		t.Fatalf("APIVersions = %#v", opts.APIVersions)
 	}
-	if got := opts.ArgoEnv.Envsubst("$ARGOCD_APP_NAME:$ARGOCD_APP_NAMESPACE:$ARGOCD_APP_PROJECT_NAME:$ARGOCD_APP_SOURCE_PATH:$ARGOCD_APP_REVISION_SHORT_8"); got != "demo:argocd:k3s:apps/demo:12345678" {
+	if got := opts.ArgoEnv.Envsubst("$ARGOCD_APP_NAME:$ARGOCD_APP_NAMESPACE:$ARGOCD_APP_PROJECT_NAME:$ARGOCD_APP_SOURCE_PATH:$ARGOCD_APP_REVISION_SHORT_8"); got != "demo:workloads:k3s:apps/demo:12345678" {
 		t.Fatalf("ArgoEnv substitution = %q", got)
 	}
 }
@@ -109,7 +109,7 @@ func TestParseKubeVersionNormalizesHelmSuffix(t *testing.T) {
 		},
 	}
 
-	opts, err := renderOptions(application, source, CapabilityOptions{})
+	opts, err := renderOptions(application, source, CapabilityOptions{}, defaultTrackingOptions())
 	if err != nil {
 		t.Fatalf("renderOptions() error = %v", err)
 	}
@@ -131,7 +131,7 @@ func TestParseKubeVersionNormalizesKustomizeSuffix(t *testing.T) {
 		},
 	}
 
-	opts, err := renderOptions(application, source, CapabilityOptions{})
+	opts, err := renderOptions(application, source, CapabilityOptions{}, defaultTrackingOptions())
 	if err != nil {
 		t.Fatalf("renderOptions() error = %v", err)
 	}
@@ -151,7 +151,7 @@ func TestParseKubeVersionEmptyStaysEmpty(t *testing.T) {
 		Helm: &argoappv1.ApplicationSourceHelm{},
 	}
 
-	opts, err := renderOptions(application, source, CapabilityOptions{})
+	opts, err := renderOptions(application, source, CapabilityOptions{}, defaultTrackingOptions())
 	if err != nil {
 		t.Fatalf("renderOptions() error = %v", err)
 	}
@@ -173,7 +173,7 @@ func TestParseKubeVersionInvalidReturnsError(t *testing.T) {
 		},
 	}
 
-	_, err := renderOptions(application, source, CapabilityOptions{})
+	_, err := renderOptions(application, source, CapabilityOptions{}, defaultTrackingOptions())
 	if err == nil {
 		t.Fatal("renderOptions() error = nil, want kube version parse error")
 	}
@@ -196,7 +196,7 @@ func TestRenderOptionsCopiesDirectoryJsonnet(t *testing.T) {
 		},
 	}
 
-	opts, err := renderOptions(application, source, CapabilityOptions{})
+	opts, err := renderOptions(application, source, CapabilityOptions{}, defaultTrackingOptions())
 	if err != nil {
 		t.Fatalf("renderOptions() error = %v", err)
 	}
@@ -226,7 +226,7 @@ func TestRenderOptionsAppliesCapabilityOverride(t *testing.T) {
 	opts, err := renderOptions(application, source, CapabilityOptions{
 		KubeVersion: "1.34.0",
 		APIVersions: []string{"monitoring.coreos.com/v1", "gateway.networking.k8s.io/v1"},
-	})
+	}, defaultTrackingOptions())
 	if err != nil {
 		t.Fatalf("renderOptions() error = %v", err)
 	}
@@ -245,7 +245,7 @@ func TestRenderOptionsNoCapabilityOverrideLeavesKubeVersionEmpty(t *testing.T) {
 		Spec: argoappv1.ApplicationSpec{Destination: argoappv1.ApplicationDestination{Namespace: "demo"}},
 	}
 	source := argoappv1.ApplicationSource{Helm: &argoappv1.ApplicationSourceHelm{}}
-	opts, err := renderOptions(application, source, CapabilityOptions{})
+	opts, err := renderOptions(application, source, CapabilityOptions{}, defaultTrackingOptions())
 	if err != nil {
 		t.Fatalf("renderOptions() error = %v", err)
 	}
@@ -1577,5 +1577,85 @@ func writeAppTestFile(t *testing.T, path string, data string) {
 	}
 	if err := os.WriteFile(path, []byte(strings.TrimPrefix(data, "\n")), 0o644); err != nil {
 		t.Fatalf("WriteFile(%q): %v", path, err)
+	}
+}
+
+func TestArgoRenderEnvMatchesArgoCDBuildEnvironment(t *testing.T) {
+	source := argoappv1.ApplicationSource{
+		RepoURL:        "https://example.invalid/repo.git",
+		Path:           "apps/demo",
+		TargetRevision: "1234567890abcdef",
+	}
+	testCases := []struct {
+		name                string
+		appNamespace        string
+		controllerNamespace string
+		destination         string
+		wantName            string
+		wantNamespace       string
+	}{
+		{name: "app in controller namespace", appNamespace: "argocd", controllerNamespace: "argocd", destination: "workloads", wantName: "demo", wantNamespace: "workloads"},
+		{name: "app outside controller namespace", appNamespace: "team-a", controllerNamespace: "argocd", destination: "workloads", wantName: "team-a_demo", wantNamespace: "workloads"},
+		{name: "app without metadata namespace", appNamespace: "", controllerNamespace: "argocd", destination: "workloads", wantName: "demo", wantNamespace: "workloads"},
+		{name: "custom controller namespace", appNamespace: "argo-system", controllerNamespace: "argo-system", destination: "workloads", wantName: "demo", wantNamespace: "workloads"},
+		{name: "empty destination namespace", appNamespace: "argocd", controllerNamespace: "argocd", destination: "", wantName: "demo", wantNamespace: ""},
+	}
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			application := argoappv1.Application{
+				Name: "demo", Namespace: testCase.appNamespace,
+				Spec: argoappv1.ApplicationSpec{
+					Project:     "k3s",
+					Destination: argoappv1.ApplicationDestination{Namespace: testCase.destination},
+				},
+			}
+			env := argoRenderEnv(application, source, testCase.controllerNamespace)
+			got := env.Envsubst("$ARGOCD_APP_NAME|$ARGOCD_APP_NAMESPACE")
+			want := testCase.wantName + "|" + testCase.wantNamespace
+			if got != want {
+				t.Fatalf("ARGOCD_APP_NAME|ARGOCD_APP_NAMESPACE = %q, want %q", got, want)
+			}
+		})
+	}
+
+	// The remaining seven entries are unchanged by this fix and stay pinned.
+	application := argoappv1.Application{
+		Name: "demo", Namespace: "argocd",
+		Spec: argoappv1.ApplicationSpec{Project: "k3s", Destination: argoappv1.ApplicationDestination{Namespace: "workloads"}},
+	}
+	env := argoRenderEnv(application, source, "argocd")
+	got := env.Envsubst("$ARGOCD_APP_PROJECT_NAME|$ARGOCD_APP_REVISION|$ARGOCD_APP_REVISION_SHORT|$ARGOCD_APP_REVISION_SHORT_8|$ARGOCD_APP_SOURCE_REPO_URL|$ARGOCD_APP_SOURCE_PATH|$ARGOCD_APP_SOURCE_TARGET_REVISION")
+	want := "k3s|1234567890abcdef|1234567|12345678|https://example.invalid/repo.git|apps/demo|1234567890abcdef"
+	if got != want {
+		t.Fatalf("remaining ARGOCD_APP_* = %q, want %q", got, want)
+	}
+	if len(env) != 9 {
+		t.Fatalf("len(argoRenderEnv) = %d, want 9 entries like the Argo CD repo-server", len(env))
+	}
+}
+
+func TestRenderOptionsNormalizesTrackingOptionsForArgoEnv(t *testing.T) {
+	application := argoappv1.Application{
+		Name: "demo", Namespace: "argocd",
+		Spec: argoappv1.ApplicationSpec{Destination: argoappv1.ApplicationDestination{Namespace: "workloads"}},
+	}
+	source := argoappv1.ApplicationSource{Path: "apps/demo"}
+
+	// Zero TrackingOptions must normalize to the default controller namespace
+	// ("argocd"), so an app in that namespace keeps its bare instance name.
+	opts, err := renderOptions(application, source, CapabilityOptions{}, TrackingOptions{})
+	if err != nil {
+		t.Fatalf("renderOptions() error = %v", err)
+	}
+	if got := opts.ArgoEnv.Envsubst("$ARGOCD_APP_NAME"); got != "demo" {
+		t.Fatalf("ARGOCD_APP_NAME with zero TrackingOptions = %q, want %q (controller namespace must be normalized before InstanceName)", got, "demo")
+	}
+
+	opts, err = renderOptions(application, source, CapabilityOptions{}, TrackingOptions{ControllerNamespace: "argo-system"})
+	if err != nil {
+		t.Fatalf("renderOptions() error = %v", err)
+	}
+	if got := opts.ArgoEnv.Envsubst("$ARGOCD_APP_NAME"); got != "argocd_demo" {
+		t.Fatalf("ARGOCD_APP_NAME with custom controller namespace = %q, want %q", got, "argocd_demo")
 	}
 }
