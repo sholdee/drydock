@@ -43,10 +43,7 @@ func (p localProvider) renderExecPolicyPluginSource(ctx context.Context, source 
 	if message != "" {
 		return nil, unsupportedPluginDiagnostic(fmt.Sprintf("config management plugin %s %s", pluginDisplayName(name), message)), true, unsupportedPolicyPluginError(message)
 	}
-	extraEnv := append([]string(nil), params.extraEnv...)
-	if p.offline {
-		extraEnv = append(extraEnv, "DRYDOCK_OFFLINE=true")
-	}
+	extraEnv := composePolicyPluginExtraEnv(opts, params, p.offline)
 	result, err := p.pluginExecRunner.Run(ctx, pluginexec.Request{
 		SourceDir:       sourceDir,
 		RepositoryDir:   source.RepoRoot,

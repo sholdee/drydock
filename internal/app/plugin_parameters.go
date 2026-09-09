@@ -119,9 +119,15 @@ func requireApplicationPluginParameters(name string, allowed []pluginpolicy.Exec
 	return ""
 }
 
+// recordApplicationPluginParameterEnv always records ARGOCD_APP_PARAMETERS
+// (null when the Application declares no parameters), matching the
+// repo-server.
 func recordApplicationPluginParameterEnv(name string, params argoappv1.ApplicationSourcePluginParameters, out *validatedPluginParameters) string {
 	if len(params) == 0 {
-		return ""
+		// Environ marshals nil as null, matching the repo-server for
+		// Applications without parameters; an explicit empty list and the
+		// bootstrap-entrypoint synthetic Application would otherwise yield [].
+		params = nil
 	}
 	extraEnv, err := params.Environ()
 	if err != nil {
