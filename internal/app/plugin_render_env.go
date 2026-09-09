@@ -3,6 +3,7 @@ package app
 import (
 	"strings"
 
+	argoappv1 "github.com/argoproj/argo-cd/v3/pkg/apis/application/v1alpha1"
 	"github.com/sholdee/drydock/internal/render"
 )
 
@@ -35,4 +36,17 @@ func composePolicyPluginExtraEnv(opts render.RenderOptions, params validatedPlug
 		env = append(env, "DRYDOCK_OFFLINE=true")
 	}
 	return env
+}
+
+// applicationPluginEnvNames lists the names in spec.source.plugin.env for
+// diagnostics. Values are never included: Application env may carry secrets.
+func applicationPluginEnvNames(env argoappv1.Env) []string {
+	names := make([]string, 0, len(env))
+	for _, entry := range env {
+		if entry == nil || strings.TrimSpace(entry.Name) == "" {
+			continue
+		}
+		names = append(names, entry.Name)
+	}
+	return names
 }

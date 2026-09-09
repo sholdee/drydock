@@ -701,7 +701,7 @@ metadata:
 	if !hasDiagnosticCode(result.Diagnostics, diagnostic.CodePluginUnsupported) {
 		t.Fatalf("Diagnostics = %#v, want plugin.unsupported", result.Diagnostics)
 	}
-	if !hasDiagnosticMessage(result.Diagnostics, "env or parameters") {
+	if !hasDiagnosticMessage(result.Diagnostics, "Application plugin env") {
 		t.Fatalf("Diagnostics = %#v, want env/parameters rejection", result.Diagnostics)
 	}
 }
