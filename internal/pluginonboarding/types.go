@@ -20,6 +20,7 @@ const (
 	StatusPass = "PASS"
 	StatusWarn = "WARN"
 	StatusFail = "FAIL"
+	// StatusInfo is issue-only: reported, never changes readiness.
 	StatusInfo = "INFO"
 )
 

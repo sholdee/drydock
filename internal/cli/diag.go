@@ -270,7 +270,12 @@ func renderDiagnosticsWithColor(w io.Writer, diags []diagnostic.Diagnostic, colo
 		if color {
 			severity = colorizeDiagnosticSeverity(diag.Severity)
 		}
-		if _, err := fmt.Fprintf(w, "%s %s: %s%s\n", severity, diag.Category, diag.Message, formatDiagnosticProvenance(diag.Provenance)); err != nil {
+		// The stable code (always set by WithStableCodes) is what -o json, the
+		// markdown report, and the docs use to identify a diagnostic, so it
+		// replaces the category label. Codes are <category>.<detail> except
+		// changed-only (diff.changed-only-incomplete), repeated-resource
+		// (render.repeated-resource), and crd-scope (build.crd-scope-collision).
+		if _, err := fmt.Fprintf(w, "%s %s: %s%s\n", severity, diag.Code, diag.Message, formatDiagnosticProvenance(diag.Provenance)); err != nil {
 			return err
 		}
 	}

@@ -121,6 +121,9 @@ func TestValidateApplicationPluginEnvFailsClosed(t *testing.T) {
 		want  string
 	}{
 		{name: "not allowlisted", allow: []string{"MODE"}, env: argoappv1.Env{{Name: "SECRET", Value: sentinel}}, want: `Application plugin env "SECRET", which is not allowed by policy applicationEnv.allow`},
+		{name: "several not allowlisted are all named", allow: []string{"MODE"}, env: argoappv1.Env{{Name: "SECRET", Value: sentinel}, {Name: "MODE", Value: sentinel}, {Name: "TOKEN", Value: sentinel}}, want: `Application plugin env "SECRET", "TOKEN", which are not allowed by policy applicationEnv.allow`},
+		{name: "no allowlist names every entry once", allow: nil, env: argoappv1.Env{{Name: "MODE", Value: sentinel}, {Name: "SUFFIX", Value: sentinel}, {Name: "USE_TELEMETRY", Value: sentinel}}, want: `Application plugin env "MODE", "SUFFIX", "USE_TELEMETRY", which are not allowed by policy applicationEnv.allow`},
+		{name: "duplicate of a non-allowlisted name is a duplicate", allow: nil, env: argoappv1.Env{{Name: "MODE", Value: sentinel}, {Name: "MODE", Value: sentinel}}, want: `duplicate Application plugin env "MODE"`},
 		{name: "no allowlist at all", allow: nil, env: argoappv1.Env{{Name: "MODE", Value: sentinel}}, want: "applicationEnv.allow"},
 		{name: "invalid name", allow: []string{"MODE"}, env: argoappv1.Env{{Name: "9MODE", Value: sentinel}}, want: "invalid Application plugin env name"},
 		{name: "nil entry", allow: []string{"MODE"}, env: argoappv1.Env{nil}, want: "unnamed Application plugin env entry"},

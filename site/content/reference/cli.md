@@ -124,6 +124,11 @@ drydock build app argocd/my-app --path .
 `build app` errors when no discovered Application matches. The unqualified
 `NAME` form must identify exactly one Application.
 
+`build` prints a `---` separated YAML document stream by default. Use `-o json`
+for one `v1` `List` document whose `items` hold the rendered objects; both
+formats keep diagnostics on stderr, and any other format is rejected before an
+Application renders.
+
 When one selected Application fails to render, embedding callers receive
 partial results containing successful manifests, diagnostics, and
 per-Application statuses. CLI `build` commands keep stdout parseable:
@@ -256,6 +261,10 @@ explicit missing `--plugin-policy-path` is a command error. `-o json` provides
 deterministic `status` and issue `code` fields. `--strict` exits nonzero on
 readiness `FAIL` after rendering the report.
 
+Readiness statuses are `PASS`, `WARN`, and `FAIL`. Issues can also carry
+`INFO`, which is reported but never changes readiness; an explicit
+`allowMutableImageTag: true` is reported that way.
+
 ## Render Tests
 
 Test every discovered Application without printing manifest bodies:
@@ -331,6 +340,11 @@ By default, `diag` uses static repository discovery, ApplicationSet expansion,
 and settings metadata without rendering Applications. It prints diagnostics to
 stderr and returns an error when runtime failures or error-severity diagnostics
 are found. Use `--strict` to promote warnings to errors.
+
+Text diagnostics are printed as `<severity> <code>: <message>`, followed by
+the source path and pointer when known, for example
+`warning appset.unsupported-generator: …`. The code is the same stable `code`
+that `-o json`, `-o yaml`, and markdown reports carry.
 
 `diag` refuses broad roots such as the filesystem root or the current user's
 home directory. Run it from the GitOps repository root or pass `--path` to that

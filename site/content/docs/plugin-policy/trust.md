@@ -255,8 +255,8 @@ it; host `env.allow` values and other Application entries are not
 substitutable. Names must be identifiers, duplicates are rejected, values are
 capped at 16 KiB and may not contain NUL (`engine: container` also rejects CR
 or LF, which cannot pass through `--env-file`). An entry that is not
-allowlisted fails the source before the plugin runs, naming the entry but
-never its value. The 16 KiB cap applies after substitution. Without
+allowlisted fails the source before the plugin runs, naming every such entry
+but never a value. The 16 KiB cap applies after substitution. Without
 `--kube-version` / `--api-versions`, `$KUBE_VERSION` and
 `$KUBE_API_VERSIONS` expand to empty strings. Application env values are not
 redacted from diagnostics; like a repo-server, drydock treats them as

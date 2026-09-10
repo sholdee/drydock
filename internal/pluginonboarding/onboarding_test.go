@@ -656,12 +656,15 @@ func TestReadinessDetectsPlaceholdersAndMutableImages(t *testing.T) {
 		t.Fatalf("Parse mutable() error = %v", err)
 	}
 	readiness = Readiness(report, &policy, DoctorOptions{EnablePlugins: true, TrustedPolicy: true})
-	if readiness.Status != StatusWarn || !hasIssue(readiness.Plugins[0].Issues, IssueImageMutable) {
-		t.Fatalf("Readiness = %#v, want mutable warning", readiness)
+	if readiness.Status != StatusPass || readiness.Plugins[0].Status != StatusPass {
+		t.Fatalf("Readiness = %#v, want PASS: allowMutableImageTag is the policy author's acknowledgment", readiness)
+	}
+	if status := issueStatus(readiness.Plugins[0].Issues, IssueImageMutable); status != StatusInfo {
+		t.Fatalf("image.mutable status = %q, want INFO", status)
 	}
 	readiness = Readiness(report, &policy, DoctorOptions{EnablePlugins: true, TrustedPolicy: true, Strict: true})
-	if readiness.Status != StatusFail || !hasIssue(readiness.Plugins[0].Issues, IssueImageMutable) {
-		t.Fatalf("Strict readiness = %#v, want mutable failure", readiness)
+	if readiness.Status != StatusPass || issueStatus(readiness.Plugins[0].Issues, IssueImageMutable) != StatusInfo {
+		t.Fatalf("Strict readiness = %#v, want PASS with image.mutable at INFO: strict does not override a reviewed opt-in", readiness)
 	}
 }
 
@@ -921,5 +924,29 @@ func TestGenerateWritesApplicationEnvAllowFromObservedNames(t *testing.T) {
 	}
 	if _, err := pluginpolicy.Parse("generated.yaml", data); err != nil {
 		t.Fatalf("generated policy does not parse: %v", err)
+	}
+}
+
+func TestCombineStatusesNeverRaisesReadinessForInfo(t *testing.T) {
+	testCases := []struct {
+		left, right, want string
+	}{
+		{StatusPass, StatusInfo, StatusPass},
+		{StatusInfo, StatusPass, StatusPass},
+		{"", StatusInfo, StatusPass},
+		{StatusInfo, StatusInfo, StatusPass},
+		{StatusInfo, StatusWarn, StatusWarn},
+		{StatusWarn, StatusInfo, StatusWarn},
+		{StatusInfo, StatusFail, StatusFail},
+		{"", StatusWarn, StatusWarn},
+		{StatusPass, StatusPass, StatusPass},
+		{"", "", ""},
+	}
+	for _, testCase := range testCases {
+		t.Run(testCase.left+"+"+testCase.right, func(t *testing.T) {
+			if got := combineStatuses(testCase.left, testCase.right); got != testCase.want {
+				t.Fatalf("combineStatuses(%q, %q) = %q, want %q", testCase.left, testCase.right, got, testCase.want)
+			}
+		})
 	}
 }

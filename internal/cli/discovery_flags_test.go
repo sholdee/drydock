@@ -103,7 +103,7 @@ func TestDiffAppsDiscoverIgnoreKeepsStrictChangedOnlyIndependent(t *testing.T) {
 	// path under --strict-changed-only; the flag families are independent.
 	_, stderr, _ := executeCLIExpectingError(t, "diff", "apps", "--path-orig", left, "--path", right,
 		"--strict-changed-only", "--discover-ignore", "templates/**")
-	for _, want := range []string{"error changed-only:", "templates/scaffold.yaml"} {
+	for _, want := range []string{"error diff.changed-only-incomplete:", "templates/scaffold.yaml"} {
 		if !strings.Contains(stderr, want) {
 			t.Fatalf("stderr missing %q:\n%s", want, stderr)
 		}

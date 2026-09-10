@@ -4,7 +4,9 @@ import (
 	"bytes"
 	"context"
 	"encoding/base64"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -98,7 +100,7 @@ data:
 			t.Fatalf("output leaked placeholder material %q\nstdout:\n%s\nstderr:\n%s", forbidden, stdout.String(), stderr.String())
 		}
 	}
-	for _, want := range []string{"warning plugin:", "argocd-vault-plugin placeholders were replaced with deterministic redacted values"} {
+	for _, want := range []string{"warning plugin.avp-compat-substituted:", "argocd-vault-plugin placeholders were replaced with deterministic redacted values"} {
 		if !strings.Contains(stderr.String(), want) {
 			t.Fatalf("stderr = %q, want AVP compatibility diagnostic fragment %q", stderr.String(), want)
 		}
@@ -168,7 +170,7 @@ spec:
 			t.Fatalf("build apps stdout missing %q:\n%s", want, got)
 		}
 	}
-	wantStderr := "warning appset: unsupported ApplicationSet generator; supported generators are git directories, git files, list, matrix, and merge (path: unsupported-appset.yaml, pointer: spec.generators)\n"
+	wantStderr := "warning appset.unsupported-generator: unsupported ApplicationSet generator; supported generators are git directories, git files, list, matrix, and merge (path: unsupported-appset.yaml, pointer: spec.generators)\n"
 	if got := stderr.String(); got != wantStderr {
 		t.Fatalf("build apps stderr = %q, want %q", got, wantStderr)
 	}
@@ -243,7 +245,7 @@ func TestBuildAppsSuppressesPartialStdoutWhenOutputWouldBeInvalid(t *testing.T) 
 	if stdout.String() != "" {
 		t.Fatalf("stdout = %q, want empty partial output on build error", stdout.String())
 	}
-	if !strings.Contains(stderr.String(), "error render:") {
+	if !strings.Contains(stderr.String(), "error render.failed:") {
 		t.Fatalf("stderr = %q, want render diagnostic", stderr.String())
 	}
 }
@@ -269,7 +271,7 @@ func TestBuildAppsFailsClosedForPluginSource(t *testing.T) {
 				t.Fatalf("stdout = %q, want empty partial output", stdout.String())
 			}
 			for _, want := range []string{
-				"error plugin:",
+				"error plugin.unsupported:",
 				"config management plugin cue is not supported by the default renderer",
 				"no compatible native renderer",
 			} {
@@ -661,4 +663,126 @@ func writeCLIFile(path, body string) error {
 		return err
 	}
 	return os.WriteFile(path, []byte(body), 0o600)
+}
+
+func TestBuildJSONOutputIsAV1List(t *testing.T) {
+	root := t.TempDir()
+	writeSimpleAppForCLI(t, root, "one")
+	for _, args := range [][]string{
+		{"build", "apps", "--path", root, "-o", "json"},
+		{"build", "app", "demo", "--path", root, "--output", "json"},
+	} {
+		t.Run(strings.Join(args[:2], " "), func(t *testing.T) {
+			result := runCLI(t, args...)
+			var list struct {
+				APIVersion string           `json:"apiVersion"`
+				Kind       string           `json:"kind"`
+				Items      []map[string]any `json:"items"`
+			}
+			if err := json.Unmarshal([]byte(result.Stdout), &list); err != nil {
+				t.Fatalf("stdout is not one JSON document: %v\n%s", err, result.Stdout)
+			}
+			if list.APIVersion != "v1" || list.Kind != "List" || len(list.Items) != 1 {
+				t.Fatalf("stdout = %s, want a v1 List with one item", result.Stdout)
+			}
+			if kind := list.Items[0]["kind"]; kind != "ConfigMap" {
+				t.Fatalf("items[0].kind = %v, want ConfigMap", kind)
+			}
+			if strings.Contains(result.Stdout, "---") {
+				t.Fatalf("json output must not carry YAML document markers:\n%s", result.Stdout)
+			}
+			if result.Stderr != "" {
+				t.Fatalf("stderr = %q, want empty", result.Stderr)
+			}
+		})
+	}
+}
+
+func TestBuildJSONOutputListsItemsEvenWhenEmpty(t *testing.T) {
+	root := t.TempDir()
+	writeCLITestFile(t, filepath.Join(root, "apps", "demo.yaml"), `apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: demo
+  namespace: argocd
+spec:
+  source:
+    repoURL: https://github.com/example/repo
+    path: manifests/demo
+    targetRevision: main
+  destination:
+    name: in-cluster
+    namespace: demo
+`)
+	writeCLITestFile(t, filepath.Join(root, "manifests", "demo", ".keep"), "")
+	result := runCLI(t, "build", "apps", "--path", root, "-o", "json")
+	if !strings.Contains(result.Stdout, `"items": []`) {
+		t.Fatalf("stdout = %s, want an empty items array, never null", result.Stdout)
+	}
+}
+
+func TestBuildDefaultOutputIsTheYAMLStream(t *testing.T) {
+	root := t.TempDir()
+	writeSimpleAppForCLI(t, root, "one")
+	// The exact bytes build printed before -o was honored: the default stream
+	// is a documented pipeline input, so the flag must not change it.
+	want := "---\napiVersion: v1\ndata:\n    value: one\nkind: ConfigMap\nmetadata:\n    annotations:\n        argocd.argoproj.io/tracking-id: demo:/ConfigMap:demo/demo\n    name: demo\n    namespace: demo\n"
+	if got := runCLI(t, "build", "apps", "--path", root).Stdout; got != want {
+		t.Fatalf("default stdout = %q, want the pre-change YAML stream %q", got, want)
+	}
+	if got := runCLI(t, "build", "apps", "--path", root, "-o", "yaml").Stdout; got != want {
+		t.Fatalf("-o yaml stdout = %q, want %q", got, want)
+	}
+}
+
+func TestBuildRejectsUnsupportedOutputBeforeRendering(t *testing.T) {
+	root := t.TempDir()
+	writeFailingCLIApplication(t, root, "broken")
+	for _, args := range [][]string{
+		{"build", "apps", "--path", root, "-o", "table"},
+		{"build", "app", "broken", "--path", root, "-o", "name"},
+		{"build", "apps", "--path", root, "-o", "diff"},
+	} {
+		t.Run(strings.Join(args[len(args)-2:], " "), func(t *testing.T) {
+			cmd := NewRootCommand(VersionInfo{})
+			cmd.SetArgs(args)
+			var stdout, stderr bytes.Buffer
+			cmd.SetOut(&stdout)
+			cmd.SetErr(&stderr)
+			err := cmd.Execute()
+			want := fmt.Sprintf("unsupported output %q for build", args[len(args)-1])
+			if err == nil || !strings.Contains(err.Error(), want) {
+				t.Fatalf("error = %v, want %q", err, want)
+			}
+			if stdout.String() != "" {
+				t.Fatalf("stdout = %q, want empty", stdout.String())
+			}
+			// The broken Application would print a render diagnostic if
+			// rendering had started; the flag is rejected before that.
+			if strings.Contains(stderr.String(), "render") {
+				t.Fatalf("stderr = %q, want no render diagnostics for a rejected flag", stderr.String())
+			}
+		})
+	}
+}
+
+func TestBuildAppsJSONOutputStaysEmptyOnRenderFailure(t *testing.T) {
+	root := t.TempDir()
+	writeSimpleAppForCLI(t, root, "ok")
+	writeFailingCLIApplication(t, root, "broken")
+	cmd := NewRootCommand(VersionInfo{})
+	cmd.SetArgs([]string{"build", "apps", "--path", root, "-o", "json"})
+	var stdout, stderr bytes.Buffer
+	cmd.SetOut(&stdout)
+	cmd.SetErr(&stderr)
+	err := cmd.Execute()
+	if code := commandErrorCode(err); code != 2 {
+		t.Fatalf("error code = %d, want 2; err = %v", code, err)
+	}
+	if stdout.String() != "" {
+		t.Fatalf("stdout = %q, want empty: a partial List would read as the whole desired state", stdout.String())
+	}
+	if !strings.Contains(stderr.String(), "error render") {
+		t.Fatalf("stderr = %q, want render diagnostic", stderr.String())
+	}
 }
