@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"github.com/sholdee/drydock/internal/app"
+	cliformat "github.com/sholdee/drydock/internal/format"
 	"github.com/spf13/cobra"
 	"go.yaml.in/yaml/v3"
 )
@@ -20,6 +21,7 @@ func newBuildCommand(info VersionInfo, deps Dependencies) *cobra.Command {
 	}
 
 	appsFlags := defaultCommonFlags()
+	appsFlags.output = string(cliformat.OutputYAML)
 	appsFlags.parallelism = defaultRenderAppsParallelism()
 	appsFlags.engineFingerprint = engineFingerprintFromVersionInfo(info)
 	apps := &cobra.Command{
@@ -33,6 +35,7 @@ func newBuildCommand(info VersionInfo, deps Dependencies) *cobra.Command {
 	bindCommonFlags(apps, &appsFlags)
 
 	appFlags := defaultCommonFlags()
+	appFlags.output = string(cliformat.OutputYAML)
 	appFlags.parallelism = defaultRenderAppsParallelism()
 	appFlags.engineFingerprint = engineFingerprintFromVersionInfo(info)
 	appCmd := &cobra.Command{
@@ -50,6 +53,10 @@ func newBuildCommand(info VersionInfo, deps Dependencies) *cobra.Command {
 }
 
 func runBuildApps(cmd *cobra.Command, deps Dependencies, flags commonFlags) error {
+	output, err := parseBuildOutput(flags.output)
+	if err != nil {
+		return err
+	}
 	repoMaps, err := parseRepoMaps(flags.repoMaps)
 	if err != nil {
 		return err
@@ -66,7 +73,7 @@ func runBuildApps(cmd *cobra.Command, deps Dependencies, flags commonFlags) erro
 		}
 		return err
 	}
-	if err := renderBuildResult(cmd, result); err != nil {
+	if err := renderBuildResult(cmd, output, result); err != nil {
 		return err
 	}
 	if flags.cacheEvents {
@@ -76,6 +83,10 @@ func runBuildApps(cmd *cobra.Command, deps Dependencies, flags commonFlags) erro
 }
 
 func runBuildApp(cmd *cobra.Command, deps Dependencies, flags commonFlags, name string) error {
+	output, err := parseBuildOutput(flags.output)
+	if err != nil {
+		return err
+	}
 	repoMaps, err := parseRepoMaps(flags.repoMaps)
 	if err != nil {
 		return err
@@ -95,7 +106,7 @@ func runBuildApp(cmd *cobra.Command, deps Dependencies, flags commonFlags, name 
 		}
 		return err
 	}
-	if err := renderBuildResult(cmd, result); err != nil {
+	if err := renderBuildResult(cmd, output, result); err != nil {
 		return err
 	}
 	if flags.cacheEvents {
@@ -104,21 +115,41 @@ func runBuildApp(cmd *cobra.Command, deps Dependencies, flags commonFlags, name 
 	return nil
 }
 
-func renderBuildResult(cmd *cobra.Command, result app.BuildResult) error {
+// manifestList is the v1 List envelope kubectl prints for multiple objects;
+// one JSON document lets kubectl, kubeconform, and jq consume build output
+// without splitting a stream.
+type manifestList struct {
+	APIVersion string           `json:"apiVersion"`
+	Kind       string           `json:"kind"`
+	Items      []map[string]any `json:"items"`
+}
+
+func renderBuildResult(cmd *cobra.Command, output string, result app.BuildResult) error {
 	if err := renderDiagnostics(cmd.ErrOrStderr(), result.Diagnostics); err != nil {
 		return err
 	}
-	for _, manifest := range result.Manifests {
-		data, err := yaml.Marshal(manifest.Object.Object)
-		if err != nil {
-			return err
+	switch output {
+	case string(cliformat.OutputJSON):
+		list := manifestList{APIVersion: "v1", Kind: "List", Items: make([]map[string]any, 0, len(result.Manifests))}
+		for _, manifest := range result.Manifests {
+			list.Items = append(list.Items, manifest.Object.Object)
 		}
-		if _, err := fmt.Fprintln(cmd.OutOrStdout(), "---"); err != nil {
-			return err
+		return cliformat.JSON(cmd.OutOrStdout(), list)
+	case string(cliformat.OutputYAML):
+		for _, manifest := range result.Manifests {
+			data, err := yaml.Marshal(manifest.Object.Object)
+			if err != nil {
+				return err
+			}
+			if _, err := fmt.Fprintln(cmd.OutOrStdout(), "---"); err != nil {
+				return err
+			}
+			if _, err := cmd.OutOrStdout().Write(data); err != nil {
+				return err
+			}
 		}
-		if _, err := cmd.OutOrStdout().Write(data); err != nil {
-			return err
-		}
+		return nil
+	default:
+		return fmt.Errorf("unsupported output %q for build", output)
 	}
-	return nil
 }

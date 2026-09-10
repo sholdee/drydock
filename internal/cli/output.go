@@ -72,3 +72,17 @@ func writeStructuredOutput(w io.Writer, output string, value any) error {
 		return fmt.Errorf("unsupported structured output %q", output)
 	}
 }
+
+// parseBuildOutput accepts the manifest formats build can print. The YAML
+// stream is the default so existing `drydock build apps > out.yaml` pipelines
+// keep working byte for byte; JSON wraps the objects in one v1 List document.
+func parseBuildOutput(value string) (string, error) {
+	switch output := strings.TrimSpace(value); output {
+	case "", string(cliformat.OutputYAML):
+		return string(cliformat.OutputYAML), nil
+	case string(cliformat.OutputJSON):
+		return output, nil
+	default:
+		return "", fmt.Errorf("unsupported output %q for build", value)
+	}
+}

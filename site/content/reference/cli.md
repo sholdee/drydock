@@ -124,6 +124,11 @@ drydock build app argocd/my-app --path .
 `build app` errors when no discovered Application matches. The unqualified
 `NAME` form must identify exactly one Application.
 
+`build` prints a `---` separated YAML document stream by default. Use `-o json`
+for one `v1` `List` document whose `items` hold the rendered objects; both
+formats keep diagnostics on stderr, and any other format is rejected before an
+Application renders.
+
 When one selected Application fails to render, embedding callers receive
 partial results containing successful manifests, diagnostics, and
 per-Application statuses. CLI `build` commands keep stdout parseable:

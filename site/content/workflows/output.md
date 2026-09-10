@@ -11,6 +11,7 @@ Use `-o` or `--output` to select the format supported by each command:
 
 | Command area | Output formats |
 | --- | --- |
+| `build apps`, `build app` | `yaml`, `json` |
 | `get apps`, `get images` | `table`, `name`, `json`, `yaml` |
 | `test apps`, `test app` | `text`, `json`, `yaml` |
 | `diff apps`, `diff app` | `unified`, `markdown`, `json`, `yaml` |
