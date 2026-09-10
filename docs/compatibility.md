@@ -210,6 +210,10 @@ Supported:
   (`<namespace>_<name>` for Applications outside the controller namespace;
   drydock assumes the Argo CD controller namespace is `argocd`) and
   `ARGOCD_APP_NAMESPACE` is `spec.destination.namespace`.
+- `.argocd-source.yaml` and `.argocd-source-<app>.yaml` overrides, where
+  `<app>` is the Application instance name like the repo-server's lookup: an
+  Application outside the controller namespace reads
+  `.argocd-source-<namespace>_<name>.yaml`, and a bare-name file is ignored.
 - Recorded divergence from strict Argo CD v3.5.2: `ARGOCD_APP_REVISION`,
   `ARGOCD_APP_REVISION_SHORT`, and `ARGOCD_APP_REVISION_SHORT_8` carry the spec
   `targetRevision` string; a repo-server reports the resolved revision

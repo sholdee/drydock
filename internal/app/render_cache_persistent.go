@@ -541,7 +541,7 @@ func localInputSourceIdentity(ctx context.Context, handle *persistentRenderCache
 	// Clean mode: globs are safe because Helm expansion happens against
 	// committed-equal content and any expansion change rotates the path set
 	// (and therefore the cache key) via the committed digest.
-	paths, _, err := localInputDigestPathsForSource(ctx, plan, sourcePlan, provider.repoRoot)
+	paths, _, err := localInputDigestPathsForSource(ctx, plan, sourcePlan, provider)
 	if err != nil {
 		return SourceIdentity{}, renderCacheReasonInputGraph, false
 	}
@@ -567,7 +567,7 @@ func committedSourceIdentityForPaths(ctx context.Context, handle *persistentRend
 }
 
 func worktreeInputSourceIdentity(ctx context.Context, handle *persistentRenderCache, provider localProvider, plan PlanResult, sourcePlan SourcePlan) (SourceIdentity, string, bool) {
-	paths, helmGlobs, err := localInputDigestPathsForSource(ctx, plan, sourcePlan, provider.repoRoot)
+	paths, helmGlobs, err := localInputDigestPathsForSource(ctx, plan, sourcePlan, provider)
 	if err != nil {
 		return SourceIdentity{}, renderCacheReasonInputGraph, false
 	}
@@ -749,7 +749,7 @@ func strictPathInsideRoot(root, candidate string) bool {
 	return rel != "." && !pathsafety.RelEscapes(rel) && !filepath.IsAbs(rel)
 }
 
-func localInputDigestPathsForSource(ctx context.Context, plan PlanResult, sourcePlan SourcePlan, repoRoot string) ([]gitref.PathDigestPath, bool, error) {
+func localInputDigestPathsForSource(ctx context.Context, plan PlanResult, sourcePlan SourcePlan, provider localProvider) ([]gitref.PathDigestPath, bool, error) {
 	sourcePath := strings.TrimSpace(sourcePlan.Source.Path)
 	if sourcePath == "" {
 		return nil, false, fmt.Errorf("local source path is empty")
@@ -758,15 +758,17 @@ func localInputDigestPathsForSource(ctx context.Context, plan PlanResult, source
 	if err != nil {
 		return nil, false, err
 	}
-	paths, helmGlobs, err := localToolInputDigestPaths(ctx, plan, sourcePlan, repoRoot, clean)
+	paths, helmGlobs, err := localToolInputDigestPaths(ctx, plan, sourcePlan, provider.repoRoot, clean)
 	if err != nil {
 		return nil, false, err
 	}
 	// PrepareSource merges these override files into the source spec before
 	// rendering, so their content is a render input for every tool. Optional:
 	// absence is itself a digest record, so adding or deleting one rotates
-	// the key.
-	return append(paths, argocdSourceOverrideDigestPaths(clean, plan.Application.Name)...), helmGlobs, nil
+	// the key. The per-Application file name follows the instance name, so a
+	// tenant Application's digest tracks .argocd-source-<namespace>_<name>.yaml
+	// and never the bare-name file the repo-server would not read.
+	return append(paths, argocdSourceOverrideDigestPaths(clean, provider.overrideInstanceName(plan.Application))...), helmGlobs, nil
 }
 
 func argocdSourceOverrideDigestPaths(sourcePath, appName string) []gitref.PathDigestPath {

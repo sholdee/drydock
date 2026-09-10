@@ -89,6 +89,21 @@ resources:
 	}
 }
 
+func TestNewLocalProviderCarriesControllerNamespace(t *testing.T) {
+	settings := config.DefaultSettings()
+	provider, cleanup, err := newLocalProvider(context.Background(), Orchestrator{}, t.TempDir(), settings, BuildRequest{}, nil, "drydock-test-*")
+	defer cleanup()
+	if err != nil {
+		t.Fatalf("newLocalProvider() error = %v", err)
+	}
+	// The override-file lookup must agree with the render path's tracking
+	// options, or ARGOCD_APP_NAME and .argocd-source-<app>.yaml would name
+	// different Applications.
+	if want := trackingOptionsFromSettings(settings).ControllerNamespace; provider.controllerNamespace != want || want == "" {
+		t.Fatalf("controllerNamespace = %q, want %q (non-empty)", provider.controllerNamespace, want)
+	}
+}
+
 func TestNewLocalProviderCarriesHelmValuesFileSchemes(t *testing.T) {
 	settings := config.DefaultSettings()
 	settings.HelmValuesFileSchemes = []config.Value[string]{

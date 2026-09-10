@@ -20,7 +20,12 @@ import (
 )
 
 type localProvider struct {
-	repoRoot                     string
+	repoRoot string
+	// controllerNamespace is the Argo CD controller namespace that decides an
+	// Application's instance name (<namespace>_<name> outside it); empty means
+	// the drydock default. It must match the tracking options the render path
+	// uses so override files, ARGOCD_APP_NAME, and tracking metadata agree.
+	controllerNamespace          string
 	sourceResolver               *sourcepkg.Resolver
 	chartAcquirer                chart.Acquirer
 	gitAcquirer                  sourcepkg.GitAcquirer

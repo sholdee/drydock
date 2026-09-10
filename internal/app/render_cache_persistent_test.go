@@ -1584,7 +1584,7 @@ func TestLocalInputDigestPathsIncludeArgocdSourceOverrides(t *testing.T) {
 	}
 	plan := mustPlan(t, application)
 
-	paths, _, err := localInputDigestPathsForSource(context.Background(), plan, plan.Sources[0], repoRoot)
+	paths, _, err := localInputDigestPathsForSource(context.Background(), plan, plan.Sources[0], localProvider{repoRoot: repoRoot})
 	if err != nil {
 		t.Fatalf("localInputDigestPathsForSource() error = %v", err)
 	}
@@ -1602,6 +1602,33 @@ func TestLocalInputDigestPathsIncludeArgocdSourceOverrides(t *testing.T) {
 	}
 	if len(want) != 0 {
 		t.Fatalf("digest paths missing override files %v; got %#v", want, paths)
+	}
+}
+
+func TestLocalInputDigestPathsResolveApplicationOverrideByInstanceName(t *testing.T) {
+	repoRoot := t.TempDir()
+	writeTestFile(t, repoRoot+"/manifests/demo/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: demo\n")
+	application := argoappv1.Application{
+		Name: "demo-app", Namespace: "tenant",
+		Spec: argoappv1.ApplicationSpec{Source: &argoappv1.ApplicationSource{
+			RepoURL: "https://git.example.test/org/repo.git", Path: "manifests/demo", TargetRevision: "main",
+		}},
+	}
+	plan := mustPlan(t, application)
+
+	paths, _, err := localInputDigestPathsForSource(context.Background(), plan, plan.Sources[0], localProvider{repoRoot: repoRoot})
+	if err != nil {
+		t.Fatalf("localInputDigestPathsForSource() error = %v", err)
+	}
+	seen := map[string]bool{}
+	for _, item := range paths {
+		seen[item.Path] = true
+	}
+	if !seen["manifests/demo/.argocd-source-tenant_demo-app.yaml"] {
+		t.Fatalf("digest paths missing the instance-name override file; got %#v", paths)
+	}
+	if seen["manifests/demo/.argocd-source-demo-app.yaml"] {
+		t.Fatalf("digest paths must not track the bare-name file for a tenant Application; got %#v", paths)
 	}
 }
 
@@ -1645,7 +1672,7 @@ func TestLocalToolInputDigestPathsMatchSelectLocalRendererPrecedence(t *testing.
 	}}}
 	plan := mustPlan(t, application)
 
-	paths, _, err := localInputDigestPathsForSource(context.Background(), plan, plan.Sources[0], repoRoot)
+	paths, _, err := localInputDigestPathsForSource(context.Background(), plan, plan.Sources[0], localProvider{repoRoot: repoRoot})
 	if err != nil {
 		t.Fatalf("localInputDigestPathsForSource() error = %v", err)
 	}
@@ -1773,7 +1800,7 @@ func TestKustomizeDigestPathsIncludeFilenameVariants(t *testing.T) {
 		RepoURL: "https://git.example.test/org/repo.git", Path: "apps/alpha", TargetRevision: "main",
 	}}}
 	plan := mustPlan(t, application)
-	paths, _, err := localInputDigestPathsForSource(context.Background(), plan, plan.Sources[0], repoRoot)
+	paths, _, err := localInputDigestPathsForSource(context.Background(), plan, plan.Sources[0], localProvider{repoRoot: repoRoot})
 	if err != nil {
 		t.Fatalf("localInputDigestPathsForSource() error = %v", err)
 	}
