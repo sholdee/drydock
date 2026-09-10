@@ -162,11 +162,15 @@ func TestGenerateAllowsObservedParametersAndEnv(t *testing.T) {
 		`type: array`,
 		`name: "values-file"`,
 		`type: string`,
+		`applicationEnv:`,
 		`- "PKL_ENV"`,
 	} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("generated policy missing %q:\n%s", want, text)
 		}
+	}
+	if strings.Contains(text, "\n    env:\n") {
+		t.Fatalf("generated policy must not emit host env.allow from Application evidence:\n%s", text)
 	}
 }
 
@@ -690,6 +694,134 @@ plugins:
 	}
 }
 
+func TestReadinessAcceptsApplicationEnvAllowAndWarnsOnMisdirectedHostEnv(t *testing.T) {
+	root := t.TempDir()
+	app := pluginApp("argocd", "demo", "apps/demo", "pkl")
+	app.Spec.Source.Plugin.Env = argoappv1.Env{{Name: "PKL_ENV", Value: "prod"}}
+	settings := settingsWithCMP("pkl", config.ConfigManagementPlugin{Name: "pkl", GenerateCommand: []string{"pkl"}})
+	report, err := Analyze(root, []ApplicationInput{{Application: app}}, settings, nil, AnalyzeOptions{})
+	if err != nil {
+		t.Fatalf("Analyze() error = %v", err)
+	}
+	parse := func(body string) *pluginpolicy.Policy {
+		policy, err := pluginpolicy.Parse("policy.yaml", []byte(`apiVersion: drydock.sholdee.dev/v1alpha1
+kind: PluginPolicy
+plugins:
+  pkl:
+    engine: exec
+    generate:
+      command: ["pkl"]
+`+body))
+		if err != nil {
+			t.Fatalf("Parse() error = %v", err)
+		}
+		return &policy
+	}
+	opts := DoctorOptions{EnablePlugins: true, TrustedPolicy: true}
+
+	good := Readiness(report, parse("    applicationEnv:\n      allow: [\"PKL_ENV\"]\n"), opts)
+	if hasIssue(good.Plugins[0].Issues, IssueEnvMissingAllow) || hasIssue(good.Plugins[0].Issues, IssueEnvMisdirected) || good.Status != StatusPass {
+		t.Fatalf("Readiness with applicationEnv.allow = %#v, want PASS without env issues", good)
+	}
+
+	misdirected := Readiness(report, parse("    env:\n      allow: [\"PKL_ENV\"]\n"), opts)
+	if !hasIssue(misdirected.Plugins[0].Issues, IssueEnvMissingAllow) || !hasIssue(misdirected.Plugins[0].Issues, IssueEnvMisdirected) {
+		t.Fatalf("Readiness with host env.allow = %#v, want env.missing_allow and env.misdirected", misdirected.Plugins[0].Issues)
+	}
+	if status := issueStatus(misdirected.Plugins[0].Issues, IssueEnvMisdirected); status != StatusWarn {
+		t.Fatalf("env.misdirected status = %q, want WARN", status)
+	}
+	strict := Readiness(report, parse("    env:\n      allow: [\"PKL_ENV\"]\n"), DoctorOptions{EnablePlugins: true, TrustedPolicy: true, Strict: true})
+	if status := issueStatus(strict.Plugins[0].Issues, IssueEnvMisdirected); status != StatusFail {
+		t.Fatalf("env.misdirected status under --strict = %q, want FAIL", status)
+	}
+
+	// A host variable that legitimately shares a name with an allowlisted
+	// Application env entry is not misdirected.
+	both := Readiness(report, parse("    applicationEnv:\n      allow: [\"PKL_ENV\"]\n    env:\n      allow: [\"PKL_ENV\"]\n"), opts)
+	if hasIssue(both.Plugins[0].Issues, IssueEnvMisdirected) || both.Status != StatusPass {
+		t.Fatalf("Readiness with both lists = %#v, want PASS without env.misdirected", both)
+	}
+}
+
+func TestReadinessRejectsInvalidApplicationEnvNamesAndNativeEngineEnv(t *testing.T) {
+	root := t.TempDir()
+	app := pluginApp("argocd", "demo", "apps/demo", "pkl")
+	app.Spec.Source.Plugin.Env = argoappv1.Env{{Name: "my-var", Value: "x"}}
+	settings := settingsWithCMP("pkl", config.ConfigManagementPlugin{Name: "pkl", GenerateCommand: []string{"pkl"}})
+	report, err := Analyze(root, []ApplicationInput{{Application: app}}, settings, nil, AnalyzeOptions{})
+	if err != nil {
+		t.Fatalf("Analyze() error = %v", err)
+	}
+	execPolicy, err := pluginpolicy.Parse("policy.yaml", []byte(`apiVersion: drydock.sholdee.dev/v1alpha1
+kind: PluginPolicy
+plugins:
+  pkl:
+    engine: exec
+    generate:
+      command: ["pkl"]
+`))
+	if err != nil {
+		t.Fatalf("Parse() error = %v", err)
+	}
+	opts := DoctorOptions{EnablePlugins: true, TrustedPolicy: true}
+	invalid := Readiness(report, &execPolicy, opts)
+	if !hasIssue(invalid.Plugins[0].Issues, IssueEnvMissingAllow) {
+		t.Fatalf("Readiness = %#v, want env.missing_allow for an invalid identifier", invalid.Plugins[0].Issues)
+	}
+	for _, item := range invalid.Plugins[0].Issues {
+		if item.Code == IssueEnvMissingAllow && !strings.Contains(item.Message, "not a valid environment identifier") {
+			t.Fatalf("message = %q, want the invalid-identifier explanation", item.Message)
+		}
+	}
+
+	nativePolicy, err := pluginpolicy.Parse("policy.yaml", []byte(`apiVersion: drydock.sholdee.dev/v1alpha1
+kind: PluginPolicy
+plugins:
+  pkl:
+    engine: avp-compat
+`))
+	if err != nil {
+		t.Fatalf("Parse() error = %v", err)
+	}
+	native := Readiness(report, &nativePolicy, opts)
+	if !hasIssue(native.Plugins[0].Issues, IssueEnvMissingAllow) || native.Status != StatusFail {
+		t.Fatalf("Readiness for a native engine with Application env = %#v, want FAIL env.missing_allow", native)
+	}
+}
+
+func TestReadinessSurfacesPolicyWarnings(t *testing.T) {
+	policy, err := pluginpolicy.Parse("policy.yaml", []byte(`apiVersion: drydock.sholdee.dev/v1alpha1
+kind: PluginPolicy
+plugins:
+  pkl:
+    engine: exec
+    generate:
+      command: ["pkl"]
+    env:
+      allow: ["KUBE_VERSION"]
+`))
+	if err != nil {
+		t.Fatalf("Parse() error = %v", err)
+	}
+	readiness := Readiness(Report{}, &policy, DoctorOptions{EnablePlugins: true, TrustedPolicy: true})
+	if !hasIssue(readiness.Recommendations, IssuePolicyEnvIgnored) {
+		t.Fatalf("Recommendations = %#v, want %s", readiness.Recommendations, IssuePolicyEnvIgnored)
+	}
+	if readiness.Status != StatusWarn {
+		t.Fatalf("Status = %q, want WARN", readiness.Status)
+	}
+}
+
+func issueStatus(issues []ReadinessIssue, code string) string {
+	for _, item := range issues {
+		if item.Code == code {
+			return item.Status
+		}
+	}
+	return ""
+}
+
 func pluginApp(namespace, name, sourcePath, plugin string) argoappv1.Application {
 	app := sourceApp(namespace, name, sourcePath)
 	app.Spec.Source.Plugin = &argoappv1.ApplicationSourcePlugin{Name: plugin}
@@ -765,21 +897,29 @@ func hasIssue(issues []ReadinessIssue, code string) bool {
 	return false
 }
 
-func TestGenerateSkipsDrydockManagedEnvNames(t *testing.T) {
+func TestGenerateWritesApplicationEnvAllowFromObservedNames(t *testing.T) {
 	root := t.TempDir()
 	app := pluginApp("argocd", "demo", "apps/demo", "pkl")
-	app.Spec.Source.Plugin.Env = argoappv1.Env{{Name: "KUBE_VERSION", Value: "1.30.0"}, {Name: "ARGOCD_APP_NAME", Value: "x"}, {Name: "PKL_ENV", Value: "prod"}}
+	app.Spec.Source.Plugin.Env = argoappv1.Env{{Name: "KUBE_VERSION", Value: "1.30.0"}, {Name: "9BAD", Value: "x"}, {Name: "PKL_ENV", Value: "prod"}}
 	settings := settingsWithCMP("pkl", config.ConfigManagementPlugin{Name: "pkl", GenerateCommand: []string{"pkl"}, Discover: config.ConfigManagementPluginDiscovery{FileName: "PklProject"}})
 	report, err := Analyze(root, []ApplicationInput{{Application: app}}, settings, nil, AnalyzeOptions{})
 	if err != nil {
 		t.Fatalf("Analyze() error = %v", err)
 	}
-	data, err := Generate(report, GenerateOptions{})
+	data, err := Generate(report, GenerateOptions{Comments: true})
 	if err != nil {
 		t.Fatalf("Generate() error = %v", err)
 	}
 	text := string(data)
-	if !strings.Contains(text, `- "PKL_ENV"`) || strings.Contains(text, "KUBE_VERSION") || strings.Contains(text, "ARGOCD_APP_NAME") {
-		t.Fatalf("generated policy = \n%s\nwant PKL_ENV only (managed names skipped)", text)
+	for _, want := range []string{"    applicationEnv:\n      allow:\n", `- "KUBE_VERSION"`, `- "PKL_ENV"`, "env.allow"} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("generated policy missing %q:\n%s", want, text)
+		}
+	}
+	if strings.Contains(text, "9BAD") || strings.Contains(text, "\n    env:\n") {
+		t.Fatalf("generated policy must skip invalid names and never emit host env.allow:\n%s", text)
+	}
+	if _, err := pluginpolicy.Parse("generated.yaml", data); err != nil {
+		t.Fatalf("generated policy does not parse: %v", err)
 	}
 }

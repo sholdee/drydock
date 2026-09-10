@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"reflect"
 	"slices"
+	"sort"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -3033,6 +3035,8 @@ func appExecPluginHelperBuildEnv() {
 	fmt.Printf("  api: %q\n", os.Getenv("KUBE_API_VERSIONS"))
 	fmt.Printf("  params: %q\n", os.Getenv("ARGOCD_APP_PARAMETERS"))
 	fmt.Printf("  offline: %q\n", os.Getenv("DRYDOCK_OFFLINE"))
+	fmt.Printf("  appEnvMode: %q\n", os.Getenv("ARGOCD_ENV_MODE"))
+	fmt.Printf("  bareMode: %q\n", os.Getenv("MODE"))
 }
 
 func appExecPluginHelperRepoParam(args []string) error {
@@ -3253,4 +3257,198 @@ plugins:
 		}
 		assertWarning(t, result.Diagnostics)
 	})
+}
+
+// writePluginBuildApplicationWithEnv is writePluginBuildApplication plus a
+// spec.source.plugin.env block.
+func writePluginBuildApplicationWithEnv(t *testing.T, root, appName, pluginName string, env map[string]string) {
+	t.Helper()
+	names := make([]string, 0, len(env))
+	for name := range env {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	var block strings.Builder
+	if len(names) > 0 {
+		block.WriteString("      env:\n")
+	}
+	for _, name := range names {
+		fmt.Fprintf(&block, "        - name: %s\n          value: %s\n", name, yamlSingleQuoted(env[name]))
+	}
+	writeTestFile(t, filepath.Join(root, "apps", appName+".yaml"), `apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: `+appName+`
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/example/repo
+    path: manifests/`+appName+`
+    targetRevision: main
+    plugin:
+      name: `+pluginName+`
+`+block.String()+`  destination:
+    name: in-cluster
+    namespace: default
+`)
+	writeTestFile(t, filepath.Join(root, "manifests", appName, ".keep"), "")
+}
+
+func writeExecPluginPolicyWithApplicationEnv(t *testing.T, root, name string, command []string, allow []string) {
+	t.Helper()
+	quoted := yamlSingleQuotedList(command)
+	allowed := make([]string, 0, len(allow))
+	for _, entry := range allow {
+		allowed = append(allowed, strconv.Quote(entry))
+	}
+	writeTestFile(t, filepath.Join(root, ".drydock", "plugins.yaml"), `apiVersion: drydock.sholdee.dev/v1alpha1
+kind: PluginPolicy
+plugins:
+  `+name+`:
+    engine: exec
+    generate:
+      command: [`+strings.Join(quoted, ", ")+`]
+      timeout: `+testExecPolicyCommandTimeout+`
+    env:
+      allow: ["DRYDOCK_APP_EXEC_HELPER", "DRYDOCK_APP_EXEC_VALUE"]
+    applicationEnv:
+      allow: [`+strings.Join(allowed, ", ")+`]
+`)
+}
+
+func TestOrchestratorBuildDeliversAllowlistedApplicationEnvToExecPlugin(t *testing.T) {
+	root := t.TempDir()
+	writePluginBuildApplicationWithEnv(t, root, "plugin", "exec-renderer", map[string]string{
+		"MODE":   "prod",
+		"SUFFIX": "$ARGOCD_APP_NAME-$KUBE_VERSION-$$-$MODE", // $MODE: earlier entries are not substitutable
+	})
+	writeTestFile(t, filepath.Join(root, "manifests", "plugin", "marker.txt"), "from-source")
+	writeExecPluginPolicyWithApplicationEnv(t, root, "exec-renderer", []string{"renderer"}, []string{"MODE", "SUFFIX"})
+	policy, fingerprint := readTestPluginPolicy(t, root)
+	runner := &recordingExecRunner{result: pluginexec.Result{Stdout: []byte("apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: injected\n")}}
+
+	_, err := (Orchestrator{PluginExecRunner: runner}).Build(context.Background(), BuildRequest{
+		Path:                    root,
+		EnablePlugins:           true,
+		KubeVersion:             "v1.30.2",
+		APIVersions:             []string{"monitoring.coreos.com/v1", "apps/v1"},
+		pluginPolicyLoaded:      true,
+		pluginPolicy:            policy,
+		pluginPolicyFingerprint: fingerprint,
+		pluginPolicyExecTrusted: true,
+	})
+	if err != nil {
+		t.Fatalf("Build() error = %v", err)
+	}
+	base := argoBuildEnvForPluginFixture()
+	want := append(append([]string(nil), base[:11]...), "ARGOCD_ENV_MODE=prod", "ARGOCD_ENV_SUFFIX=plugin-1.30.2-$-", base[11])
+	if got := runner.lastRequest.ExtraEnv; !reflect.DeepEqual(got, want) {
+		t.Fatalf("ExtraEnv = %#v, want %#v", got, want)
+	}
+	if slices.Contains(runner.lastRequest.ExtraEnv, "MODE=prod") {
+		t.Fatalf("ExtraEnv = %#v must not contain a bare MODE", runner.lastRequest.ExtraEnv)
+	}
+}
+
+func TestOrchestratorBuildRejectsApplicationEnvNotAllowlisted(t *testing.T) {
+	root := t.TempDir()
+	writePluginBuildApplicationWithEnv(t, root, "plugin", "exec-renderer", map[string]string{"MODE": "prod", "SECRET": "hunter2"})
+	writeTestFile(t, filepath.Join(root, "manifests", "plugin", "marker.txt"), "from-source")
+	writeExecPluginPolicyWithApplicationEnv(t, root, "exec-renderer", []string{"renderer"}, []string{"MODE"})
+	policy, fingerprint := readTestPluginPolicy(t, root)
+	runner := &recordingExecRunner{}
+
+	result, err := (Orchestrator{PluginExecRunner: runner}).Build(context.Background(), BuildRequest{
+		Path:                    root,
+		EnablePlugins:           true,
+		pluginPolicyLoaded:      true,
+		pluginPolicy:            policy,
+		pluginPolicyFingerprint: fingerprint,
+		pluginPolicyExecTrusted: true,
+	})
+	if err == nil {
+		t.Fatal("Build() error = nil, want rejection")
+	}
+	if runner.calls != 0 {
+		t.Fatalf("runner calls = %d, want 0 (fail closed before execution)", runner.calls)
+	}
+	if !hasDiagnosticCode(result.Diagnostics, diagnostic.CodePluginUnsupported) || !hasDiagnosticMessage(result.Diagnostics, `Application plugin env "SECRET", which is not allowed by policy applicationEnv.allow`) {
+		t.Fatalf("Diagnostics = %#v, want plugin.unsupported naming SECRET and applicationEnv.allow", result.Diagnostics)
+	}
+	if hasDiagnosticMessage(result.Diagnostics, "hunter2") {
+		t.Fatalf("Diagnostics = %#v leak the env value", result.Diagnostics)
+	}
+}
+
+func TestOrchestratorBuildDeliversAllowlistedApplicationEnvToContainerPlugin(t *testing.T) {
+	root := t.TempDir()
+	writePluginBuildApplicationWithEnv(t, root, "plugin", "container-renderer", map[string]string{"REGION": "eu"})
+	writeTestFile(t, filepath.Join(root, "manifests", "plugin", "marker.txt"), "from-source")
+	writeTestFile(t, filepath.Join(root, ".drydock", "plugins.yaml"), `apiVersion: drydock.sholdee.dev/v1alpha1
+kind: PluginPolicy
+plugins:
+  container-renderer:
+    engine: container
+    image: registry.example.test/plugins/render@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+    configManagementPlugin:
+      discover:
+        fileName: marker.txt
+    generate:
+      command: ["pkl", "eval", "index.pkl"]
+    applicationEnv:
+      allow: ["REGION"]
+`)
+	policy, fingerprint := readTestPluginPolicy(t, root)
+	runner := &recordingContainerRunner{result: pluginexec.Result{Stdout: []byte("apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: injected\n")}}
+
+	_, err := (Orchestrator{PluginContainerRunner: runner}).Build(context.Background(), BuildRequest{
+		Path:                    root,
+		EnablePlugins:           true,
+		PluginCacheDir:          filepath.Join(t.TempDir(), "plugin-cache"),
+		KubeVersion:             "v1.30.2",
+		APIVersions:             []string{"monitoring.coreos.com/v1", "apps/v1"},
+		pluginPolicyLoaded:      true,
+		pluginPolicy:            policy,
+		pluginPolicyFingerprint: fingerprint,
+		pluginPolicyExecTrusted: true,
+	})
+	if err != nil {
+		t.Fatalf("Build() error = %v", err)
+	}
+	base := argoBuildEnvForPluginFixture()
+	want := append(append([]string(nil), base[:11]...), "ARGOCD_ENV_REGION=eu", base[11])
+	if got := runner.lastRequest.ExtraEnv; !reflect.DeepEqual(got, want) {
+		t.Fatalf("container ExtraEnv = %#v, want %#v", got, want)
+	}
+}
+
+// End to end through a real subprocess.
+func TestOrchestratorBuildExecPolicyPluginObservesApplicationEnv(t *testing.T) {
+	root := t.TempDir()
+	writePluginBuildApplicationWithEnv(t, root, "plugin", "exec-renderer", map[string]string{"MODE": "prod"})
+	writeTestFile(t, filepath.Join(root, "manifests", "plugin", "marker.txt"), "from-source")
+	t.Setenv("DRYDOCK_APP_EXEC_HELPER", "1")
+	writeExecPluginPolicyWithApplicationEnv(t, root, "exec-renderer", appExecCommand(t, "build-env"), []string{"MODE"})
+	policy, fingerprint := readTestPluginPolicy(t, root)
+
+	result, err := (Orchestrator{}).Build(context.Background(), BuildRequest{
+		Path:                    root,
+		EnablePlugins:           true,
+		pluginPolicyLoaded:      true,
+		pluginPolicy:            policy,
+		pluginPolicyFingerprint: fingerprint,
+		pluginPolicyExecTrusted: true,
+	})
+	if err != nil {
+		t.Fatalf("Build() error = %v\nDiagnostics: %#v", err, result.Diagnostics)
+	}
+	manifest, ok := manifestByName(result.Manifests, "exec-build-env")
+	if !ok {
+		t.Fatalf("Manifests = %#v, want exec-build-env", result.Manifests)
+	}
+	data := configMapData(t, manifest)
+	if data["appEnvMode"] != "prod" || data["bareMode"] != "" {
+		t.Fatalf("data = %#v, want ARGOCD_ENV_MODE=prod and no bare MODE", data)
+	}
 }

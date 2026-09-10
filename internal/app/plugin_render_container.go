@@ -38,13 +38,17 @@ func (p localProvider) renderContainerPolicyPluginSource(ctx context.Context, so
 	if message != "" {
 		return nil, unsupportedPluginDiagnostic(message), true, unsupportedPolicyPluginError(message)
 	}
+	applicationEnv, message := validateApplicationPluginEnv(name, policyPlugin.Container.Lifecycle.ApplicationEnv.Allow, opts.Plugin.Env, policyPluginBuildEnvEntries(opts))
+	if message != "" {
+		return nil, unsupportedPluginDiagnostic(message), true, unsupportedPolicyPluginError(message)
+	}
 	lifecycle, sensitive, message := expandExecPluginCommandTemplates(policyPlugin.Container.Lifecycle, params)
 	if message != "" {
 		return nil, unsupportedPluginDiagnostic(fmt.Sprintf("config management plugin %s %s", pluginDisplayName(name), message)), true, unsupportedPolicyPluginError(message)
 	}
 	containerConfig := *policyPlugin.Container
 	containerConfig.Lifecycle = lifecycle
-	extraEnv := composePolicyPluginExtraEnv(opts, params, p.offline)
+	extraEnv := composePolicyPluginExtraEnv(opts, applicationEnv, params, p.offline)
 	result, err := p.pluginContainerRunner.Run(ctx, plugincontainer.Request{
 		SourceDir:         sourceDir,
 		RepositoryDir:     source.RepoRoot,

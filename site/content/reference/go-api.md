@@ -64,11 +64,12 @@ Application plugin parameters for command-backed engines must be allowlisted by
 policy. Trusted `engine: exec` and `engine: container` policy plugins receive
 the Argo CD build environment (`ARGOCD_APP_*`, `KUBE_VERSION`,
 `KUBE_API_VERSIONS`) as environment variables, like a repo-server sidecar;
-Application plugin env (`spec.source.plugin.env`) is not forwarded to them
-yet. Injected `PluginRenderer` implementations are unaffected and keep
-receiving the full `PluginRequest` in process. Native policy engines such as
-`avp-compat` and `native-kustomize` do
-not execute plugin commands and reject Application plugin env and parameters.
+Application plugin env (`spec.source.plugin.env`) reaches them as
+`ARGOCD_ENV_<name>` when allowlisted by `applicationEnv.allow`. Injected
+`PluginRenderer` implementations are unaffected and keep receiving the full
+`PluginRequest` in process. Native policy engines such as `avp-compat` and
+`native-kustomize` do not execute plugin commands and reject Application
+plugin env and parameters.
 Explicit `argocd-vault-plugin` sources and discovered simple AVP CMP aliases
 use native AVP compatibility by default. `Config.EnableAVPCompat` forces the
 same placeholder redaction pass for ordinary native-rendered sources.
