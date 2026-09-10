@@ -1,0 +1,21 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: parity-tenant-overrides
+  namespace: parity-tenant
+spec:
+  project: parity-tenant
+  source:
+    repoURL: git://argocd-parity-git.argocd-parity.svc.cluster.local/repo.git
+    targetRevision: HEAD
+    path: charts/tenant-overrides
+    helm:
+      releaseName: parity-tenant-overrides
+      parameters:
+        - name: appName
+          value: $ARGOCD_APP_NAME
+        - name: appNamespace
+          value: $ARGOCD_APP_NAMESPACE
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: parity-tenant-workloads

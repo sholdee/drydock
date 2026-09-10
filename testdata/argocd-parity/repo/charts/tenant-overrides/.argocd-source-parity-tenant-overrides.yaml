@@ -1,0 +1,4 @@
+helm:
+  valuesObject:
+    decoy: bare-name-file-must-be-ignored
+    both: from-bare-name-file

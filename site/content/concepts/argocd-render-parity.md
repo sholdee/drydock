@@ -53,6 +53,7 @@ treated as a rendering regression for the covered fixture set.
 | Jsonnet | ext vars, top-level arguments, code mode, libraries |
 | Multi-source | `$ref` values, ref-only sources, source precedence, last-wins resources |
 | ApplicationSet | git directories, git files, list, matrix, merge, Go templates, `missingkey=error`, selectors, generator template overrides, `templatePatch`, fasttemplate (default) mode with `path`/`path.basename`/`path[N]`/`values.*` params, `elementsYaml` generator input, `normalize` and `upper` template functions, template render error scoping (comment-only git files match under `missingkey=error` contributes zero Applications) |
+| Apps in any namespace | Application outside the controller namespace: instance-name `ARGOCD_APP_NAME` (`<namespace>_<name>`), destination `ARGOCD_APP_NAMESPACE`, `.argocd-source-<namespace>_<name>.yaml` override with the bare-name file ignored, AppProject `sourceNamespaces`, tracking metadata compared without ignore rules |
 | Tracking and resources | Argo CD tracking metadata, repeated-resource last-wins behavior, CRDs excluded from tracking metadata, hook-annotated resources excluded from the manifests view across all source types (helm test hooks, Argo CD sync hooks; `crd-install` kept) |
 
 The source of truth for the active fixture inventory is the parity smoke script;

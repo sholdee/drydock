@@ -1,5 +1,6 @@
 commaValue: from-default
 appName: from-default
+appNamespace: from-default
 envFile: from-default
 shared: from-default
 fileMessage: from-default

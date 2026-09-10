@@ -101,6 +101,16 @@ TRACKING_APPLICATIONS=(
   parity-tracking
   parity-helm-crds-default
   parity-oci-config
+  parity-tenant-overrides
+)
+
+# Applications outside the Argo CD controller namespace. They pin instance-name
+# semantics: ARGOCD_APP_NAME is <namespace>_<name>, the per-Application source
+# override file is .argocd-source-<namespace>_<name>.yaml (the bare-name file is
+# ignored), and tracking metadata carries the same instance name.
+TENANT_NAMESPACE="parity-tenant"
+TENANT_APPLICATIONS=(
+  parity-tenant-overrides
 )
 
 PROJECT_POLICY_CASES=(
@@ -599,27 +609,58 @@ login_argocd() {
 }
 
 apply_fixture_apps() {
+  ensure_namespace "${TENANT_NAMESPACE}"
+  kubectl -n argocd apply -f "${FIXTURE_REPO_PATH}/projects" >/dev/null
   kubectl -n argocd apply -f "${FIXTURE_REPO_PATH}/applications" >/dev/null
   kubectl -n argocd apply -f "${FIXTURE_REPO_PATH}/applicationsets" >/dev/null
+  kubectl -n "${TENANT_NAMESPACE}" apply -f "${FIXTURE_REPO_PATH}/tenant-applications" >/dev/null
+}
+
+wait_for_application() {
+  local namespace="$1"
+  local app="$2"
+  local reconciled_at
+  for _ in {1..120}; do
+    if kubectl -n "${namespace}" get application "${app}" >/dev/null 2>&1; then
+      break
+    fi
+    sleep 1
+  done
+  kubectl -n "${namespace}" get application "${app}" >/dev/null
+  # `argocd app manifests` serves the controller's cached comparison, so an
+  # Application the controller never reconciled returns exit 0 with empty
+  # output. Gate on reconciledAt so that failure surfaces here instead of as a
+  # misleading "did not generate manifests" after the capture retry loop.
+  for _ in {1..120}; do
+    reconciled_at="$(kubectl -n "${namespace}" get application "${app}" -o jsonpath='{.status.reconciledAt}' 2>/dev/null || true)"
+    if [[ -n "${reconciled_at}" ]]; then
+      return 0
+    fi
+    sleep 2
+  done
+  local dump
+  dump="$(artifact_dir logs)/unreconciled-${namespace}-${app}.yaml"
+  kubectl -n "${namespace}" get application "${app}" -o yaml > "${dump}" 2>&1 || true
+  fail "Argo CD did not reconcile Application ${namespace}/${app}; see ${dump}"
 }
 
 wait_for_applications() {
   local app
   for app in "${APPLICATIONS[@]}"; do
-    for _ in {1..120}; do
-      if kubectl -n argocd get application "${app}" >/dev/null 2>&1; then
-        break
-      fi
-      sleep 1
-    done
-    kubectl -n argocd get application "${app}" >/dev/null
+    wait_for_application argocd "${app}"
+  done
+  for app in "${TENANT_APPLICATIONS[@]}"; do
+    wait_for_application "${TENANT_NAMESPACE}" "${app}"
   done
 }
 
-assert_application_inventory() {
+assert_namespace_inventory() {
+  local namespace="$1"
+  local diff_file="$2"
+  shift 2
   local expected actual
-  expected="$(printf '%s\n' "${APPLICATIONS[@]}" | sort)"
-  actual="$(kubectl -n argocd get applications.argoproj.io -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}' | sort)"
+  expected="$(printf '%s\n' "$@" | sort)"
+  actual="$(kubectl -n "${namespace}" get applications.argoproj.io -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}' | sort)"
   if [[ "${actual}" != "${expected}" ]]; then
     {
       echo "expected Applications:"
@@ -627,8 +668,29 @@ assert_application_inventory() {
       echo
       echo "actual Applications:"
       printf '%s\n' "${actual}"
-    } > "${OUT_DIR}/application-inventory.diff"
-    fail "Argo CD Application inventory did not match expected list; see ${OUT_DIR}/application-inventory.diff"
+    } > "${OUT_DIR}/${diff_file}"
+    fail "Argo CD Application inventory in ${namespace} did not match expected list; see ${OUT_DIR}/${diff_file}"
+  fi
+}
+
+assert_application_inventory() {
+  assert_namespace_inventory argocd application-inventory.diff "${APPLICATIONS[@]}"
+  assert_namespace_inventory "${TENANT_NAMESPACE}" tenant-application-inventory.diff "${TENANT_APPLICATIONS[@]}"
+}
+
+capture_argocd_manifest() {
+  local app_ref="$1"
+  local stem="$2"
+  local output_dir="$3"
+  for _ in {1..120}; do
+    if argocd app manifests "${app_ref}" > "${output_dir}/${stem}.yaml" 2> "${OUT_DIR}/argocd-${stem}.stderr"; then
+      rm -f "${OUT_DIR}/argocd-${stem}.stderr"
+      break
+    fi
+    sleep 2
+  done
+  if [[ ! -s "${output_dir}/${stem}.yaml" ]]; then
+    fail "Argo CD did not generate manifests for ${app_ref}; see ${OUT_DIR}/argocd-${stem}.stderr"
   fi
 }
 
@@ -636,31 +698,35 @@ capture_argocd_manifests() {
   local app output_dir
   output_dir="$(artifact_dir argocd-manifests)"
   for app in "${APPLICATIONS[@]}"; do
-    for _ in {1..120}; do
-      if argocd app manifests "${app}" > "${output_dir}/${app}.yaml" 2> "${OUT_DIR}/argocd-${app}.stderr"; then
-        rm -f "${OUT_DIR}/argocd-${app}.stderr"
-        break
-      fi
-      sleep 2
-    done
-    if [[ ! -s "${output_dir}/${app}.yaml" ]]; then
-      fail "Argo CD did not generate manifests for ${app}; see ${OUT_DIR}/argocd-${app}.stderr"
-    fi
+    capture_argocd_manifest "${app}" "${app}" "${output_dir}"
   done
+  for app in "${TENANT_APPLICATIONS[@]}"; do
+    capture_argocd_manifest "${TENANT_NAMESPACE}/${app}" "${app}" "${output_dir}"
+  done
+}
+
+capture_drydock_manifest() {
+  local app_ref="$1"
+  local stem="$2"
+  local output_dir="$3"
+  (cd "${REPO_ROOT}" && "${DRYDOCK_CMD[@]}" build app "${app_ref}" \
+    --path "${FIXTURE_REPO_PATH}" \
+    --repo-map "${FIXTURE_REPO_URL}=${FIXTURE_REPO_PATH}" \
+    --oci-cache-dir "${OCI_CACHE_DIR}" \
+    --oci-ca-file "${OCI_CA_FILE}" \
+    --render-cache-dir "${OCI_OFFLINE_RENDER_CACHE_DIR}" \
+    --offline > "${output_dir}/${stem}.yaml" 2> "${OUT_DIR}/drydock-${stem}.stderr")
+  rm -f "${OUT_DIR}/drydock-${stem}.stderr"
 }
 
 capture_drydock_manifests() {
   local app output_dir
   output_dir="$(artifact_dir drydock-manifests)"
   for app in "${APPLICATIONS[@]}"; do
-    (cd "${REPO_ROOT}" && "${DRYDOCK_CMD[@]}" build app "argocd/${app}" \
-      --path "${FIXTURE_REPO_PATH}" \
-      --repo-map "${FIXTURE_REPO_URL}=${FIXTURE_REPO_PATH}" \
-      --oci-cache-dir "${OCI_CACHE_DIR}" \
-      --oci-ca-file "${OCI_CA_FILE}" \
-      --render-cache-dir "${OCI_OFFLINE_RENDER_CACHE_DIR}" \
-      --offline > "${output_dir}/${app}.yaml" 2> "${OUT_DIR}/drydock-${app}.stderr")
-    rm -f "${OUT_DIR}/drydock-${app}.stderr"
+    capture_drydock_manifest "argocd/${app}" "${app}" "${output_dir}"
+  done
+  for app in "${TENANT_APPLICATIONS[@]}"; do
+    capture_drydock_manifest "${TENANT_NAMESPACE}/${app}" "${app}" "${output_dir}"
   done
 }
 
@@ -693,9 +759,9 @@ ensure_namespace() {
   kubectl get namespace "${namespace}" >/dev/null 2>&1 || kubectl create namespace "${namespace}" >/dev/null
 }
 
-configure_project_policy_application_namespaces() {
+configure_application_namespaces() {
   kubectl -n argocd patch configmap argocd-cmd-params-cm --type merge \
-    -p '{"data":{"application.namespaces":"project-policy-tenant"}}' >/dev/null
+    -p "{\"data\":{\"application.namespaces\":\"${TENANT_NAMESPACE},project-policy-tenant\"}}" >/dev/null
   kubectl -n argocd rollout restart deployment/argocd-server >/dev/null
   kubectl -n argocd rollout restart statefulset/argocd-application-controller >/dev/null
   kubectl -n argocd rollout status deployment/argocd-server --timeout=300s
@@ -825,8 +891,6 @@ compare_project_policy_smoke() {
 }
 
 run_project_policy_smoke() {
-  log_step "Configuring Argo CD project-policy Application namespaces"
-  configure_project_policy_application_namespaces
   log_step "Preparing project-policy namespaces"
   prepare_project_policy_namespaces
   log_step "Applying project-policy AppProjects and Applications"
@@ -871,6 +935,10 @@ main() {
   verify_oci_artifact_manifest
   log_step "Installing Argo CD ${argocd_version}"
   install_argocd "${argocd_version}"
+  # Restarting argocd-server must happen before login_argocd starts the
+  # port-forward it binds to a single server pod.
+  log_step "Enabling Applications in tenant namespaces"
+  configure_application_namespaces
   log_step "Logging in to Argo CD"
   login_argocd
   log_step "Applying parity fixture Applications"

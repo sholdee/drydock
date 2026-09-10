@@ -1,0 +1,4 @@
+helm:
+  valuesObject:
+    fromAppOverride: from-instance-override
+    both: from-instance-override

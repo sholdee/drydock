@@ -4,9 +4,9 @@ metadata:
   name: {{ .Release.Name }}
   namespace: {{ .Release.Namespace }}
 data:
-  commaValue: {{ .Values.commaValue }}
+  fromRepoOverride: {{ .Values.fromRepoOverride }}
+  fromAppOverride: {{ .Values.fromAppOverride }}
+  both: {{ .Values.both }}
+  decoy: {{ .Values.decoy }}
   appName: {{ .Values.appName }}
   appNamespace: {{ .Values.appNamespace }}
-  envFile: {{ .Values.envFile }}
-  shared: {{ .Values.shared }}
-  fileMessage: {{ .Values.fileMessage | quote }}

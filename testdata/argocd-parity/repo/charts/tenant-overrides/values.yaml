@@ -1,0 +1,6 @@
+fromRepoOverride: from-default
+fromAppOverride: from-default
+both: from-default
+decoy: from-default
+appName: from-default
+appNamespace: from-default
