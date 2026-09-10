@@ -107,6 +107,13 @@
       enabled: false,
     },
     {
+      description: 'structured-merge-diff major line is pinned by argo-cd (util/argo/managedfields.Normalize takes its typed.ParseableType); migrate only inside an argo-cd upgrade that moves it',
+      matchManagers: ['gomod'],
+      matchPackageNames: ['/^sigs\\.k8s\\.io\\/structured-merge-diff\\//'],
+      matchUpdateTypes: ['major'],
+      enabled: false,
+    },
+    {
       description: 'Do not automerge high-risk GitOps renderer module updates',
       matchManagers: ['gomod'],
       matchPackageNames: [
