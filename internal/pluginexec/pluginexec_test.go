@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"reflect"
 	"runtime"
 	"strings"
 	"testing"
@@ -778,4 +779,41 @@ func repositoryCopyTestConfig(t *testing.T, include []string, readPath string) p
 		Include: include,
 	}
 	return config
+}
+
+func TestBuildEnvRejectsDuplicateNames(t *testing.T) {
+	lookup := func(name string) (string, bool) { return "host", true }
+	_, err := BuildEnv(pluginpolicy.ExecEnv{Allow: []string{"REGION"}}, lookup, []string{"REGION=extra"})
+	if err == nil || !strings.Contains(err.Error(), "REGION") || !strings.Contains(err.Error(), "twice") {
+		t.Fatalf("BuildEnv() error = %v, want duplicate REGION error", err)
+	}
+	if _, err := BuildEnv(pluginpolicy.ExecEnv{}, lookup, []string{"PATH=/evil"}); err == nil {
+		t.Fatal("BuildEnv() error = nil, want PATH duplicate rejected")
+	}
+}
+
+func TestBuildEnvRejectsNULAndInvalidExtraNames(t *testing.T) {
+	lookup := func(string) (string, bool) { return "", false }
+	if _, err := BuildEnv(pluginpolicy.ExecEnv{}, lookup, []string{"ARGOCD_APP_NAME=a\x00b"}); err == nil || !strings.Contains(err.Error(), "ARGOCD_APP_NAME") || !strings.Contains(err.Error(), "NUL") {
+		t.Fatalf("BuildEnv() error = %v, want NUL rejection naming the variable", err)
+	}
+	if _, err := BuildEnv(pluginpolicy.ExecEnv{}, lookup, []string{"BAD-NAME=x"}); err == nil || !strings.Contains(err.Error(), "BAD-NAME") {
+		t.Fatalf("BuildEnv() error = %v, want invalid name rejection", err)
+	}
+	hostNUL := func(string) (string, bool) { return "x\x00y", true }
+	if _, err := BuildEnv(pluginpolicy.ExecEnv{Allow: []string{"REGION"}}, hostNUL, nil); err == nil || !strings.Contains(err.Error(), "REGION") {
+		t.Fatalf("BuildEnv() error = %v, want NUL rejection for allow-listed host value", err)
+	}
+}
+
+func TestBuildEnvOrdersPathAllowThenExtra(t *testing.T) {
+	lookup := func(name string) (string, bool) { return "host-" + name, true }
+	got, err := BuildEnv(pluginpolicy.ExecEnv{Allow: []string{"REGION"}}, lookup, []string{"ARGOCD_APP_NAME=demo", "KUBE_VERSION="})
+	if err != nil {
+		t.Fatalf("BuildEnv() error = %v", err)
+	}
+	want := []string{"PATH=" + ControlledPath, "REGION=host-REGION", "ARGOCD_APP_NAME=demo", "KUBE_VERSION="}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("BuildEnv() = %#v, want %#v", got, want)
+	}
 }

@@ -257,7 +257,7 @@
           }
         },
         "env": {
-          "description": "Caller environment variables the plugin may receive.",
+          "description": "Names of drydock's own process environment variables copied into the plugin (not Application env). ARGOCD_APP_*, KUBE_VERSION, KUBE_API_VERSIONS and DRYDOCK_OFFLINE are set automatically and ignored here.",
           "$ref": "#/$defs/env"
         },
         "parameters": {
@@ -345,7 +345,7 @@
           }
         },
         "env": {
-          "description": "Caller environment variables the plugin may receive.",
+          "description": "Names of drydock's own process environment variables copied into the plugin (not Application env). ARGOCD_APP_*, KUBE_VERSION, KUBE_API_VERSIONS and DRYDOCK_OFFLINE are set automatically and ignored here.",
           "$ref": "#/$defs/env"
         },
         "parameters": {
@@ -611,7 +611,7 @@
     },
     "env": {
       "type": "object",
-      "description": "Environment variables allowed from the caller environment.",
+      "description": "Names of drydock's own process environment variables copied into the plugin (not Application env). ARGOCD_APP_*, KUBE_VERSION, KUBE_API_VERSIONS and DRYDOCK_OFFLINE are set automatically and ignored here.",
       "additionalProperties": false,
       "properties": {
         "allow": {

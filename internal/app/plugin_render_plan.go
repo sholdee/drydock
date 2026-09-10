@@ -93,10 +93,13 @@ func (p localProvider) renderPolicyPluginPlan(ctx context.Context, source render
 
 func validatePolicyPluginSource(name string, source render.ResolvedSource, opts render.RenderOptions, policyPlugin pluginpolicy.Plugin) string {
 	if len(opts.Plugin.Env) > 0 {
-		return fmt.Sprintf("config management plugin %s uses env or parameters, which are unsupported by trusted native plugin policy", pluginDisplayName(name))
+		if policyPlugin.Engine == pluginpolicy.EngineExec || policyPlugin.Engine == pluginpolicy.EngineContainer {
+			return fmt.Sprintf("config management plugin %s uses Application plugin env (%s), which drydock does not forward to %s plugins yet; pass per-Application values through parameters allowlisted by parameters.allow", pluginDisplayName(name), strings.Join(applicationPluginEnvNames(opts.Plugin.Env), ", "), policyPlugin.Engine)
+		}
+		return fmt.Sprintf("config management plugin %s uses Application plugin env, which is unsupported by trusted native plugin policy", pluginDisplayName(name))
 	}
 	if len(opts.Plugin.Parameters) > 0 && policyPlugin.Engine != pluginpolicy.EngineExec && policyPlugin.Engine != pluginpolicy.EngineContainer {
-		return fmt.Sprintf("config management plugin %s uses env or parameters, which are unsupported by trusted native plugin policy", pluginDisplayName(name))
+		return fmt.Sprintf("config management plugin %s uses Application plugin parameters, which are unsupported by trusted native plugin policy", pluginDisplayName(name))
 	}
 	if source.Path == "" && source.Chart == "" {
 		return fmt.Sprintf("config management plugin %s must define path or chart for trusted native plugin policy", pluginDisplayName(name))

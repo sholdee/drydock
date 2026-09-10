@@ -321,18 +321,8 @@ func commandAccepted(command []string) bool {
 	return !isDeniedCommand(argv0)
 }
 
-var envNamePattern = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
-
 func envNameAccepted(name string) bool {
-	if !envNamePattern.MatchString(name) {
-		return false
-	}
-	upper := strings.ToUpper(name)
-	switch upper {
-	case "PATH", "ARGOCD_APP_PARAMETERS", "BASH_ENV", "ENV", "PYTHONPATH", "PYTHONHOME", "PYTHONSTARTUP", "RUBYOPT", "RUBYLIB", "NODE_OPTIONS", "NODE_PATH", "PERL5LIB", "PERL5OPT", "PSMODULEPATH", "POWERSHELL_TELEMETRY_OPTOUT":
-		return false
-	}
-	return !strings.HasPrefix(upper, "LD_") && !strings.HasPrefix(upper, "DYLD_") && !strings.HasPrefix(upper, "PARAM_")
+	return pluginpolicy.ValidateEnvName(name) == nil && !pluginpolicy.IsManagedEnvName(name)
 }
 
 var parameterNamePattern = regexp.MustCompile(`^[A-Za-z0-9_.-]+$`)

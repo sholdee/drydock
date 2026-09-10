@@ -44,10 +44,7 @@ func (p localProvider) renderContainerPolicyPluginSource(ctx context.Context, so
 	}
 	containerConfig := *policyPlugin.Container
 	containerConfig.Lifecycle = lifecycle
-	extraEnv := append([]string(nil), params.extraEnv...)
-	if p.offline {
-		extraEnv = append(extraEnv, "DRYDOCK_OFFLINE=true")
-	}
+	extraEnv := composePolicyPluginExtraEnv(opts, params, p.offline)
 	result, err := p.pluginContainerRunner.Run(ctx, plugincontainer.Request{
 		SourceDir:         sourceDir,
 		RepositoryDir:     source.RepoRoot,

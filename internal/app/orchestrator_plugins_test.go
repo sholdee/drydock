@@ -6,6 +6,8 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"reflect"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -699,7 +701,7 @@ metadata:
 	if !hasDiagnosticCode(result.Diagnostics, diagnostic.CodePluginUnsupported) {
 		t.Fatalf("Diagnostics = %#v, want plugin.unsupported", result.Diagnostics)
 	}
-	if !hasDiagnosticMessage(result.Diagnostics, "env or parameters") {
+	if !hasDiagnosticMessage(result.Diagnostics, "Application plugin env") {
 		t.Fatalf("Diagnostics = %#v, want env/parameters rejection", result.Diagnostics)
 	}
 }
@@ -844,6 +846,123 @@ data:
 		t.Fatalf("Manifests = %#v, want injected runner manifest", result.Manifests)
 	}
 	assertExecPolicyPluginExecution(t, result.PluginExecutions)
+}
+
+// argoBuildEnvForPluginFixture is the environment a repo-server would hand the
+// exec-renderer plugin for writePluginBuildApplication's fixture (name plugin,
+// namespace argocd == controller namespace, project default, destination
+// default, repo https://github.com/example/repo, path manifests/plugin,
+// targetRevision main) with --kube-version v1.30.2 and two API versions.
+func argoBuildEnvForPluginFixture() []string {
+	return []string{
+		"ARGOCD_APP_NAME=plugin",
+		"ARGOCD_APP_NAMESPACE=default",
+		"ARGOCD_APP_PROJECT_NAME=default",
+		"ARGOCD_APP_REVISION=main",
+		"ARGOCD_APP_REVISION_SHORT=main",
+		"ARGOCD_APP_REVISION_SHORT_8=main",
+		"ARGOCD_APP_SOURCE_REPO_URL=https://github.com/example/repo",
+		"ARGOCD_APP_SOURCE_PATH=manifests/plugin",
+		"ARGOCD_APP_SOURCE_TARGET_REVISION=main",
+		"KUBE_VERSION=1.30.2",
+		"KUBE_API_VERSIONS=apps/v1,monitoring.coreos.com/v1",
+		"ARGOCD_APP_PARAMETERS=null",
+	}
+}
+
+func TestOrchestratorBuildPassesArgoBuildEnvironmentToExecPolicyPlugin(t *testing.T) {
+	root := t.TempDir()
+	writePluginBuildApplication(t, root, "plugin", "exec-renderer")
+	writeTestFile(t, filepath.Join(root, "manifests", "plugin", "marker.txt"), "from-source")
+	policy, fingerprint := testExecPluginPolicy(t, "exec-renderer", []string{"renderer"})
+	runner := &recordingExecRunner{result: pluginexec.Result{Stdout: []byte("apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: injected\n")}}
+
+	for _, offline := range []bool{false, true} {
+		_, err := (Orchestrator{PluginExecRunner: runner}).Build(context.Background(), BuildRequest{
+			Path:                    root,
+			EnablePlugins:           true,
+			Offline:                 offline,
+			KubeVersion:             "v1.30.2",
+			APIVersions:             []string{"monitoring.coreos.com/v1", "apps/v1", "apps/v1"},
+			pluginPolicyLoaded:      true,
+			pluginPolicy:            policy,
+			pluginPolicyFingerprint: fingerprint,
+			pluginPolicyExecTrusted: true,
+		})
+		if err != nil {
+			t.Fatalf("Build(offline=%v) error = %v", offline, err)
+		}
+		want := argoBuildEnvForPluginFixture()
+		if offline {
+			want = append(want, "DRYDOCK_OFFLINE=true")
+		}
+		if got := runner.lastRequest.ExtraEnv; !reflect.DeepEqual(got, want) {
+			t.Fatalf("exec ExtraEnv (offline=%v) = %#v, want %#v", offline, got, want)
+		}
+	}
+}
+
+func TestOrchestratorBuildPassesArgoBuildEnvironmentToContainerPolicyPlugin(t *testing.T) {
+	root := t.TempDir()
+	writePluginBuildApplication(t, root, "plugin", "container-renderer")
+	writeTestFile(t, filepath.Join(root, "manifests", "plugin", "marker.txt"), "from-source")
+	policy, fingerprint := testContainerPluginPolicy(t, "container-renderer")
+	runner := &recordingContainerRunner{result: pluginexec.Result{Stdout: []byte("apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: injected\n")}}
+
+	_, err := (Orchestrator{PluginContainerRunner: runner}).Build(context.Background(), BuildRequest{
+		Path:                    root,
+		EnablePlugins:           true,
+		PluginCacheDir:          filepath.Join(t.TempDir(), "plugin-cache"),
+		KubeVersion:             "v1.30.2",
+		APIVersions:             []string{"monitoring.coreos.com/v1", "apps/v1"},
+		pluginPolicyLoaded:      true,
+		pluginPolicy:            policy,
+		pluginPolicyFingerprint: fingerprint,
+		pluginPolicyExecTrusted: true,
+	})
+	if err != nil {
+		t.Fatalf("Build() error = %v", err)
+	}
+	if got, want := runner.lastRequest.ExtraEnv, argoBuildEnvForPluginFixture(); !reflect.DeepEqual(got, want) {
+		t.Fatalf("container ExtraEnv = %#v, want %#v", got, want)
+	}
+}
+
+// End to end through a real subprocess: the helper prints what it observes.
+func TestOrchestratorBuildExecPolicyPluginObservesArgoBuildEnvironment(t *testing.T) {
+	root := t.TempDir()
+	writePluginBuildApplication(t, root, "plugin", "exec-renderer")
+	writeTestFile(t, filepath.Join(root, "manifests", "plugin", "marker.txt"), "from-source")
+	t.Setenv("DRYDOCK_APP_EXEC_HELPER", "1")
+	policy, fingerprint := testExecPluginPolicy(t, "exec-renderer", appExecCommand(t, "build-env"))
+
+	result, err := (Orchestrator{}).Build(context.Background(), BuildRequest{
+		Path:                    root,
+		EnablePlugins:           true,
+		KubeVersion:             "v1.30.2",
+		APIVersions:             []string{"apps/v1"},
+		pluginPolicyLoaded:      true,
+		pluginPolicy:            policy,
+		pluginPolicyFingerprint: fingerprint,
+		pluginPolicyExecTrusted: true,
+	})
+	if err != nil {
+		t.Fatalf("Build() error = %v\nDiagnostics: %#v", err, result.Diagnostics)
+	}
+	manifest, ok := manifestByName(result.Manifests, "exec-build-env")
+	if !ok {
+		t.Fatalf("Manifests = %#v, want exec-build-env", result.Manifests)
+	}
+	data := configMapData(t, manifest)
+	want := map[string]string{
+		"name": "plugin", "namespace": "default", "project": "default",
+		"sourcePath": "manifests/plugin", "kube": "1.30.2", "api": "apps/v1", "params": "null", "offline": "",
+	}
+	for key, value := range want {
+		if data[key] != value {
+			t.Fatalf("data[%q] = %#v, want %q (data = %#v)", key, data[key], value, data)
+		}
+	}
 }
 
 func TestOrchestratorBuildRendersTrustedContainerPolicyPlugin(t *testing.T) {
@@ -1561,13 +1680,15 @@ func assertExecPolicyPluginExecution(t *testing.T, executions []PluginExecution)
 }
 
 type recordingExecRunner struct {
-	calls  int
-	result pluginexec.Result
-	err    error
+	calls       int
+	lastRequest pluginexec.Request
+	result      pluginexec.Result
+	err         error
 }
 
-func (r *recordingExecRunner) Run(context.Context, pluginexec.Request) (pluginexec.Result, error) {
+func (r *recordingExecRunner) Run(_ context.Context, request pluginexec.Request) (pluginexec.Result, error) {
 	r.calls++
+	r.lastRequest = request
 	return r.result, r.err
 }
 
@@ -2837,6 +2958,9 @@ func TestAppExecPluginHelperProcess(t *testing.T) {
 	case "params":
 		appExecPluginHelperParams(args)
 		os.Exit(0)
+	case "build-env":
+		appExecPluginHelperBuildEnv()
+		os.Exit(0)
 	case "repo-param":
 		if err := appExecPluginHelperRepoParam(args); err != nil {
 			fmt.Fprintf(os.Stderr, "%v\n", err)
@@ -2893,6 +3017,22 @@ func appExecPluginHelperParams(args []string) {
 	fmt.Printf("  arg: %q\n", paramArg)
 	fmt.Printf("  param: %q\n", os.Getenv("PARAM_PATH"))
 	fmt.Printf("  json: %q\n", os.Getenv("ARGOCD_APP_PARAMETERS"))
+}
+
+func appExecPluginHelperBuildEnv() {
+	fmt.Println("apiVersion: v1")
+	fmt.Println("kind: ConfigMap")
+	fmt.Println("metadata:")
+	fmt.Println("  name: exec-build-env")
+	fmt.Println("data:")
+	fmt.Printf("  name: %q\n", os.Getenv("ARGOCD_APP_NAME"))
+	fmt.Printf("  namespace: %q\n", os.Getenv("ARGOCD_APP_NAMESPACE"))
+	fmt.Printf("  project: %q\n", os.Getenv("ARGOCD_APP_PROJECT_NAME"))
+	fmt.Printf("  sourcePath: %q\n", os.Getenv("ARGOCD_APP_SOURCE_PATH"))
+	fmt.Printf("  kube: %q\n", os.Getenv("KUBE_VERSION"))
+	fmt.Printf("  api: %q\n", os.Getenv("KUBE_API_VERSIONS"))
+	fmt.Printf("  params: %q\n", os.Getenv("ARGOCD_APP_PARAMETERS"))
+	fmt.Printf("  offline: %q\n", os.Getenv("DRYDOCK_OFFLINE"))
 }
 
 func appExecPluginHelperRepoParam(args []string) error {
@@ -3015,4 +3155,102 @@ func TestOrchestratorInjectedPluginRendererErrorPreservesDiagnostics(t *testing.
 	if !hasDiagnosticCode(result.Diagnostics, diagnostic.CodePluginFailed) {
 		t.Fatalf("Diagnostics = %#v, want plugin.failed", result.Diagnostics)
 	}
+}
+
+func TestOrchestratorDiffAppsWarnsWhenPolicyEnvAllowListsManagedName(t *testing.T) {
+	root := t.TempDir()
+	left := filepath.Join(root, "left")
+	right := filepath.Join(root, "right")
+	writePluginBuildApplication(t, left, "plugin", "exec-renderer")
+	writePluginBuildApplication(t, right, "plugin", "exec-renderer")
+	writeTestFile(t, filepath.Join(left, "manifests", "plugin", "marker.txt"), "left")
+	writeTestFile(t, filepath.Join(right, "manifests", "plugin", "marker.txt"), "right")
+	// The policy is read from the diff baseline (LeftPath) through the real
+	// loader and is exec-trusted because LeftPath != RightPath.
+	writeTestFile(t, filepath.Join(left, ".drydock", "plugins.yaml"), `apiVersion: drydock.sholdee.dev/v1alpha1
+kind: PluginPolicy
+plugins:
+  exec-renderer:
+    engine: exec
+    generate:
+      command: ["renderer"]
+    env:
+      allow: ["KUBE_VERSION"]
+`)
+	t.Setenv("KUBE_VERSION", "from-host-shell")
+	runner := &recordingExecRunner{result: pluginexec.Result{Stdout: []byte("apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: injected\n")}}
+
+	result, err := (Orchestrator{PluginExecRunner: runner}).DiffApps(context.Background(), DiffRequest{
+		LeftPath:      left,
+		RightPath:     right,
+		ChangedOnly:   false,
+		Unified:       3,
+		EnablePlugins: true,
+		KubeVersion:   "v1.30.2",
+	})
+	if err != nil {
+		t.Fatalf("DiffApps() error = %v\nDiagnostics: %#v", err, result.Diagnostics)
+	}
+	if !hasDiagnosticCode(result.Diagnostics, diagnostic.CodePluginPolicyEnvIgnored) {
+		t.Fatalf("Diagnostics = %#v, want %s warning", result.Diagnostics, diagnostic.CodePluginPolicyEnvIgnored)
+	}
+	if runner.calls != 2 {
+		t.Fatalf("runner calls = %d, want both diff sides", runner.calls)
+	}
+	if got := runner.lastRequest.Config.Env.Allow; len(got) != 0 {
+		t.Fatalf("policy env.allow reaching the runner = %#v, want the managed name dropped", got)
+	}
+	if !slices.Contains(runner.lastRequest.ExtraEnv, "KUBE_VERSION=1.30.2") {
+		t.Fatalf("ExtraEnv = %#v, want drydock's KUBE_VERSION, not the host shell's", runner.lastRequest.ExtraEnv)
+	}
+}
+
+func TestOrchestratorStrictKeepsPolicyEnvIgnoredAsWarning(t *testing.T) {
+	root := t.TempDir()
+	writeBuildApplication(t, root, "plain", "plain-config")
+	writeTestFile(t, filepath.Join(root, ".drydock", "plugins.yaml"), `apiVersion: drydock.sholdee.dev/v1alpha1
+kind: PluginPolicy
+plugins:
+  exec-renderer:
+    engine: exec
+    generate:
+      command: ["renderer"]
+    env:
+      allow: ["KUBE_VERSION"]
+`)
+	request := BuildRequest{Path: root, Strict: true}
+	assertWarning := func(t *testing.T, diags []diagnostic.Diagnostic) {
+		t.Helper()
+		found := false
+		for _, diag := range diags {
+			if diag.Code != diagnostic.CodePluginPolicyEnvIgnored {
+				continue
+			}
+			found = true
+			if diag.Severity != diagnostic.SeverityWarning {
+				t.Fatalf("%s severity = %q, want warning under --strict", diag.Code, diag.Severity)
+			}
+		}
+		if !found {
+			t.Fatalf("Diagnostics = %#v, want %s", diags, diagnostic.CodePluginPolicyEnvIgnored)
+		}
+	}
+
+	// ListApplications and Diag both run diagnosticFailure over the policy
+	// diagnostics; Build and DiffApps do not, so a non-exempt warning would
+	// make get/diag --strict reject a policy build/diff --strict accept.
+	t.Run("ListApplications", func(t *testing.T) {
+		result, err := (Orchestrator{}).ListApplications(context.Background(), request)
+		if err != nil {
+			t.Fatalf("ListApplications() error = %v\nDiagnostics: %#v", err, result.Diagnostics)
+		}
+		assertWarning(t, result.Diagnostics)
+	})
+	t.Run("Diag", func(t *testing.T) {
+		result, err := (Orchestrator{}).Diag(context.Background(), request)
+		if err != nil {
+			t.Fatalf("Diag() error = %v\nDiagnostics: %#v", err, result.Diagnostics)
+		}
+		assertWarning(t, result.Diagnostics)
+	})
 }

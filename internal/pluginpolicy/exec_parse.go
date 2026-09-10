@@ -276,7 +276,7 @@ func parseExecEnv(node *yaml.Node, path, pointer string) (ExecEnv, error) {
 		if name == "" {
 			return ExecEnv{}, fmt.Errorf("parse plugin policy %s: %s.allow[%d] must not be empty", path, pointer, index)
 		}
-		if err := validateEnvName(name); err != nil {
+		if err := ValidateEnvName(name); err != nil {
 			return ExecEnv{}, fmt.Errorf("parse plugin policy %s: %s.allow: %w", path, pointer, err)
 		}
 		if _, ok := seen[name]; ok {
@@ -631,7 +631,11 @@ var reservedExecEnvNames = map[string]struct{}{
 
 var reservedExecEnvPrefixes = []string{"LD_", "DYLD_", "PARAM_"}
 
-func validateEnvName(name string) error {
+// ValidateEnvName returns an error if name may not appear in policy
+// env.allow: it must be an identifier and must not be a reserved
+// loader/interpreter variable or a name the Application parameter environment
+// owns (PATH, ARGOCD_APP_PARAMETERS, PARAM_*, LD_*, DYLD_*, ...).
+func ValidateEnvName(name string) error {
 	if !envNamePattern.MatchString(name) {
 		return fmt.Errorf("env name %q is invalid", name)
 	}
@@ -645,6 +649,37 @@ func validateEnvName(name string) error {
 		}
 	}
 	return nil
+}
+
+// IsValidEnvName reports whether name is a POSIX environment identifier.
+func IsValidEnvName(name string) bool { return envNamePattern.MatchString(name) }
+
+// managedEnvNames and managedEnvPrefixes are set by drydock itself for every
+// command-backed plugin run (the Argo CD build environment and drydock
+// extras). Listing them in env.allow is redundant and would let a
+// caller-environment value stand in for the value drydock computes, so Parse
+// drops them with a warning instead of forwarding them.
+var managedEnvNames = map[string]struct{}{
+	"KUBE_VERSION":      {},
+	"KUBE_API_VERSIONS": {},
+	"DRYDOCK_OFFLINE":   {},
+}
+
+var managedEnvPrefixes = []string{"ARGOCD_APP_"}
+
+// IsManagedEnvName reports whether drydock sets name itself for command-backed
+// plugins (case-insensitive, like the reserved-name check).
+func IsManagedEnvName(name string) bool {
+	upper := strings.ToUpper(name)
+	if _, ok := managedEnvNames[upper]; ok {
+		return true
+	}
+	for _, prefix := range managedEnvPrefixes {
+		if strings.HasPrefix(upper, prefix) {
+			return true
+		}
+	}
+	return false
 }
 
 func parameterEnvName(name string) string {
