@@ -2,6 +2,7 @@ package app
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 
 	argoappv1 "github.com/argoproj/argo-cd/v3/pkg/apis/application/v1alpha1"
@@ -71,9 +72,10 @@ const maxApplicationPluginEnvValueBytes = pluginexec.MaxEnvValueBytes
 // policy's applicationEnv.allow and drydock's env rules, then returns the
 // ARGOCD_ENV_<name>=<value> entries in spec order with each value expanded
 // against buildEnv (Argo CD's Envsubst: $VAR/${VAR}, $$ -> $, unknown ->
-// empty). It fails closed with a message that names the entry but never its
-// value: Application env may carry secrets. Values are not added to the
-// redaction set because a repo-server treats them as non-secret too.
+// empty). It fails closed with a message that names every entry missing from
+// the allowlist but never a value: Application env may carry secrets. Values
+// are not added to the redaction set because a repo-server treats them as
+// non-secret too.
 func validateApplicationPluginEnv(name string, allow []string, env argoappv1.Env, buildEnv argoappv1.Env) ([]string, string) {
 	if len(env) == 0 {
 		return nil, ""
@@ -83,6 +85,7 @@ func validateApplicationPluginEnv(name string, allow []string, env argoappv1.Env
 		allowed[entry] = struct{}{}
 	}
 	seen := make(map[string]struct{}, len(env))
+	var notAllowed []string
 	out := make([]string, 0, len(env))
 	for _, entry := range env {
 		if entry == nil || strings.TrimSpace(entry.Name) == "" {
@@ -91,13 +94,16 @@ func validateApplicationPluginEnv(name string, allow []string, env argoappv1.Env
 		if !pluginpolicy.IsValidEnvName(entry.Name) {
 			return nil, fmt.Sprintf("config management plugin %s has invalid Application plugin env name %q", pluginDisplayName(name), entry.Name)
 		}
-		if _, ok := allowed[entry.Name]; !ok {
-			return nil, fmt.Sprintf("config management plugin %s uses Application plugin env %q, which is not allowed by policy applicationEnv.allow", pluginDisplayName(name), entry.Name)
-		}
 		if _, ok := seen[entry.Name]; ok {
 			return nil, fmt.Sprintf("config management plugin %s has duplicate Application plugin env %q", pluginDisplayName(name), entry.Name)
 		}
 		seen[entry.Name] = struct{}{}
+		if _, ok := allowed[entry.Name]; !ok {
+			// Keep going: one message that names every missing entry saves a
+			// policy edit per name.
+			notAllowed = append(notAllowed, entry.Name)
+			continue
+		}
 		if len(entry.Value) > maxApplicationPluginEnvValueBytes {
 			return nil, fmt.Sprintf("config management plugin %s Application plugin env %q value is too large", pluginDisplayName(name), entry.Name)
 		}
@@ -110,5 +116,21 @@ func validateApplicationPluginEnv(name string, allow []string, env argoappv1.Env
 		}
 		out = append(out, pluginpolicy.ApplicationEnvPrefix+entry.Name+"="+expanded)
 	}
+	if len(notAllowed) == 1 {
+		return nil, fmt.Sprintf("config management plugin %s uses Application plugin env %q, which is not allowed by policy applicationEnv.allow", pluginDisplayName(name), notAllowed[0])
+	}
+	if len(notAllowed) > 1 {
+		return nil, fmt.Sprintf("config management plugin %s uses Application plugin env %s, which are not allowed by policy applicationEnv.allow", pluginDisplayName(name), quotedEnvNames(notAllowed))
+	}
 	return out, ""
+}
+
+// quotedEnvNames renders names as `"A", "B"` so the plural fail-closed message
+// reads like the single-entry one.
+func quotedEnvNames(names []string) string {
+	quoted := make([]string, 0, len(names))
+	for _, name := range names {
+		quoted = append(quoted, strconv.Quote(name))
+	}
+	return strings.Join(quoted, ", ")
 }
