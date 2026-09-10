@@ -337,6 +337,11 @@ and settings metadata without rendering Applications. It prints diagnostics to
 stderr and returns an error when runtime failures or error-severity diagnostics
 are found. Use `--strict` to promote warnings to errors.
 
+Text diagnostics are printed as `<severity> <code>: <message>`, followed by
+the source path and pointer when known, for example
+`warning appset.unsupported-generator: …`. The code is the same stable `code`
+that `-o json`, `-o yaml`, and markdown reports carry.
+
 `diag` refuses broad roots such as the filesystem root or the current user's
 home directory. Run it from the GitOps repository root or pass `--path` to that
 repository.

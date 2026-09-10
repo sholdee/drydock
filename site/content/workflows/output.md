@@ -27,7 +27,9 @@ stays parseable. Markdown diff output embeds successful diagnostics in the
 generated report because the markdown document is the review surface: errors
 are listed openly above the diffs, warnings collapse inside an expandable
 block rendered below the diffs, and repeated diagnostic codes aggregate into
-one entry with a count.
+one entry with a count. Text diagnostics carry their stable code
+(`error plugin.unsupported: …`) so the same identifier appears in text, JSON,
+YAML, and markdown output.
 
 `test apps` text output prints `PASS`, `FAIL`, or `SKIPPED` status lines. When
 stdout and stderr are terminals, status lines stream as Applications complete

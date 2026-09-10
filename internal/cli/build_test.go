@@ -100,7 +100,7 @@ data:
 			t.Fatalf("output leaked placeholder material %q\nstdout:\n%s\nstderr:\n%s", forbidden, stdout.String(), stderr.String())
 		}
 	}
-	for _, want := range []string{"warning plugin:", "argocd-vault-plugin placeholders were replaced with deterministic redacted values"} {
+	for _, want := range []string{"warning plugin.avp-compat-substituted:", "argocd-vault-plugin placeholders were replaced with deterministic redacted values"} {
 		if !strings.Contains(stderr.String(), want) {
 			t.Fatalf("stderr = %q, want AVP compatibility diagnostic fragment %q", stderr.String(), want)
 		}
@@ -170,7 +170,7 @@ spec:
 			t.Fatalf("build apps stdout missing %q:\n%s", want, got)
 		}
 	}
-	wantStderr := "warning appset: unsupported ApplicationSet generator; supported generators are git directories, git files, list, matrix, and merge (path: unsupported-appset.yaml, pointer: spec.generators)\n"
+	wantStderr := "warning appset.unsupported-generator: unsupported ApplicationSet generator; supported generators are git directories, git files, list, matrix, and merge (path: unsupported-appset.yaml, pointer: spec.generators)\n"
 	if got := stderr.String(); got != wantStderr {
 		t.Fatalf("build apps stderr = %q, want %q", got, wantStderr)
 	}
@@ -245,7 +245,7 @@ func TestBuildAppsSuppressesPartialStdoutWhenOutputWouldBeInvalid(t *testing.T) 
 	if stdout.String() != "" {
 		t.Fatalf("stdout = %q, want empty partial output on build error", stdout.String())
 	}
-	if !strings.Contains(stderr.String(), "error render:") {
+	if !strings.Contains(stderr.String(), "error render.failed:") {
 		t.Fatalf("stderr = %q, want render diagnostic", stderr.String())
 	}
 }
@@ -271,7 +271,7 @@ func TestBuildAppsFailsClosedForPluginSource(t *testing.T) {
 				t.Fatalf("stdout = %q, want empty partial output", stdout.String())
 			}
 			for _, want := range []string{
-				"error plugin:",
+				"error plugin.unsupported:",
 				"config management plugin cue is not supported by the default renderer",
 				"no compatible native renderer",
 			} {

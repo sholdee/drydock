@@ -700,7 +700,7 @@ func TestDiffAppsFailsClosedForPluginSource(t *testing.T) {
 				t.Fatalf("stdout = %q, want empty diff output", stdout.String())
 			}
 			for _, want := range []string{
-				"error plugin:",
+				"error plugin.unsupported:",
 				"config management plugin cue is not supported by the default renderer",
 				"no compatible native renderer",
 			} {
@@ -896,7 +896,7 @@ func TestDiffAppsStructuredOutputKeepsDiagnosticsOnStderr(t *testing.T) {
 	if len(results) != 1 {
 		t.Fatalf("len(results) = %d, want 1", len(results))
 	}
-	for _, want := range []string{"warning changed-only:", "README.md"} {
+	for _, want := range []string{"warning diff.changed-only-incomplete:", "README.md"} {
 		if !strings.Contains(stderr.String(), want) {
 			t.Fatalf("stderr missing %q:\nstdout:\n%s\nstderr:\n%s", want, stdout.String(), stderr.String())
 		}
@@ -1071,7 +1071,7 @@ func TestDiffColorNeverLeavesDiagnosticsColorIndependent(t *testing.T) {
 		},
 	}, "diff", "apps", "--path-orig", "left", "--path", "right", "--color=never", "--exit-code=false")
 
-	if !strings.Contains(result.Stderr, "\x1b[33mwarning\x1b[0m changed-only: unowned input") {
+	if !strings.Contains(result.Stderr, "\x1b[33mwarning\x1b[0m diff.changed-only-incomplete: unowned input") {
 		t.Fatalf("stderr = %q, want colored warning diagnostic", result.Stderr)
 	}
 }
@@ -1231,7 +1231,7 @@ func TestDiffAppsPrintsDiagnosticsOnStrictChangedOnlyError(t *testing.T) {
 		t.Fatal("Execute() error = nil, want strict changed-only error")
 	}
 
-	for _, want := range []string{"error changed-only:", "README.md"} {
+	for _, want := range []string{"error diff.changed-only-incomplete:", "README.md"} {
 		if !strings.Contains(stderr.String(), want) {
 			t.Fatalf("stderr missing %q:\nstdout:\n%s\nstderr:\n%s", want, stdout.String(), stderr.String())
 		}
@@ -1262,7 +1262,7 @@ func TestDiffImagesPrintsDiagnosticsOnStrictChangedOnlyError(t *testing.T) {
 		t.Fatal("Execute() error = nil, want strict changed-only error")
 	}
 
-	for _, want := range []string{"error changed-only:", "README.md"} {
+	for _, want := range []string{"error diff.changed-only-incomplete:", "README.md"} {
 		if !strings.Contains(stderr.String(), want) {
 			t.Fatalf("stderr missing %q:\nstdout:\n%s\nstderr:\n%s", want, stdout.String(), stderr.String())
 		}

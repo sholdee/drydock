@@ -208,7 +208,7 @@ func TestDiagPrintsUnsupportedApplicationSetWarning(t *testing.T) {
 	if stdout.String() != "" {
 		t.Fatalf("stdout = %q, want empty", stdout.String())
 	}
-	want := "warning appset: unsupported ApplicationSet generator; supported generators are git directories, git files, list, matrix, and merge (path: unsupported-appset.yaml, pointer: spec.generators)\n"
+	want := "warning appset.unsupported-generator: unsupported ApplicationSet generator; supported generators are git directories, git files, list, matrix, and merge (path: unsupported-appset.yaml, pointer: spec.generators)\n"
 	if stderr.String() != want {
 		t.Fatalf("stderr = %q, want %q", stderr.String(), want)
 	}
@@ -233,7 +233,7 @@ func TestDiagReportsPluginSourceFailure(t *testing.T) {
 		t.Fatalf("stdout = %q, want empty", stdout.String())
 	}
 	for _, want := range []string{
-		"error plugin:",
+		"error plugin.unsupported:",
 		"config management plugin cue is not supported by the default renderer",
 		"no compatible native renderer",
 	} {
@@ -276,8 +276,8 @@ func TestRenderDiagnosticsWithColorColorsWarningAndErrorLabels(t *testing.T) {
 		t.Fatalf("renderDiagnosticsWithColor() error = %v", err)
 	}
 
-	want := "\x1b[33mwarning\x1b[0m settings: metadata only\n" +
-		"\x1b[31merror\x1b[0m render: decode failed\n"
+	want := "\x1b[33mwarning\x1b[0m settings.unspecified: metadata only\n" +
+		"\x1b[31merror\x1b[0m render.failed: decode failed\n"
 	if stderr.String() != want {
 		t.Fatalf("stderr = %q, want %q", stderr.String(), want)
 	}
@@ -293,7 +293,7 @@ func TestRenderDiagnosticsWithoutColorKeepsPlainOutput(t *testing.T) {
 		t.Fatalf("renderDiagnosticsWithColor() error = %v", err)
 	}
 
-	if got, want := stderr.String(), "warning settings: metadata only\n"; got != want {
+	if got, want := stderr.String(), "warning settings.unspecified: metadata only\n"; got != want {
 		t.Fatalf("stderr = %q, want %q", got, want)
 	}
 }
@@ -834,7 +834,7 @@ func TestDiagStrictUnsupportedApplicationSetErrors(t *testing.T) {
 	if stdout.String() != "" {
 		t.Fatalf("stdout = %q, want empty", stdout.String())
 	}
-	if !strings.Contains(stderr.String(), "error appset:") {
+	if !strings.Contains(stderr.String(), "error appset.unsupported-generator:") {
 		t.Fatalf("stderr = %q, want error appset diagnostic", stderr.String())
 	}
 }
@@ -946,4 +946,44 @@ func (acquirer *recordingDiagChartAcquirer) Acquire(_ context.Context, request c
 		Kind:       request.Kind,
 		FromCache:  acquirer.fromCache,
 	}, nil
+}
+
+func TestRenderDiagnosticsTextPrintsTheStableCode(t *testing.T) {
+	testCases := []struct {
+		name string
+		diag diagnostic.Diagnostic
+		want string
+	}{
+		{
+			name: "explicit code replaces the category label",
+			diag: diagnostic.Diagnostic{Code: diagnostic.CodePluginUnsupported, Severity: diagnostic.SeverityError, Category: "plugin", Message: "config management plugin cue is not supported"},
+			want: "error plugin.unsupported: config management plugin cue is not supported\n",
+		},
+		{
+			name: "derived code keeps provenance",
+			diag: diagnostic.Diagnostic{Severity: diagnostic.SeverityWarning, Category: "settings", Message: "argocd-cm parsed as metadata only", Provenance: diagnostic.Provenance{Path: "argocd/argocd-cm.yaml"}},
+			want: "warning settings.metadata-only: argocd-cm parsed as metadata only (path: argocd/argocd-cm.yaml)\n",
+		},
+		{
+			name: "category whose code has a different prefix",
+			diag: diagnostic.Diagnostic{Severity: diagnostic.SeverityWarning, Category: "changed-only", Message: "unowned input"},
+			want: "warning diff.changed-only-incomplete: unowned input\n",
+		},
+		{
+			name: "uncategorized diagnostics still get a code",
+			diag: diagnostic.Diagnostic{Severity: diagnostic.SeverityWarning, Category: "profile", Message: "unknown profile key"},
+			want: "warning profile.unspecified: unknown profile key\n",
+		},
+	}
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			var stderr bytes.Buffer
+			if err := renderDiagnosticsWithColor(&stderr, []diagnostic.Diagnostic{testCase.diag}, false); err != nil {
+				t.Fatalf("renderDiagnosticsWithColor() error = %v", err)
+			}
+			if got := stderr.String(); got != testCase.want {
+				t.Fatalf("stderr = %q, want %q", got, testCase.want)
+			}
+		})
+	}
 }

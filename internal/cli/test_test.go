@@ -123,7 +123,7 @@ func TestTestAppsReportsPluginSourceFailure(t *testing.T) {
 			t.Fatalf("stdout = %q, want %q", stdout.String(), want)
 		}
 	}
-	if !strings.Contains(stderr.String(), "error plugin:") {
+	if !strings.Contains(stderr.String(), "error plugin.unsupported:") {
 		t.Fatalf("stderr = %q, want plugin diagnostic", stderr.String())
 	}
 }
@@ -152,7 +152,7 @@ func TestTestAppReportsPluginSourceFailure(t *testing.T) {
 			t.Fatalf("stdout = %q, want %q", stdout.String(), want)
 		}
 	}
-	if !strings.Contains(stderr.String(), "error plugin:") {
+	if !strings.Contains(stderr.String(), "error plugin.unsupported:") {
 		t.Fatalf("stderr = %q, want plugin diagnostic", stderr.String())
 	}
 }
