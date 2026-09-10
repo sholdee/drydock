@@ -1,0 +1,9 @@
+# zizmor configuration. The self-repository audit (zizmor >= 1.30.0) asks for
+# GitHub's `$/` self-repository syntax on in-repo reusable-workflow calls, but
+# actionlint (1.7.12) rejects that form, so the `./` form stays until
+# actionlint supports it.
+rules:
+  self-repository:
+    ignore:
+      - ci.yml
+      - release.yml
