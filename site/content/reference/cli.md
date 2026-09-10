@@ -261,6 +261,10 @@ explicit missing `--plugin-policy-path` is a command error. `-o json` provides
 deterministic `status` and issue `code` fields. `--strict` exits nonzero on
 readiness `FAIL` after rendering the report.
 
+Readiness statuses are `PASS`, `WARN`, and `FAIL`. Issues can also carry
+`INFO`, which is reported but never changes readiness; an explicit
+`allowMutableImageTag: true` is reported that way.
+
 ## Render Tests
 
 Test every discovered Application without printing manifest bodies:

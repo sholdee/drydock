@@ -82,7 +82,7 @@ and optional `configManagementPlugin`.
 | --- | --- | --- | --- |
 | `runtime` | No | `docker` | Only Docker is supported. |
 | `image` | Yes | None | Fully qualified image reference. Digest required unless `allowMutableImageTag: true`. |
-| `allowMutableImageTag` | No | `false` | Allows tag-only image references for local/trusted workflows. |
+| `allowMutableImageTag` | No | `false` | Allows tag-only image references for local/trusted workflows. `plugin-policy doctor` reports the opt-in as `image.mutable` at `INFO`, which never changes readiness. |
 | `network` | No | `none` | `none` or `default`. `default` is rejected when `--offline` is set. |
 | `cacheMounts` | No | `[]` | Policy-managed durable cache mounts under reserved container paths below `/drydock-cache`. |
 

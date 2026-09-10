@@ -111,11 +111,9 @@ func policyGateIssues(report PluginReport, plugin pluginpolicy.Plugin, opts Doct
 			issues = append(issues, issue(IssueImagePlaceholder, StatusFail, name, fmt.Sprintf("plugin %q image is still a placeholder", name)))
 		}
 		if plugin.Container.AllowMutableImageTag {
-			status := StatusWarn
-			if opts.Strict {
-				status = StatusFail
-			}
-			issues = append(issues, issue(IssueImageMutable, status, name, fmt.Sprintf("plugin %q uses a mutable image tag; digest pinning is recommended", name)))
+			// The parser refuses a tag-only image without this opt-in, so the
+			// policy already records the decision; report it, never gate on it.
+			issues = append(issues, issue(IssueImageMutable, StatusInfo, name, fmt.Sprintf("plugin %q uses a mutable image tag allowed by allowMutableImageTag; pin a digest for reproducible renders", name)))
 		}
 		if commandHasPlaceholder(plugin.Container.Lifecycle.Generate.Command) {
 			issues = append(issues, issue(IssueCommandPlaceholder, StatusFail, name, fmt.Sprintf("plugin %q generate command is still a placeholder", name)))
@@ -231,6 +229,9 @@ func applicationReadinessStatus(items []ApplicationReadiness) string {
 	return status
 }
 
+// combineStatuses ranks FAIL over WARN over PASS. INFO issues stay in the
+// report but never change readiness: an informational issue on a PASS plugin
+// leaves the plugin, and the report, at PASS.
 func combineStatuses(left, right string) string {
 	if left == StatusFail || right == StatusFail {
 		return StatusFail
@@ -238,8 +239,11 @@ func combineStatuses(left, right string) string {
 	if left == StatusWarn || right == StatusWarn {
 		return StatusWarn
 	}
-	if left == StatusInfo || right == StatusInfo {
-		return StatusInfo
+	if left == StatusInfo {
+		left = StatusPass
+	}
+	if right == StatusInfo {
+		right = StatusPass
 	}
 	if left == "" {
 		return right
