@@ -1,3 +1,4 @@
 fromRepoOverride: from-default
 fromAppOverride: from-default
 both: from-default
+pathLevel: from-default

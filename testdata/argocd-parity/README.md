@@ -12,6 +12,37 @@ URL:
 The smoke harness maps that URL back to this local fixture repository with
 `--repo-map` so drydock and Argo CD render the same source tree.
 
+## Source override merge semantics
+
+`applications/source-overrides.yaml` renders `charts/source-overrides`, which
+carries a path-level `.argocd-source.yaml` and a per-Application
+`.argocd-source-parity-source-overrides.yaml` (a bare-name file, because this
+Application is in the controller namespace, so its instance name is its
+`metadata.name`).
+
+The chart pins two expectations at once. `pathLevel: from-argocd-source`
+proves the path-level file is read: only `.argocd-source.yaml` sets that key,
+and it sets it under `helm.valuesObject`, which merges key by key and so
+survives the second file. `fromRepoOverride: from-default` proves override
+merging is an RFC 7386 JSON merge patch that replaces arrays wholesale: the
+per-Application file's `helm.parameters` list replaces the path-level list
+entirely, discarding the path-level `fromRepoOverride` parameter before Helm
+runs, so the chart default wins.
+
+Both Argo CD and drydock must render this `data`:
+
+| key | value |
+| --- | --- |
+| `fromRepoOverride` | `from-default` |
+| `fromAppOverride` | `from-app-specific-source` |
+| `both` | `from-app-specific-source` |
+| `pathLevel` | `from-argocd-source` |
+
+Keep the `helm.parameters` lists in both override files. The tenant chart
+below deliberately avoids `parameters` so its keys survive merging; this chart
+deliberately uses them so the replacement itself stays pinned. Converting
+these files to `valuesObject` would delete that coverage silently.
+
 ## Tenant namespace fixture
 
 `projects/parity-tenant.yaml` and `tenant-applications/` cover Applications

@@ -7,3 +7,4 @@ data:
   fromRepoOverride: {{ .Values.fromRepoOverride }}
   fromAppOverride: {{ .Values.fromAppOverride }}
   both: {{ .Values.both }}
+  pathLevel: {{ .Values.pathLevel }}
