@@ -17,6 +17,7 @@ ARGOCD_MODULE="github.com/argoproj/argo-cd/v3"
 FIXTURE_REPO_URL="git://argocd-parity-git.argocd-parity.svc.cluster.local/repo.git"
 FIXTURE_REPO_PATH="${REPO_ROOT}/testdata/argocd-parity/repo"
 IGNORE_FILE="${REPO_ROOT}/testdata/argocd-parity/compare-ignore.yaml"
+SIDECAR_PATH="${REPO_ROOT}/testdata/argocd-parity/sidecar"
 PROJECT_POLICY_REPO_PATH="${REPO_ROOT}/testdata/argocd-project-policy/repo"
 PROJECT_POLICY_EXPECTED="${REPO_ROOT}/testdata/argocd-project-policy/expected.yaml"
 OCI_ARTIFACT_PATH="${REPO_ROOT}/testdata/argocd-parity/oci-artifact"
@@ -95,6 +96,7 @@ APPLICATIONS=(
   parity-ft-beta
   parity-fn-gamma-one
   parity-helm-null-default
+  parity-plugin-env
 )
 
 TRACKING_APPLICATIONS=(
@@ -102,6 +104,7 @@ TRACKING_APPLICATIONS=(
   parity-helm-crds-default
   parity-oci-config
   parity-tenant-overrides
+  parity-plugin-env
 )
 
 # Applications outside the Argo CD controller namespace. They pin instance-name
@@ -112,6 +115,19 @@ TENANT_NAMESPACE="parity-tenant"
 TENANT_APPLICATIONS=(
   parity-tenant-overrides
 )
+
+# Applications rendered through a config management plugin. Their drydock
+# capture carries --enable-plugins plus trusted policy provenance; no other
+# app may, because --plugin-policy-ref makes a missing policy fatal and
+# materializes the whole policy-repo tree per invocation.
+PLUGIN_APPLICATIONS=(
+  parity-plugin-env
+)
+# Set by prepare_fixture_git_image: the local git repo the smoke builds from
+# the working tree. It is the trusted policy repo for the plugin capture, so
+# a local run with an uncommitted fixture is trusted exactly like CI's PR
+# merge commit.
+FIXTURE_GIT_WORK=""
 
 PROJECT_POLICY_CASES=(
   "argocd|project-policy-source-allowed|none"
@@ -205,6 +221,7 @@ done
 [[ -d "${OCI_ARTIFACT_PATH}" ]] || fail "OCI artifact content directory not found: ${OCI_ARTIFACT_PATH}"
 [[ -d "${PROJECT_POLICY_REPO_PATH}" ]] || fail "project policy fixture repo not found: ${PROJECT_POLICY_REPO_PATH}"
 [[ -f "${PROJECT_POLICY_EXPECTED}" ]] || fail "project policy expected file not found: ${PROJECT_POLICY_EXPECTED}"
+[[ -d "${SIDECAR_PATH}" ]] || fail "CMP sidecar manifest directory not found: ${SIDECAR_PATH}"
 
 OUT_DIR="$(mkdir -p "${OUT_DIR}" && cd "${OUT_DIR}" && pwd)"
 WORK_DIR="$(mktemp -d)"
@@ -258,7 +275,11 @@ artifact_dir() {
 collect_logs() {
   local logs_dir
   logs_dir="$(artifact_dir logs)"
-  kubectl -n argocd logs deployment/argocd-repo-server --tail=300 > "${logs_dir}/argocd-repo-server.log" 2>&1 || true
+  # repo-server carries the parity CMP sidecar; name each container explicitly
+  # so both logs land under their own filename regardless of the
+  # default-container annotation.
+  kubectl -n argocd logs deployment/argocd-repo-server -c argocd-repo-server --tail=300 > "${logs_dir}/argocd-repo-server.log" 2>&1 || true
+  kubectl -n argocd logs deployment/argocd-repo-server -c parity-env --tail=300 > "${logs_dir}/argocd-repo-server-parity-env.log" 2>&1 || true
   kubectl -n argocd logs statefulset/argocd-application-controller --tail=300 > "${logs_dir}/argocd-application-controller.log" 2>&1 || true
   kubectl -n argocd logs deployment/argocd-applicationset-controller --tail=300 > "${logs_dir}/argocd-applicationset-controller.log" 2>&1 || true
   kubectl -n argocd-parity logs deployment/argocd-parity-registry --tail=300 > "${logs_dir}/argocd-parity-registry.log" 2>&1 || true
@@ -290,19 +311,21 @@ install_argocd_cli() {
 }
 
 prepare_fixture_git_image() {
-  local git_work bare image dockerfile
-  git_work="${WORK_DIR}/fixture-src"
+  local bare image dockerfile
+  # Script-scoped: this repo is also the trusted plugin policy repo for the
+  # plugin Application's drydock capture.
+  FIXTURE_GIT_WORK="${WORK_DIR}/fixture-src"
   bare="${WORK_DIR}/repo.git"
   image="drydock-argocd-parity-git:${CLUSTER_NAME}"
-  mkdir -p "${git_work}"
-  cp -R "${FIXTURE_REPO_PATH}/." "${git_work}/"
-  cp -R "${PROJECT_POLICY_REPO_PATH}/." "${git_work}/"
-  git -C "${git_work}" init --initial-branch=main >/dev/null
-  git -C "${git_work}" config user.email "drydock@example.invalid"
-  git -C "${git_work}" config user.name "drydock render parity smoke"
-  git -C "${git_work}" add .
-  git -C "${git_work}" commit -m "seed argocd parity fixture" >/dev/null
-  git clone --bare --no-hardlinks "${git_work}" "${bare}" >/dev/null
+  mkdir -p "${FIXTURE_GIT_WORK}"
+  cp -R "${FIXTURE_REPO_PATH}/." "${FIXTURE_GIT_WORK}/"
+  cp -R "${PROJECT_POLICY_REPO_PATH}/." "${FIXTURE_GIT_WORK}/"
+  git -C "${FIXTURE_GIT_WORK}" init --initial-branch=main >/dev/null
+  git -C "${FIXTURE_GIT_WORK}" config user.email "drydock@example.invalid"
+  git -C "${FIXTURE_GIT_WORK}" config user.name "drydock render parity smoke"
+  git -C "${FIXTURE_GIT_WORK}" add .
+  git -C "${FIXTURE_GIT_WORK}" commit -m "seed argocd parity fixture" >/dev/null
+  git clone --bare --no-hardlinks "${FIXTURE_GIT_WORK}" "${bare}" >/dev/null
   git --git-dir="${bare}" update-server-info
 
   dockerfile="${WORK_DIR}/Dockerfile.git"
@@ -591,6 +614,44 @@ install_argocd() {
   kubectl -n argocd rollout status statefulset/argocd-application-controller --timeout=300s
 }
 
+install_cmp_sidecar() {
+  local version="$1"
+  local patch_file sidecar_log
+  patch_file="${WORK_DIR}/repo-server-cmp-patch.yaml"
+  # The ConfigMap must exist before the patch: the sidecar mounts it as a
+  # non-optional configMap volume, so a patch that landed first would leave
+  # the new ReplicaSet in ContainerCreating and the rollout below would burn
+  # its whole timeout on a confusing message.
+  kubectl -n argocd create configmap parity-env-cmp \
+    --from-file="plugin.yaml=${SIDECAR_PATH}/plugin.yaml" >/dev/null \
+    || fail "could not create the parity-env-cmp ConfigMap from ${SIDECAR_PATH}/plugin.yaml"
+  sed "s|__ARGOCD_IMAGE__|quay.io/argoproj/argocd:${version}|" \
+    "${SIDECAR_PATH}/repo-server-patch.yaml" > "${patch_file}" \
+    || fail "could not render the repo-server CMP sidecar patch from ${SIDECAR_PATH}/repo-server-patch.yaml"
+  # install.yaml is applied server-side once and never re-applied, so a
+  # client-side strategic patch afterwards is safe, and the patch itself
+  # rolls the Deployment - no restart call needed.
+  kubectl -n argocd patch deployment argocd-repo-server --type strategic \
+    --patch-file "${patch_file}" >/dev/null \
+    || fail "could not patch argocd-repo-server with the parity CMP sidecar"
+  kubectl -n argocd rollout status deployment/argocd-repo-server --timeout=300s
+  # rollout status only proves the container is Running. Gate on the socket
+  # so a bad plugin.yaml fails here with a clear message instead of four
+  # minutes later as "did not generate manifests".
+  for _ in {1..60}; do
+    if kubectl -n argocd exec deployment/argocd-repo-server -c parity-env -- \
+      sh -c 'test -S /home/argocd/cmp-server/plugins/parity-env.sock' >/dev/null 2>&1; then
+      return 0
+    fi
+    sleep 2
+  done
+  # Same filename collect_logs writes from the EXIT trap, so the later, longer
+  # tail supersedes this dump instead of leaving two copies.
+  sidecar_log="$(artifact_dir logs)/argocd-repo-server-parity-env.log"
+  kubectl -n argocd logs deployment/argocd-repo-server -c parity-env --tail=200 > "${sidecar_log}" 2>&1 || true
+  fail "argocd-cmp-server never bound /home/argocd/cmp-server/plugins/parity-env.sock; see ${sidecar_log}"
+}
+
 login_argocd() {
   local password
   password="$(kubectl -n argocd get secret argocd-initial-admin-secret -o jsonpath='{.data.password}' | base64 -d)"
@@ -709,13 +770,31 @@ capture_drydock_manifest() {
   local app_ref="$1"
   local stem="$2"
   local output_dir="$3"
-  (cd "${REPO_ROOT}" && "${DRYDOCK_CMD[@]}" build app "${app_ref}" \
-    --path "${FIXTURE_REPO_PATH}" \
-    --repo-map "${FIXTURE_REPO_URL}=${FIXTURE_REPO_PATH}" \
-    --oci-cache-dir "${OCI_CACHE_DIR}" \
-    --oci-ca-file "${OCI_CA_FILE}" \
-    --render-cache-dir "${OCI_OFFLINE_RENDER_CACHE_DIR}" \
-    --offline > "${output_dir}/${stem}.yaml" 2> "${OUT_DIR}/drydock-${stem}.stderr")
+  local plugin_app
+  local build_args=(build app "${app_ref}"
+    --path "${FIXTURE_REPO_PATH}"
+    --repo-map "${FIXTURE_REPO_URL}=${FIXTURE_REPO_PATH}"
+    --oci-cache-dir "${OCI_CACHE_DIR}"
+    --oci-ca-file "${OCI_CA_FILE}"
+    --render-cache-dir "${OCI_OFFLINE_RENDER_CACHE_DIR}"
+    --offline)
+  for plugin_app in "${PLUGIN_APPLICATIONS[@]}"; do
+    if [[ "${stem}" == "${plugin_app}" ]]; then
+      # Scoped to the plugin app on purpose: --plugin-policy-ref makes a
+      # missing policy fatal for every app it is passed to, and each
+      # invocation materializes the whole policy-repo tree into a temp dir.
+      # exec engines also require a non-empty --plugin-policy-ref for trust,
+      # so these flags are exactly what makes this render work at all.
+      [[ -n "${FIXTURE_GIT_WORK}" ]] \
+        || fail "FIXTURE_GIT_WORK is unset; prepare_fixture_git_image must run before capturing ${stem}"
+      build_args+=(--enable-plugins
+        --plugin-policy-repo "${FIXTURE_GIT_WORK}"
+        --plugin-policy-ref HEAD)
+      break
+    fi
+  done
+  (cd "${REPO_ROOT}" && "${DRYDOCK_CMD[@]}" "${build_args[@]}" \
+    > "${output_dir}/${stem}.yaml" 2> "${OUT_DIR}/drydock-${stem}.stderr")
   rm -f "${OUT_DIR}/drydock-${stem}.stderr"
 }
 
@@ -935,6 +1014,8 @@ main() {
   verify_oci_artifact_manifest
   log_step "Installing Argo CD ${argocd_version}"
   install_argocd "${argocd_version}"
+  log_step "Installing the parity CMP sidecar"
+  install_cmp_sidecar "${argocd_version}"
   # Restarting argocd-server must happen before login_argocd starts the
   # port-forward it binds to a single server pod.
   log_step "Enabling Applications in tenant namespaces"

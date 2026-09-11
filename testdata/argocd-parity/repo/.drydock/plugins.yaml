@@ -1,0 +1,23 @@
+apiVersion: drydock.sholdee.dev/v1alpha1
+kind: PluginPolicy
+plugins:
+  parity-env:
+    engine: exec
+    generate:
+      # awk is a non-denied trusted executable resolved on the controlled PATH
+      # (/usr/local/bin:/usr/bin:/bin), and "generate.awk" has no slash, so it
+      # is not treated as a path argument and resolves against the temp copy of
+      # the Application source that is the process working directory. sh, bash
+      # and friends are rejected as argv[0], and a repo-committed program
+      # cannot be argv[0] either, so this is the only shape that runs.
+      command: ["awk", "-f", "generate.awk"]
+    applicationEnv:
+      allow:
+        - MODE
+        - SUFFIX
+    parameters:
+      allow:
+        - name: title
+          type: string
+        - name: items
+          type: array

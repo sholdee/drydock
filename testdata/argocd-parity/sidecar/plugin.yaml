@@ -1,0 +1,21 @@
+# ConfigManagementPlugin descriptor for the parity CMP sidecar. This is NOT a
+# CRD: the smoke mounts it into the sidecar as
+# /home/argocd/cmp-server/config/plugin.yaml from a ConfigMap and never
+# `kubectl apply`s it.
+apiVersion: argoproj.io/v1alpha1
+kind: ConfigManagementPlugin
+metadata:
+  name: parity-env
+spec:
+  # No spec.version, so the socket is parity-env.sock and the fixture
+  # Application names the plugin plainly as `parity-env`.
+  #
+  # No discover block on purpose. With discovery unconfigured a named plugin
+  # matches unconditionally and no repository is streamed for discovery, so no
+  # other fixture Application can be captured by this sidecar. With a discover
+  # block present, a named plugin would ALSO have to satisfy it.
+  generate:
+    # Runs with the Application source path inside the sidecar's private
+    # extraction of the streamed repo as the working directory, so this is the
+    # same program file drydock's exec engine runs.
+    command: ["awk", "-f", "generate.awk"]

@@ -1,0 +1,55 @@
+# Strategic merge patch for the Argo CD repo-server Deployment. containers and
+# volumes merge on `name`, so listing only the new entries preserves the
+# upstream argocd-repo-server container, the copyutil initContainer, and the
+# var-files / plugins / tmp volumes the install manifest already declares.
+#
+# __ARGOCD_IMAGE__ is substituted by install_cmp_sidecar with the image the
+# install manifest uses, so the sidecar shares the image already pulled onto
+# the kind node and the staged argocd-cmp-server binary is version-matched.
+spec:
+  template:
+    metadata:
+      annotations:
+        # Keep ad-hoc `kubectl logs`/`kubectl exec deployment/argocd-repo-server`
+        # on the real repo-server; the merge places the sidecar first.
+        kubectl.kubernetes.io/default-container: argocd-repo-server
+    spec:
+      containers:
+        - name: parity-env
+          image: __ARGOCD_IMAGE__
+          imagePullPolicy: IfNotPresent
+          # copyutil already staged this symlink into var-files; naming it as
+          # the command overrides the image entrypoint.
+          command: ["/var/run/argocd/argocd-cmp-server"]
+          args: ["--loglevel", "debug"]
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 999
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+            seccompProfile:
+              type: RuntimeDefault
+          volumeMounts:
+            - name: var-files
+              mountPath: /var/run/argocd
+            # repo-server discovers plugins by listing socket files here, so
+            # this must be the shared volume.
+            - name: plugins
+              mountPath: /home/argocd/cmp-server/plugins
+            - name: parity-env-cmp
+              mountPath: /home/argocd/cmp-server/config/plugin.yaml
+              subPath: plugin.yaml
+            # A private tmp: the CMP workdir is <tmp>/_cmp_server, and sharing
+            # repo-server's tmp volume is forbidden upstream as a
+            # path-traversal mitigation.
+            - name: cmp-tmp
+              mountPath: /tmp
+      volumes:
+        - name: parity-env-cmp
+          configMap:
+            name: parity-env-cmp
+        - name: cmp-tmp
+          emptyDir: {}

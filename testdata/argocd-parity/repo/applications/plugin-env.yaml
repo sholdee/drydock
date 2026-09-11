@@ -1,0 +1,28 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: parity-plugin-env
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: git://argocd-parity-git.argocd-parity.svc.cluster.local/repo.git
+    targetRevision: HEAD
+    path: workloads/plugin-env
+    plugin:
+      name: parity-env
+      env:
+        - name: MODE
+          value: prod
+        - name: SUFFIX
+          value: "$ARGOCD_APP_NAME-suffix"
+      parameters:
+        - name: title
+          string: hello
+        - name: items
+          array:
+            - alpha
+            - beta
+  destination:
+    name: in-cluster
+    namespace: parity-plugin-env

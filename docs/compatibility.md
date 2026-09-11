@@ -301,6 +301,10 @@ Supported:
   allowlisted by `applicationEnv.allow`, delivered as `ARGOCD_ENV_<name>` after
   build-environment substitution in the repo-server's order and position. Host
   `env.allow` entries naming `ARGOCD_ENV_*` are ignored with a warning.
+- That config management plugin environment contract is pinned live: the Argo
+  CD render parity smoke renders one fixture Application through a repo-server
+  CMP sidecar and through a trusted `engine: exec` policy and compares the
+  emitted values.
 - Config management plugin source detection with fail-closed diagnostics in
   the CLI and default Go client.
 - Injectable in-process plugin renderers, named plugin registry dispatch, and
