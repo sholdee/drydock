@@ -21,7 +21,7 @@ require (
 	go.yaml.in/yaml/v3 v3.0.5
 	golang.org/x/crypto v0.56.0
 	golang.org/x/sys v0.48.0
-	golang.org/x/term v0.45.0
+	golang.org/x/term v0.46.0
 	helm.sh/helm/v4 v4.2.4
 	k8s.io/apimachinery v0.37.0
 	oras.land/oras-go/v2 v2.6.2
