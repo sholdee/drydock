@@ -1013,6 +1013,52 @@ helm:
 	}
 }
 
+func TestRenderApplicationResolvesArgocdSourceOverrideByInstanceName(t *testing.T) {
+	root := t.TempDir()
+	writeSourceOverrideChart(t, filepath.Join(root, "apps", "demo"), "demo")
+	// The repo-server names the per-Application file after the instance name,
+	// so for an Application outside the controller namespace the bare-name
+	// file is not an override at all.
+	writeAppTestFile(t, filepath.Join(root, "apps", "demo", ".argocd-source-demo.yaml"), `
+helm:
+  values: |
+    message: bare-name-file-must-be-ignored
+`)
+	writeAppTestFile(t, filepath.Join(root, "apps", "demo", ".argocd-source-tenant_demo.yaml"), `
+helm:
+  values: |
+    message: instance-name-file
+`)
+	testCases := []struct {
+		name                 string
+		provider             localProvider
+		applicationNamespace string
+		want                 string
+	}{
+		{name: "tenant namespace, default controller namespace", provider: localProvider{repoRoot: root}, applicationNamespace: "tenant", want: "instance-name-file"},
+		{name: "tenant namespace, explicit controller namespace", provider: localProvider{repoRoot: root, controllerNamespace: "argocd"}, applicationNamespace: "tenant", want: "instance-name-file"},
+		{name: "controller namespace keeps the bare name", provider: localProvider{repoRoot: root, controllerNamespace: "tenant"}, applicationNamespace: "tenant", want: "bare-name-file-must-be-ignored"},
+	}
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			application := rendererSelectionApplication("demo", argoappv1.ApplicationSource{
+				RepoURL: "https://repo.example.invalid/repo.git",
+				Path:    "apps/demo",
+			})
+			application.Namespace = testCase.applicationNamespace
+			result, err := RenderApplication(context.Background(), application, testCase.provider)
+			if err != nil {
+				t.Fatalf("RenderApplication() error = %v", err)
+			}
+			manifest := assertManifestNamed(t, result.Manifests, "demo")
+			message, _, _ := unstructured.NestedString(manifest.Object.Object, "data", "message")
+			if message != testCase.want {
+				t.Fatalf("data.message = %q, want %q", message, testCase.want)
+			}
+		})
+	}
+}
+
 func TestRenderApplicationRejectsArgocdSourceOverrideExplicitTypeConflict(t *testing.T) {
 	root := t.TempDir()
 	writeDirectorySelectionFixture(t, filepath.Join(root, "apps", "demo"))

@@ -12,6 +12,62 @@ URL:
 The smoke harness maps that URL back to this local fixture repository with
 `--repo-map` so drydock and Argo CD render the same source tree.
 
+## Tenant namespace fixture
+
+`projects/parity-tenant.yaml` and `tenant-applications/` cover Applications
+that live outside the Argo CD controller namespace, which is where the
+instance-name rules become visible.
+
+The smoke enables the `parity-tenant` namespace by patching
+`application.namespaces` in `argocd-cmd-params-cm` and restarting the server
+and controller *before* it logs in to Argo CD and applies fixtures, because
+`login_argocd` starts a port-forward bound to a single `argocd-server` pod
+that a later restart would kill.
+
+`tenant-applications/parity-tenant-overrides.yaml` is a Helm Application in
+the `parity-tenant` namespace whose parameters substitute `$ARGOCD_APP_NAME`
+and `$ARGOCD_APP_NAMESPACE`. Its chart `charts/tenant-overrides` carries three
+override files:
+
+- `.argocd-source.yaml` — the path-level override, read for every
+  Application that renders this source path.
+- `.argocd-source-parity-tenant_parity-tenant-overrides.yaml` — the
+  per-Application override, named by the Application *instance name*
+  (`<namespace>_<name>`) because the Application is outside the controller
+  namespace.
+- `.argocd-source-parity-tenant-overrides.yaml` — a deliberate decoy named by
+  the bare Application name. The repo-server never reads it for this
+  Application; it exists so a regression that resolves the override file by
+  `metadata.name` flips the comparison instead of passing silently.
+
+The override files use `helm.valuesObject` maps rather than `helm.parameters`
+lists: override merging is an RFC 7386 JSON merge patch, which replaces arrays
+wholesale, so a `parameters` list in an override would erase the Application's
+own `appName`/`appNamespace` parameters. Maps merge key by key, later files win
+per key, and Helm applies `parameters` over `valuesObject`, so the six keys
+stay independent.
+
+Both Argo CD and drydock must render this `data`:
+
+| key | value |
+| --- | --- |
+| `fromRepoOverride` | `from-argocd-source` |
+| `fromAppOverride` | `from-instance-override` |
+| `both` | `from-instance-override` |
+| `decoy` | `from-default` |
+| `appName` | `parity-tenant_parity-tenant-overrides` |
+| `appNamespace` | `parity-tenant-workloads` |
+
+The `sourceNamespaces: [parity-tenant]` entry on the `parity-tenant`
+AppProject is what lets live Argo CD reconcile the Application at all; without
+it the controller refuses it and `argocd app manifests` returns nothing.
+drydock reports a missing `sourceNamespaces` entry only as a warning
+diagnostic, so this half of the rule is enforced by live Argo CD.
+
+`parity-tenant-overrides` is also in the tracking comparison, which runs
+without ignore rules, so the instance name in the tracking annotation is
+compared too.
+
 ## OCI artifact fixture
 
 `oci-artifact/` is the content directory for the one first-class OCI

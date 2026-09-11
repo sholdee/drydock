@@ -1,0 +1,13 @@
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: parity-tenant
+  namespace: argocd
+spec:
+  sourceRepos:
+    - git://argocd-parity-git.argocd-parity.svc.cluster.local/repo.git
+  destinations:
+    - server: https://kubernetes.default.svc
+      namespace: parity-tenant-workloads
+  sourceNamespaces:
+    - parity-tenant

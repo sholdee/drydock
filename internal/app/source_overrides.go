@@ -40,7 +40,7 @@ func (p localProvider) PrepareSource(ctx context.Context, application argoappv1.
 		return sourcePlan, err
 	}
 	sourceDir := filepath.Join(sourceRoot, sourcePath)
-	merged, err := mergeArgocdSourceOverrides(sourcePlan.Source, sourceDir, application.Name)
+	merged, err := mergeArgocdSourceOverrides(sourcePlan.Source, sourceDir, p.overrideInstanceName(application))
 	if err != nil {
 		return sourcePlan, err
 	}
@@ -104,4 +104,16 @@ func mergeArgocdSourceOverrides(source argoappv1.ApplicationSource, sourceDir, a
 	merged.Ref = source.Ref
 	merged.Name = source.Name
 	return merged, nil
+}
+
+// overrideInstanceName is the name the Argo CD repo-server uses for the
+// per-Application override file: the Application instance name, so an
+// Application outside the controller namespace reads
+// .argocd-source-<namespace>_<name>.yaml and a bare-name file is ignored.
+func (p localProvider) overrideInstanceName(application argoappv1.Application) string {
+	controllerNamespace := p.controllerNamespace
+	if controllerNamespace == "" {
+		controllerNamespace = defaultArgoCDControllerNamespace
+	}
+	return application.InstanceName(controllerNamespace)
 }

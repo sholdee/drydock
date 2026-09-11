@@ -19,6 +19,8 @@ spec:
           value: alpha,beta
         - name: appName
           value: $ARGOCD_APP_NAME
+        - name: appNamespace
+          value: $ARGOCD_APP_NAMESPACE
       fileParameters:
         - name: fileMessage
           path: ../../shared-files/params-edge-message.txt

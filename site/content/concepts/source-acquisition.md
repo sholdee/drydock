@@ -409,9 +409,10 @@ generated Application input invalidates that Application while unchanged
 Applications can still hit the render cache. Generated inputs include static
 Application YAML, ApplicationSet generator files, and rendered bootstrap
 Application parents when discovery records those paths. Local source override
-files (`.argocd-source.yaml` and `.argocd-source-<app>.yaml`) are also part
-of every Application's input digest; adding, editing, or deleting an override
-file invalidates that Application's cached entry.
+files (`.argocd-source.yaml` and `.argocd-source-<app>.yaml`, `<app>` being
+the Application instance name) are also part of every Application's input
+digest; adding, editing, or deleting an override file invalidates that
+Application's cached entry.
 
 Local dirty worktrees can also use the render output cache for Applications
 whose proven render inputs are unchanged. In dirty Git-backed roots, drydock

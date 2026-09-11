@@ -1,0 +1,4 @@
+helm:
+  valuesObject:
+    fromRepoOverride: from-argocd-source
+    both: from-argocd-source

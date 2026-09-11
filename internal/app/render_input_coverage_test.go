@@ -89,7 +89,7 @@ func assertRenderInputCoverage(t *testing.T, repoRoot string, application argoap
 		t.Fatalf("preparePlanSourcesForRender() error = %v", prepErr)
 	}
 
-	digestPaths, _, err := localInputDigestPathsForSource(context.Background(), preparedPlan, preparedPlan.Sources[0], repoRoot)
+	digestPaths, _, err := localInputDigestPathsForSource(context.Background(), preparedPlan, preparedPlan.Sources[0], provider)
 	if err != nil {
 		t.Fatalf("localInputDigestPathsForSource() error = %v", err)
 	}

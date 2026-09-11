@@ -42,6 +42,7 @@ func newLocalProvider(ctx context.Context, orchestrator Orchestrator, root strin
 	forbiddenRoots := requestForbiddenRoots(root, request.AcquisitionOptions)
 	provider := localProvider{
 		repoRoot:                     root,
+		controllerNamespace:          trackingOptionsFromSettings(settings).ControllerNamespace,
 		sourceResolver:               sourcepkg.NewResolver(sourcepkg.Options{RepoMaps: request.RepoMaps, Offline: request.Offline}),
 		chartAcquirer:                acquirer,
 		gitAcquirer:                  gitAcquirer,
