@@ -155,7 +155,7 @@ require (
 	go.opentelemetry.io/otel/trace v1.44.0 // indirect
 	go.uber.org/atomic v1.11.0 // indirect
 	go.yaml.in/yaml/v2 v2.4.3 // indirect
-	golang.org/x/net v0.58.0 // indirect
+	golang.org/x/net v0.59.0 // indirect
 	golang.org/x/oauth2 v0.37.0 // indirect
 	golang.org/x/sync v0.23.0 // indirect
 	golang.org/x/text v0.42.0 // indirect
