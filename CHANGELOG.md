@@ -1,5 +1,53 @@
 # Changelog
 
+## [0.3.0](https://github.com/sholdee/drydock/compare/v0.2.10...v0.3.0) (2026-09-11)
+
+
+### Features
+
+* **plugin-policy:** applicationEnv.allow delivers Application plugin env to exec/container plugins as ARGOCD_ENV_* ([#317](https://github.com/sholdee/drydock/issues/317)) ([184cc71](https://github.com/sholdee/drydock/commit/184cc71d46beccd61e530fd0071e2ae0afe90485))
+* **plugin:** pass the Argo CD build environment to exec and container plugins ([#316](https://github.com/sholdee/drydock/issues/316)) ([dbfc1b9](https://github.com/sholdee/drydock/commit/dbfc1b911bcc1e5d63ad766f643c46e8cfc1b765))
+
+
+### Bug Fixes
+
+* **cli:** build honors -o, text diagnostics print codes, doctor INFO for opted-in mutable tags, full env fail-closed message ([#320](https://github.com/sholdee/drydock/issues/320)) ([1693419](https://github.com/sholdee/drydock/commit/1693419e85381e746ff20d96049ecdedb32d74f1))
+* **deps:** update module github.com/argoproj/argo-cd/v3 to v3.5.2 ([#290](https://github.com/sholdee/drydock/issues/290)) ([9b946f7](https://github.com/sholdee/drydock/commit/9b946f73b2dbebcc34d8acbd552a5fe618cc158d))
+* **deps:** update module github.com/google/go-containerregistry to v0.22.0 ([#286](https://github.com/sholdee/drydock/issues/286)) ([0c7ea8d](https://github.com/sholdee/drydock/commit/0c7ea8d400f1d3bb59e7344eefd24ec93f4f938f))
+* **deps:** update module github.com/google/go-containerregistry to v0.22.1 ([#305](https://github.com/sholdee/drydock/issues/305)) ([76e34f0](https://github.com/sholdee/drydock/commit/76e34f042d46eea6a14218509c92055bed0eb6c0))
+* **deps:** update module github.com/sirupsen/logrus to v1.10.2 ([#285](https://github.com/sholdee/drydock/issues/285)) ([c07325a](https://github.com/sholdee/drydock/commit/c07325a49fc72209561597a2dade0fd11dcd67bf))
+* **deps:** update module golang.org/x/crypto to v0.56.0 ([#304](https://github.com/sholdee/drydock/issues/304)) ([3c7d8f9](https://github.com/sholdee/drydock/commit/3c7d8f96cd8fda359748d31f2445842028f7a94a))
+* **deps:** update module golang.org/x/crypto to v0.57.0 ([#325](https://github.com/sholdee/drydock/issues/325)) ([b19ce3c](https://github.com/sholdee/drydock/commit/b19ce3c4ca2521efdc5e1e0ac3fd271f7d4e4bd7))
+* **deps:** update module golang.org/x/sys to v0.48.0 ([#310](https://github.com/sholdee/drydock/issues/310)) ([8950054](https://github.com/sholdee/drydock/commit/89500548050851ade720d9950493f64bcc8bdd97))
+* **deps:** update module golang.org/x/term to v0.46.0 ([#323](https://github.com/sholdee/drydock/issues/323)) ([491ab37](https://github.com/sholdee/drydock/commit/491ab37cbf49157f912e8e838a4589500f9d3320))
+* **deps:** update module k8s.io/apimachinery to v0.37.0 ([#288](https://github.com/sholdee/drydock/issues/288)) ([652e376](https://github.com/sholdee/drydock/commit/652e37686f4b16ea11d6cf2acb8c90300d108bc8))
+* **render:** derive ARGOCD_APP_NAME and ARGOCD_APP_NAMESPACE like the Argo CD repo-server ([#312](https://github.com/sholdee/drydock/issues/312)) ([6a5bbd4](https://github.com/sholdee/drydock/commit/6a5bbd450c22b21ea361002e9beab9ff9f349e48))
+* **render:** resolve .argocd-source-&lt;app&gt;.yaml by Application instance name, live-pinned by a tenant-namespace parity fixture ([#321](https://github.com/sholdee/drydock/issues/321)) ([31c3d57](https://github.com/sholdee/drydock/commit/31c3d57909dc69e4cb429e9b8aba9426dc3a136c))
+
+
+### Miscellaneous Chores
+
+* **deps:** update dependency go to v1.27.1 ([#301](https://github.com/sholdee/drydock/issues/301)) ([0f0bd07](https://github.com/sholdee/drydock/commit/0f0bd0707a572aa6f9f53aa2eb4a9150690df23c))
+* **deps:** update dependency golangci-lint to v2.13.2 ([#292](https://github.com/sholdee/drydock/issues/292)) ([7b9f718](https://github.com/sholdee/drydock/commit/7b9f718abaf03a3830aea5e45b03798a24013669))
+* **deps:** update dependency lefthook to v2.1.12 ([#293](https://github.com/sholdee/drydock/issues/293)) ([609931a](https://github.com/sholdee/drydock/commit/609931ad82baba1b656128e37d9faa05bac25558))
+* **deps:** update dependency oras to v1.3.4 ([#291](https://github.com/sholdee/drydock/issues/291)) ([e39fa69](https://github.com/sholdee/drydock/commit/e39fa69e55194c2de79ad8b874830a69a138ad23))
+* **deps:** update dependency zizmor to v1.30.0 ([#296](https://github.com/sholdee/drydock/issues/296)) ([adae8f4](https://github.com/sholdee/drydock/commit/adae8f447360668874c0b9568a24ea79827cc8ad))
+* **deps:** update docker/dockerfile docker tag to v1.27 ([#303](https://github.com/sholdee/drydock/issues/303)) ([48292f0](https://github.com/sholdee/drydock/commit/48292f02af058c92a38524b750d15e65dbe4431e))
+* **deps:** update go module directive to v1.27.1 ([#299](https://github.com/sholdee/drydock/issues/299)) ([38c716c](https://github.com/sholdee/drydock/commit/38c716c96beb321c941414f7520eebcfe7d7f88e))
+* **deps:** update golang docker tag to v1.27.1 ([#302](https://github.com/sholdee/drydock/issues/302)) ([9a77038](https://github.com/sholdee/drydock/commit/9a77038d939efafec287c37ddd4e226307e1f3b9))
+* **deps:** update golang:1.27.0 docker digest to 0ecdc2a ([#283](https://github.com/sholdee/drydock/issues/283)) ([ac014f1](https://github.com/sholdee/drydock/commit/ac014f16196ff8e7076995e7d48444b863778506))
+* **deps:** update golang:1.27.0 docker digest to 4013ae0 ([#295](https://github.com/sholdee/drydock/issues/295)) ([1d9bf16](https://github.com/sholdee/drydock/commit/1d9bf16c6df71b1ee2b9ff277713a152110e29be))
+* **deps:** update module golang.org/x/net to v0.59.0 ([#326](https://github.com/sholdee/drydock/issues/326)) ([a933ed8](https://github.com/sholdee/drydock/commit/a933ed8a226a8cf5e6600a4705151502b42b0a4b))
+* **deps:** update module golang.org/x/oauth2 to v0.37.0 ([#307](https://github.com/sholdee/drydock/issues/307)) ([e32b8b3](https://github.com/sholdee/drydock/commit/e32b8b3cd99be8cce74ab59c5b0d01e0474937a7))
+* **deps:** update module golang.org/x/sync to v0.23.0 ([#308](https://github.com/sholdee/drydock/issues/308)) ([9dac3aa](https://github.com/sholdee/drydock/commit/9dac3aa66ad595d18b1d6f0a5b719f7e7a262661))
+* **deps:** update module golang.org/x/text to v0.42.0 ([#322](https://github.com/sholdee/drydock/issues/322)) ([78417e3](https://github.com/sholdee/drydock/commit/78417e35337a15f79c879a0724dfcfa1c840e0b0))
+* **deps:** update module golang.org/x/time to v0.16.0 ([#309](https://github.com/sholdee/drydock/issues/309)) ([46d7d45](https://github.com/sholdee/drydock/commit/46d7d455cd8fc5e6cc436cf1ef627937cb36af14))
+
+
+### Tests
+
+* **parity:** live-pin the config management plugin environment contract against a repo-server CMP sidecar ([7e61602](https://github.com/sholdee/drydock/commit/7e616022572b35c2199c28926a50ab230f8441cf))
+
 ## [0.2.10](https://github.com/sholdee/drydock/compare/v0.2.9...v0.2.10) (2026-08-26)
 
 
