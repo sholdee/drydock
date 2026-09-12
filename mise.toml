@@ -5,7 +5,7 @@ lefthook = "2.1.12"
 oras = "1.3.4"
 shellcheck = "0.11.0"
 zizmor = "1.30.1"
-hugo = "0.165.0"
+hugo = "0.166.0"
 
 [tasks.fmt]
 description = "Run go fmt against Go code"
