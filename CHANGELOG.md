@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.3.1](https://github.com/sholdee/drydock/compare/v0.3.0...v0.3.1) (2026-09-13)
+
+
+### Miscellaneous Chores
+
+* **deps:** update dependency hugo to v0.166.0 ([#330](https://github.com/sholdee/drydock/issues/330)) ([c9581ea](https://github.com/sholdee/drydock/commit/c9581ea66dd2b3eb805bf2dfeee48f8e9555da1d))
+* **deps:** update dependency zizmor to v1.30.1 ([#328](https://github.com/sholdee/drydock/issues/328)) ([ce9ad24](https://github.com/sholdee/drydock/commit/ce9ad24f230c321551559bd497827083e8c29350))
+* **deps:** update golang:1.27.1 docker digest to f44f6e8 ([#332](https://github.com/sholdee/drydock/issues/332)) ([a57c4fd](https://github.com/sholdee/drydock/commit/a57c4fd914958beaf0da197f72a48a12795c843c))
+
 ## [0.3.0](https://github.com/sholdee/drydock/compare/v0.2.10...v0.3.0) (2026-09-11)
 
 
