@@ -632,6 +632,37 @@ func TestHTTPClientTrustsCAFile(t *testing.T) {
 	}
 }
 
+// --oci-insecure-skip-verify is the one flag in the family whose entire
+// purpose is to change TLS verification behaviour, so it needs its own
+// end-to-end pin: the field must reach the chart client's tls.Config, not
+// merely flip hasTLSConfig(). The control leg proves the registry really is
+// untrusted by the system pool, so a dropped InsecureSkipVerify assignment
+// cannot pass by accident.
+func TestHTTPClientSkipsVerificationWithInsecureFlag(t *testing.T) {
+	reg := ocitest.StartTLSRegistry(t)
+	client, configured, err := Credentials{InsecureSkipVerify: true}.HTTPClient()
+	if err != nil {
+		t.Fatalf("HTTPClient() error = %v", err)
+	}
+	if !configured {
+		t.Fatal("HTTPClient() configured = false, want true with --oci-insecure-skip-verify")
+	}
+	response, err := client.Get("https://" + reg.Host + "/v2/")
+	if err != nil {
+		t.Fatalf("insecure client GET error = %v", err)
+	}
+	_ = response.Body.Close()
+
+	systemPoolResponse, err := http.DefaultClient.Get("https://" + reg.Host + "/v2/")
+	if err == nil {
+		_ = systemPoolResponse.Body.Close()
+		t.Fatal("system-pool client reached the self-signed registry, fixture is not proving anything")
+	}
+	if !strings.Contains(err.Error(), "x509") {
+		t.Fatalf("system-pool client error = %v, want x509 verification failure", err)
+	}
+}
+
 // A bad --oci-ca-file fails closed with the flag-naming error rather than
 // silently narrowing the pool.
 func TestHTTPClientRejectsUnreadableAndNonPEMCAFile(t *testing.T) {

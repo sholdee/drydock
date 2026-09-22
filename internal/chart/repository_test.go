@@ -1347,12 +1347,13 @@ func TestDefaultAcquirerNestedOCIChartsWithSameLeafDoNotCollide(t *testing.T) {
 
 	chartDirs := make([]string, 0, 2)
 	for _, name := range []string{"a/charts/demo", "b/charts/demo"} {
-		result, err := acquirer.Acquire(context.Background(), Request{
+		request := Request{
 			Repository: "oci://registry.example.test/charts",
 			Name:       name,
 			Version:    "1.2.3",
 			Kind:       RepositoryOCI,
-		}, opts)
+		}
+		result, err := acquirer.Acquire(context.Background(), request, opts)
 		if err != nil {
 			t.Fatalf("Acquire(%q) error = %v", name, err)
 		}
@@ -1361,6 +1362,16 @@ func TestDefaultAcquirerNestedOCIChartsWithSameLeafDoNotCollide(t *testing.T) {
 		}
 		if _, err := os.Stat(filepath.Join(result.ChartDir, "Chart.yaml")); err != nil {
 			t.Fatalf("stat extracted Chart.yaml for %q: %v", name, err)
+		}
+		// The leaf is the on-disk name, but `drydock cache ls` and prune read
+		// the metadata: it keeps the FULL nested name, or two distinct charts
+		// become indistinguishable in cache listings.
+		metadata, err := cachepkg.ReadMetadata(filepath.Dir(result.ChartDir), cachepkg.SourceChart, string(request.Kind), mustCacheKey(t, request))
+		if err != nil {
+			t.Fatalf("ReadMetadata() for %q error = %v", name, err)
+		}
+		if metadata == nil || metadata.Name != name {
+			t.Fatalf("metadata = %#v, want Name = the full nested name %q", metadata, name)
 		}
 		chartDirs = append(chartDirs, result.ChartDir)
 	}

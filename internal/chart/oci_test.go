@@ -522,9 +522,19 @@ func TestHelmOCIPullerPullsNestedChartOverTLS(t *testing.T) {
 // OCIPuller only, so it never reaches the HTTP(S) Helm repository path. This
 // test hand-constructs the acquirer, so it CANNOT catch the forbidden
 // DefaultAcquirer{Client: tlsClient} wiring — TestLocalProviderBuildsOCIOnlyTLSAcquirer does.
+//
+// The index entry's archive URL is RELATIVE so a leaking client stays inside
+// the fixture server: it then fails on the fixture's non-archive body instead
+// of on a DNS lookup of a bogus hostname, which would make the regression
+// depend on the host resolver and report a misleading cause.
 func TestOCITLSClientDoesNotReachHTTPHelmRepositories(t *testing.T) {
-	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		writeIndexFor(t, w, "demo", "https://charts.example.test/demo-1.0.0.tgz")
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, ".tgz") {
+			w.Header().Set("Content-Type", "application/gzip")
+			_, _ = w.Write([]byte("the shared client reached the repository"))
+			return
+		}
+		writeIndexFor(t, w, "demo", "demo-1.2.3.tgz")
 	}))
 	defer server.Close()
 	insecure := &http.Client{Transport: &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true, MinVersion: tls.VersionTLS12}}}
@@ -533,13 +543,13 @@ func TestOCITLSClientDoesNotReachHTTPHelmRepositories(t *testing.T) {
 	_, err := acquirer.Acquire(t.Context(), Request{
 		Repository: server.URL,
 		Name:       "demo",
-		Version:    "1.0.0",
+		Version:    "1.2.3",
 		Kind:       RepositoryHTTP,
 	}, Options{CacheDir: t.TempDir()})
 	if err == nil {
 		t.Fatal("Acquire() error = nil: the OCI TLS client leaked into the HTTP Helm repository path")
 	}
 	if !strings.Contains(err.Error(), "x509") {
-		t.Fatalf("Acquire() error = %v, want x509 verification failure from the untouched shared client", err)
+		t.Fatalf("Acquire() error = %v, want x509 verification failure from the untouched shared client: the OCI TLS client reached the repository", err)
 	}
 }

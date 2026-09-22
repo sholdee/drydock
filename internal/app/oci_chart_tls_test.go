@@ -49,10 +49,22 @@ func TestLocalProviderBuildsOCIOnlyTLSAcquirer(t *testing.T) {
 // must still fail verification. This is the assertion that goes red the moment
 // anyone sets the shared Client field — the fetchOCIChart fallback would
 // otherwise make the leaking form indistinguishable in a render-level test.
+//
+// The index entry uses a RELATIVE archive URL so the leaking wiring stays
+// inside the fixture server: under the correct wiring the index GET fails at
+// x509 and the archive is never fetched, and under the leaking wiring the
+// failure is the fixture's non-archive body rather than a DNS lookup of a
+// bogus hostname, which would make the regression depend on the host resolver
+// and report a misleading cause.
 func TestBuilderOCITLSAcquirerStillRejectsUntrustedHTTPHelmRepository(t *testing.T) {
-	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, ".tgz") {
+			w.Header().Set("Content-Type", "application/gzip")
+			_, _ = w.Write([]byte("the shared client reached the repository"))
+			return
+		}
 		w.Header().Set("Content-Type", "application/yaml")
-		_, _ = w.Write([]byte("apiVersion: v1\nentries:\n  demo:\n  - version: 1.0.0\n    urls:\n    - https://charts.example.test/demo-1.0.0.tgz\n"))
+		_, _ = w.Write([]byte("apiVersion: v1\nentries:\n  demo:\n  - version: 1.0.0\n    urls:\n    - demo-1.0.0.tgz\n"))
 	}))
 	defer server.Close()
 	acquirer := buildRequestChartAcquirer(t, ociartifact.Credentials{InsecureSkipVerify: true})
@@ -67,7 +79,7 @@ func TestBuilderOCITLSAcquirerStillRejectsUntrustedHTTPHelmRepository(t *testing
 		t.Fatal("Acquire() error = nil: --oci-insecure-skip-verify reached an HTTP(S) Helm repository")
 	}
 	if !strings.Contains(err.Error(), "x509") {
-		t.Fatalf("Acquire() error = %v, want x509 verification failure", err)
+		t.Fatalf("Acquire() error = %v, want x509 verification failure: the shared DefaultAcquirer.Client carried --oci-insecure-skip-verify to the HTTP(S) Helm repository", err)
 	}
 }
 
