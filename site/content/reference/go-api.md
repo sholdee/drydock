@@ -31,7 +31,9 @@ fetched unless the request is configured for offline/cache-only behavior.
 the CLI `--oci-cache-dir` flag. Like the other cache roots, it must resolve
 outside current and baseline repository trees. `Config.OCICredentials`
 mirrors the CLI `--oci-*` credential flags for private OCI artifact
-registries — a single global set, with TLS material given as file paths.
+registries — a single global set, with TLS material given as file paths. The
+TLS fields also configure OCI Helm chart pulls; the credentials do not, since
+OCI Helm chart auth stays `--registry-config`.
 
 `NewClient` accepts public Git, chart, remote-resource, and plugin renderer
 interfaces so tests and embedding callers can provide deterministic fakes

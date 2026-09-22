@@ -1,16 +1,22 @@
 package chart
 
 import (
+	"bytes"
 	"context"
+	"crypto/tls"
 	"encoding/base64"
 	"errors"
 	"fmt"
 	"io"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/sholdee/drydock/internal/ociartifact"
+	"github.com/sholdee/drydock/internal/ociartifact/ocitest"
 )
 
 func TestOCIChartRefUsesDigestSeparator(t *testing.T) {
@@ -476,5 +482,64 @@ func TestHelmOCIPullerRestoresDockerConfigAfterFailedPull(t *testing.T) {
 	}
 	if got := os.Getenv("DOCKER_CONFIG"); got != originalDockerConfig {
 		t.Fatalf("DOCKER_CONFIG = %q, want restored value %q", got, originalDockerConfig)
+	}
+}
+
+// The end-to-end nested pull over TLS: a self-signed registry (the parity
+// smoke's shape) plus a chart name with slashes in it. This is what pins the
+// leaf-based temp-file names in HelmOCIPuller.Pull — a nested name would
+// otherwise be joined into a directory that was never created.
+func TestHelmOCIPullerPullsNestedChartOverTLS(t *testing.T) {
+	reg := ocitest.StartTLSRegistry(t)
+	ocitest.PushHelmChartArtifact(t, reg, "parity/nested/demo", "1.0.0", ocitest.HelmChartSpec{Name: "demo", Version: "1.0.0"})
+	client, configured, err := ociartifact.Credentials{CAFile: reg.CAFilePath(t)}.HTTPClient()
+	if err != nil {
+		t.Fatalf("HTTPClient() error = %v", err)
+	}
+	if !configured {
+		t.Fatal("HTTPClient() configured = false, want true with --oci-ca-file")
+	}
+	request := Request{Repository: reg.Host, Name: "parity/nested/demo", Version: "1.0.0", Kind: RepositoryOCI}
+
+	archive, err := (HelmOCIPuller{Client: client}).Pull(t.Context(), request, Options{})
+	if err != nil {
+		t.Fatalf("Pull() error = %v", err)
+	}
+	if !chartArchiveContainsNamedChart(bytes.NewReader(archive), "demo") {
+		t.Fatal("pulled archive is not rooted at the chart name leaf")
+	}
+
+	// Control: without the CA the same pull must fail on verification, so the
+	// success above is the flag's doing and not an accidentally lax client.
+	if _, err := (HelmOCIPuller{}).Pull(t.Context(), request, Options{}); err == nil {
+		t.Fatal("Pull() without --oci-ca-file error = nil, want x509 verification failure")
+	} else if !strings.Contains(err.Error(), "x509") {
+		t.Fatalf("Pull() without --oci-ca-file error = %v, want x509 verification failure", err)
+	}
+}
+
+// Companion to the wiring pin in internal/app: the OCI TLS client rides on
+// OCIPuller only, so it never reaches the HTTP(S) Helm repository path. This
+// test hand-constructs the acquirer, so it CANNOT catch the forbidden
+// DefaultAcquirer{Client: tlsClient} wiring — TestLocalProviderBuildsOCIOnlyTLSAcquirer does.
+func TestOCITLSClientDoesNotReachHTTPHelmRepositories(t *testing.T) {
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		writeIndexFor(t, w, "demo", "https://charts.example.test/demo-1.0.0.tgz")
+	}))
+	defer server.Close()
+	insecure := &http.Client{Transport: &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true, MinVersion: tls.VersionTLS12}}}
+	acquirer := DefaultAcquirer{OCIPuller: HelmOCIPuller{Client: insecure}}
+
+	_, err := acquirer.Acquire(t.Context(), Request{
+		Repository: server.URL,
+		Name:       "demo",
+		Version:    "1.0.0",
+		Kind:       RepositoryHTTP,
+	}, Options{CacheDir: t.TempDir()})
+	if err == nil {
+		t.Fatal("Acquire() error = nil: the OCI TLS client leaked into the HTTP Helm repository path")
+	}
+	if !strings.Contains(err.Error(), "x509") {
+		t.Fatalf("Acquire() error = %v, want x509 verification failure from the untouched shared client", err)
 	}
 }

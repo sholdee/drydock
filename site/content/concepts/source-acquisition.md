@@ -170,10 +170,10 @@ sources only:
 | --- | --- |
 | `--oci-username USER` | Username for authenticated OCI artifact registries. |
 | `--oci-password PASS` | Password for authenticated OCI artifact registries. |
-| `--oci-ca-file PATH` | PEM CA bundle for OCI artifact registry TLS (replaces the system pool for all OCI registries). |
-| `--oci-client-cert-file PATH` | Client certificate file for mutual-TLS OCI artifact registries (requires `--oci-client-key-file`). |
-| `--oci-client-key-file PATH` | Client key file for mutual-TLS OCI artifact registries (requires `--oci-client-cert-file`). |
-| `--oci-insecure-skip-verify` | Skip TLS certificate verification for OCI artifact registries (insecure; credentials are exposed to whoever answers). |
+| `--oci-ca-file PATH` | PEM CA bundle for OCI artifact registry and OCI Helm chart registry TLS (artifact registries: replaces the system pool; Helm chart registries: added to the system pool). |
+| `--oci-client-cert-file PATH` | Client certificate file for mutual-TLS OCI artifact registries and OCI Helm chart registries (requires `--oci-client-key-file`). |
+| `--oci-client-key-file PATH` | Client key file for mutual-TLS OCI artifact registries and OCI Helm chart registries (requires `--oci-client-cert-file`). |
+| `--oci-insecure-skip-verify` | Skip TLS certificate verification for OCI artifact registries and OCI Helm chart registries (insecure; credentials are exposed to whoever answers). |
 
 The family is a single global set: the one username/password pair is
 presented to every OCI artifact registry the run touches, matching the
@@ -195,6 +195,18 @@ TLS caveats:
   registries in the run; it does not append to it. A run mixing a
   private-CA registry and a public-CA registry needs a bundle containing
   both CAs (or per-registry maps, a recorded follow-up).
+- The four TLS flags also configure **OCI Helm chart** pulls, so a chart
+  registry behind a corporate CA is reachable. There the bundle is
+  **added** to the system pool rather than replacing it, so a run that
+  pins a private artifact registry keeps pulling public charts. Only TLS
+  material crosses over: `--registry-config` remains the sole credential
+  source for OCI Helm charts, and the HTTP(S) Helm repository client is
+  left on the system pool.
+- `--oci-insecure-skip-verify` has no per-registry scoping — it disables
+  certificate verification for every OCI artifact *and* OCI Helm chart
+  registry in the run, including public ones, and any
+  `--registry-config` credentials are then sent over an unverified
+  connection.
 - The CA file must exist and parse as PEM, and
   `--oci-client-cert-file`/`--oci-client-key-file` must be set together
   as a valid pair. Validation fails fast at request construction with an
@@ -490,6 +502,7 @@ discovered repository Secrets, or live Argo CD repository state.
 | HTTP(S) Helm | Bearer token | `--helm-bearer-token TOKEN` |
 | HTTP(S) Helm | Basic auth | `--helm-username USER`, `--helm-password PASS` |
 | OCI Helm | Registry config | `--registry-config PATH` |
+| OCI Helm | TLS material | `--oci-ca-file PATH`, `--oci-client-cert-file PATH`, `--oci-client-key-file PATH`, `--oci-insecure-skip-verify` |
 | OCI artifact | Basic auth | `--oci-username USER`, `--oci-password PASS` |
 | OCI artifact | TLS material | `--oci-ca-file PATH`, `--oci-client-cert-file PATH`, `--oci-client-key-file PATH`, `--oci-insecure-skip-verify` |
 | HTTP(S) remote Kustomize | Bearer token | `--remote-bearer-token TOKEN` |

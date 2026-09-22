@@ -130,10 +130,16 @@ type RemoteResourceCredentials struct {
 }
 
 // OCICredentials supplies auth and TLS material for first-class OCI artifact
-// sources. All TLS fields are file paths. The single set applies to every
-// OCI registry a run touches; CAFile REPLACES the system CA pool for those
-// registries; setting any TLS field (or InsecureSkipVerify) also disables the
-// loopback plain-HTTP default.
+// sources; the TLS fields additionally configure OCI Helm chart pulls
+// (Username/Password stay artifact-only — OCI Helm chart auth is
+// RegistryConfig). All TLS fields are file paths. The single set applies to
+// every OCI registry a run touches. CAFile REPLACES the system CA pool for
+// artifact registries but is ADDED to it for Helm chart registries, so a run
+// pinning a private artifact registry keeps pulling public charts. Setting
+// any TLS field (or InsecureSkipVerify) also disables the loopback
+// plain-HTTP default for artifact sources. The chart-side TLS wiring applies
+// only when Config.ChartAcquirer is nil; a supplied ChartAcquirer is
+// responsible for its own transport.
 type OCICredentials struct {
 	Username           string
 	Password           string
