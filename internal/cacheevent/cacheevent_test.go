@@ -295,3 +295,54 @@ func TestRecordRenderEventErrorKeepsApplicationLabel(t *testing.T) {
 func contains(value, fragment string) bool {
 	return strings.Contains(value, fragment)
 }
+
+func TestRedactEventErrorKeepsSSHUsernameWordsIntact(t *testing.T) {
+	got := RedactEventError(
+		"git SSH private key file is required for repository ssh://git@github.com/o/r.git",
+		"ssh://github.com/o/r.git",
+		[]string{"ssh://git@github.com/o/r.git"},
+	)
+	want := "git SSH private key file is required for repository ssh://github.com/o/r.git"
+	if got != want {
+		t.Fatalf("RedactEventError() = %q, want %q", got, want)
+	}
+}
+
+func TestRedactEventErrorKeepsSCPStyleUsernameWordsIntact(t *testing.T) {
+	got := RedactEventError(
+		"git SSH private key file is required for repository git@github.com:o/r.git",
+		"github.com:o/r.git",
+		[]string{"git@github.com:o/r.git"},
+	)
+	const prefix = "git SSH private key file is required for repository "
+	if !strings.HasPrefix(got, prefix) {
+		t.Fatalf("RedactEventError() = %q, want prefix %q", got, prefix)
+	}
+	if strings.Contains(got, "github.com") {
+		t.Fatalf("RedactEventError() = %q, must not keep the host", got)
+	}
+}
+
+func TestRedactEventErrorRedactsBareUsernameForHTTPCredentials(t *testing.T) {
+	got := RedactEventError(
+		"clone https://alice:secret@host/o/r.git failed for alice",
+		"https://host/o/r.git",
+		[]string{"https://alice:secret@host/o/r.git"},
+	)
+	for _, leaked := range []string{"alice", "secret"} {
+		if strings.Contains(got, leaked) {
+			t.Fatalf("RedactEventError() = %q, leaked %q", got, leaked)
+		}
+	}
+}
+
+func TestRedactEventErrorRedactsBareTokenUsernameWithoutPassword(t *testing.T) {
+	got := RedactEventError(
+		"clone https://ghp_abc@host/o/r.git failed; credential ghp_abc rejected",
+		"https://host/o/r.git",
+		[]string{"https://ghp_abc@host/o/r.git"},
+	)
+	if strings.Contains(got, "ghp_abc") {
+		t.Fatalf("RedactEventError() = %q, leaked the token", got)
+	}
+}
