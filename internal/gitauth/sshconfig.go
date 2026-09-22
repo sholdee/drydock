@@ -37,7 +37,7 @@ func fileSSHConfig(homeDir, systemPath string) func(host, key string) ([]string,
 		files.files = append(files.files, labeledFile{path: filepath.Join(homeDir, ".ssh", "config"), label: userSSHConfigLabel})
 	}
 	if systemPath != "" {
-		files.files = append(files.files, labeledFile{path: systemPath, label: systemPath})
+		files.files = append(files.files, labeledFile{path: systemPath, label: systemSSHConfigLabel})
 	}
 	return files.getAll
 }

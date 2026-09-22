@@ -324,7 +324,7 @@ func TestSSHAuthReportsPassphraseProtectedIdentities(t *testing.T) {
 		t.Fatalf("SSHAuth() error = %v, want *NoCredentialsError", err)
 	}
 	message := err.Error()
-	want := "id_ed25519: passphrase-protected; pass it with --git-ssh-key-file and --git-ssh-passphrase"
+	want := "id_ed25519: passphrase-protected; pass it with --git-ssh-key-file (and --git-ssh-passphrase)"
 	if !strings.Contains(message, want) {
 		t.Fatalf("error = %q, want it to contain %q", message, want)
 	}
@@ -446,6 +446,172 @@ func TestSSHAuthResolvesKnownHostsFiles(t *testing.T) {
 			t.Fatalf("error = %q, want %q", err, want)
 		}
 	})
+
+	t.Run("the ssh-keyscan hint names the host that is dialed", func(t *testing.T) {
+		env := newTestEnv(t)
+		env.writeKey(t, filepath.Join(env.home, ".ssh", "id_ed25519"), newTestKey(t, ""))
+		env.writeSSHConfig(t, "Host example.test", "  Hostname code.example.fi")
+
+		_, _, err := SSHAuth(SSHCredentials{}, testRepoURL, env.env)
+		if err == nil {
+			t.Fatal("SSHAuth() error = nil, want the known_hosts error")
+		}
+		want := "no known_hosts file: pass --git-known-hosts-file or create ~/.ssh/known_hosts (ssh-keyscan code.example.fi >> ~/.ssh/known_hosts)"
+		if err.Error() != want {
+			t.Fatalf("error = %q, want %q", err, want)
+		}
+	})
+}
+
+func TestSSHAuthKnownHostsErrorsHideAmbientPaths(t *testing.T) {
+	t.Run("an ambient file that cannot be read", func(t *testing.T) {
+		env := newTestEnv(t)
+		knownHosts := env.writeKnownHosts(t)
+		makeUnreadable(t, knownHosts)
+		env.writeKey(t, filepath.Join(env.home, ".ssh", "id_ed25519"), newTestKey(t, ""))
+
+		_, _, err := SSHAuth(SSHCredentials{}, testRepoURL, env.env)
+		assertAmbientKnownHostsError(t, err, env.home)
+	})
+
+	t.Run("an ambient file that cannot be parsed", func(t *testing.T) {
+		env := newTestEnv(t)
+		env.writeKnownHosts(t, "example.test not-a-host-key")
+		env.writeKey(t, filepath.Join(env.home, ".ssh", "id_ed25519"), newTestKey(t, ""))
+
+		_, _, err := SSHAuth(SSHCredentials{}, testRepoURL, env.env)
+		assertAmbientKnownHostsError(t, err, env.home)
+	})
+
+	t.Run("an explicit path is still named", func(t *testing.T) {
+		env := newTestEnv(t)
+		explicit := filepath.Join(env.home, "explicit_known_hosts")
+		if err := os.WriteFile(explicit, []byte{}, 0o600); err != nil {
+			t.Fatalf("write known_hosts: %v", err)
+		}
+		makeUnreadable(t, explicit)
+		keyPath := env.writeKey(t, filepath.Join(env.home, "explicit_key"), newTestKey(t, ""))
+
+		_, _, err := SSHAuth(SSHCredentials{PrivateKeyPath: keyPath, KnownHostsPath: explicit}, testRepoURL, env.env)
+		if err == nil {
+			t.Fatal("SSHAuth() error = nil, want a known_hosts error")
+		}
+		if !strings.Contains(err.Error(), explicit) {
+			t.Fatalf("error = %q, want it to name %q", err, explicit)
+		}
+	})
+}
+
+func TestSSHAuthSystemFileErrorsUseLabels(t *testing.T) {
+	t.Run("an unparsable system known_hosts is named by its label", func(t *testing.T) {
+		env := newTestEnv(t)
+		systemKnownHosts := filepath.Join(env.home, "system_known_hosts")
+		if err := os.WriteFile(systemKnownHosts, []byte("example.test not-a-host-key\n"), 0o600); err != nil {
+			t.Fatalf("write system known_hosts: %v", err)
+		}
+		env.env.SystemKnownHosts = systemKnownHosts
+		env.writeKey(t, filepath.Join(env.home, ".ssh", "id_ed25519"), newTestKey(t, ""))
+
+		_, _, err := SSHAuth(SSHCredentials{}, testRepoURL, env.env)
+		if err == nil {
+			t.Fatal("SSHAuth() error = nil, want a known_hosts error")
+		}
+		if !strings.Contains(err.Error(), systemKnownHostsLabel) {
+			t.Fatalf("error = %q, want it to name %q", err, systemKnownHostsLabel)
+		}
+		assertNoLeaks(t, err.Error(), env.home)
+	})
+
+	t.Run("an unparsable system ssh_config is named by its label", func(t *testing.T) {
+		env := newTestEnv(t)
+		systemConfig := filepath.Join(env.home, "system_ssh_config")
+		if err := os.WriteFile(systemConfig, []byte("Match host example.test\n  IdentityFile ~/.ssh/other\n"), 0o600); err != nil {
+			t.Fatalf("write system ssh_config: %v", err)
+		}
+		env.env.SystemSSHConfigPath = systemConfig
+		env.env.SSHConfig = fileSSHConfig(env.home, systemConfig)
+		env.writeKnownHosts(t)
+		env.writeKey(t, filepath.Join(env.home, ".ssh", "id_ed25519"), newTestKey(t, ""))
+
+		_, resolution, err := SSHAuth(SSHCredentials{}, testRepoURL, env.env)
+		if err != nil {
+			t.Fatalf("SSHAuth() error = %v, want the default key to still load", err)
+		}
+		entry := skippedWithPrefix(resolution, "ssh_config:")
+		if entry == "" {
+			t.Fatalf("Skipped = %q, want an ssh_config parse entry", resolution.Skipped)
+		}
+		if !strings.Contains(entry, systemSSHConfigLabel) {
+			t.Fatalf("skip entry = %q, want it to name %q", entry, systemSSHConfigLabel)
+		}
+		assertNoLeaks(t, entry, env.home)
+		if len(resolution.IdentityFiles) != 1 {
+			t.Fatalf("IdentityFiles = %q, want the default key", resolution.IdentityFiles)
+		}
+	})
+}
+
+func TestSSHAuthReportsAnAgentThatDoesNotAnswer(t *testing.T) {
+	env := newTestEnv(t)
+	env.writeKnownHosts(t)
+	socket := filepath.Join(env.home, "agent.sock")
+	env.setVar("SSH_AUTH_SOCK", socket)
+	env.env.AgentDial = func(string) (net.Conn, error) {
+		return nil, &net.OpError{
+			Op:   "dial",
+			Net:  "unix",
+			Addr: &net.UnixAddr{Name: socket, Net: "unix"},
+			Err:  errors.New("connect: connection refused"),
+		}
+	}
+
+	_, resolution, err := SSHAuth(SSHCredentials{}, testRepoURL, env.env)
+	if _, ok := errors.AsType[*NoCredentialsError](err); !ok {
+		t.Fatalf("SSHAuth() error = %v, want *NoCredentialsError", err)
+	}
+	if resolution.Agent {
+		t.Fatal("Agent = true, want false when the agent never answered")
+	}
+	if resolution.AgentSource != agentSourceEnv {
+		t.Fatalf("AgentSource = %q, want %q", resolution.AgentSource, agentSourceEnv)
+	}
+	if !strings.Contains(err.Error(), "the ssh-agent at "+agentSourceEnv+" did not answer") {
+		t.Fatalf("error = %q, want the unanswered-agent clause", err)
+	}
+	entry := skippedWithPrefix(resolution, "agent: ")
+	if entry == "" {
+		t.Fatalf("Skipped = %v, want an agent entry", resolution.Skipped)
+	}
+	if strings.Contains(entry, socket) || strings.Contains(entry, env.home) {
+		t.Fatalf("Skipped entry = %q, leaked the socket path", entry)
+	}
+}
+
+func TestSSHAuthReportsTheAgentsShareOfTheIdentityBudget(t *testing.T) {
+	env := newTestEnv(t)
+	agentKeys := make([]testKey, 0, maxIdentities-1)
+	for range maxIdentities - 1 {
+		agentKeys = append(agentKeys, newTestKey(t, ""))
+	}
+	env.setVar("SSH_AUTH_SOCK", startTestAgent(t, agentKeys...))
+	env.writeKnownHosts(t)
+	loaded := env.writeKey(t, filepath.Join(env.home, ".ssh", "id_ed25519"), newTestKey(t, ""))
+	env.writeKey(t, filepath.Join(env.home, ".ssh", "id_rsa"), newTestKey(t, ""))
+
+	_, resolution, err := SSHAuth(SSHCredentials{}, testRepoURL, env.env)
+	if err != nil {
+		t.Fatalf("SSHAuth() error = %v", err)
+	}
+	if resolution.AgentKeys != maxIdentities-1 {
+		t.Fatalf("AgentKeys = %d, want %d", resolution.AgentKeys, maxIdentities-1)
+	}
+	if !equalStrings(resolution.IdentityFiles, []string{loaded}) {
+		t.Fatalf("IdentityFiles = %v, want %v", resolution.IdentityFiles, []string{loaded})
+	}
+	want := fmt.Sprintf("id_rsa: not offered; the agent already offers %d of the %d identities sent per connection", maxIdentities-1, maxIdentities)
+	if !hasSkipped(resolution, want) {
+		t.Fatalf("Skipped = %v, want %q", resolution.Skipped, want)
+	}
 }
 
 func TestSSHAuthVerifiesHostKeys(t *testing.T) {
@@ -679,6 +845,43 @@ func clientConfig(t *testing.T, auth any) *ssh.ClientConfig {
 		t.Fatalf("ClientConfig() error = %v", err)
 	}
 	return config
+}
+
+// makeUnreadable strips every permission bit so opening the file fails. Root
+// ignores the mode, so tests that need the failure skip when running as root.
+func makeUnreadable(t *testing.T, path string) {
+	t.Helper()
+	if os.Geteuid() == 0 {
+		t.Skip("root reads a 0o000 file regardless of its mode")
+	}
+	if err := os.Chmod(path, 0o000); err != nil {
+		t.Fatalf("Chmod() error = %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(path, 0o600) })
+}
+
+// assertAmbientKnownHostsError pins the property the plan requires of every
+// ambient known_hosts failure: the file is named by its documented label and
+// the home directory never appears.
+func assertAmbientKnownHostsError(t *testing.T, err error, home string) {
+	t.Helper()
+	if err == nil {
+		t.Fatal("SSHAuth() error = nil, want a known_hosts error")
+	}
+	message := err.Error()
+	if !strings.Contains(message, userKnownHostsLabel) {
+		t.Fatalf("error = %q, want it to name %q", message, userKnownHostsLabel)
+	}
+	assertNoLeaks(t, message, home)
+}
+
+func skippedWithPrefix(resolution Resolution, prefix string) string {
+	for _, entry := range resolution.Skipped {
+		if strings.HasPrefix(entry, prefix) {
+			return entry
+		}
+	}
+	return ""
 }
 
 func hasSkipped(resolution Resolution, entry string) bool {

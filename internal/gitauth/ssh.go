@@ -30,7 +30,11 @@ const (
 	// that were discovered rather than configured.
 	ambientAuthName = "ssh-ambient-identities"
 
-	userSSHConfigLabel = "~/.ssh/config"
+	userSSHConfigLabel   = "~/.ssh/config"
+	systemSSHConfigLabel = "system ssh_config"
+
+	userKnownHostsLabel   = "~/.ssh/known_hosts"
+	systemKnownHostsLabel = "system ssh_known_hosts"
 )
 
 // defaultIdentityFiles are the ~/.ssh key files OpenSSH tries when no
@@ -272,11 +276,11 @@ func resolveHostWithPort(env Environment, alias string, port int, rec *recorder)
 func applyKnownHosts(helper *gitssh.HostKeyCallbackHelper, creds SSHCredentials, env Environment, host string, res *Resolution) error {
 	files := knownHostsFiles(creds, env)
 	if len(files) == 0 {
-		return fmt.Errorf("no known_hosts file: pass --git-known-hosts-file or create ~/.ssh/known_hosts (ssh-keyscan %s >> ~/.ssh/known_hosts)", host)
+		return fmt.Errorf("no known_hosts file: pass --git-known-hosts-file or create ~/.ssh/known_hosts (ssh-keyscan %s >> ~/.ssh/known_hosts)", keyscanHost(res.HostWithPort, host))
 	}
 	db, err := gitssh.NewKnownHostsDb(files...)
 	if err != nil {
-		return fmt.Errorf("load known_hosts: %w", err)
+		return fmt.Errorf("load known_hosts: %s", knownHostsErrorReason(err, creds, env))
 	}
 	helper.HostKeyCallback = db.HostKeyCallback()
 	helper.HostKeyAlgorithms = db.HostKeyAlgorithms(res.HostWithPort)
@@ -296,6 +300,47 @@ func knownHostsFiles(creds SSHCredentials, env Environment) []string {
 		files = []string{filepath.Join(env.HomeDir, ".ssh", "known_hosts"), env.SystemKnownHosts}
 	}
 	return existingOnly(files)
+}
+
+// keyscanHost names the host go-git actually dials, so the ssh-keyscan hint
+// stays runnable when an ssh_config Hostname directive rewrites the alias.
+func keyscanHost(hostWithPort, alias string) string {
+	if host, _, err := net.SplitHostPort(hostWithPort); err == nil && host != "" {
+		return host
+	}
+	return alias
+}
+
+// knownHostsErrorReason renders a known_hosts failure for a user-facing error.
+// An explicit --git-known-hosts-file path was typed by the operator, so it is
+// echoed back verbatim; the ambient list is built from the home directory, and
+// these strings land in PR comments, so every absolute path is replaced by the
+// label the documentation uses.
+func knownHostsErrorReason(err error, creds SSHCredentials, env Environment) string {
+	if strings.TrimSpace(creds.KnownHostsPath) != "" {
+		return err.Error()
+	}
+	reason := err.Error()
+	if pathErr, ok := errors.AsType[*fs.PathError](err); ok {
+		reason = knownHostsLabel(pathErr.Path, env) + ": " + pathErr.Err.Error()
+	}
+	for _, file := range knownHostsFiles(SSHCredentials{}, env) {
+		reason = strings.ReplaceAll(reason, file, knownHostsLabel(file, env))
+	}
+	return reason
+}
+
+// knownHostsLabel names an ambient known_hosts file without its directory.
+func knownHostsLabel(path string, env Environment) string {
+	clean := filepath.Clean(path)
+	switch clean {
+	case filepath.Clean(filepath.Join(env.HomeDir, ".ssh", "known_hosts")):
+		return userKnownHostsLabel
+	case filepath.Clean(env.SystemKnownHosts):
+		return systemKnownHostsLabel
+	default:
+		return filepath.Base(clean)
+	}
 }
 
 func existingOnly(files []string) []string {
@@ -377,7 +422,7 @@ func loadIdentityFile(path, name string, rec *recorder) (ssh.Signer, bool) {
 		return signer, true
 	}
 	if _, ok := errors.AsType[*ssh.PassphraseMissingError](err); ok {
-		rec.skip(name, "passphrase-protected; pass it with --git-ssh-key-file and --git-ssh-passphrase")
+		rec.skip(name, "passphrase-protected; pass it with --git-ssh-key-file (and --git-ssh-passphrase)")
 		return nil, false
 	}
 	rec.skip(name, "unusable private key")

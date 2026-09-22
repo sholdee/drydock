@@ -525,8 +525,9 @@ or formatted errors.
 order OpenSSH uses:
 
 1. `--git-ssh-key-file` (with `--git-ssh-passphrase` for an encrypted key).
-   When it is set, nothing else is tried — there is no fallback behind an
-   explicit key.
+   `--git-ssh-passphrase` applies only to that key; on its own it does nothing.
+   When `--git-ssh-key-file` is set, nothing else is tried — there is no
+   fallback behind an explicit key.
 2. The ssh-agent. The socket comes from an `IdentityAgent` directive in
    `~/.ssh/config` when one applies to the host, otherwise from
    `$SSH_AUTH_SOCK`. `IdentityAgent none` disables the agent entirely.
@@ -543,11 +544,13 @@ offers all of them; that is the agent's choice, not drydock's.
 
 Host keys are always verified. The known_hosts list is `--git-known-hosts-file`
 when set, otherwise `$SSH_KNOWN_HOSTS` (a path list), otherwise
-`~/.ssh/known_hosts` and `/etc/ssh/ssh_known_hosts`. Missing files in either
-list are skipped; only an explicit `--git-known-hosts-file` that cannot be read
-is an error. When no known_hosts file is found at all, the run fails with the
-`ssh-keyscan` command that fixes it. There is no flag that skips host key
-verification.
+`~/.ssh/known_hosts` and `/etc/ssh/ssh_known_hosts`. Files in the
+`$SSH_KNOWN_HOSTS` list and the defaults that do not exist are skipped; a
+missing `--git-known-hosts-file` is an error. A file that exists but cannot be
+read or parsed is an error, whether it came from `--git-known-hosts-file` or
+from the defaults. When no
+known_hosts file is found at all, the run fails with the `ssh-keyscan` command
+that fixes it. There is no flag that skips host key verification.
 
 drydock never prompts, so a passphrase-protected ambient key cannot be
 unlocked. Such a key is skipped, and its basename is named in the error when no
