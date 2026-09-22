@@ -340,13 +340,28 @@ func loadIdentityFiles(env Environment, host string, rec *recorder, res *Resolut
 			continue
 		}
 		if len(signers) >= budget {
-			rec.skip(name, fmt.Sprintf("not offered; at most %d identities are sent per connection", maxIdentities))
+			rec.skip(name, budgetSkipReason(res.AgentKeys))
 			continue
 		}
 		signers = append(signers, signer)
 		res.IdentityFiles = append(res.IdentityFiles, candidate)
 	}
 	return signers
+}
+
+// budgetSkipReason explains why a file identity is left out. The cap applies
+// only to the identities drydock loads: an agent holding more than
+// maxIdentities keys still offers all of them, so the reason names the agent's
+// share rather than claiming a cap drydock does not enforce on the agent.
+func budgetSkipReason(agentKeys int) string {
+	switch {
+	case agentKeys >= maxIdentities:
+		return fmt.Sprintf("not offered; the agent's keys already fill the %d-identity budget", maxIdentities)
+	case agentKeys > 0:
+		return fmt.Sprintf("not offered; the agent already offers %d of the %d identities sent per connection", agentKeys, maxIdentities)
+	default:
+		return fmt.Sprintf("not offered; at most %d identities are sent per connection", maxIdentities)
+	}
 }
 
 func loadIdentityFile(path, name string, rec *recorder) (ssh.Signer, bool) {

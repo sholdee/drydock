@@ -291,6 +291,29 @@ func TestSSHAuthCapsTheIdentityCount(t *testing.T) {
 	}
 }
 
+func TestSSHAuthReportsTheAgentFillingTheIdentityBudget(t *testing.T) {
+	env := newTestEnv(t)
+	agentKeys := make([]testKey, 0, maxIdentities+1)
+	for range maxIdentities + 1 {
+		agentKeys = append(agentKeys, newTestKey(t, ""))
+	}
+	env.setVar("SSH_AUTH_SOCK", startTestAgent(t, agentKeys...))
+	env.writeKnownHosts(t)
+	env.writeKey(t, filepath.Join(env.home, ".ssh", "id_ed25519"), newTestKey(t, ""))
+
+	_, resolution, err := SSHAuth(SSHCredentials{}, testRepoURL, env.env)
+	if err != nil {
+		t.Fatalf("SSHAuth() error = %v", err)
+	}
+	if len(resolution.IdentityFiles) != 0 {
+		t.Fatalf("IdentityFiles = %v, want none", resolution.IdentityFiles)
+	}
+	want := fmt.Sprintf("id_ed25519: not offered; the agent's keys already fill the %d-identity budget", maxIdentities)
+	if !hasSkipped(resolution, want) {
+		t.Fatalf("Skipped = %v, want %q", resolution.Skipped, want)
+	}
+}
+
 func TestSSHAuthReportsPassphraseProtectedIdentities(t *testing.T) {
 	env := newTestEnv(t)
 	env.writeKnownHosts(t)
