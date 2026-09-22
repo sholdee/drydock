@@ -43,7 +43,7 @@ which boundaries are intentionally runtime-offline.
 | Multi-source Applications | Use normal commands; add `--repo-map URL=PATH` when external Git sources are already checked out locally. |
 | Remote Helm or OCI charts | Let drydock fetch into its chart cache, or pre-populate the cache and use `--offline`. |
 | First-class OCI artifact sources (`oci://` + `path:`) | Use normal commands; drydock resolves the tag or constraint to a digest and renders the artifact content. Warm the cache online before `--offline` runs. |
-| Private Git, Helm, OCI artifact, or remote Kustomize sources | Pass explicit auth flags or local repo maps. drydock does not read ambient credential helpers. |
+| Private Git, Helm, OCI artifact, or remote Kustomize sources | Pass explicit auth flags or local repo maps. drydock does not read ambient credential helpers. Git SSH is the exception: the runner's ssh-agent and `~/.ssh` identities are used when no `--git-ssh-key-file` is given. Host keys are always verified against known_hosts. |
 | Kustomize with Helm charts | Use the native renderer. `kustomize.buildOptions: --enable-helm` is honored without shelling out to Kustomize. |
 | Config management plugins | Prefer native compatibility paths. Use trusted plugin policy plus `--enable-plugins` only when exec or container command simulation is truly needed. |
 | Pull request review | Use `diff apps`, `diff images`, or the GitHub PR action for markdown comments and artifacts. |

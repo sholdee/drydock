@@ -136,7 +136,8 @@ Supported:
 - Default Git clone/fetch into the Git cache for unmapped path sources missing
   from the local tree.
 - `--repo-map URL=PATH` path-source resolution for local external checkouts.
-- Explicit Git HTTPS bearer/basic auth and SSH key-file auth.
+- Explicit Git HTTPS bearer/basic auth; Git SSH auth from an explicit key file
+  or from the ssh-agent and `~/.ssh` identities.
 - Explicit HTTP(S) Helm bearer/basic auth.
 - Explicit HTTP(S) remote Kustomize bearer/basic auth.
 - Explicit Helm OCI registry config path plumbing.

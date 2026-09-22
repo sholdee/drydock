@@ -238,7 +238,8 @@ the current or baseline repository tree. Cache lifecycle commands are local
 filesystem operations only; they must not render, fetch, clone, or read
 credential flags.
 
-Authenticated source handling is explicit and non-interactive:
+Authenticated source handling is non-interactive, and explicit apart from SSH
+identity resolution:
 
 - Do not prompt for credentials.
 - Do not read ambient Git credential helpers.
@@ -393,7 +394,8 @@ remote refs, absolute paths, repo-root escapes, and symlinked graph entries.
 
 Kustomize `helmCharts` and Argo CD chart-only sources use drydock chart
 acquisition and Helm Go rendering. Remote Kustomize HTTP(S) file refs and Git
-refs use drydock's remote resource cache and explicit credentials.
+refs use drydock's remote resource cache and the same credentials as the
+corresponding source type, including Git SSH identity resolution.
 
 Helm rendering must use Go libraries by default. Preserve Argo CD semantics
 such as release name defaulting to Application name, passing destination
