@@ -174,8 +174,11 @@ Important boundaries:
   `oci://` repository URLs are rejected with a redacted error naming the
   flags. Per-registry credential maps and Docker config ingestion are
   recorded follow-ups, as are CLI flags for the extraction media-type
-  allowlist and size cap, and an OCI fixture for the Argo CD render parity
-  smoke (which needs an in-cluster registry).
+  allowlist and size cap. The Argo CD render parity smoke covers both OCI
+  source kinds against an in-cluster registry: an OCI artifact source, and an
+  OCI Helm chart source whose chart name is nested
+  (`parity/nested/parity-nested-chart`) under a scheme-less `host:port`
+  repository URL.
 - The `--oci-*` TLS flags (`--oci-ca-file`, `--oci-client-cert-file`,
   `--oci-client-key-file`, `--oci-insecure-skip-verify`) also apply to OCI
   Helm chart pulls, so a private chart registry behind a corporate CA is

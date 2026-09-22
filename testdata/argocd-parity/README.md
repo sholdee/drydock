@@ -213,3 +213,30 @@ appends it with `sudo` and removes its own marked line on exit; a
 pre-existing entry for that hostname skips `sudo` entirely. On macOS the
 bridge uses local port 5443 (AirPlay owns 5000) and certificate generation
 uses the LibreSSL-compatible config-file `subjectAltName` form.
+
+## OCI Helm chart fixture
+
+`oci-chart/parity-nested-chart/` is the chart source for
+`parity-oci-helm-nested`, the Application that pins a **nested** OCI chart
+name:
+
+- repoURL `argocd-parity-registry.argocd-parity.svc.cluster.local:5443` —
+  scheme-less `host:port`, which is what makes Argo CD classify the source as
+  Helm-OCI (`chart` set plus no scheme on `repoURL`)
+- chart `parity/nested/parity-nested-chart`, targetRevision `1.0.0`
+- `helm.valuesObject` overriding `fromValues`, so the rendered ConfigMap
+  proves values reached the nested chart and not just that it resolved
+
+The smoke harness pushes it with `scripts/argocd-parity-chart-push`, which
+packages the directory and uploads it through helm's own registry client:
+`oras push` cannot produce the helm config
+(`application/vnd.cncf.helm.config.v1+json`) and content
+(`application/vnd.cncf.helm.chart.content.v1.tar+gzip`) media types that both
+Argo CD's repo-server and drydock require, and the smoke must not depend on a
+`helm` binary. The manifest shape is verified before Argo CD ever sees the
+chart. drydock warms `--chart-cache-dir` — not `--oci-cache-dir`, which holds
+artifacts — with one non-offline build before the offline per-app loop runs.
+
+The chart lives outside `repo/` for the same reason the artifact content does:
+a classification regression that fell back to path resolution would render the
+git fixture instead of the chart and flip the comparison hard.
