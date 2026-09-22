@@ -117,12 +117,12 @@ func (puller HelmOCIPuller) Pull(ctx context.Context, request Request, opts Opti
 		return nil, fmt.Errorf("pulled OCI chart %s contains no chart archive", request.Name)
 	}
 
-	archivePath := filepath.Join(tempDir, request.Name+"-"+request.Version+".tgz")
+	archivePath := filepath.Join(tempDir, chartLeaf(request.Name)+"-"+request.Version+".tgz")
 	if err := os.WriteFile(archivePath, result.Chart.Data, 0o600); err != nil {
 		return nil, fmt.Errorf("write pulled OCI chart archive %s: %w", filepath.Base(archivePath), err)
 	}
 
-	matches, err := filepath.Glob(filepath.Join(tempDir, request.Name+"-*.tgz"))
+	matches, err := filepath.Glob(filepath.Join(tempDir, chartLeaf(request.Name)+"-*.tgz"))
 	if err != nil {
 		return nil, fmt.Errorf("find pulled OCI chart archive: %w", err)
 	}

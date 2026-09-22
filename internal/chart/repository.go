@@ -31,7 +31,7 @@ func (acquirer DefaultAcquirer) Acquire(ctx context.Context, request Request, op
 	default:
 		return Result{}, fmt.Errorf("unsupported chart repository kind %q", request.Kind)
 	}
-	if err := validateChartNamePathLeaf(request.Name); err != nil {
+	if err := validateChartName(request.Kind, request.Name); err != nil {
 		return Result{}, err
 	}
 	if request.Kind == RepositoryOCI {
@@ -50,7 +50,7 @@ func (acquirer DefaultAcquirer) Acquire(ctx context.Context, request Request, op
 	}
 	keyParent := cache.ChartKindRoot(opts.CacheDir, string(request.Kind))
 	keyDir := cache.ChartEntryPath(opts.CacheDir, string(request.Kind), key)
-	chartDir := filepath.Join(keyDir, request.Name)
+	chartDir := filepath.Join(keyDir, chartLeaf(request.Name))
 	if err := rejectForbiddenCachePath(keyDir, opts.ForbiddenRoots); err != nil {
 		return Result{}, err
 	}
@@ -66,8 +66,8 @@ func (acquirer DefaultAcquirer) Acquire(ctx context.Context, request Request, op
 	if err != nil {
 		return Result{}, err
 	}
-	if !chartArchiveContainsNamedChart(bytes.NewReader(archive), request.Name) {
-		return Result{}, fmt.Errorf("chart archive for %s %s does not contain %s/Chart.yaml", request.Name, request.Version, request.Name)
+	if !chartArchiveContainsNamedChart(bytes.NewReader(archive), chartLeaf(request.Name)) {
+		return Result{}, fmt.Errorf("chart archive for %s %s does not contain %s/Chart.yaml", request.Name, request.Version, chartLeaf(request.Name))
 	}
 
 	if err := rejectForbiddenCachePath(keyDir, opts.ForbiddenRoots); err != nil {
@@ -82,8 +82,8 @@ func (acquirer DefaultAcquirer) Acquire(ctx context.Context, request Request, op
 	}
 	defer func() { _ = os.RemoveAll(tmpKeyDir) }()
 
-	tmpChartDir := filepath.Join(tmpKeyDir, request.Name)
-	if err := extractChartArchive(bytes.NewReader(archive), tmpChartDir, request.Name); err != nil {
+	tmpChartDir := filepath.Join(tmpKeyDir, chartLeaf(request.Name))
+	if err := extractChartArchive(bytes.NewReader(archive), tmpChartDir, chartLeaf(request.Name)); err != nil {
 		return Result{}, err
 	}
 	if !chartDirReady(tmpChartDir) {
@@ -119,6 +119,33 @@ func (acquirer DefaultAcquirer) fetchChart(ctx context.Context, request Request,
 		return nil, fmt.Errorf("unsupported chart repository kind %q", request.Kind)
 	}
 }
+func validateChartName(kind RepositoryKind, name string) error {
+	if kind == RepositoryOCI {
+		return validateOCIChartName(name)
+	}
+	return validateChartNamePathLeaf(name)
+}
+func validateOCIChartName(name string) error {
+	if strings.TrimSpace(name) == "" {
+		return fmt.Errorf("chart name is required")
+	}
+	if strings.Contains(name, `\`) {
+		return fmt.Errorf("chart name %q must use \"/\" separators", name)
+	}
+	if filepath.IsAbs(name) || strings.HasPrefix(name, "/") {
+		return fmt.Errorf("chart name %q must be a relative path", name)
+	}
+	for segment := range strings.SplitSeq(name, "/") {
+		switch segment {
+		case "", ".", "..":
+			return fmt.Errorf("chart name %q must not contain empty, \".\" or \"..\" path segments", name)
+		}
+	}
+	if path.Clean(name) != name {
+		return fmt.Errorf("chart name %q must be clean", name)
+	}
+	return nil
+}
 func validateChartNamePathLeaf(name string) error {
 	if strings.TrimSpace(name) == "" {
 		return fmt.Errorf("chart name is required")
@@ -137,6 +164,9 @@ func validateChartNamePathLeaf(name string) error {
 		return fmt.Errorf("chart name %q must be clean", name)
 	}
 	return nil
+}
+func chartLeaf(name string) string {
+	return path.Base(name)
 }
 func chartDirReady(chartDir string) bool {
 	info, err := os.Lstat(filepath.Join(chartDir, "Chart.yaml"))

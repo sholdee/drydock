@@ -34,6 +34,24 @@ func TestOCIChartRefUsesDigestSeparator(t *testing.T) {
 	}
 }
 
+func TestOCIChartRefSupportsNestedChartNames(t *testing.T) {
+	tests := []struct {
+		name    string
+		version string
+		want    string
+	}{
+		{name: "semver tag", version: "2.5.31", want: "ghcr.io/opencost/charts/opencost:2.5.31"},
+		{name: "sha256 digest", version: "sha256:abc123", want: "ghcr.io/opencost/charts/opencost@sha256:abc123"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := ociChartRef("ghcr.io", "opencost/charts/opencost", tt.version); got != tt.want {
+				t.Fatalf("ociChartRef() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
 type fakeOCIPuller struct {
 	archive []byte
 	err     error
