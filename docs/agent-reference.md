@@ -244,7 +244,9 @@ Authenticated source handling is explicit and non-interactive:
 - Do not read ambient Git credential helpers.
 - Do not read ambient Helm registry config.
 - Git HTTPS auth supports bearer and basic auth; bearer wins.
-- Git SSH auth requires explicit key and known-hosts files.
+- Git SSH auth uses an explicit key file when given; otherwise the agent,
+  `~/.ssh/config` `IdentityFile`, and `~/.ssh/id_*` identities in that order.
+  known_hosts verification is always on; no prompting.
 - HTTP(S) Helm and remote Kustomize auth support bearer and basic auth; bearer
   wins.
 - OCI Helm auth is provided only through explicit registry config.

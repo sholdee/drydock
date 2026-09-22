@@ -172,7 +172,12 @@ Repository resolution and cache behavior are documented in
   escalation and failure.
 - Unmapped external Git repositories fetch into the Git cache by default and
   require cache hits or repo maps under `--offline`.
-- Credential use is explicit, non-interactive, and redacted.
+- Credential use is non-interactive and redacted. Credentials are explicit,
+  with one OpenSSH-style exception: when no `--git-ssh-key-file` is given, SSH
+  identities are resolved from the agent (`SSH_AUTH_SOCK`), `~/.ssh/config`
+  `IdentityFile` entries, and the default `~/.ssh/id_*` files, and host keys
+  are always verified against known_hosts. Git credential helpers, Helm
+  registry config, Docker config, and Argo CD repository state are never read.
 - Caches must stay outside selected repository trees and symlink-resolved
   equivalents.
 
