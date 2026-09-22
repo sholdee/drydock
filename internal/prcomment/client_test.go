@@ -529,6 +529,20 @@ func TestUpsertCapsPagination(t *testing.T) {
 	var baseURL string
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		rec.record(t, request)
+		if request.Method == http.MethodPost {
+			writer.WriteHeader(http.StatusCreated)
+			_, _ = io.WriteString(writer, `{"id": 1}`)
+			return
+		}
+		// Past a generous multiple of the cap, stop advertising a next page and
+		// serve a terminal page with no marker in it. A client that still honours
+		// maxListPages never gets here; one that lost the cap walks off the end of
+		// the chain, finds nothing, creates a comment, and fails the assertions
+		// below in milliseconds instead of hanging until the test timeout.
+		if rec.count(http.MethodGet) > maxListPages+10 {
+			_, _ = io.WriteString(writer, `[]`)
+			return
+		}
 		writer.Header().Set("Link", "<"+baseURL+"/repos/o/r/issues/4/comments?per_page=100&page=99>; rel=\"next\"")
 		_, _ = io.WriteString(writer, `[]`)
 	}))
