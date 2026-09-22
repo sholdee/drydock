@@ -482,10 +482,13 @@ drydock pr comment \
 | `--timeout` | `30s` | Overall request timeout |
 
 The token is read from the environment only, never from a flag value or any
-other argument. `--token-env` names the variable to read; when it is empty,
-`GITHUB_TOKEN` is used. When both are empty the command fails without printing
-any value. Tokens are redacted from error messages, and redirects are refused
-so a token never travels to another host.
+other argument. By default the command reads `DRYDOCK_GITHUB_TOKEN` and falls
+back to `GITHUB_TOKEN` when it is empty. Passing `--token-env` names the one
+variable to read and disables that fallback, so a misspelled or unset variable
+fails loudly instead of sending a GitHub-issued token to whatever `--api-url`
+names. When no token is found the command fails without printing any value.
+Tokens are redacted from error messages, and redirects are refused so a token
+never travels to another host.
 
 Stickiness comes from a hidden marker that the command writes as the first
 line of the body:
