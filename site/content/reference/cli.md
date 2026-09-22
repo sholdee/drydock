@@ -22,6 +22,7 @@ For task-oriented examples, start with [Getting started](/getting-started/),
 | Inspect cache roots and entries | `drydock cache path`, `drydock cache list -o json` |
 | Scaffold plugin policy | `drydock plugin-policy init --path .` |
 | Check plugin policy readiness | `drydock plugin-policy doctor --path .` |
+| Post or update a sticky pull request comment | `drydock pr comment --number 12 --message-id 12/drydock-diff --body-file comment.md` |
 
 All render-backed commands are runtime-offline: they do not contact live Argo
 CD or Kubernetes. Declared Git, HTTP Helm, OCI Helm, OCI artifact, and remote
@@ -456,3 +457,51 @@ excluded (policy-managed).
 
 For cache boundaries, offline behavior, and credentials, see
 [Source acquisition](/concepts/source-acquisition/).
+
+## CI Helper Commands
+
+`drydock pr comment` posts or updates a single sticky pull request comment on
+the host SCM. It is the one drydock command that calls a provider API; render,
+diff, test, get, and diag paths never do.
+
+```bash
+drydock pr comment \
+  --number 12 \
+  --message-id 12/drydock-diff \
+  --body-file comment.md
+```
+
+| Flag | Default | Behavior |
+| --- | --- | --- |
+| `--api-url` | `$GITHUB_API_URL`, else `https://api.github.com` | API base URL |
+| `--repository` | `$GITHUB_REPOSITORY` | Target repository as `owner/name` |
+| `--number` | required | Pull request number |
+| `--message-id` | required | Sticky comment identity |
+| `--body-file` | required | Comment body file; `-` reads standard input |
+| `--token-env` | `DRYDOCK_GITHUB_TOKEN` | Environment variable holding the token |
+| `--timeout` | `30s` | Overall request timeout |
+
+The token is read from the environment only, never from a flag value or any
+other argument. `--token-env` names the variable to read; when it is empty,
+`GITHUB_TOKEN` is used. When both are empty the command fails without printing
+any value. Tokens are redacted from error messages, and redirects are refused
+so a token never travels to another host.
+
+Stickiness comes from a hidden marker that the command writes as the first
+line of the body:
+
+```html
+<!-- add-pr-comment:12/drydock-diff -->
+```
+
+The command lists existing pull request comments, updates the first one whose
+body contains that marker regardless of author, and creates a new comment
+otherwise. The marker is byte-identical to the one written by
+`mshick/add-pr-comment`, so comments created by that action before drydock
+took over commenting keep being updated in place. Success prints one line,
+`created <url>` or `updated <url>`. Any failure exits with code 2.
+
+Because the issue-comment API is the same on GitHub, Forgejo, and Gitea, the
+command works on all three. Forgejo and Gitea Actions runners export
+`GITHUB_API_URL`, `GITHUB_REPOSITORY`, and `GITHUB_TOKEN`, so no extra flags
+are needed there; on Forgejo the token needs `write:issue`.
