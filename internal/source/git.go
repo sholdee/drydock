@@ -13,7 +13,6 @@ import (
 	git "github.com/go-git/go-git/v5"
 	"github.com/go-git/go-git/v5/plumbing"
 	"github.com/go-git/go-git/v5/plumbing/transport"
-	githttp "github.com/go-git/go-git/v5/plumbing/transport/http"
 
 	"github.com/sholdee/drydock/internal/cache"
 	"github.com/sholdee/drydock/internal/gitauth"
@@ -238,40 +237,20 @@ func pullGitRepository(ctx context.Context, worktree *git.Worktree, repoURL stri
 	return fmt.Errorf("fetch repository %s: %s", RedactURL(repoURL), redactGitError(err, repoURL, credentials))
 }
 
+// gitAuthMethod resolves the go-git auth method for repoURL. GitCredentials
+// mirrors gitauth.Credentials field for field, so the conversion is direct and
+// the compiler catches any drift between the two layouts.
 func gitAuthMethod(credentials GitCredentials, repoURL string) (transport.AuthMethod, bool, error) {
-	if isSSHGitURL(repoURL) {
-		auth, err := gitSSHAuthMethod(credentials, repoURL)
-		return auth, auth != nil, err
+	auth, hasAuth, _, err := gitauth.AuthMethod(gitauth.Credentials(credentials), repoURL, newSSHEnvironment())
+	if err != nil {
+		return nil, false, fmt.Errorf("git SSH auth for repository %s: %s", RedactURL(repoURL), redactGitCredentialError(err.Error(), credentials))
 	}
-	if strings.TrimSpace(credentials.BearerToken) != "" {
-		return &githttp.TokenAuth{Token: credentials.BearerToken}, true, nil
-	}
-	if strings.TrimSpace(credentials.Username) != "" || credentials.Password != "" {
-		return &githttp.BasicAuth{Username: credentials.Username, Password: credentials.Password}, true, nil
-	}
-	return nil, false, nil
+	return auth, hasAuth, nil
 }
 
 // newSSHEnvironment builds the ambient environment SSH identity resolution
 // reads. Tests replace it so they never touch the developer's ~/.ssh or agent.
 var newSSHEnvironment = gitauth.Default
-
-func gitSSHAuthMethod(credentials GitCredentials, repoURL string) (transport.AuthMethod, error) {
-	auth, _, err := gitauth.SSHAuth(gitauth.SSHCredentials{
-		PrivateKeyPath: credentials.SSHPrivateKeyPath,
-		PrivateKey:     credentials.SSHPrivateKey,
-		Passphrase:     credentials.SSHPassphrase,
-		KnownHostsPath: credentials.SSHKnownHostsPath,
-	}, repoURL, newSSHEnvironment())
-	if err != nil {
-		return nil, fmt.Errorf("git SSH auth for repository %s: %s", RedactURL(repoURL), redactGitCredentialError(err.Error(), credentials))
-	}
-	return auth, nil
-}
-
-func isSSHGitURL(repoURL string) bool {
-	return giturl.IsSSHURL(repoURL)
-}
 
 func isSCPStyleGitURL(repoURL string) bool {
 	return giturl.IsSCPStyle(repoURL)
