@@ -29,6 +29,7 @@ Current command groups are:
 - `diff apps`, `diff app`, `diff images`
 - `diag`
 - `cache path`, `cache list`, `cache prune`, `cache delete`
+- `pr comment`
 - `version`
 
 Shared flags cover repository paths, selectors, repo maps, explicit Git/chart
@@ -253,6 +254,9 @@ Authenticated source handling is explicit and non-interactive:
   run. Any TLS-implying `--oci-*` flag disables the loopback plain-HTTP
   default. Credentials in `oci://` repository URLs are rejected with a
   redacted error.
+- CI helper commands (`pr comment`) read only the documented `GITHUB_*`
+  variables and the token variables; nothing else in the binary reads a token
+  from the environment.
 
 Never print password, bearer token, SSH private key, SSH passphrase, remote
 resource credential, registry credential, or credential-bearing URL values.

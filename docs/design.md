@@ -25,6 +25,16 @@ intentional product boundaries:
 - CLI config management plugin execution and repo-server sidecar discovery.
 - Live provider APIs for ApplicationSet generators.
 
+CI helper commands are the one sanctioned exception to the no-provider-API
+rule. `drydock pr comment` posts or updates a sticky pull request comment
+through the host SCM's GitHub-compatible issue-comment API (GitHub, Forgejo,
+Gitea). Such commands never run on render, diff, test, get, or diag paths;
+they take their target from explicit flags or the `GITHUB_API_URL` and
+`GITHUB_REPOSITORY` variables CI runners export; they read the token from
+`DRYDOCK_GITHUB_TOKEN` or `GITHUB_TOKEN` only, never from argv; they refuse
+redirects and never print the token. Any further provider call still requires
+a design update.
+
 Future live-runtime work must remain explicitly opt-in and pass the design gate
 in `docs/reports/live-integration-design-gate.md`.
 

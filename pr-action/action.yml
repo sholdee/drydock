@@ -534,11 +534,14 @@ runs:
     - name: Comment rendered manifest diff
       if: ${{ github.event_name == 'pull_request' && steps.prepare.outputs.trusted-context == 'true' && steps.run.outputs.diff-comment == 'true' }}
       continue-on-error: ${{ inputs.comment-continue-on-error == 'true' }}
-      uses: mshick/add-pr-comment@ec328af66588ab8f77cdeb2c264f14aba45bbf59 # v3.12
-      with:
-        message-id: ${{ github.event.pull_request.number }}/drydock-diff
-        message-path: ${{ steps.run.outputs.diff-comment-path }}
-        repo-token: ${{ steps.app-token-client.outputs.token || steps.app-token-legacy.outputs.token || inputs.github-token || github.token }}
+      shell: bash
+      env:
+        DRYDOCK_BIN: ${{ inputs.install == 'true' && format('{0}/drydock', steps.setup.outputs.install-dir) || inputs.drydock-bin }}
+        DRYDOCK_COMMENT_MESSAGE_ID: ${{ github.event.pull_request.number }}/drydock-diff
+        DRYDOCK_COMMENT_PATH: ${{ steps.run.outputs.diff-comment-path }}
+        DRYDOCK_PR_NUMBER: ${{ github.event.pull_request.number }}
+        DRYDOCK_GITHUB_TOKEN: ${{ steps.app-token-client.outputs.token || steps.app-token-legacy.outputs.token || inputs.github-token || github.token }}
+      run: '"${GITHUB_ACTION_PATH}/comment.sh"'
 
     - name: Upload added images
       if: ${{ inputs.upload-artifacts == 'true' && steps.run.outputs.has-images == 'true' }}
@@ -551,8 +554,11 @@ runs:
     - name: Comment added images
       if: ${{ github.event_name == 'pull_request' && steps.prepare.outputs.trusted-context == 'true' && steps.run.outputs.images-comment == 'true' }}
       continue-on-error: ${{ inputs.comment-continue-on-error == 'true' }}
-      uses: mshick/add-pr-comment@ec328af66588ab8f77cdeb2c264f14aba45bbf59 # v3.12
-      with:
-        message-id: ${{ github.event.pull_request.number }}/drydock-images
-        message-path: ${{ steps.run.outputs.images-comment-path }}
-        repo-token: ${{ steps.app-token-client.outputs.token || steps.app-token-legacy.outputs.token || inputs.github-token || github.token }}
+      shell: bash
+      env:
+        DRYDOCK_BIN: ${{ inputs.install == 'true' && format('{0}/drydock', steps.setup.outputs.install-dir) || inputs.drydock-bin }}
+        DRYDOCK_COMMENT_MESSAGE_ID: ${{ github.event.pull_request.number }}/drydock-images
+        DRYDOCK_COMMENT_PATH: ${{ steps.run.outputs.images-comment-path }}
+        DRYDOCK_PR_NUMBER: ${{ github.event.pull_request.number }}
+        DRYDOCK_GITHUB_TOKEN: ${{ steps.app-token-client.outputs.token || steps.app-token-legacy.outputs.token || inputs.github-token || github.token }}
+      run: '"${GITHUB_ACTION_PATH}/comment.sh"'

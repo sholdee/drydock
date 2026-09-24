@@ -214,6 +214,31 @@ comments. Checkout uses `persist-credentials: false`, and the token is not
 exported to `drydock test`, `drydock diff`, cache contents, or uploaded
 artifacts.
 
+### Forgejo and Gitea
+
+Pull request comments are posted by the drydock binary itself, through the
+platform's GitHub-compatible issue-comment API, using the `GITHUB_API_URL` and
+`GITHUB_REPOSITORY` variables the runner exports plus the token. The token
+needs write access to pull requests; on Forgejo a `write:issue` scope is
+enough. The token reaches the binary through the environment only, never on
+the command line.
+
+Commenting needs a drydock release that includes the `pr comment` subcommand.
+A workflow pinning `version` to an older release fails the comment step with a
+message naming the `version` input; the job still passes unless you set
+`comment-continue-on-error: "false"`.
+
+The GitHub App inputs (`github-app-client-id`, `github-app-id`,
+`github-app-private-key`) are GitHub-only. They are backed by
+`actions/create-github-app-token`, which is not mirrored on
+`data.forgejo.org`, so setting them on Forgejo fails the job. Use
+`github-token` or the runner's default token there.
+
+Artifact upload (`upload-artifacts: "true"`) goes through
+`actions/upload-artifact`, which is mirrored on `data.forgejo.org`, but
+whether the platform's artifact API serves it is not verified here. Set
+`upload-artifacts: "false"` if uploads fail on your instance.
+
 ## Caching
 
 Binary caching is separate from drydock repository caches. Binary cache entries
@@ -528,7 +553,7 @@ rotation audit rather than relying on drydock diff for this class of change.
 | `comment-mode` | `both` | Pull request comment mode: `none`, `diff`, `images`, or `both`. |
 | `comment-empty` | `false` | Comment even when the corresponding diff is empty. |
 | `comment-continue-on-error` | `true` | Do not fail the workflow when pull request commenting fails. |
-| `diff-max-bytes` | `60000` | Maximum rendered diff comment bytes; larger values are clamped to GitHub's comment budget. |
+| `diff-max-bytes` | `60000` | Maximum rendered diff comment bytes; larger values are clamped to the 65536-character comment limit on GitHub; other platforms may allow more. |
 | `markdown-diagnostics` | unset | Diagnostics detail embedded in PR comments: `all` (errors open above the diffs, warnings collapsed below), `errors`, or `none`. Unset omits the flag and uses the drydock default (`all`). |
 | `upload-artifacts` | `true` | Upload full diff and image report artifacts when they are non-empty. |
 | `artifact-retention-days` | `30` | Retention days for uploaded artifacts. |

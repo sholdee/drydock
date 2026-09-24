@@ -26,7 +26,7 @@ func TestRootHelp(t *testing.T) {
 	}
 
 	got := out.String()
-	for _, want := range []string{"drydock", "diff", "build", "get", "cache", "diag", "plugin-policy", "version"} {
+	for _, want := range []string{"drydock", "diff", "build", "get", "cache", "diag", "plugin-policy", "Pull request helpers for CI", "version"} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("help output missing %q:\n%s", want, got)
 		}

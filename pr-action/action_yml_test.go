@@ -302,3 +302,78 @@ func TestActionNoPinnedActionRefsInPruneStep(t *testing.T) {
 		t.Fatalf("prune step must not use any external actions (nothing to SHA-pin):\n%s", pruneBlock)
 	}
 }
+
+// stepBlock returns the action.yml text from the named step up to the next
+// step, so assertions cannot leak across step boundaries.
+func stepBlock(t *testing.T, actionYAML, name string) string {
+	t.Helper()
+
+	start := strings.Index(actionYAML, "- name: "+name+"\n")
+	if start == -1 {
+		t.Fatalf("action.yml missing %q step", name)
+	}
+	next := strings.Index(actionYAML[start+1:], "\n    - name: ")
+	if next == -1 {
+		return actionYAML[start:]
+	}
+	return actionYAML[start : start+1+next]
+}
+
+// The two sticky comments are posted by the drydock binary, not by a
+// GitHub-only action: Forgejo runners resolve `uses:` against
+// data.forgejo.org, where mshick/add-pr-comment does not exist, and an
+// unmirrored action on a step whose `if:` is true fails the whole job.
+func TestActionCommentStepsPostThroughDrydockBinary(t *testing.T) {
+	actionYAML := loadActionYAML(t)
+
+	for _, forbidden := range []string{"mshick", "add-pr-comment"} {
+		if strings.Contains(actionYAML, forbidden) {
+			t.Fatalf("action.yml still references %q; comments must go through the drydock binary", forbidden)
+		}
+	}
+
+	diffIdx := strings.Index(actionYAML, "- name: Comment rendered manifest diff\n")
+	imagesIdx := strings.Index(actionYAML, "- name: Comment added images\n")
+	if diffIdx == -1 {
+		t.Fatal("action.yml missing 'Comment rendered manifest diff' step")
+	}
+	if imagesIdx == -1 {
+		t.Fatal("action.yml missing 'Comment added images' step")
+	}
+	if diffIdx >= imagesIdx {
+		t.Fatalf("images comment (pos %d) must follow the diff comment (pos %d)", imagesIdx, diffIdx)
+	}
+
+	for name, want := range map[string]struct {
+		messageID   string
+		commentPath string
+	}{
+		"Comment rendered manifest diff": {
+			messageID:   "${{ github.event.pull_request.number }}/drydock-diff",
+			commentPath: "${{ steps.run.outputs.diff-comment-path }}",
+		},
+		"Comment added images": {
+			messageID:   "${{ github.event.pull_request.number }}/drydock-images",
+			commentPath: "${{ steps.run.outputs.images-comment-path }}",
+		},
+	} {
+		block := stepBlock(t, actionYAML, name)
+		for _, needle := range []string{
+			"shell: bash",
+			`run: '"${GITHUB_ACTION_PATH}/comment.sh"'`,
+			"continue-on-error: ${{ inputs.comment-continue-on-error == 'true' }}",
+			"DRYDOCK_BIN: ${{ inputs.install == 'true' && format('{0}/drydock', steps.setup.outputs.install-dir) || inputs.drydock-bin }}",
+			"DRYDOCK_COMMENT_MESSAGE_ID: " + want.messageID,
+			"DRYDOCK_COMMENT_PATH: " + want.commentPath,
+			"DRYDOCK_PR_NUMBER: ${{ github.event.pull_request.number }}",
+			"DRYDOCK_GITHUB_TOKEN: ${{ steps.app-token-client.outputs.token || steps.app-token-legacy.outputs.token || inputs.github-token || github.token }}",
+		} {
+			if !strings.Contains(block, needle) {
+				t.Fatalf("%s step missing %q:\n%s", name, needle, block)
+			}
+		}
+		if strings.Contains(block, "\n      uses:") {
+			t.Fatalf("%s step must not use an external action:\n%s", name, block)
+		}
+	}
+}
