@@ -224,7 +224,11 @@ func TestSSHAuthReportsUnsupportedSSHConfigAndKeepsDefaults(t *testing.T) {
 	env := newTestEnv(t)
 	env.writeKnownHosts(t)
 	defaultKey := env.writeKey(t, filepath.Join(env.home, ".ssh", "id_ed25519"), newTestKey(t, ""))
-	env.writeSSHConfig(t, "Match host example.test", "  IdentityFile ~/.ssh/other_key")
+	// A bare Match line is rejected by every ssh_config release: v1.2.x reports
+	// "Match directive parsing is unsupported", v1.6+ "requires at least one
+	// criterion". A Match WITH criteria parses fine on v1.6+, so it is not a
+	// version-agnostic "unparsable" fixture.
+	env.writeSSHConfig(t, "Match", "  IdentityFile ~/.ssh/other_key")
 
 	_, resolution, err := SSHAuth(SSHCredentials{}, testRepoURL, env.env)
 	if err != nil {
@@ -525,7 +529,7 @@ func TestSSHAuthSystemFileErrorsUseLabels(t *testing.T) {
 	t.Run("an unparsable system ssh_config is named by its label", func(t *testing.T) {
 		env := newTestEnv(t)
 		systemConfig := filepath.Join(env.home, "system_ssh_config")
-		if err := os.WriteFile(systemConfig, []byte("Match host example.test\n  IdentityFile ~/.ssh/other\n"), 0o600); err != nil {
+		if err := os.WriteFile(systemConfig, []byte("Match\n  IdentityFile ~/.ssh/other\n"), 0o600); err != nil {
 			t.Fatalf("write system ssh_config: %v", err)
 		}
 		env.env.SystemSSHConfigPath = systemConfig
