@@ -1,5 +1,32 @@
 # Changelog
 
+## [0.3.1](https://github.com/sholdee/drydock/compare/v0.3.0...v0.3.1) (2026-09-24)
+
+
+### Features
+
+* **source:** use the ssh-agent and ~/.ssh identities when no key file is given ([#344](https://github.com/sholdee/drydock/issues/344)) ([198af8e](https://github.com/sholdee/drydock/commit/198af8e8fa3ed1c562d4bc1b4e8f57cdb2b310ee))
+
+
+### Bug Fixes
+
+* **chart:** accept nested OCI chart names like Argo CD ([#342](https://github.com/sholdee/drydock/issues/342)) ([93786f7](https://github.com/sholdee/drydock/commit/93786f70aa72f15d54278bc7e8911a67c1433f45))
+* **deps:** update module github.com/argoproj/argo-cd/v3 to v3.5.3 ([#333](https://github.com/sholdee/drydock/issues/333)) ([217a1ea](https://github.com/sholdee/drydock/commit/217a1ea8d84e8a04e2cbfb71dbaa76be2a64505b))
+* **deps:** update module github.com/bmatcuk/doublestar/v4 to v4.10.1 ([#341](https://github.com/sholdee/drydock/issues/341)) ([ba57b8a](https://github.com/sholdee/drydock/commit/ba57b8ac8d62aacbb70b0a62e21dcd0275d8b9ab))
+* **deps:** update module github.com/bmatcuk/doublestar/v4 to v4.10.2 ([#346](https://github.com/sholdee/drydock/issues/346)) ([5108d84](https://github.com/sholdee/drydock/commit/5108d849a73e6249bead1866ab9365c32d8ef258))
+* **deps:** update module github.com/kevinburke/ssh_config to v1.6.0 ([#347](https://github.com/sholdee/drydock/issues/347)) ([12b5b3a](https://github.com/sholdee/drydock/commit/12b5b3a92452ac32ced0a84ff2ac4dd123d6fd03))
+* **deps:** update module helm.sh/helm/v4 to v4.3.0 ([#331](https://github.com/sholdee/drydock/issues/331)) ([7a47ba1](https://github.com/sholdee/drydock/commit/7a47ba1bf8e5d6257ed53731a0860e36a9cf4c78))
+* **pr-action:** post sticky comments through drydock so Forgejo runners work ([#343](https://github.com/sholdee/drydock/issues/343)) ([bec595c](https://github.com/sholdee/drydock/commit/bec595ccc4e5648d3c1d36bfa3e6b6688597ccfe))
+
+
+### Miscellaneous Chores
+
+* **deps:** update dependency hugo to v0.166.0 ([#330](https://github.com/sholdee/drydock/issues/330)) ([c9581ea](https://github.com/sholdee/drydock/commit/c9581ea66dd2b3eb805bf2dfeee48f8e9555da1d))
+* **deps:** update dependency lefthook to v2.1.14 ([#334](https://github.com/sholdee/drydock/issues/334)) ([d12338f](https://github.com/sholdee/drydock/commit/d12338fc619173371c50bc6e742513910f1792a7))
+* **deps:** update dependency zizmor to v1.30.1 ([#328](https://github.com/sholdee/drydock/issues/328)) ([ce9ad24](https://github.com/sholdee/drydock/commit/ce9ad24f230c321551559bd497827083e8c29350))
+* **deps:** update golang:1.27.1 docker digest to 3680233 ([#340](https://github.com/sholdee/drydock/issues/340)) ([dfa5c39](https://github.com/sholdee/drydock/commit/dfa5c39b1517eada2c6af3b36968c16b75e334be))
+* **deps:** update golang:1.27.1 docker digest to f44f6e8 ([#332](https://github.com/sholdee/drydock/issues/332)) ([a57c4fd](https://github.com/sholdee/drydock/commit/a57c4fd914958beaf0da197f72a48a12795c843c))
+
 ## [0.3.0](https://github.com/sholdee/drydock/compare/v0.2.10...v0.3.0) (2026-09-11)
 
 
