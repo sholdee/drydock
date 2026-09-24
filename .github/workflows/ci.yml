@@ -97,7 +97,7 @@ jobs:
           if [[ "${EVENT_NAME}" == "pull_request" ]]; then
             changed_files="$(git diff --name-only "${BASE_SHA}...HEAD")"
 
-            if grep -Eq '^(\.github/workflows/argocd-parity-smoke\.yml|cmd/drydock/|internal/|scripts/argocd-parity-compare/|scripts/argocd-project-policy-smoke/|scripts/argocd-parity-smoke\.sh|testdata/argocd-parity/|testdata/argocd-project-policy/)' <<<"${changed_files}"; then
+            if grep -Eq '^(\.github/workflows/argocd-parity-smoke\.yml|cmd/drydock/|internal/|scripts/argocd-parity-chart-push/|scripts/argocd-parity-compare/|scripts/argocd-project-policy-smoke/|scripts/argocd-parity-smoke\.sh|testdata/argocd-parity/|testdata/argocd-project-policy/)' <<<"${changed_files}"; then
               run_smoke="true"
               reason="drydock source, parity harness, or parity fixture files changed"
             elif grep -qx 'go.mod' <<<"${changed_files}"; then
