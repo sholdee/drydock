@@ -24,20 +24,9 @@ type HelmOCIPuller struct {
 	Client *http.Client
 }
 
-//nolint:gocyclo // Coordinates validation, cache lookup, fetch, extraction, and publish in acquisition order.
 func (acquirer DefaultAcquirer) Acquire(ctx context.Context, request Request, opts Options) (Result, error) {
-	switch request.Kind {
-	case RepositoryHTTP, RepositoryOCI:
-	default:
-		return Result{}, fmt.Errorf("unsupported chart repository kind %q", request.Kind)
-	}
-	if err := validateChartName(request.Kind, request.Name); err != nil {
+	if err := validateRequest(request); err != nil {
 		return Result{}, err
-	}
-	if request.Kind == RepositoryOCI {
-		if _, err := parseOCIChartRepository(request.Repository); err != nil {
-			return Result{}, err
-		}
 	}
 	cacheDir, err := ResolveCacheDir(opts.CacheDir, opts.ForbiddenRoots)
 	if err != nil {
@@ -70,6 +59,31 @@ func (acquirer DefaultAcquirer) Acquire(ctx context.Context, request Request, op
 		return Result{}, fmt.Errorf("chart archive for %s %s does not contain %s/Chart.yaml", request.Name, request.Version, chartLeaf(request.Name))
 	}
 
+	return publishFetchedChart(request, opts, keyParent, keyDir, key, archive)
+}
+
+// validateRequest rejects unsupported kinds, unsafe chart names, and malformed
+// OCI repositories before any cache path is touched.
+func validateRequest(request Request) error {
+	switch request.Kind {
+	case RepositoryHTTP, RepositoryOCI:
+	default:
+		return fmt.Errorf("unsupported chart repository kind %q", request.Kind)
+	}
+	if err := validateChartName(request.Kind, request.Name); err != nil {
+		return err
+	}
+	if request.Kind == RepositoryOCI {
+		if _, err := parseOCIChartRepository(request.Repository); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// publishFetchedChart extracts a freshly fetched archive into a temporary
+// sibling directory and publishes it atomically into the cache entry.
+func publishFetchedChart(request Request, opts Options, keyParent, keyDir, key string, archive []byte) (Result, error) {
 	if err := rejectForbiddenCachePath(keyDir, opts.ForbiddenRoots); err != nil {
 		return Result{}, err
 	}
@@ -93,7 +107,7 @@ func (acquirer DefaultAcquirer) Acquire(ctx context.Context, request Request, op
 		return Result{}, err
 	}
 	writeChartMetadata(keyDir, key, request)
-	return resultFor(request, chartDir, false), nil
+	return resultFor(request, filepath.Join(keyDir, chartLeaf(request.Name)), false), nil
 }
 func writeChartMetadata(keyDir, key string, request Request) {
 	target := request.Repository

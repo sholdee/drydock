@@ -69,7 +69,6 @@ func isAuthError(err error) bool {
 	return false
 }
 
-//nolint:gocyclo // Keeps temporary credential isolation and OCI pull validation in one scoped flow.
 func (puller HelmOCIPuller) Pull(ctx context.Context, request Request, opts Options) ([]byte, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
@@ -85,19 +84,9 @@ func (puller HelmOCIPuller) Pull(ctx context.Context, request Request, opts Opti
 	}
 	defer func() { _ = os.RemoveAll(tempDir) }()
 
-	registryConfig := strings.TrimSpace(opts.Credentials.RegistryConfig)
-	if registryConfig == "" {
-		registryConfig = filepath.Join(tempDir, "registry-config.json")
-		if err := os.WriteFile(registryConfig, []byte("{}\n"), 0o600); err != nil {
-			return nil, fmt.Errorf("write temporary Helm registry config: %w", err)
-		}
-	}
-	dockerConfigDir := filepath.Join(tempDir, "docker")
-	if err := os.MkdirAll(dockerConfigDir, 0o700); err != nil {
-		return nil, fmt.Errorf("create temporary Docker config directory %s: %w", dockerConfigDir, err)
-	}
-	if err := os.WriteFile(filepath.Join(dockerConfigDir, "config.json"), []byte("{}\n"), 0o600); err != nil {
-		return nil, fmt.Errorf("write temporary Docker config: %w", err)
+	registryConfig, dockerConfigDir, err := prepareOCIRegistryConfig(tempDir, opts.Credentials.RegistryConfig)
+	if err != nil {
+		return nil, err
 	}
 
 	registryClient, err := newHelmOCIRegistryClient(puller.Client, registryConfig, dockerConfigDir)
@@ -117,8 +106,35 @@ func (puller HelmOCIPuller) Pull(ctx context.Context, request Request, opts Opti
 		return nil, fmt.Errorf("pulled OCI chart %s contains no chart archive", request.Name)
 	}
 
+	return storePulledOCIChart(tempDir, request, result.Chart.Data)
+}
+
+// prepareOCIRegistryConfig materializes the isolated credential surface for a
+// single pull: a Helm registry config (defaulted to an empty temporary file
+// when none was supplied) and an empty Docker config directory.
+func prepareOCIRegistryConfig(tempDir, credentialsRegistryConfig string) (string, string, error) {
+	registryConfig := strings.TrimSpace(credentialsRegistryConfig)
+	if registryConfig == "" {
+		registryConfig = filepath.Join(tempDir, "registry-config.json")
+		if err := os.WriteFile(registryConfig, []byte("{}\n"), 0o600); err != nil {
+			return "", "", fmt.Errorf("write temporary Helm registry config: %w", err)
+		}
+	}
+	dockerConfigDir := filepath.Join(tempDir, "docker")
+	if err := os.MkdirAll(dockerConfigDir, 0o700); err != nil {
+		return "", "", fmt.Errorf("create temporary Docker config directory %s: %w", dockerConfigDir, err)
+	}
+	if err := os.WriteFile(filepath.Join(dockerConfigDir, "config.json"), []byte("{}\n"), 0o600); err != nil {
+		return "", "", fmt.Errorf("write temporary Docker config: %w", err)
+	}
+	return registryConfig, dockerConfigDir, nil
+}
+
+// storePulledOCIChart writes the pulled archive into tempDir and reads back the
+// single matching archive, so the bytes returned are the ones on disk.
+func storePulledOCIChart(tempDir string, request Request, chartData []byte) ([]byte, error) {
 	archivePath := filepath.Join(tempDir, chartLeaf(request.Name)+"-"+request.Version+".tgz")
-	if err := os.WriteFile(archivePath, result.Chart.Data, 0o600); err != nil {
+	if err := os.WriteFile(archivePath, chartData, 0o600); err != nil {
 		return nil, fmt.Errorf("write pulled OCI chart archive %s: %w", filepath.Base(archivePath), err)
 	}
 
