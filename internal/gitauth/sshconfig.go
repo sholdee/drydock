@@ -108,9 +108,10 @@ func decodeSSHConfigFile(path string) (*ssh_config.Config, bool, error) {
 	return config, true, nil
 }
 
-// configGetAll converts the panic ssh_config v1.2.0 raises for the Match
-// directives it cannot evaluate into an error, so one unsupported stanza does
-// not take the process down.
+// configGetAll converts the panic older ssh_config releases (v1.2.x) raise for
+// Match directives they cannot evaluate into an error, so one unsupported
+// stanza does not take the process down. Newer releases parse Match, so the
+// recover is simply never hit there.
 func configGetAll(config *ssh_config.Config, host, key string) (values []string, err error) {
 	defer func() {
 		recovered := recover()
