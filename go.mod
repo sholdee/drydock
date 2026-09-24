@@ -14,7 +14,7 @@ require (
 	github.com/google/go-containerregistry v0.22.1
 	github.com/google/go-jsonnet v0.22.0
 	github.com/itchyny/gojq v0.12.19
-	github.com/kevinburke/ssh_config v1.2.0
+	github.com/kevinburke/ssh_config v1.6.0
 	github.com/opencontainers/image-spec v1.1.1
 	github.com/pmezard/go-difflib v1.0.1-0.20181226105442-5d4384ee4fb2
 	github.com/sirupsen/logrus v1.10.2
