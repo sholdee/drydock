@@ -111,6 +111,44 @@ look for render cache `hit`, `miss`, `store`, and `skipped` actions. Dirty
 inputs that are unsafe to hash, such as symlinks or unsupported file types,
 render normally and report a `skipped` event for the affected Application.
 
+## Use The Runner's SSH Identity
+
+Git SSH sources need no flags when the runner already has an SSH identity.
+drydock uses the ssh-agent, then `~/.ssh/config` `IdentityFile` entries, then
+`~/.ssh/id_ed25519`, `id_ecdsa`, and `id_rsa`. Host keys are always verified,
+so `known_hosts` must contain the host.
+
+Locally, load the key once and render normally:
+
+```bash
+ssh-add ~/.ssh/id_ed25519
+drydock test apps --path .
+```
+
+In GitHub Actions, start an agent before the action runs:
+
+```yaml
+- uses: webfactory/ssh-agent@v0.10.0
+  with:
+    ssh-private-key: ${{ secrets.DEPLOY_KEY }}
+- run: ssh-keyscan github.com >> ~/.ssh/known_hosts
+- uses: sholdee/drydock/pr-action@main
+```
+
+The action inherits `SSH_AUTH_SOCK` from the job, so no drydock input is
+needed.
+
+On a Forgejo or self-hosted runner, a key in the runner's `~/.ssh`, or an
+`IdentityFile` entry in its `~/.ssh/config`, is picked up the same way. Add the
+host to the runner's `~/.ssh/known_hosts` once:
+
+```bash
+ssh-keyscan code.example.com >> ~/.ssh/known_hosts
+```
+
+Passphrase-protected keys are skipped — drydock never prompts. Pass those with
+`--git-ssh-key-file` and `--git-ssh-passphrase`.
+
 ## Pass Explicit Credentials
 
 ```bash
@@ -123,6 +161,7 @@ drydock test apps --path . \
 drydock test apps --path . --registry-config ./ci/registry-config.json
 ```
 
-Credential handling is explicit and non-interactive. Complete cache, auth,
+Explicit credentials win: `--git-ssh-key-file` disables the ambient identity
+lookup entirely. Credential handling is non-interactive. Complete cache, auth,
 Helm, Git, and remote Kustomize behavior is in
 [source acquisition](/concepts/source-acquisition/).

@@ -2,6 +2,11 @@ package remote
 
 import (
 	"context"
+	"crypto/ed25519"
+	"crypto/rand"
+	"encoding/pem"
+	"errors"
+	"net"
 	"os"
 	"path/filepath"
 	"strings"
@@ -11,7 +16,11 @@ import (
 	git "github.com/go-git/go-git/v5"
 	"github.com/go-git/go-git/v5/plumbing"
 	"github.com/go-git/go-git/v5/plumbing/object"
+	"github.com/go-git/go-git/v5/plumbing/transport"
+	gitssh "github.com/go-git/go-git/v5/plumbing/transport/ssh"
 	cachepkg "github.com/sholdee/drydock/internal/cache"
+	"github.com/sholdee/drydock/internal/gitauth"
+	cryptossh "golang.org/x/crypto/ssh"
 )
 
 func TestNormalizeGitRepoCacheURLDoesNotDoubleAppendGitSuffix(t *testing.T) {
@@ -373,4 +382,176 @@ func commitRemoteGitFixtureFile(t *testing.T, repo *git.Repository, worktree *gi
 		t.Fatalf("CommitObject() error = %v", err)
 	}
 	return hash
+}
+
+func TestRemoteGitSSHAuthReportsNoUsableIdentity(t *testing.T) {
+	useSSHEnvironment(t, syntheticSSHEnvironment(t, t.TempDir()))
+
+	_, _, err := gitAuthMethod(GitCredentials{SSHKnownHostsPath: writeEmptyKnownHostsFile(t)}, "ssh://git@example.com/org/repo.git")
+	if err == nil {
+		t.Fatal("gitAuthMethod() error = nil, want no-credentials error")
+	}
+	for _, want := range []string{
+		"git SSH",
+		"no SSH credentials: --git-ssh-key-file is not set",
+		"no ssh-agent",
+		"ssh://example.com/org/repo.git",
+	} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("gitAuthMethod() error = %q, want %q", err, want)
+		}
+	}
+}
+
+func TestRemoteGitSSHAuthRequiresKnownHostsFile(t *testing.T) {
+	useSSHEnvironment(t, syntheticSSHEnvironment(t, t.TempDir()))
+
+	_, _, err := gitAuthMethod(GitCredentials{SSHPrivateKeyPath: writeSSHPrivateKey(t, "")}, "ssh://git@example.com/org/repo.git")
+	if err == nil {
+		t.Fatal("gitAuthMethod() error = nil, want missing known_hosts error")
+	}
+	if !strings.Contains(err.Error(), "ssh-keyscan example.com >> ~/.ssh/known_hosts") {
+		t.Fatalf("gitAuthMethod() error = %q, want ssh-keyscan hint", err)
+	}
+}
+
+func TestRemoteGitSSHAuthUsesAmbientIdentityWithoutKeyFile(t *testing.T) {
+	home := writeSSHHome(t, "example.com")
+	useSSHEnvironment(t, syntheticSSHEnvironment(t, home))
+
+	auth, hasAuth, err := gitAuthMethod(GitCredentials{}, "ssh://git@example.com/org/repo.git")
+	if err != nil {
+		t.Fatalf("gitAuthMethod() error = %v", err)
+	}
+	if !hasAuth {
+		t.Fatal("hasAuth = false, want true")
+	}
+	if auth.Name() != "ssh-ambient-identities" {
+		t.Fatalf("auth.Name() = %q, want ssh-ambient-identities", auth.Name())
+	}
+	assertVerifiesHostKeys(t, auth)
+}
+
+func TestRemoteGitSSHAuthExplicitKeyVerifiesHostKeys(t *testing.T) {
+	home := writeSSHHome(t, "example.com")
+	useSSHEnvironment(t, syntheticSSHEnvironment(t, home))
+
+	auth, _, err := gitAuthMethod(GitCredentials{
+		SSHPrivateKeyPath: writeSSHPrivateKey(t, ""),
+		SSHKnownHostsPath: filepath.Join(home, ".ssh", "known_hosts"),
+	}, "ssh://git@example.com/org/repo.git")
+	if err != nil {
+		t.Fatalf("gitAuthMethod() error = %v", err)
+	}
+	if _, ok := auth.(*gitssh.PublicKeys); !ok {
+		t.Fatalf("auth = %T, want *ssh.PublicKeys", auth)
+	}
+	assertVerifiesHostKeys(t, auth)
+}
+
+func writeSSHPrivateKey(t *testing.T, passphrase string) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "id_ed25519")
+	writeSSHPrivateKeyAt(t, path, passphrase)
+	return path
+}
+
+func writeSSHPrivateKeyAt(t *testing.T, path, passphrase string) {
+	t.Helper()
+	_, privateKey, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatalf("GenerateKey() error = %v", err)
+	}
+	var block *pem.Block
+	if passphrase == "" {
+		block, err = cryptossh.MarshalPrivateKey(privateKey, "test@example.com")
+	} else {
+		block, err = cryptossh.MarshalPrivateKeyWithPassphrase(privateKey, "test@example.com", []byte(passphrase))
+	}
+	if err != nil {
+		t.Fatalf("MarshalPrivateKey() error = %v", err)
+	}
+	if err := os.WriteFile(path, pem.EncodeToMemory(block), 0o600); err != nil {
+		t.Fatalf("write private key: %v", err)
+	}
+}
+
+func writeEmptyKnownHostsFile(t *testing.T) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "known_hosts")
+	if err := os.WriteFile(path, []byte{}, 0o600); err != nil {
+		t.Fatalf("write known_hosts: %v", err)
+	}
+	return path
+}
+
+// writeSSHHome builds a synthetic home directory holding an unencrypted
+// ~/.ssh/id_ed25519 and a ~/.ssh/known_hosts entry for host.
+func writeSSHHome(t *testing.T, host string) string {
+	t.Helper()
+	home := t.TempDir()
+	sshDir := filepath.Join(home, ".ssh")
+	if err := os.MkdirAll(sshDir, 0o700); err != nil {
+		t.Fatalf("create .ssh: %v", err)
+	}
+	writeSSHPrivateKeyAt(t, filepath.Join(sshDir, "id_ed25519"), "")
+	writeKnownHostsEntry(t, filepath.Join(sshDir, "known_hosts"), host)
+	return home
+}
+
+func writeKnownHostsEntry(t *testing.T, path, host string) {
+	t.Helper()
+	publicKey, _, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatalf("GenerateKey() error = %v", err)
+	}
+	hostKey, err := cryptossh.NewPublicKey(publicKey)
+	if err != nil {
+		t.Fatalf("NewPublicKey() error = %v", err)
+	}
+	line := host + " " + strings.TrimSpace(string(cryptossh.MarshalAuthorizedKey(hostKey))) + "\n"
+	if err := os.WriteFile(path, []byte(line), 0o600); err != nil {
+		t.Fatalf("write known_hosts: %v", err)
+	}
+}
+
+// syntheticSSHEnvironment isolates SSH identity resolution from the developer's
+// real ~/.ssh, /etc/ssh, and ssh-agent.
+func syntheticSSHEnvironment(t *testing.T, home string) gitauth.Environment {
+	t.Helper()
+	missing := filepath.Join(t.TempDir(), "missing")
+	return gitauth.Environment{
+		LookupEnv:           func(string) (string, bool) { return "", false },
+		HomeDir:             home,
+		SystemSSHConfigPath: missing,
+		SystemKnownHosts:    missing,
+		AgentDial:           func(string) (net.Conn, error) { return nil, errors.New("no agent") },
+	}
+}
+
+func useSSHEnvironment(t *testing.T, env gitauth.Environment) {
+	t.Helper()
+	previous := newSSHEnvironment
+	newSSHEnvironment = func() gitauth.Environment { return env }
+	t.Cleanup(func() { newSSHEnvironment = previous })
+}
+
+func assertVerifiesHostKeys(t *testing.T, auth transport.AuthMethod) {
+	t.Helper()
+	configurer, ok := auth.(interface {
+		ClientConfig() (*cryptossh.ClientConfig, error)
+	})
+	if !ok {
+		t.Fatalf("auth = %T, want an ssh client config builder", auth)
+	}
+	config, err := configurer.ClientConfig()
+	if err != nil {
+		t.Fatalf("ClientConfig() error = %v", err)
+	}
+	if config.HostKeyCallback == nil {
+		t.Fatal("HostKeyCallback = nil, want known_hosts callback")
+	}
+	if len(config.HostKeyAlgorithms) == 0 {
+		t.Fatal("HostKeyAlgorithms is empty, want algorithms from known_hosts")
+	}
 }

@@ -136,7 +136,8 @@ Supported:
 - Default Git clone/fetch into the Git cache for unmapped path sources missing
   from the local tree.
 - `--repo-map URL=PATH` path-source resolution for local external checkouts.
-- Explicit Git HTTPS bearer/basic auth and SSH key-file auth.
+- Explicit Git HTTPS bearer/basic auth; Git SSH auth from an explicit key file
+  or from the ssh-agent and `~/.ssh` identities.
 - Explicit HTTP(S) Helm bearer/basic auth.
 - Explicit HTTP(S) remote Kustomize bearer/basic auth.
 - Explicit Helm OCI registry config path plumbing.
@@ -200,7 +201,9 @@ Important boundaries:
   repository-alias, or otherwise unresolved dependencies must be available
   under `charts/` and fail closed when missing.
 - Ambient Git credential helpers, ambient Helm registry config, and secret
-  credential fields from discovered repository Secrets are not read.
+  credential fields from discovered repository Secrets are not read. SSH
+  identities are the exception: without `--git-ssh-key-file`, the agent and
+  `~/.ssh` identities are used, with known_hosts verification.
 - Cache lifecycle commands are local filesystem operations only; they do not
   render, fetch, read credential flags, or retry failed acquisitions.
 

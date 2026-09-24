@@ -7,7 +7,10 @@ aliases:
 drydock renders from local files and explicit source caches. It may fetch
 declared Git, HTTP Helm, OCI Helm, OCI artifact, and remote Kustomize inputs
 unless `--offline` is set. It does not read ambient Git credential helpers,
-ambient Helm registry config, or live Argo CD repository state.
+ambient Helm registry config, Docker config, or live Argo CD repository state.
+Git SSH identities are the one exception: when no `--git-ssh-key-file` is
+given, drydock resolves one the way OpenSSH does and always verifies host keys.
+See [SSH Identity Resolution](#ssh-identity-resolution).
 
 ## Resolution Order
 
@@ -490,15 +493,18 @@ cached entries.
 
 ## Credentials
 
-Credentials are explicit and non-interactive. Drydock does not read ambient Git
-credential helpers, ambient Helm registry config, credential fields from
-discovered repository Secrets, or live Argo CD repository state.
+Credentials are non-interactive: drydock never prompts. It does not read
+ambient Git credential helpers, ambient Helm registry config, Docker config,
+credential fields from discovered repository Secrets, or live Argo CD
+repository state. Credentials are explicit, with one OpenSSH-style exception —
+Git SSH identities, described in
+[SSH Identity Resolution](#ssh-identity-resolution).
 
 | Source | Auth form | Flags |
 | --- | --- | --- |
 | Git HTTPS | Bearer token | `--git-bearer-token TOKEN` |
 | Git HTTPS | Basic auth | `--git-username USER`, `--git-password PASS` |
-| Git SSH | SSH key | `--git-ssh-key-file PATH`, `--git-known-hosts-file PATH`, `--git-ssh-passphrase PASSPHRASE` |
+| Git SSH | SSH key or ambient identity | `--git-ssh-key-file PATH` (optional; see [SSH Identity Resolution](#ssh-identity-resolution)), `--git-known-hosts-file PATH` (optional), `--git-ssh-passphrase PASSPHRASE` |
 | HTTP(S) Helm | Bearer token | `--helm-bearer-token TOKEN` |
 | HTTP(S) Helm | Basic auth | `--helm-username USER`, `--helm-password PASS` |
 | OCI Helm | Registry config | `--registry-config PATH` |
@@ -510,8 +516,9 @@ discovered repository Secrets, or live Argo CD repository state.
 
 For Git HTTPS, HTTP(S) Helm, and HTTP(S) remote Kustomize, bearer auth wins
 when both bearer and basic credentials are provided. Kustomize Git remote refs
-reuse the explicit `--git-*` credentials, but use the remote Kustomize cache
-and `--offline` or `--refresh-remotes` behavior.
+reuse the `--git-*` credentials, including the SSH identity resolution below,
+but use the remote Kustomize cache and `--offline` or `--refresh-remotes`
+behavior.
 
 Supported SSH URL forms are:
 
@@ -524,6 +531,69 @@ Supported SSH URL forms are:
 Passwords, bearer tokens, SSH private keys, SSH passphrases, registry
 credential values, and credential-bearing URLs are never printed in diagnostics
 or formatted errors.
+
+## SSH Identity Resolution
+
+`--git-ssh-key-file` is optional. drydock resolves a Git SSH identity in the
+order OpenSSH uses:
+
+1. `--git-ssh-key-file` (with `--git-ssh-passphrase` for an encrypted key).
+   `--git-ssh-passphrase` applies only to that key; on its own it does nothing.
+   When `--git-ssh-key-file` is set, nothing else is tried — there is no
+   fallback behind an explicit key.
+2. The ssh-agent. The socket comes from an `IdentityAgent` directive in
+   `~/.ssh/config` when one applies to the host, otherwise from
+   `$SSH_AUTH_SOCK`. `IdentityAgent none` disables the agent entirely.
+3. `IdentityFile` entries in `~/.ssh/config` for the host.
+4. The default identities `~/.ssh/id_ed25519`, `~/.ssh/id_ecdsa`, and
+   `~/.ssh/id_rsa`.
+
+Agent keys and file identities are offered together, agent keys first. A file
+identity whose public key the agent already offers is dropped. File identities
+are only loaded up to six total including the agent's keys — the OpenSSH
+`MaxAuthTries` default — so a large `~/.ssh` cannot exhaust the server's auth
+attempts before a usable key is reached. An agent that holds more than six keys
+offers all of them; that is the agent's choice, not drydock's.
+
+Host keys are always verified. The known_hosts list is `--git-known-hosts-file`
+when set, otherwise `$SSH_KNOWN_HOSTS` (a path list), otherwise
+`~/.ssh/known_hosts` and `/etc/ssh/ssh_known_hosts`. Files in the
+`$SSH_KNOWN_HOSTS` list and the defaults that do not exist are skipped; a
+missing `--git-known-hosts-file` is an error. A file that exists but cannot be
+read or parsed is an error, whether it came from `--git-known-hosts-file` or
+from the defaults. When no
+known_hosts file is found at all, the run fails with the `ssh-keyscan` command
+that fixes it. There is no flag that skips host key verification.
+
+drydock never prompts, so a passphrase-protected ambient key cannot be
+unlocked. Such a key is skipped, and its basename is named in the error when no
+other identity works. Pass it explicitly with `--git-ssh-key-file` and
+`--git-ssh-passphrase`.
+
+Only `Hostname`, `Port`, `IdentityAgent`, and `IdentityFile` are read from
+`~/.ssh/config` and `/etc/ssh/ssh_config`; other directives, including
+`ProxyCommand`, are ignored. `Match` blocks are not supported: a file whose
+stanza for the host contains one contributes no directives for that host, and
+the reason is reported in the error when no identity is found. The default
+identities are still tried.
+
+### SSH Identity Exposure
+
+An Application's `repoURL` is repository content. On a runner that has an agent
+socket or a usable `~/.ssh` identity, a pull request that adds an Application
+with an `ssh://` `repoURL` can make drydock attempt an authenticated SSH
+handshake against a host the pull request chose.
+
+Host keys are verified during key exchange, before any identity is offered, so
+a host that is not in the run's known_hosts files gets a dropped connection and
+no public key. The residual surface is the hosts already listed in those
+known_hosts files; against those, public-key authentication reveals only the
+public key, never the private key or the passphrase.
+
+Passing `--git-ssh-key-file` disables the ambient lookup entirely, so only that
+one key is offered, but it does not restrict which hosts a run may dial. To
+bound that, give the run a `--git-known-hosts-file` that lists only the hosts it
+is allowed to reach, or start the agent only for the steps that need it.
 
 ## Cache Lifecycle Boundary
 

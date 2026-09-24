@@ -71,8 +71,9 @@ when the user-facing task requires it.
 - Do not print Secret manifest values, repository credentials, tokens, SSH
   private keys, passphrases, registry credentials, or credential-bearing URLs.
 - Do not read ambient Git credential helpers, ambient Helm registry config, or
-  discovered repository Secret credential fields unless a future design update
-  explicitly allows it.
+  discovered repository Secret credential fields. SSH identity resolution from
+  the agent and `~/.ssh` is the one sanctioned ambient read (see
+  `docs/design.md`).
 - Do not expose `internal/...` package types through `pkg/drydock`.
 - Do not use Flux ownership rules. Changed-only behavior is Argo
   Application-aware; overlapping Applications are not collapsed to one owner.

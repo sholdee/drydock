@@ -11,10 +11,9 @@ import (
 	git "github.com/go-git/go-git/v5"
 	"github.com/go-git/go-git/v5/plumbing"
 	"github.com/go-git/go-git/v5/plumbing/transport"
-	githttp "github.com/go-git/go-git/v5/plumbing/transport/http"
-	gitssh "github.com/go-git/go-git/v5/plumbing/transport/ssh"
 
 	"github.com/sholdee/drydock/internal/cache"
+	"github.com/sholdee/drydock/internal/gitauth"
 	"github.com/sholdee/drydock/internal/giturl"
 )
 
@@ -180,56 +179,24 @@ func pullGitRepository(ctx context.Context, worktree *git.Worktree, repoURL stri
 	return fmt.Errorf("fetch remote Git repository %s: %s", RedactGitRepoURL(repoURL), redactGitError(err, repoURL, credentials))
 }
 
+// gitAuthMethod resolves the go-git auth method for a remote Kustomize Git
+// ref. The shared builder lives in gitauth; this package's GitCredentials is a
+// field-for-field mirror of gitauth.Credentials, which is what makes the
+// struct conversion below legal (and compile-checked against drift).
 func gitAuthMethod(credentials GitCredentials, repoURL string) (transport.AuthMethod, bool, error) {
-	if isSSHGitURL(repoURL) {
-		auth, err := gitSSHAuthMethod(credentials, repoURL)
-		return auth, auth != nil, err
+	auth, hasAuth, _, err := gitauth.AuthMethod(gitauth.Credentials(credentials), repoURL, newSSHEnvironment())
+	if err != nil {
+		return nil, false, fmt.Errorf("git SSH auth for remote Git repository %s: %s", RedactGitRepoURL(repoURL), redactGitCredentialError(err.Error(), credentials))
 	}
-	if strings.TrimSpace(credentials.BearerToken) != "" {
-		return &githttp.TokenAuth{Token: credentials.BearerToken}, true, nil
-	}
-	if strings.TrimSpace(credentials.Username) != "" || credentials.Password != "" {
-		return &githttp.BasicAuth{Username: credentials.Username, Password: credentials.Password}, true, nil
-	}
-	return nil, false, nil
+	return auth, hasAuth, nil
 }
 
-func gitSSHAuthMethod(credentials GitCredentials, repoURL string) (transport.AuthMethod, error) {
-	if strings.TrimSpace(credentials.SSHPrivateKeyPath) == "" && strings.TrimSpace(credentials.SSHPrivateKey) == "" {
-		return nil, fmt.Errorf("git SSH private key file is required for remote Git repository %s", RedactGitRepoURL(repoURL))
-	}
-	if strings.TrimSpace(credentials.SSHKnownHostsPath) == "" {
-		return nil, fmt.Errorf("git SSH known_hosts file is required for remote Git repository %s", RedactGitRepoURL(repoURL))
-	}
-	user := sshGitUser(repoURL)
-	var auth *gitssh.PublicKeys
-	var err error
-	if strings.TrimSpace(credentials.SSHPrivateKey) != "" {
-		auth, err = gitssh.NewPublicKeys(user, []byte(credentials.SSHPrivateKey), credentials.SSHPassphrase)
-	} else {
-		auth, err = gitssh.NewPublicKeysFromFile(user, credentials.SSHPrivateKeyPath, credentials.SSHPassphrase)
-	}
-	if err != nil {
-		return nil, fmt.Errorf("load git SSH private key for remote Git repository %s: %s", RedactGitRepoURL(repoURL), redactGitCredentialError(err.Error(), credentials))
-	}
-	callback, err := gitssh.NewKnownHostsCallback(credentials.SSHKnownHostsPath)
-	if err != nil {
-		return nil, fmt.Errorf("load git SSH known_hosts file for remote Git repository %s: %s", RedactGitRepoURL(repoURL), redactGitCredentialError(err.Error(), credentials))
-	}
-	auth.HostKeyCallback = callback
-	return auth, nil
-}
-
-func isSSHGitURL(repoURL string) bool {
-	return giturl.IsSSHURL(repoURL)
-}
+// newSSHEnvironment builds the ambient environment SSH identity resolution
+// reads. Tests replace it so they never touch the developer's ~/.ssh or agent.
+var newSSHEnvironment = gitauth.Default
 
 func isSCPStyleGitURL(repoURL string) bool {
 	return giturl.IsSCPStyle(repoURL)
-}
-
-func sshGitUser(repoURL string) string {
-	return giturl.SSHUser(repoURL)
 }
 
 func checkoutGitRevision(repo *git.Repository, worktree *git.Worktree, revision string) (string, error) {

@@ -15,7 +15,12 @@ type RepoMap struct {
 	Path string
 }
 
-// GitCredentials supplies credentials for Git source acquisition.
+// GitCredentials supplies credentials for Git source acquisition. When no SSH
+// private key is set, SSH sources fall back to the ssh-agent, the ~/.ssh/config
+// IdentityFile entries for the host, and the default ~/.ssh/id_* keys, in that
+// order. Host keys are always verified against known_hosts: the explicit file
+// when set, otherwise $SSH_KNOWN_HOSTS, ~/.ssh/known_hosts, and
+// /etc/ssh/ssh_known_hosts.
 type GitCredentials struct {
 	Username          string
 	Password          string

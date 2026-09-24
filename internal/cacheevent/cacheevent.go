@@ -310,7 +310,7 @@ func (c *variantCollector) addURLVariants(prefix string, rawURL string) {
 	for _, base := range parsedURLBases(*parsed) {
 		c.addURLComponentCombinations(prefix, base)
 	}
-	c.addUserInfoVariants(parsed.User)
+	c.addUserInfoVariants(parsed.User, parsed.Scheme)
 	c.add(parsed.RawQuery)
 	c.addRawQueryValues(parsed.RawQuery)
 	c.add(parsed.Fragment)
@@ -347,7 +347,12 @@ func (c *variantCollector) addURLComponentCombinations(prefix string, base url.U
 	}
 }
 
-func (c *variantCollector) addUserInfoVariants(userInfo *url.Userinfo) {
+// addUserInfoVariants records the userinfo forms that must be redacted out of
+// an error message. The bare username is only a secret for HTTP(S) URLs, where
+// a token is commonly carried as the username; an SSH URL's username is the
+// login name (usually "git"), and redacting it bare would also erase the same
+// letters from "github.com", ".git", and the words of the message itself.
+func (c *variantCollector) addUserInfoVariants(userInfo *url.Userinfo, scheme string) {
 	if userInfo == nil {
 		return
 	}
@@ -357,7 +362,9 @@ func (c *variantCollector) addUserInfoVariants(userInfo *url.Userinfo) {
 	c.add(rawUserInfo + "@")
 	rawUsername, rawPassword, rawHasPassword := strings.Cut(rawUserInfo, ":")
 	if username != "" {
-		c.add(rawUsername)
+		if hasPassword || scheme == "http" || scheme == "https" {
+			c.add(rawUsername)
+		}
 		c.add(username + ":***@")
 		c.add(username + "@")
 	}
@@ -375,7 +382,7 @@ func (c *variantCollector) addSCPStyleComponents(raw string) {
 		c.add(parsed.RawQuery)
 		c.addRawQueryValues(parsed.RawQuery)
 		c.add(parsed.Fragment)
-		c.addUserInfoVariants(parsed.User)
+		c.addUserInfoVariants(parsed.User, "ssh")
 	}
 }
 
