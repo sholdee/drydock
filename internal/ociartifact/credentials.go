@@ -3,8 +3,12 @@ package ociartifact
 import (
 	"crypto/tls"
 	"crypto/x509"
+	"errors"
 	"fmt"
+	"net/http"
 	"os"
+
+	"helm.sh/helm/v4/pkg/registry"
 
 	"github.com/argoproj/argo-cd/v3/util/oci"
 )
@@ -57,6 +61,79 @@ func (c Credentials) Validate() error {
 		}
 	}
 	return nil
+}
+
+// HTTPClient builds the http.Client that OCI *Helm chart* pulls use, from the
+// same --oci-* TLS flags the artifact path consumes. It reports configured =
+// false when no TLS-implying flag is set, so the caller leaves the Helm OCI
+// puller on helm's own default client. Credentials stay out of it:
+// username/password remain artifact-only and OCI Helm chart auth remains
+// --registry-config.
+//
+// The pool rule differs from the artifact path deliberately. The vendored
+// Argo client REPLACES the system pool with CAPath (client.go:482); for chart
+// pulls the bundle is ADDED to the system pool, because a run that passes
+// --oci-ca-file for a private artifact registry must keep pulling public
+// charts from e.g. ghcr.io. A system pool that cannot be loaded is an error
+// naming the flag rather than a silently narrowed pool.
+func (c Credentials) HTTPClient() (client *http.Client, configured bool, err error) {
+	if err := c.Validate(); err != nil {
+		return nil, false, err
+	}
+	if !c.hasTLSConfig() {
+		return nil, false, nil
+	}
+	config := &tls.Config{MinVersion: tls.VersionTLS12, InsecureSkipVerify: c.InsecureSkipVerify}
+	if c.CAFile != "" {
+		caData, err := os.ReadFile(c.CAFile)
+		if err != nil {
+			return nil, false, fmt.Errorf("--oci-ca-file: %w", err)
+		}
+		systemPool, err := x509.SystemCertPool()
+		if err != nil {
+			return nil, false, fmt.Errorf("--oci-ca-file %q: load system certificate pool: %w", c.CAFile, err)
+		}
+		pool, err := rootCAPool(systemPool, caData)
+		if err != nil {
+			return nil, false, fmt.Errorf("--oci-ca-file %q %w", c.CAFile, err)
+		}
+		config.RootCAs = pool
+	}
+	// Validate proved the pair loads and that neither half stands alone.
+	if c.ClientCertFile != "" && c.ClientKeyFile != "" {
+		pair, err := tls.LoadX509KeyPair(c.ClientCertFile, c.ClientKeyFile)
+		if err != nil {
+			return nil, false, fmt.Errorf("--oci-client-cert-file/--oci-client-key-file: %w", err)
+		}
+		config.Certificates = []tls.Certificate{pair}
+	}
+	// helm's own transport: a clone of http.DefaultTransport wrapped in the
+	// ORAS retry policy (pkg/registry/transport.go). Cloning keeps the TLS
+	// config off the process-wide default transport. No client timeout —
+	// helm's default client has none and chart layers can be large. A helm
+	// bump that changes the base type fails closed with a clear error rather
+	// than dropping the flags and surfacing a puzzling x509 failure later.
+	transport := registry.NewTransport(false)
+	base, ok := transport.Base.(*http.Transport)
+	if !ok {
+		return nil, false, fmt.Errorf("cannot apply --oci-* TLS material: helm registry transport base is %T, want *http.Transport", transport.Base)
+	}
+	base.TLSClientConfig = config
+	return &http.Client{Transport: transport}, true, nil
+}
+
+// rootCAPool returns base plus the certificates in caData, leaving base
+// untouched. A nil base means "start empty"; x509.SystemCertPool() is what
+// HTTPClient passes.
+func rootCAPool(base *x509.CertPool, caData []byte) (*x509.CertPool, error) {
+	pool := x509.NewCertPool()
+	if base != nil {
+		pool = base.Clone()
+	}
+	if !pool.AppendCertsFromPEM(caData) {
+		return nil, errors.New("contains no PEM certificates")
+	}
+	return pool, nil
 }
 
 // clientCreds builds the exact oci.Creds handed to the vendored client

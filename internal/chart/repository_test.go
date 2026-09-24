@@ -1201,3 +1201,205 @@ type roundTripFunc func(*http.Request) (*http.Response, error)
 func (fn roundTripFunc) RoundTrip(request *http.Request) (*http.Response, error) {
 	return fn(request)
 }
+
+func TestValidateChartNameAcceptsNestedOCINames(t *testing.T) {
+	for _, tt := range []struct {
+		name      string
+		kind      RepositoryKind
+		chartName string
+		wantErr   string
+	}{
+		{name: "oci nested", kind: RepositoryOCI, chartName: "opencost/charts/opencost"},
+		{name: "oci two segments", kind: RepositoryOCI, chartName: "a/b"},
+		{name: "oci single segment", kind: RepositoryOCI, chartName: "demo"},
+		{name: "http single segment", kind: RepositoryHTTP, chartName: "demo"},
+		{
+			name:      "oci empty segment",
+			kind:      RepositoryOCI,
+			chartName: "a//b",
+			wantErr:   `must not contain empty, "." or ".." path segments`,
+		},
+		{
+			name:      "oci dot segment",
+			kind:      RepositoryOCI,
+			chartName: "a/./b",
+			wantErr:   `must not contain empty, "." or ".." path segments`,
+		},
+		{
+			name:      "oci parent segment",
+			kind:      RepositoryOCI,
+			chartName: "a/../b",
+			wantErr:   `must not contain empty, "." or ".." path segments`,
+		},
+		{
+			name:      "oci absolute",
+			kind:      RepositoryOCI,
+			chartName: "/a/b",
+			wantErr:   "must be a relative path",
+		},
+		{
+			name:      "oci trailing slash",
+			kind:      RepositoryOCI,
+			chartName: "a/b/",
+			wantErr:   `must not contain empty, "." or ".." path segments`,
+		},
+		{
+			name:      "oci backslash",
+			kind:      RepositoryOCI,
+			chartName: `a\b`,
+			wantErr:   `must use "/" separators`,
+		},
+		{
+			name:      "oci dot",
+			kind:      RepositoryOCI,
+			chartName: ".",
+			wantErr:   `must not contain empty, "." or ".." path segments`,
+		},
+		{
+			name:      "oci parent",
+			kind:      RepositoryOCI,
+			chartName: "..",
+			wantErr:   `must not contain empty, "." or ".." path segments`,
+		},
+		{
+			name:      "oci empty",
+			kind:      RepositoryOCI,
+			chartName: "",
+			wantErr:   "chart name is required",
+		},
+		{
+			name:      "http nested",
+			kind:      RepositoryHTTP,
+			chartName: "a/b",
+			wantErr:   "must be a single path component",
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			err := validateChartName(tt.kind, tt.chartName)
+			if tt.wantErr == "" {
+				if err != nil {
+					t.Fatalf("validateChartName(%q, %q) error = %v, want nil", tt.kind, tt.chartName, err)
+				}
+				return
+			}
+			if err == nil {
+				t.Fatalf("validateChartName(%q, %q) error = nil, want %q", tt.kind, tt.chartName, tt.wantErr)
+			}
+			if !strings.Contains(err.Error(), tt.wantErr) {
+				t.Fatalf("validateChartName(%q, %q) error = %q, want %q", tt.kind, tt.chartName, err, tt.wantErr)
+			}
+		})
+	}
+}
+
+func TestDefaultAcquirerNestedOCIChartUsesLeafOnDisk(t *testing.T) {
+	puller := &fakeOCIPuller{archive: chartArchive(t, "demo", map[string]string{
+		"Chart.yaml":  "apiVersion: v2\nname: demo\nversion: 1.2.3\n",
+		"values.yaml": "replicaCount: 1\n",
+	})}
+	request := Request{
+		Repository: "oci://registry.example.test/charts",
+		Name:       "parity/nested/demo",
+		Version:    "1.2.3",
+		Kind:       RepositoryOCI,
+	}
+	opts := Options{CacheDir: t.TempDir()}
+	acquirer := DefaultAcquirer{OCIPuller: puller}
+
+	first, err := acquirer.Acquire(context.Background(), request, opts)
+	if err != nil {
+		t.Fatalf("first Acquire() error = %v", err)
+	}
+	if first.Name != request.Name {
+		t.Fatalf("first Name = %q, want %q", first.Name, request.Name)
+	}
+	if got := filepath.Base(first.ChartDir); got != "demo" {
+		t.Fatalf("first ChartDir base = %q, want %q", got, "demo")
+	}
+	if got, want := first.ChartDir, filepath.Join(opts.CacheDir, string(request.Kind), mustCacheKey(t, request), "demo"); got != want {
+		t.Fatalf("first ChartDir = %q, want %q", got, want)
+	}
+	if _, err := os.Stat(filepath.Join(first.ChartDir, "Chart.yaml")); err != nil {
+		t.Fatalf("stat extracted Chart.yaml: %v", err)
+	}
+
+	second, err := acquirer.Acquire(context.Background(), request, opts)
+	if err != nil {
+		t.Fatalf("second Acquire() error = %v", err)
+	}
+	if !second.FromCache {
+		t.Fatal("second Acquire() FromCache = false, want true")
+	}
+	if second.ChartDir != first.ChartDir {
+		t.Fatalf("second ChartDir = %q, want %q", second.ChartDir, first.ChartDir)
+	}
+	if puller.pulls != 1 {
+		t.Fatalf("pull count = %d, want 1", puller.pulls)
+	}
+}
+
+func TestDefaultAcquirerNestedOCIChartsWithSameLeafDoNotCollide(t *testing.T) {
+	puller := &fakeOCIPuller{archive: chartArchive(t, "demo", map[string]string{
+		"Chart.yaml": "apiVersion: v2\nname: demo\nversion: 1.2.3\n",
+	})}
+	opts := Options{CacheDir: t.TempDir()}
+	acquirer := DefaultAcquirer{OCIPuller: puller}
+
+	chartDirs := make([]string, 0, 2)
+	for _, name := range []string{"a/charts/demo", "b/charts/demo"} {
+		request := Request{
+			Repository: "oci://registry.example.test/charts",
+			Name:       name,
+			Version:    "1.2.3",
+			Kind:       RepositoryOCI,
+		}
+		result, err := acquirer.Acquire(context.Background(), request, opts)
+		if err != nil {
+			t.Fatalf("Acquire(%q) error = %v", name, err)
+		}
+		if result.FromCache {
+			t.Fatalf("Acquire(%q) FromCache = true, want false", name)
+		}
+		if _, err := os.Stat(filepath.Join(result.ChartDir, "Chart.yaml")); err != nil {
+			t.Fatalf("stat extracted Chart.yaml for %q: %v", name, err)
+		}
+		// The leaf is the on-disk name, but `drydock cache ls` and prune read
+		// the metadata: it keeps the FULL nested name, or two distinct charts
+		// become indistinguishable in cache listings.
+		metadata, err := cachepkg.ReadMetadata(filepath.Dir(result.ChartDir), cachepkg.SourceChart, string(request.Kind), mustCacheKey(t, request))
+		if err != nil {
+			t.Fatalf("ReadMetadata() for %q error = %v", name, err)
+		}
+		if metadata == nil || metadata.Name != name {
+			t.Fatalf("metadata = %#v, want Name = the full nested name %q", metadata, name)
+		}
+		chartDirs = append(chartDirs, result.ChartDir)
+	}
+	if chartDirs[0] == chartDirs[1] {
+		t.Fatalf("nested charts sharing a leaf collided in %q", chartDirs[0])
+	}
+	if puller.pulls != 2 {
+		t.Fatalf("pull count = %d, want 2", puller.pulls)
+	}
+}
+
+func TestChartArchiveMustBeRootedAtLeaf(t *testing.T) {
+	puller := &fakeOCIPuller{archive: chartArchive(t, "other", map[string]string{
+		"Chart.yaml": "apiVersion: v2\nname: other\nversion: 1.2.3\n",
+	})}
+	_, err := (DefaultAcquirer{OCIPuller: puller}).Acquire(context.Background(), Request{
+		Repository: "oci://registry.example.test/charts",
+		Name:       "parity/nested/demo",
+		Version:    "1.2.3",
+		Kind:       RepositoryOCI,
+	}, Options{CacheDir: t.TempDir()})
+	if err == nil {
+		t.Fatal("Acquire() error = nil, want chart root mismatch error")
+	}
+	if !strings.Contains(err.Error(), "does not contain demo/Chart.yaml") {
+		t.Fatalf("Acquire() error = %q, want expected entry %q", err, "demo/Chart.yaml")
+	}
+	if !strings.Contains(err.Error(), "parity/nested/demo") {
+		t.Fatalf("Acquire() error = %q, want the requested chart name", err)
+	}
+}

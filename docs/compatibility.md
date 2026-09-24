@@ -174,8 +174,24 @@ Important boundaries:
   `oci://` repository URLs are rejected with a redacted error naming the
   flags. Per-registry credential maps and Docker config ingestion are
   recorded follow-ups, as are CLI flags for the extraction media-type
-  allowlist and size cap, and an OCI fixture for the Argo CD render parity
-  smoke (which needs an in-cluster registry).
+  allowlist and size cap. The Argo CD render parity smoke covers both OCI
+  source kinds against an in-cluster registry: an OCI artifact source, and an
+  OCI Helm chart source whose chart name is nested
+  (`parity/nested/parity-nested-chart`) under a scheme-less `host:port`
+  repository URL.
+- The `--oci-*` TLS flags (`--oci-ca-file`, `--oci-client-cert-file`,
+  `--oci-client-key-file`, `--oci-insecure-skip-verify`) also apply to OCI
+  Helm chart pulls, so a private chart registry behind a corporate CA is
+  reachable. The bundle is handled differently per source kind: artifact
+  registries replace the system pool (vendored Argo CD behavior), chart
+  registries add the bundle to the system pool so public charts in the same
+  run keep resolving. Only TLS material crosses over — `--registry-config`
+  remains the sole credential source for OCI Helm charts, and the HTTP(S)
+  Helm repository client is left untouched. `--oci-insecure-skip-verify` has
+  no per-registry scoping: it disables certificate verification for every OCI
+  artifact and OCI Helm chart registry in the run, including public ones, and
+  any `--registry-config` credentials are then sent over an unverified
+  connection.
 - `--repo-map` takes precedence over local fallback and network fetching.
 - Top-level `--repo` for Git ref diffs supports local repository paths only.
 - Missing HTTP(S) and OCI Helm chart dependencies declared in `Chart.yaml` are

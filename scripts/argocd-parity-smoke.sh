@@ -29,6 +29,12 @@ OCI_REGISTRY_IMAGE="public.ecr.aws/docker/library/registry@sha256:a3d8aaa63ed868
 OCI_ARTIFACT_REPOSITORY="parity/config"
 OCI_ARTIFACT_TAG="v1.0.0"
 OCI_APPLICATION="parity-oci-config"
+# The OCI Helm chart fixture: a nested chart name under a scheme-less
+# host:port repoURL, the shape Argo CD dispatches to `helm pull
+# oci://<repo>/<chart>` and drydock now accepts too.
+OCI_CHART_PATH="${REPO_ROOT}/testdata/argocd-parity/oci-chart/parity-nested-chart"
+OCI_CHART_REPOSITORY="parity/nested"
+OCI_CHART_APPLICATION="parity-oci-helm-nested"
 OCI_HOSTS_MARKER="drydock-argocd-parity-smoke"
 HOSTS_ENTRY_ADDED="false"
 OUT_DIR="${REPO_ROOT}/argocd-parity-smoke"
@@ -42,6 +48,7 @@ REGISTRY_PORT_FORWARD_PID=""
 
 APPLICATIONS=(
   parity-oci-config
+  parity-oci-helm-nested
   parity-directory
   parity-directory-edges
   parity-helm-release-namespace
@@ -219,6 +226,7 @@ done
 [[ -d "${FIXTURE_REPO_PATH}" ]] || fail "fixture repo not found: ${FIXTURE_REPO_PATH}"
 [[ -f "${IGNORE_FILE}" ]] || fail "compare ignore file not found: ${IGNORE_FILE}"
 [[ -d "${OCI_ARTIFACT_PATH}" ]] || fail "OCI artifact content directory not found: ${OCI_ARTIFACT_PATH}"
+[[ -f "${OCI_CHART_PATH}/Chart.yaml" ]] || fail "OCI Helm chart fixture not found: ${OCI_CHART_PATH}/Chart.yaml"
 [[ -d "${PROJECT_POLICY_REPO_PATH}" ]] || fail "project policy fixture repo not found: ${PROJECT_POLICY_REPO_PATH}"
 [[ -f "${PROJECT_POLICY_EXPECTED}" ]] || fail "project policy expected file not found: ${PROJECT_POLICY_EXPECTED}"
 [[ -d "${SIDECAR_PATH}" ]] || fail "CMP sidecar manifest directory not found: ${SIDECAR_PATH}"
@@ -238,6 +246,9 @@ OCI_TLS_DIR="${WORK_DIR}/registry-tls"
 OCI_CA_FILE="${OCI_TLS_DIR}/tls.crt"
 OCI_TLS_KEY_FILE="${OCI_TLS_DIR}/tls.key"
 OCI_CACHE_DIR="${WORK_DIR}/oci-cache"
+# OCI Helm charts land in the chart cache, not the artifact cache: the warm
+# run fills it and the offline per-app loop reads it back.
+CHART_CACHE_DIR="${WORK_DIR}/chart-cache"
 # Fresh, non-overlapping render cache dirs: the persistent render cache key
 # omits Offline, so sharing one dir would let the offline loop replay the
 # warm (non-offline) render instead of exercising offline resolve+extract.
@@ -544,6 +555,42 @@ push_oci_artifact() {
   rm -f "${stderr_file}"
 }
 
+push_oci_chart() {
+  local ref stderr_file
+  ref="${OCI_REGISTRY_HOST}:${OCI_REGISTRY_PORT}/${OCI_CHART_REPOSITORY}"
+  stderr_file="${OUT_DIR}/helm-chart-push.stderr"
+  # helm's own registry client, not oras: only it writes the helm config and
+  # content media types Argo CD's repo-server and drydock both require, and
+  # the smoke must not depend on a helm binary being installed.
+  (cd "${REPO_ROOT}" && go run ./scripts/argocd-parity-chart-push \
+    --chart-dir "${OCI_CHART_PATH}" \
+    --ref "${ref}" \
+    --ca-file "${OCI_CA_FILE}" \
+    > /dev/null 2> "${stderr_file}") \
+    || fail "helm chart push of the nested OCI parity chart to ${ref} failed; see ${stderr_file}"
+  rm -f "${stderr_file}"
+}
+
+verify_oci_chart_manifest() {
+  local ref manifest stderr_file config_count layer_count media_type_count
+  ref="${OCI_REGISTRY_HOST}:${OCI_REGISTRY_PORT}/${OCI_CHART_REPOSITORY}/parity-nested-chart:1.0.0"
+  stderr_file="${OUT_DIR}/oras-chart-manifest-fetch.stderr"
+  manifest="$(oras manifest fetch --ca-file "${OCI_CA_FILE}" "${ref}" 2> "${stderr_file}")" \
+    || fail "oras manifest fetch for the pushed nested OCI parity chart ${ref} failed; see ${stderr_file}"
+  rm -f "${stderr_file}"
+  config_count="$(grep -o 'application/vnd\.cncf\.helm\.config\.v1+json' <<< "${manifest}" | wc -l | tr -d ' ' || true)"
+  layer_count="$(grep -o 'application/vnd\.cncf\.helm\.chart\.content\.v1\.tar+gzip' <<< "${manifest}" | wc -l | tr -d ' ' || true)"
+  media_type_count="$(grep -o '"mediaType"' <<< "${manifest}" | wc -l | tr -d ' ' || true)"
+  # Expect exactly two mediaType entries — the helm config and one helm chart
+  # content layer, with no provenance layer and no extra content layer. Helm's
+  # registry client writes no top-level manifest mediaType, unlike the oras
+  # push in verify_oci_artifact_manifest, so the total is two and not three.
+  if [[ "${config_count}" != "1" || "${layer_count}" != "1" || "${media_type_count}" != "2" ]]; then
+    printf '%s\n' "${manifest}" > "${OUT_DIR}/oci-chart-manifest.json"
+    fail "pushed nested OCI parity chart ${ref} has the wrong manifest shape: want one application/vnd.cncf.helm.config.v1+json config and exactly one application/vnd.cncf.helm.chart.content.v1.tar+gzip layer, got ${config_count} helm configs and ${layer_count} helm content layers across ${media_type_count} mediaType entries; see ${OUT_DIR}/oci-chart-manifest.json"
+  fi
+}
+
 verify_oci_artifact_manifest() {
   local ref manifest stderr_file layer_count media_type_count
   ref="${OCI_REGISTRY_HOST}:${OCI_REGISTRY_PORT}/${OCI_ARTIFACT_REPOSITORY}:${OCI_ARTIFACT_TAG}"
@@ -562,29 +609,43 @@ verify_oci_artifact_manifest() {
 }
 
 wait_for_oci_application() {
-  local sync_status
-  for _ in {1..120}; do
-    sync_status="$(kubectl -n argocd get application "${OCI_APPLICATION}" -o jsonpath='{.status.sync.status}' 2>/dev/null || true)"
-    if [[ "${sync_status}" == "Synced" || "${sync_status}" == "OutOfSync" ]]; then
-      return 0
+  local app sync_status
+  # Both registry-backed Applications: the artifact source and the nested OCI
+  # Helm chart source. Naming the app in the failure tells a TLS problem
+  # (argocd-tls-certs-cm) apart from a media-type or chart-name problem.
+  for app in "${OCI_APPLICATION}" "${OCI_CHART_APPLICATION}"; do
+    sync_status=""
+    for _ in {1..120}; do
+      sync_status="$(kubectl -n argocd get application "${app}" -o jsonpath='{.status.sync.status}' 2>/dev/null || true)"
+      if [[ "${sync_status}" == "Synced" || "${sync_status}" == "OutOfSync" ]]; then
+        break
+      fi
+      sleep 2
+    done
+    if [[ "${sync_status}" != "Synced" && "${sync_status}" != "OutOfSync" ]]; then
+      kubectl -n argocd get application "${app}" -o yaml > "${OUT_DIR}/${app}.yaml" 2>&1 || true
+      fail "OCI Application ${app} did not reach a comparable sync state (Argo CD could not fetch it from ${OCI_REGISTRY_HOST}; check the argocd-tls-certs-cm CA, the registry service, and the pushed manifest media types); see ${OUT_DIR}/${app}.yaml"
     fi
-    sleep 2
   done
-  kubectl -n argocd get application "${OCI_APPLICATION}" -o yaml > "${OUT_DIR}/oci-application.yaml" 2>&1 || true
-  fail "OCI Application ${OCI_APPLICATION} did not reach a comparable sync state (Argo CD could not fetch the artifact from ${OCI_REGISTRY_HOST}; check the argocd-tls-certs-cm CA and registry service); see ${OUT_DIR}/oci-application.yaml"
 }
 
 warm_drydock_oci_cache() {
-  local stderr_file="${OUT_DIR}/drydock-oci-warm.stderr"
-  (cd "${REPO_ROOT}" && "${DRYDOCK_CMD[@]}" build app "argocd/${OCI_APPLICATION}" \
-    --path "${FIXTURE_REPO_PATH}" \
-    --repo-map "${FIXTURE_REPO_URL}=${FIXTURE_REPO_PATH}" \
-    --oci-cache-dir "${OCI_CACHE_DIR}" \
-    --oci-ca-file "${OCI_CA_FILE}" \
-    --render-cache-dir "${OCI_WARM_RENDER_CACHE_DIR}" \
-    > /dev/null 2> "${stderr_file}") \
-    || fail "drydock OCI cache warm (non-offline build of ${OCI_APPLICATION} with --oci-cache-dir/--oci-ca-file) failed; see ${stderr_file}"
-  rm -f "${stderr_file}"
+  local app stderr_file
+  # The artifact app fills --oci-cache-dir, the chart app fills
+  # --chart-cache-dir; the offline capture loop reads both back.
+  for app in "${OCI_APPLICATION}" "${OCI_CHART_APPLICATION}"; do
+    stderr_file="${OUT_DIR}/drydock-oci-warm-${app}.stderr"
+    (cd "${REPO_ROOT}" && "${DRYDOCK_CMD[@]}" build app "argocd/${app}" \
+      --path "${FIXTURE_REPO_PATH}" \
+      --repo-map "${FIXTURE_REPO_URL}=${FIXTURE_REPO_PATH}" \
+      --oci-cache-dir "${OCI_CACHE_DIR}" \
+      --chart-cache-dir "${CHART_CACHE_DIR}" \
+      --oci-ca-file "${OCI_CA_FILE}" \
+      --render-cache-dir "${OCI_WARM_RENDER_CACHE_DIR}" \
+      > /dev/null 2> "${stderr_file}") \
+      || fail "drydock OCI cache warm (non-offline build of ${app} with --oci-cache-dir/--chart-cache-dir/--oci-ca-file) failed; see ${stderr_file}"
+    rm -f "${stderr_file}"
+  done
 }
 
 install_argocd() {
@@ -775,6 +836,7 @@ capture_drydock_manifest() {
     --path "${FIXTURE_REPO_PATH}"
     --repo-map "${FIXTURE_REPO_URL}=${FIXTURE_REPO_PATH}"
     --oci-cache-dir "${OCI_CACHE_DIR}"
+    --chart-cache-dir "${CHART_CACHE_DIR}"
     --oci-ca-file "${OCI_CA_FILE}"
     --render-cache-dir "${OCI_OFFLINE_RENDER_CACHE_DIR}"
     --offline)
@@ -1012,6 +1074,9 @@ main() {
   log_step "Pushing OCI parity artifact"
   push_oci_artifact
   verify_oci_artifact_manifest
+  log_step "Pushing nested OCI parity Helm chart"
+  push_oci_chart
+  verify_oci_chart_manifest
   log_step "Installing Argo CD ${argocd_version}"
   install_argocd "${argocd_version}"
   log_step "Installing the parity CMP sidecar"
@@ -1031,7 +1096,7 @@ main() {
   wait_for_oci_application
   log_step "Capturing Argo CD rendered manifests"
   capture_argocd_manifests
-  log_step "Warming drydock OCI artifact cache"
+  log_step "Warming drydock OCI artifact and chart caches"
   warm_drydock_oci_cache
   log_step "Capturing drydock rendered manifests"
   capture_drydock_manifests

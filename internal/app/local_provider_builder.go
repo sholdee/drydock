@@ -21,7 +21,21 @@ import (
 func newLocalProvider(ctx context.Context, orchestrator Orchestrator, root string, settings config.ArgoSettings, request BuildRequest, recorder *cacheevent.Recorder, snapshotPrefix string) (localProvider, func(), error) {
 	acquirer := orchestrator.ChartAcquirer
 	if acquirer == nil {
-		acquirer = chart.DefaultAcquirer{}
+		// OCI Helm chart pulls honour the --oci-* TLS flags. The client goes on
+		// OCIPuller ONLY: DefaultAcquirer.Client is shared with the HTTP(S) Helm
+		// repository path (index.yaml, chart archives, Helm dependency
+		// resolution, Kustomize helmCharts), so setting it would apply the OCI
+		// CA pool and --oci-insecure-skip-verify to every https:// Helm
+		// repository in the run. A caller-supplied ChartAcquirer is left alone.
+		client, configured, err := request.OCICredentials.HTTPClient()
+		if err != nil {
+			return localProvider{}, func() {}, err
+		}
+		if configured {
+			acquirer = chart.DefaultAcquirer{OCIPuller: chart.HelmOCIPuller{Client: client}}
+		} else {
+			acquirer = chart.DefaultAcquirer{}
+		}
 	}
 	gitAcquirer := orchestrator.GitAcquirer
 	if gitAcquirer == nil {

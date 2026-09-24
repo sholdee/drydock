@@ -1,12 +1,25 @@
 package ociartifact
 
 import (
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/tls"
+	"crypto/x509"
+	"crypto/x509/pkix"
 	"encoding/json"
+	"encoding/pem"
+	"math/big"
+	"net"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
+
+	"oras.land/oras-go/v2/registry/remote/retry"
 
 	"github.com/sholdee/drydock/internal/ociartifact/ocitest"
 )
@@ -563,4 +576,265 @@ func cacheDiskState(t *testing.T, cacheDir string) map[string]string {
 		t.Fatalf("walk cache dir %s: %v", cacheDir, err)
 	}
 	return state
+}
+
+// HTTPClient is the OCI *Helm chart* seam: it reports configured = false when
+// no TLS-implying flag is set, so the Helm OCI puller keeps helm's default
+// client (and no `nil, nil` return sneaks past nilnil).
+func TestHTTPClientUnconfiguredWithoutTLSFlags(t *testing.T) {
+	for _, tt := range []struct {
+		name        string
+		credentials Credentials
+	}{
+		{name: "zero value", credentials: Credentials{}},
+		{name: "basic auth only", credentials: Credentials{Username: "oci-user", Password: "oci-pass"}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			client, configured, err := tt.credentials.HTTPClient()
+			if err != nil {
+				t.Fatalf("HTTPClient() error = %v", err)
+			}
+			if configured {
+				t.Fatal("HTTPClient() configured = true, want false without TLS flags")
+			}
+			if client != nil {
+				t.Fatalf("HTTPClient() client = %#v, want nil", client)
+			}
+		})
+	}
+}
+
+// --oci-ca-file makes the chart client trust a registry the system pool does
+// not, which is what lets the parity smoke's self-signed registry serve OCI
+// Helm charts.
+func TestHTTPClientTrustsCAFile(t *testing.T) {
+	reg := ocitest.StartTLSRegistry(t)
+	client, configured, err := Credentials{CAFile: reg.CAFilePath(t)}.HTTPClient()
+	if err != nil {
+		t.Fatalf("HTTPClient() error = %v", err)
+	}
+	if !configured {
+		t.Fatal("HTTPClient() configured = false, want true with --oci-ca-file")
+	}
+	response, err := client.Get("https://" + reg.Host + "/v2/")
+	if err != nil {
+		t.Fatalf("configured client GET error = %v", err)
+	}
+	_ = response.Body.Close()
+
+	systemPoolResponse, err := http.DefaultClient.Get("https://" + reg.Host + "/v2/")
+	if err == nil {
+		_ = systemPoolResponse.Body.Close()
+		t.Fatal("system-pool client reached the self-signed registry, fixture is not proving anything")
+	}
+	if !strings.Contains(err.Error(), "x509") {
+		t.Fatalf("system-pool client error = %v, want x509 verification failure", err)
+	}
+}
+
+// --oci-insecure-skip-verify is the one flag in the family whose entire
+// purpose is to change TLS verification behaviour, so it needs its own
+// end-to-end pin: the field must reach the chart client's tls.Config, not
+// merely flip hasTLSConfig(). The control leg proves the registry really is
+// untrusted by the system pool, so a dropped InsecureSkipVerify assignment
+// cannot pass by accident.
+func TestHTTPClientSkipsVerificationWithInsecureFlag(t *testing.T) {
+	reg := ocitest.StartTLSRegistry(t)
+	client, configured, err := Credentials{InsecureSkipVerify: true}.HTTPClient()
+	if err != nil {
+		t.Fatalf("HTTPClient() error = %v", err)
+	}
+	if !configured {
+		t.Fatal("HTTPClient() configured = false, want true with --oci-insecure-skip-verify")
+	}
+	response, err := client.Get("https://" + reg.Host + "/v2/")
+	if err != nil {
+		t.Fatalf("insecure client GET error = %v", err)
+	}
+	_ = response.Body.Close()
+
+	systemPoolResponse, err := http.DefaultClient.Get("https://" + reg.Host + "/v2/")
+	if err == nil {
+		_ = systemPoolResponse.Body.Close()
+		t.Fatal("system-pool client reached the self-signed registry, fixture is not proving anything")
+	}
+	if !strings.Contains(err.Error(), "x509") {
+		t.Fatalf("system-pool client error = %v, want x509 verification failure", err)
+	}
+}
+
+// A bad --oci-ca-file fails closed with the flag-naming error rather than
+// silently narrowing the pool.
+func TestHTTPClientRejectsUnreadableAndNonPEMCAFile(t *testing.T) {
+	bogus := filepath.Join(t.TempDir(), "not-a-pem.txt")
+	if err := os.WriteFile(bogus, []byte("not pem\n"), 0o600); err != nil {
+		t.Fatalf("write bogus CA file: %v", err)
+	}
+	for _, tt := range []struct {
+		name string
+		file string
+		want string
+	}{
+		{name: "missing", file: filepath.Join(t.TempDir(), "absent.pem"), want: "--oci-ca-file"},
+		{name: "non-PEM", file: bogus, want: "contains no PEM certificates"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			client, configured, err := Credentials{CAFile: tt.file}.HTTPClient()
+			if err == nil {
+				t.Fatal("HTTPClient() error = nil, want a flag-naming error")
+			}
+			if !strings.Contains(err.Error(), tt.want) {
+				t.Fatalf("HTTPClient() error = %q, want it to contain %q", err, tt.want)
+			}
+			if client != nil || configured {
+				t.Fatalf("HTTPClient() = (%#v, %v), want (nil, false) on error", client, configured)
+			}
+		})
+	}
+}
+
+// The seam test above only proves rootCAPool augments whatever base it is
+// given. This pins the other half of the rule: the client HTTPClient returns
+// carries a pool that is strictly wider than the --oci-ca-file bundle, i.e.
+// the system roots survived. Dropping the x509.SystemCertPool() base in
+// HTTPClient turns this red on both macOS (where the system pool exposes no
+// Subjects) and Linux, because CertPool.Equal compares the system-pool flag
+// as well as the certificates.
+func TestHTTPClientCAFileAugmentsSystemPool(t *testing.T) {
+	reg := ocitest.StartTLSRegistry(t)
+	caPEM, err := os.ReadFile(reg.CAFilePath(t))
+	if err != nil {
+		t.Fatalf("read CA file: %v", err)
+	}
+	client, configured, err := Credentials{CAFile: reg.CAFilePath(t)}.HTTPClient()
+	if err != nil {
+		t.Fatalf("HTTPClient() error = %v", err)
+	}
+	if !configured {
+		t.Fatal("HTTPClient() configured = false, want true with --oci-ca-file")
+	}
+	transport, ok := client.Transport.(*retry.Transport)
+	if !ok {
+		t.Fatalf("client.Transport = %T, want *retry.Transport", client.Transport)
+	}
+	base, ok := transport.Base.(*http.Transport)
+	if !ok {
+		t.Fatalf("transport.Base = %T, want *http.Transport", transport.Base)
+	}
+	caOnly := x509.NewCertPool()
+	if !caOnly.AppendCertsFromPEM(caPEM) {
+		t.Fatal("CA file did not parse")
+	}
+	if base.TLSClientConfig.RootCAs.Equal(caOnly) {
+		t.Fatal("--oci-ca-file replaced the system pool instead of adding to it")
+	}
+}
+
+// The mutual-TLS half of the flags: --oci-client-cert-file/--oci-client-key-file
+// must reach the chart client's TLS config, not just Validate(). The control
+// leg proves the registry really demands a client certificate, so a dropped
+// Certificates assignment cannot pass by accident.
+func TestHTTPClientPresentsClientCertPair(t *testing.T) {
+	reg, certFile, keyFile := ocitest.StartMTLSRegistry(t)
+	withPair, configured, err := Credentials{CAFile: reg.CAFilePath(t), ClientCertFile: certFile, ClientKeyFile: keyFile}.HTTPClient()
+	if err != nil {
+		t.Fatalf("HTTPClient() error = %v", err)
+	}
+	if !configured {
+		t.Fatal("HTTPClient() configured = false, want true with the client certificate pair")
+	}
+	response, err := withPair.Get("https://" + reg.Host + "/v2/")
+	if err != nil {
+		t.Fatalf("client with --oci-client-cert-file GET error = %v", err)
+	}
+	_ = response.Body.Close()
+
+	caOnly, _, err := Credentials{CAFile: reg.CAFilePath(t)}.HTTPClient()
+	if err != nil {
+		t.Fatalf("HTTPClient() without the pair error = %v", err)
+	}
+	if bare, err := caOnly.Get("https://" + reg.Host + "/v2/"); err == nil {
+		_ = bare.Body.Close()
+		t.Fatal("client without the pair reached the mutual-TLS registry, fixture is not proving anything")
+	}
+}
+
+// Augment, not replace: a run that passes --oci-ca-file for a private
+// artifact registry must keep pulling public charts. rootCAPool is the seam
+// that makes the pool-building rule testable without the network. That
+// HTTPClient actually hands it the system pool is pinned separately by
+// TestHTTPClientCAFileAugmentsSystemPool.
+func TestRootCAPoolAugmentsBasePool(t *testing.T) {
+	serverA, pemA := selfSignedTLSServer(t)
+	serverB, pemB := selfSignedTLSServer(t)
+
+	base := x509.NewCertPool()
+	if !base.AppendCertsFromPEM(pemA) {
+		t.Fatal("base pool did not accept cert A")
+	}
+	pool, err := rootCAPool(base, pemB)
+	if err != nil {
+		t.Fatalf("rootCAPool() error = %v", err)
+	}
+	client := &http.Client{Transport: &http.Transport{TLSClientConfig: &tls.Config{RootCAs: pool, MinVersion: tls.VersionTLS12}}}
+	for name, server := range map[string]*httptest.Server{"base cert A": serverA, "added cert B": serverB} {
+		t.Run(name, func(t *testing.T) {
+			response, err := client.Get(server.URL)
+			if err != nil {
+				t.Fatalf("GET %s error = %v, want the augmented pool to trust it", name, err)
+			}
+			_ = response.Body.Close()
+		})
+	}
+	if _, err := rootCAPool(base, []byte("not pem\n")); err == nil {
+		t.Fatal("rootCAPool() with non-PEM data error = nil")
+	}
+}
+
+// selfSignedTLSServer starts an https loopback server with its own throwaway
+// self-signed certificate and returns that certificate as PEM. Two calls
+// produce two distinct roots, which httptest's shared built-in certificate
+// cannot.
+func selfSignedTLSServer(t *testing.T) (*httptest.Server, []byte) {
+	t.Helper()
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatalf("generate server key: %v", err)
+	}
+	serial, err := rand.Int(rand.Reader, new(big.Int).Lsh(big.NewInt(1), 128))
+	if err != nil {
+		t.Fatalf("generate serial: %v", err)
+	}
+	template := x509.Certificate{
+		SerialNumber:          serial,
+		Subject:               pkix.Name{CommonName: "drydock-rootca-test"},
+		NotBefore:             time.Now().Add(-time.Hour),
+		NotAfter:              time.Now().Add(24 * time.Hour),
+		KeyUsage:              x509.KeyUsageDigitalSignature | x509.KeyUsageCertSign,
+		ExtKeyUsage:           []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+		BasicConstraintsValid: true,
+		IsCA:                  true,
+		IPAddresses:           []net.IP{net.ParseIP("127.0.0.1"), net.IPv6loopback},
+		DNSNames:              []string{"localhost"},
+	}
+	der, err := x509.CreateCertificate(rand.Reader, &template, &template, &key.PublicKey, key)
+	if err != nil {
+		t.Fatalf("create server cert: %v", err)
+	}
+	certPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})
+	keyDER, err := x509.MarshalECPrivateKey(key)
+	if err != nil {
+		t.Fatalf("marshal server key: %v", err)
+	}
+	pair, err := tls.X509KeyPair(certPEM, pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: keyDER}))
+	if err != nil {
+		t.Fatalf("build server key pair: %v", err)
+	}
+	server := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	server.TLS = &tls.Config{Certificates: []tls.Certificate{pair}, MinVersion: tls.VersionTLS12}
+	server.StartTLS()
+	t.Cleanup(server.Close)
+	return server, certPEM
 }

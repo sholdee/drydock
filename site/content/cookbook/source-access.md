@@ -60,8 +60,11 @@ touches. `--oci-ca-file` replaces the system trust pool for all OCI artifact
 registries in the run, and setting any TLS-implying flag (`--oci-ca-file`,
 `--oci-client-cert-file`, `--oci-client-key-file`,
 `--oci-insecure-skip-verify`) switches loopback registries from their
-plain-HTTP development default to TLS. Credentials embedded in the `oci://`
-repository URL are rejected; pass them through the flags. Details are in
+plain-HTTP development default to TLS. The same four TLS flags also configure
+OCI Helm chart pulls, where the bundle is added to the system pool instead of
+replacing it; chart credentials remain `--registry-config`. Credentials
+embedded in the `oci://` repository URL are rejected; pass them through the
+flags. Details are in
 [source acquisition](/concepts/source-acquisition/#authentication-and-tls).
 
 In the GitHub PR action, pass the same flags through the trusted `extra-*`
