@@ -33,11 +33,11 @@ func repositoryProjectScopeEqual(actualOrg, actualRepo, scopeOrg, scopeRepo, ful
 }
 
 func splitProviderProject(project string) (string, string) {
-	i := strings.LastIndex(project, "/")
-	if i < 0 {
+	org, repo, ok := strings.CutLast(project, "/")
+	if !ok {
 		return "", project
 	}
-	return project[:i], project[i+1:]
+	return org, repo
 }
 
 func gitLabGroupScopeEqual(actual, expected string, includeSubgroups bool) bool {

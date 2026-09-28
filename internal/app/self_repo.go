@@ -228,8 +228,8 @@ func splitGitURLKeyHostAndRepoName(key string) (string, string) {
 		return "", ""
 	}
 	name := repoPath
-	if idx := strings.LastIndex(repoPath, "/"); idx >= 0 {
-		name = repoPath[idx+1:]
+	if _, after, ok := strings.CutLast(repoPath, "/"); ok {
+		name = after
 	}
 	if name == "" {
 		return "", ""

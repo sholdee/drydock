@@ -121,8 +121,8 @@ func redactEmbeddedSchemeUserinfo(output string) (string, bool) {
 	if schemeIndex := strings.Index(output, "://"); schemeIndex >= 0 {
 		prefix := output[:schemeIndex+3]
 		rest := output[schemeIndex+3:]
-		if at := strings.LastIndex(rest, "@"); at >= 0 {
-			return prefix + rest[at+1:], true
+		if _, afterUserinfo, ok := strings.CutLast(rest, "@"); ok {
+			return prefix + afterUserinfo, true
 		}
 	}
 	return "", false
@@ -155,8 +155,8 @@ func redactOpaqueSchemeUserinfo(output string) (string, bool) {
 }
 
 func redactGenericUserinfo(output string) (string, bool) {
-	if at := strings.LastIndex(output, "@"); at >= 0 {
-		return output[at+1:], true
+	if _, afterUserinfo, ok := strings.CutLast(output, "@"); ok {
+		return afterUserinfo, true
 	}
 	return "", false
 }
