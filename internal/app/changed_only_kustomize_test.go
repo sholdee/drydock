@@ -137,11 +137,52 @@ data:
 `)
 }
 
+// writeKustomizePluginOverlay makes demo-production an explicit plugin
+// source over the plain-base overlay layout. The shared base is as much its
+// input as demo-staging's plain Kustomize source.
+func writeKustomizePluginOverlay(t *testing.T, root, value, pluginName string) {
+	t.Helper()
+	writeKustomizePlainBaseApps(t, root, value)
+	writeTestFile(t, filepath.Join(root, "apps", "demo-production.yaml"), `apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: demo-production
+  namespace: argocd
+spec:
+  source:
+    repoURL: https://github.com/example/repo
+    targetRevision: main
+    path: workloads/demo/overlays/production
+    plugin:
+      name: `+pluginName+`
+  destination:
+    name: in-cluster
+    namespace: demo-production
+`)
+}
+
+// writeAVPPluginOverlayApps renders demo-production through default AVP
+// compatibility, which builds the plugin path with Kustomize.
+func writeAVPPluginOverlayApps(t *testing.T, root, value string) {
+	t.Helper()
+	writeKustomizePluginOverlay(t, root, value, argocdVaultPluginName)
+}
+
+// writeNativeKustomizePluginOverlayApps renders demo-production through a
+// Kustomize CMP that drydock builds natively.
+func writeNativeKustomizePluginOverlayApps(t *testing.T, root, value string) {
+	t.Helper()
+	writeKustomizePluginOverlay(t, root, value, "kustomize-build-with-helm")
+	writeNativeKustomizeCMPHelmValues(t, root, "kustomize-build-with-helm", "", "sh, -c", "kustomize build --enable-helm")
+}
+
 func TestOrchestratorDiffAppsStrictChangedOnlyOwnsKustomizeBase(t *testing.T) {
 	for name, write := range map[string]func(*testing.T, string, string){
 		"plain base resource":         writeKustomizePlainBaseApps,
 		"base helmCharts values":      writeKustomizeOverlayApps,
 		"source kustomize components": writeSourceKustomizeComponentApps,
+		"avp plugin source":           writeAVPPluginOverlayApps,
+		"native kustomize plugin":     writeNativeKustomizePluginOverlayApps,
 	} {
 		t.Run(name, func(t *testing.T) {
 			assertStrictChangedOnlySelectsBothOverlays(t, write)
@@ -236,7 +277,11 @@ func TestWithKustomizeSelectionPathsOnlyWalksLocallyRenderedSources(t *testing.T
 		kustomizeApp("foreign", argoappv1.ApplicationSource{RepoURL: "https://github.com/example/other", Path: "deploy/overlays/staging"}),
 		// Repo-mapped to a different checkout: renders from there, not root.
 		kustomizeApp("mapped", argoappv1.ApplicationSource{RepoURL: "https://github.com/example/mapped", Path: overlay}),
-		// Explicit non-Kustomize type over a Kustomize directory.
+		// Plugin over a Kustomize directory: AVP and native Kustomize plugin
+		// compatibility render it with Kustomize.
+		kustomizeApp("plugin", argoappv1.ApplicationSource{RepoURL: "https://github.com/example/repo", Path: overlay, Plugin: &argoappv1.ApplicationSourcePlugin{Name: argocdVaultPluginName}}),
+		// Explicit Helm or Directory type over a Kustomize directory.
+		kustomizeApp("helm", argoappv1.ApplicationSource{RepoURL: "https://github.com/example/repo", Path: overlay, Helm: &argoappv1.ApplicationSourceHelm{ReleaseName: "demo"}}),
 		kustomizeApp("directory", argoappv1.ApplicationSource{RepoURL: "https://github.com/example/repo", Path: overlay, Directory: &argoappv1.ApplicationSourceDirectory{Recurse: true}}),
 		kustomizeApp("oci", argoappv1.ApplicationSource{RepoURL: "oci://registry.example.com/demo", Path: overlay}),
 	}
@@ -248,7 +293,7 @@ func TestWithKustomizeSelectionPathsOnlyWalksLocallyRenderedSources(t *testing.T
 	for _, input := range got {
 		owns[input.Application.Name] = slices.Contains(input.Paths, values)
 	}
-	want := map[string]bool{"local": true, "multi": true, "foreign": false, "mapped": false, "directory": false, "oci": false}
+	want := map[string]bool{"local": true, "multi": true, "foreign": false, "mapped": false, "plugin": true, "helm": false, "directory": false, "oci": false}
 	for name, wantOwns := range want {
 		if owns[name] != wantOwns {
 			t.Errorf("%s owns %s = %v, want %v", name, values, owns[name], wantOwns)
@@ -260,8 +305,8 @@ func TestWithKustomizeSelectionPathsOnlyWalksLocallyRenderedSources(t *testing.T
 		}
 	}
 	selected, unowned := SelectChangedApplicationInputs(got, []string{values, "README.md"})
-	if len(selected) != 2 || !slices.Equal(unowned, []string{"README.md"}) {
-		t.Fatalf("selected = %d apps, unowned = %v; want local+multi selected and only README.md unowned", len(selected), unowned)
+	if len(selected) != 3 || !slices.Equal(unowned, []string{"README.md"}) {
+		t.Fatalf("selected = %d apps, unowned = %v; want local+multi+plugin selected and only README.md unowned", len(selected), unowned)
 	}
 }
 

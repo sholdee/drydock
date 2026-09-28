@@ -88,7 +88,10 @@ paths, plus the components and patch files the Application adds through
 Editing `apps/demo/base/helm-release/values.yaml` therefore selects every
 overlay that includes that base. Only sources that render from the local
 checkout contribute: sources fetched from another repository, repo-mapped to
-another checkout, or stored in OCI do not. Remote refs do not add ownership.
+another checkout, or stored in OCI do not. Plugin sources contribute when
+their path holds a kustomization, because AVP and native Kustomize plugin
+compatibility build it with Kustomize; explicit Helm and Directory sources do
+not. Remote refs do not add ownership.
 If the Kustomize graph cannot be read, for example because a kustomization
 escapes the repository or fails to parse, the Application keeps only its
 `spec.source.path` ownership. A change only that graph would have owned then

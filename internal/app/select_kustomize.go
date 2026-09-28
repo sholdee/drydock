@@ -67,9 +67,13 @@ func applicationSources(app argoappv1.Application) argoappv1.ApplicationSources 
 // kustomizeSelectionSourceIsLocal mirrors localProvider.resolveSourceRootIdentity:
 // a path source renders from the local tree when it is not repo-mapped
 // elsewhere, not OCI, and its path exists under root — whatever its repoURL. Sources fetched
-// from another repository never contribute local ownership. Explicit
-// non-Kustomize types are skipped; implicit ones are detected by
-// KustomizeSelectionPaths finding (or not) a kustomization file.
+// from another repository never contribute local ownership. Explicit Helm
+// and Directory sources are skipped. Implicit and plugin sources are detected
+// by KustomizeSelectionPaths finding (or not) a kustomization file: AVP and
+// native Kustomize plugin compatibility render a plugin path with Kustomize,
+// and a Kustomize-based CMP reads the same graph. Leaving a plugin out would
+// let a sibling's graph own the shared base alone and drop the plugin
+// Application from the diff.
 func kustomizeSelectionSourceIsLocal(root string, resolver *sourcepkg.Resolver, source argoappv1.ApplicationSource) bool {
 	if source.Path == "" || source.Chart != "" {
 		return false
@@ -81,7 +85,7 @@ func kustomizeSelectionSourceIsLocal(root string, resolver *sourcepkg.Resolver, 
 		return false
 	}
 	explicitType, err := source.ExplicitType()
-	if err != nil || explicitType != nil && *explicitType != argoappv1.ApplicationSourceTypeKustomize {
+	if err != nil || explicitType != nil && *explicitType != argoappv1.ApplicationSourceTypeKustomize && *explicitType != argoappv1.ApplicationSourceTypePlugin {
 		return false
 	}
 	exists, err := sourcePathExists(root, source.Path)

@@ -246,15 +246,17 @@ Application manifest files, source paths, `$ref` value files, and supported
 `argocd.argoproj.io/manifest-generate-paths` inputs, plus the local Kustomize
 input graph of every source that renders from the tree under diff, including
 components and patch files added through `spec.source.kustomize` (the same
-refs the persistent render cache digests). Individual refs the digest walk
-rejects drop out of ownership, and an Application whose graph cannot be read
-keeps only its `spec.source.path` ownership. A change that only a dropped ref
-or an unread graph reaches stays unowned; a change another Application's graph
-also reaches selects just that Application. Selection is unioned across both
-diff sides by Application identity, because a deleted file is only in the left
-tree's graph. If every changed path can be mapped, only affected Applications
-render. If any path is unowned, non-strict mode warns and renders all
-Applications; `--strict-changed-only` fails instead.
+refs the persistent render cache digests). Plugin sources walk the graph too
+when their path holds a kustomization; explicit Helm and Directory sources do
+not. Individual refs the digest walk rejects drop out of ownership, and an
+Application whose graph cannot be read keeps only its `spec.source.path`
+ownership. A change that only a dropped ref or an unread graph reaches stays
+unowned; a change another Application's graph also reaches selects just that
+Application. Selection is unioned across both diff sides by Application
+identity, because a deleted file is only in the left tree's graph. If every
+changed path can be mapped, only affected Applications render. If any path is
+unowned, non-strict mode warns and renders all Applications;
+`--strict-changed-only` fails instead.
 
 Operators can scope the changed path set with explicit include and ignore
 globs before ownership is evaluated. Include globs define the considered path
