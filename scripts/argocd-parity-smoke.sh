@@ -23,9 +23,20 @@ PROJECT_POLICY_EXPECTED="${REPO_ROOT}/testdata/argocd-project-policy/expected.ya
 OCI_ARTIFACT_PATH="${REPO_ROOT}/testdata/argocd-parity/oci-artifact"
 OCI_REGISTRY_HOST="argocd-parity-registry.argocd-parity.svc.cluster.local"
 OCI_REGISTRY_PORT="5443"
-# Multi-arch index digest for registry:2.8.3 on the Docker-official ECR
-# mirror (covers CI amd64 and local darwin arm64; no Docker Hub 429 surface).
-OCI_REGISTRY_IMAGE="public.ecr.aws/docker/library/registry@sha256:a3d8aaa63ed8681a604f1dea0aa03f100d5895b6a58ace528858a7b332415373"
+# Multi-arch index digest for the Docker-official registry:2.8.3 (covers CI
+# amd64 and local darwin arm64). Pulls try each mirror in order, retrying with
+# backoff; every mirror is pinned to the same digest, so all serve identical
+# content. The ECR mirror comes first (no Docker Hub 429 surface), but its
+# anonymous quota is per egress IP and CI runners share IPs, so it can answer
+# "toomanyrequests: Data limit exceeded" for a whole job.
+OCI_REGISTRY_IMAGE_DIGEST="sha256:a3d8aaa63ed8681a604f1dea0aa03f100d5895b6a58ace528858a7b332415373"
+OCI_REGISTRY_IMAGE_REPOSITORIES=(
+  "public.ecr.aws/docker/library/registry"
+  "mirror.gcr.io/library/registry"
+  "docker.io/library/registry"
+)
+PULL_RETRY_ATTEMPTS=4
+PULL_RETRY_INITIAL_DELAY_SECONDS=5
 OCI_ARTIFACT_REPOSITORY="parity/config"
 OCI_ARTIFACT_TAG="v1.0.0"
 OCI_APPLICATION="parity-oci-config"
@@ -168,6 +179,23 @@ fail() {
 
 log_step() {
   echo "==> $*" >&2
+}
+
+# retry runs a command until it succeeds, at most PULL_RETRY_ATTEMPTS times,
+# sleeping PULL_RETRY_INITIAL_DELAY_SECONDS and then doubling between attempts.
+# It is for image pulls, which fail transiently under anonymous rate limits.
+retry() {
+  local description="$1" attempt=1 delay="${PULL_RETRY_INITIAL_DELAY_SECONDS}"
+  shift
+  until "$@"; do
+    if ((attempt >= PULL_RETRY_ATTEMPTS)); then
+      return 1
+    fi
+    echo "argocd render parity smoke: ${description} failed (attempt ${attempt}/${PULL_RETRY_ATTEMPTS}); retrying in ${delay}s" >&2
+    sleep "${delay}"
+    attempt=$((attempt + 1))
+    delay=$((delay * 2))
+  done
 }
 
 require_value() {
@@ -349,7 +377,10 @@ EXPOSE 9418
 USER 65534:65534
 ENTRYPOINT ["git", "daemon", "--verbose", "--export-all", "--base-path=/srv/git", "--reuseaddr", "--informative-errors", "/srv/git"]
 DOCKERFILE
-  docker build -q -t "${image}" -f "${dockerfile}" "${WORK_DIR}" >/dev/null
+  # The build pulls its base image from Docker Hub and packages from the
+  # Alpine CDN, both rate-limited for anonymous clients.
+  retry "docker build of ${image}" docker build -q -t "${image}" -f "${dockerfile}" "${WORK_DIR}" >/dev/null \
+    || fail "docker build of the fixture Git server image ${image} failed"
   kind load docker-image "${image}" --name "${CLUSTER_NAME}"
 }
 
@@ -441,14 +472,30 @@ CONFIG
     || fail "generated OCI registry TLS certificate or key is missing or empty under ${OCI_TLS_DIR}"
 }
 
+# pull_registry_image pulls the pinned registry image from the first mirror
+# that serves it and prints the reference it pulled.
+pull_registry_image() {
+  local repository reference
+  for repository in "${OCI_REGISTRY_IMAGE_REPOSITORIES[@]}"; do
+    reference="${repository}@${OCI_REGISTRY_IMAGE_DIGEST}"
+    if retry "docker pull of ${reference}" docker pull "${reference}" >/dev/null; then
+      printf '%s\n' "${reference}"
+      return 0
+    fi
+    echo "argocd render parity smoke: giving up on ${repository}; trying the next mirror" >&2
+  done
+  return 1
+}
+
 prepare_registry_image() {
   local image="drydock-argocd-parity-registry:${CLUSTER_NAME}"
-  docker pull "${OCI_REGISTRY_IMAGE}" >/dev/null \
-    || fail "docker pull of the pinned OCI registry image ${OCI_REGISTRY_IMAGE} failed"
+  local pulled
+  pulled="$(pull_registry_image)" \
+    || fail "docker pull of the pinned OCI registry image ${OCI_REGISTRY_IMAGE_DIGEST} failed from every mirror: ${OCI_REGISTRY_IMAGE_REPOSITORIES[*]}"
   # A digest pull has no tag; the Deployment matches on the image field with
   # imagePullPolicy Never, so re-tag to the exact name:tag it references.
-  docker tag "${OCI_REGISTRY_IMAGE}" "${image}" \
-    || fail "docker tag of the pinned OCI registry image to ${image} failed"
+  docker tag "${pulled}" "${image}" \
+    || fail "docker tag of the pinned OCI registry image ${pulled} to ${image} failed"
   if ! kind load docker-image "${image}" --name "${CLUSTER_NAME}"; then
     # Under Docker's containerd image store a digest pull keeps the multi-arch
     # index but only the host platform's blobs; kind's `ctr images import
