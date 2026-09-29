@@ -1,6 +1,7 @@
 package render
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"net/url"
@@ -12,8 +13,8 @@ import (
 	"github.com/bmatcuk/doublestar/v4"
 	"github.com/sholdee/drydock/internal/pathsafety"
 	"github.com/sholdee/drydock/internal/remote"
-	"go.yaml.in/yaml/v3"
 	"helm.sh/helm/v4/pkg/chart/common"
+	chartv2loader "helm.sh/helm/v4/pkg/chart/v2/loader"
 )
 
 type HelmLocalInputPath struct {
@@ -292,7 +293,16 @@ func shouldLoadHelmValueFiles(mode string, inlineValues map[string]any) (bool, e
 	}
 }
 
+// helmValuesDecoder decodes the bytes of one values file into a values map.
+type helmValuesDecoder func(display string, data []byte) (map[string]any, error)
+
+// loadHelmValueFiles reads value files the way `helm template --values` does
+// (parseHelmValueFile).
 func loadHelmValueFiles(ctx context.Context, repoRoot, baseDir, boundaryDir string, refRoots map[string]string, files []string, ignoreMissing bool, opts RenderOptions) (map[string]any, error) {
+	return loadHelmValueFilesWith(ctx, repoRoot, baseDir, boundaryDir, refRoots, files, ignoreMissing, opts, parseHelmValueFile)
+}
+
+func loadHelmValueFilesWith(ctx context.Context, repoRoot, baseDir, boundaryDir string, refRoots map[string]string, files []string, ignoreMissing bool, opts RenderOptions, decode helmValuesDecoder) (map[string]any, error) {
 	loader := helmValueFileLoader{
 		ctx:           ctx,
 		repoRoot:      repoRoot,
@@ -301,6 +311,7 @@ func loadHelmValueFiles(ctx context.Context, repoRoot, baseDir, boundaryDir stri
 		refRoots:      refRoots,
 		ignoreMissing: ignoreMissing,
 		opts:          opts,
+		decode:        decode,
 		explicit:      map[string]struct{}{},
 		globSeen:      map[string]struct{}{},
 	}
@@ -330,6 +341,7 @@ type helmValueFileLoader struct {
 	refRoots      map[string]string
 	ignoreMissing bool
 	opts          RenderOptions
+	decode        helmValuesDecoder
 	explicit      map[string]struct{}
 	globSeen      map[string]struct{}
 }
@@ -448,7 +460,7 @@ func (l *helmValueFileLoader) loadLocalResolved(root, resolved, display string) 
 		}
 		return loadedHelmValueFile{}, false, fmt.Errorf("read helm value file %q: %w", display, err)
 	}
-	values, err := parseHelmValueFile(display, data)
+	values, err := l.decode(display, data)
 	if err != nil {
 		return loadedHelmValueFile{}, false, err
 	}
@@ -501,20 +513,23 @@ func (l *helmValueFileLoader) loadRemote(file string) (loadedHelmValueFile, erro
 	if err != nil {
 		return loadedHelmValueFile{}, fmt.Errorf("read helm value file %s: %w", remote.RedactURL(file), err)
 	}
-	values, err := parseHelmValueFile(remote.RedactURL(file), data)
+	values, err := l.decode(remote.RedactURL(file), data)
 	if err != nil {
 		return loadedHelmValueFile{}, err
 	}
 	return loadedHelmValueFile{display: remote.RedactURL(file), values: values}, nil
 }
 
+// parseHelmValueFile decodes a values file exactly as `helm template --values`
+// does (pkg/cli/values Options.MergeValues): every YAML document is decoded
+// through sigs.k8s.io/yaml and the documents are merged. Decoding through JSON
+// makes every number float64, so a template printing {{ .Values.x }} renders
+// 1000000 as 1e+06 in Argo CD; YAML 1.1 scalars (yes/no/on/off) are booleans;
+// timestamps stay strings; duplicate keys resolve last-wins.
 func parseHelmValueFile(display string, data []byte) (map[string]any, error) {
-	values := map[string]any{}
-	if err := yaml.Unmarshal(data, &values); err != nil {
+	values, err := chartv2loader.LoadValues(bytes.NewReader(data))
+	if err != nil {
 		return nil, fmt.Errorf("helm value file %q must be a YAML mapping: %w", display, err)
-	}
-	if values == nil {
-		values = map[string]any{}
 	}
 	return values, nil
 }

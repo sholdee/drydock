@@ -15,7 +15,7 @@ import (
 	"github.com/sholdee/drydock/internal/manifest"
 	"github.com/sholdee/drydock/internal/render"
 	sourcepkg "github.com/sholdee/drydock/internal/source"
-	"go.yaml.in/yaml/v3"
+	chartv2loader "helm.sh/helm/v4/pkg/chart/v2/loader"
 	version "k8s.io/apimachinery/pkg/util/version"
 )
 
@@ -476,16 +476,15 @@ func helmValues(helm *argoappv1.ApplicationSourceHelm) (map[string]any, error) {
 	return helmValuesString(helm.Values)
 }
 
+// helmValuesString decodes spec.source.helm.values the way Argo CD's
+// repo-server hands it to Helm: the string is written verbatim to a temp file
+// passed as the last --values, which helm reads with chart/v2/loader.LoadValues
+// (all documents merged, via sigs.k8s.io/yaml, so every number is float64).
+// A comment-only string therefore yields empty values, not an error.
 func helmValuesString(raw string) (map[string]any, error) {
-	if strings.TrimSpace(raw) == "" {
-		return map[string]any{}, nil
-	}
-	var values map[string]any
-	if err := yaml.Unmarshal([]byte(raw), &values); err != nil {
+	values, err := chartv2loader.LoadValues(strings.NewReader(raw))
+	if err != nil {
 		return nil, fmt.Errorf("helm values must be a YAML mapping: %w", err)
-	}
-	if values == nil {
-		return nil, fmt.Errorf("helm values must be a YAML mapping")
 	}
 	return values, nil
 }

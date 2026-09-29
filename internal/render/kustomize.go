@@ -409,7 +409,7 @@ func writeKustomizeHelmGeneratedValuesFile(ctx context.Context, tempRepoRoot, te
 		if valueFilesBase == chartRel {
 			valueFilesBoundary = chartRel
 		}
-		primaryValues, err = loadHelmValueFiles(ctx, tempRepoRoot, valueFilesBase, valueFilesBoundary, nil, []string{valueFile}, ignoreMissing, opts)
+		primaryValues, err = loadHelmValueFilesWith(ctx, tempRepoRoot, valueFilesBase, valueFilesBoundary, nil, []string{valueFile}, ignoreMissing, opts, parseKustomizeHelmValueFile)
 		if err != nil {
 			return "", err
 		}
@@ -432,6 +432,24 @@ func writeKustomizeHelmGeneratedValuesFile(ctx context.Context, tempRepoRoot, te
 		return "", fmt.Errorf("write generated helm values %s: %w", generatedRel, err)
 	}
 	return generatedRel, nil
+}
+
+// parseKustomizeHelmValueFile decodes the helmCharts valuesFile that
+// kustomize merges with valuesInline
+// (HelmChartInflationGeneratorPlugin.replaceValuesInline). kustomize reads it
+// through kyaml (yaml.v3: YAML 1.2, so yes/no stay strings) and marshals the
+// merged map into the values file helm reads, so this read must not use Helm's
+// decoder (parseHelmValueFile); the generated file itself is read as helm
+// reads it.
+func parseKustomizeHelmValueFile(display string, data []byte) (map[string]any, error) {
+	values := map[string]any{}
+	if err := goyaml.Unmarshal(data, &values); err != nil {
+		return nil, fmt.Errorf("helm value file %q must be a YAML mapping: %w", display, err)
+	}
+	if values == nil {
+		values = map[string]any{}
+	}
+	return values, nil
 }
 
 func safeGeneratedKustomizeHelmBaseName(name, version string) string {
