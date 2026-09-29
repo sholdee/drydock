@@ -4,12 +4,15 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
+	"slices"
 	"strings"
 
 	argoappv1 "github.com/argoproj/argo-cd/v3/pkg/apis/application/v1alpha1"
 	"github.com/sholdee/drydock/internal/acquisition"
 	"github.com/sholdee/drydock/internal/cacheevent"
 	"github.com/sholdee/drydock/internal/change"
+	"github.com/sholdee/drydock/internal/config"
 	"github.com/sholdee/drydock/internal/diagnostic"
 )
 
@@ -64,28 +67,13 @@ func (o Orchestrator) buildDiffSides(ctx context.Context, request DiffRequest) (
 		rightBuildRequest.renderSettingsSignature = rightList.result.renderSettingsSignature
 		rightBuildRequest.discovered = rightList.result.discovered
 
-		// Each side owns the Kustomize graph of its own tree, so a base file
-		// added or deleted by the change is owned by the side that has it.
-		leftInputs := withKustomizeSelectionPaths(ctx, leftBuildRequest.Path, leftBuildRequest.RepoMaps, leftList.result.ApplicationInputs)
-		rightInputs := withKustomizeSelectionPaths(ctx, rightBuildRequest.Path, rightBuildRequest.RepoMaps, rightList.result.ApplicationInputs)
-		leftSelected, rightSelected, unowned := selectChangedDiffSides(leftInputs, rightInputs, changedPaths)
-		if len(unowned) > 0 {
-			diag := diagnostic.Diagnostic{
-				Severity: diagnostic.SeverityWarning,
-				Category: "changed-only",
-				Message:  fmt.Sprintf("changed-only could not map %d changed path(s); rendering all Applications: %s", len(unowned), strings.Join(unowned, ", ")),
-			}
-			diagnostics = append(diagnostics, diag)
-			if request.StrictChangedOnly || request.Strict {
-				diagnostics[len(diagnostics)-1].Severity = diagnostic.SeverityError
-				return BuildResult{}, BuildResult{}, diagnostics, fmt.Errorf("changed-only input ownership incomplete")
-			}
-			leftBuildRequest.Applications = leftList.result.Applications
-			rightBuildRequest.Applications = rightList.result.Applications
-		} else {
-			leftBuildRequest.Applications = leftSelected
-			rightBuildRequest.Applications = rightSelected
+		leftApplications, rightApplications, selectionDiags, err := changedOnlyApplications(ctx, request, leftBuildRequest, rightBuildRequest, leftList.result, rightList.result, changedPaths)
+		diagnostics = append(diagnostics, selectionDiags...)
+		if err != nil {
+			return BuildResult{}, BuildResult{}, diagnostics, err
 		}
+		leftBuildRequest.Applications = leftApplications
+		rightBuildRequest.Applications = rightApplications
 	}
 
 	leftBuild, rightBuild := runDiffSidePair(ctx, concurrent, o.Build, leftBuildRequest, rightBuildRequest)
@@ -97,6 +85,72 @@ func (o Orchestrator) buildDiffSides(ctx context.Context, request DiffRequest) (
 		return leftBuild.result, rightBuild.result, diagnostics, err
 	}
 	return leftBuild.result, rightBuild.result, diagnostics, nil
+}
+
+// changedOnlySettingsCode identifies the changed-only render-all an Argo CD
+// settings change forces. It is strict-exempt (strictExemptDiagnostic):
+// rendering every Application is the complete answer, not an ownership gap,
+// so neither --strict nor --strict-changed-only fails on it.
+const changedOnlySettingsCode = "diff.changed-only-settings"
+
+func changedOnlySettingsDiagnostic() diagnostic.Diagnostic {
+	return diagnostic.Diagnostic{
+		Code:     changedOnlySettingsCode,
+		Severity: diagnostic.SeverityWarning,
+		Category: "changed-only",
+		Message:  "Argo CD settings changed; rendering all Applications",
+	}
+}
+
+// changedOnlyApplications returns the Applications each side of a
+// changed-only diff renders: those the changed paths select, or all of them
+// when the Argo CD settings changed or a changed path is owned by no
+// Application (an error under --strict-changed-only or --strict).
+func changedOnlyApplications(ctx context.Context, request DiffRequest, leftBuildRequest, rightBuildRequest BuildRequest, leftList, rightList BuildResult, changedPaths []string) ([]argoappv1.Application, []argoappv1.Application, []diagnostic.Diagnostic, error) {
+	// A settings change reaches every render, whichever Application owns the
+	// file that carries it (a self-managed argocd Application, a sibling's
+	// Kustomize graph): selecting only that owner would drop the rest.
+	settingsChanged, err := argoSettingsChanged(leftList.Settings, rightList.Settings)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	if settingsChanged {
+		return leftList.Applications, rightList.Applications, []diagnostic.Diagnostic{changedOnlySettingsDiagnostic()}, nil
+	}
+
+	// Each side owns the selection-only inputs of its own tree, so a base
+	// file added or deleted by the change is owned by the side that has it.
+	// Each side's self-repo facts decide which $ref roots are local.
+	leftSide := withSelectionOnlyPaths(ctx, leftBuildRequest.Path, leftBuildRequest.RepoMaps, leftBuildRequest.selfRepo, leftList.ApplicationInputs)
+	rightSide := withSelectionOnlyPaths(ctx, rightBuildRequest.Path, rightBuildRequest.RepoMaps, rightBuildRequest.selfRepo, rightList.ApplicationInputs)
+	leftSelected, rightSelected, unowned := selectChangedDiffSides(leftSide, rightSide, changedPaths)
+	if len(unowned) == 0 {
+		return leftSelected, rightSelected, nil, nil
+	}
+	diag := diagnostic.Diagnostic{
+		Severity: diagnostic.SeverityWarning,
+		Category: "changed-only",
+		Message:  fmt.Sprintf("changed-only could not map %d changed path(s); rendering all Applications: %s", len(unowned), strings.Join(unowned, ", ")),
+	}
+	if request.StrictChangedOnly || request.Strict {
+		diag.Severity = diagnostic.SeverityError
+		return nil, nil, []diagnostic.Diagnostic{diag}, fmt.Errorf("changed-only input ownership incomplete")
+	}
+	return leftList.Applications, rightList.Applications, []diagnostic.Diagnostic{diag}, nil
+}
+
+// argoSettingsChanged reports whether the two sides resolved different Argo
+// CD settings (changedOnlySettingsSignature).
+func argoSettingsChanged(left, right config.ArgoSettings) (bool, error) {
+	leftSig, err := changedOnlySettingsSignature(left)
+	if err != nil {
+		return false, err
+	}
+	rightSig, err := changedOnlySettingsSignature(right)
+	if err != nil {
+		return false, err
+	}
+	return leftSig != rightSig, nil
 }
 
 func filteredChangedOnlyPaths(request DiffRequest) ([]string, error) {
@@ -126,15 +180,133 @@ func changedOnlyPathFilter(request DiffRequest) (change.PathFilter, error) {
 // can differ per tree — a file the change deletes is only in the left tree's
 // Kustomize graph — and rendering an Application on one side only would
 // report a false all-added or all-deleted diff instead of the real change or
-// render failure.
-func selectChangedDiffSides(leftInputs, rightInputs []ApplicationSelectionInput, changedPaths []string) ([]argoappv1.Application, []argoappv1.Application, []string) {
-	leftSelected, leftUnowned := SelectChangedApplicationInputs(leftInputs, changedPaths)
-	rightSelected, rightUnowned := SelectChangedApplicationInputs(rightInputs, changedPaths)
-	selectedKeys := make(map[string]struct{}, len(leftSelected)+len(rightSelected))
-	for _, application := range append(append([]argoappv1.Application(nil), leftSelected...), rightSelected...) {
-		selectedKeys[applicationKey(application)] = struct{}{}
+// render failure. A rendered directory whose Kustomize graph a changed path
+// intersects owns that path on its side and selects every Application it
+// declared, on either side. Every Application a selected one renders is
+// selected too, transitively: whatever changes the parent's render can
+// rewrite the child's spec. Unowned paths are unaffected: every path a child
+// reaches through its parent is owned by that parent already.
+func selectChangedDiffSides(left, right selectionSide, changedPaths []string) ([]argoappv1.Application, []argoappv1.Application, []string) {
+	selectedKeys := map[string]struct{}{}
+	changedDirs := map[string]struct{}{}
+	var unowned [2][]string
+	for i, side := range []selectionSide{left, right} {
+		selected, sideUnowned := SelectChangedApplicationInputs(side.inputs, changedPaths)
+		for _, application := range selected {
+			selectedKeys[applicationKey(application)] = struct{}{}
+		}
+		unowned[i] = side.selectChangedRenderedDirs(changedDirs, changedPaths, sideUnowned)
 	}
-	return selectedByKey(leftInputs, selectedKeys), selectedByKey(rightInputs, selectedKeys), unownedByNeitherSide(leftUnowned, rightUnowned)
+	for _, inputs := range [][]ApplicationSelectionInput{left.inputs, right.inputs} {
+		for _, input := range inputs {
+			if _, ok := changedDirs[input.RenderedDir]; ok {
+				selectedKeys[applicationKey(input.Application)] = struct{}{}
+			}
+		}
+	}
+	selectRenderedDescendants(selectedKeys, left.inputs, right.inputs)
+	return selectedByKey(left.inputs, selectedKeys), selectedByKey(right.inputs, selectedKeys), unownedByNeitherSide(unowned[0], unowned[1])
+}
+
+// selectChangedRenderedDirs adds to dirs every rendered directory whose
+// Kustomize graph intersects a changed path, and returns unowned without the
+// paths those graphs own.
+func (s selectionSide) selectChangedRenderedDirs(dirs map[string]struct{}, changedPaths, unowned []string) []string {
+	owned := map[string]struct{}{}
+	for _, changedPath := range changedPaths {
+		normalizedChanged := normalizeSelectPath(changedPath)
+		for dir, graph := range s.renderedDirs {
+			if slices.ContainsFunc(graph, func(graphPath string) bool {
+				return pathIntersects(normalizeSelectPath(graphPath), normalizedChanged)
+			}) {
+				dirs[dir] = struct{}{}
+				owned[normalizedChanged] = struct{}{}
+			}
+		}
+	}
+	remaining := make([]string, 0, len(unowned))
+	for _, changedPath := range unowned {
+		if _, ok := owned[changedPath]; !ok {
+			remaining = append(remaining, changedPath)
+		}
+	}
+	return remaining
+}
+
+// selectRenderedDescendants adds to keys every Application whose recorded
+// parent (ParentKey) is in keys, on either side, until none is left: a
+// nested app-of-apps selects its grandchildren, and a cycle or self-parent
+// ends because each key is added once.
+func selectRenderedDescendants(keys map[string]struct{}, sides ...[]ApplicationSelectionInput) {
+	children := map[string][]string{}
+	for _, inputs := range sides {
+		// A child is rendered by an Application of its own side.
+		parents := newParentResolver(inputs)
+		for _, input := range inputs {
+			if input.ParentKey == "" {
+				continue
+			}
+			child := applicationKey(input.Application)
+			for _, parent := range parents.resolve(input.ParentKey) {
+				children[parent] = append(children[parent], child)
+			}
+		}
+	}
+	pending := slices.Collect(maps.Keys(keys))
+	for len(pending) > 0 {
+		key := pending[len(pending)-1]
+		pending = pending[:len(pending)-1]
+		for _, child := range children[key] {
+			if _, ok := keys[child]; !ok {
+				keys[child] = struct{}{}
+				pending = append(pending, child)
+			}
+		}
+	}
+}
+
+// parentResolver resolves a recorded ParentKey to the Applications of one
+// side it can name.
+type parentResolver struct {
+	keys map[string]struct{}
+	// namespaces lists the namespaces each Application name appears in.
+	namespaces map[string][]string
+}
+
+func newParentResolver(inputs []ApplicationSelectionInput) parentResolver {
+	resolver := parentResolver{keys: map[string]struct{}{}, namespaces: map[string][]string{}}
+	for _, input := range inputs {
+		key := applicationKey(input.Application)
+		if _, ok := resolver.keys[key]; ok {
+			continue
+		}
+		resolver.keys[key] = struct{}{}
+		resolver.namespaces[input.Application.Name] = append(resolver.namespaces[input.Application.Name], input.Application.Namespace)
+	}
+	return resolver
+}
+
+// resolve returns parentKey when an input carries it. Otherwise it mirrors
+// namespaceDefaultedConflict: a discovery merge can replace the parent with a
+// twin whose namespace was defaulted, so it returns every same-name
+// Application where exactly one of the two namespaces is empty. When several
+// match it returns them all: selecting too much is safe.
+func (r parentResolver) resolve(parentKey string) []string {
+	if _, ok := r.keys[parentKey]; ok {
+		return []string{parentKey}
+	}
+	// applicationKey is namespace + "\x00" + name.
+	namespace, name, ok := strings.Cut(parentKey, "\x00")
+	if !ok {
+		return nil
+	}
+	var keys []string
+	for _, candidate := range r.namespaces[name] {
+		if candidate != namespace && (candidate == "" || namespace == "") {
+			keys = append(keys, applicationKey(argoappv1.Application{Namespace: candidate, Name: name}))
+		}
+	}
+	return keys
 }
 
 func selectedByKey(inputs []ApplicationSelectionInput, keys map[string]struct{}) []argoappv1.Application {

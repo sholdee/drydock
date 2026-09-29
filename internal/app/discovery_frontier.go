@@ -128,6 +128,7 @@ func scanRenderedApplicationObjects(parent argoappv1.Application, parentInputs [
 			return out, allDiags, fmt.Errorf("discover rendered Application %s output %q: %w", applicationDisplayName(parent), displayPath, err)
 		}
 		markDiscoveryTier(&next, discovery.SourceTierRenderedFleet, renderedInputPaths(parentInputs, renderedManifest))
+		markRenderedOrigin(&next, applicationKey(parent), "")
 		var mergeDiags []diagnostic.Diagnostic
 		out, mergeDiags = mergeDiscoveryResultsWithDiagnostics(out, next)
 		allDiags = append(allDiags, mergeDiags...)

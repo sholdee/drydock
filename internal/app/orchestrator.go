@@ -76,6 +76,12 @@ type ApplicationManifest struct {
 type ApplicationSelectionInput struct {
 	Application argoappv1.Application
 	Paths       []string
+	// ParentKey (applicationKey) and RenderedDir carry what rendered a
+	// discovered Application (discovery.ApplicationFile), so changed-only
+	// selection can select it with its origin. They are selection-only and
+	// never key a cache.
+	ParentKey   string
+	RenderedDir string
 }
 
 type ApplicationSelector func([]argoappv1.Application) []argoappv1.Application
@@ -268,10 +274,7 @@ func (o Orchestrator) ListApplications(ctx context.Context, request BuildRequest
 func appendDiscoveredApplications(discovered discovery.Result, result *BuildResult) error {
 	for _, appFile := range discovered.Applications {
 		result.Applications = append(result.Applications, appFile.Application)
-		result.ApplicationInputs = append(result.ApplicationInputs, ApplicationSelectionInput{
-			Application: appFile.Application,
-			Paths:       discoveredApplicationInputPaths(appFile),
-		})
+		result.ApplicationInputs = append(result.ApplicationInputs, discoveredApplicationSelectionInput(appFile))
 	}
 	return nil
 }
@@ -279,12 +282,18 @@ func appendDiscoveredApplications(discovered discovery.Result, result *BuildResu
 func discoveredApplicationSelectionInputs(discovered discovery.Result) []ApplicationSelectionInput {
 	inputs := make([]ApplicationSelectionInput, 0, len(discovered.Applications))
 	for _, appFile := range discovered.Applications {
-		inputs = append(inputs, ApplicationSelectionInput{
-			Application: appFile.Application,
-			Paths:       discoveredApplicationInputPaths(appFile),
-		})
+		inputs = append(inputs, discoveredApplicationSelectionInput(appFile))
 	}
 	return inputs
+}
+
+func discoveredApplicationSelectionInput(appFile discovery.ApplicationFile) ApplicationSelectionInput {
+	return ApplicationSelectionInput{
+		Application: appFile.Application,
+		Paths:       discoveredApplicationInputPaths(appFile),
+		ParentKey:   appFile.ParentKey,
+		RenderedDir: appFile.RenderedDir,
+	}
 }
 
 func discoveredApplicationInputPaths(appFile discovery.ApplicationFile) []string {
@@ -955,8 +964,10 @@ func normalizeDiagnostics(diags []diagnostic.Diagnostic, strict, forceWarning bo
 // policy is often read from the diff baseline or --plugin-policy-ref where the
 // PR branch cannot fix it, so diag/get --strict must accept the same policies
 // build/diff --strict accept.
+// The changed-only settings render-all is the complete answer, not an
+// ownership gap: every Application is rendered.
 func strictExemptDiagnostic(diag diagnostic.Diagnostic) bool {
-	return diag.Code == selfRepoNearMissCode || diag.Code == diagnostic.CodePluginPolicyEnvIgnored
+	return diag.Code == selfRepoNearMissCode || diag.Code == diagnostic.CodePluginPolicyEnvIgnored || diag.Code == changedOnlySettingsCode
 }
 
 func diagnosticFailure(diags []diagnostic.Diagnostic, strict bool) error {

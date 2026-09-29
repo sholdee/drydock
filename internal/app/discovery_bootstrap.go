@@ -184,6 +184,7 @@ func scanPolicyBootstrapEntrypointObjects(request BuildRequest, entrypoint plugi
 			return out, allDiags, fmt.Errorf("discover plugin policy bootstrap entrypoint %q output %q: %w", entrypoint.Name, displayPath, err)
 		}
 		markDiscoveryTier(&next, discovery.SourceTierPolicyBootstrap, policyBootstrapInputPaths(request, sourcePath, renderedManifest))
+		markRenderedOrigin(&next, "", filepath.ToSlash(sourcePath))
 		var mergeDiags []diagnostic.Diagnostic
 		out, mergeDiags = mergeDiscoveryResultsWithDiagnostics(out, next)
 		allDiags = append(allDiags, mergeDiags...)

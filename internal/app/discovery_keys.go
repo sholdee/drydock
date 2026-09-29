@@ -27,6 +27,22 @@ func markDiscoveryTier(result *discovery.Result, tier discovery.SourceTier, inpu
 	}
 }
 
+// markRenderedOrigin records the origin of result's Applications and
+// ApplicationSets: the Application with key parentKey, or, when no
+// Application rendered them, the repository directory dir. Changed-only
+// selection (selectChangedDiffSides) selects a rendered Application whenever
+// its origin is selected or dir's Kustomize graph changes.
+func markRenderedOrigin(result *discovery.Result, parentKey, dir string) {
+	for i := range result.Applications {
+		result.Applications[i].ParentKey = parentKey
+		result.Applications[i].RenderedDir = dir
+	}
+	for i := range result.ApplicationSets {
+		result.ApplicationSets[i].ParentKey = parentKey
+		result.ApplicationSets[i].RenderedDir = dir
+	}
+}
+
 func fallbackInputPaths(existing, fallback []string, path string) []string {
 	if len(fallback) != 0 {
 		return uniqueStrings(fallback)

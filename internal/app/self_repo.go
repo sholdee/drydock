@@ -102,12 +102,40 @@ func (r selfRepoRefs) clone() selfRepoRefs {
 	}
 }
 
-// isSelfRepoRef reports whether the source names the local repository at a
-// revision tracking its tree ("", HEAD, a diffed ref name, or a
-// symref-derived default-branch name). Pinned commit SHAs always acquire;
-// tags and branches beyond the tracked revisions always acquire.
-func (p localProvider) isSelfRepoRef(repoURL, revision string) bool {
-	if len(p.selfRepoURLKeys) == 0 {
+// selfRepoMatcher is the one self-repo match shared by source resolution
+// (localProvider.isSelfRepoRef) and changed-only $ref ownership
+// (refSourceRendersFromRoot), so selection owns exactly the ref roots the
+// provider serves from the local tree. The zero value matches nothing.
+type selfRepoMatcher struct {
+	urlKeys   map[string]struct{}
+	revisions map[string]struct{}
+}
+
+// newSelfRepoMatcher indexes refs. Refs without URL keys yield the zero
+// matcher.
+func newSelfRepoMatcher(refs selfRepoRefs) selfRepoMatcher {
+	if len(refs.urlKeys) == 0 {
+		return selfRepoMatcher{}
+	}
+	m := selfRepoMatcher{
+		urlKeys:   make(map[string]struct{}, len(refs.urlKeys)),
+		revisions: make(map[string]struct{}, len(refs.revisions)),
+	}
+	for _, key := range refs.urlKeys {
+		m.urlKeys[key] = struct{}{}
+	}
+	for _, revision := range refs.revisions {
+		m.revisions[revision] = struct{}{}
+	}
+	return m
+}
+
+// matches reports whether repoURL names the local repository at a revision
+// tracking its tree ("", HEAD, a diffed ref name, or a symref-derived
+// default-branch name). Pinned commit SHAs always acquire; tags and branches
+// beyond the tracked revisions always acquire.
+func (m selfRepoMatcher) matches(repoURL, revision string) bool {
+	if len(m.urlKeys) == 0 {
 		return false
 	}
 	rev := strings.TrimSpace(revision)
@@ -115,15 +143,21 @@ func (p localProvider) isSelfRepoRef(repoURL, revision string) bool {
 		return false // pinned SHAs always acquire
 	}
 	if !sourcepkg.IsDefaultRevision(rev) {
-		if _, ok := p.selfRepoRevisions[rev]; !ok {
+		if _, ok := m.revisions[rev]; !ok {
 			return false // tags/unrelated branches acquire
 		}
 	}
 	if strings.TrimSpace(repoURL) == "" {
 		return false
 	}
-	_, ok := p.selfRepoURLKeys[sourcepkg.CanonicalGitURLKey(repoURL)]
+	_, ok := m.urlKeys[sourcepkg.CanonicalGitURLKey(repoURL)]
 	return ok
+}
+
+// isSelfRepoRef reports whether the source names the local repository at a
+// revision tracking its tree; see selfRepoMatcher.matches.
+func (p localProvider) isSelfRepoRef(repoURL, revision string) bool {
+	return selfRepoMatcher{urlKeys: p.selfRepoURLKeys, revisions: p.selfRepoRevisions}.matches(repoURL, revision)
 }
 
 // selfRepoNearMissDiagnostics warns when a source resembles the local

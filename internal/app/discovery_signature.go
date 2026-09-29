@@ -60,6 +60,73 @@ func renderSettingsSignature(settings config.ArgoSettings) (string, error) {
 	return hex.EncodeToString(sum[:]), nil
 }
 
+// changedOnlySettingsSignature fingerprints every Argo CD setting a diff side
+// resolved, for changed-only selection: a settings change reaches every
+// Application, whichever one owns the file that carries it. It covers the
+// render settings (renderSettingsSignature, including the plugin generate
+// commands that JSON leaves out), plugin discovery rules, and every field
+// the settings serialize, so a setting renderSettingsSignature does not need
+// but a diff reads — resource filters, compare options, ignoreDifferences,
+// clusters — or one added later is never missed. Command parameters are left
+// out as renderSettingsSignature leaves them out: only diag reads them.
+// Provenance is dropped: it names the side's own tree, so identical settings
+// in two trees would otherwise always differ.
+func changedOnlySettingsSignature(settings config.ArgoSettings) (string, error) {
+	renderSig, err := renderSettingsSignature(settings)
+	if err != nil {
+		return "", err
+	}
+	settings.CommandParameters = nil
+	settings.HelmValuesFileSchemesSource = config.Provenance{}
+	data, err := json.Marshal(settings)
+	if err != nil {
+		return "", fmt.Errorf("fingerprint Argo CD settings: %w", err)
+	}
+	var fields any
+	if err := json.Unmarshal(data, &fields); err != nil {
+		return "", fmt.Errorf("fingerprint Argo CD settings: %w", err)
+	}
+	discover := make(map[string]config.ConfigManagementPluginDiscovery, len(settings.ConfigManagementPlugins))
+	for key, plugin := range settings.ConfigManagementPlugins {
+		discover[key] = plugin.Discover
+	}
+	data, err = json.Marshal([]any{renderSig, withoutProvenance(fields), discover})
+	if err != nil {
+		return "", fmt.Errorf("fingerprint Argo CD settings: %w", err)
+	}
+	sum := sha256.Sum256(data)
+	return hex.EncodeToString(sum[:]), nil
+}
+
+// withoutProvenance removes, in place, every "provenance" field of decoded
+// settings JSON. Only a provenance-shaped value (path and pointer) is
+// removed, so a map entry that happens to use the key keeps counting.
+func withoutProvenance(value any) any {
+	switch typed := value.(type) {
+	case map[string]any:
+		if provenance, ok := typed["provenance"].(map[string]any); ok && provenanceShaped(provenance) {
+			delete(typed, "provenance")
+		}
+		for key, item := range typed {
+			typed[key] = withoutProvenance(item)
+		}
+	case []any:
+		for i, item := range typed {
+			typed[i] = withoutProvenance(item)
+		}
+	}
+	return value
+}
+
+func provenanceShaped(value map[string]any) bool {
+	for key := range value {
+		if key != "path" && key != "pointer" {
+			return false
+		}
+	}
+	return true
+}
+
 type renderSettingsPlugin struct {
 	Name            string   `json:"name,omitempty"`
 	Version         string   `json:"version,omitempty"`

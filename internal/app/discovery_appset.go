@@ -44,6 +44,8 @@ func expandApplicationSetDiscovery(root string, request BuildRequest, discovered
 				Application:   app.Application,
 				Tier:          appSetFile.Tier,
 				InputPaths:    generatedApplicationInputPaths(appSetFile, app),
+				ParentKey:     appSetFile.ParentKey,
+				RenderedDir:   appSetFile.RenderedDir,
 			})
 		}
 	}

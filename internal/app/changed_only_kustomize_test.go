@@ -256,7 +256,7 @@ func TestOrchestratorDiffAppsChangedOnlyKustomizeGraphKeepsUnownedFallback(t *te
 	}
 }
 
-func TestWithKustomizeSelectionPathsOnlyWalksLocallyRenderedSources(t *testing.T) {
+func TestWithSelectionOnlyPathsOnlyWalksLocallyRenderedSources(t *testing.T) {
 	root := t.TempDir()
 	writeKustomizeOverlayApps(t, root, "v")
 	const overlay = "workloads/demo/overlays/staging"
@@ -287,7 +287,7 @@ func TestWithKustomizeSelectionPathsOnlyWalksLocallyRenderedSources(t *testing.T
 	}
 	repoMaps := []sourcepkg.RepoMap{{URL: "https://github.com/example/mapped", Path: t.TempDir()}}
 
-	got := withKustomizeSelectionPaths(context.Background(), root, repoMaps, inputs)
+	got := withSelectionOnlyPaths(context.Background(), root, repoMaps, selfRepoRefs{}, inputs).inputs
 
 	owns := map[string]bool{}
 	for _, input := range got {
@@ -310,10 +310,10 @@ func TestWithKustomizeSelectionPathsOnlyWalksLocallyRenderedSources(t *testing.T
 	}
 }
 
-// TestWithKustomizeSelectionPathsKeysWalksBySourceKustomizeOptions pins the
+// TestWithSelectionOnlyPathsKeysWalksBySourceKustomizeOptions pins the
 // walk memo key: two sources on one path own different inputs when only one
 // adds spec.source.kustomize components, in either walk order.
-func TestWithKustomizeSelectionPathsKeysWalksBySourceKustomizeOptions(t *testing.T) {
+func TestWithSelectionOnlyPathsKeysWalksBySourceKustomizeOptions(t *testing.T) {
 	root := t.TempDir()
 	writeSourceKustomizeComponentApps(t, root, "v")
 	const component = "workloads/demo/components/extra"
@@ -329,7 +329,7 @@ func TestWithKustomizeSelectionPathsKeysWalksBySourceKustomizeOptions(t *testing
 		{input("plain", plain), input("component", withComponent)},
 		{input("component", withComponent), input("plain", plain)},
 	} {
-		for _, got := range withKustomizeSelectionPaths(context.Background(), root, nil, inputs) {
+		for _, got := range withSelectionOnlyPaths(context.Background(), root, nil, selfRepoRefs{}, inputs).inputs {
 			wantOwns := got.Application.Name == "component"
 			if owns := slices.Contains(got.Paths, component); owns != wantOwns {
 				t.Errorf("%s owns %s = %v, want %v (walk order %s first)", got.Application.Name, component, owns, wantOwns, inputs[0].Application.Name)
@@ -358,7 +358,7 @@ func TestSelectChangedDiffSidesUnionsApplicationsAcrossSides(t *testing.T) {
 		{Application: application("other"), Paths: []string{"manifests/other"}},
 	}
 
-	leftSelected, rightSelected, unowned := selectChangedDiffSides(left, right, []string{deleted})
+	leftSelected, rightSelected, unowned := selectChangedDiffSides(selectionSide{inputs: left}, selectionSide{inputs: right}, []string{deleted})
 
 	names := func(apps []argoappv1.Application) []string {
 		out := make([]string, 0, len(apps))

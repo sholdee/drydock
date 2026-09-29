@@ -95,15 +95,9 @@ func newLocalProvider(ctx context.Context, orchestrator Orchestrator, root strin
 		cacheEvents:                  recorder,
 	}
 	provider.rootIdentity, provider.rootInputMode, provider.rootDirtyPaths = rootIdentityForRequest(ctx, root, request)
-	if len(request.selfRepo.urlKeys) > 0 {
-		provider.selfRepoURLKeys = make(map[string]struct{}, len(request.selfRepo.urlKeys))
-		for _, key := range request.selfRepo.urlKeys {
-			provider.selfRepoURLKeys[key] = struct{}{}
-		}
-		provider.selfRepoRevisions = make(map[string]struct{}, len(request.selfRepo.revisions))
-		for _, revision := range request.selfRepo.revisions {
-			provider.selfRepoRevisions[revision] = struct{}{}
-		}
+	if matcher := newSelfRepoMatcher(request.selfRepo); len(matcher.urlKeys) > 0 {
+		provider.selfRepoURLKeys = matcher.urlKeys
+		provider.selfRepoRevisions = matcher.revisions
 		provider.selfRepoNearMissOnce = &sync.Map{}
 	}
 	provider.renderObserver = orchestrator.renderObserver

@@ -35,6 +35,14 @@ type ApplicationFile struct {
 	Application   argoappv1.Application
 	Tier          SourceTier
 	InputPaths    []string
+	// ParentKey and RenderedDir record what rendered the Application, for
+	// changed-only ownership only; they never key a cache or fingerprint.
+	// ParentKey is the caller's namespace/name key of the Application whose
+	// render declared it (SourceTierRenderedFleet). RenderedDir is the
+	// repository directory rendered to declare it without a parent
+	// Application (SourceTierExplicitRendered, SourceTierPolicyBootstrap).
+	ParentKey   string
+	RenderedDir string
 }
 
 type ApplicationSetFile struct {
@@ -43,6 +51,10 @@ type ApplicationSetFile struct {
 	ApplicationSet argoappv1.ApplicationSet
 	Tier           SourceTier
 	InputPaths     []string
+	// ParentKey and RenderedDir pass on to the generated Applications; see
+	// ApplicationFile.
+	ParentKey   string
+	RenderedDir string
 }
 
 type ProjectFile struct {

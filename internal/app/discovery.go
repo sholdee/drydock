@@ -144,6 +144,7 @@ func (o Orchestrator) discoverRenderedKustomize(ctx context.Context, root string
 			return out, allDiags, recorder.Events(), fmt.Errorf("discover kustomize %q: %w", displayPath, err)
 		}
 		markDiscoveryTier(&next, discovery.SourceTierExplicitRendered, []string{displayPath})
+		markRenderedOrigin(&next, "", displayPath)
 		var mergeDiags []diagnostic.Diagnostic
 		out, mergeDiags = mergeDiscoveryResultsWithDiagnostics(out, next)
 		allDiags = append(allDiags, mergeDiags...)
