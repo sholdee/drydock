@@ -259,3 +259,122 @@ func TestRenderInputCoverageHelmSourceOutOfChartDirValueFile(t *testing.T) {
 	}
 	assertRenderInputCoverage(t, repoRoot, application)
 }
+
+const renderCoverageDemoConfigMap = "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: demo\ndata:\n  value: base\n"
+
+const renderCoveragePatchedConfigMap = "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: demo\ndata:\n  value: patched\n"
+
+// TestRenderInputCoverageKustomizeBuiltinPluginConfigReferents pins that the
+// files builtin plugin configs read through the listing kustomization's
+// loader are covered by the persistent render cache digest, for every kind
+// with referents and for inline and directory entries. The referents sit next
+// to the listing kustomization, outside the config's own directory, which is
+// where kustomize resolves them.
+func TestRenderInputCoverageKustomizeBuiltinPluginConfigReferents(t *testing.T) {
+	const transformerEntry = "resources:\n  - cm.yaml\ntransformers:\n  - cfg/transformer.yaml\n"
+	for _, tt := range []struct {
+		name  string
+		files map[string]string
+	}{
+		{
+			name: "PatchTransformer path",
+			files: map[string]string{
+				"kustomization.yaml":   transformerEntry,
+				"cfg/transformer.yaml": "apiVersion: builtin\nkind: PatchTransformer\nmetadata:\n  name: patch\npath: patch.yaml\ntarget:\n  kind: ConfigMap\n  name: demo\n",
+				"patch.yaml":           renderCoveragePatchedConfigMap,
+			},
+		},
+		{
+			name: "PatchJson6902Transformer path",
+			files: map[string]string{
+				"kustomization.yaml":   transformerEntry,
+				"cfg/transformer.yaml": "apiVersion: builtin\nkind: PatchJson6902Transformer\nmetadata:\n  name: ops\ntarget:\n  version: v1\n  kind: ConfigMap\n  name: demo\npath: ops.yaml\n",
+				"ops.yaml":             "- op: replace\n  path: /data/value\n  value: patched\n",
+			},
+		},
+		{
+			name: "PatchStrategicMergeTransformer paths",
+			files: map[string]string{
+				"kustomization.yaml":   transformerEntry,
+				"cfg/transformer.yaml": "apiVersion: builtin\nkind: PatchStrategicMergeTransformer\nmetadata:\n  name: smp\npaths:\n  - patch.yaml\n",
+				"patch.yaml":           renderCoveragePatchedConfigMap,
+			},
+		},
+		{
+			name: "ReplacementTransformer replacements path",
+			files: map[string]string{
+				"kustomization.yaml":   "resources:\n  - cm.yaml\n  - source.yaml\ntransformers:\n  - cfg/transformer.yaml\n",
+				"source.yaml":          "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: source\ndata:\n  value: replaced\n",
+				"cfg/transformer.yaml": "apiVersion: builtin\nkind: ReplacementTransformer\nmetadata:\n  name: replace\nreplacements:\n  - path: replacement.yaml\n",
+				"replacement.yaml":     "source:\n  kind: ConfigMap\n  name: source\n  fieldPath: data.value\ntargets:\n  - select:\n      kind: ConfigMap\n      name: demo\n    fieldPaths:\n      - data.value\n",
+			},
+		},
+		{
+			// env: is never read by a builtin generator config (only
+			// kustomization-level generators merge it into envs:), so
+			// corrupting ignored.env must leave the render unchanged; if
+			// kustomize ever read it, the undigested file would trip here.
+			name: "ConfigMapGenerator files and envs",
+			files: map[string]string{
+				"kustomization.yaml": "generators:\n  - cfg/generator.yaml\n",
+				"cfg/generator.yaml": "apiVersion: builtin\nkind: ConfigMapGenerator\nmetadata:\n  name: generated\nfiles:\n  - key=data.txt\nenvs:\n  - vars.env\nenv: ignored.env\n",
+				"data.txt":           "data\n",
+				"vars.env":           "A=a\n",
+				"ignored.env":        "IGNORED=x\n",
+			},
+		},
+		{
+			name: "SecretGenerator files and envs",
+			files: map[string]string{
+				"kustomization.yaml": "generators:\n  - cfg/generator.yaml\n",
+				"cfg/generator.yaml": "apiVersion: builtin\nkind: SecretGenerator\nmetadata:\n  name: generated\nfiles:\n  - token.txt\nenvs:\n  - secret.env\n",
+				"token.txt":          "token\n",
+				"secret.env":         "A=a\n",
+			},
+		},
+		{
+			name: "ValueAddTransformer targetFilePath",
+			files: map[string]string{
+				"kustomization.yaml":   transformerEntry,
+				"cfg/transformer.yaml": "apiVersion: builtin\nkind: ValueAddTransformer\nmetadata:\n  name: add\nvalue: added\ntargetFilePath: targets.yaml\n",
+				"targets.yaml":         "targets:\n  - selector:\n      kind: ConfigMap\n      name: demo\n    fieldPath: data/marker\n",
+			},
+		},
+		{
+			name: "inline transformers entry",
+			files: map[string]string{
+				"kustomization.yaml": "resources:\n  - cm.yaml\ntransformers:\n  - |\n    apiVersion: builtin\n    kind: PatchStrategicMergeTransformer\n    metadata:\n      name: inline\n    paths:\n      - patch.yaml\n",
+				"patch.yaml":         renderCoveragePatchedConfigMap,
+			},
+		},
+		{
+			name: "directory transformers entry",
+			files: map[string]string{
+				"kustomization.yaml":     "resources:\n  - cm.yaml\ntransformers:\n  - ./cfg\n",
+				"cfg/kustomization.yaml": "resources:\n  - transformer.yaml\n",
+				"cfg/transformer.yaml":   "apiVersion: builtin\nkind: PatchTransformer\nmetadata:\n  name: patch\npath: patch.yaml\ntarget:\n  kind: ConfigMap\n  name: demo\n",
+				"patch.yaml":             renderCoveragePatchedConfigMap,
+			},
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			repoRoot := t.TempDir()
+			appDir := filepath.Join(repoRoot, "manifests", "app")
+			writeTestFile(t, filepath.Join(appDir, "cm.yaml"), renderCoverageDemoConfigMap)
+			for name, content := range tt.files {
+				writeTestFile(t, filepath.Join(appDir, filepath.FromSlash(name)), content)
+			}
+			writeTestFile(t, filepath.Join(repoRoot, "unrelated", "README.md"), "not a render input\n")
+			application := argoappv1.Application{
+				Name: "app", Namespace: "argocd",
+				Spec: argoappv1.ApplicationSpec{
+					Source: &argoappv1.ApplicationSource{
+						RepoURL: "https://git.example.test/org/repo.git", Path: "manifests/app", TargetRevision: "main",
+					},
+					Destination: argoappv1.ApplicationDestination{Namespace: "default"},
+				},
+			}
+			assertRenderInputCoverage(t, repoRoot, application)
+		})
+	}
+}

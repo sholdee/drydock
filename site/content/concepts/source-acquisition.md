@@ -456,6 +456,15 @@ Renders are persisted only when every input is provably pinned. Floating remote
 Kustomize bases, remote URL Helm value files, plugin sources, repo-mapped
 sources, and unsupported local input graphs always re-render.
 
+A Kustomize input graph includes the files that builtin plugin configs listed
+under `transformers`, `generators`, and `validators` read: patch `path` and
+`paths`, `replacements[].path`, generator `files` and `envs`, and
+`ValueAddTransformer` `targetFilePath`, resolved against the listing
+kustomization directory. A plugin config drydock cannot enumerate, such as a
+remote config entry, a non-builtin plugin, an unknown kind, or
+`HelmChartInflationGenerator`, makes the source skip persistence with
+`input-graph-unsupported`.
+
 Clean Git roots use committed input digests. Dirty Git roots use per-Application
 committed or working-tree input digests, as described above. Symlinks,
 unsupported file types, unreadable files, unbounded input graphs, and non-Git

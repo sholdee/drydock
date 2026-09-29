@@ -288,7 +288,8 @@ Supported:
   VALUES are never decrypted and no
   decryption key, KMS network call, or exec is involved.
   Builtin generator configs (`apiVersion: builtin`) are left for krusty and
-  render successfully with or without the flag. Exec transformers, exec
+  render successfully with or without the flag; the persistent render cache
+  digests the files builtin configs reference. Exec transformers, exec
   validators, container KRM functions, and other non-KSOPS generators remain
   unsupported and fail closed. krusty's own errors surface for unsupported
   transformer and validator kinds.

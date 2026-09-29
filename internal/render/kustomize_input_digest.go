@@ -256,12 +256,12 @@ func (c *kustomizeInputCollector) collectAuxiliaryRefs(ctx context.Context, dir 
 		}
 	}
 	for _, ref := range kustomization.Transformers {
-		if err := c.addKustomizeRef(ctx, dir, "transformers", ref, false); err != nil {
+		if err := c.collectPluginConfigEntry(ctx, dir, "transformers", ref); err != nil {
 			return err
 		}
 	}
 	for _, ref := range kustomization.Validators {
-		if err := c.addKustomizeRef(ctx, dir, "validators", ref, false); err != nil {
+		if err := c.collectPluginConfigEntry(ctx, dir, "validators", ref); err != nil {
 			return err
 		}
 	}
@@ -296,19 +296,27 @@ func (c *kustomizeInputCollector) collectPatchRefs(ctx context.Context, dir stri
 	return nil
 }
 
-// collectGeneratorManifestRef digests one generators: entry. Inline entries
-// are part of the kustomization file, which is always digested — but an
-// inline KSOPS document's files: referents are separate render inputs of
-// ksops-compat emulation, so they join the digest too, resolved relative to
-// the kustomization directory (the base directory emulation uses for inline
-// entries). Local path entries are digested by content, and when the manifest
-// parses as a KSOPS generator its files: referents join the digest too —
-// sops edits must rotate the render cache key.
+// collectGeneratorManifestRef digests one generators: entry: the entry and
+// its builtin configs' referents like any plugin config entry
+// (collectPluginConfigEntry), plus the files: referents of its KSOPS
+// documents.
 func (c *kustomizeInputCollector) collectGeneratorManifestRef(ctx context.Context, dir, ref string) error {
 	ref = strings.TrimSpace(ref)
 	if ref == "" {
 		return nil
 	}
+	if err := c.collectKSOPSGeneratorFileRefs(ctx, dir, ref); err != nil {
+		return err
+	}
+	return c.collectPluginConfigEntry(ctx, dir, "generators", ref)
+}
+
+// collectKSOPSGeneratorFileRefs adds the files: referents of a generators:
+// entry's KSOPS documents — separate render inputs of ksops-compat
+// emulation; sops edits must rotate the render cache key. Emulation resolves
+// them relative to the kustomization directory for inline entries and to the
+// manifest's own directory for local path entries.
+func (c *kustomizeInputCollector) collectKSOPSGeneratorFileRefs(ctx context.Context, dir, ref string) error {
 	if docs, inline := inlineKustomizeGeneratorDocuments(ref); inline {
 		for _, fileRef := range ksopsGeneratorFileRefsFromDocuments(docs) {
 			if err := c.addLocalRef(ctx, dir, "generators.files", fileRef, false); err != nil {
@@ -317,11 +325,9 @@ func (c *kustomizeInputCollector) collectGeneratorManifestRef(ctx context.Contex
 		}
 		return nil
 	}
-	if err := c.addKustomizeRef(ctx, dir, "generators", ref, false); err != nil {
-		return err
-	}
-	if _, _, ok, err := remoteRequestForKustomizeRef(ref); err != nil || ok {
-		return c.skip(ctx, err)
+	if isRemoteKustomizeRef(ref) {
+		// collectPluginConfigEntry reports remote entries.
+		return nil
 	}
 	path := filepath.Clean(filepath.Join(dir, filepath.FromSlash(ref)))
 	for _, fileRef := range ksopsGeneratorFileRefs(path) {
@@ -365,17 +371,27 @@ func (c *kustomizeInputCollector) addKustomizeRef(ctx context.Context, dir, fiel
 }
 
 func (c *kustomizeInputCollector) addLocalRef(ctx context.Context, dir, field, ref string, optional bool) error {
-	if filepath.IsAbs(ref) {
-		return c.skip(ctx, fmt.Errorf("kustomize %s %q must be relative", field, ref))
-	}
-	if isRemoteKustomizeRef(ref) {
-		return c.skip(ctx, unsupportedRemoteKustomizeRefError(field, ref))
-	}
-	path := filepath.Clean(filepath.Join(dir, filepath.FromSlash(ref)))
-	if err := rejectPathOutsideBoundary("kustomize "+field, path, c.repoRoot); err != nil {
+	path, err := c.resolveLocalRef(dir, field, ref)
+	if err != nil {
 		return c.skip(ctx, err)
 	}
 	return c.addAbsPath(ctx, path, optional)
+}
+
+// resolveLocalRef resolves a local ref against dir, rejecting absolute,
+// remote and out-of-repository refs.
+func (c *kustomizeInputCollector) resolveLocalRef(dir, field, ref string) (string, error) {
+	if filepath.IsAbs(ref) {
+		return "", fmt.Errorf("kustomize %s %q must be relative", field, ref)
+	}
+	if isRemoteKustomizeRef(ref) {
+		return "", unsupportedRemoteKustomizeRefError(field, ref)
+	}
+	path := filepath.Clean(filepath.Join(dir, filepath.FromSlash(ref)))
+	if err := rejectPathOutsideBoundary("kustomize "+field, path, c.repoRoot); err != nil {
+		return "", err
+	}
+	return path, nil
 }
 
 func (c *kustomizeInputCollector) addAbsPath(ctx context.Context, path string, optional bool) error {
