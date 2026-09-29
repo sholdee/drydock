@@ -280,6 +280,18 @@ evaluated. This render-all carries diagnostic `diff.changed-only-settings`
 (warning) and is exempt from `--strict-changed-only` and `--strict`, because
 rendering everything is the complete answer, not an ownership gap.
 
+A changed AppProject (added, removed, or with a different namespace or spec,
+looked up by name as project validation looks it up) selects every Application
+in that project on both sides: validation reads it even though no render does,
+and this selection adds no diagnostic of its own. Declaring the first
+AppProject or removing the last renders every Application instead: with no
+AppProject, every Application validates against the implicit `default`
+project, whatever project it names. This render-all carries diagnostic
+`diff.changed-only-projects` (warning) and is exempt from
+`--strict-changed-only` and `--strict`, for the same reason as
+`diff.changed-only-settings`: rendering everything is the complete answer, not
+an ownership gap. `--project-diagnostics off` skips both forms of selection.
+
 Operators can scope the changed path set with explicit include and ignore
 globs before ownership is evaluated. Include globs define the considered path
 universe; ignore globs remove paths from that universe and take precedence. If

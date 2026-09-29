@@ -22,11 +22,20 @@ type changedOnlyOracleCase struct {
 	// and the request that diffs them.
 	setup func(*testing.T) (Orchestrator, DiffRequest)
 	// wantFallback is "" or the diagnostic code of the expected render-all:
-	// diff.changed-only-incomplete or diff.changed-only-settings.
+	// diff.changed-only-incomplete, diff.changed-only-settings, or
+	// diff.changed-only-projects.
 	wantFallback string
 	// wantApplications are the Applications the full diff reports, so a
 	// fixture that stops diffing cannot make the row pass vacuously.
 	wantApplications []string
+	// wantProjectDiagnostics are the project diagnostics both diffs report,
+	// sorted (projectDiagnosticKeys). A fixture that exercises project
+	// selection must keep its project-rule violation inside an Application
+	// the changed-only selection actually selects (a member of the changed
+	// AppProject, or one that renders under a render-all): this comparison is
+	// how the oracle catches a selection that renders the AppProject's owner
+	// but silently drops a denied member.
+	wantProjectDiagnostics []projectDiagnosticKey
 }
 
 // pathPairOracleSetup diffs two trees write fills with left and right.
@@ -158,6 +167,19 @@ func TestChangedOnlyMatchesFullDiff(t *testing.T) {
 			}, "old", "new", settingsDiscovery),
 			wantApplications: []string{"other"},
 		},
+		// AppProject validation.
+		{
+			name:                   "tightened AppProject sourceRepos",
+			setup:                  pathPairOracleSetup(writeTenantProjectApps, tenantRepoURL, "https://github.com/example/platform", DiscoveryOptions{}),
+			wantApplications:       []string{"argocd"},
+			wantProjectDiagnostics: []projectDiagnosticKey{sourceRepositoryDenied("tenant-app", tenantRepoURL, "tenant")},
+		},
+		{
+			name:             "first AppProject declared",
+			setup:            pathPairOracleSetup(writeMaybeTenantProjectApps, "absent", "present", DiscoveryOptions{}),
+			wantFallback:     changedOnlyProjectsCode,
+			wantApplications: []string{"argocd"},
+		},
 		// Control: a path no Application owns still renders all.
 		{
 			name: "unowned README",
@@ -171,7 +193,7 @@ func TestChangedOnlyMatchesFullDiff(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			o, request := tc.setup(t)
-			full := assertChangedOnlyMatchesFullDiff(t, o, request, tc.wantFallback)
+			full := assertChangedOnlyMatchesFullDiff(t, o, request, tc.wantFallback, tc.wantProjectDiagnostics)
 			if got := diffedApplications(DiffResult{Results: full}); !slices.Equal(got, tc.wantApplications) {
 				t.Fatalf("full diff Applications = %v, want %v", got, tc.wantApplications)
 			}
@@ -184,8 +206,9 @@ func TestChangedOnlyMatchesFullDiff(t *testing.T) {
 // requires no changed-only diagnostic at all; otherwise exactly one, with
 // that code. Either way the changed-only results must equal the full results
 // (a render-all is still a full render), compared field by field after a
-// deterministic sort.
-func assertChangedOnlyMatchesFullDiff(t *testing.T, o Orchestrator, request DiffRequest, wantFallback string) []diff.Result {
+// deterministic sort, and both diffs must report exactly
+// wantProjectDiagnostics.
+func assertChangedOnlyMatchesFullDiff(t *testing.T, o Orchestrator, request DiffRequest, wantFallback string, wantProjectDiagnostics []projectDiagnosticKey) []diff.Result {
 	t.Helper()
 	request.ChangedOnly = false
 	request.StrictChangedOnly = false
@@ -213,7 +236,44 @@ func assertChangedOnlyMatchesFullDiff(t *testing.T, o Orchestrator, request Diff
 		t.Fatalf("changed-only diagnostics %v, want exactly [%s]: %#v", codes, wantFallback, changedOnly.Diagnostics)
 	}
 	assertDiffResultsEqual(t, full, changedOnly)
+	for _, side := range []struct {
+		name   string
+		result DiffResult
+	}{{"full", full}, {"changed-only", changedOnly}} {
+		if got := projectDiagnosticKeys(side.result.Diagnostics); !slices.Equal(got, wantProjectDiagnostics) {
+			t.Fatalf("%s diff project diagnostics = %#v, want %#v", side.name, got, wantProjectDiagnostics)
+		}
+	}
 	return full.Results
+}
+
+// projectDiagnosticKey identifies a project diagnostic: one
+// diagnostic.ClassifyProjectDiagnostic does not class as non-project.
+type projectDiagnosticKey struct {
+	Code       string
+	Message    string
+	Provenance diagnostic.Provenance
+}
+
+// projectDiagnosticKeys returns the project diagnostics in diags, with their
+// stable codes, sorted.
+func projectDiagnosticKeys(diags []diagnostic.Diagnostic) []projectDiagnosticKey {
+	var keys []projectDiagnosticKey
+	for _, diag := range diagnostic.WithStableCodes(diags) {
+		if diagnostic.ClassifyProjectDiagnostic(diag) == diagnostic.ProjectDiagnosticClassNonProject {
+			continue
+		}
+		keys = append(keys, projectDiagnosticKey{Code: diag.Code, Message: diag.Message, Provenance: diag.Provenance})
+	}
+	slices.SortFunc(keys, func(a, b projectDiagnosticKey) int {
+		return cmp.Or(
+			cmp.Compare(a.Code, b.Code),
+			cmp.Compare(a.Message, b.Message),
+			cmp.Compare(a.Provenance.Path, b.Provenance.Path),
+			cmp.Compare(a.Provenance.Pointer, b.Provenance.Pointer),
+		)
+	})
+	return keys
 }
 
 // assertDiffResultsEqual reports the first result, by Application and

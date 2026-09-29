@@ -358,7 +358,7 @@ func TestSelectChangedDiffSidesUnionsApplicationsAcrossSides(t *testing.T) {
 		{Application: application("other"), Paths: []string{"manifests/other"}},
 	}
 
-	leftSelected, rightSelected, unowned := selectChangedDiffSides(selectionSide{inputs: left}, selectionSide{inputs: right}, []string{deleted})
+	leftSelected, rightSelected, unowned := selectChangedDiffSides(selectionSide{inputs: left}, selectionSide{inputs: right}, []string{deleted}, nil)
 
 	names := func(apps []argoappv1.Application) []string {
 		out := make([]string, 0, len(apps))

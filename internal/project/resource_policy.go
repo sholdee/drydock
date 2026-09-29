@@ -284,7 +284,7 @@ func (v *renderedResourcePolicyValidator) validationErrorDiagnostic(obj *unstruc
 
 func renderedResourcePolicyProject(app argoappv1.Application, projects []argoappv1.AppProject, settings config.ArgoSettings) (argoappv1.AppProject, bool) {
 	projectName := applicationProject(app)
-	index := projectIndex(projects)
+	index := ByName(projects)
 	proj, ok := index[projectName]
 	if !ok {
 		if projectName == argoappv1.DefaultAppProjectName || len(projects) == 0 {

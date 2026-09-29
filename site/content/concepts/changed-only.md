@@ -21,6 +21,17 @@ this render-all is exempt from `--strict-changed-only` and `--strict`: rendering
 every Application is the complete answer to a settings change, not a gap in
 ownership.
 
+A changed AppProject selects every Application in that project, not just the
+Application that owns the AppProject file: tightening `sourceRepos`,
+destinations, or resource lists re-validates each member, so changed-only
+reports the same project diagnostics as a full diff. Declaring the first
+AppProject or removing the last renders all Applications instead, with its own
+diagnostic (`diff.changed-only-projects`): with no AppProject every
+Application validates against the implicit `default` project, whatever
+project it names. Like `diff.changed-only-settings`, this render-all is exempt
+from `--strict-changed-only` and `--strict`. With `--project-diagnostics off`,
+AppProject changes select nothing extra.
+
 ## Commands
 
 Use the default behavior:

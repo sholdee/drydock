@@ -23,7 +23,7 @@ func ValidateApplications(apps []argoappv1.Application, projects []argoappv1.App
 		return nil
 	}
 
-	index := projectIndex(projects)
+	index := ByName(projects)
 	hasLocalProjects := len(projects) > 0
 	diags := make([]diagnostic.Diagnostic, 0)
 	for _, app := range apps {
@@ -51,7 +51,10 @@ func ValidateApplications(apps []argoappv1.Application, projects []argoappv1.App
 	return dedupeDiagnostics(diags)
 }
 
-func projectIndex(projects []argoappv1.AppProject) map[string]argoappv1.AppProject {
+// ByName indexes projects the way validation looks an Application's
+// AppProject up: by name alone, the last one winning, skipping any without a
+// name.
+func ByName(projects []argoappv1.AppProject) map[string]argoappv1.AppProject {
 	index := make(map[string]argoappv1.AppProject, len(projects))
 	for _, proj := range projects {
 		if proj.Name == "" {

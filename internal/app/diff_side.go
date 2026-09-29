@@ -14,6 +14,7 @@ import (
 	"github.com/sholdee/drydock/internal/change"
 	"github.com/sholdee/drydock/internal/config"
 	"github.com/sholdee/drydock/internal/diagnostic"
+	"github.com/sholdee/drydock/internal/project"
 )
 
 func (o Orchestrator) buildDiffSides(ctx context.Context, request DiffRequest) (BuildResult, BuildResult, []diagnostic.Diagnostic, error) {
@@ -102,10 +103,28 @@ func changedOnlySettingsDiagnostic() diagnostic.Diagnostic {
 	}
 }
 
+// changedOnlyProjectsCode identifies the changed-only render-all a changed
+// AppProject population forces: the first AppProject declared, or the last
+// one removed, on either side (changedProjectNames' all switch). It is
+// strict-exempt (strictExemptDiagnostic) for the same reason as
+// changedOnlySettingsCode: rendering every Application is the complete
+// answer, not an ownership gap.
+const changedOnlyProjectsCode = "diff.changed-only-projects"
+
+func changedOnlyProjectsDiagnostic() diagnostic.Diagnostic {
+	return diagnostic.Diagnostic{
+		Code:     changedOnlyProjectsCode,
+		Severity: diagnostic.SeverityWarning,
+		Category: "changed-only",
+		Message:  "first AppProject declared or last AppProject removed on one side; rendering all Applications",
+	}
+}
+
 // changedOnlyApplications returns the Applications each side of a
-// changed-only diff renders: those the changed paths select, or all of them
-// when the Argo CD settings changed or a changed path is owned by no
-// Application (an error under --strict-changed-only or --strict).
+// changed-only diff renders: those the changed paths or changed AppProjects
+// select, or all of them when the Argo CD settings changed, either side
+// declares no AppProject while the other does, or a changed path is owned by
+// no Application (an error under --strict-changed-only or --strict).
 func changedOnlyApplications(ctx context.Context, request DiffRequest, leftBuildRequest, rightBuildRequest BuildRequest, leftList, rightList BuildResult, changedPaths []string) ([]argoappv1.Application, []argoappv1.Application, []diagnostic.Diagnostic, error) {
 	// A settings change reaches every render, whichever Application owns the
 	// file that carries it (a self-managed argocd Application, a sibling's
@@ -118,12 +137,24 @@ func changedOnlyApplications(ctx context.Context, request DiffRequest, leftBuild
 		return leftList.Applications, rightList.Applications, []diagnostic.Diagnostic{changedOnlySettingsDiagnostic()}, nil
 	}
 
+	// An AppProject change reaches every Application in the project through
+	// project validation, whichever Application owns the file that carries
+	// it. With project diagnostics off it reaches nothing a diff reports.
+	var projectNames map[string]struct{}
+	if request.ProjectDiagnosticsMode.Normalize() != diagnostic.ProjectDiagnosticsModeOff {
+		var all bool
+		projectNames, all = changedProjectNames(leftList.Projects, rightList.Projects)
+		if all {
+			return leftList.Applications, rightList.Applications, []diagnostic.Diagnostic{changedOnlyProjectsDiagnostic()}, nil
+		}
+	}
+
 	// Each side owns the selection-only inputs of its own tree, so a base
 	// file added or deleted by the change is owned by the side that has it.
 	// Each side's self-repo facts decide which $ref roots are local.
 	leftSide := withSelectionOnlyPaths(ctx, leftBuildRequest.Path, leftBuildRequest.RepoMaps, leftBuildRequest.selfRepo, leftList.ApplicationInputs)
 	rightSide := withSelectionOnlyPaths(ctx, rightBuildRequest.Path, rightBuildRequest.RepoMaps, rightBuildRequest.selfRepo, rightList.ApplicationInputs)
-	leftSelected, rightSelected, unowned := selectChangedDiffSides(leftSide, rightSide, changedPaths)
+	leftSelected, rightSelected, unowned := selectChangedDiffSides(leftSide, rightSide, changedPaths, projectNames)
 	if len(unowned) == 0 {
 		return leftSelected, rightSelected, nil, nil
 	}
@@ -137,6 +168,47 @@ func changedOnlyApplications(ctx context.Context, request DiffRequest, leftBuild
 		return nil, nil, []diagnostic.Diagnostic{diag}, fmt.Errorf("changed-only input ownership incomplete")
 	}
 	return leftList.Applications, rightList.Applications, []diagnostic.Diagnostic{diag}, nil
+}
+
+// changedProjectNames returns the names of the AppProjects that validate
+// differently on the two sides: added, removed, or with a changed namespace
+// or spec, indexed as validation indexes them (project.ByName). all reports
+// that exactly one side declares no AppProject: there every Application
+// validates against the implicit default project and repository metadata
+// goes unchecked (project.ValidateApplications), so every one is affected.
+func changedProjectNames(left, right []argoappv1.AppProject) (names map[string]struct{}, all bool) {
+	if (len(left) == 0) != (len(right) == 0) {
+		return nil, true
+	}
+	leftFingerprints := projectFingerprints(left)
+	rightFingerprints := projectFingerprints(right)
+	names = map[string]struct{}{}
+	for name, fingerprint := range leftFingerprints {
+		if rightFingerprints[name] != fingerprint {
+			names[name] = struct{}{}
+		}
+	}
+	for name := range rightFingerprints {
+		if _, ok := leftFingerprints[name]; !ok {
+			names[name] = struct{}{}
+		}
+	}
+	return names, false
+}
+
+// projectFingerprints fingerprints, by name, what validation reads of each
+// AppProject: its namespace (the controller namespace for source namespace
+// checks) and its spec.
+func projectFingerprints(projects []argoappv1.AppProject) map[string]string {
+	index := project.ByName(projects)
+	fingerprints := make(map[string]string, len(index))
+	for name, proj := range index {
+		fingerprints[name] = objectContentFingerprint(name, struct {
+			Namespace string
+			Spec      argoappv1.AppProjectSpec
+		}{proj.Namespace, proj.Spec})
+	}
+	return fingerprints
 }
 
 // argoSettingsChanged reports whether the two sides resolved different Argo
@@ -185,8 +257,10 @@ func changedOnlyPathFilter(request DiffRequest) (change.PathFilter, error) {
 // declared, on either side. Every Application a selected one renders is
 // selected too, transitively: whatever changes the parent's render can
 // rewrite the child's spec. Unowned paths are unaffected: every path a child
-// reaches through its parent is owned by that parent already.
-func selectChangedDiffSides(left, right selectionSide, changedPaths []string) ([]argoappv1.Application, []argoappv1.Application, []string) {
+// reaches through its parent is owned by that parent already. Every
+// Application in one of changedProjects is selected last, on either side:
+// the AppProject reaches its validation, not its render or its children's.
+func selectChangedDiffSides(left, right selectionSide, changedPaths []string, changedProjects map[string]struct{}) ([]argoappv1.Application, []argoappv1.Application, []string) {
 	selectedKeys := map[string]struct{}{}
 	changedDirs := map[string]struct{}{}
 	var unowned [2][]string
@@ -205,6 +279,13 @@ func selectChangedDiffSides(left, right selectionSide, changedPaths []string) ([
 		}
 	}
 	selectRenderedDescendants(selectedKeys, left.inputs, right.inputs)
+	for _, inputs := range [][]ApplicationSelectionInput{left.inputs, right.inputs} {
+		for _, input := range inputs {
+			if _, ok := changedProjects[input.Application.Spec.GetProject()]; ok {
+				selectedKeys[applicationKey(input.Application)] = struct{}{}
+			}
+		}
+	}
 	return selectedByKey(left.inputs, selectedKeys), selectedByKey(right.inputs, selectedKeys), unownedByNeitherSide(unowned[0], unowned[1])
 }
 

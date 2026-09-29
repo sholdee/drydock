@@ -598,7 +598,7 @@ func TestSelectChangedDiffSidesSelectsRenderedDescendants(t *testing.T) {
 		if tc.wantRight == nil {
 			tc.wantRight = tc.wantLeft
 		}
-		left, right, unowned := selectChangedDiffSides(augmented, rightSide, []string{tc.changed})
+		left, right, unowned := selectChangedDiffSides(augmented, rightSide, []string{tc.changed}, nil)
 		if len(unowned) != 0 {
 			t.Errorf("%s unowned = %v", tc.changed, unowned)
 		}
@@ -653,6 +653,7 @@ func TestSelectChangedDiffSidesSelectsRenderedDirApplications(t *testing.T) {
 				selectionSide{inputs: left, renderedDirs: tc.leftDirs},
 				selectionSide{inputs: right, renderedDirs: tc.rightDirs},
 				[]string{graphFile},
+				nil,
 			)
 			if !slices.Equal(unowned, tc.wantUnowned) {
 				t.Fatalf("unowned = %v, want %v", unowned, tc.wantUnowned)
@@ -665,6 +666,87 @@ func TestSelectChangedDiffSidesSelectsRenderedDirApplications(t *testing.T) {
 			}
 			if got := applicationNames(rightSelected); !slices.Equal(got, wantRight) {
 				t.Errorf("right selected %v, want %v", got, wantRight)
+			}
+		})
+	}
+}
+
+// The rendered-directory selection loop (diff_side.go, after
+// selectChangedRenderedDirs) ranges over both left.inputs and right.inputs
+// independently, so a RenderedDir input present only on the left is selected
+// there even though the equivalent right-side coverage above only ever adds
+// an input exclusive to the right.
+func TestSelectChangedDiffSidesSelectsRenderedDirApplicationsOnLeftOnly(t *testing.T) {
+	const graphFile = "envs/prod/configmap.yaml"
+	renderedDirs := map[string][]string{"clusters/prod": {"clusters/prod/kustomization.yaml", graphFile}}
+	left := selectionSide{
+		inputs: []ApplicationSelectionInput{
+			{Application: argoappv1.Application{Namespace: "argocd", Name: "left-only"}, RenderedDir: "clusters/prod"},
+		},
+		renderedDirs: renderedDirs,
+	}
+	right := selectionSide{}
+	leftSelected, rightSelected, unowned := selectChangedDiffSides(left, right, []string{graphFile}, nil)
+	if len(unowned) != 0 {
+		t.Fatalf("unowned = %v, want none", unowned)
+	}
+	if got := applicationNames(leftSelected); !slices.Equal(got, []string{"left-only"}) {
+		t.Fatalf("left selected %v, want [left-only]", got)
+	}
+	if len(rightSelected) != 0 {
+		t.Fatalf("right selected %v, want none", rightSelected)
+	}
+}
+
+// An Application in a changed project is selected wherever it exists, even
+// when the other side has no input for it at all: the changedProjects loop
+// (after selectRenderedDescendants) ranges over left.inputs and right.inputs
+// independently, the same as the rendered-directory loop above it.
+func TestSelectChangedDiffSidesSelectsChangedProjectMembers(t *testing.T) {
+	member := func(name, project string) ApplicationSelectionInput {
+		return ApplicationSelectionInput{
+			Application: argoappv1.Application{
+				Namespace: "argocd",
+				Name:      name,
+				Spec:      argoappv1.ApplicationSpec{Project: project},
+			},
+		}
+	}
+	changedProjects := map[string]struct{}{"tenant": {}}
+	unrelated := member("other", "default")
+	for _, tc := range []struct {
+		name                string
+		left, right         []ApplicationSelectionInput
+		wantLeft, wantRight []string
+	}{
+		{
+			name:     "member present only on the left",
+			left:     []ApplicationSelectionInput{member("tenant-app", "tenant"), unrelated},
+			right:    []ApplicationSelectionInput{unrelated},
+			wantLeft: []string{"tenant-app"},
+		},
+		{
+			name:      "member present only on the right",
+			left:      []ApplicationSelectionInput{unrelated},
+			right:     []ApplicationSelectionInput{member("tenant-app", "tenant"), unrelated},
+			wantRight: []string{"tenant-app"},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			leftSelected, rightSelected, unowned := selectChangedDiffSides(
+				selectionSide{inputs: tc.left},
+				selectionSide{inputs: tc.right},
+				nil,
+				changedProjects,
+			)
+			if len(unowned) != 0 {
+				t.Fatalf("unowned = %v, want none", unowned)
+			}
+			if got := applicationNames(leftSelected); !slices.Equal(got, tc.wantLeft) {
+				t.Fatalf("left selected %v, want %v", got, tc.wantLeft)
+			}
+			if got := applicationNames(rightSelected); !slices.Equal(got, tc.wantRight) {
+				t.Fatalf("right selected %v, want %v", got, tc.wantRight)
 			}
 		})
 	}
@@ -714,7 +796,7 @@ func TestParentResolverFallsBackToNamespaceDefaultedTwin(t *testing.T) {
 		{Application: argoappv1.Application{Namespace: "argocd", Name: "child"}, Paths: []string{"child"}, ParentKey: key("", "parent")},
 	}
 	side := selectionSide{inputs: inputs}
-	left, right, _ := selectChangedDiffSides(side, side, []string{"parent/values.yaml"})
+	left, right, _ := selectChangedDiffSides(side, side, []string{"parent/values.yaml"}, nil)
 	for _, selected := range [][]argoappv1.Application{left, right} {
 		if got := applicationNames(selected); !slices.Equal(got, []string{"child", "parent"}) {
 			t.Fatalf("selected %v, want [child parent]", got)

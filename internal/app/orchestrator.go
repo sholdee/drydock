@@ -965,9 +965,11 @@ func normalizeDiagnostics(diags []diagnostic.Diagnostic, strict, forceWarning bo
 // PR branch cannot fix it, so diag/get --strict must accept the same policies
 // build/diff --strict accept.
 // The changed-only settings render-all is the complete answer, not an
-// ownership gap: every Application is rendered.
+// ownership gap: every Application is rendered. The changed-only AppProject
+// render-all (the first AppProject declared or the last removed) has the
+// same shape.
 func strictExemptDiagnostic(diag diagnostic.Diagnostic) bool {
-	return diag.Code == selfRepoNearMissCode || diag.Code == diagnostic.CodePluginPolicyEnvIgnored || diag.Code == changedOnlySettingsCode
+	return diag.Code == selfRepoNearMissCode || diag.Code == diagnostic.CodePluginPolicyEnvIgnored || diag.Code == changedOnlySettingsCode || diag.Code == changedOnlyProjectsCode
 }
 
 func diagnosticFailure(diags []diagnostic.Diagnostic, strict bool) error {
