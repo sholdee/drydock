@@ -339,9 +339,11 @@ Remote Kustomize refs are supported in these fields:
 | Support files | `generators`, `transformers`, `validators`, `configurations`, `crds`, `openapi.path`, `replacements.path` |
 | Generator inputs | ConfigMap and Secret generator `files`, `envs`, and `env` entries |
 
-HTTP(S) refs are treated as single YAML or JSON files. Directory-shaped fields,
-including remote bases and components, must use Git refs that resolve to
-Kustomization directories.
+HTTP(S) refs are treated as single YAML or JSON files. A `resources` entry
+accepts either an HTTP(S) file or a Git ref that resolves to a Kustomization
+directory. Kustomize folds the deprecated `bases` field into `resources`, so
+`bases` entries accept the same refs. `components` entries must use Git refs
+that resolve to Kustomization directories.
 
 Ambiguous non-file HTTP(S) URLs are rejected unless they use known Git host
 shorthand, a `.git` repository path, or explicit Git syntax such as `git::`,
