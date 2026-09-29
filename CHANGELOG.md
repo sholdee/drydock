@@ -3,6 +3,15 @@
 ## [0.3.2](https://github.com/sholdee/drydock/compare/v0.3.1...v0.3.2) (2026-09-29)
 
 
+### ⚠ Security
+
+* **render:** validate every path Kustomize and Helm read during rendering ([GHSA-wvmc-q9gg-784r](https://github.com/sholdee/drydock/security/advisories/GHSA-wvmc-q9gg-784r), high) ([95b4d97](https://github.com/sholdee/drydock/commit/95b4d979372f6d302eb173a833d18f68551e4584))
+
+  Repository content could make rendering read outside the repository, read Git metadata such as a checkout token persisted in `.git/config`, or fetch remote content despite offline mode. The vectors were case-variant or whitespace-padded kustomization references, builtin plugin configuration paths, and `.git` access. This affects every release from 0.1.0 through 0.3.1. Upgrade if drydock or the PR action renders untrusted pull requests. The advisory lists workarounds.
+
+  Set `persist-credentials: false` on `actions/checkout` in workflows that run drydock. The documented examples now do.
+
+
 ### Bug Fixes
 
 * **cache:** digest builtin Kustomize plugin config referents ([#360](https://github.com/sholdee/drydock/issues/360)) ([efdf1e1](https://github.com/sholdee/drydock/commit/efdf1e1b05d90dd6411a1f1b56fe83e98afeb545))
@@ -11,6 +20,7 @@
 * **diff:** own local kustomize graph inputs in changed-only selection ([#355](https://github.com/sholdee/drydock/issues/355)) ([00430a7](https://github.com/sholdee/drydock/commit/00430a73462430fa942164b6cf45c704e4399568))
 * **diff:** select AppProject members in changed-only ([#361](https://github.com/sholdee/drydock/issues/361)) ([4ad779a](https://github.com/sholdee/drydock/commit/4ad779aa3e343991f67fd3cbfa32578cee6356fc))
 * **diff:** walk plugin sources' kustomize graph in changed-only selection ([#357](https://github.com/sholdee/drydock/issues/357)) ([ae685d0](https://github.com/sholdee/drydock/commit/ae685d0c6e064b6f151b14283b4be3061437f08b))
+* **render:** validate every path Kustomize and Helm read during rendering ([GHSA-wvmc-q9gg-784r](https://github.com/sholdee/drydock/security/advisories/GHSA-wvmc-q9gg-784r)) ([95b4d97](https://github.com/sholdee/drydock/commit/95b4d979372f6d302eb173a833d18f68551e4584))
 
 
 ### Miscellaneous Chores
@@ -21,6 +31,20 @@
 ### Code Refactoring
 
 * split on the last separator with strings.CutLast ([#356](https://github.com/sholdee/drydock/issues/356)) ([8ad73ae](https://github.com/sholdee/drydock/commit/8ad73aed9cb6649cb2850dadd70fb6fad7c3944d))
+
+
+### Upgrade notes
+
+* **Settings changes render everything.** In changed-only diffs, changed Argo CD settings now render every Application, with diagnostic `diff.changed-only-settings`. This covers the argocd-cm keys drydock reads, CMP definitions, and repository and cluster Secrets.
+* **AppProject changes.** A changed AppProject selects every Application in that project. Declaring the first AppProject or removing the last one renders everything, with `diff.changed-only-projects`. Both diagnostics are exempt from `--strict` and `--strict-changed-only`.
+* **Newly rejected references.** These now fail with explicit errors:
+  * remote http(s) or symlinked files referenced by builtin plugin configurations;
+  * directory `transformers:`/`generators:`/`validators:` entries whose kustomization sets fields other than `resources`;
+  * kustomizations with unknown fields, which Kustomize itself rejects;
+  * references into `.git`.
+* **Render-cache keys.** Persistent render-cache keys rotate for sources whose builtin plugin configurations reference files, and for kustomizations with case-variant, duplicate or whitespace-padded references. Pinned remote plugin configuration entries are no longer cached.
+* **Helm number formatting.** Kustomize `helmCharts` `valuesInline` numbers now reach the chart as floats, as they do in Argo CD. A value such as `1000000` renders as `1e+06`.
+* **Error wording.** Errors for `bases` entries now name `resources`, and a generator's `env` now names `envs`.
 
 ## [0.3.1](https://github.com/sholdee/drydock/compare/v0.3.0...v0.3.1) (2026-09-24)
 
