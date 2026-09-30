@@ -221,6 +221,50 @@ d:
 	}
 }
 
+func TestRenderApplicationHelmParametersMatchHelmCLI(t *testing.T) {
+	// Argo CD keeps the last parameter per name of each kind and passes
+	// --set d.a=2 --set-string d.a=1 --set-file d.f=<chart>/present.txt; helm
+	// applies --set-string after --set, so the forceString entry wins even
+	// though it is listed first, and the overridden missing file is never read.
+	const template = `apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: nums
+data:
+{{- range $k, $v := .Values.d }}
+  {{ $k }}: "{{ kindOf $v }}={{ $v }}"
+{{- end }}
+`
+	root := t.TempDir()
+	writeTestFile(t, filepath.Join(root, "chart", "Chart.yaml"), "apiVersion: v2\nname: nums\nversion: 0.1.0\n")
+	writeTestFile(t, filepath.Join(root, "chart", "values.yaml"), "d: {}\n")
+	writeTestFile(t, filepath.Join(root, "chart", "templates", "cm.yaml"), template)
+	writeTestFile(t, filepath.Join(root, "chart", "present.txt"), "present")
+
+	got := renderHelmValuesParityConfigMap(t, root, &argoappv1.ApplicationSourceHelm{
+		Parameters: []argoappv1.HelmParameter{
+			{Name: "d.a", Value: "1", ForceString: true},
+			{Name: "d.a", Value: "2"},
+		},
+		FileParameters: []argoappv1.HelmFileParameter{
+			{Name: "d.f", Path: "missing.txt"},
+			{Name: "d.f", Path: "present.txt"},
+		},
+	})
+	want := map[string]string{
+		"a": "string=1",
+		"f": "string=present",
+	}
+	for key, wantValue := range want {
+		if got[key] != wantValue {
+			t.Errorf("data[%q] = %q, want %q (helm v4.2.1)", key, got[key], wantValue)
+		}
+	}
+	if len(got) != len(want) {
+		t.Errorf("rendered %d data keys, want %d: %v", len(got), len(want), got)
+	}
+}
+
 func renderHelmValuesParityConfigMap(t *testing.T, root string, helm *argoappv1.ApplicationSourceHelm) map[string]string {
 	t.Helper()
 	application := argoappv1.Application{

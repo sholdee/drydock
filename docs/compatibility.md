@@ -229,6 +229,20 @@ Supported:
   (`<namespace>_<name>` for Applications outside the controller namespace;
   drydock assumes the Argo CD controller namespace is `argocd`) and
   `ARGOCD_APP_NAMESPACE` is `spec.destination.namespace`.
+- Helm `parameters` and `fileParameters` applied the way Argo CD's
+  `helm template` call applies them: every `--set`, then every `--set-string`
+  (`forceString: true`), then every `--set-file`, keeping only the last entry
+  per exact name within each kind. Names are used verbatim, an empty name sets
+  nothing (its `fileParameters` file is still read), and an overridden
+  `fileParameters` path is resolved but never read.
+- Recorded divergence from strict Argo CD v3.5.3: the repo-server passes the
+  surviving entries of one kind in Go's randomized map iteration order, so
+  overlapping names within one kind (such as `a` and `a.b`) can render
+  differently from one Argo CD run to the next. drydock applies them in list
+  order, which is one of the possible outcomes.
+- Recorded divergence from strict Argo CD v3.5.3: drydock does not follow a
+  symlink at an overridden `fileParameters` path, so it accepts one whose
+  target escapes the repository where the repo-server fails.
 - `.argocd-source.yaml` and `.argocd-source-<app>.yaml` overrides, where
   `<app>` is the Application instance name like the repo-server's lookup: an
   Application outside the controller namespace reads

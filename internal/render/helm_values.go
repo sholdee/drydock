@@ -57,10 +57,14 @@ func CollectHelmLocalInputPaths(input HelmLocalInputOptions) ([]HelmLocalInputPa
 	if err := out.addRequiredRepoPath(sourcePath); err != nil {
 		return nil, err
 	}
-	paths := append([]string(nil), opts.ValueFiles...)
-	for _, parameter := range opts.HelmFileParameters {
-		paths = append(paths, parameter.Path)
+	// helm reads only the last file parameter per name (applyHelmParameters).
+	// Overridden paths stay out of the explicit identities too: the renderer's
+	// value-file glob skips only explicit value files, so it still reads them.
+	var fileParameterPaths []string
+	for _, parameter := range EffectiveHelmFileParameters(opts.HelmFileParameters) {
+		fileParameterPaths = append(fileParameterPaths, parameter.Path)
 	}
+	paths := append(append([]string(nil), opts.ValueFiles...), fileParameterPaths...)
 	if err := out.collectExplicitIdentities(paths); err != nil {
 		return nil, err
 	}
@@ -69,8 +73,8 @@ func CollectHelmLocalInputPaths(input HelmLocalInputOptions) ([]HelmLocalInputPa
 			return nil, err
 		}
 	}
-	for _, parameter := range opts.HelmFileParameters {
-		if err := out.collectFileParameter(parameter.Path); err != nil {
+	for _, raw := range fileParameterPaths {
+		if err := out.collectFileParameter(raw); err != nil {
 			return nil, err
 		}
 	}
@@ -539,8 +543,16 @@ func hasHelmValueGlob(file string) bool {
 }
 
 func isRemoteHelmValueFile(file string) bool {
+	_, ok := parseRemoteHelmValueFile(file)
+	return ok
+}
+
+func parseRemoteHelmValueFile(file string) (*url.URL, bool) {
 	parsed, err := url.Parse(file)
-	return err == nil && parsed.IsAbs() && parsed.Scheme != ""
+	if err != nil || !parsed.IsAbs() || parsed.Scheme == "" {
+		return nil, false
+	}
+	return parsed, true
 }
 
 func envsubstHelmValueFilePath(raw string, opts RenderOptions, refRoots map[string]string) string {

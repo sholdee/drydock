@@ -1605,6 +1605,36 @@ func TestLocalInputDigestPathsIncludeArgocdSourceOverrides(t *testing.T) {
 	}
 }
 
+// TestLocalInputDigestPathsSkipFileParameterOverriddenByFetchedRef pins that a
+// local file parameter overridden by a later fetched-ref entry with the same
+// name is not a digest input: helm never reads it, so a missing file must not
+// make the source ineligible for the persistent render cache.
+func TestLocalInputDigestPathsSkipFileParameterOverriddenByFetchedRef(t *testing.T) {
+	repoRoot := t.TempDir()
+	writeTestFile(t, repoRoot+"/charts/demo/Chart.yaml", "apiVersion: v2\nname: demo\nversion: 0.1.0\n")
+	application := argoappv1.Application{Spec: argoappv1.ApplicationSpec{Sources: argoappv1.ApplicationSources{
+		{
+			RepoURL: "https://git.example.test/org/repo.git", Path: "charts/demo", TargetRevision: "main",
+			Helm: &argoappv1.ApplicationSourceHelm{FileParameters: []argoappv1.HelmFileParameter{
+				{Name: "f", Path: "files/missing.txt"},
+				{Name: "f", Path: "$values/files/f.txt"},
+			}},
+		},
+		{RepoURL: "https://git.example.test/org/values.git", TargetRevision: "main", Ref: "values"},
+	}}}
+	plan := mustPlan(t, application)
+
+	paths, _, err := localInputDigestPathsForSource(context.Background(), plan, plan.Sources[0], localProvider{repoRoot: repoRoot})
+	if err != nil {
+		t.Fatalf("localInputDigestPathsForSource() error = %v", err)
+	}
+	for _, item := range paths {
+		if item.Path == "charts/demo/files/missing.txt" {
+			t.Fatalf("digest paths include the overridden file parameter: %#v", paths)
+		}
+	}
+}
+
 func TestLocalInputDigestPathsResolveApplicationOverrideByInstanceName(t *testing.T) {
 	repoRoot := t.TempDir()
 	writeTestFile(t, repoRoot+"/manifests/demo/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: demo\n")

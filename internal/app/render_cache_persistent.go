@@ -887,8 +887,11 @@ func localHelmDigestInputPaths(plan PlanResult, sourcePlan SourcePlan, opts rend
 			valueFiles = append(valueFiles, valueFile)
 		}
 	}
-	fileParameters := make([]argoappv1.HelmFileParameter, 0, len(opts.HelmFileParameters))
-	for _, parameter := range opts.HelmFileParameters {
+	// Pick the file parameters helm reads before dropping fetched-ref ones, so
+	// a local entry overridden by a fetched-ref entry is not an input.
+	effective := render.EffectiveHelmFileParameters(opts.HelmFileParameters)
+	fileParameters := make([]argoappv1.HelmFileParameter, 0, len(effective))
+	for _, parameter := range effective {
 		keep, err := localHelmDigestShouldCollectPath(plan, sourcePlan, parameter.Path)
 		if err != nil {
 			return nil, nil, err

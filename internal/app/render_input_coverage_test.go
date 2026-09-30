@@ -306,6 +306,43 @@ func TestRenderInputCoverageHelmSourceOutOfChartDirValueFile(t *testing.T) {
 	assertRenderInputCoverage(t, repoRoot, application)
 }
 
+// TestRenderInputCoverageHelmSourceOverriddenFileParameters pins the digest
+// for out-of-chart file parameters that repeat a name: helm reads only the
+// last entry per name, so the overridden missing file is not required, while
+// the winners and a value-file glob match that an overridden entry points at
+// are still covered.
+func TestRenderInputCoverageHelmSourceOverriddenFileParameters(t *testing.T) {
+	repoRoot := t.TempDir()
+	writeTestFile(t, repoRoot+"/charts/demo/Chart.yaml", "apiVersion: v2\nname: demo\nversion: 0.1.0\n")
+	writeTestFile(t, repoRoot+"/charts/demo/values.yaml", "a: from-default\nb: from-default\nfileValue: from-default\nother: from-default\n")
+	writeTestFile(t, repoRoot+"/charts/demo/templates/cm.yaml",
+		"apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: {{ .Chart.Name }}\ndata:\n  a: {{ .Values.a | quote }}\n  b: {{ .Values.b | quote }}\n  fileValue: {{ .Values.fileValue | quote }}\n  other: {{ .Values.other | quote }}\n")
+	writeTestFile(t, repoRoot+"/values/a.yaml", "a: from-a\n")
+	writeTestFile(t, repoRoot+"/values/b.yaml", "b: from-b\n")
+	writeTestFile(t, repoRoot+"/shared-files/message.txt", "from-file\n")
+	writeTestFile(t, repoRoot+"/shared-files/other.txt", "from-other\n")
+	writeTestFile(t, repoRoot+"/unrelated/README.md", "not a render input\n")
+	application := argoappv1.Application{
+		Name: "demo", Namespace: "argocd",
+		Spec: argoappv1.ApplicationSpec{
+			Source: &argoappv1.ApplicationSource{
+				RepoURL: "https://git.example.test/org/repo.git", Path: "charts/demo", TargetRevision: "main",
+				Helm: &argoappv1.ApplicationSourceHelm{
+					ValueFiles: []string{"../../values/*.yaml"},
+					FileParameters: []argoappv1.HelmFileParameter{
+						{Name: "fileValue", Path: "../../shared-files/missing.txt"},
+						{Name: "fileValue", Path: "../../shared-files/message.txt"},
+						{Name: "other", Path: "../../values/a.yaml"},
+						{Name: "other", Path: "../../shared-files/other.txt"},
+					},
+				},
+			},
+			Destination: argoappv1.ApplicationDestination{Namespace: "default"},
+		},
+	}
+	assertRenderInputCoverage(t, repoRoot, application)
+}
+
 const renderCoverageDemoConfigMap = "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: demo\ndata:\n  value: base\n"
 
 const renderCoveragePatchedConfigMap = "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: demo\ndata:\n  value: patched\n"

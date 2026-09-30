@@ -406,6 +406,188 @@ func TestHelmRendererAppliesHelmParametersAndFileParameters(t *testing.T) {
 	}
 }
 
+// TestHelmRendererAppliesHelmParametersLikeArgoCD pins how helm.parameters and
+// helm.fileParameters combine. Argo CD v3.5.3 keys --set, --set-string and
+// --set-file by exact name (reposerver/repository/repository.go), so only the
+// last entry per name of each kind reaches helm, and helm v4.2.1 applies every
+// --set, then --set-string, then --set-file (pkg/cli/values/options.go
+// MergeValues). The wanted values are helm v4.2.1 `helm template` output for
+// the arguments Argo CD builds; the path errors come from the repo-server,
+// which resolves every file parameter path, overridden or not
+// (util/io/path/resolved.go ResolveValueFilePathOrUrl).
+func TestHelmRendererAppliesHelmParametersLikeArgoCD(t *testing.T) {
+	for _, tt := range []struct {
+		name           string
+		parameters     []argoappv1.HelmParameter
+		fileParameters []argoappv1.HelmFileParameter
+		want           string
+		wantErr        string
+	}{
+		{
+			name: "forceString before plain with the same name",
+			parameters: []argoappv1.HelmParameter{
+				{Name: "a", Value: "1", ForceString: true},
+				{Name: "a", Value: "2"},
+			},
+			want: `{"a":"1"}`,
+		},
+		{
+			name: "plain before forceString with the same name",
+			parameters: []argoappv1.HelmParameter{
+				{Name: "a", Value: "2"},
+				{Name: "a", Value: "1", ForceString: true},
+			},
+			want: `{"a":"1"}`,
+		},
+		{
+			name: "forceString child before plain parent",
+			parameters: []argoappv1.HelmParameter{
+				{Name: "a.b", Value: "x", ForceString: true},
+				{Name: "a", Value: "y"},
+			},
+			wantErr: "interface conversion",
+		},
+		{
+			name: "forceString parent before plain child",
+			parameters: []argoappv1.HelmParameter{
+				{Name: "a", Value: "y", ForceString: true},
+				{Name: "a.b", Value: "x"},
+			},
+			want: `{"a":"y"}`,
+		},
+		{
+			name: "overridden duplicate side effects are dropped",
+			parameters: []argoappv1.HelmParameter{
+				{Name: "a", Value: "{x},b={y}"},
+				{Name: "a", Value: "z"},
+			},
+			want: `{"a":"z"}`,
+		},
+		{
+			name: "overridden duplicate is never parsed",
+			parameters: []argoappv1.HelmParameter{
+				{Name: "a", Value: "{x"},
+				{Name: "a", Value: "z"},
+			},
+			want: `{"a":"z"}`,
+		},
+		{
+			name: "names are not trimmed",
+			parameters: []argoappv1.HelmParameter{
+				{Name: " a", Value: "1"},
+				{Name: "a", Value: "2"},
+			},
+			want: `{" a":1,"a":2}`,
+		},
+		{
+			name: "forceString list element before plain",
+			parameters: []argoappv1.HelmParameter{
+				{Name: "a[0]", Value: "007", ForceString: true},
+				{Name: "a[0]", Value: "8"},
+			},
+			want: `{"a":["007"]}`,
+		},
+		{
+			name: "empty names set nothing",
+			parameters: []argoappv1.HelmParameter{
+				{Name: "", Value: "1"},
+				{Name: "", Value: "2", ForceString: true},
+			},
+			fileParameters: []argoappv1.HelmFileParameter{
+				{Name: "", Path: "present.txt"},
+			},
+			want: `{}`,
+		},
+		{
+			// helm's strvals reads the file before it skips the empty key.
+			name: "empty file parameter name still reads the file",
+			fileParameters: []argoappv1.HelmFileParameter{
+				{Name: "", Path: "missing.txt"},
+			},
+			wantErr: "no such file",
+		},
+		{
+			name: "overridden missing file parameter is never read",
+			fileParameters: []argoappv1.HelmFileParameter{
+				{Name: "f", Path: "missing.txt"},
+				{Name: "f", Path: "present.txt"},
+			},
+			want: `{"f":"present-content\n"}`,
+		},
+		{
+			name: "overridden remote file parameter is never fetched",
+			fileParameters: []argoappv1.HelmFileParameter{
+				{Name: "f", Path: "https://example.invalid/values.txt"},
+				{Name: "f", Path: "present.txt"},
+			},
+			want: `{"f":"present-content\n"}`,
+		},
+		{
+			name: "file parameter names are not trimmed",
+			fileParameters: []argoappv1.HelmFileParameter{
+				{Name: " f", Path: "present.txt"},
+			},
+			want: `{" f":"present-content\n"}`,
+		},
+		{
+			name: "overridden file parameter path is still resolved",
+			fileParameters: []argoappv1.HelmFileParameter{
+				{Name: "f", Path: "../../outside.txt"},
+				{Name: "f", Path: "present.txt"},
+			},
+			wantErr: "escapes",
+		},
+		{
+			name: "overridden file parameter URL scheme is still checked",
+			fileParameters: []argoappv1.HelmFileParameter{
+				{Name: "f", Path: "s3://bucket/values.txt"},
+				{Name: "f", Path: "present.txt"},
+			},
+			wantErr: "not allowed",
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			root := t.TempDir()
+			chartDir := filepath.Join(root, "chart")
+			writeFile(t, filepath.Join(chartDir, "Chart.yaml"), "apiVersion: v2\nname: probe\nversion: 0.1.0\n")
+			writeFile(t, filepath.Join(chartDir, "values.yaml"), "{}\n")
+			writeFile(t, filepath.Join(chartDir, "templates", "cm.yaml"), `apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: probe
+data:
+  values: {{ toJson .Values | quote }}
+`)
+			writeFile(t, filepath.Join(chartDir, "present.txt"), "present-content\n")
+
+			result, _, err := (HelmRenderer{}).Render(context.Background(), ResolvedSource{
+				RepoRoot: root,
+				Path:     "chart",
+			}, RenderOptions{
+				AppName:            "probe",
+				HelmParameters:     tt.parameters,
+				HelmFileParameters: tt.fileParameters,
+			})
+			if tt.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+					t.Fatalf("Render() error = %v, want error containing %q", err, tt.wantErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("Render() error = %v", err)
+			}
+			if len(result) != 1 {
+				t.Fatalf("len(result) = %d, want 1", len(result))
+			}
+			got, _, _ := unstructured.NestedString(result[0].Object.Object, "data", "values")
+			if got != tt.want {
+				t.Fatalf("values = %s, want %s (helm v4.2.1)", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestCleanHelmSetParameterMatchesArgoEscaping(t *testing.T) {
 	for input, want := range map[string]string{
 		"val":        "val",

@@ -48,6 +48,70 @@ func TestCollectHelmLocalInputPathsIncludesValueFilesAndFileParameters(t *testin
 	}
 }
 
+// TestCollectHelmLocalInputPathsSkipsOverriddenFileParameters verifies that a
+// file parameter overridden by a later entry with the same name is not an
+// input: helm never reads it, so a missing file does not block collection.
+func TestCollectHelmLocalInputPathsSkipsOverriddenFileParameters(t *testing.T) {
+	root := t.TempDir()
+	writeHelmInputTestFile(t, filepath.Join(root, "charts", "demo", "Chart.yaml"), "apiVersion: v2\nname: demo\nversion: 0.1.0\n")
+	writeHelmInputTestFile(t, filepath.Join(root, "charts", "demo", "files", "secret.txt"), "secret\n")
+
+	got, err := CollectHelmLocalInputPaths(HelmLocalInputOptions{
+		RepoRoot: root,
+		Source:   ResolvedSource{Path: "charts/demo"},
+		Options: RenderOptions{
+			HelmFileParameters: []argoappv1.HelmFileParameter{
+				{Name: "secret", Path: "files/missing.txt"},
+				{Name: "secret", Path: "files/secret.txt"},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("CollectHelmLocalInputPaths() error = %v", err)
+	}
+	want := []HelmLocalInputPath{
+		{Path: "charts/demo"},
+		{Path: "charts/demo/files/secret.txt"},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("paths = %#v, want %#v", got, want)
+	}
+}
+
+// TestCollectHelmLocalInputPathsKeepsGlobMatchOfOverriddenFileParameter
+// verifies that an overridden file parameter path does not hide a value-file
+// glob match: the renderer's glob skips only explicit value files, so it still
+// reads values/a.yaml even though helm never reads it as a file parameter.
+func TestCollectHelmLocalInputPathsKeepsGlobMatchOfOverriddenFileParameter(t *testing.T) {
+	root := t.TempDir()
+	writeHelmInputTestFile(t, filepath.Join(root, "charts", "demo", "Chart.yaml"), "apiVersion: v2\nname: demo\nversion: 0.1.0\n")
+	writeHelmInputTestFile(t, filepath.Join(root, "charts", "demo", "values", "a.yaml"), "a: 1\n")
+	writeHelmInputTestFile(t, filepath.Join(root, "charts", "demo", "values", "b.yaml"), "b: 1\n")
+
+	got, err := CollectHelmLocalInputPaths(HelmLocalInputOptions{
+		RepoRoot: root,
+		Source:   ResolvedSource{Path: "charts/demo"},
+		Options: RenderOptions{
+			ValueFiles: []string{"values/*.yaml"},
+			HelmFileParameters: []argoappv1.HelmFileParameter{
+				{Name: "f", Path: "values/a.yaml"},
+				{Name: "f", Path: "values/b.yaml"},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("CollectHelmLocalInputPaths() error = %v", err)
+	}
+	want := []HelmLocalInputPath{
+		{Path: "charts/demo"},
+		{Path: "charts/demo/values/a.yaml"},
+		{Path: "charts/demo/values/b.yaml"},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("paths = %#v, want %#v", got, want)
+	}
+}
+
 func TestCollectHelmLocalInputPathsIncludesSameRepoRefValueFile(t *testing.T) {
 	root := t.TempDir()
 	writeHelmInputTestFile(t, filepath.Join(root, "charts", "demo", "Chart.yaml"), "apiVersion: v2\nname: demo\nversion: 0.1.0\n")
