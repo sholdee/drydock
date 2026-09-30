@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/sholdee/drydock/internal/config"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 )
 
@@ -351,8 +352,19 @@ data:
 	if len(result.SettingsCandidates) != 1 {
 		t.Fatalf("SettingsCandidates = %#v, want one", result.SettingsCandidates)
 	}
-	if result.SettingsCandidates[0].DocumentIndex != 2 {
-		t.Fatalf("DocumentIndex = %d, want real YAML document index 2", result.SettingsCandidates[0].DocumentIndex)
+	// The manifest splitter (apimachinery's YAMLReader, as kubectl and Argo CD
+	// use) returns the first "---" line, ended by the second, as an empty
+	// document 0 and starts the ConfigMap's document with the third.
+	candidate := result.SettingsCandidates[0]
+	if candidate.DocumentIndex != 1 {
+		t.Fatalf("DocumentIndex = %d, want manifest splitter document index 1", candidate.DocumentIndex)
+	}
+	settings, diags, err := config.LoadFromConfigMapDocument(filepath.Join(root, candidate.Path), candidate.DocumentIndex)
+	if err != nil {
+		t.Fatalf("LoadFromConfigMapDocument() error = %v", err)
+	}
+	if len(diags) != 0 || !settings.CompareOptions.IgnoreAggregatedRoles {
+		t.Fatalf("LoadFromConfigMapDocument() at the discovered index = %#v, %#v; want the argocd-cm compare options", settings.CompareOptions, diags)
 	}
 }
 

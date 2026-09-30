@@ -78,6 +78,11 @@ type RenderOptions struct {
 	IncludeCRDsSet               bool
 	SkipHooks                    bool
 	SkipTests                    bool
+
+	// helmOutputForKustomize marks a helm render whose manifests become
+	// kustomize input (helmCharts). kustomize reads helm's output with YAML
+	// 1.2 rules, so it is decoded with those rather than Argo CD's.
+	helmOutputForKustomize bool
 }
 
 type PluginConfig struct {

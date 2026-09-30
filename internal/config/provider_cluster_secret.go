@@ -9,7 +9,7 @@ import (
 	"strings"
 
 	"github.com/sholdee/drydock/internal/diagnostic"
-	"go.yaml.in/yaml/v3"
+	"github.com/sholdee/drydock/internal/manifestyaml"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 )
 
@@ -20,12 +20,12 @@ func LoadClusterSecret(path string) (ArgoSettings, []diagnostic.Diagnostic, erro
 		return settings, nil, err
 	}
 
-	decoder := yaml.NewDecoder(bytes.NewReader(data))
+	decoder := manifestyaml.NewDecoder(bytes.NewReader(data))
 	candidates := make([]ArgoSettings, 0)
 	foundClusterSecret := false
 	for {
 		var doc clusterSecretDocument
-		if err := decoder.Decode(&doc); err != nil {
+		if err := decodeNextYAMLDocument(decoder, &doc); err != nil {
 			if errors.Is(err, io.EOF) {
 				break
 			}

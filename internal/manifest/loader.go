@@ -4,11 +4,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"math"
-	"reflect"
-	"time"
 
-	"go.yaml.in/yaml/v3"
+	"github.com/sholdee/drydock/internal/manifestyaml"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 )
 
@@ -19,58 +16,63 @@ type Document struct {
 	RootObject *unstructured.Unstructured
 }
 
+// DecodeDocuments decodes a YAML or JSON manifest stream the way kubectl and
+// Argo CD's directory source read it (see manifestyaml.Decoder) and flattens
+// List documents into their items.
 func DecodeDocuments(path string, reader io.Reader) ([]Document, error) {
-	return decodeDocuments(path, reader, true)
+	return decodeDocuments(path, manifestyaml.NewDecoder(reader), true)
 }
 
+// DecodeDocumentRoots is DecodeDocuments without List flattening.
 func DecodeDocumentRoots(path string, reader io.Reader) ([]Document, error) {
-	return decodeDocuments(path, reader, false)
+	return decodeDocuments(path, manifestyaml.NewDecoder(reader), false)
 }
 
-func decodeDocuments(path string, reader io.Reader, flattenLists bool) ([]Document, error) {
-	dec := yaml.NewDecoder(reader)
+// DecodeGeneratedDocuments decodes helm, kustomize, or config management
+// plugin output the way Argo CD's repo-server splits it with gitops-engine
+// kube.SplitYAML (see manifestyaml.NewGeneratedDecoder).
+func DecodeGeneratedDocuments(path string, reader io.Reader) ([]Document, error) {
+	return decodeDocuments(path, manifestyaml.NewGeneratedDecoder(reader), true)
+}
+
+type documentDecoder interface {
+	// Decode returns the next document's value, nil for an empty document,
+	// or io.EOF after the last document.
+	Decode() (any, error)
+}
+
+func decodeDocuments(path string, decoder documentDecoder, flattenLists bool) ([]Document, error) {
 	var out []Document
-	index := 0
-	for {
-		var raw any
-		err := dec.Decode(&raw)
+	for index := 0; ; index++ {
+		value, err := decoder.Decode()
 		if errors.Is(err, io.EOF) {
 			return out, nil
 		}
 		if err != nil {
 			return nil, fmt.Errorf("%s document %d: decode YAML document failed: %w", path, index, err)
 		}
-		if raw == nil {
-			index++
+		if value == nil {
 			continue
 		}
-
-		normalized, err := normalizeYAMLValue(raw)
-		if err != nil {
-			return nil, fmt.Errorf("%s document %d: %w", path, index, err)
-		}
-		normalizedMap, ok := normalized.(map[string]any)
+		object, ok := value.(map[string]any)
 		if !ok {
-			return nil, fmt.Errorf("%s document %d decoded to unsupported root type %T", path, index, normalized)
+			return nil, fmt.Errorf("%s document %d decoded to unsupported root type %T", path, index, value)
 		}
-		if len(normalizedMap) == 0 {
-			index++
+		if len(object) == 0 {
 			continue
 		}
 
-		obj := &unstructured.Unstructured{Object: normalizedMap}
+		obj := &unstructured.Unstructured{Object: object}
 		if flattenLists {
 			flattened, skip, err := flattenItemsField(path, index, obj)
 			if err != nil {
 				return nil, err
 			}
 			if skip {
-				index++
 				continue
 			}
 			if flattened != nil {
 				out = append(out, flattened...)
-				index++
 				continue
 			}
 		}
@@ -81,7 +83,6 @@ func decodeDocuments(path string, reader io.Reader, flattenLists bool) ([]Docume
 			Object:     obj,
 			RootObject: obj,
 		})
-		index++
 	}
 }
 
@@ -124,85 +125,4 @@ func flattenItemsField(path string, index int, obj *unstructured.Unstructured) (
 	}
 	// items present but not a list and not nil (e.g. a scalar): error.
 	return nil, false, fmt.Errorf("%s document %d /items is not a list", path, index)
-}
-
-func normalizeYAMLValue(value any) (any, error) {
-	switch typed := value.(type) {
-	case map[string]any:
-		return normalizeYAMLStringMap(typed)
-	case map[any]any:
-		return normalizeYAMLAnyMap(typed)
-	case []any:
-		return normalizeYAMLSlice(typed)
-	default:
-		return normalizeYAMLScalar(typed)
-	}
-}
-
-func normalizeYAMLStringMap(values map[string]any) (map[string]any, error) {
-	normalized := make(map[string]any, len(values))
-	for key, child := range values {
-		value, err := normalizeYAMLValue(child)
-		if err != nil {
-			return nil, err
-		}
-		normalized[key] = value
-	}
-	return normalized, nil
-}
-
-func normalizeYAMLAnyMap(values map[any]any) (map[string]any, error) {
-	normalized := make(map[string]any, len(values))
-	for key, child := range values {
-		stringKey, ok := key.(string)
-		if !ok {
-			return nil, fmt.Errorf("YAML object key has unsupported type %T", key)
-		}
-		value, err := normalizeYAMLValue(child)
-		if err != nil {
-			return nil, err
-		}
-		normalized[stringKey] = value
-	}
-	return normalized, nil
-}
-
-func normalizeYAMLSlice(values []any) ([]any, error) {
-	normalized := make([]any, len(values))
-	for i, child := range values {
-		value, err := normalizeYAMLValue(child)
-		if err != nil {
-			return nil, err
-		}
-		normalized[i] = value
-	}
-	return normalized, nil
-}
-
-func normalizeYAMLScalar(value any) (any, error) {
-	switch typed := value.(type) {
-	case int, int8, int16, int32, int64:
-		return normalizeSignedYAMLInteger(reflect.ValueOf(typed).Int()), nil
-	case uint, uint8, uint16, uint32, uint64:
-		return normalizeUnsignedYAMLInteger(reflect.ValueOf(typed).Uint())
-	case float32:
-		return float64(typed), nil
-	case time.Time:
-		return typed.Format(time.RFC3339Nano), nil
-	case float64, string, bool, nil:
-		return typed, nil
-	default:
-		return nil, fmt.Errorf("YAML value has unsupported type %T", value)
-	}
-}
-
-func normalizeSignedYAMLInteger(value int64) int64 {
-	return value
-}
-
-func normalizeUnsignedYAMLInteger(value uint64) (int64, error) {
-	if value > math.MaxInt64 {
-		return 0, fmt.Errorf("YAML integer overflows int64")
-	}
-	return int64(value), nil
 }

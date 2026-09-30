@@ -7,7 +7,7 @@ import (
 
 	argoappv1 "github.com/argoproj/argo-cd/v3/pkg/apis/application/v1alpha1"
 	"github.com/sholdee/drydock/internal/diagnostic"
-	"go.yaml.in/yaml/v3"
+	sigsyaml "sigs.k8s.io/yaml"
 )
 
 func evaluateListGenerator(ctx generatorContext, generator argoappv1.ApplicationSetGenerator) ([]generatorParamSet, []diagnostic.Diagnostic, bool, error) {
@@ -51,7 +51,7 @@ func listGeneratorParamSets(manifestPath string, list *argoappv1.ListGenerator, 
 		return out, diags, nil
 	}
 	var elements []any
-	if err := yaml.Unmarshal([]byte(list.ElementsYaml), &elements); err != nil {
+	if err := sigsyaml.Unmarshal([]byte(list.ElementsYaml), &elements); err != nil {
 		diags = append(diags, appsetDiagnostic(manifestPath, fmt.Sprintf("list generator elementsYaml is not valid YAML: %v", err)))
 		return out, diags, nil
 	}

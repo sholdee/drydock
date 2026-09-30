@@ -850,6 +850,44 @@ data:
 	assertExecPolicyPluginExecution(t, result.PluginExecutions)
 }
 
+// pluginJSONStdout is a config management plugin's output as one JSON
+// document. Argo CD v3.5.3 splits plugin output with gitops-engine
+// kube.SplitYAML (reposerver/repository/repository.go:2358), which re-reads
+// each document as YAML, so 1.0 and 1e6 come back as int64.
+const pluginJSONStdout = `{"apiVersion":"example.com/v1","kind":"Widget","metadata":{"name":"json"},"spec":{"one":1.0,"mil":1e6}}`
+
+func assertPluginJSONWidgetSpec(t *testing.T, manifests []render.Manifest) {
+	t.Helper()
+	if len(manifests) != 1 || manifests[0].Object.GetKind() != "Widget" {
+		t.Fatalf("Manifests = %#v, want one Widget", manifests)
+	}
+	want := map[string]any{"one": int64(1), "mil": int64(1000000)}
+	if got := manifests[0].Object.Object["spec"]; !reflect.DeepEqual(got, want) {
+		t.Fatalf("Widget spec = %#v, want %#v (kube.SplitYAML)", got, want)
+	}
+}
+
+func TestOrchestratorBuildDecodesExecPolicyPluginJSONOutputLikeSplitYAML(t *testing.T) {
+	root := t.TempDir()
+	writePluginBuildApplication(t, root, "plugin", "exec-renderer")
+	writeTestFile(t, filepath.Join(root, "manifests", "plugin", "marker.txt"), "from-source")
+	policy, fingerprint := testExecPluginPolicy(t, "exec-renderer", []string{"renderer"})
+	runner := &recordingExecRunner{result: pluginexec.Result{Stdout: []byte(pluginJSONStdout)}}
+
+	result, err := (Orchestrator{PluginExecRunner: runner}).Build(context.Background(), BuildRequest{
+		Path:                    root,
+		EnablePlugins:           true,
+		pluginPolicyLoaded:      true,
+		pluginPolicy:            policy,
+		pluginPolicyFingerprint: fingerprint,
+		pluginPolicyExecTrusted: true,
+	})
+	if err != nil {
+		t.Fatalf("Build() error = %v\nDiagnostics: %#v", err, result.Diagnostics)
+	}
+	assertPluginJSONWidgetSpec(t, result.Manifests)
+}
+
 // argoBuildEnvForPluginFixture is the environment a repo-server would hand the
 // exec-renderer plugin for writePluginBuildApplication's fixture (name plugin,
 // namespace argocd == controller namespace, project default, destination
@@ -1018,6 +1056,28 @@ data:
 	if execution.Engine != "container" || execution.Runtime != "docker" || execution.Image != "registry.example.test/plugins/render@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" {
 		t.Fatalf("PluginExecution = %#v, want container runtime/image metadata", execution)
 	}
+}
+
+func TestOrchestratorBuildDecodesContainerPolicyPluginJSONOutputLikeSplitYAML(t *testing.T) {
+	root := t.TempDir()
+	writePluginBuildApplication(t, root, "plugin", "container-renderer")
+	writeTestFile(t, filepath.Join(root, "manifests", "plugin", "marker.txt"), "from-source")
+	policy, fingerprint := testContainerPluginPolicy(t, "container-renderer")
+	runner := &recordingContainerRunner{result: pluginexec.Result{Stdout: []byte(pluginJSONStdout)}}
+
+	result, err := (Orchestrator{PluginContainerRunner: runner}).Build(context.Background(), BuildRequest{
+		Path:                    root,
+		EnablePlugins:           true,
+		PluginCacheDir:          filepath.Join(t.TempDir(), "plugin-cache"),
+		pluginPolicyLoaded:      true,
+		pluginPolicy:            policy,
+		pluginPolicyFingerprint: fingerprint,
+		pluginPolicyExecTrusted: true,
+	})
+	if err != nil {
+		t.Fatalf("Build() error = %v\nDiagnostics: %#v", err, result.Diagnostics)
+	}
+	assertPluginJSONWidgetSpec(t, result.Manifests)
 }
 
 func TestOrchestratorBuildRejectsContainerPolicyWithoutEnablePlugins(t *testing.T) {

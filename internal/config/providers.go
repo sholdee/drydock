@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/sholdee/drydock/internal/diagnostic"
+	"github.com/sholdee/drydock/internal/manifestyaml"
 	"go.yaml.in/yaml/v3"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 )
@@ -231,13 +232,13 @@ func LoadRepositorySecret(path string) (ArgoSettings, []diagnostic.Diagnostic, e
 		return settings, nil, err
 	}
 
-	decoder := yaml.NewDecoder(bytes.NewReader(data))
+	decoder := manifestyaml.NewDecoder(bytes.NewReader(data))
 	candidates := make([]ArgoSettings, 0)
 	diags := make([]diagnostic.Diagnostic, 0)
 	foundRepositorySecret := false
 	for {
 		var doc repositorySecretDocument
-		if err := decoder.Decode(&doc); err != nil {
+		if err := decodeNextYAMLDocument(decoder, &doc); err != nil {
 			if errors.Is(err, io.EOF) {
 				break
 			}
@@ -305,13 +306,30 @@ func decodeUnstructuredObject(obj *unstructured.Unstructured, out any) error {
 	if obj == nil {
 		return fmt.Errorf("object is nil")
 	}
-	data, err := yaml.Marshal(obj.Object)
+	return decodeYAMLValue(obj.Object, out)
+}
+
+func decodeYAMLValue(value, out any) error {
+	data, err := yaml.Marshal(value)
 	if err != nil {
 		return err
 	}
 	return yaml.Unmarshal(data, out)
 }
 
+// decodeNextYAMLDocument decodes the next manifest document into out, leaving
+// out unchanged for an empty document.
+func decodeNextYAMLDocument(decoder *manifestyaml.Decoder, out any) error {
+	raw, err := decoder.Decode()
+	if err != nil || raw == nil {
+		return err
+	}
+	return decodeYAMLValue(raw, out)
+}
+
+// decodeYAMLDocumentAt decodes the document that discovery recorded at
+// documentIndex. It splits the file with the same manifestyaml decoder as
+// manifest.DecodeDocuments, so both count documents alike.
 func decodeYAMLDocumentAt(path string, documentIndex int, out any) error {
 	if documentIndex < 0 {
 		return fmt.Errorf("document index must be greater than or equal to 0")
@@ -322,10 +340,9 @@ func decodeYAMLDocumentAt(path string, documentIndex int, out any) error {
 	}
 	defer func() { _ = file.Close() }()
 
-	decoder := yaml.NewDecoder(file)
+	decoder := manifestyaml.NewDecoder(file)
 	for index := 0; ; index++ {
-		var raw any
-		err := decoder.Decode(&raw)
+		raw, err := decoder.Decode()
 		if errors.Is(err, io.EOF) {
 			return fmt.Errorf("document %d not found", documentIndex)
 		}
@@ -338,11 +355,7 @@ func decodeYAMLDocumentAt(path string, documentIndex int, out any) error {
 		if raw == nil {
 			return fmt.Errorf("document %d is empty", documentIndex)
 		}
-		data, err := yaml.Marshal(raw)
-		if err != nil {
-			return err
-		}
-		return yaml.Unmarshal(data, out)
+		return decodeYAMLValue(raw, out)
 	}
 }
 

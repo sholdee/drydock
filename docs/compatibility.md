@@ -72,6 +72,16 @@ valid runtime-only configuration.
 Supported:
 
 - Direct Application discovery from repository manifests.
+- Manifest YAML read the way kubectl and the repo-server read it
+  (apimachinery's YAMLOrJSONDecoder with sigs.k8s.io/yaml, YAML 1.1), for
+  discovered manifests, rendered directory, Helm, Kustomize, and plugin
+  output, `elementsYaml`, and Git files params: unquoted `y`/`yes`/`on` and
+  `n`/`no`/`off` are booleans, number and boolean map keys become strings,
+  timestamps keep their text, a duplicate key keeps its last value, and text
+  after `---` on a separator line is an error. Kustomize `helmCharts` output
+  reaches kustomize as kustomize reads it (YAML 1.2). Error messages number
+  documents as that splitter does, so in a file that opens with a comment
+  header and `---`, the first object is `document 1`.
 - Recursive rendered fleet discovery from desired output, including rendered
   `Application`, `ApplicationSet`, `AppProject`, and Argo CD settings objects.
   Static committed objects take precedence over default rendered fleet

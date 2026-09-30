@@ -15,7 +15,7 @@ import (
 	"github.com/bmatcuk/doublestar/v4"
 	"github.com/sholdee/drydock/internal/diagnostic"
 	"github.com/sholdee/drydock/internal/pathsafety"
-	"go.yaml.in/yaml/v3"
+	sigsyaml "sigs.k8s.io/yaml"
 )
 
 func evaluateGitGenerator(ctx generatorContext, generator argoappv1.ApplicationSetGenerator) ([]generatorParamSet, []diagnostic.Diagnostic, bool, error) {
@@ -311,7 +311,7 @@ func decodeGitFileParams(absPath, rel, manifestPath string) ([]map[string]any, *
 	}
 
 	mapping := map[string]any{}
-	if err := yaml.Unmarshal(data, &mapping); err == nil {
+	if err := sigsyaml.Unmarshal(data, &mapping); err == nil {
 		if mapping == nil {
 			mapping = map[string]any{}
 		}
@@ -319,7 +319,7 @@ func decodeGitFileParams(absPath, rel, manifestPath string) ([]map[string]any, *
 	}
 
 	var objects []map[string]any
-	if err := yaml.Unmarshal(data, &objects); err != nil {
+	if err := sigsyaml.Unmarshal(data, &objects); err != nil {
 		diag := appsetDiagnostic(manifestPath, fmt.Sprintf("git files match %q is not valid YAML: %v", rel, err))
 		return nil, &diag, nil
 	}

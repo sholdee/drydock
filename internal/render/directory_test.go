@@ -591,8 +591,7 @@ apiVersion: v1
 kind: ConfigMap
 metadata:
   name: first
-metadata:
-  name: duplicate
+  labels: [unclosed
 `)
 
 	_, _, err := (DirectoryRenderer{}).Render(context.Background(), ResolvedSource{

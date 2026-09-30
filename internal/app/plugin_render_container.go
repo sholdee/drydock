@@ -70,7 +70,7 @@ func (p localProvider) renderContainerPolicyPluginSource(ctx context.Context, so
 		return nil, []diagnostic.Diagnostic{pluginFailedDiagnostic(message)}, true, fmt.Errorf("%s", message)
 	}
 	phase, decodePath := execPolicyDecodeTarget(name, source, len(policyPlugin.Container.Lifecycle.PostRenderers) > 0)
-	docs, err := manifest.DecodeDocuments(decodePath, bytes.NewReader(result.Stdout))
+	docs, err := manifest.DecodeGeneratedDocuments(decodePath, bytes.NewReader(result.Stdout))
 	if err != nil {
 		message := fmt.Sprintf("config management plugin %s produced invalid %s for %s at %s: %s", pluginDisplayName(name), phase, execPolicySourceLabel(source), decodePath, redactSensitiveText(err.Error(), sensitive))
 		return nil, []diagnostic.Diagnostic{pluginFailedDiagnostic(message)}, true, fmt.Errorf("%s", message)

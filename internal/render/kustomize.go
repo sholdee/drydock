@@ -91,7 +91,7 @@ func renderPlainKustomize(ctx context.Context, source ResolvedSource, root strin
 		return nil, nil, fmt.Errorf("kustomize build %s: serialize manifests: %w", root, err)
 	}
 
-	docs, err := manifest.DecodeDocuments(manifestPath, bytes.NewReader(rendered))
+	docs, err := manifest.DecodeGeneratedDocuments(manifestPath, bytes.NewReader(rendered))
 	if err != nil {
 		return nil, nil, err
 	}
@@ -380,6 +380,7 @@ func renderOptionsForKustomizeHelmChart(ctx context.Context, helmChart types.Hel
 		IncludeCRDsSet:               true,
 		SkipHooks:                    helmChart.SkipHooks,
 		SkipTests:                    helmChart.SkipTests,
+		helmOutputForKustomize:       true,
 	}, nil
 }
 

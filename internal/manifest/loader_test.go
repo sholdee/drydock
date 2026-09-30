@@ -88,7 +88,7 @@ func TestDecodeDocumentsDecodesJSON(t *testing.T) {
 	}
 }
 
-func TestDecodeDocumentsDuplicateKeyErrorIncludesParserContext(t *testing.T) {
+func TestDecodeYAML12DocumentsDuplicateKeyErrorIncludesParserContext(t *testing.T) {
 	input := strings.NewReader(`apiVersion: v1
 kind: Service
 metadata:
@@ -97,13 +97,13 @@ metadata:
   name: second
 `)
 
-	_, err := DecodeDocuments("service.yaml", input)
+	_, err := DecodeYAML12Documents("service.yaml", input)
 	if err == nil {
-		t.Fatal("DecodeDocuments() error = nil, want duplicate key error")
+		t.Fatal("DecodeYAML12Documents() error = nil, want duplicate key error")
 	}
 	for _, want := range []string{"service.yaml document 0", "decode YAML document failed", "mapping key \"metadata\" already defined"} {
 		if !strings.Contains(err.Error(), want) {
-			t.Fatalf("DecodeDocuments() error = %q, want %q", err.Error(), want)
+			t.Fatalf("DecodeYAML12Documents() error = %q, want %q", err.Error(), want)
 		}
 	}
 }
@@ -138,7 +138,7 @@ spec:
 	}
 }
 
-func TestDecodeDocumentsNormalizesYAMLTimestampScalars(t *testing.T) {
+func TestDecodeYAML12DocumentsNormalizesYAMLTimestampScalars(t *testing.T) {
 	input := strings.NewReader(`
 apiVersion: v1
 kind: ConfigMap
@@ -148,9 +148,9 @@ data:
   releaseDate: 2026-05-23
 `)
 
-	docs, err := DecodeDocuments("configmap.yaml", input)
+	docs, err := DecodeYAML12Documents("configmap.yaml", input)
 	if err != nil {
-		t.Fatalf("DecodeDocuments() error = %v", err)
+		t.Fatalf("DecodeYAML12Documents() error = %v", err)
 	}
 
 	value, found, err := unstructured.NestedString(docs[0].Object.Object, "data", "releaseDate")
@@ -165,7 +165,7 @@ data:
 	}
 }
 
-func TestDecodeDocumentsUnsignedIntegerOverflowErrorDoesNotIncludeManifestValue(t *testing.T) {
+func TestDecodeYAML12DocumentsUnsignedIntegerOverflowErrorDoesNotIncludeManifestValue(t *testing.T) {
 	const secretValue = "9223372036854775808"
 	input := strings.NewReader(`
 apiVersion: v1
@@ -176,9 +176,9 @@ data:
   token: ` + secretValue + `
 `)
 
-	_, err := DecodeDocuments("secret.yaml", input)
+	_, err := DecodeYAML12Documents("secret.yaml", input)
 	if err == nil {
-		t.Fatalf("DecodeDocuments() error = nil, want overflow error")
+		t.Fatalf("DecodeYAML12Documents() error = nil, want overflow error")
 	}
 	if !strings.Contains(err.Error(), "YAML integer overflows int64") {
 		t.Fatalf("error = %q, want overflow message", err)

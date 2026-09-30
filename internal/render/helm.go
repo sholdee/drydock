@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"io"
 	"maps"
 	"os"
 	"path"
@@ -196,6 +197,7 @@ func validateHelmChartTree(root string) (bool, error) {
 }
 
 func decodeHelmManifests(pathMap map[string]string, chrt helmchart.Charter, rendered map[string]string, opts RenderOptions) ([]Manifest, []diagnostic.Diagnostic, error) {
+	decode := helmManifestDecoder(opts)
 	var out []Manifest
 	if shouldIncludeCRDs(opts) {
 		if provider, ok := chrt.(helmCRDObjectProvider); ok {
@@ -204,7 +206,7 @@ func decodeHelmManifests(pathMap map[string]string, chrt helmchart.Charter, rend
 				if err != nil {
 					return nil, nil, err
 				}
-				docs, err := manifest.DecodeDocuments(path, bytes.NewReader(crd.File.Data))
+				docs, err := decode(path, bytes.NewReader(crd.File.Data))
 				if err != nil {
 					return nil, nil, err
 				}
@@ -216,7 +218,7 @@ func decodeHelmManifests(pathMap map[string]string, chrt helmchart.Charter, rend
 				if err != nil {
 					return nil, nil, err
 				}
-				docs, err := manifest.DecodeDocuments(path, bytes.NewReader(crd.Data))
+				docs, err := decode(path, bytes.NewReader(crd.Data))
 				if err != nil {
 					return nil, nil, err
 				}
@@ -238,7 +240,7 @@ func decodeHelmManifests(pathMap map[string]string, chrt helmchart.Charter, rend
 		if err != nil {
 			return nil, nil, err
 		}
-		docs, err := decodeRenderedHelmTemplate(path, rendered[name])
+		docs, err := decodeRenderedHelmTemplate(path, rendered[name], decode)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -247,10 +249,22 @@ func decodeHelmManifests(pathMap map[string]string, chrt helmchart.Charter, rend
 	return out, nil, nil
 }
 
-func decodeRenderedHelmTemplate(path, rendered string) ([]manifest.Document, error) {
+// documentDecoder splits a manifest stream read from path into documents.
+type documentDecoder func(path string, reader io.Reader) ([]manifest.Document, error)
+
+// helmManifestDecoder reads helm output as Argo CD's repo-server does, or, for
+// helmCharts output that kustomize consumes, as kustomize does.
+func helmManifestDecoder(opts RenderOptions) documentDecoder {
+	if opts.helmOutputForKustomize {
+		return manifest.DecodeYAML12Documents
+	}
+	return manifest.DecodeGeneratedDocuments
+}
+
+func decodeRenderedHelmTemplate(path, rendered string, decode documentDecoder) ([]manifest.Document, error) {
 	var out []manifest.Document
 	for _, document := range splitHelmRenderedManifests(rendered) {
-		docs, err := manifest.DecodeDocuments(path, strings.NewReader(document))
+		docs, err := decode(path, strings.NewReader(document))
 		if err != nil {
 			return nil, err
 		}

@@ -1,15 +1,17 @@
 package appset
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"maps"
 
 	appsetutils "github.com/argoproj/argo-cd/v3/applicationset/utils"
 	argoappv1 "github.com/argoproj/argo-cd/v3/pkg/apis/application/v1alpha1"
 	"github.com/sholdee/drydock/internal/diagnostic"
-	"go.yaml.in/yaml/v3"
+	"github.com/sholdee/drydock/internal/manifestyaml"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
@@ -31,8 +33,8 @@ func GenerateFromYAML(repoRoot, manifestPath string, data []byte) ([]GeneratedAp
 }
 
 func GenerateFromYAMLWithOptions(repoRoot, manifestPath string, data []byte, options Options) ([]GeneratedApplication, []diagnostic.Diagnostic, error) {
-	var raw map[string]any
-	if err := yaml.Unmarshal(data, &raw); err != nil {
+	raw, err := manifestyaml.NewDecoder(bytes.NewReader(data)).Decode()
+	if err != nil && !errors.Is(err, io.EOF) {
 		return nil, nil, fmt.Errorf("parse ApplicationSet %s: %w", manifestPath, err)
 	}
 	normalized, err := json.Marshal(raw)
