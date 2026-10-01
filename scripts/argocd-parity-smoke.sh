@@ -219,7 +219,8 @@ log_step() {
 
 # retry runs a command until it succeeds, at most PULL_RETRY_ATTEMPTS times,
 # sleeping PULL_RETRY_INITIAL_DELAY_SECONDS and then doubling between attempts.
-# It is for image pulls, which fail transiently under anonymous rate limits.
+# It is for downloads: image pulls, which fail transiently under anonymous
+# rate limits, and the AVP release binary.
 retry() {
   local description="$1" attempt=1 delay="${PULL_RETRY_INITIAL_DELAY_SECONDS}"
   shift
@@ -556,15 +557,16 @@ pull_pinned_image() {
   return 1
 }
 
-# host_linux_arch prints the Linux architecture name of the host, which is
-# also the kind node's architecture.
-host_linux_arch() {
+# daemon_linux_arch prints the architecture of the Docker daemon, which is the
+# architecture of every image it builds and of the kind node it runs. The
+# shell's own architecture can differ (a Rosetta shell, a remote DOCKER_HOST).
+daemon_linux_arch() {
   local arch
-  arch="$(uname -m)"
+  arch="$(docker version --format '{{.Server.Arch}}')" \
+    || fail "docker version failed; is the Docker daemon reachable?"
   case "${arch}" in
-    x86_64 | amd64) printf 'amd64\n' ;;
-    arm64 | aarch64) printf 'arm64\n' ;;
-    *) fail "unsupported host architecture: ${arch}" ;;
+    amd64 | arm64) printf '%s\n' "${arch}" ;;
+    *) fail "unsupported Docker daemon architecture: ${arch}" ;;
   esac
 }
 
@@ -582,7 +584,7 @@ kind_load_image() {
   # --all-platforms` of the docker-save stream then fails on the missing
   # foreign-platform manifests ("content digest ...: not found"). Exporting
   # just the host platform sidesteps the index entirely.
-  arch="$(host_linux_arch)"
+  arch="$(daemon_linux_arch)"
   archive="${WORK_DIR}/kind-load-${description// /-}.tar"
   docker save --platform "linux/${arch}" "${image}" -o "${archive}" \
     || fail "single-platform docker save of the ${description} image ${image} for linux/${arch} failed"
@@ -623,7 +625,7 @@ prepare_parity_alpine_image() {
 prepare_avp_image() {
   local image="drydock-argocd-parity-avp:${CLUSTER_NAME}"
   local arch expected actual binary url container version
-  arch="$(host_linux_arch)"
+  arch="$(daemon_linux_arch)"
   case "${arch}" in
     amd64) expected="${AVP_SHA256_LINUX_AMD64}" ;;
     arm64) expected="${AVP_SHA256_LINUX_ARM64}" ;;

@@ -230,10 +230,11 @@ drydock's container engine looks up `docker` only on
 `/usr/local/bin:/usr/bin:/bin`, and offline it ignores the shell's Docker
 context: it rejects a non-empty `DOCKER_CONTEXT`, `DOCKER_CONFIG`,
 `DOCKER_TLS_VERIFY` or `DOCKER_CERT_PATH` and runs with an empty client
-config, so the daemon it reaches is `DOCKER_HOST` or `/var/run/docker.sock`.
-Before the capture the harness checks both with the same lookups. On Docker
-Desktop `/var/run/docker.sock` exists; on colima or OrbStack without it, set
-`DOCKER_HOST` to the endpoint `docker context inspect` reports. Run with
+config, so the daemon it reaches is `DOCKER_HOST` or `/var/run/docker.sock`,
+and `DOCKER_HOST` must be a local `unix://` socket. Before the capture the
+harness checks both with the same lookups. On Docker Desktop
+`/var/run/docker.sock` exists; on colima or OrbStack without it, set
+`DOCKER_HOST` to the `unix://` endpoint `docker context inspect` reports. Run with
 `KUBECONFIG` pointing at a fresh file (for example `KUBECONFIG=$(mktemp)`) so
 the throwaway kind cluster never touches your kubeconfig. Apple Silicon hosts
 run the `linux/arm64` image variants.
@@ -321,8 +322,9 @@ workload obeys them, and new values must too.
 
 ### Local runs
 
-The harness downloads the `linux_<host arch>` AVP binary (`linux_arm64` on
-Apple Silicon) from GitHub releases, so the run needs that download. The
+The harness downloads the AVP binary for the Docker daemon's architecture
+(`linux_arm64` on Apple Silicon) from GitHub releases, so the run needs that
+download. The
 image builds from the pinned alpine already in the local image store, so it
 needs no Docker Hub or package-mirror access.
 

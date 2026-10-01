@@ -57,6 +57,11 @@ spec:
           imagePullPolicy: Never
           command: ["/var/run/argocd/argocd-cmp-server"]
           args: ["--loglevel", "debug"]
+          # uid 999 has no passwd entry on alpine, so HOME would default to /;
+          # point it at the writable tmp instead of relying on nothing using it.
+          env:
+            - name: HOME
+              value: /tmp
           securityContext:
             runAsNonRoot: true
             runAsUser: 999
@@ -90,6 +95,9 @@ spec:
           env:
             - name: AVP_TYPE
               value: kubernetessecret
+            # Same no-passwd-entry reason as parity-container.
+            - name: HOME
+              value: /tmp
           securityContext:
             runAsNonRoot: true
             runAsUser: 999
