@@ -143,7 +143,7 @@ func TestRunOrderedParallelResultCancelRetainsCompletedPartials(t *testing.T) {
 				}
 				return result{value: index}
 			},
-			shouldCancel: func(result result) bool {
+			shouldStop: func(result result) bool {
 				return result.err != nil
 			},
 		})
@@ -167,6 +167,104 @@ func TestRunOrderedParallelResultCancelRetainsCompletedPartials(t *testing.T) {
 	}
 	if !errors.Is(out.results[0].err, resultErr) || out.results[1].value != 1 {
 		t.Fatalf("results = %#v, want ordered partial results", out.results)
+	}
+}
+
+// TestRunOrderedParallelResultCancelStopsOnlyLaterJobs fails job 2 while
+// jobs 0, 1 and 3 are in flight: the jobs before it, whose results an ordered
+// caller still reads, must run to completion, and every later job must be
+// cancelled or never run.
+func TestRunOrderedParallelResultCancelStopsOnlyLaterJobs(t *testing.T) {
+	jobs := orderedStopJobs{
+		started:   make(chan int, 5),
+		cancelled: make(chan int, 5),
+		fail:      make(chan struct{}),
+		release:   make(chan struct{}),
+	}
+
+	resultCh := make(chan struct {
+		results   []orderedStopResult
+		completed []bool
+		err       error
+	}, 1)
+	go func() {
+		results, completed, err := runOrderedParallel(context.Background(), orderedParallelOptions[orderedStopResult]{
+			total:       5,
+			parallelism: 4,
+			run:         jobs.run,
+			shouldStop: func(result orderedStopResult) bool {
+				return result.err != nil
+			},
+		})
+		resultCh <- struct {
+			results   []orderedStopResult
+			completed []bool
+			err       error
+		}{results: results, completed: completed, err: err}
+	}()
+
+	waitStartedIndexes(t, jobs.started, 0, 1, 2, 3)
+	close(jobs.fail)
+	for index := -1; index != 3; {
+		select {
+		case index = <-jobs.cancelled:
+		case <-time.After(time.Second):
+			t.Fatal("timed out waiting for job 3 to be cancelled")
+		}
+	}
+	close(jobs.release)
+
+	out := <-resultCh
+	if out.err != nil {
+		t.Fatalf("runOrderedParallel() error = %v", out.err)
+	}
+	for index, result := range out.results {
+		switch {
+		case index < 2 && (!out.completed[index] || result.cancelled):
+			t.Fatalf("job %d completed = %v cancelled = %v, want it run to completion", index, out.completed[index], result.cancelled)
+		case index == 2 && (!out.completed[index] || !errors.Is(result.err, errOrderedStopJob)):
+			t.Fatalf("job 2 = %#v completed = %v, want its failure", result, out.completed[index])
+		case index > 2 && out.completed[index] && !result.cancelled:
+			t.Fatalf("job %d ran to completion after job 2 failed, want it cancelled or never run", index)
+		}
+	}
+}
+
+var errOrderedStopJob = errors.New("job failed")
+
+type orderedStopResult struct {
+	cancelled bool
+	err       error
+}
+
+// orderedStopJobs runs job 2 until fail closes and then fails it; earlier
+// jobs run until release closes, and later jobs until they are cancelled.
+type orderedStopJobs struct {
+	started   chan int
+	cancelled chan int
+	fail      chan struct{}
+	release   chan struct{}
+}
+
+func (j orderedStopJobs) run(ctx context.Context, index int) orderedStopResult {
+	j.started <- index
+	done := j.release
+	switch {
+	case index == 2:
+		<-j.fail
+		return orderedStopResult{err: errOrderedStopJob}
+	case index > 2:
+		done = nil
+	}
+	select {
+	case <-ctx.Done():
+		j.cancelled <- index
+		return orderedStopResult{cancelled: true}
+	case <-done:
+		return orderedStopResult{}
+	case <-time.After(10 * time.Second):
+		// Only a hang guard; the test checks cancellation, not timing.
+		return orderedStopResult{}
 	}
 }
 

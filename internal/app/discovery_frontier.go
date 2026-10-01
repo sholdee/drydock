@@ -29,8 +29,7 @@ func (o Orchestrator) renderDiscoveryFrontier(ctx context.Context, root string, 
 		return discovery.Result{}, nil, recorder.Events(), err
 	}
 	if parallelism > 1 && len(discovered.Applications) > 1 {
-		out, diags, err := renderDiscoveryFrontierParallel(ctx, root, request, discovered, inputs, provider, settingsSig, renderCache, parallelism)
-		return out, diags, recorder.Events(), err
+		return renderDiscoveryFrontierParallel(ctx, root, request, discovered, inputs, provider, settingsSig, renderCache, parallelism)
 	}
 
 	var out discovery.Result
@@ -51,41 +50,73 @@ func (o Orchestrator) renderDiscoveryFrontier(ctx context.Context, root string, 
 type indexedDiscoveryRenderResult struct {
 	result discovery.Result
 	diags  []diagnostic.Diagnostic
+	events []cacheevent.Event
 	err    error
 }
 
-func renderDiscoveryFrontierParallel(ctx context.Context, root string, request BuildRequest, discovered discovery.Result, inputs map[string]applicationInputPaths, provider localProvider, settingsSig string, renderCache *applicationRenderCache, parallelism int) (discovery.Result, []diagnostic.Diagnostic, error) {
+// renderDiscoveryFrontierParallel merges the frontier in frontier order, as
+// the sequential frontier does: the first Application to fail decides the
+// error, and only it and the Applications before it contribute diagnostics
+// and cache events. A failure therefore waits for the slower Applications
+// before it to finish, as the sequential frontier would have rendered them
+// first; only the Applications after it are cut short.
+func renderDiscoveryFrontierParallel(ctx context.Context, root string, request BuildRequest, discovered discovery.Result, inputs map[string]applicationInputPaths, provider localProvider, settingsSig string, renderCache *applicationRenderCache, parallelism int) (discovery.Result, []diagnostic.Diagnostic, []cacheevent.Event, error) {
 	applications := discovered.Applications
 	results, completed, parallelErr := runOrderedParallel(ctx, orderedParallelOptions[indexedDiscoveryRenderResult]{
 		total:       len(applications),
 		parallelism: parallelism,
 		run: func(ctx context.Context, index int) indexedDiscoveryRenderResult {
-			result, diags, err := renderDiscoveryApplication(ctx, root, request, provider, settingsSig, renderCache, inputs, discovered, applications[index])
-			return indexedDiscoveryRenderResult{result: result, diags: diags, err: err}
+			return renderParallelDiscoveryApplication(ctx, root, request, provider, settingsSig, renderCache, inputs, discovered, applications[index])
 		},
-		shouldCancel: func(result indexedDiscoveryRenderResult) bool {
+		shouldStop: func(result indexedDiscoveryRenderResult) bool {
 			return result.err != nil
 		},
 	})
 	if parallelErr != nil {
-		return discovery.Result{}, nil, parallelErr
+		var events []cacheevent.Event
+		for index, result := range results {
+			if completed[index] {
+				events = append(events, result.events...)
+			}
+		}
+		return discovery.Result{}, nil, events, parallelErr
 	}
 
 	var out discovery.Result
 	var allDiags []diagnostic.Diagnostic
+	var allEvents []cacheevent.Event
 	for index, result := range results {
 		if !completed[index] {
-			continue
+			// Only Applications after a failed one are skipped, and the loop
+			// returns at that failure first; an earlier gap would silently
+			// drop an Application from discovery, so refuse it.
+			return out, allDiags, allEvents, fmt.Errorf("render frontier Application %s: never rendered", applications[index].Path)
 		}
 		allDiags = append(allDiags, result.diags...)
+		allEvents = append(allEvents, result.events...)
 		if result.err != nil {
-			return out, allDiags, result.err
+			return out, allDiags, allEvents, result.err
 		}
 		var mergeDiags []diagnostic.Diagnostic
 		out, mergeDiags = mergeDiscoveryResultsWithDiagnostics(out, result.result)
 		allDiags = append(allDiags, mergeDiags...)
 	}
-	return out, allDiags, nil
+	return out, allDiags, allEvents, nil
+}
+
+// renderParallelDiscoveryApplication renders one frontier Application with
+// its own cache event recorder, as the final render does, so the frontier
+// can report events in frontier order.
+func renderParallelDiscoveryApplication(ctx context.Context, root string, request BuildRequest, provider localProvider, settingsSig string, renderCache *applicationRenderCache, inputs map[string]applicationInputPaths, discovered discovery.Result, appFile discovery.ApplicationFile) indexedDiscoveryRenderResult {
+	recorder := cacheevent.NewRecorder(request.RecordCacheEvents)
+	provider.cacheEvents = recorder
+	result, diags, err := renderDiscoveryApplication(ctx, root, request, provider, settingsSig, renderCache, inputs, discovered, appFile)
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		// A cancelled render reads as one that rendered nothing; report the
+		// cancellation instead of a frontier missing this Application.
+		return indexedDiscoveryRenderResult{events: recorder.Events(), err: ctxErr}
+	}
+	return indexedDiscoveryRenderResult{result: result, diags: diags, events: recorder.Events(), err: err}
 }
 
 func renderDiscoveryApplication(ctx context.Context, root string, request BuildRequest, provider localProvider, settingsSig string, renderCache *applicationRenderCache, inputs map[string]applicationInputPaths, discovered discovery.Result, appFile discovery.ApplicationFile) (discovery.Result, []diagnostic.Diagnostic, error) {
