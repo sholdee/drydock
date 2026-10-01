@@ -1,0 +1,14 @@
+# ConfigManagementPlugin descriptor for the container-plugin parity sidecar.
+# Like plugin.yaml it is mounted from a ConfigMap (parity-container-cmp), never
+# applied. The sidecar runs the pinned alpine image drydock's container engine
+# runs, so the same busybox awk executes the same program on both sides.
+apiVersion: argoproj.io/v1alpha1
+kind: ConfigManagementPlugin
+metadata:
+  name: parity-container
+spec:
+  # No spec.version and no discover block, for the same reasons as
+  # plugin.yaml: the socket is parity-container.sock and only the Application
+  # that names this plugin is captured by it.
+  generate:
+    command: ["awk", "-f", "generate.awk"]

@@ -4,8 +4,9 @@
 # var-files / plugins / tmp volumes the install manifest already declares.
 #
 # __ARGOCD_IMAGE__ is substituted by install_cmp_sidecar with the image the
-# install manifest uses, so the sidecar shares the image already pulled onto
-# the kind node and the staged argocd-cmp-server binary is version-matched.
+# install manifest uses, so the parity-env sidecar shares the image already
+# pulled onto the kind node. Every sidecar runs the version-matched
+# argocd-cmp-server copyutil staged into var-files, whatever its image.
 spec:
   template:
     metadata:
@@ -47,9 +48,44 @@ spec:
             # path-traversal mitigation.
             - name: cmp-tmp
               mountPath: /tmp
+        # The container-plugin sidecar. __PARITY_ALPINE_IMAGE__ is the pinned
+        # alpine the smoke pulled by digest, re-tagged and kind-loaded; it is
+        # the image drydock's container engine runs. argocd-cmp-server is
+        # static, so the staged binary runs on alpine unchanged.
+        - name: parity-container
+          image: __PARITY_ALPINE_IMAGE__
+          imagePullPolicy: Never
+          command: ["/var/run/argocd/argocd-cmp-server"]
+          args: ["--loglevel", "debug"]
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 999
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+            seccompProfile:
+              type: RuntimeDefault
+          volumeMounts:
+            - name: var-files
+              mountPath: /var/run/argocd
+            - name: plugins
+              mountPath: /home/argocd/cmp-server/plugins
+            - name: parity-container-cmp
+              mountPath: /home/argocd/cmp-server/config/plugin.yaml
+              subPath: plugin.yaml
+            # Each sidecar gets its own private tmp.
+            - name: parity-container-tmp
+              mountPath: /tmp
       volumes:
         - name: parity-env-cmp
           configMap:
             name: parity-env-cmp
         - name: cmp-tmp
+          emptyDir: {}
+        - name: parity-container-cmp
+          configMap:
+            name: parity-container-cmp
+        - name: parity-container-tmp
           emptyDir: {}

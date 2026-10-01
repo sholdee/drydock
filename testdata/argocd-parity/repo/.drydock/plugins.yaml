@@ -21,3 +21,25 @@ plugins:
           type: string
         - name: items
           type: array
+  parity-container:
+    engine: container
+    # The same pinned alpine the live CMP sidecar runs, by index digest (the
+    # digest is identical on every mirror the smoke pulls from). The smoke
+    # pulls it before capture because drydock runs it offline with
+    # `--pull never`; when a fallback mirror served the pull, the smoke
+    # rewrites this line in its git snapshot of the policy to the pulled
+    # reference and fails if the rewritten line is missing. network defaults
+    # to none, which offline rendering requires.
+    image: public.ecr.aws/docker/library/alpine@sha256:85fe1e81d6758c208f3e1eed4338a1997e19d4be002d4dd32d3100c9a8c010a0
+    generate:
+      # Becomes `--entrypoint awk <image> -f generate.awk`, resolved on the
+      # image PATH with the copied Application source as the working
+      # directory. sh and other interpreters cannot be argv[0] here either.
+      command: ["awk", "-f", "generate.awk"]
+    applicationEnv:
+      allow:
+        - MODE
+    parameters:
+      allow:
+        - name: title
+          type: string

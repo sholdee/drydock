@@ -169,6 +169,75 @@ ignore rules.
 - `PATH` and every other sidecar container variable: the sidecar prepends its
   own `os.Environ()`, which drydock's fixed exec environment never has.
 
+## Container plugin fixture
+
+`applications/plugin-container.yaml` (`parity-plugin-container`) renders
+through drydock's `engine: container` on one side and a CMP sidecar running
+the same image on the other.
+
+- Image: the Docker-official `alpine:3.23.6`, pinned by its multi-arch index
+  digest `sha256:85fe1e81d6758c208f3e1eed4338a1997e19d4be002d4dd32d3100c9a8c010a0`,
+  which is identical on `public.ecr.aws/docker/library`, `mirror.gcr.io/library`
+  and `docker.io/library`. The smoke pulls it through the same mirror loop as
+  the registry image, re-tags it `drydock-argocd-parity-alpine:<cluster>` and
+  kind-loads it.
+- Argo CD side: `sidecar/plugin-container.yaml` is the `parity-container`
+  descriptor, mounted from the `parity-container-cmp` ConfigMap into the
+  `parity-container` sidecar of `sidecar/repo-server-patch.yaml`. The sidecar
+  runs the staged `argocd-cmp-server` (static, so it runs on alpine) with its
+  own private `/tmp`.
+- drydock side: the `parity-container` entry in `repo/.drydock/plugins.yaml`
+  names the image by digest with the default `network: none`, so the capture
+  runs `docker run --network none --pull never --entrypoint awk <image> -f
+  generate.awk` against a copy of the source mounted at `/work`. Like
+  `parity-plugin-env` it is captured with `--enable-plugins` and the trusted
+  policy ref. drydock reads policy only from the git snapshot the harness
+  builds, so when a fallback mirror served the pull the harness rewrites the
+  image line in that snapshot (never in this directory) to the pulled
+  reference, and fails if the expected line is missing either way.
+
+Both sides run `workloads/plugin-container/generate.awk` with busybox awk and
+must render this `data`:
+
+| key | value | proves |
+| --- | --- | --- |
+| `alpineRelease` | `3.23.6` | the program ran in the pinned image |
+| `greeting` | `hello from the parity container workload` | the working directory is the Application source |
+| `appName` | `parity-plugin-container` | build environment reached the container |
+| `appNamespace` | `parity-plugin-container` | build environment reached the container |
+| `envMode` | `container` | `ARGOCD_ENV_MODE` crossed the container boundary |
+| `paramTitle` | `from-container` | `PARAM_TITLE` crossed the container boundary |
+
+The program exits non-zero when either file is unreadable instead of emitting
+an empty value, so both sides failing alike cannot compare equal. The full
+environment contract (`ARGOCD_APP_PARAMETERS`, array parameters, the
+`ARGOCD_ENV_` prefix rule) stays pinned by `parity-plugin-env`; this fixture
+pins only that the container engine delivers the same inputs. It is not in
+the tracking comparison.
+
+### Deliberately not covered by this fixture
+
+- `network: default`, cache mounts, `init` commands and post-renderers: each
+  is a drydock-side option with no Argo CD counterpart to compare against.
+- Mutable image tags (`allowMutableImageTag`) and image pulls at render time:
+  the capture is offline, which requires a locally present digest reference.
+- Container stderr: drydock omits it from errors by design, so the harness
+  cannot compare it.
+
+### Local runs
+
+drydock's container engine looks up `docker` only on
+`/usr/local/bin:/usr/bin:/bin`, and offline it ignores the shell's Docker
+context: it rejects a non-empty `DOCKER_CONTEXT`, `DOCKER_CONFIG`,
+`DOCKER_TLS_VERIFY` or `DOCKER_CERT_PATH` and runs with an empty client
+config, so the daemon it reaches is `DOCKER_HOST` or `/var/run/docker.sock`.
+Before the capture the harness checks both with the same lookups. On Docker
+Desktop `/var/run/docker.sock` exists; on colima or OrbStack without it, set
+`DOCKER_HOST` to the endpoint `docker context inspect` reports. Run with
+`KUBECONFIG` pointing at a fresh file (for example `KUBECONFIG=$(mktemp)`) so
+the throwaway kind cluster never touches your kubeconfig. Apple Silicon hosts
+run the `linux/arm64` image variants.
+
 ## OCI artifact fixture
 
 `oci-artifact/` is the content directory for the one first-class OCI

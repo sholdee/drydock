@@ -37,6 +37,21 @@ OCI_REGISTRY_IMAGE_REPOSITORIES=(
 )
 PULL_RETRY_ATTEMPTS=4
 PULL_RETRY_INITIAL_DELAY_SECONDS=5
+# Multi-arch index digest for the Docker-official alpine:3.23.6, identical on
+# every mirror below. The container-plugin fixture runs it twice: as the
+# repo-server CMP sidecar image (re-tagged and kind-loaded) and as drydock's
+# container-engine image. The first mirror is the reference the committed
+# policy (testdata/argocd-parity/repo/.drydock/plugins.yaml) names.
+PARITY_ALPINE_IMAGE_DIGEST="sha256:85fe1e81d6758c208f3e1eed4338a1997e19d4be002d4dd32d3100c9a8c010a0"
+PARITY_ALPINE_IMAGE_REPOSITORIES=(
+  "public.ecr.aws/docker/library/alpine"
+  "mirror.gcr.io/library/alpine"
+  "docker.io/library/alpine"
+)
+# Set by prepare_parity_alpine_image: the digest reference the pull actually
+# succeeded with, which is the only name the local image store has for it.
+PARITY_ALPINE_POLICY_IMAGE=""
+CONTAINER_PLUGIN_APPLICATION="parity-plugin-container"
 OCI_ARTIFACT_REPOSITORY="parity/config"
 OCI_ARTIFACT_TAG="v1.0.0"
 OCI_APPLICATION="parity-oci-config"
@@ -115,6 +130,7 @@ APPLICATIONS=(
   parity-fn-gamma-one
   parity-helm-null-default
   parity-plugin-env
+  parity-plugin-container
 )
 
 TRACKING_APPLICATIONS=(
@@ -140,6 +156,14 @@ TENANT_APPLICATIONS=(
 # materializes the whole policy-repo tree per invocation.
 PLUGIN_APPLICATIONS=(
   parity-plugin-env
+  parity-plugin-container
+)
+# CMP sidecars patched onto argocd-repo-server. Each entry is both the
+# container name and the ConfigManagementPlugin name, so its socket is
+# /home/argocd/cmp-server/plugins/<entry>.sock.
+CMP_SIDECARS=(
+  parity-env
+  parity-container
 )
 # Set by prepare_fixture_git_image: the local git repo the smoke builds from
 # the working tree. It is the trusted policy repo for the plugin capture, so
@@ -312,13 +336,15 @@ artifact_dir() {
 }
 
 collect_logs() {
-  local logs_dir
+  local logs_dir sidecar
   logs_dir="$(artifact_dir logs)"
-  # repo-server carries the parity CMP sidecar; name each container explicitly
-  # so both logs land under their own filename regardless of the
+  # repo-server carries the parity CMP sidecars; name each container
+  # explicitly so every log lands under its own filename regardless of the
   # default-container annotation.
   kubectl -n argocd logs deployment/argocd-repo-server -c argocd-repo-server --tail=300 > "${logs_dir}/argocd-repo-server.log" 2>&1 || true
-  kubectl -n argocd logs deployment/argocd-repo-server -c parity-env --tail=300 > "${logs_dir}/argocd-repo-server-parity-env.log" 2>&1 || true
+  for sidecar in "${CMP_SIDECARS[@]}"; do
+    kubectl -n argocd logs deployment/argocd-repo-server -c "${sidecar}" --tail=300 > "${logs_dir}/argocd-repo-server-${sidecar}.log" 2>&1 || true
+  done
   kubectl -n argocd logs statefulset/argocd-application-controller --tail=300 > "${logs_dir}/argocd-application-controller.log" 2>&1 || true
   kubectl -n argocd logs deployment/argocd-applicationset-controller --tail=300 > "${logs_dir}/argocd-applicationset-controller.log" 2>&1 || true
   kubectl -n argocd-parity logs deployment/argocd-parity-registry --tail=300 > "${logs_dir}/argocd-parity-registry.log" 2>&1 || true
@@ -349,6 +375,34 @@ install_argocd_cli() {
   export PATH="${WORK_DIR}/bin:${PATH}"
 }
 
+# pin_container_policy_image points the container plugin policy in the given
+# file at the reference the alpine pull succeeded with. drydock runs the image
+# with `--pull never`, and a digest pull from a fallback mirror leaves the
+# image under that mirror's name only. Only the git snapshot is rewritten:
+# drydock reads trusted policy from --plugin-policy-repo at
+# --plugin-policy-ref, never from --path. The check runs even when nothing was
+# rewritten, so a digest bumped in the script but not in the committed policy
+# (or the reverse) fails here instead of as an offline image miss.
+pin_container_policy_image() {
+  local policy="$1"
+  local canonical content
+  canonical="${PARITY_ALPINE_IMAGE_REPOSITORIES[0]}@${PARITY_ALPINE_IMAGE_DIGEST}"
+  [[ -n "${PARITY_ALPINE_POLICY_IMAGE}" ]] \
+    || fail "PARITY_ALPINE_POLICY_IMAGE is unset; prepare_parity_alpine_image must run before prepare_fixture_git_image"
+  [[ -f "${policy}" ]] || fail "plugin policy not found in the fixture git snapshot: ${policy}"
+  if [[ "${PARITY_ALPINE_POLICY_IMAGE}" != "${canonical}" ]]; then
+    content="$(< "${policy}")"
+    # The replacement stays unquoted: bash 3.2 would keep the quotes
+    # literally, and an image reference carries no & or backslash that bash
+    # 5.2's patsub_replacement would expand.
+    printf '%s\n' "${content//"${canonical}"/${PARITY_ALPINE_POLICY_IMAGE}}" > "${policy}" \
+      || fail "could not rewrite the container plugin image in ${policy}"
+    echo "argocd render parity smoke: container plugin policy image rewritten to the pulled mirror reference ${PARITY_ALPINE_POLICY_IMAGE}" >&2
+  fi
+  grep -qF "image: ${PARITY_ALPINE_POLICY_IMAGE}" "${policy}" \
+    || fail "container plugin policy ${policy} does not name the pulled image ${PARITY_ALPINE_POLICY_IMAGE}; keep its image digest in sync with PARITY_ALPINE_IMAGE_DIGEST"
+}
+
 prepare_fixture_git_image() {
   local bare image dockerfile
   # Script-scoped: this repo is also the trusted plugin policy repo for the
@@ -359,6 +413,7 @@ prepare_fixture_git_image() {
   mkdir -p "${FIXTURE_GIT_WORK}"
   cp -R "${FIXTURE_REPO_PATH}/." "${FIXTURE_GIT_WORK}/"
   cp -R "${PROJECT_POLICY_REPO_PATH}/." "${FIXTURE_GIT_WORK}/"
+  pin_container_policy_image "${FIXTURE_GIT_WORK}/.drydock/plugins.yaml"
   git -C "${FIXTURE_GIT_WORK}" init --initial-branch=main >/dev/null
   git -C "${FIXTURE_GIT_WORK}" config user.email "drydock@example.invalid"
   git -C "${FIXTURE_GIT_WORK}" config user.name "drydock render parity smoke"
@@ -472,12 +527,14 @@ CONFIG
     || fail "generated OCI registry TLS certificate or key is missing or empty under ${OCI_TLS_DIR}"
 }
 
-# pull_registry_image pulls the pinned registry image from the first mirror
+# pull_pinned_image pulls <digest> from the first of the given repositories
 # that serves it and prints the reference it pulled.
-pull_registry_image() {
+pull_pinned_image() {
+  local digest="$1"
+  shift
   local repository reference
-  for repository in "${OCI_REGISTRY_IMAGE_REPOSITORIES[@]}"; do
-    reference="${repository}@${OCI_REGISTRY_IMAGE_DIGEST}"
+  for repository in "$@"; do
+    reference="${repository}@${digest}"
     if retry "docker pull of ${reference}" docker pull "${reference}" >/dev/null; then
       printf '%s\n' "${reference}"
       return 0
@@ -487,34 +544,64 @@ pull_registry_image() {
   return 1
 }
 
+# host_linux_arch prints the Linux architecture name of the host, which is
+# also the kind node's architecture.
+host_linux_arch() {
+  local arch
+  arch="$(uname -m)"
+  case "${arch}" in
+    x86_64 | amd64) printf 'amd64\n' ;;
+    arm64 | aarch64) printf 'arm64\n' ;;
+    *) fail "unsupported host architecture: ${arch}" ;;
+  esac
+}
+
+# kind_load_image loads a local image into the kind cluster, falling back to a
+# single-platform export.
+kind_load_image() {
+  local image="$1"
+  local description="$2"
+  local arch archive
+  if kind load docker-image "${image}" --name "${CLUSTER_NAME}"; then
+    return 0
+  fi
+  # Under Docker's containerd image store a digest pull keeps the multi-arch
+  # index but only the host platform's blobs; kind's `ctr images import
+  # --all-platforms` of the docker-save stream then fails on the missing
+  # foreign-platform manifests ("content digest ...: not found"). Exporting
+  # just the host platform sidesteps the index entirely.
+  arch="$(host_linux_arch)"
+  archive="${WORK_DIR}/kind-load-${description// /-}.tar"
+  docker save --platform "linux/${arch}" "${image}" -o "${archive}" \
+    || fail "single-platform docker save of the ${description} image ${image} for linux/${arch} failed"
+  kind load image-archive "${archive}" --name "${CLUSTER_NAME}" \
+    || fail "kind load of the ${description} image ${image} into cluster ${CLUSTER_NAME} failed"
+  rm -f "${archive}"
+}
+
 prepare_registry_image() {
   local image="drydock-argocd-parity-registry:${CLUSTER_NAME}"
   local pulled
-  pulled="$(pull_registry_image)" \
+  pulled="$(pull_pinned_image "${OCI_REGISTRY_IMAGE_DIGEST}" "${OCI_REGISTRY_IMAGE_REPOSITORIES[@]}")" \
     || fail "docker pull of the pinned OCI registry image ${OCI_REGISTRY_IMAGE_DIGEST} failed from every mirror: ${OCI_REGISTRY_IMAGE_REPOSITORIES[*]}"
   # A digest pull has no tag; the Deployment matches on the image field with
   # imagePullPolicy Never, so re-tag to the exact name:tag it references.
   docker tag "${pulled}" "${image}" \
     || fail "docker tag of the pinned OCI registry image ${pulled} to ${image} failed"
-  if ! kind load docker-image "${image}" --name "${CLUSTER_NAME}"; then
-    # Under Docker's containerd image store a digest pull keeps the multi-arch
-    # index but only the host platform's blobs; kind's `ctr images import
-    # --all-platforms` of the docker-save stream then fails on the missing
-    # foreign-platform manifests ("content digest ...: not found"). Exporting
-    # just the host platform sidesteps the index entirely.
-    local arch archive
-    arch="$(uname -m)"
-    case "${arch}" in
-      x86_64 | amd64) arch="amd64" ;;
-      arm64 | aarch64) arch="arm64" ;;
-      *) fail "unsupported host architecture for single-platform registry image export: ${arch}" ;;
-    esac
-    archive="${WORK_DIR}/registry-image.tar"
-    docker save --platform "linux/${arch}" "${image}" -o "${archive}" \
-      || fail "single-platform docker save of ${image} for linux/${arch} failed"
-    kind load image-archive "${archive}" --name "${CLUSTER_NAME}" \
-      || fail "kind load of the OCI registry image ${image} into cluster ${CLUSTER_NAME} failed"
-  fi
+  kind_load_image "${image}" "OCI registry"
+}
+
+# prepare_parity_alpine_image pulls the pinned alpine for the container
+# plugin fixture. The digest reference stays in the local image store for
+# drydock's offline `docker run --pull never`; the re-tagged name is what the
+# repo-server sidecar runs with imagePullPolicy Never.
+prepare_parity_alpine_image() {
+  local image="drydock-argocd-parity-alpine:${CLUSTER_NAME}"
+  PARITY_ALPINE_POLICY_IMAGE="$(pull_pinned_image "${PARITY_ALPINE_IMAGE_DIGEST}" "${PARITY_ALPINE_IMAGE_REPOSITORIES[@]}")" \
+    || fail "docker pull of the pinned alpine image ${PARITY_ALPINE_IMAGE_DIGEST} failed from every mirror: ${PARITY_ALPINE_IMAGE_REPOSITORIES[*]}"
+  docker tag "${PARITY_ALPINE_POLICY_IMAGE}" "${image}" \
+    || fail "docker tag of the pinned alpine image ${PARITY_ALPINE_POLICY_IMAGE} to ${image} failed"
+  kind_load_image "${image}" "plugin alpine"
 }
 
 install_fixture_registry() {
@@ -722,42 +809,59 @@ install_argocd() {
   kubectl -n argocd rollout status statefulset/argocd-application-controller --timeout=300s
 }
 
-install_cmp_sidecar() {
-  local version="$1"
-  local patch_file sidecar_log
-  patch_file="${WORK_DIR}/repo-server-cmp-patch.yaml"
-  # The ConfigMap must exist before the patch: the sidecar mounts it as a
-  # non-optional configMap volume, so a patch that landed first would leave
-  # the new ReplicaSet in ContainerCreating and the rollout below would burn
-  # its whole timeout on a confusing message.
-  kubectl -n argocd create configmap parity-env-cmp \
-    --from-file="plugin.yaml=${SIDECAR_PATH}/plugin.yaml" >/dev/null \
-    || fail "could not create the parity-env-cmp ConfigMap from ${SIDECAR_PATH}/plugin.yaml"
-  sed "s|__ARGOCD_IMAGE__|quay.io/argoproj/argocd:${version}|" \
-    "${SIDECAR_PATH}/repo-server-patch.yaml" > "${patch_file}" \
-    || fail "could not render the repo-server CMP sidecar patch from ${SIDECAR_PATH}/repo-server-patch.yaml"
-  # install.yaml is applied server-side once and never re-applied, so a
-  # client-side strategic patch afterwards is safe, and the patch itself
-  # rolls the Deployment - no restart call needed.
-  kubectl -n argocd patch deployment argocd-repo-server --type strategic \
-    --patch-file "${patch_file}" >/dev/null \
-    || fail "could not patch argocd-repo-server with the parity CMP sidecar"
-  kubectl -n argocd rollout status deployment/argocd-repo-server --timeout=300s
-  # rollout status only proves the container is Running. Gate on the socket
-  # so a bad plugin.yaml fails here with a clear message instead of four
-  # minutes later as "did not generate manifests".
+# wait_for_cmp_socket gates on a sidecar's plugin socket. rollout status only
+# proves the container is Running; this makes a bad plugin descriptor fail
+# here with a clear message instead of minutes later as "did not generate
+# manifests".
+wait_for_cmp_socket() {
+  local sidecar="$1"
+  local socket="/home/argocd/cmp-server/plugins/${sidecar}.sock"
+  local sidecar_log
   for _ in {1..60}; do
-    if kubectl -n argocd exec deployment/argocd-repo-server -c parity-env -- \
-      sh -c 'test -S /home/argocd/cmp-server/plugins/parity-env.sock' >/dev/null 2>&1; then
+    if kubectl -n argocd exec deployment/argocd-repo-server -c "${sidecar}" -- \
+      sh -c "test -S ${socket}" >/dev/null 2>&1; then
       return 0
     fi
     sleep 2
   done
   # Same filename collect_logs writes from the EXIT trap, so the later, longer
   # tail supersedes this dump instead of leaving two copies.
-  sidecar_log="$(artifact_dir logs)/argocd-repo-server-parity-env.log"
-  kubectl -n argocd logs deployment/argocd-repo-server -c parity-env --tail=200 > "${sidecar_log}" 2>&1 || true
-  fail "argocd-cmp-server never bound /home/argocd/cmp-server/plugins/parity-env.sock; see ${sidecar_log}"
+  sidecar_log="$(artifact_dir logs)/argocd-repo-server-${sidecar}.log"
+  kubectl -n argocd logs deployment/argocd-repo-server -c "${sidecar}" --tail=200 > "${sidecar_log}" 2>&1 || true
+  fail "argocd-cmp-server in sidecar ${sidecar} never bound ${socket}; see ${sidecar_log}"
+}
+
+install_cmp_sidecar() {
+  local version="$1"
+  local patch_file sidecar
+  patch_file="${WORK_DIR}/repo-server-cmp-patch.yaml"
+  # The ConfigMaps must exist before the patch: each sidecar mounts its own as
+  # a non-optional configMap volume, so a patch that landed first would leave
+  # the new ReplicaSet in ContainerCreating and the rollout below would burn
+  # its whole timeout on a confusing message.
+  kubectl -n argocd create configmap parity-env-cmp \
+    --from-file="plugin.yaml=${SIDECAR_PATH}/plugin.yaml" >/dev/null \
+    || fail "could not create the parity-env-cmp ConfigMap from ${SIDECAR_PATH}/plugin.yaml"
+  kubectl -n argocd create configmap parity-container-cmp \
+    --from-file="plugin.yaml=${SIDECAR_PATH}/plugin-container.yaml" >/dev/null \
+    || fail "could not create the parity-container-cmp ConfigMap from ${SIDECAR_PATH}/plugin-container.yaml"
+  sed -e "s|__ARGOCD_IMAGE__|quay.io/argoproj/argocd:${version}|" \
+    -e "s|__PARITY_ALPINE_IMAGE__|drydock-argocd-parity-alpine:${CLUSTER_NAME}|" \
+    "${SIDECAR_PATH}/repo-server-patch.yaml" > "${patch_file}" \
+    || fail "could not render the repo-server CMP sidecar patch from ${SIDECAR_PATH}/repo-server-patch.yaml"
+  if grep -q '__[A-Z_]*__' "${patch_file}"; then
+    fail "the rendered repo-server CMP sidecar patch ${patch_file} still has an unsubstituted __PLACEHOLDER__"
+  fi
+  # install.yaml is applied server-side once and never re-applied, so a
+  # client-side strategic patch afterwards is safe, and the patch itself
+  # rolls the Deployment - no restart call needed.
+  kubectl -n argocd patch deployment argocd-repo-server --type strategic \
+    --patch-file "${patch_file}" >/dev/null \
+    || fail "could not patch argocd-repo-server with the parity CMP sidecars"
+  kubectl -n argocd rollout status deployment/argocd-repo-server --timeout=300s
+  for sidecar in "${CMP_SIDECARS[@]}"; do
+    wait_for_cmp_socket "${sidecar}"
+  done
 }
 
 login_argocd() {
@@ -878,7 +982,7 @@ capture_drydock_manifest() {
   local app_ref="$1"
   local stem="$2"
   local output_dir="$3"
-  local plugin_app
+  local plugin_app stderr_file
   local build_args=(build app "${app_ref}"
     --path "${FIXTURE_REPO_PATH}"
     --repo-map "${FIXTURE_REPO_URL}=${FIXTURE_REPO_PATH}"
@@ -902,14 +1006,44 @@ capture_drydock_manifest() {
       break
     fi
   done
-  (cd "${REPO_ROOT}" && "${DRYDOCK_CMD[@]}" "${build_args[@]}" \
-    > "${output_dir}/${stem}.yaml" 2> "${OUT_DIR}/drydock-${stem}.stderr")
-  rm -f "${OUT_DIR}/drydock-${stem}.stderr"
+  stderr_file="${OUT_DIR}/drydock-${stem}.stderr"
+  if ! (cd "${REPO_ROOT}" && "${DRYDOCK_CMD[@]}" "${build_args[@]}" \
+    > "${output_dir}/${stem}.yaml" 2> "${stderr_file}"); then
+    # The stderr file sits outside the uploaded artifact directories, so
+    # print it into the job log where it is the only diagnosis.
+    echo "argocd render parity smoke: drydock capture of ${app_ref} failed; its stderr follows" >&2
+    cat "${stderr_file}" >&2 || true
+    fail "drydock capture of ${app_ref} failed; see ${stderr_file}"
+  fi
+  rm -f "${stderr_file}"
+}
+
+# preflight_container_plugin_capture checks what drydock's container engine
+# needs before the capture that uses it, so a host gap fails with a named
+# cause rather than a generic plugin error. It mirrors drydock's own lookups:
+# docker only on the controlled PATH, and (offline) an isolated empty Docker
+# client config, so the default context's endpoint - DOCKER_HOST or
+# /var/run/docker.sock - must hold the image, not the shell's current context.
+preflight_container_plugin_capture() {
+  local dir docker_path="" client_config
+  for dir in /usr/local/bin /usr/bin /bin; do
+    if [[ -f "${dir}/docker" && -x "${dir}/docker" ]]; then
+      docker_path="${dir}/docker"
+      break
+    fi
+  done
+  [[ -n "${docker_path}" ]] \
+    || fail "drydock's container engine looks up docker only on /usr/local/bin:/usr/bin:/bin and none of them has it (docker on PATH: $(command -v docker || echo none)); ${CONTAINER_PLUGIN_APPLICATION} cannot render"
+  client_config="${WORK_DIR}/docker-preflight-config"
+  mkdir -p "${client_config}"
+  DOCKER_CONFIG="${client_config}" "${docker_path}" image inspect "${PARITY_ALPINE_POLICY_IMAGE}" >/dev/null 2>&1 \
+    || fail "${docker_path} with an empty client config (as drydock runs it offline) cannot see ${PARITY_ALPINE_POLICY_IMAGE}; drydock runs it with --pull never, so ${CONTAINER_PLUGIN_APPLICATION} cannot render. Locally: unset DOCKER_CONTEXT, and if /var/run/docker.sock is absent set DOCKER_HOST to the endpoint \`docker context inspect\` reports"
 }
 
 capture_drydock_manifests() {
   local app output_dir
   output_dir="$(artifact_dir drydock-manifests)"
+  preflight_container_plugin_capture
   for app in "${APPLICATIONS[@]}"; do
     capture_drydock_manifest "argocd/${app}" "${app}" "${output_dir}"
   done
@@ -1110,6 +1244,10 @@ main() {
     log_step "Using existing kind cluster ${CLUSTER_NAME}"
     kind export kubeconfig --name "${CLUSTER_NAME}"
   fi
+  # Before the Git server: a fallback-mirror pull rewrites the container
+  # plugin policy in the git snapshot that step commits.
+  log_step "Preparing the pinned container plugin image"
+  prepare_parity_alpine_image
   log_step "Preparing fixture Git server"
   prepare_fixture_git_image
   install_fixture_git_server
