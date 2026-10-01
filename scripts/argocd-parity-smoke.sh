@@ -52,6 +52,16 @@ PARITY_ALPINE_IMAGE_REPOSITORIES=(
 # succeeded with, which is the only name the local image store has for it.
 PARITY_ALPINE_POLICY_IMAGE=""
 CONTAINER_PLUGIN_APPLICATION="parity-plugin-container"
+# argocd-vault-plugin release binary for the AVP sidecar, built into an image
+# on top of the pinned alpine above. Release binaries are static (CGO off),
+# so they run on alpine's musl. Pinned per architecture by sha256.
+AVP_VERSION="v1.18.1"
+AVP_SHA256_LINUX_AMD64="9e8e301c0d4e01f050b4df1e47a4137eb0ba459944ed2c32b53ef1571eb93c40"
+AVP_SHA256_LINUX_ARM64="dd6e4d7db290c2f16aeb142941cd727e623b3faa25258c7743d9ddfac39db1c3"
+AVP_APPLICATION="parity-avp"
+# drydock-redacted- markers testdata/argocd-parity/repo/workloads/avp must
+# render on each side: one per placeholder occurrence.
+AVP_EXPECTED_MARKERS=7
 OCI_ARTIFACT_REPOSITORY="parity/config"
 OCI_ARTIFACT_TAG="v1.0.0"
 OCI_APPLICATION="parity-oci-config"
@@ -131,6 +141,7 @@ APPLICATIONS=(
   parity-helm-null-default
   parity-plugin-env
   parity-plugin-container
+  parity-avp
 )
 
 TRACKING_APPLICATIONS=(
@@ -164,6 +175,7 @@ PLUGIN_APPLICATIONS=(
 CMP_SIDECARS=(
   parity-env
   parity-container
+  argocd-vault-plugin
 )
 # Set by prepare_fixture_git_image: the local git repo the smoke builds from
 # the working tree. It is the trusted policy repo for the plugin capture, so
@@ -604,6 +616,46 @@ prepare_parity_alpine_image() {
   kind_load_image "${image}" "plugin alpine"
 }
 
+# prepare_avp_image builds the argocd-vault-plugin sidecar image with no
+# Dockerfile build, so nothing is fetched beyond the sha256-pinned release
+# binary: the binary is copied into a container created from the
+# already-pulled alpine, and the container is committed.
+prepare_avp_image() {
+  local image="drydock-argocd-parity-avp:${CLUSTER_NAME}"
+  local arch expected actual binary url container version
+  arch="$(host_linux_arch)"
+  case "${arch}" in
+    amd64) expected="${AVP_SHA256_LINUX_AMD64}" ;;
+    arm64) expected="${AVP_SHA256_LINUX_ARM64}" ;;
+    *) fail "no pinned argocd-vault-plugin sha256 for linux/${arch}" ;;
+  esac
+  [[ -n "${PARITY_ALPINE_POLICY_IMAGE}" ]] \
+    || fail "PARITY_ALPINE_POLICY_IMAGE is unset; prepare_parity_alpine_image must run before prepare_avp_image"
+  binary="${WORK_DIR}/argocd-vault-plugin"
+  url="https://github.com/argoproj-labs/argocd-vault-plugin/releases/download/${AVP_VERSION}/argocd-vault-plugin_${AVP_VERSION#v}_linux_${arch}"
+  retry "download of ${url}" curl -fsSL "${url}" -o "${binary}" \
+    || fail "download of the argocd-vault-plugin ${AVP_VERSION} linux/${arch} release binary from ${url} failed"
+  actual="$(openssl dgst -sha256 -r "${binary}" | cut -d ' ' -f 1)"
+  [[ "${actual}" == "${expected}" ]] \
+    || fail "argocd-vault-plugin ${AVP_VERSION} linux/${arch} sha256 mismatch: got ${actual}, want ${expected} (${url})"
+  chmod 0755 "${binary}"
+  container="$(docker create --pull never "${PARITY_ALPINE_POLICY_IMAGE}")" \
+    || fail "docker create from the pinned alpine image ${PARITY_ALPINE_POLICY_IMAGE} failed"
+  if ! docker cp "${binary}" "${container}:/usr/local/bin/argocd-vault-plugin" >/dev/null \
+    || ! docker commit "${container}" "${image}" >/dev/null; then
+    docker rm -f "${container}" >/dev/null 2>&1 || true
+    fail "could not build ${image} from ${PARITY_ALPINE_POLICY_IMAGE} and the argocd-vault-plugin binary"
+  fi
+  docker rm -f "${container}" >/dev/null 2>&1 || true
+  # Proves the binary runs in the image before the sidecar depends on it.
+  version="$(docker run --rm --network none --pull never "${image}" argocd-vault-plugin version)" \
+    || fail "argocd-vault-plugin version failed inside ${image}"
+  [[ "${version}" == *" ${AVP_VERSION} "* ]] \
+    || fail "argocd-vault-plugin in ${image} reports '${version}', want ${AVP_VERSION}"
+  echo "argocd render parity smoke: ${version}" >&2
+  kind_load_image "${image}" "argocd-vault-plugin"
+}
+
 install_fixture_registry() {
   kubectl -n argocd-parity create secret tls argocd-parity-registry-tls \
     --cert="${OCI_CA_FILE}" --key="${OCI_TLS_KEY_FILE}" >/dev/null \
@@ -831,6 +883,23 @@ wait_for_cmp_socket() {
   fail "argocd-cmp-server in sidecar ${sidecar} never bound ${socket}; see ${sidecar_log}"
 }
 
+# install_avp_backend applies the Secret the AVP sidecar's kubernetessecret
+# backend reads (drydock's public redaction markers, no secret value) and the
+# RBAC that lets the repo-server ServiceAccount get it, then confirms the
+# grant, so a broken binding fails here and not as a generate error.
+install_avp_backend() {
+  kubectl apply -f "${SIDECAR_PATH}/avp-backend.yaml" -f "${SIDECAR_PATH}/avp-rbac.yaml" >/dev/null \
+    || fail "could not apply the argocd-vault-plugin backend Secret and RBAC from ${SIDECAR_PATH}"
+  for _ in {1..30}; do
+    if kubectl auth can-i get secrets/parity-avp-backend -n argocd \
+      --as=system:serviceaccount:argocd:argocd-repo-server >/dev/null 2>&1; then
+      return 0
+    fi
+    sleep 1
+  done
+  fail "ServiceAccount argocd/argocd-repo-server still cannot get secret parity-avp-backend after applying ${SIDECAR_PATH}/avp-rbac.yaml"
+}
+
 install_cmp_sidecar() {
   local version="$1"
   local patch_file sidecar
@@ -845,8 +914,13 @@ install_cmp_sidecar() {
   kubectl -n argocd create configmap parity-container-cmp \
     --from-file="plugin.yaml=${SIDECAR_PATH}/plugin-container.yaml" >/dev/null \
     || fail "could not create the parity-container-cmp ConfigMap from ${SIDECAR_PATH}/plugin-container.yaml"
+  kubectl -n argocd create configmap parity-avp-cmp \
+    --from-file="plugin.yaml=${SIDECAR_PATH}/plugin-avp.yaml" >/dev/null \
+    || fail "could not create the parity-avp-cmp ConfigMap from ${SIDECAR_PATH}/plugin-avp.yaml"
+  install_avp_backend
   sed -e "s|__ARGOCD_IMAGE__|quay.io/argoproj/argocd:${version}|" \
     -e "s|__PARITY_ALPINE_IMAGE__|drydock-argocd-parity-alpine:${CLUSTER_NAME}|" \
+    -e "s|__PARITY_AVP_IMAGE__|drydock-argocd-parity-avp:${CLUSTER_NAME}|" \
     "${SIDECAR_PATH}/repo-server-patch.yaml" > "${patch_file}" \
     || fail "could not render the repo-server CMP sidecar patch from ${SIDECAR_PATH}/repo-server-patch.yaml"
   if grep -q '__[A-Z_]*__' "${patch_file}"; then
@@ -1052,6 +1126,22 @@ capture_drydock_manifests() {
   done
 }
 
+# assert_avp_markers keeps "both sides left the placeholders alone" from
+# passing the exact comparison: each side must render exactly
+# AVP_EXPECTED_MARKERS drydock-redacted- markers for the AVP fixture.
+assert_avp_markers() {
+  local side file count mismatch="false"
+  log_step "Counting ${AVP_APPLICATION} redaction markers on both sides"
+  for side in argocd drydock; do
+    file="${OUT_DIR}/${side}-manifests/${AVP_APPLICATION}.yaml"
+    count="$(grep -o 'drydock-redacted-[0-9a-f]\{12\}' "${file}" | wc -l | tr -d ' ' || true)"
+    echo "argocd render parity smoke: ${AVP_APPLICATION} ${side} markers: ${count} (want ${AVP_EXPECTED_MARKERS})" >&2
+    [[ "${count}" == "${AVP_EXPECTED_MARKERS}" ]] || mismatch="true"
+  done
+  [[ "${mismatch}" == "false" ]] \
+    || fail "${AVP_APPLICATION} must render exactly ${AVP_EXPECTED_MARKERS} drydock-redacted- markers on both sides; see ${OUT_DIR}/argocd-manifests/${AVP_APPLICATION}.yaml and ${OUT_DIR}/drydock-manifests/${AVP_APPLICATION}.yaml"
+}
+
 compare_manifests() {
   log_step "Comparing Argo CD and drydock rendered manifests"
   (cd "${REPO_ROOT}" && go run ./scripts/argocd-parity-compare \
@@ -1248,6 +1338,8 @@ main() {
   # plugin policy in the git snapshot that step commits.
   log_step "Preparing the pinned container plugin image"
   prepare_parity_alpine_image
+  log_step "Preparing the argocd-vault-plugin sidecar image"
+  prepare_avp_image
   log_step "Preparing fixture Git server"
   prepare_fixture_git_image
   install_fixture_git_server
@@ -1285,6 +1377,7 @@ main() {
   warm_drydock_oci_cache
   log_step "Capturing drydock rendered manifests"
   capture_drydock_manifests
+  assert_avp_markers
   compare_manifests
   compare_tracking_manifests
   if [[ "${RUN_PROJECT_POLICY_SMOKE}" == "true" ]]; then

@@ -1,0 +1,17 @@
+# The AVP kubernetessecret backend for the parity-avp fixture. It holds no
+# secret: each value is the public marker drydock's AVP compatibility renders
+# for that placeholder, "drydock-redacted-" plus the first 12 hex digits of
+# sha256("path:parity-avp-backend#<key>"). Live AVP substituting these values
+# therefore renders byte-for-byte what drydock renders. To recompute one:
+#
+#   printf 'path:parity-avp-backend#username' | shasum -a 256
+apiVersion: v1
+kind: Secret
+metadata:
+  name: parity-avp-backend
+  namespace: argocd
+type: Opaque
+stringData:
+  username: drydock-redacted-5401fc97182f
+  password: drydock-redacted-4de5813a6837
+  endpoint: drydock-redacted-6799b3ec831f

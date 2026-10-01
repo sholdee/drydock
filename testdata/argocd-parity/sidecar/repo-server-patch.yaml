@@ -78,6 +78,46 @@ spec:
             # Each sidecar gets its own private tmp.
             - name: parity-container-tmp
               mountPath: /tmp
+        # The argocd-vault-plugin sidecar. __PARITY_AVP_IMAGE__ is the pinned
+        # alpine plus the sha256-pinned AVP release binary, committed and
+        # kind-loaded by the smoke.
+        - name: argocd-vault-plugin
+          image: __PARITY_AVP_IMAGE__
+          imagePullPolicy: Never
+          command: ["/var/run/argocd/argocd-cmp-server"]
+          # Default log level on purpose: debug logs the full generated
+          # output.
+          env:
+            - name: AVP_TYPE
+              value: kubernetessecret
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 999
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+            seccompProfile:
+              type: RuntimeDefault
+          volumeMounts:
+            - name: var-files
+              mountPath: /var/run/argocd
+            - name: plugins
+              mountPath: /home/argocd/cmp-server/plugins
+            - name: parity-avp-cmp
+              mountPath: /home/argocd/cmp-server/config/plugin.yaml
+              subPath: plugin.yaml
+            - name: parity-avp-tmp
+              mountPath: /tmp
+            # The repo-server pod sets automountServiceAccountToken: false,
+            # but AVP's kubernetessecret backend logs in with
+            # rest.InClusterConfig before it reads any manifest. This mounts
+            # the standard token, CA and namespace files in this container
+            # only.
+            - name: parity-avp-serviceaccount
+              mountPath: /var/run/secrets/kubernetes.io/serviceaccount
+              readOnly: true
       volumes:
         - name: parity-env-cmp
           configMap:
@@ -89,3 +129,23 @@ spec:
             name: parity-container-cmp
         - name: parity-container-tmp
           emptyDir: {}
+        - name: parity-avp-cmp
+          configMap:
+            name: parity-avp-cmp
+        - name: parity-avp-tmp
+          emptyDir: {}
+        - name: parity-avp-serviceaccount
+          projected:
+            sources:
+              - serviceAccountToken:
+                  path: token
+              - configMap:
+                  name: kube-root-ca.crt
+                  items:
+                    - key: ca.crt
+                      path: ca.crt
+              - downwardAPI:
+                  items:
+                    - path: namespace
+                      fieldRef:
+                        fieldPath: metadata.namespace

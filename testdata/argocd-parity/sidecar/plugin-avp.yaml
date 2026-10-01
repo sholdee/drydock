@@ -1,0 +1,14 @@
+# ConfigManagementPlugin descriptor for the argocd-vault-plugin parity
+# sidecar, mounted from the parity-avp-cmp ConfigMap like plugin.yaml.
+apiVersion: argoproj.io/v1alpha1
+kind: ConfigManagementPlugin
+metadata:
+  # Matches the Application's plugin.name exactly, which is also the name
+  # drydock's built-in AVP compatibility matches. No spec.version, so the
+  # socket is argocd-vault-plugin.sock; no discover block, as in plugin.yaml.
+  name: argocd-vault-plugin
+spec:
+  generate:
+    # The sidecar sets AVP_TYPE=kubernetessecret, so every placeholder reads
+    # the parity-avp-backend Secret in the argocd namespace.
+    command: ["argocd-vault-plugin", "generate", "./"]

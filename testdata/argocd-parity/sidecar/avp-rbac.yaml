@@ -1,0 +1,27 @@
+# Lets the argocd-vault-plugin sidecar, which runs as the argocd-repo-server
+# ServiceAccount, read the one Secret its kubernetessecret backend needs and
+# nothing else.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: parity-avp-backend-reader
+  namespace: argocd
+rules:
+  - apiGroups: [""]
+    resources: ["secrets"]
+    resourceNames: ["parity-avp-backend"]
+    verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: parity-avp-backend-reader
+  namespace: argocd
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: parity-avp-backend-reader
+subjects:
+  - kind: ServiceAccount
+    name: argocd-repo-server
+    namespace: argocd
