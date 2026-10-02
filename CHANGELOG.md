@@ -1,5 +1,29 @@
 # Changelog
 
+## [0.3.3](https://github.com/sholdee/drydock/compare/v0.3.2...v0.3.3) (2026-10-02)
+
+
+### Bug Fixes
+
+* **app:** render app-of-apps frontiers deterministically in parallel ([#372](https://github.com/sholdee/drydock/issues/372)) ([033fa98](https://github.com/sholdee/drydock/commit/033fa981f72603c4272b96066b19e8d9e64d6a57))
+* **format:** emit 2-space YAML so list-nested block scalars stay readable ([#375](https://github.com/sholdee/drydock/issues/375)) ([7dd0d1e](https://github.com/sholdee/drydock/commit/7dd0d1e6ab6587941351cd4eb35edeb1eaa479ae))
+* **render:** apply Helm parameters in Argo CD's --set order ([#369](https://github.com/sholdee/drydock/issues/369)) ([1fa11e3](https://github.com/sholdee/drydock/commit/1fa11e3139823afb585ceda58ac17fcd617095ab))
+* **render:** encode helmCharts remarsal without mismatched |N ([#373](https://github.com/sholdee/drydock/issues/373)) ([b27a1f0](https://github.com/sholdee/drydock/commit/b27a1f0218a2297513b8176fe91077c5828fb23e))
+* **render:** read Helm values like Helm ([#367](https://github.com/sholdee/drydock/issues/367)) ([92260e2](https://github.com/sholdee/drydock/commit/92260e2040bb496a5dc3d010005ddb994cbbca4a))
+* **render:** read manifest YAML like Argo CD ([#368](https://github.com/sholdee/drydock/issues/368)) ([209dcab](https://github.com/sholdee/drydock/commit/209dcabd09c24e847d0559d7b682e5766393279a))
+
+
+### Documentation
+
+* **changelog:** add security fix and upgrade notes to 0.3.2 ([#362](https://github.com/sholdee/drydock/issues/362)) ([8bd181c](https://github.com/sholdee/drydock/commit/8bd181c7440472eaff09362d6d5069539cdb627a))
+* **sources:** describe remote refs accepted by bases and resources ([#364](https://github.com/sholdee/drydock/issues/364)) ([fda2791](https://github.com/sholdee/drydock/commit/fda27912bd0473cb9fa26747f0b84e93036d4ea7))
+
+
+### Miscellaneous Chores
+
+* **deps:** update dependency hugo to v0.167.0 ([#371](https://github.com/sholdee/drydock/issues/371)) ([52278cc](https://github.com/sholdee/drydock/commit/52278cc2d26ebd2a67cf0772519d252d58214c14))
+* **deps:** update dependency lefthook to v2.1.15 ([#374](https://github.com/sholdee/drydock/issues/374)) ([2b7b347](https://github.com/sholdee/drydock/commit/2b7b347f53a43218d8c7be715ca9d1c23d56f834))
+
 ## [0.3.2](https://github.com/sholdee/drydock/compare/v0.3.1...v0.3.2) (2026-09-29)
 
 
