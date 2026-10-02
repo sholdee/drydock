@@ -1,7 +1,6 @@
 package app
 
 import (
-	"bytes"
 	"sort"
 	"strings"
 
@@ -9,8 +8,8 @@ import (
 	"github.com/argoproj/argo-cd/v3/util/glob"
 	"github.com/sholdee/drydock/internal/config"
 	"github.com/sholdee/drydock/internal/diff"
+	"github.com/sholdee/drydock/internal/format"
 	"github.com/sholdee/drydock/internal/manifest"
-	"go.yaml.in/yaml/v3"
 )
 
 func normalizationFor(application argoappv1.Application, id manifest.Identity, settings config.ArgoSettings) diff.Normalization {
@@ -88,14 +87,9 @@ func ignoreRuleMatches(rule argoappv1.ResourceIgnoreDifferences, id manifest.Ide
 }
 
 func marshalDiffObject(obj map[string]any) (string, error) {
-	var buf bytes.Buffer
-	encoder := yaml.NewEncoder(&buf)
-	encoder.SetIndent(2)
-	if err := encoder.Encode(obj); err != nil {
+	data, err := format.MarshalYAML(obj)
+	if err != nil {
 		return "", err
 	}
-	if err := encoder.Close(); err != nil {
-		return "", err
-	}
-	return buf.String(), nil
+	return string(data), nil
 }

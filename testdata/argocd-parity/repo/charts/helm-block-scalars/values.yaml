@@ -1,0 +1,11 @@
+# Both strings are multi-line, so drydock's YAML output emits them as literal
+# block scalars. The templates give the Deployment env values a leading
+# newline (query) and leading spaces (banner); that first character is what
+# forces an explicit indentation indicator on the emitted scalar.
+query: |-
+  SELECT id, name
+  FROM widgets
+  WHERE enabled
+banner: |-
+  drydock parity
+  block scalars

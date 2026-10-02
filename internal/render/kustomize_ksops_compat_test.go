@@ -9,7 +9,7 @@ import (
 	"testing"
 
 	"github.com/sholdee/drydock/internal/diagnostic"
-	goyaml "go.yaml.in/yaml/v3"
+	"github.com/sholdee/drydock/internal/format"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 )
 
@@ -66,7 +66,7 @@ func serializeRenderedManifests(t *testing.T, manifests []Manifest) string {
 	t.Helper()
 	var builder strings.Builder
 	for _, manifest := range manifests {
-		data, err := goyaml.Marshal(manifest.Object.Object)
+		data, err := format.MarshalYAML(manifest.Object.Object)
 		if err != nil {
 			t.Fatalf("marshal rendered manifest: %v", err)
 		}
@@ -330,6 +330,60 @@ sops:
 	custom, _, _ := unstructured.NestedString(secret.Object, "customField")
 	if !strings.HasPrefix(custom, ksopsRedactedPrefix) {
 		t.Fatalf("customField = %q, want plain %q marker (custom encrypted_regex values must be replaced too)", custom, ksopsRedactedPrefix)
+	}
+}
+
+// TestKustomizeKSOPSCompatKeepsListNestedBlockScalars pins the placeholder
+// encoding of plaintext fields: a literal block scalar inside a sequence item
+// whose text starts with a blank line keeps its value. At yaml.v3's default
+// indent the re-encoded placeholder manifest carried an indentation indicator
+// that disagreed with its content, and kustomize could not read it.
+func TestKustomizeKSOPSCompatKeepsListNestedBlockScalars(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "apps", "demo", "kustomization.yaml"), `
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+generators:
+  - ./secret-generator.yaml
+`)
+	writeFile(t, filepath.Join(root, "apps", "demo", "secret-generator.yaml"), `apiVersion: viaduct.ai/v1
+kind: ksops
+metadata:
+  name: rules-generator
+files:
+  - ./rules.sops.yaml
+`)
+	writeFile(t, filepath.Join(root, "apps", "demo", "rules.sops.yaml"), `apiVersion: example.com/v1
+kind: Widget
+metadata:
+    name: demo-rules
+spec:
+    rules:
+        - alert: DemoDown
+          expr: |
+
+            up{job="demo"} == 0
+          webhook: ENC[AES256_GCM,data:webhookCipher,iv:x,tag:y,type:str]
+sops:
+    encrypted_regex: ^(webhook)$
+    version: 3.10.2
+`)
+
+	manifests, _, err := renderKSOPSFixture(t, root, true)
+	if err != nil {
+		t.Fatalf("Render() error = %v", err)
+	}
+	widget := manifestNamed(t, manifests, "Widget", "demo-rules")
+	rules, _, _ := unstructured.NestedSlice(widget.Object, "spec", "rules")
+	if len(rules) != 1 {
+		t.Fatalf("spec.rules = %#v, want one rule", rules)
+	}
+	rule, _ := rules[0].(map[string]any)
+	if got, want := rule["expr"], "\nup{job=\"demo\"} == 0\n"; got != want {
+		t.Fatalf("spec.rules[0].expr = %q, want %q", got, want)
+	}
+	if webhook, _ := rule["webhook"].(string); !strings.HasPrefix(webhook, ksopsRedactedPrefix) {
+		t.Fatalf("spec.rules[0].webhook = %q, want plain %q marker", webhook, ksopsRedactedPrefix)
 	}
 }
 

@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/sholdee/drydock/internal/diagnostic"
+	"github.com/sholdee/drydock/internal/format"
 	"github.com/sholdee/drydock/internal/manifestyaml"
 	"go.yaml.in/yaml/v3"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -310,7 +311,7 @@ func decodeUnstructuredObject(obj *unstructured.Unstructured, out any) error {
 }
 
 func decodeYAMLValue(value, out any) error {
-	data, err := yaml.Marshal(value)
+	data, err := format.MarshalYAML(value)
 	if err != nil {
 		return err
 	}
@@ -421,7 +422,7 @@ func configManagementPluginsFromHelmValue(name string, value any, path, pointer 
 		}
 		return configManagementPluginsFromYAML([]byte(typed), path, pointer)
 	default:
-		data, err := yaml.Marshal(typed)
+		data, err := format.MarshalYAML(typed)
 		if err != nil {
 			return nil, fmt.Errorf("parse config management plugin %s: %w", pointer, err)
 		}

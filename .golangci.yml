@@ -16,6 +16,7 @@ linters:
     - errchkjson
     - errorlint
     - exhaustive
+    - forbidigo
     - gocheckcompilerdirectives
     - gocritic
     - gocyclo
@@ -47,6 +48,17 @@ linters:
       require-specific: true
     errcheck:
       check-type-assertions: true
+    forbidigo:
+      # Matched against the real package path, so an import alias or another
+      # package named yaml (sigs.k8s.io/yaml) neither hides nor trips it.
+      analyze-types: true
+      forbid:
+        - pattern: ^yaml\.(Marshal|NewEncoder)$
+          pkg: ^(go\.yaml\.in/yaml/v3|gopkg\.in/yaml\.v3)$
+          msg: >-
+            encode YAML with internal/format (format.YAML, format.MarshalYAML):
+            at yaml.v3's default 4-space indent a list-nested block scalar whose
+            text starts with a newline or a space does not read back intact
   exclusions:
     presets:
       - std-error-handling
@@ -54,6 +66,10 @@ linters:
       - linters:
           - modernize
         text: "omitzero:"
+      # The 2-space encoder every other package uses.
+      - path: ^internal/format/format\.go$
+        linters:
+          - forbidigo
 
 formatters:
   enable:

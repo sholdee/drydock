@@ -1,0 +1,11 @@
+# Control: the same strings nested under mappings only. Their block scalars
+# were always emitted readably; only list-nested ones were not.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Release.Name }}
+  namespace: {{ .Release.Namespace }}
+data:
+  query: |
+    {{ .Values.query | nindent 4 }}
+  banner: {{ .Values.banner | indent 2 | quote }}

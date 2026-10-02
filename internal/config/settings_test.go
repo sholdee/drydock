@@ -11,7 +11,7 @@ import (
 	"testing"
 
 	"github.com/sholdee/drydock/internal/diagnostic"
-	"go.yaml.in/yaml/v3"
+	"github.com/sholdee/drydock/internal/format"
 )
 
 func TestLoadHelmValuesSettings(t *testing.T) {
@@ -76,6 +76,78 @@ func TestLoadHelmValuesConfigManagementPlugins(t *testing.T) {
 	}
 	if got := strings.Join(append(plugin.GenerateCommand, plugin.GenerateArgs...), " "); got != "sh -c kustomize build --enable-helm" {
 		t.Fatalf("plugin command = %q", got)
+	}
+}
+
+// TestLoadHelmValuesConfigManagementPluginKeepsBlockScalarArgs pins the
+// re-encode of a structured plugin spec: an args entry written as a literal
+// block scalar that starts with a blank line keeps its value. At yaml.v3's
+// default indent the re-encoded spec carried an indentation indicator that
+// disagreed with its content, and the plugin failed to parse.
+func TestLoadHelmValuesConfigManagementPluginKeepsBlockScalarArgs(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "values.yaml")
+	if err := os.WriteFile(path, []byte(`configs:
+  cmp:
+    plugins:
+      render:
+        generate:
+          command: [sh, -c]
+          args:
+            - |
+
+              set -eu
+              kustomize build .
+`), 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	settings, diags, err := LoadFromHelmValues(path)
+	if err != nil {
+		t.Fatalf("LoadFromHelmValues() error = %v", err)
+	}
+	if len(diags) != 0 {
+		t.Fatalf("diagnostics = %#v", diags)
+	}
+	plugin, ok := settings.ConfigManagementPlugins["render"]
+	if !ok {
+		t.Fatalf("ConfigManagementPlugins = %#v, want render plugin", settings.ConfigManagementPlugins)
+	}
+	if want := []string{"\nset -eu\nkustomize build .\n"}; !slices.Equal(plugin.GenerateArgs, want) {
+		t.Fatalf("plugin GenerateArgs = %q, want %q", plugin.GenerateArgs, want)
+	}
+}
+
+// TestLoadFromHelmValuesDocumentReadsListNestedBlockScalars pins the
+// document decode settings discovery uses: the whole values document is
+// re-encoded before it is read, so a block scalar anywhere in a list that
+// starts with a blank line (here a sidecar script the settings never read)
+// made the entire document fail to load at yaml.v3's default indent.
+func TestLoadFromHelmValuesDocumentReadsListNestedBlockScalars(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "values.yaml")
+	if err := os.WriteFile(path, []byte(`repoServer:
+  extraContainers:
+    - name: render
+      args:
+        - |
+
+          set -eu
+          exec /var/run/argocd/argocd-cmp-server
+configs:
+  cm:
+    application.instanceLabelKey: argocd.argoproj.io/instance
+`), 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	settings, diags, err := LoadFromHelmValuesDocument(path, 0)
+	if err != nil {
+		t.Fatalf("LoadFromHelmValuesDocument() error = %v", err)
+	}
+	if len(diags) != 0 {
+		t.Fatalf("diagnostics = %#v", diags)
+	}
+	if got, want := settings.InstanceLabelKey.Value, "argocd.argoproj.io/instance"; got != want {
+		t.Fatalf("InstanceLabelKey = %q, want %q", got, want)
 	}
 }
 
@@ -184,9 +256,9 @@ func TestConfigManagementPluginsDoNotSerializeRawCommands(t *testing.T) {
 	if err != nil {
 		t.Fatalf("json.Marshal() error = %v", err)
 	}
-	yamlData, err := yaml.Marshal(settings)
+	yamlData, err := format.MarshalYAML(settings)
 	if err != nil {
-		t.Fatalf("yaml.Marshal() error = %v", err)
+		t.Fatalf("format.MarshalYAML() error = %v", err)
 	}
 	combined := string(jsonData) + string(yamlData)
 	for _, forbidden := range []string{"ConfigManagementPlugins", "kustomize build", "--enable-helm"} {

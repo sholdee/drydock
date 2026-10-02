@@ -328,6 +328,20 @@ func TestGetImagesNameOutput(t *testing.T) {
 	}
 }
 
+// TestGetImagesReadsWorkloadsWithListNestedBlockScalars pins that image
+// extraction reads every workload: it re-reads each rendered manifest from
+// YAML, and a workload the encoder could not round-trip lost its images
+// silently.
+func TestGetImagesReadsWorkloadsWithListNestedBlockScalars(t *testing.T) {
+	root := t.TempDir()
+	writeBlockScalarEnvAppForCLI(t, root, "ghcr.io/example/demo:v1")
+
+	result := runCLI(t, "get", "images", "--path", root, "-o", "name")
+	if got, want := result.Stdout, "ghcr.io/example/demo:v1\n"; got != want {
+		t.Fatalf("get images -o name output = %q, want %q", got, want)
+	}
+}
+
 func TestGetImagesIncludesExactImageKey(t *testing.T) {
 	root := t.TempDir()
 	writeExactImageKeyAppForCLI(t, root, "renovate/renovate:43.195.6@sha256:72d184865d505d5badc5c3b32a48410096e0d9d7e0d875dae28ee97832178f47")

@@ -1,6 +1,7 @@
 package format
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -71,8 +72,31 @@ func Table(w io.Writer, columns []Column, rows []map[string]string) error {
 	return tw.Flush()
 }
 
+// MarshalYAML returns value encoded as YAML indented by 2 spaces. It is the
+// only go.yaml.in/yaml/v3 encoder in drydock (a forbidigo rule keeps it that
+// way). The width is not only style: at yaml.v3's default of 4, a block
+// scalar inside a sequence item whose text starts with a newline or a space
+// gets an indentation indicator that disagrees with the column its content is
+// written at. Parsers reject such a document, or, when every line starts with
+// the same spaces, silently read the text back without them.
+func MarshalYAML(value any) ([]byte, error) {
+	var buffer bytes.Buffer
+	encoder := yaml.NewEncoder(&buffer)
+	encoder.SetIndent(2)
+	if err := encoder.Encode(value); err != nil {
+		return nil, err
+	}
+	if err := encoder.Close(); err != nil {
+		return nil, err
+	}
+	return buffer.Bytes(), nil
+}
+
+// YAML writes value as YAML (see MarshalYAML) in a single write, so an
+// encoding error leaves nothing behind and large documents do not reach w in
+// yaml.v3's 128-byte flushes.
 func YAML(w io.Writer, value any) error {
-	data, err := yaml.Marshal(value)
+	data, err := MarshalYAML(value)
 	if err != nil {
 		return err
 	}

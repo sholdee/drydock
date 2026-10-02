@@ -82,6 +82,58 @@ target:
 	assertPatchedFrom(t, renderPluginConfigFixture(t, root), "listing-dir")
 }
 
+// TestKustomizeBuiltinInlineStrategicMergePatchWithLeadingBlankLine pins the
+// re-encode the referent walk reads a builtin config through. A
+// PatchStrategicMergeTransformer paths: entry holding inline patch content
+// that starts with a blank line is a block scalar inside a list; kustomize
+// applies it, but at yaml.v3's default indent the re-encoded config carried
+// an indentation indicator that disagreed with its content and did not
+// decode. The strict digest walk then failed (the source was never cached)
+// and changed-only selection dropped the file referent next to it, so an
+// edit to patch.yaml selected nothing.
+func TestKustomizeBuiltinInlineStrategicMergePatchWithLeadingBlankLine(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "apps", "demo", "kustomization.yaml"), `apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - cm.yaml
+transformers:
+  - cfg/smp.yaml
+`)
+	writeFile(t, filepath.Join(root, "apps", "demo", "cm.yaml"), pluginConfigTestConfigMap)
+	writeFile(t, filepath.Join(root, "apps", "demo", "patch.yaml"), pluginConfigTestLabelPatch("listing-dir"))
+	writeFile(t, filepath.Join(root, "apps", "demo", "cfg", "smp.yaml"), `apiVersion: builtin
+kind: PatchStrategicMergeTransformer
+metadata:
+  name: label-demo
+paths:
+  - patch.yaml
+  - |
+
+    apiVersion: v1
+    kind: ConfigMap
+    metadata:
+      name: demo
+      labels:
+        inline: patched
+`)
+
+	manifests := renderPluginConfigFixture(t, root)
+	assertPatchedFrom(t, manifests, "listing-dir")
+	if got, _, _ := unstructured.NestedString(findManifest(manifests, "ConfigMap", "demo").Object, "metadata", "labels", "inline"); got != "patched" {
+		t.Fatalf("ConfigMap demo label inline = %q, want the inline patch applied", got)
+	}
+
+	assertRequiredDigestPaths(t, pluginDigestPaths(t, root, "apps/demo"), "apps/demo/cfg/smp.yaml", "apps/demo/patch.yaml")
+	selection, err := KustomizeSelectionPaths(context.Background(), root, "apps/demo", nil)
+	if err != nil {
+		t.Fatalf("KustomizeSelectionPaths() error = %v", err)
+	}
+	if !slices.Contains(selection, "apps/demo/patch.yaml") {
+		t.Fatalf("KustomizeSelectionPaths() = %v, missing apps/demo/patch.yaml", selection)
+	}
+}
+
 // TestKustomizeBuiltinGeneratorReferentsResolveAgainstListingDir pins the
 // same base for generators: entries, which always render through the
 // prepared workspace.

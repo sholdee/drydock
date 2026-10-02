@@ -1,11 +1,11 @@
 package diff
 
 import (
-	"bytes"
 	"errors"
 	"fmt"
 	argoappv1 "github.com/argoproj/argo-cd/v3/pkg/apis/application/v1alpha1"
 	"github.com/argoproj/argo-cd/v3/util/argo/normalizers"
+	"github.com/sholdee/drydock/internal/format"
 	"go.yaml.in/yaml/v3"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"strings"
@@ -312,16 +312,11 @@ func encodeDiffYAML(object map[string]any) (string, error) {
 	if object == nil {
 		return "", nil
 	}
-	var buf bytes.Buffer
-	encoder := yaml.NewEncoder(&buf)
-	encoder.SetIndent(2)
-	if err := encoder.Encode(object); err != nil {
+	data, err := format.MarshalYAML(object)
+	if err != nil {
 		return "", err
 	}
-	if err := encoder.Close(); err != nil {
-		return "", err
-	}
-	return buf.String(), nil
+	return string(data), nil
 }
 func appendUniqueNormalization(left, right Normalization) Normalization {
 	left.JSONPointers = appendUniqueStrings(left.JSONPointers, right.JSONPointers)

@@ -1,0 +1,27 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Release.Name }}
+  namespace: {{ .Release.Namespace }}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: {{ .Release.Name }}
+  template:
+    metadata:
+      labels:
+        app: {{ .Release.Name }}
+    spec:
+      containers:
+        - name: worker
+          image: registry.example.invalid/worker:1.0.0
+          env:
+            # The literal keeps the blank first line the template emits
+            # before nindent's output, so the value starts with a newline.
+            - name: QUERY
+              value: |
+                {{ .Values.query | nindent 16 }}
+            # indent prefixes every line, so the value starts with spaces.
+            - name: BANNER
+              value: {{ .Values.banner | indent 2 | quote }}

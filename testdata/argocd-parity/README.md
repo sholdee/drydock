@@ -399,3 +399,31 @@ artifacts — with one non-offline build before the offline per-app loop runs.
 The chart lives outside `repo/` for the same reason the artifact content does:
 a classification regression that fell back to path resolution would render the
 git fixture instead of the chart and flip the comparison hard.
+
+## Helm block scalar fixture
+
+`applications/helm-block-scalars.yaml` (`parity-helm-block-scalars`) renders
+`charts/helm-block-scalars`, whose Deployment carries two multi-line env
+values. drydock's YAML output writes each as a literal block scalar inside a
+sequence item:
+
+- `QUERY` starts with a newline: the template writes `value: |` and puts the
+  `nindent` call on the next line, so the literal's first line is blank.
+- `BANNER` starts with spaces: `indent 2` prefixes every line.
+
+That first character makes the encoder write an explicit indentation
+indicator. At yaml.v3's default 4-space indent the indicator inside a
+sequence item disagreed with the column the content was written at:
+`QUERY` made drydock's output unreadable to the comparison's decoder (and to
+kubectl), and `BANNER` on its own read back without its leading spaces. The
+ConfigMap carries the same two strings nested under mappings only, where the
+output was always read back exactly, as a control.
+
+Both Argo CD and drydock must render these values:
+
+| resource | field | value |
+| --- | --- | --- |
+| Deployment | env `QUERY` | `"\nSELECT id, name\nFROM widgets\nWHERE enabled\n"` |
+| Deployment | env `BANNER` | `"  drydock parity\n  block scalars"` |
+| ConfigMap | `data.query` | the `QUERY` value |
+| ConfigMap | `data.banner` | the `BANNER` value |

@@ -139,6 +139,7 @@ APPLICATIONS=(
   parity-ft-beta
   parity-fn-gamma-one
   parity-helm-null-default
+  parity-helm-block-scalars
   parity-plugin-env
   parity-plugin-container
   parity-avp

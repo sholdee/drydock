@@ -15,6 +15,7 @@ import (
 	"strings"
 
 	"github.com/sholdee/drydock/internal/diagnostic"
+	"github.com/sholdee/drydock/internal/format"
 	goyaml "go.yaml.in/yaml/v3"
 	"sigs.k8s.io/kustomize/api/konfig"
 	"sigs.k8s.io/kustomize/api/types"
@@ -302,12 +303,10 @@ func substituteKSOPSSopsFile(relPath string, content []byte) ([]byte, error) {
 		// grep-able).
 		kind := yamlMappingString(root, "kind")
 		substituteEncryptedYAMLValues(root, relPath, docIndex, nil, kind, false)
-		data, err := goyaml.Marshal(doc)
-		if err != nil {
+		buffer.WriteString("---\n")
+		if err := format.YAML(&buffer, doc); err != nil {
 			return nil, fmt.Errorf("encode placeholder manifest: %w", err)
 		}
-		buffer.WriteString("---\n")
-		buffer.Write(data)
 		emitted++
 	}
 	if emitted == 0 {

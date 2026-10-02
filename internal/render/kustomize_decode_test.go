@@ -243,6 +243,15 @@ func TestKustomizePreparedWorkspaceRendersLikeKustomize(t *testing.T) {
 				"apps/demo/deployment.yaml": "apiVersion: apps/v1\nkind: Deployment\nmetadata:\n  name: web\nspec:\n  template:\n    spec:\n      containers:\n        - name: web\n          image: nginx\n",
 			},
 		},
+		// An inline patch whose text starts with a blank line is a block
+		// scalar inside a patches: item; the rewrite must encode it so
+		// kustomize can read it back (at yaml.v3's default indent it could
+		// not: "did not find expected key").
+		{
+			name:          "inline patch with leading blank line",
+			kustomization: "resources:\n  - cm.yaml\npatches:\n  - target:\n      kind: ConfigMap\n      name: demo\n    patch: |\n\n      apiVersion: v1\n      kind: ConfigMap\n      metadata:\n        name: demo\n      data:\n        value: patched\n",
+			files:         map[string]string{"apps/demo/cm.yaml": decodeTestConfigMap("demo", "base")},
+		},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			plainRoot := t.TempDir()

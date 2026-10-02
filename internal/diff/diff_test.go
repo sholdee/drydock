@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"go.yaml.in/yaml/v3"
+	"github.com/sholdee/drydock/internal/format"
 )
 
 func TestRunParentAwareDiff(t *testing.T) {
@@ -1083,18 +1083,18 @@ func TestDocumentNormalizationOmittedFromStructuredOutput(t *testing.T) {
 	if err != nil {
 		t.Fatalf("json.Marshal() error = %v", err)
 	}
-	yamlBody, err := yaml.Marshal(doc)
+	yamlBody, err := format.MarshalYAML(doc)
 	if err != nil {
-		t.Fatalf("yaml.Marshal() error = %v", err)
+		t.Fatalf("format.MarshalYAML() error = %v", err)
 	}
 
-	for format, body := range map[string]string{
+	for name, body := range map[string]string{
 		"json": string(jsonBody),
 		"yaml": string(yamlBody),
 	} {
 		for _, forbidden := range []string{"Normalization", "normalization", "/data/value"} {
 			if strings.Contains(body, forbidden) {
-				t.Fatalf("%s output includes normalization field or value %q:\n%s", format, forbidden, body)
+				t.Fatalf("%s output includes normalization field or value %q:\n%s", name, forbidden, body)
 			}
 		}
 	}

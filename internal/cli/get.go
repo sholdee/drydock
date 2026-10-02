@@ -11,7 +11,6 @@ import (
 	"github.com/sholdee/drydock/internal/diff"
 	cliformat "github.com/sholdee/drydock/internal/format"
 	"github.com/spf13/cobra"
-	"go.yaml.in/yaml/v3"
 	"k8s.io/apimachinery/pkg/labels"
 )
 
@@ -321,7 +320,7 @@ func imagesFromBuild(result app.BuildResult) []string {
 		if manifest.Object == nil {
 			continue
 		}
-		body, err := yaml.Marshal(manifest.Object.Object)
+		body, err := cliformat.MarshalYAML(manifest.Object.Object)
 		if err != nil {
 			continue
 		}

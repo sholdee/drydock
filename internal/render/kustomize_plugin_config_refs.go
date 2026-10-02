@@ -8,6 +8,7 @@ import (
 	"reflect"
 	"strings"
 
+	"github.com/sholdee/drydock/internal/format"
 	goyaml "go.yaml.in/yaml/v3"
 	"sigs.k8s.io/kustomize/api/types"
 	sigsyaml "sigs.k8s.io/yaml"
@@ -141,7 +142,7 @@ func builtinPluginDocumentRefs(kind string, root *goyaml.Node) ([]kustomizePlugi
 	if extract == nil {
 		return nil, nil
 	}
-	content, err := goyaml.Marshal(root)
+	content, err := format.MarshalYAML(root)
 	if err != nil {
 		return nil, fmt.Errorf("builtin %s config: %w", kind, err)
 	}

@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 
 	"github.com/sholdee/drydock/internal/diagnostic"
-	goyaml "go.yaml.in/yaml/v3"
+	"github.com/sholdee/drydock/internal/format"
 )
 
 type kustomizeWorkspace struct {
@@ -176,7 +176,7 @@ func (w *kustomizeWorkspace) prepareKustomizationDir(ctx context.Context, dir, b
 	// The rewrite encodes the kustomize-decoded kustomization, so its keys
 	// are the canonical ones and its deprecated fields are already folded:
 	// kustomize reads from it what it would read from the original.
-	data, err := goyaml.Marshal(&kustomization)
+	data, err := format.MarshalYAML(&kustomization)
 	if err != nil {
 		return fmt.Errorf("encode temp kustomization %s: %w", manifestPath, err)
 	}

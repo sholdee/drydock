@@ -7,7 +7,6 @@ import (
 	"github.com/sholdee/drydock/internal/app"
 	cliformat "github.com/sholdee/drydock/internal/format"
 	"github.com/spf13/cobra"
-	"go.yaml.in/yaml/v3"
 )
 
 func newBuildCommand(info VersionInfo, deps Dependencies) *cobra.Command {
@@ -136,19 +135,11 @@ func renderBuildResult(cmd *cobra.Command, output string, result app.BuildResult
 		}
 		return cliformat.JSON(cmd.OutOrStdout(), list)
 	case string(cliformat.OutputYAML):
+		objects := make([]any, 0, len(result.Manifests))
 		for _, manifest := range result.Manifests {
-			data, err := yaml.Marshal(manifest.Object.Object)
-			if err != nil {
-				return err
-			}
-			if _, err := fmt.Fprintln(cmd.OutOrStdout(), "---"); err != nil {
-				return err
-			}
-			if _, err := cmd.OutOrStdout().Write(data); err != nil {
-				return err
-			}
+			objects = append(objects, manifest.Object.Object)
 		}
-		return nil
+		return cliformat.YAMLMulti(cmd.OutOrStdout(), objects)
 	default:
 		return fmt.Errorf("unsupported output %q for build", output)
 	}

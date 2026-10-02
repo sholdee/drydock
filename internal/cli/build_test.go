@@ -15,9 +15,11 @@ import (
 
 	"github.com/sholdee/drydock/internal/app"
 	"github.com/sholdee/drydock/internal/chart"
+	"github.com/sholdee/drydock/internal/manifest"
 	"github.com/sholdee/drydock/internal/ociartifact"
 	"github.com/sholdee/drydock/internal/ociartifact/ocitest"
 	sourcepkg "github.com/sholdee/drydock/internal/source"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 )
 
 func TestBuildAppsRendersManifests(t *testing.T) {
@@ -724,14 +726,87 @@ spec:
 func TestBuildDefaultOutputIsTheYAMLStream(t *testing.T) {
 	root := t.TempDir()
 	writeSimpleAppForCLI(t, root, "one")
-	// The exact bytes build printed before -o was honored: the default stream
-	// is a documented pipeline input, so the flag must not change it.
-	want := "---\napiVersion: v1\ndata:\n    value: one\nkind: ConfigMap\nmetadata:\n    annotations:\n        argocd.argoproj.io/tracking-id: demo:/ConfigMap:demo/demo\n    name: demo\n    namespace: demo\n"
+	// The exact bytes of the default stream: it is a documented pipeline
+	// input, so -o yaml must not change it. Documents are indented by 2
+	// spaces.
+	want := "---\napiVersion: v1\ndata:\n  value: one\nkind: ConfigMap\nmetadata:\n  annotations:\n    argocd.argoproj.io/tracking-id: demo:/ConfigMap:demo/demo\n  name: demo\n  namespace: demo\n"
 	if got := runCLI(t, "build", "apps", "--path", root).Stdout; got != want {
-		t.Fatalf("default stdout = %q, want the pre-change YAML stream %q", got, want)
+		t.Fatalf("default stdout = %q, want the YAML stream %q", got, want)
 	}
 	if got := runCLI(t, "build", "apps", "--path", root, "-o", "yaml").Stdout; got != want {
 		t.Fatalf("-o yaml stdout = %q, want %q", got, want)
+	}
+}
+
+// writeBlockScalarEnvAppForCLI writes a Deployment whose env value is a
+// literal block scalar starting with a blank line, the shape Helm's
+// `value: |` plus nindent renders. At yaml.v3's default 4-space indent the
+// encoder wrote it inside the env sequence with an indentation indicator that
+// disagreed with its content, and nothing could read the YAML back.
+func writeBlockScalarEnvAppForCLI(t *testing.T, root, image string) {
+	t.Helper()
+	writeCLITestFile(t, filepath.Join(root, "apps", "demo.yaml"), `apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: demo
+  namespace: argocd
+spec:
+  source:
+    repoURL: https://github.com/example/repo
+    path: manifests/demo
+    targetRevision: main
+  destination:
+    name: in-cluster
+    namespace: demo
+`)
+	writeCLITestFile(t, filepath.Join(root, "manifests", "demo", "deployment.yaml"), `apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: demo
+spec:
+  selector:
+    matchLabels:
+      app: demo
+  template:
+    metadata:
+      labels:
+        app: demo
+    spec:
+      containers:
+        - name: app
+          image: `+image+`
+          env:
+            - name: QUERY
+              value: |
+
+                SELECT 1
+`)
+}
+
+func TestBuildYAMLOutputReadsBackListNestedBlockScalars(t *testing.T) {
+	root := t.TempDir()
+	writeBlockScalarEnvAppForCLI(t, root, "ghcr.io/example/demo:v1")
+
+	stdout := runCLI(t, "build", "apps", "--path", root).Stdout
+	docs, err := manifest.DecodeDocuments("stdout", strings.NewReader(stdout))
+	if err != nil {
+		t.Fatalf("DecodeDocuments(build stdout) error = %v\n%s", err, stdout)
+	}
+	if len(docs) != 1 {
+		t.Fatalf("decoded %d documents, want 1\n%s", len(docs), stdout)
+	}
+	containers, _, _ := unstructured.NestedSlice(docs[0].Object.Object, "spec", "template", "spec", "containers")
+	if len(containers) != 1 {
+		t.Fatalf("containers = %#v, want one", containers)
+	}
+	container, _ := containers[0].(map[string]any)
+	env, _ := container["env"].([]any)
+	if len(env) != 1 {
+		t.Fatalf("env = %#v, want one variable", env)
+	}
+	variable, _ := env[0].(map[string]any)
+	if got, want := variable["value"], "\nSELECT 1\n"; got != want {
+		t.Fatalf("env QUERY value = %q, want %q", got, want)
 	}
 }
 
