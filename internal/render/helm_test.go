@@ -309,6 +309,50 @@ enabled: true
 	}
 }
 
+// helm template emits a `kind: List` as one document; Argo CD splits it into
+// its items, and the List survives as Manifest.RootObject so AVP
+// compatibility can process the items with the List's context.
+func TestHelmRendererRecordsListRootObject(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "chart", "Chart.yaml"), `
+apiVersion: v2
+name: chart
+version: 0.1.0
+`)
+	writeFile(t, filepath.Join(root, "chart", "templates", "list.yaml"), `
+apiVersion: v1
+kind: List
+items:
+  - apiVersion: v1
+    kind: Secret
+    metadata:
+      name: first
+  - apiVersion: v1
+    kind: ConfigMap
+    metadata:
+      name: second
+`)
+
+	result, diags, err := (HelmRenderer{}).Render(context.Background(), ResolvedSource{
+		RepoRoot: root,
+		Path:     "chart",
+	}, RenderOptions{AppName: "demo"})
+	if err != nil {
+		t.Fatalf("Render() error = %v", err)
+	}
+	if len(diags) != 0 {
+		t.Fatalf("diagnostics = %#v", diags)
+	}
+	if got, want := manifestNames(result), []string{"first", "second"}; strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Fatalf("manifest names = %#v, want %#v", got, want)
+	}
+	for _, manifest := range result {
+		if manifest.RootObject == nil || manifest.RootObject.GetKind() != "List" {
+			t.Fatalf("%s RootObject = %#v, want the enclosing List", manifest.Object.GetName(), manifest.RootObject)
+		}
+	}
+}
+
 func TestHelmRendererAppliesValueFiles(t *testing.T) {
 	root := t.TempDir()
 	writeValueChart(t, filepath.Join(root, "chart"))

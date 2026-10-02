@@ -96,10 +96,7 @@ func (DirectoryRenderer) Render(ctx context.Context, source ResolvedSource, opts
 					return err
 				}
 			}
-			rendered := Manifest{
-				Path:   doc.Path,
-				Object: doc.Object,
-			}
+			rendered := NewDocumentManifest(doc)
 			include, err := classifyDirectoryDocument(rendered)
 			if err != nil {
 				return err

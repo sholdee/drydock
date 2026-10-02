@@ -7,6 +7,7 @@ import (
 	"maps"
 	"slices"
 	"sort"
+	"strconv"
 	"strings"
 
 	argoappv1 "github.com/argoproj/argo-cd/v3/pkg/apis/application/v1alpha1"
@@ -16,6 +17,7 @@ import (
 	"github.com/sholdee/drydock/internal/render"
 	sourcepkg "github.com/sholdee/drydock/internal/source"
 	chartv2loader "helm.sh/helm/v4/pkg/chart/v2/loader"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	version "k8s.io/apimachinery/pkg/util/version"
 )
 
@@ -440,11 +442,27 @@ func applyAVPCompatToManifest(manifest *render.Manifest, opts render.RenderOptio
 	if !opts.EnableAVPCompat || manifest == nil || manifest.Object == nil {
 		return false
 	}
-	defaultPath := ""
-	if annotations := manifest.Object.GetAnnotations(); annotations != nil {
-		defaultPath = annotations["avp.kubernetes.io/path"]
+	// Mirror AVP's per-object context (pkg/kube/template.go:31-60): the
+	// replacer is chosen from the top-level kind alone and the placeholder
+	// regex from the presence of the path annotation key, even when its value
+	// is empty (pkg/kube/util.go:113-115). AVP decodes each document into one
+	// object (cmd/util.go:46-50), so a `kind: List` is that object: its kind
+	// and annotations govern every item (util.go:54-61 recurses into the
+	// items with the List's Resource). drydock flattens Lists before this
+	// pass, so the context comes from the List root when there is one.
+	scope := manifest.Object
+	if manifest.RootObject != nil {
+		scope = manifest.RootObject
 	}
-	value, changed := avpcompat.ReplaceValueWithPath(manifest.Object.Object, defaultPath)
+	annotations := avpAnnotations(scope)
+	// cmd/generate.go:93-102: an object whose ignore annotation parses true
+	// with strconv.ParseBool is emitted verbatim.
+	if ignore, _ := strconv.ParseBool(annotations[avpcompat.IgnoreAnnotation]); ignore {
+		return false
+	}
+	avpOpts := avpcompat.Options{Kind: scope.GetKind()}
+	avpOpts.Path, avpOpts.PathAnnotationPresent = annotations[avpcompat.PathAnnotation]
+	value, changed := avpcompat.ReplaceValueWithOptions(manifest.Object.Object, avpOpts)
 	if !changed {
 		return false
 	}
@@ -454,6 +472,22 @@ func applyAVPCompatToManifest(manifest *render.Manifest, opts render.RenderOptio
 	}
 	manifest.Object.Object = object
 	return true
+}
+
+// avpAnnotations reads metadata.annotations the way AVP v1.18.1 does. AVP
+// pins k8s.io/apimachinery v0.29.1 (go.mod:33), whose GetAnnotations is
+// NestedStringMap: a map holding any non-string value, a YAML null included,
+// comes back nil, so EVERY annotation on that object reads as absent for the
+// regex selection (template.go:32-33, util.go:113) and the ignore check
+// (generate.go:93). drydock's apimachinery coerces a null to "" and keeps the
+// key (NestedNullCoercingStringMap), which would select the generic regex
+// where AVP selects the specific one, so GetAnnotations is not used here.
+func avpAnnotations(object *unstructured.Unstructured) map[string]string {
+	annotations, _, err := unstructured.NestedStringMap(object.Object, "metadata", "annotations")
+	if err != nil {
+		return nil
+	}
+	return annotations
 }
 
 func avpCompatDiagnostic() diagnostic.Diagnostic {

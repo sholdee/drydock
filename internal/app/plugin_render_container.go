@@ -77,10 +77,7 @@ func (p localProvider) renderContainerPolicyPluginSource(ctx context.Context, so
 	}
 	manifests := make([]render.Manifest, 0, len(docs))
 	for _, doc := range docs {
-		manifests = append(manifests, render.Manifest{
-			Path:   doc.Path,
-			Object: doc.Object,
-		})
+		manifests = append(manifests, render.NewDocumentManifest(doc))
 	}
 	p.recordPluginExecutions(opts, source, name, pluginExecutionDetails{
 		engine:     string(pluginpolicy.EngineContainer),

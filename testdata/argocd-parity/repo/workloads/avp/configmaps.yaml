@@ -1,11 +1,13 @@
 # argocd-vault-plugin parity workload. Every value obeys the placeholder rules
 # in the fixture README: the path is spelled exactly parity-avp-backend, no
-# whitespace, modifiers or versions inside <>, every scalar quoted, and the
-# annotated ConfigMap has no < or > outside its placeholders. Keep this
-# directory flat (AVP walks it recursively, drydock's directory source does
-# not) and ConfigMaps only (Argo CD masks Secret data in app manifests).
+# modifiers or versions, every scalar quoted, and every <...> span on an
+# annotated object contains an inline token or a key the backend holds. Keep
+# this directory flat (AVP walks it recursively, drydock's directory source
+# does not) and ConfigMaps only: `argocd app manifests` masks Secret data, so
+# Secrets live in workloads/avp-secret and are compared through the
+# kubectl-exec oracle alone.
 #
-# The smoke counts drydock-redacted- markers on both sides; update
+# The smoke counts drydock-redacted- markers on every side; update
 # AVP_EXPECTED_MARKERS in scripts/argocd-parity-smoke.sh with any change here.
 apiVersion: v1
 kind: ConfigMap
@@ -18,6 +20,11 @@ data:
   # Two inline placeholders embedded in one string.
   dsn: "postgres://<path:parity-avp-backend#username>:<path:parity-avp-backend#password>@db.example.invalid:5432/app"
   plain: "left exactly as written"
+  # Without the annotation only a literal "<path:" starts a match, so the
+  # stray "<stray " prefix survives on both sides.
+  stray: "<stray <path:parity-avp-backend#username>"
+  # Space before ">": the key is "endpoint " until both sides trim it.
+  spaced: "<path:parity-avp-backend#endpoint >"
 ---
 apiVersion: v1
 kind: ConfigMap
@@ -33,3 +40,46 @@ data:
   url: "https://<endpoint>/v1"
   # An inline placeholder still names its own path under the annotation.
   inline: "<path:parity-avp-backend#username>"
+  # Spaces inside <> are trimmed from a generic key on both sides.
+  spaced: "< password >"
+  # With the annotation present the match runs from the first "<" on the line
+  # to the next ">", so "<stray " is swallowed into the replaced span and the
+  # inline token inside it still resolves: the whole value becomes one marker.
+  stray: "<stray <path:parity-avp-backend#username>"
+  # Same span rule with prefix text inside one bracket pair.
+  prefixed: "<prefix path:parity-avp-backend#endpoint>"
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: "parity-avp-empty-path"
+  namespace: "parity-avp"
+  annotations:
+    # Present but empty: the generic regex is selected on key presence, while
+    # the empty path fetches no data. Inline tokens still resolve; a bare
+    # <key> would be a missing value and an AVP error, so none appears here.
+    avp.kubernetes.io/path: ""
+data:
+  inline: "<path:parity-avp-backend#password>"
+  # Rendered as one marker, not "<stray " plus a marker: proof that the empty
+  # annotation switched both sides to the generic span.
+  stray: "<stray <path:parity-avp-backend#username>"
+  plain: "no placeholder here"
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: "parity-avp-lists"
+  namespace: "parity-avp"
+data:
+  plain: "lists live outside data"
+# Not a ConfigMap field: nothing applies this manifest, both renderers carry
+# unknown fields through, and AVP's walk ignores the kind. The walk descends
+# one list level: a string directly in a list and a map in a list are
+# replaced, while a list nested in a list is skipped whole on both sides, so
+# its placeholders stay verbatim and do not count as markers.
+lists:
+  - "<path:parity-avp-backend#username>"
+  - key: "<path:parity-avp-backend#password>"
+  - - "<path:parity-avp-backend#endpoint>"
+  - - key: "<path:parity-avp-backend#endpoint>"

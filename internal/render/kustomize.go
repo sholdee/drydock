@@ -99,10 +99,7 @@ func renderPlainKustomize(ctx context.Context, source ResolvedSource, root strin
 
 	out := make([]Manifest, 0, len(docs))
 	for _, doc := range docs {
-		out = append(out, Manifest{
-			Path:   doc.Path,
-			Object: doc.Object,
-		})
+		out = append(out, NewDocumentManifest(doc))
 	}
 	return out, nil, nil
 }

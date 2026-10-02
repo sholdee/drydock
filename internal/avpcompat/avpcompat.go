@@ -1,113 +1,232 @@
+// Package avpcompat mirrors where argocd-vault-plugin (AVP) substitutes
+// placeholders, without any secret backend: every placeholder AVP would
+// resolve becomes a deterministic marker derived from the placeholder's
+// identity. Parity means drydock substitutes exactly where AVP substitutes
+// and nowhere else, so the matching, span selection and traversal rules below
+// are copied from AVP v1.18.1 pkg/kube/util.go and pkg/kube/template.go and
+// cite the lines they mirror.
 package avpcompat
 
 import (
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
+	"regexp"
 	"strings"
 )
 
 const redactedPrefix = "drydock-redacted-"
 
-// ContainsPlaceholder reports whether value contains a supported AVP placeholder.
+// PathAnnotation is the AVP annotation that scopes generic <key> placeholders
+// to a backend path.
+const PathAnnotation = "avp.kubernetes.io/path"
+
+// IgnoreAnnotation marks an object AVP emits verbatim: cmd/generate.go:93-102
+// skips Replace() when its value parses true with strconv.ParseBool.
+const IgnoreAnnotation = "avp.kubernetes.io/ignore"
+
+// The three regular expressions are AVP's own, verbatim (pkg/kube/util.go:26-28).
+//
+//   - genericPlaceholder is used when the path annotation key is present
+//     (util.go:113-115): (?U) makes `.*` lazy, so a match runs from the first
+//     '<' on a line to the next '>' and never crosses a newline.
+//   - specificPathPlaceholder is used when the annotation key is absent: it
+//     only starts at a literal "<path:" and admits anything but '#' inside
+//     the path and key parts, newlines and '>' included.
+//   - indivPlaceholderSyntax is tested, unanchored, against the trimmed body of
+//     every match (util.go:130-135) to decide between an inline path lookup and
+//     a lookup in the annotation path's data.
+var (
+	genericPlaceholder      = regexp.MustCompile(`(?mU)<(.*)>`)
+	specificPathPlaceholder = regexp.MustCompile(`(?mU)<path:([^#]+)#([^#]+)(?:#([^#]+))?>`)
+	indivPlaceholderSyntax  = regexp.MustCompile(`(?mU)path:(?P<path>[^#]+?)#(?P<key>[^#]+?)(?:#(?P<version>.+?))??`)
+)
+
+var (
+	indivPathIndex    = indivPlaceholderSyntax.SubexpIndex("path")
+	indivKeyIndex     = indivPlaceholderSyntax.SubexpIndex("key")
+	indivVersionIndex = indivPlaceholderSyntax.SubexpIndex("version")
+)
+
+// Options describes the manifest context AVP derives its replacement rules
+// from (pkg/kube/template.go:31-60, 67-79).
+type Options struct {
+	// Kind is the manifest's top-level kind. AVP picks one replacer per object
+	// from this string alone (template.go:70-77): "Secret" selects the
+	// base64-aware replacer, everything else is processed as plain text.
+	Kind string
+	// PathAnnotationPresent reports whether metadata.annotations carries the
+	// avp.kubernetes.io/path key at all. AVP selects the placeholder regex on
+	// key presence, not on the value (util.go:113-115), so an empty annotation
+	// still switches to the generic regex.
+	PathAnnotationPresent bool
+	// Path is the annotation value. Generic placeholders are only resolvable
+	// when it is non-empty (template.go:33-48: an empty path fetches nothing,
+	// so every generic lookup misses and AVP leaves the match unchanged).
+	Path string
+}
+
+// ContainsPlaceholder reports whether value contains an inline path
+// placeholder that AVP would substitute without a path annotation.
 func ContainsPlaceholder(value string) bool {
 	_, changed := ReplaceString(value)
 	return changed
 }
 
-// ReplaceString replaces supported AVP placeholders with stable redacted values.
+// ReplaceString replaces inline path placeholders with stable redacted values,
+// as AVP does for a manifest without the path annotation.
 func ReplaceString(value string) (string, bool) {
-	return replaceString(value, "")
+	return replaceString(value, Options{})
 }
 
-// ReplaceStringWithPath replaces inline path placeholders and annotation-scoped
-// generic placeholders with stable redacted values.
+// ReplaceStringWithPath replaces placeholders as AVP does for a manifest whose
+// path annotation is present with the given value: inline path placeholders
+// and, when defaultPath is non-empty, generic <key> placeholders.
 func ReplaceStringWithPath(value string, defaultPath string) (string, bool) {
-	return replaceString(value, strings.TrimSpace(defaultPath))
+	return replaceString(value, Options{PathAnnotationPresent: true, Path: defaultPath})
 }
 
-func replaceString(value string, defaultPath string) (string, bool) {
-	if !strings.Contains(value, "<") || !strings.Contains(value, ">") {
+// ReplaceStringWithOptions replaces placeholders in a single string under the
+// given manifest context.
+func ReplaceStringWithOptions(value string, opts Options) (string, bool) {
+	return replaceString(value, opts)
+}
+
+// ReplaceValue replaces inline path placeholders through decoded YAML/JSON
+// values, as AVP does for a manifest without the path annotation.
+func ReplaceValue(value any) (any, bool) {
+	return replaceValue(value, Options{})
+}
+
+// ReplaceValueWithPath replaces placeholders through decoded YAML/JSON values
+// as AVP does for a manifest whose path annotation is present with the given
+// value.
+func ReplaceValueWithPath(value any, defaultPath string) (any, bool) {
+	return replaceValue(value, Options{PathAnnotationPresent: true, Path: defaultPath})
+}
+
+// ReplaceValueWithOptions replaces placeholders through decoded YAML/JSON
+// values under the given manifest context. The input is never mutated; the
+// returned value shares unchanged subtrees with it.
+func ReplaceValueWithOptions(value any, opts Options) (any, bool) {
+	return replaceValue(value, opts)
+}
+
+// replaceString is the per-string base case. For kind Secret it mirrors
+// secretReplacement (util.go:217-227): every string in the object is first
+// tried as standard, padded base64; when that decodes and the decoded bytes
+// contain a generic <...> placeholder on one line (always the generic regex,
+// whatever the annotation), the replacement runs on the decoded text and the
+// result is re-encoded. AVP therefore canonicalizes such values even when
+// nothing is substituted, and so does drydock. Everything else, including
+// ConfigMap binaryData, is processed as plain text.
+func replaceString(value string, opts Options) (string, bool) {
+	if opts.Kind == "Secret" {
+		if decoded, err := base64.StdEncoding.DecodeString(value); err == nil && genericPlaceholder.Match(decoded) {
+			inner, _ := replacePlainString(string(decoded), opts)
+			out := base64.StdEncoding.EncodeToString([]byte(inner))
+			return out, out != value
+		}
+	}
+	return replacePlainString(value, opts)
+}
+
+// replacePlainString mirrors genericReplacement (util.go:105-203): the regex
+// is selected on annotation key presence and every match, leftmost-first and
+// non-overlapping, is replaced whole.
+func replacePlainString(value string, opts Options) (string, bool) {
+	if !strings.Contains(value, "<") {
 		return value, false
 	}
-	if defaultPath == "" && !strings.Contains(value, "path:") {
-		return value, false
+	placeholderRegex := specificPathPlaceholder
+	if opts.PathAnnotationPresent {
+		placeholderRegex = genericPlaceholder
 	}
 
-	var out strings.Builder
 	changed := false
-	last := 0
-	scan := 0
-
-	for scan < len(value) {
-		startRel := strings.IndexByte(value[scan:], '<')
-		if startRel == -1 {
-			break
+	out := placeholderRegex.ReplaceAllStringFunc(value, func(match string) string {
+		identity, ok := placeholderIdentity(match, opts)
+		if !ok {
+			return match
 		}
-		start := scan + startRel
-		endRel := strings.IndexByte(value[start+1:], '>')
-		if endRel == -1 {
-			break
-		}
-		end := start + 1 + endRel
-		token := value[start : end+1]
-
-		identity, ok := placeholderIdentity(token, defaultPath)
-		if ok {
-			if !changed {
-				out.Grow(len(value))
-			}
-			out.WriteString(value[last:start])
-			out.WriteString(redactedValue(identity))
-			last = end + 1
-			changed = true
-		}
-
-		scan = end + 1
-	}
-
+		changed = true
+		return redactedValue(identity)
+	})
 	if !changed {
 		return value, false
 	}
-	out.WriteString(value[last:])
-	return out.String(), true
+	return out, true
 }
 
-// ReplaceValue replaces supported AVP placeholders through decoded YAML/JSON values.
-func ReplaceValue(value any) (any, bool) {
-	return replaceValue(value, "")
+// placeholderIdentity derives the marker identity of one regex match the way
+// AVP derives its lookup (util.go:118-149): strip every leading and trailing
+// '<' and '>', split off '|' modifiers, trim spaces (only spaces) from the
+// first field, and test the unanchored inline syntax. An inline token
+// resolves to its own path, key and optional version regardless of the
+// annotation; anything else is a key in the annotation path's data, which
+// only exists when the annotation is present and non-empty. Modifiers do not
+// change what AVP looks up, so they are not part of the identity.
+func placeholderIdentity(match string, opts Options) (string, bool) {
+	placeholder := strings.Trim(match, "<>")
+	pipelineFields := strings.Split(placeholder, "|")
+	placeholder = strings.Trim(pipelineFields[0], " ")
+
+	if sub := indivPlaceholderSyntax.FindStringSubmatch(placeholder); sub != nil {
+		identity := "path:" + sub[indivPathIndex] + "#" + strings.TrimSpace(sub[indivKeyIndex])
+		if version := sub[indivVersionIndex]; version != "" {
+			identity += "#" + version
+		}
+		return identity, true
+	}
+	if !opts.PathAnnotationPresent || opts.Path == "" {
+		return "", false
+	}
+	return "path:" + opts.Path + "#" + placeholder, true
 }
 
-// ReplaceValueWithPath replaces supported AVP placeholders through decoded
-// YAML/JSON values, including generic placeholders scoped to an AVP path
-// annotation.
-func ReplaceValueWithPath(value any, defaultPath string) (any, bool) {
-	return replaceValue(value, strings.TrimSpace(defaultPath))
-}
-
-func replaceValue(value any, defaultPath string) (any, bool) {
+// replaceValue mirrors replaceInner's walk (util.go:44-101). Maps recurse,
+// lists are walked only one level deep (see replaceAnySlice) and scalars other
+// than strings are untouched. unstructured objects only ever contain
+// map[string]any and []any; the other map and slice types are accepted for
+// the Helm values pre-template pass, which has no AVP analogue, and follow
+// the same rules.
+func replaceValue(value any, opts Options) (any, bool) {
 	switch typed := value.(type) {
 	case string:
-		return replaceString(typed, defaultPath)
+		return replaceString(typed, opts)
 	case []any:
-		return replaceAnySlice(typed, defaultPath)
+		return replaceAnySlice(typed, opts)
 	case []string:
-		return replaceStringSlice(typed, defaultPath)
+		return replaceStringSlice(typed, opts)
 	case map[string]any:
-		return replaceStringAnyMap(typed, defaultPath)
+		return replaceStringAnyMap(typed, opts)
 	case map[string]string:
-		return replaceStringStringMap(typed, defaultPath)
+		return replaceStringStringMap(typed, opts)
 	case map[any]any:
-		return replaceAnyMap(typed, defaultPath)
+		return replaceAnyMap(typed, opts)
 	default:
 		return value, false
 	}
 }
 
-func replaceAnySlice(values []any, defaultPath string) (any, bool) {
+// replaceAnySlice mirrors replaceInner's slice branch (util.go:54-72): only
+// string elements are replaced and only map[string]interface{} elements are
+// recursed into. Every other element type, in particular a nested list and
+// everything inside it, is left untouched.
+func replaceAnySlice(values []any, opts Options) (any, bool) {
 	replaced := make([]any, len(values))
 	changed := false
 	for i, item := range values {
-		next, itemChanged := replaceValue(item, defaultPath)
+		var next any
+		itemChanged := false
+		switch typed := item.(type) {
+		case string:
+			next, itemChanged = replaceString(typed, opts)
+		case map[string]any:
+			next, itemChanged = replaceStringAnyMap(typed, opts)
+		default:
+			next = item
+		}
 		replaced[i] = next
 		changed = changed || itemChanged
 	}
@@ -117,11 +236,11 @@ func replaceAnySlice(values []any, defaultPath string) (any, bool) {
 	return replaced, true
 }
 
-func replaceStringSlice(values []string, defaultPath string) (any, bool) {
+func replaceStringSlice(values []string, opts Options) (any, bool) {
 	replaced := make([]string, len(values))
 	changed := false
 	for i, item := range values {
-		next, itemChanged := replaceString(item, defaultPath)
+		next, itemChanged := replaceString(item, opts)
 		replaced[i] = next
 		changed = changed || itemChanged
 	}
@@ -131,11 +250,11 @@ func replaceStringSlice(values []string, defaultPath string) (any, bool) {
 	return replaced, true
 }
 
-func replaceStringAnyMap(values map[string]any, defaultPath string) (any, bool) {
+func replaceStringAnyMap(values map[string]any, opts Options) (any, bool) {
 	replaced := make(map[string]any, len(values))
 	changed := false
 	for key, item := range values {
-		next, itemChanged := replaceValue(item, defaultPath)
+		next, itemChanged := replaceValue(item, opts)
 		replaced[key] = next
 		changed = changed || itemChanged
 	}
@@ -145,11 +264,11 @@ func replaceStringAnyMap(values map[string]any, defaultPath string) (any, bool) 
 	return replaced, true
 }
 
-func replaceStringStringMap(values map[string]string, defaultPath string) (any, bool) {
+func replaceStringStringMap(values map[string]string, opts Options) (any, bool) {
 	replaced := make(map[string]string, len(values))
 	changed := false
 	for key, item := range values {
-		next, itemChanged := replaceString(item, defaultPath)
+		next, itemChanged := replaceString(item, opts)
 		replaced[key] = next
 		changed = changed || itemChanged
 	}
@@ -159,11 +278,11 @@ func replaceStringStringMap(values map[string]string, defaultPath string) (any, 
 	return replaced, true
 }
 
-func replaceAnyMap(values map[any]any, defaultPath string) (any, bool) {
+func replaceAnyMap(values map[any]any, opts Options) (any, bool) {
 	replaced := make(map[any]any, len(values))
 	changed := false
 	for key, item := range values {
-		next, itemChanged := replaceValue(item, defaultPath)
+		next, itemChanged := replaceValue(item, opts)
 		replaced[key] = next
 		changed = changed || itemChanged
 	}
@@ -171,64 +290,6 @@ func replaceAnyMap(values map[any]any, defaultPath string) (any, bool) {
 		return values, false
 	}
 	return replaced, true
-}
-
-func placeholderIdentity(token string, defaultPath string) (string, bool) {
-	if identity, ok := pathPlaceholderIdentity(token); ok {
-		return identity, true
-	}
-	if defaultPath == "" {
-		return "", false
-	}
-	key, ok := genericPlaceholderKey(token)
-	if !ok {
-		return "", false
-	}
-	return "path:" + defaultPath + "#" + key, true
-}
-
-func pathPlaceholderIdentity(token string) (string, bool) {
-	if len(token) < len("<path:a#b>") || token[0] != '<' || token[len(token)-1] != '>' {
-		return "", false
-	}
-
-	body := strings.TrimSpace(token[1 : len(token)-1])
-	if !strings.HasPrefix(body, "path:") {
-		return "", false
-	}
-
-	selector := strings.TrimSpace(strings.TrimPrefix(body, "path:"))
-	pathPart, keyPart, ok := strings.Cut(selector, "#")
-	if !ok || strings.TrimSpace(pathPart) == "" || strings.TrimSpace(keyPart) == "" {
-		return "", false
-	}
-	return "path:" + selector, true
-}
-
-func genericPlaceholderKey(token string) (string, bool) {
-	if len(token) < len("<a>") || token[0] != '<' || token[len(token)-1] != '>' {
-		return "", false
-	}
-	key := strings.TrimSpace(token[1 : len(token)-1])
-	if key == "" || strings.HasPrefix(key, "path:") {
-		return "", false
-	}
-	for _, r := range key {
-		if !isGenericPlaceholderKeyRune(r) {
-			return "", false
-		}
-	}
-	return key, true
-}
-
-func isGenericPlaceholderKeyRune(r rune) bool {
-	return r >= 'a' && r <= 'z' ||
-		r >= 'A' && r <= 'Z' ||
-		r >= '0' && r <= '9' ||
-		r == '_' ||
-		r == '-' ||
-		r == '.' ||
-		r == '/'
 }
 
 func redactedValue(identity string) string {

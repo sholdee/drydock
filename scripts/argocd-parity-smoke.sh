@@ -59,9 +59,21 @@ AVP_VERSION="v1.18.1"
 AVP_SHA256_LINUX_AMD64="9e8e301c0d4e01f050b4df1e47a4137eb0ba459944ed2c32b53ef1571eb93c40"
 AVP_SHA256_LINUX_ARM64="dd6e4d7db290c2f16aeb142941cd727e623b3faa25258c7743d9ddfac39db1c3"
 AVP_APPLICATION="parity-avp"
+# The Secrets-only AVP Application. `argocd app manifests` masks Secret data
+# and stringData as ++++++++, so it is kept out of the masked comparison and
+# compared through the kubectl-exec oracle alone.
+AVP_SECRET_APPLICATION="parity-avp-secret"
+# Applications the oracle renders with `argocd-vault-plugin generate` inside
+# the sidecar and compares unmasked against drydock.
+AVP_ORACLE_APPLICATIONS=("${AVP_APPLICATION}" "${AVP_SECRET_APPLICATION}")
 # drydock-redacted- markers testdata/argocd-parity/repo/workloads/avp must
-# render on each side: one per placeholder occurrence.
-AVP_EXPECTED_MARKERS=7
+# render on each side: one per substituted placeholder occurrence (the two
+# inside the nested list stay verbatim).
+AVP_EXPECTED_MARKERS=16
+# Markers testdata/argocd-parity/repo/workloads/avp-secret must render on
+# each oracle side: four literal in stringData plus five inside decoded
+# base64 data values.
+AVP_SECRET_EXPECTED_MARKERS=9
 OCI_ARTIFACT_REPOSITORY="parity/config"
 OCI_ARTIFACT_TAG="v1.0.0"
 OCI_APPLICATION="parity-oci-config"
@@ -143,6 +155,7 @@ APPLICATIONS=(
   parity-plugin-env
   parity-plugin-container
   parity-avp
+  parity-avp-secret
 )
 
 TRACKING_APPLICATIONS=(
@@ -1045,9 +1058,17 @@ capture_argocd_manifest() {
 }
 
 capture_argocd_manifests() {
-  local app output_dir
+  local app output_dir masked_dir
   output_dir="$(artifact_dir argocd-manifests)"
+  # The Secrets-only AVP Application renders masked (++++++++) here, so it
+  # stays out of the exact comparison and is recorded only as proof that the
+  # sidecar generated it under Argo CD; the oracle compares it unmasked.
+  masked_dir="$(artifact_dir avp-oracle/argocd-masked-manifests)"
   for app in "${APPLICATIONS[@]}"; do
+    if [[ "${app}" == "${AVP_SECRET_APPLICATION}" ]]; then
+      capture_argocd_manifest "${app}" "${app}" "${masked_dir}"
+      continue
+    fi
     capture_argocd_manifest "${app}" "${app}" "${output_dir}"
   done
   for app in "${TENANT_APPLICATIONS[@]}"; do
@@ -1122,6 +1143,9 @@ capture_drydock_manifests() {
   output_dir="$(artifact_dir drydock-manifests)"
   preflight_container_plugin_capture
   for app in "${APPLICATIONS[@]}"; do
+    # Rendered by capture_avp_oracle_manifests into the oracle directory, so
+    # the masked comparison sees the same Application set on both sides.
+    [[ "${app}" == "${AVP_SECRET_APPLICATION}" ]] && continue
     capture_drydock_manifest "argocd/${app}" "${app}" "${output_dir}"
   done
   for app in "${TENANT_APPLICATIONS[@]}"; do
@@ -1129,20 +1153,108 @@ capture_drydock_manifests() {
   done
 }
 
+# capture_avp_oracle_manifests is the second AVP oracle. `argocd app
+# manifests` masks Secret data as ++++++++, so it cannot see a base64
+# Secret.data substitution. Each oracle Application's source directory is
+# copied into the argocd-vault-plugin sidecar's private /tmp and rendered
+# there with `argocd-vault-plugin generate`: the same binary, AVP_TYPE,
+# backend Secret and projected ServiceAccount token the Argo CD side used.
+# That unmasked output and drydock's render of the same Application land in
+# avp-oracle/ for compare_avp_oracle_manifests.
+capture_avp_oracle_manifests() {
+  local pod app source_path remote avp_dir drydock_dir stderr_file
+  avp_dir="$(artifact_dir avp-oracle/argocd-vault-plugin-manifests)"
+  drydock_dir="$(artifact_dir avp-oracle/drydock-manifests)"
+  # One pod for both execs: a copy and a generate that landed on different
+  # repo-server pods would render an empty directory.
+  pod="$(kubectl -n argocd get pods -l app.kubernetes.io/name=argocd-repo-server \
+    --field-selector=status.phase=Running -o jsonpath='{.items[0].metadata.name}')" \
+    || fail "could not list argocd-repo-server pods for the argocd-vault-plugin oracle"
+  [[ -n "${pod}" ]] || fail "no running argocd-repo-server pod for the argocd-vault-plugin oracle"
+  for app in "${AVP_ORACLE_APPLICATIONS[@]}"; do
+    source_path="$(kubectl -n argocd get application "${app}" -o jsonpath='{.spec.source.path}')" \
+      || fail "could not read spec.source.path of Application argocd/${app}"
+    [[ -n "${source_path}" ]] || fail "Application argocd/${app} has no spec.source.path for the argocd-vault-plugin oracle"
+    [[ -d "${FIXTURE_REPO_PATH}/${source_path}" ]] \
+      || fail "Application argocd/${app} source path ${source_path} is not a directory under ${FIXTURE_REPO_PATH}"
+    remote="/tmp/drydock-avp-oracle/${app}"
+    # COPYFILE_DISABLE keeps macOS tar from adding ._* AppleDouble entries,
+    # which AVP would read as YAML files.
+    COPYFILE_DISABLE=1 tar -C "${FIXTURE_REPO_PATH}/${source_path}" -cf - . \
+      | kubectl -n argocd exec -i "${pod}" -c argocd-vault-plugin -- \
+        sh -c "rm -rf '${remote}' && mkdir -p '${remote}' && tar -xf - -C '${remote}'" \
+      || fail "could not copy ${source_path} into the argocd-vault-plugin sidecar of ${pod} at ${remote}"
+    stderr_file="${OUT_DIR}/avp-oracle/argocd-vault-plugin-${app}.stderr"
+    if ! kubectl -n argocd exec "${pod}" -c argocd-vault-plugin -- \
+      argocd-vault-plugin generate "${remote}" > "${avp_dir}/${app}.yaml" 2> "${stderr_file}"; then
+      echo "argocd render parity smoke: argocd-vault-plugin generate of ${source_path} failed in the sidecar; its stderr follows" >&2
+      cat "${stderr_file}" >&2 || true
+      fail "argocd-vault-plugin generate of ${source_path} failed in the sidecar; see ${stderr_file}"
+    fi
+    rm -f "${stderr_file}"
+    [[ -s "${avp_dir}/${app}.yaml" ]] \
+      || fail "argocd-vault-plugin generate of ${source_path} in the sidecar produced no output"
+    capture_drydock_manifest "argocd/${app}" "${app}" "${drydock_dir}"
+  done
+}
+
+# count_avp_markers prints how many drydock-redacted- markers a manifest file
+# carries: literally, plus inside every standard base64 token it contains. A
+# substituted Secret.data value is base64 on both sides, so a literal count
+# alone would let "neither side decoded anything" pass there.
+count_avp_markers() {
+  local file="$1" token
+  {
+    grep -o 'drydock-redacted-[0-9a-f]\{12\}' "${file}" || true
+    while IFS= read -r token; do
+      printf '%s' "${token}" | base64 -d 2>/dev/null \
+        | grep -ao 'drydock-redacted-[0-9a-f]\{12\}' || true
+    done < <(grep -oE '[A-Za-z0-9+/]{16,}={0,2}' "${file}" || true)
+  } | wc -l | tr -d ' '
+}
+
+# check_avp_marker_count reports one file's marker count against the expected
+# one and returns 1 on a mismatch, so assert_avp_markers can print every side
+# before failing.
+check_avp_marker_count() {
+  local file="$1" want="$2" label="$3" count
+  count="$(count_avp_markers "${file}")"
+  echo "argocd render parity smoke: ${label} markers: ${count} (want ${want})" >&2
+  [[ "${count}" == "${want}" ]]
+}
+
 # assert_avp_markers keeps "both sides left the placeholders alone" from
-# passing the exact comparison: each side must render exactly
-# AVP_EXPECTED_MARKERS drydock-redacted- markers for the AVP fixture.
+# passing the exact comparisons: the masked sides must render exactly
+# AVP_EXPECTED_MARKERS markers for the AVP fixture, and the oracle sides
+# AVP_EXPECTED_MARKERS and AVP_SECRET_EXPECTED_MARKERS for their two
+# Applications.
 assert_avp_markers() {
-  local side file count mismatch="false"
-  log_step "Counting ${AVP_APPLICATION} redaction markers on both sides"
+  local side mismatch="false"
+  log_step "Counting redaction markers on every AVP side"
   for side in argocd drydock; do
-    file="${OUT_DIR}/${side}-manifests/${AVP_APPLICATION}.yaml"
-    count="$(grep -o 'drydock-redacted-[0-9a-f]\{12\}' "${file}" | wc -l | tr -d ' ' || true)"
-    echo "argocd render parity smoke: ${AVP_APPLICATION} ${side} markers: ${count} (want ${AVP_EXPECTED_MARKERS})" >&2
-    [[ "${count}" == "${AVP_EXPECTED_MARKERS}" ]] || mismatch="true"
+    check_avp_marker_count "${OUT_DIR}/${side}-manifests/${AVP_APPLICATION}.yaml" \
+      "${AVP_EXPECTED_MARKERS}" "${AVP_APPLICATION} ${side}" || mismatch="true"
+  done
+  for side in argocd-vault-plugin drydock; do
+    check_avp_marker_count "${OUT_DIR}/avp-oracle/${side}-manifests/${AVP_APPLICATION}.yaml" \
+      "${AVP_EXPECTED_MARKERS}" "${AVP_APPLICATION} oracle ${side}" || mismatch="true"
+    check_avp_marker_count "${OUT_DIR}/avp-oracle/${side}-manifests/${AVP_SECRET_APPLICATION}.yaml" \
+      "${AVP_SECRET_EXPECTED_MARKERS}" "${AVP_SECRET_APPLICATION} oracle ${side}" || mismatch="true"
   done
   [[ "${mismatch}" == "false" ]] \
-    || fail "${AVP_APPLICATION} must render exactly ${AVP_EXPECTED_MARKERS} drydock-redacted- markers on both sides; see ${OUT_DIR}/argocd-manifests/${AVP_APPLICATION}.yaml and ${OUT_DIR}/drydock-manifests/${AVP_APPLICATION}.yaml"
+    || fail "every AVP side must render exactly its expected drydock-redacted- marker count; see ${OUT_DIR}/argocd-manifests/${AVP_APPLICATION}.yaml, ${OUT_DIR}/drydock-manifests/${AVP_APPLICATION}.yaml and ${OUT_DIR}/avp-oracle/"
+}
+
+# compare_avp_oracle_manifests runs the exact per-resource comparison on the
+# oracle output, with no Secret masking: the "argocd" side of the comparer's
+# output is the sidecar's `argocd-vault-plugin generate` output here.
+compare_avp_oracle_manifests() {
+  log_step "Comparing argocd-vault-plugin sidecar output and drydock rendered manifests"
+  (cd "${REPO_ROOT}" && go run ./scripts/argocd-parity-compare \
+    --argocd-dir "${OUT_DIR}/avp-oracle/argocd-vault-plugin-manifests" \
+    --drydock-dir "${OUT_DIR}/avp-oracle/drydock-manifests" \
+    --out-dir "${OUT_DIR}/compare-avp-oracle" \
+    --ignore-file "${IGNORE_FILE}")
 }
 
 compare_manifests() {
@@ -1380,8 +1492,11 @@ main() {
   warm_drydock_oci_cache
   log_step "Capturing drydock rendered manifests"
   capture_drydock_manifests
+  log_step "Rendering the argocd-vault-plugin oracle inside the sidecar"
+  capture_avp_oracle_manifests
   assert_avp_markers
   compare_manifests
+  compare_avp_oracle_manifests
   compare_tracking_manifests
   if [[ "${RUN_PROJECT_POLICY_SMOKE}" == "true" ]]; then
     run_project_policy_smoke

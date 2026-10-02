@@ -80,6 +80,33 @@ items:
 		if manifest.Path != filepath.Join("apps", "list.yaml") {
 			t.Fatalf("Path = %q, want apps/list.yaml", manifest.Path)
 		}
+		if manifest.RootObject == nil || manifest.RootObject.GetKind() != "List" {
+			t.Fatalf("RootObject = %#v, want the enclosing List", manifest.RootObject)
+		}
+	}
+	if result[0].RootObject != result[1].RootObject {
+		t.Fatal("RootObject differs between items of the same List")
+	}
+}
+
+func TestDirectoryRendererLeavesRootObjectNilForPlainDocuments(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "apps", "cm.yaml"), `
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: plain
+`)
+
+	result, _, err := (DirectoryRenderer{}).Render(context.Background(), ResolvedSource{RepoRoot: root, Path: "apps"}, RenderOptions{})
+	if err != nil {
+		t.Fatalf("Render() error = %v", err)
+	}
+	if len(result) != 1 {
+		t.Fatalf("len(result) = %d, want 1", len(result))
+	}
+	if result[0].RootObject != nil {
+		t.Fatalf("RootObject = %#v, want nil for a document that was not flattened", result[0].RootObject)
 	}
 }
 

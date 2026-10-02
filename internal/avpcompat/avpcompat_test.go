@@ -95,14 +95,17 @@ func TestReplaceStringLeavesGenericPlaceholderWithoutPath(t *testing.T) {
 	}
 }
 
-func TestReplaceStringWithPathIgnoresUnsaneGenericPlaceholder(t *testing.T) {
+// Once the path annotation is present AVP matches every `(?mU)<(.*)>` span
+// (pkg/kube/util.go:26,113-122) and looks the body up as a key, whatever
+// characters it contains; drydock used to require [A-Za-z0-9_./-] keys.
+func TestReplaceStringWithPathSubstitutesAnyAngleToken(t *testing.T) {
 	const input = "keep <not an avp token>"
 	got, changed := ReplaceStringWithPath(input, "vaults/K8s/items/demo")
-	if changed {
-		t.Fatal("ReplaceStringWithPath() changed = true, want false")
+	if !changed {
+		t.Fatal("ReplaceStringWithPath() changed = false, want true")
 	}
-	if got != input {
-		t.Fatalf("ReplaceStringWithPath() = %q, want unchanged %q", got, input)
+	if want := "keep " + redactedValue("path:vaults/K8s/items/demo#not an avp token"); got != want {
+		t.Fatalf("ReplaceStringWithPath() = %q, want %q", got, want)
 	}
 }
 

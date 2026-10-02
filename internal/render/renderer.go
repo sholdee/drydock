@@ -8,6 +8,7 @@ import (
 	"github.com/sholdee/drydock/internal/cacheevent"
 	"github.com/sholdee/drydock/internal/chart"
 	"github.com/sholdee/drydock/internal/diagnostic"
+	"github.com/sholdee/drydock/internal/manifest"
 	"github.com/sholdee/drydock/internal/remote"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 )
@@ -116,6 +117,23 @@ type Manifest struct {
 	Path                         string
 	NamespaceBeforeNormalization string
 	Object                       *unstructured.Unstructured
+	// RootObject is the enclosing document when Object was flattened out of
+	// a `kind: List` (manifest.Document.RootObject), nil when Object was the
+	// document root. AVP compatibility reads its per-object context (kind and
+	// annotations) from it, because argocd-vault-plugin processes a List as
+	// one object. The render cache does not carry it: it stores manifests
+	// after that pass.
+	RootObject *unstructured.Unstructured
+}
+
+// NewDocumentManifest builds the Manifest for a decoded document, recording
+// the List it was flattened out of as RootObject.
+func NewDocumentManifest(doc manifest.Document) Manifest {
+	rendered := Manifest{Path: doc.Path, Object: doc.Object}
+	if doc.RootObject != nil && doc.RootObject != doc.Object {
+		rendered.RootObject = doc.RootObject
+	}
+	return rendered
 }
 
 type Renderer interface {

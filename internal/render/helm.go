@@ -278,10 +278,7 @@ func appendHelmDocuments(out []Manifest, docs []manifest.Document, opts RenderOp
 		if shouldSkipHelmDocument(doc.Object, opts) {
 			continue
 		}
-		out = append(out, Manifest{
-			Path:   doc.Path,
-			Object: doc.Object,
-		})
+		out = append(out, NewDocumentManifest(doc))
 	}
 	return out
 }

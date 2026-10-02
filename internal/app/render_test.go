@@ -423,6 +423,382 @@ func TestRenderApplicationAVPCompatibilityReplacesRenderedManifestPlaceholders(t
 	}
 }
 
+func renderAVPCompatFixture(t *testing.T, fixture map[string]any) *unstructured.Unstructured {
+	t.Helper()
+	application := argoappv1.Application{
+		Namespace: "argocd", Name: "demo",
+		Spec: argoappv1.ApplicationSpec{
+			Source: &argoappv1.ApplicationSource{
+				RepoURL: "https://repo",
+				Path:    "manifests/demo",
+			},
+		},
+	}
+	renderers := StaticRenderers{
+		"manifests/demo": []render.Manifest{{Object: &unstructured.Unstructured{Object: fixture}}},
+	}
+	result, err := RenderApplication(context.Background(), application, renderers, PluginOptions{EnableAVPCompat: true})
+	if err != nil {
+		t.Fatalf("RenderApplication() error = %v", err)
+	}
+	if len(result.Manifests) != 1 {
+		t.Fatalf("len(Manifests) = %d, want 1", len(result.Manifests))
+	}
+	return result.Manifests[0].Object
+}
+
+// labelTracking renders with Argo CD's label tracking method. A manifest
+// holding a YAML-null annotation value never reaches Argo CD's output under
+// the default annotation method: util/kube/kube.go SetAppInstanceAnnotation
+// reads the map with nestedNullableStringMap and fails on the null, in Argo
+// CD and in drydock alike. Label tracking touches only metadata.labels, so
+// it is the configuration under which AVP's handling of such a manifest is
+// observable.
+var labelTracking = TrackingOptions{Method: string(argoappv1.TrackingMethodLabel)}
+
+func renderAVPCompatManifests(t *testing.T, tracking TrackingOptions, manifests ...render.Manifest) RenderResult {
+	t.Helper()
+	application := argoappv1.Application{
+		Namespace: "argocd", Name: "demo",
+		Spec: argoappv1.ApplicationSpec{
+			Source: &argoappv1.ApplicationSource{
+				RepoURL: "https://repo",
+				Path:    "manifests/demo",
+			},
+		},
+	}
+	result, err := RenderApplicationWithOptions(context.Background(), application, StaticRenderers{"manifests/demo": manifests}, ApplicationRenderOptions{
+		PluginOptions:   PluginOptions{EnableAVPCompat: true},
+		TrackingOptions: tracking,
+	})
+	if err != nil {
+		t.Fatalf("RenderApplication() error = %v", err)
+	}
+	return result
+}
+
+func renderAVPCompatFixtureLabelTracked(t *testing.T, fixture map[string]any) *unstructured.Unstructured {
+	t.Helper()
+	result := renderAVPCompatManifests(t, labelTracking, render.Manifest{Object: &unstructured.Unstructured{Object: fixture}})
+	if len(result.Manifests) != 1 {
+		t.Fatalf("len(Manifests) = %d, want 1", len(result.Manifests))
+	}
+	return result.Manifests[0].Object
+}
+
+// AVP switches to its generic `(?mU)<(.*)>` regex on the presence of the
+// avp.kubernetes.io/path annotation KEY (pkg/kube/util.go:113-115). With an
+// empty value no backend data is fetched (pkg/kube/template.go:33-48), so a
+// generic key stays in place while an inline token matched through the
+// generic span is substituted; the stray '<' before it is part of that span.
+func TestRenderApplicationAVPCompatibilityEmptyPathAnnotationSelectsGenericRegex(t *testing.T) {
+	got := renderAVPCompatFixture(t, map[string]any{
+		"apiVersion": "v1",
+		"kind":       "ConfigMap",
+		"metadata": map[string]any{
+			"name":        "demo",
+			"annotations": map[string]any{"avp.kubernetes.io/path": ""},
+		},
+		"data": map[string]any{
+			"generic": "<foo>",
+			"inline":  "a < b <path:x#y>",
+		},
+	})
+	generic, _, _ := unstructured.NestedString(got.Object, "data", "generic")
+	if generic != "<foo>" {
+		t.Fatalf("data.generic = %q, want unchanged <foo> under an empty path annotation", generic)
+	}
+	inline, _, _ := unstructured.NestedString(got.Object, "data", "inline")
+	if want := "a drydock-redacted-ed49687a5044"; inline != want {
+		t.Fatalf("data.inline = %q, want %q (generic span from the stray '<')", inline, want)
+	}
+}
+
+// AVP picks the base64-aware secretReplacement from the top-level kind
+// string (pkg/kube/template.go:70-77) and applies it to every string in the
+// object (pkg/kube/util.go:32-103, 217-227): a value that decodes as standard
+// base64 to text with a <...> placeholder is substituted in the decoded text
+// and re-encoded. ConfigMap values are never decoded (util.go:205-215).
+func TestRenderApplicationAVPCompatibilityDecodesSecretBase64Values(t *testing.T) {
+	const encoded = "PHBhdGg6YSNiPg=="                      // base64("<path:a#b>")
+	const want = "ZHJ5ZG9jay1yZWRhY3RlZC1jMmI2OTdhNmU0MWE=" // base64("drydock-redacted-c2b697a6e41a")
+
+	secret := renderAVPCompatFixture(t, map[string]any{
+		"apiVersion": "v1",
+		"kind":       "Secret",
+		"metadata": map[string]any{
+			"name":   "demo",
+			"labels": map[string]any{"x": encoded},
+		},
+		"type":       "Opaque",
+		"data":       map[string]any{"k": encoded},
+		"stringData": map[string]any{"k": "<path:a#b>"},
+	})
+	if got, _, _ := unstructured.NestedString(secret.Object, "data", "k"); got != want {
+		t.Fatalf("Secret data.k = %q, want %q", got, want)
+	}
+	if got, _, _ := unstructured.NestedString(secret.Object, "metadata", "labels", "x"); got != want {
+		t.Fatalf("Secret metadata.labels.x = %q, want %q (AVP walks metadata too)", got, want)
+	}
+	if got, _, _ := unstructured.NestedString(secret.Object, "stringData", "k"); got != "drydock-redacted-c2b697a6e41a" {
+		t.Fatalf("Secret stringData.k = %q, want plain marker", got)
+	}
+
+	configMap := renderAVPCompatFixture(t, map[string]any{
+		"apiVersion": "v1",
+		"kind":       "ConfigMap",
+		"metadata":   map[string]any{"name": "demo"},
+		"data":       map[string]any{"k": encoded},
+		"binaryData": map[string]any{"k": encoded},
+	})
+	for _, field := range []string{"data", "binaryData"} {
+		if got, _, _ := unstructured.NestedString(configMap.Object, field, "k"); got != encoded {
+			t.Fatalf("ConfigMap %s.k = %q, want unchanged %q", field, got, encoded)
+		}
+	}
+}
+
+// AVP v1.18.1 pins k8s.io/apimachinery v0.29.1 (go.mod:33), whose
+// GetAnnotations is NestedStringMap: a YAML-null annotation value makes the
+// whole map nil, so the path annotation key reads as ABSENT and the specific
+// `<path:...#...>` regex applies (pkg/kube/util.go:113-115). drydock's
+// apimachinery would coerce the null to "" and keep the key, which selects
+// the generic regex; the compat pass must not do that.
+func TestRenderApplicationAVPCompatibilityNullPathAnnotationReadsAsAbsent(t *testing.T) {
+	got := renderAVPCompatFixtureLabelTracked(t, map[string]any{
+		"apiVersion": "v1",
+		"kind":       "ConfigMap",
+		"metadata": map[string]any{
+			"name":        "demo",
+			"annotations": map[string]any{"avp.kubernetes.io/path": nil},
+		},
+		"data": map[string]any{
+			"stray":    "a < b <path:x#y>",
+			"generic":  "<foo path:x#y>",
+			"fourpart": "<path:a#b#c#d>",
+			"bracket":  "<path:a>b#c>",
+		},
+	})
+	want := map[string]string{
+		"stray":    "a < b drydock-redacted-ed49687a5044", // the stray '<' is not part of a specific-regex match
+		"generic":  "<foo path:x#y>",                      // only the generic regex would match this
+		"fourpart": "<path:a#b#c#d>",                      // the specific regex admits 2 or 3 parts
+		"bracket":  "drydock-redacted-df5e0cacff05",       // specific regex: path "a>b", key "c"
+	}
+	for key, wantValue := range want {
+		if value, _, _ := unstructured.NestedString(got.Object, "data", key); value != wantValue {
+			t.Fatalf("data.%s = %q, want %q under a null path annotation", key, value, wantValue)
+		}
+	}
+}
+
+// A null value under ANY annotation key hides every annotation from AVP
+// (NestedStringMap returns nil on the first non-string value), including a
+// well-formed avp.kubernetes.io/path next to it. Helm charts render
+// `annotation: {{ .Values.x }}` with an empty value exactly like this.
+func TestRenderApplicationAVPCompatibilityNullSiblingAnnotationHidesPathAnnotation(t *testing.T) {
+	got := renderAVPCompatFixtureLabelTracked(t, map[string]any{
+		"apiVersion": "v1",
+		"kind":       "ConfigMap",
+		"metadata": map[string]any{
+			"name": "demo",
+			"annotations": map[string]any{
+				"avp.kubernetes.io/path": "P",
+				"foo":                    nil,
+			},
+		},
+		"data": map[string]any{
+			"generic": "<x>",
+			"inline":  "a < b <path:x#y>",
+		},
+	})
+	if generic, _, _ := unstructured.NestedString(got.Object, "data", "generic"); generic != "<x>" {
+		t.Fatalf("data.generic = %q, want unchanged <x> (AVP reads no annotations here)", generic)
+	}
+	inline, _, _ := unstructured.NestedString(got.Object, "data", "inline")
+	if want := "a < b drydock-redacted-ed49687a5044"; inline != want {
+		t.Fatalf("data.inline = %q, want %q (specific regex keeps the stray '<')", inline, want)
+	}
+}
+
+// cmd/generate.go:93-102: AVP skips Replace() when avp.kubernetes.io/ignore
+// parses true with strconv.ParseBool and emits the object verbatim.
+func TestRenderApplicationAVPCompatibilityHonoursIgnoreAnnotation(t *testing.T) {
+	const placeholder = "<path:a#b>"
+	const marker = "drydock-redacted-c2b697a6e41a"
+	cases := []struct {
+		name        string
+		annotations map[string]any
+		want        string
+	}{
+		{name: "true", annotations: map[string]any{"avp.kubernetes.io/ignore": "true"}, want: placeholder},
+		{name: "True", annotations: map[string]any{"avp.kubernetes.io/ignore": "True"}, want: placeholder},
+		{name: "1", annotations: map[string]any{"avp.kubernetes.io/ignore": "1"}, want: placeholder},
+		{name: "t", annotations: map[string]any{"avp.kubernetes.io/ignore": "t"}, want: placeholder},
+		{name: "false", annotations: map[string]any{"avp.kubernetes.io/ignore": "false"}, want: marker},
+		{name: "unparsable", annotations: map[string]any{"avp.kubernetes.io/ignore": "yes"}, want: marker},
+		{name: "ignore with path annotation", annotations: map[string]any{"avp.kubernetes.io/ignore": "true", "avp.kubernetes.io/path": "P"}, want: placeholder},
+		// generate.go:93 reads the map through the same strict accessor, so a
+		// null sibling hides the ignore annotation as well.
+		{name: "ignore hidden by null sibling", annotations: map[string]any{"avp.kubernetes.io/ignore": "true", "other": nil}, want: marker},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			result := renderAVPCompatManifests(t, labelTracking, render.Manifest{Object: &unstructured.Unstructured{Object: map[string]any{
+				"apiVersion": "v1",
+				"kind":       "ConfigMap",
+				"metadata":   map[string]any{"name": "demo", "annotations": tc.annotations},
+				"data":       map[string]any{"k": placeholder},
+			}}})
+			if got, _, _ := unstructured.NestedString(result.Manifests[0].Object.Object, "data", "k"); got != tc.want {
+				t.Fatalf("data.k = %q, want %q", got, tc.want)
+			}
+			if wantDiag := tc.want == marker; hasDiagnosticCode(result.Diagnostics, "plugin.avp-compat-substituted") != wantDiag {
+				t.Fatalf("avp-compat-substituted diagnostic present = %v, want %v (Diagnostics = %#v)", !wantDiag, wantDiag, result.Diagnostics)
+			}
+		})
+	}
+}
+
+// AVP decodes a `kind: List` into ONE object (cmd/util.go:46-50): the
+// replacer comes from the List's kind (pkg/kube/template.go:52,70-77, so a
+// Secret item is never base64-decoded) and the regex from the List's
+// annotations (template.go:32-33, util.go:113), while the walk still visits
+// every string inside items (util.go:54-61). drydock flattens Lists before
+// the compat pass and carries the List as Manifest.RootObject.
+func TestRenderApplicationAVPCompatibilityUsesListRootContext(t *testing.T) {
+	const encoded = "PHBhdGg6YSNiPg==" // base64("<path:a#b>")
+	item := func(kind, name string, annotations map[string]any, data map[string]any) map[string]any {
+		metadata := map[string]any{"name": name}
+		if annotations != nil {
+			metadata["annotations"] = annotations
+		}
+		return map[string]any{"apiVersion": "v1", "kind": kind, "metadata": metadata, "data": data}
+	}
+	list := func(annotations map[string]any, items ...map[string]any) *unstructured.Unstructured {
+		object := map[string]any{"apiVersion": "v1", "kind": "List", "metadata": map[string]any{}}
+		if annotations != nil {
+			object["metadata"] = map[string]any{"annotations": annotations}
+		}
+		raw := make([]any, 0, len(items))
+		for _, entry := range items {
+			raw = append(raw, entry)
+		}
+		object["items"] = raw
+		return &unstructured.Unstructured{Object: object}
+	}
+	// renderList flattens the List the way manifest.DecodeDocuments does:
+	// one Manifest per item, each item map shared with the root's items.
+	renderList := func(t *testing.T, annotations map[string]any, items ...map[string]any) []render.Manifest {
+		t.Helper()
+		root := list(annotations, items...)
+		manifests := make([]render.Manifest, 0, len(items))
+		for _, entry := range items {
+			manifests = append(manifests, render.Manifest{Object: &unstructured.Unstructured{Object: entry}, RootObject: root})
+		}
+		return renderAVPCompatManifests(t, TrackingOptions{}, manifests...).Manifests
+	}
+	dataOf := func(t *testing.T, manifests []render.Manifest, name, key string) string {
+		t.Helper()
+		found, ok := manifestByName(manifests, name)
+		if !ok {
+			t.Fatalf("manifests = %#v, want %s", manifests, name)
+		}
+		value, _, _ := unstructured.NestedString(found.Object.Object, "data", key)
+		return value
+	}
+
+	t.Run("unannotated List keeps item kind and annotations out of the context", func(t *testing.T) {
+		manifests := renderList(t, nil,
+			item("Secret", "secret", nil, map[string]any{"k": encoded, "plain": "<path:a#b>"}),
+			item("ConfigMap", "configmap", map[string]any{"avp.kubernetes.io/path": "P"}, map[string]any{"k": "<x>", "inline": "<path:a#b>"}),
+		)
+		if got := dataOf(t, manifests, "secret", "k"); got != encoded {
+			t.Fatalf("Secret item data.k = %q, want unchanged %q (the List is not a Secret)", got, encoded)
+		}
+		if got := dataOf(t, manifests, "secret", "plain"); got != "drydock-redacted-c2b697a6e41a" {
+			t.Fatalf("Secret item data.plain = %q, want plain inline marker", got)
+		}
+		if got := dataOf(t, manifests, "configmap", "k"); got != "<x>" {
+			t.Fatalf("ConfigMap item data.k = %q, want unchanged <x> (the List has no path annotation)", got)
+		}
+		if got := dataOf(t, manifests, "configmap", "inline"); got != "drydock-redacted-c2b697a6e41a" {
+			t.Fatalf("ConfigMap item data.inline = %q, want inline marker", got)
+		}
+	})
+
+	t.Run("List annotations govern every item", func(t *testing.T) {
+		manifests := renderList(t, map[string]any{"avp.kubernetes.io/path": "P"},
+			item("ConfigMap", "configmap", nil, map[string]any{"k": "<x>"}),
+		)
+		if got := dataOf(t, manifests, "configmap", "k"); got != "drydock-redacted-4870c4cc1dfc" {
+			t.Fatalf("ConfigMap item data.k = %q, want generic marker for path:P#x", got)
+		}
+	})
+
+	t.Run("List ignore annotation skips every item", func(t *testing.T) {
+		manifests := renderList(t, map[string]any{"avp.kubernetes.io/ignore": "true"},
+			item("ConfigMap", "configmap", nil, map[string]any{"k": "<path:a#b>"}),
+		)
+		if got := dataOf(t, manifests, "configmap", "k"); got != "<path:a#b>" {
+			t.Fatalf("ConfigMap item data.k = %q, want unchanged placeholder", got)
+		}
+	})
+}
+
+// The same List semantics through the directory renderer, which is where
+// drydock flattens the List and records its root.
+func TestRenderApplicationAVPCompatibilityDirectoryListItemsUseListContext(t *testing.T) {
+	root := t.TempDir()
+	writeAppTestFile(t, filepath.Join(root, "apps", "demo", "list.yaml"), `
+apiVersion: v1
+kind: List
+items:
+  - apiVersion: v1
+    kind: Secret
+    metadata:
+      name: list-secret
+    data:
+      k: PHBhdGg6YSNiPg==
+  - apiVersion: v1
+    kind: ConfigMap
+    metadata:
+      name: list-configmap
+      annotations:
+        avp.kubernetes.io/path: P
+    data:
+      k: "<x>"
+      inline: "<path:a#b>"
+`)
+	application := rendererSelectionApplication("demo", argoappv1.ApplicationSource{
+		RepoURL:   "https://repo",
+		Path:      "apps/demo",
+		Directory: &argoappv1.ApplicationSourceDirectory{},
+	})
+
+	result, err := RenderApplication(context.Background(), application, localProvider{repoRoot: root}, PluginOptions{EnableAVPCompat: true})
+	if err != nil {
+		t.Fatalf("RenderApplication() error = %v", err)
+	}
+	secret, ok := manifestByName(result.Manifests, "list-secret")
+	if !ok {
+		t.Fatalf("manifests = %#v, want list-secret", result.Manifests)
+	}
+	if got, _, _ := unstructured.NestedString(secret.Object.Object, "data", "k"); got != "PHBhdGg6YSNiPg==" {
+		t.Fatalf("Secret item data.k = %q, want unchanged base64 (AVP walks the List with genericReplacement)", got)
+	}
+	configMap, ok := manifestByName(result.Manifests, "list-configmap")
+	if !ok {
+		t.Fatalf("manifests = %#v, want list-configmap", result.Manifests)
+	}
+	if got, _, _ := unstructured.NestedString(configMap.Object.Object, "data", "k"); got != "<x>" {
+		t.Fatalf("ConfigMap item data.k = %q, want unchanged <x> (the List carries no path annotation)", got)
+	}
+	if got, _, _ := unstructured.NestedString(configMap.Object.Object, "data", "inline"); got != "drydock-redacted-c2b697a6e41a" {
+		t.Fatalf("ConfigMap item data.inline = %q, want inline marker", got)
+	}
+}
+
 func TestRenderApplicationLeavesAVPPlaceholdersUnchangedByDefault(t *testing.T) {
 	application := argoappv1.Application{
 		Namespace: "argocd", Name: "demo",

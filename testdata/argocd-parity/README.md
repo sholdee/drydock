@@ -241,11 +241,12 @@ run the `linux/arm64` image variants.
 
 ## argocd-vault-plugin fixture
 
-`applications/avp.yaml` (`parity-avp`) names the plugin
-`argocd-vault-plugin`, the exact name drydock's built-in AVP compatibility
-matches. drydock needs no `--enable-plugins` and no policy for it: it renders
-`workloads/avp` as a plain directory and replaces every placeholder with
-`drydock-redacted-` plus the first 12 hex digits of the sha256 of the
+`applications/avp.yaml` (`parity-avp`) and `applications/avp-secret.yaml`
+(`parity-avp-secret`) name the plugin `argocd-vault-plugin`, the exact name
+drydock's built-in AVP compatibility matches. drydock needs no
+`--enable-plugins` and no policy for them: it renders `workloads/avp` and
+`workloads/avp-secret` as plain directories and replaces every placeholder
+with `drydock-redacted-` plus the first 12 hex digits of the sha256 of the
 placeholder's identity, `path:<path>#<key>`. Live Argo CD runs the real
 plugin, so the fixture makes the real plugin produce those same strings.
 
@@ -268,25 +269,86 @@ plugin, so the fixture makes the real plugin produce those same strings.
   ServiceAccount `get` on that one Secret, and the harness confirms the grant
   with `kubectl auth can-i` before patching the repo-server.
 
+### Two oracles
+
+`argocd app manifests` masks every Secret `data` and `stringData` value as
+`++++++++`, so the masked comparison every other Application goes through
+cannot see a base64 `Secret.data` substitution. The AVP fixture therefore
+has two oracles:
+
+- The masked oracle: `parity-avp` (`workloads/avp`, ConfigMaps only) is
+  captured with `argocd app manifests` and compared exactly like every other
+  Application.
+- The kubectl-exec oracle: after the sidecar is ready and drydock has
+  rendered, the harness copies each oracle Application's source directory
+  (`tar | kubectl exec -i ... tar -x`) into the `argocd-vault-plugin`
+  container's private `/tmp`, runs `argocd-vault-plugin generate <dir>` there
+  (the same binary, `AVP_TYPE`, backend Secret and projected ServiceAccount
+  token Argo CD used), and compares that unmasked stdout against drydock's
+  render of the same Application with the repo comparer and the same ignore
+  rules, under `avp-oracle/` and `compare-avp-oracle/` in the output
+  directory. Both `parity-avp` and `parity-avp-secret` go through it.
+  `parity-avp-secret` (`workloads/avp-secret`, Secrets only) is kept out of
+  the masked comparison; its masked capture is recorded under
+  `avp-oracle/argocd-masked-manifests/` only as proof that Argo CD rendered
+  it through the sidecar.
+
 `workloads/avp/configmaps.yaml` covers inline placeholders, two inline
 placeholders embedded in one string, annotation-scoped `<key>` placeholders
 (including one embedded in a string), an inline placeholder under the path
-annotation, and a plain field. Both sides must render this `data`:
+annotation, keys with spaces inside `<>`, a stray `<` before a placeholder
+with and without the annotation, a present-but-empty path annotation, a list
+nested in a list, and plain fields. Both sides must render this `data`:
 
 | ConfigMap | key | value |
 | --- | --- | --- |
 | `parity-avp-inline` | `username` | `drydock-redacted-5401fc97182f` |
 | `parity-avp-inline` | `dsn` | `postgres://drydock-redacted-5401fc97182f:drydock-redacted-4de5813a6837@db.example.invalid:5432/app` |
 | `parity-avp-inline` | `plain` | `left exactly as written` |
+| `parity-avp-inline` | `stray` | `<stray drydock-redacted-5401fc97182f` |
+| `parity-avp-inline` | `spaced` | `drydock-redacted-6799b3ec831f` |
 | `parity-avp-annotated` | `password` | `drydock-redacted-4de5813a6837` |
 | `parity-avp-annotated` | `endpoint` | `drydock-redacted-6799b3ec831f` |
 | `parity-avp-annotated` | `url` | `https://drydock-redacted-6799b3ec831f/v1` |
 | `parity-avp-annotated` | `inline` | `drydock-redacted-5401fc97182f` |
+| `parity-avp-annotated` | `spaced` | `drydock-redacted-4de5813a6837` |
+| `parity-avp-annotated` | `stray` | `drydock-redacted-5401fc97182f` |
+| `parity-avp-annotated` | `prefixed` | `drydock-redacted-6799b3ec831f` |
+| `parity-avp-empty-path` | `inline` | `drydock-redacted-4de5813a6837` |
+| `parity-avp-empty-path` | `stray` | `drydock-redacted-5401fc97182f` |
+| `parity-avp-empty-path` | `plain` | `no placeholder here` |
+| `parity-avp-lists` | `plain` | `lists live outside data` |
 
-Beyond the exact comparison, the harness counts `drydock-redacted-` markers
-on each side and requires exactly `AVP_EXPECTED_MARKERS` (7) on both, so
-"neither side replaced anything" cannot pass. The app is not in the tracking
-comparison.
+`parity-avp-lists` also carries a top-level `lists` field (not a ConfigMap
+field; nothing applies the manifest and AVP's walk ignores the kind) whose
+first two items, a string and a map, render `drydock-redacted-5401fc97182f`
+and `key: drydock-redacted-4de5813a6837`, while the two items that are lists
+themselves keep `<path:parity-avp-backend#endpoint>` verbatim on both sides.
+
+`workloads/avp-secret/secrets.yaml` covers placeholders inside base64 `data`
+values and in `stringData`, with and without the path annotation. Both sides
+must render:
+
+| Secret | field | key | value |
+| --- | --- | --- | --- |
+| `parity-avp-secret-inline` | `data` | `password` | `ZHJ5ZG9jay1yZWRhY3RlZC00ZGU1ODEzYTY4Mzc=` (base64 of the `password` marker) |
+| `parity-avp-secret-inline` | `data` | `dsn` | base64 of `postgres://drydock-redacted-5401fc97182f:drydock-redacted-4de5813a6837@db.example.invalid:5432/app` |
+| `parity-avp-secret-inline` | `data` | `markup` | `PGh0bWw+bm90IGEgcGxhY2Vob2xkZXI8L2h0bWw+` (unchanged: `<html>` is no inline token) |
+| `parity-avp-secret-inline` | `data` | `plain` | `bGVmdCBleGFjdGx5IGFzIHdyaXR0ZW4=` (unchanged) |
+| `parity-avp-secret-inline` | `stringData` | `username` | `drydock-redacted-5401fc97182f` |
+| `parity-avp-secret-inline` | `stringData` | `endpoint` | `https://drydock-redacted-6799b3ec831f/v1` |
+| `parity-avp-secret-annotated` | `data` | `endpoint` | `ZHJ5ZG9jay1yZWRhY3RlZC02Nzk5YjNlYzgzMWY=` |
+| `parity-avp-secret-annotated` | `data` | `url` | `aHR0cHM6Ly9kcnlkb2NrLXJlZGFjdGVkLTY3OTliM2VjODMxZi92MQ==` |
+| `parity-avp-secret-annotated` | `stringData` | `password` | `drydock-redacted-4de5813a6837` |
+| `parity-avp-secret-annotated` | `stringData` | `inline` | `drydock-redacted-5401fc97182f` |
+
+Beyond the exact comparisons, the harness counts `drydock-redacted-` markers,
+literally and inside every decoded base64 token, on every side and requires
+exactly `AVP_EXPECTED_MARKERS` (16) for `parity-avp` on the two masked sides
+and the two oracle sides, and `AVP_SECRET_EXPECTED_MARKERS` (9: four literal
+in `stringData`, five inside base64 `data`) for `parity-avp-secret` on the
+two oracle sides, so "neither side replaced anything" cannot pass. Neither
+app is in the tracking comparison.
 
 ### Placeholder rules
 
@@ -297,23 +359,52 @@ workload obeys them, and new values must too.
   in the `avp.kubernetes.io/path` annotation, with no `argocd:` namespace
   prefix: AVP reads a bare name from the `argocd` namespace, and drydock
   hashes the path text as written.
-- No whitespace inside `<>`, no `|` modifiers and no `#version` suffix.
-- An annotated resource has a non-empty annotation and no `<` or `>`
-  anywhere except its placeholders: once the annotation is present AVP treats
-  any `<...>` as a placeholder, while drydock only accepts keys made of
-  `[A-Za-z0-9_./-]`.
-- Quote every scalar.
-- No list nested in a list: AVP does not descend into one, drydock does.
-- Keep the directory flat (AVP's `generate ./` walks it recursively, the
-  drydock directory source does not) and use ConfigMaps only:
-  `argocd app manifests` masks Secret data as `++++++++`.
+- No `|` modifiers: drydock derives its marker from the path and key alone,
+  so AVP would emit the modified backend value where drydock emits the bare
+  marker. No `#version` suffix: the backend Secret has no versions.
+- Spaces inside `<>` are fine: both sides trim spaces (only spaces, not
+  tabs) from a generic key and from an inline key, so `< password >` and
+  `<path:parity-avp-backend#endpoint >` resolve the same keys as their tight
+  spellings. Keys the backend lacks are AVP errors (see the next rule), so a
+  key must still be `username`, `password` or `endpoint` once trimmed.
+- Once the annotation key is present, with any value, both sides treat every
+  `(?mU)<(.*)>` span on a line as a placeholder: the match runs from the
+  first `<` to the next `>`, so a stray `<` before a placeholder is swallowed
+  into the replaced span. The swallowed span must still contain an inline
+  token (`<stray <path:...#key>` and `<prefix path:...#key>` resolve through
+  the unanchored inline syntax), because a swallowed bare key is a missing
+  value and AVP fails the whole generate, not just that value. Without the
+  annotation only a literal `<path:` starts a match and a stray `<` stays.
+- A present-but-empty `avp.kubernetes.io/path: ""` selects the generic span
+  on both sides but fetches no data, so such an object may carry inline
+  tokens only: a bare `<key>` under it is an AVP error.
+- Quote every scalar. An annotation with no value (`key:` and nothing after
+  it) hides every annotation on that object from AVP (its apimachinery
+  v0.29.1 reads the map strictly), which drydock mirrors, but Argo CD's
+  annotation tracking rejects such a manifest outright, so the fixture never
+  carries one.
+- No `kind: List` and no `avp.kubernetes.io/ignore`: drydock mirrors AVP's
+  List-as-one-object context and the ignore skip, but a skipped placeholder is
+  a "neither side replaced" value and a List item's markers count the same as
+  a plain document's, so neither adds coverage here.
+- Lists nested directly in lists are skipped on both sides (AVP walks one
+  list level, and drydock mirrors that). `parity-avp-lists` pins that with
+  two placeholders that stay verbatim; they are not markers, so they do not
+  count toward `AVP_EXPECTED_MARKERS`.
+- Secret values are tried as padded standard base64 first on both sides, and
+  one that decodes to text with a `<...>` span is substituted in the decoded
+  text and re-encoded; every other string in a Secret, `stringData`
+  included, is processed as plain text. Keep base64 `data` canonical (padded,
+  no trailing bits) so an unchanged value re-encodes byte-for-byte.
+- Keep both directories flat (AVP's `generate <dir>` walks recursively, the
+  drydock directory source does not). ConfigMaps only in `workloads/avp` and
+  Secrets only in `workloads/avp-secret`: the former is the masked oracle's
+  Application and the latter is excluded from it.
 
 ### Deliberately not covered by this fixture
 
-- Placeholders in base64 `Secret.data` (AVP decodes and replaces them,
-  drydock does not), modifiers, versioned placeholders, lists nested in lists
-  and Secrets in general: each is a known divergence or cannot be compared
-  through `argocd app manifests`.
+- Modifiers and versioned placeholders: they change AVP's output, not where
+  it substitutes, and have no backend here.
 - Other AVP backends and authentication methods, and AVP configuration from
   `--secret-name` or `--config-path`.
 - A versioned plugin name (`spec.version`), or a renamed plugin that drydock
@@ -326,7 +417,10 @@ The harness downloads the AVP binary for the Docker daemon's architecture
 (`linux_arm64` on Apple Silicon) from GitHub releases, so the run needs that
 download. The
 image builds from the pinned alpine already in the local image store, so it
-needs no Docker Hub or package-mirror access.
+needs no Docker Hub or package-mirror access. The kubectl-exec oracle needs
+only `kubectl exec` into the sidecar: the copy is a `tar` pipe (with
+`COPYFILE_DISABLE=1`, so macOS adds no `._*` entries AVP would read as YAML)
+into the container's emptyDir `/tmp`.
 
 ## OCI artifact fixture
 

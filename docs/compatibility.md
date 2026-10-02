@@ -299,7 +299,16 @@ Supported:
   `discover.fileName` or `discover.find.glob` rule matches a native-rendered
   source. drydock does not execute `discover.find.command`.
 - Native AVP compatibility for explicit `argocd-vault-plugin` sources and
-  discovered simple AVP CMP aliases.
+  discovered simple AVP CMP aliases. Placeholders are matched with AVP's own
+  regexes (inline `<path:PATH#KEY>` tokens without the
+  `avp.kubernetes.io/path` annotation, any `<...>` span on a line once the
+  annotation key is present), the walk visits every string in the object but
+  does not descend into a list nested in a list, and `kind: Secret` values
+  that decode as base64 to placeholder text are substituted in the decoded
+  text and re-encoded, as AVP does. `avp.kubernetes.io/ignore: "true"` skips
+  the object, items of a `kind: List` take their kind and annotations from
+  the List, and a YAML-null annotation value hides every annotation on the
+  object, all as AVP v1.18.1 behaves.
 - KSOPS kustomize generator compatibility under `--enable-ksops-compat`. When
   the mode is active, `apiVersion: viaduct.ai/v1 / kind: ksops` generator
   entries are rendered as deterministic placeholder manifests without
