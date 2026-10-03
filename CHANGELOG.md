@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.3.4](https://github.com/sholdee/drydock/compare/v0.3.3...v0.3.4) (2026-10-03)
+
+
+### Bug Fixes
+
+* **avpcompat:** substitute placeholders exactly where argocd-vault-plugin does ([#376](https://github.com/sholdee/drydock/issues/376)) ([8e5b971](https://github.com/sholdee/drydock/commit/8e5b9712749e792839c0e066ee589147cdbe1821))
+
+
+### Miscellaneous Chores
+
+* **deps:** update golang:1.27.1 docker digest to e0174e5 ([#378](https://github.com/sholdee/drydock/issues/378)) ([9da25d5](https://github.com/sholdee/drydock/commit/9da25d5e83b63077e4dab1ecebe5d42185a3312b))
+
 ## [0.3.3](https://github.com/sholdee/drydock/compare/v0.3.2...v0.3.3) (2026-10-02)
 
 
