@@ -854,7 +854,7 @@ var kustomizeNestedFieldCoverageTable = map[string]map[string]kustomizationField
 	"types.GeneratorOptions":  nestedFields(nil, "labels", "annotations", "disableNameSuffixHash", "immutable"),
 	"types.Image":             nestedFields(nil, "name", "newName", "newTag", "digest", "tagSuffix"),
 	"types.KubernetesService": nestedFields(nil, "name", "namespace"),
-	"types.Label":             nestedFields(nil, "pairs", "includeSelectors", "includeTemplates", "fields"),
+	"types.Label":             nestedFields(nil, "pairs", "includeSelectors", "includeTemplates", "includeVolumeClaimTemplates", "fields"),
 	"types.LegacySortOptions": nestedFields(nil, "orderFirst", "orderLast"),
 	"types.ObjectMeta":        nestedFields(nil, "name", "namespace", "labels", "annotations"),
 	"types.PatchArgs":         nestedFields(nil, "allowNameChange", "allowKindChange"),
