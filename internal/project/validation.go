@@ -71,14 +71,9 @@ func effectiveProject(proj argoappv1.AppProject, settings config.ArgoSettings) a
 		if repo.Project != proj.Name {
 			continue
 		}
-		repoURL := strings.TrimSpace(repo.URL)
-		if repoURL == "" {
-			repoURL = strings.TrimSpace(key)
+		if repoURL := projectSourceRepo(key, repo); repoURL != "" {
+			repos = append(repos, repoURL)
 		}
-		if repoURL == "" {
-			continue
-		}
-		repos = append(repos, repoURL)
 	}
 	sort.Strings(repos)
 	proj.Spec.SourceRepos = append(proj.Spec.SourceRepos, repos...)
@@ -171,7 +166,7 @@ func validateDestination(app argoappv1.Application, proj argoappv1.AppProject, s
 
 func destinationCluster(dest argoappv1.ApplicationDestination, settings config.ArgoSettings) (*argoappv1.Cluster, bool) {
 	name := strings.TrimSpace(dest.Name)
-	server := normalizeClusterServer(strings.TrimSpace(dest.Server))
+	server := NormalizeClusterServer(dest.Server)
 	if server != "" {
 		if cluster, ok := settings.Clusters[server]; ok {
 			return argoClusterFromSettings(cluster, name), true
@@ -245,7 +240,9 @@ func clusterDisplayName(cluster config.ClusterSettings) string {
 	return cluster.Server
 }
 
-func normalizeClusterServer(raw string) string {
+// NormalizeClusterServer normalizes a cluster server the way validation
+// looks a destination server up among the cluster Secrets.
+func NormalizeClusterServer(raw string) string {
 	return strings.TrimRight(strings.TrimSpace(raw), "/")
 }
 
@@ -418,32 +415,13 @@ func repositoryMetadataDiagnostics(app argoappv1.Application, settings config.Ar
 	return diags
 }
 
-//nolint:gocyclo // Repository matching intentionally covers Argo CD's URL normalization variants in one place.
 func repositorySettingsForURL(repoURL string, settings config.ArgoSettings) (config.RepositorySettings, bool) {
 	if repo, ok := settings.HelmRepositories[repoURL]; ok {
 		return repo, true
 	}
-	normalizedRepoURL, repoURLNormalized := normalizeGitURL(repoURL)
-	normalizedOCIRepoURL, repoURLOCI := normalizeOCIURL(repoURL)
 	for key, repo := range settings.HelmRepositories {
-		if key == repoURL || repo.URL == repoURL {
+		if NewRepositoryMatch(key, repo).matchesURL(repoURL) {
 			return repo, true
-		}
-		if repoURLNormalized {
-			if normalizedKey, ok := normalizeGitURL(key); ok && normalizedKey == normalizedRepoURL {
-				return repo, true
-			}
-			if normalizedURL, ok := normalizeGitURL(repo.URL); ok && normalizedURL == normalizedRepoURL {
-				return repo, true
-			}
-		}
-		if repoURLOCI && repo.EnableOCI {
-			if normalizedKey, ok := normalizeOCIURL(key); ok && normalizedKey == normalizedOCIRepoURL {
-				return repo, true
-			}
-			if normalizedURL, ok := normalizeOCIURL(repo.URL); ok && normalizedURL == normalizedOCIRepoURL {
-				return repo, true
-			}
 		}
 	}
 	return config.RepositorySettings{}, false

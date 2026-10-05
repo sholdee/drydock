@@ -12,7 +12,6 @@ import (
 	"github.com/sholdee/drydock/internal/acquisition"
 	"github.com/sholdee/drydock/internal/cacheevent"
 	"github.com/sholdee/drydock/internal/change"
-	"github.com/sholdee/drydock/internal/config"
 	"github.com/sholdee/drydock/internal/diagnostic"
 	"github.com/sholdee/drydock/internal/project"
 )
@@ -103,6 +102,22 @@ func changedOnlySettingsDiagnostic() diagnostic.Diagnostic {
 	}
 }
 
+// changedOnlySettingsScopedCode identifies a changed-only selection that a
+// repository or cluster settings change widened to the Applications it
+// reaches (settingsDelta.selects). It is strict-exempt
+// (strictExemptDiagnostic): the selection is complete, not an ownership gap.
+// No severity below warning exists.
+const changedOnlySettingsScopedCode = "diff.changed-only-settings-scoped"
+
+func changedOnlySettingsScopedDiagnostic(selected int) diagnostic.Diagnostic {
+	return diagnostic.Diagnostic{
+		Code:     changedOnlySettingsScopedCode,
+		Severity: diagnostic.SeverityWarning,
+		Category: "changed-only",
+		Message:  fmt.Sprintf("Argo CD repository or cluster settings changed; selecting %d Application(s) that use them", selected),
+	}
+}
+
 // changedOnlyProjectsCode identifies the changed-only render-all a changed
 // AppProject population forces: the first AppProject declared, or the last
 // one removed, on either side (changedProjectNames' all switch). It is
@@ -121,19 +136,22 @@ func changedOnlyProjectsDiagnostic() diagnostic.Diagnostic {
 }
 
 // changedOnlyApplications returns the Applications each side of a
-// changed-only diff renders: those the changed paths or changed AppProjects
-// select, or all of them when the Argo CD settings changed, either side
-// declares no AppProject while the other does, or a changed path is owned by
-// no Application (an error under --strict-changed-only or --strict).
+// changed-only diff renders: those the changed paths, changed AppProjects, or
+// changed repository and cluster settings select, or all of them when a
+// render-affecting Argo CD setting changed, either side declares no
+// AppProject while the other does, or a changed path is owned by no
+// Application (an error under --strict-changed-only or --strict).
 func changedOnlyApplications(ctx context.Context, request DiffRequest, leftBuildRequest, rightBuildRequest BuildRequest, leftList, rightList BuildResult, changedPaths []string) ([]argoappv1.Application, []argoappv1.Application, []diagnostic.Diagnostic, error) {
-	// A settings change reaches every render, whichever Application owns the
-	// file that carries it (a self-managed argocd Application, a sibling's
-	// Kustomize graph): selecting only that owner would drop the rest.
-	settingsChanged, err := argoSettingsChanged(leftList.Settings, rightList.Settings)
+	// A render-affecting settings change reaches every render, whichever
+	// Application owns the file that carries it (a self-managed argocd
+	// Application, a sibling's Kustomize graph): selecting only that owner
+	// would drop the rest. A repository or cluster entry reaches only the
+	// Applications that use it, selected below.
+	settings, err := classifySettingsChange(leftList.Settings, rightList.Settings)
 	if err != nil {
 		return nil, nil, nil, err
 	}
-	if settingsChanged {
+	if settings.renderAll {
 		return leftList.Applications, rightList.Applications, []diagnostic.Diagnostic{changedOnlySettingsDiagnostic()}, nil
 	}
 
@@ -156,7 +174,11 @@ func changedOnlyApplications(ctx context.Context, request DiffRequest, leftBuild
 	rightSide := withSelectionOnlyPaths(ctx, rightBuildRequest.Path, rightBuildRequest.RepoMaps, rightBuildRequest.selfRepo, rightList.ApplicationInputs)
 	leftSelected, rightSelected, unowned := selectChangedDiffSides(leftSide, rightSide, changedPaths, projectNames)
 	if len(unowned) == 0 {
-		return leftSelected, rightSelected, nil, nil
+		leftSelected, rightSelected, reached := withSettingsSelection(leftSide, rightSide, leftSelected, rightSelected, settings)
+		if reached == 0 {
+			return leftSelected, rightSelected, nil, nil
+		}
+		return leftSelected, rightSelected, []diagnostic.Diagnostic{changedOnlySettingsScopedDiagnostic(reached)}, nil
 	}
 	diag := diagnostic.Diagnostic{
 		Severity: diagnostic.SeverityWarning,
@@ -209,20 +231,6 @@ func projectFingerprints(projects []argoappv1.AppProject) map[string]string {
 		}{proj.Namespace, proj.Spec})
 	}
 	return fingerprints
-}
-
-// argoSettingsChanged reports whether the two sides resolved different Argo
-// CD settings (changedOnlySettingsSignature).
-func argoSettingsChanged(left, right config.ArgoSettings) (bool, error) {
-	leftSig, err := changedOnlySettingsSignature(left)
-	if err != nil {
-		return false, err
-	}
-	rightSig, err := changedOnlySettingsSignature(right)
-	if err != nil {
-		return false, err
-	}
-	return leftSig != rightSig, nil
 }
 
 func filteredChangedOnlyPaths(request DiffRequest) ([]string, error) {

@@ -172,6 +172,15 @@ its own annotation: changed-only then renders only that owner, and strict mode
 does not catch the omission. See
 [Declare plugin inputs](/workflows/local-diffs/#declare-plugin-inputs).
 
+A changed Argo CD setting that every render or diff reads also renders all
+Applications, with `diff.changed-only-settings`: the tracking method, resource
+exclusions, compare options, an `ignoreDifferences` customization, or a CMP
+definition, for example. A repository or cluster Secret change does not,
+unless the Secret enables OCI for an OCI repository URL: it selects only the
+Applications that use it (`diff.changed-only-settings-scoped`). Neither it nor
+a setting no output reads excuses an unowned changed path, which still renders
+all Applications and fails `--strict-changed-only`.
+
 ## Symptom: Plugin Source Fails Closed
 
 The CLI and default Go client do not execute config management plugin commands

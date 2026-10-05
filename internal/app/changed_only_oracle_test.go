@@ -9,6 +9,7 @@ import (
 	"slices"
 	"testing"
 
+	argoappv1 "github.com/argoproj/argo-cd/v3/pkg/apis/application/v1alpha1"
 	"github.com/sholdee/drydock/internal/diagnostic"
 	"github.com/sholdee/drydock/internal/diff"
 	sourcepkg "github.com/sholdee/drydock/internal/source"
@@ -23,7 +24,8 @@ type changedOnlyOracleCase struct {
 	setup func(*testing.T) (Orchestrator, DiffRequest)
 	// wantFallback is "" or the diagnostic code of the expected render-all:
 	// diff.changed-only-incomplete, diff.changed-only-settings, or
-	// diff.changed-only-projects.
+	// diff.changed-only-projects; or diff.changed-only-settings-scoped for a
+	// selection a repository or cluster settings change widens.
 	wantFallback string
 	// wantApplications are the Applications the full diff reports, so a
 	// fixture that stops diffing cannot make the row pass vacuously.
@@ -63,6 +65,15 @@ func withExecPlugins(setup func(*testing.T) (Orchestrator, DiffRequest)) func(*t
 		t.Setenv("DRYDOCK_APP_EXEC_HELPER", "1")
 		o, request := setup(t)
 		request.EnablePlugins = true
+		return o, request
+	}
+}
+
+// withProjectDiagnosticsMode runs setup's request with mode.
+func withProjectDiagnosticsMode(setup func(*testing.T) (Orchestrator, DiffRequest), mode diagnostic.ProjectDiagnosticsMode) func(*testing.T) (Orchestrator, DiffRequest) {
+	return func(t *testing.T) (Orchestrator, DiffRequest) {
+		o, request := setup(t)
+		request.ProjectDiagnosticsMode = mode
 		return o, request
 	}
 }
@@ -207,6 +218,183 @@ func TestChangedOnlyMatchesFullDiff(t *testing.T) {
 				writeTestFile(t, filepath.Join(root, "README.md"), readme)
 			}, "left\n", "right\n", DiscoveryOptions{}),
 			wantFallback: "diff.changed-only-incomplete",
+		},
+		// Argo CD settings guard classes.
+		{
+			name: "repository Secret added",
+			setup: pathPairOracleSetup(func(t *testing.T, root, url string) {
+				t.Helper()
+				writeRepositorySecretApps(t, root, url, map[string]string{"uses-x": chartsXURL})
+			}, "", chartsXURL, DiscoveryOptions{}),
+			wantFallback:           changedOnlySettingsScopedCode,
+			wantApplications:       []string{"argocd"},
+			wantProjectDiagnostics: []projectDiagnosticKey{sourceRepositoryDenied("uses-x", chartsXURL, "team-a")},
+		},
+		{
+			name: "repository Secret removed",
+			setup: pathPairOracleSetup(func(t *testing.T, root, url string) {
+				t.Helper()
+				writeRepositorySecretApps(t, root, url, map[string]string{"uses-x": chartsXURL})
+			}, chartsXURL, "", DiscoveryOptions{}),
+			wantFallback:           changedOnlySettingsScopedCode,
+			wantApplications:       []string{"argocd"},
+			wantProjectDiagnostics: []projectDiagnosticKey{sourceRepositoryDenied("uses-x", chartsXURL, "team-a")},
+		},
+		{
+			name: "repository Secret URL changed",
+			setup: pathPairOracleSetup(func(t *testing.T, root, url string) {
+				t.Helper()
+				writeRepositorySecretApps(t, root, url, map[string]string{"uses-x": chartsXURL, "uses-y": chartsYURL})
+			}, chartsXURL, chartsYURL, DiscoveryOptions{}),
+			wantFallback:     changedOnlySettingsScopedCode,
+			wantApplications: []string{"argocd"},
+			wantProjectDiagnostics: []projectDiagnosticKey{
+				sourceRepositoryDenied("uses-x", chartsXURL, "team-a"),
+				sourceRepositoryDenied("uses-y", chartsYURL, "team-a"),
+			},
+		},
+		{
+			name: "cluster Secret renamed, destination by server",
+			setup: pathPairOracleSetup(func(t *testing.T, root, name string) {
+				t.Helper()
+				project := clusterProjectYAML(false, "    - name: prod\n      namespace: \"*\"\n    - server: "+inClusterServer+"\n      namespace: \"*\"\n")
+				writeClusterSecretApps(t, root, project, clusterSecretYAML(name, prodServer, ""), "    server: "+prodServer+"\n    namespace: workloads\n")
+			}, "prod", "staging", DiscoveryOptions{}),
+			wantFallback:           changedOnlySettingsScopedCode,
+			wantApplications:       []string{"argocd"},
+			wantProjectDiagnostics: []projectDiagnosticKey{destinationDenied("to-prod", "team-a")},
+		},
+		{
+			// Only --project-diagnostics all reports the name-only
+			// destination a server policy cannot resolve.
+			name: "cluster Secret server changed, destination by name",
+			setup: withProjectDiagnosticsMode(pathPairOracleSetup(func(t *testing.T, root, server string) {
+				t.Helper()
+				project := clusterProjectYAML(false, "    - server: "+prodServer+"\n      namespace: \"*\"\n    - server: "+inClusterServer+"\n      namespace: \"*\"\n")
+				writeClusterSecretApps(t, root, project, clusterSecretYAML("prod", server, ""), "    name: prod\n    namespace: workloads\n")
+			}, prodServer, prodBServer, DiscoveryOptions{}), diagnostic.ProjectDiagnosticsModeAll),
+			wantFallback:           changedOnlySettingsScopedCode,
+			wantApplications:       []string{"argocd"},
+			wantProjectDiagnostics: []projectDiagnosticKey{destinationNameUnresolved("to-prod", "prod")},
+		},
+		{
+			// A project-scoped cluster reaches every member of its project:
+			// bystander never deploys to it.
+			name: "project-scoped cluster Secret moved to another project",
+			setup: pathPairOracleSetup(func(t *testing.T, root, project string) {
+				t.Helper()
+				writeClusterSecretApps(t, root, clusterProjectYAML(true, "    - server: \"*\"\n      namespace: \"*\"\n"), clusterSecretYAML("prod", prodServer, project), "    name: prod\n    namespace: workloads\n")
+			}, "team-a", "team-b", DiscoveryOptions{}),
+			wantFallback:     changedOnlySettingsScopedCode,
+			wantApplications: []string{"argocd"},
+			wantProjectDiagnostics: []projectDiagnosticKey{
+				destinationDenied("bystander", "team-a"),
+				destinationDenied("to-prod", "team-a"),
+			},
+		},
+		{
+			// Settings no output reads select nothing beyond the owner of
+			// the changed file.
+			name:             "no-effect settings",
+			setup:            pathPairOracleSetup(writeSelfManagedSettingsApps, trackingAnnotationSettings, noEffectSettings, DiscoveryOptions{}),
+			wantApplications: []string{"argocd"},
+		},
+		{
+			name:             "ignoreDifferences customization",
+			setup:            pathPairOracleSetup(writeSelfManagedSettingsApps, trackingAnnotationSettings, ignoreDifferencesSettings, DiscoveryOptions{}),
+			wantFallback:     changedOnlySettingsCode,
+			wantApplications: []string{"argocd"},
+		},
+		{
+			name: "repository Secret with an unrelated change",
+			setup: pathPairOracleSetup(func(t *testing.T, root, value string) {
+				t.Helper()
+				url := ""
+				if value == "new" {
+					url = chartsXURL
+				}
+				writeRepositorySecretApps(t, root, url, map[string]string{"uses-x": chartsXURL})
+				writeDiffApplication(t, root, "third", "third", value)
+			}, "old", "new", DiscoveryOptions{}),
+			wantFallback:           changedOnlySettingsScopedCode,
+			wantApplications:       []string{"argocd", "third"},
+			wantProjectDiagnostics: []projectDiagnosticKey{sourceRepositoryDenied("uses-x", chartsXURL, "team-a")},
+		},
+		{
+			// A project-scoped deny pattern joins sourceRepos as !url and
+			// denies the sources it names.
+			name: "deny-pattern repository Secret denies its URL",
+			setup: pathPairOracleSetup(func(t *testing.T, root, url string) {
+				t.Helper()
+				writeRepositorySecretProjectApps(t, root, "*", url, map[string]string{"uses-x": chartsXURL})
+			}, "", "!"+chartsXURL, DiscoveryOptions{}),
+			wantFallback:           changedOnlySettingsScopedCode,
+			wantApplications:       []string{"argocd"},
+			wantProjectDiagnostics: []projectDiagnosticKey{sourceRepositoryDenied("uses-x", chartsXURL, "team-a")},
+		},
+		{
+			// With no AppProject, a default-project deny pattern reaches
+			// every Application, whatever project it names.
+			name: "default-project deny-pattern repository Secret, Application in another project",
+			setup: pathPairOracleSetup(func(t *testing.T, root, url string) {
+				t.Helper()
+				writeDefaultRepositorySecretApps(t, root, url, "team-x")
+			}, "", "!"+chartsXURL, DiscoveryOptions{}),
+			wantFallback:           changedOnlySettingsScopedCode,
+			wantApplications:       []string{"argocd"},
+			wantProjectDiagnostics: []projectDiagnosticKey{sourceRepositoryDenied("uses-x", chartsXURL, argoappv1.DefaultAppProjectName)},
+		},
+		{
+			name: "default-project deny-pattern repository Secret, Application in default",
+			setup: pathPairOracleSetup(func(t *testing.T, root, url string) {
+				t.Helper()
+				writeDefaultRepositorySecretApps(t, root, url, argoappv1.DefaultAppProjectName)
+			}, "", "!"+chartsXURL, DiscoveryOptions{}),
+			wantFallback:           changedOnlySettingsScopedCode,
+			wantApplications:       []string{"argocd"},
+			wantProjectDiagnostics: []projectDiagnosticKey{sourceRepositoryDenied("uses-x", chartsXURL, argoappv1.DefaultAppProjectName)},
+		},
+		{
+			// Argo CD's negation turns a deny pattern into permitting every
+			// other source: it reaches uses-y, which never uses the URL.
+			name: "deny-pattern repository Secret permits other sources",
+			setup: pathPairOracleSetup(func(t *testing.T, root, url string) {
+				t.Helper()
+				writeRepositorySecretApps(t, root, url, map[string]string{"uses-y": chartsYURL})
+			}, "", "!"+chartsXURL, DiscoveryOptions{}),
+			wantFallback:           changedOnlySettingsScopedCode,
+			wantApplications:       []string{"argocd"},
+			wantProjectDiagnostics: []projectDiagnosticKey{sourceRepositoryDenied("uses-y", chartsYURL, "team-a")},
+		},
+		{
+			// A scoped settings change does not excuse an unowned path.
+			name: "repository Secret with an unowned change",
+			setup: pathPairOracleSetup(func(t *testing.T, root, value string) {
+				t.Helper()
+				url := ""
+				if value == "new" {
+					url = chartsXURL
+				}
+				writeRepositorySecretApps(t, root, url, map[string]string{"uses-x": chartsXURL})
+				writeTestFile(t, filepath.Join(root, "README.md"), value)
+			}, "old", "new", DiscoveryOptions{}),
+			wantFallback:           "diff.changed-only-incomplete",
+			wantApplications:       []string{"argocd"},
+			wantProjectDiagnostics: []projectDiagnosticKey{sourceRepositoryDenied("uses-x", chartsXURL, "team-a")},
+		},
+		{
+			name: "no-effect setting with an unowned change",
+			setup: pathPairOracleSetup(func(t *testing.T, root, value string) {
+				t.Helper()
+				settings := trackingAnnotationSettings
+				if value == "new" {
+					settings = noEffectSettings
+				}
+				writeSelfManagedSettingsApps(t, root, settings)
+				writeTestFile(t, filepath.Join(root, "README.md"), value)
+			}, "old", "new", DiscoveryOptions{}),
+			wantFallback:     "diff.changed-only-incomplete",
+			wantApplications: []string{"argocd"},
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

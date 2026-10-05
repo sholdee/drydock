@@ -10,16 +10,43 @@ If any changed file is unowned or ambiguous, non-strict mode warns and renders
 all Applications (`diff.changed-only-incomplete`). This preserves correctness
 at the cost of a broader diff.
 
-An Argo CD settings change (an argocd-cm setting drydock reads, a CMP
-definition, or a repository or cluster Secret) also renders all Applications,
-with its own diagnostic
-(`diff.changed-only-settings`). This fires even when the changed settings file
-is excluded by `--changed-only-ignore`, as long as another changed path survives
-the filters, because the guard compares resolved settings between the two sides
-directly, before path ownership is evaluated. Unlike an unowned-path fallback,
-this render-all is exempt from `--strict-changed-only` and `--strict`: rendering
+drydock also compares the resolved Argo CD settings of the two sides directly,
+before path ownership is evaluated, so a settings change counts even when the
+changed settings file is excluded by `--changed-only-ignore`, as long as another
+changed path survives the filters. What it selects depends on what reads the
+setting.
+
+A setting that every render or diff reads renders all Applications, with its own
+diagnostic (`diff.changed-only-settings`): the tracking method, instance label,
+or installation ID, Kustomize build options, Helm value file schemes, a CMP
+definition, resource exclusions or inclusions, compare options, a resource
+customization a diff or health check reads (`ignoreDifferences`,
+`knownTypeFields`, health Lua, `useOpenLibs`), or which repository Secrets
+enable OCI for an OCI repository URL. Unlike an unowned-path fallback, this
+render-all is exempt from `--strict-changed-only` and `--strict`: rendering
 every Application is the complete answer to a settings change, not a gap in
 ownership.
+
+A repository or cluster Secret that is added, removed, or changed reaches
+Applications only through project validation, so it selects only the
+Applications that use it, reported with `diff.changed-only-settings-scoped`
+(also strict-exempt). A repository Secret selects every Application with a
+source whose `repoURL` matches its URL, chart and `$ref` sources included, and
+a project-scoped deny pattern (`!url`) every Application in its project. A
+deny pattern scoped to `default` reaches every Application: with no AppProject
+declared, each one validates against the implicit `default` project, whatever
+project it names. A cluster Secret selects every Application whose destination
+names the cluster or points at its server, and a project-scoped cluster Secret
+every Application in that project. Such a change does not excuse an unowned
+changed path: that still renders all Applications with
+`diff.changed-only-incomplete`, and
+`--strict-changed-only` still fails.
+
+Settings that no build, diff, or test reads select nothing:
+`resource.ignoreResourceUpdatesEnabled`,
+`resource.customizations.ignoreResourceUpdates.*`, and action Lua
+(`resource.customizations.actions.*`). They do not excuse an unowned changed
+path either.
 
 A changed AppProject selects every Application in that project, not just the
 Application that owns the AppProject file: tightening `sourceRepos`,

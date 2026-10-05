@@ -967,9 +967,14 @@ func normalizeDiagnostics(diags []diagnostic.Diagnostic, strict, forceWarning bo
 // The changed-only settings render-all is the complete answer, not an
 // ownership gap: every Application is rendered. The changed-only AppProject
 // render-all (the first AppProject declared or the last removed) has the
-// same shape.
+// same shape, and so does the selection a repository or cluster settings
+// change widens: it selects every Application the change reaches.
 func strictExemptDiagnostic(diag diagnostic.Diagnostic) bool {
-	return diag.Code == selfRepoNearMissCode || diag.Code == diagnostic.CodePluginPolicyEnvIgnored || diag.Code == changedOnlySettingsCode || diag.Code == changedOnlyProjectsCode
+	switch diag.Code {
+	case selfRepoNearMissCode, diagnostic.CodePluginPolicyEnvIgnored, changedOnlySettingsCode, changedOnlySettingsScopedCode, changedOnlyProjectsCode:
+		return true
+	}
+	return false
 }
 
 func diagnosticFailure(diags []diagnostic.Diagnostic, strict bool) error {

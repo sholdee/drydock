@@ -279,14 +279,24 @@ affected Applications render. If any path is unowned, non-strict mode warns and
 renders all Applications (`diff.changed-only-incomplete`);
 `--strict-changed-only` fails instead.
 
-An Argo CD settings change (an argocd-cm setting drydock reads, a CMP
-definition, or a repository or cluster Secret) also renders every Application,
-regardless of whether the settings file itself is owned or excluded by
-`--changed-only-ignore`, as long as another changed path survives the filters:
-the guard compares a settings signature from both sides before path ownership is
-evaluated. This render-all carries diagnostic `diff.changed-only-settings`
-(warning) and is exempt from `--strict-changed-only` and `--strict`, because
-rendering everything is the complete answer, not an ownership gap.
+An Argo CD settings change that a render or a diff reads (an argocd-cm setting
+drydock reads, a CMP definition, or the set of repositories that enable OCI)
+also renders every Application, regardless of whether the settings file itself
+is owned or excluded by `--changed-only-ignore`, as long as another changed path
+survives the filters: the guard compares settings signatures from both sides
+before path ownership is evaluated. This render-all carries diagnostic
+`diff.changed-only-settings` (warning) and is exempt from
+`--strict-changed-only` and `--strict`, because rendering everything is the
+complete answer, not an ownership gap. A repository or cluster Secret change
+reaches only project validation, so it instead selects the Applications
+validation matches it to (a source `repoURL`, a destination name or server, or
+every member of the project of a project-scoped cluster or deny-pattern
+repository, and every Application for a deny pattern scoped to `default`,
+which the implicit default project applies to all of them), with diagnostic
+`diff.changed-only-settings-scoped` (warning, equally exempt), and settings
+only diag reads, such as action Lua and `ignoreResourceUpdates`, select
+nothing; neither class excuses an unowned changed path, which still falls back
+to `diff.changed-only-incomplete` and fails `--strict-changed-only`.
 
 A changed AppProject (added, removed, or with a different namespace or spec,
 looked up by name as project validation looks it up) selects every Application

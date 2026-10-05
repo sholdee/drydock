@@ -58,6 +58,13 @@ render. `--strict-changed-only` applies only to the remaining considered paths.
 Keep broad ignores out of plugin-heavy or unconventional repositories, because
 ignored files cannot trigger an Application render.
 
+Changed Argo CD settings are compared between the two trees. A setting every
+render or diff reads, such as the tracking method or resource exclusions,
+renders all Applications (`diff.changed-only-settings`). A repository or
+cluster Secret change selects only the Applications that use it
+(`diff.changed-only-settings-scoped`). Settings no output reads, such as action
+Lua, select nothing. See [Changed-only diffs](/concepts/changed-only/).
+
 `diff app` selects one requested Application directly in each tree and does not
 use changed-only Git path filtering. If the Application exists only in current,
 the diff shows additions; if it exists only in baseline, the diff shows

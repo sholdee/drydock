@@ -61,16 +61,16 @@ func renderSettingsSignature(settings config.ArgoSettings) (string, error) {
 }
 
 // changedOnlySettingsSignature fingerprints every Argo CD setting a diff side
-// resolved, for changed-only selection: a settings change reaches every
-// Application, whichever one owns the file that carries it. It covers the
-// render settings (renderSettingsSignature, including the plugin generate
-// commands that JSON leaves out), plugin discovery rules, and every field
-// the settings serialize, so a setting renderSettingsSignature does not need
-// but a diff reads — resource filters, compare options, ignoreDifferences,
-// clusters — or one added later is never missed. Command parameters are left
-// out as renderSettingsSignature leaves them out: only diag reads them.
-// Provenance is dropped: it names the side's own tree, so identical settings
-// in two trees would otherwise always differ.
+// resolved, for changed-only selection (classifySettingsChange): a settings
+// change can reach Applications other than the one that owns the file that
+// carries it. It covers the render settings (renderSettingsSignature,
+// including the plugin generate commands that JSON leaves out), plugin
+// discovery rules, and every field the settings serialize, so a setting
+// renderSettingsSignature does not need but a diff reads — resource filters,
+// compare options, ignoreDifferences, clusters — or one added later is never
+// missed. Command parameters are left out as renderSettingsSignature leaves
+// them out: only diag reads them. Provenance is dropped: it names the side's
+// own tree, so identical settings in two trees would otherwise always differ.
 func changedOnlySettingsSignature(settings config.ArgoSettings) (string, error) {
 	renderSig, err := renderSettingsSignature(settings)
 	if err != nil {
