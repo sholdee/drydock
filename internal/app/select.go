@@ -20,11 +20,19 @@ func SelectChangedApplications(apps []argoappv1.Application, changedPaths []stri
 }
 
 // SelectChangedApplicationInputs returns Applications whose explicit inputs or
-// declared local source paths intersect at least one changed path.
+// declared local source paths intersect at least one changed path, or whose
+// manifest-generate-paths annotation matches one.
+//
+// The annotation is matched here, not folded into applicationSelectionPaths:
+// those paths also key the persistent render cache as required inputs
+// (applicationInputsByKey), where a glob or an absent declared path would
+// make the Application and its rendered children persistence-ineligible.
 func SelectChangedApplicationInputs(inputs []ApplicationSelectionInput, changedPaths []string) ([]argoappv1.Application, []string) {
 	appPaths := make([][]string, len(inputs))
+	generatePaths := make([][]string, len(inputs))
 	for i, input := range inputs {
 		appPaths[i] = applicationSelectionPaths(input)
+		generatePaths[i] = manifestGeneratePaths(input.Application)
 	}
 
 	selectedIndexes := make(map[int]struct{})
@@ -36,6 +44,12 @@ func SelectChangedApplicationInputs(inputs []ApplicationSelectionInput, changedP
 		for appIndex, sourcePaths := range appPaths {
 			for _, sourcePath := range sourcePaths {
 				if pathIntersects(sourcePath, normalizedChanged) {
+					selectedIndexes[appIndex] = struct{}{}
+					owned = true
+				}
+			}
+			for _, generatePath := range generatePaths[appIndex] {
+				if manifestGeneratePathMatches(generatePath, normalizedChanged) {
 					selectedIndexes[appIndex] = struct{}{}
 					owned = true
 				}
@@ -182,6 +196,70 @@ func localSourcePath(source argoappv1.ApplicationSource) (string, bool) {
 		return "", false
 	}
 	return "", true
+}
+
+// manifestGeneratePaths returns the repository paths app declares in Argo
+// CD's argocd.argoproj.io/manifest-generate-paths annotation: the escape
+// hatch for inputs changed-only selection cannot model, such as files an
+// exec or container config management plugin reads. Parsing mirrors Argo
+// CD's GetSourceRefreshPaths (util/app/path/path.go:128-147 at v3.5.3):
+// the value is split on ";", each item is trimmed and skipped when empty,
+// an item starting with "/" is relative to the repository root, and any
+// other item is joined to the source's path, so "." is the source path.
+//
+// Every item is normalized like other selection paths, and one that cleans
+// to the repository root or escapes it owns nothing: owning "" would
+// intersect every changed path and suppress the unowned render-all fallback
+// repository-wide. A relative item needs a local base path, so a chart,
+// ref-only or pathless source contributes only absolute items, and an OCI
+// source, whose path selects within the artifact, contributes none. Glob
+// metacharacters are kept for manifestGeneratePathMatches.
+func manifestGeneratePaths(app argoappv1.Application) []string {
+	value := app.Annotations[argoappv1.AnnotationKeyManifestGeneratePaths]
+	if strings.TrimSpace(value) == "" {
+		return nil
+	}
+	var paths []string
+	for _, source := range applicationSources(app) {
+		if ociartifact.IsOCIURL(source.RepoURL) {
+			continue
+		}
+		base, hasBase := localSourcePath(source)
+		for item := range strings.SplitSeq(value, ";") {
+			// Backslashes are separators here as in every other selection
+			// path, so a path.Match escape such as `\*` is not supported.
+			item = strings.ReplaceAll(strings.TrimSpace(item), "\\", "/")
+			var declared string
+			switch {
+			case item == "":
+				continue
+			case strings.HasPrefix(item, "/"):
+				declared = strings.TrimLeft(item, "/")
+			case hasBase:
+				declared = path.Join(base, item)
+			default:
+				continue
+			}
+			if cleaned, ok := cleanSelectionRelativePath(declared); ok {
+				paths = append(paths, cleaned)
+			}
+		}
+	}
+	return uniqueStrings(paths)
+}
+
+// manifestGeneratePathMatches reports whether changedPath matches one
+// manifestGeneratePaths item the way Argo CD's AppFilesHaveChanged does
+// (util/app/path/path.go:169-181 at v3.5.3): it is the item, lies under the
+// item as a directory, or matches the item as a path.Match glob, whose "*"
+// and "?" never cross a "/". An item that is not a valid pattern matches
+// only through the first two rules.
+func manifestGeneratePathMatches(item, changedPath string) bool {
+	if pathIntersects(item, changedPath) {
+		return true
+	}
+	matched, err := path.Match(item, changedPath)
+	return err == nil && matched
 }
 
 func pathIntersects(sourcePath, changedPath string) bool {

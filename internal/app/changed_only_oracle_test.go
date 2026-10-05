@@ -55,6 +55,18 @@ func pathPairOracleSetup(write func(*testing.T, string, string), left, right str
 	}
 }
 
+// withExecPlugins enables plugins on the request setup builds and lets the
+// exec plugin helper process (appExecCommand) run. A path-pair diff trusts
+// the left tree's exec policy (diffPluginPolicyExecTrusted).
+func withExecPlugins(setup func(*testing.T) (Orchestrator, DiffRequest)) func(*testing.T) (Orchestrator, DiffRequest) {
+	return func(t *testing.T) (Orchestrator, DiffRequest) {
+		t.Setenv("DRYDOCK_APP_EXEC_HELPER", "1")
+		o, request := setup(t)
+		request.EnablePlugins = true
+		return o, request
+	}
+}
+
 // repoOracleSetup diffs master against feature in the repository init
 // commits, with a git acquirer that fails: every source must resolve to the
 // side trees.
@@ -144,6 +156,11 @@ func TestChangedOnlyMatchesFullDiff(t *testing.T) {
 		{name: "local-chart app-of-apps escaped value file", setup: pathPairOracleSetup(writeHelmValuesAppOfAppsApps, "v1", "v2", DiscoveryOptions{}), wantApplications: []string{"apps", "child"}},
 		{name: "local-chart app-of-apps self-repo $values ref", setup: repoOracleSetup(initSelfRepoRefAppOfAppsRepo, false, nil), wantApplications: []string{"apps", "child"}},
 		{name: "nested app-of-apps grandchild", setup: pathPairOracleSetup(writeNestedHelmAppOfAppsApps, "v1", "v2", DiscoveryOptions{}), wantApplications: []string{"apps", "child", "mid"}},
+		// Declared plugin inputs: argocd.argoproj.io/manifest-generate-paths.
+		// TestChangedOnlyDropsUndeclaredExecPluginInput is the undeclared
+		// control.
+		{name: "exec plugin declares a shared file", setup: withExecPlugins(pathPairOracleSetup(writeExecPluginDeclaredSharedFileApps, "old", "new", DiscoveryOptions{})), wantApplications: []string{"owner", "reader"}},
+		{name: "exec plugin declares a shared file glob", setup: withExecPlugins(pathPairOracleSetup(writeExecPluginGlobSharedFileApps, "old", "new", DiscoveryOptions{})), wantApplications: []string{"owner", "reader"}},
 		// Argo CD settings.
 		{
 			name:             "settings change through a discover-kustomize graph",

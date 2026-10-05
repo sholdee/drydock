@@ -63,6 +63,53 @@ use changed-only Git path filtering. If the Application exists only in current,
 the diff shows additions; if it exists only in baseline, the diff shows
 deletions.
 
+## Declare Plugin Inputs
+
+Changed-only selection models Application manifests, source paths, Helm value
+files, and the local Kustomize graph. It cannot see which files an exec or
+container plugin reads. If a plugin reads a file outside its source path, a
+change to that file renders all Applications when nothing else owns it. When
+another Application owns the file, through its graph or its own
+`manifest-generate-paths` annotation, only that Application renders: the plugin
+Application is silently left out, and `--strict-changed-only` passes. A
+declared path counts as owned, so every plugin Application that reads it must
+declare it.
+
+Declare those inputs with Argo CD's
+[`argocd.argoproj.io/manifest-generate-paths`](https://argo-cd.readthedocs.io/en/stable/operator-manual/high_availability/#manifest-paths-annotation)
+annotation:
+
+```yaml
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: reader
+  annotations:
+    # The source path, plus shared/ from the repository root.
+    argocd.argoproj.io/manifest-generate-paths: .;/shared
+spec:
+  source:
+    repoURL: https://github.com/example/repo
+    path: workloads/reader
+    plugin:
+      name: helmfile
+```
+
+drydock uses Argo CD's syntax for the annotation. Entries are `;`-separated.
+Relative entries resolve against each source's `path`, so `.` is the source
+path itself. A leading `/` makes an entry relative to the repository root.
+Globs match with Go's `path.Match`, so `/shared/*.yaml` matches
+`shared/config.yaml` but not `shared/nested/config.yaml`. A changed file
+selects the Application when it is a declared path, lies under one, or matches
+a declared glob.
+
+Three rules narrow Argo CD's reading. Sources without a local path, such as
+chart-only or ref-only sources, use only `/` entries; OCI sources contribute
+nothing. Entries that resolve to the repository root, or escape it, are
+ignored, so the annotation can never suppress the render-all fallback for the
+whole repository. Backslashes are read as path separators, like every other
+selection path, so a glob metacharacter cannot be escaped with `\`.
+
 ## Manifest Diff Semantics
 
 Manifest diffs hide common Helm-rendered metadata noise by default:

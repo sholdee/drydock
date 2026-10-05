@@ -164,6 +164,14 @@ renders all Applications. Use strict mode when ambiguous ownership should fail:
 drydock diff apps --repo . --ref HEAD --ref-orig main --strict-changed-only
 ```
 
+If the unowned file is one an exec or container plugin reads, declare it in the
+plugin Application's `argocd.argoproj.io/manifest-generate-paths` annotation
+so changed-only selects that Application instead of rendering all. Declare it
+too when a plugin reads a file another Application owns, through its graph or
+its own annotation: changed-only then renders only that owner, and strict mode
+does not catch the omission. See
+[Declare plugin inputs](/workflows/local-diffs/#declare-plugin-inputs).
+
 ## Symptom: Plugin Source Fails Closed
 
 The CLI and default Go client do not execute config management plugin commands

@@ -264,7 +264,15 @@ entrypoint also owns that directory's Kustomize graph. Individual refs the
 digest walk rejects drop out of ownership, and an Application whose graph cannot
 be read keeps only its `spec.source.path` ownership. A change that only a
 dropped ref or an unread graph reaches stays unowned; a change another
-Application's graph also reaches selects just that Application. Selection is
+Application's graph also reaches selects just that Application. An exec or
+container plugin can read any file, so its inputs are declared instead: an
+Application's `argocd.argoproj.io/manifest-generate-paths` annotation adds
+ownership with Argo CD's syntax (`;`-separated paths relative to each source's
+path, `.` for the path itself, or relative to the repository root with a
+leading `/`; `path.Match` globs whose `*` never crosses a `/`). A relative entry
+needs a source with a local path, OCI sources contribute nothing, and an entry
+that resolves to the repository root or escapes it owns nothing. Declared paths
+are selection-only and never key the persistent render cache. Selection is
 unioned across both diff sides by Application identity, because a deleted file
 is only in the left tree's graph. If every changed path can be mapped, only
 affected Applications render. If any path is unowned, non-strict mode warns and
