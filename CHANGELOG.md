@@ -1,5 +1,28 @@
 # Changelog
 
+## [0.3.4](https://github.com/sholdee/drydock/compare/v0.3.3...v0.3.4) (2026-10-08)
+
+
+### Features
+
+* **diff:** honour argocd.argoproj.io/manifest-generate-paths in changed-only selection ([#382](https://github.com/sholdee/drydock/issues/382)) ([c97fccd](https://github.com/sholdee/drydock/commit/c97fccdc410105b60fb232cf62aa85797ca3f20d)), closes [#365](https://github.com/sholdee/drydock/issues/365)
+* **diff:** select only the Applications an Argo CD repository or cluster change reaches ([#384](https://github.com/sholdee/drydock/issues/384)) ([82a0d71](https://github.com/sholdee/drydock/commit/82a0d71eff6845e36de7c7210cd717d88b29b406)), closes [#366](https://github.com/sholdee/drydock/issues/366)
+* **discovery:** add --discover-manifest for external Application/ApplicationSet files ([#385](https://github.com/sholdee/drydock/issues/385)) ([d524fa2](https://github.com/sholdee/drydock/commit/d524fa2be29c5d83a6945f7071b588d3498017fc))
+
+
+### Bug Fixes
+
+* **avpcompat:** substitute placeholders exactly where argocd-vault-plugin does ([#376](https://github.com/sholdee/drydock/issues/376)) ([8e5b971](https://github.com/sholdee/drydock/commit/8e5b9712749e792839c0e066ee589147cdbe1821))
+* **deps:** update module github.com/go-git/go-git/v5 to v5.19.3 ([#386](https://github.com/sholdee/drydock/issues/386)) ([29b68b6](https://github.com/sholdee/drydock/commit/29b68b62b64c38459b07a4b7e4c73dc5af673531))
+* **deps:** update module sigs.k8s.io/kustomize/api to v0.21.2 ([#380](https://github.com/sholdee/drydock/issues/380)) ([0326e07](https://github.com/sholdee/drydock/commit/0326e07859a3e66e6483f9161dc9b031b573b833))
+
+
+### Miscellaneous Chores
+
+* **deps:** update dependency lefthook to v2.1.16 ([#381](https://github.com/sholdee/drydock/issues/381)) ([ede3724](https://github.com/sholdee/drydock/commit/ede3724a136700cb799aa85ab62dc6c02d3a1d93))
+* **deps:** update dependency lefthook to v2.1.17 ([#388](https://github.com/sholdee/drydock/issues/388)) ([9ddcd17](https://github.com/sholdee/drydock/commit/9ddcd17a6563e2b6ad894119361b805800e1d696))
+* **deps:** update golang:1.27.1 docker digest to e0174e5 ([#378](https://github.com/sholdee/drydock/issues/378)) ([9da25d5](https://github.com/sholdee/drydock/commit/9da25d5e83b63077e4dab1ecebe5d42185a3312b))
+
 ## [0.3.3](https://github.com/sholdee/drydock/compare/v0.3.2...v0.3.3) (2026-10-02)
 
 
