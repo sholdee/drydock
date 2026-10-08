@@ -298,7 +298,7 @@ func discoveredApplicationSelectionInput(appFile discovery.ApplicationFile) Appl
 
 func discoveredApplicationInputPaths(appFile discovery.ApplicationFile) []string {
 	paths := append([]string(nil), appFile.InputPaths...)
-	if len(paths) == 0 && appFile.Path != "" {
+	if len(paths) == 0 && appFile.Path != "" && appFile.Tier != discovery.SourceTierExternalManifest {
 		paths = []string{appFile.Path}
 	}
 	for i := range paths {
@@ -309,7 +309,7 @@ func discoveredApplicationInputPaths(appFile discovery.ApplicationFile) []string
 
 func generatedApplicationInputPaths(appSetFile discovery.ApplicationSetFile, app appset.GeneratedApplication) []string {
 	paths := append([]string(nil), appSetFile.InputPaths...)
-	if len(paths) == 0 && appSetFile.Path != "" {
+	if len(paths) == 0 && appSetFile.Path != "" && appSetFile.Tier != discovery.SourceTierExternalManifest {
 		paths = []string{appSetFile.Path}
 	}
 	for i := range paths {

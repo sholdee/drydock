@@ -70,6 +70,11 @@ type Config struct {
 	// DiscoverIgnores removes repository-relative glob matches from repository
 	// discovery before decoding, including explicit path scans.
 	DiscoverIgnores []string
+	// DiscoverManifestPaths adds operator-supplied Application and
+	// ApplicationSet files outside the repository to discovery. Relative paths
+	// resolve against the current working directory; diffs feed the same files
+	// to both sides.
+	DiscoverManifestPaths []string
 	// Strict promotes supported diagnostics that are warnings by default to
 	// operation errors.
 	Strict bool
@@ -312,6 +317,7 @@ func (client *Client) requestOptions() requestopts.Options {
 		MaxDiscoveryDepthSet:           maxDiscoveryDepthSet,
 		DiscoverKustomizePaths:         append([]string(nil), client.config.DiscoverKustomizePaths...),
 		DiscoverIgnores:                append([]string(nil), client.config.DiscoverIgnores...),
+		DiscoverManifestPaths:          append([]string(nil), client.config.DiscoverManifestPaths...),
 		ChangedOnly:                    client.config.ChangedOnly,
 		ChangedOnlyIncludes:            append([]string(nil), client.config.ChangedOnlyIncludes...),
 		ChangedOnlyIgnores:             append([]string(nil), client.config.ChangedOnlyIgnores...),

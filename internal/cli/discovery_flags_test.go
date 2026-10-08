@@ -5,6 +5,9 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	gitconfig "github.com/go-git/go-git/v5/config"
+	"github.com/go-git/go-git/v5/plumbing"
 )
 
 const cliDiscoverIgnoreHint = "(use --discover-ignore to exclude non-deployable manifests from discovery)"
@@ -132,4 +135,63 @@ func TestMaxDiscoveryDepthFlagDistinguishesDefaultFromExplicitZero(t *testing.T)
 	if request := recorder.listRequests[0]; request.MaxDiscoveryDepth != 0 || !request.MaxDiscoveryDepthSet {
 		t.Fatalf("explicit max discovery depth = %d set=%t, want 0 set=true", request.MaxDiscoveryDepth, request.MaxDiscoveryDepthSet)
 	}
+}
+
+func TestDiffAndTestAppsDiscoverManifestEqualsForm(t *testing.T) {
+	root := t.TempDir()
+	repo, wt := initCLIGitRepo(t, root)
+	if _, err := repo.CreateRemote(&gitconfig.RemoteConfig{Name: "origin", URLs: []string{"https://github.com/example/manifests.git"}}); err != nil {
+		t.Fatalf("CreateRemote() error = %v", err)
+	}
+	if err := repo.Storer.SetReference(plumbing.NewSymbolicReference("refs/remotes/origin/HEAD", "refs/remotes/origin/main")); err != nil {
+		t.Fatalf("SetReference() error = %v", err)
+	}
+	writeCLIDiscoverManifestConfigMap(t, root, "baseline")
+	commitCLIGitRepo(t, repo, wt, "baseline")
+	checkoutCLIGitBranch(t, wt, "feature")
+	writeCLIDiscoverManifestConfigMap(t, root, "feature")
+	commitCLIGitRepo(t, repo, wt, "feature")
+
+	external := filepath.Join(t.TempDir(), "appset.yaml")
+	writeCLITestFile(t, external, `apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: external
+  namespace: argocd
+spec:
+  generators:
+    - list:
+        elements:
+          - name: demo
+  template:
+    metadata:
+      name: '{{name}}'
+    spec:
+      project: default
+      source:
+        repoURL: https://github.com/example/manifests
+        targetRevision: main
+        path: manifests/{{name}}
+      destination:
+        name: in-cluster
+        namespace: default
+`)
+
+	result := runCLI(t, "diff", "apps", "--repo", root, "--ref-orig", "master", "--ref", "feature", "--exit-code=false", "--offline", "--discover-manifest="+external)
+	assertStdoutContainsAll(t, result, "-  value: baseline", "+  value: feature")
+
+	result = runCLI(t, "test", "apps", "--path", root, "--offline", "--discover-manifest="+external)
+	assertStdoutContainsAll(t, result, "PASS argocd/demo")
+}
+
+func writeCLIDiscoverManifestConfigMap(t *testing.T, root, value string) {
+	t.Helper()
+	writeCLITestFile(t, filepath.Join(root, "manifests", "demo", "configmap.yaml"), `apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: demo
+  namespace: default
+data:
+  value: `+value+`
+`)
 }

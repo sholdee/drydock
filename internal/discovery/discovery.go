@@ -27,6 +27,10 @@ const (
 	SourceTierExplicitRendered
 	SourceTierPolicyBootstrap
 	SourceTierRenderedFleet
+	// SourceTierExternalManifest marks objects loaded from an operator-supplied
+	// --discover-manifest file outside the trees under analysis. Their Path is
+	// the absolute file path and never a repository path.
+	SourceTierExternalManifest
 )
 
 type ApplicationFile struct {

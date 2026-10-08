@@ -218,7 +218,7 @@ func discoveryTierPriority(tier discovery.SourceTier) int {
 	switch tier {
 	case discovery.SourceTierExplicitRendered:
 		return 0
-	case discovery.SourceTierStatic:
+	case discovery.SourceTierStatic, discovery.SourceTierExternalManifest:
 		return 1
 	case discovery.SourceTierPolicyBootstrap:
 		return 2

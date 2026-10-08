@@ -408,6 +408,7 @@ Newline-delimited inputs are passed as repeated drydock flags:
 - `changed-only-ignore`
 - `discover-kustomize`
 - `discover-ignore`
+- `discover-manifest`
 - `repo-map`
 - `cache-restore-keys`
 - `extra-test-args`
@@ -502,6 +503,7 @@ extra-diff-args: |
 | `show-ignored-fields` | `false` | Show drydock default ignored diff fields. |
 | `discover-kustomize` | unset | Newline-delimited local Kustomize paths to render during Application discovery. |
 | `discover-ignore` | unset | Newline-delimited repository-relative glob patterns excluded from discovery before decoding. Applies to test, diff, and image diff steps. |
+| `discover-manifest` | unset | Newline-delimited Argo CD `Application` or `ApplicationSet` YAML files outside the repository to add to discovery. Paths are absolute or relative to the workspace; `..` components are rejected. Applies to test, diff, and image diff steps. |
 | `repo-map` | unset | Newline-delimited repository URL mappings in `URL=PATH` form. |
 | `kube-version` | unset | Kubernetes version for rendering capabilities. Overrides per-app `kubeVersion`. |
 | `api-versions` | unset | Newline-delimited additional Kubernetes API versions for capability-gated rendering, unioned with per-app `apiVersions`. Accepts `group/version` or `group/version/Kind` form. |

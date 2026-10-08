@@ -255,6 +255,31 @@ func TestActionDiscoverIgnoreInputDeclaredAndWiredToRunStep(t *testing.T) {
 	}
 }
 
+func TestActionDiscoverManifestInputDeclaredAndWiredToRunStep(t *testing.T) {
+	actionYAML := loadActionYAML(t)
+
+	// Input must be declared.
+	if !strings.Contains(actionYAML, "discover-manifest:") {
+		t.Fatalf("action.yml missing discover-manifest input declaration")
+	}
+
+	// Run step must wire the env var.
+	runIdx := strings.Index(actionYAML, "- name: Run drydock\n")
+	if runIdx == -1 {
+		t.Fatalf("action.yml missing 'Run drydock' step")
+	}
+	nextStep := strings.Index(actionYAML[runIdx+1:], "\n    - name: ")
+	var runBlock string
+	if nextStep == -1 {
+		runBlock = actionYAML[runIdx:]
+	} else {
+		runBlock = actionYAML[runIdx : runIdx+1+nextStep]
+	}
+	if !strings.Contains(runBlock, "DRYDOCK_INPUT_DISCOVER_MANIFEST: ${{ inputs.discover-manifest }}") {
+		t.Fatalf("Run step env block missing DRYDOCK_INPUT_DISCOVER_MANIFEST wiring:\n%s", runBlock)
+	}
+}
+
 // The Run step needs the base ref even when fetch-base is skipped
 // (render-test-only configs): run.sh writes the origin/HEAD symref from these
 // env vars so drydock's self-repo resolution works in ALL modes.

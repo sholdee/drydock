@@ -363,6 +363,7 @@ append_value_flag common_args "${DRYDOCK_INPUT_PLUGIN_POLICY_REPO}" "--plugin-po
 append_value_flag common_args "${DRYDOCK_INPUT_KUBE_VERSION}" "--kube-version"
 append_lines common_args "${DRYDOCK_INPUT_DISCOVER_KUSTOMIZE}" "--discover-kustomize"
 append_lines common_args "${DRYDOCK_INPUT_DISCOVER_IGNORE}" "--discover-ignore"
+append_lines common_args "${DRYDOCK_INPUT_DISCOVER_MANIFEST}" "--discover-manifest"
 append_lines common_args "${DRYDOCK_INPUT_REPO_MAP}" "--repo-map"
 append_lines common_args "${DRYDOCK_INPUT_API_VERSIONS}" "--api-versions"
 if [[ -n "${DRYDOCK_INPUT_CHANGED_ONLY}" ]]; then

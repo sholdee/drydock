@@ -333,6 +333,11 @@ func resolveDiffRequestPaths(ctx context.Context, request DiffRequest, computeCh
 	if err := validateDiffRefOptions(request, hasRef); err != nil {
 		return request, cleanup, err
 	}
+	discoveryOptions, err := withDiscoverManifests(request.DiscoveryOptions)
+	if err != nil {
+		return request, cleanup, err
+	}
+	request.DiscoveryOptions = discoveryOptions
 	if hasRef {
 		request.Repo = repoPath
 	}
@@ -493,6 +498,7 @@ func (request DiffRequest) buildAcquisitionOptions(forbiddenRoots []string) Acqu
 func cloneDiscoveryOptions(input DiscoveryOptions) DiscoveryOptions {
 	input.DiscoverKustomizePaths = append([]string(nil), input.DiscoverKustomizePaths...)
 	input.DiscoverIgnoreGlobs = append([]string(nil), input.DiscoverIgnoreGlobs...)
+	input.DiscoverManifestPaths = append([]string(nil), input.DiscoverManifestPaths...)
 	return input
 }
 

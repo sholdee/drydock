@@ -31,17 +31,17 @@ func (o Orchestrator) discoverRepository(ctx context.Context, root string, reque
 	request.discoveryPathMemo = &sync.Map{}
 	request.appsetGenerationMemo = &sync.Map{}
 
-	discovered, err := discovery.Scan(root, discovery.Options{IgnoreGlobs: request.DiscoverIgnoreGlobs})
+	discovered, externalDiags, err := scanRepositoryDiscovery(root, request)
 	if err != nil {
-		return discovery.Result{}, nil, nil, renderCache, "", err
+		return discovered, externalDiags, nil, renderCache, "", err
 	}
-	markDiscoveryTier(&discovered, discovery.SourceTierStatic, nil)
 
 	appsetOptions, providerDiags, err := applicationSetOptionsForRequest(request)
 	if err != nil {
 		return discovered, providerDiags, nil, renderCache, "", diagnosticsError(providerDiags, err)
 	}
 	var allDiags []diagnostic.Diagnostic
+	allDiags = append(allDiags, externalDiags...)
 	allDiags = append(allDiags, providerDiags...)
 	var allEvents []cacheevent.Event
 
@@ -90,6 +90,17 @@ func (o Orchestrator) discoverRepository(ctx context.Context, root string, reque
 	}
 
 	return discovered, dedupeDiagnostics(allDiags), allEvents, renderCache, renderSig, nil
+}
+
+// scanRepositoryDiscovery scans root for committed objects and adds the
+// operator-supplied --discover-manifest objects.
+func scanRepositoryDiscovery(root string, request BuildRequest) (discovery.Result, []diagnostic.Diagnostic, error) {
+	discovered, err := discovery.Scan(root, discovery.Options{IgnoreGlobs: request.DiscoverIgnoreGlobs})
+	if err != nil {
+		return discovery.Result{}, nil, err
+	}
+	markDiscoveryTier(&discovered, discovery.SourceTierStatic, nil)
+	return mergeDiscoverManifests(request, discovered)
 }
 
 func (o Orchestrator) applyExplicitKustomizeDiscovery(ctx context.Context, root string, request BuildRequest, discovered discovery.Result) (discovery.Result, []diagnostic.Diagnostic, []cacheevent.Event, error) {

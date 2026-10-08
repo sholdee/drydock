@@ -388,6 +388,32 @@ func TestRunPassesDiscoverIgnoreToAllCommands(t *testing.T) {
 	}
 }
 
+func TestRunPassesDiscoverManifestToAllCommands(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell action tests require bash")
+	}
+
+	workDir := runCommentScenario(t, commentScenario{
+		commentMode:      "both",
+		diffOutput:       true,
+		imageOutput:      true,
+		runTest:          true,
+		discoverManifest: "/tmp/platform/appset.yaml\nexternal/apps.yaml",
+	})
+
+	args := readFile(t, filepath.Join(workDir, "drydock-args.txt"))
+	lines := strings.Split(strings.TrimSpace(args), "\n")
+	if len(lines) != 4 {
+		t.Fatalf("drydock invocations = %q, want test, diff apps, diff images name, diff images markdown", args)
+	}
+	for _, line := range lines {
+		if !strings.Contains(line, "--discover-manifest /tmp/platform/appset.yaml") ||
+			!strings.Contains(line, "--discover-manifest external/apps.yaml") {
+			t.Fatalf("drydock invocation missing discover-manifest paths:\n%s", line)
+		}
+	}
+}
+
 func TestRunPassesMarkdownDiagnosticsOnlyToMarkdownInvocations(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("shell action tests require bash")
@@ -805,6 +831,7 @@ type commentScenario struct {
 	changedOnlyInclude              string
 	changedOnlyIgnore               string
 	discoverIgnore                  string
+	discoverManifest                string
 	markdownDiagnostics             string
 	omitDiffHTMLArtifactNameFromEnv bool
 	cachePath                       string
@@ -829,6 +856,7 @@ func runCommentScenario(t *testing.T, scenario commentScenario) string {
 		"DRYDOCK_INPUT_CHANGED_ONLY_INCLUDE="+scenario.changedOnlyInclude,
 		"DRYDOCK_INPUT_CHANGED_ONLY_IGNORE="+scenario.changedOnlyIgnore,
 		"DRYDOCK_INPUT_DISCOVER_IGNORE="+scenario.discoverIgnore,
+		"DRYDOCK_INPUT_DISCOVER_MANIFEST="+scenario.discoverManifest,
 		"DRYDOCK_INPUT_MARKDOWN_DIAGNOSTICS="+scenario.markdownDiagnostics,
 		"DRYDOCK_INPUT_RUN_DIFF=true",
 		"DRYDOCK_INPUT_RUN_IMAGE_DIFF="+boolString(!scenario.skipImageDiff),
@@ -1170,6 +1198,7 @@ func defaultRunEnv(tmp, workDir, outputPath string) []string {
 		"DRYDOCK_INPUT_DISABLE_PLUGIN_POLICY=false",
 		"DRYDOCK_INPUT_DISCOVER_IGNORE=",
 		"DRYDOCK_INPUT_DISCOVER_KUSTOMIZE=",
+		"DRYDOCK_INPUT_DISCOVER_MANIFEST=",
 		"DRYDOCK_INPUT_ENABLE_AVP_COMPAT=false",
 		"DRYDOCK_INPUT_ENABLE_KSOPS_COMPAT=false",
 		"DRYDOCK_INPUT_ENABLE_PLUGINS=false",

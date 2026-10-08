@@ -115,13 +115,16 @@ func localSourceAlreadyDiscovered(root, sourceRoot string, discovered discovery.
 }
 
 func discoveryHasPathUnder(discovered discovery.Result, root string) bool {
+	// --discover-manifest objects carry the external file's absolute path,
+	// never a repository path, so they cannot show that a repository
+	// directory was already discovered.
 	for _, item := range discovered.Applications {
-		if pathUnderRoot(item.Path, root) {
+		if item.Tier != discovery.SourceTierExternalManifest && pathUnderRoot(item.Path, root) {
 			return true
 		}
 	}
 	for _, item := range discovered.ApplicationSets {
-		if pathUnderRoot(item.Path, root) {
+		if item.Tier != discovery.SourceTierExternalManifest && pathUnderRoot(item.Path, root) {
 			return true
 		}
 	}

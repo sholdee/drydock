@@ -469,6 +469,24 @@ func TestPublicConfigRoutesProviderFixtureDataWithoutInternalTypes(t *testing.T)
 		t.Fatalf("diff ApplicationSetProviderData.Clusters = %#v, want public data converted to internal request data", got)
 	}
 }
+
+func TestPublicConfigRoutesDiscoverManifestPaths(t *testing.T) {
+	client := NewClient(Config{
+		Path:                  "/tmp/repo",
+		DiscoverManifestPaths: []string{"/tmp/platform/appset.yaml"},
+	})
+
+	buildRequest := client.buildRequest()
+	if !slices.Equal(buildRequest.DiscoverManifestPaths, []string{"/tmp/platform/appset.yaml"}) {
+		t.Fatalf("DiscoverManifestPaths = %#v, want /tmp/platform/appset.yaml", buildRequest.DiscoverManifestPaths)
+	}
+
+	diffRequest := client.diffRequest()
+	if !slices.Equal(diffRequest.DiscoverManifestPaths, []string{"/tmp/platform/appset.yaml"}) {
+		t.Fatalf("diff DiscoverManifestPaths = %#v, want /tmp/platform/appset.yaml", diffRequest.DiscoverManifestPaths)
+	}
+}
+
 func TestListApplications(t *testing.T) {
 	result, err := ListApplications(context.Background(), Config{Path: filepath.Join("..", "..", "testdata", "applications", "e2e")})
 	if err != nil {

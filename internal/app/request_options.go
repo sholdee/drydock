@@ -5,6 +5,7 @@ import (
 
 	"github.com/sholdee/drydock/internal/appset"
 	"github.com/sholdee/drydock/internal/chart"
+	"github.com/sholdee/drydock/internal/discovery"
 	"github.com/sholdee/drydock/internal/ociartifact"
 	"github.com/sholdee/drydock/internal/pluginpolicy"
 	"github.com/sholdee/drydock/internal/remote"
@@ -18,6 +19,11 @@ type DiscoveryOptions struct {
 	MaxDiscoveryDepthSet   bool
 	DiscoverKustomizePaths []string
 	DiscoverIgnoreGlobs    []string
+	// DiscoverManifestPaths are operator-supplied Application/ApplicationSet
+	// files outside the repository. Both diff sides share one load.
+	DiscoverManifestPaths []string
+
+	discoverManifests *discovery.Result
 }
 
 type AcquisitionOptions struct {

@@ -111,6 +111,9 @@ inputs:
   discover-ignore:
     description: Newline-delimited repository-relative glob patterns excluded from discovery before decoding.
     required: false
+  discover-manifest:
+    description: Newline-delimited Argo CD Application or ApplicationSet YAML files outside the repository to add to discovery. Paths are absolute or relative to the workspace; `..` components are rejected.
+    required: false
   repo-map:
     description: Newline-delimited repository URL mappings in URL=PATH form.
     required: false
@@ -452,6 +455,7 @@ runs:
         DRYDOCK_INPUT_DISABLE_PLUGIN_POLICY: ${{ inputs.disable-plugin-policy }}
         DRYDOCK_INPUT_DISCOVER_IGNORE: ${{ inputs.discover-ignore }}
         DRYDOCK_INPUT_DISCOVER_KUSTOMIZE: ${{ inputs.discover-kustomize }}
+        DRYDOCK_INPUT_DISCOVER_MANIFEST: ${{ inputs.discover-manifest }}
         DRYDOCK_INPUT_ENABLE_AVP_COMPAT: ${{ inputs.enable-avp-compat }}
         DRYDOCK_INPUT_ENABLE_KSOPS_COMPAT: ${{ inputs.enable-ksops-compat }}
         DRYDOCK_INPUT_ENABLE_PLUGINS: ${{ inputs.enable-plugins }}

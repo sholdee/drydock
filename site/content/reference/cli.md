@@ -83,6 +83,22 @@ The path is relative to `--path`, must not escape through `..`, and must not
 include symlinked path components. Explicitly rendered Kustomize objects take
 precedence over committed duplicates with the same identity.
 
+When an `ApplicationSet` lives in a different repository from the manifests it
+renders, pass its file with repeatable `--discover-manifest`. The path may be
+absolute and outside the repository; on a diff, the same file feeds both sides:
+
+```bash
+drydock diff apps --repo . --ref-orig origin/main --ref HEAD \
+  --discover-manifest=/tmp/platform/appsets/manifests.yaml
+```
+
+Every command with path discovery accepts the flag: `build`, `get`, `test`,
+`diff`, and `diag`. A relative path resolves against the current working
+directory, unlike `--discover-kustomize`, which is relative to `--path`. The
+file must hold only Argo CD `Application` or `ApplicationSet` documents, must
+not contain `..` path components, and must not be a symlink. It is not read from
+either ref snapshot and is never a changed path of the diff.
+
 For repositories that also commit non-deployable YAML, such as unrendered
 chart templates that fail strict decoding, exclude those files from discovery
 with repeatable `--discover-ignore` globs:
