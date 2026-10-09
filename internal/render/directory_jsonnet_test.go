@@ -318,14 +318,39 @@ func TestDirectoryRendererRejectsJsonnetLibEscapes(t *testing.T) {
 	}
 }
 
-func TestDirectoryRendererRejectsJsonnetImportEscapes(t *testing.T) {
+func TestDirectoryRendererAllowsJsonnetImportsAcrossRepoRoot(t *testing.T) {
+	// A relative import may leave the Application path as long as it stays
+	// under the repository root: the Argo CD repo-server confines Jsonnet
+	// imports to the repository, not to the Application path.
 	root := t.TempDir()
-	writeFile(t, filepath.Join(root, "outside.libsonnet"), `{
+	writeFile(t, filepath.Join(root, "shared", "common.libsonnet"), `{
+  apiVersion: 'v1',
+  kind: 'ConfigMap',
+  metadata: { name: 'from-sibling-dir' },
+}`)
+	writeFile(t, filepath.Join(root, "apps", "main.jsonnet"), `import '../shared/common.libsonnet'`)
+
+	result, _, err := (DirectoryRenderer{}).Render(context.Background(), ResolvedSource{
+		RepoRoot: root,
+		Path:     "apps",
+	}, RenderOptions{})
+	if err != nil {
+		t.Fatalf("Render() error = %v", err)
+	}
+	if got := directoryManifestNames(result); !reflect.DeepEqual(got, []string{"from-sibling-dir"}) {
+		t.Fatalf("rendered names = %#v, want from-sibling-dir", got)
+	}
+}
+
+func TestDirectoryRendererRejectsJsonnetImportsEscapingRepoRoot(t *testing.T) {
+	base := t.TempDir()
+	root := filepath.Join(base, "repo")
+	writeFile(t, filepath.Join(base, "outside.libsonnet"), `{
   apiVersion: 'v1',
   kind: 'ConfigMap',
   metadata: { name: 'outside' },
 }`)
-	writeFile(t, filepath.Join(root, "apps", "main.jsonnet"), `import '../outside.libsonnet'`)
+	writeFile(t, filepath.Join(root, "apps", "main.jsonnet"), `import '../../outside.libsonnet'`)
 
 	_, _, err := (DirectoryRenderer{}).Render(context.Background(), ResolvedSource{
 		RepoRoot: root,
@@ -334,8 +359,25 @@ func TestDirectoryRendererRejectsJsonnetImportEscapes(t *testing.T) {
 	if err == nil {
 		t.Fatal("Render() error = nil, want Jsonnet import escape error")
 	}
-	if !strings.Contains(err.Error(), "jsonnet import") {
-		t.Fatalf("Render() error = %v, want jsonnet import message", err)
+	if !strings.Contains(err.Error(), "jsonnet import") || !strings.Contains(err.Error(), "escapes repository root") {
+		t.Fatalf("Render() error = %v, want jsonnet import repository-root escape message", err)
+	}
+}
+
+func TestDirectoryRendererRejectsJsonnetDirectoryImports(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "apps", "lib", "common.libsonnet"), `{}`)
+	writeFile(t, filepath.Join(root, "apps", "main.jsonnet"), `import 'lib'`)
+
+	_, _, err := (DirectoryRenderer{}).Render(context.Background(), ResolvedSource{
+		RepoRoot: root,
+		Path:     "apps",
+	}, RenderOptions{})
+	if err == nil {
+		t.Fatal("Render() error = nil, want non-regular file error")
+	}
+	if !strings.Contains(err.Error(), "is not a regular file") {
+		t.Fatalf("Render() error = %v, want non-regular file message", err)
 	}
 }
 
