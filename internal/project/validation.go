@@ -30,9 +30,19 @@ func ValidateApplications(apps []argoappv1.Application, projects []argoappv1.App
 		projectName := applicationProject(app)
 		proj, ok := index[projectName]
 		if !ok {
-			if projectName == argoappv1.DefaultAppProjectName || !hasLocalProjects {
+			switch {
+			case projectName == argoappv1.DefaultAppProjectName:
 				proj = implicitDefaultProject()
-			} else {
+			case !hasLocalProjects:
+				// The repository declares no AppProject, so the one this
+				// Application names lives only on the cluster. Validate
+				// against the permissive implicit default so settings-derived
+				// checks still apply, and record that in a deferred
+				// diagnostic rather than reporting denials in the name of a
+				// project the Application never referenced.
+				proj = implicitDefaultProject()
+				diags = append(diags, unresolvedProjectWarning(app, projectName))
+			default:
 				diags = append(diags, projectWarning(app, fmt.Sprintf("Application %s references missing AppProject %q", applicationName(app), projectName)))
 				continue
 			}
@@ -84,11 +94,17 @@ func applicationProject(app argoappv1.Application) string {
 	return app.Spec.GetProject()
 }
 
+// implicitDefaultProject stands in for an AppProject drydock cannot see: the
+// auto-created default project, or whatever project an Application names when
+// the repository declares none. It is permissive on every axis, source
+// namespaces included, because the real project's spec is unknown offline and
+// a stand-in must never deny what the cluster might permit.
 func implicitDefaultProject() argoappv1.AppProject {
 	return argoappv1.AppProject{
 		Name: argoappv1.DefaultAppProjectName,
 		Spec: argoappv1.AppProjectSpec{
-			SourceRepos: []string{"*"},
+			SourceRepos:      []string{"*"},
+			SourceNamespaces: []string{"*"},
 			Destinations: []argoappv1.ApplicationDestination{{
 				Name:      "*",
 				Server:    "*",
@@ -468,6 +484,16 @@ func redactOCIRepoURL(raw string) string {
 
 func projectWarning(app argoappv1.Application, message string) diagnostic.Diagnostic {
 	return warning(projectDiagnosticCategory, message, app)
+}
+
+// unresolvedProjectWarning reports an Application whose AppProject is not in
+// the repository while the repository declares no AppProject at all. It is a
+// deferred diagnostic: nothing is wrong with the repository, drydock simply
+// cannot see the project, so actionable mode hides it.
+func unresolvedProjectWarning(app argoappv1.Application, projectName string) diagnostic.Diagnostic {
+	diag := projectWarning(app, fmt.Sprintf("Application %s references AppProject %q, which is not declared in the repository; validating against the implicit default project", applicationName(app), projectName))
+	diag.Code = diagnostic.CodeProjectUnresolved
+	return diag
 }
 
 func repositoryWarning(app argoappv1.Application, message string) diagnostic.Diagnostic {

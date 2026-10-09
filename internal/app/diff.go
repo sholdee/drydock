@@ -105,7 +105,7 @@ func (o Orchestrator) DiffApps(ctx context.Context, request DiffRequest) (result
 	}()
 
 	leftBuild, rightBuild, diagnostics, err := o.buildDiffSides(ctx, request)
-	diagnostics = request.filterProjectDiagnostics(append(policyDiags, diagnostics...))
+	diagnostics = request.filterProjectDiagnostics(dedupeProjectDiagnostics(append(policyDiags, diagnostics...)))
 	cacheEvents := cacheEventsFromBuilds(leftBuild, rightBuild)
 	buildErr := err
 	if buildErr != nil && !hasRenderedDiffInput(leftBuild, rightBuild) {
@@ -260,7 +260,7 @@ func (o Orchestrator) DiffImages(ctx context.Context, request DiffRequest) (resu
 	}()
 
 	leftBuild, rightBuild, diagnostics, err := o.buildDiffSides(ctx, request)
-	diagnostics = request.filterProjectDiagnostics(append(policyDiags, diagnostics...))
+	diagnostics = request.filterProjectDiagnostics(dedupeProjectDiagnostics(append(policyDiags, diagnostics...)))
 	cacheEvents := cacheEventsFromBuilds(leftBuild, rightBuild)
 	buildErr := err
 	if buildErr != nil && !hasRenderedDiffInput(leftBuild, rightBuild) {
@@ -648,4 +648,32 @@ func diffDocuments(build BuildResult) ([]diff.Document, error) {
 		})
 	}
 	return docs, nil
+}
+
+// dedupeProjectDiagnostics collapses AppProject validation diagnostics that
+// both diff sides report identically. They are facts about the manifests
+// (project, repository, and cluster metadata codes), so one that holds on
+// each side is one finding, reported once as build and test report it. Other
+// diagnostics stay per side: a source-resolution warning, for example, is
+// about how that side resolved, and TestDiffRefSelfRepoForkNearMissWarnsOncePerSide
+// pins that.
+func dedupeProjectDiagnostics(input []diagnostic.Diagnostic) []diagnostic.Diagnostic {
+	if len(input) == 0 {
+		return nil
+	}
+	out := make([]diagnostic.Diagnostic, 0, len(input))
+	seen := map[string]struct{}{}
+	for _, diag := range input {
+		if diagnostic.ClassifyProjectDiagnostic(diag) == diagnostic.ProjectDiagnosticClassNonProject {
+			out = append(out, diag)
+			continue
+		}
+		key := fmt.Sprintf("%s\x00%s\x00%s\x00%s\x00%s\x00%s", diag.Code, diag.Severity, diag.Category, diag.Message, diag.Provenance.Path, diag.Provenance.Pointer)
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		out = append(out, diag)
+	}
+	return out
 }

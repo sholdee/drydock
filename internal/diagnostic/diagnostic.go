@@ -190,6 +190,8 @@ func projectCode(message string) string {
 		return CodeProjectScopedClustersDeferred
 	case strings.Contains(message, "references missing AppProject"):
 		return CodeProjectMissing
+	case strings.Contains(message, "not declared in the repository"):
+		return CodeProjectUnresolved
 	default:
 		return CodeProjectUnspecified
 	}

@@ -452,6 +452,12 @@ Supported:
   metadata-only AppProject diagnostics. Use `--project-diagnostics=all` for full
   compatibility audits, or `--project-diagnostics=off` to suppress AppProject
   diagnostics.
+- Repositories that declare no AppProject. Every Application then validates
+  against the permissive implicit `default` project, whatever project it
+  names; an Application naming another project records that with a deferred
+  `project.unresolved` diagnostic, visible only in `all` mode. The actionable
+  `project.missing` warning is reserved for repositories that declare other
+  AppProjects but not the named one.
 - `argocd-cmd-params-cm` runtime-boundary diagnostics for settings that imply
   live repo-server, controller, or ApplicationSet controller behavior. These
   settings are parsed as metadata and do not mutate render behavior.
@@ -498,7 +504,7 @@ implemented or documented as runtime boundaries.
 | Local AppProject discovery | `discovery.Scan`, `appendDiscoveredProjects` | `TestScanDiscoversAppProjects`, `TestScanPreservesDocumentIdentityForTypedObjects` | No follow-up |
 | Rendered AppProject discovery | `applyExplicitKustomizeDiscovery`, `discoverRenderedFleet`, bootstrap discovery | Existing explicit-rendered and fleet discovery tests | Phase 2 fixture expansion |
 | Duplicate or conflicting projects | `mergeProjects`, `resolveDiscoveryConflict`, same-scan `projectIndex` last-wins | Existing rendered precedence coverage | Discovery-focused follow-up |
-| Implicit default project | `effectiveProject`, `implicitDefaultProject` | `TestValidateApplicationsAllowsImplicitDefaultProject`, `TestValidateApplicationsCurrentBehaviorAllowsImplicitDefaultProjectWhenOtherLocalProjectsExist` | No follow-up |
+| Implicit default project | `effectiveProject`, `implicitDefaultProject` | `TestValidateApplicationsAllowsImplicitDefaultProject`, `TestValidateApplicationsImplicitDefaultProjectPermitsAnySourceNamespace`, `TestValidateApplicationsDefersUnresolvedProjectWithoutLocalProjects`, `TestValidateApplicationsCurrentBehaviorAllowsImplicitDefaultProjectWhenOtherLocalProjectsExist` | No follow-up |
 | Missing non-default project | `ValidateApplications`, `projectIndex`, `applicationProject` | `TestValidateApplicationsCurrentBehaviorReportsMissingNonDefaultProject` | No follow-up |
 | Source repository matching | `validateSources`, Argo `IsSourcePermitted` | Existing source policy tests, source parity fixtures, `TestValidateApplicationsCurrentBehaviorReportsDeniedMultiSourceRepository` | Phase 3 remediation for any future parity gaps |
 | Destination matching | `validateDestination`, `destinationCluster`, Argo `IsDestinationPermitted` | Existing destination and project-scoped cluster tests, destination parity fixtures | Phase 3 remediation for deferred metadata cases |

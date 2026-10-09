@@ -594,3 +594,47 @@ func settingsWithCluster(name, server, project string) config.ArgoSettings {
 	}
 	return settings
 }
+
+func TestValidateApplicationsImplicitDefaultProjectPermitsAnySourceNamespace(t *testing.T) {
+	// With no AppProject declared, the implicit default stands in for a
+	// project drydock cannot see, so it must not deny source namespaces it
+	// knows nothing about (apps-in-any-namespace layouts, issue #389).
+	apps := []argoappv1.Application{applicationInNamespace("myapp", "argocd-tenant-a", "", argoappv1.ApplicationSource{
+		RepoURL: "https://github.com/example/repo",
+		Path:    "apps/myapp",
+	}, argoappv1.ApplicationDestination{
+		Server:    "https://kubernetes.default.svc",
+		Namespace: "workloads",
+	})}
+
+	diags := ValidateApplications(apps, nil, config.DefaultSettings())
+	if len(diags) != 0 {
+		t.Fatalf("Diagnostics = %#v, want none for the implicit default project", diags)
+	}
+}
+
+func TestValidateApplicationsDefersUnresolvedProjectWithoutLocalProjects(t *testing.T) {
+	apps := []argoappv1.Application{applicationInNamespace("myapp", "argocd-tenant-a", "myproject", argoappv1.ApplicationSource{
+		RepoURL: "https://github.com/example/repo",
+		Path:    "apps/myapp",
+	}, argoappv1.ApplicationDestination{
+		Server:    "https://kubernetes.default.svc",
+		Namespace: "workloads",
+	})}
+
+	diags := ValidateApplications(apps, nil, config.DefaultSettings())
+	if len(diags) != 1 {
+		t.Fatalf("Diagnostics = %#v, want exactly one unresolved-project diagnostic", diags)
+	}
+	diag := diags[0]
+	if diag.Code != diagnostic.CodeProjectUnresolved {
+		t.Fatalf("Code = %q, want %q", diag.Code, diagnostic.CodeProjectUnresolved)
+	}
+	want := `Application argocd-tenant-a/myapp references AppProject "myproject", which is not declared in the repository; validating against the implicit default project`
+	if diag.Message != want {
+		t.Fatalf("Message = %q, want %q", diag.Message, want)
+	}
+	if class := diagnostic.ClassifyProjectDiagnostic(diag); class != diagnostic.ProjectDiagnosticClassDeferred {
+		t.Fatalf("ClassifyProjectDiagnostic() = %q, want deferred", class)
+	}
+}
