@@ -57,6 +57,10 @@ func makeJsonnetVM(appPath, repoRoot string, sourceJsonnet argoappv1.Application
 	if err != nil {
 		return nil, err
 	}
+	absRepoRoot, err := filepath.Abs(repoRoot)
+	if err != nil {
+		return nil, err
+	}
 	jpaths := []string{absAppPath}
 	for _, lib := range sourceJsonnet.Libs {
 		resolved, err := resolveJsonnetLib(repoRoot, lib)
@@ -65,7 +69,7 @@ func makeJsonnetVM(appPath, repoRoot string, sourceJsonnet argoappv1.Application
 		}
 		jpaths = append(jpaths, resolved)
 	}
-	vm.Importer(newBoundedJsonnetImporter(jpaths))
+	vm.Importer(newBoundedJsonnetImporter(absRepoRoot, jpaths))
 	return vm, nil
 }
 
@@ -91,9 +95,19 @@ func resolveJsonnetLib(repoRoot, raw string) (string, error) {
 	return filepath.Abs(resolved)
 }
 
+// boundedJsonnetImporter resolves import, importstr, and importbin the way
+// go-jsonnet's FileImporter does (the importing file's directory first, then
+// the library paths in reverse order) while confining every resolved path to
+// the repository root. This mirrors the Argo CD repo-server's confined
+// importer (reposerver/repository, v3.5.4+): a relative import may reach any
+// file under the repository root but never a path outside it, a symlinked
+// path, a .git directory, or a non-regular file. Absolute imports are
+// rejected outright; drydock renders CI checkouts whose absolute paths never
+// match a repo-server's, so accepting them would only invite path confusion.
 type boundedJsonnetImporter struct {
-	roots []string
-	cache map[string]*boundedJsonnetImportCacheEntry
+	boundary string
+	roots    []string
+	cache    map[string]*boundedJsonnetImportCacheEntry
 }
 
 type boundedJsonnetImportCacheEntry struct {
@@ -101,12 +115,16 @@ type boundedJsonnetImportCacheEntry struct {
 	exists   bool
 }
 
-func newBoundedJsonnetImporter(roots []string) *boundedJsonnetImporter {
+func newBoundedJsonnetImporter(boundary string, roots []string) *boundedJsonnetImporter {
 	normalized := make([]string, 0, len(roots))
 	for _, root := range roots {
 		normalized = append(normalized, filepath.Clean(root))
 	}
-	return &boundedJsonnetImporter{roots: normalized, cache: map[string]*boundedJsonnetImportCacheEntry{}}
+	return &boundedJsonnetImporter{
+		boundary: filepath.Clean(boundary),
+		roots:    normalized,
+		cache:    map[string]*boundedJsonnetImportCacheEntry{},
+	}
 }
 
 func (i *boundedJsonnetImporter) Import(importedFrom, importedPath string) (jsonnet.Contents, string, error) {
@@ -115,64 +133,53 @@ func (i *boundedJsonnetImporter) Import(importedFrom, importedPath string) (json
 		return jsonnet.Contents{}, "", err
 	}
 	for _, candidate := range candidates {
-		contents, found, err := i.tryImport(candidate.root, candidate.path)
+		contents, found, err := i.tryImport(candidate)
 		if err != nil {
 			return jsonnet.Contents{}, "", err
 		}
 		if found {
-			return contents, candidate.path, nil
+			return contents, candidate, nil
 		}
 	}
 	return jsonnet.Contents{}, "", fmt.Errorf("couldn't open import %q: no match locally or in the Jsonnet library paths", importedPath)
 }
 
-type jsonnetImportCandidate struct {
-	root string
-	path string
-}
-
-func (i *boundedJsonnetImporter) importCandidates(importedFrom, importedPath string) ([]jsonnetImportCandidate, error) {
+func (i *boundedJsonnetImporter) importCandidates(importedFrom, importedPath string) ([]string, error) {
 	if strings.TrimSpace(importedFrom) == "" && filepath.IsAbs(importedPath) {
-		root, ok, err := i.rootFor(importedPath)
-		if err != nil {
-			return nil, err
-		}
-		if !ok {
-			return nil, fmt.Errorf("jsonnet import %q is outside configured import roots", importedPath)
-		}
+		// The entrypoint handed to EvaluateFile: an absolute path drydock
+		// built under the source root, not repository content.
 		candidate := filepath.Clean(importedPath)
-		if err := rejectPathOutsideBoundary("jsonnet import", candidate, root); err != nil {
+		if err := rejectPathOutsideBoundary("jsonnet import", candidate, i.boundary); err != nil {
 			return nil, err
 		}
-		return []jsonnetImportCandidate{{root: root, path: candidate}}, nil
+		return []string{candidate}, nil
 	}
 	if filepath.IsAbs(importedPath) {
 		return nil, fmt.Errorf("jsonnet import %q must be relative", importedPath)
 	}
 
 	importPath := filepath.FromSlash(importedPath)
-	var candidates []jsonnetImportCandidate
+	var candidates []string
 	seen := map[string]bool{}
 	if strings.TrimSpace(importedFrom) != "" {
-		root, ok, err := i.rootFor(importedFrom)
+		from, err := filepath.Abs(importedFrom)
 		if err != nil {
 			return nil, err
 		}
-		if !ok {
-			return nil, fmt.Errorf("jsonnet import source %q is outside configured import roots", importedFrom)
-		}
-		candidate := filepath.Clean(filepath.Join(filepath.Dir(importedFrom), importPath))
-		if err := rejectPathOutsideBoundary("jsonnet import", candidate, root); err != nil {
+		if err := rejectPathOutsideBoundary("jsonnet import source", from, i.boundary); err != nil {
 			return nil, err
 		}
-		candidates = append(candidates, jsonnetImportCandidate{root: root, path: candidate})
+		candidate := filepath.Clean(filepath.Join(filepath.Dir(from), importPath))
+		if err := rejectPathOutsideBoundary("jsonnet import", candidate, i.boundary); err != nil {
+			return nil, err
+		}
+		candidates = append(candidates, candidate)
 		seen[candidate] = true
 	}
 
-	for _, v := range slices.Backward(i.roots) {
-		root := v
+	for _, root := range slices.Backward(i.roots) {
 		candidate := filepath.Clean(filepath.Join(root, importPath))
-		if err := rejectPathOutsideBoundary("jsonnet import", candidate, root); err != nil {
+		if err := rejectPathOutsideBoundary("jsonnet import", candidate, i.boundary); err != nil {
 			if len(candidates) == 0 {
 				return nil, err
 			}
@@ -181,43 +188,38 @@ func (i *boundedJsonnetImporter) importCandidates(importedFrom, importedPath str
 		if seen[candidate] {
 			continue
 		}
-		candidates = append(candidates, jsonnetImportCandidate{root: root, path: candidate})
+		candidates = append(candidates, candidate)
 		seen[candidate] = true
 	}
 	return candidates, nil
 }
 
-func (i *boundedJsonnetImporter) rootFor(path string) (string, bool, error) {
-	absPath, err := filepath.Abs(path)
-	if err != nil {
-		return "", false, err
-	}
-	absPath = filepath.Clean(absPath)
-	for _, root := range i.roots {
-		rel, err := filepath.Rel(root, absPath)
-		if err == nil && !pathsafety.RelEscapes(rel) {
-			return root, true, nil
-		}
-	}
-	return "", false, nil
-}
-
-func (i *boundedJsonnetImporter) tryImport(root, path string) (jsonnet.Contents, bool, error) {
-	if pathEntersGit(root, path) {
+func (i *boundedJsonnetImporter) tryImport(path string) (jsonnet.Contents, bool, error) {
+	if pathEntersGit(i.boundary, path) {
 		return jsonnet.Contents{}, false, fmt.Errorf("jsonnet import %q enters a .git directory", path)
 	}
-	if err := rejectSymlinkedPath(root, path); err != nil {
+	if err := rejectSymlinkedPath(i.boundary, path); err != nil {
 		return jsonnet.Contents{}, false, err
 	}
 	if entry, ok := i.cache[path]; ok {
 		return entry.contents, entry.exists, nil
 	}
-	data, err := os.ReadFile(path)
+	// Stat before reading: a non-regular file (a directory, or a device such
+	// as /dev/zero reached through some future gap) must be rejected without
+	// ever being read.
+	info, err := os.Lstat(path)
 	if err != nil {
 		if os.IsNotExist(err) {
 			i.cache[path] = &boundedJsonnetImportCacheEntry{exists: false}
 			return jsonnet.Contents{}, false, nil
 		}
+		return jsonnet.Contents{}, false, err
+	}
+	if !info.Mode().IsRegular() {
+		return jsonnet.Contents{}, false, fmt.Errorf("jsonnet import %q is not a regular file", path)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
 		return jsonnet.Contents{}, false, err
 	}
 	entry := &boundedJsonnetImportCacheEntry{

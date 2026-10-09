@@ -268,7 +268,8 @@ Supported:
 - Directory rendering honors `+argocd:skip-file-rendering`, walks hidden
   directories when `recurse` is enabled, renders Jsonnet through native Go
   libraries with extVars, TLAs, code mode, env substitution, and repo-relative
-  libs, and skips drydock cache metadata sidecars.
+  libs, confines Jsonnet imports to the repository root as the Argo CD
+  repo-server does from v3.5.4, and skips drydock cache metadata sidecars.
 - Local Kustomize rendering with supported `kustomize.buildOptions`:
   `--enable-helm`, `--helm-api-versions`,
   `--load-restrictor=LoadRestrictionsRootOnly|LoadRestrictionsNone`,
