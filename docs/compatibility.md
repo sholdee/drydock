@@ -426,7 +426,8 @@ Not supported:
 Supported:
 
 - `diag --path` repository diagnostics through static discovery, ApplicationSet
-  expansion, and settings metadata.
+  expansion, settings metadata, and AppProject validation of the discovered
+  Applications (source repositories, destinations, source namespaces).
 - `diag --render` render-backed diagnostic reports.
 - `diag -o json|yaml` structured diagnostic reports.
 - `diag --cache-events` optional render-backed cache acquisition event

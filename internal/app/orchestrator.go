@@ -216,6 +216,36 @@ func (o Orchestrator) Diag(ctx context.Context, request DiagRequest) (DiagResult
 	return diagResult, nil
 }
 
+// DiagStatic reports repository diagnostics without rendering: static
+// discovery, settings metadata, and AppProject validation of the discovered
+// Applications (source repositories, destinations, source namespaces, and the
+// project metadata checks). Rendered-resource policy needs manifests and
+// stays with Diag. ListApplications is left as a pure listing primitive
+// because get, plugin-policy, the public client, and the selection paths all
+// rely on it reporting nothing beyond discovery.
+func (o Orchestrator) DiagStatic(ctx context.Context, request DiagRequest) (DiagResult, error) {
+	request.DiscoveryMode = DiscoveryModeStatic
+	request.MaxDiscoveryDepth = 0
+	request.MaxDiscoveryDepthSet = true
+	result, err := o.ListApplications(ctx, request)
+	diagResult := DiagResult{
+		Applications: result.Applications,
+		Diagnostics:  result.Diagnostics,
+		Settings:     result.Settings,
+		CacheEvents:  result.CacheEvents,
+	}
+	if err != nil {
+		return diagResult, err
+	}
+	projectDiags := project.ValidateApplications(result.Applications, result.Projects, result.Settings)
+	projectDiags = request.normalizeDiagnostics(projectDiags, false)
+	diagResult.Diagnostics = dedupeDiagnostics(append(diagResult.Diagnostics, projectDiags...))
+	if err := diagnosticFailure(projectDiags, request.Strict); err != nil {
+		return diagResult, err
+	}
+	return diagResult, nil
+}
+
 func (o Orchestrator) ListApplications(ctx context.Context, request BuildRequest) (result BuildResult, err error) {
 	request, releaseSnapshots, err := ensureSnapshotSession(request)
 	if err != nil {

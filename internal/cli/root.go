@@ -35,6 +35,7 @@ type Orchestrator interface {
 	DiffApp(context.Context, app.DiffAppRequest) (app.DiffResult, error)
 	DiffImages(context.Context, app.DiffRequest) (app.ImageDiffResult, error)
 	Diag(context.Context, app.DiagRequest) (app.DiagResult, error)
+	DiagStatic(context.Context, app.DiagRequest) (app.DiagResult, error)
 }
 
 func defaultDependencies() Dependencies {
