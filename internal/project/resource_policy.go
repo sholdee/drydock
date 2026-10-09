@@ -35,6 +35,9 @@ const (
 type RenderedResource struct {
 	Object                       *unstructured.Unstructured
 	NamespaceBeforeNormalization string
+	// Hook marks a hook-annotated object. Hooks are validated like any other
+	// rendered object and only named differently in diagnostics.
+	Hook bool
 }
 
 type renderedResourcePolicyValidator struct {
@@ -142,21 +145,22 @@ func (v *renderedResourcePolicyValidator) validateResource(resource RenderedReso
 	name := obj.GetName()
 	scope := v.renderedResourcePolicyScope(resource)
 	if scope.deferred {
-		return v.validateUnknownScopeResource(obj)
+		return v.validateUnknownScopeResource(resource)
 	}
 
 	if !v.resourcePolicyProject.IsGroupKindNamePermitted(groupKind, name, scope.namespaced) {
-		return resourcePolicyDeniedWarning(v.app, obj, v.resourcePolicyProject), true
+		return resourcePolicyDeniedWarning(v.app, resource, v.resourcePolicyProject), true
 	}
 
 	if !scope.namespaced {
 		return diagnostic.Diagnostic{}, false
 	}
 
-	return v.validateNamespacedResource(obj, scope)
+	return v.validateNamespacedResource(resource, scope)
 }
 
-func (v *renderedResourcePolicyValidator) validateUnknownScopeResource(obj *unstructured.Unstructured) (diagnostic.Diagnostic, bool) {
+func (v *renderedResourcePolicyValidator) validateUnknownScopeResource(resource RenderedResource) (diagnostic.Diagnostic, bool) {
+	obj := resource.Object
 	namespace := renderedResourceNamespace(v.app, obj)
 	namespaced := v.evaluateResourceScope(obj, true, namespace)
 	clusterScoped := v.evaluateResourceScope(obj, false, "")
@@ -165,9 +169,9 @@ func (v *renderedResourcePolicyValidator) validateUnknownScopeResource(obj *unst
 	case namespaced == resourcePolicyOutcomeAllowed && clusterScoped == resourcePolicyOutcomeAllowed:
 		return diagnostic.Diagnostic{}, false
 	case namespaced == resourcePolicyOutcomeDenied && clusterScoped == resourcePolicyOutcomeDenied:
-		return resourcePolicyDeniedWarning(v.app, obj, v.resourcePolicyProject), true
+		return resourcePolicyDeniedWarning(v.app, resource, v.resourcePolicyProject), true
 	default:
-		return resourcePolicyDeferredWarning(v.app, fmt.Sprintf("Application %s rendered resource %s has unknown scope offline; AppProject resource policy validation is deferred", applicationName(v.app), renderedResourceDescription(obj))), true
+		return resourcePolicyDeferredWarning(v.app, fmt.Sprintf("Application %s %s %s has unknown scope offline; AppProject resource policy validation is deferred", applicationName(v.app), renderedResourceNoun(resource), renderedResourceDescription(obj))), true
 	}
 }
 
@@ -216,7 +220,8 @@ func (v *renderedResourcePolicyValidator) projectScopedOutcome() resourcePolicyO
 	return resourcePolicyOutcomeAllowed
 }
 
-func (v *renderedResourcePolicyValidator) validateNamespacedResource(obj *unstructured.Unstructured, scope renderedResourceScope) (diagnostic.Diagnostic, bool) {
+func (v *renderedResourcePolicyValidator) validateNamespacedResource(resource RenderedResource, scope renderedResourceScope) (diagnostic.Diagnostic, bool) {
+	obj := resource.Object
 	if resourcePolicyNameOnlyDestinationDeferred(v.dest, scope.namespace, v.proj, v.destinationClusterKnown) {
 		return v.nameOnlyDestinationDeferralDiagnostic()
 	}
@@ -241,7 +246,7 @@ func (v *renderedResourcePolicyValidator) validateNamespacedResource(obj *unstru
 		return v.validationErrorDiagnostic(obj, err), true
 	}
 	if !permitted {
-		return resourcePolicyDestinationDeniedWarning(v.app, obj, scope.namespace, v.resourcePolicyProject), true
+		return resourcePolicyDestinationDeniedWarning(v.app, resource, scope.namespace, v.resourcePolicyProject), true
 	}
 	return diagnostic.Diagnostic{}, false
 }
@@ -363,16 +368,25 @@ func resourcePolicyNameOnlyDestinationPermittedByWildcardServer(dest argoappv1.A
 	return nameOnlyDestinationPermittedByWildcardServer(renderedDest, proj)
 }
 
-func resourcePolicyDeniedWarning(app argoappv1.Application, obj *unstructured.Unstructured, proj argoappv1.AppProject) diagnostic.Diagnostic {
-	diag := projectWarning(app, fmt.Sprintf("Application %s rendered resource %s is not permitted by AppProject %q", applicationName(app), renderedResourceDescription(obj), proj.Name))
+func resourcePolicyDeniedWarning(app argoappv1.Application, resource RenderedResource, proj argoappv1.AppProject) diagnostic.Diagnostic {
+	diag := projectWarning(app, fmt.Sprintf("Application %s %s %s is not permitted by AppProject %q", applicationName(app), renderedResourceNoun(resource), renderedResourceDescription(resource.Object), proj.Name))
 	diag.Code = projectResourceDeniedCode
 	return diag
 }
 
-func resourcePolicyDestinationDeniedWarning(app argoappv1.Application, obj *unstructured.Unstructured, namespace string, proj argoappv1.AppProject) diagnostic.Diagnostic {
-	diag := projectWarning(app, fmt.Sprintf("Application %s rendered resource %s namespace %q is not permitted by AppProject %q", applicationName(app), renderedResourceDescription(obj), namespace, proj.Name))
+func resourcePolicyDestinationDeniedWarning(app argoappv1.Application, resource RenderedResource, namespace string, proj argoappv1.AppProject) diagnostic.Diagnostic {
+	diag := projectWarning(app, fmt.Sprintf("Application %s %s %s namespace %q is not permitted by AppProject %q", applicationName(app), renderedResourceNoun(resource), renderedResourceDescription(resource.Object), namespace, proj.Name))
 	diag.Code = projectResourceDestinationDeniedCode
 	return diag
+}
+
+// renderedResourceNoun names a rendered object in diagnostics. Hooks are
+// called out so a denial reads the way Argo CD reports one.
+func renderedResourceNoun(resource RenderedResource) string {
+	if resource.Hook {
+		return "rendered hook"
+	}
+	return "rendered resource"
 }
 
 func resourcePolicyDeferredWarning(app argoappv1.Application, message string) diagnostic.Diagnostic {

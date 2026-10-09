@@ -49,6 +49,22 @@ func payloadFixtureResult() RenderResult {
 				}},
 			},
 		},
+		Hooks: []render.Manifest{
+			{
+				SourceIndex: 0,
+				SourceName:  "primary",
+				Path:        "manifests/demo",
+				Object: &unstructured.Unstructured{Object: map[string]any{
+					"apiVersion": "batch/v1",
+					"kind":       "Job",
+					"metadata": map[string]any{
+						"generateName": "pre-delete-",
+						"namespace":    "demo-ns",
+						"annotations":  map[string]any{"argocd.argoproj.io/hook": "PreDelete"},
+					},
+				}},
+			},
+		},
 		Diagnostics: []diagnostic.Diagnostic{
 			{
 				Code:       "plugin.avp-compat-substituted",

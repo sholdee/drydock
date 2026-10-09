@@ -24,10 +24,16 @@ type EntryFile struct {
 	ModifiedAt time.Time
 }
 
-// FormatVersion is the entry schema version. It rotates together with the
-// "v1" path segment on any entry-schema change and participates in the
-// persistent render cache key.
-const FormatVersion = 1
+// FormatVersion is the entry schema version. It participates in the
+// persistent render cache key, so bumping it invalidates every existing
+// entry; an entry written under an older version is also rejected on read
+// and ages out through the size-cap sweep. Bump it whenever the serialized
+// RenderResult payload gains or changes a field. The storeVersionSegment
+// path component rotates only when the on-disk layout itself changes.
+//
+// History: 2 carries hooks alongside manifests so a cached render cannot
+// skip AppProject resource-policy validation of hooks.
+const FormatVersion = 2
 
 // DefaultMaxSizeBytes is the default eviction cap: 512 MiB.
 const DefaultMaxSizeBytes int64 = 512 * 1024 * 1024
