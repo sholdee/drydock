@@ -280,3 +280,118 @@ func assertRenderedResourcePolicyDiagnostic(t *testing.T, diags []diagnostic.Dia
 	t.Fatalf("Diagnostics = %#v, want %s", diags, renderedResourceDeniedCode)
 	return diagnostic.Diagnostic{}
 }
+
+func TestOrchestratorBuildReportsHookResourcePolicyDiagnostics(t *testing.T) {
+	root := t.TempDir()
+	writeRenderedHookResourcePolicyFixture(t, root, `  namespaceResourceWhitelist:
+    - group: ""
+      kind: ConfigMap
+`)
+
+	result, err := Orchestrator{}.Build(context.Background(), BuildRequest{Path: root})
+	if err != nil {
+		t.Fatalf("Build() error = %v", err)
+	}
+
+	// The Job is outside the namespace whitelist and the ClusterRoleBinding is
+	// cluster-scoped with no cluster whitelist: both delete hooks are denied,
+	// exactly as the Argo CD controller refuses them from v3.5.4.
+	denied := 0
+	for _, diag := range result.Diagnostics {
+		if diag.Code == renderedResourceDeniedCode {
+			denied++
+		}
+	}
+	if denied != 2 {
+		t.Fatalf("resource-denied diagnostics = %d, want 2: %#v", denied, result.Diagnostics)
+	}
+	for _, fragment := range []string{
+		"rendered hook batch/Job workloads/cleanup is not permitted by AppProject \"platform\"",
+		"rendered hook rbac.authorization.k8s.io/ClusterRoleBinding escalate is not permitted by AppProject \"platform\"",
+	} {
+		if !hasDiagnosticMessage(result.Diagnostics, fragment) {
+			t.Fatalf("Diagnostics = %#v, want message containing %q", result.Diagnostics, fragment)
+		}
+	}
+	assertApplicationStatuses(t, result.Statuses, []ApplicationStatus{
+		{Namespace: "argocd", Name: "demo", Status: ApplicationStatusPass},
+	})
+	if len(result.Manifests) != 1 {
+		t.Fatalf("len(Manifests) = %d, want 1 (hooks stay out of the manifests view)", len(result.Manifests))
+	}
+}
+
+func TestOrchestratorBuildPermitsHooksWithinProjectPolicy(t *testing.T) {
+	root := t.TempDir()
+	writeRenderedHookResourcePolicyFixture(t, root, `  namespaceResourceWhitelist:
+    - group: ""
+      kind: ConfigMap
+    - group: batch
+      kind: Job
+  clusterResourceWhitelist:
+    - group: rbac.authorization.k8s.io
+      kind: ClusterRoleBinding
+`)
+
+	result, err := Orchestrator{}.Build(context.Background(), BuildRequest{Path: root, Strict: true})
+	if err != nil {
+		t.Fatalf("Build() error = %v", err)
+	}
+	for _, diag := range result.Diagnostics {
+		if diag.Code == renderedResourceDeniedCode {
+			t.Fatalf("Diagnostics = %#v, want no resource-denied diagnostic for permitted hooks", result.Diagnostics)
+		}
+	}
+	if len(result.Manifests) != 1 {
+		t.Fatalf("len(Manifests) = %d, want 1 (hooks stay out of the manifests view)", len(result.Manifests))
+	}
+}
+
+// writeRenderedHookResourcePolicyFixture writes an Application whose source
+// renders one ConfigMap plus a PreDelete Job and a PostDelete
+// ClusterRoleBinding, and an AppProject whose resource policy is the given
+// spec fragment.
+func writeRenderedHookResourcePolicyFixture(t *testing.T, root, resourcePolicy string) {
+	t.Helper()
+	writeBuildApplicationWithProject(t, root, "demo", "allowed-cm", "platform", "https://github.com/example/repo", "workloads")
+	writeTestFile(t, filepath.Join(root, "manifests", "demo", "hooks.yaml"), `apiVersion: batch/v1
+kind: Job
+metadata:
+  name: cleanup
+  annotations:
+    argocd.argoproj.io/hook: PreDelete
+spec:
+  template:
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: cleanup
+          image: busybox
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: escalate
+  annotations:
+    argocd.argoproj.io/hook: PostDelete
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: cluster-admin
+subjects:
+  - kind: ServiceAccount
+    name: default
+    namespace: workloads
+`)
+	writeTestFile(t, filepath.Join(root, "projects", "platform.yaml"), `apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: platform
+spec:
+  sourceRepos:
+    - https://github.com/example/repo
+  destinations:
+    - server: https://kubernetes.default.svc
+      namespace: workloads
+`+resourcePolicy)
+}

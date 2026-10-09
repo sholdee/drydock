@@ -1721,6 +1721,76 @@ func TestRenderApplicationExcludesArgoHookPostSync(t *testing.T) {
 	if result.Manifests[0].Object.GetName() != "keep" {
 		t.Fatalf("manifest name = %q, want keep", result.Manifests[0].Object.GetName())
 	}
+	if len(result.Hooks) != 1 || result.Hooks[0].Object.GetName() != "post-sync-job" {
+		t.Fatalf("Hooks = %#v, want the excluded PostSync job carried for policy validation", result.Hooks)
+	}
+}
+
+func TestRenderApplicationCollectsHooksForPolicyValidation(t *testing.T) {
+	// Hooks leave the manifests view but are kept, namespace-normalized, for
+	// AppProject resource-policy validation. generateName-only hooks have no
+	// stable identity and must not be deduplicated against each other.
+	application := argoappv1.Application{
+		Name: "demo",
+		Spec: argoappv1.ApplicationSpec{
+			Destination: argoappv1.ApplicationDestination{Namespace: "workloads"},
+			Source: &argoappv1.ApplicationSource{
+				RepoURL:   "https://repo",
+				Path:      "manifests",
+				Directory: &argoappv1.ApplicationSourceDirectory{},
+			},
+		},
+	}
+	hookJob := func(name, generateName, namespace, hookType string) *unstructured.Unstructured {
+		metadata := map[string]any{
+			"annotations": map[string]any{"argocd.argoproj.io/hook": hookType},
+		}
+		if name != "" {
+			metadata["name"] = name
+		}
+		if generateName != "" {
+			metadata["generateName"] = generateName
+		}
+		if namespace != "" {
+			metadata["namespace"] = namespace
+		}
+		return &unstructured.Unstructured{Object: map[string]any{
+			"apiVersion": "batch/v1",
+			"kind":       "Job",
+			"metadata":   metadata,
+		}}
+	}
+	renderers := StaticRenderers{
+		"manifests": []render.Manifest{
+			{Object: cm("keep", "yes")},
+			{Object: hookJob("", "pre-delete-", "", "PreDelete")},
+			{Object: hookJob("", "post-delete-", "", "PostDelete")},
+			{Object: hookJob("pinned", "", "other", "PreSync")},
+		},
+	}
+
+	result, err := RenderApplication(context.Background(), application, renderers)
+	if err != nil {
+		t.Fatalf("RenderApplication() error = %v", err)
+	}
+	if len(result.Manifests) != 1 || result.Manifests[0].Object.GetName() != "keep" {
+		t.Fatalf("Manifests = %#v, want only the ConfigMap", result.Manifests)
+	}
+	if len(result.Hooks) != 3 {
+		t.Fatalf("len(Hooks) = %d, want 3 (generateName hooks are not deduplicated): %#v", len(result.Hooks), result.Hooks)
+	}
+	for _, hook := range result.Hooks[:2] {
+		if hook.Object.GetNamespace() != "workloads" {
+			t.Fatalf("hook %s namespace = %q, want destination namespace applied", hook.Object.GetGenerateName(), hook.Object.GetNamespace())
+		}
+		if hook.NamespaceBeforeNormalization != "" {
+			t.Fatalf("hook %s NamespaceBeforeNormalization = %q, want empty", hook.Object.GetGenerateName(), hook.NamespaceBeforeNormalization)
+		}
+	}
+	pinned := result.Hooks[2]
+	if pinned.Object.GetNamespace() != "other" || pinned.NamespaceBeforeNormalization != "other" {
+		t.Fatalf("pinned hook namespace = %q / before normalization %q, want other / other", pinned.Object.GetNamespace(), pinned.NamespaceBeforeNormalization)
+	}
 }
 
 func TestRenderApplicationKeepsHelmCRDInstallHook(t *testing.T) {

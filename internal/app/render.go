@@ -22,7 +22,14 @@ import (
 )
 
 type RenderResult struct {
-	Manifests        []render.Manifest
+	// Manifests is the managed-resources view: rendered objects with hooks
+	// removed, as the Argo CD controller presents them.
+	Manifests []render.Manifest
+	// Hooks carries hook-annotated objects (sync and delete hooks). They are
+	// excluded from Manifests but still validated against AppProject
+	// resource policy, as Argo CD validates every hook task at sync time
+	// and, from v3.5.4, PreDelete/PostDelete hooks at deletion.
+	Hooks            []render.Manifest
 	Diagnostics      []diagnostic.Diagnostic
 	PluginExecutions []PluginExecution
 }
@@ -137,9 +144,7 @@ func appendRenderedManifests(application argoappv1.Application, sourcePlan Sourc
 		if rendered.Object != nil {
 			rendered.Object = rendered.Object.DeepCopy()
 		}
-		if rendered.Object != nil && isArgoHook(rendered.Object) {
-			continue
-		}
+		hook := rendered.Object != nil && isArgoHook(rendered.Object)
 		if applyAVPCompatToManifest(&rendered, opts) {
 			avpCompatSubstituted = true
 		}
@@ -149,6 +154,14 @@ func appendRenderedManifests(application argoappv1.Application, sourcePlan Sourc
 		ApplyDestinationNamespace(application, rendered.Object)
 		if err := applyTrackingMetadata(application, rendered.Object, trackingOpts); err != nil {
 			return false, fmt.Errorf("%s: %w", renderSourceContext(application, sourcePlan), err)
+		}
+		if hook {
+			// Hooks leave the managed-resources view (the Argo CD controller
+			// filters them) but are kept for AppProject resource-policy
+			// validation. They skip repeated-resource dedupe: a generateName
+			// hook has no stable identity.
+			result.Hooks = append(result.Hooks, rendered)
+			continue
 		}
 
 		id := manifest.IdentityOf(rendered.Object)
@@ -171,7 +184,8 @@ func appendRenderedManifests(application argoappv1.Application, sourcePlan Sourc
 // isArgoHook mirrors the Argo CD controller managed-resources view hook filter
 // (controller/hook.go isHook + gitops-engine pkg/sync/hook/hook.go IsHook).
 // Resources classified as hooks are excluded from the desired-state manifests
-// view that drydock produces.
+// view that drydock produces and carried in RenderResult.Hooks for AppProject
+// resource-policy validation instead.
 //
 // Rules (in evaluation order):
 //  1. argocd.argoproj.io/hook present → IS a hook, UNLESS its recognized hook

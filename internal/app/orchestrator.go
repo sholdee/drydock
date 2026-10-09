@@ -554,7 +554,7 @@ func renderOneApplication(ctx context.Context, application argoappv1.Application
 	}
 	cluster := applicationDestinationCluster(application)
 	filteredManifests := make([]render.Manifest, 0, len(rendered.Manifests))
-	policyResources := make([]project.RenderedResource, 0, len(rendered.Manifests))
+	policyResources := make([]project.RenderedResource, 0, len(rendered.Manifests)+len(rendered.Hooks))
 	for _, renderedManifest := range rendered.Manifests {
 		id := manifest.IdentityOf(renderedManifest.Object)
 		if request.settingsFilter.Drop(id, cluster) {
@@ -568,6 +568,19 @@ func renderOneApplication(ctx context.Context, application argoappv1.Application
 			continue
 		}
 		filteredManifests = append(filteredManifests, renderedManifest)
+	}
+	// Hooks never reach the manifests view, but Argo CD applies the same
+	// AppProject permission check to every hook task at sync time and, from
+	// v3.5.4, to PreDelete/PostDelete hooks at deletion.
+	for _, hook := range rendered.Hooks {
+		if request.settingsFilter.Drop(manifest.IdentityOf(hook.Object), cluster) {
+			continue
+		}
+		policyResources = append(policyResources, project.RenderedResource{
+			Object:                       hook.Object,
+			NamespaceBeforeNormalization: hook.NamespaceBeforeNormalization,
+			Hook:                         true,
+		})
 	}
 
 	if request.healthEvaluator != nil {
@@ -587,7 +600,12 @@ func renderOneApplication(ctx context.Context, application argoappv1.Application
 		}
 	}
 
-	appScopeRegistry := manifest.BuildCRDScopeRegistry(manifestObjectPtrs(rendered.Manifests))
+	// A CRD shipped as a PreSync hook still defines the scope of the custom
+	// resources the main sync applies, so hooks feed the scope registry too.
+	scopeInputs := make([]render.Manifest, 0, len(rendered.Manifests)+len(rendered.Hooks))
+	scopeInputs = append(scopeInputs, rendered.Manifests...)
+	scopeInputs = append(scopeInputs, rendered.Hooks...)
+	appScopeRegistry := manifest.BuildCRDScopeRegistry(manifestObjectPtrs(scopeInputs))
 	resourcePolicyDiags := project.ValidateRenderedResourcePolicyResourcesWithRegistry(application, policyResources, request.projects, request.settings, appScopeRegistry)
 	resourcePolicyDiags = request.request.normalizeDiagnostics(resourcePolicyDiags, false)
 	out.diagnostics = append(out.diagnostics, resourcePolicyDiags...)

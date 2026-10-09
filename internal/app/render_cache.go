@@ -62,6 +62,7 @@ func (cache *applicationRenderCache) set(key string, result RenderResult, err er
 func cloneRenderResult(result RenderResult) RenderResult {
 	return RenderResult{
 		Manifests:        cloneRenderManifests(result.Manifests),
+		Hooks:            cloneRenderManifests(result.Hooks),
 		Diagnostics:      cloneDiagnostics(result.Diagnostics),
 		PluginExecutions: clonePluginExecutions(result.PluginExecutions),
 	}

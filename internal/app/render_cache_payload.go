@@ -14,6 +14,7 @@ import (
 // explicit DTOs; internal/rendercache stores these bytes opaquely.
 type renderCachePayload struct {
 	Manifests        []renderCacheManifest   `json:"manifests"`
+	Hooks            []renderCacheManifest   `json:"hooks,omitempty"`
 	Diagnostics      []diagnostic.Diagnostic `json:"diagnostics,omitempty"`
 	PluginExecutions []PluginExecution       `json:"pluginExecutions,omitempty"`
 }
@@ -28,20 +29,10 @@ type renderCacheManifest struct {
 
 func marshalRenderResultPayload(result RenderResult) ([]byte, error) {
 	payload := renderCachePayload{
+		Manifests:        renderCacheManifestsFromRender(result.Manifests),
+		Hooks:            renderCacheManifestsFromRender(result.Hooks),
 		Diagnostics:      result.Diagnostics,
 		PluginExecutions: result.PluginExecutions,
-	}
-	if result.Manifests != nil {
-		payload.Manifests = make([]renderCacheManifest, 0, len(result.Manifests))
-		for _, item := range result.Manifests {
-			payload.Manifests = append(payload.Manifests, renderCacheManifest{
-				SourceIndex:                  item.SourceIndex,
-				SourceName:                   item.SourceName,
-				Path:                         item.Path,
-				NamespaceBeforeNormalization: item.NamespaceBeforeNormalization,
-				Object:                       item.Object,
-			})
-		}
 	}
 	data, err := json.Marshal(payload)
 	if err != nil {
@@ -55,21 +46,46 @@ func unmarshalRenderResultPayload(data []byte) (RenderResult, error) {
 	if err := json.Unmarshal(data, &payload); err != nil {
 		return RenderResult{}, fmt.Errorf("decode render cache payload: %w", err)
 	}
-	result := RenderResult{
+	return RenderResult{
+		Manifests:        renderManifestsFromCache(payload.Manifests),
+		Hooks:            renderManifestsFromCache(payload.Hooks),
 		Diagnostics:      payload.Diagnostics,
 		PluginExecutions: payload.PluginExecutions,
+	}, nil
+}
+
+// renderCacheManifestsFromRender preserves nil (absent) versus empty so a
+// round trip reproduces the original RenderResult exactly.
+func renderCacheManifestsFromRender(items []render.Manifest) []renderCacheManifest {
+	if items == nil {
+		return nil
 	}
-	if payload.Manifests != nil {
-		result.Manifests = make([]render.Manifest, 0, len(payload.Manifests))
-		for _, item := range payload.Manifests {
-			result.Manifests = append(result.Manifests, render.Manifest{
-				SourceIndex:                  item.SourceIndex,
-				SourceName:                   item.SourceName,
-				Path:                         item.Path,
-				NamespaceBeforeNormalization: item.NamespaceBeforeNormalization,
-				Object:                       item.Object,
-			})
-		}
+	out := make([]renderCacheManifest, 0, len(items))
+	for _, item := range items {
+		out = append(out, renderCacheManifest{
+			SourceIndex:                  item.SourceIndex,
+			SourceName:                   item.SourceName,
+			Path:                         item.Path,
+			NamespaceBeforeNormalization: item.NamespaceBeforeNormalization,
+			Object:                       item.Object,
+		})
 	}
-	return result, nil
+	return out
+}
+
+func renderManifestsFromCache(items []renderCacheManifest) []render.Manifest {
+	if items == nil {
+		return nil
+	}
+	out := make([]render.Manifest, 0, len(items))
+	for _, item := range items {
+		out = append(out, render.Manifest{
+			SourceIndex:                  item.SourceIndex,
+			SourceName:                   item.SourceName,
+			Path:                         item.Path,
+			NamespaceBeforeNormalization: item.NamespaceBeforeNormalization,
+			Object:                       item.Object,
+		})
+	}
+	return out
 }
