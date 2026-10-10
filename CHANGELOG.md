@@ -1,5 +1,23 @@
 # Changelog
 
+## [0.3.5](https://github.com/sholdee/drydock/compare/v0.3.4...v0.3.5) (2026-10-10)
+
+
+### Bug Fixes
+
+* **deps:** bump argo-cd to v3.5.4 for GHSA-w996-f2wq-x9c6 ([#392](https://github.com/sholdee/drydock/issues/392)) ([6cc2746](https://github.com/sholdee/drydock/commit/6cc27468746c542d84c6e3ef0cf9f36aaf9e3f3e))
+* **deps:** update module golang.org/x/sys to v0.49.0 ([#400](https://github.com/sholdee/drydock/issues/400)) ([6993f52](https://github.com/sholdee/drydock/commit/6993f52b8b96148d5cbfdea391c6bfb963922cff))
+* **diag:** validate discovered Applications against AppProjects without --render ([#396](https://github.com/sholdee/drydock/issues/396)) ([457b5f0](https://github.com/sholdee/drydock/commit/457b5f0057c9af345c23067d469fbc00f37d8bf2))
+* **project:** validate hooks against AppProject resource policy ([#394](https://github.com/sholdee/drydock/issues/394)) ([9406d69](https://github.com/sholdee/drydock/commit/9406d69ace127da56bd0614b23f63d17788fdc6d))
+* **render:** confine Jsonnet imports to the repository root ([#393](https://github.com/sholdee/drydock/issues/393)) ([8eb3a3b](https://github.com/sholdee/drydock/commit/8eb3a3ba1164fc97d2864a56170733daca0fd95f))
+
+
+### Miscellaneous Chores
+
+* **deps:** update dependency lefthook to v2.2.0 ([#401](https://github.com/sholdee/drydock/issues/401)) ([9a64094](https://github.com/sholdee/drydock/commit/9a640942fd327eee159a917d523ae3fb5e4cd270))
+* **deps:** update golang:1.27.1 docker digest to 162be52 ([#397](https://github.com/sholdee/drydock/issues/397)) ([980c2d9](https://github.com/sholdee/drydock/commit/980c2d97c6cd3b084cdc795933f8362f9c4cabd7))
+* **deps:** update module golang.org/x/sync to v0.24.0 ([#390](https://github.com/sholdee/drydock/issues/390)) ([8dcb981](https://github.com/sholdee/drydock/commit/8dcb9819bae95fc476e556a6be2f7cf4a73e52a4))
+
 ## [0.3.4](https://github.com/sholdee/drydock/compare/v0.3.3...v0.3.4) (2026-10-08)
 
 
