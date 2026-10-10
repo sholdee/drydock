@@ -67,17 +67,17 @@ func TestDiagJSONCleanRepositoryUsesEmptyDiagnosticsArray(t *testing.T) {
 
 func TestDiagStructuredProjectDiagnosticsModeFiltersStaticAndRenderDiagnostics(t *testing.T) {
 	tests := []struct {
-		name       string
-		args       []string
-		listResult app.BuildResult
-		diagResult app.DiagResult
-		want       string
-		forbid     string
+		name             string
+		args             []string
+		diagStaticResult app.DiagResult
+		diagResult       app.DiagResult
+		want             string
+		forbid           string
 	}{
 		{
 			name: "default static json hides deferred project diagnostics",
 			args: []string{"diag", "--path", "repo", "-o", "json"},
-			listResult: app.BuildResult{Diagnostics: []diagnostic.Diagnostic{{
+			diagStaticResult: app.DiagResult{Diagnostics: []diagnostic.Diagnostic{{
 				Severity: diagnostic.SeverityWarning,
 				Category: "project",
 				Code:     diagnostic.CodeProjectResourceScopeDeferred,
@@ -88,7 +88,7 @@ func TestDiagStructuredProjectDiagnosticsModeFiltersStaticAndRenderDiagnostics(t
 		{
 			name: "all static yaml keeps deferred project diagnostics",
 			args: []string{"diag", "--path", "repo", "-o", "yaml", "--project-diagnostics", "all"},
-			listResult: app.BuildResult{Diagnostics: []diagnostic.Diagnostic{{
+			diagStaticResult: app.DiagResult{Diagnostics: []diagnostic.Diagnostic{{
 				Severity: diagnostic.SeverityWarning,
 				Category: "project",
 				Code:     diagnostic.CodeProjectResourceScopeDeferred,
@@ -112,8 +112,8 @@ func TestDiagStructuredProjectDiagnosticsModeFiltersStaticAndRenderDiagnostics(t
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			orchestrator := &recordingCLIOrchestrator{
-				listResult: tt.listResult,
-				diagResult: tt.diagResult,
+				diagStaticResult: tt.diagStaticResult,
+				diagResult:       tt.diagResult,
 			}
 			cmd := NewRootCommandWithDependencies(VersionInfo{}, Dependencies{Orchestrator: orchestrator})
 			cmd.SetArgs(tt.args)
@@ -186,8 +186,8 @@ func TestDiagRejectsHomeDirectoryPathBeforeScanning(t *testing.T) {
 	if stderr.String() != "" {
 		t.Fatalf("stderr = %q, want empty", stderr.String())
 	}
-	if len(orchestrator.listRequests) != 0 || len(orchestrator.diagRequests) != 0 {
-		t.Fatalf("orchestrator called: list=%d diag=%d", len(orchestrator.listRequests), len(orchestrator.diagRequests))
+	if len(orchestrator.diagStaticRequests) != 0 || len(orchestrator.diagRequests) != 0 {
+		t.Fatalf("orchestrator called: static=%d diag=%d", len(orchestrator.diagStaticRequests), len(orchestrator.diagRequests))
 	}
 }
 
@@ -665,7 +665,9 @@ func TestDiagJSONOutputIncludesPluginExecutions(t *testing.T) {
 	}
 }
 
-func TestDiagDefaultUsesApplicationListing(t *testing.T) {
+func TestDiagDefaultUsesStaticDiag(t *testing.T) {
+	// Static diag is its own orchestrator entry point: static discovery plus
+	// AppProject validation, never the bare listing get and plugin-policy use.
 	orchestrator := &recordingCLIOrchestrator{}
 	cmd := NewRootCommandWithDependencies(VersionInfo{}, Dependencies{Orchestrator: orchestrator})
 	cmd.SetArgs([]string{"diag", "--path", "repo"})
@@ -677,15 +679,11 @@ func TestDiagDefaultUsesApplicationListing(t *testing.T) {
 	if err := cmd.Execute(); err != nil {
 		t.Fatalf("Execute() error = %v\nstdout:\n%s\nstderr:\n%s", err, stdout.String(), stderr.String())
 	}
-	if len(orchestrator.listRequests) != 1 {
-		t.Fatalf("list requests = %d, want 1", len(orchestrator.listRequests))
+	if len(orchestrator.diagStaticRequests) != 1 {
+		t.Fatalf("static diag requests = %d, want 1", len(orchestrator.diagStaticRequests))
 	}
-	request := orchestrator.listRequests[0]
-	if request.DiscoveryMode != app.DiscoveryModeStatic || request.MaxDiscoveryDepth != 0 || !request.MaxDiscoveryDepthSet {
-		t.Fatalf("list request discovery = mode=%q depth=%d set=%t, want static depth 0", request.DiscoveryMode, request.MaxDiscoveryDepth, request.MaxDiscoveryDepthSet)
-	}
-	if len(orchestrator.diagRequests) != 0 {
-		t.Fatalf("diag requests = %d, want 0", len(orchestrator.diagRequests))
+	if len(orchestrator.listRequests) != 0 || len(orchestrator.diagRequests) != 0 {
+		t.Fatalf("orchestrator calls: list=%d diag=%d, want neither", len(orchestrator.listRequests), len(orchestrator.diagRequests))
 	}
 }
 
@@ -719,8 +717,8 @@ func TestDiagRenderBackedFlagsUseDiag(t *testing.T) {
 			if request.DiscoveryMode != app.DiscoveryModeFleet {
 				t.Fatalf("diag request discovery mode = %q, want fleet", request.DiscoveryMode)
 			}
-			if len(orchestrator.listRequests) != 0 {
-				t.Fatalf("list requests = %d, want 0", len(orchestrator.listRequests))
+			if len(orchestrator.diagStaticRequests) != 0 {
+				t.Fatalf("static diag requests = %d, want 0", len(orchestrator.diagStaticRequests))
 			}
 		})
 	}
@@ -985,5 +983,84 @@ func TestRenderDiagnosticsTextPrintsTheStableCode(t *testing.T) {
 				t.Fatalf("stderr = %q, want %q", got, testCase.want)
 			}
 		})
+	}
+}
+
+func writeStaticProjectDenialForCLI(t *testing.T, root string) {
+	t.Helper()
+	writeCLITestFile(t, filepath.Join(root, "apps", "demo.yaml"), `apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: demo
+  namespace: argocd
+spec:
+  project: platform
+  source:
+    repoURL: https://github.com/example/repo
+    path: manifests/demo
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: workloads
+`)
+	writeCLITestFile(t, filepath.Join(root, "manifests", "demo", "cm.yaml"), `apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: demo
+data:
+  value: demo
+`)
+	writeCLITestFile(t, filepath.Join(root, "projects", "platform.yaml"), `apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: platform
+spec:
+  sourceRepos:
+    - https://github.com/example/other
+  destinations:
+    - server: https://kubernetes.default.svc
+      namespace: workloads
+`)
+}
+
+func TestDiagStaticReportsAppProjectDiagnostics(t *testing.T) {
+	// Static diag validates discovered Applications against local AppProject
+	// manifests without rendering; previously only --render did.
+	root := t.TempDir()
+	writeStaticProjectDenialForCLI(t, root)
+
+	cmd := NewRootCommand(VersionInfo{})
+	cmd.SetArgs([]string{"diag", "--path", root})
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	cmd.SetOut(&stdout)
+	cmd.SetErr(&stderr)
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("Execute() error = %v\nstdout:\n%s\nstderr:\n%s", err, stdout.String(), stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "warning project.source-repository-denied: Application argocd/demo source repository \"https://github.com/example/repo\" is not permitted by AppProject \"platform\"") {
+		t.Fatalf("stderr = %q, want static AppProject source repository denial", stderr.String())
+	}
+	if stdout.String() != "" {
+		t.Fatalf("stdout = %q, want empty when diagnostics are printed to stderr", stdout.String())
+	}
+}
+
+func TestDiagStaticStrictFailsOnAppProjectDiagnostics(t *testing.T) {
+	root := t.TempDir()
+	writeStaticProjectDenialForCLI(t, root)
+
+	cmd := NewRootCommand(VersionInfo{})
+	cmd.SetArgs([]string{"diag", "--path", root, "--strict"})
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	cmd.SetOut(&stdout)
+	cmd.SetErr(&stderr)
+
+	if err := cmd.Execute(); err == nil {
+		t.Fatalf("Execute() error = nil, want strict failure\nstderr:\n%s", stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "error project.source-repository-denied:") {
+		t.Fatalf("stderr = %q, want the denial promoted to an error", stderr.String())
 	}
 }

@@ -165,7 +165,7 @@ func TestNonTestCommandsDoNotRequestStatusOnlyBuild(t *testing.T) {
 			name: "diag",
 			args: []string{"diag"},
 			statusOnly: func(recorder *recordingCLIOrchestrator) bool {
-				return recorder.listRequests[0].StatusOnly
+				return recorder.diagStaticRequests[0].StatusOnly
 			},
 		},
 	}
@@ -260,8 +260,8 @@ func TestDiagParallelismFlag(t *testing.T) {
 	recorder := &recordingCLIOrchestrator{}
 	executeParallelismCommand(t, recorder, "diag", "--parallelism", "7")
 
-	if got := recorder.listRequests[0].Parallelism; got != 7 {
-		t.Fatalf("ListApplications BuildRequest.Parallelism = %d, want 7", got)
+	if got := recorder.diagStaticRequests[0].Parallelism; got != 7 {
+		t.Fatalf("DiagStatic DiagRequest.Parallelism = %d, want 7", got)
 	}
 }
 
@@ -270,8 +270,8 @@ func TestDiagDefaultParallelismIsAuto(t *testing.T) {
 	executeParallelismCommand(t, recorder, "diag")
 
 	want := defaultRenderAppsParallelism()
-	if got := recorder.listRequests[0].Parallelism; got != want {
-		t.Fatalf("ListApplications BuildRequest.Parallelism = %d, want %d", got, want)
+	if got := recorder.diagStaticRequests[0].Parallelism; got != want {
+		t.Fatalf("DiagStatic DiagRequest.Parallelism = %d, want %d", got, want)
 	}
 }
 
@@ -318,6 +318,7 @@ type recordingCLIOrchestrator struct {
 	diffAppRequests                  []app.DiffAppRequest
 	diffImagesRequests               []app.DiffRequest
 	diagRequests                     []app.DiagRequest
+	diagStaticRequests               []app.DiagRequest
 	buildResult                      app.BuildResult
 	buildError                       error
 	buildHook                        func(app.BuildRequest) error
@@ -333,6 +334,8 @@ type recordingCLIOrchestrator struct {
 	listError                        error
 	diagResult                       app.DiagResult
 	diagError                        error
+	diagStaticResult                 app.DiagResult
+	diagStaticError                  error
 }
 
 func (orchestrator *recordingCLIOrchestrator) Build(_ context.Context, request app.BuildRequest) (app.BuildResult, error) {
@@ -383,4 +386,9 @@ func (orchestrator *recordingCLIOrchestrator) DiffImages(_ context.Context, requ
 func (orchestrator *recordingCLIOrchestrator) Diag(_ context.Context, request app.DiagRequest) (app.DiagResult, error) {
 	orchestrator.diagRequests = append(orchestrator.diagRequests, request)
 	return orchestrator.diagResult, orchestrator.diagError
+}
+
+func (orchestrator *recordingCLIOrchestrator) DiagStatic(_ context.Context, request app.DiagRequest) (app.DiagResult, error) {
+	orchestrator.diagStaticRequests = append(orchestrator.diagStaticRequests, request)
+	return orchestrator.diagStaticResult, orchestrator.diagStaticError
 }

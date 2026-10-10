@@ -354,7 +354,9 @@ drydock diag --path .
 ```
 
 By default, `diag` uses static repository discovery, ApplicationSet expansion,
-and settings metadata without rendering Applications. It prints diagnostics to
+and settings metadata without rendering Applications, and validates the
+discovered Applications against local `AppProject` manifests (source
+repositories, destinations, and source namespaces). It prints diagnostics to
 stderr and returns an error when runtime failures or error-severity diagnostics
 are found. Use `--strict` to promote warnings to errors.
 
@@ -384,10 +386,10 @@ metadata such as action names, `useOpenLibs`, and SHA-256 hashes for
 health/action Lua. It does not print raw Lua bodies, embedded secret-looking
 strings, or live-cluster state.
 
-When local `AppProject` manifests are present, `build`, `test`, `diff`, and the
-Go API report source repository and destination validation diagnostics from
-those manifests. `diag --render` includes the same render-backed project
-diagnostics, including rendered-resource allow/deny policy.
+When local `AppProject` manifests are present, `build`, `test`, `diff`, `diag`,
+and the Go API report source repository, destination, and source namespace
+validation diagnostics from those manifests. `diag --render` adds the
+render-backed rendered-resource allow/deny policy diagnostics.
 
 Project diagnostics default to `--project-diagnostics=actionable`. In this
 mode, drydock keeps known local denials visible, including missing projects,

@@ -174,17 +174,7 @@ func runDiag(ctx context.Context, orchestrator Orchestrator, request app.DiagReq
 	if mode.Render {
 		return orchestrator.Diag(ctx, request)
 	}
-	request.DiscoveryMode = app.DiscoveryModeStatic
-	request.MaxDiscoveryDepth = 0
-	request.MaxDiscoveryDepthSet = true
-	result, err := orchestrator.ListApplications(ctx, request)
-	diagResult := app.DiagResult{
-		Applications: result.Applications,
-		Diagnostics:  result.Diagnostics,
-		Settings:     result.Settings,
-		CacheEvents:  result.CacheEvents,
-	}
-	return diagResult, err
+	return orchestrator.DiagStatic(ctx, request)
 }
 
 func nonNilDiagnostics(diagnostics []diagnostic.Diagnostic) []diagnostic.Diagnostic {
