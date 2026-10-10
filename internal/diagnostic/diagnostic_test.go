@@ -403,3 +403,21 @@ func TestStableCodesIncludeProviderFixtureDiagnostics(t *testing.T) {
 		})
 	}
 }
+
+func TestFilterProjectDiagnosticsActionableHidesUnresolvedProject(t *testing.T) {
+	diag := projectDiagnostic(CodeProjectUnresolved, `Application argocd-tenant-a/myapp references AppProject "myproject", which is not declared in the repository; validating against the implicit default project`)
+	if class := ClassifyProjectDiagnostic(diag); class != ProjectDiagnosticClassDeferred {
+		t.Fatalf("ClassifyProjectDiagnostic(unresolved project) = %q, want deferred", class)
+	}
+	if got := FilterProjectDiagnostics([]Diagnostic{diag}, ProjectDiagnosticsModeActionable); len(got) != 0 {
+		t.Fatalf("FilterProjectDiagnostics(actionable) = %#v, want hidden", got)
+	}
+	if got := FilterProjectDiagnostics([]Diagnostic{diag}, ProjectDiagnosticsModeAll); len(got) != 1 {
+		t.Fatalf("FilterProjectDiagnostics(all) = %#v, want kept", got)
+	}
+	// The message alone yields the same code, so the stable-code pass agrees
+	// with the explicit code validation sets.
+	if code := StableCode(Diagnostic{Category: "project", Message: diag.Message}); code != CodeProjectUnresolved {
+		t.Fatalf("StableCode() = %q, want %q", code, CodeProjectUnresolved)
+	}
+}

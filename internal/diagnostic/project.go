@@ -7,6 +7,7 @@ import (
 
 const (
 	CodeProjectMissing                        = "project.missing"
+	CodeProjectUnresolved                     = "project.unresolved"
 	CodeProjectSourceRepositoryDenied         = "project.source-repository-denied"
 	CodeProjectDestinationDenied              = "project.destination-denied"
 	CodeProjectSourceNamespaceDenied          = "project.source-namespace-denied"
@@ -79,7 +80,8 @@ func ClassifyProjectDiagnostic(diag Diagnostic) ProjectDiagnosticClass {
 		CodeProjectResourceDestinationDenied:
 		return ProjectDiagnosticClassActionable
 	case CodeProjectResourceScopeDeferred,
-		CodeProjectScopedClustersDeferred:
+		CodeProjectScopedClustersDeferred,
+		CodeProjectUnresolved:
 		return ProjectDiagnosticClassDeferred
 	case CodeProjectRBACMetadataOnly,
 		CodeRepositoryMetadataMissing,

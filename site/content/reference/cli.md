@@ -395,7 +395,10 @@ Project diagnostics default to `--project-diagnostics=actionable`. In this
 mode, drydock keeps known local denials visible, including missing projects,
 denied source repositories, denied destinations, denied source namespaces, and
 denied rendered resources. AppProject diagnostics that cannot be conclusively
-enforced offline are hidden by default.
+enforced offline are hidden by default. That includes `project.unresolved`:
+when the repository declares no AppProject, an Application naming one
+validates against the permissive implicit `default` project, and this
+diagnostic records that so `all` mode can show it.
 
 Use `--project-diagnostics=all` for full AppProject audit output during
 compatibility investigations, or `--project-diagnostics=off` to suppress
