@@ -1017,9 +1017,18 @@ func normalizeDiagnostics(diags []diagnostic.Diagnostic, strict, forceWarning bo
 // render-all (the first AppProject declared or the last removed) has the
 // same shape, and so does the selection a repository or cluster settings
 // change widens: it selects every Application the change reaches.
+// The oci-chart-ignored advisory shares the shape too: the render is
+// identical to Argo CD's whether or not it fires, because Argo CD dispatches
+// every oci:// repoURL as an OCI artifact source and never reads chart there
+// (repository.go:358-364 at v3.5.4). Argo CD accepts the shape silently, so
+// failing --strict on it would make drydock stricter than the system it
+// mirrors on Applications Argo CD runs today; a stale chart that meant a
+// different artifact gives --strict nothing to protect — the pull of
+// repoURL:targetRevision either fails (already an error, warning alongside)
+// or renders Argo-identical output.
 func strictExemptDiagnostic(diag diagnostic.Diagnostic) bool {
 	switch diag.Code {
-	case selfRepoNearMissCode, diagnostic.CodePluginPolicyEnvIgnored, changedOnlySettingsCode, changedOnlySettingsScopedCode, changedOnlyProjectsCode:
+	case selfRepoNearMissCode, ociChartIgnoredCode, diagnostic.CodePluginPolicyEnvIgnored, changedOnlySettingsCode, changedOnlySettingsScopedCode, changedOnlyProjectsCode:
 		return true
 	}
 	return false

@@ -2,6 +2,7 @@ package cli
 
 import (
 	"encoding/base64"
+	"encoding/json"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -29,6 +30,28 @@ spec:
     targetRevision: "`+revision+`"
     path: `+sourcePath+`
   destination:
+    name: in-cluster
+    namespace: default
+`)
+}
+
+// writeOCIChartAppForCLI writes an Application in the issue #399 shape: an
+// oci:// repoURL plus a chart: (ignored by Argo CD and drydock), no path, and
+// extra carries the helm block when one is wanted. writeOCIAppForCLI
+// hard-codes a path line, which this shape must not have.
+func writeOCIChartAppForCLI(t *testing.T, root, appName, repoURL, chart, revision, extra string) {
+	t.Helper()
+	writeCLITestFile(t, filepath.Join(root, "apps", appName+".yaml"), `apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: `+appName+`
+  namespace: argocd
+spec:
+  source:
+    repoURL: `+repoURL+`
+    targetRevision: "`+revision+`"
+    chart: `+chart+`
+`+extra+`  destination:
     name: in-cluster
     namespace: default
 `)
@@ -369,5 +392,88 @@ func TestCLIDiffAppBothSidesShareOCICredentials(t *testing.T) {
 		if opts.Credentials != want {
 			t.Fatalf("acquirer call %d credentials = %#v, want %#v (both diff-app sides must share the flag credentials)", i, opts.Credentials, want)
 		}
+	}
+}
+
+// TestCLIBuildOCIChartShapeWarnsAndRenders drives the reporter's shape through
+// the full CLI and the REAL acquirer: the artifact renders with the
+// helm.valuesObject override on stdout, stderr carries the advisory exactly
+// once, and --strict changes nothing (exit 0, same output, same advisory).
+func TestCLIBuildOCIChartShapeWarnsAndRenders(t *testing.T) {
+	reg := ocitest.StartRegistry(t)
+	ocitest.PushHelmChartArtifact(t, reg, "charts/app-template", "1.2.3", ocitest.HelmChartSpec{Name: "app-template", Version: "1.2.3"})
+	root := t.TempDir()
+	writeOCIChartAppForCLI(t, root, "demo", reg.RepoURL("charts/app-template"), "app-template", "1.2.3", "    helm:\n      valuesObject:\n        message: cli-values-object\n")
+	ociCacheDir := t.TempDir()
+
+	for _, extra := range [][]string{nil, {"--strict"}} {
+		result := runCLI(t, append([]string{"build", "apps", "--path", root, "--oci-cache-dir", ociCacheDir}, extra...)...)
+		assertStdoutContainsAll(t, result, "demo-demo", "cli-values-object")
+		if got := strings.Count(result.Stderr, "source.oci-chart-ignored"); got != 1 {
+			t.Fatalf("args %v: stderr mentions source.oci-chart-ignored %d times, want exactly 1:\n%s", extra, got, result.Stderr)
+		}
+	}
+}
+
+// TestCLIDiffOCIChartShapeWarnsOncePerSide pins the per-side advisory count on
+// the diff surface: two sides, one Application each, exactly two mentions. The
+// sides differ in a helm.valuesObject entry so the default changed-only
+// selection renders the Application on both sides (identical trees select
+// nothing and render nothing).
+func TestCLIDiffOCIChartShapeWarnsOncePerSide(t *testing.T) {
+	reg := ocitest.StartRegistry(t)
+	ocitest.PushHelmChartArtifact(t, reg, "charts/app-template", "1.2.3", ocitest.HelmChartSpec{Name: "app-template", Version: "1.2.3"})
+	left := t.TempDir()
+	right := t.TempDir()
+	for side, message := range map[string]string{left: "left-values", right: "right-values"} {
+		writeOCIChartAppForCLI(t, side, "demo", reg.RepoURL("charts/app-template"), "app-template", "1.2.3", "    helm:\n      valuesObject:\n        message: "+message+"\n")
+	}
+
+	result := runCLI(t, "diff", "apps", "--path-orig", left, "--path", right, "--oci-cache-dir", t.TempDir(), "--exit-code=false")
+	assertStdoutContainsAll(t, result, "left-values", "right-values")
+	if got := strings.Count(result.Stderr, "source.oci-chart-ignored"); got != 2 {
+		t.Fatalf("stderr mentions source.oci-chart-ignored %d times, want exactly one per side:\nstderr:\n%s\nstdout:\n%s", got, result.Stderr, result.Stdout)
+	}
+}
+
+// TestCLIDiagRenderJSONSurfacesOCIChartIgnored pins the structured surface:
+// diag --render -o json reports the advisory with its stable code, warning
+// severity and source category, and nothing reaches stderr.
+func TestCLIDiagRenderJSONSurfacesOCIChartIgnored(t *testing.T) {
+	reg := ocitest.StartRegistry(t)
+	ocitest.PushHelmChartArtifact(t, reg, "charts/app-template", "1.2.3", ocitest.HelmChartSpec{Name: "app-template", Version: "1.2.3"})
+	root := t.TempDir()
+	writeOCIChartAppForCLI(t, root, "demo", reg.RepoURL("charts/app-template"), "app-template", "1.2.3", "")
+
+	result := runCLI(t, "diag", "--path", root, "--render", "-o", "json", "--oci-cache-dir", t.TempDir())
+	if result.Stderr != "" {
+		t.Fatalf("stderr = %q, want empty for structured diag output", result.Stderr)
+	}
+	var report struct {
+		Diagnostics []struct {
+			Code     string `json:"code"`
+			Severity string `json:"severity"`
+			Category string `json:"category"`
+			Message  string `json:"message"`
+		} `json:"diagnostics"`
+	}
+	if err := json.Unmarshal([]byte(result.Stdout), &report); err != nil {
+		t.Fatalf("json.Unmarshal() error = %v\nstdout:\n%s", err, result.Stdout)
+	}
+	var found []string
+	for _, diag := range report.Diagnostics {
+		if diag.Code != "source.oci-chart-ignored" {
+			continue
+		}
+		if diag.Severity != "warning" || diag.Category != "source" {
+			t.Fatalf("diagnostic = %#v, want severity warning in category source", diag)
+		}
+		if !strings.Contains(diag.Message, "path: .") {
+			t.Fatalf("diagnostic message = %q, want the path: . remedy", diag.Message)
+		}
+		found = append(found, diag.Message)
+	}
+	if len(found) != 1 {
+		t.Fatalf("source.oci-chart-ignored diagnostics = %d, want exactly 1:\n%s", len(found), result.Stdout)
 	}
 }

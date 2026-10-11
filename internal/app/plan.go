@@ -5,6 +5,7 @@ import (
 	"regexp"
 
 	argoappv1 "github.com/argoproj/argo-cd/v3/pkg/apis/application/v1alpha1"
+	"github.com/sholdee/drydock/internal/ociartifact"
 )
 
 var validRef = regexp.MustCompile(`^[A-Za-z0-9_-]+$`)
@@ -47,7 +48,14 @@ func Plan(application argoappv1.Application) (PlanResult, error) {
 			if !validRef.MatchString(source.Ref) {
 				return result, fmt.Errorf("sources[%d].ref %q contains unsupported characters", i, source.Ref)
 			}
-			if source.Chart != "" {
+			// An oci:// entry that sets both ref and chart still dispatches as
+			// an OCI artifact source upstream (repository.go:358-360 at
+			// v3.5.4) and renders; Argo CD rejects the combination only when
+			// another source consumes the ref (repository.go:595-597). Only
+			// the schemeless/HTTP chart shape is rejected here; consuming an
+			// oci:// entry's $ref stays rejected by the OCI gate in
+			// resolveRefRoots.
+			if source.Chart != "" && !ociartifact.IsOCIURL(source.RepoURL) {
 				return result, fmt.Errorf("sources[%d] cannot set both ref and chart", i)
 			}
 			sourcePlan.RefKey = "$" + source.Ref

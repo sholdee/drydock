@@ -869,15 +869,28 @@ spec:
 		}
 	}
 }
+
+// An oci:// chart-only source is an OCI artifact source (Argo CD dispatches
+// IsOCI before IsHelm, issue #399): the artifact acquirer pulls the repoURL as
+// spelled and the chart acquirer stays idle. The whitespace-padded spelling is
+// kept on purpose — trimming is a drydock leniency (IsOCIURL is total over
+// spellings where Argo CD matches the exact lowercase prefix), recorded in
+// docs/compatibility.md. The fake is wired explicitly: a zero
+// acquisition.Session returns the delegate as is but substitutes the real
+// DefaultAcquirer for nil, which would reach the network.
 func TestLocalProviderClassifiesChartOnlyOCIRepository(t *testing.T) {
 	root := t.TempDir()
-	chartDir := filepath.Join(root, "cache", "demo")
-	writeAppTestValueChart(t, chartDir)
-	acquirer := &recordingChartAcquirer{chartDir: chartDir}
+	chartAcquirer := &recordingChartAcquirer{chartDir: filepath.Join(root, "cache", "demo")}
+	artifactAcquirer := &fakeOCIArtifactAcquirer{
+		digest:      "sha256:" + strings.Repeat("ab", 32),
+		files:       fakeOCIChartFiles("demo", nil),
+		extractRoot: t.TempDir(),
+	}
 
-	_, _, err := (localProvider{
-		repoRoot:      root,
-		chartAcquirer: acquirer,
+	manifests, diags, err := (localProvider{
+		repoRoot:            root,
+		chartAcquirer:       chartAcquirer,
+		ociArtifactAcquirer: artifactAcquirer,
 	}).RenderSource(context.Background(), render.ResolvedSource{
 		Chart:          "demo",
 		RepoURL:        " oci://registry.example.test/charts ",
@@ -886,12 +899,18 @@ func TestLocalProviderClassifiesChartOnlyOCIRepository(t *testing.T) {
 	if err != nil {
 		t.Fatalf("RenderSource() error = %v", err)
 	}
-	if len(acquirer.requests) != 1 {
-		t.Fatalf("chart acquire calls = %d, want 1", len(acquirer.requests))
+	if len(chartAcquirer.requests) != 0 {
+		t.Fatalf("chart acquire calls = %d, want 0 for an oci:// source: %#v", len(chartAcquirer.requests), chartAcquirer.requests)
 	}
-	if got := acquirer.requests[0].Kind; got != chart.RepositoryOCI {
-		t.Fatalf("request kind = %q, want %q", got, chart.RepositoryOCI)
+	resolved, _ := artifactAcquirer.requests()
+	if len(resolved) != 1 {
+		t.Fatalf("artifact Resolve calls = %#v, want exactly one", resolved)
 	}
+	if got := strings.TrimSpace(resolved[0].repoURL); got != "oci://registry.example.test/charts" || resolved[0].revision != "2.0.0" {
+		t.Fatalf("artifact Resolve = %#v, want the repoURL as spelled (chart never joins it) at 2.0.0", resolved[0])
+	}
+	assertManifestNamed(t, manifests, "demo")
+	assertOCIChartIgnoredWarningOnce(t, diags)
 }
 
 func TestLocalProviderClassifiesBareChartOnlyRepositoryAsOCI(t *testing.T) {

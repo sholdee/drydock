@@ -77,7 +77,10 @@ func RenderApplicationWithOptions(ctx context.Context, application argoappv1.App
 		if prepareErr != nil && i == prepareFailedAt {
 			// Render the prepared prefix, then surface the prepare failure
 			// with the partial diagnostics, matching the historical
-			// lazy-prepare behavior.
+			// lazy-prepare behavior. The failed source's spec-only advisories
+			// ride along: RenderSource would have emitted them before the
+			// acquisition that failed here instead.
+			result.Diagnostics = append(result.Diagnostics, sourceDiagnostics(application, sourcePlan, prepareFailureDiagnostics(sourcePlan))...)
 			return result, prepareErr
 		}
 		if sourcePlan.RefOnly {

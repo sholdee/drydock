@@ -61,7 +61,7 @@ func TestManifestGeneratePaths(t *testing.T) {
 			},
 			want: []string{"values/demo.yaml"},
 		},
-		{name: "OCI source owns nothing", annotation: ".; /shared", source: &argoappv1.ApplicationSource{RepoURL: "oci://registry.example.com/manifests", Path: "."}},
+		{name: "OCI source keeps only absolute items", annotation: ".; /shared", source: &argoappv1.ApplicationSource{RepoURL: "oci://registry.example.com/manifests", Path: "."}, want: []string{"shared"}},
 		{
 			name:       "OCI source beside a local source",
 			annotation: ".; /shared",
@@ -69,8 +69,9 @@ func TestManifestGeneratePaths(t *testing.T) {
 				{RepoURL: "oci://registry.example.com/manifests", Path: "."},
 				{RepoURL: "https://github.com/example/repo", Path: "apps/a"},
 			},
-			want: []string{"apps/a", "shared"},
+			want: []string{"shared", "apps/a"},
 		},
+		{name: "moved shape keeps only absolute items", annotation: "values.yaml; /values/demo.yaml", source: &argoappv1.ApplicationSource{RepoURL: "oci://charts.example.test/org", Chart: "demo"}, want: []string{"values/demo.yaml"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			app := testApplication("reader", tc.source, tc.sources)

@@ -100,6 +100,18 @@ func (p localProvider) RenderSource(ctx context.Context, source render.ResolvedS
 	// reaches the user when the fork-shaped URL's own acquisition fails
 	// (offline cache miss, unreachable fork) — the moment it is most useful.
 	nearMissDiags := p.selfRepoNearMissDiagnostics(source, opts.RefSources)
+	// Same timing for the oci-chart-ignored advisory: it names the artifact
+	// drydock is about to pull, so it must accompany a failing pull. Argo CD
+	// dispatches every oci:// repoURL as an OCI artifact source before any
+	// Helm handling and renders apppathutil.Path(ociPath, source.Path) — the
+	// extraction root when path is empty — without reading chart
+	// (repository.go:358-364,424-427 at v3.5.4). Normalizing here puts every
+	// later source.Chart reader (the chart dispatch below, renderPluginSource
+	// and the plugin guards) behind that rule.
+	if diag, ok := ociChartIgnoredDiagnostic(source); ok {
+		nearMissDiags = append(nearMissDiags, diag)
+	}
+	source = normalizeOCISource(source)
 	sourceRoot := source.RepoRoot
 	var err error
 	if sourceRoot == "" {
@@ -109,12 +121,6 @@ func (p localProvider) RenderSource(ctx context.Context, source render.ResolvedS
 		}
 	}
 	source.RepoRoot = sourceRoot
-	if ociartifact.IsOCIURL(source.RepoURL) && source.Chart == "" && source.Path == "" {
-		// Argo CD renders the extraction root when an OCI source omits path
-		// (apppathutil.Path(ociPath, "") — vendored repository.go:415-418);
-		// "." selects the same root through the local-renderer dispatch below.
-		source.Path = "."
-	}
 	opts.ChartAcquirer = p.acquisition.ChartAcquirer(p.chartAcquirer)
 	opts.ChartCacheDir = p.chartCacheDir
 	opts.OfflineCharts = p.offline

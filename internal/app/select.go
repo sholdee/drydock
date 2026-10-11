@@ -211,9 +211,11 @@ func localSourcePath(source argoappv1.ApplicationSource) (string, bool) {
 // to the repository root or escapes it owns nothing: owning "" would
 // intersect every changed path and suppress the unowned render-all fallback
 // repository-wide. A relative item needs a local base path, so a chart,
-// ref-only or pathless source contributes only absolute items, and an OCI
-// source, whose path selects within the artifact, contributes none. Glob
-// metacharacters are kept for manifestGeneratePathMatches.
+// ref-only, pathless or OCI source contributes only absolute items — an OCI
+// source's path selects within the artifact (localSourcePath reports no
+// base), but Argo CD applies the annotation per source without a type
+// filter, so its absolute items are honoured like a chart-only source's.
+// Glob metacharacters are kept for manifestGeneratePathMatches.
 func manifestGeneratePaths(app argoappv1.Application) []string {
 	value := app.Annotations[argoappv1.AnnotationKeyManifestGeneratePaths]
 	if strings.TrimSpace(value) == "" {
@@ -221,9 +223,6 @@ func manifestGeneratePaths(app argoappv1.Application) []string {
 	}
 	var paths []string
 	for _, source := range applicationSources(app) {
-		if ociartifact.IsOCIURL(source.RepoURL) {
-			continue
-		}
 		base, hasBase := localSourcePath(source)
 		for item := range strings.SplitSeq(value, ";") {
 			// Backslashes are separators here as in every other selection

@@ -20,22 +20,32 @@ const (
 )
 
 func (p localProvider) PrepareSource(ctx context.Context, application argoappv1.Application, sourcePlan SourcePlan) (SourcePlan, error) {
-	if sourcePlan.RefOnly || strings.TrimSpace(sourcePlan.Source.Path) == "" {
+	if sourcePlan.RefOnly {
 		return sourcePlan, nil
 	}
-
-	sourceRoot, err := p.resolveSourceRoot(ctx, render.ResolvedSource{
+	// Argo CD merges .argocd-source*.yaml at the OCI app path
+	// (repository.go:1920-1923 at v3.5.4), which is the artifact root when
+	// path is empty, so the pathless oci:// shape prepares exactly like
+	// `path: .` and chart is ignored. The default applies to this local copy
+	// only: sourcePlan.Source.Path stays as written, so renderSourceContext
+	// and mergeArgocdSourceOverrides' re-pin keep reading the spec.
+	source := normalizeOCISource(render.ResolvedSource{
 		Path:           sourcePlan.Source.Path,
 		Chart:          sourcePlan.Source.Chart,
 		RepoURL:        sourcePlan.Source.RepoURL,
 		TargetRevision: sourcePlan.Source.TargetRevision,
 		ExplicitType:   sourcePlan.ExplicitType,
 	})
+	if strings.TrimSpace(source.Path) == "" {
+		return sourcePlan, nil
+	}
+
+	sourceRoot, err := p.resolveSourceRoot(ctx, source)
 	if err != nil {
 		return sourcePlan, err
 	}
 
-	sourcePath, err := cleanLocalSourcePath(sourcePlan.Source.Path)
+	sourcePath, err := cleanLocalSourcePath(source.Path)
 	if err != nil {
 		return sourcePlan, err
 	}

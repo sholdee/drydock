@@ -143,7 +143,10 @@ func (t *selectionTree) repoMapped(repoURL string) (toRoot, mapped bool) {
 // a path source renders from the local tree when it is not repo-mapped
 // elsewhere, not OCI, and its path exists under root — whatever its repoURL.
 // Sources fetched from another repository never contribute local ownership,
-// and a chart source's value files resolve inside the fetched chart.
+// an oci:// source is never local whether or not it sets chart (Argo CD
+// ignores chart there and the path selects within the artifact), and a
+// schemeless-OCI or HTTP(S) chart source's value files resolve inside the
+// fetched chart.
 func pathSourceRendersFromRoot(tree *selectionTree, source argoappv1.ApplicationSource) bool {
 	if source.Path == "" || source.Chart != "" {
 		return false
@@ -162,13 +165,15 @@ func pathSourceRendersFromRoot(tree *selectionTree, source argoappv1.Application
 // for the source renderRefsForSource hands the provider as a $ref root: it
 // reports whether that root is this tree, reached without acquisition. A
 // repo-mapped source resolves to its mapped path and an OCI source is never
-// local; otherwise a path present under root, a self-repo reference, or an
-// empty repoURL resolves to root. Unlike pathSourceRendersFromRoot it needs
-// no path. One documented divergence: a chart-only source reports false
-// although the provider returns root for it. Argo CD cannot use a chart
-// repository as a $ref root, and a ref source cannot set chart, so only a
-// ref twin of a chart-only consumer (same repoURL and revision) reaches it.
-// The provider's nil-resolver branch serves hand-built providers only.
+// local (chart or no chart — the provider classifies every oci:// spelling
+// as an artifact source); otherwise a path present under root, a self-repo
+// reference, or an empty repoURL resolves to root. Unlike
+// pathSourceRendersFromRoot it needs no path. One documented divergence: a
+// schemeless-OCI or HTTP(S) chart-only source reports false although the
+// provider returns root for it. Argo CD cannot use a chart repository as a
+// $ref root, and a non-OCI ref source cannot set chart, so only a ref twin
+// of a chart-only consumer (same repoURL and revision) reaches it. The
+// provider's nil-resolver branch serves hand-built providers only.
 func refSourceRendersFromRoot(tree *selectionTree, source render.ResolvedSource) bool {
 	if source.Path == "" && source.Chart != "" {
 		return false

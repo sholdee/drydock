@@ -77,6 +77,34 @@ func TestPlanRejectsRefChart(t *testing.T) {
 	}
 }
 
+// An oci:// entry with both ref and chart plans: upstream dispatches it as
+// an OCI artifact source and renders it (repository.go:358-360 at v3.5.4),
+// rejecting the pair only when another source consumes the ref. The entry is
+// not ref-only (chart is set, so it renders), and its ref is registered.
+func TestPlanAllowsRefChartOnOCISource(t *testing.T) {
+	application := argoappv1.Application{
+		Spec: argoappv1.ApplicationSpec{
+			Sources: argoappv1.ApplicationSources{
+				{RepoURL: "oci://ghcr.io/example/charts", Chart: "app", Ref: "values"},
+			},
+		},
+	}
+
+	result, err := Plan(application)
+	if err != nil {
+		t.Fatalf("Plan() error = %v, want oci:// ref+chart accepted", err)
+	}
+	if len(result.Sources) != 1 {
+		t.Fatalf("Sources = %#v, want one", result.Sources)
+	}
+	if result.Sources[0].RefOnly {
+		t.Fatalf("RefOnly = true, want false: the entry sets chart and renders")
+	}
+	if got := result.Sources[0].RefKey; got != "$values" {
+		t.Fatalf("RefKey = %q, want $values", got)
+	}
+}
+
 func TestPlanRejectsMultipleExplicitSourceTypes(t *testing.T) {
 	application := argoappv1.Application{
 		Spec: argoappv1.ApplicationSpec{

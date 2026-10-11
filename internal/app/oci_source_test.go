@@ -1,9 +1,13 @@
 package app
 
 import (
+	"bytes"
 	"context"
+	"errors"
+	"maps"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"testing"
@@ -13,37 +17,59 @@ import (
 	gitconfig "github.com/go-git/go-git/v5/config"
 	"github.com/sholdee/drydock/internal/cacheevent"
 	"github.com/sholdee/drydock/internal/config"
+	"github.com/sholdee/drydock/internal/diagnostic"
 	"github.com/sholdee/drydock/internal/discovery"
 	"github.com/sholdee/drydock/internal/ociartifact"
 	"github.com/sholdee/drydock/internal/ociartifact/ocitest"
 	"github.com/sholdee/drydock/internal/render"
 	sourcepkg "github.com/sholdee/drydock/internal/source"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"sigs.k8s.io/yaml"
 )
 
 // fakeOCIArtifactAcquirer is the unit-test seam fake: it resolves every
-// revision to a fixed digest and extracts fixed files, mirroring the
-// OnAcquired contract of the production acquirer.
+// revision to a fixed digest (or fails with resolveErr) and extracts fixed
+// files, mirroring the OnAcquired contract of the production acquirer. It
+// records the (repoURL, revision) handed to Resolve and the (repoURL, digest)
+// handed to Extract so tests can pin WHAT was pulled, not only that a pull
+// happened. extractRoot, when set, hosts the extraction directories (for
+// hand-built providers, which never release them through a session).
 type fakeOCIArtifactAcquirer struct {
-	mu       sync.Mutex
-	digest   string
-	files    map[string]string
-	resolves int
-	extracts int
+	mu          sync.Mutex
+	digest      string
+	files       map[string]string
+	resolveErr  error
+	extractRoot string
+	resolves    int
+	extracts    int
+	resolved    []fakeOCIRequest
+	extracted   []fakeOCIRequest
 }
 
-func (a *fakeOCIArtifactAcquirer) Resolve(_ context.Context, _, _ string, _ ociartifact.Options) (string, error) {
+// fakeOCIRequest is one recorded acquirer call: revision is the requested
+// revision for Resolve and the digest for Extract.
+type fakeOCIRequest struct {
+	repoURL  string
+	revision string
+}
+
+func (a *fakeOCIArtifactAcquirer) Resolve(_ context.Context, repoURL, revision string, _ ociartifact.Options) (string, error) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	a.resolves++
+	a.resolved = append(a.resolved, fakeOCIRequest{repoURL: repoURL, revision: revision})
+	if a.resolveErr != nil {
+		return "", a.resolveErr
+	}
 	return a.digest, nil
 }
 
-func (a *fakeOCIArtifactAcquirer) Extract(_ context.Context, _, _ string, opts ociartifact.Options) (string, func(), error) {
+func (a *fakeOCIArtifactAcquirer) Extract(_ context.Context, repoURL, digest string, opts ociartifact.Options) (string, func(), error) {
 	a.mu.Lock()
 	a.extracts++
+	a.extracted = append(a.extracted, fakeOCIRequest{repoURL: repoURL, revision: digest})
 	a.mu.Unlock()
-	dir, err := os.MkdirTemp("", "drydock-fake-oci-*")
+	dir, err := os.MkdirTemp(a.extractRoot, "drydock-fake-oci-*")
 	if err != nil {
 		return "", nil, err
 	}
@@ -66,6 +92,82 @@ func (a *fakeOCIArtifactAcquirer) counts() (int, int) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	return a.resolves, a.extracts
+}
+
+// requests returns copies of the recorded Resolve and Extract calls, in order.
+func (a *fakeOCIArtifactAcquirer) requests() (resolved, extracted []fakeOCIRequest) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return append([]fakeOCIRequest(nil), a.resolved...), append([]fakeOCIRequest(nil), a.extracted...)
+}
+
+// fakeOCIChartFiles is the fake acquirer's content for chart-shaped
+// artifacts: a chart whose ConfigMap is named after the release and echoes
+// .Values.message, plus any extra files (an .argocd-source.yaml override, a
+// replacement template).
+func fakeOCIChartFiles(name string, extra map[string]string) map[string]string {
+	files := map[string]string{
+		"Chart.yaml":        "apiVersion: v2\nname: " + name + "\nversion: 1.2.3\n",
+		"values.yaml":       "message: from-defaults\n",
+		"templates/cm.yaml": "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: {{ .Release.Name }}\ndata:\n  message: {{ .Values.message | quote }}\n",
+	}
+	maps.Copy(files, extra)
+	return files
+}
+
+func plainConfigMapYAML(name string) string {
+	return "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: " + name + "\ndata: {}\n"
+}
+
+func diagnosticsWithCode(diags []diagnostic.Diagnostic, code string) []diagnostic.Diagnostic {
+	var out []diagnostic.Diagnostic
+	for _, diag := range diags {
+		if diag.Code == code {
+			out = append(out, diag)
+		}
+	}
+	return out
+}
+
+// assertOCIChartIgnoredWarningOnce pins the advisory contract: exactly one
+// source.oci-chart-ignored diagnostic, always a warning in category source.
+func assertOCIChartIgnoredWarningOnce(t *testing.T, diags []diagnostic.Diagnostic) diagnostic.Diagnostic {
+	t.Helper()
+	found := diagnosticsWithCode(diags, ociChartIgnoredCode)
+	if len(found) != 1 {
+		t.Fatalf("%s diagnostics = %d, want exactly 1: %#v", ociChartIgnoredCode, len(found), diags)
+	}
+	diag := found[0]
+	if diag.Severity != diagnostic.SeverityWarning {
+		t.Fatalf("%s severity = %s, want warning: %#v", ociChartIgnoredCode, diag.Severity, diag)
+	}
+	if diag.Category != "source" {
+		t.Fatalf("%s category = %q, want source: %#v", ociChartIgnoredCode, diag.Category, diag)
+	}
+	return diag
+}
+
+func assertNoOCIChartIgnoredWarning(t *testing.T, diags []diagnostic.Diagnostic) {
+	t.Helper()
+	if found := diagnosticsWithCode(diags, ociChartIgnoredCode); len(found) != 0 {
+		t.Fatalf("%s fired for a shape it must stay quiet on: %#v", ociChartIgnoredCode, found)
+	}
+}
+
+// sortedManifestYAML serializes manifests in a stable order for whole-render
+// equality checks between two builds of one Application.
+func sortedManifestYAML(t *testing.T, manifests []render.Manifest) []byte {
+	t.Helper()
+	docs := make([]string, 0, len(manifests))
+	for _, manifest := range manifests {
+		data, err := yaml.Marshal(manifest.Object.Object)
+		if err != nil {
+			t.Fatalf("yaml.Marshal() error = %v", err)
+		}
+		docs = append(docs, string(data))
+	}
+	sort.Strings(docs)
+	return []byte(strings.Join(docs, "---\n"))
 }
 
 func writeOCIApplication(t *testing.T, root, appName, repoURL, sourcePath, revision, extra string) {
@@ -280,13 +382,13 @@ func TestBuildRendersPlainManifestsOCIArtifact(t *testing.T) {
 	assertManifestNamed(t, result.Manifests, "plain-artifact")
 }
 
-// Classic-shape regression pin: oci:// + chart keeps drydock's existing
-// helm-chart flow (recorded divergence) — the chart acquirer is hit, the
-// artifact acquirer never runs.
-func TestBuildClassicOCIChartShapeUsesChartAcquirer(t *testing.T) {
+// Argo CD dispatch pin (issue #399): oci:// + chart is an OCI artifact
+// source — repoURL:targetRevision is pulled as spelled (never
+// <repoURL>/<chart>), the chart acquirer stays idle, the artifact renders,
+// and the source carries exactly one advisory that names the Argo-equivalent
+// remedy (drop chart, path: .) before the schemeless alternative.
+func TestBuildOCIChartShapeUsesArtifactAcquirer(t *testing.T) {
 	root := t.TempDir()
-	chartRoot := t.TempDir()
-	writeTestChart(t, chartRoot, "demo")
 	writeTestFile(t, filepath.Join(root, "apps", "classic.yaml"), `apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
@@ -301,91 +403,129 @@ spec:
     name: in-cluster
     namespace: default
 `)
-	chartAcquirer := &recordingChartAcquirer{chartDir: filepath.Join(chartRoot, "demo")}
-	artifactAcquirer := &fakeOCIArtifactAcquirer{digest: "sha256:" + strings.Repeat("ab", 32)}
+	chartAcquirer := &recordingChartAcquirer{chartDir: t.TempDir()}
+	artifactAcquirer := &fakeOCIArtifactAcquirer{digest: "sha256:" + strings.Repeat("ab", 32), files: fakeOCIChartFiles("demo", nil)}
 
 	result, err := Orchestrator{ChartAcquirer: chartAcquirer, OCIArtifactAcquirer: artifactAcquirer}.Build(context.Background(), ociBuildRequest(t, root))
 	if err != nil {
 		t.Fatalf("Build() error = %v", err)
 	}
 	assertManifestNamed(t, result.Manifests, "classic")
-	if len(chartAcquirer.requests) == 0 {
-		t.Fatal("chart acquirer not hit for oci:// + chart shape")
+	if resolves, extracts := artifactAcquirer.counts(); resolves < 1 || extracts < 1 {
+		t.Fatalf("artifact acquirer calls = (%d resolves, %d extracts), want the artifact pulled", resolves, extracts)
 	}
-	if resolves, extracts := artifactAcquirer.counts(); resolves != 0 || extracts != 0 {
-		t.Fatalf("artifact acquirer hit for oci:// + chart shape: %d resolves %d extracts", resolves, extracts)
+	resolved, extracted := artifactAcquirer.requests()
+	for _, request := range append(resolved, extracted...) {
+		if request.repoURL != "oci://charts.example.test/org" {
+			t.Fatalf("acquirer pulled %q, want the repoURL as spelled (chart must never join the reference)", request.repoURL)
+		}
+	}
+	for _, request := range resolved {
+		if request.revision != "1.2.3" {
+			t.Fatalf("Resolve revision = %q, want targetRevision 1.2.3", request.revision)
+		}
+	}
+	if len(chartAcquirer.requests) != 0 {
+		t.Fatalf("chart acquirer requests = %#v, want none for an oci:// source", chartAcquirer.requests)
+	}
+	diag := assertOCIChartIgnoredWarningOnce(t, result.Diagnostics)
+	for _, fragment := range []string{"is ignored", "oci://charts.example.test/org", "path: .", "schemeless Helm OCI shape"} {
+		if !strings.Contains(diag.Message, fragment) {
+			t.Fatalf("diagnostic message = %q, want fragment %q", diag.Message, fragment)
+		}
+	}
+	if strings.Index(diag.Message, "path: .") >= strings.Index(diag.Message, "schemeless") {
+		t.Fatalf("diagnostic message = %q, want the path: . remedy before the schemeless alternative", diag.Message)
 	}
 }
 
-// The hybrid shape (oci:// + chart + path) errors clearly instead of falling
-// through to the masked branches.
-func TestBuildHybridOCIChartPathShapeFails(t *testing.T) {
-	root := t.TempDir()
-	writeTestFile(t, filepath.Join(root, "apps", "hybrid.yaml"), `apiVersion: argoproj.io/v1alpha1
-kind: Application
-metadata:
-  name: hybrid
-  namespace: argocd
-spec:
-  source:
-    repoURL: oci://charts.example.test/org
-    targetRevision: 1.2.3
-    chart: demo
-    path: .
-  destination:
-    name: in-cluster
-    namespace: default
-`)
-	artifactAcquirer := &fakeOCIArtifactAcquirer{digest: "sha256:" + strings.Repeat("ab", 32)}
-	_, err := Orchestrator{OCIArtifactAcquirer: artifactAcquirer}.Build(context.Background(), ociBuildRequest(t, root))
-	assertBuildErrorContains(t, err, "unsupported source shape")
-	if resolves, extracts := artifactAcquirer.counts(); resolves != 0 || extracts != 0 {
-		t.Fatalf("artifact acquirer hit for hybrid shape: %d resolves %d extracts", resolves, extracts)
+// chart + path on one oci:// source is valid: path selects within the
+// artifact and chart is ignored (Argo CD has no exclusivity check outside the
+// API-create ValidateRepo path). The advisory fires once in both shapes.
+func TestBuildOCIChartPathShapeRendersArtifactAtPath(t *testing.T) {
+	for _, tt := range []struct {
+		name  string
+		path  string
+		files map[string]string
+		want  string
+	}{
+		{name: "path dot", path: ".", files: map[string]string{"cm.yaml": plainConfigMapYAML("hybrid-root")}, want: "hybrid-root"},
+		{name: "path manifests", path: "manifests", files: map[string]string{"manifests/cm.yaml": plainConfigMapYAML("hybrid-nested")}, want: "hybrid-nested"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			root := t.TempDir()
+			writeOCIApplication(t, root, "hybrid", "oci://charts.example.test/org", tt.path, "1.2.3", "    chart: demo\n")
+			artifactAcquirer := &fakeOCIArtifactAcquirer{digest: "sha256:" + strings.Repeat("ab", 32), files: tt.files}
+
+			result, err := Orchestrator{OCIArtifactAcquirer: artifactAcquirer}.Build(context.Background(), ociBuildRequest(t, root))
+			if err != nil {
+				t.Fatalf("Build() error = %v", err)
+			}
+			assertManifestNamed(t, result.Manifests, tt.want)
+			if resolves, extracts := artifactAcquirer.counts(); resolves < 1 || extracts < 1 {
+				t.Fatalf("artifact acquirer calls = (%d resolves, %d extracts), want the artifact pulled", resolves, extracts)
+			}
+			assertOCIChartIgnoredWarningOnce(t, result.Diagnostics)
+		})
 	}
 }
 
 // Empty-path normalization pin: an OCI Application with NO path line renders
 // the artifact manifests exactly like `path: .` — argo renders the extraction
-// root when an OCI source omits path (vendored repository.go:415-418).
+// root when an OCI source omits path (apppathutil.Path(ociPath, ""),
+// repository.go:425 at v3.5.4) — whether or not chart is set.
 func TestBuildRendersOCIArtifactWithoutPath(t *testing.T) {
 	reg := ocitest.StartRegistry(t)
 	ocitest.PushHelmChartArtifact(t, reg, "charts/demo", "1.2.3", ocitest.HelmChartSpec{Name: "demo", Version: "1.2.3"})
-	root := t.TempDir()
-	writeOCIApplication(t, root, "demo", reg.RepoURL("charts/demo"), "", "1.2.3", "")
+	for _, tt := range []struct {
+		name        string
+		extra       string
+		wantWarning bool
+	}{
+		{name: "no chart"},
+		{name: "chart set", extra: "    chart: demo\n", wantWarning: true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			root := t.TempDir()
+			writeOCIApplication(t, root, "demo", reg.RepoURL("charts/demo"), "", "1.2.3", tt.extra)
 
-	result, err := Orchestrator{}.Build(context.Background(), ociBuildRequest(t, root))
-	if err != nil {
-		t.Fatalf("Build() error = %v", err)
-	}
-	manifest := assertManifestNamed(t, result.Manifests, "demo-demo")
-	if marker, _, _ := unstructured.NestedString(manifest.Object.Object, "data", "marker"); marker != "oci-artifact-content" {
-		t.Fatalf("marker = %q, want artifact content", marker)
+			result, err := Orchestrator{}.Build(context.Background(), ociBuildRequest(t, root))
+			if err != nil {
+				t.Fatalf("Build() error = %v", err)
+			}
+			manifest := assertManifestNamed(t, result.Manifests, "demo-demo")
+			if marker, _, _ := unstructured.NestedString(manifest.Object.Object, "data", "marker"); marker != "oci-artifact-content" {
+				t.Fatalf("marker = %q, want artifact content", marker)
+			}
+			if tt.wantWarning {
+				assertOCIChartIgnoredWarningOnce(t, result.Diagnostics)
+			} else {
+				assertNoOCIChartIgnoredWarning(t, result.Diagnostics)
+			}
+		})
 	}
 }
 
-// The hybrid-shape error text goes through RedactURL: credentials embedded in
-// the repoURL spelling never appear in it.
-func TestBuildHybridOCIShapeErrorRedactsCredentials(t *testing.T) {
+// The advisory goes through RedactURL: credentials embedded in the repoURL
+// spelling never reach the diagnostic text or any error.
+func TestBuildOCIChartIgnoredWarningRedactsCredentials(t *testing.T) {
 	root := t.TempDir()
-	writeTestFile(t, filepath.Join(root, "apps", "hybrid.yaml"), `apiVersion: argoproj.io/v1alpha1
-kind: Application
-metadata:
-  name: hybrid
-  namespace: argocd
-spec:
-  source:
-    repoURL: oci://user:sekret@charts.example.test/org
-    targetRevision: 1.2.3
-    chart: demo
-    path: .
-  destination:
-    name: in-cluster
-    namespace: default
-`)
-	_, err := Orchestrator{}.Build(context.Background(), ociBuildRequest(t, root))
-	assertBuildErrorContains(t, err, "unsupported source shape")
-	if strings.Contains(err.Error(), "sekret") {
-		t.Fatalf("hybrid-shape error leaks URL credentials: %v", err)
+	writeOCIApplication(t, root, "hybrid", "oci://user:sekret@charts.example.test/org", "", "1.2.3", "    chart: demo\n")
+	fake := &fakeOCIArtifactAcquirer{digest: "sha256:" + strings.Repeat("ab", 32), files: fakeOCIChartFiles("demo", nil)}
+
+	result, err := Orchestrator{OCIArtifactAcquirer: fake}.Build(context.Background(), ociBuildRequest(t, root))
+	diag := assertOCIChartIgnoredWarningOnce(t, result.Diagnostics)
+	text := diag.Message
+	if err != nil {
+		text += "\n" + err.Error()
+	}
+	for _, leaked := range []string{"sekret", "user:sekret"} {
+		if strings.Contains(text, leaked) {
+			t.Fatalf("diagnostic or error leaks URL credentials %q:\n%s", leaked, text)
+		}
+	}
+	if !strings.Contains(diag.Message, "oci://charts.example.test/org") {
+		t.Fatalf("diagnostic message = %q, want the redacted repository URL", diag.Message)
 	}
 }
 
@@ -564,6 +704,25 @@ func TestOCISourceIdentityDerivesFromDigest(t *testing.T) {
 	if identities[0].Kind != sourceIdentityKindOCI || identities[0].Revision != digest {
 		t.Fatalf("identity = %#v, want kind oci with digest revision", identities[0])
 	}
+
+	// The moved shape (chart set, with or without path) is an artifact source
+	// too: digest identity, never the chart flow's spec-derived name+version
+	// identity — the persistent render-cache key follows the content.
+	for _, source := range []render.ResolvedSource{
+		{RepoURL: "oci://registry.example/org/app", TargetRevision: "1.2.3", Chart: "app"},
+		{RepoURL: "oci://registry.example/org/app", TargetRevision: "1.2.3", Chart: "app", Path: "manifests"},
+	} {
+		_, identity, err := provider.resolveSourceRootIdentity(context.Background(), source)
+		if err != nil {
+			t.Fatalf("resolveSourceRootIdentity(chart=%q path=%q) error = %v", source.Chart, source.Path, err)
+		}
+		if identity.Kind != sourceIdentityKindOCI || identity.Revision != digest || identity.Locator != ociartifact.RedactURL(source.RepoURL) {
+			t.Fatalf("identity(chart=%q path=%q) = %#v, want kind oci, digest revision, redacted locator", source.Chart, source.Path, identity)
+		}
+		if identity == chartOnlySourceIdentity(source) {
+			t.Fatalf("identity(chart=%q path=%q) = %#v, must not be the chart flow's spec-derived identity", source.Chart, source.Path, identity)
+		}
+	}
 }
 
 // Near-miss/self-repo exclusion: an oci:// URL whose scheme-stripped form
@@ -634,28 +793,45 @@ spec:
 }
 
 // repo-map precedence: mapping the oci:// URL to a local path keeps winning
-// over OCI classification (today's only #220 workaround stays intact).
+// over OCI classification (today's only #220 workaround stays intact) — for
+// the chart-bearing spellings too, which render the mapped tree (the mapped
+// root when path is empty) with the advisory still emitted.
 func TestBuildOCIRepoMapPrecedence(t *testing.T) {
-	root := t.TempDir()
 	mapped := t.TempDir()
-	writeTestFile(t, filepath.Join(mapped, "manifests", "cm.yaml"), `apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: mapped-content
-data: {}
-`)
-	writeOCIApplication(t, root, "demo", "oci://registry.example/org/app", "manifests", "1.2.3", "")
-	fake := &fakeOCIArtifactAcquirer{digest: "sha256:" + strings.Repeat("aa", 32)}
-	request := ociBuildRequest(t, root)
-	request.RepoMaps = []sourcepkg.RepoMap{{URL: "oci://registry.example/org/app", Path: mapped}}
+	writeTestFile(t, filepath.Join(mapped, "manifests", "cm.yaml"), plainConfigMapYAML("mapped-content"))
+	writeTestFile(t, filepath.Join(mapped, "cm.yaml"), plainConfigMapYAML("mapped-root-content"))
+	for _, tt := range []struct {
+		name        string
+		path        string
+		extra       string
+		want        string
+		wantWarning bool
+	}{
+		{name: "path", path: "manifests", want: "mapped-content"},
+		{name: "chart and path", path: "manifests", extra: "    chart: demo\n", want: "mapped-content", wantWarning: true},
+		{name: "chart only renders the mapped root", extra: "    chart: demo\n", want: "mapped-root-content", wantWarning: true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			root := t.TempDir()
+			writeOCIApplication(t, root, "demo", "oci://registry.example/org/app", tt.path, "1.2.3", tt.extra)
+			fake := &fakeOCIArtifactAcquirer{digest: "sha256:" + strings.Repeat("aa", 32)}
+			request := ociBuildRequest(t, root)
+			request.RepoMaps = []sourcepkg.RepoMap{{URL: "oci://registry.example/org/app", Path: mapped}}
 
-	result, err := Orchestrator{OCIArtifactAcquirer: fake}.Build(context.Background(), request)
-	if err != nil {
-		t.Fatalf("Build() error = %v", err)
-	}
-	assertManifestNamed(t, result.Manifests, "mapped-content")
-	if resolves, extracts := fake.counts(); resolves != 0 || extracts != 0 {
-		t.Fatalf("artifact acquirer hit despite repo-map: %d resolves %d extracts", resolves, extracts)
+			result, err := Orchestrator{OCIArtifactAcquirer: fake}.Build(context.Background(), request)
+			if err != nil {
+				t.Fatalf("Build() error = %v", err)
+			}
+			assertManifestNamed(t, result.Manifests, tt.want)
+			if resolves, extracts := fake.counts(); resolves != 0 || extracts != 0 {
+				t.Fatalf("artifact acquirer hit despite repo-map: %d resolves %d extracts", resolves, extracts)
+			}
+			if tt.wantWarning {
+				assertOCIChartIgnoredWarningOnce(t, result.Diagnostics)
+			} else {
+				assertNoOCIChartIgnoredWarning(t, result.Diagnostics)
+			}
+		})
 	}
 }
 
@@ -681,7 +857,9 @@ func TestOCISourceSkippedInDiscoveryFrontier(t *testing.T) {
 
 // Repo-map escape hatch at the frontier: a repo-mapped oci:// parent renders
 // from the mapped local tree, so it keeps frontier eligibility and discovers
-// child Applications; an unmapped oci:// parent stays skipped.
+// child Applications — whatever chart says, with or without path (the OCI
+// rule is evaluated before the chart-only skip); an unmapped oci:// parent
+// stays skipped in every spelling.
 func TestOCISourceRepoMappedEntersDiscoveryFrontier(t *testing.T) {
 	root := t.TempDir()
 	// A discovery-relevant file at the local `path: .` keeps the unmapped
@@ -689,22 +867,26 @@ func TestOCISourceRepoMappedEntersDiscoveryFrontier(t *testing.T) {
 	writeBuildApplication(t, root, "decoy", "decoy-cm")
 	mapped := t.TempDir()
 	writeBuildApplication(t, mapped, "child", "child-cm")
-	app := argoappv1.Application{
-		Spec: argoappv1.ApplicationSpec{
-			Source: &argoappv1.ApplicationSource{
-				RepoURL:        "oci://registry.example/org/app",
-				TargetRevision: "1.2.3",
-				Path:           ".",
-			},
-		},
-	}
 	request := BuildRequest{
 		RepoMaps: []sourcepkg.RepoMap{{URL: "oci://registry.example/org/app", Path: mapped}}}
-	if !applicationMayRenderDiscoveryObjects(root, request, discovery.Result{}, app) {
-		t.Fatal("repo-mapped OCI parent lost frontier eligibility (its child Applications would be silently dropped)")
-	}
-	if applicationMayRenderDiscoveryObjects(root, BuildRequest{}, discovery.Result{}, app) {
-		t.Fatal("unmapped OCI source entered the discovery frontier")
+	for _, tt := range []struct {
+		name   string
+		source argoappv1.ApplicationSource
+	}{
+		{name: "path", source: argoappv1.ApplicationSource{RepoURL: "oci://registry.example/org/app", TargetRevision: "1.2.3", Path: "."}},
+		{name: "chart and path", source: argoappv1.ApplicationSource{RepoURL: "oci://registry.example/org/app", TargetRevision: "1.2.3", Chart: "demo", Path: "."}},
+		{name: "chart only", source: argoappv1.ApplicationSource{RepoURL: "oci://registry.example/org/app", TargetRevision: "1.2.3", Chart: "demo"}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			source := tt.source
+			app := argoappv1.Application{Spec: argoappv1.ApplicationSpec{Source: &source}}
+			if !applicationMayRenderDiscoveryObjects(root, request, discovery.Result{}, app) {
+				t.Fatal("repo-mapped OCI parent lost frontier eligibility (its child Applications would be silently dropped)")
+			}
+			if applicationMayRenderDiscoveryObjects(root, BuildRequest{}, discovery.Result{}, app) {
+				t.Fatal("unmapped OCI source entered the discovery frontier")
+			}
+		})
 	}
 }
 
@@ -832,4 +1014,313 @@ func TestOCIExtractionLifecycleAndTwoSidedPaths(t *testing.T) {
 	if !names["side-a"] || !names["side-b"] {
 		t.Fatalf("diff results = %#v, want side-a and side-b (no cross-side contamination)", diffResult.Results)
 	}
+}
+
+// The advisory is strict-exempt: --strict neither escalates it nor fails the
+// build, because the render is Argo-identical whether or not it fires.
+func TestBuildOCIChartIgnoredWarningIsStrictExempt(t *testing.T) {
+	for _, tt := range []struct {
+		name   string
+		strict bool
+	}{
+		{name: "default"},
+		{name: "strict still succeeds", strict: true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			root := t.TempDir()
+			writeOCIApplication(t, root, "demo", "oci://charts.example.test/org", "", "1.2.3", "    chart: demo\n")
+			fake := &fakeOCIArtifactAcquirer{digest: "sha256:" + strings.Repeat("ab", 32), files: fakeOCIChartFiles("demo", nil)}
+			request := ociBuildRequest(t, root)
+			request.Strict = tt.strict
+
+			result, err := Orchestrator{OCIArtifactAcquirer: fake}.Build(context.Background(), request)
+			if err != nil {
+				t.Fatalf("Build() error = %v (oci-chart-ignored must stay strict-exempt)", err)
+			}
+			assertManifestNamed(t, result.Manifests, "demo")
+			assertOCIChartIgnoredWarningOnce(t, result.Diagnostics)
+		})
+	}
+}
+
+// Reporter's shape (issue #399) end to end through the hermetic registry: the
+// chart is pushed under the full repoURL, chart: names it redundantly, no
+// path, helm.valuesObject and releaseName set. It renders the same bytes the
+// no-chart `path: .` spelling renders, through the OCI artifact flow: one OCI
+// acquisition event per build, zero chart-acquirer requests. The twins are
+// built separately under one Application name so tracking metadata cannot
+// differ (one build would also memoize the second pull away).
+func TestBuildRendersOCIChartShapeWithHelmValuesObject(t *testing.T) {
+	reg := ocitest.StartRegistry(t)
+	ocitest.PushHelmChartArtifact(t, reg, "charts/app-template", "1.2.3", ocitest.HelmChartSpec{Name: "app-template", Version: "1.2.3"})
+	helmBlock := "    helm:\n      releaseName: twin\n      valuesObject:\n        message: from-values-object\n"
+	rendered := map[string][]byte{}
+	for _, tt := range []struct {
+		name        string
+		path        string
+		extra       string
+		wantWarning bool
+	}{
+		{name: "chart shape", extra: "    chart: app-template\n" + helmBlock, wantWarning: true},
+		{name: "path shape", path: ".", extra: helmBlock},
+	} {
+		root := t.TempDir()
+		writeOCIApplication(t, root, "demo", reg.RepoURL("charts/app-template"), tt.path, "1.2.3", tt.extra)
+		chartAcquirer := &recordingChartAcquirer{chartDir: t.TempDir()}
+
+		result, err := Orchestrator{ChartAcquirer: chartAcquirer}.Build(context.Background(), ociBuildRequest(t, root))
+		if err != nil {
+			t.Fatalf("%s: Build() error = %v", tt.name, err)
+		}
+		manifest := assertManifestNamed(t, result.Manifests, "twin-demo")
+		if message, _, _ := unstructured.NestedString(manifest.Object.Object, "data", "message"); message != "from-values-object" {
+			t.Fatalf("%s: message = %q, want the helm.valuesObject override", tt.name, message)
+		}
+		if len(chartAcquirer.requests) != 0 {
+			t.Fatalf("%s: chart acquirer requests = %#v, want none (oci:// is an artifact source)", tt.name, chartAcquirer.requests)
+		}
+		if got := ociEventCount(result.CacheEvents); got != 1 {
+			t.Fatalf("%s: oci cache events = %d, want 1: %#v", tt.name, got, result.CacheEvents)
+		}
+		if tt.wantWarning {
+			assertOCIChartIgnoredWarningOnce(t, result.Diagnostics)
+		} else {
+			assertNoOCIChartIgnoredWarning(t, result.Diagnostics)
+		}
+		rendered[tt.name] = sortedManifestYAML(t, result.Manifests)
+	}
+	if !bytes.Equal(rendered["chart shape"], rendered["path shape"]) {
+		t.Fatalf("chart shape and path shape rendered differently:\n--- chart shape ---\n%s\n--- path shape ---\n%s", rendered["chart shape"], rendered["path shape"])
+	}
+}
+
+// Upstream merges .argocd-source*.yaml at the OCI app path
+// (repository.go:1920-1923 at v3.5.4) — the artifact root for the pathless
+// shape. PrepareSource therefore acquires oci:// + chart exactly as it does
+// `path: .`, so an override inside the artifact reaches the helm block in
+// both spellings and they render the same bytes.
+func TestBuildOCIChartShapeMergesArgocdSourceOverrides(t *testing.T) {
+	files := fakeOCIChartFiles("demo", map[string]string{
+		".argocd-source.yaml": "helm:\n  valuesObject:\n    message: from-override\n",
+	})
+	rendered := map[string][]byte{}
+	for _, tt := range []struct {
+		name        string
+		path        string
+		extra       string
+		wantWarning bool
+	}{
+		{name: "chart shape", extra: "    chart: demo\n", wantWarning: true},
+		{name: "path shape", path: "."},
+	} {
+		root := t.TempDir()
+		writeOCIApplication(t, root, "demo", "oci://charts.example.test/org", tt.path, "1.2.3", tt.extra)
+		fake := &fakeOCIArtifactAcquirer{digest: "sha256:" + strings.Repeat("ab", 32), files: files}
+
+		result, err := Orchestrator{OCIArtifactAcquirer: fake}.Build(context.Background(), ociBuildRequest(t, root))
+		if err != nil {
+			t.Fatalf("%s: Build() error = %v", tt.name, err)
+		}
+		manifest := assertManifestNamed(t, result.Manifests, "demo")
+		if message, _, _ := unstructured.NestedString(manifest.Object.Object, "data", "message"); message != "from-override" {
+			t.Fatalf("%s: message = %q, want the .argocd-source.yaml override merged at the artifact root", tt.name, message)
+		}
+		if tt.wantWarning {
+			assertOCIChartIgnoredWarningOnce(t, result.Diagnostics)
+		} else {
+			assertNoOCIChartIgnoredWarning(t, result.Diagnostics)
+		}
+		rendered[tt.name] = sortedManifestYAML(t, result.Manifests)
+	}
+	if !bytes.Equal(rendered["chart shape"], rendered["path shape"]) {
+		t.Fatalf("chart shape and path shape rendered differently:\n--- chart shape ---\n%s\n--- path shape ---\n%s", rendered["chart shape"], rendered["path shape"])
+	}
+}
+
+// A config management plugin on oci:// + chart runs on the extracted artifact
+// at the (defaulted) path, like a chart-only source's plugin runs on the
+// fetched chart: the default AVP compatibility renders the chart natively and
+// substitutes its placeholders, and the advisory still fires.
+func TestBuildOCIChartShapeWithAVPCompatPluginRendersArtifact(t *testing.T) {
+	root := t.TempDir()
+	writeTestFile(t, filepath.Join(root, "apps", "plugin.yaml"), `apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: oci-chart-plugin
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: oci://charts.example.test/org
+    targetRevision: 1.2.3
+    chart: demo
+    plugin:
+      name: argocd-vault-plugin
+  destination:
+    name: in-cluster
+    namespace: default
+`)
+	fake := &fakeOCIArtifactAcquirer{digest: "sha256:" + strings.Repeat("ab", 32), files: fakeOCIChartFiles("demo", map[string]string{
+		"templates/cm.yaml": `apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: avp-oci-chart
+  annotations:
+    avp.kubernetes.io/path: vaults/K8s/items/chart-secret
+data:
+  value: <CHART_VALUE>
+`,
+	})}
+
+	result, err := Orchestrator{OCIArtifactAcquirer: fake}.Build(context.Background(), ociBuildRequest(t, root))
+	if err != nil {
+		t.Fatalf("Build() error = %v", err)
+	}
+	assertRedactedDataValue(t, result.Manifests, "avp-oci-chart", "value", "")
+	if hasDiagnosticCode(result.Diagnostics, "plugin.avp-compat-substituted") {
+		t.Fatalf("Diagnostics = %#v, default AVP plugin compatibility should be quiet", result.Diagnostics)
+	}
+	if resolves, extracts := fake.counts(); resolves < 1 || extracts < 1 {
+		t.Fatalf("artifact acquirer calls = (%d resolves, %d extracts), want the plugin source pulled as an artifact", resolves, extracts)
+	}
+	assertOCIChartIgnoredWarningOnce(t, result.Diagnostics)
+}
+
+// The advisory accompanies an acquisition failure: when the pull of
+// repoURL:targetRevision fails (a stale chart that meant a different
+// artifact, an unreachable registry), the user still gets the hint that
+// explains which reference drydock — and Argo CD — tried.
+func TestBuildOCIChartIgnoredWarningAccompaniesAcquisitionFailure(t *testing.T) {
+	root := t.TempDir()
+	writeOCIApplication(t, root, "demo", "oci://charts.example.test/org", "", "1.2.3", "    chart: demo\n")
+	fake := &fakeOCIArtifactAcquirer{resolveErr: errors.New("registry unreachable")}
+
+	result, err := Orchestrator{OCIArtifactAcquirer: fake}.Build(context.Background(), ociBuildRequest(t, root))
+	assertBuildErrorContains(t, err, "registry unreachable")
+	assertOCIChartIgnoredWarningOnce(t, result.Diagnostics)
+}
+
+// Two-sided diff: the advisory is kept per side (one per Application per
+// side), strict or not.
+func TestDiffOCIChartIgnoredWarnsOncePerSide(t *testing.T) {
+	for _, tt := range []struct {
+		name   string
+		strict bool
+	}{
+		{name: "default"},
+		{name: "strict still succeeds", strict: true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			left := t.TempDir()
+			right := t.TempDir()
+			for _, side := range []string{left, right} {
+				writeOCIApplication(t, side, "demo", "oci://charts.example.test/org", "", "1.2.3", "    chart: demo\n")
+			}
+			fake := &fakeOCIArtifactAcquirer{digest: "sha256:" + strings.Repeat("ab", 32), files: fakeOCIChartFiles("demo", nil)}
+
+			result, err := Orchestrator{OCIArtifactAcquirer: fake}.DiffApps(context.Background(), DiffRequest{
+				LeftPath:    left,
+				RightPath:   right,
+				Unified:     3,
+				Strict:      tt.strict,
+				OCICacheDir: t.TempDir(),
+			})
+			if err != nil {
+				t.Fatalf("DiffApps() error = %v (oci-chart-ignored must stay strict-exempt)", err)
+			}
+			found := diagnosticsWithCode(result.Diagnostics, ociChartIgnoredCode)
+			if len(found) != 2 {
+				t.Fatalf("%s diagnostics = %d, want exactly one per side: %#v", ociChartIgnoredCode, len(found), result.Diagnostics)
+			}
+			for _, diag := range found {
+				if diag.Severity != diagnostic.SeverityWarning {
+					t.Fatalf("%s severity = %s, want warning: %#v", ociChartIgnoredCode, diag.Severity, diag)
+				}
+			}
+		})
+	}
+}
+
+// Negative pin: an oci:// source without chart never carries the advisory.
+func TestBuildOCIArtifactWithoutChartEmitsNoChartIgnoredWarning(t *testing.T) {
+	root := t.TempDir()
+	writeOCIApplication(t, root, "demo", "oci://charts.example.test/org", ".", "1.2.3", "")
+	fake := &fakeOCIArtifactAcquirer{digest: "sha256:" + strings.Repeat("ab", 32), files: map[string]string{"cm.yaml": plainConfigMapYAML("artifact-content")}}
+
+	result, err := Orchestrator{OCIArtifactAcquirer: fake}.Build(context.Background(), ociBuildRequest(t, root))
+	if err != nil {
+		t.Fatalf("Build() error = %v", err)
+	}
+	assertManifestNamed(t, result.Manifests, "artifact-content")
+	assertNoOCIChartIgnoredWarning(t, result.Diagnostics)
+}
+
+// Negative pin: the schemeless Helm-OCI shape is unchanged — the chart
+// acquirer is hit, the artifact acquirer never runs, no advisory.
+func TestBuildSchemelessOCIChartShapeUsesChartAcquirerWithoutWarning(t *testing.T) {
+	root := t.TempDir()
+	chartRoot := t.TempDir()
+	writeTestChart(t, chartRoot, "demo")
+	writeTestFile(t, filepath.Join(root, "apps", "schemeless.yaml"), `apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: schemeless
+  namespace: argocd
+spec:
+  source:
+    repoURL: charts.example.test/org
+    targetRevision: 1.2.3
+    chart: demo
+  destination:
+    name: in-cluster
+    namespace: default
+`)
+	chartAcquirer := &recordingChartAcquirer{chartDir: filepath.Join(chartRoot, "demo")}
+	artifactAcquirer := &fakeOCIArtifactAcquirer{digest: "sha256:" + strings.Repeat("ab", 32)}
+
+	result, err := Orchestrator{ChartAcquirer: chartAcquirer, OCIArtifactAcquirer: artifactAcquirer}.Build(context.Background(), ociBuildRequest(t, root))
+	if err != nil {
+		t.Fatalf("Build() error = %v", err)
+	}
+	assertManifestNamed(t, result.Manifests, "schemeless")
+	if len(chartAcquirer.requests) == 0 {
+		t.Fatal("chart acquirer not hit for the schemeless Helm-OCI shape")
+	}
+	if resolves, extracts := artifactAcquirer.counts(); resolves != 0 || extracts != 0 {
+		t.Fatalf("artifact acquirer hit for the schemeless Helm-OCI shape: %d resolves %d extracts", resolves, extracts)
+	}
+	assertNoOCIChartIgnoredWarning(t, result.Diagnostics)
+}
+
+// An oci:// entry may set both ref and chart (Plan no longer rejects it:
+// upstream dispatches it as an OCI artifact source and renders it), but
+// consuming its $ref stays rejected by the OCI $ref gate, as for any oci://
+// ref source.
+func TestBuildOCIRefChartSourceCannotBeConsumedAsRef(t *testing.T) {
+	root := t.TempDir()
+	writeTestChart(t, root, "chart")
+	writeTestFile(t, filepath.Join(root, "apps", "ref.yaml"), `apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: ref
+  namespace: argocd
+spec:
+  sources:
+    - repoURL: oci://registry.example/org/values
+      targetRevision: "1.0.0"
+      chart: values
+      ref: values
+    - repoURL: https://github.com/example/repo
+      targetRevision: main
+      path: chart
+      helm:
+        valueFiles:
+          - $values/values.yaml
+  destination:
+    name: in-cluster
+    namespace: default
+`)
+	fake := &fakeOCIArtifactAcquirer{digest: "sha256:" + strings.Repeat("ef", 32), files: map[string]string{"cm.yaml": plainConfigMapYAML("values-artifact")}}
+	_, err := Orchestrator{OCIArtifactAcquirer: fake}.Build(context.Background(), ociBuildRequest(t, root))
+	assertBuildErrorContains(t, err, "$values", "cannot be referenced as $ref value sources")
 }

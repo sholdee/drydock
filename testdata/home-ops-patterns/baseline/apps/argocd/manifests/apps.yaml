@@ -40,7 +40,7 @@ metadata:
 spec:
   project: default
   source:
-    repoURL: oci://registry.example.test/charts
+    repoURL: registry.example.test/charts
     chart: direct-oci
     targetRevision: 1.0.0
     helm:

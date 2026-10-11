@@ -130,6 +130,61 @@ spec:
 	}
 }
 
+// Render-level check for the moved shape (issue #399): an oci:// repoURL
+// naming the nested chart repository plus a chart: that Argo CD ignores
+// renders the pushed chart through the OCI artifact flow — from a
+// self-signed registry with the CA flag and the OCI cache, with the advisory
+// emitted. The negative half follows the artifact flow's TLS-vs-loopback rule
+// (TestTLSRegistryTLSVsLoopbackRule): a TLS-implying flag without CA trust
+// must fail x509 (no flag at all would speak plain HTTP to the loopback
+// registry and fail differently).
+func TestBuildRendersNestedOCIChartArtifactOverTLSWithChartIgnored(t *testing.T) {
+	reg := ocitest.StartTLSRegistry(t)
+	ocitest.PushHelmChartArtifact(t, reg, "parity/nested/demo", "1.0.0", ocitest.HelmChartSpec{Name: "demo", Version: "1.0.0"})
+	root := t.TempDir()
+	writeTestFile(t, filepath.Join(root, "apps", "nested-chart.yaml"), `apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: nested-chart
+  namespace: argocd
+spec:
+  source:
+    repoURL: oci://`+reg.Host+`/parity/nested/demo
+    chart: whatever
+    targetRevision: "1.0.0"
+  destination:
+    name: in-cluster
+    namespace: default
+`)
+
+	result, err := Orchestrator{}.Build(context.Background(), BuildRequest{
+		Path:           root,
+		OCICacheDir:    t.TempDir(),
+		OCICredentials: ociartifact.Credentials{CAFile: reg.CAFilePath(t)},
+	})
+	if err != nil {
+		t.Fatalf("Build() with --oci-ca-file error = %v", err)
+	}
+	manifest := assertManifestNamed(t, result.Manifests, "nested-chart-demo")
+	if marker, _, _ := unstructured.NestedString(manifest.Object.Object, "data", "marker"); marker != "oci-artifact-content" {
+		t.Fatalf("marker = %q, want the pushed chart's template output", marker)
+	}
+	assertOCIChartIgnoredWarningOnce(t, result.Diagnostics)
+
+	certFile, keyFile := ocitest.GenerateClientCertFiles(t)
+	_, err = Orchestrator{}.Build(context.Background(), BuildRequest{
+		Path:           root,
+		OCICacheDir:    t.TempDir(),
+		OCICredentials: ociartifact.Credentials{ClientCertFile: certFile, ClientKeyFile: keyFile},
+	})
+	if err == nil {
+		t.Fatal("Build() without --oci-ca-file error = nil, want x509 verification failure")
+	}
+	if !strings.Contains(err.Error(), "x509") {
+		t.Fatalf("Build() without --oci-ca-file error = %v, want x509 verification failure", err)
+	}
+}
+
 func buildRequestChartAcquirer(t *testing.T, credentials ociartifact.Credentials) chart.DefaultAcquirer {
 	t.Helper()
 	request := BuildRequest{Path: t.TempDir(), OCICredentials: credentials}

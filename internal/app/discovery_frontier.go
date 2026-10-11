@@ -176,19 +176,22 @@ func applicationMayRenderDiscoveryObjects(root string, request BuildRequest, dis
 		if sourcePlan.RefOnly {
 			continue
 		}
-		if sourcePlan.Source.Chart != "" && sourcePlan.Source.Path == "" {
-			continue
-		}
 		// OCI artifact content comes from a registry exactly like chart-only
 		// sources: it never renders local discovery objects, and `path: .`
 		// must not pull the local repository into the discovery frontier. A
 		// repo-mapped oci:// URL is the documented escape hatch, though: the
 		// mapped local tree stands in for the artifact content, so it keeps
-		// frontier eligibility through localDiscoverySourceRoot below.
+		// frontier eligibility through localDiscoverySourceRoot below (which
+		// returns the mapped root for an empty path). The oci:// rule is
+		// evaluated first and whatever chart says, because Argo CD ignores
+		// chart on oci:// sources; the chart-only skip below is for the
+		// schemeless-OCI and HTTP(S) Helm chart flow.
 		if ociartifact.IsOCIURL(sourcePlan.Source.RepoURL) {
 			if _, mapped := mappedRepositoryPath(request, sourcePlan.Source.RepoURL); !mapped {
 				continue
 			}
+		} else if sourcePlan.Source.Chart != "" && sourcePlan.Source.Path == "" {
+			continue
 		}
 		sourceRoot, ok := localDiscoverySourceRoot(root, request, sourcePlan.Source)
 		if !ok {
