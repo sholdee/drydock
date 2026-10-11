@@ -21,6 +21,7 @@ func TestConfigOCICredentialsMapToInternal(t *testing.T) {
 		OCICredentials: OCICredentials{
 			Username:           "oci-user",
 			Password:           "oci-pass",
+			RegistryConfig:     "/path/registry.json",
 			CAFile:             "/certs/ca.pem",
 			ClientCertFile:     "/certs/client-cert.pem",
 			ClientKeyFile:      "/certs/client-key.pem",
@@ -30,6 +31,7 @@ func TestConfigOCICredentialsMapToInternal(t *testing.T) {
 	want := ociartifact.Credentials{
 		Username:           "oci-user",
 		Password:           "oci-pass",
+		RegistryConfig:     "/path/registry.json",
 		CAFile:             "/certs/ca.pem",
 		ClientCertFile:     "/certs/client-cert.pem",
 		ClientKeyFile:      "/certs/client-key.pem",

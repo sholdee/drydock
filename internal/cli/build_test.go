@@ -387,6 +387,7 @@ data:
 	wantOCICredentials := ociartifact.Credentials{
 		Username:           "oci-user",
 		Password:           "oci-pass",
+		RegistryConfig:     registryConfig,
 		CAFile:             ociCAFile,
 		ClientCertFile:     ociCertFile,
 		ClientKeyFile:      ociKeyFile,

@@ -177,6 +177,48 @@ func TestBuildAndDiffFailFastOnInvalidOCICredentials(t *testing.T) {
 	}
 }
 
+// TestBuildWithoutOCISourcesIgnoresMissingRegistryConfig pins the lazy
+// contract on the Build surface: --registry-config is validated at the first
+// oci:// acquisition, so a run with no OCI artifact source never opens it. CI
+// that passes the flag unconditionally (pr-action extra-*-args) keeps building
+// git-only repositories.
+func TestBuildWithoutOCISourcesIgnoresMissingRegistryConfig(t *testing.T) {
+	root := t.TempDir()
+	writeBuildApplication(t, root, "demo", "local-cm")
+	request := BuildRequest{
+		Path:           root,
+		OCICredentials: ociartifact.Credentials{RegistryConfig: filepath.Join(t.TempDir(), "missing.json")},
+	}
+
+	result, err := Orchestrator{}.Build(context.Background(), request)
+	if err != nil {
+		t.Fatalf("Build() error = %v, want success: a missing --registry-config must not fail a run without OCI sources", err)
+	}
+	assertManifestNamed(t, result.Manifests, "local-cm")
+}
+
+// TestBuildOCISourceFailsOnMissingRegistryConfig is the other half of the lazy
+// contract: the same missing file fails the first oci:// acquisition, before
+// the acquirer is asked anything, with the flag named.
+func TestBuildOCISourceFailsOnMissingRegistryConfig(t *testing.T) {
+	root := t.TempDir()
+	writeOCIApplication(t, root, "demo", "oci://registry.example.test/org/app", ".", "v1", "")
+	fake := &fakeOCIArtifactAcquirer{
+		digest: "sha256:" + strings.Repeat("ab", 32),
+		files:  map[string]string{"cm.yaml": "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: artifact\ndata: {}\n"},
+	}
+	missing := filepath.Join(t.TempDir(), "missing.json")
+	request := ociBuildRequest(t, root)
+	request.OCICredentials = ociartifact.Credentials{RegistryConfig: missing}
+
+	_, err := Orchestrator{OCIArtifactAcquirer: fake}.Build(context.Background(), request)
+	assertBuildErrorContains(t, err, "--registry-config")
+	assertBuildErrorContains(t, err, "does not exist")
+	if resolves, extracts := fake.counts(); resolves != 0 || extracts != 0 {
+		t.Fatalf("acquirer calls = (%d resolves, %d extracts), want none before the registry config is validated", resolves, extracts)
+	}
+}
+
 // Issue #220 shape WITH a helm block: values flow into the artifact chart.
 func TestBuildRendersOCIArtifactWithHelmValues(t *testing.T) {
 	reg := ocitest.StartRegistry(t)

@@ -158,9 +158,9 @@ func bindAuthFlags(cmd *cobra.Command, flags *commonFlags) {
 	cmd.Flags().StringVar(&flags.helmUsername, "helm-username", flags.helmUsername, "username for authenticated HTTP Helm repositories")
 	cmd.Flags().StringVar(&flags.helmPassword, "helm-password", flags.helmPassword, "password for authenticated HTTP Helm repositories")
 	cmd.Flags().StringVar(&flags.helmBearerToken, "helm-bearer-token", flags.helmBearerToken, "bearer token for authenticated HTTP Helm repositories")
-	cmd.Flags().StringVar(&flags.registryConfig, "registry-config", flags.registryConfig, "Helm OCI registry config file")
-	cmd.Flags().StringVar(&flags.ociUsername, "oci-username", flags.ociUsername, "username for authenticated OCI artifact registries")
-	cmd.Flags().StringVar(&flags.ociPassword, "oci-password", flags.ociPassword, "password for authenticated OCI artifact registries")
+	cmd.Flags().StringVar(&flags.registryConfig, "registry-config", flags.registryConfig, "Docker/Helm registry config file (helm registry login format) with per-registry credentials for OCI artifact sources and OCI Helm chart registries")
+	cmd.Flags().StringVar(&flags.ociUsername, "oci-username", flags.ociUsername, "username for authenticated OCI artifact registries (every registry in the run; overrides --registry-config)")
+	cmd.Flags().StringVar(&flags.ociPassword, "oci-password", flags.ociPassword, "password for authenticated OCI artifact registries (every registry in the run; overrides --registry-config)")
 	cmd.Flags().StringVar(&flags.ociCAFile, "oci-ca-file", flags.ociCAFile, "PEM CA bundle for OCI artifact registry and OCI Helm chart registry TLS (artifact registries: replaces the system pool; Helm chart registries: added to the system pool)")
 	cmd.Flags().StringVar(&flags.ociClientCertFile, "oci-client-cert-file", flags.ociClientCertFile, "client certificate file for mutual-TLS OCI artifact registries and OCI Helm chart registries (requires --oci-client-key-file)")
 	cmd.Flags().StringVar(&flags.ociClientKeyFile, "oci-client-key-file", flags.ociClientKeyFile, "client key file for mutual-TLS OCI artifact registries and OCI Helm chart registries (requires --oci-client-cert-file)")
@@ -336,6 +336,7 @@ func (flags commonFlags) ociCredentials() ociartifact.Credentials {
 	return ociartifact.Credentials{
 		Username:           flags.ociUsername,
 		Password:           flags.ociPassword,
+		RegistryConfig:     flags.registryConfig,
 		CAFile:             flags.ociCAFile,
 		ClientCertFile:     flags.ociClientCertFile,
 		ClientKeyFile:      flags.ociClientKeyFile,

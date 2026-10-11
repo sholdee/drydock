@@ -135,19 +135,30 @@ type RemoteResourceCredentials struct {
 }
 
 // OCICredentials supplies auth and TLS material for first-class OCI artifact
-// sources; the TLS fields additionally configure OCI Helm chart pulls
-// (Username/Password stay artifact-only — OCI Helm chart auth is
-// RegistryConfig). All TLS fields are file paths. The single set applies to
-// every OCI registry a run touches. CAFile REPLACES the system CA pool for
-// artifact registries but is ADDED to it for Helm chart registries, so a run
-// pinning a private artifact registry keeps pulling public charts. Setting
-// any TLS field (or InsecureSkipVerify) also disables the loopback
-// plain-HTTP default for artifact sources. The chart-side TLS wiring applies
-// only when Config.ChartAcquirer is nil; a supplied ChartAcquirer is
-// responsible for its own transport.
+// sources; the TLS fields additionally configure OCI Helm chart pulls. All
+// file fields are paths. Auth comes from two sources: RegistryConfig is a
+// Docker/Helm registry config file (`helm registry login` format) consulted
+// per registry host, so one run can authenticate to several registries; the
+// Username/Password pair is the global override, presented to every OCI
+// artifact registry and short-circuiting the file whenever either half is
+// set. RegistryConfig is validated at the first oci:// acquisition of a run,
+// not at request construction, so a run without OCI artifact sources never
+// opens it. Hosts without an entry stay anonymous; identity-token entries
+// and credential helpers that cannot run are errors; an auth-less file never
+// reaches the OS keychain (unlike helm's chart loader). The CLI feeds one
+// --registry-config path to both this field and
+// ChartCredentials.RegistryConfig; embedders set each. The TLS fields are one
+// global set: CAFile REPLACES the system CA pool for artifact registries but
+// is ADDED to it for Helm chart registries, so a run pinning a private
+// artifact registry keeps pulling public charts. Setting any TLS field (or
+// InsecureSkipVerify) also disables the loopback plain-HTTP default for
+// artifact sources. The chart-side TLS wiring applies only when
+// Config.ChartAcquirer is nil; a supplied ChartAcquirer is responsible for
+// its own transport.
 type OCICredentials struct {
 	Username           string
 	Password           string
+	RegistryConfig     string
 	CAFile             string
 	ClientCertFile     string
 	ClientKeyFile      string
@@ -265,6 +276,7 @@ func ociCredentialsToInternal(credentials OCICredentials) ociartifact.Credential
 	return ociartifact.Credentials{
 		Username:           credentials.Username,
 		Password:           credentials.Password,
+		RegistryConfig:     credentials.RegistryConfig,
 		CAFile:             credentials.CAFile,
 		ClientCertFile:     credentials.ClientCertFile,
 		ClientKeyFile:      credentials.ClientKeyFile,

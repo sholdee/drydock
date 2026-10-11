@@ -320,8 +320,16 @@ func rejectURLUserinfo(repoURL string) error {
 	return fmt.Errorf("OCI artifact %s: %q and %q are not allowed in an OCI repository URL; put digests in targetRevision and credentials in --oci-username/--oci-password", RedactURL(repoURL), "@", "%")
 }
 
-func (a DefaultAcquirer) newClient(repoURL string, cacheDir string, credentials Credentials, extraOpts ...oci.ClientOpts) (oci.Client, error) {
-	creds, err := clientCreds(repoURL, credentials)
+// newClient resolves per-host --registry-config credentials before building
+// the vendored client, so any Options.Credentials carrying RegistryConfig
+// works (direct DefaultAcquirer users included); the app layer pre-resolves
+// once per source for redaction, and for that copy ForRepository is a no-op.
+func (a DefaultAcquirer) newClient(ctx context.Context, repoURL string, cacheDir string, credentials Credentials, extraOpts ...oci.ClientOpts) (oci.Client, error) {
+	effective, err := credentials.ForRepository(ctx, repoURL)
+	if err != nil {
+		return nil, err
+	}
+	creds, err := clientCreds(repoURL, effective)
 	if err != nil {
 		return nil, err
 	}
@@ -389,7 +397,7 @@ func (a DefaultAcquirer) Resolve(ctx context.Context, repoURL, revision string, 
 		return resolveOffline(cacheDir, repoURL, revision)
 	}
 	memo := &prefetchedTagsCache{}
-	client, err := a.newClient(repoURL, cacheDir, opts.Credentials, oci.WithIndexCache(memo))
+	client, err := a.newClient(ctx, repoURL, cacheDir, opts.Credentials, oci.WithIndexCache(memo))
 	if err != nil {
 		// Defense-in-depth: construction errors surface with the redacted URL
 		// even though userinfo was already rejected above.
@@ -505,7 +513,7 @@ func (a DefaultAcquirer) Extract(ctx context.Context, repoURL, digest string, op
 	if opts.Offline && !fromImageCache {
 		return "", nil, fmt.Errorf("offline cache miss for OCI artifact %s digest %s", RedactURL(repoURL), digest)
 	}
-	client, err := a.newClient(repoURL, cacheDir, opts.Credentials)
+	client, err := a.newClient(ctx, repoURL, cacheDir, opts.Credentials)
 	if err != nil {
 		// Defense-in-depth: construction errors surface with the redacted URL
 		// even though userinfo was already rejected above.

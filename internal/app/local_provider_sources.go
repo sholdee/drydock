@@ -149,23 +149,33 @@ func (p localProvider) resolveClassifiedOCISource(ctx context.Context, source re
 // session snapshot area, and the extraction root becomes the source root.
 func (p localProvider) resolveOCIArtifactSource(ctx context.Context, source render.ResolvedSource) (string, SourceIdentity, error) {
 	acquirer := p.acquisition.OCIArtifactAcquirer(p.ociArtifactAcquirer)
+	// Per-host --registry-config credentials resolve once per source, before
+	// acquisition: the file-sourced password must reach ociSensitiveValues so
+	// cache events and error text redact it, and a missing or unusable file
+	// fails here — at the first oci:// acquisition — rather than at request
+	// construction, where Validate stays TLS-only so git-only runs never see
+	// it. The acquirer's own ForRepository call is a no-op on this copy.
+	effective, err := p.ociCredentials.ForRepository(ctx, source.RepoURL)
+	if err != nil {
+		return "", SourceIdentity{}, p.recordOCIAcquisitionError(source, err, p.ociCredentials)
+	}
 	acquiredFromCache := (*bool)(nil)
 	opts := ociartifact.Options{
 		CacheDir:       p.ociCacheDir,
 		Offline:        p.offline,
 		ForbiddenRoots: append([]string(nil), p.ociForbiddenRoots...),
-		Credentials:    p.ociCredentials,
+		Credentials:    effective,
 		OnAcquired: func(fromImageCache bool) {
 			acquiredFromCache = &fromImageCache
 		},
 	}
 	digest, err := acquirer.Resolve(ctx, source.RepoURL, source.TargetRevision, opts)
 	if err != nil {
-		return "", SourceIdentity{}, p.recordOCIAcquisitionError(source, err)
+		return "", SourceIdentity{}, p.recordOCIAcquisitionError(source, err, effective)
 	}
 	root, _, err := acquirer.Extract(ctx, source.RepoURL, digest, opts)
 	if err != nil {
-		return "", SourceIdentity{}, p.recordOCIAcquisitionError(source, err)
+		return "", SourceIdentity{}, p.recordOCIAcquisitionError(source, err, effective)
 	}
 	// Session-memoized calls skip OnAcquired: only real acquisitions emit an
 	// event, so a two-sided diff at one digest records a single event.
@@ -178,7 +188,7 @@ func (p localProvider) resolveOCIArtifactSource(ctx context.Context, source rend
 			FromCache:         *acquiredFromCache,
 			Network:           !*acquiredFromCache,
 			Offline:           p.offline,
-			SensitiveValues:   ociSensitiveValues(p.ociCredentials),
+			SensitiveValues:   ociSensitiveValues(effective),
 		}))
 		p.recordAcquisition(cacheevent.AcquisitionRecord{
 			Kind:              cacheevent.AcquisitionOCI,
@@ -196,14 +206,19 @@ func (p localProvider) resolveOCIArtifactSource(ctx context.Context, source rend
 	}, nil
 }
 
-func (p localProvider) recordOCIAcquisitionError(source render.ResolvedSource, err error) error {
+// recordOCIAcquisitionError records the failure as a cache event and returns
+// the redacted error. credentials are the ones in effect for the failed step
+// (the per-host resolved set once ForRepository succeeded, the request's own
+// set when ForRepository itself failed), so whichever password was in play is
+// scrubbed from both.
+func (p localProvider) recordOCIAcquisitionError(source render.ResolvedSource, err error, credentials ociartifact.Credentials) error {
 	acquireError := cacheevent.NewAcquisitionError(cacheevent.AcquisitionEventInput{
 		Source:            cacheevent.SourceOCI,
 		Target:            source.RepoURL,
 		RequestedRevision: source.TargetRevision,
 		Offline:           p.offline,
 		Err:               err,
-		SensitiveValues:   ociSensitiveValues(p.ociCredentials),
+		SensitiveValues:   ociSensitiveValues(credentials),
 	})
 	p.recordCacheEvent(acquireError.Event)
 	return fmt.Errorf("%s", acquireError.RedactedError)

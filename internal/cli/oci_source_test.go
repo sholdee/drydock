@@ -101,6 +101,87 @@ func TestCLIOCIBasicAuthSuccess(t *testing.T) {
 	assertStdoutContainsAll(t, result, "authed-artifact-content")
 }
 
+// writeCLIRegistryConfig writes a Docker-format registry config file with one
+// plain auths entry for host and returns its path.
+func writeCLIRegistryConfig(t *testing.T, root, host, username, password string) string {
+	t.Helper()
+	path := filepath.Join(root, "registry-config.json")
+	auth := base64.StdEncoding.EncodeToString([]byte(username + ":" + password))
+	writeCLITestFile(t, path, `{"auths":{"`+host+`":{"auth":"`+auth+`"}}}`)
+	return path
+}
+
+// TestCLIOCIRegistryConfigAuthSuccess drives the full CLI through the REAL
+// acquirer against a Basic-auth registry with the credential coming from
+// --registry-config alone: the per-host file lookup reaches the wire.
+func TestCLIOCIRegistryConfigAuthSuccess(t *testing.T) {
+	reg := ocitest.StartRegistry(t)
+	pushCLIChartArtifact(t, reg, "manifests/app", "v1", "registry-config-artifact-content")
+	reg.EnableBasicAuth("oci-user", "sekrit-pass")
+	root := t.TempDir()
+	writeOCIAppForCLI(t, root, "demo", reg.RepoURL("manifests/app"), ".", "v1")
+	registryConfig := writeCLIRegistryConfig(t, t.TempDir(), reg.Host, "oci-user", "sekrit-pass")
+
+	result := runCLI(t, "build", "apps",
+		"--path", root,
+		"--oci-cache-dir", t.TempDir(),
+		"--registry-config", registryConfig,
+	)
+	assertStdoutContainsAll(t, result, "registry-config-artifact-content")
+}
+
+// TestCLIOCIRegistryConfigWrongPasswordRedacted is the file-sourced twin of
+// TestCLIOCIAuthFailureRedactsCredentials: the wrong password exists only in
+// --registry-config, so only the per-host pre-resolution feeding
+// ociSensitiveValues can keep it and its base64(user:pass) form out of the
+// command error, stdout, stderr (which carries --cache-events for build) and
+// the cache directory. The constraint revision forces the /tags/list GET whose
+// errcode body echoes the Authorization header back.
+func TestCLIOCIRegistryConfigWrongPasswordRedacted(t *testing.T) {
+	reg := ocitest.StartRegistry(t)
+	pushCLIChartArtifact(t, reg, "manifests/app", "1.0.0", "authed-artifact-content")
+	reg.EnableBasicAuth("oci-user", "correct-pass")
+	root := t.TempDir()
+	writeOCIAppForCLI(t, root, "demo", reg.RepoURL("manifests/app"), ".", "~1.0")
+	registryConfig := writeCLIRegistryConfig(t, t.TempDir(), reg.Host, "oci-user", "sekrit-wrong")
+
+	cacheDir := t.TempDir()
+	stdout, stderr, err := executeCLIExpectingError(t, "build", "apps",
+		"--path", root,
+		"--oci-cache-dir", cacheDir,
+		"--registry-config", registryConfig,
+		"--cache-events",
+	)
+	if !strings.Contains(err.Error(), "401") {
+		t.Fatalf("error = %q, want a clear 401 auth error", err)
+	}
+	basicForm := base64.StdEncoding.EncodeToString([]byte("oci-user:sekrit-wrong"))
+	for _, leaked := range []string{"sekrit-wrong", basicForm} {
+		for surface, text := range map[string]string{"error": err.Error(), "stdout": stdout, "stderr": stderr} {
+			if strings.Contains(text, leaked) {
+				t.Fatalf("%s leaked %q:\n%s", surface, leaked, text)
+			}
+		}
+	}
+	if walkErr := filepath.WalkDir(cacheDir, func(path string, entry fs.DirEntry, err error) error {
+		if err != nil || entry.IsDir() {
+			return err
+		}
+		data, readErr := os.ReadFile(path)
+		if readErr != nil {
+			return readErr
+		}
+		for _, leaked := range []string{"sekrit-wrong", basicForm} {
+			if strings.Contains(string(data), leaked) {
+				t.Fatalf("cache file %s leaked %q", path, leaked)
+			}
+		}
+		return nil
+	}); walkErr != nil {
+		t.Fatalf("walk cache dir: %v", walkErr)
+	}
+}
+
 // TestCLIOCIAuthFailureRedactsCredentials pins end-to-end redaction on the
 // leak-shaped path: the fixture 401 body echoes the received Authorization
 // header raw and base64-decoded, so the wrong password and its
