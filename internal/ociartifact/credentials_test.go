@@ -9,6 +9,8 @@ import (
 	"crypto/x509/pkix"
 	"encoding/json"
 	"encoding/pem"
+	"errors"
+	"fmt"
 	"math/big"
 	"net"
 	"net/http"
@@ -19,6 +21,7 @@ import (
 	"testing"
 	"time"
 
+	"oras.land/oras-go/v2/registry/remote/errcode"
 	"oras.land/oras-go/v2/registry/remote/retry"
 
 	"github.com/sholdee/drydock/internal/ociartifact/ocitest"
@@ -55,7 +58,9 @@ func TestResolveExtractWithBasicAuth(t *testing.T) {
 
 // Wrong credentials surface as a clear errcode.ErrorResponse-shaped auth
 // error: the retried request still gets a 401 and ORAS returns the response
-// as an error (no transport failure involved).
+// as an error (no transport failure involved). isAuthError classifies it by
+// type, so the wrap reads "authenticate OCI artifact" and names the
+// credential flags instead of the plain resolve failure.
 func TestResolveWrongBasicAuthFailsClearly(t *testing.T) {
 	reg := ocitest.StartRegistry(t)
 	ocitest.PushHelmChartArtifact(t, reg, "charts/auth", "1.2.3", ocitest.HelmChartSpec{Name: "auth", Version: "1.2.3"})
@@ -69,8 +74,86 @@ func TestResolveWrongBasicAuthFailsClearly(t *testing.T) {
 	if !strings.Contains(err.Error(), "401") {
 		t.Fatalf("Resolve() error = %q, want errcode-shaped 401 auth error", err)
 	}
-	if !strings.Contains(err.Error(), "resolve OCI artifact") {
-		t.Fatalf("Resolve() error = %q, want artifact-naming wrap", err)
+	for _, want := range []string{"authenticate OCI artifact", "--registry-config"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("Resolve() error = %q, want auth-classified wrap containing %q", err, want)
+		}
+	}
+}
+
+// TestExtractWrongBasicAuthNamesCredentialFlags pins the Extract-side wrap:
+// the digest is resolved anonymously, auth is enabled afterwards, and the
+// credentialed pull answers 401. The typed error survives the vendored
+// client's %w chain, so the wrap takes the digest form of the auth message.
+func TestExtractWrongBasicAuthNamesCredentialFlags(t *testing.T) {
+	reg := ocitest.StartRegistry(t)
+	digest := ocitest.PushHelmChartArtifact(t, reg, "charts/auth", "1.2.3", ocitest.HelmChartSpec{Name: "auth", Version: "1.2.3"})
+	reg.EnableBasicAuth("oci-user", "oci-pass")
+	opts := Options{CacheDir: t.TempDir(), Credentials: Credentials{Username: "oci-user", Password: "wrong-pass"}}
+
+	_, release, err := (DefaultAcquirer{}).Extract(t.Context(), reg.RepoURL("charts/auth"), digest, opts)
+	if err == nil {
+		release()
+		t.Fatal("Extract() with wrong creds should fail")
+	}
+	for _, want := range []string{"401", "authenticate OCI artifact", "digest " + digest, "--oci-username/--oci-password"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("Extract() error = %q, want auth-classified wrap containing %q", err, want)
+		}
+	}
+	if strings.Contains(err.Error(), "extract OCI artifact") {
+		t.Fatalf("Extract() error = %q, want the authenticate wrap in place of the extract wrap", err)
+	}
+}
+
+// TestResolveNotFoundKeepsResolvePrefix pins the negative side of the
+// classification: an unpushed tag on an anonymous registry is a plain
+// resolve failure (oras maps the 404 to errdef.ErrNotFound, not to an
+// *errcode.ErrorResponse), so the wrap keeps its resolve prefix and never
+// points at the credential flags.
+func TestResolveNotFoundKeepsResolvePrefix(t *testing.T) {
+	reg := ocitest.StartRegistry(t)
+	opts := Options{CacheDir: t.TempDir()}
+
+	_, err := (DefaultAcquirer{}).Resolve(t.Context(), reg.RepoURL("charts/missing"), "1.2.3", opts)
+	if err == nil {
+		t.Fatal("Resolve() of an unpushed tag should fail")
+	}
+	for _, want := range []string{"resolve OCI artifact", "not found"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("Resolve() error = %q, want not-found wrap containing %q", err, want)
+		}
+	}
+	if strings.Contains(err.Error(), "authenticate") {
+		t.Fatalf("Resolve() error = %q, must not classify a 404 as an auth failure", err)
+	}
+}
+
+// TestIsAuthErrorClassification pins decision 9 of the oci-chart plan: the
+// typed *errcode.ErrorResponse status is authoritative through any %w chain,
+// the text fallback matches only "unauthorized" / "authentication required",
+// and neither digest digits nor a filesystem "permission denied" classify.
+func TestIsAuthErrorClassification(t *testing.T) {
+	const digestWithStatusDigits = "sha256:4014030000000000000000000000000000000000000000000000000000000000"
+	for _, tt := range []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{name: "nil", err: nil, want: false},
+		{name: "typed 401", err: &errcode.ErrorResponse{StatusCode: http.StatusUnauthorized}, want: true},
+		{name: "typed 403", err: &errcode.ErrorResponse{StatusCode: http.StatusForbidden}, want: true},
+		{name: "typed 404", err: &errcode.ErrorResponse{StatusCode: http.StatusNotFound}, want: false},
+		{name: "digest digits are not a status", err: errors.New("extract OCI artifact x digest " + digestWithStatusDigits + ": not found"), want: false},
+		{name: "filesystem permission denied", err: errors.New("open /cache/x: permission denied"), want: false},
+		{name: "text fallback", err: errors.New("cannot get digest for revision 1.2.3: unauthorized: authentication required"), want: true},
+		{name: "wrapped typed 403", err: fmt.Errorf("cannot get digest: %w", &errcode.ErrorResponse{StatusCode: http.StatusForbidden}), want: true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := isAuthError(tt.err); got != tt.want {
+				t.Fatalf("isAuthError(%v) = %t, want %t", tt.err, got, tt.want)
+			}
+		})
 	}
 }
 
