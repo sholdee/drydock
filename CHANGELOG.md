@@ -1,5 +1,34 @@
 # Changelog
 
+## [0.3.5](https://github.com/sholdee/drydock/compare/v0.3.4...v0.3.5) (2026-10-12)
+
+
+### Bug Fixes
+
+* **deps:** bump argo-cd to v3.5.4 for GHSA-w996-f2wq-x9c6 ([#392](https://github.com/sholdee/drydock/issues/392)) ([6cc2746](https://github.com/sholdee/drydock/commit/6cc27468746c542d84c6e3ef0cf9f36aaf9e3f3e))
+* **deps:** update module golang.org/x/crypto to v0.58.0 ([#415](https://github.com/sholdee/drydock/issues/415)) ([5a44310](https://github.com/sholdee/drydock/commit/5a44310501b1adcca1face80b32c8e280d7bde72))
+* **deps:** update module golang.org/x/sys to v0.49.0 ([#400](https://github.com/sholdee/drydock/issues/400)) ([6993f52](https://github.com/sholdee/drydock/commit/6993f52b8b96148d5cbfdea391c6bfb963922cff))
+* **deps:** update module golang.org/x/term to v0.47.0 ([#414](https://github.com/sholdee/drydock/issues/414)) ([d81d239](https://github.com/sholdee/drydock/commit/d81d2398da72834125ff88e17da037f74e3de818))
+* **diag:** validate discovered Applications against AppProjects without --render ([#396](https://github.com/sholdee/drydock/issues/396)) ([457b5f0](https://github.com/sholdee/drydock/commit/457b5f0057c9af345c23067d469fbc00f37d8bf2))
+* **project:** stop denying source namespaces from the implicit default project ([#395](https://github.com/sholdee/drydock/issues/395)) ([ca658d7](https://github.com/sholdee/drydock/commit/ca658d76a101937faeac19794842b71fdc0e4865)), closes [#389](https://github.com/sholdee/drydock/issues/389)
+* **project:** validate hooks against AppProject resource policy ([#394](https://github.com/sholdee/drydock/issues/394)) ([9406d69](https://github.com/sholdee/drydock/commit/9406d69ace127da56bd0614b23f63d17788fdc6d))
+* **render:** confine Jsonnet imports to the repository root ([#393](https://github.com/sholdee/drydock/issues/393)) ([8eb3a3b](https://github.com/sholdee/drydock/commit/8eb3a3ba1164fc97d2864a56170733daca0fd95f))
+* **source:** follow Argo CD OCI dispatch for oci:// sources that set chart ([#399](https://github.com/sholdee/drydock/issues/399)) ([#412](https://github.com/sholdee/drydock/issues/412)) ([0dd5ea5](https://github.com/sholdee/drydock/commit/0dd5ea5df5abf6067eea1d53ab8343fb4cde59ff))
+
+
+### Miscellaneous Chores
+
+* **deps:** update dependency go to v1.27.2 ([#408](https://github.com/sholdee/drydock/issues/408)) ([b27da32](https://github.com/sholdee/drydock/commit/b27da32c826a8fd33c90780d8f24145e197e4307))
+* **deps:** update dependency lefthook to v2.2.0 ([#401](https://github.com/sholdee/drydock/issues/401)) ([9a64094](https://github.com/sholdee/drydock/commit/9a640942fd327eee159a917d523ae3fb5e4cd270))
+* **deps:** update dependency lefthook to v2.2.1 ([#405](https://github.com/sholdee/drydock/issues/405)) ([0392755](https://github.com/sholdee/drydock/commit/03927559f8ff0524f319989ccf5eb2ceddc0002e))
+* **deps:** update docker/dockerfile docker tag to v1.28 ([#403](https://github.com/sholdee/drydock/issues/403)) ([8dcbab7](https://github.com/sholdee/drydock/commit/8dcbab73316fa3b92fc02dc5e62aa4912c6b2ee0))
+* **deps:** update go module directive to v1.27.2 ([#402](https://github.com/sholdee/drydock/issues/402)) ([330b8bf](https://github.com/sholdee/drydock/commit/330b8bfbd78c4369f5f142e8d9c4097bf9aaf445))
+* **deps:** update golang docker tag to v1.27.2 ([#411](https://github.com/sholdee/drydock/issues/411)) ([b00f2d4](https://github.com/sholdee/drydock/commit/b00f2d4595926ff90761ad677a756d18162d8029))
+* **deps:** update golang:1.27.1 docker digest to 162be52 ([#397](https://github.com/sholdee/drydock/issues/397)) ([980c2d9](https://github.com/sholdee/drydock/commit/980c2d97c6cd3b084cdc795933f8362f9c4cabd7))
+* **deps:** update module golang.org/x/net to v0.60.0 ([#410](https://github.com/sholdee/drydock/issues/410)) ([2b5e322](https://github.com/sholdee/drydock/commit/2b5e3224afdd4a95b65eb11643d4eb1f45b0c5a5))
+* **deps:** update module golang.org/x/sync to v0.24.0 ([#390](https://github.com/sholdee/drydock/issues/390)) ([8dcb981](https://github.com/sholdee/drydock/commit/8dcb9819bae95fc476e556a6be2f7cf4a73e52a4))
+* **deps:** update module golang.org/x/text to v0.43.0 ([#413](https://github.com/sholdee/drydock/issues/413)) ([a75cf78](https://github.com/sholdee/drydock/commit/a75cf782e0fd06924d61f4678caf2e03ad262fca))
+
 ## [0.3.4](https://github.com/sholdee/drydock/compare/v0.3.3...v0.3.4) (2026-10-08)
 
 
