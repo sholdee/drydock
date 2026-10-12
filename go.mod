@@ -225,6 +225,15 @@ replace (
 	k8s.io/kms => k8s.io/kms v0.36.1
 	k8s.io/kube-aggregator => k8s.io/kube-aggregator v0.36.1
 	k8s.io/kube-controller-manager => k8s.io/kube-controller-manager v0.36.1
+
+	// kustomize api/kyaml v0.21.3 and later require a k8s.io/kube-openapi built
+	// on structured-merge-diff/v7 (the Kubernetes 1.38 line). The apimachinery
+	// pinned above is on v6 and does not compile against it, so kube-openapi is
+	// held on the v6 line until Argo CD's Kubernetes set moves to a v7-based
+	// release. Argo CD requires kube-openapi rather than replacing it, so the
+	// post-upgrade sync helper does not manage this pin; revisit it by hand at
+	// Argo CD major-line bumps.
+	k8s.io/kube-openapi => k8s.io/kube-openapi v0.0.0-20260721132016-d427ff9ee9ad
 	k8s.io/kube-proxy => k8s.io/kube-proxy v0.36.1
 	k8s.io/kube-scheduler => k8s.io/kube-scheduler v0.36.1
 	k8s.io/kubectl => k8s.io/kubectl v0.36.1

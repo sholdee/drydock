@@ -107,6 +107,19 @@
       enabled: false,
     },
     {
+      description: 'kube-openapi is replace-pinned to the structured-merge-diff v6 line that the Argo CD Kubernetes pins compile against; kustomize 0.21.3+ requires a v7-based one (see go.mod)',
+      matchManagers: ['gomod'],
+      matchDepTypes: ['replace'],
+      matchPackageNames: ['k8s.io/kube-openapi'],
+      enabled: false,
+    },
+    {
+      description: 'kustomize api and kyaml release in lockstep and bump each other through MVS; update them in one PR',
+      matchManagers: ['gomod'],
+      matchPackageNames: ['/^sigs\\.k8s\\.io\\/kustomize\\//'],
+      groupName: 'kustomize',
+    },
+    {
       description: 'structured-merge-diff major line is pinned by argo-cd (util/argo/managedfields.Normalize takes its typed.ParseableType); migrate only inside an argo-cd upgrade that moves it',
       matchManagers: ['gomod'],
       matchPackageNames: ['/^sigs\\.k8s\\.io\\/structured-merge-diff\\//'],
