@@ -30,10 +30,19 @@ fetched unless the request is configured for offline/cache-only behavior.
 `Config.OCICacheDir` overrides the OCI artifact source cache root, mirroring
 the CLI `--oci-cache-dir` flag. Like the other cache roots, it must resolve
 outside current and baseline repository trees. `Config.OCICredentials`
-mirrors the CLI `--oci-*` credential flags for private OCI artifact
-registries — a single global set, with TLS material given as file paths. The
-TLS fields also configure OCI Helm chart pulls; the credentials do not, since
-OCI Helm chart auth stays `--registry-config`.
+mirrors the CLI credential flags for private OCI artifact registries, with
+file material given as paths: `RegistryConfig` is the per-registry-host
+credential file (the CLI feeds one `--registry-config` path to it and to
+`ChartCredentials.RegistryConfig`; embedders set each), read and validated at
+the first `oci://` acquisition; `Username`/`Password` are the global override
+presented to every OCI artifact registry; the TLS fields are one global set
+that also configures OCI Helm chart pulls. Every source whose `repoURL` has
+the `oci://` scheme is an OCI artifact source, as in Argo CD's repo-server,
+so `Config.ChartAcquirer` no longer receives `oci://` + `chart:` sources —
+only schemeless Helm-OCI and HTTP(S) chart sources reach it. A public OCI
+artifact acquirer hook is tracked as a follow-up; embedders that need a
+deterministic fake for a registry-hosted chart use the schemeless shape
+meanwhile.
 
 `NewClient` accepts public Git, chart, remote-resource, and plugin renderer
 interfaces so tests and embedding callers can provide deterministic fakes

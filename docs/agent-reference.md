@@ -197,12 +197,15 @@ Canonical references:
 - `docs/design.md`
 
 Repository URL maps are deterministic and preferred over network fetches. Path
-source resolution order is explicit repo map, `oci://` classification (a
-first-class OCI artifact source — `oci://` URL, no `chart:` — acquires from
-the registry and never falls to the local-path, self-repo, or Git branches;
-`oci://` + `chart:` keeps the Helm-chart flow as a recorded divergence from
-strict Argo CD v3.4.5, and `chart:` + `path:` on one `oci://` source is an
-error), existing local source path,
+source resolution order is explicit repo map, `oci://` classification (every
+`oci://` repository URL is a first-class OCI artifact source, as in Argo CD's
+`IsOCI`-before-`IsHelm` dispatch: it acquires `repoURL` at `targetRevision`
+from the registry and never falls to the local-path, self-repo, or Git
+branches; `spec.source.chart` is ignored there and reported once per source
+as the strict-exempt `source.oci-chart-ignored` warning, `path` defaults to
+`.`, `.argocd-source*.yaml` is merged at the content path, and `chart:` +
+`path:` on one `oci://` source is valid; the schemeless Helm-OCI shape keeps
+the chart flow), existing local source path,
 self-repo resolution (on all render surfaces, a source naming a configured
 remote of the local checkout at `""`/`HEAD`, a diffed ref name during diffs,
 or the repository's default-branch name resolves to the local tree — the
@@ -251,12 +254,20 @@ identity resolution:
   known_hosts verification is always on; no prompting.
 - HTTP(S) Helm and remote Kustomize auth support bearer and basic auth; bearer
   wins.
-- OCI Helm auth is provided only through explicit registry config.
-- OCI artifact auth is provided only through the explicit `--oci-*` flags: one
-  global username/password and TLS set for every OCI artifact registry in a
-  run. Any TLS-implying `--oci-*` flag disables the loopback plain-HTTP
-  default. Credentials in `oci://` repository URLs are rejected with a
-  redacted error.
+- OCI Helm (schemeless chart) auth is provided only through the explicit
+  `--registry-config` file.
+- OCI artifact auth comes per registry host from the same explicit
+  `--registry-config` file (plain `auths`, legacy `https://host/` keys,
+  `credsStore`/`credHelpers`), read and validated lazily at the first
+  `oci://` acquisition so runs without OCI artifact sources never open it,
+  with `--oci-username`/`--oci-password` as the global override for every
+  OCI artifact registry in a run. Hosts without an entry stay anonymous;
+  identity-token entries and credential helpers that cannot run are errors;
+  an auth-less file never reaches the OS keychain (helm's chart loader
+  does). The TLS set is global, and any TLS-implying `--oci-*` flag disables
+  the loopback plain-HTTP default. Credentials in `oci://` repository URLs
+  are rejected with a redacted error, and artifact auth failures name both
+  credential flags.
 - CI helper commands (`pr comment`) read only the documented `GITHUB_*`
   variables and the token variables; nothing else in the binary reads a token
   from the environment.

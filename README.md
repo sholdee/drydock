@@ -262,8 +262,8 @@ inspect locally and in CI:
   entrypoints, AppProjects, and settings objects.
 - **Rendering:** directory, Kustomize, Helm, Jsonnet, single-source and
   multi-source Applications, Kustomize Helm charts, remote Helm charts,
-  first-class OCI artifact sources (`oci://` + `path:`), and remote Kustomize
-  sources.
+  first-class OCI artifact sources (every `oci://` repository URL, as Argo CD
+  dispatches them), and remote Kustomize sources.
 - **Source acquisition:** declared Git, HTTP Helm, OCI Helm, OCI artifact,
   and remote Kustomize inputs through explicit drydock caches, plus
   `--repo-map` for adjacent local checkouts.

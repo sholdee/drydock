@@ -204,8 +204,10 @@ Repository resolution and cache behavior are documented in
   with one OpenSSH-style exception: when no `--git-ssh-key-file` is given, SSH
   identities are resolved from the agent (`SSH_AUTH_SOCK`), `~/.ssh/config`
   `IdentityFile` entries, and the default `~/.ssh/id_*` files, and host keys
-  are always verified against known_hosts. Git credential helpers, Helm
-  registry config, Docker config, and Argo CD repository state are never read.
+  are always verified against known_hosts. Ambient Git credential helpers,
+  ambient Helm registry config, Docker config, the OS keychain, and Argo CD
+  repository state are never read; an explicit `--registry-config` file is,
+  including the credential helpers it names.
 - Caches must stay outside selected repository trees and symlink-resolved
   equivalents.
 
@@ -221,10 +223,15 @@ Supported render paths:
 - Local Helm charts.
 - Kustomize `helmCharts` through the shared Helm library path.
 - Remote Helm chart sources from HTTP(S) and OCI repositories.
-- First-class OCI artifact sources (`repoURL: oci://...` with `path:` and no
-  `chart:`): revision resolved to a digest, artifact content pulled into the
-  digest-keyed OCI cache, and the selected `path` rendered through the normal
-  directory, Kustomize, or Helm pipeline.
+- First-class OCI artifact sources (every `repoURL: oci://...`, following
+  Argo CD's OCI-before-Helm dispatch): revision resolved to a digest,
+  artifact content pulled into the digest-keyed OCI cache,
+  `.argocd-source*.yaml` merged at the content path, and `path` (default
+  `.`) rendered through the normal directory, Kustomize, or Helm pipeline.
+  `spec.source.chart` never participates; a source that sets it warns with
+  `source.oci-chart-ignored` and renders the artifact anyway; the warning is
+  advisory only and exempt from `--strict` escalation and failure, because
+  Argo CD renders the shape silently.
 - Remote Kustomize HTTP(S) files and Git refs.
 - Discovered Argo CD CMP definitions that normalize to a safe `kustomize
   build` command, interpreted through drydock's native Kustomize renderer.
@@ -288,9 +295,10 @@ Application's `argocd.argoproj.io/manifest-generate-paths` annotation adds
 ownership with Argo CD's syntax (`;`-separated paths relative to each source's
 path, `.` for the path itself, or relative to the repository root with a
 leading `/`; `path.Match` globs whose `*` never crosses a `/`). A relative entry
-needs a source with a local path, OCI sources contribute nothing, and an entry
-that resolves to the repository root or escapes it owns nothing. Declared paths
-are selection-only and never key the persistent render cache. Selection is
+needs a source with a local path (chart-only and OCI sources keep only absolute
+entries), and an entry that resolves to the repository root or escapes it owns
+nothing. Declared paths are selection-only and never key the persistent render
+cache. Selection is
 unioned across both diff sides by Application identity, because a deleted file
 is only in the left tree's graph. If every changed path can be mapped, only
 affected Applications render. If any path is unowned, non-strict mode warns and

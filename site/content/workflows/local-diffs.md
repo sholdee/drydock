@@ -110,9 +110,9 @@ Globs match with Go's `path.Match`, so `/shared/*.yaml` matches
 selects the Application when it is a declared path, lies under one, or matches
 a declared glob.
 
-Three rules narrow Argo CD's reading. Sources without a local path, such as
-chart-only or ref-only sources, use only `/` entries; OCI sources contribute
-nothing. Entries that resolve to the repository root, or escape it, are
+Three rules narrow Argo CD's reading. Sources without a local path — chart-only,
+ref-only, or OCI sources — use only `/` entries, and their relative entries are
+skipped. Entries that resolve to the repository root, or escape it, are
 ignored, so the annotation can never suppress the render-all fallback for the
 whole repository. Backslashes are read as path separators, like every other
 selection path, so a glob metacharacter cannot be escaped with `\`.

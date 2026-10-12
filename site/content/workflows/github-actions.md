@@ -424,9 +424,11 @@ passes them as arguments without `eval`, but they still change drydock behavior.
 
 The `extra-*` inputs are also the supported path for source credentials the
 action deliberately defines no inputs for, such as the `--oci-*` OCI artifact
-registry flags. Pass one `--flag=value` line per argument with repository
-secrets; both diff sides share the same extra diff arguments, and the action
-never echoes its argument list, so secret values stay out of workflow logs:
+registry flags or `--registry-config` (whose per-registry credentials now
+cover `oci://` Applications as well as OCI chart registries). Pass one
+`--flag=value` line per argument with repository secrets; both diff sides
+share the same extra diff arguments, and the action never echoes its
+argument list, so secret values stay out of workflow logs:
 
 ```yaml
 extra-test-args: |

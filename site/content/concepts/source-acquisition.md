@@ -17,11 +17,11 @@ See [SSH Identity Resolution](#ssh-identity-resolution).
 For repository sources, drydock resolves deterministically:
 
 1. Explicit `--repo-map URL=PATH`.
-2. `oci://` source classification. An `oci://` repository URL without `chart:`
-   is a first-class [OCI artifact source](#oci-artifact-sources) and is
-   acquired from the registry — it never falls through to a local source path
-   or Git acquisition, even when its `path:` (commonly `.`) exists in the
-   local tree.
+2. `oci://` source classification. Every `oci://` repository URL is a
+   first-class [OCI artifact source](#oci-artifact-sources) — with or without
+   `chart:`, which is ignored there — and is acquired from the registry. It
+   never falls through to a local source path or Git acquisition, even when
+   its `path:` (default `.`) exists in the local tree.
 3. Existing local source path under the selected repository tree.
 4. A source naming the local checkout — a configured remote of the selected
    repository — at `""`/`HEAD`, a diffed ref name (during diffs), or the
@@ -98,13 +98,16 @@ Chart-only HTTP(S) and OCI Helm sources may be fetched into the chart cache
 unless `--offline` is set. Local Helm chart sources render from the repository
 tree.
 
-A source combining an `oci://` repository URL with `chart:` (and no `path:`)
-keeps drydock's existing Helm-chart flow. This is a deliberate, recorded
-divergence from strict Argo CD v3.4.5, which dispatches `oci://` URLs to its
-OCI handling before Helm handling and would reject that shape — fleets use it,
-and rendering the chart matches what their clusters run. An `oci://` source
-that sets both `chart:` and `path:` fails with a clear
-`unsupported source shape` error instead of falling into either flow.
+An OCI Helm chart source is the schemeless shape Argo CD classifies as
+Helm-OCI: `repoURL: ghcr.io/org/charts` (host and optional path, no scheme)
+plus `chart:`, including nested chart names. It is pulled through the Helm
+registry client into the chart cache at the exact `targetRevision` version;
+semver constraints are not resolved for this shape, where Argo CD's
+repo-server resolves them against the registry tag list — a recorded
+follow-up. A `repoURL` that starts with `oci://` is never a Helm chart
+source: Argo CD's repo-server dispatches on the scheme before it looks at
+`chart:`, and drydock follows it — see
+[OCI Artifact Sources](#oci-artifact-sources).
 
 Drydock resolves missing HTTP(S) and OCI chart dependencies declared in
 `Chart.yaml` through its native chart cache. With `--offline`, cache hits are
@@ -130,11 +133,15 @@ credential discovery.
 
 ## OCI Artifact Sources
 
-Argo CD first-class OCI sources — `repoURL: oci://registry/repo`, a `path:`
-into the artifact content, and no `chart:` — are supported on every render
-surface. drydock resolves the revision to a digest, pulls the artifact from
-the registry, extracts its content, and renders the selected `path` with the
-normal directory, Kustomize, or Helm pipeline:
+Every source whose `repoURL` carries the `oci://` scheme is an Argo CD
+first-class OCI artifact source, supported on every render surface. The
+repo-server dispatches on that scheme before it considers Helm (`IsOCI`
+before `IsHelm`), and drydock follows the same rule: it resolves
+`targetRevision` to a digest, pulls `repoURL` from the registry, extracts the
+content, merges any `.argocd-source*.yaml` found at the content path, and
+renders `path` (default `.`) with the normal directory, Kustomize, or Helm
+pipeline — Helm is inferred from a `Chart.yaml` there and the source's `helm`
+block is applied:
 
 ```yaml
 source:
@@ -143,10 +150,47 @@ source:
   path: .
 ```
 
+A Helm chart pushed to a registry is an OCI artifact too, so the same shape
+renders it: the chart's own OCI repository is the `repoURL`, the chart
+version is the `targetRevision`, and `path: .` is the chart root:
+
+```yaml
+source:
+  repoURL: oci://ghcr.io/bjw-s-labs/helm/app-template
+  targetRevision: 5.2.1
+  path: .
+  helm:
+    valuesObject:
+      controllers: {}
+```
+
+`spec.source.chart` never participates in an `oci://` source — not in the
+pull, the routing, override merging, or rendering, with or without `path:`,
+`helm:`, `plugin:`, or `ref:`. A source that sets it is rendered exactly as
+above, and drydock reports one advisory warning per Application source,
+`source.oci-chart-ignored`, naming both Argo-valid spellings: drop `chart:`
+and set `path: .` to keep the artifact (Argo CD requires `path` or `chart` on
+every source, or `ref` in a multi-source list), or switch to the schemeless
+Helm-OCI shape (`repoURL: ghcr.io/bjw-s-labs/helm` plus
+`chart: app-template`) if the chart under that repository was meant. The
+warning is advisory only: `--strict` neither escalates it nor fails the run
+on it, because Argo CD renders the shape silently and the manifests are the
+same either way. `chart:` together with `path:` is valid; `path` selects
+within the artifact. Argo CD's API server (`argocd app create`) still
+classifies such a repository Helm-first and rejects the shape; drydock
+mirrors the controller, which renders it when applied declaratively, and the
+Argo CD render parity smoke pins that live.
+
 Classification is total over `oci://` URLs: an OCI source never resolves to a
 local source path, the self-repository branch, or Git acquisition, even when
 `path: .` exists in the local tree. Explicit `--repo-map` of the `oci://` URL
-still wins and renders the mapped local path instead of fetching.
+still wins and renders the mapped local path instead of fetching; the
+`chart:` warning is still reported. Two recorded leniencies: the scheme check
+trims surrounding whitespace and matches case-insensitively, where Argo CD's
+`IsOCI` is an exact lowercase prefix check, so it only adds classification
+and never re-routes a URL Argo CD treats as OCI; and a single-source `oci://`
+Application with neither `path:` nor `chart:`, an invalid spec upstream,
+renders the artifact root in drydock.
 
 ### Revisions
 
@@ -165,23 +209,39 @@ flag because nothing tag-shaped can go stale between online runs.
 
 ### Authentication And TLS
 
-Private OCI artifact registries authenticate with an explicit global
-credential family; `--registry-config` still applies to OCI Helm chart
-sources only:
+Private OCI artifact registries authenticate with an explicit credential
+family: `--registry-config` supplies per-registry credentials for OCI
+artifact sources and OCI Helm chart registries alike, the `--oci-*`
+username/password pair is the global override, and the `--oci-*` TLS flags
+are one global set:
 
 | Flag | Behavior |
 | --- | --- |
-| `--oci-username USER` | Username for authenticated OCI artifact registries. |
-| `--oci-password PASS` | Password for authenticated OCI artifact registries. |
+| `--registry-config PATH` | Docker/Helm registry config file (`helm registry login` format) with per-registry credentials for OCI artifact sources and OCI Helm chart registries. For artifact sources it is read and validated at the first `oci://` acquisition. |
+| `--oci-username USER` | Username for authenticated OCI artifact registries (every registry in the run; overrides `--registry-config`). |
+| `--oci-password PASS` | Password for authenticated OCI artifact registries (every registry in the run; overrides `--registry-config`). |
 | `--oci-ca-file PATH` | PEM CA bundle for OCI artifact registry and OCI Helm chart registry TLS (artifact registries: replaces the system pool; Helm chart registries: added to the system pool). |
 | `--oci-client-cert-file PATH` | Client certificate file for mutual-TLS OCI artifact registries and OCI Helm chart registries (requires `--oci-client-key-file`). |
 | `--oci-client-key-file PATH` | Client key file for mutual-TLS OCI artifact registries and OCI Helm chart registries (requires `--oci-client-cert-file`). |
 | `--oci-insecure-skip-verify` | Skip TLS certificate verification for OCI artifact registries and OCI Helm chart registries (insecure; credentials are exposed to whoever answers). |
 
-The family is a single global set: the one username/password pair is
-presented to every OCI artifact registry the run touches, matching the
-Git and Helm credential flags. Per-registry credential maps and Docker
-config ingestion are recorded follow-ups.
+`--registry-config` is consulted per registry host through the same
+credential store that `docker login` and `helm registry login` write: plain
+`auths` entries, legacy `https://host/` keys, and `credsStore`/`credHelpers`
+helpers. The lookup happens at the first `oci://` acquisition of a run, which
+is also when the file's existence is checked, so a run with no OCI artifact
+sources never opens it and CI can pass the flag unconditionally. A host
+without an entry stays anonymous. Two shapes are errors rather than silent
+anonymous pulls: an identity-token entry (`identitytoken`/`registrytoken`,
+which the OCI artifact client cannot present — it sends username and
+password only), and a credential helper that cannot run (the error names the
+`docker-credential-<helper>` binary; use a plain `auths` file or the
+`--oci-*` flags). An auth-less file never reaches the OS keychain for
+artifact sources, unlike helm's chart loader. When either `--oci-username` or
+`--oci-password` is set, that pair is presented to every OCI artifact
+registry the run touches and the file is not opened, matching the Git and
+Helm credential flags. Per-registry CLI credential maps are a recorded
+follow-up.
 
 TLS behavior follows one deterministic rule. Loopback registries
 (localhost) default to plain HTTP for local development and testing; all
@@ -201,15 +261,15 @@ TLS caveats:
 - The four TLS flags also configure **OCI Helm chart** pulls, so a chart
   registry behind a corporate CA is reachable. There the bundle is
   **added** to the system pool rather than replacing it, so a run that
-  pins a private artifact registry keeps pulling public charts. Only TLS
-  material crosses over: `--registry-config` remains the sole credential
-  source for OCI Helm charts, and the HTTP(S) Helm repository client is
-  left on the system pool.
+  pins a private artifact registry keeps pulling public charts. TLS
+  material and `--registry-config` are shared by both OCI flows;
+  `--oci-username`/`--oci-password` apply to OCI artifact registries only,
+  and the HTTP(S) Helm repository client is left on the system pool.
 - `--oci-insecure-skip-verify` has no per-registry scoping — it disables
   certificate verification for every OCI artifact *and* OCI Helm chart
   registry in the run, including public ones, and any
-  `--registry-config` credentials are then sent over an unverified
-  connection.
+  `--registry-config` or `--oci-*` credentials are then sent over an
+  unverified connection.
 - The CA file must exist and parse as PEM, and
   `--oci-client-cert-file`/`--oci-client-key-file` must be set together
   as a valid pair. Validation fails fast at request construction with an
@@ -223,21 +283,25 @@ OCI artifact oci://registry.example.com/org/app: "@" and "%" are not allowed in 
 ```
 
 Credential values never enter cache keys, cache metadata, cache events,
-diagnostics, or formatted errors. A credentialed run produces the same
-cache entries as an anonymous run, and registry authentication failures
-redact the presented authorization material:
+diagnostics, or formatted errors, whether they came from the flags or from
+the `--registry-config` file. A credentialed run produces the same cache
+entries as an anonymous run, and registry authentication failures (401 or
+403) redact the presented authorization material and name the flags:
 
 ```text
-... response status code 401: unauthorized: authentication required; received authorization Basic [redacted] decoded [redacted]:[redacted]
+authenticate OCI artifact oci://registry.example.com/org/app revision "1.2.3": ... response status code 401: unauthorized: authentication required; received authorization Basic [redacted] decoded [redacted]:[redacted]; pass --registry-config or --oci-username/--oci-password (registries answer 401/403 for private and for nonexistent repositories alike)
 ```
 
 Credentials affect only online acquisition. `--offline` runs never
 contact the registry, so the `--oci-*` credential flags have no effect on
-offline acquisition — with one caveat: credential validation (missing or
+offline acquisition — with one caveat: TLS validation (missing or
 non-PEM `--oci-ca-file`, incomplete or mismatched client cert/key pair)
 runs at request construction on every build and diff, including offline
 runs and runs with no OCI sources at all, and fails fast. Wrappers that
 pass `--oci-*` flags unconditionally should pass valid values or none.
+`--registry-config` is different: it is validated only at the first
+`oci://` acquisition, so a wrong path fails only runs that pull an OCI
+artifact.
 
 ### Extraction Guards
 
@@ -272,23 +336,36 @@ Under `--offline`:
 
 The remediation for an offline cache miss is one online run of the same
 command (or any render covering the same source) to populate the image cache
-and tag records, then re-run with `--offline`.
+and tag records, then re-run with `--offline`:
+
+```bash
+drydock build apps --path . --oci-cache-dir /var/cache/drydock-oci
+drydock build apps --path . --oci-cache-dir /var/cache/drydock-oci --offline
+```
+
+An Application whose `oci://` source sets `chart:` was served from the chart
+cache by earlier releases and is served from the OCI cache now, so it needs
+that warm run — or a non-offline pr-action run — before `--offline` can
+render it. Its old chart-cache entries are orphaned; `drydock cache prune
+--source chart` removes them, and `--refresh-charts` no longer applies to it.
 
 ### Boundaries
 
-- `oci://` + `chart:` keeps the Helm-chart flow (see
-  [Helm Sources](#helm-sources)); `chart:` + `path:` on one `oci://` source
-  is an error.
+- `chart:` on an `oci://` source is ignored and reported once as the
+  strict-exempt `source.oci-chart-ignored` warning; `chart:` + `path:` on
+  one `oci://` source is valid. The schemeless Helm-OCI shape is the chart
+  flow (see [Helm Sources](#helm-sources)).
 - OCI sources cannot be `$ref` value-file sources. Argo CD materializes
   referenced sources from Git only, and drydock fails such refs with a clear
   error instead of accidentally supporting them.
 - Changed-only diff selection treats OCI sources like chart-only Helm
   sources: they re-render when the Application manifest changes, not on
   arbitrary repository changes, and they never render discovery objects.
-- Private registries requiring authentication use the explicit `--oci-*`
-  credential flags (see
-  [Authentication And TLS](#authentication-and-tls));
-  `--registry-config` applies to OCI Helm chart sources only. Loopback
+  Absolute (`/`-prefixed) `argocd.argoproj.io/manifest-generate-paths`
+  entries they declare are honoured, as for chart-only sources.
+- Private registries requiring authentication use `--registry-config` (per
+  registry host) or the explicit `--oci-username`/`--oci-password` override
+  (see [Authentication And TLS](#authentication-and-tls)). Loopback
   registries (localhost) use plain HTTP for local development and testing
   unless a TLS-implying `--oci-*` flag is set; all other hosts use TLS.
 
@@ -379,7 +456,7 @@ drydock test apps --path . --offline
 | `--render-cache-max-size QUANTITY` | Size cap before LRU eviction (default `512Mi`). |
 | `--refresh-renders` | Ignore persisted render outputs and overwrite them after rendering. |
 | `--plugin-cache-dir PATH` | Runtime override for policy-managed container plugin cache mounts. |
-| `--registry-config PATH` | Supply the only Helm OCI chart registry credentials. OCI artifact sources use the `--oci-*` credential flags instead. |
+| `--registry-config PATH` | Docker/Helm registry config file with per-registry credentials for OCI Helm chart registries and OCI artifact sources; `--oci-username`/`--oci-password` override it for artifact sources. |
 
 Render-time Git, chart, OCI artifact, and remote-resource caches must stay outside the
 current repository tree, compared repository trees, repo-map roots, and their
@@ -506,9 +583,10 @@ cached entries.
 
 Credentials are non-interactive: drydock never prompts. It does not read
 ambient Git credential helpers, ambient Helm registry config, Docker config,
-credential fields from discovered repository Secrets, or live Argo CD
-repository state. Credentials are explicit, with one OpenSSH-style exception —
-Git SSH identities, described in
+the OS keychain, credential fields from discovered repository Secrets, or live
+Argo CD repository state; an explicit `--registry-config` file is read,
+including the credential helpers it names. Credentials are explicit, with one
+OpenSSH-style exception — Git SSH identities, described in
 [SSH Identity Resolution](#ssh-identity-resolution).
 
 | Source | Auth form | Flags |
@@ -520,7 +598,8 @@ Git SSH identities, described in
 | HTTP(S) Helm | Basic auth | `--helm-username USER`, `--helm-password PASS` |
 | OCI Helm | Registry config | `--registry-config PATH` |
 | OCI Helm | TLS material | `--oci-ca-file PATH`, `--oci-client-cert-file PATH`, `--oci-client-key-file PATH`, `--oci-insecure-skip-verify` |
-| OCI artifact | Basic auth | `--oci-username USER`, `--oci-password PASS` |
+| OCI artifact | Registry config (per registry host) | `--registry-config PATH` |
+| OCI artifact | Basic auth (global override) | `--oci-username USER`, `--oci-password PASS` |
 | OCI artifact | TLS material | `--oci-ca-file PATH`, `--oci-client-cert-file PATH`, `--oci-client-key-file PATH`, `--oci-insecure-skip-verify` |
 | HTTP(S) remote Kustomize | Bearer token | `--remote-bearer-token TOKEN` |
 | HTTP(S) remote Kustomize | Basic auth | `--remote-username USER`, `--remote-password PASS` |

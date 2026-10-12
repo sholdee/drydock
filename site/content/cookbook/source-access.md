@@ -26,6 +26,22 @@ source:
   path: .
 ```
 
+A Helm chart in a registry is an OCI artifact too: the chart's repository is
+the `repoURL`, the chart version is the `targetRevision`, `path: .` is the
+chart root, and the `helm` block applies as usual. Do not add `chart:` to an
+`oci://` source — Argo CD ignores it there, and drydock warns with
+`source.oci-chart-ignored`:
+
+```yaml
+source:
+  repoURL: oci://ghcr.io/bjw-s-labs/helm/app-template
+  targetRevision: 5.2.1
+  path: .
+  helm:
+    valuesObject:
+      controllers: {}
+```
+
 First-class OCI artifact sources render with normal commands — no extra flags:
 
 ```bash
@@ -39,12 +55,14 @@ run, so a re-pushed tag is picked up automatically; pin a digest when the
 render must not move. For `--offline` runs, warm the cache with one online run
 first — digests render from the cached image, and tags or constraints resolve
 from records captured online. Private registries requiring authentication use
-the explicit `--oci-*` credential flags — see
+`--registry-config` or the explicit `--oci-*` credential flags — see
 [Render Private OCI Artifact Registries](#render-private-oci-artifact-registries).
 
 ## Render Private OCI Artifact Registries
 
 ```bash
+drydock test apps --path . \
+  --registry-config "$HOME/.config/helm/registry/config.json"
 drydock test apps --path . \
   --oci-username "$OCI_USER" \
   --oci-password "$OCI_PASSWORD"
@@ -54,17 +72,24 @@ drydock test apps --path . \
   --oci-ca-file ./ci/registry-ca.pem
 ```
 
-The `--oci-*` flags are one global set: the same username/password pair and
-TLS configuration are presented to every OCI artifact registry the run
-touches. `--oci-ca-file` replaces the system trust pool for all OCI artifact
+`--registry-config` points at a Docker/Helm registry config file (what
+`helm registry login` or `docker login` writes) and supplies credentials per
+registry host, for OCI artifact sources and OCI Helm chart registries alike.
+drydock reads and validates it at the first `oci://` acquisition, so passing
+it on runs without OCI sources is harmless; hosts without an entry stay
+anonymous, and identity-token entries or credential helpers that cannot run
+are errors for artifact sources rather than silent anonymous pulls. The
+`--oci-username`/`--oci-password` pair is the global override: when either is
+set, the file is not opened and the pair is presented to every OCI artifact
+registry the run touches. The TLS configuration is one global set:
+`--oci-ca-file` replaces the system trust pool for all OCI artifact
 registries in the run, and setting any TLS-implying flag (`--oci-ca-file`,
 `--oci-client-cert-file`, `--oci-client-key-file`,
 `--oci-insecure-skip-verify`) switches loopback registries from their
 plain-HTTP development default to TLS. The same four TLS flags also configure
 OCI Helm chart pulls, where the bundle is added to the system pool instead of
-replacing it; chart credentials remain `--registry-config`. Credentials
-embedded in the `oci://` repository URL are rejected; pass them through the
-flags. Details are in
+replacing it. Credentials embedded in the `oci://` repository URL are
+rejected; pass them through the flags or the file. Details are in
 [source acquisition](/concepts/source-acquisition/#authentication-and-tls).
 
 In the GitHub PR action, pass the same flags through the trusted `extra-*`
@@ -162,6 +187,8 @@ drydock test apps --path . --registry-config ./ci/registry-config.json
 ```
 
 Explicit credentials win: `--git-ssh-key-file` disables the ambient identity
-lookup entirely. Credential handling is non-interactive. Complete cache, auth,
+lookup entirely, and `--registry-config` covers OCI Helm chart registries and
+`oci://` artifact sources per registry host. Credential handling is
+non-interactive. Complete cache, auth,
 Helm, Git, and remote Kustomize behavior is in
 [source acquisition](/concepts/source-acquisition/).

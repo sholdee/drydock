@@ -160,8 +160,9 @@ statuses, diagnostics, cache events, and structured output.
 
 Rendering supports directory sources, directory Jsonnet, Kustomize sources,
 local Helm charts, Kustomize `helmCharts`, remote Kustomize HTTP(S) files and
-Git refs, Argo CD chart-only remote Helm sources, and first-class OCI
-artifact sources (`repoURL: oci://...` with `path:` and no `chart:`).
+Git refs, Argo CD chart-only remote Helm sources (HTTP(S) and schemeless
+Helm-OCI repositories with `chart:`), and first-class OCI artifact sources
+(every `repoURL: oci://...`).
 Path-based Git sources use the local `--path` tree when the source path
 exists there. Use `--repo-map URL=PATH` to force a source repository URL to a
 local checkout.
@@ -169,11 +170,16 @@ local checkout.
 OCI artifact sources resolve digest, exact-tag, or semver-constraint
 revisions against the registry, cache the pulled image under the OCI cache
 root (`--oci-cache-dir PATH` overrides it), and render the extracted content
-at the source `path`. An `oci://` source with `chart:` and no `path:` keeps
-the Helm-chart flow; setting both `chart:` and `path:` is an error, and OCI
-sources cannot be `$ref` value-file sources. See
+at the source `path` (default `.`), applying the `helm` block when the
+content is a chart. `spec.source.chart` is ignored on `oci://` sources, as in
+Argo CD's OCI-before-Helm dispatch, and reported once per source as the
+advisory `source.oci-chart-ignored` warning, which `--strict` does not
+escalate; `chart:` plus `path:` is valid. OCI sources cannot be `$ref`
+value-file sources. Private registries authenticate through
+`--registry-config` (per registry host) or the
+`--oci-username`/`--oci-password` override. See
 [Source acquisition](/concepts/source-acquisition/#oci-artifact-sources) for
-revision, cache, and offline details.
+revision, cache, credential, and offline details.
 
 Capability-gated charts can render optional resources only when a Kubernetes
 version or API version is available. drydock derives a default Kubernetes

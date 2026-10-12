@@ -125,9 +125,9 @@ the local tree is the desired state.
 
 ## Symptom: OCI Source Renders The Local Checkout Or Fails With `load helm chart .`
 
-A first-class OCI artifact source — `repoURL: oci://...` with `path:` and no
-`chart:` — has two historical failure modes on older drydock releases, which
-did not classify `oci://` URLs:
+A first-class OCI artifact source — any `repoURL: oci://...` — has two
+historical failure modes on older drydock releases, which did not classify
+`oci://` URLs:
 
 - With a `helm:` block, the render failed with an error like
   `load helm chart .`, because the local repository root was treated as the
@@ -145,14 +145,74 @@ rendered instead.
 
 Related shapes on current releases:
 
-- `oci://` + `chart:` (no `path:`) keeps the Helm-chart flow (recorded
-  divergence from strict Argo CD v3.4.5).
-- `oci://` + `chart:` + `path:` fails with `unsupported source shape`.
+- `chart:` on an `oci://` source is ignored, as in Argo CD, and reported as
+  `source.oci-chart-ignored` — see the next symptom.
 - An OCI URL as a `$ref` value-file source fails clearly; Argo CD supports
   Git-only `$ref` sources.
 - An `offline cache miss` error under `--offline` means the digest, tag, or
   constraint was never resolved online against this cache directory — run
   once without `--offline` to warm the image cache and tag records.
+
+## Symptom: `source.oci-chart-ignored`, Or An `oci://` + `chart:` Source Is Not Found
+
+An Application whose `repoURL` starts with `oci://` and also sets `chart:`:
+
+```yaml
+source:
+  repoURL: oci://ghcr.io/bjw-s-labs/helm/app-template
+  chart: app-template
+  targetRevision: 5.2.1
+```
+
+Argo CD's repo-server dispatches every `oci://` URL as an OCI artifact source
+before it considers Helm, so it pulls `repoURL` itself at `targetRevision`
+and never reads `chart:`. Current drydock releases do the same and report one
+advisory warning per Application source:
+
+```text
+warning source.oci-chart-ignored: Application argocd/app source[0] chart="app-template": chart "app-template" is ignored: Argo CD treats every oci:// repository URL as an OCI artifact source and pulls oci://ghcr.io/bjw-s-labs/helm/app-template at revision "5.2.1" without reading spec.source.chart, so drydock renders that artifact; to silence this warning drop chart and set path: . (Argo CD requires path or chart on every source, or ref in a multi-source list); only if you meant the chart named "app-template" under repository ghcr.io/bjw-s-labs/helm/app-template, switch to the schemeless Helm OCI shape (repoURL "ghcr.io/bjw-s-labs/helm/app-template", chart "app-template")
+```
+
+The warning is advisory: `--strict` neither escalates it nor fails on it, the
+manifests are identical with or without it, and the Argo CD render parity
+smoke pins the shape live. Two remedies, both Argo-valid:
+
+- Keep the artifact: drop `chart:` and set `path: .` (Argo CD requires `path`
+  or `chart` on every source, or `ref` in a multi-source list).
+- Keep a chart under a repository: switch to the schemeless Helm-OCI shape,
+  `repoURL: ghcr.io/bjw-s-labs/helm` plus `chart: app-template`, which uses
+  the Helm registry client and the chart cache.
+
+Older drydock releases pulled `<repoURL>/<chart>:<version>` for this shape
+instead. A source that relied on that now pulls `repoURL:targetRevision`,
+which fails with `resolve OCI artifact ... not found` or an
+`authenticate OCI artifact ...` error (registries answer 401/403 for private
+and for nonexistent repositories alike); the warning is printed alongside,
+and the schemeless remedy above restores the previous pull.
+
+Credential errors surface at the first `oci://` acquisition and name the
+flag. `--registry-config "<path>" does not exist` means the path is wrong —
+runs without OCI artifact sources never open the file, so this appears only
+on OCI pulls. `the credential for <host> is an identity token` means the
+file's entry came from a token login that the OCI artifact client cannot
+present; log in to that registry with a username and password or pass
+`--oci-username`/`--oci-password`. An error naming
+`docker-credential-<helper>` means the file routes that host through a
+credential helper that cannot run here; use a plain `auths` file or the
+`--oci-*` flags.
+
+Under `--offline`, including the pr-action's `offline` input, an Application
+that moved from the chart flow to the artifact flow fails with
+`offline cache miss` until one online run with `--oci-cache-dir` warms the
+image cache and tag records:
+
+```bash
+drydock build apps --path . --oci-cache-dir /var/cache/drydock-oci
+drydock build apps --path . --oci-cache-dir /var/cache/drydock-oci --offline
+```
+
+Its earlier chart-cache entries are orphaned; `drydock cache prune --source
+chart` removes them.
 
 ## Symptom: Changed-Only Falls Back To All Apps
 
