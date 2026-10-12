@@ -144,6 +144,9 @@ func TestIsAuthErrorClassification(t *testing.T) {
 		{name: "typed 401", err: &errcode.ErrorResponse{StatusCode: http.StatusUnauthorized}, want: true},
 		{name: "typed 403", err: &errcode.ErrorResponse{StatusCode: http.StatusForbidden}, want: true},
 		{name: "typed 404", err: &errcode.ErrorResponse{StatusCode: http.StatusNotFound}, want: false},
+		// The typed status is authoritative: a 404 whose body happens to say
+		// "unauthorized" must not reach the text fallback.
+		{name: "typed 404 with unauthorized text", err: &errcode.ErrorResponse{StatusCode: http.StatusNotFound, Errors: errcode.Errors{{Code: "NAME_UNKNOWN", Message: "unauthorized"}}}, want: false},
 		{name: "digest digits are not a status", err: errors.New("extract OCI artifact x digest " + digestWithStatusDigits + ": not found"), want: false},
 		{name: "filesystem permission denied", err: errors.New("open /cache/x: permission denied"), want: false},
 		{name: "text fallback", err: errors.New("cannot get digest for revision 1.2.3: unauthorized: authentication required"), want: true},

@@ -150,19 +150,45 @@ func TestRegistryConfigAuthlessFileStaysAnonymous(t *testing.T) {
 // a silent anonymous pull: the vendored client sends username/password only.
 func TestRegistryConfigIdentityTokenRejected(t *testing.T) {
 	reg := ocitest.StartRegistry(t)
-	config := writeRegistryConfig(t, `{"auths":{"`+reg.Host+`":{"identitytoken":"tok-sekrit-123"}}}`)
+	for _, tt := range []struct {
+		name  string
+		entry string
+	}{
+		{name: "identitytoken only", entry: `{"identitytoken":"tok-sekrit-123"}`},
+		// The Docker CLI stores token logins with auth = base64("<token>:")
+		// beside identitytoken, leaving a placeholder username and an empty
+		// password; that shape must be rejected the same way.
+		{name: "docker cli token entry", entry: `{"auth":"PHRva2VuPjo=","identitytoken":"tok-sekrit-123"}`},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			config := writeRegistryConfig(t, `{"auths":{"`+reg.Host+`":`+tt.entry+`}}`)
 
-	_, err := (DefaultAcquirer{}).Resolve(t.Context(), reg.RepoURL("charts/auth"), "1.2.3", Options{CacheDir: t.TempDir(), Credentials: Credentials{RegistryConfig: config}})
-	if err == nil {
-		t.Fatal("Resolve() error = nil, want identity-token rejection")
+			_, err := (DefaultAcquirer{}).Resolve(t.Context(), reg.RepoURL("charts/auth"), "1.2.3", Options{CacheDir: t.TempDir(), Credentials: Credentials{RegistryConfig: config}})
+			if err == nil {
+				t.Fatal("Resolve() error = nil, want identity-token rejection")
+			}
+			for _, want := range []string{"--registry-config", reg.Host, "identity token", "--oci-username/--oci-password"} {
+				if !strings.Contains(err.Error(), want) {
+					t.Fatalf("Resolve() error = %q, want %q", err, want)
+				}
+			}
+			if strings.Contains(err.Error(), "tok-sekrit-123") {
+				t.Fatalf("Resolve() error leaks the token: %q", err)
+			}
+		})
 	}
-	for _, want := range []string{"--registry-config", reg.Host, "identity token", "--oci-username/--oci-password"} {
-		if !strings.Contains(err.Error(), want) {
-			t.Fatalf("Resolve() error = %q, want %q", err, want)
-		}
+}
+
+// TestForRepositoryTrimsRegistryConfig pins parity with the chart flow, which
+// trims the same flag value before validating it.
+func TestForRepositoryTrimsRegistryConfig(t *testing.T) {
+	config := writeRegistryConfig(t, `{"auths":{}}`)
+	resolved, err := (Credentials{RegistryConfig: "  " + config + "\t"}).ForRepository(t.Context(), "oci://registry.example.test/org/app")
+	if err != nil {
+		t.Fatalf("ForRepository() error = %v, want padded path accepted", err)
 	}
-	if strings.Contains(err.Error(), "tok-sekrit-123") {
-		t.Fatalf("Resolve() error leaks the token: %q", err)
+	if resolved.RegistryConfig != "" || resolved.Username != "" || resolved.Password != "" {
+		t.Fatalf("ForRepository() = %#v, want anonymous credentials with RegistryConfig cleared", resolved)
 	}
 }
 

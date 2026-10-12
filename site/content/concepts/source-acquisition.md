@@ -229,8 +229,8 @@ are one global set:
 credential store that `docker login` and `helm registry login` write: plain
 `auths` entries, legacy `https://host/` keys, and `credsStore`/`credHelpers`
 helpers. The lookup happens at the first `oci://` acquisition of a run, which
-is also when the file's existence is checked, so a run with no OCI artifact
-sources never opens it and CI can pass the flag unconditionally. A host
+is also when the file's existence is checked, so a run that pulls nothing from
+an OCI registry never opens it and CI can pass the flag unconditionally. A host
 without an entry stays anonymous. Two shapes are errors rather than silent
 anonymous pulls: an identity-token entry (`identitytoken`/`registrytoken`,
 which the OCI artifact client cannot present — it sends username and

@@ -179,7 +179,10 @@ func (c Credentials) ForRepository(ctx context.Context, repoURL string) (Credent
 	if c.Username != "" || c.Password != "" {
 		return c, nil
 	}
-	if c.RegistryConfig == "" {
+	// Trimmed like the chart flow's validateRegistryConfig, so one padded
+	// --registry-config value behaves the same in both flows.
+	registryConfig := strings.TrimSpace(c.RegistryConfig)
+	if registryConfig == "" {
 		return c, nil
 	}
 	// The host segment is about to be echoed in error text and used as a
@@ -188,20 +191,24 @@ func (c Credentials) ForRepository(ctx context.Context, repoURL string) (Credent
 	if err := rejectURLUserinfo(repoURL); err != nil {
 		return Credentials{}, err
 	}
-	if err := validateRegistryConfigFile(c.RegistryConfig); err != nil {
+	if err := validateRegistryConfigFile(registryConfig); err != nil {
 		return Credentials{}, err
 	}
 	host, server := registryConfigKey(repoURL)
-	store, err := orascreds.NewStore(c.RegistryConfig, orascreds.StoreOptions{})
+	store, err := orascreds.NewStore(registryConfig, orascreds.StoreOptions{})
 	if err != nil {
-		return Credentials{}, fmt.Errorf("--registry-config %q: %w", c.RegistryConfig, err)
+		return Credentials{}, fmt.Errorf("--registry-config %q: %w", registryConfig, err)
 	}
 	cred, err := store.Get(ctx, server)
 	if err != nil {
-		return Credentials{}, fmt.Errorf("--registry-config %q: credentials for %s: %w", c.RegistryConfig, server, err)
+		return Credentials{}, fmt.Errorf("--registry-config %q: credentials for %s: %w", registryConfig, server, err)
 	}
-	if cred.Username == "" && cred.Password == "" && (cred.RefreshToken != "" || cred.AccessToken != "") {
-		return Credentials{}, fmt.Errorf("--registry-config %q: the credential for %s is an identity token, which OCI artifact sources cannot use (the OCI client sends username/password only); log in to %s with a username and password or pass --oci-username/--oci-password", c.RegistryConfig, server, host)
+	// A token entry has no usable password. The Docker CLI writes such
+	// entries with an `auth` field of base64("<token>:") beside
+	// `identitytoken`, so the username may be a placeholder rather than
+	// empty; the empty password plus a token is the reliable signal.
+	if cred.Password == "" && (cred.RefreshToken != "" || cred.AccessToken != "") {
+		return Credentials{}, fmt.Errorf("--registry-config %q: the credential for %s is an identity token, which OCI artifact sources cannot use (the OCI client sends username/password only); log in to %s with a username and password or pass --oci-username/--oci-password", registryConfig, server, host)
 	}
 	resolved := c
 	resolved.Username = cred.Username

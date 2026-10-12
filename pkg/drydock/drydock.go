@@ -117,7 +117,8 @@ type Config struct {
 	// OCICacheDir overrides the OCI artifact source cache root.
 	OCICacheDir string
 	// OCICredentials supplies credentials for first-class OCI artifact source
-	// acquisition.
+	// acquisition: per registry host through RegistryConfig, with
+	// Username/Password as the global override.
 	OCICredentials OCICredentials
 	// EnableAVPCompat forces argocd-vault-plugin placeholder redaction for
 	// native-rendered sources. Explicit argocd-vault-plugin sources use native
