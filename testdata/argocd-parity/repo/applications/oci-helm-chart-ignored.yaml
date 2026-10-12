@@ -1,0 +1,19 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: parity-oci-helm-chart-ignored
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: oci://argocd-parity-registry.argocd-parity.svc.cluster.local:5443/parity/nested/parity-nested-chart
+    # Ignored by Argo CD and by drydock: an oci:// repoURL dispatches to the
+    # OCI artifact path before the Helm path, which never reads chart.
+    chart: parity-nested-chart
+    targetRevision: 1.0.0
+    helm:
+      valuesObject:
+        fromValues: from-application
+  destination:
+    name: in-cluster
+    namespace: parity-oci-helm-chart-ignored

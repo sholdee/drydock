@@ -83,6 +83,14 @@ OCI_APPLICATION="parity-oci-config"
 OCI_CHART_PATH="${REPO_ROOT}/testdata/argocd-parity/oci-chart/parity-nested-chart"
 OCI_CHART_REPOSITORY="parity/nested"
 OCI_CHART_APPLICATION="parity-oci-helm-nested"
+# The same pushed chart addressed as an OCI artifact: repoURL
+# oci://<host:port>/parity/nested/parity-nested-chart with chart: set.
+# Argo CD's repo-server dispatches on IsOCI before IsHelm
+# (reposerver/repository/repository.go:358-364), pulls the repoURL at the
+# tag and never reads chart; drydock does the same and warns
+# source.oci-chart-ignored. parity-oci-helm-chart-ignored is Argo-valid only
+# when applied declaratively (argocd app create would reject it).
+OCI_CHART_IGNORED_APPLICATION="parity-oci-helm-chart-ignored"
 OCI_HOSTS_MARKER="drydock-argocd-parity-smoke"
 HOSTS_ENTRY_ADDED="false"
 OUT_DIR="${REPO_ROOT}/argocd-parity-smoke"
@@ -97,6 +105,7 @@ REGISTRY_PORT_FORWARD_PID=""
 APPLICATIONS=(
   parity-oci-config
   parity-oci-helm-nested
+  parity-oci-helm-chart-ignored
   parity-directory
   parity-directory-edges
   parity-helm-release-namespace
@@ -812,10 +821,12 @@ verify_oci_artifact_manifest() {
 
 wait_for_oci_application() {
   local app sync_status
-  # Both registry-backed Applications: the artifact source and the nested OCI
-  # Helm chart source. Naming the app in the failure tells a TLS problem
-  # (argocd-tls-certs-cm) apart from a media-type or chart-name problem.
-  for app in "${OCI_APPLICATION}" "${OCI_CHART_APPLICATION}"; do
+  # All three registry-backed Applications: the artifact source, the nested
+  # OCI Helm chart source, and parity-oci-helm-chart-ignored (the chart pulled
+  # as an oci:// artifact with chart: set). Naming the app in the failure
+  # tells a TLS problem (argocd-tls-certs-cm) apart from a media-type or
+  # chart-name problem.
+  for app in "${OCI_APPLICATION}" "${OCI_CHART_APPLICATION}" "${OCI_CHART_IGNORED_APPLICATION}"; do
     sync_status=""
     for _ in {1..120}; do
       sync_status="$(kubectl -n argocd get application "${app}" -o jsonpath='{.status.sync.status}' 2>/dev/null || true)"
@@ -833,9 +844,11 @@ wait_for_oci_application() {
 
 warm_drydock_oci_cache() {
   local app stderr_file
-  # The artifact app fills --oci-cache-dir, the chart app fills
-  # --chart-cache-dir; the offline capture loop reads both back.
-  for app in "${OCI_APPLICATION}" "${OCI_CHART_APPLICATION}"; do
+  # The artifact app and parity-oci-helm-chart-ignored fill --oci-cache-dir
+  # (an oci:// repoURL takes the artifact flow whether or not chart: is set),
+  # the schemeless chart app fills --chart-cache-dir; the offline capture
+  # loop reads both back.
+  for app in "${OCI_APPLICATION}" "${OCI_CHART_APPLICATION}" "${OCI_CHART_IGNORED_APPLICATION}"; do
     stderr_file="${OUT_DIR}/drydock-oci-warm-${app}.stderr"
     (cd "${REPO_ROOT}" && "${DRYDOCK_CMD[@]}" build app "argocd/${app}" \
       --path "${FIXTURE_REPO_PATH}" \
@@ -1112,6 +1125,17 @@ capture_drydock_manifest() {
     echo "argocd render parity smoke: drydock capture of ${app_ref} failed; its stderr follows" >&2
     cat "${stderr_file}" >&2 || true
     fail "drydock capture of ${app_ref} failed; see ${stderr_file}"
+  fi
+  if [[ "${stem}" == "${OCI_CHART_IGNORED_APPLICATION}" ]]; then
+    # parity-oci-helm-chart-ignored must render AND warn: the capture runs
+    # without --strict, so the advisory source.oci-chart-ignored line is the
+    # only evidence that drydock ignored chart: and took the artifact path
+    # rather than rendering the same manifests through the chart flow.
+    if ! grep -q 'source.oci-chart-ignored' "${stderr_file}"; then
+      echo "argocd render parity smoke: drydock capture of ${app_ref} did not warn source.oci-chart-ignored; its stderr follows" >&2
+      cat "${stderr_file}" >&2 || true
+      fail "drydock capture of ${app_ref} rendered without the source.oci-chart-ignored warning (an oci:// repoURL with chart: set must warn once and render the artifact); see ${stderr_file}"
+    fi
   fi
   rm -f "${stderr_file}"
 }

@@ -190,7 +190,11 @@ render_oracle() {
   if [[ -n "${chart}" ]]; then
     vals="$(mktemp)"; jq '.spec.source.helm.valuesObject // {}' <<<"${spec}" > "${vals}"  # helm -f reads JSON as YAML
     local -a hcmd
-    if   [[ "${repo}" == oci://* ]];   then hcmd=(helm template "${release}" "${repo}/${chart}"         --version "${ver}")
+    # oci:// repoURL: Argo CD's repo-server dispatches on IsOCI before IsHelm
+    # (reposerver/repository/repository.go:358-364) and pulls repoURL itself at
+    # targetRevision as an OCI artifact; spec.source.chart is never read, so the
+    # oracle must not append it (drydock warns source.oci-chart-ignored instead).
+    if   [[ "${repo}" == oci://* ]];   then hcmd=(helm template "${release}" "${repo}"                   --version "${ver}")
     elif [[ "${repo}" == http*://* ]]; then hcmd=(helm template "${release}" "${chart}" --repo "${repo}" --version "${ver}")
     else                                    hcmd=(helm template "${release}" "oci://${repo}/${chart}"   --version "${ver}")  # ghcr.io/... OCI
     fi

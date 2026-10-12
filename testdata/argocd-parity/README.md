@@ -445,15 +445,13 @@ comparison hard.
 
 ### Deliberately not covered by this fixture
 
-- The `oci://` + `chart:` divergence shape: live Argo CD v3.4.5 rejects that
-  combination, and the harness has no expected-to-fail-on-Argo notion
-  (capture hard-fails on empty output). That shape stays pinned by fleet and
-  unit tests only.
-- The helm-content-inside-first-class-artifact shape (no `chart:` field, a
-  `Chart.yaml` inside the artifact): hermetically pinned by unit tests, not
-  live-pinned. This plain-manifests fixture does not cover it. It is a
-  distinct shape from the `oci://` + `chart:` divergence above; do not
-  conflate the two.
+- The helm-content-inside-first-class-artifact shape without a `chart:` field
+  (a `Chart.yaml` inside the artifact, `path: .`): hermetically pinned by unit
+  tests, not live-pinned under its own Application, and not covered by this
+  plain-manifests fixture. Do not conflate it with the `oci://` + `chart:`
+  spelling, which `parity-oci-helm-chart-ignored` live-pins (see the OCI Helm
+  chart fixture below): Argo CD dispatches both as OCI artifacts, but only
+  the latter carries a `chart:` field for drydock to warn about.
 - Semver tag constraints (a tag-list moving part), registry authentication
   (an htpasswd surface for a hermetically-pinned path), and multi-registry
   setups.
@@ -493,6 +491,31 @@ artifacts — with one non-offline build before the offline per-app loop runs.
 The chart lives outside `repo/` for the same reason the artifact content does:
 a classification regression that fell back to path resolution would render the
 git fixture instead of the chart and flip the comparison hard.
+
+`applications/oci-helm-chart-ignored.yaml` (`parity-oci-helm-chart-ignored`)
+reuses the same pushed chart through the `oci://` + `chart:` spelling:
+
+- repoURL
+  `oci://argocd-parity-registry.argocd-parity.svc.cluster.local:5443/parity/nested/parity-nested-chart`
+  — the `oci://` scheme is what makes Argo CD's repo-server dispatch the
+  source as an OCI artifact (`IsOCI` before `IsHelm`,
+  `reposerver/repository/repository.go:358-364`) and pull the repoURL itself
+  at `targetRevision: 1.0.0`
+- `chart: parity-nested-chart`, which neither Argo CD nor drydock reads
+- the same `helm.valuesObject`, so the rendered ConfigMap proves the extracted
+  artifact was recognised as a chart and the Application's values applied
+
+The Application is Argo-valid only when applied declaratively, which is how
+the smoke applies it (`kubectl apply`; the controller validates permissions
+only). `argocd app create` would reject it: the API server's `ValidateRepo`
+classifies the repository Helm-first (`TestRepoWithKnownType`,
+`util/argo/argo.go:271-281`) and never reaches the controller's OCI dispatch.
+The earlier claim that live Argo CD "rejects that combination" came from that
+API-create path, not from the controller. drydock renders the same artifact
+and reports the advisory warning `source.oci-chart-ignored` once (exempt from
+`--strict`); the capture step fails if that line is missing from drydock's
+stderr. The app fills `--oci-cache-dir` through the artifact flow, not
+`--chart-cache-dir`, so the warm step covers it alongside `parity-oci-config`.
 
 ## Helm block scalar fixture
 
