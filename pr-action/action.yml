@@ -230,6 +230,9 @@ inputs:
   markdown-diagnostics:
     description: Diagnostics detail embedded in PR comments with all, errors, or none. Leave empty for drydock defaults.
     required: false
+  markdown-diff-style:
+    description: Diff body style inside each Application block of the PR comment with unified or dyff. Leave empty for drydock defaults.
+    required: false
   force-open-details:
     description: Force every application diff block open. Without this input, a single application is open and several stay collapsed.
     required: false
@@ -472,6 +475,7 @@ runs:
         DRYDOCK_INPUT_HEAD_REF: ${{ inputs.head-ref }}
         DRYDOCK_INPUT_KUBE_VERSION: ${{ inputs.kube-version }}
         DRYDOCK_INPUT_MARKDOWN_DIAGNOSTICS: ${{ inputs.markdown-diagnostics }}
+        DRYDOCK_INPUT_MARKDOWN_DIFF_STYLE: ${{ inputs.markdown-diff-style }}
         DRYDOCK_INPUT_MAX_DISCOVERY_DEPTH: ${{ inputs.max-discovery-depth }}
         DRYDOCK_INPUT_OFFLINE: ${{ inputs.offline }}
         DRYDOCK_INPUT_FORCE_OPEN_DETAILS: ${{ inputs.force-open-details }}

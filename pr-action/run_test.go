@@ -527,6 +527,81 @@ printf '%s\n' "$*" >> "${DRYDOCK_ACTION_WORK_DIR}/drydock-args.txt"
 	}
 }
 
+func TestRunPassesMarkdownDiffStyleOnlyToDiffApps(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell action tests require bash")
+	}
+
+	workDir := runCommentScenario(t, commentScenario{
+		commentMode:       "both",
+		diffOutput:        true,
+		imageOutput:       true,
+		runTest:           true,
+		markdownDiffStyle: "dyff",
+	})
+
+	args := readFile(t, filepath.Join(workDir, "drydock-args.txt"))
+	lines := strings.Split(strings.TrimSpace(args), "\n")
+	if len(lines) != 4 {
+		t.Fatalf("drydock invocations = %q, want test, diff apps, diff images name, diff images markdown", args)
+	}
+	for _, line := range lines {
+		hasFlag := strings.Contains(line, "--markdown-diff-style dyff")
+		isDiffApps := strings.Contains(line, "diff apps")
+		if isDiffApps && !hasFlag {
+			t.Fatalf("diff apps invocation missing --markdown-diff-style:\n%s", line)
+		}
+		if !isDiffApps && hasFlag {
+			t.Fatalf("non-diff-apps invocation received --markdown-diff-style:\n%s", line)
+		}
+	}
+}
+
+func TestRunOmitsMarkdownDiffStyleWhenInputUnset(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell action tests require bash")
+	}
+
+	workDir := runCommentScenario(t, commentScenario{
+		commentMode: "both",
+		diffOutput:  true,
+		imageOutput: true,
+		runTest:     true,
+	})
+
+	args := readFile(t, filepath.Join(workDir, "drydock-args.txt"))
+	if strings.Contains(args, "--markdown-diff-style") {
+		t.Fatalf("drydock invocations = %q, want no --markdown-diff-style flag when input unset", args)
+	}
+}
+
+func TestRunRejectsInvalidMarkdownDiffStyleValue(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell action tests require bash")
+	}
+
+	tmp := t.TempDir()
+	workDir := filepath.Join(tmp, "work")
+	outputPath := filepath.Join(tmp, "github-output")
+	writeExecutable(t, filepath.Join(tmp, "drydock"), `#!/usr/bin/env bash
+set -euo pipefail
+mkdir -p "${DRYDOCK_ACTION_WORK_DIR}"
+printf '%s\n' "$*" >> "${DRYDOCK_ACTION_WORK_DIR}/drydock-args.txt"
+`)
+	cmd := exec.Command("bash", "run.sh")
+	cmd.Dir = "."
+	cmd.Env = append(defaultRunEnv(tmp, workDir, outputPath),
+		"DRYDOCK_INPUT_MARKDOWN_DIFF_STYLE=github",
+	)
+	out, err := cmd.CombinedOutput()
+	if err == nil {
+		t.Fatalf("run.sh error = nil, want invalid markdown-diff-style failure\n%s", out)
+	}
+	if !strings.Contains(string(out), "markdown-diff-style must be empty, unified, or dyff") {
+		t.Fatalf("run.sh output = %q, want markdown-diff-style validation message", out)
+	}
+}
+
 func TestRunOmitsDiscoverIgnoreWhenInputUnset(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("shell action tests require bash")
@@ -871,6 +946,7 @@ type commentScenario struct {
 	discoverIgnore                  string
 	discoverManifest                string
 	markdownDiagnostics             string
+	markdownDiffStyle               string
 	omitDiffHTMLArtifactNameFromEnv bool
 	cachePath                       string
 }
@@ -896,6 +972,7 @@ func runCommentScenario(t *testing.T, scenario commentScenario) string {
 		"DRYDOCK_INPUT_DISCOVER_IGNORE="+scenario.discoverIgnore,
 		"DRYDOCK_INPUT_DISCOVER_MANIFEST="+scenario.discoverManifest,
 		"DRYDOCK_INPUT_MARKDOWN_DIAGNOSTICS="+scenario.markdownDiagnostics,
+		"DRYDOCK_INPUT_MARKDOWN_DIFF_STYLE="+scenario.markdownDiffStyle,
 		"DRYDOCK_INPUT_RUN_DIFF=true",
 		"DRYDOCK_INPUT_RUN_IMAGE_DIFF="+boolString(!scenario.skipImageDiff),
 		"DRYDOCK_INPUT_RUN_TEST="+boolString(scenario.runTest),
@@ -1249,6 +1326,7 @@ func defaultRunEnv(tmp, workDir, outputPath string) []string {
 		"DRYDOCK_INPUT_HEAD_REF=",
 		"DRYDOCK_INPUT_KUBE_VERSION=",
 		"DRYDOCK_INPUT_MARKDOWN_DIAGNOSTICS=",
+		"DRYDOCK_INPUT_MARKDOWN_DIFF_STYLE=",
 		"DRYDOCK_INPUT_MAX_DISCOVERY_DEPTH=",
 		"DRYDOCK_INPUT_OFFLINE=false",
 		"DRYDOCK_INPUT_FORCE_OPEN_DETAILS=false",

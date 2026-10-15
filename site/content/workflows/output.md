@@ -14,8 +14,8 @@ Use `-o` or `--output` to select the format supported by each command:
 | `build apps`, `build app` | `yaml`, `json` |
 | `get apps`, `get images` | `table`, `name`, `json`, `yaml` |
 | `test apps`, `test app` | `text`, `json`, `yaml` |
-| `diff apps`, `diff app` | `unified`, `dyff`, `markdown`, `json`, `yaml` |
-| `diff images` | `unified`, `markdown`, `json`, `yaml`, `name` |
+| `diff apps`, `diff app` | `diff`, `dyff`, `markdown`, `json`, `yaml` |
+| `diff images` | `diff`, `markdown`, `json`, `yaml`, `name` |
 | `diag` | `text`, `json`, `yaml` |
 
 `-o name` is intended for list-style output. It is not supported for manifest
