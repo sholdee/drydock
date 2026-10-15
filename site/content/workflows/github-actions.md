@@ -561,6 +561,7 @@ rotation audit rather than relying on drydock diff for this class of change.
 | `comment-continue-on-error` | `true` | Do not fail the workflow when pull request commenting fails. |
 | `diff-max-bytes` | `60000` | Maximum rendered diff comment bytes; larger values are clamped to the 65536-character comment limit on GitHub; other platforms may allow more. |
 | `markdown-diagnostics` | unset | Diagnostics detail embedded in PR comments: `all` (errors open above the diffs, warnings collapsed below), `errors`, or `none`. Unset omits the flag and uses the drydock default (`all`). |
+| `force-open-details` | `false` | Force every application diff block open. Without this input, a single application is open and several stay collapsed. |
 | `upload-artifacts` | `true` | Upload full diff and image report artifacts when they are non-empty. |
 | `artifact-retention-days` | `30` | Retention days for uploaded artifacts. |
 | `diff-artifact-name` | generated | Artifact name override for rendered manifest diffs. |

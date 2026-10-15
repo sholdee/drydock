@@ -371,7 +371,9 @@ listed openly above the diffs, warnings collapse inside a `<details>` block
 rendered below the diffs, and repeated
 diagnostic codes aggregate with counts. `--markdown-diagnostics all|errors|none`
 narrows or drops the embedded list without touching summary counts or
-non-markdown diagnostics surfaces. `-o name`
+non-markdown diagnostics surfaces. `--force-open-details` opens every
+application `<details>` block. Without that flag, a single application is
+open and several stay collapsed. Warning diagnostics stay collapsed. `-o name`
 remains unsupported for `diff apps` and `diff app`.
 
 Application-local and global ignore rules support `jsonPointers`,

@@ -230,6 +230,34 @@ func TestActionMarkdownDiagnosticsInputDeclaredAndWiredToRunStep(t *testing.T) {
 	}
 }
 
+func TestActionOpenDetailsInputDeclaredAndWiredToRunStep(t *testing.T) {
+	actionYAML := loadActionYAML(t)
+
+	inputIdx := strings.Index(actionYAML, "force-open-details:")
+	if inputIdx == -1 {
+		t.Fatalf("action.yml missing force-open-details input declaration")
+	}
+	snippet := actionYAML[inputIdx:min(inputIdx+300, len(actionYAML))]
+	if !strings.Contains(snippet, `default: "false"`) {
+		t.Fatalf("force-open-details input block = %q, want default: \"false\"", snippet)
+	}
+
+	runIdx := strings.Index(actionYAML, "- name: Run drydock\n")
+	if runIdx == -1 {
+		t.Fatalf("action.yml missing 'Run drydock' step")
+	}
+	nextStep := strings.Index(actionYAML[runIdx+1:], "\n    - name: ")
+	var runBlock string
+	if nextStep == -1 {
+		runBlock = actionYAML[runIdx:]
+	} else {
+		runBlock = actionYAML[runIdx : runIdx+1+nextStep]
+	}
+	if !strings.Contains(runBlock, "DRYDOCK_INPUT_FORCE_OPEN_DETAILS: ${{ inputs.force-open-details }}") {
+		t.Fatalf("Run step env block missing DRYDOCK_INPUT_FORCE_OPEN_DETAILS wiring:\n%s", runBlock)
+	}
+}
+
 func TestActionDiscoverIgnoreInputDeclaredAndWiredToRunStep(t *testing.T) {
 	actionYAML := loadActionYAML(t)
 

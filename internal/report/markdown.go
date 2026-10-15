@@ -28,6 +28,9 @@ type MarkdownOptions struct {
 	Title           string
 	Diagnostics     DiagnosticsMode
 	DiffStyle       DiffStyle
+	// ForceOpenDetails opens every application diff block. When false, a
+	// single application is open and several applications stay collapsed.
+	ForceOpenDetails bool
 }
 
 // DiffStyle selects how each Application's changes are written inside its
@@ -175,7 +178,7 @@ func DiffMarkdown(result app.DiffResult, options MarkdownOptions) ([]byte, Markd
 	if len(groups) == 0 {
 		state.appendBounded(noDiffMarkdown())
 	} else {
-		state.appendAppDetails(groups, len(groups) == 1)
+		state.appendAppDetails(groups, options.ForceOpenDetails || len(groups) == 1)
 	}
 	state.appendBounded(omittedMarkdown(groups[state.shownApps:]))
 	if errorsFit {

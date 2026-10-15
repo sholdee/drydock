@@ -444,6 +444,44 @@ func TestRunPassesMarkdownDiagnosticsOnlyToMarkdownInvocations(t *testing.T) {
 	}
 }
 
+func TestRunPassesOpenDetailsOnlyToDiffApps(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell action tests require bash")
+	}
+
+	tmp := t.TempDir()
+	workDir := filepath.Join(tmp, "work")
+	outputPath := filepath.Join(tmp, "github-output")
+	writeExecutable(t, filepath.Join(tmp, "drydock"), `#!/usr/bin/env bash
+set -euo pipefail
+mkdir -p "${DRYDOCK_ACTION_WORK_DIR}"
+printf '%s\n' "$*" >> "${DRYDOCK_ACTION_WORK_DIR}/drydock-args.txt"
+`)
+	cmd := exec.Command("bash", "run.sh")
+	cmd.Dir = "."
+	cmd.Env = setEnv(append(defaultRunEnv(tmp, workDir, outputPath),
+		"DRYDOCK_INPUT_RUN_DIFF=true",
+		"DRYDOCK_INPUT_RUN_IMAGE_DIFF=true",
+		"DRYDOCK_INPUT_RUN_TEST=true",
+	), "DRYDOCK_INPUT_FORCE_OPEN_DETAILS", "true")
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("run.sh failed: %v\n%s", err, out)
+	}
+
+	args := readFile(t, filepath.Join(workDir, "drydock-args.txt"))
+	for line := range strings.SplitSeq(strings.TrimSpace(args), "\n") {
+		hasFlag := strings.Contains(line, "--force-open-details")
+		isDiffApps := strings.Contains(line, "diff apps")
+		if isDiffApps && !hasFlag {
+			t.Fatalf("diff apps invocation missing --force-open-details:\n%s", line)
+		}
+		if !isDiffApps && hasFlag {
+			t.Fatalf("non-diff-apps invocation received --force-open-details:\n%s", line)
+		}
+	}
+}
+
 func TestRunOmitsMarkdownDiagnosticsWhenInputUnset(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("shell action tests require bash")
@@ -1213,6 +1251,7 @@ func defaultRunEnv(tmp, workDir, outputPath string) []string {
 		"DRYDOCK_INPUT_MARKDOWN_DIAGNOSTICS=",
 		"DRYDOCK_INPUT_MAX_DISCOVERY_DEPTH=",
 		"DRYDOCK_INPUT_OFFLINE=false",
+		"DRYDOCK_INPUT_FORCE_OPEN_DETAILS=false",
 		"DRYDOCK_INPUT_PARALLELISM=",
 		"DRYDOCK_INPUT_PATH=.",
 		"DRYDOCK_INPUT_PLUGIN_POLICY_PATH=",

@@ -110,6 +110,30 @@ func TestDiffMarkdownClosesDetailsForMultipleApplications(t *testing.T) {
 	}
 }
 
+func TestDiffMarkdownOpensDetailsWhenRequested(t *testing.T) {
+	out, _, err := DiffMarkdown(app.DiffResult{
+		Results: []diff.Result{
+			diffResult("argocd", "one", "cm-one", "-old\n+new\n"),
+			diffResult("argocd", "two", "cm-two", "-old\n+new\n"),
+		},
+		Diagnostics: []diagnostic.Diagnostic{{
+			Severity: diagnostic.SeverityWarning,
+			Category: "render",
+			Message:  "noisy warning",
+		}},
+	}, MarkdownOptions{MaxBytes: DefaultMaxBytes, ForceOpenDetails: true})
+	if err != nil {
+		t.Fatalf("DiffMarkdown() error = %v", err)
+	}
+	text := string(out)
+	if got := strings.Count(text, "<details open>"); got != 2 {
+		t.Fatalf("open details count = %d, want 2:\n%s", got, text)
+	}
+	if !strings.Contains(text, "<details>\n<summary>Diagnostics (1 warning)</summary>") {
+		t.Fatalf("warning details were not left collapsed:\n%s", text)
+	}
+}
+
 func TestDiffMarkdownUsesDynamicFenceForBackticks(t *testing.T) {
 	out, _, err := DiffMarkdown(app.DiffResult{
 		Results: []diff.Result{diffResult("argocd", "demo", "cm", "- value: ```\n+ value: ````\n")},

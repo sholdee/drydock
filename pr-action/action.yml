@@ -230,6 +230,10 @@ inputs:
   markdown-diagnostics:
     description: Diagnostics detail embedded in PR comments with all, errors, or none. Leave empty for drydock defaults.
     required: false
+  force-open-details:
+    description: Force every application diff block open. Without this input, a single application is open and several stay collapsed.
+    required: false
+    default: "false"
   upload-artifacts:
     description: Upload full diff and image report artifacts when they are non-empty.
     required: false
@@ -470,6 +474,7 @@ runs:
         DRYDOCK_INPUT_MARKDOWN_DIAGNOSTICS: ${{ inputs.markdown-diagnostics }}
         DRYDOCK_INPUT_MAX_DISCOVERY_DEPTH: ${{ inputs.max-discovery-depth }}
         DRYDOCK_INPUT_OFFLINE: ${{ inputs.offline }}
+        DRYDOCK_INPUT_FORCE_OPEN_DETAILS: ${{ inputs.force-open-details }}
         DRYDOCK_INPUT_PARALLELISM: ${{ inputs.parallelism }}
         DRYDOCK_INPUT_PATH: ${{ inputs.path }}
         DRYDOCK_INPUT_PLUGIN_POLICY_PATH: ${{ inputs.plugin-policy-path }}

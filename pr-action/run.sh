@@ -251,6 +251,7 @@ bool "${DRYDOCK_INPUT_FAIL_ON_RENDER_ERROR}" fail-on-render-error
 bool "${DRYDOCK_INPUT_FAIL_ON_DIFF}" fail-on-diff
 bool "${DRYDOCK_INPUT_FAIL_ON_IMAGE_DIFF}" fail-on-image-diff
 bool "${DRYDOCK_INPUT_COMMENT_EMPTY}" comment-empty
+bool "${DRYDOCK_INPUT_FORCE_OPEN_DETAILS}" force-open-details
 bool "${DRYDOCK_INPUT_UPLOAD_ARTIFACTS}" upload-artifacts
 positive_int "${DRYDOCK_INPUT_DIFF_MAX_BYTES}" diff-max-bytes
 optional_int "${DRYDOCK_INPUT_PARALLELISM}" parallelism
@@ -410,6 +411,7 @@ if [[ "${DRYDOCK_INPUT_RUN_DIFF}" == "true" ]]; then
     --exit-code=false
   )
   append_value_flag diff_args "${DRYDOCK_INPUT_MARKDOWN_DIAGNOSTICS}" "--markdown-diagnostics"
+  append_bool_flag diff_args "${DRYDOCK_INPUT_FORCE_OPEN_DETAILS}" "--force-open-details"
   if ! capture_command "${diff_comment_path}" "${diff_stderr}" "${diff_args[@]}"; then
     failed="true"
   fi

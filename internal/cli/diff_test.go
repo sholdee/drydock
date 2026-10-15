@@ -347,6 +347,28 @@ func TestDiffAppsMarkdownDiagnosticsModeNone(t *testing.T) {
 	assertStdoutExcludesAll(t, result, "noisy placeholder warning", "<summary>Diagnostics")
 }
 
+func TestDiffAppsOpenDetailsForcesEveryApplicationOpen(t *testing.T) {
+	recorder := &recordingCLIOrchestrator{
+		diffAppsResult: app.DiffResult{
+			Results: []diff.Result{
+				{
+					Parent: diff.Parent{Namespace: "argocd", Name: "one"},
+					Diff:   sampleUnifiedDiffForCLI(),
+				},
+				{
+					Parent: diff.Parent{Namespace: "argocd", Name: "two"},
+					Diff:   sampleUnifiedDiffForCLI(),
+				},
+			},
+		},
+	}
+
+	result := runCLIWithDependencies(t, Dependencies{Orchestrator: recorder}, "diff", "apps", "--path-orig", "left", "--path", "right", "-o", "markdown", "--force-open-details", "--exit-code=false")
+	if got := strings.Count(result.Stdout, "<details open>"); got != 2 {
+		t.Fatalf("open details count = %d, want 2:\n%s", got, result.Stdout)
+	}
+}
+
 func TestDiffAppsMarkdownRejectsInvalidDiagnosticsMode(t *testing.T) {
 	recorder := &recordingCLIOrchestrator{}
 	cmd := NewRootCommandWithDependencies(VersionInfo{}, Dependencies{

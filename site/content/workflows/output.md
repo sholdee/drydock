@@ -109,7 +109,8 @@ Markdown remains the PR-comment stdout format. `--html-output-file` writes an
 additional HTML file with the same standalone review view.
 
 Manifest markdown includes a summary plus expandable per-Application rendered
-manifest patches. Image markdown is a companion view for scanning rendered
+manifest patches. A single Application is expanded. Several Applications stay
+collapsed unless `--force-open-details` is set. Image markdown is a companion view for scanning rendered
 image reference changes and omits unchanged images by default.
 
 ## Exit Codes
