@@ -29,7 +29,7 @@ require (
 	golang.org/x/term v0.47.0
 	helm.sh/helm/v4 v4.3.0
 	k8s.io/apimachinery v0.37.1
-	oras.land/oras-go/v2 v2.6.2
+	oras.land/oras-go/v2 v2.6.3
 	sigs.k8s.io/kustomize/api v0.21.2
 	sigs.k8s.io/kustomize/kyaml v0.21.2
 	sigs.k8s.io/structured-merge-diff/v6 v6.4.2
