@@ -1,5 +1,27 @@
 # Changelog
 
+## [0.3.6](https://github.com/sholdee/drydock/compare/v0.3.5...v0.3.6) (2026-10-15)
+
+
+### Features
+
+* **pr-action:** add markdown-diff-style input and fix diff output docs ([#428](https://github.com/sholdee/drydock/issues/428)) ([c342bf4](https://github.com/sholdee/drydock/commit/c342bf4e38079cd5ee6cf33d720705053e92be8b))
+* **report:** add --force-open-details to expand every application diff ([#424](https://github.com/sholdee/drydock/issues/424)) ([b28d2d9](https://github.com/sholdee/drydock/commit/b28d2d9455c89d6a598de22a00d921aee6509732))
+* **report:** add dyff output and markdown diff style ([#426](https://github.com/sholdee/drydock/issues/426)) ([101b0be](https://github.com/sholdee/drydock/commit/101b0bea451661141a5d37bf6b88475c9da19879))
+
+
+### Bug Fixes
+
+* **deps:** update module github.com/argoproj/argo-cd/v3 to v3.5.5 ([#427](https://github.com/sholdee/drydock/issues/427)) ([42f50db](https://github.com/sholdee/drydock/commit/42f50db0ce760c221d3fb81c9fc21d52f072537d))
+* **deps:** update module github.com/bmatcuk/doublestar/v4 to v4.10.3 ([#425](https://github.com/sholdee/drydock/issues/425)) ([d8aa57d](https://github.com/sholdee/drydock/commit/d8aa57d6a5b407d9e913380979e571b7a3793669))
+
+
+### Miscellaneous Chores
+
+* **deps:** pin kube-openapi to Argo CD's Kubernetes line and group kustomize updates ([#417](https://github.com/sholdee/drydock/issues/417)) ([1201664](https://github.com/sholdee/drydock/commit/120166400713632c5dd0c753d66c48d9e0db9556))
+* **deps:** update actions/upload-artifact action to v7.0.2 ([#423](https://github.com/sholdee/drydock/issues/423)) ([63580f2](https://github.com/sholdee/drydock/commit/63580f2efea4e7d4c943be4e55008a7241a849b2))
+* **deps:** update module golang.org/x/net to v0.61.0 ([#416](https://github.com/sholdee/drydock/issues/416)) ([ec8d120](https://github.com/sholdee/drydock/commit/ec8d1204b5abfb4c8e687bdf74314f9607f5bdda))
+
 ## [0.3.5](https://github.com/sholdee/drydock/compare/v0.3.4...v0.3.5) (2026-10-12)
 
 
