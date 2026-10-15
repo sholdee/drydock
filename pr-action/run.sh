@@ -278,6 +278,13 @@ case "${DRYDOCK_INPUT_MARKDOWN_DIAGNOSTICS}" in
     exit 1
     ;;
 esac
+case "${DRYDOCK_INPUT_MARKDOWN_DIFF_STYLE}" in
+  '' | unified | dyff) ;;
+  *)
+    echo "markdown-diff-style must be empty, unified, or dyff, got '${DRYDOCK_INPUT_MARKDOWN_DIFF_STYLE}'." >&2
+    exit 1
+    ;;
+esac
 
 work_dir="${DRYDOCK_ACTION_WORK_DIR}"
 mkdir -p "${work_dir}"
@@ -411,6 +418,7 @@ if [[ "${DRYDOCK_INPUT_RUN_DIFF}" == "true" ]]; then
     --exit-code=false
   )
   append_value_flag diff_args "${DRYDOCK_INPUT_MARKDOWN_DIAGNOSTICS}" "--markdown-diagnostics"
+  append_value_flag diff_args "${DRYDOCK_INPUT_MARKDOWN_DIFF_STYLE}" "--markdown-diff-style"
   append_bool_flag diff_args "${DRYDOCK_INPUT_FORCE_OPEN_DETAILS}" "--force-open-details"
   if ! capture_command "${diff_comment_path}" "${diff_stderr}" "${diff_args[@]}"; then
     failed="true"
