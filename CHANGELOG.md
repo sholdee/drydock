@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.3.7](https://github.com/sholdee/drydock/compare/v0.3.6...v0.3.7) (2026-10-17)
+
+
+### Bug Fixes
+
+* **deps:** update kustomize to v0.21.3 ([#419](https://github.com/sholdee/drydock/issues/419)) ([b05fb29](https://github.com/sholdee/drydock/commit/b05fb2992a4475a5167c5c4f5f71255843456737))
+* **deps:** update module oras.land/oras-go/v2 to v2.6.3 ([#429](https://github.com/sholdee/drydock/issues/429)) ([cb6a4bd](https://github.com/sholdee/drydock/commit/cb6a4bd21e71420a1c637b9eb213bb3a445c916c))
+
+
+### Miscellaneous Chores
+
+* **deps:** update dependency hugo to v0.168.0 ([#432](https://github.com/sholdee/drydock/issues/432)) ([d5ecbfe](https://github.com/sholdee/drydock/commit/d5ecbfeeaddb7b84401137d57e98a1efa38d1be4))
+* **deps:** update dependency lefthook to v2.2.2 ([#431](https://github.com/sholdee/drydock/issues/431)) ([f176cbd](https://github.com/sholdee/drydock/commit/f176cbd1d75a9e54977a7fb6dad36c9a4e5912cc))
+* **deps:** update golang:1.27.2 docker digest to 8201530 ([#433](https://github.com/sholdee/drydock/issues/433)) ([105abb1](https://github.com/sholdee/drydock/commit/105abb1feb498d802369eddddfbd4de02fd2bbef))
+
 ## [0.3.6](https://github.com/sholdee/drydock/compare/v0.3.5...v0.3.6) (2026-10-15)
 
 
