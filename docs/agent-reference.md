@@ -359,7 +359,11 @@ in-process dyff library (never the `dyff` binary) and is not available for
 `diff images`. `--markdown-diff-style unified|dyff` (`diff apps`/`diff app`,
 markdown output only) swaps the unified diff in each Application's ```diff
 fence for dyff's GitHub-style report; summary counts, byte budgets, JSON/YAML,
-and the raw/HTML report files stay unified. Image
+and the raw/HTML report files stay unified. Both dyff renderers pair a removed
+and an added Kustomize-hash-suffixed ConfigMap (same Application source, namespace, and name base; never Secrets,
+whose per-side redaction defeats matching) via `dyffreport.Items`, and keep the
+pair only when dyff reports a rename, otherwise rendering each result alone.
+Pairing is presentation-only. Image
 diff output supports unified diff, markdown, JSON, and YAML for `added`,
 `removed`, and `unchanged` image lists. Image markdown output is comment-facing
 and omits unchanged images by default. `diff images -o name` prints current-only

@@ -772,12 +772,17 @@ func appDetailMarkdown(group appGroup, budget int, openDetails bool, style DiffS
 // would discard the rest and dyff rendering is comparatively slow.
 func groupDiffText(group appGroup, style DiffStyle, limit int) string {
 	var builder strings.Builder
-	for _, item := range group.resources {
-		if style == DiffStyleDyff {
-			builder.WriteString(dyffreport.GitHubBody(item))
-		} else {
-			builder.WriteString(item.Diff)
+	if style == DiffStyleDyff {
+		for _, item := range dyffreport.Items(group.resources) {
+			builder.WriteString(item.GitHubBody())
+			if limit > 0 && builder.Len() > limit {
+				break
+			}
 		}
+		return builder.String()
+	}
+	for _, item := range group.resources {
+		builder.WriteString(item.Diff)
 		if limit > 0 && builder.Len() > limit {
 			break
 		}

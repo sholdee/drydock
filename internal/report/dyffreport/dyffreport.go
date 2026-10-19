@@ -21,10 +21,11 @@ import (
 	"github.com/sholdee/drydock/internal/diff"
 )
 
-// Write renders one dyff report per result, each preceded by the resource
-// header. It compares the result display bodies, so Secret redaction and
-// ignore rules already applied by the diff engine are preserved. When dyff
-// cannot compare a resource or finds no structural difference although the
+// Write renders one dyff report per resource, each preceded by the resource
+// header. A removed and an added Kustomize-generated ConfigMap that differ only
+// by name hash are reported together as one rename (see Items). It compares
+// the result display bodies, so Secret redaction and ignore rules already
+// applied by the diff engine are preserved. When dyff cannot compare a resource or finds no structural difference although the
 // unified diff is non-empty, the resource falls back to its unified diff so a
 // real change is never silently dropped.
 //
@@ -36,8 +37,8 @@ func Write(w io.Writer, results []diff.Result, color bool) error {
 	width, height := term.GetTerminalSize()
 	defer configure(color, width, height)()
 
-	for _, result := range results {
-		if err := writeResult(w, result, color); err != nil {
+	for _, item := range Items(results) {
+		if err := writeItem(w, item, color); err != nil {
 			return err
 		}
 	}
@@ -76,15 +77,27 @@ func configure(color bool, width, height int) func() {
 // Like Write, it falls back to the unified diff when dyff cannot produce a
 // structural report. Not safe for concurrent use (see Write).
 func GitHubBody(result diff.Result) string {
+	return Item{results: []diff.Result{result}}.GitHubBody()
+}
+
+// GitHubBody renders the item like the package-level GitHubBody. Items built
+// by Items report a renamed generated resource as one change. Not safe for
+// concurrent use (see Write).
+func (item Item) GitHubBody() string {
 	defer configure(false, githubWidth, githubHeight)()
 
-	report, err := compare(result)
-	if err == nil && len(report.Diffs) == 0 {
-		err = errors.New("no structural differences found")
+	var out strings.Builder
+	for _, e := range item.entries() {
+		out.WriteString(e.githubBody())
 	}
-	if err != nil {
-		return fmt.Sprintf("# dyff: %v; showing unified diff\n%s", err, result.Diff)
+	return out.String()
+}
+
+func (e entry) githubBody() string {
+	if e.err != nil {
+		return fmt.Sprintf("# dyff: %v; showing unified diff\n%s", e.err, e.fallback)
 	}
+	report := e.report
 	// dyff only prints the per-change resource identity line when the input
 	// has several documents, but every report here covers a single resource.
 	// Its document count is read from the report copy only, so padding it
@@ -111,30 +124,34 @@ func GitHubBody(result diff.Result) string {
 	}
 	var out bytes.Buffer
 	if err := github.WriteReport(&out); err != nil {
-		return fmt.Sprintf("# dyff: %v; showing unified diff\n%s", err, result.Diff)
+		return fmt.Sprintf("# dyff: %v; showing unified diff\n%s", err, e.fallback)
 	}
 	return strings.Trim(out.String(), "\n") + "\n"
 }
 
-func writeResult(w io.Writer, result diff.Result, color bool) error {
-	header := result.Header()
+func writeItem(w io.Writer, item Item, color bool) error {
+	for _, e := range item.entries() {
+		if err := e.write(w, color); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (e entry) write(w io.Writer, color bool) error {
+	header := e.header
 	if color {
 		header = "\x1b[1m" + header + "\x1b[0m"
 	}
 	if _, err := fmt.Fprintln(w, header); err != nil {
 		return err
 	}
-
-	report, err := compare(result)
-	if err == nil && len(report.Diffs) == 0 {
-		err = errors.New("no structural differences found")
-	}
-	if err != nil {
-		_, writeErr := fmt.Fprintf(w, "(dyff: %v; showing unified diff)\n%s", err, result.Diff)
+	if e.err != nil {
+		_, writeErr := fmt.Fprintf(w, "(dyff: %v; showing unified diff)\n%s", e.err, e.fallback)
 		return writeErr
 	}
 	human := &dyff.HumanReport{
-		Report:                report,
+		Report:                e.report,
 		Indent:                2,
 		UseIndentLines:        true,
 		MinorChangeThreshold:  0.1,
@@ -145,12 +162,65 @@ func writeResult(w io.Writer, result diff.Result, color bool) error {
 	return human.WriteReport(w)
 }
 
-func compare(result diff.Result) (dyff.Report, error) {
-	from, err := inputFile(result.Header(), result.Before)
+// entry is one dyff comparison ready to render. When err is set, fallback (the
+// unified diff) is shown instead of the report.
+type entry struct {
+	header   string
+	fallback string
+	report   dyff.Report
+	err      error
+}
+
+func newEntry(header, fallback, before, after string) entry {
+	report, err := compare(header, before, after)
+	if err == nil && len(report.Diffs) == 0 {
+		err = errors.New("no structural differences found")
+	}
+	return entry{header: header, fallback: fallback, report: report, err: err}
+}
+
+// entries compares the item. A pair of results stays one entry only when dyff
+// reports it as a rename of one resource; otherwise (dyff found the two
+// resources too different, or could not compare them) each result is compared
+// on its own, as if it had never been paired.
+func (item Item) entries() []entry {
+	if len(item.results) == 2 {
+		removed, added := item.results[0], item.results[1]
+		if removed.Change == diff.ChangeAdded {
+			removed, added = added, removed
+		}
+		header := added.Header() + " (renamed from " + removed.Resource.Name + ")"
+		report, err := compare(header, removed.Before, added.After)
+		if err == nil && len(report.Diffs) > 0 && isRename(report) {
+			return []entry{{header: header, report: report}}
+		}
+	}
+	entries := make([]entry, 0, len(item.results))
+	for _, result := range item.results {
+		entries = append(entries, newEntry(result.Header(), result.Diff, result.Before, result.After))
+	}
+	return entries
+}
+
+// isRename reports whether the report of a removed and an added document
+// describes changes inside one matched document. When dyff does not match the
+// two, it reports a document-level removal, addition, or order change, all of
+// which have an empty path.
+func isRename(report dyff.Report) bool {
+	for _, d := range report.Diffs {
+		if d.Path == nil || len(d.Path.PathElements) == 0 {
+			return false
+		}
+	}
+	return true
+}
+
+func compare(header, before, after string) (dyff.Report, error) {
+	from, err := inputFile(header, before)
 	if err != nil {
 		return dyff.Report{}, fmt.Errorf("load before body: %w", err)
 	}
-	to, err := inputFile(result.Header(), result.After)
+	to, err := inputFile(header, after)
 	if err != nil {
 		return dyff.Report{}, fmt.Errorf("load after body: %w", err)
 	}

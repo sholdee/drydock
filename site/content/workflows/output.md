@@ -59,6 +59,14 @@ path, change type, and added and removed values. The default is `unified`.
 Unlike the `dyff` CLI, drydock compares values exactly (no inline-JSON or
 number normalization), does not inspect certificates, and falls back to the
 unified diff for a resource whose values contain control characters.
+Both dyff styles report a Kustomize `configMapGenerator` hash change (for
+example `common-env-745mg7f9mk` to `common-env-8f59fckt76`) as one renamed
+ConfigMap that lists only the changed values, instead of a removed and an added
+ConfigMap. Pairing happens inside one Application source and namespace, and
+only when exactly one removed and one added ConfigMap share the same name
+before the hash. If dyff does not consider the two ConfigMaps a rename, for
+example because most keys changed, they are reported separately. Secrets are
+never paired, because their values are redacted.
 The summary counts, size budget, `--raw-output-file`, and `--html-output-file`
 still use the unified diff.
 
