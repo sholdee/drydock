@@ -1,5 +1,31 @@
 # Changelog
 
+## [0.3.7](https://github.com/sholdee/drydock/compare/v0.3.6...v0.3.7) (2026-10-19)
+
+
+### Bug Fixes
+
+* **deps:** update kustomize to v0.21.3 ([#419](https://github.com/sholdee/drydock/issues/419)) ([b05fb29](https://github.com/sholdee/drydock/commit/b05fb2992a4475a5167c5c4f5f71255843456737))
+* **deps:** update module helm.sh/helm/v4 to v4.3.1 ([#434](https://github.com/sholdee/drydock/issues/434)) ([5a9335e](https://github.com/sholdee/drydock/commit/5a9335e01401a595f8715c02de2d0a513d085d2f))
+* **deps:** update module oras.land/oras-go/v2 to v2.6.3 ([#429](https://github.com/sholdee/drydock/issues/429)) ([cb6a4bd](https://github.com/sholdee/drydock/commit/cb6a4bd21e71420a1c637b9eb213bb3a445c916c))
+* **deps:** update module oras.land/oras-go/v2 to v2.6.4 ([#439](https://github.com/sholdee/drydock/issues/439)) ([c84b5fe](https://github.com/sholdee/drydock/commit/c84b5fedf0ebe940ba2cc57498ce0c6658b0c152))
+* **report:** show kustomize configmap hash renames as one change in dyff output ([#440](https://github.com/sholdee/drydock/issues/440)) ([49d96e9](https://github.com/sholdee/drydock/commit/49d96e9f35e74734e9d02b43136d34689e2c3d44))
+
+
+### Miscellaneous Chores
+
+* **deps:** update dependency golangci-lint to v2.15.0 ([#438](https://github.com/sholdee/drydock/issues/438)) ([8137316](https://github.com/sholdee/drydock/commit/8137316ba21050d5eeb75ac40465a2194598247c))
+* **deps:** update dependency hugo to v0.168.0 ([#432](https://github.com/sholdee/drydock/issues/432)) ([d5ecbfe](https://github.com/sholdee/drydock/commit/d5ecbfeeaddb7b84401137d57e98a1efa38d1be4))
+* **deps:** update dependency lefthook to v2.2.2 ([#431](https://github.com/sholdee/drydock/issues/431)) ([f176cbd](https://github.com/sholdee/drydock/commit/f176cbd1d75a9e54977a7fb6dad36c9a4e5912cc))
+* **deps:** update dependency zizmor to v1.31.0 ([#435](https://github.com/sholdee/drydock/issues/435)) ([05a5896](https://github.com/sholdee/drydock/commit/05a5896fdb12a28af35107fdc10d9cfb8fd78c07))
+* **deps:** update dependency zizmor to v1.31.1 ([#436](https://github.com/sholdee/drydock/issues/436)) ([79bf66a](https://github.com/sholdee/drydock/commit/79bf66a7c408e6f560fb6eab940bbfed1611dbcb))
+* **deps:** update golang:1.27.2 docker digest to 8201530 ([#433](https://github.com/sholdee/drydock/issues/433)) ([105abb1](https://github.com/sholdee/drydock/commit/105abb1feb498d802369eddddfbd4de02fd2bbef))
+
+
+### Code Refactoring
+
+* **pluginexec:** signal plugin exit with a close instead of an error channel ([#442](https://github.com/sholdee/drydock/issues/442)) ([4055c56](https://github.com/sholdee/drydock/commit/4055c5635940c97f7f7431212a9ce32f7419d79b))
+
 ## [0.3.6](https://github.com/sholdee/drydock/compare/v0.3.5...v0.3.6) (2026-10-15)
 
 
