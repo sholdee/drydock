@@ -153,3 +153,57 @@ func TestParseDiffStyle(t *testing.T) {
 		t.Error("ParseDiffStyle(github) error = nil, want error")
 	}
 }
+
+func TestDiffMarkdownDyffStyleShowsGeneratedRenameAsOneChange(t *testing.T) {
+	data := func(tail string) map[string]string {
+		return map[string]string{"A": "a", "B": "b", "C": "c", "D": "d", "TAIL": tail}
+	}
+	oldCM := configMapDiff(t, "demo", "common-env-745mg7f9mk", data("old"), nil)
+	newCM := configMapDiff(t, "demo", "common-env-8f59fckt76", nil, data("new"))
+	result := app.DiffResult{Results: []diff.Result{oldCM, newCM}}
+
+	out, _, err := DiffMarkdown(result, MarkdownOptions{MaxBytes: DefaultMaxBytes, DiffStyle: DiffStyleDyff})
+	if err != nil {
+		t.Fatalf("DiffMarkdown() error = %v", err)
+	}
+
+	text := string(out)
+	for _, want := range []string{"@@ data.TAIL @@", "- old", "+ new", "@@ metadata.name @@"} {
+		if !strings.Contains(text, want) {
+			t.Errorf("markdown missing %q:\n%s", want, text)
+		}
+	}
+	for _, unwanted := range []string{"document removed", "document added", "A: a"} {
+		if strings.Contains(text, unwanted) {
+			t.Errorf("markdown contains %q:\n%s", unwanted, text)
+		}
+	}
+}
+
+func TestDiffMarkdownDyffStylePairsRenamesPerApplicationInOrder(t *testing.T) {
+	data := func(tail string) map[string]string {
+		return map[string]string{"A": "a", "B": "b", "C": "c", "D": "d", "TAIL": tail}
+	}
+	result := app.DiffResult{Results: []diff.Result{
+		configMapDiff(t, "demo", "common-env-745mg7f9mk", data("old"), nil),
+		configMapDiff(t, "demo", "common-env-8f59fckt76", nil, data("new")),
+		configMapDiff(t, "demo", "zz-plain", map[string]string{"k": "1"}, map[string]string{"k": "2"}),
+		// Same generated names in another Application must not pair with demo.
+		configMapDiff(t, "other", "common-env-745mg7f9mk", data("old"), nil),
+	}}
+
+	out, _, err := DiffMarkdown(result, MarkdownOptions{MaxBytes: DefaultMaxBytes, DiffStyle: DiffStyleDyff})
+	if err != nil {
+		t.Fatalf("DiffMarkdown() error = %v", err)
+	}
+
+	text := string(out)
+	rename := strings.Index(text, "@@ data.TAIL @@")
+	plain := strings.Index(text, "# v1/ConfigMap/default/zz-plain")
+	if rename < 0 || plain < 0 || rename > plain {
+		t.Errorf("paired rename should come before zz-plain (rename=%d, plain=%d):\n%s", rename, plain, text)
+	}
+	if strings.Count(text, "one document removed") != 1 {
+		t.Errorf("only the unpaired Application should report a removed document:\n%s", text)
+	}
+}
