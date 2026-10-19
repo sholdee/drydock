@@ -28,18 +28,22 @@ func runProcess(ctx context.Context, request processRequest) error {
 	if err := cmd.Start(); err != nil {
 		return err
 	}
-	done := make(chan error, 1)
+	var waitErr error
+	done := make(chan struct{})
 	go func() {
-		done <- cmd.Wait()
+		waitErr = cmd.Wait()
+		close(done)
 	}()
 	select {
-	case err := <-done:
-		return processWaitError(err)
+	case <-done:
+		return processWaitError(waitErr)
 	case <-runCtx.Done():
 		if cmd.Process != nil {
 			_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
 			_ = cmd.Process.Kill()
 		}
+		// Reap the killed process. Its wait error is the kill signal; the
+		// context error below is what the caller needs.
 		<-done
 		if ctx.Err() != nil {
 			return ctx.Err()
