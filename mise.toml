@@ -2,7 +2,7 @@
 go = "1.27.2"
 golangci-lint = "2.15.0"
 lefthook = "2.2.2"
-oras = "1.3.4"
+oras = "1.3.5"
 shellcheck = "0.11.0"
 zizmor = "1.31.1"
 hugo = "0.168.0"
