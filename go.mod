@@ -5,7 +5,7 @@ go 1.27.2
 require (
 	dario.cat/mergo v1.0.2
 	github.com/argoproj/argo-cd/gitops-engine v0.7.1-0.20250908182407-97ad5b59a627
-	github.com/argoproj/argo-cd/v3 v3.5.5
+	github.com/argoproj/argo-cd/v3 v3.5.6
 	github.com/argoproj/pkg v0.13.6
 	github.com/bmatcuk/doublestar/v4 v4.10.3
 	github.com/distribution/reference v0.6.0
@@ -214,7 +214,7 @@ require (
 replace (
 	// Argo CD uses a local replace for GitOps Engine. Consumers do not inherit
 	// it, so this pseudo-version must track the selected Argo CD tag.
-	github.com/argoproj/argo-cd/gitops-engine => github.com/argoproj/argo-cd/gitops-engine v0.0.0-20261012100433-a5038b0e2bba
+	github.com/argoproj/argo-cd/gitops-engine => github.com/argoproj/argo-cd/gitops-engine v0.0.0-20261020182657-c2b1e3017e2c
 
 	// Pin the Kubernetes module set to the versions Argo CD v3.5 pins in its
 	// own replace block, so MVS cannot drift individual k8s.io modules.
