@@ -1,5 +1,24 @@
 # Changelog
 
+## [0.3.8](https://github.com/sholdee/drydock/compare/v0.3.7...v0.3.8) (2026-10-23)
+
+
+### Bug Fixes
+
+* **deps:** update module github.com/argoproj/argo-cd/v3 to v3.5.6 ([#451](https://github.com/sholdee/drydock/issues/451)) ([0d9bb11](https://github.com/sholdee/drydock/commit/0d9bb1136a7a6dc0acefdc257ff63f9b67a88d90))
+* **deps:** update module oras.land/oras-go/v2 to v2.7.0 ([#454](https://github.com/sholdee/drydock/issues/454)) ([435f9f1](https://github.com/sholdee/drydock/commit/435f9f12b5d21f62a7ed586a06ef56b50016e0d6))
+
+
+### Miscellaneous Chores
+
+* **deps:** update actions/create-github-app-token action to v3.3.0 ([#443](https://github.com/sholdee/drydock/issues/443)) ([2496aaa](https://github.com/sholdee/drydock/commit/2496aaaa45d82fe9edb12cbec05c138ff10bdcf4))
+* **deps:** update dependency go to v1.27.3 ([#447](https://github.com/sholdee/drydock/issues/447)) ([6da0551](https://github.com/sholdee/drydock/commit/6da05513a4277d091a783677215628b64e66f517))
+* **deps:** update dependency oras to v1.3.5 ([#445](https://github.com/sholdee/drydock/issues/445)) ([b196f98](https://github.com/sholdee/drydock/commit/b196f98d0c41abb6b0a5acc21ccd41f7b2d62e59))
+* **deps:** update dependency shinagawa-web/gomarklint to v3.3.2 ([#449](https://github.com/sholdee/drydock/issues/449)) ([6578248](https://github.com/sholdee/drydock/commit/65782489497fc7c11b2c182a02bf1b564cb7eab6))
+* **deps:** update gcr.io/distroless/static:nonroot docker digest to d620678 ([#448](https://github.com/sholdee/drydock/issues/448)) ([e5c20c5](https://github.com/sholdee/drydock/commit/e5c20c5e1dd3dad12d51db75e7339e08593cb525))
+* **deps:** update go module directive to v1.27.3 ([#446](https://github.com/sholdee/drydock/issues/446)) ([bb24919](https://github.com/sholdee/drydock/commit/bb249199088e1160d594dbc8a42d67ea1486ddf4))
+* **deps:** update golang docker tag to v1.27.3 ([#450](https://github.com/sholdee/drydock/issues/450)) ([1d2ecad](https://github.com/sholdee/drydock/commit/1d2ecadc97cd8116dd92e6c3f174751fdcb8dc19))
+
 ## [0.3.7](https://github.com/sholdee/drydock/compare/v0.3.6...v0.3.7) (2026-10-19)
 
 
