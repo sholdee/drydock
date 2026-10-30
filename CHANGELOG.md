@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.3.9](https://github.com/sholdee/drydock/compare/v0.3.8...v0.3.9) (2026-10-30)
+
+
+### Bug Fixes
+
+* **deps:** update module github.com/bmatcuk/doublestar/v4 to v4.10.4 ([#455](https://github.com/sholdee/drydock/issues/455)) ([512b580](https://github.com/sholdee/drydock/commit/512b580cd7bf69696222fbe119f326404a17643b))
+
+
+### Miscellaneous Chores
+
+* **deps:** update dependency hugo to v0.169.0 ([#459](https://github.com/sholdee/drydock/issues/459)) ([d9817ae](https://github.com/sholdee/drydock/commit/d9817ae11a1d0b99a3862c61c0e6547a5c9bb3b9))
+* **deps:** update dependency oras to v1.3.6 ([#457](https://github.com/sholdee/drydock/issues/457)) ([ead3c44](https://github.com/sholdee/drydock/commit/ead3c44f9b2c103f6dfc1cd0ab9114c2cdf936f5))
+* **deps:** update module golang.org/x/net to v0.62.0 ([#460](https://github.com/sholdee/drydock/issues/460)) ([85f8947](https://github.com/sholdee/drydock/commit/85f8947a70e8f7d0f2f77493936a2f1e003a2865))
+
 ## [0.3.8](https://github.com/sholdee/drydock/compare/v0.3.7...v0.3.8) (2026-10-23)
 
 
