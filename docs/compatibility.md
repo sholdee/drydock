@@ -512,6 +512,25 @@ Supported:
 - Global `resource.customizations.ignoreDifferences.*`,
   `knownTypeFields.*`, selected compare options, resource exclusions, and
   resource inclusions.
+- Resource-level `argocd.argoproj.io/ignore-differences` annotations, as in
+  Argo CD v3.6.1: the value is YAML with only `jsonPointers`, the rule applies
+  only to the annotated resource (including child Application CRs), and an
+  unparseable value or an empty `jsonPointers` list is skipped. Annotation
+  pointers stay active under `--show-ignored-fields`. Annotation pointers use
+  the path rules of the JSON-patch library Argo CD applies them with: the
+  first `/`-separated segment is dropped unchecked (so `#/spec/replicas`
+  removes `/spec/replicas`), only `~0` and `~1` are decoded, and a negative
+  array index counts from the end. As in Argo CD, where a failed JSON-patch
+  remove is only logged, a pointer that cannot be applied (non-numeric or
+  out-of-range array index, `-`, or a root `""` pointer) is skipped; it never
+  fails the diff or hides the resource. Application-level and global
+  `jsonPointers` keep their strict RFC 6901 validation.
+- Recorded divergence from strict Argo CD v3.6.1: Argo CD reads the
+  ignore-differences annotation from the desired (target) object and applies
+  the rule to live and target. drydock compares desired against desired, so
+  it reads the annotation from the current-side manifest, falls back to the
+  baseline manifest only when the resource exists only on the baseline side,
+  and applies the rule to both sides.
 - Repeated-resource last-wins behavior inside one Application, with a
   diagnostic.
 - `get images` and `diff images` rendered image reference extraction from

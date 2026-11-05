@@ -25,6 +25,12 @@ type Normalization struct {
 	ManagedFieldsManagers []string
 	KnownTypeFields       []KnownTypeField
 	CompareOptions        CompareOptions
+	// AnnotationJSONPointers holds the jsonPointers parsed from the resource's
+	// own argocd.argoproj.io/ignore-differences annotation. Argo CD applies
+	// them as JSON-patch remove operations and only logs failures, so they are
+	// applied leniently: invalid pointers and the document-root pointer are
+	// skipped rather than failing the diff or removing the whole resource.
+	AnnotationJSONPointers []string
 }
 type Document struct {
 	Parent        Parent        `json:"parent" yaml:"parent"`
@@ -120,6 +126,15 @@ func documentsWithSharedNormalization(left, right Document, hasLeft, hasRight bo
 		}
 	}
 	normalization.CompareOptions = compareOptions
+	// Argo CD reads the ignore-differences annotation from the desired (target)
+	// object only. drydock compares desired against desired, so the current
+	// (right) side stands in for the target and the baseline is used only when
+	// the resource no longer exists on the current side.
+	if hasRight {
+		normalization.AnnotationJSONPointers = right.Normalization.AnnotationJSONPointers
+	} else if hasLeft {
+		normalization.AnnotationJSONPointers = left.Normalization.AnnotationJSONPointers
+	}
 	if hasLeft {
 		left.Normalization = cloneNormalization(normalization)
 	}

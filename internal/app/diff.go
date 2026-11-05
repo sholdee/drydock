@@ -629,6 +629,8 @@ func diffDocuments(build BuildResult) ([]diff.Document, error) {
 		if err != nil {
 			return nil, err
 		}
+		normalization := normalizationFor(item.Application, id, build.Settings)
+		normalization.AnnotationJSONPointers = annotationIgnoreJSONPointers(item.Manifest.Object)
 		docs = append(docs, diff.Document{
 			Parent: diff.Parent{
 				Namespace:   item.Application.Namespace,
@@ -644,7 +646,7 @@ func diffDocuments(build BuildResult) ([]diff.Document, error) {
 				Name:      id.Name,
 			},
 			Body:          body,
-			Normalization: normalizationFor(item.Application, id, build.Settings),
+			Normalization: normalization,
 		})
 	}
 	return docs, nil

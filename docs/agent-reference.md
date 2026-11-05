@@ -386,6 +386,13 @@ sides when both sides contain a matching resource. Managed fields support is an
 offline desired-vs-desired approximation using rendered manifests; do not
 claim live server-side ownership prediction.
 
+The resource-level `argocd.argoproj.io/ignore-differences` annotation
+(`jsonPointers` only) targets just the annotated resource. Read it from the
+current side, falling back to the baseline for removed resources, and apply
+its pointers leniently with evanphx/json-patch path semantics (first segment
+dropped unchecked, negative indexes, literal unknown `~` escapes); pointers
+that cannot be applied, including root pointers, are skipped, never errors.
+
 Resource filters such as `--skip-kind`, `--skip-crds`, and `--skip-secrets`
 are explicit opt-ins. Do not change defaults to hide Secrets or CRDs.
 

@@ -35,6 +35,73 @@ func removeJSONPointers(object map[string]any, pointers []string) (map[string]an
 	}
 	return typed, nil
 }
+
+// removeAnnotationJSONPointers removes pointers taken from a resource's
+// argocd.argoproj.io/ignore-differences annotation. Argo CD turns each one into
+// a JSON-patch remove operation applied by github.com/evanphx/json-patch and
+// only logs a failed apply, so a pointer that cannot be applied is skipped
+// instead of failing the diff or dropping the whole resource.
+//
+// Pointers are resolved with that library's path semantics rather than strict
+// RFC 6901: the first "/"-separated segment is dropped without checking it
+// (so "#/spec/replicas" and "x/metadata" address /spec/replicas and
+// /metadata), "~1" and "~0" are decoded but other "~" sequences stay literal,
+// and a negative array index -n addresses element len-n. A root ("") pointer
+// has a single segment and is skipped.
+func removeAnnotationJSONPointers(object map[string]any, pointers []string) map[string]any {
+	for _, pointer := range pointers {
+		tokens, ok := annotationJSONPointerTokens(pointer)
+		if !ok {
+			continue
+		}
+		next, _, err := removeJSONPointerValue(object, tokens, pointer, resolveAnnotationJSONPointerIndex)
+		if err != nil {
+			continue
+		}
+		if typed, ok := next.(map[string]any); ok {
+			object = typed
+		}
+	}
+	return object
+}
+
+// annotationJSONPointerKeyDecoder matches evanphx/json-patch decodePatchKey.
+var annotationJSONPointerKeyDecoder = strings.NewReplacer("~1", "/", "~0", "~")
+
+// annotationJSONPointerTokens splits a pointer the way evanphx/json-patch
+// findObject does: split on "/", drop the first segment, decode the rest.
+func annotationJSONPointerTokens(pointer string) ([]string, bool) {
+	split := strings.Split(pointer, "/")
+	if len(split) < 2 {
+		return nil, false
+	}
+	tokens := make([]string, 0, len(split)-1)
+	for _, part := range split[1:] {
+		tokens = append(tokens, annotationJSONPointerKeyDecoder.Replace(part))
+	}
+	return tokens, true
+}
+
+// resolveAnnotationJSONPointerIndex parses an array index like
+// evanphx/json-patch with SupportNegativeIndices enabled (its default): an
+// index in [-length, -1] counts from the end. Any other out-of-range index is
+// returned unchanged and treated as a missing element.
+func resolveAnnotationJSONPointerIndex(token, pointer string, length int) (int, error) {
+	index, err := strconv.Atoi(token)
+	if err != nil {
+		return 0, fmt.Errorf("invalid JSON pointer %q: invalid array index %q", pointer, token)
+	}
+	if index < 0 && index >= -length {
+		index += length
+	}
+	return index, nil
+}
+
+// resolveStrictJSONPointerIndex parses an RFC 6901 array index.
+func resolveStrictJSONPointerIndex(token, pointer string, _ int) (int, error) {
+	return parseJSONPointerArrayIndex(token, pointer)
+}
+
 func removeJSONPointer(root any, pointer string) (any, bool, error) {
 	tokens, err := jsonPointerTokens(pointer)
 	if err != nil {
@@ -43,7 +110,7 @@ func removeJSONPointer(root any, pointer string) (any, bool, error) {
 	if len(tokens) == 0 {
 		return root, true, nil
 	}
-	nextRoot, _, err := removeJSONPointerValue(root, tokens, pointer)
+	nextRoot, _, err := removeJSONPointerValue(root, tokens, pointer, resolveStrictJSONPointerIndex)
 	return nextRoot, false, err
 }
 func jsonPointerTokens(pointer string) ([]string, error) {
@@ -86,7 +153,12 @@ func decodeJSONPointerToken(token, pointer string) (string, error) {
 	}
 	return out.String(), nil
 }
-func removeJSONPointerValue(current any, tokens []string, pointer string) (any, bool, error) {
+
+// jsonPointerIndexResolver parses an array index token for an array of the
+// given length. An index outside [0, length) means a missing element.
+type jsonPointerIndexResolver func(token, pointer string, length int) (int, error)
+
+func removeJSONPointerValue(current any, tokens []string, pointer string, resolveIndex jsonPointerIndexResolver) (any, bool, error) {
 	if len(tokens) == 0 {
 		return current, true, nil
 	}
@@ -103,7 +175,7 @@ func removeJSONPointerValue(current any, tokens []string, pointer string) (any, 
 		if !exists {
 			return current, false, nil
 		}
-		nextChild, removed, err := removeJSONPointerValue(child, tokens[1:], pointer)
+		nextChild, removed, err := removeJSONPointerValue(child, tokens[1:], pointer, resolveIndex)
 		if err != nil {
 			return current, false, err
 		}
@@ -113,7 +185,7 @@ func removeJSONPointerValue(current any, tokens []string, pointer string) (any, 
 		return object, removed, nil
 	}
 	if values, ok := current.([]any); ok {
-		index, err := parseJSONPointerArrayIndex(tokens[0], pointer)
+		index, err := resolveIndex(tokens[0], pointer, len(values))
 		if err != nil {
 			return current, false, err
 		}
@@ -124,7 +196,7 @@ func removeJSONPointerValue(current any, tokens []string, pointer string) (any, 
 			values = append(values[:index], values[index+1:]...)
 			return values, true, nil
 		}
-		nextChild, removed, err := removeJSONPointerValue(values[index], tokens[1:], pointer)
+		nextChild, removed, err := removeJSONPointerValue(values[index], tokens[1:], pointer, resolveIndex)
 		if err != nil {
 			return current, false, err
 		}

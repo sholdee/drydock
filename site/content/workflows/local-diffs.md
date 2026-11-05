@@ -152,6 +152,30 @@ resource diffs. Supported ignore fields are `jsonPointers`,
 exists on both sides, drydock applies the union of matching Application-local
 and global settings from the baseline and current trees.
 
+A resource can also carry its own ignore rule in the
+`argocd.argoproj.io/ignore-differences` annotation, as supported by Argo CD
+v3.6.1. The value is YAML with a `jsonPointers` list, and the rule applies only
+to the annotated resource, including child Application CRs in app-of-apps
+setups:
+
+```yaml
+metadata:
+  annotations:
+    argocd.argoproj.io/ignore-differences: |
+      jsonPointers:
+        - /spec/replicas
+```
+
+drydock reads the annotation from the current-side manifest, or from the
+baseline manifest when the resource was removed, and applies it to both sides.
+Like Argo CD, it skips an annotation that does not parse or lists no pointers.
+Annotation pointers follow the same path rules as Argo CD's JSON-patch library:
+a negative array index such as `-1` addresses the last element, and the first
+path segment is not checked, so `#/spec/replicas` also removes `spec.replicas`.
+A pointer that cannot be applied, such as a non-numeric array index or the root
+pointer `""`, is skipped instead of failing the diff.
+`--show-ignored-fields` does not disable annotation rules.
+
 By default status is ignored for all resources. Use
 `ignoreResourceStatusField: none`, `off`, or `false` in discovered Argo CD
 compare options when rendered status fields should remain visible in PR diffs.
