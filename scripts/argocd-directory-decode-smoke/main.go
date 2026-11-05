@@ -1,12 +1,17 @@
 // Command argocd-directory-decode-smoke checks the directory-source decode
 // failures in the Argo CD render parity smoke.
 //
-// Each case is one Application whose directory holds a file that the Argo CD
-// repo-server refuses to decode. Argo CD must report a ComparisonError
-// condition that names the file, and drydock must fail to render the same
-// Application with an error that names the same file. Files that both sides
-// skip are not checked here: they live in an Application that renders, and
-// the main manifest comparison covers it.
+// Each case is one Application whose directory holds a file that fails the
+// source. Argo CD must report a ComparisonError condition that names the
+// file, and drydock must fail to render the same Application with an error
+// that names the same file. Files that both sides skip are not checked here:
+// they live in an Application that renders, and the main manifest comparison
+// covers it.
+//
+// A ".json" file that holds an object without a kind fails later, in the
+// Argo CD controller. Its ComparisonError quotes the object instead of
+// naming the file, so such a case sets argocdQuotesObject and its
+// argocdMessage quotes the start of that object.
 package main
 
 import (
@@ -28,6 +33,12 @@ import (
 // v3.6.1).
 const comparisonErrorType = "ComparisonError"
 
+// missingKindPrefix starts the error the Argo CD controller reports when a
+// generated manifest has no kind. v1alpha1.UnmarshalToUnstructured
+// (pkg/apis/application/v1alpha1/types.go:4154-4164 at v3.6.1) returns the
+// apimachinery missing-kind error, which quotes the whole manifest.
+const missingKindPrefix = "Object 'Kind' is missing in '{"
+
 type options struct {
 	Expected     string
 	Namespace    string
@@ -46,6 +57,9 @@ type expectedCase struct {
 	File           string `yaml:"file"`
 	ArgoCDMessage  string `yaml:"argocdMessage"`
 	DrydockMessage string `yaml:"drydockMessage"`
+	// ArgoCDQuotesObject marks a case whose Argo CD message quotes the
+	// manifest without a kind instead of naming the file.
+	ArgoCDQuotesObject bool `yaml:"argocdQuotesObject"`
 }
 
 type appStatusFile struct {
@@ -193,8 +207,15 @@ func validateExpected(cases []expectedCase) error {
 			return fmt.Errorf("expected case %s must name the failing file", tc.Name)
 		}
 		// Each side's message must name the file, so a failure caused by
-		// some other file cannot pass the case.
-		if !strings.Contains(tc.ArgoCDMessage, tc.File) {
+		// some other file cannot pass the case. The Argo CD message for a
+		// manifest without a kind names no file, so it must quote part of
+		// the object instead.
+		switch {
+		case tc.ArgoCDQuotesObject:
+			if !strings.HasPrefix(tc.ArgoCDMessage, missingKindPrefix) || len(tc.ArgoCDMessage) == len(missingKindPrefix) {
+				return fmt.Errorf("expected case %s argocdMessage must start with %q and quote part of the object", tc.Name, missingKindPrefix)
+			}
+		case !strings.Contains(tc.ArgoCDMessage, tc.File):
 			return fmt.Errorf("expected case %s argocdMessage must contain the file name %q", tc.Name, tc.File)
 		}
 		if !strings.Contains(tc.DrydockMessage, tc.File) {

@@ -238,9 +238,18 @@ drydock selects directory-source files as the Argo CD v3.6.1 repo-server does:
   the directory and emits the `directory.extension-filter-disabled` warning.
   It stays advisory under `--strict`, because Argo CD treats the setting as
   valid. Add an `include` pattern that names the manifest files to silence it.
-- A file ending in `.json` must hold one JSON object with a `kind`; an empty
+- A file ending in `.json` must hold one JSON object with a `kind`. An empty
   file, YAML content, a JSON array, or several concatenated objects fail the
   source, as in Argo CD.
+- A `.json` file that holds an object without a `kind`, such as
+  `package.json`, `tsconfig.json`, or `{}`, also fails the source. drydock
+  names the file in an error such as
+  `package.json: JSON object has no kind, so Argo CD fails the Application with "Object 'Kind' is missing"`.
+  Argo CD fails the same Application with a `ComparisonError` that says
+  `Object 'Kind' is missing` and quotes the object, not the file. Earlier
+  drydock releases skipped the file. Move the file out of the source
+  directory, or set `exclude` to a pattern that matches it, such as
+  `{package,tsconfig}.json`.
 - Any other file that does not decode as YAML or JSON is skipped unless a
   manifest precedes the broken document or the file contains all of
   `apiVersion:`, `kind:`, and `metadata:`; then it fails the source. With `disableExtensionFilter`, narrow `include` so that

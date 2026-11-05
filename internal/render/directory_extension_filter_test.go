@@ -189,13 +189,69 @@ func TestDirectoryRendererRejectsJSONFileThatIsNotOneObject(t *testing.T) {
 	}
 }
 
-func TestDirectoryRendererJSONFileAcceptsOCIImageManifest(t *testing.T) {
+// TestDirectoryRendererJSONFileFailsWithoutKind pins the Argo CD v3.6.1 path
+// for a .json file whose object has no kind but passes the OCI image
+// manifest test: the repo-server emits it and the controller fails the
+// Application with "Object 'Kind' is missing".
+// TestDirectoryRendererDecodeMatchesUpstream proves the outcome against the
+// upstream code.
+func TestDirectoryRendererJSONFileFailsWithoutKind(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		content string
+		value   string
+	}{
+		{name: "package.json", content: `{"name":"web","version":"1.0.0","dependencies":{"vite":"^5.0.0"}}`, value: "JSON object"},
+		{name: "tsconfig.json", content: `{"compilerOptions":{"strict":true},"include":["src"]}`, value: "JSON object"},
+		{name: "empty-object.json", content: "{}\n", value: "JSON object"},
+		{name: "oci.json", content: `{"schemaVersion":2,"mediaType":"application/vnd.oci.image.manifest.v1+json","layers":[]}`, value: "JSON object"},
+		{name: "null.json", content: "null", value: "JSON value"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			writeFile(t, filepath.Join(root, "apps", tc.name), tc.content)
+			writeFile(t, filepath.Join(root, "apps", "cm.yaml"), directoryConfigMap("cm"))
+			_, _, err := (DirectoryRenderer{}).Render(context.Background(), ResolvedSource{RepoRoot: root, Path: "apps"}, RenderOptions{})
+			want := "apps/" + tc.name + ": " + tc.value + ` has no kind, so Argo CD fails the Application with "Object 'Kind' is missing"`
+			if err == nil || err.Error() != want {
+				t.Fatalf("Render() error = %v, want %q", err, want)
+			}
+		})
+	}
+}
+
+// TestDirectoryRendererKindlessJSONReportsRepoServerFailureFirst pins the
+// error order. Argo CD fails on a .json object without a kind only in the
+// controller, after the repo-server has read every file, so a file that
+// fails in the repo-server is the one reported.
+func TestDirectoryRendererKindlessJSONReportsRepoServerFailureFirst(t *testing.T) {
 	root := t.TempDir()
-	writeFile(t, filepath.Join(root, "apps", "oci.json"), `{"schemaVersion":2,"mediaType":"application/vnd.oci.image.manifest.v1+json","layers":[]}`)
-	writeFile(t, filepath.Join(root, "apps", "cm.yaml"), directoryConfigMap("cm"))
+	writeFile(t, filepath.Join(root, "apps", "a-package.json"), `{"name":"web"}`)
+	writeFile(t, filepath.Join(root, "apps", "b-broken.json"), `{"apiVersion":"v1",`)
+	_, _, err := (DirectoryRenderer{}).Render(context.Background(), ResolvedSource{RepoRoot: root, Path: "apps"}, RenderOptions{})
+	if err == nil || !strings.HasPrefix(err.Error(), "apps/b-broken.json: decode JSON object failed") {
+		t.Fatalf("Render() error = %v, want the b-broken.json decode failure", err)
+	}
+
+	writeFile(t, filepath.Join(root, "apps", "b-broken.json"), `{"apiVersion":"v1","kind":"ConfigMap","metadata":{"name":"fixed"}}`)
+	writeFile(t, filepath.Join(root, "apps", "c-tsconfig.json"), `{"include":["src"]}`)
+	_, _, err = (DirectoryRenderer{}).Render(context.Background(), ResolvedSource{RepoRoot: root, Path: "apps"}, RenderOptions{})
+	if err == nil || !strings.HasPrefix(err.Error(), "apps/a-package.json: JSON object has no kind") {
+		t.Fatalf("Render() error = %v, want the first kind-less file, a-package.json", err)
+	}
+}
+
+// TestDirectoryRendererKindlessJSONListRendersItems pins the List shape on
+// the same path. GenerateManifests flattens an object whose items field is an
+// array, whatever its kind, so the items render and the object itself is
+// never emitted.
+func TestDirectoryRendererKindlessJSONListRendersItems(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "apps", "list.json"), `{"apiVersion":"v1","items":[{"apiVersion":"v1","kind":"ConfigMap","metadata":{"name":"item"}}]}`)
+	writeFile(t, filepath.Join(root, "apps", "null-items.json"), `{"items":null}`)
 
 	names, _ := renderDirectoryExtensionFixture(t, root, RenderOptions{})
-	if want := []string{"cm"}; !reflect.DeepEqual(names, want) {
+	if want := []string{"item"}; !reflect.DeepEqual(names, want) {
 		t.Fatalf("rendered names = %#v, want %#v", names, want)
 	}
 }

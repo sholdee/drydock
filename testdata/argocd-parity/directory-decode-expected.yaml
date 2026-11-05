@@ -2,11 +2,16 @@
 #
 # Each case is an Application in the parity-directory-decode namespace
 # (repo/directory-decode-applications). Its source directory holds a valid
-# ConfigMap and one file that the Argo CD v3.6.1 repo-server refuses to
-# decode (getObjsFromYAMLOrJSON, reposerver/repository/repository.go).
-# Argo CD must report a ComparisonError condition that contains
-# argocdMessage, and `drydock build app` must fail with stderr that contains
-# drydockMessage. Both messages must name the file.
+# ConfigMap and one file that fails the source in Argo CD v3.6.1. Most such
+# files fail in the repo-server (getObjsFromYAMLOrJSON,
+# reposerver/repository/repository.go). Argo CD must report a ComparisonError
+# condition that contains argocdMessage, and `drydock build app` must fail
+# with stderr that contains drydockMessage. Both messages must name the file.
+#
+# A .json object without a kind fails later, in the controller. Its message
+# quotes the manifest instead of naming the file, so those cases set
+# argocdQuotesObject and quote the start of the manifest. Go sorts the keys,
+# and the tracking annotation is part of the manifest.
 #
 # Files that both sides skip, and files whose text both sides decode first
 # (byte order marks, invalid UTF-8), live in the parity-directory-decode-skips
@@ -53,3 +58,16 @@ cases:
     file: markers.yaml
     argocdMessage: Failed to unmarshal "markers.yaml"
     drydockMessage: "markers.yaml document 0 is missing kind"
+  # A .json object without a kind passes the OCI image manifest test. The
+  # repo-server emits it, and the controller fails because it has no kind.
+  - name: parity-decode-json-package
+    file: package.json
+    argocdQuotesObject: true
+    argocdMessage: "Object 'Kind' is missing in '{\"devDependencies\":{\"vite\":\"^5.4.0\"},\"metadata\":{\"annotations\":{\"argocd.argoproj.io/tracking-id\":"
+    drydockMessage: "package.json: JSON object has no kind"
+  # The same for an empty object.
+  - name: parity-decode-json-object
+    file: empty-object.json
+    argocdQuotesObject: true
+    argocdMessage: "Object 'Kind' is missing in '{\"metadata\":{\"annotations\":{\"argocd.argoproj.io/tracking-id\":"
+    drydockMessage: "empty-object.json: JSON object has no kind"

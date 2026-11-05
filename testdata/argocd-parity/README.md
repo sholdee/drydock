@@ -778,9 +778,10 @@ drydock side.
 
 ## Directory decode fixture
 
-These fixtures cover how the Argo CD v3.6.1 repo-server reads each file in a
-directory source (`getObjsFromYAMLOrJSON` in
-`reposerver/repository/repository.go`). Some files fail the whole source.
+These fixtures cover how Argo CD v3.6.1 reads each file in a directory
+source (`getObjsFromYAMLOrJSON` in `reposerver/repository/repository.go`, and
+the controller for a `.json` object without a `kind`). Some files fail the
+whole source.
 Other files are skipped without a message. The fixtures live under
 `workloads/directory-decode/`.
 
@@ -825,6 +826,16 @@ names the file, the text that the Argo CD `ComparisonError` condition must
 contain, and the text that drydock's stderr must contain. Both texts must name
 the file, so a failure caused by a different file does not pass.
 
+The two `.json` cases without a `kind` are different. The repo-server accepts
+those files as OCI image manifests and emits each object without a `kind`.
+The controller then fails with `Object 'Kind' is missing in '...'`, which
+quotes the manifest but not the file. These cases set `argocdQuotesObject`,
+and their Argo CD text quotes the start of the manifest instead of the file
+name. Go sorts the manifest keys, and the manifest holds the tracking
+annotation. `TestDirectoryRendererParityDecodeFixtures` in `internal/render`
+runs the upstream tracking and controller code on these fixtures offline and
+proves that both expected texts match.
+
 | Application | failing file | why it fails |
 | --- | --- | --- |
 | `parity-decode-json-invalid` | `invalid.json` | JSON syntax error |
@@ -835,16 +846,11 @@ the file, so a failure caused by a different file does not pass.
 | `parity-decode-yaml-partial` | `partial.yaml` | a YAML syntax error after a decoded object |
 | `parity-decode-yaml-kindless` | `kindless.yaml` | a document without `kind` after a decoded object |
 | `parity-decode-yaml-markers` | `markers.yaml` | the first document has no `kind`, and the file text holds `apiVersion:`, `kind:` and `metadata:` |
+| `parity-decode-json-package` | `package.json` | an npm `package.json` object has no `kind`, so the controller fails |
+| `parity-decode-json-object` | `empty-object.json` | `{}` has no `kind`, so the controller fails |
 
 `run_directory_decode_smoke` in `scripts/argocd-parity-smoke.sh` waits for a
 `ComparisonError` on each Application, then saves the Application JSON. It
 then runs `drydock build app` for each Application and saves the exit code
 and stderr. `scripts/argocd-directory-decode-smoke` compares the two sides.
 The results go to `directory-decode/` in the smoke output directory.
-
-### Deliberately not covered by this fixture
-
-A `.json` file that holds an object without `kind`, such as a `package.json`,
-is not covered. The repo-server accepts it as an OCI image manifest and emits
-an object without `kind`. drydock renders nothing for it. That divergence is
-recorded in `docs/compatibility.md`.

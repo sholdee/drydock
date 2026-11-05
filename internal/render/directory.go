@@ -51,6 +51,10 @@ func (DirectoryRenderer) Render(ctx context.Context, source ResolvedSource, opts
 	}
 	var out []Manifest
 	diags := directoryRenderDiagnostics(opts)
+	// kindlessJSONErr holds the first ".json" file whose object has no kind.
+	// Argo CD's repo-server emits that object and the controller fails on it
+	// later, so any file that fails in the repo-server is reported first.
+	var kindlessJSONErr error
 
 	err = filepath.WalkDir(root, func(path string, entry os.DirEntry, err error) error {
 		if err != nil {
@@ -101,10 +105,24 @@ func (DirectoryRenderer) Render(ctx context.Context, source ResolvedSource, opts
 			out = append(out, rendered...)
 			return nil
 		}
-		jsonFile := isJSONSuffixFile(path)
-		if jsonFile {
-			if err := validateDirectoryJSONFile(manifestPath, data); err != nil {
+		kindlessList := false
+		if isJSONSuffixFile(path) {
+			object, kindless, err := validateDirectoryJSONFile(manifestPath, data)
+			if err != nil {
 				return err
+			}
+			if kindless {
+				switch {
+				case object.IsList():
+					kindlessList = true
+				case directoryNullList(object):
+					return nil
+				default:
+					if kindlessJSONErr == nil {
+						kindlessJSONErr = directoryKindlessJSONError(manifestPath, object)
+					}
+					return nil
+				}
 			}
 		} else if stream := directoryStreamFailure(manifestPath, data); stream.err != nil {
 			if !stream.partial && !directoryDecodeFailureIsFatal(stream.yielded, data) {
@@ -115,16 +133,18 @@ func (DirectoryRenderer) Render(ctx context.Context, source ResolvedSource, opts
 			}
 			return stream.err
 		}
-		roots, err := manifest.DecodeDocumentRoots(manifestPath, bytes.NewReader(data))
-		if err != nil {
-			return err
-		}
-		hasCandidate, err := classifyDirectoryRoots(roots)
-		if err != nil {
-			return err
-		}
-		if !hasCandidate {
-			return nil
+		if !kindlessList {
+			roots, err := manifest.DecodeDocumentRoots(manifestPath, bytes.NewReader(data))
+			if err != nil {
+				return err
+			}
+			hasCandidate, err := classifyDirectoryRoots(roots)
+			if err != nil {
+				return err
+			}
+			if !hasCandidate {
+				return nil
+			}
 		}
 		docs, err := manifest.DecodeDocuments(manifestPath, bytes.NewReader(data))
 		if err != nil {
@@ -132,7 +152,9 @@ func (DirectoryRenderer) Render(ctx context.Context, source ResolvedSource, opts
 		}
 
 		for _, doc := range docs {
-			if doc.RootObject != nil && doc.RootObject != doc.Object {
+			// A kind-less ".json" list is never emitted itself, so only its
+			// items are checked.
+			if !kindlessList && doc.RootObject != nil && doc.RootObject != doc.Object {
 				if _, err := classifyDirectoryDocument(Manifest{Path: doc.Path, Object: doc.RootObject}); err != nil {
 					return err
 				}
@@ -149,6 +171,9 @@ func (DirectoryRenderer) Render(ctx context.Context, source ResolvedSource, opts
 		}
 		return nil
 	})
+	if err == nil {
+		err = kindlessJSONErr
+	}
 	return out, diags, err
 }
 
@@ -315,25 +340,65 @@ func isJSONSuffixFile(path string) bool {
 }
 
 // validateDirectoryJSONFile mirrors the repo-server's rule for a file whose
-// name ends in ".json" (getObjsFromYAMLOrJSON at v3.6.1): the content, after
-// any UTF-8 byte order mark, must decode as one JSON object with a kind,
-// falling back to an OCI image manifest, and nothing but whitespace may
-// follow it. An empty file, YAML, a JSON array or scalar, and a syntax error
-// all fail the source. A file accepted only as an OCI image manifest is left
-// to the stream decoder, which skips an object without apiVersion and kind.
-func validateDirectoryJSONFile(manifestPath string, data []byte) error {
+// name ends in ".json" (getObjsFromYAMLOrJSON,
+// reposerver/repository/repository.go:2069-2091 at v3.6.1). The content,
+// after any UTF-8 byte order mark, must decode as one JSON object with a
+// kind, and nothing but whitespace may follow it. An empty file, YAML, a JSON
+// array or scalar, and a syntax error all fail the source.
+//
+// When the object has no kind, or the content is JSON null, the repo-server
+// tries the content as an OCI image manifest. If that also fails, the source
+// fails with the first error. If it succeeds, the repo-server keeps the
+// object that the failed decode left behind. validateDirectoryJSONFile then
+// returns that object with kindless set, so the caller can treat it as the
+// repo-server does.
+func validateDirectoryJSONFile(manifestPath string, data []byte) (object *unstructured.Unstructured, kindless bool, err error) {
 	decoder := json.NewDecoder(bytes.NewReader(data))
-	var object unstructured.Unstructured
-	if err := decoder.Decode(&object); err != nil {
+	object = &unstructured.Unstructured{}
+	if decodeErr := decoder.Decode(object); decodeErr != nil {
 		var ociManifest imagev1.Manifest
 		if json.NewDecoder(bytes.NewReader(data)).Decode(&ociManifest) != nil {
-			return fmt.Errorf("%s: decode JSON object failed: %s", manifestPath, describeDirectoryJSONDecodeError(err))
+			return nil, false, fmt.Errorf("%s: decode JSON object failed: %s", manifestPath, describeDirectoryJSONDecodeError(decodeErr))
 		}
+		kindless = true
 	}
 	if decoder.More() {
-		return fmt.Errorf("%s: found multiple objects; only single objects are allowed in JSON files", manifestPath)
+		return nil, false, fmt.Errorf("%s: found multiple objects; only single objects are allowed in JSON files", manifestPath)
 	}
-	return nil
+	return object, kindless, nil
+}
+
+// directoryNullList mirrors the repo-server's isNullList
+// (reposerver/repository/repository.go:1988-2000 at v3.6.1): an object with
+// "items: null" and neither spec nor status emits nothing.
+func directoryNullList(object *unstructured.Unstructured) bool {
+	if _, ok := object.Object["spec"]; ok {
+		return false
+	}
+	if _, ok := object.Object["status"]; ok {
+		return false
+	}
+	items, ok := object.Object["items"]
+	return ok && items == nil
+}
+
+// directoryKindlessJSONError is the source failure for a ".json" file that
+// the repo-server accepts as an OCI image manifest and then emits as a
+// manifest without a kind (GenerateManifests,
+// reposerver/repository/repository.go:1817-1852 at v3.6.1). The controller
+// cannot read that manifest back, so the Application fails with a
+// ComparisonError that says "Object 'Kind' is missing" (unmarshalManifests,
+// controller/state.go:562-571, through v1alpha1.UnmarshalToUnstructured).
+// That message quotes the object but not the file, so drydock names the
+// file instead.
+func directoryKindlessJSONError(manifestPath string, object *unstructured.Unstructured) error {
+	// The failed decode leaves no object for JSON null, or for an object
+	// that the Unstructured decoder cannot hold.
+	value := "JSON object"
+	if object.Object == nil {
+		value = "JSON value"
+	}
+	return fmt.Errorf("%s: %s has no kind, so Argo CD fails the Application with \"Object 'Kind' is missing\"", manifestPath, value)
 }
 
 // describeDirectoryJSONDecodeError names why a ".json" file did not decode

@@ -118,6 +118,41 @@ func TestComparePassesWhenBothSidesFailOnTheSameFile(t *testing.T) {
 	}
 }
 
+// TestCompareMatchesQuotedObjectMessage covers a .json object without a kind.
+// The Argo CD controller message quotes the manifest and names no file.
+func TestCompareMatchesQuotedObjectMessage(t *testing.T) {
+	fixture := newTestFixture(t, `cases:
+  - name: parity-decode-json-object
+    file: empty-object.json
+    argocdQuotesObject: true
+    argocdMessage: "Object 'Kind' is missing in '{\"metadata\":{\"annotations\":{\"argocd.argoproj.io/tracking-id\":"
+    drydockMessage: "empty-object.json: JSON object has no kind"
+`)
+	fixture.writeApplication(t, testNamespace, "parity-decode-json-object",
+		comparisonError(`Failed to load target state: failed to unmarshal manifests for source 1 of 1: Object 'Kind' is missing in '{"metadata":{"annotations":{"argocd.argoproj.io/tracking-id":"parity-directory-decode_parity-decode-json-object:/:parity-directory-decode-workloads/"}}}'`))
+	fixture.writeDrydock(t, "parity-decode-json-object", 2,
+		"error render.failed: workloads/directory-decode/json-object/empty-object.json: JSON object has no kind, so Argo CD fails the Application with \"Object 'Kind' is missing\"\n")
+
+	result, err := compare(fixture.options())
+	if err != nil {
+		t.Fatalf("compare() error = %v", err)
+	}
+	if len(result.Failures) != 0 {
+		t.Fatalf("compare() failures = %v, want none", result.Failures)
+	}
+
+	// A missing kind on some other object must not pass the case.
+	fixture.writeApplication(t, testNamespace, "parity-decode-json-object",
+		comparisonError(`Failed to load target state: failed to unmarshal manifests for source 1 of 1: Object 'Kind' is missing in '{"apiVersion":"v1","metadata":{"annotations":{"argocd.argoproj.io/tracking-id":"x"}}}'`))
+	result, err = compare(fixture.options())
+	if err != nil {
+		t.Fatalf("compare() error = %v", err)
+	}
+	if len(result.Failures) != 1 || !strings.Contains(result.Failures[0], "does not contain") {
+		t.Fatalf("compare() failures = %v, want one message mismatch", result.Failures)
+	}
+}
+
 func TestCompareReportsMismatches(t *testing.T) {
 	tests := []struct {
 		name   string
@@ -245,6 +280,28 @@ func TestReadExpectedRejectsInvalidCases(t *testing.T) {
     drydockMessage: "empty.json: decode JSON object failed"
 `,
 			want: `argocdMessage must contain the file name "empty.json"`,
+		},
+		{
+			name: "quoted object without missing kind prefix",
+			expected: `cases:
+  - name: parity-decode-json-object
+    file: empty-object.json
+    argocdQuotesObject: true
+    argocdMessage: Failed to unmarshal
+    drydockMessage: "empty-object.json: JSON object has no kind"
+`,
+			want: "argocdMessage must start with",
+		},
+		{
+			name: "quoted object with only the prefix",
+			expected: `cases:
+  - name: parity-decode-json-object
+    file: empty-object.json
+    argocdQuotesObject: true
+    argocdMessage: "Object 'Kind' is missing in '{"
+    drydockMessage: "empty-object.json: JSON object has no kind"
+`,
+			want: "quote part of the object",
 		},
 		{
 			name: "drydock message without file",
