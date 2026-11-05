@@ -3,6 +3,7 @@ package appset
 import (
 	"errors"
 	"fmt"
+	"maps"
 	"reflect"
 	"slices"
 	"strings"
@@ -85,9 +86,7 @@ func mergeOracleClusterParams(values map[string]string) map[string]any {
 
 func mergeOracleListParams(fields map[string]any) map[string]any {
 	params := map[string]any{"name": "alpha", "env": "prod"}
-	for key, value := range fields {
-		params[key] = value
-	}
+	maps.Copy(params, fields)
 	return params
 }
 
