@@ -1,13 +1,14 @@
 package appset
 
 import (
-	argoappv1 "github.com/argoproj/argo-cd/v3/pkg/apis/application/v1alpha1"
+	"errors"
 	"os"
 	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
 
+	argoappv1 "github.com/argoproj/argo-cd/v3/pkg/apis/application/v1alpha1"
 	"github.com/sholdee/drydock/internal/diagnostic"
 )
 
@@ -992,5 +993,66 @@ spec:
 	}
 	if !strings.Contains(diags[0].Message, "unsupported ApplicationSet generator") {
 		t.Fatalf("diagnostic message = %q, want unsupported ApplicationSet generator", diags[0].Message)
+	}
+}
+
+func TestGenerateUnsupportedGeneratorMessageNamesEverySupportedGenerator(t *testing.T) {
+	diags := unsupportedGeneratorDiagnostic("app-set.yaml")
+	if len(diags) != 1 {
+		t.Fatalf("diagnostics = %#v", diags)
+	}
+	for _, name := range []string{"git directories", "git files", "list", "matrix", "merge", "clusters", "clusterDecisionResource", "scmProvider", "pullRequest", "plugin", "--appset-provider-fixture"} {
+		if !strings.Contains(diags[0].Message, name) {
+			t.Fatalf("unsupported generator message = %q, want it to name %q", diags[0].Message, name)
+		}
+	}
+	if code := diagnostic.StableCode(diags[0]); code != "appset.unsupported-generator" {
+		t.Fatalf("stable code = %q, want appset.unsupported-generator", code)
+	}
+}
+
+func TestGenerateOciGeneratorIsNamedAsUnsupported(t *testing.T) {
+	data := []byte(`
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: oci
+spec:
+  goTemplate: true
+  generators:
+    - oci:
+        repoURL: oci://registry.example.invalid/configs
+        revision: 1.0.0
+        directories:
+          - path: '*'
+  template:
+    metadata:
+      name: '{{.path.basename}}'
+`)
+
+	_, diags, err := GenerateFromYAML(t.TempDir(), "app-set.yaml", data)
+	if err == nil || !errors.Is(err, ErrUnsupportedGenerator) {
+		t.Fatalf("GenerateFromYAML() error = %v, want ErrUnsupportedGenerator", err)
+	}
+	if len(diags) != 1 || !strings.Contains(diags[0].Message, "the oci generator is not supported") {
+		t.Fatalf("diagnostics = %#v, want named oci generator diagnostic", diags)
+	}
+	if code := diagnostic.StableCode(diags[0]); code != "appset.unsupported-generator" {
+		t.Fatalf("stable code = %q, want appset.unsupported-generator", code)
+	}
+}
+
+func TestGeneratorFromNestedCarriesOciGenerator(t *testing.T) {
+	oci := &argoappv1.OciGenerator{RepoURL: "oci://registry.example.invalid/configs", Revision: "1.0.0"}
+	generator, err := generatorFromNested(argoappv1.ApplicationSetNestedGenerator{Oci: oci})
+	if err != nil {
+		t.Fatalf("generatorFromNested() error = %v", err)
+	}
+	if generator.Oci != oci {
+		t.Fatalf("generatorFromNested().Oci = %#v, want the nested oci generator", generator.Oci)
+	}
+	supported, err := supportedGeneratorTree(generator, true)
+	if err != nil || supported {
+		t.Fatalf("supportedGeneratorTree(oci) = %v, %v; want unsupported until the oci generator is implemented", supported, err)
 	}
 }

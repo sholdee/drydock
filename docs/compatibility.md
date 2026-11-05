@@ -101,7 +101,16 @@ Supported:
 - Nested matrix/merge combinations where the Argo CD v3 nested JSON API
   permits them.
 - Explicit local YAML/JSON fixtures for cluster, clusterDecisionResource, SCM
-  provider, pull-request, and plugin ApplicationSet generators.
+  provider, pull-request, and plugin ApplicationSet generators. Cluster
+  generator params omit the annotations Argo CD v3.6.1 reserves
+  (`argocd.argoproj.io/refresh`, `refresh-timestamp`, `hydrate`,
+  `hydrate-timestamp`, `tracking-id`, `installation-id`, and
+  `kubectl.kubernetes.io/last-applied-configuration`). The Go-template
+  `.metadata.annotations` key exists only when the fixture cluster has
+  annotations; `.metadata.labels` is always present, as it is for Argo CD's
+  secret-type-labelled cluster Secrets.
+- Argo CD v3.6.1 Go-template functions, including `tpl`, in templates,
+  `templatePatch`, generator `values`, and matrix/merge child interpolation.
 - Fail-closed fixture diagnostics for invalid provider fixtures, no provider
   matches, and unsupported provider filters.
 - Warning diagnostics when a discovered ApplicationSet generates zero
@@ -109,18 +118,38 @@ Supported:
 - Argo CD Git files param decoding for empty content: empty, comment-only, and
   bare `---`/`...` files decode to one empty param set, `[]` decodes to zero
   param sets, and multi-document files decode only the first document.
-- ApplicationSet template and `templatePatch` execution errors scoped to the
-  failing ApplicationSet as `appset.template-render-failed` warning
-  diagnostics; that ApplicationSet contributes zero Applications and
-  `--strict` promotes the warnings to errors, matching the Argo CD
-  controller's `ErrorOccurred` condition behavior. Generator evaluation
-  errors remain fatal.
+- ApplicationSet template, `templatePatch`, generator `values`, and
+  matrix/merge child interpolation execution errors scoped to the failing
+  ApplicationSet as `appset.template-render-failed` warning diagnostics; that
+  ApplicationSet contributes zero Applications and `--strict` promotes the
+  warnings to errors, matching the Argo CD controller's `ErrorOccurred`
+  condition behavior. Other generator evaluation errors, such as file IO and
+  source acquisition, remain fatal.
+- Argo CD v3.6.1 generated-Application name validation: a generated
+  Application with an empty `metadata.name` (including a
+  `generateName`-only `templatePatch`) and every generated Application that
+  shares a duplicated name are omitted with an
+  `appset.application-validation-failed` warning; the ApplicationSet's other
+  Applications still generate, and `--strict` promotes the warning.
+- Argo CD v3.6.1 RollingSync rollout lint for `spec.strategy.type:
+  RollingSync`: an empty step list warns as `appset.rollout-no-steps`, and
+  invalid `matchExpressions` operators, Applications selected by several
+  steps, invalid `maxUpdate` values, and steps that match no generated
+  Application warn as `appset.invalid-rollout-config`. Argo CD applies these
+  only when the ApplicationSet controller runs with progressive syncs
+  enabled, which drydock cannot observe, so generation output is unchanged.
+  `--strict` promotes `appset.rollout-no-steps`, which stops reconciliation
+  when progressive syncs are enabled, but neither escalates nor fails on
+  `appset.invalid-rollout-config`, because Argo CD's `InvalidRolloutConfig`
+  condition never blocks Application create or update.
 
 Not supported:
 
 - Live Kubernetes, Argo CD, SCM provider, pull-request, cloud, or plugin
   service API calls for ApplicationSet generation.
 - Unsupported generators without diagnostics.
+- The Argo CD v3.6 OCI ApplicationSet generator (`generators[].oci`); it
+  emits an `appset.unsupported-generator` diagnostic.
 
 See `site/content/docs/applicationsets.md` for generator details and fixture
 schema.

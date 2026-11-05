@@ -176,12 +176,24 @@ is an Argo CD parity pin: empty, comment-only, and bare `---`/`...` files
 decode to one empty param set, `[]` decodes to zero, and multi-document files
 decode only the first document. Do not change it.
 
-Template and `templatePatch` execution errors are appset-scoped warning
-diagnostics (`appset.template-render-failed`), and the failing ApplicationSet
-contributes zero generated Applications, matching the Argo CD controller's
-`ErrorOccurred` condition scoping. Generator evaluation errors stay fatal. The
-"template render failed" message substring is the stable-code dispatch key in
-`internal/diagnostic`; keep the message and dispatch case in sync.
+Template, `templatePatch`, generator `values`, and matrix/merge child
+interpolation execution errors are appset-scoped warning diagnostics
+(`appset.template-render-failed`), and the failing ApplicationSet contributes
+zero generated Applications, matching the Argo CD controller's
+`ErrorOccurred` condition scoping. Generator template failures are marked with
+`generatorTemplateError`; other generator evaluation errors (IO, acquisition,
+invalid generator specs) stay fatal. The "template render failed" message
+substring is the stable-code dispatch key in `internal/diagnostic`; keep the
+message and dispatch case in sync.
+
+After rendering, generated Applications go through Argo CD's name validation
+(empty names first, then duplicates; every Application sharing a duplicated
+name is dropped) as `appset.application-validation-failed` warnings, and
+`spec.strategy` RollingSync steps are linted as `appset.rollout-no-steps` and
+`appset.invalid-rollout-config` warnings that never change generation output;
+`appset.invalid-rollout-config` is strict-exempt (`strictExemptDiagnostic`)
+because Argo CD's condition is non-blocking. Each of these codes dispatches on a message substring kept in sync with
+`internal/diagnostic.appSetCode`.
 
 ## Source Resolution, Cache, And Credentials
 

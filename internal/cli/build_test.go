@@ -172,7 +172,7 @@ spec:
 			t.Fatalf("build apps stdout missing %q:\n%s", want, got)
 		}
 	}
-	wantStderr := "warning appset.unsupported-generator: unsupported ApplicationSet generator; supported generators are git directories, git files, list, matrix, and merge (path: unsupported-appset.yaml, pointer: spec.generators)\n"
+	wantStderr := "warning appset.unsupported-generator: unsupported ApplicationSet generator; supported generators are git directories, git files, list, matrix, and merge, plus clusters, clusterDecisionResource, scmProvider, pullRequest, and plugin from --appset-provider-fixture data (path: unsupported-appset.yaml, pointer: spec.generators)\n"
 	if got := stderr.String(); got != wantStderr {
 		t.Fatalf("build apps stderr = %q, want %q", got, wantStderr)
 	}

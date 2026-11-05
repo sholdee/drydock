@@ -84,7 +84,7 @@ func TestWithStableCodesAssignsKnownCodes(t *testing.T) {
 	}{
 		{
 			name: "unsupported appset generator",
-			diag: Diagnostic{Severity: SeverityWarning, Category: "appset", Message: "unsupported ApplicationSet generator; supported generators are git directories, git files, list, matrix, and merge"},
+			diag: Diagnostic{Severity: SeverityWarning, Category: "appset", Message: "unsupported ApplicationSet generator; supported generators are git directories, git files, list, matrix, and merge, plus clusters, clusterDecisionResource, scmProvider, pullRequest, and plugin from --appset-provider-fixture data"},
 			want: "appset.unsupported-generator",
 		},
 		{
@@ -388,6 +388,53 @@ func TestStableCodesIncludeProviderFixtureDiagnostics(t *testing.T) {
 			name:    "unsupported filter",
 			message: "provider filter cannot be evaluated from fixture fields",
 			want:    "appset.provider-unsupported-filter",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			diags := WithStableCodes([]Diagnostic{{
+				Severity: SeverityWarning,
+				Category: "appset",
+				Message:  tt.message,
+			}})
+			if got := diags[0].Code; got != tt.want {
+				t.Fatalf("Code = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestStableCodesIncludeApplicationSetValidationDiagnostics(t *testing.T) {
+	tests := []struct {
+		name    string
+		message string
+		want    string
+	}{
+		{
+			name:    "empty generated name",
+			message: "generated Application validation failed: ApplicationSet demo contains an application with no name; a name must be set in the template's metadata.name or via a templatePatch (generateName is not supported); Argo CD reports an ApplicationValidationError condition",
+			want:    "appset.application-validation-failed",
+		},
+		{
+			name:    "duplicate generated name",
+			message: "generated Application validation failed: ApplicationSet demo contains applications with duplicate name: alpha; Argo CD reports an ApplicationValidationError condition",
+			want:    "appset.application-validation-failed",
+		},
+		{
+			name:    "rollout without steps",
+			message: "ApplicationSet argocd/demo uses the RollingSync strategy with an empty steps list: No steps defined for rollout",
+			want:    "appset.rollout-no-steps",
+		},
+		{
+			name:    "invalid rollout config",
+			message: "ApplicationSet argocd/demo has an invalid RollingSync rollout config: Step 1 has invalid matchExpression operators: Exists. Supported Operators are 'In' and 'NotIn'",
+			want:    "appset.invalid-rollout-config",
+		},
+		{
+			name:    "generator template render failure",
+			message: "ApplicationSet template render failed while evaluating a generator: render value \"bad\": boom",
+			want:    "appset.template-render-failed",
 		},
 	}
 

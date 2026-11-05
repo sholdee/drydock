@@ -72,6 +72,12 @@ func GenerateWithOptions(repoRoot, manifestPath string, appset argoappv1.Applica
 	for _, generator := range appset.Spec.Generators {
 		paramSets, generatorDiags, supported, err := evaluateGenerator(ctx, generator)
 		if err != nil {
+			if _, ok := errors.AsType[*generatorTemplateError](err); ok {
+				templateRenderFailed = true
+				diags = append(diags, generatorDiags...)
+				diags = append(diags, appsetGeneratorTemplateRenderDiagnostic(manifestPath, err))
+				continue
+			}
 			return out, append(diags, generatorDiags...), err
 		}
 		diags = append(diags, generatorDiags...)
@@ -95,7 +101,10 @@ func GenerateWithOptions(repoRoot, manifestPath string, appset argoappv1.Applica
 	if len(out) == 0 && unsupportedCount > 0 {
 		return nil, diags, fmt.Errorf("%w in %s", ErrUnsupportedGenerator, manifestPath)
 	}
-	return out, diags, nil
+	valid, validationDiags := validateGeneratedApplications(manifestPath, appset, out)
+	diags = append(diags, validationDiags...)
+	diags = append(diags, rolloutStrategyDiagnostics(manifestPath, appset, out, valid)...)
+	return valid, diags, nil
 }
 
 type generatorParamSet struct {
@@ -134,6 +143,8 @@ func evaluateGenerator(ctx generatorContext, generator argoappv1.ApplicationSetG
 		return evaluatePluginGenerator(ctx, generator)
 	case generator.Git != nil:
 		return evaluateGitGenerator(ctx, generator)
+	case generator.Oci != nil:
+		return nil, unsupportedOciGeneratorDiagnostic(ctx.ManifestPath), false, nil
 	default:
 		return nil, unsupportedGeneratorDiagnostic(ctx.ManifestPath), false, nil
 	}
@@ -154,7 +165,7 @@ func evaluateNestedGenerator(ctx generatorContext, nested argoappv1.ApplicationS
 	if len(inheritedParams) != 0 {
 		rendered, err := (&appsetutils.Render{}).RenderGeneratorParams(&generator, inheritedParams, ctx.AppSet.Spec.GoTemplate, ctx.AppSet.Spec.GoTemplateOptions)
 		if err != nil {
-			return nil, nil, true, fmt.Errorf("interpolate nested generator: %w", err)
+			return nil, nil, true, &generatorTemplateError{err: fmt.Errorf("interpolate nested generator: %w", err)}
 		}
 		generator = *rendered
 	}
@@ -170,6 +181,8 @@ func supportedGeneratorTree(generator argoappv1.ApplicationSetGenerator, provide
 		return true, nil
 	case generator.Clusters != nil || generator.ClusterDecisionResource != nil || generator.SCMProvider != nil || generator.PullRequest != nil || generator.Plugin != nil:
 		return providerSupplied, nil
+	case generator.Oci != nil:
+		return false, nil
 	case generator.Matrix != nil:
 		if err := validateMatrixGenerator(generator.Matrix); err != nil {
 			return true, err
@@ -227,13 +240,22 @@ func generatorFromNested(nested argoappv1.ApplicationSetNestedGenerator) (argoap
 		Merge:                   mergeGenerator,
 		Selector:                nested.Selector,
 		Plugin:                  nested.Plugin,
+		Oci:                     nested.Oci,
 	}, nil
 }
 
 const defaultClusterDecisionStatusListKey = "clusters"
 
+// supportedGeneratorsSummary names every generator drydock evaluates. Keep it
+// in sync with evaluateGenerator and supportedGeneratorTree.
+const supportedGeneratorsSummary = "supported generators are git directories, git files, list, matrix, and merge, plus clusters, clusterDecisionResource, scmProvider, pullRequest, and plugin from --appset-provider-fixture data"
+
 func unsupportedGeneratorDiagnostic(manifestPath string) []diagnostic.Diagnostic {
-	return []diagnostic.Diagnostic{appsetDiagnostic(manifestPath, "unsupported ApplicationSet generator; supported generators are git directories, git files, list, matrix, and merge")}
+	return []diagnostic.Diagnostic{appsetDiagnostic(manifestPath, "unsupported ApplicationSet generator; "+supportedGeneratorsSummary)}
+}
+
+func unsupportedOciGeneratorDiagnostic(manifestPath string) []diagnostic.Diagnostic {
+	return []diagnostic.Diagnostic{appsetDiagnostic(manifestPath, "unsupported ApplicationSet generator: the oci generator is not supported; "+supportedGeneratorsSummary)}
 }
 
 func providerNoMatchDiagnostic(manifestPath, kind string) diagnostic.Diagnostic {
@@ -251,12 +273,12 @@ func providerUnsupportedFilterDiagnostic(manifestPath, detail string) diagnostic
 // appsetTemplateRenderDiagnostic scopes template-execution failures (template
 // and templatePatch) to the failing ApplicationSet, matching the Argo CD
 // controller: it records the render error as an ErrorOccurred condition and
-// reconciles no Applications for that ApplicationSet. This is deliberately
-// narrower than Argo CD for now — upstream also scopes generator Transform
-// errors (values templating, nested matrix/merge interpolation) as
-// conditions, but drydock keeps evaluateGenerator failures fatal because
-// acquisition/IO failures are drydock-side limitations where silently
-// skipping would hide unknown desired state. The "template render failed"
+// reconciles no Applications for that ApplicationSet. Generator-side
+// template failures (values templating, nested matrix/merge interpolation)
+// are scoped the same way through generatorTemplateError and
+// appsetGeneratorTemplateRenderDiagnostic. Other evaluateGenerator failures
+// stay fatal because acquisition/IO failures are drydock-side limitations
+// where silently skipping would hide unknown desired state. The "template render failed"
 // message substring is the stable-code dispatch key
 // (appset.template-render-failed); keep it in sync with
 // internal/diagnostic.appSetCode.
@@ -303,7 +325,7 @@ func appendTemplatedValues(params map[string]any, values map[string]string, useG
 		for key, value := range values {
 			rendered, err := renderer.Replace(value, params, useGoTemplate, goTemplateOptions)
 			if err != nil {
-				return fmt.Errorf("render value %q: %w", key, err)
+				return &generatorTemplateError{err: fmt.Errorf("render value %q: %w", key, err)}
 			}
 			renderedValues[key] = rendered
 		}
@@ -315,7 +337,7 @@ func appendTemplatedValues(params map[string]any, values map[string]string, useG
 	for key, value := range values {
 		rendered, err := renderer.Replace(value, params, useGoTemplate, goTemplateOptions)
 		if err != nil {
-			return fmt.Errorf("render value %q: %w", key, err)
+			return &generatorTemplateError{err: fmt.Errorf("render value %q: %w", key, err)}
 		}
 		renderedParams["values."+key] = rendered
 	}

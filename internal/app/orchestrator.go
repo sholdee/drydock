@@ -1026,9 +1026,18 @@ func normalizeDiagnostics(diags []diagnostic.Diagnostic, strict, forceWarning bo
 // different artifact gives --strict nothing to protect — the pull of
 // repoURL:targetRevision either fails (already an error, warning alongside)
 // or renders Argo-identical output.
+// The ApplicationSet invalid-rollout-config lint is the same kind of advisory:
+// Argo CD v3.6.1 evaluates RollingSync steps only when the ApplicationSet
+// controller runs with progressive syncs enabled (off by default), and even
+// then InvalidRolloutConfig is a condition that never stops Applications from
+// being created or updated (applicationset_controller.go). Generation output
+// is identical either way, and an ordinary staged rollout (a prod step with no
+// Applications yet) must not fail --strict CI. The empty-steps lint
+// (appset.rollout-no-steps) stays promotable: with progressive syncs enabled
+// it aborts reconciliation of the whole ApplicationSet.
 func strictExemptDiagnostic(diag diagnostic.Diagnostic) bool {
 	switch diag.Code {
-	case selfRepoNearMissCode, ociChartIgnoredCode, diagnostic.CodePluginPolicyEnvIgnored, changedOnlySettingsCode, changedOnlySettingsScopedCode, changedOnlyProjectsCode:
+	case selfRepoNearMissCode, ociChartIgnoredCode, diagnostic.CodePluginPolicyEnvIgnored, changedOnlySettingsCode, changedOnlySettingsScopedCode, changedOnlyProjectsCode, diagnostic.CodeAppSetInvalidRolloutConfig:
 		return true
 	}
 	return false

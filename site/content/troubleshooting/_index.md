@@ -41,6 +41,16 @@ In one-sided diffs, the failing side's zero desired Applications appear as
 additions or deletions, while the live controller would abort reconciliation
 without pruning.
 
+## Symptom: ApplicationSet Omits Some Generated Applications
+
+An `appset.application-validation-failed` warning means a generated
+Application had no `metadata.name` (for example, a `templatePatch` that sets
+only `generateName` or renders an empty name) or shared its name with another
+Application from the same ApplicationSet. Argo CD v3.6.1 refuses those
+Applications, and for a duplicated name it refuses every Application with
+that name. Give each generated Application a unique, non-empty
+`metadata.name`.
+
 ## Symptom: Discovery Fails Decoding Non-Deployable YAML
 
 Discovery errors that end with

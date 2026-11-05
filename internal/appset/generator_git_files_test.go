@@ -650,7 +650,7 @@ func TestGenerateGitFilesCollectsAllTemplateRenderFailures(t *testing.T) {
 	assertTemplateRenderFailedDiagnostic(t, diags[1], "pipelines/second.yaml")
 }
 
-func TestGenerateGitFilesValuesTemplatingFailureStaysFatal(t *testing.T) {
+func TestGenerateGitFilesValuesTemplatingFailureIsAppSetScoped(t *testing.T) {
 	root := t.TempDir()
 	writeAppsetTestFile(t, filepath.Join(root, "pipelines", "pipelines.yaml"), "name: alpha\n")
 	data := []byte(`
@@ -681,12 +681,22 @@ spec:
         namespace: default
 `)
 
-	_, _, err := GenerateFromYAML(root, "app-set.yaml", data)
-	if err == nil {
-		t.Fatal("GenerateFromYAML() error = nil, want fatal values-templating error")
+	apps, diags, err := GenerateFromYAML(root, "app-set.yaml", data)
+	if err != nil {
+		t.Fatalf("GenerateFromYAML() error = %v, want appset-scoped values-templating warning", err)
 	}
-	if !strings.Contains(err.Error(), `render value "bad"`) {
-		t.Fatalf("error = %v, want values-templating render failure", err)
+	if len(apps) != 0 {
+		t.Fatalf("generated apps = %#v, want none", apps)
+	}
+	if len(diags) != 1 {
+		t.Fatalf("diagnostics = %#v, want one template render failure", diags)
+	}
+	diag := diags[0]
+	if diag.Severity != diagnostic.SeverityWarning || !strings.Contains(diag.Message, "template render failed") || !strings.Contains(diag.Message, `render value "bad"`) {
+		t.Fatalf("diagnostic = %#v, want values-templating template render failed warning", diag)
+	}
+	if code := diagnostic.StableCode(diag); code != "appset.template-render-failed" {
+		t.Fatalf("stable code = %q, want appset.template-render-failed", code)
 	}
 }
 

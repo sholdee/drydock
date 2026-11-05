@@ -21,6 +21,7 @@ while generating Applications.
 | Matrix | Native for two child generators, including interpolated child params. |
 | Merge | Native for two or more child generators over `mergeKeys`. |
 | Provider-backed generators | Fixture-backed for clusters, clusterDecisionResource, SCM provider, pull requests, and plugin generators. |
+| OCI | Not supported. The Argo CD v3.6 `oci` generator emits an `appset.unsupported-generator` diagnostic. |
 
 Supported ApplicationSet behavior includes:
 
@@ -29,7 +30,10 @@ Supported ApplicationSet behavior includes:
 - generator-level selectors and template overrides
 - `spec.templatePatch` rendered from generator params and strategic-merge-applied
   to generated Applications, with `spec.project` preserved
-- Sprig-compatible template functions used by Argo CD
+- Sprig-compatible template functions used by Argo CD, plus Argo CD v3.6.1's
+  `tpl` (nested template rendering with the same options, functions, and
+  three-level recursion limit) in templates, `templatePatch`, generator
+  `values`, and matrix/merge child interpolation
 - generated `Application.metadata.namespace` set to the ApplicationSet
   namespace
 - Argo CD's default generated Application finalizer where applicable
@@ -111,9 +115,10 @@ the Argo CD v3 nested JSON API permits them.
 
 ## Template Render Errors
 
-Template execution failures, including `templatePatch` failures and
-`missingkey=error` misses, are scoped to the failing ApplicationSet. drydock
-emits one warning diagnostic per failing param set with stable code
+Template execution failures, including `templatePatch` failures, generator
+`values` templating, matrix/merge child interpolation, and `missingkey=error`
+misses, are scoped to the failing ApplicationSet. drydock emits one warning
+diagnostic per failing param set or generator with stable code
 `appset.template-render-failed`, and that ApplicationSet contributes zero
 generated Applications, including param sets that rendered successfully. Other
 ApplicationSets and Applications render normally; `--strict` promotes the
@@ -127,14 +132,53 @@ comment-only param file while the template references file params under
 and rendering the template against it fails. Use `[]` as the param file
 content when a match should generate nothing.
 
-Generator evaluation failures — file IO, source acquisition, invalid
-ApplicationSet YAML, and generator `values` templating — remain fatal to the
-run.
+Generator evaluation failures — file IO, source acquisition, and invalid
+ApplicationSet YAML — remain fatal to the run.
 
 In diffs, a failing ApplicationSet contributes zero desired Applications on
 that side. When the failure exists on only one side, the diff reports that
 ApplicationSet's Applications as additions or deletions and exits `1`, while
 the live controller would abort reconciliation without pruning.
+
+## Generated Application Validation
+
+drydock mirrors the name checks of the Argo CD v3.6.1 ApplicationSet
+controller after all templates render:
+
+- A generated Application with an empty `metadata.name`, including one whose
+  `templatePatch` sets only `generateName`, is omitted.
+- When several generated Applications share a name, every Application with
+  that name is omitted, not only the later ones; Argo CD keys validation
+  errors by Application name.
+
+Each failure emits an `appset.application-validation-failed` warning carrying
+Argo CD's message, and the ApplicationSet's other Applications still
+generate. `--strict` promotes the warning to an error.
+
+## RollingSync Rollout Lint
+
+For `spec.strategy.type: RollingSync` with a `rollingSync` block, drydock
+checks the steps against the generated Applications' labels the way the Argo
+CD v3.6.1 controller does when progressive syncs are enabled:
+
+| Finding | Stable code | Argo CD v3.6.1 behavior |
+| --- | --- | --- |
+| Empty `steps` | `appset.rollout-no-steps` | `ErrorOccurred` ("No steps defined for rollout"); no Applications are created, updated, or deleted |
+| `matchExpressions` operator other than `In`/`NotIn` | `appset.invalid-rollout-config` | `InvalidRolloutConfig` condition |
+| Application selected by more than one step | `appset.invalid-rollout-config` | `InvalidRolloutConfig` condition |
+| Invalid `maxUpdate` value | `appset.invalid-rollout-config` | `InvalidRolloutConfig` condition |
+| Step that matches no generated Application | `appset.invalid-rollout-config` | `InvalidRolloutConfig` condition |
+
+These are warnings only: progressive syncs are an ApplicationSet controller
+flag drydock cannot observe, so drydock still generates the Applications.
+Messages reuse Argo CD's text; drydock reports every finding class, while the
+Argo CD condition shows the highest-priority one. The `maxUpdate` check
+assumes the cluster already holds the generated Applications. `--strict`
+promotes `appset.rollout-no-steps` to an error, because Argo CD stops
+reconciling the ApplicationSet. It neither escalates nor fails on
+`appset.invalid-rollout-config`, because Argo CD's `InvalidRolloutConfig`
+condition never blocks Applications, so a staged rollout whose later step has
+no Applications yet still passes `--strict` CI.
 
 ## Provider Fixtures
 
@@ -239,7 +283,7 @@ uses for each supported provider family:
 
 | Generator | Stable template parameters |
 | --- | --- |
-| `clusters` | `name`, `nameNormalized`, `server`, `project`, metadata labels/annotations, `values` |
+| `clusters` | `name`, `nameNormalized`, `server`, `project`, metadata labels/annotations (see below), `values` |
 | `clusterDecisionResource` | `name`, `server`, decision fields, `values` |
 | `scmProvider` | `organization`, `repository`, `repository_id`, `url`, `branch`, `branchNormalized`, `sha`, `short_sha`, `short_sha_7`, `labels`, `values` |
 | `pullRequest` | `number`, `title`, `branch`, `branch_slug`, `target_branch`, `target_branch_slug`, `head_sha`, `head_short_sha`, `head_short_sha_7`, `author`, `labels`, `values` |
@@ -252,3 +296,13 @@ notation, including `metadata.labels.<key>`, `metadata.annotations.<key>`, and
 For Go-template ApplicationSets, nested values remain available as maps or
 arrays, such as `.metadata.labels`, `.metadata.annotations`, `.labels`, and
 `.values`.
+
+As in Argo CD v3.6.1, `clusters` params never expose the reserved annotations
+`argocd.argoproj.io/refresh`, `argocd.argoproj.io/refresh-timestamp`,
+`argocd.argoproj.io/hydrate`, `argocd.argoproj.io/hydrate-timestamp`,
+`argocd.argoproj.io/tracking-id`, `argocd.argoproj.io/installation-id`, and
+`kubectl.kubernetes.io/last-applied-configuration`. In Go-template mode,
+`.metadata.annotations` exists only when the fixture cluster has annotations
+(an empty map when all of them are reserved). `.metadata.labels` is always
+present, an empty map when the fixture has no labels, because Argo CD only
+reads cluster Secrets that carry the `argocd.argoproj.io/secret-type` label.

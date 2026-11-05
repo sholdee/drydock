@@ -18,6 +18,10 @@ const (
 	CodePluginAutoDiscovery    = "plugin.auto-discovery-deferred"
 )
 
+// CodeAppSetInvalidRolloutConfig is the RollingSync rollout lint for Argo
+// CD's non-blocking InvalidRolloutConfig condition.
+const CodeAppSetInvalidRolloutConfig = "appset.invalid-rollout-config"
+
 type Provenance struct {
 	Path    string `json:"path,omitempty" yaml:"path,omitempty"`
 	Pointer string `json:"pointer,omitempty" yaml:"pointer,omitempty"`
@@ -152,6 +156,12 @@ func appSetCode(message string) string {
 		return "appset.template-render-failed"
 	case strings.Contains(message, "generated zero Applications"):
 		return "appset.generated-zero-applications"
+	case strings.Contains(message, "generated Application validation failed"):
+		return "appset.application-validation-failed"
+	case strings.Contains(message, "No steps defined for rollout"):
+		return "appset.rollout-no-steps"
+	case strings.Contains(message, "invalid RollingSync rollout config"):
+		return CodeAppSetInvalidRolloutConfig
 	default:
 		return "appset.unspecified"
 	}
