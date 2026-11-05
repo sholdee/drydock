@@ -137,6 +137,15 @@ Supported:
   secret-type-labelled cluster Secrets. The render parity smoke checks the
   hidden annotations in Go-template and fasttemplate modes against cluster
   Secrets applied to Argo CD.
+- Argo CD v3.6.1 Go types for provider generator params in Go-template mode.
+  Cluster `.metadata.annotations`, cluster `.metadata.labels`, and `.values`
+  from every generator that has `values` are `map[string]string`. The cluster
+  `flatList` `.clusters` param is a `[]map[string]any`. Pull-request `.labels`
+  is a `[]string`. Sprig map functions such as `hasKey`, `keys`, `pick`,
+  `omit`, `values`, and `dig` need a `map[string]any`, so they fail on these
+  maps. drydock then warns `appset.template-render-failed` and generates no
+  Applications for that ApplicationSet, as Argo CD does. The render parity
+  smoke checks a `hasKey` call on cluster annotations.
 - Argo CD v3.6.1 Go-template functions, including `tpl`, in templates,
   `templatePatch`, generator `values`, and matrix/merge child interpolation.
 - Fail-closed fixture diagnostics for invalid provider fixtures, no provider

@@ -328,7 +328,11 @@ func appendTemplatedValues(params map[string]any, values map[string]string, useG
 
 	renderer := &appsetutils.Render{}
 	if useGoTemplate {
-		renderedValues := map[string]any{}
+		// Argo CD v3.6.1 stores rendered values as map[string]string
+		// (applicationset/generators/value_interpolation.go:20-24). Keep
+		// that type so templates that call Sprig map functions on .values
+		// fail the same way.
+		renderedValues := map[string]string{}
 		for key, value := range values {
 			rendered, err := renderer.Replace(value, params, useGoTemplate, goTemplateOptions)
 			if err != nil {

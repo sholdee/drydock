@@ -347,6 +347,24 @@ For Go-template ApplicationSets, nested values remain available as maps or
 arrays, such as `.metadata.labels`, `.metadata.annotations`, `.labels`, and
 `.values`.
 
+These params have the same Go types as in Argo CD v3.6.1:
+
+| Param | Go type |
+| --- | --- |
+| `clusters` `.metadata.annotations` and `.metadata.labels` | `map[string]string` |
+| `.values` from any generator that sets `values` | `map[string]string` |
+| `clusters` `.clusters` with `flatList: true` | `[]map[string]any` |
+| `pullRequest` `.labels` | `[]string` |
+
+The type matters for Sprig map functions. `hasKey`, `keys`, `pick`, `omit`,
+`values`, and `dig` need a `map[string]any`, so they fail on a
+`map[string]string`. For example, `{{ hasKey .metadata.annotations "team" }}`
+fails in Argo CD. drydock fails it too: it warns
+`appset.template-render-failed`, and the ApplicationSet generates no
+Applications. To test for a key, use `{{ index .metadata.annotations "team" }}`
+instead, which returns an empty string when the key is missing, or range over
+the map.
+
 As in Argo CD v3.6.1, `clusters` params never expose the reserved annotations
 `argocd.argoproj.io/refresh`, `argocd.argoproj.io/refresh-timestamp`,
 `argocd.argoproj.io/hydrate`, `argocd.argoproj.io/hydrate-timestamp`,

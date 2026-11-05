@@ -74,11 +74,3 @@ func shortString(value string, limit int) string {
 	}
 	return value[:limit]
 }
-
-func stringMapAny(input map[string]string) map[string]any {
-	out := make(map[string]any, len(input))
-	for key, value := range input {
-		out[key] = value
-	}
-	return out
-}

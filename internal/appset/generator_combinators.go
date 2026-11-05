@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"maps"
+	"slices"
 
 	"dario.cat/mergo"
 	appsetutils "github.com/argoproj/argo-cd/v3/applicationset/utils"
@@ -140,16 +141,33 @@ func cloneParams(params map[string]any) map[string]any {
 	return out
 }
 
+// cloneParamValue copies the param shapes that generators produce, so a
+// merge never writes into another param set. Generators keep Argo CD's Go
+// types, such as map[string]string for cluster metadata and values, so the
+// copy keeps them too.
 func cloneParamValue(value any) any {
 	switch typed := value.(type) {
 	case map[string]any:
 		return cloneParams(typed)
+	case map[string]string:
+		return maps.Clone(typed)
 	case []any:
 		out := make([]any, len(typed))
 		for i, value := range typed {
 			out[i] = cloneParamValue(value)
 		}
 		return out
+	case []map[string]any:
+		if typed == nil {
+			return typed
+		}
+		out := make([]map[string]any, len(typed))
+		for i, value := range typed {
+			out[i] = cloneParams(value)
+		}
+		return out
+	case []string:
+		return slices.Clone(typed)
 	default:
 		return typed
 	}
