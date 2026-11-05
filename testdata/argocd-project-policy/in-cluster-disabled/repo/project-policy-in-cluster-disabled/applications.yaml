@@ -1,0 +1,16 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: project-policy-in-cluster-disabled-server
+  namespace: argocd
+spec:
+  project: project-policy-in-cluster-disabled-server
+  source:
+    repoURL: git://argocd-parity-git.argocd-parity.svc.cluster.local/repo.git
+    targetRevision: HEAD
+    path: project-policy-in-cluster-disabled/workloads/server
+    directory:
+      recurse: true
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: project-policy-workloads

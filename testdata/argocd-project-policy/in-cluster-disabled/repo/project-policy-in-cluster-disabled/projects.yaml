@@ -1,0 +1,16 @@
+# The project allows every destination. With cluster.inClusterEnabled set to
+# "false", Argo CD still rejects https://kubernetes.default.svc before it
+# checks the project (util/db/cluster.go:252-259, v3.6.1).
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: project-policy-in-cluster-disabled-server
+  namespace: argocd
+spec:
+  sourceRepos:
+    - git://argocd-parity-git.argocd-parity.svc.cluster.local/repo.git
+  destinations:
+    - server: "*"
+      namespace: "*"
+  sourceNamespaces:
+    - argocd

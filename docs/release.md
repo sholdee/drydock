@@ -229,6 +229,25 @@ namespace outcomes against the real Argo CD instance. It is not broad live
 authorization parity and excludes RBAC/Casbin, sync windows, orphaning,
 signatures, sync impersonation, and rendered-resource policy.
 
+The AppProject check runs in three phases, because two of them change state
+that every Application shares. The first phase also applies a project-scoped
+cluster Secret that only Argo CD sees. That Secret carries a short-lived
+ServiceAccount token, which the script passes to kubectl on stdin. The second
+phase adds a cluster Secret named `in-cluster` at another server and removes it
+afterward. The last phase sets argocd-cm `cluster.inClusterEnabled` to
+`"false"` and removes the key afterward.
+
+If a phase fails on a cluster from `--existing-cluster`, the cleanup trap
+removes the cluster Secret named `in-cluster` and the argocd-cm
+`cluster.inClusterEnabled` key. This reset undoes only the shared Argo CD
+state that phases 2 and 3 change. It leaves the first phase's live-only
+cluster Secret in place. It is for a manual rerun of one phase and
+for a look at the cluster afterward. It does not make a second full run on the
+same cluster pass. That run fails earlier, because the `argocd` and
+`argocd-parity` namespaces and the project-policy Applications are still
+there. With `--keep-cluster`, the trap does not reset this state, so that you
+can inspect the failed phase.
+
 This workflow is intentionally outside ordinary pull request CI. It always runs
 when manually dispatched, and CI calls it as a reusable workflow only when
 render parity fixtures change or `go.mod` changes touch semantic-rendering

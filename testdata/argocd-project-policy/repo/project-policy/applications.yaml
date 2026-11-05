@@ -99,3 +99,139 @@ spec:
   destination:
     server: https://kubernetes.default.svc
     namespace: project-policy-workloads
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: project-policy-destination-deny-server-wins
+  namespace: argocd
+spec:
+  project: project-policy-destination-deny-server-wins
+  source:
+    repoURL: git://argocd-parity-git.argocd-parity.svc.cluster.local/repo.git
+    targetRevision: HEAD
+    path: project-policy/workloads/destination-deny-server-wins
+    directory:
+      recurse: true
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: project-policy-workloads
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: project-policy-destination-deny-listed-first
+  namespace: argocd
+spec:
+  project: project-policy-destination-deny-listed-first
+  source:
+    repoURL: git://argocd-parity-git.argocd-parity.svc.cluster.local/repo.git
+    targetRevision: HEAD
+    path: project-policy/workloads/destination-deny-listed-first
+    directory:
+      recurse: true
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: project-policy-workloads
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: project-policy-destination-deny-namespace-wins
+  namespace: argocd
+spec:
+  project: project-policy-destination-deny-namespace-wins
+  source:
+    repoURL: git://argocd-parity-git.argocd-parity.svc.cluster.local/repo.git
+    targetRevision: HEAD
+    path: project-policy/workloads/destination-deny-namespace-wins
+    directory:
+      recurse: true
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: project-policy-workloads
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: project-policy-destination-deny-other-allowed
+  namespace: argocd
+spec:
+  project: project-policy-destination-deny-other-allowed
+  source:
+    repoURL: git://argocd-parity-git.argocd-parity.svc.cluster.local/repo.git
+    targetRevision: HEAD
+    path: project-policy/workloads/destination-deny-other-allowed
+    directory:
+      recurse: true
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: project-policy-workloads
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: project-policy-destination-name-in-cluster
+  namespace: argocd
+spec:
+  project: project-policy-destination-name-in-cluster
+  source:
+    repoURL: git://argocd-parity-git.argocd-parity.svc.cluster.local/repo.git
+    targetRevision: HEAD
+    path: project-policy/workloads/destination-name-in-cluster
+    directory:
+      recurse: true
+  destination:
+    name: in-cluster
+    namespace: project-policy-workloads
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: project-policy-destination-server-in-cluster-name-policy
+  namespace: argocd
+spec:
+  project: project-policy-destination-server-in-cluster-name-policy
+  source:
+    repoURL: git://argocd-parity-git.argocd-parity.svc.cluster.local/repo.git
+    targetRevision: HEAD
+    path: project-policy/workloads/destination-server-in-cluster-name-policy
+    directory:
+      recurse: true
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: project-policy-workloads
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: project-policy-destination-live-scoped-cluster
+  namespace: argocd
+spec:
+  project: project-policy-destination-live-scoped-cluster
+  source:
+    repoURL: git://argocd-parity-git.argocd-parity.svc.cluster.local/repo.git
+    targetRevision: HEAD
+    path: project-policy/workloads/destination-live-scoped-cluster
+    directory:
+      recurse: true
+  destination:
+    server: https://kubernetes.default.svc.cluster.local
+    namespace: project-policy-workloads
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: project-policy-destination-live-scoped-cluster-denied
+  namespace: argocd
+spec:
+  project: project-policy-destination-live-scoped-cluster-denied
+  source:
+    repoURL: git://argocd-parity-git.argocd-parity.svc.cluster.local/repo.git
+    targetRevision: HEAD
+    path: project-policy/workloads/destination-live-scoped-cluster-denied
+    directory:
+      recurse: true
+  destination:
+    server: https://kubernetes.default.svc.cluster.local
+    namespace: project-policy-workloads

@@ -1,0 +1,12 @@
+# drydock reads this setting from the repository. The smoke patches the same
+# key into the live argocd-cm instead of applying this file, then removes it.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: argocd-cm
+  namespace: argocd
+  labels:
+    app.kubernetes.io/name: argocd-cm
+    app.kubernetes.io/part-of: argocd
+data:
+  cluster.inClusterEnabled: "false"

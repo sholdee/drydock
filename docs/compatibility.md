@@ -21,7 +21,15 @@ maintainer workflow details.
 
 It also runs a thin live AppProject Application-spec policy sanity check for
 source repository, destination, and source namespace outcomes against the real
-Argo CD instance.
+Argo CD instance. The destination cases include these:
+
+- A deny entry that wins over an allow entry, listed before or after it.
+- The built-in `in-cluster` cluster, by name and by server.
+- A cluster Secret named `in-cluster` at another server.
+- argocd-cm `cluster.inClusterEnabled` set to `"false"`.
+- A project-scoped cluster Secret that only the live Argo CD has. Argo CD
+  allows this destination. drydock cannot see the Secret, so the check
+  requires a deferred diagnostic and no denial.
 
 This check is scoped to generated desired state. Live-only runtime behavior
 such as Kubernetes defaulting, admission mutation, server-side diff, managed
@@ -760,6 +768,40 @@ after the selected project diagnostic mode is applied.
 | `spec.signatureKeys` | `types.go`, Argo GPG verification in `controller/state.go` and repo-server verification | Unsupported runtime verification | None | Deprecated upstream in favor of `spec.sourceIntegrity`; `EffectiveSourceIntegrity` converts the keys into a Git GPG policy for every repository. Requires GPG keyring state, repo-server verification result, and resolved commit metadata |
 | `spec.sourceIntegrity` | `types.go`, `EffectiveSourceIntegrity`, source integrity checks in `controller/state.go` and repo-server verification | Unsupported runtime verification | None | Requires GPG keyring state, repo-server verification result, and resolved commit metadata |
 | `spec.destinationServiceAccounts` | `types.go`, `ValidateProject`, `controller/sync.go` sync impersonation runtime | Runtime-bound metadata | None | Sync impersonation is applied during controller sync; drydock does not mutate REST config or validate live service account authorization |
+
+### AppProject Known Gap: Live Cluster Secret At The In-Cluster Address
+
+Some repositories have no cluster Secret at `https://kubernetes.default.svc`.
+In those repositories, drydock treats a destination at that server as Argo
+CD's built-in `in-cluster` cluster. A name-only `in-cluster` destination
+resolves the same way. drydock then checks the AppProject against the
+built-in cluster. If no destination entry allows it, drydock reports a
+definite `project.destination-denied` warning.
+
+The live Argo CD can decide differently. A cluster Secret at the in-cluster
+address takes the place of the built-in cluster (`util/db/cluster.go:261-266`
+in Argo CD v3.6.1). Suppose that Secret exists only in the live cluster and
+its `project` field names the Application's project. Argo CD then adds an
+implicit destination for its server to that project
+(`util/argo/argo.go:832-844`). That implicit destination can allow the
+Application that drydock denies. The Secret's name can also change how name
+entries match.
+
+drydock keeps the definite denial. It does not defer this case. The live
+Secret keeps the in-cluster server, so a server deny entry that matches
+`https://kubernetes.default.svc` denies in Argo CD too. Name entries are
+different. Argo CD matches them against the live Secret's name, and drydock
+matches them against `in-cluster` (`globMatch` and `isDestinationMatched` in
+`pkg/apis/application/v1alpha1/app_project_types.go`). For example, suppose
+the live Secret has the name `local`. The name deny entry `!in-cluster` then
+matches in Argo CD and allows the Application, but drydock denies it. In the
+other direction, the name deny entry `!local` denies in Argo CD, but drydock
+allows the Application. So this gap affects denials where no entry allows the
+cluster, and any result that depends on a name entry. To get Argo CD's
+result, put that cluster Secret in the repository, so that drydock can read
+its metadata. When drydock denies a destination that it resolved to the
+built-in cluster, the `project.destination-denied` message says so. The
+message also names this fix.
 
 ### AppProject Current Behavior Traceability
 

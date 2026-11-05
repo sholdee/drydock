@@ -1,0 +1,16 @@
+# The project allows only https://kubernetes.default.svc. The Application
+# names in-cluster, which the cluster Secret above points elsewhere, so Argo
+# CD denies it.
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: project-policy-in-cluster-secret-name
+  namespace: argocd
+spec:
+  sourceRepos:
+    - git://argocd-parity-git.argocd-parity.svc.cluster.local/repo.git
+  destinations:
+    - server: https://kubernetes.default.svc
+      namespace: project-policy-workloads
+  sourceNamespaces:
+    - argocd

@@ -57,6 +57,24 @@ treated as a rendering regression for the covered fixture set.
 | Config management plugins | Named CMP sidecar with no `discover` block against a trusted `engine: exec` policy: the `ARGOCD_APP_*` build environment, `spec.source.plugin.env` delivered as `ARGOCD_ENV_<name>` after build-environment substitution and never under its bare name, the exact `ARGOCD_APP_PARAMETERS` JSON, and the `PARAM_*` surface with no extra names |
 | Tracking and resources | Argo CD tracking metadata, repeated-resource last-wins behavior, CRDs excluded from tracking metadata, hook-annotated resources excluded from the manifests view across all source types (helm test hooks, Argo CD sync hooks; `crd-install` kept) but still validated against AppProject resource policy, as Argo CD validates hook tasks at sync time and delete hooks at deletion |
 
+## AppProject Policy Check
+
+The same smoke also checks AppProject Application-spec policy against the live
+Argo CD. It compares the policy conditions Argo CD sets on each fixture
+Application with the diagnostics `drydock diag` reports. The cases cover
+source repositories, source namespaces, and destinations. The destination cases
+cover these rules:
+
+- A deny entry (`!`) wins over an allow entry, listed before or after it.
+- A destination named `in-cluster`, or at server
+  `https://kubernetes.default.svc`, reaches the built-in cluster when no cluster
+  Secret claims it.
+- A cluster Secret named `in-cluster` takes that name from the built-in cluster.
+- argocd-cm `cluster.inClusterEnabled: "false"` rejects the built-in cluster.
+- A project-scoped cluster Secret that exists only in the live Argo CD adds a
+  destination that drydock cannot see. drydock must report a deferred
+  diagnostic, not a denial.
+
 The source of truth for the active fixture inventory is the parity smoke script;
 this table summarizes the covered semantics rather than enumerating every
 fixture name.

@@ -376,6 +376,98 @@ func TestValidateApplicationsDenyEntryWinsOverProjectScopedClusterDestination(t 
 	assertDiagnostic(t, diags, "destination is not permitted")
 }
 
+// A deny entry wins whether it comes before or after the allow entry: Argo
+// CD returns false as soon as a deny entry rejects the destination
+// (pkg/apis/application/v1alpha1/app_project_types.go:507-527, v3.6.1). The
+// built-in in-cluster cluster is the oracle input for both orders.
+func TestValidateApplicationsDenyEntryWinsInEitherOrder(t *testing.T) {
+	deny := argoappv1.ApplicationDestination{Server: "!" + argoappv1.KubernetesInternalAPIServerAddr, Namespace: "*"}
+	allow := argoappv1.ApplicationDestination{Server: "*", Namespace: "*"}
+	app := application("demo", "platform", argoappv1.ApplicationSource{
+		RepoURL: "https://github.com/example/repo",
+		Path:    "apps/demo",
+	}, argoappv1.ApplicationDestination{Server: argoappv1.KubernetesInternalAPIServerAddr, Namespace: "workloads"})
+	builtIn := &argoappv1.Cluster{Name: argoappv1.KubernetesInClusterName, Server: argoappv1.KubernetesInternalAPIServerAddr}
+
+	for _, tt := range []struct {
+		name         string
+		destinations []argoappv1.ApplicationDestination
+	}{
+		{name: "deny listed first", destinations: []argoappv1.ApplicationDestination{deny, allow}},
+		{name: "deny listed last", destinations: []argoappv1.ApplicationDestination{allow, deny}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			proj := destinationProject(tt.destinations...)
+			argoPermitted, err := proj.IsDestinationPermitted(builtIn, "workloads", nil)
+			if err != nil {
+				t.Fatalf("IsDestinationPermitted() error = %v", err)
+			}
+			if argoPermitted {
+				t.Fatalf("Argo CD permitted %#v, want denied", tt.destinations)
+			}
+			diags := ValidateApplications([]argoappv1.Application{app}, []argoappv1.AppProject{proj}, config.DefaultSettings())
+			assertDiagnostic(t, diags, "destination is not permitted")
+		})
+	}
+}
+
+func TestValidateApplicationsInClusterDenialHintsAtLiveClusterSecret(t *testing.T) {
+	const hint = "if a live cluster Secret at that address names this project, Argo CD can allow it"
+	inClusterApp := application("demo", "platform", argoappv1.ApplicationSource{
+		RepoURL: "https://github.com/example/repo",
+		Path:    "apps/demo",
+	}, argoappv1.ApplicationDestination{Server: argoappv1.KubernetesInternalAPIServerAddr, Namespace: "workloads"})
+	proj := destinationProject(argoappv1.ApplicationDestination{Server: "https://other.example", Namespace: "*"})
+
+	for _, tt := range []struct {
+		name     string
+		app      argoappv1.Application
+		settings func() config.ArgoSettings
+		wantHint bool
+	}{
+		{name: "server-only built-in cluster", app: inClusterApp, settings: config.DefaultSettings, wantHint: true},
+		{name: "name-only built-in cluster", app: nameOnlyApplication(argoappv1.KubernetesInClusterName, "workloads"), settings: config.DefaultSettings, wantHint: true},
+		{
+			name: "repository cluster Secret at the in-cluster address",
+			app:  inClusterApp,
+			settings: func() config.ArgoSettings {
+				settings := config.DefaultSettings()
+				settings.Clusters[argoappv1.KubernetesInternalAPIServerAddr] = config.ClusterSettings{Name: "local", Server: argoappv1.KubernetesInternalAPIServerAddr}
+				return settings
+			},
+		},
+		{
+			name: "repository cluster Secret elsewhere",
+			app: application("demo", "platform", argoappv1.ApplicationSource{
+				RepoURL: "https://github.com/example/repo",
+				Path:    "apps/demo",
+			}, argoappv1.ApplicationDestination{Server: "https://team.example", Namespace: "workloads"}),
+			settings: func() config.ArgoSettings {
+				settings := config.DefaultSettings()
+				settings.Clusters["https://team.example"] = config.ClusterSettings{Name: "team", Server: "https://team.example"}
+				return settings
+			},
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			diags := ValidateApplications([]argoappv1.Application{tt.app}, []argoappv1.AppProject{proj}, tt.settings())
+			denials := 0
+			for _, diag := range diags {
+				if !strings.Contains(diag.Message, "destination is not permitted by AppProject") {
+					continue
+				}
+				denials++
+				if got := strings.Contains(diag.Message, hint); got != tt.wantHint {
+					t.Fatalf("message %q contains hint = %v, want %v", diag.Message, got, tt.wantHint)
+				}
+			}
+			if denials != 1 {
+				t.Fatalf("Diagnostics = %#v, want one destination denial", diags)
+			}
+		})
+	}
+}
+
 func nameOnlyApplication(cluster, namespace string) argoappv1.Application {
 	return application("demo", "platform", argoappv1.ApplicationSource{
 		RepoURL: "https://github.com/example/repo",

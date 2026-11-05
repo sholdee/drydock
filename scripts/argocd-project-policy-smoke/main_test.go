@@ -347,3 +347,104 @@ func writeFile(t *testing.T, path, content string) {
 		t.Fatalf("WriteFile(%q) error = %v", path, err)
 	}
 }
+
+func TestCompareChecksDrydockDeferredCode(t *testing.T) {
+	deferred := `{
+      "code": "project.unspecified",
+      "severity": "warning",
+      "category": "project",
+      "message": "Application argocd/project-policy-live destination server \"https://live.example\" has no cluster Secret; its cluster name cannot be resolved against AppProject name policy offline",
+      "provenance": {"path": "argocd/project-policy-live"}
+    }`
+	denied := `{
+      "code": "project.destination-denied",
+      "severity": "warning",
+      "category": "project",
+      "message": "Application argocd/project-policy-live destination is not permitted by AppProject \"project-policy-live\"",
+      "provenance": {"path": "argocd/project-policy-live"}
+    }`
+	for _, tt := range []struct {
+		name         string
+		expectedCase string
+		diagnostics  string
+		wantFailures []string
+	}{
+		{
+			name:         "deferred as expected",
+			expectedCase: "    drydockDeferredCode: project.unspecified\n",
+			diagnostics:  deferred,
+		},
+		{
+			name:         "denied instead of deferred",
+			expectedCase: "    drydockDeferredCode: project.unspecified\n",
+			diagnostics:  denied,
+			wantFailures: []string{
+				"drydock diagnostic codes got project.destination-denied, want none",
+				"drydock deferred diagnostic codes got none, want project.unspecified",
+			},
+		},
+		{
+			name:        "deferred when no deferral is expected",
+			diagnostics: deferred,
+			wantFailures: []string{
+				"drydock deferred diagnostic codes got project.unspecified, want none",
+			},
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			root := t.TempDir()
+			appDir := filepath.Join(root, "apps")
+			if err := os.Mkdir(appDir, 0o755); err != nil {
+				t.Fatalf("Mkdir() error = %v", err)
+			}
+			writeApplicationJSON(t, appDir, "argocd", "project-policy-live")
+			expectedPath := filepath.Join(root, "expected.yaml")
+			writeFile(t, expectedPath, `cases:
+  - name: project-policy-live
+    namespace: argocd
+    argocdCondition: none
+    drydockDiagnosticCode: ""
+`+tt.expectedCase)
+			diagnosticsPath := filepath.Join(root, "drydock.json")
+			writeFile(t, diagnosticsPath, `{"diagnostics": [`+tt.diagnostics+`]}`)
+
+			result, err := compare(options{
+				ArgoCDAppDir:       appDir,
+				DrydockDiagnostics: diagnosticsPath,
+				Expected:           expectedPath,
+			})
+			if err != nil {
+				t.Fatalf("compare() error = %v", err)
+			}
+			if len(result.Failures) != len(tt.wantFailures) {
+				t.Fatalf("Failures = %#v, want %d failures %q", result.Failures, len(tt.wantFailures), tt.wantFailures)
+			}
+			for i, want := range tt.wantFailures {
+				if !strings.Contains(result.Failures[i], want) {
+					t.Fatalf("Failures[%d] = %q, want it to contain %q", i, result.Failures[i], want)
+				}
+			}
+		})
+	}
+}
+
+// Argo CD v3.6.1 words cluster lookup failures without "destination"
+// (util/argo/argo.go:1152-1193), and they are destination failures.
+func TestPolicyConditionCategoriesClassifiesClusterLookupErrors(t *testing.T) {
+	for _, tt := range []struct {
+		message string
+		want    conditionCategory
+	}{
+		{message: `error getting cluster by server "https://kubernetes.default.svc": rpc error: code = NotFound desc = cluster "https://kubernetes.default.svc" is disabled`, want: conditionCategoryDestination},
+		{message: `error getting cluster by server "https://repo.example": rpc error: code = NotFound desc = cluster "https://repo.example" not found`, want: conditionCategoryDestination},
+		{message: "there are no clusters with this name: in-cluster", want: conditionCategoryDestination},
+		{message: "there are 2 clusters with the same name: [https://a.example https://b.example]", want: conditionCategoryDestination},
+		{message: "application destination server 'in-cluster' and namespace 'workloads' do not match any of the allowed destinations in project 'demo'", want: conditionCategoryDestination},
+		{message: "application repo https://example.invalid/repo.git is not permitted in project 'demo'", want: conditionCategorySource},
+	} {
+		got := policyConditionCategories([]appCondition{invalidSpecCondition(tt.message)})
+		if len(got) != 1 || got[0] != tt.want {
+			t.Fatalf("policyConditionCategories(%q) = %v, want [%s]", tt.message, got, tt.want)
+		}
+	}
+}

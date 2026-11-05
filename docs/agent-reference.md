@@ -513,3 +513,17 @@ GitHub Actions, `.github/workflows/argocd-parity-smoke.yml` provisions
 `scripts/argocd-parity-smoke.sh --existing-cluster`. Keep the CI module
 detector small and keep setup input versions covered by
 `.github/renovate.json5` custom managers.
+
+The AppProject policy part of the smoke runs in phases under
+`testdata/argocd-project-policy/`. Each phase has a case array in the script,
+an `expected.yaml`, and an `applications.yaml`.
+`go test ./scripts/argocd-project-policy-smoke` checks that the three agree.
+A case that changes state every Application shares, such as a cluster Secret
+named `in-cluster` or an argocd-cm key, goes in a later phase with its own
+fixture repo. Add its undo step to `reset_project_policy_shared_state`, so the
+cleanup trap also undoes it after a failed run on an existing cluster. The
+trap skips that reset with `--keep-cluster`. Cluster Secrets that only Argo
+CD sees go in `live-cluster-secrets.yaml`, outside every drydock repo. The
+first phase applies the Secret `project-policy-live-scoped-cluster` from that
+file. The script leaves that Secret in place on purpose and applies it again
+on each run, so the reset does not remove it.
