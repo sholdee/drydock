@@ -19,9 +19,29 @@ type KnownTypeField struct {
 	Field string
 	Type  string
 }
+
+// IgnoreRule holds the jsonPointers and jqPathExpressions of one
+// ignore-differences rule that matches a resource. Argo CD v3.6.1 applies a
+// rule's pointers first and then its jq expressions, one rule at a time
+// (util/argo/normalizers/diff_normalizer.go:142-176). Every copy of a repeated
+// pointer or expression is kept, because a repeated array-index pointer
+// removes one more element each time.
+type IgnoreRule struct {
+	JSONPointers      []string
+	JQPathExpressions []string
+}
+
+// Normalization holds the diff normalization for one resource. The ignore
+// rules run in Argo CD's order: ApplicationRules, then the
+// AnnotationJSONPointers rule, then CustomizationRules
+// (util/argo/diff/ignore.go:118-122 and 155-159, diff_normalizer.go:122-140).
 type Normalization struct {
-	JSONPointers          []string
-	JQPathExpressions     []string
+	// ApplicationRules are the matching Application spec.ignoreDifferences
+	// entries, in spec order.
+	ApplicationRules []IgnoreRule
+	// CustomizationRules are the matching resource.customizations
+	// ignoreDifferences entries, in sorted key order.
+	CustomizationRules    []IgnoreRule
 	ManagedFieldsManagers []string
 	KnownTypeFields       []KnownTypeField
 	CompareOptions        CompareOptions
@@ -109,31 +129,24 @@ func diffResultForKey(leftByKey, rightByKey map[string]Document, key string, opt
 }
 
 func documentsWithSharedNormalization(left, right Document, hasLeft, hasRight bool) (Document, Document) {
-	normalization := Normalization{}
-	var compareOptions CompareOptions
-	var hasCompareOptions bool
-	if hasLeft {
-		normalization = appendUniqueNormalization(normalization, left.Normalization)
-		compareOptions = left.Normalization.CompareOptions
-		hasCompareOptions = true
+	var normalization Normalization
+	switch {
+	case hasLeft && hasRight:
+		normalization = mergeNormalization(left.Normalization, right.Normalization)
+	case hasLeft:
+		normalization = left.Normalization
+	case hasRight:
+		normalization = right.Normalization
 	}
-	if hasRight {
-		normalization = appendUniqueNormalization(normalization, right.Normalization)
-		if hasCompareOptions {
-			compareOptions = mergeCompareOptions(compareOptions, right.Normalization.CompareOptions)
-		} else {
-			compareOptions = right.Normalization.CompareOptions
-		}
-	}
-	normalization.CompareOptions = compareOptions
 	// Argo CD reads the ignore-differences annotation from the desired (target)
-	// object only. drydock compares desired against desired, so the current
-	// (right) side stands in for the target and the baseline is used only when
-	// the resource no longer exists on the current side.
+	// objects only (util/argo/diff/normalize.go:14-15, diff.go:290-291,
+	// ignore.go:130-131). drydock compares desired against desired, so the
+	// current (right) side stands in for the target. A resource that exists
+	// only on the baseline side has no target, so its own annotation does not
+	// normalize it.
+	normalization.AnnotationJSONPointers = nil
 	if hasRight {
 		normalization.AnnotationJSONPointers = right.Normalization.AnnotationJSONPointers
-	} else if hasLeft {
-		normalization.AnnotationJSONPointers = left.Normalization.AnnotationJSONPointers
 	}
 	if hasLeft {
 		left.Normalization = cloneNormalization(normalization)

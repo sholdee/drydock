@@ -6,6 +6,7 @@ import (
 
 	argoappv1 "github.com/argoproj/argo-cd/v3/pkg/apis/application/v1alpha1"
 	"github.com/sholdee/drydock/internal/config"
+	"github.com/sholdee/drydock/internal/diff"
 	"github.com/sholdee/drydock/internal/manifest"
 )
 
@@ -37,7 +38,7 @@ func TestNormalizationForGlobSemanticsMatchGobwasV1(t *testing.T) {
 				Kind:         tt.kind,
 				JSONPointers: []string{"/spec/replicas"},
 			}}}}
-			got := slices.Contains(normalizationFor(app, id, config.DefaultSettings()).JSONPointers, "/spec/replicas")
+			got := ruleListHasPointer(normalizationFor(app, id, config.DefaultSettings()).ApplicationRules, "/spec/replicas")
 			if got != tt.want {
 				t.Fatalf("ignoreDifferences group %q on %q applied = %t, want %t", tt.pattern, tt.group, got, tt.want)
 			}
@@ -46,7 +47,7 @@ func TestNormalizationForGlobSemanticsMatchGobwasV1(t *testing.T) {
 			settings.ResourceCustomizations[tt.pattern+"/"+tt.kind] = config.ResourceCustomization{
 				IgnoreDifferences: config.OverrideIgnoreDifferences{JSONPointers: []string{"/spec/template"}},
 			}
-			got = slices.Contains(normalizationFor(argoappv1.Application{}, id, settings).JSONPointers, "/spec/template")
+			got = ruleListHasPointer(normalizationFor(argoappv1.Application{}, id, settings).CustomizationRules, "/spec/template")
 			if got != tt.want {
 				t.Fatalf("resource.customizations key %q on group %q applied = %t, want %t", tt.pattern+"/"+tt.kind, tt.group, got, tt.want)
 			}
@@ -59,7 +60,16 @@ func TestNormalizationForGlobSemanticsMatchGobwasV1(t *testing.T) {
 		Kind:         "D*Deployment",
 		JSONPointers: []string{"/spec/replicas"},
 	}}}}
-	if got := normalizationFor(app, manifest.Identity{Group: "apps", Kind: "Deployment"}, config.DefaultSettings()).JSONPointers; len(got) != 0 {
-		t.Fatalf("ignoreDifferences kind D*Deployment on Deployment JSONPointers = %v, want none", got)
+	if got := normalizationFor(app, manifest.Identity{Group: "apps", Kind: "Deployment"}, config.DefaultSettings()).ApplicationRules; len(got) != 0 {
+		t.Fatalf("ignoreDifferences kind D*Deployment on Deployment rules = %v, want none", got)
 	}
+}
+
+func ruleListHasPointer(rules []diff.IgnoreRule, pointer string) bool {
+	for _, rule := range rules {
+		if slices.Contains(rule.JSONPointers, pointer) {
+			return true
+		}
+	}
+	return false
 }

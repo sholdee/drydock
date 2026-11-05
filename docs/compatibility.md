@@ -717,6 +717,34 @@ Supported:
 - Global `resource.customizations.ignoreDifferences.*`,
   `knownTypeFields.*`, selected compare options, resource exclusions, and
   resource inclusions.
+- Ignore rule order as in Argo CD v3.6.1. Application rules run first, then
+  the resource's annotation rule, then `resource.customizations` rules
+  (`util/argo/diff/ignore.go`, `util/argo/normalizers/diff_normalizer.go`).
+  Each rule removes its `jsonPointers` and then its `jqPathExpressions` before
+  the next rule runs. drydock keeps every copy of a repeated pointer or
+  expression, so a repeated array-index pointer removes one element per copy.
+  Argo CD walks `resource.customizations` in Go map order, which is not
+  defined. drydock uses sorted key order so the result is stable.
+- `resource.customizations` keys as Argo CD reads them for `jsonPointers`,
+  `jqPathExpressions`, and `knownTypeFields`
+  (`util/argo/normalizers/util.go`): `group/kind` matches with globs, a key
+  with no slash such as `Service` means that kind in the core group, and a key
+  with more than one slash matches nothing. For `managedFieldsManagers`, Argo
+  CD reads keys in a different way (`util/argo/diff/ignore.go`). It looks up
+  the exact text `group/kind` and the key `*/*`, with no globs. A core
+  resource has the lookup key `/Kind`, so a key with no slash such as
+  `Service` never applies its managers. Use `/Service`, or the split key
+  `resource.customizations.ignoreDifferences._Service`. drydock matches this
+  behavior. `knownTypeFields` apply only when
+  the key's group and kind equal the resource's group and kind, with no glob
+  matching. Argo Rollouts always get Argo CD's default known type, a PodSpec at
+  `spec.template.spec`, unless a key sets `knownTypeFields` for
+  `argoproj.io/Rollout`. The known-types normalizer runs after the ignore
+  rules, as in Argo CD (`util/argo/diff/normalize.go`).
+- When the two diff sides carry different ignore settings, drydock applies
+  the union. It keeps the baseline side's rules in order and adds the current
+  side's rules that the baseline does not have. Rules that both sides share
+  run once, so identical settings give exactly Argo CD's rule list.
 - Resource-level `argocd.argoproj.io/ignore-differences` annotations, as in
   Argo CD v3.6.1: the value is YAML with only `jsonPointers`, the rule applies
   only to the annotated resource (including child Application CRs), and an
@@ -730,12 +758,12 @@ Supported:
   out-of-range array index, `-`, or a root `""` pointer) is skipped; it never
   fails the diff or hides the resource. Application-level and global
   `jsonPointers` keep their strict RFC 6901 validation.
-- Recorded divergence from strict Argo CD v3.6.1: Argo CD reads the
-  ignore-differences annotation from the desired (target) object and applies
-  the rule to live and target. drydock compares desired against desired, so
-  it reads the annotation from the current-side manifest, falls back to the
-  baseline manifest only when the resource exists only on the baseline side,
-  and applies the rule to both sides.
+- Argo CD reads the ignore-differences annotation only from the desired
+  (target) object and applies the rule to live and target. drydock compares
+  desired against desired, so the current-side manifest stands in for the
+  target. drydock reads the annotation from the current-side manifest and
+  applies the rule to both sides. A resource that exists only on the baseline
+  side has no target, so its own annotation does not normalize it.
 - Repeated-resource last-wins behavior inside one Application, with a
   diagnostic.
 - `get images` and `diff images` rendered image reference extraction from

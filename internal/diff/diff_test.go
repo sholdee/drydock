@@ -775,8 +775,8 @@ func TestRunShowIgnoredFieldsIncludesDefaultIgnoredHelmMetadata(t *testing.T) {
 func TestRunIgnoreJSONPointerSuppressesReplicasDiff(t *testing.T) {
 	left := []Document{deploymentDocument("1", nil)}
 	right := []Document{deploymentDocument("2", nil)}
-	left[0].Normalization.JSONPointers = []string{"/spec/replicas"}
-	right[0].Normalization.JSONPointers = []string{"/spec/replicas"}
+	left[0].Normalization.ApplicationRules = []IgnoreRule{{JSONPointers: []string{"/spec/replicas"}}}
+	right[0].Normalization.ApplicationRules = []IgnoreRule{{JSONPointers: []string{"/spec/replicas"}}}
 
 	results, err := Run(left, right, Options{Unified: 3})
 	if err != nil {
@@ -892,7 +892,7 @@ data:
   a/b~c: remove
   keep: same
 `,
-		Normalization: Normalization{JSONPointers: []string{"/data/a~1b~0c"}},
+		Normalization: Normalization{ApplicationRules: []IgnoreRule{{JSONPointers: []string{"/data/a~1b~0c"}}}},
 	}
 
 	body, err := normalizeDocumentBody(doc, Options{})
@@ -1325,7 +1325,7 @@ func configMapDocument(value string, pointers []string) Document {
 			Name:      "cfg",
 		},
 		Body:          "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: cfg\n  namespace: default\ndata:\n  value: " + value + "\n",
-		Normalization: Normalization{JSONPointers: pointers},
+		Normalization: Normalization{ApplicationRules: []IgnoreRule{{JSONPointers: pointers}}},
 	}
 }
 
@@ -1356,7 +1356,7 @@ spec:
             - name: second
               value: two
 `,
-		Normalization: Normalization{JSONPointers: pointers},
+		Normalization: Normalization{ApplicationRules: []IgnoreRule{{JSONPointers: pointers}}},
 	}
 }
 
@@ -1451,7 +1451,7 @@ func secretDocument(password, token string, pointers []string) Document {
 			Name:      "creds",
 		},
 		Body:          "apiVersion: v1\nkind: Secret\nmetadata:\n  name: creds\n  namespace: default\ndata:\n  password: " + password + "\n  token: " + token + "\n",
-		Normalization: Normalization{JSONPointers: pointers},
+		Normalization: Normalization{ApplicationRules: []IgnoreRule{{JSONPointers: pointers}}},
 	}
 }
 

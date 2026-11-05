@@ -80,7 +80,12 @@ func TestRunAnnotationJSONPointersIgnoreBaselineWhenCurrentSideExists(t *testing
 	}
 }
 
-func TestRunAnnotationJSONPointersFallBackToBaselineForRemovedResource(t *testing.T) {
+// TestRunAnnotationJSONPointersSkipRemovedResource checks that a resource
+// that exists only on the baseline side is not normalized by its own
+// annotation. Argo CD reads the annotation only from target objects
+// (util/argo/diff/normalize.go:14-15, ignore.go:130-131), and a removed
+// resource has no target.
+func TestRunAnnotationJSONPointersSkipRemovedResource(t *testing.T) {
 	left := []Document{annotationDeploymentDocument("1", []string{"/spec/replicas"})}
 
 	results, err := Run(left, nil, Options{Unified: 3})
@@ -90,8 +95,8 @@ func TestRunAnnotationJSONPointersFallBackToBaselineForRemovedResource(t *testin
 	if len(results) != 1 || results[0].Change != ChangeRemoved {
 		t.Fatalf("results = %#v, want one removed resource", results)
 	}
-	if strings.Contains(results[0].Diff, "replicas") {
-		t.Fatalf("Diff = %q, want baseline annotation pointer applied to removed resource", results[0].Diff)
+	if !strings.Contains(results[0].Diff, "-  replicas: 1") {
+		t.Fatalf("Diff = %q, want baseline annotation pointer not applied to removed resource", results[0].Diff)
 	}
 }
 
@@ -161,8 +166,8 @@ func TestRunAnnotationRootPointerDoesNotHideAddedResource(t *testing.T) {
 func TestRunAnnotationJSONPointersComposeWithStrictPointers(t *testing.T) {
 	left := annotationDeploymentDocument("1", []string{"/spec/template/spec/containers/0/env"})
 	right := annotationDeploymentDocument("2", []string{"/spec/template/spec/containers/0/env"})
-	left.Normalization.JSONPointers = []string{"/spec/replicas"}
-	right.Normalization.JSONPointers = []string{"/spec/replicas"}
+	left.Normalization.ApplicationRules = []IgnoreRule{{JSONPointers: []string{"/spec/replicas"}}}
+	right.Normalization.ApplicationRules = []IgnoreRule{{JSONPointers: []string{"/spec/replicas"}}}
 	right.Body = strings.Replace(right.Body, "value: two", "value: changed", 1)
 
 	results, err := Run([]Document{left}, []Document{right}, Options{Unified: 3})

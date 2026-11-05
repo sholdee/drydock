@@ -8,6 +8,7 @@ import (
 	"github.com/sholdee/drydock/internal/format"
 	"go.yaml.in/yaml/v3"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"slices"
 	"strings"
 )
 
@@ -84,10 +85,10 @@ func normalizeDiffBodyForResource(body string, opts Options, normalization Norma
 	attrs := stripAttrSet(opts.StripAttrs)
 	if !requiresDefaultIgnoredFieldNormalization(body, opts) &&
 		len(attrs) == 0 &&
-		len(normalization.JSONPointers) == 0 &&
+		len(normalization.ApplicationRules) == 0 &&
 		len(normalization.AnnotationJSONPointers) == 0 &&
-		len(normalization.JQPathExpressions) == 0 &&
-		len(normalization.KnownTypeFields) == 0 &&
+		len(normalization.CustomizationRules) == 0 &&
+		!knownTypeFieldsApply(resource, normalization.KnownTypeFields) &&
 		!compareOptionsRequireObject(resource, normalization.CompareOptions) {
 		return body, nil
 	}
@@ -116,14 +117,14 @@ func normalizeDiffObject(body string, opts Options, normalization Normalization,
 	if body == "" {
 		return nil, false, nil
 	}
-	if err := validateJSONPointers(normalization.JSONPointers); err != nil {
-		return nil, false, err
+	for _, rules := range [][]IgnoreRule{normalization.ApplicationRules, normalization.CustomizationRules} {
+		for _, rule := range rules {
+			if err := validateJSONPointers(rule.JSONPointers); err != nil {
+				return nil, false, err
+			}
+		}
 	}
 	object, err := decodeDiffYAML(body)
-	if err != nil {
-		return nil, false, err
-	}
-	object, err = normalizeKnownTypeFields(object, resource, normalization.KnownTypeFields)
 	if err != nil {
 		return nil, false, err
 	}
@@ -131,23 +132,76 @@ func normalizeDiffObject(body string, opts Options, normalization Normalization,
 	if !opts.ShowIgnoredFields {
 		stripDefaultIgnoredFields(object)
 	}
-	object, err = removeJSONPointers(object, normalization.JSONPointers)
+	object, err = applyIgnoreRules(object, normalization)
 	if err != nil {
 		if errors.Is(err, errJSONPointerRemovedRoot) {
 			return nil, true, nil
 		}
 		return nil, false, err
 	}
-	object = removeAnnotationJSONPointers(object, normalization.AnnotationJSONPointers)
-	object, err = removeJQPathExpressions(object, normalization.JQPathExpressions)
+	object = normalizeCompareOptionsObject(object, resource, normalization.CompareOptions)
+	// Argo CD runs the known-types normalizer after the ignore normalizer
+	// (util/argo/diff/normalize.go:46-57). The order matters: a jq select can
+	// match a value before remarshaling changes it, and an ignore rule can
+	// remove a field that would fail to remarshal.
+	object, err = normalizeKnownTypeFields(object, resource, normalization.KnownTypeFields)
 	if err != nil {
 		return nil, false, err
 	}
-	object = normalizeCompareOptionsObject(object, resource, normalization.CompareOptions)
 	return object, false, nil
 }
+
+// applyIgnoreRules applies the ignore rules in Argo CD's order: Application
+// rules, then the resource's annotation rule, then resource.customizations
+// rules. Each rule applies its JSON pointers and then its jq expressions
+// (util/argo/normalizers/diff_normalizer.go:142-176). Application and
+// customization pointers keep drydock's strict RFC 6901 handling. Annotation
+// pointers are lenient, as Argo CD only logs a failed patch.
+func applyIgnoreRules(object map[string]any, normalization Normalization) (map[string]any, error) {
+	apply := func(rule IgnoreRule) error {
+		var err error
+		object, err = removeJSONPointers(object, rule.JSONPointers)
+		if err != nil {
+			return err
+		}
+		object, err = removeJQPathExpressions(object, rule.JQPathExpressions)
+		return err
+	}
+	for _, rule := range normalization.ApplicationRules {
+		if err := apply(rule); err != nil {
+			return nil, err
+		}
+	}
+	object = removeAnnotationJSONPointers(object, normalization.AnnotationJSONPointers)
+	for _, rule := range normalization.CustomizationRules {
+		if err := apply(rule); err != nil {
+			return nil, err
+		}
+	}
+	return object, nil
+}
+
+// rolloutGroup and rolloutKind name the Argo Rollouts kind that Argo CD's
+// known-types normalizer always covers. Unless a resource.customizations
+// entry sets knownTypeFields for it, Argo CD normalizes spec.template.spec as
+// a PodSpec (util/argo/normalizers/knowntypes_normalizer.go:56-70).
+const (
+	rolloutGroup = "argoproj.io"
+	rolloutKind  = "Rollout"
+)
+
+// knownTypeFieldsApply reports whether the known-types normalizer can change
+// the resource.
+func knownTypeFieldsApply(resource Resource, fields []KnownTypeField) bool {
+	return len(fields) > 0 || (resource.Group == rolloutGroup && resource.Kind == rolloutKind)
+}
+
+// normalizeKnownTypeFields runs Argo CD's known-types normalizer. fields must
+// come only from resource.customizations keys whose group and kind equal the
+// resource's group and kind, because Argo CD looks the fields up by exact
+// group and kind.
 func normalizeKnownTypeFields(object map[string]any, resource Resource, fields []KnownTypeField) (map[string]any, error) {
-	if len(fields) == 0 {
+	if !knownTypeFieldsApply(resource, fields) {
 		return object, nil
 	}
 	overrideFields := make([]argoappv1.KnownTypeField, 0, len(fields))
@@ -158,9 +212,11 @@ func normalizeKnownTypeFields(object map[string]any, resource Resource, fields [
 	if resource.Group != "" {
 		key = resource.Group + "/" + resource.Kind
 	}
-	normalizer, err := normalizers.NewKnownTypesNormalizer(map[string]argoappv1.ResourceOverride{
-		key: {KnownTypeFields: overrideFields},
-	})
+	overrides := map[string]argoappv1.ResourceOverride{}
+	if len(overrideFields) > 0 {
+		overrides[key] = argoappv1.ResourceOverride{KnownTypeFields: overrideFields}
+	}
+	normalizer, err := normalizers.NewKnownTypesNormalizer(overrides)
 	if err != nil {
 		return nil, err
 	}
@@ -320,12 +376,68 @@ func encodeDiffYAML(object map[string]any) (string, error) {
 	}
 	return string(data), nil
 }
-func appendUniqueNormalization(left, right Normalization) Normalization {
-	left.JSONPointers = appendUniqueStrings(left.JSONPointers, right.JSONPointers)
-	left.JQPathExpressions = appendUniqueStrings(left.JQPathExpressions, right.JQPathExpressions)
-	left.ManagedFieldsManagers = appendUniqueStrings(left.ManagedFieldsManagers, right.ManagedFieldsManagers)
-	left.KnownTypeFields = appendUniqueKnownTypeFields(left.KnownTypeFields, right.KnownTypeFields)
-	return left
+
+// mergeNormalization joins the normalization of the two sides of a diff.
+// drydock compares desired state against desired state, and each side can
+// carry different settings, so it applies the union of both sides' rules.
+// Argo CD has one rule list and keeps every copy of a rule, so the union
+// keeps all of the left side's rules in order and then adds only the right
+// side's rules that the left side does not already have. When both sides have
+// the same rules, the result is exactly that one rule list. The annotation
+// rule is not merged here; the caller sets it from the current side.
+func mergeNormalization(left, right Normalization) Normalization {
+	return Normalization{
+		ApplicationRules:      mergeIgnoreRules(left.ApplicationRules, right.ApplicationRules),
+		CustomizationRules:    mergeIgnoreRules(left.CustomizationRules, right.CustomizationRules),
+		ManagedFieldsManagers: appendUniqueStrings(appendUniqueStrings(nil, left.ManagedFieldsManagers), right.ManagedFieldsManagers),
+		KnownTypeFields:       appendUniqueKnownTypeFields(appendUniqueKnownTypeFields(nil, left.KnownTypeFields), right.KnownTypeFields),
+		CompareOptions:        mergeCompareOptions(left.CompareOptions, right.CompareOptions),
+	}
+}
+
+// mergeIgnoreRules returns left followed by each rule of right that is not
+// matched by a left rule. Each left rule matches at most one right rule, so a
+// rule that appears more often on the right side keeps its extra copies.
+func mergeIgnoreRules(left, right []IgnoreRule) []IgnoreRule {
+	out := cloneIgnoreRules(left)
+	used := make([]bool, len(left))
+	for _, rule := range right {
+		matched := false
+		for i, candidate := range left {
+			if !used[i] && ignoreRulesEqual(candidate, rule) {
+				used[i] = true
+				matched = true
+				break
+			}
+		}
+		if !matched {
+			out = append(out, cloneIgnoreRule(rule))
+		}
+	}
+	return out
+}
+
+func ignoreRulesEqual(left, right IgnoreRule) bool {
+	return slices.Equal(left.JSONPointers, right.JSONPointers) &&
+		slices.Equal(left.JQPathExpressions, right.JQPathExpressions)
+}
+
+func cloneIgnoreRule(rule IgnoreRule) IgnoreRule {
+	return IgnoreRule{
+		JSONPointers:      append([]string(nil), rule.JSONPointers...),
+		JQPathExpressions: append([]string(nil), rule.JQPathExpressions...),
+	}
+}
+
+func cloneIgnoreRules(rules []IgnoreRule) []IgnoreRule {
+	if rules == nil {
+		return nil
+	}
+	out := make([]IgnoreRule, 0, len(rules))
+	for _, rule := range rules {
+		out = append(out, cloneIgnoreRule(rule))
+	}
+	return out
 }
 func appendUniqueStrings(out []string, values []string) []string {
 	seen := make(map[string]struct{}, len(out)+len(values))
@@ -357,8 +469,8 @@ func appendUniqueKnownTypeFields(out []KnownTypeField, values []KnownTypeField) 
 }
 func cloneNormalization(normalization Normalization) Normalization {
 	return Normalization{
-		JSONPointers:           append([]string(nil), normalization.JSONPointers...),
-		JQPathExpressions:      append([]string(nil), normalization.JQPathExpressions...),
+		ApplicationRules:       cloneIgnoreRules(normalization.ApplicationRules),
+		CustomizationRules:     cloneIgnoreRules(normalization.CustomizationRules),
 		ManagedFieldsManagers:  append([]string(nil), normalization.ManagedFieldsManagers...),
 		KnownTypeFields:        append([]KnownTypeField(nil), normalization.KnownTypeFields...),
 		CompareOptions:         normalization.CompareOptions,
