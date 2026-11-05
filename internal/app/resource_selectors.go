@@ -2,7 +2,6 @@ package app
 
 import (
 	"fmt"
-	"strings"
 
 	argoappv1 "github.com/argoproj/argo-cd/v3/pkg/apis/application/v1alpha1"
 	"github.com/sholdee/drydock/internal/config"
@@ -20,14 +19,16 @@ import (
 // the render and diff output.
 //
 // Argo CD matches the rule cluster globs against the resolved destination
-// server (GetLabelSelector(..., destCluster.Server)), so a name-only
-// destination is resolved first; when it cannot be resolved offline Argo CD
-// would fail the comparison instead, and no selector warning is reported.
+// server (GetLabelSelector(..., destCluster.Server)), so the destination is
+// resolved first (project.ResolveDestinationServer); when it cannot be
+// resolved offline, or Argo CD would fail the comparison before matching
+// selectors (an unknown or ambiguous name, a disabled in-cluster cluster),
+// no selector warning is reported.
 func resourceSelectorMismatchDiagnostics(application argoappv1.Application, resources []project.RenderedResource, filter manifest.SettingsResourceFilter, settings config.ArgoSettings) []diagnostic.Diagnostic {
 	if len(filter.Selectors) == 0 {
 		return nil
 	}
-	cluster, ok := resourceSelectorDestinationServer(application.Spec.Destination, settings)
+	cluster, ok := project.ResolveDestinationServer(application.Spec.Destination, settings)
 	if !ok {
 		return nil
 	}
@@ -47,36 +48,4 @@ func resourceSelectorMismatchDiagnostics(application argoappv1.Application, reso
 		})
 	}
 	return diags
-}
-
-// resourceSelectorDestinationServer resolves an Application destination to
-// the cluster server URL the way Argo CD's argo.GetDestinationServer does: a
-// server destination is used as is without trailing slashes, and a name-only
-// destination resolves through the cluster Secrets by name, with the
-// implicit in-cluster name mapping to https://kubernetes.default.svc when no
-// cluster Secret carries that name. A destination with both or neither set,
-// an unknown name, or an ambiguous name does not resolve.
-func resourceSelectorDestinationServer(dest argoappv1.ApplicationDestination, settings config.ArgoSettings) (string, bool) {
-	if dest.Name != "" && dest.Server != "" {
-		return "", false
-	}
-	if dest.Server != "" {
-		return strings.TrimRight(dest.Server, "/"), true
-	}
-	if dest.Name == "" {
-		return "", false
-	}
-	var servers []string
-	for _, cluster := range settings.Clusters {
-		if cluster.Name == dest.Name {
-			servers = append(servers, cluster.Server)
-		}
-	}
-	if len(servers) == 0 && dest.Name == argoappv1.KubernetesInClusterName {
-		return argoappv1.KubernetesInternalAPIServerAddr, true
-	}
-	if len(servers) != 1 {
-		return "", false
-	}
-	return servers[0], true
 }

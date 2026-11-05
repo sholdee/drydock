@@ -9,6 +9,7 @@ import (
 	argoappv1 "github.com/argoproj/argo-cd/v3/pkg/apis/application/v1alpha1"
 	"github.com/sholdee/drydock/internal/config"
 	"github.com/sholdee/drydock/internal/diagnostic"
+	"github.com/sholdee/drydock/internal/project"
 )
 
 func writeResourceSelectorSettings(t *testing.T, root, extra, selectors string) {
@@ -175,6 +176,12 @@ func TestResourceSelectorDestinationServer(t *testing.T) {
 	settings.Clusters["https://dup-b.example.com"] = config.ClusterSettings{Name: "dup", Server: "https://dup-b.example.com"}
 	settings.Clusters["https://local.example.com"] = config.ClusterSettings{Name: "in-cluster", Server: "https://local.example.com"}
 	noInCluster := config.DefaultSettings()
+	disabled := config.DefaultSettings()
+	disabled.InClusterEnabled = config.Value[bool]{Value: false}
+	disabled.Clusters["https://prod.example.com"] = config.ClusterSettings{Name: "prod", Server: "https://prod.example.com"}
+	disabled.Clusters["https://kubernetes.default.svc"] = config.ClusterSettings{Name: "local", Server: "https://kubernetes.default.svc"}
+	localSecret := config.DefaultSettings()
+	localSecret.Clusters["https://kubernetes.default.svc"] = config.ClusterSettings{Name: "local", Server: "https://kubernetes.default.svc"}
 
 	tests := []struct {
 		name       string
@@ -191,12 +198,19 @@ func TestResourceSelectorDestinationServer(t *testing.T) {
 		{name: "ambiguous name", dest: argoappv1.ApplicationDestination{Name: "dup"}, settings: settings},
 		{name: "both name and server", dest: argoappv1.ApplicationDestination{Name: "prod", Server: "https://prod.example.com"}, settings: settings},
 		{name: "neither", settings: settings},
+		{name: "name is trimmed", dest: argoappv1.ApplicationDestination{Name: " prod "}, settings: settings, wantServer: "https://prod.example.com", wantOK: true},
+		{name: "in-cluster resolves through a Secret at its address", dest: argoappv1.ApplicationDestination{Name: "in-cluster"}, settings: localSecret, wantServer: "https://kubernetes.default.svc", wantOK: true},
+		// Argo CD fails GetDestinationCluster before GetLabelSelector.
+		{name: "in-cluster disabled, implicit name", dest: argoappv1.ApplicationDestination{Name: "in-cluster"}, settings: disabled},
+		{name: "in-cluster disabled, server", dest: argoappv1.ApplicationDestination{Server: "https://kubernetes.default.svc/"}, settings: disabled},
+		{name: "in-cluster disabled, Secret name at its address", dest: argoappv1.ApplicationDestination{Name: "local"}, settings: disabled},
+		{name: "in-cluster disabled, other cluster", dest: argoappv1.ApplicationDestination{Name: "prod"}, settings: disabled, wantServer: "https://prod.example.com", wantOK: true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			server, ok := resourceSelectorDestinationServer(tt.dest, tt.settings)
+			server, ok := project.ResolveDestinationServer(tt.dest, tt.settings)
 			if server != tt.wantServer || ok != tt.wantOK {
-				t.Fatalf("resourceSelectorDestinationServer() = %q, %v; want %q, %v", server, ok, tt.wantServer, tt.wantOK)
+				t.Fatalf("ResolveDestinationServer() = %q, %v; want %q, %v", server, ok, tt.wantServer, tt.wantOK)
 			}
 		})
 	}

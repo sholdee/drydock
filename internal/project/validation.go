@@ -275,6 +275,28 @@ func destinationCluster(dest argoappv1.ApplicationDestination, settings config.A
 	return &argoappv1.Cluster{Name: name, Server: server}, destinationUnresolved
 }
 
+// ResolveDestinationServer returns the cluster server Argo CD would resolve
+// an Application destination to (util/argo GetDestinationCluster), resolved
+// offline the way project validation resolves it (destinationCluster). It
+// returns false when Argo CD would fail the lookup or drydock cannot tell
+// the server: both name and server or neither set, a name no discovered
+// cluster Secret resolves (unknown or ambiguous), and the in-cluster address
+// while argocd-cm cluster.inClusterEnabled is "false". A server-only
+// destination no cluster Secret describes resolves to its own server.
+func ResolveDestinationServer(dest argoappv1.ApplicationDestination, settings config.ArgoSettings) (string, bool) {
+	name := strings.TrimSpace(dest.Name)
+	server := NormalizeClusterServer(dest.Server)
+	if (name == "") == (server == "") || destinationInClusterDisabled(dest, settings) {
+		return "", false
+	}
+	cluster, resolution := destinationCluster(dest, settings)
+	if resolution == destinationUnresolved && server == "" {
+		return "", false
+	}
+	resolved := NormalizeClusterServer(cluster.Server)
+	return resolved, resolved != ""
+}
+
 // clusterNameDeclared reports whether any discovered cluster Secret has name.
 func clusterNameDeclared(name string, settings config.ArgoSettings) bool {
 	for _, cluster := range settings.Clusters {

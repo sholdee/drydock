@@ -674,7 +674,9 @@ Supported:
   resolved destination server, as in Argo CD: a destination name resolves
   through the cluster Secrets, and the implicit `in-cluster` name resolves to
   `https://kubernetes.default.svc`. When a name cannot be resolved offline
-  (unknown or ambiguous), no selector warning is reported. Resource exclusions
+  (unknown or ambiguous), or the destination is the in-cluster cluster that
+  `cluster.inClusterEnabled: "false"` disables, Argo CD fails the comparison
+  before it reads selectors, and no selector warning is reported. Resource exclusions
   and inclusions still match the destination name when only a name is set.
 
 ### AppProject Field Semantics
