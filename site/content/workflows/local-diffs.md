@@ -150,7 +150,15 @@ Application-level `spec.ignoreDifferences[]` rules and global
 resource diffs. Supported ignore fields are `jsonPointers`,
 `jqPathExpressions`, and `managedFieldsManagers`. When a matching resource
 exists on both sides, drydock applies the union of matching Application-local
-and global settings from the baseline and current trees.
+and global settings from the baseline and current trees. A rule that both trees
+share runs once.
+
+drydock runs ignore rules in Argo CD's order. Application rules run first, then
+the resource's annotation rule, then `resource.customizations` rules. Each rule
+removes its `jsonPointers` and then its `jqPathExpressions` before the next rule
+starts. A repeated pointer runs once for each copy, so `/spec/containers/0`
+listed twice removes two containers. A `resource.customizations` key with no
+slash, such as `Service`, names that kind in the core group only.
 
 A resource can also carry its own ignore rule in the
 `argocd.argoproj.io/ignore-differences` annotation, as supported by Argo CD
@@ -166,8 +174,9 @@ metadata:
         - /spec/replicas
 ```
 
-drydock reads the annotation from the current-side manifest, or from the
-baseline manifest when the resource was removed, and applies it to both sides.
+drydock reads the annotation from the current-side manifest and applies it to
+both sides. Argo CD reads it only from the desired manifest, so a resource that
+exists only in the baseline tree is not normalized by its own annotation.
 Like Argo CD, it skips an annotation that does not parse or lists no pointers.
 Annotation pointers follow the same path rules as Argo CD's JSON-patch library:
 a negative array index such as `-1` addresses the last element, and the first

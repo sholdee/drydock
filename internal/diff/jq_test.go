@@ -21,7 +21,7 @@ spec:
 `
 
 	got, err := normalizeDiffBody(body, Options{}, Normalization{
-		JQPathExpressions: []string{`.spec.template.spec.containers[] | select(.name == "sidecar")`},
+		ApplicationRules: []IgnoreRule{{JQPathExpressions: []string{`.spec.template.spec.containers[] | select(.name == "sidecar")`}}},
 	})
 	if err != nil {
 		t.Fatalf("normalizeDiffBody() error = %v", err)
@@ -33,7 +33,7 @@ spec:
 
 func TestNormalizeDiffBodyInvalidJQReturnsError(t *testing.T) {
 	_, err := normalizeDiffBody("kind: ConfigMap\n", Options{}, Normalization{
-		JQPathExpressions: []string{".metadata.name)"},
+		ApplicationRules: []IgnoreRule{{JQPathExpressions: []string{".metadata.name)"}}},
 	})
 	if err == nil {
 		t.Fatal("normalizeDiffBody() error = nil, want invalid jq error")

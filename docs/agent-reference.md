@@ -412,9 +412,17 @@ sides when both sides contain a matching resource. Managed fields support is an
 offline desired-vs-desired approximation using rendered manifests; do not
 claim live server-side ownership prediction.
 
+Ignore rules run in Argo CD v3.6.1 order: Application rules, then the
+annotation rule, then `resource.customizations` rules, each rule applying its
+`jsonPointers` and then its `jqPathExpressions`. Keep every copy of a repeated
+pointer, because repeated array-index pointers remove more elements. The
+known-types normalizer runs after the ignore rules. A customization key with no
+slash means that kind in the core group. `knownTypeFields` match the exact
+group and kind, and Argo Rollouts always get the default PodSpec known type.
+
 The resource-level `argocd.argoproj.io/ignore-differences` annotation
-(`jsonPointers` only) targets just the annotated resource. Read it from the
-current side, falling back to the baseline for removed resources, and apply
+(`jsonPointers` only) targets just the annotated resource. Read it only from
+the current side, never from the baseline of a removed resource, and apply
 its pointers leniently with evanphx/json-patch path semantics (first segment
 dropped unchecked, negative indexes, literal unknown `~` escapes); pointers
 that cannot be applied, including root pointers, are skipped, never errors.
