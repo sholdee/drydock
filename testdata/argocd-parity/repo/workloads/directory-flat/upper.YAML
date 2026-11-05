@@ -1,0 +1,9 @@
+# Argo CD's directory extension filter is case-sensitive: this file is not a
+# manifest and must not render.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: flat-root-upper-extension
+  namespace: parity-directory-flat
+data:
+  extension: YAML

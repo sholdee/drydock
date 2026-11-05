@@ -151,6 +151,7 @@ APPLICATIONS=(
   parity-directory-flat
   parity-directory-forced
   parity-directory-glob
+  parity-directory-extension-filter
   parity-kustomize-variants
   parity-kustomize-labels
   parity-kustomize-generators

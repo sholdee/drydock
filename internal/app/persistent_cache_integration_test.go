@@ -877,6 +877,79 @@ data:
 	}
 }
 
+// TestPersistentCacheKustomizeSkippedComponentGainingKustomizationInvalidates
+// pins that a component skipped under ignoreMissingComponents (its directory
+// holds no kustomization file) stays keyed: once a kustomization file lands
+// there the component renders, so the cached entry must miss.
+func TestPersistentCacheKustomizeSkippedComponentGainingKustomizationInvalidates(t *testing.T) {
+	root := t.TempDir()
+	writePersistentCachePlainKustomizeApp(t, root, "alpha")
+	writePersistentCachePlainKustomizeApp(t, root, "beta")
+	writeTestFile(t, filepath.Join(root, "apps", "alpha.yaml"), `apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: alpha
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/example/repo
+    path: manifests/alpha
+    targetRevision: main
+    kustomize:
+      ignoreMissingComponents: true
+      components:
+        - ../components/pending
+        - ../components/missing
+  destination:
+    name: in-cluster
+    namespace: default
+`)
+	writeTestFile(t, filepath.Join(root, "manifests", "components", "pending", "cm.yaml"), `apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: pending-component
+`)
+	gitCommitAll(t, root, "initial")
+	cacheDir := t.TempDir()
+	request := persistentBuildRequest(root, cacheDir)
+	request.RecordCacheEvents = true
+
+	cold, err := (Orchestrator{}).Build(context.Background(), request)
+	if err != nil {
+		t.Fatalf("cold Build() error = %v", err)
+	}
+	if _, ok := manifestByName(cold.Manifests, "pending-component"); ok {
+		t.Fatalf("cold Manifests = %#v, skipped component rendered", cold.Manifests)
+	}
+	if got := countRenderCacheEntries(t, cacheDir); got != 2 {
+		t.Fatalf("entries after cold run = %d, want 2 (alpha with skipped components persists)", got)
+	}
+
+	writeTestFile(t, filepath.Join(root, "manifests", "components", "pending", "kustomization.yaml"), `apiVersion: kustomize.config.k8s.io/v1alpha1
+kind: Component
+resources:
+  - cm.yaml
+`)
+	gitCommitAll(t, root, "make pending a component")
+
+	orchestrator := Orchestrator{}
+	renderedPaths := renderedSourceCounts(&orchestrator)
+	warm, err := orchestrator.Build(context.Background(), request)
+	if err != nil {
+		t.Fatalf("warm Build() error = %v", err)
+	}
+	if got := renderedPaths["manifests/alpha"]; got != 1 {
+		t.Fatalf("alpha renders after component kustomization add = %d, want 1; all renders = %#v", got, renderedPaths)
+	}
+	if got := renderedPaths["manifests/beta"]; got != 0 {
+		t.Fatalf("beta renders after component kustomization add = %d, want 0; all renders = %#v", got, renderedPaths)
+	}
+	if _, ok := manifestByName(warm.Manifests, "pending-component"); !ok {
+		t.Fatalf("warm Manifests = %#v, want pending-component", warm.Manifests)
+	}
+}
+
 func TestPersistentCacheKustomizeHelmValuesAndLocalChartInvalidate(t *testing.T) {
 	root := t.TempDir()
 	writePersistentCacheKustomizeApp(t, root, "alpha", `apiVersion: kustomize.config.k8s.io/v1beta1

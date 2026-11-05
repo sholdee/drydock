@@ -461,3 +461,56 @@ func TestRenderInputCoverageKustomizeBuiltinPluginConfigReferents(t *testing.T) 
 		})
 	}
 }
+
+// TestRenderInputCoverageDirectoryDisableExtensionFilter pins that files with
+// custom extensions, read only under directory.disableExtensionFilter, are
+// covered by the directory source digest.
+func TestRenderInputCoverageDirectoryDisableExtensionFilter(t *testing.T) {
+	repoRoot := t.TempDir()
+	writeTestFile(t, repoRoot+"/manifests/demo/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: demo\n")
+	writeTestFile(t, repoRoot+"/manifests/demo/secret.yaml.sealed", "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: sealed\n")
+	writeTestFile(t, repoRoot+"/manifests/demo/nested/extra.sealed", "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: extra\n")
+	writeTestFile(t, repoRoot+"/unrelated/README.md", "not a render input\n")
+	application := argoappv1.Application{
+		Name: "demo", Namespace: "argocd",
+		Spec: argoappv1.ApplicationSpec{
+			Source: &argoappv1.ApplicationSource{
+				RepoURL: "https://git.example.test/org/repo.git", Path: "manifests/demo", TargetRevision: "main",
+				Directory: &argoappv1.ApplicationSourceDirectory{
+					Recurse:                true,
+					DisableExtensionFilter: true,
+					Include:                "{*.yaml,**/*.sealed,*.sealed}",
+				},
+			},
+			Destination: argoappv1.ApplicationDestination{Namespace: "default"},
+		},
+	}
+	assertRenderInputCoverage(t, repoRoot, application)
+}
+
+// TestRenderInputCoverageKustomizeIgnoreMissingComponents pins coverage for
+// spec.source.kustomize.components under ignoreMissingComponents, including a
+// component directory skipped because it holds no kustomization file.
+func TestRenderInputCoverageKustomizeIgnoreMissingComponents(t *testing.T) {
+	repoRoot := t.TempDir()
+	writeTestFile(t, repoRoot+"/manifests/app/kustomization.yaml", "resources:\n  - cm.yaml\n")
+	writeTestFile(t, repoRoot+"/manifests/app/cm.yaml", renderCoverageDemoConfigMap)
+	writeTestFile(t, repoRoot+"/manifests/components/valid/kustomization.yaml", "apiVersion: kustomize.config.k8s.io/v1alpha1\nkind: Component\nresources:\n  - cm.yaml\n")
+	writeTestFile(t, repoRoot+"/manifests/components/valid/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: component\n")
+	writeTestFile(t, repoRoot+"/manifests/components/plain/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: plain\n")
+	writeTestFile(t, repoRoot+"/unrelated/README.md", "not a render input\n")
+	application := argoappv1.Application{
+		Name: "app", Namespace: "argocd",
+		Spec: argoappv1.ApplicationSpec{
+			Source: &argoappv1.ApplicationSource{
+				RepoURL: "https://git.example.test/org/repo.git", Path: "manifests/app", TargetRevision: "main",
+				Kustomize: &argoappv1.ApplicationSourceKustomize{
+					Components:              []string{"../components/plain", "../components/missing", "../components/valid"},
+					IgnoreMissingComponents: true,
+				},
+			},
+			Destination: argoappv1.ApplicationDestination{Namespace: "default"},
+		},
+	}
+	assertRenderInputCoverage(t, repoRoot, application)
+}

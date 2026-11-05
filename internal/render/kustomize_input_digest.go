@@ -32,7 +32,7 @@ func KustomizeInputDigestPaths(ctx context.Context, source ResolvedSource, opts 
 	if err != nil {
 		return nil, err
 	}
-	sourceOptionGraph, sourceOptionPaths, err := sourceKustomizeWorkspaceAdditions(ctx, source.RepoRoot, root, opts)
+	sourceOptionGraph, sourceOptionPaths, sourceOptionalPaths, err := sourceKustomizeWorkspaceAdditions(ctx, source.RepoRoot, root, opts)
 	if err != nil {
 		return nil, err
 	}
@@ -49,6 +49,11 @@ func KustomizeInputDigestPaths(ctx context.Context, source ResolvedSource, opts 
 	}
 	for _, path := range sourceOptionPaths {
 		if err := collector.addAbsPath(ctx, path, false); err != nil {
+			return nil, err
+		}
+	}
+	for _, path := range sourceOptionalPaths {
+		if err := collector.addAbsPath(ctx, path, true); err != nil {
 			return nil, err
 		}
 	}
@@ -106,6 +111,13 @@ func (c *kustomizeInputCollector) collectSourceKustomizeRefs(ctx context.Context
 		return nil
 	}
 	for _, component := range kustomize.Components {
+		skipped, err := c.collectSkippedComponent(ctx, sourceRoot, component, kustomize.IgnoreMissingComponents)
+		if err != nil {
+			return err
+		}
+		if skipped {
+			continue
+		}
 		if err := c.addKustomizeRef(ctx, sourceRoot, "kustomize.components", component, false); err != nil {
 			return err
 		}
@@ -132,6 +144,28 @@ func (c *kustomizeInputCollector) collectSourceKustomizeRefs(ctx context.Context
 		}
 	}
 	return nil
+}
+
+// collectSkippedComponent applies the ignoreMissingComponents check to one
+// component and reports whether it was skipped; without ignoreMissing no
+// component is skipped. A skipped component's
+// in-repository directory is still owned, as an optional path: a
+// kustomization file appearing there makes it a component.
+func (c *kustomizeInputCollector) collectSkippedComponent(ctx context.Context, sourceRoot, component string, ignoreMissing bool) (bool, error) {
+	if !ignoreMissing {
+		return false, nil
+	}
+	decision, err := ignoreMissingComponentDecision(sourceRoot, c.repoRoot, component)
+	if err != nil {
+		return true, c.skip(ctx, err)
+	}
+	if decision.keep {
+		return false, nil
+	}
+	if decision.probe == "" {
+		return true, nil
+	}
+	return true, c.addAbsPath(ctx, decision.probe, true)
 }
 
 // skip reports err unless the collector is best-effort, in which case the

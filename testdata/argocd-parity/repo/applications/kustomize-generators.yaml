@@ -11,7 +11,10 @@ spec:
     path: workloads/kustomize-generators/base
     kustomize:
       ignoreMissingComponents: true
+      # no-kustomization comes first: Argo CD v3.6.1 stops at the first valid
+      # component, so a later entry would not exercise its kustomization check.
       components:
+        - ../components/no-kustomization
         - ../components/extra
         - ../components/missing
   destination:

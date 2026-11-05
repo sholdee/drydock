@@ -1,0 +1,8 @@
+# No kustomization file: ignoreMissingComponents skips this directory.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: generators-no-kustomization
+  namespace: parity-kustomize-generators
+data:
+  from: invalid-component

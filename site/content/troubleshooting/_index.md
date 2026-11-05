@@ -214,6 +214,34 @@ drydock build apps --path . --oci-cache-dir /var/cache/drydock-oci --offline
 Its earlier chart-cache entries are orphaned; `drydock cache prune --source
 chart` removes them.
 
+## Symptom: A Directory Source Skips Files Or Warns `directory.extension-filter-disabled`
+
+drydock selects directory-source files as the Argo CD v3.6.1 repo-server does:
+
+- Only `.yaml`, `.yml`, `.json`, and `.jsonnet` files are read by default, and
+  the match is case-sensitive: `deploy.YAML` is skipped by both drydock and
+  Argo CD. Older drydock releases rendered it.
+- Files with other extensions, such as `*.yaml.sealed`, render only with
+  `spec.source.directory.disableExtensionFilter: true`. `include` and
+  `exclude` are then the only filters.
+- `disableExtensionFilter` without `include` or `exclude` reads every file in
+  the directory and emits the `directory.extension-filter-disabled` warning,
+  which `--strict` turns into a failure. Add an `include` pattern that names
+  the manifest files to silence it.
+- A file ending in `.json` must hold one JSON object with a `kind`; an empty
+  file, YAML content, a JSON array, or several concatenated objects fail the
+  source, as in Argo CD.
+- Any other file that does not decode as YAML or JSON is skipped unless a
+  manifest precedes the broken document or the file contains all of
+  `apiVersion:`, `kind:`, and `metadata:`; then it fails the source. With `disableExtensionFilter`, narrow `include` so that
+  READMEs, `.libsonnet` libraries, or templates holding example manifests are
+  not read.
+
+A Kustomize component listed under `ignoreMissingComponents: true` is skipped
+when its directory is missing, holds no `kustomization.yaml`,
+`kustomization.yml`, or `Kustomization`, is a remote ref, or escapes the
+repository.
+
 ## Symptom: Changed-Only Falls Back To All Apps
 
 Multi-Application diffs use changed-only selection by default. If a changed

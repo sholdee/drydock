@@ -80,6 +80,11 @@ type RenderOptions struct {
 	SkipHooks                    bool
 	SkipTests                    bool
 
+	// DirectoryDisableExtensionFilter is spec.source.directory.
+	// disableExtensionFilter: the built-in extension filter is skipped and
+	// every file passing include/exclude is read.
+	DirectoryDisableExtensionFilter bool
+
 	// helmOutputForKustomize marks a helm render whose manifests become
 	// kustomize input (helmCharts). kustomize reads helm's output with YAML
 	// 1.2 rules, so it is decoded with those rather than Argo CD's.

@@ -298,23 +298,25 @@ Supported:
   per exact name within each kind. Names are used verbatim, an empty name sets
   nothing (its `fileParameters` file is still read), and an overridden
   `fileParameters` path is resolved but never read.
-- Recorded divergence from strict Argo CD v3.5.3: the repo-server passes the
-  surviving entries of one kind in Go's randomized map iteration order, so
-  overlapping names within one kind (such as `a` and `a.b`) can render
-  differently from one Argo CD run to the next. drydock applies them in list
-  order, which is one of the possible outcomes.
-- Recorded divergence from strict Argo CD v3.5.3: drydock does not follow a
-  symlink at an overridden `fileParameters` path, so it accepts one whose
-  target escapes the repository where the repo-server fails.
+- Recorded divergence from strict Argo CD v3.6.1 (unchanged since v3.5.x):
+  the repo-server passes the surviving entries of one kind in Go's randomized
+  map iteration order, so overlapping names within one kind (such as `a` and
+  `a.b`) can render differently from one Argo CD run to the next. drydock
+  applies them in list order, which is one of the possible outcomes.
+- Recorded divergence from strict Argo CD v3.6.1 (unchanged since v3.5.x):
+  drydock does not follow a symlink at an overridden `fileParameters` path,
+  so it accepts one whose target escapes the repository where the
+  repo-server fails.
 - `.argocd-source.yaml` and `.argocd-source-<app>.yaml` overrides, where
   `<app>` is the Application instance name like the repo-server's lookup: an
   Application outside the controller namespace reads
   `.argocd-source-<namespace>_<name>.yaml`, and a bare-name file is ignored.
-- Recorded divergence from strict Argo CD v3.5.2: `ARGOCD_APP_REVISION`,
-  `ARGOCD_APP_REVISION_SHORT`, and `ARGOCD_APP_REVISION_SHORT_8` carry the spec
-  `targetRevision` string; a repo-server reports the resolved revision
-  (commit SHA for Git sources, chart version for Helm repository sources,
-  manifest digest for OCI sources).
+- Recorded divergence from strict Argo CD v3.6.1 (unchanged since v3.5.x):
+  `ARGOCD_APP_REVISION`, `ARGOCD_APP_REVISION_SHORT`, and
+  `ARGOCD_APP_REVISION_SHORT_8` carry the spec `targetRevision` string; a
+  repo-server reports the resolved revision (commit SHA for Git sources,
+  chart version for Helm repository sources, manifest digest for OCI
+  sources).
 - Directory rendering that skips values-like YAML documents only when both
   `apiVersion` and `kind` are absent, and fails clearly when exactly one is
   present.
@@ -323,6 +325,32 @@ Supported:
   libraries with extVars, TLAs, code mode, env substitution, and repo-relative
   libs, confines Jsonnet imports to the repository root as the Argo CD
   repo-server does from v3.5.4, and skips drydock cache metadata sidecars.
+- Directory file selection as the Argo CD v3.6.1 repo-server performs it: the
+  built-in `.yaml`/`.yml`/`.json`/`.jsonnet` extension filter is
+  case-sensitive (`deploy.YAML` is not rendered), `include` and `exclude`
+  match the source-relative path with `github.com/gobwas/glob` v1.0.0
+  semantics (`{**/,}crds/*.yaml` matches `crds/a.yaml` and `x/crds/a.yaml`).
+- Directory file decoding as the Argo CD v3.6.1 repo-server performs it: a
+  leading UTF-8 byte order mark is dropped, and a file ending in `.json` must
+  decode as one JSON object with a `kind` (or as an OCI image manifest)
+  followed only by whitespace, so an empty file, YAML content, a JSON array,
+  a syntax error, or several concatenated objects fail the source. Every
+  other file is a YAML/JSON stream. When the stream does not decode, the file
+  fails the source if an object decoded before the failure or if its content
+  holds all of `apiVersion:`, `kind:`, and `metadata:`; otherwise it is
+  skipped as unrelated YAML.
+- Recorded divergence from strict Argo CD v3.6.1: a `.json` file accepted
+  only as an OCI image manifest renders nothing in drydock; the repo-server
+  emits it as a manifest without a `kind`.
+- Directory `disableExtensionFilter`: the extension filter is skipped and
+  `include`/`exclude` become the only filters, so custom extensions such as
+  `*.yaml.sealed` render. A `.jsonnet` suffix is still evaluated as Jsonnet, a
+  `.json` suffix still follows the single-object JSON rule, and every other
+  file, such as a README or `.libsonnet` library that `include` admits, is
+  read as a YAML/JSON stream under the skip-or-fail rule above. Enabling it
+  with neither `include` nor `exclude` renders every file and emits the
+  `directory.extension-filter-disabled` warning (promoted by `--strict`),
+  where the repo-server logs a warning.
 - Local Kustomize rendering with supported `kustomize.buildOptions`:
   `--enable-helm`, `--helm-api-versions`,
   `--load-restrictor=LoadRestrictionsRootOnly|LoadRestrictionsNone`,
@@ -339,6 +367,20 @@ Supported:
   root.
 - Kustomize Helm remote HTTP(S) value files through the same remote-resource
   cache path used by Helm sources.
+- Kustomize `ignoreMissingComponents` as in Argo CD v3.6.1: each
+  `kustomize.components` entry is joined with the source path and kept only
+  when that directory holds a regular `kustomization.yaml`,
+  `kustomization.yml`, or `Kustomization`, looked up inside the repository
+  root with in-repository symlinks followed. Missing directories, directories
+  without a kustomization file, remote refs, and refs escaping the repository
+  are skipped without reading outside it; an absolute ref is joined under the
+  source path. A skipped in-repository directory stays a persistent render
+  cache input, so adding a kustomization file there invalidates the entry.
+- Recorded divergence from strict Argo CD v3.6.1: with
+  `ignoreMissingComponents`, `util/kustomize/kustomize.go` (commit
+  `a16170b2e`) leaves its component loop with `break component` after the
+  first valid component, so the repo-server adds only that one. drydock adds
+  every valid component, the documented intent of the option.
 - Remote Kustomize refs in `resources`, `bases`, `components`,
   `patches.path`, `patchesJson6902.path`, non-inline
   `patchesStrategicMerge`, `generators`, `transformers`, `validators`,
@@ -424,6 +466,10 @@ Documented runtime-offline safety boundary:
 - Directory rendering rejects symlinked source path components and skips
   symlinked manifest files, even when an Argo CD repo-server could render an
   in-repository symlink target.
+- Under Kustomize `ignoreMissingComponents`, a component whose kustomization
+  file is an in-repository symlink counts as present, as in Argo CD v3.6.1,
+  and then fails drydock's symlinked graph entry check where the repo-server
+  renders it.
 
 Not supported:
 

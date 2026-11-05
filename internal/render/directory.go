@@ -3,15 +3,23 @@ package render
 import (
 	"bytes"
 	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 
 	argoglob "github.com/argoproj/argo-cd/v3/util/glob"
+	imagev1 "github.com/opencontainers/image-spec/specs-go/v1"
 	"github.com/sholdee/drydock/internal/diagnostic"
 	"github.com/sholdee/drydock/internal/manifest"
+	"github.com/sholdee/drydock/internal/manifestyaml"
 	"github.com/sholdee/drydock/internal/pathsafety"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime"
 )
 
 type DirectoryRenderer struct{}
@@ -19,7 +27,21 @@ type DirectoryRenderer struct{}
 const (
 	argocdSkipFileRenderingMarker = "+argocd:skip-file-rendering"
 	drydockCacheMetadataDirName   = ".drydock-cache"
+
+	// DirectoryExtensionFilterDisabledCode identifies the warning for a
+	// directory source that sets disableExtensionFilter with neither include
+	// nor exclude. Argo CD's repo-server logs the same condition as a warning
+	// and renders every file (getPotentiallyValidManifests,
+	// reposerver/repository/repository.go at v3.6.1).
+	DirectoryExtensionFilterDisabledCode = "directory.extension-filter-disabled"
 )
+
+// directoryManifestFile is Argo CD's built-in directory extension filter
+// (reposerver/repository/repository.go manifestFile at v3.6.1), matched
+// case-sensitively against the file name: deploy.YAML is not a manifest.
+var directoryManifestFile = regexp.MustCompile(`^.*\.(yaml|yml|json|jsonnet)$`)
+
+var utf8ByteOrderMark = []byte("\xef\xbb\xbf")
 
 //nolint:gocyclo // Directory rendering keeps walk, filtering, decode, and path provenance in one pass.
 func (DirectoryRenderer) Render(ctx context.Context, source ResolvedSource, opts RenderOptions) ([]Manifest, []diagnostic.Diagnostic, error) {
@@ -28,6 +50,7 @@ func (DirectoryRenderer) Render(ctx context.Context, source ResolvedSource, opts
 		return nil, nil, err
 	}
 	var out []Manifest
+	diags := directoryRenderDiagnostics(opts)
 
 	err = filepath.WalkDir(root, func(path string, entry os.DirEntry, err error) error {
 		if err != nil {
@@ -45,7 +68,10 @@ func (DirectoryRenderer) Render(ctx context.Context, source ResolvedSource, opts
 			}
 			return nil
 		}
-		if !isManifestFile(path) {
+		// disableExtensionFilter skips the built-in extension filter, leaving
+		// include and exclude as the only filters (Argo CD v3.6.1
+		// getPotentiallyValidManifestFile).
+		if !opts.DirectoryDisableExtensionFilter && !isManifestFile(path) {
 			return nil
 		}
 		if !directoryManifestIncluded(root, path, opts) {
@@ -71,12 +97,22 @@ func (DirectoryRenderer) Render(ctx context.Context, source ResolvedSource, opts
 			out = append(out, rendered...)
 			return nil
 		}
+		// The repo-server opens every directory file through
+		// utfutil.OpenFile(..., utfutil.UTF8), which drops a leading UTF-8 byte
+		// order mark before the JSON or YAML decoder sees the content.
+		data = bytes.TrimPrefix(data, utf8ByteOrderMark)
+		jsonFile := isJSONSuffixFile(path)
+		if jsonFile {
+			if err := validateDirectoryJSONFile(manifestPath, data); err != nil {
+				return err
+			}
+		}
 		roots, err := manifest.DecodeDocumentRoots(manifestPath, bytes.NewReader(data))
 		if err != nil {
-			if shouldIgnoreDirectoryDecodeError(data) {
-				return nil
+			if jsonFile || directoryDecodeFailureIsFatal(data) {
+				return err
 			}
-			return err
+			return nil
 		}
 		hasCandidate, err := classifyDirectoryRoots(roots)
 		if err != nil {
@@ -108,7 +144,19 @@ func (DirectoryRenderer) Render(ctx context.Context, source ResolvedSource, opts
 		}
 		return nil
 	})
-	return out, nil, err
+	return out, diags, err
+}
+
+func directoryRenderDiagnostics(opts RenderOptions) []diagnostic.Diagnostic {
+	if !opts.DirectoryDisableExtensionFilter || opts.DirectoryInclude != "" || opts.DirectoryExclude != "" {
+		return nil
+	}
+	return []diagnostic.Diagnostic{{
+		Code:     DirectoryExtensionFilterDisabledCode,
+		Severity: diagnostic.SeverityWarning,
+		Category: "directory",
+		Message:  "directory.disableExtensionFilter is enabled without include or exclude; every file in the directory is read and considered as a manifest",
+	}}
 }
 
 func classifyDirectoryRoots(docs []manifest.Document) (bool, error) {
@@ -143,31 +191,45 @@ func classifyDirectoryDocument(manifest Manifest) (bool, error) {
 	return true, nil
 }
 
-func shouldIgnoreDirectoryDecodeError(data []byte) bool {
-	return !directoryDataLooksKubernetesManifest(data)
-}
-
-func directoryDataLooksKubernetesManifest(data []byte) bool {
-	text := string(data)
-	if strings.Contains(text, `"apiVersion"`) || strings.Contains(text, `"kind"`) {
+// directoryDecodeFailureIsFatal mirrors how getObjsFromYAMLOrJSON
+// (reposerver/repository/repository.go at v3.6.1) treats a file outside the
+// ".json" rule whose YAML/JSON stream fails to decode. The source fails when
+// the stream yielded an object before the failure, or when the raw content
+// holds all of "apiVersion:", "kind:" and "metadata:"; any other file is
+// taken to be unrelated YAML and skipped.
+func directoryDecodeFailureIsFatal(data []byte) bool {
+	if directoryStreamYieldedObject(data) {
 		return true
 	}
-	for line := range strings.SplitSeq(text, "\n") {
-		if strings.TrimSpace(line) == "" {
+	return bytes.Contains(data, []byte("apiVersion:")) &&
+		bytes.Contains(data, []byte("kind:")) &&
+		bytes.Contains(data, []byte("metadata:"))
+}
+
+// directoryStreamYieldedObject reports whether the repo-server's
+// splitYAMLOrJSON returns at least one object before it stops. It decodes
+// each document into an Unstructured, so it stops at the first decode error
+// and at the first non-empty document that is not an object with a string
+// kind; null and empty documents are skipped.
+func directoryStreamYieldedObject(data []byte) bool {
+	decoder := manifestyaml.NewDecoder(bytes.NewReader(data))
+	for {
+		value, err := decoder.Decode()
+		if err != nil {
+			return false
+		}
+		if value == nil {
 			continue
 		}
-		trimmedLeft := strings.TrimLeft(line, " \t")
-		if strings.HasPrefix(trimmedLeft, "#") || strings.HasPrefix(trimmedLeft, "---") || strings.HasPrefix(trimmedLeft, "...") {
-			continue
+		object, ok := value.(map[string]any)
+		if !ok {
+			return false
 		}
-		if len(trimmedLeft) != len(line) {
-			continue
+		if kind, _ := object["kind"].(string); kind == "" {
+			return false
 		}
-		if strings.HasPrefix(trimmedLeft, "apiVersion:") || strings.HasPrefix(trimmedLeft, "kind:") {
-			return true
-		}
+		return true
 	}
-	return false
 }
 
 func directoryManifestIncluded(root, filePath string, opts RenderOptions) bool {
@@ -198,12 +260,61 @@ func shouldSkipDirectoryCandidate(root, path string, entry os.DirEntry, opts Ren
 }
 
 func isManifestFile(path string) bool {
-	ext := strings.ToLower(filepath.Ext(path))
-	return ext == ".yaml" || ext == ".yml" || ext == ".json" || ext == ".jsonnet"
+	return directoryManifestFile.MatchString(filepath.Base(path))
 }
 
+// isJSONSuffixFile reports whether the repo-server's case-sensitive ".json"
+// suffix check selects the single-object JSON rule for a file, whether or not
+// the extension filter is disabled.
+func isJSONSuffixFile(path string) bool {
+	return strings.HasSuffix(filepath.Base(path), ".json")
+}
+
+// validateDirectoryJSONFile mirrors the repo-server's rule for a file whose
+// name ends in ".json" (getObjsFromYAMLOrJSON at v3.6.1): the content, after
+// any UTF-8 byte order mark, must decode as one JSON object with a kind,
+// falling back to an OCI image manifest, and nothing but whitespace may
+// follow it. An empty file, YAML, a JSON array or scalar, and a syntax error
+// all fail the source. A file accepted only as an OCI image manifest is left
+// to the stream decoder, which skips an object without apiVersion and kind.
+func validateDirectoryJSONFile(manifestPath string, data []byte) error {
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	var object unstructured.Unstructured
+	if err := decoder.Decode(&object); err != nil {
+		var ociManifest imagev1.Manifest
+		if json.NewDecoder(bytes.NewReader(data)).Decode(&ociManifest) != nil {
+			return fmt.Errorf("%s: decode JSON object failed: %s", manifestPath, describeDirectoryJSONDecodeError(err))
+		}
+	}
+	if decoder.More() {
+		return fmt.Errorf("%s: found multiple objects; only single objects are allowed in JSON files", manifestPath)
+	}
+	return nil
+}
+
+// describeDirectoryJSONDecodeError names why a ".json" file did not decode
+// without echoing its content: Unstructured's missing-kind error quotes the
+// whole document.
+func describeDirectoryJSONDecodeError(err error) string {
+	if errors.Is(err, io.EOF) {
+		return "file is empty"
+	}
+	if errors.Is(err, io.ErrUnexpectedEOF) {
+		return "unexpected end of JSON input"
+	}
+	if syntaxErr, ok := errors.AsType[*json.SyntaxError](err); ok {
+		return fmt.Sprintf("invalid JSON at offset %d", syntaxErr.Offset)
+	}
+	if runtime.IsMissingKind(err) {
+		return "JSON object is missing kind"
+	}
+	return "JSON value is not an object"
+}
+
+// isJsonnetFile mirrors the repo-server's case-sensitive ".jsonnet" suffix
+// check, which applies whether or not the extension filter is disabled.
 func isJsonnetFile(path string) bool {
-	return strings.EqualFold(filepath.Ext(path), ".jsonnet")
+	return strings.HasSuffix(filepath.Base(path), ".jsonnet")
 }
 
 func sourceRoot(source ResolvedSource) (string, error) {

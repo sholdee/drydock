@@ -407,7 +407,9 @@ Canonical references:
 Renderers implement `internal/render.Renderer`. The default implementation
 path must not shell out.
 
-Directory rendering parses YAML/JSON files, flattens any document with an
+Directory rendering selects files with the repo-server's case-sensitive
+extension filter (skipped under `directory.disableExtensionFilter`, leaving
+include/exclude as the only filters), parses YAML/JSON files, flattens any document with an
 `items` array into its items regardless of kind (matching Argo CD's
 shape-based detection) and drops `items: null` documents as no-ops, renders
 Jsonnet with native Go libraries, honors Argo CD's
