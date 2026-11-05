@@ -5,6 +5,7 @@ import (
 	"maps"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	argoappv1 "github.com/argoproj/argo-cd/v3/pkg/apis/application/v1alpha1"
@@ -12,6 +13,12 @@ import (
 	"github.com/sholdee/drydock/internal/pathsafety"
 	"sigs.k8s.io/kustomize/api/types"
 )
+
+// KustomizeIgnoreMissingComponentsDroppedCode identifies the warning for a
+// Kustomize source with ignoreMissingComponents whose components list holds
+// more than one valid component. Argo CD v3.6.1 adds only the first one
+// (util/kustomize/kustomize.go:346-372), so the later ones are dropped.
+const KustomizeIgnoreMissingComponentsDroppedCode = "kustomize.ignore-missing-components-dropped"
 
 func sourceKustomizeDiagnostics(opts RenderOptions) []diagnostic.Diagnostic {
 	if opts.Kustomize == nil || opts.Kustomize.Version == "" {
@@ -40,12 +47,21 @@ func hasKustomizeSourceMutations(opts RenderOptions) bool {
 		len(kustomize.Components) != 0
 }
 
+// applySourceKustomizeOptions merges the spec.source.kustomize options into
+// the source kustomization. dir and boundaryRoot are the source directory and
+// repository root in the render workspace. originDir and originRoot are the
+// same paths in the original repository: the workspace does not hold the
+// components that ignoreMissingComponents drops, so the dropped-component
+// warning looks for them there. The returned diagnostics report options that
+// Argo CD v3.6.1 accepts but does not fully apply.
+//
 //nolint:gocyclo // Mirrors Argo CD's source-level Kustomize override surface explicitly.
-func applySourceKustomizeOptions(kustomization *types.Kustomization, dir, boundaryRoot string, opts RenderOptions) error {
+func applySourceKustomizeOptions(kustomization *types.Kustomization, dir, boundaryRoot, originDir, originRoot string, opts RenderOptions) ([]diagnostic.Diagnostic, error) {
 	kustomize := opts.Kustomize
 	if kustomize == nil {
-		return nil
+		return nil, nil
 	}
+	var diags []diagnostic.Diagnostic
 	if kustomize.NamePrefix != "" {
 		kustomization.NamePrefix = kustomize.NamePrefix
 	}
@@ -58,21 +74,21 @@ func applySourceKustomizeOptions(kustomization *types.Kustomization, dir, bounda
 	if len(kustomize.Images) != 0 {
 		images, err := sourceKustomizeImages(kustomize.Images, opts.ArgoEnv)
 		if err != nil {
-			return err
+			return nil, err
 		}
 		kustomization.Images = upsertImages(kustomization.Images, images)
 	}
 	if len(kustomize.Replicas) != 0 {
 		replicas, err := sourceKustomizeReplicas(kustomize.Replicas)
 		if err != nil {
-			return err
+			return nil, err
 		}
 		kustomization.Replicas = upsertReplicas(kustomization.Replicas, replicas)
 	}
 	if len(kustomize.CommonLabels) != 0 {
 		labels := envsubstStringMap(kustomize.CommonLabels, opts.ArgoEnv)
 		if err := applySourceKustomizeLabels(kustomization, labels, kustomize); err != nil {
-			return err
+			return nil, err
 		}
 	}
 	if len(kustomize.CommonAnnotations) != 0 {
@@ -81,7 +97,7 @@ func applySourceKustomizeOptions(kustomization *types.Kustomization, dir, bounda
 			annotations = envsubstStringMap(annotations, opts.ArgoEnv)
 		}
 		if err := mergeStringMap(kustomization.CommonAnnotations, annotations, kustomize.ForceCommonAnnotations, "common annotation"); err != nil {
-			return err
+			return nil, err
 		}
 		if kustomization.CommonAnnotations == nil {
 			kustomization.CommonAnnotations = map[string]string{}
@@ -92,13 +108,16 @@ func applySourceKustomizeOptions(kustomization *types.Kustomization, dir, bounda
 		kustomization.Patches = append(kustomization.Patches, sourceKustomizePatches(kustomize.Patches)...)
 	}
 	if len(kustomize.Components) != 0 {
-		components, err := sourceKustomizeComponents(dir, boundaryRoot, kustomize.Components, kustomize.IgnoreMissingComponents)
+		components, dropped, err := sourceKustomizeComponents(dir, boundaryRoot, originDir, originRoot, kustomize.Components, kustomize.IgnoreMissingComponents)
 		if err != nil {
-			return err
+			return nil, err
 		}
 		kustomization.Components = append(kustomization.Components, components...)
+		if len(dropped) != 0 {
+			diags = append(diags, ignoreMissingComponentsDroppedDiagnostic(components[0], dropped))
+		}
 	}
-	return nil
+	return diags, nil
 }
 
 func sourceKustomizeImages(images argoappv1.KustomizeImages, env argoappv1.Env) ([]types.Image, error) {
@@ -288,25 +307,179 @@ func sourceKustomizePatchOptions(options map[string]bool) *types.PatchArgs {
 	}
 }
 
-func sourceKustomizeComponents(dir, boundaryRoot string, components []string, ignoreMissing bool) ([]string, error) {
-	out := make([]string, 0, len(components))
-	// Every valid component is kept. Recorded divergence from strict Argo CD
-	// v3.6.1: util/kustomize/kustomize.go (a16170b2e) exits its component
-	// loop with `break component` after the first valid entry, so the
-	// repo-server adds only that one; drydock keeps the documented intent.
-	for _, component := range components {
-		if ignoreMissing {
-			decision, err := ignoreMissingComponentDecision(dir, boundaryRoot, component)
-			if err != nil {
-				return nil, err
-			}
-			if !decision.keep {
-				continue
-			}
-		}
-		out = append(out, component)
+// sourceKustomizeComponents returns the spec.source.kustomize components
+// that rendering adds. Without ignoreMissing every component is added.
+//
+// With ignoreMissing, drydock mirrors Argo CD v3.6.1
+// (util/kustomize/kustomize.go:345-372): the repo-server leaves its component
+// loop with `break component` (kustomize.go:366) after the first component
+// that holds a kustomization file. Components before it that fail the check
+// are skipped, and the first valid one is added. Every later component is
+// dropped: the repo-server never reads, checks or copies it, so drydock does
+// not either, and a broken later component cannot fail the render.
+//
+// dropped names the later components that hold a kustomization file, so the
+// caller can warn about the resources they would have added. This lookup is
+// drydock's own and only feeds the warning. It runs in the original
+// repository (originDir, originRoot), because the render workspace does not
+// hold the dropped components. It looks only for a regular kustomization
+// file, through an os.Root on originRoot, so it reads nothing outside the
+// repository. dropped names each directory once, keyed by the cleaned
+// repository-relative path that the repo-server resolves
+// (filepath.Rel(repoRoot, filepath.Join(path, c)) at kustomize.go:357), and
+// leaves out a later entry that resolves to the kept component, such as a
+// repeat of it or the same path with extra slashes: no resources are missing
+// for it.
+//
+// This is believed to be an upstream bug: argoproj/argo-cd#26576 (merge
+// d631fcdfb) turned an earlier `continue` into `break component`. Revisit
+// this when upstream fixes it.
+func sourceKustomizeComponents(dir, boundaryRoot, originDir, originRoot string, components []string, ignoreMissing bool) (kept, dropped []string, err error) {
+	if !ignoreMissing {
+		return append(make([]string, 0, len(components)), components...), nil, nil
 	}
-	return out, nil
+	selection, err := selectIgnoreMissingComponents(dir, boundaryRoot, components)
+	if err != nil {
+		return nil, nil, err
+	}
+	if !selection.found {
+		return []string{}, nil, nil
+	}
+	dropped, err = droppedIgnoreMissingComponents(originDir, originRoot, selection.keptRel, selection.later)
+	if err != nil {
+		return nil, nil, err
+	}
+	return []string{selection.kept}, dropped, nil
+}
+
+// ignoreMissingComponentsSelection is the outcome of the Argo CD v3.6.1
+// ignoreMissingComponents loop (util/kustomize/kustomize.go:355-372) over
+// spec.source.kustomize.components.
+type ignoreMissingComponentsSelection struct {
+	// found reports whether a component holds a kustomization file.
+	found bool
+	// kept is the first component that holds a kustomization file, the only
+	// one the repo-server adds; keptRel is its repository-relative
+	// directory.
+	kept    string
+	keptRel string
+	// skipped holds the check outcome of each component before kept.
+	skipped []ignoreMissingComponent
+	// later holds the components after kept, which the loop never reaches
+	// (`break component` at kustomize.go:366).
+	later []string
+}
+
+// selectIgnoreMissingComponents runs the ignoreMissingComponents check on
+// each component in order and stops at the first valid one, as the
+// repo-server does. Components after it are returned unchecked.
+func selectIgnoreMissingComponents(dir, boundaryRoot string, components []string) (ignoreMissingComponentsSelection, error) {
+	var selection ignoreMissingComponentsSelection
+	for i, component := range components {
+		decision, err := ignoreMissingComponentDecision(dir, boundaryRoot, component)
+		if err != nil {
+			return ignoreMissingComponentsSelection{}, err
+		}
+		if !decision.keep {
+			selection.skipped = append(selection.skipped, decision)
+			continue
+		}
+		selection.found = true
+		selection.kept = component
+		selection.keptRel = decision.rel
+		selection.later = components[i+1:]
+		break
+	}
+	return selection, nil
+}
+
+// laterIgnoreMissingComponentDir returns the directory a component after
+// the kept one names, and its cleaned path relative to boundaryRoot, the
+// path the repo-server would resolve (kustomize.go:357). ok is false for a
+// remote ref, a ref escaping the repository, and a ref entering a .git
+// directory: drydock never looks there for the warning, so those refs are
+// not render inputs.
+func laterIgnoreMissingComponentDir(dir, boundaryRoot, ref string) (componentDir, rel string, ok bool) {
+	if isRemoteKustomizeRef(ref) {
+		return "", "", false
+	}
+	componentDir = filepath.Clean(filepath.Join(dir, filepath.FromSlash(ref)))
+	rel, inside := relInsideBoundary(filepath.Clean(boundaryRoot), componentDir)
+	if !inside || pathsafety.RelEntersGit(rel) {
+		return "", "", false
+	}
+	return componentDir, rel, true
+}
+
+// droppedIgnoreMissingComponents returns the components in later whose
+// directory holds a regular kustomization file, once per directory, without
+// the kept component's directory.
+func droppedIgnoreMissingComponents(dir, boundaryRoot, keptRel string, later []string) ([]string, error) {
+	var dropped []string
+	seen := map[string]struct{}{keptRel: {}}
+	for _, ref := range later {
+		_, rel, ok := laterIgnoreMissingComponentDir(dir, boundaryRoot, ref)
+		if !ok {
+			continue
+		}
+		if _, dup := seen[rel]; dup {
+			continue
+		}
+		seen[rel] = struct{}{}
+		found, err := componentHasKustomizationFile(filepath.Clean(boundaryRoot), rel)
+		if err != nil {
+			return nil, err
+		}
+		if found {
+			dropped = append(dropped, ref)
+		}
+	}
+	return dropped, nil
+}
+
+// laterIgnoreMissingComponentInputs returns the files the dropped-component
+// warning looks at: each kustomization file name in the directory of each
+// in-repository component after the kept one. They are optional render
+// inputs: the digest records their existence and bytes, which covers the
+// warning, without reading the rest of a component the render drops. When
+// the ref names an existing path that is not a directory, that path itself
+// is the input instead: the digest records its type, so it turning into a
+// directory changes the key.
+func laterIgnoreMissingComponentInputs(dir, boundaryRoot string, later []string) []string {
+	var inputs []string
+	for _, ref := range later {
+		componentDir, _, ok := laterIgnoreMissingComponentDir(dir, boundaryRoot, ref)
+		if !ok {
+			continue
+		}
+		if info, err := os.Lstat(componentDir); err == nil && !info.IsDir() {
+			inputs = append(inputs, componentDir)
+			continue
+		}
+		for _, name := range kustomizationFileNames {
+			inputs = append(inputs, filepath.Join(componentDir, name))
+		}
+	}
+	return inputs
+}
+
+// ignoreMissingComponentsDroppedDiagnostic warns that Argo CD v3.6.1 adds
+// only the first valid component under ignoreMissingComponents, and names
+// each later component that holds a kustomization file. It is not exempt
+// from --strict: the dropped components' resources are missing from the
+// render.
+func ignoreMissingComponentsDroppedDiagnostic(first string, dropped []string) diagnostic.Diagnostic {
+	quoted := make([]string, 0, len(dropped))
+	for _, component := range dropped {
+		quoted = append(quoted, strconv.Quote(component))
+	}
+	return diagnostic.Diagnostic{
+		Code:     KustomizeIgnoreMissingComponentsDroppedCode,
+		Severity: diagnostic.SeverityWarning,
+		Category: "kustomize",
+		Message: fmt.Sprintf("kustomize ignoreMissingComponents adds only the first valid component %q, as Argo CD v3.6.1 does; dropped later components that hold a kustomization file: %s",
+			first, strings.Join(quoted, ", ")),
+	}
 }
 
 // ignoreMissingComponent is the outcome of the ignoreMissingComponents check
@@ -314,6 +487,10 @@ func sourceKustomizeComponents(dir, boundaryRoot string, components []string, ig
 type ignoreMissingComponent struct {
 	// keep reports whether the component is added to the kustomization.
 	keep bool
+	// rel is the cleaned component directory relative to the repository
+	// root, the path the repo-server checks. It is empty for a remote ref
+	// and a ref escaping the repository.
+	rel string
 	// probe is the in-boundary directory the check looked at. A skipped
 	// component's probe stays a render input (an optional digest path): a
 	// kustomization file appearing there changes the render.
@@ -321,14 +498,15 @@ type ignoreMissingComponent struct {
 }
 
 // ignoreMissingComponentDecision mirrors Argo CD v3.6.1's
-// ignoreMissingComponents check (util/kustomize/kustomize.go, a16170b2e):
-// the ref is joined with the source directory and kept only when that
-// directory holds a regular kustomization.yaml, kustomization.yml or
-// Kustomization, looked up through an os.Root on the repository root so
-// in-root symlinks are followed and nothing outside the root is read. As
-// upstream, a remote ref and a ref escaping the repository are skipped, and
-// an absolute ref is joined under the source directory rather than rejected.
-// A kept absolute ref still fails, as drydock never reads absolute paths.
+// ignoreMissingComponents check for one component
+// (util/kustomize/kustomize.go:357-368): the ref is joined with the source
+// directory and kept only when that directory holds a regular
+// kustomization.yaml, kustomization.yml or Kustomization, looked up through
+// an os.Root on the repository root so in-root symlinks are followed and
+// nothing outside the root is read. As upstream, a remote ref and a ref
+// escaping the repository are skipped, and an absolute ref is joined under
+// the source directory rather than rejected. A kept absolute ref still
+// fails, as drydock never reads absolute paths.
 func ignoreMissingComponentDecision(dir, boundaryRoot, ref string) (ignoreMissingComponent, error) {
 	if isRemoteKustomizeRef(ref) {
 		return ignoreMissingComponent{}, nil
@@ -339,7 +517,7 @@ func ignoreMissingComponentDecision(dir, boundaryRoot, ref string) (ignoreMissin
 	if !inside {
 		return ignoreMissingComponent{}, nil
 	}
-	var decision ignoreMissingComponent
+	decision := ignoreMissingComponent{rel: rel}
 	if !pathsafety.RelEntersGit(rel) {
 		decision.probe = componentDir
 	}

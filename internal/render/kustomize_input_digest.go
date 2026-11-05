@@ -105,7 +105,10 @@ func KustomizeSelectionPaths(ctx context.Context, repoRoot, sourcePath string, k
 // patch files that rendering merges into the source kustomization
 // (applySourceKustomizeOptions). The digest collects the same refs through
 // sourceKustomizeWorkspaceAdditions; this best-effort form keeps a
-// component's own directory when its graph cannot be read.
+// component's own directory when its graph cannot be read. Under
+// ignoreMissingComponents it also owns the graphs of the components dropped
+// after the first valid one, which the digest does not walk. That
+// over-selects, which is safe for changed-only selection.
 func (c *kustomizeInputCollector) collectSourceKustomizeRefs(ctx context.Context, sourceRoot string, kustomize *argoappv1.ApplicationSourceKustomize) error {
 	if kustomize == nil {
 		return nil

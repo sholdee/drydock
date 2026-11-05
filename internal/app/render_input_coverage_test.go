@@ -514,3 +514,61 @@ func TestRenderInputCoverageKustomizeIgnoreMissingComponents(t *testing.T) {
 	}
 	assertRenderInputCoverage(t, repoRoot, application)
 }
+
+// TestRenderInputCoverageKustomizeIgnoreMissingComponentsAfterFirstValid pins
+// coverage when ignoreMissingComponents drops the components after the first
+// valid one, as Argo CD v3.6.1 does (util/kustomize/kustomize.go:366). The
+// render never reads a dropped component, so a broken one (invalid YAML
+// here) renders. The kustomization file names of each later directory
+// decide the dropped-component warning, so the digest must list each of
+// them as an optional path, including names that do not exist yet: a
+// corruption tripwire cannot see a file being created.
+// TestPersistentCacheKustomizeDroppedComponentKustomizationChangeInvalidates
+// proves that changing or creating one rotates the key.
+func TestRenderInputCoverageKustomizeIgnoreMissingComponentsAfterFirstValid(t *testing.T) {
+	repoRoot := t.TempDir()
+	writeTestFile(t, repoRoot+"/manifests/app/kustomization.yaml", "resources:\n  - cm.yaml\n")
+	writeTestFile(t, repoRoot+"/manifests/app/cm.yaml", renderCoverageDemoConfigMap)
+	for _, name := range []string{"first", "second"} {
+		writeTestFile(t, repoRoot+"/manifests/components/"+name+"/kustomization.yaml", "apiVersion: kustomize.config.k8s.io/v1alpha1\nkind: Component\nresources:\n  - cm.yaml\n")
+		writeTestFile(t, repoRoot+"/manifests/components/"+name+"/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: component-"+name+"\n")
+	}
+	writeTestFile(t, repoRoot+"/manifests/components/broken/kustomization.yaml", "}{ not: [valid\n")
+	writeTestFile(t, repoRoot+"/manifests/components/later-plain/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: later-plain\n")
+	writeTestFile(t, repoRoot+"/unrelated/README.md", "not a render input\n")
+	application := argoappv1.Application{
+		Name: "app", Namespace: "argocd",
+		Spec: argoappv1.ApplicationSpec{
+			Source: &argoappv1.ApplicationSource{
+				RepoURL: "https://git.example.test/org/repo.git", Path: "manifests/app", TargetRevision: "main",
+				Kustomize: &argoappv1.ApplicationSourceKustomize{
+					Components:              []string{"../components/missing", "../components/first", "../components/second", "../components/broken", "../components/later-plain"},
+					IgnoreMissingComponents: true,
+				},
+			},
+			Destination: argoappv1.ApplicationDestination{Namespace: "default"},
+		},
+	}
+	assertRenderInputCoverage(t, repoRoot, application)
+
+	provider := renderCoverageFixtureProvider(repoRoot)
+	plan := mustPlan(t, application)
+	digestPaths, _, err := localInputDigestPathsForSource(context.Background(), plan, plan.Sources[0], provider)
+	if err != nil {
+		t.Fatalf("localInputDigestPathsForSource() error = %v", err)
+	}
+	for _, dir := range []string{"second", "broken", "later-plain"} {
+		for _, name := range []string{"kustomization.yaml", "kustomization.yml", "Kustomization"} {
+			want := gitref.PathDigestPath{Path: "manifests/components/" + dir + "/" + name, Optional: true}
+			found := false
+			for _, item := range digestPaths {
+				if item == want {
+					found = true
+				}
+			}
+			if !found {
+				t.Errorf("digest paths %#v, want %#v", digestPaths, want)
+			}
+		}
+	}
+}

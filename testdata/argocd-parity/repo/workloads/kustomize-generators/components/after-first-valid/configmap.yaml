@@ -1,0 +1,10 @@
+# A valid component listed after the first valid one. Under
+# ignoreMissingComponents, Argo CD v3.6.1 drops it, so this ConfigMap must
+# not render.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: generators-after-first-valid
+  namespace: parity-kustomize-generators
+data:
+  from: dropped-component
