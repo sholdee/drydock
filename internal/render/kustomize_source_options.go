@@ -506,7 +506,8 @@ type ignoreMissingComponent struct {
 // nothing outside the root is read. As upstream, a remote ref and a ref
 // escaping the repository are skipped, and an absolute ref is joined under
 // the source directory rather than rejected. A kept absolute ref still
-// fails, as drydock never reads absolute paths.
+// fails, as drydock never reads absolute paths. That error comes with the
+// decision's rel and probe set, so a caller can still own the directory.
 func ignoreMissingComponentDecision(dir, boundaryRoot, ref string) (ignoreMissingComponent, error) {
 	if isRemoteKustomizeRef(ref) {
 		return ignoreMissingComponent{}, nil
@@ -529,7 +530,7 @@ func ignoreMissingComponentDecision(dir, boundaryRoot, ref string) (ignoreMissin
 		return decision, nil
 	}
 	if filepath.IsAbs(ref) {
-		return ignoreMissingComponent{}, fmt.Errorf("kustomize components %q must be relative", ref)
+		return decision, fmt.Errorf("kustomize components %q must be relative", ref)
 	}
 	decision.keep = true
 	return decision, nil

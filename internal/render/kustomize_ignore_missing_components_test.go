@@ -405,6 +405,36 @@ func TestKustomizeSelectionPathsOwnSkippedComponentDirectories(t *testing.T) {
 	}
 }
 
+// TestKustomizeSelectionPathsOwnAbsoluteComponentOutsideSource pins that
+// changed-only selection owns the directory of an absolute component ref that
+// holds a kustomization file. Argo CD v3.6.1 joins the ref under the source
+// directory (util/kustomize/kustomize.go:357), so "/../components/abs" from
+// apps/demo names apps/components/abs, outside spec.source.path. As the first
+// valid component, its kustomization file makes the render fail. After the
+// first valid component, the file decides the dropped-component warning.
+// Either way, editing it changes the result, so the Application must be
+// selected.
+func TestKustomizeSelectionPathsOwnAbsoluteComponentOutsideSource(t *testing.T) {
+	for name, components := range map[string][]string{
+		"first valid":       {"../components/missing", "/../components/abs", "../components/valid"},
+		"after first valid": {"../components/valid", "/../components/abs"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			root := filepath.Join(t.TempDir(), "repo")
+			writeIgnoreMissingComponentsRepo(t, root, "valid", "abs")
+			kustomize := &argoappv1.ApplicationSourceKustomize{Components: components, IgnoreMissingComponents: true}
+			selection, err := KustomizeSelectionPaths(context.Background(), root, filepath.Join("apps", "demo"), kustomize)
+			if err != nil {
+				t.Fatalf("KustomizeSelectionPaths() error = %v", err)
+			}
+			const want = "apps/components/abs"
+			if i := sort.SearchStrings(selection, want); i >= len(selection) || selection[i] != want {
+				t.Fatalf("KustomizeSelectionPaths() = %v, missing %q", selection, want)
+			}
+		})
+	}
+}
+
 // TestKustomizeInputDigestPathsKeepSkippedComponentDirectories pins that a
 // component skipped under ignoreMissingComponents stays a render input: its
 // in-repository directory is an optional digest path, so a kustomization file
