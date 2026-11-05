@@ -354,7 +354,7 @@ func assertClientCreds(t *testing.T, url string, loopback bool, combo credsCombo
 // TestCredentialsValidate pins the fail-fast validation errors, each naming
 // the responsible flag: the vendored client would otherwise silently ignore
 // a non-PEM CA (empty pool replacing the system pool) or a lone cert/key
-// half (client.go:482,486).
+// half (util/oci/client.go:495,500 at v3.6.1).
 func TestCredentialsValidate(t *testing.T) {
 	certFile, keyFile := ocitest.GenerateClientCertFiles(t)
 	otherCertFile, _ := ocitest.GenerateClientCertFiles(t)
