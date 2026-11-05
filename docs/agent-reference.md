@@ -520,5 +520,6 @@ an `expected.yaml`, and an `applications.yaml`.
 `go test ./scripts/argocd-project-policy-smoke` checks that the three agree.
 A case that changes state every Application shares, such as a cluster Secret
 named `in-cluster` or an argocd-cm key, goes in a later phase with its own
-fixture repo. Cluster Secrets that only Argo CD sees go in
-`live-cluster-secrets.yaml`, outside every drydock repo.
+fixture repo. Add its undo step to `reset_project_policy_shared_state`, so the
+cleanup trap also undoes it after a failed run. Cluster Secrets that only Argo
+CD sees go in `live-cluster-secrets.yaml`, outside every drydock repo.

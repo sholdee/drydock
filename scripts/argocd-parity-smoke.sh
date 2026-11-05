@@ -107,6 +107,9 @@ OUT_DIR="${REPO_ROOT}/argocd-parity-smoke"
 KEEP_CLUSTER="false"
 CREATE_CLUSTER="true"
 RUN_PROJECT_POLICY_SMOKE="true"
+# Set to "true" once a project-policy phase starts to change state that every
+# Application shares. The cleanup trap reads it.
+PROJECT_POLICY_SHARED_STATE_CHANGED="false"
 CLUSTER_NAME="drydock-argocd-parity-${GITHUB_RUN_ID:-$$}"
 DRYDOCK_CMD=(go run ./cmd/drydock)
 PORT_FORWARD_PID=""
@@ -392,6 +395,13 @@ cleanup() {
   fi
   if [[ "${status}" -ne 0 ]]; then
     collect_logs || true
+  fi
+  # A failed project-policy phase leaves its shared Argo CD state behind.
+  # Undo it on a cluster that outlives this run, so the next run starts
+  # clean. The failed Application status is already in the artifacts.
+  if [[ "${PROJECT_POLICY_SHARED_STATE_CHANGED}" == "true" ]] \
+    && [[ "${CREATE_CLUSTER}" != "true" || "${KEEP_CLUSTER}" == "true" ]]; then
+    reset_project_policy_shared_state >/dev/null 2>&1 || true
   fi
   rm -rf "${WORK_DIR}"
   if [[ "${CREATE_CLUSTER}" == "true" && "${KEEP_CLUSTER}" != "true" ]]; then
@@ -1365,6 +1375,17 @@ PROJECT_POLICY_PHASE_MANIFESTS=""
 PROJECT_POLICY_PHASE_EXPECTED=""
 PROJECT_POLICY_PHASE_CASES=()
 
+# reset_project_policy_shared_state undoes the shared state that the later
+# project-policy phases change: the cluster Secret named in-cluster and the
+# argocd-cm cluster.inClusterEnabled key. It is safe to run more than once.
+# A merge patch with a null value removes the key, and does nothing when the
+# key is absent.
+reset_project_policy_shared_state() {
+  kubectl --request-timeout=30s -n argocd delete secret "${PROJECT_POLICY_IN_CLUSTER_SECRET_NAME}" --ignore-not-found >/dev/null
+  kubectl --request-timeout=30s -n argocd patch configmap argocd-cm --type merge \
+    -p '{"data":{"cluster.inClusterEnabled":null}}' >/dev/null
+}
+
 use_project_policy_phase() {
   PROJECT_POLICY_PHASE="$1"
   PROJECT_POLICY_PHASE_REPO="$2"
@@ -1545,6 +1566,7 @@ run_project_policy_smoke() {
   use_project_policy_phase project-policy-in-cluster-secret "${PROJECT_POLICY_IN_CLUSTER_SECRET_DIR}/repo" \
     project-policy-in-cluster-secret "${PROJECT_POLICY_IN_CLUSTER_SECRET_DIR}/expected.yaml" \
     "${PROJECT_POLICY_IN_CLUSTER_SECRET_CASES[@]}"
+  PROJECT_POLICY_SHARED_STATE_CHANGED="true"
   run_project_policy_phase
   log_step "Removing the cluster Secret named in-cluster"
   kubectl -n argocd delete secret "${PROJECT_POLICY_IN_CLUSTER_SECRET_NAME}" --ignore-not-found >/dev/null
@@ -1558,8 +1580,8 @@ run_project_policy_smoke() {
     -p '{"data":{"cluster.inClusterEnabled":"false"}}' >/dev/null
   run_project_policy_phase
   log_step "Enabling the in-cluster cluster in argocd-cm again"
-  kubectl -n argocd patch configmap argocd-cm --type json \
-    -p '[{"op":"remove","path":"/data/cluster.inClusterEnabled"}]' >/dev/null
+  reset_project_policy_shared_state
+  PROJECT_POLICY_SHARED_STATE_CHANGED="false"
 }
 
 main() {
