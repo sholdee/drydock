@@ -27,6 +27,10 @@ cases:
     namespace: argocd
     argocdCondition: destination
     drydockDiagnosticCode: project.destination-denied
+  - name: project-policy-destination-deny-listed-first
+    namespace: argocd
+    argocdCondition: destination
+    drydockDiagnosticCode: project.destination-denied
   - name: project-policy-destination-deny-namespace-wins
     namespace: argocd
     argocdCondition: destination

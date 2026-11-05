@@ -225,6 +225,7 @@ PROJECT_POLICY_CASES=(
   "project-policy-tenant|project-policy-source-namespace-allowed|none"
   "project-policy-tenant|project-policy-source-namespace-denied|source-namespace"
   "argocd|project-policy-destination-deny-server-wins|destination"
+  "argocd|project-policy-destination-deny-listed-first|destination"
   "argocd|project-policy-destination-deny-namespace-wins|destination"
   "argocd|project-policy-destination-deny-other-allowed|none"
   "argocd|project-policy-destination-name-in-cluster|none"

@@ -23,7 +23,7 @@ It also runs a thin live AppProject Application-spec policy sanity check for
 source repository, destination, and source namespace outcomes against the real
 Argo CD instance. The destination cases include these:
 
-- A deny entry that wins over an allow entry.
+- A deny entry that wins over an allow entry, listed before or after it.
 - The built-in `in-cluster` cluster, by name and by server.
 - A cluster Secret named `in-cluster` at another server.
 - argocd-cm `cluster.inClusterEnabled` set to `"false"`.

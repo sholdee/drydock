@@ -120,6 +120,23 @@ spec:
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
+  name: project-policy-destination-deny-listed-first
+  namespace: argocd
+spec:
+  project: project-policy-destination-deny-listed-first
+  source:
+    repoURL: git://argocd-parity-git.argocd-parity.svc.cluster.local/repo.git
+    targetRevision: HEAD
+    path: project-policy/workloads/destination-deny-listed-first
+    directory:
+      recurse: true
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: project-policy-workloads
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
   name: project-policy-destination-deny-namespace-wins
   namespace: argocd
 spec:

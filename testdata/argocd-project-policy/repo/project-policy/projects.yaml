@@ -101,6 +101,24 @@ spec:
   sourceNamespaces:
     - argocd
 ---
+# The same deny entry, listed before the allow entry. The order does not
+# matter: the deny entry rejects the destination at once.
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: project-policy-destination-deny-listed-first
+  namespace: argocd
+spec:
+  sourceRepos:
+    - git://argocd-parity-git.argocd-parity.svc.cluster.local/repo.git
+  destinations:
+    - server: "!https://kubernetes.default.svc"
+      namespace: "*"
+    - server: "*"
+      namespace: "*"
+  sourceNamespaces:
+    - argocd
+---
 # A namespace deny entry denies when its server matches.
 apiVersion: argoproj.io/v1alpha1
 kind: AppProject

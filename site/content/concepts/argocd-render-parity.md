@@ -65,7 +65,7 @@ Application with the diagnostics `drydock diag` reports. The cases cover
 source repositories, source namespaces, and destinations. The destination cases
 cover these rules:
 
-- A deny entry (`!`) wins over an allow entry.
+- A deny entry (`!`) wins over an allow entry, listed before or after it.
 - A destination named `in-cluster`, or at server
   `https://kubernetes.default.svc`, reaches the built-in cluster when no cluster
   Secret claims it.

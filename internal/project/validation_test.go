@@ -376,6 +376,41 @@ func TestValidateApplicationsDenyEntryWinsOverProjectScopedClusterDestination(t 
 	assertDiagnostic(t, diags, "destination is not permitted")
 }
 
+// A deny entry wins whether it comes before or after the allow entry: Argo
+// CD returns false as soon as a deny entry rejects the destination
+// (pkg/apis/application/v1alpha1/app_project_types.go:507-527, v3.6.1). The
+// built-in in-cluster cluster is the oracle input for both orders.
+func TestValidateApplicationsDenyEntryWinsInEitherOrder(t *testing.T) {
+	deny := argoappv1.ApplicationDestination{Server: "!" + argoappv1.KubernetesInternalAPIServerAddr, Namespace: "*"}
+	allow := argoappv1.ApplicationDestination{Server: "*", Namespace: "*"}
+	app := application("demo", "platform", argoappv1.ApplicationSource{
+		RepoURL: "https://github.com/example/repo",
+		Path:    "apps/demo",
+	}, argoappv1.ApplicationDestination{Server: argoappv1.KubernetesInternalAPIServerAddr, Namespace: "workloads"})
+	builtIn := &argoappv1.Cluster{Name: argoappv1.KubernetesInClusterName, Server: argoappv1.KubernetesInternalAPIServerAddr}
+
+	for _, tt := range []struct {
+		name         string
+		destinations []argoappv1.ApplicationDestination
+	}{
+		{name: "deny listed first", destinations: []argoappv1.ApplicationDestination{deny, allow}},
+		{name: "deny listed last", destinations: []argoappv1.ApplicationDestination{allow, deny}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			proj := destinationProject(tt.destinations...)
+			argoPermitted, err := proj.IsDestinationPermitted(builtIn, "workloads", nil)
+			if err != nil {
+				t.Fatalf("IsDestinationPermitted() error = %v", err)
+			}
+			if argoPermitted {
+				t.Fatalf("Argo CD permitted %#v, want denied", tt.destinations)
+			}
+			diags := ValidateApplications([]argoappv1.Application{app}, []argoappv1.AppProject{proj}, config.DefaultSettings())
+			assertDiagnostic(t, diags, "destination is not permitted")
+		})
+	}
+}
+
 func nameOnlyApplication(cluster, namespace string) argoappv1.Application {
 	return application("demo", "platform", argoappv1.ApplicationSource{
 		RepoURL: "https://github.com/example/repo",
