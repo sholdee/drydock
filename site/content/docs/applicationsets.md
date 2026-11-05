@@ -36,7 +36,8 @@ Supported ApplicationSet behavior includes:
 - Sprig-compatible template functions used by Argo CD, plus Argo CD v3.6.1's
   `tpl` (nested template rendering with the same options, functions, and
   three-level recursion limit) in templates, `templatePatch`, generator
-  `values`, and matrix/merge child interpolation
+  `values` (except `clusterDecisionResource`, which does not render values),
+  and matrix/merge child interpolation
 - generated `Application.metadata.namespace` set to the ApplicationSet
   namespace
 - Argo CD's default generated Application finalizer where applicable
@@ -338,6 +339,17 @@ uses for each supported provider family:
 | `scmProvider` | `organization`, `repository`, `repository_id`, `url`, `branch`, `branchNormalized`, `sha`, `short_sha`, `short_sha_7`, `labels`, `values` |
 | `pullRequest` | `number`, `title`, `branch`, `branch_slug`, `target_branch`, `target_branch_slug`, `head_sha`, `head_short_sha`, `head_short_sha_7`, `author`, `labels`, `values` |
 | `plugin` | fixture output fields, `generator.input.parameters`, `values` |
+
+Every generator except `clusterDecisionResource` renders its `values` as
+templates with the generator params. As in Argo CD v3.6.1,
+`clusterDecisionResource` copies each value as a plain string and does not
+render it. A value such as `region: '{{region}}'` stays the literal text
+`{{region}}`, and a value with broken template syntax is not an error. To use a
+decision field, reference it directly in the Application template, such as
+`{{region}}` or `{{ .region }}`. In Go-template mode, a decision field named
+`values` together with generator `values` makes Argo CD fail the
+ApplicationSet. drydock warns `appset.template-render-failed` and generates no
+Applications for it.
 
 For non-Go-template ApplicationSets, nested maps are flattened with dot
 notation, including `metadata.labels.<key>`, `metadata.annotations.<key>`, and

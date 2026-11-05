@@ -148,6 +148,14 @@ Supported:
   smoke checks a `hasKey` call on cluster annotations.
 - Argo CD v3.6.1 Go-template functions, including `tpl`, in templates,
   `templatePatch`, generator `values`, and matrix/merge child interpolation.
+- Argo CD v3.6.1 `clusterDecisionResource` `values`: the generator copies each
+  value as a plain string and does not render it as a template
+  (`applicationset/generators/duck_type.go`). `region: '{{region}}'` stays the
+  literal `{{region}}`, and broken template syntax in a value is not an error.
+  All other generators render their `values`. In Go-template mode, a decision
+  field named `values` together with generator `values` fails the
+  ApplicationSet (Argo CD panics in that case), so drydock warns
+  `appset.template-render-failed` and generates no Applications for it.
 - Fail-closed fixture diagnostics for invalid provider fixtures, no provider
   matches, and unsupported provider filters.
 - Warning diagnostics when a discovered ApplicationSet generates zero

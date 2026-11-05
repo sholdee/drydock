@@ -18,7 +18,7 @@ func evaluateClusterDecisionResourceGenerator(ctx generatorContext, generator ar
 	if err != nil {
 		return nil, nil, true, err
 	}
-	paramSets, diags, err := clusterDecisionResourceParamSets(ctx.ManifestPath, generator.ClusterDecisionResource, ctx.Options.Provider.Data, ctx.AppSet.Spec.GoTemplate, ctx.AppSet.Spec.GoTemplateOptions)
+	paramSets, diags, err := clusterDecisionResourceParamSets(ctx.ManifestPath, generator.ClusterDecisionResource, ctx.Options.Provider.Data, ctx.AppSet.Spec.GoTemplate)
 	if err != nil {
 		return nil, diags, true, err
 	}
@@ -28,7 +28,7 @@ func evaluateClusterDecisionResourceGenerator(ctx generatorContext, generator ar
 	return paramSets, diags, true, err
 }
 
-func clusterDecisionResourceParamSets(manifestPath string, generator *argoappv1.DuckTypeGenerator, data ProviderData, useGoTemplate bool, goTemplateOptions []string) ([]generatorParamSet, []diagnostic.Diagnostic, error) {
+func clusterDecisionResourceParamSets(manifestPath string, generator *argoappv1.DuckTypeGenerator, data ProviderData, useGoTemplate bool) ([]generatorParamSet, []diagnostic.Diagnostic, error) {
 	if len(data.ClusterDecisions) == 0 {
 		return nil, []diagnostic.Diagnostic{providerNoMatchDiagnostic(manifestPath, "clusterDecisionResource")}, nil
 	}
@@ -37,7 +37,7 @@ func clusterDecisionResourceParamSets(manifestPath string, generator *argoappv1.
 	}
 
 	clustersByName := clusterInputsByName(data.Clusters)
-	out, diag, err := clusterDecisionResourceInputParamSets(manifestPath, generator, data.ClusterDecisions, clustersByName, useGoTemplate, goTemplateOptions)
+	out, diag, err := clusterDecisionResourceInputParamSets(manifestPath, generator, data.ClusterDecisions, clustersByName, useGoTemplate)
 	if diag != nil {
 		return nil, []diagnostic.Diagnostic{*diag}, nil
 	}
@@ -70,7 +70,7 @@ func clusterInputsByName(clusters []ClusterInput) map[string]ClusterInput {
 	return clustersByName
 }
 
-func clusterDecisionResourceInputParamSets(manifestPath string, generator *argoappv1.DuckTypeGenerator, inputs []ClusterDecisionInput, clustersByName map[string]ClusterInput, useGoTemplate bool, goTemplateOptions []string) ([]generatorParamSet, *diagnostic.Diagnostic, error) {
+func clusterDecisionResourceInputParamSets(manifestPath string, generator *argoappv1.DuckTypeGenerator, inputs []ClusterDecisionInput, clustersByName map[string]ClusterInput, useGoTemplate bool) ([]generatorParamSet, *diagnostic.Diagnostic, error) {
 	var out []generatorParamSet
 	for _, input := range inputs {
 		matched, err := clusterDecisionResourceMatches(generator, input)
@@ -81,7 +81,7 @@ func clusterDecisionResourceInputParamSets(manifestPath string, generator *argoa
 		if !matched {
 			continue
 		}
-		paramSets, err := clusterDecisionResourceDecisionParamSets(generator, input, clustersByName, useGoTemplate, goTemplateOptions)
+		paramSets, err := clusterDecisionResourceDecisionParamSets(generator, input, clustersByName, useGoTemplate)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -90,14 +90,14 @@ func clusterDecisionResourceInputParamSets(manifestPath string, generator *argoa
 	return out, nil, nil
 }
 
-func clusterDecisionResourceDecisionParamSets(generator *argoappv1.DuckTypeGenerator, input ClusterDecisionInput, clustersByName map[string]ClusterInput, useGoTemplate bool, goTemplateOptions []string) ([]generatorParamSet, error) {
+func clusterDecisionResourceDecisionParamSets(generator *argoappv1.DuckTypeGenerator, input ClusterDecisionInput, clustersByName map[string]ClusterInput, useGoTemplate bool) ([]generatorParamSet, error) {
 	statusListKey := clusterDecisionResourceStatusListKey(input)
 	if statusListKey == "" || input.MatchKey == "" {
 		return nil, nil
 	}
 	out := make([]generatorParamSet, 0, len(input.Decisions))
 	for _, decision := range input.Decisions {
-		paramSet, ok, err := clusterDecisionResourceDecisionParamSet(generator, input.MatchKey, decision, clustersByName, useGoTemplate, goTemplateOptions)
+		paramSet, ok, err := clusterDecisionResourceDecisionParamSet(generator, input.MatchKey, decision, clustersByName, useGoTemplate)
 		if err != nil {
 			return nil, err
 		}
@@ -115,7 +115,7 @@ func clusterDecisionResourceStatusListKey(input ClusterDecisionInput) string {
 	return input.StatusListKey
 }
 
-func clusterDecisionResourceDecisionParamSet(generator *argoappv1.DuckTypeGenerator, matchKey string, decision map[string]any, clustersByName map[string]ClusterInput, useGoTemplate bool, goTemplateOptions []string) (generatorParamSet, bool, error) {
+func clusterDecisionResourceDecisionParamSet(generator *argoappv1.DuckTypeGenerator, matchKey string, decision map[string]any, clustersByName map[string]ClusterInput, useGoTemplate bool) (generatorParamSet, bool, error) {
 	matchValue, ok := decision[matchKey]
 	if !ok || fmt.Sprint(matchValue) == "" {
 		return generatorParamSet{}, false, nil
@@ -131,7 +131,7 @@ func clusterDecisionResourceDecisionParamSet(generator *argoappv1.DuckTypeGenera
 	for key, value := range decision {
 		params[key] = fmt.Sprint(value)
 	}
-	if err := appendTemplatedValues(params, generator.Values, useGoTemplate, goTemplateOptions); err != nil {
+	if err := collectClusterDecisionValues(params, generator.Values, useGoTemplate); err != nil {
 		return generatorParamSet{}, false, err
 	}
 	return generatorParamSet{
@@ -155,4 +155,33 @@ func clusterDecisionResourceMatches(generator *argoappv1.DuckTypeGenerator, inpu
 		return false, fmt.Errorf("clusterDecisionResource labelSelector: %w", err)
 	}
 	return selector.Matches(labels.Set(input.Labels)), nil
+}
+
+// collectClusterDecisionValues copies the generator values into params as
+// Argo CD v3.6.1 does (applicationset/generators/duck_type.go:189-191 and
+// collectParams at :222-230). Unlike every other generator, Argo CD does not
+// render clusterDecisionResource values as templates: each value is the raw
+// string from the ApplicationSet, so '{{region}}' stays literal and a broken
+// template in a value is not an error.
+//
+// In Go-template mode, a decision field named "values" is already a string
+// param when collectParams runs, so its map[string]string type assertion
+// panics and Argo CD generates no Applications. drydock reports the same
+// outcome as a failed ApplicationSet instead of panicking.
+func collectClusterDecisionValues(params map[string]any, values map[string]string, useGoTemplate bool) error {
+	for key, value := range values {
+		if !useGoTemplate {
+			params["values."+key] = value
+			continue
+		}
+		if params["values"] == nil {
+			params["values"] = map[string]string{}
+		}
+		collected, ok := params["values"].(map[string]string)
+		if !ok {
+			return &generatorTemplateError{err: errors.New(`clusterDecisionResource decision field "values" conflicts with generator values; Argo CD v3.6.1 fails this ApplicationSet (applicationset/generators/duck_type.go:226)`)}
+		}
+		collected[key] = value
+	}
+	return nil
 }

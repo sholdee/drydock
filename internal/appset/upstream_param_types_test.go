@@ -2,6 +2,8 @@ package appset
 
 import (
 	"encoding/json"
+	"errors"
+	"fmt"
 	"maps"
 	"path"
 	"reflect"
@@ -507,28 +509,111 @@ func TestSCMRepositoryValuesParamTypeMatchesUpstream(t *testing.T) {
 	}
 }
 
-func TestClusterDecisionResourceValuesParamTypeMatchesUpstream(t *testing.T) {
+// upstreamClusterDecisionParams copies the per-decision param build of the
+// Argo CD v3.6.1 clusterDecisionResource generator:
+//
+//   - applicationset/generators/duck_type.go:160-169 (name, server, and each
+//     decision field as fmt.Sprintf("%v"))
+//   - applicationset/generators/duck_type.go:171-173 and collectParams at
+//     :222-230 (values copied as raw strings, never rendered)
+func upstreamClusterDecisionParams(cluster ClusterInput, clusterDecision map[string]any, values map[string]string, goTemplate bool) map[string]any {
+	params := map[string]any{
+		"name":   cluster.Name,
+		"server": cluster.Server,
+	}
+	for key, value := range clusterDecision {
+		params[key] = fmt.Sprintf("%v", value)
+	}
+	for key, value := range values {
+		if goTemplate {
+			if params["values"] == nil {
+				params["values"] = map[string]string{}
+			}
+			params["values"].(map[string]string)[key] = value //nolint:errcheck // Copied upstream code; a panic here matches Argo CD.
+		} else {
+			params["values."+key] = value
+		}
+	}
+	return params
+}
+
+// TestClusterDecisionResourceValuesMatchUpstream checks that drydock copies
+// clusterDecisionResource values as raw strings, as Argo CD v3.6.1 does. A
+// values template stays literal, and a values template that would fail to
+// parse is not an error.
+func TestClusterDecisionResourceValuesMatchUpstream(t *testing.T) {
+	cluster := ClusterInput{Name: "alpha", Server: "https://alpha.example.invalid"}
+	decision := map[string]any{"clusterName": "alpha", "region": "east", "weight": 3}
+	clusters := map[string]ClusterInput{"alpha": cluster}
+	for _, goTemplate := range []bool{true, false} {
+		name := "fasttemplate"
+		values := map[string]string{"region": "{{region}}", "broken": "{{ .missing ", "plain": "west"}
+		templates := []string{"{{values.region}}", "{{values.broken}}", "{{values.plain}}", "{{region}}", "{{weight}}"}
+		if goTemplate {
+			name = "goTemplate"
+			values = map[string]string{"region": "{{ .region }}", "broken": "{{ .missing ", "plain": "west"}
+			templates = []string{
+				`{{ .values.region }}`,
+				`{{ .values.broken }}`,
+				`{{ .values.plain }}`,
+				`{{ .region }}`,
+				`{{ .weight }}`,
+				`{{ hasKey .values "region" }}`,
+			}
+		}
+		t.Run(name, func(t *testing.T) {
+			generator := &argoappv1.DuckTypeGenerator{Values: values}
+			upstream := upstreamClusterDecisionParams(cluster, decision, values, goTemplate)
+			paramSet, ok, err := clusterDecisionResourceDecisionParamSet(generator, "clusterName", decision, clusters, goTemplate)
+			if err != nil || !ok {
+				t.Fatalf("clusterDecisionResourceDecisionParamSet() ok = %v, error = %v", ok, err)
+			}
+			if !reflect.DeepEqual(paramSet.Params, upstream) {
+				t.Fatalf("drydock params differ from upstream:\ndrydock  = %#v\nupstream = %#v", paramSet.Params, upstream)
+			}
+			var mustFail []string
+			if goTemplate {
+				mustFail = []string{`{{ hasKey .values "region" }}`}
+			}
+			assertSameUpstreamRender(t, "clusterDecisionResource", upstream, paramSet.Params, goTemplate, templates, mustFail)
+			// The oracle must show the raw value, or this test would not
+			// catch a drydock that renders values again.
+			got, _ := upstream["values.region"].(string)
+			want := values["region"]
+			if goTemplate {
+				valuesParam, _ := upstream["values"].(map[string]string)
+				got = valuesParam["region"]
+			}
+			if got != want {
+				t.Fatalf("upstream values.region = %q, want the raw %q", got, want)
+			}
+		})
+	}
+}
+
+// TestClusterDecisionResourceValuesDecisionFieldConflict covers a decision
+// field named "values" in Go-template mode. Argo CD v3.6.1 panics in
+// collectParams (applicationset/generators/duck_type.go:226) because the
+// field is already a string. drydock fails the param set instead.
+func TestClusterDecisionResourceValuesDecisionFieldConflict(t *testing.T) {
 	generator := &argoappv1.DuckTypeGenerator{Values: map[string]string{"region": "east"}}
 	clusters := map[string]ClusterInput{"alpha": {Name: "alpha", Server: "https://alpha.example.invalid"}}
-	paramSet, ok, err := clusterDecisionResourceDecisionParamSet(generator, "clusterName", map[string]any{"clusterName": "alpha"}, clusters, true, []string{"missingkey=error"})
-	if err != nil || !ok {
-		t.Fatalf("clusterDecisionResourceDecisionParamSet() ok = %v, error = %v", ok, err)
+	decision := map[string]any{"clusterName": "alpha", "values": "decision"}
+	_, _, err := clusterDecisionResourceDecisionParamSet(generator, "clusterName", decision, clusters, true)
+	if _, ok := errors.AsType[*generatorTemplateError](err); !ok {
+		t.Fatalf("error = %v, want a generatorTemplateError", err)
 	}
-	// applicationset/generators/duck_type.go:222-230 (collectParams) stores
-	// values as map[string]string.
-	upstream := map[string]any{
-		"name":        "alpha",
-		"server":      "https://alpha.example.invalid",
-		"clusterName": "alpha",
-		"values":      map[string]string{"region": "east"},
+	// Without generator values, collectParams never runs and the decision
+	// field stays a plain string param.
+	paramSet, ok, err := clusterDecisionResourceDecisionParamSet(&argoappv1.DuckTypeGenerator{}, "clusterName", decision, clusters, true)
+	if err != nil || !ok || paramSet.Params["values"] != "decision" {
+		t.Fatalf("params = %#v, ok = %v, error = %v; want values = decision", paramSet.Params, ok, err)
 	}
-	if !reflect.DeepEqual(paramSet.Params, upstream) {
-		t.Fatalf("drydock params differ from upstream:\ndrydock  = %#v\nupstream = %#v", paramSet.Params, upstream)
+	// In fasttemplate mode the values keys are flat, so there is no conflict.
+	paramSet, ok, err = clusterDecisionResourceDecisionParamSet(generator, "clusterName", decision, clusters, false)
+	if err != nil || !ok || paramSet.Params["values"] != "decision" || paramSet.Params["values.region"] != "east" {
+		t.Fatalf("fasttemplate params = %#v, ok = %v, error = %v", paramSet.Params, ok, err)
 	}
-	assertSameUpstreamRender(t, "clusterDecisionResource", upstream, paramSet.Params, true, []string{
-		`{{ hasKey .values "region" }}`,
-		`{{ .values.region }}`,
-	}, []string{`{{ hasKey .values "region" }}`})
 }
 
 // TestMatrixKeepsUpstreamParamTypes checks that the matrix merge keeps the
