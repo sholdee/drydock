@@ -687,10 +687,10 @@ func TestSCMRepositoryIDInvalidFailsClosed(t *testing.T) {
 // upstreamClusterDecisionParams copies the per-decision param build of the
 // Argo CD v3.6.1 clusterDecisionResource generator:
 //
-//   - applicationset/generators/duck_type.go:160-169 (name, server, and each
+//   - applicationset/generators/duck_type.go:161-168 (name, server, and each
 //     decision field as fmt.Sprintf("%v"))
-//   - applicationset/generators/duck_type.go:171-173 and collectParams at
-//     :222-230 (values copied as raw strings, never rendered)
+//   - applicationset/generators/duck_type.go:170-172 and collectParams at
+//     :222-231 (values copied as raw strings, never rendered)
 func upstreamClusterDecisionParams(cluster ClusterInput, clusterDecision map[string]any, values map[string]string, goTemplate bool) map[string]any {
 	params := map[string]any{
 		"name":   cluster.Name,
@@ -768,7 +768,7 @@ func TestClusterDecisionResourceValuesMatchUpstream(t *testing.T) {
 
 // TestClusterDecisionResourceValuesDecisionFieldConflict covers a decision
 // field named "values" in Go-template mode. Argo CD v3.6.1 panics in
-// collectParams (applicationset/generators/duck_type.go:226) because the
+// collectParams (applicationset/generators/duck_type.go:227) because the
 // field is already a string. drydock fails the param set instead.
 func TestClusterDecisionResourceValuesDecisionFieldConflict(t *testing.T) {
 	generator := &argoappv1.DuckTypeGenerator{Values: map[string]string{"region": "east"}}

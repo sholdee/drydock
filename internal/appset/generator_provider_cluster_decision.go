@@ -158,8 +158,8 @@ func clusterDecisionResourceMatches(generator *argoappv1.DuckTypeGenerator, inpu
 }
 
 // collectClusterDecisionValues copies the generator values into params as
-// Argo CD v3.6.1 does (applicationset/generators/duck_type.go:189-191 and
-// collectParams at :222-230). Unlike every other generator, Argo CD does not
+// Argo CD v3.6.1 does (applicationset/generators/duck_type.go:170-172 and
+// collectParams at :222-231). Unlike every other generator, Argo CD does not
 // render clusterDecisionResource values as templates: each value is the raw
 // string from the ApplicationSet, so '{{region}}' stays literal and a broken
 // template in a value is not an error.
@@ -179,7 +179,7 @@ func collectClusterDecisionValues(params map[string]any, values map[string]strin
 		}
 		collected, ok := params["values"].(map[string]string)
 		if !ok {
-			return &generatorTemplateError{err: errors.New(`clusterDecisionResource decision field "values" conflicts with generator values; Argo CD v3.6.1 fails this ApplicationSet (applicationset/generators/duck_type.go:226)`)}
+			return &generatorTemplateError{err: errors.New(`clusterDecisionResource decision field "values" conflicts with generator values; Argo CD v3.6.1 fails this ApplicationSet (applicationset/generators/duck_type.go:227)`)}
 		}
 		collected[key] = value
 	}

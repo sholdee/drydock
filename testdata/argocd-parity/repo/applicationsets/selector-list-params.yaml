@@ -1,6 +1,6 @@
 # Argo CD v3.6.1 flattens generator params for selectors with
 # github.com/jeremywohl/flatten, which only walks maps and []any
-# (applicationset/generators/generator_spec_processor.go:126-160). The
+# (applicationset/generators/generator_spec_processor.go:126-163). The
 # []string path.segments param is one selector key whose value is the fmt
 # rendering of the list, such as "[workloads appset git alpha]". There is no
 # path.segments.N key.

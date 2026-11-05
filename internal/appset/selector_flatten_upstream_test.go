@@ -22,7 +22,7 @@ import (
 // Upstream writes interface{}; the copies write any, which is the same type.
 
 // upstreamFlattenParameters copies
-// applicationset/generators/generator_spec_processor.go:126-137.
+// applicationset/generators/generator_spec_processor.go:126-138.
 func upstreamFlattenParameters(in map[string]any) (map[string]string, error) {
 	flat, err := upstreamFlatten(upstreamNormalizeMapForFlatten(in), "")
 	if err != nil {
@@ -38,7 +38,7 @@ func upstreamFlattenParameters(in map[string]any) (map[string]string, error) {
 }
 
 // upstreamNormalizeMapForFlatten copies
-// applicationset/generators/generator_spec_processor.go:146-160.
+// applicationset/generators/generator_spec_processor.go:146-163.
 func upstreamNormalizeMapForFlatten(in map[string]any) map[string]any {
 	out := make(map[string]any, len(in))
 	for k, v := range in {

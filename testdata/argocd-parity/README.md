@@ -741,7 +741,7 @@ param.
 Argo CD v3.6.1 builds `path.segments` as a `[]string`
 (`applicationset/generators/repo_path_utils.go`). Before it matches a
 selector, it flattens the params with `github.com/jeremywohl/flatten`
-(`applicationset/generators/generator_spec_processor.go:126-160`). That
+(`applicationset/generators/generator_spec_processor.go:126-163`). That
 library only walks `map[string]interface{}` and `[]interface{}`, so the
 `[]string` is one leaf, and `fmt.Sprintf("%v")` turns it into
 `[workloads appset git alpha]`. There is no `path.segments.N` key.

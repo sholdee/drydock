@@ -89,7 +89,7 @@ func generatorContainsProvider(generator argoappv1.ApplicationSetGenerator) bool
 
 // selectorLabels flattens generator params into the label set that a
 // generator selector matches, as Argo CD v3.6.1 flattenParameters does
-// (applicationset/generators/generator_spec_processor.go:126-160).
+// (applicationset/generators/generator_spec_processor.go:126-163).
 //
 // Argo CD flattens with github.com/jeremywohl/flatten, which only walks
 // map[string]any and []any. Before that, normalizeMapForFlatten turns each
@@ -106,7 +106,7 @@ func selectorLabels(params map[string]any) map[string]string {
 }
 
 // normalizeSelectorParams mirrors normalizeMapForFlatten
-// (generator_spec_processor.go:146-160).
+// (generator_spec_processor.go:146-163).
 func normalizeSelectorParams(in map[string]any) map[string]any {
 	out := make(map[string]any, len(in))
 	for key, value := range in {

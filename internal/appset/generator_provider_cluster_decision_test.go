@@ -56,8 +56,8 @@ spec:
 		t.Fatalf("generated names = %#v, want rendered decision fields", got)
 	}
 	// Argo CD v3.6.1 does not render clusterDecisionResource values as
-	// templates (applicationset/generators/duck_type.go:189-191 and
-	// :222-230), so values.region keeps the raw '{{region}}' string.
+	// templates (applicationset/generators/duck_type.go:170-172 and
+	// :222-231), so values.region keeps the raw '{{region}}' string.
 	annotations := apps[0].Application.Annotations
 	if annotations["decision-region"] != "east" || annotations["values-region"] != "{{region}}" {
 		t.Fatalf("annotations = %#v, want decision-region east and literal values-region {{region}}", annotations)
