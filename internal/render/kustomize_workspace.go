@@ -24,16 +24,20 @@ type kustomizeWorkspace struct {
 	// emits duplicate resource IDs, which kustomize accumulation rejects
 	// before any diagnostic is surfaced.
 	ksopsSubstitutedFiles int
+	// sourceOptionDiagnostics holds the warnings from merging the
+	// spec.source.kustomize options into the source kustomization.
+	sourceOptionDiagnostics []diagnostic.Diagnostic
 }
 
-// diagnostics surfaces warnings accumulated while preparing the workspace —
-// one ksops-compat substitution warning per source, mirroring the
-// avp-compat-substituted pattern.
+// diagnostics surfaces warnings accumulated while preparing the workspace:
+// the source option warnings, then one ksops-compat substitution warning per
+// source, mirroring the avp-compat-substituted pattern.
 func (w *kustomizeWorkspace) diagnostics() []diagnostic.Diagnostic {
-	if w.ksopsSubstitutedFiles == 0 {
-		return nil
+	diags := append([]diagnostic.Diagnostic(nil), w.sourceOptionDiagnostics...)
+	if w.ksopsSubstitutedFiles != 0 {
+		diags = append(diags, ksopsCompatDiagnostic(w.ksopsSubstitutedFiles))
 	}
-	return []diagnostic.Diagnostic{ksopsCompatDiagnostic(w.ksopsSubstitutedFiles)}
+	return diags
 }
 
 func renderKustomizeWithPreparedWorkspace(ctx context.Context, source ResolvedSource, graph []kustomizeGraphNode, opts RenderOptions, buildSettings kustomizeBuildSettings) ([]Manifest, []diagnostic.Diagnostic, error) {
@@ -112,9 +116,11 @@ func (w *kustomizeWorkspace) prepareKustomizationDir(ctx context.Context, dir, b
 		return err
 	}
 	if dir == w.sourceRoot {
-		if err := applySourceKustomizeOptions(&kustomization, dir, boundaryRoot, w.opts); err != nil {
+		diags, err := applySourceKustomizeOptions(&kustomization, dir, boundaryRoot, w.opts)
+		if err != nil {
 			return fmt.Errorf("%s: %w", manifestPath, err)
 		}
+		w.sourceOptionDiagnostics = append(w.sourceOptionDiagnostics, diags...)
 	}
 
 	graphIndex := w.nextGraphIndex

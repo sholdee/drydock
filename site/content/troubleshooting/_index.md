@@ -252,6 +252,24 @@ when its directory is missing, holds no `kustomization.yaml`,
 `kustomization.yml`, or `Kustomization`, is a remote ref, or escapes the
 repository.
 
+## Symptom: `kustomize.ignore-missing-components-dropped`
+
+With `ignoreMissingComponents: true`, Argo CD v3.6.1 adds only the first
+component that has a kustomization file. It drops every later component, even
+a valid one, and does not log it. drydock renders the same, so the resources
+of the later components are missing from both renders. The
+`kustomize.ignore-missing-components-dropped` warning names each later
+component that has a kustomization file. `--strict` makes the warning an
+error.
+
+We believe this upstream behavior is a bug (argoproj/argo-cd#26576). drydock
+will follow upstream when it changes. Until then, use one of these fixes:
+
+- Set `ignoreMissingComponents: false` when every listed component exists.
+  Argo CD then adds all of them.
+- List only one component that can be valid under `ignoreMissingComponents`.
+- Move the components into the kustomization's own `components:` list.
+
 ## Symptom: Changed-Only Falls Back To All Apps
 
 Multi-Application diffs use changed-only selection by default. If a changed

@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	argoappv1 "github.com/argoproj/argo-cd/v3/pkg/apis/application/v1alpha1"
+	"github.com/sholdee/drydock/internal/diagnostic"
 	"github.com/sholdee/drydock/internal/gitref"
 )
 
@@ -57,9 +58,11 @@ func renderIgnoreMissingComponents(t *testing.T, root string, ignoreMissing bool
 }
 
 // TestKustomizeRendererIgnoreMissingComponentsRequiresKustomizationFile pins
-// Argo CD v3.6.1 (util/kustomize/kustomize.go, a16170b2e): under
+// Argo CD v3.6.1 (util/kustomize/kustomize.go:357-368): under
 // ignoreMissingComponents a component directory is kept only when it holds a
-// regular kustomization.yaml, kustomization.yml or Kustomization.
+// regular kustomization.yaml, kustomization.yml or Kustomization. Each case
+// lists the invalid components first, because the repo-server stops at the
+// first valid one.
 func TestKustomizeRendererIgnoreMissingComponentsRequiresKustomizationFile(t *testing.T) {
 	root := t.TempDir()
 	writeIgnoreMissingComponentsRepo(t, root, "valid")
@@ -76,13 +79,15 @@ func TestKustomizeRendererIgnoreMissingComponentsRequiresKustomizationFile(t *te
 		t.Fatal(err)
 	}
 
-	names, err := renderIgnoreMissingComponents(t, root, true,
-		"../components/plain", "./local-plain", "../components/valid", "../components/missing", "../components/dirfile", "../components/yml", "../components/bare")
-	if err != nil {
-		t.Fatalf("Render() error = %v", err)
-	}
-	if want := []string{"component-bare", "component-valid", "component-yml", "demo"}; !reflect.DeepEqual(names, want) {
-		t.Fatalf("rendered names = %#v, want %#v", names, want)
+	invalid := []string{"../components/plain", "./local-plain", "../components/missing", "../components/dirfile"}
+	for _, name := range []string{"valid", "yml", "bare"} {
+		names, err := renderIgnoreMissingComponents(t, root, true, append(append([]string(nil), invalid...), "../components/"+name)...)
+		if err != nil {
+			t.Fatalf("Render() with component %q error = %v", name, err)
+		}
+		if want := []string{"component-" + name, "demo"}; !reflect.DeepEqual(names, want) {
+			t.Fatalf("rendered names with component %q = %#v, want %#v", name, names, want)
+		}
 	}
 
 	if _, err := renderIgnoreMissingComponents(t, root, false, "../components/plain"); err == nil {
@@ -90,22 +95,78 @@ func TestKustomizeRendererIgnoreMissingComponentsRequiresKustomizationFile(t *te
 	}
 }
 
-// TestKustomizeRendererIgnoreMissingComponentsKeepsEveryValidComponent pins a
-// recorded divergence from strict Argo CD v3.6.1: util/kustomize/kustomize.go
-// (a16170b2e) leaves its component loop with `break component` after the
-// first valid entry, so the repo-server adds only component-a here. drydock
-// keeps every valid component, the documented ignoreMissingComponents intent.
-func TestKustomizeRendererIgnoreMissingComponentsKeepsEveryValidComponent(t *testing.T) {
+// TestKustomizeRendererIgnoreMissingComponentsStopsAtFirstValidComponent pins
+// Argo CD v3.6.1 (util/kustomize/kustomize.go:346-372): with
+// ignoreMissingComponents the repo-server leaves its component loop with
+// `break component` after the first valid component, so it adds only
+// component-a here and drops component-b without a log line. drydock does the
+// same and warns about component-b. A later component without a
+// kustomization file adds nothing, so the warning does not name it. Without
+// ignoreMissingComponents every component is added.
+func TestKustomizeRendererIgnoreMissingComponentsStopsAtFirstValidComponent(t *testing.T) {
 	root := t.TempDir()
-	writeIgnoreMissingComponentsRepo(t, root, "a", "b")
+	writeIgnoreMissingComponentsRepo(t, root, "a", "b", "c")
+	writeFile(t, filepath.Join(root, "apps", "components", "plain", "cm.yaml"), directoryConfigMap("component-plain"))
 
-	names, err := renderIgnoreMissingComponents(t, root, true, "../components/missing", "../components/a", "../components/b")
+	names, dropped := renderIgnoreMissingComponentsDropped(t, root,
+		"../components/missing", "../components/a", "../components/plain", "../components/b", "../components/c")
+	if want := []string{"component-a", "demo"}; !reflect.DeepEqual(names, want) {
+		t.Fatalf("rendered names = %#v, want only the first valid component %#v", names, want)
+	}
+	if len(dropped) != 1 || dropped[0].Severity != diagnostic.SeverityWarning {
+		t.Fatalf("%s diagnostics = %#v, want one warning", KustomizeIgnoreMissingComponentsDroppedCode, dropped)
+	}
+	message := dropped[0].Message
+	for _, want := range []string{`"../components/a"`, `"../components/b"`, `"../components/c"`} {
+		if !strings.Contains(message, want) {
+			t.Errorf("warning message %q does not name %s", message, want)
+		}
+	}
+	for _, unwanted := range []string{"missing", "plain"} {
+		if strings.Contains(message, unwanted) {
+			t.Errorf("warning message %q names the invalid component %q", message, unwanted)
+		}
+	}
+
+	// One valid component: nothing is dropped, so nothing warns.
+	if _, dropped := renderIgnoreMissingComponentsDropped(t, root, "../components/missing", "../components/a", "../components/plain"); len(dropped) != 0 {
+		t.Fatalf("diagnostics with one valid component = %#v, want no %s warning", dropped, KustomizeIgnoreMissingComponentsDroppedCode)
+	}
+
+	names, err := renderIgnoreMissingComponents(t, root, false, "../components/a", "../components/b")
+	if err != nil {
+		t.Fatalf("Render() without ignoreMissingComponents error = %v", err)
+	}
+	if want := []string{"component-a", "component-b", "demo"}; !reflect.DeepEqual(names, want) {
+		t.Fatalf("rendered names without ignoreMissingComponents = %#v, want every component %#v", names, want)
+	}
+}
+
+// renderIgnoreMissingComponentsDropped renders apps/demo with components
+// under ignoreMissingComponents and returns the rendered names and the
+// kustomize.ignore-missing-components-dropped diagnostics.
+func renderIgnoreMissingComponentsDropped(t *testing.T, root string, components ...string) ([]string, []diagnostic.Diagnostic) {
+	t.Helper()
+	manifests, diags, err := (KustomizeRenderer{}).Render(context.Background(), ResolvedSource{
+		RepoRoot: root,
+		Path:     filepath.Join("apps", "demo"),
+	}, RenderOptions{
+		OfflineRemoteResources: true,
+		Kustomize: &argoappv1.ApplicationSourceKustomize{
+			Components:              components,
+			IgnoreMissingComponents: true,
+		},
+	})
 	if err != nil {
 		t.Fatalf("Render() error = %v", err)
 	}
-	if want := []string{"component-a", "component-b", "demo"}; !reflect.DeepEqual(names, want) {
-		t.Fatalf("rendered names = %#v, want every valid component %#v", names, want)
+	var dropped []diagnostic.Diagnostic
+	for _, diag := range diags {
+		if diag.Code == KustomizeIgnoreMissingComponentsDroppedCode {
+			dropped = append(dropped, diag)
+		}
 	}
+	return directoryManifestNames(manifests), dropped
 }
 
 // TestKustomizeRendererIgnoreMissingComponentsSkipsRemoteEscapingAndAbsolute
@@ -146,6 +207,13 @@ func TestKustomizeRendererIgnoreMissingComponentsSkipsRemoteEscapingAndAbsolute(
 	_, err = renderIgnoreMissingComponents(t, root, true, "/components/absolute")
 	if err == nil || !strings.Contains(err.Error(), "must be relative") {
 		t.Fatalf("Render() error = %v, want absolute component rejection", err)
+	}
+
+	// Recorded divergence: the repo-server drops a found absolute ref that
+	// comes after the first valid component. drydock still rejects it.
+	_, err = renderIgnoreMissingComponents(t, root, true, "../components/valid", "/components/absolute")
+	if err == nil || !strings.Contains(err.Error(), "must be relative") {
+		t.Fatalf("Render() with a later absolute ref error = %v, want absolute component rejection", err)
 	}
 }
 

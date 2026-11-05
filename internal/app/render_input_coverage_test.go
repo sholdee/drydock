@@ -514,3 +514,35 @@ func TestRenderInputCoverageKustomizeIgnoreMissingComponents(t *testing.T) {
 	}
 	assertRenderInputCoverage(t, repoRoot, application)
 }
+
+// TestRenderInputCoverageKustomizeIgnoreMissingComponentsAfterFirstValid pins
+// coverage when ignoreMissingComponents drops components after the first
+// valid one, as Argo CD v3.6.1 does. The dropped valid component and the
+// later directory without a kustomization file stay render inputs: they
+// change the warning, and they change the render when an earlier component
+// stops being valid.
+func TestRenderInputCoverageKustomizeIgnoreMissingComponentsAfterFirstValid(t *testing.T) {
+	repoRoot := t.TempDir()
+	writeTestFile(t, repoRoot+"/manifests/app/kustomization.yaml", "resources:\n  - cm.yaml\n")
+	writeTestFile(t, repoRoot+"/manifests/app/cm.yaml", renderCoverageDemoConfigMap)
+	for _, name := range []string{"first", "second"} {
+		writeTestFile(t, repoRoot+"/manifests/components/"+name+"/kustomization.yaml", "apiVersion: kustomize.config.k8s.io/v1alpha1\nkind: Component\nresources:\n  - cm.yaml\n")
+		writeTestFile(t, repoRoot+"/manifests/components/"+name+"/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: component-"+name+"\n")
+	}
+	writeTestFile(t, repoRoot+"/manifests/components/later-plain/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: later-plain\n")
+	writeTestFile(t, repoRoot+"/unrelated/README.md", "not a render input\n")
+	application := argoappv1.Application{
+		Name: "app", Namespace: "argocd",
+		Spec: argoappv1.ApplicationSpec{
+			Source: &argoappv1.ApplicationSource{
+				RepoURL: "https://git.example.test/org/repo.git", Path: "manifests/app", TargetRevision: "main",
+				Kustomize: &argoappv1.ApplicationSourceKustomize{
+					Components:              []string{"../components/missing", "../components/first", "../components/second", "../components/later-plain"},
+					IgnoreMissingComponents: true,
+				},
+			},
+			Destination: argoappv1.ApplicationDestination{Namespace: "default"},
+		},
+	}
+	assertRenderInputCoverage(t, repoRoot, application)
+}

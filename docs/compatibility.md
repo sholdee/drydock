@@ -442,11 +442,24 @@ Supported:
   are skipped without reading outside it; an absolute ref is joined under the
   source path. A skipped in-repository directory stays a persistent render
   cache input, so adding a kustomization file there invalidates the entry.
-- Recorded divergence from strict Argo CD v3.6.1: with
-  `ignoreMissingComponents`, `util/kustomize/kustomize.go` (commit
-  `a16170b2e`) leaves its component loop with `break component` after the
-  first valid component, so the repo-server adds only that one. drydock adds
-  every valid component, the documented intent of the option.
+- Kustomize `ignoreMissingComponents` adds only the first valid component, as
+  in Argo CD v3.6.1. `util/kustomize/kustomize.go:346-372` leaves its
+  component loop with `break component` after the first component that has a
+  kustomization file. Invalid components before it are skipped, and every
+  component after it is dropped without a check or a log line. drydock
+  renders the same and emits the `kustomize.ignore-missing-components-dropped`
+  warning, which names each later component that has a kustomization file.
+  The warning is not advisory: `--strict` makes it an error, because
+  resources that the components list names are missing from the render.
+  Without `ignoreMissingComponents`, every component is added. We believe
+  this upstream behavior is a bug: argoproj/argo-cd#26576 (merge
+  `d631fcdfb`) turned an earlier `continue` into `break component`. drydock
+  mirrors it until upstream fixes it, and then follows the fix. Dropped
+  components stay persistent render cache inputs.
+- Recorded divergence from Argo CD v3.6.1: drydock rejects an absolute
+  component ref that has a kustomization file at any position in the list,
+  because drydock never reads absolute paths. The repo-server drops such a
+  ref when it comes after the first valid component.
 - Remote Kustomize refs in `resources`, `bases`, `components`,
   `patches.path`, `patchesJson6902.path`, non-inline
   `patchesStrategicMerge`, `generators`, `transformers`, `validators`,
