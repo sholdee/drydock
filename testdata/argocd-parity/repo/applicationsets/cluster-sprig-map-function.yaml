@@ -10,7 +10,10 @@
 # beta has only reserved ones, so it gets an empty map. The type is the only
 # reason the render fails. No parity-cluster-haskey-* name appears in the
 # smoke's expected Application list, so the inventory checks require zero
-# Applications on both sides.
+# Applications on both sides. A missing Application could also mean that the
+# ApplicationSet has not reconciled yet. So before those checks, the smoke
+# waits for this ApplicationSet's ErrorOccurred condition and requires its
+# message to contain "got map[string]string" (APPLICATIONSET_ERRORS).
 apiVersion: argoproj.io/v1alpha1
 kind: ApplicationSet
 metadata:

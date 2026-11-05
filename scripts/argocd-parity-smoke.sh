@@ -244,11 +244,27 @@ APPLICATIONS=(
   parity-cluster-ft-beta
   # parity-cluster-sprig-map-function calls hasKey on the map[string]string
   # cluster annotations, so its parity-cluster-haskey-* Applications must be
-  # absent on both sides.
+  # absent on both sides. APPLICATIONSET_ERRORS below proves that Argo CD
+  # rejected it, not that it has not reconciled yet.
   # Generator selector on the []string path.segments param, which Argo CD
   # flattens to one "[a b c]" value. The parity-segments-index-* Applications
   # select on path.segments.3 and must be absent on both sides.
   parity-segments-alpha
+)
+
+# ApplicationSets that Argo CD must reject, as "name|text" pairs. Before the
+# inventory checks, the smoke waits for each one to have an ErrorOccurred
+# condition with status True and a message that contains the text. Without
+# this wait, a missing Application could also mean that the ApplicationSet
+# has not reconciled yet.
+#
+# A matrix or merge param type clash cannot be listed here. Argo CD v3.6.1
+# panics in that merge, and Reconcile recovers the panic and returns before
+# it sets any condition
+# (applicationset/controllers/applicationset_controller.go:123-133), so there
+# is no condition to wait for.
+APPLICATIONSET_ERRORS=(
+  "parity-cluster-sprig-map-function|got map[string]string"
 )
 
 TRACKING_APPLICATIONS=(
@@ -1207,6 +1223,37 @@ wait_for_applications() {
   done
 }
 
+# wait_for_applicationset_error waits until ApplicationSet argocd/<name> has
+# an ErrorOccurred condition with status True and a message that contains the
+# expected text. It keeps polling while the condition is missing or different,
+# because the first reconcile can still be running.
+wait_for_applicationset_error() {
+  local appset="$1"
+  local expected="$2"
+  local status="" message="" dump
+  for _ in {1..120}; do
+    status="$(kubectl -n argocd get applicationset "${appset}" \
+      -o jsonpath='{.status.conditions[?(@.type=="ErrorOccurred")].status}' 2>/dev/null || true)"
+    message="$(kubectl -n argocd get applicationset "${appset}" \
+      -o jsonpath='{.status.conditions[?(@.type=="ErrorOccurred")].message}' 2>/dev/null || true)"
+    if [[ "${status}" == "True" && "${message}" == *"${expected}"* ]]; then
+      return 0
+    fi
+    sleep 2
+  done
+  dump="$(artifact_dir logs)/applicationset-${appset}.yaml"
+  kubectl -n argocd get applicationset "${appset}" -o yaml > "${dump}" 2>&1 || true
+  fail "ApplicationSet argocd/${appset} has no ErrorOccurred condition with status True and a message that contains \"${expected}\" (last status: ${status:-none}; last message: ${message:-none}); see ${dump}"
+}
+
+wait_for_applicationset_errors() {
+  local entry appset expected
+  for entry in "${APPLICATIONSET_ERRORS[@]}"; do
+    IFS='|' read -r appset expected <<< "${entry}"
+    wait_for_applicationset_error "${appset}" "${expected}"
+  done
+}
+
 assert_namespace_inventory() {
   local namespace="$1"
   local diff_file="$2"
@@ -1840,6 +1887,8 @@ main() {
   wait_for_oci_applicationsets
   log_step "Waiting for expected Applications"
   wait_for_applications
+  log_step "Waiting for expected ApplicationSet errors"
+  wait_for_applicationset_errors
   assert_application_inventory
   log_step "Capturing the Argo CD Application inventory"
   capture_argocd_applications

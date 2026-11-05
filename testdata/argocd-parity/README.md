@@ -732,6 +732,24 @@ both require zero Applications from this ApplicationSet.
 `TestArgoCDParityFixtureClusterSprigMapFunctionGeneratesNothing` in
 `internal/appset` pins the drydock side.
 
+A missing Application could also mean that Argo CD has not reconciled the
+ApplicationSet yet. So the smoke lists this ApplicationSet in
+`APPLICATIONSET_ERRORS`. Before the inventory checks, it waits for an
+`ErrorOccurred` condition with status `True` and requires the message to
+contain `got map[string]string`. That text comes from the Go template type
+error for the `hasKey` argument. The smoke fails if the condition does not
+appear within the timeout.
+
+The smoke has no fixture for a matrix or merge param type clash. For example,
+a matrix of a list element with a `values` field and a cluster generator with
+`values` makes Argo CD v3.6.1 panic in the param merge
+(`applicationset/generators/matrix.go:95`). Reconcile recovers the panic and
+returns before it sets any condition
+(`applicationset/controllers/applicationset_controller.go:123-133`). So there
+is no condition that proves Argo CD reconciled the ApplicationSet, and a
+missing Application would prove nothing. Unit tests in `internal/appset` and
+`internal/cli` cover the drydock side.
+
 ## Generator selector list param fixture
 
 `applicationsets/selector-list-params.yaml` has two Git directory generators
