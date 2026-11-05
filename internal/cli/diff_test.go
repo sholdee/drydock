@@ -1302,23 +1302,23 @@ func TestNetworkCacheFlagsAreRegistered(t *testing.T) {
 	}{
 		{
 			name: "build apps",
-			args: []string{"build", "apps", "--offline", "--refresh-charts", "--chart-cache-dir", "/tmp/charts", "--refresh-remotes", "--remote-cache-dir", "/tmp/remotes", "--path", "missing"},
+			args: []string{"build", "apps", "--offline", "--refresh-charts", "--chart-cache-max-age", "24h", "--chart-cache-dir", "/tmp/charts", "--refresh-remotes", "--remote-cache-dir", "/tmp/remotes", "--path", "missing"},
 		},
 		{
 			name: "build app",
-			args: []string{"build", "app", "demo", "--offline", "--refresh-charts", "--chart-cache-dir", "/tmp/charts", "--refresh-remotes", "--remote-cache-dir", "/tmp/remotes", "--path", "missing"},
+			args: []string{"build", "app", "demo", "--offline", "--refresh-charts", "--chart-cache-max-age", "24h", "--chart-cache-dir", "/tmp/charts", "--refresh-remotes", "--remote-cache-dir", "/tmp/remotes", "--path", "missing"},
 		},
 		{
 			name: "diff apps",
-			args: []string{"diff", "apps", "--offline", "--refresh-charts", "--chart-cache-dir", "/tmp/charts", "--refresh-remotes", "--remote-cache-dir", "/tmp/remotes", "--path", "missing", "--path-orig", "base"},
+			args: []string{"diff", "apps", "--offline", "--refresh-charts", "--chart-cache-max-age", "24h", "--chart-cache-dir", "/tmp/charts", "--refresh-remotes", "--remote-cache-dir", "/tmp/remotes", "--path", "missing", "--path-orig", "base"},
 		},
 		{
 			name: "diff app",
-			args: []string{"diff", "app", "demo", "--offline", "--refresh-charts", "--chart-cache-dir", "/tmp/charts", "--refresh-remotes", "--remote-cache-dir", "/tmp/remotes", "--path", "missing", "--path-orig", "base"},
+			args: []string{"diff", "app", "demo", "--offline", "--refresh-charts", "--chart-cache-max-age", "24h", "--chart-cache-dir", "/tmp/charts", "--refresh-remotes", "--remote-cache-dir", "/tmp/remotes", "--path", "missing", "--path-orig", "base"},
 		},
 		{
 			name: "diff images",
-			args: []string{"diff", "images", "--offline", "--refresh-charts", "--chart-cache-dir", "/tmp/charts", "--refresh-remotes", "--remote-cache-dir", "/tmp/remotes", "--path", "missing", "--path-orig", "base"},
+			args: []string{"diff", "images", "--offline", "--refresh-charts", "--chart-cache-max-age", "24h", "--chart-cache-dir", "/tmp/charts", "--refresh-remotes", "--remote-cache-dir", "/tmp/remotes", "--path", "missing", "--path-orig", "base"},
 		},
 	}
 

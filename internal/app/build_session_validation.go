@@ -3,6 +3,7 @@ package app
 import (
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/sholdee/drydock/internal/chart"
 	"github.com/sholdee/drydock/internal/ociartifact"
@@ -19,6 +20,9 @@ func validateBuildNetworkOptions(request BuildRequest) error {
 	}
 	forbiddenRoots := requestForbiddenRoots(root, request.AcquisitionOptions)
 	if err := validateGitCacheDir(request.GitCacheDir, forbiddenRoots); err != nil {
+		return err
+	}
+	if err := validateChartCacheMaxAge(request.ChartCacheMaxAge); err != nil {
 		return err
 	}
 	if _, err := chart.ResolveCacheDir(request.ChartCacheDir, forbiddenRoots); err != nil {
@@ -94,4 +98,13 @@ func requestForbiddenRoots(root string, options AcquisitionOptions) []string {
 		}
 	}
 	return forbiddenRoots
+}
+
+// validateChartCacheMaxAge rejects a negative chart cache max age; zero
+// keeps cached charts forever.
+func validateChartCacheMaxAge(maxAge time.Duration) error {
+	if maxAge < 0 {
+		return fmt.Errorf("chart cache max age must not be negative, got %s", maxAge)
+	}
+	return nil
 }

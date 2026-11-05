@@ -27,8 +27,13 @@ type DiscoveryOptions struct {
 }
 
 type AcquisitionOptions struct {
-	Offline                      bool
-	RefreshCharts                bool
+	Offline       bool
+	RefreshCharts bool
+	// ChartCacheMaxAge, when positive, refetches cached charts fetched longer
+	// ago than it, and keeps the persistent render cache from serving output
+	// rendered from them. Under Offline an expired chart is reused with a
+	// source.chart-cache-stale warning. Zero never expires cached charts.
+	ChartCacheMaxAge             time.Duration
 	ChartCacheDir                string
 	ChartCredentials             chart.ChartCredentials
 	RepoMaps                     []sourcepkg.RepoMap

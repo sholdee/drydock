@@ -447,6 +447,7 @@ drydock test apps --path . --offline
 | `--refresh-git` | Fetch cached Git repositories and bypass persisted render outputs for those inputs. |
 | `--git-cache-dir PATH` | Override the default Git repository cache root. |
 | `--refresh-charts` | Refresh cached immutable chart entries and bypass persisted render outputs for those inputs. |
+| `--chart-cache-max-age DURATION` | Refetch cached charts fetched longer ago than `DURATION` (for example `24h`) and never serve persisted render outputs built from them. Default `0` never expires cached charts. |
 | `--chart-cache-dir PATH` | Override the default chart cache root. |
 | `--refresh-remotes` | Refresh cached remote Kustomize resources and bypass persisted render outputs for those inputs. |
 | `--remote-cache-dir PATH` | Override the default remote-resource cache root. |
@@ -578,6 +579,41 @@ Chart-backed renders key on the exact chart name and version. If a registry
 republishes an existing version, for example a mutable OCI chart version, use
 `--refresh-charts` (or `--refresh-renders`) to re-render and overwrite the
 cached entries.
+
+### Chart Cache Max Age
+
+Cached Helm charts never expire by default. Argo CD v3.6.1's repo-server
+re-pulls a cached chart archive once it is older than the repo cache
+expiration (24h by default), so a republished chart version reaches Argo CD
+within that window. To converge the same way, pass `--chart-cache-max-age`
+with the same duration (`Config.ChartCacheMaxAge` in the Go API):
+
+```bash
+drydock test apps --path . --chart-cache-max-age 24h
+```
+
+The age is measured from when drydock fetched the chart into the cache, not
+from its last use. An entry with no recorded fetch time, such as a legacy
+entry without cache metadata, counts as expired; reusing it never records
+one. A positive max age applies to chart sources, Helm `Chart.yaml`
+dependencies, and Kustomize `helmCharts` alike:
+
+- An expired chart is refetched once per run. Persisted render outputs built
+  from it miss with reason `chart-expired`, re-render from the refetched
+  chart, and overwrite their entries.
+- A persisted render output is served only while every chart it was built
+  from is still the cache entry it read. If the chart was refetched since, for
+  example by `--refresh-charts` or by another Application's expiry, the
+  lookup misses with reason `chart-unverified`, as do outputs stored without
+  chart records.
+- Under `--offline`, an expired chart is still used, and each render that
+  reads it reports a `source.chart-cache-stale` warning naming the chart, its
+  fetch time, and the max age. `--strict` promotes the warning to an error.
+  Such renders are never persisted; their store is skipped with reason
+  `chart-stale`.
+
+`0`, the default, keeps today's behavior: cached charts are served until
+`--refresh-charts`, and negative durations are rejected.
 
 ## Credentials
 

@@ -532,6 +532,9 @@ func validateDiffPaths(request DiffRequest) error {
 }
 
 func validateDiffCacheRoots(request DiffRequest, forbiddenRoots []string) error {
+	if err := validateChartCacheMaxAge(request.ChartCacheMaxAge); err != nil {
+		return err
+	}
 	if _, err := chart.ResolveCacheDir(request.ChartCacheDir, forbiddenRoots); err != nil {
 		return err
 	}

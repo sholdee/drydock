@@ -298,6 +298,17 @@ Important boundaries:
   `helm dependency build` or mutating the source checkout. Local `file://`,
   repository-alias, or otherwise unresolved dependencies must be available
   under `charts/` and fail closed when missing.
+- Cached Helm charts never expire by default. Argo CD v3.6.1's repo-server
+  re-pulls a cached chart archive older than its repo cache expiration (24h
+  by default), so a republished chart version converges there; drydock needs
+  `--refresh-charts`, or opts in with `--chart-cache-max-age DURATION` (public
+  API `Config.ChartCacheMaxAge`). A positive max age refetches chart sources,
+  Helm dependencies, and Kustomize `helmCharts` whose cache entry was fetched
+  longer ago (fetch time, not last use; an entry with no recorded fetch time
+  counts as expired, even after reuse), and persisted render outputs built from an expired or since
+  refetched chart are never served. With `--offline` an expired chart is
+  still used and reported by a `source.chart-cache-stale` warning, which
+  `--strict` promotes.
 - Ambient Git credential helpers, ambient Helm registry config, and secret
   credential fields from discovered repository Secrets are not read. SSH
   identities are the exception: without `--git-ssh-key-file`, the agent and

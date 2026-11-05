@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/sholdee/drydock/internal/pathsafety"
 )
@@ -34,12 +35,27 @@ type Result struct {
 	Version    string
 	Kind       RepositoryKind
 	FromCache  bool
+	// CacheKey is the chart cache entry key (NewCacheKey) the chart was
+	// served from or published to. Empty when the acquirer did not use the
+	// chart cache.
+	CacheKey string
+	// FetchedAt is when the cache entry was fetched and published; it is the
+	// age MaxAge is judged by. Zero when unknown, for example an entry
+	// without readable cache metadata or an injected acquirer.
+	FetchedAt time.Time
+	// Stale reports a cached chart older than Options.MaxAge (or of unknown
+	// age) that was reused because Options.Offline forbids refetching it.
+	Stale bool
 }
 
 type Options struct {
-	CacheDir        string
-	Offline         bool
-	Refresh         bool
+	CacheDir string
+	Offline  bool
+	Refresh  bool
+	// MaxAge, when positive, expires a cached chart whose fetch time is
+	// older than it (or unknown): it is refetched like Refresh, or reused
+	// and reported Stale when Offline is set. Zero never expires entries.
+	MaxAge          time.Duration
 	ForbiddenRoots  []string
 	PassCredentials bool
 	Credentials     ChartCredentials

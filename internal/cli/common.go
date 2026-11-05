@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io"
 	"strings"
+	"time"
 
 	"github.com/sholdee/drydock/internal/cacheevent"
 	"github.com/sholdee/drydock/internal/chart"
@@ -32,6 +33,7 @@ type commonFlags struct {
 	repoMaps                 []string
 	offline                  bool
 	refreshCharts            bool
+	chartCacheMaxAge         time.Duration
 	chartCacheDir            string
 	gitCacheDir              string
 	refreshGit               bool
@@ -142,6 +144,7 @@ func bindPathDiscoveryFlags(cmd *cobra.Command, flags *commonFlags) {
 func bindAcquisitionCacheFlags(cmd *cobra.Command, flags *commonFlags) {
 	cmd.Flags().BoolVar(&flags.offline, "offline", flags.offline, "disable network access and use local files, repo maps, or existing caches")
 	cmd.Flags().BoolVar(&flags.refreshCharts, "refresh-charts", flags.refreshCharts, "refresh cached Helm charts before rendering")
+	cmd.Flags().DurationVar(&flags.chartCacheMaxAge, "chart-cache-max-age", flags.chartCacheMaxAge, "refetch cached Helm charts fetched longer ago than this duration, like Argo CD's repo cache expiration (0 never expires them; with --offline an expired chart is used with a warning)")
 	cmd.Flags().StringVar(&flags.chartCacheDir, "chart-cache-dir", flags.chartCacheDir, "directory for cached Helm charts")
 	cmd.Flags().StringVar(&flags.gitCacheDir, "git-cache-dir", flags.gitCacheDir, "directory for cached Git repositories")
 	cmd.Flags().BoolVar(&flags.refreshGit, "refresh-git", flags.refreshGit, "fetch cached Git repositories before rendering")
@@ -369,6 +372,7 @@ func requestOptionsFromFlags(flags commonFlags, repoMaps []source.RepoMap) reque
 		ShowIgnoredFields:              flags.showIgnoredFields,
 		Offline:                        flags.offline,
 		RefreshCharts:                  flags.refreshCharts,
+		ChartCacheMaxAge:               flags.chartCacheMaxAge,
 		ChartCacheDir:                  flags.chartCacheDir,
 		ChartCredentials:               flags.chartCredentials(),
 		RepoMaps:                       repoMaps,

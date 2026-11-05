@@ -6,11 +6,14 @@ import (
 	"encoding/hex"
 	"path/filepath"
 	"testing"
+	"time"
 
 	argoappv1 "github.com/argoproj/argo-cd/v3/pkg/apis/application/v1alpha1"
+	cachepkg "github.com/sholdee/drydock/internal/cache"
 	"github.com/sholdee/drydock/internal/cacheevent"
 	"github.com/sholdee/drydock/internal/filedigest"
 	"github.com/sholdee/drydock/internal/render"
+	"github.com/sholdee/drydock/internal/rendercache"
 	sourcepkg "github.com/sholdee/drydock/internal/source"
 )
 
@@ -480,5 +483,137 @@ func TestRenderApplicationDirtyShortcutStoreSkipsOnMidRenderEdit(t *testing.T) {
 	}
 	if !found {
 		t.Fatalf("expected skipped/inputs-changed event, got %#v", events)
+	}
+}
+
+// chartMaxAgeEntry writes chart cache metadata for kind/key fetched at
+// fetchedAt under cacheDir.
+func chartMaxAgeEntry(t *testing.T, cacheDir, kind, key string, fetchedAt time.Time) {
+	t.Helper()
+	if err := cachepkg.WriteMetadata(cachepkg.ChartEntryPath(cacheDir, kind, key), cachepkg.Metadata{
+		Source:    cachepkg.SourceChart,
+		Kind:      kind,
+		Key:       key,
+		CreatedAt: fetchedAt,
+	}); err != nil {
+		t.Fatalf("WriteMetadata() error = %v", err)
+	}
+}
+
+func chartMaxAgeRecord(key string, fetchedAt time.Time, stale bool) cacheevent.AcquisitionRecord {
+	return cacheevent.AcquisitionRecord{
+		Kind:              cacheevent.AcquisitionChart,
+		RequestedRevision: "1.2.3",
+		ResolvedRevision:  "1.2.3",
+		Chart: cacheevent.ChartAcquisition{
+			Name:      "demo",
+			Version:   "1.2.3",
+			CacheKind: "http",
+			CacheKey:  key,
+			FetchedAt: fetchedAt,
+			Stale:     stale,
+		},
+	}
+}
+
+// TestPersistentRenderStateLookupChecksChartsUnderMaxAge pins the lookup
+// side of --chart-cache-max-age: an entry is served only while every chart
+// its render read is still the chart cache entry with the recorded fetch
+// time and within the max age. Without a max age the chart provenance is
+// ignored. Sabotage: dropping the renderCacheChartsFresh call in lookup()
+// turns every miss case below into a hit.
+func TestPersistentRenderStateLookupChecksChartsUnderMaxAge(t *testing.T) {
+	const chartKey = "0123456789abcdef"
+	fetchedAt := time.Now().Add(-2 * time.Hour).UTC().Truncate(time.Millisecond)
+	stored := persistentRenderState{
+		enabled:      true,
+		key:          testRenderCacheStoreKey("chart-max-age"),
+		handle:       newPersistentRenderCache(testRenderCacheOptions(t), true),
+		recorder:     cacheevent.NewRecorder(true),
+		acquisitions: cacheevent.NewAcquisitionCollector(),
+	}
+	stored.acquisitions.Record(chartMaxAgeRecord(chartKey, fetchedAt, false))
+	stored.store(context.Background(), RenderResult{})
+	if got := stored.handle.store.Writes(); got != 1 {
+		t.Fatalf("store writes = %d, want 1", got)
+	}
+
+	for _, tc := range []struct {
+		name     string
+		maxAge   time.Duration
+		entryAt  time.Time
+		noEntry  bool
+		wantHit  bool
+		wantMiss string
+	}{
+		{name: "no max age ignores charts", maxAge: 0, noEntry: true, wantHit: true},
+		{name: "fresh chart hits", maxAge: 24 * time.Hour, entryAt: fetchedAt, wantHit: true},
+		{name: "expired chart misses", maxAge: time.Hour, entryAt: fetchedAt, wantMiss: renderCacheReasonChartExpired},
+		{name: "refetched chart misses", maxAge: 24 * time.Hour, entryAt: fetchedAt.Add(time.Minute), wantMiss: renderCacheReasonChartUnverified},
+		{name: "missing chart misses", maxAge: 24 * time.Hour, noEntry: true, wantMiss: renderCacheReasonChartUnverified},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			chartCacheDir := t.TempDir()
+			if !tc.noEntry {
+				chartMaxAgeEntry(t, chartCacheDir, "http", chartKey, tc.entryAt)
+			}
+			state := stored
+			state.recorder = cacheevent.NewRecorder(true)
+			state.chartMaxAge = tc.maxAge
+			state.chartCacheDir = chartCacheDir
+			_, hit := state.lookup()
+			if hit != tc.wantHit {
+				t.Fatalf("lookup() hit = %v, want %v; events = %#v", hit, tc.wantHit, state.recorder.Events())
+			}
+			if tc.wantMiss != "" && !hasRenderCacheEvent(state.recorder.Events(), cacheevent.ActionMiss, "", tc.wantMiss) {
+				t.Fatalf("events = %#v, want miss %q", state.recorder.Events(), tc.wantMiss)
+			}
+		})
+	}
+}
+
+// TestPersistentRenderStateLookupUnrecordedChartsMissUnderMaxAge: a payload
+// that does not say which charts its render read cannot be proven fresh.
+func TestPersistentRenderStateLookupUnrecordedChartsMissUnderMaxAge(t *testing.T) {
+	handle := newPersistentRenderCache(testRenderCacheOptions(t), true)
+	key := testRenderCacheStoreKey("chart-unrecorded")
+	payload, err := marshalRenderResultPayload(RenderResult{})
+	if err != nil {
+		t.Fatalf("marshalRenderResultPayload() error = %v", err)
+	}
+	if err := handle.store.Put(key, payload, rendercache.EntryMeta{}); err != nil {
+		t.Fatalf("Put() error = %v", err)
+	}
+	state := persistentRenderState{enabled: true, key: key, handle: handle, recorder: cacheevent.NewRecorder(true), chartMaxAge: time.Hour, chartCacheDir: t.TempDir()}
+	if _, hit := state.lookup(); hit {
+		t.Fatal("lookup() hit a payload without chart records under a max age")
+	}
+	if !hasRenderCacheEvent(state.recorder.Events(), cacheevent.ActionMiss, "", renderCacheReasonChartUnverified) {
+		t.Fatalf("events = %#v, want chart-unverified miss", state.recorder.Events())
+	}
+	state.chartMaxAge = 0
+	if _, hit := state.lookup(); !hit {
+		t.Fatal("lookup() missed without a max age")
+	}
+}
+
+// TestPersistentRenderStateStoreSkipsStaleChart: a render from an expired
+// chart reused offline is never persisted. Sabotage: ignoring the stale bit
+// in store() writes the entry.
+func TestPersistentRenderStateStoreSkipsStaleChart(t *testing.T) {
+	state := persistentRenderState{
+		enabled:      true,
+		key:          testRenderCacheStoreKey("chart-stale"),
+		handle:       newPersistentRenderCache(testRenderCacheOptions(t), true),
+		recorder:     cacheevent.NewRecorder(true),
+		acquisitions: cacheevent.NewAcquisitionCollector(),
+	}
+	state.acquisitions.Record(chartMaxAgeRecord("0123456789abcdef", time.Now().Add(-48*time.Hour), true))
+	state.store(context.Background(), RenderResult{})
+	if got := state.handle.store.Writes(); got != 0 {
+		t.Fatalf("store writes = %d for a stale chart render, want 0", got)
+	}
+	if !hasRenderCacheEvent(state.recorder.Events(), cacheevent.ActionSkipped, "", renderCacheReasonChartStale) {
+		t.Fatalf("events = %#v, want chart-stale skip", state.recorder.Events())
 	}
 }

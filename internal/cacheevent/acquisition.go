@@ -1,6 +1,9 @@
 package cacheevent
 
-import "sync"
+import (
+	"sync"
+	"time"
+)
 
 // AcquisitionKind classifies a mid-render acquisition for the persistent
 // render cache pin-stability gate. Unlike Event.Source, it distinguishes
@@ -22,6 +25,27 @@ type AcquisitionRecord struct {
 	Kind              AcquisitionKind
 	RequestedRevision string
 	ResolvedRevision  string
+	// Chart is the chart cache identity of an AcquisitionChart record; the
+	// persistent render cache checks it against the chart cache under
+	// --chart-cache-max-age. Zero for other kinds.
+	Chart ChartAcquisition
+}
+
+// ChartAcquisition identifies the chart cache entry one chart acquisition
+// was served from, and when that entry was fetched. Target is the redacted
+// repository.
+type ChartAcquisition struct {
+	Target    string
+	Name      string
+	Version   string
+	CacheKind string
+	CacheKey  string
+	FetchedAt time.Time
+	// MaxAge is the --chart-cache-max-age the acquisition ran under, and
+	// Stale reports a cached chart older than it (or of unknown age) reused
+	// because --offline forbids refetching it.
+	MaxAge time.Duration
+	Stale  bool
 }
 
 // AcquisitionCollector gathers records for one application render. It records
@@ -56,4 +80,14 @@ func (c *AcquisitionCollector) Records() []AcquisitionRecord {
 	out := make([]AcquisitionRecord, len(c.records))
 	copy(out, c.records)
 	return out
+}
+
+// Len reports how many records the collector holds.
+func (c *AcquisitionCollector) Len() int {
+	if c == nil {
+		return 0
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return len(c.records)
 }

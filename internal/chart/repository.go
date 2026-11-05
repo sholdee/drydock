@@ -9,6 +9,7 @@ import (
 	"path"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/sholdee/drydock/internal/cache"
 )
@@ -44,8 +45,20 @@ func (acquirer DefaultAcquirer) Acquire(ctx context.Context, request Request, op
 		return Result{}, err
 	}
 	if !opts.Refresh && chartDirReady(chartDir) {
-		writeChartMetadata(keyDir, key, request)
-		return resultFor(request, chartDir, true), nil
+		fetchedAt, known := entryFetchedAt(keyDir, request.Kind, key)
+		expired := Expired(fetchedAt, known, opts.MaxAge, time.Now())
+		if !expired || opts.Offline {
+			// Reuse refreshes the entry's last-use time. An entry of unknown
+			// age keeps its fetch time unknown, whatever the max age: dating
+			// the old content as freshly fetched would let a later max-age
+			// run serve it instead of refetching it.
+			writeChartMetadata(keyDir, key, request, time.Time{}, !known)
+			result := resultFor(request, chartDir, true)
+			result.CacheKey = key
+			result.FetchedAt = fetchedAt
+			result.Stale = expired
+			return result, nil
+		}
 	}
 	if opts.Offline {
 		return Result{}, fmt.Errorf("offline cache miss for chart %s %s", request.Name, request.Version)
@@ -106,21 +119,69 @@ func publishFetchedChart(request Request, opts Options, keyParent, keyDir, key s
 	if err := publishChartCache(keyDir, tmpKeyDir); err != nil {
 		return Result{}, err
 	}
-	writeChartMetadata(keyDir, key, request)
-	return resultFor(request, filepath.Join(keyDir, chartLeaf(request.Name)), false), nil
+	// The published entry starts without metadata, so its creation time is
+	// this fetch: the age a later MaxAge check judges it by.
+	fetchedAt := time.Now().UTC()
+	writeChartMetadata(keyDir, key, request, fetchedAt, false)
+	result := resultFor(request, filepath.Join(keyDir, chartLeaf(request.Name)), false)
+	result.CacheKey = key
+	if storedAt, ok := entryFetchedAt(keyDir, request.Kind, key); ok {
+		result.FetchedAt = storedAt
+	}
+	return result, nil
 }
-func writeChartMetadata(keyDir, key string, request Request) {
+
+// Expired reports whether a chart cache entry fetched at fetchedAt (known
+// false when that is unknown) is past maxAge at now. A non-positive maxAge
+// never expires an entry; an entry of unknown age always expires under a
+// positive one. This mirrors Argo CD 3.6's repo-server, which re-pulls a
+// cached chart archive older than the repo cache expiration
+// (util/helm/client.go ExtractChart at v3.6.1).
+func Expired(fetchedAt time.Time, known bool, maxAge time.Duration, now time.Time) bool {
+	if maxAge <= 0 {
+		return false
+	}
+	if !known {
+		return true
+	}
+	return now.Sub(fetchedAt) > maxAge
+}
+
+// EntryFetchedAt reports when the chart cache entry kind/key under cacheDir
+// was fetched, from its cache metadata. ok is false when the entry has no
+// readable metadata for that key.
+func EntryFetchedAt(cacheDir string, kind RepositoryKind, key string) (time.Time, bool) {
+	if strings.TrimSpace(cacheDir) == "" || strings.TrimSpace(key) == "" {
+		return time.Time{}, false
+	}
+	return entryFetchedAt(cache.ChartEntryPath(cacheDir, string(kind), key), kind, key)
+}
+
+func entryFetchedAt(keyDir string, kind RepositoryKind, key string) (time.Time, bool) {
+	metadata, err := cache.ReadMetadata(keyDir, cache.SourceChart, string(kind), key)
+	if err != nil || metadata == nil || metadata.CreatedAt.IsZero() || metadata.FetchTimeUnknown {
+		return time.Time{}, false
+	}
+	return metadata.CreatedAt, true
+}
+
+// writeChartMetadata records the entry's metadata. A zero createdAt keeps the
+// existing fetch time; fetchTimeUnknown marks metadata backfilled on reuse of
+// an entry whose fetch time is unknown.
+func writeChartMetadata(keyDir, key string, request Request, createdAt time.Time, fetchTimeUnknown bool) {
 	target := request.Repository
 	if normalized, err := NormalizeCacheRepository(request.Repository, request.Kind); err == nil {
 		target = normalized
 	}
 	_ = cache.WriteMetadata(keyDir, cache.Metadata{
-		Source:  cache.SourceChart,
-		Kind:    string(request.Kind),
-		Key:     key,
-		Target:  cache.RedactedTarget(target),
-		Name:    strings.TrimSpace(request.Name),
-		Version: strings.TrimSpace(request.Version),
+		Source:           cache.SourceChart,
+		Kind:             string(request.Kind),
+		Key:              key,
+		Target:           cache.RedactedTarget(target),
+		Name:             strings.TrimSpace(request.Name),
+		Version:          strings.TrimSpace(request.Version),
+		CreatedAt:        createdAt,
+		FetchTimeUnknown: fetchTimeUnknown,
 	})
 }
 func (acquirer DefaultAcquirer) fetchChart(ctx context.Context, request Request, opts Options) ([]byte, error) {

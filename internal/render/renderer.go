@@ -3,6 +3,7 @@ package render
 import (
 	"context"
 	"errors"
+	"time"
 
 	argoappv1 "github.com/argoproj/argo-cd/v3/pkg/apis/application/v1alpha1"
 	"github.com/sholdee/drydock/internal/cacheevent"
@@ -61,6 +62,7 @@ type RenderOptions struct {
 	ChartCacheDir                string
 	OfflineCharts                bool
 	RefreshCharts                bool
+	ChartCacheMaxAge             time.Duration
 	ChartForbiddenRoots          []string
 	ChartCredentials             chart.ChartCredentials
 	ChartAcquirer                chart.Acquirer

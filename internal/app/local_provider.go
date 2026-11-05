@@ -33,6 +33,7 @@ type localProvider struct {
 	pluginRenderer               render.PluginRenderer
 	offline                      bool
 	refreshCharts                bool
+	chartCacheMaxAge             time.Duration
 	chartCacheDir                string
 	chartForbiddenRoots          []string
 	chartCredentials             chart.ChartCredentials
@@ -96,6 +97,20 @@ type localProvider struct {
 var processCacheTargetLocks = acquisition.NewTargetLocks()
 
 func (p localProvider) RenderSource(ctx context.Context, source render.ResolvedSource, opts render.RenderOptions) ([]render.Manifest, []diagnostic.Diagnostic, error) {
+	// Every chart acquisition of this source, at any depth (chart sources,
+	// Helm dependencies, Kustomize helmCharts), records itself here; the
+	// stale-chart warnings are read back from those records. A provider
+	// without a collector gets one for this call only.
+	if p.acquisitions == nil {
+		p.acquisitions = cacheevent.NewAcquisitionCollector()
+	}
+	recorded := p.acquisitions.Len()
+	manifests, diags, err := p.renderSource(ctx, source, opts)
+	diags = append(diags, staleChartDiagnostics(p.acquisitions.Records()[recorded:])...)
+	return manifests, diags, err
+}
+
+func (p localProvider) renderSource(ctx context.Context, source render.ResolvedSource, opts render.RenderOptions) ([]render.Manifest, []diagnostic.Diagnostic, error) {
 	// Computed before any acquisition so the --repo-map remediation hint still
 	// reaches the user when the fork-shaped URL's own acquisition fails
 	// (offline cache miss, unreachable fork) — the moment it is most useful.
@@ -125,6 +140,7 @@ func (p localProvider) RenderSource(ctx context.Context, source render.ResolvedS
 	opts.ChartCacheDir = p.chartCacheDir
 	opts.OfflineCharts = p.offline
 	opts.RefreshCharts = p.refreshCharts
+	opts.ChartCacheMaxAge = p.chartCacheMaxAge
 	opts.ChartForbiddenRoots = append([]string(nil), p.chartForbiddenRoots...)
 	opts.ChartForbiddenRoots = appendUniqueString(opts.ChartForbiddenRoots, sourceRoot)
 	opts.ChartCredentials = p.chartCredentials

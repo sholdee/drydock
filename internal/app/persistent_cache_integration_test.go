@@ -1,15 +1,20 @@
 package app
 
 import (
+	"archive/tar"
 	"bytes"
 	"compress/gzip"
 	"context"
 	"encoding/json"
 	"io"
 	"io/fs"
+	"maps"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -18,7 +23,9 @@ import (
 
 	git "github.com/go-git/go-git/v5"
 	"github.com/go-git/go-git/v5/plumbing/object"
+	cachepkg "github.com/sholdee/drydock/internal/cache"
 	"github.com/sholdee/drydock/internal/cacheevent"
+	"github.com/sholdee/drydock/internal/chart"
 	"github.com/sholdee/drydock/internal/diagnostic"
 	"github.com/sholdee/drydock/internal/remote"
 	"github.com/sholdee/drydock/internal/render"
@@ -2009,4 +2016,308 @@ func assertDirtyDiffWarmHit(t *testing.T, result DiffResult, worktreeRenders, re
 	if len(result.Results) == 0 {
 		t.Fatalf("warm dirty diff returned no results; expected cached cm change diff")
 	}
+}
+
+// chartMaxAgeRepo is an HTTP Helm repository serving chart demo 1.2.3; its
+// content field changes what the next archive download carries, as a
+// registry republishing the same chart version does.
+type chartMaxAgeRepo struct {
+	server    *httptest.Server
+	mu        sync.Mutex
+	downloads int
+	content   string
+}
+
+func newChartMaxAgeRepo(t *testing.T) *chartMaxAgeRepo {
+	t.Helper()
+	repo := &chartMaxAgeRepo{content: "first"}
+	repo.server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/index.yaml":
+			_, _ = io.WriteString(w, "apiVersion: v1\nentries:\n  demo:\n    - version: 1.2.3\n      urls:\n        - demo-1.2.3.tgz\n")
+		case "/demo-1.2.3.tgz":
+			repo.mu.Lock()
+			repo.downloads++
+			content := repo.content
+			repo.mu.Unlock()
+			_, _ = w.Write(chartMaxAgeArchive(t, content))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(repo.server.Close)
+	return repo
+}
+
+func (repo *chartMaxAgeRepo) republish(content string) {
+	repo.mu.Lock()
+	defer repo.mu.Unlock()
+	repo.content = content
+}
+
+func (repo *chartMaxAgeRepo) downloadCount() int {
+	repo.mu.Lock()
+	defer repo.mu.Unlock()
+	return repo.downloads
+}
+
+func (repo *chartMaxAgeRepo) request() chart.Request {
+	return chart.Request{Repository: repo.server.URL, Name: "demo", Version: "1.2.3", Kind: chart.RepositoryHTTP}
+}
+
+func chartMaxAgeArchive(t *testing.T, content string) []byte {
+	t.Helper()
+	files := map[string]string{
+		"demo/Chart.yaml":          "apiVersion: v2\nname: demo\nversion: 1.2.3\n",
+		"demo/values.yaml":         "content: " + content + "\n",
+		"demo/templates/cm.yaml":   "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: {{ .Release.Name }}-chart\ndata:\n  content: {{ .Values.content | quote }}\n",
+		"demo/templates/NOTES.txt": "notes\n",
+	}
+	var buf bytes.Buffer
+	gz := gzip.NewWriter(&buf)
+	tw := tar.NewWriter(gz)
+	for _, name := range slices.Sorted(maps.Keys(files)) {
+		body := files[name]
+		if err := tw.WriteHeader(&tar.Header{Name: name, Mode: 0o644, Size: int64(len(body)), Typeflag: tar.TypeReg}); err != nil {
+			t.Fatalf("write tar header: %v", err)
+		}
+		if _, err := io.WriteString(tw, body); err != nil {
+			t.Fatalf("write tar body: %v", err)
+		}
+	}
+	if err := tw.Close(); err != nil {
+		t.Fatalf("close tar: %v", err)
+	}
+	if err := gz.Close(); err != nil {
+		t.Fatalf("close gzip: %v", err)
+	}
+	return buf.Bytes()
+}
+
+func writeChartMaxAgeApp(t *testing.T, root, name, repoURL string) {
+	t.Helper()
+	writeTestFile(t, filepath.Join(root, "apps", name+".yaml"), `apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: `+name+`
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: `+repoURL+`
+    chart: demo
+    targetRevision: 1.2.3
+  destination:
+    name: in-cluster
+    namespace: default
+`)
+}
+
+// chartMaxAgeFixture is a committed repository with two Applications that
+// render the same remote chart, plus the caches a run uses.
+type chartMaxAgeFixture struct {
+	repo          *chartMaxAgeRepo
+	root          string
+	renderCache   string
+	chartCacheDir string
+}
+
+func newChartMaxAgeFixture(t *testing.T) chartMaxAgeFixture {
+	t.Helper()
+	fixture := chartMaxAgeFixture{
+		repo:          newChartMaxAgeRepo(t),
+		root:          t.TempDir(),
+		renderCache:   t.TempDir(),
+		chartCacheDir: t.TempDir(),
+	}
+	writeChartMaxAgeApp(t, fixture.root, "alpha", fixture.repo.server.URL)
+	writeChartMaxAgeApp(t, fixture.root, "beta", fixture.repo.server.URL)
+	gitCommitAll(t, fixture.root, "initial")
+	return fixture
+}
+
+func (fixture chartMaxAgeFixture) run(t *testing.T, maxAge time.Duration, offline bool) (BuildResult, int64, error) {
+	t.Helper()
+	request := persistentBuildRequest(fixture.root, fixture.renderCache)
+	request.ChartCacheDir = fixture.chartCacheDir
+	request.ChartCacheMaxAge = maxAge
+	request.Offline = offline
+	request.RecordCacheEvents = true
+	var renders atomic.Int64
+	orchestrator := Orchestrator{ChartAcquirer: chart.DefaultAcquirer{Client: fixture.repo.server.Client()}}
+	orchestrator.renderObserver = func(render.ResolvedSource) { renders.Add(1) }
+	result, err := orchestrator.Build(context.Background(), request)
+	return result, renders.Load(), err
+}
+
+// age rewrites the cached chart's fetch time to age ago.
+func (fixture chartMaxAgeFixture) age(t *testing.T, age time.Duration) {
+	t.Helper()
+	request := fixture.repo.request()
+	key, err := chart.NewCacheKey(request)
+	if err != nil {
+		t.Fatalf("NewCacheKey() error = %v", err)
+	}
+	entry := cachepkg.ChartEntryPath(fixture.chartCacheDir, string(request.Kind), key)
+	metadata, err := cachepkg.ReadMetadata(entry, cachepkg.SourceChart, string(request.Kind), key)
+	if err != nil || metadata == nil {
+		t.Fatalf("ReadMetadata() = %#v, %v", metadata, err)
+	}
+	metadata.CreatedAt = time.Now().Add(-age).UTC()
+	if err := cachepkg.WriteMetadata(entry, *metadata); err != nil {
+		t.Fatalf("WriteMetadata() error = %v", err)
+	}
+}
+
+func assertChartMaxAgeContent(t *testing.T, result BuildResult, want string) {
+	t.Helper()
+	for _, app := range []string{"alpha", "beta"} {
+		if got := persistentConfigMapDataValue(t, result, app, app+"-chart", "content"); got != want {
+			t.Fatalf("%s content = %q, want %q", app, got, want)
+		}
+	}
+}
+
+// runChecked runs one online build and checks its render count, the chart
+// downloads so far, and the content both Applications render.
+func (fixture chartMaxAgeFixture) runChecked(t *testing.T, label string, maxAge time.Duration, wantRenders int64, wantDownloads int, wantContent string) BuildResult {
+	t.Helper()
+	result, renders, err := fixture.run(t, maxAge, false)
+	if err != nil {
+		t.Fatalf("%s Build() error = %v", label, err)
+	}
+	if renders != wantRenders || fixture.repo.downloadCount() != wantDownloads {
+		t.Fatalf("%s renders = %d, downloads = %d; want %d renders, %d downloads", label, renders, fixture.repo.downloadCount(), wantRenders, wantDownloads)
+	}
+	assertChartMaxAgeContent(t, result, wantContent)
+	return result
+}
+
+func assertChartMaxAgeMisses(t *testing.T, events []cacheevent.Event) {
+	t.Helper()
+	for _, app := range []string{"argocd/alpha", "argocd/beta"} {
+		if !hasRenderCacheEvent(events, cacheevent.ActionMiss, app, renderCacheReasonChartExpired) && !hasRenderCacheEvent(events, cacheevent.ActionMiss, app, renderCacheReasonChartUnverified) {
+			t.Fatalf("CacheEvents = %#v, want a chart max-age miss for %s", events, app)
+		}
+	}
+}
+
+// TestPersistentCacheChartMaxAgeExpiredChartIsNeverServed pins the
+// --chart-cache-max-age contract on the persistent tier: a chart past the
+// max age is refetched once, and every Application rendered from it misses
+// and re-renders from the refetched chart instead of serving output of the
+// expired one; without the flag the cached render keeps hitting.
+func TestPersistentCacheChartMaxAgeExpiredChartIsNeverServed(t *testing.T) {
+	fixture := newChartMaxAgeFixture(t)
+
+	fixture.runChecked(t, "cold", 24*time.Hour, 2, 1, "first")
+	if got := countRenderCacheEntries(t, fixture.renderCache); got != 2 {
+		t.Fatalf("entries after cold run = %d, want 2", got)
+	}
+	// A fresh chart keeps hitting under the max age.
+	fixture.runChecked(t, "warm", 24*time.Hour, 0, 1, "first")
+
+	fixture.repo.republish("republished")
+	fixture.age(t, 48*time.Hour)
+
+	// Without the flag nothing expires: the cached render still hits.
+	fixture.runChecked(t, "unflagged", 0, 0, 1, "first")
+
+	// Both Applications re-render from one refetch of the expired chart.
+	expired := fixture.runChecked(t, "expired", 24*time.Hour, 2, 2, "republished")
+	assertChartMaxAgeMisses(t, expired.CacheEvents)
+	if got := countRenderCacheEntries(t, fixture.renderCache); got != 2 {
+		t.Fatalf("entries after refetch = %d, want the 2 entries overwritten", got)
+	}
+
+	fixture.runChecked(t, "rewarm", 24*time.Hour, 0, 2, "republished")
+}
+
+// TestPersistentCacheChartMaxAgeRefetchedChartMisses pins the fetch-time tie:
+// once the chart cache entry is refetched (here by another process), a
+// render stored from the previous fetch misses under the max age even though
+// the new entry is fresh.
+func TestPersistentCacheChartMaxAgeRefetchedChartMisses(t *testing.T) {
+	fixture := newChartMaxAgeFixture(t)
+	if _, _, err := fixture.run(t, 24*time.Hour, false); err != nil {
+		t.Fatalf("cold Build() error = %v", err)
+	}
+	fixture.repo.republish("republished")
+	if _, err := (chart.DefaultAcquirer{Client: fixture.repo.server.Client()}).Acquire(context.Background(), fixture.repo.request(), chart.Options{CacheDir: fixture.chartCacheDir, Refresh: true}); err != nil {
+		t.Fatalf("refresh Acquire() error = %v", err)
+	}
+
+	result, renders, err := fixture.run(t, 24*time.Hour, false)
+	if err != nil {
+		t.Fatalf("Build() error = %v", err)
+	}
+	if renders != 2 {
+		t.Fatalf("renders = %d, want both Applications re-rendered from the refetched chart", renders)
+	}
+	assertChartMaxAgeContent(t, result, "republished")
+	if !hasRenderCacheEvent(result.CacheEvents, cacheevent.ActionMiss, "argocd/alpha", renderCacheReasonChartUnverified) {
+		t.Fatalf("CacheEvents = %#v, want chart-unverified miss", result.CacheEvents)
+	}
+}
+
+// assertChartCacheStaleWarnings checks one stale-chart warning per
+// Application, at severity.
+func assertChartCacheStaleWarnings(t *testing.T, diags []diagnostic.Diagnostic, severity diagnostic.Severity) {
+	t.Helper()
+	stale := 0
+	for _, diag := range diags {
+		if diag.Code != chartCacheStaleCode {
+			continue
+		}
+		stale++
+		if diag.Severity != severity || !strings.Contains(diag.Message, "cached chart demo 1.2.3") || !strings.Contains(diag.Message, "older than --chart-cache-max-age 24h0m0s") {
+			t.Fatalf("stale diagnostic = %#v, want severity %s", diag, severity)
+		}
+	}
+	if stale != 2 {
+		t.Fatalf("Diagnostics = %#v, want one %s per Application", diags, chartCacheStaleCode)
+	}
+}
+
+// TestPersistentCacheChartMaxAgeOfflineStaleChartWarnsAndNeverStores pins
+// the offline side: an expired chart is reused with a warning, the cached
+// render is not served (its replay would drop the warning), and the render
+// from the stale chart is never stored.
+func TestPersistentCacheChartMaxAgeOfflineStaleChartWarnsAndNeverStores(t *testing.T) {
+	fixture := newChartMaxAgeFixture(t)
+	if _, _, err := fixture.run(t, 24*time.Hour, false); err != nil {
+		t.Fatalf("cold Build() error = %v", err)
+	}
+	payloadsBefore := readRenderCachePayloads(t, fixture.renderCache)
+	fixture.repo.republish("republished")
+	fixture.age(t, 48*time.Hour)
+
+	result, renders, err := fixture.run(t, 24*time.Hour, true)
+	if err != nil {
+		t.Fatalf("offline Build() error = %v", err)
+	}
+	if renders != 2 || fixture.repo.downloadCount() != 1 {
+		t.Fatalf("offline renders = %d, downloads = %d; want re-renders from the stale cached chart", renders, fixture.repo.downloadCount())
+	}
+	assertChartMaxAgeContent(t, result, "first")
+	assertChartCacheStaleWarnings(t, result.Diagnostics, diagnostic.SeverityWarning)
+	for _, app := range []string{"argocd/alpha", "argocd/beta"} {
+		if !hasRenderCacheEvent(result.CacheEvents, cacheevent.ActionSkipped, app, renderCacheReasonChartStale) {
+			t.Fatalf("CacheEvents = %#v, want chart-stale store skip for %s", result.CacheEvents, app)
+		}
+	}
+	if payloadsAfter := readRenderCachePayloads(t, fixture.renderCache); !reflect.DeepEqual(payloadsAfter, payloadsBefore) {
+		t.Fatal("offline stale render rewrote persisted render entries")
+	}
+
+	strictRequest := persistentBuildRequest(fixture.root, fixture.renderCache)
+	strictRequest.ChartCacheDir = fixture.chartCacheDir
+	strictRequest.ChartCacheMaxAge = 24 * time.Hour
+	strictRequest.Offline = true
+	strictRequest.Strict = true
+	strictResult, err := (Orchestrator{ChartAcquirer: chart.DefaultAcquirer{Client: fixture.repo.server.Client()}}).Build(context.Background(), strictRequest)
+	if err == nil {
+		t.Fatal("strict offline Build() error = nil, want the stale-chart warning promoted")
+	}
+	assertChartCacheStaleWarnings(t, strictResult.Diagnostics, diagnostic.SeverityError)
 }

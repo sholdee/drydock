@@ -48,6 +48,15 @@ meanwhile.
 interfaces so tests and embedding callers can provide deterministic fakes
 without importing internal packages.
 
+An injected `Config.ChartAcquirer` receives `Config.ChartCacheMaxAge` as
+`ChartOptions.MaxAge` and is responsible for expiring its own cached charts.
+A chart it returns with `ChartResult.Stale` set gets the
+`source.chart-cache-stale` warning, and the render is never persisted. Under a
+positive max age, persisted render outputs are served only for charts whose
+`ChartResult.CacheKey` and `FetchedAt` still match an entry in drydock's chart
+cache. For other charts the outputs miss with reason `chart-unverified` and
+re-render.
+
 ## Results
 
 Public render results include Applications, manifests, diagnostics, and

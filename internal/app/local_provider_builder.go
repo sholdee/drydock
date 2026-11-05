@@ -64,6 +64,7 @@ func newLocalProvider(ctx context.Context, orchestrator Orchestrator, root strin
 		pluginRenderer:               orchestrator.pluginRenderer(request),
 		offline:                      request.Offline,
 		refreshCharts:                request.RefreshCharts,
+		chartCacheMaxAge:             request.ChartCacheMaxAge,
 		chartCacheDir:                request.ChartCacheDir,
 		chartForbiddenRoots:          forbiddenRoots,
 		chartCredentials:             request.ChartCredentials,
