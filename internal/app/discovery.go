@@ -16,6 +16,13 @@ import (
 )
 
 func (o Orchestrator) discoverRepository(ctx context.Context, root string, request BuildRequest) (discovery.Result, []diagnostic.Diagnostic, []cacheevent.Event, *applicationRenderCache, string, error) {
+	ociFetcher := newAppsetOCIArtifactFetcher(ctx, o, root, request)
+	discovered, diags, events, renderCache, renderSig, err := o.discoverRepositoryWithOCI(ctx, root, request, ociFetcher)
+	events = append(events, ociFetcher.close()...)
+	return discovered, diags, events, renderCache, renderSig, err
+}
+
+func (o Orchestrator) discoverRepositoryWithOCI(ctx context.Context, root string, request BuildRequest, ociFetcher *appsetOCIArtifactFetcher) (discovery.Result, []diagnostic.Diagnostic, []cacheevent.Event, *applicationRenderCache, string, error) {
 	mode, err := normalizeDiscoveryMode(request.DiscoveryMode)
 	if err != nil {
 		return discovery.Result{}, nil, nil, nil, "", err
@@ -40,6 +47,7 @@ func (o Orchestrator) discoverRepository(ctx context.Context, root string, reque
 	if err != nil {
 		return discovered, providerDiags, nil, renderCache, "", diagnosticsError(providerDiags, err)
 	}
+	appsetOptions.OCI = ociFetcher
 	var allDiags []diagnostic.Diagnostic
 	allDiags = append(allDiags, externalDiags...)
 	allDiags = append(allDiags, providerDiags...)

@@ -1011,7 +1011,7 @@ func TestGenerateUnsupportedGeneratorMessageNamesEverySupportedGenerator(t *test
 	}
 }
 
-func TestGenerateOciGeneratorIsNamedAsUnsupported(t *testing.T) {
+func TestGenerateOciGeneratorWithoutFetcherIsNamedAsUnsupported(t *testing.T) {
 	data := []byte(`
 apiVersion: argoproj.io/v1alpha1
 kind: ApplicationSet
@@ -1034,7 +1034,7 @@ spec:
 	if err == nil || !errors.Is(err, ErrUnsupportedGenerator) {
 		t.Fatalf("GenerateFromYAML() error = %v, want ErrUnsupportedGenerator", err)
 	}
-	if len(diags) != 1 || !strings.Contains(diags[0].Message, "the oci generator is not supported") {
+	if len(diags) != 1 || !strings.Contains(diags[0].Message, "the oci generator needs OCI artifact acquisition") {
 		t.Fatalf("diagnostics = %#v, want named oci generator diagnostic", diags)
 	}
 	if code := diagnostic.StableCode(diags[0]); code != "appset.unsupported-generator" {
@@ -1051,8 +1051,12 @@ func TestGeneratorFromNestedCarriesOciGenerator(t *testing.T) {
 	if generator.Oci != oci {
 		t.Fatalf("generatorFromNested().Oci = %#v, want the nested oci generator", generator.Oci)
 	}
-	supported, err := supportedGeneratorTree(generator, true)
+	supported, err := supportedGeneratorTree(generator, Options{})
 	if err != nil || supported {
-		t.Fatalf("supportedGeneratorTree(oci) = %v, %v; want unsupported until the oci generator is implemented", supported, err)
+		t.Fatalf("supportedGeneratorTree(oci, no fetcher) = %v, %v; want unsupported", supported, err)
+	}
+	supported, err = supportedGeneratorTree(generator, Options{OCI: &fakeOCIFetcher{}})
+	if err != nil || !supported {
+		t.Fatalf("supportedGeneratorTree(oci, fetcher) = %v, %v; want supported", supported, err)
 	}
 }

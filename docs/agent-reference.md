@@ -169,6 +169,14 @@ Provider-backed ApplicationSet generators are offline fixture-backed only. Do
 not add Kubernetes API reads, Argo CD API reads, SCM/pull-request/cloud API
 calls, plugin service calls, shellouts, or ambient credential discovery.
 
+The Argo CD v3.6 OCI generator is the one generator that acquires a source:
+`internal/app` hands `appset.Options.OCI` a fetcher that reuses the `oci://`
+Application source path (repo map, `--offline`, OCI cache, credentials,
+snapshot session). Its matching mirrors the v3.6.1 repo-server
+(`walkDirectoryTree` without hidden directories, always-doublestar file
+globs over `os.Root`), and its param sets carry no `SourcePath`, so
+artifact paths never claim changed paths or local render-cache inputs.
+
 Git files generator behavior is intentionally local and fail-closed. Keep path
 matching sorted, reject absolute paths and `..` escapes, do not follow
 symlinks, and decode only YAML/JSON mapping documents. Empty-content decoding

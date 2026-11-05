@@ -9,7 +9,9 @@ errors.
 
 Provider-backed generators are fixture-backed only. drydock does not contact
 Kubernetes, Argo CD, SCM provider, pull-request, cloud, or plugin-service APIs
-while generating Applications.
+while generating Applications. The only generator that reaches the network is
+the OCI generator, which pulls its artifact from the registry exactly as an
+`oci://` Application source does, and not at all under `--offline`.
 
 ## Supported Generators
 
@@ -21,7 +23,8 @@ while generating Applications.
 | Matrix | Native for two child generators, including interpolated child params. |
 | Merge | Native for two or more child generators over `mergeKeys`. |
 | Provider-backed generators | Fixture-backed for clusters, clusterDecisionResource, SCM provider, pull requests, and plugin generators. |
-| OCI | Not supported. The Argo CD v3.6 `oci` generator emits an `appset.unsupported-generator` diagnostic. |
+| OCI directories | Native over the pulled artifact. Matches keep the Argo CD v3.6.1 repo-server walk order. |
+| OCI files | Native over the pulled artifact. Matches are sorted by path. |
 
 Supported ApplicationSet behavior includes:
 
@@ -96,6 +99,51 @@ In PR diff mode, mapped repository URLs use the local `--path` or
 `--path-orig` trees for directory discovery and rendering, even when the
 ApplicationSet declares `revision: master`.
 
+## OCI Generator
+
+The Argo CD v3.6.1 `oci` generator works like the Git generator over the
+content of an OCI artifact instead of the repository under analysis. It is
+supported top-level and as a matrix or merge child.
+
+```yaml
+generators:
+  - oci:
+      repoURL: oci://ghcr.io/my-org/platform
+      revision: v1.2.3
+      directories:
+        - path: platform/*
+        - path: platform/legacy
+          exclude: true
+```
+
+- drydock pulls `repoURL` at `revision` through the same path as an `oci://`
+  Application source: a `--repo-map` entry for the URL wins, tags and semver
+  constraints resolve to a digest, content comes from the OCI cache when it
+  is there, `--offline` resolves only from earlier online runs, and
+  registry credentials come from `--registry-config` or
+  `--oci-username`/`--oci-password`. A failed pull fails the run, like other
+  source acquisition failures.
+- `directories`, `files`, `exclude`, `pathParamPrefix`, `values`, and the
+  generator `template` and `selector` behave as in the Git generator, with
+  the same `path`, `path.basename`, `path.basenameNormalized`,
+  `path.segments`/`path[n]`, `path.filename`, and `path.filenameNormalized`
+  params. When both `directories` and `files` are set, `directories` wins.
+- Directory patterns match with `path.Match` exactly as written: no
+  normalization, so `apps/*/` and `./apps/*` match nothing. Hidden
+  directories and everything under them are never listed.
+- File patterns are always doublestar globs, and `.` or an empty pattern
+  means `**`. Hidden files match. A symlink that resolves outside the
+  artifact is skipped.
+- Param files decode like Git files, including the empty-content rules. As
+  with Git files, a file that is not valid YAML or JSON produces a
+  diagnostic and is skipped; Argo CD instead fails the whole ApplicationSet.
+- Generated Applications own no repository paths from the artifact:
+  changed-only selection matches them through the ApplicationSet file and
+  their own local sources, and persistent render cache keys follow the
+  generated Application spec.
+- `requeueAfterSeconds` has no effect; each run resolves `revision` once,
+  and a two-sided diff shares one resolution.
+
 ## List, Matrix, And Merge
 
 List generators support `elements` and `elementsYaml`. For non-Go-template
@@ -109,9 +157,9 @@ second child from first-child params, including templated `elementsYaml`.
 Merge generators overlay two or more child generators by `mergeKeys` in base
 generator order.
 
-Matrix and merge children may use list, Git directories, Git files,
-fixture-backed provider generators, and nested matrix/merge combinations where
-the Argo CD v3 nested JSON API permits them.
+Matrix and merge children may use list, Git directories, Git files, OCI
+directories, OCI files, fixture-backed provider generators, and nested
+matrix/merge combinations where the Argo CD v3 nested JSON API permits them.
 
 ## Template Render Errors
 

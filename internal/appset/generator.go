@@ -26,6 +26,10 @@ var ErrUnsupportedGenerator = errors.New("unsupported ApplicationSet generator")
 
 type Options struct {
 	Provider ProviderOptions
+	// OCI acquires the artifacts oci generators name. It is excluded from
+	// JSON so Options stays usable as a generation memo key. Without it the
+	// oci generator is reported as unsupported.
+	OCI OCIArtifactFetcher `json:"-"`
 }
 
 func GenerateFromYAML(repoRoot, manifestPath string, data []byte) ([]GeneratedApplication, []diagnostic.Diagnostic, error) {
@@ -144,7 +148,7 @@ func evaluateGenerator(ctx generatorContext, generator argoappv1.ApplicationSetG
 	case generator.Git != nil:
 		return evaluateGitGenerator(ctx, generator)
 	case generator.Oci != nil:
-		return nil, unsupportedOciGeneratorDiagnostic(ctx.ManifestPath), false, nil
+		return evaluateOciGenerator(ctx, generator)
 	default:
 		return nil, unsupportedGeneratorDiagnostic(ctx.ManifestPath), false, nil
 	}
@@ -155,7 +159,7 @@ func evaluateNestedGenerator(ctx generatorContext, nested argoappv1.ApplicationS
 	if err != nil {
 		return nil, nil, true, err
 	}
-	supported, err := supportedGeneratorTree(generator, ctx.Options.Provider.Supplied())
+	supported, err := supportedGeneratorTree(generator, ctx.Options)
 	if err != nil {
 		return nil, nil, true, err
 	}
@@ -175,36 +179,36 @@ func evaluateNestedGenerator(ctx generatorContext, nested argoappv1.ApplicationS
 	return evaluateGenerator(ctx, generator)
 }
 
-func supportedGeneratorTree(generator argoappv1.ApplicationSetGenerator, providerSupplied bool) (bool, error) {
+func supportedGeneratorTree(generator argoappv1.ApplicationSetGenerator, options Options) (bool, error) {
 	switch {
 	case generator.List != nil || generator.Git != nil:
 		return true, nil
 	case generator.Clusters != nil || generator.ClusterDecisionResource != nil || generator.SCMProvider != nil || generator.PullRequest != nil || generator.Plugin != nil:
-		return providerSupplied, nil
+		return options.Provider.Supplied(), nil
 	case generator.Oci != nil:
-		return false, nil
+		return options.OCI != nil, nil
 	case generator.Matrix != nil:
 		if err := validateMatrixGenerator(generator.Matrix); err != nil {
 			return true, err
 		}
-		return supportedNestedGeneratorTrees(generator.Matrix.Generators, providerSupplied)
+		return supportedNestedGeneratorTrees(generator.Matrix.Generators, options)
 	case generator.Merge != nil:
 		if err := validateMergeGenerator(generator.Merge); err != nil {
 			return true, err
 		}
-		return supportedNestedGeneratorTrees(generator.Merge.Generators, providerSupplied)
+		return supportedNestedGeneratorTrees(generator.Merge.Generators, options)
 	default:
 		return false, nil
 	}
 }
 
-func supportedNestedGeneratorTrees(nestedGenerators []argoappv1.ApplicationSetNestedGenerator, providerSupplied bool) (bool, error) {
+func supportedNestedGeneratorTrees(nestedGenerators []argoappv1.ApplicationSetNestedGenerator, options Options) (bool, error) {
 	for _, nested := range nestedGenerators {
 		generator, err := generatorFromNested(nested)
 		if err != nil {
 			return false, err
 		}
-		supported, err := supportedGeneratorTree(generator, providerSupplied)
+		supported, err := supportedGeneratorTree(generator, options)
 		if err != nil || !supported {
 			return supported, err
 		}
@@ -248,14 +252,17 @@ const defaultClusterDecisionStatusListKey = "clusters"
 
 // supportedGeneratorsSummary names every generator drydock evaluates. Keep it
 // in sync with evaluateGenerator and supportedGeneratorTree.
-const supportedGeneratorsSummary = "supported generators are git directories, git files, list, matrix, and merge, plus clusters, clusterDecisionResource, scmProvider, pullRequest, and plugin from --appset-provider-fixture data"
+const supportedGeneratorsSummary = "supported generators are git directories, git files, oci directories, oci files, list, matrix, and merge, plus clusters, clusterDecisionResource, scmProvider, pullRequest, and plugin from --appset-provider-fixture data"
 
 func unsupportedGeneratorDiagnostic(manifestPath string) []diagnostic.Diagnostic {
 	return []diagnostic.Diagnostic{appsetDiagnostic(manifestPath, "unsupported ApplicationSet generator; "+supportedGeneratorsSummary)}
 }
 
+// unsupportedOciGeneratorDiagnostic reports an oci generator evaluated
+// without an OCIArtifactFetcher (direct library callers); the drydock
+// discovery pipeline always configures one.
 func unsupportedOciGeneratorDiagnostic(manifestPath string) []diagnostic.Diagnostic {
-	return []diagnostic.Diagnostic{appsetDiagnostic(manifestPath, "unsupported ApplicationSet generator: the oci generator is not supported; "+supportedGeneratorsSummary)}
+	return []diagnostic.Diagnostic{appsetDiagnostic(manifestPath, "unsupported ApplicationSet generator: the oci generator needs OCI artifact acquisition, which this caller did not configure; "+supportedGeneratorsSummary)}
 }
 
 func providerNoMatchDiagnostic(manifestPath, kind string) diagnostic.Diagnostic {

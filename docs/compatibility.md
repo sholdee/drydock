@@ -92,6 +92,14 @@ Supported:
   entrypoint.
 - ApplicationSet Git directories, Git files, list, matrix, and merge
   generators.
+- The Argo CD v3.6.1 OCI ApplicationSet generator (`generators[].oci`),
+  top-level and nested in matrix/merge, with directories and files, `exclude`,
+  `pathParamPrefix`, `values`, and the same path params as the Git generator.
+  The artifact is acquired like an `oci://` Application source (`--repo-map`,
+  `--offline`, the OCI cache, `--registry-config`, and `--oci-*` flags).
+  Directory and file matching follow the v3.6.1 repo-server: hidden
+  directories are skipped, file patterns are always doublestar (`.` means
+  `**`), and files resolving outside the artifact are skipped.
 - ApplicationSet `templatePatch` rendering and strategic merge patching, with
   generated `spec.project` preserved.
 - ApplicationSet list `elementsYaml`, including matrix-interpolated
@@ -115,9 +123,10 @@ Supported:
   matches, and unsupported provider filters.
 - Warning diagnostics when a discovered ApplicationSet generates zero
   Applications; `--strict` promotes those diagnostics to errors.
-- Argo CD Git files param decoding for empty content: empty, comment-only, and
-  bare `---`/`...` files decode to one empty param set, `[]` decodes to zero
-  param sets, and multi-document files decode only the first document.
+- Argo CD Git and OCI files param decoding for empty content: empty,
+  comment-only, and bare `---`/`...` files decode to one empty param set,
+  `[]` decodes to zero param sets, and multi-document files decode only the
+  first document.
 - ApplicationSet template, `templatePatch`, generator `values`, and
   matrix/merge child interpolation execution errors scoped to the failing
   ApplicationSet as `appset.template-render-failed` warning diagnostics; that
@@ -148,8 +157,8 @@ Not supported:
 - Live Kubernetes, Argo CD, SCM provider, pull-request, cloud, or plugin
   service API calls for ApplicationSet generation.
 - Unsupported generators without diagnostics.
-- The Argo CD v3.6 OCI ApplicationSet generator (`generators[].oci`); it
-  emits an `appset.unsupported-generator` diagnostic.
+- OCI generator `requeueAfterSeconds` and webhook refreshes; each drydock run
+  resolves the generator `revision` once.
 
 See `site/content/docs/applicationsets.md` for generator details and fixture
 schema.

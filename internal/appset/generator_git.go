@@ -90,25 +90,7 @@ func splitDirectoryPatterns(dirs []argoappv1.GitDirectoryGeneratorItem) ([]strin
 }
 
 func matchDirectories(repoRoot string, includes, excludes []string) ([]string, error) {
-	var candidates []string
-	err := filepath.WalkDir(repoRoot, func(abs string, entry os.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		if !entry.IsDir() {
-			return nil
-		}
-		if strings.HasPrefix(entry.Name(), ".") && abs != repoRoot {
-			return filepath.SkipDir
-		}
-		rel, err := filepath.Rel(repoRoot, abs)
-		if err != nil || rel == "." {
-			return err
-		}
-		rel = filepath.ToSlash(rel)
-		candidates = append(candidates, rel)
-		return nil
-	})
+	candidates, err := walkDirectoryTree(repoRoot)
 	if err != nil {
 		return nil, err
 	}
@@ -129,6 +111,38 @@ func matchDirectories(repoRoot string, includes, excludes []string) ([]string, e
 	}
 	sort.Strings(matches)
 	return matches, nil
+}
+
+// walkDirectoryTree lists every directory under root as a slash-separated
+// relative path in filepath.WalkDir order, skipping hidden directories and
+// their subtrees and never following symlinks. It mirrors Argo CD's
+// repo-server walkDirectoryTree (reposerver/repository/utils.go) with
+// includeHidden false: reposerver.include.hidden.directories is a runtime
+// repo-server setting drydock does not apply. The root itself is exempt from
+// the hidden check (Argo CD's roots are checkout and extraction temp dirs).
+func walkDirectoryTree(root string) ([]string, error) {
+	var paths []string
+	err := filepath.WalkDir(root, func(abs string, entry os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if !entry.IsDir() {
+			return nil
+		}
+		if strings.HasPrefix(entry.Name(), ".") && abs != root {
+			return filepath.SkipDir
+		}
+		rel, err := filepath.Rel(root, abs)
+		if err != nil || rel == "." {
+			return err
+		}
+		paths = append(paths, filepath.ToSlash(rel))
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return paths, nil
 }
 
 func gitFileParamSets(repoRoot, manifestPath string, git *argoappv1.GitGenerator, useGoTemplate bool, goTemplateOptions []string) ([]generatorParamSet, []diagnostic.Diagnostic, error) {
@@ -281,7 +295,16 @@ func gitFileParams(repoRoot, rel, prefix string, values map[string]string, useGo
 		}
 		return nil, []diagnostic.Diagnostic{*diag}, nil
 	}
+	paramObjects, err := fileParamObjects(fileObjects, rel, prefix, values, useGoTemplate, goTemplateOptions)
+	return paramObjects, nil, err
+}
 
+// fileParamObjects shapes decoded param-file objects into generator params:
+// file fields (flattened outside Go-template mode), the path/filename params
+// for rel, and templated values. Argo CD shares this shaping between the Git
+// and OCI file generators (applicationset/generators/repo_path_utils.go
+// parseFileParams).
+func fileParamObjects(fileObjects []map[string]any, rel, prefix string, values map[string]string, useGoTemplate bool, goTemplateOptions []string) ([]map[string]any, error) {
 	paramObjects := make([]map[string]any, 0, len(fileObjects))
 	for _, fileValues := range fileObjects {
 		params := map[string]any{}
@@ -294,11 +317,11 @@ func gitFileParams(repoRoot, rel, prefix string, values map[string]string, useGo
 		}
 
 		if err := appendTemplatedValues(params, values, useGoTemplate, goTemplateOptions); err != nil {
-			return nil, nil, err
+			return nil, err
 		}
 		paramObjects = append(paramObjects, params)
 	}
-	return paramObjects, nil, nil
+	return paramObjects, nil
 }
 
 func decodeGitFileParams(absPath, rel, manifestPath string) ([]map[string]any, *diagnostic.Diagnostic, error) {
@@ -306,8 +329,15 @@ func decodeGitFileParams(absPath, rel, manifestPath string) ([]map[string]any, *
 	if err != nil {
 		return nil, nil, err
 	}
+	objects, diag := decodeFileParamsContent(data, "git files", rel, manifestPath)
+	return objects, diag, nil
+}
+
+// decodeFileParamsContent decodes one generator param file. kind names the
+// generator in the invalid-content diagnostic ("git files" or "oci files").
+func decodeFileParamsContent(data []byte, kind, rel, manifestPath string) ([]map[string]any, *diagnostic.Diagnostic) {
 	if isEmptyGitFileParamsContent(data) {
-		return []map[string]any{{}}, nil, nil
+		return []map[string]any{{}}, nil
 	}
 
 	mapping := map[string]any{}
@@ -315,20 +345,20 @@ func decodeGitFileParams(absPath, rel, manifestPath string) ([]map[string]any, *
 		if mapping == nil {
 			mapping = map[string]any{}
 		}
-		return []map[string]any{mapping}, nil, nil
+		return []map[string]any{mapping}, nil
 	}
 
 	var objects []map[string]any
 	if err := sigsyaml.Unmarshal(data, &objects); err != nil {
-		diag := appsetDiagnostic(manifestPath, fmt.Sprintf("git files match %q is not valid YAML: %v", rel, err))
-		return nil, &diag, nil
+		diag := appsetDiagnostic(manifestPath, fmt.Sprintf("%s match %q is not valid YAML: %v", kind, rel, err))
+		return nil, &diag
 	}
 	for i := range objects {
 		if objects[i] == nil {
 			objects[i] = map[string]any{}
 		}
 	}
-	return objects, nil, nil
+	return objects, nil
 }
 
 func isEmptyGitFileParamsContent(data []byte) bool {
