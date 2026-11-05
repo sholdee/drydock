@@ -449,6 +449,10 @@ Supported:
   component after it is dropped without a check or a log line. drydock
   renders the same and emits the `kustomize.ignore-missing-components-dropped`
   warning, which names each later component that has a kustomization file.
+  The warning skips a later entry that resolves to the same directory as the
+  kept component, such as `../c/a` repeated or written as `../c//a`. Argo CD
+  resolves both with `filepath.Rel(repoRoot, filepath.Join(path, c))`
+  (`util/kustomize/kustomize.go:357`), so no resources are missing.
   The warning is not advisory: `--strict` makes it an error, because
   resources that the components list names are missing from the render.
   Without `ignoreMissingComponents`, every component is added. We believe

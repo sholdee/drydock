@@ -313,7 +313,11 @@ func sourceKustomizePatchOptions(options map[string]bool) *types.PatchArgs {
 // the first valid one is added, and every later component is dropped without
 // a check or a log line. dropped names the later components that hold a
 // kustomization file, so the caller can warn about the resources they would
-// have added. This is believed to be an upstream bug: argoproj/argo-cd#26576
+// have added. dropped leaves out a later entry that resolves to the same
+// directory as the kept component, such as a repeat of it or the same path
+// with extra slashes. The repo-server resolves both to one componentDir
+// (filepath.Rel(repoRoot, filepath.Join(path, c)) at kustomize.go:357), so no
+// resources are missing. This is believed to be an upstream bug: argoproj/argo-cd#26576
 // (merge d631fcdfb) turned an earlier `continue` into `break component`.
 // Revisit this when upstream fixes it.
 func sourceKustomizeComponents(dir, boundaryRoot string, components []string, ignoreMissing bool) (kept, dropped []string, err error) {
@@ -321,13 +325,18 @@ func sourceKustomizeComponents(dir, boundaryRoot string, components []string, ig
 		return append(make([]string, 0, len(components)), components...), nil, nil
 	}
 	kept = make([]string, 0, 1)
+	var keptRel string
 	for _, component := range components {
 		if len(kept) != 0 {
+			// The workspace step (sourceKustomizeWorkspaceAdditions) already
+			// ran ignoreMissingComponentDecision on every component, so it
+			// rejected a later absolute ref that holds a kustomization file.
+			// This tolerant probe exists only for the warning.
 			later, err := probeIgnoreMissingComponent(dir, boundaryRoot, component)
 			if err != nil {
 				return nil, nil, err
 			}
-			if later.keep {
+			if later.keep && later.rel != keptRel {
 				dropped = append(dropped, component)
 			}
 			continue
@@ -338,6 +347,7 @@ func sourceKustomizeComponents(dir, boundaryRoot string, components []string, ig
 		}
 		if decision.keep {
 			kept = append(kept, component)
+			keptRel = decision.rel
 		}
 	}
 	return kept, dropped, nil
@@ -367,6 +377,10 @@ func ignoreMissingComponentsDroppedDiagnostic(first string, dropped []string) di
 type ignoreMissingComponent struct {
 	// keep reports whether the component is added to the kustomization.
 	keep bool
+	// rel is the cleaned component directory relative to the repository
+	// root, the path the repo-server checks. It is empty for a remote ref
+	// and a ref escaping the repository.
+	rel string
 	// probe is the in-boundary directory the check looked at. A skipped
 	// component's probe stays a render input (an optional digest path): a
 	// kustomization file appearing there changes the render.
@@ -407,7 +421,7 @@ func probeIgnoreMissingComponent(dir, boundaryRoot, ref string) (ignoreMissingCo
 	if !inside {
 		return ignoreMissingComponent{}, nil
 	}
-	var decision ignoreMissingComponent
+	decision := ignoreMissingComponent{rel: rel}
 	if !pathsafety.RelEntersGit(rel) {
 		decision.probe = componentDir
 	}

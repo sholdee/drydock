@@ -259,8 +259,9 @@ component that has a kustomization file. It drops every later component, even
 a valid one, and does not log it. drydock renders the same, so the resources
 of the later components are missing from both renders. The
 `kustomize.ignore-missing-components-dropped` warning names each later
-component that has a kustomization file. `--strict` makes the warning an
-error.
+component that has a kustomization file. It does not name a later entry that
+points at the same directory as the kept component, such as a repeat of it.
+`--strict` makes the warning an error.
 
 We believe this upstream behavior is a bug (argoproj/argo-cd#26576). drydock
 will follow upstream when it changes. Until then, use one of these fixes:

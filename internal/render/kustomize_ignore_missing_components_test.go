@@ -142,6 +142,43 @@ func TestKustomizeRendererIgnoreMissingComponentsStopsAtFirstValidComponent(t *t
 	}
 }
 
+// TestKustomizeRendererIgnoreMissingComponentsSkipsCopiesOfKeptComponent
+// checks that the dropped warning does not name a later entry that resolves
+// to the kept component. Argo CD v3.6.1 resolves each entry with
+// filepath.Rel(repoRoot, filepath.Join(path, c))
+// (util/kustomize/kustomize.go:357), so a repeat, a doubled slash, a "./"
+// prefix, a trailing slash and a detour through ".." all name component-a.
+// No resources are missing, so --strict must not fail. A distinct valid
+// component after them still warns.
+func TestKustomizeRendererIgnoreMissingComponentsSkipsCopiesOfKeptComponent(t *testing.T) {
+	root := t.TempDir()
+	writeIgnoreMissingComponentsRepo(t, root, "a", "b")
+
+	for _, copyOfKept := range []string{
+		"../components/a",
+		"../components//a",
+		"./../components/a",
+		"../components/a/",
+		"../components/b/../a",
+	} {
+		names, dropped := renderIgnoreMissingComponentsDropped(t, root, "../components/missing", "../components/a", copyOfKept)
+		if want := []string{"component-a", "demo"}; !reflect.DeepEqual(names, want) {
+			t.Fatalf("rendered names with %q = %#v, want %#v", copyOfKept, names, want)
+		}
+		if len(dropped) != 0 {
+			t.Fatalf("diagnostics with %q = %#v, want no %s warning for a copy of the kept component", copyOfKept, dropped, KustomizeIgnoreMissingComponentsDroppedCode)
+		}
+	}
+
+	_, dropped := renderIgnoreMissingComponentsDropped(t, root, "../components/a", "../components//a", "../components/b")
+	if len(dropped) != 1 {
+		t.Fatalf("%s diagnostics = %#v, want one warning", KustomizeIgnoreMissingComponentsDroppedCode, dropped)
+	}
+	if message := dropped[0].Message; !strings.Contains(message, `"../components/b"`) || strings.Contains(message, `"../components//a"`) {
+		t.Fatalf("warning message %q, want it to name only ../components/b as dropped", message)
+	}
+}
+
 // renderIgnoreMissingComponentsDropped renders apps/demo with components
 // under ignoreMissingComponents and returns the rendered names and the
 // kustomize.ignore-missing-components-dropped diagnostics.
