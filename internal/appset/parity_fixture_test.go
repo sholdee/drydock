@@ -11,6 +11,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/sholdee/drydock/internal/diagnostic"
 	corev1 "k8s.io/api/core/v1"
 	k8syaml "k8s.io/apimachinery/pkg/util/yaml"
 )
@@ -105,6 +106,38 @@ func TestArgoCDParityFixtureClusterGeneratorHidesReservedAnnotations(t *testing.
 		}, "\n"),
 	}
 	assertParityHelmValues(t, ftApps, wantFT)
+}
+
+// TestArgoCDParityFixtureClusterSprigMapFunctionGeneratesNothing pins the
+// smoke fixture that calls hasKey on .metadata.annotations. Argo CD passes
+// that map as map[string]string, so hasKey fails and no Application exists.
+func TestArgoCDParityFixtureClusterSprigMapFunctionGeneratesNothing(t *testing.T) {
+	repoRoot := filepath.Join(parityFixtureRoot, "repo")
+	manifestPath := filepath.Join("applicationsets", "cluster-sprig-map-function.yaml")
+	data, err := os.ReadFile(filepath.Join(repoRoot, manifestPath))
+	if err != nil {
+		t.Fatalf("read %s: %v", manifestPath, err)
+	}
+	apps, diags, err := GenerateFromYAMLWithOptions(repoRoot, manifestPath, data, parityProviderOptions(t))
+	if err != nil {
+		t.Fatalf("GenerateFromYAMLWithOptions() error = %v", err)
+	}
+	if len(apps) != 0 {
+		t.Fatalf("generated names = %#v, want none", generatedNames(apps))
+	}
+	// Both clusters have the annotations key, so each failure must be the
+	// type error, not a missing key.
+	if len(diags) != 2 {
+		t.Fatalf("diagnostics = %#v, want one per cluster", diags)
+	}
+	for _, diag := range diags {
+		if code := diagnostic.StableCode(diag); code != "appset.template-render-failed" {
+			t.Fatalf("diagnostic code = %q, want appset.template-render-failed", code)
+		}
+		if !strings.Contains(diag.Message, "got map[string]string") {
+			t.Fatalf("diagnostic message = %q, want the hasKey map[string]string type error", diag.Message)
+		}
+	}
 }
 
 // assertParityHelmValues checks that each named Application exists and that

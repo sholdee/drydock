@@ -242,6 +242,9 @@ APPLICATIONS=(
   parity-cluster-beta
   parity-cluster-ft-alpha
   parity-cluster-ft-beta
+  # parity-cluster-sprig-map-function calls hasKey on the map[string]string
+  # cluster annotations, so its parity-cluster-haskey-* Applications must be
+  # absent on both sides.
 )
 
 TRACKING_APPLICATIONS=(

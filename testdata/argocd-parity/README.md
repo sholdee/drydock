@@ -705,3 +705,29 @@ same two clusters, and every drydock capture passes it with
 with that label. It also lists a stand-in last-applied annotation for each
 cluster. `TestArgoCDParityProviderFixtureMatchesClusterSecrets` in
 `internal/appset` fails if the fixture and the Secrets drift apart.
+
+## Cluster generator param type fixture
+
+`applicationsets/cluster-sprig-map-function.yaml` uses the same cluster
+Secrets and selector as the cluster generator fixture. Its Go template calls
+`hasKey .metadata.annotations "parity.drydock.dev/team"`.
+
+Argo CD v3.6.1 passes `.metadata.annotations` as a `map[string]string`
+(`applicationset/generators/cluster.go:172`). Nothing converts it before the
+template runs: the generator spec processor passes the params on as they are
+(`applicationset/generators/generator_spec_processor.go:68-90`), and Render
+executes the template on them (`applicationset/utils/utils.go:419`). Sprig
+`hasKey` takes a `map[string]interface{}`, so every render fails with a type
+error. Argo CD sets an `ErrorOccurred` condition and creates no Applications
+(`applicationset/controllers/applicationset_controller.go:199-215`).
+
+Both clusters have the annotations key. The beta Secret has only reserved
+annotations, so its map is empty but present. The type is the only reason the
+render fails.
+
+drydock passes the same Go type. It warns `appset.template-render-failed` and
+generates no Applications. No `parity-cluster-haskey-*` name is in the
+smoke's `APPLICATIONS` array, so the Argo CD and drydock inventory checks
+both require zero Applications from this ApplicationSet.
+`TestArgoCDParityFixtureClusterSprigMapFunctionGeneratesNothing` in
+`internal/appset` pins the drydock side.
