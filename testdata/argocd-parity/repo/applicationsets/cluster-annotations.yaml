@@ -1,0 +1,41 @@
+# Cluster generator in Go-template mode over the cluster Secrets in
+# testdata/argocd-parity/cluster-secrets. Argo CD v3.6.1 hides reserved
+# annotations from .metadata.annotations
+# (applicationset/generators/cluster.go:132-140 and 166-173). The key still
+# exists when every annotation is reserved, so the beta cluster renders {}.
+# The selector keeps Argo CD from adding the local in-cluster entry
+# (applicationset/generators/cluster.go:60), which the drydock provider
+# fixture does not model.
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: parity-cluster-annotations
+  namespace: argocd
+spec:
+  goTemplate: true
+  goTemplateOptions: ["missingkey=error"]
+  generators:
+    - clusters:
+        selector:
+          matchLabels:
+            parity.drydock.dev/cluster-generator: "true"
+  template:
+    metadata:
+      name: "parity-cluster-{{.name}}"
+    spec:
+      project: default
+      source:
+        repoURL: git://argocd-parity-git.argocd-parity.svc.cluster.local/repo.git
+        targetRevision: HEAD
+        path: charts/appset-cluster
+        helm:
+          values: |
+            data:
+              cluster: {{ .name | quote }}
+              nameNormalized: {{ .nameNormalized | quote }}
+              server: {{ .server | quote }}
+              project: {{ .project | quote }}
+              annotations: {{ toJson .metadata.annotations }}
+      destination:
+        name: in-cluster
+        namespace: "parity-cluster-{{.name}}"

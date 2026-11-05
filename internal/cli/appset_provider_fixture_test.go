@@ -315,3 +315,121 @@ spec:
         namespace: default
 `)
 }
+
+// TestGetAppsSurvivesCombinatorParamTypeClash is the CLI regression test for
+// a drydock panic. A matrix or merge generator in Go-template mode merges a
+// list element field "values" (map[string]any) into cluster generator values
+// (map[string]string). mergo panics in reflect on that merge, in drydock and
+// in Argo CD v3.6.1. drydock must not crash: each such ApplicationSet warns
+// appset.template-render-failed and produces no Applications, and other
+// ApplicationSets still generate.
+func TestGetAppsSurvivesCombinatorParamTypeClash(t *testing.T) {
+	root := t.TempDir()
+	const template = `
+  template:
+    metadata:
+      name: '{{ .name }}-{{ .env }}'
+    spec:
+      project: default
+      source:
+        repoURL: https://github.com/example/repo
+        path: apps
+        targetRevision: main
+      destination:
+        server: '{{ .server }}'
+        namespace: default
+`
+	writeCLITestFile(t, filepath.Join(root, "apps", "matrix-clash.yaml"), `apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: matrix-clash
+  namespace: argocd
+spec:
+  goTemplate: true
+  goTemplateOptions: ["missingkey=error"]
+  generators:
+    - matrix:
+        generators:
+          - list:
+              elements:
+                - env: matrix
+                  values:
+                    region: east
+          - clusters:
+              values:
+                region: west
+`+template)
+	writeCLITestFile(t, filepath.Join(root, "apps", "merge-clash.yaml"), `apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: merge-clash
+  namespace: argocd
+spec:
+  goTemplate: true
+  goTemplateOptions: ["missingkey=error"]
+  generators:
+    - merge:
+        mergeKeys: [name]
+        generators:
+          - clusters:
+              values:
+                region: west
+          - list:
+              elements:
+                - name: alpha
+                  env: merge
+                  values:
+                    region: east
+`+template)
+	// The reverse matrix order merges map[string]string values into the
+	// list's map[string]any values, which does not panic.
+	writeCLITestFile(t, filepath.Join(root, "apps", "matrix-ok.yaml"), `apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: matrix-ok
+  namespace: argocd
+spec:
+  goTemplate: true
+  goTemplateOptions: ["missingkey=error"]
+  generators:
+    - matrix:
+        generators:
+          - clusters:
+              values:
+                region: west
+          - list:
+              elements:
+                - env: ok
+                  values:
+                    region: east
+`+template)
+	fixture := filepath.Join(t.TempDir(), "providers.yaml")
+	writeCLITestFile(t, fixture, `clusters:
+  - name: alpha
+    server: https://alpha.example.invalid
+`)
+
+	cmd := NewRootCommand(VersionInfo{})
+	cmd.SetArgs([]string{"get", "apps", "--path", root, "--appset-provider-fixture", fixture, "--offline", "-o", "name"})
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	cmd.SetOut(&stdout)
+	cmd.SetErr(&stderr)
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("Execute() error = %v\nstdout:\n%s\nstderr:\n%s", err, stdout.String(), stderr.String())
+	}
+	if got, want := stdout.String(), "argocd/alpha-ok\n"; got != want {
+		t.Fatalf("stdout = %q, want %q\nstderr:\n%s", got, want, stderr.String())
+	}
+	for _, want := range []string{
+		"warning appset.template-render-failed: ApplicationSet template render failed while evaluating a generator: ApplicationSet matrix-clash: the matrix generator cannot merge",
+		"warning appset.template-render-failed: ApplicationSet template render failed while evaluating a generator: ApplicationSet merge-clash: the merge generator cannot merge",
+		"applicationset/generators/matrix.go:95",
+		"applicationset/generators/merge.go:81",
+	} {
+		if !strings.Contains(stderr.String(), want) {
+			t.Fatalf("stderr missing %q:\n%s", want, stderr.String())
+		}
+	}
+}

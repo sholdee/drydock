@@ -1,0 +1,46 @@
+# Cluster generator in Go-template mode whose template calls the Sprig
+# hasKey function on .metadata.annotations. Argo CD v3.6.1 passes that map as
+# map[string]string (applicationset/generators/cluster.go:172), and hasKey
+# takes map[string]interface{}, so every render fails with a type error.
+# Argo CD sets an ErrorOccurred condition and creates no Applications
+# (applicationset/controllers/applicationset_controller.go:199-215). drydock
+# must generate none either and warn appset.template-render-failed.
+#
+# Both clusters have the annotations key: alpha has exposed annotations, and
+# beta has only reserved ones, so it gets an empty map. The type is the only
+# reason the render fails. No parity-cluster-haskey-* name appears in the
+# smoke's expected Application list, so the inventory checks require zero
+# Applications on both sides. A missing Application could also mean that the
+# ApplicationSet has not reconciled yet. So before those checks, the smoke
+# waits for this ApplicationSet's ErrorOccurred condition and requires its
+# message to contain "got map[string]string" (APPLICATIONSET_ERRORS).
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: parity-cluster-sprig-map-function
+  namespace: argocd
+spec:
+  goTemplate: true
+  goTemplateOptions: ["missingkey=error"]
+  generators:
+    - clusters:
+        selector:
+          matchLabels:
+            parity.drydock.dev/cluster-generator: "true"
+  template:
+    metadata:
+      name: "parity-cluster-haskey-{{.name}}"
+    spec:
+      project: default
+      source:
+        repoURL: git://argocd-parity-git.argocd-parity.svc.cluster.local/repo.git
+        targetRevision: HEAD
+        path: charts/appset-cluster
+        helm:
+          values: |
+            data:
+              cluster: {{ .name | quote }}
+              hasTeam: {{ hasKey .metadata.annotations "parity.drydock.dev/team" | quote }}
+      destination:
+        name: in-cluster
+        namespace: "parity-cluster-haskey-{{.name}}"

@@ -123,7 +123,12 @@ Supported:
 - ApplicationSet list `elementsYaml`, including matrix-interpolated
   `elementsYaml`.
 - Generator selectors and generator template overrides for supported
-  generators.
+  generators. Selectors match the params flattened as Argo CD v3.6.1
+  `flattenParameters` does (`applicationset/generators/generator_spec_processor.go`):
+  maps and untyped lists are walked into dot-separated keys, but a `[]string`
+  such as Git `path.segments` or pull-request `labels` is one key whose value
+  is the Go print form, such as `[apps alpha]`. The render parity smoke checks a
+  selector on `path.segments`.
 - Nested matrix/merge combinations where the Argo CD v3 nested JSON API
   permits them.
 - Explicit local YAML/JSON fixtures for cluster, clusterDecisionResource, SCM
@@ -134,9 +139,51 @@ Supported:
   `kubectl.kubernetes.io/last-applied-configuration`). The Go-template
   `.metadata.annotations` key exists only when the fixture cluster has
   annotations; `.metadata.labels` is always present, as it is for Argo CD's
-  secret-type-labelled cluster Secrets.
+  secret-type-labelled cluster Secrets. The render parity smoke checks the
+  hidden annotations in Go-template and fasttemplate modes against cluster
+  Secrets applied to Argo CD.
+- Argo CD v3.6.1 Go types for provider generator params in Go-template mode.
+  Cluster `.metadata.annotations`, cluster `.metadata.labels`, and `.values`
+  from every generator that has `values` are `map[string]string`. The cluster
+  `flatList` `.clusters` param is a `[]map[string]any`. Pull-request `.labels`
+  is a `[]string`. Sprig map functions such as `hasKey`, `keys`, `pick`,
+  `omit`, `values`, and `dig` need a `map[string]any`, so they fail on these
+  maps. drydock then warns `appset.template-render-failed` and generates no
+  Applications for that ApplicationSet, as Argo CD does. The render parity
+  smoke checks a `hasKey` call on cluster annotations.
+- Argo CD v3.6.1 Go types for the SCM provider `repository_id` param. The
+  fixture `repositoryID` text is converted per provider: `*int64` for GitHub,
+  `int64` for GitLab, `int` for Gitea and Bitbucket Server, `uuid.UUID` for
+  Azure DevOps, and `string` for Bitbucket Cloud and AWS CodeCommit
+  (`applicationset/services/scm_provider/*.go`). An ID that does not parse as
+  its provider type is an `appset.provider-fixture-invalid` error. An omitted ID
+  is the zero value of the type. Go templates print the number or UUID;
+  fasttemplate leaves `{{repository_id}}` literal for the integer and UUID
+  providers, because Argo CD only replaces string params.
 - Argo CD v3.6.1 Go-template functions, including `tpl`, in templates,
   `templatePatch`, generator `values`, and matrix/merge child interpolation.
+- Argo CD v3.6.1 `clusterDecisionResource` `values`: the generator copies each
+  value as a plain string and does not render it as a template
+  (`applicationset/generators/duck_type.go`). `region: '{{region}}'` stays the
+  literal `{{region}}`, and broken template syntax in a value is not an error.
+  All other generators render their `values`. In Go-template mode, a decision
+  field named `values` together with generator `values` fails the
+  ApplicationSet (Argo CD panics in that case), so drydock warns
+  `appset.template-render-failed` and generates no Applications for it.
+- Argo CD v3.6.1 matrix and merge param type clashes in Go-template mode. Both
+  generators merge child params with `mergo` and `WithOverride`
+  (`applicationset/generators/matrix.go:95` and `merge.go:81`). If the merge
+  writes a `map[string]any` entry into a `map[string]string` under the same
+  key, it panics. A list element field named `values` is a `map[string]any`.
+  Cluster generator `values` are a `map[string]string`. So a matrix with that
+  list first and a cluster generator with `values` second panics. A merge
+  generator with a
+  cluster base and a list override that sets `values` panics too. The reverse
+  order merges without error. Argo CD recovers the panic, sets no
+  `ErrorOccurred` condition, and creates no Applications for the
+  ApplicationSet. drydock warns `appset.template-render-failed`, names the
+  ApplicationSet, and generates no Applications for it. The
+  `clusterDecisionResource` panic above has the same outcome.
 - Fail-closed fixture diagnostics for invalid provider fixtures, no provider
   matches, and unsupported provider filters.
 - Warning diagnostics when a discovered ApplicationSet generates zero
@@ -157,7 +204,9 @@ Supported:
   `generateName`-only `templatePatch`) and every generated Application that
   shares a duplicated name are omitted with an
   `appset.application-validation-failed` warning; the ApplicationSet's other
-  Applications still generate, and `--strict` promotes the warning.
+  Applications still generate, and `--strict` promotes the warning. The
+  render parity smoke checks both cases against Argo CD, and it compares the
+  whole drydock Application list with the Argo CD list.
 - Argo CD v3.6.1 RollingSync rollout lint for `spec.strategy.type:
   RollingSync`: an empty step list warns as `appset.rollout-no-steps`, and
   invalid `matchExpressions` operators, Applications selected by several

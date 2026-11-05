@@ -460,7 +460,8 @@ func TestGenerateClusterGeneratorFlatParamsExcludeReservedAnnotations(t *testing
 	if !ok {
 		t.Fatalf("metadata param = %#v, want map", goParams["metadata"])
 	}
-	annotations, ok := metadata["annotations"].(map[string]any)
+	// Argo CD v3.6.1 passes map[string]string, so the assertion pins it.
+	annotations, ok := metadata["annotations"].(map[string]string)
 	if !ok || len(annotations) != 1 || annotations["team.example/owner"] != "platform" {
 		t.Fatalf("metadata.annotations = %#v, want only the non-reserved annotation", metadata["annotations"])
 	}
@@ -477,7 +478,7 @@ func TestClusterParamsGoTemplateBareClusterMetadata(t *testing.T) {
 	if !ok || len(metadata) != 1 {
 		t.Fatalf("bare metadata = %#v, want only the labels key", bare["metadata"])
 	}
-	if labels, ok := metadata["labels"].(map[string]any); !ok || len(labels) != 0 {
+	if labels, ok := metadata["labels"].(map[string]string); !ok || labels == nil || len(labels) != 0 {
 		t.Fatalf("bare metadata.labels = %#v, want empty map", metadata["labels"])
 	}
 }

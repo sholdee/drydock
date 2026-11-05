@@ -1,0 +1,4 @@
+# The cluster generator ApplicationSets fill data through helm.values. Each
+# string value is copied as is. Any other value, such as the
+# .metadata.annotations map, is stored as JSON.
+data: {}

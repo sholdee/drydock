@@ -36,7 +36,8 @@ Supported ApplicationSet behavior includes:
 - Sprig-compatible template functions used by Argo CD, plus Argo CD v3.6.1's
   `tpl` (nested template rendering with the same options, functions, and
   three-level recursion limit) in templates, `templatePatch`, generator
-  `values`, and matrix/merge child interpolation
+  `values` (except `clusterDecisionResource`, which does not render values),
+  and matrix/merge child interpolation
 - generated `Application.metadata.namespace` set to the ApplicationSet
   namespace
 - Argo CD's default generated Application finalizer where applicable
@@ -163,6 +164,29 @@ Matrix and merge children may use list, Git directories, Git files, OCI
 directories, OCI files, fixture-backed provider generators, and nested
 matrix/merge combinations where the Argo CD v3 nested JSON API permits them.
 
+## Generator Selectors
+
+A generator `selector` matches against the generator params flattened into
+labels, as Argo CD v3.6.1 does. Nested maps become dot-separated keys, such as
+`path.basename`, `metadata.labels.env`, and `values.region`. Lists of untyped
+values, such as plugin output arrays, become indexed keys, such as `items.0`.
+
+A list of strings is not split. Git `path.segments` and pull-request `labels`
+are each one key whose value is the Go print form of the list, with the items
+inside square brackets and separated by spaces. For example, the directory
+`apps/alpha` gives `path.segments` the value `[apps alpha]`, so this selector
+matches it:
+
+```yaml
+selector:
+  matchLabels:
+    path.segments: "[apps alpha]"
+```
+
+There is no `path.segments.0` or `labels.0` key, so a selector on such a key
+never matches. The cluster `flatList` `clusters` param is one key in the same
+way.
+
 ## Template Render Errors
 
 Template execution failures, including `templatePatch` failures, generator
@@ -278,7 +302,7 @@ scmRepositories:
     project: platform
     region: us-east-1
     repository: example-repo
-    repositoryID: repo-123
+    repositoryID: 123456789
     branch: main
     sha: abcdef1234567890
     url: https://github.com/example-org/example-repo
@@ -326,6 +350,39 @@ SCM repositories accept `project`, `region`, and `tags`; pull requests accept
 `tagFilters` from `tags`, and GitLab `pullRequestState` is evaluated from
 `state`.
 
+### SCM repository IDs
+
+Argo CD v3.6.1 passes `repository_id` to templates with a different Go type
+for each SCM provider. drydock reads the fixture `repositoryID` and converts it
+to the same type:
+
+| Provider | Go type | Fixture `repositoryID` |
+| --- | --- | --- |
+| `github` | `*int64` | decimal integer |
+| `gitlab` | `int64` | decimal integer |
+| `gitea`, `bitbucketServer` | `int` | decimal integer |
+| `azureDevOps` | `uuid.UUID` | UUID |
+| `bitbucket` (Cloud), `awsCodeCommit` | `string` | any text |
+
+In YAML fixtures, write an integer ID with or without quotes. In JSON fixtures,
+write it as a string, such as `"repositoryID": "123456789"`. If an ID does not
+match its provider type, drydock reports an `appset.provider-fixture-invalid`
+error and the `scmProvider` generator produces no params. If you leave
+`repositoryID` out, `repository_id` is the zero value of the type: `<nil>` for
+GitHub, `0` for the other integer providers, the all-zero UUID for Azure DevOps,
+and an empty string for the others.
+
+The type changes the output:
+
+- In Go-template mode, `{{ .repository_id }}` prints the number or the
+  lower-case UUID. A comparison with a string, such as
+  `{{ eq .repository_id "123" }}`, fails for the integer and UUID types.
+- In fasttemplate mode, Argo CD only replaces string params. For the integer and
+  UUID providers, `{{repository_id}}` stays in the output as literal text.
+- `{{ printf "%v" .repository_id }}` prints a memory address for GitHub,
+  because the value is a pointer. The address changes between runs in Argo CD
+  and in drydock.
+
 ## Template Parameters
 
 Provider fixtures emit the same stable template parameter names that Argo CD
@@ -339,6 +396,17 @@ uses for each supported provider family:
 | `pullRequest` | `number`, `title`, `branch`, `branch_slug`, `target_branch`, `target_branch_slug`, `head_sha`, `head_short_sha`, `head_short_sha_7`, `author`, `labels`, `values` |
 | `plugin` | fixture output fields, `generator.input.parameters`, `values` |
 
+Every generator except `clusterDecisionResource` renders its `values` as
+templates with the generator params. As in Argo CD v3.6.1,
+`clusterDecisionResource` copies each value as a plain string and does not
+render it. A value such as `region: '{{region}}'` stays the literal text
+`{{region}}`, and a value with broken template syntax is not an error. To use a
+decision field, reference it directly in the Application template, such as
+`{{region}}` or `{{ .region }}`. In Go-template mode, a decision field named
+`values` together with generator `values` makes Argo CD fail the
+ApplicationSet. drydock warns `appset.template-render-failed` and generates no
+Applications for it.
+
 For non-Go-template ApplicationSets, nested maps are flattened with dot
 notation, including `metadata.labels.<key>`, `metadata.annotations.<key>`, and
 `values.<key>`.
@@ -346,6 +414,24 @@ notation, including `metadata.labels.<key>`, `metadata.annotations.<key>`, and
 For Go-template ApplicationSets, nested values remain available as maps or
 arrays, such as `.metadata.labels`, `.metadata.annotations`, `.labels`, and
 `.values`.
+
+These params have the same Go types as in Argo CD v3.6.1:
+
+| Param | Go type |
+| --- | --- |
+| `clusters` `.metadata.annotations` and `.metadata.labels` | `map[string]string` |
+| `.values` from any generator that sets `values` | `map[string]string` |
+| `clusters` `.clusters` with `flatList: true` | `[]map[string]any` |
+| `pullRequest` `.labels` | `[]string` |
+
+The type matters for Sprig map functions. `hasKey`, `keys`, `pick`, `omit`,
+`values`, and `dig` need a `map[string]any`, so they fail on a
+`map[string]string`. For example, `{{ hasKey .metadata.annotations "team" }}`
+fails in Argo CD. drydock fails it too: it warns
+`appset.template-render-failed`, and the ApplicationSet generates no
+Applications. To test for a key, use `{{ index .metadata.annotations "team" }}`
+instead, which returns an empty string when the key is missing, or range over
+the map.
 
 As in Argo CD v3.6.1, `clusters` params never expose the reserved annotations
 `argocd.argoproj.io/refresh`, `argocd.argoproj.io/refresh-timestamp`,

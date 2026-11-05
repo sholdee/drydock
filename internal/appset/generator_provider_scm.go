@@ -5,10 +5,12 @@ import (
 	"fmt"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 
 	appsetutils "github.com/argoproj/argo-cd/v3/applicationset/utils"
 	argoappv1 "github.com/argoproj/argo-cd/v3/pkg/apis/application/v1alpha1"
+	"github.com/google/uuid"
 	"github.com/sholdee/drydock/internal/diagnostic"
 )
 
@@ -64,7 +66,11 @@ func scmProviderParamSets(manifestPath string, generator *argoappv1.SCMProviderG
 		if !matches {
 			continue
 		}
-		params, err := scmRepositoryParams(input, generator.Values, useGoTemplate, goTemplateOptions)
+		repositoryID, err := scmRepositoryIDParam(generator, input.RepositoryID)
+		if err != nil {
+			return nil, []diagnostic.Diagnostic{scmRepositoryIDInvalidDiagnostic(manifestPath, input, err)}, nil
+		}
+		params, err := scmRepositoryParams(input, repositoryID, generator.Values, useGoTemplate, goTemplateOptions)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -340,11 +346,87 @@ func scmRepositoryMatchesPathsDoNotExistFilter(input SCMRepositoryInput, filter 
 	return true, nil
 }
 
-func scmRepositoryParams(input SCMRepositoryInput, values map[string]string, useGoTemplate bool, goTemplateOptions []string) (map[string]any, error) {
+// scmRepositoryIDParam converts the fixture repositoryID string to the Go
+// value that the Argo CD v3.6.1 SCM provider stores in
+// scm_provider.Repository.RepositoryId (an any,
+// applicationset/services/scm_provider/types.go:16). The scm_provider
+// generator puts that value in the repository_id param unchanged in both
+// template modes (applicationset/generators/scm_provider.go:278). The type
+// changes the output: Go templates print the number or UUID, while
+// fasttemplate only replaces string params and leaves {{repository_id}}
+// literal for the integer and UUID providers.
+//
+// An empty fixture value becomes the zero value of the provider type, as if
+// the provider API left the ID out.
+func scmRepositoryIDParam(generator *argoappv1.SCMProviderGenerator, id string) (any, error) {
+	switch {
+	case generator.Github != nil:
+		// githubRepo.ID is *int64 (scm_provider/github.go:105; go-github
+		// v69 Repository.ID).
+		if id == "" {
+			return (*int64)(nil), nil
+		}
+		value, err := parseSCMRepositoryInt(id, 64)
+		if err != nil {
+			return nil, err
+		}
+		return &value, nil
+	case generator.Gitlab != nil:
+		// gitlabRepo.ID is int64 (scm_provider/gitlab.go:138;
+		// gitlab.com/gitlab-org/api/client-go v1.46.0 Project.ID).
+		if id == "" {
+			return int64(0), nil
+		}
+		return parseSCMRepositoryInt(id, 64)
+	case generator.Gitea != nil, generator.BitbucketServer != nil:
+		// Gitea converts its int64 ID with int(repo.ID)
+		// (scm_provider/gitea.go:129). Bitbucket Server uses
+		// bitbucketRepo.ID, an int (scm_provider/bitbucket_server.go:107;
+		// go-bitbucket-v1 Repository.ID).
+		if id == "" {
+			return 0, nil
+		}
+		value, err := parseSCMRepositoryInt(id, strconv.IntSize)
+		return int(value), err
+	case generator.AzureDevOps != nil:
+		// *azureRepo.Id is a uuid.UUID (scm_provider/azure_devops.go:95).
+		if id == "" {
+			return uuid.Nil, nil
+		}
+		value, err := uuid.Parse(id)
+		if err != nil {
+			return nil, fmt.Errorf("must be a UUID: %w", err)
+		}
+		return value, nil
+	default:
+		// Bitbucket Cloud uses the repository UUID string
+		// (scm_provider/bitbucket_cloud.go:118) and AWS CodeCommit uses
+		// aws.ToString of the repository ID (scm_provider/aws_codecommit.go:120).
+		return id, nil
+	}
+}
+
+func parseSCMRepositoryInt(id string, bitSize int) (int64, error) {
+	value, err := strconv.ParseInt(id, 10, bitSize)
+	if err != nil {
+		return 0, fmt.Errorf("must be a decimal integer: %w", err)
+	}
+	return value, nil
+}
+
+func scmRepositoryIDInvalidDiagnostic(manifestPath string, input SCMRepositoryInput, err error) diagnostic.Diagnostic {
+	path := input.FixturePath
+	if path == "" {
+		path = manifestPath
+	}
+	return providerFixtureInvalidDiagnostic(path, fmt.Sprintf("provider fixture invalid: scmProvider %s repository %s/%s repositoryID %q %v; Argo CD v3.6.1 passes this provider's repository ID with a typed Go value", input.Provider, input.Organization, input.Repository, input.RepositoryID, err))
+}
+
+func scmRepositoryParams(input SCMRepositoryInput, repositoryID any, values map[string]string, useGoTemplate bool, goTemplateOptions []string) (map[string]any, error) {
 	params := map[string]any{
 		"organization":     input.Organization,
 		"repository":       input.Repository,
-		"repository_id":    input.RepositoryID,
+		"repository_id":    repositoryID,
 		"url":              input.URL,
 		"branch":           input.Branch,
 		"branchNormalized": appsetutils.SanitizeName(input.Branch),

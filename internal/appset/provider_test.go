@@ -28,7 +28,7 @@ scmRepositories:
   - provider: github
     organization: example-org
     repository: example-repo
-    repositoryID: repo-123
+    repositoryID: 123456789
     branch: main
     sha: abcdef1234567890
     url: https://github.com/example-org/example-repo
@@ -98,8 +98,9 @@ scmRepositories:
 	if data.Clusters[0].FixturePath != jsonPath || data.Clusters[1].FixturePath != yamlPath {
 		t.Fatalf("cluster provenance = %q, %q; want fixture paths", data.Clusters[0].FixturePath, data.Clusters[1].FixturePath)
 	}
-	if got := data.SCMRepositories[0].RepositoryID; got != "repo-123" {
-		t.Fatalf("RepositoryID = %q, want repo-123", got)
+	// An unquoted YAML integer loads as its decimal text.
+	if got := data.SCMRepositories[0].RepositoryID; got != "123456789" {
+		t.Fatalf("RepositoryID = %q, want 123456789", got)
 	}
 	if got := data.ClusterDecisions[0].Decisions[0]["clusterName"]; got != "prod-a" {
 		t.Fatalf("cluster decision = %#v, want clusterName prod-a", data.ClusterDecisions[0].Decisions[0])

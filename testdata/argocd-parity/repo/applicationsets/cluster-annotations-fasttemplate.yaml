@@ -1,0 +1,40 @@
+# Cluster generator in the default fasttemplate mode. Argo CD v3.6.1 exposes
+# each non-reserved annotation as metadata.annotations.<key>
+# (applicationset/generators/cluster.go:180-182) and leaves a placeholder it
+# cannot resolve as literal text (applicationset/utils/utils.go:434-441). So
+# the reserved keys below render verbatim, and so does team on the beta
+# cluster, which has no team annotation.
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: parity-cluster-annotations-fasttemplate
+  namespace: argocd
+spec:
+  generators:
+    - clusters:
+        selector:
+          matchLabels:
+            parity.drydock.dev/cluster-generator: "true"
+  template:
+    metadata:
+      name: "parity-cluster-ft-{{name}}"
+    spec:
+      project: default
+      source:
+        repoURL: git://argocd-parity-git.argocd-parity.svc.cluster.local/repo.git
+        targetRevision: HEAD
+        path: charts/appset-cluster
+        helm:
+          values: |
+            data:
+              cluster: '{{name}}'
+              server: '{{server}}'
+              team: '{{metadata.annotations.parity.drydock.dev/team}}'
+              manifestGeneratePaths: '{{metadata.annotations.argocd.argoproj.io/manifest-generate-paths}}'
+              refresh: '{{metadata.annotations.argocd.argoproj.io/refresh}}'
+              trackingID: '{{metadata.annotations.argocd.argoproj.io/tracking-id}}'
+              lastApplied: '{{metadata.annotations.kubectl.kubernetes.io/last-applied-configuration}}'
+              role: '{{metadata.labels.parity.drydock.dev/role}}'
+      destination:
+        name: in-cluster
+        namespace: "parity-cluster-ft-{{name}}"

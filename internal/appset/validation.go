@@ -1,6 +1,7 @@
 package appset
 
 import (
+	"errors"
 	"fmt"
 	"maps"
 	"slices"
@@ -14,14 +15,22 @@ import (
 )
 
 // generatorTemplateError marks a template-execution failure raised while
-// evaluating a generator: generator `values` templating and matrix/merge
-// child interpolation. Argo CD reports these generator Transform errors as an
+// evaluating a generator: generator `values` templating, matrix/merge
+// child interpolation, and the param failures where Argo CD panics (see
+// upstreamPanic). Argo CD reports these generator Transform errors as an
 // ErrorOccurred condition and reconciles no Applications for the
 // ApplicationSet, so GenerateWithOptions scopes them like template and
 // templatePatch failures instead of failing the run. Acquisition and IO
 // failures stay fatal because they are drydock-side limitations.
+//
+// upstreamPanic marks a failure where Argo CD panics instead of returning an
+// error. The ApplicationSet controller recovers the panic in Reconcile
+// (applicationset/controllers/applicationset_controller.go:123-133) and
+// returns before it generates Applications or sets a status condition. The
+// result for the ApplicationSet is the same: no Applications.
 type generatorTemplateError struct {
-	err error
+	err           error
+	upstreamPanic bool
 }
 
 func (e *generatorTemplateError) Error() string {
@@ -36,10 +45,14 @@ func (e *generatorTemplateError) Unwrap() error {
 // of appsetTemplateRenderDiagnostic. The "template render failed" substring
 // is the stable-code dispatch key (appset.template-render-failed).
 func appsetGeneratorTemplateRenderDiagnostic(manifestPath string, err error) diagnostic.Diagnostic {
+	argoCDOutcome := "Argo CD reports the same failure as an ErrorOccurred condition and reconciles no Applications"
+	if templateErr, ok := errors.AsType[*generatorTemplateError](err); ok && templateErr.upstreamPanic {
+		argoCDOutcome = "the Argo CD ApplicationSet controller recovers from the panic and reconciles no Applications without setting an ErrorOccurred condition"
+	}
 	return diagnostic.Diagnostic{
 		Severity:   diagnostic.SeverityWarning,
 		Category:   "appset",
-		Message:    fmt.Sprintf("ApplicationSet template render failed while evaluating a generator: %v; this ApplicationSet contributes no Applications (Argo CD reports the same failure as an ErrorOccurred condition and reconciles no Applications)", err),
+		Message:    fmt.Sprintf("ApplicationSet template render failed while evaluating a generator: %v; this ApplicationSet contributes no Applications (%s)", err, argoCDOutcome),
 		Provenance: diagnostic.Provenance{Path: manifestPath, Pointer: "spec.generators"},
 	}
 }

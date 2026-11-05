@@ -2,6 +2,7 @@ package appset
 
 import (
 	"fmt"
+	"maps"
 
 	appsetutils "github.com/argoproj/argo-cd/v3/applicationset/utils"
 	argocommon "github.com/argoproj/argo-cd/v3/common"
@@ -57,7 +58,10 @@ func clusterGeneratorParamSets(manifestPath string, clusters *argoappv1.ClusterG
 		return nil, []diagnostic.Diagnostic{providerNoMatchDiagnostic(manifestPath, "clusters")}, nil
 	}
 	if clusters.FlatList {
-		clusterList := make([]any, 0, len(out))
+		// Argo CD v3.6.1 puts the clusters under one key as a
+		// []map[string]any (applicationset/generators/cluster.go:119-126).
+		// Keep that type.
+		clusterList := make([]map[string]any, 0, len(out))
 		for _, paramSet := range out {
 			clusterList = append(clusterList, paramSet.Params)
 		}
@@ -81,18 +85,28 @@ func clusterParams(cluster ClusterInput, values map[string]string, useGoTemplate
 	annotations := clusterAnnotationParams(cluster.Annotations)
 	if useGoTemplate {
 		meta := map[string]any{}
+		// Argo CD v3.6.1 passes both maps to the template as
+		// map[string]string, not map[string]any
+		// (applicationset/generators/cluster.go:172 and :175). Keep that
+		// type. Sprig map functions such as hasKey, keys, pick, omit,
+		// and values take map[string]any, so they fail on these maps in
+		// Argo CD and must fail here too.
+		//
 		// Argo CD gates the annotations key on the unfiltered map, so the key
 		// exists whenever the cluster has annotations, even if all of them
 		// are excluded.
 		if len(cluster.Annotations) > 0 {
-			meta["annotations"] = stringMapAny(annotations)
+			meta["annotations"] = annotations
 		}
 		// Argo CD gates labels the same way, but its cluster generator only
 		// lists Secrets selected by argocd.argoproj.io/secret-type=cluster,
 		// so every cluster it sees has labels and the key is always present.
 		// Fixture clusters do not carry that implicit label, so always expose
-		// the key (an empty map when the fixture has no labels).
-		meta["labels"] = stringMapAny(cluster.Labels)
+		// the key (an empty map when the fixture has no labels). The copy
+		// keeps generator merges from writing into the fixture data.
+		labels := make(map[string]string, len(cluster.Labels))
+		maps.Copy(labels, cluster.Labels)
+		meta["labels"] = labels
 		params["metadata"] = meta
 	} else {
 		for key, value := range annotations {

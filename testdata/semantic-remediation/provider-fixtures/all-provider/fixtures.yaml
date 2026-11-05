@@ -28,7 +28,7 @@ scmRepositories:
   - provider: github
     organization: example-org
     repository: platform-service
-    repositoryID: repo-123
+    repositoryID: 123456789
     branch: main
     sha: abcdef1234567890
     url: https://example.invalid/example-org/platform-service.git

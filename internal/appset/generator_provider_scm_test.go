@@ -46,7 +46,7 @@ spec:
 			Provider:     "github",
 			Organization: "example-org",
 			Repository:   "platform-api",
-			RepositoryID: "repo-123",
+			RepositoryID: "123456789",
 			Branch:       "feature/Add_Login",
 			SHA:          "abcdef1234567890",
 			URL:          "https://github.com/example-org/platform-api",
@@ -66,7 +66,7 @@ spec:
 	if app.Spec.GetSource().RepoURL != "https://github.com/example-org/platform-api" || app.Spec.GetSource().TargetRevision != "feature/Add_Login" {
 		t.Fatalf("source = %#v, want repo URL and branch from fixture", app.Spec.GetSource())
 	}
-	if app.Labels["repo-labels"] != "deploy,team-a" || app.Annotations["repo-id"] != "repo-123" {
+	if app.Labels["repo-labels"] != "deploy,team-a" || app.Annotations["repo-id"] != "123456789" {
 		t.Fatalf("metadata = labels %#v annotations %#v, want SCM params", app.Labels, app.Annotations)
 	}
 	if app.Annotations["short"] != "abcdef12" || app.Annotations["short7"] != "abcdef1" {
