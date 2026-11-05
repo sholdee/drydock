@@ -204,6 +204,19 @@ func classifyCommandParameterKey(key string) commandParameterClassification {
 			valueMode:      commandParameterRedactedValue,
 			warnRuntime:    true,
 		}
+	case "applicationsetcontroller.enable.progressive.syncs":
+		// Progressive syncs gate whether Argo CD v3.6 acts on RollingSync
+		// steps at all (an empty steps list aborts reconciliation; other
+		// invalid configs become an InvalidRolloutConfig condition). drydock
+		// generates the same Applications either way and already reports the
+		// rollout config through the appset.rollout-no-steps and
+		// appset.invalid-rollout-config lints, so the flag is recorded with
+		// its sanitized value for settings summaries but adds no
+		// metadata-only warning, which --strict would otherwise promote.
+		return commandParameterClassification{
+			classification: CommandParameterRuntimeOnly,
+			valueMode:      commandParameterSanitizedValue,
+		}
 	case "repo.server", "commit.server":
 		return commandParameterClassification{
 			classification: CommandParameterRuntimeWiring,
@@ -234,6 +247,9 @@ func classifyCommandParameterKey(key string) commandParameterClassification {
 		"controller.metrics.",
 		"reposerver.log.",
 		"reposerver.metrics.",
+		"reposerver.tls.",
+		"applicationsetcontroller.wq.",
+		"commitserver.",
 		"dexserver.",
 		"notificationscontroller.",
 	) || isOtherRuntimeWiringCommandParameter(key):
