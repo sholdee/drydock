@@ -569,12 +569,15 @@ Each template feeds generator params into `kustomize.namePrefix`,
 `nameSuffix`, `namespace`, and `commonAnnotations`. A wrong param therefore
 changes the rendered ConfigMap, not only the Application spec.
 
-The warm step builds `parity-oci-dir-alpha` online once, which fills
-`--oci-cache-dir` with this artifact. Every offline drydock run after that
-evaluates these ApplicationSets during discovery and reads the artifact from
-the cache. Next, the smoke script waits for each of the five ApplicationSets
-to report `ParametersGenerated=True`. It does this before it waits for
+On the Argo CD side, the smoke script first waits for each of the five
+ApplicationSets to report `ParametersGenerated=True`. It does this right after
+it applies the fixture Applications and before it waits for the generated
 Applications, so a registry or generator failure names the ApplicationSet.
+
+On the drydock side, a later warm step builds `parity-oci-dir-alpha` online
+once, which fills `--oci-cache-dir` with this artifact. Every offline drydock
+run after that evaluates these ApplicationSets during discovery and reads the
+artifact from the cache.
 
 ### Application inventory comparison
 
@@ -600,8 +603,12 @@ generator ones. Its output lands in `compare-applications/`.
 ### Deliberately not covered by this fixture
 
 - A param file that is not valid YAML or JSON. Argo CD fails the whole
-  generator on it (`applicationset/generators/repo_path_utils.go:183-186`
-  and `:364-367`), while drydock reports a diagnostic and skips the file.
+  ApplicationSet on it: the generator returns the error
+  (`applicationset/generators/repo_path_utils.go:183-186` and `:364-367`),
+  and the controller sets `ErrorOccurred` and returns before it creates or
+  updates any Application, even from other generators
+  (`applicationset/controllers/applicationset_controller.go:199-216`).
+  drydock reports a diagnostic and skips the file.
   That difference is documented, and a fixture for it fails the comparison.
 - `reposerver.include.hidden.directories`: drydock does not read that
   repo-server setting, and the smoke keeps the default.

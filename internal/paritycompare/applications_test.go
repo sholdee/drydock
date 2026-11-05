@@ -167,3 +167,17 @@ func TestCompareApplicationsRejectsDuplicates(t *testing.T) {
 		t.Fatalf("CompareApplications() error = %v, want a duplicate error", err)
 	}
 }
+
+func TestCompareApplicationsRejectsEmptyArgoCDInventory(t *testing.T) {
+	if _, _, err := compareApplicationLists(t, `{"items": []}`, `[]`); err == nil || !strings.Contains(err.Error(), "holds no Applications") {
+		t.Fatalf("CompareApplications() error = %v, want an empty Argo CD inventory error", err)
+	}
+}
+
+func TestCompareApplicationsRejectsTrailingDrydockData(t *testing.T) {
+	for _, trailing := range []string{"[]", "{}", "warning: extra output"} {
+		if _, _, err := compareApplicationLists(t, argocdApplicationList, drydockApplicationList+"\n"+trailing); err == nil || !strings.Contains(err.Error(), "unexpected data after the Application list") {
+			t.Fatalf("CompareApplications() with trailing %q error = %v, want a trailing data error", trailing, err)
+		}
+	}
+}
