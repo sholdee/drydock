@@ -634,3 +634,74 @@ Both Argo CD and drydock must render these values:
 | Deployment | env `BANNER` | `"  drydock parity\n  block scalars"` |
 | ConfigMap | `data.query` | the `QUERY` value |
 | ConfigMap | `data.banner` | the `BANNER` value |
+
+## ApplicationSet name validation fixture
+
+Argo CD v3.6.1 checks every generated Application name before it creates
+anything (`applicationset/controllers/applicationset_controller.go:608-642`).
+It sets an `ErrorOccurred` condition with reason `ApplicationValidationError`,
+drops each Application that failed the check, and still creates the rest
+(lines 298-352). Two fixtures pin this:
+
+- `applicationsets/validation-empty-name.yaml` renders three list elements.
+  The middle one renders an empty `metadata.name`. Argo CD creates
+  `parity-empty-name-alpha` and `parity-empty-name-beta` only.
+- `applicationsets/validation-duplicate-name.yaml` renders
+  `parity-duplicate-name-shared` twice and `parity-duplicate-name-unique` once.
+  Argo CD keys the error by the shared name, so it creates neither shared
+  Application. It creates `parity-duplicate-name-unique` only.
+
+drydock drops the same Applications and warns
+`appset.application-validation-failed` for each failure.
+
+The dropped Applications have no manifests to compare, so the smoke checks
+the Application lists instead. It already compares the Argo CD list with the
+`APPLICATIONS` array in the smoke script. It also runs `drydock get apps` over
+the fixture repository and compares that list with the same array. Without
+the second check, an Application that drydock keeps by mistake would go
+unnoticed, because the smoke renders only the Applications it names.
+
+## Cluster generator fixture
+
+`applicationsets/cluster-annotations.yaml` (Go-template mode) and
+`applicationsets/cluster-annotations-fasttemplate.yaml` (default mode) use the
+cluster generator. Their input is two cluster Secrets in
+`cluster-secrets/clusters.yaml`. The smoke applies them to the `argocd`
+namespace before the ApplicationSets.
+
+The Secrets carry the annotations that Argo CD v3.6.1 keeps out of cluster
+generator parameters (`applicationset/generators/cluster.go:132-140`):
+`argocd.argoproj.io/refresh`, `refresh-timestamp`, `hydrate`,
+`hydrate-timestamp`, `tracking-id`, `installation-id`, and
+`kubectl.kubernetes.io/last-applied-configuration`. The smoke applies the
+Secrets with client-side `kubectl apply`, which writes the last one. The
+smoke fails if that annotation is missing. The alpha Secret also has two
+annotations that Argo CD does expose: `parity.drydock.dev/team` and
+`argocd.argoproj.io/manifest-generate-paths`. The second one shows that only
+the listed keys are hidden, not every `argocd.argoproj.io/` key.
+
+Both ApplicationSets render `charts/appset-cluster`, a chart that writes its
+`data` values into a ConfigMap. The Go-template ApplicationSet stores
+`toJson .metadata.annotations`, so the comparison sees the exact set of
+exposed keys. The beta Secret has only reserved annotations, so it renders
+`{}`: the key exists because Argo CD checks the unfiltered map
+(`cluster.go:171-173`). The fasttemplate ApplicationSet names single keys.
+Argo CD leaves a placeholder it cannot resolve as literal text
+(`applicationset/utils/utils.go:434-441`), so each reserved key renders as
+`{{metadata.annotations.<key>}}`.
+
+Each generator uses a label selector. With a selector, Argo CD does not add
+the local `in-cluster` entry (`cluster.go:60`). The drydock provider fixture
+does not model that entry.
+
+The Secret servers do not exist. Every generated Application deploys to
+`in-cluster`, so Argo CD never connects to them.
+
+drydock reads cluster generator input only from a provider fixture, never
+from Secrets in the repository. `appset-provider-fixture.yaml` describes the
+same two clusters, and every drydock capture passes it with
+`--appset-provider-fixture`. The fixture lists the
+`argocd.argoproj.io/secret-type` label, because Argo CD only reads Secrets
+with that label. It also lists a stand-in last-applied annotation for each
+cluster. `TestArgoCDParityProviderFixtureMatchesClusterSecrets` in
+`internal/appset` fails if the fixture and the Secrets drift apart.

@@ -1,0 +1,51 @@
+# Cluster Secrets for the cluster generator ApplicationSets in
+# repo/applicationsets/cluster-annotations*.yaml. The smoke applies them in
+# the argocd namespace with client-side kubectl apply before it applies the
+# ApplicationSets. That apply adds kubectl.kubernetes.io/last-applied-configuration
+# to each Secret, so both clusters also carry that reserved annotation.
+#
+# The servers do not exist. No generated Application deploys to them: every
+# template sends its Application to in-cluster.
+#
+# Keep ../appset-provider-fixture.yaml in step with this file. It is the
+# drydock side of the same clusters.
+apiVersion: v1
+kind: Secret
+metadata:
+  name: parity-cluster-alpha
+  namespace: argocd
+  labels:
+    argocd.argoproj.io/secret-type: cluster
+    parity.drydock.dev/cluster-generator: "true"
+    parity.drydock.dev/role: primary
+  annotations:
+    parity.drydock.dev/team: alpha-team
+    argocd.argoproj.io/manifest-generate-paths: .
+    argocd.argoproj.io/refresh: "2026-01-02T03:04:05Z"
+    argocd.argoproj.io/refresh-timestamp: "2026-01-02T03:04:05Z"
+    argocd.argoproj.io/hydrate: normal
+    argocd.argoproj.io/hydrate-timestamp: "2026-01-02T03:04:05Z"
+    argocd.argoproj.io/tracking-id: parity-cluster-ghost:/Secret:argocd/parity-cluster-alpha
+    argocd.argoproj.io/installation-id: parity-installation
+type: Opaque
+stringData:
+  name: alpha
+  server: https://alpha.parity-clusters.invalid
+  project: default
+  config: '{"tlsClientConfig":{"insecure":false}}'
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: parity-cluster-beta
+  namespace: argocd
+  labels:
+    argocd.argoproj.io/secret-type: cluster
+    parity.drydock.dev/cluster-generator: "true"
+  annotations:
+    argocd.argoproj.io/refresh-timestamp: "2026-01-02T03:04:05Z"
+type: Opaque
+stringData:
+  name: beta
+  server: https://beta.parity-clusters.invalid
+  config: '{"tlsClientConfig":{"insecure":false}}'

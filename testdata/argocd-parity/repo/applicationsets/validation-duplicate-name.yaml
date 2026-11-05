@@ -1,0 +1,33 @@
+# Two elements render the same Application name. Argo CD v3.6.1 keys the
+# validation error by that name, so it creates neither of them, and it still
+# creates the unique Application (applicationset/controllers/
+# applicationset_controller.go:621-623 and 328-333).
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: parity-validation-duplicate-name
+  namespace: argocd
+spec:
+  goTemplate: true
+  goTemplateOptions: ["missingkey=error"]
+  generators:
+    - list:
+        elements:
+          - suffix: shared
+            path: workloads/appset/validation/duplicate-name-unique
+          - suffix: unique
+            path: workloads/appset/validation/duplicate-name-unique
+          - suffix: shared
+            path: workloads/appset/validation/empty-name-alpha
+  template:
+    metadata:
+      name: "parity-duplicate-name-{{.suffix}}"
+    spec:
+      project: default
+      source:
+        repoURL: git://argocd-parity-git.argocd-parity.svc.cluster.local/repo.git
+        targetRevision: HEAD
+        path: "{{.path}}"
+      destination:
+        name: in-cluster
+        namespace: "parity-duplicate-name-{{.suffix}}"

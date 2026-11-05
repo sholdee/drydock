@@ -1,0 +1,33 @@
+# The middle element renders an Application with an empty metadata.name.
+# Argo CD v3.6.1 rejects only that Application and still creates the other
+# two (applicationset/controllers/applicationset_controller.go:617-619 and
+# 328-333).
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: parity-validation-empty-name
+  namespace: argocd
+spec:
+  goTemplate: true
+  goTemplateOptions: ["missingkey=error"]
+  generators:
+    - list:
+        elements:
+          - appName: parity-empty-name-alpha
+            path: workloads/appset/validation/empty-name-alpha
+          - appName: ""
+            path: workloads/appset/validation/empty-name-alpha
+          - appName: parity-empty-name-beta
+            path: workloads/appset/validation/empty-name-beta
+  template:
+    metadata:
+      name: "{{.appName}}"
+    spec:
+      project: default
+      source:
+        repoURL: git://argocd-parity-git.argocd-parity.svc.cluster.local/repo.git
+        targetRevision: HEAD
+        path: "{{.path}}"
+      destination:
+        name: in-cluster
+        namespace: "{{.appName}}"

@@ -1,0 +1,6 @@
+apiVersion: v2
+name: appset-cluster
+description: Local Helm chart that records cluster generator parameters for Argo CD parity.
+type: application
+version: 0.1.0
+appVersion: "1.0.0"

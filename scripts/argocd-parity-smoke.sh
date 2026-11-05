@@ -18,6 +18,15 @@ FIXTURE_REPO_URL="git://argocd-parity-git.argocd-parity.svc.cluster.local/repo.g
 FIXTURE_REPO_PATH="${REPO_ROOT}/testdata/argocd-parity/repo"
 IGNORE_FILE="${REPO_ROOT}/testdata/argocd-parity/compare-ignore.yaml"
 SIDECAR_PATH="${REPO_ROOT}/testdata/argocd-parity/sidecar"
+# Cluster Secrets for the cluster generator ApplicationSets. Argo CD reads them
+# from the argocd namespace. drydock reads the same clusters from the provider
+# fixture, which every drydock capture passes with --appset-provider-fixture.
+CLUSTER_SECRETS_PATH="${REPO_ROOT}/testdata/argocd-parity/cluster-secrets"
+APPSET_PROVIDER_FIXTURE="${REPO_ROOT}/testdata/argocd-parity/appset-provider-fixture.yaml"
+CLUSTER_SECRET_NAMES=(
+  parity-cluster-alpha
+  parity-cluster-beta
+)
 PROJECT_POLICY_REPO_PATH="${REPO_ROOT}/testdata/argocd-project-policy/repo"
 PROJECT_POLICY_EXPECTED="${REPO_ROOT}/testdata/argocd-project-policy/expected.yaml"
 # Cluster Secrets that exist only in the live Argo CD. drydock never sees
@@ -223,6 +232,16 @@ APPLICATIONS=(
   parity-plugin-container
   parity-avp
   parity-avp-secret
+  # ApplicationSet name validation: the empty-name and duplicated-name
+  # Applications must be absent on both sides, so only these survive.
+  parity-empty-name-alpha
+  parity-empty-name-beta
+  parity-duplicate-name-unique
+  # Cluster generator over cluster Secrets with reserved annotations.
+  parity-cluster-alpha
+  parity-cluster-beta
+  parity-cluster-ft-alpha
+  parity-cluster-ft-beta
 )
 
 TRACKING_APPLICATIONS=(
@@ -1116,10 +1135,29 @@ login_argocd() {
   argocd login localhost:18080 --username admin --password "${password}" --insecure >/dev/null
 }
 
+# apply_cluster_secrets applies the cluster Secrets before any
+# ApplicationSet, so the cluster generator sees them on its first reconcile.
+# It uses client-side apply on purpose: that writes
+# kubectl.kubernetes.io/last-applied-configuration, one of the reserved
+# annotations the cluster generator must hide. The check below fails the run
+# if that annotation is missing, because the fixture would then stop
+# exercising it.
+apply_cluster_secrets() {
+  local secret
+  kubectl -n argocd apply -f "${CLUSTER_SECRETS_PATH}" >/dev/null \
+    || fail "could not apply the cluster generator Secrets from ${CLUSTER_SECRETS_PATH}"
+  for secret in "${CLUSTER_SECRET_NAMES[@]}"; do
+    [[ -n "$(kubectl -n argocd get secret "${secret}" \
+      -o jsonpath='{.metadata.annotations.kubectl\.kubernetes\.io/last-applied-configuration}')" ]] \
+      || fail "cluster Secret argocd/${secret} has no kubectl.kubernetes.io/last-applied-configuration annotation; the cluster generator fixture needs it"
+  done
+}
+
 apply_fixture_apps() {
   ensure_namespace "${TENANT_NAMESPACE}"
   kubectl -n argocd apply -f "${FIXTURE_REPO_PATH}/projects" >/dev/null
   kubectl -n argocd apply -f "${FIXTURE_REPO_PATH}/applications" >/dev/null
+  apply_cluster_secrets
   kubectl -n argocd apply -f "${FIXTURE_REPO_PATH}/applicationsets" >/dev/null
   kubectl -n "${TENANT_NAMESPACE}" apply -f "${FIXTURE_REPO_PATH}/tenant-applications" >/dev/null
 }
@@ -1233,6 +1271,7 @@ capture_drydock_manifest() {
     --chart-cache-dir "${CHART_CACHE_DIR}"
     --oci-ca-file "${OCI_CA_FILE}"
     --render-cache-dir "${OCI_OFFLINE_RENDER_CACHE_DIR}"
+    --appset-provider-fixture "${APPSET_PROVIDER_FIXTURE}"
     --offline)
   for plugin_app in "${PLUGIN_APPLICATIONS[@]}"; do
     if [[ "${stem}" == "${plugin_app}" ]]; then
@@ -1466,6 +1505,7 @@ capture_drydock_applications() {
     --oci-cache-dir "${OCI_CACHE_DIR}" \
     --chart-cache-dir "${CHART_CACHE_DIR}" \
     --oci-ca-file "${OCI_CA_FILE}" \
+    --appset-provider-fixture "${APPSET_PROVIDER_FIXTURE}" \
     --render-cache-dir "${OCI_OFFLINE_RENDER_CACHE_DIR}" \
     --offline \
     -o json > "${output_dir}/drydock.json" 2> "${stderr_file}"); then

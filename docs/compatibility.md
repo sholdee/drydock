@@ -134,7 +134,9 @@ Supported:
   `kubectl.kubernetes.io/last-applied-configuration`). The Go-template
   `.metadata.annotations` key exists only when the fixture cluster has
   annotations; `.metadata.labels` is always present, as it is for Argo CD's
-  secret-type-labelled cluster Secrets.
+  secret-type-labelled cluster Secrets. The render parity smoke checks the
+  hidden annotations in Go-template and fasttemplate modes against cluster
+  Secrets applied to Argo CD.
 - Argo CD v3.6.1 Go-template functions, including `tpl`, in templates,
   `templatePatch`, generator `values`, and matrix/merge child interpolation.
 - Fail-closed fixture diagnostics for invalid provider fixtures, no provider
@@ -157,7 +159,9 @@ Supported:
   `generateName`-only `templatePatch`) and every generated Application that
   shares a duplicated name are omitted with an
   `appset.application-validation-failed` warning; the ApplicationSet's other
-  Applications still generate, and `--strict` promotes the warning.
+  Applications still generate, and `--strict` promotes the warning. The
+  render parity smoke checks both cases against Argo CD, and it compares the
+  whole drydock Application list with the Argo CD list.
 - Argo CD v3.6.1 RollingSync rollout lint for `spec.strategy.type:
   RollingSync`: an empty step list warns as `appset.rollout-no-steps`, and
   invalid `matchExpressions` operators, Applications selected by several

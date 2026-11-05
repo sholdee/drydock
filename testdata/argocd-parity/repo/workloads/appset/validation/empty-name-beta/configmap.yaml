@@ -1,0 +1,8 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: parity-empty-name-beta
+  namespace: parity-empty-name-beta
+data:
+  generator: list
+  element: empty-name-beta

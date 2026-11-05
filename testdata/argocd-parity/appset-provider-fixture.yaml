@@ -1,0 +1,36 @@
+# drydock provider fixture for the cluster generator ApplicationSets. It
+# describes the same clusters as cluster-secrets/clusters.yaml, which the
+# smoke applies to Argo CD. drydock reads cluster generator input only from a
+# provider fixture, so the smoke passes this file with
+# --appset-provider-fixture.
+#
+# Labels include argocd.argoproj.io/secret-type because Argo CD only lists
+# Secrets with that label. The last-applied-configuration annotations stand in
+# for the ones kubectl apply writes on the live Secrets. Their values do not
+# matter because the cluster generator never exposes them.
+clusters:
+  - name: alpha
+    server: https://alpha.parity-clusters.invalid
+    project: default
+    labels:
+      argocd.argoproj.io/secret-type: cluster
+      parity.drydock.dev/cluster-generator: "true"
+      parity.drydock.dev/role: primary
+    annotations:
+      parity.drydock.dev/team: alpha-team
+      argocd.argoproj.io/manifest-generate-paths: .
+      argocd.argoproj.io/refresh: "2026-01-02T03:04:05Z"
+      argocd.argoproj.io/refresh-timestamp: "2026-01-02T03:04:05Z"
+      argocd.argoproj.io/hydrate: normal
+      argocd.argoproj.io/hydrate-timestamp: "2026-01-02T03:04:05Z"
+      argocd.argoproj.io/tracking-id: parity-cluster-ghost:/Secret:argocd/parity-cluster-alpha
+      argocd.argoproj.io/installation-id: parity-installation
+      kubectl.kubernetes.io/last-applied-configuration: '{"kind":"Secret"}'
+  - name: beta
+    server: https://beta.parity-clusters.invalid
+    labels:
+      argocd.argoproj.io/secret-type: cluster
+      parity.drydock.dev/cluster-generator: "true"
+    annotations:
+      argocd.argoproj.io/refresh-timestamp: "2026-01-02T03:04:05Z"
+      kubectl.kubernetes.io/last-applied-configuration: '{"kind":"Secret"}'
