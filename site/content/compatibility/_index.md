@@ -125,7 +125,9 @@ at `https://kubernetes.default.svc` or a name-only `in-cluster` destination
 with no cluster Secret is the built-in `in-cluster` cluster (denied when
 argocd-cm `cluster.inClusterEnabled` is `"false"`), and a check that depends on
 a cluster name, server, or project scoping drydock cannot resolve offline is
-deferred rather than denied. argocd-cm `globalProjects` are not merged.
+deferred rather than denied. argocd-cm `globalProjects` are not merged. The
+[render parity smoke](/concepts/argocd-render-parity/) checks these
+destination rules against a live Argo CD.
 
 It does not predict live API defaulting, admission mutation, server-side apply
 ownership, live health aggregation, sync windows, orphaned resources, source

@@ -229,6 +229,14 @@ namespace outcomes against the real Argo CD instance. It is not broad live
 authorization parity and excludes RBAC/Casbin, sync windows, orphaning,
 signatures, sync impersonation, and rendered-resource policy.
 
+The AppProject check runs in three phases, because two of them change state
+that every Application shares. The first phase also applies a project-scoped
+cluster Secret that only Argo CD sees. That Secret carries a short-lived
+ServiceAccount token, which the script passes to kubectl on stdin. The second
+phase adds a cluster Secret named `in-cluster` at another server and removes it
+afterward. The last phase sets argocd-cm `cluster.inClusterEnabled` to
+`"false"` and removes the key afterward.
+
 This workflow is intentionally outside ordinary pull request CI. It always runs
 when manually dispatched, and CI calls it as a reusable workflow only when
 render parity fixtures change or `go.mod` changes touch semantic-rendering

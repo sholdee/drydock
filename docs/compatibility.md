@@ -21,7 +21,15 @@ maintainer workflow details.
 
 It also runs a thin live AppProject Application-spec policy sanity check for
 source repository, destination, and source namespace outcomes against the real
-Argo CD instance.
+Argo CD instance. The destination cases include these:
+
+- A deny entry that wins over an allow entry.
+- The built-in `in-cluster` cluster, by name and by server.
+- A cluster Secret named `in-cluster` at another server.
+- argocd-cm `cluster.inClusterEnabled` set to `"false"`.
+- A project-scoped cluster Secret that only the live Argo CD has. Argo CD
+  allows this destination. drydock cannot see the Secret, so the check
+  requires a deferred diagnostic and no denial.
 
 This check is scoped to generated desired state. Live-only runtime behavior
 such as Kubernetes defaulting, admission mutation, server-side diff, managed
