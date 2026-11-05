@@ -1,0 +1,8 @@
+{
+  "name": "east",
+  "app": "teams/platform/gamma",
+  "team": "platform",
+  "labels": {
+    "tier": "gold"
+  }
+}

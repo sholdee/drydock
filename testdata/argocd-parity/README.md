@@ -517,6 +517,96 @@ and reports the advisory warning `source.oci-chart-ignored` once (exempt from
 stderr. The app fills `--oci-cache-dir` through the artifact flow, not
 `--chart-cache-dir`, so the warm step covers it alongside `parity-oci-config`.
 
+## OCI ApplicationSet generator fixture
+
+`oci-appset-artifact/` is a second OCI artifact. The smoke pushes it to
+`parity/appset:v1.0.0` the same way as `oci-artifact/` and checks the same
+one-layer manifest shape. Five ApplicationSets in `repo/applicationsets/`
+use the Argo CD v3.6.1 `oci` generator on it. Every Application they
+generate renders from the same artifact as a Kustomize source.
+
+The artifact tree:
+
+| path | role |
+| --- | --- |
+| `apps/alpha`, `apps/beta`, `apps/skipped` | app directories |
+| `apps/.hidden` | hidden directory: the directory walk never lists it |
+| `apps/linked` | symlink to `alpha`: the directory walk never lists it |
+| `teams/platform/gamma`, `teams/platform/delta` | nested app directories |
+| `params/clusters.yaml` | YAML list of two objects |
+| `params/regions/east/site.json` | JSON object with a nested map |
+| `params/regions/west/site.yaml` | YAML object |
+| `params/regions/mirror` | symlink to `west`: file patterns follow it |
+| `params/regions/legacy/site.yaml` | removed by an exclude pattern |
+| `params/.hidden/site.yaml` | hidden file match: file patterns include it |
+| `root.yaml` | YAML list of two objects with nested maps and lists |
+
+The ApplicationSets:
+
+| ApplicationSet | mode | generator shape | generated Applications |
+| --- | --- | --- | --- |
+| `parity-oci-directories` | Go template | `directories` with two includes and one exclude, `values` | `parity-oci-dir-{alpha,beta,delta,gamma}` |
+| `parity-oci-directories-fasttemplate` | fasttemplate | `directories` with two includes and two excludes, `pathParamPrefix: src`, `values` | `parity-oci-ft-{alpha,skipped,gamma}` |
+| `parity-oci-files` | Go template | `files` with two doublestar includes and one exclude, `pathParamPrefix: cfg`, `values` | `parity-oci-file-{hidden-hidden,north-params,south-params,east-east,west-mirror,west-west}` |
+| `parity-oci-files-fasttemplate` | fasttemplate | `files` with an empty include pattern and three excludes, `values` | `parity-oci-ftfile-root-{one,two}` |
+| `parity-oci-matrix` | Go template | `matrix` of a list generator and an `oci` generator whose `revision` comes from the list element | `parity-oci-mx-{dev,prod}-{delta,gamma}` |
+
+`apps/*` matches `apps/.hidden` and `apps/linked` by name. Only the
+repo-server directory walk keeps them out: it skips hidden directories and
+never treats a symlink as a directory
+(`reposerver/repository/utils.go:90-121`, called by `GetOciDirectories` at
+`reposerver/repository/repository.go:3846`). If drydock lists either one,
+it generates an extra `parity-oci-dir-*` Application.
+
+File patterns behave the other way. `GetOciFiles` globs with doublestar over
+an `os.Root` of the artifact (`reposerver/repository/repository.go:3760-3802`),
+which matches hidden directories and follows in-artifact symlinks. That is
+why `parity-oci-file-hidden-hidden` and `parity-oci-file-west-mirror` exist.
+An empty pattern means `**` (`repository.go:3729-3731` and `:3760-3763`), so
+`parity-oci-files-fasttemplate` must exclude everything except `root.yaml`.
+
+Each template feeds generator params into `kustomize.namePrefix`,
+`nameSuffix`, `namespace`, and `commonAnnotations`. A wrong param therefore
+changes the rendered ConfigMap, not only the Application spec.
+
+The warm step builds `parity-oci-dir-alpha` online once, which fills
+`--oci-cache-dir` with this artifact. Every offline drydock run after that
+evaluates these ApplicationSets during discovery and reads the artifact from
+the cache. Next, the smoke script waits for each of the five ApplicationSets
+to report `ParametersGenerated=True`. It does this before it waits for
+Applications, so a registry or generator failure names the ApplicationSet.
+
+### Application inventory comparison
+
+The manifest capture loops over the fixed `APPLICATIONS` list, so on its own
+it cannot see an Application that only drydock generates. The smoke script
+therefore also compares the two Application inventories:
+
+- Argo CD side: `kubectl get applications.argoproj.io --all-namespaces -o json`,
+  taken right after the inventory check and before the project-policy smoke
+  adds its own Applications.
+- drydock side: `drydock get apps -o json` with the same offline flags and
+  caches as the manifest capture.
+
+`scripts/argocd-parity-compare --argocd-applications ... --drydock-applications ...`
+projects each Argo CD Application into the shape `drydock get apps -o json`
+prints: namespace, name, project, destination, and each source's
+`repoURL`, `targetRevision`, `path`, `chart`, and `ref`. Then it requires
+the same set of Applications with the same projected spec on both sides. A
+new field in drydock's output fails the load until the comparer projects it
+too. The comparison covers every fixture Application, not only the OCI
+generator ones. Its output lands in `compare-applications/`.
+
+### Deliberately not covered by this fixture
+
+- A param file that is not valid YAML or JSON. Argo CD fails the whole
+  generator on it (`applicationset/generators/repo_path_utils.go:183-186`
+  and `:364-367`), while drydock reports a diagnostic and skips the file.
+  That difference is documented, and a fixture for it fails the comparison.
+- `reposerver.include.hidden.directories`: drydock does not read that
+  repo-server setting, and the smoke keeps the default.
+- `requeueAfterSeconds` and semver revisions on the generator.
+
 ## Helm block scalar fixture
 
 `applications/helm-block-scalars.yaml` (`parity-helm-block-scalars`) renders

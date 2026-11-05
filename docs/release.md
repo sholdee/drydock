@@ -259,7 +259,8 @@ admission mutation, managed fields, and controller reconciliation stay outside
 the smoke's scope.
 
 The workflow uploads only whitelisted parity artifacts: Argo CD manifest
-output, drydock manifest output, canonical comparison output, AppProject policy
+output, drydock manifest output, canonical comparison output, the projected
+Application inventory comparison, AppProject policy
 status and diagnostic evidence, diffs, and selected sanitized logs on failure.
 It does not upload kubeconfig, Argo CD CLI config, Secrets, or full cluster
 dumps.

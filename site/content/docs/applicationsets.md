@@ -130,10 +130,12 @@ generators:
   params. When both `directories` and `files` are set, `directories` wins.
 - Directory patterns match with `path.Match` exactly as written: no
   normalization, so `apps/*/` and `./apps/*` match nothing. Hidden
-  directories and everything under them are never listed.
+  directories and everything under them are never listed. A symlink to a
+  directory is never listed either.
 - File patterns are always doublestar globs, and `.` or an empty pattern
-  means `**`. Hidden files match. A symlink that resolves outside the
-  artifact is skipped.
+  means `**`. Hidden files match. File patterns follow symlinks that stay
+  inside the artifact. A symlink that resolves outside the artifact is
+  skipped.
 - Param files decode like Git files, including the empty-content rules. As
   with Git files, a file that is not valid YAML or JSON produces a
   diagnostic and is skipped; Argo CD instead fails the whole ApplicationSet.

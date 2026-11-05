@@ -14,10 +14,12 @@ an isolated Argo CD render parity smoke.
 
 The smoke installs the pinned Argo CD version into kind, serves the
 `testdata/argocd-parity` fixture repository to Argo CD, renders the same
-Applications with drydock, and compares generated desired manifests. It runs
-manually for maintainer validation and selectively in CI when render parity
-fixtures or semantic-rendering dependencies change. See `docs/release.md` for
-maintainer workflow details.
+Applications with drydock, and compares generated desired manifests. It also
+compares the Application inventories: drydock must generate exactly the
+Applications that Argo CD holds, with the same project, destination, and
+sources. Maintainers run it manually. When render parity fixtures or
+semantic-rendering dependencies change, CI runs it too. See `docs/release.md`
+for maintainer workflow details.
 
 It also runs a thin live AppProject Application-spec policy sanity check for
 source repository, destination, and source namespace outcomes against the real
@@ -108,6 +110,14 @@ Supported:
   Directory and file matching follow the v3.6.1 repo-server: hidden
   directories are skipped, file patterns are always doublestar (`.` means
   `**`), and files resolving outside the artifact are skipped.
+  The directory walk never lists a symlink to a directory, but file patterns
+  follow symlinks that stay inside the artifact. The Argo CD render parity
+  smoke tests the generator against an in-cluster registry. Its fixtures use
+  directories and files with include and exclude patterns, an empty file
+  pattern, and hidden and symlinked directories. They read JSON and YAML
+  param files, one of them a list of objects. They use `pathParamPrefix` and
+  `values` in Go template and fasttemplate mode, and one of them nests the
+  generator in a matrix with a list generator.
 - ApplicationSet `templatePatch` rendering and strategic merge patching, with
   generated `spec.project` preserved.
 - ApplicationSet list `elementsYaml`, including matrix-interpolated
