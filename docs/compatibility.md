@@ -170,6 +170,20 @@ Supported:
   field named `values` together with generator `values` fails the
   ApplicationSet (Argo CD panics in that case), so drydock warns
   `appset.template-render-failed` and generates no Applications for it.
+- Argo CD v3.6.1 matrix and merge param type clashes in Go-template mode. Both
+  generators merge child params with `mergo` and `WithOverride`
+  (`applicationset/generators/matrix.go:95` and `merge.go:81`). If the merge
+  writes a `map[string]any` entry into a `map[string]string` under the same
+  key, it panics. A list element field named `values` is a `map[string]any`.
+  Cluster generator `values` are a `map[string]string`. So a matrix with that
+  list first and a cluster generator with `values` second panics. A merge
+  generator with a
+  cluster base and a list override that sets `values` panics too. The reverse
+  order merges without error. Argo CD recovers the panic, sets no
+  `ErrorOccurred` condition, and creates no Applications for the
+  ApplicationSet. drydock warns `appset.template-render-failed`, names the
+  ApplicationSet, and generates no Applications for it. The
+  `clusterDecisionResource` panic above has the same outcome.
 - Fail-closed fixture diagnostics for invalid provider fixtures, no provider
   matches, and unsupported provider filters.
 - Warning diagnostics when a discovered ApplicationSet generates zero

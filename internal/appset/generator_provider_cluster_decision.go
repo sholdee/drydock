@@ -179,7 +179,10 @@ func collectClusterDecisionValues(params map[string]any, values map[string]strin
 		}
 		collected, ok := params["values"].(map[string]string)
 		if !ok {
-			return &generatorTemplateError{err: errors.New(`clusterDecisionResource decision field "values" conflicts with generator values; Argo CD v3.6.1 fails this ApplicationSet (applicationset/generators/duck_type.go:227)`)}
+			return &generatorTemplateError{
+				err:           errors.New(`clusterDecisionResource decision field "values" conflicts with generator values; Argo CD v3.6.1 panics on this ApplicationSet (applicationset/generators/duck_type.go:227)`),
+				upstreamPanic: true,
+			}
 		}
 		collected[key] = value
 	}

@@ -775,8 +775,8 @@ func TestClusterDecisionResourceValuesDecisionFieldConflict(t *testing.T) {
 	clusters := map[string]ClusterInput{"alpha": {Name: "alpha", Server: "https://alpha.example.invalid"}}
 	decision := map[string]any{"clusterName": "alpha", "values": "decision"}
 	_, _, err := clusterDecisionResourceDecisionParamSet(generator, "clusterName", decision, clusters, true)
-	if _, ok := errors.AsType[*generatorTemplateError](err); !ok {
-		t.Fatalf("error = %v, want a generatorTemplateError", err)
+	if templateErr, ok := errors.AsType[*generatorTemplateError](err); !ok || !templateErr.upstreamPanic {
+		t.Fatalf("error = %#v, want a generatorTemplateError marked upstreamPanic", err)
 	}
 	// Without generator values, collectParams never runs and the decision
 	// field stays a plain string param.
@@ -797,7 +797,7 @@ func TestMatrixKeepsUpstreamParamTypes(t *testing.T) {
 	labels := map[string]string{"env": "prod"}
 	first := map[string]any{"metadata": map[string]any{"labels": labels}, "values": map[string]string{"region": "east"}}
 	second := map[string]any{"path": map[string]any{"segments": []string{"apps", "alpha"}}}
-	combined, err := combineMatrixParams(first, second, true)
+	combined, err := combineMatrixParams("matrix-types", first, second, true)
 	if err != nil {
 		t.Fatalf("combineMatrixParams() error = %v", err)
 	}
