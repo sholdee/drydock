@@ -1,0 +1,11 @@
+﻿{
+  "apiVersion": "v1",
+  "kind": "ConfigMap",
+  "metadata": {
+    "name": "parity-decode-utf8-bom",
+    "namespace": "parity-directory-decode-skips"
+  },
+  "data": {
+    "fixture": "directory-decode"
+  }
+}

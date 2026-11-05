@@ -33,6 +33,13 @@ Argo CD instance. The destination cases include these:
   allows this destination. drydock cannot see the Secret, so the check
   requires a deferred diagnostic and no denial.
 
+It also checks directory files that fail the source. Each such Application
+lives in its own namespace and holds one file that the repo-server refuses to
+decode. Argo CD must report a `ComparisonError` condition, drydock must fail
+to render, and both errors must name the same file. Files that both sides skip,
+and files whose text both sides decode first, render in the main manifest
+comparison.
+
 This check is scoped to generated desired state. Live-only runtime behavior
 such as Kubernetes defaulting, admission mutation, server-side diff, managed
 fields, health aggregation, sync behavior, and controller state remains outside
@@ -470,7 +477,9 @@ Supported:
   YAML and `{}` included). When the stream stops, the file fails the source
   if an object decoded before it or if its content holds all of
   `apiVersion:`, `kind:`, and `metadata:`; otherwise the whole file is
-  skipped as unrelated YAML.
+  skipped as unrelated YAML. The render parity smoke covers the byte order
+  mark and invalid UTF-8 cases, the skipped files, and each failing case
+  above.
 - Recorded divergence from strict Argo CD v3.6.1: a `.json` file accepted
   only as an OCI image manifest renders nothing in drydock; the repo-server
   emits it as a manifest without a `kind`.

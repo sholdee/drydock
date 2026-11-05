@@ -1,0 +1,22 @@
+{
+  "apiVersion": "v1",
+  "kind": "ConfigMap",
+  "metadata": {
+    "name": "parity-decode-json-multiple-first",
+    "namespace": "parity-directory-decode-workloads"
+  },
+  "data": {
+    "fixture": "directory-decode"
+  }
+}
+{
+  "apiVersion": "v1",
+  "kind": "ConfigMap",
+  "metadata": {
+    "name": "parity-decode-json-multiple-second",
+    "namespace": "parity-directory-decode-workloads"
+  },
+  "data": {
+    "fixture": "directory-decode"
+  }
+}

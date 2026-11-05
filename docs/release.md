@@ -248,6 +248,10 @@ same cluster pass. That run fails earlier, because the `argocd` and
 there. With `--keep-cluster`, the trap does not reset this state, so that you
 can inspect the failed phase.
 
+The run also checks directory files that fail the source. Each failing
+Application must show a `ComparisonError` condition in Argo CD and a render
+failure in drydock, and both errors must name the same file.
+
 This workflow is intentionally outside ordinary pull request CI. It always runs
 when manually dispatched, and CI calls it as a reusable workflow only when
 render parity fixtures change or `go.mod` changes touch semantic-rendering
@@ -260,7 +264,8 @@ the smoke's scope.
 
 The workflow uploads only whitelisted parity artifacts: Argo CD manifest
 output, drydock manifest output, canonical comparison output, the projected
-Application inventory comparison, AppProject policy
-status and diagnostic evidence, diffs, and selected sanitized logs on failure.
+Application inventory comparison, directory decode failure status and drydock
+results, AppProject policy status and diagnostic evidence, diffs, and selected
+sanitized logs on failure.
 It does not upload kubeconfig, Argo CD CLI config, Secrets, or full cluster
 dumps.

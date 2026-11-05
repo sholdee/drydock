@@ -1,0 +1,55 @@
+# Directory-source decode failures for the Argo CD render parity smoke.
+#
+# Each case is an Application in the parity-directory-decode namespace
+# (repo/directory-decode-applications). Its source directory holds a valid
+# ConfigMap and one file that the Argo CD v3.6.1 repo-server refuses to
+# decode (getObjsFromYAMLOrJSON, reposerver/repository/repository.go).
+# Argo CD must report a ComparisonError condition that contains
+# argocdMessage, and `drydock build app` must fail with stderr that contains
+# drydockMessage. Both messages must name the file.
+#
+# Files that both sides skip, and files whose text both sides decode first
+# (byte order marks, invalid UTF-8), live in the parity-directory-decode-skips
+# Application, which the main manifest comparison covers.
+cases:
+  # A .json file must hold one JSON object. A syntax error fails the source.
+  - name: parity-decode-json-invalid
+    file: invalid.json
+    argocdMessage: Failed to unmarshal "invalid.json"
+    drydockMessage: "invalid.json: decode JSON object failed"
+  # A second object after the first fails the source.
+  - name: parity-decode-json-multiple
+    file: multiple.json
+    argocdMessage: Found multiple objects in "multiple.json"
+    drydockMessage: "multiple.json: found multiple objects"
+  # A JSON array is not an object, even when it holds manifests.
+  - name: parity-decode-json-array
+    file: array.json
+    argocdMessage: Failed to unmarshal "array.json"
+    drydockMessage: "array.json: decode JSON object failed"
+  # An empty .json file fails, where an empty .yaml file is skipped.
+  - name: parity-decode-json-empty
+    file: empty.json
+    argocdMessage: Failed to unmarshal "empty.json"
+    drydockMessage: "empty.json: decode JSON object failed"
+  # YAML text in a .json file fails, even when it is a valid manifest.
+  - name: parity-decode-json-yaml
+    file: yaml-content.json
+    argocdMessage: Failed to unmarshal "yaml-content.json"
+    drydockMessage: "yaml-content.json: decode JSON object failed"
+  # A YAML syntax error after a decoded object fails the source.
+  - name: parity-decode-yaml-partial
+    file: partial.yaml
+    argocdMessage: Failed to unmarshal "partial.yaml"
+    drydockMessage: "partial.yaml document 1: decode YAML document failed"
+  # A document without a kind after a decoded object fails the source.
+  - name: parity-decode-yaml-kindless
+    file: kindless.yaml
+    argocdMessage: Failed to unmarshal "kindless.yaml"
+    drydockMessage: "kindless.yaml document 1 is missing kind"
+  # A file whose first document stops the stream fails when the file text
+  # holds all of "apiVersion:", "kind:" and "metadata:".
+  - name: parity-decode-yaml-markers
+    file: markers.yaml
+    argocdMessage: Failed to unmarshal "markers.yaml"
+    drydockMessage: "markers.yaml document 0 is missing kind"

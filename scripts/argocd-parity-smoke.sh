@@ -39,6 +39,17 @@ PROJECT_POLICY_LIVE_CLUSTER_SECRET_NAME="project-policy-live-scoped-cluster"
 PROJECT_POLICY_IN_CLUSTER_SECRET_DIR="${REPO_ROOT}/testdata/argocd-project-policy/in-cluster-secret"
 PROJECT_POLICY_IN_CLUSTER_SECRET_NAME="project-policy-in-cluster-secret"
 PROJECT_POLICY_IN_CLUSTER_DISABLED_DIR="${REPO_ROOT}/testdata/argocd-project-policy/in-cluster-disabled"
+# Directory-source decode failures. Each Application in this namespace must
+# fail on both sides: Argo CD with a ComparisonError condition and drydock
+# with a render failure, both naming the same file. They live outside the
+# argocd namespace so the main inventory and manifest comparisons never see
+# them. The expected file lists the cases and the message each side must
+# show. Files that both sides skip render in parity-directory-decode-skips,
+# which the main manifest comparison covers.
+DIRECTORY_DECODE_NAMESPACE="parity-directory-decode"
+DIRECTORY_DECODE_EXPECTED="${REPO_ROOT}/testdata/argocd-parity/directory-decode-expected.yaml"
+# Set by run_directory_decode_smoke from DIRECTORY_DECODE_EXPECTED.
+DIRECTORY_DECODE_APPLICATIONS=()
 OCI_ARTIFACT_PATH="${REPO_ROOT}/testdata/argocd-parity/oci-artifact"
 OCI_APPSET_ARTIFACT_PATH="${REPO_ROOT}/testdata/argocd-parity/oci-appset-artifact"
 OCI_REGISTRY_HOST="argocd-parity-registry.argocd-parity.svc.cluster.local"
@@ -199,6 +210,7 @@ APPLICATIONS=(
   parity-directory-forced
   parity-directory-glob
   parity-directory-extension-filter
+  parity-directory-decode-skips
   parity-kustomize-variants
   parity-kustomize-labels
   parity-kustomize-generators
@@ -441,6 +453,7 @@ for project_policy_phase_dir in "${PROJECT_POLICY_IN_CLUSTER_SECRET_DIR}" "${PRO
   [[ -d "${project_policy_phase_dir}/repo" ]] || fail "project policy phase repo not found: ${project_policy_phase_dir}/repo"
   [[ -f "${project_policy_phase_dir}/expected.yaml" ]] || fail "project policy phase expected file not found: ${project_policy_phase_dir}/expected.yaml"
 done
+[[ -f "${DIRECTORY_DECODE_EXPECTED}" ]] || fail "directory decode expected file not found: ${DIRECTORY_DECODE_EXPECTED}"
 [[ -d "${SIDECAR_PATH}" ]] || fail "CMP sidecar manifest directory not found: ${SIDECAR_PATH}"
 
 OUT_DIR="$(mkdir -p "${OUT_DIR}" && cd "${OUT_DIR}" && pwd)"
@@ -1178,11 +1191,13 @@ apply_cluster_secrets() {
 
 apply_fixture_apps() {
   ensure_namespace "${TENANT_NAMESPACE}"
+  ensure_namespace "${DIRECTORY_DECODE_NAMESPACE}"
   kubectl -n argocd apply -f "${FIXTURE_REPO_PATH}/projects" >/dev/null
   kubectl -n argocd apply -f "${FIXTURE_REPO_PATH}/applications" >/dev/null
   apply_cluster_secrets
   kubectl -n argocd apply -f "${FIXTURE_REPO_PATH}/applicationsets" >/dev/null
   kubectl -n "${TENANT_NAMESPACE}" apply -f "${FIXTURE_REPO_PATH}/tenant-applications" >/dev/null
+  kubectl -n "${DIRECTORY_DECODE_NAMESPACE}" apply -f "${FIXTURE_REPO_PATH}/directory-decode-applications" >/dev/null
 }
 
 wait_for_application() {
@@ -1313,12 +1328,11 @@ capture_argocd_manifests() {
   done
 }
 
-capture_drydock_manifest() {
+# drydock_build_args sets DRYDOCK_BUILD_ARGS to the offline `drydock build
+# app` command line every capture shares.
+drydock_build_args() {
   local app_ref="$1"
-  local stem="$2"
-  local output_dir="$3"
-  local plugin_app stderr_file
-  local build_args=(build app "${app_ref}"
+  DRYDOCK_BUILD_ARGS=(build app "${app_ref}"
     --path "${FIXTURE_REPO_PATH}"
     --repo-map "${FIXTURE_REPO_URL}=${FIXTURE_REPO_PATH}"
     --oci-cache-dir "${OCI_CACHE_DIR}"
@@ -1327,6 +1341,16 @@ capture_drydock_manifest() {
     --render-cache-dir "${OCI_OFFLINE_RENDER_CACHE_DIR}"
     --appset-provider-fixture "${APPSET_PROVIDER_FIXTURE}"
     --offline)
+}
+
+capture_drydock_manifest() {
+  local app_ref="$1"
+  local stem="$2"
+  local output_dir="$3"
+  local plugin_app stderr_file
+  local build_args
+  drydock_build_args "${app_ref}"
+  build_args=("${DRYDOCK_BUILD_ARGS[@]}")
   for plugin_app in "${PLUGIN_APPLICATIONS[@]}"; do
     if [[ "${stem}" == "${plugin_app}" ]]; then
       # Scoped to the plugin app on purpose: --plugin-policy-ref makes a
@@ -1606,7 +1630,7 @@ ensure_namespace() {
 
 configure_application_namespaces() {
   kubectl -n argocd patch configmap argocd-cmd-params-cm --type merge \
-    -p "{\"data\":{\"application.namespaces\":\"${TENANT_NAMESPACE},project-policy-tenant\"}}" >/dev/null
+    -p "{\"data\":{\"application.namespaces\":\"${TENANT_NAMESPACE},${DIRECTORY_DECODE_NAMESPACE},project-policy-tenant\"}}" >/dev/null
   kubectl -n argocd rollout restart deployment/argocd-server >/dev/null
   kubectl -n argocd rollout restart statefulset/argocd-application-controller >/dev/null
   kubectl -n argocd rollout status deployment/argocd-server --timeout=300s
@@ -1673,11 +1697,32 @@ apply_project_policy_live_cluster_secrets() {
     | kubectl -n argocd patch secret "${PROJECT_POLICY_LIVE_CLUSTER_SECRET_NAME}" --type merge --patch-file /dev/stdin >/dev/null
 }
 
+# application_conditions prints one "<type>\t<message>" line per status
+# condition of an Application, and nothing when it has none or is missing.
+application_conditions() {
+  local namespace="$1"
+  local app="$2"
+  kubectl -n "${namespace}" get application "${app}" -o jsonpath='{range .status.conditions[*]}{.type}{"\t"}{.message}{"\n"}{end}' 2>/dev/null || true
+}
+
+# application_has_condition_type succeeds when the Application has at least
+# one status condition of the given type.
+application_has_condition_type() {
+  local namespace="$1"
+  local app="$2"
+  local expected_type="$3"
+  local condition_type message
+  while IFS=$'\t' read -r condition_type message; do
+    [[ "${condition_type}" == "${expected_type}" ]] && return 0
+  done < <(application_conditions "${namespace}" "${app}")
+  return 1
+}
+
 project_policy_condition_categories() {
   local namespace="$1"
   local app="$2"
   local conditions condition_type message normalized category
-  conditions="$(kubectl -n "${namespace}" get application "${app}" -o jsonpath='{range .status.conditions[*]}{.type}{"\t"}{.message}{"\n"}{end}' 2>/dev/null || true)"
+  conditions="$(application_conditions "${namespace}" "${app}")"
   while IFS=$'\t' read -r condition_type message; do
     [[ -n "${message}" ]] || continue
     normalized="$(printf '%s' "${message}" | tr '[:upper:]' '[:lower:]')"
@@ -1832,6 +1877,85 @@ run_project_policy_smoke() {
   PROJECT_POLICY_SHARED_STATE_CHANGED="false"
 }
 
+load_directory_decode_applications() {
+  local app
+  DIRECTORY_DECODE_APPLICATIONS=()
+  while IFS= read -r app; do
+    [[ -n "${app}" ]] && DIRECTORY_DECODE_APPLICATIONS+=("${app}")
+  done < <(cd "${REPO_ROOT}" && go run ./scripts/argocd-directory-decode-smoke --list --expected "${DIRECTORY_DECODE_EXPECTED}")
+  [[ "${#DIRECTORY_DECODE_APPLICATIONS[@]}" -gt 0 ]] \
+    || fail "no directory decode cases listed in ${DIRECTORY_DECODE_EXPECTED}"
+}
+
+# wait_for_directory_decode_application waits for the controller to record
+# a ComparisonError on a decode failure Application. A new Application's
+# first comparison resolves its revision without the revision cache, so the
+# controller records the error at once rather than after the repo error
+# grace period (CompareAppState, controller/state.go at v3.6.1).
+wait_for_directory_decode_application() {
+  local app="$1"
+  local failure_dir
+  for _ in {1..180}; do
+    if application_has_condition_type "${DIRECTORY_DECODE_NAMESPACE}" "${app}" ComparisonError; then
+      return 0
+    fi
+    sleep 2
+  done
+  failure_dir="$(artifact_dir directory-decode)"
+  kubectl -n "${DIRECTORY_DECODE_NAMESPACE}" get application "${app}" -o yaml > "${failure_dir}/${app}.yaml" 2>&1 || true
+  fail "directory decode Application ${DIRECTORY_DECODE_NAMESPACE}/${app} did not report a ComparisonError; see ${failure_dir}/${app}.yaml"
+}
+
+capture_directory_decode_argocd_applications() {
+  local app output_dir
+  output_dir="$(artifact_dir directory-decode/argocd-applications)"
+  for app in "${DIRECTORY_DECODE_APPLICATIONS[@]}"; do
+    kubectl -n "${DIRECTORY_DECODE_NAMESPACE}" get application "${app}" -o json > "${output_dir}/${app}.json"
+  done
+}
+
+# capture_directory_decode_drydock_results runs `drydock build app` for each
+# decode failure Application and records its exit code and stderr. A failed
+# render is the expected outcome here, so it does not stop the smoke.
+capture_directory_decode_drydock_results() {
+  local app output_dir exit_code
+  output_dir="$(artifact_dir directory-decode/drydock-results)"
+  for app in "${DIRECTORY_DECODE_APPLICATIONS[@]}"; do
+    drydock_build_args "${DIRECTORY_DECODE_NAMESPACE}/${app}"
+    exit_code=0
+    (cd "${REPO_ROOT}" && "${DRYDOCK_CMD[@]}" "${DRYDOCK_BUILD_ARGS[@]}" \
+      > "${output_dir}/${app}.yaml" 2> "${output_dir}/${app}.stderr") || exit_code="$?"
+    printf '%s\n' "${exit_code}" > "${output_dir}/${app}.exit"
+  done
+}
+
+compare_directory_decode_smoke() {
+  local output_dir
+  output_dir="$(artifact_dir directory-decode)"
+  (cd "${REPO_ROOT}" && go run ./scripts/argocd-directory-decode-smoke \
+    --expected "${DIRECTORY_DECODE_EXPECTED}" \
+    --namespace "${DIRECTORY_DECODE_NAMESPACE}" \
+    --argocd-app-dir "${output_dir}/argocd-applications" \
+    --drydock-dir "${output_dir}/drydock-results" \
+    --out "${output_dir}/summary.txt")
+}
+
+run_directory_decode_smoke() {
+  local app
+  load_directory_decode_applications
+  assert_namespace_inventory "${DIRECTORY_DECODE_NAMESPACE}" directory-decode-application-inventory.diff "${DIRECTORY_DECODE_APPLICATIONS[@]}"
+  log_step "Waiting for directory decode failures in Argo CD"
+  for app in "${DIRECTORY_DECODE_APPLICATIONS[@]}"; do
+    wait_for_directory_decode_application "${app}"
+  done
+  log_step "Capturing directory decode Argo CD Application status"
+  capture_directory_decode_argocd_applications
+  log_step "Capturing directory decode drydock results"
+  capture_directory_decode_drydock_results
+  log_step "Comparing directory decode failures"
+  compare_directory_decode_smoke
+}
+
 main() {
   local argocd_version
   argocd_version="$(resolve_argocd_version)"
@@ -1909,6 +2033,7 @@ main() {
   compare_applications
   compare_avp_oracle_manifests
   compare_tracking_manifests
+  run_directory_decode_smoke
   if [[ "${RUN_PROJECT_POLICY_SMOKE}" == "true" ]]; then
     run_project_policy_smoke
   else
