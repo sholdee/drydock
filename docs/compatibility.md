@@ -414,8 +414,9 @@ Supported:
   file, such as a README or `.libsonnet` library that `include` admits, is
   read as a YAML/JSON stream under the skip-or-fail rule above. Enabling it
   with neither `include` nor `exclude` renders every file and emits the
-  `directory.extension-filter-disabled` warning (promoted by `--strict`),
-  where the repo-server logs a warning.
+  `directory.extension-filter-disabled` warning, where the repo-server logs a
+  warning. Upstream calls this a valid configuration, so `--strict` keeps the
+  warning advisory.
 - Local Kustomize rendering with supported `kustomize.buildOptions`:
   `--enable-helm`, `--helm-api-versions`,
   `--load-restrictor=LoadRestrictionsRootOnly|LoadRestrictionsNone`,

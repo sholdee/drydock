@@ -235,9 +235,9 @@ drydock selects directory-source files as the Argo CD v3.6.1 repo-server does:
   `spec.source.directory.disableExtensionFilter: true`. `include` and
   `exclude` are then the only filters.
 - `disableExtensionFilter` without `include` or `exclude` reads every file in
-  the directory and emits the `directory.extension-filter-disabled` warning,
-  which `--strict` turns into a failure. Add an `include` pattern that names
-  the manifest files to silence it.
+  the directory and emits the `directory.extension-filter-disabled` warning.
+  It stays advisory under `--strict`, because Argo CD treats the setting as
+  valid. Add an `include` pattern that names the manifest files to silence it.
 - A file ending in `.json` must hold one JSON object with a `kind`; an empty
   file, YAML content, a JSON array, or several concatenated objects fail the
   source, as in Argo CD.

@@ -63,7 +63,8 @@ func TestOrchestratorBuildDirectoryDisableExtensionFilter(t *testing.T) {
 
 // TestOrchestratorBuildDirectoryDisableExtensionFilterWithoutFiltersWarns
 // pins the warning for disableExtensionFilter without include or exclude
-// (Argo CD logs it and renders every file) and its --strict promotion.
+// (Argo CD logs it and renders every file). Upstream treats the setting as a
+// valid choice, so --strict keeps it advisory, like source.oci-chart-ignored.
 func TestOrchestratorBuildDirectoryDisableExtensionFilterWithoutFiltersWarns(t *testing.T) {
 	root := t.TempDir()
 	writeDisableExtensionFilterApplication(t, root, "unfiltered", "      disableExtensionFilter: true")
@@ -83,13 +84,13 @@ func TestOrchestratorBuildDirectoryDisableExtensionFilterWithoutFiltersWarns(t *
 	assertExtensionFilterDiagnostic(t, result.Diagnostics, diagnostic.SeverityWarning)
 
 	result, err = (Orchestrator{}).Build(context.Background(), BuildRequest{Path: root, Strict: true})
-	if err == nil {
-		t.Fatal("strict Build() error = nil, want extension-filter warning promoted to failure")
+	if err != nil {
+		t.Fatalf("strict Build() error = %v, want extension-filter warning to stay advisory", err)
 	}
 	assertApplicationStatuses(t, result.Statuses, []ApplicationStatus{
-		{Namespace: "argocd", Name: "unfiltered", Status: ApplicationStatusFail},
+		{Namespace: "argocd", Name: "unfiltered", Status: ApplicationStatusPass},
 	})
-	assertExtensionFilterDiagnostic(t, result.Diagnostics, diagnostic.SeverityError)
+	assertExtensionFilterDiagnostic(t, result.Diagnostics, diagnostic.SeverityWarning)
 }
 
 func assertExtensionFilterDiagnostic(t *testing.T, diags []diagnostic.Diagnostic, severity diagnostic.Severity) {

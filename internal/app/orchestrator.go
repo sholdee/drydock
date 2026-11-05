@@ -1046,7 +1046,7 @@ func normalizeDiagnostics(diags []diagnostic.Diagnostic, strict, forceWarning bo
 // it aborts reconciliation of the whole ApplicationSet.
 func strictExemptDiagnostic(diag diagnostic.Diagnostic) bool {
 	switch diag.Code {
-	case selfRepoNearMissCode, ociChartIgnoredCode, diagnostic.CodePluginPolicyEnvIgnored, changedOnlySettingsCode, changedOnlySettingsScopedCode, changedOnlyProjectsCode, diagnostic.CodeAppSetInvalidRolloutConfig:
+	case selfRepoNearMissCode, ociChartIgnoredCode, diagnostic.CodePluginPolicyEnvIgnored, changedOnlySettingsCode, changedOnlySettingsScopedCode, changedOnlyProjectsCode, diagnostic.CodeAppSetInvalidRolloutConfig, render.DirectoryExtensionFilterDisabledCode:
 		return true
 	}
 	return false
