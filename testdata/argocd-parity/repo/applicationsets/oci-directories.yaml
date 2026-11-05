@@ -1,0 +1,41 @@
+# OCI generator, Go template, directories with include and exclude patterns.
+# apps/* also matches apps/.hidden and apps/linked by name, so only the
+# repo-server directory walk keeps them out: it skips hidden directories and
+# never lists a symlink to a directory.
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: parity-oci-directories
+  namespace: argocd
+spec:
+  goTemplate: true
+  goTemplateOptions: ["missingkey=error"]
+  generators:
+    - oci:
+        repoURL: oci://argocd-parity-registry.argocd-parity.svc.cluster.local:5443/parity/appset
+        revision: v1.0.0
+        directories:
+          - path: apps/*
+          - path: teams/*/*
+          - path: apps/skipped
+            exclude: true
+        values:
+          tier: '{{ index .path.segments 0 }}'
+  template:
+    metadata:
+      name: 'parity-oci-dir-{{ .path.basenameNormalized }}'
+    spec:
+      project: default
+      source:
+        repoURL: oci://argocd-parity-registry.argocd-parity.svc.cluster.local:5443/parity/appset
+        targetRevision: v1.0.0
+        path: '{{ .path.path }}'
+        kustomize:
+          namespace: 'parity-oci-dir-{{ .path.basenameNormalized }}'
+          namePrefix: '{{ .values.tier }}-'
+          commonAnnotations:
+            parity-oci-path: '{{ .path.path }}'
+            parity-oci-segments: '{{ join "," .path.segments }}'
+      destination:
+        name: in-cluster
+        namespace: 'parity-oci-dir-{{ .path.basenameNormalized }}'

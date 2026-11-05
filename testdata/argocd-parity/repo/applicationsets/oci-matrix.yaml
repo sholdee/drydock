@@ -1,0 +1,40 @@
+# OCI generator nested in a matrix with a list generator. The list element
+# supplies the OCI revision, so the matrix must interpolate the OCI child
+# from first-child params before it pulls the artifact.
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: parity-oci-matrix
+  namespace: argocd
+spec:
+  goTemplate: true
+  goTemplateOptions: ["missingkey=error"]
+  generators:
+    - matrix:
+        generators:
+          - list:
+              elements:
+                - env: dev
+                  ociRevision: v1.0.0
+                - env: prod
+                  ociRevision: v1.0.0
+          - oci:
+              repoURL: oci://argocd-parity-registry.argocd-parity.svc.cluster.local:5443/parity/appset
+              revision: '{{ .ociRevision }}'
+              directories:
+                - path: teams/platform/*
+  template:
+    metadata:
+      name: 'parity-oci-mx-{{ .env }}-{{ .path.basename }}'
+    spec:
+      project: default
+      source:
+        repoURL: oci://argocd-parity-registry.argocd-parity.svc.cluster.local:5443/parity/appset
+        targetRevision: '{{ .ociRevision }}'
+        path: '{{ .path.path }}'
+        kustomize:
+          namespace: 'parity-oci-mx-{{ .env }}'
+          namePrefix: '{{ .env }}-'
+      destination:
+        name: in-cluster
+        namespace: 'parity-oci-mx-{{ .env }}'

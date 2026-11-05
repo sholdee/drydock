@@ -1,0 +1,45 @@
+# OCI generator, fasttemplate, files with an empty include pattern. Argo CD
+# reads an empty pattern as "**", so the exclude patterns must remove every
+# file except root.yaml, a list of objects with nested maps and lists that
+# fasttemplate flattens to dotted keys.
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: parity-oci-files-fasttemplate
+  namespace: argocd
+spec:
+  generators:
+    - oci:
+        repoURL: oci://argocd-parity-registry.argocd-parity.svc.cluster.local:5443/parity/appset
+        revision: v1.0.0
+        files:
+          - path: ""
+          - path: apps/**
+            exclude: true
+          - path: teams/**
+            exclude: true
+          - path: params/**
+            exclude: true
+        values:
+          site: '{{name}}-{{path.filename}}'
+  template:
+    metadata:
+      name: 'parity-oci-ftfile-{{name}}'
+    spec:
+      project: default
+      source:
+        repoURL: oci://argocd-parity-registry.argocd-parity.svc.cluster.local:5443/parity/appset
+        targetRevision: v1.0.0
+        path: 'apps/{{app}}'
+        kustomize:
+          namespace: 'parity-oci-ftfile-{{name}}'
+          namePrefix: '{{meta.owner}}-'
+          nameSuffix: '-{{ports.1}}'
+          commonAnnotations:
+            parity-oci-site: '{{values.site}}'
+            parity-oci-dir: '{{path}}'
+            parity-oci-dir-segment: '{{path[0]}}'
+            parity-oci-first-port: '{{ports.0}}'
+      destination:
+        name: in-cluster
+        namespace: 'parity-oci-ftfile-{{name}}'

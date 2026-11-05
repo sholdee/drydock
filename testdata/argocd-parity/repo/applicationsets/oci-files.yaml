@@ -1,0 +1,46 @@
+# OCI generator, Go template, files with two include patterns and one
+# exclude pattern, pathParamPrefix, and values. params/clusters.yaml holds a
+# list of objects, params/regions/east/site.json is JSON, the doublestar
+# patterns match the hidden params/.hidden directory, and they reach
+# params/regions/mirror/site.yaml through the in-artifact symlink
+# params/regions/mirror -> west.
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: parity-oci-files
+  namespace: argocd
+spec:
+  goTemplate: true
+  goTemplateOptions: ["missingkey=error"]
+  generators:
+    - oci:
+        repoURL: oci://argocd-parity-registry.argocd-parity.svc.cluster.local:5443/parity/appset
+        revision: v1.0.0
+        pathParamPrefix: cfg
+        files:
+          - path: params/**/*.yaml
+          - path: params/**/*.json
+          - path: params/regions/legacy/*
+            exclude: true
+        values:
+          owner: '{{ .team }}-{{ .cfg.path.basenameNormalized }}'
+  template:
+    metadata:
+      name: 'parity-oci-file-{{ .name }}-{{ .cfg.path.basenameNormalized }}'
+    spec:
+      project: default
+      source:
+        repoURL: oci://argocd-parity-registry.argocd-parity.svc.cluster.local:5443/parity/appset
+        targetRevision: v1.0.0
+        path: '{{ .app }}'
+        kustomize:
+          namespace: 'parity-oci-file-{{ .name }}'
+          namePrefix: '{{ .name }}-{{ .cfg.path.basenameNormalized }}-'
+          commonAnnotations:
+            parity-oci-owner: '{{ .values.owner }}'
+            parity-oci-file: '{{ .cfg.path.path }}/{{ .cfg.path.filename }}'
+            parity-oci-file-normalized: '{{ .cfg.path.filenameNormalized }}'
+            parity-oci-tier: '{{ dig "labels" "tier" "none" . }}'
+      destination:
+        name: in-cluster
+        namespace: 'parity-oci-file-{{ .name }}'

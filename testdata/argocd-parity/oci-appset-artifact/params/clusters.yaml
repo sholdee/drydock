@@ -1,0 +1,9 @@
+# A list of objects: each item becomes one param set.
+- name: north
+  app: apps/alpha
+  team: core
+- name: south
+  app: apps/beta
+  team: edge
+  labels:
+    tier: silver

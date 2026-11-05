@@ -1,0 +1,39 @@
+# OCI generator, fasttemplate (the default), directories with
+# pathParamPrefix and values. Two exclude patterns remove one match from
+# each include pattern.
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: parity-oci-directories-fasttemplate
+  namespace: argocd
+spec:
+  generators:
+    - oci:
+        repoURL: oci://argocd-parity-registry.argocd-parity.svc.cluster.local:5443/parity/appset
+        revision: v1.0.0
+        pathParamPrefix: src
+        directories:
+          - path: apps/*
+          - path: teams/platform/*
+          - path: apps/beta
+            exclude: true
+          - path: teams/platform/delta
+            exclude: true
+        values:
+          team: 'team-{{src.path[0]}}'
+  template:
+    metadata:
+      name: 'parity-oci-ft-{{src.path.basename}}'
+    spec:
+      project: default
+      source:
+        repoURL: oci://argocd-parity-registry.argocd-parity.svc.cluster.local:5443/parity/appset
+        targetRevision: v1.0.0
+        path: '{{src.path}}'
+        kustomize:
+          namespace: 'parity-oci-ft-{{src.path.basename}}'
+          namePrefix: '{{values.team}}-'
+          nameSuffix: '-{{src.path.basenameNormalized}}'
+      destination:
+        name: in-cluster
+        namespace: 'parity-oci-ft-{{src.path.basename}}'

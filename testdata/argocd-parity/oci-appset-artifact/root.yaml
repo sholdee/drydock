@@ -1,0 +1,14 @@
+- name: root-one
+  app: alpha
+  meta:
+    owner: core
+  ports:
+    - 80
+    - 8080
+- name: root-two
+  app: beta
+  meta:
+    owner: edge
+  ports:
+    - 443
+    - 8443

@@ -21,6 +21,7 @@ SIDECAR_PATH="${REPO_ROOT}/testdata/argocd-parity/sidecar"
 PROJECT_POLICY_REPO_PATH="${REPO_ROOT}/testdata/argocd-project-policy/repo"
 PROJECT_POLICY_EXPECTED="${REPO_ROOT}/testdata/argocd-project-policy/expected.yaml"
 OCI_ARTIFACT_PATH="${REPO_ROOT}/testdata/argocd-parity/oci-artifact"
+OCI_APPSET_ARTIFACT_PATH="${REPO_ROOT}/testdata/argocd-parity/oci-appset-artifact"
 OCI_REGISTRY_HOST="argocd-parity-registry.argocd-parity.svc.cluster.local"
 OCI_REGISTRY_PORT="5443"
 # Multi-arch index digest for the Docker-official registry:2.8.3 (covers CI
@@ -77,6 +78,25 @@ AVP_SECRET_EXPECTED_MARKERS=9
 OCI_ARTIFACT_REPOSITORY="parity/config"
 OCI_ARTIFACT_TAG="v1.0.0"
 OCI_APPLICATION="parity-oci-config"
+# The ApplicationSet OCI generator fixture: a second artifact whose directory
+# tree the parity-oci-* ApplicationSets list and read. It holds app
+# directories, a hidden directory, nested directories, symlinked
+# directories, and JSON and YAML param files, one of them a list of objects.
+# Every Application those ApplicationSets generate renders from the same
+# artifact.
+OCI_APPSET_ARTIFACT_REPOSITORY="parity/appset"
+OCI_APPSET_ARTIFACT_TAG="v1.0.0"
+OCI_APPSETS=(
+  parity-oci-directories
+  parity-oci-directories-fasttemplate
+  parity-oci-files
+  parity-oci-files-fasttemplate
+  parity-oci-matrix
+)
+# One generated Application to warm drydock's OCI cache with. Its build
+# evaluates the OCI generator and renders the artifact, so the offline
+# capture loop finds both in the cache.
+OCI_APPSET_WARM_APPLICATION="parity-oci-dir-alpha"
 # The OCI Helm chart fixture: a nested chart name under a scheme-less
 # host:port repoURL, the shape Argo CD dispatches to `helm pull
 # oci://<repo>/<chart>` and drydock now accepts too.
@@ -162,6 +182,25 @@ APPLICATIONS=(
   parity-fn-gamma-one
   parity-helm-null-default
   parity-helm-block-scalars
+  parity-oci-dir-alpha
+  parity-oci-dir-beta
+  parity-oci-dir-delta
+  parity-oci-dir-gamma
+  parity-oci-ft-alpha
+  parity-oci-ft-gamma
+  parity-oci-ft-skipped
+  parity-oci-file-east-east
+  parity-oci-file-hidden-hidden
+  parity-oci-file-north-params
+  parity-oci-file-south-params
+  parity-oci-file-west-mirror
+  parity-oci-file-west-west
+  parity-oci-ftfile-root-one
+  parity-oci-ftfile-root-two
+  parity-oci-mx-dev-delta
+  parity-oci-mx-dev-gamma
+  parity-oci-mx-prod-delta
+  parity-oci-mx-prod-gamma
   parity-plugin-env
   parity-plugin-container
   parity-avp
@@ -315,6 +354,7 @@ done
 [[ -d "${FIXTURE_REPO_PATH}" ]] || fail "fixture repo not found: ${FIXTURE_REPO_PATH}"
 [[ -f "${IGNORE_FILE}" ]] || fail "compare ignore file not found: ${IGNORE_FILE}"
 [[ -d "${OCI_ARTIFACT_PATH}" ]] || fail "OCI artifact content directory not found: ${OCI_ARTIFACT_PATH}"
+[[ -d "${OCI_APPSET_ARTIFACT_PATH}" ]] || fail "OCI ApplicationSet artifact content directory not found: ${OCI_APPSET_ARTIFACT_PATH}"
 [[ -f "${OCI_CHART_PATH}/Chart.yaml" ]] || fail "OCI Helm chart fixture not found: ${OCI_CHART_PATH}/Chart.yaml"
 [[ -d "${PROJECT_POLICY_REPO_PATH}" ]] || fail "project policy fixture repo not found: ${PROJECT_POLICY_REPO_PATH}"
 [[ -f "${PROJECT_POLICY_EXPECTED}" ]] || fail "project policy expected file not found: ${PROJECT_POLICY_EXPECTED}"
@@ -755,15 +795,17 @@ start_registry_port_forward() {
 }
 
 push_oci_artifact() {
+  local content_dir="$1" repository="$2" tag="$3" label="$4"
   local ref stderr_file
-  ref="${OCI_REGISTRY_HOST}:${OCI_REGISTRY_PORT}/${OCI_ARTIFACT_REPOSITORY}:${OCI_ARTIFACT_TAG}"
-  stderr_file="${OUT_DIR}/oras-push.stderr"
+  ref="${OCI_REGISTRY_HOST}:${OCI_REGISTRY_PORT}/${repository}:${tag}"
+  stderr_file="${OUT_DIR}/oras-push-${label}.stderr"
   # Push the content directory from inside it so the tar entries sit at the
   # extraction root (path: . in the fixture Application) as exactly one
   # tar+gzip content layer. helm push or per-file oras push would change the
-  # media-type semantics.
-  (cd "${OCI_ARTIFACT_PATH}" && oras push --ca-file "${OCI_CA_FILE}" "${ref}" . >/dev/null 2> "${stderr_file}") \
-    || fail "oras push of the OCI parity artifact to ${ref} failed; see ${stderr_file}"
+  # media-type semantics. oras keeps hidden directories and stores symlinks
+  # as symlinks, which the ApplicationSet artifact relies on.
+  (cd "${content_dir}" && oras push --ca-file "${OCI_CA_FILE}" "${ref}" . >/dev/null 2> "${stderr_file}") \
+    || fail "oras push of the OCI parity ${label} artifact to ${ref} failed; see ${stderr_file}"
   rm -f "${stderr_file}"
 }
 
@@ -804,30 +846,57 @@ verify_oci_chart_manifest() {
 }
 
 verify_oci_artifact_manifest() {
+  local repository="$1" tag="$2" label="$3"
   local ref manifest stderr_file layer_count media_type_count
-  ref="${OCI_REGISTRY_HOST}:${OCI_REGISTRY_PORT}/${OCI_ARTIFACT_REPOSITORY}:${OCI_ARTIFACT_TAG}"
-  stderr_file="${OUT_DIR}/oras-manifest-fetch.stderr"
+  ref="${OCI_REGISTRY_HOST}:${OCI_REGISTRY_PORT}/${repository}:${tag}"
+  stderr_file="${OUT_DIR}/oras-manifest-fetch-${label}.stderr"
   manifest="$(oras manifest fetch --ca-file "${OCI_CA_FILE}" "${ref}" 2> "${stderr_file}")" \
-    || fail "oras manifest fetch for the pushed OCI parity artifact ${ref} failed; see ${stderr_file}"
+    || fail "oras manifest fetch for the pushed OCI parity ${label} artifact ${ref} failed; see ${stderr_file}"
   rm -f "${stderr_file}"
   layer_count="$(grep -o 'application/vnd\.oci\.image\.layer\.v1\.tar+gzip' <<< "${manifest}" | wc -l | tr -d ' ' || true)"
   media_type_count="$(grep -o '"mediaType"' <<< "${manifest}" | wc -l | tr -d ' ' || true)"
   # Expect exactly three mediaType entries (manifest, empty config, one
   # layer) with the single layer being the tar+gzip content type.
   if [[ "${layer_count}" != "1" || "${media_type_count}" != "3" ]]; then
-    printf '%s\n' "${manifest}" > "${OUT_DIR}/oci-artifact-manifest.json"
-    fail "pushed OCI parity artifact ${ref} has the wrong manifest shape: want exactly one application/vnd.oci.image.layer.v1.tar+gzip content layer, got ${layer_count} tar+gzip layers across ${media_type_count} mediaType entries; see ${OUT_DIR}/oci-artifact-manifest.json"
+    printf '%s\n' "${manifest}" > "${OUT_DIR}/oci-${label}-artifact-manifest.json"
+    fail "pushed OCI parity ${label} artifact ${ref} has the wrong manifest shape: want exactly one application/vnd.oci.image.layer.v1.tar+gzip content layer, got ${layer_count} tar+gzip layers across ${media_type_count} mediaType entries; see ${OUT_DIR}/oci-${label}-artifact-manifest.json"
   fi
+}
+
+# wait_for_oci_applicationsets gates on every OCI generator ApplicationSet
+# reporting ParametersGenerated=True. The ApplicationSet controller sets it
+# only after the generator pulled the artifact through the repo-server and
+# produced params, so a registry, CA, or generator failure names the
+# ApplicationSet here instead of surfacing later as a missing Application.
+wait_for_oci_applicationsets() {
+  local appset status dump
+  for appset in "${OCI_APPSETS[@]}"; do
+    status=""
+    for _ in {1..120}; do
+      status="$(kubectl -n argocd get applicationset "${appset}" \
+        -o jsonpath='{.status.conditions[?(@.type=="ParametersGenerated")].status}' 2>/dev/null || true)"
+      if [[ "${status}" == "True" ]]; then
+        break
+      fi
+      sleep 2
+    done
+    if [[ "${status}" != "True" ]]; then
+      dump="$(artifact_dir logs)/applicationset-${appset}.yaml"
+      kubectl -n argocd get applicationset "${appset}" -o yaml > "${dump}" 2>&1 || true
+      fail "OCI generator ApplicationSet ${appset} did not report ParametersGenerated=True (the ApplicationSet controller could not list or read ${OCI_APPSET_ARTIFACT_REPOSITORY}:${OCI_APPSET_ARTIFACT_TAG} through the repo-server, or the generator failed); see ${dump}"
+    fi
+  done
 }
 
 wait_for_oci_application() {
   local app sync_status
-  # All three registry-backed Applications: the artifact source, the nested
-  # OCI Helm chart source, and parity-oci-helm-chart-ignored (the chart pulled
-  # as an oci:// artifact with chart: set). Naming the app in the failure
+  # The registry-backed Applications: the artifact source, the nested OCI
+  # Helm chart source, parity-oci-helm-chart-ignored (the chart pulled as an
+  # oci:// artifact with chart: set), and one Application the OCI generator
+  # made from the ApplicationSet artifact. Naming the app in the failure
   # tells a TLS problem (argocd-tls-certs-cm) apart from a media-type or
   # chart-name problem.
-  for app in "${OCI_APPLICATION}" "${OCI_CHART_APPLICATION}" "${OCI_CHART_IGNORED_APPLICATION}"; do
+  for app in "${OCI_APPLICATION}" "${OCI_CHART_APPLICATION}" "${OCI_CHART_IGNORED_APPLICATION}" "${OCI_APPSET_WARM_APPLICATION}"; do
     sync_status=""
     for _ in {1..120}; do
       sync_status="$(kubectl -n argocd get application "${app}" -o jsonpath='{.status.sync.status}' 2>/dev/null || true)"
@@ -848,8 +917,11 @@ warm_drydock_oci_cache() {
   # The artifact app and parity-oci-helm-chart-ignored fill --oci-cache-dir
   # (an oci:// repoURL takes the artifact flow whether or not chart: is set),
   # the schemeless chart app fills --chart-cache-dir; the offline capture
-  # loop reads both back.
-  for app in "${OCI_APPLICATION}" "${OCI_CHART_APPLICATION}" "${OCI_CHART_IGNORED_APPLICATION}"; do
+  # loop reads both back. The OCI generator Application fills
+  # --oci-cache-dir with the ApplicationSet artifact. Every later offline
+  # drydock run evaluates the OCI generator ApplicationSets during
+  # discovery, so none of them works without this warm run.
+  for app in "${OCI_APPLICATION}" "${OCI_CHART_APPLICATION}" "${OCI_CHART_IGNORED_APPLICATION}" "${OCI_APPSET_WARM_APPLICATION}"; do
     stderr_file="${OUT_DIR}/drydock-oci-warm-${app}.stderr"
     (cd "${REPO_ROOT}" && "${DRYDOCK_CMD[@]}" build app "argocd/${app}" \
       --path "${FIXTURE_REPO_PATH}" \
@@ -1291,6 +1363,54 @@ compare_manifests() {
     --ignore-file "${IGNORE_FILE}")
 }
 
+# capture_argocd_applications records every Application the live Argo CD
+# instance holds, both the committed ones and the ones the ApplicationSet
+# controller generated. It runs before the project-policy smoke applies its
+# own Applications.
+capture_argocd_applications() {
+  local output_dir
+  output_dir="$(artifact_dir applications)"
+  kubectl get applications.argoproj.io --all-namespaces -o json > "${output_dir}/argocd.json" \
+    || fail "could not list the Argo CD Applications for the Application inventory comparison"
+}
+
+# capture_drydock_applications lists every Application drydock discovers and
+# generates from the fixture repository, with the same offline flags and
+# caches as the manifest capture.
+capture_drydock_applications() {
+  local output_dir stderr_file
+  output_dir="$(artifact_dir applications)"
+  stderr_file="${OUT_DIR}/drydock-get-apps.stderr"
+  if ! (cd "${REPO_ROOT}" && "${DRYDOCK_CMD[@]}" get apps \
+    --path "${FIXTURE_REPO_PATH}" \
+    --repo-map "${FIXTURE_REPO_URL}=${FIXTURE_REPO_PATH}" \
+    --oci-cache-dir "${OCI_CACHE_DIR}" \
+    --chart-cache-dir "${CHART_CACHE_DIR}" \
+    --oci-ca-file "${OCI_CA_FILE}" \
+    --render-cache-dir "${OCI_OFFLINE_RENDER_CACHE_DIR}" \
+    --offline \
+    -o json > "${output_dir}/drydock.json" 2> "${stderr_file}"); then
+    echo "argocd render parity smoke: drydock get apps failed; its stderr follows" >&2
+    cat "${stderr_file}" >&2 || true
+    fail "drydock get apps for the Application inventory comparison failed; see ${stderr_file}"
+  fi
+  rm -f "${stderr_file}"
+}
+
+# compare_applications checks names and specs, not just counts: drydock must
+# generate exactly the Applications Argo CD holds, with the same project,
+# destination, and sources. The manifest capture loops over the fixed
+# APPLICATIONS list, so an extra Application that only drydock generates
+# (for example from a directory the repo-server walk skips) shows up only
+# here.
+compare_applications() {
+  log_step "Comparing Argo CD and drydock Application inventories and specs"
+  (cd "${REPO_ROOT}" && go run ./scripts/argocd-parity-compare \
+    --argocd-applications "${OUT_DIR}/applications/argocd.json" \
+    --drydock-applications "${OUT_DIR}/applications/drydock.json" \
+    --out-dir "${OUT_DIR}/compare-applications")
+}
+
 compare_tracking_manifests() {
   local app argocd_dir drydock_dir
   log_step "Comparing tracking metadata without ignore rules"
@@ -1488,9 +1608,11 @@ main() {
   install_fixture_registry
   log_step "Starting OCI registry port-forward"
   start_registry_port_forward
-  log_step "Pushing OCI parity artifact"
-  push_oci_artifact
-  verify_oci_artifact_manifest
+  log_step "Pushing OCI parity artifacts"
+  push_oci_artifact "${OCI_ARTIFACT_PATH}" "${OCI_ARTIFACT_REPOSITORY}" "${OCI_ARTIFACT_TAG}" config
+  verify_oci_artifact_manifest "${OCI_ARTIFACT_REPOSITORY}" "${OCI_ARTIFACT_TAG}" config
+  push_oci_artifact "${OCI_APPSET_ARTIFACT_PATH}" "${OCI_APPSET_ARTIFACT_REPOSITORY}" "${OCI_APPSET_ARTIFACT_TAG}" appset
+  verify_oci_artifact_manifest "${OCI_APPSET_ARTIFACT_REPOSITORY}" "${OCI_APPSET_ARTIFACT_TAG}" appset
   log_step "Pushing nested OCI parity Helm chart"
   push_oci_chart
   verify_oci_chart_manifest
@@ -1506,9 +1628,13 @@ main() {
   login_argocd
   log_step "Applying parity fixture Applications"
   apply_fixture_apps
+  log_step "Waiting for the OCI generator ApplicationSets"
+  wait_for_oci_applicationsets
   log_step "Waiting for expected Applications"
   wait_for_applications
   assert_application_inventory
+  log_step "Capturing the Argo CD Application inventory"
+  capture_argocd_applications
   log_step "Waiting for the OCI Application comparison"
   wait_for_oci_application
   log_step "Capturing Argo CD rendered manifests"
@@ -1517,10 +1643,13 @@ main() {
   warm_drydock_oci_cache
   log_step "Capturing drydock rendered manifests"
   capture_drydock_manifests
+  log_step "Capturing the drydock Application inventory"
+  capture_drydock_applications
   log_step "Rendering the argocd-vault-plugin oracle inside the sidecar"
   capture_avp_oracle_manifests
   assert_avp_markers
   compare_manifests
+  compare_applications
   compare_avp_oracle_manifests
   compare_tracking_manifests
   if [[ "${RUN_PROJECT_POLICY_SMOKE}" == "true" ]]; then

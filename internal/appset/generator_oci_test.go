@@ -594,3 +594,121 @@ spec:
 		t.Fatalf("fetch requests = %v, want none", fetcher.requests)
 	}
 }
+
+// TestWalkDirectoryTreeMatchesRepoServerWalk pins drydock's directory walk to
+// Argo CD v3.6.1 reposerver/repository/utils.go walkDirectoryTree with
+// includeHidden false, which GetOciDirectories calls
+// (reposerver/repository/repository.go:3846). filepath.WalkDir never follows
+// a symlink, so a symlink to a directory is neither listed nor descended,
+// and a hidden directory is skipped with its whole subtree. The root is
+// exempt from the hidden check: upstream checks the root's own name
+// (utils.go:100 runs before the "." check at :109), but its roots are UUID
+// temp dirs (util/io/files/util.go:58-62 via util/oci/client.go:577), while
+// a drydock --repo-map root may legitimately be named ".something".
+func TestWalkDirectoryTreeMatchesRepoServerWalk(t *testing.T) {
+	base := t.TempDir()
+	root := filepath.Join(base, ".artifact")
+	for _, rel := range []string{
+		"apps/alpha/kustomization.yaml",
+		"apps/.hidden/kustomization.yaml",
+		"apps/.hidden/nested/kustomization.yaml",
+		"a/b/c.yaml",
+		"a-c/d.yaml",
+		".top/x.yaml",
+	} {
+		writeAppsetTestFile(t, filepath.Join(root, filepath.FromSlash(rel)), "kind: ConfigMap\n")
+	}
+	writeAppsetTestFile(t, filepath.Join(base, "outside", "x.yaml"), "kind: ConfigMap\n")
+	if err := os.Symlink("alpha", filepath.Join(root, "apps", "linked")); err != nil {
+		t.Fatalf("Symlink() error = %v", err)
+	}
+	if err := os.Symlink("../../outside", filepath.Join(root, "apps", "escape")); err != nil {
+		t.Fatalf("Symlink() error = %v", err)
+	}
+
+	got, err := walkDirectoryTree(root)
+	if err != nil {
+		t.Fatalf("walkDirectoryTree() error = %v", err)
+	}
+	// filepath.WalkDir order: "a" < "a-c" < "apps", and "a/b" before "a-c".
+	want := []string{"a", "a/b", "a-c", "apps", "apps/alpha"}
+	if !slices.Equal(got, want) {
+		t.Fatalf("walkDirectoryTree() = %q, want %q", got, want)
+	}
+}
+
+// TestOciGeneratorArgoCDParityFixture runs the parity smoke's OCI generator
+// ApplicationSets over the committed artifact tree. The kind smoke checks the
+// same names and specs against live Argo CD v3.6.1; this test keeps the
+// expected inventory visible without a cluster.
+func TestOciGeneratorArgoCDParityFixture(t *testing.T) {
+	const fixture = "../../testdata/argocd-parity"
+	const repoURL = "oci://argocd-parity-registry.argocd-parity.svc.cluster.local:5443/parity/appset"
+	artifact := filepath.Join(fixture, "oci-appset-artifact")
+	tests := []struct {
+		file  string
+		names []string
+		paths []string
+	}{
+		{
+			// apps/.hidden and the apps/linked symlink match apps/* by name
+			// but the walk never lists them.
+			file:  "oci-directories.yaml",
+			names: []string{"parity-oci-dir-alpha", "parity-oci-dir-beta", "parity-oci-dir-delta", "parity-oci-dir-gamma"},
+			paths: []string{"apps/alpha", "apps/beta", "teams/platform/delta", "teams/platform/gamma"},
+		},
+		{
+			file:  "oci-directories-fasttemplate.yaml",
+			names: []string{"parity-oci-ft-alpha", "parity-oci-ft-skipped", "parity-oci-ft-gamma"},
+			paths: []string{"apps/alpha", "apps/skipped", "teams/platform/gamma"},
+		},
+		{
+			// Sorted by file path: the hidden directory first, then the
+			// two-object list, the JSON file, and the symlinked mirror of
+			// west before west itself.
+			file:  "oci-files.yaml",
+			names: []string{"parity-oci-file-hidden-hidden", "parity-oci-file-north-params", "parity-oci-file-south-params", "parity-oci-file-east-east", "parity-oci-file-west-mirror", "parity-oci-file-west-west"},
+			paths: []string{"apps/beta", "apps/alpha", "apps/beta", "teams/platform/gamma", "teams/platform/delta", "teams/platform/delta"},
+		},
+		{
+			file:  "oci-files-fasttemplate.yaml",
+			names: []string{"parity-oci-ftfile-root-one", "parity-oci-ftfile-root-two"},
+			paths: []string{"apps/alpha", "apps/beta"},
+		},
+		{
+			file:  "oci-matrix.yaml",
+			names: []string{"parity-oci-mx-dev-delta", "parity-oci-mx-dev-gamma", "parity-oci-mx-prod-delta", "parity-oci-mx-prod-gamma"},
+			paths: []string{"teams/platform/delta", "teams/platform/gamma", "teams/platform/delta", "teams/platform/gamma"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.file, func(t *testing.T) {
+			data, err := os.ReadFile(filepath.Join(fixture, "repo", "applicationsets", tt.file))
+			if err != nil {
+				t.Fatalf("read fixture: %v", err)
+			}
+			fetcher := &fakeOCIFetcher{root: artifact}
+			apps, diags, err := GenerateFromYAMLWithOptions(t.TempDir(), tt.file, data, Options{OCI: fetcher})
+			if err != nil {
+				t.Fatalf("GenerateFromYAMLWithOptions() error = %v", err)
+			}
+			if len(diags) != 0 {
+				t.Fatalf("diagnostics = %#v", diags)
+			}
+			if got := generatedNames(apps); !slices.Equal(got, tt.names) {
+				t.Fatalf("names = %q, want %q", got, tt.names)
+			}
+			for i, app := range apps {
+				source := app.Application.Spec.Source
+				if source == nil || source.RepoURL != repoURL || source.TargetRevision != "v1.0.0" || source.Path != tt.paths[i] {
+					t.Fatalf("%s source = %#v, want %s at v1.0.0 path %s", app.Application.Name, source, repoURL, tt.paths[i])
+				}
+			}
+			for _, request := range fetcher.requests {
+				if request != repoURL+"@v1.0.0" {
+					t.Fatalf("fetch request = %q, want %s@v1.0.0", request, repoURL)
+				}
+			}
+		})
+	}
+}

@@ -1,0 +1,7 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: oci-appset-config
+data:
+  component: alpha
+  artifactPath: apps/alpha
