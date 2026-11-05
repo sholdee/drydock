@@ -586,10 +586,17 @@ Supported:
   expression, so a repeated array-index pointer removes one element per copy.
   Argo CD walks `resource.customizations` in Go map order, which is not
   defined. drydock uses sorted key order so the result is stable.
-- `resource.customizations` keys as Argo CD reads them
+- `resource.customizations` keys as Argo CD reads them for `jsonPointers`,
+  `jqPathExpressions`, and `knownTypeFields`
   (`util/argo/normalizers/util.go`): `group/kind` matches with globs, a key
   with no slash such as `Service` means that kind in the core group, and a key
-  with more than one slash matches nothing. `knownTypeFields` apply only when
+  with more than one slash matches nothing. For `managedFieldsManagers`, Argo
+  CD reads keys in a different way (`util/argo/diff/ignore.go`). It looks up
+  the exact text `group/kind` and the key `*/*`, with no globs. A core
+  resource has the lookup key `/Kind`, so a key with no slash such as
+  `Service` never applies its managers. Use `/Service`, or the split key
+  `resource.customizations.ignoreDifferences._Service`. drydock matches this
+  behavior. `knownTypeFields` apply only when
   the key's group and kind equal the resource's group and kind, with no glob
   matching. Argo Rollouts always get Argo CD's default known type, a PodSpec at
   `spec.template.spec`, unless a key sets `knownTypeFields` for

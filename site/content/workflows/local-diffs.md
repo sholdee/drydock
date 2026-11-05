@@ -157,8 +157,15 @@ drydock runs ignore rules in Argo CD's order. Application rules run first, then
 the resource's annotation rule, then `resource.customizations` rules. Each rule
 removes its `jsonPointers` and then its `jqPathExpressions` before the next rule
 starts. A repeated pointer runs once for each copy, so `/spec/containers/0`
-listed twice removes two containers. A `resource.customizations` key with no
-slash, such as `Service`, names that kind in the core group only.
+listed twice removes two containers. For `jsonPointers` and
+`jqPathExpressions`, a `resource.customizations` key with no slash, such as
+`Service`, names that kind in the core group only.
+
+`managedFieldsManagers` in `resource.customizations` follow a different key
+rule, as in Argo CD v3.6.1. The key must be the exact `group/kind` text or
+`*/*`. Globs do not match. A core resource needs a key with a leading slash,
+such as `/Service`. A key with no slash, such as `Service`, never applies its
+managers.
 
 A resource can also carry its own ignore rule in the
 `argocd.argoproj.io/ignore-differences` annotation, as supported by Argo CD

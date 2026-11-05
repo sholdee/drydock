@@ -100,7 +100,7 @@ func globalNormalizationFor(settings config.ArgoSettings, id manifest.Identity) 
 			normalization.CustomizationRules = appendIgnoreRule(normalization.CustomizationRules,
 				customization.IgnoreDifferences.JSONPointers, customization.IgnoreDifferences.JQPathExpressions)
 		}
-		if resourceCustomizationKeyMatches(key, id) {
+		if managedFieldsKeyMatches(key, id) {
 			normalization.ManagedFieldsManagers = append(normalization.ManagedFieldsManagers, customization.IgnoreDifferences.ManagedFieldsManagers...)
 		}
 		// The known-types normalizer looks fields up by exact group and kind,
@@ -135,21 +135,13 @@ func overrideKeyGroupKind(key string) (string, string) {
 	}
 }
 
-// resourceCustomizationKeyMatches matches a resource.customizations key for
-// managedFieldsManagers. It matches a key with no slash against the kind in
-// any group.
-func resourceCustomizationKeyMatches(key string, id manifest.Identity) bool {
-	if key == "" {
-		return false
-	}
-	if key == "*/*" {
-		return true
-	}
-	group, kind, found := strings.Cut(key, "/")
-	if !found {
-		return glob.Match(key, id.Kind)
-	}
-	return glob.Match(group, id.Group) && glob.Match(kind, id.Kind)
+// managedFieldsKeyMatches matches a resource.customizations key for
+// managedFieldsManagers. Argo CD looks the key up in the overrides map by the
+// exact text "group/kind", then by "*/*" (util/argo/diff/ignore.go:52-64).
+// It uses no glob. A core resource has the lookup key "/Kind", so a key with
+// no slash, such as Service, never matches.
+func managedFieldsKeyMatches(key string, id manifest.Identity) bool {
+	return key == id.Group+"/"+id.Kind || key == "*/*"
 }
 
 func ignoreRuleMatches(rule argoappv1.ResourceIgnoreDifferences, id manifest.Identity) bool {
