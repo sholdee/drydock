@@ -465,8 +465,10 @@ Supported:
   (`util/kustomize/kustomize.go:357`). So `../c/b` and `../c/b/` are named
   once, and an entry that resolves to the kept component, such as `../c/a`
   repeated or written as `../c//a`, is not named, because no resources are
-  missing for it. An absolute ref after the kept component is joined under
-  the source path, as Argo CD does, and can be named. The warning is not
+  missing for it. An in-repository symlink to the kept component has a
+  different path, so the warning names it. Argo CD drops it too. An
+  absolute ref after the kept component is joined under the source path, as
+  Argo CD does, and can be named. The warning is not
   advisory: `--strict` makes it an error, because resources that the
   components list names are missing from the render.
 - Without `ignoreMissingComponents`, every component is added. We believe the
@@ -478,9 +480,15 @@ Supported:
   each dropped in-repository directory are optional inputs: the key records
   whether each file exists and its bytes, so creating, deleting, or changing
   one invalidates the entry. When a dropped ref names a file, that path is
-  the input instead. The rest of a dropped component is not an input. If a dropped directory is reached through an in-repository symlink,
-  drydock cannot record these inputs, so that Application renders without
-  the persistent cache.
+  the input instead. The rest of a dropped component is not an input.
+  drydock cannot record these inputs in these cases, so that Application
+  renders without the persistent cache. The render itself still succeeds,
+  as in Argo CD.
+  - A dropped directory is reached through an in-repository symlink.
+  - A dropped kustomization file is a symlink.
+  - A dropped ref is a symlink that points outside the repository.
+  - A dropped ref passes through a regular file, such as
+    `../components/f/sub` when `f` is a file.
 - Recorded divergence from Argo CD v3.6.1: drydock rejects an absolute
   component ref that has a kustomization file when it is the component that
   would be added (the first valid one), because drydock never reads absolute
