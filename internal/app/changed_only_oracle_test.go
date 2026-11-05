@@ -302,7 +302,7 @@ func TestChangedOnlyMatchesFullDiff(t *testing.T) {
 			wantFallback:     changedOnlySettingsScopedCode,
 			wantApplications: []string{"argocd"},
 			wantProjectDiagnostics: []projectDiagnosticKey{
-				destinationDenied("bystander", "team-a"),
+				destinationDeniedInCluster("bystander", "team-a"),
 				destinationDenied("to-prod", "team-a"),
 			},
 		},

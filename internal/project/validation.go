@@ -172,7 +172,7 @@ func validateDestination(app argoappv1.Application, proj argoappv1.AppProject, s
 		switch offlineDestinationPermitted(proj, offline, dest.Namespace) {
 		case tristateTrue:
 		case tristateFalse:
-			diags = append(diags, destinationDeniedWarning(app, proj))
+			diags = append(diags, destinationDeniedWarning(app, proj, ""))
 		case tristateUnknown:
 			diags = append(diags, projectWarning(app, unresolvedDestinationDeferredMessage(app, offline)))
 		}
@@ -190,13 +190,27 @@ func validateDestination(app argoappv1.Application, proj argoappv1.AppProject, s
 		return diags
 	}
 	if !permitted {
-		diags = append(diags, destinationDeniedWarning(app, proj))
+		hint := ""
+		if resolution == destinationLocalCluster {
+			hint = localClusterDeniedHint
+		}
+		diags = append(diags, destinationDeniedWarning(app, proj, hint))
 	}
 	return diags
 }
 
-func destinationDeniedWarning(app argoappv1.Application, proj argoappv1.AppProject) diagnostic.Diagnostic {
-	return projectWarning(app, fmt.Sprintf("Application %s destination is not permitted by AppProject %q", applicationName(app), proj.Name))
+// localClusterDeniedHint explains the one case where the live Argo CD can
+// disagree with a denial of the built-in in-cluster cluster: a cluster Secret
+// at the in-cluster address that exists only in the live cluster takes the
+// place of the built-in cluster (util/db/cluster.go:261-266), and when it
+// names the project, Argo CD adds an implicit destination for it
+// (util/argo/argo.go:832-844). docs/compatibility.md records this gap.
+const localClusterDeniedHint = "; drydock resolved it to Argo CD's built-in in-cluster cluster because the repository has no cluster Secret at " +
+	argoappv1.KubernetesInternalAPIServerAddr +
+	"; if a live cluster Secret at that address names this project, Argo CD can allow it, so commit that Secret to the repository to get Argo CD's result"
+
+func destinationDeniedWarning(app argoappv1.Application, proj argoappv1.AppProject, hint string) diagnostic.Diagnostic {
+	return projectWarning(app, fmt.Sprintf("Application %s destination is not permitted by AppProject %q%s", applicationName(app), proj.Name, hint))
 }
 
 // destinationInClusterDisabled reports whether dest is Argo CD's in-cluster

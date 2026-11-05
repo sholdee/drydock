@@ -455,6 +455,15 @@ func destinationDenied(app, project string) projectDiagnosticKey {
 	}
 }
 
+// destinationDeniedInCluster is destinationDenied for a destination that
+// resolves to the built-in in-cluster cluster, whose message carries the
+// live cluster Secret hint.
+func destinationDeniedInCluster(app, project string) projectDiagnosticKey {
+	key := destinationDenied(app, project)
+	key.Message += "; drydock resolved it to Argo CD's built-in in-cluster cluster because the repository has no cluster Secret at https://kubernetes.default.svc; if a live cluster Secret at that address names this project, Argo CD can allow it, so commit that Secret to the repository to get Argo CD's result"
+	return key
+}
+
 func destinationNameUnresolved(app, name string) projectDiagnosticKey {
 	return projectDiagnosticKey{
 		Code:       diagnostic.CodeProjectUnspecified,

@@ -752,7 +752,9 @@ other direction, the name deny entry `!local` denies in Argo CD, but drydock
 allows the Application. So this gap affects denials where no entry allows the
 cluster, and any result that depends on a name entry. To get Argo CD's
 result, put that cluster Secret in the repository, so that drydock can read
-its metadata.
+its metadata. When drydock denies a destination that it resolved to the
+built-in cluster, the `project.destination-denied` message says so. The
+message also names this fix.
 
 ### AppProject Current Behavior Traceability
 
