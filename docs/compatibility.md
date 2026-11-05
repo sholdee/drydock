@@ -722,6 +722,29 @@ after the selected project diagnostic mode is applied.
 | `spec.sourceIntegrity` | `types.go`, `EffectiveSourceIntegrity`, source integrity checks in `controller/state.go` and repo-server verification | Unsupported runtime verification | None | Requires GPG keyring state, repo-server verification result, and resolved commit metadata |
 | `spec.destinationServiceAccounts` | `types.go`, `ValidateProject`, `controller/sync.go` sync impersonation runtime | Runtime-bound metadata | None | Sync impersonation is applied during controller sync; drydock does not mutate REST config or validate live service account authorization |
 
+### AppProject Known Gap: Live Cluster Secret At The In-Cluster Address
+
+Some repositories have no cluster Secret at `https://kubernetes.default.svc`.
+In those repositories, drydock treats a destination at that server as Argo
+CD's built-in `in-cluster` cluster. A name-only `in-cluster` destination
+resolves the same way. drydock then checks the AppProject against the
+built-in cluster. If no destination entry allows it, drydock reports a
+definite `project.destination-denied` warning.
+
+The live Argo CD can decide differently. A cluster Secret at the in-cluster
+address takes the place of the built-in cluster (`util/db/cluster.go:261-266`
+in Argo CD v3.6.1). Suppose that Secret exists only in the live cluster and
+its `project` field names the Application's project. Argo CD then adds an
+implicit destination for its server to that project
+(`util/argo/argo.go:832-844`). That implicit destination can allow the
+Application that drydock denies. The Secret's name can also change how name
+entries match.
+
+drydock keeps the definite denial. It does not defer this case. A matching
+deny entry still denies in Argo CD too, so this gap affects only denials
+where no entry allows the cluster. To get Argo CD's result, put that cluster
+Secret in the repository, so that drydock can read its metadata.
+
 ### AppProject Current Behavior Traceability
 
 This table maps the current drydock code paths and tests to the semantics above.
