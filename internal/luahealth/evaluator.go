@@ -9,7 +9,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/argoproj/argo-cd/gitops-engine/pkg/health"
+	"github.com/argoproj/argo-cd/gitops-engine/v3/pkg/health"
 	argoglob "github.com/argoproj/argo-cd/v3/util/glob"
 	argolua "github.com/argoproj/argo-cd/v3/util/lua"
 	"github.com/sholdee/drydock/internal/config"

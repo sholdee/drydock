@@ -158,9 +158,9 @@ rendered-tier discovery. Fatal discovery decode errors append a
 `--discover-ignore` remediation hint at the discovery call sites, not inside
 `internal/manifest`.
 
-Supported ApplicationSet generators are local and deterministic. The supported
-set includes Git directories, Git files, list, matrix, merge, and explicit
-fixture-backed provider generators. Preserve Go-template behavior such as
+Supported ApplicationSet generators are deterministic. The supported set
+includes Git directories, Git files, OCI directories and files, list, matrix,
+merge, and explicit fixture-backed provider generators. Preserve Go-template behavior such as
 `missingkey=error`, Sprig functions, generator selectors, generator template
 overrides, supported nested matrix/merge combinations, and deterministic
 merge-key overlays.
@@ -169,6 +169,14 @@ Provider-backed ApplicationSet generators are offline fixture-backed only. Do
 not add Kubernetes API reads, Argo CD API reads, SCM/pull-request/cloud API
 calls, plugin service calls, shellouts, or ambient credential discovery.
 
+The Argo CD v3.6 OCI generator is the one generator that acquires a source:
+`internal/app` hands `appset.Options.OCI` a fetcher that reuses the `oci://`
+Application source path (repo map, `--offline`, OCI cache, credentials,
+snapshot session). Its matching mirrors the v3.6.1 repo-server
+(`walkDirectoryTree` without hidden directories, always-doublestar file
+globs over `os.Root`), and its param sets carry no `SourcePath`, so
+artifact paths never claim changed paths or local render-cache inputs.
+
 Git files generator behavior is intentionally local and fail-closed. Keep path
 matching sorted, reject absolute paths and `..` escapes, do not follow
 symlinks, and decode only YAML/JSON mapping documents. Empty-content decoding
@@ -176,12 +184,24 @@ is an Argo CD parity pin: empty, comment-only, and bare `---`/`...` files
 decode to one empty param set, `[]` decodes to zero, and multi-document files
 decode only the first document. Do not change it.
 
-Template and `templatePatch` execution errors are appset-scoped warning
-diagnostics (`appset.template-render-failed`), and the failing ApplicationSet
-contributes zero generated Applications, matching the Argo CD controller's
-`ErrorOccurred` condition scoping. Generator evaluation errors stay fatal. The
-"template render failed" message substring is the stable-code dispatch key in
-`internal/diagnostic`; keep the message and dispatch case in sync.
+Template, `templatePatch`, generator `values`, and matrix/merge child
+interpolation execution errors are appset-scoped warning diagnostics
+(`appset.template-render-failed`), and the failing ApplicationSet contributes
+zero generated Applications, matching the Argo CD controller's
+`ErrorOccurred` condition scoping. Generator template failures are marked with
+`generatorTemplateError`; other generator evaluation errors (IO, acquisition,
+invalid generator specs) stay fatal. The "template render failed" message
+substring is the stable-code dispatch key in `internal/diagnostic`; keep the
+message and dispatch case in sync.
+
+After rendering, generated Applications go through Argo CD's name validation
+(empty names first, then duplicates; every Application sharing a duplicated
+name is dropped) as `appset.application-validation-failed` warnings, and
+`spec.strategy` RollingSync steps are linted as `appset.rollout-no-steps` and
+`appset.invalid-rollout-config` warnings that never change generation output;
+`appset.invalid-rollout-config` is strict-exempt (`strictExemptDiagnostic`)
+because Argo CD's condition is non-blocking. Each of these codes dispatches on a message substring kept in sync with
+`internal/diagnostic.appSetCode`.
 
 ## Source Resolution, Cache, And Credentials
 
@@ -335,6 +355,12 @@ must emit a diagnostic. Do not dedupe across Applications; cross-Application
 shared-resource behavior belongs to live Argo CD semantics and is out of
 scope for offline desired-state analysis.
 
+Built-in Kubernetes kind scopes live in `internal/manifest/scope.go`, keyed by
+group and kind. `TestBuiltInScopeTablesCoverStaticSchemeKinds` fails when a
+Kubernetes bump adds a top-level kind to the gitops-engine static scheme that
+neither table lists; classify it from its `+genclient:nonNamespaced` marker in
+`k8s.io/api`.
+
 Diff identity is parent Application plus child resource identity. Same-named
 resources from different Applications remain separate. Named app arguments may
 use `NAME` or `NAMESPACE/NAME`.
@@ -386,6 +412,13 @@ sides when both sides contain a matching resource. Managed fields support is an
 offline desired-vs-desired approximation using rendered manifests; do not
 claim live server-side ownership prediction.
 
+The resource-level `argocd.argoproj.io/ignore-differences` annotation
+(`jsonPointers` only) targets just the annotated resource. Read it from the
+current side, falling back to the baseline for removed resources, and apply
+its pointers leniently with evanphx/json-patch path semantics (first segment
+dropped unchecked, negative indexes, literal unknown `~` escapes); pointers
+that cannot be applied, including root pointers, are skipped, never errors.
+
 Resource filters such as `--skip-kind`, `--skip-crds`, and `--skip-secrets`
 are explicit opt-ins. Do not change defaults to hide Secrets or CRDs.
 
@@ -407,7 +440,9 @@ Canonical references:
 Renderers implement `internal/render.Renderer`. The default implementation
 path must not shell out.
 
-Directory rendering parses YAML/JSON files, flattens any document with an
+Directory rendering selects files with the repo-server's case-sensitive
+extension filter (skipped under `directory.disableExtensionFilter`, leaving
+include/exclude as the only filters), parses YAML/JSON files, flattens any document with an
 `items` array into its items regardless of kind (matching Argo CD's
 shape-based detection) and drops `items: null` documents as no-ops, renders
 Jsonnet with native Go libraries, honors Argo CD's

@@ -9,6 +9,7 @@ import (
 
 	argoappv1 "github.com/argoproj/argo-cd/v3/pkg/apis/application/v1alpha1"
 	"github.com/sholdee/drydock/internal/diagnostic"
+	"github.com/sholdee/drydock/internal/pathsafety"
 	"sigs.k8s.io/kustomize/api/types"
 )
 
@@ -289,13 +290,17 @@ func sourceKustomizePatchOptions(options map[string]bool) *types.PatchArgs {
 
 func sourceKustomizeComponents(dir, boundaryRoot string, components []string, ignoreMissing bool) ([]string, error) {
 	out := make([]string, 0, len(components))
+	// Every valid component is kept. Recorded divergence from strict Argo CD
+	// v3.6.1: util/kustomize/kustomize.go (a16170b2e) exits its component
+	// loop with `break component` after the first valid entry, so the
+	// repo-server adds only that one; drydock keeps the documented intent.
 	for _, component := range components {
 		if ignoreMissing {
-			exists, err := sourceKustomizeComponentExists(dir, boundaryRoot, component)
+			decision, err := ignoreMissingComponentDecision(dir, boundaryRoot, component)
 			if err != nil {
 				return nil, err
 			}
-			if !exists {
+			if !decision.keep {
 				continue
 			}
 		}
@@ -304,22 +309,76 @@ func sourceKustomizeComponents(dir, boundaryRoot string, components []string, ig
 	return out, nil
 }
 
-func sourceKustomizeComponentExists(dir, boundaryRoot, ref string) (bool, error) {
+// ignoreMissingComponent is the outcome of the ignoreMissingComponents check
+// for one spec.source.kustomize.components entry.
+type ignoreMissingComponent struct {
+	// keep reports whether the component is added to the kustomization.
+	keep bool
+	// probe is the in-boundary directory the check looked at. A skipped
+	// component's probe stays a render input (an optional digest path): a
+	// kustomization file appearing there changes the render.
+	probe string
+}
+
+// ignoreMissingComponentDecision mirrors Argo CD v3.6.1's
+// ignoreMissingComponents check (util/kustomize/kustomize.go, a16170b2e):
+// the ref is joined with the source directory and kept only when that
+// directory holds a regular kustomization.yaml, kustomization.yml or
+// Kustomization, looked up through an os.Root on the repository root so
+// in-root symlinks are followed and nothing outside the root is read. As
+// upstream, a remote ref and a ref escaping the repository are skipped, and
+// an absolute ref is joined under the source directory rather than rejected.
+// A kept absolute ref still fails, as drydock never reads absolute paths.
+func ignoreMissingComponentDecision(dir, boundaryRoot, ref string) (ignoreMissingComponent, error) {
 	if isRemoteKustomizeRef(ref) {
-		return true, nil
+		return ignoreMissingComponent{}, nil
+	}
+	boundaryRoot = filepath.Clean(boundaryRoot)
+	componentDir := filepath.Clean(filepath.Join(dir, filepath.FromSlash(ref)))
+	rel, inside := relInsideBoundary(boundaryRoot, componentDir)
+	if !inside {
+		return ignoreMissingComponent{}, nil
+	}
+	var decision ignoreMissingComponent
+	if !pathsafety.RelEntersGit(rel) {
+		decision.probe = componentDir
+	}
+	found, err := componentHasKustomizationFile(boundaryRoot, rel)
+	if err != nil {
+		return ignoreMissingComponent{}, err
+	}
+	if !found {
+		return decision, nil
 	}
 	if filepath.IsAbs(ref) {
-		return false, fmt.Errorf("kustomize components %q must be relative", ref)
+		return ignoreMissingComponent{}, fmt.Errorf("kustomize components %q must be relative", ref)
 	}
-	path := filepath.Join(dir, filepath.FromSlash(ref))
-	if err := rejectPathOutsideBoundary("kustomize components", path, boundaryRoot); err != nil {
-		return false, err
+	decision.keep = true
+	return decision, nil
+}
+
+func relInsideBoundary(boundaryRoot, path string) (string, bool) {
+	rel, err := filepath.Rel(boundaryRoot, path)
+	if err != nil || pathsafety.RelEscapes(rel) {
+		return "", false
 	}
-	if _, err := os.Lstat(path); err != nil {
-		if os.IsNotExist(err) {
-			return false, nil
+	return rel, true
+}
+
+// componentHasKustomizationFile reports whether rel, under boundaryRoot,
+// holds a regular kustomization file. Like the repo-server, any Stat error
+// (missing, escaping symlink, not a directory) means "not found".
+func componentHasKustomizationFile(boundaryRoot, rel string) (bool, error) {
+	root, err := os.OpenRoot(boundaryRoot)
+	if err != nil {
+		return false, fmt.Errorf("open repository root for kustomize components: %w", err)
+	}
+	defer func() { _ = root.Close() }()
+	for _, name := range kustomizationFileNames {
+		info, err := root.Stat(filepath.Join(rel, name))
+		if err == nil && info.Mode().IsRegular() {
+			return true, nil
 		}
-		return false, err
 	}
-	return true, nil
+	return false, nil
 }

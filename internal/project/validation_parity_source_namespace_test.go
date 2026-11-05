@@ -45,6 +45,16 @@ func TestValidateApplicationsSourceNamespaceParityWithArgoCD(t *testing.T) {
 			appNamespace:     "team-b",
 			sourceNamespaces: []string{"team-a"},
 		},
+		{
+			name:             "single slash entry is not a regexp",
+			appNamespace:     "team-a",
+			sourceNamespaces: []string{"/"},
+		},
+		{
+			name:             "empty regexp entry is not a regexp",
+			appNamespace:     "team-a",
+			sourceNamespaces: []string{"//"},
+		},
 	}
 
 	for _, tt := range tests {
@@ -115,5 +125,23 @@ func assertSourceNamespaceDiagnosticsMatchPermit(t *testing.T, diags []diagnosti
 	}
 	if !permitted && sourceNamespaceDiagnostics != 1 {
 		t.Fatalf("Diagnostics = %#v, want one source namespace diagnostic for Argo CD-denied namespace", diags)
+	}
+}
+
+// Argo CD v3.6.1 util/glob.MatchStringInList treats an entry as a regexp only
+// when it is longer than two characters (c49f8b712, #30572): `/` used to
+// panic with a slice bounds error and `//` compiled an empty regexp that
+// matched every namespace. Both are now literal globs that deny any other
+// namespace.
+func TestValidateApplicationsSourceNamespaceSlashEntriesDeny(t *testing.T) {
+	for _, entry := range []string{"/", "//"} {
+		t.Run(entry, func(t *testing.T) {
+			app := sourceNamespaceParityApplication("team-a")
+			proj := sourceNamespaceParityProject([]string{entry})
+
+			diags := ValidateApplications([]argoappv1.Application{app}, []argoappv1.AppProject{proj}, config.DefaultSettings())
+
+			assertSourceNamespaceDiagnosticsMatchPermit(t, diags, false)
+		})
 	}
 }

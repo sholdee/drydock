@@ -150,9 +150,11 @@ it. A generated Application owns its source paths in the repository under diff
 as usual, and sources naming that repository still render from each side's tree
 through self-repository resolution and the per-side `--repo-map` rewrite.
 
-ApplicationSet support is deterministic and local. Git, list, matrix, merge,
-and fixture-backed provider generators are documented in
-`site/content/docs/applicationsets.md`.
+ApplicationSet support is deterministic. Git directories and files, OCI
+directories and files, list, matrix, merge, and fixture-backed provider
+generators are documented in `site/content/docs/applicationsets.md`. The OCI
+generator is the only one that reaches the network; it pulls the artifact
+through the same cache, authentication, and `--offline` rules as OCI sources.
 
 Unsupported generators or unsupported fields produce diagnostics. Non-strict
 commands keep supported Applications where possible; `--strict` promotes those
@@ -161,7 +163,9 @@ diagnostics to errors.
 Template and `templatePatch` execution errors are scoped to the failing
 ApplicationSet as warning diagnostics, and that ApplicationSet contributes
 zero generated Applications, matching the Argo CD controller's `ErrorOccurred`
-condition scoping. Generator evaluation errors remain fatal to the run.
+condition scoping. Generator `values` and matrix/merge interpolation template
+errors are scoped the same way. Other generator evaluation errors, such as
+source acquisition or IO failures, remain fatal to the run.
 
 ## Source Planning And Acquisition
 

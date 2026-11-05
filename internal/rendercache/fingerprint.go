@@ -10,7 +10,7 @@ import (
 // one list to extend when a new module starts affecting rendered output.
 const (
 	ArgoCDModulePath       = "github.com/argoproj/argo-cd/v3"
-	GitOpsEngineModulePath = "github.com/argoproj/argo-cd/gitops-engine"
+	GitOpsEngineModulePath = "github.com/argoproj/argo-cd/gitops-engine/v3"
 	HelmModulePath         = "helm.sh/helm/v4"
 	KustomizeModulePath    = "sigs.k8s.io/kustomize/api"
 	JsonnetModulePath      = "github.com/google/go-jsonnet"

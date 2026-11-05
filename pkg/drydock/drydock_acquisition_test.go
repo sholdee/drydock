@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/sholdee/drydock/internal/ociartifact"
 	"github.com/sholdee/drydock/internal/remote"
@@ -544,5 +545,69 @@ spec:
 	}
 	if !hasStatus(result.Statuses, "external", "FAIL") {
 		t.Fatalf("Statuses = %#v, want FAIL status for external app", result.Statuses)
+	}
+}
+
+// TestConfigChartCacheMaxAgeMapsToRequests pins the public ChartCacheMaxAge
+// option into both Build and Diff requests; zero stays zero.
+func TestConfigChartCacheMaxAgeMapsToRequests(t *testing.T) {
+	options := NewClient(Config{Path: ".", ChartCacheMaxAge: 36 * time.Hour}).requestOptions()
+	if got := options.Build().ChartCacheMaxAge; got != 36*time.Hour {
+		t.Fatalf("Build().ChartCacheMaxAge = %v, want 36h", got)
+	}
+	if got := options.Diff().ChartCacheMaxAge; got != 36*time.Hour {
+		t.Fatalf("Diff().ChartCacheMaxAge = %v, want 36h", got)
+	}
+	if got := NewClient(Config{Path: "."}).requestOptions().Build().ChartCacheMaxAge; got != 0 {
+		t.Fatalf("default ChartCacheMaxAge = %v, want 0", got)
+	}
+}
+
+func TestConfigNegativeChartCacheMaxAgeIsRejected(t *testing.T) {
+	_, err := NewClient(Config{Path: t.TempDir(), ChartCacheMaxAge: -time.Hour}).Render(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "chart cache max age must not be negative") {
+		t.Fatalf("Build() error = %v, want negative max age rejection", err)
+	}
+}
+
+// TestChartAcquirerReceivesMaxAgeAndReportsStale pins the public
+// ChartAcquirer contract for Config.ChartCacheMaxAge: the acquirer receives
+// the max age, and a chart it reports as Stale (reused offline past the max
+// age) gets the source.chart-cache-stale warning, as the built-in acquirer's
+// does.
+func TestChartAcquirerReceivesMaxAgeAndReportsStale(t *testing.T) {
+	root := t.TempDir()
+	chartDir := filepath.Join(t.TempDir(), "demo")
+	writeAPIChart(t, chartDir, "demo", "1.2.3", `apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: charted
+`)
+	writeAPIChartApplication(t, root)
+	renderCacheDisabled := false
+	fetchedAt := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
+	acquirer := &recordingChartAcquirer{chartDir: chartDir, fromCache: true, cacheKey: "demo-key", fetchedAt: fetchedAt, stale: true}
+
+	result, err := Render(context.Background(), Config{
+		Path:             root,
+		Offline:          true,
+		ChartCacheMaxAge: 36 * time.Hour,
+		RenderCache:      RenderCacheOptions{Enabled: &renderCacheDisabled},
+		ChartAcquirer:    acquirer,
+	})
+	if err != nil {
+		t.Fatalf("Render() error = %v", err)
+	}
+	if len(acquirer.options) != 1 || acquirer.options[0].MaxAge != 36*time.Hour || !acquirer.options[0].Offline {
+		t.Fatalf("Chart options = %#v, want one offline acquisition with MaxAge 36h", acquirer.options)
+	}
+	var stale []Diagnostic
+	for _, diag := range result.Diagnostics {
+		if diag.Code == "source.chart-cache-stale" {
+			stale = append(stale, diag)
+		}
+	}
+	if len(stale) != 1 || !strings.Contains(stale[0].Message, "was fetched at 2026-01-02T03:04:05Z") || !strings.Contains(stale[0].Message, "36h0m0s") {
+		t.Fatalf("Diagnostics = %#v, want one source.chart-cache-stale warning with the reported fetch time", result.Diagnostics)
 	}
 }

@@ -257,9 +257,10 @@ func TestValidateRenderedResourcePolicyStillChecksNamespaceWhenProjectScopedMeta
 
 func TestValidateRenderedResourcePolicyDefersNameOnlyDestinationServerPolicy(t *testing.T) {
 	app := resourcePolicyApplication("demo", "platform")
+	app.Spec.Destination.Name = "prod"
 	project := resourcePolicyProject("platform")
 	project.Spec.Destinations = []argoappv1.ApplicationDestination{{
-		Server:    "https://kubernetes.default.svc",
+		Server:    "https://prod.example",
 		Namespace: "*",
 	}}
 
@@ -267,20 +268,21 @@ func TestValidateRenderedResourcePolicyDefersNameOnlyDestinationServerPolicy(t *
 		renderedObject("v1", "ConfigMap", "workloads", "settings"),
 	}, []argoappv1.AppProject{project}, config.DefaultSettings())
 
-	assertDiagnostic(t, diags, "destination name \"in-cluster\" cannot be resolved against AppProject server policy offline")
+	assertDiagnostic(t, diags, "destination name \"prod\" cannot be resolved against AppProject server policy offline")
 	assertNoResourcePolicyDenied(t, diags)
 }
 
 func TestValidateRenderedResourcePolicyDefersNameOnlyDestinationServerPolicyForRenderedNamespace(t *testing.T) {
 	app := resourcePolicyApplication("demo", "platform")
+	app.Spec.Destination.Name = "prod"
 	project := resourcePolicyProject("platform")
 	project.Spec.Destinations = []argoappv1.ApplicationDestination{
 		{
-			Name:      "in-cluster",
+			Name:      "prod",
 			Namespace: "workloads",
 		},
 		{
-			Server:    "https://kubernetes.default.svc",
+			Server:    "https://prod.example",
 			Namespace: "kube-system",
 		},
 	}
@@ -289,17 +291,18 @@ func TestValidateRenderedResourcePolicyDefersNameOnlyDestinationServerPolicyForR
 		renderedObject("v1", "ConfigMap", "kube-system", "settings"),
 	}, []argoappv1.AppProject{project}, config.DefaultSettings())
 
-	assertDiagnostic(t, diags, "destination name \"in-cluster\" cannot be resolved against AppProject server policy offline")
+	assertDiagnostic(t, diags, "destination name \"prod\" cannot be resolved against AppProject server policy offline")
 	assertNoResourcePolicyDenied(t, diags)
 	assertNoResourcePolicyDestinationDenied(t, diags)
 }
 
 func TestValidateRenderedResourcePolicyAllowsNameOnlyRenderedNamespaceWithWildcardServer(t *testing.T) {
 	app := resourcePolicyApplication("demo", "platform")
+	app.Spec.Destination.Name = "prod"
 	project := resourcePolicyProject("platform")
 	project.Spec.Destinations = []argoappv1.ApplicationDestination{
 		{
-			Name:      "in-cluster",
+			Name:      "prod",
 			Namespace: "workloads",
 		},
 		{
@@ -317,10 +320,11 @@ func TestValidateRenderedResourcePolicyAllowsNameOnlyRenderedNamespaceWithWildca
 
 func TestValidateRenderedResourcePolicyDoesNotBypassNameOnlyRenderedNamespaceDeny(t *testing.T) {
 	app := resourcePolicyApplication("demo", "platform")
+	app.Spec.Destination.Name = "prod"
 	project := resourcePolicyProject("platform")
 	project.Spec.Destinations = []argoappv1.ApplicationDestination{
 		{
-			Name:      "in-cluster",
+			Name:      "prod",
 			Namespace: "workloads",
 		},
 		{
@@ -339,6 +343,137 @@ func TestValidateRenderedResourcePolicyDoesNotBypassNameOnlyRenderedNamespaceDen
 
 	assertResourcePolicyDestinationDenied(t, diags, "ConfigMap kube-system/settings")
 	assertNoResourcePolicyDenied(t, diags)
+}
+
+// Project-scoped cluster Secrets add implicit destinations to the project
+// the rendered-resource policy evaluates (GetAppProjectByName).
+func TestValidateRenderedResourcePolicyUsesProjectScopedClusterDestinations(t *testing.T) {
+	app := application("demo", "platform", argoappv1.ApplicationSource{
+		RepoURL: "https://github.com/example/repo",
+		Path:    "apps/demo",
+	}, argoappv1.ApplicationDestination{Server: "https://team.example", Namespace: "team-a"})
+	project := resourcePolicyProject("platform")
+	project.Spec.Destinations = []argoappv1.ApplicationDestination{{Server: "https://other.example", Namespace: "*"}}
+	settings := config.DefaultSettings()
+	settings.Clusters["https://team.example"] = config.ClusterSettings{
+		Name: "team", Server: "https://team.example", Project: "platform", Namespaces: []string{"team-a"},
+	}
+
+	allowed := ValidateRenderedResourcePolicy(app, []*unstructured.Unstructured{
+		renderedObject("v1", "ConfigMap", "team-a", "settings"),
+	}, []argoappv1.AppProject{project}, settings)
+	assertNoResourcePolicyDiagnostics(t, allowed)
+
+	denied := ValidateRenderedResourcePolicy(app, []*unstructured.Unstructured{
+		renderedObject("v1", "ConfigMap", "team-b", "settings"),
+	}, []argoappv1.AppProject{project}, settings)
+	assertResourcePolicyDestinationDenied(t, denied, "ConfigMap team-b/settings")
+
+	unscoped := settings.Clusters["https://team.example"]
+	unscoped.Namespaces = nil
+	settings.Clusters["https://team.example"] = unscoped
+	anyNamespace := ValidateRenderedResourcePolicy(app, []*unstructured.Unstructured{
+		renderedObject("v1", "ConfigMap", "team-b", "settings"),
+	}, []argoappv1.AppProject{project}, settings)
+	assertNoResourcePolicyDiagnostics(t, anyNamespace)
+}
+
+// A server-only destination at the in-cluster address with no cluster Secret
+// is Argo CD's in-cluster cluster for rendered objects too.
+func TestValidateRenderedResourcePolicyResolvesInClusterServerWithoutSecret(t *testing.T) {
+	app := application("demo", "platform", argoappv1.ApplicationSource{
+		RepoURL: "https://github.com/example/repo",
+		Path:    "apps/demo",
+	}, argoappv1.ApplicationDestination{Server: "https://kubernetes.default.svc", Namespace: "workloads"})
+	project := resourcePolicyProject("platform")
+	project.Spec.Destinations = []argoappv1.ApplicationDestination{{Name: "in-cluster", Namespace: "workloads"}}
+
+	diags := ValidateRenderedResourcePolicy(app, []*unstructured.Unstructured{
+		renderedObject("v1", "ConfigMap", "workloads", "settings"),
+		renderedObject("v1", "ConfigMap", "kube-system", "settings"),
+	}, []argoappv1.AppProject{project}, config.DefaultSettings())
+	assertResourcePolicyDestinationDenied(t, diags, "ConfigMap kube-system/settings")
+	if len(diags) != 1 {
+		t.Fatalf("Diagnostics = %#v, want only the kube-system denial", diags)
+	}
+}
+
+// A name-only in-cluster destination with no cluster Secret of that name is
+// Argo CD's in-cluster cluster for rendered objects too.
+func TestValidateRenderedResourcePolicyResolvesInClusterNameWithoutSecret(t *testing.T) {
+	app := resourcePolicyApplication("demo", "platform")
+	project := resourcePolicyProject("platform")
+	project.Spec.Destinations = []argoappv1.ApplicationDestination{{Server: "https://kubernetes.default.svc", Namespace: "workloads"}}
+
+	diags := ValidateRenderedResourcePolicy(app, []*unstructured.Unstructured{
+		renderedObject("v1", "ConfigMap", "workloads", "settings"),
+		renderedObject("v1", "ConfigMap", "kube-system", "settings"),
+	}, []argoappv1.AppProject{project}, config.DefaultSettings())
+	assertResourcePolicyDestinationDenied(t, diags, "ConfigMap kube-system/settings")
+	if len(diags) != 1 {
+		t.Fatalf("Diagnostics = %#v, want only the kube-system denial", diags)
+	}
+}
+
+// Argo CD rejects an Application at a disabled in-cluster destination before
+// it evaluates any rendered resource; validateDestination reports it.
+func TestValidateRenderedResourcePolicySkipsDisabledInClusterDestination(t *testing.T) {
+	app := application("demo", "platform", argoappv1.ApplicationSource{
+		RepoURL: "https://github.com/example/repo",
+		Path:    "apps/demo",
+	}, argoappv1.ApplicationDestination{Server: "https://kubernetes.default.svc", Namespace: "workloads"})
+	project := resourcePolicyProject("platform")
+	project.Spec.Destinations = []argoappv1.ApplicationDestination{{Server: "*", Namespace: "workloads"}}
+	settings := config.DefaultSettings()
+	settings.InClusterEnabled = config.Value[bool]{Value: false, Provenance: config.Provenance{Path: "argocd-cm.yaml"}}
+
+	diags := ValidateRenderedResourcePolicy(app, []*unstructured.Unstructured{
+		renderedObject("v1", "ConfigMap", "kube-system", "settings"),
+	}, []argoappv1.AppProject{project}, settings)
+	if len(diags) != 0 {
+		t.Fatalf("Diagnostics = %#v, want none", diags)
+	}
+}
+
+// The live cluster behind an unresolved destination may be scoped to the
+// project, adding an implicit destination for its server, so a rendered
+// namespace no entry matches defers rather than denies.
+func TestValidateRenderedResourcePolicyDefersUnmatchedNamespaceForUnresolvedDestination(t *testing.T) {
+	app := application("demo", "platform", argoappv1.ApplicationSource{
+		RepoURL: "https://github.com/example/repo",
+		Path:    "apps/demo",
+	}, argoappv1.ApplicationDestination{Server: "https://prod.example", Namespace: "workloads"})
+	project := resourcePolicyProject("platform")
+	project.Spec.Destinations = []argoappv1.ApplicationDestination{{Server: "*", Namespace: "workloads"}}
+
+	diags := ValidateRenderedResourcePolicy(app, []*unstructured.Unstructured{
+		renderedObject("v1", "ConfigMap", "kube-system", "settings"),
+	}, []argoappv1.AppProject{project}, config.DefaultSettings())
+	assertDiagnostic(t, diags, "destination server \"https://prod.example\" has no cluster Secret; its cluster name cannot be resolved against AppProject name policy offline")
+	assertNoResourcePolicyDestinationDenied(t, diags)
+}
+
+func TestValidateRenderedResourcePolicyDefersNamePolicyForServerOnlyDestinationWithoutSecret(t *testing.T) {
+	app := application("demo", "platform", argoappv1.ApplicationSource{
+		RepoURL: "https://github.com/example/repo",
+		Path:    "apps/demo",
+	}, argoappv1.ApplicationDestination{Server: "https://prod.example", Namespace: "workloads"})
+	project := resourcePolicyProject("platform")
+	project.Spec.Destinations = []argoappv1.ApplicationDestination{
+		{Server: "*", Namespace: "*"},
+		{Name: "!legacy", Namespace: "kube-system"},
+	}
+
+	diags := ValidateRenderedResourcePolicy(app, []*unstructured.Unstructured{
+		renderedObject("v1", "ConfigMap", "workloads", "settings"),
+		renderedObject("v1", "ConfigMap", "kube-system", "settings"),
+	}, []argoappv1.AppProject{project}, config.DefaultSettings())
+	assertDiagnostic(t, diags, "destination server \"https://prod.example\" has no cluster Secret; its cluster name cannot be resolved against AppProject name policy offline")
+	assertNoResourcePolicyDenied(t, diags)
+	assertNoResourcePolicyDestinationDenied(t, diags)
+	if len(diags) != 1 {
+		t.Fatalf("Diagnostics = %#v, want one deferral for the kube-system object only", diags)
+	}
 }
 
 func TestValidateRenderedResourcePolicyDefersUnknownUnnamespacedCRScope(t *testing.T) {

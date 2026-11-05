@@ -260,6 +260,7 @@ func resolveKustomizeHelmChart(ctx context.Context, tempRepoRoot, tempSourceRoot
 		CacheDir:       opts.ChartCacheDir,
 		Offline:        opts.OfflineCharts,
 		Refresh:        opts.RefreshCharts,
+		MaxAge:         opts.ChartCacheMaxAge,
 		ForbiddenRoots: append([]string(nil), opts.ChartForbiddenRoots...),
 		Credentials:    opts.ChartCredentials,
 	})
@@ -361,6 +362,7 @@ func renderOptionsForKustomizeHelmChart(ctx context.Context, helmChart types.Hel
 		ChartCacheDir:                opts.ChartCacheDir,
 		OfflineCharts:                opts.OfflineCharts,
 		RefreshCharts:                opts.RefreshCharts,
+		ChartCacheMaxAge:             opts.ChartCacheMaxAge,
 		ChartForbiddenRoots:          append([]string(nil), opts.ChartForbiddenRoots...),
 		ChartCredentials:             opts.ChartCredentials,
 		ChartAcquirer:                acquirer,

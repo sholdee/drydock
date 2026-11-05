@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	argoappv1 "github.com/argoproj/argo-cd/v3/pkg/apis/application/v1alpha1"
 	"github.com/sholdee/drydock/internal/chart"
@@ -1630,6 +1631,7 @@ metadata:
 		ChartCacheDir:       filepath.Join(root, "..", "chart-cache"),
 		OfflineCharts:       true,
 		RefreshCharts:       true,
+		ChartCacheMaxAge:    36 * time.Hour,
 		ChartForbiddenRoots: []string{root},
 		ChartCredentials:    chart.ChartCredentials{Username: "helm-user"},
 		PassCredentials:     true,
@@ -1840,7 +1842,7 @@ func assertHelmDependencyAcquireRequest(t *testing.T, acquirer *fakeChartAcquire
 	if got := acquirer.requests[0]; got.Repository != "oci://registry-1.docker.io/cloudpirates" || got.Name != "postgres" || got.Version != "0.12.4" || got.Kind != chart.RepositoryOCI {
 		t.Fatalf("chart request = %#v", got)
 	}
-	if got := acquirer.options[0]; !got.Offline || !got.Refresh || !got.PassCredentials || got.CacheDir == "" || len(got.ForbiddenRoots) != 1 || got.Credentials.Username != "helm-user" {
+	if got := acquirer.options[0]; !got.Offline || !got.Refresh || got.MaxAge != 36*time.Hour || !got.PassCredentials || got.CacheDir == "" || len(got.ForbiddenRoots) != 1 || got.Credentials.Username != "helm-user" {
 		t.Fatalf("chart options = %#v", got)
 	}
 }

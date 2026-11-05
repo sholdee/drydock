@@ -2,6 +2,7 @@ package drydock
 
 import (
 	"context"
+	"time"
 
 	"github.com/sholdee/drydock/internal/chart"
 	"github.com/sholdee/drydock/internal/ociartifact"
@@ -88,9 +89,14 @@ type ChartRequest struct {
 
 // ChartOptions controls Helm chart acquisition.
 type ChartOptions struct {
-	CacheDir    string
-	Offline     bool
-	Refresh     bool
+	CacheDir string
+	Offline  bool
+	Refresh  bool
+	// MaxAge is Config.ChartCacheMaxAge. When positive, an acquirer that
+	// caches charts should refetch a cached chart fetched longer ago than it
+	// (or of unknown age), or, when Offline is set, reuse it and report
+	// ChartResult.Stale. Zero never expires cached charts.
+	MaxAge      time.Duration
 	Credentials ChartCredentials
 }
 
@@ -102,6 +108,19 @@ type ChartResult struct {
 	Version    string
 	Kind       RepositoryKind
 	FromCache  bool
+	// CacheKey and FetchedAt identify the drydock chart cache entry under
+	// ChartOptions.CacheDir the chart was served from and when that entry was
+	// fetched. Under a positive ChartOptions.MaxAge, a persisted render
+	// output is served only while every chart it read still matches such an
+	// entry; leave them empty when the chart does not come from the drydock
+	// chart cache, and such renders always re-run (reason chart-unverified).
+	CacheKey  string
+	FetchedAt time.Time
+	// Stale reports a cached chart older than ChartOptions.MaxAge that was
+	// reused because ChartOptions.Offline forbids refetching it. Each render
+	// that reads it gets a source.chart-cache-stale warning and is never
+	// persisted.
+	Stale bool
 }
 
 // ChartAcquirer acquires Helm charts for Application rendering.
@@ -346,6 +365,7 @@ func (adapter chartAcquirerAdapter) Acquire(ctx context.Context, request chart.R
 		CacheDir:    opts.CacheDir,
 		Offline:     opts.Offline,
 		Refresh:     opts.Refresh,
+		MaxAge:      opts.MaxAge,
 		Credentials: chartCredentialsFromInternal(opts.Credentials),
 	})
 	return chart.Result{
@@ -355,6 +375,9 @@ func (adapter chartAcquirerAdapter) Acquire(ctx context.Context, request chart.R
 		Version:    result.Version,
 		Kind:       chartKindToInternal(result.Kind),
 		FromCache:  result.FromCache,
+		CacheKey:   result.CacheKey,
+		FetchedAt:  result.FetchedAt,
+		Stale:      result.Stale,
 	}, err
 }
 

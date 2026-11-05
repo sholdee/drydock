@@ -46,15 +46,19 @@ type renderedResourcePolicyValidator struct {
 	resourcePolicyProject         argoappv1.AppProject
 	dest                          argoappv1.ApplicationDestination
 	destCluster                   *argoappv1.Cluster
-	destinationClusterKnown       bool
 	projectClusters               []*argoappv1.Cluster
 	projectScopedCheckDeferred    bool
 	projectScopedDeferralReported bool
-	nameOnlyDeferralReported      bool
-	appDestinationChecked         bool
-	appDestinationPermitted       bool
-	appDestinationPermittedErr    error
-	crdScope                      manifest.CRDScopeRegistry
+	// offline is the destination's offline view when its cluster is
+	// unresolved (unresolvedOfflineDestination) and no project-scoped cluster
+	// check applies; offlineApplies reports whether it is set.
+	offline                    offlineDestination
+	offlineApplies             bool
+	offlineDeferralReported    bool
+	appDestinationChecked      bool
+	appDestinationPermitted    bool
+	appDestinationPermittedErr error
+	crdScope                   manifest.CRDScopeRegistry
 }
 
 // ValidateRenderedResourcePolicy validates rendered Kubernetes objects for one Application against its effective AppProject resource policy.
@@ -90,6 +94,11 @@ func ValidateRenderedResourcePolicyResourcesWithRegistry(app argoappv1.Applicati
 	if len(diags) > 0 {
 		return diags
 	}
+	if destinationInClusterDisabled(app.Spec.Destination, settings) {
+		// Argo CD rejects the Application before it evaluates any resource;
+		// validateDestination reports it.
+		return nil
+	}
 	validator.crdScope = registry
 	return validator.validate(resources)
 }
@@ -101,27 +110,28 @@ func newRenderedResourcePolicyValidator(app argoappv1.Application, projects []ar
 	}
 
 	dest := app.Spec.Destination
-	destCluster, destinationClusterKnown := destinationCluster(dest, settings)
+	destCluster, resolution := destinationCluster(dest, settings)
 	projectClusters, projectClusterMetadataAvailable := projectScopedClusters(proj.Name, settings)
-	projectScopedCheckAvailable := projectClusterMetadataAvailable || destinationClusterKnown
+	projectScopedCheckAvailable := projectClusterMetadataAvailable || resolution == destinationFromClusterSecret
 
 	resourcePolicyProject := proj
 	projectScopedCheckDeferred := resourcePolicyProject.Spec.PermitOnlyProjectScopedClusters && !projectScopedCheckAvailable
 	if projectScopedCheckDeferred {
 		resourcePolicyProject.Spec.PermitOnlyProjectScopedClusters = false
 	}
+	offline, offlineApplies := unresolvedOfflineDestination(dest, resolution)
+	offlineApplies = offlineApplies && !resourcePolicyProject.Spec.PermitOnlyProjectScopedClusters
 
 	return &renderedResourcePolicyValidator{
-		app:                           app,
-		proj:                          proj,
-		resourcePolicyProject:         resourcePolicyProject,
-		dest:                          dest,
-		destCluster:                   destCluster,
-		destinationClusterKnown:       destinationClusterKnown,
-		projectClusters:               projectClusters,
-		projectScopedCheckDeferred:    projectScopedCheckDeferred,
-		projectScopedDeferralReported: false,
-		nameOnlyDeferralReported:      false,
+		app:                        app,
+		proj:                       proj,
+		resourcePolicyProject:      resourcePolicyProject,
+		dest:                       dest,
+		destCluster:                destCluster,
+		projectClusters:            projectClusters,
+		projectScopedCheckDeferred: projectScopedCheckDeferred,
+		offline:                    offline,
+		offlineApplies:             offlineApplies,
 	}, nil
 }
 
@@ -185,11 +195,8 @@ func (v *renderedResourcePolicyValidator) evaluateResourceScope(obj *unstructure
 		return resourcePolicyOutcomeAllowed
 	}
 
-	if resourcePolicyNameOnlyDestinationDeferred(v.dest, namespace, v.proj, v.destinationClusterKnown) {
-		return resourcePolicyOutcomeDeferred
-	}
-	if resourcePolicyNameOnlyDestinationPermittedByWildcardServer(v.dest, namespace, v.proj, v.destinationClusterKnown) {
-		return v.projectScopedOutcome()
+	if v.offlineApplies {
+		return v.offlineResourceScopeOutcome(namespace)
 	}
 	if namespace == strings.TrimSpace(v.dest.Namespace) {
 		return v.projectScopedOutcome()
@@ -222,11 +229,8 @@ func (v *renderedResourcePolicyValidator) projectScopedOutcome() resourcePolicyO
 
 func (v *renderedResourcePolicyValidator) validateNamespacedResource(resource RenderedResource, scope renderedResourceScope) (diagnostic.Diagnostic, bool) {
 	obj := resource.Object
-	if resourcePolicyNameOnlyDestinationDeferred(v.dest, scope.namespace, v.proj, v.destinationClusterKnown) {
-		return v.nameOnlyDestinationDeferralDiagnostic()
-	}
-	if resourcePolicyNameOnlyDestinationPermittedByWildcardServer(v.dest, scope.namespace, v.proj, v.destinationClusterKnown) {
-		return v.projectScopedDeferralDiagnostic()
+	if v.offlineApplies {
+		return v.validateOfflineNamespacedResource(resource, scope.namespace)
 	}
 	if scope.namespace == strings.TrimSpace(v.dest.Namespace) {
 		return v.projectScopedDeferralDiagnostic()
@@ -267,12 +271,53 @@ func (v *renderedResourcePolicyValidator) applicationDestinationPermitted() (boo
 	return v.appDestinationPermitted, v.appDestinationPermittedErr
 }
 
-func (v *renderedResourcePolicyValidator) nameOnlyDestinationDeferralDiagnostic() (diagnostic.Diagnostic, bool) {
-	if v.nameOnlyDeferralReported {
+// offlineNamespacePermitted evaluates the unresolved destination in
+// namespace offline (offlineDestinationPermitted).
+func (v *renderedResourcePolicyValidator) offlineNamespacePermitted(namespace string) tristate {
+	return offlineDestinationPermitted(v.resourcePolicyProject, v.offline, namespace)
+}
+
+// offlineResourceScopeOutcome is evaluateResourceScope's namespaced outcome
+// in namespace for an unresolved destination: a denied rendered namespace is
+// denied, or deferred while the Application destination itself is.
+func (v *renderedResourcePolicyValidator) offlineResourceScopeOutcome(namespace string) resourcePolicyOutcome {
+	switch v.offlineNamespacePermitted(namespace) {
+	case tristateTrue:
+		return v.projectScopedOutcome()
+	case tristateUnknown:
+		return resourcePolicyOutcomeDeferred
+	case tristateFalse:
+	}
+	if v.offlineNamespacePermitted(v.dest.Namespace) == tristateUnknown {
+		return resourcePolicyOutcomeDeferred
+	}
+	return resourcePolicyOutcomeDenied
+}
+
+// validateOfflineNamespacedResource is validateNamespacedResource for an
+// unresolved destination. Argo CD reports the rendered object's namespace
+// only when the Application destination itself is permitted;
+// validateDestination reports a denied or deferred Application destination.
+func (v *renderedResourcePolicyValidator) validateOfflineNamespacedResource(resource RenderedResource, namespace string) (diagnostic.Diagnostic, bool) {
+	switch v.offlineNamespacePermitted(namespace) {
+	case tristateTrue:
+		return v.projectScopedDeferralDiagnostic()
+	case tristateUnknown:
+		return v.offlineDeferralDiagnostic()
+	case tristateFalse:
+	}
+	if v.offlineNamespacePermitted(v.dest.Namespace) != tristateTrue {
 		return diagnostic.Diagnostic{}, false
 	}
-	v.nameOnlyDeferralReported = true
-	return projectWarning(v.app, fmt.Sprintf("Application %s destination name %q cannot be resolved against AppProject server policy offline", applicationName(v.app), v.dest.Name)), true
+	return resourcePolicyDestinationDeniedWarning(v.app, resource, namespace, v.resourcePolicyProject), true
+}
+
+func (v *renderedResourcePolicyValidator) offlineDeferralDiagnostic() (diagnostic.Diagnostic, bool) {
+	if v.offlineDeferralReported {
+		return diagnostic.Diagnostic{}, false
+	}
+	v.offlineDeferralReported = true
+	return projectWarning(v.app, unresolvedDestinationDeferredMessage(v.app, v.offline)), true
 }
 
 func (v *renderedResourcePolicyValidator) projectScopedDeferralDiagnostic() (diagnostic.Diagnostic, bool) {
@@ -333,39 +378,6 @@ func renderedResourceNamespace(app argoappv1.Application, obj *unstructured.Unst
 		return namespace
 	}
 	return ""
-}
-
-func resourcePolicyNameOnlyDestinationDeferred(dest argoappv1.ApplicationDestination, namespace string, proj argoappv1.AppProject, destinationClusterKnown bool) bool {
-	if destinationClusterKnown || !isNameOnlyDestination(dest) {
-		return false
-	}
-	renderedDest := dest
-	renderedDest.Namespace = namespace
-	if nameOnlyDestinationExplicitlyDenied(renderedDest, proj) {
-		return false
-	}
-	if nameOnlyDestinationHasServerDenyPolicy(renderedDest, proj) {
-		return true
-	}
-	if nameOnlyDestinationHasServerScopedNamespaceDenyPolicy(renderedDest, proj) {
-		return true
-	}
-	if nameOnlyDestinationPermittedByWildcardServer(renderedDest, proj) {
-		return false
-	}
-	return nameOnlyDestinationHasServerSpecificPolicy(renderedDest, proj)
-}
-
-func resourcePolicyNameOnlyDestinationPermittedByWildcardServer(dest argoappv1.ApplicationDestination, namespace string, proj argoappv1.AppProject, destinationClusterKnown bool) bool {
-	if destinationClusterKnown || !isNameOnlyDestination(dest) {
-		return false
-	}
-	renderedDest := dest
-	renderedDest.Namespace = namespace
-	if nameOnlyDestinationExplicitlyDenied(renderedDest, proj) {
-		return false
-	}
-	return nameOnlyDestinationPermittedByWildcardServer(renderedDest, proj)
 }
 
 func resourcePolicyDeniedWarning(app argoappv1.Application, resource RenderedResource, proj argoappv1.AppProject) diagnostic.Diagnostic {

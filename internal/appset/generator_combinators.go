@@ -43,7 +43,7 @@ func matrixGeneratorParamSets(ctx generatorContext, matrix *argoappv1.MatrixGene
 	if err := validateMatrixGenerator(matrix); err != nil {
 		return nil, nil, true, err
 	}
-	supported, err := supportedNestedGeneratorTrees(matrix.Generators, ctx.Options.Provider.Supplied())
+	supported, err := supportedNestedGeneratorTrees(matrix.Generators, ctx.Options)
 	if err != nil {
 		return nil, nil, true, err
 	}

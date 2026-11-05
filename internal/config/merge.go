@@ -21,10 +21,12 @@ func MergeDiscovered(candidates []ArgoSettings) (ArgoSettings, []diagnostic.Diag
 		diags = append(diags, mergeClusters(&merged, candidate)...)
 		diags = append(diags, mergeCompareOptions(&merged, candidate)...)
 		diags = append(diags, mergeIgnoreResourceUpdatesEnabled(&merged, candidate)...)
+		diags = append(diags, mergeInClusterEnabled(&merged, candidate)...)
 		diags = append(diags, mergeConfigManagementPlugins(&merged, candidate)...)
 		mergeCommandParameters(&merged, candidate)
 		merged.ResourceExclusions = append(merged.ResourceExclusions, candidate.ResourceExclusions...)
 		merged.ResourceInclusions = append(merged.ResourceInclusions, candidate.ResourceInclusions...)
+		merged.ResourceSelectors = append(merged.ResourceSelectors, candidate.ResourceSelectors...)
 		diags = append(diags, mergeResourceCustomizations(&merged, candidate)...)
 	}
 
@@ -163,6 +165,22 @@ func mergeIgnoreResourceUpdatesEnabled(merged *ArgoSettings, candidate ArgoSetti
 	}
 	if !hasProvenanceBool(merged.IgnoreResourceUpdatesEnabled) {
 		merged.IgnoreResourceUpdatesEnabled = candidate.IgnoreResourceUpdatesEnabled
+	}
+	return nil
+}
+
+func mergeInClusterEnabled(merged *ArgoSettings, candidate ArgoSettings) []diagnostic.Diagnostic {
+	if !hasProvenanceBool(candidate.InClusterEnabled) {
+		return nil
+	}
+	if hasProvenanceBool(merged.InClusterEnabled) && merged.InClusterEnabled.Value != candidate.InClusterEnabled.Value {
+		return []diagnostic.Diagnostic{conflictDiagnostic(
+			fmt.Sprintf("conflicting cluster.inClusterEnabled values %t and %t", merged.InClusterEnabled.Value, candidate.InClusterEnabled.Value),
+			candidate.InClusterEnabled.Provenance,
+		)}
+	}
+	if !hasProvenanceBool(merged.InClusterEnabled) {
+		merged.InClusterEnabled = candidate.InClusterEnabled
 	}
 	return nil
 }

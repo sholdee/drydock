@@ -2,11 +2,11 @@ package project
 
 import (
 	"fmt"
+	"slices"
 	"sort"
 	"strings"
 
 	argoappv1 "github.com/argoproj/argo-cd/v3/pkg/apis/application/v1alpha1"
-	argoglob "github.com/argoproj/argo-cd/v3/util/glob"
 	"github.com/sholdee/drydock/internal/chart"
 	"github.com/sholdee/drydock/internal/config"
 	"github.com/sholdee/drydock/internal/diagnostic"
@@ -75,6 +75,12 @@ func ByName(projects []argoappv1.AppProject) map[string]argoappv1.AppProject {
 	return index
 }
 
+// effectiveProject mirrors Argo CD util/argo GetAppProjectByName: every
+// repository Secret scoped to the project adds its URL to sourceRepos, and
+// every cluster Secret scoped to it adds an implicit destination for its
+// server, in every namespace or in each namespace the Secret lists. Entries
+// are appended to copies of the project's lists, in a deterministic order.
+// argocd-cm globalProjects (GetAppVirtualProject) are not merged.
 func effectiveProject(proj argoappv1.AppProject, settings config.ArgoSettings) argoappv1.AppProject {
 	repos := make([]string, 0)
 	for key, repo := range settings.HelmRepositories {
@@ -86,8 +92,26 @@ func effectiveProject(proj argoappv1.AppProject, settings config.ArgoSettings) a
 		}
 	}
 	sort.Strings(repos)
-	proj.Spec.SourceRepos = append(proj.Spec.SourceRepos, repos...)
+	proj.Spec.SourceRepos = slices.Concat(proj.Spec.SourceRepos, repos)
+	proj.Spec.Destinations = slices.Concat(proj.Spec.Destinations, projectScopedClusterDestinations(proj.Name, settings))
 	return proj
+}
+
+// projectScopedClusterDestinations returns the destinations Argo CD adds to
+// a project for its project-scoped cluster Secrets, ordered by server.
+func projectScopedClusterDestinations(projectName string, settings config.ArgoSettings) []argoappv1.ApplicationDestination {
+	clusters, _ := projectScopedClusters(projectName, settings)
+	destinations := make([]argoappv1.ApplicationDestination, 0, len(clusters))
+	for _, cluster := range clusters {
+		if len(cluster.Namespaces) == 0 {
+			destinations = append(destinations, argoappv1.ApplicationDestination{Server: cluster.Server, Namespace: "*"})
+			continue
+		}
+		for _, namespace := range cluster.Namespaces {
+			destinations = append(destinations, argoappv1.ApplicationDestination{Server: cluster.Server, Namespace: namespace})
+		}
+	}
+	return destinations
 }
 
 func applicationProject(app argoappv1.Application) string {
@@ -132,14 +156,28 @@ func validateSources(app argoappv1.Application, proj argoappv1.AppProject) []dia
 func validateDestination(app argoappv1.Application, proj argoappv1.AppProject, settings config.ArgoSettings) []diagnostic.Diagnostic {
 	diags := make([]diagnostic.Diagnostic, 0, 2)
 	dest := app.Spec.Destination
-	destCluster, destinationClusterKnown := destinationCluster(dest, settings)
+	if destinationInClusterDisabled(dest, settings) {
+		return append(diags, inClusterDisabledWarning(app))
+	}
+	destCluster, resolution := destinationCluster(dest, settings)
 	projectClusters, projectClusterMetadataAvailable := projectScopedClusters(proj.Name, settings)
-	projectScopedCheckAvailable := projectClusterMetadataAvailable || destinationClusterKnown
+	projectScopedCheckAvailable := projectClusterMetadataAvailable || resolution == destinationFromClusterSecret
 	if proj.Spec.PermitOnlyProjectScopedClusters && !projectScopedCheckAvailable {
 		diags = append(diags, projectWarning(app, fmt.Sprintf("AppProject %q enables permitOnlyProjectScopedClusters; project-scoped cluster Secrets enforcement is deferred offline", proj.Name)))
 		proj.Spec.PermitOnlyProjectScopedClusters = false
 	}
 	projectScopedCheckApplied := proj.Spec.PermitOnlyProjectScopedClusters
+
+	if offline, ok := unresolvedOfflineDestination(dest, resolution); ok && !projectScopedCheckApplied {
+		switch offlineDestinationPermitted(proj, offline, dest.Namespace) {
+		case tristateTrue:
+		case tristateFalse:
+			diags = append(diags, destinationDeniedWarning(app, proj))
+		case tristateUnknown:
+			diags = append(diags, projectWarning(app, unresolvedDestinationDeferredMessage(app, offline)))
+		}
+		return diags
+	}
 
 	permitted, err := proj.IsDestinationPermitted(destCluster, dest.Namespace, func(project string) ([]*argoappv1.Cluster, error) {
 		if project != proj.Name {
@@ -152,49 +190,121 @@ func validateDestination(app argoappv1.Application, proj argoappv1.AppProject, s
 		return diags
 	}
 	if !permitted {
-		if projectScopedCheckApplied {
-			diags = append(diags, projectWarning(app, fmt.Sprintf("Application %s destination is not permitted by AppProject %q", applicationName(app), proj.Name)))
-			return diags
-		}
-		if nameOnlyDestinationExplicitlyDenied(dest, proj) {
-			diags = append(diags, projectWarning(app, fmt.Sprintf("Application %s destination is not permitted by AppProject %q", applicationName(app), proj.Name)))
-			return diags
-		}
-		if nameOnlyDestinationHasServerDenyPolicy(dest, proj) {
-			diags = append(diags, projectWarning(app, fmt.Sprintf("Application %s destination name %q cannot be resolved against AppProject server policy offline", applicationName(app), dest.Name)))
-			return diags
-		}
-		if nameOnlyDestinationHasServerScopedNamespaceDenyPolicy(dest, proj) {
-			diags = append(diags, projectWarning(app, fmt.Sprintf("Application %s destination name %q cannot be resolved against AppProject server policy offline", applicationName(app), dest.Name)))
-			return diags
-		}
-		if nameOnlyDestinationPermittedByWildcardServer(dest, proj) {
-			return diags
-		}
-		if nameOnlyDestinationHasServerSpecificPolicy(dest, proj) {
-			diags = append(diags, projectWarning(app, fmt.Sprintf("Application %s destination name %q cannot be resolved against AppProject server policy offline", applicationName(app), dest.Name)))
-			return diags
-		}
-		diags = append(diags, projectWarning(app, fmt.Sprintf("Application %s destination is not permitted by AppProject %q", applicationName(app), proj.Name)))
+		diags = append(diags, destinationDeniedWarning(app, proj))
 	}
 	return diags
 }
 
-func destinationCluster(dest argoappv1.ApplicationDestination, settings config.ArgoSettings) (*argoappv1.Cluster, bool) {
+func destinationDeniedWarning(app argoappv1.Application, proj argoappv1.AppProject) diagnostic.Diagnostic {
+	return projectWarning(app, fmt.Sprintf("Application %s destination is not permitted by AppProject %q", applicationName(app), proj.Name))
+}
+
+// destinationInClusterDisabled reports whether dest is Argo CD's in-cluster
+// address while argocd-cm cluster.inClusterEnabled is "false". util/db
+// GetCluster rejects that server as disabled before it looks at any cluster
+// Secret, and GetClusterServersByName drops it from name lookups, so Argo CD
+// rejects the Application whatever its AppProject permits. A name-only
+// destination counts when the repository's cluster Secret with that name is
+// at the in-cluster address.
+func destinationInClusterDisabled(dest argoappv1.ApplicationDestination, settings config.ArgoSettings) bool {
+	if settings.InClusterEnabled.Value {
+		return false
+	}
+	name := strings.TrimSpace(dest.Name)
+	server := NormalizeClusterServer(dest.Server)
+	switch {
+	case name == "" && server != "":
+		return server == argoappv1.KubernetesInternalAPIServerAddr
+	case server == "" && name != "":
+		cluster, ok := clusterSettingsByName(name, settings)
+		return ok && NormalizeClusterServer(cluster.Server) == argoappv1.KubernetesInternalAPIServerAddr
+	default:
+		return false
+	}
+}
+
+func inClusterDisabledWarning(app argoappv1.Application) diagnostic.Diagnostic {
+	return projectWarning(app, fmt.Sprintf("Application %s destination is not permitted: cluster %q is disabled by argocd-cm cluster.inClusterEnabled", applicationName(app), argoappv1.KubernetesInternalAPIServerAddr))
+}
+
+// destinationResolution is how drydock resolved an Application destination's
+// cluster offline.
+type destinationResolution int
+
+const (
+	// destinationUnresolved: no discovered cluster Secret describes the
+	// destination, so its name or server may be unknown.
+	destinationUnresolved destinationResolution = iota
+	// destinationFromClusterSecret: a discovered cluster Secret describes it.
+	destinationFromClusterSecret
+	// destinationLocalCluster: a server-only destination at
+	// https://kubernetes.default.svc, or a name-only destination named
+	// in-cluster, with no cluster Secret, which Argo CD resolves to its
+	// built-in in-cluster cluster unless argocd-cm cluster.inClusterEnabled
+	// is "false" (util/db GetCluster and GetClusterServersByName).
+	destinationLocalCluster
+)
+
+func destinationCluster(dest argoappv1.ApplicationDestination, settings config.ArgoSettings) (*argoappv1.Cluster, destinationResolution) {
 	name := strings.TrimSpace(dest.Name)
 	server := NormalizeClusterServer(dest.Server)
 	if server != "" {
 		if cluster, ok := settings.Clusters[server]; ok {
-			return argoClusterFromSettings(cluster, name), true
+			return argoClusterFromSettings(cluster, name), destinationFromClusterSecret
 		}
-		return &argoappv1.Cluster{Name: name, Server: server}, false
+		if name == "" && server == argoappv1.KubernetesInternalAPIServerAddr && settings.InClusterEnabled.Value {
+			return &argoappv1.Cluster{Name: argoappv1.KubernetesInClusterName, Server: server}, destinationLocalCluster
+		}
+		return &argoappv1.Cluster{Name: name, Server: server}, destinationUnresolved
 	}
 	if name != "" {
 		if cluster, ok := clusterSettingsByName(name, settings); ok {
-			return argoClusterFromSettings(cluster, name), true
+			return argoClusterFromSettings(cluster, name), destinationFromClusterSecret
+		}
+		// util/db GetClusterServersByName: with no cluster Secret named
+		// in-cluster, the name is the in-cluster address, which GetCluster
+		// then resolves through a Secret at that address or to the built-in
+		// cluster.
+		if name == argoappv1.KubernetesInClusterName && settings.InClusterEnabled.Value && !clusterNameDeclared(name, settings) {
+			if cluster, ok := settings.Clusters[argoappv1.KubernetesInternalAPIServerAddr]; ok {
+				return argoClusterFromSettings(cluster, ""), destinationFromClusterSecret
+			}
+			return &argoappv1.Cluster{Name: argoappv1.KubernetesInClusterName, Server: argoappv1.KubernetesInternalAPIServerAddr}, destinationLocalCluster
 		}
 	}
-	return &argoappv1.Cluster{Name: name, Server: server}, false
+	return &argoappv1.Cluster{Name: name, Server: server}, destinationUnresolved
+}
+
+// ResolveDestinationServer returns the cluster server Argo CD would resolve
+// an Application destination to (util/argo GetDestinationCluster), resolved
+// offline the way project validation resolves it (destinationCluster). It
+// returns false when Argo CD would fail the lookup or drydock cannot tell
+// the server: both name and server or neither set, a name no discovered
+// cluster Secret resolves (unknown or ambiguous), and the in-cluster address
+// while argocd-cm cluster.inClusterEnabled is "false". A server-only
+// destination no cluster Secret describes resolves to its own server.
+func ResolveDestinationServer(dest argoappv1.ApplicationDestination, settings config.ArgoSettings) (string, bool) {
+	name := strings.TrimSpace(dest.Name)
+	server := NormalizeClusterServer(dest.Server)
+	if (name == "") == (server == "") || destinationInClusterDisabled(dest, settings) {
+		return "", false
+	}
+	cluster, resolution := destinationCluster(dest, settings)
+	if resolution == destinationUnresolved && server == "" {
+		return "", false
+	}
+	resolved := NormalizeClusterServer(cluster.Server)
+	return resolved, resolved != ""
+}
+
+// clusterNameDeclared reports whether any discovered cluster Secret has name.
+func clusterNameDeclared(name string, settings config.ArgoSettings) bool {
+	for _, cluster := range settings.Clusters {
+		if clusterDisplayName(cluster) == name {
+			return true
+		}
+	}
+	return false
 }
 
 func clusterSettingsByName(name string, settings config.ArgoSettings) (config.ClusterSettings, bool) {
@@ -260,131 +370,6 @@ func clusterDisplayName(cluster config.ClusterSettings) string {
 // looks a destination server up among the cluster Secrets.
 func NormalizeClusterServer(raw string) string {
 	return strings.TrimRight(strings.TrimSpace(raw), "/")
-}
-
-func nameOnlyDestinationExplicitlyDenied(dest argoappv1.ApplicationDestination, proj argoappv1.AppProject) bool {
-	if !isNameOnlyDestination(dest) {
-		return false
-	}
-	for _, allowed := range proj.Spec.Destinations {
-		if destinationNameDenied(allowed.Name, dest.Name) {
-			return true
-		}
-		if strings.TrimSpace(allowed.Server) == "*" && destinationNamespaceDenied(allowed.Namespace, dest.Namespace) {
-			return true
-		}
-	}
-	return false
-}
-
-func nameOnlyDestinationHasServerDenyPolicy(dest argoappv1.ApplicationDestination, proj argoappv1.AppProject) bool {
-	if !isNameOnlyDestination(dest) {
-		return false
-	}
-	for _, allowed := range proj.Spec.Destinations {
-		server := strings.TrimSpace(allowed.Server)
-		if !destinationDenyPattern(server) {
-			continue
-		}
-		if destinationPatternMatch(allowed.Namespace, dest.Namespace) {
-			return true
-		}
-	}
-	return false
-}
-
-func nameOnlyDestinationHasServerScopedNamespaceDenyPolicy(dest argoappv1.ApplicationDestination, proj argoappv1.AppProject) bool {
-	if !isNameOnlyDestination(dest) {
-		return false
-	}
-	for _, allowed := range proj.Spec.Destinations {
-		server := strings.TrimSpace(allowed.Server)
-		if server == "" || server == "*" {
-			continue
-		}
-		if destinationNamespaceDenied(allowed.Namespace, dest.Namespace) {
-			return true
-		}
-	}
-	return false
-}
-
-func nameOnlyDestinationPermittedByWildcardServer(dest argoappv1.ApplicationDestination, proj argoappv1.AppProject) bool {
-	if !isNameOnlyDestination(dest) {
-		return false
-	}
-	for _, allowed := range proj.Spec.Destinations {
-		if strings.TrimSpace(allowed.Server) != "*" {
-			continue
-		}
-		if destinationNamespaceAllowed(allowed.Namespace, dest.Namespace) {
-			return true
-		}
-	}
-	return false
-}
-
-func nameOnlyDestinationHasServerSpecificPolicy(dest argoappv1.ApplicationDestination, proj argoappv1.AppProject) bool {
-	if !isNameOnlyDestination(dest) {
-		return false
-	}
-	for _, allowed := range proj.Spec.Destinations {
-		server := strings.TrimSpace(allowed.Server)
-		if server == "" || server == "*" || destinationDenyPattern(server) {
-			continue
-		}
-		if destinationNamespaceAllowed(allowed.Namespace, dest.Namespace) {
-			return true
-		}
-	}
-	return false
-}
-
-func isNameOnlyDestination(dest argoappv1.ApplicationDestination) bool {
-	return strings.TrimSpace(dest.Name) != "" && strings.TrimSpace(dest.Server) == ""
-}
-
-func destinationNameDenied(pattern, name string) bool {
-	pattern = strings.TrimSpace(pattern)
-	if pattern == "" || !destinationDenyPattern(pattern) {
-		return false
-	}
-	return destinationGlobMatch(strings.TrimPrefix(pattern, "!"), name)
-}
-
-func destinationNamespaceDenied(pattern, namespace string) bool {
-	pattern = strings.TrimSpace(pattern)
-	if pattern == "" || !destinationDenyPattern(pattern) {
-		return false
-	}
-	return destinationGlobMatch(strings.TrimPrefix(pattern, "!"), namespace)
-}
-
-func destinationNamespaceAllowed(pattern, namespace string) bool {
-	pattern = strings.TrimSpace(pattern)
-	if pattern == "" || destinationDenyPattern(pattern) {
-		return false
-	}
-	return destinationGlobMatch(pattern, namespace)
-}
-
-func destinationDenyPattern(pattern string) bool {
-	return strings.HasPrefix(pattern, "!")
-}
-
-func destinationGlobMatch(pattern, value string) bool {
-	if pattern == "*" {
-		return true
-	}
-	return argoglob.Match(pattern, value)
-}
-
-func destinationPatternMatch(pattern, value string) bool {
-	pattern = strings.TrimSpace(pattern)
-	if destinationDenyPattern(pattern) {
-		return !destinationGlobMatch(strings.TrimPrefix(pattern, "!"), value)
-	}
-	return destinationGlobMatch(pattern, value)
 }
 
 func validateSourceNamespace(app argoappv1.Application, proj argoappv1.AppProject) []diagnostic.Diagnostic {

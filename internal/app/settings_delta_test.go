@@ -41,14 +41,19 @@ var argoSettingsFieldClasses = map[string]settingsChangeClass{
 	"InstallationID":           settingsRenderAll,
 	"ConfigManagementPlugins":  settingsRenderAll,
 	// Diff: which rendered resources survive, and normalization.
-	"ResourceExclusions":     settingsRenderAll,
-	"ResourceInclusions":     settingsRenderAll,
+	"ResourceExclusions": settingsRenderAll,
+	"ResourceInclusions": settingsRenderAll,
+	// Selector-mismatch warnings on every rendered resource.
+	"ResourceSelectors":      settingsRenderAll,
 	"CompareOptions":         settingsRenderAll,
 	"ResourceCustomizations": settingsRenderAll,
 	// Project validation of the Applications that use the entry; the OCI
 	// repository set it implies is render-all (renderAllSettingsSignature).
 	"HelmRepositories": settingsScoped,
 	"Clusters":         settingsScoped,
+	// Project validation of every destination that may be the built-in
+	// in-cluster cluster (project.destinationCluster).
+	"InClusterEnabled": settingsRenderAll,
 	// Read only by diag, by settings merging, or as provenance.
 	"HelmValuesFileSchemesSource":  settingsNoEffect,
 	"IgnoreResourceUpdatesEnabled": settingsNoEffect,
@@ -297,6 +302,11 @@ func TestClassifySettingsChange(t *testing.T) {
 			Source:  &argoappv1.ApplicationSource{RepoURL: repoURL, Path: "app"},
 		}}
 	}
+	destined := func(destination argoappv1.ApplicationDestination) argoappv1.Application {
+		app := application("", chartsYURL)
+		app.Spec.Destination = destination
+		return app
+	}
 	ociEnabled := repo("ghcr.io/example/charts", "")
 	ociEnabled.EnableOCI = true
 	x := map[string]config.RepositorySettings{chartsXURL: repo(chartsXURL, "")}
@@ -397,6 +407,18 @@ func TestClassifySettingsChange(t *testing.T) {
 			right:          config.ArgoSettings{Clusters: map[string]config.ClusterSettings{prodServer: cluster("", prodServer+"/", "")}},
 			clusterServers: []string{prodServer},
 			clusterNames:   []string{prodServer},
+		},
+		{
+			// A name-only in-cluster destination resolves through the entry
+			// at the in-cluster address when no cluster Secret is named
+			// in-cluster (project.destinationCluster).
+			name:           "cluster at the in-cluster address added",
+			left:           clusters(),
+			right:          clusters(cluster("local", argoappv1.KubernetesInternalAPIServerAddr, "")),
+			clusterServers: []string{argoappv1.KubernetesInternalAPIServerAddr},
+			clusterNames:   []string{argoappv1.KubernetesInternalAPIServerAddr, argoappv1.KubernetesInClusterName, "local"},
+			selects:        []argoappv1.Application{destined(argoappv1.ApplicationDestination{Name: argoappv1.KubernetesInClusterName, Namespace: "x"})},
+			skips:          []argoappv1.Application{destined(argoappv1.ApplicationDestination{Name: "prod", Namespace: "x"})},
 		},
 		{
 			name:           "project-scoped cluster moved",

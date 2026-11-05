@@ -1,7 +1,7 @@
 // Package ociartifact acquires first-class Argo CD OCI artifact sources
 // (repoURL "oci://…" without chart:) by wrapping the vendored Argo CD OCI
-// client. Revision resolution and extraction guards follow argo-cd v3.4.5
-// util/oci/client.go; the image cache is a drydock-owned layout under the OCI
+// client. Revision resolution and extraction guards follow the vendored
+// argo-cd v3.6.1 util/oci/client.go; the image cache is a drydock-owned layout under the OCI
 // cache root so `drydock cache` can list and prune it.
 package ociartifact
 
@@ -67,11 +67,11 @@ type Acquirer interface {
 
 // DefaultAcquirer wraps util/oci.NewClientWithLock. Every exported method of
 // the argo client calls its embedded EventHandlers unconditionally and
-// NewClientWithLock installs no defaults (util/oci/client.go:232,244,357,
-// 373,410), so no-op handlers are mandatory. Resolve injects a drydock-owned
-// prefetch-populated tags memo via WithIndexCache (see prefetchedTagsCache) —
-// the upstream SetOCITags write path stores an empty read buffer
-// (util/oci/client.go:450-452) and is deliberately ignored.
+// NewClientWithLock installs no defaults (util/oci/client.go:238,250,367,
+// 383,420 at v3.6.1), so no-op handlers are mandatory. Resolve injects a
+// drydock-owned prefetch-populated tags memo via WithIndexCache (see
+// prefetchedTagsCache); the upstream SetOCITags write path is deliberately
+// ignored.
 type DefaultAcquirer struct{}
 
 // ociKeyLock is the drydock-supplied KeyLock serializing per-path image cache
@@ -79,8 +79,8 @@ type DefaultAcquirer struct{}
 var ociKeyLock = sync.NewKeyLock()
 
 // defaultLayerMediaTypes mirrors the Argo CD repo-server default for
-// --oci-layer-media-types (vendored argo-cd v3.4.5
-// cmd/argocd-repo-server/commands/argocd_repo_server.go:267).
+// --oci-layer-media-types (vendored argo-cd v3.6.1
+// cmd/argocd-repo-server/commands/argocd_repo_server.go:276).
 func defaultLayerMediaTypes() []string {
 	return []string{
 		"application/vnd.oci.image.layer.v1.tar",
@@ -90,8 +90,8 @@ func defaultLayerMediaTypes() []string {
 }
 
 // defaultManifestMaxExtractedSize mirrors the Argo CD repo-server default for
-// --oci-manifest-max-extracted-size, "1G" (vendored argo-cd v3.4.5
-// cmd/argocd-repo-server/commands/argocd_repo_server.go:262);
+// --oci-manifest-max-extracted-size, "1G" (vendored argo-cd v3.6.1
+// cmd/argocd-repo-server/commands/argocd_repo_server.go:271);
 // resource.ParseQuantity("1G").ToDec().Value() is 10^9 bytes.
 const defaultManifestMaxExtractedSize = int64(1_000_000_000)
 
@@ -307,7 +307,7 @@ func isLoopbackURL(repoURL string) bool {
 // legitimate repoURL contains one. Nothing functional is lost: oras rejects
 // userinfo URLs anyway (oras-go registry/reference.go:196) — but its error
 // echoes the RAW registry component, and the vendored client logs c.repoURL
-// through logrus on tag fetches (client.go:446-451), so the secret must
+// through logrus on tag fetches (client.go:456-458 at v3.6.1), so the secret must
 // never reach either sink. The rejection error carries only the redacted
 // URL and names the remediation for both mistake shapes.
 func rejectURLUserinfo(repoURL string) error {
@@ -349,11 +349,15 @@ func (a DefaultAcquirer) newClient(ctx context.Context, repoURL string, cacheDir
 // once: resolveOnline populates it from drydock's OWN GetTags result before
 // ResolveRevision runs, and ResolveRevision's constraint fallback then reads
 // it back through the client's tags cache. Two hard rules: upstream
-// SetOCITags hands over an empty read buffer (util/oci/client.go:450-452) so
-// writes are ignored, and the memo must NEVER lazy-fill — getTags holds the
-// non-reentrant argoproj KeyLock indexLock across cache callbacks
-// (client.go:421-423), so a miss that called back into the client would
-// self-deadlock.
+// SetOCITags writes are ignored, and the memo must NEVER lazy-fill — getTags
+// holds the non-reentrant argoproj KeyLock indexLock across cache callbacks
+// (util/oci/client.go:432-433 at v3.6.1), so a miss that called back into
+// the client would self-deadlock. Up to v3.5.x SetOCITags received the empty
+// read buffer instead of the tags; since v3.6.1 (33eb5e4ef) getTags hands it
+// the JSON-encoded tag list it just fetched (client.go:460-467). Ignoring it is still correct: the memo exists only to
+// share resolveOnline's own prefetch with ResolveRevision's constraint
+// fallback, resolveOnline populates it explicitly from that result, and a
+// stored write would add nothing the same resolve reads again.
 type prefetchedTagsCache struct {
 	data []byte
 }
@@ -366,7 +370,8 @@ func (c *prefetchedTagsCache) populate(tags []string) {
 	c.data = data
 }
 
-// SetOCITags ignores upstream writes (empty buffer; see type comment).
+// SetOCITags ignores upstream writes; resolveOnline populates the memo itself
+// (see type comment).
 func (c *prefetchedTagsCache) SetOCITags(string, []byte) error { return nil }
 
 func (c *prefetchedTagsCache) GetOCITags(_ string, indexData *[]byte) error {
@@ -378,8 +383,8 @@ func (c *prefetchedTagsCache) GetOCITags(_ string, indexData *[]byte) error {
 }
 
 // Resolve resolves revision to a digest. Digest-pinned revisions pass through
-// without network. Online, resolution mirrors argo-cd v3.4.5
-// util/oci/client.go:384-407 exactly: the literal revision resolves first via
+// without network. Online, resolution mirrors argo-cd v3.6.1
+// util/oci/client.go:394-417 exactly: the literal revision resolves first via
 // a registry HEAD, and only when that fails does a constraint-shaped revision
 // fall back to MaxVersion over the tag list. Offline, resolution is
 // seam-level from records captured on earlier online runs, in the same
@@ -427,10 +432,10 @@ func resolveOnline(ctx context.Context, client oci.Client, memo *prefetchedTagsC
 			memo.populate(fetched)
 		}
 	}
-	// Match the argo-cd v3.4.5 resolution order exactly: ResolveRevision
+	// Match the argo-cd v3.6.1 resolution order exactly: ResolveRevision
 	// resolves the literal revision first and only falls back to MaxVersion
 	// over the tag list when the exact lookup fails and the revision parses
-	// as a semver constraint (util/oci/client.go:384-407 resolveRevision).
+	// as a semver constraint (util/oci/client.go:394-417 resolveRevision).
 	// Dispatching on IsConstraint before the exact lookup would resolve a
 	// literal constraint-shaped tag like "1.x" to the constraint winner
 	// instead of the tag's own digest.
@@ -501,8 +506,8 @@ func offlineResolveMiss(repoURL, revision string) error {
 // credential flags instead of a bare "resolve"/"extract" failure. Typed
 // first: oras answers every non-2xx registry response (other than the 404 it
 // maps to errdef.ErrNotFound) with *errcode.ErrorResponse, and the vendored
-// argo client wraps it with %w at every level (util/oci/client.go:472
-// resolveDigest, :337 extract), so errors.As reaches it through the chain and
+// argo client wraps it with %w at every level (util/oci/client.go:480
+// resolveDigest, :337 extract, at v3.6.1), so errors.As reaches it through the chain and
 // its status code is authoritative. The text fallback exists for errors that
 // lost the type and matches only the words "unauthorized" and
 // "authentication required": never bare digits, because the Extract wrap

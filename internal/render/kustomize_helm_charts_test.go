@@ -7,6 +7,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/sholdee/drydock/internal/cacheevent"
 	"github.com/sholdee/drydock/internal/chart"
@@ -307,6 +308,12 @@ helmCharts:
 		Kind:              cacheevent.AcquisitionChart,
 		RequestedRevision: "1.2.3",
 		ResolvedRevision:  "1.2.3",
+		Chart: cacheevent.ChartAcquisition{
+			Target:    "https://charts.example.test",
+			Name:      "demo",
+			Version:   "1.2.3",
+			CacheKind: "http",
+		},
 	}}
 	if got := collector.Records(); !reflect.DeepEqual(got, want) {
 		t.Fatalf("Acquisition records = %#v, want %#v", got, want)
@@ -590,10 +597,11 @@ helmCharts:
 		RepoRoot: root,
 		Path:     filepath.Join("apps", "demo"),
 	}, RenderOptions{
-		ChartAcquirer: acquirer,
-		ChartCacheDir: filepath.Join(root, "cache"),
-		OfflineCharts: true,
-		RefreshCharts: true,
+		ChartAcquirer:    acquirer,
+		ChartCacheDir:    filepath.Join(root, "cache"),
+		OfflineCharts:    true,
+		RefreshCharts:    true,
+		ChartCacheMaxAge: 36 * time.Hour,
 		ChartCredentials: chart.ChartCredentials{
 			Username:       "helm-user",
 			Password:       "helm-pass",
@@ -623,6 +631,7 @@ helmCharts:
 		CacheDir: filepath.Join(root, "cache"),
 		Offline:  true,
 		Refresh:  true,
+		MaxAge:   36 * time.Hour,
 		Credentials: chart.ChartCredentials{
 			Username:       "helm-user",
 			Password:       "helm-pass",

@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"time"
 
 	argoappv1 "github.com/argoproj/argo-cd/v3/pkg/apis/application/v1alpha1"
 	"github.com/sholdee/drydock/internal/cacheevent"
@@ -190,6 +191,7 @@ func applicationRenderCacheKey(ctx renderContext, application argoappv1.Applicat
 		RepoMaps                []sourcepkg.RepoMap         `json:"repoMaps,omitempty"`
 		Offline                 bool                        `json:"offline"`
 		RefreshCharts           bool                        `json:"refreshCharts"`
+		ChartCacheMaxAge        string                      `json:"chartCacheMaxAge,omitempty"`
 		ChartCacheDir           string                      `json:"chartCacheDir,omitempty"`
 		GitCacheDir             string                      `json:"gitCacheDir,omitempty"`
 		RefreshGit              bool                        `json:"refreshGit"`
@@ -211,6 +213,7 @@ func applicationRenderCacheKey(ctx renderContext, application argoappv1.Applicat
 		RepoMaps:                append([]sourcepkg.RepoMap(nil), ctx.request.RepoMaps...),
 		Offline:                 ctx.request.Offline,
 		RefreshCharts:           ctx.request.RefreshCharts,
+		ChartCacheMaxAge:        chartCacheMaxAgeKey(ctx.request.ChartCacheMaxAge),
 		ChartCacheDir:           ctx.request.ChartCacheDir,
 		GitCacheDir:             ctx.request.GitCacheDir,
 		RefreshGit:              ctx.request.RefreshGit,
@@ -285,4 +288,14 @@ func newApplicationRenderCacheInput(application argoappv1.Application) applicati
 		Namespace: application.Namespace,
 		Spec:      application.Spec,
 	}
+}
+
+// chartCacheMaxAgeKey keys the run-scoped render cache on the chart cache
+// max age. Zero, the default, contributes nothing, so default keys keep
+// their bytes.
+func chartCacheMaxAgeKey(maxAge time.Duration) string {
+	if maxAge <= 0 {
+		return ""
+	}
+	return maxAge.String()
 }

@@ -86,6 +86,15 @@ type Config struct {
 	// RefreshCharts refreshes chart cache entries instead of reusing cached
 	// charts when network acquisition is allowed.
 	RefreshCharts bool
+	// ChartCacheMaxAge, when positive, refetches cached charts fetched longer
+	// ago than it, as Argo CD 3.6's repo-server expires cached chart archives
+	// after its repo cache expiration, and never serves persisted render
+	// output rendered from such a chart. With Offline an expired chart is
+	// used with a source.chart-cache-stale warning. Zero, the default, never
+	// expires cached charts; negative values are rejected. An injected
+	// ChartAcquirer receives it as ChartOptions.MaxAge and enforces it
+	// itself; see ChartResult for what it reports back.
+	ChartCacheMaxAge time.Duration
 	// ChartCacheDir overrides the Helm chart cache root.
 	ChartCacheDir string
 	// ChartCredentials supplies credentials for chart repository acquisition.
@@ -330,6 +339,7 @@ func (client *Client) requestOptions() requestopts.Options {
 		ShowIgnoredFields:              client.config.ShowIgnoredFields,
 		Offline:                        client.config.Offline,
 		RefreshCharts:                  client.config.RefreshCharts,
+		ChartCacheMaxAge:               client.config.ChartCacheMaxAge,
 		ChartCacheDir:                  client.config.ChartCacheDir,
 		ChartCredentials:               chartCredentialsToInternal(client.config.ChartCredentials),
 		RepoMaps:                       repoMapsToInternal(client.config.RepoMaps),

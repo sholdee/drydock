@@ -28,6 +28,7 @@ func TestOptionsBuildCopiesSharedFields(t *testing.T) {
 	assertDeepEqual(t, "DiscoverKustomizePaths", request.DiscoverKustomizePaths, []string{"argocd/overlays/prod"})
 	assertDeepEqual(t, "Offline", request.Offline, true)
 	assertDeepEqual(t, "RefreshCharts", request.RefreshCharts, true)
+	assertDeepEqual(t, "ChartCacheMaxAge", request.ChartCacheMaxAge, 36*time.Hour)
 	assertDeepEqual(t, "ChartCacheDir", request.ChartCacheDir, "chart-cache")
 	assertDeepEqual(t, "ChartCredentials", request.ChartCredentials, chart.ChartCredentials{Username: "helm-user"})
 	assertDeepEqual(t, "RepoMaps", request.RepoMaps, []source.RepoMap{{URL: "https://example.test/repo.git", Path: "/repo"}})
@@ -97,6 +98,7 @@ func TestOptionsDiffCopiesSharedFields(t *testing.T) {
 	assertDeepEqual(t, "ShowIgnoredFields", request.ShowIgnoredFields, true)
 	assertDeepEqual(t, "Offline", request.Offline, true)
 	assertDeepEqual(t, "RefreshCharts", request.RefreshCharts, true)
+	assertDeepEqual(t, "ChartCacheMaxAge", request.ChartCacheMaxAge, 36*time.Hour)
 	assertDeepEqual(t, "ChartCacheDir", request.ChartCacheDir, "chart-cache")
 	assertDeepEqual(t, "ChartCredentials", request.ChartCredentials, chart.ChartCredentials{Username: "helm-user"})
 	assertDeepEqual(t, "RepoMaps", request.RepoMaps, []source.RepoMap{{URL: "https://example.test/repo.git", Path: "/repo"}})
@@ -171,6 +173,7 @@ func fixtureOptions() Options {
 		ShowIgnoredFields:            true,
 		Offline:                      true,
 		RefreshCharts:                true,
+		ChartCacheMaxAge:             36 * time.Hour,
 		ChartCacheDir:                "chart-cache",
 		ChartCredentials:             chart.ChartCredentials{Username: "helm-user"},
 		RepoMaps:                     []source.RepoMap{{URL: "https://example.test/repo.git", Path: "/repo"}},

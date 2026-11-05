@@ -1931,3 +1931,63 @@ func assertJSONDoesNotContain(t *testing.T, value any, forbidden string) {
 		t.Fatalf("JSON output contains %q: %s", forbidden, data)
 	}
 }
+
+func TestLoadConfigMapInClusterEnabled(t *testing.T) {
+	// Argo CD SettingsManager.IsInClusterEnabled disables the in-cluster
+	// destination only for the exact string "false".
+	for _, tt := range []struct {
+		raw  string
+		want bool
+	}{
+		{raw: "false", want: false},
+		{raw: "true", want: true},
+		{raw: "False", want: true},
+		{raw: "", want: true},
+	} {
+		t.Run(tt.raw, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "argocd-cm.yaml")
+			if err := os.WriteFile(path, []byte("apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: argocd-cm\ndata:\n  cluster.inClusterEnabled: \""+tt.raw+"\"\n"), 0o600); err != nil {
+				t.Fatalf("WriteFile() error = %v", err)
+			}
+			settings, diags, err := LoadFromConfigMap(path)
+			if err != nil {
+				t.Fatalf("LoadFromConfigMap() error = %v", err)
+			}
+			if len(diags) != 0 {
+				t.Fatalf("diagnostics = %#v, want none", diags)
+			}
+			if settings.InClusterEnabled.Value != tt.want {
+				t.Fatalf("InClusterEnabled = %t, want %t", settings.InClusterEnabled.Value, tt.want)
+			}
+			if settings.InClusterEnabled.Provenance.Pointer != "data.cluster.inClusterEnabled" {
+				t.Fatalf("InClusterEnabled provenance = %#v", settings.InClusterEnabled.Provenance)
+			}
+		})
+	}
+}
+
+func TestDefaultSettingsEnableInCluster(t *testing.T) {
+	if !DefaultSettings().InClusterEnabled.Value {
+		t.Fatalf("DefaultSettings().InClusterEnabled = false, want true")
+	}
+}
+
+func TestMergeSettingsInClusterEnabled(t *testing.T) {
+	disabled := DefaultSettings()
+	disabled.InClusterEnabled = Value[bool]{Value: false, Provenance: Provenance{Path: "right.yaml"}}
+
+	merged, diags := MergeDiscovered([]ArgoSettings{DefaultSettings(), disabled})
+	if len(diags) != 0 {
+		t.Fatalf("Diagnostics = %#v, want none for a default and an explicit value", diags)
+	}
+	if merged.InClusterEnabled.Value {
+		t.Fatalf("InClusterEnabled = true, want false")
+	}
+
+	enabled := DefaultSettings()
+	enabled.InClusterEnabled = Value[bool]{Value: true, Provenance: Provenance{Path: "left.yaml"}}
+	_, diags = MergeDiscovered([]ArgoSettings{enabled, disabled})
+	if len(diags) != 1 || diags[0].Category != "settings" || !strings.Contains(diags[0].Message, "cluster.inClusterEnabled") {
+		t.Fatalf("Diagnostics = %#v, want one cluster.inClusterEnabled conflict", diags)
+	}
+}

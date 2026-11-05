@@ -11,7 +11,11 @@ import (
 
 const (
 	argoCDModule       = "github.com/argoproj/argo-cd/v3"
-	gitopsEngineModule = "github.com/argoproj/argo-cd/gitops-engine"
+	gitopsEngineModule = "github.com/argoproj/argo-cd/gitops-engine/v3"
+	// legacyGitopsEngineModule is the pre-v3.6 module path. Argo CD v3.5 and
+	// earlier only reached consumers through a local replace, so drydock pinned
+	// it by pseudo-version; drop any such leftover replace.
+	legacyGitopsEngineModule = "github.com/argoproj/argo-cd/gitops-engine"
 )
 
 var argoCompatibilityReplaceModules = []string{
@@ -29,6 +33,7 @@ var argoCompatibilityReplaceModules = []string{
 	"k8s.io/controller-manager",
 	"k8s.io/cri-api",
 	"k8s.io/cri-client",
+	"k8s.io/cri-streaming",
 	"k8s.io/csi-translation-lib",
 	"k8s.io/dynamic-resource-allocation",
 	"k8s.io/endpointslice",
@@ -51,9 +56,6 @@ type moduleInfo struct {
 	Path    string `json:"Path"`
 	Version string `json:"Version"`
 	GoMod   string `json:"GoMod"`
-	Origin  struct {
-		Hash string `json:"Hash"`
-	} `json:"Origin"`
 }
 
 type goModFile struct {
@@ -114,29 +116,32 @@ func syncArgoCompatibilityStack() error {
 	if err != nil {
 		return fmt.Errorf("resolve Argo CD version %s: %w", argo.Version, err)
 	}
-	if strings.TrimSpace(argoVersion.Origin.Hash) == "" {
-		return fmt.Errorf("selected Argo CD version %s did not report an origin hash", argo.Version)
-	}
 	if strings.TrimSpace(argoVersion.GoMod) == "" {
 		return fmt.Errorf("selected Argo CD version %s did not report a go.mod path", argo.Version)
-	}
-
-	engine, err := goListModule(gitopsEngineModule + "@" + argoVersion.Origin.Hash)
-	if err != nil {
-		return fmt.Errorf("resolve GitOps Engine at Argo CD commit %s: %w", argoVersion.Origin.Hash, err)
-	}
-	if strings.TrimSpace(engine.Version) == "" {
-		return fmt.Errorf("resolved GitOps Engine at Argo CD commit %s did not report a module version", argoVersion.Origin.Hash)
-	}
-
-	if err := runGo("mod", "edit", "-replace="+gitopsEngineModule+"="+gitopsEngineModule+"@"+engine.Version); err != nil {
-		return fmt.Errorf("update GitOps Engine replace: %w", err)
 	}
 
 	argoGoMod, err := readGoMod(argoVersion.GoMod)
 	if err != nil {
 		return fmt.Errorf("read Argo CD go.mod: %w", err)
 	}
+
+	// Since v3.6 GitOps Engine is a tagged module (gitops-engine/vX.Y.Z) that
+	// Argo CD requires at its own release version. Argo CD still builds it from
+	// a local replace, which consumers do not inherit, so require exactly the
+	// version Argo CD declares and drop any replace left from older lines.
+	engineVersion, err := gitopsEngineRequirement(argoGoMod)
+	if err != nil {
+		return err
+	}
+	if err := runGo("mod", "edit",
+		"-dropreplace="+legacyGitopsEngineModule,
+		"-droprequire="+legacyGitopsEngineModule,
+		"-dropreplace="+gitopsEngineModule,
+		"-require="+gitopsEngineModule+"@"+engineVersion,
+	); err != nil {
+		return fmt.Errorf("update GitOps Engine requirement: %w", err)
+	}
+
 	replacements, err := compatibilityReplacements(argoGoMod, argoCompatibilityReplaceModules)
 	if err != nil {
 		return err
@@ -153,6 +158,19 @@ func syncArgoCompatibilityStack() error {
 
 	fmt.Printf("Aligned Argo CD compatibility stack for %s %s\n", argoCDModule, argo.Version)
 	return nil
+}
+
+func gitopsEngineRequirement(source goModFile) (string, error) {
+	for _, requirement := range source.Require {
+		if requirement.Path == gitopsEngineModule {
+			version := strings.TrimSpace(requirement.Version)
+			if version == "" {
+				break
+			}
+			return version, nil
+		}
+	}
+	return "", fmt.Errorf("selected Argo CD go.mod does not require %s at a version", gitopsEngineModule)
 }
 
 func compatibilityReplacements(source goModFile, modules []string) ([]goModReplace, error) {

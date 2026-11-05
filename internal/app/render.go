@@ -346,6 +346,7 @@ func renderOptions(application argoappv1.Application, source argoappv1.Applicati
 		opts.DirectoryRecurse = source.Directory.Recurse
 		opts.DirectoryInclude = source.Directory.Include
 		opts.DirectoryExclude = source.Directory.Exclude
+		opts.DirectoryDisableExtensionFilter = source.Directory.DisableExtensionFilter
 		if jsonnet := source.Directory.Jsonnet.DeepCopy(); jsonnet != nil {
 			opts.Jsonnet = *jsonnet
 		}

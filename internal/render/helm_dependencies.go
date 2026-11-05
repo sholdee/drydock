@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/sholdee/drydock/internal/cacheevent"
 	"github.com/sholdee/drydock/internal/chart"
@@ -55,6 +56,7 @@ func prepareHelmDependencyWorkspace(ctx context.Context, chartPath, chartSourceP
 			CacheDir:        opts.ChartCacheDir,
 			Offline:         opts.OfflineCharts,
 			Refresh:         opts.RefreshCharts,
+			MaxAge:          opts.ChartCacheMaxAge,
 			ForbiddenRoots:  append([]string(nil), opts.ChartForbiddenRoots...),
 			PassCredentials: opts.PassCredentials,
 			Credentials:     opts.ChartCredentials,
@@ -327,11 +329,7 @@ func helmChartVersion(chrt helmchart.Charter) string {
 
 func recordChartCacheEvent(opts RenderOptions, request chart.Request, acquireErr error, acquired chart.Result) {
 	if acquireErr == nil && opts.AcquisitionCollector != nil {
-		opts.AcquisitionCollector.Record(cacheevent.AcquisitionRecord{
-			Kind:              cacheevent.AcquisitionChart,
-			RequestedRevision: request.Version,
-			ResolvedRevision:  acquired.Version,
-		})
+		opts.AcquisitionCollector.Record(ChartAcquisitionRecord(request, acquired, opts.ChartCacheMaxAge))
 	}
 	if opts.CacheEventRecorder == nil {
 		return
@@ -353,4 +351,29 @@ func recordChartCacheEvent(opts RenderOptions, request chart.Request, acquireErr
 	input.FromCache = acquired.FromCache
 	input.Network = !acquired.FromCache
 	opts.CacheEventRecorder.Record(cacheevent.NewAcquisitionEvent(input))
+}
+
+// ChartAcquisitionRecord is the acquisition record of one successful chart
+// acquisition: its pinned revisions and the chart cache entry it was served
+// from, which the persistent render cache checks under a chart cache max age.
+func ChartAcquisitionRecord(request chart.Request, acquired chart.Result, maxAge time.Duration) cacheevent.AcquisitionRecord {
+	kind := acquired.Kind
+	if kind == "" {
+		kind = request.Kind
+	}
+	return cacheevent.AcquisitionRecord{
+		Kind:              cacheevent.AcquisitionChart,
+		RequestedRevision: request.Version,
+		ResolvedRevision:  acquired.Version,
+		Chart: cacheevent.ChartAcquisition{
+			Target:    cacheevent.RedactTarget(request.Repository),
+			Name:      strings.TrimSpace(request.Name),
+			Version:   strings.TrimSpace(request.Version),
+			CacheKind: string(kind),
+			CacheKey:  acquired.CacheKey,
+			FetchedAt: acquired.FetchedAt,
+			MaxAge:    maxAge,
+			Stale:     acquired.Stale,
+		},
+	}
 }

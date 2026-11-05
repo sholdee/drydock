@@ -92,6 +92,14 @@ Supported:
   entrypoint.
 - ApplicationSet Git directories, Git files, list, matrix, and merge
   generators.
+- The Argo CD v3.6.1 OCI ApplicationSet generator (`generators[].oci`),
+  top-level and nested in matrix/merge, with directories and files, `exclude`,
+  `pathParamPrefix`, `values`, and the same path params as the Git generator.
+  The artifact is acquired like an `oci://` Application source (`--repo-map`,
+  `--offline`, the OCI cache, `--registry-config`, and `--oci-*` flags).
+  Directory and file matching follow the v3.6.1 repo-server: hidden
+  directories are skipped, file patterns are always doublestar (`.` means
+  `**`), and files resolving outside the artifact are skipped.
 - ApplicationSet `templatePatch` rendering and strategic merge patching, with
   generated `spec.project` preserved.
 - ApplicationSet list `elementsYaml`, including matrix-interpolated
@@ -101,26 +109,56 @@ Supported:
 - Nested matrix/merge combinations where the Argo CD v3 nested JSON API
   permits them.
 - Explicit local YAML/JSON fixtures for cluster, clusterDecisionResource, SCM
-  provider, pull-request, and plugin ApplicationSet generators.
+  provider, pull-request, and plugin ApplicationSet generators. Cluster
+  generator params omit the annotations Argo CD v3.6.1 reserves
+  (`argocd.argoproj.io/refresh`, `refresh-timestamp`, `hydrate`,
+  `hydrate-timestamp`, `tracking-id`, `installation-id`, and
+  `kubectl.kubernetes.io/last-applied-configuration`). The Go-template
+  `.metadata.annotations` key exists only when the fixture cluster has
+  annotations; `.metadata.labels` is always present, as it is for Argo CD's
+  secret-type-labelled cluster Secrets.
+- Argo CD v3.6.1 Go-template functions, including `tpl`, in templates,
+  `templatePatch`, generator `values`, and matrix/merge child interpolation.
 - Fail-closed fixture diagnostics for invalid provider fixtures, no provider
   matches, and unsupported provider filters.
 - Warning diagnostics when a discovered ApplicationSet generates zero
   Applications; `--strict` promotes those diagnostics to errors.
-- Argo CD Git files param decoding for empty content: empty, comment-only, and
-  bare `---`/`...` files decode to one empty param set, `[]` decodes to zero
-  param sets, and multi-document files decode only the first document.
-- ApplicationSet template and `templatePatch` execution errors scoped to the
-  failing ApplicationSet as `appset.template-render-failed` warning
-  diagnostics; that ApplicationSet contributes zero Applications and
-  `--strict` promotes the warnings to errors, matching the Argo CD
-  controller's `ErrorOccurred` condition behavior. Generator evaluation
-  errors remain fatal.
+- Argo CD Git and OCI files param decoding for empty content: empty,
+  comment-only, and bare `---`/`...` files decode to one empty param set,
+  `[]` decodes to zero param sets, and multi-document files decode only the
+  first document.
+- ApplicationSet template, `templatePatch`, generator `values`, and
+  matrix/merge child interpolation execution errors scoped to the failing
+  ApplicationSet as `appset.template-render-failed` warning diagnostics; that
+  ApplicationSet contributes zero Applications and `--strict` promotes the
+  warnings to errors, matching the Argo CD controller's `ErrorOccurred`
+  condition behavior. Other generator evaluation errors, such as file IO and
+  source acquisition, remain fatal.
+- Argo CD v3.6.1 generated-Application name validation: a generated
+  Application with an empty `metadata.name` (including a
+  `generateName`-only `templatePatch`) and every generated Application that
+  shares a duplicated name are omitted with an
+  `appset.application-validation-failed` warning; the ApplicationSet's other
+  Applications still generate, and `--strict` promotes the warning.
+- Argo CD v3.6.1 RollingSync rollout lint for `spec.strategy.type:
+  RollingSync`: an empty step list warns as `appset.rollout-no-steps`, and
+  invalid `matchExpressions` operators, Applications selected by several
+  steps, invalid `maxUpdate` values, and steps that match no generated
+  Application warn as `appset.invalid-rollout-config`. Argo CD applies these
+  only when the ApplicationSet controller runs with progressive syncs
+  enabled, which drydock cannot observe, so generation output is unchanged.
+  `--strict` promotes `appset.rollout-no-steps`, which stops reconciliation
+  when progressive syncs are enabled, but neither escalates nor fails on
+  `appset.invalid-rollout-config`, because Argo CD's `InvalidRolloutConfig`
+  condition never blocks Application create or update.
 
 Not supported:
 
 - Live Kubernetes, Argo CD, SCM provider, pull-request, cloud, or plugin
   service API calls for ApplicationSet generation.
 - Unsupported generators without diagnostics.
+- OCI generator `requeueAfterSeconds` and webhook refreshes; each drydock run
+  resolves the generator `revision` once.
 
 See `site/content/docs/applicationsets.md` for generator details and fixture
 schema.
@@ -260,6 +298,26 @@ Important boundaries:
   `helm dependency build` or mutating the source checkout. Local `file://`,
   repository-alias, or otherwise unresolved dependencies must be available
   under `charts/` and fail closed when missing.
+- Cached Helm charts never expire by default. Argo CD v3.6.1's repo-server
+  re-pulls a cached chart archive older than its repo cache expiration (24h
+  by default), so a republished chart version converges there; drydock needs
+  `--refresh-charts`, or opts in with `--chart-cache-max-age DURATION` (public
+  API `Config.ChartCacheMaxAge`). A positive max age refetches chart sources,
+  Helm dependencies, and Kustomize `helmCharts` whose cache entry was fetched
+  longer ago (fetch time, not last use; an entry with no recorded fetch time
+  counts as expired, even after reuse), and persisted render outputs built from an expired or since
+  refetched chart are never served. With `--offline` an expired chart is
+  still used and reported by a `source.chart-cache-stale` warning, which
+  `--strict` promotes.
+- Recorded divergence from strict Argo CD v3.6.1 (unchanged since v3.5.x):
+  drydock extracts fetched Helm chart archives itself and accepts only
+  directory and regular-file entries with relative names under the chart
+  root, so an archive holding a symlink, hard link, or other entry type, or
+  an absolute entry name, fails to acquire. The repo-server's extractor
+  (`util/io/files` `untar`) creates symlinks whose target stays inside the
+  extraction directory, skips other entry types, and extracts absolute names
+  relative to that directory. Charts built with `helm package` rarely contain
+  such entries.
 - Ambient Git credential helpers, ambient Helm registry config, and secret
   credential fields from discovered repository Secrets are not read. SSH
   identities are the exception: without `--git-ssh-key-file`, the agent and
@@ -298,31 +356,67 @@ Supported:
   per exact name within each kind. Names are used verbatim, an empty name sets
   nothing (its `fileParameters` file is still read), and an overridden
   `fileParameters` path is resolved but never read.
-- Recorded divergence from strict Argo CD v3.5.3: the repo-server passes the
-  surviving entries of one kind in Go's randomized map iteration order, so
-  overlapping names within one kind (such as `a` and `a.b`) can render
-  differently from one Argo CD run to the next. drydock applies them in list
-  order, which is one of the possible outcomes.
-- Recorded divergence from strict Argo CD v3.5.3: drydock does not follow a
-  symlink at an overridden `fileParameters` path, so it accepts one whose
-  target escapes the repository where the repo-server fails.
+- Recorded divergence from strict Argo CD v3.6.1 (unchanged since v3.5.x):
+  the repo-server passes the surviving entries of one kind in Go's randomized
+  map iteration order, so overlapping names within one kind (such as `a` and
+  `a.b`) can render differently from one Argo CD run to the next. drydock
+  applies them in list order, which is one of the possible outcomes.
+- Recorded divergence from strict Argo CD v3.6.1 (unchanged since v3.5.x):
+  drydock does not follow a symlink at an overridden `fileParameters` path,
+  so it accepts one whose target escapes the repository where the
+  repo-server fails.
 - `.argocd-source.yaml` and `.argocd-source-<app>.yaml` overrides, where
   `<app>` is the Application instance name like the repo-server's lookup: an
   Application outside the controller namespace reads
   `.argocd-source-<namespace>_<name>.yaml`, and a bare-name file is ignored.
-- Recorded divergence from strict Argo CD v3.5.2: `ARGOCD_APP_REVISION`,
-  `ARGOCD_APP_REVISION_SHORT`, and `ARGOCD_APP_REVISION_SHORT_8` carry the spec
-  `targetRevision` string; a repo-server reports the resolved revision
-  (commit SHA for Git sources, chart version for Helm repository sources,
-  manifest digest for OCI sources).
-- Directory rendering that skips values-like YAML documents only when both
-  `apiVersion` and `kind` are absent, and fails clearly when exactly one is
-  present.
+- Recorded divergence from strict Argo CD v3.6.1 (unchanged since v3.5.x):
+  `ARGOCD_APP_REVISION`, `ARGOCD_APP_REVISION_SHORT`, and
+  `ARGOCD_APP_REVISION_SHORT_8` carry the spec `targetRevision` string; a
+  repo-server reports the resolved revision (commit SHA for Git sources,
+  chart version for Helm repository sources, manifest digest for OCI
+  sources).
+- Recorded divergence from strict Argo CD v3.6.1 (unchanged since v3.5.x):
+  a directory YAML document with exactly one of `apiVersion` and `kind`
+  fails the source. The repo-server renders a document with a `kind` but no
+  `apiVersion`, and skips a file that stops at a document with an
+  `apiVersion` but no `kind` when nothing decoded before it and the file does
+  not hold every manifest marker (see the decoding rules below).
 - Directory rendering honors `+argocd:skip-file-rendering`, walks hidden
   directories when `recurse` is enabled, renders Jsonnet through native Go
   libraries with extVars, TLAs, code mode, env substitution, and repo-relative
   libs, confines Jsonnet imports to the repository root as the Argo CD
   repo-server does from v3.5.4, and skips drydock cache metadata sidecars.
+- Directory file selection as the Argo CD v3.6.1 repo-server performs it: the
+  built-in `.yaml`/`.yml`/`.json`/`.jsonnet` extension filter is
+  case-sensitive (`deploy.YAML` is not rendered), `include` and `exclude`
+  match the source-relative path with `github.com/gobwas/glob` v1.0.0
+  semantics (`{**/,}crds/*.yaml` matches `crds/a.yaml` and `x/crds/a.yaml`).
+- Directory file decoding as the Argo CD v3.6.1 repo-server performs it: file
+  text is read as UTF-8 unless a byte order mark says UTF-16LE or UTF-16BE,
+  the byte order mark is dropped, and invalid UTF-8 becomes U+FFFD, before
+  the `+argocd:skip-file-rendering` check and every decoder. A file ending in
+  `.json` must decode as one JSON object with a `kind` (or as an OCI image
+  manifest) followed only by whitespace, so an empty file, YAML content, a
+  JSON array, a syntax error, or several concatenated objects fail the
+  source. Every other file is a YAML/JSON stream that stops at a syntax error
+  or at a non-empty document that is not an object with a `kind` (values-like
+  YAML and `{}` included). When the stream stops, the file fails the source
+  if an object decoded before it or if its content holds all of
+  `apiVersion:`, `kind:`, and `metadata:`; otherwise the whole file is
+  skipped as unrelated YAML.
+- Recorded divergence from strict Argo CD v3.6.1: a `.json` file accepted
+  only as an OCI image manifest renders nothing in drydock; the repo-server
+  emits it as a manifest without a `kind`.
+- Directory `disableExtensionFilter`: the extension filter is skipped and
+  `include`/`exclude` become the only filters, so custom extensions such as
+  `*.yaml.sealed` render. A `.jsonnet` suffix is still evaluated as Jsonnet, a
+  `.json` suffix still follows the single-object JSON rule, and every other
+  file, such as a README or `.libsonnet` library that `include` admits, is
+  read as a YAML/JSON stream under the skip-or-fail rule above. Enabling it
+  with neither `include` nor `exclude` renders every file and emits the
+  `directory.extension-filter-disabled` warning, where the repo-server logs a
+  warning. Upstream calls this a valid configuration, so `--strict` keeps the
+  warning advisory.
 - Local Kustomize rendering with supported `kustomize.buildOptions`:
   `--enable-helm`, `--helm-api-versions`,
   `--load-restrictor=LoadRestrictionsRootOnly|LoadRestrictionsNone`,
@@ -339,6 +433,20 @@ Supported:
   root.
 - Kustomize Helm remote HTTP(S) value files through the same remote-resource
   cache path used by Helm sources.
+- Kustomize `ignoreMissingComponents` as in Argo CD v3.6.1: each
+  `kustomize.components` entry is joined with the source path and kept only
+  when that directory holds a regular `kustomization.yaml`,
+  `kustomization.yml`, or `Kustomization`, looked up inside the repository
+  root with in-repository symlinks followed. Missing directories, directories
+  without a kustomization file, remote refs, and refs escaping the repository
+  are skipped without reading outside it; an absolute ref is joined under the
+  source path. A skipped in-repository directory stays a persistent render
+  cache input, so adding a kustomization file there invalidates the entry.
+- Recorded divergence from strict Argo CD v3.6.1: with
+  `ignoreMissingComponents`, `util/kustomize/kustomize.go` (commit
+  `a16170b2e`) leaves its component loop with `break component` after the
+  first valid component, so the repo-server adds only that one. drydock adds
+  every valid component, the documented intent of the option.
 - Remote Kustomize refs in `resources`, `bases`, `components`,
   `patches.path`, `patchesJson6902.path`, non-inline
   `patchesStrategicMerge`, `generators`, `transformers`, `validators`,
@@ -424,6 +532,10 @@ Documented runtime-offline safety boundary:
 - Directory rendering rejects symlinked source path components and skips
   symlinked manifest files, even when an Argo CD repo-server could render an
   in-repository symlink target.
+- Under Kustomize `ignoreMissingComponents`, a component whose kustomization
+  file is an in-repository symlink counts as present, as in Argo CD v3.6.1,
+  and then fails drydock's symlinked graph entry check where the repo-server
+  renders it.
 
 Not supported:
 
@@ -466,6 +578,25 @@ Supported:
 - Global `resource.customizations.ignoreDifferences.*`,
   `knownTypeFields.*`, selected compare options, resource exclusions, and
   resource inclusions.
+- Resource-level `argocd.argoproj.io/ignore-differences` annotations, as in
+  Argo CD v3.6.1: the value is YAML with only `jsonPointers`, the rule applies
+  only to the annotated resource (including child Application CRs), and an
+  unparseable value or an empty `jsonPointers` list is skipped. Annotation
+  pointers stay active under `--show-ignored-fields`. Annotation pointers use
+  the path rules of the JSON-patch library Argo CD applies them with: the
+  first `/`-separated segment is dropped unchecked (so `#/spec/replicas`
+  removes `/spec/replicas`), only `~0` and `~1` are decoded, and a negative
+  array index counts from the end. As in Argo CD, where a failed JSON-patch
+  remove is only logged, a pointer that cannot be applied (non-numeric or
+  out-of-range array index, `-`, or a root `""` pointer) is skipped; it never
+  fails the diff or hides the resource. Application-level and global
+  `jsonPointers` keep their strict RFC 6901 validation.
+- Recorded divergence from strict Argo CD v3.6.1: Argo CD reads the
+  ignore-differences annotation from the desired (target) object and applies
+  the rule to live and target. drydock compares desired against desired, so
+  it reads the annotation from the current-side manifest, falls back to the
+  baseline manifest only when the resource exists only on the baseline side,
+  and applies the rule to both sides.
 - Repeated-resource last-wins behavior inside one Application, with a
   diagnostic.
 - `get images` and `diff images` rendered image reference extraction from
@@ -474,6 +605,10 @@ Supported:
 Not supported:
 
 - Applying `ignoreResourceUpdates` to desired-vs-desired diffs.
+- Live Server-Side Diff. Since Argo CD v3.6.1 it is also used whenever the
+  `ServerSideApply=true` sync option is enabled, so Argo CD's diff for those
+  resources includes API server defaulting and admission webhook mutation
+  that drydock's desired-vs-desired diff never shows.
 - Managed-fields prediction from live state.
 - Arbitrary string scanning for image references.
 
@@ -503,7 +638,13 @@ Supported:
 - Cluster Secret metadata parsing for offline named-cluster destination
   diagnostics and project-scoped cluster checks when the desired state includes
   the relevant cluster Secret metadata. Only `name`, `server`, `namespaces`,
-  `clusterResources`, and `project` are decoded.
+  `clusterResources`, and `project` are decoded. A cluster Secret whose
+  `project` names an AppProject adds that project's implicit destinations, as
+  Argo CD does. A server-only destination at `https://kubernetes.default.svc`,
+  or a name-only `in-cluster` destination, with no cluster Secret resolves to
+  Argo CD's built-in `in-cluster` cluster. When argocd-cm
+  `cluster.inClusterEnabled` is `"false"`, a destination at that address is
+  reported as not permitted, as Argo CD rejects it.
 - Project diagnostic modes. The default `actionable` mode reports local
   AppProject denials that drydock can enforce offline and hides deferred or
   metadata-only AppProject diagnostics. Use `--project-diagnostics=all` for full
@@ -519,24 +660,46 @@ Supported:
   live repo-server, controller, or ApplicationSet controller behavior. These
   settings are parsed as metadata and do not mutate render behavior.
 - Custom health Lua validation in `test apps` and `test app`, executed offline
-  against rendered desired manifests.
+  against rendered desired manifests. It reports Lua runtime errors and
+  invalid status values. A `deletionMessage` (Argo CD v3.6.1) applies only to
+  terminating objects, so it never takes effect on desired manifests.
 - Health and action customization parsing and diagnostics, including
   `useOpenLibs` metadata and redacted SHA-256 Lua summaries.
 - Warning diagnostics for version-specific `kustomize.buildOptions.<version>`
   and `kustomize.path.<version>` settings because drydock does not select
   external Kustomize binaries.
+- `argocd-cm` `resource.selectors` (Argo CD v3.6.1), decoded as Argo CD
+  decodes it. An unparsable list or label selector is a
+  `settings.resource-selector-invalid` error, because Argo CD fails settings
+  loading on it. Selectors never drop resources: Argo CD only narrows its
+  list/watch calls with them. A rendered resource or hook that survives the
+  resource exclusions and inclusions, but whose labels (after tracking
+  metadata) do not match the ANDed selectors for its group, kind, and
+  cluster, stays in render and diff output with a
+  `settings.resource-selector-mismatch` warning carrying Argo CD's
+  `ExcludedResourceWarning` text: Argo CD will not watch it, so it stays
+  OutOfSync. `--strict` promotes the warning. Cluster globs match the
+  resolved destination server, as in Argo CD: a destination name resolves
+  through the cluster Secrets, and the implicit `in-cluster` name resolves to
+  `https://kubernetes.default.svc`. When a name cannot be resolved offline
+  (unknown or ambiguous), or the destination is the in-cluster cluster that
+  `cluster.inClusterEnabled: "false"` disables, Argo CD fails the comparison
+  before it reads selectors, and no selector warning is reported. Resource exclusions
+  and inclusions still match the destination name when only a name is set.
 
 ### AppProject Field Semantics
 
-This matrix is audited against Argo CD `v3.4.3`
-(`1801122b4391cad4961301f787006dc9a88c2dd3`). It records current drydock
+This matrix is audited against Argo CD `v3.6.1`
+(`94037c4d4e1af4bd0651d37a179fbd9e347e668c`). It records current drydock
 behavior. Strict render tests promote visible project and repository warnings
 after the selected project diagnostic mode is applied.
 
 | Field | Upstream owner | drydock status | Current diagnostic | Offline input and next phase |
 | --- | --- | --- | --- | --- |
 | `spec.sourceRepos` | `types.go`, `IsSourcePermitted`, Argo repo metadata merge | Supported | `project` warning for denied sources; `repository` warning for mismatched repository Secret project metadata | Application sources plus redacted repository metadata; parity fixtures present, future gaps Phase 3 |
-| `spec.destinations` | `types.go`, `IsDestinationPermitted`, `isDestinationMatched` | Supported with named-cluster metadata caveats | `project` warning for denied destinations or unresolved name-only server policy | Application destination plus redacted cluster metadata; parity fixtures present, deferred metadata cases Phase 3 |
+| `spec.destinations` | `app_project_types.go`, `IsDestinationPermitted`, `isDestinationMatched` | Supported with named-cluster metadata caveats | `project` warning for denied destinations; deferred `project` warning when the decision depends on an unresolved cluster's server (name-only destination) or name (server-only destination) | Application destination plus redacted cluster metadata. A name or server deny entry denies only when its namespace also matches (v3.6.1, #28854). A server-only `https://kubernetes.default.svc` or name-only `in-cluster` destination with no cluster Secret is the built-in `in-cluster` cluster. With `cluster.inClusterEnabled` `"false"`, a destination at that address, directly or through a cluster Secret name, is denied whatever the project permits (util/db `GetCluster`). Other unresolved destinations are evaluated in three-valued logic: drydock denies or permits only when every cluster the unknown name or server could be, scoped to the project or not, gives the same answer, and otherwise defers. Because an unseen project-scoped cluster adds an implicit destination for its server, only a matching deny entry denies an unresolved destination. Parity fixtures resolve clusters as Argo CD does |
+| Implicit project-scoped cluster destinations | `util/argo` `GetAppProjectByName` | Supported | Same as `spec.destinations`; deny entries still win | A cluster Secret with `project: <name>` adds `{server, namespace: "*"}`, or one destination per `namespaces` value, to that AppProject, for Application destinations and rendered-resource namespaces alike |
+| argocd-cm `globalProjects` | `util/argo` `GetAppVirtualProject`, `GetGlobalProjects` | Unsupported | None | Global project settings are not parsed and their policy is not merged into matching AppProjects |
 | `spec.description` | `types.go` | Metadata-only | None | Decoded as typed metadata |
 | `spec.sourceNamespaces` | `types.go`, `IsAppNamespacePermitted` | Supported | `project` warning for denied Application source namespace | Application namespace plus controller namespace assumption; parity fixtures present |
 | `spec.permitOnlyProjectScopedClusters` | `types.go`, `IsDestinationPermitted` project-cluster check | Deferred when cluster metadata is unavailable; supported when redacted project-scoped cluster metadata is present | `project` warning for deferred metadata or known denial | Redacted cluster Secret `project` metadata; without it drydock reports a runtime-boundary deferral rather than a hard decision |
@@ -544,10 +707,11 @@ after the selected project diagnostic mode is applied.
 | `spec.clusterResourceBlacklist` | `types.go`, `IsGroupKindNamePermitted`, `IsResourcePermitted` | Supported for render-backed workflows | `project.resource-denied` warning for denied rendered resources | Rendered objects, including sync and delete hooks, plus offline scope knowledge; unknown custom-resource scope defers with `project.resource-scope-deferred` only when possible scopes change or defer the policy outcome |
 | `spec.namespaceResourceWhitelist` | `types.go`, `IsGroupKindNamePermitted`, `IsResourcePermitted` | Supported for render-backed workflows | `project.resource-denied` warning for denied rendered resources; `project.resource-destination-denied` for rendered object namespace denials | Rendered objects, including sync and delete hooks, plus destination namespace normalization; discovery-only workflows do not evaluate rendered resource policy |
 | `spec.namespaceResourceBlacklist` | `types.go`, `IsGroupKindNamePermitted`, `IsResourcePermitted` | Supported for render-backed workflows | `project.resource-denied` warning for denied rendered resources; `project.resource-destination-denied` for rendered object namespace denials | Rendered objects, including sync and delete hooks, plus destination namespace normalization; discovery-only workflows do not evaluate rendered resource policy |
-| `spec.roles` | `types.go`, `ValidateProject`, `ProjectPoliciesString`, Argo RBAC runtime | Metadata-only | `project.rbac-metadata-only` warning when roles are present | Role presence only; no Casbin authorization, claims, scopes, or token-status simulation |
+| `spec.roles` | `types.go`, `ValidateProject`, `ProjectPoliciesString`, Argo RBAC runtime | Metadata-only | `project.rbac-metadata-only` warning when roles are present | Role presence only; no Casbin authorization, claims, scopes, or token-status simulation. Policy actions are not validated, so the `rollback` action Argo CD v3.6.1 accepts is metadata like any other |
 | `spec.syncWindows` | `types.go`, `SyncWindow.Matches`, `SyncWindows.CanSync`, Argo sync runtime | Runtime-bound; documented only | None | Depends on clock, timezone, destination, and manual vs automated operation context |
 | `spec.orphanedResources` | `types.go`, Argo application controller live orphan scan | Unsupported live-cluster behavior | None | Requires live namespace inventory, ownership graph, orphan exclusions, and controller state |
-| `spec.signatureKeys` | `types.go`, Argo GPG verification in `controller/state.go` and repo-server verification | Unsupported runtime verification | None | Requires GPG keyring state, repo-server verification result, and resolved commit metadata |
+| `spec.signatureKeys` | `types.go`, Argo GPG verification in `controller/state.go` and repo-server verification | Unsupported runtime verification | None | Deprecated upstream in favor of `spec.sourceIntegrity`; `EffectiveSourceIntegrity` converts the keys into a Git GPG policy for every repository. Requires GPG keyring state, repo-server verification result, and resolved commit metadata |
+| `spec.sourceIntegrity` | `types.go`, `EffectiveSourceIntegrity`, source integrity checks in `controller/state.go` and repo-server verification | Unsupported runtime verification | None | Requires GPG keyring state, repo-server verification result, and resolved commit metadata |
 | `spec.destinationServiceAccounts` | `types.go`, `ValidateProject`, `controller/sync.go` sync impersonation runtime | Runtime-bound metadata | None | Sync impersonation is applied during controller sync; drydock does not mutate REST config or validate live service account authorization |
 
 ### AppProject Current Behavior Traceability
@@ -564,8 +728,8 @@ implemented or documented as runtime boundaries.
 | Implicit default project | `effectiveProject`, `implicitDefaultProject` | `TestValidateApplicationsAllowsImplicitDefaultProject`, `TestValidateApplicationsImplicitDefaultProjectPermitsAnySourceNamespace`, `TestValidateApplicationsDefersUnresolvedProjectWithoutLocalProjects`, `TestValidateApplicationsCurrentBehaviorAllowsImplicitDefaultProjectWhenOtherLocalProjectsExist` | No follow-up |
 | Missing non-default project | `ValidateApplications`, `projectIndex`, `applicationProject` | `TestValidateApplicationsCurrentBehaviorReportsMissingNonDefaultProject` | No follow-up |
 | Source repository matching | `validateSources`, Argo `IsSourcePermitted` | Existing source policy tests, source parity fixtures, `TestValidateApplicationsCurrentBehaviorReportsDeniedMultiSourceRepository` | Phase 3 remediation for any future parity gaps |
-| Destination matching | `validateDestination`, `destinationCluster`, Argo `IsDestinationPermitted` | Existing destination and project-scoped cluster tests, destination parity fixtures | Phase 3 remediation for deferred metadata cases |
-| Cluster Secret metadata | `clusterSecretSettings`, `projectScopedClusters` | Cluster parser tests, project-scoped destination tests, metadata integration fixtures | Phase 3 remediation for deferred metadata cases |
+| Destination matching | `validateDestination`, `destinationCluster`, `offlineDestinationPermitted`, Argo `IsDestinationPermitted` | Existing destination and project-scoped cluster tests, destination parity fixtures fed Argo CD-resolved clusters, `TestOfflineDestinationPermittedIsSoundAgainstArgoCD` | Unresolved destinations defer only when the unknown name, server, or project scoping decides the outcome |
+| Cluster Secret metadata | `clusterSecretSettings`, `projectScopedClusters`, `projectScopedClusterDestinations` | Cluster parser tests, project-scoped destination tests, `TestValidateApplicationsAddsProjectScopedClusterDestinations`, metadata integration fixtures | No follow-up |
 | Repository Secret project metadata | `repositorySecretSettings`, `effectiveProject`, `repositoryMetadataDiagnostics` | Repository metadata tests, project-scoped repository tests, metadata integration fixtures | No follow-up |
 | Source namespace checks | `validateSourceNamespace` | Existing source namespace tests, source namespace parity fixtures, `TestValidateApplicationsCurrentBehaviorPhase3SourceNamespacesEmptyListDeniesNonControllerNamespace` | No follow-up |
 | RBAC role metadata | `rbacMetadataDiagnostics` | Existing source namespace and RBAC metadata test | Metadata-only warning; authorization is not simulated |

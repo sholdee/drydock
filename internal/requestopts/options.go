@@ -39,6 +39,7 @@ type Options struct {
 	ShowIgnoredFields              bool
 	Offline                        bool
 	RefreshCharts                  bool
+	ChartCacheMaxAge               time.Duration
 	ChartCacheDir                  string
 	ChartCredentials               chart.ChartCredentials
 	RepoMaps                       []source.RepoMap
@@ -144,6 +145,7 @@ func (options Options) acquisitionOptions() app.AcquisitionOptions {
 	return app.AcquisitionOptions{
 		Offline:                      options.Offline,
 		RefreshCharts:                options.RefreshCharts,
+		ChartCacheMaxAge:             options.ChartCacheMaxAge,
 		ChartCacheDir:                options.ChartCacheDir,
 		ChartCredentials:             options.ChartCredentials,
 		RepoMaps:                     append([]source.RepoMap(nil), options.RepoMaps...),

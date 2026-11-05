@@ -28,9 +28,13 @@ type ClusterSettings struct {
 }
 
 type ResourceFilterRule struct {
-	APIGroups  []string   `json:"apiGroups,omitempty" yaml:"apiGroups,omitempty"`
-	Kinds      []string   `json:"kinds,omitempty" yaml:"kinds,omitempty"`
-	Clusters   []string   `json:"clusters,omitempty" yaml:"clusters,omitempty"`
+	APIGroups []string `json:"apiGroups,omitempty" yaml:"apiGroups,omitempty"`
+	Kinds     []string `json:"kinds,omitempty" yaml:"kinds,omitempty"`
+	Clusters  []string `json:"clusters,omitempty" yaml:"clusters,omitempty"`
+	// Selector is the label selector, in its string form, of a
+	// resource.selectors rule. Exclusion and inclusion rules ignore it, as
+	// Argo CD's FilteredResource does.
+	Selector   string     `json:"selector,omitempty" yaml:"selector,omitempty"`
 	Provenance Provenance `json:"provenance,omitempty" yaml:"provenance,omitempty"`
 }
 
@@ -134,9 +138,11 @@ type ArgoSettings struct {
 	InstallationID               Value[string]                     `json:"installationID,omitempty" yaml:"installationID,omitempty"`
 	ResourceExclusions           []ResourceFilterRule              `json:"resourceExclusions,omitempty" yaml:"resourceExclusions,omitempty"`
 	ResourceInclusions           []ResourceFilterRule              `json:"resourceInclusions,omitempty" yaml:"resourceInclusions,omitempty"`
+	ResourceSelectors            []ResourceFilterRule              `json:"resourceSelectors,omitempty" yaml:"resourceSelectors,omitempty"`
 	CompareOptions               ResourceCompareOptions            `json:"compareOptions,omitempty" yaml:"compareOptions,omitempty"`
 	ResourceCustomizations       map[string]ResourceCustomization  `json:"resourceCustomizations,omitempty" yaml:"resourceCustomizations,omitempty"`
 	IgnoreResourceUpdatesEnabled Value[bool]                       `json:"ignoreResourceUpdatesEnabled,omitempty" yaml:"ignoreResourceUpdatesEnabled,omitempty"`
+	InClusterEnabled             Value[bool]                       `json:"inClusterEnabled,omitempty" yaml:"inClusterEnabled,omitempty"`
 	ConfigManagementPlugins      map[string]ConfigManagementPlugin `json:"-" yaml:"-"`
 	CommandParameters            []CommandParameterSetting         `json:"commandParameters,omitempty" yaml:"commandParameters,omitempty"`
 }
@@ -158,6 +164,11 @@ func DefaultSettings() ArgoSettings {
 			Value: "app.kubernetes.io/instance",
 		},
 		IgnoreResourceUpdatesEnabled: Value[bool]{
+			Value: true,
+		},
+		// argocd-cm cluster.inClusterEnabled defaults to true: Argo CD serves
+		// the built-in in-cluster destination unless it is disabled.
+		InClusterEnabled: Value[bool]{
 			Value: true,
 		},
 	}

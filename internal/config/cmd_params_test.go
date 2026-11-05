@@ -155,6 +155,76 @@ data:
 	}
 }
 
+func TestLoadCmdParamsClassifiesArgoCD36Keys(t *testing.T) {
+	// Keys Argo CD v3.6.1 added to argocd-cmd-params-cm (docs and
+	// manifests/base configMapKeyRef diff against v3.5.4) are runtime wiring:
+	// none of them changes what the repo-server renders.
+	path := filepath.Join(t.TempDir(), "argocd-cmd-params-cm.yaml")
+	if err := os.WriteFile(path, []byte(`apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: argocd-cmd-params-cm
+data:
+  applicationsetcontroller.wq.backoff.factor: "1.5"
+  applicationsetcontroller.wq.basedelay.ns: "1000000"
+  applicationsetcontroller.wq.bucket.qps: "50"
+  applicationsetcontroller.wq.bucket.size: "500"
+  applicationsetcontroller.wq.cooldown.ns: "10000000000"
+  applicationsetcontroller.wq.maxdelay.ns: "1000000000000"
+  commitserver.signing.key.path: /app/config/SUPER_SECRET_KEY_PATH
+  commitserver.signing.key.passphrase.file: /app/config/SUPER_SECRET_PASSPHRASE
+  controller.metrics.application.conditions: OrphanedResourceWarning
+  controller.metrics.application.labels: team
+  controller.metrics.cluster.labels: env
+  otlp.sample.ratio: "0.1"
+  redis.key.prefix: argocd
+  redis.sentinel.hosts: sentinel:26379
+  redis.sentinel.master: mymaster
+  reposerver.tls.curvepreferences: X25519
+  server.disable.swagger.ui: "true"
+  server.tls.curvepreferences: X25519
+`), 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	settings, diags, err := LoadCommandParametersConfigMap(path)
+	if err != nil {
+		t.Fatalf("LoadCommandParametersConfigMap() error = %v", err)
+	}
+	if len(diags) != 0 {
+		t.Fatalf("diagnostics = %#v, want none for runtime wiring keys", diags)
+	}
+	if len(settings.CommandParameters) != 18 {
+		t.Fatalf("CommandParameters = %#v, want 18 keys", settings.CommandParameters)
+	}
+	for _, setting := range settings.CommandParameters {
+		assertCommandParameter(t, settings, setting.Key, "", false, CommandParameterRuntimeWiring)
+	}
+	assertJSONDoesNotContain(t, settings, "SUPER_SECRET")
+}
+
+func TestLoadCmdParamsRecordsProgressiveSyncsWithoutWarning(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "argocd-cmd-params-cm.yaml")
+	if err := os.WriteFile(path, []byte(`apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: argocd-cmd-params-cm
+data:
+  applicationsetcontroller.enable.progressive.syncs: "true"
+`), 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	settings, diags, err := LoadCommandParametersConfigMap(path)
+	if err != nil {
+		t.Fatalf("LoadCommandParametersConfigMap() error = %v", err)
+	}
+	if len(diags) != 0 {
+		t.Fatalf("diagnostics = %#v, want no metadata-only warning (--strict would promote it)", diags)
+	}
+	assertCommandParameter(t, settings, "applicationsetcontroller.enable.progressive.syncs", "true", false, CommandParameterRuntimeOnly)
+}
+
 func requireCommandParameter(t *testing.T, settings ArgoSettings, key string) CommandParameterSetting {
 	t.Helper()
 	for _, setting := range settings.CommandParameters {

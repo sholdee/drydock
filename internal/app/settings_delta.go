@@ -28,8 +28,9 @@ type settingsDelta struct {
 	repositories map[string][]project.RepositoryMatch
 	// clusterServers holds the normalized server of every cluster entry that
 	// was added, removed, or modified, from both sides; clusterNames holds
-	// the names validation can find those entries by: the name, and the
-	// server it falls back to.
+	// the names validation can find those entries by: the name, the server
+	// it falls back to, and in-cluster for an entry at the in-cluster
+	// address.
 	clusterServers, clusterNames map[string]struct{}
 	// projects names the AppProjects a changed cluster entry reaches as a
 	// whole (projectScopedClusters).
@@ -40,9 +41,11 @@ type settingsDelta struct {
 //
 //   - render-affecting settings (tracking, the instance label, Kustomize
 //     build options, Helm value file schemes, CMP definitions and discovery,
-//     resource exclusions and inclusions, compare options, and the resource
-//     customizations a diff or a health check reads) and the OCI Helm
-//     repositories set reach every render or diff: renderAll;
+//     resource exclusions, inclusions, and selectors, compare options, and
+//     the resource customizations a diff or a health check reads), the OCI
+//     Helm repositories set, and cluster.inClusterEnabled, which project
+//     validation reads for every in-cluster destination, reach every render
+//     or diff: renderAll;
 //   - a repository or cluster entry reaches only the Applications that use
 //     it, through project validation (settingsDelta.selects);
 //   - command parameters, provenance, resource.ignoreResourceUpdatesEnabled,
@@ -180,6 +183,12 @@ func (d *settingsDelta) addCluster(key string, cluster config.ClusterSettings) b
 	for _, server := range servers {
 		d.clusterServers[server] = struct{}{}
 		d.clusterNames[server] = struct{}{}
+		// With no cluster Secret named in-cluster, validation resolves that
+		// name through the entry at the in-cluster address
+		// (project.destinationCluster, util/db GetClusterServersByName).
+		if server == argoappv1.KubernetesInternalAPIServerAddr {
+			d.clusterNames[argoappv1.KubernetesInClusterName] = struct{}{}
+		}
 	}
 	if name := strings.TrimSpace(cluster.Name); name != "" {
 		d.clusterNames[name] = struct{}{}

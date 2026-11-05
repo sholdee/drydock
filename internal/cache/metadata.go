@@ -28,6 +28,11 @@ type Metadata struct {
 	Path          string    `json:"path,omitempty" yaml:"path,omitempty"`
 	CreatedAt     time.Time `json:"createdAt" yaml:"createdAt"`
 	UpdatedAt     time.Time `json:"updatedAt" yaml:"updatedAt"`
+	// FetchTimeUnknown marks metadata backfilled when an entry that had none
+	// was reused rather than fetched: CreatedAt then records the backfill,
+	// not when the content was fetched. Chart cache max age treats such an
+	// entry as being of unknown age.
+	FetchTimeUnknown bool `json:"fetchTimeUnknown,omitempty" yaml:"fetchTimeUnknown,omitempty"`
 }
 
 func MetadataPath(entryPath string) string {

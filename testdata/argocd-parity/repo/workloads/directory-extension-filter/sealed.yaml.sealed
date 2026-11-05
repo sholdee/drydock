@@ -1,0 +1,7 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: extension-filter-sealed
+  namespace: parity-directory-extension-filter
+data:
+  extension: yaml.sealed

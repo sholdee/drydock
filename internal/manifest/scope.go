@@ -7,6 +7,11 @@ type groupKind struct {
 	Kind  string
 }
 
+// The built-in scope tables are keyed by group and kind, so every served
+// version shares one entry. Scopes follow the +genclient:nonNamespaced
+// markers in k8s.io/api, and TestBuiltInScopeTablesCoverStaticSchemeKinds
+// checks that every top-level kind in the gitops-engine static scheme (the
+// Kubernetes API set Argo CD diffs with) has an entry.
 var builtInClusterScopedKinds = map[groupKind]struct{}{
 	{Kind: "ComponentStatus"}:  {},
 	{Kind: "Namespace"}:        {},
@@ -40,6 +45,7 @@ var builtInClusterScopedKinds = map[groupKind]struct{}{
 	{Group: "rbac.authorization.k8s.io", Kind: "ClusterRoleBinding"}:                  {},
 	{Group: "resource.k8s.io", Kind: "DeviceClass"}:                                   {},
 	{Group: "resource.k8s.io", Kind: "DeviceTaintRule"}:                               {},
+	{Group: "resource.k8s.io", Kind: "ResourcePoolStatusRequest"}:                     {},
 	{Group: "resource.k8s.io", Kind: "ResourceSlice"}:                                 {},
 	{Group: "scheduling.k8s.io", Kind: "PriorityClass"}:                               {},
 	{Group: "storage.k8s.io", Kind: "CSIDriver"}:                                      {},
@@ -51,32 +57,40 @@ var builtInClusterScopedKinds = map[groupKind]struct{}{
 }
 
 var knownNamespacedBuiltInKinds = map[groupKind]struct{}{
-	{Kind: "Binding"}:                                       {},
-	{Kind: "ConfigMap"}:                                     {},
-	{Kind: "Endpoints"}:                                     {},
-	{Kind: "Event"}:                                         {},
-	{Kind: "LimitRange"}:                                    {},
-	{Kind: "PersistentVolumeClaim"}:                         {},
-	{Kind: "Pod"}:                                           {},
-	{Kind: "PodTemplate"}:                                   {},
-	{Kind: "ReplicationController"}:                         {},
-	{Kind: "ResourceQuota"}:                                 {},
-	{Kind: "Secret"}:                                        {},
-	{Kind: "Service"}:                                       {},
-	{Kind: "ServiceAccount"}:                                {},
-	{Group: "apps", Kind: "ControllerRevision"}:             {},
-	{Group: "apps", Kind: "DaemonSet"}:                      {},
-	{Group: "apps", Kind: "Deployment"}:                     {},
-	{Group: "apps", Kind: "ReplicaSet"}:                     {},
-	{Group: "apps", Kind: "StatefulSet"}:                    {},
-	{Group: "autoscaling", Kind: "HorizontalPodAutoscaler"}: {},
-	{Group: "batch", Kind: "CronJob"}:                       {},
-	{Group: "batch", Kind: "Job"}:                           {},
+	{Kind: "Binding"}:                                                 {},
+	{Kind: "ConfigMap"}:                                               {},
+	{Kind: "Endpoints"}:                                               {},
+	{Kind: "Event"}:                                                   {},
+	{Kind: "LimitRange"}:                                              {},
+	{Kind: "PersistentVolumeClaim"}:                                   {},
+	{Kind: "Pod"}:                                                     {},
+	{Kind: "PodTemplate"}:                                             {},
+	{Kind: "ReplicationController"}:                                   {},
+	{Kind: "ResourceQuota"}:                                           {},
+	{Kind: "Secret"}:                                                  {},
+	{Kind: "Service"}:                                                 {},
+	{Kind: "ServiceAccount"}:                                          {},
+	{Group: "apps", Kind: "ControllerRevision"}:                       {},
+	{Group: "apps", Kind: "DaemonSet"}:                                {},
+	{Group: "apps", Kind: "Deployment"}:                               {},
+	{Group: "apps", Kind: "ReplicaSet"}:                               {},
+	{Group: "apps", Kind: "StatefulSet"}:                              {},
+	{Group: "autoscaling", Kind: "HorizontalPodAutoscaler"}:           {},
+	{Group: "batch", Kind: "CronJob"}:                                 {},
+	{Group: "batch", Kind: "Job"}:                                     {},
+	{Group: "extensions", Kind: "DaemonSet"}:                          {},
+	{Group: "extensions", Kind: "Deployment"}:                         {},
+	{Group: "extensions", Kind: "Ingress"}:                            {},
+	{Group: "extensions", Kind: "NetworkPolicy"}:                      {},
+	{Group: "extensions", Kind: "ReplicaSet"}:                         {},
 	{Group: "authorization.k8s.io", Kind: "LocalSubjectAccessReview"}: {},
+	{Group: "certificates.k8s.io", Kind: "PodCertificateRequest"}:     {},
 	{Group: "coordination.k8s.io", Kind: "Lease"}:                     {},
 	{Group: "coordination.k8s.io", Kind: "LeaseCandidate"}:            {},
 	{Group: "discovery.k8s.io", Kind: "EndpointSlice"}:                {},
 	{Group: "events.k8s.io", Kind: "Event"}:                           {},
+	{Group: "lifecycle.k8s.io", Kind: "Eviction"}:                     {},
+	{Group: "lifecycle.k8s.io", Kind: "EvictionRequest"}:              {},
 	{Group: "networking.k8s.io", Kind: "Ingress"}:                     {},
 	{Group: "networking.k8s.io", Kind: "NetworkPolicy"}:               {},
 	{Group: "policy", Kind: "Eviction"}:                               {},
@@ -86,6 +100,9 @@ var knownNamespacedBuiltInKinds = map[groupKind]struct{}{
 	{Group: "resource.k8s.io", Kind: "PodSchedulingContext"}:          {},
 	{Group: "resource.k8s.io", Kind: "ResourceClaim"}:                 {},
 	{Group: "resource.k8s.io", Kind: "ResourceClaimTemplate"}:         {},
+	{Group: "scheduling.k8s.io", Kind: "CompositePodGroup"}:           {},
+	{Group: "scheduling.k8s.io", Kind: "PodGroup"}:                    {},
+	{Group: "scheduling.k8s.io", Kind: "Workload"}:                    {},
 	{Group: "storage.k8s.io", Kind: "CSIStorageCapacity"}:             {},
 }
 

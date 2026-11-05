@@ -85,6 +85,7 @@ func normalizeDiffBodyForResource(body string, opts Options, normalization Norma
 	if !requiresDefaultIgnoredFieldNormalization(body, opts) &&
 		len(attrs) == 0 &&
 		len(normalization.JSONPointers) == 0 &&
+		len(normalization.AnnotationJSONPointers) == 0 &&
 		len(normalization.JQPathExpressions) == 0 &&
 		len(normalization.KnownTypeFields) == 0 &&
 		!compareOptionsRequireObject(resource, normalization.CompareOptions) {
@@ -137,6 +138,7 @@ func normalizeDiffObject(body string, opts Options, normalization Normalization,
 		}
 		return nil, false, err
 	}
+	object = removeAnnotationJSONPointers(object, normalization.AnnotationJSONPointers)
 	object, err = removeJQPathExpressions(object, normalization.JQPathExpressions)
 	if err != nil {
 		return nil, false, err
@@ -355,10 +357,11 @@ func appendUniqueKnownTypeFields(out []KnownTypeField, values []KnownTypeField) 
 }
 func cloneNormalization(normalization Normalization) Normalization {
 	return Normalization{
-		JSONPointers:          append([]string(nil), normalization.JSONPointers...),
-		JQPathExpressions:     append([]string(nil), normalization.JQPathExpressions...),
-		ManagedFieldsManagers: append([]string(nil), normalization.ManagedFieldsManagers...),
-		KnownTypeFields:       append([]KnownTypeField(nil), normalization.KnownTypeFields...),
-		CompareOptions:        normalization.CompareOptions,
+		JSONPointers:           append([]string(nil), normalization.JSONPointers...),
+		JQPathExpressions:      append([]string(nil), normalization.JQPathExpressions...),
+		ManagedFieldsManagers:  append([]string(nil), normalization.ManagedFieldsManagers...),
+		KnownTypeFields:        append([]KnownTypeField(nil), normalization.KnownTypeFields...),
+		CompareOptions:         normalization.CompareOptions,
+		AnnotationJSONPointers: append([]string(nil), normalization.AnnotationJSONPointers...),
 	}
 }

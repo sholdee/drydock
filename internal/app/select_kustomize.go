@@ -84,17 +84,20 @@ func withSelectionOnlyPaths(ctx context.Context, root string, repoMaps []sourcep
 }
 
 // kustomizeSelectionMemoKey identifies one selection walk: sources sharing a
-// path but adding different spec.source.kustomize components or patches own
+// path but adding different spec.source.kustomize components or patches, or
+// resolving components under a different ignoreMissingComponents, own
 // different inputs.
 func kustomizeSelectionMemoKey(source argoappv1.ApplicationSource) string {
 	var components, patches []string
+	ignoreMissing := false
 	if source.Kustomize != nil {
 		components = source.Kustomize.Components
+		ignoreMissing = source.Kustomize.IgnoreMissingComponents
 		for _, patch := range source.Kustomize.Patches {
 			patches = append(patches, patch.Path)
 		}
 	}
-	return fmt.Sprintf("%q %q %q", source.Path, components, patches)
+	return fmt.Sprintf("%q %q %q %t", source.Path, components, patches, ignoreMissing)
 }
 
 func applicationSources(app argoappv1.Application) argoappv1.ApplicationSources {

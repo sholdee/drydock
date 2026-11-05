@@ -105,3 +105,28 @@ replace k8s.io/api => k8s.io/api v0.34.0
 		t.Fatalf("Replace = %#v, want k8s.io/api v0.34.0", mod.Replace)
 	}
 }
+
+func TestGitopsEngineRequirementUsesArgoRequire(t *testing.T) {
+	source := goModFile{
+		Require: []goModRequire{
+			{Path: legacyGitopsEngineModule, Version: "v0.7.0"},
+			{Path: gitopsEngineModule, Version: "v3.6.1"},
+		},
+	}
+	version, err := gitopsEngineRequirement(source)
+	if err != nil {
+		t.Fatalf("gitopsEngineRequirement() error = %v", err)
+	}
+	if version != "v3.6.1" {
+		t.Fatalf("gitopsEngineRequirement() = %q, want v3.6.1", version)
+	}
+}
+
+func TestGitopsEngineRequirementRejectsMissingRequire(t *testing.T) {
+	source := goModFile{
+		Require: []goModRequire{{Path: legacyGitopsEngineModule, Version: "v0.7.0"}},
+	}
+	if _, err := gitopsEngineRequirement(source); err == nil || !strings.Contains(err.Error(), gitopsEngineModule) {
+		t.Fatalf("gitopsEngineRequirement() error = %v, want missing %s error", err, gitopsEngineModule)
+	}
+}

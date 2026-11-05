@@ -25,7 +25,7 @@ which boundaries are intentionally runtime-offline.
 | Area | Status | What works | Boundary |
 | --- | --- | --- | --- |
 | Applications | Native | Direct `Application` manifests, single-source and multi-source apps, rendered app-of-apps discovery. | No live application-controller state or sync behavior. |
-| ApplicationSets | Native and supported with input | Git directories, Git files, list, matrix, merge, template overrides, `templatePatch`, and fixture-backed provider generators. | No live Kubernetes, SCM, pull-request, cloud, or plugin provider API calls. |
+| ApplicationSets | Native and supported with input | Git directories, Git files, OCI directories and files, list, matrix, merge, template overrides, `templatePatch`, and fixture-backed provider generators. | No live Kubernetes, SCM, pull-request, cloud, or plugin provider API calls. |
 | Sources | Native and supported with input | Local paths, Git cache/fetch, `--repo-map`, HTTP(S) Helm, OCI Helm, OCI artifact sources, remote Kustomize, external Helm value files, and cache lifecycle commands. | `--offline` requires local files, repo maps, or cache hits. Ambient Git helpers and Helm registry config are not read. Private OCI artifact registries use the explicit `--oci-*` credential flags — one global set for every OCI registry in a run. |
 | Rendering | Native | Directory, Kustomize, Helm, Jsonnet, Kustomize Helm charts, Argo CD tracking metadata, namespace normalization, and custom health Lua validation. | No `kubectl`, `argocd`, Helm CLI, Kustomize CLI, repo-server wrapper, or live API defaulting. |
 | Plugins | Supported with input | Native safe Kustomize CMP compatibility, argocd-vault-plugin placeholder compatibility, in-process public API renderers, trusted exec or container policy with `--enable-plugins`, and `bootstrap.entrypoints` for plugin-rendered app discovery. | No default sidecar plugin execution, ambient plugin loading, or plugin credential injection. |
@@ -57,9 +57,10 @@ Applications, ApplicationSets, AppProjects, and Argo CD settings from desired
 output. Static committed objects take precedence over default rendered fleet
 duplicates.
 
-Supported ApplicationSet generators are local and deterministic. Provider-style
-generators are fixture-backed so CI can validate generated output without
-calling live provider APIs.
+Supported ApplicationSet generators are deterministic. The OCI generator reads
+an artifact acquired like an `oci://` Application source, so it follows the
+same cache and `--offline` rules. Provider-style generators are fixture-backed
+so CI can validate generated output without calling live provider APIs.
 
 Template render errors are scoped to the failing ApplicationSet as warning
 diagnostics, and that ApplicationSet contributes zero generated Applications,
@@ -117,6 +118,14 @@ offline. Use `--project-diagnostics=all` for full audit output, or
 uses stderr for non-markdown output and embeds successful diagnostics in
 markdown reports; `diag --render -o json` exposes the same visible findings with
 stable diagnostic codes for CI.
+
+AppProject destination checks follow Argo CD 3.6.1: a cluster Secret scoped to
+a project adds that project's implicit destinations, a server-only destination
+at `https://kubernetes.default.svc` or a name-only `in-cluster` destination
+with no cluster Secret is the built-in `in-cluster` cluster (denied when
+argocd-cm `cluster.inClusterEnabled` is `"false"`), and a check that depends on
+a cluster name, server, or project scoping drydock cannot resolve offline is
+deferred rather than denied. argocd-cm `globalProjects` are not merged.
 
 It does not predict live API defaulting, admission mutation, server-side apply
 ownership, live health aggregation, sync windows, orphaned resources, source

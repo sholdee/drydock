@@ -588,7 +588,7 @@ image:
   tag: two
 `)
 	writeFile(t, filepath.Join(root, "apps", "scalar.yaml"), `plain scalar`)
-	writeFile(t, filepath.Join(root, "apps", "array.json"), `["plain", "array"]`)
+	writeFile(t, filepath.Join(root, "apps", "array.yaml"), `["plain", "array"]`)
 	writeFile(t, filepath.Join(root, "apps", "visible.yaml"), `
 apiVersion: v1
 kind: ConfigMap

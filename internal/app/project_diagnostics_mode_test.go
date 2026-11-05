@@ -176,7 +176,7 @@ spec:
     path: manifests/demo
     targetRevision: main
   destination:
-    name: in-cluster
+    name: prod
     namespace: workloads
 `)
 	writeTestFile(t, filepath.Join(root, "manifests", "demo", "cm.yaml"), `apiVersion: v1
@@ -194,7 +194,7 @@ spec:
   sourceRepos:
     - https://github.com/example/repo
   destinations:
-    - server: https://kubernetes.default.svc
+    - server: https://prod.example
       namespace: '*'
 `)
 }

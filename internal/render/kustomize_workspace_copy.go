@@ -42,7 +42,7 @@ type preparedKustomizeWorkspaceCopier struct {
 }
 
 func copyPreparedKustomizeWorkspaceTree(ctx context.Context, repoRoot, sourceRoot, dstRoot string, graph []kustomizeGraphNode, opts RenderOptions) error {
-	sourceOptionGraph, sourceOptionPaths, err := sourceKustomizeWorkspaceAdditions(ctx, repoRoot, sourceRoot, opts)
+	sourceOptionGraph, sourceOptionPaths, _, err := sourceKustomizeWorkspaceAdditions(ctx, repoRoot, sourceRoot, opts)
 	if err != nil {
 		return err
 	}
@@ -257,11 +257,18 @@ func referencedKustomizeWorkspacePaths(dir string, kustomization types.Kustomiza
 	return refs
 }
 
-func sourceKustomizeWorkspaceAdditions(ctx context.Context, repoRoot, sourceRoot string, opts RenderOptions) ([]kustomizeGraphNode, []string, error) {
+// sourceKustomizeWorkspaceAdditions returns the graph of the
+// spec.source.kustomize components rendering adds, the local component
+// directories and patch files they read, and, under ignoreMissingComponents,
+// the in-repository directories of skipped components. Those optional paths
+// are render inputs for the digest (a kustomization file appearing there
+// changes the render) but are not copied into the workspace.
+func sourceKustomizeWorkspaceAdditions(ctx context.Context, repoRoot, sourceRoot string, opts RenderOptions) ([]kustomizeGraphNode, []string, []string, error) {
 	if opts.Kustomize == nil {
-		return nil, nil, nil
+		return nil, nil, nil, nil
 	}
 	refs := make([]string, 0, len(opts.Kustomize.Components)+len(opts.Kustomize.Patches))
+	var optionalRefs []string
 	graph := make([]kustomizeGraphNode, 0)
 	appendLocalRef := func(ref string) {
 		if ref == "" || isRemoteKustomizeRef(ref) || filepath.IsAbs(ref) {
@@ -270,30 +277,44 @@ func sourceKustomizeWorkspaceAdditions(ctx context.Context, repoRoot, sourceRoot
 		refs = append(refs, filepath.Clean(filepath.Join(sourceRoot, filepath.FromSlash(ref))))
 	}
 	for _, component := range opts.Kustomize.Components {
+		if opts.Kustomize.IgnoreMissingComponents {
+			decision, err := ignoreMissingComponentDecision(sourceRoot, repoRoot, component)
+			if err != nil {
+				return nil, nil, nil, err
+			}
+			if !decision.keep {
+				optionalRefs = appendNonEmpty(optionalRefs, decision.probe)
+				continue
+			}
+		}
 		appendLocalRef(component)
 		componentPath := filepath.Clean(filepath.Join(sourceRoot, filepath.FromSlash(component)))
 		if isRemoteKustomizeRef(component) || filepath.IsAbs(component) {
 			continue
 		}
 		if _, err := os.Lstat(componentPath); err != nil {
-			if os.IsNotExist(err) && opts.Kustomize.IgnoreMissingComponents {
-				continue
-			}
 			if os.IsNotExist(err) {
 				continue
 			}
-			return nil, nil, err
+			return nil, nil, nil, err
 		}
 		_, componentGraph, err := collectKustomizeGraph(ctx, repoRoot, componentPath, kustomizeInputWalk)
 		if err != nil {
-			return nil, nil, err
+			return nil, nil, nil, err
 		}
 		graph = append(graph, componentGraph...)
 	}
 	for _, patch := range opts.Kustomize.Patches {
 		appendLocalRef(patch.Path)
 	}
-	return graph, refs, nil
+	return graph, refs, optionalRefs, nil
+}
+
+func appendNonEmpty(values []string, value string) []string {
+	if value == "" {
+		return values
+	}
+	return append(values, value)
 }
 
 func appendGeneratorWorkspaceRefs(appendLocalRef func(string), sources types.KvPairSources) {

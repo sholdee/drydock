@@ -250,6 +250,9 @@ func (acquirer *recordingGitAcquirer) Acquire(_ context.Context, request GitRequ
 type recordingChartAcquirer struct {
 	chartDir  string
 	fromCache bool
+	cacheKey  string
+	fetchedAt time.Time
+	stale     bool
 	err       error
 	requests  []ChartRequest
 	options   []ChartOptions
@@ -268,6 +271,9 @@ func (acquirer *recordingChartAcquirer) Acquire(_ context.Context, request Chart
 		Version:    request.Version,
 		Kind:       request.Kind,
 		FromCache:  acquirer.fromCache,
+		CacheKey:   acquirer.cacheKey,
+		FetchedAt:  acquirer.fetchedAt,
+		Stale:      acquirer.stale,
 	}, nil
 }
 

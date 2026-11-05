@@ -216,3 +216,21 @@ func assertNoDiagnosticCategory(t *testing.T, diags []diagnostic.Diagnostic, cat
 		}
 	}
 }
+
+// Argo CD rejects a destination that sets both name and server before project
+// policy (util/argo GetDestinationServer), so no parity row covers it.
+// drydock evaluates the project's destinations against both fields as given.
+func TestValidateApplicationsCurrentBehaviorEvaluatesDestinationWithNameAndServer(t *testing.T) {
+	apps := []argoappv1.Application{application("demo", "platform", argoappv1.ApplicationSource{
+		RepoURL: "https://github.com/example/repo",
+		Path:    "apps/demo",
+	}, argoappv1.ApplicationDestination{
+		Name:      "in-cluster",
+		Server:    "https://kubernetes.default.svc",
+		Namespace: "workloads",
+	})}
+	projects := []argoappv1.AppProject{destinationProject(argoappv1.ApplicationDestination{Name: "in-cluster", Namespace: "workloads"})}
+
+	diags := ValidateApplications(apps, projects, config.DefaultSettings())
+	assertNoDiagnostic(t, diags, "destination")
+}

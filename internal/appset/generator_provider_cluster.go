@@ -4,8 +4,10 @@ import (
 	"fmt"
 
 	appsetutils "github.com/argoproj/argo-cd/v3/applicationset/utils"
+	argocommon "github.com/argoproj/argo-cd/v3/common"
 	argoappv1 "github.com/argoproj/argo-cd/v3/pkg/apis/application/v1alpha1"
 	"github.com/sholdee/drydock/internal/diagnostic"
+	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/labels"
 )
 
@@ -76,17 +78,28 @@ func clusterParams(cluster ClusterInput, values map[string]string, useGoTemplate
 		"project":        project,
 	}
 
+	annotations := clusterAnnotationParams(cluster.Annotations)
 	if useGoTemplate {
-		params["metadata"] = map[string]any{
-			"labels":      stringMapAny(cluster.Labels),
-			"annotations": stringMapAny(cluster.Annotations),
+		meta := map[string]any{}
+		// Argo CD gates the annotations key on the unfiltered map, so the key
+		// exists whenever the cluster has annotations, even if all of them
+		// are excluded.
+		if len(cluster.Annotations) > 0 {
+			meta["annotations"] = stringMapAny(annotations)
 		}
+		// Argo CD gates labels the same way, but its cluster generator only
+		// lists Secrets selected by argocd.argoproj.io/secret-type=cluster,
+		// so every cluster it sees has labels and the key is always present.
+		// Fixture clusters do not carry that implicit label, so always expose
+		// the key (an empty map when the fixture has no labels).
+		meta["labels"] = stringMapAny(cluster.Labels)
+		params["metadata"] = meta
 	} else {
+		for key, value := range annotations {
+			params["metadata.annotations."+key] = value
+		}
 		for key, value := range cluster.Labels {
 			params["metadata.labels."+key] = value
-		}
-		for key, value := range cluster.Annotations {
-			params["metadata.annotations."+key] = value
 		}
 	}
 
@@ -94,4 +107,28 @@ func clusterParams(cluster ClusterInput, values map[string]string, useGoTemplate
 		return nil, err
 	}
 	return params, nil
+}
+
+// excludedClusterAnnotations mirrors Argo CD v3.6.1 excludedClusterAnnotations
+// (applicationset/generators/cluster.go): annotations Argo CD or kubectl write
+// onto cluster Secrets as their own state, or one-shot Application triggers,
+// are not exposed as cluster generator parameters.
+var excludedClusterAnnotations = map[string]bool{
+	argoappv1.AnnotationKeyRefresh:          true,
+	argoappv1.AnnotationKeyRefreshTimestamp: true,
+	argoappv1.AnnotationKeyHydrate:          true,
+	argoappv1.AnnotationKeyHydrateTimestamp: true,
+	argocommon.AnnotationKeyAppInstance:     true,
+	argocommon.AnnotationInstallationID:     true,
+	corev1.LastAppliedConfigAnnotation:      true,
+}
+
+func clusterAnnotationParams(annotations map[string]string) map[string]string {
+	params := make(map[string]string, len(annotations))
+	for key, value := range annotations {
+		if !excludedClusterAnnotations[key] {
+			params[key] = value
+		}
+	}
+	return params
 }

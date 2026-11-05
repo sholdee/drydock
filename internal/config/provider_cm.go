@@ -70,6 +70,17 @@ func applyCMMap(settings *ArgoSettings, values map[string]string, path, basePoin
 			}
 		}
 	}
+	if raw, ok := values["cluster.inClusterEnabled"]; ok {
+		// Argo CD SettingsManager.IsInClusterEnabled: only the exact string
+		// "false" disables the in-cluster destination.
+		settings.InClusterEnabled = Value[bool]{
+			Value: raw != "false",
+			Provenance: diagnostic.Provenance{
+				Path:    path,
+				Pointer: basePointer + ".cluster.inClusterEnabled",
+			},
+		}
+	}
 	if raw := values["resource.exclusions"]; strings.TrimSpace(raw) != "" {
 		diags = appendParsedResourceFilters(&settings.ResourceExclusions, raw, diagnostic.Provenance{
 			Path:    path,
@@ -80,6 +91,12 @@ func applyCMMap(settings *ArgoSettings, values map[string]string, path, basePoin
 		diags = appendParsedResourceFilters(&settings.ResourceInclusions, raw, diagnostic.Provenance{
 			Path:    path,
 			Pointer: basePointer + ".resource.inclusions",
+		}, diags)
+	}
+	if raw := values["resource.selectors"]; strings.TrimSpace(raw) != "" {
+		diags = appendParsedResourceSelectors(&settings.ResourceSelectors, raw, diagnostic.Provenance{
+			Path:    path,
+			Pointer: basePointer + ".resource.selectors",
 		}, diags)
 	}
 	if raw := values["resource.compareoptions"]; strings.TrimSpace(raw) != "" {

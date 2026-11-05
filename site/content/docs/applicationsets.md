@@ -9,7 +9,9 @@ errors.
 
 Provider-backed generators are fixture-backed only. drydock does not contact
 Kubernetes, Argo CD, SCM provider, pull-request, cloud, or plugin-service APIs
-while generating Applications.
+while generating Applications. The only generator that reaches the network is
+the OCI generator, which pulls its artifact from the registry exactly as an
+`oci://` Application source does, and not at all under `--offline`.
 
 ## Supported Generators
 
@@ -21,6 +23,8 @@ while generating Applications.
 | Matrix | Native for two child generators, including interpolated child params. |
 | Merge | Native for two or more child generators over `mergeKeys`. |
 | Provider-backed generators | Fixture-backed for clusters, clusterDecisionResource, SCM provider, pull requests, and plugin generators. |
+| OCI directories | Native over the pulled artifact. Matches keep the Argo CD v3.6.1 repo-server walk order. |
+| OCI files | Native over the pulled artifact. Matches are sorted by path. |
 
 Supported ApplicationSet behavior includes:
 
@@ -29,7 +33,10 @@ Supported ApplicationSet behavior includes:
 - generator-level selectors and template overrides
 - `spec.templatePatch` rendered from generator params and strategic-merge-applied
   to generated Applications, with `spec.project` preserved
-- Sprig-compatible template functions used by Argo CD
+- Sprig-compatible template functions used by Argo CD, plus Argo CD v3.6.1's
+  `tpl` (nested template rendering with the same options, functions, and
+  three-level recursion limit) in templates, `templatePatch`, generator
+  `values`, and matrix/merge child interpolation
 - generated `Application.metadata.namespace` set to the ApplicationSet
   namespace
 - Argo CD's default generated Application finalizer where applicable
@@ -92,6 +99,51 @@ In PR diff mode, mapped repository URLs use the local `--path` or
 `--path-orig` trees for directory discovery and rendering, even when the
 ApplicationSet declares `revision: master`.
 
+## OCI Generator
+
+The Argo CD v3.6.1 `oci` generator works like the Git generator over the
+content of an OCI artifact instead of the repository under analysis. It is
+supported top-level and as a matrix or merge child.
+
+```yaml
+generators:
+  - oci:
+      repoURL: oci://ghcr.io/my-org/platform
+      revision: v1.2.3
+      directories:
+        - path: platform/*
+        - path: platform/legacy
+          exclude: true
+```
+
+- drydock pulls `repoURL` at `revision` through the same path as an `oci://`
+  Application source: a `--repo-map` entry for the URL wins, tags and semver
+  constraints resolve to a digest, content comes from the OCI cache when it
+  is there, `--offline` resolves only from earlier online runs, and
+  registry credentials come from `--registry-config` or
+  `--oci-username`/`--oci-password`. A failed pull fails the run, like other
+  source acquisition failures.
+- `directories`, `files`, `exclude`, `pathParamPrefix`, `values`, and the
+  generator `template` and `selector` behave as in the Git generator, with
+  the same `path`, `path.basename`, `path.basenameNormalized`,
+  `path.segments`/`path[n]`, `path.filename`, and `path.filenameNormalized`
+  params. When both `directories` and `files` are set, `directories` wins.
+- Directory patterns match with `path.Match` exactly as written: no
+  normalization, so `apps/*/` and `./apps/*` match nothing. Hidden
+  directories and everything under them are never listed.
+- File patterns are always doublestar globs, and `.` or an empty pattern
+  means `**`. Hidden files match. A symlink that resolves outside the
+  artifact is skipped.
+- Param files decode like Git files, including the empty-content rules. As
+  with Git files, a file that is not valid YAML or JSON produces a
+  diagnostic and is skipped; Argo CD instead fails the whole ApplicationSet.
+- Generated Applications own no repository paths from the artifact:
+  changed-only selection matches them through the ApplicationSet file and
+  their own local sources, and persistent render cache keys follow the
+  generated Application spec.
+- `requeueAfterSeconds` has no effect; each run resolves `revision` once,
+  and a two-sided diff shares one resolution.
+
 ## List, Matrix, And Merge
 
 List generators support `elements` and `elementsYaml`. For non-Go-template
@@ -105,15 +157,16 @@ second child from first-child params, including templated `elementsYaml`.
 Merge generators overlay two or more child generators by `mergeKeys` in base
 generator order.
 
-Matrix and merge children may use list, Git directories, Git files,
-fixture-backed provider generators, and nested matrix/merge combinations where
-the Argo CD v3 nested JSON API permits them.
+Matrix and merge children may use list, Git directories, Git files, OCI
+directories, OCI files, fixture-backed provider generators, and nested
+matrix/merge combinations where the Argo CD v3 nested JSON API permits them.
 
 ## Template Render Errors
 
-Template execution failures, including `templatePatch` failures and
-`missingkey=error` misses, are scoped to the failing ApplicationSet. drydock
-emits one warning diagnostic per failing param set with stable code
+Template execution failures, including `templatePatch` failures, generator
+`values` templating, matrix/merge child interpolation, and `missingkey=error`
+misses, are scoped to the failing ApplicationSet. drydock emits one warning
+diagnostic per failing param set or generator with stable code
 `appset.template-render-failed`, and that ApplicationSet contributes zero
 generated Applications, including param sets that rendered successfully. Other
 ApplicationSets and Applications render normally; `--strict` promotes the
@@ -127,14 +180,53 @@ comment-only param file while the template references file params under
 and rendering the template against it fails. Use `[]` as the param file
 content when a match should generate nothing.
 
-Generator evaluation failures — file IO, source acquisition, invalid
-ApplicationSet YAML, and generator `values` templating — remain fatal to the
-run.
+Generator evaluation failures — file IO, source acquisition, and invalid
+ApplicationSet YAML — remain fatal to the run.
 
 In diffs, a failing ApplicationSet contributes zero desired Applications on
 that side. When the failure exists on only one side, the diff reports that
 ApplicationSet's Applications as additions or deletions and exits `1`, while
 the live controller would abort reconciliation without pruning.
+
+## Generated Application Validation
+
+drydock mirrors the name checks of the Argo CD v3.6.1 ApplicationSet
+controller after all templates render:
+
+- A generated Application with an empty `metadata.name`, including one whose
+  `templatePatch` sets only `generateName`, is omitted.
+- When several generated Applications share a name, every Application with
+  that name is omitted, not only the later ones; Argo CD keys validation
+  errors by Application name.
+
+Each failure emits an `appset.application-validation-failed` warning carrying
+Argo CD's message, and the ApplicationSet's other Applications still
+generate. `--strict` promotes the warning to an error.
+
+## RollingSync Rollout Lint
+
+For `spec.strategy.type: RollingSync` with a `rollingSync` block, drydock
+checks the steps against the generated Applications' labels the way the Argo
+CD v3.6.1 controller does when progressive syncs are enabled:
+
+| Finding | Stable code | Argo CD v3.6.1 behavior |
+| --- | --- | --- |
+| Empty `steps` | `appset.rollout-no-steps` | `ErrorOccurred` ("No steps defined for rollout"); no Applications are created, updated, or deleted |
+| `matchExpressions` operator other than `In`/`NotIn` | `appset.invalid-rollout-config` | `InvalidRolloutConfig` condition |
+| Application selected by more than one step | `appset.invalid-rollout-config` | `InvalidRolloutConfig` condition |
+| Invalid `maxUpdate` value | `appset.invalid-rollout-config` | `InvalidRolloutConfig` condition |
+| Step that matches no generated Application | `appset.invalid-rollout-config` | `InvalidRolloutConfig` condition |
+
+These are warnings only: progressive syncs are an ApplicationSet controller
+flag drydock cannot observe, so drydock still generates the Applications.
+Messages reuse Argo CD's text; drydock reports every finding class, while the
+Argo CD condition shows the highest-priority one. The `maxUpdate` check
+assumes the cluster already holds the generated Applications. `--strict`
+promotes `appset.rollout-no-steps` to an error, because Argo CD stops
+reconciling the ApplicationSet. It neither escalates nor fails on
+`appset.invalid-rollout-config`, because Argo CD's `InvalidRolloutConfig`
+condition never blocks Applications, so a staged rollout whose later step has
+no Applications yet still passes `--strict` CI.
 
 ## Provider Fixtures
 
@@ -239,7 +331,7 @@ uses for each supported provider family:
 
 | Generator | Stable template parameters |
 | --- | --- |
-| `clusters` | `name`, `nameNormalized`, `server`, `project`, metadata labels/annotations, `values` |
+| `clusters` | `name`, `nameNormalized`, `server`, `project`, metadata labels/annotations (see below), `values` |
 | `clusterDecisionResource` | `name`, `server`, decision fields, `values` |
 | `scmProvider` | `organization`, `repository`, `repository_id`, `url`, `branch`, `branchNormalized`, `sha`, `short_sha`, `short_sha_7`, `labels`, `values` |
 | `pullRequest` | `number`, `title`, `branch`, `branch_slug`, `target_branch`, `target_branch_slug`, `head_sha`, `head_short_sha`, `head_short_sha_7`, `author`, `labels`, `values` |
@@ -252,3 +344,13 @@ notation, including `metadata.labels.<key>`, `metadata.annotations.<key>`, and
 For Go-template ApplicationSets, nested values remain available as maps or
 arrays, such as `.metadata.labels`, `.metadata.annotations`, `.labels`, and
 `.values`.
+
+As in Argo CD v3.6.1, `clusters` params never expose the reserved annotations
+`argocd.argoproj.io/refresh`, `argocd.argoproj.io/refresh-timestamp`,
+`argocd.argoproj.io/hydrate`, `argocd.argoproj.io/hydrate-timestamp`,
+`argocd.argoproj.io/tracking-id`, `argocd.argoproj.io/installation-id`, and
+`kubectl.kubernetes.io/last-applied-configuration`. In Go-template mode,
+`.metadata.annotations` exists only when the fixture cluster has annotations
+(an empty map when all of them are reserved). `.metadata.labels` is always
+present, an empty map when the fixture has no labels, because Argo CD only
+reads cluster Secrets that carry the `argocd.argoproj.io/secret-type` label.

@@ -32,6 +32,7 @@ func (p localProvider) renderChartOnlySource(ctx context.Context, source render.
 		CacheDir:        p.chartCacheDir,
 		Offline:         p.offline,
 		Refresh:         p.refreshCharts,
+		MaxAge:          p.chartCacheMaxAge,
 		ForbiddenRoots:  append([]string(nil), opts.ChartForbiddenRoots...),
 		PassCredentials: opts.PassCredentials,
 		Credentials:     p.chartCredentials,
@@ -59,11 +60,12 @@ func (p localProvider) renderChartOnlySource(ctx context.Context, source render.
 		Offline:           p.offline,
 		Refresh:           p.refreshCharts,
 	}))
-	p.recordAcquisition(cacheevent.AcquisitionRecord{
-		Kind:              cacheevent.AcquisitionChart,
-		RequestedRevision: source.TargetRevision,
-		ResolvedRevision:  acquired.Version,
-	})
+	p.recordAcquisition(render.ChartAcquisitionRecord(chart.Request{
+		Repository: source.RepoURL,
+		Name:       source.Chart,
+		Version:    source.TargetRevision,
+		Kind:       kind,
+	}, acquired, p.chartCacheMaxAge))
 
 	if p.renderObserver != nil {
 		p.renderObserver(source)

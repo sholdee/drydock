@@ -1,0 +1,11 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: extension-filter-manifest-one
+  namespace: parity-directory-extension-filter
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: extension-filter-manifest-two
+  namespace: parity-directory-extension-filter

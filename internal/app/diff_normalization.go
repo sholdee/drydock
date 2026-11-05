@@ -4,13 +4,45 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/argoproj/argo-cd/v3/common"
 	argoappv1 "github.com/argoproj/argo-cd/v3/pkg/apis/application/v1alpha1"
 	"github.com/argoproj/argo-cd/v3/util/glob"
 	"github.com/sholdee/drydock/internal/config"
 	"github.com/sholdee/drydock/internal/diff"
 	"github.com/sholdee/drydock/internal/format"
 	"github.com/sholdee/drydock/internal/manifest"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"sigs.k8s.io/yaml"
 )
+
+// ignoreDifferencesAnnotationValue mirrors Argo CD's parsed form of the
+// argocd.argoproj.io/ignore-differences annotation: only jsonPointers is
+// supported.
+type ignoreDifferencesAnnotationValue struct {
+	JSONPointers []string `json:"jsonPointers"`
+}
+
+// annotationIgnoreJSONPointers returns the jsonPointers declared by obj's own
+// argocd.argoproj.io/ignore-differences annotation, following Argo CD's
+// ExtractIgnoreDifferencesFromAnnotations: the value is YAML decoded with
+// sigs.k8s.io/yaml, and an empty value, a parse error, or an empty
+// jsonPointers list yields no rule. The rule Argo CD builds from the
+// annotation targets the annotated object's own group, kind, name, and
+// namespace, so the pointers apply only to that document.
+func annotationIgnoreJSONPointers(obj *unstructured.Unstructured) []string {
+	if obj == nil {
+		return nil
+	}
+	value, ok := obj.GetAnnotations()[common.AnnotationKeyIgnoreDifferences]
+	if !ok || value == "" {
+		return nil
+	}
+	var parsed ignoreDifferencesAnnotationValue
+	if err := yaml.Unmarshal([]byte(value), &parsed); err != nil || len(parsed.JSONPointers) == 0 {
+		return nil
+	}
+	return parsed.JSONPointers
+}
 
 func normalizationFor(application argoappv1.Application, id manifest.Identity, settings config.ArgoSettings) diff.Normalization {
 	normalization := diff.Normalization{

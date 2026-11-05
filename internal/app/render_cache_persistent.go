@@ -12,9 +12,11 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"time"
 
 	argoappv1 "github.com/argoproj/argo-cd/v3/pkg/apis/application/v1alpha1"
 	"github.com/sholdee/drydock/internal/cacheevent"
+	"github.com/sholdee/drydock/internal/chart"
 	"github.com/sholdee/drydock/internal/digestpath"
 	"github.com/sholdee/drydock/internal/filedigest"
 	"github.com/sholdee/drydock/internal/gitref"
@@ -442,6 +444,15 @@ const (
 	renderCacheReasonRecordsInactive      = "records-inactive"
 	renderCacheReasonRefresh              = "refresh"
 	renderCacheReasonInputsChanged        = "inputs-changed"
+	// --chart-cache-max-age outcomes: a lookup misses when a chart the
+	// cached render read has expired (chart-expired) or when the render
+	// cannot be tied to the chart cache entry the cache holds now
+	// (chart-unverified: refetched since, missing, or never recorded); a
+	// render from an expired chart reused offline is never stored
+	// (chart-stale).
+	renderCacheReasonChartExpired    = "chart-expired"
+	renderCacheReasonChartUnverified = "chart-unverified"
+	renderCacheReasonChartStale      = "chart-stale"
 )
 
 // collectSourceIdentities is the prepare phase: resolve every source and
@@ -1012,6 +1023,11 @@ type persistentRenderState struct {
 	acquisitions  *cacheevent.AcquisitionCollector
 	appName       string
 	verifications []renderInputVerification
+	// chartMaxAge is --chart-cache-max-age; when positive, lookup serves an
+	// entry only while every chart its render read is still the chart cache
+	// entry under chartCacheDir and within the max age.
+	chartMaxAge   time.Duration
+	chartCacheDir string
 }
 
 func (state *persistentRenderState) event(action cacheevent.Action, reason string, errorText string) {
@@ -1052,6 +1068,14 @@ func preparePersistentRender(ctx context.Context, application argoappv1.Applicat
 	state.refresh = handle.refresh
 	state.recorder = local.cacheEvents
 	state.acquisitions = local.acquisitions
+	state.chartMaxAge = local.chartCacheMaxAge
+	if state.chartMaxAge > 0 {
+		// An unresolvable directory leaves chartCacheDir empty, which no
+		// chart entry verifies against: lookups then miss.
+		if dir, err := chart.ResolveCacheDir(local.chartCacheDir, local.chartForbiddenRoots); err == nil {
+			state.chartCacheDir = dir
+		}
+	}
 	verifier := &renderInputVerifier{}
 	local.inputVerifier = verifier
 	if applicationUsesPluginSource(application) || planUsesPluginSource(plan) {
@@ -1206,11 +1230,17 @@ func (state *persistentRenderState) lookup() (RenderResult, bool) {
 		state.event(cacheevent.ActionMiss, "", "")
 		return RenderResult{}, false
 	}
-	result, err := unmarshalRenderResultPayload(payload)
+	result, charts, err := unmarshalRenderCachePayload(payload)
 	if err != nil {
 		_ = state.handle.store.Delete(state.key)
 		state.event(cacheevent.ActionError, "", err.Error())
 		return RenderResult{}, false
+	}
+	if state.chartMaxAge > 0 {
+		if reason, fresh := renderCacheChartsFresh(charts, state.chartCacheDir, state.chartMaxAge, time.Now()); !fresh {
+			state.event(cacheevent.ActionMiss, reason, "")
+			return RenderResult{}, false
+		}
 	}
 	state.event(cacheevent.ActionHit, "", "")
 	return result, true
@@ -1224,15 +1254,21 @@ func (state *persistentRenderState) store(ctx context.Context, result RenderResu
 		state.event(cacheevent.ActionSkipped, renderCacheReasonRecordsInactive, "")
 		return
 	}
-	if !acquisitionsPinStable(state.acquisitions.Records()) {
+	records := state.acquisitions.Records()
+	if !acquisitionsPinStable(records) {
 		state.event(cacheevent.ActionSkipped, renderCacheReasonPinUnstable, "")
+		return
+	}
+	charts, stale := renderCacheChartsFromRecords(records)
+	if stale {
+		state.event(cacheevent.ActionSkipped, renderCacheReasonChartStale, "")
 		return
 	}
 	if unchanged, detail := state.renderInputsUnchanged(ctx); !unchanged {
 		state.event(cacheevent.ActionSkipped, renderCacheReasonInputsChanged, detail)
 		return
 	}
-	payload, err := marshalRenderResultPayload(result)
+	payload, err := marshalRenderCachePayload(result, charts)
 	if err != nil {
 		state.event(cacheevent.ActionError, "", err.Error())
 		return

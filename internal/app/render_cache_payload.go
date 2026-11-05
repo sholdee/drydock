@@ -3,6 +3,7 @@ package app
 import (
 	"encoding/json"
 	"fmt"
+	"time"
 
 	"github.com/sholdee/drydock/internal/diagnostic"
 	"github.com/sholdee/drydock/internal/render"
@@ -17,6 +18,26 @@ type renderCachePayload struct {
 	Hooks            []renderCacheManifest   `json:"hooks,omitempty"`
 	Diagnostics      []diagnostic.Diagnostic `json:"diagnostics,omitempty"`
 	PluginExecutions []PluginExecution       `json:"pluginExecutions,omitempty"`
+	// Charts lists the chart cache entries the render read and when each
+	// was fetched; ChartsRecorded tells an empty list from a payload stored
+	// before drydock recorded them. Only --chart-cache-max-age lookups read
+	// them (renderCacheChartsFresh): they are not part of the key.
+	Charts         []renderCacheChart `json:"charts,omitempty"`
+	ChartsRecorded bool               `json:"chartsRecorded,omitempty"`
+}
+
+// renderCacheChart identifies one chart cache entry by kind and key, never
+// by path, and the fetch time the render saw.
+type renderCacheChart struct {
+	Kind      string    `json:"kind"`
+	Key       string    `json:"key"`
+	FetchedAt time.Time `json:"fetchedAt"`
+}
+
+// renderCacheCharts is the chart provenance a payload carries.
+type renderCacheCharts struct {
+	recorded bool
+	charts   []renderCacheChart
 }
 
 type renderCacheManifest struct {
@@ -28,11 +49,19 @@ type renderCacheManifest struct {
 }
 
 func marshalRenderResultPayload(result RenderResult) ([]byte, error) {
+	return marshalRenderCachePayload(result, renderCacheCharts{})
+}
+
+// marshalRenderCachePayload encodes result with the chart cache entries its
+// render read.
+func marshalRenderCachePayload(result RenderResult, charts renderCacheCharts) ([]byte, error) {
 	payload := renderCachePayload{
 		Manifests:        renderCacheManifestsFromRender(result.Manifests),
 		Hooks:            renderCacheManifestsFromRender(result.Hooks),
 		Diagnostics:      result.Diagnostics,
 		PluginExecutions: result.PluginExecutions,
+		Charts:           charts.charts,
+		ChartsRecorded:   charts.recorded,
 	}
 	data, err := json.Marshal(payload)
 	if err != nil {
@@ -42,16 +71,23 @@ func marshalRenderResultPayload(result RenderResult) ([]byte, error) {
 }
 
 func unmarshalRenderResultPayload(data []byte) (RenderResult, error) {
+	result, _, err := unmarshalRenderCachePayload(data)
+	return result, err
+}
+
+// unmarshalRenderCachePayload decodes a payload and the chart cache entries
+// its render read.
+func unmarshalRenderCachePayload(data []byte) (RenderResult, renderCacheCharts, error) {
 	var payload renderCachePayload
 	if err := json.Unmarshal(data, &payload); err != nil {
-		return RenderResult{}, fmt.Errorf("decode render cache payload: %w", err)
+		return RenderResult{}, renderCacheCharts{}, fmt.Errorf("decode render cache payload: %w", err)
 	}
 	return RenderResult{
 		Manifests:        renderManifestsFromCache(payload.Manifests),
 		Hooks:            renderManifestsFromCache(payload.Hooks),
 		Diagnostics:      payload.Diagnostics,
 		PluginExecutions: payload.PluginExecutions,
-	}, nil
+	}, renderCacheCharts{recorded: payload.ChartsRecorded, charts: payload.Charts}, nil
 }
 
 // renderCacheManifestsFromRender preserves nil (absent) versus empty so a
