@@ -23,6 +23,10 @@ type SettingsResourceFilter struct {
 	Selectors []config.ResourceFilterRule
 }
 
+// Drop mirrors Argo CD's ResourcesFilter.IsExcludedResource
+// (util/settings/resources_filter.go at v3.6.1). The cluster is the resolved
+// destination server, which Argo CD passes as destCluster.Server
+// (controller/state.go CompareAppState). It is never the destination name.
 func (f SettingsResourceFilter) Drop(id Identity, cluster string) bool {
 	if matchesAnyResourceRule(id, cluster, coreExcludedResourceRules) {
 		return true
@@ -37,6 +41,22 @@ func (f SettingsResourceFilter) Drop(id Identity, cluster string) bool {
 		return true
 	}
 	return false
+}
+
+// DropUnresolved is Drop for a destination whose server drydock cannot
+// resolve offline. It evaluates IsExcludedResource in three-valued logic
+// over the unknown server, the way AppProject validation evaluates an
+// unresolved destination. It drops id only when Argo CD would drop it for
+// every possible server. When the answer depends on the server, it keeps
+// id, so a guess never removes a resource from the output.
+func (f SettingsResourceFilter) DropUnresolved(id Identity) bool {
+	excluded := anyRuleMatchesUnknownCluster(id, coreExcludedResourceRules).or(anyRuleMatchesUnknownCluster(id, f.Exclusions))
+	included := anyRuleMatchesUnknownCluster(id, f.Inclusions)
+	inclusionsForCluster := tristateFalse
+	for _, rule := range f.Inclusions {
+		inclusionsForCluster = inclusionsForCluster.or(ruleMatchesUnknownCluster(rule))
+	}
+	return excluded.or(included.not().and(inclusionsForCluster)) == tristateTrue
 }
 
 func matchesAnyResourceRule(id Identity, cluster string, rules []config.ResourceFilterRule) bool {
@@ -88,6 +108,69 @@ func anyRuleMatchesCluster(rules []config.ResourceFilterRule, cluster string) bo
 		}
 	}
 	return false
+}
+
+// tristate is a Kleene truth value for a filter decision that may depend on
+// a destination server drydock cannot resolve. The encoding orders the
+// values so that AND is min and OR is max.
+type tristate uint8
+
+const (
+	tristateFalse tristate = iota
+	tristateUnknown
+	tristateTrue
+)
+
+func tristateOf(value bool) tristate {
+	if value {
+		return tristateTrue
+	}
+	return tristateFalse
+}
+
+func (t tristate) and(other tristate) tristate { return min(t, other) }
+
+func (t tristate) or(other tristate) tristate { return max(t, other) }
+
+func (t tristate) not() tristate { return tristateTrue - t }
+
+func anyRuleMatchesUnknownCluster(id Identity, rules []config.ResourceFilterRule) tristate {
+	matched := tristateFalse
+	for _, rule := range rules {
+		matched = matched.or(tristateOf(resourceRuleMatchesGroup(rule, id.Group) && resourceRuleMatchesKind(rule, id.Kind)).and(ruleMatchesUnknownCluster(rule)))
+	}
+	return matched
+}
+
+// ruleMatchesUnknownCluster is FilteredResource.MatchCluster for a server
+// that is unknown but not empty: Argo CD always resolves a destination to a
+// cluster with a server.
+func ruleMatchesUnknownCluster(rule config.ResourceFilterRule) tristate {
+	if len(rule.Clusters) == 0 {
+		return tristateTrue
+	}
+	matched := tristateFalse
+	for _, pattern := range rule.Clusters {
+		matched = matched.or(clusterGlobMatchesUnknownServer(pattern))
+	}
+	return matched
+}
+
+// clusterGlobMatchesUnknownServer decides util/glob.Match(pattern, server)
+// for an unknown non-empty server. A pattern of only stars matches every
+// server, and an empty or invalid pattern matches none. Any other pattern
+// depends on the server.
+func clusterGlobMatchesUnknownServer(pattern string) tristate {
+	if pattern == "" {
+		return tristateFalse
+	}
+	if _, err := glob.MatchWithError(pattern, ""); err != nil {
+		return tristateFalse
+	}
+	if strings.Trim(pattern, "*") == "" {
+		return tristateTrue
+	}
+	return tristateUnknown
 }
 
 // LabelSelector mirrors Argo CD's ResourcesFilter.GetLabelSelector
