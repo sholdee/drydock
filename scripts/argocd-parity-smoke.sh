@@ -91,6 +91,11 @@ OCI_CHART_APPLICATION="parity-oci-helm-nested"
 # source.oci-chart-ignored. parity-oci-helm-chart-ignored is Argo-valid only
 # when applied declaratively (argocd app create would reject it).
 OCI_CHART_IGNORED_APPLICATION="parity-oci-helm-chart-ignored"
+# Lists two valid components under ignoreMissingComponents. Argo CD v3.6.1
+# leaves its component loop after the first valid one
+# (util/kustomize/kustomize.go:346-372) and drops the second. drydock renders
+# the same and warns kustomize.ignore-missing-components-dropped.
+COMPONENTS_DROPPED_APPLICATION="parity-kustomize-generators"
 OCI_HOSTS_MARKER="drydock-argocd-parity-smoke"
 HOSTS_ENTRY_ADDED="false"
 OUT_DIR="${REPO_ROOT}/argocd-parity-smoke"
@@ -1132,13 +1137,33 @@ capture_drydock_manifest() {
     # without --strict, so the advisory source.oci-chart-ignored line is the
     # only evidence that drydock ignored chart: and took the artifact path
     # rather than rendering the same manifests through the chart flow.
-    if ! grep -q 'source.oci-chart-ignored' "${stderr_file}"; then
-      echo "argocd render parity smoke: drydock capture of ${app_ref} did not warn source.oci-chart-ignored; its stderr follows" >&2
-      cat "${stderr_file}" >&2 || true
-      fail "drydock capture of ${app_ref} rendered without the source.oci-chart-ignored warning (an oci:// repoURL with chart: set must warn once and render the artifact); see ${stderr_file}"
-    fi
+    require_drydock_capture_warning "${app_ref}" "${stderr_file}" \
+      source.oci-chart-ignored \
+      "an oci:// repoURL with chart: set must warn once and render the artifact"
+  fi
+  if [[ "${stem}" == "${COMPONENTS_DROPPED_APPLICATION}" ]]; then
+    # The manifest comparison proves that drydock drops the later valid
+    # component as Argo CD does. The warning is the only evidence that users
+    # see the dropped resources.
+    require_drydock_capture_warning "${app_ref}" "${stderr_file}" \
+      kustomize.ignore-missing-components-dropped \
+      "a valid component after the first valid one under ignoreMissingComponents must warn"
   fi
   rm -f "${stderr_file}"
+}
+
+# require_drydock_capture_warning fails the smoke when a drydock capture's
+# stderr lacks the named warning code.
+require_drydock_capture_warning() {
+  local app_ref="$1"
+  local stderr_file="$2"
+  local code="$3"
+  local reason="$4"
+  if ! grep -qF "${code}" "${stderr_file}"; then
+    echo "argocd render parity smoke: drydock capture of ${app_ref} did not warn ${code}; its stderr follows" >&2
+    cat "${stderr_file}" >&2 || true
+    fail "drydock capture of ${app_ref} rendered without the ${code} warning (${reason}); see ${stderr_file}"
+  fi
 }
 
 # preflight_container_plugin_capture checks what drydock's container engine

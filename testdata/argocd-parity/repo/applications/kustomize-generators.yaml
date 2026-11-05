@@ -11,11 +11,14 @@ spec:
     path: workloads/kustomize-generators/base
     kustomize:
       ignoreMissingComponents: true
-      # no-kustomization comes first: Argo CD v3.6.1 stops at the first valid
-      # component, so a later entry would not exercise its kustomization check.
+      # Argo CD v3.6.1 skips no-kustomization (it has no kustomization file),
+      # adds extra (the first valid component), and then stops. It drops the
+      # valid after-first-valid component and never checks missing. drydock
+      # renders the same and warns about after-first-valid.
       components:
         - ../components/no-kustomization
         - ../components/extra
+        - ../components/after-first-valid
         - ../components/missing
   destination:
     name: in-cluster
