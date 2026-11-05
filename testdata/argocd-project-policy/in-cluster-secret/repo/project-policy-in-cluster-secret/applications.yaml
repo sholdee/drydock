@@ -1,0 +1,16 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: project-policy-in-cluster-secret-name
+  namespace: argocd
+spec:
+  project: project-policy-in-cluster-secret-name
+  source:
+    repoURL: git://argocd-parity-git.argocd-parity.svc.cluster.local/repo.git
+    targetRevision: HEAD
+    path: project-policy-in-cluster-secret/workloads/name
+    directory:
+      recurse: true
+  destination:
+    name: in-cluster
+    namespace: project-policy-workloads

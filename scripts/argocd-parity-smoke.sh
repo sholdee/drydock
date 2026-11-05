@@ -20,6 +20,16 @@ IGNORE_FILE="${REPO_ROOT}/testdata/argocd-parity/compare-ignore.yaml"
 SIDECAR_PATH="${REPO_ROOT}/testdata/argocd-parity/sidecar"
 PROJECT_POLICY_REPO_PATH="${REPO_ROOT}/testdata/argocd-project-policy/repo"
 PROJECT_POLICY_EXPECTED="${REPO_ROOT}/testdata/argocd-project-policy/expected.yaml"
+# Cluster Secrets that exist only in the live Argo CD. drydock never sees
+# them, so the cases that use them test drydock's cannot-tell-offline result.
+PROJECT_POLICY_LIVE_CLUSTER_SECRETS="${REPO_ROOT}/testdata/argocd-project-policy/live-cluster-secrets.yaml"
+PROJECT_POLICY_LIVE_CLUSTER_SECRET_NAME="project-policy-live-scoped-cluster"
+# Later project-policy phases. Each one changes cluster-wide Argo CD state
+# that would break the cases before it, so each has its own fixture repo,
+# expected file and drydock run, and runs after the phase before it.
+PROJECT_POLICY_IN_CLUSTER_SECRET_DIR="${REPO_ROOT}/testdata/argocd-project-policy/in-cluster-secret"
+PROJECT_POLICY_IN_CLUSTER_SECRET_NAME="project-policy-in-cluster-secret"
+PROJECT_POLICY_IN_CLUSTER_DISABLED_DIR="${REPO_ROOT}/testdata/argocd-project-policy/in-cluster-disabled"
 OCI_ARTIFACT_PATH="${REPO_ROOT}/testdata/argocd-parity/oci-artifact"
 OCI_REGISTRY_HOST="argocd-parity-registry.argocd-parity.svc.cluster.local"
 OCI_REGISTRY_PORT="5443"
@@ -214,6 +224,23 @@ PROJECT_POLICY_CASES=(
   "argocd|project-policy-destination-denied|destination"
   "project-policy-tenant|project-policy-source-namespace-allowed|none"
   "project-policy-tenant|project-policy-source-namespace-denied|source-namespace"
+  "argocd|project-policy-destination-deny-server-wins|destination"
+  "argocd|project-policy-destination-deny-namespace-wins|destination"
+  "argocd|project-policy-destination-deny-other-allowed|none"
+  "argocd|project-policy-destination-name-in-cluster|none"
+  "argocd|project-policy-destination-server-in-cluster-name-policy|none"
+  "argocd|project-policy-destination-live-scoped-cluster|none"
+  "argocd|project-policy-destination-live-scoped-cluster-denied|destination"
+)
+# A cluster Secret named in-cluster at another server. It would change the
+# name-in-cluster case above, so it runs after that case is compared.
+PROJECT_POLICY_IN_CLUSTER_SECRET_CASES=(
+  "argocd|project-policy-in-cluster-secret-name|destination"
+)
+# argocd-cm cluster.inClusterEnabled "false" rejects every Application on
+# https://kubernetes.default.svc, so this phase runs last.
+PROJECT_POLICY_IN_CLUSTER_DISABLED_CASES=(
+  "argocd|project-policy-in-cluster-disabled-server|destination"
 )
 
 usage() {
@@ -318,6 +345,11 @@ done
 [[ -f "${OCI_CHART_PATH}/Chart.yaml" ]] || fail "OCI Helm chart fixture not found: ${OCI_CHART_PATH}/Chart.yaml"
 [[ -d "${PROJECT_POLICY_REPO_PATH}" ]] || fail "project policy fixture repo not found: ${PROJECT_POLICY_REPO_PATH}"
 [[ -f "${PROJECT_POLICY_EXPECTED}" ]] || fail "project policy expected file not found: ${PROJECT_POLICY_EXPECTED}"
+[[ -f "${PROJECT_POLICY_LIVE_CLUSTER_SECRETS}" ]] || fail "project policy live cluster Secrets not found: ${PROJECT_POLICY_LIVE_CLUSTER_SECRETS}"
+for project_policy_phase_dir in "${PROJECT_POLICY_IN_CLUSTER_SECRET_DIR}" "${PROJECT_POLICY_IN_CLUSTER_DISABLED_DIR}"; do
+  [[ -d "${project_policy_phase_dir}/repo" ]] || fail "project policy phase repo not found: ${project_policy_phase_dir}/repo"
+  [[ -f "${project_policy_phase_dir}/expected.yaml" ]] || fail "project policy phase expected file not found: ${project_policy_phase_dir}/expected.yaml"
+done
 [[ -d "${SIDECAR_PATH}" ]] || fail "CMP sidecar manifest directory not found: ${SIDECAR_PATH}"
 
 OUT_DIR="$(mkdir -p "${OUT_DIR}" && cd "${OUT_DIR}" && pwd)"
@@ -450,6 +482,8 @@ prepare_fixture_git_image() {
   mkdir -p "${FIXTURE_GIT_WORK}"
   cp -R "${FIXTURE_REPO_PATH}/." "${FIXTURE_GIT_WORK}/"
   cp -R "${PROJECT_POLICY_REPO_PATH}/." "${FIXTURE_GIT_WORK}/"
+  cp -R "${PROJECT_POLICY_IN_CLUSTER_SECRET_DIR}/repo/." "${FIXTURE_GIT_WORK}/"
+  cp -R "${PROJECT_POLICY_IN_CLUSTER_DISABLED_DIR}/repo/." "${FIXTURE_GIT_WORK}/"
   pin_container_policy_image "${FIXTURE_GIT_WORK}/.drydock/plugins.yaml"
   git -C "${FIXTURE_GIT_WORK}" init --initial-branch=main >/dev/null
   git -C "${FIXTURE_GIT_WORK}" config user.email "drydock@example.invalid"
@@ -1320,14 +1354,53 @@ configure_application_namespaces() {
   kubectl -n argocd rollout status statefulset/argocd-application-controller --timeout=300s
 }
 
+# The project-policy phase the functions below act on. use_project_policy_phase
+# sets it: the artifact directory name, the drydock fixture repo, the
+# directory in that repo that holds the phase's manifests, the expected file,
+# and the namespace|application|category cases.
+PROJECT_POLICY_PHASE=""
+PROJECT_POLICY_PHASE_REPO=""
+PROJECT_POLICY_PHASE_MANIFESTS=""
+PROJECT_POLICY_PHASE_EXPECTED=""
+PROJECT_POLICY_PHASE_CASES=()
+
+use_project_policy_phase() {
+  PROJECT_POLICY_PHASE="$1"
+  PROJECT_POLICY_PHASE_REPO="$2"
+  PROJECT_POLICY_PHASE_MANIFESTS="$2/$3"
+  PROJECT_POLICY_PHASE_EXPECTED="$4"
+  shift 4
+  PROJECT_POLICY_PHASE_CASES=("$@")
+}
+
 prepare_project_policy_namespaces() {
   ensure_namespace project-policy-tenant
   ensure_namespace project-policy-workloads
 }
 
+# A phase's cluster-secrets.yaml is in its drydock repo, so both Argo CD and
+# drydock see those cluster Secrets.
 apply_project_policy_apps() {
-  kubectl apply -f "${PROJECT_POLICY_REPO_PATH}/project-policy/projects.yaml" >/dev/null
-  kubectl apply -f "${PROJECT_POLICY_REPO_PATH}/project-policy/applications.yaml" >/dev/null
+  if [[ -f "${PROJECT_POLICY_PHASE_MANIFESTS}/cluster-secrets.yaml" ]]; then
+    kubectl apply -f "${PROJECT_POLICY_PHASE_MANIFESTS}/cluster-secrets.yaml" >/dev/null
+  fi
+  kubectl apply -f "${PROJECT_POLICY_PHASE_MANIFESTS}/projects.yaml" >/dev/null
+  kubectl apply -f "${PROJECT_POLICY_PHASE_MANIFESTS}/applications.yaml" >/dev/null
+}
+
+# apply_project_policy_live_cluster_secrets applies the cluster Secrets that
+# only Argo CD sees. The Secret points at the kind API server through a
+# second address, so it needs credentials: a short-lived token for the
+# controller's own ServiceAccount. The token goes to kubectl on stdin, so it
+# never lands on disk or in a process argument. TLS verification is off
+# because this is a throwaway kind cluster.
+apply_project_policy_live_cluster_secrets() {
+  local token
+  kubectl apply -f "${PROJECT_POLICY_LIVE_CLUSTER_SECRETS}" >/dev/null
+  token="$(kubectl -n argocd create token argocd-application-controller)"
+  [[ -n "${token}" ]] || fail "could not create a token for the project-policy live cluster Secret"
+  printf '{"stringData":{"config":"{\\"bearerToken\\":\\"%s\\",\\"tlsClientConfig\\":{\\"insecure\\":true}}"}}' "${token}" \
+    | kubectl -n argocd patch secret "${PROJECT_POLICY_LIVE_CLUSTER_SECRET_NAME}" --type merge --patch-file /dev/stdin >/dev/null
 }
 
 project_policy_condition_categories() {
@@ -1344,6 +1417,10 @@ project_policy_condition_categories() {
     elif [[ "${condition_type}" == "InvalidSpecError" ]]; then
       if [[ "${normalized}" == *"source namespace"* ]]; then
         category="source-namespace"
+      elif [[ "${normalized}" == *"error getting cluster"* || "${normalized}" == *"clusters with this name"* || "${normalized}" == *"clusters with the same name"* ]]; then
+        # A destination Argo CD cannot resolve to a cluster. These messages
+        # do not say "destination" (util/argo/argo.go:1152-1193, v3.6.1).
+        category="destination"
       elif [[ "${normalized}" == *destination* ]]; then
         category="destination"
       elif [[ "${normalized}" == *source* || "${normalized}" == *repo* ]]; then
@@ -1394,14 +1471,14 @@ wait_for_project_policy_application() {
     sleep 2
   done
   local failure_dir
-  failure_dir="$(artifact_dir project-policy)"
+  failure_dir="$(artifact_dir "${PROJECT_POLICY_PHASE}")"
   kubectl -n "${namespace}" get application "${app}" -o yaml > "${failure_dir}/${app}.yaml" 2>&1 || true
   fail "project-policy Application ${namespace}/${app} did not reach expected policy condition category ${expected_category}; see ${failure_dir}/${app}.yaml"
 }
 
 wait_for_project_policy_applications() {
   local case_entry namespace app expected_category
-  for case_entry in "${PROJECT_POLICY_CASES[@]}"; do
+  for case_entry in "${PROJECT_POLICY_PHASE_CASES[@]}"; do
     IFS='|' read -r namespace app expected_category <<< "${case_entry}"
     wait_for_project_policy_application "${namespace}" "${app}" "${expected_category}"
   done
@@ -1409,8 +1486,8 @@ wait_for_project_policy_applications() {
 
 capture_project_policy_argocd_applications() {
   local case_entry namespace app expected_category output_dir
-  output_dir="$(artifact_dir project-policy/argocd-applications)"
-  for case_entry in "${PROJECT_POLICY_CASES[@]}"; do
+  output_dir="$(artifact_dir "${PROJECT_POLICY_PHASE}/argocd-applications")"
+  for case_entry in "${PROJECT_POLICY_PHASE_CASES[@]}"; do
     IFS='|' read -r namespace app expected_category <<< "${case_entry}"
     kubectl -n "${namespace}" get application "${app}" -o json > "${output_dir}/${app}.json"
   done
@@ -1418,11 +1495,11 @@ capture_project_policy_argocd_applications() {
 
 capture_project_policy_drydock_diagnostics() {
   local output_dir stderr_file
-  output_dir="$(artifact_dir project-policy)"
+  output_dir="$(artifact_dir "${PROJECT_POLICY_PHASE}")"
   stderr_file="${output_dir}/drydock-diagnostics.stderr"
   (cd "${REPO_ROOT}" && "${DRYDOCK_CMD[@]}" diag \
-    --path "${PROJECT_POLICY_REPO_PATH}" \
-    --repo-map "${FIXTURE_REPO_URL}=${PROJECT_POLICY_REPO_PATH}" \
+    --path "${PROJECT_POLICY_PHASE_REPO}" \
+    --repo-map "${FIXTURE_REPO_URL}=${PROJECT_POLICY_PHASE_REPO}" \
     --offline \
     --render \
     --project-diagnostics all \
@@ -1432,29 +1509,56 @@ capture_project_policy_drydock_diagnostics() {
 
 compare_project_policy_smoke() {
   local output_dir stderr_file
-  output_dir="$(artifact_dir project-policy)"
+  output_dir="$(artifact_dir "${PROJECT_POLICY_PHASE}")"
   stderr_file="${output_dir}/summary.stderr"
   (cd "${REPO_ROOT}" && go run ./scripts/argocd-project-policy-smoke \
     --argocd-app-dir "${output_dir}/argocd-applications" \
     --drydock-diagnostics "${output_dir}/drydock-diagnostics.json" \
-    --expected "${PROJECT_POLICY_EXPECTED}" \
+    --expected "${PROJECT_POLICY_PHASE_EXPECTED}" \
     --out "${output_dir}/summary.txt" 2> "${stderr_file}")
   rm -f "${stderr_file}"
 }
 
-run_project_policy_smoke() {
-  log_step "Preparing project-policy namespaces"
+run_project_policy_phase() {
+  log_step "Preparing ${PROJECT_POLICY_PHASE} namespaces"
   prepare_project_policy_namespaces
-  log_step "Applying project-policy AppProjects and Applications"
+  log_step "Applying ${PROJECT_POLICY_PHASE} AppProjects and Applications"
   apply_project_policy_apps
-  log_step "Waiting for project-policy Application policy outcomes"
+  log_step "Waiting for ${PROJECT_POLICY_PHASE} Application policy outcomes"
   wait_for_project_policy_applications
-  log_step "Capturing project-policy Argo CD Application status"
+  log_step "Capturing ${PROJECT_POLICY_PHASE} Argo CD Application status"
   capture_project_policy_argocd_applications
-  log_step "Capturing project-policy drydock diagnostics"
+  log_step "Capturing ${PROJECT_POLICY_PHASE} drydock diagnostics"
   capture_project_policy_drydock_diagnostics
-  log_step "Comparing project-policy outcomes"
+  log_step "Comparing ${PROJECT_POLICY_PHASE} outcomes"
   compare_project_policy_smoke
+}
+
+run_project_policy_smoke() {
+  use_project_policy_phase project-policy "${PROJECT_POLICY_REPO_PATH}" project-policy \
+    "${PROJECT_POLICY_EXPECTED}" "${PROJECT_POLICY_CASES[@]}"
+  log_step "Applying project-policy cluster Secrets that only Argo CD sees"
+  apply_project_policy_live_cluster_secrets
+  run_project_policy_phase
+
+  use_project_policy_phase project-policy-in-cluster-secret "${PROJECT_POLICY_IN_CLUSTER_SECRET_DIR}/repo" \
+    project-policy-in-cluster-secret "${PROJECT_POLICY_IN_CLUSTER_SECRET_DIR}/expected.yaml" \
+    "${PROJECT_POLICY_IN_CLUSTER_SECRET_CASES[@]}"
+  run_project_policy_phase
+  log_step "Removing the cluster Secret named in-cluster"
+  kubectl -n argocd delete secret "${PROJECT_POLICY_IN_CLUSTER_SECRET_NAME}" --ignore-not-found >/dev/null
+
+  # drydock reads the same setting from the phase repo's argocd-cm.yaml.
+  use_project_policy_phase project-policy-in-cluster-disabled "${PROJECT_POLICY_IN_CLUSTER_DISABLED_DIR}/repo" \
+    project-policy-in-cluster-disabled "${PROJECT_POLICY_IN_CLUSTER_DISABLED_DIR}/expected.yaml" \
+    "${PROJECT_POLICY_IN_CLUSTER_DISABLED_CASES[@]}"
+  log_step "Disabling the in-cluster cluster in argocd-cm"
+  kubectl -n argocd patch configmap argocd-cm --type merge \
+    -p '{"data":{"cluster.inClusterEnabled":"false"}}' >/dev/null
+  run_project_policy_phase
+  log_step "Enabling the in-cluster cluster in argocd-cm again"
+  kubectl -n argocd patch configmap argocd-cm --type json \
+    -p '[{"op":"remove","path":"/data/cluster.inClusterEnabled"}]' >/dev/null
 }
 
 main() {

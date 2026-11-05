@@ -23,3 +23,35 @@ cases:
     namespace: project-policy-tenant
     argocdCondition: source-namespace
     drydockDiagnosticCode: project.source-namespace-denied
+  - name: project-policy-destination-deny-server-wins
+    namespace: argocd
+    argocdCondition: destination
+    drydockDiagnosticCode: project.destination-denied
+  - name: project-policy-destination-deny-namespace-wins
+    namespace: argocd
+    argocdCondition: destination
+    drydockDiagnosticCode: project.destination-denied
+  - name: project-policy-destination-deny-other-allowed
+    namespace: argocd
+    argocdCondition: none
+    drydockDiagnosticCode: ""
+  - name: project-policy-destination-name-in-cluster
+    namespace: argocd
+    argocdCondition: none
+    drydockDiagnosticCode: ""
+  - name: project-policy-destination-server-in-cluster-name-policy
+    namespace: argocd
+    argocdCondition: none
+    drydockDiagnosticCode: ""
+  # Argo CD allows this destination through a project-scoped cluster Secret
+  # that exists only in the live cluster. drydock cannot see it, so it must
+  # report a deferred result and no denial.
+  - name: project-policy-destination-live-scoped-cluster
+    namespace: argocd
+    argocdCondition: none
+    drydockDiagnosticCode: ""
+    drydockDeferredCode: project.unspecified
+  - name: project-policy-destination-live-scoped-cluster-denied
+    namespace: argocd
+    argocdCondition: destination
+    drydockDiagnosticCode: project.destination-denied

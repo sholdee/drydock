@@ -45,6 +45,10 @@ type expectedCase struct {
 	Namespace             string            `yaml:"namespace"`
 	ArgoCDCondition       conditionCategory `yaml:"argocdCondition"`
 	DrydockDiagnosticCode string            `yaml:"drydockDiagnosticCode"`
+	// DrydockDeferredCode is the code of the deferred project diagnostic
+	// drydock reports when it cannot tell the outcome offline. Empty means
+	// drydock must report no deferred project diagnostic for the case.
+	DrydockDeferredCode string `yaml:"drydockDeferredCode"`
 }
 
 type appStatusFile struct {
@@ -261,6 +265,9 @@ func evaluateCase(tc expectedCase, app appStatusFile, drydockDiagnostics []diagn
 	if failure := evaluateDrydockDiagnostics(tc, drydockDiagnostics); failure != "" {
 		failures = append(failures, failure)
 	}
+	if failure := evaluateDrydockDeferredDiagnostics(tc, drydockDiagnostics); failure != "" {
+		failures = append(failures, failure)
+	}
 	return failures
 }
 
@@ -300,6 +307,8 @@ func classifyInvalidSpecMessage(message string) conditionCategory {
 	switch {
 	case strings.Contains(normalized, "source namespace"):
 		return conditionCategorySourceNamespace
+	case isDestinationClusterMessage(normalized):
+		return conditionCategoryDestination
 	case strings.Contains(normalized, "destination"):
 		return conditionCategoryDestination
 	case strings.Contains(normalized, "source") || strings.Contains(normalized, "repo"):
@@ -307,6 +316,17 @@ func classifyInvalidSpecMessage(message string) conditionCategory {
 	default:
 		return conditionCategory("unknown")
 	}
+}
+
+// isDestinationClusterMessage reports a destination that Argo CD cannot
+// resolve to a cluster. util/argo GetDestinationServer and
+// GetDestinationCluster (util/argo/argo.go:1152-1193, v3.6.1) word these
+// errors without "destination", and a server URL in them may contain
+// "source" or "repo", so they are checked first.
+func isDestinationClusterMessage(normalized string) bool {
+	return strings.Contains(normalized, "error getting cluster") ||
+		strings.Contains(normalized, "clusters with this name") ||
+		strings.Contains(normalized, "clusters with the same name")
 }
 
 func isSourceNamespacePolicyMessage(message string) bool {
@@ -338,6 +358,44 @@ func evaluateDrydockDiagnostics(tc expectedCase, diagnostics []diagnostic.Diagno
 		return ""
 	}
 	return fmt.Sprintf("drydock diagnostic codes got %s, want %s", strings.Join(displaySet(actual), ", "), strings.Join(displaySet(expected), ", "))
+}
+
+// evaluateDrydockDeferredDiagnostics compares the codes of the deferred
+// project diagnostics drydock reports for the case with its
+// drydockDeferredCode. A deferred diagnostic is one drydock reports when it
+// cannot tell the outcome offline.
+func evaluateDrydockDeferredDiagnostics(tc expectedCase, diagnostics []diagnostic.Diagnostic) string {
+	actual := deferredDrydockCodesForCase(tc, diagnostics)
+	expected := expectedDrydockCodes(tc.DrydockDeferredCode)
+	if equalStringSets(actual, expected) {
+		return ""
+	}
+	return fmt.Sprintf("drydock deferred diagnostic codes got %s, want %s", strings.Join(displaySet(actual), ", "), strings.Join(displaySet(expected), ", "))
+}
+
+func deferredDrydockCodesForCase(tc expectedCase, diagnostics []diagnostic.Diagnostic) []string {
+	seen := make(map[string]struct{})
+	for _, diag := range diagnostics {
+		if diag.Provenance.Path != appKey(tc.Namespace, tc.Name) {
+			continue
+		}
+		if diagnostic.ClassifyProjectDiagnostic(diag) != diagnostic.ProjectDiagnosticClassDeferred {
+			continue
+		}
+		// Like the monitored codes, the expectation needs the explicit
+		// code drydock wrote, not one derived from the message.
+		code := strings.TrimSpace(diag.Code)
+		if code == "" {
+			code = "missing-code"
+		}
+		seen[code] = struct{}{}
+	}
+	out := make([]string, 0, len(seen))
+	for code := range seen {
+		out = append(out, code)
+	}
+	sort.Strings(out)
+	return out
 }
 
 func expectedDrydockCodes(code string) []string {

@@ -81,3 +81,128 @@ spec:
       namespace: project-policy-workloads
   sourceNamespaces:
     - argocd
+---
+# A deny entry wins over an allow entry, whatever their order: Argo CD
+# returns false as soon as a deny entry rejects the destination
+# (pkg/apis/application/v1alpha1/app_project_types.go:507-527, v3.6.1).
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: project-policy-destination-deny-server-wins
+  namespace: argocd
+spec:
+  sourceRepos:
+    - git://argocd-parity-git.argocd-parity.svc.cluster.local/repo.git
+  destinations:
+    - server: "*"
+      namespace: "*"
+    - server: "!https://kubernetes.default.svc"
+      namespace: "*"
+  sourceNamespaces:
+    - argocd
+---
+# A namespace deny entry denies when its server matches.
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: project-policy-destination-deny-namespace-wins
+  namespace: argocd
+spec:
+  sourceRepos:
+    - git://argocd-parity-git.argocd-parity.svc.cluster.local/repo.git
+  destinations:
+    - server: "*"
+      namespace: "*"
+    - server: https://kubernetes.default.svc
+      namespace: "!project-policy-workloads"
+  sourceNamespaces:
+    - argocd
+---
+# A deny entry for another server matches this destination, so the
+# allow entry stands.
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: project-policy-destination-deny-other-allowed
+  namespace: argocd
+spec:
+  sourceRepos:
+    - git://argocd-parity-git.argocd-parity.svc.cluster.local/repo.git
+  destinations:
+    - server: "*"
+      namespace: project-policy-workloads
+    - server: "!https://project-policy-elsewhere.invalid"
+      namespace: "*"
+  sourceNamespaces:
+    - argocd
+---
+# The Application names in-cluster and no cluster Secret has that name, so
+# Argo CD resolves the name to https://kubernetes.default.svc
+# (util/db/cluster.go:320-322) and the server entry allows it.
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: project-policy-destination-name-in-cluster
+  namespace: argocd
+spec:
+  sourceRepos:
+    - git://argocd-parity-git.argocd-parity.svc.cluster.local/repo.git
+  destinations:
+    - server: https://kubernetes.default.svc
+      namespace: project-policy-workloads
+  sourceNamespaces:
+    - argocd
+---
+# The Application names server https://kubernetes.default.svc and no cluster
+# Secret has that server, so Argo CD uses its built-in cluster named
+# in-cluster (util/db/cluster.go:252-273) and the name entry allows it.
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: project-policy-destination-server-in-cluster-name-policy
+  namespace: argocd
+spec:
+  sourceRepos:
+    - git://argocd-parity-git.argocd-parity.svc.cluster.local/repo.git
+  destinations:
+    - name: in-cluster
+      namespace: project-policy-workloads
+  sourceNamespaces:
+    - argocd
+---
+# No entry matches the Application's server. The cluster Secret for that
+# server exists only in the live cluster (../../live-cluster-secrets.yaml)
+# and is scoped to this project, so Argo CD adds an implicit destination for
+# it (util/argo/argo.go:832-844) and allows the Application. drydock cannot
+# see that Secret and must defer, not deny.
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: project-policy-destination-live-scoped-cluster
+  namespace: argocd
+spec:
+  sourceRepos:
+    - git://argocd-parity-git.argocd-parity.svc.cluster.local/repo.git
+  destinations:
+    - server: https://kubernetes.default.svc
+      namespace: project-policy-workloads
+  sourceNamespaces:
+    - argocd
+---
+# The same live-only cluster, but a server deny entry rejects it. A deny is
+# definite even when drydock cannot see the cluster Secret.
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: project-policy-destination-live-scoped-cluster-denied
+  namespace: argocd
+spec:
+  sourceRepos:
+    - git://argocd-parity-git.argocd-parity.svc.cluster.local/repo.git
+  destinations:
+    - server: "*"
+      namespace: "*"
+    - server: "!https://kubernetes.default.svc.cluster.local"
+      namespace: "*"
+  sourceNamespaces:
+    - argocd

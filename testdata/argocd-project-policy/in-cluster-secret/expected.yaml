@@ -1,0 +1,5 @@
+cases:
+  - name: project-policy-in-cluster-secret-name
+    namespace: argocd
+    argocdCondition: destination
+    drydockDiagnosticCode: project.destination-denied
