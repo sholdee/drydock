@@ -740,10 +740,19 @@ implicit destination for its server to that project
 Application that drydock denies. The Secret's name can also change how name
 entries match.
 
-drydock keeps the definite denial. It does not defer this case. A matching
-deny entry still denies in Argo CD too, so this gap affects only denials
-where no entry allows the cluster. To get Argo CD's result, put that cluster
-Secret in the repository, so that drydock can read its metadata.
+drydock keeps the definite denial. It does not defer this case. The live
+Secret keeps the in-cluster server, so a server deny entry that matches
+`https://kubernetes.default.svc` denies in Argo CD too. Name entries are
+different. Argo CD matches them against the live Secret's name, and drydock
+matches them against `in-cluster` (`globMatch` and `isDestinationMatched` in
+`pkg/apis/application/v1alpha1/app_project_types.go`). For example, suppose
+the live Secret has the name `local`. The name deny entry `!in-cluster` then
+matches in Argo CD and allows the Application, but drydock denies it. In the
+other direction, the name deny entry `!local` denies in Argo CD, but drydock
+allows the Application. So this gap affects denials where no entry allows the
+cluster, and any result that depends on a name entry. To get Argo CD's
+result, put that cluster Secret in the repository, so that drydock can read
+its metadata.
 
 ### AppProject Current Behavior Traceability
 
