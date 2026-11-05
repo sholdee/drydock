@@ -582,12 +582,12 @@ func renderOneApplication(ctx context.Context, application argoappv1.Application
 		out.cacheEvents = append(out.cacheEvents, recorder.Events()...)
 		return out
 	}
-	cluster := applicationDestinationCluster(application)
+	settingsDrop := settingsFilterDrop(application, request.settingsFilter, request.settings)
 	filteredManifests := make([]render.Manifest, 0, len(rendered.Manifests))
 	policyResources := make([]project.RenderedResource, 0, len(rendered.Manifests)+len(rendered.Hooks))
 	for _, renderedManifest := range rendered.Manifests {
 		id := manifest.IdentityOf(renderedManifest.Object)
-		if request.settingsFilter.Drop(id, cluster) {
+		if settingsDrop(id) {
 			continue
 		}
 		policyResources = append(policyResources, project.RenderedResource{
@@ -603,7 +603,7 @@ func renderOneApplication(ctx context.Context, application argoappv1.Application
 	// AppProject permission check to every hook task at sync time and, from
 	// v3.5.4, to PreDelete/PostDelete hooks at deletion.
 	for _, hook := range rendered.Hooks {
-		if request.settingsFilter.Drop(manifest.IdentityOf(hook.Object), cluster) {
+		if settingsDrop(manifest.IdentityOf(hook.Object)) {
 			continue
 		}
 		policyResources = append(policyResources, project.RenderedResource{
@@ -752,11 +752,23 @@ func (request BuildRequest) resourceFilter() manifest.ResourceFilter {
 	}
 }
 
-func applicationDestinationCluster(application argoappv1.Application) string {
-	if application.Spec.Destination.Name != "" {
-		return application.Spec.Destination.Name
+// settingsFilterDrop returns the argocd-cm resource.exclusions and
+// resource.inclusions check for application. Argo CD matches the rule
+// cluster globs against the resolved destination server
+// (controller/state.go CompareAppState calls IsExcludedResource with
+// destCluster.Server at v3.6.1), so the destination is resolved first, as the
+// resource.selectors check resolves it (project.ResolveDestinationServer).
+// When drydock cannot resolve the server offline, a resource is dropped only
+// when Argo CD would drop it for every possible server
+// (SettingsResourceFilter.DropUnresolved).
+func settingsFilterDrop(application argoappv1.Application, filter manifest.SettingsResourceFilter, settings config.ArgoSettings) func(manifest.Identity) bool {
+	server, ok := project.ResolveDestinationServer(application.Spec.Destination, settings)
+	if !ok {
+		return filter.DropUnresolved
 	}
-	return application.Spec.Destination.Server
+	return func(id manifest.Identity) bool {
+		return filter.Drop(id, server)
+	}
 }
 
 func (o Orchestrator) BuildApp(ctx context.Context, request BuildAppRequest) (BuildResult, error) {

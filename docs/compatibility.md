@@ -715,8 +715,7 @@ Supported:
 - Application-level `spec.ignoreDifferences[]` `jsonPointers`,
   `jqPathExpressions`, and `managedFieldsManagers`.
 - Global `resource.customizations.ignoreDifferences.*`,
-  `knownTypeFields.*`, selected compare options, resource exclusions, and
-  resource inclusions.
+  `knownTypeFields.*`, and selected compare options.
 - Ignore rule order as in Argo CD v3.6.1. Application rules run first, then
   the resource's annotation rule, then `resource.customizations` rules
   (`util/argo/diff/ignore.go`, `util/argo/normalizers/diff_normalizer.go`).
@@ -745,6 +744,23 @@ Supported:
   the union. It keeps the baseline side's rules in order and adds the current
   side's rules that the baseline does not have. Rules that both sides share
   run once, so identical settings give exactly Argo CD's rule list.
+- `argocd-cm` `resource.exclusions` and `resource.inclusions` (Argo CD
+  v3.6.1), with Argo CD's core exclusions. drydock decodes them as Argo CD
+  decodes them, with `sigs.k8s.io/yaml`. Keys match case-insensitively, so
+  `Kinds:` is the same as `kinds:`. A repeated key keeps its last value, and
+  unknown keys are ignored. A value Argo CD cannot decode is an error
+  diagnostic. Cluster globs match the resolved destination server, as in
+  Argo CD, and never the destination name. A destination name resolves
+  through the cluster Secrets, and the implicit `in-cluster` name resolves to
+  `https://kubernetes.default.svc`. Some destinations cannot be resolved
+  offline: a name with no cluster Secret or with more than one, both or
+  neither of name and server, or the in-cluster cluster that
+  `cluster.inClusterEnabled: "false"` disables. For these, drydock drops a
+  resource only when Argo CD would drop it for every possible server. A rule
+  with no clusters, or with only `*`, still applies. When the result depends
+  on the server, drydock keeps the resource. Argo CD itself fails the
+  comparison when it cannot resolve the destination. drydock cannot see live
+  cluster Secrets, so it treats the server as unknown.
 - Resource-level `argocd.argoproj.io/ignore-differences` annotations, as in
   Argo CD v3.6.1: the value is YAML with only `jsonPointers`, the rule applies
   only to the annotated resource (including child Application CRs), and an
@@ -851,8 +867,7 @@ Supported:
   `https://kubernetes.default.svc`. When a name cannot be resolved offline
   (unknown or ambiguous), or the destination is the in-cluster cluster that
   `cluster.inClusterEnabled: "false"` disables, Argo CD fails the comparison
-  before it reads selectors, and no selector warning is reported. Resource exclusions
-  and inclusions still match the destination name when only a name is set.
+  before it reads selectors, and no selector warning is reported.
 
 ### AppProject Field Semantics
 

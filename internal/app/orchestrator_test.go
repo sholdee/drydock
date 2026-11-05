@@ -1026,10 +1026,15 @@ spec:
 	}
 }
 
+// Argo CD matches the inclusion cluster globs against the server a
+// destination name resolves to (controller/state.go CompareAppState passes
+// destCluster.Server at v3.6.1).
 func TestOrchestratorBuildAppliesClusterScopedResourceInclusions(t *testing.T) {
 	root := t.TempDir()
 	writeBuildApplicationWithDestination(t, root, "prod", "prod-cm", "prod-west")
 	writeBuildApplicationWithDestination(t, root, "dev", "dev-cm", "dev")
+	writeResourceSelectorClusterSecret(t, root, "prod-west", "https://prod-west.example.com")
+	writeResourceSelectorClusterSecret(t, root, "dev", "https://dev.example.com")
 	writeTestFile(t, filepath.Join(root, "settings", "argocd-cm.yaml"), `apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -1038,7 +1043,7 @@ data:
   resource.inclusions: |
     - apiGroups: ["apps"]
       kinds: ["Deployment"]
-      clusters: ["prod-*"]
+      clusters: ["https://prod-*"]
 `)
 
 	result, err := Orchestrator{}.Build(context.Background(), BuildRequest{Path: root})
