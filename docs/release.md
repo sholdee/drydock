@@ -235,9 +235,18 @@ cluster Secret that only Argo CD sees. That Secret carries a short-lived
 ServiceAccount token, which the script passes to kubectl on stdin. The second
 phase adds a cluster Secret named `in-cluster` at another server and removes it
 afterward. The last phase sets argocd-cm `cluster.inClusterEnabled` to
-`"false"` and removes the key afterward. If a phase fails on a cluster that
-outlives the run, the cleanup trap removes that Secret and that key, so the
-next run starts clean.
+`"false"` and removes the key afterward.
+
+If a phase fails on a cluster from `--existing-cluster`, the cleanup trap
+removes the cluster Secret named `in-cluster` and the argocd-cm
+`cluster.inClusterEnabled` key. This reset undoes only the shared Argo CD
+state that phases 2 and 3 change. It leaves the first phase's live-only
+cluster Secret in place. It is for a manual rerun of one phase and
+for a look at the cluster afterward. It does not make a second full run on the
+same cluster pass. That run fails earlier, because the `argocd` and
+`argocd-parity` namespaces and the project-policy Applications are still
+there. With `--keep-cluster`, the trap does not reset this state, so that you
+can inspect the failed phase.
 
 This workflow is intentionally outside ordinary pull request CI. It always runs
 when manually dispatched, and CI calls it as a reusable workflow only when

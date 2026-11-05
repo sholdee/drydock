@@ -521,5 +521,9 @@ an `expected.yaml`, and an `applications.yaml`.
 A case that changes state every Application shares, such as a cluster Secret
 named `in-cluster` or an argocd-cm key, goes in a later phase with its own
 fixture repo. Add its undo step to `reset_project_policy_shared_state`, so the
-cleanup trap also undoes it after a failed run. Cluster Secrets that only Argo
-CD sees go in `live-cluster-secrets.yaml`, outside every drydock repo.
+cleanup trap also undoes it after a failed run on an existing cluster. The
+trap skips that reset with `--keep-cluster`. Cluster Secrets that only Argo
+CD sees go in `live-cluster-secrets.yaml`, outside every drydock repo. The
+first phase applies the Secret `project-policy-live-scoped-cluster` from that
+file. The script leaves that Secret in place on purpose and applies it again
+on each run, so the reset does not remove it.

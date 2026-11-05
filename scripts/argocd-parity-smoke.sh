@@ -396,12 +396,21 @@ cleanup() {
   if [[ "${status}" -ne 0 ]]; then
     collect_logs || true
   fi
-  # A failed project-policy phase leaves its shared Argo CD state behind.
-  # Undo it on a cluster that outlives this run, so the next run starts
-  # clean. The failed Application status is already in the artifacts.
-  if [[ "${PROJECT_POLICY_SHARED_STATE_CHANGED}" == "true" ]] \
-    && [[ "${CREATE_CLUSTER}" != "true" || "${KEEP_CLUSTER}" == "true" ]]; then
-    reset_project_policy_shared_state >/dev/null 2>&1 || true
+  # A failed project-policy phase leaves behind the shared Argo CD state that
+  # phases 2 and 3 change: the cluster Secret named in-cluster and the
+  # argocd-cm cluster.inClusterEnabled key. On an existing cluster, undo only
+  # that state, so that a manual rerun of one phase, or a look at the other
+  # Applications, starts from the normal Argo CD settings. The failed
+  # Application status is already in the artifacts. The reset does not make
+  # a second full run pass on the same cluster. That run fails earlier, on
+  # the namespaces and Applications that this run left. With --keep-cluster,
+  # keep the state so that the user can inspect the failed phase.
+  if [[ "${PROJECT_POLICY_SHARED_STATE_CHANGED}" == "true" ]]; then
+    if [[ "${KEEP_CLUSTER}" == "true" ]]; then
+      log_step "Keeping the project-policy shared Argo CD state for inspection (--keep-cluster)" || true
+    elif [[ "${CREATE_CLUSTER}" != "true" ]]; then
+      reset_project_policy_shared_state >/dev/null 2>&1 || true
+    fi
   fi
   rm -rf "${WORK_DIR}"
   if [[ "${CREATE_CLUSTER}" == "true" && "${KEEP_CLUSTER}" != "true" ]]; then
