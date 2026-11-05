@@ -15,6 +15,8 @@ import (
 	"testing"
 
 	imagev1 "github.com/opencontainers/image-spec/specs-go/v1"
+	xunicode "golang.org/x/text/encoding/unicode"
+	"golang.org/x/text/transform"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	kubeyaml "k8s.io/apimachinery/pkg/util/yaml"
@@ -22,11 +24,16 @@ import (
 
 // upstreamGetObjsFromYAMLOrJSON is getObjsFromYAMLOrJSON and splitYAMLOrJSON
 // from Argo CD v3.6.1 reposerver/repository/repository.go, with
-// utfutil.OpenFile(..., utfutil.UTF8) reduced to dropping a leading UTF-8 byte
-// order mark (utfutil is not in drydock's module graph; UTF-16 input is not
-// exercised here).
+// utfutil.OpenFile(..., utfutil.UTF8) replaced by the reader utfutil v1.0.0
+// NewReader builds for that hint, unicode.BOMOverride over the x/text UTF-8
+// decoder (utfutil is not in drydock's module graph).
+// TestDirectoryRendererDecodesUpstreamUTF16Fixture pins the UTF-16 case
+// against upstream's own expectation rather than this copy.
 func upstreamGetObjsFromYAMLOrJSON(data []byte, filename string) ([]*unstructured.Unstructured, error) {
-	data = bytes.TrimPrefix(data, []byte("\xef\xbb\xbf"))
+	data, _, err := transform.Bytes(xunicode.BOMOverride(xunicode.UTF8.NewDecoder()), data)
+	if err != nil {
+		return nil, err
+	}
 	if strings.HasSuffix(filename, ".json") {
 		var obj unstructured.Unstructured
 		decoder := json.NewDecoder(bytes.NewReader(data))
@@ -110,6 +117,21 @@ func TestDirectoryRendererDecodeMatchesUpstream(t *testing.T) {
 		"readme-indented.md":  "# Usage\n\n1. Create:\n   ```yaml\n   apiVersion: v1\n   kind: ConfigMap\n   metadata:\n     name: x\n   ```\n",
 		"tmpl.tpl":            "{{- define \"cm\" -}}\napiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: {{ .name }}\n{{- end }}\n",
 		"heredoc.sh":          "#!/bin/sh\ncat <<EOT | kubectl apply -f -\napiVersion: v1\nkind: Namespace\nmetadata:\n  name: x\nEOT\n",
+		// A non-empty document without a string kind stops the stream.
+		"kindless-after.yaml":     "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: a\n---\nfoo: bar\n",
+		"kindless-before.yaml":    "foo: bar\n---\napiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: b\n",
+		"kindless-nometa.yaml":    "foo: bar\n---\napiVersion: v1\nkind: ConfigMap\n",
+		"empty-map-after.yaml":    "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: c\n---\n{}\n",
+		"empty-map.yaml":          "{}\n",
+		"values.yaml":             "replicas: 2\nimage:\n  tag: v1\n",
+		"apiversion-only-cm.yaml": "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: d\n---\napiVersion: v1\nfoo: bar\n",
+		"numeric-kind.yaml":       "apiVersion: v1\nkind: 5\nmetadata:\n  name: e\n",
+		"null-docs.yaml":          "---\nnull\n---\napiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: f\n---\n",
+		"sequence-after.yaml":     "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: g\n---\n- x\n",
+		"invalid-utf8.yaml":       "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: h\ndata:\n  k: \"\xff\"\n",
+		"utf16le.yaml":            utf16Text(t, xunicode.LittleEndian, "kind: Namespace\r\napiVersion: v1\r\nmetadata:\r\n  name: le\r\n---\r\nkind: ServiceAccount\r\napiVersion: v1\r\nmetadata:\r\n  name: le-sa\r\n"),
+		"utf16be.yaml":            utf16Text(t, xunicode.BigEndian, "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: be\n"),
+		"utf16le.json":            utf16Text(t, xunicode.LittleEndian, `{"apiVersion":"v1","kind":"ConfigMap","metadata":{"name":"le-json"}}`),
 	}
 	names := make([]string, 0, len(cases))
 	for name := range cases {
@@ -147,9 +169,11 @@ func TestDirectoryRendererDecodeMatchesUpstream(t *testing.T) {
 
 // upstreamRenderedNames flattens Lists as GenerateManifests does and drops
 // the kind-less object a ".json" OCI image manifest leaves behind, which
-// drydock skips (a recorded divergence). Documents with only one of apiVersion
-// and kind are not compared: drydock fails them where the repo-server renders
-// them.
+// drydock skips (a recorded divergence). Files whose outcome turns on a
+// document with only one of apiVersion and kind are not compared: drydock
+// fails them where the repo-server renders the document (kind only) or skips
+// the file (apiVersion only, with nothing decoded before it and not every
+// manifest marker), both recorded divergences.
 func upstreamRenderedNames(objs []*unstructured.Unstructured) []string {
 	names := []string{}
 	for _, obj := range objs {
@@ -171,4 +195,42 @@ func upstreamRenderedNames(objs []*unstructured.Unstructured) []string {
 	}
 	sort.Strings(names)
 	return names
+}
+
+// utf16Text encodes text as UTF-16 with a byte order mark, as Windows
+// editors save it.
+func utf16Text(t *testing.T, order xunicode.Endianness, text string) string {
+	t.Helper()
+	encoded, _, err := transform.Bytes(xunicode.UTF16(order, xunicode.UseBOM).NewEncoder(), []byte(text))
+	if err != nil {
+		t.Fatalf("encode UTF-16: %v", err)
+	}
+	return string(encoded)
+}
+
+// TestDirectoryRendererDecodesUpstreamUTF16Fixture is Argo CD v3.6.1
+// reposerver/repository TestGenerateFromUTF16: testdata/utf-16/utf-16.yaml, a
+// UTF-16LE file with a byte order mark and CRLF line endings, renders both of
+// its objects. A UTF-16 file holding the skip-file-rendering marker is
+// skipped.
+func TestDirectoryRendererDecodesUpstreamUTF16Fixture(t *testing.T) {
+	text := "kind: Namespace\r\napiVersion: v1\r\nmetadata:\r\n  name: linkerd\r\n  annotations:\r\n    linkerd.io/inject: disabled\r\n---\r\n" +
+		"kind: ServiceAccount\r\napiVersion: v1\r\nmetadata:\r\n  name: linkerd-controller\r\n  namespace: linkerd\r\n"
+	data := utf16Text(t, xunicode.LittleEndian, text)
+	if !strings.HasPrefix(data, "\xff\xfek\x00") {
+		t.Fatalf("fixture does not start with a UTF-16LE byte order mark: %q", data[:4])
+	}
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "apps", "utf-16.yaml"), data)
+	// getPotentiallyValidManifestFile looks for the skip marker in the text
+	// utfutil.ReadFile decodes.
+	writeFile(t, filepath.Join(root, "apps", "skipped.yaml"), utf16Text(t, xunicode.LittleEndian,
+		"# +argocd:skip-file-rendering\napiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: skipped\n"))
+	result, _, err := (DirectoryRenderer{}).Render(context.Background(), ResolvedSource{RepoRoot: root, Path: "apps"}, RenderOptions{})
+	if err != nil {
+		t.Fatalf("Render() error = %v", err)
+	}
+	if got, want := directoryManifestNames(result), []string{"linkerd", "linkerd-controller"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("rendered %#v, want %#v", got, want)
+	}
 }

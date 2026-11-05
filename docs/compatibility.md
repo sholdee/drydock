@@ -375,9 +375,12 @@ Supported:
   repo-server reports the resolved revision (commit SHA for Git sources,
   chart version for Helm repository sources, manifest digest for OCI
   sources).
-- Directory rendering that skips values-like YAML documents only when both
-  `apiVersion` and `kind` are absent, and fails clearly when exactly one is
-  present.
+- Recorded divergence from strict Argo CD v3.6.1 (unchanged since v3.5.x):
+  a directory YAML document with exactly one of `apiVersion` and `kind`
+  fails the source. The repo-server renders a document with a `kind` but no
+  `apiVersion`, and skips a file that stops at a document with an
+  `apiVersion` but no `kind` when nothing decoded before it and the file does
+  not hold every manifest marker (see the decoding rules below).
 - Directory rendering honors `+argocd:skip-file-rendering`, walks hidden
   directories when `recurse` is enabled, renders Jsonnet through native Go
   libraries with extVars, TLAs, code mode, env substitution, and repo-relative
@@ -388,14 +391,18 @@ Supported:
   case-sensitive (`deploy.YAML` is not rendered), `include` and `exclude`
   match the source-relative path with `github.com/gobwas/glob` v1.0.0
   semantics (`{**/,}crds/*.yaml` matches `crds/a.yaml` and `x/crds/a.yaml`).
-- Directory file decoding as the Argo CD v3.6.1 repo-server performs it: a
-  leading UTF-8 byte order mark is dropped, and a file ending in `.json` must
-  decode as one JSON object with a `kind` (or as an OCI image manifest)
-  followed only by whitespace, so an empty file, YAML content, a JSON array,
-  a syntax error, or several concatenated objects fail the source. Every
-  other file is a YAML/JSON stream. When the stream does not decode, the file
-  fails the source if an object decoded before the failure or if its content
-  holds all of `apiVersion:`, `kind:`, and `metadata:`; otherwise it is
+- Directory file decoding as the Argo CD v3.6.1 repo-server performs it: file
+  text is read as UTF-8 unless a byte order mark says UTF-16LE or UTF-16BE,
+  the byte order mark is dropped, and invalid UTF-8 becomes U+FFFD, before
+  the `+argocd:skip-file-rendering` check and every decoder. A file ending in
+  `.json` must decode as one JSON object with a `kind` (or as an OCI image
+  manifest) followed only by whitespace, so an empty file, YAML content, a
+  JSON array, a syntax error, or several concatenated objects fail the
+  source. Every other file is a YAML/JSON stream that stops at a syntax error
+  or at a non-empty document that is not an object with a `kind` (values-like
+  YAML and `{}` included). When the stream stops, the file fails the source
+  if an object decoded before it or if its content holds all of
+  `apiVersion:`, `kind:`, and `metadata:`; otherwise the whole file is
   skipped as unrelated YAML.
 - Recorded divergence from strict Argo CD v3.6.1: a `.json` file accepted
   only as an OCI image manifest renders nothing in drydock; the repo-server

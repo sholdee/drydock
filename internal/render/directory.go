@@ -18,6 +18,8 @@ import (
 	"github.com/sholdee/drydock/internal/manifest"
 	"github.com/sholdee/drydock/internal/manifestyaml"
 	"github.com/sholdee/drydock/internal/pathsafety"
+	xunicode "golang.org/x/text/encoding/unicode"
+	"golang.org/x/text/transform"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 )
@@ -40,8 +42,6 @@ const (
 // (reposerver/repository/repository.go manifestFile at v3.6.1), matched
 // case-sensitively against the file name: deploy.YAML is not a manifest.
 var directoryManifestFile = regexp.MustCompile(`^.*\.(yaml|yml|json|jsonnet)$`)
-
-var utf8ByteOrderMark = []byte("\xef\xbb\xbf")
 
 //nolint:gocyclo // Directory rendering keeps walk, filtering, decode, and path provenance in one pass.
 func (DirectoryRenderer) Render(ctx context.Context, source ResolvedSource, opts RenderOptions) ([]Manifest, []diagnostic.Diagnostic, error) {
@@ -86,6 +86,10 @@ func (DirectoryRenderer) Render(ctx context.Context, source ResolvedSource, opts
 		if err != nil {
 			return err
 		}
+		data, err = decodeDirectoryFileText(manifestPath, data)
+		if err != nil {
+			return err
+		}
 		if bytes.Contains(data, []byte(argocdSkipFileRenderingMarker)) {
 			return nil
 		}
@@ -97,22 +101,23 @@ func (DirectoryRenderer) Render(ctx context.Context, source ResolvedSource, opts
 			out = append(out, rendered...)
 			return nil
 		}
-		// The repo-server opens every directory file through
-		// utfutil.OpenFile(..., utfutil.UTF8), which drops a leading UTF-8 byte
-		// order mark before the JSON or YAML decoder sees the content.
-		data = bytes.TrimPrefix(data, utf8ByteOrderMark)
 		jsonFile := isJSONSuffixFile(path)
 		if jsonFile {
 			if err := validateDirectoryJSONFile(manifestPath, data); err != nil {
 				return err
 			}
+		} else if stream := directoryStreamFailure(manifestPath, data); stream.err != nil {
+			if !stream.partial && !directoryDecodeFailureIsFatal(stream.yielded, data) {
+				return nil
+			}
+			if _, rootsErr := manifest.DecodeDocumentRoots(manifestPath, bytes.NewReader(data)); rootsErr != nil {
+				return rootsErr
+			}
+			return stream.err
 		}
 		roots, err := manifest.DecodeDocumentRoots(manifestPath, bytes.NewReader(data))
 		if err != nil {
-			if jsonFile || directoryDecodeFailureIsFatal(data) {
-				return err
-			}
-			return nil
+			return err
 		}
 		hasCandidate, err := classifyDirectoryRoots(roots)
 		if err != nil {
@@ -191,14 +196,30 @@ func classifyDirectoryDocument(manifest Manifest) (bool, error) {
 	return true, nil
 }
 
+// decodeDirectoryFileText decodes a directory file's bytes the way the
+// repo-server reads every directory file, through utfutil.OpenFile and
+// utfutil.ReadFile with the utfutil.UTF8 hint (reposerver/repository at
+// v3.6.1): UTF-8 unless a byte order mark says UTF-16LE or UTF-16BE, the
+// byte order mark dropped, and invalid UTF-8 replaced with U+FFFD
+// (unicode.BOMOverride over the x/text UTF-8 decoder, as utfutil.NewReader
+// builds it). The skip-file-rendering marker and every decoder see the
+// decoded text.
+func decodeDirectoryFileText(manifestPath string, data []byte) ([]byte, error) {
+	decoded, _, err := transform.Bytes(xunicode.BOMOverride(xunicode.UTF8.NewDecoder()), data)
+	if err != nil {
+		return nil, fmt.Errorf("%s: decode file text failed: %w", manifestPath, err)
+	}
+	return decoded, nil
+}
+
 // directoryDecodeFailureIsFatal mirrors how getObjsFromYAMLOrJSON
 // (reposerver/repository/repository.go at v3.6.1) treats a file outside the
-// ".json" rule whose YAML/JSON stream fails to decode. The source fails when
-// the stream yielded an object before the failure, or when the raw content
-// holds all of "apiVersion:", "kind:" and "metadata:"; any other file is
-// taken to be unrelated YAML and skipped.
-func directoryDecodeFailureIsFatal(data []byte) bool {
-	if directoryStreamYieldedObject(data) {
+// ".json" rule whose YAML/JSON stream stops with an error. The source fails
+// when the stream yielded an object before the failure, or when the raw
+// content holds all of "apiVersion:", "kind:" and "metadata:"; any other file
+// is taken to be unrelated YAML and skipped.
+func directoryDecodeFailureIsFatal(yielded bool, data []byte) bool {
+	if yielded {
 		return true
 	}
 	return bytes.Contains(data, []byte("apiVersion:")) &&
@@ -206,29 +227,52 @@ func directoryDecodeFailureIsFatal(data []byte) bool {
 		bytes.Contains(data, []byte("metadata:"))
 }
 
-// directoryStreamYieldedObject reports whether the repo-server's
-// splitYAMLOrJSON returns at least one object before it stops. It decodes
-// each document into an Unstructured, so it stops at the first decode error
-// and at the first non-empty document that is not an object with a string
-// kind; null and empty documents are skipped.
-func directoryStreamYieldedObject(data []byte) bool {
+// directoryStreamResult is where the repo-server's splitYAMLOrJSON stops
+// reading a file outside the ".json" rule.
+type directoryStreamResult struct {
+	// err is what stops the stream; nil when every document decodes.
+	err error
+	// yielded reports that an object decoded before err.
+	yielded bool
+	// partial reports that err is a document with an apiVersion but no
+	// kind, which drydock fails whatever the repo-server does with the file
+	// (a recorded divergence: the repo-server skips such a file when it
+	// stops there with nothing decoded and not every manifest marker).
+	partial bool
+}
+
+// directoryStreamFailure walks a file outside the ".json" rule the way the
+// repo-server's splitYAMLOrJSON does. splitYAMLOrJSON decodes each document
+// into an Unstructured, so it stops at the first decode error and at the
+// first non-empty document that is not an object with a non-empty string
+// kind, an empty mapping included; null and empty documents are skipped.
+func directoryStreamFailure(manifestPath string, data []byte) directoryStreamResult {
 	decoder := manifestyaml.NewDecoder(bytes.NewReader(data))
-	for {
+	var result directoryStreamResult
+	for index := 0; ; index++ {
 		value, err := decoder.Decode()
+		if errors.Is(err, io.EOF) {
+			return result
+		}
 		if err != nil {
-			return false
+			result.err = fmt.Errorf("%s document %d: decode YAML document failed: %w", manifestPath, index, err)
+			return result
 		}
 		if value == nil {
 			continue
 		}
 		object, ok := value.(map[string]any)
 		if !ok {
-			return false
+			result.err = fmt.Errorf("%s document %d is not an object", manifestPath, index)
+			return result
 		}
 		if kind, _ := object["kind"].(string); kind == "" {
-			return false
+			result.err = fmt.Errorf("%s document %d is missing kind", manifestPath, index)
+			apiVersion, _ := object["apiVersion"].(string)
+			result.partial = apiVersion != ""
+			return result
 		}
-		return true
+		result.yielded = true
 	}
 }
 
