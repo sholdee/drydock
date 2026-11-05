@@ -887,7 +887,11 @@ data:
 // TestPersistentCacheKustomizeSkippedComponentGainingKustomizationInvalidates
 // pins that a component skipped under ignoreMissingComponents (its directory
 // holds no kustomization file) stays keyed: once a kustomization file lands
-// there the component renders, so the cached entry must miss.
+// there the component renders, so the cached entry must miss. The kept
+// component's own paths already change the key, so this does not guard the
+// skipped directory's optional digest path; the store-time verification
+// test TestRenderApplicationStoreSkipsWhenSkippedComponentGainsKustomization
+// does.
 func TestPersistentCacheKustomizeSkippedComponentGainingKustomizationInvalidates(t *testing.T) {
 	root := t.TempDir()
 	writePersistentCachePlainKustomizeApp(t, root, "alpha")

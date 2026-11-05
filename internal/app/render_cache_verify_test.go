@@ -246,6 +246,108 @@ func TestRenderApplicationStoreSkipsOnMidRenderEdit(t *testing.T) {
 	}
 }
 
+// TestRenderApplicationStoreSkipsWhenSkippedComponentGainsKustomization
+// guards the optional digest path of a component that ignoreMissingComponents
+// skips (kustomizeInputCollector.collectSkippedComponent). The key is
+// computed while the component's directory holds no kustomization file; one
+// that lands there before the renderer reads it makes the render include the
+// component, and only that optional path's store-time verification stops the
+// render being stored under the key of the render without it. Changing the
+// key, as TestPersistentCacheKustomizeSkippedComponentGainingKustomizationInvalidates
+// pins, does not need the optional path: the kept component adds its own.
+func TestRenderApplicationStoreSkipsWhenSkippedComponentGainsKustomization(t *testing.T) {
+	repoRoot := t.TempDir()
+	writeTestFile(t, filepath.Join(repoRoot, "manifests", "demo", "kustomization.yaml"),
+		"apiVersion: kustomize.config.k8s.io/v1beta1\nkind: Kustomization\nresources:\n  - cm.yaml\n")
+	writeTestFile(t, filepath.Join(repoRoot, "manifests", "demo", "cm.yaml"),
+		"apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: demo\n")
+	pendingDir := filepath.Join(repoRoot, "manifests", "components", "pending")
+	writeTestFile(t, filepath.Join(pendingDir, "cm.yaml"),
+		"apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: pending-component\n")
+	rev := gitCommitAll(t, repoRoot, "initial")
+
+	application := argoappv1.Application{
+		Name: "demo", Namespace: "argocd",
+		Spec: argoappv1.ApplicationSpec{
+			Source: &argoappv1.ApplicationSource{
+				RepoURL:        "https://git.example.test/org/repo.git",
+				Path:           "manifests/demo",
+				TargetRevision: "main",
+				Kustomize: &argoappv1.ApplicationSourceKustomize{
+					IgnoreMissingComponents: true,
+					Components:              []string{"../components/pending"},
+				},
+			},
+			Destination: argoappv1.ApplicationDestination{Namespace: "default"},
+		},
+	}
+	provider := func(observer func(render.ResolvedSource)) localProvider {
+		return localProvider{
+			repoRoot:       repoRoot,
+			sourceResolver: sourcepkg.NewResolver(sourcepkg.Options{}),
+			rootIdentity:   SourceIdentity{Kind: sourceIdentityKindRoot, Revision: rev},
+			rootInputMode:  rootInputModeDirty,
+			cacheEvents:    cacheevent.NewRecorder(true),
+			acquisitions:   cacheevent.NewAcquisitionCollector(),
+			renderObserver: observer,
+		}
+	}
+
+	// Control: with the component skipped throughout, the render stores.
+	controlHandle := newPersistentRenderCache(testRenderCacheOptions(t), true)
+	if !controlHandle.active() {
+		t.Fatal("control persistent cache did not open")
+	}
+	control, err := RenderApplicationWithOptions(context.Background(), application, provider(nil), ApplicationRenderOptions{
+		persistent: persistentRenderOptions{cache: controlHandle},
+	})
+	if err != nil {
+		t.Fatalf("control RenderApplicationWithOptions() error = %v", err)
+	}
+	if got := len(control.Manifests); got != 1 {
+		t.Fatalf("control phase: %d manifests, want 1 (component skipped)", got)
+	}
+	if got := controlHandle.store.Writes(); got != 1 {
+		t.Fatalf("control phase: store.Writes() = %d, want 1", got)
+	}
+
+	// Dirty: the kustomization file lands after the key, before the render.
+	dirtyHandle := newPersistentRenderCache(testRenderCacheOptions(t), true)
+	if !dirtyHandle.active() {
+		t.Fatal("dirty persistent cache did not open")
+	}
+	mutatedOnce := false
+	dirtyProvider := provider(func(render.ResolvedSource) {
+		if mutatedOnce {
+			return
+		}
+		mutatedOnce = true
+		writeTestFile(t, filepath.Join(pendingDir, "kustomization.yaml"),
+			"apiVersion: kustomize.config.k8s.io/v1alpha1\nkind: Component\nresources:\n  - cm.yaml\n")
+	})
+	dirty, err := RenderApplicationWithOptions(context.Background(), application, dirtyProvider, ApplicationRenderOptions{
+		persistent: persistentRenderOptions{cache: dirtyHandle},
+	})
+	if err != nil {
+		t.Fatalf("dirty RenderApplicationWithOptions() error = %v", err)
+	}
+	if got := len(dirty.Manifests); got != 2 {
+		t.Fatalf("dirty phase: %d manifests, want 2 (the mutation must land before the component check)", got)
+	}
+	if got := dirtyHandle.store.Writes(); got != 0 {
+		t.Fatalf("dirty phase: store.Writes() = %d, want 0: a render with the component must not be stored under the key computed without it", got)
+	}
+	var foundSkip bool
+	for _, ev := range dirtyProvider.cacheEvents.Events() {
+		if ev.Action == cacheevent.ActionSkipped && ev.Reason == renderCacheReasonInputsChanged {
+			foundSkip = true
+		}
+	}
+	if !foundSkip {
+		t.Fatalf("expected skipped/inputs-changed event in dirty phase, got %#v", dirtyProvider.cacheEvents.Events())
+	}
+}
+
 func TestRenderApplicationCleanModeStoreSkipsOnMidRenderEdit(t *testing.T) {
 	repoRoot := t.TempDir()
 	sourceFile := filepath.Join(repoRoot, "manifests", "demo", "cm.yaml")
