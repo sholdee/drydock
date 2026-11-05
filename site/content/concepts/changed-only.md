@@ -36,8 +36,10 @@ a project-scoped deny pattern (`!url`) every Application in its project. A
 deny pattern scoped to `default` reaches every Application: with no AppProject
 declared, each one validates against the implicit `default` project, whatever
 project it names. A cluster Secret selects every Application whose destination
-names the cluster or points at its server, and a project-scoped cluster Secret
-every Application in that project. Such a change does not excuse an unowned
+names the cluster or points at its server (a Secret at
+`https://kubernetes.default.svc` also selects destinations named `in-cluster`,
+which resolve through it when no Secret carries that name), and a
+project-scoped cluster Secret every Application in that project. Such a change does not excuse an unowned
 changed path: that still renders all Applications with
 `diff.changed-only-incomplete`, and
 `--strict-changed-only` still fails.
