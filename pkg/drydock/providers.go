@@ -40,6 +40,10 @@ type ApplicationSetProviderSCMRepository struct {
 	Project      string
 	Region       string
 	Repository   string
+	// RepositoryID is converted to the Go type that the Argo CD v3.6.1
+	// provider uses for repository_id: a decimal integer for GitHub,
+	// GitLab, Gitea, and Bitbucket Server, a UUID for Azure DevOps, and a
+	// plain string for Bitbucket Cloud and AWS CodeCommit.
 	RepositoryID string
 	Branch       string
 	SHA          string

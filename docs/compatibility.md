@@ -146,6 +146,15 @@ Supported:
   maps. drydock then warns `appset.template-render-failed` and generates no
   Applications for that ApplicationSet, as Argo CD does. The render parity
   smoke checks a `hasKey` call on cluster annotations.
+- Argo CD v3.6.1 Go types for the SCM provider `repository_id` param. The
+  fixture `repositoryID` text is converted per provider: `*int64` for GitHub,
+  `int64` for GitLab, `int` for Gitea and Bitbucket Server, `uuid.UUID` for
+  Azure DevOps, and `string` for Bitbucket Cloud and AWS CodeCommit
+  (`applicationset/services/scm_provider/*.go`). An ID that does not parse as
+  its provider type is an `appset.provider-fixture-invalid` error. An omitted ID
+  is the zero value of the type. Go templates print the number or UUID;
+  fasttemplate leaves `{{repository_id}}` literal for the integer and UUID
+  providers, because Argo CD only replaces string params.
 - Argo CD v3.6.1 Go-template functions, including `tpl`, in templates,
   `templatePatch`, generator `values`, and matrix/merge child interpolation.
 - Argo CD v3.6.1 `clusterDecisionResource` `values`: the generator copies each

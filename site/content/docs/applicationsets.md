@@ -279,7 +279,7 @@ scmRepositories:
     project: platform
     region: us-east-1
     repository: example-repo
-    repositoryID: repo-123
+    repositoryID: 123456789
     branch: main
     sha: abcdef1234567890
     url: https://github.com/example-org/example-repo
@@ -326,6 +326,39 @@ SCM repositories accept `project`, `region`, and `tags`; pull requests accept
 `project`, AWS CodeCommit requires explicit `region` and can evaluate
 `tagFilters` from `tags`, and GitLab `pullRequestState` is evaluated from
 `state`.
+
+### SCM repository IDs
+
+Argo CD v3.6.1 passes `repository_id` to templates with a different Go type
+for each SCM provider. drydock reads the fixture `repositoryID` and converts it
+to the same type:
+
+| Provider | Go type | Fixture `repositoryID` |
+| --- | --- | --- |
+| `github` | `*int64` | decimal integer |
+| `gitlab` | `int64` | decimal integer |
+| `gitea`, `bitbucketServer` | `int` | decimal integer |
+| `azureDevOps` | `uuid.UUID` | UUID |
+| `bitbucket` (Cloud), `awsCodeCommit` | `string` | any text |
+
+In YAML fixtures, write an integer ID with or without quotes. In JSON fixtures,
+write it as a string, such as `"repositoryID": "123456789"`. If an ID does not
+match its provider type, drydock reports an `appset.provider-fixture-invalid`
+error and the `scmProvider` generator produces no params. If you leave
+`repositoryID` out, `repository_id` is the zero value of the type: `<nil>` for
+GitHub, `0` for the other integer providers, the all-zero UUID for Azure DevOps,
+and an empty string for the others.
+
+The type changes the output:
+
+- In Go-template mode, `{{ .repository_id }}` prints the number or the
+  lower-case UUID. A comparison with a string, such as
+  `{{ eq .repository_id "123" }}`, fails for the integer and UUID types.
+- In fasttemplate mode, Argo CD only replaces string params. For the integer and
+  UUID providers, `{{repository_id}}` stays in the output as literal text.
+- `{{ printf "%v" .repository_id }}` prints a memory address for GitHub,
+  because the value is a pointer. The address changes between runs in Argo CD
+  and in drydock.
 
 ## Template Parameters
 

@@ -9,11 +9,13 @@ import (
 	"reflect"
 	"slices"
 	"sort"
+	"strconv"
 	"strings"
 	"testing"
 
 	appsetutils "github.com/argoproj/argo-cd/v3/applicationset/utils"
 	argoappv1 "github.com/argoproj/argo-cd/v3/pkg/apis/application/v1alpha1"
+	"github.com/google/uuid"
 	"github.com/sholdee/drydock/internal/diagnostic"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -496,16 +498,189 @@ func TestPullRequestParamTypesMatchUpstream(t *testing.T) {
 	}
 }
 
-func TestSCMRepositoryValuesParamTypeMatchesUpstream(t *testing.T) {
-	input := SCMRepositoryInput{Organization: "example", Repository: "repo", Branch: "main", SHA: "abcdef1234567890"}
-	params, err := scmRepositoryParams(input, map[string]string{"region": "{{ .repository }}-east"}, true, []string{"missingkey=error"})
-	if err != nil {
-		t.Fatalf("scmRepositoryParams() error = %v", err)
+// upstreamSCMRepository mirrors applicationset/services/scm_provider
+// Repository (types.go:9-17). RepositoryId is an any that each provider sets
+// with its own Go type.
+type upstreamSCMRepository struct {
+	Organization string
+	Repository   string
+	URL          string
+	Branch       string
+	SHA          string
+	Labels       []string
+	RepositoryId any
+}
+
+// upstreamSCMProviderParams copies applicationset/generators/scm_provider.go:268-292
+// (the param build loop), then value_interpolation.go:8-33.
+func upstreamSCMProviderParams(t *testing.T, repo upstreamSCMRepository, values map[string]string, goTemplate bool, options []string) map[string]any {
+	t.Helper()
+	shortSHALength := min(len(repo.SHA), 8)
+	shortSHALength7 := min(len(repo.SHA), 7)
+	params := map[string]any{
+		"organization":     repo.Organization,
+		"repository":       repo.Repository,
+		"repository_id":    repo.RepositoryId,
+		"url":              repo.URL,
+		"branch":           repo.Branch,
+		"sha":              repo.SHA,
+		"short_sha":        repo.SHA[:shortSHALength],
+		"short_sha_7":      repo.SHA[:shortSHALength7],
+		"labels":           strings.Join(repo.Labels, ","),
+		"branchNormalized": appsetutils.SanitizeName(repo.Branch),
 	}
-	// applicationset/generators/scm_provider.go:288 uses the shared
-	// appendTemplatedValues, which stores map[string]string.
-	if _, ok := params["values"].(map[string]string); !ok {
-		t.Fatalf("values param is %T, want map[string]string", params["values"])
+	upstreamAppendTemplatedValues(t, values, params, goTemplate, options)
+	return params
+}
+
+// upstreamSCMRepositoryIDCases lists, per provider, the Go value that the
+// Argo CD v3.6.1 provider stores in RepositoryId:
+//
+//   - GitHub: githubRepo.ID, *int64 (scm_provider/github.go:105; go-github
+//     v69.2.0 Repository.ID)
+//   - GitLab: gitlabRepo.ID, int64 (scm_provider/gitlab.go:138;
+//     gitlab.com/gitlab-org/api/client-go v1.46.0 Project.ID)
+//   - Gitea: int(repo.ID), int (scm_provider/gitea.go:129)
+//   - Bitbucket Server: bitbucketRepo.ID, int
+//     (scm_provider/bitbucket_server.go:107; go-bitbucket-v1 Repository.ID)
+//   - Bitbucket Cloud: bitBucketRepo.Uuid, string
+//     (scm_provider/bitbucket_cloud.go:118; ktrysmt/go-bitbucket v0.10.0)
+//   - Azure DevOps: *azureRepo.Id, uuid.UUID (scm_provider/azure_devops.go:95)
+//   - AWS CodeCommit: aws.ToString(RepositoryId), string
+//     (scm_provider/aws_codecommit.go:120)
+//
+// The module versions are the ones in the Argo CD v3.6.1 go.mod.
+var upstreamSCMRepositoryIDCases = []struct {
+	name      string
+	generator argoappv1.SCMProviderGenerator
+	provider  string
+	fixtureID string
+	upstream  any
+}{
+	{"github", argoappv1.SCMProviderGenerator{Github: &argoappv1.SCMProviderGeneratorGithub{Organization: "example"}}, "github", "123456789", new(int64(123456789))},
+	{"github empty", argoappv1.SCMProviderGenerator{Github: &argoappv1.SCMProviderGeneratorGithub{Organization: "example"}}, "github", "", (*int64)(nil)},
+	{"gitlab", argoappv1.SCMProviderGenerator{Gitlab: &argoappv1.SCMProviderGeneratorGitlab{Group: "example"}}, "gitlab", "9007199254740993", int64(9007199254740993)},
+	{"gitlab empty", argoappv1.SCMProviderGenerator{Gitlab: &argoappv1.SCMProviderGeneratorGitlab{Group: "example"}}, "gitlab", "", int64(0)},
+	{"gitea", argoappv1.SCMProviderGenerator{Gitea: &argoappv1.SCMProviderGeneratorGitea{Owner: "example"}}, "gitea", "42", 42},
+	{"bitbucket server", argoappv1.SCMProviderGenerator{BitbucketServer: &argoappv1.SCMProviderGeneratorBitbucketServer{Project: "example"}}, "bitbucketServer", "-7", -7},
+	{"bitbucket cloud", argoappv1.SCMProviderGenerator{Bitbucket: &argoappv1.SCMProviderGeneratorBitbucket{Owner: "example"}}, "bitbucket", "{0b5a6f0e-2c3d-4e5f-8a9b-0c1d2e3f4a5b}", "{0b5a6f0e-2c3d-4e5f-8a9b-0c1d2e3f4a5b}"},
+	{"azure devops", argoappv1.SCMProviderGenerator{AzureDevOps: &argoappv1.SCMProviderGeneratorAzureDevOps{Organization: "example", TeamProject: "example"}}, "azureDevOps", "6BA7B810-9DAD-11D1-80B4-00C04FD430C8", uuid.MustParse("6ba7b810-9dad-11d1-80b4-00c04fd430c8")},
+	{"azure devops empty", argoappv1.SCMProviderGenerator{AzureDevOps: &argoappv1.SCMProviderGeneratorAzureDevOps{Organization: "example", TeamProject: "example"}}, "azureDevOps", "", uuid.Nil},
+	{"aws codecommit", argoappv1.SCMProviderGenerator{AWSCodeCommit: &argoappv1.SCMProviderGeneratorAWSCodeCommit{Region: "us-east-1"}}, "awsCodeCommit", "f7579e13-b83e-4027-aaef-650c0EXAMPLE", "f7579e13-b83e-4027-aaef-650c0EXAMPLE"},
+}
+
+// upstreamSCMRepositoryIDTemplates prints repository_id in ways that depend
+// on its Go type. printf "%v" is left out: on a *int64 it prints a memory
+// address, which differs between any two runs in Argo CD and in drydock.
+var upstreamSCMRepositoryIDTemplates = []string{
+	`{{ .repository_id }}`,
+	`{{ toJson .repository_id }}`,
+	`{{ printf "%T" .repository_id }}`,
+	`{{ eq .repository_id "123456789" }}`,
+	`{{ kindOf .repository_id }}`,
+	`{{ .values.id }}`,
+}
+
+func TestSCMRepositoryIDParamMatchesUpstream(t *testing.T) {
+	for _, tc := range upstreamSCMRepositoryIDCases {
+		for _, goTemplate := range []bool{true, false} {
+			mode := "fasttemplate"
+			values := map[string]string{"id": "{{repository_id}}"}
+			templates := []string{"{{repository_id}}", "{{values.id}}", "{{repository}}"}
+			var options []string
+			if goTemplate {
+				mode = "goTemplate"
+				values = map[string]string{"id": "{{ .repository_id }}"}
+				templates = upstreamSCMRepositoryIDTemplates
+				options = []string{"missingkey=error"}
+			}
+			t.Run(tc.name+"/"+mode, func(t *testing.T) {
+				input := SCMRepositoryInput{Provider: tc.provider, Organization: "example", Project: "example", Region: "us-east-1", Repository: "repo", RepositoryID: tc.fixtureID, Branch: "main", SHA: "abcdef1234567890", Labels: []string{"ops"}}
+				upstream := upstreamSCMProviderParams(t, upstreamSCMRepository{
+					Organization: input.Organization,
+					Repository:   input.Repository,
+					Branch:       input.Branch,
+					SHA:          input.SHA,
+					Labels:       input.Labels,
+					RepositoryId: tc.upstream,
+				}, values, goTemplate, options)
+
+				generator := tc.generator
+				generator.Values = values
+				paramSets, diags, err := scmProviderParamSets("app-set.yaml", &generator, []SCMRepositoryInput{input}, goTemplate, options)
+				if err != nil || len(diags) != 0 || len(paramSets) != 1 {
+					t.Fatalf("scmProviderParamSets() = %d param sets, diagnostics %#v, error %v", len(paramSets), diags, err)
+				}
+				drydock := paramSets[0].Params
+				if !reflect.DeepEqual(drydock, upstream) {
+					t.Fatalf("drydock params differ from upstream:\ndrydock  = %#v\nupstream = %#v", drydock, upstream)
+				}
+				if got, want := reflect.TypeOf(drydock["repository_id"]), reflect.TypeOf(tc.upstream); got != want {
+					t.Fatalf("repository_id type = %v, want %v", got, want)
+				}
+				assertSameUpstreamRender(t, "scmProvider "+tc.name, upstream, drydock, goTemplate, templates, nil)
+			})
+		}
+	}
+}
+
+// TestSCMRepositoryIDOraclePrintsUpstreamValues pins what upstream Render
+// prints for each Go type, so a change in the oracle shows up here.
+func TestSCMRepositoryIDOraclePrintsUpstreamValues(t *testing.T) {
+	want := map[string][2]string{
+		"github":             {"123456789", "{{repository_id}}"},
+		"github empty":       {"<nil>", "{{repository_id}}"},
+		"gitlab":             {"9007199254740993", "{{repository_id}}"},
+		"gitlab empty":       {"0", "{{repository_id}}"},
+		"gitea":              {"42", "{{repository_id}}"},
+		"bitbucket server":   {"-7", "{{repository_id}}"},
+		"bitbucket cloud":    {"{0b5a6f0e-2c3d-4e5f-8a9b-0c1d2e3f4a5b}", "{0b5a6f0e-2c3d-4e5f-8a9b-0c1d2e3f4a5b}"},
+		"azure devops":       {"6ba7b810-9dad-11d1-80b4-00c04fd430c8", "{{repository_id}}"},
+		"azure devops empty": {"00000000-0000-0000-0000-000000000000", "{{repository_id}}"},
+		"aws codecommit":     {"f7579e13-b83e-4027-aaef-650c0EXAMPLE", "f7579e13-b83e-4027-aaef-650c0EXAMPLE"},
+	}
+	renderer := &appsetutils.Render{}
+	for _, tc := range upstreamSCMRepositoryIDCases {
+		params := map[string]any{"repository_id": tc.upstream}
+		goOut, err := renderer.Replace(`{{ .repository_id }}`, params, true, []string{"missingkey=error"})
+		if err != nil {
+			t.Fatalf("%s: Go template error = %v", tc.name, err)
+		}
+		fastOut, err := renderer.Replace(`{{repository_id}}`, params, false, nil)
+		if err != nil {
+			t.Fatalf("%s: fasttemplate error = %v", tc.name, err)
+		}
+		if got := [2]string{goOut, fastOut}; got != want[tc.name] {
+			t.Fatalf("%s: upstream prints %q, want %q", tc.name, got, want[tc.name])
+		}
+	}
+}
+
+func TestSCMRepositoryIDInvalidFailsClosed(t *testing.T) {
+	cases := []struct {
+		name      string
+		generator argoappv1.SCMProviderGenerator
+		provider  string
+		id        string
+	}{
+		{"github", argoappv1.SCMProviderGenerator{Github: &argoappv1.SCMProviderGeneratorGithub{Organization: "example"}}, "github", "repo-123"},
+		{"gitlab", argoappv1.SCMProviderGenerator{Gitlab: &argoappv1.SCMProviderGeneratorGitlab{Group: "example"}}, "gitlab", "0x1F"},
+		{"gitea", argoappv1.SCMProviderGenerator{Gitea: &argoappv1.SCMProviderGeneratorGitea{Owner: "example"}}, "gitea", "1.5"},
+		{"bitbucket server", argoappv1.SCMProviderGenerator{BitbucketServer: &argoappv1.SCMProviderGeneratorBitbucketServer{Project: "example"}}, "bitbucketServer", " 7"},
+		{"azure devops", argoappv1.SCMProviderGenerator{AzureDevOps: &argoappv1.SCMProviderGeneratorAzureDevOps{Organization: "example", TeamProject: "example"}}, "azureDevOps", "repo-123"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			input := SCMRepositoryInput{Provider: tc.provider, Organization: "example", Project: "example", Region: "us-east-1", Repository: "repo", RepositoryID: tc.id, Branch: "main", FixturePath: "fixtures.yaml"}
+			paramSets, diags, err := scmProviderParamSets("app-set.yaml", &tc.generator, []SCMRepositoryInput{input}, true, nil)
+			if err != nil || len(paramSets) != 0 || len(diags) != 1 {
+				t.Fatalf("scmProviderParamSets() = %d param sets, diagnostics %#v, error %v; want one diagnostic", len(paramSets), diags, err)
+			}
+			diag := diags[0]
+			if diag.Severity != diagnostic.SeverityError || diagnostic.StableCode(diag) != "appset.provider-fixture-invalid" || diag.Provenance.Path != "fixtures.yaml" || !strings.Contains(diag.Message, strconv.Quote(tc.id)) {
+				t.Fatalf("diagnostic = %#v, want an appset.provider-fixture-invalid error for fixtures.yaml naming %q", diag, tc.id)
+			}
+		})
 	}
 }
 
