@@ -93,6 +93,12 @@ func applyCMMap(settings *ArgoSettings, values map[string]string, path, basePoin
 			Pointer: basePointer + ".resource.inclusions",
 		}, diags)
 	}
+	if raw := values["resource.selectors"]; strings.TrimSpace(raw) != "" {
+		diags = appendParsedResourceSelectors(&settings.ResourceSelectors, raw, diagnostic.Provenance{
+			Path:    path,
+			Pointer: basePointer + ".resource.selectors",
+		}, diags)
+	}
 	if raw := values["resource.compareoptions"]; strings.TrimSpace(raw) != "" {
 		diags = appendParsedResourceCompareOptions(settings, raw, diagnostic.Provenance{
 			Path:    path,

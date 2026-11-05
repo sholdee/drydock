@@ -41,8 +41,10 @@ var argoSettingsFieldClasses = map[string]settingsChangeClass{
 	"InstallationID":           settingsRenderAll,
 	"ConfigManagementPlugins":  settingsRenderAll,
 	// Diff: which rendered resources survive, and normalization.
-	"ResourceExclusions":     settingsRenderAll,
-	"ResourceInclusions":     settingsRenderAll,
+	"ResourceExclusions": settingsRenderAll,
+	"ResourceInclusions": settingsRenderAll,
+	// Selector-mismatch warnings on every rendered resource.
+	"ResourceSelectors":      settingsRenderAll,
 	"CompareOptions":         settingsRenderAll,
 	"ResourceCustomizations": settingsRenderAll,
 	// Project validation of the Applications that use the entry; the OCI

@@ -613,6 +613,15 @@ func renderOneApplication(ctx context.Context, application argoappv1.Application
 		})
 	}
 
+	selectorDiags := resourceSelectorMismatchDiagnostics(application, policyResources, request.settingsFilter, request.settings)
+	selectorDiags = request.request.normalizeDiagnostics(selectorDiags, false)
+	out.diagnostics = append(out.diagnostics, selectorDiags...)
+	if err := diagnosticFailure(selectorDiags, request.strict); err != nil {
+		out.statuses = append(out.statuses, applicationStatus(application, ApplicationStatusFail, err.Error()))
+		out.cacheEvents = append(out.cacheEvents, recorder.Events()...)
+		return out
+	}
+
 	if request.healthEvaluator != nil {
 		healthDiags := request.healthEvaluator.Validate(ctx, luahealth.Request{
 			Application: luahealth.ApplicationRef{

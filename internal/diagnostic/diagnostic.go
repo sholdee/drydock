@@ -22,6 +22,14 @@ const (
 // CD's non-blocking InvalidRolloutConfig condition.
 const CodeAppSetInvalidRolloutConfig = "appset.invalid-rollout-config"
 
+// Stable codes of the argocd-cm resource.selectors diagnostics: a list or
+// selector Argo CD cannot parse, and a rendered resource whose labels do not
+// match the selectors that apply to it.
+const (
+	CodeSettingsResourceSelectorInvalid  = "settings.resource-selector-invalid"
+	CodeSettingsResourceSelectorMismatch = "settings.resource-selector-mismatch"
+)
+
 type Provenance struct {
 	Path    string `json:"path,omitempty" yaml:"path,omitempty"`
 	Pointer string `json:"pointer,omitempty" yaml:"pointer,omitempty"`
@@ -169,6 +177,10 @@ func appSetCode(message string) string {
 
 func settingsCode(message string) string {
 	switch {
+	case strings.Contains(message, "invalid resource.selectors"):
+		return CodeSettingsResourceSelectorInvalid
+	case strings.Contains(message, "does not match the resource selector"):
+		return CodeSettingsResourceSelectorMismatch
 	case strings.Contains(message, "conflicting"):
 		return "settings.conflict"
 	case strings.Contains(message, "failed to parse"):

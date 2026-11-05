@@ -182,7 +182,10 @@ compare options when rendered status fields should remain visible in PR diffs.
 
 Rendered-resource filters run before diff comparison. Argo CD core exclusions
 and discovered `resource.exclusions`/`resource.inclusions` are applied
-automatically. Omit CRDs and Secrets from a pull request diff with:
+automatically. `resource.selectors` never filters: a resource its selectors do
+not match stays in the diff with a `settings.resource-selector-mismatch`
+warning, because Argo CD keeps it managed but never watches it. Omit CRDs and
+Secrets from a pull request diff with:
 
 ```bash
 drydock diff apps \

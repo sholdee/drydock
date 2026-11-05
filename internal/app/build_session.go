@@ -85,6 +85,7 @@ func (session *buildSession) Build(ctx context.Context) (BuildResult, error) {
 	settingsFilter := manifest.SettingsResourceFilter{
 		Exclusions: result.Settings.ResourceExclusions,
 		Inclusions: result.Settings.ResourceInclusions,
+		Selectors:  result.Settings.ResourceSelectors,
 	}
 
 	provider, cleanup, err := newLocalProvider(ctx, session.orchestrator, session.root, result.Settings, session.request, session.cacheRecorder, "drydock-cache-snapshots-*")

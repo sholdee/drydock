@@ -19,8 +19,8 @@ setting.
 A setting that every render or diff reads renders all Applications, with its own
 diagnostic (`diff.changed-only-settings`): the tracking method, instance label,
 or installation ID, Kustomize build options, Helm value file schemes, a CMP
-definition, resource exclusions or inclusions, compare options, a resource
-customization a diff or health check reads (`ignoreDifferences`,
+definition, resource exclusions, inclusions, or selectors, compare options, a
+resource customization a diff or health check reads (`ignoreDifferences`,
 `knownTypeFields`, health Lua, `useOpenLibs`), `cluster.inClusterEnabled`, or
 which repository Secrets enable OCI for an OCI repository URL. Unlike an
 unowned-path fallback, this render-all is exempt from `--strict-changed-only`

@@ -26,6 +26,7 @@ func MergeDiscovered(candidates []ArgoSettings) (ArgoSettings, []diagnostic.Diag
 		mergeCommandParameters(&merged, candidate)
 		merged.ResourceExclusions = append(merged.ResourceExclusions, candidate.ResourceExclusions...)
 		merged.ResourceInclusions = append(merged.ResourceInclusions, candidate.ResourceInclusions...)
+		merged.ResourceSelectors = append(merged.ResourceSelectors, candidate.ResourceSelectors...)
 		diags = append(diags, mergeResourceCustomizations(&merged, candidate)...)
 	}
 

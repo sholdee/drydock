@@ -634,6 +634,22 @@ Supported:
 - Warning diagnostics for version-specific `kustomize.buildOptions.<version>`
   and `kustomize.path.<version>` settings because drydock does not select
   external Kustomize binaries.
+- `argocd-cm` `resource.selectors` (Argo CD v3.6.1), decoded as Argo CD
+  decodes it. An unparsable list or label selector is a
+  `settings.resource-selector-invalid` error, because Argo CD fails settings
+  loading on it. Selectors never drop resources: Argo CD only narrows its
+  list/watch calls with them. A rendered resource or hook that survives the
+  resource exclusions and inclusions, but whose labels (after tracking
+  metadata) do not match the ANDed selectors for its group, kind, and
+  cluster, stays in render and diff output with a
+  `settings.resource-selector-mismatch` warning carrying Argo CD's
+  `ExcludedResourceWarning` text: Argo CD will not watch it, so it stays
+  OutOfSync. `--strict` promotes the warning. Cluster globs match the
+  resolved destination server, as in Argo CD: a destination name resolves
+  through the cluster Secrets, and the implicit `in-cluster` name resolves to
+  `https://kubernetes.default.svc`. When a name cannot be resolved offline
+  (unknown or ambiguous), no selector warning is reported. Resource exclusions
+  and inclusions still match the destination name when only a name is set.
 
 ### AppProject Field Semantics
 

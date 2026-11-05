@@ -375,6 +375,7 @@ func isKnownArgoCMSettingKey(key string) bool {
 		"application.instanceLabelKey",
 		"resource.exclusions",
 		"resource.inclusions",
+		"resource.selectors",
 		"resource.compareoptions",
 		"resource.customizations":
 		return true
