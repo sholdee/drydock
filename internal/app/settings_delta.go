@@ -41,8 +41,10 @@ type settingsDelta struct {
 //   - render-affecting settings (tracking, the instance label, Kustomize
 //     build options, Helm value file schemes, CMP definitions and discovery,
 //     resource exclusions and inclusions, compare options, and the resource
-//     customizations a diff or a health check reads) and the OCI Helm
-//     repositories set reach every render or diff: renderAll;
+//     customizations a diff or a health check reads), the OCI Helm
+//     repositories set, and cluster.inClusterEnabled, which project
+//     validation reads for every in-cluster destination, reach every render
+//     or diff: renderAll;
 //   - a repository or cluster entry reaches only the Applications that use
 //     it, through project validation (settingsDelta.selects);
 //   - command parameters, provenance, resource.ignoreResourceUpdatesEnabled,

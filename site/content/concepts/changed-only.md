@@ -21,11 +21,11 @@ diagnostic (`diff.changed-only-settings`): the tracking method, instance label,
 or installation ID, Kustomize build options, Helm value file schemes, a CMP
 definition, resource exclusions or inclusions, compare options, a resource
 customization a diff or health check reads (`ignoreDifferences`,
-`knownTypeFields`, health Lua, `useOpenLibs`), or which repository Secrets
-enable OCI for an OCI repository URL. Unlike an unowned-path fallback, this
-render-all is exempt from `--strict-changed-only` and `--strict`: rendering
-every Application is the complete answer to a settings change, not a gap in
-ownership.
+`knownTypeFields`, health Lua, `useOpenLibs`), `cluster.inClusterEnabled`, or
+which repository Secrets enable OCI for an OCI repository URL. Unlike an
+unowned-path fallback, this render-all is exempt from `--strict-changed-only`
+and `--strict`: rendering every Application is the complete answer to a
+settings change, not a gap in ownership.
 
 A repository or cluster Secret that is added, removed, or changed reaches
 Applications only through project validation, so it selects only the

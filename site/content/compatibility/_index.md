@@ -118,6 +118,14 @@ uses stderr for non-markdown output and embeds successful diagnostics in
 markdown reports; `diag --render -o json` exposes the same visible findings with
 stable diagnostic codes for CI.
 
+AppProject destination checks follow Argo CD 3.6.1: a cluster Secret scoped to
+a project adds that project's implicit destinations, a server-only destination
+at `https://kubernetes.default.svc` or a name-only `in-cluster` destination
+with no cluster Secret is the built-in `in-cluster` cluster (denied when
+argocd-cm `cluster.inClusterEnabled` is `"false"`), and a check that depends on
+a cluster name, server, or project scoping drydock cannot resolve offline is
+deferred rather than denied. argocd-cm `globalProjects` are not merged.
+
 It does not predict live API defaulting, admission mutation, server-side apply
 ownership, live health aggregation, sync windows, orphaned resources, source
 signature verification, destination service account impersonation, or full RBAC

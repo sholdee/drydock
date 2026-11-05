@@ -49,6 +49,9 @@ var argoSettingsFieldClasses = map[string]settingsChangeClass{
 	// repository set it implies is render-all (renderAllSettingsSignature).
 	"HelmRepositories": settingsScoped,
 	"Clusters":         settingsScoped,
+	// Project validation of every destination that may be the built-in
+	// in-cluster cluster (project.destinationCluster).
+	"InClusterEnabled": settingsRenderAll,
 	// Read only by diag, by settings merging, or as provenance.
 	"HelmValuesFileSchemesSource":  settingsNoEffect,
 	"IgnoreResourceUpdatesEnabled": settingsNoEffect,

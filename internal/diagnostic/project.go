@@ -142,5 +142,7 @@ func classificationCode(diag Diagnostic) string {
 func projectUnspecifiedDeferredMessage(message string) bool {
 	return strings.Contains(message, "could not be validated against AppProject") ||
 		(strings.Contains(message, "destination name") &&
-			strings.Contains(message, "cannot be resolved against AppProject server policy offline"))
+			strings.Contains(message, "cannot be resolved against AppProject server policy offline")) ||
+		(strings.Contains(message, "destination server") &&
+			strings.Contains(message, "cannot be resolved against AppProject name policy offline"))
 }

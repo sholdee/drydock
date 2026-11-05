@@ -406,3 +406,38 @@ func captureProcessStdout(t *testing.T, fn func()) (output string) {
 	fn()
 	return output
 }
+
+// Argo CD v3.6.1 matches wildcard health customization keys with util/glob
+// on gobwas/glob v1.0.0 (821e090d6, #29482): an empty brace alternative
+// matches, and a prefix and suffix no longer overlap. A failing script shows
+// which customization applied.
+func TestEvaluatorWildcardGlobSemanticsMatchGobwasV1(t *testing.T) {
+	for _, tc := range []struct {
+		key        string
+		apiVersion string
+		want       bool
+	}{
+		{key: "{*.,}example.com/Widget", apiVersion: "example.com/v1", want: true},
+		{key: "{*.,}example.com/Widget", apiVersion: "apps.example.com/v1", want: true},
+		{key: "{*.,}example.com/Widget", apiVersion: "xexample.com/v1", want: false},
+		{key: "example.com/W*Widget", apiVersion: "example.com/v1", want: false},
+		{key: "example.com/Wi*dget", apiVersion: "example.com/v1", want: true},
+	} {
+		t.Run(tc.key+" "+tc.apiVersion, func(t *testing.T) {
+			evaluator := New(config.ArgoSettings{ResourceCustomizations: map[string]config.ResourceCustomization{
+				tc.key: {
+					HasHealthLua: true,
+					HealthLua:    `return obj.status.conditions[1].type`,
+				},
+			}})
+
+			diags := evaluator.Validate(context.Background(), Request{
+				Application: ApplicationRef{Name: "demo", Namespace: "argocd"},
+				Manifests:   []render.Manifest{{Object: object(tc.apiVersion, "Widget", "default", "demo")}},
+			})
+			if got := len(diags) != 0; got != tc.want {
+				t.Fatalf("customization %q applied to %s = %t (diagnostics %#v), want %t", tc.key, tc.apiVersion, got, diags, tc.want)
+			}
+		})
+	}
+}

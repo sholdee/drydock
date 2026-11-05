@@ -503,7 +503,13 @@ Supported:
 - Cluster Secret metadata parsing for offline named-cluster destination
   diagnostics and project-scoped cluster checks when the desired state includes
   the relevant cluster Secret metadata. Only `name`, `server`, `namespaces`,
-  `clusterResources`, and `project` are decoded.
+  `clusterResources`, and `project` are decoded. A cluster Secret whose
+  `project` names an AppProject adds that project's implicit destinations, as
+  Argo CD does. A server-only destination at `https://kubernetes.default.svc`,
+  or a name-only `in-cluster` destination, with no cluster Secret resolves to
+  Argo CD's built-in `in-cluster` cluster. When argocd-cm
+  `cluster.inClusterEnabled` is `"false"`, a destination at that address is
+  reported as not permitted, as Argo CD rejects it.
 - Project diagnostic modes. The default `actionable` mode reports local
   AppProject denials that drydock can enforce offline and hides deferred or
   metadata-only AppProject diagnostics. Use `--project-diagnostics=all` for full
@@ -528,15 +534,17 @@ Supported:
 
 ### AppProject Field Semantics
 
-This matrix is audited against Argo CD `v3.4.3`
-(`1801122b4391cad4961301f787006dc9a88c2dd3`). It records current drydock
+This matrix is audited against Argo CD `v3.6.1`
+(`94037c4d4e1af4bd0651d37a179fbd9e347e668c`). It records current drydock
 behavior. Strict render tests promote visible project and repository warnings
 after the selected project diagnostic mode is applied.
 
 | Field | Upstream owner | drydock status | Current diagnostic | Offline input and next phase |
 | --- | --- | --- | --- | --- |
 | `spec.sourceRepos` | `types.go`, `IsSourcePermitted`, Argo repo metadata merge | Supported | `project` warning for denied sources; `repository` warning for mismatched repository Secret project metadata | Application sources plus redacted repository metadata; parity fixtures present, future gaps Phase 3 |
-| `spec.destinations` | `types.go`, `IsDestinationPermitted`, `isDestinationMatched` | Supported with named-cluster metadata caveats | `project` warning for denied destinations or unresolved name-only server policy | Application destination plus redacted cluster metadata; parity fixtures present, deferred metadata cases Phase 3 |
+| `spec.destinations` | `app_project_types.go`, `IsDestinationPermitted`, `isDestinationMatched` | Supported with named-cluster metadata caveats | `project` warning for denied destinations; deferred `project` warning when the decision depends on an unresolved cluster's server (name-only destination) or name (server-only destination) | Application destination plus redacted cluster metadata. A name or server deny entry denies only when its namespace also matches (v3.6.1, #28854). A server-only `https://kubernetes.default.svc` or name-only `in-cluster` destination with no cluster Secret is the built-in `in-cluster` cluster. With `cluster.inClusterEnabled` `"false"`, a destination at that address, directly or through a cluster Secret name, is denied whatever the project permits (util/db `GetCluster`). Other unresolved destinations are evaluated in three-valued logic: drydock denies or permits only when every cluster the unknown name or server could be, scoped to the project or not, gives the same answer, and otherwise defers. Because an unseen project-scoped cluster adds an implicit destination for its server, only a matching deny entry denies an unresolved destination. Parity fixtures resolve clusters as Argo CD does |
+| Implicit project-scoped cluster destinations | `util/argo` `GetAppProjectByName` | Supported | Same as `spec.destinations`; deny entries still win | A cluster Secret with `project: <name>` adds `{server, namespace: "*"}`, or one destination per `namespaces` value, to that AppProject, for Application destinations and rendered-resource namespaces alike |
+| argocd-cm `globalProjects` | `util/argo` `GetAppVirtualProject`, `GetGlobalProjects` | Unsupported | None | Global project settings are not parsed and their policy is not merged into matching AppProjects |
 | `spec.description` | `types.go` | Metadata-only | None | Decoded as typed metadata |
 | `spec.sourceNamespaces` | `types.go`, `IsAppNamespacePermitted` | Supported | `project` warning for denied Application source namespace | Application namespace plus controller namespace assumption; parity fixtures present |
 | `spec.permitOnlyProjectScopedClusters` | `types.go`, `IsDestinationPermitted` project-cluster check | Deferred when cluster metadata is unavailable; supported when redacted project-scoped cluster metadata is present | `project` warning for deferred metadata or known denial | Redacted cluster Secret `project` metadata; without it drydock reports a runtime-boundary deferral rather than a hard decision |
@@ -564,8 +572,8 @@ implemented or documented as runtime boundaries.
 | Implicit default project | `effectiveProject`, `implicitDefaultProject` | `TestValidateApplicationsAllowsImplicitDefaultProject`, `TestValidateApplicationsImplicitDefaultProjectPermitsAnySourceNamespace`, `TestValidateApplicationsDefersUnresolvedProjectWithoutLocalProjects`, `TestValidateApplicationsCurrentBehaviorAllowsImplicitDefaultProjectWhenOtherLocalProjectsExist` | No follow-up |
 | Missing non-default project | `ValidateApplications`, `projectIndex`, `applicationProject` | `TestValidateApplicationsCurrentBehaviorReportsMissingNonDefaultProject` | No follow-up |
 | Source repository matching | `validateSources`, Argo `IsSourcePermitted` | Existing source policy tests, source parity fixtures, `TestValidateApplicationsCurrentBehaviorReportsDeniedMultiSourceRepository` | Phase 3 remediation for any future parity gaps |
-| Destination matching | `validateDestination`, `destinationCluster`, Argo `IsDestinationPermitted` | Existing destination and project-scoped cluster tests, destination parity fixtures | Phase 3 remediation for deferred metadata cases |
-| Cluster Secret metadata | `clusterSecretSettings`, `projectScopedClusters` | Cluster parser tests, project-scoped destination tests, metadata integration fixtures | Phase 3 remediation for deferred metadata cases |
+| Destination matching | `validateDestination`, `destinationCluster`, `offlineDestinationPermitted`, Argo `IsDestinationPermitted` | Existing destination and project-scoped cluster tests, destination parity fixtures fed Argo CD-resolved clusters, `TestOfflineDestinationPermittedIsSoundAgainstArgoCD` | Unresolved destinations defer only when the unknown name, server, or project scoping decides the outcome |
+| Cluster Secret metadata | `clusterSecretSettings`, `projectScopedClusters`, `projectScopedClusterDestinations` | Cluster parser tests, project-scoped destination tests, `TestValidateApplicationsAddsProjectScopedClusterDestinations`, metadata integration fixtures | No follow-up |
 | Repository Secret project metadata | `repositorySecretSettings`, `effectiveProject`, `repositoryMetadataDiagnostics` | Repository metadata tests, project-scoped repository tests, metadata integration fixtures | No follow-up |
 | Source namespace checks | `validateSourceNamespace` | Existing source namespace tests, source namespace parity fixtures, `TestValidateApplicationsCurrentBehaviorPhase3SourceNamespacesEmptyListDeniesNonControllerNamespace` | No follow-up |
 | RBAC role metadata | `rbacMetadataDiagnostics` | Existing source namespace and RBAC metadata test | Metadata-only warning; authorization is not simulated |

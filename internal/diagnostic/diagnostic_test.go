@@ -234,6 +234,7 @@ func TestFilterProjectDiagnosticsActionableHidesDeferredAndMetadataOnly(t *testi
 		projectDiagnostic(CodeProjectRBACMetadataOnly, "AppProject \"platform\" defines RBAC roles; offline validation reports role presence but does not simulate authorization"),
 		projectDiagnostic(CodeProjectUnspecified, "Application argocd/demo destination could not be validated against AppProject \"platform\": cluster metadata is unavailable"),
 		projectDiagnostic(CodeProjectUnspecified, "Application argocd/demo destination name \"in-cluster\" cannot be resolved against AppProject server policy offline"),
+		projectDiagnostic(CodeProjectUnspecified, "Application argocd/demo destination server \"https://prod.example\" has no cluster Secret; its cluster name cannot be resolved against AppProject name policy offline"),
 		{
 			Severity: SeverityWarning,
 			Category: "repository",

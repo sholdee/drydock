@@ -96,3 +96,36 @@ func TestSettingsResourceFilterEmptyFieldsAndKindWildcardMatchAll(t *testing.T) 
 		t.Fatal("Drop(batch/Job) = false, want true")
 	}
 }
+
+// Argo CD v3.6.1 matches resource.exclusions and resource.inclusions API
+// groups and clusters with util/glob on gobwas/glob v1.0.0 (821e090d6,
+// #29482): an empty brace alternative matches, and a prefix and suffix no
+// longer overlap.
+func TestSettingsResourceFilterGlobSemanticsMatchGobwasV1(t *testing.T) {
+	filter := SettingsResourceFilter{
+		Exclusions: []config.ResourceFilterRule{
+			{APIGroups: []string{"{*.,}example.com"}},
+			{APIGroups: []string{"a*ant"}},
+			{APIGroups: []string{"apps"}, Clusters: []string{"{https://*.,https://}prod.example"}},
+		},
+	}
+
+	for _, tc := range []struct {
+		id      Identity
+		cluster string
+		want    bool
+	}{
+		{id: Identity{Group: "example.com", Kind: "Widget"}, want: true},
+		{id: Identity{Group: "monitoring.example.com", Kind: "Widget"}, want: true},
+		{id: Identity{Group: "xexample.com", Kind: "Widget"}, want: false},
+		{id: Identity{Group: "ant", Kind: "Colony"}, want: false},
+		{id: Identity{Group: "aant", Kind: "Colony"}, want: true},
+		{id: Identity{Group: "apps", Kind: "Deployment"}, cluster: "https://prod.example", want: true},
+		{id: Identity{Group: "apps", Kind: "Deployment"}, cluster: "https://eu.prod.example", want: true},
+		{id: Identity{Group: "apps", Kind: "Deployment"}, cluster: "https://dev.example", want: false},
+	} {
+		if got := filter.Drop(tc.id, tc.cluster); got != tc.want {
+			t.Fatalf("Drop(%#v, %q) = %t, want %t", tc.id, tc.cluster, got, tc.want)
+		}
+	}
+}

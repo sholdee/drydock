@@ -265,14 +265,28 @@ func TestChangedOnlyMatchesFullDiff(t *testing.T) {
 			wantProjectDiagnostics: []projectDiagnosticKey{destinationDenied("to-prod", "team-a")},
 		},
 		{
-			// Only --project-diagnostics all reports the name-only
-			// destination a server policy cannot resolve.
+			// The name resolves through the changed Secret to a server the
+			// project does not permit.
 			name: "cluster Secret server changed, destination by name",
+			setup: pathPairOracleSetup(func(t *testing.T, root, server string) {
+				t.Helper()
+				project := clusterProjectYAML(false, "    - server: "+prodServer+"\n      namespace: \"*\"\n    - server: "+inClusterServer+"\n      namespace: \"*\"\n")
+				writeClusterSecretApps(t, root, project, clusterSecretYAML("prod", server, ""), "    name: prod\n    namespace: workloads\n")
+			}, prodServer, prodBServer, DiscoveryOptions{}),
+			wantFallback:           changedOnlySettingsScopedCode,
+			wantApplications:       []string{"argocd"},
+			wantProjectDiagnostics: []projectDiagnosticKey{destinationDenied("to-prod", "team-a")},
+		},
+		{
+			// Without a server the Secret no longer describes a cluster, so
+			// the name is unresolved. Only --project-diagnostics all reports
+			// the name-only destination a server policy cannot resolve.
+			name: "cluster Secret server removed, destination by name",
 			setup: withProjectDiagnosticsMode(pathPairOracleSetup(func(t *testing.T, root, server string) {
 				t.Helper()
 				project := clusterProjectYAML(false, "    - server: "+prodServer+"\n      namespace: \"*\"\n    - server: "+inClusterServer+"\n      namespace: \"*\"\n")
 				writeClusterSecretApps(t, root, project, clusterSecretYAML("prod", server, ""), "    name: prod\n    namespace: workloads\n")
-			}, prodServer, prodBServer, DiscoveryOptions{}), diagnostic.ProjectDiagnosticsModeAll),
+			}, prodServer, "", DiscoveryOptions{}), diagnostic.ProjectDiagnosticsModeAll),
 			wantFallback:           changedOnlySettingsScopedCode,
 			wantApplications:       []string{"argocd"},
 			wantProjectDiagnostics: []projectDiagnosticKey{destinationNameUnresolved("to-prod", "prod")},

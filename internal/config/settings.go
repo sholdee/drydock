@@ -137,6 +137,7 @@ type ArgoSettings struct {
 	CompareOptions               ResourceCompareOptions            `json:"compareOptions,omitempty" yaml:"compareOptions,omitempty"`
 	ResourceCustomizations       map[string]ResourceCustomization  `json:"resourceCustomizations,omitempty" yaml:"resourceCustomizations,omitempty"`
 	IgnoreResourceUpdatesEnabled Value[bool]                       `json:"ignoreResourceUpdatesEnabled,omitempty" yaml:"ignoreResourceUpdatesEnabled,omitempty"`
+	InClusterEnabled             Value[bool]                       `json:"inClusterEnabled,omitempty" yaml:"inClusterEnabled,omitempty"`
 	ConfigManagementPlugins      map[string]ConfigManagementPlugin `json:"-" yaml:"-"`
 	CommandParameters            []CommandParameterSetting         `json:"commandParameters,omitempty" yaml:"commandParameters,omitempty"`
 }
@@ -158,6 +159,11 @@ func DefaultSettings() ArgoSettings {
 			Value: "app.kubernetes.io/instance",
 		},
 		IgnoreResourceUpdatesEnabled: Value[bool]{
+			Value: true,
+		},
+		// argocd-cm cluster.inClusterEnabled defaults to true: Argo CD serves
+		// the built-in in-cluster destination unless it is disabled.
+		InClusterEnabled: Value[bool]{
 			Value: true,
 		},
 	}
