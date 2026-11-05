@@ -443,27 +443,49 @@ Supported:
   source path. A skipped in-repository directory stays a persistent render
   cache input, so adding a kustomization file there invalidates the entry.
 - Kustomize `ignoreMissingComponents` adds only the first valid component, as
-  in Argo CD v3.6.1. `util/kustomize/kustomize.go:346-372` leaves its
-  component loop with `break component` after the first component that has a
-  kustomization file. Invalid components before it are skipped, and every
-  component after it is dropped without a check or a log line. drydock
-  renders the same and emits the `kustomize.ignore-missing-components-dropped`
-  warning, which names each later component that has a kustomization file.
-  The warning skips a later entry that resolves to the same directory as the
-  kept component, such as `../c/a` repeated or written as `../c//a`. Argo CD
-  resolves both with `filepath.Rel(repoRoot, filepath.Join(path, c))`
-  (`util/kustomize/kustomize.go:357`), so no resources are missing.
-  The warning is not advisory: `--strict` makes it an error, because
-  resources that the components list names are missing from the render.
-  Without `ignoreMissingComponents`, every component is added. We believe
-  this upstream behavior is a bug: argoproj/argo-cd#26576 (merge
-  `d631fcdfb`) turned an earlier `continue` into `break component`. drydock
-  mirrors it until upstream fixes it, and then follows the fix. Dropped
-  components stay persistent render cache inputs.
+  in Argo CD v3.6.1. `util/kustomize/kustomize.go:345-372` leaves its
+  component loop with `break component` (line 366) after the first component
+  that has a kustomization file. Invalid components before it are skipped.
+  Every component after it is dropped: the repo-server never reads, checks,
+  or logs it. drydock renders the same. It does not read, validate, or copy a
+  dropped component, so a dropped component with invalid YAML, a resource
+  that escapes the repository, or an in-repository symlink does not fail the
+  render.
+- For the dropped components, drydock emits the
+  `kustomize.ignore-missing-components-dropped` warning. Argo CD has no such
+  check. To build the warning, drydock looks in the original repository for
+  a regular `kustomization.yaml`, `kustomization.yml`, or `Kustomization` in
+  each dropped directory. It looks only inside the repository root, it
+  follows in-repository symlinks but not symlinks that leave the repository,
+  and it does not look at remote refs, refs that escape the repository, or
+  refs inside `.git`. The warning names each dropped directory that has a
+  kustomization file once. drydock compares directories by the cleaned
+  repository-relative path that Argo CD resolves with
+  `filepath.Rel(repoRoot, filepath.Join(path, c))`
+  (`util/kustomize/kustomize.go:357`). So `../c/b` and `../c/b/` are named
+  once, and an entry that resolves to the kept component, such as `../c/a`
+  repeated or written as `../c//a`, is not named, because no resources are
+  missing for it. An absolute ref after the kept component is joined under
+  the source path, as Argo CD does, and can be named. The warning is not
+  advisory: `--strict` makes it an error, because resources that the
+  components list names are missing from the render.
+- Without `ignoreMissingComponents`, every component is added. We believe the
+  `ignoreMissingComponents` behavior above is an upstream bug:
+  argoproj/argo-cd#26576 (merge `d631fcdfb`) turned an earlier `continue`
+  into `break component`. drydock mirrors it until upstream fixes it, and
+  then follows the fix.
+- For the persistent render cache, the three kustomization file names in
+  each dropped in-repository directory are optional inputs: the key records
+  whether each file exists and its bytes, so creating, deleting, or changing
+  one invalidates the entry. When a dropped ref names a file, that path is
+  the input instead. The rest of a dropped component is not an input. If a dropped directory is reached through an in-repository symlink,
+  drydock cannot record these inputs, so that Application renders without
+  the persistent cache.
 - Recorded divergence from Argo CD v3.6.1: drydock rejects an absolute
-  component ref that has a kustomization file at any position in the list,
-  because drydock never reads absolute paths. The repo-server drops such a
-  ref when it comes after the first valid component.
+  component ref that has a kustomization file when it is the component that
+  would be added (the first valid one), because drydock never reads absolute
+  paths. An absolute ref after the first valid component is dropped, as in
+  Argo CD.
 - Remote Kustomize refs in `resources`, `bases`, `components`,
   `patches.path`, `patchesJson6902.path`, non-inline
   `patchesStrategicMerge`, `generators`, `transformers`, `validators`,

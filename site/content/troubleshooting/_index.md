@@ -256,12 +256,17 @@ repository.
 
 With `ignoreMissingComponents: true`, Argo CD v3.6.1 adds only the first
 component that has a kustomization file. It drops every later component, even
-a valid one, and does not log it. drydock renders the same, so the resources
-of the later components are missing from both renders. The
-`kustomize.ignore-missing-components-dropped` warning names each later
-component that has a kustomization file. It does not name a later entry that
-points at the same directory as the kept component, such as a repeat of it.
-`--strict` makes the warning an error.
+a valid one, and does not read or log it. drydock renders the same, so the
+resources of the later components are missing from both renders. drydock
+does not read a dropped component either, so a dropped component with broken
+YAML or a bad path does not fail the render.
+
+The `kustomize.ignore-missing-components-dropped` warning names each later
+directory that has a `kustomization.yaml`, `kustomization.yml`, or
+`Kustomization`, once. drydock checks only for that file and only inside the
+repository. The warning does not name a later entry that points at the same
+directory as the kept component, such as a repeat of it. `--strict` makes the
+warning an error.
 
 We believe this upstream behavior is a bug (argoproj/argo-cd#26576). drydock
 will follow upstream when it changes. Until then, use one of these fixes:

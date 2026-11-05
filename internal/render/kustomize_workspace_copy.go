@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	argoappv1 "github.com/argoproj/argo-cd/v3/pkg/apis/application/v1alpha1"
 	"github.com/sholdee/drydock/internal/filecopy"
 	"github.com/sholdee/drydock/internal/pathsafety"
 	"sigs.k8s.io/kustomize/api/types"
@@ -259,16 +260,19 @@ func referencedKustomizeWorkspacePaths(dir string, kustomization types.Kustomiza
 
 // sourceKustomizeWorkspaceAdditions returns the graph of the
 // spec.source.kustomize components rendering adds, the local component
-// directories and patch files they read, and, under ignoreMissingComponents,
-// the in-repository directories of skipped components. Those optional paths
-// are render inputs for the digest (a kustomization file appearing there
-// changes the render) but are not copied into the workspace.
+// directories and patch files they read, and optional render inputs that are
+// not copied into the workspace. Under ignoreMissingComponents only the
+// first valid component is added (see sourceKustomizeComponents). The
+// optional inputs are then the in-repository directories of the components
+// skipped before it (a kustomization file appearing there changes the
+// render) and the kustomization file names of each component after it (they
+// decide the dropped-component warning). A component after the first valid
+// one is never walked, checked or copied, as the repo-server never reads it.
 func sourceKustomizeWorkspaceAdditions(ctx context.Context, repoRoot, sourceRoot string, opts RenderOptions) ([]kustomizeGraphNode, []string, []string, error) {
 	if opts.Kustomize == nil {
 		return nil, nil, nil, nil
 	}
 	refs := make([]string, 0, len(opts.Kustomize.Components)+len(opts.Kustomize.Patches))
-	var optionalRefs []string
 	graph := make([]kustomizeGraphNode, 0)
 	appendLocalRef := func(ref string) {
 		if ref == "" || isRemoteKustomizeRef(ref) || filepath.IsAbs(ref) {
@@ -276,17 +280,11 @@ func sourceKustomizeWorkspaceAdditions(ctx context.Context, repoRoot, sourceRoot
 		}
 		refs = append(refs, filepath.Clean(filepath.Join(sourceRoot, filepath.FromSlash(ref))))
 	}
-	for _, component := range opts.Kustomize.Components {
-		if opts.Kustomize.IgnoreMissingComponents {
-			decision, err := ignoreMissingComponentDecision(sourceRoot, repoRoot, component)
-			if err != nil {
-				return nil, nil, nil, err
-			}
-			if !decision.keep {
-				optionalRefs = appendNonEmpty(optionalRefs, decision.probe)
-				continue
-			}
-		}
+	components, optionalRefs, err := sourceKustomizeAddedComponents(repoRoot, sourceRoot, opts.Kustomize)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	for _, component := range components {
 		appendLocalRef(component)
 		componentPath := filepath.Clean(filepath.Join(sourceRoot, filepath.FromSlash(component)))
 		if isRemoteKustomizeRef(component) || filepath.IsAbs(component) {
@@ -308,6 +306,30 @@ func sourceKustomizeWorkspaceAdditions(ctx context.Context, repoRoot, sourceRoot
 		appendLocalRef(patch.Path)
 	}
 	return graph, refs, optionalRefs, nil
+}
+
+// sourceKustomizeAddedComponents returns the spec.source.kustomize
+// components that rendering adds and, under ignoreMissingComponents, the
+// optional render inputs of the components it does not add: the
+// in-repository directories skipped before the first valid component and the
+// kustomization file names of each component after it.
+func sourceKustomizeAddedComponents(repoRoot, sourceRoot string, kustomize *argoappv1.ApplicationSourceKustomize) ([]string, []string, error) {
+	if !kustomize.IgnoreMissingComponents {
+		return kustomize.Components, nil, nil
+	}
+	selection, err := selectIgnoreMissingComponents(sourceRoot, repoRoot, kustomize.Components)
+	if err != nil {
+		return nil, nil, err
+	}
+	var optionalRefs []string
+	for _, skipped := range selection.skipped {
+		optionalRefs = appendNonEmpty(optionalRefs, skipped.probe)
+	}
+	optionalRefs = append(optionalRefs, laterIgnoreMissingComponentInputs(sourceRoot, repoRoot, selection.later)...)
+	if !selection.found {
+		return nil, optionalRefs, nil
+	}
+	return []string{selection.kept}, optionalRefs, nil
 }
 
 func appendNonEmpty(values []string, value string) []string {

@@ -8,6 +8,7 @@ import (
 
 	"github.com/sholdee/drydock/internal/diagnostic"
 	"github.com/sholdee/drydock/internal/format"
+	"github.com/sholdee/drydock/internal/pathsafety"
 )
 
 type kustomizeWorkspace struct {
@@ -116,7 +117,11 @@ func (w *kustomizeWorkspace) prepareKustomizationDir(ctx context.Context, dir, b
 		return err
 	}
 	if dir == w.sourceRoot {
-		diags, err := applySourceKustomizeOptions(&kustomization, dir, boundaryRoot, w.opts)
+		originDir, err := w.originalPath(dir)
+		if err != nil {
+			return err
+		}
+		diags, err := applySourceKustomizeOptions(&kustomization, dir, boundaryRoot, originDir, w.originalRepoRoot, w.opts)
 		if err != nil {
 			return fmt.Errorf("%s: %w", manifestPath, err)
 		}
@@ -190,6 +195,16 @@ func (w *kustomizeWorkspace) prepareKustomizationDir(ctx context.Context, dir, b
 		return fmt.Errorf("write temp kustomization %s: %w", manifestPath, err)
 	}
 	return nil
+}
+
+// originalPath maps a path in the temp workspace repository to the same
+// path in the original repository.
+func (w *kustomizeWorkspace) originalPath(path string) (string, error) {
+	rel, err := filepath.Rel(w.tempRepoRoot, path)
+	if err != nil || pathsafety.RelEscapes(rel) {
+		return "", fmt.Errorf("workspace path %q escapes workspace root %q", path, w.tempRepoRoot)
+	}
+	return filepath.Join(w.originalRepoRoot, rel), nil
 }
 
 func (w *kustomizeWorkspace) prepareKustomizeRefs(ctx context.Context, dir, boundaryRoot, field string, graphIndex int, refs []string, inheritedHelmNamespace string, allowFileRefs bool) ([]string, error) {
