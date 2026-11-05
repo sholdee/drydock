@@ -71,3 +71,17 @@ cases:
     argocdQuotesObject: true
     argocdMessage: "Object 'Kind' is missing in '{\"metadata\":{\"annotations\":{\"argocd.argoproj.io/tracking-id\":"
     drydockMessage: "empty-object.json: JSON object has no kind"
+  # A list item without a kind takes the same path. The repo-server splits
+  # the list into its items and emits each one, even when the list itself
+  # has no kind.
+  - name: parity-decode-json-list-item
+    file: kindless-list.json
+    argocdQuotesObject: true
+    argocdMessage: "Object 'Kind' is missing in '{\"data\":{\"note\":\"a list item without a kind\"},\"metadata\":{\"annotations\":{\"argocd.argoproj.io/tracking-id\":"
+    drydockMessage: "kindless-list.json document 0 list item /items/0 has no kind"
+  # The same for an item of a List in a YAML file.
+  - name: parity-decode-yaml-list-item
+    file: list.yaml
+    argocdQuotesObject: true
+    argocdMessage: "Object 'Kind' is missing in '{\"data\":{\"note\":\"a list item without a kind\"},\"metadata\":{\"annotations\":{\"argocd.argoproj.io/tracking-id\":\"parity-directory-decode_parity-decode-yaml-list-item:"
+    drydockMessage: "list.yaml document 0 list item /items/0 has no kind"

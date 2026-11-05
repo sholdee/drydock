@@ -272,6 +272,21 @@ func TestDirectoryRendererDecodeMatchesUpstream(t *testing.T) {
 		"kindless-empty-list.json":  `{"items":[]}`,
 		"kindless-null-items.json":  `{"items":null}`,
 		"kindless-item-scalar.json": `{"items":[1]}`,
+		// A list item without a kind is emitted with the tracking
+		// annotation, and the controller fails on it. This holds for a list
+		// with or without a kind of its own, in a ".json" file or a stream.
+		"kindless-list-empty-item.json":      `{"items":[{}]}`,
+		"kindless-list-named-item.json":      `{"items":[{"name":"web"}]}`,
+		"kindless-list-apiversion-item.json": `{"items":[{"apiVersion":"v1","metadata":{"name":"no-kind"}}]}`,
+		"kindless-list-mixed-items.json":     `{"items":[{"apiVersion":"v1","kind":"ConfigMap","metadata":{"name":"mixed"}},{"name":"web"}]}`,
+		"list-named-item.json":               `{"apiVersion":"v1","kind":"List","items":[{"name":"web"}]}`,
+		"list-empty-kind-item.json":          `{"apiVersion":"v1","kind":"List","items":[{"apiVersion":"v1","kind":"","metadata":{"name":"empty-kind"}}]}`,
+		"list-number-kind-item.json":         `{"apiVersion":"v1","kind":"List","items":[{"apiVersion":"v1","kind":5,"metadata":{"name":"number-kind"}}]}`,
+		"list-bad-metadata-item.json":        `{"apiVersion":"v1","kind":"List","items":[{"metadata":"text"}]}`,
+		"list-named-item.yaml":               "apiVersion: v1\nkind: List\nitems:\n  - name: web\n",
+		"list-empty-item.yaml":               "apiVersion: v1\nkind: List\nitems:\n  - {}\n",
+		"list-mixed-items.yaml":              "apiVersion: v1\nkind: List\nitems:\n  - apiVersion: v1\n    kind: ConfigMap\n    metadata:\n      name: mixed\n  - name: web\n",
+		"configmap-items.yaml":               "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: items\nitems:\n  - name: web\n",
 		// A number out of float64 range fails the Unstructured decode before
 		// the kind check and leaves no object, so even a ConfigMap takes
 		// this path.

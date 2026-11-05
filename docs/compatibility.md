@@ -488,9 +488,17 @@ Supported:
   `Object 'Kind' is missing`. drydock reports this failure only when no other
   file fails to decode, as Argo CD does. Content that does not decode as an
   OCI image manifest fails the source in the repo-server. An object without
-  a `kind` whose `items` field is an array renders its items, and one whose
-  `items` field is `null` renders nothing, as in Argo CD. Earlier drydock
-  releases rendered nothing for such a file and did not fail.
+  a `kind` whose `items` field is an array is a list, and one whose `items`
+  field is `null` renders nothing, as in Argo CD. Earlier drydock releases
+  rendered nothing for such a file and did not fail.
+- A list item without a `kind` fails the source, in any directory file and
+  whether or not the list has a `kind` of its own, such as
+  `{"items":[{"name":"web"}]}` or a `kind: List` whose item has no `kind`.
+  The Argo CD v3.6.1 repo-server splits every list into its items and emits
+  each item, and the controller fails on an item without a `kind` with the
+  same `Object 'Kind' is missing` error. drydock reports this failure only
+  when no other file fails to decode. Earlier drydock releases skipped such
+  an item when it also had no `apiVersion`.
 - Directory `disableExtensionFilter`: the extension filter is skipped and
   `include`/`exclude` become the only filters, so custom extensions such as
   `*.yaml.sealed` render. A `.jsonnet` suffix is still evaluated as Jsonnet, a

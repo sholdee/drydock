@@ -51,8 +51,9 @@ func (DirectoryRenderer) Render(ctx context.Context, source ResolvedSource, opts
 	}
 	var out []Manifest
 	diags := directoryRenderDiagnostics(opts)
-	// kindlessJSONErr holds the first ".json" file whose object has no kind.
-	// Argo CD's repo-server emits that object and the controller fails on it
+	// kindlessJSONErr holds the first manifest without a kind that Argo CD's
+	// repo-server emits: a ".json" object without a kind, or a list item
+	// without a kind in any file. The controller fails on that manifest
 	// later, so any file that fails in the repo-server is reported first.
 	var kindlessJSONErr error
 
@@ -151,12 +152,28 @@ func (DirectoryRenderer) Render(ctx context.Context, source ResolvedSource, opts
 			return err
 		}
 
+		var itemRoot *unstructured.Unstructured
+		itemIndex := 0
 		for _, doc := range docs {
+			listItem := kindlessList || (doc.RootObject != nil && doc.RootObject != doc.Object)
 			// A kind-less ".json" list is never emitted itself, so only its
 			// items are checked.
-			if !kindlessList && doc.RootObject != nil && doc.RootObject != doc.Object {
+			if !kindlessList && listItem {
 				if _, err := classifyDirectoryDocument(Manifest{Path: doc.Path, Object: doc.RootObject}); err != nil {
 					return err
+				}
+			}
+			if listItem {
+				if doc.RootObject != itemRoot {
+					itemRoot, itemIndex = doc.RootObject, 0
+				} else {
+					itemIndex++
+				}
+				if doc.Object.GetKind() == "" {
+					if kindlessJSONErr == nil {
+						kindlessJSONErr = directoryKindlessListItemError(manifestPath, doc.Index, itemIndex)
+					}
+					continue
 				}
 			}
 			rendered := NewDocumentManifest(doc)
@@ -399,6 +416,16 @@ func directoryKindlessJSONError(manifestPath string, object *unstructured.Unstru
 		value = "JSON value"
 	}
 	return fmt.Errorf("%s: %s has no kind, so Argo CD fails the Application with \"Object 'Kind' is missing\"", manifestPath, value)
+}
+
+// directoryKindlessListItemError is the source failure for a list item
+// without a kind. GenerateManifests (reposerver/repository/repository.go:
+// 1817-1852 at v3.6.1) splits every list into its items, adds the tracking
+// annotation to each item, and emits it. The controller then fails on the
+// item, as directoryKindlessJSONError describes. This holds for any list,
+// with or without a kind of its own, in any directory file.
+func directoryKindlessListItemError(manifestPath string, document, item int) error {
+	return fmt.Errorf("%s document %d list item /items/%d has no kind, so Argo CD fails the Application with \"Object 'Kind' is missing\"", manifestPath, document, item)
 }
 
 // describeDirectoryJSONDecodeError names why a ".json" file did not decode

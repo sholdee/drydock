@@ -256,6 +256,52 @@ func TestDirectoryRendererKindlessJSONListRendersItems(t *testing.T) {
 	}
 }
 
+// TestDirectoryRendererListItemFailsWithoutKind pins the Argo CD v3.6.1 path
+// for a list item without a kind. GenerateManifests emits every list item,
+// so the controller fails the Application with "Object 'Kind' is missing".
+// This holds for a list with or without a kind of its own, in a .json file
+// or a YAML stream. The error names the file and the item.
+// TestDirectoryRendererDecodeMatchesUpstream proves the outcome against the
+// upstream code.
+func TestDirectoryRendererListItemFailsWithoutKind(t *testing.T) {
+	const tail = ` has no kind, so Argo CD fails the Application with "Object 'Kind' is missing"`
+	for _, tc := range []struct {
+		name    string
+		content string
+		want    string
+	}{
+		{name: "empty-item.json", content: `{"items":[{}]}`, want: "apps/empty-item.json document 0 list item /items/0"},
+		{name: "named-item.json", content: `{"items":[{"name":"web"}]}`, want: "apps/named-item.json document 0 list item /items/0"},
+		{name: "apiversion-item.json", content: `{"items":[{"apiVersion":"v1","metadata":{"name":"no-kind"}}]}`, want: "apps/apiversion-item.json document 0 list item /items/0"},
+		{name: "list.json", content: `{"apiVersion":"v1","kind":"List","items":[{"apiVersion":"v1","kind":"ConfigMap","metadata":{"name":"ok"}},{"name":"web"}]}`, want: "apps/list.json document 0 list item /items/1"},
+		{name: "list.yaml", content: directoryConfigMap("first") + "---\napiVersion: v1\nkind: List\nitems:\n  - name: web\n", want: "apps/list.yaml document 1 list item /items/0"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			writeFile(t, filepath.Join(root, "apps", tc.name), tc.content)
+			writeFile(t, filepath.Join(root, "apps", "cm.yaml"), directoryConfigMap("cm"))
+			_, _, err := (DirectoryRenderer{}).Render(context.Background(), ResolvedSource{RepoRoot: root, Path: "apps"}, RenderOptions{})
+			if want := tc.want + tail; err == nil || err.Error() != want {
+				t.Fatalf("Render() error = %v, want %q", err, want)
+			}
+		})
+	}
+}
+
+// TestDirectoryRendererKindlessListItemReportsRepoServerFailureFirst pins
+// the error order for a list item without a kind. The controller fails on it
+// only after the repo-server has read every file, so a later file that fails
+// in the repo-server is the one reported.
+func TestDirectoryRendererKindlessListItemReportsRepoServerFailureFirst(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "apps", "a-list.json"), `{"items":[{"name":"web"}]}`)
+	writeFile(t, filepath.Join(root, "apps", "b-broken.json"), `{"apiVersion":"v1",`)
+	_, _, err := (DirectoryRenderer{}).Render(context.Background(), ResolvedSource{RepoRoot: root, Path: "apps"}, RenderOptions{})
+	if err == nil || !strings.HasPrefix(err.Error(), "apps/b-broken.json: decode JSON object failed") {
+		t.Fatalf("Render() error = %v, want the b-broken.json decode failure", err)
+	}
+}
+
 // TestDirectoryRendererDisableExtensionFilterDecodeFailures pins the
 // repo-server's skip-or-fail rule for files that do not decode, which
 // disableExtensionFilter exposes to arbitrary file names: a file fails only

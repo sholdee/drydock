@@ -826,10 +826,12 @@ names the file, the text that the Argo CD `ComparisonError` condition must
 contain, and the text that drydock's stderr must contain. Both texts must name
 the file, so a failure caused by a different file does not pass.
 
-The two `.json` cases without a `kind` are different. The repo-server accepts
-those files as OCI image manifests and emits each object without a `kind`.
-The controller then fails with `Object 'Kind' is missing in '...'`, which
-quotes the manifest but not the file. These cases set `argocdQuotesObject`,
+The cases without a `kind` are different. The repo-server accepts the two
+`.json` objects without a `kind` as OCI image manifests and emits each one.
+It splits every list into its items and emits each item, so the two list
+items without a `kind` are emitted too. The controller then fails with
+`Object 'Kind' is missing in '...'`, which quotes the manifest but not the
+file. These cases set `argocdQuotesObject`,
 and their Argo CD text quotes the start of the manifest instead of the file
 name. Go sorts the manifest keys, and the manifest holds the tracking
 annotation. `TestDirectoryRendererParityDecodeFixtures` in `internal/render`
@@ -848,6 +850,8 @@ proves that both expected texts match.
 | `parity-decode-yaml-markers` | `markers.yaml` | the first document has no `kind`, and the file text holds `apiVersion:`, `kind:` and `metadata:` |
 | `parity-decode-json-package` | `package.json` | an npm `package.json` object has no `kind`, so the controller fails |
 | `parity-decode-json-object` | `empty-object.json` | `{}` has no `kind`, so the controller fails |
+| `parity-decode-json-list-item` | `kindless-list.json` | an item of a list without a `kind` has no `kind`, so the controller fails |
+| `parity-decode-yaml-list-item` | `list.yaml` | an item of a YAML `kind: List` has no `kind`, so the controller fails |
 
 `run_directory_decode_smoke` in `scripts/argocd-parity-smoke.sh` waits for a
 `ComparisonError` on each Application, then saves the Application JSON. It

@@ -250,6 +250,13 @@ drydock selects directory-source files as the Argo CD v3.6.1 repo-server does:
   drydock releases skipped the file. Move the file out of the source
   directory, or set `exclude` to a pattern that matches it, such as
   `{package,tsconfig}.json`.
+- A list item without a `kind` fails the source the same way, in any
+  directory file and whether or not the list has a `kind` of its own. This
+  covers `{"items":[{"name":"web"}]}` and a `kind: List` whose item has no
+  `kind`. drydock names the file and the item in an error such as
+  `list.json document 0 list item /items/0 has no kind, so Argo CD fails the Application with "Object 'Kind' is missing"`.
+  Earlier drydock releases skipped such an item when it also had no
+  `apiVersion`. Add a `kind` to the item, or remove the item.
 - Any other file that does not decode as YAML or JSON is skipped unless a
   manifest precedes the broken document or the file contains all of
   `apiVersion:`, `kind:`, and `metadata:`; then it fails the source. With `disableExtensionFilter`, narrow `include` so that
