@@ -148,12 +148,18 @@ func cloneParams(params map[string]any) map[string]any {
 func cloneParamValue(value any) any {
 	switch typed := value.(type) {
 	case map[string]any:
+		if typed == nil {
+			return typed
+		}
 		return cloneParams(typed)
 	case map[string]string:
 		return maps.Clone(typed)
 	case []any:
-		out := make([]any, len(typed))
-		for i, value := range typed {
+		// Clone keeps a nil list nil, as Argo CD v3.6.1 deepCopyParamValue
+		// does (applicationset/generators/matrix.go:205-212). A nil list
+		// and an empty one print differently with toJson.
+		out := slices.Clone(typed)
+		for i, value := range out {
 			out[i] = cloneParamValue(value)
 		}
 		return out

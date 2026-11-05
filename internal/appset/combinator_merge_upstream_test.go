@@ -174,6 +174,12 @@ var mergeOracleCases = []mergeOracleCase{
 		incoming:  func() map[string]any { return mergeOracleClusterParams(map[string]string{"region": "west"}) },
 		wantPanic: false,
 	},
+	{
+		name:      "nil []any into cluster params",
+		receiving: func() map[string]any { return mergeOracleClusterParams(map[string]string{"region": "west"}) },
+		incoming:  func() map[string]any { return mergeOracleListParams(map[string]any{"items": []any(nil)}) },
+		wantPanic: false,
+	},
 }
 
 // TestCombinatorParamMergeMatchesUpstream runs every case through the copied
@@ -333,5 +339,33 @@ spec:
 				}
 			}
 		})
+	}
+}
+
+// TestCloneParamValueKeepsNil checks that the param copy keeps a nil list
+// and a nil map nil, as Argo CD v3.6.1 deepCopyParamValue does
+// (applicationset/generators/matrix.go:188-212). toJson prints a nil list
+// as null and an empty one as [].
+func TestCloneParamValueKeepsNil(t *testing.T) {
+	for _, value := range []any{[]any(nil), map[string]any(nil), map[string]string(nil), []string(nil), []map[string]any(nil)} {
+		got := cloneParamValue(value)
+		if reflect.TypeOf(got) != reflect.TypeOf(value) || !reflect.ValueOf(got).IsNil() {
+			t.Fatalf("cloneParamValue(%#v) = %#v, want a nil %T", value, got, value)
+		}
+	}
+	got, err := combineMatrixParams("nil-list", map[string]any{"items": []any(nil)}, map[string]any{"name": "alpha"}, true)
+	if err != nil {
+		t.Fatalf("combineMatrixParams() error = %v", err)
+	}
+	upstream, err := upstreamMatrixGoTemplateMerge(map[string]any{"items": []any(nil)}, map[string]any{"name": "alpha"})
+	if err != nil {
+		t.Fatalf("upstream matrix merge error = %v", err)
+	}
+	if !reflect.DeepEqual(got, upstream) {
+		t.Fatalf("drydock params = %#v, upstream = %#v", got, upstream)
+	}
+	// Empty lists stay empty, not nil.
+	if got := cloneParamValue([]any{}); got == nil || reflect.ValueOf(got).IsNil() {
+		t.Fatalf("cloneParamValue([]any{}) = %#v, want an empty non-nil list", got)
 	}
 }
