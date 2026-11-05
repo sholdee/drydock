@@ -33,6 +33,14 @@ Argo CD instance. The destination cases include these:
   allows this destination. drydock cannot see the Secret, so the check
   requires a deferred diagnostic and no denial.
 
+It also checks directory files that fail the source. Each such Application
+lives in its own namespace and holds one file that fails the source. Argo CD
+must report a `ComparisonError` condition, drydock must fail to render, and
+both errors must name the same file. For a `.json` object without a `kind`,
+the Argo CD controller error quotes the object instead of the file, so the
+check matches the quoted object. Files that both sides skip, and files whose
+text both sides decode first, render in the main manifest comparison.
+
 This check is scoped to generated desired state. Live-only runtime behavior
 such as Kubernetes defaulting, admission mutation, server-side diff, managed
 fields, health aggregation, sync behavior, and controller state remains outside
@@ -462,18 +470,35 @@ Supported:
   text is read as UTF-8 unless a byte order mark says UTF-16LE or UTF-16BE,
   the byte order mark is dropped, and invalid UTF-8 becomes U+FFFD, before
   the `+argocd:skip-file-rendering` check and every decoder. A file ending in
-  `.json` must decode as one JSON object with a `kind` (or as an OCI image
-  manifest) followed only by whitespace, so an empty file, YAML content, a
-  JSON array, a syntax error, or several concatenated objects fail the
-  source. Every other file is a YAML/JSON stream that stops at a syntax error
+  `.json` must decode as one JSON object with a `kind` followed only by
+  whitespace, so an empty file, YAML content, a JSON array, a syntax error,
+  or several concatenated objects fail the source. Every other file is a YAML/JSON stream that stops at a syntax error
   or at a non-empty document that is not an object with a `kind` (values-like
   YAML and `{}` included). When the stream stops, the file fails the source
   if an object decoded before it or if its content holds all of
   `apiVersion:`, `kind:`, and `metadata:`; otherwise the whole file is
-  skipped as unrelated YAML.
-- Recorded divergence from strict Argo CD v3.6.1: a `.json` file accepted
-  only as an OCI image manifest renders nothing in drydock; the repo-server
-  emits it as a manifest without a `kind`.
+  skipped as unrelated YAML. The render parity smoke covers the byte order
+  mark and invalid UTF-8 cases, the skipped files, and each failing case
+  above.
+- A `.json` file that holds JSON `null` or an object without a `kind`, such
+  as `package.json`, `tsconfig.json`, or `{}`, fails the source. The Argo CD
+  v3.6.1 repo-server accepts such content when it also decodes as an OCI
+  image manifest, and emits it as a manifest without a `kind`. The controller
+  then fails the Application with a `ComparisonError` that says
+  `Object 'Kind' is missing`. drydock reports this failure only when no other
+  file fails to decode, as Argo CD does. Content that does not decode as an
+  OCI image manifest fails the source in the repo-server. An object without
+  a `kind` whose `items` field is an array is a list, and one whose `items`
+  field is `null` renders nothing, as in Argo CD. Earlier drydock releases
+  rendered nothing for such a file and did not fail.
+- A list item without a `kind` fails the source, in any directory file and
+  whether or not the list has a `kind` of its own, such as
+  `{"items":[{"name":"web"}]}` or a `kind: List` whose item has no `kind`.
+  The Argo CD v3.6.1 repo-server splits every list into its items and emits
+  each item, and the controller fails on an item without a `kind` with the
+  same `Object 'Kind' is missing` error. drydock reports this failure only
+  when no other file fails to decode. Earlier drydock releases skipped such
+  an item when it also had no `apiVersion`.
 - Directory `disableExtensionFilter`: the extension filter is skipped and
   `include`/`exclude` become the only filters, so custom extensions such as
   `*.yaml.sealed` render. A `.jsonnet` suffix is still evaluated as Jsonnet, a

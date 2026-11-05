@@ -1,0 +1,87 @@
+# Directory-source decode failures for the Argo CD render parity smoke.
+#
+# Each case is an Application in the parity-directory-decode namespace
+# (repo/directory-decode-applications). Its source directory holds a valid
+# ConfigMap and one file that fails the source in Argo CD v3.6.1. Most such
+# files fail in the repo-server (getObjsFromYAMLOrJSON,
+# reposerver/repository/repository.go). Argo CD must report a ComparisonError
+# condition that contains argocdMessage, and `drydock build app` must fail
+# with stderr that contains drydockMessage. Both messages must name the file.
+#
+# A .json object without a kind fails later, in the controller. Its message
+# quotes the manifest instead of naming the file, so those cases set
+# argocdQuotesObject and quote the start of the manifest. Go sorts the keys,
+# and the tracking annotation is part of the manifest.
+#
+# Files that both sides skip, and files whose text both sides decode first
+# (byte order marks, invalid UTF-8), live in the parity-directory-decode-skips
+# Application, which the main manifest comparison covers.
+cases:
+  # A .json file must hold one JSON object. A syntax error fails the source.
+  - name: parity-decode-json-invalid
+    file: invalid.json
+    argocdMessage: Failed to unmarshal "invalid.json"
+    drydockMessage: "invalid.json: decode JSON object failed"
+  # A second object after the first fails the source.
+  - name: parity-decode-json-multiple
+    file: multiple.json
+    argocdMessage: Found multiple objects in "multiple.json"
+    drydockMessage: "multiple.json: found multiple objects"
+  # A JSON array is not an object, even when it holds manifests.
+  - name: parity-decode-json-array
+    file: array.json
+    argocdMessage: Failed to unmarshal "array.json"
+    drydockMessage: "array.json: decode JSON object failed"
+  # An empty .json file fails, where an empty .yaml file is skipped.
+  - name: parity-decode-json-empty
+    file: empty.json
+    argocdMessage: Failed to unmarshal "empty.json"
+    drydockMessage: "empty.json: decode JSON object failed"
+  # YAML text in a .json file fails, even when it is a valid manifest.
+  - name: parity-decode-json-yaml
+    file: yaml-content.json
+    argocdMessage: Failed to unmarshal "yaml-content.json"
+    drydockMessage: "yaml-content.json: decode JSON object failed"
+  # A YAML syntax error after a decoded object fails the source.
+  - name: parity-decode-yaml-partial
+    file: partial.yaml
+    argocdMessage: Failed to unmarshal "partial.yaml"
+    drydockMessage: "partial.yaml document 1: decode YAML document failed"
+  # A document without a kind after a decoded object fails the source.
+  - name: parity-decode-yaml-kindless
+    file: kindless.yaml
+    argocdMessage: Failed to unmarshal "kindless.yaml"
+    drydockMessage: "kindless.yaml document 1 is missing kind"
+  # A file whose first document stops the stream fails when the file text
+  # holds all of "apiVersion:", "kind:" and "metadata:".
+  - name: parity-decode-yaml-markers
+    file: markers.yaml
+    argocdMessage: Failed to unmarshal "markers.yaml"
+    drydockMessage: "markers.yaml document 0 is missing kind"
+  # A .json object without a kind passes the OCI image manifest test. The
+  # repo-server emits it, and the controller fails because it has no kind.
+  - name: parity-decode-json-package
+    file: package.json
+    argocdQuotesObject: true
+    argocdMessage: "Object 'Kind' is missing in '{\"devDependencies\":{\"vite\":\"^5.4.0\"},\"metadata\":{\"annotations\":{\"argocd.argoproj.io/tracking-id\":"
+    drydockMessage: "package.json: JSON object has no kind"
+  # The same for an empty object.
+  - name: parity-decode-json-object
+    file: empty-object.json
+    argocdQuotesObject: true
+    argocdMessage: "Object 'Kind' is missing in '{\"metadata\":{\"annotations\":{\"argocd.argoproj.io/tracking-id\":"
+    drydockMessage: "empty-object.json: JSON object has no kind"
+  # A list item without a kind takes the same path. The repo-server splits
+  # the list into its items and emits each one, even when the list itself
+  # has no kind.
+  - name: parity-decode-json-list-item
+    file: kindless-list.json
+    argocdQuotesObject: true
+    argocdMessage: "Object 'Kind' is missing in '{\"data\":{\"note\":\"a list item without a kind\"},\"metadata\":{\"annotations\":{\"argocd.argoproj.io/tracking-id\":"
+    drydockMessage: "kindless-list.json document 0 list item /items/0 has no kind"
+  # The same for an item of a List in a YAML file.
+  - name: parity-decode-yaml-list-item
+    file: list.yaml
+    argocdQuotesObject: true
+    argocdMessage: "Object 'Kind' is missing in '{\"data\":{\"note\":\"a list item without a kind\"},\"metadata\":{\"annotations\":{\"argocd.argoproj.io/tracking-id\":\"parity-directory-decode_parity-decode-yaml-list-item:"
+    drydockMessage: "list.yaml document 0 list item /items/0 has no kind"

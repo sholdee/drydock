@@ -3,4 +3,4 @@ kind: Kustomization
 configMapGenerator:
   - name: generated-from-data
     files:
-      - data.json
+      - data.txt

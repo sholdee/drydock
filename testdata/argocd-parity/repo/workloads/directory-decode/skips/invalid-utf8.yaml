@@ -1,0 +1,8 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: parity-decode-invalid-utf8
+  namespace: parity-directory-decode-skips
+data:
+  fixture: directory-decode
+  replaced: "before-ÿ-after"

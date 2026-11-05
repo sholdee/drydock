@@ -1,0 +1,10 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: parity-decode-yaml-kindless-first
+  namespace: parity-directory-decode-workloads
+data:
+  fixture: directory-decode
+---
+replicas: 3
+image: example.invalid/app:1.0.0

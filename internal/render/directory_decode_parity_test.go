@@ -14,12 +14,17 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/argoproj/argo-cd/gitops-engine/v3/pkg/utils/kube"
+	"github.com/argoproj/argo-cd/v3/common"
+	"github.com/argoproj/argo-cd/v3/pkg/apis/application/v1alpha1"
+	argoutil "github.com/argoproj/argo-cd/v3/util/argo"
 	imagev1 "github.com/opencontainers/image-spec/specs-go/v1"
 	xunicode "golang.org/x/text/encoding/unicode"
 	"golang.org/x/text/transform"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	kubeyaml "k8s.io/apimachinery/pkg/util/yaml"
+	"sigs.k8s.io/yaml"
 )
 
 // upstreamGetObjsFromYAMLOrJSON is getObjsFromYAMLOrJSON and splitYAMLOrJSON
@@ -74,6 +79,160 @@ func upstreamGetObjsFromYAMLOrJSON(data []byte, filename string) ([]*unstructure
 	}
 }
 
+// upstreamApplicationObjects carries objects from
+// upstreamGetObjsFromYAMLOrJSON through the rest of the Argo CD v3.6.1 path.
+// The loop is a copy of the manifest loop in GenerateManifests
+// (reposerver/repository/repository.go:1817-1852): Lists flatten into their
+// items, a null-items List emits nothing, and every other object is emitted
+// with annotation tracking. The tracking call is the upstream
+// util/argo SetAppInstance itself. The controller then reads each manifest
+// back with the upstream v1alpha1.UnmarshalToUnstructured (unmarshalManifests,
+// controller/state.go:562-571), which fails on an object without a kind.
+func upstreamApplicationObjects(objs []*unstructured.Unstructured, appName, namespace string) ([]*unstructured.Unstructured, error) {
+	tracking := argoutil.NewResourceTracking()
+	var manifests []string
+	for _, obj := range objs {
+		if obj == nil {
+			continue
+		}
+		var targets []*unstructured.Unstructured
+		switch {
+		case obj.IsList():
+			err := obj.EachListItem(func(object runtime.Object) error {
+				unstructuredObj, ok := object.(*unstructured.Unstructured)
+				if ok {
+					targets = append(targets, unstructuredObj)
+					return nil
+				}
+				return errors.New("resource list item has unexpected type")
+			})
+			if err != nil {
+				return nil, err
+			}
+		case upstreamIsNullList(obj):
+		default:
+			targets = []*unstructured.Unstructured{obj}
+		}
+		for _, target := range targets {
+			if !kube.IsCRD(target) {
+				if err := tracking.SetAppInstance(target, common.LabelKeyAppInstance, appName, namespace, v1alpha1.TrackingMethodAnnotation, ""); err != nil {
+					return nil, fmt.Errorf("failed to set app instance tracking info on manifest: %w", err)
+				}
+			}
+			manifest, err := json.Marshal(target.Object)
+			if err != nil {
+				return nil, err
+			}
+			manifests = append(manifests, string(manifest))
+		}
+	}
+	out := make([]*unstructured.Unstructured, 0, len(manifests))
+	for _, manifest := range manifests {
+		obj, err := v1alpha1.UnmarshalToUnstructured(manifest)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, obj)
+	}
+	return out, nil
+}
+
+// upstreamIsNullList is isNullList from Argo CD v3.6.1
+// reposerver/repository/repository.go:1988-2000.
+func upstreamIsNullList(obj *unstructured.Unstructured) bool {
+	if _, ok := obj.Object["spec"]; ok {
+		return false
+	}
+	if _, ok := obj.Object["status"]; ok {
+		return false
+	}
+	field, ok := obj.Object["items"]
+	if !ok {
+		return false
+	}
+	return field == nil
+}
+
+// upstreamDirectoryFileOutcome is what Argo CD v3.6.1 does with one
+// directory file: the objects the controller reads back, or the error that
+// fails the Application.
+func upstreamDirectoryFileOutcome(data []byte, filename string) ([]*unstructured.Unstructured, error) {
+	objs, err := upstreamGetObjsFromYAMLOrJSON(data, filename)
+	if err != nil {
+		return nil, err
+	}
+	return upstreamApplicationObjects(objs, "parity", "default")
+}
+
+// TestDirectoryRendererParityDecodeFixtures renders each failing directory of
+// the Argo CD render parity smoke (testdata/argocd-parity) offline. drydock
+// must fail with the drydockMessage the smoke expects. For a case whose Argo
+// CD message quotes the manifest, the upstream oracle must also fail with
+// the argocdMessage the smoke expects, given the Application's instance name
+// and destination namespace. The repo-server messages of the other cases come
+// from a copy of upstream code, so the smoke alone checks them.
+func TestDirectoryRendererParityDecodeFixtures(t *testing.T) {
+	parityRoot := filepath.Join("..", "..", "testdata", "argocd-parity")
+	data, err := os.ReadFile(filepath.Join(parityRoot, "directory-decode-expected.yaml"))
+	if err != nil {
+		t.Fatalf("ReadFile() error = %v", err)
+	}
+	var expected struct {
+		Cases []struct {
+			Name               string `json:"name"`
+			File               string `json:"file"`
+			ArgoCDMessage      string `json:"argocdMessage"`
+			DrydockMessage     string `json:"drydockMessage"`
+			ArgoCDQuotesObject bool   `json:"argocdQuotesObject"`
+		} `json:"cases"`
+	}
+	if err := yaml.Unmarshal(data, &expected); err != nil {
+		t.Fatalf("parse expected file: %v", err)
+	}
+	repoRoot := filepath.Join(parityRoot, "repo")
+	quoted := 0
+	for _, tc := range expected.Cases {
+		t.Run(tc.Name, func(t *testing.T) {
+			caseDir := strings.TrimPrefix(tc.Name, "parity-decode-")
+			sourcePath := filepath.Join("workloads", "directory-decode", caseDir)
+			_, _, drydockErr := (DirectoryRenderer{}).Render(context.Background(), ResolvedSource{RepoRoot: repoRoot, Path: sourcePath}, RenderOptions{})
+			if drydockErr == nil || !strings.Contains(drydockErr.Error(), tc.DrydockMessage) {
+				t.Fatalf("drydock error = %v, want %q", drydockErr, tc.DrydockMessage)
+			}
+			if !tc.ArgoCDQuotesObject {
+				return
+			}
+			quoted++
+			// A parity-directory-decode Application is outside the controller
+			// namespace, so its instance name is <namespace>_<name>.
+			appName := "parity-directory-decode_" + tc.Name
+			entries, err := os.ReadDir(filepath.Join(repoRoot, sourcePath))
+			if err != nil {
+				t.Fatalf("ReadDir() error = %v", err)
+			}
+			var objs []*unstructured.Unstructured
+			for _, entry := range entries {
+				content, err := os.ReadFile(filepath.Join(repoRoot, sourcePath, entry.Name()))
+				if err != nil {
+					t.Fatalf("ReadFile() error = %v", err)
+				}
+				fileObjs, err := upstreamGetObjsFromYAMLOrJSON(content, entry.Name())
+				if err != nil {
+					t.Fatalf("upstream repo-server error = %v, want the controller to fail", err)
+				}
+				objs = append(objs, fileObjs...)
+			}
+			_, upstreamErr := upstreamApplicationObjects(objs, appName, "parity-directory-decode-workloads")
+			if upstreamErr == nil || !strings.Contains(upstreamErr.Error(), tc.ArgoCDMessage) {
+				t.Fatalf("upstream error = %v, want %q", upstreamErr, tc.ArgoCDMessage)
+			}
+		})
+	}
+	if quoted == 0 {
+		t.Fatal("expected file has no argocdQuotesObject case")
+	}
+}
+
 // TestDirectoryRendererDecodeMatchesUpstream compares, file by file, whether
 // Argo CD v3.6.1 fails a directory source and which objects it renders with
 // drydock's directory renderer under disableExtensionFilter, where any file
@@ -95,6 +254,48 @@ func TestDirectoryRendererDecodeMatchesUpstream(t *testing.T) {
 		"trailing.json":  "{\"apiVersion\":\"v1\",\"kind\":\"ConfigMap\",\"metadata\":{\"name\":\"t\"}}\n---\n",
 		"oci.json":       `{"schemaVersion":2,"mediaType":"application/vnd.oci.image.manifest.v1+json","layers":[]}`,
 		"list.json":      `{"apiVersion":"v1","kind":"List","items":[{"apiVersion":"v1","kind":"ConfigMap","metadata":{"name":"li"}}]}`,
+		// ".json" content without a kind that passes the OCI image manifest
+		// test: the repo-server emits it and the controller fails on it,
+		// unless it is a List shape.
+		"empty-object.json":         `{}`,
+		"null.json":                 `null`,
+		"package.json":              `{"name":"web","version":"1.0.0","private":true,"scripts":{"build":"vite build"},"dependencies":{"vite":"^5.0.0"}}`,
+		"tsconfig.json":             `{"compilerOptions":{"strict":true,"target":"ES2022"},"include":["src"]}`,
+		"apiversion-only.json":      `{"apiVersion":"v1","metadata":{"name":"no-kind"}}`,
+		"empty-kind.json":           `{"apiVersion":"v1","kind":"","metadata":{"name":"empty-kind"}}`,
+		"number-kind.json":          `{"apiVersion":"v1","kind":5,"metadata":{"name":"number-kind"}}`,
+		"null-items-spec.json":      `{"items":null,"spec":{}}`,
+		"scalar-items.json":         `{"items":"text"}`,
+		"bad-metadata.json":         `{"metadata":"text"}`,
+		"kindless-list.json":        `{"items":[{"apiVersion":"v1","kind":"ConfigMap","metadata":{"name":"kindless-list"}}]}`,
+		"apiversion-list.json":      `{"apiVersion":"v1","items":[{"apiVersion":"v1","kind":"ConfigMap","metadata":{"name":"apiversion-list"}}]}`,
+		"kindless-empty-list.json":  `{"items":[]}`,
+		"kindless-null-items.json":  `{"items":null}`,
+		"kindless-item-scalar.json": `{"items":[1]}`,
+		// A list item without a kind is emitted with the tracking
+		// annotation, and the controller fails on it. This holds for a list
+		// with or without a kind of its own, in a ".json" file or a stream.
+		"kindless-list-empty-item.json":      `{"items":[{}]}`,
+		"kindless-list-named-item.json":      `{"items":[{"name":"web"}]}`,
+		"kindless-list-apiversion-item.json": `{"items":[{"apiVersion":"v1","metadata":{"name":"no-kind"}}]}`,
+		"kindless-list-mixed-items.json":     `{"items":[{"apiVersion":"v1","kind":"ConfigMap","metadata":{"name":"mixed"}},{"name":"web"}]}`,
+		"list-named-item.json":               `{"apiVersion":"v1","kind":"List","items":[{"name":"web"}]}`,
+		"list-empty-kind-item.json":          `{"apiVersion":"v1","kind":"List","items":[{"apiVersion":"v1","kind":"","metadata":{"name":"empty-kind"}}]}`,
+		"list-number-kind-item.json":         `{"apiVersion":"v1","kind":"List","items":[{"apiVersion":"v1","kind":5,"metadata":{"name":"number-kind"}}]}`,
+		"list-bad-metadata-item.json":        `{"apiVersion":"v1","kind":"List","items":[{"metadata":"text"}]}`,
+		"list-named-item.yaml":               "apiVersion: v1\nkind: List\nitems:\n  - name: web\n",
+		"list-empty-item.yaml":               "apiVersion: v1\nkind: List\nitems:\n  - {}\n",
+		"list-mixed-items.yaml":              "apiVersion: v1\nkind: List\nitems:\n  - apiVersion: v1\n    kind: ConfigMap\n    metadata:\n      name: mixed\n  - name: web\n",
+		"configmap-items.yaml":               "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: items\nitems:\n  - name: web\n",
+		// A number out of float64 range fails the Unstructured decode before
+		// the kind check and leaves no object, so even a ConfigMap takes
+		// this path.
+		"out-of-range.json": `{"apiVersion":"v1","kind":"ConfigMap","metadata":{"name":"out-of-range"},"data":{"n":1e400}}`,
+		// ".json" content without a kind that fails the OCI image manifest
+		// test: the repo-server fails the source with the decode error.
+		"oci-string-config.json":     `{"name":"web","config":"text"}`,
+		"oci-number-annotation.json": `{"annotations":{"count":1}}`,
+		"oci-string-version.json":    `{"apiVersion":"v1","schemaVersion":"2"}`,
 		// Every other file name: a YAML/JSON stream.
 		"bom.yaml":            bom + "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: bom-yaml\n",
 		"bom-stream.yaml":     bom + "{\"apiVersion\":\"v1\",\"kind\":\"ConfigMap\",\"metadata\":{\"name\":\"s1\"}}\n{\"apiVersion\":\"v1\",\"kind\":\"ConfigMap\",\"metadata\":{\"name\":\"s2\"}}\n",
@@ -149,7 +350,7 @@ func TestDirectoryRendererDecodeMatchesUpstream(t *testing.T) {
 				t.Fatalf("ReadFile() error = %v", err)
 			}
 
-			upstreamObjs, upstreamErr := upstreamGetObjsFromYAMLOrJSON(data, name)
+			upstreamObjs, upstreamErr := upstreamDirectoryFileOutcome(data, name)
 			result, _, drydockErr := (DirectoryRenderer{}).Render(context.Background(), ResolvedSource{RepoRoot: root, Path: "apps"}, RenderOptions{
 				DirectoryDisableExtensionFilter: true,
 				DirectoryInclude:                "*",
@@ -167,28 +368,16 @@ func TestDirectoryRendererDecodeMatchesUpstream(t *testing.T) {
 	}
 }
 
-// upstreamRenderedNames flattens Lists as GenerateManifests does and drops
-// the kind-less object a ".json" OCI image manifest leaves behind, which
-// drydock skips (a recorded divergence). Files whose outcome turns on a
-// document with only one of apiVersion and kind are not compared: drydock
-// fails them where the repo-server renders the document (kind only) or skips
-// the file (apiVersion only, with nothing decoded before it and not every
-// manifest marker), both recorded divergences.
+// upstreamRenderedNames lists the names of the objects the controller reads
+// back. Files whose outcome turns on a document with only one of apiVersion
+// and kind are not compared: drydock fails them where the repo-server renders
+// the document (kind only) or skips the file (apiVersion only, with nothing
+// decoded before it and not every manifest marker), both recorded
+// divergences.
 func upstreamRenderedNames(objs []*unstructured.Unstructured) []string {
 	names := []string{}
 	for _, obj := range objs {
-		if obj == nil || obj.GetKind() == "" {
-			continue
-		}
-		if obj.IsList() {
-			_ = obj.EachListItem(func(item runtime.Object) error {
-				accessor, ok := item.(*unstructured.Unstructured)
-				if !ok {
-					return fmt.Errorf("list item has type %T", item)
-				}
-				names = append(names, accessor.GetName())
-				return nil
-			})
+		if obj == nil {
 			continue
 		}
 		names = append(names, obj.GetName())

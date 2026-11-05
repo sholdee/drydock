@@ -775,3 +775,86 @@ library only walks `map[string]interface{}` and `[]interface{}`, so the
 drydock flattens params the same way.
 `TestArgoCDParityFixtureSelectorListParams` in `internal/appset` pins the
 drydock side.
+
+## Directory decode fixture
+
+These fixtures cover how Argo CD v3.6.1 reads each file in a directory
+source (`getObjsFromYAMLOrJSON` in `reposerver/repository/repository.go`, and
+the controller for a `.json` object without a `kind`). Some files fail the
+whole source.
+Other files are skipped without a message. The fixtures live under
+`workloads/directory-decode/`.
+
+### Files that both sides skip or decode
+
+`applications/directory-decode-skips.yaml` (`parity-directory-decode-skips`)
+is a normal Application in the main comparison. Its directory holds one plain
+ConfigMap and these files:
+
+| file | expected result |
+| --- | --- |
+| `values.yaml` | skipped: a values file has no `kind` |
+| `syntax-error.yaml` | skipped: a YAML syntax error with no manifest markers |
+| `empty-mapping.yaml` | skipped: `{}` has no `kind` |
+| `empty.yaml` | skipped: an empty YAML file holds no documents |
+| `sequence.yaml` | skipped: a YAML list is not an object |
+| `values-then-kind.yaml` | skipped: the first document has no `kind`, and the file text has no `metadata:` |
+| `utf16le-no-bom.yaml` | skipped: UTF-16 text without a byte order mark is read as UTF-8 and does not parse |
+| `utf16le-bom.yaml` | rendered: the UTF-16LE byte order mark selects the decoding |
+| `utf16be-bom.json` | rendered: the same for UTF-16BE, under the single-object JSON rule |
+| `utf8-bom.json` | rendered: the UTF-8 byte order mark is dropped before the JSON decoder runs |
+| `invalid-utf8.yaml` | rendered: the invalid byte becomes U+FFFD |
+
+The comparison proves both sides render the same five ConfigMaps. The skipped
+files never produce an object.
+
+Several of these files are not valid text on purpose. The UTF-16 files hold
+NUL bytes, so Git treats them as binary. Do not let an editor or a formatter
+rewrite them.
+
+### Files that fail the source
+
+`directory-decode-applications/` holds one Application per failing file. They
+live in the `parity-directory-decode` namespace, so the main inventory and
+manifest comparisons never see them. The smoke adds that namespace to
+`application.namespaces`, and `projects/parity-directory-decode.yaml` allows
+it through `sourceNamespaces`.
+
+Each source directory holds a valid ConfigMap and one file that fails the
+source. `../directory-decode-expected.yaml` lists the cases. For each case it
+names the file, the text that the Argo CD `ComparisonError` condition must
+contain, and the text that drydock's stderr must contain. Both texts must name
+the file, so a failure caused by a different file does not pass.
+
+The cases without a `kind` are different. The repo-server accepts the two
+`.json` objects without a `kind` as OCI image manifests and emits each one.
+It splits every list into its items and emits each item, so the two list
+items without a `kind` are emitted too. The controller then fails with
+`Object 'Kind' is missing in '...'`, which quotes the manifest but not the
+file. These cases set `argocdQuotesObject`,
+and their Argo CD text quotes the start of the manifest instead of the file
+name. Go sorts the manifest keys, and the manifest holds the tracking
+annotation. `TestDirectoryRendererParityDecodeFixtures` in `internal/render`
+runs the upstream tracking and controller code on these fixtures offline and
+proves that both expected texts match.
+
+| Application | failing file | why it fails |
+| --- | --- | --- |
+| `parity-decode-json-invalid` | `invalid.json` | JSON syntax error |
+| `parity-decode-json-multiple` | `multiple.json` | two objects in one `.json` file |
+| `parity-decode-json-array` | `array.json` | a JSON array is not one object |
+| `parity-decode-json-empty` | `empty.json` | an empty `.json` file |
+| `parity-decode-json-yaml` | `yaml-content.json` | YAML text in a `.json` file |
+| `parity-decode-yaml-partial` | `partial.yaml` | a YAML syntax error after a decoded object |
+| `parity-decode-yaml-kindless` | `kindless.yaml` | a document without `kind` after a decoded object |
+| `parity-decode-yaml-markers` | `markers.yaml` | the first document has no `kind`, and the file text holds `apiVersion:`, `kind:` and `metadata:` |
+| `parity-decode-json-package` | `package.json` | an npm `package.json` object has no `kind`, so the controller fails |
+| `parity-decode-json-object` | `empty-object.json` | `{}` has no `kind`, so the controller fails |
+| `parity-decode-json-list-item` | `kindless-list.json` | an item of a list without a `kind` has no `kind`, so the controller fails |
+| `parity-decode-yaml-list-item` | `list.yaml` | an item of a YAML `kind: List` has no `kind`, so the controller fails |
+
+`run_directory_decode_smoke` in `scripts/argocd-parity-smoke.sh` waits for a
+`ComparisonError` on each Application, then saves the Application JSON. It
+then runs `drydock build app` for each Application and saves the exit code
+and stderr. `scripts/argocd-directory-decode-smoke` compares the two sides.
+The results go to `directory-decode/` in the smoke output directory.
