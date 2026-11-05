@@ -309,6 +309,15 @@ Important boundaries:
   refetched chart are never served. With `--offline` an expired chart is
   still used and reported by a `source.chart-cache-stale` warning, which
   `--strict` promotes.
+- Recorded divergence from strict Argo CD v3.6.1 (unchanged since v3.5.x):
+  drydock extracts fetched Helm chart archives itself and accepts only
+  directory and regular-file entries with relative names under the chart
+  root, so an archive holding a symlink, hard link, or other entry type, or
+  an absolute entry name, fails to acquire. The repo-server's extractor
+  (`util/io/files` `untar`) creates symlinks whose target stays inside the
+  extraction directory, skips other entry types, and extracts absolute names
+  relative to that directory. Charts built with `helm package` rarely contain
+  such entries.
 - Ambient Git credential helpers, ambient Helm registry config, and secret
   credential fields from discovered repository Secrets are not read. SSH
   identities are the exception: without `--git-ssh-key-file`, the agent and
@@ -588,6 +597,10 @@ Supported:
 Not supported:
 
 - Applying `ignoreResourceUpdates` to desired-vs-desired diffs.
+- Live Server-Side Diff. Since Argo CD v3.6.1 it is also used whenever the
+  `ServerSideApply=true` sync option is enabled, so Argo CD's diff for those
+  resources includes API server defaulting and admission webhook mutation
+  that drydock's desired-vs-desired diff never shows.
 - Managed-fields prediction from live state.
 - Arbitrary string scanning for image references.
 
@@ -639,7 +652,9 @@ Supported:
   live repo-server, controller, or ApplicationSet controller behavior. These
   settings are parsed as metadata and do not mutate render behavior.
 - Custom health Lua validation in `test apps` and `test app`, executed offline
-  against rendered desired manifests.
+  against rendered desired manifests. It reports Lua runtime errors and
+  invalid status values. A `deletionMessage` (Argo CD v3.6.1) applies only to
+  terminating objects, so it never takes effect on desired manifests.
 - Health and action customization parsing and diagnostics, including
   `useOpenLibs` metadata and redacted SHA-256 Lua summaries.
 - Warning diagnostics for version-specific `kustomize.buildOptions.<version>`
@@ -682,10 +697,11 @@ after the selected project diagnostic mode is applied.
 | `spec.clusterResourceBlacklist` | `types.go`, `IsGroupKindNamePermitted`, `IsResourcePermitted` | Supported for render-backed workflows | `project.resource-denied` warning for denied rendered resources | Rendered objects, including sync and delete hooks, plus offline scope knowledge; unknown custom-resource scope defers with `project.resource-scope-deferred` only when possible scopes change or defer the policy outcome |
 | `spec.namespaceResourceWhitelist` | `types.go`, `IsGroupKindNamePermitted`, `IsResourcePermitted` | Supported for render-backed workflows | `project.resource-denied` warning for denied rendered resources; `project.resource-destination-denied` for rendered object namespace denials | Rendered objects, including sync and delete hooks, plus destination namespace normalization; discovery-only workflows do not evaluate rendered resource policy |
 | `spec.namespaceResourceBlacklist` | `types.go`, `IsGroupKindNamePermitted`, `IsResourcePermitted` | Supported for render-backed workflows | `project.resource-denied` warning for denied rendered resources; `project.resource-destination-denied` for rendered object namespace denials | Rendered objects, including sync and delete hooks, plus destination namespace normalization; discovery-only workflows do not evaluate rendered resource policy |
-| `spec.roles` | `types.go`, `ValidateProject`, `ProjectPoliciesString`, Argo RBAC runtime | Metadata-only | `project.rbac-metadata-only` warning when roles are present | Role presence only; no Casbin authorization, claims, scopes, or token-status simulation |
+| `spec.roles` | `types.go`, `ValidateProject`, `ProjectPoliciesString`, Argo RBAC runtime | Metadata-only | `project.rbac-metadata-only` warning when roles are present | Role presence only; no Casbin authorization, claims, scopes, or token-status simulation. Policy actions are not validated, so the `rollback` action Argo CD v3.6.1 accepts is metadata like any other |
 | `spec.syncWindows` | `types.go`, `SyncWindow.Matches`, `SyncWindows.CanSync`, Argo sync runtime | Runtime-bound; documented only | None | Depends on clock, timezone, destination, and manual vs automated operation context |
 | `spec.orphanedResources` | `types.go`, Argo application controller live orphan scan | Unsupported live-cluster behavior | None | Requires live namespace inventory, ownership graph, orphan exclusions, and controller state |
-| `spec.signatureKeys` | `types.go`, Argo GPG verification in `controller/state.go` and repo-server verification | Unsupported runtime verification | None | Requires GPG keyring state, repo-server verification result, and resolved commit metadata |
+| `spec.signatureKeys` | `types.go`, Argo GPG verification in `controller/state.go` and repo-server verification | Unsupported runtime verification | None | Deprecated upstream in favor of `spec.sourceIntegrity`; `EffectiveSourceIntegrity` converts the keys into a Git GPG policy for every repository. Requires GPG keyring state, repo-server verification result, and resolved commit metadata |
+| `spec.sourceIntegrity` | `types.go`, `EffectiveSourceIntegrity`, source integrity checks in `controller/state.go` and repo-server verification | Unsupported runtime verification | None | Requires GPG keyring state, repo-server verification result, and resolved commit metadata |
 | `spec.destinationServiceAccounts` | `types.go`, `ValidateProject`, `controller/sync.go` sync impersonation runtime | Runtime-bound metadata | None | Sync impersonation is applied during controller sync; drydock does not mutate REST config or validate live service account authorization |
 
 ### AppProject Current Behavior Traceability

@@ -158,9 +158,9 @@ rendered-tier discovery. Fatal discovery decode errors append a
 `--discover-ignore` remediation hint at the discovery call sites, not inside
 `internal/manifest`.
 
-Supported ApplicationSet generators are local and deterministic. The supported
-set includes Git directories, Git files, list, matrix, merge, and explicit
-fixture-backed provider generators. Preserve Go-template behavior such as
+Supported ApplicationSet generators are deterministic. The supported set
+includes Git directories, Git files, OCI directories and files, list, matrix,
+merge, and explicit fixture-backed provider generators. Preserve Go-template behavior such as
 `missingkey=error`, Sprig functions, generator selectors, generator template
 overrides, supported nested matrix/merge combinations, and deterministic
 merge-key overlays.
@@ -354,6 +354,12 @@ Within one Application, repeated rendered resource identity is last-wins and
 must emit a diagnostic. Do not dedupe across Applications; cross-Application
 shared-resource behavior belongs to live Argo CD semantics and is out of
 scope for offline desired-state analysis.
+
+Built-in Kubernetes kind scopes live in `internal/manifest/scope.go`, keyed by
+group and kind. `TestBuiltInScopeTablesCoverStaticSchemeKinds` fails when a
+Kubernetes bump adds a top-level kind to the gitops-engine static scheme that
+neither table lists; classify it from its `+genclient:nonNamespaced` marker in
+`k8s.io/api`.
 
 Diff identity is parent Application plus child resource identity. Same-named
 resources from different Applications remain separate. Named app arguments may
