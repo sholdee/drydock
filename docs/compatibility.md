@@ -716,6 +716,45 @@ Supported:
   `jqPathExpressions`, and `managedFieldsManagers`.
 - Global `resource.customizations.ignoreDifferences.*`,
   `knownTypeFields.*`, and selected compare options.
+- The `resource.customizations` map, built as Argo CD v3.6.1
+  `SettingsManager.GetResourceOverrides` builds it
+  (`util/settings/settings.go:1127-1300`). drydock first reads the
+  `resource.customizations` block with `sigs.k8s.io/yaml`, so field names
+  match in any case. Block keys stay as written, so the block key `all` is
+  not `*/*`. Then each split key `resource.customizations.<type>.<suffix>`
+  sets one field of one key. The types are `health`, `useOpenLibs`,
+  `actions`, `ignoreDifferences`, `ignoreResourceUpdates`, and
+  `knownTypeFields`. A split key replaces its field and keeps the other
+  fields of the key. The split key wins over the block. An empty value also
+  replaces the field. For example, the block key `/Service` sets
+  `managedFieldsManagers: [a]`, and
+  `resource.customizations.ignoreDifferences._Service` sets
+  `managedFieldsManagers: [b]`. The result is `[b]`.
+- Split key suffixes as Argo CD reads them (`convertToOverrideKey`).
+  drydock splits the suffix on `_`. Two parts become `group/kind`, and an
+  empty part stays empty. So `_Service` is `/Service`, `Service_` is `Service/`, and
+  `_` is `/`. The last two keys match no resource. A suffix with no `_` stays
+  as written, dots included. The suffix `all` becomes `*/*`.
+- Argo CD fails on these `resource.customizations` values, and drydock
+  reports each as an error:
+  - A block that does not decode.
+  - A block entry with no value.
+  - A split key suffix that is empty or has more than one `_`.
+  - A split key with an unknown type.
+  - A split key value that does not decode.
+
+  Argo CD panics on a block entry with no value. The
+  `useOpenLibs` value must be exactly a Go boolean such as `true`. Argo CD
+  does not remove spaces or a final new line, and it rejects an empty value.
+  After any of these errors, Argo CD uses no overrides. drydock reports an
+  error diagnostic and keeps no resource customizations from that ConfigMap.
+- Argo CD checks the split key prefix `resource.customizations` with no
+  final dot. So `resource.customizationsX.health.Service` is also a split
+  key. Argo CD reads the split keys in Go map order, which is not defined.
+  If two split keys set the same field of the same key, the order changes
+  the result. Otherwise it does not. With valid ConfigMap keys, only this prefix rule can cause
+  that. drydock reads the split keys in sorted order, keeps the last value,
+  and reports a warning.
 - Ignore rule order as in Argo CD v3.6.1. Application rules run first, then
   the resource's annotation rule, then `resource.customizations` rules
   (`util/argo/diff/ignore.go`, `util/argo/normalizers/diff_normalizer.go`).

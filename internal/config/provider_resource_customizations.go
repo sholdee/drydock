@@ -3,129 +3,174 @@ package config
 import (
 	"crypto/sha256"
 	"fmt"
-	argoappv1 "github.com/argoproj/argo-cd/v3/pkg/apis/application/v1alpha1"
-	"github.com/sholdee/drydock/internal/diagnostic"
-	"go.yaml.in/yaml/v3"
 	"reflect"
 	"sort"
 	"strings"
+
+	argoappv1 "github.com/argoproj/argo-cd/v3/pkg/apis/application/v1alpha1"
+	"github.com/sholdee/drydock/internal/diagnostic"
+	"go.yaml.in/yaml/v3"
+	sigsyaml "sigs.k8s.io/yaml"
 )
 
-func appendParsedResourceCustomizations(settings *ArgoSettings, raw string, provenance diagnostic.Provenance, diags []diagnostic.Diagnostic) []diagnostic.Diagnostic {
-	var customizations map[string]struct {
-		IgnoreDifferences     string           `yaml:"ignoreDifferences"`
-		IgnoreResourceUpdates string           `yaml:"ignoreResourceUpdates"`
-		KnownTypeFields       []KnownTypeField `yaml:"knownTypeFields"`
-		HealthLua             string           `yaml:"health.lua"`
-		UseOpenLibs           *bool            `yaml:"health.lua.useOpenLibs"`
-		Actions               string           `yaml:"actions"`
+// appendParsedResourceOverrides builds the resource customizations of one
+// argocd-cm the way Argo CD v3.6.1 SettingsManager.GetResourceOverrides does
+// (util/settings/settings.go:1127-1143). It decodes the
+// resource.customizations block with sigs.k8s.io/yaml into Argo CD's own
+// ResourceOverride type, so block keys are kept as written and field names
+// follow the JSON tag rules. Then the split keys replace single fields
+// (appendResourceOverridesFromSplitKeys). The ignore-status override that
+// Argo CD adds afterwards comes from resource.compareoptions, which drydock
+// handles on its own.
+//
+// Argo CD fails the whole call on the first error and uses no overrides.
+// drydock reports each error as an error diagnostic and keeps no resource
+// customizations from this ConfigMap.
+func appendParsedResourceOverrides(settings *ArgoSettings, values map[string]string, path, basePointer string, diags []diagnostic.Diagnostic) []diagnostic.Diagnostic {
+	build := &resourceOverrideBuild{
+		overrides:       map[string]argoappv1.ResourceOverride{},
+		fieldProvenance: map[string]map[string]diagnostic.Provenance{},
+		keyProvenance:   map[string]diagnostic.Provenance{},
+		splitKeySource:  map[string]map[string]string{},
+		useOpenLibsSet:  map[string]bool{},
 	}
-	if err := yaml.Unmarshal([]byte(raw), &customizations); err != nil {
-		return append(diags, diagnostic.Diagnostic{
-			Severity:   diagnostic.SeverityError,
-			Category:   "settings",
-			Message:    "invalid resource.customizations settings",
-			Provenance: provenance,
-		})
+	failed := false
+	if value, ok := values[resourceCustomizationsKey]; ok && value != "" {
+		provenance := diagnostic.Provenance{
+			Path:    path,
+			Pointer: basePointer + "." + resourceCustomizationsKey,
+		}
+		var openLibs map[string]struct {
+			UseOpenLibs *bool `json:"health.lua.useOpenLibs"`
+		}
+		err := decodeResourceOverrides(value, &build.overrides)
+		if err == nil {
+			err = sigsyaml.Unmarshal([]byte(value), &openLibs)
+		}
+		if err != nil {
+			failed = true
+			build.overrides = map[string]argoappv1.ResourceOverride{}
+			diags = append(diags, resourceCustomizationError(
+				fmt.Sprintf("invalid resource.customizations settings: %v", err),
+				provenance,
+			))
+		}
+		for key := range build.overrides {
+			for _, field := range []string{
+				overrideFieldHealth,
+				overrideFieldUseOpenLibs,
+				overrideFieldActions,
+				overrideFieldIgnoreDifferences,
+				overrideFieldIgnoreResourceUpdates,
+				overrideFieldKnownTypeFields,
+			} {
+				build.setField(key, field, provenance)
+			}
+			if openLibs[key].UseOpenLibs != nil {
+				build.useOpenLibsSet[key] = true
+			}
+		}
 	}
 
-	keys := make([]string, 0, len(customizations))
-	for key := range customizations {
+	next := appendResourceOverridesFromSplitKeys(build, values, path, basePointer, nil)
+	diags = append(diags, next...)
+	if failed || hasErrorDiagnostic(next) {
+		return diags
+	}
+
+	keys := make([]string, 0, len(build.overrides))
+	for key := range build.overrides {
 		keys = append(keys, key)
 	}
 	sort.Strings(keys)
 	for _, key := range keys {
-		block := customizations[key]
-		customization := ResourceCustomization{
-			Provenance: provenance,
+		customization, ok, next := resourceCustomizationFromOverride(key, build.overrides[key], build)
+		diags = append(diags, next...)
+		if !ok {
+			continue
 		}
-		hasCustomization := false
-		if strings.TrimSpace(block.IgnoreDifferences) != "" {
-			ignore, next := parseOverrideIgnoreDifferences(block.IgnoreDifferences, provenance)
-			diags = append(diags, next...)
-			if !hasErrorDiagnostic(next) {
-				customization.IgnoreDifferences = ignore
-				hasCustomization = true
-			}
+		if settings.ResourceCustomizations == nil {
+			settings.ResourceCustomizations = map[string]ResourceCustomization{}
 		}
-		if strings.TrimSpace(block.IgnoreResourceUpdates) != "" {
-			ignore, next := parseOverrideIgnoreDifferencesWithMessage(
-				block.IgnoreResourceUpdates,
-				provenance,
-				"invalid resource customization ignoreResourceUpdates settings",
-			)
-			diags = append(diags, next...)
-			if !hasErrorDiagnostic(next) {
-				customization.IgnoreResourceUpdates = ignore
-				hasCustomization = true
-				diags = append(diags, advancedResourceCustomizationWarning(
-					"resource customizations ignoreResourceUpdates are parsed but not applied to desired-vs-desired diffs",
-					provenance,
-				))
-			}
-		}
-		if len(block.KnownTypeFields) > 0 {
-			customization.KnownTypeFields = append([]KnownTypeField(nil), block.KnownTypeFields...)
-			hasCustomization = true
-		}
-		if strings.TrimSpace(block.HealthLua) != "" {
-			customization.HasHealthLua = true
-			customization.HealthLuaSHA256 = stringFingerprint(block.HealthLua)
-			customization.HealthLua = block.HealthLua
-			customization.healthLuaFingerprint = customization.HealthLuaSHA256
-			hasCustomization = true
-		}
-		if block.UseOpenLibs != nil {
-			customization.HasUseOpenLibs = true
-			customization.UseOpenLibs = *block.UseOpenLibs
-			hasCustomization = true
-		}
-		if strings.TrimSpace(block.Actions) != "" {
-			actions, next := parseResourceActionsSummary(block.Actions, provenance)
-			diags = append(diags, next...)
-			if !hasErrorDiagnostic(next) {
-				customization.Actions = actions
-				hasCustomization = true
-				diags = append(diags, advancedResourceCustomizationWarning(
-					"resource customizations actions are parsed as metadata only and are not executed offline",
-					provenance,
-				))
-			}
-		}
-		if hasCustomization {
-			diags = addResourceCustomization(settings, key, customization, diags)
-		}
+		settings.ResourceCustomizations[key] = customization
 	}
 	return diags
 }
-func parseOverrideIgnoreDifferences(raw string, provenance diagnostic.Provenance) (OverrideIgnoreDifferences, []diagnostic.Diagnostic) {
-	return parseOverrideIgnoreDifferencesWithMessage(raw, provenance, "invalid resource customization ignoreDifferences settings")
-}
-func parseOverrideIgnoreDifferencesWithMessage(raw string, provenance diagnostic.Provenance, message string) (OverrideIgnoreDifferences, []diagnostic.Diagnostic) {
-	var ignore OverrideIgnoreDifferences
-	if err := yaml.Unmarshal([]byte(raw), &ignore); err != nil {
-		return ignore, []diagnostic.Diagnostic{{
-			Severity:   diagnostic.SeverityError,
-			Category:   "settings",
-			Message:    message,
-			Provenance: provenance,
-		}}
-	}
 
-	return ignore, nil
+// decodeResourceOverrides decodes the resource.customizations block into
+// Argo CD's ResourceOverride map. Argo CD's ResourceOverride.UnmarshalJSON
+// (pkg/apis/application/v1alpha1/types.go:2641-2658) panics with a nil
+// pointer error on a null entry, such as "Service:" with no value, so Argo
+// CD cannot load such a block. drydock turns the panic into an error.
+func decodeResourceOverrides(value string, overrides *map[string]argoappv1.ResourceOverride) (err error) {
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			err = fmt.Errorf("an entry with no value makes Argo CD panic: %v", recovered)
+		}
+	}()
+	return sigsyaml.Unmarshal([]byte(value), overrides)
 }
-func parseKnownTypeFields(raw string, provenance diagnostic.Provenance) ([]KnownTypeField, []diagnostic.Diagnostic) {
-	var fields []KnownTypeField
-	if err := yaml.Unmarshal([]byte(raw), &fields); err != nil {
-		return nil, []diagnostic.Diagnostic{{
-			Severity:   diagnostic.SeverityError,
-			Category:   "settings",
-			Message:    "invalid resource customization knownTypeFields settings",
-			Provenance: provenance,
-		}}
+
+// resourceCustomizationFromOverride converts one Argo CD ResourceOverride
+// into drydock's ResourceCustomization. It reports false when the override
+// sets nothing, because an empty override changes no diff or health result.
+// Health Lua and actions that hold only white space count as unset.
+func resourceCustomizationFromOverride(key string, override argoappv1.ResourceOverride, build *resourceOverrideBuild) (ResourceCustomization, bool, []diagnostic.Diagnostic) {
+	var diags []diagnostic.Diagnostic
+	fieldProvenance := build.fieldProvenance[key]
+	customization := ResourceCustomization{
+		Provenance:            build.keyProvenance[key],
+		IgnoreDifferences:     overrideIgnoreDifferencesFromArgo(override.IgnoreDifferences),
+		IgnoreResourceUpdates: overrideIgnoreDifferencesFromArgo(override.IgnoreResourceUpdates),
 	}
-	return fields, nil
+	hasCustomization := hasOverrideSection(customization.IgnoreDifferences)
+	if hasOverrideSection(customization.IgnoreResourceUpdates) {
+		hasCustomization = true
+		diags = append(diags, advancedResourceCustomizationWarning(
+			"resource customizations ignoreResourceUpdates are parsed but not applied to desired-vs-desired diffs",
+			fieldProvenance[overrideFieldIgnoreResourceUpdates],
+		))
+	}
+	for _, field := range override.KnownTypeFields {
+		customization.KnownTypeFields = append(customization.KnownTypeFields, KnownTypeField{Field: field.Field, Type: field.Type})
+		hasCustomization = true
+	}
+	if strings.TrimSpace(override.HealthLua) != "" {
+		customization.HasHealthLua = true
+		customization.HealthLuaSHA256 = stringFingerprint(override.HealthLua)
+		customization.HealthLua = override.HealthLua
+		customization.healthLuaFingerprint = customization.HealthLuaSHA256
+		hasCustomization = true
+	}
+	if override.UseOpenLibs || build.useOpenLibsSet[key] {
+		customization.HasUseOpenLibs = true
+		customization.UseOpenLibs = override.UseOpenLibs
+		hasCustomization = true
+	}
+	if strings.TrimSpace(override.Actions) != "" {
+		provenance := fieldProvenance[overrideFieldActions]
+		actions, next := parseResourceActionsSummary(override.Actions, provenance)
+		diags = append(diags, next...)
+		if !hasErrorDiagnostic(next) {
+			customization.Actions = actions
+			hasCustomization = true
+			diags = append(diags, advancedResourceCustomizationWarning(
+				"resource customizations actions are parsed as metadata only and are not executed offline",
+				provenance,
+			))
+		}
+	}
+	return customization, hasCustomization, diags
 }
+
+func overrideIgnoreDifferencesFromArgo(ignore argoappv1.OverrideIgnoreDiff) OverrideIgnoreDifferences {
+	return OverrideIgnoreDifferences{
+		JSONPointers:          ignore.JSONPointers,
+		JQPathExpressions:     ignore.JQPathExpressions,
+		ManagedFieldsManagers: ignore.ManagedFieldsManagers,
+	}
+}
+
 func parseResourceActionsSummary(raw string, provenance diagnostic.Provenance) (ResourceActionsSummary, []diagnostic.Diagnostic) {
 	var actions argoappv1.ResourceActions
 	if err := yaml.Unmarshal([]byte(raw), &actions); err != nil {
@@ -173,25 +218,6 @@ func advancedResourceCustomizationWarning(message string, provenance diagnostic.
 		Message:    message,
 		Provenance: provenance,
 	}
-}
-func addResourceCustomization(settings *ArgoSettings, key string, customization ResourceCustomization, diags []diagnostic.Diagnostic) []diagnostic.Diagnostic {
-	if settings.ResourceCustomizations == nil {
-		settings.ResourceCustomizations = map[string]ResourceCustomization{}
-	}
-	existing, ok := settings.ResourceCustomizations[key]
-	if ok {
-		merged, ok := mergeResourceCustomizationSections(existing, customization)
-		if ok {
-			settings.ResourceCustomizations[key] = merged
-			return diags
-		}
-		return append(diags, conflictDiagnostic(
-			fmt.Sprintf("conflicting resource customization settings discovered for %q", key),
-			customization.Provenance,
-		))
-	}
-	settings.ResourceCustomizations[key] = customization
-	return diags
 }
 func mergeResourceCustomizationSections(existing, incoming ResourceCustomization) (ResourceCustomization, bool) {
 	merged := existing
