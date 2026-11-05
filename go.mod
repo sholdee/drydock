@@ -4,8 +4,8 @@ go 1.27.3
 
 require (
 	dario.cat/mergo v1.0.2
-	github.com/argoproj/argo-cd/gitops-engine v0.7.1-0.20250908182407-97ad5b59a627
-	github.com/argoproj/argo-cd/v3 v3.5.6
+	github.com/argoproj/argo-cd/gitops-engine/v3 v3.6.1
+	github.com/argoproj/argo-cd/v3 v3.6.1
 	github.com/argoproj/pkg v0.13.6
 	github.com/bmatcuk/doublestar/v4 v4.10.4
 	github.com/distribution/reference v0.6.0
@@ -39,11 +39,11 @@ require (
 require (
 	cloud.google.com/go/compute/metadata v0.9.0 // indirect
 	cyphar.com/go-pathrs v0.2.5 // indirect
-	github.com/Azure/azure-sdk-for-go/sdk/azcore v1.22.0 // indirect
-	github.com/Azure/azure-sdk-for-go/sdk/azidentity v1.14.0 // indirect
+	github.com/Azure/azure-sdk-for-go/sdk/azcore v1.23.1 // indirect
+	github.com/Azure/azure-sdk-for-go/sdk/azidentity v1.14.1 // indirect
 	github.com/Azure/azure-sdk-for-go/sdk/internal v1.12.0 // indirect
 	github.com/Azure/go-ansiterm v0.0.0-20250102033503-faa5f7b0171c // indirect
-	github.com/AzureAD/microsoft-authentication-library-for-go v1.7.2 // indirect
+	github.com/AzureAD/microsoft-authentication-library-for-go v1.8.0 // indirect
 	github.com/BurntSushi/toml v1.6.0 // indirect
 	github.com/MakeNowJust/heredoc v1.0.0 // indirect
 	github.com/Masterminds/goutils v1.1.1 // indirect
@@ -54,7 +54,7 @@ require (
 	github.com/argoproj/pkg/v2 v2.0.1 // indirect
 	github.com/beorn7/perks v1.0.1 // indirect
 	github.com/blang/semver/v4 v4.0.0 // indirect
-	github.com/bombsimon/logrusr/v4 v4.1.0 // indirect
+	github.com/bombsimon/logrusr/v4 v4.2.0 // indirect
 	github.com/bradleyfalzon/ghinstallation/v2 v2.19.0 // indirect
 	github.com/casbin/casbin/v2 v2.135.0 // indirect
 	github.com/casbin/govaluate v1.10.0 // indirect
@@ -78,22 +78,22 @@ require (
 	github.com/go-git/go-billy/v5 v5.9.2 // indirect
 	github.com/go-logr/logr v1.4.4 // indirect
 	github.com/go-logr/stdr v1.2.2 // indirect
-	github.com/go-openapi/jsonpointer v1.0.0 // indirect
-	github.com/go-openapi/jsonreference v1.0.0 // indirect
-	github.com/go-openapi/swag v0.27.1 // indirect
-	github.com/go-openapi/swag/cmdutils v0.27.1 // indirect
-	github.com/go-openapi/swag/conv v0.27.1 // indirect
-	github.com/go-openapi/swag/fileutils v0.27.1 // indirect
-	github.com/go-openapi/swag/jsonutils v0.27.1 // indirect
-	github.com/go-openapi/swag/loading v0.27.1 // indirect
-	github.com/go-openapi/swag/mangling v0.27.1 // indirect
-	github.com/go-openapi/swag/netutils v0.27.1 // indirect
-	github.com/go-openapi/swag/pools v0.27.1 // indirect
-	github.com/go-openapi/swag/stringutils v0.27.1 // indirect
-	github.com/go-openapi/swag/typeutils v0.27.1 // indirect
-	github.com/go-openapi/swag/yamlutils v0.27.1 // indirect
+	github.com/go-openapi/jsonpointer v1.0.1 // indirect
+	github.com/go-openapi/jsonreference v1.0.2 // indirect
+	github.com/go-openapi/swag v0.28.0 // indirect
+	github.com/go-openapi/swag/cmdutils v0.28.0 // indirect
+	github.com/go-openapi/swag/conv v0.29.1 // indirect
+	github.com/go-openapi/swag/fileutils v0.28.0 // indirect
+	github.com/go-openapi/swag/jsonutils v0.29.1 // indirect
+	github.com/go-openapi/swag/loading v0.29.1 // indirect
+	github.com/go-openapi/swag/mangling v0.29.1 // indirect
+	github.com/go-openapi/swag/netutils v0.28.0 // indirect
+	github.com/go-openapi/swag/pools v0.29.1 // indirect
+	github.com/go-openapi/swag/stringutils v0.29.1 // indirect
+	github.com/go-openapi/swag/typeutils v0.29.1 // indirect
+	github.com/go-openapi/swag/yamlutils v0.29.1 // indirect
 	github.com/go-redis/cache/v9 v9.0.0 // indirect
-	github.com/gobwas/glob v0.2.3 // indirect
+	github.com/gobwas/glob v1.0.0 // indirect
 	github.com/gogo/protobuf v1.3.2 // indirect
 	github.com/golang-jwt/jwt/v4 v4.5.2 // indirect
 	github.com/golang-jwt/jwt/v5 v5.3.1 // indirect
@@ -113,7 +113,7 @@ require (
 	github.com/gorilla/websocket v1.5.4-0.20250319132907-e064f32e3674 // indirect
 	github.com/gosimple/slug v1.15.0 // indirect
 	github.com/gosimple/unidecode v1.0.1 // indirect
-	github.com/grpc-ecosystem/go-grpc-middleware/v2 v2.3.3 // indirect
+	github.com/grpc-ecosystem/go-grpc-middleware/v2 v2.3.4 // indirect
 	github.com/grpc-ecosystem/grpc-gateway v1.16.0 // indirect
 	github.com/huandu/xstrings v1.5.0 // indirect
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect
@@ -144,18 +144,18 @@ require (
 	github.com/peterbourgon/diskv v2.0.1+incompatible // indirect
 	github.com/pjbgf/sha1cd v0.7.0 // indirect
 	github.com/pkg/browser v0.0.0-20240102092130-5ac0b6a4141c // indirect
-	github.com/prometheus/client_golang v1.24.0 // indirect
-	github.com/prometheus/client_model v0.6.2 // indirect
-	github.com/prometheus/common v0.70.0 // indirect
+	github.com/prometheus/client_golang v1.24.1 // indirect
+	github.com/prometheus/client_model v0.6.3 // indirect
+	github.com/prometheus/common v0.70.1 // indirect
 	github.com/prometheus/procfs v0.21.1 // indirect
 	github.com/r3labs/diff/v3 v3.0.2 // indirect
-	github.com/redis/go-redis/v9 v9.20.1 // indirect
+	github.com/redis/go-redis/v9 v9.22.0 // indirect
 	github.com/robfig/cron/v3 v3.0.2-0.20210106135023-bc59245fe10e // indirect
 	github.com/russross/blackfriday/v2 v2.1.0 // indirect
 	github.com/santhosh-tekuri/jsonschema/v6 v6.0.3 // indirect
 	github.com/sergi/go-diff v1.4.0 // indirect
 	github.com/shopspring/decimal v1.4.0 // indirect
-	github.com/skeema/knownhosts v1.3.2 // indirect
+	github.com/skeema/knownhosts v1.3.3 // indirect
 	github.com/spf13/cast v1.7.1 // indirect
 	github.com/spf13/pflag v1.0.10 // indirect
 	github.com/texttheater/golang-levenshtein v1.0.1 // indirect
@@ -170,10 +170,10 @@ require (
 	github.com/xlab/treeprint v1.2.0 // indirect
 	github.com/yuin/gopher-lua v1.1.2 // indirect
 	go.opentelemetry.io/auto/sdk v1.2.1 // indirect
-	go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc v0.69.0 // indirect
-	go.opentelemetry.io/otel v1.45.0 // indirect
-	go.opentelemetry.io/otel/metric v1.45.0 // indirect
-	go.opentelemetry.io/otel/trace v1.45.0 // indirect
+	go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc v0.71.0 // indirect
+	go.opentelemetry.io/otel v1.46.0 // indirect
+	go.opentelemetry.io/otel/metric v1.46.0 // indirect
+	go.opentelemetry.io/otel/trace v1.46.0 // indirect
 	go.uber.org/atomic v1.11.0 // indirect
 	go.yaml.in/yaml/v2 v2.4.4 // indirect
 	golang.org/x/net v0.62.0 // indirect
@@ -182,8 +182,8 @@ require (
 	golang.org/x/text v0.43.0 // indirect
 	golang.org/x/time v0.16.0 // indirect
 	google.golang.org/genproto v0.0.0-20260319201613-d00831a3d3e7 // indirect
-	google.golang.org/genproto/googleapis/api v0.0.0-20260803160001-6ac0973c030d // indirect
-	google.golang.org/genproto/googleapis/rpc v0.0.0-20260803160001-6ac0973c030d // indirect
+	google.golang.org/genproto/googleapis/api v0.0.0-20260819154853-08b0e4226688 // indirect
+	google.golang.org/genproto/googleapis/rpc v0.0.0-20260825221802-da73d73af1c5 // indirect
 	google.golang.org/grpc v1.84.0 // indirect
 	google.golang.org/protobuf v1.36.12 // indirect
 	gopkg.in/evanphx/json-patch.v4 v4.13.0 // indirect
@@ -196,14 +196,14 @@ require (
 	k8s.io/cli-runtime v0.37.1 // indirect
 	k8s.io/client-go v0.37.1 // indirect
 	k8s.io/component-base v0.37.1 // indirect
-	k8s.io/component-helpers v0.36.1 // indirect
-	k8s.io/controller-manager v0.36.1 // indirect
+	k8s.io/component-helpers v0.37.0 // indirect
+	k8s.io/controller-manager v0.37.0 // indirect
 	k8s.io/klog/v2 v2.140.0 // indirect
-	k8s.io/kube-aggregator v0.36.1 // indirect
+	k8s.io/kube-aggregator v0.37.0 // indirect
 	k8s.io/kube-openapi v0.0.0-20261001230523-97fa35140926 // indirect
 	k8s.io/kubectl v0.37.1 // indirect
-	k8s.io/kubernetes v1.36.1 // indirect
-	k8s.io/streaming v0.36.1 // indirect
+	k8s.io/kubernetes v1.37.0 // indirect
+	k8s.io/streaming v0.37.0 // indirect
 	k8s.io/utils v0.0.0-20260626114624-be93311217bd // indirect
 	layeh.com/gopher-json v0.0.0-20190114024228-97fed8db8427 // indirect
 	sigs.k8s.io/controller-runtime v0.25.2 // indirect
@@ -212,50 +212,48 @@ require (
 )
 
 replace (
-	// Argo CD uses a local replace for GitOps Engine. Consumers do not inherit
-	// it, so this pseudo-version must track the selected Argo CD tag.
-	github.com/argoproj/argo-cd/gitops-engine => github.com/argoproj/argo-cd/gitops-engine v0.0.0-20261020182657-c2b1e3017e2c
-
-	// Pin the Kubernetes module set to the versions Argo CD v3.5 pins in its
+	// Pin the Kubernetes module set to the versions Argo CD v3.6 pins in its
 	// own replace block, so MVS cannot drift individual k8s.io modules.
-	k8s.io/api => k8s.io/api v0.36.1
-	k8s.io/apiextensions-apiserver => k8s.io/apiextensions-apiserver v0.36.1
-	k8s.io/apimachinery => k8s.io/apimachinery v0.36.1
-	k8s.io/apiserver => k8s.io/apiserver v0.36.1
-	k8s.io/cli-runtime => k8s.io/cli-runtime v0.36.1
-	k8s.io/client-go => k8s.io/client-go v0.36.1
-	k8s.io/cloud-provider => k8s.io/cloud-provider v0.36.1
-	k8s.io/cluster-bootstrap => k8s.io/cluster-bootstrap v0.36.1
-	k8s.io/code-generator => k8s.io/code-generator v0.36.1
-	k8s.io/component-base => k8s.io/component-base v0.36.1
-	k8s.io/component-helpers => k8s.io/component-helpers v0.36.1
-	k8s.io/controller-manager => k8s.io/controller-manager v0.36.1
-	k8s.io/cri-api => k8s.io/cri-api v0.36.1
-	k8s.io/cri-client => k8s.io/cri-client v0.36.1
-	k8s.io/csi-translation-lib => k8s.io/csi-translation-lib v0.36.1
-	k8s.io/dynamic-resource-allocation => k8s.io/dynamic-resource-allocation v0.36.1
-	k8s.io/endpointslice => k8s.io/endpointslice v0.36.1
-	k8s.io/externaljwt => k8s.io/externaljwt v0.36.1
-	k8s.io/kms => k8s.io/kms v0.36.1
-	k8s.io/kube-aggregator => k8s.io/kube-aggregator v0.36.1
-	k8s.io/kube-controller-manager => k8s.io/kube-controller-manager v0.36.1
+	k8s.io/api => k8s.io/api v0.37.0
+	k8s.io/apiextensions-apiserver => k8s.io/apiextensions-apiserver v0.37.0
+	k8s.io/apimachinery => k8s.io/apimachinery v0.37.0
+	k8s.io/apiserver => k8s.io/apiserver v0.37.0
+	k8s.io/cli-runtime => k8s.io/cli-runtime v0.37.0
+	k8s.io/client-go => k8s.io/client-go v0.37.0
+	k8s.io/cloud-provider => k8s.io/cloud-provider v0.37.0
+	k8s.io/cluster-bootstrap => k8s.io/cluster-bootstrap v0.37.0
+	k8s.io/code-generator => k8s.io/code-generator v0.37.0
+	k8s.io/component-base => k8s.io/component-base v0.37.0
+	k8s.io/component-helpers => k8s.io/component-helpers v0.37.0
+	k8s.io/controller-manager => k8s.io/controller-manager v0.37.0
+	k8s.io/cri-api => k8s.io/cri-api v0.37.0
+	k8s.io/cri-client => k8s.io/cri-client v0.37.0
+	k8s.io/cri-streaming => k8s.io/cri-streaming v0.37.0
+	k8s.io/csi-translation-lib => k8s.io/csi-translation-lib v0.37.0
+	k8s.io/dynamic-resource-allocation => k8s.io/dynamic-resource-allocation v0.37.0
+	k8s.io/endpointslice => k8s.io/endpointslice v0.37.0
+	k8s.io/externaljwt => k8s.io/externaljwt v0.37.0
+	k8s.io/kms => k8s.io/kms v0.37.0
+	k8s.io/kube-aggregator => k8s.io/kube-aggregator v0.37.0
+	k8s.io/kube-controller-manager => k8s.io/kube-controller-manager v0.37.0
 
 	// kustomize api/kyaml v0.21.3 and later require a k8s.io/kube-openapi built
 	// on structured-merge-diff/v7 (the Kubernetes 1.38 line). The apimachinery
 	// pinned above is on v6 and does not compile against it, so kube-openapi is
-	// held on the v6 line until Argo CD's Kubernetes set moves to a v7-based
-	// release. Argo CD requires kube-openapi rather than replacing it, so the
+	// held on the v6 line (the exact revision Argo CD v3.6 requires) until Argo
+	// CD's Kubernetes set moves to a v7-based release. Argo CD requires
+	// kube-openapi rather than replacing it, so the
 	// post-upgrade sync helper does not manage this pin; revisit it by hand at
 	// Argo CD major-line bumps.
 	k8s.io/kube-openapi => k8s.io/kube-openapi v0.0.0-20260721132016-d427ff9ee9ad
-	k8s.io/kube-proxy => k8s.io/kube-proxy v0.36.1
-	k8s.io/kube-scheduler => k8s.io/kube-scheduler v0.36.1
-	k8s.io/kubectl => k8s.io/kubectl v0.36.1
-	k8s.io/kubelet => k8s.io/kubelet v0.36.1
-	k8s.io/metrics => k8s.io/metrics v0.36.1
-	k8s.io/mount-utils => k8s.io/mount-utils v0.36.1
-	k8s.io/pod-security-admission => k8s.io/pod-security-admission v0.36.1
-	k8s.io/sample-apiserver => k8s.io/sample-apiserver v0.36.1
+	k8s.io/kube-proxy => k8s.io/kube-proxy v0.37.0
+	k8s.io/kube-scheduler => k8s.io/kube-scheduler v0.37.0
+	k8s.io/kubectl => k8s.io/kubectl v0.37.0
+	k8s.io/kubelet => k8s.io/kubelet v0.37.0
+	k8s.io/metrics => k8s.io/metrics v0.37.0
+	k8s.io/mount-utils => k8s.io/mount-utils v0.37.0
+	k8s.io/pod-security-admission => k8s.io/pod-security-admission v0.37.0
+	k8s.io/sample-apiserver => k8s.io/sample-apiserver v0.37.0
 
 	sigs.k8s.io/controller-runtime => sigs.k8s.io/controller-runtime v0.24.1
 )
