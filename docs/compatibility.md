@@ -123,7 +123,12 @@ Supported:
 - ApplicationSet list `elementsYaml`, including matrix-interpolated
   `elementsYaml`.
 - Generator selectors and generator template overrides for supported
-  generators.
+  generators. Selectors match the params flattened as Argo CD v3.6.1
+  `flattenParameters` does (`applicationset/generators/generator_spec_processor.go`):
+  maps and untyped lists are walked into dot-separated keys, but a `[]string`
+  such as Git `path.segments` or pull-request `labels` is one key whose value
+  is the Go print form, such as `[apps alpha]`. The render parity smoke checks a
+  selector on `path.segments`.
 - Nested matrix/merge combinations where the Argo CD v3 nested JSON API
   permits them.
 - Explicit local YAML/JSON fixtures for cluster, clusterDecisionResource, SCM

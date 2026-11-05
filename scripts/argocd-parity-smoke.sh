@@ -245,6 +245,10 @@ APPLICATIONS=(
   # parity-cluster-sprig-map-function calls hasKey on the map[string]string
   # cluster annotations, so its parity-cluster-haskey-* Applications must be
   # absent on both sides.
+  # Generator selector on the []string path.segments param, which Argo CD
+  # flattens to one "[a b c]" value. The parity-segments-index-* Applications
+  # select on path.segments.3 and must be absent on both sides.
+  parity-segments-alpha
 )
 
 TRACKING_APPLICATIONS=(

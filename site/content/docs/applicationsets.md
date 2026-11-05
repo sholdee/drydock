@@ -164,6 +164,29 @@ Matrix and merge children may use list, Git directories, Git files, OCI
 directories, OCI files, fixture-backed provider generators, and nested
 matrix/merge combinations where the Argo CD v3 nested JSON API permits them.
 
+## Generator Selectors
+
+A generator `selector` matches against the generator params flattened into
+labels, as Argo CD v3.6.1 does. Nested maps become dot-separated keys, such as
+`path.basename`, `metadata.labels.env`, and `values.region`. Lists of untyped
+values, such as plugin output arrays, become indexed keys, such as `items.0`.
+
+A list of strings is not split. Git `path.segments` and pull-request `labels`
+are each one key whose value is the Go print form of the list, with the items
+inside square brackets and separated by spaces. For example, the directory
+`apps/alpha` gives `path.segments` the value `[apps alpha]`, so this selector
+matches it:
+
+```yaml
+selector:
+  matchLabels:
+    path.segments: "[apps alpha]"
+```
+
+There is no `path.segments.0` or `labels.0` key, so a selector on such a key
+never matches. The cluster `flatList` `clusters` param is one key in the same
+way.
+
 ## Template Render Errors
 
 Template execution failures, including `templatePatch` failures, generator

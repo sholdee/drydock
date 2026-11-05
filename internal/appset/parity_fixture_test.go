@@ -140,6 +140,23 @@ func TestArgoCDParityFixtureClusterSprigMapFunctionGeneratesNothing(t *testing.T
 	}
 }
 
+// TestArgoCDParityFixtureSelectorListParams pins the smoke fixture whose
+// generator selectors read the []string path.segments param. Argo CD
+// flattens the list to one "[workloads appset git alpha]" value, so only
+// alpha matches the first generator and nothing matches path.segments.3.
+func TestArgoCDParityFixtureSelectorListParams(t *testing.T) {
+	apps, codes := generateParityAppSet(t, "selector-list-params.yaml", Options{})
+	if got, want := generatedNames(apps), []string{"parity-segments-alpha"}; !slices.Equal(got, want) {
+		t.Fatalf("generated names = %#v, want %#v", got, want)
+	}
+	if len(codes) != 0 {
+		t.Fatalf("diagnostic codes = %#v, want none", codes)
+	}
+	if got := apps[0].Application.Spec.GetSource().Path; got != "workloads/appset/git/alpha" {
+		t.Fatalf("source path = %q, want workloads/appset/git/alpha", got)
+	}
+}
+
 // assertParityHelmValues checks that each named Application exists and that
 // its helm.values string holds every wanted line.
 func assertParityHelmValues(t *testing.T, apps []GeneratedApplication, want map[string]string) {

@@ -731,3 +731,29 @@ smoke's `APPLICATIONS` array, so the Argo CD and drydock inventory checks
 both require zero Applications from this ApplicationSet.
 `TestArgoCDParityFixtureClusterSprigMapFunctionGeneratesNothing` in
 `internal/appset` pins the drydock side.
+
+## Generator selector list param fixture
+
+`applicationsets/selector-list-params.yaml` has two Git directory generators
+over `workloads/appset/git/*`, each with a selector on the `path.segments`
+param.
+
+Argo CD v3.6.1 builds `path.segments` as a `[]string`
+(`applicationset/generators/repo_path_utils.go`). Before it matches a
+selector, it flattens the params with `github.com/jeremywohl/flatten`
+(`applicationset/generators/generator_spec_processor.go:126-160`). That
+library only walks `map[string]interface{}` and `[]interface{}`, so the
+`[]string` is one leaf, and `fmt.Sprintf("%v")` turns it into
+`[workloads appset git alpha]`. There is no `path.segments.N` key.
+
+- The first generator selects `path.segments: "[workloads appset git alpha]"`,
+  so only `parity-segments-alpha` exists. It is in the smoke's
+  `APPLICATIONS` array.
+- The second generator selects on `path.segments.3` with `Exists`, so it
+  matches nothing. No `parity-segments-index-*` name is in `APPLICATIONS`, so
+  the Argo CD and drydock inventory checks both require that these
+  Applications are absent.
+
+drydock flattens params the same way.
+`TestArgoCDParityFixtureSelectorListParams` in `internal/appset` pins the
+drydock side.
