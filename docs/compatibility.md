@@ -487,7 +487,10 @@ Supported:
   gets the revision of its own repository, and a `$ref` source adds nothing.
   drydock resolves the value offline as follows:
   - A Git source fetched into the Git cache gets the commit SHA that drydock
-    checked out.
+    checked out. A hex `targetRevision` that is also the name of a branch or
+    tag checks out that ref, because `ls-remote` matches ref names before it
+    takes a hex revision as an abbreviated SHA (`util/git/client.go:991-1022`).
+    drydock looks for the branch under every remote of its clone.
   - A source that renders from the `--path` tree (a path that exists there,
     or a repository that drydock maps to the tree) gets the HEAD commit of
     that tree, also when the worktree has uncommitted changes. drydock
@@ -495,6 +498,16 @@ Supported:
     so it reports the commit of that tree. Each side of a `--ref` or
     `--ref-orig` diff gets the commit of its snapshot.
   - A `--repo-map` source gets the HEAD commit of the mapped directory.
+  - A `--path` or `--repo-map` source whose `targetRevision` pins a commit by
+    SHA gets what Argo CD reports for that pin, although drydock still
+    renders the local tree. A full SHA gives the SHA in lower case for a
+    single-source Application (`git rev-parse HEAD` after the checkout) and
+    the SHA as written for a multi-source Application. A hex revision that
+    is also a branch or tag name gives the commit of that ref. Any other
+    abbreviated SHA gives the commit that it names in the local repository
+    for a single-source Application, or the HEAD commit when no single
+    local commit matches, and the abbreviation as written for a
+    multi-source Application.
   - A Git source of a multi-source Application gets what `git ls-remote`
     resolution gives, as Argo CD does. The repo-server passes the
     `ls-remote` result as the revision there and does not read the
@@ -506,10 +519,9 @@ Supported:
     single-source Application gets the checked-out commit SHA in all of
     these cases (`git rev-parse HEAD`, `repository.go:519-525`). Any
     `spec.sources` list counts as multi-source, also with one entry.
-    drydock keeps an abbreviated SHA only when it is a prefix of the commit
-    that drydock renders and no branch or tag has that name, which it reads
-    from the Git cache clone, the repository of a `--ref` snapshot, the
-    `--path` tree, or the `--repo-map` directory.
+    drydock reads branch and tag names from the Git cache clone, the
+    repository of a `--ref` snapshot, the `--path` tree, or the
+    `--repo-map` directory.
   - An OCI artifact source gets the manifest digest (`sha256:...`), so
     `_SHORT` is `sha256:` and `_SHORT_8` is `sha256:` plus one hex digit,
     as in Argo CD.
@@ -530,13 +542,33 @@ Supported:
     For a tag or a branch that exists only locally and was never pushed,
     drydock reports the local commit, where Argo CD cannot resolve the
     revision and fails the Application.
+  - Known nondeterminism in Argo CD: for a name that is both a branch and
+    a tag, `ls-remote` takes the first match in a ref list without a fixed
+    order, so Argo CD can resolve either. drydock always takes the branch.
 - The persistent render cache keys a local source on its input files and not
   on the commit, so a commit that leaves the inputs unchanged keeps the
-  cached entry. A local source whose spec names one of the
-  `ARGOCD_APP_REVISION` variables also keys on the commit, so each new
-  commit renders it again. A diff between two commits shows a change in the
-  objects of such a source even when no input changed, as Argo CD does after
-  the new commit syncs.
+  cached entry. A source whose spec names one of the `ARGOCD_APP_REVISION`
+  variables, also through a merged `.argocd-source` override, also keys on
+  the value that the variable gets when the key does not hold it already:
+  - a local source always keys on it, so with the HEAD commit each new
+    commit renders it again, and with a SHA pin it keeps its key;
+  - a fetched Git source keys on its commit, and also on the value when the
+    value differs from that commit: an abbreviated SHA, or a full SHA in
+    upper case, of a multi-source Application;
+  - a `--ref` snapshot source keys on the snapshot commit, and also on the
+    value when the value differs from that commit, such as a SHA pin of
+    another commit.
+
+  The keys of all other sources do not change.
+- A diff between two commits shows a change in the objects of a source that
+  reads one of these variables even when no input changed, as Argo CD does
+  after the new commit syncs. `--changed-only` selects every Application
+  whose spec reads one of the variables, in its spec or through a merged
+  `.argocd-source` override on either side, whenever the two sides render
+  different commits, and warns `diff.changed-only-app-revision` with their
+  number. `--strict` does not fail on that warning. When no relevant path
+  changed at all, the changed-only diff is still skipped before any
+  Application is listed, so these Applications are not rendered then.
 - Directory rendering honors `+argocd:skip-file-rendering`, walks hidden
   directories when `recurse` is enabled, renders Jsonnet through native Go
   libraries with extVars, TLAs, code mode, env substitution, and repo-relative

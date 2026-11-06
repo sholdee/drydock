@@ -203,6 +203,12 @@ tags, so both get the commit SHA, not the SHA of the tag object. The
 harness checks that the tag object SHA differs from the commit SHA and that
 no Argo CD capture of the two Applications holds it.
 
+These two cases pin the Argo CD side only. drydock renders a `--repo-map`
+directory at its HEAD commit whatever `targetRevision` names, and the tag
+points to that commit, so the drydock capture does not resolve the tag.
+Unit tests in `internal/source` and `internal/app` cover how drydock
+resolves tags, branches and SHA pins for fetched sources and local trees.
+
 The commit SHA is the commit that the fixture Git server serves. The harness
 builds that repository in `FIXTURE_GIT_WORK` from the working tree and
 clones the served bare repository from it, so the commit exists only for
