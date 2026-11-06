@@ -73,19 +73,20 @@ func withSelectionOnlyPaths(ctx context.Context, root string, repoMaps []sourcep
 	}
 	symlinkMemo := map[string]symlinkSelection{}
 	symlinkInputs := func(source argoappv1.ApplicationSource) symlinkSelection {
-		dirs := []string{source.Path}
+		var libs []string
 		if source.Directory != nil {
-			for _, lib := range source.Directory.Jsonnet.Libs {
-				dirs = append(dirs, strings.TrimSpace(lib))
-			}
+			libs = source.Directory.Jsonnet.Libs
 		}
-		key := fmt.Sprintf("%q", dirs)
+		key := fmt.Sprintf("%q %q", source.Path, libs)
 		selection, ok := symlinkMemo[key]
 		if !ok {
+			// The symlinks under the source path and under each library
+			// that resolves, as the renderer resolves it.
+			dirs := append([]string{source.Path}, render.DirectoryJsonnetLibDirs(root, libs)...)
 			selection.paths = render.DirectorySymlinkInputPaths(root, dirs)
 			// A scan that ran out of budget or failed, such as on an
 			// unreadable directory, leaves the imports unknown.
-			imports, err := render.DirectoryJsonnetImportPaths(ctx, root, source.Path, dirs[1:])
+			imports, err := render.DirectoryJsonnetImportPaths(ctx, root, source.Path, libs)
 			selection.unknown = err != nil
 			selection.paths = append(selection.paths, imports...)
 			symlinkMemo[key] = selection

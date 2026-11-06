@@ -36,7 +36,8 @@ func DirectoryInputDigestPaths(ctx context.Context, source ResolvedSource, opts 
 		if err != nil {
 			return nil, err
 		}
-		paths = append(paths, gitref.PathDigestPath{Path: libRel})
+		// A library need not exist: the repo-server accepts a missing one.
+		paths = append(paths, gitref.PathDigestPath{Path: libRel, Optional: true})
 	}
 	trees := make([]string, 0, len(paths))
 	for _, item := range paths {

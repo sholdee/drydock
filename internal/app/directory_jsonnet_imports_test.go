@@ -216,3 +216,38 @@ func TestWithSelectionOnlyPathsMarksAFailedScanUnknown(t *testing.T) {
 		t.Fatalf("unscanned = %v, want the source whose scan failed", side.unscanned)
 	}
 }
+
+// TestWithSelectionOnlyPathsJsonnetLibraries pins two library rules. A
+// file that a Jsonnet file imports from a library, here an absolute lib
+// that is a symlink to vendor, selects the source. A source without
+// Jsonnet files ignores a library that would not resolve, so it is not
+// rendered on every change.
+func TestWithSelectionOnlyPathsJsonnetLibraries(t *testing.T) {
+	root := t.TempDir()
+	writeTestFile(t, filepath.Join(root, "app", "main.jsonnet"), "{ apiVersion: 'v1', kind: 'ConfigMap', metadata: { name: (import 'common.libsonnet').name } }\n")
+	writeTestFile(t, filepath.Join(root, "vendor", "common.libsonnet"), "{ name: 'demo' }\n")
+	writeTestFile(t, filepath.Join(root, "plain", "cm.yaml"), "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: plain\n")
+	symlinkBoundsLink(t, "vendor", filepath.Join(root, "lib"))
+	jsonnetApp := argoappv1.Application{
+		Name: "jsonnet",
+		Spec: argoappv1.ApplicationSpec{Source: &argoappv1.ApplicationSource{
+			RepoURL: "https://git.example.test/repo.git", TargetRevision: "main", Path: "app",
+			Directory: &argoappv1.ApplicationSourceDirectory{Jsonnet: argoappv1.ApplicationSourceJsonnet{Libs: []string{"/lib"}}},
+		}},
+	}
+	plainApp := argoappv1.Application{
+		Name: "plain",
+		Spec: argoappv1.ApplicationSpec{Source: &argoappv1.ApplicationSource{
+			RepoURL: "https://git.example.test/repo.git", TargetRevision: "main", Path: "plain",
+			Directory: &argoappv1.ApplicationSourceDirectory{Jsonnet: argoappv1.ApplicationSourceJsonnet{Libs: []string{"../outside"}}},
+		}},
+	}
+	side := withSelectionOnlyPaths(context.Background(), root, nil, selfRepoRefs{}, []ApplicationSelectionInput{{Application: jsonnetApp}, {Application: plainApp}})
+	if len(side.unscanned) != 0 {
+		t.Fatalf("unscanned = %v, want none", side.unscanned)
+	}
+	selected, _ := SelectChangedApplicationInputs(side.inputs, []string{"vendor/common.libsonnet"})
+	if len(selected) != 1 || selected[0].Name != "jsonnet" {
+		t.Fatalf("selected = %v, want the Jsonnet source", selected)
+	}
+}

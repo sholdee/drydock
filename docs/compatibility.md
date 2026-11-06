@@ -468,6 +468,14 @@ Supported:
   libraries with extVars, TLAs, code mode, env substitution, and repo-relative
   libs, confines Jsonnet imports to the repository root as the Argo CD
   repo-server does from v3.5.4, and skips drydock cache metadata sidecars.
+- Jsonnet `libs` resolve as in the Argo CD v3.6.1 repo-server
+  (`ResolveFileOrDirectoryPath`). A lib is relative to the repository root,
+  also when it starts with `/`. A lib that is itself a symlink is followed,
+  and the root itself is allowed. A lib outside the repository fails with
+  `file '<lib>' resolved to outside repository root`. A missing lib is
+  allowed. Earlier drydock releases rejected an absolute lib and a
+  symlinked lib directory. drydock still rejects a lib in a `.git`
+  directory.
 - Directory file selection as the Argo CD v3.6.1 repo-server performs it: the
   built-in `.yaml`/`.yml`/`.json`/`.jsonnet` extension filter is
   case-sensitive (`deploy.YAML` is not rendered), `include` and `exclude`

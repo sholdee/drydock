@@ -18,8 +18,7 @@ import (
 )
 
 // DirectoryJsonnetImportPaths returns the repository paths outside the
-// source path and its Jsonnet libraries that the Jsonnet files of a
-// directory source import, directly or through other imports. Jsonnet
+// source path that the Jsonnet files of a directory source import, directly or through other imports. Jsonnet
 // import paths are string literals, so drydock reads them from the parsed
 // files instead of evaluating them. For each import, the result holds every
 // path the importer tries before the one it finds (a new file at an earlier
@@ -44,27 +43,27 @@ func DirectoryJsonnetImportPaths(ctx context.Context, repoRoot, sourcePath strin
 	if err != nil {
 		return nil, err
 	}
+	entries, err := directoryJsonnetEntryFiles(appPath)
+	if err != nil {
+		return nil, err
+	}
+	// A source without Jsonnet files never resolves its libraries, so a
+	// library that does not resolve is no scan error.
+	if len(entries) == 0 {
+		return nil, nil
+	}
 	jpaths := []string{appPath}
-	covered := []string{filepath.Clean(sourcePath)}
 	for _, lib := range libs {
 		resolved, err := resolveJsonnetLib(absRoot, lib)
 		if err != nil {
 			return nil, err
 		}
 		jpaths = append(jpaths, resolved)
-		rel, err := filepath.Rel(absRoot, resolved)
-		if err != nil {
-			return nil, err
-		}
-		covered = append(covered, rel)
 	}
-	entries, err := directoryJsonnetEntryFiles(appPath)
-	if err != nil {
-		return nil, err
-	}
-	if len(entries) == 0 {
-		return nil, nil
-	}
+	// Only the source path is left out of the result. Files found in a
+	// library are kept: changed-only selection does not own library
+	// directories as a whole.
+	covered := []string{filepath.Clean(sourcePath)}
 	realRoot, err := filepath.EvalSymlinks(absRoot)
 	if err != nil {
 		return nil, err
@@ -93,6 +92,30 @@ func DirectoryJsonnetImportPaths(ctx context.Context, repoRoot, sourcePath strin
 	}
 	sort.Strings(out)
 	return out, nil
+}
+
+// DirectoryJsonnetLibDirs returns the libraries of a directory source that
+// resolve as the renderer resolves them (resolveJsonnetLib), relative to the
+// repository root with forward slashes. A library that does not resolve, or
+// that resolves to the repository root, is left out.
+func DirectoryJsonnetLibDirs(repoRoot string, libs []string) []string {
+	absRoot, err := filepath.Abs(repoRoot)
+	if err != nil {
+		return nil
+	}
+	var out []string
+	for _, lib := range libs {
+		resolved, err := resolveJsonnetLib(absRoot, lib)
+		if err != nil {
+			continue
+		}
+		rel, err := filepath.Rel(absRoot, resolved)
+		if err != nil || rel == "." || pathsafety.RelEscapes(rel) {
+			continue
+		}
+		out = append(out, filepath.ToSlash(rel))
+	}
+	return out
 }
 
 // directoryJsonnetEntryFiles returns every .jsonnet file under appPath, as

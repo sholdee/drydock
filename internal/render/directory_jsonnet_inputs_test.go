@@ -11,7 +11,7 @@ import (
 )
 
 // TestDirectoryJsonnetImportPaths pins the files outside a directory source
-// and its libraries that its Jsonnet files import: a relative import and
+// that its Jsonnet files import: a relative import and
 // what it imports, an importstr, an import through a symlink with the
 // symlink target, and a missing path that the importer tries before the
 // one it finds, because a new file there would win.
@@ -37,7 +37,9 @@ local vendored = import 'vendored.libsonnet';
 	if err != nil {
 		t.Fatalf("DirectoryJsonnetImportPaths() error = %v", err)
 	}
-	want := []string{"other/target.libsonnet", "shared/lib.libsonnet", "shared/nested.libsonnet", "shared/text.txt"}
+	// Files found in the library vendor count too: changed-only selection
+	// does not own library directories as a whole.
+	want := []string{"other/target.libsonnet", "shared/lib.libsonnet", "shared/nested.libsonnet", "shared/text.txt", "vendor/nested.libsonnet", "vendor/vendored.libsonnet"}
 	if strings.Join(got, ",") != strings.Join(want, ",") {
 		t.Fatalf("DirectoryJsonnetImportPaths() = %v, want %v", got, want)
 	}
@@ -113,5 +115,17 @@ func TestDirectoryJsonnetImportPathsRunsOutOnALargeFile(t *testing.T) {
 	writeFile(t, filepath.Join(root, "app", "main.jsonnet"), "import '../lib/inner.libsonnet'\n"+strings.Repeat(" ", maxJsonnetImportScanBytes))
 	if _, err := DirectoryJsonnetImportPaths(t.Context(), root, "app", nil); !errors.Is(err, ErrJsonnetImportScanBudget) {
 		t.Fatalf("DirectoryJsonnetImportPaths() error = %v, want the budget error", err)
+	}
+}
+
+// TestDirectoryJsonnetImportPathsWithoutJsonnetFiles pins that a source
+// without Jsonnet files does not resolve its libraries, so a library that
+// would fail the render of a Jsonnet file is no scan error there.
+func TestDirectoryJsonnetImportPathsWithoutJsonnetFiles(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "app", "cm.yaml"), "a: 1\n")
+	got, err := DirectoryJsonnetImportPaths(t.Context(), root, "app", []string{"../outside"})
+	if err != nil || len(got) != 0 {
+		t.Fatalf("DirectoryJsonnetImportPaths() = %v, %v, want nothing and no error", got, err)
 	}
 }
