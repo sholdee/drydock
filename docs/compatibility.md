@@ -879,6 +879,12 @@ Supported:
 - Kustomize Helm `valuesFile` and `additionalValuesFiles` entries outside the
   kustomization directory when the resolved file remains inside the repository
   root.
+- Kustomize Helm `valuesFile` and `additionalValuesFiles` paths are read as
+  written, as kustomize reads them. A build environment variable such as
+  `$ARGOCD_APP_REVISION_SHORT` in such a path stays literal, because Argo CD
+  substitutes the build environment into a Kustomize source only for
+  `images`, `commonLabels`, and `commonAnnotations`. Earlier drydock releases
+  substituted it.
 - Kustomize Helm remote HTTP(S) value files through the same remote-resource
   cache path used by Helm sources.
 - Kustomize `ignoreMissingComponents` as in Argo CD v3.6.1: each
@@ -1160,7 +1166,12 @@ Supported:
   - The `valuesFile` and `additionalValuesFiles` of each Kustomize
     `helmCharts` entry, and the `values.yaml` files of its local chart.
     drydock reads them as the renderer does: relative to the kustomization
-    directory, with globs and build environment variables. It skips
+    directory, with globs. kustomize reads these paths as written, so a
+    `$ARGOCD_APP_NAME` or other build environment variable in them stays
+    literal. Argo CD substitutes the build environment only into the
+    `images`, `commonLabels`, and `commonAnnotations` of a Kustomize source
+    (`util/kustomize/kustomize.go:189`, `236`, and `254-257`). Earlier
+    drydock releases substituted it into these paths. It skips
     `valuesFile` when `valuesMerge` is `replace` and `valuesInline` is set,
     because the render then does not read it. When `valuesInline` is set,
     kustomize reads `valuesFile` with its own YAML parser, which reads only

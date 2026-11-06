@@ -47,16 +47,15 @@ type KustomizeHelmValuesInputs struct {
 // or symlinked is skipped. An error means the graph itself could not be
 // read.
 //
-// env is the Argo CD build environment of the Application, which the Helm
-// value file loader substitutes in value file paths.
-func KustomizeHelmValues(ctx context.Context, repoRoot, sourcePath string, kustomize *argoappv1.ApplicationSourceKustomize, env argoappv1.Env) (KustomizeHelmValuesInputs, error) {
+// The values file paths are read as written: kustomize does not substitute
+// the Argo CD build environment into them.
+func KustomizeHelmValues(ctx context.Context, repoRoot, sourcePath string, kustomize *argoappv1.ApplicationSourceKustomize) (KustomizeHelmValuesInputs, error) {
 	paths, graph, err := kustomizeSelectionGraph(ctx, repoRoot, sourcePath, kustomize)
 	if err != nil {
 		return KustomizeHelmValuesInputs{}, err
 	}
 	values := kustomizeHelmValuesCollector{
 		collector:     &kustomizeInputCollector{repoRoot: filepath.Clean(repoRoot), bestEffort: true},
-		env:           env,
 		seen:          map[string]struct{}{},
 		helmSeen:      map[string]struct{}{},
 		kustomizeSeen: map[string]struct{}{},
@@ -82,7 +81,6 @@ func KustomizeHelmValues(ctx context.Context, repoRoot, sourcePath string, kusto
 
 type kustomizeHelmValuesCollector struct {
 	collector *kustomizeInputCollector
-	env       argoappv1.Env
 	// helmSeen and kustomizeSeen hold the files already in
 	// HelmParsedValuesFiles and KustomizeParsedValuesFiles.
 	helmSeen      map[string]struct{}
@@ -138,8 +136,8 @@ func (c *kustomizeHelmValuesCollector) addValuesFile(path string) {
 // shouldLoadHelmValueFiles allows it: valuesMerge replace skips it. Without
 // valuesInline, Helm reads valuesFile. Helm always reads
 // additionalValuesFiles. Every file goes through the Helm value file loader
-// paths, relative to the kustomization directory, with globs and env
-// substitution (HelmValueFileReads).
+// paths, relative to the kustomization directory, with globs and without
+// env substitution (HelmValueFileReads).
 func (c *kustomizeHelmValuesCollector) helmChartValueFileReads(node kustomizeGraphNode, helmChart types.HelmChart) (helmParsed, kustomizeParsed []string) {
 	nodeRel, err := relativeManifestPath(c.collector.repoRoot, node.Dir)
 	if err != nil {
@@ -154,7 +152,7 @@ func (c *kustomizeHelmValuesCollector) helmChartValueFileReads(node kustomizeGra
 			ValueFiles:             files,
 			ValueFilesBaseDir:      nodeRel,
 			ValueFilesBoundaryRoot: ".",
-			ArgoEnv:                c.env,
+			LiteralValueFilePaths:  true,
 		}, false)
 	}
 	primary := make([]string, 0, 1+len(helmChart.AdditionalValuesFiles))

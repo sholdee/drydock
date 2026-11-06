@@ -346,15 +346,19 @@ func renderOptionsForKustomizeHelmChart(ctx context.Context, helmChart types.Hel
 	}
 
 	return RenderOptions{
-		AppName:                      helmChart.Name,
-		ReleaseName:                  helmChart.ReleaseName,
-		Namespace:                    namespace,
-		KubeVersion:                  kustomizeHelmKubeVersion(helmChart, opts),
-		APIVersions:                  append(append([]string(nil), opts.APIVersions...), helmChart.ApiVersions...),
-		ValueFiles:                   valueFiles,
-		ValueFilesBaseDir:            valueFilesBaseDir,
-		ValueFilesBoundaryRoot:       ".",
-		ArgoEnv:                      append(opts.ArgoEnv[:0:0], opts.ArgoEnv...),
+		AppName:                helmChart.Name,
+		ReleaseName:            helmChart.ReleaseName,
+		Namespace:              namespace,
+		KubeVersion:            kustomizeHelmKubeVersion(helmChart, opts),
+		APIVersions:            append(append([]string(nil), opts.APIVersions...), helmChart.ApiVersions...),
+		ValueFiles:             valueFiles,
+		ValueFilesBaseDir:      valueFilesBaseDir,
+		ValueFilesBoundaryRoot: ".",
+		// kustomize loads valuesFile and additionalValuesFiles as written
+		// (HelmChartInflationGenerator), and Argo CD does not substitute
+		// the build environment into a kustomization, so the inner Helm
+		// render gets no build environment.
+		LiteralValueFilePaths:        true,
 		ValuesObject:                 valuesObject,
 		ValuesMergeMode:              valuesMergeMode,
 		HelmValueFileSchemes:         append([]string(nil), opts.HelmValueFileSchemes...),

@@ -157,7 +157,7 @@ func (b *settingsInstallBuilder) addSource(ctx context.Context, provider localPr
 	source := sourcePlan.Source
 	sourceType := settingsInstallSourceType(sourcePlan, b.root, sourcePath, local)
 	if sourceType == argoappv1.ApplicationSourceTypeKustomize && local {
-		b.addKustomize(ctx, sourcePath, source.Kustomize, settingsInstallRenderEnv(provider, application, source, local))
+		b.addKustomize(ctx, sourcePath, source.Kustomize)
 	}
 	if sourceType != argoappv1.ApplicationSourceTypeHelm {
 		return
@@ -292,8 +292,8 @@ func settingsInstallSourceType(sourcePlan SourcePlan, root, sourcePath string, l
 	}
 }
 
-func (b *settingsInstallBuilder) addKustomize(ctx context.Context, sourcePath string, kustomize *argoappv1.ApplicationSourceKustomize, env argoappv1.Env) {
-	values, err := render.KustomizeHelmValues(ctx, b.root, sourcePath, kustomize, env)
+func (b *settingsInstallBuilder) addKustomize(ctx context.Context, sourcePath string, kustomize *argoappv1.ApplicationSourceKustomize) {
+	values, err := render.KustomizeHelmValues(ctx, b.root, sourcePath, kustomize)
 	if err != nil {
 		return
 	}

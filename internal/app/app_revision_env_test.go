@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"fmt"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -608,5 +609,59 @@ func assertAnnotatedTagObject(t *testing.T, commit, tagObject string) {
 	t.Helper()
 	if tagObject == commit {
 		t.Fatalf("v1.0.0 tag object = commit %s, want an annotated tag object", commit)
+	}
+}
+
+// kustomize loads the valuesFile and additionalValuesFiles of a helmCharts
+// entry as written, and Argo CD substitutes the build environment only into
+// images, commonLabels, and commonAnnotations of a Kustomize source. So a
+// $ARGOCD_APP_REVISION_SHORT in such a path names the file with that literal
+// name, also across commits with the render cache on.
+func TestKustomizeHelmChartsValuesFilesStayLiteral(t *testing.T) {
+	root := t.TempDir()
+	writePersistentCacheKustomizeApp(t, root, "literal", `apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+helmCharts:
+  - name: demo
+    releaseName: demo
+    valuesFile: values-$ARGOCD_APP_NAME.yaml
+    additionalValuesFiles:
+      - extra-$ARGOCD_APP_REVISION_SHORT.yaml
+`)
+	dir := filepath.Join(root, "manifests", "literal")
+	writeTestFile(t, filepath.Join(dir, "charts", "demo", "Chart.yaml"), "apiVersion: v2\nname: demo\nversion: 0.1.0\n")
+	writeTestFile(t, filepath.Join(dir, "charts", "demo", "templates", "cm.yaml"), `apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: demo
+data:
+  name: {{ .Values.name | quote }}
+  extra: {{ .Values.extra | quote }}
+`)
+	writeTestFile(t, filepath.Join(dir, "values-$ARGOCD_APP_NAME.yaml"), "name: literal\n")
+	writeTestFile(t, filepath.Join(dir, "values-literal.yaml"), "name: substituted\n")
+	writeTestFile(t, filepath.Join(dir, "extra-$ARGOCD_APP_REVISION_SHORT.yaml"), "extra: literal\n")
+	first := gitCommitAll(t, root, "initial")
+	writeTestFile(t, filepath.Join(dir, "extra-"+first[:7]+".yaml"), "extra: substituted\n")
+	second := gitCommitAll(t, root, "add substituted name")
+	writeTestFile(t, filepath.Join(dir, "extra-"+second[:7]+".yaml"), "extra: substituted\n")
+	gitCommitAll(t, root, "add substituted name again")
+
+	request := persistentBuildRequest(root, t.TempDir())
+	for run := range 2 {
+		result, err := Orchestrator{}.Build(context.Background(), request)
+		if err != nil {
+			t.Fatalf("Build() run %d error = %v\nDiagnostics: %#v", run, err, result.Diagnostics)
+		}
+		if got := persistentConfigMapDataValue(t, result, "literal", "demo", "name"); got != "literal" {
+			t.Fatalf("run %d name = %q, want the literal valuesFile", run, got)
+		}
+		if got := persistentConfigMapDataValue(t, result, "literal", "demo", "extra"); got != "literal" {
+			t.Fatalf("run %d extra = %q, want the literal additionalValuesFiles entry", run, got)
+		}
+		writeTestFile(t, filepath.Join(root, "README.md"), fmt.Sprintf("unrelated change %d\n", run))
+		head := gitCommitAll(t, root, "unrelated")
+		writeTestFile(t, filepath.Join(dir, "extra-"+head[:7]+".yaml"), "extra: substituted\n")
+		gitCommitAll(t, root, "substituted for the new head")
 	}
 }

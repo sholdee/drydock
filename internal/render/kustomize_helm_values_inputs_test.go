@@ -5,14 +5,12 @@ import (
 	"path/filepath"
 	"slices"
 	"testing"
-
-	argoappv1 "github.com/argoproj/argo-cd/v3/pkg/apis/application/v1alpha1"
 )
 
 // KustomizeHelmValues lists the values files that the helmCharts render
 // reads: valuesFile only when valuesMerge allows it, and additionalValuesFiles
-// with globs and the Argo CD build environment, as the Helm value file
-// loader reads them.
+// with globs. kustomize reads the paths as written, so a $ARGOCD_APP_NAME in
+// a path stays literal.
 func TestKustomizeHelmValuesReadsValuesFilesLikeTheRenderer(t *testing.T) {
 	for _, tc := range []struct {
 		name  string
@@ -40,19 +38,18 @@ func TestKustomizeHelmValuesReadsValuesFilesLikeTheRenderer(t *testing.T) {
 			want:  []string{"install/layers/a.yaml", "install/layers/b.yaml"},
 		},
 		{
-			name:  "build environment in additionalValuesFiles",
+			name:  "build environment variable stays literal in additionalValuesFiles",
 			chart: "    additionalValuesFiles:\n      - values-$ARGOCD_APP_NAME.yaml\n",
-			want:  []string{"install/values-demo.yaml"},
+			want:  []string{"install/values-$ARGOCD_APP_NAME.yaml"},
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			root := t.TempDir()
 			writeFile(t, filepath.Join(root, "install", "kustomization.yaml"), "apiVersion: kustomize.config.k8s.io/v1beta1\nkind: Kustomization\nhelmCharts:\n  - name: demo\n    releaseName: demo\n"+tc.chart)
-			for _, file := range []string{"values.yaml", "extra.yaml", "layers/a.yaml", "layers/b.yaml", "values-demo.yaml"} {
+			for _, file := range []string{"values.yaml", "extra.yaml", "layers/a.yaml", "layers/b.yaml", "values-demo.yaml", "values-$ARGOCD_APP_NAME.yaml"} {
 				writeFile(t, filepath.Join(root, "install", filepath.FromSlash(file)), "a: 1\n")
 			}
-			env := argoappv1.Env{{Name: "ARGOCD_APP_NAME", Value: "demo"}}
-			values, err := KustomizeHelmValues(context.Background(), root, "install", nil, env)
+			values, err := KustomizeHelmValues(context.Background(), root, "install", nil)
 			if err != nil {
 				t.Fatalf("KustomizeHelmValues() error = %v", err)
 			}
@@ -71,7 +68,7 @@ func TestKustomizeHelmValuesSplitsFilesByParser(t *testing.T) {
 	writeFile(t, filepath.Join(root, "install", "kustomization.yaml"), "apiVersion: kustomize.config.k8s.io/v1beta1\nkind: Kustomization\nhelmCharts:\n  - name: demo\n    releaseName: demo\n    valuesFile: values.yaml\n    valuesInline:\n      a: 1\n    additionalValuesFiles:\n      - extra.yaml\n")
 	writeFile(t, filepath.Join(root, "install", "values.yaml"), "a: 1\n")
 	writeFile(t, filepath.Join(root, "install", "extra.yaml"), "a: 1\n")
-	values, err := KustomizeHelmValues(context.Background(), root, "install", nil, nil)
+	values, err := KustomizeHelmValues(context.Background(), root, "install", nil)
 	if err != nil {
 		t.Fatalf("KustomizeHelmValues() error = %v", err)
 	}
