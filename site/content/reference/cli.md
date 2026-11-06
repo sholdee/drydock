@@ -79,6 +79,13 @@ drydock get apps --path . --discover-kustomize argocd/overlays/prod
 drydock test apps --path . --discover-kustomize clusters/prod/argocd
 ```
 
+A `--discover-kustomize` path also counts as the Argo CD install of this
+cluster. If its render holds `argocd-cm`, `argocd-cmd-params-cm`, or
+`argocd-cmp-cm` in the `argocd` namespace, drydock reads the Argo CD settings
+from them. The Helm values files and settings ConfigMap files that the render
+reads are then not settings sources of their own, also when no Application
+installs Argo CD.
+
 The path is relative to `--path`, must not escape through `..`, and must not
 include symlinked path components. Explicitly rendered Kustomize objects take
 precedence over committed duplicates with the same identity.

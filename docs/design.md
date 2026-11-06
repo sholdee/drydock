@@ -139,14 +139,23 @@ that installs Argo CD on another cluster is not an install. An install that
 the frontier already renders for discovery is not rendered settings-only.
 drydock finds the values files of an install with the resolution helpers of
 the renderer: globs, build environment variables, `$ref` roots, the merged
-`.argocd-source.yaml` overrides, and subchart values. It repeats this until the settings no longer change how
-these Applications render. These renders are keyed without tracking
+`.argocd-source.yaml` overrides, and subchart values.
+
+drydock repeats the settings-only renders until the settings no longer
+change how these installs render. These renders are keyed without tracking
 settings and resource customizations, because neither changes the data of a
-settings ConfigMap. Then drydock renders the rest of the round once, with
-the settled settings. The final render renders each install again as a
-normal Application. If an install fails to render, drydock reports a
+settings ConfigMap. Then the frontier renders the round with the settled
+settings. The final render renders each install again as a normal
+Application, with the final settings. The two renders have different keys,
+so a run renders such an install twice, and the settings-only render runs
+before the frontier. If an install fails to render, drydock reports a
 `settings` warning, and the values files of that install stay settings
 sources of their own unless another rendered install read them.
+
+A `--discover-kustomize` path names the Argo CD install of this cluster.
+Its rendered settings ConfigMaps in the `argocd` namespace replace the
+values files and settings ConfigMap files that its render reads, also when
+no Application installs Argo CD.
 
 Repeatable `--discover-ignore` repository-relative globs (same doublestar
 semantics as `--changed-only-ignore`) exclude matching files from this scan

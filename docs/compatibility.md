@@ -107,7 +107,11 @@ Supported:
 - Explicit `--discover-kustomize PATH` discovery from rendered local
   Kustomize entrypoints. Explicitly rendered Kustomize objects take precedence
   over committed duplicates because the path is the operator-selected Argo CD
-  entrypoint.
+  entrypoint. For the same reason, the path counts as the Argo CD install of
+  this cluster: its rendered `argocd-cm`, `argocd-cmd-params-cm`, and
+  `argocd-cmp-cm` in the `argocd` namespace replace the values files and
+  settings ConfigMap files that its render reads, also when no Application
+  installs Argo CD (see "Settings from the rendered Argo CD install").
 - ApplicationSet Git directories, Git files, list, matrix, and merge
   generators.
 - The Argo CD v3.6.1 OCI ApplicationSet generator (`generators[].oci`),
@@ -921,6 +925,10 @@ Supported:
     its `charts/` directory.
   - The `valuesFile` and `additionalValuesFiles` of each Kustomize
     `helmCharts` entry, and the `values.yaml` files of its local chart.
+    drydock reads them as the renderer does: relative to the kustomization
+    directory, with globs and build environment variables. It skips
+    `valuesFile` when `valuesMerge` is `replace` and `valuesInline` is set,
+    because the render then does not read it.
 
   drydock merges the `.argocd-source.yaml` and `.argocd-source-<app>.yaml`
   overrides of a local source first, as Argo CD does. Then it picks the
@@ -976,7 +984,8 @@ Supported:
   or a desired-vs-desired diff. The argo-cd chart sets eight of them by
   default. drydock parses them and reports one
   `settings.ignore-resource-updates` warning for each settings source that
-  names their keys. `--strict` does not fail on this warning.
+  names their keys. A diff reports each distinct warning once, not once for
+  each side. `--strict` does not fail on this warning.
 - `configs.cm` in an Argo CD Helm values file that drydock reads on its own,
   as the argo-helm `argo-cd` chart 10.14.0 turns it into `argocd-cm`. This
   applies when no install that drydock renders reads the file. The chart
