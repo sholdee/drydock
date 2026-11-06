@@ -716,6 +716,88 @@ Supported:
   `jqPathExpressions`, and `managedFieldsManagers`.
 - Global `resource.customizations.ignoreDifferences.*`,
   `knownTypeFields.*`, and selected compare options.
+- The `resource.customizations` map, built as Argo CD v3.6.1
+  `SettingsManager.GetResourceOverrides` builds it
+  (`util/settings/settings.go:1127-1300`). drydock first reads the
+  `resource.customizations` block with `sigs.k8s.io/yaml`, so field names
+  match in any case. Block keys stay as written, so the block key `all` is
+  not `*/*`. Then each split key `resource.customizations.<type>.<suffix>`
+  sets one field of one key. The types are `health`, `useOpenLibs`,
+  `actions`, `ignoreDifferences`, `ignoreResourceUpdates`, and
+  `knownTypeFields`. A split key replaces its field and keeps the other
+  fields of the key. The split key wins over the block. An empty value also
+  replaces the field. For example, the block key `/Service` sets
+  `managedFieldsManagers: [a]`, and
+  `resource.customizations.ignoreDifferences._Service` sets
+  `managedFieldsManagers: [b]`. The result is `[b]`.
+- Split key suffixes as Argo CD reads them (`convertToOverrideKey`).
+  drydock splits the suffix on `_`. Two parts become `group/kind`, and an
+  empty part stays empty. So `_Service` is `/Service`, `Service_` is `Service/`, and
+  `_` is `/`. The last two keys match no resource. A suffix with no `_` stays
+  as written, dots included. The suffix `all` becomes `*/*`.
+- Argo CD fails on these `resource.customizations` values, and drydock
+  reports each as an error:
+  - A block that does not decode.
+  - A block entry with no value.
+  - A split key suffix that is empty or has more than one `_`.
+  - A split key with an unknown type.
+  - A split key value that does not decode.
+
+  Argo CD panics on a block entry with no value. The
+  `useOpenLibs` value must be exactly a Go boolean such as `true`. Argo CD
+  does not remove spaces or a final new line, and it rejects an empty value.
+  After any of these errors, Argo CD uses no overrides. drydock reports an
+  error diagnostic and keeps no resource customizations from that ConfigMap.
+- Argo CD checks the split key prefix `resource.customizations` with no
+  final dot. So `resource.customizationsX.health.Service` is also a split
+  key. Argo CD reads the split keys in Go map order, which is not defined.
+  If two split keys set the same field of the same key, the order changes
+  the result. Otherwise it does not. With valid ConfigMap keys, only this
+  prefix rule can cause that. drydock reads the split keys in sorted order,
+  keeps the last value, and reports a warning.
+- Discovery of Argo CD settings. drydock finds the `argocd-cm` ConfigMap by
+  its name, as Argo CD does. drydock finds an Argo CD Helm values file by
+  the keys under `configs.cm`. A key that starts with
+  `resource.customizations` counts, with or without a dot after it, because
+  Argo CD reads both forms.
+- `configs.cm` in an Argo CD Helm values file, read as the argo-helm
+  `argo-cd` chart 10.14.0 turns it into `argocd-cm`. The chart helper
+  `argo-cd.config.cm` is in `templates/_helpers.tpl`. drydock reads the
+  values file as Helm does, so `yes` and `on` are `true`, and every
+  number is a float. Then drydock does what the chart does:
+  - If `create` has a false value, the chart makes no `argocd-cm`. drydock
+    then reads no `argocd-cm` settings from the file.
+  - The keys `create`, `annotations`, and `resourceExclusionsAdditional`
+    do not go into `argocd-cm`.
+  - If `resourceExclusionsAdditional` is set, its YAML text goes at the end
+    of `resource.exclusions`. If `resource.exclusions` is then a value that
+    is not text, the chart fails, and drydock reports an error.
+  - Each value becomes text with the Helm `toString` function. For example,
+    `100000000` becomes `1e+08`, and a map becomes `map[a:1]`.
+  - A key whose text is empty does not go into `argocd-cm`. So
+    `resource.customizations.useOpenLibs.Service: ""` sets nothing. In a
+    raw `argocd-cm` ConfigMap, the same empty value is an error, as in
+    Argo CD.
+
+  drydock does not read the default values of the chart. If the chart has a
+  default for a key, Helm removes the key when its value is `null`. Helm writes
+  `<nil>` for a `null` key that the chart does not define. drydock always
+  removes a key with a `null` value. For the same reason,
+  `resourceExclusionsAdditional` goes only after a `resource.exclusions`
+  value that the values file itself sets.
+- Several Argo CD settings files, one file at a time. drydock reads each
+  `argocd-cm` ConfigMap and each Helm values file on its own. Then drydock
+  merges the settings field by field. If two files set the same field of
+  the same `resource.customizations` key to different values, drydock
+  reports a conflict. Helm instead merges all values files of one release
+  into one `configs.cm` map, and a later file wins for each key. drydock
+  does not know which values files one Argo CD release uses, or their
+  order. So for layered values files, drydock reports a conflict where Helm
+  keeps the value from the later file.
+- The location of each `resource.customizations` field. Each field keeps
+  the `argocd-cm` key that set it. A health Lua error points at the key that
+  holds the script. A merge conflict points at the key that sets the field
+  with the conflict.
 - Ignore rule order as in Argo CD v3.6.1. Application rules run first, then
   the resource's annotation rule, then `resource.customizations` rules
   (`util/argo/diff/ignore.go`, `util/argo/normalizers/diff_normalizer.go`).
@@ -848,6 +930,18 @@ Supported:
   terminating objects, so it never takes effect on desired manifests.
 - Health and action customization parsing and diagnostics, including
   `useOpenLibs` metadata and redacted SHA-256 Lua summaries.
+- A `health.lua` value that holds only white space, as in Argo CD v3.6.1.
+  Argo CD runs any `health.lua` value that is not empty
+  (`util/lua/lua.go:254`). A script with only white space returns nothing,
+  so the resource gets no health status from Lua. A wildcard key and the
+  built-in Lua script for the kind then do not apply. drydock keeps such a
+  script and runs it in the same way. An empty value counts as no script.
+- Resource actions, as in Argo CD v3.6.1. Argo CD keeps the `actions` text
+  when it loads settings. The code that lists or runs actions decodes the
+  text (`util/lua/lua.go:501`). drydock never runs actions, so it accepts
+  every `actions` value and reports no error for it. This includes text
+  that does not decode. For such text, the summary has only the SHA-256
+  value of the text.
 - Warning diagnostics for version-specific `kustomize.buildOptions.<version>`
   and `kustomize.path.<version>` settings because drydock does not select
   external Kustomize binaries.

@@ -238,6 +238,11 @@ data:
     resource.compareoptions: |
       ignoreResourceStatusField: none
 `)
+	mustWriteFile(t, filepath.Join(root, "settings", "split-prefix-values.yaml"), `configs:
+  cm:
+    resource.customizationsX.health.example.com_Widget: |
+      return { status = "Healthy" }
+`)
 	mustWriteFile(t, filepath.Join(root, "settings", "selector-values.yaml"), `configs:
   cm:
     resource.selectors: |
@@ -264,6 +269,7 @@ data:
 		{Path: filepath.Join("settings", "compare-values.yaml"), DocumentIndex: 0, Kind: "argocd-values"},
 		{Path: filepath.Join("settings", "repo-secret.yaml"), DocumentIndex: 0, Kind: "repository-secret", APIVersion: "v1", Namespace: "argocd", Name: "repo"},
 		{Path: filepath.Join("settings", "selector-values.yaml"), DocumentIndex: 0, Kind: "argocd-values"},
+		{Path: filepath.Join("settings", "split-prefix-values.yaml"), DocumentIndex: 0, Kind: "argocd-values"},
 		{Path: filepath.Join("settings", "values.yaml"), DocumentIndex: 0, Kind: "argocd-values"},
 	}
 	if !reflect.DeepEqual(result.SettingsCandidates, wantSettings) {

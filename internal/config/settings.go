@@ -83,6 +83,37 @@ type ResourceCustomization struct {
 	UseOpenLibs           bool                   `json:"useOpenLibs,omitempty" yaml:"useOpenLibs,omitempty"`
 	Actions               ResourceActionsSummary `json:"actions,omitempty" yaml:"actions,omitempty"`
 	Provenance            Provenance             `json:"provenance,omitempty" yaml:"provenance,omitempty"`
+	// fieldProvenance records, per field, the argocd-cm entry that set the
+	// field. The keys are the split key types: health, useOpenLibs,
+	// actions, ignoreDifferences, ignoreResourceUpdates, and
+	// knownTypeFields.
+	fieldProvenance map[string]Provenance
+}
+
+// FieldProvenance returns the argocd-cm entry that set one field of the
+// customization. field is a split key type, such as health or
+// ignoreDifferences. It falls back to Provenance when the field has no
+// recorded entry.
+func (customization ResourceCustomization) FieldProvenance(field string) Provenance {
+	if provenance, ok := customization.fieldProvenance[field]; ok {
+		return provenance
+	}
+	return customization.Provenance
+}
+
+// HealthLuaProvenance returns the argocd-cm entry that set the health Lua
+// script.
+func (customization ResourceCustomization) HealthLuaProvenance() Provenance {
+	return customization.FieldProvenance(overrideFieldHealth)
+}
+
+// WithoutProvenance returns a copy of the customization with no
+// provenance, for comparisons that must not depend on where settings came
+// from.
+func (customization ResourceCustomization) WithoutProvenance() ResourceCustomization {
+	customization.Provenance = Provenance{}
+	customization.fieldProvenance = nil
+	return customization
 }
 
 type ConfigManagementPlugin struct {

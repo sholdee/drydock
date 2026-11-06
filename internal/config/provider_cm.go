@@ -105,13 +105,7 @@ func applyCMMap(settings *ArgoSettings, values map[string]string, path, basePoin
 			Pointer: basePointer + ".resource.compareoptions",
 		}, diags)
 	}
-	if raw := values["resource.customizations"]; strings.TrimSpace(raw) != "" {
-		diags = appendParsedResourceCustomizations(settings, raw, diagnostic.Provenance{
-			Path:    path,
-			Pointer: basePointer + ".resource.customizations",
-		}, diags)
-	}
-	diags = appendParsedSplitResourceCustomizations(settings, values, path, basePointer, diags)
+	diags = appendParsedResourceOverrides(settings, values, path, basePointer, diags)
 	return diags
 }
 

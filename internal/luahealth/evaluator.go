@@ -48,7 +48,9 @@ type customization struct {
 func New(settings config.ArgoSettings) Evaluator {
 	keys := make([]string, 0, len(settings.ResourceCustomizations))
 	for key, resourceCustomization := range settings.ResourceCustomizations {
-		if resourceCustomization.HasHealthLua && strings.TrimSpace(resourceCustomization.HealthLua) != "" {
+		// Argo CD uses any non-empty health.lua, even one that holds only
+		// white space (util/lua/lua.go:254 and 571).
+		if resourceCustomization.HasHealthLua && resourceCustomization.HealthLua != "" {
 			keys = append(keys, key)
 		}
 	}
@@ -61,7 +63,7 @@ func New(settings config.ArgoSettings) Evaluator {
 			key:         key,
 			healthLua:   resourceCustomization.HealthLua,
 			useOpenLibs: resourceCustomization.UseOpenLibs,
-			provenance:  resourceCustomization.Provenance,
+			provenance:  resourceCustomization.HealthLuaProvenance(),
 		}
 		if err := compileHealthLua(next.healthLua); err != nil {
 			next.compileErr = true

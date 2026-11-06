@@ -1122,7 +1122,10 @@ data:
 	}
 }
 
-func TestLoadConfigMapConflictingHealthLuaBodyFailsClosed(t *testing.T) {
+// TestLoadConfigMapSplitHealthLuaReplacesBlock checks that a split key
+// replaces the block's health.lua for the same key, as in Argo CD v3.6.1
+// (util/settings/settings.go:1250-1251).
+func TestLoadConfigMapSplitHealthLuaReplacesBlock(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "argocd-cm.yaml")
 	if err := os.WriteFile(path, []byte(`apiVersion: v1
 kind: ConfigMap
@@ -1139,12 +1142,16 @@ data:
 		t.Fatalf("WriteFile() error = %v", err)
 	}
 
-	_, diags, err := LoadFromConfigMap(path)
+	settings, diags, err := LoadFromConfigMap(path)
 	if err != nil {
 		t.Fatalf("LoadFromConfigMap() error = %v", err)
 	}
-	if !hasDiagnosticMessage(diags, "conflicting resource customization settings discovered") {
-		t.Fatalf("diagnostics = %#v, want conflicting health Lua diagnostic", diags)
+	if len(diags) != 0 {
+		t.Fatalf("diagnostics = %#v, want none", diags)
+	}
+	got := strings.TrimSpace(settings.ResourceCustomizations["apps/Deployment"].HealthLua)
+	if got != `return { status = "Progressing" }` {
+		t.Fatalf("HealthLua = %q, want the split key body", got)
 	}
 }
 
@@ -1182,7 +1189,10 @@ data:
 	}
 }
 
-func TestLoadConfigMapConflictingActionLuaBodyFailsClosed(t *testing.T) {
+// TestLoadConfigMapSplitActionsReplaceBlock checks that a split key
+// replaces the block's actions for the same key, as in Argo CD v3.6.1
+// (util/settings/settings.go:1258-1259).
+func TestLoadConfigMapSplitActionsReplaceBlock(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "argocd-cm.yaml")
 	if err := os.WriteFile(path, []byte(`apiVersion: v1
 kind: ConfigMap
@@ -1206,12 +1216,16 @@ data:
 		t.Fatalf("WriteFile() error = %v", err)
 	}
 
-	_, diags, err := LoadFromConfigMap(path)
+	settings, diags, err := LoadFromConfigMap(path)
 	if err != nil {
 		t.Fatalf("LoadFromConfigMap() error = %v", err)
 	}
-	if !hasDiagnosticMessage(diags, "conflicting resource customization settings discovered") {
-		t.Fatalf("diagnostics = %#v, want conflicting actions diagnostic", diags)
+	if hasErrorDiagnostic(diags) {
+		t.Fatalf("diagnostics = %#v, want no error", diags)
+	}
+	actions := settings.ResourceCustomizations["apps/Deployment"].Actions
+	if len(actions.ActionLuaSHA256) != 1 || actions.ActionLuaSHA256[0].SHA256 != stringFingerprint("obj.metadata.name = \"changed\"\nreturn obj\n") {
+		t.Fatalf("actions = %#v, want the split key actions", actions)
 	}
 }
 
@@ -1300,7 +1314,8 @@ func TestLoadConfigMapSplitResourceCustomizationKeys(t *testing.T) {
 		{name: "group kind", suffix: "apps_Deployment", want: "apps/Deployment"},
 		{name: "core group kind", suffix: "_PersistentVolumeClaim", want: "/PersistentVolumeClaim"},
 		{name: "empty", suffix: "", wantErr: true},
-		{name: "empty kind", suffix: "apps_", wantErr: true},
+		{name: "empty kind", suffix: "apps_", want: "apps/"},
+		{name: "empty group and kind", suffix: "_", want: "/"},
 		{name: "extra separator", suffix: "apps_Deployment_extra", wantErr: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

@@ -17,23 +17,20 @@ import (
 
 func LoadFromHelmValues(path string) (ArgoSettings, []diagnostic.Diagnostic, error) {
 	settings := DefaultSettings()
-	data, err := os.ReadFile(path)
+	file, err := os.Open(path)
 	if err != nil {
 		return settings, nil, err
 	}
+	defer func() { _ = file.Close() }()
 
+	// Read the first document with the decoder that discovery uses. It
+	// reads YAML as sigs.k8s.io/yaml does, which is how Helm reads values
+	// files.
 	var doc helmValuesSettingsDocument
-	if err := yaml.Unmarshal(data, &doc); err != nil {
+	if err := decodeNextYAMLDocument(manifestyaml.NewDecoder(file), &doc); err != nil && !errors.Is(err, io.EOF) {
 		return settings, nil, fmt.Errorf("parse helm values %s: %w", path, err)
 	}
-
-	diags := applyCMMap(&settings, doc.Configs.CM, path, "configs.cm")
-	cmpDiags, err := applyCMPPlugins(&settings, doc.Configs.CMP.Plugins, path, "configs.cmp.plugins")
-	if err != nil {
-		return settings, diags, err
-	}
-	diags = append(diags, cmpDiags...)
-	return settings, diags, nil
+	return applyHelmValuesDocument(settings, doc, path)
 }
 
 func LoadFromHelmValuesDocument(path string, documentIndex int) (ArgoSettings, []diagnostic.Diagnostic, error) {
@@ -42,13 +39,7 @@ func LoadFromHelmValuesDocument(path string, documentIndex int) (ArgoSettings, [
 	if err := decodeYAMLDocumentAt(path, documentIndex, &doc); err != nil {
 		return settings, nil, fmt.Errorf("parse helm values %s document %d: %w", path, documentIndex, err)
 	}
-	diags := applyCMMap(&settings, doc.Configs.CM, path, "configs.cm")
-	cmpDiags, err := applyCMPPlugins(&settings, doc.Configs.CMP.Plugins, path, "configs.cmp.plugins")
-	if err != nil {
-		return settings, diags, err
-	}
-	diags = append(diags, cmpDiags...)
-	return settings, diags, nil
+	return applyHelmValuesDocument(settings, doc, path)
 }
 
 func LoadFromHelmValuesObject(path string, obj *unstructured.Unstructured) (ArgoSettings, []diagnostic.Diagnostic, error) {
@@ -57,7 +48,17 @@ func LoadFromHelmValuesObject(path string, obj *unstructured.Unstructured) (Argo
 	if err := decodeUnstructuredObject(obj, &doc); err != nil {
 		return settings, nil, fmt.Errorf("parse helm values %s: %w", path, err)
 	}
-	diags := applyCMMap(&settings, doc.Configs.CM, path, "configs.cm")
+	return applyHelmValuesDocument(settings, doc, path)
+}
+
+// applyHelmValuesDocument reads the Argo CD settings of one argo-cd Helm
+// values document. configs.cm is first turned into the argocd-cm data that
+// the chart renders (helmArgoCDConfigMapData).
+func applyHelmValuesDocument(settings ArgoSettings, doc helmValuesSettingsDocument, path string) (ArgoSettings, []diagnostic.Diagnostic, error) {
+	data, rendered, diags := helmArgoCDConfigMapData(doc.Configs.CM, path)
+	if rendered && !hasErrorDiagnostic(diags) {
+		diags = append(diags, applyCMMap(&settings, data, path, "configs.cm")...)
+	}
 	cmpDiags, err := applyCMPPlugins(&settings, doc.Configs.CMP.Plugins, path, "configs.cmp.plugins")
 	if err != nil {
 		return settings, diags, err
@@ -362,7 +363,7 @@ func decodeYAMLDocumentAt(path string, documentIndex int, out any) error {
 
 type helmValuesSettingsDocument struct {
 	Configs struct {
-		CM  map[string]string `yaml:"cm"`
+		CM  map[string]any `yaml:"cm"`
 		CMP struct {
 			Plugins map[string]any `yaml:"plugins"`
 		} `yaml:"cmp"`
