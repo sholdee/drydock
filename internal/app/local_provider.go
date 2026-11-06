@@ -181,7 +181,7 @@ func (p localProvider) renderSource(ctx context.Context, source render.ResolvedS
 		return nil, nearMissDiags, err
 	}
 	opts.RefRoots = mergeRefRoots(anchoredRefRoots, refRoots)
-	if err := p.checkSourceTreesOutOfBoundsSymlinks(ctx, source, opts); err != nil {
+	if err := p.checkSourceTreesOutOfBoundsSymlinks(ctx, source); err != nil {
 		return nil, nearMissDiags, err
 	}
 	if opts.Plugin != nil {

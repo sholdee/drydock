@@ -570,12 +570,16 @@ Supported:
   parameter reads, on an OCI artifact (`oci image contains out-of-bounds
   symlinks. file: <path>`), and on a chart of a Helm repository (`chart
   contains out-of-bounds symlinks. file: <path>`). The path is the first
-  such symlink in walk order. The check of a source's own
-  tree runs before `.argocd-source.yaml` is read, and the check of a `$ref`
-  repository runs after it, also for a chart of a Helm repository. A Git
-  source that only sets `ref` is not checked, as in Argo CD. An `oci://`
-  source that only sets `ref` is acquired and checked, because the
-  repo-server extracts it, but nothing renders from it. Setting
+  such symlink in walk order. For a source with a path, drydock checks the
+  source's own tree, then each `$ref` repository that the `helm.valueFiles`
+  and `helm.fileParameters` of the spec read, and only then reads
+  `.argocd-source.yaml`, as the repo-server does. So an override that
+  replaces the value files does not skip a `$ref` check. For a chart of a
+  Helm repository, drydock checks the chart first and then its `$ref`
+  repositories. A Git source that only sets `ref` is not checked, as in Argo
+  CD. An `oci://` source that only sets `ref` is acquired and checked,
+  because the repo-server extracts it, but nothing renders from it. When the
+  check is off, drydock does not acquire it. Setting
   `reposerver.allow.oob.symlinks` to `true` in `argocd-cmd-params-cm` turns
   the check off, as the repo-server flag `--allow-oob-symlinks` does.
   drydock reads that key only from an `argocd-cmd-params-cm` that it

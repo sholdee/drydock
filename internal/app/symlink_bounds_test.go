@@ -186,18 +186,31 @@ func TestLocalProviderChecksEachScope(t *testing.T) {
 		RefSources: map[string]render.ResolvedSource{"$values": {RepoURL: "https://git.example.test/values.git", TargetRevision: "main"}},
 	}
 	t.Run("$ref repository", func(t *testing.T) {
+		root := refApplicationRoot(t, "")
 		_, valuesMap := refValues(t)
-		root := t.TempDir()
-		writeTestFile(t, filepath.Join(root, "chart", "Chart.yaml"), "apiVersion: v2\nname: demo\nversion: 1.0.0\n")
-		provider := localProvider{
-			repoRoot:       root,
-			sourceResolver: sourcepkg.NewResolver(sourcepkg.Options{RepoMaps: []sourcepkg.RepoMap{valuesMap}}),
-		}
-		_, _, err := provider.RenderSource(context.Background(), render.ResolvedSource{RepoRoot: root, Path: "chart"}, refOptions)
+		provider := localProvider{repoRoot: root, sourceResolver: sourcepkg.NewResolver(sourcepkg.Options{RepoMaps: []sourcepkg.RepoMap{valuesMap}})}
+		_, err := RenderApplication(context.Background(), refApplication(), provider)
 		if err == nil || !strings.Contains(err.Error(), "ref root $values: repository contains out-of-bounds symlinks. file: escape.yaml") {
-			t.Fatalf("RenderSource() error = %v, want the $ref out-of-bounds error", err)
+			t.Fatalf("RenderApplication() error = %v, want the $ref out-of-bounds error", err)
 		}
 	})
+	// The repo-server checks the $ref repositories of the spec before it
+	// reads .argocd-source.yaml (reposerver/repository/repository.go:870-967
+	// at v3.6.1).
+	for name, override := range map[string]string{
+		"an override that replaces the value files": "helm:\n  valueFiles:\n    - values.yaml\n",
+		"a malformed override":                      "helm: [not, a, map\n",
+	} {
+		t.Run("$ref repository before "+name, func(t *testing.T) {
+			root := refApplicationRoot(t, override)
+			_, valuesMap := refValues(t)
+			provider := localProvider{repoRoot: root, sourceResolver: sourcepkg.NewResolver(sourcepkg.Options{RepoMaps: []sourcepkg.RepoMap{valuesMap}})}
+			_, err := RenderApplication(context.Background(), refApplication(), provider)
+			if err == nil || !strings.Contains(err.Error(), "ref root $values: repository contains out-of-bounds symlinks. file: escape.yaml") {
+				t.Fatalf("RenderApplication() error = %v, want the $ref out-of-bounds error", err)
+			}
+		})
+	}
 	t.Run("a Helm repository chart is checked before its $ref repository", func(t *testing.T) {
 		_, valuesMap := refValues(t)
 		chartDir := filepath.Join(t.TempDir(), "demo")
@@ -257,7 +270,40 @@ func TestRenderApplicationChecksBeforeOverridesAndOCIRefOnlySources(t *testing.T
 		if err == nil || !strings.Contains(err.Error(), "source[1]") || !strings.Contains(err.Error(), "oci image contains out-of-bounds symlinks. file: escape.yaml") {
 			t.Fatalf("RenderApplication() error = %v, want the OCI ref-only source checked", err)
 		}
+		// With the check off nothing renders from the source and nothing
+		// is checked, so drydock does not acquire it: the repo-map now
+		// points nowhere, and the render still succeeds.
+		provider.allowOutOfBoundsSymlinks = true
+		provider.sourceResolver = sourcepkg.NewResolver(sourcepkg.Options{RepoMaps: []sourcepkg.RepoMap{{URL: "oci://registry.example.test/parity/values", Path: filepath.Join(t.TempDir(), "missing")}}})
+		if _, err := RenderApplication(context.Background(), application, provider); err != nil {
+			t.Fatalf("RenderApplication() with the check off error = %v, want the OCI ref-only source left alone", err)
+		}
 	})
+}
+
+// refApplicationRoot writes a local Helm chart at chart/ with a values file
+// and, when override is set, a .argocd-source.yaml next to it.
+func refApplicationRoot(t *testing.T, override string) string {
+	t.Helper()
+	root := t.TempDir()
+	writeTestFile(t, filepath.Join(root, "chart", "Chart.yaml"), "apiVersion: v2\nname: demo\nversion: 1.0.0\n")
+	writeTestFile(t, filepath.Join(root, "chart", "values.yaml"), "a: 1\n")
+	if override != "" {
+		writeTestFile(t, filepath.Join(root, "chart", ".argocd-source.yaml"), override)
+	}
+	return root
+}
+
+// refApplication renders chart/ with the value file $values/values.yaml
+// from a second repository.
+func refApplication() argoappv1.Application {
+	return argoappv1.Application{
+		Name: "demo",
+		Spec: argoappv1.ApplicationSpec{Sources: argoappv1.ApplicationSources{
+			{RepoURL: "https://git.example.test/repo.git", TargetRevision: "main", Path: "chart", Helm: &argoappv1.ApplicationSourceHelm{ValueFiles: []string{"$values/values.yaml"}}},
+			{RepoURL: "https://git.example.test/values.git", TargetRevision: "main", Ref: "values"},
+		}},
+	}
 }
 
 type fixedChartAcquirer struct{ dir string }

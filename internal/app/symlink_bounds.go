@@ -4,10 +4,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
+
 	"path/filepath"
 	"strings"
 	"sync"
 
+	argoappv1 "github.com/argoproj/argo-cd/v3/pkg/apis/application/v1alpha1"
 	"github.com/sholdee/drydock/internal/config"
 	"github.com/sholdee/drydock/internal/gitref"
 	"github.com/sholdee/drydock/internal/ociartifact"
@@ -121,26 +123,71 @@ func (p localProvider) checkOutOfBoundsSymlinks(ctx context.Context, root string
 }
 
 // checkSourceTreesOutOfBoundsSymlinks checks the tree a source renders
-// from, then each $ref repository it reads, as the repo-server does before
-// it generates manifests. source.RepoRoot is the resolved root. A
-// chart-only source renders from the chart it acquires, which
-// renderChartOnlySource checks before its $ref repositories.
-func (p localProvider) checkSourceTreesOutOfBoundsSymlinks(ctx context.Context, source render.ResolvedSource, opts render.RenderOptions) error {
+// from, as the repo-server does before it generates manifests.
+// source.RepoRoot is the resolved root. PrepareSource already checked it
+// and the $ref repositories of a path source, so this is a memo hit for a
+// prepared source. A chart-only source renders from the chart it acquires,
+// which renderChartOnlySource checks before its $ref repositories.
+func (p localProvider) checkSourceTreesOutOfBoundsSymlinks(ctx context.Context, source render.ResolvedSource) error {
 	if chartFlowSource(source) {
 		return nil
 	}
-	if err := p.checkOutOfBoundsSymlinks(ctx, source.RepoRoot, sourceOutOfBoundsSymlinkScope(source)); err != nil {
-		return err
+	return p.checkOutOfBoundsSymlinks(ctx, source.RepoRoot, sourceOutOfBoundsSymlinkScope(source))
+}
+
+// checkSpecHelmRefRootsOutOfBoundsSymlinks checks the $ref repositories of
+// a path source as the repo-server does in runManifestGenAsync
+// (reposerver/repository/repository.go:870-959 at v3.6.1): only for an
+// Application with sources, from the spec's helm valueFiles and then
+// fileParameters, before it reads .argocd-source.yaml (line 967). So an
+// override that replaces the value files does not skip the check. A $ref
+// to the source's own repository is checked with the source. An error
+// that resolving a $ref would give is left to the render, which reports it.
+func (p localProvider) checkSpecHelmRefRootsOutOfBoundsSymlinks(ctx context.Context, application argoappv1.Application, sourcePlan SourcePlan) error {
+	helm := sourcePlan.Source.Helm
+	if p.allowOutOfBoundsSymlinks || helm == nil || len(application.Spec.Sources) == 0 {
+		return nil
 	}
-	return p.checkHelmRefRootsOutOfBoundsSymlinks(ctx, opts)
+	candidates := append([]string(nil), helm.ValueFiles...)
+	for _, parameter := range helm.FileParameters {
+		candidates = append(candidates, parameter.Path)
+	}
+	plan, err := Plan(application)
+	if err != nil {
+		return nil
+	}
+	_, refSources, err := renderRefsForSource(plan, sourcePlan, candidates)
+	if err != nil {
+		return nil
+	}
+	checked := map[string]bool{}
+	for _, candidate := range candidates {
+		refKey, ok, err := helmValueFileRefKey(candidate)
+		if err != nil || !ok || checked[refKey] {
+			continue
+		}
+		checked[refKey] = true
+		refSource, ok := refSources[refKey]
+		if !ok {
+			continue
+		}
+		roots, err := p.resolveRefRoots(ctx, map[string]render.ResolvedSource{refKey: refSource})
+		if err != nil {
+			return nil
+		}
+		if err := p.checkOutOfBoundsSymlinks(ctx, roots[refKey], render.OutOfBoundsSymlinkScopeRepository); err != nil {
+			return fmt.Errorf("ref root %s: %w", refKey, err)
+		}
+	}
+	return nil
 }
 
 // checkHelmRefRootsOutOfBoundsSymlinks checks each Git repository that a
-// Helm $ref value file or file parameter reads, in the order the
-// repo-server does: value files first, then file parameters, each
-// repository once (reposerver/repository/repository.go:870-959 at v3.6.1).
-// The repo-server runs this after it checked the source's own tree, so a
-// chart-only source runs it after its chart check.
+// Helm $ref value file or file parameter of a chart-only source reads, in
+// the order the repo-server does: value files first, then file parameters,
+// each repository once (reposerver/repository/repository.go:870-959 at
+// v3.6.1). The repo-server runs this after it checked the chart. A chart-only
+// source reads no overrides, so its options hold the spec's value files.
 func (p localProvider) checkHelmRefRootsOutOfBoundsSymlinks(ctx context.Context, opts render.RenderOptions) error {
 	candidates := append([]string(nil), opts.ValueFiles...)
 	for _, parameter := range opts.HelmFileParameters {
@@ -170,6 +217,11 @@ func (p localProvider) checkHelmRefRootsOutOfBoundsSymlinks(ctx context.Context,
 // extracts such an artifact and checks it (429-444), and then generates
 // nothing from it because its path and chart are empty (689-697).
 func (p localProvider) checkRefOnlyOCISource(ctx context.Context, sourcePlan SourcePlan) error {
+	// With the check off there is nothing to check and nothing renders, so
+	// drydock does not acquire the artifact.
+	if p.allowOutOfBoundsSymlinks {
+		return nil
+	}
 	source := normalizeOCISource(render.ResolvedSource{
 		Path:           sourcePlan.Source.Path,
 		RepoURL:        sourcePlan.Source.RepoURL,

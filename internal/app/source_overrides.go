@@ -44,11 +44,14 @@ func (p localProvider) PrepareSource(ctx context.Context, application argoappv1.
 	if err != nil {
 		return sourcePlan, err
 	}
-	// The repo-server checks the tree before GenerateManifests reads the
-	// overrides (reposerver/repository/repository.go:499-514 and
-	// 1907-1923 at v3.6.1). A chart-only source has no path, so it never
-	// gets here.
+	// The repo-server checks the tree and then the $ref repositories
+	// before GenerateManifests reads the overrides
+	// (reposerver/repository/repository.go:499-514, 870-959, and 967 at
+	// v3.6.1). A chart-only source has no path, so it never gets here.
 	if err := p.checkOutOfBoundsSymlinks(ctx, sourceRoot, sourceOutOfBoundsSymlinkScope(source)); err != nil {
+		return sourcePlan, err
+	}
+	if err := p.checkSpecHelmRefRootsOutOfBoundsSymlinks(ctx, application, sourcePlan); err != nil {
 		return sourcePlan, err
 	}
 
