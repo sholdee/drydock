@@ -47,6 +47,13 @@ selector syntax to match `Application.metadata.labels`:
 drydock get apps --path . -l 'env in (prod,stage),tier!=test'
 ```
 
+A child Application that drydock finds by rendering its parent has the
+tracking metadata that Argo CD sets on it, from the tracking settings of the
+repository. Under label tracking, the child has the label
+`app.kubernetes.io/instance` (or the configured
+`application.instanceLabelKey`) with the parent name, and `-l` can select on
+it.
+
 List rendered image references from Applications:
 
 ```bash
@@ -78,6 +85,23 @@ overlays, add one or more local Kustomize discovery entrypoints:
 drydock get apps --path . --discover-kustomize argocd/overlays/prod
 drydock test apps --path . --discover-kustomize clusters/prod/argocd
 ```
+
+Fleet discovery renders the Application that installs Argo CD on this cluster
+from a Helm chart, to read the Argo CD settings. So `build`, `test`, `diff`,
+`get apps`, changed-only diffs, and `diag` with `--render`, `--cache-events`,
+or `--plugin-executions` need the chart of that install, also when a change
+does not touch it. Plain `diag` uses static discovery and does not render the
+install. With `--offline`, the chart must be in
+the chart cache. If drydock cannot render the install, it reports a
+`settings.install-render-failed` warning and reads the values files of the
+install on their own. `--strict` fails on this warning.
+
+A `--discover-kustomize` path also counts as the Argo CD install of this
+cluster. If its render holds `argocd-cm`, `argocd-cmd-params-cm`, or
+`argocd-cmp-cm` in the `argocd` namespace, drydock reads the Argo CD settings
+from them. The Helm values files and settings ConfigMap files that the render
+reads are then not settings sources of their own, also when no Application
+installs Argo CD.
 
 The path is relative to `--path`, must not escape through `..`, and must not
 include symlinked path components. Explicitly rendered Kustomize objects take
@@ -434,7 +458,9 @@ They may produce diagnostics and settings summaries, but they do not mutate
 drydock render behavior. The exception is
 `reposerver.max.combined.directory.manifests.size`. drydock applies it as the
 limit on the combined file size of one directory source, with the repo-server
-default `10M` when it is not set.
+default `10M` when it is not set. When the repository installs Argo CD from the
+argo-cd Helm chart, drydock reads it from the rendered `argocd-cmd-params-cm`,
+which the chart makes from `configs.params`.
 
 ## Cache Commands
 

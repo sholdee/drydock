@@ -743,8 +743,14 @@ data:
 
 func TestLoadConfigMapAdvancedResourceCustomizations(t *testing.T) {
 	settings, diags := loadAdvancedResourceCustomizations(t)
-	if len(diags) != 4 {
-		t.Fatalf("len(diags) = %d, want 4 warnings: %#v", len(diags), diags)
+	// Two actions warnings, and one ignoreResourceUpdates advisory for the
+	// whole ConfigMap that names both keys.
+	if len(diags) != 3 {
+		t.Fatalf("len(diags) = %d, want 3 warnings: %#v", len(diags), diags)
+	}
+	advisory := diags[len(diags)-1]
+	if advisory.Code != diagnostic.CodeSettingsIgnoreResourceUpdates || !strings.Contains(advisory.Message, "keys: apps/Deployment, batch/Job") {
+		t.Fatalf("ignoreResourceUpdates advisory = %#v, want one advisory naming both keys", advisory)
 	}
 	if settings.IgnoreResourceUpdatesEnabled.Value {
 		t.Fatalf("IgnoreResourceUpdatesEnabled = true, want false")
@@ -884,8 +890,8 @@ data:
 	if err != nil {
 		t.Fatalf("LoadFromConfigMap() error = %v", err)
 	}
-	if !hasDiagnosticCode(diags, "settings.metadata-only") {
-		t.Fatalf("diagnostics = %#v, want settings.metadata-only", diags)
+	if len(diags) != 1 || diags[0].Code != diagnostic.CodeSettingsIgnoreResourceUpdates {
+		t.Fatalf("diagnostics = %#v, want one %s advisory", diags, diagnostic.CodeSettingsIgnoreResourceUpdates)
 	}
 	customization := settings.ResourceCustomizations["apps/Deployment"]
 	if len(customization.IgnoreResourceUpdates.JSONPointers) != 1 || customization.IgnoreResourceUpdates.JSONPointers[0] != "/status" {
@@ -919,7 +925,7 @@ data:
 		t.Fatalf("LoadFromConfigMap() error = %v", err)
 	}
 	assertDiagnosticStableCode(t, diags, "resource customizations actions", "settings.metadata-only")
-	assertDiagnosticStableCode(t, diags, "resource customizations ignoreResourceUpdates", "settings.metadata-only")
+	assertDiagnosticStableCode(t, diags, "resource customizations ignoreResourceUpdates", diagnostic.CodeSettingsIgnoreResourceUpdates)
 }
 
 func TestLoadConfigMapSplitResourceCustomizationRetainsHealthLuaWithoutWarning(t *testing.T) {

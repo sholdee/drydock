@@ -72,13 +72,20 @@ func KustomizeInputDigestPaths(ctx context.Context, source ResolvedSource, opts 
 // than failing the walk. An error means the graph itself could not be read;
 // callers fall back to spec.source.path ownership.
 func KustomizeSelectionPaths(ctx context.Context, repoRoot, sourcePath string, kustomize *argoappv1.ApplicationSourceKustomize) ([]string, error) {
+	paths, _, err := kustomizeSelectionGraph(ctx, repoRoot, sourcePath, kustomize)
+	return paths, err
+}
+
+// kustomizeSelectionGraph is KustomizeSelectionPaths, and it also returns the
+// graph it walked.
+func kustomizeSelectionGraph(ctx context.Context, repoRoot, sourcePath string, kustomize *argoappv1.ApplicationSourceKustomize) ([]string, []kustomizeGraphNode, error) {
 	root, err := sourceRoot(ResolvedSource{RepoRoot: repoRoot, Path: sourcePath})
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	_, graph, err := collectKustomizeGraph(ctx, repoRoot, root, kustomizeInputWalk)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	collector := &kustomizeInputCollector{
 		repoRoot:   filepath.Clean(repoRoot),
@@ -87,18 +94,18 @@ func KustomizeSelectionPaths(ctx context.Context, repoRoot, sourcePath string, k
 	}
 	for _, node := range graph {
 		if err := collector.collectNode(ctx, node); err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 	}
 	if err := collector.collectSourceKustomizeRefs(ctx, root, kustomize); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	out := make([]string, 0, len(collector.paths))
 	for path := range collector.paths {
 		out = append(out, path)
 	}
 	sort.Strings(out)
-	return out, nil
+	return out, graph, nil
 }
 
 // collectSourceKustomizeRefs adds the spec.source.kustomize components and

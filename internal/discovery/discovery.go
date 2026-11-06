@@ -78,6 +78,27 @@ type SettingsCandidate struct {
 	Name          string
 	Object        *unstructured.Unstructured
 	Tier          SourceTier
+	// RenderValuesFiles and RenderFiles list, for a settings ConfigMap that
+	// an Application render produced, the repository files that render read:
+	// the local Helm values files, and the other local Kustomize input files.
+	// They hold files only, never directories. The rendered ConfigMap is what
+	// the cluster gets from those files, so a committed values file in
+	// RenderValuesFiles, or a committed settings ConfigMap in RenderFiles, is
+	// replaced by it. Only rendered candidates set them.
+	RenderValuesFiles []string
+	RenderFiles       []string
+}
+
+// IsSettingsConfigMapKind reports whether kind is the candidate kind of an
+// Argo CD settings ConfigMap: argocd-cm, argocd-cmd-params-cm, or
+// argocd-cmp-cm.
+func IsSettingsConfigMapKind(kind string) bool {
+	switch kind {
+	case "argocd-cm", "argocd-cmd-params-cm", "argocd-cmp-cm":
+		return true
+	default:
+		return false
+	}
 }
 
 type Result struct {

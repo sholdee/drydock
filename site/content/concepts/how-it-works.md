@@ -16,6 +16,15 @@ explicit Kustomize discovery entrypoints and trusted PluginPolicy bootstrap
 entrypoints when bootstrap inputs are not committed as inflated Argo CD
 objects.
 
+When an Application installs Argo CD from a Helm chart, drydock renders it
+and reads the Argo CD settings from the rendered ConfigMaps. An install
+renders the `argo-cd` chart, or its Helm values set Argo CD settings, and it
+deploys to this cluster. Helm
+merges the values files of the install and the chart defaults, so drydock
+sees the settings that Argo CD sees in the cluster. If the install does not
+render, drydock reports a warning and reads `configs.cm` and `configs.cmp`
+from its values files on their own.
+
 Supported ApplicationSet generators expand offline from local files, lists,
 matrix and merge combinations, or explicit provider fixtures. Unsupported
 generators produce diagnostics instead of guessing.

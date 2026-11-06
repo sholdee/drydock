@@ -126,6 +126,47 @@ func (p localProvider) resolveSourceRootIdentity(ctx context.Context, source ren
 	}, nil
 }
 
+// sourceResolvesToRepoRoot reports whether resolveSourceRootIdentity resolves
+// source to this provider's repository root, without acquiring anything. It
+// follows the same order of checks; keep the two in step. A chart-only
+// source has no local root, so it reports false.
+func (p localProvider) sourceResolvesToRepoRoot(source render.ResolvedSource) bool {
+	if chartFlowSource(source) {
+		return false
+	}
+	if p.sourceResolver != nil {
+		if mappedPath, ok := p.sourceResolver.MappedPath(source.RepoURL); ok {
+			mapped, err := filepath.Abs(mappedPath)
+			if err != nil {
+				return false
+			}
+			root, err := filepath.Abs(p.repoRoot)
+			return err == nil && filepath.Clean(mapped) == filepath.Clean(root)
+		}
+	}
+	if ociartifact.IsOCIURL(source.RepoURL) {
+		return false
+	}
+	if source.Path != "" {
+		if exists, err := sourcePathExists(p.repoRoot, source.Path); err != nil {
+			return false
+		} else if exists {
+			return true
+		}
+	}
+	if p.isSelfRepoRef(source.RepoURL, source.TargetRevision) {
+		return true
+	}
+	return strings.TrimSpace(source.RepoURL) == "" || p.sourceResolver == nil
+}
+
+// sourceRootIsRepoRoot reports whether the render resolves the root of
+// source to this provider's repository root: a chart from a chart repository
+// (chartFlowSource) or a source that sourceResolvesToRepoRoot finds here.
+func (p localProvider) sourceRootIsRepoRoot(source render.ResolvedSource) bool {
+	return chartFlowSource(source) || p.sourceResolvesToRepoRoot(source)
+}
+
 // resolveOCIArtifactSource acquires a first-class OCI artifact source: the
 // revision resolves to a digest, the artifact content extracts into the
 // session snapshot area, and the extraction root becomes the source root.

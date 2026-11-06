@@ -102,8 +102,16 @@ Provider precedence:
 
 1. Explicit CLI flags such as `--argocd-cm`, `--argocd-values`,
    `--repo-secret`, and `--kustomize-build-option`.
-2. Rendered Argo CD ConfigMap candidates, especially `argocd-cm`.
-3. Argo CD Helm values candidates, including `configs.cm`.
+2. Rendered Argo CD ConfigMap candidates, especially `argocd-cm`. Some
+   repositories install Argo CD from a Helm chart. Fleet discovery then
+   renders that install for its settings. It reads the rendered
+   `argocd-cm`, `argocd-cmd-params-cm`, and `argocd-cmp-cm`. Helm merges
+   all values of the release and the chart defaults, so these ConfigMaps
+   hold what the cluster gets. A values file or a committed settings
+   ConfigMap that the render reads is then not a candidate of its own.
+3. Argo CD Helm values candidates, including `configs.cm`, for values files
+   that no rendered install reads. drydock reads each such file on its own,
+   without the chart defaults.
 4. Repository Secrets labeled
    `argocd.argoproj.io/secret-type: repository`, using only non-sensitive
    metadata.
@@ -121,6 +129,33 @@ supported generated `ApplicationSet` Applications, Argo CD settings,
 AppProjects, repository metadata, and cluster Secret metadata. Generated and
 direct Applications share the same downstream planning, rendering, test, and
 diff path.
+
+Fleet discovery renders Applications in rounds until the discovered objects
+and the settings stop changing. At the start of each round, drydock renders
+the Applications that install Argo CD from a Helm chart, for their settings
+ConfigMaps only. An install renders the `argo-cd` chart, or its Helm values
+set Argo CD settings, and its destination is this cluster. An Application
+that installs Argo CD on another cluster is not an install. An install that
+the frontier already renders for discovery is not rendered settings-only.
+drydock finds the values files of an install with the resolution helpers of
+the renderer: globs, build environment variables, `$ref` roots, the merged
+`.argocd-source.yaml` overrides, and subchart values.
+
+drydock repeats the settings-only renders until the settings no longer
+change how these installs render. These renders are keyed without tracking
+settings and resource customizations, because neither changes the data of a
+settings ConfigMap. Then the frontier renders the round with the settled
+settings. The final render renders each install again as a normal
+Application, with the final settings. The two renders have different keys,
+so a run renders such an install twice, and the settings-only render runs
+before the frontier. If an install fails to render, drydock reports a
+`settings` warning, and the values files of that install stay settings
+sources of their own unless another rendered install read them.
+
+A `--discover-kustomize` path names the Argo CD install of this cluster.
+Its rendered settings ConfigMaps in the `argocd` namespace replace the
+values files and settings ConfigMap files that its render reads, also when
+no Application installs Argo CD.
 
 Repeatable `--discover-ignore` repository-relative globs (same doublestar
 semantics as `--changed-only-ignore`) exclude matching files from this scan

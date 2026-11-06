@@ -17,11 +17,20 @@ func appendDiscoveredProjects(projects []argoappv1.AppProject, discovered discov
 	return projects
 }
 
+// loadSettingsFromDiscovery loads and merges the discovered settings
+// candidates. A committed values file or settings ConfigMap that a rendered
+// settings ConfigMap read (RenderInputs) is left out: Helm merged it with the
+// other values of its release and the chart defaults, and the rendered
+// ConfigMap holds that result.
 func loadSettingsFromDiscovery(root string, discovered discovery.Result) (config.ArgoSettings, []diagnostic.Diagnostic, error) {
 	var candidates []config.ArgoSettings
 	var diags []diagnostic.Diagnostic
 	seen := make(map[string]struct{}, len(discovered.SettingsCandidates))
+	renderInputs := renderedSettingsInputs(discovered.SettingsCandidates)
 	for _, candidate := range discovered.SettingsCandidates {
+		if supersededBySettingsRender(candidate, renderInputs) {
+			continue
+		}
 		key := fmt.Sprintf("%s\x00%s\x00%d", candidate.Kind, candidate.Path, candidate.DocumentIndex)
 		if _, ok := seen[key]; ok {
 			continue
