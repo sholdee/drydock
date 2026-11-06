@@ -382,3 +382,30 @@ func TestHelmRendererParityRenderFixtureMatchesUpstream(t *testing.T) {
 		t.Fatalf("rendered %d objects, want 3 (update the README count too)", len(got))
 	}
 }
+
+// TestHelmRendererErrorsDoNotEchoContent renders templates whose document
+// head helm cannot read. helm template fails on each one with "YAML parse
+// error on <file>" (pkg/release/v1/util/manifest_sorter.go:151-153 at helm
+// v4.3.1), and the wrapped sigs.k8s.io/yaml error can copy a map key, an
+// anchor name, or a value. drydock keeps the prefix and drops the content.
+func TestHelmRendererErrorsDoNotEchoContent(t *testing.T) {
+	const secretValue = "hunter2secret"
+	for name, template := range map[string]string{
+		"map key":           "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: x\ndata:\n  ? {topsecret: " + secretValue + "}\n  : c\n",
+		"unknown anchor":    "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: x\ndata:\n  a: *" + secretValue + "\n",
+		"value against tag": "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: x\ndata:\n  a: !!int " + secretValue + "\n",
+	} {
+		t.Run(name, func(t *testing.T) {
+			chartDir, _, err := renderParityChart(t, map[string]string{"templates/cm.yaml": template}, false)
+			if _, upstreamErr := upstreamHelmOutcome(t, chartDir, false); upstreamErr == nil {
+				t.Fatal("upstream error = nil, want a failure")
+			}
+			if err == nil || !strings.Contains(err.Error(), "helm template chart: YAML parse error on parity/templates/cm.yaml: ") {
+				t.Fatalf("drydock error = %v, want the helm prefix", err)
+			}
+			if strings.Contains(err.Error(), secretValue) {
+				t.Fatalf("drydock error leaked manifest data: %q", err)
+			}
+		})
+	}
+}

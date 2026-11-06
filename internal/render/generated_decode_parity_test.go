@@ -222,6 +222,9 @@ func TestDecodeGeneratedOutputDoesNotEchoContent(t *testing.T) {
 		"apiVersion: v1/x/y\nkind: Secret\nstringData:\n  token: " + secretValue + "\n",
 		`{"kind": "Secret", "data": {"token": ` + secretValue + `}`,
 		"--- {kind: Secret, data: {token: " + secretValue + "}}\n",
+		"apiVersion: v1\nkind: Secret\ndata:\n  ? {key: " + secretValue + "}\n  : c\n",
+		"apiVersion: v1\nkind: Secret\ndata:\n  token: *" + secretValue + "\n",
+		"apiVersion: v1\nkind: Secret\ndata:\n  token: !!int " + secretValue + "\n",
 	} {
 		_, err := DecodeGeneratedOutput("out", []byte(input), nil)
 		if err == nil {

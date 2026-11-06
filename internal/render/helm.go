@@ -2,6 +2,7 @@ package render
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"maps"
 	"os"
@@ -14,6 +15,7 @@ import (
 	"github.com/sholdee/drydock/internal/avpcompat"
 	"github.com/sholdee/drydock/internal/diagnostic"
 	"github.com/sholdee/drydock/internal/manifest"
+	"github.com/sholdee/drydock/internal/manifestyaml"
 	helmchart "helm.sh/helm/v4/pkg/chart"
 	"helm.sh/helm/v4/pkg/chart/common"
 	chartutil "helm.sh/helm/v4/pkg/chart/common/util"
@@ -309,7 +311,7 @@ func helmTemplateStream(manifestPath string, pathMap map[string]string, chrt hel
 	}
 	hooks, sorted, err := releaseutil.SortManifests(files, nil, releaseutil.InstallOrder)
 	if err != nil {
-		return nil, fmt.Errorf("helm template %s: %w", manifestPath, err)
+		return nil, fmt.Errorf("helm template %s: %w", manifestPath, sanitizeHelmSortError(err))
 	}
 	stream.indexTemplates(files)
 	for _, entry := range sorted {
@@ -424,6 +426,23 @@ func (s *helmStream) addTemplateDocument(name, content string) error {
 		order:      queue[0].order,
 	})
 	return nil
+}
+
+// sanitizeHelmSortError keeps the "YAML parse error on <file>: " prefix that
+// releaseutil.SortManifests (pkg/release/v1/util/manifest_sorter.go:151-153
+// at helm v4.3.1) puts on a sigs.k8s.io/yaml error, and drops the manifest
+// content that the wrapped error can copy, such as a map key (see
+// manifestyaml.SanitizeDecodeError).
+func sanitizeHelmSortError(err error) error {
+	inner := errors.Unwrap(err)
+	if inner == nil {
+		return manifestyaml.SanitizeDecodeError(err)
+	}
+	prefix, ok := strings.CutSuffix(err.Error(), inner.Error())
+	if !ok {
+		return manifestyaml.SanitizeDecodeError(err)
+	}
+	return fmt.Errorf("%s%w", prefix, manifestyaml.SanitizeDecodeError(inner))
 }
 
 // helmNotesFileSuffix is the suffix of the files that helm's renderResources

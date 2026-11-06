@@ -62,9 +62,11 @@ func (d *Decoder) Decode() (any, error) {
 }
 
 // SanitizeDecodeError drops the manifest content that apimachinery,
-// sigs.k8s.io/yaml and sigs.k8s.io/json copy into some errors: the text after
-// a "---" separator, a map key JSON cannot represent and its entry's value,
-// an out-of-range number, and the offending character of a JSON syntax error.
+// sigs.k8s.io/yaml, go.yaml.in/yaml/v2 and sigs.k8s.io/json copy into some
+// errors: the text after a "---" separator, a map key JSON cannot represent
+// and its entry's value, an out-of-range number, the name of an anchor, a
+// value whose tag does not fit it, and the offending character of a JSON
+// syntax error.
 func SanitizeDecodeError(err error) error {
 	message := err.Error()
 	switch {
@@ -74,6 +76,12 @@ func SanitizeDecodeError(err error) error {
 		return errors.New("YAML object key is not a string, number, or boolean")
 	case strings.Contains(message, "cannot unmarshal number"):
 		return errors.New("JSON number is out of range")
+	case strings.Contains(message, "yaml: unknown anchor"):
+		return errors.New("YAML alias refers to an anchor that is not defined")
+	case strings.Contains(message, "value contains itself"):
+		return errors.New("YAML anchor refers to itself")
+	case strings.Contains(message, "yaml: cannot decode !!"):
+		return errors.New("YAML value does not fit its tag")
 	}
 	// apimachinery wraps a JSON syntax error in JSONSyntaxError, except once
 	// a stream has yielded more than one JSON object, when it returns the
