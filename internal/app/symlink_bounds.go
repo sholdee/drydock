@@ -95,7 +95,7 @@ func walkOutOfBoundsSymlinks(ctx context.Context, abs string, scope render.OutOf
 	if scope == render.OutOfBoundsSymlinkScopeRepository {
 		opts.SkipRootGit = true
 		// A worktree whose Git data cannot be read is checked whole.
-		if filter, filterErr := gitref.OpenUntrackedIgnoredFilter(abs); filterErr == nil {
+		if filter, filterErr := gitref.OpenUntrackedIgnoredFilter(ctx, abs); filterErr == nil {
 			opts.Skip = filter.Skip
 		}
 	}

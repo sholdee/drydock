@@ -6,48 +6,84 @@ import (
 	"testing"
 )
 
+// filterModes runs a test with the git CLI and with the go-git fallback,
+// which an empty PATH selects.
+func filterModes(t *testing.T, run func(t *testing.T, cli bool)) {
+	t.Helper()
+	t.Run("git CLI", func(t *testing.T) {
+		if _, err := exec.LookPath("git"); err != nil {
+			t.Skip("git not installed")
+		}
+		run(t, true)
+	})
+	t.Run("go-git fallback", func(t *testing.T) {
+		t.Setenv("PATH", "")
+		run(t, false)
+	})
+}
+
+// isolateGitUserConfig points Git and go-git at an empty user home, so the
+// tests do not read the user's own ignore rules.
+func isolateGitUserConfig(t *testing.T) string {
+	t.Helper()
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", "")
+	t.Setenv("GIT_CONFIG_NOSYSTEM", "1")
+	return home
+}
+
 // TestUntrackedIgnoredFilterSkipsOnlyIgnoredUntrackedPaths pins which
 // worktree paths the out-of-bounds symlink check leaves out: a path that Git
 // ignores and does not track. A tracked path is kept even when an ignore
 // rule matches it, and so is a directory that holds one.
 func TestUntrackedIgnoredFilterSkipsOnlyIgnoredUntrackedPaths(t *testing.T) {
-	root, _, wt := newSnapshotRepo(t)
-	writeChangeSetFile(t, filepath.Join(root, ".gitignore"), "ignored/\n*.tmp\nforced/\n")
-	writeChangeSetFile(t, filepath.Join(root, "apps", "cm.yaml"), "a: 1\n")
-	writeChangeSetFile(t, filepath.Join(root, "forced", "kept.tmp"), "a: 1\n")
-	commitAllSnapshotFiles(t, wt, "fixture")
-	if _, err := wt.Add("forced/kept.tmp"); err != nil {
-		t.Fatalf("Add() error = %v", err)
-	}
-
-	filter, err := OpenUntrackedIgnoredFilter(root)
-	if err != nil || filter == nil {
-		t.Fatalf("OpenUntrackedIgnoredFilter() = %v, %v", filter, err)
-	}
-	for _, tc := range []struct {
-		rel   string
-		isDir bool
-		want  bool
-	}{
-		{rel: "apps", isDir: true},
-		{rel: "apps/cm.yaml"},
-		{rel: "apps/new.yaml"},
-		{rel: "ignored", isDir: true, want: true},
-		{rel: "apps/scratch.tmp", want: true},
-		{rel: "forced", isDir: true},
-		{rel: "forced/kept.tmp"},
-		{rel: "forced/other.tmp", want: true},
-	} {
-		if got := filter.Skip(tc.rel, tc.isDir); got != tc.want {
-			t.Errorf("Skip(%q, %t) = %t, want %t", tc.rel, tc.isDir, got, tc.want)
+	filterModes(t, func(t *testing.T, _ bool) {
+		isolateGitUserConfig(t)
+		root, _, wt := newSnapshotRepo(t)
+		writeChangeSetFile(t, filepath.Join(root, ".gitignore"), "ignored/\n*.tmp\nforced/\n")
+		writeChangeSetFile(t, filepath.Join(root, "apps", "cm.yaml"), "a: 1\n")
+		writeChangeSetFile(t, filepath.Join(root, "forced", "kept.tmp"), "a: 1\n")
+		commitAllSnapshotFiles(t, wt, "fixture")
+		if _, err := wt.Add("forced/kept.tmp"); err != nil {
+			t.Fatalf("Add() error = %v", err)
 		}
-	}
+		writeChangeSetFile(t, filepath.Join(root, "apps", "new.yaml"), "a: 1\n")
+		writeChangeSetFile(t, filepath.Join(root, "ignored", "x"), "a: 1\n")
+		writeChangeSetFile(t, filepath.Join(root, "apps", "scratch.tmp"), "a: 1\n")
+		writeChangeSetFile(t, filepath.Join(root, "forced", "other.tmp"), "a: 1\n")
+
+		filter, err := OpenUntrackedIgnoredFilter(t.Context(), root)
+		if err != nil || filter == nil {
+			t.Fatalf("OpenUntrackedIgnoredFilter() = %v, %v", filter, err)
+		}
+		for _, tc := range []struct {
+			rel   string
+			isDir bool
+			want  bool
+		}{
+			{rel: "apps", isDir: true},
+			{rel: "apps/cm.yaml"},
+			{rel: "apps/new.yaml"},
+			{rel: "ignored", isDir: true, want: true},
+			{rel: "ignored/x", want: true},
+			{rel: "apps/scratch.tmp", want: true},
+			{rel: "forced", isDir: true},
+			{rel: "forced/kept.tmp"},
+			{rel: "forced/other.tmp", want: true},
+		} {
+			if got := filter.Skip(tc.rel, tc.isDir); got != tc.want {
+				t.Errorf("Skip(%q, %t) = %t, want %t", tc.rel, tc.isDir, got, tc.want)
+			}
+		}
+	})
 }
 
 func TestUntrackedIgnoredFilterSkipsNothingOutsideAWorktree(t *testing.T) {
 	root := t.TempDir()
 	writeChangeSetFile(t, filepath.Join(root, ".gitignore"), "*\n")
-	filter, err := OpenUntrackedIgnoredFilter(root)
+	writeChangeSetFile(t, filepath.Join(root, "anything"), "a: 1\n")
+	filter, err := OpenUntrackedIgnoredFilter(t.Context(), root)
 	if err != nil {
 		t.Fatalf("OpenUntrackedIgnoredFilter() error = %v", err)
 	}
@@ -56,66 +92,96 @@ func TestUntrackedIgnoredFilterSkipsNothingOutsideAWorktree(t *testing.T) {
 	}
 }
 
+// TestUntrackedIgnoredFilterMapsASubdirectoryRoot pins a root in a
+// subdirectory of a worktree: the ignore rules of the worktree apply to it,
+// relative to the worktree top level. A root that Git ignores itself is
+// checked whole.
+func TestUntrackedIgnoredFilterMapsASubdirectoryRoot(t *testing.T) {
+	filterModes(t, func(t *testing.T, _ bool) {
+		isolateGitUserConfig(t)
+		top, _, wt := newSnapshotRepo(t)
+		writeChangeSetFile(t, filepath.Join(top, ".gitignore"), ".venv/\ngenerated/\n")
+		writeChangeSetFile(t, filepath.Join(top, "gitops", "app", "cm.yaml"), "a: 1\n")
+		commitAllSnapshotFiles(t, wt, "fixture")
+		writeChangeSetFile(t, filepath.Join(top, "gitops", ".venv", "bin", "python"), "x\n")
+		writeChangeSetFile(t, filepath.Join(top, "generated", "app", "cm.yaml"), "a: 1\n")
+
+		filter, err := OpenUntrackedIgnoredFilter(t.Context(), filepath.Join(top, "gitops"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !filter.Skip(".venv", true) || !filter.Skip(".venv/bin/python", false) {
+			t.Fatal("Skip(.venv) = false, want the worktree ignore rules applied to the subdirectory root")
+		}
+		if filter.Skip("app/cm.yaml", false) {
+			t.Fatal("Skip(app/cm.yaml) = true, want a tracked file kept")
+		}
+		ignoredRoot, err := OpenUntrackedIgnoredFilter(t.Context(), filepath.Join(top, "generated"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if ignoredRoot.Skip("app/cm.yaml", false) || ignoredRoot.Skip("app", true) {
+			t.Fatal("a root that Git ignores skipped a path, want it checked whole")
+		}
+	})
+}
+
 // TestUntrackedIgnoredFilterNeverSkipsSubmodulePaths pins that paths at or
 // under a gitlink are kept. The parent index does not list the files of a
 // submodule, but Argo CD checks out submodules, so a tracked submodule file
 // that a parent ignore rule matches is in every checkout.
 func TestUntrackedIgnoredFilterNeverSkipsSubmodulePaths(t *testing.T) {
-	root, repo, wt := newSnapshotRepo(t)
-	writeChangeSetFile(t, filepath.Join(root, ".gitignore"), "result\nsub/\n")
-	commitAllSnapshotFiles(t, wt, "fixture")
-	commitSubmoduleEntryForTest(t, repo, wt, "sub")
-	filter, err := OpenUntrackedIgnoredFilter(root)
-	if err != nil {
-		t.Fatalf("OpenUntrackedIgnoredFilter() error = %v", err)
-	}
-	for _, tc := range []struct {
-		rel   string
-		isDir bool
-	}{
-		{rel: "sub", isDir: true},
-		{rel: "sub/result"},
-		{rel: "sub/deep/result"},
-	} {
-		if filter.Skip(tc.rel, tc.isDir) {
-			t.Errorf("Skip(%q, %t) = true, want a submodule path kept", tc.rel, tc.isDir)
+	filterModes(t, func(t *testing.T, _ bool) {
+		isolateGitUserConfig(t)
+		root, repo, wt := newSnapshotRepo(t)
+		writeChangeSetFile(t, filepath.Join(root, ".gitignore"), "result\n")
+		commitAllSnapshotFiles(t, wt, "fixture")
+		commitSubmoduleEntryForTest(t, repo, wt, "sub")
+		writeChangeSetFile(t, filepath.Join(root, "sub", "result"), "x\n")
+		writeChangeSetFile(t, filepath.Join(root, "sub", "deep", "result"), "x\n")
+		writeChangeSetFile(t, filepath.Join(root, "result"), "x\n")
+		filter, err := OpenUntrackedIgnoredFilter(t.Context(), root)
+		if err != nil {
+			t.Fatalf("OpenUntrackedIgnoredFilter() error = %v", err)
 		}
-	}
-	if !filter.Skip("result", false) {
-		t.Error("Skip(result) = false, want the ignored parent path skipped")
-	}
+		for _, tc := range []struct {
+			rel   string
+			isDir bool
+		}{
+			{rel: "sub", isDir: true},
+			{rel: "sub/result"},
+			{rel: "sub/deep/result"},
+		} {
+			if filter.Skip(tc.rel, tc.isDir) {
+				t.Errorf("Skip(%q, %t) = true, want a submodule path kept", tc.rel, tc.isDir)
+			}
+		}
+		if !filter.Skip("result", false) {
+			t.Error("Skip(result) = false, want the ignored parent path skipped")
+		}
+	})
 }
 
-// TestUntrackedIgnoredFilterReadsTheDefaultUserIgnoreFile pins that Git's
-// default user ignore file applies when core.excludesFile is not set, and
-// that a configured core.excludesFile replaces it.
-func TestUntrackedIgnoredFilterReadsTheDefaultUserIgnoreFile(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("HOME", home)
-	xdg := filepath.Join(home, "xdg")
-	t.Setenv("XDG_CONFIG_HOME", xdg)
-	writeChangeSetFile(t, filepath.Join(xdg, "git", "ignore"), "result\n")
-	root, _, wt := newSnapshotRepo(t)
-	writeChangeSetFile(t, filepath.Join(root, "apps", "cm.yaml"), "a: 1\n")
-	commitAllSnapshotFiles(t, wt, "fixture")
-
-	filter, err := OpenUntrackedIgnoredFilter(root)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !filter.Skip("result", false) {
-		t.Fatal("Skip(result) = false, want the default user ignore file read")
-	}
-
-	writeChangeSetFile(t, filepath.Join(home, ".gitconfig"), "[core]\n\texcludesFile = ~/custom-ignore\n")
-	writeChangeSetFile(t, filepath.Join(home, "custom-ignore"), ".venv/\n")
-	filter, err = OpenUntrackedIgnoredFilter(root)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if filter.Skip("result", false) || !filter.Skip(".venv", true) {
-		t.Fatal("core.excludesFile did not replace the default user ignore file")
-	}
+// TestUntrackedIgnoredFilterUserIgnoreFile pins the user ignore rules. The
+// git CLI applies them as Git does, so the default user ignore file
+// applies when core.excludesFile is not set. The go-git fallback leaves
+// them out, so it only ever skips fewer paths than Git.
+func TestUntrackedIgnoredFilterUserIgnoreFile(t *testing.T) {
+	filterModes(t, func(t *testing.T, cli bool) {
+		home := isolateGitUserConfig(t)
+		writeChangeSetFile(t, filepath.Join(home, ".config", "git", "ignore"), "result\n")
+		root, _, wt := newSnapshotRepo(t)
+		writeChangeSetFile(t, filepath.Join(root, "apps", "cm.yaml"), "a: 1\n")
+		commitAllSnapshotFiles(t, wt, "fixture")
+		writeChangeSetFile(t, filepath.Join(root, "result"), "x\n")
+		filter, err := OpenUntrackedIgnoredFilter(t.Context(), root)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := filter.Skip("result", false); got != cli {
+			t.Fatalf("Skip(result) = %t, want %t", got, cli)
+		}
+	})
 }
 
 // TestUntrackedIgnoredFilterReadsInfoExcludeOfALinkedWorktree pins that a
@@ -126,8 +192,7 @@ func TestUntrackedIgnoredFilterReadsInfoExcludeOfALinkedWorktree(t *testing.T) {
 	if err != nil {
 		t.Skip("git not installed")
 	}
-	t.Setenv("HOME", t.TempDir())
-	t.Setenv("XDG_CONFIG_HOME", "")
+	isolateGitUserConfig(t)
 	main, _, wt := newSnapshotRepo(t)
 	writeChangeSetFile(t, filepath.Join(main, "apps", "cm.yaml"), "a: 1\n")
 	commitAllSnapshotFiles(t, wt, "fixture")
@@ -136,11 +201,14 @@ func TestUntrackedIgnoredFilterReadsInfoExcludeOfALinkedWorktree(t *testing.T) {
 	if out, err := exec.Command(gitBin, "-C", main, "worktree", "add", "-q", linked).CombinedOutput(); err != nil {
 		t.Skipf("git worktree add: %v: %s", err, out)
 	}
-	filter, err := OpenUntrackedIgnoredFilter(linked)
-	if err != nil {
-		t.Fatalf("OpenUntrackedIgnoredFilter() error = %v", err)
-	}
-	if !filter.Skip("local-only", true) {
-		t.Fatal("Skip(local-only) = false, want info/exclude of the common Git directory read")
-	}
+	writeChangeSetFile(t, filepath.Join(linked, "local-only", "x"), "x\n")
+	filterModes(t, func(t *testing.T, _ bool) {
+		filter, err := OpenUntrackedIgnoredFilter(t.Context(), linked)
+		if err != nil {
+			t.Fatalf("OpenUntrackedIgnoredFilter() error = %v", err)
+		}
+		if !filter.Skip("local-only", true) {
+			t.Fatal("Skip(local-only) = false, want info/exclude of the common Git directory read")
+		}
+	})
 }

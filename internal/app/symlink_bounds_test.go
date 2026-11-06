@@ -444,3 +444,32 @@ func TestSymlinkBoundsMemoWalksEachTreeOnce(t *testing.T) {
 		t.Fatalf("second check = %q, want the kept answer", got)
 	}
 }
+
+// TestLocalProviderSkipsIgnoredPathsUnderASubdirectoryRoot pins the review
+// repro: the root is a subdirectory of a Git worktree, and an ignored,
+// untracked virtual environment under it holds an absolute symlink. Git
+// ignores it, so the check leaves it out, as for a root at the top level.
+func TestLocalProviderSkipsIgnoredPathsUnderASubdirectoryRoot(t *testing.T) {
+	top := t.TempDir()
+	repo, err := git.PlainInit(top, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeTestFile(t, filepath.Join(top, ".gitignore"), ".venv/\n")
+	writeTestFile(t, filepath.Join(top, "gitops", "app", "cm.yaml"), symlinkBoundsConfigMap)
+	worktree, err := repo.Worktree()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := worktree.AddWithOptions(&git.AddOptions{All: true}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := worktree.Commit("fixture", &git.CommitOptions{Author: &object.Signature{Name: "Test", Email: "test@example.invalid"}}); err != nil {
+		t.Fatal(err)
+	}
+	root := filepath.Join(top, "gitops")
+	symlinkBoundsLink(t, "/usr/bin/python3", filepath.Join(root, ".venv", "bin", "python"))
+	if _, _, err := (localProvider{}).RenderSource(context.Background(), render.ResolvedSource{RepoRoot: root, Path: "app"}, render.RenderOptions{}); err != nil {
+		t.Fatalf("RenderSource() error = %v, want the ignored virtual environment left out", err)
+	}
+}

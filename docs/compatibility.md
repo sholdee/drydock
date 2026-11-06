@@ -586,16 +586,20 @@ Supported:
   discovers, as for the size limit.
 - In a local Git worktree, the out-of-bounds check leaves out every path that
   Git ignores and does not track, such as a Python virtual environment or a
-  Nix build result. drydock reads the ignore rules from `.gitignore` files,
-  from `info/exclude` (of the common Git directory for a linked worktree),
-  and from the file that `core.excludesFile` names, or the default user file
-  `$XDG_CONFIG_HOME/git/ignore` or `~/.config/git/ignore` without one. It
-  does not follow `include` sections of a Git configuration file. No commit, and so no Argo CD checkout, can hold such a
-  path. A `.git` file at the worktree root, as in a linked worktree, is
-  skipped like a `.git` directory. A path at or under a submodule is always
-  checked, because Argo CD checks out submodules and the parent index does
-  not list their files. A root that is not the top level of a Git worktree
-  is checked whole.
+  Nix build result. No commit, and so no Argo CD checkout, can hold such a
+  path. The root can be the top level of the worktree or a directory in it.
+  When the `git` command is on `PATH`, drydock asks Git for that set with
+  `git ls-files --others --ignored --exclude-standard --directory`, so every
+  ignore rule that Git applies counts. Without `git`, or when it fails,
+  drydock reads the index, the `.gitignore` files, and `info/exclude` (of
+  the common Git directory for a linked worktree) itself. It then leaves out
+  `core.excludesFile` and the default user ignore file, so it skips fewer
+  paths than Git, never more. A path at or under a submodule is always
+  checked in that case, because the parent index does not list submodule
+  files and Argo CD checks out submodules. A `.git` file at the worktree
+  root, as in a linked worktree, is skipped like a `.git` directory. A root
+  that is not in a Git worktree, or that Git ignores itself, is checked
+  whole.
 - The persistent render cache key and changed-only selection of a directory
   source cover the files outside its path and its Jsonnet libraries that
   its symlinks reach and its Jsonnet files import, directly or through other
