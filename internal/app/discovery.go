@@ -34,11 +34,14 @@ func (o Orchestrator) discoverRepository(ctx context.Context, root string, reque
 // no second run. There is never a third run: when the second run ends with
 // yet another value, it keeps its result and warns about the cycle.
 //
-// A first run that fails after its first ApplicationSet expansion may fail
-// because of that value, for example on an ApplicationSet that only an
-// Application Argo CD would never create declares. So its partial result
-// decides the same way, and the second run's result or error is returned.
-// A first run that fails earlier returns its error.
+// A first run that fails once its first ApplicationSet expansion has chosen
+// the value may fail because of that value, for example on an
+// ApplicationSet that only an Application Argo CD would never create
+// declares. So its partial result decides the same way, and the second
+// run's result or error is returned. A first run that fails earlier returns
+// its error. So does a first run whose partial result does not hold the
+// settings yet, for example when an app-of-apps renders the Argo CD install
+// one level deeper than the failure.
 func (o Orchestrator) discoverRepositoryWithOCI(ctx context.Context, root string, request BuildRequest, ociFetcher *appsetOCIArtifactFetcher) (discovery.Result, []diagnostic.Diagnostic, []cacheevent.Event, *applicationRenderCache, string, error) {
 	var used *bool
 	discovered, diags, events, renderCache, renderSig, runErr := o.observedDiscoveryRun(ctx, root, request, ociFetcher, &used)
@@ -112,8 +115,8 @@ func (o Orchestrator) observedDiscoveryRun(ctx context.Context, root string, req
 
 // discoverRepositoryRun is one discovery run. used receives the
 // applicationsetcontroller.enable.progressive.syncs value that its
-// ApplicationSet expansions used, once the first expansion starts; it stays
-// nil when the run fails before that.
+// ApplicationSet expansions use, as soon as expandFirstApplicationSets has
+// chosen it. It stays nil when the run fails before that choice.
 func (o Orchestrator) discoverRepositoryRun(ctx context.Context, root string, request BuildRequest, ociFetcher *appsetOCIArtifactFetcher, used **bool) (discovery.Result, []diagnostic.Diagnostic, []cacheevent.Event, *applicationRenderCache, string, error) {
 	mode, err := normalizeDiscoveryMode(request.DiscoveryMode)
 	if err != nil {
@@ -154,9 +157,7 @@ func (o Orchestrator) discoverRepositoryRun(ctx context.Context, root string, re
 	}
 
 	var expansionDiags []diagnostic.Diagnostic
-	discovered, expansionDiags, err = expandFirstApplicationSets(root, request, discovered, &appsetOptions)
-	progressiveSyncs := appsetOptions.ProgressiveSyncs
-	*used = &progressiveSyncs
+	discovered, expansionDiags, err = expandFirstApplicationSets(root, request, discovered, &appsetOptions, used)
 	allDiags = append(allDiags, expansionDiags...)
 	if err != nil {
 		return discovered, allDiags, allEvents, renderCache, "", err
@@ -199,8 +200,9 @@ func (o Orchestrator) discoverRepositoryRun(ctx context.Context, root string, re
 // applicationsetcontroller.enable.progressive.syncs value that every
 // ApplicationSet expansion of one discovery run uses, and runs the first
 // expansion. The value is the one a second run carries, or else the one in
-// the settings found before the first expansion.
-func expandFirstApplicationSets(root string, request BuildRequest, discovered discovery.Result, appsetOptions *appset.Options) (discovery.Result, []diagnostic.Diagnostic, error) {
+// the settings found before the first expansion. used receives the value
+// once it is chosen.
+func expandFirstApplicationSets(root string, request BuildRequest, discovered discovery.Result, appsetOptions *appset.Options, used **bool) (discovery.Result, []diagnostic.Diagnostic, error) {
 	if request.progressiveSyncs != nil {
 		appsetOptions.ProgressiveSyncs = *request.progressiveSyncs
 	} else {
@@ -210,6 +212,8 @@ func expandFirstApplicationSets(root string, request BuildRequest, discovered di
 		}
 		appsetOptions.ProgressiveSyncs = config.ParseEnableProgressiveSyncs(settings.EnableProgressiveSyncs.Value)
 	}
+	progressiveSyncs := appsetOptions.ProgressiveSyncs
+	*used = &progressiveSyncs
 	return expandApplicationSetDiscovery(root, request, discovered, *appsetOptions)
 }
 

@@ -565,7 +565,12 @@ Supported:
   Then drydock runs discovery a second time with the final value, but only
   when it found an ApplicationSet with a RollingSync strategy. A first run
   that failed after its first ApplicationSet expansion can also lead to a
-  second run. The second run is the last. If that run ends with the other
+  second run. For that, the partial result of the failed run must already
+  hold the rendered install's settings. A committed app-of-apps can
+  render the install Application from a Helm chart, one level deeper. If the
+  first run fails at or before that level, drydock returns its error. With
+  the flag committed, the same repository succeeds. The second run is the
+  last. If that run ends with the other
   value again, drydock keeps its result and warns
   `settings.progressive-syncs-cycle`, which `--strict` fails on. Here is an
   example. An ApplicationSet has a RollingSync strategy with an empty steps

@@ -211,7 +211,11 @@ expansion. A second run needs two things: the run found an ApplicationSet
 with a RollingSync strategy, and its final settings give another value. Then
 `discoverRepositoryWithOCI` runs discovery again with that value. A run that
 failed after its first expansion counts too, with its partial result. A run
-that failed earlier returns its error. There are at most two runs. If the second run
+that failed earlier returns its error. Sometimes the partial result of a
+failed run does not hold the install's settings yet. For example, an app-of-apps can
+render the install one level deeper than the failure. Then the run also
+returns its error. With the flag committed, the same repository succeeds.
+There are at most two runs. If the second run
 ends with the other value again, its result stays and
 `settings.progressive-syncs-cycle` (not strict-exempt) is added. Off, it gives one
 `appset.rollout-strategy-ignored` advisory. On, an empty steps list gives

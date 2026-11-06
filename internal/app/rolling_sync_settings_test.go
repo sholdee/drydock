@@ -428,6 +428,43 @@ spec:
 `)
 }
 
+// failedFirstRunOutcome lists the Applications of a repository whose rendered
+// install turns progressive syncs on and whose nested ApplicationSet q uses
+// generators. early also commits the flag. It checks the discovery run
+// count: one with the flag committed, two with the flag found late.
+func failedFirstRunOutcome(t *testing.T, shape argoCDInstallShape, generators string, strict, early bool) ([]string, []string, error) {
+	t.Helper()
+	root := t.TempDir()
+	shape.write(t, root, []string{"values.yaml"})
+	writeTestFile(t, filepath.Join(root, "argocd", "values.yaml"), `configs:
+  params:
+    applicationsetcontroller.enable.progressive.syncs: "true"
+`)
+	if early {
+		writeTestFile(t, filepath.Join(root, "settings", "argocd-cmd-params-cm.yaml"), `apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: argocd-cmd-params-cm
+  namespace: argocd
+data:
+  applicationsetcontroller.enable.progressive.syncs: "true"
+`)
+	}
+	writeRollingSyncNestedApplicationSet(t, root, generators)
+	request := BuildRequest{Path: root, Parallelism: 1, Strict: strict}
+	if shape.repoMaps != nil {
+		request.RepoMaps = shape.repoMaps(root)
+	}
+	runs := 0
+	orchestrator := Orchestrator{ChartAcquirer: fakeArgoCDChartAcquirer(t), discoveryRunObserver: func() { runs++ }}
+	result, err := orchestrator.ListApplications(context.Background(), request)
+	if wantRuns := map[bool]int{true: 1, false: 2}[early]; runs != wantRuns {
+		t.Fatalf("early=%t: discovery runs = %d, want %d", early, runs, wantRuns)
+	}
+	names, codes := discoveryOutcome(result)
+	return names, codes, err
+}
+
 // TestProgressiveSyncsRestartAfterFailedFirstRun pins that a first discovery
 // run that fails because it ran without the flag still restarts with the
 // flag from the rendered install. The result and error must be those of a
@@ -458,34 +495,11 @@ func TestProgressiveSyncsRestartAfterFailedFirstRun(t *testing.T) {
 	for _, shape := range argoCDInstallShapes() {
 		for _, tc := range cases {
 			t.Run(shape.name+"/"+tc.name, func(t *testing.T) {
-				outcome := func(early bool) ([]string, []string, error) {
-					root := t.TempDir()
-					shape.write(t, root, []string{"values.yaml"})
-					writeTestFile(t, filepath.Join(root, "argocd", "values.yaml"), `configs:
-  params:
-    applicationsetcontroller.enable.progressive.syncs: "true"
-`)
-					if early {
-						writeTestFile(t, filepath.Join(root, "settings", "argocd-cmd-params-cm.yaml"), `apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: argocd-cmd-params-cm
-  namespace: argocd
-data:
-  applicationsetcontroller.enable.progressive.syncs: "true"
-`)
-					}
-					writeRollingSyncNestedApplicationSet(t, root, tc.generators)
-					request := BuildRequest{Path: root, Parallelism: 1, Strict: tc.strict}
-					if shape.repoMaps != nil {
-						request.RepoMaps = shape.repoMaps(root)
-					}
-					result, err := Orchestrator{ChartAcquirer: fakeArgoCDChartAcquirer(t)}.ListApplications(context.Background(), request)
-					names, codes := discoveryOutcome(result)
-					return names, codes, err
+				_, _, earlyErr := failedFirstRunOutcome(t, shape, tc.generators, tc.strict, true)
+				lateNames, lateCodes, lateErr := failedFirstRunOutcome(t, shape, tc.generators, tc.strict, false)
+				if slices.Contains(lateCodes, diagnostic.CodeAppSetRolloutStrategyIgnored) {
+					t.Fatalf("flag from rendered install: codes = %v, want no advisory from the first run", lateCodes)
 				}
-				_, _, earlyErr := outcome(true)
-				lateNames, lateCodes, lateErr := outcome(false)
 				for label, err := range map[string]error{"flag known early": earlyErr, "flag from rendered install": lateErr} {
 					if tc.wantErr == "" && err != nil {
 						t.Fatalf("%s: ListApplications() error = %v, want none", label, err)
@@ -501,5 +515,37 @@ data:
 				}
 			})
 		}
+	}
+}
+
+// TestProgressiveSyncsNoRestartWhenFirstRunFailsEarly pins that a first run
+// that fails before it chose the progressive syncs value returns its own
+// error after one run. Its partial result holds a RollingSync
+// ApplicationSet and settings that turn the flag on, so only the missing
+// choice stops a second run.
+func TestProgressiveSyncsNoRestartWhenFirstRunFailsEarly(t *testing.T) {
+	root := t.TempDir()
+	writeTestFile(t, filepath.Join(root, "settings", "argocd-cmd-params-cm.yaml"), `apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: argocd-cmd-params-cm
+  namespace: argocd
+data:
+  applicationsetcontroller.enable.progressive.syncs: "true"
+`)
+	writeRollingSyncWithoutSteps(t, root)
+	runs := 0
+	orchestrator := Orchestrator{discoveryRunObserver: func() { runs++ }}
+	missing := filepath.Join(root, "missing-provider-fixture.yaml")
+	_, err := orchestrator.ListApplications(context.Background(), BuildRequest{
+		Path:                           root,
+		Parallelism:                    1,
+		ApplicationSetProviderFixtures: []string{missing},
+	})
+	if err == nil || !strings.Contains(err.Error(), "missing-provider-fixture.yaml") {
+		t.Fatalf("ListApplications() error = %v, want the provider fixture error", err)
+	}
+	if runs != 1 {
+		t.Fatalf("discovery runs = %d, want 1", runs)
 	}
 }
