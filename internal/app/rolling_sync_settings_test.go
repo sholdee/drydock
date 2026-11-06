@@ -3,6 +3,7 @@ package app
 import (
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 
 	argoappv1 "github.com/argoproj/argo-cd/v3/pkg/apis/application/v1alpha1"
@@ -98,6 +99,142 @@ func TestRenderedArgoCDInstallProgressiveSyncsGateRollingSync(t *testing.T) {
 						t.Fatalf("%q: diagnostic codes = %v, want no %s", tc.value, codes, other)
 					}
 				}
+			}
+		})
+	}
+}
+
+// writeRollingSyncAppOfApps writes an ApplicationSet with an empty RollingSync
+// steps list that, without progressive syncs, generates a duplicated name
+// (alpha) and an app-of-apps (beta) whose render declares grandchild.
+func writeRollingSyncAppOfApps(t *testing.T, root string) {
+	t.Helper()
+	writeTestFile(t, filepath.Join(root, "appsets", "rolling.yaml"), `apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: rolling
+  namespace: argocd
+spec:
+  goTemplate: true
+  strategy:
+    type: RollingSync
+    rollingSync:
+      steps: []
+  generators:
+    - list:
+        elements:
+          - name: alpha
+          - name: alpha
+          - name: beta
+  template:
+    metadata:
+      name: '{{.name}}'
+      namespace: argocd
+    spec:
+      project: default
+      source:
+        repoURL: https://github.com/example/repo
+        path: children/{{.name}}
+        targetRevision: main
+      destination:
+        name: in-cluster
+        namespace: argocd
+`)
+	writeTestFile(t, filepath.Join(root, "children", "alpha", "cm.yaml"), `apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: alpha
+data:
+  value: alpha
+`)
+	// A Helm chart, so only a render of beta declares the grandchild.
+	writeTestFile(t, filepath.Join(root, "children", "beta", "Chart.yaml"), `apiVersion: v2
+name: beta
+version: 0.1.0
+`)
+	writeTestFile(t, filepath.Join(root, "children", "beta", "values.yaml"), "suffix: rendered\n")
+	writeTestFile(t, filepath.Join(root, "children", "beta", "templates", "grandchild.yaml"), `apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: grandchild-{{ .Values.suffix }}
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/example/repo
+    path: children/alpha
+    targetRevision: main
+  destination:
+    name: in-cluster
+    namespace: default
+`)
+}
+
+// discoveryOutcome is what a discovery result shows of an ApplicationSet:
+// the Application names and the ApplicationSet diagnostic codes.
+func discoveryOutcome(result BuildResult) ([]string, []string) {
+	names := make([]string, 0, len(result.Applications))
+	for _, app := range result.Applications {
+		names = append(names, app.Namespace+"/"+app.Name)
+	}
+	var codes []string
+	for _, code := range diagnosticCodes(result.Diagnostics) {
+		if strings.HasPrefix(code, "appset.") {
+			codes = append(codes, code)
+		}
+	}
+	slices.Sort(names)
+	slices.Sort(codes)
+	return names, codes
+}
+
+// TestProgressiveSyncsFromRenderedInstallMatchesKnownEarly pins that the
+// result does not depend on where drydock finds
+// applicationsetcontroller.enable.progressive.syncs. With the flag in a
+// committed argocd-cmd-params-cm, the first ApplicationSet expansion already
+// knows it. With the flag only in the rendered Argo CD install, the first
+// expansion does not, and drydock must still end with no Application from
+// the empty steps list, no Application those would declare, and none of
+// their warnings: Argo CD returns at the steps check
+// (applicationset_controller.go:265-277), before it validates names.
+func TestProgressiveSyncsFromRenderedInstallMatchesKnownEarly(t *testing.T) {
+	for _, shape := range argoCDInstallShapes() {
+		t.Run(shape.name, func(t *testing.T) {
+			outcome := func(early bool) ([]string, []string) {
+				root := t.TempDir()
+				shape.write(t, root, []string{"values.yaml"})
+				writeTestFile(t, filepath.Join(root, "argocd", "values.yaml"), `configs:
+  params:
+    applicationsetcontroller.enable.progressive.syncs: "true"
+`)
+				if early {
+					writeTestFile(t, filepath.Join(root, "settings", "argocd-cmd-params-cm.yaml"), `apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: argocd-cmd-params-cm
+  namespace: argocd
+data:
+  applicationsetcontroller.enable.progressive.syncs: "true"
+`)
+				}
+				writeRollingSyncAppOfApps(t, root)
+				return discoveryOutcome(listArgoCDInstallSettings(t, root, shape, fakeArgoCDChartAcquirer(t)))
+			}
+			earlyNames, earlyCodes := outcome(true)
+			lateNames, lateCodes := outcome(false)
+			for _, name := range []string{"argocd/alpha", "argocd/beta", "argocd/grandchild-rendered"} {
+				if slices.Contains(earlyNames, name) {
+					t.Fatalf("flag known early: Applications = %v, want no %s", earlyNames, name)
+				}
+			}
+			if !slices.Equal(lateNames, earlyNames) {
+				t.Fatalf("flag from rendered install: Applications = %v, want %v as with the flag known early", lateNames, earlyNames)
+			}
+			if !slices.Equal(lateCodes, earlyCodes) {
+				t.Fatalf("flag from rendered install: appset codes = %v, want %v as with the flag known early", lateCodes, earlyCodes)
+			}
+			if !slices.Contains(earlyCodes, "appset.rollout-no-steps") || slices.Contains(earlyCodes, "appset.application-validation-failed") {
+				t.Fatalf("flag known early: appset codes = %v, want rollout-no-steps and no name validation warning", earlyCodes)
 			}
 		})
 	}

@@ -66,6 +66,10 @@ type BuildRequest struct {
 	discoveryPathMemo    *sync.Map
 	appsetGenerationMemo *sync.Map
 	settingsInstallMemo  *sync.Map
+	// progressiveSyncs, when set, is the
+	// applicationsetcontroller.enable.progressive.syncs value of a restarted
+	// discovery run (discoverRepositoryWithOCI).
+	progressiveSyncs *bool
 }
 
 type BuildAppRequest struct {

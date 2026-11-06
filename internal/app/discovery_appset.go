@@ -8,25 +8,11 @@ import (
 	"sync"
 
 	"github.com/sholdee/drydock/internal/appset"
-	"github.com/sholdee/drydock/internal/config"
 	"github.com/sholdee/drydock/internal/diagnostic"
 	"github.com/sholdee/drydock/internal/discovery"
 )
 
-// expandApplicationSetDiscovery generates the Applications of every
-// discovered ApplicationSet. It reads
-// applicationsetcontroller.enable.progressive.syncs from the settings
-// discovered so far, because with progressive syncs on, an empty RollingSync
-// steps list generates nothing. Fleet discovery can find that setting only
-// after an earlier expansion, for example in a rendered Argo CD install, so
-// an ApplicationSet that now generates nothing also drops the Applications
-// an earlier expansion generated from it.
 func expandApplicationSetDiscovery(root string, request BuildRequest, discovered discovery.Result, appsetOptions appset.Options) (discovery.Result, []diagnostic.Diagnostic, error) {
-	settings, _, err := loadSettingsFromDiscovery(root, discovered)
-	if err != nil {
-		return discovered, nil, err
-	}
-	appsetOptions.ProgressiveSyncs = config.ParseEnableProgressiveSyncs(settings.EnableProgressiveSyncs.Value)
 	var generated discovery.Result
 	var allDiags []diagnostic.Diagnostic
 	for _, appSetFile := range discovered.ApplicationSets {
@@ -41,7 +27,6 @@ func expandApplicationSetDiscovery(root string, request BuildRequest, discovered
 		}
 		allDiags = append(allDiags, request.normalizeDiagnostics(diags, false)...)
 		if len(apps) == 0 {
-			discovered.Applications = withoutGeneratedApplications(discovered.Applications, appSetFile)
 			if len(diags) != 0 {
 				continue
 			}
@@ -67,21 +52,6 @@ func expandApplicationSetDiscovery(root string, request BuildRequest, discovered
 	merged, mergeDiags := mergeDiscoveryResultsWithDiagnostics(discovered, generated)
 	allDiags = append(allDiags, mergeDiags...)
 	return merged, allDiags, nil
-}
-
-// withoutGeneratedApplications returns apps without the Applications that an
-// earlier expansion generated from appSetFile. A generated Application
-// carries the document and origin of its ApplicationSet, which no other
-// discovered Application shares.
-func withoutGeneratedApplications(apps []discovery.ApplicationFile, appSetFile discovery.ApplicationSetFile) []discovery.ApplicationFile {
-	var out []discovery.ApplicationFile
-	for _, app := range apps {
-		if app.Path == appSetFile.Path && app.DocumentIndex == appSetFile.DocumentIndex && app.ParentKey == appSetFile.ParentKey && app.RenderedDir == appSetFile.RenderedDir {
-			continue
-		}
-		out = append(out, app)
-	}
-	return out
 }
 
 type appsetGenerationOutcome struct {

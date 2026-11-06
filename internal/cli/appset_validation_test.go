@@ -255,3 +255,87 @@ spec:
 		t.Fatalf("stderr escalated a rollout lint under --strict:\n%s", stderr.String())
 	}
 }
+
+// writeListWithApplicationSet writes one kind: List that holds an
+// ApplicationSet and a static Application. List flattening gives both items
+// the same document index.
+func writeListWithApplicationSet(t *testing.T, root, strategy, elements string) {
+	t.Helper()
+	writeCLITestFile(t, filepath.Join(root, "list.yaml"), `apiVersion: v1
+kind: List
+items:
+  - apiVersion: argoproj.io/v1alpha1
+    kind: ApplicationSet
+    metadata:
+      name: guestbook
+      namespace: argocd
+    spec:
+      goTemplate: true
+`+strategy+`      generators:
+        - list:
+            elements: `+elements+`
+      template:
+        metadata:
+          name: '{{.name}}'
+        spec:
+          project: default
+          source:
+            repoURL: https://github.com/example/repo
+            path: apps/{{.name}}
+            targetRevision: main
+          destination:
+            name: in-cluster
+            namespace: default
+  - apiVersion: argoproj.io/v1alpha1
+    kind: Application
+    metadata:
+      name: static
+      namespace: argocd
+    spec:
+      project: default
+      source:
+        repoURL: https://github.com/example/repo
+        path: apps/static
+        targetRevision: main
+      destination:
+        name: in-cluster
+        namespace: default
+`)
+}
+
+// An ApplicationSet that generates no Application must not hide a static
+// Application that shares its kind: List. Argo CD deletes only the
+// Applications an ApplicationSet owns (applicationset_controller.go:888-895).
+func TestGetAppsKeepsStaticApplicationInListWithEmptyApplicationSet(t *testing.T) {
+	for name, tc := range map[string]struct {
+		strategy string
+		elements string
+		progress bool
+	}{
+		"no elements, progressive syncs off": {elements: "[]"},
+		"empty steps, progressive syncs on": {
+			strategy: "      strategy:\n        type: RollingSync\n        rollingSync:\n          steps: []\n",
+			elements: "[{name: alpha}]",
+			progress: true,
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			root := t.TempDir()
+			writeListWithApplicationSet(t, root, tc.strategy, tc.elements)
+			if tc.progress {
+				writeProgressiveSyncsOn(t, root)
+			}
+			cmd := NewRootCommand(VersionInfo{})
+			cmd.SetArgs([]string{"get", "apps", "--path", root, "-o", "name"})
+			var out, stderr bytes.Buffer
+			cmd.SetOut(&out)
+			cmd.SetErr(&stderr)
+			if err := cmd.Execute(); err != nil {
+				t.Fatalf("Execute() error = %v\nstderr:\n%s", err, stderr.String())
+			}
+			if got, want := out.String(), "argocd/static\n"; got != want {
+				t.Fatalf("stdout = %q, want %q\nstderr:\n%s", got, want, stderr.String())
+			}
+		})
+	}
+}
