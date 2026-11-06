@@ -156,9 +156,10 @@ func helmRefRootFor(name string, refRoots map[string]string) (string, bool) {
 // source: the rest of the path, env-substituted, is relative to that root
 // (getResolvedRefValueFile, repository.go:1583-1604). A bare "$name" or
 // "$name/" resolves to that root, which then fails. Any other path is
-// env-substituted, so "$$" becomes "$", and resolves against the source
-// path and the repository root. drydock keeps failing a path with an
-// unknown "$name" first segment, as its plan does.
+// env-substituted, so "$$" becomes "$" and an unknown "$name" becomes
+// its env value, and resolves against the source path and the repository
+// root. For an Application with sources, the plan fails a "$name" that
+// names no source first, as the repo-server does.
 func helmFileParameterPathFor(source ResolvedSource, opts RenderOptions, raw string) (helmFileParameterPath, error) {
 	if name := helmFileParameterRefName(raw); name != "" {
 		if root, ok := helmRefRootFor(name, opts.RefRoots); ok {
@@ -173,13 +174,6 @@ func helmFileParameterPathFor(source ResolvedSource, opts RenderOptions, raw str
 			}
 			p.appPath, p.root = cleanRoot, cleanRoot
 			return p, nil
-		}
-		if !strings.HasPrefix(name, "$$") {
-			_, _, err := helmValueFileRefRoot(raw, opts.RefRoots)
-			if err == nil {
-				err = fmt.Errorf("helm file parameter %q references unknown ref %q", raw, name)
-			}
-			return helmFileParameterPath{file: raw}, err
 		}
 	}
 	file := opts.ArgoEnv.Envsubst(raw)

@@ -485,7 +485,7 @@ func TestRenderApplicationReportsAnUnknownRefBeforeTheTreeCheck(t *testing.T) {
 	application.Spec.Sources[0].Helm.ValueFiles = []string{"$missing/values.yaml"}
 	provider := localProvider{repoRoot: root, sourceResolver: sourcepkg.NewResolver(sourcepkg.Options{})}
 	_, err := RenderApplication(context.Background(), application, provider)
-	if err == nil || !strings.Contains(err.Error(), "unknown ref $missing") || strings.Contains(err.Error(), "out-of-bounds") {
+	if err == nil || !strings.Contains(err.Error(), `source referenced "$missing", which is not one of the available sources ($values)`) || strings.Contains(err.Error(), "out-of-bounds") {
 		t.Fatalf("RenderApplication() error = %v, want the unknown $ref error first", err)
 	}
 }

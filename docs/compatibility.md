@@ -449,7 +449,8 @@ Supported:
   annotation-based tracking, and CRDs are not stamped.
 - Argo CD build-environment substitution (`$ARGOCD_APP_NAME`,
   `$ARGOCD_APP_NAMESPACE`, `$ARGOCD_APP_PROJECT_NAME`, `$ARGOCD_APP_SOURCE_*`)
-  in Helm parameters, value-file names, and `fileParameters` paths, Kustomize
+  in Helm parameters, value-file names, and `fileParameters` paths (see the
+  `$ref` rules below for a path that starts with `$`), Kustomize
   images, labels, and `commonAnnotationsEnvsubst` annotations, and Jsonnet ext
   vars and TLAs, with
   the repo-server's values: `ARGOCD_APP_NAME` is the Application instance name
@@ -475,9 +476,7 @@ Supported:
   A path is a `$ref` path when its first segment, before env substitution,
   names a ref source, as in `getReferencedSourceName`. Its rest is
   env-substituted and is relative to the root of the ref source, so a bare
-  `$values` or `$values/` resolves to that root and fails. `$$` is an
-  escaped `$`, so `$$values/a.txt` is the local path `$values/a.txt`, also
-  for value files. When the path
+  `$values` or `$values/` resolves to that root and fails. When the path
   itself is a symlink, the resolver follows it, up to ten levels, and joins
   a relative target to the directory of the path as text. So a symlink to a
   file in the repository works, and so does a path through a symlinked
@@ -497,6 +496,21 @@ Supported:
   name a different file, or leave the repository as text and fail, where
   the out-of-bounds symlink check passes. drydock does the same. The parity
   smoke pins both cases.
+- A Helm value file or file parameter path that starts with a `$` segment
+  that names no ref source follows the repo-server's
+  `resolveReferencedSources`. For an Application with `sources`, it fails
+  with `source referenced "<segment>", which is not one of the available
+  sources (<refs>)`, or with `source referenced "<segment>", but no source
+  has a 'ref' field defined`. drydock lists the refs sorted, where the
+  repo-server uses Go map order. For an Application with one `source`, the
+  repo-server skips that check, so the path is a local path that is
+  env-substituted: `$$values/a.yaml` is the file `$values/a.yaml`, and
+  `$ARGOCD_APP_NAME/values.yaml` names a directory after the Application.
+  For a value file, the substituted path must still be relative (see the
+  value file divergence below). drydock checks an Application with
+  `sources` against the merged source after `.argocd-source*.yaml`, while
+  the repo-server checks the spec, so a `$` segment that only an override
+  file sets fails in drydock but is a local path in Argo CD.
 - helm `--set-file` parses `name=<path>` and drops a backslash before any
   character, so it can read a file other than the resolved path, such as
   `ab.txt` for `a\b.txt`. drydock reads the same file, and its cache key

@@ -164,8 +164,8 @@ func (p localProvider) checkSpecHelmRefRootsOutOfBoundsSymlinks(ctx context.Cont
 	}
 	checked := map[string]bool{}
 	for _, candidate := range candidates {
-		refKey, isRef, keyErr := helmValueFileRefKey(candidate)
-		if keyErr != nil || !isRef || checked[refKey] {
+		refKey, isRef := helmValueFileRefKey(candidate)
+		if !isRef || checked[refKey] {
 			continue
 		}
 		checked[refKey] = true

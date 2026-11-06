@@ -963,16 +963,14 @@ func localHelmDigestShouldCollectPath(plan PlanResult, sourcePlan SourcePlan, in
 	if !strings.HasPrefix(trimmed, "$") {
 		return true, nil
 	}
-	refKey, ok, err := helmValueFileRefKey(trimmed)
-	if err != nil {
-		return false, err
-	}
-	if !ok {
-		return false, fmt.Errorf("unprovable Helm ref path %q", inputPath)
-	}
+	refKey, _ := helmValueFileRefKey(trimmed)
 	refSource, ok := plan.Refs[refKey]
 	if !ok {
-		return false, fmt.Errorf("unknown Helm ref path %q", inputPath)
+		if err := unknownHelmRefError(plan, refKey); err != nil {
+			return false, err
+		}
+		// A local path; the collector rejects its env substitution.
+		return true, nil
 	}
 	return isSameSourceRevision(refSource.Source, sourcePlan.Source), nil
 }
