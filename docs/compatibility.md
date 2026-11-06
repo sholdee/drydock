@@ -570,8 +570,9 @@ Supported:
   parameter reads, on an OCI artifact (`oci image contains out-of-bounds
   symlinks. file: <path>`), and on a chart of a Helm repository (`chart
   contains out-of-bounds symlinks. file: <path>`). The path is the first
-  such symlink in walk order. For a source with a path, drydock checks the
-  source's own tree, then each `$ref` repository that the `helm.valueFiles`
+  such symlink in walk order. For a source with a path, drydock first
+  reports a `$ref` of the spec that names no source, as Argo CD does. It
+  then checks the source's own tree, then each `$ref` repository that the `helm.valueFiles`
   and `helm.fileParameters` of the spec read, and only then reads
   `.argocd-source.yaml`, as the repo-server does. So an override that
   replaces the value files does not skip a `$ref` check. For a chart of a

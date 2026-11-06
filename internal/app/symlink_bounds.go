@@ -178,6 +178,31 @@ func (p localProvider) checkSpecHelmRefRootsOutOfBoundsSymlinks(ctx context.Cont
 	return nil
 }
 
+// specHelmRefError returns the error that resolving the $ref value files
+// and file parameters of the spec gives, such as an unknown $ref, for an
+// Application with sources, as the repo-server's resolveReferencedSources
+// does before it checks the tree (reposerver/repository/repository.go:
+// 586-614 at v3.6.1). The text is the one the render reports for the same
+// problem.
+func specHelmRefError(application argoappv1.Application, sourcePlan SourcePlan) error {
+	helm := sourcePlan.Source.Helm
+	if helm == nil || len(application.Spec.Sources) == 0 {
+		return nil
+	}
+	candidates := append([]string(nil), helm.ValueFiles...)
+	for _, parameter := range helm.FileParameters {
+		candidates = append(candidates, parameter.Path)
+	}
+	plan, err := Plan(application)
+	if err != nil {
+		// Planning fails the render before any source, so it never gets
+		// here.
+		return err
+	}
+	_, _, err = renderRefsForSource(plan, sourcePlan, candidates)
+	return err
+}
+
 // specHelmRefSources returns the $ref sources of another repository that
 // candidates read. It reports false when the refs do not resolve; the render
 // then reports that error.

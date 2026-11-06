@@ -473,3 +473,19 @@ func TestLocalProviderSkipsIgnoredPathsUnderASubdirectoryRoot(t *testing.T) {
 		t.Fatalf("RenderSource() error = %v, want the ignored virtual environment left out", err)
 	}
 }
+
+// TestRenderApplicationReportsAnUnknownRefBeforeTheTreeCheck pins the
+// repo-server order for a multi-source Helm Application: an unknown $ref
+// fails in resolveReferencedSources before the tree check
+// (reposerver/repository/repository.go:391 and 499 at v3.6.1).
+func TestRenderApplicationReportsAnUnknownRefBeforeTheTreeCheck(t *testing.T) {
+	root := refApplicationRoot(t, "")
+	symlinkBoundsLink(t, "/etc/hosts", filepath.Join(root, "other", "escape.yaml"))
+	application := refApplication()
+	application.Spec.Sources[0].Helm.ValueFiles = []string{"$missing/values.yaml"}
+	provider := localProvider{repoRoot: root, sourceResolver: sourcepkg.NewResolver(sourcepkg.Options{})}
+	_, err := RenderApplication(context.Background(), application, provider)
+	if err == nil || !strings.Contains(err.Error(), "unknown ref $missing") || strings.Contains(err.Error(), "out-of-bounds") {
+		t.Fatalf("RenderApplication() error = %v, want the unknown $ref error first", err)
+	}
+}
