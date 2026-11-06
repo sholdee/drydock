@@ -36,6 +36,12 @@ const (
 // desired-vs-desired diff, so --strict does not fail on the advisory.
 const CodeSettingsIgnoreResourceUpdates = "settings.ignore-resource-updates"
 
+// CodeSettingsInstallRenderFailed is the warning that drydock cannot render
+// an Application that installs Argo CD on this cluster, so it reads the
+// settings of that install from its values files on their own, which is
+// known to be incomplete. --strict fails on it like on any warning.
+const CodeSettingsInstallRenderFailed = "settings.install-render-failed"
+
 type Provenance struct {
 	Path    string `json:"path,omitempty" yaml:"path,omitempty"`
 	Pointer string `json:"pointer,omitempty" yaml:"pointer,omitempty"`

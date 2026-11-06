@@ -225,11 +225,16 @@ func settingsInstallHelmValueFiles(provider localProvider, application argoappv1
 	if err != nil {
 		return nil
 	}
-	// The source root of a local source or a chart from a chart repository is
-	// the repository root (resolveSourceRootIdentity).
-	anchored, err := anchorLocalRefRoots(provider.repoRoot, refRoots)
-	if err != nil {
-		return nil
+	// The render anchors a ref with the repository and revision of the source
+	// at the root of that source (localProvider.renderSource). That root is
+	// this repository root only for a local source or a chart from a chart
+	// repository (resolveSourceRootIdentity). Otherwise such a ref reads
+	// another copy of the repository, not a local file.
+	anchored := map[string]string{}
+	if provider.sourceRootIsRepoRoot(settingsInstallResolvedSource(sourcePlan.Source)) {
+		if anchored, err = anchorLocalRefRoots(provider.repoRoot, refRoots); err != nil {
+			return nil
+		}
 	}
 	for refKey, refSource := range refSources {
 		if provider.sourceResolvesToRepoRoot(refSource) {
@@ -374,8 +379,9 @@ func helmValuesFileSetsArgoCDSettings(memo *sync.Map, root, rel string) bool {
 	sets := false
 	if info, err := os.Lstat(full); err == nil && info.Mode().IsRegular() {
 		if data, err := os.ReadFile(full); err == nil {
-			var values map[string]any
-			if err := sigsyaml.Unmarshal(data, &values); err == nil {
+			// Read the file as the Helm value file loader does, which merges
+			// every YAML document.
+			if values, err := render.ParseHelmValuesFile(rel, data); err == nil {
 				sets = helmValuesSetArgoCDSettings(values)
 			}
 		}
@@ -484,12 +490,12 @@ func settingsCandidateNamespace(candidate discovery.SettingsCandidate, destinati
 	return namespace
 }
 
-// settingsConfigMapsInNamespace keeps the settings ConfigMaps of result that
-// land in namespace.
+// settingsConfigMapsInNamespace drops the settings ConfigMaps of result that
+// do not land in namespace. Other settings candidates stay.
 func settingsConfigMapsInNamespace(result discovery.Result, destinationNamespace, namespace string) discovery.Result {
 	kept := result.SettingsCandidates[:0:0]
 	for _, candidate := range result.SettingsCandidates {
-		if settingsCandidateNamespace(candidate, destinationNamespace) == namespace {
+		if !discovery.IsSettingsConfigMapKind(candidate.Kind) || settingsCandidateNamespace(candidate, destinationNamespace) == namespace {
 			kept = append(kept, candidate)
 		}
 	}
@@ -530,14 +536,13 @@ func settingsInstallRenderFailedDiagnostic(appFile discovery.ApplicationFile, in
 	} else {
 		message += "drydock does not read the settings of this install"
 	}
-	diag := diagnostic.Diagnostic{
+	return diagnostic.Diagnostic{
+		Code:       diagnostic.CodeSettingsInstallRenderFailed,
 		Severity:   diagnostic.SeverityWarning,
 		Category:   "settings",
 		Message:    message,
 		Provenance: provenance,
 	}
-	diag.Code = diagnostic.StableCode(diag)
-	return diag
 }
 
 // settingsRenderInputs is the union of the files that the rendered settings

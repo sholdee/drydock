@@ -160,6 +160,13 @@ func (p localProvider) sourceResolvesToRepoRoot(source render.ResolvedSource) bo
 	return strings.TrimSpace(source.RepoURL) == "" || p.sourceResolver == nil
 }
 
+// sourceRootIsRepoRoot reports whether the render resolves the root of
+// source to this provider's repository root: a chart from a chart repository
+// (chartFlowSource) or a source that sourceResolvesToRepoRoot finds here.
+func (p localProvider) sourceRootIsRepoRoot(source render.ResolvedSource) bool {
+	return chartFlowSource(source) || p.sourceResolvesToRepoRoot(source)
+}
+
 // resolveOCIArtifactSource acquires a first-class OCI artifact source: the
 // revision resolves to a digest, the artifact content extracts into the
 // session snapshot area, and the extraction root becomes the source root.

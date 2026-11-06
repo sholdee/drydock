@@ -186,15 +186,19 @@ func renderAndScanDiscoveryApplication(ctx context.Context, request BuildRequest
 		argoNamespace = defaultArgoCDControllerNamespace
 	}
 	destinationNamespace := application.Spec.Destination.Namespace
-	if settingsOnly {
-		// Only the settings ConfigMaps in the Argo CD namespace are settings
-		// of this Argo CD.
-		result = settingsConfigMapsInNamespace(result, destinationNamespace, argoNamespace)
-	}
 	if !hasSettingsConfigMapCandidate(result) || !inCluster {
 		return result, diags, nil
 	}
-	if install := applicationSettingsInstall(ctx, request, provider, application); install.installsArgoCD() {
+	install := applicationSettingsInstall(ctx, request, provider, application)
+	if !settingsOnly && !install.installsArgoCD() {
+		// Not an Argo CD install: its settings ConfigMaps stay candidates
+		// as for any rendered object.
+		return result, diags, nil
+	}
+	// Only the settings ConfigMaps in the Argo CD namespace are settings of
+	// this Argo CD, also when the frontier renders the install for discovery.
+	result = settingsConfigMapsInNamespace(result, destinationNamespace, argoNamespace)
+	if install.installsArgoCD() {
 		markSettingsRenderInputs(&result, install, destinationNamespace, argoNamespace)
 	}
 	return result, diags, nil

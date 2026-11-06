@@ -1576,3 +1576,120 @@ data:
 		t.Fatalf("TrackingMethod = %q from %q, want label from the values file read on its own", result.Settings.TrackingMethod.Value, got)
 	}
 }
+
+// A $ref with the repository and revision of a repo-mapped source reads the
+// mapped copy, as the render anchors it at that source's root. So the local
+// file at the same path is not an input of the install and stays a settings
+// source.
+func TestSettingsInstallRefOfMappedSourceIsNotLocal(t *testing.T) {
+	root := t.TempDir()
+	mapped := t.TempDir()
+	const mappedURL = "https://github.com/example/platform"
+	writeFakeArgoCDChart(t, filepath.Join(mapped, "argocd", "chart"))
+	writeTestFile(t, filepath.Join(mapped, "argocd", "values.yaml"), "configs:\n  cm:\n    timeout.reconciliation: 300s\n")
+	writeTestFile(t, filepath.Join(root, "argocd", "values.yaml"), "configs:\n  cm:\n    application.resourceTrackingMethod: label\n")
+	writeTestFile(t, filepath.Join(root, "apps", "argocd.yaml"), `apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: argocd
+  namespace: argocd
+spec:
+  project: default
+  sources:
+    - repoURL: `+mappedURL+`
+      targetRevision: main
+      path: argocd/chart
+      helm:
+        valueFiles:
+          - $v/argocd/values.yaml
+    - repoURL: `+mappedURL+`
+      targetRevision: main
+      ref: v
+  destination:
+    name: in-cluster
+    namespace: argocd
+`)
+
+	request := BuildRequest{Path: root, Parallelism: 1, RepoMaps: []sourcepkg.RepoMap{{URL: mappedURL, Path: mapped}}}
+	result, err := Orchestrator{ChartAcquirer: fakeArgoCDChartAcquirer(t)}.ListApplications(context.Background(), request)
+	if err != nil {
+		t.Fatalf("ListApplications() error = %v, diagnostics = %#v", err, result.Diagnostics)
+	}
+	if got := filepath.ToSlash(result.Settings.TrackingMethod.Provenance.Path); result.Settings.TrackingMethod.Value != "label" || !strings.HasSuffix(got, root+"/argocd/values.yaml") {
+		t.Fatalf("TrackingMethod = %q from %q, want label from the local values file", result.Settings.TrackingMethod.Value, got)
+	}
+}
+
+// A failed install render gives a settings.install-render-failed warning,
+// once for each side, and --strict fails on it.
+func TestSettingsInstallRenderFailedDiagnostic(t *testing.T) {
+	failing := func() *recordingChartAcquirer {
+		return &recordingChartAcquirer{acquireErr: errors.New("chart is not in the cache")}
+	}
+	countCode := func(diags []diagnostic.Diagnostic) int {
+		count := 0
+		for _, diag := range diags {
+			if diag.Code == diagnostic.CodeSettingsInstallRenderFailed {
+				count++
+			}
+		}
+		return count
+	}
+	write := func(t *testing.T, root string) {
+		writeKustomizeArgoCDInstall(t, root, []string{"values.yaml"})
+		writeTestFile(t, filepath.Join(root, "argocd", "values.yaml"), "configs:\n  cm:\n    timeout.reconciliation: 300s\n")
+	}
+
+	t.Run("list", func(t *testing.T) {
+		root := t.TempDir()
+		write(t, root)
+		result := listArgoCDInstallSettings(t, root, argoCDInstallShape{}, failing())
+		if got := countCode(result.Diagnostics); got != 1 {
+			t.Fatalf("install-render-failed diagnostics = %d, want 1: %#v", got, result.Diagnostics)
+		}
+	})
+	t.Run("list strict", func(t *testing.T) {
+		root := t.TempDir()
+		write(t, root)
+		_, err := Orchestrator{ChartAcquirer: failing()}.ListApplications(context.Background(), BuildRequest{Path: root, Parallelism: 1, Strict: true})
+		if err == nil || !strings.Contains(err.Error(), "cannot render Application argocd/argocd") {
+			t.Fatalf("ListApplications(--strict) error = %v, want the install render warning to fail", err)
+		}
+	})
+	t.Run("diff", func(t *testing.T) {
+		root := t.TempDir()
+		left := filepath.Join(root, "left")
+		right := filepath.Join(root, "right")
+		write(t, left)
+		write(t, right)
+		result, _ := Orchestrator{ChartAcquirer: failing()}.DiffApps(context.Background(), DiffRequest{LeftPath: left, RightPath: right, Unified: 3, Parallelism: 1})
+		if got := countCode(result.Diagnostics); got != 2 {
+			t.Fatalf("install-render-failed diagnostics = %d, want one for each side: %#v", got, result.Diagnostics)
+		}
+	})
+}
+
+// When the frontier renders an install for discovery, only its settings
+// ConfigMaps in the Argo CD namespace are settings of this Argo CD, as for a
+// settings-only render. Here namespaceOverride moves them out, so the values
+// file is read on its own.
+func TestSettingsFromFrontierRenderedInstallKeepsArgoCDNamespaceOnly(t *testing.T) {
+	root := t.TempDir()
+	writeLocalChartArgoCDInstall(t, root, []string{"values.yaml"})
+	writeTestFile(t, filepath.Join(root, "argocd", "values.yaml"), "namespaceOverride: other\nconfigs:\n  cm:\n    application.resourceTrackingMethod: label\n")
+
+	result := listArgoCDInstallSettings(t, root, argoCDInstallShape{}, fakeArgoCDChartAcquirer(t))
+	if got := filepath.ToSlash(result.Settings.TrackingMethod.Provenance.Path); result.Settings.TrackingMethod.Value != "label" || !strings.HasSuffix(got, "/argocd/values.yaml") {
+		t.Fatalf("TrackingMethod = %q from %q, want label from the values file read on its own", result.Settings.TrackingMethod.Value, got)
+	}
+}
+
+// Helm merges every YAML document of a values file, so detection reads them
+// all.
+func TestHelmValuesFileSetsArgoCDSettingsReadsEveryDocument(t *testing.T) {
+	root := t.TempDir()
+	writeTestFile(t, filepath.Join(root, "values.yaml"), "global:\n  domain: argocd.example.com\n---\nconfigs:\n  cm:\n    timeout.reconciliation: 300s\n")
+	if !helmValuesFileSetsArgoCDSettings(nil, root, "values.yaml") {
+		t.Fatalf("helmValuesFileSetsArgoCDSettings() = false, want true for configs.cm in the second document")
+	}
+}

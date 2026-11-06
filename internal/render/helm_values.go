@@ -538,6 +538,13 @@ func parseHelmValueFile(display string, data []byte) (map[string]any, error) {
 	return values, nil
 }
 
+// ParseHelmValuesFile reads the data of one Helm values file as the Helm
+// value file loader does (parseHelmValueFile), which merges every YAML
+// document of the file.
+func ParseHelmValuesFile(display string, data []byte) (map[string]any, error) {
+	return parseHelmValueFile(display, data)
+}
+
 func hasHelmValueGlob(file string) bool {
 	return strings.ContainsAny(file, "*?[")
 }
