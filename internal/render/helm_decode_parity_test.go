@@ -217,20 +217,129 @@ items:
 	}
 }
 
-// TestHelmRendererKeepsTemplateOrder pins drydock's output order for Helm:
-// CRDs, then the templates by file name, each in file order. helm template
-// prints the documents sorted by kind instead. Only the failure order
-// follows helm's order (see TestHelmRendererDecodeMatchesUpstream).
-func TestHelmRendererKeepsTemplateOrder(t *testing.T) {
-	_, manifests, err := renderParityChart(t, map[string]string{
+// TestHelmRendererEmitsHelmTemplateOrder pins drydock's output order for
+// Helm to the order of helm template output: CRDs, then the other documents
+// sorted by kind, then the hooks. Lists come last among the other
+// documents, because List is not a kind that helm sorts.
+func TestHelmRendererEmitsHelmTemplateOrder(t *testing.T) {
+	chartDir, manifests, err := renderParityChart(t, map[string]string{
 		"templates/a.yaml": "apiVersion: apps/v1\nkind: Deployment\nmetadata:\n  name: a-deploy\n---\n" + fmt.Sprintf(helmParityConfigMap, "a-config"),
 		"templates/b.yaml": helmHookConfigMap("b-hook", "pre-install") + "---\napiVersion: v1\nkind: Namespace\nmetadata:\n  name: b-namespace\n",
+		"templates/c.yaml": "apiVersion: v1\nkind: List\nitems:\n  - " + strings.ReplaceAll(strings.TrimSuffix(fmt.Sprintf(helmParityConfigMap, "c-item"), "\n"), "\n", "\n    ") + "\n",
 	}, false)
 	if err != nil {
 		t.Fatalf("Render() error = %v", err)
 	}
-	if got, want := manifestNames(manifests), []string{"a-deploy", "a-config", "b-hook", "b-namespace"}; !reflect.DeepEqual(got, want) {
+	upstream, err := upstreamHelmOutcome(t, chartDir, false)
+	if err != nil {
+		t.Fatalf("upstream error = %v", err)
+	}
+	want := make([]string, 0, len(upstream))
+	for _, obj := range upstream {
+		want = append(want, obj.GetName())
+	}
+	if got := manifestNames(manifests); !reflect.DeepEqual(got, want) {
+		t.Fatalf("manifest names = %#v, upstream %#v", got, want)
+	}
+	if got, want := manifestNames(manifests), []string{"b-namespace", "a-config", "a-deploy", "c-item", "b-hook"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("manifest names = %#v, want %#v", got, want)
+	}
+}
+
+// lastCopies keeps the last copy of each repeated resource, in the order of
+// first appearance, as the Argo CD controller keeps it
+// (NormalizeTargetObjects, controller/state.go:575-623 at v3.6.1). The
+// controller returns the copies in map order, which does not matter here.
+func lastCopies(t *testing.T, objs []*unstructured.Unstructured) []string {
+	t.Helper()
+	index := map[string]int{}
+	var out []string
+	for _, obj := range objs {
+		key := obj.GroupVersionKind().GroupKind().String() + "/" + obj.GetNamespace() + "/" + obj.GetName()
+		body := marshalObject(t, obj)
+		if i, ok := index[key]; ok {
+			out[i] = body
+			continue
+		}
+		index[key] = len(out)
+		out = append(out, body)
+	}
+	sort.Strings(out)
+	return out
+}
+
+// TestHelmRendererRepeatedResourceWinnerMatchesUpstream renders charts that
+// hold a resource twice. Argo CD keeps the last copy in the order of helm
+// template output. A List sorts after a ConfigMap, and a hook prints after
+// every other document, so the copy in the later file does not always win.
+// The hook copy here also has argocd.argoproj.io/hook: Skip, so it is not
+// an Argo CD hook and stays a managed resource.
+func TestHelmRendererRepeatedResourceWinnerMatchesUpstream(t *testing.T) {
+	for name, templates := range map[string]map[string]string{
+		"List before a ConfigMap": {
+			"templates/a-list.yaml": "apiVersion: v1\nkind: List\nitems:\n  - apiVersion: v1\n    kind: ConfigMap\n    metadata:\n      name: dup\n    data:\n      from: list\n",
+			"templates/b-cm.yaml":   "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: dup\ndata:\n  from: plain\n",
+		},
+		"helm hook before a plain copy": {
+			"templates/a-hook.yaml": "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: dup\n  annotations:\n    helm.sh/hook: pre-install\n    argocd.argoproj.io/hook: Skip\ndata:\n  from: hook\n",
+			"templates/b-cm.yaml":   "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: dup\ndata:\n  from: plain\n",
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			chartDir, manifests, err := renderParityChart(t, templates, false)
+			if err != nil {
+				t.Fatalf("Render() error = %v", err)
+			}
+			upstream, err := upstreamHelmOutcome(t, chartDir, false)
+			if err != nil {
+				t.Fatalf("upstream error = %v", err)
+			}
+			got, want := lastCopies(t, trackedManifestObjects(t, manifests)), lastCopies(t, upstream)
+			if !reflect.DeepEqual(got, want) {
+				t.Fatalf("drydock keeps\n%s\nupstream keeps\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
+			}
+			if len(want) != 1 || strings.Contains(want[0], `"from":"plain"`) {
+				t.Fatalf("upstream keeps %v, want the copy that helm prints last", want)
+			}
+		})
+	}
+}
+
+// TestHelmRendererTrimsTheEndOfTheReleaseManifest renders charts whose last
+// CRD or other document ends with a "|+" block scalar and blank lines. helm
+// template trims the white space at the end of the CRDs and the other
+// documents together (pkg/cmd/template.go:122), so the value loses its
+// trailing lines. A hook prints after the trim and keeps them.
+func TestHelmRendererTrimsTheEndOfTheReleaseManifest(t *testing.T) {
+	keep := func(kind, name, extra string) string {
+		return "apiVersion: v1\nkind: " + kind + "\nmetadata:\n  name: " + name + "\n" + extra + "data:\n  kept: |+\n    x\n    \t\n\n\n"
+	}
+	for name, templates := range map[string]map[string]string{
+		"last document": {
+			"templates/a.yaml": keep("ConfigMap", "first", ""),
+			"templates/b.yaml": keep("ConfigMap", "last", ""),
+		},
+		"last document before a hook": {
+			"templates/a.yaml": keep("ConfigMap", "plain", ""),
+			"templates/b.yaml": keep("ConfigMap", "hook", "  annotations:\n    helm.sh/hook: pre-install\n"),
+		},
+		"CRD without templates": {
+			"crds/crd.yaml": "apiVersion: apiextensions.k8s.io/v1\nkind: CustomResourceDefinition\nmetadata:\n  name: widgets.example.com\nspec:\n  group: example.com\n  note: |+\n    x\n\n\n",
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			chartDir, manifests, err := renderParityChart(t, templates, false)
+			if err != nil {
+				t.Fatalf("Render() error = %v", err)
+			}
+			upstream, err := upstreamHelmOutcome(t, chartDir, false)
+			if err != nil {
+				t.Fatalf("upstream error = %v", err)
+			}
+			if got, want := unstructuredMaps(trackedManifestObjects(t, manifests)), unstructuredMaps(upstream); !reflect.DeepEqual(got, want) {
+				t.Fatalf("drydock rendered %#v, upstream %#v", got, want)
+			}
+		})
 	}
 }
 

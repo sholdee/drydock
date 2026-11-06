@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"sort"
 
 	"github.com/sholdee/drydock/internal/manifestyaml"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -33,10 +32,6 @@ type generatedObject struct {
 	// jsonKindless marks a ".json" object without a kind that the
 	// repo-server kept because the content is also an OCI image manifest.
 	jsonKindless bool
-	// order is the position of the object in drydock's output when it is
-	// not the position in which Argo CD reads the object. Helm output uses
-	// it. Other sources leave it at zero.
-	order int
 }
 
 // generatedTarget is one manifest that GenerateManifests emits.
@@ -44,7 +39,6 @@ type generatedTarget struct {
 	manifest     Manifest
 	label        string
 	jsonKindless bool
-	order        int
 }
 
 // generateManifests is the manifest loop of GenerateManifests
@@ -78,7 +72,6 @@ func generateManifests(objects []generatedObject, track func(*unstructured.Unstr
 				targets = append(targets, generatedTarget{
 					manifest: Manifest{Path: obj.path, Object: &unstructured.Unstructured{Object: itemObject}, RootObject: obj.object},
 					label:    label,
-					order:    obj.order,
 				})
 			}
 		case isNullList(obj.object):
@@ -88,7 +81,6 @@ func generateManifests(objects []generatedObject, track func(*unstructured.Unstr
 				manifest:     Manifest{Path: obj.path, Object: obj.object},
 				label:        obj.label,
 				jsonKindless: obj.jsonKindless,
-				order:        obj.order,
 			}}
 		}
 		for _, target := range targets {
@@ -121,12 +113,11 @@ func checkManifestKinds(targets []generatedTarget) error {
 	return nil
 }
 
-// targetManifests returns the manifests of targets. When sortByOrder is set,
-// it orders them by their order field and keeps the order of equal ones.
-func targetManifests(targets []generatedTarget, sortByOrder bool) []Manifest {
-	if sortByOrder {
-		sort.SliceStable(targets, func(i, j int) bool { return targets[i].order < targets[j].order })
-	}
+// targetManifests returns the manifests of targets, in the order in which
+// Argo CD reads them. The controller keeps the last copy of a repeated
+// resource in that order (NormalizeTargetObjects, controller/state.go:
+// 575-623 at v3.6.1).
+func targetManifests(targets []generatedTarget) []Manifest {
 	out := make([]Manifest, 0, len(targets))
 	for _, target := range targets {
 		out = append(out, target.manifest)
@@ -185,7 +176,6 @@ type generatedDocument struct {
 	path  string
 	label string
 	raw   []byte
-	order int
 }
 
 // rawExtensionDecoder is the Decode method of apimachinery's
@@ -200,7 +190,7 @@ type rawExtensionDecoder interface {
 // document that holds only comments. It stops at the first document that
 // does not decode. The label of a document counts every document the
 // decoder returns, empty ones included, from firstIndex. It appends to out.
-func splitGeneratedDocuments(out []generatedDocument, path string, decoder rawExtensionDecoder, firstIndex, order int) ([]generatedDocument, error) {
+func splitGeneratedDocuments(out []generatedDocument, path string, decoder rawExtensionDecoder, firstIndex int) ([]generatedDocument, error) {
 	for index := firstIndex; ; index++ {
 		var ext runtime.RawExtension
 		if err := decoder.Decode(&ext); err != nil {
@@ -217,7 +207,6 @@ func splitGeneratedDocuments(out []generatedDocument, path string, decoder rawEx
 			path:  path,
 			label: fmt.Sprintf("%s document %d", path, index),
 			raw:   raw,
-			order: order,
 		})
 	}
 }
@@ -245,7 +234,6 @@ func decodeGeneratedDocuments(docs []generatedDocument) ([]generatedObject, erro
 			path:   doc.path,
 			label:  doc.label,
 			object: object,
-			order:  doc.order,
 		})
 	}
 	return objects, nil
@@ -265,7 +253,7 @@ func isMissingKindError(err error) bool {
 // generatedManifests runs the repo-server and controller stages that follow
 // kube.SplitYAML: the GenerateManifests loop (generateManifests) and the
 // controller kind check (checkManifestKinds).
-func generatedManifests(docs []generatedDocument, track func(*unstructured.Unstructured) error, sortByOrder bool) ([]Manifest, error) {
+func generatedManifests(docs []generatedDocument, track func(*unstructured.Unstructured) error) ([]Manifest, error) {
 	objects, err := decodeGeneratedDocuments(docs)
 	if err != nil {
 		return nil, err
@@ -277,7 +265,7 @@ func generatedManifests(docs []generatedDocument, track func(*unstructured.Unstr
 	if err := checkManifestKinds(targets); err != nil {
 		return nil, err
 	}
-	return targetManifests(targets, sortByOrder), nil
+	return targetManifests(targets), nil
 }
 
 // DecodeGeneratedOutput reads Kustomize or config management plugin output
@@ -297,9 +285,9 @@ func generatedManifests(docs []generatedDocument, track func(*unstructured.Unstr
 // skips the tracking check.
 func DecodeGeneratedOutput(path string, data []byte, track func(*unstructured.Unstructured) error) ([]Manifest, error) {
 	decoder := utilyaml.NewYAMLOrJSONDecoder(bytes.NewReader(data), generatedJSONGuessSize)
-	docs, err := splitGeneratedDocuments(nil, path, decoder, 0, 0)
+	docs, err := splitGeneratedDocuments(nil, path, decoder, 0)
 	if err != nil {
 		return nil, err
 	}
-	return generatedManifests(docs, track, false)
+	return generatedManifests(docs, track)
 }

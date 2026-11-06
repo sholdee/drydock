@@ -11,6 +11,7 @@ import (
 	"slices"
 	"sort"
 	"strings"
+	"unicode"
 
 	"github.com/sholdee/drydock/internal/avpcompat"
 	"github.com/sholdee/drydock/internal/diagnostic"
@@ -208,8 +209,10 @@ func validateHelmChartTree(root string) (bool, error) {
 // and the controller kind check (see DecodeGeneratedOutput).
 //
 // The stages run in the order of helm template output, so the first failure
-// is the one Argo CD reports. The manifests keep drydock's order: CRDs, then
-// the templates by file name, each in file order.
+// is the one Argo CD reports. The manifests come out in the same order, so
+// the Application layer keeps the same copy of a repeated resource as the
+// Argo CD controller, which keeps the last one (NormalizeTargetObjects,
+// controller/state.go:575-623 at v3.6.1).
 func decodeHelmManifests(manifestPath string, pathMap map[string]string, chrt helmchart.Charter, rendered map[string]string, opts RenderOptions) ([]Manifest, []diagnostic.Diagnostic, error) {
 	chunks, err := helmTemplateStream(manifestPath, pathMap, chrt, rendered, opts)
 	if err != nil {
@@ -218,24 +221,25 @@ func decodeHelmManifests(manifestPath string, pathMap map[string]string, chrt he
 	if opts.helmOutputForKustomize {
 		var targets []generatedTarget
 		for _, chunk := range chunks {
-			docs, err := manifest.DecodeYAML12Documents(chunk.path, strings.NewReader(chunk.content))
+			// helm template prints a line break after each document.
+			docs, err := manifest.DecodeYAML12Documents(chunk.path, strings.NewReader(chunk.content+"\n"))
 			if err != nil {
 				return nil, nil, err
 			}
 			for _, doc := range docs {
-				targets = append(targets, generatedTarget{manifest: NewDocumentManifest(doc), order: chunk.order})
+				targets = append(targets, generatedTarget{manifest: NewDocumentManifest(doc)})
 			}
 		}
-		return targetManifests(targets, true), nil, nil
+		return targetManifests(targets), nil, nil
 	}
 	var docs []generatedDocument
 	for _, chunk := range chunks {
-		docs, err = splitGeneratedDocuments(docs, chunk.path, utilyaml.NewYAMLToJSONDecoder(strings.NewReader(chunk.text)), chunk.firstIndex, chunk.order)
+		docs, err = splitGeneratedDocuments(docs, chunk.path, utilyaml.NewYAMLToJSONDecoder(strings.NewReader(chunk.text)), chunk.firstIndex)
 		if err != nil {
 			return nil, nil, err
 		}
 	}
-	manifests, err := generatedManifests(docs, opts.TrackManifest, true)
+	manifests, err := generatedManifests(docs, opts.TrackManifest)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -249,14 +253,13 @@ type helmStreamChunk struct {
 	path string
 	// text is the chunk as helm template writes it.
 	text string
-	// content is the document, or the whole CRD file.
+	// content is the document, or the whole CRD file, without the line
+	// break that helm template prints after it.
 	content string
 	// firstIndex is the index of the first document of the chunk in its
 	// file. A template chunk holds one document from helm's split of the
 	// file; a CRD chunk holds the whole file.
 	firstIndex int
-	// order is the position of the chunk in drydock's output.
-	order int
 }
 
 // helmEntryKey names one document of a rendered template, as helm's
@@ -264,13 +267,6 @@ type helmStreamChunk struct {
 type helmEntryKey struct {
 	name    string
 	content string
-}
-
-// helmEntryPosition is where a document of a rendered template sits in
-// drydock's output.
-type helmEntryPosition struct {
-	index int
-	order int
 }
 
 // helmTemplateStream returns the chunks that helm template (helm v4.3.1, the
@@ -291,9 +287,11 @@ type helmEntryPosition struct {
 //     hooks sorted by kind (pkg/cmd/template.go). --skip-tests (Argo CD's
 //     spec.source.helm.skipTests) drops a hook with the test event.
 //     --no-hooks (kustomize's skipHooks) drops every hook.
-//
-// order keeps drydock's output order: CRDs, then the templates sorted by
-// file name, each in file order.
+//  4. helm template trims the white space at the end of the CRDs and the
+//     other documents together, before it prints the hooks
+//     (strings.TrimSpace(rel.Manifest), pkg/cmd/template.go:122). So the
+//     last of these chunks loses the white space at its end, such as the
+//     blank lines that a "|+" block scalar keeps.
 func helmTemplateStream(manifestPath string, pathMap map[string]string, chrt helmchart.Charter, rendered map[string]string, opts RenderOptions) ([]helmStreamChunk, error) {
 	stream := &helmStream{manifestPath: manifestPath, pathMap: pathMap}
 	if shouldIncludeCRDs(opts) {
@@ -319,6 +317,7 @@ func helmTemplateStream(manifestPath string, pathMap map[string]string, chrt hel
 			return nil, err
 		}
 	}
+	stream.trimLastChunk()
 	if opts.SkipHooks {
 		return stream.chunks, nil
 	}
@@ -339,11 +338,9 @@ type helmStream struct {
 	manifestPath string
 	pathMap      map[string]string
 	chunks       []helmStreamChunk
-	// order is the next position in drydock's output.
-	order int
-	// positions holds, for each template document, where the copies of it
-	// sit in drydock's output, in file order.
-	positions map[helmEntryKey][]helmEntryPosition
+	// positions holds, for each template document, the index of each copy
+	// of it in its file, in file order.
+	positions map[helmEntryKey][]int
 }
 
 func (s *helmStream) addCRDs(chrt helmchart.Charter) error {
@@ -374,24 +371,17 @@ func (s *helmStream) addCRD(name string, data []byte) error {
 		path:    crdPath,
 		text:    fmt.Sprintf("---\n# Source: %s\n%s\n", name, data),
 		content: string(data),
-		order:   s.order,
 	})
-	s.order++
 	return nil
 }
 
-// indexTemplates gives each document of the rendered templates its position
-// in drydock's output: the templates sorted by file name, each in file
-// order, split as helm splits them.
+// indexTemplates gives each document of the rendered templates its index in
+// its file, split as helm splits the file, for the document labels in
+// errors.
 func (s *helmStream) indexTemplates(files map[string]string) {
-	names := make([]string, 0, len(files))
-	for name := range files {
-		names = append(names, name)
-	}
-	sort.Strings(names)
-	s.positions = make(map[helmEntryKey][]helmEntryPosition)
-	for _, name := range names {
-		entries := releaseutil.SplitManifests(files[name])
+	s.positions = make(map[helmEntryKey][]int)
+	for name, content := range files {
+		entries := releaseutil.SplitManifests(content)
 		keys := make([]string, 0, len(entries))
 		for key := range entries {
 			keys = append(keys, key)
@@ -399,8 +389,7 @@ func (s *helmStream) indexTemplates(files map[string]string) {
 		sort.Sort(releaseutil.BySplitManifestsOrder(keys))
 		for index, key := range keys {
 			entryKey := helmEntryKey{name: name, content: entries[key]}
-			s.positions[entryKey] = append(s.positions[entryKey], helmEntryPosition{index: index, order: s.order})
-			s.order++
+			s.positions[entryKey] = append(s.positions[entryKey], index)
 		}
 	}
 }
@@ -422,10 +411,20 @@ func (s *helmStream) addTemplateDocument(name, content string) error {
 		path:       entryPath,
 		text:       fmt.Sprintf("---\n# Source: %s\n%s\n", name, content),
 		content:    content,
-		firstIndex: queue[0].index,
-		order:      queue[0].order,
+		firstIndex: queue[0],
 	})
 	return nil
+}
+
+// trimLastChunk trims the white space at the end of the last chunk, as
+// helm template trims the release manifest (see helmTemplateStream).
+func (s *helmStream) trimLastChunk() {
+	if len(s.chunks) == 0 {
+		return
+	}
+	last := &s.chunks[len(s.chunks)-1]
+	last.text = strings.TrimRightFunc(last.text, unicode.IsSpace) + "\n"
+	last.content = strings.TrimRightFunc(last.content, unicode.IsSpace)
 }
 
 // sanitizeHelmSortError keeps the "YAML parse error on <file>: " prefix that

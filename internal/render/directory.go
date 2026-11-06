@@ -103,7 +103,7 @@ func (DirectoryRenderer) Render(ctx context.Context, source ResolvedSource, opts
 	if err := checkManifestKinds(targets); err != nil {
 		return nil, diags, err
 	}
-	return targetManifests(targets, false), diags, nil
+	return targetManifests(targets), diags, nil
 }
 
 // directoryCandidateFile is one file that the repo-server's
