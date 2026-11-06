@@ -274,21 +274,44 @@ func knownTypesNormalizer(resource Resource, fields []KnownTypeField) interface 
 	return normalizer
 }
 
+// rolloutDefaultKnownTypeField is the field of Argo CD's built-in known type
+// for Argo Rollouts, a PodSpec. It applies when no knownTypeFields entry
+// with a supported type is set for argoproj.io/Rollout.
+const rolloutDefaultKnownTypeField = "spec.template.spec"
+
+// unknownKnownTypeField names the field when the replay finds none, which
+// should not happen.
+const unknownKnownTypeField = "unknown field"
+
+// replayGroup and replayKind give the replay object a group and kind that
+// no built-in known type covers, so a replayed field runs alone.
+const (
+	replayGroup = "replay.drydock.invalid"
+	replayKind  = "Replay"
+)
+
 // failingKnownTypeField replays the known-types normalization of object one
-// field at a time and returns the first field that fails. With no fields, it
-// is the Argo Rollout default, the PodSpec at spec.template.spec.
+// field at a time and returns the first field that fails. The replay runs
+// under a neutral group and kind: a field with an unsupported type is left
+// out, as Argo CD leaves it out, and the Argo Rollout default never runs
+// beside a replayed field. When no field fails, the failure came from the
+// Rollout default, if the resource is a Rollout.
 func failingKnownTypeField(object map[string]any, resource Resource, fields []KnownTypeField) string {
-	if len(fields) == 0 {
-		return "spec.template.spec"
-	}
-	obj := &unstructured.Unstructured{Object: object}
+	replay := &unstructured.Unstructured{Object: object}
+	replay.SetAPIVersion(replayGroup + "/v1")
+	replay.SetKind(replayKind)
+	replayResource := Resource{Group: replayGroup, Kind: replayKind}
 	for _, field := range fields {
-		if err := knownTypesNormalizer(resource, []KnownTypeField{field}).Normalize(obj); err != nil {
+		if err := knownTypesNormalizer(replayResource, []KnownTypeField{field}).Normalize(replay); err != nil {
 			return field.Field
 		}
 	}
-	return fields[0].Field
+	if resource.Group == rolloutGroup && resource.Kind == rolloutKind {
+		return rolloutDefaultKnownTypeField
+	}
+	return unknownKnownTypeField
 }
+
 func stripAttrSet(attrs []string) map[string]struct{} {
 	out := make(map[string]struct{}, len(attrs))
 	for _, attr := range attrs {

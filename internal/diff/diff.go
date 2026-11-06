@@ -3,6 +3,7 @@ package diff
 import (
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 )
 
@@ -122,7 +123,10 @@ type KnownTypeFailure struct {
 	Parent   Parent
 	Resource Resource
 	Field    string
-	Message  string
+	// RolloutDefault marks the built-in known type of Argo Rollouts, the
+	// PodSpec at spec.template.spec, which no knownTypeFields entry sets.
+	RolloutDefault bool
+	Message        string
 }
 
 // RunReport is the outcome of RunWithReport.
@@ -158,6 +162,7 @@ func RunWithReport(left, right []Document, opts Options) (RunReport, error) {
 	leftByKey := documentsByKey(left)
 	rightByKey := documentsByKey(right)
 	keys := sortedKeys(leftByKey, rightByKey)
+	identities := resourceIdentities{left: identitiesOf(left), right: identitiesOf(right)}
 
 	results := make([]Result, 0)
 	var failures []ComparisonFailure
@@ -168,16 +173,25 @@ func RunWithReport(left, right []Document, opts Options) (RunReport, error) {
 		if !ok {
 			doc = leftByKey[key]
 		}
-		reported := map[string]struct{}{}
+		// Known-type failures count only for a resource whose change is
+		// shown.
+		var pending []KnownTypeFailure
 		keyOpts := opts
 		keyOpts.reportKnownTypeFailure = func(field string, err error) {
-			if _, ok := reported[field]; ok {
-				return
+			for _, seen := range pending {
+				if seen.Field == field {
+					return
+				}
 			}
-			reported[field] = struct{}{}
-			knownTypeFailures = append(knownTypeFailures, KnownTypeFailure{Parent: doc.Parent, Resource: doc.Resource, Field: field, Message: err.Error()})
+			pending = append(pending, KnownTypeFailure{
+				Parent:         doc.Parent,
+				Resource:       doc.Resource,
+				Field:          field,
+				RolloutDefault: field == rolloutDefaultKnownTypeField,
+				Message:        err.Error(),
+			})
 		}
-		result, include, failure, err := diffResultForKey(leftByKey, rightByKey, key, keyOpts)
+		result, include, failure, err := diffResultForKey(leftByKey, rightByKey, key, keyOpts, identities)
 		if err != nil {
 			return RunReport{}, err
 		}
@@ -190,6 +204,7 @@ func RunWithReport(left, right []Document, opts Options) (RunReport, error) {
 		}
 		if include {
 			results = append(results, result)
+			knownTypeFailures = append(knownTypeFailures, pending...)
 		}
 	}
 	if len(failed) == 0 {
@@ -210,11 +225,50 @@ func RunWithReport(left, right []Document, opts Options) (RunReport, error) {
 	return RunReport{Results: kept, ComparisonFailures: failures, KnownTypeFailures: keptKnownTypeFailures}, nil
 }
 
-func diffResultForKey(leftByKey, rightByKey map[string]Document, key string, opts Options) (Result, bool, *ComparisonFailure, error) {
+// resourceIdentities holds, for each side, the resources by identity without
+// the Application.
+type resourceIdentities struct {
+	left, right map[string]struct{}
+}
+
+func resourceIdentityOf(doc Document) string {
+	return strings.Join([]string{doc.Resource.Group, doc.Resource.Kind, doc.Resource.Namespace, doc.Resource.Name}, "\x00")
+}
+
+func identitiesOf(docs []Document) map[string]struct{} {
+	out := make(map[string]struct{}, len(docs))
+	for _, doc := range docs {
+		out[resourceIdentityOf(doc)] = struct{}{}
+	}
+	return out
+}
+
+// createdOrDeleted reports whether a resource that only one side of its key
+// has is missing on the other side entirely. A resource that moves to
+// another Application, by a rename or an adoption, is not: Argo CD finds the
+// live object for the target whatever Application tracked it
+// (gitops-engine pkg/cache/cluster.go GetManagedLiveObjs), so it compares
+// the two as a modify.
+func (ids resourceIdentities) createdOrDeleted(left, right Document, hasLeft, hasRight bool) bool {
+	switch {
+	case hasLeft && !hasRight:
+		_, onRight := ids.right[resourceIdentityOf(left)]
+		return !onRight
+	case hasRight && !hasLeft:
+		_, onLeft := ids.left[resourceIdentityOf(right)]
+		return !onLeft
+	default:
+		return false
+	}
+}
+
+func diffResultForKey(leftByKey, rightByKey map[string]Document, key string, opts Options, identities resourceIdentities) (Result, bool, *ComparisonFailure, error) {
 	left, hasLeft := leftByKey[key]
 	right, hasRight := rightByKey[key]
 	left, right = documentsWithSharedNormalization(left, right, hasLeft, hasRight)
-	left, right = withServerSideCreateOrDeleteNormalization(left, right, hasLeft, hasRight)
+	if identities.createdOrDeleted(left, right, hasLeft, hasRight) {
+		left, right = withServerSideCreateOrDeleteNormalization(left, right, hasLeft, hasRight)
+	}
 	if hasLeft && hasRight && left.Body == right.Body {
 		// Both sides share the current side's normalization, so identical bodies
 		// always normalize identically and can never produce a diff. Under
@@ -266,8 +320,8 @@ func objectRemovedByNormalization(doc Document, opts Options) bool {
 	return errors.Is(err, errObjectRemoved)
 }
 
-// withServerSideCreateOrDeleteNormalization gives a resource that only one
-// side has the normalization of Argo CD's server-side diff for a created or
+// withServerSideCreateOrDeleteNormalization gives a created or deleted
+// resource (see resourceIdentities.createdOrDeleted) the normalization of Argo CD's server-side diff for a created or
 // deleted resource. That path skips the whole ignore normalizer and the
 // known-types normalizer (gitops-engine pkg/diff/diff.go Diff and
 // handleResourceCreateOrDeleteDiff): no Application, annotation, or

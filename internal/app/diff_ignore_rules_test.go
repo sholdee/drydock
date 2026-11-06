@@ -663,3 +663,35 @@ func TestOrchestratorDiffAppsKnownTypeSkippedAdvisory(t *testing.T) {
 		})
 	}
 }
+
+// writeRolloutApp writes Application <name> with an Argo Rollout whose pod
+// template the built-in Rollout known type fails to normalize.
+func writeRolloutApp(t *testing.T, root, name, replicas string) {
+	t.Helper()
+	writeTestFile(t, filepath.Join(root, "apps", name+".yaml"), "apiVersion: argoproj.io/v1alpha1\nkind: Application\nmetadata:\n  name: "+name+"\n  namespace: argocd\nspec:\n  source:\n    repoURL: https://github.com/example/repo\n    path: manifests/"+name+"\n    targetRevision: main\n  destination:\n    name: in-cluster\n    namespace: "+name+"\n")
+	writeTestFile(t, filepath.Join(root, "manifests", name, "rollout.yaml"), "apiVersion: argoproj.io/v1alpha1\nkind: Rollout\nmetadata:\n  name: "+name+"\nspec:\n  replicas: "+replicas+"\n  template:\n    spec:\n      containers: notalist\n")
+}
+
+// The advisory names the built-in Rollout known type, and an Application
+// that only the baseline side has gives none: Argo CD never compares it.
+func TestOrchestratorDiffAppsKnownTypeSkippedAdvisoryScope(t *testing.T) {
+	root := t.TempDir()
+	left := filepath.Join(root, "left")
+	right := filepath.Join(root, "right")
+	writeRolloutApp(t, left, "kept", "1")
+	writeRolloutApp(t, right, "kept", "2")
+	writeRolloutApp(t, left, "gone", "1")
+
+	result, err := Orchestrator{}.DiffApps(context.Background(), DiffRequest{LeftPath: left, RightPath: right, Unified: 3})
+	if err != nil {
+		t.Fatalf("DiffApps() error = %v, diagnostics = %#v", err, result.Diagnostics)
+	}
+	advisories := diagnosticsWithCode(result.Diagnostics, diffKnownTypeSkippedCode)
+	if len(advisories) != 1 || !strings.Contains(advisories[0].Message, "Application argocd/kept:") ||
+		!strings.Contains(advisories[0].Message, `the built-in Argo Rollout known type at "spec.template.spec"`) {
+		t.Fatalf("%s diagnostics = %#v, want one for Application argocd/kept that names the Rollout default", diffKnownTypeSkippedCode, advisories)
+	}
+	if len(result.Results) != 2 {
+		t.Fatalf("Results = %#v, want the change of kept and the removal of gone", result.Results)
+	}
+}

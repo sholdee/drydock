@@ -537,3 +537,110 @@ func TestRunWithReportKnownTypeFailure(t *testing.T) {
 		t.Fatalf("RunWithReport() of an unchanged resource = %#v, %v, want no report", report.KnownTypeFailures, err)
 	}
 }
+
+// A resource that moves to another Application is a change in Argo CD, not a
+// create, so the server-side create and delete path does not apply. drydock
+// shows a removal and an addition, and normalizes the addition with the new
+// Application's rules.
+func TestRunMovedResourceKeepsFullNormalization(t *testing.T) {
+	deployment := func(app, replicas string, normalization Normalization) Document {
+		return Document{
+			Parent:        Parent{Namespace: "argocd", Name: app},
+			Resource:      Resource{Group: "apps", Kind: "Deployment", Namespace: "default", Name: "web"},
+			Body:          "apiVersion: apps/v1\nkind: Deployment\nmetadata:\n  name: web\n  namespace: default\nspec:\n  replicas: " + replicas + "\n",
+			Normalization: normalization,
+		}
+	}
+	rulesOfB := Normalization{ApplicationRules: []IgnoreRule{{JSONPointers: []string{"/spec/replicas"}}}, ServerSideDiff: true}
+	results, failures, err := RunWithFailures(
+		[]Document{deployment("a", "1", Normalization{})},
+		[]Document{deployment("b", "2", rulesOfB)},
+		Options{Unified: 3})
+	if err != nil || len(failures) != 0 || len(results) != 2 {
+		t.Fatalf("RunWithFailures() = %#v, %#v, %v, want a removal and an addition", results, failures, err)
+	}
+	for _, result := range results {
+		switch result.Parent.Name {
+		case "a":
+			if result.Change != ChangeRemoved || !strings.Contains(result.Diff, "-  replicas: 1") {
+				t.Fatalf("Application a result = %#v, want the removal with replicas", result)
+			}
+		case "b":
+			if result.Change != ChangeAdded || strings.Contains(result.Diff, "replicas") {
+				t.Fatalf("Application b result = %#v, want the addition with the replicas rule applied", result)
+			}
+		}
+	}
+
+	// A resource that is new everywhere takes the create path: the rule
+	// does not apply under server-side diff.
+	results, _, err = RunWithFailures(nil, []Document{deployment("b", "2", rulesOfB)}, Options{Unified: 3})
+	if err != nil || len(results) != 1 || !strings.Contains(results[0].Diff, "+  replicas: 2") {
+		t.Fatalf("RunWithFailures() of a new resource = %#v, %v, want replicas shown", results, err)
+	}
+}
+
+// The field a known-types failure names comes from a replay that leaves out
+// unsupported types and keeps the Argo Rollout default apart.
+func TestRunWithReportNamesTheFailingKnownTypeField(t *testing.T) {
+	rollout := func(replicas string, fields []KnownTypeField, spec string) Document {
+		return Document{
+			Parent:        Parent{Namespace: "argocd", Name: "r"},
+			Resource:      Resource{Group: "argoproj.io", Kind: "Rollout", Namespace: "default", Name: "r"},
+			Body:          "apiVersion: argoproj.io/v1alpha1\nkind: Rollout\nmetadata:\n  name: r\n  namespace: default\nspec:\n  replicas: " + replicas + "\n" + spec,
+			Normalization: Normalization{KnownTypeFields: fields},
+		}
+	}
+	badPodSpec := "  template:\n    spec:\n      containers: notalist\n"
+	for _, tt := range []struct {
+		name           string
+		fields         []KnownTypeField
+		spec           string
+		wantField      string
+		wantRolloutDef bool
+	}{
+		{
+			// Only an unsupported type: Argo CD uses the Rollout default.
+			name:           "unsupported type only",
+			fields:         []KnownTypeField{{Field: "spec.strategy.foo", Type: "core/v1/NoSuchType"}},
+			spec:           badPodSpec,
+			wantField:      "spec.template.spec",
+			wantRolloutDef: true,
+		},
+		{
+			name:      "configured field fails",
+			fields:    []KnownTypeField{{Field: "spec.resources", Type: "core/v1/ResourceRequirements"}},
+			spec:      "  resources:\n    limits: notamap\n",
+			wantField: "spec.resources",
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			report, err := RunWithReport([]Document{rollout("1", tt.fields, tt.spec)}, []Document{rollout("2", tt.fields, tt.spec)}, Options{Unified: 3})
+			if err != nil {
+				t.Fatalf("RunWithReport() error = %v", err)
+			}
+			if len(report.KnownTypeFailures) != 1 || report.KnownTypeFailures[0].Field != tt.wantField || report.KnownTypeFailures[0].RolloutDefault != tt.wantRolloutDef {
+				t.Fatalf("KnownTypeFailures = %#v, want %s (Rollout default %t)", report.KnownTypeFailures, tt.wantField, tt.wantRolloutDef)
+			}
+		})
+	}
+}
+
+// A known-types failure is reported only for a change that the diff shows.
+func TestRunWithReportKnownTypeFailureOnlyForShownChanges(t *testing.T) {
+	widget := func(label string) Document {
+		return Document{
+			Parent:   Parent{Namespace: "argocd", Name: "w"},
+			Resource: Resource{Group: "example.com", Kind: "Widget", Namespace: "default", Name: "w"},
+			Body:     "apiVersion: example.com/v1\nkind: Widget\nmetadata:\n  name: w\n  namespace: default\n  labels:\n    foo: " + label + "\nspec:\n  resources:\n    limits: notamap\n",
+			Normalization: Normalization{
+				ApplicationRules: []IgnoreRule{{JSONPointers: []string{"/metadata/labels"}}},
+				KnownTypeFields:  []KnownTypeField{{Field: "spec.resources", Type: "core/v1/ResourceRequirements"}},
+			},
+		}
+	}
+	report, err := RunWithReport([]Document{widget("a")}, []Document{widget("b")}, Options{Unified: 3})
+	if err != nil || len(report.Results) != 0 || len(report.KnownTypeFailures) != 0 {
+		t.Fatalf("RunWithReport() = %#v, %v, want no change and no report", report, err)
+	}
+}

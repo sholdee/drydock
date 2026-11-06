@@ -403,13 +403,15 @@ change with `null` on that side instead. With server-side diff, both sides
 `null` compare as unchanged. Fix the jq expression so that it removes a field,
 not the object.
 
-`diff.known-type-skipped` is an advisory warning. A `knownTypeFields` entry of
-`resource.customizations` failed to normalize a field of a changed resource,
-for example a `core/v1/ResourceRequirements` field whose `limits` is not a map.
-Argo CD only logs this error and compares the field as written, and drydock
-does the same. The warning names the Application, the resource, and the field.
-`--strict` does not fail on it. Fix the field or the `knownTypeFields` type if
-you want the field normalized.
+`diff.known-type-skipped` is an advisory warning. A known type failed to
+normalize a field of a changed resource that the diff shows. The known type is
+either a `knownTypeFields` entry of `resource.customizations`, or the built-in
+known type of Argo Rollouts, a PodSpec at `spec.template.spec`. An example is a
+`core/v1/ResourceRequirements` field whose `limits` is not a map. Argo CD only
+logs this error and compares the field as written, and drydock does the same.
+The warning names the Application, the resource, and the field. `--strict` does
+not fail on it. If you want the field normalized, fix the field in the
+manifest. For a `knownTypeFields` entry, you can also fix its type.
 
 ## Symptom: Changed-Only Falls Back To All Apps
 

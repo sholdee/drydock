@@ -1254,7 +1254,13 @@ Supported:
   `binaryData` summary, and Secret redaction, still run. The client-side diff
   applies the rules. So, under server-side diff, a new or deleted resource
   now shows fields that an ignore rule hides from a changed resource.
-  Earlier drydock releases applied the rules in both modes.
+  Earlier drydock releases applied the rules in both modes. A resource that
+  moves to another Application, such as after a rename or an adoption, is
+  not new or deleted: Argo CD finds its live object whatever Application
+  tracked it (gitops-engine `pkg/cache/cluster.go`), and compares it as a
+  change with the full normalization of the new Application. drydock shows
+  it as a removal from one Application and an addition to the other, and
+  normalizes it as that change.
 - A jq expression that removes the whole object, such as `.`, makes Argo CD
   continue with the object `null`, which it cannot decode. gitops-engine
   only logs that error, and the object stays `null`. For a resource that
@@ -1291,8 +1297,10 @@ Supported:
   field whose `limits` is not a map, is only logged by Argo CD, which then
   compares the object as it is. The normalizer stops at the first field that
   fails, after it changed the fields before it. drydock does the same. For a
-  changed resource, drydock gives the advisory `diff.known-type-skipped`,
-  which names the Application, the resource, and the field. `--strict` does
+  changed resource that the diff shows, drydock gives the advisory
+  `diff.known-type-skipped`, which names the Application, the resource, and
+  the field. This also covers the built-in Argo Rollout known type. An
+  Application that only the baseline side has gets no advisory. `--strict` does
   not fail on it, because the diff matches Argo CD either way.
 - `resource.customizations` keys as Argo CD reads them for `jsonPointers`,
   `jqPathExpressions`, and `knownTypeFields`

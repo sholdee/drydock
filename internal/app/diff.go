@@ -649,12 +649,21 @@ func diffBuildResults(leftBuild, rightBuild BuildResult, opts diff.Options, stri
 	}
 	results := report.Results
 	for _, failure := range report.KnownTypeFailures {
+		app := diffApplicationKey{Namespace: failure.Parent.Namespace, Name: failure.Parent.Name}
+		if _, ok := current[app]; !ok {
+			// Argo CD never compares an Application that was deleted.
+			continue
+		}
+		field := fmt.Sprintf("knownTypeFields field %q", failure.Field)
+		if failure.RolloutDefault {
+			field = fmt.Sprintf("the built-in Argo Rollout known type at %q", failure.Field)
+		}
 		diags = append(diags, diagnostic.Diagnostic{
 			Code:     diffKnownTypeSkippedCode,
 			Severity: diagnostic.SeverityWarning,
 			Category: "diff",
-			Message: fmt.Sprintf("Application %s: %s: knownTypeFields field %q was not normalized, as Argo CD only logs this error and compares the field as written: %s",
-				diffApplicationKey{Namespace: failure.Parent.Namespace, Name: failure.Parent.Name}, diffResourceName(failure.Resource), failure.Field, failure.Message),
+			Message: fmt.Sprintf("Application %s: %s: %s was not normalized, as Argo CD only logs this error and compares the field as written: %s",
+				app, diffResourceName(failure.Resource), field, failure.Message),
 		})
 	}
 	for _, failure := range report.ComparisonFailures {
