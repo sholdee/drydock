@@ -818,9 +818,10 @@ Supported:
   keeps the last value, and reports a warning.
 - Discovery of Argo CD settings. drydock finds the `argocd-cm` ConfigMap by
   its name, as Argo CD does. drydock finds an Argo CD Helm values file by
-  the keys under `configs.cm`. A key that starts with
-  `resource.customizations` counts, with or without a dot after it, because
-  Argo CD reads both forms.
+  the keys under `configs.cm`. Every `argocd-cm` key that drydock reads
+  counts, and so does the chart key `resourceExclusionsAdditional`. A key
+  that starts with `resource.customizations` counts, with or without a dot
+  after it, because Argo CD reads both forms.
 - `configs.cm` in an Argo CD Helm values file, read as the argo-helm
   `argo-cd` chart 10.14.0 turns it into `argocd-cm`. The chart helper
   `argo-cd.config.cm` is in `templates/_helpers.tpl`. drydock reads the

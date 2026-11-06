@@ -819,3 +819,48 @@ func mustWriteFile(t *testing.T, path, data string) {
 		t.Fatal(err)
 	}
 }
+
+// TestScanFindsHelmValuesWithAnySettingKeyDrydockReads pins that a values
+// file is a settings candidate when its configs.cm holds only one key that
+// drydock reads, and is not one when it holds only keys drydock ignores.
+func TestScanFindsHelmValuesWithAnySettingKeyDrydockReads(t *testing.T) {
+	root := t.TempDir()
+	found := map[string]string{
+		"installation-id.yaml":   "installationID: my-argocd",
+		"in-cluster.yaml":        `cluster.inClusterEnabled: "false"`,
+		"value-schemes.yaml":     "helm.valuesFileSchemes: https",
+		"ignore-updates.yaml":    `resource.ignoreResourceUpdatesEnabled: "true"`,
+		"exclusions-extra.yaml":  "resourceExclusionsAdditional:\n      - kinds: [Lease]",
+		"tracking-method.yaml":   "application.resourceTrackingMethod: annotation",
+		"kustomize-options.yaml": "kustomize.buildOptions: --enable-helm",
+	}
+	ignored := map[string]string{
+		"url-only.yaml":    "url: https://argocd.example.com",
+		"create-only.yaml": "create: true",
+	}
+	for _, files := range []map[string]string{found, ignored} {
+		for name, entry := range files {
+			mustWriteFile(t, filepath.Join(root, "settings", name), "configs:\n  cm:\n    "+entry+"\n")
+		}
+	}
+	result, err := Scan(root, Options{})
+	if err != nil {
+		t.Fatalf("Scan() error = %v", err)
+	}
+	got := map[string]bool{}
+	for _, candidate := range result.SettingsCandidates {
+		if candidate.Kind == "argocd-values" {
+			got[filepath.Base(candidate.Path)] = true
+		}
+	}
+	for name := range found {
+		if !got[name] {
+			t.Errorf("Scan() did not find %s as an Argo CD values file; candidates = %#v", name, result.SettingsCandidates)
+		}
+	}
+	for name := range ignored {
+		if got[name] {
+			t.Errorf("Scan() found %s as an Argo CD values file, want it ignored", name)
+		}
+	}
+}
