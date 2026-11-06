@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"os"
 	"path/filepath"
 	"testing"
 
@@ -64,5 +65,47 @@ func TestWithSelectionOnlyPathsOwnsHelmFileParameterSymlinks(t *testing.T) {
 	}
 	if selected, _ := SelectChangedApplicationInputs(got, []string{"unrelated/README.md"}); len(selected) != 0 {
 		t.Errorf("an unrelated change selected the Helm source")
+	}
+}
+
+// TestRenderInputCoverageHelmFileParameterSymlinkRetarget pins that the
+// persistent render cache digest covers each symlink of a file parameter
+// chain: pointing one of them at another file changes the render, so the
+// symlink itself must be a digest input.
+func TestRenderInputCoverageHelmFileParameterSymlinkRetarget(t *testing.T) {
+	for _, link := range []string{"links/chain.txt", "links/file-link.txt"} {
+		t.Run(link, func(t *testing.T) {
+			root := t.TempDir()
+			application := writeHelmFileParameterSymlinkApp(t, root, false)
+			writeTestFile(t, filepath.Join(root, "links", "other.txt"), "from-other\n")
+			provider := renderCoverageFixtureProvider(root)
+			plan := mustPlan(t, application)
+			prepared, _, err := preparePlanSourcesForRender(context.Background(), application, provider, plan)
+			if err != nil {
+				t.Fatalf("preparePlanSourcesForRender() error = %v", err)
+			}
+			digestPaths, _, err := localInputDigestPathsForSource(context.Background(), prepared, prepared.Sources[0], provider)
+			if err != nil {
+				t.Fatalf("localInputDigestPathsForSource() error = %v", err)
+			}
+			baseline, err := RenderApplication(context.Background(), application, provider)
+			if err != nil {
+				t.Fatalf("baseline render error = %v", err)
+			}
+			if err := os.Remove(filepath.Join(root, filepath.FromSlash(link))); err != nil {
+				t.Fatal(err)
+			}
+			symlinkBoundsLink(t, "other.txt", filepath.Join(root, filepath.FromSlash(link)))
+			retargeted, err := RenderApplication(context.Background(), application, renderCoverageFixtureProvider(root))
+			if err != nil {
+				t.Fatalf("retargeted render error = %v", err)
+			}
+			if renderOutcomeSignature(t, baseline, nil) == renderOutcomeSignature(t, retargeted, nil) {
+				t.Fatalf("retargeting %s did not change the render", link)
+			}
+			if !digestPathsCover(digestPaths, link) {
+				t.Fatalf("retargeting %s changes the render but the digest paths %#v do not cover it", link, digestPaths)
+			}
+		})
 	}
 }

@@ -12,47 +12,66 @@ import (
 
 	argoappv1 "github.com/argoproj/argo-cd/v3/pkg/apis/application/v1alpha1"
 	pathutil "github.com/argoproj/argo-cd/v3/util/io/path"
+	"helm.sh/helm/v4/pkg/strvals"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"sigs.k8s.io/yaml"
 )
 
 // upstreamHelmFileParameterValues is how the Argo CD v3.6.1 repo-server
-// handles helm.fileParameters, with the upstream path resolver. helmTemplate
-// (reposerver/repository/repository.go:1361-1377) resolves every entry in
-// list order: a $ref entry with getResolvedRefValueFile
-// (repository.go:1583-1604), any other entry with
-// pathutil.ResolveValueFilePathOrUrl. It keys the resolved paths by name, so
-// the last entry per name wins, and helm --set-file then reads each one
-// (helm pkg/cli/values/options.go MergeValues). It returns the file contents
+// and helm handle helm.fileParameters, with the upstream path resolver.
+// helmTemplate (reposerver/repository/repository.go:1361-1377) resolves
+// every entry in list order. An entry whose first path segment, before env
+// substitution, is a key of refSources resolves with getResolvedRefValueFile
+// (repository.go:1583-1604, getReferencedSourceName at 1620-1625): the first
+// segment is dropped and the rest is env-substituted and resolved in that
+// root. Any other entry is env-substituted and resolved with
+// pathutil.ResolveValueFilePathOrUrl. The resolved paths are keyed by name,
+// so the last entry per name wins. helm then parses each name=<path> with
+// strvals after cleanSetParameters (util/helm/cmd.go:450-451) and reads
+// the file (helm pkg/cli/values/options.go:94-106). It returns the values
 // by name, or the error that the repo-server reports.
-func upstreamHelmFileParameterValues(appPath, repoRoot string, refRoots map[string]string, parameters []argoappv1.HelmFileParameter) (map[string]string, error) {
+func upstreamHelmFileParameterValues(appPath, repoRoot string, env argoappv1.Env, refSources map[string]string, parameters []argoappv1.HelmFileParameter) (map[string]string, error) {
 	schemes := []string{"https", "http"}
 	setFile := map[string]string{}
 	for _, parameter := range parameters {
-		if ref, rest, ok := strings.Cut(parameter.Path, "/"); ok && refRoots[ref] != "" {
-			root := refRoots[ref]
-			resolved, _, err := pathutil.ResolveValueFilePathOrUrl(root, root, "/"+rest, schemes)
+		refName := ""
+		if strings.HasPrefix(parameter.Path, "$") {
+			refName = strings.Split(parameter.Path, "/")[0]
+		}
+		if root := refSources[refName]; refName != "" && root != "" {
+			pathStrings := strings.Split(parameter.Path, "/")
+			pathStrings[0] = ""
+			resolved, _, err := pathutil.ResolveValueFilePathOrUrl(root, root, env.Envsubst(strings.Join(pathStrings, "/")), schemes)
 			if err != nil {
 				return nil, fmt.Errorf("error resolving set-file path: error resolving value file path: %w", err)
 			}
 			setFile[parameter.Name] = string(resolved)
 			continue
 		}
-		resolved, _, err := pathutil.ResolveValueFilePathOrUrl(appPath, repoRoot, parameter.Path, schemes)
+		resolved, _, err := pathutil.ResolveValueFilePathOrUrl(appPath, repoRoot, env.Envsubst(parameter.Path), schemes)
 		if err != nil {
 			return nil, fmt.Errorf("error resolving helm value file path: %w", err)
 		}
 		setFile[parameter.Name] = string(resolved)
 	}
-	values := map[string]string{}
-	for name, path := range setFile {
-		data, err := os.ReadFile(path)
+	values := map[string]any{}
+	read := func(input []rune) (any, error) {
+		data, err := os.ReadFile(string(input))
 		if err != nil {
+			return nil, err
+		}
+		return string(data), nil
+	}
+	for name, path := range setFile {
+		if err := strvals.ParseIntoFile(name+"="+cleanHelmSetParameter(path), values, read); err != nil {
 			return nil, fmt.Errorf("failed parsing --set-file data: %w", err)
 		}
-		values[name] = string(data)
 	}
-	return values, nil
+	out := map[string]string{}
+	for name, value := range values {
+		out[name] = fmt.Sprint(value)
+	}
+	return out, nil
 }
 
 // writeHelmFileParameterSymlinkRepo writes a repository at root/repo with a
@@ -77,6 +96,9 @@ data:
 	writeFile(t, filepath.Join(links, "real", "inner.txt"), "inner")
 	writeFile(t, filepath.Join(links, "real", "which.txt"), "physical")
 	writeFile(t, filepath.Join(links, "which.txt"), "lexical")
+	writeFile(t, filepath.Join(chartDir, "$values", "x.txt"), "escaped-dollar")
+	writeFile(t, filepath.Join(chartDir, "ab.txt"), "without-backslash")
+	writeFile(t, filepath.Join(repo, ".git", "config"), "[core]\n")
 	if err := os.MkdirAll(filepath.Join(links, "real", "deep"), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -149,6 +171,17 @@ func TestHelmFileParameterSymlinksMatchArgoCD(t *testing.T) {
 		}},
 		{name: "ref file symlink", parameters: []argoappv1.HelmFileParameter{{Name: "f", Path: "$values/links/file-link.txt"}}},
 		{name: "ref symlink out of the ref root", parameters: []argoappv1.HelmFileParameter{{Name: "f", Path: "$values/links/escape.txt"}}},
+		{name: "env substitution", parameters: []argoappv1.HelmFileParameter{{Name: "f", Path: "../../links/$ARGOCD_APP_NAME.txt"}}},
+		{name: "ref decided before env substitution", parameters: []argoappv1.HelmFileParameter{{Name: "f", Path: "$values/links/$ARGOCD_APP_NAME.txt"}}},
+		{name: "escaped dollar is not a ref", parameters: []argoappv1.HelmFileParameter{{Name: "f", Path: "$$values/x.txt"}}},
+		{name: "bare ref", parameters: []argoappv1.HelmFileParameter{{Name: "f", Path: "$values"}}},
+		{name: "bare ref with a slash", parameters: []argoappv1.HelmFileParameter{{Name: "f", Path: "$values/"}}},
+		{name: "helm drops a backslash", parameters: []argoappv1.HelmFileParameter{{Name: "f", Path: `a\b.txt`}}},
+		{name: "overridden path in .git", parameters: []argoappv1.HelmFileParameter{
+			{Name: "f", Path: "../../.git/config"},
+			{Name: "f", Path: "../../links/target.txt"},
+		}},
+		{name: "path in .git", parameters: []argoappv1.HelmFileParameter{{Name: "f", Path: "../../.git/config"}}, drydockErr: "enters a .git directory"},
 		{name: "overridden URL", parameters: []argoappv1.HelmFileParameter{
 			{Name: "f", Path: "https://example.invalid/values.txt"},
 			{Name: "f", Path: "../../links/file-link.txt"},
@@ -160,7 +193,7 @@ func TestHelmFileParameterSymlinksMatchArgoCD(t *testing.T) {
 			// outside the repository.
 			name:       "symlinked parent directory out of the repository",
 			parameters: []argoappv1.HelmFileParameter{{Name: "f", Path: "../../links/escape-dir/outside.txt"}},
-			drydockErr: "resolves to a file outside the repository through a symlinked directory",
+			drydockErr: "makes helm read a file outside the repository, which drydock never reads",
 		},
 		{name: "overridden symlinked parent directory out of the repository", parameters: []argoappv1.HelmFileParameter{
 			{Name: "f", Path: "../../links/escape-dir/outside.txt"},
@@ -170,9 +203,11 @@ func TestHelmFileParameterSymlinksMatchArgoCD(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			repo := writeHelmFileParameterSymlinkRepo(t, t.TempDir())
 			refRoots := map[string]string{"$values": repo}
-			want, wantErr := upstreamHelmFileParameterValues(filepath.Join(repo, "charts", "app"), repo, refRoots, tt.parameters)
+			env := argoappv1.Env{{Name: "ARGOCD_APP_NAME", Value: "file-link"}}
+			want, wantErr := upstreamHelmFileParameterValues(filepath.Join(repo, "charts", "app"), repo, env, refRoots, tt.parameters)
 			result, _, err := (HelmRenderer{}).Render(context.Background(), ResolvedSource{RepoRoot: repo, Path: "charts/app"}, RenderOptions{
 				AppName:            "probe",
+				ArgoEnv:            env,
 				RefRoots:           refRoots,
 				HelmFileParameters: tt.parameters,
 			})
@@ -189,10 +224,13 @@ func TestHelmFileParameterSymlinksMatchArgoCD(t *testing.T) {
 				return
 			}
 			if wantErr != nil {
-				// A read error names the absolute path, which is the same on
-				// both sides here. drydock words the start of the message
-				// in its own way.
-				wantText := strings.TrimPrefix(wantErr.Error(), "failed parsing --set-file data: ")
+				// A read error names the absolute path. drydock reads the
+				// real path, which can differ above the repository, and
+				// words the start of the message in its own way.
+				wantText := wantErr.Error()
+				if i := strings.Index(wantText, "/repo/"); strings.HasPrefix(wantText, "failed parsing --set-file data: ") && i >= 0 {
+					wantText = wantText[i+1:]
+				}
 				if err == nil || !strings.Contains(err.Error(), wantText) {
 					t.Fatalf("Render() error = %v, want the repo-server's %q", err, wantText)
 				}
@@ -215,9 +253,10 @@ func TestHelmFileParameterSymlinksMatchArgoCD(t *testing.T) {
 
 // TestCollectHelmLocalInputPathsFollowsFileParameterSymlinks pins that the
 // persistent render cache digest of a Helm source covers the symlinks that
-// a file parameter path passes through and the file that helm reads, and,
-// as optional paths, those of an overridden entry whose path passes through
-// a symlink.
+// a file parameter path passes through and the file that helm reads, after
+// helm drops a backslash, and, as optional paths, those of an overridden
+// entry whose path passes through a symlink. An overridden path in .git
+// adds nothing and does not fail.
 func TestCollectHelmLocalInputPathsFollowsFileParameterSymlinks(t *testing.T) {
 	repo := writeHelmFileParameterSymlinkRepo(t, t.TempDir())
 	got, err := CollectHelmLocalInputPaths(HelmLocalInputOptions{
@@ -231,11 +270,13 @@ func TestCollectHelmLocalInputPathsFollowsFileParameterSymlinks(t *testing.T) {
 				{Name: "lexical", Path: "../../links/lex-dir/sibling.txt"},
 				{Name: "ref", Path: "$values/links/file-link.txt"},
 				{Name: "absolute", Path: "/links/target.txt"},
+				{Name: "backslash", Path: `a\b.txt`},
 			},
 		},
 		OverriddenFileParameters: []argoappv1.HelmFileParameter{
 			{Name: "chain", Path: "../../links/dangling.txt"},
 			{Name: "inner", Path: "../../links/target.txt"},
+			{Name: "absolute", Path: "../../.git/config"},
 		},
 	})
 	if err != nil {
@@ -243,6 +284,8 @@ func TestCollectHelmLocalInputPathsFollowsFileParameterSymlinks(t *testing.T) {
 	}
 	want := []HelmLocalInputPath{
 		{Path: "charts/app"},
+		{Path: `charts/app/a\b.txt`, Optional: true},
+		{Path: "charts/app/ab.txt"},
 		{Path: "links/chain.txt"},
 		{Path: "links/dangling.txt", Optional: true},
 		{Path: "links/dir-link"},
@@ -306,7 +349,7 @@ func TestHelmFileParameterSymlinksSmokeFixtureMatchesUpstream(t *testing.T) {
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			refRoots := map[string]string{"$files": repoRoot}
-			upstream, err := upstreamHelmFileParameterValues(filepath.Join(repoRoot, chartPath), repoRoot, refRoots, tt.parameters)
+			upstream, err := upstreamHelmFileParameterValues(filepath.Join(repoRoot, chartPath), repoRoot, nil, refRoots, tt.parameters)
 			if err != nil {
 				t.Fatalf("upstream error = %v", err)
 			}
@@ -358,4 +401,61 @@ func readHelmFileParameterSymlinkApplications(t *testing.T, repoRoot, chartPath 
 		t.Fatal("the override file sets no helm block")
 	}
 	return spec, override, overrideSource.Helm.FileParameters
+}
+
+// TestHelmFileParameterErrorsComeBeforeValueFileReads pins the error order
+// of Argo CD v3.6.1. The repo-server resolves the value file paths
+// (reposerver/repository/repository.go:1328) and then every file parameter
+// path (1361-1377) before it runs helm, and helm reads the value files only
+// then. So a file parameter that does not resolve wins over a value file
+// that is missing or does not parse.
+func TestHelmFileParameterErrorsComeBeforeValueFileReads(t *testing.T) {
+	for _, tt := range []struct {
+		name  string
+		files map[string]string
+	}{
+		{name: "missing value file"},
+		{name: "value file that does not parse", files: map[string]string{"values-extra.yaml": "a: [\n"}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			repo := writeHelmFileParameterSymlinkRepo(t, t.TempDir())
+			for name, content := range tt.files {
+				writeFile(t, filepath.Join(repo, "charts", "app", name), content)
+			}
+			_, _, err := (HelmRenderer{}).Render(context.Background(), ResolvedSource{RepoRoot: repo, Path: "charts/app"}, RenderOptions{
+				AppName:    "probe",
+				ValueFiles: []string{"values-extra.yaml"},
+				HelmFileParameters: []argoappv1.HelmFileParameter{
+					{Name: "f", Path: "../../../outside.txt"},
+				},
+			})
+			want := "error resolving helm value file path: file '../../../outside.txt' resolved to outside repository root"
+			if err == nil || !strings.Contains(err.Error(), want) {
+				t.Fatalf("Render() error = %v, want %q", err, want)
+			}
+		})
+	}
+}
+
+// TestHelmValueFileEscapedDollarIsNotARef pins that a value file path that
+// starts with "$$" is a local path, not a $ref path. The repo-server
+// decides the ref on the raw path (getReferencedSourceName,
+// reposerver/repository/repository.go:1620-1625 at v3.6.1), where "$$values"
+// names no source, and Env.Envsubst then turns "$$" into "$".
+func TestHelmValueFileEscapedDollarIsNotARef(t *testing.T) {
+	repo := writeHelmFileParameterSymlinkRepo(t, t.TempDir())
+	writeFile(t, filepath.Join(repo, "charts", "app", "$values", "v.yaml"), "fromLocal: escaped-dollar\n")
+	writeFile(t, filepath.Join(repo, "v.yaml"), "fromRef: wrong-file\n")
+	result, _, err := (HelmRenderer{}).Render(context.Background(), ResolvedSource{RepoRoot: repo, Path: "charts/app"}, RenderOptions{
+		AppName:    "probe",
+		RefRoots:   map[string]string{"$values": repo},
+		ValueFiles: []string{"$$values/v.yaml"},
+	})
+	if err != nil {
+		t.Fatalf("Render() error = %v", err)
+	}
+	raw, _, _ := unstructured.NestedString(result[0].Object.Object, "data", "values")
+	if raw != `{"fromLocal":"escaped-dollar"}` {
+		t.Fatalf("values = %s, want the local file", raw)
+	}
 }

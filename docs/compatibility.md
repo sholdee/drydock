@@ -472,7 +472,12 @@ Supported:
   entry, also an overridden one, and also for entries that come from an
   `.argocd-source.yaml` file. A relative path is relative to the source
   path, and a path that starts with `/` is relative to the repository root.
-  A `$ref` path is relative to the root of the ref source. When the path
+  A path is a `$ref` path when its first segment, before env substitution,
+  names a ref source, as in `getReferencedSourceName`. Its rest is
+  env-substituted and is relative to the root of the ref source, so a bare
+  `$values` or `$values/` resolves to that root and fails. `$$` is an
+  escaped `$`, so `$$values/a.txt` is the local path `$values/a.txt`, also
+  for value files. When the path
   itself is a symlink, the resolver follows it, up to ten levels, and joins
   a relative target to the directory of the path as text. So a symlink to a
   file in the repository works, and so does a path through a symlinked
@@ -492,15 +497,31 @@ Supported:
   name a different file, or leave the repository as text and fail, where
   the out-of-bounds symlink check passes. drydock does the same. The parity
   smoke pins both cases.
-- drydock reads a file parameter only when its real path is in the
-  repository and outside `.git`. A path through a symlinked directory that
-  leaves the repository fails with `resolves to a file outside the
-  repository through a symlinked directory`. The repo-server reads such a
-  file, but its out-of-bounds symlink check fails the repository first
-  unless `reposerver.allow.oob.symlinks` is `true`. drydock also does not
-  read the link text of a path that is outside the repository before it
-  follows the link. The repo-server reads it and accepts a symlink there
-  that points back into its checkout.
+- helm `--set-file` parses `name=<path>` and drops a backslash before any
+  character, so it can read a file other than the resolved path, such as
+  `ab.txt` for `a\b.txt`. drydock reads the same file, and its cache key
+  and changed-only selection track that file.
+- drydock reads a file parameter only when the real path of the file that
+  helm reads is in the repository and outside `.git`. A path through a
+  symlinked directory that leaves the repository fails with `makes helm
+  read a file outside the repository, which drydock never reads`. The
+  repo-server reads such a file, but its out-of-bounds symlink check fails
+  the repository first unless `reposerver.allow.oob.symlinks` is `true`.
+  An overridden entry is never read, so an overridden path in `.git` does
+  not fail.
+- The repo-server resolves the value file paths, then every file parameter
+  path, and only then runs helm, which reads the value files and the file
+  parameters before it loads the chart. drydock keeps this order, so with
+  two problems it reports the same first error. For example, a file
+  parameter that does not resolve wins over a value file that is missing
+  or does not parse.
+- Recorded divergence from strict Argo CD v3.6.1: when the path as written
+  is outside the repository, drydock fails at once with the repo-server's
+  `resolved to outside repository root` error and does not read its link
+  text. The repo-server reads it and accepts a symlink there that points
+  back into its checkout. For the later links of a chain, drydock reads the
+  link text as the repo-server does, also outside the repository, but the
+  result must still be in the repository.
 - Recorded divergence from strict Argo CD v3.6.1: a `fileParameters` URL
   with an allowed scheme fails in drydock (`must reference a local or $ref
   file`). helm `--set-file` fetches it in Argo CD. An overridden URL is
@@ -714,7 +735,7 @@ Supported:
   worktree does not track, or that Git ignores itself, is checked whole.
 - The persistent render cache key and changed-only selection of a Helm
   source cover each symlink that a `fileParameters` path passes through and
-  the file it ends at. For an overridden entry whose path passes through a
+  the file that helm reads. For an overridden entry whose path passes through a
   symlink, these paths are optional inputs, because they decide whether the
   path resolves.
 - The persistent render cache key and changed-only selection of a directory

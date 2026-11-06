@@ -450,7 +450,7 @@ func renderGeneratedParityCase(t *testing.T, tc parityDecodeCase) (drydockErr, u
 		parameters := readParityFileParameters(t, filepath.Join(repoRoot, "directory-decode-applications", strings.TrimPrefix(tc.Name, "parity-decode-")+".yaml"))
 		opts.HelmFileParameters = parameters
 		_, _, drydockErr = (HelmRenderer{}).Render(context.Background(), source, opts)
-		_, upstreamErr = upstreamHelmFileParameterValues(sourceDir, repoRoot, nil, parameters)
+		_, upstreamErr = upstreamHelmFileParameterValues(sourceDir, repoRoot, nil, nil, parameters)
 	case "kustomize":
 		_, _, drydockErr = (KustomizeRenderer{}).Render(context.Background(), source, opts)
 		resMap, err := krusty.MakeKustomizer(krusty.MakeDefaultOptions()).Run(filesys.MakeFsOnDisk(), sourceDir)

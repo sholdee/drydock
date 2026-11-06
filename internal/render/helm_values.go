@@ -75,12 +75,12 @@ func CollectHelmLocalInputPaths(input HelmLocalInputOptions) ([]HelmLocalInputPa
 		}
 	}
 	for _, parameter := range EffectiveHelmFileParameters(opts.HelmFileParameters) {
-		if err := out.collectFileParameter(parameter.Path, false); err != nil {
+		if err := out.collectFileParameter(parameter, false); err != nil {
 			return nil, err
 		}
 	}
 	for _, parameter := range input.OverriddenFileParameters {
-		if err := out.collectFileParameter(parameter.Path, true); err != nil {
+		if err := out.collectFileParameter(parameter, true); err != nil {
 			return nil, err
 		}
 	}
@@ -159,30 +159,29 @@ func (c *helmLocalInputCollector) collectValueFile(raw string) error {
 // reads the file of an overridden entry, so such an entry adds its inputs
 // only when its path passes through a symlink, which decides whether the
 // path resolves, and all of them are optional.
-func (c *helmLocalInputCollector) collectFileParameter(raw string, overridden bool) error {
-	file, err := c.resolvedInput(raw)
+func (c *helmLocalInputCollector) collectFileParameter(parameter argoappv1.HelmFileParameter, overridden bool) error {
+	if _, err := c.resolvedInput(parameter.Path); err != nil {
+		return err
+	}
+	p, err := helmFileParameterPathFor(c.source, c.opts, parameter.Path)
 	if err != nil {
 		return err
 	}
-	appPath, root, path, local, err := helmFileParameterRoots(c.source, c.opts, file)
-	if err != nil {
-		return err
-	}
-	if !local {
+	if p.url != "" {
 		if overridden {
 			return nil
 		}
-		return fmt.Errorf("remote Helm file parameter %q is not persistent-cache eligible", remote.RedactURL(file))
+		return fmt.Errorf("remote Helm file parameter %q is not persistent-cache eligible", remote.RedactURL(p.url))
 	}
-	if hasHelmValueGlob(file) {
-		return fmt.Errorf("helm file parameter %q uses an unsupported glob", file)
+	if hasHelmValueGlob(p.file) {
+		return fmt.Errorf("helm file parameter %q uses an unsupported glob", p.file)
 	}
-	inputs, err := HelmFileParameterInputPaths(appPath, root, path)
+	inputs, err := HelmFileParameterInputPaths(parameter.Name, p.appPath, p.root, p.path)
 	if err != nil {
 		return err
 	}
 	if inputs.Read == "" {
-		return fmt.Errorf("helm file parameter %q does not resolve to a file", file)
+		return fmt.Errorf("helm file parameter %q does not resolve to a file", p.file)
 	}
 	if overridden && len(inputs.Symlinks) == 0 {
 		return nil
@@ -370,14 +369,20 @@ func shouldLoadHelmValueFiles(mode string, inlineValues map[string]any) (bool, e
 // helmValuesDecoder decodes the bytes of one values file into a values map.
 type helmValuesDecoder func(display string, data []byte) (map[string]any, error)
 
-// loadHelmValueFiles reads value files the way `helm template --values` does
-// (parseHelmValueFile).
-func loadHelmValueFiles(ctx context.Context, repoRoot, baseDir, boundaryDir string, refRoots map[string]string, files []string, ignoreMissing bool, opts RenderOptions) (map[string]any, error) {
-	return loadHelmValueFilesWith(ctx, repoRoot, baseDir, boundaryDir, refRoots, files, ignoreMissing, opts, parseHelmValueFile)
+// loadHelmValueFilesWith resolves every value file path and then reads the
+// files in order with decode. The Helm renderer runs the two phases itself
+// (assembleHelmInputValues), so file parameter paths resolve in between.
+func loadHelmValueFilesWith(ctx context.Context, repoRoot, baseDir, boundaryDir string, refRoots map[string]string, files []string, ignoreMissing bool, opts RenderOptions, decode helmValuesDecoder) (map[string]any, error) {
+	loader := newHelmValueFileLoader(ctx, repoRoot, baseDir, boundaryDir, refRoots, ignoreMissing, opts, decode)
+	plans, err := loader.planAll(files)
+	if err != nil {
+		return nil, err
+	}
+	return loader.readAll(plans)
 }
 
-func loadHelmValueFilesWith(ctx context.Context, repoRoot, baseDir, boundaryDir string, refRoots map[string]string, files []string, ignoreMissing bool, opts RenderOptions, decode helmValuesDecoder) (map[string]any, error) {
-	loader := helmValueFileLoader{
+func newHelmValueFileLoader(ctx context.Context, repoRoot, baseDir, boundaryDir string, refRoots map[string]string, ignoreMissing bool, opts RenderOptions, decode helmValuesDecoder) *helmValueFileLoader {
+	return &helmValueFileLoader{
 		ctx:           ctx,
 		repoRoot:      repoRoot,
 		baseDir:       baseDir,
@@ -389,22 +394,6 @@ func loadHelmValueFilesWith(ctx context.Context, repoRoot, baseDir, boundaryDir 
 		explicit:      map[string]struct{}{},
 		globSeen:      map[string]struct{}{},
 	}
-	if err := loader.collectExplicitIdentities(files); err != nil {
-		return nil, err
-	}
-	out := map[string]any{}
-	for _, file := range files {
-		valuesList, err := loader.load(file)
-		if err != nil {
-			return nil, err
-		}
-		for _, values := range valuesList {
-			if err := mergeHelmValueMap(out, values.values); err != nil {
-				return nil, fmt.Errorf("merge helm value file %q: %w", values.display, err)
-			}
-		}
-	}
-	return out, nil
 }
 
 type helmValueFileLoader struct {
@@ -425,6 +414,52 @@ type loadedHelmValueFile struct {
 	values  map[string]any
 }
 
+// plannedHelmValueFile is one value file that helm will read: a remote URL,
+// or a local path under root.
+type plannedHelmValueFile struct {
+	display string
+	url     string
+	root    string
+	path    string
+}
+
+// planAll resolves every value file path, expanding globs, without reading
+// any file, as the repo-server's getResolvedValueFiles does before it runs
+// helm (reposerver/repository/repository.go:1468-1581 at v3.6.1).
+func (l *helmValueFileLoader) planAll(files []string) ([]plannedHelmValueFile, error) {
+	if err := l.collectExplicitIdentities(files); err != nil {
+		return nil, err
+	}
+	var plans []plannedHelmValueFile
+	for _, file := range files {
+		planned, err := l.plan(file)
+		if err != nil {
+			return nil, err
+		}
+		plans = append(plans, planned...)
+	}
+	return plans, nil
+}
+
+// readAll reads and merges the planned value files in order, as helm
+// --values does.
+func (l *helmValueFileLoader) readAll(plans []plannedHelmValueFile) (map[string]any, error) {
+	out := map[string]any{}
+	for _, planned := range plans {
+		values, ok, err := l.read(planned)
+		if err != nil {
+			return nil, err
+		}
+		if !ok {
+			continue
+		}
+		if err := mergeHelmValueMap(out, values.values); err != nil {
+			return nil, fmt.Errorf("merge helm value file %q: %w", values.display, err)
+		}
+	}
+	return out, nil
+}
+
 func (l *helmValueFileLoader) collectExplicitIdentities(files []string) error {
 	for _, raw := range files {
 		file := envsubstHelmValueFilePath(raw, l.opts, l.refRoots)
@@ -436,9 +471,6 @@ func (l *helmValueFileLoader) collectExplicitIdentities(files []string) error {
 			return err
 		}
 		if _, err := os.Lstat(resolved); err != nil {
-			if l.ignoreMissing && os.IsNotExist(err) {
-				continue
-			}
 			if os.IsNotExist(err) {
 				continue
 			}
@@ -453,26 +485,32 @@ func (l *helmValueFileLoader) collectExplicitIdentities(files []string) error {
 	return nil
 }
 
-func (l *helmValueFileLoader) load(raw string) ([]loadedHelmValueFile, error) {
+func (l *helmValueFileLoader) plan(raw string) ([]plannedHelmValueFile, error) {
 	file := envsubstHelmValueFilePath(raw, l.opts, l.refRoots)
 	if isRemoteHelmValueFile(file) {
-		values, err := l.loadRemote(file)
+		parsed, err := url.Parse(file)
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("parse helm value file URL %q: %w", remote.RedactURL(file), err)
 		}
-		return []loadedHelmValueFile{values}, nil
+		if !helmValueFileSchemeAllowed(parsed.Scheme, l.opts) {
+			return nil, fmt.Errorf("helm value file URL scheme %q is not allowed", parsed.Scheme)
+		}
+		if parsed.Scheme != "http" && parsed.Scheme != "https" {
+			return nil, fmt.Errorf("helm value file URL scheme %q is configured but not supported by drydock", parsed.Scheme)
+		}
+		return []plannedHelmValueFile{{display: remote.RedactURL(file), url: file}}, nil
 	}
 	if hasHelmValueGlob(file) {
-		return l.loadGlob(file)
+		return l.planGlob(file)
 	}
-	values, ok, err := l.loadLocal(file, file)
-	if err != nil || !ok {
+	root, resolved, err := resolveHelmValueFile(l.repoRoot, l.baseDir, l.boundaryDir, l.refRoots, file)
+	if err != nil {
 		return nil, err
 	}
-	return []loadedHelmValueFile{values}, nil
+	return []plannedHelmValueFile{{display: file, root: root, path: resolved}}, nil
 }
 
-func (l *helmValueFileLoader) loadGlob(pattern string) ([]loadedHelmValueFile, error) {
+func (l *helmValueFileLoader) planGlob(pattern string) ([]plannedHelmValueFile, error) {
 	root, resolvedPattern, err := resolveHelmValueFile(l.repoRoot, l.baseDir, l.boundaryDir, l.refRoots, pattern)
 	if err != nil {
 		return nil, err
@@ -487,7 +525,7 @@ func (l *helmValueFileLoader) loadGlob(pattern string) ([]loadedHelmValueFile, e
 		}
 		return nil, fmt.Errorf("helm value file glob %q matched no files", pattern)
 	}
-	out := make([]loadedHelmValueFile, 0, len(matches))
+	out := make([]plannedHelmValueFile, 0, len(matches))
 	for _, match := range matches {
 		if pathEntersGit(root, match) {
 			return nil, fmt.Errorf("helm value file glob %q matched %q, which enters a .git directory", pattern, displayHelmValueGlobMatch(root, match, pattern))
@@ -503,24 +541,17 @@ func (l *helmValueFileLoader) loadGlob(pattern string) ([]loadedHelmValueFile, e
 			continue
 		}
 		l.globSeen[identity] = struct{}{}
-		display := displayHelmValueGlobMatch(root, match, pattern)
-		values, ok, err := l.loadLocalResolved(root, match, display)
-		if err != nil {
-			return nil, err
-		}
-		if ok {
-			out = append(out, values)
-		}
+		out = append(out, plannedHelmValueFile{display: displayHelmValueGlobMatch(root, match, pattern), root: root, path: match})
 	}
 	return out, nil
 }
 
-func (l *helmValueFileLoader) loadLocal(file, display string) (loadedHelmValueFile, bool, error) {
-	root, resolved, err := resolveHelmValueFile(l.repoRoot, l.baseDir, l.boundaryDir, l.refRoots, file)
-	if err != nil {
-		return loadedHelmValueFile{}, false, err
+func (l *helmValueFileLoader) read(planned plannedHelmValueFile) (loadedHelmValueFile, bool, error) {
+	if planned.url != "" {
+		values, err := l.loadRemote(planned.url)
+		return values, err == nil, err
 	}
-	return l.loadLocalResolved(root, resolved, display)
+	return l.loadLocalResolved(planned.root, planned.path, planned.display)
 }
 
 func (l *helmValueFileLoader) loadLocalResolved(root, resolved, display string) (loadedHelmValueFile, bool, error) {
@@ -635,26 +666,35 @@ func parseRemoteHelmValueFile(file string) (*url.URL, bool) {
 func envsubstHelmValueFilePath(raw string, opts RenderOptions, refRoots map[string]string) string {
 	ref, rest, ok := helmValueFileRefPrefix(raw, refRoots)
 	if !ok {
-		return opts.ArgoEnv.Envsubst(raw)
+		file := opts.ArgoEnv.Envsubst(raw)
+		if strings.HasPrefix(file, "$") {
+			// "$$name" is an escaped "$", not a ref, as in the repo-server
+			// (getReferencedSourceName and Env.Envsubst). Keep the
+			// substituted path relative so it is not read as a ref.
+			return "./" + file
+		}
+		return file
 	}
 	return ref + opts.ArgoEnv.Envsubst(rest)
 }
 
+// helmValueFileRefPrefix splits raw into the $ref that names a source of
+// refRoots and the rest of the path, which starts with "/" and is not
+// empty. The ref is decided on raw, before env substitution, as the
+// repo-server does. "$$name" is an escaped "$", not a ref.
 func helmValueFileRefPrefix(raw string, refRoots map[string]string) (string, string, bool) {
-	if !strings.HasPrefix(raw, "$") {
+	ref := helmFileParameterRefName(raw)
+	if ref == "" {
 		return "", "", false
 	}
-	ref, rest, ok := strings.Cut(raw, "/")
-	if !ok || ref == "" || rest == "" {
+	rest := strings.TrimPrefix(raw, ref)
+	if len(rest) < 2 {
 		return "", "", false
 	}
-	if _, ok := refRoots[ref]; ok {
-		return ref, "/" + rest, true
+	if _, ok := helmRefRootFor(ref, refRoots); !ok {
+		return "", "", false
 	}
-	if _, ok := refRoots[strings.TrimPrefix(ref, "$")]; ok {
-		return ref, "/" + rest, true
-	}
-	return "", "", false
+	return ref, rest, true
 }
 
 func localHelmValueFileIdentity(root, resolved, display string) (string, error) {

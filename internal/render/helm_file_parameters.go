@@ -7,7 +7,9 @@ import (
 	"path/filepath"
 	"strings"
 
+	argoappv1 "github.com/argoproj/argo-cd/v3/pkg/apis/application/v1alpha1"
 	"github.com/sholdee/drydock/internal/pathsafety"
+	"helm.sh/helm/v4/pkg/strvals"
 )
 
 // argoResolveFailure is the text of resolveFailure (util/io/path/
@@ -46,9 +48,11 @@ func resolveArgoSymlinkRecursive(path string, maxDepth int) (string, error) {
 // itself. The errors have the repo-server's text.
 //
 // drydock differs in one point: a joined path outside repoRoot fails at
-// once, with the same error, because drydock does not read link text
-// outside the repository. The repo-server would read it and accept a
-// symlink there that points back into the repository.
+// once, with the same error, without reading its link text. The
+// repo-server reads it and accepts a symlink there that points back into
+// the repository. Later links in a chain are read as the repo-server reads
+// them, also outside the repository, but only their link text: the result
+// must still be in the repository.
 func resolveArgoValueFilePath(appPath, repoRoot, file string) (string, error) {
 	absRoot, err := filepath.Abs(repoRoot)
 	if err != nil {
@@ -92,7 +96,7 @@ func resolveArgoValueFilePath(appPath, repoRoot, file string) (string, error) {
 // helmFileParameterTarget is where the repo-server resolves the path of one
 // helm.fileParameters entry, which it passes to helm --set-file.
 type helmFileParameterTarget struct {
-	// file is the path after env substitution.
+	// file is the path after env substitution, as the errors name it.
 	file string
 	// url is set for a URL with an allowed scheme.
 	url string
@@ -101,77 +105,195 @@ type helmFileParameterTarget struct {
 	root string
 	// path is the absolute resolved path.
 	path string
+	// readPath is the real path of the file that helm --set-file reads,
+	// set for the entry that helm reads.
+	readPath string
 }
 
-// resolveHelmFileParameter resolves the path of one helm.fileParameters
-// entry as the Argo CD v3.6.1 repo-server does before it runs helm
-// (helmTemplate, reposerver/repository/repository.go:1361-1377). A $ref
-// path resolves in the root of the ref source with getResolvedRefValueFile
-// (repository.go:1583-1604). Any other path resolves with
-// ResolveValueFilePathOrUrl against the source path and the repository
-// root (resolveArgoValueFilePath). It runs for every entry, also one that a
-// later entry with the same name overrides, so such an entry still fails
-// when its path does not resolve. The errors have the repo-server's text.
-// drydock also rejects a path in a .git directory.
-func resolveHelmFileParameter(source ResolvedSource, opts RenderOptions, rawPath string) (helmFileParameterTarget, error) {
-	file := envsubstHelmValueFilePath(rawPath, opts, opts.RefRoots)
-	target := helmFileParameterTarget{file: file}
-	appPath, root, path, local, err := helmFileParameterRoots(source, opts, file)
+// helmFileParameterPath is a helm.fileParameters path before it resolves:
+// the directory a relative path is relative to, the root it must stay
+// under, and the path to resolve there, or a URL.
+type helmFileParameterPath struct {
+	// file is the path after env substitution, as the errors name it.
+	file    string
+	ref     bool
+	url     string
+	appPath string
+	root    string
+	path    string
+}
+
+// helmFileParameterRefName is getReferencedSourceName
+// (reposerver/repository/repository.go:1620-1625 at v3.6.1): the first
+// segment of a path that starts with "$", also a bare "$name".
+func helmFileParameterRefName(raw string) string {
+	if !strings.HasPrefix(raw, "$") {
+		return ""
+	}
+	name, _, _ := strings.Cut(raw, "/")
+	return name
+}
+
+// helmRefRootFor returns the root of the $ref source that the ref name
+// names. "$$name" is an escaped "$", as Env.Envsubst reads it, and names no
+// source.
+func helmRefRootFor(name string, refRoots map[string]string) (string, bool) {
+	trimmed := strings.TrimPrefix(name, "$")
+	if trimmed == "" || trimmed == name || strings.HasPrefix(trimmed, "$") {
+		return "", false
+	}
+	if root, ok := refRoots[name]; ok {
+		return root, true
+	}
+	root, ok := refRoots[trimmed]
+	return root, ok
+}
+
+// helmFileParameterPathFor decides, as helmTemplate does
+// (reposerver/repository/repository.go:1361-1377 at v3.6.1), how the raw
+// helm.fileParameters path resolves. A path whose first segment names a
+// $ref source, before env substitution, resolves in the root of that
+// source: the rest of the path, env-substituted, is relative to that root
+// (getResolvedRefValueFile, repository.go:1583-1604). A bare "$name" or
+// "$name/" resolves to that root, which then fails. Any other path is
+// env-substituted, so "$$" becomes "$", and resolves against the source
+// path and the repository root. drydock keeps failing a path with an
+// unknown "$name" first segment, as its plan does.
+func helmFileParameterPathFor(source ResolvedSource, opts RenderOptions, raw string) (helmFileParameterPath, error) {
+	if name := helmFileParameterRefName(raw); name != "" {
+		if root, ok := helmRefRootFor(name, opts.RefRoots); ok {
+			rest := opts.ArgoEnv.Envsubst(strings.TrimPrefix(raw, name))
+			p := helmFileParameterPath{file: name + rest, ref: true, path: rest}
+			if strings.TrimSpace(root) == "" {
+				return p, fmt.Errorf("helm file parameter %q references unknown ref %q", p.file, name)
+			}
+			cleanRoot := filepath.Clean(root)
+			if err := rejectHelmRefRootSymlink(cleanRoot); err != nil {
+				return p, fmt.Errorf("helm file parameter %q ref root %q: %w", p.file, name, err)
+			}
+			p.appPath, p.root = cleanRoot, cleanRoot
+			return p, nil
+		}
+		if !strings.HasPrefix(name, "$$") {
+			_, _, err := helmValueFileRefRoot(raw, opts.RefRoots)
+			if err == nil {
+				err = fmt.Errorf("helm file parameter %q references unknown ref %q", raw, name)
+			}
+			return helmFileParameterPath{file: raw}, err
+		}
+	}
+	file := opts.ArgoEnv.Envsubst(raw)
+	p := helmFileParameterPath{file: file, path: file}
+	if _, remote := parseRemoteHelmValueFile(file); remote {
+		p.url = file
+		return p, nil
+	}
+	appPath, root, err := helmValueFileRoots(source.RepoRoot, helmValueFilesBaseDir(source, opts), helmValueFilesBoundaryRoot(source, opts))
+	if err != nil {
+		return p, err
+	}
+	p.appPath, p.root = appPath, root
+	return p, nil
+}
+
+// resolveHelmFileParameter resolves one helm.fileParameters entry as the
+// Argo CD v3.6.1 repo-server does before it runs helm
+// (helmFileParameterPathFor, resolveArgoValueFilePath). It runs for every
+// entry, also one that a later entry with the same name overrides, so such
+// an entry still fails when its path does not resolve. The errors have the
+// repo-server's text. For the entry that helm reads (read), it also finds
+// the file that helm --set-file reads (helmSetFileReadPath). drydock reads
+// that file only when its real path is in the root and outside .git.
+func resolveHelmFileParameter(source ResolvedSource, opts RenderOptions, parameter argoappv1.HelmFileParameter, read bool) (helmFileParameterTarget, error) {
+	p, err := helmFileParameterPathFor(source, opts, parameter.Path)
+	target := helmFileParameterTarget{file: p.file}
 	if err != nil {
 		return target, err
 	}
-	if !local {
-		parsed, _ := parseRemoteHelmValueFile(file)
+	if p.url != "" {
+		parsed, _ := parseRemoteHelmValueFile(p.url)
 		if !helmValueFileSchemeAllowed(parsed.Scheme, opts) {
 			return target, fmt.Errorf("error resolving helm value file path: the URL scheme '%s' is not allowed", parsed.Scheme)
 		}
-		target.url = file
+		target.url = p.url
 		return target, nil
 	}
-	resolved, err := resolveArgoValueFilePath(appPath, root, path)
+	resolved, err := resolveArgoValueFilePath(p.appPath, p.root, p.path)
 	if err != nil {
-		if strings.HasPrefix(file, "$") {
+		if p.ref {
 			return target, fmt.Errorf("error resolving set-file path: error resolving value file path: %w", err)
 		}
 		return target, fmt.Errorf("error resolving helm value file path: %w", err)
 	}
 	target.path = resolved
-	if target.root, err = filepath.Abs(root); err != nil {
+	if target.root, err = filepath.Abs(p.root); err != nil {
 		return target, err
 	}
-	if pathEntersGit(target.root, target.path) {
-		return target, gitPathRefError("helm file parameter", file)
+	if !read {
+		return target, nil
+	}
+	readPath := helmSetFileReadPath(parameter.Name, target.root, resolved)
+	if target.readPath, err = confineHelmFileParameterRead(target.root, readPath, p.file); err != nil {
+		return target, err
 	}
 	return target, nil
 }
 
-// readHelmFileParameter reads the file at path, a path that helm --set-file
-// received for a file parameter that resolved under root. drydock reads only
-// a file whose real path is inside root and outside .git. A symlinked
-// directory on the way can lead elsewhere: the repo-server follows it, but
-// its out-of-bounds symlink check fails such a repository unless
-// reposerver.allow.oob.symlinks is true.
-func readHelmFileParameter(root, path, file string) ([]byte, error) {
+// helmFileParameterSetValue is the file that drydock passes to --set-file
+// for the file resolved at path under root. The repo-server passes the
+// absolute resolved path. drydock passes it relative to the root, with a
+// leading "/", so a comma or a backslash in the path of drydock's checkout
+// cannot change how helm splits the value.
+func helmFileParameterSetValue(root, path string) string {
+	rel, err := filepath.Rel(root, path)
+	if err != nil {
+		return path
+	}
+	return "/" + filepath.ToSlash(rel)
+}
+
+// helmSetFileReadPath returns the path that helm --set-file reads for the
+// file parameter name resolved at path under root. helm parses
+// name=<path> with strvals, which drops a backslash before any character,
+// so the file it reads can differ from the resolved path
+// (cleanHelmSetParameter, helm pkg/cli/values/options.go:94-106). When the
+// expression does not parse, it returns path: the render then fails with
+// the parse error.
+func helmSetFileReadPath(name, root, path string) string {
+	value := helmFileParameterSetValue(root, path)
+	var parsed string
+	capture := func(input []rune) (any, error) {
+		parsed = string(input)
+		return "", nil
+	}
+	if err := strvals.ParseIntoFile(name+"="+cleanHelmSetParameter(value), map[string]any{}, capture); err != nil || !strings.HasPrefix(parsed, "/") {
+		return path
+	}
+	return filepath.Join(root, filepath.FromSlash(parsed))
+}
+
+// confineHelmFileParameterRead returns the real path of path, the file that
+// helm --set-file reads for file, and fails when that real path is outside
+// root or in .git. The repo-server reads such a file through a symlinked
+// directory, but its out-of-bounds symlink check fails the repository first
+// unless reposerver.allow.oob.symlinks is true.
+func confineHelmFileParameterRead(root, path, file string) (string, error) {
 	realRoot, err := filepath.EvalSymlinks(root)
 	if err != nil {
-		return nil, err
+		return "", err
 	}
 	realPath, err := pathsafety.ResolveForContainment(path)
 	if err != nil {
-		return nil, fmt.Errorf("read helm file parameter %q: %w", file, err)
+		return "", fmt.Errorf("read helm file parameter %q: %w", file, err)
 	}
 	rel, err := filepath.Rel(realRoot, realPath)
 	if err != nil || filepath.IsAbs(rel) || pathsafety.RelEscapes(rel) {
-		return nil, fmt.Errorf("helm file parameter %q resolves to a file outside the repository through a symlinked directory, which drydock never reads", file)
+		return "", fmt.Errorf("helm file parameter %q makes helm read a file outside the repository, which drydock never reads", file)
 	}
 	if pathsafety.RelEntersGit(rel) {
-		return nil, gitPathRefError("helm file parameter", file)
+		return "", gitPathRefError("helm file parameter", file)
 	}
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return nil, fmt.Errorf("read helm file parameter %q: %w", file, err)
-	}
-	return data, nil
+	return realPath, nil
 }
 
 // HelmFileParameterInputs are the paths that decide how the repo-server
@@ -179,11 +301,11 @@ func readHelmFileParameter(root, path, file string) ([]byte, error) {
 // Every path is absolute, with the symlinks of the root resolved, and can be
 // outside the root.
 type HelmFileParameterInputs struct {
-	// Symlinks are the symlinks that the path and its resolved path pass
+	// Symlinks are the symlinks that the path and the file helm reads pass
 	// through, a symlinked directory included.
 	Symlinks []string
-	// Read is where the resolved path ends, the file helm reads. It is
-	// empty when the path cannot be resolved, such as in a symlink loop.
+	// Read is where the path that helm --set-file reads ends. It is empty
+	// when that path cannot be resolved, such as in a symlink loop.
 	Read string
 	// Written is where the path as written ends, when it differs from
 	// Read. It may be missing.
@@ -191,10 +313,10 @@ type HelmFileParameterInputs struct {
 }
 
 // HelmFileParameterInputPaths returns the inputs of the local
-// helm.fileParameters path file. appPath is the directory that a relative
-// file is relative to, and root is the root that it must stay under. It
-// fails when the path does not resolve, as the render does.
-func HelmFileParameterInputPaths(appPath, root, file string) (HelmFileParameterInputs, error) {
+// helm.fileParameters entry name with path file. appPath is the directory
+// that a relative file is relative to, and root is the root that it must
+// stay under. It fails when the path does not resolve, as the render does.
+func HelmFileParameterInputPaths(name, appPath, root, file string) (HelmFileParameterInputs, error) {
 	var inputs HelmFileParameterInputs
 	resolved, err := resolveArgoValueFilePath(appPath, root, file)
 	if err != nil {
@@ -218,8 +340,7 @@ func HelmFileParameterInputPaths(appPath, root, file string) (HelmFileParameterI
 	}
 	seen := map[string]struct{}{}
 	trace := func(path string) (string, error) {
-		// resolveArgoValueFilePath checked that both paths are under absRoot
-		// as text, so the trace starts at the real root and never lists the
+		// The trace starts at the real root, so it never lists the
 		// symlinks above it.
 		rel, err := filepath.Rel(absRoot, path)
 		if err != nil || pathsafety.RelEscapes(rel) {
@@ -234,7 +355,7 @@ func HelmFileParameterInputPaths(appPath, root, file string) (HelmFileParameterI
 		}
 		return end, nil
 	}
-	if inputs.Read, err = trace(resolved); err != nil {
+	if inputs.Read, err = trace(helmSetFileReadPath(name, absRoot, resolved)); err != nil {
 		return inputs, err
 	}
 	written, err := trace(joined)
@@ -245,26 +366,4 @@ func HelmFileParameterInputPaths(appPath, root, file string) (HelmFileParameterI
 		inputs.Written = written
 	}
 	return inputs, nil
-}
-
-// helmFileParameterRoots returns the directory that the helm.fileParameters
-// path file is relative to, the root it must stay under, and the path to
-// resolve there, as resolveHelmFileParameter resolves it. ok is false for a
-// URL.
-func helmFileParameterRoots(source ResolvedSource, opts RenderOptions, file string) (appPath, root, path string, ok bool, err error) {
-	if strings.HasPrefix(file, "$") {
-		root, refPath, err := helmValueFileRefRoot(file, opts.RefRoots)
-		if err != nil {
-			return "", "", "", false, err
-		}
-		return root, root, refPath, true, nil
-	}
-	if _, remote := parseRemoteHelmValueFile(file); remote {
-		return "", "", "", false, nil
-	}
-	appPath, root, err = helmValueFileRoots(source.RepoRoot, helmValueFilesBaseDir(source, opts), helmValueFilesBoundaryRoot(source, opts))
-	if err != nil {
-		return "", "", "", false, err
-	}
-	return appPath, root, file, true, nil
 }

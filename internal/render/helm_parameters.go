@@ -3,7 +3,7 @@ package render
 import (
 	"context"
 	"fmt"
-	"path/filepath"
+	"os"
 	"strings"
 
 	argoappv1 "github.com/argoproj/argo-cd/v3/pkg/apis/application/v1alpha1"
@@ -11,25 +11,32 @@ import (
 	"helm.sh/helm/v4/pkg/strvals"
 )
 
+// resolveHelmFileParameters resolves the path of every helm.fileParameters
+// entry in list order, as the repo-server does before it runs helm
+// (resolveHelmFileParameter).
+func resolveHelmFileParameters(source ResolvedSource, opts RenderOptions) ([]helmFileParameterTarget, error) {
+	last := lastHelmFileParameters(opts.HelmFileParameters)
+	targets := make([]helmFileParameterTarget, len(opts.HelmFileParameters))
+	for i, parameter := range opts.HelmFileParameters {
+		target, err := resolveHelmFileParameter(source, opts, parameter, last[i])
+		if err != nil {
+			return nil, fmt.Errorf("helm file parameter %q: %w", parameter.Name, err)
+		}
+		targets[i] = target
+	}
+	return targets, nil
+}
+
 // applyHelmParameters applies helm.parameters and helm.fileParameters the way
-// Argo CD's helm template call does. The repo-server first resolves the path
-// of every file parameter (resolveHelmFileParameter). It collects --set,
+// Argo CD's helm template call does. targets are the resolved file parameter
+// paths (resolveHelmFileParameters). The repo-server collects --set,
 // --set-string and --set-file values into maps keyed by the exact parameter
 // name, so only the last entry per name of each kind reaches helm, and helm
 // applies every --set, then every --set-string, then every --set-file,
 // whatever their order on the command line. Winning entries apply in list
 // order; Argo CD's own order within one kind follows Go's randomized map
 // iteration order.
-func applyHelmParameters(ctx context.Context, source ResolvedSource, opts RenderOptions, values map[string]any) error {
-	targets := make([]helmFileParameterTarget, len(opts.HelmFileParameters))
-	for i, parameter := range opts.HelmFileParameters {
-		target, err := resolveHelmFileParameter(source, opts, parameter.Path)
-		if err != nil {
-			return fmt.Errorf("helm file parameter %q: %w", parameter.Name, err)
-		}
-		targets[i] = target
-	}
-
+func applyHelmParameters(ctx context.Context, opts RenderOptions, targets []helmFileParameterTarget, values map[string]any) error {
 	lastParameters := lastHelmParameters(opts.HelmParameters)
 	for _, forceString := range []bool{false, true} {
 		for i, parameter := range opts.HelmParameters {
@@ -48,8 +55,13 @@ func applyHelmParameters(ctx context.Context, source ResolvedSource, opts Render
 			continue
 		}
 		target := targets[i]
-		if err := strvals.ParseIntoFile(parameter.Name+"="+cleanHelmSetParameter(helmFileParameterSetValue(target)), values, helmFileParameterReader(ctx, target)); err != nil {
-			return fmt.Errorf("helm file parameter %q failed to parse: %s", parameter.Name, redactHelmParameterError(err.Error(), parameter.Path, target.file))
+		value := target.url
+		if value == "" {
+			value = helmFileParameterSetValue(target.root, target.path)
+		}
+		// The path is not secret: the repo-server shows it in its errors.
+		if err := strvals.ParseIntoFile(parameter.Name+"="+cleanHelmSetParameter(value), values, helmFileParameterReader(ctx, target)); err != nil {
+			return fmt.Errorf("helm file parameter %q failed to parse: %w", parameter.Name, err)
 		}
 	}
 	return nil
@@ -134,23 +146,10 @@ func lastEntryPerKey[T any, K comparable](entries []T, key func(T) K) []bool {
 	return last
 }
 
-// helmFileParameterSetValue is the file that drydock passes to --set-file for
-// target. The repo-server passes the absolute resolved path. drydock passes
-// it relative to the root, with a leading "/", so a comma or a backslash in
-// the path of drydock's checkout cannot change how helm splits the value.
-func helmFileParameterSetValue(target helmFileParameterTarget) string {
-	if target.url != "" {
-		return target.url
-	}
-	rel, err := filepath.Rel(target.root, target.path)
-	if err != nil {
-		return target.path
-	}
-	return "/" + filepath.ToSlash(rel)
-}
-
 // helmFileParameterReader reads the file that helm --set-file names for
-// target. helm reads the file even when the parameter name is empty.
+// target: target.readPath, the real path that resolveHelmFileParameter
+// found and checked. helm reads the file even when the parameter name is
+// empty.
 func helmFileParameterReader(ctx context.Context, target helmFileParameterTarget) strvals.RunesValueReader {
 	return func(input []rune) (any, error) {
 		if err := ctx.Err(); err != nil {
@@ -160,9 +159,9 @@ func helmFileParameterReader(ctx context.Context, target helmFileParameterTarget
 		if target.url != "" || isRemoteHelmValueFile(value) {
 			return nil, fmt.Errorf("helm file parameter %q must reference a local or $ref file", remote.RedactURL(value))
 		}
-		data, err := readHelmFileParameter(target.root, filepath.Join(target.root, filepath.FromSlash(value)), target.file)
+		data, err := os.ReadFile(target.readPath)
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("read helm file parameter %q: %w", target.file, err)
 		}
 		return string(data), nil
 	}

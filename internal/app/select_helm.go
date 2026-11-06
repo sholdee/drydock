@@ -34,19 +34,20 @@ func helmLocalSelectionPaths(root string, source argoappv1.ApplicationSource) []
 		if selectionPath, ok := helmLocalInputSelectionPath(sourcePath, file, false); ok {
 			paths = append(paths, selectionPath)
 		}
-		paths = append(paths, helmFileParameterSymlinkSelectionPaths(root, source.Path, parameter.Path)...)
+		paths = append(paths, helmFileParameterSymlinkSelectionPaths(root, source.Path, parameter.Name, parameter.Path)...)
 	}
 	return paths
 }
 
 // helmFileParameterSymlinkSelectionPaths returns the repository paths that
-// decide what the local file parameter path file reads when it passes
-// through a symlink: each symlink on the way and the paths they end at
+// decide what the local file parameter name with path file reads when that
+// is not the path as written: each symlink on the way and the paths they
+// end at, and the file helm reads after it drops backslashes
 // (render.HelmFileParameterInputPaths). appRel is the directory that a
-// relative file is relative to. It owns nothing for a path without a
-// symlink, an env-templated path, a URL, or a path that does not resolve.
-// Paths outside root are left out: drydock never reads them.
-func helmFileParameterSymlinkSelectionPaths(root, appRel, file string) []string {
+// relative file is relative to. It owns nothing more for a plain path, an
+// env-templated path, a URL, or a path that does not resolve. Paths outside
+// root are left out: drydock never reads them.
+func helmFileParameterSymlinkSelectionPaths(root, appRel, name, file string) []string {
 	if strings.TrimSpace(file) == "" || strings.Contains(file, "$") || strings.Contains(file, "://") {
 		return nil
 	}
@@ -58,8 +59,8 @@ func helmFileParameterSymlinkSelectionPaths(root, appRel, file string) []string 
 	if err != nil {
 		return nil
 	}
-	inputs, err := render.HelmFileParameterInputPaths(filepath.Join(absRoot, filepath.FromSlash(appRel)), absRoot, filepath.FromSlash(file))
-	if err != nil || len(inputs.Symlinks) == 0 {
+	inputs, err := render.HelmFileParameterInputPaths(name, filepath.Join(absRoot, filepath.FromSlash(appRel)), absRoot, filepath.FromSlash(file))
+	if err != nil || (len(inputs.Symlinks) == 0 && inputs.Written == "") {
 		return nil
 	}
 	var paths []string
@@ -105,7 +106,7 @@ func helmRefSelectionPaths(tree *selectionTree, application argoappv1.Applicatio
 			if selectionPath, ok := helmRefInputSelectionPath(tree, plan, sourcePlan, parameter.Path, false); ok {
 				paths = append(paths, selectionPath)
 				_, refPath, _ := splitHelmValueFileRef(parameter.Path)
-				paths = append(paths, helmFileParameterSymlinkSelectionPaths(tree.root, "", "/"+refPath)...)
+				paths = append(paths, helmFileParameterSymlinkSelectionPaths(tree.root, "", parameter.Name, "/"+refPath)...)
 			}
 		}
 	}
