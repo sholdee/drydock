@@ -250,18 +250,50 @@ drydock selects directory-source files as the Argo CD v3.6.1 repo-server does:
   drydock releases skipped the file. Move the file out of the source
   directory, or set `exclude` to a pattern that matches it, such as
   `{package,tsconfig}.json`.
-- A list item without a `kind` fails the source the same way, in any
-  directory file and whether or not the list has a `kind` of its own. This
-  covers `{"items":[{"name":"web"}]}` and a `kind: List` whose item has no
-  `kind`. drydock names the file and the item in an error such as
+- A list item without a `kind` fails the source the same way, in a YAML,
+  JSON, or Jsonnet file, whether or not the list has a `kind` of its own.
+  This covers `{"items":[{"name":"web"}]}` and a `kind: List` whose item has
+  no `kind`. drydock names the file and the item in an error such as
   `list.json document 0 list item /items/0 has no kind, so Argo CD fails the Application with "Object 'Kind' is missing"`.
+  For Jsonnet output the error names the item as `list.jsonnet output list item /items/0`.
   Earlier drydock releases skipped such an item when it also had no
   `apiVersion`. Add a `kind` to the item, or remove the item.
+- A Jsonnet file whose output holds an object without a `kind` fails in
+  the repo-server, in both Argo CD and drydock. The error starts with
+  `failed to unmarshal generated json` and names the file. Earlier drydock
+  releases skipped the object. Add a `kind`, or remove the object from the
+  output.
+- A manifest whose `metadata.annotations` or `metadata.labels` is not a map
+  of strings fails with `failed to set app instance tracking info on manifest`
+  when the tracking method reads that field. Argo CD names only the object.
+  drydock also names the file, and the list item when there is one. Fix the
+  field in the manifest.
+- If the error says that the directory source files are larger in sum than
+  the limit, the files that Argo CD reads add up to more than
+  `reposerver.max.combined.directory.manifests.size` (default `10M`). Argo CD
+  fails the same Application with `exceeded max combined manifest file size`.
+  Narrow `include` or `exclude`, split the directory, or raise the setting in
+  `argocd-cmd-params-cm` for both Argo CD and drydock.
+- When several files fail, drydock reports the file that Argo CD reports.
+  Argo CD reads every file first, then splits lists and sets tracking
+  metadata, and checks for a missing `kind` last. So a file that does not
+  decode is reported before an earlier file whose list or tracking metadata
+  fails.
+- An `apiVersion` with two or more slashes, such as the typo `apps/v1/`, does
+  not parse as a group version. Argo CD then finds no `kind` in the object,
+  so the file fails or is skipped as for a missing `kind`. drydock names the
+  `apiVersion` in an error such as
+  `apiversion.json: JSON object has apiVersion "apps/v1/", which is not a valid group version, so it has no kind`.
+  Fix the `apiVersion`.
+- A document with a `kind` and no `apiVersion` renders without an
+  `apiVersion`, as in Argo CD. Kubernetes cannot apply a manifest without
+  an `apiVersion`, so add it.
 - Any other file that does not decode as YAML or JSON is skipped unless a
   manifest precedes the broken document or the file contains all of
-  `apiVersion:`, `kind:`, and `metadata:`; then it fails the source. With `disableExtensionFilter`, narrow `include` so that
-  READMEs, `.libsonnet` libraries, or templates holding example manifests are
-  not read.
+  `apiVersion:`, `kind:`, and `metadata:`; then it fails the source. This
+  includes a first document that has an `apiVersion` but no `kind`. With
+  `disableExtensionFilter`, narrow `include` so that READMEs, `.libsonnet`
+  libraries, or templates holding example manifests are not read.
 
 A Kustomize component listed under `ignoreMissingComponents: true` is skipped
 when its directory is missing, holds no `kustomization.yaml`,

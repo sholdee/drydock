@@ -24,6 +24,7 @@ func MergeDiscovered(candidates []ArgoSettings) (ArgoSettings, []diagnostic.Diag
 		diags = append(diags, mergeInClusterEnabled(&merged, candidate)...)
 		diags = append(diags, mergeConfigManagementPlugins(&merged, candidate)...)
 		mergeCommandParameters(&merged, candidate)
+		diags = append(diags, mergeMaxCombinedDirectoryManifestsSize(&merged, candidate)...)
 		merged.ResourceExclusions = append(merged.ResourceExclusions, candidate.ResourceExclusions...)
 		merged.ResourceInclusions = append(merged.ResourceInclusions, candidate.ResourceInclusions...)
 		merged.ResourceSelectors = append(merged.ResourceSelectors, candidate.ResourceSelectors...)
@@ -86,6 +87,20 @@ func mergeInstallationID(merged *ArgoSettings, candidate ArgoSettings) []diagnos
 		)}
 	}
 	merged.InstallationID = candidate.InstallationID
+	return nil
+}
+
+func mergeMaxCombinedDirectoryManifestsSize(merged *ArgoSettings, candidate ArgoSettings) []diagnostic.Diagnostic {
+	if !hasProvenance(candidate.MaxCombinedDirectoryManifestsSize) {
+		return nil
+	}
+	if hasProvenance(merged.MaxCombinedDirectoryManifestsSize) && merged.MaxCombinedDirectoryManifestsSize.Value != candidate.MaxCombinedDirectoryManifestsSize.Value {
+		return []diagnostic.Diagnostic{conflictDiagnostic(
+			fmt.Sprintf("conflicting %s values %q and %q", maxCombinedDirectoryManifestsSizeKey, merged.MaxCombinedDirectoryManifestsSize.Value, candidate.MaxCombinedDirectoryManifestsSize.Value),
+			candidate.MaxCombinedDirectoryManifestsSize.Provenance,
+		)}
+	}
+	merged.MaxCombinedDirectoryManifestsSize = candidate.MaxCombinedDirectoryManifestsSize
 	return nil
 }
 

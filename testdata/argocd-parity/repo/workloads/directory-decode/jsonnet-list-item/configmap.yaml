@@ -1,0 +1,7 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: parity-decode-jsonnet-list-item
+  namespace: parity-directory-decode-workloads
+data:
+  fixture: directory-decode

@@ -41,11 +41,12 @@ PROJECT_POLICY_IN_CLUSTER_SECRET_NAME="project-policy-in-cluster-secret"
 PROJECT_POLICY_IN_CLUSTER_DISABLED_DIR="${REPO_ROOT}/testdata/argocd-project-policy/in-cluster-disabled"
 # Directory-source decode failures. Each Application in this namespace must
 # fail on both sides: Argo CD with a ComparisonError condition and drydock
-# with a render failure, both naming the same file. They live outside the
-# argocd namespace so the main inventory and manifest comparisons never see
-# them. The expected file lists the cases and the message each side must
-# show. Files that both sides skip render in parity-directory-decode-skips,
-# which the main manifest comparison covers.
+# with a render failure, both naming the same file, or the object in it when
+# the Argo CD message names no file. They live outside the argocd namespace
+# so the main inventory and manifest comparisons never see them. The expected
+# file lists the cases and the message each side must show. Files that both
+# sides skip or render live in parity-directory-decode-skips and
+# parity-directory-decode-jsonnet, which the main manifest comparison covers.
 DIRECTORY_DECODE_NAMESPACE="parity-directory-decode"
 DIRECTORY_DECODE_EXPECTED="${REPO_ROOT}/testdata/argocd-parity/directory-decode-expected.yaml"
 # Set by run_directory_decode_smoke from DIRECTORY_DECODE_EXPECTED.
@@ -211,6 +212,7 @@ APPLICATIONS=(
   parity-directory-glob
   parity-directory-extension-filter
   parity-directory-decode-skips
+  parity-directory-decode-jsonnet
   parity-kustomize-variants
   parity-kustomize-labels
   parity-kustomize-generators

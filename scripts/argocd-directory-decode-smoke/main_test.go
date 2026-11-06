@@ -153,6 +153,41 @@ func TestCompareMatchesQuotedObjectMessage(t *testing.T) {
 	}
 }
 
+// TestCompareMatchesNamedObjectMessage covers tracking metadata that cannot
+// be set. The Argo CD repo-server message names the object and no file.
+func TestCompareMatchesNamedObjectMessage(t *testing.T) {
+	fixture := newTestFixture(t, `cases:
+  - name: parity-decode-yaml-tracking
+    file: tracking.yaml
+    argocdNamesObject: parity-decode-tracking-annotations
+    argocdMessage: "failed to set app instance tracking info on manifest: failed to get annotations for /v1, Kind=ConfigMap parity-directory-decode-workloads/parity-decode-tracking-annotations"
+    drydockMessage: "tracking.yaml document 0 list item /items/0: failed to set app instance tracking info on manifest"
+`)
+	fixture.writeApplication(t, testNamespace, "parity-decode-yaml-tracking",
+		comparisonError(`Failed to load target state: failed to generate manifest for source 1 of 1: rpc error: code = Unknown desc = failed to set app instance tracking info on manifest: failed to get annotations for /v1, Kind=ConfigMap parity-directory-decode-workloads/parity-decode-tracking-annotations: .metadata.annotations accessor error: not-a-map is of the type string, expected map[string]interface{}`))
+	fixture.writeDrydock(t, "parity-decode-yaml-tracking", 2,
+		"error render.failed: workloads/directory-decode/yaml-tracking/tracking.yaml document 0 list item /items/0: failed to set app instance tracking info on manifest: failed to get annotations for /v1, Kind=ConfigMap parity-directory-decode-workloads/parity-decode-tracking-annotations\n")
+
+	result, err := compare(fixture.options())
+	if err != nil {
+		t.Fatalf("compare() error = %v", err)
+	}
+	if len(result.Failures) != 0 {
+		t.Fatalf("compare() failures = %v, want none", result.Failures)
+	}
+
+	// The same failure on some other object must not pass the case.
+	fixture.writeApplication(t, testNamespace, "parity-decode-yaml-tracking",
+		comparisonError(`Failed to load target state: failed to generate manifest for source 1 of 1: rpc error: code = Unknown desc = failed to set app instance tracking info on manifest: failed to get annotations for /v1, Kind=ConfigMap parity-directory-decode-workloads/other: .metadata.annotations accessor error`))
+	result, err = compare(fixture.options())
+	if err != nil {
+		t.Fatalf("compare() error = %v", err)
+	}
+	if len(result.Failures) != 1 || !strings.Contains(result.Failures[0], "does not contain") {
+		t.Fatalf("compare() failures = %v, want one message mismatch", result.Failures)
+	}
+}
+
 func TestCompareReportsMismatches(t *testing.T) {
 	tests := []struct {
 		name   string
@@ -304,6 +339,29 @@ func TestReadExpectedRejectsInvalidCases(t *testing.T) {
 			want: "quote part of the object",
 		},
 		{
+			name: "named object missing from the Argo CD message",
+			expected: `cases:
+  - name: parity-decode-yaml-tracking
+    file: tracking.yaml
+    argocdNamesObject: parity-decode-tracking-annotations
+    argocdMessage: failed to set app instance tracking info on manifest
+    drydockMessage: "tracking.yaml document 0 list item /items/0: failed to set app instance tracking info on manifest"
+`,
+			want: `argocdMessage must contain the object name "parity-decode-tracking-annotations"`,
+		},
+		{
+			name: "quoted and named object",
+			expected: `cases:
+  - name: parity-decode-yaml-tracking
+    file: tracking.yaml
+    argocdQuotesObject: true
+    argocdNamesObject: parity-decode-tracking-annotations
+    argocdMessage: "Object 'Kind' is missing in '{parity-decode-tracking-annotations"
+    drydockMessage: "tracking.yaml document 0 list item /items/0: failed to set app instance tracking info on manifest"
+`,
+			want: "must not set both argocdQuotesObject and argocdNamesObject",
+		},
+		{
 			name: "drydock message without file",
 			expected: `cases:
   - name: parity-decode-json-empty
@@ -366,8 +424,12 @@ func TestCommittedExpectedFileMatchesFixtures(t *testing.T) {
 				t.Fatalf("Application for %s does not contain %q", tc.Name, want)
 			}
 		}
-		if _, err := os.Stat(filepath.Join(fixtureRepo, "workloads", "directory-decode", caseDir, tc.File)); err != nil {
+		failing, err := os.ReadFile(filepath.Join(fixtureRepo, "workloads", "directory-decode", caseDir, tc.File))
+		if err != nil {
 			t.Fatalf("failing file for %s: %v", tc.Name, err)
+		}
+		if tc.ArgoCDNamesObject != "" && !strings.Contains(string(failing), "name: "+tc.ArgoCDNamesObject+"\n") {
+			t.Fatalf("failing file for %s does not hold the object %q", tc.Name, tc.ArgoCDNamesObject)
 		}
 	}
 }

@@ -40,6 +40,8 @@ var argoSettingsFieldClasses = map[string]settingsChangeClass{
 	"InstanceLabelKey":         settingsRenderAll,
 	"InstallationID":           settingsRenderAll,
 	"ConfigManagementPlugins":  settingsRenderAll,
+	// The size limit of every directory source.
+	"MaxCombinedDirectoryManifestsSize": settingsRenderAll,
 	// Diff: which rendered resources survive, and normalization.
 	"ResourceExclusions": settingsRenderAll,
 	"ResourceInclusions": settingsRenderAll,

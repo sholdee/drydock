@@ -8,10 +8,12 @@
 // they live in an Application that renders, and the main manifest comparison
 // covers it.
 //
-// A ".json" file that holds an object without a kind fails later, in the
-// Argo CD controller. Its ComparisonError quotes the object instead of
-// naming the file, so such a case sets argocdQuotesObject and its
-// argocdMessage quotes the start of that object.
+// A manifest without a kind fails later, in the Argo CD controller. Its
+// ComparisonError quotes the object instead of naming the file, so such a
+// case sets argocdQuotesObject and its argocdMessage quotes the start of that
+// object. Tracking metadata that cannot be set fails in the repo-server with
+// a message that names the object instead of the file, so such a case sets
+// argocdNamesObject to that object's name.
 package main
 
 import (
@@ -60,6 +62,9 @@ type expectedCase struct {
 	// ArgoCDQuotesObject marks a case whose Argo CD message quotes the
 	// manifest without a kind instead of naming the file.
 	ArgoCDQuotesObject bool `yaml:"argocdQuotesObject"`
+	// ArgoCDNamesObject is the name of the object in the failing file that
+	// the Argo CD message names instead of the file.
+	ArgoCDNamesObject string `yaml:"argocdNamesObject"`
 }
 
 type appStatusFile struct {
@@ -209,8 +214,15 @@ func validateExpected(cases []expectedCase) error {
 		// Each side's message must name the file, so a failure caused by
 		// some other file cannot pass the case. The Argo CD message for a
 		// manifest without a kind names no file, so it must quote part of
-		// the object instead.
+		// the object instead. The Argo CD message for tracking metadata that
+		// cannot be set names the object instead.
 		switch {
+		case tc.ArgoCDQuotesObject && tc.ArgoCDNamesObject != "":
+			return fmt.Errorf("expected case %s must not set both argocdQuotesObject and argocdNamesObject", tc.Name)
+		case tc.ArgoCDNamesObject != "":
+			if !strings.Contains(tc.ArgoCDMessage, tc.ArgoCDNamesObject) {
+				return fmt.Errorf("expected case %s argocdMessage must contain the object name %q", tc.Name, tc.ArgoCDNamesObject)
+			}
 		case tc.ArgoCDQuotesObject:
 			if !strings.HasPrefix(tc.ArgoCDMessage, missingKindPrefix) || len(tc.ArgoCDMessage) == len(missingKindPrefix) {
 				return fmt.Errorf("expected case %s argocdMessage must start with %q and quote part of the object", tc.Name, missingKindPrefix)

@@ -50,19 +50,24 @@ that generates an extra Application in drydock only.
 
 Some fixture Applications must fail. Each one holds a directory file that the
 Argo CD repo-server refuses to decode, such as invalid JSON, two objects in one
-`.json` file, or a broken YAML document after a valid one. The smoke checks
-that Argo CD reports a `ComparisonError` condition, that drydock fails to
-render, and that both errors name the same file. A `.json` object without a
-`kind`, such as `package.json` or `{}`, fails later in the Argo CD
-controller, and so does a list item without a `kind`. That error quotes the object instead of the file, so the smoke
-matches the quoted object. These Applications live in their own namespace,
-so they do not affect the manifest comparison.
+`.json` file, a broken YAML document after a valid one, or a Jsonnet object
+without a `kind`. The smoke checks that Argo CD reports a `ComparisonError`
+condition, that drydock fails to render, and that both errors name the same
+file. A `.json` object without a `kind`, such as `package.json` or `{}`,
+fails later in the Argo CD controller, and so does a list item without a
+`kind`. That error quotes the object instead of the file, so the smoke
+matches the quoted object. A list item whose annotations are not a map fails
+when the repo-server sets the tracking annotation. That error names the
+object instead of the file, so the smoke matches the object name. Two
+Applications hold two failing files each, and prove that a later file that
+fails an earlier stage is reported first. These Applications live in their
+own namespace, so they do not affect the manifest comparison.
 
 ## Covered Areas
 
 | Area | Covered examples |
 | --- | --- |
-| Directory | recurse, include/exclude handling, skip files, non-recursive auto-detected directories, multi-document YAML files, `.yml`/`.json` extensions, non-Kubernetes YAML silently skipped, null-items Lists as no-ops, shape-based (kind-agnostic) list flattening including `ConfigMapList`, explicit directory-mode forcing on a kustomize path, `**` include globs with path-scoped excludes, case-sensitive extension filter (`.YAML` skipped), `disableExtensionFilter` with custom extensions selected by `include`, file text decoding (UTF-8 and UTF-16 byte order marks, invalid UTF-8 replaced, UTF-16 without a byte order mark skipped), skipped non-manifest files (values files, `{}`, YAML lists, syntax errors without manifest markers), files that fail the source (invalid, empty, YAML, array, multi-object, or kind-less object `.json` such as `package.json` and `{}`, a list item without a `kind` in a `.json` or YAML file, a broken or kindless YAML document after a valid one, a kindless first document in a file that looks like a manifest) |
+| Directory | recurse, include/exclude handling, skip files, non-recursive auto-detected directories, multi-document YAML files, `.yml`/`.json` extensions, non-Kubernetes YAML silently skipped, null-items Lists as no-ops, shape-based (kind-agnostic) list flattening including `ConfigMapList`, explicit directory-mode forcing on a kustomize path, `**` include globs with path-scoped excludes, case-sensitive extension filter (`.YAML` skipped), `disableExtensionFilter` with custom extensions selected by `include`, file text decoding (UTF-8 and UTF-16 byte order marks, invalid UTF-8 replaced, UTF-16 without a byte order mark skipped), skipped non-manifest files (values files, `{}`, YAML lists, syntax errors without manifest markers, a first document with an `apiVersion` but no `kind`, `kind: ""`, an `apiVersion` with two or more slashes), documents and Lists with a `kind` but no `apiVersion`, objects whose `items` field is not a list, Jsonnet Lists split into items and Jsonnet arrays with `null` and List elements, files that fail the source (invalid, empty, YAML, array, multi-object, or kind-less object `.json` such as `package.json` and `{}`, a list item without a `kind` in a `.json`, YAML, or Jsonnet file, a Jsonnet object without a `kind`, an `apiVersion` with two or more slashes in a `.json` or YAML file, a list item whose annotations are not a map, a broken or kindless YAML document after a valid one, a kindless first document in a file that looks like a manifest), and the stage order that decides which of several failing files is reported |
 | Helm | release name and namespace, values, parameters, file parameters, capabilities, value-file globs, skip CRDs/tests, vendored subchart dependencies with `condition`/`alias`/global values propagation, default CRD inclusion, `values`/`valuesObject`/`valueFiles`/`parameters` precedence chain (`valuesObject` wholly replaces the `values` string), `helm.namespace` override distinct from destination namespace, `skipSchemaValidation`, `kubeVersion` `+suffix` normalization, env-var substitution in parameter values and valueFile names (`$ARGOCD_APP_NAME`), value files and `fileParameters` outside the chart directory bounded at the repo root, comma in parameter values, `.argocd-source.yaml` and `.argocd-source-<app>.yaml` overrides (JSON merge patch, arrays replaced wholesale), `$ref` fileParameters |
 | Kustomize | base rendering, namespace, images, replicas, labels, annotations, components, patches, Helm charts, `kustomization.yml` and bare `Kustomization` filename variants, `nameSuffix`, image digest replacement, strategic-merge patches without explicit target, `labelWithoutSelector`, `labelIncludeTemplates`, `forceCommonLabels`, `forceCommonAnnotations`, `commonAnnotationsEnvsubst`, `configMapGenerator` hash suffixes, `ignoreMissingComponents` (missing directories and directories without a kustomization file skipped, and only the first valid component added, with a warning for each dropped valid component), `kubeVersion`/`apiVersions` pass-through to `helmCharts` inflation |
 | Jsonnet | ext vars, top-level arguments, code mode, libraries |

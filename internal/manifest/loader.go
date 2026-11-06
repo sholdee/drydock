@@ -86,8 +86,14 @@ func decodeDocuments(path string, decoder documentDecoder, flattenLists bool) ([
 	}
 }
 
-// flattenItemsField implements Argo CD's list-flattening logic: flatten by items
-// field shape (not by kind), and no-op null-items documents without spec/status.
+// flattenItemsField implements the list split in Argo CD v3.6.1
+// GenerateManifests (reposerver/repository/repository.go:1817-1840). It
+// splits by the shape of the items field, not by kind. An object whose items
+// field is an array is a list (Unstructured.IsList), and each item must be an
+// object (Unstructured.EachListItem). An object whose items field is null and
+// that has neither spec nor status emits nothing (isNullList). Every other
+// object, including one whose items field is a scalar or a map, is emitted
+// unchanged.
 // Returns (flattened docs, skip, error). When flattened is non-nil the caller
 // should append them. When skip is true the caller should discard the document.
 func flattenItemsField(path string, index int, obj *unstructured.Unstructured) ([]Document, bool, error) {
@@ -95,9 +101,7 @@ func flattenItemsField(path string, index int, obj *unstructured.Unstructured) (
 	if !hasItems {
 		return nil, false, nil
 	}
-	items, isList := itemsRaw.([]any)
-	if isList {
-		// items is a JSON array: flatten each entry as an individual resource.
+	if items, isList := itemsRaw.([]any); isList {
 		flattened := make([]Document, 0, len(items))
 		for i, item := range items {
 			itemMap, ok := item.(map[string]any)
@@ -114,15 +118,9 @@ func flattenItemsField(path string, index int, obj *unstructured.Unstructured) (
 		return flattened, false, nil
 	}
 	if itemsRaw == nil {
-		// items key present with null value: silent no-op when the document has no
-		// root spec or status (matches Argo CD isNullList behaviour).
 		_, hasSpec := obj.Object["spec"]
 		_, hasStatus := obj.Object["status"]
-		if !hasSpec && !hasStatus {
-			return nil, true, nil
-		}
-		return nil, false, nil
+		return nil, !hasSpec && !hasStatus, nil
 	}
-	// items present but not a list and not nil (e.g. a scalar): error.
-	return nil, false, fmt.Errorf("%s document %d /items is not a list", path, index)
+	return nil, false, nil
 }

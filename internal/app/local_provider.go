@@ -61,9 +61,13 @@ type localProvider struct {
 	pluginExecRunner             pluginexec.Runner
 	pluginContainerRunner        plugincontainer.Runner
 	kustomizeBuildOptions        []string
-	configManagementPlugins      map[string]config.ConfigManagementPlugin
-	cacheEvents                  *cacheevent.Recorder
-	acquisitions                 *cacheevent.AcquisitionCollector
+	// maxCombinedDirectoryManifestsSize is the repo-server limit on the
+	// combined size of the files of one directory source, in bytes. Zero
+	// means no limit.
+	maxCombinedDirectoryManifestsSize int64
+	configManagementPlugins           map[string]config.ConfigManagementPlugin
+	cacheEvents                       *cacheevent.Recorder
+	acquisitions                      *cacheevent.AcquisitionCollector
 	// inputVerifier accumulates the digest path sets behind one application's
 	// persistent key so store() can re-check them after the render. nil for
 	// renders without the persistent tier.
@@ -159,6 +163,7 @@ func (p localProvider) renderSource(ctx context.Context, source render.ResolvedS
 		opts.HelmValueFileSchemesSet = p.helmValueFileSchemesSet
 	}
 	opts.CacheEventRecorder = p.cacheEvents
+	opts.DirectoryMaxCombinedManifestsSize = p.maxCombinedDirectoryManifestsSize
 	opts.AcquisitionCollector = p.acquisitions
 	anchoredRefRoots, err := anchorLocalRefRoots(sourceRoot, opts.RefRoots)
 	if err != nil {

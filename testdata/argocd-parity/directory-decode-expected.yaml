@@ -13,6 +13,10 @@
 # argocdQuotesObject and quote the start of the manifest. Go sorts the keys,
 # and the tracking annotation is part of the manifest.
 #
+# Tracking metadata that cannot be set fails in the repo-server after every
+# file was read. Its message names the object, not the file, so those cases
+# set argocdNamesObject to the object name in the failing file.
+#
 # Files that both sides skip, and files whose text both sides decode first
 # (byte order marks, invalid UTF-8), live in the parity-directory-decode-skips
 # Application, which the main manifest comparison covers.
@@ -85,3 +89,52 @@ cases:
     argocdQuotesObject: true
     argocdMessage: "Object 'Kind' is missing in '{\"data\":{\"note\":\"a list item without a kind\"},\"metadata\":{\"annotations\":{\"argocd.argoproj.io/tracking-id\":\"parity-directory-decode_parity-decode-yaml-list-item:"
     drydockMessage: "list.yaml document 0 list item /items/0 has no kind"
+  # Jsonnet output is decoded into Unstructured objects, and that decode
+  # needs a kind. So a Jsonnet object without a kind fails in the repo-server.
+  - name: parity-decode-jsonnet-kindless
+    file: kindless.jsonnet
+    argocdMessage: Failed to unmarshal generated json "kindless.jsonnet"
+    drydockMessage: 'kindless.jsonnet": JSON object is missing kind'
+  # A List from Jsonnet is split into its items like any other List. An item
+  # without a kind fails in the controller.
+  - name: parity-decode-jsonnet-list-item
+    file: list.jsonnet
+    argocdQuotesObject: true
+    argocdMessage: "Object 'Kind' is missing in '{\"data\":{\"note\":\"a jsonnet list item without a kind\"},\"metadata\":{\"annotations\":{\"argocd.argoproj.io/tracking-id\":\"parity-directory-decode_parity-decode-jsonnet-list-item:"
+    drydockMessage: "list.jsonnet output list item /items/0 has no kind"
+  # A list item whose annotations are not a map fails when the repo-server
+  # sets the tracking annotation.
+  - name: parity-decode-yaml-tracking
+    file: tracking.yaml
+    argocdNamesObject: parity-decode-tracking-annotations
+    argocdMessage: "failed to set app instance tracking info on manifest: failed to get annotations for /v1, Kind=ConfigMap parity-directory-decode-workloads/parity-decode-tracking-annotations"
+    drydockMessage: "tracking.yaml document 0 list item /items/0: failed to set app instance tracking info on manifest"
+  # Error order. a-scalar-item.json has a list item that is not an object,
+  # which fails only after every file is read. b-invalid.json fails while it
+  # is read, so Argo CD reports b-invalid.json although it comes later.
+  - name: parity-decode-order-decode
+    file: b-invalid.json
+    argocdMessage: Failed to unmarshal "b-invalid.json"
+    drydockMessage: "b-invalid.json: decode JSON object failed"
+  # Error order. a-kindless.json fails in the controller. b-tracking.yaml
+  # fails earlier, in the repo-server, so Argo CD reports b-tracking.yaml
+  # although it comes later.
+  - name: parity-decode-order-tracking
+    file: b-tracking.yaml
+    argocdNamesObject: parity-decode-order-tracking-annotations
+    argocdMessage: "failed to set app instance tracking info on manifest: failed to get annotations for /v1, Kind=ConfigMap parity-directory-decode-workloads/parity-decode-order-tracking-annotations"
+    drydockMessage: "b-tracking.yaml document 0 list item /items/0: failed to set app instance tracking info on manifest"
+  # An apiVersion with two or more slashes does not parse as a group
+  # version, so the Unstructured decode finds no kind. A .json object then
+  # passes the OCI image manifest test, and the controller fails on it.
+  - name: parity-decode-json-apiversion
+    file: apiversion.json
+    argocdQuotesObject: true
+    argocdMessage: "Object 'Kind' is missing in '{\"apiVersion\":\"apps/v1/\",\"kind\":\"Deployment\",\"metadata\":{\"annotations\":{\"argocd.argoproj.io/tracking-id\":\"parity-directory-decode_parity-decode-json-apiversion:"
+    drydockMessage: 'apiversion.json: JSON object has apiVersion "apps/v1/", which is not a valid group version, so it has no kind'
+  # The same apiVersion in a YAML file stops the stream at the first
+  # document, and the file text holds every manifest marker.
+  - name: parity-decode-yaml-apiversion
+    file: apiversion.yaml
+    argocdMessage: Failed to unmarshal "apiversion.yaml"
+    drydockMessage: 'apiversion.yaml document 0 has apiVersion "apps/v1/", which is not a valid group version, so it has no kind'

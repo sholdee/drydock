@@ -1,0 +1,10 @@
+# A List without an apiVersion is still split into its items.
+kind: List
+items:
+  - apiVersion: v1
+    kind: ConfigMap
+    metadata:
+      name: parity-decode-skips-list-item
+      namespace: parity-directory-decode-skips
+    data:
+      fixture: directory-decode

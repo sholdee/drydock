@@ -108,6 +108,12 @@ func renderSourcePlan(ctx context.Context, application argoappv1.Application, pr
 	opts.EnablePlugins = pluginOpts.EnablePlugins
 	opts.SourceIndex = sourcePlan.Index
 	opts.SourceName = sourcePlan.Name
+	// The directory renderer checks the tracking metadata of each manifest
+	// in the order the Argo CD repo-server sets it. appendRenderedManifests
+	// sets the metadata that the result keeps.
+	opts.TrackManifest = func(obj *unstructured.Unstructured) error {
+		return applyTrackingMetadata(application, obj, trackingOpts)
+	}
 	refRoots, refSources, err := renderRefsForSource(plan, sourcePlan, helmRefInputPaths(opts))
 	if err != nil {
 		return fmt.Errorf("%s: %w", renderSourceContext(application, sourcePlan), err)

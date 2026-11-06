@@ -1,0 +1,6 @@
+# An empty kind stops the stream like a missing kind. The file text has no
+# metadata marker, so the file is skipped.
+apiVersion: v1
+kind: ""
+data:
+  fixture: directory-decode

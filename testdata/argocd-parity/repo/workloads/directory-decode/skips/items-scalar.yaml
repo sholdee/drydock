@@ -1,0 +1,10 @@
+# An object with a kind whose items field is not an array is not a list, so
+# it renders unchanged.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: parity-decode-skips-items-scalar
+  namespace: parity-directory-decode-skips
+data:
+  fixture: directory-decode
+items: text

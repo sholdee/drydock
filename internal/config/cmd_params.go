@@ -16,6 +16,11 @@ import (
 
 const commandParametersConfigMapName = "argocd-cmd-params-cm"
 
+// maxCombinedDirectoryManifestsSizeKey sets the repo-server flag
+// --max-combined-directory-manifests-size (Argo CD v3.6.1
+// cmd/argocd-repo-server/commands/argocd_repo_server.go:264).
+const maxCombinedDirectoryManifestsSizeKey = "reposerver.max.combined.directory.manifests.size"
+
 type commandParameterValueMode int
 
 const (
@@ -155,6 +160,14 @@ func commandParametersSettings(path, basePointer string, values map[string]strin
 		if classification.warnRuntime {
 			runtimeOnlyKeys = append(runtimeOnlyKeys, key)
 		}
+		if key == maxCombinedDirectoryManifestsSizeKey {
+			// The value is kept as written: the repo-server parses it with
+			// resource.ParseQuantity, which rejects spaces around it.
+			settings.MaxCombinedDirectoryManifestsSize = Value[string]{
+				Value:      values[key],
+				Provenance: setting.Provenance,
+			}
+		}
 		settings.CommandParameters = append(settings.CommandParameters, setting)
 	}
 
@@ -192,9 +205,13 @@ func classifyCommandParameterKey(key string) commandParameterClassification {
 			valueMode:      commandParameterSanitizedValue,
 			warnRuntime:    true,
 		}
+	case maxCombinedDirectoryManifestsSizeKey:
+		return commandParameterClassification{
+			classification: CommandParameterRendered,
+			valueMode:      commandParameterSanitizedValue,
+		}
 	case "controller.diff.server.side",
 		"reposerver.allow.oob.symlinks",
-		"reposerver.max.combined.directory.manifests.size",
 		"reposerver.enable.git.submodule",
 		"applicationsetcontroller.enable.scm.providers",
 		"applicationsetcontroller.allowed.scm.providers",

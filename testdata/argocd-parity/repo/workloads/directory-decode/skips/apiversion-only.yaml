@@ -1,0 +1,5 @@
+# The first document has an apiVersion but no kind, so the stream stops. The
+# file text has no kind marker, so the file is skipped.
+apiVersion: v1
+metadata:
+  name: parity-decode-skips-apiversion-only

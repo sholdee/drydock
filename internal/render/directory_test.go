@@ -633,89 +633,55 @@ metadata:
 	}
 }
 
-func TestDirectoryRendererRejectsYAMLDocumentWithKindButNoAPIVersion(t *testing.T) {
-	root := t.TempDir()
-	writeFile(t, filepath.Join(root, "apps", "broken.yaml"), `
-kind: ConfigMap
-metadata:
-  name: broken
-`)
-
-	_, _, err := (DirectoryRenderer{}).Render(context.Background(), ResolvedSource{
-		RepoRoot: root,
-		Path:     "apps",
-	}, RenderOptions{})
-	if err == nil {
-		t.Fatal("Render() error = nil, want partial manifest error")
-	}
-	if !strings.Contains(err.Error(), "missing apiVersion") {
-		t.Fatalf("Render() error = %v, want missing apiVersion message", err)
-	}
-}
-
-func TestDirectoryRendererRejectsYAMLDocumentWithAPIVersionButNoKind(t *testing.T) {
-	root := t.TempDir()
-	writeFile(t, filepath.Join(root, "apps", "broken.yaml"), `
-apiVersion: v1
-metadata:
-  name: broken
-`)
-
-	_, _, err := (DirectoryRenderer{}).Render(context.Background(), ResolvedSource{
-		RepoRoot: root,
-		Path:     "apps",
-	}, RenderOptions{})
-	if err == nil {
-		t.Fatal("Render() error = nil, want partial manifest error")
-	}
-	if !strings.Contains(err.Error(), "missing kind") {
-		t.Fatalf("Render() error = %v, want missing kind message", err)
-	}
-}
-
-func TestDirectoryRendererRejectsListDocumentWithKindButNoAPIVersion(t *testing.T) {
+// TestDirectoryRendererReadsDocumentsWithOneOfAPIVersionAndKind pins how
+// Argo CD v3.6.1 reads a YAML document that has only one of apiVersion and
+// kind. splitYAMLOrJSON decodes each document into an Unstructured, which
+// needs a kind but not an apiVersion (reposerver/repository/repository.go:
+// 2119-2136, apimachinery unstructured/helpers.go:388-391). So a document
+// with a kind and no apiVersion renders as it is. A document with an
+// apiVersion and no kind stops the stream. The file is then skipped unless an
+// object decoded before it or the file text holds every manifest marker.
+// TestDirectoryRendererDecodeMatchesUpstream checks the same files against
+// the upstream code.
+func TestDirectoryRendererReadsDocumentsWithOneOfAPIVersionAndKind(t *testing.T) {
 	for _, tt := range []struct {
-		name string
-		body string
+		name    string
+		body    string
+		want    []string
+		wantErr string
 	}{
-		{
-			name: "with item",
-			body: `
-kind: List
-items:
-  - apiVersion: v1
-    kind: ConfigMap
-    metadata:
-      name: demo
-`,
-		},
-		{
-			name: "empty items",
-			body: `
-kind: List
-items: []
-`,
-		},
-		{
-			name: "missing items",
-			body: `
-kind: List
-`,
-		},
+		{name: "kind only", body: "kind: ConfigMap\nmetadata:\n  name: kind-only\n", want: []string{"/ConfigMap/kind-only"}},
+		{name: "apiVersion only", body: "apiVersion: v1\nmetadata:\n  name: broken\n", want: []string{}},
+		{name: "apiVersion only with every marker", body: "apiVersion: v1\nmetadata:\n  name: broken\n  labels:\n    kind: x\n", wantErr: "broken.yaml document 0 is missing kind"},
+		{name: "empty kind without metadata", body: "apiVersion: v1\nkind: \"\"\nfoo: bar\n", want: []string{}},
+		{name: "empty kind with metadata", body: "apiVersion: v1\nkind: \"\"\nmetadata:\n  name: x\n", wantErr: "broken.yaml document 0 is missing kind"},
+		{name: "list without apiVersion", body: "kind: List\nitems:\n  - apiVersion: v1\n    kind: ConfigMap\n    metadata:\n      name: demo\n", want: []string{"v1/ConfigMap/demo"}},
+		{name: "list without apiVersion and items", body: "kind: List\nitems: []\n", want: []string{}},
+		{name: "list without apiVersion or items field", body: "kind: List\n", want: []string{"/List/"}},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			root := t.TempDir()
-			writeFile(t, filepath.Join(root, "apps", "broken-list.yaml"), tt.body)
+			writeFile(t, filepath.Join(root, "apps", "broken.yaml"), tt.body)
 
-			_, _, err := (DirectoryRenderer{}).Render(context.Background(), ResolvedSource{
+			result, _, err := (DirectoryRenderer{}).Render(context.Background(), ResolvedSource{
 				RepoRoot: root,
 				Path:     "apps",
 			}, RenderOptions{})
-			if err == nil {
-				t.Fatal("Render() error = nil, want partial List manifest error")
+			if tt.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+					t.Fatalf("Render() error = %v, want %q", err, tt.wantErr)
+				}
+				return
 			}
-			if !strings.Contains(err.Error(), "missing apiVersion") {
-				t.Fatalf("Render() error = %v, want missing apiVersion message", err)
+			if err != nil {
+				t.Fatalf("Render() error = %v", err)
+			}
+			got := []string{}
+			for _, manifest := range result {
+				got = append(got, manifest.Object.GetAPIVersion()+"/"+manifest.Object.GetKind()+"/"+manifest.Object.GetName())
+			}
+			if !reflect.DeepEqual(got, tt.want) {
+				t.Fatalf("rendered %#v, want %#v", got, tt.want)
 			}
 		})
 	}

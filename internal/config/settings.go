@@ -147,6 +147,9 @@ const (
 	CommandParameterRuntimeOnly   CommandParameterClassification = "runtime-only"
 	CommandParameterRuntimeWiring CommandParameterClassification = "runtime-wiring"
 	CommandParameterUnknown       CommandParameterClassification = "unknown"
+	// CommandParameterRendered marks a command parameter that drydock
+	// applies when it renders.
+	CommandParameterRendered CommandParameterClassification = "rendered"
 )
 
 type CommandParameterSetting struct {
@@ -176,6 +179,10 @@ type ArgoSettings struct {
 	InClusterEnabled             Value[bool]                       `json:"inClusterEnabled,omitempty" yaml:"inClusterEnabled,omitempty"`
 	ConfigManagementPlugins      map[string]ConfigManagementPlugin `json:"-" yaml:"-"`
 	CommandParameters            []CommandParameterSetting         `json:"commandParameters,omitempty" yaml:"commandParameters,omitempty"`
+	// MaxCombinedDirectoryManifestsSize is the argocd-cmd-params-cm key
+	// reposerver.max.combined.directory.manifests.size, a Kubernetes
+	// quantity. Empty means the repo-server default, 10M.
+	MaxCombinedDirectoryManifestsSize Value[string] `json:"maxCombinedDirectoryManifestsSize,omitempty" yaml:"maxCombinedDirectoryManifestsSize,omitempty"`
 }
 
 func DefaultSettings() ArgoSettings {

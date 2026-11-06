@@ -204,23 +204,28 @@ func TestDecodeDocumentsRootScalarErrorDoesNotIncludeManifestValue(t *testing.T)
 	}
 }
 
-func TestDecodeDocumentsListItemsErrorDoesNotIncludeManifestValue(t *testing.T) {
-	const secretValue = "secret-token-value"
-	input := strings.NewReader(`
-apiVersion: v1
-kind: List
-items: ` + secretValue + `
-`)
-
-	_, err := DecodeDocuments("secrets.yaml", input)
-	if err == nil {
-		t.Fatalf("DecodeDocuments() error = nil, want error")
-	}
-	if !strings.Contains(err.Error(), "secrets.yaml document 0 /items is not a list") {
-		t.Fatalf("error = %q, want path and document index", err)
-	}
-	if strings.Contains(err.Error(), secretValue) {
-		t.Fatalf("error leaked manifest data: %q", err)
+// TestDecodeDocumentsKeepsObjectWhoseItemsIsNotAList pins Argo CD v3.6.1
+// GenerateManifests (reposerver/repository/repository.go:1817-1840): an
+// object whose items field is a scalar or a map is neither a list
+// (Unstructured.IsList) nor a null list (isNullList), so it is emitted
+// unchanged.
+func TestDecodeDocumentsKeepsObjectWhoseItemsIsNotAList(t *testing.T) {
+	for name, items := range map[string]string{
+		"scalar": "text",
+		"map":    "\n  a: b",
+	} {
+		t.Run(name, func(t *testing.T) {
+			docs, err := DecodeDocuments("cm.yaml", strings.NewReader("apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: z\nitems: "+items+"\n"))
+			if err != nil {
+				t.Fatalf("DecodeDocuments() error = %v", err)
+			}
+			if len(docs) != 1 || docs[0].Object.GetName() != "z" || docs[0].RootObject != docs[0].Object {
+				t.Fatalf("DecodeDocuments() = %#v, want the ConfigMap unchanged", docs)
+			}
+			if _, ok := docs[0].Object.Object["items"]; !ok {
+				t.Fatalf("DecodeDocuments() dropped the items field: %#v", docs[0].Object.Object)
+			}
+		})
 	}
 }
 

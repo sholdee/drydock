@@ -1,0 +1,6 @@
+# The apiVersion has a trailing slash, so it does not parse as a group
+# version and the document has no kind for Argo CD.
+apiVersion: apps/v1/
+kind: Deployment
+metadata:
+  name: parity-decode-apiversion-typo

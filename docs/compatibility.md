@@ -450,12 +450,6 @@ Supported:
   repo-server reports the resolved revision (commit SHA for Git sources,
   chart version for Helm repository sources, manifest digest for OCI
   sources).
-- Recorded divergence from strict Argo CD v3.6.1 (unchanged since v3.5.x):
-  a directory YAML document with exactly one of `apiVersion` and `kind`
-  fails the source. The repo-server renders a document with a `kind` but no
-  `apiVersion`, and skips a file that stops at a document with an
-  `apiVersion` but no `kind` when nothing decoded before it and the file does
-  not hold every manifest marker (see the decoding rules below).
 - Directory rendering honors `+argocd:skip-file-rendering`, walks hidden
   directories when `recurse` is enabled, renders Jsonnet through native Go
   libraries with extVars, TLAs, code mode, env substitution, and repo-relative
@@ -472,33 +466,100 @@ Supported:
   the `+argocd:skip-file-rendering` check and every decoder. A file ending in
   `.json` must decode as one JSON object with a `kind` followed only by
   whitespace, so an empty file, YAML content, a JSON array, a syntax error,
-  or several concatenated objects fail the source. Every other file is a YAML/JSON stream that stops at a syntax error
-  or at a non-empty document that is not an object with a `kind` (values-like
-  YAML and `{}` included). When the stream stops, the file fails the source
-  if an object decoded before it or if its content holds all of
-  `apiVersion:`, `kind:`, and `metadata:`; otherwise the whole file is
-  skipped as unrelated YAML. The render parity smoke covers the byte order
-  mark and invalid UTF-8 cases, the skipped files, and each failing case
-  above.
+  or several concatenated objects fail the source. Every other file except
+  a `.jsonnet` file is a YAML/JSON stream. The stream stops at a syntax
+  error or at a non-empty document that is not an object with a non-empty
+  `kind` (values-like YAML, `{}`, and `kind: ""` included). A document needs
+  a `kind` but not an `apiVersion`, so a document with a `kind` and no
+  `apiVersion` renders without one, as in Argo CD. When the stream stops,
+  the file fails the source if an object decoded before it or if its
+  content holds all of `apiVersion:`, `kind:`, and `metadata:`. Otherwise the
+  whole file is skipped as unrelated YAML. Earlier drydock releases failed
+  the source on a document with exactly one of `apiVersion` and `kind`. The
+  render parity smoke covers the byte order mark and invalid UTF-8 cases,
+  the skipped files, and each failing case above.
+- Jsonnet output in a directory source is decoded as the repo-server
+  decodes it: as an array of objects, or else as one object. Each object
+  needs a non-empty `kind`, so an object without one fails the source with
+  `failed to unmarshal generated json`. A `null` array element adds nothing.
+  The objects then go through the same list split and `kind` check as the
+  objects of every other file. A `kind: List` from Jsonnet renders its items,
+  and a List whose `items` field is `null` renders nothing. Earlier drydock
+  releases rendered the List itself and skipped an object without a `kind`.
+- Directory sources fail in the stage order of Argo CD v3.6.1. The
+  repo-server first reads every candidate file, drops files with the
+  `+argocd:skip-file-rendering` marker, and checks the size limit. Then it
+  decodes every file. Then it splits each list into its items and sets the
+  tracking metadata on each manifest. Last, the controller fails on a
+  manifest without a `kind`. So a file that fails an earlier stage is
+  reported, even when a file before it fails a later stage. For example, a
+  `.json` file that does not decode is reported before a list item that is
+  not an object in an earlier file, and a file that cannot be read is
+  reported before a decode error in an earlier file.
+- The files of one directory source must not be larger in sum than the
+  repo-server limit, as in Argo CD v3.6.1. The limit is
+  `reposerver.max.combined.directory.manifests.size` in
+  `argocd-cmd-params-cm`, a Kubernetes quantity, and its default is `10M`
+  (10000000 bytes). `0` turns the limit off. The sum counts the raw size of
+  each file that passes the extension filter, `include`, and `exclude`. It
+  does not count Jsonnet files or files with the skip marker. Over the limit,
+  Argo CD fails with `exceeded max combined manifest file size`, and drydock
+  fails with an error that names the file that went over and the limit.
+  drydock reads the setting only from an `argocd-cmd-params-cm` that it
+  discovers in the repository or in rendered Application output. Otherwise
+  it uses `10M`. So drydock does not see a limit that the Argo CD Helm chart
+  sets through `configs.params`, `repoServer.extraArgs`, or `repoServer.env`,
+  unless the rendered `argocd-cmd-params-cm` of that install is discovered.
+  An empty value means `10M`, and a value that is not a Kubernetes quantity,
+  spaces around it included, fails the build, as it stops the repo-server at
+  startup. Earlier drydock releases had no limit.
+- Recorded divergence from strict Argo CD v3.6.1: drydock skips every file
+  symlink in a directory source. The repo-server follows a file symlink
+  whose target is in the repository, renders the target, and counts the
+  target size toward the limit, so the drydock sum can be lower. A file
+  symlink whose target is outside the repository fails the source in Argo
+  CD, but drydock skips it. A later change will match this.
+- A directory file that is not a regular file, such as a named pipe or a
+  socket, is skipped, as in Argo CD. Earlier drydock releases tried to read
+  it, and a named pipe stopped the render.
+- A manifest whose tracking metadata cannot be set, such as one whose
+  `metadata.annotations` is a string, fails the source in the repo-server
+  stage with `failed to set app instance tracking info on manifest`, as in
+  Argo CD. drydock runs the upstream tracking code with the configured
+  tracking method, so annotation tracking reads the annotations, label
+  tracking reads the labels, and annotation and label tracking reads both.
+  A list item takes the same check. drydock names the file and the item.
+- An object counts as having a `kind` only when its `apiVersion` also parses
+  as a group version, as in the Unstructured decode that Argo CD v3.6.1 uses.
+  An `apiVersion` with two or more slashes, such as the typo `apps/v1/`, does
+  not parse, so the object has no `kind` for Argo CD. In a YAML file such a
+  document stops the stream. A `.json` object or a list item with it fails
+  in the controller stage with `Object 'Kind' is missing`. drydock reports
+  the same failure and names the `apiVersion`. Earlier drydock releases
+  rendered such a YAML document or list item.
+- An object with a `kind` whose `items` field is a string, a number, or a
+  map is not a list, so it renders unchanged, as in Argo CD. This holds for
+  every source type. Earlier drydock releases failed it with
+  `/items is not a list`.
 - A `.json` file that holds JSON `null` or an object without a `kind`, such
   as `package.json`, `tsconfig.json`, or `{}`, fails the source. The Argo CD
   v3.6.1 repo-server accepts such content when it also decodes as an OCI
   image manifest, and emits it as a manifest without a `kind`. The controller
   then fails the Application with a `ComparisonError` that says
-  `Object 'Kind' is missing`. drydock reports this failure only when no other
-  file fails to decode, as Argo CD does. Content that does not decode as an
+  `Object 'Kind' is missing`. drydock reports this failure only when no file
+  fails an earlier stage, as Argo CD does. Content that does not decode as an
   OCI image manifest fails the source in the repo-server. An object without
   a `kind` whose `items` field is an array is a list, and one whose `items`
   field is `null` renders nothing, as in Argo CD. Earlier drydock releases
   rendered nothing for such a file and did not fail.
-- A list item without a `kind` fails the source, in any directory file and
-  whether or not the list has a `kind` of its own, such as
-  `{"items":[{"name":"web"}]}` or a `kind: List` whose item has no `kind`.
-  The Argo CD v3.6.1 repo-server splits every list into its items and emits
-  each item, and the controller fails on an item without a `kind` with the
-  same `Object 'Kind' is missing` error. drydock reports this failure only
-  when no other file fails to decode. Earlier drydock releases skipped such
-  an item when it also had no `apiVersion`.
+- A list item without a `kind` fails the source, in a YAML, JSON, or
+  Jsonnet file of a directory source, whether or not the list has a `kind`
+  of its own, such as `{"items":[{"name":"web"}]}` or a `kind: List` whose
+  item has no `kind`. The Argo CD v3.6.1 repo-server splits every list into
+  its items and emits each item, and the controller fails on an item without
+  a `kind` with the same `Object 'Kind' is missing` error. drydock reports
+  this failure only when no file fails an earlier stage. Earlier drydock
+  releases skipped such an item when it also had no `apiVersion`.
 - Directory `disableExtensionFilter`: the extension filter is skipped and
   `include`/`exclude` become the only filters, so custom extensions such as
   `*.yaml.sealed` render. A `.jsonnet` suffix is still evaluated as Jsonnet, a
@@ -923,7 +984,9 @@ Supported:
   AppProjects but not the named one.
 - `argocd-cmd-params-cm` runtime-boundary diagnostics for settings that imply
   live repo-server, controller, or ApplicationSet controller behavior. These
-  settings are parsed as metadata and do not mutate render behavior.
+  settings are parsed as metadata and do not mutate render behavior, except
+  `reposerver.max.combined.directory.manifests.size` (see the directory
+  size limit above).
 - Custom health Lua validation in `test apps` and `test app`, executed offline
   against rendered desired manifests. It reports Lua runtime errors and
   invalid status values. A `deletionMessage` (Argo CD v3.6.1) applies only to
