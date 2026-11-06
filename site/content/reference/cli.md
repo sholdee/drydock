@@ -86,6 +86,14 @@ drydock get apps --path . --discover-kustomize argocd/overlays/prod
 drydock test apps --path . --discover-kustomize clusters/prod/argocd
 ```
 
+Fleet discovery renders the Application that installs Argo CD on this cluster
+from a Helm chart, to read the Argo CD settings. So `build`, `test`, `diff`,
+`get apps`, `diag`, and changed-only diffs need the chart of that install,
+also when a change does not touch it. With `--offline`, the chart must be in
+the chart cache. If drydock cannot render the install, it reports a
+`settings.install-render-failed` warning and reads the values files of the
+install on their own. `--strict` fails on this warning.
+
 A `--discover-kustomize` path also counts as the Argo CD install of this
 cluster. If its render holds `argocd-cm`, `argocd-cmd-params-cm`, or
 `argocd-cmp-cm` in the `argocd` namespace, drydock reads the Argo CD settings

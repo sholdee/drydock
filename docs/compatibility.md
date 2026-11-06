@@ -918,16 +918,23 @@ Supported:
   So an install counts only when its destination is this cluster: the
   destination resolves to `https://kubernetes.default.svc`, by server or by
   name, as project validation resolves it. Only its rendered ConfigMaps in
-  the Argo CD namespace (`argocd`) count. An Application that installs Argo
+  the Argo CD namespace (`argocd`) count, both when drydock renders it for
+  settings only and when the discovery frontier renders it. drydock drops
+  its settings ConfigMaps in other namespaces. An Application that installs Argo
   CD on another cluster is not an install. drydock does not render it for
   settings, and its values files stay settings sources of their own, as in
   earlier releases.
 
   The local Helm values files of a render are these files:
-  - The `valueFiles` entries. drydock resolves them as the renderer does. It
+  - The `valueFiles` entries. drydock resolves them as the renderer does, and
+    it reads every YAML document of a values file, as Helm does. It
     fills in `$ARGOCD_APP_NAME` and the other build environment variables,
-    resolves a `$ref` whose source is this repository, and expands globs.
-    For a chart from a chart repository, only `$ref` entries are local.
+    resolves `$ref` roots as the render does, and expands globs. A `$ref`
+    with the repository and revision of the source reads the root of that
+    source. So it is local only when that source renders from this
+    repository, or is a chart from a chart repository. Any other `$ref` is
+    local when its source is this repository. For a chart from a chart
+    repository, only `$ref` entries are local.
   - The `values.yaml` of a local chart, and of each unpacked subchart under
     its `charts/` directory.
   - The `valuesFile` and `additionalValuesFiles` of each Kustomize
@@ -970,9 +977,14 @@ Supported:
   `application.instanceLabelKey`. A `null` value removes a chart default, as
   in Helm. `configs.params` reaches `argocd-cmd-params-cm`.
 
-  If drydock cannot render an install, for example because the chart is not
-  in the cache with `--offline`, it reports a `settings` warning that names
-  the Application and the error. Then each values file of that install
+  Every fleet command renders the install in discovery, so it needs the
+  chart of the install: `build`, `test`, `diff`, `get apps`, `diag`, and a
+  changed-only diff, also when the change does not touch the install. If
+  drydock cannot render an install, for example because the chart is not in
+  the cache with `--offline`, it reports a
+  `settings.install-render-failed` warning that names the Application and
+  the error, once for each diff side. The settings are then known to be
+  incomplete, so `--strict` fails on this warning. Then each values file of that install
   stays a settings source of its own, as described below, unless another
   install that rendered read the same file. drydock reads only `configs.cm`
   and `configs.cmp` from such a file. A values file that no rendered install
