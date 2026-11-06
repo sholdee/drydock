@@ -395,10 +395,13 @@ expression in `resource.customizations` fails every Application. The command
 prints the diagnostics and no diff, and fails. Fix the jq expression. A
 deleted Application is not checked, because Argo CD never compares it.
 
-`diff.comparison-failed` is an error. A `jqPathExpressions` entry removed a
-whole object, as `.` does, and the Application uses the client-side diff.
-Argo CD then fails the comparison of the Application. Fix the jq expression so
-that it removes a field, not the object.
+`diff.comparison-failed` is an error. A `jqPathExpressions` entry removed the
+whole object on both sides, as `.` does, and the Application uses the
+client-side diff. Argo CD then fails the comparison of the Application. When
+the expression removes the object on one side only, Argo CD and drydock show a
+change with `null` on that side instead. With server-side diff, both sides
+`null` compare as unchanged. Fix the jq expression so that it removes a field,
+not the object.
 
 ## Symptom: Changed-Only Falls Back To All Apps
 

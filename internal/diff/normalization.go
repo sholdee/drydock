@@ -247,9 +247,10 @@ func normalizeKnownTypeFields(object map[string]any, resource Resource, fields [
 		return nil, err
 	}
 	obj := &unstructured.Unstructured{Object: object}
-	if err := normalizer.Normalize(obj); err != nil {
-		return nil, err
-	}
+	// Argo CD's composable normalizer returns a known-types error to
+	// gitops-engine, which only logs it and compares the object as it is
+	// (pkg/diff/diff.go:771-775). So the error is ignored here too.
+	_ = normalizer.Normalize(obj)
 	return obj.Object, nil
 }
 func stripAttrSet(attrs []string) map[string]struct{} {

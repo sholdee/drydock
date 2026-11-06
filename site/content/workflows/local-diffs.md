@@ -170,7 +170,12 @@ which has no `spec`. A jq expression that does not parse fails each Application
 it belongs to with a `diff.ignore-rule-invalid` error, even when it matches no
 resource, because Argo CD then fails the comparison of the Application. An
 expression in `resource.customizations` belongs to every Application. The
-command then prints no diff and fails.
+command then prints no diff and fails. A jq expression that removes the whole
+object on both sides, as `.` does, gives a `diff.comparison-failed` error for
+its Application when the Application uses the client-side diff, as Argo CD also
+fails that comparison. With server-side diff, the resource then compares as
+unchanged. When the object is removed on one side only, the diff shows a change
+with `null` on that side.
 
 Every `jsonPointers` entry follows the path rules of the JSON-patch library
 that Argo CD applies it with, the same rules as annotation pointers below. A

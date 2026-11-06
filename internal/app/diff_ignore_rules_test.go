@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	argoappv1 "github.com/argoproj/argo-cd/v3/pkg/apis/application/v1alpha1"
 	"github.com/sholdee/drydock/internal/config"
 	"github.com/sholdee/drydock/internal/diagnostic"
 	"github.com/sholdee/drydock/internal/diff"
@@ -587,6 +588,39 @@ func TestOrchestratorDiffAppsChangedOnlyUsesCurrentSideRules(t *testing.T) {
 				if res.Parent.Name != "demo" {
 					t.Fatalf("Results = %#v, want only Application demo", result.Results)
 				}
+			}
+		})
+	}
+}
+
+// applicationServerSideDiff follows shouldUseServerSideDiff
+// (controller/state.go:1184-1191) without the controller-level switch.
+func TestApplicationServerSideDiff(t *testing.T) {
+	for _, tt := range []struct {
+		name        string
+		annotation  string
+		syncOptions []string
+		want        bool
+	}{
+		{name: "default"},
+		{name: "ServerSideDiff=true annotation alone", annotation: "ServerSideDiff=true", want: true},
+		{name: "ServerSideApply=true sync option alone", syncOptions: []string{"ServerSideApply=true"}, want: true},
+		{name: "ServerSideDiff=false wins over ServerSideApply=true", annotation: "ServerSideDiff=false", syncOptions: []string{"ServerSideApply=true"}},
+		{name: "comma-separated annotation", annotation: "IgnoreExtraneous,ServerSideDiff=true", want: true},
+		{name: "comma-separated annotation with spaces", annotation: "IgnoreExtraneous, ServerSideDiff=true", want: true},
+		{name: "comma-separated false wins", annotation: "ServerSideDiff=true,ServerSideDiff=false", syncOptions: []string{"ServerSideApply=true"}},
+		{name: "other options only", annotation: "IgnoreExtraneous", syncOptions: []string{"CreateNamespace=true"}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			application := argoappv1.Application{}
+			if tt.annotation != "" {
+				application.Annotations = map[string]string{"argocd.argoproj.io/compare-options": tt.annotation}
+			}
+			if tt.syncOptions != nil {
+				application.Spec.SyncPolicy = &argoappv1.SyncPolicy{SyncOptions: tt.syncOptions}
+			}
+			if got := applicationServerSideDiff(application); got != tt.want {
+				t.Fatalf("applicationServerSideDiff() = %t, want %t", got, tt.want)
 			}
 		})
 	}

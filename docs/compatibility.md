@@ -1239,13 +1239,20 @@ Supported:
 - A jq expression that removes the whole object, such as `.`, makes Argo CD
   continue with the object `null`, which it cannot decode. gitops-engine
   only logs that error, and the object stays `null`. The result depends on
-  the diff mode. With the client-side diff, gitops-engine cannot build a
-  patch and fails, so Argo CD fails the comparison of the Application.
-  drydock then reports a `diff.comparison-failed` error for that
-  Application, also when its resource did not change. With server-side
-  diff, Argo CD compares `null` with `null`, so a change to the resource is
-  hidden, and drydock does the same. A new or deleted resource shows as a
-  change in both modes. drydock reads the diff mode from the Application:
+  the diff mode and on which side is `null`:
+  - Both sides `null`, client-side diff: gitops-engine cannot build a patch
+    and fails, so Argo CD fails the comparison of the Application. drydock
+    reports a `diff.comparison-failed` error for that Application, also
+    when its resource did not change.
+  - Both sides `null`, server-side diff: Argo CD compares `null` with
+    `null`, so a change to the resource is hidden. drydock does the same.
+  - One side `null`: Argo CD reports a change, and drydock shows a change
+    with `null` on that side. With the client-side diff, this needs the
+    last-applied annotation that a client-side sync leaves; without it,
+    the two-way diff hides a `null` desired object.
+  - A new or deleted resource shows as a change in both modes. Server-side
+    diff shows the whole object, because it does not run the ignore rules
+    for it. The client-side diff shows `null`. drydock reads the diff mode from the Application:
   the `ServerSideDiff=true` or `ServerSideDiff=false` compare option and
   the `ServerSideApply=true` sync option. drydock does not read the
   controller-level switch `controller.diff.server.side`, which turns on
@@ -1264,6 +1271,9 @@ Supported:
   other Applications with the error. Argo CD never compares a deleted
   Application, so an Application that only the baseline side has is not
   checked.
+- A known-types normalizer error, such as a `core/v1/ResourceRequirements`
+  field whose `limits` is not a map, is only logged by Argo CD, which then
+  compares the object as it is. drydock ignores the error in the same way.
 - `resource.customizations` keys as Argo CD reads them for `jsonPointers`,
   `jqPathExpressions`, and `knownTypeFields`
   (`util/argo/normalizers/util.go`): `group/kind` matches with globs, a key

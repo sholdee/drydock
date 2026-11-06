@@ -163,24 +163,27 @@ func diffResultForKey(leftByKey, rightByKey map[string]Document, key string, opt
 	left, hasLeft := leftByKey[key]
 	right, hasRight := rightByKey[key]
 	left, right = documentsWithSharedNormalization(left, right, hasLeft, hasRight)
-	if hasLeft && hasRight && left.Body == right.Body && !mayFailComparison(left.Normalization) {
+	if hasLeft && hasRight && left.Body == right.Body {
 		// Both sides share the current side's normalization, so identical bodies
-		// always normalize identically and can never produce a diff.
+		// always normalize identically and can never produce a diff. Under
+		// client-side diff, an ignore rule that removes the whole object
+		// still fails the comparison, so one side is checked for that. Other
+		// errors of that check are ignored, as the resource is unchanged.
+		if mayFailComparison(left.Normalization) && objectRemovedByNormalization(right, opts) {
+			return Result{}, false, bothObjectsRemovedFailure(right), nil
+		}
 		return Result{}, false, nil, nil
 	}
 	leftBody, rightBody, err := normalizedDocumentBodies(left, right, hasLeft, hasRight, opts)
 	if err != nil {
 		return Result{}, false, nil, err
 	}
-	if hasLeft && hasRight && !right.Normalization.ServerSideDiff && (leftBody == nullDiffBody || rightBody == nullDiffBody) {
-		// gitops-engine's client-side diff cannot build a patch from the
-		// object null and returns an error, so Argo CD fails the comparison
-		// of the Application (pkg/diff/diff.go Diff, controller/state.go
-		// StateDiffs). Server-side diff compares null as it is.
-		return Result{}, false, &ComparisonFailure{
-			Parent:  right.Parent,
-			Message: fmt.Sprintf("%s: an ignore rule removed the whole object, so Argo CD's client-side diff fails the comparison of the Application", headerOf(right)),
-		}, nil
+	if hasLeft && hasRight && !right.Normalization.ServerSideDiff && leftBody == nullDiffBody && rightBody == nullDiffBody {
+		return Result{}, false, bothObjectsRemovedFailure(right), nil
+	}
+	leftBody, rightBody, err = serverSideCreateOrDeleteBodies(left, right, hasLeft, hasRight, leftBody, rightBody, opts)
+	if err != nil {
+		return Result{}, false, nil, err
 	}
 	doc, change, include := changedDocument(left, right, hasLeft, hasRight, leftBody, rightBody)
 	if !include {
@@ -188,6 +191,59 @@ func diffResultForKey(leftByKey, rightByKey map[string]Document, key string, opt
 	}
 	result, err := resultFor(doc, change, leftBody, rightBody, opts)
 	return result, true, nil, err
+}
+
+// bothObjectsRemovedFailure is the failure of the comparison when an ignore
+// rule removes the object on both sides under client-side diff.
+// gitops-engine then cannot build a patch from null and null and returns an
+// error, so Argo CD fails the comparison of the Application
+// (pkg/diff/diff.go Diff, controller/state.go StateDiffs). When only one
+// side is null, the client-side diff reports a change (with the last-applied
+// annotation that a client-side sync leaves) and server-side diff always
+// does, so drydock shows a change. Server-side diff compares null with null
+// as unchanged.
+func bothObjectsRemovedFailure(doc Document) *ComparisonFailure {
+	return &ComparisonFailure{
+		Parent:  doc.Parent,
+		Message: fmt.Sprintf("%s: an ignore rule removed the whole object on both sides, so Argo CD's client-side diff fails the comparison of the Application", headerOf(doc)),
+	}
+}
+
+// objectRemovedByNormalization reports whether the document's ignore rules
+// remove its whole object. Any other normalization error counts as false.
+func objectRemovedByNormalization(doc Document, opts Options) bool {
+	_, err := normalizeDiffObject(doc.Body, opts, doc.Normalization, doc.Resource)
+	return errors.Is(err, errObjectRemoved)
+}
+
+// serverSideCreateOrDeleteBodies replaces the null body of a resource that
+// only one side has under server-side diff. Argo CD's server-side diff skips
+// the ignore rules and known types for a created or deleted resource
+// (gitops-engine pkg/diff/diff.go Diff and handleResourceCreateOrDeleteDiff),
+// so it shows the whole object where a rule would remove it.
+func serverSideCreateOrDeleteBodies(left, right Document, hasLeft, hasRight bool, leftBody, rightBody string, opts Options) (string, string, error) {
+	if hasLeft == hasRight {
+		return leftBody, rightBody, nil
+	}
+	doc, body := right, rightBody
+	if hasLeft {
+		doc, body = left, leftBody
+	}
+	if !doc.Normalization.ServerSideDiff || body != nullDiffBody {
+		return leftBody, rightBody, nil
+	}
+	doc.Normalization.ApplicationRules = nil
+	doc.Normalization.CustomizationRules = nil
+	doc.Normalization.AnnotationJSONPointers = nil
+	doc.Normalization.KnownTypeFields = nil
+	shown, err := normalizeDocumentBody(doc, opts)
+	if err != nil {
+		return "", "", err
+	}
+	if hasLeft {
+		return shown, rightBody, nil
+	}
+	return leftBody, shown, nil
 }
 
 // mayFailComparison reports whether normalization can remove a whole object
