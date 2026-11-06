@@ -1,0 +1,34 @@
+# An empty steps list. Argo CD sets ErrorOccurred with reason
+# ApplicationSetRolloutError and returns before it creates any Application.
+# drydock still generates the Applications, which is a known difference, so
+# this generator has no elements: both sides then hold no Applications and
+# the smoke compares only the condition and the warning.
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: parity-rolling-sync-no-steps
+  namespace: argocd
+spec:
+  goTemplate: true
+  goTemplateOptions: ["missingkey=error"]
+  generators:
+    - list:
+        elements: []
+  strategy:
+    type: RollingSync
+    rollingSync:
+      steps: []
+  template:
+    metadata:
+      name: "parity-rolling-sync-no-steps-{{.env}}"
+      labels:
+        env: "{{.env}}"
+    spec:
+      project: default
+      source:
+        repoURL: git://argocd-parity-git.argocd-parity.svc.cluster.local/repo.git
+        targetRevision: HEAD
+        path: workloads/appset/rolling-sync
+      destination:
+        name: in-cluster
+        namespace: "parity-rolling-sync-no-steps-{{.env}}"

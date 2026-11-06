@@ -277,6 +277,15 @@ APPLICATIONS=(
   # flattens to one "[a b c]" value. The parity-segments-index-* Applications
   # select on path.segments.3 and must be absent on both sides.
   parity-segments-alpha
+  # RollingSync strategies. InvalidRolloutConfig never blocks Applications,
+  # so every one of them exists. parity-rolling-sync-no-steps has no
+  # elements, so it has no Applications on either side.
+  parity-rolling-sync-valid-dev
+  parity-rolling-sync-valid-prod
+  parity-rolling-sync-operator-dev
+  parity-rolling-sync-duplicate-dev
+  parity-rolling-sync-empty-step-dev
+  parity-rolling-sync-max-update-dev
 )
 
 # ApplicationSets that Argo CD must reject, as "name|text" pairs. Before the
@@ -292,6 +301,23 @@ APPLICATIONS=(
 # is no condition to wait for.
 APPLICATIONSET_ERRORS=(
   "parity-cluster-sprig-map-function|got map[string]string"
+)
+
+# RollingSync ApplicationSets, as "name|type|status|reason|message|code"
+# entries. Argo CD v3.6.1 must set the condition of that type with exactly
+# that status, reason and message
+# (applicationset/progressivesync/progressive_sync.go:953-971 and
+# applicationset/controllers/applicationset_controller.go:263-277). drydock
+# must warn with the code and carry the same message. An empty code means
+# drydock must not warn. Argo CD shows only the highest-priority finding
+# (validation_issues.go:114-128); drydock warns once for each finding.
+ROLLING_SYNC_CONDITIONS=(
+  "parity-rolling-sync-valid|InvalidRolloutConfig|False|ApplicationSetValidRolloutConfig|Rolling Sync Configured correctly|"
+  "parity-rolling-sync-operator|InvalidRolloutConfig|True|ApplicationSetInvalidRolloutConfig|Step 1 has invalid matchExpression operators: Exists. Supported Operators are 'In' and 'NotIn'|appset.invalid-rollout-config"
+  "parity-rolling-sync-duplicate|InvalidRolloutConfig|True|ApplicationSetInvalidRolloutConfig|Application 'parity-rolling-sync-duplicate-dev' is selected by multiple steps: (1-2)|appset.invalid-rollout-config"
+  "parity-rolling-sync-empty-step|InvalidRolloutConfig|True|ApplicationSetInvalidRolloutConfig|Steps [2] have no applications matching their criteria|appset.invalid-rollout-config"
+  "parity-rolling-sync-max-update|InvalidRolloutConfig|True|ApplicationSetInvalidRolloutConfig|Step 1 has an invalid maxUpdate value: 1|appset.invalid-rollout-config"
+  "parity-rolling-sync-no-steps|ErrorOccurred|True|ApplicationSetRolloutError|No steps defined for rollout|appset.rollout-no-steps"
 )
 
 TRACKING_APPLICATIONS=(
@@ -1099,6 +1125,10 @@ install_argocd() {
   kubectl wait --for=condition=Established crd/applications.argoproj.io --timeout=120s
   kubectl wait --for=condition=Established crd/applicationsets.argoproj.io --timeout=120s
   kubectl -n argocd patch configmap argocd-cm --type merge -p '{"data":{"kustomize.buildOptions":"--enable-helm"}}' >/dev/null
+  # Argo CD checks RollingSync steps only with progressive syncs on, and they
+  # are off by default. The ApplicationSet controller restart below picks it up.
+  kubectl -n argocd patch configmap argocd-cmd-params-cm --type merge \
+    -p '{"data":{"applicationsetcontroller.enable.progressive.syncs":"true"}}' >/dev/null
   # Argo CD derives the OCI registry CA from argocd-tls-certs-cm keyed by the
   # bare hostname without port. The patch must land before the rollout
   # restart below so repo-server pods mount the CA from the start (ConfigMap
@@ -1113,6 +1143,7 @@ install_argocd() {
     --patch-file "${WORK_DIR}/argocd-tls-certs-cm.patch.json" >/dev/null \
     || fail "could not patch argocd-tls-certs-cm with the ${OCI_REGISTRY_HOST} CA bundle"
   kubectl -n argocd rollout restart deployment/argocd-repo-server >/dev/null
+  kubectl -n argocd rollout restart deployment/argocd-applicationset-controller >/dev/null
   kubectl -n argocd rollout status deployment/argocd-repo-server --timeout=300s
   kubectl -n argocd rollout status deployment/argocd-server --timeout=300s
   kubectl -n argocd rollout status deployment/argocd-applicationset-controller --timeout=300s
@@ -1309,6 +1340,68 @@ wait_for_applicationset_errors() {
     IFS='|' read -r appset expected <<< "${entry}"
     wait_for_applicationset_error "${appset}" "${expected}"
   done
+}
+
+# applicationset_condition prints "<status>|<reason>|<message>" for the
+# condition of the given type on ApplicationSet argocd/<name>, and nothing
+# when it has none.
+applicationset_condition() {
+  local appset="$1"
+  local condition_type="$2"
+  kubectl -n argocd get applicationset "${appset}" \
+    -o jsonpath="{range .status.conditions[?(@.type==\"${condition_type}\")]}{.status}|{.reason}|{.message}{end}" 2>/dev/null || true
+}
+
+# wait_for_rolling_sync_conditions waits until each ApplicationSet in
+# ROLLING_SYNC_CONDITIONS has its expected condition. The maxUpdate finding
+# needs the Applications to exist first, so it appears on a later reconcile.
+wait_for_rolling_sync_conditions() {
+  local entry appset condition_type status reason message code expected actual dump
+  for entry in "${ROLLING_SYNC_CONDITIONS[@]}"; do
+    IFS='|' read -r appset condition_type status reason message code <<< "${entry}"
+    expected="${status}|${reason}|${message}"
+    for _ in {1..120}; do
+      actual="$(applicationset_condition "${appset}" "${condition_type}")"
+      [[ "${actual}" == "${expected}" ]] && continue 2
+      sleep 2
+    done
+    dump="$(artifact_dir logs)/applicationset-${appset}.yaml"
+    kubectl -n argocd get applicationset "${appset}" -o yaml > "${dump}" 2>&1 || true
+    fail "ApplicationSet argocd/${appset} ${condition_type} condition is \"${actual:-none}\", want \"${expected}\"; see ${dump}"
+  done
+}
+
+# compare_rolling_sync_conditions compares the RollingSync findings of both
+# sides. Argo CD and drydock must flag the same ApplicationSets as
+# ROLLING_SYNC_CONDITIONS, and for each one drydock must warn with the
+# expected code and the Argo CD condition message. It reads the drydock
+# warnings from the get apps stderr that capture_drydock_applications keeps.
+compare_rolling_sync_conditions() {
+  local stderr_file="${OUT_DIR}/applications/drydock.stderr"
+  local entry appset condition_type status reason message code
+  local expected="" argocd drydock
+  log_step "Comparing Argo CD RollingSync conditions with drydock warnings"
+  for entry in "${ROLLING_SYNC_CONDITIONS[@]}"; do
+    IFS='|' read -r appset condition_type status reason message code <<< "${entry}"
+    [[ -n "${code}" ]] || continue
+    expected+="${appset}"$'\n'
+    grep -F "warning ${code}: ApplicationSet argocd/${appset} " "${stderr_file}" | grep -qF ": ${message};" \
+      || fail "drydock did not warn ${code} for ApplicationSet argocd/${appset} with the Argo CD message \"${message}\"; see ${stderr_file}"
+  done
+  expected="$(printf '%s' "${expected}" | sort)"
+  argocd="$(kubectl -n argocd get applicationsets.argoproj.io -o jsonpath='{range .items[*]}{.metadata.name}{"\t"}{.status.conditions[?(@.type=="InvalidRolloutConfig")].status}{"\t"}{.status.conditions[?(@.reason=="ApplicationSetRolloutError")].status}{"\n"}{end}' \
+    | awk -F'\t' '$2 == "True" || $3 == "True" { print $1 }' | sort)"
+  drydock="$(grep -oE '^warning appset\.(invalid-rollout-config|rollout-no-steps): ApplicationSet argocd/[^ ]+' "${stderr_file}" \
+    | sed 's|.*/||' | sort -u || true)"
+  if [[ "${argocd}" != "${expected}" || "${drydock}" != "${expected}" ]]; then
+    {
+      printf 'expected flagged ApplicationSets:\n%s\n\n' "${expected}"
+      printf 'Argo CD flagged ApplicationSets:\n%s\n\n' "${argocd}"
+      printf 'drydock flagged ApplicationSets:\n%s\n' "${drydock}"
+    } > "${OUT_DIR}/rolling-sync-conditions.diff"
+    fail "the ApplicationSets that Argo CD and drydock flag for RollingSync do not match; see ${OUT_DIR}/rolling-sync-conditions.diff"
+  fi
+  echo "RollingSync conditions: ${#ROLLING_SYNC_CONDITIONS[@]} cases match" >&2
 }
 
 assert_namespace_inventory() {
@@ -1618,7 +1711,8 @@ capture_argocd_applications() {
 capture_drydock_applications() {
   local output_dir stderr_file
   output_dir="$(artifact_dir applications)"
-  stderr_file="${OUT_DIR}/drydock-get-apps.stderr"
+  # Kept: compare_rolling_sync_conditions reads the warnings in it.
+  stderr_file="${output_dir}/drydock.stderr"
   if ! (cd "${REPO_ROOT}" && "${DRYDOCK_CMD[@]}" get apps \
     --path "${FIXTURE_REPO_PATH}" \
     --repo-map "${FIXTURE_REPO_URL}=${FIXTURE_REPO_PATH}" \
@@ -1633,7 +1727,6 @@ capture_drydock_applications() {
     cat "${stderr_file}" >&2 || true
     fail "drydock get apps for the Application inventory comparison failed; see ${stderr_file}"
   fi
-  rm -f "${stderr_file}"
 }
 
 # compare_applications checks names and specs, not just counts: drydock must
@@ -2076,6 +2169,8 @@ main() {
   wait_for_applications
   log_step "Waiting for expected ApplicationSet errors"
   wait_for_applicationset_errors
+  log_step "Waiting for RollingSync ApplicationSet conditions"
+  wait_for_rolling_sync_conditions
   assert_application_inventory
   log_step "Capturing the Argo CD Application inventory"
   capture_argocd_applications
@@ -2094,6 +2189,7 @@ main() {
   assert_avp_markers
   compare_manifests
   compare_applications
+  compare_rolling_sync_conditions
   compare_avp_oracle_manifests
   compare_tracking_manifests
   run_directory_decode_smoke

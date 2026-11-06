@@ -1,0 +1,39 @@
+# Step 2 selects no Application.
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: parity-rolling-sync-empty-step
+  namespace: argocd
+spec:
+  goTemplate: true
+  goTemplateOptions: ["missingkey=error"]
+  generators:
+    - list:
+        elements:
+          - env: dev
+  strategy:
+    type: RollingSync
+    rollingSync:
+      steps:
+        - matchExpressions:
+            - key: env
+              operator: In
+              values: [dev]
+        - matchExpressions:
+            - key: env
+              operator: In
+              values: [prod]
+  template:
+    metadata:
+      name: "parity-rolling-sync-empty-step-{{.env}}"
+      labels:
+        env: "{{.env}}"
+    spec:
+      project: default
+      source:
+        repoURL: git://argocd-parity-git.argocd-parity.svc.cluster.local/repo.git
+        targetRevision: HEAD
+        path: workloads/appset/rolling-sync
+      destination:
+        name: in-cluster
+        namespace: "parity-rolling-sync-empty-step-{{.env}}"

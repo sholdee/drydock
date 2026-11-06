@@ -825,6 +825,61 @@ drydock flattens params the same way.
 `TestArgoCDParityFixtureSelectorListParams` in `internal/appset` pins the
 drydock side.
 
+## RollingSync fixture
+
+The `applicationsets/rolling-sync-*.yaml` ApplicationSets use
+`spec.strategy.type: RollingSync`. The ApplicationSet controller of Argo CD
+v3.6.1 has a progressive syncs flag
+(`applicationsetcontroller.enable.progressive.syncs` in
+`argocd-cmd-params-cm`). Without that flag, the controller does not check
+RollingSync steps. The flag is off by default
+(`cmd/argocd-applicationset-controller/commands/applicationset_controller.go:327`).
+The smoke turns it on during the Argo CD install.
+
+With the flag on, Argo CD sets one of these conditions on the ApplicationSet:
+
+| ApplicationSet | Condition | Message |
+| --- | --- | --- |
+| `parity-rolling-sync-valid` | `InvalidRolloutConfig` `False`, reason `ApplicationSetValidRolloutConfig` | `Rolling Sync Configured correctly` |
+| `parity-rolling-sync-operator` | `InvalidRolloutConfig` `True`, reason `ApplicationSetInvalidRolloutConfig` | `Step 1 has invalid matchExpression operators: Exists. ...` |
+| `parity-rolling-sync-duplicate` | same | `Application 'parity-rolling-sync-duplicate-dev' is selected by multiple steps: (1-2)` |
+| `parity-rolling-sync-empty-step` | same | `Steps [2] have no applications matching their criteria` |
+| `parity-rolling-sync-max-update` | same | `Step 1 has an invalid maxUpdate value: 1` |
+| `parity-rolling-sync-no-steps` | `ErrorOccurred` `True`, reason `ApplicationSetRolloutError` | `No steps defined for rollout` |
+
+`InvalidRolloutConfig` comes from `getInvalidRolloutConfig`
+(`applicationset/progressivesync/progressive_sync.go:953-971`). It never
+stops Argo CD from creating or updating Applications, so every Application
+of the first five ApplicationSets is in the smoke's `APPLICATIONS` array.
+When there are several findings, the condition shows only the one with the
+highest priority (`validation_issues.go:114-128`). The operator fixture has
+two findings (the operator and an empty step 1), so it pins that order.
+Argo CD checks `maxUpdate` only for Applications that already exist, so that
+condition turns `True` on a reconcile after the first one.
+
+An empty steps list is different. Argo CD sets `ErrorOccurred` and returns
+before it creates, updates, or deletes any Application
+(`applicationset/controllers/applicationset_controller.go:263-277`). drydock
+still generates the Applications, because it cannot know whether the flag is
+on. This is a known difference. So `parity-rolling-sync-no-steps` has no list
+elements: neither side has Applications, and the smoke compares only the
+condition with the warning.
+
+The smoke checks the conditions in two steps:
+
+1. Before the inventory checks, it waits until each ApplicationSet in
+   `ROLLING_SYNC_CONDITIONS` has the exact status, reason, and message above.
+2. After `drydock get apps`, it reads the warnings from that command's
+   stderr. Argo CD and drydock must flag the same ApplicationSets. drydock
+   flags an ApplicationSet with `appset.invalid-rollout-config` or
+   `appset.rollout-no-steps`. For each flagged ApplicationSet, one drydock
+   warning must carry the Argo CD message. drydock warns once for each
+   finding, so it can warn more than once for one ApplicationSet.
+
+The usual inventory and manifest comparisons cover the generated
+Applications. `TestArgoCDParityFixtureRollingSync` in `internal/appset` pins
+the drydock side.
+
 ## Directory decode fixture
 
 These fixtures cover how Argo CD v3.6.1 reads each file in a directory
