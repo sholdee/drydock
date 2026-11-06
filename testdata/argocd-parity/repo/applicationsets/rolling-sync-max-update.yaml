@@ -36,3 +36,9 @@ spec:
       destination:
         name: in-cluster
         namespace: "parity-rolling-sync-max-update-{{.env}}"
+      # The controller starts real syncs. This keeps them from failing on a
+      # missing namespace. drydock and argocd app manifests both leave the
+      # created Namespace out.
+      syncPolicy:
+        syncOptions:
+          - CreateNamespace=true

@@ -887,6 +887,17 @@ The usual inventory and manifest comparisons cover the generated
 Applications. `TestArgoCDParityFixtureRollingSync` in `internal/appset` pins
 the drydock side.
 
+With steps, the Argo CD controller also sets
+`spec.syncPolicy.automated.enabled: false` on each generated Application with
+an automated sync policy. The inventory comparison checks only the name,
+namespace, project, destination, and sources, not `syncPolicy`, so the smoke
+does not pin this. `TestGenerateDisablesAutomatedSyncForRollingSync` in
+`internal/appset` does.
+
+The controller also starts real syncs of these Applications. Their templates
+set `CreateNamespace=true`, so the syncs do not fail on a missing namespace.
+Neither side's rendered manifests show the created Namespace.
+
 ## Concurrent runs
 
 Each smoke run writes its own kubeconfig to `<out>/kubeconfig` and removes it
