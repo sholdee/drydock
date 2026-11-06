@@ -553,13 +553,53 @@ Supported:
   field is `null` renders nothing, as in Argo CD. Earlier drydock releases
   rendered nothing for such a file and did not fail.
 - A list item without a `kind` fails the source, in a YAML, JSON, or
-  Jsonnet file of a directory source, whether or not the list has a `kind`
+  Jsonnet file of a directory source and in Helm, Kustomize, or plugin
+  output, whether or not the list has a `kind`
   of its own, such as `{"items":[{"name":"web"}]}` or a `kind: List` whose
   item has no `kind`. The Argo CD v3.6.1 repo-server splits every list into
   its items and emits each item, and the controller fails on an item without
   a `kind` with the same `Object 'Kind' is missing` error. drydock reports
   this failure only when no file fails an earlier stage. Earlier drydock
   releases skipped such an item when it also had no `apiVersion`.
+- Helm, Kustomize, and config management plugin output is read as the
+  Argo CD v3.6.1 repo-server reads it, with gitops-engine `kube.SplitYAML`.
+  The whole output is split into documents first. An empty document, a
+  document with only comments, and a `null` document add nothing. Then each
+  document is decoded into an object that must have a `kind`. A document
+  that is not an object fails the source. A document without a `kind` fails
+  the source with `Object 'Kind' is missing`, also an empty object `{}` and
+  an object whose `apiVersion` does not parse, such as `apps/v1/`. A
+  document that does not parse is reported before an earlier document
+  without a `kind`. Then lists are split, a `null` list adds nothing, and the
+  tracking metadata is set, as for a directory source. Last, a list item
+  without a `kind` fails the source in the controller stage. drydock names
+  the template file, the `kustomization.yaml` file, or the plugin output,
+  and the document index. Earlier drydock releases skipped an empty object,
+  rendered a document without a `kind`, and did not fail this output on
+  tracking metadata that cannot be set. The render parity smoke
+  covers a Helm template without a `kind`, a Helm `{}`, a Helm and a
+  Kustomize `apps/v1/` typo, a Helm List item without a `kind`, and a
+  plugin `{}`.
+- Helm output is read as `helm template` (Helm v4.3.1, the version that
+  Argo CD v3.6.1 bundles) writes it. Each file whose name ends in
+  `NOTES.txt` is dropped. Each template document is a hook or not by the
+  `helm.sh/hook` annotation of the document itself, so a `kind: List` is
+  read by its own annotations and not by the annotations of its items. A
+  document whose `helm.sh/hook` value names a hook event that Helm does not
+  know, such as `crd-install` or `test-failure`, or is empty, is dropped,
+  with a Helm log line `skipping unknown hooks` on stderr. With
+  `spec.source.helm.skipTests`, a document whose hook events include `test`
+  or `test-success` is dropped as a whole, a List with its items. With
+  Kustomize `helmCharts` `skipHooks`, every hook document is dropped. A
+  template document whose head Helm cannot read, such as annotations that
+  are not strings, fails the source with `YAML parse error on <file>`, as
+  `helm template` does. When several documents fail, drydock reports the
+  document that Argo CD reports: Argo CD reads the CRDs first, then the
+  other documents in Helm's kind order, then the hooks. drydock still emits
+  the manifests in its own order: CRDs, then templates by file name, each
+  in file order. Earlier drydock releases dropped only files named
+  `NOTES.txt`, checked the hook annotation of each list item, kept documents
+  with unknown hook events, and kept a test hook List under `skipTests`.
 - Directory `disableExtensionFilter`: the extension filter is skipped and
   `include`/`exclude` become the only filters, so custom extensions such as
   `*.yaml.sealed` render. A `.jsonnet` suffix is still evaluated as Jsonnet, a
