@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 
 	argoappv1 "github.com/argoproj/argo-cd/v3/pkg/apis/application/v1alpha1"
@@ -147,9 +148,12 @@ func lastEntryPerKey[T any, K comparable](entries []T, key func(T) K) []bool {
 }
 
 // helmFileParameterReader reads the file that helm --set-file names for
-// target: target.readPath, the real path that resolveHelmFileParameter
-// found and checked. helm reads the file even when the parameter name is
-// empty.
+// target. helm asks for the path it parsed from name=<path>, which must be
+// target.helmPath: a name that holds "=" or "," can make helm parse another
+// path, which drydock did not resolve, so that fails. drydock reads the file
+// only when its real path is in the root and outside .git
+// (confineHelmFileParameterRead), and then reads that real path. helm reads
+// the file even when the parameter name is empty.
 func helmFileParameterReader(ctx context.Context, target helmFileParameterTarget) strvals.RunesValueReader {
 	return func(input []rune) (any, error) {
 		if err := ctx.Err(); err != nil {
@@ -159,7 +163,18 @@ func helmFileParameterReader(ctx context.Context, target helmFileParameterTarget
 		if target.url != "" || isRemoteHelmValueFile(value) {
 			return nil, fmt.Errorf("helm file parameter %q must reference a local or $ref file", remote.RedactURL(value))
 		}
-		data, err := os.ReadFile(target.readPath)
+		asked := ""
+		if strings.HasPrefix(value, "/") {
+			asked = filepath.Join(target.root, filepath.FromSlash(value))
+		}
+		if asked == "" || asked != target.helmPath {
+			return nil, fmt.Errorf("helm file parameter %q: helm --set-file reads %q, which is not the resolved path", target.file, value)
+		}
+		real, err := confineHelmFileParameterRead(target.root, asked, target.file)
+		if err != nil {
+			return nil, err
+		}
+		data, err := os.ReadFile(real)
 		if err != nil {
 			return nil, fmt.Errorf("read helm file parameter %q: %w", target.file, err)
 		}

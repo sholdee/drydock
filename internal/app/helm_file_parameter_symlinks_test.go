@@ -178,3 +178,40 @@ func TestRenderInputCoverageHelmFileParameterSymlinkRetarget(t *testing.T) {
 		})
 	}
 }
+
+// TestWithSelectionOnlyPathsReadsTheInstanceNameOverride pins that
+// selection reads the per-Application override file of an Application
+// outside the controller namespace by its instance name,
+// .argocd-source-<namespace>_<name>.yaml, and not the bare-name file, as the
+// repo-server does.
+func TestWithSelectionOnlyPathsReadsTheInstanceNameOverride(t *testing.T) {
+	root := t.TempDir()
+	application := writeHelmFileParameterSymlinkApp(t, root, false)
+	application.Namespace = "tenant"
+	application.Spec.Source.Helm = nil
+	writeTestFile(t, filepath.Join(root, "shared", "instance.txt"), "instance\n")
+	writeTestFile(t, filepath.Join(root, "shared", "bare.txt"), "bare\n")
+	writeTestFile(t, filepath.Join(root, "charts", "demo", ".argocd-source-tenant_demo.yaml"), "helm:\n  fileParameters:\n    - name: chain\n      path: ../../shared/instance.txt\n")
+	writeTestFile(t, filepath.Join(root, "charts", "demo", ".argocd-source-demo.yaml"), "helm:\n  fileParameters:\n    - name: chain\n      path: ../../shared/bare.txt\n")
+	got := withSelectionOnlyPaths(context.Background(), root, nil, selfRepoRefs{}, []ApplicationSelectionInput{{Application: application}}).inputs
+	if selected, _ := SelectChangedApplicationInputs(got, []string{"shared/instance.txt"}); len(selected) != 1 {
+		t.Errorf("change to shared/instance.txt selected %d Applications, want 1 (paths %v)", len(selected), got[0].Paths)
+	}
+	if selected, _ := SelectChangedApplicationInputs(got, []string{"shared/bare.txt"}); len(selected) != 0 {
+		t.Errorf("change to shared/bare.txt selected the Application, but the bare-name override is not read (paths %v)", got[0].Paths)
+	}
+}
+
+// TestWithSelectionOnlyPathsOwnsTheFileHelmReads pins that selection owns
+// the file that helm --set-file reads after it drops a backslash:
+// ../../shared/a\b.txt reads shared/ab.txt.
+func TestWithSelectionOnlyPathsOwnsTheFileHelmReads(t *testing.T) {
+	root := t.TempDir()
+	application := writeHelmFileParameterSymlinkApp(t, root, false)
+	writeTestFile(t, filepath.Join(root, "shared", "ab.txt"), "without-backslash\n")
+	application.Spec.Source.Helm.FileParameters = []argoappv1.HelmFileParameter{{Name: "chain", Path: `../../shared/a\b.txt`}}
+	got := withSelectionOnlyPaths(context.Background(), root, nil, selfRepoRefs{}, []ApplicationSelectionInput{{Application: application}}).inputs
+	if selected, _ := SelectChangedApplicationInputs(got, []string{"shared/ab.txt"}); len(selected) != 1 {
+		t.Errorf("change to shared/ab.txt selected %d Applications, want 1 (paths %v)", len(selected), got[0].Paths)
+	}
+}

@@ -459,3 +459,56 @@ func TestHelmValueFileEscapedDollarIsNotARef(t *testing.T) {
 		t.Fatalf("values = %s, want the local file", raw)
 	}
 }
+
+// TestHelmReadErrorsKeepHelmOrder pins two more steps of the Argo CD v3.6.1
+// order. A file parameter path that runs through a file resolves (the
+// resolver keeps the path when it is not a symlink, util/io/path/
+// resolved.go:26-31), so a missing value file fails first, when helm reads
+// the values. And helm reads the values before it loads the chart (helm
+// pkg/cmd/install.go runInstall), so a value file that does not parse wins
+// over a chart that does not load.
+func TestHelmReadErrorsKeepHelmOrder(t *testing.T) {
+	t.Run("missing value file before a file parameter through a file", func(t *testing.T) {
+		repo := writeHelmFileParameterSymlinkRepo(t, t.TempDir())
+		_, _, err := (HelmRenderer{}).Render(context.Background(), ResolvedSource{RepoRoot: repo, Path: "charts/app"}, RenderOptions{
+			AppName:            "probe",
+			ValueFiles:         []string{"values-missing.yaml"},
+			HelmFileParameters: []argoappv1.HelmFileParameter{{Name: "f", Path: "../../links/target.txt/x"}},
+		})
+		if err == nil || !strings.Contains(err.Error(), "values-missing.yaml") {
+			t.Fatalf("Render() error = %v, want the missing value file", err)
+		}
+	})
+	t.Run("value file before the chart", func(t *testing.T) {
+		repo := writeHelmFileParameterSymlinkRepo(t, t.TempDir())
+		writeFile(t, filepath.Join(repo, "charts", "app", "Chart.yaml"), "apiVersion: [\n")
+		writeFile(t, filepath.Join(repo, "charts", "app", "values-bad.yaml"), "a: [\n")
+		_, _, err := (HelmRenderer{}).Render(context.Background(), ResolvedSource{RepoRoot: repo, Path: "charts/app"}, RenderOptions{
+			AppName:    "probe",
+			ValueFiles: []string{"values-bad.yaml"},
+		})
+		if err == nil || !strings.Contains(err.Error(), "values-bad.yaml") || strings.Contains(err.Error(), "load helm chart") {
+			t.Fatalf("Render() error = %v, want the value file error", err)
+		}
+	})
+}
+
+// TestHelmFileParameterNameCannotRedirectTheRead pins that drydock reads
+// only the path it resolved. helm parses name=<path>, so a name such as
+// "f=nope.txt,g" makes helm read nope.txt for f, which the repo-server
+// never resolved. drydock fails there instead of reading the checked file
+// for both keys.
+func TestHelmFileParameterNameCannotRedirectTheRead(t *testing.T) {
+	repo := writeHelmFileParameterSymlinkRepo(t, t.TempDir())
+	parameters := []argoappv1.HelmFileParameter{{Name: "f=nope.txt,g", Path: "../../links/target.txt"}}
+	if _, err := upstreamHelmFileParameterValues(filepath.Join(repo, "charts", "app"), repo, nil, nil, parameters); err == nil || !strings.Contains(err.Error(), "nope.txt") {
+		t.Fatalf("upstream error = %v, want helm to fail on nope.txt", err)
+	}
+	_, _, err := (HelmRenderer{}).Render(context.Background(), ResolvedSource{RepoRoot: repo, Path: "charts/app"}, RenderOptions{
+		AppName:            "probe",
+		HelmFileParameters: parameters,
+	})
+	if err == nil || !strings.Contains(err.Error(), `helm --set-file reads "nope.txt", which is not the resolved path`) {
+		t.Fatalf("Render() error = %v, want the redirected read refused", err)
+	}
+}

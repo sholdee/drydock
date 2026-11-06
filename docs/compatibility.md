@@ -525,10 +525,21 @@ Supported:
   not fail.
 - The repo-server resolves the value file paths, then every file parameter
   path, and only then runs helm, which reads the value files and the file
-  parameters before it loads the chart. drydock keeps this order, so with
-  two problems it reports the same first error. For example, a file
-  parameter that does not resolve wins over a value file that is missing
-  or does not parse.
+  parameters before it loads the chart. drydock keeps this order. For
+  example, a file parameter that does not resolve wins over a value file
+  that is missing or does not parse, a missing value file wins over a file
+  parameter that helm cannot read, and a value file that does not parse
+  wins over a chart that does not load. drydock's own checks can fail
+  earlier: a value file that is a symlink fails while drydock resolves the
+  value files (see the value file divergence below).
+- Recorded divergence from strict Argo CD v3.6.1: helm `--set-file` parses
+  `name=<path>`, so a file parameter name that holds `=` or `,` can make
+  helm read another path, relative to its working directory. drydock fails
+  with `helm --set-file reads "<path>", which is not the resolved path`.
+- Recorded divergence from strict Argo CD v3.6.1: the repo-server drops a
+  value file whose resolved path is already in the list, so `[a, b, a]`
+  reads `a` and then `b`. drydock reads `a`, `b`, and `a` again, so `a`
+  wins over `b`.
 - Recorded divergence from strict Argo CD v3.6.1: when the path as written
   is outside the repository, drydock fails at once with the repo-server's
   `resolved to outside repository root` error and does not read its link

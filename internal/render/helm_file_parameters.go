@@ -105,9 +105,9 @@ type helmFileParameterTarget struct {
 	root string
 	// path is the absolute resolved path.
 	path string
-	// readPath is the real path of the file that helm --set-file reads,
-	// set for the entry that helm reads.
-	readPath string
+	// helmPath is the path that helm --set-file reads, after it drops
+	// backslashes (helmSetFileReadPath), set for the entry that helm reads.
+	helmPath string
 }
 
 // helmFileParameterPath is a helm.fileParameters path before it resolves:
@@ -196,8 +196,8 @@ func helmFileParameterPathFor(source ResolvedSource, opts RenderOptions, raw str
 // entry, also one that a later entry with the same name overrides, so such
 // an entry still fails when its path does not resolve. The errors have the
 // repo-server's text. For the entry that helm reads (read), it also finds
-// the file that helm --set-file reads (helmSetFileReadPath). drydock reads
-// that file only when its real path is in the root and outside .git.
+// the path that helm --set-file reads (helmSetFileReadPath). The reader
+// checks that path only when helm reads it, as helm would fail only then.
 func resolveHelmFileParameter(source ResolvedSource, opts RenderOptions, parameter argoappv1.HelmFileParameter, read bool) (helmFileParameterTarget, error) {
 	p, err := helmFileParameterPathFor(source, opts, parameter.Path)
 	target := helmFileParameterTarget{file: p.file}
@@ -226,10 +226,7 @@ func resolveHelmFileParameter(source ResolvedSource, opts RenderOptions, paramet
 	if !read {
 		return target, nil
 	}
-	readPath := helmSetFileReadPath(parameter.Name, target.root, resolved)
-	if target.readPath, err = confineHelmFileParameterRead(target.root, readPath, p.file); err != nil {
-		return target, err
-	}
+	target.helmPath = helmSetFileReadPath(parameter.Name, target.root, resolved)
 	return target, nil
 }
 
