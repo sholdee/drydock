@@ -942,7 +942,10 @@ Supported:
     drydock reads them as the renderer does: relative to the kustomization
     directory, with globs and build environment variables. It skips
     `valuesFile` when `valuesMerge` is `replace` and `valuesInline` is set,
-    because the render then does not read it.
+    because the render then does not read it. When `valuesInline` is set,
+    kustomize reads `valuesFile` with its own YAML parser, which reads only
+    the first YAML document, and drydock reads it the same way. Helm reads
+    every other values file with all its YAML documents.
 
   drydock merges the `.argocd-source.yaml` and `.argocd-source-<app>.yaml`
   overrides of a local source first, as Argo CD does. Then it picks the

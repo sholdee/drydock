@@ -1689,7 +1689,50 @@ func TestSettingsFromFrontierRenderedInstallKeepsArgoCDNamespaceOnly(t *testing.
 func TestHelmValuesFileSetsArgoCDSettingsReadsEveryDocument(t *testing.T) {
 	root := t.TempDir()
 	writeTestFile(t, filepath.Join(root, "values.yaml"), "global:\n  domain: argocd.example.com\n---\nconfigs:\n  cm:\n    timeout.reconciliation: 300s\n")
-	if !helmValuesFileSetsArgoCDSettings(nil, root, "values.yaml") {
+	if !helmValuesFileSetsArgoCDSettings(nil, root, "values.yaml", valuesParserHelm) {
 		t.Fatalf("helmValuesFileSetsArgoCDSettings() = false, want true for configs.cm in the second document")
+	}
+}
+
+// kustomize reads a helmCharts valuesFile that it merges with valuesInline
+// with its own parser, which reads only the first YAML document. Helm reads
+// the same file, without valuesInline, with every document. Detection reads
+// the file with the parser that the render uses, so the two cannot judge the
+// file differently.
+func TestApplicationSettingsInstallUsesTheKustomizeParser(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		inline string
+		want   bool
+	}{
+		{name: "valuesFile read by Helm", want: true},
+		{name: "valuesFile merged with valuesInline by kustomize", inline: "    valuesInline:\n      extra: true\n", want: false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			writeTestFile(t, filepath.Join(root, "platform", "kustomization.yaml"), "apiVersion: kustomize.config.k8s.io/v1beta1\nkind: Kustomization\nhelmCharts:\n  - name: platform\n    releaseName: platform\n    valuesFile: values.yaml\n"+tc.inline)
+			writeTestFile(t, filepath.Join(root, "platform", "values.yaml"), "global:\n  domain: example.com\n---\nconfigs:\n  cm:\n    timeout.reconciliation: 300s\n")
+			application := decodeTestApplication(t, `apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: platform
+  namespace: argocd
+spec:
+  source:
+    repoURL: https://github.com/example/repo
+    targetRevision: main
+    path: platform
+  destination:
+    name: in-cluster
+    namespace: argocd
+`)
+			install := applicationSettingsInstall(context.Background(), BuildRequest{}, settingsInstallProbe(root, BuildRequest{}), application)
+			if got := install.installsArgoCD(); got != tc.want {
+				t.Fatalf("installsArgoCD() = %t, want %t (install %#v)", got, tc.want, install)
+			}
+			if !slices.Contains(install.valuesFilesRead, "platform/values.yaml") {
+				t.Fatalf("valuesFilesRead = %v, want the valuesFile in either case", install.valuesFilesRead)
+			}
+		})
 	}
 }

@@ -138,13 +138,13 @@ type settingsInstallBuilder struct {
 
 // addValuesFile adds a local Helm values file that a render reads, when it
 // exists as a regular file.
-func (b *settingsInstallBuilder) addValuesFile(rel string) {
+func (b *settingsInstallBuilder) addValuesFile(rel string, parser valuesParser) {
 	info, err := os.Lstat(filepath.Join(b.root, filepath.FromSlash(rel)))
 	if err != nil || !info.Mode().IsRegular() {
 		return
 	}
 	b.install.valuesFilesRead = append(b.install.valuesFilesRead, rel)
-	if helmValuesFileSetsArgoCDSettings(b.memo, b.root, rel) {
+	if helmValuesFileSetsArgoCDSettings(b.memo, b.root, rel, parser) {
 		b.install.valuesFiles = append(b.install.valuesFiles, rel)
 	}
 }
@@ -170,7 +170,7 @@ func (b *settingsInstallBuilder) addSource(ctx context.Context, provider localPr
 		// Helm reads the values.yaml files of the chart and of its unpacked
 		// subcharts as defaults.
 		for _, rel := range render.HelmChartValuesFiles(b.root, chartDir) {
-			b.addValuesFile(rel)
+			b.addValuesFile(rel, valuesParserHelm)
 		}
 		if localChartIsArgoCD(chartDir) {
 			b.install.chart = true
@@ -180,7 +180,7 @@ func (b *settingsInstallBuilder) addSource(ctx context.Context, provider localPr
 		return
 	}
 	for _, rel := range settingsInstallHelmValueFiles(provider, application, plan, sourcePlan, sourcePath, local) {
-		b.addValuesFile(rel)
+		b.addValuesFile(rel, valuesParserHelm)
 	}
 	if helmSourceInlineSetsArgoCDSettings(source.Helm) {
 		b.install.inline = true
@@ -290,8 +290,11 @@ func (b *settingsInstallBuilder) addKustomize(ctx context.Context, sourcePath st
 	if err != nil {
 		return
 	}
-	for _, rel := range values.ValuesFiles {
-		b.addValuesFile(rel)
+	for _, rel := range values.HelmParsedValuesFiles {
+		b.addValuesFile(rel, valuesParserHelm)
+	}
+	for _, rel := range values.KustomizeParsedValuesFiles {
+		b.addValuesFile(rel, valuesParserKustomize)
 	}
 	valuesFiles := make(map[string]struct{}, len(values.ValuesFiles))
 	for _, rel := range values.ValuesFiles {
@@ -363,12 +366,24 @@ func settingsInstallResolvedSource(source argoappv1.ApplicationSource) render.Re
 	}
 }
 
-// helmValuesFileSetsArgoCDSettings reads a local Helm values file as Helm
-// does and reports whether it sets Argo CD settings. A file that is missing,
-// is not a regular file, or does not decode sets none.
-func helmValuesFileSetsArgoCDSettings(memo *sync.Map, root, rel string) bool {
+// valuesParser names the parser that the render reads a values file with.
+type valuesParser string
+
+const (
+	// valuesParserHelm is the Helm value file loader (render.ParseHelmValuesFile).
+	valuesParserHelm valuesParser = "helm"
+	// valuesParserKustomize is the Kustomize helmCharts valuesFile read that
+	// merges valuesInline (render.ParseKustomizeHelmValuesFile).
+	valuesParserKustomize valuesParser = "kustomize"
+)
+
+// helmValuesFileSetsArgoCDSettings reads a local values file with the parser
+// that the render uses for it and reports whether it sets Argo CD settings.
+// A file that is missing, is not a regular file, or does not decode sets
+// none.
+func helmValuesFileSetsArgoCDSettings(memo *sync.Map, root, rel string, parser valuesParser) bool {
 	full := filepath.Join(root, filepath.FromSlash(rel))
-	key := "values\x00" + full
+	key := "values\x00" + string(parser) + "\x00" + full
 	if memo != nil {
 		if cached, ok := memo.Load(key); ok {
 			if sets, ok := cached.(bool); ok {
@@ -379,9 +394,11 @@ func helmValuesFileSetsArgoCDSettings(memo *sync.Map, root, rel string) bool {
 	sets := false
 	if info, err := os.Lstat(full); err == nil && info.Mode().IsRegular() {
 		if data, err := os.ReadFile(full); err == nil {
-			// Read the file as the Helm value file loader does, which merges
-			// every YAML document.
-			if values, err := render.ParseHelmValuesFile(rel, data); err == nil {
+			parse := render.ParseHelmValuesFile
+			if parser == valuesParserKustomize {
+				parse = render.ParseKustomizeHelmValuesFile
+			}
+			if values, err := parse(rel, data); err == nil {
 				sets = helmValuesSetArgoCDSettings(values)
 			}
 		}

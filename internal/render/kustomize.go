@@ -456,6 +456,13 @@ func parseKustomizeHelmValueFile(display string, data []byte) (map[string]any, e
 	return values, nil
 }
 
+// ParseKustomizeHelmValuesFile reads the data of a helmCharts valuesFile as
+// kustomize reads it before it merges valuesInline
+// (parseKustomizeHelmValueFile).
+func ParseKustomizeHelmValuesFile(display string, data []byte) (map[string]any, error) {
+	return parseKustomizeHelmValueFile(display, data)
+}
+
 func safeGeneratedKustomizeHelmBaseName(name, version string) string {
 	joined := strings.Trim(strings.TrimSpace(name)+"-"+strings.TrimSpace(version), "-")
 	if joined == "" {

@@ -62,3 +62,23 @@ func TestKustomizeHelmValuesReadsValuesFilesLikeTheRenderer(t *testing.T) {
 		})
 	}
 }
+
+// KustomizeHelmValues names the parser that the render reads each values
+// file with: the Kustomize parser for a valuesFile merged with valuesInline,
+// and Helm for the rest.
+func TestKustomizeHelmValuesSplitsFilesByParser(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "install", "kustomization.yaml"), "apiVersion: kustomize.config.k8s.io/v1beta1\nkind: Kustomization\nhelmCharts:\n  - name: demo\n    releaseName: demo\n    valuesFile: values.yaml\n    valuesInline:\n      a: 1\n    additionalValuesFiles:\n      - extra.yaml\n")
+	writeFile(t, filepath.Join(root, "install", "values.yaml"), "a: 1\n")
+	writeFile(t, filepath.Join(root, "install", "extra.yaml"), "a: 1\n")
+	values, err := KustomizeHelmValues(context.Background(), root, "install", nil, nil)
+	if err != nil {
+		t.Fatalf("KustomizeHelmValues() error = %v", err)
+	}
+	if want := []string{"install/values.yaml"}; !slices.Equal(values.KustomizeParsedValuesFiles, want) {
+		t.Fatalf("KustomizeParsedValuesFiles = %v, want %v", values.KustomizeParsedValuesFiles, want)
+	}
+	if want := []string{"install/extra.yaml"}; !slices.Equal(values.HelmParsedValuesFiles, want) {
+		t.Fatalf("HelmParsedValuesFiles = %v, want %v", values.HelmParsedValuesFiles, want)
+	}
+}
