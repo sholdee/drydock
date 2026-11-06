@@ -403,7 +403,10 @@ func TestDirectoryRendererRejectsJsonnetAbsoluteImports(t *testing.T) {
 	}
 }
 
-func TestDirectoryRendererRejectsJsonnetSymlinkImports(t *testing.T) {
+// TestDirectoryRendererRejectsJsonnetImportsOutsideRepository pins
+// confinedImporter.validate (reposerver/repository/repository.go:2381-2389 at
+// v3.6.1): an import whose symlinks resolve outside the repository fails.
+func TestDirectoryRendererRejectsJsonnetImportsOutsideRepository(t *testing.T) {
 	root := t.TempDir()
 	outside := filepath.Join(t.TempDir(), "outside.libsonnet")
 	writeFile(t, outside, `{
@@ -426,10 +429,7 @@ func TestDirectoryRendererRejectsJsonnetSymlinkImports(t *testing.T) {
 		RepoRoot: root,
 		Path:     "apps",
 	}, RenderOptions{})
-	if err == nil {
-		t.Fatal("Render() error = nil, want Jsonnet symlink import error")
-	}
-	if !strings.Contains(err.Error(), "symlink") {
-		t.Fatalf("Render() error = %v, want symlink message", err)
+	if err == nil || !strings.Contains(err.Error(), `jsonnet import "linked.libsonnet" resolves outside repository root`) {
+		t.Fatalf("Render() error = %v, want the repo-server outside-repository import error", err)
 	}
 }

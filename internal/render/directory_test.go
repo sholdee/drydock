@@ -747,7 +747,13 @@ metadata:
 	}
 }
 
-func TestDirectoryRendererSkipsSymlinkedYAMLFile(t *testing.T) {
+// TestDirectoryRendererRejectsSymlinkOutsideRepository pins the repo-server
+// rule for a file symlink whose target is outside the repository
+// (getPotentiallyValidManifestFile, reposerver/repository/repository.go:
+// 2175-2177 at v3.6.1). The repo-wide out-of-bounds check fails such a
+// repository first unless reposerver.allow.oob.symlinks is true; then the
+// directory walk fails the source.
+func TestDirectoryRendererRejectsSymlinkOutsideRepository(t *testing.T) {
 	root := t.TempDir()
 	outside := t.TempDir()
 	writeFile(t, filepath.Join(outside, "outside.yaml"), `
@@ -759,18 +765,15 @@ metadata:
 	symlink(t, filepath.Join(outside, "outside.yaml"), filepath.Join(root, "apps", "linked.yaml"))
 
 	renderer := DirectoryRenderer{}
-	result, diags, err := renderer.Render(context.Background(), ResolvedSource{
+	result, _, err := renderer.Render(context.Background(), ResolvedSource{
 		RepoRoot: root,
 		Path:     "apps",
 	}, RenderOptions{})
-	if err != nil {
-		t.Fatalf("Render() error = %v", err)
-	}
-	if len(diags) != 0 {
-		t.Fatalf("diagnostics = %#v", diags)
+	if err == nil || !strings.Contains(err.Error(), `apps/linked.yaml: illegal filepath in symlink at "linked.yaml"`) {
+		t.Fatalf("Render() error = %v, want the repo-server illegal filepath error", err)
 	}
 	if len(result) != 0 {
-		t.Fatalf("result = %#v, want no manifests from symlinked YAML", result)
+		t.Fatalf("result = %#v, want no manifests", result)
 	}
 }
 
