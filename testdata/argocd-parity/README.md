@@ -786,11 +786,18 @@ drydock side.
 ## Directory decode fixture
 
 These fixtures cover how Argo CD v3.6.1 reads each file in a directory
-source (`getObjsFromYAMLOrJSON` in `reposerver/repository/repository.go`, and
-the controller for a `.json` object without a `kind`). Some files fail the
-whole source.
-Other files are skipped without a message. The fixtures live under
-`workloads/directory-decode/`.
+source. Argo CD reads a directory in three stages:
+
+1. The repo-server reads every file into one list of objects
+   (`findManifests` and `getObjsFromYAMLOrJSON` in
+   `reposerver/repository/repository.go`).
+2. `GenerateManifests` splits each list into its items and sets the tracking
+   metadata on each manifest.
+3. The controller reads each manifest back and fails on one without a
+   `kind`.
+
+Some files fail the whole source. Other files are skipped without a message.
+The fixtures live under `workloads/directory-decode/`.
 
 ### Files that both sides skip or decode
 
@@ -811,9 +818,32 @@ ConfigMap and these files:
 | `utf16be-bom.json` | rendered: the same for UTF-16BE, under the single-object JSON rule |
 | `utf8-bom.json` | rendered: the UTF-8 byte order mark is dropped before the JSON decoder runs |
 | `invalid-utf8.yaml` | rendered: the invalid byte becomes U+FFFD |
+| `apiversion-only.yaml` | skipped: the first document has an `apiVersion` but no `kind`, and the file text has no `kind:` |
+| `empty-kind.yaml` | skipped: `kind: ""` stops the stream like a missing `kind`, and the file text has no `metadata:` |
+| `kind-only.yaml` | rendered: a document needs a `kind` but not an `apiVersion`, so the ConfigMap renders without an `apiVersion` |
+| `list-no-apiversion.yaml` | rendered: a `kind: List` without an `apiVersion` is still split into its item |
+| `items-scalar.yaml` | rendered: a ConfigMap whose `items` field is a string is not a list, so it renders unchanged |
+| `items-map.yaml` | rendered: the same for an `items` field that is a map |
 
-The comparison proves both sides render the same five ConfigMaps. The skipped
+The comparison proves both sides render the same nine ConfigMaps. The skipped
 files never produce an object.
+
+`applications/directory-decode-jsonnet.yaml`
+(`parity-directory-decode-jsonnet`) is a second normal Application in the
+main comparison. Argo CD adds Jsonnet output to the same list of objects as
+every other file, so the same list split applies. Its directory holds these
+files:
+
+| file | expected result |
+| --- | --- |
+| `list.jsonnet` | a `kind: List` renders its two ConfigMaps, not the List |
+| `array.jsonnet` | an array adds each element: `null` adds nothing, a ConfigMap renders, a List renders its item, and a List whose `items` field is `null` renders nothing |
+| `kind-only.jsonnet` | an object needs a `kind` but not an `apiVersion`, so the ConfigMap renders without an `apiVersion` |
+
+The comparison proves both sides render the same five ConfigMaps.
+`TestDirectoryRendererParityRenderFixturesMatchUpstream` in `internal/render`
+renders both directories with drydock and with the upstream oracle and
+requires the same objects.
 
 Several of these files are not valid text on purpose. The UTF-16 files hold
 NUL bytes, so Git treats them as binary. Do not let an editor or a formatter
@@ -821,29 +851,40 @@ rewrite them.
 
 ### Files that fail the source
 
-`directory-decode-applications/` holds one Application per failing file. They
+`directory-decode-applications/` holds one Application per failing case. They
 live in the `parity-directory-decode` namespace, so the main inventory and
 manifest comparisons never see them. The smoke adds that namespace to
 `application.namespaces`, and `projects/parity-directory-decode.yaml` allows
 it through `sourceNamespaces`.
 
 Each source directory holds a valid ConfigMap and one file that fails the
-source. `../directory-decode-expected.yaml` lists the cases. For each case it
-names the file, the text that the Argo CD `ComparisonError` condition must
-contain, and the text that drydock's stderr must contain. Both texts must name
-the file, so a failure caused by a different file does not pass.
+source. Each `order-*` directory holds two failing files, which fail at
+different stages. `../directory-decode-expected.yaml` lists the cases. For
+each case it names the file that Argo CD reports, the text that the Argo CD
+`ComparisonError` condition must contain, and the text that drydock's stderr
+must contain. Both texts must name the file, so a failure caused by a
+different file does not pass.
 
 The cases without a `kind` are different. The repo-server accepts the two
 `.json` objects without a `kind` as OCI image manifests and emits each one.
-It splits every list into its items and emits each item, so the two list
+It splits every list into its items and emits each item, so the three list
 items without a `kind` are emitted too. The controller then fails with
 `Object 'Kind' is missing in '...'`, which quotes the manifest but not the
-file. These cases set `argocdQuotesObject`,
-and their Argo CD text quotes the start of the manifest instead of the file
-name. Go sorts the manifest keys, and the manifest holds the tracking
-annotation. `TestDirectoryRendererParityDecodeFixtures` in `internal/render`
-runs the upstream tracking and controller code on these fixtures offline and
-proves that both expected texts match.
+file. These cases set `argocdQuotesObject`, and their Argo CD text quotes the
+start of the manifest instead of the file name. Go sorts the manifest keys,
+and the manifest holds the tracking annotation.
+
+The tracking cases are different too. The repo-server fails with
+`failed to set app instance tracking info on manifest`, and the message names
+the object but not the file. These cases set `argocdNamesObject` to the name
+of the object in the failing file, and the Argo CD text must contain it.
+
+`TestDirectoryRendererParityDecodeFixtures` in `internal/render` runs every
+case offline. drydock must fail with the expected text. The upstream oracle
+must fail with the expected Argo CD text. The oracle runs the upstream
+tracking and controller code itself, so the quoted and named texts must
+match exactly. Its repo-server decode code is a copy whose wording differs in
+case, so the other texts are compared without case.
 
 | Application | failing file | why it fails |
 | --- | --- | --- |
@@ -859,6 +900,11 @@ proves that both expected texts match.
 | `parity-decode-json-object` | `empty-object.json` | `{}` has no `kind`, so the controller fails |
 | `parity-decode-json-list-item` | `kindless-list.json` | an item of a list without a `kind` has no `kind`, so the controller fails |
 | `parity-decode-yaml-list-item` | `list.yaml` | an item of a YAML `kind: List` has no `kind`, so the controller fails |
+| `parity-decode-jsonnet-kindless` | `kindless.jsonnet` | the Jsonnet output has no `kind`, so the repo-server cannot decode it |
+| `parity-decode-jsonnet-list-item` | `list.jsonnet` | an item of a Jsonnet `kind: List` has no `kind`, so the controller fails |
+| `parity-decode-yaml-tracking` | `tracking.yaml` | a List item whose `annotations` field is a string, so the repo-server cannot set the tracking annotation |
+| `parity-decode-order-decode` | `b-invalid.json` | `b-invalid.json` does not decode. It wins over `a-scalar-item.json`, whose list item is not an object, because the repo-server reads every file before it splits lists |
+| `parity-decode-order-tracking` | `b-tracking.yaml` | `b-tracking.yaml` fails the tracking annotation. It wins over `a-kindless.json`, which has no `kind`, because the controller checks kinds last |
 
 `run_directory_decode_smoke` in `scripts/argocd-parity-smoke.sh` waits for a
 `ComparisonError` on each Application, then saves the Application JSON. It
