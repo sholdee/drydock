@@ -131,6 +131,8 @@ jobs:
             ${{ runner.temp }}/argocd-parity-smoke/drydock-manifests
             ${{ runner.temp }}/argocd-parity-smoke/compare
             ${{ runner.temp }}/argocd-parity-smoke/compare-applications
+            ${{ runner.temp }}/argocd-parity-smoke/applications/drydock.stderr
+            ${{ runner.temp }}/argocd-parity-smoke/rolling-sync-conditions.diff
             ${{ runner.temp }}/argocd-parity-smoke/directory-decode
             ${{ runner.temp }}/argocd-parity-smoke/project-policy
             ${{ runner.temp }}/argocd-parity-smoke/project-policy-in-cluster-secret
