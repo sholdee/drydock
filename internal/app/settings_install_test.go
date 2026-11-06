@@ -533,7 +533,7 @@ func TestSettingsFromRenderedArgoCDInstallChartDefaultInstanceLabelKey(t *testin
 }
 
 // configs.params becomes argocd-cmd-params-cm, which sets the repo-server
-// directory size limit.
+// directory size limit and the out-of-bounds symlink check.
 func TestSettingsFromRenderedArgoCDInstallCommandParameters(t *testing.T) {
 	for _, shape := range argoCDInstallShapes() {
 		t.Run(shape.name, func(t *testing.T) {
@@ -542,11 +542,15 @@ func TestSettingsFromRenderedArgoCDInstallCommandParameters(t *testing.T) {
 			writeTestFile(t, filepath.Join(root, "argocd", "values.yaml"), `configs:
   params:
     reposerver.max.combined.directory.manifests.size: 50M
+    reposerver.allow.oob.symlinks: "true"
 `)
 
 			result := listArgoCDInstallSettings(t, root, shape, fakeArgoCDChartAcquirer(t))
 			if got := result.Settings.MaxCombinedDirectoryManifestsSize.Value; got != "50M" {
 				t.Fatalf("MaxCombinedDirectoryManifestsSize = %q, want configs.params value", got)
+			}
+			if got := result.Settings.AllowOutOfBoundsSymlinks.Value; got != "true" {
+				t.Fatalf("AllowOutOfBoundsSymlinks = %q, want configs.params value", got)
 			}
 		})
 	}

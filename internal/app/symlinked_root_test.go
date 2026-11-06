@@ -19,9 +19,9 @@ func symlinkedRootApplication(name, repoURL, path string) string {
 // they render, with paths relative to the root as for a plain root.
 func TestOrchestratorBuildsFromASymlinkedRoot(t *testing.T) {
 	parent := t.TempDir()
-	real := filepath.Join(parent, "real")
-	writeTestFile(t, filepath.Join(real, "apps", "demo.yaml"), symlinkedRootApplication("demo", "https://git.example.test/repo.git", "app"))
-	writeTestFile(t, filepath.Join(real, "app", "cm.yaml"), "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: demo\n")
+	realDir := filepath.Join(parent, "real")
+	writeTestFile(t, filepath.Join(realDir, "apps", "demo.yaml"), symlinkedRootApplication("demo", "https://git.example.test/repo.git", "app"))
+	writeTestFile(t, filepath.Join(realDir, "app", "cm.yaml"), "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: demo\n")
 	link := filepath.Join(parent, "link")
 	if err := os.Symlink("real", link); err != nil {
 		t.Skipf("symlink unavailable: %v", err)
@@ -68,9 +68,9 @@ func TestOrchestratorRendersARepoMapRootThatIsASymlink(t *testing.T) {
 func TestOrchestratorDiffsSymlinkedRoots(t *testing.T) {
 	parent := t.TempDir()
 	for side, value := range map[string]string{"left": "one", "right": "two"} {
-		real := filepath.Join(parent, side+"-real")
-		writeTestFile(t, filepath.Join(real, "apps", "demo.yaml"), symlinkedRootApplication("demo", "https://git.example.test/repo.git", "app"))
-		writeTestFile(t, filepath.Join(real, "app", "cm.yaml"), "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: demo\ndata:\n  value: "+value+"\n")
+		realDir := filepath.Join(parent, side+"-real")
+		writeTestFile(t, filepath.Join(realDir, "apps", "demo.yaml"), symlinkedRootApplication("demo", "https://git.example.test/repo.git", "app"))
+		writeTestFile(t, filepath.Join(realDir, "app", "cm.yaml"), "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: demo\ndata:\n  value: "+value+"\n")
 		if err := os.Symlink(side+"-real", filepath.Join(parent, side)); err != nil {
 			t.Skipf("symlink unavailable: %v", err)
 		}
