@@ -9,7 +9,6 @@ import (
 
 	argoappv1 "github.com/argoproj/argo-cd/v3/pkg/apis/application/v1alpha1"
 	"github.com/sholdee/drydock/internal/diagnostic"
-	"go.yaml.in/yaml/v3"
 	sigsyaml "sigs.k8s.io/yaml"
 )
 
@@ -135,7 +134,11 @@ func resourceCustomizationFromOverride(key string, override argoappv1.ResourceOv
 		customization.KnownTypeFields = append(customization.KnownTypeFields, KnownTypeField{Field: field.Field, Type: field.Type})
 		hasCustomization = true
 	}
-	if strings.TrimSpace(override.HealthLua) != "" {
+	// Argo CD uses any non-empty health.lua, even one that holds only white
+	// space (util/lua/lua.go:254 and 571). Such a script returns nothing, so
+	// Argo CD's Lua health gives no status and the built-in Lua script and
+	// wildcard keys do not apply.
+	if override.HealthLua != "" {
 		customization.HasHealthLua = true
 		customization.HealthLuaSHA256 = stringFingerprint(override.HealthLua)
 		customization.HealthLua = override.HealthLua
@@ -147,18 +150,17 @@ func resourceCustomizationFromOverride(key string, override argoappv1.ResourceOv
 		customization.UseOpenLibs = override.UseOpenLibs
 		hasCustomization = true
 	}
-	if strings.TrimSpace(override.Actions) != "" {
-		provenance := fieldProvenance[overrideFieldActions]
-		actions, next := parseResourceActionsSummary(override.Actions, provenance)
-		diags = append(diags, next...)
-		if !hasErrorDiagnostic(next) {
-			customization.Actions = actions
-			hasCustomization = true
-			diags = append(diags, advancedResourceCustomizationWarning(
-				"resource customizations actions are parsed as metadata only and are not executed offline",
-				provenance,
-			))
-		}
+	// Argo CD keeps actions as a string when it loads settings and decodes
+	// them only when it lists or runs actions (util/lua/lua.go:501 and 533).
+	// A non-empty value, even white space only, replaces the built-in
+	// actions there. drydock never runs actions, so it accepts every value.
+	if override.Actions != "" {
+		customization.Actions = resourceActionsSummary(override)
+		hasCustomization = true
+		diags = append(diags, advancedResourceCustomizationWarning(
+			"resource customizations actions are parsed as metadata only and are not executed offline",
+			fieldProvenance[overrideFieldActions],
+		))
 	}
 	return customization, hasCustomization, diags
 }
@@ -171,23 +173,22 @@ func overrideIgnoreDifferencesFromArgo(ignore argoappv1.OverrideIgnoreDiff) Over
 	}
 }
 
-func parseResourceActionsSummary(raw string, provenance diagnostic.Provenance) (ResourceActionsSummary, []diagnostic.Diagnostic) {
-	var actions argoappv1.ResourceActions
-	if err := yaml.Unmarshal([]byte(raw), &actions); err != nil {
-		return ResourceActionsSummary{}, []diagnostic.Diagnostic{{
-			Severity:   diagnostic.SeverityError,
-			Category:   "settings",
-			Message:    "invalid resource customization actions settings",
-			Provenance: provenance,
-		}}
-	}
-
+// resourceActionsSummary summarizes the actions of an override. It decodes
+// them with Argo CD's own ResourceOverride.GetActions. When that fails, the
+// summary has only the fingerprint of the raw value. Argo CD accepts such a
+// value when it loads settings and fails only when it lists or runs the
+// actions, which drydock never does, so drydock reports no diagnostic.
+func resourceActionsSummary(override argoappv1.ResourceOverride) ResourceActionsSummary {
 	summary := ResourceActionsSummary{
-		HasActions:          true,
-		HasDiscoveryLua:     strings.TrimSpace(actions.ActionDiscoveryLua) != "",
-		MergeBuiltinActions: actions.MergeBuiltinActions,
-		fingerprint:         stringFingerprint(raw),
+		HasActions:  true,
+		fingerprint: stringFingerprint(override.Actions),
 	}
+	actions, err := override.GetActions()
+	if err != nil {
+		return summary
+	}
+	summary.HasDiscoveryLua = strings.TrimSpace(actions.ActionDiscoveryLua) != ""
+	summary.MergeBuiltinActions = actions.MergeBuiltinActions
 	if summary.HasDiscoveryLua {
 		summary.DiscoveryLuaSHA256 = stringFingerprint(actions.ActionDiscoveryLua)
 	}
@@ -209,7 +210,7 @@ func parseResourceActionsSummary(raw string, provenance diagnostic.Provenance) (
 		}
 		return left.Name < right.Name
 	})
-	return summary, nil
+	return summary
 }
 func advancedResourceCustomizationWarning(message string, provenance diagnostic.Provenance) diagnostic.Diagnostic {
 	return diagnostic.Diagnostic{

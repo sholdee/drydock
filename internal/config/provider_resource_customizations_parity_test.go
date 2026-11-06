@@ -37,14 +37,15 @@ func upstreamResourceOverrides(t *testing.T, data map[string]string) (overrides 
 }
 
 // comparableOverride is the part of a resource override that drydock keeps.
-// Health Lua and actions are compared without leading and trailing white
-// space, because drydock treats white space only as unset.
+// drydock keeps actions only as a summary, so actions are compared by
+// presence and by the fingerprint of the raw value.
 type comparableOverride struct {
 	IgnoreDifferences     [3][]string
 	IgnoreResourceUpdates [3][]string
 	KnownTypeFields       []string
 	HealthLua             string
 	UseOpenLibs           bool
+	HasActions            bool
 	ActionsSHA256         string
 }
 
@@ -64,13 +65,14 @@ func comparableUpstreamOverrides(overrides map[string]argoappv1.ResourceOverride
 		value := comparableOverride{
 			IgnoreDifferences:     comparableIgnore(override.IgnoreDifferences.JSONPointers, override.IgnoreDifferences.JQPathExpressions, override.IgnoreDifferences.ManagedFieldsManagers),
 			IgnoreResourceUpdates: comparableIgnore(override.IgnoreResourceUpdates.JSONPointers, override.IgnoreResourceUpdates.JQPathExpressions, override.IgnoreResourceUpdates.ManagedFieldsManagers),
-			HealthLua:             strings.TrimSpace(override.HealthLua),
+			HealthLua:             override.HealthLua,
 			UseOpenLibs:           override.UseOpenLibs,
 		}
 		for _, field := range override.KnownTypeFields {
 			value.KnownTypeFields = append(value.KnownTypeFields, field.Field+"="+field.Type)
 		}
-		if strings.TrimSpace(override.Actions) != "" {
+		if override.Actions != "" {
+			value.HasActions = true
 			value.ActionsSHA256 = stringFingerprint(override.Actions)
 		}
 		// An empty override changes no diff or health result, so drydock
@@ -89,8 +91,9 @@ func comparableDrydockCustomizations(customizations map[string]ResourceCustomiza
 		value := comparableOverride{
 			IgnoreDifferences:     comparableIgnore(customization.IgnoreDifferences.JSONPointers, customization.IgnoreDifferences.JQPathExpressions, customization.IgnoreDifferences.ManagedFieldsManagers),
 			IgnoreResourceUpdates: comparableIgnore(customization.IgnoreResourceUpdates.JSONPointers, customization.IgnoreResourceUpdates.JQPathExpressions, customization.IgnoreResourceUpdates.ManagedFieldsManagers),
-			HealthLua:             strings.TrimSpace(customization.HealthLua),
+			HealthLua:             customization.HealthLua,
 			UseOpenLibs:           customization.UseOpenLibs,
+			HasActions:            customization.Actions.HasActions,
 			ActionsSHA256:         customization.Actions.fingerprint,
 		}
 		for _, field := range customization.KnownTypeFields {
@@ -241,6 +244,30 @@ func TestResourceOverridesParityWithArgoCD(t *testing.T) {
 		}, wantKey: "lua.useOpenLibs./Service"},
 		{name: "prefix without dot is a split key", data: map[string]string{
 			"resource.customizationsX.ignoreDifferences._Service": ignoreA,
+		}, wantKey: "/Service"},
+
+		// White space and actions that Argo CD keeps as written.
+		{name: "white space split health is kept", data: map[string]string{
+			"resource.customizations.health._Service": "  \n",
+		}, wantKey: "/Service"},
+		{name: "white space block health is kept", data: map[string]string{
+			"resource.customizations": "/Service:\n  health.lua: \"  \"\n",
+		}, wantKey: "/Service"},
+		{name: "white space split health replaces block", data: map[string]string{
+			"resource.customizations":                 "/Service:\n  health.lua: return {status=\"Healthy\"}\n",
+			"resource.customizations.health._Service": " ",
+		}, wantKey: "/Service"},
+		{name: "white space split actions are kept", data: map[string]string{
+			"resource.customizations.actions._Service": "\n",
+		}, wantKey: "/Service"},
+		{name: "undecodable split actions are accepted", data: map[string]string{
+			"resource.customizations.actions._Service": "definitions: [\n",
+		}, wantKey: "/Service"},
+		{name: "split actions of the wrong shape are accepted", data: map[string]string{
+			"resource.customizations.actions._Service": "definitions: oops\n",
+		}, wantKey: "/Service"},
+		{name: "undecodable block actions are accepted", data: map[string]string{
+			"resource.customizations": "/Service:\n  actions: |\n    definitions: [\n  ignoreDifferences: |\n    managedFieldsManagers: [a]\n",
 		}, wantKey: "/Service"},
 
 		// Values Argo CD cannot decode.

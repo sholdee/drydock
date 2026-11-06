@@ -752,9 +752,9 @@ Supported:
   final dot. So `resource.customizationsX.health.Service` is also a split
   key. Argo CD reads the split keys in Go map order, which is not defined.
   If two split keys set the same field of the same key, the order changes
-  the result. Otherwise it does not. With valid ConfigMap keys, only this prefix rule can cause
-  that. drydock reads the split keys in sorted order, keeps the last value,
-  and reports a warning.
+  the result. Otherwise it does not. With valid ConfigMap keys, only this
+  prefix rule can cause that. drydock reads the split keys in sorted order,
+  keeps the last value, and reports a warning.
 - Ignore rule order as in Argo CD v3.6.1. Application rules run first, then
   the resource's annotation rule, then `resource.customizations` rules
   (`util/argo/diff/ignore.go`, `util/argo/normalizers/diff_normalizer.go`).
@@ -887,6 +887,18 @@ Supported:
   terminating objects, so it never takes effect on desired manifests.
 - Health and action customization parsing and diagnostics, including
   `useOpenLibs` metadata and redacted SHA-256 Lua summaries.
+- A `health.lua` value that holds only white space, as in Argo CD v3.6.1.
+  Argo CD runs any `health.lua` value that is not empty
+  (`util/lua/lua.go:254`). A script with only white space returns nothing,
+  so the resource gets no health status from Lua. A wildcard key and the
+  built-in Lua script for the kind then do not apply. drydock keeps such a
+  script and runs it in the same way. An empty value counts as no script.
+- Resource actions, as in Argo CD v3.6.1. Argo CD keeps the `actions` text
+  when it loads settings. The code that lists or runs actions decodes the
+  text (`util/lua/lua.go:501`). drydock never runs actions, so it accepts
+  every `actions` value and reports no error for it. This includes text
+  that does not decode. For such text, the summary has only the SHA-256
+  value of the text.
 - Warning diagnostics for version-specific `kustomize.buildOptions.<version>`
   and `kustomize.path.<version>` settings because drydock does not select
   external Kustomize binaries.
