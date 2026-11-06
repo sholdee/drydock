@@ -323,6 +323,7 @@ func resolveDiffRequestPaths(ctx context.Context, request DiffRequest, computeCh
 	request.LeftPath = pathsafety.ResolveSymlinkedRoot(request.LeftPath)
 	request.RightPath = pathsafety.ResolveSymlinkedRoot(request.RightPath)
 	request.Repo = pathsafety.ResolveSymlinkedRoot(request.Repo)
+	request.RepoMaps = resolveRepoMapRoots(request.RepoMaps)
 	var cleanups []func() error
 	cleanup := func() error {
 		var err error

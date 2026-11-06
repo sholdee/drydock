@@ -196,7 +196,22 @@ func ensureBuildSelfRepoRefs(request BuildRequest) BuildRequest {
 // check, and the cache keys all read the tree it points to.
 func resolveBuildRequestRoot(request BuildRequest) BuildRequest {
 	request.Path = pathsafety.ResolveSymlinkedRoot(request.Path)
+	request.RepoMaps = resolveRepoMapRoots(request.RepoMaps)
 	return request
+}
+
+// resolveRepoMapRoots returns a copy of repoMaps whose roots that are
+// themselves symlinks are resolved, so discovery, the source resolver, and
+// every other reader of a mapped root see the tree it points to.
+func resolveRepoMapRoots(repoMaps []sourcepkg.RepoMap) []sourcepkg.RepoMap {
+	if len(repoMaps) == 0 {
+		return repoMaps
+	}
+	out := make([]sourcepkg.RepoMap, len(repoMaps))
+	for i, repoMap := range repoMaps {
+		out[i] = sourcepkg.RepoMap{URL: repoMap.URL, Path: pathsafety.ResolveSymlinkedRoot(repoMap.Path)}
+	}
+	return out
 }
 
 func ensureSnapshotSession(request BuildRequest) (BuildRequest, func(), error) {

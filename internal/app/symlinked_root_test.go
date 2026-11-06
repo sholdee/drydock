@@ -87,3 +87,32 @@ func TestOrchestratorDiffsSymlinkedRoots(t *testing.T) {
 		t.Fatalf("diffed Applications = %v, want demo", got)
 	}
 }
+
+// TestOrchestratorDiscoversChildrenInASymlinkedRepoMapRoot pins that
+// discovery reads a --repo-map root that is itself a symlink: a parent
+// Application whose source is that repository at path "." declares a child
+// Application, and the child is found.
+func TestOrchestratorDiscoversChildrenInASymlinkedRepoMapRoot(t *testing.T) {
+	parent := t.TempDir()
+	root := filepath.Join(parent, "root")
+	writeTestFile(t, filepath.Join(root, "apps", "parent.yaml"), symlinkedRootApplication("parent", "https://git.example.test/children.git", "."))
+	writeTestFile(t, filepath.Join(parent, "children-real", "child.yaml"), symlinkedRootApplication("child", "https://git.example.test/repo.git", "app"))
+	link := filepath.Join(parent, "children-link")
+	if err := os.Symlink("children-real", link); err != nil {
+		t.Skipf("symlink unavailable: %v", err)
+	}
+	result, err := Orchestrator{}.ListApplications(context.Background(), BuildRequest{
+		Path:     root,
+		RepoMaps: []sourcepkg.RepoMap{{URL: "https://git.example.test/children.git", Path: link}},
+	})
+	if err != nil {
+		t.Fatalf("ListApplications() error = %v, diagnostics = %#v", err, result.Diagnostics)
+	}
+	names := map[string]bool{}
+	for _, application := range result.Applications {
+		names[application.Name] = true
+	}
+	if !names["parent"] || !names["child"] {
+		t.Fatalf("Applications = %v, want parent and child", names)
+	}
+}
