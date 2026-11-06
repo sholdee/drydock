@@ -263,6 +263,10 @@ drydock reads the switch only from `argocd-cmd-params-cm`. It does not see a
 value set only on the ApplicationSet controller Deployment, for example
 through the chart's `applicationSet.extraArgs` or `applicationSet.extraEnv`.
 
+An empty steps list differs from Argo CD in one way. Argo CD keeps the
+Applications that already exist and leaves them unchanged. drydock generates
+none, so `drydock diff` shows them all as removed, and `--strict` fails.
+
 Messages reuse Argo CD's text. drydock reports every finding class, while the
 Argo CD condition shows the highest-priority one. The `maxUpdate` check
 assumes the cluster already holds the generated Applications. `--strict`
