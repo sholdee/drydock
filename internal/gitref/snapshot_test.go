@@ -633,3 +633,28 @@ func TestMaterializeTreeRejectsOverlappingTreePaths(t *testing.T) {
 		}
 	}
 }
+
+// TestMkdirSnapshotParentsNeverCreatesThroughASymlink pins that the
+// snapshot writer creates directories one component at a time and refuses a
+// component that is a symlink, so it creates nothing outside the snapshot.
+// os.MkdirAll follows the symlink and would create outside/x.
+func TestMkdirSnapshotParentsNeverCreatesThroughASymlink(t *testing.T) {
+	root := t.TempDir()
+	outside := t.TempDir()
+	if err := os.Symlink(outside, filepath.Join(root, "a")); err != nil {
+		t.Skipf("symlink unavailable: %v", err)
+	}
+	err := mkdirSnapshotParents(root, filepath.Join(root, "a", "x", "y"))
+	if err == nil || !strings.Contains(err.Error(), "is not a directory inside snapshot root") {
+		t.Fatalf("mkdirSnapshotParents() error = %v, want the symlink refused", err)
+	}
+	if _, err := os.Lstat(filepath.Join(outside, "x")); !os.IsNotExist(err) {
+		t.Fatalf("a directory was created outside the snapshot: %v", err)
+	}
+	if err := mkdirSnapshotParents(root, filepath.Join(root, "b", "c")); err != nil {
+		t.Fatalf("mkdirSnapshotParents() error = %v", err)
+	}
+	if info, err := os.Lstat(filepath.Join(root, "b", "c")); err != nil || !info.IsDir() {
+		t.Fatalf("Lstat(b/c) = %v, %v, want a directory", info, err)
+	}
+}

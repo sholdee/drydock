@@ -196,7 +196,7 @@ func materializeTreeFile(root string, file *object.File, keepOutOfBoundsSymlinks
 	if err := validateSnapshotWriteParent(root, parent); err != nil {
 		return err
 	}
-	if err := os.MkdirAll(parent, 0o755); err != nil {
+	if err := mkdirSnapshotParents(root, parent); err != nil {
 		return err
 	}
 	if err := validateSnapshotWriteParent(root, parent); err != nil {
@@ -273,6 +273,39 @@ func writeSnapshotFile(target string, file *object.File) error {
 		return copyErr
 	}
 	return closeErr
+}
+
+// mkdirSnapshotParents creates dir and every directory between root and it,
+// one component at a time. It refuses a component that exists as a symlink
+// or as anything but a directory, so it never creates a directory through a
+// symlink, outside the snapshot. os.MkdirAll follows symlinks, so on a
+// case-insensitive filesystem a parallel worker that wrote the symlink "A"
+// could make it create "a/x" outside the snapshot before any later check.
+// os.Mkdir does not follow a symlink at its own path: it fails because the
+// path exists, and the check that follows refuses it.
+func mkdirSnapshotParents(root, dir string) error {
+	rel, err := filepath.Rel(root, dir)
+	if err != nil || filepath.IsAbs(rel) || pathsafety.RelEscapes(rel) {
+		return fmt.Errorf("snapshot destination %q escapes snapshot root %q", dir, root)
+	}
+	if rel == "." {
+		return nil
+	}
+	current := root
+	for component := range strings.SplitSeq(rel, string(os.PathSeparator)) {
+		current = filepath.Join(current, component)
+		if err := os.Mkdir(current, 0o755); err != nil && !os.IsExist(err) {
+			return err
+		}
+		info, err := os.Lstat(current)
+		if err != nil {
+			return err
+		}
+		if info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
+			return fmt.Errorf("snapshot destination %q is not a directory inside snapshot root %q", current, root)
+		}
+	}
+	return nil
 }
 
 func validateSnapshotWriteParent(root, parent string) error {
