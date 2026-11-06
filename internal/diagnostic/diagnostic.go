@@ -30,6 +30,12 @@ const (
 	CodeSettingsResourceSelectorMismatch = "settings.resource-selector-mismatch"
 )
 
+// CodeSettingsIgnoreResourceUpdates is the advisory that one settings source
+// sets ignoreResourceUpdates customizations. Argo CD uses them only to skip
+// reconciles on live updates. They never change desired output or a
+// desired-vs-desired diff, so --strict does not fail on the advisory.
+const CodeSettingsIgnoreResourceUpdates = "settings.ignore-resource-updates"
+
 type Provenance struct {
 	Path    string `json:"path,omitempty" yaml:"path,omitempty"`
 	Pointer string `json:"pointer,omitempty" yaml:"pointer,omitempty"`

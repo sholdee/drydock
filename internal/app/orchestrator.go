@@ -1048,6 +1048,10 @@ func normalizeDiagnostics(diags []diagnostic.Diagnostic, strict, forceWarning bo
 // different artifact gives --strict nothing to protect — the pull of
 // repoURL:targetRevision either fails (already an error, warning alongside)
 // or renders Argo-identical output.
+// The ignoreResourceUpdates advisory is the same kind: Argo CD uses those
+// rules only to skip reconciles on live updates, so desired output and
+// desired-vs-desired diffs are identical whether or not they are set, and
+// the argo-cd Helm chart sets eight of them by default.
 // The ApplicationSet invalid-rollout-config lint is the same kind of advisory:
 // Argo CD v3.6.1 evaluates RollingSync steps only when the ApplicationSet
 // controller runs with progressive syncs enabled (off by default), and even
@@ -1059,7 +1063,7 @@ func normalizeDiagnostics(diags []diagnostic.Diagnostic, strict, forceWarning bo
 // it aborts reconciliation of the whole ApplicationSet.
 func strictExemptDiagnostic(diag diagnostic.Diagnostic) bool {
 	switch diag.Code {
-	case selfRepoNearMissCode, ociChartIgnoredCode, diagnostic.CodePluginPolicyEnvIgnored, changedOnlySettingsCode, changedOnlySettingsScopedCode, changedOnlyProjectsCode, diagnostic.CodeAppSetInvalidRolloutConfig, render.DirectoryExtensionFilterDisabledCode:
+	case selfRepoNearMissCode, ociChartIgnoredCode, diagnostic.CodeSettingsIgnoreResourceUpdates, diagnostic.CodePluginPolicyEnvIgnored, changedOnlySettingsCode, changedOnlySettingsScopedCode, changedOnlyProjectsCode, diagnostic.CodeAppSetInvalidRolloutConfig, render.DirectoryExtensionFilterDisabledCode:
 		return true
 	}
 	return false
