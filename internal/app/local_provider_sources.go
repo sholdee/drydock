@@ -136,8 +136,8 @@ func (p localProvider) resolveSourceRootIdentity(ctx context.Context, source ren
 // OCI source. For a Git source of a single-source Application it is the
 // checked-out commit (`git rev-parse HEAD`). For a Git source of a
 // multi-source Application (multi) it is the `git ls-remote` result as it
-// is, which sourcepkg.LsRemoteRevision gives: the tag object SHA for an
-// annotated tag and an abbreviated SHA as written.
+// is, which sourcepkg.LsRemoteRevision gives: a full or abbreviated SHA as
+// written, else the commit SHA (listRemote peels annotated tags).
 //
 // root and identity are what resolveSourceRootIdentity returned for source.
 // drydock reports the commit of the tree it renders: the resolved commit of

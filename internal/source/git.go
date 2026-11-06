@@ -47,8 +47,8 @@ type GitResult struct {
 	Revision string
 	// LsRemoteRevision is Revision in the form that `git ls-remote`
 	// resolution in the Argo CD repo-server gives for the requested
-	// revision (see LsRemoteRevision): the tag object SHA for an annotated
-	// tag, an abbreviated SHA as written, else the commit SHA.
+	// revision (see LsRemoteRevision): a full or abbreviated SHA as
+	// written, else the commit SHA.
 	LsRemoteRevision string
 	FromCache        bool
 	Network          bool
@@ -291,42 +291,29 @@ func checkoutGitRevision(repo *git.Repository, worktree *git.Worktree, revision 
 // result is:
 //
 //   - revision as written when it is a full 40-digit SHA;
-//   - the SHA that the tag ref holds when revision names a tag of repo that
-//     points to commit, which is the tag object SHA for an annotated tag and
-//     the commit SHA for a lightweight tag;
 //   - revision as written when it is an abbreviated SHA (7 or more hex
-//     digits) that names no ref and is a prefix of commit;
-//   - commit in every other case: HEAD, a branch, or a revision whose ref
-//     names a different commit than the one drydock renders.
+//     digits) that names no branch or tag and is a prefix of commit;
+//   - commit in every other case: HEAD, a branch, a lightweight tag, and an
+//     annotated tag, because listRemote peels each tag that the server
+//     advertises with a peeled SHA (util/git/workaround.go:86-96).
 //
-// A branch wins over a tag with the same name. ls-remote takes the first
-// match in an unordered ref list there, so Argo CD can pick either. drydock
-// reads the refs of repo, not of the remote: a tag that was never pushed
-// still resolves here, and a tag that repo never fetched does not.
+// drydock reads the refs of repo, not of the remote.
 func LsRemoteRevision(repo *git.Repository, revision, commit string) string {
 	revision = strings.TrimSpace(revision)
 	if fullCommitSHA.MatchString(revision) {
 		return revision
 	}
-	if repo == nil || isDefaultGitRevision(revision) {
+	if repo == nil || isDefaultGitRevision(revision) || !abbreviatedCommitSHA.MatchString(revision) {
 		return commit
 	}
-	for _, name := range lsRemoteBranchRefNames(revision) {
+	// ls-remote matches a ref name before it takes a hex revision as an
+	// abbreviated SHA.
+	for _, name := range lsRemoteRefNames(revision) {
 		if _, err := repo.Reference(name, true); err == nil {
 			return commit
 		}
 	}
-	tagName := plumbing.ReferenceName("refs/tags/" + revision)
-	if strings.HasPrefix(revision, "refs/tags/") {
-		tagName = plumbing.ReferenceName(revision)
-	}
-	if ref, err := repo.Reference(tagName, true); err == nil {
-		if peeled, err := ResolveGitRevision(repo, tagName.String()); err == nil && peeled.String() == commit {
-			return ref.Hash().String()
-		}
-		return commit
-	}
-	if abbreviatedCommitSHA.MatchString(revision) && strings.HasPrefix(commit, strings.ToLower(revision)) {
+	if strings.HasPrefix(commit, strings.ToLower(revision)) {
 		return revision
 	}
 	return commit
@@ -337,19 +324,15 @@ var (
 	abbreviatedCommitSHA = regexp.MustCompile("^[0-9A-Fa-f]{7,}$")
 )
 
-// lsRemoteBranchRefNames lists the local ref names that hold the branch
-// revision names: refs/heads/<branch> in a working repository and
-// refs/remotes/origin/<branch> in a drydock Git cache clone.
-func lsRemoteBranchRefNames(revision string) []plumbing.ReferenceName {
-	branch := revision
-	if trimmed, ok := strings.CutPrefix(revision, "refs/heads/"); ok {
-		branch = trimmed
-	} else if strings.HasPrefix(revision, "refs/") {
-		return nil
-	}
+// lsRemoteRefNames lists the local ref names that would hold a branch or a
+// tag named revision: refs/heads/<name> in a working repository,
+// refs/remotes/origin/<name> in a drydock Git cache clone, and
+// refs/tags/<name>.
+func lsRemoteRefNames(revision string) []plumbing.ReferenceName {
 	return []plumbing.ReferenceName{
-		plumbing.NewBranchReferenceName(branch),
-		plumbing.NewRemoteReferenceName("origin", branch),
+		plumbing.NewBranchReferenceName(revision),
+		plumbing.NewRemoteReferenceName("origin", revision),
+		plumbing.NewTagReferenceName(revision),
 	}
 }
 

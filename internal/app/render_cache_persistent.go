@@ -563,8 +563,8 @@ func sourceIdentityForPlan(ctx context.Context, handle *persistentRenderCache, p
 // identity when the source reads it and the key does not hold that value
 // yet. The local input kinds drop Revision, so they always need it. The
 // other kinds hold the commit, digest, or chart version in Revision, which
-// is the value unless a multi-source Application reports the tag object SHA
-// or an abbreviated SHA instead. Sources that do not read the variables
+// is the value unless a multi-source Application reports an abbreviated
+// SHA instead. Sources that do not read the variables
 // keep their identity, so their keys do not change.
 func withKeyAppRevision(identity SourceIdentity, sourcePlan SourcePlan) SourceIdentity {
 	if sourcePlan.AppRevision == "" || !sourceReadsAppRevision(sourcePlan.Source) {

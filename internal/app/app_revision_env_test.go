@@ -459,14 +459,16 @@ func gitTagAppRevisionFixture(t *testing.T, root string) (string, string) {
 // A single-source Application reports the commit (`git rev-parse HEAD`).
 // A multi-source Application reports the `git ls-remote` result as it is
 // (reposerver/repository/repository.go:516-518): an abbreviated SHA as
-// written, the tag object SHA for an annotated tag, and the commit for a
-// lightweight tag. These cases render from the --path tree.
+// written, and the commit for a lightweight tag and for an annotated tag,
+// because listRemote peels annotated tags (util/git/workaround.go:86-96).
+// These cases render from the --path tree.
 func TestBuildLocalTreeAppRevisionFollowsSingleAndMultiSourceRules(t *testing.T) {
 	root := t.TempDir()
 	writeAppRevisionChart(t, filepath.Join(root, "charts", "revision"))
 	gitCommitAll(t, root, "chart")
 	commit, tagObject := gitTagAppRevisionFixture(t, root)
 	short := commit[:9]
+	assertAnnotatedTagObject(t, commit, tagObject)
 	cases := []struct {
 		name     string
 		revision string
@@ -477,7 +479,7 @@ func TestBuildLocalTreeAppRevisionFollowsSingleAndMultiSourceRules(t *testing.T)
 		{name: "single-annotated", revision: "v1.0.0", want: commit},
 		{name: "single-light", revision: "light", want: commit},
 		{name: "multi-short", revision: short, multi: true, want: short},
-		{name: "multi-annotated", revision: "v1.0.0", multi: true, want: tagObject},
+		{name: "multi-annotated", revision: "v1.0.0", multi: true, want: commit},
 		{name: "multi-light", revision: "light", multi: true, want: commit},
 	}
 	for _, tc := range cases {
@@ -496,13 +498,14 @@ func TestBuildLocalTreeAppRevisionFollowsSingleAndMultiSourceRules(t *testing.T)
 }
 
 // The same rules hold for a Git source that drydock fetches into its Git
-// cache: the clone holds the tag objects of the remote.
+// cache.
 func TestBuildFetchedGitAppRevisionFollowsSingleAndMultiSourceRules(t *testing.T) {
 	remote := t.TempDir()
 	writeAppRevisionChart(t, filepath.Join(remote, "charts", "remote"))
 	gitCommitAll(t, remote, "chart")
 	commit, tagObject := gitTagAppRevisionFixture(t, remote)
 	short := commit[:9]
+	assertAnnotatedTagObject(t, commit, tagObject)
 	repoURL := "file://" + filepath.ToSlash(remote)
 	root := t.TempDir()
 	cases := []struct {
@@ -515,7 +518,7 @@ func TestBuildFetchedGitAppRevisionFollowsSingleAndMultiSourceRules(t *testing.T
 		{name: "single-annotated", revision: "v1.0.0", want: commit},
 		{name: "single-light", revision: "light", want: commit},
 		{name: "multi-short", revision: short, multi: true, want: short},
-		{name: "multi-annotated", revision: "v1.0.0", multi: true, want: tagObject},
+		{name: "multi-annotated", revision: "v1.0.0", multi: true, want: commit},
 		{name: "multi-light", revision: "light", multi: true, want: commit},
 	}
 	for _, tc := range cases {
@@ -533,55 +536,50 @@ func TestBuildFetchedGitAppRevisionFollowsSingleAndMultiSourceRules(t *testing.T
 	}
 }
 
-// A --repo-map directory and each side of a --ref diff resolve the tag in
-// their own repository. The diff base commit carries the annotated tag; the
-// head commit does not, so the head side reports its commit.
-func TestRepoMapAndDiffRefAppRevisionResolveAnnotatedTagForMultiSource(t *testing.T) {
+// A --repo-map directory and a --ref diff side keep an abbreviated SHA of a
+// multi-source Application as written when it names the commit they render.
+func TestRepoMapAndDiffRefAppRevisionKeepAbbreviatedSHAForMultiSource(t *testing.T) {
 	const mappedURL = "https://git.example.test/mapped/repo.git"
 	t.Run("repo-map", func(t *testing.T) {
-		root := t.TempDir()
-		writeAppRevisionSourcesApp(t, root, "mapped", mappedURL, "v1.0.0", "charts/revision", true)
 		mappedDir := t.TempDir()
 		writeAppRevisionChart(t, filepath.Join(mappedDir, "charts", "revision"))
-		gitCommitAll(t, mappedDir, "mapped")
-		_, tagObject := gitTagAppRevisionFixture(t, mappedDir)
+		mappedHead := gitCommitAll(t, mappedDir, "mapped")
+		root := t.TempDir()
+		writeAppRevisionSourcesApp(t, root, "mapped", mappedURL, mappedHead[:10], "charts/revision", true)
 		result, err := Orchestrator{}.Build(context.Background(), BuildRequest{Path: root, RepoMaps: []sourcepkg.RepoMap{{URL: mappedURL, Path: mappedDir}}})
 		if err != nil {
 			t.Fatalf("Build() error = %v\nDiagnostics: %#v", err, result.Diagnostics)
 		}
-		assertAppRevisionChartData(t, result.Manifests, "mapped-revision", tagObject)
+		assertAppRevisionChartData(t, result.Manifests, "mapped-revision", mappedHead[:10])
 	})
-	t.Run("diff-ref", func(t *testing.T) {
-		root := t.TempDir()
-		writeAppRevisionChart(t, filepath.Join(root, "charts", "revision"))
-		writeAppRevisionSourcesApp(t, root, "tagged", appRevisionTestRepoURL, "v1.0.0", "charts/revision", true)
-		base := gitCommitAll(t, root, "base")
-		_, tagObject := gitTagAppRevisionFixture(t, root)
-		writeTestFile(t, filepath.Join(root, "README.md"), "unrelated change\n")
-		head := gitCommitAll(t, root, "head")
-		result, err := Orchestrator{}.DiffApps(context.Background(), DiffRequest{RightPath: root, Repo: root, Ref: "HEAD", RefOrig: base})
+	// A --ref diff side renders a snapshot directory without .git. Its
+	// revision comes from the repository the snapshot was made from.
+	t.Run("ref-snapshot", func(t *testing.T) {
+		repoDir := t.TempDir()
+		writeTestFile(t, filepath.Join(repoDir, "README.md"), "snapshot source\n")
+		commit := gitCommitAll(t, repoDir, "snapshot")
+		snapshot := t.TempDir()
+		writeAppRevisionChart(t, filepath.Join(snapshot, "charts", "revision"))
+		writeAppRevisionSourcesApp(t, snapshot, "multi", appRevisionTestRepoURL, commit[:9], "charts/revision", true)
+		writeAppRevisionSourcesApp(t, snapshot, "single", appRevisionTestRepoURL, commit[:9], "charts/revision", false)
+		request := BuildRequest{Path: snapshot}
+		request.rootRevision = commit
+		request.rootRepo = repoDir
+		result, err := Orchestrator{}.Build(context.Background(), request)
 		if err != nil {
-			t.Fatalf("DiffApps() error = %v\nDiagnostics: %#v", err, result.Diagnostics)
+			t.Fatalf("Build() error = %v\nDiagnostics: %#v", err, result.Diagnostics)
 		}
-		for _, item := range result.Results {
-			if item.Resource.Name != "tagged-revision" {
-				continue
-			}
-			if !strings.Contains(item.Before, "revision: "+tagObject) || !strings.Contains(item.After, "revision: "+head) {
-				t.Fatalf("diff before/after = %q / %q, want tag object %s and head %s", item.Before, item.After, tagObject, head)
-			}
-			return
-		}
-		t.Fatalf("Results = %#v, want a change to tagged-revision", result.Results)
+		assertAppRevisionChartData(t, result.Manifests, "multi-revision", commit[:9])
+		assertAppRevisionChartData(t, result.Manifests, "single-revision", commit)
 	})
 }
 
 // A fetched Git source keys on its commit. A multi-source Application that
-// reads the tag object SHA also keys on that SHA, so a new tag object on the
-// same commit renders again. Other sources keep their identity.
+// reads an abbreviated SHA also keys on that value. Other sources keep
+// their identity.
 func TestWithKeyAppRevisionAddsOnlyValuesTheKeyLacks(t *testing.T) {
 	const commit = "1111111111111111111111111111111111111111"
-	const tagObject = "2222222222222222222222222222222222222222"
+	const abbreviated = "1111111"
 	reader := argoappv1.ApplicationSource{Helm: &argoappv1.ApplicationSourceHelm{Parameters: []argoappv1.HelmParameter{{Name: "r", Value: "$ARGOCD_APP_REVISION"}}}}
 	plain := argoappv1.ApplicationSource{Helm: &argoappv1.ApplicationSourceHelm{Parameters: []argoappv1.HelmParameter{{Name: "r", Value: "fixed"}}}}
 	gitIdentity := SourceIdentity{Kind: sourceIdentityKindGit, Revision: commit}
@@ -592,9 +590,9 @@ func TestWithKeyAppRevisionAddsOnlyValuesTheKeyLacks(t *testing.T) {
 		plan     SourcePlan
 		want     string
 	}{
-		{name: "git reader with tag object", identity: gitIdentity, plan: SourcePlan{Source: reader, AppRevision: tagObject}, want: tagObject},
+		{name: "git reader with abbreviated SHA", identity: gitIdentity, plan: SourcePlan{Source: reader, AppRevision: abbreviated}, want: abbreviated},
 		{name: "git reader with commit", identity: gitIdentity, plan: SourcePlan{Source: reader, AppRevision: commit}, want: ""},
-		{name: "git non-reader", identity: gitIdentity, plan: SourcePlan{Source: plain, AppRevision: tagObject}, want: ""},
+		{name: "git non-reader", identity: gitIdentity, plan: SourcePlan{Source: plain, AppRevision: abbreviated}, want: ""},
 		{name: "local reader", identity: local, plan: SourcePlan{Source: reader, AppRevision: commit}, want: commit},
 		{name: "local non-reader", identity: local, plan: SourcePlan{Source: plain, AppRevision: commit}, want: ""},
 	} {
@@ -603,5 +601,12 @@ func TestWithKeyAppRevisionAddsOnlyValuesTheKeyLacks(t *testing.T) {
 				t.Fatalf("AppRevision = %q, want %q", got, tc.want)
 			}
 		})
+	}
+}
+
+func assertAnnotatedTagObject(t *testing.T, commit, tagObject string) {
+	t.Helper()
+	if tagObject == commit {
+		t.Fatalf("v1.0.0 tag object = commit %s, want an annotated tag object", commit)
 	}
 }
