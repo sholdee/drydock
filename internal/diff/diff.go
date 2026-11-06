@@ -56,8 +56,13 @@ type Normalization struct {
 	AnnotationJSONPointers []string
 	// ServerSideDiff reports that Argo CD compares the resource's
 	// Application with server-side diff. It decides what happens when an
-	// ignore rule removes a whole object (see errObjectRemoved).
+	// ignore rule removes a whole object (see errObjectRemoved), and how a
+	// created or deleted resource is normalized (see
+	// withServerSideCreateOrDeleteNormalization).
 	ServerSideDiff bool
+	// skipKnownTypes turns off the known-types normalizer, including the
+	// Rollout default.
+	skipKnownTypes bool
 }
 type Document struct {
 	Parent        Parent        `json:"parent" yaml:"parent"`
@@ -94,6 +99,9 @@ type Options struct {
 	Unified           int
 	StripAttrs        []string
 	ShowIgnoredFields bool
+	// reportKnownTypeFailure, when it is set, receives each knownTypeFields
+	// field that failed to normalize. RunWithReport sets it.
+	reportKnownTypeFailure func(field string, err error)
 	// JQExecutionTimeout limits how long one jq ignore-rule deletion may run,
 	// as the Argo CD controller setting controller.ignore.normalizer.jq.timeout
 	// does. Zero means Argo CD's default of 1 second. An expression that runs
@@ -106,6 +114,22 @@ type Options struct {
 type ComparisonFailure struct {
 	Parent  Parent
 	Message string
+}
+
+// KnownTypeFailure is a knownTypeFields field that failed to normalize on a
+// changed resource. Argo CD logs it and compares the field as written.
+type KnownTypeFailure struct {
+	Parent   Parent
+	Resource Resource
+	Field    string
+	Message  string
+}
+
+// RunReport is the outcome of RunWithReport.
+type RunReport struct {
+	Results            []Result
+	ComparisonFailures []ComparisonFailure
+	KnownTypeFailures  []KnownTypeFailure
 }
 
 // Run diffs the documents. It returns an error for an Application whose
@@ -124,17 +148,38 @@ func Run(left, right []Document, opts Options) ([]Result, error) {
 // RunWithFailures diffs the documents. An Application whose comparison
 // fails, as Argo CD fails it, gets one ComparisonFailure and no results.
 func RunWithFailures(left, right []Document, opts Options) ([]Result, []ComparisonFailure, error) {
+	report, err := RunWithReport(left, right, opts)
+	return report.Results, report.ComparisonFailures, err
+}
+
+// RunWithReport diffs the documents like RunWithFailures and also reports
+// the knownTypeFields fields that failed to normalize.
+func RunWithReport(left, right []Document, opts Options) (RunReport, error) {
 	leftByKey := documentsByKey(left)
 	rightByKey := documentsByKey(right)
 	keys := sortedKeys(leftByKey, rightByKey)
 
 	results := make([]Result, 0)
 	var failures []ComparisonFailure
+	var knownTypeFailures []KnownTypeFailure
 	failed := map[string]struct{}{}
 	for _, key := range keys {
-		result, include, failure, err := diffResultForKey(leftByKey, rightByKey, key, opts)
+		doc, ok := rightByKey[key]
+		if !ok {
+			doc = leftByKey[key]
+		}
+		reported := map[string]struct{}{}
+		keyOpts := opts
+		keyOpts.reportKnownTypeFailure = func(field string, err error) {
+			if _, ok := reported[field]; ok {
+				return
+			}
+			reported[field] = struct{}{}
+			knownTypeFailures = append(knownTypeFailures, KnownTypeFailure{Parent: doc.Parent, Resource: doc.Resource, Field: field, Message: err.Error()})
+		}
+		result, include, failure, err := diffResultForKey(leftByKey, rightByKey, key, keyOpts)
 		if err != nil {
-			return nil, nil, err
+			return RunReport{}, err
 		}
 		if failure != nil {
 			if _, ok := failed[parentName(failure.Parent)]; !ok {
@@ -148,7 +193,7 @@ func RunWithFailures(left, right []Document, opts Options) ([]Result, []Comparis
 		}
 	}
 	if len(failed) == 0 {
-		return results, nil, nil
+		return RunReport{Results: results, KnownTypeFailures: knownTypeFailures}, nil
 	}
 	kept := results[:0]
 	for _, result := range results {
@@ -156,13 +201,20 @@ func RunWithFailures(left, right []Document, opts Options) ([]Result, []Comparis
 			kept = append(kept, result)
 		}
 	}
-	return kept, failures, nil
+	keptKnownTypeFailures := knownTypeFailures[:0]
+	for _, failure := range knownTypeFailures {
+		if _, ok := failed[parentName(failure.Parent)]; !ok {
+			keptKnownTypeFailures = append(keptKnownTypeFailures, failure)
+		}
+	}
+	return RunReport{Results: kept, ComparisonFailures: failures, KnownTypeFailures: keptKnownTypeFailures}, nil
 }
 
 func diffResultForKey(leftByKey, rightByKey map[string]Document, key string, opts Options) (Result, bool, *ComparisonFailure, error) {
 	left, hasLeft := leftByKey[key]
 	right, hasRight := rightByKey[key]
 	left, right = documentsWithSharedNormalization(left, right, hasLeft, hasRight)
+	left, right = withServerSideCreateOrDeleteNormalization(left, right, hasLeft, hasRight)
 	if hasLeft && hasRight && left.Body == right.Body {
 		// Both sides share the current side's normalization, so identical bodies
 		// always normalize identically and can never produce a diff. Under
@@ -180,10 +232,6 @@ func diffResultForKey(leftByKey, rightByKey map[string]Document, key string, opt
 	}
 	if hasLeft && hasRight && !right.Normalization.ServerSideDiff && leftBody == nullDiffBody && rightBody == nullDiffBody {
 		return Result{}, false, bothObjectsRemovedFailure(right), nil
-	}
-	leftBody, rightBody, err = serverSideCreateOrDeleteBodies(left, right, hasLeft, hasRight, leftBody, rightBody, opts)
-	if err != nil {
-		return Result{}, false, nil, err
 	}
 	doc, change, include := changedDocument(left, right, hasLeft, hasRight, leftBody, rightBody)
 	if !include {
@@ -211,39 +259,45 @@ func bothObjectsRemovedFailure(doc Document) *ComparisonFailure {
 
 // objectRemovedByNormalization reports whether the document's ignore rules
 // remove its whole object. Any other normalization error counts as false.
+// The resource is unchanged, so known-type failures are not reported.
 func objectRemovedByNormalization(doc Document, opts Options) bool {
+	opts.reportKnownTypeFailure = nil
 	_, err := normalizeDiffObject(doc.Body, opts, doc.Normalization, doc.Resource)
 	return errors.Is(err, errObjectRemoved)
 }
 
-// serverSideCreateOrDeleteBodies replaces the null body of a resource that
-// only one side has under server-side diff. Argo CD's server-side diff skips
-// the ignore rules and known types for a created or deleted resource
-// (gitops-engine pkg/diff/diff.go Diff and handleResourceCreateOrDeleteDiff),
-// so it shows the whole object where a rule would remove it.
-func serverSideCreateOrDeleteBodies(left, right Document, hasLeft, hasRight bool, leftBody, rightBody string, opts Options) (string, string, error) {
+// withServerSideCreateOrDeleteNormalization gives a resource that only one
+// side has the normalization of Argo CD's server-side diff for a created or
+// deleted resource. That path skips the whole ignore normalizer and the
+// known-types normalizer (gitops-engine pkg/diff/diff.go Diff and
+// handleResourceCreateOrDeleteDiff): no Application, annotation, or
+// resource.customizations rule, no status removal, which is a
+// resource.customizations rule in Argo CD, and no known types, not even the
+// Rollout default. The aggregated-role normalization still runs. Managed
+// fields need both sides, so they never apply here. drydock's own display
+// steps, such as the ConfigMap binaryData summary and Secret redaction,
+// still run on the body.
+func withServerSideCreateOrDeleteNormalization(left, right Document, hasLeft, hasRight bool) (Document, Document) {
 	if hasLeft == hasRight {
-		return leftBody, rightBody, nil
+		return left, right
 	}
-	doc, body := right, rightBody
-	if hasLeft {
-		doc, body = left, leftBody
-	}
-	if !doc.Normalization.ServerSideDiff || body != nullDiffBody {
-		return leftBody, rightBody, nil
-	}
-	doc.Normalization.ApplicationRules = nil
-	doc.Normalization.CustomizationRules = nil
-	doc.Normalization.AnnotationJSONPointers = nil
-	doc.Normalization.KnownTypeFields = nil
-	shown, err := normalizeDocumentBody(doc, opts)
-	if err != nil {
-		return "", "", err
+	adjust := func(doc Document) Document {
+		if !doc.Normalization.ServerSideDiff {
+			return doc
+		}
+		doc.Normalization.ApplicationRules = nil
+		doc.Normalization.CustomizationRules = nil
+		doc.Normalization.AnnotationJSONPointers = nil
+		doc.Normalization.KnownTypeFields = nil
+		doc.Normalization.ManagedFieldsManagers = nil
+		doc.Normalization.CompareOptions.IgnoreResourceStatusField = IgnoreResourceStatusNone
+		doc.Normalization.skipKnownTypes = true
+		return doc
 	}
 	if hasLeft {
-		return shown, rightBody, nil
+		return adjust(left), right
 	}
-	return leftBody, shown, nil
+	return left, adjust(right)
 }
 
 // mayFailComparison reports whether normalization can remove a whole object

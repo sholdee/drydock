@@ -376,7 +376,7 @@ will follow upstream when it changes. Until then, use one of these fixes:
 - List only one component that can be valid under `ignoreMissingComponents`.
 - Move the components into the kustomization's own `components:` list.
 
-## Symptom: `diff.ignore-pointer-invalid`, `diff.ignore-rule-invalid`, Or `diff.comparison-failed`
+## Symptom: A `diff.ignore-*`, `diff.comparison-failed`, Or `diff.known-type-skipped` Diagnostic
 
 `diff.ignore-pointer-invalid` is a warning. It names an Application and a
 `jsonPointers` entry of its `spec.ignoreDifferences` or of
@@ -402,6 +402,14 @@ the expression removes the object on one side only, Argo CD and drydock show a
 change with `null` on that side instead. With server-side diff, both sides
 `null` compare as unchanged. Fix the jq expression so that it removes a field,
 not the object.
+
+`diff.known-type-skipped` is an advisory warning. A `knownTypeFields` entry of
+`resource.customizations` failed to normalize a field of a changed resource,
+for example a `core/v1/ResourceRequirements` field whose `limits` is not a map.
+Argo CD only logs this error and compares the field as written, and drydock
+does the same. The warning names the Application, the resource, and the field.
+`--strict` does not fail on it. Fix the field or the `knownTypeFields` type if
+you want the field normalized.
 
 ## Symptom: Changed-Only Falls Back To All Apps
 

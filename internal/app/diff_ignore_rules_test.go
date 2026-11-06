@@ -625,3 +625,41 @@ func TestApplicationServerSideDiff(t *testing.T) {
 		})
 	}
 }
+
+// A knownTypeFields field that fails to normalize on a changed resource gives
+// the strict-exempt advisory diff.known-type-skipped, which names the
+// Application, the resource and the field. Argo CD only logs the error.
+func TestOrchestratorDiffAppsKnownTypeSkippedAdvisory(t *testing.T) {
+	writeApp := func(t *testing.T, root, replicas string) {
+		t.Helper()
+		writeTestFile(t, filepath.Join(root, "apps", "demo.yaml"), "apiVersion: argoproj.io/v1alpha1\nkind: Application\nmetadata:\n  name: demo\n  namespace: argocd\nspec:\n  source:\n    repoURL: https://github.com/example/repo\n    path: manifests/demo\n    targetRevision: main\n  destination:\n    name: in-cluster\n    namespace: demo\n")
+		writeTestFile(t, filepath.Join(root, "manifests", "demo", "widget.yaml"), "apiVersion: example.com/v1\nkind: Widget\nmetadata:\n  name: widget\nspec:\n  replicas: "+replicas+"\n  resources:\n    limits: notamap\n")
+		writeTestFile(t, filepath.Join(root, "argocd-cm.yaml"), "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: argocd-cm\n  namespace: argocd\ndata:\n  resource.customizations.knownTypeFields.example.com_Widget: |\n    - field: spec.resources\n      type: core/v1/ResourceRequirements\n")
+	}
+	for _, strict := range []bool{false, true} {
+		t.Run(fmt.Sprintf("strict=%t", strict), func(t *testing.T) {
+			root := t.TempDir()
+			left := filepath.Join(root, "left")
+			right := filepath.Join(root, "right")
+			writeApp(t, left, "1")
+			writeApp(t, right, "2")
+
+			result, err := Orchestrator{}.DiffApps(context.Background(), DiffRequest{LeftPath: left, RightPath: right, Unified: 3, Strict: strict})
+			if err != nil {
+				t.Fatalf("DiffApps() error = %v, want the advisory to pass --strict", err)
+			}
+			advisories := diagnosticsWithCode(result.Diagnostics, diffKnownTypeSkippedCode)
+			if len(advisories) != 1 || advisories[0].Severity != diagnostic.SeverityWarning {
+				t.Fatalf("%s diagnostics = %#v, want one warning", diffKnownTypeSkippedCode, advisories)
+			}
+			for _, want := range []string{"Application argocd/demo:", "example.com/Widget demo/widget", `"spec.resources"`} {
+				if !strings.Contains(advisories[0].Message, want) {
+					t.Fatalf("advisory = %q, want %q", advisories[0].Message, want)
+				}
+			}
+			if len(result.Results) != 1 {
+				t.Fatalf("Results = %#v, want the Widget change", result.Results)
+			}
+		})
+	}
+}

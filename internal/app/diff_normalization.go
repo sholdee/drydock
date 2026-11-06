@@ -198,6 +198,11 @@ const (
 	// comparison Argo CD fails while it diffs a resource, such as an ignore
 	// rule that removes a whole object under client-side diff.
 	diffComparisonFailedCode = "diff.comparison-failed"
+	// diffKnownTypeSkippedCode is the advisory warning that a knownTypeFields
+	// field of a changed resource failed to normalize. Argo CD logs the error
+	// and compares the field as written, and so does drydock, so --strict
+	// does not fail on it.
+	diffKnownTypeSkippedCode = "diff.known-type-skipped"
 )
 
 // diffApplicationKey names one Application in a diff.
@@ -322,6 +327,18 @@ func invalidIgnorePointerDiagnostics(leftDocs, rightDocs []diff.Document) []diag
 		}
 	}
 	return diags
+}
+
+func diffResourceName(resource diff.Resource) string {
+	kind := resource.Kind
+	if resource.Group != "" {
+		kind = resource.Group + "/" + kind
+	}
+	name := resource.Name
+	if resource.Namespace != "" {
+		name = resource.Namespace + "/" + name
+	}
+	return kind + " " + name
 }
 
 func withoutApplications(docs []diff.Document, failed map[diffApplicationKey]struct{}) []diff.Document {

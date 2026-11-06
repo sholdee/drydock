@@ -1085,6 +1085,9 @@ func normalizeDiagnostics(diags []diagnostic.Diagnostic, strict, forceWarning bo
 // different artifact gives --strict nothing to protect — the pull of
 // repoURL:targetRevision either fails (already an error, warning alongside)
 // or renders Argo-identical output.
+// The known-type-skipped advisory is the same kind: Argo CD only logs a
+// knownTypeFields error and compares the field as written, and drydock does
+// the same, so the diff matches Argo CD whether or not the advisory fires.
 // The ignoreResourceUpdates advisory is the same kind: Argo CD uses those
 // rules only to skip reconciles on live updates, so desired output and
 // desired-vs-desired diffs are identical whether or not they are set, and
@@ -1101,7 +1104,7 @@ func normalizeDiagnostics(diags []diagnostic.Diagnostic, strict, forceWarning bo
 // the whole ApplicationSet, which then contributes no Applications.
 func strictExemptDiagnostic(diag diagnostic.Diagnostic) bool {
 	switch diag.Code {
-	case selfRepoNearMissCode, ociChartIgnoredCode, diagnostic.CodeSettingsIgnoreResourceUpdates, diagnostic.CodePluginPolicyEnvIgnored, changedOnlySettingsCode, changedOnlySettingsScopedCode, changedOnlyProjectsCode, changedOnlySymlinksCode, changedOnlyJsonnetScanCode, diagnostic.CodeAppSetInvalidRolloutConfig, diagnostic.CodeAppSetRolloutStrategyIgnored, render.DirectoryExtensionFilterDisabledCode:
+	case selfRepoNearMissCode, ociChartIgnoredCode, diffKnownTypeSkippedCode, diagnostic.CodeSettingsIgnoreResourceUpdates, diagnostic.CodePluginPolicyEnvIgnored, changedOnlySettingsCode, changedOnlySettingsScopedCode, changedOnlyProjectsCode, changedOnlySymlinksCode, changedOnlyJsonnetScanCode, diagnostic.CodeAppSetInvalidRolloutConfig, diagnostic.CodeAppSetRolloutStrategyIgnored, render.DirectoryExtensionFilterDisabledCode:
 		return true
 	}
 	return false

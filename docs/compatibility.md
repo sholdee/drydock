@@ -1236,10 +1236,30 @@ Supported:
 - drydock parses and runs jq expressions with the gojq version that Argo CD
   v3.6.1 requires (v0.12.19). A newer gojq accepts some expressions that
   Argo CD rejects, such as `.data.ignored?//empty`.
+- drydock reads the diff mode of each Application as Argo CD v3.6.1 does
+  (`controller/state.go`): the `ServerSideDiff=true` or
+  `ServerSideDiff=false` compare option and the `ServerSideApply=true` sync
+  option. drydock does not read the controller-level switch
+  `controller.diff.server.side`, which turns on server-side diff for every
+  Application, so with that switch drydock treats such an Application as
+  using the client-side diff. The mode decides the next two points.
+- A resource that only one side has, a created or a deleted resource,
+  shows as a change in both modes. Under server-side diff, Argo CD skips the
+  whole ignore normalizer and the known-types normalizer for it
+  (gitops-engine `pkg/diff/diff.go`). So no Application, annotation, or
+  `resource.customizations` rule applies, `status` is not removed, and no
+  known type applies, not even the Argo Rollout default. The aggregated-role
+  normalization still applies. drydock does the same, and its own display
+  steps, the drydock-default ignored fields, `--strip-attr`, the ConfigMap
+  `binaryData` summary, and Secret redaction, still run. The client-side diff
+  applies the rules. So, under server-side diff, a new or deleted resource
+  now shows fields that an ignore rule hides from a changed resource.
+  Earlier drydock releases applied the rules in both modes.
 - A jq expression that removes the whole object, such as `.`, makes Argo CD
   continue with the object `null`, which it cannot decode. gitops-engine
-  only logs that error, and the object stays `null`. The result depends on
-  the diff mode and on which side is `null`:
+  only logs that error, and the object stays `null`. For a resource that
+  both sides have, the result depends on the diff mode and on which side is
+  `null`:
   - Both sides `null`, client-side diff: gitops-engine cannot build a patch
     and fails, so Argo CD fails the comparison of the Application. drydock
     reports a `diff.comparison-failed` error for that Application, also
@@ -1250,14 +1270,10 @@ Supported:
     with `null` on that side. With the client-side diff, this needs the
     last-applied annotation that a client-side sync leaves; without it,
     the two-way diff hides a `null` desired object.
-  - A new or deleted resource shows as a change in both modes. Server-side
-    diff shows the whole object, because it does not run the ignore rules
-    for it. The client-side diff shows `null`. drydock reads the diff mode from the Application:
-  the `ServerSideDiff=true` or `ServerSideDiff=false` compare option and
-  the `ServerSideApply=true` sync option. drydock does not read the
-  controller-level switch `controller.diff.server.side`, which turns on
-  server-side diff for every Application. With that switch, drydock fails
-  an Application that Argo CD compares with server-side diff.
+
+  A created or deleted resource is a change in both modes. The client-side
+  diff shows `null` for it. Server-side diff shows the whole object, because
+  it does not run the ignore rules for it (see above).
 - A jq expression that does not parse or compile fails the comparison of
   each current-side Application it belongs to, even when it matches no
   resource or the Application renders no resources. Argo CD builds every jq
@@ -1273,7 +1289,11 @@ Supported:
   checked.
 - A known-types normalizer error, such as a `core/v1/ResourceRequirements`
   field whose `limits` is not a map, is only logged by Argo CD, which then
-  compares the object as it is. drydock ignores the error in the same way.
+  compares the object as it is. The normalizer stops at the first field that
+  fails, after it changed the fields before it. drydock does the same. For a
+  changed resource, drydock gives the advisory `diff.known-type-skipped`,
+  which names the Application, the resource, and the field. `--strict` does
+  not fail on it, because the diff matches Argo CD either way.
 - `resource.customizations` keys as Argo CD reads them for `jsonPointers`,
   `jqPathExpressions`, and `knownTypeFields`
   (`util/argo/normalizers/util.go`): `group/kind` matches with globs, a key

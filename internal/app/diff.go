@@ -643,11 +643,21 @@ func diffBuildResults(leftBuild, rightBuild BuildResult, opts diff.Options, stri
 	leftDocs = withoutApplications(leftDocs, failed)
 	rightDocs = withoutApplications(rightDocs, failed)
 	diags = append(diags, invalidIgnorePointerDiagnostics(leftDocs, rightDocs)...)
-	results, failures, err := diff.RunWithFailures(leftDocs, rightDocs, opts)
+	report, err := diff.RunWithReport(leftDocs, rightDocs, opts)
 	if err != nil {
 		return nil, normalizeDiagnostics(diags, strict, false), err
 	}
-	for _, failure := range failures {
+	results := report.Results
+	for _, failure := range report.KnownTypeFailures {
+		diags = append(diags, diagnostic.Diagnostic{
+			Code:     diffKnownTypeSkippedCode,
+			Severity: diagnostic.SeverityWarning,
+			Category: "diff",
+			Message: fmt.Sprintf("Application %s: %s: knownTypeFields field %q was not normalized, as Argo CD only logs this error and compares the field as written: %s",
+				diffApplicationKey{Namespace: failure.Parent.Namespace, Name: failure.Parent.Name}, diffResourceName(failure.Resource), failure.Field, failure.Message),
+		})
+	}
+	for _, failure := range report.ComparisonFailures {
 		diags = append(diags, diagnostic.Diagnostic{
 			Code:     diffComparisonFailedCode,
 			Severity: diagnostic.SeverityError,

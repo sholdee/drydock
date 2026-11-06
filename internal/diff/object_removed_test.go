@@ -328,9 +328,18 @@ func TestUpstreamKnownTypeErrorIsLogged(t *testing.T) {
 			"spec":       map[string]any{"replicas": replicas, "resources": map[string]any{"limits": "notamap"}},
 		}}
 	}
+	overrides := map[string]argoappv1.ResourceOverride{"example.com/Widget": {KnownTypeFields: []argoappv1.KnownTypeField{{Field: "spec.resources", Type: "core/v1/ResourceRequirements"}}}}
+	// The premise: the known-types normalizer fails on this object.
+	knownTypes, err := normalizers.NewKnownTypesNormalizer(overrides)
+	if err != nil {
+		t.Fatalf("NewKnownTypesNormalizer() error = %v", err)
+	}
+	if err := knownTypes.Normalize(widget(1)); err == nil {
+		t.Fatal("known-types Normalize() error = nil, want a failure on limits: notamap")
+	}
 	config, err := argodiff.NewDiffConfigBuilder().WithDiffSettings(
 		[]argoappv1.ResourceIgnoreDifferences{{Group: "example.com", Kind: "Widget", JQPathExpressions: []string{".metadata.labels.foo"}}},
-		map[string]argoappv1.ResourceOverride{"example.com/Widget": {KnownTypeFields: []argoappv1.KnownTypeField{{Field: "spec.resources", Type: "core/v1/ResourceRequirements"}}}},
+		overrides,
 		false, normalizers.IgnoreNormalizerOpts{}).WithNoCache().Build()
 	if err != nil {
 		t.Fatalf("Build() error = %v", err)
@@ -346,5 +355,185 @@ func TestUpstreamKnownTypeErrorIsLogged(t *testing.T) {
 		if got := result.Diffs[0]; got.Modified != tt.wantModified || strings.Contains(string(got.PredictedLive), `"foo"`) {
 			t.Fatalf("StateDiffs() = modified %t, predicted %s, want modified %t and the label removed", got.Modified, got.PredictedLive, tt.wantModified)
 		}
+	}
+}
+
+// TestUpstreamCreateAndDeleteNormalization pins how Argo CD v3.6.1
+// normalizes a created or deleted resource. Server-side diff skips the ignore
+// normalizer and the known-types normalizer: field rules, the status
+// override, and known types do not apply. The aggregated-role normalization
+// still does. The client-side diff applies all of them.
+func TestUpstreamCreateAndDeleteNormalization(t *testing.T) {
+	objects := map[string]func() *unstructured.Unstructured{
+		"ConfigMap": func() *unstructured.Unstructured {
+			return &unstructured.Unstructured{Object: map[string]any{"apiVersion": "v1", "kind": "ConfigMap", "metadata": map[string]any{"name": "c", "namespace": "n"}, "data": map[string]any{"a": "1", "b": "2"}, "status": map[string]any{"s": "x"}}}
+		},
+		"Widget": func() *unstructured.Unstructured {
+			return &unstructured.Unstructured{Object: map[string]any{"apiVersion": "example.com/v1", "kind": "Widget", "metadata": map[string]any{"name": "w", "namespace": "n"}, "spec": map[string]any{"resources": map[string]any{"limits": map[string]any{"cpu": "0.1"}}}}}
+		},
+		"ClusterRole": func() *unstructured.Unstructured {
+			return &unstructured.Unstructured{Object: map[string]any{"apiVersion": "rbac.authorization.k8s.io/v1", "kind": "ClusterRole", "metadata": map[string]any{"name": "r"}, "aggregationRule": map[string]any{"clusterRoleSelectors": []any{}}, "rules": []any{map[string]any{"verbs": []any{"get"}}}}}
+		},
+	}
+	ignores := []argoappv1.ResourceIgnoreDifferences{{Kind: "ConfigMap", JQPathExpressions: []string{".data.b"}}}
+	overrides := map[string]argoappv1.ResourceOverride{
+		"*/*":                {IgnoreDifferences: argoappv1.OverrideIgnoreDiff{JSONPointers: []string{"/status"}}},
+		"example.com/Widget": {KnownTypeFields: []argoappv1.KnownTypeField{{Field: "spec.resources", Type: "core/v1/ResourceRequirements"}}},
+	}
+	for _, serverSide := range []bool{false, true} {
+		config, err := argodiff.NewDiffConfigBuilder().
+			WithDiffSettings(ignores, overrides, true, normalizers.IgnoreNormalizerOpts{}).
+			WithNoCache().WithServerSideDiff(serverSide).WithServerSideDryRunner(echoDryRunner{}).
+			WithManager("argocd-controller").WithIgnoreMutationWebhook(false).Build()
+		if err != nil {
+			t.Fatalf("Build() error = %v", err)
+		}
+		// The text the shown object contains when the normalization runs,
+		// and when it does not.
+		want := map[string][2]string{
+			"ConfigMap": {`"data":{"a":"1"}`, `"b":"2"`},
+			"Widget":    {`"cpu":"100m"`, `"cpu":"0.1"`},
+		}
+		for kind, object := range objects {
+			for _, created := range []bool{true, false} {
+				lives, targets := []*unstructured.Unstructured{nil}, []*unstructured.Unstructured{object()}
+				if !created {
+					lives, targets = targets, lives
+				}
+				result, err := argodiff.StateDiffs(t.Context(), lives, targets, config)
+				if err != nil {
+					t.Fatalf("StateDiffs() error = %v", err)
+				}
+				shown := string(result.Diffs[0].PredictedLive)
+				if !created {
+					shown = string(result.Diffs[0].NormalizedLive)
+				}
+				if kind == "ClusterRole" {
+					if !strings.Contains(shown, `"rules":null`) {
+						t.Fatalf("%s server-side=%t created=%t shows %s, want rules normalized", kind, serverSide, created, shown)
+					}
+					continue
+				}
+				wantText := want[kind][0]
+				if serverSide {
+					wantText = want[kind][1]
+				}
+				if !strings.Contains(shown, wantText) || strings.Contains(shown, `"status"`) != serverSide && kind == "ConfigMap" {
+					t.Fatalf("%s server-side=%t created=%t shows %s, want %s", kind, serverSide, created, shown, wantText)
+				}
+			}
+		}
+	}
+}
+
+// drydock matches TestUpstreamCreateAndDeleteNormalization: under
+// server-side diff a created or deleted resource shows the whole object, and
+// drydock's own display steps still run on it. The client-side diff applies
+// the rules.
+func TestRunCreateAndDeleteNormalization(t *testing.T) {
+	configMap := func(rule string, serverSide bool) Document {
+		return Document{
+			Parent:   Parent{Namespace: "argocd", Name: "demo"},
+			Resource: Resource{Kind: "ConfigMap", Namespace: "default", Name: "demo"},
+			Body:     "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: demo\n  namespace: default\ndata:\n  a: \"1\"\n  b: \"2\"\nbinaryData:\n  blob: aGVsbG8gd29ybGQ=\n",
+			Normalization: Normalization{
+				ApplicationRules: []IgnoreRule{{JQPathExpressions: []string{rule}}},
+				ServerSideDiff:   serverSide,
+			},
+		}
+	}
+	for _, tt := range []struct {
+		name, rule        string
+		serverSide        bool
+		wantText, notText []string
+	}{
+		{name: "server-side, whole object rule", rule: ".", serverSide: true, wantText: []string{"a: \"1\"", "b: \"2\"", "blob:"}, notText: []string{"aGVsbG8gd29ybGQ=", "null"}},
+		{name: "server-side, field rule", rule: ".data.b", serverSide: true, wantText: []string{"b: \"2\""}, notText: []string{"aGVsbG8gd29ybGQ="}},
+		{name: "client-side, whole object rule", rule: ".", wantText: []string{"null"}, notText: []string{"a: \"1\""}},
+		{name: "client-side, field rule", rule: ".data.b", wantText: []string{"a: \"1\""}, notText: []string{"b: \"2\"", "aGVsbG8gd29ybGQ="}},
+	} {
+		for _, created := range []bool{true, false} {
+			name := tt.name + map[bool]string{true: ", created", false: ", deleted"}[created]
+			t.Run(name, func(t *testing.T) {
+				var left, right []Document
+				if created {
+					right = []Document{configMap(tt.rule, tt.serverSide)}
+				} else {
+					left = []Document{configMap(tt.rule, tt.serverSide)}
+				}
+				results, failures, err := RunWithFailures(left, right, Options{Unified: 3})
+				if err != nil || len(failures) != 0 || len(results) != 1 {
+					t.Fatalf("RunWithFailures() = %#v, %#v, %v, want one change", results, failures, err)
+				}
+				for _, want := range tt.wantText {
+					if !strings.Contains(results[0].Diff, want) {
+						t.Fatalf("Diff = %q, want %q", results[0].Diff, want)
+					}
+				}
+				for _, not := range tt.notText {
+					if strings.Contains(results[0].Diff, not) {
+						t.Fatalf("Diff = %q, must not contain %q", results[0].Diff, not)
+					}
+				}
+			})
+		}
+	}
+}
+
+// A Secret whose object an ignore rule removes keeps null on that side
+// through Secret redaction, as a ConfigMap does.
+func TestRunSecretRemovedObjectKeepsNull(t *testing.T) {
+	secret := func(value string) Document {
+		return Document{
+			Parent:   Parent{Namespace: "argocd", Name: "demo"},
+			Resource: Resource{Kind: "Secret", Namespace: "default", Name: "demo"},
+			Body:     "apiVersion: v1\nkind: Secret\nmetadata:\n  name: demo\n  namespace: default\ndata:\n  key: " + value + "\n",
+			Normalization: Normalization{
+				ApplicationRules: []IgnoreRule{{JQPathExpressions: []string{`select(.data.key == "Yg==")`}}},
+			},
+		}
+	}
+	results, failures, err := RunWithFailures([]Document{secret("YQ==")}, []Document{secret("Yg==")}, Options{Unified: 3})
+	if err != nil || len(failures) != 0 || len(results) != 1 || results[0].Change != ChangeModified || !strings.Contains(results[0].Diff, "+null") {
+		t.Fatalf("RunWithFailures() = %#v, %#v, %v, want a change to null", results, failures, err)
+	}
+	if strings.Contains(results[0].Diff, "YQ==") {
+		t.Fatalf("Diff = %q, leaks the Secret value", results[0].Diff)
+	}
+	results, failures, err = RunWithFailures(nil, []Document{secret("Yg==")}, Options{Unified: 3})
+	if err != nil || len(failures) != 0 || len(results) != 1 || results[0].Change != ChangeAdded || !strings.Contains(results[0].Diff, "+null") {
+		t.Fatalf("RunWithFailures() = %#v, %#v, %v, want an added null", results, failures, err)
+	}
+}
+
+// A knownTypeFields field that fails is reported once, with the field.
+func TestRunWithReportKnownTypeFailure(t *testing.T) {
+	widget := func(replicas string) Document {
+		return Document{
+			Parent:   Parent{Namespace: "argocd", Name: "widget"},
+			Resource: Resource{Group: "example.com", Kind: "Widget", Namespace: "default", Name: "w"},
+			Body:     "apiVersion: example.com/v1\nkind: Widget\nmetadata:\n  name: w\n  namespace: default\nspec:\n  replicas: " + replicas + "\n  ok:\n    limits:\n      cpu: \"0.1\"\n  resources:\n    limits: notamap\n",
+			Normalization: Normalization{
+				KnownTypeFields: []KnownTypeField{
+					{Field: "spec.ok", Type: "core/v1/ResourceRequirements"},
+					{Field: "spec.resources", Type: "core/v1/ResourceRequirements"},
+				},
+			},
+		}
+	}
+	report, err := RunWithReport([]Document{widget("1")}, []Document{widget("2")}, Options{Unified: 3})
+	if err != nil {
+		t.Fatalf("RunWithReport() error = %v", err)
+	}
+	if len(report.KnownTypeFailures) != 1 || report.KnownTypeFailures[0].Field != "spec.resources" || report.KnownTypeFailures[0].Parent.Name != "widget" {
+		t.Fatalf("KnownTypeFailures = %#v, want one for spec.resources", report.KnownTypeFailures)
+	}
+	// The field before the failing one is still normalized, as in Argo CD.
+	if len(report.Results) != 1 || strings.Contains(report.Results[0].Diff, "0.1") {
+		t.Fatalf("Results = %#v, want spec.ok normalized", report.Results)
+	}
+	report, err = RunWithReport([]Document{widget("1")}, []Document{widget("1")}, Options{Unified: 3})
+	if err != nil || len(report.KnownTypeFailures) != 0 {
+		t.Fatalf("RunWithReport() of an unchanged resource = %#v, %v, want no report", report.KnownTypeFailures, err)
 	}
 }

@@ -25,13 +25,18 @@ func redactedSecretBodies(from, to string) (string, string, error) {
 	redactSecretFieldPair(fromObject, toObject, "stringData")
 	redactSecretFieldPair(fromObject, toObject, "binaryData")
 
-	redactedFrom, err := encodeDiffYAML(fromObject)
-	if err != nil {
-		return "", "", fmt.Errorf("encode redacted Secret before body: %w", err)
+	// A side with no object, absent ("") or removed by an ignore rule
+	// (nullDiffBody), keeps its body, so the diff shows null.
+	redactedFrom, redactedTo := from, to
+	if fromObject != nil {
+		if redactedFrom, err = encodeDiffYAML(fromObject); err != nil {
+			return "", "", fmt.Errorf("encode redacted Secret before body: %w", err)
+		}
 	}
-	redactedTo, err := encodeDiffYAML(toObject)
-	if err != nil {
-		return "", "", fmt.Errorf("encode redacted Secret after body: %w", err)
+	if toObject != nil {
+		if redactedTo, err = encodeDiffYAML(toObject); err != nil {
+			return "", "", fmt.Errorf("encode redacted Secret after body: %w", err)
+		}
 	}
 	return redactedFrom, redactedTo, nil
 }

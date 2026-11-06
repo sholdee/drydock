@@ -177,6 +177,11 @@ fails that comparison. With server-side diff, the resource then compares as
 unchanged. When the object is removed on one side only, the diff shows a change
 with `null` on that side.
 
+For an Application that uses server-side diff, through the `ServerSideDiff=true`
+compare option or the `ServerSideApply=true` sync option, a new or deleted
+resource shows the whole object, as in Argo CD: ignore rules, `status` removal,
+and known types do not apply to it. A changed resource still uses them.
+
 Every `jsonPointers` entry follows the path rules of the JSON-patch library
 that Argo CD applies it with, the same rules as annotation pointers below. A
 pointer that is not a valid JSON pointer, such as `spec/replicas`, or the root

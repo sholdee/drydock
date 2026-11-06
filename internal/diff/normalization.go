@@ -123,7 +123,7 @@ func normalizeDiffBodyForResource(body string, opts Options, normalization Norma
 		len(normalization.ApplicationRules) == 0 &&
 		len(normalization.AnnotationJSONPointers) == 0 &&
 		len(normalization.CustomizationRules) == 0 &&
-		!knownTypeFieldsApply(resource, normalization.KnownTypeFields) &&
+		(normalization.skipKnownTypes || !knownTypeFieldsApply(resource, normalization.KnownTypeFields)) &&
 		!compareOptionsRequireObject(resource, normalization.CompareOptions) {
 		return body, nil
 	}
@@ -172,7 +172,10 @@ func normalizeDiffObject(body string, opts Options, normalization Normalization,
 	// (util/argo/diff/normalize.go:46-57). The order matters: a jq select can
 	// match a value before remarshaling changes it, and an ignore rule can
 	// remove a field that would fail to remarshal.
-	object, err = normalizeKnownTypeFields(object, resource, normalization.KnownTypeFields)
+	if normalization.skipKnownTypes {
+		return object, nil
+	}
+	object, err = normalizeKnownTypeFields(object, resource, normalization.KnownTypeFields, opts.reportKnownTypeFailure)
 	if err != nil {
 		return nil, err
 	}
@@ -226,10 +229,33 @@ func knownTypeFieldsApply(resource Resource, fields []KnownTypeField) bool {
 // come only from resource.customizations keys whose group and kind equal the
 // resource's group and kind, because Argo CD looks the fields up by exact
 // group and kind.
-func normalizeKnownTypeFields(object map[string]any, resource Resource, fields []KnownTypeField) (map[string]any, error) {
+//
+// Argo CD's composable normalizer returns a known-types error to
+// gitops-engine, which only logs it and compares the object as it is
+// (pkg/diff/diff.go:771-775). The normalizer stops at the first field that
+// fails, after it changed the fields before it. drydock keeps that result and
+// calls report, when it is set, with the field that failed.
+func normalizeKnownTypeFields(object map[string]any, resource Resource, fields []KnownTypeField, report func(field string, err error)) (map[string]any, error) {
 	if !knownTypeFieldsApply(resource, fields) {
 		return object, nil
 	}
+	var original map[string]any
+	if report != nil {
+		var err error
+		if original, err = cloneMap(object); err != nil {
+			return nil, err
+		}
+	}
+	obj := &unstructured.Unstructured{Object: object}
+	if err := knownTypesNormalizer(resource, fields).Normalize(obj); err != nil && report != nil {
+		report(failingKnownTypeField(original, resource, fields), err)
+	}
+	return obj.Object, nil
+}
+
+func knownTypesNormalizer(resource Resource, fields []KnownTypeField) interface {
+	Normalize(*unstructured.Unstructured) error
+} {
 	overrideFields := make([]argoappv1.KnownTypeField, 0, len(fields))
 	for _, field := range fields {
 		overrideFields = append(overrideFields, argoappv1.KnownTypeField{Field: field.Field, Type: field.Type})
@@ -242,16 +268,26 @@ func normalizeKnownTypeFields(object map[string]any, resource Resource, fields [
 	if len(overrideFields) > 0 {
 		overrides[key] = argoappv1.ResourceOverride{KnownTypeFields: overrideFields}
 	}
-	normalizer, err := normalizers.NewKnownTypesNormalizer(overrides)
-	if err != nil {
-		return nil, err
+	// NewKnownTypesNormalizer never fails in Argo CD v3.6.1: it logs an
+	// unsupported type and leaves that field out.
+	normalizer, _ := normalizers.NewKnownTypesNormalizer(overrides)
+	return normalizer
+}
+
+// failingKnownTypeField replays the known-types normalization of object one
+// field at a time and returns the first field that fails. With no fields, it
+// is the Argo Rollout default, the PodSpec at spec.template.spec.
+func failingKnownTypeField(object map[string]any, resource Resource, fields []KnownTypeField) string {
+	if len(fields) == 0 {
+		return "spec.template.spec"
 	}
 	obj := &unstructured.Unstructured{Object: object}
-	// Argo CD's composable normalizer returns a known-types error to
-	// gitops-engine, which only logs it and compares the object as it is
-	// (pkg/diff/diff.go:771-775). So the error is ignored here too.
-	_ = normalizer.Normalize(obj)
-	return obj.Object, nil
+	for _, field := range fields {
+		if err := knownTypesNormalizer(resource, []KnownTypeField{field}).Normalize(obj); err != nil {
+			return field.Field
+		}
+	}
+	return fields[0].Field
 }
 func stripAttrSet(attrs []string) map[string]struct{} {
 	out := make(map[string]struct{}, len(attrs))
@@ -431,5 +467,6 @@ func cloneNormalization(normalization Normalization) Normalization {
 		CompareOptions:         normalization.CompareOptions,
 		AnnotationJSONPointers: append([]string(nil), normalization.AnnotationJSONPointers...),
 		ServerSideDiff:         normalization.ServerSideDiff,
+		skipKnownTypes:         normalization.skipKnownTypes,
 	}
 }
