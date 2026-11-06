@@ -3,6 +3,7 @@ package config
 import (
 	"crypto/sha256"
 	"fmt"
+	"maps"
 	"reflect"
 	"sort"
 	"strings"
@@ -162,7 +163,33 @@ func resourceCustomizationFromOverride(key string, override argoappv1.ResourceOv
 			fieldProvenance[overrideFieldActions],
 		))
 	}
+	customization.fieldProvenance = setFieldProvenance(customization, fieldProvenance)
 	return customization, hasCustomization, diags
+}
+
+// setFieldProvenance keeps the provenance of the fields that customization
+// sets.
+func setFieldProvenance(customization ResourceCustomization, provenance map[string]diagnostic.Provenance) map[string]Provenance {
+	sets := map[string]bool{
+		overrideFieldIgnoreDifferences:     hasOverrideSection(customization.IgnoreDifferences),
+		overrideFieldIgnoreResourceUpdates: hasOverrideSection(customization.IgnoreResourceUpdates),
+		overrideFieldKnownTypeFields:       len(customization.KnownTypeFields) > 0,
+		overrideFieldHealth:                customization.HasHealthLua,
+		overrideFieldUseOpenLibs:           customization.HasUseOpenLibs,
+		overrideFieldActions:               customization.Actions.HasActions,
+	}
+	var out map[string]Provenance
+	for field, set := range sets {
+		value, ok := provenance[field]
+		if !set || !ok {
+			continue
+		}
+		if out == nil {
+			out = map[string]Provenance{}
+		}
+		out[field] = value
+	}
+	return out
 }
 
 func overrideIgnoreDifferencesFromArgo(ignore argoappv1.OverrideIgnoreDiff) OverrideIgnoreDifferences {
@@ -220,35 +247,56 @@ func advancedResourceCustomizationWarning(message string, provenance diagnostic.
 		Provenance: provenance,
 	}
 }
-func mergeResourceCustomizationSections(existing, incoming ResourceCustomization) (ResourceCustomization, bool) {
+
+// mergeResourceCustomizationSections merges the customization that another
+// settings source gives for the same key into existing, field by field. It
+// returns the name of the first field that both set to different values,
+// or "" when they agree. A merged field keeps the provenance of the source
+// that set it.
+func mergeResourceCustomizationSections(existing, incoming ResourceCustomization) (ResourceCustomization, string) {
 	merged := existing
+	merged.fieldProvenance = maps.Clone(existing.fieldProvenance)
 	if !hasResourceCustomizationProvenance(merged) && hasResourceCustomizationProvenance(incoming) {
 		merged.Provenance = incoming.Provenance
 	}
+	adopt := func(field string, incomingSets, existingSets bool) {
+		if !incomingSets || existingSets {
+			return
+		}
+		if provenance, ok := incoming.fieldProvenance[field]; ok {
+			if merged.fieldProvenance == nil {
+				merged.fieldProvenance = map[string]Provenance{}
+			}
+			merged.fieldProvenance[field] = provenance
+		}
+	}
+	adopt(overrideFieldIgnoreDifferences, hasOverrideSection(incoming.IgnoreDifferences), hasOverrideSection(existing.IgnoreDifferences))
+	adopt(overrideFieldIgnoreResourceUpdates, hasOverrideSection(incoming.IgnoreResourceUpdates), hasOverrideSection(existing.IgnoreResourceUpdates))
+	adopt(overrideFieldKnownTypeFields, len(incoming.KnownTypeFields) > 0, len(existing.KnownTypeFields) > 0)
+	adopt(overrideFieldHealth, incoming.HasHealthLua, existing.HasHealthLua)
+	adopt(overrideFieldUseOpenLibs, incoming.HasUseOpenLibs, existing.HasUseOpenLibs)
+	adopt(overrideFieldActions, incoming.Actions.HasActions, existing.Actions.HasActions)
+
 	var ok bool
 	if merged.IgnoreDifferences, ok = mergeOverrideSection(merged.IgnoreDifferences, incoming.IgnoreDifferences); !ok {
-		return existing, false
+		return existing, overrideFieldIgnoreDifferences
 	}
 	if merged.IgnoreResourceUpdates, ok = mergeOverrideSection(merged.IgnoreResourceUpdates, incoming.IgnoreResourceUpdates); !ok {
-		return existing, false
+		return existing, overrideFieldIgnoreResourceUpdates
 	}
-	return mergeAdvancedResourceCustomizationSections(merged, incoming, existing)
-}
-func mergeAdvancedResourceCustomizationSections(merged, incoming, existing ResourceCustomization) (ResourceCustomization, bool) {
-	var ok bool
 	if merged.KnownTypeFields, ok = mergeKnownTypeFieldsSection(merged.KnownTypeFields, incoming.KnownTypeFields); !ok {
-		return existing, false
+		return existing, overrideFieldKnownTypeFields
 	}
 	if merged, ok = mergeHealthLuaSection(merged, incoming); !ok {
-		return existing, false
+		return existing, overrideFieldHealth
 	}
 	if merged, ok = mergeUseOpenLibsSection(merged, incoming); !ok {
-		return existing, false
+		return existing, overrideFieldUseOpenLibs
 	}
 	if merged.Actions, ok = mergeActionsSection(merged.Actions, incoming.Actions); !ok {
-		return existing, false
+		return existing, overrideFieldActions
 	}
-	return merged, true
+	return merged, ""
 }
 func mergeKnownTypeFieldsSection(existing, incoming []KnownTypeField) ([]KnownTypeField, bool) {
 	if len(incoming) == 0 {

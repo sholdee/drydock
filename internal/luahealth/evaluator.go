@@ -63,7 +63,7 @@ func New(settings config.ArgoSettings) Evaluator {
 			key:         key,
 			healthLua:   resourceCustomization.HealthLua,
 			useOpenLibs: resourceCustomization.UseOpenLibs,
-			provenance:  resourceCustomization.Provenance,
+			provenance:  resourceCustomization.HealthLuaProvenance(),
 		}
 		if err := compileHealthLua(next.healthLua); err != nil {
 			next.compileErr = true

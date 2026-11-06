@@ -125,7 +125,7 @@ func renderAllResourceCustomizations(customizations map[string]config.ResourceCu
 	for key, customization := range customizations {
 		customization.IgnoreResourceUpdates = config.OverrideIgnoreDifferences{}
 		customization.Actions = config.ResourceActionsSummary{}
-		customization.Provenance = config.Provenance{}
+		customization = customization.WithoutProvenance()
 		if reflect.ValueOf(customization).IsZero() {
 			continue
 		}

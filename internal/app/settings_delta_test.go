@@ -77,6 +77,7 @@ var resourceCustomizationFieldClasses = map[string]settingsChangeClass{
 	"IgnoreResourceUpdates": settingsNoEffect,
 	"Actions":               settingsNoEffect,
 	"Provenance":            settingsNoEffect,
+	"fieldProvenance":       settingsNoEffect,
 }
 
 // fingerprintedResourceCustomizationFields are fields no signature reads

@@ -794,6 +794,10 @@ Supported:
   does not know which values files one Argo CD release uses, or their
   order. So for layered values files, drydock reports a conflict where Helm
   keeps the value from the later file.
+- The location of each `resource.customizations` field. Each field keeps
+  the `argocd-cm` key that set it. A health Lua error points at the key that
+  holds the script. A merge conflict points at the key that sets the field
+  with the conflict.
 - Ignore rule order as in Argo CD v3.6.1. Application rules run first, then
   the resource's annotation rule, then `resource.customizations` rules
   (`util/argo/diff/ignore.go`, `util/argo/normalizers/diff_normalizer.go`).

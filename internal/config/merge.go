@@ -193,11 +193,11 @@ func mergeResourceCustomizations(merged *ArgoSettings, candidate ArgoSettings) [
 			merged.ResourceCustomizations[key] = customization
 			continue
 		}
-		next, ok := mergeResourceCustomizationSections(existing, customization)
-		if !ok {
+		next, conflict := mergeResourceCustomizationSections(existing, customization)
+		if conflict != "" {
 			diags = append(diags, conflictDiagnostic(
-				fmt.Sprintf("conflicting resource customization settings discovered for %q", key),
-				customization.Provenance,
+				fmt.Sprintf("conflicting resource customization settings discovered for %q (%s)", key, conflict),
+				customization.FieldProvenance(conflict),
 			))
 			continue
 		}
