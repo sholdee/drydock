@@ -22,6 +22,11 @@ const (
 // CD's non-blocking InvalidRolloutConfig condition.
 const CodeAppSetInvalidRolloutConfig = "appset.invalid-rollout-config"
 
+// CodeSettingsProgressiveSyncsCycle reports an
+// applicationsetcontroller.enable.progressive.syncs value that decides
+// whether the Application that sets it exists.
+const CodeSettingsProgressiveSyncsCycle = "settings.progressive-syncs-cycle"
+
 // CodeAppSetRolloutNoSteps reports a RollingSync strategy with an empty
 // steps list while progressive syncs are on.
 const CodeAppSetRolloutNoSteps = "appset.rollout-no-steps"
@@ -203,6 +208,8 @@ func settingsCode(message string) string {
 		return CodeSettingsResourceSelectorInvalid
 	case strings.Contains(message, "does not match the resource selector"):
 		return CodeSettingsResourceSelectorMismatch
+	case strings.Contains(message, "has no stable value"):
+		return CodeSettingsProgressiveSyncsCycle
 	case strings.Contains(message, "conflicting"):
 		return "settings.conflict"
 	case strings.Contains(message, "failed to parse"):

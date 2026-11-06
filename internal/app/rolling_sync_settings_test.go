@@ -1,14 +1,15 @@
 package app
 
 import (
+	"context"
 	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
 
 	argoappv1 "github.com/argoproj/argo-cd/v3/pkg/apis/application/v1alpha1"
-
 	"github.com/sholdee/drydock/internal/diagnostic"
+	sourcepkg "github.com/sholdee/drydock/internal/source"
 )
 
 // writeRollingSyncWithoutSteps writes an ApplicationSet whose RollingSync
@@ -235,6 +236,134 @@ data:
 			}
 			if !slices.Contains(earlyCodes, "appset.rollout-no-steps") || slices.Contains(earlyCodes, "appset.application-validation-failed") {
 				t.Fatalf("flag known early: appset codes = %v, want rollout-no-steps and no name validation warning", earlyCodes)
+			}
+		})
+	}
+}
+
+// writeRollingSyncSettingsCycle writes an ApplicationSet with an empty
+// RollingSync steps list that generates the only Application that sets
+// applicationsetcontroller.enable.progressive.syncs to true. With the flag
+// off it generates that Application, and with the flag on it does not.
+func writeRollingSyncSettingsCycle(t *testing.T, root string) {
+	t.Helper()
+	writeTestFile(t, filepath.Join(root, "appsets", "rolling.yaml"), `apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: rolling
+  namespace: argocd
+spec:
+  goTemplate: true
+  strategy:
+    type: RollingSync
+    rollingSync:
+      steps: []
+  generators:
+    - list:
+        elements:
+          - name: settings
+  template:
+    metadata:
+      name: '{{.name}}'
+      namespace: argocd
+    spec:
+      project: default
+      source:
+        repoURL: https://example.com/repo.git
+        path: charts/settings
+        targetRevision: main
+      destination:
+        name: in-cluster
+        namespace: argocd
+`)
+	writeTestFile(t, filepath.Join(root, "charts", "settings", "Chart.yaml"), "apiVersion: v2\nname: settings\nversion: 0.1.0\n")
+	writeTestFile(t, filepath.Join(root, "charts", "settings", "values.yaml"), "flag: \"true\"\n")
+	writeTestFile(t, filepath.Join(root, "charts", "settings", "templates", "cm.yaml"), `apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: argocd-cmd-params-cm
+  namespace: argocd
+data:
+  applicationsetcontroller.enable.progressive.syncs: {{ .Values.flag | quote }}
+`)
+}
+
+// TestProgressiveSyncsCycleWarnsAfterSecondRun pins the case where the flag
+// decides its own source. The first run, with the flag off, generates the
+// Application that turns it on. The second run, with the flag on, does not.
+// drydock keeps the second result, warns about the cycle, and never runs a
+// third time.
+func TestProgressiveSyncsCycleWarnsAfterSecondRun(t *testing.T) {
+	root := t.TempDir()
+	writeRollingSyncSettingsCycle(t, root)
+	runs := 0
+	orchestrator := Orchestrator{discoveryRunObserver: func() { runs++ }}
+	result, err := orchestrator.ListApplications(context.Background(), BuildRequest{
+		Path:        root,
+		Parallelism: 1,
+		RepoMaps:    []sourcepkg.RepoMap{{URL: "https://example.com/repo.git", Path: root}},
+	})
+	if err != nil {
+		t.Fatalf("ListApplications() error = %v, diagnostics = %#v", err, result.Diagnostics)
+	}
+	if runs != 2 {
+		t.Fatalf("discovery runs = %d, want 2", runs)
+	}
+	names, _ := discoveryOutcome(result)
+	if slices.Contains(names, "argocd/settings") {
+		t.Fatalf("Applications = %v, want the second run's result without argocd/settings", names)
+	}
+	var cycle *diagnostic.Diagnostic
+	for _, diag := range diagnostic.WithStableCodes(result.Diagnostics) {
+		if diag.Code == diagnostic.CodeSettingsProgressiveSyncsCycle {
+			cycle = &diag
+		}
+	}
+	if cycle == nil {
+		t.Fatalf("diagnostic codes = %v, want %s", diagnosticCodes(result.Diagnostics), diagnostic.CodeSettingsProgressiveSyncsCycle)
+	}
+	if !strings.Contains(cycle.Message, "discovery with it true ends with it false") || cycle.Provenance.Path == "" {
+		t.Fatalf("cycle diagnostic = %#v, want both values and the settings source", cycle)
+	}
+	if strictExemptDiagnostic(*cycle) {
+		t.Fatal("the cycle diagnostic is strict-exempt, want --strict to fail on it")
+	}
+}
+
+// TestProgressiveSyncsRestartNeedsRollingSync pins that discovery runs a
+// second time only when an ApplicationSet has a RollingSync strategy: the
+// flag changes nothing else.
+func TestProgressiveSyncsRestartNeedsRollingSync(t *testing.T) {
+	shape := argoCDInstallShapes()[1]
+	for _, tc := range []struct {
+		name        string
+		rollingSync bool
+		wantRuns    int
+	}{
+		{name: "no RollingSync ApplicationSet", wantRuns: 1},
+		{name: "RollingSync ApplicationSet", rollingSync: true, wantRuns: 2},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			shape.write(t, root, []string{"values.yaml"})
+			writeTestFile(t, filepath.Join(root, "argocd", "values.yaml"), `configs:
+  params:
+    applicationsetcontroller.enable.progressive.syncs: "true"
+`)
+			if tc.rollingSync {
+				writeRollingSyncWithoutSteps(t, root)
+			}
+			runs := 0
+			orchestrator := Orchestrator{ChartAcquirer: fakeArgoCDChartAcquirer(t), discoveryRunObserver: func() { runs++ }}
+			result, err := orchestrator.ListApplications(context.Background(), BuildRequest{Path: root, Parallelism: 1})
+			if err != nil {
+				t.Fatalf("ListApplications() error = %v, diagnostics = %#v", err, result.Diagnostics)
+			}
+			if got := result.Settings.EnableProgressiveSyncs.Value; got != "true" {
+				t.Fatalf("EnableProgressiveSyncs = %q, want the rendered install's value", got)
+			}
+			if runs != tc.wantRuns {
+				t.Fatalf("discovery runs = %d, want %d", runs, tc.wantRuns)
 			}
 		})
 	}

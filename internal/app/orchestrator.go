@@ -170,6 +170,9 @@ type Orchestrator struct {
 	// renderObserver is a test seam invoked immediately before local
 	// render-engine invocations. It is nil in production.
 	renderObserver func(render.ResolvedSource)
+	// discoveryRunObserver is a test seam invoked at the start of each
+	// discovery run (discoverRepositoryRun). It is nil in production.
+	discoveryRunObserver func()
 }
 
 // ensureBuildSelfRepoRefs populates request.selfRepo for single-tree

@@ -141,6 +141,12 @@ func rolloutStrategyDiagnostics(manifestPath string, appset argoappv1.Applicatio
 	return diags
 }
 
+// IsRollingSyncStrategy reports an ApplicationSet whose strategy the
+// applicationsetcontroller.enable.progressive.syncs flag changes.
+func IsRollingSyncStrategy(appset argoappv1.ApplicationSet) bool {
+	return isRollingSyncStrategy(appset)
+}
+
 // isRollingSyncStrategy mirrors progressivesync.IsRollingSyncStrategy.
 func isRollingSyncStrategy(appset argoappv1.ApplicationSet) bool {
 	return appset.Spec.Strategy != nil && appset.Spec.Strategy.Type == "RollingSync" && appset.Spec.Strategy.RollingSync != nil
