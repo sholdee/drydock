@@ -339,3 +339,57 @@ func TestGetAppsKeepsStaticApplicationInListWithEmptyApplicationSet(t *testing.T
 		})
 	}
 }
+
+// A RollingSync advisory or lint finding does not explain why an
+// ApplicationSet generated nothing, so the generated-zero warning stays and
+// --strict fails on it, with progressive syncs off and on.
+func TestGetAppsStrictFailsOnEmptyRollingSyncApplicationSet(t *testing.T) {
+	for name, progress := range map[string]bool{"progressive syncs off": false, "progressive syncs on": true} {
+		t.Run(name, func(t *testing.T) {
+			root := t.TempDir()
+			writeCLITestFile(t, filepath.Join(root, "appset.yaml"), `apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: empty
+  namespace: argocd
+spec:
+  goTemplate: true
+  strategy:
+    type: RollingSync
+    rollingSync:
+      steps:
+        - matchExpressions:
+            - key: env
+              operator: In
+              values: [dev]
+  generators:
+    - list:
+        elements: []
+  template:
+    metadata:
+      name: '{{.name}}'
+    spec:
+      project: default
+      source:
+        repoURL: https://github.com/example/repo
+        path: apps/x
+        targetRevision: main
+      destination:
+        name: in-cluster
+        namespace: default
+`)
+			if progress {
+				writeProgressiveSyncsOn(t, root)
+			}
+			cmd := NewRootCommand(VersionInfo{})
+			cmd.SetArgs([]string{"get", "apps", "--path", root, "-o", "name", "--strict"})
+			var out, stderr bytes.Buffer
+			cmd.SetOut(&out)
+			cmd.SetErr(&stderr)
+			err := cmd.Execute()
+			if err == nil || !strings.Contains(stderr.String()+err.Error(), "ApplicationSet argocd/empty generated zero Applications") {
+				t.Fatalf("Execute(--strict) error = %v, want the generated-zero warning to fail\nstderr:\n%s", err, stderr.String())
+			}
+		})
+	}
+}
