@@ -546,6 +546,14 @@ Supported:
   `resolves outside repository root`. drydock also fails a source whose
   symlink or Jsonnet import resolves into a `.git` directory, which the
   repo-server would read from its own clone.
+- An Argo CD checkout is never a symlink. When a `--path` root, a diff root,
+  or a `--repo-map` root is itself a symlink, drydock resolves it once at
+  the start of the run and reads the tree it points to everywhere:
+  discovery, rendering, the out-of-bounds check, and the cache keys. Earlier
+  releases found no Applications under such a `--path` root, and rendered
+  nothing for a directory source at path `.` under such a `--repo-map` root.
+  A root with a symlink only above it, such as a macOS temporary directory,
+  keeps its spelling. Paths in output stay relative to the root.
 - The walk skips `.git` directories. Git cannot track a nested `.git`
   directory, so no Argo CD checkout holds one. The repo-server walks its own
   root `.git` directory when a source at the repository root recurses. A
@@ -562,8 +570,7 @@ Supported:
   parameter reads, on an OCI artifact (`oci image contains out-of-bounds
   symlinks. file: <path>`), and on a chart of a Helm repository (`chart
   contains out-of-bounds symlinks. file: <path>`). The path is the first
-  such symlink in walk order. A root that is itself a symlink, such as a
-  `--repo-map` path, is checked at its target. The check of a source's own
+  such symlink in walk order. The check of a source's own
   tree runs before `.argocd-source.yaml` is read, and the check of a `$ref`
   repository runs after it, also for a chart of a Helm repository. A Git
   source that only sets `ref` is not checked, as in Argo CD. An `oci://`

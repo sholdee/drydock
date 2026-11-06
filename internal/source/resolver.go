@@ -3,6 +3,8 @@ package source
 import (
 	"net/url"
 	"strings"
+
+	"github.com/sholdee/drydock/internal/pathsafety"
 )
 
 type RepoMap struct {
@@ -37,7 +39,9 @@ func (r *Resolver) MappedPath(repoURL string) (string, bool) {
 func NewResolver(opts Options) *Resolver {
 	repoMaps := make(map[string]string, len(opts.RepoMaps))
 	for _, repoMap := range opts.RepoMaps {
-		repoMaps[NormalizeURL(repoMap.URL)] = repoMap.Path
+		// A mapped root that is itself a symlink is resolved once here, so
+		// every walk of it reads the tree (see ResolveSymlinkedRoot).
+		repoMaps[NormalizeURL(repoMap.URL)] = pathsafety.ResolveSymlinkedRoot(repoMap.Path)
 	}
 	return &Resolver{
 		repoMaps: repoMaps,

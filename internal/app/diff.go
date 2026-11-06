@@ -17,6 +17,7 @@ import (
 	"github.com/sholdee/drydock/internal/gitref"
 	"github.com/sholdee/drydock/internal/manifest"
 	"github.com/sholdee/drydock/internal/ociartifact"
+	"github.com/sholdee/drydock/internal/pathsafety"
 	"github.com/sholdee/drydock/internal/remote"
 	"github.com/sholdee/drydock/internal/rendercache"
 	sourcepkg "github.com/sholdee/drydock/internal/source"
@@ -317,6 +318,11 @@ func compareStringSets(left, right []string) (added, removed, unchanged []string
 }
 
 func resolveDiffRequestPaths(ctx context.Context, request DiffRequest, computeChangedPaths bool) (DiffRequest, func() error, error) {
+	// A root that is itself a symlink is resolved once here, as a build root
+	// is (resolveBuildRequestRoot).
+	request.LeftPath = pathsafety.ResolveSymlinkedRoot(request.LeftPath)
+	request.RightPath = pathsafety.ResolveSymlinkedRoot(request.RightPath)
+	request.Repo = pathsafety.ResolveSymlinkedRoot(request.Repo)
 	var cleanups []func() error
 	cleanup := func() error {
 		var err error

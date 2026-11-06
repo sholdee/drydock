@@ -18,6 +18,7 @@ import (
 	"github.com/sholdee/drydock/internal/luahealth"
 	"github.com/sholdee/drydock/internal/manifest"
 	"github.com/sholdee/drydock/internal/ociartifact"
+	"github.com/sholdee/drydock/internal/pathsafety"
 	"github.com/sholdee/drydock/internal/plugincontainer"
 	"github.com/sholdee/drydock/internal/pluginexec"
 	"github.com/sholdee/drydock/internal/project"
@@ -190,6 +191,14 @@ func ensureBuildSelfRepoRefs(request BuildRequest) BuildRequest {
 	return request
 }
 
+// resolveBuildRequestRoot resolves a build root that is itself a symlink
+// (pathsafety.ResolveSymlinkedRoot), so discovery, rendering, the symlink
+// check, and the cache keys all read the tree it points to.
+func resolveBuildRequestRoot(request BuildRequest) BuildRequest {
+	request.Path = pathsafety.ResolveSymlinkedRoot(request.Path)
+	return request
+}
+
 func ensureSnapshotSession(request BuildRequest) (BuildRequest, func(), error) {
 	if request.snapshotSession != nil {
 		return request, func() {}, nil
@@ -251,6 +260,7 @@ func (o Orchestrator) DiagStatic(ctx context.Context, request DiagRequest) (Diag
 }
 
 func (o Orchestrator) ListApplications(ctx context.Context, request BuildRequest) (result BuildResult, err error) {
+	request = resolveBuildRequestRoot(request)
 	request, releaseSnapshots, err := ensureSnapshotSession(request)
 	if err != nil {
 		return BuildResult{}, err
@@ -380,6 +390,7 @@ func applicationSetOptionsForRequest(request BuildRequest) (appset.Options, []di
 }
 
 func (o Orchestrator) Build(ctx context.Context, request BuildRequest) (result BuildResult, err error) {
+	request = resolveBuildRequestRoot(request)
 	request, releaseSnapshots, err := ensureSnapshotSession(request)
 	if err != nil {
 		return BuildResult{}, err
@@ -781,7 +792,7 @@ func (o Orchestrator) BuildApp(ctx context.Context, request BuildAppRequest) (Bu
 		return BuildResult{}, fmt.Errorf("application name is required")
 	}
 
-	buildRequest := request.BuildRequest
+	buildRequest := resolveBuildRequestRoot(request.BuildRequest)
 	buildRequest, releaseSnapshots, err := ensureSnapshotSession(buildRequest)
 	if err != nil {
 		return BuildResult{}, err
@@ -823,6 +834,7 @@ func (o Orchestrator) BuildApp(ctx context.Context, request BuildAppRequest) (Bu
 // BuildSelection lists Applications, narrows them with selectApps, and builds
 // the selection while reusing the list phase's discovery and render caches.
 func (o Orchestrator) BuildSelection(ctx context.Context, request BuildRequest, selectApps ApplicationSelector) (BuildResult, error) {
+	request = resolveBuildRequestRoot(request)
 	request, releaseSnapshots, err := ensureSnapshotSession(request)
 	if err != nil {
 		return BuildResult{}, err
