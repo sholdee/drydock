@@ -3,6 +3,7 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -131,10 +132,11 @@ func TestGitopsEngineRequirementRejectsMissingRequire(t *testing.T) {
 	}
 }
 
-// TestGojqMatchesSelectedArgoCD keeps gojq at exactly the version the
-// selected Argo CD requires, so that drydock parses and runs jq ignore rules
-// as Argo CD does. Renovate ignores gojq, and the post-upgrade sync helper
-// sets it after an Argo CD upgrade.
+// TestGojqMatchesSelectedArgoCD keeps gojq, and every module the gojq
+// package compiles into drydock, at exactly the version the selected Argo CD
+// requires, so that drydock parses and runs jq ignore rules as Argo CD does.
+// Renovate ignores these modules, and the post-upgrade sync helper sets them
+// after an Argo CD upgrade.
 func TestGojqMatchesSelectedArgoCD(t *testing.T) {
 	argo, err := goListModule(argoCDModule)
 	if err != nil {
@@ -144,15 +146,24 @@ func TestGojqMatchesSelectedArgoCD(t *testing.T) {
 	if err != nil {
 		t.Fatalf("readGoMod(%s) error = %v", argo.GoMod, err)
 	}
-	want, err := argoRequirement(argoGoMod, gojqModule)
+	modules, err := gojqModules()
 	if err != nil {
-		t.Fatalf("argoRequirement() error = %v", err)
+		t.Fatalf("gojqModules() error = %v", err)
 	}
-	got, err := goListModule(gojqModule)
-	if err != nil {
-		t.Fatalf("goListModule(%s) error = %v", gojqModule, err)
+	if len(modules) < 2 || !slices.Contains(modules, gojqModule) {
+		t.Fatalf("gojqModules() = %v, want gojq and the modules it compiles in", modules)
 	}
-	if got.Version != want {
-		t.Fatalf("%s is %s, but Argo CD %s requires %s; run go run ./scripts/sync-argocd-gitops-engine.go", gojqModule, got.Version, argo.Version, want)
+	for _, module := range modules {
+		want, err := argoRequirement(argoGoMod, module)
+		if err != nil {
+			t.Fatalf("argoRequirement(%s) error = %v", module, err)
+		}
+		got, err := goListModule(module)
+		if err != nil {
+			t.Fatalf("goListModule(%s) error = %v", module, err)
+		}
+		if got.Version != want {
+			t.Fatalf("%s is %s, but Argo CD %s requires %s; run go run ./scripts/sync-argocd-gitops-engine.go", module, got.Version, argo.Version, want)
+		}
 	}
 }

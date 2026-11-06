@@ -146,12 +146,8 @@ func syncArgoCompatibilityStack() error {
 	); err != nil {
 		return fmt.Errorf("update GitOps Engine requirement: %w", err)
 	}
-	gojqVersion, err := argoRequirement(argoGoMod, gojqModule)
-	if err != nil {
+	if err := requireGojqModules(argoGoMod); err != nil {
 		return err
-	}
-	if err := runGo("mod", "edit", "-require="+gojqModule+"@"+gojqVersion); err != nil {
-		return fmt.Errorf("update gojq requirement: %w", err)
 	}
 
 	replacements, err := compatibilityReplacements(argoGoMod, argoCompatibilityReplaceModules)
@@ -174,6 +170,58 @@ func syncArgoCompatibilityStack() error {
 
 func gitopsEngineRequirement(source goModFile) (string, error) {
 	return argoRequirement(source, gitopsEngineModule)
+}
+
+// requireGojqModules requires gojq, and then every other module that the
+// gojq package compiles into drydock (such as timefmt-go, which its date
+// functions use), at the version the selected Argo CD requires. The module
+// set is read after gojq moves, because a new gojq can change it.
+func requireGojqModules(argoGoMod goModFile) error {
+	gojqVersion, err := argoRequirement(argoGoMod, gojqModule)
+	if err != nil {
+		return err
+	}
+	if err := runGo("mod", "edit", "-require="+gojqModule+"@"+gojqVersion); err != nil {
+		return fmt.Errorf("update gojq requirement: %w", err)
+	}
+	modules, err := gojqModules()
+	if err != nil {
+		return err
+	}
+	for _, module := range modules {
+		version, err := argoRequirement(argoGoMod, module)
+		if err != nil {
+			return err
+		}
+		if err := runGo("mod", "edit", "-require="+module+"@"+version); err != nil {
+			return fmt.Errorf("update %s requirement: %w", module, err)
+		}
+	}
+	return nil
+}
+
+// gojqModules returns the modules whose packages the gojq package compiles
+// into drydock, gojq included. Modules that only gojq's command-line tool
+// uses are not part of drydock and are left out.
+func gojqModules() ([]string, error) {
+	cmd := exec.Command("go", "list", "-mod=mod", "-deps", "-f", "{{with .Module}}{{.Path}}{{end}}", gojqModule)
+	output, err := cmd.Output()
+	if err != nil {
+		return nil, fmt.Errorf("go list -deps %s: %w", gojqModule, err)
+	}
+	seen := map[string]struct{}{}
+	var modules []string
+	for line := range strings.SplitSeq(strings.TrimSpace(string(output)), "\n") {
+		if line == "" {
+			continue
+		}
+		if _, ok := seen[line]; ok {
+			continue
+		}
+		seen[line] = struct{}{}
+		modules = append(modules, line)
+	}
+	return modules, nil
 }
 
 // argoRequirement returns the version at which the selected Argo CD go.mod
