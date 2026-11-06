@@ -42,34 +42,94 @@ const (
 // case-sensitively against the file name: deploy.YAML is not a manifest.
 var directoryManifestFile = regexp.MustCompile(`^.*\.(yaml|yml|json|jsonnet)$`)
 
-// Render follows the three stages in which Argo CD v3.6.1 reads a directory
+// Render follows the stages in which Argo CD v3.6.1 reads a directory
 // source, and fails at the same stage as Argo CD:
 //
-//  1. The repo-server's findManifests (reposerver/repository/repository.go:
-//     2005-2051) reads every file, in walk order, into one list of objects.
-//     A file that fails here fails the source at once.
-//  2. GenerateManifests (repository.go:1817-1852) then splits each object
+//  1. The repo-server's getPotentiallyValidManifests (reposerver/repository/
+//     repository.go:2225-2283) walks the directory and reads every candidate
+//     file before it decodes any. It drops files with the skip marker, and it
+//     fails when a file cannot be read or when the combined size of the
+//     files is over the limit.
+//  2. findManifests (repository.go:2005-2051) decodes every file, in walk
+//     order, into one list of objects. A file that fails here fails the
+//     source at once.
+//  3. GenerateManifests (repository.go:1816-1852) then splits each object
 //     that is a list into its items, drops a null list, and adds the
 //     tracking metadata to each manifest it emits. A list item that is not
 //     an object, or tracking metadata that cannot be set, fails the source
-//     here, after every file was read.
-//  3. The controller reads each emitted manifest back
+//     here, after every file was decoded.
+//  4. The controller reads each emitted manifest back
 //     (unmarshalManifests, controller/state.go:562-571) and fails on the
 //     first one without a kind.
 //
 // So a file that fails in an earlier stage is reported before a file that
 // fails in a later stage, whatever their order in the directory.
-//
-//nolint:gocyclo // The walk keeps file filtering, decoding, and path provenance in one pass.
 func (DirectoryRenderer) Render(ctx context.Context, source ResolvedSource, opts RenderOptions) ([]Manifest, []diagnostic.Diagnostic, error) {
 	root, err := sourceRoot(source)
 	if err != nil {
 		return nil, nil, err
 	}
 	diags := directoryRenderDiagnostics(opts)
+	files, err := directoryCandidateFiles(ctx, root, source, opts)
+	if err != nil {
+		return nil, diags, err
+	}
 	var objects []directoryObject
+	for _, file := range files {
+		if err := ctx.Err(); err != nil {
+			return nil, diags, err
+		}
+		var fileObjects []directoryObject
+		switch {
+		case isJsonnetFile(file.path):
+			fileObjects, err = renderJsonnetFile(root, source.RepoRoot, file.path, file.manifestPath, opts)
+		case isJSONSuffixFile(file.path):
+			fileObjects, err = directoryJSONFileObjects(file.manifestPath, file.data)
+		default:
+			fileObjects, err = directoryStreamObjects(file.manifestPath, file.data)
+		}
+		if err != nil {
+			return nil, diags, err
+		}
+		objects = append(objects, fileObjects...)
+	}
+	targets, err := generateDirectoryManifests(objects, opts)
+	if err != nil {
+		return nil, diags, err
+	}
+	if err := checkDirectoryManifestKinds(targets); err != nil {
+		return nil, diags, err
+	}
+	out := make([]Manifest, 0, len(targets))
+	for _, target := range targets {
+		out = append(out, target.manifest)
+	}
+	return out, diags, nil
+}
 
-	err = filepath.WalkDir(root, func(path string, entry os.DirEntry, err error) error {
+// directoryCandidateFile is one file that the repo-server's
+// getPotentiallyValidManifests passes on to findManifests.
+type directoryCandidateFile struct {
+	path         string
+	manifestPath string
+	// data is the decoded file text (see decodeDirectoryFileText).
+	data []byte
+}
+
+// directoryCandidateFiles is getPotentiallyValidManifests
+// (reposerver/repository/repository.go:2148-2283 at v3.6.1). It walks the
+// source directory, applies the extension filter, include, and exclude,
+// reads each remaining file, and drops a file with the skip marker. It
+// counts the raw size of every remaining file except a Jsonnet file, and
+// fails as soon as the sum is over opts.DirectoryMaxCombinedManifestsSize.
+// Nothing is decoded yet, so a read error or the size limit wins over a
+// decode error in an earlier file.
+//
+//nolint:gocyclo // The walk keeps the repo-server filter order, the read, and the size sum in one pass.
+func directoryCandidateFiles(ctx context.Context, root string, source ResolvedSource, opts RenderOptions) ([]directoryCandidateFile, error) {
+	var files []directoryCandidateFile
+	var combinedSize int64
+	err := filepath.WalkDir(root, func(path string, entry os.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
@@ -91,6 +151,11 @@ func (DirectoryRenderer) Render(ctx context.Context, source ResolvedSource, opts
 		if !opts.DirectoryDisableExtensionFilter && !isManifestFile(path) {
 			return nil
 		}
+		// The repo-server skips a file that is not a regular file, such as a
+		// named pipe or a socket.
+		if !entry.Type().IsRegular() {
+			return nil
+		}
 		if !directoryManifestIncluded(root, path, opts) {
 			return nil
 		}
@@ -99,47 +164,38 @@ func (DirectoryRenderer) Render(ctx context.Context, source ResolvedSource, opts
 		if pathErr != nil {
 			return pathErr
 		}
-		data, err := os.ReadFile(path)
+		raw, err := os.ReadFile(path)
 		if err != nil {
-			return err
+			return fmt.Errorf("%s: read file failed: %w", manifestPath, err)
 		}
-		data, err = decodeDirectoryFileText(manifestPath, data)
+		data, err := decodeDirectoryFileText(manifestPath, raw)
 		if err != nil {
 			return err
 		}
 		if bytes.Contains(data, []byte(argocdSkipFileRenderingMarker)) {
 			return nil
 		}
-		var fileObjects []directoryObject
-		switch {
-		case isJsonnetFile(path):
-			fileObjects, err = renderJsonnetFile(root, source.RepoRoot, path, manifestPath, opts)
-		case isJSONSuffixFile(path):
-			fileObjects, err = directoryJSONFileObjects(manifestPath, data)
-		default:
-			fileObjects, err = directoryStreamObjects(manifestPath, data)
+		// The repo-server does not count a Jsonnet file: the Jsonnet
+		// evaluator manages its own memory.
+		if !isJsonnetFile(path) {
+			combinedSize += int64(len(raw))
+			if limit := opts.DirectoryMaxCombinedManifestsSize; limit != 0 && combinedSize > limit {
+				return directorySizeLimitError(manifestPath, limit)
+			}
 		}
-		if err != nil {
-			return err
-		}
-		objects = append(objects, fileObjects...)
+		files = append(files, directoryCandidateFile{path: path, manifestPath: manifestPath, data: data})
 		return nil
 	})
-	if err != nil {
-		return nil, diags, err
-	}
-	targets, err := generateDirectoryManifests(objects, opts)
-	if err != nil {
-		return nil, diags, err
-	}
-	if err := checkDirectoryManifestKinds(targets); err != nil {
-		return nil, diags, err
-	}
-	out := make([]Manifest, 0, len(targets))
-	for _, target := range targets {
-		out = append(out, target.manifest)
-	}
-	return out, diags, nil
+	return files, err
+}
+
+// directorySizeLimitError is the source failure when the files of a
+// directory source are larger in sum than the repo-server allows. Argo CD
+// v3.6.1 fails with ErrExceededMaxCombinedManifestFileSize
+// (reposerver/repository/repository.go:88 and 2268-2272), which names no
+// file. drydock names the file that went over the limit.
+func directorySizeLimitError(manifestPath string, limit int64) error {
+	return fmt.Errorf("%s: the directory source files are larger in sum than %d bytes, the limit that argocd-cmd-params-cm reposerver.max.combined.directory.manifests.size sets, so Argo CD fails with \"exceeded max combined manifest file size\"", manifestPath, limit)
 }
 
 // directoryObject is one object that the repo-server's findManifests reads

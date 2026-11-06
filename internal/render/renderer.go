@@ -87,6 +87,11 @@ type RenderOptions struct {
 	// every file passing include/exclude is read.
 	DirectoryDisableExtensionFilter bool
 
+	// DirectoryMaxCombinedManifestsSize is the repo-server limit on the
+	// combined size of the files of one directory source, in bytes. Zero
+	// means no limit.
+	DirectoryMaxCombinedManifestsSize int64
+
 	// TrackManifest adds the Argo CD tracking metadata to one manifest, as
 	// the repo-server's GenerateManifests does. The directory renderer calls
 	// it on a copy of each manifest it emits, only to fail the source at the

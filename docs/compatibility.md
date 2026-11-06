@@ -487,12 +487,18 @@ Supported:
   and a List whose `items` field is `null` renders nothing. Earlier drydock
   releases rendered the List itself and skipped an object without a `kind`.
 - Directory sources fail in the stage order of Argo CD v3.6.1. The
-  repo-server first reads every file. Then it splits each list into its
-  items and sets the tracking metadata on each manifest. Last, the
-  controller fails on a manifest without a `kind`. So a file that fails an
-  earlier stage is reported, even when a file before it fails a later stage.
-  For example, a `.json` file that does not decode is reported before a list
-  item that is not an object in an earlier file.
+  repo-server first reads every candidate file, drops files with the
+  `+argocd:skip-file-rendering` marker, and checks the size limit. Then it
+  decodes every file. Then it splits each list into its items and sets the
+  tracking metadata on each manifest. Last, the controller fails on a
+  manifest without a `kind`. So a file that fails an earlier stage is
+  reported, even when a file before it fails a later stage. For example, a
+  `.json` file that does not decode is reported before a list item that is
+  not an object in an earlier file, and a file that cannot be read is
+  reported before a decode error in an earlier file.
+- A directory file that is not a regular file, such as a named pipe or a
+  socket, is skipped, as in Argo CD. Earlier drydock releases tried to read
+  it, and a named pipe stopped the render.
 - A manifest whose tracking metadata cannot be set, such as one whose
   `metadata.annotations` is a string, fails the source in the repo-server
   stage with `failed to set app instance tracking info on manifest`, as in
