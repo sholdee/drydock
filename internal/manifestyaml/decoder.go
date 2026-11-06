@@ -66,7 +66,7 @@ func (d *Decoder) Decode() (any, error) {
 		if errors.Is(err, io.EOF) {
 			return nil, io.EOF
 		}
-		return nil, sanitizeDecodeError(err)
+		return nil, SanitizeDecodeError(err)
 	}
 	raw := bytes.TrimSpace(ext.Raw)
 	if len(raw) == 0 || bytes.Equal(raw, []byte("null")) {
@@ -75,22 +75,22 @@ func (d *Decoder) Decode() (any, error) {
 	if d.reparse {
 		converted, err := sigsyaml.YAMLToJSON(raw)
 		if err != nil {
-			return nil, sanitizeDecodeError(err)
+			return nil, SanitizeDecodeError(err)
 		}
 		raw = converted
 	}
 	var value any
 	if err := utiljson.Unmarshal(raw, &value); err != nil {
-		return nil, sanitizeDecodeError(err)
+		return nil, SanitizeDecodeError(err)
 	}
 	return value, nil
 }
 
-// sanitizeDecodeError drops the manifest content that apimachinery,
+// SanitizeDecodeError drops the manifest content that apimachinery,
 // sigs.k8s.io/yaml and sigs.k8s.io/json copy into some errors: the text after
 // a "---" separator, a map key JSON cannot represent and its entry's value,
 // an out-of-range number, and the offending character of a JSON syntax error.
-func sanitizeDecodeError(err error) error {
+func SanitizeDecodeError(err error) error {
 	message := err.Error()
 	switch {
 	case strings.Contains(message, "invalid Yaml document separator"):

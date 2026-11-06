@@ -1817,6 +1817,39 @@ func TestOrchestratorBuildReportsInvalidExecPolicyOutput(t *testing.T) {
 	}
 }
 
+// TestOrchestratorBuildReadsExecPolicyOutputAsArgoCD checks that plugin
+// output goes through the Argo CD v3.6.1 stages: kube.SplitYAML fails on an
+// empty object in the repo-server, and the controller fails on a list item
+// without a kind (see render.DecodeGeneratedOutput).
+func TestOrchestratorBuildReadsExecPolicyOutputAsArgoCD(t *testing.T) {
+	for mode, want := range map[string]string{
+		"empty-object":       "generate-output document 1 has no kind",
+		"list-item-kindless": "generate-output document 0 list item /items/0 has no kind",
+	} {
+		t.Run(mode, func(t *testing.T) {
+			root := t.TempDir()
+			writePluginBuildApplication(t, root, "plugin", "exec-renderer")
+			t.Setenv("DRYDOCK_APP_EXEC_HELPER", "1")
+			policy, fingerprint := testExecPluginPolicy(t, "exec-renderer", appExecCommand(t, mode))
+
+			result, err := (Orchestrator{}).Build(context.Background(), BuildRequest{
+				Path:                    root,
+				EnablePlugins:           true,
+				pluginPolicyLoaded:      true,
+				pluginPolicy:            policy,
+				pluginPolicyFingerprint: fingerprint,
+				pluginPolicyExecTrusted: true,
+			})
+			if err == nil {
+				t.Fatal("Build() error = nil, want a failure")
+			}
+			if !hasDiagnosticMessage(result.Diagnostics, "produced invalid generated manifests") || !hasDiagnosticMessage(result.Diagnostics, want) {
+				t.Fatalf("Diagnostics = %#v, want an invalid generated manifest diagnostic with %q", result.Diagnostics, want)
+			}
+		})
+	}
+}
+
 func TestOrchestratorBuildRunsExecPolicyPostRenderer(t *testing.T) {
 	root := t.TempDir()
 	writePluginBuildApplication(t, root, "plugin", "exec-renderer")
@@ -3031,6 +3064,12 @@ func TestAppExecPluginHelperProcess(t *testing.T) {
 		os.Exit(0)
 	case "invalid":
 		appExecPluginHelperInvalid()
+		os.Exit(0)
+	case "empty-object":
+		fmt.Print("apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: first\n---\n{}\n")
+		os.Exit(0)
+	case "list-item-kindless":
+		fmt.Print("apiVersion: v1\nkind: List\nitems:\n  - metadata:\n      name: kindless\n")
 		os.Exit(0)
 	case "invalid-param":
 		appExecPluginHelperInvalidParam(args)

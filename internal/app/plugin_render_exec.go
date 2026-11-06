@@ -1,14 +1,12 @@
 package app
 
 import (
-	"bytes"
 	"context"
 	"fmt"
 	"path/filepath"
 	"strings"
 
 	"github.com/sholdee/drydock/internal/diagnostic"
-	"github.com/sholdee/drydock/internal/manifest"
 	"github.com/sholdee/drydock/internal/pluginexec"
 	"github.com/sholdee/drydock/internal/pluginpolicy"
 	"github.com/sholdee/drydock/internal/render"
@@ -65,14 +63,15 @@ func (p localProvider) renderExecPolicyPluginSource(ctx context.Context, source 
 		return nil, []diagnostic.Diagnostic{pluginFailedDiagnostic(message)}, true, fmt.Errorf("%s", message)
 	}
 	phase, decodePath := execPolicyDecodeTarget(name, source, len(policyPlugin.Exec.PostRenderers) > 0)
-	docs, err := manifest.DecodeGeneratedDocuments(decodePath, bytes.NewReader(result.Stdout))
+	// Argo CD's cmp-server splits the plugin output with
+	// kube.SplitYAMLToString, and the repo-server decodes each document with
+	// kube.SplitYAML before GenerateManifests (cmpserver/plugin/plugin.go:278
+	// and reposerver/repository/repository.go:2487 at v3.6.1). Splitting the
+	// whole output first and then decoding each document is the same.
+	manifests, err := render.DecodeGeneratedOutput(decodePath, result.Stdout, opts.TrackManifest)
 	if err != nil {
 		message := fmt.Sprintf("config management plugin %s produced invalid %s for %s at %s: %s", pluginDisplayName(name), phase, execPolicySourceLabel(source), decodePath, redactSensitiveText(err.Error(), sensitive))
 		return nil, []diagnostic.Diagnostic{pluginFailedDiagnostic(message)}, true, fmt.Errorf("%s", message)
-	}
-	manifests := make([]render.Manifest, 0, len(docs))
-	for _, doc := range docs {
-		manifests = append(manifests, render.NewDocumentManifest(doc))
 	}
 	p.recordPluginExecutions(opts, source, name, pluginExecutionDetails{
 		engine:     string(pluginpolicy.EngineExec),
