@@ -206,8 +206,14 @@ After rendering, generated Applications go through Argo CD's name validation
 name is dropped) as `appset.application-validation-failed` warnings, and
 `spec.strategy` RollingSync handling follows
 `applicationsetcontroller.enable.progressive.syncs` (`appset.Options.ProgressiveSyncs`).
-Each discovery run uses one value. If the final settings give another value,
-`discoverRepositoryWithOCI` runs discovery again with it. Off, it gives one
+Each discovery run uses one value, read before the first ApplicationSet
+expansion. A second run needs two things: the run found an ApplicationSet
+with a RollingSync strategy, and its final settings give another value. Then
+`discoverRepositoryWithOCI` runs discovery again with that value. A run that
+failed after its first expansion counts too, with its partial result. A run
+that failed earlier returns its error. There are at most two runs. If the second run
+ends with the other value again, its result stays and
+`settings.progressive-syncs-cycle` (not strict-exempt) is added. Off, it gives one
 `appset.rollout-strategy-ignored` advisory. On, an empty steps list gives
 `appset.rollout-no-steps` and no Applications, and other findings are
 `appset.invalid-rollout-config` warnings that do not drop Applications. With

@@ -473,10 +473,11 @@ drydock render behavior. There are three exceptions:
 
 The repository can install Argo CD from the argo-cd Helm chart. Then drydock
 reads these keys from the rendered `argocd-cmd-params-cm`, which the chart
-makes from `configs.params`. A committed `argocd-cmd-params-cm` and a
-rendered one with the same name and namespace do not conflict. The committed
-one wins, and drydock gives a `discovery.duplicate` warning for the rendered
-one.
+makes from `configs.params`. When the render reads a committed values file
+or settings ConfigMap, the rendered ConfigMap replaces it. Otherwise two
+`argocd-cmd-params-cm` objects with the same name and namespace follow the
+discovery precedence in [Discovery Commands](#discovery-commands): one wins,
+and a copy that differs gives a `discovery.duplicate` warning.
 
 ## Cache Commands
 

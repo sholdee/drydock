@@ -559,9 +559,21 @@ Supported:
   `applicationSet.extraArgs` (`--enable-progressive-syncs`). It can set it
   through `applicationSet.extraEnv` too
   (`ARGOCD_APPLICATIONSET_CONTROLLER_ENABLE_PROGRESSIVE_SYNCS`). drydock does
-  not see a value set on the Deployment, and treats progressive syncs as off. If the
-  value decides whether the Application that sets it exists, drydock warns
-  `settings.progressive-syncs-cycle`, which `--strict` fails on.
+  not see a value set on the Deployment, and treats progressive syncs as off.
+- An `argocd-cmd-params-cm` from a rendered Application can set the flag
+  late, after drydock expanded the ApplicationSets with the earlier value.
+  Then drydock runs discovery a second time with the final value, but only
+  when it found an ApplicationSet with a RollingSync strategy. A first run
+  that failed after its first ApplicationSet expansion can also lead to a
+  second run. The second run is the last. If that run ends with the other
+  value again, drydock keeps its result and warns
+  `settings.progressive-syncs-cycle`, which `--strict` fails on. Here is an
+  example. An ApplicationSet has a RollingSync strategy with an empty steps
+  list. With the flag off, it generates an Application. That Application
+  renders the `argocd-cmd-params-cm` that turns the flag on. After such a
+  cycle, the settings that drydock reports show the final value of the
+  second run, which is not the value its generation used. The warning names
+  both values.
 - A directory source follows file symlinks as the Argo CD v3.6.1
   repo-server does (`getPotentiallyValidManifestFile`). The walk never
   enters a symlinked directory. The extension filter, `include`, and
