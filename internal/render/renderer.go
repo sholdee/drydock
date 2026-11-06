@@ -87,6 +87,13 @@ type RenderOptions struct {
 	// every file passing include/exclude is read.
 	DirectoryDisableExtensionFilter bool
 
+	// TrackManifest adds the Argo CD tracking metadata to one manifest, as
+	// the repo-server's GenerateManifests does. The directory renderer calls
+	// it on a copy of each manifest it emits, only to fail the source at the
+	// same point as Argo CD when the metadata cannot be set. The renderer
+	// output never carries the result. Nil skips the check.
+	TrackManifest func(*unstructured.Unstructured) error
+
 	// helmOutputForKustomize marks a helm render whose manifests become
 	// kustomize input (helmCharts). kustomize reads helm's output with YAML
 	// 1.2 rules, so it is decoded with those rather than Argo CD's.

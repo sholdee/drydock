@@ -2,12 +2,15 @@ package app
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/argoproj/argo-cd/v3/common"
 	argoappv1 "github.com/argoproj/argo-cd/v3/pkg/apis/application/v1alpha1"
 	"github.com/sholdee/drydock/internal/config"
+	"github.com/sholdee/drydock/internal/diagnostic"
 	"github.com/sholdee/drydock/internal/render"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 )
@@ -230,6 +233,53 @@ func TestRenderSettingsSignatureIgnoresProvenance(t *testing.T) {
 	}
 	if nextSig != baseSig {
 		t.Fatalf("render settings signature changed for provenance-only metadata")
+	}
+}
+
+// directoryTrackingProvider renders every source as a directory under root.
+type directoryTrackingProvider struct{ root string }
+
+func (p directoryTrackingProvider) RenderSource(ctx context.Context, source render.ResolvedSource, opts render.RenderOptions) ([]render.Manifest, []diagnostic.Diagnostic, error) {
+	source.RepoRoot = p.root
+	return render.DirectoryRenderer{}.Render(ctx, source, opts)
+}
+
+// TestRenderApplicationFailsDirectoryTrackingBeforeMissingKind pins the
+// order in which Argo CD v3.6.1 fails a directory source. The repo-server sets
+// the tracking metadata on every manifest before the controller checks kinds
+// (GenerateManifests, reposerver/repository/repository.go:1842-1847, and
+// unmarshalManifests, controller/state.go:562-571). So a list item whose
+// annotations are not a map fails the Application under annotation tracking,
+// even when an earlier file has an object without a kind. Label tracking
+// does not read the annotations, so the missing kind fails it instead.
+func TestRenderApplicationFailsDirectoryTrackingBeforeMissingKind(t *testing.T) {
+	root := t.TempDir()
+	for name, content := range map[string]string{
+		"a.json": `{}`,
+		"b.json": `{"apiVersion":"v1","kind":"List","items":[{"apiVersion":"v1","kind":"ConfigMap","metadata":{"name":"q","annotations":"x"}}]}`,
+	} {
+		path := filepath.Join(root, "manifests", name)
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	application := trackingTestApplication("argocd", "demo")
+	for method, want := range map[argoappv1.TrackingMethod]string{
+		argoappv1.TrackingMethodAnnotation:         "manifests/b.json document 0 list item /items/0: failed to set app instance tracking info on manifest",
+		argoappv1.TrackingMethodAnnotationAndLabel: "manifests/b.json document 0 list item /items/0: failed to set app instance tracking info on manifest",
+		argoappv1.TrackingMethodLabel:              "manifests/a.json: JSON object has no kind",
+	} {
+		t.Run(string(method), func(t *testing.T) {
+			_, err := RenderApplicationWithOptions(context.Background(), application, directoryTrackingProvider{root: root}, ApplicationRenderOptions{
+				TrackingOptions: TrackingOptions{Method: string(method)},
+			})
+			if err == nil || !strings.Contains(err.Error(), want) {
+				t.Fatalf("RenderApplicationWithOptions() error = %v, want %q", err, want)
+			}
+		})
 	}
 }
 

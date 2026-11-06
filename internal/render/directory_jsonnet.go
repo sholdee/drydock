@@ -14,7 +14,12 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 )
 
-func renderJsonnetFile(appPath, repoRoot, filePath, manifestPath string, opts RenderOptions) ([]Manifest, error) {
+// renderJsonnetFile evaluates one Jsonnet file of a directory source and
+// returns the objects it produces, as the repo-server's findManifests does
+// (reposerver/repository/repository.go:2005-2051 at v3.6.1). The objects go
+// through the same list split and kind check as the objects of every other
+// file.
+func renderJsonnetFile(appPath, repoRoot, filePath, manifestPath string, opts RenderOptions) ([]directoryObject, error) {
 	vm, err := makeJsonnetVM(appPath, repoRoot, opts.Jsonnet, opts.ArgoEnv)
 	if err != nil {
 		return nil, err
@@ -27,11 +32,7 @@ func renderJsonnetFile(appPath, repoRoot, filePath, manifestPath string, opts Re
 	if err != nil {
 		return nil, fmt.Errorf("failed to evaluate jsonnet %q: %w", manifestPath, err)
 	}
-	manifests, err := decodeJsonnetManifests(manifestPath, []byte(jsonOutput))
-	if err != nil {
-		return nil, err
-	}
-	return manifests, nil
+	return decodeJsonnetObjects(manifestPath, []byte(jsonOutput))
 }
 
 func makeJsonnetVM(appPath, repoRoot string, sourceJsonnet argoappv1.ApplicationSourceJsonnet, env argoappv1.Env) (*jsonnet.VM, error) {
@@ -230,40 +231,50 @@ func (i *boundedJsonnetImporter) tryImport(path string) (jsonnet.Contents, bool,
 	return entry.contents, true, nil
 }
 
-func decodeJsonnetManifests(path string, data []byte) ([]Manifest, error) {
-	var objects []map[string]any
+// decodeJsonnetObjects decodes Jsonnet output the way findManifests does.
+// It first decodes the output as an array of Unstructured objects, and when
+// that fails, as one Unstructured object. Each Unstructured decode fails on an
+// object without a non-empty string kind, so such an object fails the source
+// in the repo-server. A JSON null in the array, or null output, adds nothing.
+func decodeJsonnetObjects(manifestPath string, data []byte) ([]directoryObject, error) {
+	var objects []*unstructured.Unstructured
 	if err := json.Unmarshal(data, &objects); err == nil {
-		return jsonnetManifestsFromObjects(path, objects)
+		out := make([]directoryObject, 0, len(objects))
+		for index, object := range objects {
+			out = append(out, directoryObject{
+				path:   manifestPath,
+				label:  fmt.Sprintf("%s output item %d", manifestPath, index),
+				object: object,
+			})
+		}
+		return out, nil
 	}
-
-	var object map[string]any
+	var object unstructured.Unstructured
 	if err := json.Unmarshal(data, &object); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal generated json %q: %w", path, err)
+		return nil, fmt.Errorf("failed to unmarshal generated json %q: %s", manifestPath, describeJsonnetDecodeError(data, err))
 	}
-	if object == nil {
-		return nil, nil
-	}
-	return jsonnetManifestsFromObjects(path, []map[string]any{object})
+	return []directoryObject{{
+		path:   manifestPath,
+		label:  manifestPath + " output",
+		object: &object,
+	}}, nil
 }
 
-func jsonnetManifestsFromObjects(path string, objects []map[string]any) ([]Manifest, error) {
-	manifests := make([]Manifest, 0, len(objects))
-	for _, object := range objects {
-		if object == nil {
-			continue
-		}
-		manifest := Manifest{
-			Path:   path,
-			Object: &unstructured.Unstructured{Object: object},
-		}
-		include, err := classifyDirectoryDocument(manifest)
-		if err != nil {
-			return nil, err
-		}
-		if !include {
-			continue
-		}
-		manifests = append(manifests, manifest)
+// describeJsonnetDecodeError names why Jsonnet output did not decode,
+// without echoing the output: Unstructured's missing-kind error quotes the
+// whole object. The repo-server reports the error of its second decode,
+// which for array output only says that an array is not an object. drydock
+// names the array item that failed the first decode instead.
+func describeJsonnetDecodeError(data []byte, err error) string {
+	var items []json.RawMessage
+	if json.Unmarshal(data, &items) != nil {
+		return describeDirectoryJSONDecodeError(err)
 	}
-	return manifests, nil
+	for index, item := range items {
+		var object *unstructured.Unstructured
+		if itemErr := json.Unmarshal(item, &object); itemErr != nil {
+			return fmt.Sprintf("output item %d: %s", index, describeDirectoryJSONDecodeError(itemErr))
+		}
+	}
+	return describeDirectoryJSONDecodeError(err)
 }
