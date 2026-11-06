@@ -1,6 +1,6 @@
 # A single-source Application at the annotated tag of
 # app-revision-annotated-tag.yaml. The repo-server reports the commit SHA
-# that it checked out (git rev-parse HEAD), not the tag object SHA.
+# that it checked out (git rev-parse HEAD).
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:

@@ -1,8 +1,9 @@
 # A multi-source Application at an annotated tag. The smoke tags the fixture
 # commit with parity-app-revision-annotated before it serves the repository.
-# The repo-server passes the ls-remote result as the revision, which is the
-# SHA of the tag object, not of the commit. The single-source Application in
-# app-revision-annotated-tag-single.yaml gets the commit SHA for the same tag.
+# The repo-server passes the ls-remote result as the revision. Argo CD's
+# listRemote peels annotated tags, so that is the commit SHA, not the SHA of
+# the tag object, as for the single-source Application in
+# app-revision-annotated-tag-single.yaml.
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:

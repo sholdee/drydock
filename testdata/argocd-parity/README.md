@@ -188,7 +188,7 @@ repo-server sets them to the revision it resolves for each rendered source.
 | `parity-app-revision-multi-source` | Git chart, OCI artifact chart, `$values` ref | Helm parameters of each rendered source | commit SHA for the Git chart, manifest digest for the OCI chart |
 | `parity-app-revision-oci` | OCI artifact chart `parity/nested/parity-nested-chart` | Helm parameter `fromValues` | manifest digest |
 | `parity-app-revision-helm-repo` | schemeless OCI Helm chart, version `1.0.0` | Helm parameter `fromValues` | `1.0.0` |
-| `parity-app-revision-annotated-tag` | Git at an annotated tag, in `spec.sources` | Helm parameters | SHA of the tag object |
+| `parity-app-revision-annotated-tag` | Git at an annotated tag, in `spec.sources` | Helm parameters | commit SHA |
 | `parity-app-revision-annotated-tag-single` | Git at the same annotated tag, in `spec.source` | Helm parameters | commit SHA |
 
 For an OCI digest, `_SHORT` is `sha256:` and `_SHORT_8` is `sha256:` plus
@@ -197,9 +197,11 @@ one hex digit, on both sides.
 The harness puts the annotated tag `parity-app-revision-annotated`
 (`APP_REVISION_ANNOTATED_TAG`) on the fixture commit before it clones the
 served bare repository. A source of a multi-source Application gets the
-`git ls-remote` result as its revision, which is the tag object SHA for an
-annotated tag. A single-source Application gets the checked-out commit SHA.
-drydock reads the tag from `FIXTURE_GIT_WORK`.
+`git ls-remote` result as its revision, and a single-source Application
+gets the checked-out commit SHA. Argo CD's `listRemote` peels annotated
+tags, so both get the commit SHA, not the SHA of the tag object. The
+harness checks that the tag object SHA differs from the commit SHA and that
+no Argo CD capture of the two Applications holds it.
 
 The commit SHA is the commit that the fixture Git server serves. The harness
 builds that repository in `FIXTURE_GIT_WORK` from the working tree and
@@ -224,8 +226,7 @@ offline capture needs.
 
 Before the exact comparison, the harness makes sure that each Argo CD
 capture holds the expected value: the HEAD commit of `FIXTURE_GIT_WORK`,
-the SHA of the annotated tag object, `sha256:`, or `1.0.0|1.0.0|1.0.0`
-(`APP_REVISION_EXPECTED`). Without that
+`sha256:`, or `1.0.0|1.0.0|1.0.0` (`APP_REVISION_EXPECTED`). Without that
 check, both sides rendering an unresolved value would pass.
 
 ### Deliberately not covered by this fixture
