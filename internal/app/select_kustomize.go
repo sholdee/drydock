@@ -2,7 +2,6 @@ package app
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"strings"
 
@@ -24,7 +23,8 @@ type selectionSide struct {
 	// every Application the directory declares.
 	renderedDirs map[string][]string
 	// unscanned holds the Applications whose Jsonnet import scan ran out of
-	// budget. selectChangedDiffSides selects them whenever a path changed.
+	// budget or failed. selectChangedDiffSides selects them whenever a path
+	// changed.
 	unscanned []argoappv1.Application
 }
 
@@ -67,8 +67,8 @@ func withSelectionOnlyPaths(ctx context.Context, root string, repoMaps []sourcep
 	}
 	type symlinkSelection struct {
 		paths []string
-		// unknown reports a Jsonnet import scan that ran out of budget:
-		// the source's inputs are not known.
+		// unknown reports a Jsonnet import scan that ran out of budget or
+		// failed: the source's inputs are not known.
 		unknown bool
 	}
 	symlinkMemo := map[string]symlinkSelection{}
@@ -83,10 +83,10 @@ func withSelectionOnlyPaths(ctx context.Context, root string, repoMaps []sourcep
 		selection, ok := symlinkMemo[key]
 		if !ok {
 			selection.paths = render.DirectorySymlinkInputPaths(root, dirs)
-			// A source that cannot be read otherwise keeps its other
-			// ownership; the render reports the error.
+			// A scan that ran out of budget or failed, such as on an
+			// unreadable directory, leaves the imports unknown.
 			imports, err := render.DirectoryJsonnetImportPaths(ctx, root, source.Path, dirs[1:])
-			selection.unknown = errors.Is(err, render.ErrJsonnetImportScanBudget)
+			selection.unknown = err != nil
 			selection.paths = append(selection.paths, imports...)
 			symlinkMemo[key] = selection
 		}

@@ -627,7 +627,8 @@ Supported:
   source. The file limit is there because a symlink to a directory above a
   file can give that file endlessly many import paths. A single Jsonnet
   file over 10 MB also runs the budget out, because the scan does not read
-  it but the renderer evaluates it. When the budget runs out, the source gets no
+  it but the renderer evaluates it. When the budget runs out, or the scan
+  fails, for example on a directory it cannot read, the source gets no
   persistent cache entry and renders as usual, and changed-only renders it
   on every change, with the strict-exempt warning
   `diff.changed-only-jsonnet-scan`. A changed path that no Application owns

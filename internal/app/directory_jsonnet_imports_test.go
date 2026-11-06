@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"errors"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -185,5 +186,33 @@ func TestWithSelectionOnlyPathsScansOnlyDirectorySources(t *testing.T) {
 	got := withSelectionOnlyPaths(context.Background(), root, nil, selfRepoRefs{}, []ApplicationSelectionInput{{Application: application}}).inputs
 	if selected, _ := SelectChangedApplicationInputs(got, []string{"shared/lib.libsonnet"}); len(selected) != 0 {
 		t.Fatalf("a Helm source owned a Jsonnet import (paths %v)", got[0].Paths)
+	}
+}
+
+// TestWithSelectionOnlyPathsMarksAFailedScanUnknown pins that a Jsonnet
+// import scan that fails, here on an unreadable directory, leaves the
+// source's inputs unknown: changed-only selects it on any change.
+func TestWithSelectionOnlyPathsMarksAFailedScanUnknown(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root can read a directory without read permission")
+	}
+	root := t.TempDir()
+	writeTestFile(t, filepath.Join(root, "app", "main.jsonnet"), "import '../shared/lib.libsonnet'\n")
+	writeTestFile(t, filepath.Join(root, "shared", "lib.libsonnet"), "{}\n")
+	locked := filepath.Join(root, "app", "locked")
+	if err := os.MkdirAll(locked, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(locked, 0o000); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(locked, 0o755) })
+	application := argoappv1.Application{
+		Name: "demo",
+		Spec: argoappv1.ApplicationSpec{Source: &argoappv1.ApplicationSource{RepoURL: "https://git.example.test/repo.git", TargetRevision: "main", Path: "app"}},
+	}
+	side := withSelectionOnlyPaths(context.Background(), root, nil, selfRepoRefs{}, []ApplicationSelectionInput{{Application: application}})
+	if len(side.unscanned) != 1 {
+		t.Fatalf("unscanned = %v, want the source whose scan failed", side.unscanned)
 	}
 }
