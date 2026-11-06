@@ -322,6 +322,8 @@ APPLICATIONS=(
   parity-app-revision-multi-source
   parity-app-revision-oci
   parity-app-revision-helm-repo
+  parity-app-revision-annotated-tag
+  parity-app-revision-annotated-tag-single
 )
 
 # Applications whose Git sources read the ARGOCD_APP_REVISION variables. The
@@ -337,10 +339,17 @@ APP_REVISION_GIT_APPLICATIONS=(
   parity-app-revision-jsonnet
   parity-app-revision-plugin
   parity-app-revision-multi-source
+  parity-app-revision-annotated-tag
+  parity-app-revision-annotated-tag-single
 )
+# The annotated tag that prepare_fixture_git_image puts on the fixture
+# commit. A multi-source Application at this tag reports the SHA of the tag
+# object, a single-source Application the commit SHA.
+APP_REVISION_ANNOTATED_TAG="parity-app-revision-annotated"
 # The value each revision Application must render on the Argo CD side, as
 # "name|text" pairs, so that both sides rendering an unresolved value cannot
 # pass the comparison. @GIT_HEAD@ stands for the commit of FIXTURE_GIT_WORK,
+# @GIT_TAG_OBJECT@ for the SHA of the APP_REVISION_ANNOTATED_TAG tag object,
 # and "sha256:" for the start of an OCI manifest digest. The text is the part
 # after the first "|".
 APP_REVISION_EXPECTED=(
@@ -352,6 +361,8 @@ APP_REVISION_EXPECTED=(
   "parity-app-revision-multi-source|sha256:"
   "parity-app-revision-oci|sha256:"
   "parity-app-revision-helm-repo|1.0.0|1.0.0|1.0.0"
+  "parity-app-revision-annotated-tag|@GIT_TAG_OBJECT@"
+  "parity-app-revision-annotated-tag-single|@GIT_HEAD@"
 )
 
 # ApplicationSets that Argo CD must reject, as "name|text" pairs. Before the
@@ -782,6 +793,7 @@ prepare_fixture_git_image() {
   git -C "${FIXTURE_GIT_WORK}" config user.name "drydock render parity smoke"
   git -C "${FIXTURE_GIT_WORK}" add .
   git -C "${FIXTURE_GIT_WORK}" commit -m "seed argocd parity fixture" >/dev/null
+  git -C "${FIXTURE_GIT_WORK}" tag -a "${APP_REVISION_ANNOTATED_TAG}" -m "annotated tag for the ARGOCD_APP_REVISION parity case"
   git clone --bare --no-hardlinks "${FIXTURE_GIT_WORK}" "${bare}" >/dev/null
   git --git-dir="${bare}" update-server-info
   prepare_oob_symlink_repo
@@ -1817,14 +1829,19 @@ assert_avp_markers() {
 # Application rendered its expected resolved value under Argo CD. The exact
 # comparison then proves that drydock rendered the same.
 assert_app_revision_captures() {
-  local entry app text git_head file mismatch="false"
+  local entry app text git_head git_tag_object file mismatch="false"
   log_step "Checking the resolved ARGOCD_APP_REVISION values on the Argo CD side"
   git_head="$(git -C "${FIXTURE_GIT_WORK}" rev-parse HEAD)" \
     || fail "could not read the HEAD commit of ${FIXTURE_GIT_WORK}"
+  git_tag_object="$(git -C "${FIXTURE_GIT_WORK}" rev-parse "refs/tags/${APP_REVISION_ANNOTATED_TAG}")" \
+    || fail "could not read the ${APP_REVISION_ANNOTATED_TAG} tag object of ${FIXTURE_GIT_WORK}"
+  [[ "${git_tag_object}" != "${git_head}" ]] \
+    || fail "${APP_REVISION_ANNOTATED_TAG} must be an annotated tag, whose object SHA differs from the commit SHA"
   for entry in "${APP_REVISION_EXPECTED[@]}"; do
     app="${entry%%|*}"
     text="${entry#*|}"
     text="${text//@GIT_HEAD@/${git_head}}"
+    text="${text//@GIT_TAG_OBJECT@/${git_tag_object}}"
     file="${OUT_DIR}/argocd-manifests/${app}.yaml"
     if ! grep -qF -- "${text}" "${file}"; then
       echo "argocd render parity smoke: ${file} does not contain '${text}'" >&2

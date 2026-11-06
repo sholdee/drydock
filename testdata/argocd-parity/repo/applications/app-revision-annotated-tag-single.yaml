@@ -1,0 +1,28 @@
+# A single-source Application at the annotated tag of
+# app-revision-annotated-tag.yaml. The repo-server reports the commit SHA
+# that it checked out (git rev-parse HEAD), not the tag object SHA.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: parity-app-revision-annotated-tag-single
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: git://argocd-parity-git.argocd-parity.svc.cluster.local/repo.git
+    targetRevision: parity-app-revision-annotated
+    path: charts/app-revision
+    helm:
+      parameters:
+        - name: revision
+          value: $ARGOCD_APP_REVISION
+          forceString: true
+        - name: short
+          value: $ARGOCD_APP_REVISION_SHORT
+          forceString: true
+        - name: short8
+          value: ${ARGOCD_APP_REVISION_SHORT_8}
+          forceString: true
+  destination:
+    name: in-cluster
+    namespace: parity-app-revision-annotated-tag-single
