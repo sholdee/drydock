@@ -114,11 +114,12 @@ func (o Orchestrator) DiffApps(ctx context.Context, request DiffRequest) (result
 		return DiffResult{Diagnostics: diagnostics, CacheEvents: cacheEvents}, err
 	}
 
-	results, diffErr := diffBuildResults(leftBuild, rightBuild, diff.Options{
+	results, diffDiags, diffErr := diffBuildResults(leftBuild, rightBuild, diff.Options{
 		Unified:           request.Unified,
 		StripAttrs:        request.StripAttrs,
 		ShowIgnoredFields: request.ShowIgnoredFields,
-	})
+	}, request.Strict)
+	diagnostics = append(diagnostics, diffDiags...)
 	if err := errors.Join(buildErr, diffErr); err != nil {
 		return DiffResult{Results: results, Diagnostics: diagnostics, CacheEvents: cacheEvents}, err
 	}
@@ -219,15 +220,16 @@ func (o Orchestrator) DiffApp(ctx context.Context, request DiffAppRequest) (resu
 		return DiffResult{Diagnostics: request.filterProjectDiagnostics(diagnostics), CacheEvents: cacheEvents}, err
 	}
 
-	results, err := diffBuildResults(leftBuild.result, rightBuild.result, diff.Options{
+	results, diffDiags, err := diffBuildResults(leftBuild.result, rightBuild.result, diff.Options{
 		Unified:           request.Unified,
 		StripAttrs:        request.StripAttrs,
 		ShowIgnoredFields: request.ShowIgnoredFields,
-	})
+	}, request.Strict)
+	diagnostics = append(request.filterProjectDiagnostics(diagnostics), diffDiags...)
 	if err != nil {
-		return DiffResult{Diagnostics: request.filterProjectDiagnostics(diagnostics), CacheEvents: cacheEvents}, err
+		return DiffResult{Diagnostics: diagnostics, CacheEvents: cacheEvents}, err
 	}
-	return DiffResult{Results: results, Diagnostics: request.filterProjectDiagnostics(diagnostics), CacheEvents: cacheEvents}, nil
+	return DiffResult{Results: results, Diagnostics: diagnostics, CacheEvents: cacheEvents}, nil
 }
 
 func (o Orchestrator) DiffImages(ctx context.Context, request DiffRequest) (result ImageDiffResult, err error) {
@@ -616,16 +618,29 @@ func selectDiffAppApplications(leftApps, rightApps []argoappv1.Application, name
 	return leftApp, leftOK, rightApp, rightOK, nil
 }
 
-func diffBuildResults(leftBuild, rightBuild BuildResult, opts diff.Options) ([]diff.Result, error) {
+// diffBuildResults diffs the rendered manifests of the two sides. It also
+// returns the diff normalization diagnostics. An Application whose ignore
+// rules Argo CD cannot build fails on its own: it gets an error diagnostic
+// and no results, and the other Applications are still diffed. The returned
+// error reports that failure, and with strict, any normalization warning.
+func diffBuildResults(leftBuild, rightBuild BuildResult, opts diff.Options, strict bool) ([]diff.Result, []diagnostic.Diagnostic, error) {
 	leftDocs, err := diffDocuments(leftBuild)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	rightDocs, err := diffDocuments(rightBuild)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	return diff.Run(leftDocs, rightDocs, opts)
+	failed, diags := invalidIgnoreRuleDiagnostics(leftBuild, rightBuild)
+	leftDocs = withoutApplications(leftDocs, failed)
+	rightDocs = withoutApplications(rightDocs, failed)
+	diags = normalizeDiagnostics(append(diags, invalidIgnorePointerDiagnostics(leftDocs, rightDocs)...), strict, false)
+	results, err := diff.Run(leftDocs, rightDocs, opts)
+	if err != nil {
+		return nil, diags, err
+	}
+	return results, diags, diagnosticFailure(diags, strict)
 }
 
 func hasRenderedDiffInput(leftBuild, rightBuild BuildResult) bool {

@@ -90,12 +90,9 @@ func drydockParityNormalize(t *testing.T, leftBody, rightBody string, resource R
 		if !present {
 			return nil
 		}
-		object, removedRoot, err := normalizeDiffObject(doc.Body, Options{}, doc.Normalization, doc.Resource)
+		object, err := normalizeDiffObject(doc.Body, Options{}, doc.Normalization, doc.Resource)
 		if err != nil {
 			t.Fatalf("normalizeDiffObject() error = %v", err)
-		}
-		if removedRoot {
-			t.Fatal("normalizeDiffObject() removed the document root")
 		}
 		return jsonRoundTrip(t, object)
 	}
@@ -181,6 +178,27 @@ func TestIgnoreRuleOrderParityWithArgoCD(t *testing.T) {
 			normalization: Normalization{
 				ApplicationRules:   []IgnoreRule{{JQPathExpressions: []string{".spec.template.spec.containers[0]"}}},
 				CustomizationRules: []IgnoreRule{{JSONPointers: []string{parityContainers + "1"}}},
+			},
+		},
+		{
+			// Application and customization pointers use JSON-patch path
+			// rules, as annotation pointers do: the first segment is not
+			// checked, a negative index counts from the end, and a pointer
+			// that fails, such as a non-numeric array index or the root
+			// pointer, is skipped while the next one applies.
+			name:      "application and customization pointers use JSON-patch path rules",
+			resource:  deployment,
+			leftBody:  parityDeploymentBody("Deployment", "apps/v1", "", "1"),
+			rightBody: parityDeploymentBody("Deployment", "apps/v1", "", "2"),
+			ignores: []argoappv1.ResourceIgnoreDifferences{
+				appRule([]string{"spec/replicas", "", parityContainers + "a/image", "#" + parityContainers + "-1"}, nil),
+			},
+			overrides: map[string]argoappv1.ResourceOverride{"apps/Deployment": {IgnoreDifferences: argoappv1.OverrideIgnoreDiff{
+				JSONPointers: []string{"/spec/~2", "x/spec/replicas"},
+			}}},
+			normalization: Normalization{
+				ApplicationRules:   []IgnoreRule{{JSONPointers: []string{"spec/replicas", "", parityContainers + "a/image", "#" + parityContainers + "-1"}}},
+				CustomizationRules: []IgnoreRule{{JSONPointers: []string{"/spec/~2", "x/spec/replicas"}}},
 			},
 		},
 		{
@@ -284,33 +302,5 @@ func TestIgnoreRuleOrderParityWithArgoCD(t *testing.T) {
 				t.Fatalf("right side mismatch\n got: %#v\nwant: %#v", gotRight, wantRight)
 			}
 		})
-	}
-}
-
-// TestMergeNormalizationKeepsOneCopyOfSharedRules checks the union drydock
-// applies when the two sides carry different settings. Rules both sides share
-// appear once, so identical settings give exactly Argo CD's single rule list,
-// and a rule repeated more often on one side keeps its extra copies.
-func TestMergeNormalizationKeepsOneCopyOfSharedRules(t *testing.T) {
-	ruleA := IgnoreRule{JSONPointers: []string{"/spec/replicas"}}
-	ruleB := IgnoreRule{JQPathExpressions: []string{".spec.paused"}}
-	left := Normalization{
-		ApplicationRules:   []IgnoreRule{ruleA, ruleA},
-		CustomizationRules: []IgnoreRule{ruleB},
-	}
-	right := Normalization{
-		ApplicationRules:   []IgnoreRule{ruleA, ruleB, ruleA, ruleA},
-		CustomizationRules: []IgnoreRule{ruleB},
-	}
-	got := mergeNormalization(left, right)
-	if want := []IgnoreRule{ruleA, ruleA, ruleB, ruleA}; !reflect.DeepEqual(got.ApplicationRules, want) {
-		t.Fatalf("ApplicationRules = %#v, want %#v", got.ApplicationRules, want)
-	}
-	if want := []IgnoreRule{ruleB}; !reflect.DeepEqual(got.CustomizationRules, want) {
-		t.Fatalf("CustomizationRules = %#v, want %#v", got.CustomizationRules, want)
-	}
-	same := mergeNormalization(right, right)
-	if !reflect.DeepEqual(same.ApplicationRules, right.ApplicationRules) {
-		t.Fatalf("merge of identical sides = %#v, want %#v", same.ApplicationRules, right.ApplicationRules)
 	}
 }

@@ -1227,8 +1227,17 @@ Supported:
 - A `jqPathExpressions` entry that fails to run on one resource, such as a
   `containers[]` expression on a ConfigMap, is skipped for that resource, and
   the other rules still apply. Argo CD logs such a failed patch and goes on
-  (`util/argo/normalizers/diff_normalizer.go`). A jq expression that does not
-  parse fails the diff. Argo CD fails the comparison for it.
+  (`util/argo/normalizers/diff_normalizer.go`).
+- A jq expression that does not parse or compile fails the comparison of
+  each Application it belongs to, even when it matches no resource. Argo CD
+  builds every jq patch of the Application's rules and of all
+  `resource.customizations` entries before it compares any resource, and it
+  sets a `ComparisonError` condition with sync status `Unknown`
+  (`controller/state.go`). So an expression in `resource.customizations`
+  fails every Application. drydock reports a `diff.ignore-rule-invalid`
+  error for each such Application, leaves its resources out of the diff, and
+  still diffs the other Applications. The command fails, as for a render
+  failure.
 - `resource.customizations` keys as Argo CD reads them for `jsonPointers`,
   `jqPathExpressions`, and `knownTypeFields`
   (`util/argo/normalizers/util.go`): `group/kind` matches with globs, a key
@@ -1245,10 +1254,15 @@ Supported:
   `spec.template.spec`, unless a key sets `knownTypeFields` for
   `argoproj.io/Rollout`. The known-types normalizer runs after the ignore
   rules, as in Argo CD (`util/argo/diff/normalize.go`).
-- When the two diff sides carry different ignore settings, drydock applies
-  the union. It keeps the baseline side's rules in order and adds the current
-  side's rules that the baseline does not have. Rules that both sides share
-  run once, so identical settings give exactly Argo CD's rule list.
+- When the two diff sides carry different ignore settings, drydock
+  normalizes both sides with the current side's settings: the Application's
+  `spec.ignoreDifferences`, `resource.customizations`, compare options, and
+  the annotation. Argo CD compares the new desired state under the rules of
+  the live Application, which are the new rules once the Application change
+  is synced. A rule that only the baseline side has does not hide a change.
+  A resource that exists only on the baseline side keeps its own rules,
+  except its annotation. Earlier drydock releases used the union of both
+  sides' rules.
 - `argocd-cm` `resource.exclusions` and `resource.inclusions` (Argo CD
   v3.6.1), with Argo CD's core exclusions. drydock decodes them as Argo CD
   decodes them, with `sigs.k8s.io/yaml`. Keys match case-insensitively, so
@@ -1276,9 +1290,15 @@ Supported:
   removes `/spec/replicas`), only `~0` and `~1` are decoded, and a negative
   array index counts from the end. As in Argo CD, where a failed JSON-patch
   remove is only logged, a pointer that cannot be applied (non-numeric or
-  out-of-range array index, `-`, or a root `""` pointer) is skipped; it never
-  fails the diff or hides the resource. Application-level and global
-  `jsonPointers` keep their strict RFC 6901 validation.
+  out-of-range array index, `-`, or a root `""` pointer) is skipped. It never
+  fails the diff or hides the resource.
+- Application-level and `resource.customizations` `jsonPointers` follow the
+  same JSON-patch path rules, because Argo CD applies every pointer the same
+  way (`util/argo/normalizers/diff_normalizer.go`). A pointer that is not a
+  valid RFC 6901 pointer, such as `spec/replicas`, or the root pointer `""`,
+  gives the `diff.ignore-pointer-invalid` warning, once for each Application
+  and pointer. `--strict` makes it an error. Earlier drydock releases failed
+  the diff on such a pointer, and removed the whole resource for `""`.
 - Argo CD reads the ignore-differences annotation only from the desired
   (target) object and applies the rule to live and target. drydock compares
   desired against desired, so the current-side manifest stands in for the

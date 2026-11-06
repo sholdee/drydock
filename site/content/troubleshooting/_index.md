@@ -376,6 +376,25 @@ will follow upstream when it changes. Until then, use one of these fixes:
 - List only one component that can be valid under `ignoreMissingComponents`.
 - Move the components into the kustomization's own `components:` list.
 
+## Symptom: `diff.ignore-pointer-invalid` Or `diff.ignore-rule-invalid`
+
+`diff.ignore-pointer-invalid` is a warning. It names an Application and a
+`jsonPointers` entry of its `spec.ignoreDifferences` or of
+`resource.customizations` that is not a valid JSON pointer, such as
+`spec/replicas` without the leading `/`, or the root pointer `""`. Argo CD
+v3.6.1 does not reject such a pointer. It applies it as a JSON-patch path,
+which skips the first segment, and skips it where the patch fails. So
+`spec/replicas` removes nothing, and `x/spec/replicas` removes
+`spec.replicas`. drydock does the same. To fix the warning, write the pointer
+with a leading `/`. `--strict` makes the warning an error.
+
+`diff.ignore-rule-invalid` is an error. A `jqPathExpressions` entry does not
+parse or compile. Argo CD then fails the comparison of the Application with a
+`ComparisonError` condition, even when the rule matches no resource. An
+expression in `resource.customizations` fails every Application. drydock
+leaves the resources of each such Application out of the diff, and the command
+fails. Fix the jq expression.
+
 ## Symptom: Changed-Only Falls Back To All Apps
 
 Multi-Application diffs use changed-only selection by default. If a changed

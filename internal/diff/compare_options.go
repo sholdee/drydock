@@ -13,44 +13,6 @@ type CompareOptions struct {
 	IgnoreResourceStatusField string
 }
 
-func mergeCompareOptions(left, right CompareOptions) CompareOptions {
-	return CompareOptions{
-		IgnoreAggregatedRoles:     left.IgnoreAggregatedRoles || right.IgnoreAggregatedRoles,
-		IgnoreResourceStatusField: mergeStatusMode(left.IgnoreResourceStatusField, right.IgnoreResourceStatusField),
-	}
-}
-
-func mergeStatusMode(left, right string) string {
-	leftRank := statusModeRank(left)
-	rightRank := statusModeRank(right)
-	if leftRank >= rightRank {
-		return statusModeForRank(leftRank)
-	}
-	return statusModeForRank(rightRank)
-}
-
-func statusModeRank(value string) int {
-	switch normalizedStatusMode(value) {
-	case IgnoreResourceStatusNone:
-		return 0
-	case IgnoreResourceStatusCRD:
-		return 1
-	default:
-		return 2
-	}
-}
-
-func statusModeForRank(rank int) string {
-	switch rank {
-	case 0:
-		return IgnoreResourceStatusNone
-	case 1:
-		return IgnoreResourceStatusCRD
-	default:
-		return IgnoreResourceStatusAll
-	}
-}
-
 func normalizeCompareOptionsObject(object map[string]any, resource Resource, opts CompareOptions) map[string]any {
 	if object == nil {
 		return nil

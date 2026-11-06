@@ -148,10 +148,10 @@ drydock diff apps \
 Application-level `spec.ignoreDifferences[]` rules and global
 `resource.customizations.ignoreDifferences.*` settings are honored for rendered
 resource diffs. Supported ignore fields are `jsonPointers`,
-`jqPathExpressions`, and `managedFieldsManagers`. When a matching resource
-exists on both sides, drydock applies the union of matching Application-local
-and global settings from the baseline and current trees. A rule that both trees
-share runs once.
+`jqPathExpressions`, and `managedFieldsManagers`. When a resource exists on
+both sides, drydock normalizes both sides with the current tree's rules and
+settings, as Argo CD compares the new desired state under the Application's new
+rules. A rule that only the baseline tree has does not hide a change.
 
 drydock runs ignore rules in Argo CD's order. Application rules run first, then
 the resource's annotation rule, then `resource.customizations` rules. Each rule
@@ -164,7 +164,16 @@ listed twice removes two containers. For `jsonPointers` and
 A `jqPathExpressions` entry that fails to run on a resource is skipped for
 that resource, and the other rules still apply, as in Argo CD v3.6.1. For
 example, `.spec.template.spec.containers[] | .image` fails on a ConfigMap,
-which has no `spec`. A jq expression that does not parse fails the diff.
+which has no `spec`. A jq expression that does not parse fails each Application
+it belongs to with a `diff.ignore-rule-invalid` error, even when it matches no
+resource, because Argo CD then fails the comparison of the Application. An
+expression in `resource.customizations` belongs to every Application.
+
+Every `jsonPointers` entry follows the path rules of the JSON-patch library
+that Argo CD applies it with, the same rules as annotation pointers below. A
+pointer that is not a valid JSON pointer, such as `spec/replicas`, or the root
+pointer `""`, gives a `diff.ignore-pointer-invalid` warning. drydock still
+applies it as Argo CD does, and skips it where the patch fails.
 
 `managedFieldsManagers` in `resource.customizations` follow a different key
 rule, as in Argo CD v3.6.1. The key must be the exact `group/kind` text or

@@ -252,11 +252,11 @@ spec:
 			if err != nil {
 				t.Fatalf("decodeDiffYAML() error = %v", err)
 			}
-			got := removeAnnotationJSONPointers(object, tt.pointers)
+			got := removeJSONPatchPointers(object, tt.pointers)
 
 			upstream := upstreamAnnotationNormalize(t, body, tt.pointers)
 			if !reflect.DeepEqual(jsonRoundTrip(t, got), jsonRoundTrip(t, upstream)) {
-				t.Fatalf("removeAnnotationJSONPointers(%q)\n got: %#v\nwant: %#v", tt.pointers, jsonRoundTrip(t, got), jsonRoundTrip(t, upstream))
+				t.Fatalf("removeJSONPatchPointers(%q)\n got: %#v\nwant: %#v", tt.pointers, jsonRoundTrip(t, got), jsonRoundTrip(t, upstream))
 			}
 		})
 	}

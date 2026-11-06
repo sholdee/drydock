@@ -8,7 +8,6 @@ import (
 	"github.com/sholdee/drydock/internal/format"
 	"go.yaml.in/yaml/v3"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
-	"slices"
 	"strings"
 )
 
@@ -44,22 +43,20 @@ func normalizedDocumentBodies(left, right Document, hasLeft, hasRight bool, opts
 	return summarizeConfigMapBinaryDataDocumentBodies(leftBody, rightBody, left, right, hasLeft, hasRight)
 }
 func normalizedDocumentPairBodies(left, right Document, opts Options) (string, string, error) {
-	leftObject, leftRemoved, err := normalizeDiffObject(left.Body, opts, left.Normalization, left.Resource)
+	leftObject, err := normalizeDiffObject(left.Body, opts, left.Normalization, left.Resource)
 	if err != nil {
 		return "", "", fmt.Errorf("normalize %s: %w", headerOf(left), err)
 	}
-	rightObject, rightRemoved, err := normalizeDiffObject(right.Body, opts, right.Normalization, right.Resource)
+	rightObject, err := normalizeDiffObject(right.Body, opts, right.Normalization, right.Resource)
 	if err != nil {
 		return "", "", fmt.Errorf("normalize %s: %w", headerOf(right), err)
 	}
-	if !leftRemoved && !rightRemoved {
-		leftObject, rightObject, err = normalizeManagedFieldsPair(leftObject, rightObject, left.Normalization.ManagedFieldsManagers)
-		if err != nil {
-			return "", "", fmt.Errorf("normalize %s: %w", headerOf(right), err)
-		}
-		stripManagedFields(leftObject)
-		stripManagedFields(rightObject)
+	leftObject, rightObject, err = normalizeManagedFieldsPair(leftObject, rightObject, left.Normalization.ManagedFieldsManagers)
+	if err != nil {
+		return "", "", fmt.Errorf("normalize %s: %w", headerOf(right), err)
 	}
+	stripManagedFields(leftObject)
+	stripManagedFields(rightObject)
 
 	leftBody, err := encodeDiffYAML(leftObject)
 	if err != nil {
@@ -92,12 +89,9 @@ func normalizeDiffBodyForResource(body string, opts Options, normalization Norma
 		!compareOptionsRequireObject(resource, normalization.CompareOptions) {
 		return body, nil
 	}
-	object, removedRoot, err := normalizeDiffObject(body, opts, normalization, resource)
+	object, err := normalizeDiffObject(body, opts, normalization, resource)
 	if err != nil {
 		return "", err
-	}
-	if removedRoot {
-		return "", nil
 	}
 	return encodeDiffYAML(object)
 }
@@ -112,21 +106,15 @@ func requiresDefaultIgnoredFieldNormalization(body string, opts Options) bool {
 			strings.Contains(body, "checksum/"))
 }
 
-func normalizeDiffObject(body string, opts Options, normalization Normalization, resource Resource) (map[string]any, bool, error) {
+func normalizeDiffObject(body string, opts Options, normalization Normalization, resource Resource) (map[string]any, error) {
 	attrs := stripAttrSet(opts.StripAttrs)
 	if body == "" {
-		return nil, false, nil
-	}
-	for _, rules := range [][]IgnoreRule{normalization.ApplicationRules, normalization.CustomizationRules} {
-		for _, rule := range rules {
-			if err := validateJSONPointers(rule.JSONPointers); err != nil {
-				return nil, false, err
-			}
-		}
+		// An empty body is a missing document, which encodes as "".
+		return nil, nil //nolint:nilnil // nil means no document, not an error.
 	}
 	object, err := decodeDiffYAML(body)
 	if err != nil {
-		return nil, false, err
+		return nil, err
 	}
 	stripMetadataAttrs(object, attrs)
 	if !opts.ShowIgnoredFields {
@@ -134,10 +122,7 @@ func normalizeDiffObject(body string, opts Options, normalization Normalization,
 	}
 	object, err = applyIgnoreRules(object, normalization)
 	if err != nil {
-		if errors.Is(err, errJSONPointerRemovedRoot) {
-			return nil, true, nil
-		}
-		return nil, false, err
+		return nil, err
 	}
 	object = normalizeCompareOptionsObject(object, resource, normalization.CompareOptions)
 	// Argo CD runs the known-types normalizer after the ignore normalizer
@@ -146,24 +131,22 @@ func normalizeDiffObject(body string, opts Options, normalization Normalization,
 	// remove a field that would fail to remarshal.
 	object, err = normalizeKnownTypeFields(object, resource, normalization.KnownTypeFields)
 	if err != nil {
-		return nil, false, err
+		return nil, err
 	}
-	return object, false, nil
+	return object, nil
 }
 
 // applyIgnoreRules applies the ignore rules in Argo CD's order: Application
 // rules, then the resource's annotation rule, then resource.customizations
 // rules. Each rule applies its JSON pointers and then its jq expressions
-// (util/argo/normalizers/diff_normalizer.go:142-176). Application and
-// customization pointers keep drydock's strict RFC 6901 handling. Annotation
-// pointers are lenient, as Argo CD only logs a failed patch.
+// (util/argo/normalizers/diff_normalizer.go:142-176). Argo CD applies every
+// pointer, from any of these sources, as its own JSON-patch remove operation
+// and skips one that fails, so all pointers use the same JSON-patch path
+// rules here.
 func applyIgnoreRules(object map[string]any, normalization Normalization) (map[string]any, error) {
 	apply := func(rule IgnoreRule) error {
 		var err error
-		object, err = removeJSONPointers(object, rule.JSONPointers)
-		if err != nil {
-			return err
-		}
+		object = removeJSONPatchPointers(object, rule.JSONPointers)
 		object, err = removeJQPathExpressions(object, rule.JQPathExpressions)
 		return err
 	}
@@ -172,7 +155,7 @@ func applyIgnoreRules(object map[string]any, normalization Normalization) (map[s
 			return nil, err
 		}
 	}
-	object = removeAnnotationJSONPointers(object, normalization.AnnotationJSONPointers)
+	object = removeJSONPatchPointers(object, normalization.AnnotationJSONPointers)
 	for _, rule := range normalization.CustomizationRules {
 		if err := apply(rule); err != nil {
 			return nil, err
@@ -377,51 +360,6 @@ func encodeDiffYAML(object map[string]any) (string, error) {
 	return string(data), nil
 }
 
-// mergeNormalization joins the normalization of the two sides of a diff.
-// drydock compares desired state against desired state, and each side can
-// carry different settings, so it applies the union of both sides' rules.
-// Argo CD has one rule list and keeps every copy of a rule, so the union
-// keeps all of the left side's rules in order and then adds only the right
-// side's rules that the left side does not already have. When both sides have
-// the same rules, the result is exactly that one rule list. The annotation
-// rule is not merged here; the caller sets it from the current side.
-func mergeNormalization(left, right Normalization) Normalization {
-	return Normalization{
-		ApplicationRules:      mergeIgnoreRules(left.ApplicationRules, right.ApplicationRules),
-		CustomizationRules:    mergeIgnoreRules(left.CustomizationRules, right.CustomizationRules),
-		ManagedFieldsManagers: appendUniqueStrings(appendUniqueStrings(nil, left.ManagedFieldsManagers), right.ManagedFieldsManagers),
-		KnownTypeFields:       appendUniqueKnownTypeFields(appendUniqueKnownTypeFields(nil, left.KnownTypeFields), right.KnownTypeFields),
-		CompareOptions:        mergeCompareOptions(left.CompareOptions, right.CompareOptions),
-	}
-}
-
-// mergeIgnoreRules returns left followed by each rule of right that is not
-// matched by a left rule. Each left rule matches at most one right rule, so a
-// rule that appears more often on the right side keeps its extra copies.
-func mergeIgnoreRules(left, right []IgnoreRule) []IgnoreRule {
-	out := cloneIgnoreRules(left)
-	used := make([]bool, len(left))
-	for _, rule := range right {
-		matched := false
-		for i, candidate := range left {
-			if !used[i] && ignoreRulesEqual(candidate, rule) {
-				used[i] = true
-				matched = true
-				break
-			}
-		}
-		if !matched {
-			out = append(out, cloneIgnoreRule(rule))
-		}
-	}
-	return out
-}
-
-func ignoreRulesEqual(left, right IgnoreRule) bool {
-	return slices.Equal(left.JSONPointers, right.JSONPointers) &&
-		slices.Equal(left.JQPathExpressions, right.JQPathExpressions)
-}
-
 func cloneIgnoreRule(rule IgnoreRule) IgnoreRule {
 	return IgnoreRule{
 		JSONPointers:      append([]string(nil), rule.JSONPointers...),
@@ -439,34 +377,7 @@ func cloneIgnoreRules(rules []IgnoreRule) []IgnoreRule {
 	}
 	return out
 }
-func appendUniqueStrings(out []string, values []string) []string {
-	seen := make(map[string]struct{}, len(out)+len(values))
-	for _, value := range out {
-		seen[value] = struct{}{}
-	}
-	for _, value := range values {
-		if _, ok := seen[value]; ok {
-			continue
-		}
-		seen[value] = struct{}{}
-		out = append(out, value)
-	}
-	return out
-}
-func appendUniqueKnownTypeFields(out []KnownTypeField, values []KnownTypeField) []KnownTypeField {
-	seen := make(map[KnownTypeField]struct{}, len(out)+len(values))
-	for _, value := range out {
-		seen[value] = struct{}{}
-	}
-	for _, value := range values {
-		if _, ok := seen[value]; ok {
-			continue
-		}
-		seen[value] = struct{}{}
-		out = append(out, value)
-	}
-	return out
-}
+
 func cloneNormalization(normalization Normalization) Normalization {
 	return Normalization{
 		ApplicationRules:       cloneIgnoreRules(normalization.ApplicationRules),

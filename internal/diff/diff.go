@@ -35,6 +35,8 @@ type IgnoreRule struct {
 // rules run in Argo CD's order: ApplicationRules, then the
 // AnnotationJSONPointers rule, then CustomizationRules
 // (util/argo/diff/ignore.go:118-122 and 155-159, diff_normalizer.go:122-140).
+// When a resource exists on both sides, both sides use the current side's
+// normalization.
 type Normalization struct {
 	// ApplicationRules are the matching Application spec.ignoreDifferences
 	// entries, in spec order.
@@ -46,10 +48,7 @@ type Normalization struct {
 	KnownTypeFields       []KnownTypeField
 	CompareOptions        CompareOptions
 	// AnnotationJSONPointers holds the jsonPointers parsed from the resource's
-	// own argocd.argoproj.io/ignore-differences annotation. Argo CD applies
-	// them as JSON-patch remove operations and only logs failures, so they are
-	// applied leniently: invalid pointers and the document-root pointer are
-	// skipped rather than failing the diff or removing the whole resource.
+	// own argocd.argoproj.io/ignore-differences annotation.
 	AnnotationJSONPointers []string
 }
 type Document struct {
@@ -128,25 +127,24 @@ func diffResultForKey(leftByKey, rightByKey map[string]Document, key string, opt
 	return result, true, err
 }
 
+// documentsWithSharedNormalization gives both sides the normalization of the
+// current (right) side. Argo CD compares the desired state with the live
+// state under one rule list: the ignore rules of the Application and the
+// settings it runs with when it compares the new desired state, which are
+// the current side's rules. It reads the ignore-differences annotation from
+// the desired (target) objects only (util/argo/diff/normalize.go:14-15,
+// diff.go:290-291, ignore.go:130-131). drydock compares desired against
+// desired, so the current side stands in for the target. A resource that
+// exists only on the baseline side has no target. It keeps its own rules
+// for the removed-resource diff, but its own annotation does not normalize
+// it.
 func documentsWithSharedNormalization(left, right Document, hasLeft, hasRight bool) (Document, Document) {
 	var normalization Normalization
-	switch {
-	case hasLeft && hasRight:
-		normalization = mergeNormalization(left.Normalization, right.Normalization)
-	case hasLeft:
-		normalization = left.Normalization
-	case hasRight:
-		normalization = right.Normalization
-	}
-	// Argo CD reads the ignore-differences annotation from the desired (target)
-	// objects only (util/argo/diff/normalize.go:14-15, diff.go:290-291,
-	// ignore.go:130-131). drydock compares desired against desired, so the
-	// current (right) side stands in for the target. A resource that exists
-	// only on the baseline side has no target, so its own annotation does not
-	// normalize it.
-	normalization.AnnotationJSONPointers = nil
 	if hasRight {
-		normalization.AnnotationJSONPointers = right.Normalization.AnnotationJSONPointers
+		normalization = right.Normalization
+	} else {
+		normalization = left.Normalization
+		normalization.AnnotationJSONPointers = nil
 	}
 	if hasLeft {
 		left.Normalization = cloneNormalization(normalization)

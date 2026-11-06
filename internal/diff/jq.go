@@ -91,3 +91,13 @@ func jqResultError(expression string, err error) error {
 	}
 	return fmt.Errorf("jq path expression %q returned error: %w", expression, err)
 }
+
+// ValidateJQPathExpression reports whether Argo CD v3.6.1 can build the jq
+// deletion patch for expression. NewIgnoreNormalizer parses and compiles
+// every expression before it matches any resource, and a failure there fails
+// the whole comparison of the Application
+// (util/argo/normalizers/diff_normalizer.go:159-168).
+func ValidateJQPathExpression(expression string) error {
+	_, err := compileJQPathExpression(expression)
+	return err
+}

@@ -1,6 +1,7 @@
 package app
 
 import (
+	"fmt"
 	"sort"
 	"strings"
 
@@ -8,6 +9,7 @@ import (
 	argoappv1 "github.com/argoproj/argo-cd/v3/pkg/apis/application/v1alpha1"
 	"github.com/argoproj/argo-cd/v3/util/glob"
 	"github.com/sholdee/drydock/internal/config"
+	"github.com/sholdee/drydock/internal/diagnostic"
 	"github.com/sholdee/drydock/internal/diff"
 	"github.com/sholdee/drydock/internal/format"
 	"github.com/sholdee/drydock/internal/manifest"
@@ -163,4 +165,176 @@ func marshalDiffObject(obj map[string]any) (string, error) {
 		return "", err
 	}
 	return string(data), nil
+}
+
+// Stable codes of the diff normalization diagnostics.
+const (
+	// diffIgnorePointerInvalidCode is the warning for an ignore-rule
+	// jsonPointer that is not a valid JSON pointer. Argo CD applies it with
+	// JSON-patch path rules and skips it where the patch fails, so drydock
+	// does the same and warns.
+	diffIgnorePointerInvalidCode = "diff.ignore-pointer-invalid"
+	// diffIgnoreRuleInvalidCode is the error for a jq expression that Argo
+	// CD cannot build. Argo CD fails the comparison of the Application.
+	diffIgnoreRuleInvalidCode = "diff.ignore-rule-invalid"
+)
+
+// diffApplicationKey names one Application in a diff.
+type diffApplicationKey struct {
+	Namespace string
+	Name      string
+}
+
+func (key diffApplicationKey) String() string {
+	if key.Namespace == "" {
+		return key.Name
+	}
+	return key.Namespace + "/" + key.Name
+}
+
+// targetApplications returns each Application that renders manifests, with
+// the build that holds the settings it is compared under: the current side
+// when the Application exists there, and the baseline side otherwise. Argo
+// CD compares under the rules and settings of the live Application, which
+// are the current side's after the change.
+func targetApplications(leftBuild, rightBuild BuildResult) ([]diffApplicationKey, map[diffApplicationKey]argoappv1.Application, map[diffApplicationKey]config.ArgoSettings) {
+	apps := map[diffApplicationKey]argoappv1.Application{}
+	settings := map[diffApplicationKey]config.ArgoSettings{}
+	for _, build := range []BuildResult{rightBuild, leftBuild} {
+		for _, item := range build.ApplicationManifests {
+			key := diffApplicationKey{Namespace: item.Application.Namespace, Name: item.Application.Name}
+			if _, ok := apps[key]; ok {
+				continue
+			}
+			apps[key] = item.Application
+			settings[key] = build.Settings
+		}
+	}
+	keys := make([]diffApplicationKey, 0, len(apps))
+	for key := range apps {
+		keys = append(keys, key)
+	}
+	sort.Slice(keys, func(i, j int) bool { return keys[i].String() < keys[j].String() })
+	return keys, apps, settings
+}
+
+// invalidIgnoreRuleDiagnostics returns an error diagnostic for each
+// Application whose ignore rules hold a jq expression that does not parse or
+// compile. Argo CD v3.6.1 builds the jq patches of every Application rule and
+// every resource.customizations entry before it matches any resource, and a
+// failure fails the comparison of that Application with a ComparisonError
+// condition (controller/state.go:975-983). So the rule fails the
+// Application even when it matches no resource.
+func invalidIgnoreRuleDiagnostics(leftBuild, rightBuild BuildResult) (map[diffApplicationKey]struct{}, []diagnostic.Diagnostic) {
+	keys, apps, settings := targetApplications(leftBuild, rightBuild)
+	failed := map[diffApplicationKey]struct{}{}
+	var diags []diagnostic.Diagnostic
+	for _, key := range keys {
+		message := invalidIgnoreRuleMessage(apps[key], settings[key])
+		if message == "" {
+			continue
+		}
+		failed[key] = struct{}{}
+		diags = append(diags, diagnostic.Diagnostic{
+			Code:     diffIgnoreRuleInvalidCode,
+			Severity: diagnostic.SeverityError,
+			Category: "diff",
+			Message:  fmt.Sprintf("Application %s: failed to compare desired states, as Argo CD fails the comparison: %s", key, message),
+		})
+	}
+	return failed, diags
+}
+
+func invalidIgnoreRuleMessage(application argoappv1.Application, settings config.ArgoSettings) string {
+	for i, rule := range application.Spec.IgnoreDifferences {
+		for _, expression := range rule.JQPathExpressions {
+			if err := diff.ValidateJQPathExpression(expression); err != nil {
+				return fmt.Sprintf("spec.ignoreDifferences[%d]: %v", i, err)
+			}
+		}
+	}
+	keys := make([]string, 0, len(settings.ResourceCustomizations))
+	for key := range settings.ResourceCustomizations {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		for _, expression := range settings.ResourceCustomizations[key].IgnoreDifferences.JQPathExpressions {
+			if err := diff.ValidateJQPathExpression(expression); err != nil {
+				return fmt.Sprintf("resource.customizations %s: %v", key, err)
+			}
+		}
+	}
+	return ""
+}
+
+// invalidIgnorePointerDiagnostics warns once per Application and pointer
+// about an Application or resource.customizations jsonPointer that is not a
+// valid JSON pointer and that a rendered resource uses. drydock applies it
+// with Argo CD's JSON-patch path rules. It reads the rules each resource is
+// compared under: the current side's, or the baseline side's for a resource
+// that only the baseline has.
+func invalidIgnorePointerDiagnostics(leftDocs, rightDocs []diff.Document) []diagnostic.Diagnostic {
+	current := make(map[string]struct{}, len(rightDocs))
+	for _, doc := range rightDocs {
+		current[diffDocumentKey(doc)] = struct{}{}
+	}
+	docs := append([]diff.Document(nil), rightDocs...)
+	for _, doc := range leftDocs {
+		if _, ok := current[diffDocumentKey(doc)]; !ok {
+			docs = append(docs, doc)
+		}
+	}
+	seen := map[string]struct{}{}
+	var diags []diagnostic.Diagnostic
+	for _, doc := range docs {
+		app := diffApplicationKey{Namespace: doc.Parent.Namespace, Name: doc.Parent.Name}
+		for _, source := range []struct {
+			name  string
+			rules []diff.IgnoreRule
+		}{
+			{"spec.ignoreDifferences", doc.Normalization.ApplicationRules},
+			{"resource.customizations", doc.Normalization.CustomizationRules},
+		} {
+			for _, rule := range source.rules {
+				for _, pointer := range rule.JSONPointers {
+					reason := diff.InvalidJSONPointerReason(pointer)
+					if reason == "" {
+						continue
+					}
+					id := app.String() + "\x00" + source.name + "\x00" + pointer
+					if _, ok := seen[id]; ok {
+						continue
+					}
+					seen[id] = struct{}{}
+					diags = append(diags, diagnostic.Diagnostic{
+						Code:     diffIgnorePointerInvalidCode,
+						Severity: diagnostic.SeverityWarning,
+						Category: "diff",
+						Message: fmt.Sprintf("Application %s: %s jsonPointer %q is not a valid JSON pointer (%s); like Argo CD, drydock applies it as a JSON-patch path and skips it where the patch fails",
+							app, source.name, pointer, reason),
+					})
+				}
+			}
+		}
+	}
+	return diags
+}
+
+func diffDocumentKey(doc diff.Document) string {
+	return strings.Join([]string{doc.Parent.Namespace, doc.Parent.Name, doc.Resource.Group, doc.Resource.Kind, doc.Resource.Namespace, doc.Resource.Name}, "\x00")
+}
+
+func withoutApplications(docs []diff.Document, failed map[diffApplicationKey]struct{}) []diff.Document {
+	if len(failed) == 0 {
+		return docs
+	}
+	out := make([]diff.Document, 0, len(docs))
+	for _, doc := range docs {
+		if _, ok := failed[diffApplicationKey{Namespace: doc.Parent.Namespace, Name: doc.Parent.Name}]; ok {
+			continue
+		}
+		out = append(out, doc)
+	}
+	return out
 }
