@@ -160,6 +160,18 @@ func (c *kustomizeInputCollector) collectSkippedComponent(ctx context.Context, s
 	}
 	decision, err := ignoreMissingComponentDecision(sourceRoot, c.repoRoot, component)
 	if err != nil {
+		// An absolute ref that holds a kustomization file fails the check,
+		// but its directory still decides the render: the render fails
+		// while the file is there, and a later absolute ref's file decides
+		// the dropped-component warning. The ref is joined under the source
+		// directory and can resolve outside spec.source.path, as
+		// "/../components/x" does, so own the directory before dropping the
+		// error.
+		if decision.probe != "" {
+			if probeErr := c.addAbsPath(ctx, decision.probe, true); probeErr != nil {
+				return true, probeErr
+			}
+		}
 		return true, c.skip(ctx, err)
 	}
 	if decision.keep {
