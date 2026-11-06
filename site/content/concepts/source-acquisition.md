@@ -507,7 +507,11 @@ Application parents when discovery records those paths. Local source override
 files (`.argocd-source.yaml` and `.argocd-source-<app>.yaml`, `<app>` being
 the Application instance name) are also part of every Application's input
 digest; adding, editing, or deleting an override file invalidates that
-Application's cached entry.
+Application's cached entry. A local source whose spec names
+`ARGOCD_APP_REVISION`, `ARGOCD_APP_REVISION_SHORT`, or
+`ARGOCD_APP_REVISION_SHORT_8` renders the commit SHA into its output, so its
+key also holds the commit and each new commit renders it again. The keys of
+other Applications do not hold the commit.
 
 Local dirty worktrees can also use the render output cache for Applications
 whose proven render inputs are unchanged. In dirty Git-backed roots, drydock

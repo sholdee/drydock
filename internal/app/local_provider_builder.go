@@ -107,6 +107,8 @@ func newLocalProvider(ctx context.Context, orchestrator Orchestrator, root strin
 	}
 	provider.userRoots = userRootSet(root, request.rootRevision, request.RepoMaps)
 	provider.rootIdentity, provider.rootInputMode, provider.rootDirtyPaths = rootIdentityForRequest(ctx, root, request)
+	provider.rootAppRevision = rootAppRevisionForRequest(root, request, provider.rootIdentity)
+	provider.mappedAppRevisions = &sync.Map{}
 	if matcher := newSelfRepoMatcher(request.selfRepo); len(matcher.urlKeys) > 0 {
 		provider.selfRepoURLKeys = matcher.urlKeys
 		provider.selfRepoRevisions = matcher.revisions
@@ -163,4 +165,19 @@ func rootIdentityForRequest(ctx context.Context, root string, request BuildReque
 	default:
 		return SourceIdentity{Kind: sourceIdentityKindRoot}, rootInputModeUnknown, nil
 	}
+}
+
+// rootAppRevisionForRequest returns the commit SHA that the tree at root
+// holds: the resolved snapshot revision of a diff side that renders a Git
+// ref, else the HEAD commit when root is the top of a Git repository, else
+// "". A dirty worktree still reports its HEAD commit. The persistent render
+// cache already resolved HEAD when it is on, so that value is reused.
+func rootAppRevisionForRequest(root string, request BuildRequest, rootIdentity SourceIdentity) string {
+	if revision := strings.TrimSpace(request.rootRevision); revision != "" {
+		return revision
+	}
+	if revision := strings.TrimSpace(rootIdentity.Revision); revision != "" {
+		return revision
+	}
+	return gitref.HeadRevision(root)
 }

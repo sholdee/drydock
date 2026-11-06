@@ -475,12 +475,55 @@ Supported:
   `<app>` is the Application instance name like the repo-server's lookup: an
   Application outside the controller namespace reads
   `.argocd-source-<namespace>_<name>.yaml`, and a bare-name file is ignored.
-- Recorded divergence from strict Argo CD v3.6.1 (unchanged since v3.5.x):
-  `ARGOCD_APP_REVISION`, `ARGOCD_APP_REVISION_SHORT`, and
-  `ARGOCD_APP_REVISION_SHORT_8` carry the spec `targetRevision` string; a
-  repo-server reports the resolved revision (commit SHA for Git sources,
-  chart version for Helm repository sources, manifest digest for OCI
-  sources).
+- `ARGOCD_APP_REVISION`, `ARGOCD_APP_REVISION_SHORT`, and
+  `ARGOCD_APP_REVISION_SHORT_8` carry the revision that the Argo CD v3.6.1
+  repo-server resolves for each rendered source. `_SHORT` and `_SHORT_8` are
+  the first 7 and 8 bytes of that value, whatever it is. The variables reach
+  every place the build environment reaches: Helm parameters, value file
+  paths and file parameter paths, Kustomize images, `commonLabels` and
+  `commonAnnotations` (with `commonAnnotationsEnvsubst`), Jsonnet extVars and
+  TLAs, and the environment and `plugin.env` substitution of config
+  management plugins. In a multi-source Application each rendered source
+  gets the revision of its own repository, and a `$ref` source adds nothing.
+  drydock resolves the value offline as follows:
+  - A Git source fetched into the Git cache gets the commit SHA that drydock
+    checked out.
+  - A source that renders from the `--path` tree (a path that exists there,
+    or a repository that drydock maps to the tree) gets the HEAD commit of
+    that tree, also when the worktree has uncommitted changes. drydock
+    renders the tree that is on disk whatever branch `targetRevision` names,
+    so it reports the commit of that tree. Each side of a `--ref` or
+    `--ref-orig` diff gets the commit of its snapshot.
+  - A `--repo-map` source gets the HEAD commit of the mapped directory.
+  - An OCI artifact source gets the manifest digest (`sha256:...`), so
+    `_SHORT` is `sha256:` and `_SHORT_8` is `sha256:` plus one hex digit,
+    as in Argo CD.
+  - A chart from a Helm repository gets the chart version. drydock supports
+    exact versions only, and for an exact version the repo-server reports
+    the `targetRevision` as written.
+- Recorded divergences from strict Argo CD v3.6.1 for these variables:
+  - When the `--path` tree or a `--repo-map` directory is not the top of a
+    Git repository (for example a subdirectory of a repository), or HEAD
+    names no commit, drydock cannot tell the commit and keeps the spec
+    `targetRevision`.
+  - A source that renders from the `--path` tree reports the local commit.
+    Argo CD reports the commit that `targetRevision` names in the remote
+    repository, which is a different commit until the change is pushed and,
+    after a merge, is the merge commit.
+  - In a multi-source Application, the repo-server passes the result of
+    `git ls-remote` as the revision and does not read the checked-out commit
+    (`repository.go:516-525`). So for a `targetRevision` that names an
+    annotated tag it reports the SHA of the tag object, and for an
+    abbreviated commit SHA it reports the abbreviation as written. A
+    single-source Application reports the commit SHA in both cases. drydock
+    reports the full commit SHA in all of these cases.
+- The persistent render cache keys a local source on its input files and not
+  on the commit, so a commit that leaves the inputs unchanged keeps the
+  cached entry. A local source whose spec names one of the
+  `ARGOCD_APP_REVISION` variables also keys on the commit, so each new
+  commit renders it again. A diff between two commits shows a change in the
+  objects of such a source even when no input changed, as Argo CD does after
+  the new commit syncs.
 - Directory rendering honors `+argocd:skip-file-rendering`, walks hidden
   directories when `recurse` is enabled, renders Jsonnet through native Go
   libraries with extVars, TLAs, code mode, env substitution, and repo-relative

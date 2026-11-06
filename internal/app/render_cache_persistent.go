@@ -33,6 +33,13 @@ type SourceIdentity struct {
 	Locator  string `json:"locator,omitempty"`
 	Revision string `json:"revision,omitempty"`
 	Digest   string `json:"digest,omitempty"`
+	// AppRevision is the ARGOCD_APP_REVISION of a local source whose spec
+	// names one of the ARGOCD_APP_REVISION variables, or empty. The local
+	// input kinds key on file digests and drop Revision, so without this
+	// field such a source would keep its key across commits while its
+	// output changes. Every other source leaves it empty, so its key stays
+	// the same across commits that do not touch its inputs.
+	AppRevision string `json:"appRevision,omitempty"`
 	// OutOfBoundsSymlink is the first out-of-bounds symlink of the provider
 	// root for a source that renders from it, or empty. Such a symlink
 	// anywhere in the tree fails every source that renders from it, so it
@@ -538,12 +545,38 @@ func sourceIdentityForPlan(ctx context.Context, handle *persistentRenderCache, p
 	if !ok {
 		return rootIdentity, reason, ok
 	}
+	if rootIdentity.Kind == sourceIdentityKindLocalInputs || rootIdentity.Kind == sourceIdentityKindWorktreeInputs {
+		if sourcePlan.AppRevision != "" && sourceReadsAppRevision(sourcePlan.Source) {
+			rootIdentity.AppRevision = sourcePlan.AppRevision
+		}
+	}
 	file, err := provider.rootOutOfBoundsSymlink(ctx)
 	if err != nil {
 		return SourceIdentity{}, renderCacheReasonInputDigest, false
 	}
 	rootIdentity.OutOfBoundsSymlink = file
 	return rootIdentity, "", true
+}
+
+// appRevisionVariable is the common prefix of ARGOCD_APP_REVISION,
+// ARGOCD_APP_REVISION_SHORT, and ARGOCD_APP_REVISION_SHORT_8.
+const appRevisionVariable = "ARGOCD_APP_REVISION"
+
+// sourceReadsAppRevision reports whether a render of source can read one of
+// the ARGOCD_APP_REVISION variables. The build environment reaches a
+// cacheable render only through env substitution of spec fields (Helm
+// parameters, value file paths and file parameter paths, Kustomize images,
+// commonLabels and commonAnnotations, Jsonnet extVars and TLAs), and a
+// substitution names the variable literally. A plugin source can read the
+// process environment, but plugin sources never persist. The check covers
+// the whole spec, so a name in a field that is not substituted (such as
+// helm.valuesObject) only costs a cache miss on each new commit.
+func sourceReadsAppRevision(source argoappv1.ApplicationSource) bool {
+	data, err := json.Marshal(source)
+	if err != nil {
+		return true
+	}
+	return strings.Contains(string(data), appRevisionVariable)
 }
 
 func rootSourceIdentityForPlan(ctx context.Context, handle *persistentRenderCache, provider localProvider, plan PlanResult, sourcePlan SourcePlan, identity SourceIdentity) (SourceIdentity, string, bool) {

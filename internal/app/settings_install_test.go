@@ -1278,6 +1278,18 @@ func TestSettingsFromRenderedArgoCDInstallResolvesValueFilesLikeTheRenderer(t *t
 			want: "label",
 		},
 		{
+			// A local source renders with the HEAD commit as
+			// ARGOCD_APP_REVISION, so the install reads the file that the
+			// short SHA names, also in a dirty worktree.
+			name: "revision env substitution",
+			write: func(t *testing.T, root string) {
+				writeLocalChartArgoCDInstall(t, root, []string{"values-$ARGOCD_APP_REVISION_SHORT.yaml", "values-a.yaml"})
+				head := gitCommitAll(t, root, "install")
+				writeTestFile(t, filepath.Join(root, "argocd", "values-"+head[:7]+".yaml"), "configs:\n  cm:\n    application.resourceTrackingMethod: annotation\n")
+			},
+			want: "label",
+		},
+		{
 			name: "argocd-source override",
 			write: func(t *testing.T, root string) {
 				writeLocalChartArgoCDInstall(t, root, []string{"values-a.yaml"})

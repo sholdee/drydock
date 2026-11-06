@@ -199,7 +199,10 @@ this order: the Argo CD build environment (`ARGOCD_APP_NAME`,
 order, the Argo-style parameter environment
 (`ARGOCD_APP_PARAMETERS`, `null` when the Application declares none, then
 `PARAM_*`), and `DRYDOCK_OFFLINE=true` when offline. `ARGOCD_APP_REVISION*`
-carry the spec `targetRevision`, not a resolved commit SHA, and
+carry the resolved revision as a repo-server does: the commit SHA of the
+tree that drydock renders for a Git source, or the spec `targetRevision`
+when drydock cannot tell the commit (see
+[Compatibility](/compatibility/)).
 `KUBE_API_VERSIONS` is sorted and deduplicated where a repo-server sends
 discovery order. For `engine: exec` the process environment is exactly
 drydock's controlled `PATH`, then the `env.allow` copies from drydock's own

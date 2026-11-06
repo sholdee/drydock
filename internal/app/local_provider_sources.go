@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/sholdee/drydock/internal/cacheevent"
+	"github.com/sholdee/drydock/internal/gitref"
 	"github.com/sholdee/drydock/internal/ociartifact"
 	"github.com/sholdee/drydock/internal/render"
 	sourcepkg "github.com/sholdee/drydock/internal/source"
@@ -124,6 +125,67 @@ func (p localProvider) resolveSourceRootIdentity(ctx context.Context, source ren
 		Locator:  sourcepkg.NormalizeURL(source.RepoURL),
 		Revision: acquired.Revision,
 	}, nil
+}
+
+// sourceAppRevision returns the revision that the Argo CD v3.6.1
+// repo-server passes to GenerateManifests for source, which newEnv
+// (reposerver/repository/repository.go:1864-1878) exposes as
+// ARGOCD_APP_REVISION. runRepoOperation (repository.go:375-386 and 516-536)
+// resolves it: the commit SHA for a Git source and the manifest digest for an
+// OCI source. root and identity are what resolveSourceRootIdentity returned
+// for source. drydock reports the commit of the tree it renders: the
+// resolved commit of a fetched Git source, the commit of the provider root
+// for a source that renders from it, and the HEAD commit of a --repo-map
+// target. "" means drydock cannot tell, and the build environment keeps the
+// spec targetRevision. A chart from a chart repository never gets here
+// (PrepareSource stops at an empty path): for the exact versions drydock
+// supports, the repo-server reports the targetRevision unchanged
+// (newHelmClientResolveRevision, repository.go:3038-3040).
+func (p localProvider) sourceAppRevision(source render.ResolvedSource, root string, identity SourceIdentity) string {
+	switch identity.Kind {
+	case sourceIdentityKindGit, sourceIdentityKindOCI:
+		return strings.TrimSpace(identity.Revision)
+	case sourceIdentityKindRoot:
+		// Only the synthetic Application of a plugin policy bootstrap
+		// entrypoint has no repoURL (Argo CD requires one). It has no Argo
+		// CD counterpart, so it keeps the documented spec values.
+		if strings.TrimSpace(source.RepoURL) == "" {
+			return ""
+		}
+		return p.rootAppRevision
+	}
+	if p.sourceResolver == nil {
+		return ""
+	}
+	if _, ok := p.sourceResolver.MappedPath(source.RepoURL); !ok {
+		return ""
+	}
+	return p.mappedAppRevision(root)
+}
+
+// mappedAppRevision returns the HEAD commit of a --repo-map target directory,
+// or the provider root revision when the target is the provider root. It
+// returns "" when the directory is not the top of a Git repository.
+func (p localProvider) mappedAppRevision(root string) string {
+	abs, err := filepath.Abs(root)
+	if err != nil {
+		return ""
+	}
+	abs = filepath.Clean(abs)
+	if repoRoot, err := filepath.Abs(p.repoRoot); err == nil && filepath.Clean(repoRoot) == abs {
+		return p.rootAppRevision
+	}
+	if p.mappedAppRevisions == nil {
+		return gitref.HeadRevision(abs)
+	}
+	if cached, ok := p.mappedAppRevisions.Load(abs); ok {
+		if revision, ok := cached.(string); ok {
+			return revision
+		}
+	}
+	revision := gitref.HeadRevision(abs)
+	p.mappedAppRevisions.Store(abs, revision)
+	return revision
 }
 
 // sourceResolvesToRepoRoot reports whether resolveSourceRootIdentity resolves

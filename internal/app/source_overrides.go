@@ -40,7 +40,7 @@ func (p localProvider) PrepareSource(ctx context.Context, application argoappv1.
 		return sourcePlan, nil
 	}
 
-	sourceRoot, err := p.resolveSourceRoot(ctx, source)
+	sourceRoot, identity, err := p.resolveSourceRootIdentity(ctx, source)
 	if err != nil {
 		return sourcePlan, err
 	}
@@ -78,6 +78,7 @@ func (p localProvider) PrepareSource(ctx context.Context, application argoappv1.
 
 	sourcePlan.Source = merged
 	sourcePlan.SourceRoot = sourceRoot
+	sourcePlan.AppRevision = p.sourceAppRevision(source, sourceRoot, identity)
 	sourcePlan.ExplicitType = ""
 	if explicitType != nil {
 		sourcePlan.ExplicitType = *explicitType

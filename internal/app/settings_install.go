@@ -157,7 +157,7 @@ func (b *settingsInstallBuilder) addSource(ctx context.Context, provider localPr
 	source := sourcePlan.Source
 	sourceType := settingsInstallSourceType(sourcePlan, b.root, sourcePath, local)
 	if sourceType == argoappv1.ApplicationSourceTypeKustomize && local {
-		b.addKustomize(ctx, sourcePath, source.Kustomize, settingsInstallRenderEnv(provider, application, source))
+		b.addKustomize(ctx, sourcePath, source.Kustomize, settingsInstallRenderEnv(provider, application, source, local))
 	}
 	if sourceType != argoappv1.ApplicationSourceTypeHelm {
 		return
@@ -221,6 +221,7 @@ func settingsInstallHelmValueFiles(provider localProvider, application argoappv1
 	if err != nil {
 		return nil
 	}
+	opts.ArgoEnv = settingsInstallRenderEnv(provider, application, sourcePlan.Source, local)
 	refRoots, refSources, err := renderRefsForSource(plan, sourcePlan, helmRefInputPaths(opts))
 	if err != nil {
 		return nil
@@ -254,9 +255,15 @@ func settingsInstallTracking(provider localProvider) TrackingOptions {
 }
 
 // settingsInstallRenderEnv is the Argo CD build environment of a source, as
-// the render passes it to the Helm value file loader.
-func settingsInstallRenderEnv(provider localProvider, application argoappv1.Application, source argoappv1.ApplicationSource) argoappv1.Env {
-	return argoRenderEnv(application, source, settingsInstallTracking(provider).ControllerNamespace)
+// the render passes it to the Helm value file loader. A local source renders
+// from the repository root, so its ARGOCD_APP_REVISION is the root commit,
+// as sourceAppRevision gives it.
+func settingsInstallRenderEnv(provider localProvider, application argoappv1.Application, source argoappv1.ApplicationSource, local bool) argoappv1.Env {
+	controllerNamespace := settingsInstallTracking(provider).ControllerNamespace
+	if local && provider.rootAppRevision != "" && strings.TrimSpace(source.RepoURL) != "" {
+		return argoRenderEnvAt(application, source, provider.rootAppRevision, controllerNamespace)
+	}
+	return argoRenderEnv(application, source, controllerNamespace)
 }
 
 // settingsInstallSourceType returns the source type as Argo CD picks it: the
