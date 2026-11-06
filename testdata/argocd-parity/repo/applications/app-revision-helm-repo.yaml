@@ -1,0 +1,22 @@
+# The revision variables of a chart from a Helm repository (here the
+# schemeless OCI Helm registry): the chart version, as written for an exact
+# version.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: parity-app-revision-helm-repo
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: argocd-parity-registry.argocd-parity.svc.cluster.local:5443
+    chart: parity/nested/parity-nested-chart
+    targetRevision: 1.0.0
+    helm:
+      parameters:
+        - name: fromValues
+          value: $ARGOCD_APP_REVISION|$ARGOCD_APP_REVISION_SHORT|$ARGOCD_APP_REVISION_SHORT_8
+          forceString: true
+  destination:
+    name: in-cluster
+    namespace: parity-app-revision-helm-repo

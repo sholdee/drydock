@@ -158,8 +158,11 @@ ignore rules.
 
 ### Deliberately not compared here
 
-- `ARGOCD_APP_REVISION`, `_SHORT`, `_SHORT_8`: live Argo CD resolves the
-  commit SHA, drydock reports the spec `targetRevision` (`HEAD`).
+- `ARGOCD_APP_REVISION`, `_SHORT`, `_SHORT_8`: this capture maps the
+  fixture URL to `repo/`, which is not the top of a Git repository, so
+  drydock reports the spec `targetRevision` (`HEAD`) here. The
+  `parity-app-revision-plugin` Application compares them (see
+  [Resolved revision fixture](#resolved-revision-fixture)).
 - `KUBE_VERSION` and `KUBE_API_VERSIONS`: the smoke passes neither
   `--kube-version` nor `--api-versions`, so drydock sends empty strings while
   live Argo CD sends the kind cluster's values. Making them comparable is a
@@ -168,6 +171,62 @@ ignore rules.
 - `DRYDOCK_OFFLINE`: drydock-only, set because the capture runs `--offline`.
 - `PATH` and every other sidecar container variable: the sidecar prepends its
   own `os.Environ()`, which drydock's fixed exec environment never has.
+
+## Resolved revision fixture
+
+The `parity-app-revision-*` Applications pin `ARGOCD_APP_REVISION`,
+`ARGOCD_APP_REVISION_SHORT` and `ARGOCD_APP_REVISION_SHORT_8`. The Argo CD
+repo-server sets them to the revision it resolves for each rendered source.
+`_SHORT` and `_SHORT_8` are the first 7 and 8 bytes of that value.
+
+| Application | Source | Where the variables go | Value |
+| --- | --- | --- | --- |
+| `parity-app-revision-helm` | Git, `charts/app-revision` | Helm parameters (`forceString`) | commit SHA |
+| `parity-app-revision-kustomize` | Git, `workloads/app-revision-kustomize` | `commonAnnotations` with `commonAnnotationsEnvsubst`, `commonLabels` | commit SHA |
+| `parity-app-revision-jsonnet` | Git, `workloads/app-revision-jsonnet` | Jsonnet TLA and extVars | commit SHA |
+| `parity-app-revision-plugin` | Git, `workloads/app-revision-plugin` | environment of the `parity-env` CMP | commit SHA |
+| `parity-app-revision-multi-source` | Git chart, OCI artifact chart, `$values` ref | Helm parameters of each rendered source | commit SHA for the Git chart, manifest digest for the OCI chart |
+| `parity-app-revision-oci` | OCI artifact chart `parity/nested/parity-nested-chart` | Helm parameter `fromValues` | manifest digest |
+| `parity-app-revision-helm-repo` | schemeless OCI Helm chart, version `1.0.0` | Helm parameter `fromValues` | `1.0.0` |
+
+For an OCI digest, `_SHORT` is `sha256:` and `_SHORT_8` is `sha256:` plus
+one hex digit, on both sides.
+
+The commit SHA is the commit that the fixture Git server serves. The harness
+builds that repository in `FIXTURE_GIT_WORK` from the working tree and
+clones the served bare repository from it, so the commit exists only for
+the run. For the Applications in `APP_REVISION_GIT_APPLICATIONS`, the
+drydock capture maps the fixture URL to `FIXTURE_GIT_WORK` instead of
+`repo/`. drydock reports the HEAD commit of a `--repo-map` directory that is
+the top of a Git repository, so both sides render the same commit. The
+other captures keep `repo/`, which is a subdirectory of the drydock
+repository, so drydock keeps the spec `targetRevision` there.
+
+`parity-app-revision-plugin` reuses the `parity-env` CMP sidecar and policy.
+That plugin runs `generate.awk` from the source path, so this source has its
+own `generate.awk`, which prints only the three variables and
+`ARGOCD_APP_SOURCE_TARGET_REVISION`. Its drydock capture carries the plugin
+flags of `PLUGIN_APPLICATIONS`.
+
+The OCI and Helm repository Applications use the chart that the smoke
+already pushes for `parity-oci-helm-chart-ignored` and
+`parity-oci-helm-nested`, so the OCI warm run already holds what their
+offline capture needs.
+
+Before the exact comparison, the harness makes sure that each Argo CD
+capture holds the expected value: the HEAD commit of `FIXTURE_GIT_WORK`,
+`sha256:`, or `1.0.0|1.0.0|1.0.0` (`APP_REVISION_EXPECTED`). Without that
+check, both sides rendering an unresolved value would pass.
+
+### Deliberately not covered by this fixture
+
+- A multi-source Application whose `targetRevision` is an annotated tag or
+  an abbreviated commit SHA. The repo-server then reports the tag object SHA
+  or the abbreviation as written, where drydock reports the full commit SHA.
+  [Compatibility](../../docs/compatibility.md) records this divergence.
+- A `targetRevision` that is a branch other than the served default branch,
+  or a semver range on Git tags: the fixture Git server serves one commit on
+  `main`, and drydock does not resolve semver ranges on Git tags.
 
 ## Container plugin fixture
 

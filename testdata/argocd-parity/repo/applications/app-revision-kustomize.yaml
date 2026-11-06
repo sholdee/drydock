@@ -1,0 +1,24 @@
+# The revision variables through Kustomize commonAnnotations (with
+# commonAnnotationsEnvsubst) and commonLabels of a Git source.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: parity-app-revision-kustomize
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: git://argocd-parity-git.argocd-parity.svc.cluster.local/repo.git
+    targetRevision: HEAD
+    path: workloads/app-revision-kustomize
+    kustomize:
+      namespace: parity-app-revision-kustomize
+      commonAnnotationsEnvsubst: true
+      commonAnnotations:
+        parity.drydock.dev/revision: $ARGOCD_APP_REVISION
+        parity.drydock.dev/short8: ${ARGOCD_APP_REVISION_SHORT_8}
+      commonLabels:
+        parity.drydock.dev/short: $ARGOCD_APP_REVISION_SHORT
+  destination:
+    name: in-cluster
+    namespace: parity-app-revision-kustomize
