@@ -86,6 +86,11 @@ type expectedCase struct {
 	// ArgoCDNamesObject is the name of the object in the failing file that
 	// the Argo CD message names instead of the file.
 	ArgoCDNamesObject string `yaml:"argocdNamesObject"`
+	// Repository names a fixture repository other than the main one. The
+	// smoke builds it from testdata/argocd-parity/<repository>-repo and
+	// serves it as <repository>.git, and the failing file may be one that
+	// the smoke adds, such as a symlink.
+	Repository string `yaml:"repository"`
 }
 
 type appStatusFile struct {

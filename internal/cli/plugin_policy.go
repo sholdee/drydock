@@ -246,11 +246,14 @@ func onboardingApplicationInputs(result app.BuildResult, selector labels.Selecto
 	return out
 }
 
+// resultRoot is the repository root that onboarding analyzes. A root that
+// is itself a symlink is resolved, as the orchestrator resolves it, so the
+// analysis reads the same tree as the build.
 func resultRoot(path string) string {
 	if strings.TrimSpace(path) == "" {
 		return "."
 	}
-	return path
+	return pathsafety.ResolveSymlinkedRoot(path)
 }
 
 func parseBootstrapEntrypoints(values []string) ([]pluginonboarding.BootstrapEntrypointHint, error) {

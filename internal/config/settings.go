@@ -183,6 +183,10 @@ type ArgoSettings struct {
 	// reposerver.max.combined.directory.manifests.size, a Kubernetes
 	// quantity. Empty means the repo-server default, 10M.
 	MaxCombinedDirectoryManifestsSize Value[string] `json:"maxCombinedDirectoryManifestsSize,omitempty" yaml:"maxCombinedDirectoryManifestsSize,omitempty"`
+	// AllowOutOfBoundsSymlinks is the argocd-cmd-params-cm key
+	// reposerver.allow.oob.symlinks, as written. The repo-server reads
+	// "true" or "false" in any case; any other value means false.
+	AllowOutOfBoundsSymlinks Value[string] `json:"allowOutOfBoundsSymlinks,omitempty" yaml:"allowOutOfBoundsSymlinks,omitempty"`
 }
 
 func DefaultSettings() ArgoSettings {

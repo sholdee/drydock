@@ -14,6 +14,7 @@ import (
 	"github.com/sholdee/drydock/internal/avpcompat"
 	"github.com/sholdee/drydock/internal/diagnostic"
 	"github.com/sholdee/drydock/internal/manifest"
+	"github.com/sholdee/drydock/internal/ociartifact"
 	"github.com/sholdee/drydock/internal/render"
 	sourcepkg "github.com/sholdee/drydock/internal/source"
 	chartv2loader "helm.sh/helm/v4/pkg/chart/v2/loader"
@@ -38,6 +39,12 @@ type StaticRenderers map[string][]render.Manifest
 
 func (s StaticRenderers) RenderSource(_ context.Context, source render.ResolvedSource, _ render.RenderOptions) ([]render.Manifest, []diagnostic.Diagnostic, error) {
 	return s[source.Path], nil, nil
+}
+
+// refOnlyOCIChecker checks an oci:// source that only sets ref, which the
+// Argo CD repo-server extracts and checks but renders nothing from.
+type refOnlyOCIChecker interface {
+	checkRefOnlyOCISource(ctx context.Context, sourcePlan SourcePlan) error
 }
 
 type sourcePreparer interface {
@@ -354,6 +361,11 @@ func preparePlanSourcesForRender(ctx context.Context, application argoappv1.Appl
 	maps.Copy(preparedPlan.Refs, plan.Refs)
 	for i, sourcePlan := range preparedPlan.Sources {
 		if sourcePlan.RefOnly {
+			if checker, ok := provider.(refOnlyOCIChecker); ok && ociartifact.IsOCIURL(sourcePlan.Source.RepoURL) {
+				if err := checker.checkRefOnlyOCISource(ctx, sourcePlan); err != nil {
+					return preparedPlan, i, fmt.Errorf("%s: %w", renderSourceContext(application, sourcePlan), err)
+				}
+			}
 			continue
 		}
 		prepared, err := preparer.PrepareSource(ctx, application, sourcePlan)

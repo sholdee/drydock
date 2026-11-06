@@ -17,6 +17,7 @@ import (
 	"github.com/sholdee/drydock/internal/gitref"
 	"github.com/sholdee/drydock/internal/manifest"
 	"github.com/sholdee/drydock/internal/ociartifact"
+	"github.com/sholdee/drydock/internal/pathsafety"
 	"github.com/sholdee/drydock/internal/remote"
 	"github.com/sholdee/drydock/internal/rendercache"
 	sourcepkg "github.com/sholdee/drydock/internal/source"
@@ -49,6 +50,7 @@ type DiffRequest struct {
 
 	changedPaths          []string
 	persistentRenderCache *persistentRenderCache
+	symlinkBounds         *symlinkBoundsMemo
 	leftPathRevision      string
 	rightPathRevision     string
 	selfRepo              selfRepoRefs
@@ -316,6 +318,12 @@ func compareStringSets(left, right []string) (added, removed, unchanged []string
 }
 
 func resolveDiffRequestPaths(ctx context.Context, request DiffRequest, computeChangedPaths bool) (DiffRequest, func() error, error) {
+	// A root that is itself a symlink is resolved once here, as a build root
+	// is (resolveBuildRequestRoot).
+	request.LeftPath = pathsafety.ResolveSymlinkedRoot(request.LeftPath)
+	request.RightPath = pathsafety.ResolveSymlinkedRoot(request.RightPath)
+	request.Repo = pathsafety.ResolveSymlinkedRoot(request.Repo)
+	request.RepoMaps = resolveRepoMapRoots(request.RepoMaps)
 	var cleanups []func() error
 	cleanup := func() error {
 		var err error
@@ -356,9 +364,10 @@ func resolveDiffRequestPaths(ctx context.Context, request DiffRequest, computeCh
 	forbiddenRoots := []string{request.LeftPath, request.RightPath, repoPath}
 	if strings.TrimSpace(request.RefOrig) != "" {
 		result, err := gitref.Snapshot(ctx, gitref.Request{
-			Repo:           repoPath,
-			Ref:            request.RefOrig,
-			ForbiddenRoots: forbiddenRoots,
+			Repo:                    repoPath,
+			Ref:                     request.RefOrig,
+			ForbiddenRoots:          forbiddenRoots,
+			KeepOutOfBoundsSymlinks: true,
 		})
 		if err != nil {
 			return request, cleanup, err
@@ -370,9 +379,10 @@ func resolveDiffRequestPaths(ctx context.Context, request DiffRequest, computeCh
 	}
 	if strings.TrimSpace(request.Ref) != "" {
 		result, err := gitref.Snapshot(ctx, gitref.Request{
-			Repo:           repoPath,
-			Ref:            request.Ref,
-			ForbiddenRoots: forbiddenRoots,
+			Repo:                    repoPath,
+			Ref:                     request.Ref,
+			ForbiddenRoots:          forbiddenRoots,
+			KeepOutOfBoundsSymlinks: true,
 		})
 		if err != nil {
 			return request, cleanup, errors.Join(err, cleanup())
@@ -484,6 +494,7 @@ func (request DiffRequest) buildRequest(path string, forbiddenRoots []string) Bu
 		// per-side deep copy: no shared mutable state across concurrent sides
 		selfRepo:              request.selfRepo.clone(),
 		persistentRenderCache: request.persistentRenderCache,
+		symlinkBounds:         request.symlinkBounds,
 	}
 }
 

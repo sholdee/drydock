@@ -42,6 +42,8 @@ var argoSettingsFieldClasses = map[string]settingsChangeClass{
 	"ConfigManagementPlugins":  settingsRenderAll,
 	// The size limit of every directory source.
 	"MaxCombinedDirectoryManifestsSize": settingsRenderAll,
+	// Whether an out-of-bounds symlink fails every source of its tree.
+	"AllowOutOfBoundsSymlinks": settingsRenderAll,
 	// Diff: which rendered resources survive, and normalization.
 	"ResourceExclusions": settingsRenderAll,
 	"ResourceInclusions": settingsRenderAll,
@@ -240,11 +242,22 @@ func assertSettingsChangeClass(t *testing.T, name string, left, right config.Arg
 	}
 }
 
+// nonZeroOverrides holds the non-zero value of a field whose generic one
+// means the same as the zero value: the repo-server reads any
+// reposerver.allow.oob.symlinks value other than "true" as false.
+var nonZeroOverrides = map[string]any{
+	"ArgoSettings.AllowOutOfBoundsSymlinks.Value": "true",
+}
+
 // nonZeroValue builds a value of typ with every exported field, element, and
 // map entry set, so that any change a reader could see is present.
 func nonZeroValue(t *testing.T, path string, typ reflect.Type) reflect.Value {
 	t.Helper()
 	value := reflect.New(typ).Elem()
+	if override, ok := nonZeroOverrides[path]; ok {
+		value.Set(reflect.ValueOf(override).Convert(typ))
+		return value
+	}
 	if scalar, ok := map[reflect.Kind]any{reflect.String: "x", reflect.Bool: true, reflect.Int: 1}[typ.Kind()]; ok {
 		value.Set(reflect.ValueOf(scalar).Convert(typ))
 		return value

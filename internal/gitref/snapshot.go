@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/url"
 	"os"
+	"path"
 	"path/filepath"
 	"runtime"
 	"sort"
@@ -22,6 +23,14 @@ type Request struct {
 	Repo           string
 	Ref            string
 	ForbiddenRoots []string
+	// KeepOutOfBoundsSymlinks writes a symlink whose target is absolute or
+	// leaves the snapshot as it is, instead of failing the snapshot. A
+	// rendered snapshot needs it: the Argo CD repo-server fails each
+	// Application that renders from such a tree, not the whole run, and
+	// drydock's renderers check the tree and never read through such a
+	// symlink. Nothing is written through it: a Git tree cannot hold a path
+	// below a symlink.
+	KeepOutOfBoundsSymlinks bool
 }
 
 type Result struct {
@@ -69,7 +78,7 @@ func Snapshot(ctx context.Context, request Request) (Result, error) {
 		return Result{}, fmt.Errorf("git ref snapshot temp directory %q is inside protected root %q", root, matchedRoot)
 	}
 
-	if err := materializeTree(ctx, tree, root); err != nil {
+	if err := materializeTree(ctx, tree, root, request.KeepOutOfBoundsSymlinks); err != nil {
 		_ = cleanup()
 		return Result{}, err
 	}
@@ -116,7 +125,7 @@ func looksLikeSCPRemote(value string) bool {
 	return strings.Contains(hostPart, ".")
 }
 
-func materializeTree(ctx context.Context, tree *object.Tree, root string) error {
+func materializeTree(ctx context.Context, tree *object.Tree, root string, keepOutOfBoundsSymlinks bool) error {
 	files := make([]object.File, 0)
 	if err := tree.Files().ForEach(func(file *object.File) error {
 		files = append(files, *file)
@@ -125,10 +134,13 @@ func materializeTree(ctx context.Context, tree *object.Tree, root string) error 
 		return err
 	}
 	sort.Slice(files, func(i, j int) bool { return files[i].Name < files[j].Name })
-	return materializeTreeFiles(ctx, files, root)
+	if err := rejectOverlappingTreePaths(files); err != nil {
+		return err
+	}
+	return materializeTreeFiles(ctx, files, root, keepOutOfBoundsSymlinks)
 }
 
-func materializeTreeFiles(ctx context.Context, files []object.File, root string) error {
+func materializeTreeFiles(ctx context.Context, files []object.File, root string, keepOutOfBoundsSymlinks bool) error {
 	if len(files) == 0 {
 		return ctx.Err()
 	}
@@ -145,7 +157,7 @@ func materializeTreeFiles(ctx context.Context, files []object.File, root string)
 					errs[i] = err
 					continue
 				}
-				errs[i] = materializeTreeFile(root, &files[i])
+				errs[i] = materializeTreeFile(root, &files[i], keepOutOfBoundsSymlinks)
 			}
 		}()
 	}
@@ -174,7 +186,7 @@ func materializeTreeParallelism(fileCount int) int {
 	return workers
 }
 
-func materializeTreeFile(root string, file *object.File) error {
+func materializeTreeFile(root string, file *object.File, keepOutOfBoundsSymlinks bool) error {
 	path := filepath.Clean(file.Name)
 	if path == "." || filepath.IsAbs(path) || path == ".." || strings.HasPrefix(path, ".."+string(os.PathSeparator)) {
 		return fmt.Errorf("unsafe Git tree path %q", file.Name)
@@ -184,7 +196,7 @@ func materializeTreeFile(root string, file *object.File) error {
 	if err := validateSnapshotWriteParent(root, parent); err != nil {
 		return err
 	}
-	if err := os.MkdirAll(parent, 0o755); err != nil {
+	if err := mkdirSnapshotParents(root, parent); err != nil {
 		return err
 	}
 	if err := validateSnapshotWriteParent(root, parent); err != nil {
@@ -197,8 +209,13 @@ func materializeTreeFile(root string, file *object.File) error {
 		if err != nil {
 			return err
 		}
-		if err := validateSnapshotSymlinkTarget(root, target, body); err != nil {
-			return fmt.Errorf("materialize symlink %q: %w", file.Name, err)
+		if body == "" {
+			return fmt.Errorf("materialize symlink %q: symlink target must not be empty", file.Name)
+		}
+		if !keepOutOfBoundsSymlinks {
+			if err := validateSnapshotSymlinkTarget(root, target, body); err != nil {
+				return fmt.Errorf("materialize symlink %q: %w", file.Name, err)
+			}
 		}
 		return os.Symlink(body, target)
 	case filemode.Regular, filemode.Deprecated, filemode.Executable:
@@ -208,6 +225,29 @@ func materializeTreeFile(root string, file *object.File) error {
 	default:
 		return fmt.Errorf("unsupported Git tree file mode %s for %q", file.Mode, file.Name)
 	}
+}
+
+// rejectOverlappingTreePaths fails for a malformed Git tree that names one
+// path twice, or a path below another file. Git never writes such a tree.
+// Written in parallel, a symlink entry could otherwise redirect the write of
+// the other entry outside the snapshot. files must be sorted by name.
+func rejectOverlappingTreePaths(files []object.File) error {
+	names := make(map[string]struct{}, len(files))
+	for i := range files {
+		name := files[i].Name
+		if _, ok := names[name]; ok {
+			return fmt.Errorf("git tree names path %q more than once", name)
+		}
+		names[name] = struct{}{}
+	}
+	for i := range files {
+		for dir := path.Dir(files[i].Name); dir != "." && dir != "/"; dir = path.Dir(dir) {
+			if _, ok := names[dir]; ok {
+				return fmt.Errorf("git tree path %q is below the file %q", files[i].Name, dir)
+			}
+		}
+	}
+	return nil
 }
 
 func writeSnapshotFile(target string, file *object.File) error {
@@ -221,7 +261,11 @@ func writeSnapshotFile(target string, file *object.File) error {
 	if file.Mode == filemode.Executable {
 		mode = 0o755
 	}
-	out, err := os.OpenFile(target, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, mode)
+	// O_NOFOLLOW fails on a symlink at target, so a write never goes
+	// through one. An existing regular file is truncated, as before: on a
+	// case-insensitive filesystem, README.md and readme.md name one file,
+	// and the last write wins.
+	out, err := os.OpenFile(target, os.O_CREATE|os.O_TRUNC|os.O_WRONLY|openNoFollow, mode)
 	if err != nil {
 		return err
 	}
@@ -231,6 +275,39 @@ func writeSnapshotFile(target string, file *object.File) error {
 		return copyErr
 	}
 	return closeErr
+}
+
+// mkdirSnapshotParents creates dir and every directory between root and it,
+// one component at a time. It refuses a component that exists as a symlink
+// or as anything but a directory, so it never creates a directory through a
+// symlink, outside the snapshot. os.MkdirAll follows symlinks, so on a
+// case-insensitive filesystem a parallel worker that wrote the symlink "A"
+// could make it create "a/x" outside the snapshot before any later check.
+// os.Mkdir does not follow a symlink at its own path: it fails because the
+// path exists, and the check that follows refuses it.
+func mkdirSnapshotParents(root, dir string) error {
+	rel, err := filepath.Rel(root, dir)
+	if err != nil || filepath.IsAbs(rel) || pathsafety.RelEscapes(rel) {
+		return fmt.Errorf("snapshot destination %q escapes snapshot root %q", dir, root)
+	}
+	if rel == "." {
+		return nil
+	}
+	current := root
+	for component := range strings.SplitSeq(rel, string(os.PathSeparator)) {
+		current = filepath.Join(current, component)
+		if err := os.Mkdir(current, 0o755); err != nil && !os.IsExist(err) {
+			return err
+		}
+		info, err := os.Lstat(current)
+		if err != nil {
+			return err
+		}
+		if info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
+			return fmt.Errorf("snapshot destination %q is not a directory inside snapshot root %q", current, root)
+		}
+	}
+	return nil
 }
 
 func validateSnapshotWriteParent(root, parent string) error {

@@ -13,6 +13,7 @@ import (
 	"strings"
 
 	argoglob "github.com/argoproj/argo-cd/v3/util/glob"
+	argofiles "github.com/argoproj/argo-cd/v3/util/io/files"
 	imagev1 "github.com/opencontainers/image-spec/specs-go/v1"
 	"github.com/sholdee/drydock/internal/diagnostic"
 	"github.com/sholdee/drydock/internal/manifestyaml"
@@ -117,18 +118,23 @@ type directoryCandidateFile struct {
 }
 
 // directoryCandidateFiles is getPotentiallyValidManifests
-// (reposerver/repository/repository.go:2148-2283 at v3.6.1). It walks the
-// source directory, applies the extension filter, include, and exclude,
-// reads each remaining file, and drops a file with the skip marker. It
-// counts the raw size of every remaining file except a Jsonnet file, and
-// fails as soon as the sum is over opts.DirectoryMaxCombinedManifestsSize.
-// Nothing is decoded yet, so a read error or the size limit wins over a
-// decode error in an earlier file.
+// (reposerver/repository/repository.go:2225-2283 at v3.6.1), with
+// getPotentiallyValidManifestFile (repository.go:2148-2218) for each file.
+// It walks the source directory without following symlinks, applies the
+// extension filter to each file's own name, resolves a file symlink inside
+// the repository, skips a file that is not a regular file, applies exclude
+// and include to the file's own path, reads each remaining file, and drops a
+// file with the skip marker. It counts the size of every remaining file
+// except a Jsonnet file (for a symlink, the size of its target), and fails as
+// soon as the sum is over opts.DirectoryMaxCombinedManifestsSize. Nothing is
+// decoded yet, so a symlink error, a read error, or the size limit wins over
+// a decode error in an earlier file.
 //
 //nolint:gocyclo // The walk keeps the repo-server filter order, the read, and the size sum in one pass.
 func directoryCandidateFiles(ctx context.Context, root string, source ResolvedSource, opts RenderOptions) ([]directoryCandidateFile, error) {
 	var files []directoryCandidateFile
 	var combinedSize int64
+	var links *directorySymlinkResolver
 	err := filepath.WalkDir(root, func(path string, entry os.DirEntry, err error) error {
 		if err != nil {
 			return err
@@ -136,9 +142,9 @@ func directoryCandidateFiles(ctx context.Context, root string, source ResolvedSo
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		if entry.Type()&os.ModeSymlink != 0 {
-			return nil
-		}
+		// WalkDir does not follow symlinks: a symlink to a directory is a
+		// file entry here, so the walk never enters it, as in the
+		// repo-server's filepath.Walk.
 		if entry.IsDir() {
 			if shouldSkipDirectoryCandidate(root, path, entry, opts) {
 				return filepath.SkipDir
@@ -147,23 +153,39 @@ func directoryCandidateFiles(ctx context.Context, root string, source ResolvedSo
 		}
 		// disableExtensionFilter skips the built-in extension filter, leaving
 		// include and exclude as the only filters (Argo CD v3.6.1
-		// getPotentiallyValidManifestFile).
+		// getPotentiallyValidManifestFile). The filter reads the name of the
+		// file itself, so a symlink is filtered by its own name.
 		if !opts.DirectoryDisableExtensionFilter && !isManifestFile(path) {
 			return nil
 		}
-		// The repo-server skips a file that is not a regular file, such as a
-		// named pipe or a socket.
-		if !entry.Type().IsRegular() {
-			return nil
-		}
-		if !directoryManifestIncluded(root, path, opts) {
-			return nil
-		}
-
 		manifestPath, pathErr := relativeManifestPath(source.RepoRoot, path)
 		if pathErr != nil {
 			return pathErr
 		}
+		if entry.Type()&os.ModeSymlink != 0 {
+			if links == nil {
+				resolver, resolverErr := newDirectorySymlinkResolver(source.RepoRoot)
+				if resolverErr != nil {
+					return resolverErr
+				}
+				links = resolver
+			}
+			follow, linkErr := links.resolve(root, path, manifestPath)
+			if linkErr != nil || !follow {
+				return linkErr
+			}
+		} else if !entry.Type().IsRegular() {
+			// The repo-server skips a file that is not a regular file, such
+			// as a named pipe or a socket.
+			return nil
+		}
+		// include and exclude match the path of the file itself, also for a
+		// symlink.
+		if !directoryManifestIncluded(root, path, opts) {
+			return nil
+		}
+
+		// A symlink is read through: the repo-server reads the target.
 		raw, err := os.ReadFile(path)
 		if err != nil {
 			return fmt.Errorf("%s: read file failed: %w", manifestPath, err)
@@ -177,7 +199,8 @@ func directoryCandidateFiles(ctx context.Context, root string, source ResolvedSo
 		}
 		// The repo-server does not count a Jsonnet file: the Jsonnet
 		// evaluator manages its own memory. The evaluator also reads the file
-		// again, so its text is not kept.
+		// again, so its text is not kept. The ".jsonnet" test reads the name
+		// of the file itself.
 		if isJsonnetFile(path) {
 			data = nil
 		} else {
@@ -190,6 +213,76 @@ func directoryCandidateFiles(ctx context.Context, root string, source ResolvedSo
 		return nil
 	})
 	return files, err
+}
+
+// directorySymlinkResolver resolves a file symlink in a directory source the
+// way the repo-server's getPotentiallyValidManifestFile does
+// (reposerver/repository/repository.go:2165-2193 at v3.6.1), with
+// files.ResolveInbound (util/io/files/util.go:96-110) against the
+// repository root.
+type directorySymlinkResolver struct {
+	// realRoot is the repository root with every symlink in it resolved.
+	// files.Inbound compares the resolved target with it as text, and a
+	// repository root such as a macOS temporary directory can itself sit
+	// under a symlink.
+	realRoot string
+}
+
+func newDirectorySymlinkResolver(repoRoot string) (*directorySymlinkResolver, error) {
+	absRoot, err := filepath.Abs(repoRoot)
+	if err != nil {
+		return nil, err
+	}
+	realRoot, err := filepath.EvalSymlinks(absRoot)
+	if err != nil {
+		return nil, fmt.Errorf("resolve repository root: %w", err)
+	}
+	return &directorySymlinkResolver{realRoot: realRoot}, nil
+}
+
+// resolve reports whether the walk reads the symlink at path. It skips a
+// symlink whose target is missing or is not a regular file, such as a
+// directory. It fails the source for a symlink whose target is outside the
+// repository root, and for a symlink that cannot be resolved, such as a
+// symlink loop. The messages quote the path relative to the source
+// directory, as the repo-server does. drydock also fails for a target in a
+// .git directory, which holds repository metadata and never render input.
+func (r *directorySymlinkResolver) resolve(appPath, path, manifestPath string) (bool, error) {
+	relPath, err := filepath.Rel(appPath, path)
+	if err != nil {
+		return false, err
+	}
+	relPath = filepath.ToSlash(relPath)
+	realPath, ok, err := argofiles.ResolveInbound(path, r.realRoot)
+	if err != nil {
+		if os.IsNotExist(err) {
+			// The repo-server logs "destination of symlink is missing" and
+			// skips the file.
+			return false, nil
+		}
+		return false, fmt.Errorf("%s: failed to evaluate symlink at %q: %w", manifestPath, relPath, err)
+	}
+	if !ok {
+		return false, fmt.Errorf("%s: illegal filepath in symlink at %q", manifestPath, relPath)
+	}
+	realRel, err := filepath.Rel(r.realRoot, realPath)
+	if err != nil {
+		return false, err
+	}
+	if pathsafety.RelEntersGit(realRel) {
+		return false, fmt.Errorf("%s: symlink at %q points into a .git directory, which drydock never reads", manifestPath, relPath)
+	}
+	info, err := os.Stat(realPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return false, nil
+		}
+		return false, fmt.Errorf("%s: failed to get file info for symlink at %q to %q: %w", manifestPath, relPath, filepath.ToSlash(realRel), err)
+	}
+	// The repo-server logs "ignoring symlink to non-regular file" and skips
+	// a symlink to a directory or to any other file that is not a regular
+	// file.
+	return info.Mode().IsRegular(), nil
 }
 
 // directorySizeLimitError is the source failure when the files of a
@@ -307,7 +400,12 @@ func shouldSkipDirectoryCandidate(root, path string, entry os.DirEntry, opts Ren
 		return false
 	}
 	// Repository metadata is never a manifest; sourceRoot already refuses a
-	// source path inside .git.
+	// source path inside .git. The repo-server walk has no such rule, so with
+	// recurse on a source at the repository root it also walks its own
+	// clone's .git directory. A fresh checkout keeps no file there that the
+	// default extension filter passes, and drydock cannot reproduce that
+	// clone metadata. Git cannot track any other .git directory, so a nested
+	// one is never in an Argo CD checkout.
 	if entry.Name() == drydockCacheMetadataDirName || strings.EqualFold(entry.Name(), ".git") {
 		return true
 	}

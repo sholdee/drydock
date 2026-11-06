@@ -12,8 +12,10 @@ import (
 	"github.com/sholdee/drydock/internal/acquisition"
 	"github.com/sholdee/drydock/internal/cacheevent"
 	"github.com/sholdee/drydock/internal/change"
+	"github.com/sholdee/drydock/internal/config"
 	"github.com/sholdee/drydock/internal/diagnostic"
 	"github.com/sholdee/drydock/internal/project"
+	"github.com/sholdee/drydock/internal/render"
 )
 
 func (o Orchestrator) buildDiffSides(ctx context.Context, request DiffRequest) (BuildResult, BuildResult, []diagnostic.Diagnostic, error) {
@@ -135,6 +137,94 @@ func changedOnlyProjectsDiagnostic() diagnostic.Diagnostic {
 	}
 }
 
+// changedOnlyJsonnetScanCode identifies the Applications that changed-only
+// selects because the scan of their Jsonnet imports ran out of budget
+// (render.ErrJsonnetImportScanBudget) or failed. It is strict-exempt
+// (strictExemptDiagnostic): selecting them is the safe answer, not an
+// ownership gap.
+const changedOnlyJsonnetScanCode = "diff.changed-only-jsonnet-scan"
+
+func changedOnlyJsonnetScanDiagnostic(names []string) diagnostic.Diagnostic {
+	return diagnostic.Diagnostic{
+		Code:     changedOnlyJsonnetScanCode,
+		Severity: diagnostic.SeverityWarning,
+		Category: "changed-only",
+		Message:  fmt.Sprintf("the Jsonnet imports of %d Application(s) could not be scanned within the scan budget or could not be read, so changed-only renders them on every change: %s", len(names), strings.Join(names, ", ")),
+	}
+}
+
+// changedOnlySymlinksCode identifies the changed-only render-all that a
+// change of the out-of-bounds symlink verdict of the tree under diff forces.
+// It is strict-exempt (strictExemptDiagnostic) for the same reason as
+// changedOnlySettingsCode.
+const changedOnlySymlinksCode = "diff.changed-only-symlinks"
+
+// changedOnlySymlinksUnknownDiagnostic is the changedOnlySymlinksCode
+// render-all for a tree that drydock could not walk: each source that renders
+// from it then fails on its own, as it does in a full diff.
+func changedOnlySymlinksUnknownDiagnostic(err error) diagnostic.Diagnostic {
+	return diagnostic.Diagnostic{
+		Code:     changedOnlySymlinksCode,
+		Severity: diagnostic.SeverityWarning,
+		Category: "changed-only",
+		Message:  fmt.Sprintf("could not check the repository for out-of-bounds symlinks (%v); rendering all Applications", err),
+	}
+}
+
+func changedOnlySymlinksDiagnostic(left, right string) diagnostic.Diagnostic {
+	describe := func(file string) string {
+		if file == "" {
+			return "none"
+		}
+		return file
+	}
+	return diagnostic.Diagnostic{
+		Code:     changedOnlySymlinksCode,
+		Severity: diagnostic.SeverityWarning,
+		Category: "changed-only",
+		Message:  fmt.Sprintf("the first out-of-bounds symlink of the repository changed (left: %s, right: %s); Argo CD fails every Application that renders from a repository with one, so rendering all Applications", describe(left), describe(right)),
+	}
+}
+
+// outOfBoundsSymlinkVerdicts returns the first out-of-bounds symlink of the
+// tree of each side, or "" for a side that has none or allows them.
+// A side whose root is a snapshot of a Git ref (rootRevision set) is not a
+// user root, so Git ignore rules hide nothing in it (userRootSet).
+func outOfBoundsSymlinkVerdicts(ctx context.Context, memo *symlinkBoundsMemo, left, right BuildRequest, leftSettings, rightSettings config.ArgoSettings) (string, string, error) {
+	verdict := func(side BuildRequest, settings config.ArgoSettings) (string, error) {
+		if allowOutOfBoundsSymlinks(settings) {
+			return "", nil
+		}
+		return memo.findOutOfBoundsSymlink(ctx, side.Path, render.OutOfBoundsSymlinkScopeRepository, strings.TrimSpace(side.rootRevision) == "")
+	}
+	leftFile, err := verdict(left, leftSettings)
+	if err != nil {
+		return "", "", err
+	}
+	rightFile, err := verdict(right, rightSettings)
+	return leftFile, rightFile, err
+}
+
+// changedOnlySymlinksRenderAll reports whether a changed-only diff renders
+// every Application because the out-of-bounds symlink verdict of the tree
+// under diff differs between the sides, or cannot be read. A tree that
+// cannot be walked does not stop the diff: each source that renders from it
+// then fails on its own, as in a full diff. Only a canceled context is an
+// error.
+func changedOnlySymlinksRenderAll(ctx context.Context, memo *symlinkBoundsMemo, leftRequest, rightRequest BuildRequest, leftSettings, rightSettings config.ArgoSettings) (bool, diagnostic.Diagnostic, error) {
+	left, right, err := outOfBoundsSymlinkVerdicts(ctx, memo, leftRequest, rightRequest, leftSettings, rightSettings)
+	if err != nil {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return false, diagnostic.Diagnostic{}, ctxErr
+		}
+		return true, changedOnlySymlinksUnknownDiagnostic(err), nil
+	}
+	if left != right {
+		return true, changedOnlySymlinksDiagnostic(left, right), nil
+	}
+	return false, diagnostic.Diagnostic{}, nil
+}
+
 // changedOnlyApplications returns the Applications each side of a
 // changed-only diff renders: those the changed paths, changed AppProjects, or
 // changed repository and cluster settings select, or all of them when a
@@ -155,6 +245,16 @@ func changedOnlyApplications(ctx context.Context, request DiffRequest, leftBuild
 		return leftList.Applications, rightList.Applications, []diagnostic.Diagnostic{changedOnlySettingsDiagnostic()}, nil
 	}
 
+	// An out-of-bounds symlink anywhere in the tree fails every Application
+	// that renders from it, whichever path holds it, and a changed-only
+	// ignore glob may hide that path. A change of the first such symlink
+	// reaches nearly every Application, so render them all.
+	if renderAll, diag, err := changedOnlySymlinksRenderAll(ctx, leftBuildRequest.symlinkBounds, leftBuildRequest, rightBuildRequest, leftList.Settings, rightList.Settings); err != nil {
+		return nil, nil, nil, err
+	} else if renderAll {
+		return leftList.Applications, rightList.Applications, []diagnostic.Diagnostic{diag}, nil
+	}
+
 	// An AppProject change reaches every Application in the project through
 	// project validation, whichever Application owns the file that carries
 	// it. With project diagnostics off it reaches nothing a diff reports.
@@ -173,12 +273,20 @@ func changedOnlyApplications(ctx context.Context, request DiffRequest, leftBuild
 	leftSide := withSelectionOnlyPaths(ctx, leftBuildRequest.Path, leftBuildRequest.RepoMaps, leftBuildRequest.selfRepo, leftList.ApplicationInputs)
 	rightSide := withSelectionOnlyPaths(ctx, rightBuildRequest.Path, rightBuildRequest.RepoMaps, rightBuildRequest.selfRepo, rightList.ApplicationInputs)
 	leftSelected, rightSelected, unowned := selectChangedDiffSides(leftSide, rightSide, changedPaths, projectNames)
+	var scanDiags []diagnostic.Diagnostic
+	var unscanned []string
+	for _, application := range append(append([]argoappv1.Application(nil), leftSide.unscanned...), rightSide.unscanned...) {
+		unscanned = append(unscanned, applicationDisplayName(application))
+	}
+	if unscanned = dedupeSortedStrings(unscanned); len(unscanned) > 0 {
+		scanDiags = append(scanDiags, changedOnlyJsonnetScanDiagnostic(unscanned))
+	}
 	if len(unowned) == 0 {
 		leftSelected, rightSelected, reached := withSettingsSelection(leftSide, rightSide, leftSelected, rightSelected, settings)
 		if reached == 0 {
-			return leftSelected, rightSelected, nil, nil
+			return leftSelected, rightSelected, scanDiags, nil
 		}
-		return leftSelected, rightSelected, []diagnostic.Diagnostic{changedOnlySettingsScopedDiagnostic(reached)}, nil
+		return leftSelected, rightSelected, append(scanDiags, changedOnlySettingsScopedDiagnostic(reached)), nil
 	}
 	diag := diagnostic.Diagnostic{
 		Severity: diagnostic.SeverityWarning,
@@ -284,6 +392,15 @@ func selectChangedDiffSides(left, right selectionSide, changedPaths []string, ch
 			if _, ok := changedDirs[input.RenderedDir]; ok {
 				selectedKeys[applicationKey(input.Application)] = struct{}{}
 			}
+		}
+	}
+	// An Application whose Jsonnet imports could not be scanned can read
+	// any changed path, so a change selects it. It is selected here, not
+	// through its Paths, so that changed paths it does not own still count
+	// as unowned.
+	if len(changedPaths) > 0 {
+		for _, application := range append(append([]argoappv1.Application(nil), left.unscanned...), right.unscanned...) {
+			selectedKeys[applicationKey(application)] = struct{}{}
 		}
 	}
 	selectRenderedDescendants(selectedKeys, left.inputs, right.inputs)

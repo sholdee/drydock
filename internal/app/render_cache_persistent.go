@@ -33,6 +33,11 @@ type SourceIdentity struct {
 	Locator  string `json:"locator,omitempty"`
 	Revision string `json:"revision,omitempty"`
 	Digest   string `json:"digest,omitempty"`
+	// OutOfBoundsSymlink is the first out-of-bounds symlink of the provider
+	// root for a source that renders from it, or empty. Such a symlink
+	// anywhere in the tree fails every source that renders from it, so it
+	// keys those renders even when no digested input path holds it.
+	OutOfBoundsSymlink string `json:"outOfBoundsSymlink,omitempty"`
 }
 
 const (
@@ -408,6 +413,10 @@ func renderCacheRefreshOptions(options RenderCacheOptions, acquisition Acquisiti
 // ensurePersistentRenderCache opens or reuses the run-scoped persistent render
 // cache handle. Only the creator's release sweeps and surfaces events.
 func ensurePersistentRenderCache(request BuildRequest) (BuildRequest, func() []cacheevent.Event) {
+	// The out-of-bounds symlink memo has the same run scope.
+	if request.symlinkBounds == nil {
+		request.symlinkBounds = newSymlinkBoundsMemo()
+	}
 	if request.persistentRenderCache != nil {
 		return request, noRenderCacheEvents
 	}
@@ -422,6 +431,9 @@ func ensurePersistentRenderCache(request BuildRequest) (BuildRequest, func() []c
 // ensureDiffPersistentRenderCache is the DiffRequest twin; buildRequest copies
 // the handle into both side BuildRequests.
 func ensureDiffPersistentRenderCache(request DiffRequest) (DiffRequest, func() []cacheevent.Event) {
+	if request.symlinkBounds == nil {
+		request.symlinkBounds = newSymlinkBoundsMemo()
+	}
 	if request.persistentRenderCache != nil {
 		return request, noRenderCacheEvents
 	}
@@ -522,7 +534,16 @@ func sourceIdentityForPlan(ctx context.Context, handle *persistentRenderCache, p
 		}
 		return identity, "", true
 	}
-	return rootSourceIdentityForPlan(ctx, handle, provider, plan, sourcePlan, identity)
+	rootIdentity, reason, ok := rootSourceIdentityForPlan(ctx, handle, provider, plan, sourcePlan, identity)
+	if !ok {
+		return rootIdentity, reason, ok
+	}
+	file, err := provider.rootOutOfBoundsSymlink(ctx)
+	if err != nil {
+		return SourceIdentity{}, renderCacheReasonInputDigest, false
+	}
+	rootIdentity.OutOfBoundsSymlink = file
+	return rootIdentity, "", true
 }
 
 func rootSourceIdentityForPlan(ctx context.Context, handle *persistentRenderCache, provider localProvider, plan PlanResult, sourcePlan SourcePlan, identity SourceIdentity) (SourceIdentity, string, bool) {
@@ -814,7 +835,7 @@ func localToolInputDigestPaths(ctx context.Context, plan PlanResult, sourcePlan 
 	}
 	switch renderer.(type) {
 	case render.DirectoryRenderer:
-		paths, err := localDirectoryInputDigestPaths(plan, sourcePlan, repoRoot)
+		paths, err := localDirectoryInputDigestPaths(ctx, plan, sourcePlan, repoRoot)
 		return paths, false, err
 	case render.HelmRenderer:
 		return localHelmInputDigestPaths(plan, sourcePlan, repoRoot)
@@ -843,7 +864,7 @@ func localKustomizeInputDigestPaths(ctx context.Context, plan PlanResult, source
 	return render.KustomizeInputDigestPaths(ctx, source, opts)
 }
 
-func localDirectoryInputDigestPaths(plan PlanResult, sourcePlan SourcePlan, repoRoot string) ([]gitref.PathDigestPath, error) {
+func localDirectoryInputDigestPaths(ctx context.Context, plan PlanResult, sourcePlan SourcePlan, repoRoot string) ([]gitref.PathDigestPath, error) {
 	opts, err := renderOptions(plan.Application, sourcePlan.Source, CapabilityOptions{}, defaultTrackingOptions())
 	if err != nil {
 		return nil, err
@@ -852,7 +873,7 @@ func localDirectoryInputDigestPaths(plan PlanResult, sourcePlan SourcePlan, repo
 	if source.RepoRoot == "" {
 		source.RepoRoot = repoRoot
 	}
-	return render.DirectoryInputDigestPaths(source, opts)
+	return render.DirectoryInputDigestPaths(ctx, source, opts)
 }
 
 func localHelmInputDigestPaths(plan PlanResult, sourcePlan SourcePlan, repoRoot string) ([]gitref.PathDigestPath, bool, error) {

@@ -2,6 +2,7 @@ package render
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -9,8 +10,8 @@ import (
 	"strings"
 
 	argoappv1 "github.com/argoproj/argo-cd/v3/pkg/apis/application/v1alpha1"
+	argofiles "github.com/argoproj/argo-cd/v3/util/io/files"
 	"github.com/google/go-jsonnet"
-	"github.com/sholdee/drydock/internal/pathsafety"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 )
 
@@ -74,41 +75,88 @@ func makeJsonnetVM(appPath, repoRoot string, sourceJsonnet argoappv1.Application
 	return vm, nil
 }
 
+// resolveJsonnetLib resolves one entry of spec.source.directory.jsonnet.libs
+// as the Argo CD v3.6.1 repo-server does, with
+// pathutil.ResolveFileOrDirectoryPath(repoRoot, repoRoot, lib)
+// (reposerver/repository/repository.go:2304-2313, util/io/path/
+// resolved.go:73-80 and 134-185). The lib is relative to the repository
+// root, also when it starts with "/". When the path itself is a symlink, it
+// is resolved, up to ten levels. The result may be the repository root, and
+// must not be outside it, which fails with the repo-server's "file '<lib>'
+// resolved to outside repository root". The lib directory need not exist.
+// drydock also rejects a lib in a .git directory. Like the repo-server, it
+// does not trim spaces around the lib.
 func resolveJsonnetLib(repoRoot, raw string) (string, error) {
-	lib := strings.TrimSpace(raw)
-	clean := filepath.Clean(filepath.FromSlash(lib))
-	if filepath.IsAbs(clean) {
-		return "", fmt.Errorf("jsonnet lib %q must be relative to repository root", raw)
+	lib := raw
+	absRoot, err := filepath.Abs(repoRoot)
+	if err != nil {
+		return "", err
 	}
-	if pathsafety.RelEscapes(clean) {
-		return "", fmt.Errorf("jsonnet lib %q escapes repository root", raw)
+	// filepath.Join cleans, so an absolute lib is joined to the root.
+	path := filepath.Join(absRoot, filepath.FromSlash(lib))
+	resolved, err := resolveJsonnetLibSymlink(path, 10)
+	if err != nil {
+		return "", fmt.Errorf("jsonnet lib %q: internal error: failed to resolve path. Check logs for more details: %w", raw, err)
 	}
-	if pathsafety.RelEntersGit(clean) {
+	resolved, err = filepath.Abs(resolved)
+	if err != nil {
+		return "", err
+	}
+	requiredRoot := absRoot
+	if !strings.HasSuffix(requiredRoot, string(os.PathSeparator)) {
+		requiredRoot += string(os.PathSeparator)
+	}
+	if resolved+string(os.PathSeparator) != requiredRoot && !strings.HasPrefix(resolved, requiredRoot) {
+		return "", fmt.Errorf("jsonnet lib: file '%s' resolved to outside repository root", lib)
+	}
+	if pathEntersGit(absRoot, resolved) {
 		return "", gitPathRefError("jsonnet lib", raw)
 	}
-	resolved := filepath.Join(repoRoot, clean)
-	if err := rejectPathOutsideBoundary("jsonnet lib", resolved, repoRoot); err != nil {
+	return resolved, nil
+}
+
+// resolveJsonnetLibSymlink is resolveSymbolicLinkRecursive (util/io/path/
+// resolved.go:22-47 at v3.6.1): when path itself is a symlink, it follows it
+// up to maxDepth levels, joining a relative target to the symlink's
+// directory. A path that is not a symlink, or does not exist, is returned
+// unchanged.
+func resolveJsonnetLibSymlink(path string, maxDepth int) (string, error) {
+	target, err := os.Readlink(path)
+	if err != nil {
+		if _, ok := errors.AsType[*os.PathError](err); ok {
+			return path, nil
+		}
 		return "", err
 	}
-	if err := rejectSymlinkedPath(repoRoot, resolved); err != nil {
-		return "", err
+	if maxDepth == 0 {
+		return "", errors.New("maximum nesting level reached")
 	}
-	return filepath.Abs(resolved)
+	if !strings.HasPrefix(target, string(os.PathSeparator)) {
+		target = filepath.Join(filepath.Dir(path), target)
+	}
+	return resolveJsonnetLibSymlink(target, maxDepth-1)
 }
 
 // boundedJsonnetImporter resolves import, importstr, and importbin the way
 // go-jsonnet's FileImporter does (the importing file's directory first, then
 // the library paths in reverse order) while confining every resolved path to
-// the repository root. This mirrors the Argo CD repo-server's confined
-// importer (reposerver/repository, v3.5.4+): a relative import may reach any
-// file under the repository root but never a path outside it, a symlinked
-// path, a .git directory, or a non-regular file. Absolute imports are
-// rejected outright; drydock renders CI checkouts whose absolute paths never
-// match a repo-server's, so accepting them would only invite path confusion.
+// the repository root. This mirrors the Argo CD repo-server's confinedImporter
+// (reposerver/repository/repository.go:2330-2397 at v3.6.1): the first
+// candidate that exists wins, its symlinks are resolved, and the import fails
+// when the resolved path is outside the repository root or is not a regular
+// file. So an import may go through an in-repository symlink, and a relative
+// import in a file reached through a symlink resolves against the directory
+// of the symlink, not of its target. drydock also rejects a path in a .git
+// directory, and an absolute import outright: drydock renders CI checkouts
+// whose absolute paths never match a repo-server's, so accepting them would
+// only invite path confusion.
 type boundedJsonnetImporter struct {
 	boundary string
 	roots    []string
 	cache    map[string]*boundedJsonnetImportCacheEntry
+	// realBoundary is boundary with its symlinks resolved, set on first use.
+	// files.Inbound compares a resolved import path with it as text.
+	realBoundary string
 }
 
 type boundedJsonnetImportCacheEntry struct {
@@ -134,7 +182,7 @@ func (i *boundedJsonnetImporter) Import(importedFrom, importedPath string) (json
 		return jsonnet.Contents{}, "", err
 	}
 	for _, candidate := range candidates {
-		contents, found, err := i.tryImport(candidate)
+		contents, found, err := i.tryImport(candidate, importedPath)
 		if err != nil {
 			return jsonnet.Contents{}, "", err
 		}
@@ -195,31 +243,28 @@ func (i *boundedJsonnetImporter) importCandidates(importedFrom, importedPath str
 	return candidates, nil
 }
 
-func (i *boundedJsonnetImporter) tryImport(path string) (jsonnet.Contents, bool, error) {
+func (i *boundedJsonnetImporter) tryImport(path, importedPath string) (jsonnet.Contents, bool, error) {
 	if pathEntersGit(i.boundary, path) {
 		return jsonnet.Contents{}, false, fmt.Errorf("jsonnet import %q enters a .git directory", path)
-	}
-	if err := rejectSymlinkedPath(i.boundary, path); err != nil {
-		return jsonnet.Contents{}, false, err
 	}
 	if entry, ok := i.cache[path]; ok {
 		return entry.contents, entry.exists, nil
 	}
-	// Stat before reading: a non-regular file (a directory, or a device such
-	// as /dev/zero reached through some future gap) must be rejected without
-	// ever being read.
-	info, err := os.Lstat(path)
-	if err != nil {
+	// confinedImporter.locate takes the first candidate that os.Lstat finds,
+	// so a symlink whose target is missing is found here and fails below.
+	if _, err := os.Lstat(path); err != nil {
 		if os.IsNotExist(err) {
 			i.cache[path] = &boundedJsonnetImportCacheEntry{exists: false}
 			return jsonnet.Contents{}, false, nil
 		}
 		return jsonnet.Contents{}, false, err
 	}
-	if !info.Mode().IsRegular() {
-		return jsonnet.Contents{}, false, fmt.Errorf("jsonnet import %q is not a regular file", path)
+	resolved, err := i.validate(path, importedPath)
+	if err != nil {
+		return jsonnet.Contents{}, false, err
 	}
-	data, err := os.ReadFile(path)
+	// Read the resolved path that validate checked.
+	data, err := os.ReadFile(resolved)
 	if err != nil {
 		return jsonnet.Contents{}, false, err
 	}
@@ -229,6 +274,40 @@ func (i *boundedJsonnetImporter) tryImport(path string) (jsonnet.Contents, bool,
 	}
 	i.cache[path] = entry
 	return entry.contents, true, nil
+}
+
+// validate is confinedImporter.validate (reposerver/repository/
+// repository.go:2381-2397 at v3.6.1): it resolves the symlinks of the found
+// path with files.ResolveInbound and requires a regular file inside the
+// repository root. It checks with stat calls only, so a non-regular file
+// such as a device is never read. drydock also rejects a resolved path in a
+// .git directory.
+func (i *boundedJsonnetImporter) validate(foundAt, importedPath string) (string, error) {
+	if i.realBoundary == "" {
+		realBoundary, err := filepath.EvalSymlinks(i.boundary)
+		if err != nil {
+			return "", fmt.Errorf("resolve repository root: %w", err)
+		}
+		i.realBoundary = realBoundary
+	}
+	resolved, ok, err := argofiles.ResolveInbound(foundAt, i.realBoundary)
+	if err != nil {
+		return "", fmt.Errorf("failed to resolve jsonnet import %q: %w", importedPath, err)
+	}
+	if !ok {
+		return "", fmt.Errorf("jsonnet import %q resolves outside repository root", importedPath)
+	}
+	if pathEntersGit(i.realBoundary, resolved) {
+		return "", fmt.Errorf("jsonnet import %q resolves into a .git directory", importedPath)
+	}
+	info, err := os.Stat(resolved)
+	if err != nil {
+		return "", fmt.Errorf("failed to stat jsonnet import %q: %w", importedPath, err)
+	}
+	if !info.Mode().IsRegular() {
+		return "", fmt.Errorf("jsonnet import %q is not a regular file", importedPath)
+	}
+	return resolved, nil
 }
 
 // decodeJsonnetObjects decodes Jsonnet output the way findManifests does.

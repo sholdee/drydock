@@ -21,6 +21,7 @@ import (
 	"testing"
 	"time"
 
+	argoappv1 "github.com/argoproj/argo-cd/v3/pkg/apis/application/v1alpha1"
 	git "github.com/go-git/go-git/v5"
 	"github.com/go-git/go-git/v5/plumbing/object"
 	cachepkg "github.com/sholdee/drydock/internal/cache"
@@ -1315,7 +1316,10 @@ func TestPersistentCacheJsonnetInputsRotateOnSourceAndDeclaredLibChanges(t *test
 	}
 }
 
-func TestPersistentCacheJsonnetUnprovableLibSkipsPersistence(t *testing.T) {
+// TestPersistentCacheIgnoresJsonnetLibsWithoutJsonnetFiles pins that a
+// library outside the repository costs a source without Jsonnet files
+// nothing: the renderer never resolves it, so the source is cached.
+func TestPersistentCacheIgnoresJsonnetLibsWithoutJsonnetFiles(t *testing.T) {
 	root := t.TempDir()
 	writeTestFile(t, filepath.Join(root, "apps", "jsonnet-skip.yaml"), `apiVersion: argoproj.io/v1alpha1
 kind: Application
@@ -1348,24 +1352,35 @@ data:
 	request := persistentBuildRequest(root, cacheDir)
 	request.RecordCacheEvents = true
 
-	for run := range 2 {
+	for run, wantRenders := range []int64{1, 0} {
 		var renders atomic.Int64
 		result, err := countingOrchestrator(&renders).Build(context.Background(), request)
 		if err != nil {
 			t.Fatalf("Build() run %d error = %v", run, err)
 		}
-		if got := renders.Load(); got != 1 {
-			t.Fatalf("run %d renders = %d, want 1 because persistence is skipped", run, got)
+		if got := renders.Load(); got != wantRenders {
+			t.Fatalf("run %d renders = %d, want %d", run, got, wantRenders)
 		}
 		if got := persistentConfigMapDataValue(t, result, "jsonnet-skip", "jsonnet-skip", "value"); got != "rendered" {
 			t.Fatalf("run %d value = %q, want rendered", run, got)
 		}
-		if !hasRenderCacheEvent(result.CacheEvents, cacheevent.ActionSkipped, "argocd/jsonnet-skip", renderCacheReasonInputGraph) {
-			t.Fatalf("run %d CacheEvents = %#v, want input graph skip", run, result.CacheEvents)
+		if hasRenderCacheEvent(result.CacheEvents, cacheevent.ActionSkipped, "argocd/jsonnet-skip", renderCacheReasonInputGraph) {
+			t.Fatalf("run %d CacheEvents = %#v, want no input graph skip", run, result.CacheEvents)
 		}
 	}
-	if got := countRenderCacheEntries(t, cacheDir); got != 0 {
-		t.Fatalf("entries for unprovable jsonnet graph = %d, want 0", got)
+}
+
+// TestPersistentCacheJsonnetUnprovableLibSkipsPersistence pins that a
+// source with a Jsonnet file and a library outside the repository, which
+// fails in the renderer, is never cached.
+func TestPersistentCacheJsonnetUnprovableLibSkipsPersistence(t *testing.T) {
+	root := t.TempDir()
+	writeTestFile(t, filepath.Join(root, "manifests", "jsonnet-skip", "main.jsonnet"), "{ apiVersion: 'v1', kind: 'ConfigMap', metadata: { name: 'x' } }\n")
+	writeTestFile(t, filepath.Join(root, "manifests", "jsonnet-skip", "cm.yaml"), "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: jsonnet-skip\n")
+	gitCommitAll(t, root, "initial")
+	source := render.ResolvedSource{RepoRoot: root, Path: "manifests/jsonnet-skip"}
+	if _, err := render.DirectoryInputDigestPaths(context.Background(), source, render.RenderOptions{Jsonnet: argoappv1.ApplicationSourceJsonnet{Libs: []string{"../outside"}}}); err == nil {
+		t.Fatal("DirectoryInputDigestPaths() error = nil, want the library outside the repository to make the source ineligible")
 	}
 }
 

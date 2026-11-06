@@ -65,9 +65,19 @@ type localProvider struct {
 	// combined size of the files of one directory source, in bytes. Zero
 	// means no limit.
 	maxCombinedDirectoryManifestsSize int64
-	configManagementPlugins           map[string]config.ConfigManagementPlugin
-	cacheEvents                       *cacheevent.Recorder
-	acquisitions                      *cacheevent.AcquisitionCollector
+	// allowOutOfBoundsSymlinks is argocd-cmd-params-cm
+	// reposerver.allow.oob.symlinks. When false, a source fails while the
+	// tree it renders from holds an out-of-bounds symlink.
+	allowOutOfBoundsSymlinks bool
+	// symlinkBounds keeps the out-of-bounds symlink check of each tree for
+	// the run. nil checks every time.
+	symlinkBounds *symlinkBoundsMemo
+	// userRoots holds the trees a user named (userRootSet). Only their
+	// out-of-bounds check leaves Git-ignored, untracked paths out.
+	userRoots               map[string]bool
+	configManagementPlugins map[string]config.ConfigManagementPlugin
+	cacheEvents             *cacheevent.Recorder
+	acquisitions            *cacheevent.AcquisitionCollector
 	// inputVerifier accumulates the digest path sets behind one application's
 	// persistent key so store() can re-check them after the render. nil for
 	// renders without the persistent tier.
@@ -174,6 +184,9 @@ func (p localProvider) renderSource(ctx context.Context, source render.ResolvedS
 		return nil, nearMissDiags, err
 	}
 	opts.RefRoots = mergeRefRoots(anchoredRefRoots, refRoots)
+	if err := p.checkSourceTreesOutOfBoundsSymlinks(ctx, source); err != nil {
+		return nil, nearMissDiags, err
+	}
 	if opts.Plugin != nil {
 		manifests, diags, err := p.renderPluginSource(ctx, source, opts)
 		return manifests, append(nearMissDiags, diags...), err

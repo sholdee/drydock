@@ -97,3 +97,25 @@ func ResolveForContainment(targetPath string) (string, error) {
 		current = parent
 	}
 }
+
+// ResolveSymlinkedRoot returns root with its symlinks resolved when root
+// itself is a symlink, and root unchanged otherwise. A walk that starts at
+// a symlink stops there, so drydock resolves such a repository root once
+// at entry. An Argo CD checkout is never a symlink. A root that only has a
+// symlink above it, such as a macOS temporary directory, walks normally and
+// keeps its spelling, so its paths in output do not change. A relative
+// symlink keeps a relative root relative.
+func ResolveSymlinkedRoot(root string) string {
+	if strings.TrimSpace(root) == "" {
+		return root
+	}
+	info, err := os.Lstat(root)
+	if err != nil || info.Mode()&os.ModeSymlink == 0 {
+		return root
+	}
+	resolved, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		return root
+	}
+	return resolved
+}

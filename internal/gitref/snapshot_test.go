@@ -9,6 +9,7 @@ import (
 
 	git "github.com/go-git/go-git/v5"
 	"github.com/go-git/go-git/v5/plumbing"
+	"github.com/go-git/go-git/v5/plumbing/filemode"
 	"github.com/go-git/go-git/v5/plumbing/object"
 )
 
@@ -364,7 +365,7 @@ func TestMaterializeTreeRejectsSymlinkPrefixWriteEscape(t *testing.T) {
 		t.Fatalf("Symlink(prefix) error = %v", err)
 	}
 
-	err = materializeTree(t.Context(), tree, snapshotRoot)
+	err = materializeTree(t.Context(), tree, snapshotRoot, false)
 	if err == nil {
 		t.Fatal("materializeTree() error = nil, want symlink-prefix escape rejection")
 	}
@@ -535,5 +536,200 @@ func assertSnapshotOutsideRepo(t *testing.T, snapshotPath, repoPath string) {
 	}
 	if snapshotPath == repoPath || strings.HasPrefix(snapshotPath, repoPath+string(os.PathSeparator)) {
 		t.Fatalf("snapshot path %q must not be inside repo %q", snapshotPath, repoPath)
+	}
+}
+
+// TestSnapshotKeepsOutOfBoundsSymlinksWhenAsked pins the snapshot that a
+// diff renders: an absolute or escaping symlink is written as it is, so the
+// render can fail each Application as the Argo CD repo-server does.
+func TestSnapshotKeepsOutOfBoundsSymlinksWhenAsked(t *testing.T) {
+	repoPath, _, wt := newSnapshotRepo(t)
+	root := wt.Filesystem.Root()
+	links := map[string]string{"absolute": "/etc/hosts", "escape": "../outside"}
+	for name, target := range links {
+		if err := os.Symlink(target, filepath.Join(root, name)); err != nil {
+			t.Fatalf("Symlink(%s) error = %v", name, err)
+		}
+		if _, err := wt.Add(name); err != nil {
+			t.Fatalf("Add(%s) error = %v", name, err)
+		}
+	}
+	if _, err := wt.Commit("add out-of-bounds symlinks", &git.CommitOptions{
+		Author: &object.Signature{Name: "Test", Email: "test@example.invalid"},
+	}); err != nil {
+		t.Fatalf("Commit() error = %v", err)
+	}
+	result, err := Snapshot(t.Context(), Request{Repo: repoPath, Ref: "HEAD", ForbiddenRoots: []string{repoPath}, KeepOutOfBoundsSymlinks: true})
+	if err != nil {
+		t.Fatalf("Snapshot() error = %v", err)
+	}
+	t.Cleanup(func() { _ = result.Cleanup() })
+	// go-git's worktree filesystem stores an absolute target with extra
+	// "../" steps, so check the kind of target, not its text.
+	if got, err := os.Readlink(filepath.Join(result.Path, "absolute")); err != nil || !filepath.IsAbs(got) {
+		t.Fatalf("Readlink(absolute) = %q, %v, want an absolute target", got, err)
+	}
+	if got, err := os.Readlink(filepath.Join(result.Path, "escape")); err != nil || got != "../outside" {
+		t.Fatalf("Readlink(escape) = %q, %v, want ../outside", got, err)
+	}
+}
+
+// TestMaterializeTreeRejectsOverlappingTreePaths pins that a malformed Git
+// tree that names one path twice, a symlink out of the snapshot and a
+// regular file, never writes through the symlink.
+func TestMaterializeTreeRejectsOverlappingTreePaths(t *testing.T) {
+	_, repo, _ := newSnapshotRepo(t)
+	outside := filepath.Join(t.TempDir(), "outside.txt")
+	if err := os.WriteFile(outside, []byte("original\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	storeBlob := func(content string) plumbing.Hash {
+		t.Helper()
+		obj := repo.Storer.NewEncodedObject()
+		obj.SetType(plumbing.BlobObject)
+		writer, err := obj.Writer()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := writer.Write([]byte(content)); err != nil {
+			t.Fatal(err)
+		}
+		_ = writer.Close()
+		hash, err := repo.Storer.SetEncodedObject(obj)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return hash
+	}
+	for _, entries := range [][]object.TreeEntry{
+		{
+			{Name: "x", Mode: filemode.Symlink, Hash: storeBlob(outside)},
+			{Name: "x", Mode: filemode.Regular, Hash: storeBlob("overwritten\n")},
+		},
+		{
+			{Name: "x", Mode: filemode.Regular, Hash: storeBlob("overwritten\n")},
+			{Name: "x", Mode: filemode.Symlink, Hash: storeBlob(outside)},
+		},
+	} {
+		tree := &object.Tree{Entries: entries}
+		obj := repo.Storer.NewEncodedObject()
+		if err := tree.Encode(obj); err != nil {
+			t.Fatal(err)
+		}
+		hash, err := repo.Storer.SetEncodedObject(obj)
+		if err != nil {
+			t.Fatal(err)
+		}
+		stored, err := object.GetTree(repo.Storer, hash)
+		if err != nil {
+			t.Fatal(err)
+		}
+		err = materializeTree(t.Context(), stored, t.TempDir(), true)
+		if err == nil || !strings.Contains(err.Error(), "more than once") {
+			t.Fatalf("materializeTree() error = %v, want the duplicate path rejected", err)
+		}
+		if data, _ := os.ReadFile(outside); string(data) != "original\n" {
+			t.Fatalf("outside file = %q, want it unchanged", data)
+		}
+	}
+}
+
+// TestMkdirSnapshotParentsNeverCreatesThroughASymlink pins that the
+// snapshot writer creates directories one component at a time and refuses a
+// component that is a symlink, so it creates nothing outside the snapshot.
+// os.MkdirAll follows the symlink and would create outside/x.
+func TestMkdirSnapshotParentsNeverCreatesThroughASymlink(t *testing.T) {
+	root := t.TempDir()
+	outside := t.TempDir()
+	if err := os.Symlink(outside, filepath.Join(root, "a")); err != nil {
+		t.Skipf("symlink unavailable: %v", err)
+	}
+	err := mkdirSnapshotParents(root, filepath.Join(root, "a", "x", "y"))
+	if err == nil || !strings.Contains(err.Error(), "is not a directory inside snapshot root") {
+		t.Fatalf("mkdirSnapshotParents() error = %v, want the symlink refused", err)
+	}
+	if _, err := os.Lstat(filepath.Join(outside, "x")); !os.IsNotExist(err) {
+		t.Fatalf("a directory was created outside the snapshot: %v", err)
+	}
+	if err := mkdirSnapshotParents(root, filepath.Join(root, "b", "c")); err != nil {
+		t.Fatalf("mkdirSnapshotParents() error = %v", err)
+	}
+	if info, err := os.Lstat(filepath.Join(root, "b", "c")); err != nil || !info.IsDir() {
+		t.Fatalf("Lstat(b/c) = %v, %v, want a directory", info, err)
+	}
+}
+
+// TestSnapshotKeepsCaseCollidingFiles pins that a commit with two regular
+// files whose names differ only in case still materializes on a
+// case-insensitive filesystem: they name one file, and the last write
+// wins, as in earlier releases.
+func TestSnapshotKeepsCaseCollidingFiles(t *testing.T) {
+	probe := t.TempDir()
+	if err := os.WriteFile(filepath.Join(probe, "a"), nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(probe, "A")); err != nil {
+		t.Skip("the filesystem is case-sensitive")
+	}
+	repoPath, repo, wt := newSnapshotRepo(t)
+	commitSnapshotFile(t, repo, wt, "README.md", "upper\n")
+	idx, err := repo.Storer.Index()
+	if err != nil {
+		t.Fatal(err)
+	}
+	obj := repo.Storer.NewEncodedObject()
+	obj.SetType(plumbing.BlobObject)
+	writer, err := obj.Writer()
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _ = writer.Write([]byte("lower\n"))
+	_ = writer.Close()
+	hash, err := repo.Storer.SetEncodedObject(obj)
+	if err != nil {
+		t.Fatal(err)
+	}
+	entry := idx.Add("readme.md")
+	entry.Mode = filemode.Regular
+	entry.Hash = hash
+	if err := repo.Storer.SetIndex(idx); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := wt.Commit("case collision", &git.CommitOptions{Author: &object.Signature{Name: "Test", Email: "test@example.invalid"}}); err != nil {
+		t.Fatal(err)
+	}
+	result, err := Snapshot(t.Context(), Request{Repo: repoPath, Ref: "HEAD", ForbiddenRoots: []string{repoPath}, KeepOutOfBoundsSymlinks: true})
+	if err != nil {
+		t.Fatalf("Snapshot() error = %v, want case-colliding files materialized", err)
+	}
+	t.Cleanup(func() { _ = result.Cleanup() })
+}
+
+// TestWriteSnapshotFileRefusesASymlink pins that a regular file is never
+// written through a symlink at its path.
+func TestWriteSnapshotFileRefusesASymlink(t *testing.T) {
+	_, repo, wt := newSnapshotRepo(t)
+	hash := commitSnapshotFile(t, repo, wt, "x", "overwritten\n")
+	commit, err := repo.CommitObject(hash)
+	if err != nil {
+		t.Fatal(err)
+	}
+	file, err := commit.File("x")
+	if err != nil {
+		t.Fatal(err)
+	}
+	outside := filepath.Join(t.TempDir(), "outside.txt")
+	if err := os.WriteFile(outside, []byte("original\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	target := filepath.Join(t.TempDir(), "x")
+	if err := os.Symlink(outside, target); err != nil {
+		t.Skipf("symlink unavailable: %v", err)
+	}
+	if err := writeSnapshotFile(target, file); err == nil {
+		t.Fatal("writeSnapshotFile() error = nil, want the symlink refused")
+	}
+	if data, _ := os.ReadFile(outside); string(data) != "original\n" {
+		t.Fatalf("outside file = %q, want it unchanged", data)
 	}
 }

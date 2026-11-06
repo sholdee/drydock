@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	argoappv1 "github.com/argoproj/argo-cd/v3/pkg/apis/application/v1alpha1"
+	argopathutil "github.com/argoproj/argo-cd/v3/util/io/path"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 )
 
@@ -292,29 +293,57 @@ func TestDirectoryRendererReturnsInvalidJsonnetErrors(t *testing.T) {
 	}
 }
 
-func TestDirectoryRendererRejectsJsonnetLibEscapes(t *testing.T) {
-	for _, lib := range []string{"../outside", "/tmp/outside"} {
+// TestResolveJsonnetLibMatchesUpstream compares drydock's lib resolution with
+// the upstream pathutil.ResolveFileOrDirectoryPath(repoRoot, repoRoot, lib)
+// that the Argo CD v3.6.1 repo-server uses (reposerver/repository/
+// repository.go:2304-2313): an absolute lib is relative to the repository
+// root, a lib that is a symlink inside the repository is followed, the root
+// itself is allowed, and a lib that leaves the repository fails.
+func TestResolveJsonnetLibMatchesUpstream(t *testing.T) {
+	parent := t.TempDir()
+	root, err := filepath.EvalSymlinks(parent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	root = filepath.Join(root, "repo")
+	writeFile(t, filepath.Join(root, "libs", "real", "x.libsonnet"), "{}\n")
+	symlink(t, "real", filepath.Join(root, "libs", "linked"))
+	symlink(t, "/etc", filepath.Join(root, "libs", "absolute"))
+	symlink(t, "../../..", filepath.Join(root, "libs", "escape"))
+	for _, lib := range []string{"libs/real", "/libs/real", "libs/linked", ".", "/", "missing", "../outside", "libs/absolute", "libs/escape", "/../outside", " libs/real", "libs/real "} {
 		t.Run(lib, func(t *testing.T) {
-			root := t.TempDir()
-			writeFile(t, filepath.Join(root, "apps", "main.jsonnet"), `{
-  apiVersion: 'v1',
-  kind: 'ConfigMap',
-  metadata: { name: 'demo' },
-}`)
-
-			_, _, err := (DirectoryRenderer{}).Render(context.Background(), ResolvedSource{
-				RepoRoot: root,
-				Path:     "apps",
-			}, RenderOptions{
-				Jsonnet: argoappv1.ApplicationSourceJsonnet{Libs: []string{lib}},
-			})
-			if err == nil {
-				t.Fatal("Render() error = nil, want Jsonnet lib safety error")
+			upstream, upstreamErr := argopathutil.ResolveFileOrDirectoryPath(root, root, lib)
+			got, err := resolveJsonnetLib(root, lib)
+			if (upstreamErr == nil) != (err == nil) {
+				t.Fatalf("resolveJsonnetLib(%q) = %q, %v; upstream %q, %v", lib, got, err, upstream, upstreamErr)
 			}
-			if !strings.Contains(err.Error(), "jsonnet lib") {
-				t.Fatalf("Render() error = %v, want jsonnet lib message", err)
+			if err != nil {
+				if strings.Contains(upstreamErr.Error(), "resolved to outside repository root") && !strings.Contains(err.Error(), upstreamErr.Error()) {
+					t.Fatalf("resolveJsonnetLib(%q) error = %v, want it to hold %q", lib, err, upstreamErr)
+				}
+				return
+			}
+			if got != string(upstream) {
+				t.Fatalf("resolveJsonnetLib(%q) = %q, upstream %q", lib, got, upstream)
 			}
 		})
+	}
+}
+
+// TestDirectoryRendererUsesASymlinkedJsonnetLib pins that a lib directory
+// that is a symlink inside the repository serves imports, as in Argo CD.
+func TestDirectoryRendererUsesASymlinkedJsonnetLib(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "vendor", "common.libsonnet"), "{ name: 'from-linked-lib' }\n")
+	symlink(t, "vendor", filepath.Join(root, "lib"))
+	writeFile(t, filepath.Join(root, "apps", "main.jsonnet"), "{ apiVersion: 'v1', kind: 'ConfigMap', metadata: { name: (import 'common.libsonnet').name } }\n")
+	for _, lib := range []string{"lib", "/lib"} {
+		result, _, err := (DirectoryRenderer{}).Render(context.Background(), ResolvedSource{RepoRoot: root, Path: "apps"}, RenderOptions{
+			Jsonnet: argoappv1.ApplicationSourceJsonnet{Libs: []string{lib}},
+		})
+		if err != nil || len(result) != 1 || result[0].Object.GetName() != "from-linked-lib" {
+			t.Fatalf("Render() with lib %q = %v, %v, want the ConfigMap from the linked lib", lib, result, err)
+		}
 	}
 }
 
@@ -403,7 +432,10 @@ func TestDirectoryRendererRejectsJsonnetAbsoluteImports(t *testing.T) {
 	}
 }
 
-func TestDirectoryRendererRejectsJsonnetSymlinkImports(t *testing.T) {
+// TestDirectoryRendererRejectsJsonnetImportsOutsideRepository pins
+// confinedImporter.validate (reposerver/repository/repository.go:2381-2389 at
+// v3.6.1): an import whose symlinks resolve outside the repository fails.
+func TestDirectoryRendererRejectsJsonnetImportsOutsideRepository(t *testing.T) {
 	root := t.TempDir()
 	outside := filepath.Join(t.TempDir(), "outside.libsonnet")
 	writeFile(t, outside, `{
@@ -426,10 +458,7 @@ func TestDirectoryRendererRejectsJsonnetSymlinkImports(t *testing.T) {
 		RepoRoot: root,
 		Path:     "apps",
 	}, RenderOptions{})
-	if err == nil {
-		t.Fatal("Render() error = nil, want Jsonnet symlink import error")
-	}
-	if !strings.Contains(err.Error(), "symlink") {
-		t.Fatalf("Render() error = %v, want symlink message", err)
+	if err == nil || !strings.Contains(err.Error(), `jsonnet import "linked.libsonnet" resolves outside repository root`) {
+		t.Fatalf("Render() error = %v, want the repo-server outside-repository import error", err)
 	}
 }

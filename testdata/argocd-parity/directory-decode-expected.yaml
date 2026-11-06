@@ -197,3 +197,15 @@ cases:
     argocdQuotesObject: true
     argocdMessage: "Object 'Kind' is missing in '{}'"
     drydockMessage: "plugin/parity-env/path/workloads/directory-decode/plugin-empty-object/generate-output document 1 has no kind"
+  # An out-of-bounds symlink anywhere in a repository fails every
+  # Application from it before the repo-server reads the source path
+  # (runRepoOperation, reposerver/repository/repository.go:499-514, and
+  # CheckOutOfBoundsSymlinks, util/app/path/path.go:51-110). The Application
+  # renders from the oob-symlink repository, whose other/escape.yaml the
+  # smoke creates as a symlink to /etc/hosts, outside the source path app.
+  # argocd-cmd-params-cm does not set reposerver.allow.oob.symlinks.
+  - name: parity-decode-oob-symlink
+    repository: oob-symlink
+    file: other/escape.yaml
+    argocdMessage: "repository contains out-of-bounds symlinks. file: other/escape.yaml"
+    drydockMessage: "repository contains out-of-bounds symlinks. file: other/escape.yaml"

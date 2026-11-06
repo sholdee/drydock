@@ -60,6 +60,8 @@ func newLocalProvider(ctx context.Context, orchestrator Orchestrator, root strin
 	}
 	provider := localProvider{
 		maxCombinedDirectoryManifestsSize: maxDirectorySize,
+		allowOutOfBoundsSymlinks:          allowOutOfBoundsSymlinks(settings),
+		symlinkBounds:                     request.symlinkBounds,
 		repoRoot:                          root,
 		controllerNamespace:               trackingOptionsFromSettings(settings).ControllerNamespace,
 		sourceResolver:                    sourcepkg.NewResolver(sourcepkg.Options{RepoMaps: request.RepoMaps, Offline: request.Offline}),
@@ -100,6 +102,10 @@ func newLocalProvider(ctx context.Context, orchestrator Orchestrator, root strin
 		configManagementPlugins:           settings.ConfigManagementPlugins,
 		cacheEvents:                       recorder,
 	}
+	if provider.symlinkBounds == nil {
+		provider.symlinkBounds = newSymlinkBoundsMemo()
+	}
+	provider.userRoots = userRootSet(root, request.rootRevision, request.RepoMaps)
 	provider.rootIdentity, provider.rootInputMode, provider.rootDirtyPaths = rootIdentityForRequest(ctx, root, request)
 	if matcher := newSelfRepoMatcher(request.selfRepo); len(matcher.urlKeys) > 0 {
 		provider.selfRepoURLKeys = matcher.urlKeys

@@ -22,13 +22,19 @@ type selectionSide struct {
 	// The graph is kept once per directory, never copied into the Paths of
 	// every Application the directory declares.
 	renderedDirs map[string][]string
+	// unscanned holds the Applications whose Jsonnet import scan ran out of
+	// budget or failed. selectChangedDiffSides selects them whenever a path
+	// changed.
+	unscanned []argoappv1.Application
 }
 
 // withSelectionOnlyPaths returns copies of inputs whose Paths also carry
 // the local inputs of every source that renders from root: its Kustomize
 // graph (bases, components, helmCharts values files, patches, generator
-// files, and spec.source.kustomize components and patches) and its Helm
-// value files and file parameters, even outside spec.source.path. Every
+// files, and spec.source.kustomize components and patches), its Helm
+// value files and file parameters, the paths that the symlinks under its
+// path and Jsonnet libraries reach, and the files that its Jsonnet files
+// import, even outside spec.source.path. Every
 // source also owns the $ref value files and file parameters whose ref root
 // is this tree (selfRepo identifies the repository under diff).
 // It exists for changed-only ownership only: ApplicationSelectionInput.Paths
@@ -59,6 +65,46 @@ func withSelectionOnlyPaths(ctx context.Context, root string, repoMaps []sourcep
 		}
 		return paths
 	}
+	type symlinkSelection struct {
+		paths []string
+		// unknown reports a Jsonnet import scan that ran out of budget or
+		// failed: the source's inputs are not known.
+		unknown bool
+	}
+	symlinkMemo := map[string]symlinkSelection{}
+	symlinkInputs := func(source argoappv1.ApplicationSource) symlinkSelection {
+		var libs []string
+		if source.Directory != nil {
+			libs = source.Directory.Jsonnet.Libs
+		}
+		key := fmt.Sprintf("%q %q", source.Path, libs)
+		selection, ok := symlinkMemo[key]
+		if !ok {
+			// The symlinks under the source path and under each library
+			// that resolves, as the renderer resolves it, and the library
+			// paths and symlinks that decide where a library is.
+			libDirs, libLinks, libErr := render.DirectoryJsonnetLibInputs(root, source.Path, libs)
+			dirs := []string{source.Path}
+			for _, dir := range libDirs {
+				// A library at the repository root would cover every
+				// path, so it adds no tree to walk; the import scan
+				// still owns the files it finds there.
+				if dir != "." {
+					dirs = append(dirs, dir)
+				}
+			}
+			selection.paths = render.DirectorySymlinkInputPaths(root, dirs)
+			selection.paths = append(selection.paths, libLinks...)
+			// A scan that ran out of budget or failed, such as on an
+			// unreadable directory, leaves the imports unknown.
+			imports, err := render.DirectoryJsonnetImportPaths(ctx, root, source.Path, libs)
+			selection.unknown = err != nil || libErr != nil
+			selection.paths = append(selection.paths, imports...)
+			symlinkMemo[key] = selection
+		}
+		return selection
+	}
+	var unscanned []argoappv1.Application
 	out := make([]ApplicationSelectionInput, len(inputs))
 	renderedDirs := map[string][]string{}
 	for i, input := range inputs {
@@ -72,6 +118,21 @@ func withSelectionOnlyPaths(ctx context.Context, root string, repoMaps []sourcep
 				continue
 			}
 			out[i].Paths = append(out[i].Paths, helmLocalSelectionPaths(source)...)
+			// A directory source reads the files that its symlinks reach
+			// and its Jsonnet files import, also outside its path. The Helm
+			// and Kustomize renderers reject symlinks and evaluate no
+			// Jsonnet.
+			if rendersAsDirectory(root, source) {
+				selection := symlinkInputs(source)
+				out[i].Paths = append(out[i].Paths, selection.paths...)
+				if selection.unknown {
+					// The inputs are not known, so selectChangedDiffSides
+					// selects the Application on any change. Its Paths stay
+					// exact, so the other changed paths still count as
+					// unowned when no Application owns them.
+					unscanned = append(unscanned, input.Application)
+				}
+			}
 			if mayWalkKustomizeGraph(source) {
 				out[i].Paths = append(out[i].Paths, kustomizeGraph(source)...)
 			}
@@ -80,7 +141,30 @@ func withSelectionOnlyPaths(ctx context.Context, root string, repoMaps []sourcep
 			renderedDirs[input.RenderedDir] = kustomizeGraph(argoappv1.ApplicationSource{Path: input.RenderedDir})
 		}
 	}
-	return selectionSide{inputs: out, renderedDirs: renderedDirs}
+	return selectionSide{inputs: out, renderedDirs: renderedDirs, unscanned: unscanned}
+}
+
+// rendersAsDirectory reports whether the local renderer renders source as a
+// directory source, as selectLocalRenderer decides for the render. An
+// explicit plugin source is not one.
+func rendersAsDirectory(root string, source argoappv1.ApplicationSource) bool {
+	explicitType, err := source.ExplicitType()
+	if err != nil {
+		return false
+	}
+	resolved := render.ResolvedSource{RepoRoot: root, Path: source.Path}
+	if explicitType != nil {
+		if *explicitType == argoappv1.ApplicationSourceTypePlugin {
+			return false
+		}
+		resolved.ExplicitType = *explicitType
+	}
+	renderer, err := selectLocalRenderer(resolved)
+	if err != nil {
+		return false
+	}
+	_, ok := renderer.(render.DirectoryRenderer)
+	return ok
 }
 
 // kustomizeSelectionMemoKey identifies one selection walk: sources sharing a

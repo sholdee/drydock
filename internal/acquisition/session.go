@@ -529,7 +529,7 @@ func rejectOutOfBoundsSymlinks(root string) error {
 			return err
 		}
 		if filepath.IsAbs(target) {
-			return fmt.Errorf("out-of-bounds symlink %q -> %q", relPath, target)
+			return outOfBoundsOCISymlinkError(relPath)
 		}
 		// Walk each target component so intermediate ".." escapes are caught
 		// even when the joined path collapses back inside root.
@@ -541,11 +541,20 @@ func rejectOutOfBoundsSymlinks(root string) error {
 				return err
 			}
 			if rel == ".." || strings.HasPrefix(rel, ".."+string(os.PathSeparator)) {
-				return fmt.Errorf("out-of-bounds symlink %q -> %q", relPath, target)
+				return outOfBoundsOCISymlinkError(relPath)
 			}
 		}
 		return nil
 	})
+}
+
+// outOfBoundsOCISymlinkError holds the Argo CD v3.6.1 repo-server message
+// for an OCI artifact with an out-of-bounds symlink
+// (reposerver/repository/repository.go:442). The repo-server fails only the
+// Application, and only unless reposerver.allow.oob.symlinks is true; drydock
+// never copies such an artifact into the session area.
+func outOfBoundsOCISymlinkError(relPath string) error {
+	return fmt.Errorf("oci image contains out-of-bounds symlinks. file: %s; drydock never extracts such an artifact, even when argocd-cmd-params-cm sets reposerver.allow.oob.symlinks to \"true\"", filepath.ToSlash(relPath))
 }
 
 type snapshotCopyOptions struct {
