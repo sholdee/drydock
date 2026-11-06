@@ -2,6 +2,7 @@ package appset
 
 import (
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -159,6 +160,18 @@ func rollingSyncSpec(strategy string) string {
 	return "  strategy:\n" + strategy
 }
 
+// generateWithProgressiveSyncs generates as if argocd-cmd-params-cm sets
+// applicationsetcontroller.enable.progressive.syncs to true.
+func generateWithProgressiveSyncs(t *testing.T, data []byte) ([]GeneratedApplication, []diagnostic.Diagnostic, error) {
+	t.Helper()
+	return GenerateFromYAMLWithOptions(t.TempDir(), "app-set.yaml", data, Options{ProgressiveSyncs: true})
+}
+
+// With progressive syncs on, Argo CD v3.6.1 sets ErrorOccurred and returns
+// before it creates, updates, or deletes any Application, and before it
+// reports the ApplicationValidationError condition
+// (applicationset_controller.go:263-277). The duplicated name proves that
+// the validation warning is left out too.
 func TestGenerateWarnsOnRollingSyncWithoutSteps(t *testing.T) {
 	for name, strategy := range map[string]string{
 		"omitted steps": "    type: RollingSync\n    rollingSync: {}\n",
@@ -166,13 +179,17 @@ func TestGenerateWarnsOnRollingSyncWithoutSteps(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			data := listAppSetYAML(`          - name: alpha
-            env: dev`, `'{{.name}}'`, rollingSyncSpec(strategy))
-			apps, diags, err := GenerateFromYAML(t.TempDir(), "app-set.yaml", data)
+            env: dev
+          - name: alpha
+            env: dev
+          - name: beta
+            env: prod`, `'{{.name}}'`, rollingSyncSpec(strategy))
+			apps, diags, err := generateWithProgressiveSyncs(t, data)
 			if err != nil {
 				t.Fatalf("GenerateFromYAML() error = %v", err)
 			}
-			if got := generatedNames(apps); !slices.Equal(got, []string{"alpha"}) {
-				t.Fatalf("generated names = %#v, want Applications still generated", got)
+			if got := generatedNames(apps); len(got) != 0 {
+				t.Fatalf("generated names = %#v, want none", got)
 			}
 			if len(diags) != 1 {
 				t.Fatalf("diagnostics = %#v, want one rollout warning", diags)
@@ -226,7 +243,7 @@ func TestGenerateAcceptsValidRollingSyncConfig(t *testing.T) {
               values: [dev]
           maxUpdate: 50%
 `))
-	apps, diags, err := GenerateFromYAML(t.TempDir(), "app-set.yaml", data)
+	apps, diags, err := generateWithProgressiveSyncs(t, data)
 	if err != nil {
 		t.Fatalf("GenerateFromYAML() error = %v", err)
 	}
@@ -384,7 +401,7 @@ func TestGenerateWarnsOnInvalidRollingSyncConfig(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			data := listAppSetYAML(tt.elements, `'{{.name}}'`, rollingSyncSpec("    type: RollingSync\n    rollingSync:\n      steps:\n"+tt.steps))
-			apps, diags, err := GenerateFromYAML(t.TempDir(), "app-set.yaml", data)
+			apps, diags, err := generateWithProgressiveSyncs(t, data)
 			if err != nil {
 				t.Fatalf("GenerateFromYAML() error = %v", err)
 			}
@@ -429,7 +446,7 @@ func TestGenerateRolloutValidationSeesApplicationsDroppedByNameValidation(t *tes
               operator: In
               values: [prod]
 `))
-	apps, diags, err := GenerateFromYAML(t.TempDir(), "app-set.yaml", data)
+	apps, diags, err := generateWithProgressiveSyncs(t, data)
 	if err != nil {
 		t.Fatalf("GenerateFromYAML() error = %v", err)
 	}
@@ -443,4 +460,134 @@ func TestGenerateRolloutValidationSeesApplicationsDroppedByNameValidation(t *tes
 	if len(rollout) != 1 || !strings.Contains(rollout[0].Message, "Application 'alpha' is selected by multiple steps: (1-1)") {
 		t.Fatalf("rollout diagnostics = %#v, want duplicate selection of alpha", rollout)
 	}
+}
+
+// With progressive syncs off (the Argo CD default), the controller ignores
+// the strategy (applicationset_controller.go:254-295): every Application
+// generates, nothing is linted, and one advisory says why.
+func TestGenerateIgnoresRollingSyncWithoutProgressiveSyncs(t *testing.T) {
+	for name, strategy := range map[string]string{
+		"empty steps": "    type: RollingSync\n    rollingSync:\n      steps: []\n",
+		"invalid steps": `    type: RollingSync
+    rollingSync:
+      steps:
+        - matchExpressions:
+            - key: env
+              operator: Exists
+          maxUpdate: "1"
+        - matchExpressions:
+            - key: env
+              operator: In
+              values: [none]
+`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			data := listAppSetYAML(`          - name: alpha
+            env: dev
+          - name: beta
+            env: prod`, `'{{.name}}'`, rollingSyncSpec(strategy))
+			apps, diags, err := GenerateFromYAML(t.TempDir(), "app-set.yaml", data)
+			if err != nil {
+				t.Fatalf("GenerateFromYAML() error = %v", err)
+			}
+			if got := generatedNames(apps); !slices.Equal(got, []string{"alpha", "beta"}) {
+				t.Fatalf("generated names = %#v, want every Application", got)
+			}
+			if len(diags) != 1 {
+				t.Fatalf("diagnostics = %#v, want one advisory", diags)
+			}
+			diag := diags[0]
+			if diag.Severity != diagnostic.SeverityWarning || diag.Code != diagnostic.CodeAppSetRolloutStrategyIgnored || diagnostic.StableCode(diag) != diag.Code {
+				t.Fatalf("diagnostic = %#v, want appset.rollout-strategy-ignored", diag)
+			}
+			if !strings.Contains(diag.Message, "argocd/guestbook") || !strings.Contains(diag.Message, "applicationsetcontroller.enable.progressive.syncs") || diag.Provenance.Pointer != "spec.strategy" {
+				t.Fatalf("diagnostic = %#v, want ApplicationSet name, the setting, and the strategy pointer", diag)
+			}
+		})
+	}
+}
+
+// With progressive syncs on and RollingSync steps set, Argo CD v3.6.1 writes
+// every generated Application with automated.enabled false
+// (progressive_sync.go:997-1013); otherwise it keeps the template's policy.
+func TestGenerateDisablesAutomatedSyncForRollingSync(t *testing.T) {
+	appSetYAML := func(strategy string) []byte {
+		return []byte(`apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: guestbook
+  namespace: argocd
+spec:
+  goTemplate: true
+` + strategy + `  generators:
+    - list:
+        elements:
+          - name: alpha
+            env: dev
+          - name: beta
+            env: prod
+  template:
+    metadata:
+      name: '{{.name}}'
+      labels:
+        env: '{{.env}}'
+    spec:
+      project: default
+      source:
+        repoURL: https://github.com/example/repo
+        path: apps/{{.name}}
+        targetRevision: main
+      destination:
+        name: in-cluster
+        namespace: default
+      syncPolicy:
+        automated:
+          prune: true
+`)
+	}
+	rollingSync := `  strategy:
+    type: RollingSync
+    rollingSync:
+      steps:
+        - matchExpressions:
+            - key: env
+              operator: In
+              values: [dev]
+`
+	for _, tc := range []struct {
+		name     string
+		strategy string
+		options  Options
+		want     *bool
+	}{
+		{name: "progressive syncs on", strategy: rollingSync, options: Options{ProgressiveSyncs: true}, want: new(false)},
+		{name: "progressive syncs off", strategy: rollingSync},
+		{name: "no strategy", options: Options{ProgressiveSyncs: true}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			apps, _, err := GenerateFromYAMLWithOptions(t.TempDir(), "app-set.yaml", appSetYAML(tc.strategy), tc.options)
+			if err != nil {
+				t.Fatalf("GenerateFromYAMLWithOptions() error = %v", err)
+			}
+			if len(apps) != 2 {
+				t.Fatalf("generated names = %#v, want both", generatedNames(apps))
+			}
+			for _, app := range apps {
+				automated := app.Application.Spec.SyncPolicy.Automated
+				if automated == nil || automated.Prune == nil || !*automated.Prune {
+					t.Fatalf("%s automated = %#v, want the template's prune kept", app.Application.Name, automated)
+				}
+				if got := automated.Enabled; (got == nil) != (tc.want == nil) || (got != nil && *got != *tc.want) {
+					t.Fatalf("%s automated.enabled = %s, want %s", app.Application.Name, boolPointerString(got), boolPointerString(tc.want))
+				}
+			}
+		})
+	}
+}
+
+func boolPointerString(value *bool) string {
+	if value == nil {
+		return "unset"
+	}
+	return strconv.FormatBool(*value)
 }

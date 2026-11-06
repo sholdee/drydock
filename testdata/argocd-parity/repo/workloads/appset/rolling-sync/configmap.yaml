@@ -1,0 +1,7 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: parity-rolling-sync
+data:
+  generator: list
+  strategy: RollingSync

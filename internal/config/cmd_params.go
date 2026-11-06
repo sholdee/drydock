@@ -28,6 +28,13 @@ const maxCombinedDirectoryManifestsSizeKey = "reposerver.max.combined.directory.
 // manifests/base/repo-server/argocd-repo-server-deployment.yaml:214-219).
 const allowOutOfBoundsSymlinksKey = "reposerver.allow.oob.symlinks"
 
+// enableProgressiveSyncsKey sets the ApplicationSet controller flag
+// --enable-progressive-syncs through the environment variable
+// ARGOCD_APPLICATIONSET_CONTROLLER_ENABLE_PROGRESSIVE_SYNCS (Argo CD v3.6.1
+// cmd/argocd-applicationset-controller/commands/applicationset_controller.go:327
+// and manifests/install.yaml:35041-35044).
+const enableProgressiveSyncsKey = "applicationsetcontroller.enable.progressive.syncs"
+
 type commandParameterValueMode int
 
 const (
@@ -183,6 +190,14 @@ func commandParametersSettings(path, basePointer string, values map[string]strin
 				Provenance: setting.Provenance,
 			}
 		}
+		if key == enableProgressiveSyncsKey {
+			// Kept as written, for the same reason: the ApplicationSet
+			// controller reads it with env.ParseBoolFromEnv.
+			settings.EnableProgressiveSyncs = Value[string]{
+				Value:      values[key],
+				Provenance: setting.Provenance,
+			}
+		}
 		settings.CommandParameters = append(settings.CommandParameters, setting)
 	}
 
@@ -220,7 +235,7 @@ func classifyCommandParameterKey(key string) commandParameterClassification {
 			valueMode:      commandParameterSanitizedValue,
 			warnRuntime:    true,
 		}
-	case maxCombinedDirectoryManifestsSizeKey, allowOutOfBoundsSymlinksKey:
+	case maxCombinedDirectoryManifestsSizeKey, allowOutOfBoundsSymlinksKey, enableProgressiveSyncsKey:
 		return commandParameterClassification{
 			classification: CommandParameterRendered,
 			valueMode:      commandParameterSanitizedValue,
@@ -234,19 +249,6 @@ func classifyCommandParameterKey(key string) commandParameterClassification {
 			classification: CommandParameterRuntimeOnly,
 			valueMode:      commandParameterRedactedValue,
 			warnRuntime:    true,
-		}
-	case "applicationsetcontroller.enable.progressive.syncs":
-		// Progressive syncs gate whether Argo CD v3.6 acts on RollingSync
-		// steps at all (an empty steps list aborts reconciliation; other
-		// invalid configs become an InvalidRolloutConfig condition). drydock
-		// generates the same Applications either way and already reports the
-		// rollout config through the appset.rollout-no-steps and
-		// appset.invalid-rollout-config lints, so the flag is recorded with
-		// its sanitized value for settings summaries but adds no
-		// metadata-only warning, which --strict would otherwise promote.
-		return commandParameterClassification{
-			classification: CommandParameterRuntimeOnly,
-			valueMode:      commandParameterSanitizedValue,
 		}
 	case "repo.server", "commit.server":
 		return commandParameterClassification{

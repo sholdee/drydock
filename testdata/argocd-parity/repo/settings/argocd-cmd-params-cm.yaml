@@ -1,0 +1,11 @@
+# drydock reads Argo CD settings from the repository. The smoke sets the same
+# key on the live argocd-cmd-params-cm when it installs Argo CD
+# (install_argocd in scripts/argocd-parity-smoke.sh). Keep the two equal.
+# With progressive syncs on, Argo CD v3.6.1 checks RollingSync steps.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: argocd-cmd-params-cm
+  namespace: argocd
+data:
+  applicationsetcontroller.enable.progressive.syncs: "true"

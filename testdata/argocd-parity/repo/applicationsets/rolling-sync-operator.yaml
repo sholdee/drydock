@@ -1,0 +1,46 @@
+# Step 1 uses the unsupported operator Exists, so it selects nothing, and
+# step 1 is also empty. Argo CD shows only the operator message, which has
+# the highest priority. drydock warns for both findings.
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: parity-rolling-sync-operator
+  namespace: argocd
+spec:
+  goTemplate: true
+  goTemplateOptions: ["missingkey=error"]
+  generators:
+    - list:
+        elements:
+          - env: dev
+  strategy:
+    type: RollingSync
+    rollingSync:
+      steps:
+        - matchExpressions:
+            - key: env
+              operator: Exists
+        - matchExpressions:
+            - key: env
+              operator: In
+              values: [dev]
+  template:
+    metadata:
+      name: "parity-rolling-sync-operator-{{.env}}"
+      labels:
+        env: "{{.env}}"
+    spec:
+      project: default
+      source:
+        repoURL: git://argocd-parity-git.argocd-parity.svc.cluster.local/repo.git
+        targetRevision: HEAD
+        path: workloads/appset/rolling-sync
+      destination:
+        name: in-cluster
+        namespace: "parity-rolling-sync-operator-{{.env}}"
+      # The controller starts real syncs. This keeps them from failing on a
+      # missing namespace. drydock and argocd app manifests both leave the
+      # created Namespace out.
+      syncPolicy:
+        syncOptions:
+          - CreateNamespace=true

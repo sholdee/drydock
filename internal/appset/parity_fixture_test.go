@@ -11,6 +11,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/sholdee/drydock/internal/config"
 	"github.com/sholdee/drydock/internal/diagnostic"
 	corev1 "k8s.io/api/core/v1"
 	k8syaml "k8s.io/apimachinery/pkg/util/yaml"
@@ -154,6 +155,88 @@ func TestArgoCDParityFixtureSelectorListParams(t *testing.T) {
 	}
 	if got := apps[0].Application.Spec.GetSource().Path; got != "workloads/appset/git/alpha" {
 		t.Fatalf("source path = %q, want workloads/appset/git/alpha", got)
+	}
+}
+
+// TestArgoCDParityFixtureRollingSync pins the RollingSync smoke fixtures,
+// with progressive syncs on as the fixture's argocd-cmd-params-cm sets
+// them. Every Application generates except those of the empty steps list.
+// The first warning must carry the message that the smoke expects in the
+// Argo CD condition (ROLLING_SYNC_CONDITIONS in
+// scripts/argocd-parity-smoke.sh); later warnings are the lower-priority
+// findings that Argo CD does not show.
+func TestArgoCDParityFixtureRollingSync(t *testing.T) {
+	tests := []struct {
+		file         string
+		names        []string
+		codes        []string
+		firstMessage string
+	}{
+		{file: "rolling-sync-valid.yaml", names: []string{"parity-rolling-sync-valid-dev", "parity-rolling-sync-valid-prod"}},
+		{
+			file:         "rolling-sync-operator.yaml",
+			names:        []string{"parity-rolling-sync-operator-dev"},
+			codes:        []string{diagnostic.CodeAppSetInvalidRolloutConfig, diagnostic.CodeAppSetInvalidRolloutConfig},
+			firstMessage: "Step 1 has invalid matchExpression operators: Exists. Supported Operators are 'In' and 'NotIn'",
+		},
+		{
+			file:         "rolling-sync-duplicate.yaml",
+			names:        []string{"parity-rolling-sync-duplicate-dev"},
+			codes:        []string{diagnostic.CodeAppSetInvalidRolloutConfig},
+			firstMessage: "Application 'parity-rolling-sync-duplicate-dev' is selected by multiple steps: (1-2)",
+		},
+		{
+			file:         "rolling-sync-empty-step.yaml",
+			names:        []string{"parity-rolling-sync-empty-step-dev"},
+			codes:        []string{diagnostic.CodeAppSetInvalidRolloutConfig},
+			firstMessage: "Steps [2] have no applications matching their criteria",
+		},
+		{
+			file:         "rolling-sync-max-update.yaml",
+			names:        []string{"parity-rolling-sync-max-update-dev"},
+			codes:        []string{diagnostic.CodeAppSetInvalidRolloutConfig},
+			firstMessage: "Step 1 has an invalid maxUpdate value: 1",
+		},
+		{
+			file:         "rolling-sync-no-steps.yaml",
+			codes:        []string{"appset.rollout-no-steps"},
+			firstMessage: "No steps defined for rollout",
+		},
+	}
+	repoRoot := filepath.Join(parityFixtureRoot, "repo")
+	params, _, err := config.LoadCommandParametersConfigMap(filepath.Join(repoRoot, "settings", "argocd-cmd-params-cm.yaml"))
+	if err != nil {
+		t.Fatalf("LoadCommandParametersConfigMap() error = %v", err)
+	}
+	options := Options{ProgressiveSyncs: config.ParseEnableProgressiveSyncs(params.EnableProgressiveSyncs.Value)}
+	if !options.ProgressiveSyncs {
+		t.Fatal("the fixture argocd-cmd-params-cm must turn progressive syncs on, as the smoke does on the live Argo CD")
+	}
+	for _, tt := range tests {
+		t.Run(tt.file, func(t *testing.T) {
+			manifestPath := filepath.Join("applicationsets", tt.file)
+			data, err := os.ReadFile(filepath.Join(repoRoot, manifestPath))
+			if err != nil {
+				t.Fatalf("read %s: %v", manifestPath, err)
+			}
+			apps, diags, err := GenerateFromYAMLWithOptions(repoRoot, manifestPath, data, options)
+			if err != nil {
+				t.Fatalf("GenerateFromYAMLWithOptions() error = %v", err)
+			}
+			if got := generatedNames(apps); !slices.Equal(got, tt.names) {
+				t.Fatalf("generated names = %#v, want %#v", got, tt.names)
+			}
+			codes := make([]string, 0, len(diags))
+			for _, diag := range diags {
+				codes = append(codes, diag.Code)
+			}
+			if !slices.Equal(codes, tt.codes) {
+				t.Fatalf("diagnostic codes = %#v, want %#v", codes, tt.codes)
+			}
+			if tt.firstMessage != "" && !strings.Contains(diags[0].Message, ": "+tt.firstMessage+";") {
+				t.Fatalf("first diagnostic message = %q, want it to carry %q", diags[0].Message, tt.firstMessage)
+			}
+		})
 	}
 }
 

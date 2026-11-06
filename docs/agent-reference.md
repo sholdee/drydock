@@ -204,10 +204,27 @@ message and dispatch case in sync.
 After rendering, generated Applications go through Argo CD's name validation
 (empty names first, then duplicates; every Application sharing a duplicated
 name is dropped) as `appset.application-validation-failed` warnings, and
-`spec.strategy` RollingSync steps are linted as `appset.rollout-no-steps` and
-`appset.invalid-rollout-config` warnings that never change generation output;
-`appset.invalid-rollout-config` is strict-exempt (`strictExemptDiagnostic`)
-because Argo CD's condition is non-blocking. Each of these codes dispatches on a message substring kept in sync with
+`spec.strategy` RollingSync handling follows
+`applicationsetcontroller.enable.progressive.syncs` (`appset.Options.ProgressiveSyncs`).
+Each discovery run uses one value, read before the first ApplicationSet
+expansion. A second run needs two things: the run found an ApplicationSet
+with a RollingSync strategy, and its final settings give another value. Then
+`discoverRepositoryWithOCI` runs discovery again with that value. A run that
+failed after its first expansion counts too, with its partial result. A run
+that failed earlier returns its error. Sometimes the partial result of a
+failed run does not hold the install's settings yet. For example, an app-of-apps can
+render the install one level deeper than the failure. Then the run also
+returns its error. With the flag committed, the same repository succeeds.
+There are at most two runs. If the second run
+ends with the other value again, its result stays and
+`settings.progressive-syncs-cycle` (not strict-exempt) is added. Off, it gives one
+`appset.rollout-strategy-ignored` advisory. On, an empty steps list gives
+`appset.rollout-no-steps` and no Applications, and other findings are
+`appset.invalid-rollout-config` warnings that do not drop Applications. With
+steps, generated Applications get `automated.enabled: false`
+(`disableRollingSyncAutomatedSync`).
+`appset.rollout-strategy-ignored` and `appset.invalid-rollout-config` are
+strict-exempt (`strictExemptDiagnostic`); `appset.rollout-no-steps` is not. Each of these codes dispatches on a message substring kept in sync with
 `internal/diagnostic.appSetCode`.
 
 ## Source Resolution, Cache, And Credentials

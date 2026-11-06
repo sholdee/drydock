@@ -66,6 +66,10 @@ type BuildRequest struct {
 	discoveryPathMemo    *sync.Map
 	appsetGenerationMemo *sync.Map
 	settingsInstallMemo  *sync.Map
+	// progressiveSyncs, when set, is the
+	// applicationsetcontroller.enable.progressive.syncs value of a restarted
+	// discovery run (discoverRepositoryWithOCI).
+	progressiveSyncs *bool
 }
 
 type BuildAppRequest struct {
@@ -166,6 +170,9 @@ type Orchestrator struct {
 	// renderObserver is a test seam invoked immediately before local
 	// render-engine invocations. It is nil in production.
 	renderObserver func(render.ResolvedSource)
+	// discoveryRunObserver is a test seam invoked at the start of each
+	// discovery run (discoverRepositoryRun). It is nil in production.
+	discoveryRunObserver func()
 }
 
 // ensureBuildSelfRepoRefs populates request.selfRepo for single-tree
@@ -1083,17 +1090,18 @@ func normalizeDiagnostics(diags []diagnostic.Diagnostic, strict, forceWarning bo
 // desired-vs-desired diffs are identical whether or not they are set, and
 // the argo-cd Helm chart sets eight of them by default.
 // The ApplicationSet invalid-rollout-config lint is the same kind of advisory:
-// Argo CD v3.6.1 evaluates RollingSync steps only when the ApplicationSet
-// controller runs with progressive syncs enabled (off by default), and even
-// then InvalidRolloutConfig is a condition that never stops Applications from
-// being created or updated (applicationset_controller.go). Generation output
-// is identical either way, and an ordinary staged rollout (a prod step with no
-// Applications yet) must not fail --strict CI. The empty-steps lint
-// (appset.rollout-no-steps) stays promotable: with progressive syncs enabled
-// it aborts reconciliation of the whole ApplicationSet.
+// with progressive syncs on, Argo CD v3.6.1 reports InvalidRolloutConfig as a
+// condition that never stops Applications from being created or updated
+// (applicationset_controller.go). Generation output is identical either way,
+// and an ordinary staged rollout (a prod step with no Applications yet) must
+// not fail --strict CI. So is rollout-strategy-ignored: with progressive
+// syncs off, Argo CD ignores the RollingSync strategy and reconciles the
+// Applications as usual. The empty-steps lint (appset.rollout-no-steps)
+// stays promotable: with progressive syncs on it aborts reconciliation of
+// the whole ApplicationSet, which then contributes no Applications.
 func strictExemptDiagnostic(diag diagnostic.Diagnostic) bool {
 	switch diag.Code {
-	case selfRepoNearMissCode, ociChartIgnoredCode, diagnostic.CodeSettingsIgnoreResourceUpdates, diagnostic.CodePluginPolicyEnvIgnored, changedOnlySettingsCode, changedOnlySettingsScopedCode, changedOnlyProjectsCode, changedOnlySymlinksCode, changedOnlyJsonnetScanCode, diagnostic.CodeAppSetInvalidRolloutConfig, render.DirectoryExtensionFilterDisabledCode:
+	case selfRepoNearMissCode, ociChartIgnoredCode, diagnostic.CodeSettingsIgnoreResourceUpdates, diagnostic.CodePluginPolicyEnvIgnored, changedOnlySettingsCode, changedOnlySettingsScopedCode, changedOnlyProjectsCode, changedOnlySymlinksCode, changedOnlyJsonnetScanCode, diagnostic.CodeAppSetInvalidRolloutConfig, diagnostic.CodeAppSetRolloutStrategyIgnored, render.DirectoryExtensionFilterDisabledCode:
 		return true
 	}
 	return false

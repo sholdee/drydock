@@ -1,0 +1,44 @@
+# The string "1" has no percent sign, so it is not a valid maxUpdate value.
+# Argo CD checks maxUpdate only for Applications that already exist, so the
+# condition turns True after the first reconcile creates the Application.
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: parity-rolling-sync-max-update
+  namespace: argocd
+spec:
+  goTemplate: true
+  goTemplateOptions: ["missingkey=error"]
+  generators:
+    - list:
+        elements:
+          - env: dev
+  strategy:
+    type: RollingSync
+    rollingSync:
+      steps:
+        - matchExpressions:
+            - key: env
+              operator: In
+              values: [dev]
+          maxUpdate: "1"
+  template:
+    metadata:
+      name: "parity-rolling-sync-max-update-{{.env}}"
+      labels:
+        env: "{{.env}}"
+    spec:
+      project: default
+      source:
+        repoURL: git://argocd-parity-git.argocd-parity.svc.cluster.local/repo.git
+        targetRevision: HEAD
+        path: workloads/appset/rolling-sync
+      destination:
+        name: in-cluster
+        namespace: "parity-rolling-sync-max-update-{{.env}}"
+      # The controller starts real syncs. This keeps them from failing on a
+      # missing namespace. drydock and argocd app manifests both leave the
+      # created Namespace out.
+      syncPolicy:
+        syncOptions:
+          - CreateNamespace=true

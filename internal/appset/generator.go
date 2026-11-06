@@ -30,6 +30,11 @@ type Options struct {
 	// JSON so Options stays usable as a generation memo key. Without it the
 	// oci generator is reported as unsupported.
 	OCI OCIArtifactFetcher `json:"-"`
+	// ProgressiveSyncs is the parsed argocd-cmd-params-cm key
+	// applicationsetcontroller.enable.progressive.syncs. Without it, Argo CD
+	// ignores a RollingSync strategy. It is part of the generation memo key,
+	// because with it an empty RollingSync steps list generates nothing.
+	ProgressiveSyncs bool `json:"progressiveSyncs,omitempty"`
 }
 
 func GenerateFromYAML(repoRoot, manifestPath string, data []byte) ([]GeneratedApplication, []diagnostic.Diagnostic, error) {
@@ -106,8 +111,18 @@ func GenerateWithOptions(repoRoot, manifestPath string, appset argoappv1.Applica
 		return nil, diags, fmt.Errorf("%w in %s", ErrUnsupportedGenerator, manifestPath)
 	}
 	valid, validationDiags := validateGeneratedApplications(manifestPath, appset, out)
+	if rolloutStepsEmpty(appset, options) {
+		// Argo CD v3.6.1 checks the steps after it validates the generated
+		// Applications and returns before it creates, updates, or deletes
+		// any of them or sets the ApplicationValidationError condition
+		// (applicationset/controllers/applicationset_controller.go:263-277).
+		// Like a template render failure, the ApplicationSet contributes no
+		// Applications and only a warning.
+		return nil, append(diags, rolloutNoStepsDiagnostic(manifestPath, appset)), nil
+	}
 	diags = append(diags, validationDiags...)
-	diags = append(diags, rolloutStrategyDiagnostics(manifestPath, appset, out, valid)...)
+	diags = append(diags, rolloutStrategyDiagnostics(manifestPath, appset, out, valid, options)...)
+	disableRollingSyncAutomatedSync(appset, options, valid)
 	return valid, diags, nil
 }
 

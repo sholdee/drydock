@@ -1,0 +1,53 @@
+# The rolling-sync-*.yaml ApplicationSets use the RollingSync strategy. Argo
+# CD v3.6.1 checks RollingSync steps only when
+# applicationsetcontroller.enable.progressive.syncs is on (it is off by
+# default), so the smoke turns it on. See the README.
+#
+# Valid steps: InvalidRolloutConfig is False with "Rolling Sync Configured
+# correctly", and drydock does not warn.
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: parity-rolling-sync-valid
+  namespace: argocd
+spec:
+  goTemplate: true
+  goTemplateOptions: ["missingkey=error"]
+  generators:
+    - list:
+        elements:
+          - env: dev
+          - env: prod
+  strategy:
+    type: RollingSync
+    rollingSync:
+      steps:
+        - matchExpressions:
+            - key: env
+              operator: In
+              values: [dev]
+        - matchExpressions:
+            - key: env
+              operator: In
+              values: [prod]
+          maxUpdate: 50%
+  template:
+    metadata:
+      name: "parity-rolling-sync-valid-{{.env}}"
+      labels:
+        env: "{{.env}}"
+    spec:
+      project: default
+      source:
+        repoURL: git://argocd-parity-git.argocd-parity.svc.cluster.local/repo.git
+        targetRevision: HEAD
+        path: workloads/appset/rolling-sync
+      destination:
+        name: in-cluster
+        namespace: "parity-rolling-sync-valid-{{.env}}"
+      # The controller starts real syncs. This keeps them from failing on a
+      # missing namespace. drydock and argocd app manifests both leave the
+      # created Namespace out.
+      syncPolicy:
+        syncOptions:
+          - CreateNamespace=true

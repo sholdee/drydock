@@ -22,7 +22,102 @@ func (o Orchestrator) discoverRepository(ctx context.Context, root string, reque
 	return discovered, diags, events, renderCache, renderSig, err
 }
 
+// discoverRepositoryWithOCI discovers the repository once, and once more
+// when the settings at the end set
+// applicationsetcontroller.enable.progressive.syncs to a value other than
+// the one the ApplicationSet expansions used. Fleet discovery can find the
+// setting late, in a rendered Argo CD install, after the ApplicationSets
+// were expanded and their Applications rendered without it. The second run
+// uses the final value from the start, so the result is the one a committed
+// setting gives. It reuses the renders of the first run. The flag changes
+// only ApplicationSets with a RollingSync strategy, so without one there is
+// no second run. There is never a third run: when the second run ends with
+// yet another value, it keeps its result and warns about the cycle.
+//
+// A first run that fails once its first ApplicationSet expansion has chosen
+// the value may fail because of that value, for example on an
+// ApplicationSet that only an Application Argo CD would never create
+// declares. So its partial result decides the same way, and the second
+// run's result or error is returned. A first run that fails earlier returns
+// its error. So does a first run whose partial result does not hold the
+// settings yet, for example when an app-of-apps renders the Argo CD install
+// one level deeper than the failure.
 func (o Orchestrator) discoverRepositoryWithOCI(ctx context.Context, root string, request BuildRequest, ociFetcher *appsetOCIArtifactFetcher) (discovery.Result, []diagnostic.Diagnostic, []cacheevent.Event, *applicationRenderCache, string, error) {
+	var used *bool
+	discovered, diags, events, renderCache, renderSig, runErr := o.observedDiscoveryRun(ctx, root, request, ociFetcher, &used)
+	if used == nil || !hasRollingSyncApplicationSet(discovered) {
+		return discovered, diags, events, renderCache, renderSig, runErr
+	}
+	settings, _, err := loadSettingsFromDiscovery(root, discovered)
+	if err != nil {
+		if runErr != nil {
+			err = runErr
+		}
+		return discovered, diags, events, renderCache, renderSig, err
+	}
+	final := config.ParseEnableProgressiveSyncs(settings.EnableProgressiveSyncs.Value)
+	if final == *used {
+		return discovered, diags, events, renderCache, renderSig, runErr
+	}
+	request.progressiveSyncs = &final
+	request.renderCache = renderCache
+	restarted, diags, restartEvents, renderCache, renderSig, err := o.observedDiscoveryRun(ctx, root, request, ociFetcher, &used)
+	events = append(events, restartEvents...)
+	if err != nil {
+		return restarted, diags, events, renderCache, renderSig, err
+	}
+	restartedSettings, _, err := loadSettingsFromDiscovery(root, restarted)
+	if err != nil {
+		return restarted, diags, events, renderCache, renderSig, err
+	}
+	if config.ParseEnableProgressiveSyncs(restartedSettings.EnableProgressiveSyncs.Value) != final {
+		diags = append(diags, progressiveSyncsCycleDiagnostic(final, settings.EnableProgressiveSyncs.Provenance))
+	}
+	return restarted, diags, events, renderCache, renderSig, nil
+}
+
+// hasRollingSyncApplicationSet reports a discovered ApplicationSet with a
+// RollingSync strategy, the only kind the progressive syncs flag changes.
+func hasRollingSyncApplicationSet(discovered discovery.Result) bool {
+	for _, appSetFile := range discovered.ApplicationSets {
+		if appset.IsRollingSyncStrategy(appSetFile.ApplicationSet) {
+			return true
+		}
+	}
+	return false
+}
+
+// progressiveSyncsCycleDiagnostic reports a progressive syncs value that
+// decides its own source: with it, an ApplicationSet with a RollingSync
+// strategy adds or removes the Application that sets it. The "has no stable
+// value" substring is the stable-code dispatch key
+// (settings.progressive-syncs-cycle). It is not strict-exempt: the result
+// cannot match Argo CD with either value.
+func progressiveSyncsCycleDiagnostic(used bool, provenance config.Provenance) diagnostic.Diagnostic {
+	diag := diagnostic.Diagnostic{
+		Severity:   diagnostic.SeverityWarning,
+		Category:   "settings",
+		Message:    fmt.Sprintf("applicationsetcontroller.enable.progressive.syncs has no stable value: discovery with it %t ends with it %t, because an ApplicationSet with a RollingSync strategy decides whether the Application that sets it exists; drydock keeps the result with it %t", used, !used, used),
+		Provenance: provenance,
+	}
+	diag.Code = diagnostic.StableCode(diag)
+	return diag
+}
+
+// observedDiscoveryRun calls the discoveryRunObserver test seam and runs
+// discoverRepositoryRun.
+func (o Orchestrator) observedDiscoveryRun(ctx context.Context, root string, request BuildRequest, ociFetcher *appsetOCIArtifactFetcher, used **bool) (discovery.Result, []diagnostic.Diagnostic, []cacheevent.Event, *applicationRenderCache, string, error) {
+	if o.discoveryRunObserver != nil {
+		o.discoveryRunObserver()
+	}
+	return o.discoverRepositoryRun(ctx, root, request, ociFetcher, used)
+}
+
+// discoverRepositoryRun is one discovery run. used receives the
+// applicationsetcontroller.enable.progressive.syncs value that its
+// ApplicationSet expansions use, as soon as expandFirstApplicationSets has
+// chosen it. It stays nil when the run fails before that choice.
+func (o Orchestrator) discoverRepositoryRun(ctx context.Context, root string, request BuildRequest, ociFetcher *appsetOCIArtifactFetcher, used **bool) (discovery.Result, []diagnostic.Diagnostic, []cacheevent.Event, *applicationRenderCache, string, error) {
 	mode, err := normalizeDiscoveryMode(request.DiscoveryMode)
 	if err != nil {
 		return discovery.Result{}, nil, nil, nil, "", err
@@ -62,7 +157,7 @@ func (o Orchestrator) discoverRepositoryWithOCI(ctx context.Context, root string
 	}
 
 	var expansionDiags []diagnostic.Diagnostic
-	discovered, expansionDiags, err = expandApplicationSetDiscovery(root, request, discovered, appsetOptions)
+	discovered, expansionDiags, err = expandFirstApplicationSets(root, request, discovered, &appsetOptions, used)
 	allDiags = append(allDiags, expansionDiags...)
 	if err != nil {
 		return discovered, allDiags, allEvents, renderCache, "", err
@@ -99,6 +194,27 @@ func (o Orchestrator) discoverRepositoryWithOCI(ctx context.Context, root string
 	}
 
 	return discovered, dedupeDiagnostics(allDiags), allEvents, renderCache, renderSig, nil
+}
+
+// expandFirstApplicationSets sets the
+// applicationsetcontroller.enable.progressive.syncs value that every
+// ApplicationSet expansion of one discovery run uses, and runs the first
+// expansion. The value is the one a second run carries, or else the one in
+// the settings found before the first expansion. used receives the value
+// once it is chosen.
+func expandFirstApplicationSets(root string, request BuildRequest, discovered discovery.Result, appsetOptions *appset.Options, used **bool) (discovery.Result, []diagnostic.Diagnostic, error) {
+	if request.progressiveSyncs != nil {
+		appsetOptions.ProgressiveSyncs = *request.progressiveSyncs
+	} else {
+		settings, _, err := loadSettingsFromDiscovery(root, discovered)
+		if err != nil {
+			return discovered, nil, err
+		}
+		appsetOptions.ProgressiveSyncs = config.ParseEnableProgressiveSyncs(settings.EnableProgressiveSyncs.Value)
+	}
+	progressiveSyncs := appsetOptions.ProgressiveSyncs
+	*used = &progressiveSyncs
+	return expandApplicationSetDiscovery(root, request, discovered, *appsetOptions)
 }
 
 // scanRepositoryDiscovery scans root for committed objects and adds the

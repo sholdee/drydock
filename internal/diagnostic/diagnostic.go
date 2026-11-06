@@ -22,6 +22,19 @@ const (
 // CD's non-blocking InvalidRolloutConfig condition.
 const CodeAppSetInvalidRolloutConfig = "appset.invalid-rollout-config"
 
+// CodeSettingsProgressiveSyncsCycle reports an
+// applicationsetcontroller.enable.progressive.syncs value that decides
+// whether the Application that sets it exists.
+const CodeSettingsProgressiveSyncsCycle = "settings.progressive-syncs-cycle"
+
+// CodeAppSetRolloutNoSteps reports a RollingSync strategy with an empty
+// steps list while progressive syncs are on.
+const CodeAppSetRolloutNoSteps = "appset.rollout-no-steps"
+
+// CodeAppSetRolloutStrategyIgnored reports a RollingSync strategy that Argo
+// CD ignores because progressive syncs are off.
+const CodeAppSetRolloutStrategyIgnored = "appset.rollout-strategy-ignored"
+
 // Stable codes of the argocd-cm resource.selectors diagnostics: a list or
 // selector Argo CD cannot parse, and a rendered resource whose labels do not
 // match the selectors that apply to it.
@@ -179,9 +192,11 @@ func appSetCode(message string) string {
 	case strings.Contains(message, "generated Application validation failed"):
 		return "appset.application-validation-failed"
 	case strings.Contains(message, "No steps defined for rollout"):
-		return "appset.rollout-no-steps"
+		return CodeAppSetRolloutNoSteps
 	case strings.Contains(message, "invalid RollingSync rollout config"):
 		return CodeAppSetInvalidRolloutConfig
+	case strings.Contains(message, "RollingSync strategy is not used"):
+		return CodeAppSetRolloutStrategyIgnored
 	default:
 		return "appset.unspecified"
 	}
@@ -193,6 +208,8 @@ func settingsCode(message string) string {
 		return CodeSettingsResourceSelectorInvalid
 	case strings.Contains(message, "does not match the resource selector"):
 		return CodeSettingsResourceSelectorMismatch
+	case strings.Contains(message, "has no stable value"):
+		return CodeSettingsProgressiveSyncsCycle
 	case strings.Contains(message, "conflicting"):
 		return "settings.conflict"
 	case strings.Contains(message, "failed to parse"):

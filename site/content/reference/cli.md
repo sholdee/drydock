@@ -455,7 +455,7 @@ drydock diag --path . --render -o json
 `argocd-cmd-params-cm` settings are parsed as runtime-boundary metadata when
 they imply live repo-server, controller, or ApplicationSet controller behavior.
 They may produce diagnostics and settings summaries, but they do not mutate
-drydock render behavior. There are two exceptions:
+drydock render behavior. There are three exceptions:
 
 - `reposerver.max.combined.directory.manifests.size`: drydock applies it as
   the limit on the combined file size of one directory source, with the
@@ -464,10 +464,20 @@ drydock render behavior. There are two exceptions:
   the tree it renders from holds an out-of-bounds symlink, as in Argo CD.
   The repo-server reads `true` and `false` in any case, and any other value
   as `false`.
+- `applicationsetcontroller.enable.progressive.syncs`: unless it is `true`,
+  drydock ignores RollingSync strategies, as Argo CD does. When it is `true`,
+  an ApplicationSet with an empty RollingSync steps list generates no
+  Applications, and drydock checks the other steps. The ApplicationSet
+  controller reads the value as the repo-server reads the key above. See
+  [RollingSync Strategy](/docs/applicationsets/#rollingsync-strategy).
 
-When the repository installs Argo CD from the argo-cd Helm chart, drydock reads
-both keys from the rendered `argocd-cmd-params-cm`, which the chart makes from
-`configs.params`.
+The repository can install Argo CD from the argo-cd Helm chart. Then drydock
+reads these keys from the rendered `argocd-cmd-params-cm`, which the chart
+makes from `configs.params`. When the render reads a committed values file
+or settings ConfigMap, the rendered ConfigMap replaces it. Otherwise two
+`argocd-cmd-params-cm` objects with the same name and namespace follow the
+discovery precedence in [Discovery Commands](#discovery-commands): one wins,
+and a copy that differs gives a `discovery.duplicate` warning.
 
 ## Cache Commands
 

@@ -27,7 +27,7 @@ func expandApplicationSetDiscovery(root string, request BuildRequest, discovered
 		}
 		allDiags = append(allDiags, request.normalizeDiagnostics(diags, false)...)
 		if len(apps) == 0 {
-			if len(diags) != 0 {
+			if explainsEmptyGeneration(diags) {
 				continue
 			}
 			diags := request.normalizeDiagnostics([]diagnostic.Diagnostic{emptyApplicationSetDiagnostic(appSetFile)}, false)
@@ -116,6 +116,22 @@ func copyDiagnostics(diags []diagnostic.Diagnostic) []diagnostic.Diagnostic {
 	out := make([]diagnostic.Diagnostic, len(diags))
 	copy(out, diags)
 	return out
+}
+
+// explainsEmptyGeneration reports a generation diagnostic that explains why
+// an ApplicationSet generated no Application, such as a generator or
+// template failure, name validation, or an empty RollingSync steps list.
+// The RollingSync advisory and lint findings describe the strategy, not the
+// empty result, so they do not hide the generated-zero warning.
+func explainsEmptyGeneration(diags []diagnostic.Diagnostic) bool {
+	for _, diag := range diags {
+		switch diagnostic.StableCode(diag) {
+		case diagnostic.CodeAppSetRolloutStrategyIgnored, diagnostic.CodeAppSetInvalidRolloutConfig:
+			continue
+		}
+		return true
+	}
+	return false
 }
 
 func emptyApplicationSetDiagnostic(appSetFile discovery.ApplicationSetFile) diagnostic.Diagnostic {

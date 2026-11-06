@@ -228,17 +228,31 @@ Supported:
   Applications still generate, and `--strict` promotes the warning. The
   render parity smoke checks both cases against Argo CD, and it compares the
   whole drydock Application list with the Argo CD list.
-- Argo CD v3.6.1 RollingSync rollout lint for `spec.strategy.type:
-  RollingSync`: an empty step list warns as `appset.rollout-no-steps`, and
-  invalid `matchExpressions` operators, Applications selected by several
+- Argo CD v3.6.1 RollingSync handling for `spec.strategy.type: RollingSync`,
+  gated on `applicationsetcontroller.enable.progressive.syncs` in
+  `argocd-cmd-params-cm` (off by default; only `true` in any letter case
+  turns it on). With it off, Argo CD ignores the strategy: the Applications
+  generate as usual, and drydock gives one strict-exempt
+  `appset.rollout-strategy-ignored` advisory. With it on, an empty step list
+  warns as `appset.rollout-no-steps` and the ApplicationSet contributes no
+  Applications. This is a recorded divergence. Argo CD returns before it
+  creates, updates, or deletes any Application
+  (`applicationset_controller.go:265-277`), so the Applications that already
+  exist stay live and unchanged. drydock follows the template render failure
+  rule instead and generates none. So a change that empties the step list
+  shows every Application of that ApplicationSet as removed in
+  `drydock diff`, and `--strict` fails on the warning. Invalid `matchExpressions` operators, Applications selected by several
   steps, invalid `maxUpdate` values, and steps that match no generated
-  Application warn as `appset.invalid-rollout-config`. Argo CD applies these
-  only when the ApplicationSet controller runs with progressive syncs
-  enabled, which drydock cannot observe, so generation output is unchanged.
-  `--strict` promotes `appset.rollout-no-steps`, which stops reconciliation
-  when progressive syncs are enabled, but neither escalates nor fails on
-  `appset.invalid-rollout-config`, because Argo CD's `InvalidRolloutConfig`
-  condition never blocks Application create or update.
+  Application warn as `appset.invalid-rollout-config`, and the Applications
+  still generate. If the step list is not empty, the Argo CD controller sets
+  `spec.syncPolicy.automated.enabled: false` on each generated Application
+  with an automated sync policy. drydock does the same. drydock does not
+  model the sync operations that the controller then starts. `--strict`
+  promotes `appset.rollout-no-steps`, but neither
+  escalates nor fails on `appset.invalid-rollout-config`, because Argo CD's
+  `InvalidRolloutConfig` condition never blocks Application create or update.
+  The render parity smoke turns progressive syncs on and checks each finding
+  class against the live ApplicationSet condition and Application list.
 
 Not supported:
 
@@ -537,6 +551,34 @@ Supported:
   `repoServer.env`. An empty value means `10M`, and a value that is not a Kubernetes quantity,
   spaces around it included, fails the build, as it stops the repo-server at
   startup. Earlier drydock releases had no limit.
+- drydock reads `applicationsetcontroller.enable.progressive.syncs` the same
+  way: from a discovered or rendered `argocd-cmd-params-cm` only. It does not
+  read the ApplicationSet controller Deployment. The chart's
+  `configs.params` sets the key in `argocd-cmd-params-cm`, which drydock
+  reads. The chart can also set the flag on the Deployment, through
+  `applicationSet.extraArgs` (`--enable-progressive-syncs`). It can set it
+  through `applicationSet.extraEnv` too
+  (`ARGOCD_APPLICATIONSET_CONTROLLER_ENABLE_PROGRESSIVE_SYNCS`). drydock does
+  not see a value set on the Deployment, and treats progressive syncs as off.
+- An `argocd-cmd-params-cm` from a rendered Application can set the flag
+  late, after drydock expanded the ApplicationSets with the earlier value.
+  Then drydock runs discovery a second time with the final value, but only
+  when it found an ApplicationSet with a RollingSync strategy. A first run
+  that failed after its first ApplicationSet expansion can also lead to a
+  second run. For that, the partial result of the failed run must already
+  hold the rendered install's settings. A committed app-of-apps can
+  render the install Application from a Helm chart, one level deeper. If the
+  first run fails at or before that level, drydock returns its error. With
+  the flag committed, the same repository succeeds. The second run is the
+  last. If that run ends with the other
+  value again, drydock keeps its result and warns
+  `settings.progressive-syncs-cycle`, which `--strict` fails on. Here is an
+  example. An ApplicationSet has a RollingSync strategy with an empty steps
+  list. With the flag off, it generates an Application. That Application
+  renders the `argocd-cmd-params-cm` that turns the flag on. After such a
+  cycle, the settings that drydock reports show the final value of the
+  second run, which is not the value its generation used. The warning names
+  both values.
 - A directory source follows file symlinks as the Argo CD v3.6.1
   repo-server does (`getPotentiallyValidManifestFile`). The walk never
   enters a symlinked directory. The extension filter, `include`, and
