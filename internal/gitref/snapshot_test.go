@@ -658,3 +658,78 @@ func TestMkdirSnapshotParentsNeverCreatesThroughASymlink(t *testing.T) {
 		t.Fatalf("Lstat(b/c) = %v, %v, want a directory", info, err)
 	}
 }
+
+// TestSnapshotKeepsCaseCollidingFiles pins that a commit with two regular
+// files whose names differ only in case still materializes on a
+// case-insensitive filesystem: they name one file, and the last write
+// wins, as in earlier releases.
+func TestSnapshotKeepsCaseCollidingFiles(t *testing.T) {
+	probe := t.TempDir()
+	if err := os.WriteFile(filepath.Join(probe, "a"), nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(probe, "A")); err != nil {
+		t.Skip("the filesystem is case-sensitive")
+	}
+	repoPath, repo, wt := newSnapshotRepo(t)
+	commitSnapshotFile(t, repo, wt, "README.md", "upper\n")
+	idx, err := repo.Storer.Index()
+	if err != nil {
+		t.Fatal(err)
+	}
+	obj := repo.Storer.NewEncodedObject()
+	obj.SetType(plumbing.BlobObject)
+	writer, err := obj.Writer()
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _ = writer.Write([]byte("lower\n"))
+	_ = writer.Close()
+	hash, err := repo.Storer.SetEncodedObject(obj)
+	if err != nil {
+		t.Fatal(err)
+	}
+	entry := idx.Add("readme.md")
+	entry.Mode = filemode.Regular
+	entry.Hash = hash
+	if err := repo.Storer.SetIndex(idx); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := wt.Commit("case collision", &git.CommitOptions{Author: &object.Signature{Name: "Test", Email: "test@example.invalid"}}); err != nil {
+		t.Fatal(err)
+	}
+	result, err := Snapshot(t.Context(), Request{Repo: repoPath, Ref: "HEAD", ForbiddenRoots: []string{repoPath}, KeepOutOfBoundsSymlinks: true})
+	if err != nil {
+		t.Fatalf("Snapshot() error = %v, want case-colliding files materialized", err)
+	}
+	t.Cleanup(func() { _ = result.Cleanup() })
+}
+
+// TestWriteSnapshotFileRefusesASymlink pins that a regular file is never
+// written through a symlink at its path.
+func TestWriteSnapshotFileRefusesASymlink(t *testing.T) {
+	_, repo, wt := newSnapshotRepo(t)
+	hash := commitSnapshotFile(t, repo, wt, "x", "overwritten\n")
+	commit, err := repo.CommitObject(hash)
+	if err != nil {
+		t.Fatal(err)
+	}
+	file, err := commit.File("x")
+	if err != nil {
+		t.Fatal(err)
+	}
+	outside := filepath.Join(t.TempDir(), "outside.txt")
+	if err := os.WriteFile(outside, []byte("original\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	target := filepath.Join(t.TempDir(), "x")
+	if err := os.Symlink(outside, target); err != nil {
+		t.Skipf("symlink unavailable: %v", err)
+	}
+	if err := writeSnapshotFile(target, file); err == nil {
+		t.Fatal("writeSnapshotFile() error = nil, want the symlink refused")
+	}
+	if data, _ := os.ReadFile(outside); string(data) != "original\n" {
+		t.Fatalf("outside file = %q, want it unchanged", data)
+	}
+}

@@ -261,9 +261,11 @@ func writeSnapshotFile(target string, file *object.File) error {
 	if file.Mode == filemode.Executable {
 		mode = 0o755
 	}
-	// O_EXCL fails on any existing path, a symlink included, so a write
-	// never goes through a symlink.
-	out, err := os.OpenFile(target, os.O_CREATE|os.O_EXCL|os.O_WRONLY, mode)
+	// O_NOFOLLOW fails on a symlink at target, so a write never goes
+	// through one. An existing regular file is truncated, as before: on a
+	// case-insensitive filesystem, README.md and readme.md name one file,
+	// and the last write wins.
+	out, err := os.OpenFile(target, os.O_CREATE|os.O_TRUNC|os.O_WRONLY|openNoFollow, mode)
 	if err != nil {
 		return err
 	}
