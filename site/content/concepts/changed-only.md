@@ -66,8 +66,11 @@ repository, fails every Application that renders from the repository, as in
 Argo CD, unless `argocd-cmd-params-cm` sets `reposerver.allow.oob.symlinks`
 to `true`. So when the first such symlink differs between the two sides,
 changed-only renders all Applications, with the strict-exempt diagnostic
-`diff.changed-only-symlinks`. A directory source also owns the files that its
-symlinks reach outside its path, so a change to such a target selects it.
+`diff.changed-only-symlinks`. The same diagnostic renders all Applications
+when drydock cannot walk a tree to find such a symlink. A directory source
+also owns the files outside its path that its symlinks reach and its Jsonnet
+files import, so a change to one of them selects it. Imports in `extVars`
+or `tlas` code are not followed.
 
 ## Commands
 

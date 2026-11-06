@@ -562,7 +562,13 @@ Supported:
   parameter reads, on an OCI artifact (`oci image contains out-of-bounds
   symlinks. file: <path>`), and on a chart of a Helm repository (`chart
   contains out-of-bounds symlinks. file: <path>`). The path is the first
-  such symlink in walk order. A ref-only source is not checked. Setting
+  such symlink in walk order. A root that is itself a symlink, such as a
+  `--repo-map` path, is checked at its target. The check of a source's own
+  tree runs before `.argocd-source.yaml` is read, and the check of a `$ref`
+  repository runs after it, also for a chart of a Helm repository. A Git
+  source that only sets `ref` is not checked, as in Argo CD. An `oci://`
+  source that only sets `ref` is acquired and checked, because the
+  repo-server extracts it, but nothing renders from it. Setting
   `reposerver.allow.oob.symlinks` to `true` in `argocd-cmd-params-cm` turns
   the check off, as the repo-server flag `--allow-oob-symlinks` does.
   drydock reads that key only from an `argocd-cmd-params-cm` that it
@@ -571,8 +577,17 @@ Supported:
   Git ignores and does not track, such as a Python virtual environment or a
   Nix build result. No commit, and so no Argo CD checkout, can hold such a
   path. A `.git` file at the worktree root, as in a linked worktree, is
-  skipped like a `.git` directory. A root that is not the top level of a Git
-  worktree is checked whole.
+  skipped like a `.git` directory. A path at or under a submodule is always
+  checked, because Argo CD checks out submodules and the parent index does
+  not list their files. A root that is not the top level of a Git worktree
+  is checked whole.
+- The persistent render cache key and changed-only selection of a directory
+  source cover the files outside its path and its Jsonnet libraries that
+  its symlinks reach and its Jsonnet files import, directly or through other
+  imports. drydock reads the import paths from the parsed Jsonnet files. It
+  does not follow imports in `extVars` or `tlas` code, so a change to a file
+  that only such code imports does not change the key or select the
+  Application.
 - Recorded divergence from strict Argo CD v3.6.1: drydock never extracts an
   OCI artifact that holds an out-of-bounds symlink, also when
   `reposerver.allow.oob.symlinks` is `true`. Helm charts and Kustomize

@@ -384,8 +384,12 @@ first such symlink differs between the two sides, every Application renders,
 with diagnostic `diff.changed-only-symlinks` (warning, exempt for the same
 reason). Each source that renders from the tree also owns the paths that the
 symlinks under its path and Jsonnet libraries reach
-(`render.DirectorySymlinkInputPaths`), and the persistent render cache digest
-of a directory source holds them as optional paths. The persistent key of a
+(`render.DirectorySymlinkInputPaths`) and the files its Jsonnet files import
+(`render.DirectoryJsonnetImportPaths`), and the persistent render cache
+digest of a directory source holds them as optional paths. Imports in
+`extVars` or `tlas` code are not followed. If drydock cannot walk a tree for
+the verdict, every Application renders with the same diagnostic, and each
+source then fails on its own. One verdict memo serves the whole run. The persistent key of a
 source that renders from the provider root also carries the first
 out-of-bounds symlink of the root.
 

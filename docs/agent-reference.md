@@ -473,8 +473,9 @@ in the repository is read, a missing or non-regular target is skipped, and a
 target outside the repository fails the source. Before any source renders,
 the provider checks its whole tree for out-of-bounds symlinks
 (`render.CheckOutOfBoundsSymlinks`) unless `reposerver.allow.oob.symlinks` is
-true. The targets of followed symlinks are render inputs for the persistent
-render cache and changed-only selection.
+true. The targets of followed symlinks and the files that Jsonnet files
+import from outside the source path and libraries are render inputs for the
+persistent render cache and changed-only selection.
 
 Kustomize rendering uses Go libraries. Do not enable Kustomize's Helm shellout
 plugin. Validate local graph references before rendering and reject unsupported
