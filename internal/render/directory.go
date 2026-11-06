@@ -221,19 +221,38 @@ func generateDirectoryManifests(objects []directoryObject, opts RenderOptions) (
 // checkDirectoryManifestKinds fails on the first emitted manifest without a
 // kind, as the controller does when it reads the manifests back
 // (unmarshalManifests, controller/state.go:562-571 at v3.6.1, through
-// v1alpha1.UnmarshalToUnstructured). A kind that is not a string counts as
-// missing, as in Unstructured.GetKind.
+// v1alpha1.UnmarshalToUnstructured). See unstructuredDecodeKind for what
+// counts as a kind.
 func checkDirectoryManifestKinds(targets []directoryTarget) error {
 	for _, target := range targets {
-		if target.manifest.Object.GetKind() != "" {
+		if unstructuredDecodeKind(target.manifest.Object) != "" {
 			continue
 		}
 		if target.jsonKindless {
 			return directoryKindlessJSONError(target.manifest.Path, target.manifest.Object)
 		}
-		return directoryKindlessManifestError(target.label)
+		return directoryKindlessManifestError(target.label, target.manifest.Object)
 	}
 	return nil
+}
+
+// unstructuredDecodeKind is the kind that the Unstructured JSON decode
+// checks (apimachinery v0.37.0 unstructured/helpers.go:388-391). The decode
+// reads the parsed GroupVersionKind, not the raw kind field, and
+// GroupVersionKind is empty when the apiVersion does not parse as a group
+// version, such as an apiVersion with two or more slashes
+// (unstructured.go:430-437, runtime/schema/group_version.go:213-226). A kind
+// that is not a string also counts as missing.
+func unstructuredDecodeKind(object *unstructured.Unstructured) string {
+	return object.GroupVersionKind().Kind
+}
+
+// missingKindReason says why unstructuredDecodeKind found no kind.
+func missingKindReason(object *unstructured.Unstructured) string {
+	if object.GetKind() != "" {
+		return fmt.Sprintf("has apiVersion %q, which is not a valid group version, so it has no kind", object.GetAPIVersion())
+	}
+	return "has no kind"
 }
 
 func directoryRenderDiagnostics(opts RenderOptions) []diagnostic.Diagnostic {
@@ -292,8 +311,12 @@ func directoryStreamObjects(manifestPath string, data []byte) ([]directoryObject
 			continue
 		} else if object, ok := value.(map[string]any); !ok {
 			stop = fmt.Errorf("%s is not an object", label)
-		} else if kind, _ := object["kind"].(string); kind == "" {
-			stop = fmt.Errorf("%s is missing kind", label)
+		} else if decoded := (&unstructured.Unstructured{Object: object}); unstructuredDecodeKind(decoded) == "" {
+			if decoded.GetKind() != "" {
+				stop = fmt.Errorf("%s %s", label, missingKindReason(decoded))
+			} else {
+				stop = fmt.Errorf("%s is missing kind", label)
+			}
 		} else {
 			objects = append(objects, directoryObject{
 				path:   manifestPath,
@@ -430,7 +453,7 @@ func directoryKindlessJSONError(manifestPath string, object *unstructured.Unstru
 	if object.Object == nil {
 		value = "JSON value"
 	}
-	return fmt.Errorf("%s: %s has no kind, so Argo CD fails the Application with \"Object 'Kind' is missing\"", manifestPath, value)
+	return fmt.Errorf("%s: %s %s, so Argo CD fails the Application with \"Object 'Kind' is missing\"", manifestPath, value, missingKindReason(object))
 }
 
 // directoryKindlessManifestError is the source failure for any other
@@ -440,8 +463,8 @@ func directoryKindlessJSONError(manifestPath string, object *unstructured.Unstru
 // controller then fails on the item, as directoryKindlessJSONError describes.
 // This holds for any list in a YAML, JSON, or Jsonnet file, with or without a
 // kind of its own.
-func directoryKindlessManifestError(label string) error {
-	return fmt.Errorf("%s has no kind, so Argo CD fails the Application with \"Object 'Kind' is missing\"", label)
+func directoryKindlessManifestError(label string, object *unstructured.Unstructured) error {
+	return fmt.Errorf("%s %s, so Argo CD fails the Application with \"Object 'Kind' is missing\"", label, missingKindReason(object))
 }
 
 // describeDirectoryJSONDecodeError names why a ".json" file did not decode

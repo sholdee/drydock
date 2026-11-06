@@ -485,9 +485,19 @@ func TestDirectoryRendererDecodeMatchesUpstream(t *testing.T) {
 		"labels-string.yaml":               "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: q\n  labels: x\n",
 		"metadata-string.yaml":             "apiVersion: v1\nkind: ConfigMap\nmetadata: text\n",
 		"crd-annotations-string.yaml":      "apiVersion: apiextensions.k8s.io/v1\nkind: CustomResourceDefinition\nmetadata:\n  name: crd\n  annotations: x\n",
-		"utf16le.yaml":                     utf16Text(t, xunicode.LittleEndian, "kind: Namespace\r\napiVersion: v1\r\nmetadata:\r\n  name: le\r\n---\r\nkind: ServiceAccount\r\napiVersion: v1\r\nmetadata:\r\n  name: le-sa\r\n"),
-		"utf16be.yaml":                     utf16Text(t, xunicode.BigEndian, "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: be\n"),
-		"utf16le.json":                     utf16Text(t, xunicode.LittleEndian, `{"apiVersion":"v1","kind":"ConfigMap","metadata":{"name":"le-json"}}`),
+		// The Unstructured decode checks the kind of the parsed group version
+		// kind, which is empty when the apiVersion has two or more slashes.
+		"bad-apiversion.json":        `{"apiVersion":"apps/v1/","kind":"Deployment","metadata":{"name":"typo"}}`,
+		"bad-apiversion.yaml":        "apiVersion: a/b/c\nkind: ConfigMap\nmetadata:\n  name: x\n",
+		"bad-apiversion-nometa.yaml": "apiVersion: a/b/c\nkind: ConfigMap\ndata:\n  a: b\n",
+		"bad-apiversion-after.yaml":  "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: ok\n---\napiVersion: a/b/c\nkind: ConfigMap\n",
+		"bad-apiversion-item.yaml":   "apiVersion: v1\nkind: List\nitems:\n  - apiVersion: a/b/c\n    kind: ConfigMap\n    metadata:\n      name: x\n",
+		"bad-apiversion-list.yaml":   "apiVersion: a/b/c\nkind: List\nmetadata:\n  name: l\nitems: []\n",
+		"slash-apiversion.yaml":      "apiVersion: /\nkind: ConfigMap\nmetadata:\n  name: slash\n",
+		"number-apiversion.yaml":     "apiVersion: 5\nkind: ConfigMap\nmetadata:\n  name: number-apiversion\n",
+		"utf16le.yaml":               utf16Text(t, xunicode.LittleEndian, "kind: Namespace\r\napiVersion: v1\r\nmetadata:\r\n  name: le\r\n---\r\nkind: ServiceAccount\r\napiVersion: v1\r\nmetadata:\r\n  name: le-sa\r\n"),
+		"utf16be.yaml":               utf16Text(t, xunicode.BigEndian, "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: be\n"),
+		"utf16le.json":               utf16Text(t, xunicode.LittleEndian, `{"apiVersion":"v1","kind":"ConfigMap","metadata":{"name":"le-json"}}`),
 	}
 	names := make([]string, 0, len(cases))
 	for name := range cases {
@@ -621,6 +631,8 @@ func TestDirectoryRendererJsonnetMatchesUpstream(t *testing.T) {
 		"null":                 {jsonnet: `null`},
 		"scalar":               {jsonnet: `"text"`, wantErr: "JSON value is not an object"},
 		"annotations-string":   {jsonnet: `{apiVersion: "v1", kind: "List", items: [{apiVersion: "v1", kind: "ConfigMap", metadata: {name: "q", annotations: "x"}}]}`, wantErr: "a.jsonnet output list item /items/0: failed to set app instance tracking info on manifest"},
+		"bad-apiversion":       {jsonnet: `{apiVersion: "apps/v1/", kind: "Deployment", metadata: {name: "x"}}`, wantErr: "JSON object is missing kind"},
+		"bad-apiversion-item":  {jsonnet: `{apiVersion: "v1", kind: "List", items: [{apiVersion: "a/b/c", kind: "ConfigMap", metadata: {name: "x"}}]}`, wantErr: `a.jsonnet output list item /items/0 has apiVersion "a/b/c", which is not a valid group version, so it has no kind`},
 		"tracking-before-kind": {jsonnet: `{apiVersion: "v1", kind: "List", items: [{name: "web"}, {apiVersion: "v1", kind: "ConfigMap", metadata: {name: "q", labels: {}, annotations: "x"}}]}`, wantErr: "a.jsonnet output list item /items/1: failed to set app instance tracking info on manifest"},
 	}
 	names := make([]string, 0, len(cases))
@@ -872,4 +884,26 @@ func marshalObject(t *testing.T, obj *unstructured.Unstructured) string {
 		t.Fatalf("Marshal() error = %v", err)
 	}
 	return string(data)
+}
+
+// TestDirectoryRendererNamesAnApiVersionThatDoesNotParse pins the drydock
+// message for an object whose apiVersion has two or more slashes. Argo CD
+// v3.6.1 reports such an object as one without a kind, because the
+// Unstructured decode checks the kind of the parsed group version kind.
+func TestDirectoryRendererNamesAnApiVersionThatDoesNotParse(t *testing.T) {
+	for name, tc := range map[string]struct {
+		files map[string]string
+		want  string
+	}{
+		"json":      {files: map[string]string{"a.json": `{"apiVersion":"apps/v1/","kind":"Deployment","metadata":{"name":"x"}}`}, want: `apps/a.json: JSON object has apiVersion "apps/v1/", which is not a valid group version, so it has no kind, so Argo CD fails the Application with "Object 'Kind' is missing"`},
+		"yaml":      {files: map[string]string{"a.yaml": "apiVersion: a/b/c\nkind: ConfigMap\nmetadata:\n  name: x\n"}, want: `apps/a.yaml document 0 has apiVersion "a/b/c", which is not a valid group version, so it has no kind`},
+		"list item": {files: map[string]string{"a.yaml": "apiVersion: v1\nkind: List\nitems:\n  - apiVersion: a/b/c\n    kind: ConfigMap\n"}, want: `apps/a.yaml document 0 list item /items/0 has apiVersion "a/b/c", which is not a valid group version, so it has no kind, so Argo CD fails`},
+	} {
+		t.Run(name, func(t *testing.T) {
+			_, err := renderFlatDirectory(t, tc.files, v1alpha1.TrackingMethodAnnotation, RenderOptions{})
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("Render() error = %v, want %q", err, tc.want)
+			}
+		})
+	}
 }
