@@ -368,3 +368,138 @@ func TestProgressiveSyncsRestartNeedsRollingSync(t *testing.T) {
 		})
 	}
 }
+
+// writeRollingSyncNestedApplicationSet writes an ApplicationSet with an empty
+// RollingSync steps list that, without progressive syncs, generates the
+// app-of-apps beta. beta's chart declares ApplicationSet q with the given
+// generators. Argo CD never creates beta, so it never sees q.
+func writeRollingSyncNestedApplicationSet(t *testing.T, root, generators string) {
+	t.Helper()
+	writeTestFile(t, filepath.Join(root, "appsets", "rolling.yaml"), `apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: rolling
+  namespace: argocd
+spec:
+  goTemplate: true
+  strategy:
+    type: RollingSync
+    rollingSync:
+      steps: []
+  generators:
+    - list:
+        elements:
+          - name: beta
+  template:
+    metadata:
+      name: '{{.name}}'
+      namespace: argocd
+    spec:
+      project: default
+      source:
+        repoURL: https://github.com/example/repo
+        path: children/{{.name}}
+        targetRevision: main
+      destination:
+        name: in-cluster
+        namespace: argocd
+`)
+	writeTestFile(t, filepath.Join(root, "children", "beta", "Chart.yaml"), "apiVersion: v2\nname: beta\nversion: 0.1.0\n")
+	writeTestFile(t, filepath.Join(root, "children", "beta", "templates", "q.yaml"), `apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: q
+  namespace: argocd
+spec:
+  goTemplate: true
+  generators:
+`+generators+`  template:
+    metadata:
+      name: 'q-{{"{{"}}.name{{"}}"}}'
+    spec:
+      project: default
+      source:
+        repoURL: https://github.com/example/repo
+        path: x
+        targetRevision: main
+      destination:
+        name: in-cluster
+        namespace: default
+`)
+}
+
+// TestProgressiveSyncsRestartAfterFailedFirstRun pins that a first discovery
+// run that fails because it ran without the flag still restarts with the
+// flag from the rendered install. The result and error must be those of a
+// repository that commits the flag.
+func TestProgressiveSyncsRestartAfterFailedFirstRun(t *testing.T) {
+	cases := []struct {
+		name       string
+		generators string
+		strict     bool
+		wantErr    string
+	}{
+		{
+			name: "bad git files glob",
+			generators: `    - git:
+        repoURL: https://github.com/example/repo
+        revision: main
+        files:
+          - path: 'missing/[*.json'
+`,
+		},
+		{
+			name:       "empty list under strict",
+			generators: "    - list:\n        elements: []\n",
+			strict:     true,
+			wantErr:    "No steps defined for rollout",
+		},
+	}
+	for _, shape := range argoCDInstallShapes() {
+		for _, tc := range cases {
+			t.Run(shape.name+"/"+tc.name, func(t *testing.T) {
+				outcome := func(early bool) ([]string, []string, error) {
+					root := t.TempDir()
+					shape.write(t, root, []string{"values.yaml"})
+					writeTestFile(t, filepath.Join(root, "argocd", "values.yaml"), `configs:
+  params:
+    applicationsetcontroller.enable.progressive.syncs: "true"
+`)
+					if early {
+						writeTestFile(t, filepath.Join(root, "settings", "argocd-cmd-params-cm.yaml"), `apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: argocd-cmd-params-cm
+  namespace: argocd
+data:
+  applicationsetcontroller.enable.progressive.syncs: "true"
+`)
+					}
+					writeRollingSyncNestedApplicationSet(t, root, tc.generators)
+					request := BuildRequest{Path: root, Parallelism: 1, Strict: tc.strict}
+					if shape.repoMaps != nil {
+						request.RepoMaps = shape.repoMaps(root)
+					}
+					result, err := Orchestrator{ChartAcquirer: fakeArgoCDChartAcquirer(t)}.ListApplications(context.Background(), request)
+					names, codes := discoveryOutcome(result)
+					return names, codes, err
+				}
+				_, _, earlyErr := outcome(true)
+				lateNames, lateCodes, lateErr := outcome(false)
+				for label, err := range map[string]error{"flag known early": earlyErr, "flag from rendered install": lateErr} {
+					if tc.wantErr == "" && err != nil {
+						t.Fatalf("%s: ListApplications() error = %v, want none", label, err)
+					}
+					if tc.wantErr != "" && (err == nil || !strings.Contains(err.Error(), tc.wantErr)) {
+						t.Fatalf("%s: ListApplications() error = %v, want %q", label, err, tc.wantErr)
+					}
+				}
+				if tc.wantErr == "" {
+					if slices.Contains(lateNames, "argocd/beta") || !slices.Contains(lateCodes, "appset.rollout-no-steps") {
+						t.Fatalf("flag from rendered install: Applications = %v, codes = %v, want no beta and rollout-no-steps", lateNames, lateCodes)
+					}
+				}
+			})
+		}
+	}
+}

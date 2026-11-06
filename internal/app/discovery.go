@@ -33,19 +33,28 @@ func (o Orchestrator) discoverRepository(ctx context.Context, root string, reque
 // only ApplicationSets with a RollingSync strategy, so without one there is
 // no second run. There is never a third run: when the second run ends with
 // yet another value, it keeps its result and warns about the cycle.
+//
+// A first run that fails after its first ApplicationSet expansion may fail
+// because of that value, for example on an ApplicationSet that only an
+// Application Argo CD would never create declares. So its partial result
+// decides the same way, and the second run's result or error is returned.
+// A first run that fails earlier returns its error.
 func (o Orchestrator) discoverRepositoryWithOCI(ctx context.Context, root string, request BuildRequest, ociFetcher *appsetOCIArtifactFetcher) (discovery.Result, []diagnostic.Diagnostic, []cacheevent.Event, *applicationRenderCache, string, error) {
-	var used bool
-	discovered, diags, events, renderCache, renderSig, err := o.observedDiscoveryRun(ctx, root, request, ociFetcher, &used)
-	if err != nil || !hasRollingSyncApplicationSet(discovered) {
-		return discovered, diags, events, renderCache, renderSig, err
+	var used *bool
+	discovered, diags, events, renderCache, renderSig, runErr := o.observedDiscoveryRun(ctx, root, request, ociFetcher, &used)
+	if used == nil || !hasRollingSyncApplicationSet(discovered) {
+		return discovered, diags, events, renderCache, renderSig, runErr
 	}
 	settings, _, err := loadSettingsFromDiscovery(root, discovered)
 	if err != nil {
+		if runErr != nil {
+			err = runErr
+		}
 		return discovered, diags, events, renderCache, renderSig, err
 	}
 	final := config.ParseEnableProgressiveSyncs(settings.EnableProgressiveSyncs.Value)
-	if final == used {
-		return discovered, diags, events, renderCache, renderSig, nil
+	if final == *used {
+		return discovered, diags, events, renderCache, renderSig, runErr
 	}
 	request.progressiveSyncs = &final
 	request.renderCache = renderCache
@@ -94,7 +103,7 @@ func progressiveSyncsCycleDiagnostic(used bool, provenance config.Provenance) di
 
 // observedDiscoveryRun calls the discoveryRunObserver test seam and runs
 // discoverRepositoryRun.
-func (o Orchestrator) observedDiscoveryRun(ctx context.Context, root string, request BuildRequest, ociFetcher *appsetOCIArtifactFetcher, used *bool) (discovery.Result, []diagnostic.Diagnostic, []cacheevent.Event, *applicationRenderCache, string, error) {
+func (o Orchestrator) observedDiscoveryRun(ctx context.Context, root string, request BuildRequest, ociFetcher *appsetOCIArtifactFetcher, used **bool) (discovery.Result, []diagnostic.Diagnostic, []cacheevent.Event, *applicationRenderCache, string, error) {
 	if o.discoveryRunObserver != nil {
 		o.discoveryRunObserver()
 	}
@@ -103,8 +112,9 @@ func (o Orchestrator) observedDiscoveryRun(ctx context.Context, root string, req
 
 // discoverRepositoryRun is one discovery run. used receives the
 // applicationsetcontroller.enable.progressive.syncs value that its
-// ApplicationSet expansions used.
-func (o Orchestrator) discoverRepositoryRun(ctx context.Context, root string, request BuildRequest, ociFetcher *appsetOCIArtifactFetcher, used *bool) (discovery.Result, []diagnostic.Diagnostic, []cacheevent.Event, *applicationRenderCache, string, error) {
+// ApplicationSet expansions used, once the first expansion starts; it stays
+// nil when the run fails before that.
+func (o Orchestrator) discoverRepositoryRun(ctx context.Context, root string, request BuildRequest, ociFetcher *appsetOCIArtifactFetcher, used **bool) (discovery.Result, []diagnostic.Diagnostic, []cacheevent.Event, *applicationRenderCache, string, error) {
 	mode, err := normalizeDiscoveryMode(request.DiscoveryMode)
 	if err != nil {
 		return discovery.Result{}, nil, nil, nil, "", err
@@ -145,7 +155,8 @@ func (o Orchestrator) discoverRepositoryRun(ctx context.Context, root string, re
 
 	var expansionDiags []diagnostic.Diagnostic
 	discovered, expansionDiags, err = expandFirstApplicationSets(root, request, discovered, &appsetOptions)
-	*used = appsetOptions.ProgressiveSyncs
+	progressiveSyncs := appsetOptions.ProgressiveSyncs
+	*used = &progressiveSyncs
 	allDiags = append(allDiags, expansionDiags...)
 	if err != nil {
 		return discovered, allDiags, allEvents, renderCache, "", err
