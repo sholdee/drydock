@@ -251,3 +251,35 @@ func TestWithSelectionOnlyPathsJsonnetLibraries(t *testing.T) {
 		t.Fatalf("selected = %v, want the Jsonnet source", selected)
 	}
 }
+
+// TestWithSelectionOnlyPathsOwnsTheJsonnetLibraryLink pins the review repro:
+// a commit that only moves the symlink that a library goes through selects
+// the Jsonnet source, though another Application owns the directory that
+// holds the symlink.
+func TestWithSelectionOnlyPathsOwnsTheJsonnetLibraryLink(t *testing.T) {
+	root := t.TempDir()
+	writeTestFile(t, filepath.Join(root, "app", "main.jsonnet"), "{ apiVersion: 'v1', kind: 'ConfigMap', metadata: { name: (import 'common.libsonnet').name } }\n")
+	writeTestFile(t, filepath.Join(root, "vendor2", "common.libsonnet"), "{ name: 'two' }\n")
+	writeTestFile(t, filepath.Join(root, "tools", "cm.yaml"), "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: tools\n")
+	symlinkBoundsLink(t, "../vendor2", filepath.Join(root, "tools", "jlib"))
+	jsonnetApp := argoappv1.Application{
+		Name: "jsonnet",
+		Spec: argoappv1.ApplicationSpec{Source: &argoappv1.ApplicationSource{
+			RepoURL: "https://git.example.test/repo.git", TargetRevision: "main", Path: "app",
+			Directory: &argoappv1.ApplicationSourceDirectory{Jsonnet: argoappv1.ApplicationSourceJsonnet{Libs: []string{"tools/jlib"}}},
+		}},
+	}
+	toolsApp := argoappv1.Application{
+		Name: "tools",
+		Spec: argoappv1.ApplicationSpec{Source: &argoappv1.ApplicationSource{RepoURL: "https://git.example.test/repo.git", TargetRevision: "main", Path: "tools"}},
+	}
+	side := withSelectionOnlyPaths(context.Background(), root, nil, selfRepoRefs{}, []ApplicationSelectionInput{{Application: jsonnetApp}, {Application: toolsApp}})
+	selected, _ := SelectChangedApplicationInputs(side.inputs, []string{"tools/jlib"})
+	names := map[string]bool{}
+	for _, application := range selected {
+		names[application.Name] = true
+	}
+	if !names["jsonnet"] || !names["tools"] {
+		t.Fatalf("selected = %v, want jsonnet and tools", names)
+	}
+}

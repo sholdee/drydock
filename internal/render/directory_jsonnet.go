@@ -84,10 +84,10 @@ func makeJsonnetVM(appPath, repoRoot string, sourceJsonnet argoappv1.Application
 // is resolved, up to ten levels. The result may be the repository root, and
 // must not be outside it, which fails with the repo-server's "file '<lib>'
 // resolved to outside repository root". The lib directory need not exist.
-// drydock also rejects a lib in a .git directory, and trims spaces around
-// the lib.
+// drydock also rejects a lib in a .git directory. Like the repo-server, it
+// does not trim spaces around the lib.
 func resolveJsonnetLib(repoRoot, raw string) (string, error) {
-	lib := strings.TrimSpace(raw)
+	lib := raw
 	absRoot, err := filepath.Abs(repoRoot)
 	if err != nil {
 		return "", err

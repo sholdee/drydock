@@ -10,9 +10,10 @@ import (
 )
 
 // DirectoryInputDigestPaths returns conservative committed repository paths for
-// directory rendering. The source directory tree is always included; Jsonnet
-// library roots are included when declared and validated with the same bounded
-// path semantics used by the renderer. The paths outside those trees that
+// directory rendering. The source directory tree is always included. For a
+// source with a Jsonnet file, each library is included as the renderer
+// resolves it, with the library path as written and the symlinks on the way
+// (DirectoryJsonnetLibInputs). The paths outside those trees that
 // their symlinks read are included too (DirectorySymlinkInputPaths), as
 // optional paths: a symlink whose target is missing reads nothing now but
 // renders the target once it exists. So are the files that its Jsonnet
@@ -27,22 +28,19 @@ func DirectoryInputDigestPaths(ctx context.Context, source ResolvedSource, opts 
 		return nil, err
 	}
 	paths := []gitref.PathDigestPath{{Path: sourceRel}}
-	for _, lib := range opts.Jsonnet.Libs {
-		resolved, err := resolveJsonnetLib(source.RepoRoot, lib)
-		if err != nil {
-			return nil, err
-		}
-		libRel, err := relativeDigestPath(source.RepoRoot, resolved)
-		if err != nil {
-			return nil, err
-		}
-		// A library need not exist: the repo-server accepts a missing one.
-		paths = append(paths, gitref.PathDigestPath{Path: libRel, Optional: true})
+	// The libraries count only for a source with a Jsonnet file. A library
+	// need not exist: the repo-server accepts a missing one.
+	libDirs, libLinks, err := DirectoryJsonnetLibInputs(source.RepoRoot, source.Path, opts.Jsonnet.Libs)
+	if err != nil {
+		return nil, err
 	}
-	trees := make([]string, 0, len(paths))
-	for _, item := range paths {
-		trees = append(trees, item.Path)
+	for _, rel := range libDirs {
+		paths = append(paths, gitref.PathDigestPath{Path: rel, Optional: true})
 	}
+	for _, rel := range libLinks {
+		paths = append(paths, gitref.PathDigestPath{Path: rel, Optional: true})
+	}
+	trees := append([]string{sourceRel}, libDirs...)
 	for _, rel := range DirectorySymlinkInputPaths(source.RepoRoot, trees) {
 		paths = append(paths, gitref.PathDigestPath{Path: rel, Optional: true})
 	}

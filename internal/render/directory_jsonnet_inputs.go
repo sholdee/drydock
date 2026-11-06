@@ -8,6 +8,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 
@@ -18,9 +19,9 @@ import (
 )
 
 // DirectoryJsonnetImportPaths returns the repository paths outside the
-// source path that the Jsonnet files of a directory source import, directly or through other imports. Jsonnet
-// import paths are string literals, so drydock reads them from the parsed
-// files instead of evaluating them. For each import, the result holds every
+// source path that the Jsonnet files of a directory source import, directly
+// or through other imports. Jsonnet import paths are string literals, so
+// drydock reads them from the parsed files instead of evaluating them. For each import, the result holds every
 // path the importer tries before the one it finds (a new file at an earlier
 // path would win), the path it finds, and the symlinks on the way to that
 // path's target. It reads every .jsonnet file under the source path, also
@@ -94,28 +95,80 @@ func DirectoryJsonnetImportPaths(ctx context.Context, repoRoot, sourcePath strin
 	return out, nil
 }
 
-// DirectoryJsonnetLibDirs returns the libraries of a directory source that
-// resolve as the renderer resolves them (resolveJsonnetLib), relative to the
-// repository root with forward slashes. A library that does not resolve, or
-// that resolves to the repository root, is left out.
-func DirectoryJsonnetLibDirs(repoRoot string, libs []string) []string {
+// DirectoryJsonnetLibInputs returns what the Jsonnet libraries of a
+// directory source add to its inputs, when the source has a Jsonnet file.
+// Without one, the renderer never resolves the libraries, so it returns
+// nothing. dirs are the libraries as the renderer resolves them
+// (resolveJsonnetLib), "." for the repository root; a library that does not
+// resolve is left out. links are the paths that decide that resolution: each
+// library path as written, joined to the root, and every symlink on the way
+// to its target. A change to one of them can move the library, so it is an
+// input even when no imported file changed. All paths are relative to the
+// repository root, with forward slashes.
+func DirectoryJsonnetLibInputs(repoRoot, sourcePath string, libs []string) (dirs, links []string, err error) {
+	if len(libs) == 0 {
+		return nil, nil, nil
+	}
 	absRoot, err := filepath.Abs(repoRoot)
 	if err != nil {
-		return nil
+		return nil, nil, err
 	}
-	var out []string
+	appPath, err := sourceRoot(ResolvedSource{RepoRoot: absRoot, Path: sourcePath})
+	if err != nil {
+		return nil, nil, err
+	}
+	entries, err := directoryJsonnetEntryFiles(appPath)
+	if err != nil || len(entries) == 0 {
+		return nil, nil, err
+	}
+	realRoot, err := filepath.EvalSymlinks(absRoot)
+	if err != nil {
+		return nil, nil, err
+	}
 	for _, lib := range libs {
+		links = appendJsonnetLibLinks(links, absRoot, realRoot, lib)
 		resolved, err := resolveJsonnetLib(absRoot, lib)
 		if err != nil {
 			continue
 		}
-		rel, err := filepath.Rel(absRoot, resolved)
-		if err != nil || rel == "." || pathsafety.RelEscapes(rel) {
-			continue
+		if rel, ok := repoRelative(absRoot, resolved); ok {
+			dirs = appendUnique(dirs, rel)
 		}
-		out = append(out, filepath.ToSlash(rel))
 	}
-	return out
+	return dirs, links, nil
+}
+
+// appendJsonnetLibLinks adds the library path as written, joined to the
+// root, and every symlink on the way to its target.
+func appendJsonnetLibLinks(links []string, absRoot, realRoot, lib string) []string {
+	joined := filepath.Join(absRoot, filepath.FromSlash(lib))
+	if rel, ok := repoRelative(absRoot, joined); ok && rel != "." && !pathsafety.RelEntersGit(filepath.FromSlash(rel)) {
+		links = appendUnique(links, rel)
+	}
+	visited, _ := traceSymlinkPaths(joined)
+	for _, hop := range visited {
+		if rel, ok := repoRelative(realRoot, hop); ok && rel != "." && !pathsafety.RelEntersGit(filepath.FromSlash(rel)) {
+			links = appendUnique(links, rel)
+		}
+	}
+	return links
+}
+
+// repoRelative returns path relative to root with forward slashes, and
+// reports false when path is outside root.
+func repoRelative(root, path string) (string, bool) {
+	rel, err := filepath.Rel(root, path)
+	if err != nil || filepath.IsAbs(rel) || pathsafety.RelEscapes(rel) {
+		return "", false
+	}
+	return filepath.ToSlash(rel), true
+}
+
+func appendUnique(values []string, value string) []string {
+	if slices.Contains(values, value) {
+		return values
+	}
+	return append(values, value)
 }
 
 // directoryJsonnetEntryFiles returns every .jsonnet file under appPath, as

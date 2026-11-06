@@ -45,6 +45,10 @@ func DirectorySymlinkInputPaths(repoRoot string, dirs []string) []string {
 	}
 	found := map[string]struct{}{}
 	for _, dir := range covered {
+		// The root is the whole repository: nothing is outside it to own.
+		if dir == "." {
+			continue
+		}
 		collectDirectorySymlinkInputs(realRoot, dir, covered, found)
 	}
 	out := make([]string, 0, len(found))
@@ -59,6 +63,9 @@ func DirectorySymlinkInputPaths(repoRoot string, dirs []string) []string {
 // covered that the symlinks under dir reach.
 func collectDirectorySymlinkInputs(realRoot, dir string, covered []string, found map[string]struct{}) {
 	start := filepath.Join(realRoot, dir)
+	if !treeInsideRepository(realRoot, start) {
+		return
+	}
 	_ = filepath.WalkDir(start, func(path string, entry fs.DirEntry, err error) error {
 		if err != nil {
 			if path == start {
@@ -75,19 +82,38 @@ func collectDirectorySymlinkInputs(realRoot, dir string, covered []string, found
 		if entry.Type()&os.ModeSymlink == 0 {
 			return nil
 		}
-		visited, final := traceSymlinkPaths(path)
-		if final != "" {
-			visited = append(visited, final)
-		}
-		for _, item := range visited {
-			rel, err := filepath.Rel(realRoot, item)
-			if err != nil || rel == "." || filepath.IsAbs(rel) || pathsafety.RelEscapes(rel) || relUnderAny(rel, covered) {
-				continue
-			}
-			found[filepath.ToSlash(rel)] = struct{}{}
-		}
+		addSymlinkTrace(realRoot, path, covered, found)
 		return nil
 	})
+}
+
+// addSymlinkTrace adds to found every repository path outside covered that
+// resolving the symlink at path passes through or ends at.
+func addSymlinkTrace(realRoot, path string, covered []string, found map[string]struct{}) {
+	visited, final := traceSymlinkPaths(path)
+	if final != "" {
+		visited = append(visited, final)
+	}
+	for _, item := range visited {
+		rel, err := filepath.Rel(realRoot, item)
+		if err != nil || rel == "." || filepath.IsAbs(rel) || pathsafety.RelEscapes(rel) || relUnderAny(rel, covered) {
+			continue
+		}
+		found[filepath.ToSlash(rel)] = struct{}{}
+	}
+}
+
+// treeInsideRepository reports whether the tree at start, with its symlinks
+// resolved, is inside realRoot and outside .git. A tree reached through a
+// symlink in a middle path part can be outside the repository or in .git.
+// The renderer never reads it there, so it is not walked.
+func treeInsideRepository(realRoot, start string) bool {
+	realStart, err := filepath.EvalSymlinks(start)
+	if err != nil {
+		return false
+	}
+	rel, err := filepath.Rel(realRoot, realStart)
+	return err == nil && !filepath.IsAbs(rel) && !pathsafety.RelEscapes(rel) && !pathsafety.RelEntersGit(rel)
 }
 
 func relUnderAny(rel string, dirs []string) bool {

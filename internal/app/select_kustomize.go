@@ -81,13 +81,24 @@ func withSelectionOnlyPaths(ctx context.Context, root string, repoMaps []sourcep
 		selection, ok := symlinkMemo[key]
 		if !ok {
 			// The symlinks under the source path and under each library
-			// that resolves, as the renderer resolves it.
-			dirs := append([]string{source.Path}, render.DirectoryJsonnetLibDirs(root, libs)...)
+			// that resolves, as the renderer resolves it, and the library
+			// paths and symlinks that decide where a library is.
+			libDirs, libLinks, libErr := render.DirectoryJsonnetLibInputs(root, source.Path, libs)
+			dirs := []string{source.Path}
+			for _, dir := range libDirs {
+				// A library at the repository root would cover every
+				// path, so it adds no tree to walk; the import scan
+				// still owns the files it finds there.
+				if dir != "." {
+					dirs = append(dirs, dir)
+				}
+			}
 			selection.paths = render.DirectorySymlinkInputPaths(root, dirs)
+			selection.paths = append(selection.paths, libLinks...)
 			// A scan that ran out of budget or failed, such as on an
 			// unreadable directory, leaves the imports unknown.
 			imports, err := render.DirectoryJsonnetImportPaths(ctx, root, source.Path, libs)
-			selection.unknown = err != nil
+			selection.unknown = err != nil || libErr != nil
 			selection.paths = append(selection.paths, imports...)
 			symlinkMemo[key] = selection
 		}

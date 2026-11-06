@@ -310,7 +310,7 @@ func TestResolveJsonnetLibMatchesUpstream(t *testing.T) {
 	symlink(t, "real", filepath.Join(root, "libs", "linked"))
 	symlink(t, "/etc", filepath.Join(root, "libs", "absolute"))
 	symlink(t, "../../..", filepath.Join(root, "libs", "escape"))
-	for _, lib := range []string{"libs/real", "/libs/real", "libs/linked", ".", "/", "missing", "../outside", "libs/absolute", "libs/escape", "/../outside"} {
+	for _, lib := range []string{"libs/real", "/libs/real", "libs/linked", ".", "/", "missing", "../outside", "libs/absolute", "libs/escape", "/../outside", " libs/real", "libs/real "} {
 		t.Run(lib, func(t *testing.T) {
 			upstream, upstreamErr := argopathutil.ResolveFileOrDirectoryPath(root, root, lib)
 			got, err := resolveJsonnetLib(root, lib)

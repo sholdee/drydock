@@ -61,3 +61,18 @@ func TestDirectoryInputDigestPathsCoverSymlinkTargets(t *testing.T) {
 		}
 	}
 }
+
+// TestDirectorySymlinkInputPathsSkipsATreeOutsideTheRepository pins that a
+// library reached through a symlink in a middle path part that points
+// outside the repository is not walked: the renderer never reads there.
+func TestDirectorySymlinkInputPathsSkipsATreeOutsideTheRepository(t *testing.T) {
+	parent := t.TempDir()
+	root := filepath.Join(parent, "repo")
+	writeFile(t, filepath.Join(root, "targets", "x.yaml"), "a: 1\n")
+	writeFile(t, filepath.Join(root, "app", "cm.yaml"), "a: 1\n")
+	symlink(t, "../../repo/targets/x.yaml", filepath.Join(parent, "outside", "lib", "link.yaml"))
+	symlink(t, "../outside", filepath.Join(root, "out"))
+	if got := DirectorySymlinkInputPaths(root, []string{"app", "out/lib"}); len(got) != 0 {
+		t.Fatalf("DirectorySymlinkInputPaths() = %v, want the outside tree not walked", got)
+	}
+}

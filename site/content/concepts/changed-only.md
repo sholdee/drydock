@@ -68,8 +68,9 @@ to `true`. So when the first such symlink differs between the two sides,
 changed-only renders all Applications, with the strict-exempt diagnostic
 `diff.changed-only-symlinks`. The same diagnostic renders all Applications
 when drydock cannot walk a tree to find such a symlink. A directory source
-also owns the files outside its path that its symlinks reach and its Jsonnet
-files import, so a change to one of them selects it. Imports in `extVars`
+also owns the files outside its path that its symlinks reach, the files its
+Jsonnet files import, also inside a Jsonnet library, and each library path and
+symlink on the way to it, so a change to one of them selects it. Imports in `extVars`
 or `tlas` code are not followed. When the scan of those imports runs out of
 its budget or fails, changed-only renders the source on every change, with the
 strict-exempt warning `diff.changed-only-jsonnet-scan`. A changed path that no

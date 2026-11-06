@@ -474,8 +474,8 @@ Supported:
   and the root itself is allowed. A lib outside the repository fails with
   `file '<lib>' resolved to outside repository root`. A missing lib is
   allowed. Earlier drydock releases rejected an absolute lib and a
-  symlinked lib directory. drydock still rejects a lib in a `.git`
-  directory.
+  symlinked lib directory, and trimmed spaces around a lib, which Argo CD
+  keeps. drydock still rejects a lib in a `.git` directory.
 - Directory file selection as the Argo CD v3.6.1 repo-server performs it: the
   built-in `.yaml`/`.yml`/`.json`/`.jsonnet` extension filter is
   case-sensitive (`deploy.YAML` is not rendered), `include` and `exclude`
@@ -628,10 +628,14 @@ Supported:
   like a `.git` directory. A root that is not in a Git worktree, that the
   worktree does not track, or that Git ignores itself, is checked whole.
 - The persistent render cache key and changed-only selection of a directory
-  source cover the files outside its path and its Jsonnet libraries that
-  its symlinks reach and its Jsonnet files import, directly or through other
-  imports. drydock reads the import paths from the parsed Jsonnet files. It
-  does not follow imports in `extVars` or `tlas` code, so a change to a file
+  source cover the files outside its path that its symlinks reach, and the
+  files that its Jsonnet files import, directly or through other imports,
+  also inside a Jsonnet library. When the source has a Jsonnet file, they
+  also cover each library path as written and every symlink on the way to
+  it, so moving a library is a change to the source. A source without a
+  Jsonnet file never resolves its libraries, so they do not count. drydock
+  reads the import paths from the parsed Jsonnet files. It does not follow
+  imports in `extVars` or `tlas` code, so a change to a file
   that only such code imports does not change the key or select the
   Application. The import scan has a budget of 1000 files and 10 MB per
   source. The file limit is there because a symlink to a directory above a

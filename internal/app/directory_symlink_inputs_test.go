@@ -44,6 +44,8 @@ func TestWithSelectionOnlyPathsOwnsSymlinkTargets(t *testing.T) {
 	writeTestFile(t, filepath.Join(root, "apps", "cm.yaml"), symlinkBoundsConfigMap)
 	writeTestFile(t, filepath.Join(root, "targets", "end.yaml"), symlinkBoundsConfigMap)
 	writeTestFile(t, filepath.Join(root, "libs", "main.libsonnet"), "{}\n")
+	// The libraries count only for a source with a Jsonnet file.
+	writeTestFile(t, filepath.Join(root, "apps", "main.jsonnet"), "{ apiVersion: 'v1', kind: 'ConfigMap', metadata: { name: 'x' } }\n")
 	symlinkBoundsLink(t, "end.yaml", filepath.Join(root, "targets", "mid.yaml"))
 	symlinkBoundsLink(t, "../targets/mid.yaml", filepath.Join(root, "apps", "chain.yaml"))
 	symlinkBoundsLink(t, "../targets/missing.yaml", filepath.Join(root, "apps", "dangling.yaml"))
