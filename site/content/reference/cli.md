@@ -434,7 +434,9 @@ They may produce diagnostics and settings summaries, but they do not mutate
 drydock render behavior. The exception is
 `reposerver.max.combined.directory.manifests.size`. drydock applies it as the
 limit on the combined file size of one directory source, with the repo-server
-default `10M` when it is not set.
+default `10M` when it is not set. When the repository installs Argo CD from the
+argo-cd Helm chart, drydock reads it from the rendered `argocd-cmd-params-cm`,
+which the chart makes from `configs.params`.
 
 ## Cache Commands
 

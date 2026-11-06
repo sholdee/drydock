@@ -55,6 +55,10 @@ drydock test apps --path .
 By default, fleet commands recursively render bootstrap Applications and
 app-of-apps sources to discover rendered `Application`, `ApplicationSet`,
 `AppProject`, and Argo CD settings objects until discovery converges.
+When the repository installs Argo CD from a Helm chart, drydock also renders
+that install and reads the Argo CD settings from its rendered `argocd-cm`,
+`argocd-cmd-params-cm`, and `argocd-cmp-cm`. These hold the merged values
+files and the chart defaults, as in the cluster.
 
 Use `--discovery-mode static` when only committed static objects should count.
 Use `--max-discovery-depth 0` when normal static discovery should still run but

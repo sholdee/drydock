@@ -505,12 +505,15 @@ Supported:
   does not count Jsonnet files or files with the skip marker. Over the limit,
   Argo CD fails with `exceeded max combined manifest file size`, and drydock
   fails with an error that names the file that went over and the limit.
-  drydock reads the setting only from an `argocd-cmd-params-cm` that it
-  discovers in the repository or in rendered Application output. Otherwise
-  it uses `10M`. So drydock does not see a limit that the Argo CD Helm chart
-  sets through `configs.params`, `repoServer.extraArgs`, or `repoServer.env`,
-  unless the rendered `argocd-cmd-params-cm` of that install is discovered.
-  An empty value means `10M`, and a value that is not a Kubernetes quantity,
+  drydock reads the setting from an `argocd-cmd-params-cm` that it
+  discovers in the repository or in rendered Application output. When the
+  repository installs Argo CD from the argo-cd Helm chart, that includes the
+  `argocd-cmd-params-cm` that the chart makes from `configs.params` (see
+  "Discovery of Argo CD settings"). Otherwise drydock uses `10M`. drydock
+  does not read the repo-server Deployment. So drydock does not see a limit
+  that the chart sets only through `repoServer.extraArgs`
+  (`--max-combined-directory-manifests-size`) or as a literal value in
+  `repoServer.env`. An empty value means `10M`, and a value that is not a Kubernetes quantity,
   spaces around it included, fails the build, as it stops the repo-server at
   startup. Earlier drydock releases had no limit.
 - Recorded divergence from strict Argo CD v3.6.1: drydock skips every file
@@ -882,10 +885,51 @@ Supported:
   counts, and so does the chart key `resourceExclusionsAdditional`. A key
   that starts with `resource.customizations` counts, with or without a dot
   after it, because Argo CD reads both forms.
-- `configs.cm` in an Argo CD Helm values file, read as the argo-helm
-  `argo-cd` chart 10.14.0 turns it into `argocd-cm`. The chart helper
-  `argo-cd.config.cm` is in `templates/_helpers.tpl`. drydock reads the
-  values file as Helm does, so `yes` and `on` are `true`, and every
+- Settings from the rendered Argo CD install. Argo CD reads its settings
+  from the `argocd-cm`, `argocd-cmd-params-cm`, and `argocd-cmp-cm`
+  ConfigMaps in the cluster. When the repository installs Argo CD from a
+  Helm chart, Helm makes these ConfigMaps. Helm merges all values of the
+  release and the chart defaults first. So in fleet discovery, drydock
+  renders the Application that installs Argo CD and reads the settings from
+  the rendered ConfigMaps. An install is an Application, a generated
+  Application, or a Kustomize `helmCharts` entry of one, whose Helm values
+  set a value under `configs.cm`, `configs.params`, or `configs.cmp`. The
+  values can come from these places:
+  - A local Helm values file: `valueFiles` of a local chart, a `$ref` value
+    file from this repository, the `values.yaml` of a local chart, or
+    `valuesFile` and `additionalValuesFiles` of a Kustomize `helmCharts`
+    entry.
+  - Inline values: `values`, `valuesObject`, `parameters`, or
+    `fileParameters` that start with `configs.`, and Kustomize
+    `valuesInline`.
+
+  drydock renders such an install for its settings only and keeps only the
+  three ConfigMaps from that render. The final render renders it again as a
+  normal Application. A values file that the install reads is then not a
+  settings source of its own. The same is true for a committed settings
+  ConfigMap that the install reads, such as a Kustomize patch of
+  `argocd-cm`. So layered values files of one install do not conflict: the
+  later file wins for each key, as in Helm. The chart defaults are in the
+  settings. For example, the default `resource.exclusions` list of the
+  argo-cd chart and `resourceExclusionsAdditional` after it, and the default
+  `application.instanceLabelKey`. A `null` value removes a chart default, as
+  in Helm. `configs.params` reaches `argocd-cmd-params-cm`.
+
+  If drydock cannot render the install, for example because the chart is
+  not in the cache with `--offline`, it reports a `settings` warning that
+  names the Application and the error. Then it reads each values file on its
+  own, as described below. A values file that no rendered install reads
+  also stays a settings source of its own. drydock does not render an
+  install in `--discovery-mode static` or with `--max-discovery-depth 0`.
+  A committed `argocd-cm` that the install does not read is a second
+  `argocd-cm` in the cluster. If both have the same namespace, drydock keeps
+  the committed one and reports the rendered one as a duplicate, as for any
+  duplicate object.
+- `configs.cm` in an Argo CD Helm values file that drydock reads on its own,
+  as the argo-helm `argo-cd` chart 10.14.0 turns it into `argocd-cm`. This
+  applies when no install that drydock renders reads the file. The chart
+  helper `argo-cd.config.cm` is in `templates/_helpers.tpl`. drydock reads
+  the values file as Helm does, so `yes` and `on` are `true`, and every
   number is a float. Then drydock does what the chart does:
   - If `create` has a false value, the chart makes no `argocd-cm`. drydock
     then reads no `argocd-cm` settings from the file.
@@ -901,21 +945,24 @@ Supported:
     raw `argocd-cm` ConfigMap, the same empty value is an error, as in
     Argo CD.
 
-  drydock does not read the default values of the chart. If the chart has a
-  default for a key, Helm removes the key when its value is `null`. Helm writes
-  `<nil>` for a `null` key that the chart does not define. drydock always
-  removes a key with a `null` value. For the same reason,
-  `resourceExclusionsAdditional` goes only after a `resource.exclusions`
-  value that the values file itself sets.
-- Several Argo CD settings files, one file at a time. drydock reads each
-  `argocd-cm` ConfigMap and each Helm values file on its own. Then drydock
-  merges the settings field by field. If two files set the same field of
-  the same `resource.customizations` key to different values, drydock
-  reports a conflict. Helm instead merges all values files of one release
-  into one `configs.cm` map, and a later file wins for each key. drydock
-  does not know which values files one Argo CD release uses, or their
-  order. So for layered values files, drydock reports a conflict where Helm
-  keeps the value from the later file.
+  For such a file, drydock does not read the default values of the chart.
+  If the chart has a default for a key, Helm removes the key when its value
+  is `null`. Helm writes `<nil>` for a `null` key that the chart does not
+  define. drydock always removes a key with a `null` value. For the same
+  reason, `resourceExclusionsAdditional` goes only after a
+  `resource.exclusions` value that the values file itself sets. drydock does
+  not read `configs.params` from such a file.
+- Several Argo CD settings sources, one source at a time. drydock reads each
+  `argocd-cm` ConfigMap, each rendered settings ConfigMap, and each Helm
+  values file that it reads on its own. Then drydock merges the settings
+  field by field. If two sources set the same field of the same
+  `resource.customizations` key to different values, drydock reports a
+  conflict. Helm instead merges all values files of one release into one
+  `configs.cm` map, and a later file wins for each key. For a rendered
+  install, drydock gets this result from Helm. For values files that drydock
+  reads on their own, drydock does not know which release uses them, or
+  their order. So for such layered values files, drydock reports a conflict
+  where Helm keeps the value from the later file.
 - The location of each `resource.customizations` field. Each field keeps
   the `argocd-cm` key that set it. A health Lua error points at the key that
   holds the script. A merge conflict points at the key that sets the field

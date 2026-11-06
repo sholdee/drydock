@@ -273,7 +273,9 @@ drydock selects directory-source files as the Argo CD v3.6.1 repo-server does:
   `reposerver.max.combined.directory.manifests.size` (default `10M`). Argo CD
   fails the same Application with `exceeded max combined manifest file size`.
   Narrow `include` or `exclude`, split the directory, or raise the setting in
-  `argocd-cmd-params-cm` for both Argo CD and drydock.
+  `argocd-cmd-params-cm` for both Argo CD and drydock. With the argo-cd Helm
+  chart, set it in `configs.params`. drydock does not read it from
+  `repoServer.extraArgs` or `repoServer.env`.
 - When several files fail, drydock reports the file that Argo CD reports.
   Argo CD reads every file first, then splits lists and sets tracking
   metadata, and checks for a missing `kind` last. So a file that does not
