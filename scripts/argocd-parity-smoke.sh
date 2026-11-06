@@ -2226,7 +2226,7 @@ apply_live_diff_settings() {
 }
 
 remove_live_diff_settings() {
-  kubectl apply --server-side --field-manager="${LIVE_DIFF_FIELD_MANAGER}" -f - >/dev/null <<'YAML'
+  kubectl --request-timeout=30s apply --server-side --field-manager="${LIVE_DIFF_FIELD_MANAGER}" -f - >/dev/null <<'YAML'
 apiVersion: v1
 kind: ConfigMap
 metadata:
