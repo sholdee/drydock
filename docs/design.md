@@ -134,8 +134,12 @@ Fleet discovery renders Applications in rounds until the discovered objects
 and the settings stop changing. At the start of each round, drydock renders
 the Applications that install Argo CD from a Helm chart, for their settings
 ConfigMaps only. An install renders the `argo-cd` chart, or its Helm values
-set Argo CD settings. An install that the frontier already renders for
-discovery is not rendered settings-only. It repeats this until the settings no longer change how
+set Argo CD settings, and its destination is this cluster. An Application
+that installs Argo CD on another cluster is not an install. An install that
+the frontier already renders for discovery is not rendered settings-only.
+drydock finds the values files of an install with the resolution helpers of
+the renderer: globs, build environment variables, `$ref` roots, the merged
+`.argocd-source.yaml` overrides, and subchart values. It repeats this until the settings no longer change how
 these Applications render. These renders are keyed without tracking
 settings and resource customizations, because neither changes the data of a
 settings ConfigMap. Then drydock renders the rest of the round once, with

@@ -898,19 +898,40 @@ Supported:
     whose `Chart.yaml` has the name `argo-cd` or a dependency with that
     name.
   - A local Helm values file of its render sets a value under `configs.cm`,
-    `configs.params`, or `configs.cmp`. Such a file is a `valueFiles` entry
-    of a local chart, a `$ref` value file from this repository, the
-    `values.yaml` of a local chart, or the `valuesFile` or
-    `additionalValuesFiles` of a Kustomize `helmCharts` entry.
+    `configs.params`, or `configs.cmp`.
   - Its inline Helm values set such a value: `values`, `valuesObject`,
     Kustomize `valuesInline`, or a `parameters` or `fileParameters` name
     that starts with `configs.cm.`, `configs.params.`, or `configs.cmp.`.
 
-  drydock follows the source type as Argo CD picks it, so a source with an
-  explicit `directory` or `plugin` type is not a Helm install. A glob value
-  file, a remote value file, and a value file inside a chart from a chart
-  repository have no local file, so drydock does not read them to find an
-  install.
+  drydock emulates the Argo CD that runs the Applications in the repository.
+  So an install counts only when its destination is this cluster: the
+  destination resolves to `https://kubernetes.default.svc`, by server or by
+  name, as project validation resolves it. Only its rendered ConfigMaps in
+  the Argo CD namespace (`argocd`) count. An Application that installs Argo
+  CD on another cluster is not an install. drydock does not render it for
+  settings, and its values files stay settings sources of their own, as in
+  earlier releases.
+
+  The local Helm values files of a render are these files:
+  - The `valueFiles` entries. drydock resolves them as the renderer does. It
+    fills in `$ARGOCD_APP_NAME` and the other build environment variables,
+    resolves a `$ref` whose source is this repository, and expands globs.
+    For a chart from a chart repository, only `$ref` entries are local.
+  - The `values.yaml` of a local chart, and of each unpacked subchart under
+    its `charts/` directory.
+  - The `valuesFile` and `additionalValuesFiles` of each Kustomize
+    `helmCharts` entry, and the `values.yaml` files of its local chart.
+
+  drydock merges the `.argocd-source.yaml` and `.argocd-source-<app>.yaml`
+  overrides of a local source first, as Argo CD does. Then it picks the
+  source type as Argo CD does: the explicit type, else Kustomize for a
+  kustomization file, else Helm for a chart. So a source with an explicit
+  `directory` or `plugin` type is not a Helm install. A remote value file
+  has no local file. drydock finds these files before it renders, with the
+  resolution helpers of the renderer. It does not record the files during
+  the render. One gap is known: a `helmCharts` entry inside a component
+  that `spec.source.kustomize.components` adds is not read for values files
+  or for the chart name.
 
   The discovery frontier already renders an install whose source path can
   hold Argo CD objects, such as a local chart whose templates name
@@ -919,16 +940,17 @@ Supported:
   three ConfigMaps from that render. The final render renders each install
   again as a normal Application.
 
-  A values file that the render read as Helm values is then not a settings
-  source of its own. The same is true for a committed settings ConfigMap
-  file that a Kustomize render read, such as a resource or a patch of
-  `argocd-cm`. drydock matches files, not directories. A file in a
-  directory that the render read from, but that the render did not read
-  itself, stays a settings source. A file in a local chart directory is not
-  a manifest that the install applies, and drydock does not scan chart
-  templates. So layered values files of one install do not conflict: the
-  later file wins for each key, as in Helm. The chart defaults are in the
-  settings. For example, the default `resource.exclusions` list of the
+  A local Helm values file of the render is then not a settings source of
+  its own. The same is true for a committed settings ConfigMap file that a
+  Kustomize render read, such as a resource or a patch of `argocd-cm`.
+  drydock matches files, not directories. A file in a directory that the
+  render read from, but that the render did not read itself, stays a
+  settings source. For example, an extra values file in a chart directory
+  stays a source. A file in a local chart directory that is not a template
+  is not a manifest that the install applies, and drydock does not scan
+  chart templates. So layered values files of one install do not conflict:
+  the later file wins for each key, as in Helm. The chart defaults are in
+  the settings. For example, the default `resource.exclusions` list of the
   argo-cd chart and `resourceExclusionsAdditional` after it, and the default
   `application.instanceLabelKey`. A `null` value removes a chart default, as
   in Helm. `configs.params` reaches `argocd-cmd-params-cm`.
@@ -941,10 +963,14 @@ Supported:
   and `configs.cmp` from such a file. A values file that no rendered install
   reads also stays a settings source of its own. drydock does not render an
   install in `--discovery-mode static` or with `--max-discovery-depth 0`.
-  A committed `argocd-cm` that the install does not read is a second
-  `argocd-cm` in the cluster. If both have the same namespace, drydock keeps
-  the committed one and reports the rendered one as a duplicate, as for any
-  duplicate object.
+
+  Two sources can put a settings ConfigMap with the same namespace and name
+  in the cluster: a committed `argocd-cm` that the install does not read, or
+  two installs on this cluster. drydock keeps one by the rules for any
+  duplicate object. For example, a committed file wins over the render of
+  an Application, and of two Application renders the first one found wins.
+  It reports the other one as a duplicate. The values files of
+  both renders stay out of the settings sources.
 - `ignoreResourceUpdates` customizations. Argo CD uses them only to skip
   reconciles when a live resource changes. They never change desired output
   or a desired-vs-desired diff. The argo-cd chart sets eight of them by
