@@ -1,0 +1,3 @@
+apiVersion: v2
+name: helm-file-parameter-symlinks
+version: 0.1.0

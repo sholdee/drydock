@@ -5,7 +5,8 @@
 // source. The source is a directory by default. A case can also set source
 // to helm, kustomize, or plugin: then the file is a chart template, a
 // Kustomize resource, or the plugin program, and Argo CD fails on the output
-// that the source generates. Argo CD must report a ComparisonError condition
+// that the source generates. With source helm-file-parameters, the file is
+// a helm.fileParameters path that fails to resolve or to read. Argo CD must report a ComparisonError condition
 // that names the file, and drydock must fail to render the same Application
 // with an error that names the same file. drydock names plugin output as
 // generate-output, not by the program file. Files that both sides skip are
@@ -47,11 +48,15 @@ const comparisonErrorType = "ComparisonError"
 const missingKindPrefix = "Object 'Kind' is missing in '{"
 
 // The source types an expected case can name. directory is the default.
+// helm-file-parameters is a Helm chart whose helm.fileParameters fail
+// before helm runs or when helm reads them, and its file is the path that
+// fails.
 const (
-	sourceDirectory = "directory"
-	sourceHelm      = "helm"
-	sourceKustomize = "kustomize"
-	sourcePlugin    = "plugin"
+	sourceDirectory          = "directory"
+	sourceHelm               = "helm"
+	sourceHelmFileParameters = "helm-file-parameters"
+	sourceKustomize          = "kustomize"
+	sourcePlugin             = "plugin"
 )
 
 // pluginOutputName is the name drydock gives the output of a config
@@ -247,10 +252,10 @@ func (tc expectedCase) validateSource() error {
 		return fmt.Errorf("expected case %s must name the failing file", tc.Name)
 	}
 	switch tc.SourceType() {
-	case sourceDirectory, sourceHelm, sourceKustomize, sourcePlugin:
+	case sourceDirectory, sourceHelm, sourceHelmFileParameters, sourceKustomize, sourcePlugin:
 		return nil
 	}
-	return fmt.Errorf("expected case %s has source %q, want directory, helm, kustomize, or plugin", tc.Name, tc.Source)
+	return fmt.Errorf("expected case %s has source %q, want directory, helm, helm-file-parameters, kustomize, or plugin", tc.Name, tc.Source)
 }
 
 // validateDrydockMessage requires that drydock's message names the file, or

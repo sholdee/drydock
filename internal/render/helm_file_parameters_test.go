@@ -260,3 +260,102 @@ func TestCollectHelmLocalInputPathsFollowsFileParameterSymlinks(t *testing.T) {
 		t.Fatalf("paths =\n%#v\nwant\n%#v", got, want)
 	}
 }
+
+// TestHelmFileParameterSymlinksSmokeFixtureMatchesUpstream renders the two
+// file parameter symlink Applications of the Argo CD render parity smoke
+// (testdata/argocd-parity) with drydock and with the repo-server's
+// resolution, and pins the values that the smoke compares live.
+// parity-helm-file-parameter-symlinks sets its file parameters in the spec,
+// next to a $files ref to its own repository.
+// parity-helm-file-parameter-symlinks-override sets them only in its
+// .argocd-source-<name>.yaml file.
+func TestHelmFileParameterSymlinksSmokeFixtureMatchesUpstream(t *testing.T) {
+	repoRoot, err := filepath.Abs(filepath.Join("..", "..", "testdata", "argocd-parity", "repo"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	const chartPath = "charts/helm-file-parameter-symlinks"
+	spec, override, overrideParameters := readHelmFileParameterSymlinkApplications(t, repoRoot, chartPath)
+	for _, tt := range []struct {
+		name       string
+		parameters []argoappv1.HelmFileParameter
+		want       map[string]string
+	}{
+		{
+			name:       spec.Name,
+			parameters: spec.Spec.Sources[1].Helm.FileParameters,
+			want: map[string]string{
+				"linked":     "from-symlink-target\n",
+				"chain":      "from-symlink-target\n",
+				"linkedDir":  "from-linked-dir\n",
+				"absolute":   "from-symlink-target\n",
+				"lexical":    "lexical\n",
+				"ref":        "from-symlink-target\n",
+				"overridden": "from-symlink-target\n",
+			},
+		},
+		{
+			name:       override.Name,
+			parameters: overrideParameters,
+			want: map[string]string{
+				"chain":      "from-symlink-target\n",
+				"linkedDir":  "from-linked-dir\n",
+				"overridden": "from-symlink-target\n",
+			},
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			refRoots := map[string]string{"$files": repoRoot}
+			upstream, err := upstreamHelmFileParameterValues(filepath.Join(repoRoot, chartPath), repoRoot, refRoots, tt.parameters)
+			if err != nil {
+				t.Fatalf("upstream error = %v", err)
+			}
+			if !reflect.DeepEqual(upstream, tt.want) {
+				t.Fatalf("upstream values = %v, want %v", upstream, tt.want)
+			}
+			result, _, err := (HelmRenderer{}).Render(context.Background(), ResolvedSource{RepoRoot: repoRoot, Path: chartPath}, RenderOptions{
+				AppName:            tt.name,
+				Namespace:          "parity-helm-file-parameter-symlinks",
+				RefRoots:           refRoots,
+				HelmFileParameters: tt.parameters,
+			})
+			if err != nil {
+				t.Fatalf("Render() error = %v", err)
+			}
+			got, _, _ := unstructured.NestedStringMap(result[0].Object.Object, "data")
+			if !reflect.DeepEqual(got, tt.want) {
+				t.Fatalf("data = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+// readHelmFileParameterSymlinkApplications reads the two file parameter
+// symlink Applications of the smoke fixture and the file parameters of the
+// override file of the second one.
+func readHelmFileParameterSymlinkApplications(t *testing.T, repoRoot, chartPath string) (spec, override argoappv1.Application, overrideParameters []argoappv1.HelmFileParameter) {
+	t.Helper()
+	read := func(path string, into any) {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := yaml.Unmarshal(data, into); err != nil {
+			t.Fatal(err)
+		}
+	}
+	read(filepath.Join(repoRoot, "applications", "helm-file-parameter-symlinks.yaml"), &spec)
+	if len(spec.Spec.Sources) != 2 || spec.Spec.Sources[1].Path != chartPath || spec.Spec.Sources[1].Helm == nil {
+		t.Fatalf("parity-helm-file-parameter-symlinks sources = %#v", spec.Spec.Sources)
+	}
+	read(filepath.Join(repoRoot, "applications", "helm-file-parameter-symlinks-override.yaml"), &override)
+	if override.Spec.Source == nil || override.Spec.Source.Path != chartPath || override.Spec.Source.Helm != nil {
+		t.Fatalf("parity-helm-file-parameter-symlinks-override source = %#v", override.Spec.Source)
+	}
+	var overrideSource argoappv1.ApplicationSource
+	read(filepath.Join(repoRoot, chartPath, ".argocd-source-"+override.Name+".yaml"), &overrideSource)
+	if overrideSource.Helm == nil {
+		t.Fatal("the override file sets no helm block")
+	}
+	return spec, override, overrideSource.Helm.FileParameters
+}

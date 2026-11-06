@@ -209,3 +209,40 @@ cases:
     file: other/escape.yaml
     argocdMessage: "repository contains out-of-bounds symlinks. file: other/escape.yaml"
     drydockMessage: "repository contains out-of-bounds symlinks. file: other/escape.yaml"
+  # Helm file parameters (source helm-file-parameters). The repo-server
+  # resolves every fileParameters path before it runs helm, also a path that
+  # a later entry with the same name overrides (helmTemplate,
+  # reposerver/repository/repository.go:1361-1377). The resolver
+  # (ResolveValueFilePathOrUrl, util/io/path/resolved.go:112-187) follows a
+  # symlink at the path itself and joins its target to the directory of the
+  # path as text. file-parameter-links/lexical-dir is a symlink to
+  # targets/deep, and targets/deep/up.txt goes three directories up. From
+  # targets/deep that stays in the repository, so the out-of-bounds check
+  # passes, but from lexical-dir it leaves the repository root as text.
+  - name: parity-decode-helm-fileparam-lexical-escape
+    source: helm-file-parameters
+    file: ../../../file-parameter-links/lexical-dir/up.txt
+    argocdMessage: "error resolving helm value file path: file '../../../file-parameter-links/lexical-dir/up.txt' resolved to outside repository root"
+    drydockMessage: "error resolving helm value file path: file '../../../file-parameter-links/lexical-dir/up.txt' resolved to outside repository root"
+  # The same path fails when a later entry with the same name overrides it,
+  # though helm never reads it. That entry reads a regular file.
+  - name: parity-decode-helm-fileparam-overridden-escape
+    source: helm-file-parameters
+    file: ../../../file-parameter-links/lexical-dir/up.txt
+    argocdMessage: "error resolving helm value file path: file '../../../file-parameter-links/lexical-dir/up.txt' resolved to outside repository root"
+    drydockMessage: "error resolving helm value file path: file '../../../file-parameter-links/lexical-dir/up.txt' resolved to outside repository root"
+  # A dangling symlink resolves to its missing target, and helm --set-file
+  # fails to read it. The repo-server names the target under
+  # "<path to cached source>", drydock under the repository root.
+  - name: parity-decode-helm-fileparam-dangling
+    source: helm-file-parameters
+    file: file-parameter-links/missing-target.txt
+    argocdMessage: "file-parameter-links/missing-target.txt: no such file or directory"
+    drydockMessage: "file-parameter-links/missing-target.txt: no such file or directory"
+  # A symlink to a directory resolves to the directory, which helm
+  # --set-file cannot read.
+  - name: parity-decode-helm-fileparam-directory
+    source: helm-file-parameters
+    file: file-parameter-links/targets
+    argocdMessage: "file-parameter-links/targets: is a directory"
+    drydockMessage: "file-parameter-links/targets: is a directory"

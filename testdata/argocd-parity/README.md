@@ -684,6 +684,68 @@ manifests` lists hooks, but drydock keeps hooks out of its build output.
 renders the chart with drydock and with the upstream oracle and requires the
 same objects.
 
+## Helm file parameter symlink fixture
+
+Argo CD v3.6.1 resolves every `helm.fileParameters` path before it runs
+helm, with `ResolveValueFilePathOrUrl` (`util/io/path/resolved.go`). When
+the path itself is a symlink, the resolver follows it and joins a relative
+target to the directory of the path as text. helm `--set-file` then reads
+the resolved path. `file-parameter-links/` holds the symlinks. It is
+outside every chart, because drydock rejects a symlink in a chart. Git
+stores each symlink as mode `120000`, and every symlink stays in the
+repository, so the out-of-bounds symlink check passes.
+
+| path | what it is |
+| --- | --- |
+| `linked.txt` | symlink to `targets/message.txt` |
+| `chain.txt` | symlink to `linked.txt` |
+| `linked-dir`, `to-dir` | symlinks to the directory `targets` |
+| `lexical-dir` | symlink to the directory `targets/deep` |
+| `targets/deep/sibling.txt` | symlink to `../which.txt` |
+| `targets/deep/up.txt` | symlink to `../../../file-parameter-links/targets/message.txt` |
+| `dangling.txt` | symlink to `missing-target.txt`, which does not exist |
+| `which.txt`, `targets/which.txt` | `lexical` and `physical` |
+
+`applications/helm-file-parameter-symlinks.yaml`
+(`parity-helm-file-parameter-symlinks`) renders
+`charts/helm-file-parameter-symlinks`, whose ConfigMap prints every value.
+It has a second source, the same repository with `ref: files`. Both
+Argo CD and drydock must render this `data`:
+
+| key | file parameter path | value |
+| --- | --- | --- |
+| `linked` | `../../file-parameter-links/linked.txt` | `from-symlink-target` |
+| `chain` | `../../file-parameter-links/chain.txt` | `from-symlink-target` |
+| `linkedDir` | `../../file-parameter-links/linked-dir/inner.txt` | `from-linked-dir` |
+| `absolute` | `/file-parameter-links/linked.txt`, relative to the repository root | `from-symlink-target` |
+| `lexical` | `../../file-parameter-links/lexical-dir/sibling.txt` | `lexical` |
+| `ref` | `$files/file-parameter-links/chain.txt` | `from-symlink-target` |
+| `overridden` | the last of four entries, `../../file-parameter-links/targets/message.txt` | `from-symlink-target` |
+
+`lexical` is `lexical`, not `physical`. The real directory of
+`sibling.txt` is `targets/deep`, so the symlink points at
+`targets/which.txt`. The resolver joins `../which.txt` to the path as
+written, `file-parameter-links/lexical-dir`, so helm reads
+`file-parameter-links/which.txt`. The three overridden `overridden` entries
+are `dangling.txt`, `to-dir`, and `$files/file-parameter-links/dangling.txt`.
+They resolve, so the render does not fail, and helm never reads them.
+
+`applications/helm-file-parameter-symlinks-override.yaml`
+(`parity-helm-file-parameter-symlinks-override`) renders the same chart but
+sets no file parameters. They come from the chart's
+`.argocd-source-parity-helm-file-parameter-symlinks-override.yaml`, which
+the other Application does not read. Both sides must render this `data`:
+
+| key | value |
+| --- | --- |
+| `chain` | `from-symlink-target` |
+| `linkedDir` | `from-linked-dir` |
+| `overridden` | `from-symlink-target`, after an overridden `dangling.txt` |
+
+`TestHelmFileParameterSymlinksSmokeFixtureMatchesUpstream` in
+`internal/render` renders both with drydock and with the upstream resolver.
+"Helm file parameters that fail the source" below lists the failing cases.
+
 ## ApplicationSet name validation fixture
 
 Argo CD v3.6.1 checks every generated Application name before it creates
@@ -1128,6 +1190,27 @@ Argo CD texts must match exactly.
 then runs `drydock build app` for each Application and saves the exit code
 and stderr. `scripts/argocd-directory-decode-smoke` compares the two sides.
 The results go to `directory-decode/` in the smoke output directory.
+
+### Helm file parameters that fail the source
+
+Four more cases set `source: helm-file-parameters`. Each is a Helm chart
+whose `helm.fileParameters` use `file-parameter-links/` (see "Helm file
+parameter symlink fixture"). `file` is the path that the messages name.
+
+| Application | why it fails |
+| --- | --- |
+| `parity-decode-helm-fileparam-lexical-escape` | `lexical-dir/up.txt` goes three directories up from `lexical-dir` as text, which leaves the repository root: `file '<path>' resolved to outside repository root` |
+| `parity-decode-helm-fileparam-overridden-escape` | the same path in an entry that a later entry overrides. The repo-server resolves it anyway |
+| `parity-decode-helm-fileparam-dangling` | `dangling.txt` resolves to `missing-target.txt`, and helm cannot read it |
+| `parity-decode-helm-fileparam-directory` | `to-dir` resolves to the directory `targets`, and helm cannot read it |
+
+The repo-server names a read failure under `<path to cached source>`, and
+drydock names it under the repository root, so the expected texts start at
+`file-parameter-links/`. A symlink loop and a symlink to the repository
+root fail with `internal error: failed to resolve path`, which names no
+file, so only the unit tests cover them. `TestGeneratedParityDecodeFixtures`
+in `internal/render` runs these cases with drydock and with the upstream
+resolver.
 
 ## Live diff fixture
 

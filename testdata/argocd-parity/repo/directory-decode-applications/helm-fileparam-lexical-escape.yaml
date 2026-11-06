@@ -1,0 +1,18 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: parity-decode-helm-fileparam-lexical-escape
+  namespace: parity-directory-decode
+spec:
+  project: parity-directory-decode
+  source:
+    repoURL: git://argocd-parity-git.argocd-parity.svc.cluster.local/repo.git
+    targetRevision: HEAD
+    path: workloads/directory-decode/helm-fileparam-lexical-escape
+    helm:
+      fileParameters:
+        - name: value
+          path: ../../../file-parameter-links/lexical-dir/up.txt
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: parity-directory-decode-workloads

@@ -1,0 +1,39 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: parity-helm-file-parameter-symlinks
+  namespace: argocd
+spec:
+  project: default
+  sources:
+    - repoURL: git://argocd-parity-git.argocd-parity.svc.cluster.local/repo.git
+      targetRevision: HEAD
+      ref: files
+    - repoURL: git://argocd-parity-git.argocd-parity.svc.cluster.local/repo.git
+      targetRevision: HEAD
+      path: charts/helm-file-parameter-symlinks
+      helm:
+        fileParameters:
+          - name: linked
+            path: ../../file-parameter-links/linked.txt
+          - name: chain
+            path: ../../file-parameter-links/chain.txt
+          - name: linkedDir
+            path: ../../file-parameter-links/linked-dir/inner.txt
+          - name: absolute
+            path: /file-parameter-links/linked.txt
+          - name: lexical
+            path: ../../file-parameter-links/lexical-dir/sibling.txt
+          - name: ref
+            path: $files/file-parameter-links/chain.txt
+          - name: overridden
+            path: ../../file-parameter-links/dangling.txt
+          - name: overridden
+            path: ../../file-parameter-links/to-dir
+          - name: overridden
+            path: $files/file-parameter-links/dangling.txt
+          - name: overridden
+            path: ../../file-parameter-links/targets/message.txt
+  destination:
+    name: in-cluster
+    namespace: parity-helm-file-parameter-symlinks
