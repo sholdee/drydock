@@ -2,6 +2,7 @@ package source
 
 import (
 	"context"
+	"fmt"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -76,14 +77,14 @@ func TestLsRemoteRevision(t *testing.T) {
 		{name: "hex branch of another remote wins over the commit", revision: hexRemoteBranch, checkout: sha, want: sha},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			hash, err := resolveCheckoutRevision(fixture.repo, tc.revision)
+			hash, err := resolveCheckoutRevision(fixture.repo, tc.revision, "")
 			if err != nil {
 				t.Fatalf("resolveCheckoutRevision(%q) error = %v", tc.revision, err)
 			}
 			if hash.String() != tc.checkout {
 				t.Fatalf("resolveCheckoutRevision(%q) = %s, want %s", tc.revision, hash, tc.checkout)
 			}
-			if got := LsRemoteRevision(fixture.repo, tc.revision, hash.String()); got != tc.want {
+			if got := LsRemoteRevision(fixture.repo, tc.revision, hash.String(), ""); got != tc.want {
 				t.Fatalf("LsRemoteRevision(%q) = %q, want %q", tc.revision, got, tc.want)
 			}
 		})
@@ -100,6 +101,9 @@ func TestPinnedRevision(t *testing.T) {
 	if err := fixture.repo.Storer.SetReference(plumbing.NewHashReference(plumbing.NewBranchReferenceName(hexBranch), commit)); err != nil {
 		t.Fatalf("SetReference(branch %s) error = %v", hexBranch, err)
 	}
+	// git checkout of an abbreviated annotated tag object checks out the
+	// commit the tag points to.
+	tagObject := createAnnotatedFixtureTag(t, fixture.repo, "v1.0.0", first)
 	upper := strings.ToUpper(first.String())
 	for _, tc := range []struct {
 		name          string
@@ -111,17 +115,103 @@ func TestPinnedRevision(t *testing.T) {
 		{name: "full SHA", repo: fixture.repo, revision: upper, single: first.String(), multi: upper, ok: true},
 		{name: "full SHA without a repository", revision: upper, single: first.String(), multi: upper, ok: true},
 		{name: "abbreviated SHA of an older commit", repo: fixture.repo, revision: first.String()[:10], single: first.String(), multi: first.String()[:10], ok: true},
+		{name: "abbreviated annotated tag object", repo: fixture.repo, revision: tagObject.String()[:10], single: first.String(), multi: tagObject.String()[:10], ok: true},
 		{name: "abbreviated SHA that names no commit", repo: fixture.repo, revision: "abcdef0123", single: "", multi: "abcdef0123", ok: true},
 		{name: "hex branch name", repo: fixture.repo, revision: hexBranch, single: commit.String(), multi: commit.String(), ok: true},
 		{name: "branch", repo: fixture.repo, revision: "master"},
 		{name: "HEAD", repo: fixture.repo, revision: "HEAD"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			single, multi, ok := PinnedRevision(tc.repo, tc.revision)
-			if single != tc.single || multi != tc.multi || ok != tc.ok {
-				t.Fatalf("PinnedRevision(%q) = %q, %q, %t; want %q, %q, %t", tc.revision, single, multi, ok, tc.single, tc.multi, tc.ok)
+			single, multi, ok, err := PinnedRevision(tc.repo, tc.revision, "")
+			if err != nil || single != tc.single || multi != tc.multi || ok != tc.ok {
+				t.Fatalf("PinnedRevision(%q) = %q, %q, %t, %v; want %q, %q, %t", tc.revision, single, multi, ok, err, tc.single, tc.multi, tc.ok)
 			}
 		})
+	}
+}
+
+// An abbreviation that matches more than one commit or tag fails, as git
+// checkout fails with "short object ID ... is ambiguous". Seven hex digits
+// cannot be made to collide in a test, so this uses a one-digit prefix that
+// two of many commits share.
+func TestResolveAbbreviatedCommitFailsWhenAmbiguous(t *testing.T) {
+	fixture := createGitFixture(t)
+	byFirstDigit := map[byte][]plumbing.Hash{}
+	var shared byte
+	for i := 0; i < 64 && shared == 0; i++ {
+		hash := commitFixtureFile(t, fixture.repo, fixture.worktree, "config.yaml", fmt.Sprintf("version: %d\n", i))
+		digit := hash.String()[0]
+		byFirstDigit[digit] = append(byFirstDigit[digit], hash)
+		if len(byFirstDigit[digit]) == 2 {
+			shared = digit
+		}
+	}
+	if shared == 0 {
+		t.Fatal("no two commits share a first hex digit")
+	}
+	if _, _, err := resolveAbbreviatedCommit(fixture.repo, string(shared)); err == nil || !strings.Contains(err.Error(), "is ambiguous") {
+		t.Fatalf("resolveAbbreviatedCommit(%q) error = %v, want ambiguous", string(shared), err)
+	}
+	unique := byFirstDigit[shared][0]
+	hash, found, err := resolveAbbreviatedCommit(fixture.repo, unique.String()[:12])
+	if err != nil || !found || hash != unique {
+		t.Fatalf("resolveAbbreviatedCommit(unique) = %s, %t, %v; want %s", hash, found, err, unique)
+	}
+}
+
+// ls-remote matches ref names first, also for a short name of hex digits
+// such as the tags `c` and `2024`. go-git would prefer a commit whose SHA
+// starts with the name.
+func TestResolveCheckoutRevisionPrefersShortHexRefNames(t *testing.T) {
+	fixture := createGitFixture(t)
+	tagged := commitFixtureFile(t, fixture.repo, fixture.worktree, "config.yaml", "version: tagged\n")
+	var prefixed plumbing.Hash
+	for i := 0; i < 256 && prefixed.IsZero(); i++ {
+		hash := commitFixtureFile(t, fixture.repo, fixture.worktree, "config.yaml", fmt.Sprintf("version: %d\n", i))
+		if strings.HasPrefix(hash.String(), "c") && hash != tagged {
+			prefixed = hash
+		}
+	}
+	if prefixed.IsZero() {
+		t.Fatal("no commit SHA starts with c")
+	}
+	for _, name := range []string{"c", "2024"} {
+		createAnnotatedFixtureTag(t, fixture.repo, name, tagged)
+		hash, err := resolveCheckoutRevision(fixture.repo, name, "")
+		if err != nil || *hash != tagged {
+			t.Fatalf("resolveCheckoutRevision(%q) = %v, %v; want the tag commit %s", name, hash, err, tagged)
+		}
+	}
+	if _, err := resolveCheckoutRevision(fixture.repo, "cafe", ""); err == nil {
+		t.Fatal("resolveCheckoutRevision(cafe) error = nil, want unable to resolve a short hex name that names no ref")
+	}
+}
+
+// A branch of the remote whose URL is the repoURL of the source wins. When
+// no remote has that URL, the remotes are tried in name order.
+func TestLsRemoteRefCommitPicksTheRemoteOfTheRepoURL(t *testing.T) {
+	fixture := createGitFixture(t)
+	older := commitFixtureFile(t, fixture.repo, fixture.worktree, "config.yaml", "version: older\n")
+	newer := commitFixtureFile(t, fixture.repo, fixture.worktree, "config.yaml", "version: newer\n")
+	for _, remote := range []struct {
+		name, url string
+		hash      plumbing.Hash
+	}{
+		{name: "aaa", url: "https://example.invalid/other.git", hash: older},
+		{name: "zzz", url: "git@example.invalid:org/app.git", hash: newer},
+	} {
+		if _, err := fixture.repo.CreateRemote(&config.RemoteConfig{Name: remote.name, URLs: []string{remote.url}}); err != nil {
+			t.Fatalf("CreateRemote(%s) error = %v", remote.name, err)
+		}
+		if err := fixture.repo.Storer.SetReference(plumbing.NewHashReference(plumbing.NewRemoteReferenceName(remote.name, "deadbeef1"), remote.hash)); err != nil {
+			t.Fatalf("SetReference(%s/deadbeef1) error = %v", remote.name, err)
+		}
+	}
+	if hash, ok := lsRemoteRefCommit(fixture.repo, "deadbeef1", "https://example.invalid/org/app"); !ok || hash != newer {
+		t.Fatalf("lsRemoteRefCommit(matching URL) = %s, %t; want %s", hash, ok, newer)
+	}
+	if hash, ok := lsRemoteRefCommit(fixture.repo, "deadbeef1", "https://example.invalid/unknown.git"); !ok || hash != older {
+		t.Fatalf("lsRemoteRefCommit(no matching URL) = %s, %t; want the first remote by name %s", hash, ok, older)
 	}
 }
 

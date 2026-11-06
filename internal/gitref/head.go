@@ -25,13 +25,13 @@ func HeadRevision(repoPath string) string {
 // repository whose top-level directory is repoPath. A revision that is not
 // hex returns before the repository is opened. When repoPath is no
 // repository top, only a full SHA resolves.
-func PinnedRevision(repoPath, revision string) (single, multi string, ok bool) {
+func PinnedRevision(repoPath, revision, repoURL string) (single, multi string, ok bool, err error) {
 	if !source.IsHexRevision(revision) {
-		return "", "", false
+		return "", "", false, nil
 	}
-	repo, _, err := openLocalRepository(repoPath)
-	if err != nil {
-		return source.PinnedRevision(nil, revision)
+	repo, _, openErr := openLocalRepository(repoPath)
+	if openErr != nil {
+		return source.PinnedRevision(nil, revision, repoURL)
 	}
-	return source.PinnedRevision(repo, revision)
+	return source.PinnedRevision(repo, revision, repoURL)
 }
