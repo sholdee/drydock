@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -123,6 +124,12 @@ func loadApplicationInventories(options ApplicationOptions) (map[string]string, 
 	if err != nil {
 		return nil, nil, fmt.Errorf("load argocd applications: %w", err)
 	}
+	// Two empty inventories would match. An empty Argo CD side means the
+	// capture ran too early or against the wrong cluster, not that both
+	// sides agree, so it fails here.
+	if len(argocd) == 0 {
+		return nil, nil, fmt.Errorf("load argocd applications: %s holds no Applications", options.ArgoCDFile)
+	}
 	drydock, err := loadDrydockApplications(options.DrydockFile)
 	if err != nil {
 		return nil, nil, fmt.Errorf("load drydock applications: %w", err)
@@ -169,6 +176,11 @@ func loadDrydockApplications(path string) (map[string]string, error) {
 	var projections []applicationProjection
 	if err := decoder.Decode(&projections); err != nil {
 		return nil, fmt.Errorf("decode %s: %w", path, err)
+	}
+	// Decode reads one JSON value. Anything after it means the capture
+	// mixed other output into the file, so it fails the load.
+	if _, err := decoder.Token(); !errors.Is(err, io.EOF) {
+		return nil, fmt.Errorf("decode %s: unexpected data after the Application list", path)
 	}
 	return indexApplicationProjections(path, projections)
 }
