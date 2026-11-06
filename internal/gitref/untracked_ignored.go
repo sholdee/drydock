@@ -58,6 +58,62 @@ type gitIgnoredSet struct {
 // not in a Git worktree, when it is a subdirectory that the worktree does not
 // track, or when Git ignores root itself.
 func OpenUntrackedIgnoredFilter(ctx context.Context, root string) (*UntrackedIgnoredFilter, error) {
+	// Git itself opens every repository it supports, such as one with
+	// reftable refs or extensions.worktreeConfig, which go-git v5 refuses.
+	if filter, ok := gitCLIUntrackedIgnoredFilter(ctx, root); ok {
+		return filter, nil
+	}
+	return goGitOpenUntrackedIgnoredFilter(ctx, root)
+}
+
+// gitCLIUntrackedIgnoredFilter builds the filter with the git CLI alone: the
+// top level and the prefix from git rev-parse, the tracked check of a
+// subdirectory root from git ls-files, and the ignored set. It reports
+// false when git is not on PATH or a call fails, so the caller falls back
+// to go-git.
+func gitCLIUntrackedIgnoredFilter(ctx context.Context, root string) (*UntrackedIgnoredFilter, bool) {
+	out, ok := runGitCLI(ctx, root, "rev-parse", "--show-toplevel", "--show-prefix")
+	if !ok {
+		return nil, false
+	}
+	lines := strings.Split(strings.TrimRight(string(out), "\n"), "\n")
+	if len(lines) == 0 || strings.TrimSpace(lines[0]) == "" {
+		return nil, false
+	}
+	top := lines[0]
+	prefix := ""
+	if len(lines) > 1 {
+		prefix = strings.TrimSuffix(lines[1], "/")
+	}
+	// A root in a subdirectory must be a tree the worktree tracks. A
+	// directory that only happens to sit inside some other worktree, such
+	// as a temporary directory, is checked whole.
+	if prefix != "" {
+		tracked, ok := runGitCLI(ctx, top, "ls-files", "-z", "--cached", "--", prefix+"/")
+		if !ok {
+			return nil, false
+		}
+		if len(tracked) == 0 {
+			return &UntrackedIgnoredFilter{}, true
+		}
+	}
+	set, ok := gitCLIIgnoredSet(ctx, top)
+	if !ok {
+		return nil, false
+	}
+	filter := &UntrackedIgnoredFilter{git: set}
+	// A root that Git ignores holds nothing a commit can hold. The user
+	// still chose it as the repository, so check it whole.
+	if prefix != "" && filter.skipFull(prefix, true) {
+		return &UntrackedIgnoredFilter{}, true
+	}
+	filter.prefix = prefix
+	return filter, true
+}
+
+// goGitOpenUntrackedIgnoredFilter is OpenUntrackedIgnoredFilter without the
+// git CLI.
+func goGitOpenUntrackedIgnoredFilter(_ context.Context, root string) (*UntrackedIgnoredFilter, error) {
 	repo, err := git.PlainOpenWithOptions(root, &git.PlainOpenOptions{DetectDotGit: true, EnableDotGitCommonDir: true})
 	if err != nil {
 		if errors.Is(err, git.ErrRepositoryNotExists) {
@@ -83,14 +139,9 @@ func OpenUntrackedIgnoredFilter(ctx context.Context, root string) (*UntrackedIgn
 	if prefix != "" && !indexTracksDir(repo, prefix) {
 		return &UntrackedIgnoredFilter{}, nil
 	}
-	var filter *UntrackedIgnoredFilter
-	if set, ok := gitCLIIgnoredSet(ctx, top); ok {
-		filter = &UntrackedIgnoredFilter{git: set}
-	} else {
-		filter, err = goGitUntrackedIgnoredFilter(repo, worktree.Filesystem.Root())
-		if err != nil {
-			return nil, err
-		}
+	filter, err := goGitUntrackedIgnoredFilter(repo, top)
+	if err != nil {
+		return nil, err
 	}
 	// A root that Git ignores holds nothing a commit can hold. The user
 	// still chose it as the repository, so check it whole.
@@ -188,25 +239,12 @@ func gitCLIEnv() []string {
 // refuses as unsafe. The command reads the index and the worktree only: it
 // takes no lock, runs no fsmonitor hook, and prompts for nothing.
 func gitCLIIgnoredSet(ctx context.Context, top string) (*gitIgnoredSet, bool) {
-	gitBin, err := exec.LookPath("git")
-	if err != nil {
-		return nil, false
-	}
-	ctx, cancel := context.WithTimeout(ctx, gitCLITimeout)
-	defer cancel()
-	cmd := exec.CommandContext(ctx, gitBin,
-		"-c", "core.fsmonitor=false",
-		"-C", top,
-		"ls-files", "-z", "--others", "--ignored", "--exclude-standard", "--directory")
-	cmd.Env = gitCLIEnv()
-	cmd.WaitDelay = time.Second
-	var stdout bytes.Buffer
-	cmd.Stdout = &stdout
-	if err := cmd.Run(); err != nil {
+	out, ok := runGitCLI(ctx, top, "ls-files", "-z", "--others", "--ignored", "--exclude-standard", "--directory")
+	if !ok {
 		return nil, false
 	}
 	set := &gitIgnoredSet{files: map[string]struct{}{}, dirs: map[string]struct{}{}}
-	for entry := range strings.SplitSeq(stdout.String(), "\x00") {
+	for entry := range strings.SplitSeq(string(out), "\x00") {
 		switch {
 		case entry == "":
 		case strings.HasSuffix(entry, "/"):
@@ -216,6 +254,27 @@ func gitCLIIgnoredSet(ctx context.Context, top string) (*gitIgnoredSet, bool) {
 		}
 	}
 	return set, true
+}
+
+// runGitCLI runs git in dir with the clean environment of gitCLIEnv,
+// without the fsmonitor hook, and within gitCLITimeout. It reports false
+// when git is not on PATH or the call fails.
+func runGitCLI(ctx context.Context, dir string, args ...string) ([]byte, bool) {
+	gitBin, err := exec.LookPath("git")
+	if err != nil {
+		return nil, false
+	}
+	ctx, cancel := context.WithTimeout(ctx, gitCLITimeout)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, gitBin, append([]string{"-c", "core.fsmonitor=false", "-C", dir}, args...)...)
+	cmd.Env = gitCLIEnv()
+	cmd.WaitDelay = time.Second
+	var stdout bytes.Buffer
+	cmd.Stdout = &stdout
+	if err := cmd.Run(); err != nil {
+		return nil, false
+	}
+	return stdout.Bytes(), true
 }
 
 // goGitUntrackedIgnoredFilter is the fallback without the git CLI.

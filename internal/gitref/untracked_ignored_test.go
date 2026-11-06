@@ -369,3 +369,59 @@ func newSnapshotRepoAt(t *testing.T, root string) (string, *git.Repository, *git
 	}
 	return root, repo, wt
 }
+
+// TestUntrackedIgnoredFilterOpensRepositoriesThatGoGitRefuses pins that the
+// git CLI path also serves a repository that go-git v5 cannot open: one
+// with reftable refs, and one with extensions.worktreeConfig, which git
+// sparse-checkout sets. An ignored, untracked virtual environment is left
+// out there too.
+func TestUntrackedIgnoredFilterOpensRepositoriesThatGoGitRefuses(t *testing.T) {
+	gitBin, err := exec.LookPath("git")
+	if err != nil {
+		t.Skip("git not installed")
+	}
+	isolateGitUserConfig(t)
+	run := func(t *testing.T, dir string, args ...string) {
+		t.Helper()
+		full := append([]string{"-c", "user.name=Test", "-c", "user.email=test@example.invalid", "-C", dir}, args...)
+		if out, err := exec.Command(gitBin, full...).CombinedOutput(); err != nil {
+			t.Skipf("git %v: %v: %s", args, err, out)
+		}
+	}
+	for name, setup := range map[string]func(t *testing.T, dir string){
+		"reftable": func(t *testing.T, dir string) {
+			run(t, dir, "init", "-q", "--ref-format=reftable")
+		},
+		"worktreeConfig": func(t *testing.T, dir string) {
+			run(t, dir, "init", "-q")
+			run(t, dir, "config", "core.repositoryformatversion", "1")
+			run(t, dir, "config", "extensions.worktreeConfig", "true")
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			root := t.TempDir()
+			setup(t, root)
+			if _, err := git.PlainOpen(root); err == nil {
+				t.Log("go-git opened the repository; the test still checks the git CLI path")
+			}
+			writeChangeSetFile(t, filepath.Join(root, ".gitignore"), ".venv/\n")
+			writeChangeSetFile(t, filepath.Join(root, "gitops", "app", "cm.yaml"), "a: 1\n")
+			run(t, root, "add", ".")
+			run(t, root, "commit", "-q", "-m", "fixture")
+			writeChangeSetFile(t, filepath.Join(root, "gitops", ".venv", "bin", "python"), "x\n")
+			for _, base := range []string{root, filepath.Join(root, "gitops")} {
+				filter, err := OpenUntrackedIgnoredFilter(t.Context(), base)
+				if err != nil {
+					t.Fatalf("OpenUntrackedIgnoredFilter(%s) error = %v", base, err)
+				}
+				rel := ".venv"
+				if base == root {
+					rel = "gitops/.venv"
+				}
+				if !filter.Skip(rel, true) {
+					t.Fatalf("Skip(%s) from %s = false, want the ignored virtual environment left out", rel, base)
+				}
+			}
+		})
+	}
+}
