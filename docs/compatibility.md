@@ -760,6 +760,40 @@ Supported:
   the keys under `configs.cm`. A key that starts with
   `resource.customizations` counts, with or without a dot after it, because
   Argo CD reads both forms.
+- `configs.cm` in an Argo CD Helm values file, read as the argo-helm
+  `argo-cd` chart 10.14.0 turns it into `argocd-cm`. The chart helper
+  `argo-cd.config.cm` is in `templates/_helpers.tpl`. drydock reads the
+  values file as Helm does, so `yes` and `on` are `true`, and every
+  number is a float. Then drydock does what the chart does:
+  - If `create` has a false value, the chart makes no `argocd-cm`. drydock
+    then reads no `argocd-cm` settings from the file.
+  - The keys `create`, `annotations`, and `resourceExclusionsAdditional`
+    do not go into `argocd-cm`.
+  - If `resourceExclusionsAdditional` is set, its YAML text goes at the end
+    of `resource.exclusions`. If `resource.exclusions` is then a value that
+    is not text, the chart fails, and drydock reports an error.
+  - Each value becomes text with the Helm `toString` function. For example,
+    `100000000` becomes `1e+08`, and a map becomes `map[a:1]`.
+  - A key whose text is empty does not go into `argocd-cm`. So
+    `resource.customizations.useOpenLibs.Service: ""` sets nothing. In a
+    raw `argocd-cm` ConfigMap, the same empty value is an error, as in
+    Argo CD.
+
+  drydock does not read the default values of the chart. If the chart has a
+  default for a key, Helm removes the key when its value is `null`. Helm writes
+  `<nil>` for a `null` key that the chart does not define. drydock always
+  removes a key with a `null` value. For the same reason,
+  `resourceExclusionsAdditional` goes only after a `resource.exclusions`
+  value that the values file itself sets.
+- Several Argo CD settings files, one file at a time. drydock reads each
+  `argocd-cm` ConfigMap and each Helm values file on its own. Then drydock
+  merges the settings field by field. If two files set the same field of
+  the same `resource.customizations` key to different values, drydock
+  reports a conflict. Helm instead merges all values files of one release
+  into one `configs.cm` map, and a later file wins for each key. drydock
+  does not know which values files one Argo CD release uses, or their
+  order. So for layered values files, drydock reports a conflict where Helm
+  keeps the value from the later file.
 - Ignore rule order as in Argo CD v3.6.1. Application rules run first, then
   the resource's annotation rule, then `resource.customizations` rules
   (`util/argo/diff/ignore.go`, `util/argo/normalizers/diff_normalizer.go`).
