@@ -192,20 +192,35 @@ func assertAppRevisionChartData(t *testing.T, manifests []render.Manifest, name,
 // variables reach Helm parameters, Kustomize commonAnnotations and
 // commonLabels, and Jsonnet extVars and TLAs.
 func TestBuildLocalSourcesSeeHeadCommitAsAppRevision(t *testing.T) {
-	root := t.TempDir()
-	writeAppRevisionChart(t, filepath.Join(root, "charts", "revision"))
-	writeAppRevisionHelmApp(t, root, "helm-revision", appRevisionTestRepoURL, "main", "charts/revision")
-	writeAppRevisionKustomizeApp(t, root)
-	writeAppRevisionJsonnetApp(t, root)
-	head := gitCommitAll(t, root, "initial")
-	writeTestFile(t, filepath.Join(root, "untracked.txt"), "dirty worktree\n")
+	for _, renderCache := range []bool{false, true} {
+		t.Run(fmt.Sprintf("render cache %t", renderCache), func(t *testing.T) {
+			root := t.TempDir()
+			writeAppRevisionChart(t, filepath.Join(root, "charts", "revision"))
+			writeAppRevisionHelmApp(t, root, "helm-revision", appRevisionTestRepoURL, "main", "charts/revision")
+			writeAppRevisionKustomizeApp(t, root)
+			writeAppRevisionJsonnetApp(t, root)
+			head := gitCommitAll(t, root, "initial")
+			writeTestFile(t, filepath.Join(root, "untracked.txt"), "dirty worktree\n")
 
-	result, err := Orchestrator{}.Build(context.Background(), BuildRequest{Path: root})
-	if err != nil {
-		t.Fatalf("Build() error = %v\nDiagnostics: %#v", err, result.Diagnostics)
+			request := BuildRequest{Path: root}
+			if renderCache {
+				request = persistentBuildRequest(root, t.TempDir())
+			}
+			// With the render cache on, the second run is served from it.
+			for run := range 2 {
+				result, err := Orchestrator{}.Build(context.Background(), request)
+				if err != nil {
+					t.Fatalf("Build() run %d error = %v\nDiagnostics: %#v", run, err, result.Diagnostics)
+				}
+				assertLocalAppRevisionReaders(t, result, head)
+			}
+		})
 	}
-	assertAppRevisionChartData(t, result.Manifests, "helm-revision-revision", head)
+}
 
+func assertLocalAppRevisionReaders(t *testing.T, result BuildResult, head string) {
+	t.Helper()
+	assertAppRevisionChartData(t, result.Manifests, "helm-revision-revision", head)
 	kustomized := assertManifestNamed(t, result.Manifests, "kustomize-revision")
 	if got := kustomized.Object.GetAnnotations()["example.com/revision"]; got != head {
 		t.Fatalf("Kustomize commonAnnotations revision = %q, want %q", got, head)
@@ -213,7 +228,6 @@ func TestBuildLocalSourcesSeeHeadCommitAsAppRevision(t *testing.T) {
 	if got := kustomized.Object.GetLabels()["example.com/short"]; got != head[:7] {
 		t.Fatalf("Kustomize commonLabels short = %q, want %q", got, head[:7])
 	}
-
 	jsonnetData := appRevisionData(t, result.Manifests, "jsonnet-revision")
 	if jsonnetData["revision"] != head || jsonnetData["short8"] != head[:8] {
 		t.Fatalf("Jsonnet data = %#v, want revision %q and short8 %q", jsonnetData, head, head[:8])
@@ -363,45 +377,69 @@ func TestDiffRefSidesSeeTheirOwnCommitAsAppRevision(t *testing.T) {
 
 // The persistent render cache keys a local source on its input files. A
 // source that names an ARGOCD_APP_REVISION variable also keys on the
-// revision, so a new commit re-renders it with the new SHA. A source that
-// does not name one keeps its key and still hits.
+// revision, so a new commit re-renders it with the new SHA, in a clean and
+// in a dirty worktree. A source that does not name one keeps its key and
+// still hits. A multi-source Application pinned to an abbreviated SHA keys
+// on the abbreviation, which does not change with the commit, so it hits.
 func TestPersistentCacheAppRevisionReaderRerendersOnNewCommit(t *testing.T) {
-	root := t.TempDir()
-	writeAppRevisionChart(t, filepath.Join(root, "charts", "revision"))
-	writeAppRevisionHelmApp(t, root, "reader", appRevisionTestRepoURL, "main", "charts/revision")
-	writePersistentCacheApp(t, root, "plain")
-	gitCommitAll(t, root, "initial")
-	cacheDir := t.TempDir()
-	request := persistentBuildRequest(root, cacheDir)
-	request.RecordCacheEvents = true
-	if _, err := (Orchestrator{}).Build(context.Background(), request); err != nil {
-		t.Fatalf("cold Build() error = %v", err)
-	}
+	for _, dirty := range []bool{false, true} {
+		t.Run(fmt.Sprintf("dirty %t", dirty), func(t *testing.T) {
+			root := t.TempDir()
+			writeAppRevisionChart(t, filepath.Join(root, "charts", "revision"))
+			writeAppRevisionHelmApp(t, root, "helm-revision", appRevisionTestRepoURL, "main", "charts/revision")
+			writeAppRevisionKustomizeApp(t, root)
+			writeAppRevisionJsonnetApp(t, root)
+			writePersistentCacheApp(t, root, "plain")
+			first := gitCommitAll(t, root, "initial")
+			writeAppRevisionSourcesApp(t, root, "pinned", appRevisionTestRepoURL, first[:9], "charts/revision", true)
+			gitCommitAll(t, root, "pinned")
+			if dirty {
+				writeTestFile(t, filepath.Join(root, "untracked.txt"), "dirty worktree\n")
+			}
+			request := persistentBuildRequest(root, t.TempDir())
+			request.RecordCacheEvents = true
+			if _, err := (Orchestrator{}).Build(context.Background(), request); err != nil {
+				t.Fatalf("cold Build() error = %v", err)
+			}
 
-	writeTestFile(t, filepath.Join(root, "README.md"), "unrelated change\n")
-	head := gitCommitAll(t, root, "unrelated")
-	var renderedMu sync.Mutex
-	renderedPaths := map[string]int{}
-	orchestrator := Orchestrator{}
-	orchestrator.renderObserver = func(source render.ResolvedSource) {
-		renderedMu.Lock()
-		defer renderedMu.Unlock()
-		renderedPaths[filepath.ToSlash(source.Path)]++
+			writeTestFile(t, filepath.Join(root, "README.md"), "unrelated change\n")
+			head := gitCommitAll(t, root, "unrelated")
+			if dirty {
+				writeTestFile(t, filepath.Join(root, "untracked.txt"), "still dirty\n")
+			}
+			var renderedMu sync.Mutex
+			renderedPaths := map[string]int{}
+			orchestrator := Orchestrator{}
+			orchestrator.renderObserver = func(source render.ResolvedSource) {
+				renderedMu.Lock()
+				defer renderedMu.Unlock()
+				renderedPaths[filepath.ToSlash(source.Path)]++
+			}
+			result, err := orchestrator.Build(context.Background(), request)
+			if err != nil {
+				t.Fatalf("warm Build() error = %v", err)
+			}
+			for _, readerPath := range []string{"manifests/kustomize-revision", "manifests/jsonnet-revision"} {
+				if got := renderedPaths[readerPath]; got != 1 {
+					t.Fatalf("%s renders = %d, want 1; all renders = %#v", readerPath, got, renderedPaths)
+				}
+			}
+			// helm-revision renders again; pinned hits. Both use charts/revision.
+			if got := renderedPaths["charts/revision"]; got != 1 {
+				t.Fatalf("charts/revision renders = %d, want 1 (helm-revision only); all renders = %#v", got, renderedPaths)
+			}
+			if got := renderedPaths["charts/plain"]; got != 0 {
+				t.Fatalf("plain renders = %d, want 0 persistent hit; all renders = %#v", got, renderedPaths)
+			}
+			for _, target := range []string{"argocd/plain", "argocd/pinned"} {
+				if !hasRenderCacheEvent(result.CacheEvents, cacheevent.ActionHit, target, "") {
+					t.Fatalf("CacheEvents = %#v, want %s persistent hit", result.CacheEvents, target)
+				}
+			}
+			assertLocalAppRevisionReaders(t, result, head)
+			assertAppRevisionChartData(t, result.Manifests, "pinned-revision", first[:9])
+		})
 	}
-	result, err := orchestrator.Build(context.Background(), request)
-	if err != nil {
-		t.Fatalf("warm Build() error = %v", err)
-	}
-	if got := renderedPaths["charts/revision"]; got != 1 {
-		t.Fatalf("reader renders = %d, want 1; all renders = %#v", got, renderedPaths)
-	}
-	if got := renderedPaths["charts/plain"]; got != 0 {
-		t.Fatalf("plain renders = %d, want 0 persistent hit; all renders = %#v", got, renderedPaths)
-	}
-	if !hasRenderCacheEvent(result.CacheEvents, cacheevent.ActionHit, "argocd/plain", "") {
-		t.Fatalf("CacheEvents = %#v, want plain persistent hit", result.CacheEvents)
-	}
-	assertAppRevisionChartData(t, result.Manifests, "reader-revision", head)
 }
 
 // writeAppRevisionSourcesApp writes a Helm Application like
@@ -465,11 +503,14 @@ func gitTagAppRevisionFixture(t *testing.T, root string) (string, string) {
 // These cases render from the --path tree.
 func TestBuildLocalTreeAppRevisionFollowsSingleAndMultiSourceRules(t *testing.T) {
 	root := t.TempDir()
+	writeTestFile(t, filepath.Join(root, "README.md"), "older\n")
+	older := gitCommitAll(t, root, "older")
 	writeAppRevisionChart(t, filepath.Join(root, "charts", "revision"))
 	gitCommitAll(t, root, "chart")
 	commit, tagObject := gitTagAppRevisionFixture(t, root)
 	short := commit[:9]
 	assertAnnotatedTagObject(t, commit, tagObject)
+	upper := strings.ToUpper(older)
 	cases := []struct {
 		name     string
 		revision string
@@ -482,6 +523,14 @@ func TestBuildLocalTreeAppRevisionFollowsSingleAndMultiSourceRules(t *testing.T)
 		{name: "multi-short", revision: short, multi: true, want: short},
 		{name: "multi-annotated", revision: "v1.0.0", multi: true, want: commit},
 		{name: "multi-light", revision: "light", multi: true, want: commit},
+		// A SHA pin reports what Argo CD reports for it, although drydock
+		// renders the tree at HEAD.
+		{name: "single-full-pin", revision: upper, want: older},
+		{name: "multi-full-pin", revision: upper, multi: true, want: upper},
+		{name: "single-older-short-pin", revision: older[:10], want: older},
+		{name: "multi-older-short-pin", revision: older[:10], multi: true, want: older[:10]},
+		{name: "single-unknown-short-pin", revision: "abcdef0123", want: commit},
+		{name: "multi-unknown-short-pin", revision: "abcdef0123", multi: true, want: "abcdef0123"},
 	}
 	for _, tc := range cases {
 		writeAppRevisionSourcesApp(t, root, tc.name, appRevisionTestRepoURL, tc.revision, "charts/revision", tc.multi)
@@ -663,5 +712,67 @@ data:
 		head := gitCommitAll(t, root, "unrelated")
 		writeTestFile(t, filepath.Join(dir, "extra-"+head[:7]+".yaml"), "extra: substituted\n")
 		gitCommitAll(t, root, "substituted for the new head")
+	}
+}
+
+// With --changed-only, an Application that reads an ARGOCD_APP_REVISION
+// variable is selected whenever the two sides render different commits:
+// its output changes with the commit, as in Argo CD. A reader found only
+// through its .argocd-source override counts too. A change elsewhere does
+// not select an Application that reads no variable.
+func TestDiffChangedOnlySelectsAppRevisionReaders(t *testing.T) {
+	root := t.TempDir()
+	writeAppRevisionChart(t, filepath.Join(root, "charts", "revision"))
+	writeAppRevisionHelmApp(t, root, "reader", appRevisionTestRepoURL, "main", "charts/revision")
+	writeAppRevisionChart(t, filepath.Join(root, "charts", "override"))
+	writeTestFile(t, filepath.Join(root, "charts", "override", ".argocd-source.yaml"), "helm:\n  parameters:\n    - name: revision\n      value: $ARGOCD_APP_REVISION\n      forceString: true\n")
+	writeTestFile(t, filepath.Join(root, "apps", "override.yaml"), `apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: override
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: `+appRevisionTestRepoURL+`
+    targetRevision: main
+    path: charts/override
+  destination:
+    name: in-cluster
+    namespace: default
+`)
+	writePersistentDirectoryCacheApp(t, root, "plain")
+	writePersistentDirectoryCacheApp(t, root, "other")
+	base := gitCommitAll(t, root, "base")
+	writePersistentDirectorySource(t, root, "other", "changed")
+	head := gitCommitAll(t, root, "change other")
+
+	result, err := Orchestrator{}.DiffApps(context.Background(), DiffRequest{RightPath: root, Repo: root, Ref: "HEAD", RefOrig: base, ChangedOnly: true})
+	if err != nil {
+		t.Fatalf("DiffApps() error = %v\nDiagnostics: %#v", err, result.Diagnostics)
+	}
+	changed := map[string]string{}
+	for _, item := range result.Results {
+		changed[item.Resource.Name] = item.After
+	}
+	for _, name := range []string{"reader-revision", "override-revision"} {
+		if !strings.Contains(changed[name], "revision: "+head) {
+			t.Fatalf("Results = %#v, want %s rendered at the head commit %s", changed, name, head)
+		}
+	}
+	if _, ok := changed["other"]; !ok {
+		t.Fatalf("Results = %#v, want the changed other ConfigMap", changed)
+	}
+	var found bool
+	for _, diag := range result.Diagnostics {
+		if diag.Code == changedOnlyAppRevisionCode {
+			found = true
+			if !strings.Contains(diag.Message, "selecting 2 Application(s)") {
+				t.Fatalf("diagnostic = %q, want 2 readers selected", diag.Message)
+			}
+		}
+	}
+	if !found {
+		t.Fatalf("Diagnostics = %#v, want %s", result.Diagnostics, changedOnlyAppRevisionCode)
 	}
 }

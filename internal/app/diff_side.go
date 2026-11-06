@@ -285,10 +285,14 @@ func changedOnlyApplications(ctx context.Context, request DiffRequest, leftBuild
 	}
 	if len(unowned) == 0 {
 		leftSelected, rightSelected, reached := withSettingsSelection(leftSide, rightSide, leftSelected, rightSelected, settings)
-		if reached == 0 {
-			return leftSelected, rightSelected, scanDiags, nil
+		if reached > 0 {
+			scanDiags = append(scanDiags, changedOnlySettingsScopedDiagnostic(reached))
 		}
-		return leftSelected, rightSelected, append(scanDiags, changedOnlySettingsScopedDiagnostic(reached)), nil
+		leftSelected, rightSelected, readers := withAppRevisionSelection(leftBuildRequest, rightBuildRequest, leftSide, rightSide, leftList.Settings, rightList.Settings, leftSelected, rightSelected)
+		if readers > 0 {
+			scanDiags = append(scanDiags, changedOnlyAppRevisionDiagnostic(readers))
+		}
+		return leftSelected, rightSelected, scanDiags, nil
 	}
 	diag := diagnostic.Diagnostic{
 		Severity: diagnostic.SeverityWarning,
