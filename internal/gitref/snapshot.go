@@ -22,6 +22,14 @@ type Request struct {
 	Repo           string
 	Ref            string
 	ForbiddenRoots []string
+	// KeepOutOfBoundsSymlinks writes a symlink whose target is absolute or
+	// leaves the snapshot as it is, instead of failing the snapshot. A
+	// rendered snapshot needs it: the Argo CD repo-server fails each
+	// Application that renders from such a tree, not the whole run, and
+	// drydock's renderers check the tree and never read through such a
+	// symlink. Nothing is written through it: a Git tree cannot hold a path
+	// below a symlink.
+	KeepOutOfBoundsSymlinks bool
 }
 
 type Result struct {
@@ -69,7 +77,7 @@ func Snapshot(ctx context.Context, request Request) (Result, error) {
 		return Result{}, fmt.Errorf("git ref snapshot temp directory %q is inside protected root %q", root, matchedRoot)
 	}
 
-	if err := materializeTree(ctx, tree, root); err != nil {
+	if err := materializeTree(ctx, tree, root, request.KeepOutOfBoundsSymlinks); err != nil {
 		_ = cleanup()
 		return Result{}, err
 	}
@@ -116,7 +124,7 @@ func looksLikeSCPRemote(value string) bool {
 	return strings.Contains(hostPart, ".")
 }
 
-func materializeTree(ctx context.Context, tree *object.Tree, root string) error {
+func materializeTree(ctx context.Context, tree *object.Tree, root string, keepOutOfBoundsSymlinks bool) error {
 	files := make([]object.File, 0)
 	if err := tree.Files().ForEach(func(file *object.File) error {
 		files = append(files, *file)
@@ -125,10 +133,10 @@ func materializeTree(ctx context.Context, tree *object.Tree, root string) error 
 		return err
 	}
 	sort.Slice(files, func(i, j int) bool { return files[i].Name < files[j].Name })
-	return materializeTreeFiles(ctx, files, root)
+	return materializeTreeFiles(ctx, files, root, keepOutOfBoundsSymlinks)
 }
 
-func materializeTreeFiles(ctx context.Context, files []object.File, root string) error {
+func materializeTreeFiles(ctx context.Context, files []object.File, root string, keepOutOfBoundsSymlinks bool) error {
 	if len(files) == 0 {
 		return ctx.Err()
 	}
@@ -145,7 +153,7 @@ func materializeTreeFiles(ctx context.Context, files []object.File, root string)
 					errs[i] = err
 					continue
 				}
-				errs[i] = materializeTreeFile(root, &files[i])
+				errs[i] = materializeTreeFile(root, &files[i], keepOutOfBoundsSymlinks)
 			}
 		}()
 	}
@@ -174,7 +182,7 @@ func materializeTreeParallelism(fileCount int) int {
 	return workers
 }
 
-func materializeTreeFile(root string, file *object.File) error {
+func materializeTreeFile(root string, file *object.File, keepOutOfBoundsSymlinks bool) error {
 	path := filepath.Clean(file.Name)
 	if path == "." || filepath.IsAbs(path) || path == ".." || strings.HasPrefix(path, ".."+string(os.PathSeparator)) {
 		return fmt.Errorf("unsafe Git tree path %q", file.Name)
@@ -197,8 +205,13 @@ func materializeTreeFile(root string, file *object.File) error {
 		if err != nil {
 			return err
 		}
-		if err := validateSnapshotSymlinkTarget(root, target, body); err != nil {
-			return fmt.Errorf("materialize symlink %q: %w", file.Name, err)
+		if body == "" {
+			return fmt.Errorf("materialize symlink %q: symlink target must not be empty", file.Name)
+		}
+		if !keepOutOfBoundsSymlinks {
+			if err := validateSnapshotSymlinkTarget(root, target, body); err != nil {
+				return fmt.Errorf("materialize symlink %q: %w", file.Name, err)
+			}
 		}
 		return os.Symlink(body, target)
 	case filemode.Regular, filemode.Deprecated, filemode.Executable:

@@ -33,6 +33,11 @@ type SourceIdentity struct {
 	Locator  string `json:"locator,omitempty"`
 	Revision string `json:"revision,omitempty"`
 	Digest   string `json:"digest,omitempty"`
+	// OutOfBoundsSymlink is the first out-of-bounds symlink of the provider
+	// root for a source that renders from it, or empty. Such a symlink
+	// anywhere in the tree fails every source that renders from it, so it
+	// keys those renders even when no digested input path holds it.
+	OutOfBoundsSymlink string `json:"outOfBoundsSymlink,omitempty"`
 }
 
 const (
@@ -522,7 +527,16 @@ func sourceIdentityForPlan(ctx context.Context, handle *persistentRenderCache, p
 		}
 		return identity, "", true
 	}
-	return rootSourceIdentityForPlan(ctx, handle, provider, plan, sourcePlan, identity)
+	rootIdentity, reason, ok := rootSourceIdentityForPlan(ctx, handle, provider, plan, sourcePlan, identity)
+	if !ok {
+		return rootIdentity, reason, ok
+	}
+	file, err := provider.rootOutOfBoundsSymlink(ctx)
+	if err != nil {
+		return SourceIdentity{}, renderCacheReasonInputDigest, false
+	}
+	rootIdentity.OutOfBoundsSymlink = file
+	return rootIdentity, "", true
 }
 
 func rootSourceIdentityForPlan(ctx context.Context, handle *persistentRenderCache, provider localProvider, plan PlanResult, sourcePlan SourcePlan, identity SourceIdentity) (SourceIdentity, string, bool) {

@@ -67,6 +67,9 @@ func (p localProvider) renderChartOnlySource(ctx context.Context, source render.
 		Kind:       kind,
 	}, acquired, p.chartCacheMaxAge))
 
+	if err := p.checkOutOfBoundsSymlinks(ctx, acquired.ChartDir, render.OutOfBoundsSymlinkScopeChart); err != nil {
+		return nil, nil, err
+	}
 	if p.renderObserver != nil {
 		p.renderObserver(source)
 	}

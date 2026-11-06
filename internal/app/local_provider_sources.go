@@ -292,6 +292,12 @@ func (p localProvider) resolveRefRoots(ctx context.Context, refSources map[strin
 		if err != nil {
 			return nil, fmt.Errorf("ref root %s: %w", refKey, err)
 		}
+		// The repo-server checks each Git repository that a $ref value
+		// file or file parameter reads (reposerver/repository/
+		// repository.go:941-959 at v3.6.1).
+		if err := p.checkOutOfBoundsSymlinks(ctx, root, render.OutOfBoundsSymlinkScopeRepository); err != nil {
+			return nil, fmt.Errorf("ref root %s: %w", refKey, err)
+		}
 		out[refKey] = root
 	}
 	return out, nil

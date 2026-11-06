@@ -291,3 +291,33 @@ func TestCommandParametersReadMaxCombinedDirectoryManifestsSize(t *testing.T) {
 		t.Fatalf("CommandParameters = %#v, want one rendered setting with its value", settings.CommandParameters)
 	}
 }
+
+// TestCommandParametersReadAllowOutOfBoundsSymlinks pins that drydock
+// applies reposerver.allow.oob.symlinks instead of recording it as
+// runtime-only metadata. The value is kept as written, because the
+// repo-server compares the raw value with env.ParseBoolFromEnv.
+func TestCommandParametersReadAllowOutOfBoundsSymlinks(t *testing.T) {
+	settings, diags := commandParametersSettings("argocd-cmd-params-cm.yaml", "data", map[string]string{
+		"reposerver.allow.oob.symlinks": "TRUE",
+	})
+	if got := settings.AllowOutOfBoundsSymlinks.Value; got != "TRUE" {
+		t.Fatalf("AllowOutOfBoundsSymlinks = %q, want TRUE", got)
+	}
+	if settings.AllowOutOfBoundsSymlinks.Provenance.Pointer != "data.reposerver.allow.oob.symlinks" {
+		t.Fatalf("provenance = %#v", settings.AllowOutOfBoundsSymlinks.Provenance)
+	}
+	if len(diags) != 0 {
+		t.Fatalf("diags = %#v, want no runtime-only warning", diags)
+	}
+	if len(settings.CommandParameters) != 1 || settings.CommandParameters[0].Classification != CommandParameterRendered || settings.CommandParameters[0].Value != "TRUE" {
+		t.Fatalf("CommandParameters = %#v, want one rendered setting with its value", settings.CommandParameters)
+	}
+	merged, mergeDiags := MergeDiscovered([]ArgoSettings{settings, settings})
+	if merged.AllowOutOfBoundsSymlinks.Value != "TRUE" || len(mergeDiags) != 0 {
+		t.Fatalf("MergeDiscovered() = %q, %#v", merged.AllowOutOfBoundsSymlinks.Value, mergeDiags)
+	}
+	other, _ := commandParametersSettings("other.yaml", "data", map[string]string{"reposerver.allow.oob.symlinks": "false"})
+	if _, conflict := MergeDiscovered([]ArgoSettings{settings, other}); len(conflict) != 1 {
+		t.Fatalf("MergeDiscovered() conflict diagnostics = %#v, want one", conflict)
+	}
+}

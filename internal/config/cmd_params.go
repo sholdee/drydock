@@ -21,6 +21,13 @@ const commandParametersConfigMapName = "argocd-cmd-params-cm"
 // cmd/argocd-repo-server/commands/argocd_repo_server.go:264).
 const maxCombinedDirectoryManifestsSizeKey = "reposerver.max.combined.directory.manifests.size"
 
+// allowOutOfBoundsSymlinksKey sets the repo-server flag --allow-oob-symlinks
+// through the environment variable
+// ARGOCD_REPO_SERVER_ALLOW_OUT_OF_BOUNDS_SYMLINKS (Argo CD v3.6.1
+// cmd/argocd-repo-server/commands/argocd_repo_server.go:266 and
+// manifests/base/repo-server/argocd-repo-server-deployment.yaml:214-219).
+const allowOutOfBoundsSymlinksKey = "reposerver.allow.oob.symlinks"
+
 type commandParameterValueMode int
 
 const (
@@ -168,6 +175,14 @@ func commandParametersSettings(path, basePointer string, values map[string]strin
 				Provenance: setting.Provenance,
 			}
 		}
+		if key == allowOutOfBoundsSymlinksKey {
+			// Kept as written: the repo-server reads it with
+			// env.ParseBoolFromEnv, which compares the raw value.
+			settings.AllowOutOfBoundsSymlinks = Value[string]{
+				Value:      values[key],
+				Provenance: setting.Provenance,
+			}
+		}
 		settings.CommandParameters = append(settings.CommandParameters, setting)
 	}
 
@@ -205,13 +220,12 @@ func classifyCommandParameterKey(key string) commandParameterClassification {
 			valueMode:      commandParameterSanitizedValue,
 			warnRuntime:    true,
 		}
-	case maxCombinedDirectoryManifestsSizeKey:
+	case maxCombinedDirectoryManifestsSizeKey, allowOutOfBoundsSymlinksKey:
 		return commandParameterClassification{
 			classification: CommandParameterRendered,
 			valueMode:      commandParameterSanitizedValue,
 		}
 	case "controller.diff.server.side",
-		"reposerver.allow.oob.symlinks",
 		"reposerver.enable.git.submodule",
 		"applicationsetcontroller.enable.scm.providers",
 		"applicationsetcontroller.allowed.scm.providers",

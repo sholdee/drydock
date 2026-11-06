@@ -155,7 +155,7 @@ func TestOCIArtifactAcquirerRejectsOutOfBoundsSymlinks(t *testing.T) {
 		acquirer := session.OCIArtifactAcquirer(fake)
 
 		_, _, err := acquirer.Extract(t.Context(), "oci://registry.example/org/app", digest, ociartifact.Options{CacheDir: t.TempDir()})
-		if err == nil || !strings.Contains(err.Error(), "out-of-bounds symlink") {
+		if err == nil || !strings.Contains(err.Error(), "oci image contains out-of-bounds symlinks. file: "+name) {
 			t.Fatalf("Extract() error = %v, want out-of-bounds symlink rejection (%s)", err, name)
 		}
 		entries, readErr := os.ReadDir(snapshotRoot)

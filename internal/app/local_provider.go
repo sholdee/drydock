@@ -65,9 +65,16 @@ type localProvider struct {
 	// combined size of the files of one directory source, in bytes. Zero
 	// means no limit.
 	maxCombinedDirectoryManifestsSize int64
-	configManagementPlugins           map[string]config.ConfigManagementPlugin
-	cacheEvents                       *cacheevent.Recorder
-	acquisitions                      *cacheevent.AcquisitionCollector
+	// allowOutOfBoundsSymlinks is argocd-cmd-params-cm
+	// reposerver.allow.oob.symlinks. When false, a source fails while the
+	// tree it renders from holds an out-of-bounds symlink.
+	allowOutOfBoundsSymlinks bool
+	// symlinkBounds keeps the out-of-bounds symlink check of each tree for
+	// the run. nil checks every time.
+	symlinkBounds           *symlinkBoundsMemo
+	configManagementPlugins map[string]config.ConfigManagementPlugin
+	cacheEvents             *cacheevent.Recorder
+	acquisitions            *cacheevent.AcquisitionCollector
 	// inputVerifier accumulates the digest path sets behind one application's
 	// persistent key so store() can re-check them after the render. nil for
 	// renders without the persistent tier.
@@ -140,6 +147,18 @@ func (p localProvider) renderSource(ctx context.Context, source render.ResolvedS
 		}
 	}
 	source.RepoRoot = sourceRoot
+	// The repo-server checks the whole checkout or artifact before it
+	// generates manifests from it. A chart-only source renders from the
+	// chart it acquires, which renderChartOnlySource checks.
+	if !chartFlowSource(source) {
+		scope := render.OutOfBoundsSymlinkScopeRepository
+		if ociartifact.IsOCIURL(source.RepoURL) {
+			scope = render.OutOfBoundsSymlinkScopeOCI
+		}
+		if err := p.checkOutOfBoundsSymlinks(ctx, sourceRoot, scope); err != nil {
+			return nil, nearMissDiags, err
+		}
+	}
 	opts.ChartAcquirer = p.acquisition.ChartAcquirer(p.chartAcquirer)
 	opts.ChartCacheDir = p.chartCacheDir
 	opts.OfflineCharts = p.offline

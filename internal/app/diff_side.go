@@ -12,8 +12,10 @@ import (
 	"github.com/sholdee/drydock/internal/acquisition"
 	"github.com/sholdee/drydock/internal/cacheevent"
 	"github.com/sholdee/drydock/internal/change"
+	"github.com/sholdee/drydock/internal/config"
 	"github.com/sholdee/drydock/internal/diagnostic"
 	"github.com/sholdee/drydock/internal/project"
+	"github.com/sholdee/drydock/internal/render"
 )
 
 func (o Orchestrator) buildDiffSides(ctx context.Context, request DiffRequest) (BuildResult, BuildResult, []diagnostic.Diagnostic, error) {
@@ -135,6 +137,44 @@ func changedOnlyProjectsDiagnostic() diagnostic.Diagnostic {
 	}
 }
 
+// changedOnlySymlinksCode identifies the changed-only render-all that a
+// change of the out-of-bounds symlink verdict of the tree under diff forces.
+// It is strict-exempt (strictExemptDiagnostic) for the same reason as
+// changedOnlySettingsCode.
+const changedOnlySymlinksCode = "diff.changed-only-symlinks"
+
+func changedOnlySymlinksDiagnostic(left, right string) diagnostic.Diagnostic {
+	describe := func(file string) string {
+		if file == "" {
+			return "none"
+		}
+		return file
+	}
+	return diagnostic.Diagnostic{
+		Code:     changedOnlySymlinksCode,
+		Severity: diagnostic.SeverityWarning,
+		Category: "changed-only",
+		Message:  fmt.Sprintf("the first out-of-bounds symlink of the repository changed (left: %s, right: %s); Argo CD fails every Application that renders from a repository with one, so rendering all Applications", describe(left), describe(right)),
+	}
+}
+
+// outOfBoundsSymlinkVerdicts returns the first out-of-bounds symlink of the
+// tree of each side, or "" for a side that has none or allows them.
+func outOfBoundsSymlinkVerdicts(ctx context.Context, leftRoot, rightRoot string, leftSettings, rightSettings config.ArgoSettings) (string, string, error) {
+	verdict := func(root string, settings config.ArgoSettings) (string, error) {
+		if allowOutOfBoundsSymlinks(settings) {
+			return "", nil
+		}
+		return (*symlinkBoundsMemo)(nil).findOutOfBoundsSymlink(ctx, root, render.OutOfBoundsSymlinkScopeRepository)
+	}
+	left, err := verdict(leftRoot, leftSettings)
+	if err != nil {
+		return "", "", err
+	}
+	right, err := verdict(rightRoot, rightSettings)
+	return left, right, err
+}
+
 // changedOnlyApplications returns the Applications each side of a
 // changed-only diff renders: those the changed paths, changed AppProjects, or
 // changed repository and cluster settings select, or all of them when a
@@ -153,6 +193,18 @@ func changedOnlyApplications(ctx context.Context, request DiffRequest, leftBuild
 	}
 	if settings.renderAll {
 		return leftList.Applications, rightList.Applications, []diagnostic.Diagnostic{changedOnlySettingsDiagnostic()}, nil
+	}
+
+	// An out-of-bounds symlink anywhere in the tree fails every Application
+	// that renders from it, whichever path holds it, and a changed-only
+	// ignore glob may hide that path. A change of the first such symlink
+	// reaches nearly every Application, so render them all.
+	leftSymlink, rightSymlink, err := outOfBoundsSymlinkVerdicts(ctx, leftBuildRequest.Path, rightBuildRequest.Path, leftList.Settings, rightList.Settings)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	if leftSymlink != rightSymlink {
+		return leftList.Applications, rightList.Applications, []diagnostic.Diagnostic{changedOnlySymlinksDiagnostic(leftSymlink, rightSymlink)}, nil
 	}
 
 	// An AppProject change reaches every Application in the project through

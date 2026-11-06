@@ -356,9 +356,10 @@ func resolveDiffRequestPaths(ctx context.Context, request DiffRequest, computeCh
 	forbiddenRoots := []string{request.LeftPath, request.RightPath, repoPath}
 	if strings.TrimSpace(request.RefOrig) != "" {
 		result, err := gitref.Snapshot(ctx, gitref.Request{
-			Repo:           repoPath,
-			Ref:            request.RefOrig,
-			ForbiddenRoots: forbiddenRoots,
+			Repo:                    repoPath,
+			Ref:                     request.RefOrig,
+			ForbiddenRoots:          forbiddenRoots,
+			KeepOutOfBoundsSymlinks: true,
 		})
 		if err != nil {
 			return request, cleanup, err
@@ -370,9 +371,10 @@ func resolveDiffRequestPaths(ctx context.Context, request DiffRequest, computeCh
 	}
 	if strings.TrimSpace(request.Ref) != "" {
 		result, err := gitref.Snapshot(ctx, gitref.Request{
-			Repo:           repoPath,
-			Ref:            request.Ref,
-			ForbiddenRoots: forbiddenRoots,
+			Repo:                    repoPath,
+			Ref:                     request.Ref,
+			ForbiddenRoots:          forbiddenRoots,
+			KeepOutOfBoundsSymlinks: true,
 		})
 		if err != nil {
 			return request, cleanup, errors.Join(err, cleanup())

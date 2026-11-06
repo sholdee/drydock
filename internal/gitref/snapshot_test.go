@@ -364,7 +364,7 @@ func TestMaterializeTreeRejectsSymlinkPrefixWriteEscape(t *testing.T) {
 		t.Fatalf("Symlink(prefix) error = %v", err)
 	}
 
-	err = materializeTree(t.Context(), tree, snapshotRoot)
+	err = materializeTree(t.Context(), tree, snapshotRoot, false)
 	if err == nil {
 		t.Fatal("materializeTree() error = nil, want symlink-prefix escape rejection")
 	}
@@ -535,5 +535,40 @@ func assertSnapshotOutsideRepo(t *testing.T, snapshotPath, repoPath string) {
 	}
 	if snapshotPath == repoPath || strings.HasPrefix(snapshotPath, repoPath+string(os.PathSeparator)) {
 		t.Fatalf("snapshot path %q must not be inside repo %q", snapshotPath, repoPath)
+	}
+}
+
+// TestSnapshotKeepsOutOfBoundsSymlinksWhenAsked pins the snapshot that a
+// diff renders: an absolute or escaping symlink is written as it is, so the
+// render can fail each Application as the Argo CD repo-server does.
+func TestSnapshotKeepsOutOfBoundsSymlinksWhenAsked(t *testing.T) {
+	repoPath, _, wt := newSnapshotRepo(t)
+	root := wt.Filesystem.Root()
+	links := map[string]string{"absolute": "/etc/hosts", "escape": "../outside"}
+	for name, target := range links {
+		if err := os.Symlink(target, filepath.Join(root, name)); err != nil {
+			t.Fatalf("Symlink(%s) error = %v", name, err)
+		}
+		if _, err := wt.Add(name); err != nil {
+			t.Fatalf("Add(%s) error = %v", name, err)
+		}
+	}
+	if _, err := wt.Commit("add out-of-bounds symlinks", &git.CommitOptions{
+		Author: &object.Signature{Name: "Test", Email: "test@example.invalid"},
+	}); err != nil {
+		t.Fatalf("Commit() error = %v", err)
+	}
+	result, err := Snapshot(t.Context(), Request{Repo: repoPath, Ref: "HEAD", ForbiddenRoots: []string{repoPath}, KeepOutOfBoundsSymlinks: true})
+	if err != nil {
+		t.Fatalf("Snapshot() error = %v", err)
+	}
+	t.Cleanup(func() { _ = result.Cleanup() })
+	// go-git's worktree filesystem stores an absolute target with extra
+	// "../" steps, so check the kind of target, not its text.
+	if got, err := os.Readlink(filepath.Join(result.Path, "absolute")); err != nil || !filepath.IsAbs(got) {
+		t.Fatalf("Readlink(absolute) = %q, %v, want an absolute target", got, err)
+	}
+	if got, err := os.Readlink(filepath.Join(result.Path, "escape")); err != nil || got != "../outside" {
+		t.Fatalf("Readlink(escape) = %q, %v, want ../outside", got, err)
 	}
 }

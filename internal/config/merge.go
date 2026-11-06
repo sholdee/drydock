@@ -25,6 +25,7 @@ func MergeDiscovered(candidates []ArgoSettings) (ArgoSettings, []diagnostic.Diag
 		diags = append(diags, mergeConfigManagementPlugins(&merged, candidate)...)
 		mergeCommandParameters(&merged, candidate)
 		diags = append(diags, mergeMaxCombinedDirectoryManifestsSize(&merged, candidate)...)
+		diags = append(diags, mergeAllowOutOfBoundsSymlinks(&merged, candidate)...)
 		merged.ResourceExclusions = append(merged.ResourceExclusions, candidate.ResourceExclusions...)
 		merged.ResourceInclusions = append(merged.ResourceInclusions, candidate.ResourceInclusions...)
 		merged.ResourceSelectors = append(merged.ResourceSelectors, candidate.ResourceSelectors...)
@@ -101,6 +102,20 @@ func mergeMaxCombinedDirectoryManifestsSize(merged *ArgoSettings, candidate Argo
 		)}
 	}
 	merged.MaxCombinedDirectoryManifestsSize = candidate.MaxCombinedDirectoryManifestsSize
+	return nil
+}
+
+func mergeAllowOutOfBoundsSymlinks(merged *ArgoSettings, candidate ArgoSettings) []diagnostic.Diagnostic {
+	if !hasProvenance(candidate.AllowOutOfBoundsSymlinks) {
+		return nil
+	}
+	if hasProvenance(merged.AllowOutOfBoundsSymlinks) && merged.AllowOutOfBoundsSymlinks.Value != candidate.AllowOutOfBoundsSymlinks.Value {
+		return []diagnostic.Diagnostic{conflictDiagnostic(
+			fmt.Sprintf("conflicting %s values %q and %q", allowOutOfBoundsSymlinksKey, merged.AllowOutOfBoundsSymlinks.Value, candidate.AllowOutOfBoundsSymlinks.Value),
+			candidate.AllowOutOfBoundsSymlinks.Provenance,
+		)}
+	}
+	merged.AllowOutOfBoundsSymlinks = candidate.AllowOutOfBoundsSymlinks
 	return nil
 }
 

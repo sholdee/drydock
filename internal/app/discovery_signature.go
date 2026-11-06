@@ -44,6 +44,10 @@ func renderSettingsSignature(settings config.ArgoSettings) (string, error) {
 		// MaxCombinedDirectoryManifestsSize decides whether a directory
 		// source fails, so it is a render input.
 		MaxCombinedDirectoryManifestsSize string `json:"maxCombinedDirectoryManifestsSize"`
+		// AllowOutOfBoundsSymlinks decides whether a source fails while its
+		// repository holds an out-of-bounds symlink, so it is a render
+		// input. It is signed as the value the repo-server parses.
+		AllowOutOfBoundsSymlinks bool `json:"allowOutOfBoundsSymlinks,omitempty"`
 	}{
 		KustomizeBuildOptions:             renderSettingsValues(settings.KustomizeBuildOptions),
 		HelmRepositories:                  renderSettingsRepositories(settings.HelmRepositories),
@@ -55,6 +59,7 @@ func renderSettingsSignature(settings config.ArgoSettings) (string, error) {
 		ConfigManagementPlugins:           plugins,
 		ResourceCustomizations:            renderSettingsCustomizations(settings.ResourceCustomizations),
 		MaxCombinedDirectoryManifestsSize: maxCombinedDirectoryManifestsSizeSignature(settings),
+		AllowOutOfBoundsSymlinks:          allowOutOfBoundsSymlinks(settings),
 	}
 	data, err := json.Marshal(input)
 	if err != nil {
@@ -85,6 +90,9 @@ func changedOnlySettingsSignature(settings config.ArgoSettings) (string, error) 
 	// renderSig carries the parsed size limit, so a new spelling of the same
 	// limit is not a change.
 	settings.MaxCombinedDirectoryManifestsSize = config.Value[string]{}
+	// renderSig carries the parsed allow flag, so "TRUE" and "true", or ""
+	// and "no", are not a change.
+	settings.AllowOutOfBoundsSymlinks = config.Value[string]{}
 	data, err := json.Marshal(settings)
 	if err != nil {
 		return "", fmt.Errorf("fingerprint Argo CD settings: %w", err)

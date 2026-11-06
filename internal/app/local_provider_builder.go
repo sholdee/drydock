@@ -60,6 +60,8 @@ func newLocalProvider(ctx context.Context, orchestrator Orchestrator, root strin
 	}
 	provider := localProvider{
 		maxCombinedDirectoryManifestsSize: maxDirectorySize,
+		allowOutOfBoundsSymlinks:          allowOutOfBoundsSymlinks(settings),
+		symlinkBounds:                     newSymlinkBoundsMemo(),
 		repoRoot:                          root,
 		controllerNamespace:               trackingOptionsFromSettings(settings).ControllerNamespace,
 		sourceResolver:                    sourcepkg.NewResolver(sourcepkg.Options{RepoMaps: request.RepoMaps, Offline: request.Offline}),
