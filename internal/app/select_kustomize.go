@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"sort"
 	"strings"
 
 	argoappv1 "github.com/argoproj/argo-cd/v3/pkg/apis/application/v1alpha1"
@@ -24,9 +23,9 @@ type selectionSide struct {
 	// The graph is kept once per directory, never copied into the Paths of
 	// every Application the directory declares.
 	renderedDirs map[string][]string
-	// unscanned holds the names of Applications whose Jsonnet import scan
-	// ran out of budget. They own every changed path.
-	unscanned []string
+	// unscanned holds the Applications whose Jsonnet import scan ran out of
+	// budget. selectChangedDiffSides selects them whenever a path changed.
+	unscanned []argoappv1.Application
 }
 
 // withSelectionOnlyPaths returns copies of inputs whose Paths also carry
@@ -93,7 +92,7 @@ func withSelectionOnlyPaths(ctx context.Context, root string, repoMaps []sourcep
 		}
 		return selection
 	}
-	var unscanned []string
+	var unscanned []argoappv1.Application
 	out := make([]ApplicationSelectionInput, len(inputs))
 	renderedDirs := map[string][]string{}
 	for i, input := range inputs {
@@ -108,15 +107,19 @@ func withSelectionOnlyPaths(ctx context.Context, root string, repoMaps []sourcep
 			}
 			out[i].Paths = append(out[i].Paths, helmLocalSelectionPaths(source)...)
 			// A directory source reads the files that its symlinks reach
-			// and its Jsonnet files import, also outside its path; a plugin
-			// can follow the symlinks too.
-			selection := symlinkInputs(source)
-			out[i].Paths = append(out[i].Paths, selection.paths...)
-			if selection.unknown {
-				// The inputs are not known, so the source owns every
-				// changed path: "" intersects all of them.
-				out[i].Paths = append(out[i].Paths, "")
-				unscanned = appendUniqueString(unscanned, applicationDisplayName(input.Application))
+			// and its Jsonnet files import, also outside its path. The Helm
+			// and Kustomize renderers reject symlinks and evaluate no
+			// Jsonnet.
+			if rendersAsDirectory(root, source) {
+				selection := symlinkInputs(source)
+				out[i].Paths = append(out[i].Paths, selection.paths...)
+				if selection.unknown {
+					// The inputs are not known, so selectChangedDiffSides
+					// selects the Application on any change. Its Paths stay
+					// exact, so the other changed paths still count as
+					// unowned when no Application owns them.
+					unscanned = append(unscanned, input.Application)
+				}
 			}
 			if mayWalkKustomizeGraph(source) {
 				out[i].Paths = append(out[i].Paths, kustomizeGraph(source)...)
@@ -126,8 +129,30 @@ func withSelectionOnlyPaths(ctx context.Context, root string, repoMaps []sourcep
 			renderedDirs[input.RenderedDir] = kustomizeGraph(argoappv1.ApplicationSource{Path: input.RenderedDir})
 		}
 	}
-	sort.Strings(unscanned)
 	return selectionSide{inputs: out, renderedDirs: renderedDirs, unscanned: unscanned}
+}
+
+// rendersAsDirectory reports whether the local renderer renders source as a
+// directory source, as selectLocalRenderer decides for the render. An
+// explicit plugin source is not one.
+func rendersAsDirectory(root string, source argoappv1.ApplicationSource) bool {
+	explicitType, err := source.ExplicitType()
+	if err != nil {
+		return false
+	}
+	resolved := render.ResolvedSource{RepoRoot: root, Path: source.Path}
+	if explicitType != nil {
+		if *explicitType == argoappv1.ApplicationSourceTypePlugin {
+			return false
+		}
+		resolved.ExplicitType = *explicitType
+	}
+	renderer, err := selectLocalRenderer(resolved)
+	if err != nil {
+		return false
+	}
+	_, ok := renderer.(render.DirectoryRenderer)
+	return ok
 }
 
 // kustomizeSelectionMemoKey identifies one selection walk: sources sharing a

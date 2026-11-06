@@ -272,7 +272,11 @@ func changedOnlyApplications(ctx context.Context, request DiffRequest, leftBuild
 	rightSide := withSelectionOnlyPaths(ctx, rightBuildRequest.Path, rightBuildRequest.RepoMaps, rightBuildRequest.selfRepo, rightList.ApplicationInputs)
 	leftSelected, rightSelected, unowned := selectChangedDiffSides(leftSide, rightSide, changedPaths, projectNames)
 	var scanDiags []diagnostic.Diagnostic
-	if unscanned := dedupeSortedStrings(append(append([]string(nil), leftSide.unscanned...), rightSide.unscanned...)); len(unscanned) > 0 {
+	var unscanned []string
+	for _, application := range append(append([]argoappv1.Application(nil), leftSide.unscanned...), rightSide.unscanned...) {
+		unscanned = append(unscanned, applicationDisplayName(application))
+	}
+	if unscanned = dedupeSortedStrings(unscanned); len(unscanned) > 0 {
 		scanDiags = append(scanDiags, changedOnlyJsonnetScanDiagnostic(unscanned))
 	}
 	if len(unowned) == 0 {
@@ -386,6 +390,15 @@ func selectChangedDiffSides(left, right selectionSide, changedPaths []string, ch
 			if _, ok := changedDirs[input.RenderedDir]; ok {
 				selectedKeys[applicationKey(input.Application)] = struct{}{}
 			}
+		}
+	}
+	// An Application whose Jsonnet imports could not be scanned can read
+	// any changed path, so a change selects it. It is selected here, not
+	// through its Paths, so that changed paths it does not own still count
+	// as unowned.
+	if len(changedPaths) > 0 {
+		for _, application := range append(append([]argoappv1.Application(nil), left.unscanned...), right.unscanned...) {
+			selectedKeys[applicationKey(application)] = struct{}{}
 		}
 	}
 	selectRenderedDescendants(selectedKeys, left.inputs, right.inputs)

@@ -382,8 +382,8 @@ in the tree under diff fails every Application that renders from it, unless
 `reposerver.allow.oob.symlinks` is true, whichever path holds it. When the
 first such symlink differs between the two sides, every Application renders,
 with diagnostic `diff.changed-only-symlinks` (warning, exempt for the same
-reason). Each source that renders from the tree also owns the paths that the
-symlinks under its path and Jsonnet libraries reach
+reason). Each directory source that renders from the tree also owns the paths
+that the symlinks under its path and Jsonnet libraries reach
 (`render.DirectorySymlinkInputPaths`) and the files its Jsonnet files import
 (`render.DirectoryJsonnetImportPaths`), and the persistent render cache
 digest of a directory source holds them as optional paths. Imports in

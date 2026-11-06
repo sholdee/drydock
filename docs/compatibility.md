@@ -612,7 +612,8 @@ Supported:
   endlessly many import paths. When the budget runs out, the source gets no
   persistent cache entry and renders as usual, and changed-only renders it
   on every change, with the strict-exempt warning
-  `diff.changed-only-jsonnet-scan`.
+  `diff.changed-only-jsonnet-scan`. A changed path that no Application owns
+  still renders every Application.
 - Recorded divergence from strict Argo CD v3.6.1: drydock never extracts an
   OCI artifact that holds an out-of-bounds symlink, also when
   `reposerver.allow.oob.symlinks` is `true`. Helm charts and Kustomize

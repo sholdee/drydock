@@ -72,7 +72,8 @@ also owns the files outside its path that its symlinks reach and its Jsonnet
 files import, so a change to one of them selects it. Imports in `extVars`
 or `tlas` code are not followed. When the scan of those imports runs out of
 its budget, changed-only renders the source on every change, with the
-strict-exempt warning `diff.changed-only-jsonnet-scan`.
+strict-exempt warning `diff.changed-only-jsonnet-scan`. A changed path that no
+Application owns still renders all Applications.
 
 ## Commands
 

@@ -129,10 +129,61 @@ func TestJsonnetImportScanBudgetKeepsCallersBounded(t *testing.T) {
 		t.Fatalf("diagnostics = %#v, want the Jsonnet scan warning for fanout", result.Diagnostics)
 	}
 	side := withSelectionOnlyPaths(ctx, left, nil, selfRepoRefs{}, []ApplicationSelectionInput{{Application: application}})
-	if selected, _ := SelectChangedApplicationInputs(side.inputs, []string{"unrelated/README.md"}); len(selected) != 1 {
+	leftSelected, _, unowned := selectChangedDiffSides(side, side, []string{"unrelated/README.md"}, nil)
+	if len(leftSelected) != 1 {
 		t.Fatal("an unrelated change did not select the source whose inputs are not known")
+	}
+	if len(unowned) != 1 {
+		t.Fatalf("unowned = %v, want the unrelated path still unowned", unowned)
 	}
 	if ctx.Err() != nil {
 		t.Fatal("the callers ran past their deadline")
+	}
+}
+
+// TestChangedOnlyKeepsTheUnownedFallbackWithAnUnscannedSource pins the
+// review repro: a source whose Jsonnet imports could not be scanned is
+// selected on any change, but a changed path that no Application owns
+// still renders every Application with diff.changed-only-incomplete.
+func TestChangedOnlyKeepsTheUnownedFallbackWithAnUnscannedSource(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	parent := t.TempDir()
+	left := filepath.Join(parent, "left")
+	right := filepath.Join(parent, "right")
+	writeJsonnetFanoutApps(t, left, "one")
+	writeJsonnetFanoutApps(t, right, "one")
+	writeTestFile(t, filepath.Join(left, "shared", "x.yaml"), "a: 1\n")
+	writeTestFile(t, filepath.Join(right, "shared", "x.yaml"), "a: 2\n")
+	result, err := Orchestrator{}.DiffApps(ctx, DiffRequest{LeftPath: left, RightPath: right, ChangedOnly: true, Unified: 3})
+	if err != nil {
+		t.Fatalf("DiffApps() error = %v, diagnostics = %#v", err, result.Diagnostics)
+	}
+	found := false
+	for _, diag := range result.Diagnostics {
+		if strings.Contains(diag.Message, "could not map 1 changed path(s); rendering all Applications: shared/x.yaml") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("diagnostics = %#v, want the unowned render-all", result.Diagnostics)
+	}
+}
+
+// TestWithSelectionOnlyPathsScansOnlyDirectorySources pins that symlink
+// targets and Jsonnet imports are owned only by a directory source. The
+// Helm and Kustomize renderers reject symlinks and evaluate no Jsonnet.
+func TestWithSelectionOnlyPathsScansOnlyDirectorySources(t *testing.T) {
+	root := t.TempDir()
+	writeTestFile(t, filepath.Join(root, "chart", "Chart.yaml"), "apiVersion: v2\nname: demo\nversion: 1.0.0\n")
+	writeTestFile(t, filepath.Join(root, "chart", "x.jsonnet"), "import '../shared/lib.libsonnet'\n")
+	writeTestFile(t, filepath.Join(root, "shared", "lib.libsonnet"), "{}\n")
+	application := argoappv1.Application{
+		Name: "chart",
+		Spec: argoappv1.ApplicationSpec{Source: &argoappv1.ApplicationSource{RepoURL: "https://git.example.test/repo.git", TargetRevision: "main", Path: "chart"}},
+	}
+	got := withSelectionOnlyPaths(context.Background(), root, nil, selfRepoRefs{}, []ApplicationSelectionInput{{Application: application}}).inputs
+	if selected, _ := SelectChangedApplicationInputs(got, []string{"shared/lib.libsonnet"}); len(selected) != 0 {
+		t.Fatalf("a Helm source owned a Jsonnet import (paths %v)", got[0].Paths)
 	}
 }
