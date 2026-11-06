@@ -564,9 +564,14 @@ Supported:
 - Helm, Kustomize, and config management plugin output is read as the
   Argo CD v3.6.1 repo-server reads it, with gitops-engine `kube.SplitYAML`.
   Argo CD first removes one line break from the end of the command output,
-  so a `|+` block scalar at the end of the last document loses one line
-  break. drydock does the same. Kustomize `helmCharts` keep the line break,
-  because kustomize reads the output of Helm itself. The second reading of
+  and drydock does the same. The YAML reader ends the last line with a line
+  break again, so this changes a value only when the last document ends with
+  a `|+` block scalar and at least one blank line: `x` with a blank line
+  after it gives "x\n", not "x\n\n". Kustomize `helmCharts` keep the line
+  break, because kustomize reads the output of Helm itself. The
+  argocd-vault-plugin compatibility paths also keep it, because AVP reads
+  the Helm or Kustomize output and prints each object followed by `---`, so
+  Argo CD removes only the line break after the last `---`. The second reading of
   each document by `kube.SplitYAML` has rules of its own, and drydock runs
   it too. For example, NEL (U+0085) folds a value and fails a key, and a
   key over 1022 characters after JSON escapes fails. The whole output is

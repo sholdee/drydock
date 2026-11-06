@@ -284,13 +284,21 @@ func generatedManifests(docs []generatedDocument, track func(*unstructured.Unstr
 // Before these stages, Argo CD removes one line break from the end of the
 // command output (util/exec/exec.go:285 for kustomize build, and
 // cmpserver/plugin/plugin.go:155 for the generate command of a config
-// management plugin), and DecodeGeneratedOutput does the same. Only a "|+"
-// block scalar at the end of the last document shows it.
+// management plugin), and DecodeGeneratedOutput does the same. The YAML
+// reader ends the last line with a line break again, so this shows only
+// when the last document ends with a "|+" block scalar followed by at
+// least one blank line: "x\n\n" becomes "x\n", and "x\n" stays "x\n".
 //
 // path names the output in errors, with the document index. A nil track
 // skips the tracking check.
 func DecodeGeneratedOutput(path string, data []byte, track func(*unstructured.Unstructured) error) ([]Manifest, error) {
-	data = bytes.TrimSuffix(data, []byte("\n"))
+	return decodeGeneratedStream(path, bytes.TrimSuffix(data, []byte("\n")), track)
+}
+
+// decodeGeneratedStream is DecodeGeneratedOutput without the removal of the
+// last line break, for output that Argo CD does not read straight from a
+// command (see RenderOptions.KeepOutputLineBreak).
+func decodeGeneratedStream(path string, data []byte, track func(*unstructured.Unstructured) error) ([]Manifest, error) {
 	decoder := utilyaml.NewYAMLOrJSONDecoder(bytes.NewReader(data), generatedJSONGuessSize)
 	docs, err := splitGeneratedDocuments(nil, path, decoder, 0)
 	if err != nil {

@@ -30,10 +30,7 @@ func (p localProvider) renderDefaultAVPCompatPluginSource(ctx context.Context, s
 		return nil, unsupportedPluginDiagnostic(message), true, unsupportedPolicyPluginError(message)
 	}
 
-	nativeOptions := opts
-	nativeOptions.Plugin = nil
-	nativeOptions.EnableAVPCompat = true
-	nativeOptions.QuietAVPCompat = true
+	nativeOptions := avpCompatNativeOptions(opts)
 	var (
 		manifests []render.Manifest
 		diags     []diagnostic.Diagnostic
@@ -59,6 +56,21 @@ func (p localProvider) renderDefaultAVPCompatPluginSource(ctx context.Context, s
 		applyAVPCompatToManifest(&manifests[i], nativeOptions)
 	}
 	return manifests, diags, true, nil
+}
+
+// avpCompatNativeOptions are the render options for a source that an
+// argocd-vault-plugin compatibility path renders natively. In Argo CD the
+// AVP sidecar pipes the output of helm template or kustomize build into
+// argocd-vault-plugin generate, which prints each object followed by
+// "---\n". The cmp-server then removes only the line break after the last
+// "---" (cmpserver/plugin/plugin.go:155), so no value loses a line break.
+func avpCompatNativeOptions(opts render.RenderOptions) render.RenderOptions {
+	nativeOptions := opts
+	nativeOptions.Plugin = nil
+	nativeOptions.EnableAVPCompat = true
+	nativeOptions.QuietAVPCompat = true
+	nativeOptions.KeepOutputLineBreak = true
+	return nativeOptions
 }
 
 func isArgocdVaultPluginName(name string) bool {
@@ -115,10 +127,7 @@ func avpCompatGenerateCommandAccepted(tokens []string) bool {
 }
 
 func (p localProvider) renderAVPCompatPolicyPluginSource(ctx context.Context, source render.ResolvedSource, opts render.RenderOptions) ([]render.Manifest, []diagnostic.Diagnostic, bool, error) {
-	nativeOptions := opts
-	nativeOptions.Plugin = nil
-	nativeOptions.EnableAVPCompat = true
-	nativeOptions.QuietAVPCompat = true
+	nativeOptions := avpCompatNativeOptions(opts)
 	var (
 		manifests []render.Manifest
 		diags     []diagnostic.Diagnostic

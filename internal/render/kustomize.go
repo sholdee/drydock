@@ -13,7 +13,6 @@ import (
 	"github.com/sholdee/drydock/internal/chart"
 	"github.com/sholdee/drydock/internal/diagnostic"
 	goyaml "go.yaml.in/yaml/v3"
-	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"sigs.k8s.io/kustomize/api/konfig"
 	"sigs.k8s.io/kustomize/api/krusty"
 	"sigs.k8s.io/kustomize/api/types"
@@ -57,7 +56,7 @@ func (KustomizeRenderer) Render(ctx context.Context, source ResolvedSource, opts
 		return manifests, append(diags, renderDiags...), err
 	}
 
-	manifests, renderDiags, err := renderPlainKustomize(ctx, source, root, buildSettings, opts.TrackManifest)
+	manifests, renderDiags, err := renderPlainKustomize(ctx, source, root, buildSettings, opts)
 	return manifests, append(diags, renderDiags...), err
 }
 
@@ -76,8 +75,8 @@ var kustomizationFileNames = KustomizationFileNames
 // renderPlainKustomize runs krusty and reads its output as the Argo CD
 // repo-server reads the output of kustomize build (util/kustomize/
 // kustomize.go:419 at v3.6.1, then GenerateManifests). See
-// DecodeGeneratedOutput. track is RenderOptions.TrackManifest.
-func renderPlainKustomize(ctx context.Context, source ResolvedSource, root string, settings kustomizeBuildSettings, track func(*unstructured.Unstructured) error) ([]Manifest, []diagnostic.Diagnostic, error) {
+// DecodeGeneratedOutput. opts gives TrackManifest and KeepOutputLineBreak.
+func renderPlainKustomize(ctx context.Context, source ResolvedSource, root string, settings kustomizeBuildSettings, opts RenderOptions) ([]Manifest, []diagnostic.Diagnostic, error) {
 	manifestPath, err := validateKustomizeGraph(ctx, source.RepoRoot, root)
 	if err != nil {
 		return nil, nil, err
@@ -96,7 +95,11 @@ func renderPlainKustomize(ctx context.Context, source ResolvedSource, root strin
 		return nil, nil, fmt.Errorf("kustomize build %s: serialize manifests: %w", root, err)
 	}
 
-	out, err := DecodeGeneratedOutput(manifestPath, rendered, track)
+	decode := DecodeGeneratedOutput
+	if opts.KeepOutputLineBreak {
+		decode = decodeGeneratedStream
+	}
+	out, err := decode(manifestPath, rendered, opts.TrackManifest)
 	if err != nil {
 		return nil, nil, err
 	}
