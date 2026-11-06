@@ -152,34 +152,52 @@ func (p localProvider) checkSpecHelmRefRootsOutOfBoundsSymlinks(ctx context.Cont
 	for _, parameter := range helm.FileParameters {
 		candidates = append(candidates, parameter.Path)
 	}
-	plan, err := Plan(application)
-	if err != nil {
-		return nil
-	}
-	_, refSources, err := renderRefsForSource(plan, sourcePlan, candidates)
-	if err != nil {
+	refSources, ok := specHelmRefSources(application, sourcePlan, candidates)
+	if !ok {
 		return nil
 	}
 	checked := map[string]bool{}
 	for _, candidate := range candidates {
-		refKey, ok, err := helmValueFileRefKey(candidate)
-		if err != nil || !ok || checked[refKey] {
+		refKey, isRef, keyErr := helmValueFileRefKey(candidate)
+		if keyErr != nil || !isRef || checked[refKey] {
 			continue
 		}
 		checked[refKey] = true
-		refSource, ok := refSources[refKey]
-		if !ok {
+		refSource, found := refSources[refKey]
+		if !found {
 			continue
 		}
-		roots, err := p.resolveRefRoots(ctx, map[string]render.ResolvedSource{refKey: refSource})
-		if err != nil {
+		root, resolved := p.resolveSpecRefRoot(ctx, refKey, refSource)
+		if !resolved {
 			return nil
 		}
-		if err := p.checkOutOfBoundsSymlinks(ctx, roots[refKey], render.OutOfBoundsSymlinkScopeRepository); err != nil {
+		if err := p.checkOutOfBoundsSymlinks(ctx, root, render.OutOfBoundsSymlinkScopeRepository); err != nil {
 			return fmt.Errorf("ref root %s: %w", refKey, err)
 		}
 	}
 	return nil
+}
+
+// specHelmRefSources returns the $ref sources of another repository that
+// candidates read. It reports false when the refs do not resolve; the render
+// then reports that error.
+func specHelmRefSources(application argoappv1.Application, sourcePlan SourcePlan, candidates []string) (map[string]render.ResolvedSource, bool) {
+	plan, err := Plan(application)
+	if err != nil {
+		return nil, false
+	}
+	_, refSources, err := renderRefsForSource(plan, sourcePlan, candidates)
+	return refSources, err == nil
+}
+
+// resolveSpecRefRoot resolves one $ref root. It reports false when the root
+// cannot be resolved; the render then reports that error.
+func (p localProvider) resolveSpecRefRoot(ctx context.Context, refKey string, refSource render.ResolvedSource) (string, bool) {
+	roots, err := p.resolveRefRoots(ctx, map[string]render.ResolvedSource{refKey: refSource})
+	if err != nil {
+		return "", false
+	}
+	return roots[refKey], true
 }
 
 // checkHelmRefRootsOutOfBoundsSymlinks checks each Git repository that a
