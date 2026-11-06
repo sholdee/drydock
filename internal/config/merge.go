@@ -3,6 +3,7 @@ package config
 import (
 	"fmt"
 	"reflect"
+	"strings"
 
 	"github.com/sholdee/drydock/internal/diagnostic"
 )
@@ -105,11 +106,21 @@ func mergeMaxCombinedDirectoryManifestsSize(merged *ArgoSettings, candidate Argo
 	return nil
 }
 
+// ParseAllowOutOfBoundsSymlinks reads reposerver.allow.oob.symlinks as the
+// Argo CD v3.6.1 repo-server reads it, through env.ParseBoolFromEnv
+// (util/env/env.go:184-193): "true" or "false" in any case, and the
+// default false for an empty or any other value.
+func ParseAllowOutOfBoundsSymlinks(value string) bool {
+	return strings.EqualFold(value, "true")
+}
+
 func mergeAllowOutOfBoundsSymlinks(merged *ArgoSettings, candidate ArgoSettings) []diagnostic.Diagnostic {
 	if !hasProvenance(candidate.AllowOutOfBoundsSymlinks) {
 		return nil
 	}
-	if hasProvenance(merged.AllowOutOfBoundsSymlinks) && merged.AllowOutOfBoundsSymlinks.Value != candidate.AllowOutOfBoundsSymlinks.Value {
+	// Spellings that the repo-server reads the same, such as "TRUE" and
+	// "true", do not conflict.
+	if hasProvenance(merged.AllowOutOfBoundsSymlinks) && ParseAllowOutOfBoundsSymlinks(merged.AllowOutOfBoundsSymlinks.Value) != ParseAllowOutOfBoundsSymlinks(candidate.AllowOutOfBoundsSymlinks.Value) {
 		return []diagnostic.Diagnostic{conflictDiagnostic(
 			fmt.Sprintf("conflicting %s values %q and %q", allowOutOfBoundsSymlinksKey, merged.AllowOutOfBoundsSymlinks.Value, candidate.AllowOutOfBoundsSymlinks.Value),
 			candidate.AllowOutOfBoundsSymlinks.Provenance,

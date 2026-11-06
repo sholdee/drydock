@@ -23,7 +23,7 @@ import (
 // case, and the default false for an empty or any other value
 // (cmd/argocd-repo-server/commands/argocd_repo_server.go:266).
 func allowOutOfBoundsSymlinks(settings config.ArgoSettings) bool {
-	return strings.EqualFold(settings.AllowOutOfBoundsSymlinks.Value, "true")
+	return config.ParseAllowOutOfBoundsSymlinks(settings.AllowOutOfBoundsSymlinks.Value)
 }
 
 // symlinkBoundsMemo keeps the out-of-bounds symlink check of each tree for

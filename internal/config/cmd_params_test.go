@@ -320,4 +320,12 @@ func TestCommandParametersReadAllowOutOfBoundsSymlinks(t *testing.T) {
 	if _, conflict := MergeDiscovered([]ArgoSettings{settings, other}); len(conflict) != 1 {
 		t.Fatalf("MergeDiscovered() conflict diagnostics = %#v, want one", conflict)
 	}
+	// Spellings that the repo-server reads the same do not conflict.
+	for _, pair := range [][2]string{{"TRUE", "true"}, {"false", "no"}, {"", "False"}} {
+		left, _ := commandParametersSettings("left.yaml", "data", map[string]string{"reposerver.allow.oob.symlinks": pair[0]})
+		right, _ := commandParametersSettings("right.yaml", "data", map[string]string{"reposerver.allow.oob.symlinks": pair[1]})
+		if _, diags := MergeDiscovered([]ArgoSettings{left, right}); len(diags) != 0 {
+			t.Fatalf("MergeDiscovered(%q, %q) diagnostics = %#v, want none", pair[0], pair[1], diags)
+		}
+	}
 }
