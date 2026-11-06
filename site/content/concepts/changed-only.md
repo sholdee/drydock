@@ -61,6 +61,14 @@ project it names. Like `diff.changed-only-settings`, this render-all is exempt
 from `--strict-changed-only` and `--strict`. With `--project-diagnostics off`,
 AppProject changes select nothing extra.
 
+A symlink with an absolute target, or one whose target leaves the
+repository, fails every Application that renders from the repository, as in
+Argo CD, unless `argocd-cmd-params-cm` sets `reposerver.allow.oob.symlinks`
+to `true`. So when the first such symlink differs between the two sides,
+changed-only renders all Applications, with the strict-exempt diagnostic
+`diff.changed-only-symlinks`. A directory source also owns the files that its
+symlinks reach outside its path, so a change to such a target selects it.
+
 ## Commands
 
 Use the default behavior:

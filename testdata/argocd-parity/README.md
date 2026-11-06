@@ -893,6 +893,34 @@ Several of these files are not valid text on purpose. The UTF-16 files hold
 NUL bytes, so Git treats them as binary. Do not let an editor or a formatter
 rewrite them.
 
+### File symlinks
+
+`applications/directory-symlinks.yaml` (`parity-directory-symlinks`) is a
+normal Application in the main comparison. It renders
+`workloads/directory-symlinks/app` with `recurse: true` and `exclude:
+excluded.yaml`. Each symlink in `app/` points into `targets/`, outside the
+source path. Git stores each symlink as mode `120000`. The smoke copies the
+fixture with `cp -R`, which keeps symlinks, and the Argo CD checkout makes
+them again.
+
+| file in `app/` | expected result |
+| --- | --- |
+| `plain.yaml` | rendered: a regular file |
+| `linked.yaml` | rendered: the target is a regular file in the repository |
+| `chain.yaml` | rendered: the target is a second symlink, which ends at a regular file |
+| `excluded.yaml` | skipped: `exclude` matches the name of the symlink, not of its target |
+| `filtered.txt` | skipped: the extension filter reads the name of the symlink |
+| `dangling.yaml` | skipped: the target is missing |
+| `dir.yaml` | skipped: the target is a directory, not a regular file |
+| `linked-dir` | skipped: the walk never enters a symlinked directory, also with `recurse` |
+| `marker.yaml` | skipped: the target holds `+argocd:skip-file-rendering` |
+| `linked.jsonnet` | rendered: evaluated through the symlink, and its import of `lib.libsonnet` resolves next to the symlink, so the ConfigMap is `parity-symlinks-jsonnet-link-dir` |
+| `imports.jsonnet` | rendered: it imports `shared.libsonnet`, a symlink into `targets/jsonnet` |
+
+The comparison proves both sides render the same five ConfigMaps.
+`TestDirectorySymlinksSmokeFixtureMatchesUpstream` in `internal/render`
+renders the directory with drydock and with copies of the repo-server code.
+
 ### Files that fail the source
 
 `directory-decode-applications/` holds one Application per failing case. They
@@ -953,6 +981,22 @@ case, so the other texts are compared without case.
 | `parity-decode-json-apiversion` | `apiversion.json` | the `apiVersion` `apps/v1/` does not parse as a group version, so the object has no `kind` and the controller fails |
 | `parity-decode-yaml-apiversion` | `apiversion.yaml` | the same `apiVersion` in the first YAML document stops the stream, and the file text holds every manifest marker |
 | `parity-decode-order-tracking` | `b-tracking.yaml` | `b-tracking.yaml` fails the tracking annotation. It wins over `a-kindless.json`, which has no `kind`, because the controller checks kinds last |
+
+### Out-of-bounds symlink
+
+`parity-decode-oob-symlink` renders `app` from a second Git repository,
+`oob-symlink.git`. The smoke builds it from `../oob-symlink-repo/` and adds
+`other/escape.yaml`, a symlink to `/etc/hosts`, outside the source path. So
+drydock's own repository never holds that symlink. The Argo CD repo-server
+checks the whole checkout before it reads the source path, and fails every
+Application from it with `repository contains out-of-bounds symlinks. file:
+other/escape.yaml`. drydock must fail with the same text. The case cannot
+live in the main fixture repository, because it would fail every Application
+there. The expected file marks it with `repository: oob-symlink`, and
+drydock reads the repository through `--repo-map`.
+`argocd-cmd-params-cm` does not set `reposerver.allow.oob.symlinks`, so the
+smoke covers only the default. Setting the key needs a restart of the
+repo-server, and it changes every Application in the cluster.
 
 ### Generated output that fails the source
 

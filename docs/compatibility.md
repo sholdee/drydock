@@ -529,12 +529,55 @@ Supported:
   `repoServer.env`. An empty value means `10M`, and a value that is not a Kubernetes quantity,
   spaces around it included, fails the build, as it stops the repo-server at
   startup. Earlier drydock releases had no limit.
-- Recorded divergence from strict Argo CD v3.6.1: drydock skips every file
-  symlink in a directory source. The repo-server follows a file symlink
-  whose target is in the repository, renders the target, and counts the
-  target size toward the limit, so the drydock sum can be lower. A file
-  symlink whose target is outside the repository fails the source in Argo
-  CD, but drydock skips it. A later change will match this.
+- A directory source follows file symlinks as the Argo CD v3.6.1
+  repo-server does (`getPotentiallyValidManifestFile`). The walk never
+  enters a symlinked directory. The extension filter, `include`, and
+  `exclude` match the name and path of the symlink itself. A symlink whose
+  target is missing, or is not a regular file, such as a directory, is
+  skipped. A target outside the repository fails the source with `illegal
+  filepath in symlink at`, also when `exclude` matches the symlink, and a
+  symlink that cannot be resolved, such as a loop, fails with `failed to
+  evaluate symlink at`. Otherwise the target is read, so the skip marker and
+  the decoders see the target, the target size counts toward the limit, and
+  a `.jsonnet` symlink is evaluated through the symlink path. A relative
+  Jsonnet import in such a file resolves next to the symlink, and an import
+  can go through an in-repository symlink, as in the repo-server's confined
+  importer. An import that resolves outside the repository fails with
+  `resolves outside repository root`. drydock also fails a source whose
+  symlink or Jsonnet import resolves into a `.git` directory, which the
+  repo-server would read from its own clone.
+- The walk skips `.git` directories. Git cannot track a nested `.git`
+  directory, so no Argo CD checkout holds one. The repo-server walks its own
+  root `.git` directory when a source at the repository root recurses. A
+  fresh clone keeps no file there that the default extension filter passes,
+  but with `disableExtensionFilter` Argo CD reads that clone metadata, which
+  drydock cannot reproduce.
+- Out-of-bounds symlinks fail every Application that renders from the tree
+  that holds one, as in Argo CD v3.6.1 (`CheckOutOfBoundsSymlinks`,
+  `util/app/path/path.go`). A symlink is out of bounds when its target is
+  absolute, or when any step of its target leaves the tree. The check runs
+  before the source renders, on the Git repository of a source with the root
+  `.git` skipped (`repository contains out-of-bounds symlinks. file:
+  <path>`), on each Git repository that a Helm `$ref` value file or file
+  parameter reads, on an OCI artifact (`oci image contains out-of-bounds
+  symlinks. file: <path>`), and on a chart of a Helm repository (`chart
+  contains out-of-bounds symlinks. file: <path>`). The path is the first
+  such symlink in walk order. A ref-only source is not checked. Setting
+  `reposerver.allow.oob.symlinks` to `true` in `argocd-cmd-params-cm` turns
+  the check off, as the repo-server flag `--allow-oob-symlinks` does.
+  drydock reads that key only from an `argocd-cmd-params-cm` that it
+  discovers, as for the size limit.
+- In a local Git worktree, the out-of-bounds check leaves out every path that
+  Git ignores and does not track, such as a Python virtual environment or a
+  Nix build result. No commit, and so no Argo CD checkout, can hold such a
+  path. A `.git` file at the worktree root, as in a linked worktree, is
+  skipped like a `.git` directory. A root that is not the top level of a Git
+  worktree is checked whole.
+- Recorded divergence from strict Argo CD v3.6.1: drydock never extracts an
+  OCI artifact that holds an out-of-bounds symlink, also when
+  `reposerver.allow.oob.symlinks` is `true`. Helm charts and Kustomize
+  graphs still reject every symlink in drydock (see the safety boundary
+  below), where the repo-server follows in-tree symlinks.
 - A directory file that is not a regular file, such as a named pipe or a
   socket, is skipped, as in Argo CD. Earlier drydock releases tried to read
   it, and a named pipe stopped the render.
@@ -805,9 +848,8 @@ Supported:
 
 Documented runtime-offline safety boundary:
 
-- Directory rendering rejects symlinked source path components and skips
-  symlinked manifest files, even when an Argo CD repo-server could render an
-  in-repository symlink target.
+- Directory rendering rejects symlinked source path components, even when
+  an Argo CD repo-server could render through an in-repository symlink.
 - Under Kustomize `ignoreMissingComponents`, a component whose kustomization
   file is an in-repository symlink counts as present, as in Argo CD v3.6.1,
   and then fails drydock's symlinked graph entry check where the repo-server
@@ -1190,7 +1232,8 @@ Supported:
   live repo-server, controller, or ApplicationSet controller behavior. These
   settings are parsed as metadata and do not mutate render behavior, except
   `reposerver.max.combined.directory.manifests.size` (see the directory
-  size limit above).
+  size limit above) and `reposerver.allow.oob.symlinks` (see the
+  out-of-bounds symlink check above).
 - Custom health Lua validation in `test apps` and `test app`, executed offline
   against rendered desired manifests. It reports Lua runtime errors and
   invalid status values. A `deletionMessage` (Argo CD v3.6.1) applies only to

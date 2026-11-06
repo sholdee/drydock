@@ -117,10 +117,14 @@ provenance and fail closed on conflicting discovered values.
 
 `argocd-cmd-params-cm` may be parsed only as command-parameter metadata for
 runtime-boundary diagnostics. Runtime-only repo-server, controller, and
-ApplicationSet-controller settings must not mutate render behavior. The one
-exception is `reposerver.max.combined.directory.manifests.size`. It decides
-whether a directory source fails, so drydock applies it and keeps it in the
-render settings signature.
+ApplicationSet-controller settings must not mutate render behavior. There are
+two exceptions, and drydock applies each one and keeps it in the render
+settings signature:
+
+- `reposerver.max.combined.directory.manifests.size` decides whether a
+  directory source fails.
+- `reposerver.allow.oob.symlinks` decides whether a source fails while the
+  tree it renders from holds an out-of-bounds symlink.
 
 Repository Secrets may contribute non-sensitive metadata such as `url`, `type`,
 `name`, `project`, and `enableOCI`. They must not retain username, password,
@@ -462,8 +466,15 @@ include/exclude as the only filters), parses YAML/JSON files, flattens any docum
 shape-based detection) and drops `items: null` documents as no-ops, renders
 Jsonnet with native Go libraries, honors Argo CD's
 `+argocd:skip-file-rendering` marker, stays within the resolved repository
-root, rejects escaping source paths and symlinked source path components, and
-skips symlinked files or directories while walking.
+root, and rejects escaping source paths and symlinked source path components.
+The walk never enters a symlinked directory. It follows a file symlink as the
+repo-server does: the symlink's own name and path pass the filters, a target
+in the repository is read, a missing or non-regular target is skipped, and a
+target outside the repository fails the source. Before any source renders,
+the provider checks its whole tree for out-of-bounds symlinks
+(`render.CheckOutOfBoundsSymlinks`) unless `reposerver.allow.oob.symlinks` is
+true. The targets of followed symlinks are render inputs for the persistent
+render cache and changed-only selection.
 
 Kustomize rendering uses Go libraries. Do not enable Kustomize's Helm shellout
 plugin. Validate local graph references before rendering and reject unsupported

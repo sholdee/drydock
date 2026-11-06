@@ -377,6 +377,18 @@ project, whatever project it names. This render-all carries diagnostic
 `diff.changed-only-settings`: rendering everything is the complete answer, not
 an ownership gap. `--project-diagnostics off` skips both forms of selection.
 
+An out-of-bounds symlink (absolute, or leaving the tree at any step) anywhere
+in the tree under diff fails every Application that renders from it, unless
+`reposerver.allow.oob.symlinks` is true, whichever path holds it. When the
+first such symlink differs between the two sides, every Application renders,
+with diagnostic `diff.changed-only-symlinks` (warning, exempt for the same
+reason). Each source that renders from the tree also owns the paths that the
+symlinks under its path and Jsonnet libraries reach
+(`render.DirectorySymlinkInputPaths`), and the persistent render cache digest
+of a directory source holds them as optional paths. The persistent key of a
+source that renders from the provider root also carries the first
+out-of-bounds symlink of the root.
+
 Operators can scope the changed path set with explicit include and ignore
 globs before ownership is evaluated. Include globs define the considered path
 universe; ignore globs remove paths from that universe and take precedence. If
