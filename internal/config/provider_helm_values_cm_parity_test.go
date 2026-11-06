@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/sholdee/drydock/internal/diagnostic"
 	"github.com/sholdee/drydock/internal/manifestyaml"
 	"helm.sh/helm/v4/pkg/chart/common"
 	chartutil "helm.sh/helm/v4/pkg/chart/common/util"
@@ -372,6 +373,52 @@ func TestHelmValuesResourceOverridesParityWithArgoCD(t *testing.T) {
 		}
 		if _, ok := want["apps/Deployment"]; !ok {
 			t.Fatalf("Argo CD map %#v has no apps/Deployment", want)
+		}
+	}
+}
+
+// TestHelmValuesTabLeadingValuesLoadLikeArgoCD pins that a configs.cm string
+// that starts with a tab loads. Helm and Argo CD read it, but drydock's YAML
+// round trip used to write it as a literal block that yaml.v3 could not read
+// back, so the whole values file failed to load.
+func TestHelmValuesTabLeadingValuesLoadLikeArgoCD(t *testing.T) {
+	const values = `configs:
+  cm:
+    resource.customizations.health.example.com_Widget: "\treturn { status = \"Healthy\" }\n"
+    resource.customizations.ignoreDifferences.apps_Deployment: "\tjsonPointers:\n    - /spec/replicas\n"
+`
+	data, rendered, err := helmRenderedArgoCDConfigMap(t, map[string]any{"create": true}, values)
+	if err != nil || !rendered {
+		t.Fatalf("Helm render error = %v, rendered = %v", err, rendered)
+	}
+	upstream, upstreamErr, panicked := upstreamResourceOverrides(t, data)
+	if panicked {
+		t.Fatal("Argo CD panicked")
+	}
+	path := filepath.Join(t.TempDir(), "values.yaml")
+	if err := os.WriteFile(path, []byte(values), 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+	for name, load := range map[string]func() (ArgoSettings, []diagnostic.Diagnostic, error){
+		"LoadFromHelmValues":         func() (ArgoSettings, []diagnostic.Diagnostic, error) { return LoadFromHelmValues(path) },
+		"LoadFromHelmValuesDocument": func() (ArgoSettings, []diagnostic.Diagnostic, error) { return LoadFromHelmValuesDocument(path, 0) },
+	} {
+		settings, diags, err := load()
+		if err != nil {
+			t.Fatalf("%s() error = %v", name, err)
+		}
+		if gotErr := hasErrorDiagnostic(diags); gotErr != (upstreamErr != nil) {
+			t.Fatalf("%s() error diagnostics = %#v, Argo CD error = %v", name, diags, upstreamErr)
+		}
+		if upstreamErr != nil {
+			continue
+		}
+		got := comparableDrydockCustomizations(settings.ResourceCustomizations)
+		if want := comparableUpstreamOverrides(upstream); !reflect.DeepEqual(got, want) {
+			t.Fatalf("%s override map mismatch\ndrydock: %#v\nArgo CD: %#v", name, got, want)
+		}
+		if _, ok := got["example.com/Widget"]; !ok {
+			t.Fatalf("%s override map %#v has no example.com/Widget", name, got)
 		}
 	}
 }

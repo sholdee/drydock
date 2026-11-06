@@ -9,6 +9,7 @@ import (
 
 	argoappv1 "github.com/argoproj/argo-cd/v3/pkg/apis/application/v1alpha1"
 	"github.com/sholdee/drydock/internal/change"
+	"github.com/sholdee/drydock/internal/config"
 	"github.com/sholdee/drydock/internal/manifest"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 )
@@ -361,30 +362,11 @@ func isArgoHelmValuesSettings(obj *unstructured.Unstructured) bool {
 		return false
 	}
 	for key := range cm {
-		if isKnownArgoCMSettingKey(key) {
+		if config.IsArgoCDHelmValuesConfigMapKey(key) {
 			return true
 		}
 	}
 	return false
-}
-
-func isKnownArgoCMSettingKey(key string) bool {
-	switch key {
-	case "kustomize.buildOptions",
-		"application.resourceTrackingMethod",
-		"application.instanceLabelKey",
-		"resource.exclusions",
-		"resource.inclusions",
-		"resource.selectors",
-		"resource.compareoptions":
-		return true
-	default:
-		// Argo CD v3.6.1 reads every key that starts with
-		// resource.customizations, with no final dot, as resource
-		// customization settings (util/settings/settings.go:1224). This also
-		// covers the resource.customizations block key itself.
-		return strings.HasPrefix(key, "resource.customizations")
-	}
 }
 
 func isConfigManagementPluginConfigMap(obj *unstructured.Unstructured) bool {
