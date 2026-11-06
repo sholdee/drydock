@@ -253,6 +253,10 @@ Supported:
   `InvalidRolloutConfig` condition never blocks Application create or update.
   The render parity smoke turns progressive syncs on and checks each finding
   class against the live ApplicationSet condition and Application list.
+  In Argo CD v3.6.1, concurrent reconciles share one store for these
+  findings, so an ApplicationSet can show the `InvalidRolloutConfig` message
+  of another one. drydock reports each ApplicationSet's own findings. The
+  smoke reconciles one ApplicationSet at a time to keep the message stable.
 
 Not supported:
 

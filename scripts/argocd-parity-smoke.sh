@@ -1138,8 +1138,16 @@ install_argocd() {
   # Argo CD checks RollingSync steps only with progressive syncs on, and they
   # are off by default. The ApplicationSet controller restart below picks it
   # up. drydock reads the same key from repo/settings/argocd-cmd-params-cm.yaml.
+  #
+  # The controller reconciles one ApplicationSet at a time. In v3.6.1 all
+  # reconciles share one progressivesync.Manager, and PerformProgressiveSyncs
+  # stores the RollingSync findings in its validationIssues field
+  # (applicationset/progressivesync/progressive_sync.go:82 and 119-125). With
+  # the default of 10 concurrent reconciles, one ApplicationSet can get the
+  # InvalidRolloutConfig message of another. drydock does not model that race,
+  # and the condition comparison needs a stable message.
   kubectl -n argocd patch configmap argocd-cmd-params-cm --type merge \
-    -p '{"data":{"applicationsetcontroller.enable.progressive.syncs":"true"}}' >/dev/null
+    -p '{"data":{"applicationsetcontroller.enable.progressive.syncs":"true","applicationsetcontroller.concurrent.reconciliations.max":"1"}}' >/dev/null
   # Argo CD derives the OCI registry CA from argocd-tls-certs-cm keyed by the
   # bare hostname without port. The patch must land before the rollout
   # restart below so repo-server pods mount the CA from the start (ConfigMap
