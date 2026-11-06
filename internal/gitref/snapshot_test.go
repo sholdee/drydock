@@ -9,6 +9,7 @@ import (
 
 	git "github.com/go-git/go-git/v5"
 	"github.com/go-git/go-git/v5/plumbing"
+	"github.com/go-git/go-git/v5/plumbing/filemode"
 	"github.com/go-git/go-git/v5/plumbing/object"
 )
 
@@ -570,5 +571,65 @@ func TestSnapshotKeepsOutOfBoundsSymlinksWhenAsked(t *testing.T) {
 	}
 	if got, err := os.Readlink(filepath.Join(result.Path, "escape")); err != nil || got != "../outside" {
 		t.Fatalf("Readlink(escape) = %q, %v, want ../outside", got, err)
+	}
+}
+
+// TestMaterializeTreeRejectsOverlappingTreePaths pins that a malformed Git
+// tree that names one path twice, a symlink out of the snapshot and a
+// regular file, never writes through the symlink.
+func TestMaterializeTreeRejectsOverlappingTreePaths(t *testing.T) {
+	_, repo, _ := newSnapshotRepo(t)
+	outside := filepath.Join(t.TempDir(), "outside.txt")
+	if err := os.WriteFile(outside, []byte("original\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	storeBlob := func(content string) plumbing.Hash {
+		t.Helper()
+		obj := repo.Storer.NewEncodedObject()
+		obj.SetType(plumbing.BlobObject)
+		writer, err := obj.Writer()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := writer.Write([]byte(content)); err != nil {
+			t.Fatal(err)
+		}
+		_ = writer.Close()
+		hash, err := repo.Storer.SetEncodedObject(obj)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return hash
+	}
+	for _, entries := range [][]object.TreeEntry{
+		{
+			{Name: "x", Mode: filemode.Symlink, Hash: storeBlob(outside)},
+			{Name: "x", Mode: filemode.Regular, Hash: storeBlob("overwritten\n")},
+		},
+		{
+			{Name: "x", Mode: filemode.Regular, Hash: storeBlob("overwritten\n")},
+			{Name: "x", Mode: filemode.Symlink, Hash: storeBlob(outside)},
+		},
+	} {
+		tree := &object.Tree{Entries: entries}
+		obj := repo.Storer.NewEncodedObject()
+		if err := tree.Encode(obj); err != nil {
+			t.Fatal(err)
+		}
+		hash, err := repo.Storer.SetEncodedObject(obj)
+		if err != nil {
+			t.Fatal(err)
+		}
+		stored, err := object.GetTree(repo.Storer, hash)
+		if err != nil {
+			t.Fatal(err)
+		}
+		err = materializeTree(t.Context(), stored, t.TempDir(), true)
+		if err == nil || !strings.Contains(err.Error(), "more than once") {
+			t.Fatalf("materializeTree() error = %v, want the duplicate path rejected", err)
+		}
+		if data, _ := os.ReadFile(outside); string(data) != "original\n" {
+			t.Fatalf("outside file = %q, want it unchanged", data)
+		}
 	}
 }

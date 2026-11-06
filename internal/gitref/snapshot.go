@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/url"
 	"os"
+	"path"
 	"path/filepath"
 	"runtime"
 	"sort"
@@ -133,6 +134,9 @@ func materializeTree(ctx context.Context, tree *object.Tree, root string, keepOu
 		return err
 	}
 	sort.Slice(files, func(i, j int) bool { return files[i].Name < files[j].Name })
+	if err := rejectOverlappingTreePaths(files); err != nil {
+		return err
+	}
 	return materializeTreeFiles(ctx, files, root, keepOutOfBoundsSymlinks)
 }
 
@@ -223,6 +227,29 @@ func materializeTreeFile(root string, file *object.File, keepOutOfBoundsSymlinks
 	}
 }
 
+// rejectOverlappingTreePaths fails for a malformed Git tree that names one
+// path twice, or a path below another file. Git never writes such a tree.
+// Written in parallel, a symlink entry could otherwise redirect the write of
+// the other entry outside the snapshot. files must be sorted by name.
+func rejectOverlappingTreePaths(files []object.File) error {
+	names := make(map[string]struct{}, len(files))
+	for i := range files {
+		name := files[i].Name
+		if _, ok := names[name]; ok {
+			return fmt.Errorf("git tree names path %q more than once", name)
+		}
+		names[name] = struct{}{}
+	}
+	for i := range files {
+		for dir := path.Dir(files[i].Name); dir != "." && dir != "/"; dir = path.Dir(dir) {
+			if _, ok := names[dir]; ok {
+				return fmt.Errorf("git tree path %q is below the file %q", files[i].Name, dir)
+			}
+		}
+	}
+	return nil
+}
+
 func writeSnapshotFile(target string, file *object.File) error {
 	reader, err := file.Reader()
 	if err != nil {
@@ -234,7 +261,9 @@ func writeSnapshotFile(target string, file *object.File) error {
 	if file.Mode == filemode.Executable {
 		mode = 0o755
 	}
-	out, err := os.OpenFile(target, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, mode)
+	// O_EXCL fails on any existing path, a symlink included, so a write
+	// never goes through a symlink.
+	out, err := os.OpenFile(target, os.O_CREATE|os.O_EXCL|os.O_WRONLY, mode)
 	if err != nil {
 		return err
 	}
