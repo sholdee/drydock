@@ -1,26 +1,30 @@
 package render
 
 import (
-	"bytes"
 	"context"
+	"errors"
 	"fmt"
-	"io"
 	"maps"
 	"os"
 	"path"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
+	"unicode"
 
 	"github.com/sholdee/drydock/internal/avpcompat"
 	"github.com/sholdee/drydock/internal/diagnostic"
 	"github.com/sholdee/drydock/internal/manifest"
+	"github.com/sholdee/drydock/internal/manifestyaml"
 	helmchart "helm.sh/helm/v4/pkg/chart"
 	"helm.sh/helm/v4/pkg/chart/common"
 	chartutil "helm.sh/helm/v4/pkg/chart/common/util"
 	chartv2 "helm.sh/helm/v4/pkg/chart/v2"
 	"helm.sh/helm/v4/pkg/engine"
-	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	release "helm.sh/helm/v4/pkg/release/v1"
+	releaseutil "helm.sh/helm/v4/pkg/release/v1/util"
+	utilyaml "k8s.io/apimachinery/pkg/util/yaml"
 )
 
 type HelmRenderer struct{}
@@ -78,7 +82,7 @@ func (HelmRenderer) Render(ctx context.Context, source ResolvedSource, opts Rend
 		return nil, nil, fmt.Errorf("helm template %s: %w", manifestPath, err)
 	}
 
-	manifests, diags, err := decodeHelmManifests(pathMap, chart, rendered, opts)
+	manifests, diags, err := decodeHelmManifests(manifestPath, pathMap, chart, rendered, opts)
 	diags = append(avpDiags, diags...)
 	return manifests, diags, err
 }
@@ -196,118 +200,275 @@ func validateHelmChartTree(root string) (bool, error) {
 	return hasGit, err
 }
 
-func decodeHelmManifests(pathMap map[string]string, chrt helmchart.Charter, rendered map[string]string, opts RenderOptions) ([]Manifest, []diagnostic.Diagnostic, error) {
-	decode := helmManifestDecoder(opts)
-	var out []Manifest
-	if shouldIncludeCRDs(opts) {
-		if provider, ok := chrt.(helmCRDObjectProvider); ok {
-			for _, crd := range provider.CRDObjects() {
-				path, err := helmManifestPath(pathMap, crd.Filename)
-				if err != nil {
-					return nil, nil, err
-				}
-				docs, err := decode(path, bytes.NewReader(crd.File.Data))
-				if err != nil {
-					return nil, nil, err
-				}
-				out = appendHelmDocuments(out, docs, opts)
-			}
-		} else if provider, ok := chrt.(helmCRDProvider); ok {
-			for _, crd := range provider.CRDs() {
-				path, err := helmManifestPath(pathMap, crd.Name)
-				if err != nil {
-					return nil, nil, err
-				}
-				docs, err := decode(path, bytes.NewReader(crd.Data))
-				if err != nil {
-					return nil, nil, err
-				}
-				out = appendHelmDocuments(out, docs, opts)
-			}
-		}
+// decodeHelmManifests reads the rendered templates as Argo CD v3.6.1 reads
+// the output of helm template. See helmTemplateStream for what helm template
+// writes. When the manifests are kustomize input (helmCharts), each document
+// is decoded with the YAML 1.2 rules kustomize uses. Otherwise the stream
+// goes through the same stages as the repo-server: kube.SplitYAML
+// (reposerver/repository/repository.go:1444), then the GenerateManifests loop
+// and the controller kind check (see DecodeGeneratedOutput).
+//
+// The stages run in the order of helm template output, so the first failure
+// is the one Argo CD reports. The manifests come out in the same order, so
+// the Application layer keeps the same copy of a repeated resource as the
+// Argo CD controller, which keeps the last one (NormalizeTargetObjects,
+// controller/state.go:575-623 at v3.6.1).
+func decodeHelmManifests(manifestPath string, pathMap map[string]string, chrt helmchart.Charter, rendered map[string]string, opts RenderOptions) ([]Manifest, []diagnostic.Diagnostic, error) {
+	chunks, err := helmTemplateStream(manifestPath, pathMap, chrt, rendered, opts)
+	if err != nil {
+		return nil, nil, err
 	}
-
-	names := make([]string, 0, len(rendered))
-	for name := range rendered {
-		names = append(names, name)
-	}
-	sort.Strings(names)
-	for _, name := range names {
-		if path.Base(name) == "NOTES.txt" {
-			continue
-		}
-		path, err := helmManifestPath(pathMap, name)
-		if err != nil {
-			return nil, nil, err
-		}
-		docs, err := decodeRenderedHelmTemplate(path, rendered[name], decode)
-		if err != nil {
-			return nil, nil, err
-		}
-		out = appendHelmDocuments(out, docs, opts)
-	}
-	return out, nil, nil
-}
-
-// documentDecoder splits a manifest stream read from path into documents.
-type documentDecoder func(path string, reader io.Reader) ([]manifest.Document, error)
-
-// helmManifestDecoder reads helm output as Argo CD's repo-server does, or, for
-// helmCharts output that kustomize consumes, as kustomize does.
-func helmManifestDecoder(opts RenderOptions) documentDecoder {
 	if opts.helmOutputForKustomize {
-		return manifest.DecodeYAML12Documents
+		var targets []generatedTarget
+		for _, chunk := range chunks {
+			// helm template prints a line break after each document.
+			docs, err := manifest.DecodeYAML12Documents(chunk.path, strings.NewReader(chunk.content+"\n"))
+			if err != nil {
+				return nil, nil, err
+			}
+			for _, doc := range docs {
+				targets = append(targets, generatedTarget{manifest: NewDocumentManifest(doc)})
+			}
+		}
+		return targetManifests(targets), nil, nil
 	}
-	return manifest.DecodeGeneratedDocuments
+	if !opts.KeepOutputLineBreak {
+		trimCommandOutput(chunks)
+	}
+	var docs []generatedDocument
+	for _, chunk := range chunks {
+		docs, err = splitGeneratedDocuments(docs, chunk.path, utilyaml.NewYAMLToJSONDecoder(strings.NewReader(chunk.text)), chunk.firstIndex)
+		if err != nil {
+			return nil, nil, err
+		}
+	}
+	manifests, err := generatedManifests(docs, opts.TrackManifest)
+	if err != nil {
+		return nil, nil, err
+	}
+	return manifests, nil, nil
 }
 
-func decodeRenderedHelmTemplate(path, rendered string, decode documentDecoder) ([]manifest.Document, error) {
-	var out []manifest.Document
-	for _, document := range splitHelmRenderedManifests(rendered) {
-		docs, err := decode(path, strings.NewReader(document))
-		if err != nil {
+// helmStreamChunk is one "---\n# Source: <file>\n<document>\n" part of the
+// output of helm template.
+type helmStreamChunk struct {
+	// path is the repository path of the template or CRD file.
+	path string
+	// text is the chunk as helm template writes it.
+	text string
+	// content is the document, or the whole CRD file, without the line
+	// break that helm template prints after it.
+	content string
+	// firstIndex is the index of the first document of the chunk in its
+	// file. A template chunk holds one document from helm's split of the
+	// file; a CRD chunk holds the whole file.
+	firstIndex int
+}
+
+// helmEntryKey names one document of a rendered template, as helm's
+// SplitManifests returns it.
+type helmEntryKey struct {
+	name    string
+	content string
+}
+
+// helmTemplateStream returns the chunks that helm template (helm v4.3.1, the
+// version Argo CD v3.6.1 bundles) writes for the rendered templates, in the
+// same order:
+//
+//  1. renderResources (pkg/action/action.go) drops every file whose name
+//     ends in NOTES.txt.
+//  2. releaseutil.SortManifests splits each other file into documents with
+//     SplitManifests and reads the head of each document. A head that does
+//     not parse fails helm template with "YAML parse error on <file>". A
+//     document whose helm.sh/hook annotation names a hook event that helm
+//     does not know, or is empty, is dropped. A document with a known hook
+//     event is a hook. helm reads the annotations of the document itself, so
+//     for a List it reads the List, not its items.
+//  3. The output holds the files from the chart's crds directories when
+//     CRDs are included, then the other documents sorted by kind, then the
+//     hooks sorted by kind (pkg/cmd/template.go). --skip-tests (Argo CD's
+//     spec.source.helm.skipTests) drops a hook with the test event.
+//     --no-hooks (kustomize's skipHooks) drops every hook.
+//  4. helm template trims the white space at the end of the CRDs and the
+//     other documents together, before it prints the hooks
+//     (strings.TrimSpace(rel.Manifest), pkg/cmd/template.go:122). So the
+//     last of these chunks loses the white space at its end, such as the
+//     blank lines that a "|+" block scalar keeps.
+//
+// Argo CD also removes one line break from the end of the whole output.
+// decodeHelmManifests does that (see trimCommandOutput), because kustomize
+// helmCharts output keeps it.
+func helmTemplateStream(manifestPath string, pathMap map[string]string, chrt helmchart.Charter, rendered map[string]string, opts RenderOptions) ([]helmStreamChunk, error) {
+	stream := &helmStream{manifestPath: manifestPath, pathMap: pathMap}
+	if shouldIncludeCRDs(opts) {
+		if err := stream.addCRDs(chrt); err != nil {
 			return nil, err
 		}
-		out = append(out, docs...)
 	}
-	return out, nil
-}
 
-func appendHelmDocuments(out []Manifest, docs []manifest.Document, opts RenderOptions) []Manifest {
-	for _, doc := range docs {
-		if shouldSkipHelmDocument(doc.Object, opts) {
+	files := make(map[string]string, len(rendered))
+	for name, content := range rendered {
+		if strings.HasSuffix(name, helmNotesFileSuffix) {
 			continue
 		}
-		out = append(out, NewDocumentManifest(doc))
+		files[name] = content
 	}
-	return out
+	hooks, sorted, err := releaseutil.SortManifests(files, nil, releaseutil.InstallOrder)
+	if err != nil {
+		return nil, fmt.Errorf("helm template %s: %w", manifestPath, sanitizeHelmSortError(err))
+	}
+	stream.indexTemplates(files)
+	for _, entry := range sorted {
+		if err := stream.addTemplateDocument(entry.Name, entry.Content); err != nil {
+			return nil, err
+		}
+	}
+	stream.trimLastChunk()
+	if opts.SkipHooks {
+		return stream.chunks, nil
+	}
+	for _, hook := range hooks {
+		if opts.SkipTests && slices.Contains(hook.Events, release.HookTest) {
+			continue
+		}
+		if err := stream.addTemplateDocument(hook.Path, hook.Manifest); err != nil {
+			return nil, err
+		}
+	}
+	return stream.chunks, nil
 }
+
+// trimCommandOutput removes one line break from the end of the stream, as
+// Argo CD does with the output of helm template (util/exec/exec.go:285 at
+// v3.6.1, through util/helm/cmd.go). kustomize reads the output of helm
+// itself, so helmCharts output keeps the line break.
+func trimCommandOutput(chunks []helmStreamChunk) {
+	if len(chunks) == 0 {
+		return
+	}
+	last := &chunks[len(chunks)-1]
+	last.text = strings.TrimSuffix(last.text, "\n")
+}
+
+// helmStream collects the chunks of helm template output for
+// helmTemplateStream.
+type helmStream struct {
+	manifestPath string
+	pathMap      map[string]string
+	chunks       []helmStreamChunk
+	// positions holds, for each template document, the index of each copy
+	// of it in its file, in file order.
+	positions map[helmEntryKey][]int
+}
+
+func (s *helmStream) addCRDs(chrt helmchart.Charter) error {
+	if provider, ok := chrt.(helmCRDObjectProvider); ok {
+		for _, crd := range provider.CRDObjects() {
+			if err := s.addCRD(crd.Filename, crd.File.Data); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+	if provider, ok := chrt.(helmCRDProvider); ok {
+		for _, crd := range provider.CRDs() {
+			if err := s.addCRD(crd.Name, crd.Data); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func (s *helmStream) addCRD(name string, data []byte) error {
+	crdPath, err := helmManifestPath(s.pathMap, name)
+	if err != nil {
+		return err
+	}
+	s.chunks = append(s.chunks, helmStreamChunk{
+		path:    crdPath,
+		text:    fmt.Sprintf("---\n# Source: %s\n%s\n", name, data),
+		content: string(data),
+	})
+	return nil
+}
+
+// indexTemplates gives each document of the rendered templates its index in
+// its file, split as helm splits the file, for the document labels in
+// errors.
+func (s *helmStream) indexTemplates(files map[string]string) {
+	s.positions = make(map[helmEntryKey][]int)
+	for name, content := range files {
+		entries := releaseutil.SplitManifests(content)
+		keys := make([]string, 0, len(entries))
+		for key := range entries {
+			keys = append(keys, key)
+		}
+		sort.Sort(releaseutil.BySplitManifestsOrder(keys))
+		for index, key := range keys {
+			entryKey := helmEntryKey{name: name, content: entries[key]}
+			s.positions[entryKey] = append(s.positions[entryKey], index)
+		}
+	}
+}
+
+// addTemplateDocument adds one document that SortManifests returned. helm
+// sorts stably, so copies of the same document in one file keep their order.
+func (s *helmStream) addTemplateDocument(name, content string) error {
+	entryKey := helmEntryKey{name: name, content: content}
+	queue := s.positions[entryKey]
+	if len(queue) == 0 {
+		return fmt.Errorf("helm template %s: cannot find a document of %s in its file", s.manifestPath, name)
+	}
+	s.positions[entryKey] = queue[1:]
+	entryPath, err := helmManifestPath(s.pathMap, name)
+	if err != nil {
+		return err
+	}
+	s.chunks = append(s.chunks, helmStreamChunk{
+		path:       entryPath,
+		text:       fmt.Sprintf("---\n# Source: %s\n%s\n", name, content),
+		content:    content,
+		firstIndex: queue[0],
+	})
+	return nil
+}
+
+// trimLastChunk trims the white space at the end of the last chunk, as
+// helm template trims the release manifest (see helmTemplateStream).
+func (s *helmStream) trimLastChunk() {
+	if len(s.chunks) == 0 {
+		return
+	}
+	last := &s.chunks[len(s.chunks)-1]
+	last.text = strings.TrimRightFunc(last.text, unicode.IsSpace) + "\n"
+	last.content = strings.TrimRightFunc(last.content, unicode.IsSpace)
+}
+
+// sanitizeHelmSortError keeps the "YAML parse error on <file>: " prefix that
+// releaseutil.SortManifests (pkg/release/v1/util/manifest_sorter.go:151-153
+// at helm v4.3.1) puts on a sigs.k8s.io/yaml error, and drops the manifest
+// content that the wrapped error can copy, such as a map key (see
+// manifestyaml.SanitizeDecodeError).
+func sanitizeHelmSortError(err error) error {
+	inner := errors.Unwrap(err)
+	if inner == nil {
+		return manifestyaml.SanitizeDecodeError(err)
+	}
+	prefix, ok := strings.CutSuffix(err.Error(), inner.Error())
+	if !ok {
+		return manifestyaml.SanitizeDecodeError(err)
+	}
+	return fmt.Errorf("%s%w", prefix, manifestyaml.SanitizeDecodeError(inner))
+}
+
+// helmNotesFileSuffix is the suffix of the files that helm's renderResources
+// drops from the rendered templates (notesFileSuffix, pkg/action/install.go).
+const helmNotesFileSuffix = "NOTES.txt"
 
 func shouldIncludeCRDs(opts RenderOptions) bool {
 	return !opts.IncludeCRDsSet || opts.IncludeCRDs
-}
-
-func shouldSkipHelmDocument(obj *unstructured.Unstructured, opts RenderOptions) bool {
-	if obj == nil {
-		return false
-	}
-	hook := obj.GetAnnotations()["helm.sh/hook"]
-	if hook == "" {
-		return false
-	}
-	if opts.SkipHooks {
-		return true
-	}
-	if !opts.SkipTests {
-		return false
-	}
-	for part := range strings.SplitSeq(hook, ",") {
-		switch strings.TrimSpace(part) {
-		case "test", "test-success", "test-failure":
-			return true
-		}
-	}
-	return false
 }
 
 func applyAVPCompatToHelmValues(values map[string]any, opts RenderOptions) []diagnostic.Diagnostic {

@@ -71,7 +71,7 @@ func RenderApplicationWithOptions(ctx context.Context, application argoappv1.App
 	pluginOpts := options.PluginOptions
 	trackingOpts := normalizeTrackingOptions(options.TrackingOptions)
 	capabilityOpts := options.CapabilityOptions
-	byID := map[manifest.Identity]int{}
+	byID := map[manifest.Identity]renderedSlot{}
 	var result RenderResult
 	for i, sourcePlan := range plan.Sources {
 		if prepareErr != nil && i == prepareFailedAt {
@@ -98,7 +98,7 @@ func RenderApplicationWithOptions(ctx context.Context, application argoappv1.App
 	return result, nil
 }
 
-func renderSourcePlan(ctx context.Context, application argoappv1.Application, provider render.Provider, plan PlanResult, sourcePlan SourcePlan, pluginOpts PluginOptions, trackingOpts TrackingOptions, capabilityOpts CapabilityOptions, byID map[manifest.Identity]int, result *RenderResult) error {
+func renderSourcePlan(ctx context.Context, application argoappv1.Application, provider render.Provider, plan PlanResult, sourcePlan SourcePlan, pluginOpts PluginOptions, trackingOpts TrackingOptions, capabilityOpts CapabilityOptions, byID map[manifest.Identity]renderedSlot, result *RenderResult) error {
 	opts, err := renderOptions(application, sourcePlan.Source, capabilityOpts, trackingOpts)
 	if err != nil {
 		return fmt.Errorf("%s: %w", renderSourceContext(application, sourcePlan), err)
@@ -147,7 +147,24 @@ func resolvedSourceForPlan(sourcePlan SourcePlan) render.ResolvedSource {
 	}
 }
 
-func appendRenderedManifests(application argoappv1.Application, sourcePlan SourcePlan, opts render.RenderOptions, trackingOpts TrackingOptions, manifests []render.Manifest, byID map[manifest.Identity]int, result *RenderResult) (bool, error) {
+// renderedSlot is where the kept copy of a resource sits in a RenderResult:
+// an index into Hooks when hook is set, else an index into Manifests.
+type renderedSlot struct {
+	hook  bool
+	index int
+}
+
+// appendRenderedManifests adds the rendered manifests of one source to
+// result. It keeps the last copy of a repeated resource, hooks included,
+// and only then sorts the kept copy into Manifests or Hooks. The Argo CD
+// controller does the same: NormalizeTargetObjects (controller/state.go:
+// 575-623 at v3.6.1) keeps the last copy of each resource key among all
+// target objects of all sources, and Reconcile (gitops-engine
+// pkg/sync/reconcile.go:71-72) splits the hooks off after that. So a hook
+// copy that comes after a regular copy makes the resource a hook, which
+// Argo CD does not manage. An object with a generateName and no name has a
+// key of its own, so it is never a repeat.
+func appendRenderedManifests(application argoappv1.Application, sourcePlan SourcePlan, opts render.RenderOptions, trackingOpts TrackingOptions, manifests []render.Manifest, byID map[manifest.Identity]renderedSlot, result *RenderResult) (bool, error) {
 	avpCompatSubstituted := false
 	for _, rendered := range manifests {
 		if rendered.Object != nil {
@@ -164,30 +181,62 @@ func appendRenderedManifests(application argoappv1.Application, sourcePlan Sourc
 		if err := applyTrackingMetadata(application, rendered.Object, trackingOpts); err != nil {
 			return false, fmt.Errorf("%s: %w", renderSourceContext(application, sourcePlan), err)
 		}
-		if hook {
-			// Hooks leave the managed-resources view (the Argo CD controller
-			// filters them) but are kept for AppProject resource-policy
-			// validation. They skip repeated-resource dedupe: a generateName
-			// hook has no stable identity.
-			result.Hooks = append(result.Hooks, rendered)
+		// Hooks leave the managed-resources view (the Argo CD controller
+		// filters them) but are kept for AppProject resource-policy
+		// validation.
+		if rendered.Object == nil || (rendered.Object.GetName() == "" && rendered.Object.GetGenerateName() != "") {
+			result.addRendered(rendered, hook)
 			continue
 		}
-
 		id := manifest.IdentityOf(rendered.Object)
-		if existing, ok := byID[id]; ok {
-			result.Manifests[existing] = rendered
+		if slot, ok := byID[id]; ok {
+			byID[id] = result.replaceRendered(slot, rendered, hook, byID)
 			result.Diagnostics = append(result.Diagnostics, diagnostic.Diagnostic{
 				Severity: diagnostic.SeverityWarning,
 				Category: "repeated-resource",
-				Message:  fmt.Sprintf("resource %s repeated in Application %s; later source wins", id.String(), application.Name),
+				Message:  fmt.Sprintf("resource %s appears more than once in Application %s; drydock keeps the last copy, as Argo CD does", id.String(), application.Name),
 			})
 			continue
 		}
-
-		byID[id] = len(result.Manifests)
-		result.Manifests = append(result.Manifests, rendered)
+		byID[id] = result.addRendered(rendered, hook)
 	}
 	return avpCompatSubstituted, nil
+}
+
+// addRendered appends rendered to Hooks or Manifests and returns its slot.
+func (result *RenderResult) addRendered(rendered render.Manifest, hook bool) renderedSlot {
+	if hook {
+		result.Hooks = append(result.Hooks, rendered)
+		return renderedSlot{hook: true, index: len(result.Hooks) - 1}
+	}
+	result.Manifests = append(result.Manifests, rendered)
+	return renderedSlot{index: len(result.Manifests) - 1}
+}
+
+// replaceRendered puts rendered in place of the copy at slot and returns the
+// slot of rendered. When one copy is a hook and the other is not, the old
+// copy leaves its list, and byID moves the slots after it down by one.
+func (result *RenderResult) replaceRendered(slot renderedSlot, rendered render.Manifest, hook bool, byID map[manifest.Identity]renderedSlot) renderedSlot {
+	if slot.hook == hook {
+		if hook {
+			result.Hooks[slot.index] = rendered
+		} else {
+			result.Manifests[slot.index] = rendered
+		}
+		return slot
+	}
+	if slot.hook {
+		result.Hooks = slices.Delete(result.Hooks, slot.index, slot.index+1)
+	} else {
+		result.Manifests = slices.Delete(result.Manifests, slot.index, slot.index+1)
+	}
+	for id, other := range byID {
+		if other.hook == slot.hook && other.index > slot.index {
+			other.index--
+			byID[id] = other
+		}
+	}
+	return result.addRendered(rendered, hook)
 }
 
 // isArgoHook mirrors the Argo CD controller managed-resources view hook filter

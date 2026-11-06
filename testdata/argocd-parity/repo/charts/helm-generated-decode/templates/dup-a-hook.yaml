@@ -1,0 +1,13 @@
+# A repeated resource. helm prints hooks after every other document, so
+# Argo CD keeps this copy, although dup-b-plain.yaml comes later by file
+# name. argocd.argoproj.io/hook: Skip makes it a regular resource for Argo
+# CD, so it stays managed.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: helm-dup-hook
+  annotations:
+    helm.sh/hook: pre-install
+    argocd.argoproj.io/hook: Skip
+data:
+  from: the helm hook copy

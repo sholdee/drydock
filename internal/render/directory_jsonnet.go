@@ -19,7 +19,7 @@ import (
 // (reposerver/repository/repository.go:2005-2051 at v3.6.1). The objects go
 // through the same list split and kind check as the objects of every other
 // file.
-func renderJsonnetFile(appPath, repoRoot, filePath, manifestPath string, opts RenderOptions) ([]directoryObject, error) {
+func renderJsonnetFile(appPath, repoRoot, filePath, manifestPath string, opts RenderOptions) ([]generatedObject, error) {
 	vm, err := makeJsonnetVM(appPath, repoRoot, opts.Jsonnet, opts.ArgoEnv)
 	if err != nil {
 		return nil, err
@@ -236,12 +236,12 @@ func (i *boundedJsonnetImporter) tryImport(path string) (jsonnet.Contents, bool,
 // that fails, as one Unstructured object. Each Unstructured decode fails on an
 // object without a non-empty string kind, so such an object fails the source
 // in the repo-server. A JSON null in the array, or null output, adds nothing.
-func decodeJsonnetObjects(manifestPath string, data []byte) ([]directoryObject, error) {
+func decodeJsonnetObjects(manifestPath string, data []byte) ([]generatedObject, error) {
 	var objects []*unstructured.Unstructured
 	if err := json.Unmarshal(data, &objects); err == nil {
-		out := make([]directoryObject, 0, len(objects))
+		out := make([]generatedObject, 0, len(objects))
 		for index, object := range objects {
-			out = append(out, directoryObject{
+			out = append(out, generatedObject{
 				path:   manifestPath,
 				label:  fmt.Sprintf("%s output item %d", manifestPath, index),
 				object: object,
@@ -253,7 +253,7 @@ func decodeJsonnetObjects(manifestPath string, data []byte) ([]directoryObject, 
 	if err := json.Unmarshal(data, &object); err != nil {
 		return nil, fmt.Errorf("failed to unmarshal generated json %q: %s", manifestPath, describeJsonnetDecodeError(data, err))
 	}
-	return []directoryObject{{
+	return []generatedObject{{
 		path:   manifestPath,
 		label:  manifestPath + " output",
 		object: &object,

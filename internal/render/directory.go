@@ -74,7 +74,7 @@ func (DirectoryRenderer) Render(ctx context.Context, source ResolvedSource, opts
 	if err != nil {
 		return nil, diags, err
 	}
-	var objects []directoryObject
+	var objects []generatedObject
 	for index := range files {
 		if err := ctx.Err(); err != nil {
 			return nil, diags, err
@@ -82,7 +82,7 @@ func (DirectoryRenderer) Render(ctx context.Context, source ResolvedSource, opts
 		file := files[index]
 		// Release the file text once it is decoded.
 		files[index].data = nil
-		var fileObjects []directoryObject
+		var fileObjects []generatedObject
 		switch {
 		case isJsonnetFile(file.path):
 			fileObjects, err = renderJsonnetFile(root, source.RepoRoot, file.path, file.manifestPath, opts)
@@ -96,18 +96,14 @@ func (DirectoryRenderer) Render(ctx context.Context, source ResolvedSource, opts
 		}
 		objects = append(objects, fileObjects...)
 	}
-	targets, err := generateDirectoryManifests(objects, opts)
+	targets, err := generateManifests(objects, opts.TrackManifest)
 	if err != nil {
 		return nil, diags, err
 	}
-	if err := checkDirectoryManifestKinds(targets); err != nil {
+	if err := checkManifestKinds(targets); err != nil {
 		return nil, diags, err
 	}
-	out := make([]Manifest, 0, len(targets))
-	for _, target := range targets {
-		out = append(out, target.manifest)
-	}
-	return out, diags, nil
+	return targetManifests(targets), diags, nil
 }
 
 // directoryCandidateFile is one file that the repo-server's
@@ -205,119 +201,6 @@ func directorySizeLimitError(manifestPath string, limit int64) error {
 	return fmt.Errorf("%s: the directory source files are larger in sum than %d bytes, the limit that argocd-cmd-params-cm reposerver.max.combined.directory.manifests.size sets, so Argo CD fails with \"exceeded max combined manifest file size\"", manifestPath, limit)
 }
 
-// directoryObject is one object that the repo-server's findManifests reads
-// from a directory file.
-type directoryObject struct {
-	path string
-	// label names the object in errors, such as "apps/a.yaml document 1".
-	label string
-	// object is nil for a JSON null in the array that a Jsonnet file
-	// returns. GenerateManifests skips it.
-	object *unstructured.Unstructured
-	// jsonKindless marks a ".json" object without a kind that the
-	// repo-server kept because the content is also an OCI image manifest.
-	jsonKindless bool
-}
-
-// directoryTarget is one manifest that GenerateManifests emits.
-type directoryTarget struct {
-	manifest     Manifest
-	label        string
-	listItem     bool
-	jsonKindless bool
-}
-
-// generateDirectoryManifests is the manifest loop of GenerateManifests
-// (reposerver/repository/repository.go:1817-1852 at v3.6.1). An object whose
-// items field is an array is a list (Unstructured.IsList): it emits each item,
-// and each item must be an object (Unstructured.EachListItem). An object whose
-// items field is null and that has neither spec nor status emits nothing
-// (isNullList). Every other object is emitted unchanged.
-//
-// The repo-server then adds the tracking metadata to each emitted manifest,
-// and fails the source when it cannot. opts.TrackManifest does the same on a
-// copy of each manifest, so that the source fails here, in the same order.
-// The Application layer adds the tracking metadata it keeps later.
-func generateDirectoryManifests(objects []directoryObject, opts RenderOptions) ([]directoryTarget, error) {
-	var out []directoryTarget
-	for _, obj := range objects {
-		if obj.object == nil {
-			continue
-		}
-		var targets []directoryTarget
-		switch {
-		case obj.object.IsList():
-			items, _ := obj.object.Object["items"].([]any)
-			for index, item := range items {
-				label := fmt.Sprintf("%s list item /items/%d", obj.label, index)
-				itemObject, ok := item.(map[string]any)
-				if !ok {
-					return nil, fmt.Errorf("%s is not an object", label)
-				}
-				targets = append(targets, directoryTarget{
-					manifest: Manifest{Path: obj.path, Object: &unstructured.Unstructured{Object: itemObject}, RootObject: obj.object},
-					label:    label,
-					listItem: true,
-				})
-			}
-		case directoryNullList(obj.object):
-			continue
-		default:
-			targets = []directoryTarget{{
-				manifest:     Manifest{Path: obj.path, Object: obj.object},
-				label:        obj.label,
-				jsonKindless: obj.jsonKindless,
-			}}
-		}
-		for _, target := range targets {
-			if opts.TrackManifest != nil {
-				if err := opts.TrackManifest(target.manifest.Object.DeepCopy()); err != nil {
-					return nil, fmt.Errorf("%s: %w", target.label, err)
-				}
-			}
-			out = append(out, target)
-		}
-	}
-	return out, nil
-}
-
-// checkDirectoryManifestKinds fails on the first emitted manifest without a
-// kind, as the controller does when it reads the manifests back
-// (unmarshalManifests, controller/state.go:562-571 at v3.6.1, through
-// v1alpha1.UnmarshalToUnstructured). See unstructuredDecodeKind for what
-// counts as a kind.
-func checkDirectoryManifestKinds(targets []directoryTarget) error {
-	for _, target := range targets {
-		if unstructuredDecodeKind(target.manifest.Object) != "" {
-			continue
-		}
-		if target.jsonKindless {
-			return directoryKindlessJSONError(target.manifest.Path, target.manifest.Object)
-		}
-		return directoryKindlessManifestError(target.label, target.manifest.Object)
-	}
-	return nil
-}
-
-// unstructuredDecodeKind is the kind that the Unstructured JSON decode
-// checks (apimachinery v0.37.0 unstructured/helpers.go:388-391). The decode
-// reads the parsed GroupVersionKind, not the raw kind field, and
-// GroupVersionKind is empty when the apiVersion does not parse as a group
-// version, such as an apiVersion with two or more slashes
-// (unstructured.go:430-437, runtime/schema/group_version.go:213-226). A kind
-// that is not a string also counts as missing.
-func unstructuredDecodeKind(object *unstructured.Unstructured) string {
-	return object.GroupVersionKind().Kind
-}
-
-// missingKindReason says why unstructuredDecodeKind found no kind.
-func missingKindReason(object *unstructured.Unstructured) string {
-	if object.GetKind() != "" {
-		return fmt.Sprintf("has apiVersion %q, which is not a valid group version, so it has no kind", object.GetAPIVersion())
-	}
-	return "has no kind"
-}
-
 func directoryRenderDiagnostics(opts RenderOptions) []diagnostic.Diagnostic {
 	if !opts.DirectoryDisableExtensionFilter || opts.DirectoryInclude != "" || opts.DirectoryExclude != "" {
 		return nil
@@ -358,9 +241,9 @@ func decodeDirectoryFileText(manifestPath string, data []byte) ([]byte, error) {
 // before the stop, or if the file text holds all of "apiVersion:", "kind:"
 // and "metadata:". Otherwise the repo-server takes the file to be unrelated
 // YAML and skips the whole file.
-func directoryStreamObjects(manifestPath string, data []byte) ([]directoryObject, error) {
+func directoryStreamObjects(manifestPath string, data []byte) ([]generatedObject, error) {
 	decoder := manifestyaml.NewDecoder(bytes.NewReader(data))
-	var objects []directoryObject
+	var objects []generatedObject
 	for index := 0; ; index++ {
 		value, err := decoder.Decode()
 		if errors.Is(err, io.EOF) {
@@ -381,7 +264,7 @@ func directoryStreamObjects(manifestPath string, data []byte) ([]directoryObject
 				stop = fmt.Errorf("%s is missing kind", label)
 			}
 		} else {
-			objects = append(objects, directoryObject{
+			objects = append(objects, generatedObject{
 				path:   manifestPath,
 				label:  label,
 				object: &unstructured.Unstructured{Object: object},
@@ -473,31 +356,17 @@ func validateDirectoryJSONFile(manifestPath string, data []byte) (object *unstru
 
 // directoryJSONFileObjects reads a file whose name ends in ".json" as one
 // object (see validateDirectoryJSONFile).
-func directoryJSONFileObjects(manifestPath string, data []byte) ([]directoryObject, error) {
+func directoryJSONFileObjects(manifestPath string, data []byte) ([]generatedObject, error) {
 	object, kindless, err := validateDirectoryJSONFile(manifestPath, data)
 	if err != nil {
 		return nil, err
 	}
-	return []directoryObject{{
+	return []generatedObject{{
 		path:         manifestPath,
 		label:        manifestPath + " document 0",
 		object:       object,
 		jsonKindless: kindless,
 	}}, nil
-}
-
-// directoryNullList mirrors the repo-server's isNullList
-// (reposerver/repository/repository.go:1988-2000 at v3.6.1): an object with
-// "items: null" and neither spec nor status emits nothing.
-func directoryNullList(object *unstructured.Unstructured) bool {
-	if _, ok := object.Object["spec"]; ok {
-		return false
-	}
-	if _, ok := object.Object["status"]; ok {
-		return false
-	}
-	items, ok := object.Object["items"]
-	return ok && items == nil
 }
 
 // directoryKindlessJSONError is the source failure for a ".json" file that
@@ -517,17 +386,6 @@ func directoryKindlessJSONError(manifestPath string, object *unstructured.Unstru
 		value = "JSON value"
 	}
 	return fmt.Errorf("%s: %s %s, so Argo CD fails the Application with \"Object 'Kind' is missing\"", manifestPath, value, missingKindReason(object))
-}
-
-// directoryKindlessManifestError is the source failure for any other
-// emitted manifest without a kind, in practice a list item. GenerateManifests
-// (reposerver/repository/repository.go:1817-1852 at v3.6.1) splits every list
-// into its items, adds the tracking metadata to each item, and emits it. The
-// controller then fails on the item, as directoryKindlessJSONError describes.
-// This holds for any list in a YAML, JSON, or Jsonnet file, with or without a
-// kind of its own.
-func directoryKindlessManifestError(label string, object *unstructured.Unstructured) error {
-	return fmt.Errorf("%s %s, so Argo CD fails the Application with \"Object 'Kind' is missing\"", label, missingKindReason(object))
 }
 
 // describeDirectoryJSONDecodeError names why a ".json" file did not decode

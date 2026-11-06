@@ -1,0 +1,36 @@
+# helm reads the hook annotation of the document itself. The Application
+# sets skipTests, so helm template --skip-tests drops this List with its
+# items, which have no hook annotation of their own.
+apiVersion: v1
+kind: List
+metadata:
+  annotations:
+    helm.sh/hook: test
+items:
+  - apiVersion: v1
+    kind: ConfigMap
+    metadata:
+      name: helm-test-list-item
+---
+# helm drops a document whose hook annotation names an event it does not
+# know, with or without skipTests.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: helm-unknown-hook-crd-install
+  annotations:
+    helm.sh/hook: crd-install
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: helm-unknown-hook-test-failure
+  annotations:
+    helm.sh/hook: test-failure
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: helm-unknown-hook-empty
+  annotations:
+    helm.sh/hook: ""

@@ -1,0 +1,6 @@
+# The apiVersion has two slashes, so it does not parse as a group version,
+# and the Unstructured decode in kube.SplitYAML finds no kind.
+apiVersion: apps/v1/
+kind: Deployment
+metadata:
+  name: parity-decode-helm-apiversion-object

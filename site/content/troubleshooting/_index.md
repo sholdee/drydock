@@ -300,6 +300,56 @@ when its directory is missing, holds no `kustomization.yaml`,
 `kustomization.yml`, or `Kustomization`, is a remote ref, or escapes the
 repository.
 
+## Symptom: Helm, Kustomize, Or Plugin Output Fails With `has no kind`
+
+drydock reads Helm, Kustomize, and config management plugin output as the
+Argo CD v3.6.1 repo-server does. The error names the template file, the
+`kustomization.yaml` file, or the plugin output, and the document index.
+Argo CD fails the same Application with a `ComparisonError` that says
+`Object 'Kind' is missing` and quotes the object, not the file.
+
+- A document without a `kind` fails the source, also an empty object `{}`.
+  drydock reports it in an error such as
+  `templates/kindless.yaml document 0 has no kind, so Argo CD fails the Application with "Object 'Kind' is missing"`.
+  Earlier drydock releases skipped `{}` and rendered other documents
+  without a `kind`. Add the `kind`, or remove the document from the
+  template or the plugin output.
+- An `apiVersion` with two or more slashes, such as the typo `apps/v1/`,
+  does not parse, so the object has no `kind` for Argo CD. Kustomize keeps
+  such an `apiVersion`, so a Kustomize source fails the same way. Fix the
+  `apiVersion`.
+- A List item without a `kind` fails the source in the controller stage,
+  with an error such as
+  `templates/list.yaml document 0 list item /items/0 has no kind`.
+  Add a `kind` to the item.
+- A document that is not an object, such as a line of text, fails with
+  `failed to unmarshal manifest`. For a Helm chart, `helm template` fails
+  first with `YAML parse error on <file>` when it cannot read the head of a
+  document, such as annotations that are not strings.
+- When several documents fail, drydock reports the document that Argo CD
+  reports. A document that does not parse is reported before a document
+  without a `kind`. For Helm, Argo CD reads the CRDs first, then the other
+  documents in Helm's kind order, then the hooks.
+
+If a Helm document is missing from the output, look at its `helm.sh/hook`
+annotation. Helm drops a document whose hook event it does not know, such
+as `crd-install` or `test-failure`, or whose value is empty, and prints
+`skipping unknown hooks` on stderr. With `skipTests`, Helm drops each
+document with the `test` hook event, a List with its items. Helm reads the
+annotations of the List itself, not the annotations of its items.
+
+If a resource is missing from the output and a `render.repeated-resource`
+warning names it, its last copy is a hook. Argo CD keeps the last copy of a
+repeated resource, and Helm prints hooks after every other document. So a
+ServiceAccount that a chart renders both as a template and as a
+`pre-install` hook is a hook, and Argo CD does not manage it. drydock leaves
+it out of the build output and diffs, as Argo CD does. Remove one of the
+copies, or give them different names.
+
+drydock lists Helm manifests in the order of `helm template` output: CRDs,
+then the other documents by kind, then the hooks. A List comes after every
+kind that Helm knows.
+
 ## Symptom: `kustomize.ignore-missing-components-dropped`
 
 With `ignoreMissingComponents: true`, Argo CD v3.6.1 adds only the first

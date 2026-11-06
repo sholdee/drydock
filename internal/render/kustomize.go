@@ -12,7 +12,6 @@ import (
 	"github.com/sholdee/drydock/internal/cacheevent"
 	"github.com/sholdee/drydock/internal/chart"
 	"github.com/sholdee/drydock/internal/diagnostic"
-	"github.com/sholdee/drydock/internal/manifest"
 	goyaml "go.yaml.in/yaml/v3"
 	"sigs.k8s.io/kustomize/api/konfig"
 	"sigs.k8s.io/kustomize/api/krusty"
@@ -57,7 +56,7 @@ func (KustomizeRenderer) Render(ctx context.Context, source ResolvedSource, opts
 		return manifests, append(diags, renderDiags...), err
 	}
 
-	manifests, renderDiags, err := renderPlainKustomize(ctx, source, root, buildSettings)
+	manifests, renderDiags, err := renderPlainKustomize(ctx, source, root, buildSettings, opts)
 	return manifests, append(diags, renderDiags...), err
 }
 
@@ -73,7 +72,11 @@ var KustomizationFileNames = []string{"kustomization.yaml", "kustomization.yml",
 // within this package.
 var kustomizationFileNames = KustomizationFileNames
 
-func renderPlainKustomize(ctx context.Context, source ResolvedSource, root string, settings kustomizeBuildSettings) ([]Manifest, []diagnostic.Diagnostic, error) {
+// renderPlainKustomize runs krusty and reads its output as the Argo CD
+// repo-server reads the output of kustomize build (util/kustomize/
+// kustomize.go:419 at v3.6.1, then GenerateManifests). See
+// DecodeGeneratedOutput. opts gives TrackManifest and KeepOutputLineBreak.
+func renderPlainKustomize(ctx context.Context, source ResolvedSource, root string, settings kustomizeBuildSettings, opts RenderOptions) ([]Manifest, []diagnostic.Diagnostic, error) {
 	manifestPath, err := validateKustomizeGraph(ctx, source.RepoRoot, root)
 	if err != nil {
 		return nil, nil, err
@@ -92,14 +95,13 @@ func renderPlainKustomize(ctx context.Context, source ResolvedSource, root strin
 		return nil, nil, fmt.Errorf("kustomize build %s: serialize manifests: %w", root, err)
 	}
 
-	docs, err := manifest.DecodeGeneratedDocuments(manifestPath, bytes.NewReader(rendered))
+	decode := DecodeGeneratedOutput
+	if opts.KeepOutputLineBreak {
+		decode = decodeGeneratedStream
+	}
+	out, err := decode(manifestPath, rendered, opts.TrackManifest)
 	if err != nil {
 		return nil, nil, err
-	}
-
-	out := make([]Manifest, 0, len(docs))
-	for _, doc := range docs {
-		out = append(out, NewDocumentManifest(doc))
 	}
 	return out, nil, nil
 }

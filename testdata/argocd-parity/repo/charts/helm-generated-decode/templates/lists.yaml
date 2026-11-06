@@ -1,0 +1,36 @@
+# GenerateManifests splits a List into its items.
+apiVersion: v1
+kind: List
+items:
+  - apiVersion: v1
+    kind: ConfigMap
+    metadata:
+      name: helm-list-item-a
+    data:
+      source: a helm List item
+  - apiVersion: v1
+    kind: ConfigMap
+    metadata:
+      name: helm-list-item-b
+    data:
+      source: a helm List item
+---
+# A List whose items field is null and that has no spec or status emits
+# nothing.
+apiVersion: v1
+kind: List
+items: null
+---
+# An object whose items field is a map is not a list. It is emitted as is.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: helm-items-map
+items:
+  note: not a list
+data:
+  source: an object whose items field is a map
+---
+# An empty document and a document with only a comment emit nothing.
+---
+# only a comment

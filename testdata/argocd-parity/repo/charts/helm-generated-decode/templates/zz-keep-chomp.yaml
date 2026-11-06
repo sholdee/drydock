@@ -1,0 +1,17 @@
+# The last document before the hooks in helm template output: a List sorts
+# after every kind that helm knows, and this file sorts last. helm template
+# trims the white space at the end of it, so the value is "x\n", without
+# the line with a tab and the blank lines. The printf call writes that line
+# and the blank lines, so this file has no trailing white space for
+# git diff --check to report.
+apiVersion: v1
+kind: List
+items:
+  - apiVersion: v1
+    kind: ConfigMap
+    metadata:
+      name: helm-keep-chomp
+    data:
+      kept: |+
+        x
+{{ printf "        \t\n\n" }}

@@ -24,14 +24,21 @@ type ResolvedSource struct {
 }
 
 type RenderOptions struct {
-	AppName                      string
-	AppNamespace                 string
-	SourceIndex                  int
-	SourceName                   string
-	Project                      string
-	Namespace                    string
-	EnableAVPCompat              bool
-	QuietAVPCompat               bool
+	AppName         string
+	AppNamespace    string
+	SourceIndex     int
+	SourceName      string
+	Project         string
+	Namespace       string
+	EnableAVPCompat bool
+	QuietAVPCompat  bool
+	// KeepOutputLineBreak keeps the line break at the end of Helm and
+	// Kustomize output. Argo CD removes it when it reads the output of
+	// helm template or kustomize build itself (util/exec/exec.go:285 at
+	// v3.6.1). A config management plugin such as argocd-vault-plugin
+	// reads that output through a pipe instead, so the line break stays.
+	// The AVP compatibility plugin paths set it.
+	KeepOutputLineBreak          bool
 	EnableKSOPSCompat            bool
 	EnablePlugins                bool
 	Plugin                       *PluginConfig

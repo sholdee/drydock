@@ -1,0 +1,2 @@
+helm drops every file whose name ends in NOTES.txt, so this text is
+not read as a manifest: [

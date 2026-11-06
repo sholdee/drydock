@@ -77,7 +77,7 @@ func renderKustomizeWithPreparedWorkspace(ctx context.Context, source ResolvedSo
 		return nil, nil, err
 	}
 
-	manifests, renderDiags, err := renderPlainKustomize(ctx, tempSource, tempRoot, buildSettings)
+	manifests, renderDiags, err := renderPlainKustomize(ctx, tempSource, tempRoot, buildSettings, opts)
 	if err != nil {
 		return nil, nil, err
 	}

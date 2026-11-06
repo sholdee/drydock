@@ -1,0 +1,12 @@
+# A repeated resource. helm sorts a List after every kind that it knows, so
+# Argo CD keeps this List item, although dup-b-plain.yaml comes later by
+# file name.
+apiVersion: v1
+kind: List
+items:
+  - apiVersion: v1
+    kind: ConfigMap
+    metadata:
+      name: helm-dup-list
+    data:
+      from: the List item copy

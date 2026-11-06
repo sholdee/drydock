@@ -1,14 +1,19 @@
-// Command argocd-directory-decode-smoke checks the directory-source decode
-// failures in the Argo CD render parity smoke.
+// Command argocd-directory-decode-smoke checks the decode failures in the
+// Argo CD render parity smoke.
 //
-// Each case is one Application whose directory holds a file that fails the
-// source. Argo CD must report a ComparisonError condition that names the
-// file, and drydock must fail to render the same Application with an error
-// that names the same file. Files that both sides skip are not checked here:
-// they live in an Application that renders, and the main manifest comparison
-// covers it.
+// Each case is one Application whose source holds a file that fails the
+// source. The source is a directory by default. A case can also set source
+// to helm, kustomize, or plugin: then the file is a chart template, a
+// Kustomize resource, or the plugin program, and Argo CD fails on the output
+// that the source generates. Argo CD must report a ComparisonError condition
+// that names the file, and drydock must fail to render the same Application
+// with an error that names the same file. drydock names plugin output as
+// generate-output, not by the program file. Files that both sides skip are
+// not checked here: they live in an Application that renders, and the main
+// manifest comparison covers it.
 //
-// A manifest without a kind fails later, in the Argo CD controller. Its
+// A manifest without a kind fails later, in the Argo CD controller, or in
+// the repo-server when the manifest is generated output. Its
 // ComparisonError quotes the object instead of naming the file, so such a
 // case sets argocdQuotesObject and its argocdMessage quotes the start of that
 // object. Tracking metadata that cannot be set fails in the repo-server with
@@ -41,6 +46,18 @@ const comparisonErrorType = "ComparisonError"
 // apimachinery missing-kind error, which quotes the whole manifest.
 const missingKindPrefix = "Object 'Kind' is missing in '{"
 
+// The source types an expected case can name. directory is the default.
+const (
+	sourceDirectory = "directory"
+	sourceHelm      = "helm"
+	sourceKustomize = "kustomize"
+	sourcePlugin    = "plugin"
+)
+
+// pluginOutputName is the name drydock gives the output of a config
+// management plugin in its errors.
+const pluginOutputName = "generate-output"
+
 type options struct {
 	Expected     string
 	Namespace    string
@@ -48,6 +65,7 @@ type options struct {
 	DrydockDir   string
 	Out          string
 	List         bool
+	ListSource   string
 }
 
 type expectedFile struct {
@@ -55,7 +73,10 @@ type expectedFile struct {
 }
 
 type expectedCase struct {
-	Name           string `yaml:"name"`
+	Name string `yaml:"name"`
+	// Source is the source type of the Application: directory (the
+	// default), helm, kustomize, or plugin.
+	Source         string `yaml:"source"`
 	File           string `yaml:"file"`
 	ArgoCDMessage  string `yaml:"argocdMessage"`
 	DrydockMessage string `yaml:"drydockMessage"`
@@ -102,6 +123,7 @@ func main() {
 	flag.StringVar(&opts.DrydockDir, "drydock-dir", "", "directory of drydock results, one <name>.exit and <name>.stderr per case")
 	flag.StringVar(&opts.Out, "out", "", "optional path for a text summary")
 	flag.BoolVar(&opts.List, "list", false, "print the expected Application names, one per line, and exit")
+	flag.StringVar(&opts.ListSource, "source", "", "with --list, print only the cases of this source type")
 	flag.Parse()
 
 	if opts.List {
@@ -111,7 +133,9 @@ func main() {
 			os.Exit(2)
 		}
 		for _, tc := range cases {
-			fmt.Println(tc.Name)
+			if opts.ListSource == "" || tc.SourceType() == opts.ListSource {
+				fmt.Println(tc.Name)
+			}
 		}
 		return
 	}
@@ -195,6 +219,47 @@ func readExpected(path string) ([]expectedCase, error) {
 	return expected.Cases, nil
 }
 
+// SourceType is the source type of the case, directory when it names none.
+func (tc expectedCase) SourceType() string {
+	if tc.Source == "" {
+		return sourceDirectory
+	}
+	return tc.Source
+}
+
+// DrydockName is the name that drydock's message must contain: the file, or
+// generate-output for a plugin case.
+func (tc expectedCase) DrydockName() string {
+	if tc.SourceType() == sourcePlugin {
+		return pluginOutputName
+	}
+	return tc.File
+}
+
+// validateSource requires a failing file and a known source type.
+func (tc expectedCase) validateSource() error {
+	if strings.TrimSpace(tc.File) == "" {
+		return fmt.Errorf("expected case %s must name the failing file", tc.Name)
+	}
+	switch tc.SourceType() {
+	case sourceDirectory, sourceHelm, sourceKustomize, sourcePlugin:
+		return nil
+	}
+	return fmt.Errorf("expected case %s has source %q, want directory, helm, kustomize, or plugin", tc.Name, tc.Source)
+}
+
+// validateDrydockMessage requires that drydock's message names the file, or
+// the plugin output for a plugin case.
+func (tc expectedCase) validateDrydockMessage() error {
+	if strings.Contains(tc.DrydockMessage, tc.DrydockName()) {
+		return nil
+	}
+	if tc.SourceType() == sourcePlugin {
+		return fmt.Errorf("expected case %s drydockMessage must contain the plugin output name %q", tc.Name, pluginOutputName)
+	}
+	return fmt.Errorf("expected case %s drydockMessage must contain the file name %q", tc.Name, tc.File)
+}
+
 func validateExpected(cases []expectedCase) error {
 	if len(cases) == 0 {
 		return errors.New("expected file contains no cases")
@@ -208,8 +273,8 @@ func validateExpected(cases []expectedCase) error {
 			return fmt.Errorf("duplicate expected case: %s", tc.Name)
 		}
 		seen[tc.Name] = struct{}{}
-		if strings.TrimSpace(tc.File) == "" {
-			return fmt.Errorf("expected case %s must name the failing file", tc.Name)
+		if err := tc.validateSource(); err != nil {
+			return err
 		}
 		// Each side's message must name the file, so a failure caused by
 		// some other file cannot pass the case. The Argo CD message for a
@@ -230,8 +295,8 @@ func validateExpected(cases []expectedCase) error {
 		case !strings.Contains(tc.ArgoCDMessage, tc.File):
 			return fmt.Errorf("expected case %s argocdMessage must contain the file name %q", tc.Name, tc.File)
 		}
-		if !strings.Contains(tc.DrydockMessage, tc.File) {
-			return fmt.Errorf("expected case %s drydockMessage must contain the file name %q", tc.Name, tc.File)
+		if err := tc.validateDrydockMessage(); err != nil {
+			return err
 		}
 	}
 	return nil

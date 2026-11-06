@@ -25,7 +25,6 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	kubeyaml "k8s.io/apimachinery/pkg/util/yaml"
-	"sigs.k8s.io/yaml"
 )
 
 // upstreamGetObjsFromYAMLOrJSON is getObjsFromYAMLOrJSON and splitYAMLOrJSON
@@ -287,27 +286,10 @@ func upstreamDirectoryFileOutcome(data []byte, filename string) ([]*unstructured
 // wording differs in case, so they are compared without case. The smoke
 // checks them against Argo CD itself.
 func TestDirectoryRendererParityDecodeFixtures(t *testing.T) {
-	parityRoot := filepath.Join("..", "..", "testdata", "argocd-parity")
-	data, err := os.ReadFile(filepath.Join(parityRoot, "directory-decode-expected.yaml"))
-	if err != nil {
-		t.Fatalf("ReadFile() error = %v", err)
-	}
-	var expected struct {
-		Cases []struct {
-			Name               string `json:"name"`
-			File               string `json:"file"`
-			ArgoCDMessage      string `json:"argocdMessage"`
-			DrydockMessage     string `json:"drydockMessage"`
-			ArgoCDQuotesObject bool   `json:"argocdQuotesObject"`
-			ArgoCDNamesObject  string `json:"argocdNamesObject"`
-		} `json:"cases"`
-	}
-	if err := yaml.Unmarshal(data, &expected); err != nil {
-		t.Fatalf("parse expected file: %v", err)
-	}
-	repoRoot := filepath.Join(parityRoot, "repo")
+	repoRoot := filepath.Join("..", "..", "testdata", "argocd-parity", "repo")
 	const namespace = "parity-directory-decode-workloads"
-	for _, tc := range expected.Cases {
+	// TestGeneratedParityDecodeFixtures covers the cases of other sources.
+	for _, tc := range readParityDecodeCases(t, true) {
 		t.Run(tc.Name, func(t *testing.T) {
 			caseDir := strings.TrimPrefix(tc.Name, "parity-decode-")
 			sourcePath := filepath.Join("workloads", "directory-decode", caseDir)

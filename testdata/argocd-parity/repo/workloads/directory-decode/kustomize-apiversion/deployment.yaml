@@ -1,0 +1,6 @@
+# kustomize keeps this apiVersion. It has two slashes, so it does not parse
+# as a group version, and kube.SplitYAML fails on the build output.
+apiVersion: apps/v1/
+kind: Deployment
+metadata:
+  name: parity-decode-kustomize-apiversion-object

@@ -176,9 +176,11 @@ Applications follow Argo CD source precedence:
 
 Each source renders independently in source array order. Ref-only sources
 render no manifests. `$ref/...` Helm value files resolve from the referenced
-source root, not from the referenced source `path`. If multiple sources emit
-the same resource identity inside one Application, the later source wins and a
-repeated-resource diagnostic is emitted.
+source root, not from the referenced source `path`. If one source or several
+sources emit the same resource identity inside one Application, the last copy
+wins and a repeated-resource diagnostic is emitted. Hooks take part in this check, and
+the kept copy decides whether the resource is a hook, as in the Argo CD
+controller.
 
 Repository resolution and cache behavior are documented in
 `site/content/concepts/source-acquisition.md`. Important invariants:
