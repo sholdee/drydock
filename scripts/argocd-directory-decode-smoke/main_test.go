@@ -153,6 +153,32 @@ func TestCompareMatchesQuotedObjectMessage(t *testing.T) {
 	}
 }
 
+// TestCompareMatchesPluginOutputMessage covers plugin output that Argo CD
+// cannot decode. The Argo CD repo-server message quotes the object, and the
+// drydock message names the plugin output instead of the plugin program.
+func TestCompareMatchesPluginOutputMessage(t *testing.T) {
+	fixture := newTestFixture(t, `cases:
+  - name: parity-decode-plugin-empty-object
+    source: plugin
+    file: generate.awk
+    argocdQuotesObject: true
+    argocdMessage: "Object 'Kind' is missing in '{}'"
+    drydockMessage: "generate-output document 1 has no kind"
+`)
+	fixture.writeApplication(t, testNamespace, "parity-decode-plugin-empty-object",
+		comparisonError(`Failed to load target state: failed to generate manifest for source 1 of 1: rpc error: code = Unknown desc = CMP processing failed for application "parity-directory-decode_parity-decode-plugin-empty-object": failed to convert CMP manifests to unstructured objects: failed to unmarshal manifest: error unmarshaling JSON: while decoding JSON: Object 'Kind' is missing in '{}'`))
+	fixture.writeDrydock(t, "parity-decode-plugin-empty-object", 2,
+		"error render.failed: config management plugin parity-env produced invalid generated manifests for source path \"workloads/directory-decode/plugin-empty-object\" at plugin/parity-env/path/workloads/directory-decode/plugin-empty-object/generate-output: plugin/parity-env/path/workloads/directory-decode/plugin-empty-object/generate-output document 1 has no kind, so Argo CD fails the Application with \"Object 'Kind' is missing\"\n")
+
+	result, err := compare(fixture.options())
+	if err != nil {
+		t.Fatalf("compare() error = %v", err)
+	}
+	if len(result.Failures) != 0 {
+		t.Fatalf("compare() failures = %v, want none", result.Failures)
+	}
+}
+
 // TestCompareMatchesNamedObjectMessage covers tracking metadata that cannot
 // be set. The Argo CD repo-server message names the object and no file.
 func TestCompareMatchesNamedObjectMessage(t *testing.T) {
@@ -370,6 +396,29 @@ func TestReadExpectedRejectsInvalidCases(t *testing.T) {
     drydockMessage: decode JSON object failed
 `,
 			want: `drydockMessage must contain the file name "empty.json"`,
+		},
+		{
+			name: "unknown source",
+			expected: `cases:
+  - name: parity-decode-json-empty
+    source: jsonnet
+    file: empty.json
+    argocdMessage: Failed to unmarshal "empty.json"
+    drydockMessage: "empty.json: decode JSON object failed"
+`,
+			want: `has source "jsonnet"`,
+		},
+		{
+			name: "plugin message without the output name",
+			expected: `cases:
+  - name: parity-decode-plugin-empty-object
+    source: plugin
+    file: generate.awk
+    argocdQuotesObject: true
+    argocdMessage: "Object 'Kind' is missing in '{}'"
+    drydockMessage: "generate.awk document 1 has no kind"
+`,
+			want: `drydockMessage must contain the plugin output name "generate-output"`,
 		},
 	}
 	for _, tt := range tests {

@@ -39,10 +39,11 @@ PROJECT_POLICY_LIVE_CLUSTER_SECRET_NAME="project-policy-live-scoped-cluster"
 PROJECT_POLICY_IN_CLUSTER_SECRET_DIR="${REPO_ROOT}/testdata/argocd-project-policy/in-cluster-secret"
 PROJECT_POLICY_IN_CLUSTER_SECRET_NAME="project-policy-in-cluster-secret"
 PROJECT_POLICY_IN_CLUSTER_DISABLED_DIR="${REPO_ROOT}/testdata/argocd-project-policy/in-cluster-disabled"
-# Directory-source decode failures. Each Application in this namespace must
-# fail on both sides: Argo CD with a ComparisonError condition and drydock
-# with a render failure, both naming the same file, or the object in it when
-# the Argo CD message names no file. They live outside the argocd namespace
+# Decode failures for directory sources and for Helm, Kustomize, and plugin
+# output. Each Application in this namespace must fail on both sides: Argo
+# CD with a ComparisonError condition and drydock with a render failure,
+# both naming the same file, or the object in it when the Argo CD message
+# names no file. They live outside the argocd namespace
 # so the main inventory and manifest comparisons never see them. The expected
 # file lists the cases and the message each side must show. Files that both
 # sides skip or render live in parity-directory-decode-skips and
@@ -51,6 +52,9 @@ DIRECTORY_DECODE_NAMESPACE="parity-directory-decode"
 DIRECTORY_DECODE_EXPECTED="${REPO_ROOT}/testdata/argocd-parity/directory-decode-expected.yaml"
 # Set by run_directory_decode_smoke from DIRECTORY_DECODE_EXPECTED.
 DIRECTORY_DECODE_APPLICATIONS=()
+# The cases with source: plugin. Their drydock capture carries the same
+# plugin flags as PLUGIN_APPLICATIONS.
+DIRECTORY_DECODE_PLUGIN_APPLICATIONS=()
 OCI_ARTIFACT_PATH="${REPO_ROOT}/testdata/argocd-parity/oci-artifact"
 OCI_APPSET_ARTIFACT_PATH="${REPO_ROOT}/testdata/argocd-parity/oci-appset-artifact"
 OCI_REGISTRY_HOST="argocd-parity-registry.argocd-parity.svc.cluster.local"
@@ -223,6 +227,7 @@ APPLICATIONS=(
   parity-fn-gamma-one
   parity-helm-null-default
   parity-helm-block-scalars
+  parity-helm-generated-decode
   parity-oci-dir-alpha
   parity-oci-dir-beta
   parity-oci-dir-delta
@@ -1887,6 +1892,10 @@ load_directory_decode_applications() {
   done < <(cd "${REPO_ROOT}" && go run ./scripts/argocd-directory-decode-smoke --list --expected "${DIRECTORY_DECODE_EXPECTED}")
   [[ "${#DIRECTORY_DECODE_APPLICATIONS[@]}" -gt 0 ]] \
     || fail "no directory decode cases listed in ${DIRECTORY_DECODE_EXPECTED}"
+  DIRECTORY_DECODE_PLUGIN_APPLICATIONS=()
+  while IFS= read -r app; do
+    [[ -n "${app}" ]] && DIRECTORY_DECODE_PLUGIN_APPLICATIONS+=("${app}")
+  done < <(cd "${REPO_ROOT}" && go run ./scripts/argocd-directory-decode-smoke --list --source plugin --expected "${DIRECTORY_DECODE_EXPECTED}")
 }
 
 # wait_for_directory_decode_application waits for the controller to record
@@ -1918,14 +1927,28 @@ capture_directory_decode_argocd_applications() {
 
 # capture_directory_decode_drydock_results runs `drydock build app` for each
 # decode failure Application and records its exit code and stderr. A failed
-# render is the expected outcome here, so it does not stop the smoke.
+# render is the expected outcome here, so it does not stop the smoke. A
+# plugin case gets the plugin flags that capture_drydock_manifest gives the
+# plugin Applications.
 capture_directory_decode_drydock_results() {
-  local app output_dir exit_code
+  local app plugin_app output_dir exit_code
+  local build_args
   output_dir="$(artifact_dir directory-decode/drydock-results)"
   for app in "${DIRECTORY_DECODE_APPLICATIONS[@]}"; do
     drydock_build_args "${DIRECTORY_DECODE_NAMESPACE}/${app}"
+    build_args=("${DRYDOCK_BUILD_ARGS[@]}")
+    for plugin_app in "${DIRECTORY_DECODE_PLUGIN_APPLICATIONS[@]}"; do
+      if [[ "${app}" == "${plugin_app}" ]]; then
+        [[ -n "${FIXTURE_GIT_WORK}" ]] \
+          || fail "FIXTURE_GIT_WORK is unset; prepare_fixture_git_image must run before capturing ${app}"
+        build_args+=(--enable-plugins
+          --plugin-policy-repo "${FIXTURE_GIT_WORK}"
+          --plugin-policy-ref HEAD)
+        break
+      fi
+    done
     exit_code=0
-    (cd "${REPO_ROOT}" && "${DRYDOCK_CMD[@]}" "${DRYDOCK_BUILD_ARGS[@]}" \
+    (cd "${REPO_ROOT}" && "${DRYDOCK_CMD[@]}" "${build_args[@]}" \
       > "${output_dir}/${app}.yaml" 2> "${output_dir}/${app}.stderr") || exit_code="$?"
     printf '%s\n' "${exit_code}" > "${output_dir}/${app}.exit"
   done

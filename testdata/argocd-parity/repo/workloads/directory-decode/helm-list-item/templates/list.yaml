@@ -1,0 +1,7 @@
+# GenerateManifests splits the List and emits the item. The controller then
+# fails on the item, because it has no kind.
+apiVersion: v1
+kind: List
+items:
+  - data:
+      note: a helm list item without a kind

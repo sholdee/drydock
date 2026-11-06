@@ -642,6 +642,33 @@ Both Argo CD and drydock must render these values:
 | ConfigMap | `data.query` | the `QUERY` value |
 | ConfigMap | `data.banner` | the `BANNER` value |
 
+## Helm generated output fixture
+
+`applications/helm-generated-decode.yaml` (`parity-helm-generated-decode`)
+renders `charts/helm-generated-decode` with `skipTests: true`. It covers how
+Argo CD reads the output of `helm template`. Both sides must render exactly
+three ConfigMaps:
+
+- `templates/lists.yaml` holds a List with two ConfigMaps, which renders
+  `helm-list-item-a` and `helm-list-item-b`. It also holds a List whose
+  `items` field is `null`, which renders nothing, and the ConfigMap
+  `helm-items-map`, whose `items` field is a map and which renders as is.
+  An empty document and a document with only a comment render nothing.
+- `templates/hooks.yaml` holds documents that Helm drops. A List with the
+  `helm.sh/hook: test` annotation is dropped with its item under
+  `skipTests`, although the item has no hook annotation of its own. Three
+  ConfigMaps whose `helm.sh/hook` value is `crd-install`, `test-failure`, or
+  empty are dropped because Helm does not know the hook event.
+- `templates/extra-NOTES.txt` is not YAML. Helm drops every file whose name
+  ends in `NOTES.txt`, so it is not read.
+
+The fixture holds no document that Argo CD keeps as a hook. `argocd app
+manifests` lists hooks, but drydock keeps hooks out of its build output.
+
+`TestHelmRendererParityRenderFixtureMatchesUpstream` in `internal/render`
+renders the chart with drydock and with the upstream oracle and requires the
+same objects.
+
 ## ApplicationSet name validation fixture
 
 Argo CD v3.6.1 checks every generated Application name before it creates
@@ -786,7 +813,8 @@ drydock side.
 ## Directory decode fixture
 
 These fixtures cover how Argo CD v3.6.1 reads each file in a directory
-source. Argo CD reads a directory in three stages:
+source, and how it reads Helm, Kustomize, and plugin output (see "Generated
+output that fails the source"). Argo CD reads a directory in three stages:
 
 1. The repo-server reads every file into one list of objects
    (`findManifests` and `getObjsFromYAMLOrJSON` in
@@ -910,6 +938,40 @@ case, so the other texts are compared without case.
 | `parity-decode-json-apiversion` | `apiversion.json` | the `apiVersion` `apps/v1/` does not parse as a group version, so the object has no `kind` and the controller fails |
 | `parity-decode-yaml-apiversion` | `apiversion.yaml` | the same `apiVersion` in the first YAML document stops the stream, and the file text holds every manifest marker |
 | `parity-decode-order-tracking` | `b-tracking.yaml` | `b-tracking.yaml` fails the tracking annotation. It wins over `a-kindless.json`, which has no `kind`, because the controller checks kinds last |
+
+### Generated output that fails the source
+
+Six more cases in the same namespace set `source` in the expected file. Their
+source is a Helm chart, a Kustomize base, or a config management plugin, not a
+plain directory. Argo CD reads the output of `helm template`, `kustomize
+build`, and the plugin with gitops-engine `kube.SplitYAML`. That function
+decodes each document into an Unstructured object, so a document without a
+`kind` fails in the repo-server. The message quotes the document as JSON with
+sorted keys, without tracking metadata, so these cases set
+`argocdQuotesObject`. A List item without a `kind` passes the repo-server and
+fails in the controller, as for a directory source.
+
+For a Helm or Kustomize case, `file` is the template or the kustomization
+file that drydock names. For the plugin case, `file` is the plugin program,
+`generate.awk`. drydock names the plugin output, `generate-output`, so the
+smoke tool requires that name in the drydock text instead. The plugin case
+uses the `parity-env` sidecar, and its drydock capture gets the same plugin
+flags as the plugin Applications of the main comparison.
+
+`TestGeneratedParityDecodeFixtures` in `internal/render` runs these cases
+offline. It renders the Helm cases with a copy of how `helm template` prints
+the output, the Kustomize case with the same kustomize library, and the
+plugin case with `awk`, and then runs the upstream code on the output. The
+Argo CD texts must match exactly.
+
+| Application | source | failing file | why it fails |
+| --- | --- | --- | --- |
+| `parity-decode-helm-kindless` | helm | `templates/kindless.yaml` | a template document has no `kind`, so the repo-server cannot decode it |
+| `parity-decode-helm-empty-object` | helm | `templates/empty-object.yaml` | the template document `{}` has no `kind` |
+| `parity-decode-helm-apiversion` | helm | `templates/deployment.yaml` | the `apiVersion` `apps/v1/` does not parse, so the document has no `kind` |
+| `parity-decode-helm-list-item` | helm | `templates/list.yaml` | an item of a Helm `kind: List` has no `kind`, so the controller fails |
+| `parity-decode-kustomize-apiversion` | kustomize | `kustomization.yaml` | kustomize keeps the `apiVersion` `apps/v1/`, so the second document of the build output has no `kind` |
+| `parity-decode-plugin-empty-object` | plugin | `generate.awk` | the plugin prints `{}` after a ConfigMap, so the second document has no `kind` |
 
 `run_directory_decode_smoke` in `scripts/argocd-parity-smoke.sh` waits for a
 `ComparisonError` on each Application, then saves the Application JSON. It

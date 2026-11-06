@@ -1,0 +1,2 @@
+# An empty object. kube.SplitYAML keeps it and fails because it has no kind.
+{}

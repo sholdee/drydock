@@ -2,6 +2,8 @@ package render
 
 import (
 	"context"
+	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
 	"sort"
@@ -13,6 +15,7 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"sigs.k8s.io/kustomize/api/krusty"
 	"sigs.k8s.io/kustomize/kyaml/filesys"
+	"sigs.k8s.io/yaml"
 )
 
 // upstreamGeneratedOutcome is what Argo CD v3.6.1 does with Kustomize or
@@ -21,11 +24,17 @@ import (
 // upstreamApplicationObjectsWithTracking), with annotation tracking for the
 // Application "parity" in namespace "default".
 func upstreamGeneratedOutcome(data string) ([]*unstructured.Unstructured, error) {
+	return upstreamGeneratedOutcomeFor(data, "parity", "default")
+}
+
+// upstreamGeneratedOutcomeFor is upstreamGeneratedOutcome for an Application
+// instance name and destination namespace.
+func upstreamGeneratedOutcomeFor(data, appName, namespace string) ([]*unstructured.Unstructured, error) {
 	objs, err := kube.SplitYAML([]byte(data))
 	if err != nil {
 		return nil, err
 	}
-	return upstreamApplicationObjects(objs, "parity", "default")
+	return upstreamApplicationObjectsWithTracking(objs, appName, namespace, v1alpha1.TrackingMethodAnnotation)
 }
 
 // trackedManifestObjects adds the upstream tracking metadata to a copy of
@@ -292,4 +301,110 @@ func TestKustomizeRendererDecodeMatchesUpstream(t *testing.T) {
 			}
 		})
 	}
+}
+
+// parityDecodeCase is one case of testdata/argocd-parity/
+// directory-decode-expected.yaml.
+type parityDecodeCase struct {
+	Name               string `json:"name"`
+	Source             string `json:"source"`
+	File               string `json:"file"`
+	ArgoCDMessage      string `json:"argocdMessage"`
+	DrydockMessage     string `json:"drydockMessage"`
+	ArgoCDQuotesObject bool   `json:"argocdQuotesObject"`
+	ArgoCDNamesObject  string `json:"argocdNamesObject"`
+}
+
+// readParityDecodeCases reads the decode smoke cases whose source is
+// directory (an empty source) when directory is set, and the other cases
+// otherwise.
+func readParityDecodeCases(t *testing.T, directory bool) []parityDecodeCase {
+	t.Helper()
+	data, err := os.ReadFile(filepath.Join("..", "..", "testdata", "argocd-parity", "directory-decode-expected.yaml"))
+	if err != nil {
+		t.Fatalf("ReadFile() error = %v", err)
+	}
+	var expected struct {
+		Cases []parityDecodeCase `json:"cases"`
+	}
+	if err := yaml.Unmarshal(data, &expected); err != nil {
+		t.Fatalf("parse expected file: %v", err)
+	}
+	var out []parityDecodeCase
+	for _, tc := range expected.Cases {
+		if (tc.Source == "" || tc.Source == "directory") == directory {
+			out = append(out, tc)
+		}
+	}
+	return out
+}
+
+// TestGeneratedParityDecodeFixtures renders each Helm, Kustomize, and plugin
+// case of the Argo CD render parity smoke (testdata/argocd-parity) offline,
+// with the Application's instance name, destination namespace, and
+// annotation tracking. drydock must fail with the drydockMessage the smoke
+// expects, and the upstream oracle must fail with the argocdMessage the smoke
+// expects. A plugin case runs the plugin program with awk, as the parity-env
+// sidecar and drydock's exec engine do.
+func TestGeneratedParityDecodeFixtures(t *testing.T) {
+	seen := map[string]bool{}
+	for _, tc := range readParityDecodeCases(t, false) {
+		seen[tc.Source] = true
+		t.Run(tc.Name, func(t *testing.T) {
+			drydockErr, upstreamErr := renderGeneratedParityCase(t, tc)
+			if drydockErr == nil || !strings.Contains(drydockErr.Error(), tc.DrydockMessage) {
+				t.Fatalf("drydock error = %v, want %q", drydockErr, tc.DrydockMessage)
+			}
+			if upstreamErr == nil || !strings.Contains(upstreamErr.Error(), tc.ArgoCDMessage) {
+				t.Fatalf("upstream error = %v, want %q", upstreamErr, tc.ArgoCDMessage)
+			}
+		})
+	}
+	for _, source := range []string{"helm", "kustomize", "plugin"} {
+		if !seen[source] {
+			t.Fatalf("the expected file has no %s case", source)
+		}
+	}
+}
+
+// renderGeneratedParityCase renders one generated-output case with drydock
+// and with the upstream oracle and returns both errors.
+func renderGeneratedParityCase(t *testing.T, tc parityDecodeCase) (drydockErr, upstreamErr error) {
+	t.Helper()
+	const namespace = "parity-directory-decode-workloads"
+	repoRoot := filepath.Join("..", "..", "testdata", "argocd-parity", "repo")
+	sourcePath := "workloads/directory-decode/" + strings.TrimPrefix(tc.Name, "parity-decode-")
+	sourceDir := filepath.Join(repoRoot, filepath.FromSlash(sourcePath))
+	appName := "parity-directory-decode_" + tc.Name
+	track := upstreamTrackManifestFor(appName, namespace, v1alpha1.TrackingMethodAnnotation)
+	opts := RenderOptions{AppName: tc.Name, Namespace: namespace, TrackManifest: track}
+	source := ResolvedSource{RepoRoot: repoRoot, Path: sourcePath}
+	switch tc.Source {
+	case "helm":
+		_, _, drydockErr = (HelmRenderer{}).Render(context.Background(), source, opts)
+		_, upstreamErr = upstreamHelmOutcomeFor(t, sourceDir, false, tc.Name, appName, namespace)
+	case "kustomize":
+		_, _, drydockErr = (KustomizeRenderer{}).Render(context.Background(), source, opts)
+		resMap, err := krusty.MakeKustomizer(krusty.MakeDefaultOptions()).Run(filesys.MakeFsOnDisk(), sourceDir)
+		if err != nil {
+			t.Fatalf("kustomize build error = %v", err)
+		}
+		built, err := resMap.AsYaml()
+		if err != nil {
+			t.Fatalf("AsYaml() error = %v", err)
+		}
+		_, upstreamErr = upstreamGeneratedOutcomeFor(string(built), appName, namespace)
+	case "plugin":
+		cmd := exec.Command("awk", "-f", "generate.awk")
+		cmd.Dir = sourceDir
+		out, err := cmd.Output()
+		if err != nil {
+			t.Fatalf("awk error = %v", err)
+		}
+		_, drydockErr = DecodeGeneratedOutput("plugin/parity-env/path/"+sourcePath+"/generate-output", out, track)
+		_, upstreamErr = upstreamGeneratedOutcomeFor(string(out), appName, namespace)
+	default:
+		t.Fatalf("unknown source %q", tc.Source)
+	}
+	return drydockErr, upstreamErr
 }

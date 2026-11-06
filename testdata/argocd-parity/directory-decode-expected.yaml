@@ -1,4 +1,9 @@
-# Directory-source decode failures for the Argo CD render parity smoke.
+# Decode failures for the Argo CD render parity smoke: directory sources, and
+# Helm, Kustomize, and plugin output. A case without source is a directory
+# case. A case with source helm, kustomize, or plugin holds a chart, a
+# Kustomize base, or a plugin program in the same place. For a plugin case,
+# file is the plugin program, and drydockMessage must name the plugin output,
+# generate-output, instead.
 #
 # Each case is an Application in the parity-directory-decode namespace
 # (repo/directory-decode-applications). Its source directory holds a valid
@@ -138,3 +143,57 @@ cases:
     file: apiversion.yaml
     argocdMessage: Failed to unmarshal "apiversion.yaml"
     drydockMessage: 'apiversion.yaml document 0 has apiVersion "apps/v1/", which is not a valid group version, so it has no kind'
+  # Helm output. Argo CD reads the output of helm template with
+  # kube.SplitYAML, which decodes each document into an Unstructured object.
+  # That decode fails on a document without a kind in the repo-server. The
+  # message quotes the document as JSON with sorted keys, without tracking
+  # metadata, and names no file.
+  - name: parity-decode-helm-kindless
+    source: helm
+    file: templates/kindless.yaml
+    argocdQuotesObject: true
+    argocdMessage: "Object 'Kind' is missing in '{\"data\":{\"note\":\"a helm template without a kind\"},\"metadata\":{\"name\":\"parity-decode-helm-kindless-object\"}}'"
+    drydockMessage: "templates/kindless.yaml document 0 has no kind"
+  # kube.SplitYAML keeps an empty object and fails on it.
+  - name: parity-decode-helm-empty-object
+    source: helm
+    file: templates/empty-object.yaml
+    argocdQuotesObject: true
+    argocdMessage: "Object 'Kind' is missing in '{}'"
+    drydockMessage: "templates/empty-object.yaml document 0 has no kind"
+  # An apiVersion with two slashes does not parse as a group version, so the
+  # decode finds no kind.
+  - name: parity-decode-helm-apiversion
+    source: helm
+    file: templates/deployment.yaml
+    argocdQuotesObject: true
+    argocdMessage: "Object 'Kind' is missing in '{\"apiVersion\":\"apps/v1/\",\"kind\":\"Deployment\",\"metadata\":{\"name\":\"parity-decode-helm-apiversion-object\"}}'"
+    drydockMessage: 'templates/deployment.yaml document 0 has apiVersion "apps/v1/", which is not a valid group version, so it has no kind'
+  # A List item without a kind passes the repo-server. GenerateManifests
+  # emits it with tracking metadata, and the controller fails on it.
+  - name: parity-decode-helm-list-item
+    source: helm
+    file: templates/list.yaml
+    argocdQuotesObject: true
+    argocdMessage: "Object 'Kind' is missing in '{\"data\":{\"note\":\"a helm list item without a kind\"},\"metadata\":{\"annotations\":{\"argocd.argoproj.io/tracking-id\":\"parity-directory-decode_parity-decode-helm-list-item:"
+    drydockMessage: "templates/list.yaml document 0 list item /items/0 has no kind"
+  # Kustomize output. kustomize keeps an apiVersion with two slashes, and
+  # kube.SplitYAML fails on the build output. drydock names the
+  # kustomization file and the document of the build output.
+  - name: parity-decode-kustomize-apiversion
+    source: kustomize
+    file: kustomization.yaml
+    argocdQuotesObject: true
+    argocdMessage: "Object 'Kind' is missing in '{\"apiVersion\":\"apps/v1/\",\"kind\":\"Deployment\",\"metadata\":{\"name\":\"parity-decode-kustomize-apiversion-object\"}}'"
+    drydockMessage: 'kustomization.yaml document 1 has apiVersion "apps/v1/", which is not a valid group version, so it has no kind'
+  # Config management plugin output from the parity-env sidecar. The
+  # cmp-server splits the output with kube.SplitYAMLToString, and the
+  # repo-server decodes each document with kube.SplitYAML, which fails on the
+  # empty object. file is the plugin program. drydock names the plugin
+  # output, generate-output, instead.
+  - name: parity-decode-plugin-empty-object
+    source: plugin
+    file: generate.awk
+    argocdQuotesObject: true
+    argocdMessage: "Object 'Kind' is missing in '{}'"
+    drydockMessage: "plugin/parity-env/path/workloads/directory-decode/plugin-empty-object/generate-output document 1 has no kind"

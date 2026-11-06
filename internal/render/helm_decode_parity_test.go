@@ -11,7 +11,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/argoproj/argo-cd/gitops-engine/v3/pkg/utils/kube"
 	"github.com/argoproj/argo-cd/v3/pkg/apis/application/v1alpha1"
 	"helm.sh/helm/v4/pkg/chart/common"
 	chartutil "helm.sh/helm/v4/pkg/chart/common/util"
@@ -24,20 +23,20 @@ import (
 
 // upstreamHelmTemplate is what `helm template --include-crds [--skip-tests]`
 // from helm v4.3.1, the version Argo CD v3.6.1 bundles, prints for the chart
-// in chartDir. It renders the templates with the helm engine, as the install
+// in chartDir, with a release name and namespace. It renders the templates with the helm engine, as the install
 // action does in client-only mode, and then copies how
 // Configuration.renderResources (pkg/action/action.go, without a
 // post-renderer and an output directory) builds the release manifest and how
 // pkg/cmd/template.go prints the release. The helm install action itself is
 // not used, because its package pulls in many modules that drydock does not
 // otherwise need.
-func upstreamHelmTemplate(t *testing.T, chartDir string, skipTests bool) (string, error) {
+func upstreamHelmTemplate(t *testing.T, chartDir string, skipTests bool, releaseName, namespace string) (string, error) {
 	t.Helper()
 	ch, err := loader.Load(chartDir)
 	if err != nil {
 		t.Fatalf("load chart: %v", err)
 	}
-	options := common.ReleaseOptions{Name: "parity", Namespace: "default", Revision: 1, IsInstall: true}
+	options := common.ReleaseOptions{Name: releaseName, Namespace: namespace, Revision: 1, IsInstall: true}
 	values, err := chartutil.ToRenderValuesWithSchemaValidation(ch, map[string]any{}, options, common.DefaultCapabilities.Copy(), false)
 	if err != nil {
 		return "", err
@@ -85,15 +84,18 @@ func upstreamHelmTemplate(t *testing.T, chartDir string, skipTests bool) (string
 // loop and the controller read-back.
 func upstreamHelmOutcome(t *testing.T, chartDir string, skipTests bool) ([]*unstructured.Unstructured, error) {
 	t.Helper()
-	out, err := upstreamHelmTemplate(t, chartDir, skipTests)
+	return upstreamHelmOutcomeFor(t, chartDir, skipTests, "parity", "parity", "default")
+}
+
+// upstreamHelmOutcomeFor is upstreamHelmOutcome for a release name, an
+// Application instance name, and a destination namespace.
+func upstreamHelmOutcomeFor(t *testing.T, chartDir string, skipTests bool, releaseName, appName, namespace string) ([]*unstructured.Unstructured, error) {
+	t.Helper()
+	out, err := upstreamHelmTemplate(t, chartDir, skipTests, releaseName, namespace)
 	if err != nil {
 		return nil, err
 	}
-	objs, err := kube.SplitYAML([]byte(out))
-	if err != nil {
-		return nil, err
-	}
-	return upstreamApplicationObjects(objs, "parity", "default")
+	return upstreamGeneratedOutcomeFor(out, appName, namespace)
 }
 
 func writeParityChart(t *testing.T, chartDir string, templates map[string]string) {
@@ -337,4 +339,46 @@ func sortedUnstructuredJSON(t *testing.T, objs []*unstructured.Unstructured) []s
 	}
 	sort.Strings(out)
 	return out
+}
+
+// TestHelmRendererParityRenderFixtureMatchesUpstream renders the
+// parity-helm-generated-decode chart of the Argo CD render parity smoke with
+// drydock and with the upstream oracle, with skipTests as the Application
+// sets it. Both must emit the same objects.
+func TestHelmRendererParityRenderFixtureMatchesUpstream(t *testing.T) {
+	const (
+		appName   = "parity-helm-generated-decode"
+		namespace = "parity-helm-generated-decode"
+		path      = "charts/helm-generated-decode"
+	)
+	repoRoot := filepath.Join("..", "..", "testdata", "argocd-parity", "repo")
+	track := upstreamTrackManifestFor(appName, namespace, v1alpha1.TrackingMethodAnnotation)
+	result, _, err := (HelmRenderer{}).Render(context.Background(), ResolvedSource{RepoRoot: repoRoot, Path: path}, RenderOptions{
+		AppName:       appName,
+		Namespace:     namespace,
+		SkipTests:     true,
+		TrackManifest: track,
+	})
+	if err != nil {
+		t.Fatalf("Render() error = %v", err)
+	}
+	upstream, err := upstreamHelmOutcomeFor(t, filepath.Join(repoRoot, path), true, appName, appName, namespace)
+	if err != nil {
+		t.Fatalf("upstream error = %v", err)
+	}
+	got := make([]string, 0, len(result))
+	for _, manifest := range result {
+		obj := manifest.Object.DeepCopy()
+		if err := track(obj); err != nil {
+			t.Fatalf("track %s: %v", manifest.Path, err)
+		}
+		got = append(got, marshalObject(t, obj))
+	}
+	sort.Strings(got)
+	if want := sortedUnstructuredJSON(t, upstream); !reflect.DeepEqual(got, want) {
+		t.Fatalf("drydock rendered\n%s\nupstream\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
+	}
+	if len(got) != 3 {
+		t.Fatalf("rendered %d objects, want 3 (update the README count too)", len(got))
+	}
 }

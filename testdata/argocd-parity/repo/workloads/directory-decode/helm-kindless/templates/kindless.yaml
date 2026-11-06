@@ -1,0 +1,6 @@
+# A document without a kind. helm template prints it, and kube.SplitYAML
+# fails on it in the repo-server.
+metadata:
+  name: parity-decode-helm-kindless-object
+data:
+  note: a helm template without a kind
