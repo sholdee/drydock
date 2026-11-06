@@ -880,7 +880,8 @@ The smoke checks the conditions in two steps:
    flags an ApplicationSet with `appset.invalid-rollout-config` or
    `appset.rollout-no-steps`. For each flagged ApplicationSet, one drydock
    warning must carry the Argo CD message. drydock warns once for each
-   finding, so it can warn more than once for one ApplicationSet.
+   finding class, such as invalid operators or empty steps, so it can warn
+   more than once for one ApplicationSet.
 
 The usual inventory and manifest comparisons cover the generated
 Applications. `TestArgoCDParityFixtureRollingSync` in `internal/appset` pins

@@ -254,6 +254,15 @@ Applications' labels the way the Argo CD controller does:
 | Invalid `maxUpdate` value | `appset.invalid-rollout-config` | `InvalidRolloutConfig` condition | Applications generate |
 | Step that matches no generated Application | `appset.invalid-rollout-config` | `InvalidRolloutConfig` condition | Applications generate |
 
+Progressive syncs can be on with at least one step. Then Argo CD writes
+`spec.syncPolicy.automated.enabled: false` on each generated Application
+with an automated sync policy, because the controller starts the syncs
+itself. drydock does the same.
+
+drydock reads the switch only from `argocd-cmd-params-cm`. It does not see a
+value set only on the ApplicationSet controller Deployment, for example
+through the chart's `applicationSet.extraArgs` or `applicationSet.extraEnv`.
+
 Messages reuse Argo CD's text. drydock reports every finding class, while the
 Argo CD condition shows the highest-priority one. The `maxUpdate` check
 assumes the cluster already holds the generated Applications. `--strict`

@@ -239,7 +239,10 @@ Supported:
   Invalid `matchExpressions` operators, Applications selected by several
   steps, invalid `maxUpdate` values, and steps that match no generated
   Application warn as `appset.invalid-rollout-config`, and the Applications
-  still generate. `--strict` promotes `appset.rollout-no-steps`, but neither
+  still generate. If the step list is not empty, the Argo CD controller sets
+  `spec.syncPolicy.automated.enabled: false` on each generated Application
+  with an automated sync policy. drydock does the same. drydock does not
+  model the sync operations that the controller then starts. `--strict` promotes `appset.rollout-no-steps`, but neither
   escalates nor fails on `appset.invalid-rollout-config`, because Argo CD's
   `InvalidRolloutConfig` condition never blocks Application create or update.
   The render parity smoke turns progressive syncs on and checks each finding
@@ -542,6 +545,13 @@ Supported:
   `repoServer.env`. An empty value means `10M`, and a value that is not a Kubernetes quantity,
   spaces around it included, fails the build, as it stops the repo-server at
   startup. Earlier drydock releases had no limit.
+- drydock reads `applicationsetcontroller.enable.progressive.syncs` the same
+  way: from a discovered or rendered `argocd-cmd-params-cm` only. It does not
+  read the ApplicationSet controller Deployment. The chart can set the
+  setting only through `applicationSet.extraArgs`
+  (`--enable-progressive-syncs`) or through `applicationSet.extraEnv`
+  (`ARGOCD_APPLICATIONSET_CONTROLLER_ENABLE_PROGRESSIVE_SYNCS`). drydock does
+  not see such a setting, and treats progressive syncs as off.
 - A directory source follows file symlinks as the Argo CD v3.6.1
   repo-server does (`getPotentiallyValidManifestFile`). The walk never
   enters a symlinked directory. The extension filter, `include`, and
