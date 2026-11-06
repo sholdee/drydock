@@ -1,0 +1,8 @@
+# A document with a kind but no apiVersion decodes, so Argo CD renders it
+# without an apiVersion.
+kind: ConfigMap
+metadata:
+  name: parity-decode-skips-kind-only
+  namespace: parity-directory-decode-skips
+data:
+  fixture: directory-decode

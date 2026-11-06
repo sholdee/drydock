@@ -277,12 +277,15 @@ func upstreamDirectoryFileOutcome(data []byte, filename string) ([]*unstructured
 }
 
 // TestDirectoryRendererParityDecodeFixtures renders each failing directory of
-// the Argo CD render parity smoke (testdata/argocd-parity) offline. drydock
-// must fail with the drydockMessage the smoke expects. For a case whose Argo
-// CD message quotes the manifest, the upstream oracle must also fail with
-// the argocdMessage the smoke expects, given the Application's instance name
-// and destination namespace. The repo-server messages of the other cases come
-// from a copy of upstream code, so the smoke alone checks them.
+// the Argo CD render parity smoke (testdata/argocd-parity) offline, with the
+// Application's instance name, destination namespace, and annotation
+// tracking. drydock must fail with the drydockMessage the smoke expects. The
+// upstream oracle must also fail on the same directory with the
+// argocdMessage the smoke expects. For a case whose Argo CD message quotes or
+// names the object, that message comes from upstream code, so it must match
+// exactly. The other messages come from a copy of upstream code whose
+// wording differs in case, so they are compared without case. The smoke
+// checks them against Argo CD itself.
 func TestDirectoryRendererParityDecodeFixtures(t *testing.T) {
 	parityRoot := filepath.Join("..", "..", "testdata", "argocd-parity")
 	data, err := os.ReadFile(filepath.Join(parityRoot, "directory-decode-expected.yaml"))
@@ -296,52 +299,53 @@ func TestDirectoryRendererParityDecodeFixtures(t *testing.T) {
 			ArgoCDMessage      string `json:"argocdMessage"`
 			DrydockMessage     string `json:"drydockMessage"`
 			ArgoCDQuotesObject bool   `json:"argocdQuotesObject"`
+			ArgoCDNamesObject  string `json:"argocdNamesObject"`
 		} `json:"cases"`
 	}
 	if err := yaml.Unmarshal(data, &expected); err != nil {
 		t.Fatalf("parse expected file: %v", err)
 	}
 	repoRoot := filepath.Join(parityRoot, "repo")
-	quoted := 0
+	const namespace = "parity-directory-decode-workloads"
 	for _, tc := range expected.Cases {
 		t.Run(tc.Name, func(t *testing.T) {
 			caseDir := strings.TrimPrefix(tc.Name, "parity-decode-")
 			sourcePath := filepath.Join("workloads", "directory-decode", caseDir)
-			_, _, drydockErr := (DirectoryRenderer{}).Render(context.Background(), ResolvedSource{RepoRoot: repoRoot, Path: sourcePath}, RenderOptions{})
-			if drydockErr == nil || !strings.Contains(drydockErr.Error(), tc.DrydockMessage) {
-				t.Fatalf("drydock error = %v, want %q", drydockErr, tc.DrydockMessage)
-			}
-			if !tc.ArgoCDQuotesObject {
-				return
-			}
-			quoted++
 			// A parity-directory-decode Application is outside the controller
 			// namespace, so its instance name is <namespace>_<name>.
 			appName := "parity-directory-decode_" + tc.Name
+			_, _, drydockErr := (DirectoryRenderer{}).Render(context.Background(), ResolvedSource{RepoRoot: repoRoot, Path: sourcePath}, RenderOptions{
+				TrackManifest: upstreamTrackManifestFor(appName, namespace, v1alpha1.TrackingMethodAnnotation),
+			})
+			if drydockErr == nil || !strings.Contains(drydockErr.Error(), tc.DrydockMessage) {
+				t.Fatalf("drydock error = %v, want %q", drydockErr, tc.DrydockMessage)
+			}
 			entries, err := os.ReadDir(filepath.Join(repoRoot, sourcePath))
 			if err != nil {
 				t.Fatalf("ReadDir() error = %v", err)
 			}
-			var objs []*unstructured.Unstructured
+			files := map[string]string{}
 			for _, entry := range entries {
 				content, err := os.ReadFile(filepath.Join(repoRoot, sourcePath, entry.Name()))
 				if err != nil {
 					t.Fatalf("ReadFile() error = %v", err)
 				}
-				fileObjs, err := upstreamGetObjsFromYAMLOrJSON(content, entry.Name())
-				if err != nil {
-					t.Fatalf("upstream repo-server error = %v, want the controller to fail", err)
-				}
-				objs = append(objs, fileObjs...)
+				files[entry.Name()] = string(content)
 			}
-			_, upstreamErr := upstreamApplicationObjects(objs, appName, "parity-directory-decode-workloads")
-			if upstreamErr == nil || !strings.Contains(upstreamErr.Error(), tc.ArgoCDMessage) {
-				t.Fatalf("upstream error = %v, want %q", upstreamErr, tc.ArgoCDMessage)
+			_, upstreamErr := upstreamDirectoryOutcomeFor(files, appName, namespace, v1alpha1.TrackingMethodAnnotation)
+			if upstreamErr == nil {
+				t.Fatalf("upstream error = nil, want %q", tc.ArgoCDMessage)
+			}
+			if tc.ArgoCDQuotesObject || tc.ArgoCDNamesObject != "" {
+				if !strings.Contains(upstreamErr.Error(), tc.ArgoCDMessage) {
+					t.Fatalf("upstream error = %v, want %q", upstreamErr, tc.ArgoCDMessage)
+				}
+				return
+			}
+			if !strings.Contains(strings.ToLower(upstreamErr.Error()), strings.ToLower(tc.ArgoCDMessage)) {
+				t.Fatalf("upstream error = %v, want %q in any case", upstreamErr, tc.ArgoCDMessage)
 			}
 		})
-	}
-	if quoted == 0 {
-		t.Fatal("expected file has no argocdQuotesObject case")
 	}
 }
 
@@ -798,4 +802,74 @@ func TestDirectoryRendererTrackingMethodsMatchUpstream(t *testing.T) {
 			})
 		}
 	}
+}
+
+// TestDirectoryRendererParityRenderFixturesMatchUpstream renders the
+// directories of the parity-directory-decode-skips and
+// parity-directory-decode-jsonnet Applications of the Argo CD render parity
+// smoke offline. drydock's output, with the same tracking annotation added,
+// must equal what the upstream oracle emits, object for object.
+func TestDirectoryRendererParityRenderFixturesMatchUpstream(t *testing.T) {
+	repoRoot := filepath.Join("..", "..", "testdata", "argocd-parity", "repo")
+	for _, tc := range []struct {
+		appName   string
+		path      string
+		namespace string
+		want      int
+	}{
+		{appName: "parity-directory-decode-skips", path: "workloads/directory-decode/skips", namespace: "parity-directory-decode-skips", want: 9},
+		{appName: "parity-directory-decode-jsonnet", path: "workloads/directory-decode/jsonnet", namespace: "parity-directory-decode-jsonnet", want: 5},
+	} {
+		t.Run(tc.appName, func(t *testing.T) {
+			entries, err := os.ReadDir(filepath.Join(repoRoot, tc.path))
+			if err != nil {
+				t.Fatalf("ReadDir() error = %v", err)
+			}
+			files := map[string]string{}
+			for _, entry := range entries {
+				content, err := os.ReadFile(filepath.Join(repoRoot, tc.path, entry.Name()))
+				if err != nil {
+					t.Fatalf("ReadFile() error = %v", err)
+				}
+				files[entry.Name()] = string(content)
+			}
+			upstreamObjs, err := upstreamDirectoryOutcomeFor(files, tc.appName, tc.namespace, v1alpha1.TrackingMethodAnnotation)
+			if err != nil {
+				t.Fatalf("upstream error = %v", err)
+			}
+			track := upstreamTrackManifestFor(tc.appName, tc.namespace, v1alpha1.TrackingMethodAnnotation)
+			result, _, err := (DirectoryRenderer{}).Render(context.Background(), ResolvedSource{RepoRoot: repoRoot, Path: tc.path}, RenderOptions{TrackManifest: track})
+			if err != nil {
+				t.Fatalf("Render() error = %v", err)
+			}
+			var got, want []string
+			for _, manifest := range result {
+				obj := manifest.Object.DeepCopy()
+				if err := track(obj); err != nil {
+					t.Fatalf("track %s: %v", manifest.Path, err)
+				}
+				got = append(got, marshalObject(t, obj))
+			}
+			for _, obj := range upstreamObjs {
+				want = append(want, marshalObject(t, obj))
+			}
+			sort.Strings(got)
+			sort.Strings(want)
+			if !reflect.DeepEqual(got, want) {
+				t.Fatalf("drydock rendered\n%s\nupstream\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
+			}
+			if len(got) != tc.want {
+				t.Fatalf("rendered %d objects, want %d (update the README count too)", len(got), tc.want)
+			}
+		})
+	}
+}
+
+func marshalObject(t *testing.T, obj *unstructured.Unstructured) string {
+	t.Helper()
+	data, err := json.Marshal(obj.Object)
+	if err != nil {
+		t.Fatalf("Marshal() error = %v", err)
+	}
+	return string(data)
 }

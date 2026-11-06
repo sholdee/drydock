@@ -1,0 +1,9 @@
+apiVersion: v1
+kind: List
+items:
+  - apiVersion: v1
+    kind: ConfigMap
+    metadata:
+      name: parity-decode-tracking-annotations
+      namespace: parity-directory-decode-workloads
+      annotations: not-a-map

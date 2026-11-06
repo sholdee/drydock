@@ -1,0 +1,7 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: parity-decode-yaml-tracking
+  namespace: parity-directory-decode-workloads
+data:
+  fixture: directory-decode

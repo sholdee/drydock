@@ -1,0 +1,10 @@
+# The same for an items field that is a map.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: parity-decode-skips-items-map
+  namespace: parity-directory-decode-skips
+data:
+  fixture: directory-decode
+items:
+  note: not a list
