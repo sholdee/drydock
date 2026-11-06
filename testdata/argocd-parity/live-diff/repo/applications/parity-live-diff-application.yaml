@@ -1,0 +1,42 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: parity-live-diff-application
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/compare-options: ServerSideDiff=true
+spec:
+  project: default
+  source:
+    repoURL: git://argocd-parity-git.argocd-parity.svc.cluster.local/live-diff.git
+    targetRevision: live-diff-a
+    path: workloads/application
+  destination:
+    name: in-cluster
+    namespace: parity-live-diff
+  ignoreDifferences:
+    # Every ConfigMap: drop data.ignored.
+    - kind: ConfigMap
+      jsonPointers:
+        - /data/ignored
+    # Only the app container's image. The select keeps the sidecar image.
+    - group: apps
+      kind: Deployment
+      jqPathExpressions:
+        - .spec.template.spec.containers[] | select(.name == "app") | .image
+    # This expression fails to run on a resource without containers, such
+    # as the jq-error ConfigMap. Argo CD skips it there and keeps the other
+    # rules.
+    - group: "*"
+      kind: "*"
+      name: jq-error
+      jqPathExpressions:
+        - .spec.template.spec.containers[] | .image
+    # A manager that owns no field of the live object hides nothing.
+    - kind: ConfigMap
+      name: managed-fields
+      managedFieldsManagers:
+        - parity-live-diff-unused-manager
+  syncPolicy:
+    syncOptions:
+      - ServerSideApply=true

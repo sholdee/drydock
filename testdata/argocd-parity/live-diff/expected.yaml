@@ -1,0 +1,126 @@
+# Expected sync status for the live diff smoke.
+#
+# Argo CD syncs each Application at targetRevision live-diff-a (repo/). Then
+# the smoke moves it to live-diff-b (repo/ plus change/), and Argo CD
+# compares live-diff-b with the live objects. drydock diffs the same two
+# commits with `drydock diff apps --ref live-diff-b --ref-orig live-diff-a`.
+#
+# Each resource below must have this status in Argo CD. drydock must report a
+# change for a resource exactly when its status is OutOfSync. Every resource
+# of these Applications must be listed, on both sides.
+#
+# A Synced resource changes only fields that an ignore rule removes. An
+# OutOfSync resource changes the same fields and also a field that no rule
+# removes, so it proves that the rule does not hide too much.
+targetRevision: live-diff-b
+applications:
+  # Application spec.ignoreDifferences, with server-side diff.
+  - name: parity-live-diff-application
+    resources:
+      # jsonPointers.
+      - kind: ConfigMap
+        name: pointer-ignored
+        status: Synced
+      - kind: ConfigMap
+        name: pointer-other
+        status: OutOfSync
+      # jqPathExpressions with a select on the container name.
+      - group: apps
+        kind: Deployment
+        name: jq-ignored
+        status: Synced
+      - group: apps
+        kind: Deployment
+        name: jq-other
+        status: OutOfSync
+      # A jq expression that fails to run on this ConfigMap is skipped, and
+      # the jsonPointers rule still removes data.ignored.
+      - kind: ConfigMap
+        name: jq-error
+        status: Synced
+      # managedFieldsManagers that own no field hide nothing.
+      - kind: ConfigMap
+        name: managed-fields
+        status: OutOfSync
+  # The same resources and rules, with the client-side three-way diff.
+  - name: parity-live-diff-application-legacy
+    resources:
+      - kind: ConfigMap
+        name: pointer-ignored
+        status: Synced
+      - kind: ConfigMap
+        name: pointer-other
+        status: OutOfSync
+      - group: apps
+        kind: Deployment
+        name: jq-ignored
+        status: Synced
+      - group: apps
+        kind: Deployment
+        name: jq-other
+        status: OutOfSync
+      - kind: ConfigMap
+        name: jq-error
+        status: Synced
+      - kind: ConfigMap
+        name: managed-fields
+        status: OutOfSync
+  # argocd-cm resource.customizations and resource.compareoptions
+  # (repo/settings/argocd-cm.yaml), with server-side diff.
+  - name: parity-live-diff-customizations
+    resources:
+      # Split key resource.customizations.ignoreDifferences.ServiceAccount.
+      - kind: ServiceAccount
+        name: split-key-ignored
+        status: Synced
+      - kind: ServiceAccount
+        name: split-key-other
+        status: OutOfSync
+      # Block key rbac.authorization.k8s.io/Role with a jq select.
+      - group: rbac.authorization.k8s.io
+        kind: Role
+        name: block-jq-ignored
+        status: Synced
+      - group: rbac.authorization.k8s.io
+        kind: Role
+        name: block-jq-other
+        status: OutOfSync
+      # Split key resource.customizations.ignoreDifferences.all.
+      - kind: ConfigMap
+        name: all-key-ignored
+        status: Synced
+      - kind: ConfigMap
+        name: all-key-other
+        status: OutOfSync
+      # resource.compareoptions ignoreAggregatedRoles: the rules of a
+      # ClusterRole with an aggregationRule are ignored, the
+      # aggregationRule is not.
+      - group: rbac.authorization.k8s.io
+        kind: ClusterRole
+        name: parity-live-diff-aggregated-ignored
+        status: Synced
+      - group: rbac.authorization.k8s.io
+        kind: ClusterRole
+        name: parity-live-diff-aggregated-other
+        status: OutOfSync
+  # The argocd.argoproj.io/ignore-differences annotation, with server-side
+  # diff.
+  - name: parity-live-diff-annotation
+    resources:
+      - kind: ConfigMap
+        name: annotation-pointer-ignored
+        status: Synced
+      - kind: ConfigMap
+        name: annotation-pointer-other
+        status: OutOfSync
+      # live-diff-b adds /data/ignored to the annotation and changes
+      # data.ignored. The annotation ignores itself. Argo CD reads the
+      # annotation from live-diff-b only, so the change is ignored.
+      - kind: ConfigMap
+        name: annotation-target-side
+        status: Synced
+      # A pointer to a missing path is skipped, and the first segment of
+      # "#/data/ignored" is not checked, so it removes data.ignored.
+      - kind: ConfigMap
+        name: annotation-lenient-pointers
+        status: Synced

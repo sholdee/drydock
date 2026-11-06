@@ -1,0 +1,19 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: parity-live-diff-customizations
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/compare-options: ServerSideDiff=true
+spec:
+  project: default
+  source:
+    repoURL: git://argocd-parity-git.argocd-parity.svc.cluster.local/live-diff.git
+    targetRevision: live-diff-a
+    path: workloads/customizations
+  destination:
+    name: in-cluster
+    namespace: parity-live-diff
+  syncPolicy:
+    syncOptions:
+      - ServerSideApply=true

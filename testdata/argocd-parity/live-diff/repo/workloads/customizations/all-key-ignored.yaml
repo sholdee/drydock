@@ -1,0 +1,8 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: all-key-ignored
+  labels:
+    parity.drydock.dev/ignored-all: before
+data:
+  kept: before
