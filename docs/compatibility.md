@@ -593,11 +593,19 @@ Supported:
   Kustomize `helmCharts` `skipHooks`, every hook document is dropped. A
   template document whose head Helm cannot read, such as annotations that
   are not strings, fails the source with `YAML parse error on <file>`, as
-  `helm template` does. When several documents fail, drydock reports the
-  document that Argo CD reports: Argo CD reads the CRDs first, then the
-  other documents in Helm's kind order, then the hooks. drydock still emits
-  the manifests in its own order: CRDs, then templates by file name, each
-  in file order. Earlier drydock releases dropped only files named
+  `helm template` does. That error keeps the Helm text but not the manifest
+  content that the YAML error can copy, such as a map key. drydock emits
+  the manifests in the order of `helm template` output: the CRDs, then the
+  other documents in Helm's kind order, then the hooks. A List comes after
+  every kind that Helm knows. So when several documents fail, drydock
+  reports the document that Argo CD reports. And when a resource repeats,
+  drydock keeps the copy that Argo CD keeps, the last one in that order. For
+  example, a List item wins over a ConfigMap with the same name in a later
+  file, and a hook copy wins over a regular copy. `helm template` trims the
+  white space at the end of the last document before the hooks, so a `|+`
+  block scalar at the end of that document loses its trailing blank lines.
+  drydock trims the same document. Earlier drydock releases emitted the
+  manifests by file name, did not trim, dropped only files named
   `NOTES.txt`, checked the hook annotation of each list item, kept documents
   with unknown hook events, and kept a test hook List under `skipTests`.
 - Directory `disableExtensionFilter`: the extension filter is skipped and
@@ -965,7 +973,16 @@ Supported:
   applies the rule to both sides. A resource that exists only on the baseline
   side has no target, so its own annotation does not normalize it.
 - Repeated-resource last-wins behavior inside one Application, with a
-  diagnostic.
+  diagnostic, as in the Argo CD v3.6.1 controller. The controller keeps the
+  last copy of each resource among the manifests of all sources, and only
+  then splits off the hooks. So when the last copy is a hook, the resource
+  is a hook, and Argo CD does not manage it. For example, Helm prints hooks
+  last, so a ServiceAccount that a chart renders as a template and as a
+  `pre-install` hook is a hook. drydock follows the same order for every
+  source type: such a resource leaves the drydock build output and diffs. A
+  repeated hook also gives the `render.repeated-resource` warning. An object
+  with a `generateName` and no name is never a repeat. Earlier drydock
+  releases kept hooks out of the repeat check.
 - `get images` and `diff images` rendered image reference extraction from
   PodSpec container images and scalar fields whose key is exactly `image`.
 

@@ -338,6 +338,18 @@ as `crd-install` or `test-failure`, or whose value is empty, and prints
 document with the `test` hook event, a List with its items. Helm reads the
 annotations of the List itself, not the annotations of its items.
 
+If a resource is missing from the output and a `render.repeated-resource`
+warning names it, its last copy is a hook. Argo CD keeps the last copy of a
+repeated resource, and Helm prints hooks after every other document. So a
+ServiceAccount that a chart renders both as a template and as a
+`pre-install` hook is a hook, and Argo CD does not manage it. drydock leaves
+it out of the build output and diffs, as Argo CD does. Remove one of the
+copies, or give them different names.
+
+drydock lists Helm manifests in the order of `helm template` output: CRDs,
+then the other documents by kind, then the hooks. A List comes after every
+kind that Helm knows.
+
 ## Symptom: `kustomize.ignore-missing-components-dropped`
 
 With `ignoreMissingComponents: true`, Argo CD v3.6.1 adds only the first
