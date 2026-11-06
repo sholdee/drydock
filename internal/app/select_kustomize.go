@@ -27,8 +27,9 @@ type selectionSide struct {
 // withSelectionOnlyPaths returns copies of inputs whose Paths also carry
 // the local inputs of every source that renders from root: its Kustomize
 // graph (bases, components, helmCharts values files, patches, generator
-// files, and spec.source.kustomize components and patches) and its Helm
-// value files and file parameters, even outside spec.source.path. Every
+// files, and spec.source.kustomize components and patches), its Helm
+// value files and file parameters, and the paths that the symlinks under its
+// path and Jsonnet libraries reach, even outside spec.source.path. Every
 // source also owns the $ref value files and file parameters whose ref root
 // is this tree (selfRepo identifies the repository under diff).
 // It exists for changed-only ownership only: ApplicationSelectionInput.Paths
@@ -59,6 +60,22 @@ func withSelectionOnlyPaths(ctx context.Context, root string, repoMaps []sourcep
 		}
 		return paths
 	}
+	symlinkMemo := map[string][]string{}
+	symlinkInputs := func(source argoappv1.ApplicationSource) []string {
+		dirs := []string{source.Path}
+		if source.Directory != nil {
+			for _, lib := range source.Directory.Jsonnet.Libs {
+				dirs = append(dirs, strings.TrimSpace(lib))
+			}
+		}
+		key := fmt.Sprintf("%q", dirs)
+		paths, ok := symlinkMemo[key]
+		if !ok {
+			paths = render.DirectorySymlinkInputPaths(root, dirs)
+			symlinkMemo[key] = paths
+		}
+		return paths
+	}
 	out := make([]ApplicationSelectionInput, len(inputs))
 	renderedDirs := map[string][]string{}
 	for i, input := range inputs {
@@ -72,6 +89,9 @@ func withSelectionOnlyPaths(ctx context.Context, root string, repoMaps []sourcep
 				continue
 			}
 			out[i].Paths = append(out[i].Paths, helmLocalSelectionPaths(source)...)
+			// A directory source reads the files that its symlinks reach,
+			// also outside its path; a plugin may follow them too.
+			out[i].Paths = append(out[i].Paths, symlinkInputs(source)...)
 			if mayWalkKustomizeGraph(source) {
 				out[i].Paths = append(out[i].Paths, kustomizeGraph(source)...)
 			}

@@ -11,7 +11,10 @@ import (
 // DirectoryInputDigestPaths returns conservative committed repository paths for
 // directory rendering. The source directory tree is always included; Jsonnet
 // library roots are included when declared and validated with the same bounded
-// path semantics used by the renderer.
+// path semantics used by the renderer. The paths outside those trees that
+// their symlinks read are included too (DirectorySymlinkInputPaths), as
+// optional paths: a symlink whose target is missing reads nothing now but
+// renders the target once it exists.
 func DirectoryInputDigestPaths(source ResolvedSource, opts RenderOptions) ([]gitref.PathDigestPath, error) {
 	root, err := sourceRoot(source)
 	if err != nil {
@@ -32,6 +35,13 @@ func DirectoryInputDigestPaths(source ResolvedSource, opts RenderOptions) ([]git
 			return nil, err
 		}
 		paths = append(paths, gitref.PathDigestPath{Path: libRel})
+	}
+	trees := make([]string, 0, len(paths))
+	for _, item := range paths {
+		trees = append(trees, item.Path)
+	}
+	for _, rel := range DirectorySymlinkInputPaths(source.RepoRoot, trees) {
+		paths = append(paths, gitref.PathDigestPath{Path: rel, Optional: true})
 	}
 	return paths, nil
 }
