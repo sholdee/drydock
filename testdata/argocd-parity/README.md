@@ -647,7 +647,7 @@ Both Argo CD and drydock must render these values:
 `applications/helm-generated-decode.yaml` (`parity-helm-generated-decode`)
 renders `charts/helm-generated-decode` with `skipTests: true`. It covers how
 Argo CD reads the output of `helm template`. Both sides must render exactly
-three ConfigMaps:
+six ConfigMaps:
 
 - `templates/lists.yaml` holds a List with two ConfigMaps, which renders
   `helm-list-item-a` and `helm-list-item-b`. It also holds a List whose
@@ -661,6 +661,21 @@ three ConfigMaps:
   empty are dropped because Helm does not know the hook event.
 - `templates/extra-NOTES.txt` is not YAML. Helm drops every file whose name
   ends in `NOTES.txt`, so it is not read.
+- `templates/dup-a-list.yaml`, `templates/dup-a-hook.yaml`, and
+  `templates/dup-b-plain.yaml` hold two repeated resources. The Argo CD
+  controller keeps the last copy in the order of `helm template` output.
+  Helm sorts a List after every kind that it knows and prints hooks last.
+  So Argo CD keeps the List item copy of `helm-dup-list` and the hook copy
+  of `helm-dup-hook`, although `dup-b-plain.yaml` comes later by file name.
+  The hook copy also has `argocd.argoproj.io/hook: Skip`, so it is not an
+  Argo CD hook and stays in the comparison. `argocd app manifests` lists
+  every copy, and the comparison keeps the last one, as the controller
+  does.
+- `templates/zz-keep-chomp.yaml` is the last document before the hooks.
+  `helm template` trims the white space at the end of it, so the `|+` value
+  of `helm-keep-chomp` is `x` and a line break, without the line with a tab
+  and the blank lines that follow. The comparison drops line breaks at the
+  end of each value but keeps the tab, so it sees the difference.
 
 The fixture holds no document that Argo CD keeps as a hook. `argocd app
 manifests` lists hooks, but drydock keeps hooks out of its build output.

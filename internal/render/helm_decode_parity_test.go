@@ -453,7 +453,8 @@ func sortedUnstructuredJSON(t *testing.T, objs []*unstructured.Unstructured) []s
 // TestHelmRendererParityRenderFixtureMatchesUpstream renders the
 // parity-helm-generated-decode chart of the Argo CD render parity smoke with
 // drydock and with the upstream oracle, with skipTests as the Application
-// sets it. Both must emit the same objects.
+// sets it. Both must keep the same copy of each repeated resource, as the
+// Argo CD controller keeps the last copy.
 func TestHelmRendererParityRenderFixtureMatchesUpstream(t *testing.T) {
 	const (
 		appName   = "parity-helm-generated-decode"
@@ -475,20 +476,20 @@ func TestHelmRendererParityRenderFixtureMatchesUpstream(t *testing.T) {
 	if err != nil {
 		t.Fatalf("upstream error = %v", err)
 	}
-	got := make([]string, 0, len(result))
+	objs := make([]*unstructured.Unstructured, 0, len(result))
 	for _, manifest := range result {
 		obj := manifest.Object.DeepCopy()
 		if err := track(obj); err != nil {
 			t.Fatalf("track %s: %v", manifest.Path, err)
 		}
-		got = append(got, marshalObject(t, obj))
+		objs = append(objs, obj)
 	}
-	sort.Strings(got)
-	if want := sortedUnstructuredJSON(t, upstream); !reflect.DeepEqual(got, want) {
+	got := lastCopies(t, objs)
+	if want := lastCopies(t, upstream); !reflect.DeepEqual(got, want) {
 		t.Fatalf("drydock rendered\n%s\nupstream\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
 	}
-	if len(got) != 3 {
-		t.Fatalf("rendered %d objects, want 3 (update the README count too)", len(got))
+	if len(got) != 6 {
+		t.Fatalf("rendered %d objects, want 6 (update the README count too)", len(got))
 	}
 }
 

@@ -1,0 +1,15 @@
+# The other copies of the repeated resources in dup-a-hook.yaml and
+# dup-a-list.yaml. Argo CD does not keep them.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: helm-dup-hook
+data:
+  from: the plain copy
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: helm-dup-list
+data:
+  from: the plain copy
