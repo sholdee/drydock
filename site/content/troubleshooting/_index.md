@@ -268,6 +268,12 @@ drydock selects directory-source files as the Argo CD v3.6.1 repo-server does:
   when the tracking method reads that field. Argo CD names only the object.
   drydock also names the file, and the list item when there is one. Fix the
   field in the manifest.
+- If the error says that the directory source files are larger in sum than
+  the limit, the files that Argo CD reads add up to more than
+  `reposerver.max.combined.directory.manifests.size` (default `10M`). Argo CD
+  fails the same Application with `exceeded max combined manifest file size`.
+  Narrow `include` or `exclude`, split the directory, or raise the setting in
+  `argocd-cmd-params-cm` for both Argo CD and drydock.
 - When several files fail, drydock reports the file that Argo CD reports.
   Argo CD reads every file first, then splits lists and sets tracking
   metadata, and checks for a missing `kind` last. So a file that does not

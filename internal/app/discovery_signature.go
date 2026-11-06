@@ -41,16 +41,20 @@ func renderSettingsSignature(settings config.ArgoSettings) (string, error) {
 		InstallationID           string                                 `json:"installationID,omitempty"`
 		ConfigManagementPlugins  map[string]renderSettingsPlugin        `json:"configManagementPlugins,omitempty"`
 		ResourceCustomizations   map[string]renderSettingsCustomization `json:"resourceCustomizations,omitempty"`
+		// MaxCombinedDirectoryManifestsSize decides whether a directory
+		// source fails, so it is a render input.
+		MaxCombinedDirectoryManifestsSize string `json:"maxCombinedDirectoryManifestsSize,omitempty"`
 	}{
-		KustomizeBuildOptions:    renderSettingsValues(settings.KustomizeBuildOptions),
-		HelmRepositories:         renderSettingsRepositories(settings.HelmRepositories),
-		HelmValuesFileSchemes:    renderSettingsValues(settings.HelmValuesFileSchemes),
-		HelmValuesFileSchemesSet: settings.HelmValuesFileSchemesSet,
-		TrackingMethod:           settings.TrackingMethod.Value,
-		InstanceLabelKey:         settings.InstanceLabelKey.Value,
-		InstallationID:           settings.InstallationID.Value,
-		ConfigManagementPlugins:  plugins,
-		ResourceCustomizations:   renderSettingsCustomizations(settings.ResourceCustomizations),
+		KustomizeBuildOptions:             renderSettingsValues(settings.KustomizeBuildOptions),
+		HelmRepositories:                  renderSettingsRepositories(settings.HelmRepositories),
+		HelmValuesFileSchemes:             renderSettingsValues(settings.HelmValuesFileSchemes),
+		HelmValuesFileSchemesSet:          settings.HelmValuesFileSchemesSet,
+		TrackingMethod:                    settings.TrackingMethod.Value,
+		InstanceLabelKey:                  settings.InstanceLabelKey.Value,
+		InstallationID:                    settings.InstallationID.Value,
+		ConfigManagementPlugins:           plugins,
+		ResourceCustomizations:            renderSettingsCustomizations(settings.ResourceCustomizations),
+		MaxCombinedDirectoryManifestsSize: settings.MaxCombinedDirectoryManifestsSize.Value,
 	}
 	data, err := json.Marshal(input)
 	if err != nil {

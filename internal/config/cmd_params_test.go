@@ -261,3 +261,24 @@ func assertContainsNone(t *testing.T, text string, values []string) {
 		}
 	}
 }
+
+// TestCommandParametersReadMaxCombinedDirectoryManifestsSize pins that drydock
+// applies reposerver.max.combined.directory.manifests.size instead of
+// recording it as runtime-only metadata.
+func TestCommandParametersReadMaxCombinedDirectoryManifestsSize(t *testing.T) {
+	settings, diags := commandParametersSettings("argocd-cmd-params-cm.yaml", "data", map[string]string{
+		"reposerver.max.combined.directory.manifests.size": " 20M ",
+	})
+	if got := settings.MaxCombinedDirectoryManifestsSize.Value; got != "20M" {
+		t.Fatalf("MaxCombinedDirectoryManifestsSize = %q, want 20M", got)
+	}
+	if settings.MaxCombinedDirectoryManifestsSize.Provenance.Pointer != "data.reposerver.max.combined.directory.manifests.size" {
+		t.Fatalf("provenance = %#v", settings.MaxCombinedDirectoryManifestsSize.Provenance)
+	}
+	if len(diags) != 0 {
+		t.Fatalf("diags = %#v, want no runtime-only warning", diags)
+	}
+	if len(settings.CommandParameters) != 1 || settings.CommandParameters[0].Classification != CommandParameterRendered || settings.CommandParameters[0].Value != "20M" {
+		t.Fatalf("CommandParameters = %#v, want one rendered setting with its value", settings.CommandParameters)
+	}
+}

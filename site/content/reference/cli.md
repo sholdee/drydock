@@ -431,7 +431,10 @@ drydock diag --path . --render -o json
 `argocd-cmd-params-cm` settings are parsed as runtime-boundary metadata when
 they imply live repo-server, controller, or ApplicationSet controller behavior.
 They may produce diagnostics and settings summaries, but they do not mutate
-drydock render behavior.
+drydock render behavior. The exception is
+`reposerver.max.combined.directory.manifests.size`. drydock applies it as the
+limit on the combined file size of one directory source, with the repo-server
+default `10M` when it is not set.
 
 ## Cache Commands
 

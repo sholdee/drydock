@@ -117,7 +117,10 @@ provenance and fail closed on conflicting discovered values.
 
 `argocd-cmd-params-cm` may be parsed only as command-parameter metadata for
 runtime-boundary diagnostics. Runtime-only repo-server, controller, and
-ApplicationSet-controller settings must not mutate render behavior.
+ApplicationSet-controller settings must not mutate render behavior. The one
+exception is `reposerver.max.combined.directory.manifests.size`. It decides
+whether a directory source fails, so drydock applies it and keeps it in the
+render settings signature.
 
 Repository Secrets may contribute non-sensitive metadata such as `url`, `type`,
 `name`, `project`, and `enableOCI`. They must not retain username, password,

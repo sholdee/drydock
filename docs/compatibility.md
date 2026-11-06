@@ -496,6 +496,18 @@ Supported:
   `.json` file that does not decode is reported before a list item that is
   not an object in an earlier file, and a file that cannot be read is
   reported before a decode error in an earlier file.
+- The files of one directory source must not be larger in sum than the
+  repo-server limit, as in Argo CD v3.6.1. The limit is
+  `reposerver.max.combined.directory.manifests.size` in
+  `argocd-cmd-params-cm`, a Kubernetes quantity, and its default is `10M`
+  (10000000 bytes). `0` turns the limit off. The sum counts the raw size of
+  each file that passes the extension filter, `include`, and `exclude`. It
+  does not count Jsonnet files or files with the skip marker. Over the limit,
+  Argo CD fails with `exceeded max combined manifest file size`, and drydock
+  fails with an error that names the file that went over and the limit.
+  drydock reads the setting from the `argocd-cmd-params-cm` that it
+  discovers or that you pass, and uses the default otherwise. Earlier
+  drydock releases had no limit.
 - A directory file that is not a regular file, such as a named pipe or a
   socket, is skipped, as in Argo CD. Earlier drydock releases tried to read
   it, and a named pipe stopped the render.
@@ -879,7 +891,9 @@ Supported:
   AppProjects but not the named one.
 - `argocd-cmd-params-cm` runtime-boundary diagnostics for settings that imply
   live repo-server, controller, or ApplicationSet controller behavior. These
-  settings are parsed as metadata and do not mutate render behavior.
+  settings are parsed as metadata and do not mutate render behavior, except
+  `reposerver.max.combined.directory.manifests.size` (see the directory
+  size limit above).
 - Custom health Lua validation in `test apps` and `test app`, executed offline
   against rendered desired manifests. It reports Lua runtime errors and
   invalid status values. A `deletionMessage` (Argo CD v3.6.1) applies only to
