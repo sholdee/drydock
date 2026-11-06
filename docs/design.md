@@ -395,6 +395,17 @@ source then fails on its own. One verdict memo serves the whole run. The persist
 source that renders from the provider root also carries the first
 out-of-bounds symlink of the root.
 
+When the two sides render different commits, every Application whose spec
+reads `ARGOCD_APP_REVISION`, `ARGOCD_APP_REVISION_SHORT`, or
+`ARGOCD_APP_REVISION_SHORT_8` (`sourceReadsAppRevision`, applied to the spec
+and to each local source merged with its `.argocd-source` overrides on that
+side), and every Application with a config management plugin source, is
+selected with its rendered descendants (`withAppRevisionSelection`), with
+diagnostic `diff.changed-only-app-revision` (warning, exempt like
+`diff.changed-only-settings-scoped`). Plugin sources count only here: they
+never persist, so they never reach the persistent key, which uses
+`sourceReadsAppRevision` alone.
+
 Operators can scope the changed path set with explicit include and ignore
 globs before ownership is evaluated. Include globs define the considered path
 universe; ignore globs remove paths from that universe and take precedence. If

@@ -487,10 +487,15 @@ Supported:
   gets the revision of its own repository, and a `$ref` source adds nothing.
   drydock resolves the value offline as follows:
   - A Git source fetched into the Git cache gets the commit SHA that drydock
-    checked out. A hex `targetRevision` that is also the name of a branch or
-    tag checks out that ref, because `ls-remote` matches ref names before it
-    takes a hex revision as an abbreviated SHA (`util/git/client.go:991-1022`).
-    drydock looks for the branch under every remote of its clone.
+    checked out. A `targetRevision` that is also the name of a branch or
+    tag checks out that ref, also a short hex name such as `c` or `2024`,
+    because `ls-remote` matches ref names before it takes a hex revision as
+    an abbreviated SHA (`util/git/client.go:991-1022`). A hex name shorter
+    than 7 digits that names no ref does not resolve, as in `ls-remote`. An
+    abbreviated SHA must name a single commit or tag, else the source
+    fails as in `git checkout`. drydock looks for the branch under the
+    remote whose URL is the `repoURL` of the source, and under every remote
+    in name order when no remote has that URL.
   - A source that renders from the `--path` tree (a path that exists there,
     or a repository that drydock maps to the tree) gets the HEAD commit of
     that tree, also when the worktree has uncommitted changes. drydock
@@ -504,10 +509,17 @@ Supported:
     single-source Application (`git rev-parse HEAD` after the checkout) and
     the SHA as written for a multi-source Application. A hex revision that
     is also a branch or tag name gives the commit of that ref. Any other
-    abbreviated SHA gives the commit that it names in the local repository
-    for a single-source Application, or the HEAD commit when no single
-    local commit matches, and the abbreviation as written for a
-    multi-source Application.
+    abbreviated SHA gives, for a single-source Application, the commit that
+    it names in the local repository (an abbreviated annotated tag object
+    gives the commit the tag points to, as `git checkout` does), or the
+    HEAD commit when nothing in the local repository matches. For a
+    multi-source Application it stays as written. An abbreviation that
+    matches more than one commit or tag fails the source, as `git checkout`
+    fails with "short object ID ... is ambiguous" in the repo-server.
+  - The targetRevision comes from the spec. An `.argocd-source` override
+    cannot change it: the repo-server keeps the spec `targetRevision` when it
+    merges the override (`repository.go:1946-1949`), and so does drydock,
+    in the render and in the settings discovery of an Argo CD install.
   - A Git source of a multi-source Application gets what `git ls-remote`
     resolution gives, as Argo CD does. The repo-server passes the
     `ls-remote` result as the revision there and does not read the
@@ -521,7 +533,8 @@ Supported:
     `spec.sources` list counts as multi-source, also with one entry.
     drydock reads branch and tag names from the Git cache clone, the
     repository of a `--ref` snapshot, the `--path` tree, or the
-    `--repo-map` directory.
+    `--repo-map` directory, and branches from the remote whose URL is the
+    `repoURL` of the source.
   - An OCI artifact source gets the manifest digest (`sha256:...`), so
     `_SHORT` is `sha256:` and `_SHORT_8` is `sha256:` plus one hex digit,
     as in Argo CD.
@@ -564,9 +577,11 @@ Supported:
   reads one of these variables even when no input changed, as Argo CD does
   after the new commit syncs. `--changed-only` selects every Application
   whose spec reads one of the variables, in its spec or through a merged
-  `.argocd-source` override on either side, whenever the two sides render
-  different commits, and warns `diff.changed-only-app-revision` with their
-  number. `--strict` does not fail on that warning. When no relevant path
+  `.argocd-source` override on either side, and every Application with a
+  config management plugin source, whose environment always holds the
+  variables, whenever the two sides render different commits. It also
+  selects the Applications they render, and warns
+  `diff.changed-only-app-revision` with their number. `--strict` does not fail on that warning. When no relevant path
   changed at all, the changed-only diff is still skipped before any
   Application is listed, so these Applications are not rendered then.
 - Directory rendering honors `+argocd:skip-file-rendering`, walks hidden
