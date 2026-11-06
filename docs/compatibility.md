@@ -602,7 +602,12 @@ Supported:
   imports. drydock reads the import paths from the parsed Jsonnet files. It
   does not follow imports in `extVars` or `tlas` code, so a change to a file
   that only such code imports does not change the key or select the
-  Application.
+  Application. The import scan has a budget of 1000 files and 10 MB per
+  source, because a symlink to a directory above the file can give one file
+  endlessly many import paths. When the budget runs out, the source gets no
+  persistent cache entry and renders as usual, and changed-only renders it
+  on every change, with the strict-exempt warning
+  `diff.changed-only-jsonnet-scan`.
 - Recorded divergence from strict Argo CD v3.6.1: drydock never extracts an
   OCI artifact that holds an out-of-bounds symlink, also when
   `reposerver.allow.oob.symlinks` is `true`. Helm charts and Kustomize

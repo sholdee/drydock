@@ -70,7 +70,9 @@ changed-only renders all Applications, with the strict-exempt diagnostic
 when drydock cannot walk a tree to find such a symlink. A directory source
 also owns the files outside its path that its symlinks reach and its Jsonnet
 files import, so a change to one of them selects it. Imports in `extVars`
-or `tlas` code are not followed.
+or `tlas` code are not followed. When the scan of those imports runs out of
+its budget, changed-only renders the source on every change, with the
+strict-exempt warning `diff.changed-only-jsonnet-scan`.
 
 ## Commands
 

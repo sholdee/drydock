@@ -1093,7 +1093,7 @@ func normalizeDiagnostics(diags []diagnostic.Diagnostic, strict, forceWarning bo
 // it aborts reconciliation of the whole ApplicationSet.
 func strictExemptDiagnostic(diag diagnostic.Diagnostic) bool {
 	switch diag.Code {
-	case selfRepoNearMissCode, ociChartIgnoredCode, diagnostic.CodeSettingsIgnoreResourceUpdates, diagnostic.CodePluginPolicyEnvIgnored, changedOnlySettingsCode, changedOnlySettingsScopedCode, changedOnlyProjectsCode, changedOnlySymlinksCode, diagnostic.CodeAppSetInvalidRolloutConfig, render.DirectoryExtensionFilterDisabledCode:
+	case selfRepoNearMissCode, ociChartIgnoredCode, diagnostic.CodeSettingsIgnoreResourceUpdates, diagnostic.CodePluginPolicyEnvIgnored, changedOnlySettingsCode, changedOnlySettingsScopedCode, changedOnlyProjectsCode, changedOnlySymlinksCode, changedOnlyJsonnetScanCode, diagnostic.CodeAppSetInvalidRolloutConfig, render.DirectoryExtensionFilterDisabledCode:
 		return true
 	}
 	return false

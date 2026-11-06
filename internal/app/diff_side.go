@@ -137,6 +137,22 @@ func changedOnlyProjectsDiagnostic() diagnostic.Diagnostic {
 	}
 }
 
+// changedOnlyJsonnetScanCode identifies the Applications that changed-only
+// selects because the scan of their Jsonnet imports ran out of budget
+// (render.ErrJsonnetImportScanBudget). It is strict-exempt
+// (strictExemptDiagnostic): selecting them is the safe answer, not an
+// ownership gap.
+const changedOnlyJsonnetScanCode = "diff.changed-only-jsonnet-scan"
+
+func changedOnlyJsonnetScanDiagnostic(names []string) diagnostic.Diagnostic {
+	return diagnostic.Diagnostic{
+		Code:     changedOnlyJsonnetScanCode,
+		Severity: diagnostic.SeverityWarning,
+		Category: "changed-only",
+		Message:  fmt.Sprintf("the Jsonnet imports of %d Application(s) could not be scanned within the scan budget, so changed-only renders them on every change: %s", len(names), strings.Join(names, ", ")),
+	}
+}
+
 // changedOnlySymlinksCode identifies the changed-only render-all that a
 // change of the out-of-bounds symlink verdict of the tree under diff forces.
 // It is strict-exempt (strictExemptDiagnostic) for the same reason as
@@ -255,12 +271,16 @@ func changedOnlyApplications(ctx context.Context, request DiffRequest, leftBuild
 	leftSide := withSelectionOnlyPaths(ctx, leftBuildRequest.Path, leftBuildRequest.RepoMaps, leftBuildRequest.selfRepo, leftList.ApplicationInputs)
 	rightSide := withSelectionOnlyPaths(ctx, rightBuildRequest.Path, rightBuildRequest.RepoMaps, rightBuildRequest.selfRepo, rightList.ApplicationInputs)
 	leftSelected, rightSelected, unowned := selectChangedDiffSides(leftSide, rightSide, changedPaths, projectNames)
+	var scanDiags []diagnostic.Diagnostic
+	if unscanned := dedupeSortedStrings(append(append([]string(nil), leftSide.unscanned...), rightSide.unscanned...)); len(unscanned) > 0 {
+		scanDiags = append(scanDiags, changedOnlyJsonnetScanDiagnostic(unscanned))
+	}
 	if len(unowned) == 0 {
 		leftSelected, rightSelected, reached := withSettingsSelection(leftSide, rightSide, leftSelected, rightSelected, settings)
 		if reached == 0 {
-			return leftSelected, rightSelected, nil, nil
+			return leftSelected, rightSelected, scanDiags, nil
 		}
-		return leftSelected, rightSelected, []diagnostic.Diagnostic{changedOnlySettingsScopedDiagnostic(reached)}, nil
+		return leftSelected, rightSelected, append(scanDiags, changedOnlySettingsScopedDiagnostic(reached)), nil
 	}
 	diag := diagnostic.Diagnostic{
 		Severity: diagnostic.SeverityWarning,

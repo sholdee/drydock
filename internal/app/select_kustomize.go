@@ -2,7 +2,9 @@ package app
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"sort"
 	"strings"
 
 	argoappv1 "github.com/argoproj/argo-cd/v3/pkg/apis/application/v1alpha1"
@@ -22,6 +24,9 @@ type selectionSide struct {
 	// The graph is kept once per directory, never copied into the Paths of
 	// every Application the directory declares.
 	renderedDirs map[string][]string
+	// unscanned holds the names of Applications whose Jsonnet import scan
+	// ran out of budget. They own every changed path.
+	unscanned []string
 }
 
 // withSelectionOnlyPaths returns copies of inputs whose Paths also carry
@@ -61,8 +66,14 @@ func withSelectionOnlyPaths(ctx context.Context, root string, repoMaps []sourcep
 		}
 		return paths
 	}
-	symlinkMemo := map[string][]string{}
-	symlinkInputs := func(source argoappv1.ApplicationSource) []string {
+	type symlinkSelection struct {
+		paths []string
+		// unknown reports a Jsonnet import scan that ran out of budget:
+		// the source's inputs are not known.
+		unknown bool
+	}
+	symlinkMemo := map[string]symlinkSelection{}
+	symlinkInputs := func(source argoappv1.ApplicationSource) symlinkSelection {
 		dirs := []string{source.Path}
 		if source.Directory != nil {
 			for _, lib := range source.Directory.Jsonnet.Libs {
@@ -70,17 +81,19 @@ func withSelectionOnlyPaths(ctx context.Context, root string, repoMaps []sourcep
 			}
 		}
 		key := fmt.Sprintf("%q", dirs)
-		paths, ok := symlinkMemo[key]
+		selection, ok := symlinkMemo[key]
 		if !ok {
-			paths = render.DirectorySymlinkInputPaths(root, dirs)
-			// A source that cannot be read keeps its other ownership; the
-			// render reports the error.
-			imports, _ := render.DirectoryJsonnetImportPaths(ctx, root, source.Path, dirs[1:])
-			paths = append(paths, imports...)
-			symlinkMemo[key] = paths
+			selection.paths = render.DirectorySymlinkInputPaths(root, dirs)
+			// A source that cannot be read otherwise keeps its other
+			// ownership; the render reports the error.
+			imports, err := render.DirectoryJsonnetImportPaths(ctx, root, source.Path, dirs[1:])
+			selection.unknown = errors.Is(err, render.ErrJsonnetImportScanBudget)
+			selection.paths = append(selection.paths, imports...)
+			symlinkMemo[key] = selection
 		}
-		return paths
+		return selection
 	}
+	var unscanned []string
 	out := make([]ApplicationSelectionInput, len(inputs))
 	renderedDirs := map[string][]string{}
 	for i, input := range inputs {
@@ -97,7 +110,14 @@ func withSelectionOnlyPaths(ctx context.Context, root string, repoMaps []sourcep
 			// A directory source reads the files that its symlinks reach
 			// and its Jsonnet files import, also outside its path; a plugin
 			// can follow the symlinks too.
-			out[i].Paths = append(out[i].Paths, symlinkInputs(source)...)
+			selection := symlinkInputs(source)
+			out[i].Paths = append(out[i].Paths, selection.paths...)
+			if selection.unknown {
+				// The inputs are not known, so the source owns every
+				// changed path: "" intersects all of them.
+				out[i].Paths = append(out[i].Paths, "")
+				unscanned = appendUniqueString(unscanned, applicationDisplayName(input.Application))
+			}
 			if mayWalkKustomizeGraph(source) {
 				out[i].Paths = append(out[i].Paths, kustomizeGraph(source)...)
 			}
@@ -106,7 +126,8 @@ func withSelectionOnlyPaths(ctx context.Context, root string, repoMaps []sourcep
 			renderedDirs[input.RenderedDir] = kustomizeGraph(argoappv1.ApplicationSource{Path: input.RenderedDir})
 		}
 	}
-	return selectionSide{inputs: out, renderedDirs: renderedDirs}
+	sort.Strings(unscanned)
+	return selectionSide{inputs: out, renderedDirs: renderedDirs, unscanned: unscanned}
 }
 
 // kustomizeSelectionMemoKey identifies one selection walk: sources sharing a

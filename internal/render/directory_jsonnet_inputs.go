@@ -2,6 +2,8 @@ package render
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"io"
 	"io/fs"
 	"os"
@@ -25,7 +27,9 @@ import (
 // path's target. It reads every .jsonnet file under the source path, also
 // one that recurse or a filter leaves out, so the result is conservative.
 // An import that the renderer refuses, a file that does not parse, and
-// imports in extVar or TLA code add nothing. It reads a file only after the
+// imports in extVar or TLA code add nothing. The scan has a budget of files
+// and bytes; when it runs out, the result is ErrJsonnetImportScanBudget. It
+// reads a file only after the
 // checks of the renderer's importer: its symlinks must resolve to a regular
 // file inside the repository, outside .git. It reads at most
 // maxJsonnetImportScanBytes of a file, and does not parse a larger one. The
@@ -80,6 +84,9 @@ func DirectoryJsonnetImportPaths(ctx context.Context, repoRoot, sourcePath strin
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
+	if collector.exhausted {
+		return nil, fmt.Errorf("%w: source %q imports more than %d files or %d bytes through its import paths", ErrJsonnetImportScanBudget, sourcePath, maxJsonnetImportScanFiles, maxJsonnetImportScanBytes)
+	}
 	out := make([]string, 0, len(collector.found))
 	for rel := range collector.found {
 		out = append(out, rel)
@@ -111,9 +118,21 @@ func directoryJsonnetEntryFiles(appPath string) ([]string, error) {
 }
 
 // maxJsonnetImportScanBytes bounds how much of one Jsonnet file the import
-// scan reads. It is the default repo-server limit on the combined size of a
-// directory source, which no single manifest file can pass.
+// scan reads, and how much it reads in total. It is the default repo-server
+// limit on the combined size of a directory source.
 const maxJsonnetImportScanBytes = 10_000_000
+
+// maxJsonnetImportScanFiles bounds how many files one scan parses. The scan
+// keys a file by the path it was imported at, because a ".." in an import
+// path is lexical, so a symlink to a directory above it can give one file
+// endlessly many paths. Two such symlinks double the paths at each level.
+const maxJsonnetImportScanFiles = 1000
+
+// ErrJsonnetImportScanBudget reports that a Jsonnet import scan stopped at
+// its budget (maxJsonnetImportScanFiles or maxJsonnetImportScanBytes), so
+// its result is not complete. A caller must not trust a cache key or a
+// changed-only selection built from it.
+var ErrJsonnetImportScanBudget = errors.New("jsonnet import scan budget exhausted")
 
 type jsonnetImportCollector struct {
 	ctx      context.Context
@@ -123,16 +142,26 @@ type jsonnetImportCollector struct {
 	covered  []string
 	found    map[string]struct{}
 	visited  map[string]bool
+	// parsed and bytesRead count against the scan budget; exhausted is set
+	// once either runs out, and stops the scan.
+	parsed    int
+	bytesRead int64
+	exhausted bool
 }
 
 // visit parses the Jsonnet file at path, the path the importer found it
 // at, and follows its imports. A relative import resolves against the
 // directory of that path, also when it is a symlink.
 func (c *jsonnetImportCollector) visit(path string) {
-	if c.visited[path] || c.ctx.Err() != nil {
+	if c.exhausted || c.visited[path] || c.ctx.Err() != nil {
 		return
 	}
 	c.visited[path] = true
+	if c.parsed >= maxJsonnetImportScanFiles {
+		c.exhausted = true
+		return
+	}
+	c.parsed++
 	data, ok := c.read(path)
 	if !ok {
 		return
@@ -186,6 +215,11 @@ func (c *jsonnetImportCollector) read(path string) ([]byte, bool) {
 	defer func() { _ = file.Close() }()
 	data, err := io.ReadAll(io.LimitReader(file, maxJsonnetImportScanBytes+1))
 	if err != nil || len(data) > maxJsonnetImportScanBytes {
+		return nil, false
+	}
+	c.bytesRead += int64(len(data))
+	if c.bytesRead > maxJsonnetImportScanBytes {
+		c.exhausted = true
 		return nil, false
 	}
 	return data, true

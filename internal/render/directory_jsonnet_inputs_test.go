@@ -2,6 +2,7 @@ package render
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -69,5 +70,38 @@ func TestDirectoryJsonnetImportPathsReadsOnlyBoundedRepositoryFiles(t *testing.T
 	}
 	if len(got) != 0 {
 		t.Fatalf("DirectoryJsonnetImportPaths() = %v, want nothing read from outside or unbounded files", got)
+	}
+}
+
+// writeJsonnetImportFanout writes the review repro: two in-repository
+// symlinks to the source directory itself, imported by the only Jsonnet
+// file, so every level of imports doubles the paths one file has. Argo CD
+// renders it, because Jsonnet does not evaluate the unused imports.
+func writeJsonnetImportFanout(t *testing.T, root string) {
+	t.Helper()
+	writeFile(t, filepath.Join(root, "app", "x.jsonnet"), `local a = import 's1/x.jsonnet';
+local b = import 's2/x.jsonnet';
+{ apiVersion: 'v1', kind: 'ConfigMap', metadata: { name: 'fanout' } }
+`)
+	symlink(t, ".", filepath.Join(root, "app", "s1"))
+	symlink(t, ".", filepath.Join(root, "app", "s2"))
+}
+
+// TestDirectoryJsonnetImportPathsStopsAtItsBudget pins that the scan stops
+// at its budget on an import graph that grows without end, and reports
+// that its result is not complete.
+func TestDirectoryJsonnetImportPathsStopsAtItsBudget(t *testing.T) {
+	root := t.TempDir()
+	writeJsonnetImportFanout(t, root)
+	ctx, cancel := context.WithTimeout(t.Context(), 20*time.Second)
+	defer cancel()
+	if _, err := DirectoryJsonnetImportPaths(ctx, root, "app", nil); !errors.Is(err, ErrJsonnetImportScanBudget) {
+		t.Fatalf("DirectoryJsonnetImportPaths() error = %v, want the budget error", err)
+	}
+	if _, err := DirectoryInputDigestPaths(ctx, ResolvedSource{RepoRoot: root, Path: "app"}, RenderOptions{}); !errors.Is(err, ErrJsonnetImportScanBudget) {
+		t.Fatalf("DirectoryInputDigestPaths() error = %v, want the budget error", err)
+	}
+	if ctx.Err() != nil {
+		t.Fatal("the scan ran past its deadline")
 	}
 }
