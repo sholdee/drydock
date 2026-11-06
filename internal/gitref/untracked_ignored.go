@@ -453,7 +453,7 @@ func linkedWorktreeInfoExclude(top string) string {
 // go-git lets a final "**" match no part at all, so it would also match a
 // file named foo, and treat the directory foo as ignored.
 func requireOnePartAfterTrailingDoubleStar(line string) string {
-	trimmed := strings.TrimRight(line, " \t")
+	trimmed := trimTrailingSpaces(line)
 	switch {
 	case strings.HasSuffix(trimmed, "/**"):
 		return trimmed + "/*"
@@ -462,6 +462,20 @@ func requireOnePartAfterTrailingDoubleStar(line string) string {
 	default:
 		return line
 	}
+}
+
+// trimTrailingSpaces removes the trailing spaces of a pattern line as Git
+// does (trim_trailing_spaces in dir.c): only spaces, not tabs, and not a
+// space escaped with a backslash.
+func trimTrailingSpaces(line string) string {
+	end := len(line)
+	for end > 0 && line[end-1] == ' ' {
+		if end > 1 && line[end-2] == '\\' {
+			break
+		}
+		end--
+	}
+	return line[:end]
 }
 
 // readIgnorePatternFile reads the patterns of one ignore file whose

@@ -437,7 +437,7 @@ func TestUntrackedIgnoredFilterNeverSkipsMoreThanGit(t *testing.T) {
 	filterModes(t, func(t *testing.T, _ bool) {
 		isolateGitUserConfig(t)
 		root, _, wt := newSnapshotRepo(t)
-		writeChangeSetFile(t, filepath.Join(root, ".gitignore"), "foo/**\n!foo/keep.yaml\nbar[!a]\nbaz/**\nqux/**/\nsub/**\n")
+		writeChangeSetFile(t, filepath.Join(root, ".gitignore"), "foo/**\n!foo/keep.yaml\nbar[!a]\nbaz/**\nqux/**/\nsub/**\ntab/**\t\n")
 		writeChangeSetFile(t, filepath.Join(root, "sub", ".gitignore"), "!keep.yaml\n")
 		writeChangeSetFile(t, filepath.Join(root, "apps", "cm.yaml"), "a: 1\n")
 		commitAllSnapshotFiles(t, wt, "fixture")
@@ -454,6 +454,9 @@ func TestUntrackedIgnoredFilterNeverSkipsMoreThanGit(t *testing.T) {
 		// brings keep.yaml back.
 		writeChangeSetFile(t, filepath.Join(root, "sub", "keep.yaml"), "x\n")
 		writeChangeSetFile(t, filepath.Join(root, "sub", "drop.yaml"), "x\n")
+		// Git strips trailing spaces but not a tab, so "tab/**<TAB>"
+		// matches only names that end in a tab.
+		writeChangeSetFile(t, filepath.Join(root, "tab", "x"), "x\n")
 		filter, err := OpenUntrackedIgnoredFilter(t.Context(), root)
 		if err != nil {
 			t.Fatal(err)
@@ -468,6 +471,7 @@ func TestUntrackedIgnoredFilterNeverSkipsMoreThanGit(t *testing.T) {
 			"qux/deeper/x":  true,
 			"sub/keep.yaml": false,
 			"sub/drop.yaml": true,
+			"tab/x":         false,
 		} {
 			if got := filter.Skip(rel, false); got != want {
 				t.Errorf("Skip(%s) = %t, want %t", rel, got, want)
