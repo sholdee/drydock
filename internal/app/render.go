@@ -194,7 +194,7 @@ func appendRenderedManifests(application argoappv1.Application, sourcePlan Sourc
 			result.Diagnostics = append(result.Diagnostics, diagnostic.Diagnostic{
 				Severity: diagnostic.SeverityWarning,
 				Category: "repeated-resource",
-				Message:  fmt.Sprintf("resource %s repeated in Application %s; later source wins", id.String(), application.Name),
+				Message:  fmt.Sprintf("resource %s appears more than once in Application %s; drydock keeps the last copy, as Argo CD does", id.String(), application.Name),
 			})
 			continue
 		}

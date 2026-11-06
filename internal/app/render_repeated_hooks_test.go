@@ -188,3 +188,27 @@ func TestRenderApplicationRepeatedHooksMatchUpstream(t *testing.T) {
 		})
 	}
 }
+
+// TestRenderApplicationRepeatedResourceMessage pins the repeated-resource
+// warning. It must hold when both copies come from one source and when one
+// copy is a hook, so it does not name a source.
+func TestRenderApplicationRepeatedResourceMessage(t *testing.T) {
+	application := argoappv1.Application{Name: "demo"}
+	application.Spec.Destination.Namespace = "default"
+	application.Spec.Source = &argoappv1.ApplicationSource{RepoURL: "https://repo", Path: "chart"}
+	renderers := StaticRenderers{"chart": {
+		{Object: cm("sa", "regular")},
+		{Object: withHook(cm("sa", "hook"), map[string]string{"helm.sh/hook": "pre-install"})},
+	}}
+	result, err := RenderApplication(context.Background(), application, renderers)
+	if err != nil {
+		t.Fatalf("RenderApplication() error = %v", err)
+	}
+	const want = "resource ConfigMap default/sa appears more than once in Application demo; drydock keeps the last copy, as Argo CD does"
+	for _, diag := range result.Diagnostics {
+		if diag.Category == "repeated-resource" && diag.Message == want {
+			return
+		}
+	}
+	t.Fatalf("Diagnostics = %#v, want %q", result.Diagnostics, want)
+}
