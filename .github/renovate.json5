@@ -16,10 +16,14 @@
   // GitOps Engine (gitops-engine/v3 since Argo CD v3.6) is required at exactly
   // the version the selected Argo CD requires; the post-upgrade sync helper
   // owns it.
+  // gojq parses and runs ignoreDifferences jqPathExpressions, so it must be
+  // the version the selected Argo CD requires: a newer gojq accepts or runs
+  // expressions differently. The post-upgrade sync helper owns it too.
   ignoreDeps: [
     'github.com/argoproj/argo-cd/gitops-engine',
     'github.com/argoproj/argo-cd/gitops-engine/v3',
     'github.com/argoproj/pkg',
+    'github.com/itchyny/gojq',
   ],
   postUpdateOptions: ['gomodTidy'],
   postUpgradeTasks: {

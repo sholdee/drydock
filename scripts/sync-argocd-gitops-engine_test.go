@@ -130,3 +130,29 @@ func TestGitopsEngineRequirementRejectsMissingRequire(t *testing.T) {
 		t.Fatalf("gitopsEngineRequirement() error = %v, want missing %s error", err, gitopsEngineModule)
 	}
 }
+
+// TestGojqMatchesSelectedArgoCD keeps gojq at exactly the version the
+// selected Argo CD requires, so that drydock parses and runs jq ignore rules
+// as Argo CD does. Renovate ignores gojq, and the post-upgrade sync helper
+// sets it after an Argo CD upgrade.
+func TestGojqMatchesSelectedArgoCD(t *testing.T) {
+	argo, err := goListModule(argoCDModule)
+	if err != nil {
+		t.Fatalf("goListModule(%s) error = %v", argoCDModule, err)
+	}
+	argoGoMod, err := readGoMod(argo.GoMod)
+	if err != nil {
+		t.Fatalf("readGoMod(%s) error = %v", argo.GoMod, err)
+	}
+	want, err := argoRequirement(argoGoMod, gojqModule)
+	if err != nil {
+		t.Fatalf("argoRequirement() error = %v", err)
+	}
+	got, err := goListModule(gojqModule)
+	if err != nil {
+		t.Fatalf("goListModule(%s) error = %v", gojqModule, err)
+	}
+	if got.Version != want {
+		t.Fatalf("%s is %s, but Argo CD %s requires %s; run go run ./scripts/sync-argocd-gitops-engine.go", gojqModule, got.Version, argo.Version, want)
+	}
+}

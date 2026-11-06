@@ -16,6 +16,11 @@ const (
 	// earlier only reached consumers through a local replace, so drydock pinned
 	// it by pseudo-version; drop any such leftover replace.
 	legacyGitopsEngineModule = "github.com/argoproj/argo-cd/gitops-engine"
+	// gojqModule parses and runs ignoreDifferences jqPathExpressions. It must
+	// be the version Argo CD requires: a newer gojq parses or runs some
+	// expressions differently, so drydock would hide fields where Argo CD
+	// fails the comparison, or the reverse.
+	gojqModule = "github.com/itchyny/gojq"
 )
 
 var argoCompatibilityReplaceModules = []string{
@@ -141,6 +146,13 @@ func syncArgoCompatibilityStack() error {
 	); err != nil {
 		return fmt.Errorf("update GitOps Engine requirement: %w", err)
 	}
+	gojqVersion, err := argoRequirement(argoGoMod, gojqModule)
+	if err != nil {
+		return err
+	}
+	if err := runGo("mod", "edit", "-require="+gojqModule+"@"+gojqVersion); err != nil {
+		return fmt.Errorf("update gojq requirement: %w", err)
+	}
 
 	replacements, err := compatibilityReplacements(argoGoMod, argoCompatibilityReplaceModules)
 	if err != nil {
@@ -161,8 +173,14 @@ func syncArgoCompatibilityStack() error {
 }
 
 func gitopsEngineRequirement(source goModFile) (string, error) {
+	return argoRequirement(source, gitopsEngineModule)
+}
+
+// argoRequirement returns the version at which the selected Argo CD go.mod
+// requires module.
+func argoRequirement(source goModFile, module string) (string, error) {
 	for _, requirement := range source.Require {
-		if requirement.Path == gitopsEngineModule {
+		if requirement.Path == module {
 			version := strings.TrimSpace(requirement.Version)
 			if version == "" {
 				break
@@ -170,7 +188,7 @@ func gitopsEngineRequirement(source goModFile) (string, error) {
 			return version, nil
 		}
 	}
-	return "", fmt.Errorf("selected Argo CD go.mod does not require %s at a version", gitopsEngineModule)
+	return "", fmt.Errorf("selected Argo CD go.mod does not require %s at a version", module)
 }
 
 func compatibilityReplacements(source goModFile, modules []string) ([]goModReplace, error) {
