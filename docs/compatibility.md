@@ -118,7 +118,9 @@ Supported:
   this cluster: its rendered `argocd-cm`, `argocd-cmd-params-cm`, and
   `argocd-cmp-cm` in the `argocd` namespace replace the values files and
   settings ConfigMap files that its render reads, also when no Application
-  installs Argo CD (see "Settings from the rendered Argo CD install").
+  installs Argo CD (see "Settings from the rendered Argo CD install"). An
+  Application whose source renders the same path is not rendered again for
+  its settings, because the `--discover-kustomize` render is that install.
 - ApplicationSet Git directories, Git files, list, matrix, and merge
   generators.
 - The Argo CD v3.6.1 OCI ApplicationSet generator (`generators[].oci`),
@@ -981,8 +983,10 @@ Supported:
   in Helm. `configs.params` reaches `argocd-cmd-params-cm`.
 
   Every fleet command renders the install in discovery, so it needs the
-  chart of the install: `build`, `test`, `diff`, `get apps`, `diag`, and a
-  changed-only diff, also when the change does not touch the install. If
+  chart of the install: `build`, `test`, `diff`, `get apps`, a changed-only
+  diff, and `diag` with `--render`, `--cache-events`, or
+  `--plugin-executions`, also when the change does not touch the install.
+  Plain `diag` uses static discovery and does not render the install. If
   drydock cannot render an install, for example because the chart is not in
   the cache with `--offline`, it reports a
   `settings.install-render-failed` warning that names the Application and

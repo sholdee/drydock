@@ -88,8 +88,10 @@ drydock test apps --path . --discover-kustomize clusters/prod/argocd
 
 Fleet discovery renders the Application that installs Argo CD on this cluster
 from a Helm chart, to read the Argo CD settings. So `build`, `test`, `diff`,
-`get apps`, `diag`, and changed-only diffs need the chart of that install,
-also when a change does not touch it. With `--offline`, the chart must be in
+`get apps`, changed-only diffs, and `diag` with `--render`, `--cache-events`,
+or `--plugin-executions` need the chart of that install, also when a change
+does not touch it. Plain `diag` uses static discovery and does not render the
+install. With `--offline`, the chart must be in
 the chart cache. If drydock cannot render the install, it reports a
 `settings.install-render-failed` warning and reads the values files of the
 install on their own. `--strict` fails on this warning.
