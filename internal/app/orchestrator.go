@@ -61,6 +61,7 @@ type BuildRequest struct {
 	selfRepo                selfRepoRefs
 	discoveryPathMemo       *sync.Map
 	appsetGenerationMemo    *sync.Map
+	settingsInstallMemo     *sync.Map
 }
 
 type BuildAppRequest struct {

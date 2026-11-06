@@ -108,7 +108,23 @@ func mergeProjects(base, overlay []discovery.ProjectFile) ([]discovery.ProjectFi
 		})
 }
 
+// mergeSettingsCandidates merges settings candidates by object identity. A
+// committed settings ConfigMap that is an input of a rendered one in overlay,
+// such as a Kustomize resource or patch of the Argo CD install, is removed
+// first: the rendered ConfigMap is what the cluster gets from it, so it is
+// not a duplicate. Values files stay; loadSettingsFromDiscovery leaves out
+// the ones a render read.
 func mergeSettingsCandidates(base, overlay []discovery.SettingsCandidate) ([]discovery.SettingsCandidate, []diagnostic.Diagnostic) {
+	if inputs := renderedSettingsInputs(overlay); len(inputs) > 0 {
+		kept := make([]discovery.SettingsCandidate, 0, len(base))
+		for _, candidate := range base {
+			if discovery.IsSettingsConfigMapKind(candidate.Kind) && supersededBySettingsRender(candidate, inputs) {
+				continue
+			}
+			kept = append(kept, candidate)
+		}
+		base = kept
+	}
 	return mergeDiscoveryItems(base, overlay,
 		settingsDiscoveryKey,
 		func(item discovery.SettingsCandidate) string { return settingsObjectKind(item.Kind) },

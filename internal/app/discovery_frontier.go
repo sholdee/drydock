@@ -24,18 +24,19 @@ func (o Orchestrator) renderDiscoveryFrontier(ctx context.Context, root string, 
 	defer cleanup()
 
 	inputs := applicationInputsByKey(discovered)
+	renderSettings := discoveryRenderSettings{signature: settingsSig, tracking: trackingOptionsFromSettings(settings)}
 	parallelism, err := normalizeParallelism(request.Parallelism)
 	if err != nil {
 		return discovery.Result{}, nil, recorder.Events(), err
 	}
 	if parallelism > 1 && len(discovered.Applications) > 1 {
-		return renderDiscoveryFrontierParallel(ctx, root, request, discovered, inputs, provider, settingsSig, renderCache, parallelism)
+		return renderDiscoveryFrontierParallel(ctx, root, request, discovered, inputs, provider, renderSettings, renderCache, parallelism)
 	}
 
 	var out discovery.Result
 	var allDiags []diagnostic.Diagnostic
 	for _, appFile := range discovered.Applications {
-		next, scanDiags, err := renderDiscoveryApplication(ctx, root, request, provider, settingsSig, renderCache, inputs, discovered, appFile)
+		next, scanDiags, err := renderDiscoveryApplication(ctx, root, request, provider, renderSettings, renderCache, inputs, discovered, appFile)
 		allDiags = append(allDiags, scanDiags...)
 		if err != nil {
 			return out, allDiags, recorder.Events(), err
@@ -45,6 +46,15 @@ func (o Orchestrator) renderDiscoveryFrontier(ctx context.Context, root string, 
 		allDiags = append(allDiags, mergeDiags...)
 	}
 	return out, allDiags, recorder.Events(), nil
+}
+
+// discoveryRenderSettings is what a frontier render reads from the Argo CD
+// settings: the render settings signature and the tracking options. The
+// final render uses the same tracking options, so it reuses a frontier
+// render of the same Application.
+type discoveryRenderSettings struct {
+	signature string
+	tracking  TrackingOptions
 }
 
 type indexedDiscoveryRenderResult struct {
@@ -60,13 +70,13 @@ type indexedDiscoveryRenderResult struct {
 // and cache events. A failure therefore waits for the slower Applications
 // before it to finish, as the sequential frontier would have rendered them
 // first; only the Applications after it are cut short.
-func renderDiscoveryFrontierParallel(ctx context.Context, root string, request BuildRequest, discovered discovery.Result, inputs map[string]applicationInputPaths, provider localProvider, settingsSig string, renderCache *applicationRenderCache, parallelism int) (discovery.Result, []diagnostic.Diagnostic, []cacheevent.Event, error) {
+func renderDiscoveryFrontierParallel(ctx context.Context, root string, request BuildRequest, discovered discovery.Result, inputs map[string]applicationInputPaths, provider localProvider, renderSettings discoveryRenderSettings, renderCache *applicationRenderCache, parallelism int) (discovery.Result, []diagnostic.Diagnostic, []cacheevent.Event, error) {
 	applications := discovered.Applications
 	results, completed, parallelErr := runOrderedParallel(ctx, orderedParallelOptions[indexedDiscoveryRenderResult]{
 		total:       len(applications),
 		parallelism: parallelism,
 		run: func(ctx context.Context, index int) indexedDiscoveryRenderResult {
-			return renderParallelDiscoveryApplication(ctx, root, request, provider, settingsSig, renderCache, inputs, discovered, applications[index])
+			return renderParallelDiscoveryApplication(ctx, root, request, provider, renderSettings, renderCache, inputs, discovered, applications[index])
 		},
 		shouldStop: func(result indexedDiscoveryRenderResult) bool {
 			return result.err != nil
@@ -107,10 +117,10 @@ func renderDiscoveryFrontierParallel(ctx context.Context, root string, request B
 // renderParallelDiscoveryApplication renders one frontier Application with
 // its own cache event recorder, as the final render does, so the frontier
 // can report events in frontier order.
-func renderParallelDiscoveryApplication(ctx context.Context, root string, request BuildRequest, provider localProvider, settingsSig string, renderCache *applicationRenderCache, inputs map[string]applicationInputPaths, discovered discovery.Result, appFile discovery.ApplicationFile) indexedDiscoveryRenderResult {
+func renderParallelDiscoveryApplication(ctx context.Context, root string, request BuildRequest, provider localProvider, renderSettings discoveryRenderSettings, renderCache *applicationRenderCache, inputs map[string]applicationInputPaths, discovered discovery.Result, appFile discovery.ApplicationFile) indexedDiscoveryRenderResult {
 	recorder := cacheevent.NewRecorder(request.RecordCacheEvents)
 	provider.cacheEvents = recorder
-	result, diags, err := renderDiscoveryApplication(ctx, root, request, provider, settingsSig, renderCache, inputs, discovered, appFile)
+	result, diags, err := renderDiscoveryApplication(ctx, root, request, provider, renderSettings, renderCache, inputs, discovered, appFile)
 	if ctxErr := ctx.Err(); ctxErr != nil {
 		// A cancelled render reads as one that rendered nothing; report the
 		// cancellation instead of a frontier missing this Application.
@@ -119,27 +129,56 @@ func renderParallelDiscoveryApplication(ctx context.Context, root string, reques
 	return indexedDiscoveryRenderResult{result: result, diags: diags, events: recorder.Events(), err: err}
 }
 
-func renderDiscoveryApplication(ctx context.Context, root string, request BuildRequest, provider localProvider, settingsSig string, renderCache *applicationRenderCache, inputs map[string]applicationInputPaths, discovered discovery.Result, appFile discovery.ApplicationFile) (discovery.Result, []diagnostic.Diagnostic, error) {
-	application := appFile.Application
-	if !applicationMayRenderDiscoveryObjects(root, request, discovered, application) {
+func renderDiscoveryApplication(ctx context.Context, root string, request BuildRequest, provider localProvider, renderSettings discoveryRenderSettings, renderCache *applicationRenderCache, inputs map[string]applicationInputPaths, discovered discovery.Result, appFile discovery.ApplicationFile) (discovery.Result, []diagnostic.Diagnostic, error) {
+	if !applicationMayRenderDiscoveryObjects(root, request, discovered, appFile.Application) {
 		return discovery.Result{}, nil, nil
 	}
+	return renderAndScanDiscoveryApplication(ctx, request, provider, renderSettings, renderCache, inputs, appFile, false)
+}
+
+// renderAndScanDiscoveryApplication renders one Application and scans its
+// output for discovery objects. With settingsOnly, it keeps only the
+// argocd-cm, argocd-cmd-params-cm, and argocd-cmp-cm ConfigMaps
+// (settleSettingsInstalls). Each rendered settings ConfigMap records the
+// repository paths the render read (markSettingsRenderInputs). When the
+// render fails and the Application's Helm values set Argo CD settings,
+// drydock reads the values files instead, and it reports that.
+func renderAndScanDiscoveryApplication(ctx context.Context, request BuildRequest, provider localProvider, renderSettings discoveryRenderSettings, renderCache *applicationRenderCache, inputs map[string]applicationInputPaths, appFile discovery.ApplicationFile, settingsOnly bool) (discovery.Result, []diagnostic.Diagnostic, error) {
+	application := appFile.Application
 	entry := inputs[applicationDiscoveryKey(application)]
 	parentInputs := entry.Paths
 	rendered, err := renderApplicationCached(renderContext{
 		context:                    ctx,
 		provider:                   provider,
 		cache:                      renderCache,
-		settingsSignature:          settingsSig,
+		settingsSignature:          renderSettings.signature,
+		trackingOptions:            renderSettings.tracking,
 		request:                    request,
 		applicationInputPaths:      parentInputs,
 		applicationInputsKnown:     inputs != nil,
 		applicationInputsDuplicate: entry.Duplicate,
 	}, application)
 	if err != nil {
+		if ctx.Err() != nil {
+			return skippedRenderedDiscovery()
+		}
+		if install := applicationSettingsInstall(ctx, request, provider, application); install.installsArgoCD() {
+			// The values files stay settings candidates, so drydock falls
+			// back to reading them; say so instead of falling back silently.
+			return discovery.Result{}, []diagnostic.Diagnostic{settingsInstallRenderFailedDiagnostic(appFile, install, err)}, nil
+		}
 		return skippedRenderedDiscovery()
 	}
-	return scanRenderedApplicationObjects(application, parentInputs, rendered.Manifests)
+	manifests := rendered.Manifests
+	if settingsOnly {
+		manifests = settingsConfigMapManifests(manifests)
+	}
+	result, diags, err := scanRenderedApplicationObjects(application, parentInputs, manifests)
+	if err != nil || !hasSettingsConfigMapCandidate(result) {
+		return result, diags, err
+	}
+	markSettingsRenderInputs(&result, applicationSettingsInstall(ctx, request, provider, application).inputs)
+	return result, diags, nil
 }
 
 func skippedRenderedDiscovery() (discovery.Result, []diagnostic.Diagnostic, error) {

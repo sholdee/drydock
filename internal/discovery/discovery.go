@@ -78,6 +78,25 @@ type SettingsCandidate struct {
 	Name          string
 	Object        *unstructured.Unstructured
 	Tier          SourceTier
+	// RenderInputs lists, for a settings ConfigMap that an Application
+	// render produced, the repository paths that render read: Helm values
+	// files and Kustomize inputs. A path can be a file or a directory. The
+	// rendered ConfigMap is what the cluster gets from those inputs, so a
+	// committed settings file at or under one of these paths is replaced by
+	// it. Only rendered candidates set it.
+	RenderInputs []string
+}
+
+// IsSettingsConfigMapKind reports whether kind is the candidate kind of an
+// Argo CD settings ConfigMap: argocd-cm, argocd-cmd-params-cm, or
+// argocd-cmp-cm.
+func IsSettingsConfigMapKind(kind string) bool {
+	switch kind {
+	case "argocd-cm", "argocd-cmd-params-cm", "argocd-cmp-cm":
+		return true
+	default:
+		return false
+	}
 }
 
 type Result struct {
@@ -348,7 +367,14 @@ func isCoreGVK(obj *unstructured.Unstructured, kind string) bool {
 }
 
 func isArgoHelmValuesSettings(obj *unstructured.Unstructured) bool {
-	configs, ok := obj.Object["configs"].(map[string]any)
+	return IsArgoHelmValuesSettings(obj.Object)
+}
+
+// IsArgoHelmValuesSettings reports whether Helm values set Argo CD settings
+// that drydock reads through the argo-cd chart: a configs.cm key or a
+// configs.cmp plugin.
+func IsArgoHelmValuesSettings(values map[string]any) bool {
+	configs, ok := values["configs"].(map[string]any)
 	if !ok {
 		return false
 	}
