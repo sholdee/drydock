@@ -891,40 +891,66 @@ Supported:
   Helm chart, Helm makes these ConfigMaps. Helm merges all values of the
   release and the chart defaults first. So in fleet discovery, drydock
   renders the Application that installs Argo CD and reads the settings from
-  the rendered ConfigMaps. An install is an Application, a generated
-  Application, or a Kustomize `helmCharts` entry of one, whose Helm values
-  set a value under `configs.cm`, `configs.params`, or `configs.cmp`. The
-  values can come from these places:
-  - A local Helm values file: `valueFiles` of a local chart, a `$ref` value
-    file from this repository, the `values.yaml` of a local chart, or
-    `valuesFile` and `additionalValuesFiles` of a Kustomize `helmCharts`
-    entry.
-  - Inline values: `values`, `valuesObject`, `parameters`, or
-    `fileParameters` that start with `configs.`, and Kustomize
-    `valuesInline`.
+  the rendered ConfigMaps. An install is an Application or a generated
+  Application that matches one of these rules:
+  - It renders a chart named `argo-cd`: a Helm source with `chart: argo-cd`,
+    a Kustomize `helmCharts` entry with `name: argo-cd`, or a local chart
+    whose `Chart.yaml` has the name `argo-cd` or a dependency with that
+    name.
+  - A local Helm values file of its render sets a value under `configs.cm`,
+    `configs.params`, or `configs.cmp`. Such a file is a `valueFiles` entry
+    of a local chart, a `$ref` value file from this repository, the
+    `values.yaml` of a local chart, or the `valuesFile` or
+    `additionalValuesFiles` of a Kustomize `helmCharts` entry.
+  - Its inline Helm values set such a value: `values`, `valuesObject`,
+    Kustomize `valuesInline`, or a `parameters` or `fileParameters` name
+    that starts with `configs.cm.`, `configs.params.`, or `configs.cmp.`.
 
-  drydock renders such an install for its settings only and keeps only the
-  three ConfigMaps from that render. The final render renders it again as a
-  normal Application. A values file that the install reads is then not a
-  settings source of its own. The same is true for a committed settings
-  ConfigMap that the install reads, such as a Kustomize patch of
-  `argocd-cm`. So layered values files of one install do not conflict: the
+  drydock follows the source type as Argo CD picks it, so a source with an
+  explicit `directory` or `plugin` type is not a Helm install. A glob value
+  file, a remote value file, and a value file inside a chart from a chart
+  repository have no local file, so drydock does not read them to find an
+  install.
+
+  The discovery frontier already renders an install whose source path can
+  hold Argo CD objects, such as a local chart whose templates name
+  `argocd-cm`. drydock keeps every object of that render, as before. drydock
+  renders every other install for its settings only, and keeps only the
+  three ConfigMaps from that render. The final render renders each install
+  again as a normal Application.
+
+  A values file that the render read as Helm values is then not a settings
+  source of its own. The same is true for a committed settings ConfigMap
+  file that a Kustomize render read, such as a resource or a patch of
+  `argocd-cm`. drydock matches files, not directories. A file in a
+  directory that the render read from, but that the render did not read
+  itself, stays a settings source. A file in a local chart directory is not
+  a manifest that the install applies, and drydock does not scan chart
+  templates. So layered values files of one install do not conflict: the
   later file wins for each key, as in Helm. The chart defaults are in the
   settings. For example, the default `resource.exclusions` list of the
   argo-cd chart and `resourceExclusionsAdditional` after it, and the default
   `application.instanceLabelKey`. A `null` value removes a chart default, as
   in Helm. `configs.params` reaches `argocd-cmd-params-cm`.
 
-  If drydock cannot render the install, for example because the chart is
-  not in the cache with `--offline`, it reports a `settings` warning that
-  names the Application and the error. Then it reads each values file on its
-  own, as described below. A values file that no rendered install reads
-  also stays a settings source of its own. drydock does not render an
+  If drydock cannot render an install, for example because the chart is not
+  in the cache with `--offline`, it reports a `settings` warning that names
+  the Application and the error. Then each values file of that install
+  stays a settings source of its own, as described below, unless another
+  install that rendered read the same file. drydock reads only `configs.cm`
+  and `configs.cmp` from such a file. A values file that no rendered install
+  reads also stays a settings source of its own. drydock does not render an
   install in `--discovery-mode static` or with `--max-discovery-depth 0`.
   A committed `argocd-cm` that the install does not read is a second
   `argocd-cm` in the cluster. If both have the same namespace, drydock keeps
   the committed one and reports the rendered one as a duplicate, as for any
   duplicate object.
+- `ignoreResourceUpdates` customizations. Argo CD uses them only to skip
+  reconciles when a live resource changes. They never change desired output
+  or a desired-vs-desired diff. The argo-cd chart sets eight of them by
+  default. drydock parses them and reports one
+  `settings.ignore-resource-updates` warning for each settings source that
+  names their keys. `--strict` does not fail on this warning.
 - `configs.cm` in an Argo CD Helm values file that drydock reads on its own,
   as the argo-helm `argo-cd` chart 10.14.0 turns it into `argocd-cm`. This
   applies when no install that drydock renders reads the file. The chart

@@ -12,10 +12,13 @@ import (
 // KustomizeHelmValuesInputs is what the helmCharts entries of a Kustomize
 // graph read as Helm values.
 type KustomizeHelmValuesInputs struct {
-	// Paths lists every repository-relative local input of the graph, as
-	// KustomizeSelectionPaths returns them. An entry can be a directory,
-	// such as a local chart.
-	Paths []string
+	// Files lists the repository-relative local inputs of the graph, as
+	// KustomizeSelectionPaths returns them, that are regular files. It leaves
+	// out directories, such as a local chart or a directory resource: the
+	// graph lists the files that Kustomize reads from them on their own, and
+	// a chart directory holds templates, not manifests that Kustomize
+	// applies.
+	Files []string
 	// ValuesFiles lists the repository-relative local Helm values files of
 	// the helmCharts entries that exist: valuesFile, additionalValuesFiles,
 	// and the values.yaml of each local chart, which Helm reads as the chart
@@ -24,6 +27,8 @@ type KustomizeHelmValuesInputs struct {
 	// ValuesInline holds the valuesInline map of each helmCharts entry that
 	// sets one.
 	ValuesInline []map[string]any
+	// ChartNames lists the name of each helmCharts entry.
+	ChartNames []string
 }
 
 // KustomizeHelmValues returns the local inputs and the Helm values of the
@@ -40,7 +45,12 @@ func KustomizeHelmValues(ctx context.Context, repoRoot, sourcePath string, kusto
 		collector: &kustomizeInputCollector{repoRoot: filepath.Clean(repoRoot), bestEffort: true},
 		seen:      map[string]struct{}{},
 	}
-	values.out.Paths = paths
+	for _, rel := range paths {
+		info, err := os.Lstat(filepath.Join(values.collector.repoRoot, filepath.FromSlash(rel)))
+		if err == nil && info.Mode().IsRegular() {
+			values.out.Files = append(values.out.Files, rel)
+		}
+	}
 	for _, node := range graph {
 		if err := ctx.Err(); err != nil {
 			return KustomizeHelmValuesInputs{}, err
@@ -61,6 +71,7 @@ type kustomizeHelmValuesCollector struct {
 func (c *kustomizeHelmValuesCollector) addNode(node kustomizeGraphNode) {
 	chartHome := kustomizationChartHome(node.Kustomization)
 	for _, helmChart := range node.Kustomization.HelmCharts {
+		c.out.ChartNames = append(c.out.ChartNames, helmChart.Name)
 		chartPath := localKustomizeHelmChartPath(node.Dir, chartHome, helmChart)
 		if rejectPathOutsideBoundary("kustomize helmCharts.name", chartPath, c.collector.repoRoot) == nil {
 			c.addValuesFile(filepath.Join(chartPath, "values.yaml"))

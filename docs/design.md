@@ -132,14 +132,17 @@ diff path.
 
 Fleet discovery renders Applications in rounds until the discovered objects
 and the settings stop changing. At the start of each round, drydock renders
-the Applications whose Helm values set Argo CD settings, for their settings
-ConfigMaps only. It repeats this until the settings no longer change how
+the Applications that install Argo CD from a Helm chart, for their settings
+ConfigMaps only. An install renders the `argo-cd` chart, or its Helm values
+set Argo CD settings. An install that the frontier already renders for
+discovery is not rendered settings-only. It repeats this until the settings no longer change how
 these Applications render. These renders are keyed without tracking
 settings and resource customizations, because neither changes the data of a
 settings ConfigMap. Then drydock renders the rest of the round once, with
 the settled settings. The final render renders each install again as a
 normal Application. If an install fails to render, drydock reports a
-`settings` warning and reads its values files on their own.
+`settings` warning, and the values files of that install stay settings
+sources of their own unless another rendered install read them.
 
 Repeatable `--discover-ignore` repository-relative globs (same doublestar
 semantics as `--changed-only-ignore`) exclude matching files from this scan

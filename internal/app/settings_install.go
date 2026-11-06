@@ -20,29 +20,39 @@ import (
 )
 
 // settingsInstall is what drydock knows, before it renders an Application,
-// about whether the Application installs Argo CD from Helm values. Argo CD
+// about whether the Application installs Argo CD from a Helm chart. Argo CD
 // reads its settings from the argocd-cm, argocd-cmd-params-cm, and
 // argocd-cmp-cm ConfigMaps that such an install puts in the cluster. Helm
 // makes those ConfigMaps from all values of the release together and from
 // the chart defaults, so drydock reads them from the rendered install and
 // not from each values file on its own.
 type settingsInstall struct {
-	// inputs lists the repository paths that the renders of the Application
-	// read and that can hold Argo CD settings: Helm values files and every
-	// Kustomize input. An entry can be a directory.
-	inputs []string
-	// valuesFiles lists the local Helm values files among inputs that set
-	// Argo CD settings (helmValuesSetArgoCDSettings).
+	// valuesFilesRead lists every local Helm values file that the renders
+	// of the Application read: Helm valueFiles, the values.yaml of a local
+	// chart, and Kustomize helmCharts values files. Only files that exist
+	// are listed.
+	valuesFilesRead []string
+	// files lists the other local files that the Kustomize renders of the
+	// Application read. It holds files only, never directories.
+	files []string
+	// valuesFiles lists the files in valuesFilesRead that set Argo CD
+	// settings (helmValuesSetArgoCDSettings).
 	valuesFiles []string
 	// inline reports Helm values written in the Application or in a
 	// kustomization that set Argo CD settings.
 	inline bool
+	// chart reports that the Application renders a chart named argo-cd.
+	chart bool
 }
 
-// installsArgoCD reports whether the Application's Helm values set Argo CD
-// settings, so that drydock renders it to read them.
+// argoCDChartName is the name of the argo-helm chart that installs Argo CD.
+const argoCDChartName = "argo-cd"
+
+// installsArgoCD reports whether the Application installs Argo CD from a Helm
+// chart: its Helm values set Argo CD settings, or it renders the argo-cd
+// chart. drydock renders such an Application to read its settings.
 func (install settingsInstall) installsArgoCD() bool {
-	return len(install.valuesFiles) > 0 || install.inline
+	return len(install.valuesFiles) > 0 || install.inline || install.chart
 }
 
 // settingsInstallProbe is a provider that holds only what
@@ -103,7 +113,8 @@ func computeSettingsInstall(ctx context.Context, memo *sync.Map, provider localP
 		}
 		builder.addSource(ctx, provider, plan, sourcePlan)
 	}
-	builder.install.inputs = uniqueStrings(builder.install.inputs)
+	builder.install.valuesFilesRead = uniqueStrings(builder.install.valuesFilesRead)
+	builder.install.files = uniqueStrings(builder.install.files)
 	builder.install.valuesFiles = uniqueStrings(builder.install.valuesFiles)
 	return builder.install
 }
@@ -114,8 +125,14 @@ type settingsInstallBuilder struct {
 	install settingsInstall
 }
 
+// addValuesFile adds a local Helm values file that a render reads, when it
+// exists as a regular file.
 func (b *settingsInstallBuilder) addValuesFile(rel string) {
-	b.install.inputs = append(b.install.inputs, rel)
+	info, err := os.Lstat(filepath.Join(b.root, filepath.FromSlash(rel)))
+	if err != nil || !info.Mode().IsRegular() {
+		return
+	}
+	b.install.valuesFilesRead = append(b.install.valuesFilesRead, rel)
 	if helmValuesFileSetsArgoCDSettings(b.memo, b.root, rel) {
 		b.install.valuesFiles = append(b.install.valuesFiles, rel)
 	}
@@ -124,26 +141,59 @@ func (b *settingsInstallBuilder) addValuesFile(rel string) {
 func (b *settingsInstallBuilder) addSource(ctx context.Context, provider localProvider, plan PlanResult, sourcePlan SourcePlan) {
 	source := sourcePlan.Source
 	sourcePath, local := settingsInstallLocalSourcePath(provider, source)
-	if source.Helm != nil {
-		for _, valueFile := range source.Helm.ValueFiles {
-			if rel, ok := settingsInstallHelmValueFile(provider, plan, sourcePath, local, valueFile); ok {
-				b.addValuesFile(rel)
-			}
-		}
-		if helmSourceInlineSetsArgoCDSettings(source.Helm) {
-			b.install.inline = true
-		}
+	sourceType := settingsInstallSourceType(sourcePlan, b.root, sourcePath, local)
+	if sourceType == argoappv1.ApplicationSourceTypeKustomize && local {
+		b.addKustomize(ctx, sourcePath, source.Kustomize)
 	}
-	if !local {
+	if sourceType != argoappv1.ApplicationSourceTypeHelm {
 		return
 	}
-	dir := filepath.Join(b.root, filepath.FromSlash(sourcePath))
-	switch {
-	case sourcePlan.ExplicitType != argoappv1.ApplicationSourceTypeHelm && hasKustomizationFile(dir):
-		b.addKustomize(ctx, sourcePath, source.Kustomize)
-	case sourceRootHasLocalChart(dir):
+	if path.Base(source.Chart) == argoCDChartName {
+		b.install.chart = true
+	}
+	if local {
 		// Helm reads the values.yaml of the chart as its defaults.
 		b.addValuesFile(path.Join(sourcePath, "values.yaml"))
+		if localChartIsArgoCD(filepath.Join(b.root, filepath.FromSlash(sourcePath))) {
+			b.install.chart = true
+		}
+	}
+	if source.Helm == nil {
+		return
+	}
+	for _, valueFile := range source.Helm.ValueFiles {
+		if rel, ok := settingsInstallHelmValueFile(provider, plan, sourcePath, local, valueFile); ok {
+			b.addValuesFile(rel)
+		}
+	}
+	if helmSourceInlineSetsArgoCDSettings(source.Helm) {
+		b.install.inline = true
+	}
+}
+
+// settingsInstallSourceType returns the source type as Argo CD picks it: the
+// explicit type of the source when it sets one, else Kustomize for a
+// directory with a kustomization file, else Helm for a chart. A chart from a
+// chart repository is Helm. An empty result means a directory or a plugin.
+func settingsInstallSourceType(sourcePlan SourcePlan, root, sourcePath string, local bool) argoappv1.ApplicationSourceType {
+	if sourcePlan.ExplicitType != "" {
+		return sourcePlan.ExplicitType
+	}
+	source := sourcePlan.Source
+	if source.Chart != "" && source.Path == "" {
+		return argoappv1.ApplicationSourceTypeHelm
+	}
+	if !local {
+		return ""
+	}
+	dir := filepath.Join(root, filepath.FromSlash(sourcePath))
+	switch {
+	case hasKustomizationFile(dir):
+		return argoappv1.ApplicationSourceTypeKustomize
+	case sourceRootHasLocalChart(dir):
+		return argoappv1.ApplicationSourceTypeHelm
+	default:
+		return ""
 	}
 }
 
@@ -152,11 +202,16 @@ func (b *settingsInstallBuilder) addKustomize(ctx context.Context, sourcePath st
 	if err != nil {
 		return
 	}
-	// The graph paths already hold the values files.
-	b.install.inputs = append(b.install.inputs, values.Paths...)
 	for _, rel := range values.ValuesFiles {
-		if helmValuesFileSetsArgoCDSettings(b.memo, b.root, rel) {
-			b.install.valuesFiles = append(b.install.valuesFiles, rel)
+		b.addValuesFile(rel)
+	}
+	valuesFiles := make(map[string]struct{}, len(values.ValuesFiles))
+	for _, rel := range values.ValuesFiles {
+		valuesFiles[rel] = struct{}{}
+	}
+	for _, rel := range values.Files {
+		if _, ok := valuesFiles[rel]; !ok {
+			b.install.files = append(b.install.files, rel)
 		}
 	}
 	for _, inline := range values.ValuesInline {
@@ -164,6 +219,38 @@ func (b *settingsInstallBuilder) addKustomize(ctx context.Context, sourcePath st
 			b.install.inline = true
 		}
 	}
+	for _, name := range values.ChartNames {
+		if path.Base(name) == argoCDChartName {
+			b.install.chart = true
+		}
+	}
+}
+
+// localChartIsArgoCD reports whether the local chart in dir is the argo-cd
+// chart, or an umbrella chart that depends on it.
+func localChartIsArgoCD(dir string) bool {
+	data, err := os.ReadFile(filepath.Join(dir, "Chart.yaml"))
+	if err != nil {
+		return false
+	}
+	var chart struct {
+		Name         string `json:"name"`
+		Dependencies []struct {
+			Name string `json:"name"`
+		} `json:"dependencies"`
+	}
+	if err := sigsyaml.Unmarshal(data, &chart); err != nil {
+		return false
+	}
+	if chart.Name == argoCDChartName {
+		return true
+	}
+	for _, dependency := range chart.Dependencies {
+		if dependency.Name == argoCDChartName {
+			return true
+		}
+	}
+	return false
 }
 
 // settingsInstallLocalSourcePath returns the clean repository-relative path
@@ -315,12 +402,13 @@ func isSettingsConfigMapObject(obj *unstructured.Unstructured) bool {
 	}
 }
 
-// markSettingsRenderInputs records inputs as the RenderInputs of every
-// settings ConfigMap in result.
-func markSettingsRenderInputs(result *discovery.Result, inputs []string) {
+// markSettingsRenderInputs records the files that the render of install
+// read on every settings ConfigMap in result.
+func markSettingsRenderInputs(result *discovery.Result, install settingsInstall) {
 	for i := range result.SettingsCandidates {
 		if discovery.IsSettingsConfigMapKind(result.SettingsCandidates[i].Kind) {
-			result.SettingsCandidates[i].RenderInputs = append([]string(nil), inputs...)
+			result.SettingsCandidates[i].RenderValuesFiles = append([]string(nil), install.valuesFilesRead...)
+			result.SettingsCandidates[i].RenderFiles = append([]string(nil), install.files...)
 		}
 	}
 }
@@ -335,18 +423,18 @@ func hasSettingsConfigMapCandidate(result discovery.Result) bool {
 }
 
 // settingsInstallRenderFailedDiagnostic reports that drydock could not render
-// an Application whose Helm values set Argo CD settings. drydock then reads
-// the settings from the values files on their own, as it does for a values
-// file of an install it does not render.
+// an Application that installs Argo CD from a Helm chart. Its values files
+// then stay settings sources of their own, unless another install that
+// rendered read them too.
 func settingsInstallRenderFailedDiagnostic(appFile discovery.ApplicationFile, install settingsInstall, renderErr error) diagnostic.Diagnostic {
 	name := applicationDisplayName(appFile.Application)
-	var message string
+	message := fmt.Sprintf("cannot render Application %s to read the Argo CD settings that it installs: %v; ", name, renderErr)
 	provenance := diagnostic.Provenance{Path: filepath.ToSlash(appFile.Path)}
 	if len(install.valuesFiles) > 0 {
-		message = fmt.Sprintf("cannot render Application %s to read the Argo CD settings that its Helm values set; drydock reads the settings from each values file on its own instead, without the chart defaults: %v", name, renderErr)
+		message += "drydock reads configs.cm and configs.cmp from each of its Helm values files on its own instead, unless another rendered install reads the file, without the chart defaults and without configs.params"
 		provenance = diagnostic.Provenance{Path: install.valuesFiles[0]}
 	} else {
-		message = fmt.Sprintf("cannot render Application %s to read the Argo CD settings that its inline Helm values set; drydock does not read these settings: %v", name, renderErr)
+		message += "drydock does not read the settings of this install"
 	}
 	diag := diagnostic.Diagnostic{
 		Severity:   diagnostic.SeverityWarning,
@@ -358,34 +446,58 @@ func settingsInstallRenderFailedDiagnostic(appFile discovery.ApplicationFile, in
 	return diag
 }
 
-// renderedSettingsInputs returns the RenderInputs of every rendered settings
-// ConfigMap in discovered.
-func renderedSettingsInputs(candidates []discovery.SettingsCandidate) []string {
-	var inputs []string
+// settingsRenderInputs is the union of the files that the rendered settings
+// ConfigMaps read.
+type settingsRenderInputs struct {
+	valuesFiles map[string]struct{}
+	files       map[string]struct{}
+}
+
+// renderedSettingsInputs returns the files that every rendered settings
+// ConfigMap in candidates read.
+func renderedSettingsInputs(candidates []discovery.SettingsCandidate) settingsRenderInputs {
+	inputs := settingsRenderInputs{valuesFiles: map[string]struct{}{}, files: map[string]struct{}{}}
 	for _, candidate := range candidates {
 		if candidate.Tier == discovery.SourceTierStatic || candidate.Tier == discovery.SourceTierExternalManifest {
 			continue
 		}
-		inputs = append(inputs, candidate.RenderInputs...)
+		for _, file := range candidate.RenderValuesFiles {
+			inputs.valuesFiles[cleanSettingsInputPath(file)] = struct{}{}
+		}
+		for _, file := range candidate.RenderFiles {
+			inputs.files[cleanSettingsInputPath(file)] = struct{}{}
+		}
 	}
 	return inputs
 }
 
-// supersededBySettingsRender reports whether a committed settings file is an
-// input of a rendered settings ConfigMap: a Helm values file or a
-// ConfigMap at or under one of inputs. The rendered ConfigMap is what the
-// cluster gets from that file, so it replaces the file.
-func supersededBySettingsRender(candidate discovery.SettingsCandidate, inputs []string) bool {
-	if candidate.Tier != discovery.SourceTierStatic || len(inputs) == 0 {
+func (inputs settingsRenderInputs) empty() bool {
+	return len(inputs.valuesFiles) == 0 && len(inputs.files) == 0
+}
+
+func cleanSettingsInputPath(value string) string {
+	return path.Clean(filepath.ToSlash(value))
+}
+
+// supersededBySettingsRender reports whether a committed settings file is a
+// file that a rendered settings ConfigMap read: a Helm values file that the
+// render read as values, or a settings ConfigMap file that a Kustomize render
+// read. The rendered ConfigMap is what the cluster gets from that file, so it
+// replaces the file. A file that the render did not read, even one in a
+// directory that the render read from, stays a settings source.
+func supersededBySettingsRender(candidate discovery.SettingsCandidate, inputs settingsRenderInputs) bool {
+	if candidate.Tier != discovery.SourceTierStatic {
 		return false
 	}
-	if candidate.Kind != "argocd-values" && !discovery.IsSettingsConfigMapKind(candidate.Kind) {
+	candidatePath := cleanSettingsInputPath(candidate.Path)
+	switch {
+	case candidate.Kind == "argocd-values":
+		_, ok := inputs.valuesFiles[candidatePath]
+		return ok
+	case discovery.IsSettingsConfigMapKind(candidate.Kind):
+		_, ok := inputs.files[candidatePath]
+		return ok
+	default:
 		return false
 	}
-	for _, input := range inputs {
-		if pathUnderRoot(candidate.Path, input) {
-			return true
-		}
-	}
-	return false
 }

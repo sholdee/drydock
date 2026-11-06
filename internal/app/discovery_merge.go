@@ -115,7 +115,7 @@ func mergeProjects(base, overlay []discovery.ProjectFile) ([]discovery.ProjectFi
 // not a duplicate. Values files stay; loadSettingsFromDiscovery leaves out
 // the ones a render read.
 func mergeSettingsCandidates(base, overlay []discovery.SettingsCandidate) ([]discovery.SettingsCandidate, []diagnostic.Diagnostic) {
-	if inputs := renderedSettingsInputs(overlay); len(inputs) > 0 {
+	if inputs := renderedSettingsInputs(overlay); !inputs.empty() {
 		kept := make([]discovery.SettingsCandidate, 0, len(base))
 		for _, candidate := range base {
 			if discovery.IsSettingsConfigMapKind(candidate.Kind) && supersededBySettingsRender(candidate, inputs) {

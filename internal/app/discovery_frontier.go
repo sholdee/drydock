@@ -177,7 +177,7 @@ func renderAndScanDiscoveryApplication(ctx context.Context, request BuildRequest
 	if err != nil || !hasSettingsConfigMapCandidate(result) {
 		return result, diags, err
 	}
-	markSettingsRenderInputs(&result, applicationSettingsInstall(ctx, request, provider, application).inputs)
+	markSettingsRenderInputs(&result, applicationSettingsInstall(ctx, request, provider, application))
 	return result, diags, nil
 }
 

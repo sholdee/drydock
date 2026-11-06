@@ -168,8 +168,8 @@ func (o Orchestrator) discoverRenderedKustomize(ctx context.Context, root string
 		if hasSettingsConfigMapCandidate(next) {
 			// Best-effort: without the graph paths, committed settings
 			// files stay candidates as before.
-			if paths, err := render.KustomizeSelectionPaths(ctx, root, displayPath, nil); err == nil {
-				markSettingsRenderInputs(&next, paths)
+			if values, err := render.KustomizeHelmValues(ctx, root, displayPath, nil); err == nil {
+				markSettingsRenderInputs(&next, settingsInstall{valuesFilesRead: values.ValuesFiles, files: values.Files})
 			}
 		}
 		var mergeDiags []diagnostic.Diagnostic

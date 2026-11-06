@@ -8,16 +8,20 @@ import (
 	"strings"
 	"testing"
 
+	argoappv1 "github.com/argoproj/argo-cd/v3/pkg/apis/application/v1alpha1"
+	"github.com/sholdee/drydock/internal/chart"
 	"github.com/sholdee/drydock/internal/config"
 	"github.com/sholdee/drydock/internal/diagnostic"
 	sourcepkg "github.com/sholdee/drydock/internal/source"
+	sigsyaml "sigs.k8s.io/yaml"
 )
 
 // The fake argo-cd chart copies the argocd-cm, argocd-cmd-params-cm, and
 // argocd-cmp-cm templates and the "argo-cd.config.cm" and
 // "argo-cd.config.params" helpers of the argo-helm argo-cd chart 10.14.0. The
 // presets and the default values are shorter: they keep only what the tests
-// read. Vendoring the real chart (3 MB) is too heavy for a unit test.
+// read, and the eight ignoreResourceUpdates defaults of the real chart.
+// Vendoring the real chart (3 MB) is too heavy for a unit test.
 const (
 	fakeArgoCDChartRepo    = "https://argoproj.github.io/argo-helm"
 	fakeArgoCDChartVersion = "10.14.0"
@@ -36,6 +40,44 @@ configs:
     application.instanceLabelKey: argocd.argoproj.io/instance
     exec.enabled: false
     timeout.reconciliation: 120s
+    resource.customizations.ignoreResourceUpdates.all: |
+      jsonPointers:
+        - /status
+    resource.customizations.ignoreResourceUpdates.argoproj.io_Application: |
+      jqPathExpressions:
+        - '.metadata.annotations."notified.notifications.argoproj.io"'
+        - '.metadata.annotations."argocd.argoproj.io/refresh"'
+        - '.metadata.annotations."argocd.argoproj.io/refresh-timestamp"'
+        - '.metadata.annotations."argocd.argoproj.io/hydrate"'
+        - '.metadata.annotations."argocd.argoproj.io/hydrate-timestamp"'
+        - '.operation'
+    resource.customizations.ignoreResourceUpdates.argoproj.io_Rollout: |
+      jqPathExpressions:
+        - '.metadata.annotations."notified.notifications.argoproj.io"'
+    resource.customizations.ignoreResourceUpdates.autoscaling_HorizontalPodAutoscaler: |
+      jqPathExpressions:
+        - '.metadata.annotations."autoscaling.alpha.kubernetes.io/behavior"'
+        - '.metadata.annotations."autoscaling.alpha.kubernetes.io/conditions"'
+        - '.metadata.annotations."autoscaling.alpha.kubernetes.io/metrics"'
+        - '.metadata.annotations."autoscaling.alpha.kubernetes.io/current-metrics"'
+    resource.customizations.ignoreResourceUpdates.ConfigMap: |
+      jqPathExpressions:
+        - '.metadata.annotations."cluster-autoscaler.kubernetes.io/last-updated"'
+        - '.metadata.annotations."control-plane.alpha.kubernetes.io/leader"'
+    resource.customizations.ignoreResourceUpdates.apps_ReplicaSet: |
+      jqPathExpressions:
+        - '.metadata.annotations."deployment.kubernetes.io/desired-replicas"'
+        - '.metadata.annotations."deployment.kubernetes.io/max-replicas"'
+        - '.metadata.annotations."rollout.argoproj.io/desired-replicas"'
+    resource.customizations.ignoreResourceUpdates.discovery.k8s.io_EndpointSlice: |
+      jsonPointers:
+        - /metadata
+        - /endpoints
+        - /ports
+    resource.customizations.ignoreResourceUpdates.Endpoints: |
+      jsonPointers:
+        - /metadata
+        - /subsets
     resource.exclusions: |
       - apiGroups:
         - coordination.k8s.io
@@ -161,6 +203,9 @@ type argoCDInstallShape struct {
 	write func(t *testing.T, root string, valuesFiles []string)
 	// repoMaps maps the $values ref source to the repository root.
 	repoMaps func(root string) []sourcepkg.RepoMap
+	// localChart reports that the chart is in the repository, so the chart
+	// acquirer cannot make the render fail.
+	localChart bool
 }
 
 const argoCDValuesRepoURL = "https://github.com/example/argocd-values"
@@ -182,7 +227,45 @@ func argoCDInstallShapes() []argoCDInstallShape {
 			name:  "ApplicationSet-generated kustomize helmCharts",
 			write: writeApplicationSetKustomizeArgoCDInstall,
 		},
+		{
+			name:       "local chart that the frontier renders",
+			write:      writeLocalChartArgoCDInstall,
+			localChart: true,
+		},
 	}
+}
+
+// writeLocalChartArgoCDInstall writes the fake chart into the repository.
+// Its templates name argocd-cm, so the discovery frontier renders the
+// Application itself (applicationMayRenderDiscoveryObjects), not the
+// settings-only pass. The values.yaml of the chart is also a committed
+// values file that sets Argo CD settings.
+func writeLocalChartArgoCDInstall(t *testing.T, root string, valuesFiles []string) {
+	t.Helper()
+	writeFakeArgoCDChart(t, filepath.Join(root, "argocd", "chart"))
+	var files strings.Builder
+	for _, file := range valuesFiles {
+		files.WriteString("        - ../" + file + "\n")
+	}
+	writeTestFile(t, filepath.Join(root, "apps", "argocd.yaml"), `apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: argocd
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/example/repo
+    targetRevision: main
+    path: argocd/chart
+    helm:
+      releaseName: argocd
+      valueFiles:
+`+files.String()+`  destination:
+    name: in-cluster
+    namespace: argocd
+`)
+	writeDiffApplication(t, root, "other", "other", "same")
 }
 
 func writeHelmRefArgoCDInstall(t *testing.T, root string, valuesFiles []string) {
@@ -325,9 +408,14 @@ func listArgoCDInstallSettings(t *testing.T, root string, shape argoCDInstallSha
 	return result
 }
 
+// settingsDiagnostics returns the settings diagnostics, without the
+// ignoreResourceUpdates advisory that the chart defaults always give.
 func settingsDiagnostics(diags []diagnostic.Diagnostic) []diagnostic.Diagnostic {
 	var out []diagnostic.Diagnostic
 	for _, diag := range diags {
+		if diag.Code == diagnostic.CodeSettingsIgnoreResourceUpdates {
+			continue
+		}
 		if diag.Category == "settings" || strings.Contains(diag.Message, "argocd-cm") {
 			out = append(out, diag)
 		}
@@ -464,6 +552,9 @@ func TestSettingsFromRenderedArgoCDInstallCommandParameters(t *testing.T) {
 // own as before, and it says so with a warning.
 func TestSettingsFromArgoCDInstallFallsBackToValuesFilesWhenRenderFails(t *testing.T) {
 	for _, shape := range argoCDInstallShapes() {
+		if shape.localChart {
+			continue
+		}
 		t.Run(shape.name, func(t *testing.T) {
 			root := t.TempDir()
 			shape.write(t, root, []string{"values.yaml"})
@@ -530,9 +621,12 @@ data:
 
 	result := listArgoCDInstallSettings(t, root, argoCDInstallShape{}, fakeArgoCDChartAcquirer(t))
 	for _, diag := range result.Diagnostics {
-		if strings.Contains(diag.Message, "duplicate") || diag.Category == "settings" {
-			t.Fatalf("diagnostic = %#v, want none", diag)
+		if strings.Contains(diag.Message, "duplicate") {
+			t.Fatalf("diagnostic = %#v, want no duplicate", diag)
 		}
+	}
+	if diags := settingsDiagnostics(result.Diagnostics); len(diags) != 0 {
+		t.Fatalf("settings diagnostics = %#v, want none", diags)
 	}
 	if got := result.Settings.TrackingMethod.Value; got != "label" {
 		t.Fatalf("TrackingMethod = %q, want the patched value", got)
@@ -638,4 +732,366 @@ spec:
 	if got := result.Settings.TrackingMethod.Value; got != "label" {
 		t.Fatalf("TrackingMethod = %q, want the inline value", got)
 	}
+}
+
+// perRepoChartAcquirer serves the fake argo-cd chart, but fails for the
+// chart repositories in failures. Run with Parallelism 1.
+type perRepoChartAcquirer struct {
+	*recordingChartAcquirer
+	failures map[string]error
+}
+
+func (acquirer perRepoChartAcquirer) Acquire(ctx context.Context, request chart.Request, opts chart.Options) (chart.Result, error) {
+	if err, ok := acquirer.failures[request.Repository]; ok {
+		return chart.Result{}, err
+	}
+	return acquirer.recordingChartAcquirer.Acquire(ctx, request, opts)
+}
+
+// The default chart sets eight ignoreResourceUpdates customizations. They
+// never change desired output, so they give one advisory that --strict does
+// not fail on, not one promotable warning per key.
+func TestBuildStrictPassesForDefaultArgoCDChartInstall(t *testing.T) {
+	root := t.TempDir()
+	writeKustomizeArgoCDInstall(t, root, []string{"values.yaml"})
+	writeTestFile(t, filepath.Join(root, "argocd", "values.yaml"), `configs:
+  cm:
+    timeout.reconciliation: 300s
+`)
+
+	result, err := Orchestrator{ChartAcquirer: fakeArgoCDChartAcquirer(t)}.Build(context.Background(), BuildRequest{
+		Path:        root,
+		Parallelism: 1,
+		Strict:      true,
+	})
+	if err != nil {
+		t.Fatalf("Build(--strict) error = %v, diagnostics = %#v", err, result.Diagnostics)
+	}
+	var advisories []diagnostic.Diagnostic
+	for _, diag := range result.Diagnostics {
+		if diag.Code == "settings.metadata-only" {
+			t.Fatalf("diagnostic = %#v, want no per-key metadata-only warning", diag)
+		}
+		if diag.Code == diagnostic.CodeSettingsIgnoreResourceUpdates {
+			advisories = append(advisories, diag)
+		}
+	}
+	if len(advisories) != 1 || advisories[0].Severity != diagnostic.SeverityWarning || !strings.Contains(advisories[0].Message, "argoproj.io/Application") {
+		t.Fatalf("ignoreResourceUpdates advisories = %#v, want one warning that lists the keys", advisories)
+	}
+}
+
+// The install reads ../shared as a Kustomize resource. A values file in that
+// directory that the install does not read is not an input of the rendered
+// argocd-cm, so drydock still reads it on its own. A committed argocd-cm
+// there that the install does not read is a second argocd-cm: drydock keeps
+// the committed one and reports the rendered one as a duplicate.
+func TestSettingsFromRenderedArgoCDInstallKeepsFilesInReadDirectories(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		write func(t *testing.T, shared string)
+		check func(t *testing.T, result BuildResult)
+	}{
+		{
+			name: "values file the install does not read",
+			write: func(t *testing.T, shared string) {
+				writeTestFile(t, filepath.Join(shared, "legacy-values.yaml"), `configs:
+  cm:
+    application.resourceTrackingMethod: label
+`)
+			},
+			check: func(t *testing.T, result BuildResult) {
+				if diags := settingsDiagnostics(result.Diagnostics); len(diags) != 0 {
+					t.Fatalf("settings diagnostics = %#v, want none", diags)
+				}
+				if got := result.Settings.TrackingMethod.Value; got != "label" {
+					t.Fatalf("TrackingMethod = %q, want label from the unread values file", got)
+				}
+			},
+		},
+		{
+			name: "argocd-cm the install does not read",
+			write: func(t *testing.T, shared string) {
+				writeTestFile(t, filepath.Join(shared, "argocd-cm.yaml"), argocdCMYAML("  application.resourceTrackingMethod: label\n"))
+			},
+			check: func(t *testing.T, result BuildResult) {
+				if got := result.Settings.TrackingMethod.Value; got != "label" {
+					t.Fatalf("TrackingMethod = %q, want label from the committed argocd-cm", got)
+				}
+				for _, diag := range result.Diagnostics {
+					if strings.Contains(diag.Message, "duplicate ConfigMap argocd/argocd-cm from rendered/argocd/argocd/") {
+						return
+					}
+				}
+				t.Fatalf("diagnostics = %#v, want the rendered argocd-cm reported as a duplicate", result.Diagnostics)
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			writeKustomizeArgoCDInstall(t, root, []string{"values.yaml"})
+			writeTestFile(t, filepath.Join(root, "argocd", "kustomization.yaml"), kustomizeArgoCDInstallYAML("resources:\n  - ../shared\n", []string{"values.yaml"}))
+			writeTestFile(t, filepath.Join(root, "argocd", "values.yaml"), `configs:
+  cm:
+    timeout.reconciliation: 300s
+`)
+			shared := filepath.Join(root, "shared")
+			writeTestFile(t, filepath.Join(shared, "kustomization.yaml"), `apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - namespace.yaml
+`)
+			writeTestFile(t, filepath.Join(shared, "namespace.yaml"), `apiVersion: v1
+kind: Namespace
+metadata:
+  name: argocd
+`)
+			tc.write(t, shared)
+
+			tc.check(t, listArgoCDInstallSettings(t, root, argoCDInstallShape{}, fakeArgoCDChartAcquirer(t)))
+		})
+	}
+}
+
+// An install of the argo-cd chart whose values set nothing under configs is
+// still an install: its argocd-cm holds the chart defaults.
+func TestSettingsFromRenderedArgoCDInstallFoundByChartName(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		write func(t *testing.T, root string)
+	}{
+		{
+			name: "helm chart",
+			write: func(t *testing.T, root string) {
+				writeTestFile(t, filepath.Join(root, "apps", "argocd.yaml"), `apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: argocd
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: `+fakeArgoCDChartRepo+`
+    chart: argo-cd
+    targetRevision: `+fakeArgoCDChartVersion+`
+  destination:
+    name: in-cluster
+    namespace: argocd
+`)
+			},
+		},
+		{
+			name: "kustomize helmCharts",
+			write: func(t *testing.T, root string) {
+				writeKustomizeArgoCDInstall(t, root, []string{"values.yaml"})
+				writeTestFile(t, filepath.Join(root, "argocd", "values.yaml"), "global:\n  domain: argocd.example.org\n")
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			tc.write(t, root)
+
+			result := listArgoCDInstallSettings(t, root, argoCDInstallShape{}, fakeArgoCDChartAcquirer(t))
+			if got := result.Settings.InstanceLabelKey.Value; got != "argocd.argoproj.io/instance" {
+				t.Fatalf("InstanceLabelKey = %q, want the chart default", got)
+			}
+			if got := resourceExclusionGroups(result.Settings); !slices.Equal(got, []string{fakeArgoCDChartLease}) {
+				t.Fatalf("resource exclusion groups = %v, want the chart default", got)
+			}
+		})
+	}
+}
+
+// The settings that the install renders can change how the install renders.
+// Here the chart default kustomize.buildOptions passes an API version to
+// Helm, and the chart sets the tracking method only when Helm has that API
+// version. drydock renders the install again until its settings stop
+// changing how it renders.
+func TestSettingsFromRenderedArgoCDInstallSettlesOverRounds(t *testing.T) {
+	root := t.TempDir()
+	writeKustomizeArgoCDInstall(t, root, []string{"values.yaml"})
+	writeTestFile(t, filepath.Join(root, "argocd", "values.yaml"), `configs:
+  cm:
+    timeout.reconciliation: 300s
+`)
+	acquirer := fakeArgoCDChartAcquirer(t)
+	writeTestFile(t, filepath.Join(acquirer.chartDir, "values.yaml"), strings.Replace(fakeArgoCDChartValues,
+		"    timeout.reconciliation: 120s\n",
+		"    timeout.reconciliation: 120s\n    kustomize.buildOptions: --helm-api-versions example.com/v1/Probe\n", 1))
+	writeTestFile(t, filepath.Join(acquirer.chartDir, "templates", "_helpers.tpl"), strings.Replace(fakeArgoCDChartHelpers,
+		`{{- $_ := set $presets "url" (printf "https://%s" .Values.global.domain) -}}`,
+		`{{- $_ := set $presets "url" (printf "https://%s" .Values.global.domain) -}}
+{{- if .Capabilities.APIVersions.Has "example.com/v1/Probe" -}}
+{{- $_ := set $presets "application.resourceTrackingMethod" "annotation+label" -}}
+{{- end -}}`, 1))
+
+	// The first render has no API version, so only a second render, with the
+	// rendered kustomize.buildOptions, sets the tracking method.
+	result := listArgoCDInstallSettings(t, root, argoCDInstallShape{}, acquirer)
+	if got := result.Settings.TrackingMethod.Value; got != "annotation+label" {
+		t.Fatalf("TrackingMethod = %q, want the value of the second render", got)
+	}
+}
+
+// Two installs each read their own values file. Both values files give way
+// to the rendered ConfigMaps, and the settings of both installs merge.
+func TestSettingsFromTwoRenderedArgoCDInstalls(t *testing.T) {
+	root := t.TempDir()
+	writeKustomizeArgoCDInstall(t, root, []string{"values.yaml"})
+	writeTestFile(t, filepath.Join(root, "argocd", "values.yaml"), `configs:
+  cm:
+    application.resourceTrackingMethod: label
+`)
+	writeTestFile(t, filepath.Join(root, "apps", "argocd-b.yaml"), `apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: argocd-b
+  namespace: argocd
+spec:
+  project: default
+  sources:
+    - repoURL: `+fakeArgoCDChartRepo+`
+      chart: argo-cd
+      targetRevision: `+fakeArgoCDChartVersion+`
+      helm:
+        valueFiles:
+          - $values/argocd-b/values.yaml
+    - repoURL: `+argoCDValuesRepoURL+`
+      targetRevision: main
+      ref: values
+  destination:
+    name: in-cluster
+    namespace: argocd-b
+`)
+	writeTestFile(t, filepath.Join(root, "argocd-b", "values.yaml"), `configs:
+  cm:
+    resourceExclusionsAdditional:
+      - apiGroups:
+          - extra.example.com
+        kinds:
+          - Extra
+`)
+
+	result := listArgoCDInstallSettings(t, root, argoCDInstallShape{repoMaps: func(root string) []sourcepkg.RepoMap {
+		return []sourcepkg.RepoMap{{URL: argoCDValuesRepoURL, Path: root}}
+	}}, fakeArgoCDChartAcquirer(t))
+	if diags := settingsDiagnostics(result.Diagnostics); len(diags) != 0 {
+		t.Fatalf("settings diagnostics = %#v, want none", diags)
+	}
+	if got := result.Settings.TrackingMethod.Provenance.Path; result.Settings.TrackingMethod.Value != "label" || !strings.HasPrefix(got, "rendered/argocd/argocd/") {
+		t.Fatalf("TrackingMethod = %q from %q, want label from the first rendered install", result.Settings.TrackingMethod.Value, got)
+	}
+	if got := resourceExclusionGroups(result.Settings); !slices.Contains(got, "extra.example.com") || !slices.Contains(got, fakeArgoCDChartLease) {
+		t.Fatalf("resource exclusion groups = %v, want the chart default and the second install's addition", got)
+	}
+	for _, exclusion := range result.Settings.ResourceExclusions {
+		if path := filepath.ToSlash(exclusion.Provenance.Path); !strings.HasPrefix(path, "rendered/") {
+			t.Fatalf("resource exclusion from %q, want only rendered ConfigMaps", path)
+		}
+	}
+}
+
+// Two installs read one values file and one does not render. The values
+// file still gives way to the install that rendered, and drydock warns about
+// the other.
+func TestSettingsFromSharedValuesFileWhenOneInstallFails(t *testing.T) {
+	root := t.TempDir()
+	writeKustomizeArgoCDInstall(t, root, []string{"values.yaml"})
+	writeTestFile(t, filepath.Join(root, "argocd", "values.yaml"), `configs:
+  cm:
+    application.resourceTrackingMethod: label
+`)
+	const failingRepo = "https://charts.example.com/unreachable"
+	writeTestFile(t, filepath.Join(root, "apps", "argocd-b.yaml"), `apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: argocd-b
+  namespace: argocd
+spec:
+  project: default
+  sources:
+    - repoURL: `+failingRepo+`
+      chart: argo-cd
+      targetRevision: `+fakeArgoCDChartVersion+`
+      helm:
+        valueFiles:
+          - $values/argocd/values.yaml
+    - repoURL: `+argoCDValuesRepoURL+`
+      targetRevision: main
+      ref: values
+  destination:
+    name: in-cluster
+    namespace: argocd-b
+`)
+	acquirer := perRepoChartAcquirer{
+		recordingChartAcquirer: fakeArgoCDChartAcquirer(t),
+		failures:               map[string]error{failingRepo: errors.New("chart is not in the cache")},
+	}
+
+	request := BuildRequest{Path: root, Parallelism: 1, RepoMaps: []sourcepkg.RepoMap{{URL: argoCDValuesRepoURL, Path: root}}}
+	result, err := Orchestrator{ChartAcquirer: acquirer}.ListApplications(context.Background(), request)
+	if err != nil {
+		t.Fatalf("ListApplications() error = %v, diagnostics = %#v", err, result.Diagnostics)
+	}
+	if got := result.Settings.TrackingMethod.Provenance.Path; result.Settings.TrackingMethod.Value != "label" || !strings.HasPrefix(got, "rendered/argocd/argocd/") {
+		t.Fatalf("TrackingMethod = %q from %q, want label from the install that rendered", result.Settings.TrackingMethod.Value, got)
+	}
+	var warnings []diagnostic.Diagnostic
+	for _, diag := range settingsDiagnostics(result.Diagnostics) {
+		if strings.Contains(diag.Message, "cannot render Application argocd/argocd-b") {
+			warnings = append(warnings, diag)
+			continue
+		}
+		t.Fatalf("settings diagnostic = %#v, want only the warning for argocd-b", diag)
+	}
+	if len(warnings) != 1 || !strings.Contains(warnings[0].Message, "unless another rendered install reads the file") {
+		t.Fatalf("fallback diagnostics = %#v, want one warning for argocd-b", warnings)
+	}
+}
+
+// drydock picks the source type as Argo CD does: an explicit directory or
+// plugin source with a local chart is not a Helm install.
+func TestApplicationSettingsInstallFollowsExplicitSourceType(t *testing.T) {
+	root := t.TempDir()
+	writeFakeArgoCDChart(t, filepath.Join(root, "argocd", "chart"))
+	for _, tc := range []struct {
+		name   string
+		source string
+		want   bool
+	}{
+		{name: "detected Helm", source: "", want: true},
+		{name: "explicit directory", source: "    directory:\n      recurse: false\n", want: false},
+		{name: "explicit plugin", source: "    plugin:\n      name: example\n", want: false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			application := decodeTestApplication(t, `apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: argocd
+  namespace: argocd
+spec:
+  source:
+    repoURL: https://github.com/example/repo
+    targetRevision: main
+    path: argocd/chart
+`+tc.source+`  destination:
+    name: in-cluster
+    namespace: argocd
+`)
+			install := applicationSettingsInstall(context.Background(), BuildRequest{}, settingsInstallProbe(root, BuildRequest{}), application)
+			if got := install.installsArgoCD(); got != tc.want {
+				t.Fatalf("installsArgoCD() = %t, want %t (install %#v)", got, tc.want, install)
+			}
+		})
+	}
+}
+
+func decodeTestApplication(t *testing.T, data string) argoappv1.Application {
+	t.Helper()
+	var application argoappv1.Application
+	if err := sigsyaml.Unmarshal([]byte(data), &application); err != nil {
+		t.Fatalf("decode Application: %v", err)
+	}
+	return application
 }
