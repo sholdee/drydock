@@ -129,7 +129,7 @@ func TestLocalProviderSkipsIgnoredUntrackedOutOfBoundsSymlinks(t *testing.T) {
 	symlinkBoundsLink(t, "/usr/bin/python3", filepath.Join(root, ".venv", "bin", "python"))
 	symlinkBoundsLink(t, "/nix/store/x", filepath.Join(root, "result"))
 	source := render.ResolvedSource{RepoRoot: root, Path: "apps"}
-	if _, _, err := (localProvider{}).RenderSource(context.Background(), source, render.RenderOptions{}); err != nil {
+	if _, _, err := (localProvider{userRoots: userRootSet(root, "", nil)}).RenderSource(context.Background(), source, render.RenderOptions{}); err != nil {
 		t.Fatalf("RenderSource() error = %v, want ignored untracked symlinks left out", err)
 	}
 
@@ -137,7 +137,7 @@ func TestLocalProviderSkipsIgnoredUntrackedOutOfBoundsSymlinks(t *testing.T) {
 	if _, err := worktree.Add("result"); err != nil {
 		t.Fatal(err)
 	}
-	_, _, err = (localProvider{}).RenderSource(context.Background(), source, render.RenderOptions{})
+	_, _, err = (localProvider{userRoots: userRootSet(root, "", nil)}).RenderSource(context.Background(), source, render.RenderOptions{})
 	if err == nil || !strings.Contains(err.Error(), "repository contains out-of-bounds symlinks. file: result") {
 		t.Fatalf("RenderSource() error = %v, want the tracked symlink reported", err)
 	}
@@ -394,16 +394,16 @@ func TestChangedOnlySymlinksRenderAllWhenTheCheckFails(t *testing.T) {
 	left := t.TempDir()
 	missing := filepath.Join(t.TempDir(), "gone")
 	settings := config.DefaultSettings()
-	renderAll, diag, err := changedOnlySymlinksRenderAll(context.Background(), newSymlinkBoundsMemo(), left, missing, settings, settings)
+	renderAll, diag, err := changedOnlySymlinksRenderAll(context.Background(), newSymlinkBoundsMemo(), BuildRequest{Path: left}, BuildRequest{Path: missing}, settings, settings)
 	if err != nil || !renderAll || diag.Code != changedOnlySymlinksCode || !strings.Contains(diag.Message, "could not check the repository for out-of-bounds symlinks") {
 		t.Fatalf("changedOnlySymlinksRenderAll() = %t, %#v, %v, want a render-all warning", renderAll, diag, err)
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	if _, _, err := changedOnlySymlinksRenderAll(ctx, newSymlinkBoundsMemo(), left, missing, settings, settings); err == nil {
+	if _, _, err := changedOnlySymlinksRenderAll(ctx, newSymlinkBoundsMemo(), BuildRequest{Path: left}, BuildRequest{Path: missing}, settings, settings); err == nil {
 		t.Fatal("changedOnlySymlinksRenderAll() with a canceled context = nil error")
 	}
-	if renderAll, _, err := changedOnlySymlinksRenderAll(context.Background(), newSymlinkBoundsMemo(), left, left, settings, settings); err != nil || renderAll {
+	if renderAll, _, err := changedOnlySymlinksRenderAll(context.Background(), newSymlinkBoundsMemo(), BuildRequest{Path: left}, BuildRequest{Path: left}, settings, settings); err != nil || renderAll {
 		t.Fatalf("changedOnlySymlinksRenderAll() for equal trees = %t, %v", renderAll, err)
 	}
 }
@@ -424,7 +424,7 @@ func TestSymlinkBoundsMemoWalksEachTreeOnce(t *testing.T) {
 			if i%2 == 0 {
 				root = bad
 			}
-			results[i], _ = memo.findOutOfBoundsSymlink(context.Background(), root, render.OutOfBoundsSymlinkScopeRepository)
+			results[i], _ = memo.findOutOfBoundsSymlink(context.Background(), root, render.OutOfBoundsSymlinkScopeRepository, true)
 		})
 	}
 	wg.Wait()
@@ -440,7 +440,7 @@ func TestSymlinkBoundsMemoWalksEachTreeOnce(t *testing.T) {
 	if err := os.Remove(filepath.Join(bad, "escape.yaml")); err != nil {
 		t.Fatal(err)
 	}
-	if got, _ := memo.findOutOfBoundsSymlink(context.Background(), bad, render.OutOfBoundsSymlinkScopeRepository); got != "escape.yaml" {
+	if got, _ := memo.findOutOfBoundsSymlink(context.Background(), bad, render.OutOfBoundsSymlinkScopeRepository, true); got != "escape.yaml" {
 		t.Fatalf("second check = %q, want the kept answer", got)
 	}
 }
@@ -469,7 +469,7 @@ func TestLocalProviderSkipsIgnoredPathsUnderASubdirectoryRoot(t *testing.T) {
 	}
 	root := filepath.Join(top, "gitops")
 	symlinkBoundsLink(t, "/usr/bin/python3", filepath.Join(root, ".venv", "bin", "python"))
-	if _, _, err := (localProvider{}).RenderSource(context.Background(), render.ResolvedSource{RepoRoot: root, Path: "app"}, render.RenderOptions{}); err != nil {
+	if _, _, err := (localProvider{userRoots: userRootSet(root, "", nil)}).RenderSource(context.Background(), render.ResolvedSource{RepoRoot: root, Path: "app"}, render.RenderOptions{}); err != nil {
 		t.Fatalf("RenderSource() error = %v, want the ignored virtual environment left out", err)
 	}
 }
@@ -487,5 +487,61 @@ func TestRenderApplicationReportsAnUnknownRefBeforeTheTreeCheck(t *testing.T) {
 	_, err := RenderApplication(context.Background(), application, provider)
 	if err == nil || !strings.Contains(err.Error(), "unknown ref $missing") || strings.Contains(err.Error(), "out-of-bounds") {
 		t.Fatalf("RenderApplication() error = %v, want the unknown $ref error first", err)
+	}
+}
+
+// TestOrchestratorDiffRefsChecksSnapshotsWhole pins that drydock's own
+// snapshots get no Git ignore rules, also when TMPDIR is inside another
+// Git worktree whose rules would hide the committed out-of-bounds symlink.
+func TestOrchestratorDiffRefsChecksSnapshotsWhole(t *testing.T) {
+	outer := t.TempDir()
+	outerRepo, err := git.PlainInit(outer, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeTestFile(t, filepath.Join(outer, ".gitignore"), "*\n!.gitignore\n!tmp/\n")
+	writeTestFile(t, filepath.Join(outer, "tmp", "keep"), "x\n")
+	outerWorktree, err := outerRepo.Worktree()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := outerWorktree.Add(".gitignore"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := outerWorktree.Add("tmp/keep"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := outerWorktree.Commit("outer", &git.CommitOptions{Author: &object.Signature{Name: "Test", Email: "test@example.invalid"}}); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("TMPDIR", filepath.Join(outer, "tmp"))
+
+	root := t.TempDir()
+	repo, err := git.PlainInit(root, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	worktree, err := repo.Worktree()
+	if err != nil {
+		t.Fatal(err)
+	}
+	commit := func(message string) {
+		t.Helper()
+		if err := worktree.AddWithOptions(&git.AddOptions{All: true}); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := worktree.Commit(message, &git.CommitOptions{Author: &object.Signature{Name: "Test", Email: "test@example.invalid"}}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	writeTestFile(t, filepath.Join(root, "apps", "demo.yaml"), symlinkedRootApplication("demo", "https://git.example.test/repo.git", "app"))
+	writeTestFile(t, filepath.Join(root, "app", "cm.yaml"), symlinkBoundsConfigMap)
+	commit("base")
+	symlinkBoundsLink(t, "../../outside.yaml", filepath.Join(root, "other", "escape.yaml"))
+	commit("escape")
+
+	_, err = Orchestrator{}.DiffApps(context.Background(), DiffRequest{Repo: root, Ref: "HEAD", RefOrig: "HEAD~1", Unified: 3})
+	if err == nil || !strings.Contains(err.Error(), "repository contains out-of-bounds symlinks. file: other/escape.yaml") {
+		t.Fatalf("DiffApps() error = %v, want the committed symlink reported", err)
 	}
 }

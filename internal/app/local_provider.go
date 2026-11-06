@@ -71,7 +71,10 @@ type localProvider struct {
 	allowOutOfBoundsSymlinks bool
 	// symlinkBounds keeps the out-of-bounds symlink check of each tree for
 	// the run. nil checks every time.
-	symlinkBounds           *symlinkBoundsMemo
+	symlinkBounds *symlinkBoundsMemo
+	// userRoots holds the trees a user named (userRootSet). Only their
+	// out-of-bounds check leaves Git-ignored, untracked paths out.
+	userRoots               map[string]bool
 	configManagementPlugins map[string]config.ConfigManagementPlugin
 	cacheEvents             *cacheevent.Recorder
 	acquisitions            *cacheevent.AcquisitionCollector

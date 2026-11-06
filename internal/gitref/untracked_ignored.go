@@ -55,7 +55,8 @@ type gitIgnoredSet struct {
 // linked worktree) with go-git. That fallback leaves out core.excludesFile
 // and the user ignore file, whose lookup has rules go-git does not follow,
 // so it skips fewer paths than Git. The filter skips nothing when root is
-// not in a Git worktree, or when Git ignores root itself.
+// not in a Git worktree, when it is a subdirectory that the worktree does not
+// track, or when Git ignores root itself.
 func OpenUntrackedIgnoredFilter(ctx context.Context, root string) (*UntrackedIgnoredFilter, error) {
 	repo, err := git.PlainOpenWithOptions(root, &git.PlainOpenOptions{DetectDotGit: true, EnableDotGitCommonDir: true})
 	if err != nil {
@@ -76,6 +77,12 @@ func OpenUntrackedIgnoredFilter(ctx context.Context, root string) (*UntrackedIgn
 	if !ok {
 		return &UntrackedIgnoredFilter{}, nil
 	}
+	// A root in a subdirectory must be a tree the worktree tracks. A
+	// directory that only happens to sit inside some other worktree, such
+	// as a temporary directory, is checked whole.
+	if prefix != "" && !indexTracksDir(repo, prefix) {
+		return &UntrackedIgnoredFilter{}, nil
+	}
 	var filter *UntrackedIgnoredFilter
 	if set, ok := gitCLIIgnoredSet(ctx, top); ok {
 		filter = &UntrackedIgnoredFilter{git: set}
@@ -92,6 +99,20 @@ func OpenUntrackedIgnoredFilter(ctx context.Context, root string) (*UntrackedIgn
 	}
 	filter.prefix = prefix
 	return filter, nil
+}
+
+// indexTracksDir reports whether the index of repo holds a path under dir.
+func indexTracksDir(repo *git.Repository, dir string) bool {
+	index, err := repo.Storer.Index()
+	if err != nil {
+		return false
+	}
+	for _, entry := range index.Entries {
+		if strings.HasPrefix(entry.Name, dir+"/") {
+			return true
+		}
+	}
+	return false
 }
 
 // worktreePrefix returns root relative to the worktree top level, with
@@ -199,10 +220,6 @@ func gitCLIIgnoredSet(ctx context.Context, top string) (*gitIgnoredSet, bool) {
 
 // goGitUntrackedIgnoredFilter is the fallback without the git CLI.
 func goGitUntrackedIgnoredFilter(repo *git.Repository, top string) (*UntrackedIgnoredFilter, error) {
-	worktree, err := repo.Worktree()
-	if err != nil {
-		return nil, fmt.Errorf("open Git worktree: %w", err)
-	}
 	index, err := repo.Storer.Index()
 	if err != nil {
 		return nil, fmt.Errorf("read Git index: %w", err)
@@ -224,16 +241,50 @@ func goGitUntrackedIgnoredFilter(repo *git.Repository, top string) (*UntrackedIg
 			filter.trackedDirs[dir] = struct{}{}
 		}
 	}
-	patterns, err := gitignore.ReadPatterns(worktree.Filesystem, nil)
-	if err != nil {
-		return nil, fmt.Errorf("read Git ignore rules: %w", err)
+	// info/exclude is in the common Git directory, which for a linked
+	// worktree is not top/.git. The .gitignore files follow, lower
+	// directories last, so they take priority.
+	infoExclude := filepath.Join(top, ".git", "info", "exclude")
+	if linked := linkedWorktreeInfoExclude(top); linked != "" {
+		infoExclude = linked
 	}
-	// info/exclude of a linked worktree is in the common Git directory. Its
-	// .git is a file there, so ReadPatterns does not find it.
-	all := readIgnorePatternFile(linkedWorktreeInfoExclude(top))
-	all = append(all, patterns...)
+	all := readIgnorePatternFile(infoExclude, nil)
+	all = append(all, readGitignoreTree(top, nil, all)...)
 	filter.matcher = gitignore.NewMatcher(all)
 	return filter, nil
+}
+
+// readGitignoreTree reads the .gitignore files of the directory dir, given
+// as path components below top, and of the directories below it, as Git
+// does: it does not read a .gitignore that is a symlink, and it does not
+// enter a directory that is ignored, that is a symlink, or that holds its
+// own .git, such as a nested repository or a submodule. go-git's
+// ReadPatterns does all three, so it can ignore more than Git.
+func readGitignoreTree(top string, dir []string, inherited []gitignore.Pattern) []gitignore.Pattern {
+	full := filepath.Join(append([]string{top}, dir...)...)
+	patterns := readIgnorePatternFile(filepath.Join(full, ".gitignore"), dir)
+	active := append(append([]gitignore.Pattern(nil), inherited...), patterns...)
+	entries, err := os.ReadDir(full)
+	if err != nil {
+		return patterns
+	}
+	matcher := gitignore.NewMatcher(active)
+	for _, entry := range entries {
+		if !entry.IsDir() || entry.Name() == ".git" {
+			continue
+		}
+		child := append(append([]string(nil), dir...), entry.Name())
+		if matcher.Match(child, true) {
+			continue
+		}
+		if _, err := os.Lstat(filepath.Join(full, entry.Name(), ".git")); err == nil {
+			continue
+		}
+		sub := readGitignoreTree(top, child, active)
+		patterns = append(patterns, sub...)
+		active = append(active, sub...)
+	}
+	return patterns
 }
 
 // Skip reports whether rel, relative to the filter root with forward
@@ -328,10 +379,16 @@ func linkedWorktreeInfoExclude(top string) string {
 	return filepath.Join(commonDir, "info", "exclude")
 }
 
-// readIgnorePatternFile reads the patterns of one ignore file whose patterns
-// apply from the worktree top level. A missing or unreadable file adds none.
-func readIgnorePatternFile(path string) []gitignore.Pattern {
+// readIgnorePatternFile reads the patterns of one ignore file whose
+// patterns apply below domain, path components from the worktree top
+// level. Git does not read an ignore file that is a symlink, so neither
+// does this. A missing or unreadable file adds none.
+func readIgnorePatternFile(path string, domain []string) []gitignore.Pattern {
 	if path == "" {
+		return nil
+	}
+	info, err := os.Lstat(path)
+	if err != nil || !info.Mode().IsRegular() {
 		return nil
 	}
 	data, err := os.ReadFile(path)
@@ -344,7 +401,7 @@ func readIgnorePatternFile(path string) []gitignore.Pattern {
 		if strings.HasPrefix(line, "#") || strings.TrimSpace(line) == "" {
 			continue
 		}
-		patterns = append(patterns, gitignore.ParsePattern(line, nil))
+		patterns = append(patterns, gitignore.ParsePattern(line, domain))
 	}
 	return patterns
 }

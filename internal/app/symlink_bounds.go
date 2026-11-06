@@ -14,6 +14,7 @@ import (
 	"github.com/sholdee/drydock/internal/gitref"
 	"github.com/sholdee/drydock/internal/ociartifact"
 	"github.com/sholdee/drydock/internal/render"
+	sourcepkg "github.com/sholdee/drydock/internal/source"
 )
 
 // allowOutOfBoundsSymlinks reads reposerver.allow.oob.symlinks from
@@ -61,19 +62,22 @@ func (m *symlinkBoundsMemo) entry(key string) *symlinkBoundsEntry {
 // findOutOfBoundsSymlink returns the first out-of-bounds symlink of the tree
 // at root, as the repo-server's CheckOutOfBoundsSymlinks names it, or "".
 // A repository scope skips the root .git entry, as the repo-server does for
-// a Git checkout, and, when root is the top level of a Git worktree, every
-// path that Git ignores and does not track: no Argo CD checkout holds such a
-// path, and a local worktree often does, such as a Python virtual
-// environment or a Nix build result with absolute symlinks. A nil memo
+// a Git checkout. For a user root, a tree the user named with --path, a
+// diff path, or --repo-map, it also leaves out every path that Git ignores
+// and does not track: no Argo CD checkout holds such a path, and a local
+// worktree often does, such as a Python virtual environment or a Nix build
+// result with absolute symlinks. drydock's own snapshots and acquisitions
+// are never user roots: they hold committed content only, and a temporary
+// directory inside some other worktree must not hide any of it. A nil memo
 // checks without keeping the answer.
-func (m *symlinkBoundsMemo) findOutOfBoundsSymlink(ctx context.Context, root string, scope render.OutOfBoundsSymlinkScope) (string, error) {
+func (m *symlinkBoundsMemo) findOutOfBoundsSymlink(ctx context.Context, root string, scope render.OutOfBoundsSymlinkScope, userRoot bool) (string, error) {
 	abs, err := filepath.Abs(root)
 	if err != nil {
 		return "", err
 	}
-	key := string(scope) + "\x00" + filepath.Clean(abs)
+	key := fmt.Sprintf("%s\x00%t\x00%s", scope, userRoot, filepath.Clean(abs))
 	if m == nil {
-		return walkOutOfBoundsSymlinks(ctx, abs, scope)
+		return walkOutOfBoundsSymlinks(ctx, abs, scope, userRoot)
 	}
 	entry := m.entry(key)
 	entry.mu.Lock()
@@ -81,7 +85,7 @@ func (m *symlinkBoundsMemo) findOutOfBoundsSymlink(ctx context.Context, root str
 	if entry.done {
 		return entry.file, entry.err
 	}
-	file, err := walkOutOfBoundsSymlinks(ctx, abs, scope)
+	file, err := walkOutOfBoundsSymlinks(ctx, abs, scope, userRoot)
 	// A canceled walk says nothing about the tree, so the next caller walks
 	// again.
 	if !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
@@ -90,13 +94,15 @@ func (m *symlinkBoundsMemo) findOutOfBoundsSymlink(ctx context.Context, root str
 	return file, err
 }
 
-func walkOutOfBoundsSymlinks(ctx context.Context, abs string, scope render.OutOfBoundsSymlinkScope) (string, error) {
+func walkOutOfBoundsSymlinks(ctx context.Context, abs string, scope render.OutOfBoundsSymlinkScope, userRoot bool) (string, error) {
 	opts := render.OutOfBoundsSymlinkOptions{}
 	if scope == render.OutOfBoundsSymlinkScopeRepository {
 		opts.SkipRootGit = true
 		// A worktree whose Git data cannot be read is checked whole.
-		if filter, filterErr := gitref.OpenUntrackedIgnoredFilter(ctx, abs); filterErr == nil {
-			opts.Skip = filter.Skip
+		if userRoot {
+			if filter, filterErr := gitref.OpenUntrackedIgnoredFilter(ctx, abs); filterErr == nil {
+				opts.Skip = filter.Skip
+			}
 		}
 	}
 	return render.FindOutOfBoundsSymlink(ctx, abs, opts)
@@ -112,7 +118,7 @@ func (p localProvider) checkOutOfBoundsSymlinks(ctx context.Context, root string
 	if p.allowOutOfBoundsSymlinks || strings.TrimSpace(root) == "" {
 		return nil
 	}
-	file, err := p.symlinkBounds.findOutOfBoundsSymlink(ctx, root, scope)
+	file, err := p.symlinkBounds.findOutOfBoundsSymlink(ctx, root, scope, p.isUserRoot(root))
 	if err != nil {
 		return err
 	}
@@ -296,5 +302,38 @@ func (p localProvider) rootOutOfBoundsSymlink(ctx context.Context) (string, erro
 	if p.allowOutOfBoundsSymlinks {
 		return "", nil
 	}
-	return p.symlinkBounds.findOutOfBoundsSymlink(ctx, p.repoRoot, render.OutOfBoundsSymlinkScopeRepository)
+	return p.symlinkBounds.findOutOfBoundsSymlink(ctx, p.repoRoot, render.OutOfBoundsSymlinkScopeRepository, p.isUserRoot(p.repoRoot))
+}
+
+// userRootSet returns the trees a user named for a provider: its root,
+// unless the root is a snapshot of a Git ref (rootRevision is set), and
+// each --repo-map path that is not that snapshot. Paths are absolute and
+// clean.
+func userRootSet(root, rootRevision string, repoMaps []sourcepkg.RepoMap) map[string]bool {
+	roots := map[string]bool{}
+	snapshot := ""
+	if abs, err := filepath.Abs(root); err == nil {
+		if strings.TrimSpace(rootRevision) == "" {
+			roots[filepath.Clean(abs)] = true
+		} else {
+			snapshot = filepath.Clean(abs)
+		}
+	}
+	for _, repoMap := range repoMaps {
+		abs, err := filepath.Abs(repoMap.Path)
+		if err != nil || filepath.Clean(abs) == snapshot {
+			continue
+		}
+		roots[filepath.Clean(abs)] = true
+	}
+	return roots
+}
+
+// isUserRoot reports whether root is a tree the user named (userRootSet).
+func (p localProvider) isUserRoot(root string) bool {
+	abs, err := filepath.Abs(root)
+	if err != nil {
+		return false
+	}
+	return p.userRoots[filepath.Clean(abs)]
 }

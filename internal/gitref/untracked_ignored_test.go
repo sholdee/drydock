@@ -1,11 +1,14 @@
 package gitref
 
 import (
+	"os"
 	"os/exec"
 	"path/filepath"
 	"syscall"
 	"testing"
 	"time"
+
+	git "github.com/go-git/go-git/v5"
 )
 
 // filterModes runs a test with the git CLI and with the go-git fallback,
@@ -298,4 +301,71 @@ func TestUntrackedIgnoredFilterFallsBackWhenGitBlocks(t *testing.T) {
 	if !filter.Skip("ignored", true) {
 		t.Fatal("Skip(ignored) = false, want the go-git rules applied")
 	}
+}
+
+// TestUntrackedIgnoredFilterSkipsNothingInAnUntrackedSubdirectory pins that a
+// root inside a worktree that does not track it, such as a temporary
+// directory under a repository, gets no ignore rules from that worktree.
+func TestUntrackedIgnoredFilterSkipsNothingInAnUntrackedSubdirectory(t *testing.T) {
+	filterModes(t, func(t *testing.T, _ bool) {
+		isolateGitUserConfig(t)
+		top, _, wt := newSnapshotRepo(t)
+		writeChangeSetFile(t, filepath.Join(top, ".gitignore"), "*.yaml\n")
+		writeChangeSetFile(t, filepath.Join(top, "README"), "x\n")
+		commitAllSnapshotFiles(t, wt, "fixture")
+		writeChangeSetFile(t, filepath.Join(top, "tmp", "snapshot", "escape.yaml"), "x\n")
+		filter, err := OpenUntrackedIgnoredFilter(t.Context(), filepath.Join(top, "tmp", "snapshot"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if filter.Skip("escape.yaml", false) {
+			t.Fatal("the filter of an untracked subdirectory skipped a path")
+		}
+	})
+}
+
+// TestUntrackedIgnoredFilterReadsIgnoreFilesLikeGit pins two Git rules that
+// the go-git fallback must keep, so it never skips more than Git: Git does
+// not read a .gitignore that is a symlink, and it does not read the
+// .gitignore files of a nested repository.
+func TestUntrackedIgnoredFilterReadsIgnoreFilesLikeGit(t *testing.T) {
+	filterModes(t, func(t *testing.T, _ bool) {
+		isolateGitUserConfig(t)
+		root, _, wt := newSnapshotRepo(t)
+		writeChangeSetFile(t, filepath.Join(root, "apps", "cm.yaml"), "a: 1\n")
+		writeChangeSetFile(t, filepath.Join(root, "rules"), "linked-rule\n")
+		commitAllSnapshotFiles(t, wt, "fixture")
+		if err := os.Symlink("../rules", filepath.Join(root, "apps", ".gitignore")); err != nil {
+			t.Skipf("symlink unavailable: %v", err)
+		}
+		writeChangeSetFile(t, filepath.Join(root, "apps", "linked-rule"), "x\n")
+		nested, _, nestedWt := newSnapshotRepoAt(t, filepath.Join(root, "nested"))
+		writeChangeSetFile(t, filepath.Join(nested, ".gitignore"), "nested-rule\n")
+		commitAllSnapshotFiles(t, nestedWt, "nested")
+		writeChangeSetFile(t, filepath.Join(nested, "nested-rule"), "x\n")
+
+		filter, err := OpenUntrackedIgnoredFilter(t.Context(), root)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if filter.Skip("apps/linked-rule", false) {
+			t.Error("Skip(apps/linked-rule) = true, want a symlinked .gitignore not read")
+		}
+		if filter.Skip("nested/nested-rule", false) {
+			t.Error("Skip(nested/nested-rule) = true, want the .gitignore of a nested repository not read")
+		}
+	})
+}
+
+func newSnapshotRepoAt(t *testing.T, root string) (string, *git.Repository, *git.Worktree) {
+	t.Helper()
+	repo, err := git.PlainInit(root, false)
+	if err != nil {
+		t.Fatalf("PlainInit() error = %v", err)
+	}
+	wt, err := repo.Worktree()
+	if err != nil {
+		t.Fatalf("Worktree() error = %v", err)
+	}
+	return root, repo, wt
 }

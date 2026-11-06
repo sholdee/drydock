@@ -188,19 +188,21 @@ func changedOnlySymlinksDiagnostic(left, right string) diagnostic.Diagnostic {
 
 // outOfBoundsSymlinkVerdicts returns the first out-of-bounds symlink of the
 // tree of each side, or "" for a side that has none or allows them.
-func outOfBoundsSymlinkVerdicts(ctx context.Context, memo *symlinkBoundsMemo, leftRoot, rightRoot string, leftSettings, rightSettings config.ArgoSettings) (string, string, error) {
-	verdict := func(root string, settings config.ArgoSettings) (string, error) {
+// A side whose root is a snapshot of a Git ref (rootRevision set) is not a
+// user root, so Git ignore rules hide nothing in it (userRootSet).
+func outOfBoundsSymlinkVerdicts(ctx context.Context, memo *symlinkBoundsMemo, left, right BuildRequest, leftSettings, rightSettings config.ArgoSettings) (string, string, error) {
+	verdict := func(side BuildRequest, settings config.ArgoSettings) (string, error) {
 		if allowOutOfBoundsSymlinks(settings) {
 			return "", nil
 		}
-		return memo.findOutOfBoundsSymlink(ctx, root, render.OutOfBoundsSymlinkScopeRepository)
+		return memo.findOutOfBoundsSymlink(ctx, side.Path, render.OutOfBoundsSymlinkScopeRepository, strings.TrimSpace(side.rootRevision) == "")
 	}
-	left, err := verdict(leftRoot, leftSettings)
+	leftFile, err := verdict(left, leftSettings)
 	if err != nil {
 		return "", "", err
 	}
-	right, err := verdict(rightRoot, rightSettings)
-	return left, right, err
+	rightFile, err := verdict(right, rightSettings)
+	return leftFile, rightFile, err
 }
 
 // changedOnlySymlinksRenderAll reports whether a changed-only diff renders
@@ -209,8 +211,8 @@ func outOfBoundsSymlinkVerdicts(ctx context.Context, memo *symlinkBoundsMemo, le
 // cannot be walked does not stop the diff: each source that renders from it
 // then fails on its own, as in a full diff. Only a canceled context is an
 // error.
-func changedOnlySymlinksRenderAll(ctx context.Context, memo *symlinkBoundsMemo, leftRoot, rightRoot string, leftSettings, rightSettings config.ArgoSettings) (bool, diagnostic.Diagnostic, error) {
-	left, right, err := outOfBoundsSymlinkVerdicts(ctx, memo, leftRoot, rightRoot, leftSettings, rightSettings)
+func changedOnlySymlinksRenderAll(ctx context.Context, memo *symlinkBoundsMemo, leftRequest, rightRequest BuildRequest, leftSettings, rightSettings config.ArgoSettings) (bool, diagnostic.Diagnostic, error) {
+	left, right, err := outOfBoundsSymlinkVerdicts(ctx, memo, leftRequest, rightRequest, leftSettings, rightSettings)
 	if err != nil {
 		if ctxErr := ctx.Err(); ctxErr != nil {
 			return false, diagnostic.Diagnostic{}, ctxErr
@@ -247,7 +249,7 @@ func changedOnlyApplications(ctx context.Context, request DiffRequest, leftBuild
 	// that renders from it, whichever path holds it, and a changed-only
 	// ignore glob may hide that path. A change of the first such symlink
 	// reaches nearly every Application, so render them all.
-	if renderAll, diag, err := changedOnlySymlinksRenderAll(ctx, leftBuildRequest.symlinkBounds, leftBuildRequest.Path, rightBuildRequest.Path, leftList.Settings, rightList.Settings); err != nil {
+	if renderAll, diag, err := changedOnlySymlinksRenderAll(ctx, leftBuildRequest.symlinkBounds, leftBuildRequest, rightBuildRequest, leftList.Settings, rightList.Settings); err != nil {
 		return nil, nil, nil, err
 	} else if renderAll {
 		return leftList.Applications, rightList.Applications, []diagnostic.Diagnostic{diag}, nil

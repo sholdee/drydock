@@ -588,7 +588,12 @@ Supported:
 - In a local Git worktree, the out-of-bounds check leaves out every path that
   Git ignores and does not track, such as a Python virtual environment or a
   Nix build result. No commit, and so no Argo CD checkout, can hold such a
-  path. The root can be the top level of the worktree or a directory in it.
+  path. This applies only to a tree the user names: the `--path` root, a
+  diff path, or a `--repo-map` path. drydock's own snapshots of a Git ref
+  and its acquired repositories hold committed content only, so they are
+  checked whole, also when the temporary directory is inside some other
+  worktree. The root can be the top level of the worktree or a directory
+  in it that the worktree tracks.
   When the `git` command is on `PATH`, drydock asks Git for that set with
   `git ls-files --others --ignored --exclude-standard --directory`, so every
   ignore rule that Git applies counts. The call drops the Git variables that
@@ -596,14 +601,16 @@ Supported:
   `GIT_INDEX_FILE` in a Git hook, and stops after 20 seconds. Without `git`,
   or when it fails or stops,
   drydock reads the index, the `.gitignore` files, and `info/exclude` (of
-  the common Git directory for a linked worktree) itself. It then leaves out
+  the common Git directory for a linked worktree) itself, as Git reads
+  them: it does not read an ignore file that is a symlink, or the
+  `.gitignore` files of a nested repository. It then leaves out
   `core.excludesFile` and the default user ignore file, so it skips fewer
   paths than Git, never more. A path at or under a submodule is always
   checked in that case, because the parent index does not list submodule
   files and Argo CD checks out submodules. A `.git` file at the worktree
   root, as in a linked worktree, is skipped like a `.git` directory. A root
-  that is not in a Git worktree, or that Git ignores itself, is checked
-  whole.
+  that is not in a Git worktree, that the worktree does not track, or that
+  Git ignores itself, is checked whole.
 - The persistent render cache key and changed-only selection of a directory
   source cover the files outside its path and its Jsonnet libraries that
   its symlinks reach and its Jsonnet files import, directly or through other
