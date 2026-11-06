@@ -55,6 +55,13 @@ DIRECTORY_DECODE_APPLICATIONS=()
 # The cases with source: plugin. Their drydock capture carries the same
 # plugin flags as PLUGIN_APPLICATIONS.
 DIRECTORY_DECODE_PLUGIN_APPLICATIONS=()
+# A second Git repository for the out-of-bounds symlink case. The Argo CD
+# repo-server fails every Application from a repository that holds such a
+# symlink, so it cannot live in the main fixture repository. The smoke adds
+# the symlink when it builds the repository, so drydock's own repository
+# never holds it. Its Application lives in the directory decode namespace.
+OOB_SYMLINK_REPO_URL="git://argocd-parity-git.argocd-parity.svc.cluster.local/oob-symlink.git"
+OOB_SYMLINK_FIXTURE_PATH="${REPO_ROOT}/testdata/argocd-parity/oob-symlink-repo"
 OCI_ARTIFACT_PATH="${REPO_ROOT}/testdata/argocd-parity/oci-artifact"
 OCI_APPSET_ARTIFACT_PATH="${REPO_ROOT}/testdata/argocd-parity/oci-appset-artifact"
 OCI_REGISTRY_HOST="argocd-parity-registry.argocd-parity.svc.cluster.local"
@@ -217,6 +224,7 @@ APPLICATIONS=(
   parity-directory-extension-filter
   parity-directory-decode-skips
   parity-directory-decode-jsonnet
+  parity-directory-symlinks
   parity-kustomize-variants
   parity-kustomize-labels
   parity-kustomize-generators
@@ -324,6 +332,9 @@ CMP_SIDECARS=(
 # a local run with an uncommitted fixture is trusted exactly like CI's PR
 # merge commit.
 FIXTURE_GIT_WORK=""
+# Set by prepare_fixture_git_image: the local git repo of OOB_SYMLINK_REPO_URL,
+# which drydock reads through --repo-map.
+OOB_SYMLINK_WORK=""
 
 PROJECT_POLICY_CASES=(
   "argocd|project-policy-source-allowed|none"
@@ -461,6 +472,7 @@ for project_policy_phase_dir in "${PROJECT_POLICY_IN_CLUSTER_SECRET_DIR}" "${PRO
   [[ -f "${project_policy_phase_dir}/expected.yaml" ]] || fail "project policy phase expected file not found: ${project_policy_phase_dir}/expected.yaml"
 done
 [[ -f "${DIRECTORY_DECODE_EXPECTED}" ]] || fail "directory decode expected file not found: ${DIRECTORY_DECODE_EXPECTED}"
+[[ -d "${OOB_SYMLINK_FIXTURE_PATH}" ]] || fail "out-of-bounds symlink fixture repo not found: ${OOB_SYMLINK_FIXTURE_PATH}"
 [[ -d "${SIDECAR_PATH}" ]] || fail "CMP sidecar manifest directory not found: ${SIDECAR_PATH}"
 
 OUT_DIR="$(mkdir -p "${OUT_DIR}" && cd "${OUT_DIR}" && pwd)"
@@ -599,6 +611,27 @@ pin_container_policy_image() {
     || fail "container plugin policy ${policy} does not name the pulled image ${PARITY_ALPINE_POLICY_IMAGE}; keep its image digest in sync with PARITY_ALPINE_IMAGE_DIGEST"
 }
 
+# prepare_oob_symlink_repo builds the repository of OOB_SYMLINK_REPO_URL as
+# WORK_DIR/oob-symlink.git. It adds other/escape.yaml, a symlink with an
+# absolute target, outside the path of the Application that renders from
+# the repository. Git stores the symlink as mode 120000, and the Argo CD
+# checkout recreates it.
+prepare_oob_symlink_repo() {
+  OOB_SYMLINK_WORK="${WORK_DIR}/oob-symlink-src"
+  mkdir -p "${OOB_SYMLINK_WORK}/other"
+  cp -R "${OOB_SYMLINK_FIXTURE_PATH}/." "${OOB_SYMLINK_WORK}/"
+  ln -s /etc/hosts "${OOB_SYMLINK_WORK}/other/escape.yaml"
+  git -C "${OOB_SYMLINK_WORK}" init --initial-branch=main >/dev/null
+  git -C "${OOB_SYMLINK_WORK}" config user.email "drydock@example.invalid"
+  git -C "${OOB_SYMLINK_WORK}" config user.name "drydock render parity smoke"
+  git -C "${OOB_SYMLINK_WORK}" add .
+  git -C "${OOB_SYMLINK_WORK}" commit -m "seed out-of-bounds symlink fixture" >/dev/null
+  [[ "$(git -C "${OOB_SYMLINK_WORK}" ls-files -s other/escape.yaml | cut -d' ' -f1)" == "120000" ]] \
+    || fail "the out-of-bounds symlink fixture did not commit other/escape.yaml as a symlink"
+  git clone --bare --no-hardlinks "${OOB_SYMLINK_WORK}" "${WORK_DIR}/oob-symlink.git" >/dev/null
+  git --git-dir="${WORK_DIR}/oob-symlink.git" update-server-info
+}
+
 prepare_fixture_git_image() {
   local bare image dockerfile
   # Script-scoped: this repo is also the trusted plugin policy repo for the
@@ -619,13 +652,16 @@ prepare_fixture_git_image() {
   git -C "${FIXTURE_GIT_WORK}" commit -m "seed argocd parity fixture" >/dev/null
   git clone --bare --no-hardlinks "${FIXTURE_GIT_WORK}" "${bare}" >/dev/null
   git --git-dir="${bare}" update-server-info
+  prepare_oob_symlink_repo
+
 
   dockerfile="${WORK_DIR}/Dockerfile.git"
   cat > "${dockerfile}" <<'DOCKERFILE'
 FROM alpine:3.23
 RUN apk add --no-cache git-daemon
 COPY --chown=65534:65534 repo.git /srv/git/repo.git
-RUN touch /srv/git/repo.git/git-daemon-export-ok && chmod -R a+rX /srv/git
+COPY --chown=65534:65534 oob-symlink.git /srv/git/oob-symlink.git
+RUN touch /srv/git/repo.git/git-daemon-export-ok /srv/git/oob-symlink.git/git-daemon-export-ok && chmod -R a+rX /srv/git
 EXPOSE 9418
 USER 65534:65534
 ENTRYPOINT ["git", "daemon", "--verbose", "--export-all", "--base-path=/srv/git", "--reuseaddr", "--informative-errors", "/srv/git"]
@@ -1937,6 +1973,9 @@ capture_directory_decode_drydock_results() {
   for app in "${DIRECTORY_DECODE_APPLICATIONS[@]}"; do
     drydock_build_args "${DIRECTORY_DECODE_NAMESPACE}/${app}"
     build_args=("${DRYDOCK_BUILD_ARGS[@]}")
+    [[ -n "${OOB_SYMLINK_WORK}" ]] \
+      || fail "OOB_SYMLINK_WORK is unset; prepare_fixture_git_image must run before capturing ${app}"
+    build_args+=(--repo-map "${OOB_SYMLINK_REPO_URL}=${OOB_SYMLINK_WORK}")
     for plugin_app in "${DIRECTORY_DECODE_PLUGIN_APPLICATIONS[@]}"; do
       if [[ "${app}" == "${plugin_app}" ]]; then
         [[ -n "${FIXTURE_GIT_WORK}" ]] \

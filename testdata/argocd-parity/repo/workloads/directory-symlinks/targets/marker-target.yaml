@@ -1,0 +1,9 @@
+# +argocd:skip-file-rendering
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: parity-symlinks-marker
+  namespace: parity-directory-symlinks
+data:
+  source: directory-symlinks
+  fixture: marker

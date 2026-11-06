@@ -464,6 +464,22 @@ func TestCommittedExpectedFileMatchesFixtures(t *testing.T) {
 		if err != nil {
 			t.Fatalf("read Application for %s: %v", tc.Name, err)
 		}
+		if tc.Repository != "" {
+			// The smoke builds this repository and adds the failing file.
+			for _, want := range []string{
+				"name: " + tc.Name + "\n",
+				"namespace: " + testNamespace + "\n",
+				"repoURL: git://argocd-parity-git.argocd-parity.svc.cluster.local/" + tc.Repository + ".git\n",
+			} {
+				if !strings.Contains(string(app), want) {
+					t.Fatalf("Application for %s does not contain %q", tc.Name, want)
+				}
+			}
+			if info, err := os.Stat(filepath.Join(repoRoot, "testdata", "argocd-parity", tc.Repository+"-repo")); err != nil || !info.IsDir() {
+				t.Fatalf("fixture repository for %s: %v", tc.Name, err)
+			}
+			continue
+		}
 		for _, want := range []string{
 			"name: " + tc.Name + "\n",
 			"namespace: " + testNamespace + "\n",

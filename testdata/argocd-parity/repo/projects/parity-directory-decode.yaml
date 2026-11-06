@@ -6,6 +6,7 @@ metadata:
 spec:
   sourceRepos:
     - git://argocd-parity-git.argocd-parity.svc.cluster.local/repo.git
+    - git://argocd-parity-git.argocd-parity.svc.cluster.local/oob-symlink.git
   destinations:
     - server: https://kubernetes.default.svc
       namespace: parity-directory-decode-workloads

@@ -1,0 +1,7 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: parity-decode-oob-symlink
+  namespace: parity-directory-decode-workloads
+data:
+  source: oob-symlink

@@ -2,12 +2,14 @@ package render
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	apppathutil "github.com/argoproj/argo-cd/v3/util/app/path"
+	"sigs.k8s.io/yaml"
 )
 
 // TestFindOutOfBoundsSymlinkMatchesUpstream runs drydock's walk and the
@@ -101,5 +103,51 @@ func TestFindOutOfBoundsSymlinkSkipsRootGitFile(t *testing.T) {
 	})
 	if err != nil || skipped != "" {
 		t.Fatalf("FindOutOfBoundsSymlink() with Skip = %q, %v, want none", skipped, err)
+	}
+}
+
+// TestOutOfBoundsSymlinkSmokeFixture builds the oob-symlink repository of
+// the Argo CD render parity smoke as the smoke does, and requires the
+// message that the smoke expects from drydock and from the upstream
+// CheckOutOfBoundsSymlinks with the repo-server's wording
+// (reposerver/repository/repository.go:512 at v3.6.1).
+func TestOutOfBoundsSymlinkSmokeFixture(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join("..", "..", "testdata", "argocd-parity", "directory-decode-expected.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var expected struct {
+		Cases []parityDecodeCase `json:"cases"`
+	}
+	if err := yaml.Unmarshal(data, &expected); err != nil {
+		t.Fatal(err)
+	}
+	var tc parityDecodeCase
+	for _, candidate := range expected.Cases {
+		if candidate.Repository == "oob-symlink" {
+			tc = candidate
+		}
+	}
+	if tc.Name == "" {
+		t.Fatal("no expected case uses the oob-symlink repository")
+	}
+	root := t.TempDir()
+	if err := os.CopyFS(root, os.DirFS(filepath.Join("..", "..", "testdata", "argocd-parity", "oob-symlink-repo"))); err != nil {
+		t.Fatal(err)
+	}
+	// prepare_oob_symlink_repo in scripts/argocd-parity-smoke.sh adds it.
+	symlink(t, "/etc/hosts", filepath.Join(root, "other", "escape.yaml"))
+
+	upstreamErr := apppathutil.CheckOutOfBoundsSymlinks(root, ".git")
+	var oob *apppathutil.OutOfBoundsSymlinkError
+	if !errors.As(upstreamErr, &oob) {
+		t.Fatalf("upstream error = %v, want an out-of-bounds symlink", upstreamErr)
+	}
+	if got := fmt.Sprintf("repository contains out-of-bounds symlinks. file: %s", oob.File); !strings.Contains(got, tc.ArgoCDMessage) {
+		t.Fatalf("upstream message = %q, want %q", got, tc.ArgoCDMessage)
+	}
+	drydockErr := CheckOutOfBoundsSymlinks(t.Context(), root, OutOfBoundsSymlinkScopeRepository, OutOfBoundsSymlinkOptions{SkipRootGit: true})
+	if drydockErr == nil || !strings.Contains(drydockErr.Error(), tc.DrydockMessage) {
+		t.Fatalf("drydock error = %v, want %q", drydockErr, tc.DrydockMessage)
 	}
 }

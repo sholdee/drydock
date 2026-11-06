@@ -370,11 +370,14 @@ type parityDecodeCase struct {
 	DrydockMessage     string `json:"drydockMessage"`
 	ArgoCDQuotesObject bool   `json:"argocdQuotesObject"`
 	ArgoCDNamesObject  string `json:"argocdNamesObject"`
+	Repository         string `json:"repository"`
 }
 
 // readParityDecodeCases reads the decode smoke cases whose source is
 // directory (an empty source) when directory is set, and the other cases
-// otherwise.
+// otherwise. A case with its own repository fails on the whole repository,
+// not on a file of the source, so TestOutOfBoundsSymlinkSmokeFixture covers
+// it instead.
 func readParityDecodeCases(t *testing.T, directory bool) []parityDecodeCase {
 	t.Helper()
 	data, err := os.ReadFile(filepath.Join("..", "..", "testdata", "argocd-parity", "directory-decode-expected.yaml"))
@@ -389,6 +392,9 @@ func readParityDecodeCases(t *testing.T, directory bool) []parityDecodeCase {
 	}
 	var out []parityDecodeCase
 	for _, tc := range expected.Cases {
+		if tc.Repository != "" {
+			continue
+		}
 		if (tc.Source == "" || tc.Source == "directory") == directory {
 			out = append(out, tc)
 		}

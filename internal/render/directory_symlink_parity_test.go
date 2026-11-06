@@ -327,3 +327,40 @@ func TestDirectoryRendererRejectsSymlinkIntoGitDirectory(t *testing.T) {
 		t.Fatalf("Render() error = %v, want the .git symlink error", err)
 	}
 }
+
+// TestDirectorySymlinksSmokeFixtureMatchesUpstream renders the
+// parity-directory-symlinks fixture of the Argo CD render parity smoke with
+// drydock and with the copies of the repo-server code, with the options of
+// its Application, and requires the ConfigMaps that the smoke expects from
+// both.
+func TestDirectorySymlinksSmokeFixtureMatchesUpstream(t *testing.T) {
+	root, err := filepath.Abs(filepath.Join("..", "..", "testdata", "argocd-parity", "repo"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	realRoot, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const sourcePath = "workloads/directory-symlinks/app"
+	upstreamObjs, err := upstreamFindManifestsWithOptions(filepath.Join(realRoot, sourcePath), realRoot, true, "", "excluded.yaml", 0)
+	if err != nil {
+		t.Fatalf("upstream error = %v", err)
+	}
+	var upstreamNames []string
+	for _, obj := range upstreamObjs {
+		upstreamNames = append(upstreamNames, obj.GetName())
+	}
+	sort.Strings(upstreamNames)
+	result, _, err := (DirectoryRenderer{}).Render(t.Context(), ResolvedSource{RepoRoot: root, Path: sourcePath}, RenderOptions{
+		DirectoryRecurse: true,
+		DirectoryExclude: "excluded.yaml",
+	})
+	if err != nil {
+		t.Fatalf("drydock error = %v", err)
+	}
+	want := "parity-symlinks-chain,parity-symlinks-jsonnet-link-dir,parity-symlinks-jsonnet-linked-import,parity-symlinks-linked,parity-symlinks-plain"
+	if got := strings.Join(directoryManifestNames(result), ","); got != want || strings.Join(upstreamNames, ",") != want {
+		t.Fatalf("drydock rendered %s, upstream %v, want %s", got, upstreamNames, want)
+	}
+}
