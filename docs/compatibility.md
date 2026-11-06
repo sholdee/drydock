@@ -103,7 +103,14 @@ Supported:
 - Recursive rendered fleet discovery from desired output, including rendered
   `Application`, `ApplicationSet`, `AppProject`, and Argo CD settings objects.
   Static committed objects take precedence over default rendered fleet
-  duplicates.
+  duplicates. drydock renders each parent with the tracking settings of the
+  repository (`application.resourceTrackingMethod`,
+  `application.instanceLabelKey`, and `installationID`), as the Argo CD
+  controller does. So a discovered child Application carries the tracking
+  metadata of its parent that Argo CD sets. Under label tracking, it has the
+  instance label with the parent name and no `argocd.argoproj.io/tracking-id`
+  annotation. `-l` selects on these labels. Earlier drydock releases always
+  used annotation tracking for this render.
 - Explicit `--discover-kustomize PATH` discovery from rendered local
   Kustomize entrypoints. Explicitly rendered Kustomize objects take precedence
   over committed duplicates because the path is the operator-selected Argo CD

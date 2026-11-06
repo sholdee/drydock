@@ -47,6 +47,13 @@ selector syntax to match `Application.metadata.labels`:
 drydock get apps --path . -l 'env in (prod,stage),tier!=test'
 ```
 
+A child Application that drydock finds by rendering its parent has the
+tracking metadata that Argo CD sets on it, from the tracking settings of the
+repository. Under label tracking, the child has the label
+`app.kubernetes.io/instance` (or the configured
+`application.instanceLabelKey`) with the parent name, and `-l` can select on
+it.
+
 List rendered image references from Applications:
 
 ```bash
