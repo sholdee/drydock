@@ -7,7 +7,10 @@
 // report for it. drydock must report a change for a resource exactly when
 // that status is OutOfSync. The check fails when either side differs from the
 // expected file, or when either side has a resource that the file does not
-// list. An Application can also list warnings that drydock must print.
+// list. drydock must also render every expected resource at the second
+// commit, so that a resource it never rendered cannot pass as unchanged. An
+// Application can list warnings that drydock must print, and the drydock
+// diff must print no other diff.ignore-* diagnostic.
 //
 // An Application with comparisonError has ignore rules that Argo CD cannot
 // build. Argo CD must report a ComparisonError condition and sync status
@@ -17,10 +20,12 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"io/fs"
 	"maps"
 	"os"
@@ -51,6 +56,7 @@ type options struct {
 	DrydockDiff          string
 	DrydockStderr        string
 	DrydockFailureDir    string
+	DrydockRenderDir     string
 	Out                  string
 	List                 bool
 	ListComparisonErrors bool
@@ -161,6 +167,7 @@ func main() {
 	flag.StringVar(&opts.DrydockDiff, "drydock-diff", "", "output of drydock diff apps -o json")
 	flag.StringVar(&opts.DrydockStderr, "drydock-stderr", "", "stderr of the same drydock diff apps run")
 	flag.StringVar(&opts.DrydockFailureDir, "drydock-failure-dir", "", "directory of drydock diff app results for the comparisonError Applications, one <name>.exit and <name>.stderr each")
+	flag.StringVar(&opts.DrydockRenderDir, "drydock-render-dir", "", "directory of drydock build app output at the second commit, one <name>.yaml per Application without comparisonError")
 	flag.StringVar(&opts.Out, "out", "", "optional path for a text summary")
 	flag.BoolVar(&opts.List, "list", false, "print the names of the Applications without comparisonError, one per line, and exit")
 	flag.BoolVar(&opts.ListComparisonErrors, "list-comparison-errors", false, "print the names of the comparisonError Applications, one per line, and exit")
@@ -222,6 +229,8 @@ func compare(opts options) (comparisonResult, error) {
 		failures := evaluateArgoCD(app, expected.TargetRevision, opts.ArgoCDAppDir)
 		if app.ComparisonError != nil {
 			failures = append(failures, evaluateDrydockFailure(app, opts.DrydockFailureDir)...)
+		} else {
+			failures = append(failures, evaluateDrydockRender(app, opts.DrydockRenderDir)...)
 		}
 		failures = append(failures, evaluateDrydock(app, changes[app.Name])...)
 		for _, warning := range app.DrydockWarnings {
@@ -248,7 +257,75 @@ func compare(opts options) (comparisonResult, error) {
 			result.Failures = append(result.Failures, fmt.Sprintf("drydock reports changes for Application %s, which the expected file does not list", name))
 		}
 	}
+	result.Failures = append(result.Failures, unexpectedDrydockDiagnostics(expected, string(stderr))...)
 	return result, nil
+}
+
+// drydockDiagnosticPrefix starts the codes of drydock's diff normalization
+// diagnostics.
+const drydockDiagnosticPrefix = "diff.ignore-"
+
+// unexpectedDrydockDiagnostics returns a failure for each stderr line of the
+// main drydock diff with a diff.ignore-* code that no drydockWarnings text
+// of the expected file matches.
+func unexpectedDrydockDiagnostics(expected expectedFile, stderr string) []string {
+	var failures []string
+	for line := range strings.SplitSeq(stderr, "\n") {
+		if !strings.Contains(line, drydockDiagnosticPrefix) {
+			continue
+		}
+		listed := false
+		for _, app := range expected.Applications {
+			for _, warning := range app.DrydockWarnings {
+				if strings.Contains(line, warning) {
+					listed = true
+				}
+			}
+		}
+		if !listed {
+			failures = append(failures, fmt.Sprintf("drydock diff printed a diagnostic that the expected file does not list: %s", line))
+		}
+	}
+	return failures
+}
+
+// evaluateDrydockRender requires that drydock rendered every expected
+// resource of the Application at the second commit.
+func evaluateDrydockRender(app expectedApplication, dir string) []string {
+	path := filepath.Join(dir, app.Name+".yaml")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return []string{fmt.Sprintf("missing drydock render capture: %v", err)}
+	}
+	rendered := map[resourceKey]struct{}{}
+	decoder := yaml.NewDecoder(bytes.NewReader(data))
+	for {
+		var object struct {
+			APIVersion string `yaml:"apiVersion"`
+			Kind       string `yaml:"kind"`
+			Metadata   struct {
+				Name string `yaml:"name"`
+			} `yaml:"metadata"`
+		}
+		if err := decoder.Decode(&object); err != nil {
+			if errors.Is(err, io.EOF) {
+				break
+			}
+			return []string{fmt.Sprintf("parse drydock render capture %s: %v", path, err)}
+		}
+		group, _, found := strings.Cut(object.APIVersion, "/")
+		if !found {
+			group = ""
+		}
+		rendered[resourceKey{Group: group, Kind: object.Kind, Name: object.Metadata.Name}] = struct{}{}
+	}
+	var failures []string
+	for _, resource := range app.Resources {
+		if _, ok := rendered[resource.key()]; !ok {
+			failures = append(failures, fmt.Sprintf("drydock did not render %s at the second commit", resource.key()))
+		}
+	}
+	return failures
 }
 
 func (opts options) validate() error {
@@ -259,6 +336,7 @@ func (opts options) validate() error {
 		{"--drydock-diff", opts.DrydockDiff},
 		{"--drydock-stderr", opts.DrydockStderr},
 		{"--drydock-failure-dir", opts.DrydockFailureDir},
+		{"--drydock-render-dir", opts.DrydockRenderDir},
 	} {
 		if strings.TrimSpace(flagValue.value) == "" {
 			missing = append(missing, flagValue.name)

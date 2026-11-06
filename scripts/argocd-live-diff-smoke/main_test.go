@@ -42,6 +42,7 @@ type testFixture struct {
 	drydock    string
 	stderr     string
 	failureDir string
+	renderDir  string
 }
 
 func newTestFixture(t *testing.T, expected string) testFixture {
@@ -54,8 +55,9 @@ func newTestFixture(t *testing.T, expected string) testFixture {
 		stderr:   filepath.Join(root, "drydock-diff.stderr"),
 
 		failureDir: filepath.Join(root, "failures"),
+		renderDir:  filepath.Join(root, "renders"),
 	}
-	for _, dir := range []string{fixture.appDir, fixture.failureDir} {
+	for _, dir := range []string{fixture.appDir, fixture.failureDir, fixture.renderDir} {
 		if err := os.Mkdir(dir, 0o755); err != nil {
 			t.Fatalf("Mkdir() error = %v", err)
 		}
@@ -72,6 +74,7 @@ func (fixture testFixture) options() options {
 
 		DrydockStderr:     fixture.stderr,
 		DrydockFailureDir: fixture.failureDir,
+		DrydockRenderDir:  fixture.renderDir,
 	}
 }
 
@@ -137,6 +140,12 @@ func (fixture testFixture) writePassingCases(t *testing.T) {
 		[]appCondition{{Type: comparisonErrorType, Message: "Failed to compare desired state to live state: failed to create diff normalizer: unexpected token"}},
 		resourceStatus("", "ConfigMap", "invalid-jq", statusUnknown))
 	fixture.writeFailure(t, "parity-live-diff-invalid-jq", "2", "error diff.ignore-rule-invalid: Application argocd/parity-live-diff-invalid-jq: failed to compare desired states\n")
+	writeFile(t, filepath.Join(fixture.renderDir, "parity-live-diff-application.yaml"), renderedConfigMap("pointer-ignored")+"---\napiVersion: apps/v1\nkind: Deployment\nmetadata:\n  name: jq-other\n")
+	writeFile(t, filepath.Join(fixture.renderDir, "parity-live-diff-annotation.yaml"), renderedConfigMap("pointer-ignored"))
+}
+
+func renderedConfigMap(name string) string {
+	return "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: " + name + "\n"
 }
 
 func (fixture testFixture) writeFailure(t *testing.T, name, exitCode, stderr string) {
@@ -258,6 +267,29 @@ func TestCompareFailures(t *testing.T) {
 				fixture.writeApplication(t, "parity-live-diff-annotation", "live-diff-b", statusSynced)
 			},
 			want: "Argo CD has no resource ConfigMap/pointer-ignored",
+		},
+		{
+			name: "drydock never rendered a Synced resource",
+			mutate: func(t *testing.T, fixture testFixture) {
+				writeFile(t, filepath.Join(fixture.renderDir, "parity-live-diff-annotation.yaml"), renderedConfigMap("other"))
+			},
+			want: "drydock did not render ConfigMap/pointer-ignored at the second commit",
+		},
+		{
+			name: "drydock render capture is missing",
+			mutate: func(t *testing.T, fixture testFixture) {
+				if err := os.Remove(filepath.Join(fixture.renderDir, "parity-live-diff-annotation.yaml")); err != nil {
+					t.Fatalf("Remove() error = %v", err)
+				}
+			},
+			want: "missing drydock render capture",
+		},
+		{
+			name: "drydock prints an unexpected diagnostic",
+			mutate: func(t *testing.T, fixture testFixture) {
+				writeFile(t, fixture.stderr, "warning diff.ignore-pointer-invalid: Application argocd/parity-live-diff-application: x\nwarning diff.ignore-pointer-invalid: Application argocd/parity-live-diff-annotation: y\n")
+			},
+			want: "drydock diff printed a diagnostic that the expected file does not list: warning diff.ignore-pointer-invalid: Application argocd/parity-live-diff-annotation: y",
 		},
 		{
 			name: "drydock misses a warning",

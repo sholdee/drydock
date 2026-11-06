@@ -87,6 +87,9 @@ LIVE_DIFF_ERROR_APPLICATIONS=()
 # Set by prepare_live_diff_repo: the local git repo of LIVE_DIFF_REPO_URL,
 # which drydock diffs.
 LIVE_DIFF_WORK=""
+# Set to "true" while the live diff Applications and argocd-cm keys exist.
+# The cleanup trap reads it.
+LIVE_DIFF_STATE_CHANGED="false"
 OCI_ARTIFACT_PATH="${REPO_ROOT}/testdata/argocd-parity/oci-artifact"
 OCI_APPSET_ARTIFACT_PATH="${REPO_ROOT}/testdata/argocd-parity/oci-appset-artifact"
 OCI_REGISTRY_HOST="argocd-parity-registry.argocd-parity.svc.cluster.local"
@@ -589,6 +592,12 @@ cleanup() {
     elif [[ "${CREATE_CLUSTER}" != "true" ]]; then
       reset_project_policy_shared_state >/dev/null 2>&1 || true
     fi
+  fi
+  # On an existing cluster, a failed live diff phase must not leave its
+  # Applications and argocd-cm keys behind. With --keep-cluster, keep them
+  # for inspection.
+  if [[ "${LIVE_DIFF_STATE_CHANGED}" == "true" && "${CREATE_CLUSTER}" != "true" && "${KEEP_CLUSTER}" != "true" ]]; then
+    remove_live_diff_state >/dev/null 2>&1 || true
   fi
   rm -rf "${WORK_DIR}"
   if [[ "${CREATE_CLUSTER}" == "true" && "${KEEP_CLUSTER}" != "true" ]]; then
@@ -2226,6 +2235,15 @@ metadata:
 YAML
 }
 
+# remove_live_diff_state deletes the live diff Applications and removes the
+# live diff argocd-cm keys. The Applications have no resources finalizer, so
+# their resources stay. It is safe to run more than once.
+remove_live_diff_state() {
+  kubectl --request-timeout=30s -n argocd delete applications.argoproj.io \
+    "${LIVE_DIFF_APPLICATIONS[@]}" "${LIVE_DIFF_ERROR_APPLICATIONS[@]}" --ignore-not-found >/dev/null
+  remove_live_diff_settings
+}
+
 # dump_live_diff_applications saves each live diff Application and fails
 # the smoke with the given message.
 dump_live_diff_applications() {
@@ -2332,6 +2350,26 @@ capture_live_diff_drydock_diff() {
   done
 }
 
+# capture_live_diff_drydock_renders renders each compared Application at
+# LIVE_DIFF_REVISION_B, the checked-out tree of LIVE_DIFF_WORK. The
+# comparison requires every expected resource in it, so a resource that
+# drydock never rendered cannot pass as unchanged.
+capture_live_diff_drydock_renders() {
+  local app output_dir
+  output_dir="$(artifact_dir live-diff/drydock-renders)"
+  for app in "${LIVE_DIFF_APPLICATIONS[@]}"; do
+    if ! (cd "${REPO_ROOT}" && "${DRYDOCK_CMD[@]}" build app "${app}" \
+      --path "${LIVE_DIFF_WORK}" \
+      --repo-map "${LIVE_DIFF_REPO_URL}=${LIVE_DIFF_WORK}" \
+      --render-cache-dir "${WORK_DIR}/render-cache-live-diff" \
+      --offline \
+      > "${output_dir}/${app}.yaml" 2> "${output_dir}/${app}.stderr"); then
+      cat "${output_dir}/${app}.stderr" >&2 || true
+      fail "drydock build of live diff Application ${app} failed; see ${output_dir}/${app}.stderr"
+    fi
+  done
+}
+
 compare_live_diff_smoke() {
   local output_dir
   output_dir="$(artifact_dir live-diff)"
@@ -2341,6 +2379,7 @@ compare_live_diff_smoke() {
     --drydock-diff "${output_dir}/drydock-diff.json" \
     --drydock-stderr "${output_dir}/drydock-diff.stderr" \
     --drydock-failure-dir "${output_dir}/drydock-failures" \
+    --drydock-render-dir "${output_dir}/drydock-renders" \
     --out "${output_dir}/summary.txt")
 }
 
@@ -2351,6 +2390,7 @@ run_live_diff_smoke() {
     ensure_namespace "${namespace}"
   done
   log_step "Applying the live diff settings to argocd-cm"
+  LIVE_DIFF_STATE_CHANGED="true"
   apply_live_diff_settings
   log_step "Applying and syncing the live diff Applications at ${LIVE_DIFF_REVISION_A}"
   kubectl -n argocd apply -f "${LIVE_DIFF_FIXTURE_PATH}/repo/applications" >/dev/null
@@ -2360,10 +2400,12 @@ run_live_diff_smoke() {
   capture_live_diff_argocd_applications
   log_step "Capturing the drydock diff between ${LIVE_DIFF_REVISION_A} and ${LIVE_DIFF_REVISION_B}"
   capture_live_diff_drydock_diff
+  capture_live_diff_drydock_renders
   log_step "Comparing live diff sync status"
   compare_live_diff_smoke
-  log_step "Removing the live diff settings from argocd-cm"
-  remove_live_diff_settings
+  log_step "Removing the live diff Applications and argocd-cm settings"
+  remove_live_diff_state
+  LIVE_DIFF_STATE_CHANGED="false"
 }
 
 main() {

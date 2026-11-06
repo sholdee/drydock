@@ -1174,15 +1174,21 @@ that no rule removes. So each rule must remove its fields and nothing more.
    repository URL at the local repository, so each side of the diff renders
    its own tag. This run leaves out the `comparisonError` Applications with
    `--discover-ignore`, because their failure fails the whole command. Then
-   the smoke runs `drydock diff app` for each of them on its own.
+   the smoke runs `drydock diff app` for each of them on its own. It also
+   saves `drydock build app` of each other Application at `live-diff-b`.
 5. `scripts/argocd-live-diff-smoke` compares both sides with the expected
    file. drydock must report a change for a resource exactly when Argo CD
    reports it `OutOfSync`. A resource that one side reports and the expected
-   file does not list fails the check. The stderr of the drydock diff must
-   contain each `drydockWarnings` text. For a `comparisonError` Application,
-   Argo CD must report a `ComparisonError` condition with sync status
-   `Unknown`, and its own drydock diff must fail with the expected message.
-6. It removes the argocd-cm keys again.
+   file does not list fails the check. drydock must render every expected
+   resource, so a resource that drydock never rendered cannot pass as
+   unchanged. The stderr of the drydock diff must contain each
+   `drydockWarnings` text, and no other `diff.ignore-*` diagnostic. For a
+   `comparisonError` Application, Argo CD must report a `ComparisonError`
+   condition with sync status `Unknown`, and its own drydock diff must fail
+   with the expected message.
+6. It deletes the live diff Applications and removes the argocd-cm keys.
+   On an existing cluster, the exit trap does the same when the phase
+   fails, unless `--keep-cluster` is set.
 
 The results go to `live-diff/` in the smoke output directory.
 
