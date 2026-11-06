@@ -1,0 +1,7 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: pointer-ignored
+data:
+  ignored: before
+  kept: before

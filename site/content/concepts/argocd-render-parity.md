@@ -72,6 +72,21 @@ out-of-bounds symlinks`, so this repository holds nothing else. These
 Applications live in their own namespace, so they do not affect the manifest
 comparison.
 
+The smoke also checks diff normalization against Argo CD sync status. A
+third Git repository holds two tagged commits. Argo CD syncs some
+Applications at the first commit, then compares the second commit with the
+live objects. drydock diffs the same two commits. In the second commit, some
+resources change only fields that an ignore rule removes, and Argo CD must
+report them `Synced` while drydock reports no change. Other resources also
+change a field that no rule removes, and both sides must report a change.
+The rules come from Application `spec.ignoreDifferences`, argocd-cm
+`resource.customizations` and `resource.compareoptions`, and the
+`argocd.argoproj.io/ignore-differences` annotation. Most of these
+Applications use server-side diff, and one uses the client-side diff. One
+Application changes its own rules in the second commit, and Argo CD must use
+the new rules. One Application has a jq rule that does not parse. Argo CD
+must fail its comparison, and drydock must fail its diff.
+
 ## Covered Areas
 
 | Area | Covered examples |
@@ -85,6 +100,7 @@ comparison.
 | Apps in any namespace | Application outside the controller namespace: instance-name `ARGOCD_APP_NAME` (`<namespace>_<name>`), destination `ARGOCD_APP_NAMESPACE`, `.argocd-source-<namespace>_<name>.yaml` override with the bare-name file ignored, AppProject `sourceNamespaces`, tracking metadata compared without ignore rules |
 | Config management plugins | Named CMP sidecar with no `discover` block against a trusted `engine: exec` policy: the `ARGOCD_APP_*` build environment, `spec.source.plugin.env` delivered as `ARGOCD_ENV_<name>` after build-environment substitution and never under its bare name, the exact `ARGOCD_APP_PARAMETERS` JSON, and the `PARAM_*` surface with no extra names, plugin output read with `kube.SplitYAML` (an empty object `{}` fails the source) |
 | Tracking and resources | Argo CD tracking metadata, repeated-resource last-wins behavior, CRDs excluded from tracking metadata, hook-annotated resources excluded from the manifests view across all source types (helm test hooks, Argo CD sync hooks; `crd-install` kept by the hook rules, although `helm template` drops it from Helm output) but still validated against AppProject resource policy, as Argo CD validates hook tasks at sync time and delete hooks at deletion |
+| Diff normalization | Argo CD sync status after a change between two commits: Application `jsonPointers` (including a pointer that is not valid and only warns), `jqPathExpressions` with a select, a `jq` expression that fails to run and is skipped, a `jq` expression that does not parse and fails the comparison, rules that change with the commit, `managedFieldsManagers` that own no field, argocd-cm split keys (a core kind without a slash, `all`) and the block form, `ignoreAggregatedRoles`, and the `argocd.argoproj.io/ignore-differences` annotation read from the target commit with JSON-patch path rules, under server-side diff and the client-side diff |
 
 ## AppProject Policy Check
 

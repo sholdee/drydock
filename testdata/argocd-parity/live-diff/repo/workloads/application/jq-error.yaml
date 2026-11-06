@@ -1,0 +1,7 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: jq-error
+data:
+  ignored: before
+  kept: before

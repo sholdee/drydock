@@ -1,0 +1,20 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: parity-live-diff-invalid-jq
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: git://argocd-parity-git.argocd-parity.svc.cluster.local/live-diff.git
+    targetRevision: live-diff-a
+    path: workloads/invalid-jq
+  destination:
+    name: in-cluster
+    namespace: parity-live-diff
+  # This jq expression does not parse. Argo CD fails the comparison of the
+  # Application, although no Service matches the rule.
+  ignoreDifferences:
+    - kind: Service
+      jqPathExpressions:
+        - .spec.ports[

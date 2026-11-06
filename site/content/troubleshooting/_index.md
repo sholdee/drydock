@@ -376,6 +376,43 @@ will follow upstream when it changes. Until then, use one of these fixes:
 - List only one component that can be valid under `ignoreMissingComponents`.
 - Move the components into the kustomization's own `components:` list.
 
+## Symptom: A `diff.ignore-*`, `diff.comparison-failed`, Or `diff.known-type-skipped` Diagnostic
+
+`diff.ignore-pointer-invalid` is a warning. It names an Application and a
+`jsonPointers` entry of its `spec.ignoreDifferences` or of
+`resource.customizations` that is not a valid JSON pointer, such as
+`spec/replicas` without the leading `/`, or the root pointer `""`. Argo CD
+v3.6.1 does not reject such a pointer. It applies it as a JSON-patch path,
+which skips the first segment, and skips it where the patch fails. So
+`spec/replicas` removes nothing, and `x/spec/replicas` removes
+`spec.replicas`. drydock does the same. To fix the warning, write the pointer
+with a leading `/`. `--strict` makes the warning an error.
+
+`diff.ignore-rule-invalid` is an error. A `jqPathExpressions` entry does not
+parse or compile. Argo CD then fails the comparison of the Application with a
+`ComparisonError` condition, even when the rule matches no resource. An
+expression in `resource.customizations` fails every Application. The command
+prints the diagnostics and no diff, and fails. Fix the jq expression. A
+deleted Application is not checked, because Argo CD never compares it.
+
+`diff.comparison-failed` is an error. A `jqPathExpressions` entry removed the
+whole object on both sides, as `.` does, and the Application uses the
+client-side diff. Argo CD then fails the comparison of the Application. When
+the expression removes the object on one side only, Argo CD and drydock show a
+change with `null` on that side instead. With server-side diff, both sides
+`null` compare as unchanged. Fix the jq expression so that it removes a field,
+not the object.
+
+`diff.known-type-skipped` is an advisory warning. A known type failed to
+normalize a field of a changed resource that the diff shows. The known type is
+either a `knownTypeFields` entry of `resource.customizations`, or the built-in
+known type of Argo Rollouts, a PodSpec at `spec.template.spec`. An example is a
+`core/v1/ResourceRequirements` field whose `limits` is not a map. Argo CD only
+logs this error and compares the field as written, and drydock does the same.
+The warning names the Application, the resource, and the field. `--strict` does
+not fail on it. If you want the field normalized, fix the field in the
+manifest. For a `knownTypeFields` entry, you can also fix its type.
+
 ## Symptom: Changed-Only Falls Back To All Apps
 
 Multi-Application diffs use changed-only selection by default. If a changed

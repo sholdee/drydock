@@ -821,64 +821,62 @@ func TestRunIgnoreJSONPointerMissingPathsAreNoOp(t *testing.T) {
 	}
 }
 
-func TestRunIgnoreJSONPointerInvalidPointersReturnClearError(t *testing.T) {
-	tests := []struct {
-		name      string
-		pointer   string
-		wantParts []string
-	}{
-		{
-			name:      "missing leading slash",
-			pointer:   "spec/replicas",
-			wantParts: []string{"JSON pointer", "must be empty or start with /"},
-		},
-		{
-			name:      "invalid array index",
-			pointer:   "/spec/template/spec/containers/web/image",
-			wantParts: []string{"JSON pointer", "array index"},
-		},
-	}
+// Argo CD v3.6.1 applies every Application and resource.customizations
+// pointer as its own JSON-patch remove operation and skips one that fails
+// (util/argo/normalizers/diff_normalizer.go:143-157 and 207-219). A pointer
+// that is not valid RFC 6901 is skipped, and the next pointer still applies.
+func TestRunIgnoreJSONPointerSkipsPointersThatFailToApply(t *testing.T) {
+	for _, pointer := range []string{"spec/replicas", "/spec/template/spec/containers/web/image", "/data/~2"} {
+		t.Run(pointer, func(t *testing.T) {
+			left := []Document{deploymentDocument("1", []string{pointer, "/spec/replicas"})}
+			right := []Document{deploymentDocument("2", []string{pointer, "/spec/replicas"})}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			left := []Document{deploymentDocument("1", []string{tt.pointer})}
-			right := []Document{deploymentDocument("2", nil)}
-
-			_, err := Run(left, right, Options{Unified: 3})
-			if err == nil {
-				t.Fatalf("Run() error = nil, want error")
+			results, err := Run(left, right, Options{Unified: 3})
+			if err != nil {
+				t.Fatalf("Run() error = %v, want the pointer skipped", err)
 			}
-			for _, want := range tt.wantParts {
-				if !strings.Contains(err.Error(), want) {
-					t.Fatalf("Run() error = %q, want substring %q", err, want)
-				}
+			if len(results) != 0 {
+				t.Fatalf("len(results) = %d, want /spec/replicas still ignored: %#v", len(results), results)
 			}
 		})
 	}
 }
 
-func TestRunIgnoreJSONPointerUsesUnionForMatchedResources(t *testing.T) {
-	left := []Document{deploymentDocument("1", nil)}
-	right := []Document{deploymentDocument("2", []string{"/spec/replicas"})}
-
-	results, err := Run(left, right, Options{Unified: 3})
-	if err != nil {
-		t.Fatalf("Run() error = %v", err)
-	}
-	if len(results) != 0 {
-		t.Fatalf("len(results) = %d, want 0: %#v", len(results), results)
-	}
-}
-
-func TestRunIgnoreJSONPointerEmptyPointerRemovesWholeDocument(t *testing.T) {
+// Argo CD skips the root pointer "": JSON-patch cannot remove the whole
+// document. Before, drydock dropped the whole resource from the diff.
+func TestRunIgnoreJSONPointerEmptyPointerDoesNotHideResource(t *testing.T) {
 	right := []Document{configMapDocument("new", []string{""})}
 
 	results, err := Run(nil, right, Options{Unified: 3})
 	if err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
+	if len(results) != 1 || results[0].Change != ChangeAdded {
+		t.Fatalf("results = %#v, want the added resource kept", results)
+	}
+}
+
+// Argo CD compares the new desired state under the rules that the
+// Application has when it compares that state: the current side's rules. A
+// rule that only the baseline side has does not hide a change.
+func TestRunUsesCurrentSideIgnoreRules(t *testing.T) {
+	left := []Document{deploymentDocument("1", []string{"/spec/replicas"})}
+	right := []Document{deploymentDocument("2", nil)}
+
+	results, err := Run(left, right, Options{Unified: 3})
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if len(results) != 1 {
+		t.Fatalf("len(results) = %d, want the replicas change shown: %#v", len(results), results)
+	}
+
+	results, err = Run(right, left, Options{Unified: 3})
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
 	if len(results) != 0 {
-		t.Fatalf("len(results) = %d, want whole-document ignore to suppress add diff: %#v", len(results), results)
+		t.Fatalf("len(results) = %d, want the current side's rule to hide the change: %#v", len(results), results)
 	}
 }
 
@@ -948,7 +946,9 @@ func TestRunIgnoreJSONPointerSecretRedactionHappensAfterRemoval(t *testing.T) {
 	}
 }
 
-func TestRunHonorsManagedFieldsManagersFromLeftSide(t *testing.T) {
+// A managedFieldsManagers rule that only the baseline side has does not
+// apply: both sides use the current side's rules.
+func TestRunIgnoresBaselineOnlyManagedFieldsManagers(t *testing.T) {
 	left := []Document{{
 		Parent:        testParent(),
 		Resource:      Resource{Group: "apps", Kind: "Deployment", Namespace: "default", Name: "web"},
@@ -965,8 +965,8 @@ func TestRunHonorsManagedFieldsManagersFromLeftSide(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
-	if len(results) != 0 {
-		t.Fatalf("len(results) = %d, want managed replicas ignored: %#v", len(results), results)
+	if len(results) != 1 {
+		t.Fatalf("len(results) = %d, want the replicas change shown: %#v", len(results), results)
 	}
 }
 

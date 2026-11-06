@@ -1,0 +1,19 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: jq-other
+spec:
+  replicas: 0
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: jq-other
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: jq-other
+    spec:
+      containers:
+        - name: app
+          image: registry.k8s.io/pause:3.10
+        - name: sidecar
+          image: registry.k8s.io/pause:3.10

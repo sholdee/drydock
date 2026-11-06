@@ -12,6 +12,7 @@ import (
 	"github.com/sholdee/drydock/internal/acquisition"
 	"github.com/sholdee/drydock/internal/cacheevent"
 	"github.com/sholdee/drydock/internal/chart"
+	"github.com/sholdee/drydock/internal/config"
 	"github.com/sholdee/drydock/internal/diagnostic"
 	"github.com/sholdee/drydock/internal/diff"
 	"github.com/sholdee/drydock/internal/gitref"
@@ -114,11 +115,12 @@ func (o Orchestrator) DiffApps(ctx context.Context, request DiffRequest) (result
 		return DiffResult{Diagnostics: diagnostics, CacheEvents: cacheEvents}, err
 	}
 
-	results, diffErr := diffBuildResults(leftBuild, rightBuild, diff.Options{
+	results, diffDiags, diffErr := diffBuildResults(leftBuild, rightBuild, diff.Options{
 		Unified:           request.Unified,
 		StripAttrs:        request.StripAttrs,
 		ShowIgnoredFields: request.ShowIgnoredFields,
-	})
+	}, request.Strict)
+	diagnostics = append(diagnostics, diffDiags...)
 	if err := errors.Join(buildErr, diffErr); err != nil {
 		return DiffResult{Results: results, Diagnostics: diagnostics, CacheEvents: cacheEvents}, err
 	}
@@ -219,15 +221,16 @@ func (o Orchestrator) DiffApp(ctx context.Context, request DiffAppRequest) (resu
 		return DiffResult{Diagnostics: request.filterProjectDiagnostics(diagnostics), CacheEvents: cacheEvents}, err
 	}
 
-	results, err := diffBuildResults(leftBuild.result, rightBuild.result, diff.Options{
+	results, diffDiags, err := diffBuildResults(leftBuild.result, rightBuild.result, diff.Options{
 		Unified:           request.Unified,
 		StripAttrs:        request.StripAttrs,
 		ShowIgnoredFields: request.ShowIgnoredFields,
-	})
+	}, request.Strict)
+	diagnostics = append(request.filterProjectDiagnostics(diagnostics), diffDiags...)
 	if err != nil {
-		return DiffResult{Diagnostics: request.filterProjectDiagnostics(diagnostics), CacheEvents: cacheEvents}, err
+		return DiffResult{Diagnostics: diagnostics, CacheEvents: cacheEvents}, err
 	}
-	return DiffResult{Results: results, Diagnostics: request.filterProjectDiagnostics(diagnostics), CacheEvents: cacheEvents}, nil
+	return DiffResult{Results: results, Diagnostics: diagnostics, CacheEvents: cacheEvents}, nil
 }
 
 func (o Orchestrator) DiffImages(ctx context.Context, request DiffRequest) (result ImageDiffResult, err error) {
@@ -616,23 +619,80 @@ func selectDiffAppApplications(leftApps, rightApps []argoappv1.Application, name
 	return leftApp, leftOK, rightApp, rightOK, nil
 }
 
-func diffBuildResults(leftBuild, rightBuild BuildResult, opts diff.Options) ([]diff.Result, error) {
-	leftDocs, err := diffDocuments(leftBuild)
+// diffBuildResults diffs the rendered manifests of the two sides. It also
+// returns the diff normalization diagnostics. An Application whose ignore
+// rules Argo CD cannot build fails on its own: it gets an error diagnostic
+// and no results, and the other Applications are still diffed. The returned
+// error reports that failure, and with strict, any normalization warning.
+func diffBuildResults(leftBuild, rightBuild BuildResult, opts diff.Options, strict bool) ([]diff.Result, []diagnostic.Diagnostic, error) {
+	current := currentApplications(rightBuild)
+	leftDocs, err := diffDocumentsWith(leftBuild, func(item ApplicationManifest, id manifest.Identity) diff.Normalization {
+		return baselineNormalization(item, id, current, rightBuild.Settings)
+	})
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	rightDocs, err := diffDocuments(rightBuild)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	return diff.Run(leftDocs, rightDocs, opts)
+	// The controller's jq timeout comes from the current side's
+	// argocd-cmd-params-cm, like the rest of the settings it compares with.
+	opts.JQExecutionTimeout = config.ParseIgnoreNormalizerJQTimeout(rightBuild.Settings.IgnoreNormalizerJQTimeout.Value)
+	failed, diags := invalidIgnoreRuleDiagnostics(rightBuild)
+	leftDocs = withoutApplications(leftDocs, failed)
+	rightDocs = withoutApplications(rightDocs, failed)
+	diags = append(diags, invalidIgnorePointerDiagnostics(leftDocs, rightDocs)...)
+	report, err := diff.RunWithReport(leftDocs, rightDocs, opts)
+	if err != nil {
+		return nil, normalizeDiagnostics(diags, strict, false), err
+	}
+	results := report.Results
+	for _, failure := range report.KnownTypeFailures {
+		app := diffApplicationKey{Namespace: failure.Parent.Namespace, Name: failure.Parent.Name}
+		if _, ok := current[app]; !ok {
+			// Argo CD never compares an Application that was deleted.
+			continue
+		}
+		field := fmt.Sprintf("knownTypeFields field %q", failure.Field)
+		if failure.RolloutDefault {
+			field = fmt.Sprintf("the built-in Argo Rollout known type at %q", failure.Field)
+		}
+		diags = append(diags, diagnostic.Diagnostic{
+			Code:     diffKnownTypeSkippedCode,
+			Severity: diagnostic.SeverityWarning,
+			Category: "diff",
+			Message: fmt.Sprintf("Application %s: %s: %s was not normalized, as Argo CD only logs this error and compares the field as written: %s",
+				app, diffResourceName(failure.Resource), field, failure.Message),
+		})
+	}
+	for _, failure := range report.ComparisonFailures {
+		diags = append(diags, diagnostic.Diagnostic{
+			Code:     diffComparisonFailedCode,
+			Severity: diagnostic.SeverityError,
+			Category: "diff",
+			Message:  fmt.Sprintf("Application %s: failed to compare desired states, as Argo CD fails the comparison: %s", diffApplicationKey{Namespace: failure.Parent.Namespace, Name: failure.Parent.Name}, failure.Message),
+		})
+	}
+	diags = normalizeDiagnostics(diags, strict, false)
+	return results, diags, diagnosticFailure(diags, strict)
 }
 
 func hasRenderedDiffInput(leftBuild, rightBuild BuildResult) bool {
 	return len(leftBuild.ApplicationManifests) > 0 || len(rightBuild.ApplicationManifests) > 0
 }
 
+// diffDocuments returns the documents of one build, each normalized with its
+// own Application's rules and the build's settings.
 func diffDocuments(build BuildResult) ([]diff.Document, error) {
+	return diffDocumentsWith(build, func(item ApplicationManifest, id manifest.Identity) diff.Normalization {
+		normalization := normalizationFor(item.Application, id, build.Settings)
+		normalization.AnnotationJSONPointers = annotationIgnoreJSONPointers(item.Manifest.Object)
+		return normalization
+	})
+}
+
+func diffDocumentsWith(build BuildResult, normalizationOf func(ApplicationManifest, manifest.Identity) diff.Normalization) ([]diff.Document, error) {
 	docs := make([]diff.Document, 0, len(build.ApplicationManifests))
 	for _, item := range build.ApplicationManifests {
 		if item.Manifest.Object == nil {
@@ -643,8 +703,7 @@ func diffDocuments(build BuildResult) ([]diff.Document, error) {
 		if err != nil {
 			return nil, err
 		}
-		normalization := normalizationFor(item.Application, id, build.Settings)
-		normalization.AnnotationJSONPointers = annotationIgnoreJSONPointers(item.Manifest.Object)
+		normalization := normalizationOf(item, id)
 		docs = append(docs, diff.Document{
 			Parent: diff.Parent{
 				Namespace:   item.Application.Namespace,

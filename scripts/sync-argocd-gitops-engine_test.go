@@ -3,6 +3,7 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -128,5 +129,41 @@ func TestGitopsEngineRequirementRejectsMissingRequire(t *testing.T) {
 	}
 	if _, err := gitopsEngineRequirement(source); err == nil || !strings.Contains(err.Error(), gitopsEngineModule) {
 		t.Fatalf("gitopsEngineRequirement() error = %v, want missing %s error", err, gitopsEngineModule)
+	}
+}
+
+// TestGojqMatchesSelectedArgoCD keeps gojq, and every module the gojq
+// package compiles into drydock, at exactly the version the selected Argo CD
+// requires, so that drydock parses and runs jq ignore rules as Argo CD does.
+// Renovate ignores these modules, and the post-upgrade sync helper sets them
+// after an Argo CD upgrade.
+func TestGojqMatchesSelectedArgoCD(t *testing.T) {
+	argo, err := goListModule(argoCDModule)
+	if err != nil {
+		t.Fatalf("goListModule(%s) error = %v", argoCDModule, err)
+	}
+	argoGoMod, err := readGoMod(argo.GoMod)
+	if err != nil {
+		t.Fatalf("readGoMod(%s) error = %v", argo.GoMod, err)
+	}
+	modules, err := gojqModules("readonly")
+	if err != nil {
+		t.Fatalf("gojqModules() error = %v", err)
+	}
+	if !slices.Contains(modules, gojqModule) {
+		t.Fatalf("gojqModules() = %v, want gojq and the modules it compiles in", modules)
+	}
+	for _, module := range modules {
+		want, err := argoRequirement(argoGoMod, module)
+		if err != nil {
+			t.Fatalf("argoRequirement(%s) error = %v", module, err)
+		}
+		got, err := goListModule(module)
+		if err != nil {
+			t.Fatalf("goListModule(%s) error = %v", module, err)
+		}
+		if got.Version != want {
+			t.Fatalf("%s is %s, but Argo CD %s requires %s; run go run ./scripts/sync-argocd-gitops-engine.go", module, got.Version, argo.Version, want)
+		}
 	}
 }

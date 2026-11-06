@@ -29,13 +29,18 @@ func redactedConfigMapBinaryDataBodies(from, to string) (string, string, error) 
 		return from, to, nil
 	}
 
-	redactedFrom, err := encodeDiffYAML(fromObject)
-	if err != nil {
-		return "", "", fmt.Errorf("encode summarized ConfigMap before body: %w", err)
+	// A side with no object, absent ("") or removed by an ignore rule
+	// (nullDiffBody), keeps its body, so the null check still sees it.
+	redactedFrom, redactedTo := from, to
+	if fromObject != nil {
+		if redactedFrom, err = encodeDiffYAML(fromObject); err != nil {
+			return "", "", fmt.Errorf("encode summarized ConfigMap before body: %w", err)
+		}
 	}
-	redactedTo, err := encodeDiffYAML(toObject)
-	if err != nil {
-		return "", "", fmt.Errorf("encode summarized ConfigMap after body: %w", err)
+	if toObject != nil {
+		if redactedTo, err = encodeDiffYAML(toObject); err != nil {
+			return "", "", fmt.Errorf("encode summarized ConfigMap after body: %w", err)
+		}
 	}
 	return redactedFrom, redactedTo, nil
 }

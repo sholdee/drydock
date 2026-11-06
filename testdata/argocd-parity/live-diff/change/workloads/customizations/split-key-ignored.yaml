@@ -1,0 +1,7 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: split-key-ignored
+  annotations:
+    parity.drydock.dev/ignored: after
+automountServiceAccountToken: false

@@ -1224,6 +1224,84 @@ Supported:
   expression, so a repeated array-index pointer removes one element per copy.
   Argo CD walks `resource.customizations` in Go map order, which is not
   defined. drydock uses sorted key order so the result is stable.
+- A `jqPathExpressions` entry that fails to run on one resource, such as a
+  `containers[]` expression on a ConfigMap, is skipped for that resource, and
+  the other rules still apply. Argo CD logs such a failed patch and goes on
+  (`util/argo/normalizers/diff_normalizer.go`). An expression that returns
+  more than one value, or that runs longer than the controller's jq
+  timeout, is skipped the same way. The timeout is the
+  `argocd-cmd-params-cm` key `controller.ignore.normalizer.jq.timeout` of
+  the current side, and 1 second when the key is empty, zero, negative, or
+  not a duration.
+- drydock parses and runs jq expressions with the gojq version that Argo CD
+  v3.6.1 requires (v0.12.19). A newer gojq accepts some expressions that
+  Argo CD rejects, such as `.data.ignored?//empty`.
+- drydock reads the diff mode of each Application as Argo CD v3.6.1 does
+  (`controller/state.go`): the `ServerSideDiff=true` or
+  `ServerSideDiff=false` compare option and the `ServerSideApply=true` sync
+  option. drydock does not read the controller-level switch
+  `controller.diff.server.side`, which turns on server-side diff for every
+  Application, so with that switch drydock treats such an Application as
+  using the client-side diff. The mode decides the next two points.
+- A resource that only one side has, a created or a deleted resource,
+  shows as a change in both modes. Under server-side diff, Argo CD skips the
+  whole ignore normalizer and the known-types normalizer for it
+  (gitops-engine `pkg/diff/diff.go`). So no Application, annotation, or
+  `resource.customizations` rule applies, `status` is not removed, and no
+  known type applies, not even the Argo Rollout default. The aggregated-role
+  normalization still applies. drydock does the same, and its own display
+  steps, the drydock-default ignored fields, `--strip-attr`, the ConfigMap
+  `binaryData` summary, and Secret redaction, still run. The client-side diff
+  applies the rules. So, under server-side diff, a new or deleted resource
+  now shows fields that an ignore rule hides from a changed resource.
+  Earlier drydock releases applied the rules in both modes. A resource that
+  moves to another Application, such as after a rename or an adoption, is
+  not new or deleted: Argo CD finds its live object whatever Application
+  tracked it (gitops-engine `pkg/cache/cluster.go`), and compares it as a
+  change with the full normalization of the new Application. drydock shows
+  it as a removal from one Application and an addition to the other, and
+  normalizes it as that change.
+- A jq expression that removes the whole object, such as `.`, makes Argo CD
+  continue with the object `null`, which it cannot decode. gitops-engine
+  only logs that error, and the object stays `null`. For a resource that
+  both sides have, the result depends on the diff mode and on which side is
+  `null`:
+  - Both sides `null`, client-side diff: gitops-engine cannot build a patch
+    and fails, so Argo CD fails the comparison of the Application. drydock
+    reports a `diff.comparison-failed` error for that Application, also
+    when its resource did not change.
+  - Both sides `null`, server-side diff: Argo CD compares `null` with
+    `null`, so a change to the resource is hidden. drydock does the same.
+  - One side `null`: Argo CD reports a change, and drydock shows a change
+    with `null` on that side. With the client-side diff, this needs the
+    last-applied annotation that a client-side sync leaves; without it,
+    the two-way diff hides a `null` desired object.
+
+  A created or deleted resource is a change in both modes. The client-side
+  diff shows `null` for it. Server-side diff shows the whole object, because
+  it does not run the ignore rules for it (see above).
+- A jq expression that does not parse or compile fails the comparison of
+  each current-side Application it belongs to, even when it matches no
+  resource or the Application renders no resources. Argo CD builds every jq
+  patch of the Application's rules and of all `resource.customizations`
+  entries before it compares any resource, and it sets a `ComparisonError`
+  condition with sync status `Unknown` (`controller/state.go`). So an
+  expression in `resource.customizations` fails every Application. drydock
+  reports a `diff.ignore-rule-invalid` error for each such Application. The
+  `diff` commands then print the diagnostics and no diff, and fail, as for a
+  render failure. Library callers of `DiffApps` still get the results of the
+  other Applications with the error. Argo CD never compares a deleted
+  Application, so an Application that only the baseline side has is not
+  checked.
+- A known-types normalizer error, such as a `core/v1/ResourceRequirements`
+  field whose `limits` is not a map, is only logged by Argo CD, which then
+  compares the object as it is. The normalizer stops at the first field that
+  fails, after it changed the fields before it. drydock does the same. For a
+  changed resource that the diff shows, drydock gives the advisory
+  `diff.known-type-skipped`, which names the Application, the resource, and
+  the field. This also covers the built-in Argo Rollout known type. An
+  Application that only the baseline side has gets no advisory. `--strict` does
+  not fail on it, because the diff matches Argo CD either way.
 - `resource.customizations` keys as Argo CD reads them for `jsonPointers`,
   `jqPathExpressions`, and `knownTypeFields`
   (`util/argo/normalizers/util.go`): `group/kind` matches with globs, a key
@@ -1240,10 +1318,20 @@ Supported:
   `spec.template.spec`, unless a key sets `knownTypeFields` for
   `argoproj.io/Rollout`. The known-types normalizer runs after the ignore
   rules, as in Argo CD (`util/argo/diff/normalize.go`).
-- When the two diff sides carry different ignore settings, drydock applies
-  the union. It keeps the baseline side's rules in order and adds the current
-  side's rules that the baseline does not have. Rules that both sides share
-  run once, so identical settings give exactly Argo CD's rule list.
+- When the two diff sides carry different ignore settings, drydock
+  normalizes both sides with the current side's settings: the Application's
+  `spec.ignoreDifferences`, `resource.customizations`, compare options, and
+  the annotation. Argo CD compares the new desired state under the rules of
+  the live Application, which are the new rules once the Application change
+  is synced. A rule that only the baseline side has does not hide a change.
+  A resource that exists only on the baseline side also uses the current
+  side's rules and settings of its Application, as Argo CD normalizes a
+  live object that the new desired state no longer has. Its own annotation
+  does not apply, because only a desired object carries the annotation
+  rule. A pointer warning comes only from the current side's rules. The
+  resources of an Application that only the baseline side has get no ignore
+  rules, because Argo CD never compares a deleted Application. Earlier
+  drydock releases used the union of both sides' rules.
 - `argocd-cm` `resource.exclusions` and `resource.inclusions` (Argo CD
   v3.6.1), with Argo CD's core exclusions. drydock decodes them as Argo CD
   decodes them, with `sigs.k8s.io/yaml`. Keys match case-insensitively, so
@@ -1271,9 +1359,15 @@ Supported:
   removes `/spec/replicas`), only `~0` and `~1` are decoded, and a negative
   array index counts from the end. As in Argo CD, where a failed JSON-patch
   remove is only logged, a pointer that cannot be applied (non-numeric or
-  out-of-range array index, `-`, or a root `""` pointer) is skipped; it never
-  fails the diff or hides the resource. Application-level and global
-  `jsonPointers` keep their strict RFC 6901 validation.
+  out-of-range array index, `-`, or a root `""` pointer) is skipped. It never
+  fails the diff or hides the resource.
+- Application-level and `resource.customizations` `jsonPointers` follow the
+  same JSON-patch path rules, because Argo CD applies every pointer the same
+  way (`util/argo/normalizers/diff_normalizer.go`). A pointer that is not a
+  valid RFC 6901 pointer, such as `spec/replicas`, or the root pointer `""`,
+  gives the `diff.ignore-pointer-invalid` warning, once for each Application
+  and pointer. `--strict` makes it an error. Earlier drydock releases failed
+  the diff on such a pointer, and removed the whole resource for `""`.
 - Argo CD reads the ignore-differences annotation only from the desired
   (target) object and applies the rule to live and target. drydock compares
   desired against desired, so the current-side manifest stands in for the
@@ -1353,7 +1447,18 @@ Supported:
   settings are parsed as metadata and do not mutate render behavior, except
   `reposerver.max.combined.directory.manifests.size` (see the directory
   size limit above) and `reposerver.allow.oob.symlinks` (see the
-  out-of-bounds symlink check above).
+  out-of-bounds symlink check above). drydock also applies
+  `controller.ignore.normalizer.jq.timeout` to diffs: it limits how long one
+  jq ignore-rule deletion may run. drydock parses it as the Argo CD v3.6.1
+  controller parses `ARGOCD_IGNORE_NORMALIZER_JQ_TIMEOUT` with
+  `env.ParseDurationFromEnv`: a Go duration such as `1500ms`, or a whole
+  number of seconds, minutes, hours or days such as `2d`. An empty, zero,
+  negative or unparseable value means the default, 1 second. A day count
+  too large for the controller ends the controller. drydock uses the
+  default for it. Two settings sources with different parsed values
+  conflict. The key changes no render, so it is not in the render cache
+  keys. It is in the changed-only settings signature, because a new
+  timeout can change the diff of every Application with a jq rule.
 - Custom health Lua validation in `test apps` and `test app`, executed offline
   against rendered desired manifests. It reports Lua runtime errors and
   invalid status values. A `deletionMessage` (Argo CD v3.6.1) applies only to

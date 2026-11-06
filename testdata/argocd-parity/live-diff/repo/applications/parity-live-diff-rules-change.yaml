@@ -1,0 +1,25 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: parity-live-diff-rules-change
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/compare-options: ServerSideDiff=true
+spec:
+  project: default
+  source:
+    repoURL: git://argocd-parity-git.argocd-parity.svc.cluster.local/live-diff.git
+    targetRevision: live-diff-a
+    path: workloads/rules-change
+  destination:
+    name: in-cluster
+    namespace: parity-live-diff
+  # live-diff-b moves this rule from rule-removed to rule-added.
+  ignoreDifferences:
+    - kind: ConfigMap
+      name: rule-removed
+      jsonPointers:
+        - /data/ignored
+  syncPolicy:
+    syncOptions:
+      - ServerSideApply=true

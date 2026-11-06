@@ -1128,3 +1128,119 @@ Argo CD texts must match exactly.
 then runs `drydock build app` for each Application and saves the exit code
 and stderr. `scripts/argocd-directory-decode-smoke` compares the two sides.
 The results go to `directory-decode/` in the smoke output directory.
+
+## Live diff fixture
+
+This fixture compares drydock's diff normalization with the sync status of
+a live Argo CD. Normalization is the step that removes ignored fields from
+both sides before a diff. The fixture covers these sources of ignore rules:
+
+- Application `spec.ignoreDifferences`: `jsonPointers`,
+  `jqPathExpressions`, and `managedFieldsManagers`.
+- argocd-cm `resource.customizations`: a split key for a core kind without a
+  slash (`ServiceAccount`), the split key `all`, and the block form with a
+  `jq` select.
+- argocd-cm `resource.compareoptions`: `ignoreAggregatedRoles`.
+- The resource annotation `argocd.argoproj.io/ignore-differences`.
+
+The fixture lives in `live-diff/`. The smoke serves it as a third Git
+repository, `live-diff.git`, with two tagged commits:
+
+- `live-diff-a` holds `live-diff/repo`.
+- `live-diff-b` copies the files of `live-diff/change` over it.
+
+`live-diff/expected.yaml` lists every resource of the Applications in
+`live-diff/repo/applications`, with the sync status that Argo CD must report
+at `live-diff-b`. A `Synced` resource changes only fields that a rule
+removes. An `OutOfSync` resource changes the same fields and one more field
+that no rule removes. So each rule must remove its fields and nothing more.
+
+`run_live_diff_smoke` in `scripts/argocd-parity-smoke.sh` runs these steps:
+
+1. It applies the keys of `live-diff/repo/settings/argocd-cm.yaml` to the
+   live argocd-cm with server-side apply and its own field manager.
+   drydock reads the same file from the repository.
+2. It applies the Applications, which name `targetRevision: live-diff-a`,
+   and syncs them. Each Application must then be `Synced` and `Healthy`. If
+   the live objects did not match Git at the first commit, a later status
+   would not prove anything. The smoke does not sync an Application with
+   `comparisonError` in the expected file.
+3. It applies the Application manifests of `live-diff-b`, as a parent
+   Application would sync a changed Application. Then it moves each
+   Application to `live-diff-b` with a patch and a hard refresh, and waits
+   until Argo CD compared that commit.
+4. It saves each Application as JSON and runs `drydock diff apps --ref
+   live-diff-b --ref-orig live-diff-a`. The repository map points the
+   repository URL at the local repository, so each side of the diff renders
+   its own tag. This run leaves out the `comparisonError` Applications with
+   `--discover-ignore`, because their failure fails the whole command. Then
+   the smoke runs `drydock diff app` for each of them on its own. It also
+   saves `drydock build app` of each other Application at `live-diff-b`.
+5. `scripts/argocd-live-diff-smoke` compares both sides with the expected
+   file. drydock must report a change for a resource exactly when Argo CD
+   reports it `OutOfSync`. A resource that one side reports and the expected
+   file does not list fails the check. drydock must render every expected
+   resource, so a resource that drydock never rendered cannot pass as
+   unchanged. The stderr of the drydock diff must contain each
+   `drydockWarnings` text, and no other `diff.ignore-*` diagnostic. For a
+   `comparisonError` Application, Argo CD must report a `ComparisonError`
+   condition with sync status `Unknown`, and its own drydock diff must fail
+   with the expected message.
+6. It deletes the live diff Applications and removes the argocd-cm keys.
+   On an existing cluster, the exit trap does the same when the phase
+   fails, unless `--keep-cluster` is set.
+
+The results go to `live-diff/` in the smoke output directory.
+
+### Diff modes
+
+Every Application that Argo CD compares, except one, uses server-side diff
+with the `ServerSideApply=true` sync option, as home-ops does. In Argo CD
+v3.6.1 that sync option also turns on server-side diff. In this mode, Argo CD applies the target with a dry run
+and normalizes the result and the live object. The resources are created by
+the same sync, so the API server defaults are the same on both sides.
+
+`parity-live-diff-application-legacy` renders the same resources and rules
+as `parity-live-diff-application` with the client-side three-way diff, in
+its own namespace. The two Applications prove that the result does not
+depend on the diff mode.
+
+### Cases
+
+| Application | resource | status | what it checks |
+| --- | --- | --- | --- |
+| `parity-live-diff-application` and `-legacy` | `ConfigMap/pointer-ignored` | `Synced` | a `jsonPointers` rule for every ConfigMap removes `data.ignored`, after the pointer `data/kept`, which is not valid and gives the `diff.ignore-pointer-invalid` warning |
+| | `ConfigMap/pointer-other` | `OutOfSync` | the same rule keeps `data.kept`: `data/kept` is the missing JSON-patch path `/kept` |
+| | `Deployment/jq-ignored` | `Synced` | a `jqPathExpressions` select on the container name removes the image of the `app` container |
+| | `Deployment/jq-other` | `OutOfSync` | the same select keeps the image of the `sidecar` container |
+| | `ConfigMap/jq-error` | `Synced` | a `jq` expression that fails to run on a ConfigMap is skipped, and the `jsonPointers` rule still applies |
+| | `ConfigMap/managed-fields` | `OutOfSync` | a `managedFieldsManagers` rule whose manager owns no field hides nothing |
+| `parity-live-diff-customizations` | `ServiceAccount/split-key-ignored` | `Synced` | the split key `ignoreDifferences.ServiceAccount` removes an annotation |
+| | `ServiceAccount/split-key-other` | `OutOfSync` | the same key keeps `automountServiceAccountToken` |
+| | `Role/block-jq-ignored` | `Synced` | the block key `rbac.authorization.k8s.io/Role` removes the verbs of the `configmaps` rule |
+| | `Role/block-jq-other` | `OutOfSync` | the same key keeps the verbs of the `secrets` rule |
+| | `ConfigMap/all-key-ignored` | `Synced` | the split key `ignoreDifferences.all` removes a label |
+| | `ConfigMap/all-key-other` | `OutOfSync` | the same key keeps `data.kept` |
+| | `ClusterRole/parity-live-diff-aggregated-ignored` | `Synced` | `ignoreAggregatedRoles` removes the rules of an aggregated ClusterRole |
+| | `ClusterRole/parity-live-diff-aggregated-other` | `OutOfSync` | the same option keeps `aggregationRule` |
+| `parity-live-diff-annotation` | `ConfigMap/annotation-pointer-ignored` | `Synced` | the annotation removes `data.ignored` |
+| | `ConfigMap/annotation-pointer-other` | `OutOfSync` | the annotation keeps `data.kept` |
+| | `ConfigMap/annotation-target-side` | `Synced` | Argo CD reads the annotation from the target commit only: `live-diff-b` adds `/data/ignored` to an annotation that ignores itself |
+| | `ConfigMap/annotation-lenient-pointers` | `Synced` | a pointer to a missing path is skipped, and `#/data/ignored` removes `data.ignored` because the first segment is not checked |
+| `parity-live-diff-rules-change` | `ConfigMap/rule-added` | `Synced` | `live-diff-b` adds an Application rule that removes the changed field, and Argo CD uses the new rules |
+| | `ConfigMap/rule-removed` | `OutOfSync` | `live-diff-b` drops the rule for the changed field, so the old rule does not hide the change |
+| `parity-live-diff-invalid-jq` | `ConfigMap/invalid-jq` | `Unknown` | a `jqPathExpressions` entry that does not parse fails the comparison, although no resource matches the rule, and drydock fails with `diff.ignore-rule-invalid` |
+
+### Deliberately not covered by this fixture
+
+- A `managedFieldsManagers` rule that hides a field. Argo CD hides the
+  fields that the named manager owns in the live object. drydock has no live
+  object, so it cannot know them. The fixture covers only a manager that
+  owns nothing.
+- `ignoreResourceStatusField`. The API server and the controllers write
+  `status` in the live object, so a `status` in Git does not reach it.
+- Fields that the API server defaults, and changes that mutating webhooks
+  make. drydock compares Git with Git and never sees them.
+- A `resource.customizations` jq expression that does not parse. Argo CD
+  builds those patches for every Application, so it would fail every
+  Application in the cluster. Unit tests in `internal/app` cover it.

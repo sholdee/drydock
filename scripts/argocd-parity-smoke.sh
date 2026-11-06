@@ -62,6 +62,34 @@ DIRECTORY_DECODE_PLUGIN_APPLICATIONS=()
 # never holds it. Its Application lives in the directory decode namespace.
 OOB_SYMLINK_REPO_URL="git://argocd-parity-git.argocd-parity.svc.cluster.local/oob-symlink.git"
 OOB_SYMLINK_FIXTURE_PATH="${REPO_ROOT}/testdata/argocd-parity/oob-symlink-repo"
+# The live diff smoke checks drydock's diff normalization against Argo CD
+# sync status. Its Git repository has two tagged commits: live-diff/repo is
+# the first, and live-diff/change holds the files that the second commit
+# changes. Argo CD syncs each Application at the first tag, then compares
+# the second tag with the live objects. drydock diffs the same two tags. The
+# expected file lists the sync status of every resource. The settings file
+# is an argocd-cm with only the ignore settings: drydock reads it from the
+# repository, and the smoke applies its keys to the live argocd-cm.
+LIVE_DIFF_REPO_URL="git://argocd-parity-git.argocd-parity.svc.cluster.local/live-diff.git"
+LIVE_DIFF_FIXTURE_PATH="${REPO_ROOT}/testdata/argocd-parity/live-diff"
+LIVE_DIFF_EXPECTED="${LIVE_DIFF_FIXTURE_PATH}/expected.yaml"
+LIVE_DIFF_SETTINGS="settings/argocd-cm.yaml"
+LIVE_DIFF_REVISION_A="live-diff-a"
+LIVE_DIFF_REVISION_B="live-diff-b"
+LIVE_DIFF_NAMESPACES=(parity-live-diff parity-live-diff-legacy)
+# The field manager that owns the live argocd-cm keys from LIVE_DIFF_SETTINGS.
+LIVE_DIFF_FIELD_MANAGER="drydock-live-diff-smoke"
+# Set by run_live_diff_smoke from LIVE_DIFF_EXPECTED: the Applications that
+# the smoke syncs and compares, and the Applications whose comparison must
+# fail because Argo CD cannot build their ignore rules.
+LIVE_DIFF_APPLICATIONS=()
+LIVE_DIFF_ERROR_APPLICATIONS=()
+# Set by prepare_live_diff_repo: the local git repo of LIVE_DIFF_REPO_URL,
+# which drydock diffs.
+LIVE_DIFF_WORK=""
+# Set to "true" while the live diff Applications and argocd-cm keys exist.
+# The cleanup trap reads it.
+LIVE_DIFF_STATE_CHANGED="false"
 OCI_ARTIFACT_PATH="${REPO_ROOT}/testdata/argocd-parity/oci-artifact"
 OCI_APPSET_ARTIFACT_PATH="${REPO_ROOT}/testdata/argocd-parity/oci-appset-artifact"
 OCI_REGISTRY_HOST="argocd-parity-registry.argocd-parity.svc.cluster.local"
@@ -499,6 +527,7 @@ for project_policy_phase_dir in "${PROJECT_POLICY_IN_CLUSTER_SECRET_DIR}" "${PRO
 done
 [[ -f "${DIRECTORY_DECODE_EXPECTED}" ]] || fail "directory decode expected file not found: ${DIRECTORY_DECODE_EXPECTED}"
 [[ -d "${OOB_SYMLINK_FIXTURE_PATH}" ]] || fail "out-of-bounds symlink fixture repo not found: ${OOB_SYMLINK_FIXTURE_PATH}"
+[[ -f "${LIVE_DIFF_EXPECTED}" ]] || fail "live diff expected file not found: ${LIVE_DIFF_EXPECTED}"
 [[ -d "${SIDECAR_PATH}" ]] || fail "CMP sidecar manifest directory not found: ${SIDECAR_PATH}"
 
 OUT_DIR="$(mkdir -p "${OUT_DIR}" && cd "${OUT_DIR}" && pwd)"
@@ -563,6 +592,12 @@ cleanup() {
     elif [[ "${CREATE_CLUSTER}" != "true" ]]; then
       reset_project_policy_shared_state >/dev/null 2>&1 || true
     fi
+  fi
+  # On an existing cluster, a failed live diff phase must not leave its
+  # Applications and argocd-cm keys behind. With --keep-cluster, keep them
+  # for inspection.
+  if [[ "${LIVE_DIFF_STATE_CHANGED}" == "true" && "${CREATE_CLUSTER}" != "true" && "${KEEP_CLUSTER}" != "true" ]]; then
+    remove_live_diff_state >/dev/null 2>&1 || true
   fi
   rm -rf "${WORK_DIR}"
   if [[ "${CREATE_CLUSTER}" == "true" && "${KEEP_CLUSTER}" != "true" ]]; then
@@ -668,6 +703,28 @@ prepare_oob_symlink_repo() {
   git --git-dir="${WORK_DIR}/oob-symlink.git" update-server-info
 }
 
+# prepare_live_diff_repo builds the repository of LIVE_DIFF_REPO_URL as
+# WORK_DIR/live-diff.git: one commit tagged LIVE_DIFF_REVISION_A, and a second
+# commit, with the live-diff/change files copied over it, tagged
+# LIVE_DIFF_REVISION_B.
+prepare_live_diff_repo() {
+  LIVE_DIFF_WORK="${WORK_DIR}/live-diff-src"
+  mkdir -p "${LIVE_DIFF_WORK}"
+  cp -R "${LIVE_DIFF_FIXTURE_PATH}/repo/." "${LIVE_DIFF_WORK}/"
+  git -C "${LIVE_DIFF_WORK}" init --initial-branch=main >/dev/null
+  git -C "${LIVE_DIFF_WORK}" config user.email "drydock@example.invalid"
+  git -C "${LIVE_DIFF_WORK}" config user.name "drydock render parity smoke"
+  git -C "${LIVE_DIFF_WORK}" add .
+  git -C "${LIVE_DIFF_WORK}" commit -m "seed live diff fixture" >/dev/null
+  git -C "${LIVE_DIFF_WORK}" tag "${LIVE_DIFF_REVISION_A}"
+  cp -R "${LIVE_DIFF_FIXTURE_PATH}/change/." "${LIVE_DIFF_WORK}/"
+  git -C "${LIVE_DIFF_WORK}" add .
+  git -C "${LIVE_DIFF_WORK}" commit -m "change live diff fixture" >/dev/null
+  git -C "${LIVE_DIFF_WORK}" tag "${LIVE_DIFF_REVISION_B}"
+  git clone --bare --no-hardlinks "${LIVE_DIFF_WORK}" "${WORK_DIR}/live-diff.git" >/dev/null
+  git --git-dir="${WORK_DIR}/live-diff.git" update-server-info
+}
+
 prepare_fixture_git_image() {
   local bare image dockerfile
   # Script-scoped: this repo is also the trusted plugin policy repo for the
@@ -689,6 +746,7 @@ prepare_fixture_git_image() {
   git clone --bare --no-hardlinks "${FIXTURE_GIT_WORK}" "${bare}" >/dev/null
   git --git-dir="${bare}" update-server-info
   prepare_oob_symlink_repo
+  prepare_live_diff_repo
 
   dockerfile="${WORK_DIR}/Dockerfile.git"
   cat > "${dockerfile}" <<'DOCKERFILE'
@@ -696,7 +754,8 @@ FROM alpine:3.23
 RUN apk add --no-cache git-daemon
 COPY --chown=65534:65534 repo.git /srv/git/repo.git
 COPY --chown=65534:65534 oob-symlink.git /srv/git/oob-symlink.git
-RUN touch /srv/git/repo.git/git-daemon-export-ok /srv/git/oob-symlink.git/git-daemon-export-ok && chmod -R a+rX /srv/git
+COPY --chown=65534:65534 live-diff.git /srv/git/live-diff.git
+RUN touch /srv/git/repo.git/git-daemon-export-ok /srv/git/oob-symlink.git/git-daemon-export-ok /srv/git/live-diff.git/git-daemon-export-ok && chmod -R a+rX /srv/git
 EXPOSE 9418
 USER 65534:65534
 ENTRYPOINT ["git", "daemon", "--verbose", "--export-all", "--base-path=/srv/git", "--reuseaddr", "--informative-errors", "/srv/git"]
@@ -2143,6 +2202,212 @@ run_directory_decode_smoke() {
   compare_directory_decode_smoke
 }
 
+load_live_diff_applications() {
+  local app
+  LIVE_DIFF_APPLICATIONS=()
+  while IFS= read -r app; do
+    [[ -n "${app}" ]] && LIVE_DIFF_APPLICATIONS+=("${app}")
+  done < <(cd "${REPO_ROOT}" && go run ./scripts/argocd-live-diff-smoke --list --expected "${LIVE_DIFF_EXPECTED}")
+  [[ "${#LIVE_DIFF_APPLICATIONS[@]}" -gt 0 ]] \
+    || fail "no live diff Applications listed in ${LIVE_DIFF_EXPECTED}"
+  LIVE_DIFF_ERROR_APPLICATIONS=()
+  while IFS= read -r app; do
+    [[ -n "${app}" ]] && LIVE_DIFF_ERROR_APPLICATIONS+=("${app}")
+  done < <(cd "${REPO_ROOT}" && go run ./scripts/argocd-live-diff-smoke --list-comparison-errors --expected "${LIVE_DIFF_EXPECTED}")
+}
+
+# apply_live_diff_settings adds the argocd-cm keys of LIVE_DIFF_SETTINGS to
+# the live argocd-cm with server-side apply, and with no keys removes them
+# again: server-side apply deletes the fields that its field manager set
+# before and no longer lists. Other argocd-cm keys keep their values.
+apply_live_diff_settings() {
+  kubectl apply --server-side --field-manager="${LIVE_DIFF_FIELD_MANAGER}" \
+    -f "${LIVE_DIFF_WORK}/${LIVE_DIFF_SETTINGS}" >/dev/null
+}
+
+remove_live_diff_settings() {
+  kubectl --request-timeout=30s apply --server-side --field-manager="${LIVE_DIFF_FIELD_MANAGER}" -f - >/dev/null <<'YAML'
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: argocd-cm
+  namespace: argocd
+YAML
+}
+
+# remove_live_diff_state deletes the live diff Applications and removes the
+# live diff argocd-cm keys. The Applications have no resources finalizer, so
+# their resources stay. It is safe to run more than once.
+remove_live_diff_state() {
+  kubectl --request-timeout=30s -n argocd delete applications.argoproj.io \
+    "${LIVE_DIFF_APPLICATIONS[@]}" "${LIVE_DIFF_ERROR_APPLICATIONS[@]}" --ignore-not-found >/dev/null
+  remove_live_diff_settings
+}
+
+# dump_live_diff_applications saves each live diff Application and fails
+# the smoke with the given message.
+dump_live_diff_applications() {
+  local message="$1"
+  local app failure_dir
+  failure_dir="$(artifact_dir live-diff/failed)"
+  for app in "${LIVE_DIFF_APPLICATIONS[@]}" "${LIVE_DIFF_ERROR_APPLICATIONS[@]}"; do
+    kubectl -n argocd get application "${app}" -o yaml > "${failure_dir}/${app}.yaml" 2>&1 || true
+  done
+  fail "${message}; see ${failure_dir}"
+}
+
+# sync_live_diff_applications syncs every live diff Application at
+# LIVE_DIFF_REVISION_A. Each one must then be Synced: at the first tag, the
+# live objects match Git after normalization, or a later OutOfSync status
+# would not prove anything.
+sync_live_diff_applications() {
+  local output_dir
+  output_dir="$(artifact_dir live-diff)"
+  argocd app sync "${LIVE_DIFF_APPLICATIONS[@]}" --timeout 300 > "${output_dir}/argocd-sync.log" 2>&1 \
+    || dump_live_diff_applications "Argo CD could not sync the live diff Applications at ${LIVE_DIFF_REVISION_A} (log: ${output_dir}/argocd-sync.log)"
+  argocd app wait "${LIVE_DIFF_APPLICATIONS[@]}" --sync --health --timeout 300 > "${output_dir}/argocd-wait.log" 2>&1 \
+    || dump_live_diff_applications "the live diff Applications are not Synced and Healthy at ${LIVE_DIFF_REVISION_A} (log: ${output_dir}/argocd-wait.log)"
+}
+
+# compare_live_diff_revision_b applies the Applications of
+# LIVE_DIFF_REVISION_B, as a parent Application would sync a changed
+# Application spec. Then it points every live diff Application at that tag
+# with a hard refresh, and waits until Argo CD has compared it. The
+# controller removes the refresh annotation when the refresh is done.
+compare_live_diff_revision_b() {
+  local app revision_b state expected
+  revision_b="$(git -C "${LIVE_DIFF_WORK}" rev-parse "${LIVE_DIFF_REVISION_B}^{commit}")"
+  kubectl -n argocd apply -f "${LIVE_DIFF_WORK}/applications" >/dev/null
+  for app in "${LIVE_DIFF_APPLICATIONS[@]}" "${LIVE_DIFF_ERROR_APPLICATIONS[@]}"; do
+    kubectl -n argocd patch application "${app}" --type merge \
+      -p "{\"metadata\":{\"annotations\":{\"argocd.argoproj.io/refresh\":\"hard\"}},\"spec\":{\"source\":{\"targetRevision\":\"${LIVE_DIFF_REVISION_B}\"}}}" >/dev/null
+  done
+  expected="${revision_b}|${LIVE_DIFF_REVISION_B}|"
+  for app in "${LIVE_DIFF_APPLICATIONS[@]}" "${LIVE_DIFF_ERROR_APPLICATIONS[@]}"; do
+    state=""
+    for _ in {1..90}; do
+      state="$(kubectl -n argocd get application "${app}" \
+        -o jsonpath='{.status.sync.revision}{"|"}{.status.sync.comparedTo.source.targetRevision}{"|"}{.metadata.annotations.argocd\.argoproj\.io/refresh}')"
+      [[ "${state}" == "${expected}" ]] && break
+      sleep 2
+    done
+    [[ "${state}" == "${expected}" ]] \
+      || dump_live_diff_applications "Argo CD did not compare Application argocd/${app} at ${LIVE_DIFF_REVISION_B} (last revision|targetRevision|refresh: ${state})"
+  done
+}
+
+capture_live_diff_argocd_applications() {
+  local app output_dir
+  output_dir="$(artifact_dir live-diff/argocd-applications)"
+  for app in "${LIVE_DIFF_APPLICATIONS[@]}" "${LIVE_DIFF_ERROR_APPLICATIONS[@]}"; do
+    kubectl -n argocd get application "${app}" -o json > "${output_dir}/${app}.json"
+  done
+}
+
+# live_diff_drydock_args sets LIVE_DIFF_DRYDOCK_ARGS to the flags that every
+# drydock diff of the two tags shares. --show-ignored-fields turns off
+# drydock's own Helm noise filter, so only Argo CD normalization applies.
+live_diff_drydock_args() {
+  LIVE_DIFF_DRYDOCK_ARGS=(--repo "${LIVE_DIFF_WORK}"
+    --path "${LIVE_DIFF_WORK}"
+    --ref "${LIVE_DIFF_REVISION_B}"
+    --ref-orig "${LIVE_DIFF_REVISION_A}"
+    --repo-map "${LIVE_DIFF_REPO_URL}=${LIVE_DIFF_WORK}"
+    --render-cache-dir "${WORK_DIR}/render-cache-live-diff"
+    --changed-only=false
+    --show-ignored-fields
+    --exit-code=false
+    --offline
+    -o json)
+}
+
+# capture_live_diff_drydock_diff diffs the two tags. It leaves out the
+# Applications whose comparison must fail, because that failure fails the
+# whole command, and keeps stderr for the expected warnings. Then it diffs
+# each of those Applications on its own and keeps the exit code and stderr.
+capture_live_diff_drydock_diff() {
+  local app output_dir failure_dir stderr_file exit_code
+  local diff_args=()
+  output_dir="$(artifact_dir live-diff)"
+  failure_dir="$(artifact_dir live-diff/drydock-failures)"
+  stderr_file="${output_dir}/drydock-diff.stderr"
+  live_diff_drydock_args
+  diff_args=("${LIVE_DIFF_DRYDOCK_ARGS[@]}")
+  for app in "${LIVE_DIFF_ERROR_APPLICATIONS[@]}"; do
+    diff_args+=(--discover-ignore "applications/${app}.yaml")
+  done
+  if ! (cd "${REPO_ROOT}" && "${DRYDOCK_CMD[@]}" diff apps "${diff_args[@]}" \
+    > "${output_dir}/drydock-diff.json" 2> "${stderr_file}"); then
+    echo "argocd render parity smoke: drydock diff of the live diff fixture failed; its stderr follows" >&2
+    cat "${stderr_file}" >&2 || true
+    fail "drydock diff of the live diff fixture failed; see ${stderr_file}"
+  fi
+  for app in "${LIVE_DIFF_ERROR_APPLICATIONS[@]}"; do
+    exit_code=0
+    (cd "${REPO_ROOT}" && "${DRYDOCK_CMD[@]}" diff app "${app}" "${LIVE_DIFF_DRYDOCK_ARGS[@]}" \
+      > "${failure_dir}/${app}.json" 2> "${failure_dir}/${app}.stderr") || exit_code="$?"
+    printf '%s\n' "${exit_code}" > "${failure_dir}/${app}.exit"
+  done
+}
+
+# capture_live_diff_drydock_renders renders each compared Application at
+# LIVE_DIFF_REVISION_B, the checked-out tree of LIVE_DIFF_WORK. The
+# comparison requires every expected resource in it, so a resource that
+# drydock never rendered cannot pass as unchanged.
+capture_live_diff_drydock_renders() {
+  local app output_dir
+  output_dir="$(artifact_dir live-diff/drydock-renders)"
+  for app in "${LIVE_DIFF_APPLICATIONS[@]}"; do
+    if ! (cd "${REPO_ROOT}" && "${DRYDOCK_CMD[@]}" build app "${app}" \
+      --path "${LIVE_DIFF_WORK}" \
+      --repo-map "${LIVE_DIFF_REPO_URL}=${LIVE_DIFF_WORK}" \
+      --render-cache-dir "${WORK_DIR}/render-cache-live-diff" \
+      --offline \
+      > "${output_dir}/${app}.yaml" 2> "${output_dir}/${app}.stderr"); then
+      cat "${output_dir}/${app}.stderr" >&2 || true
+      fail "drydock build of live diff Application ${app} failed; see ${output_dir}/${app}.stderr"
+    fi
+  done
+}
+
+compare_live_diff_smoke() {
+  local output_dir
+  output_dir="$(artifact_dir live-diff)"
+  (cd "${REPO_ROOT}" && go run ./scripts/argocd-live-diff-smoke \
+    --expected "${LIVE_DIFF_EXPECTED}" \
+    --argocd-app-dir "${output_dir}/argocd-applications" \
+    --drydock-diff "${output_dir}/drydock-diff.json" \
+    --drydock-stderr "${output_dir}/drydock-diff.stderr" \
+    --drydock-failure-dir "${output_dir}/drydock-failures" \
+    --drydock-render-dir "${output_dir}/drydock-renders" \
+    --out "${output_dir}/summary.txt")
+}
+
+run_live_diff_smoke() {
+  local namespace
+  load_live_diff_applications
+  for namespace in "${LIVE_DIFF_NAMESPACES[@]}"; do
+    ensure_namespace "${namespace}"
+  done
+  log_step "Applying the live diff settings to argocd-cm"
+  LIVE_DIFF_STATE_CHANGED="true"
+  apply_live_diff_settings
+  log_step "Applying and syncing the live diff Applications at ${LIVE_DIFF_REVISION_A}"
+  kubectl -n argocd apply -f "${LIVE_DIFF_FIXTURE_PATH}/repo/applications" >/dev/null
+  sync_live_diff_applications
+  log_step "Comparing the live diff Applications at ${LIVE_DIFF_REVISION_B}"
+  compare_live_diff_revision_b
+  capture_live_diff_argocd_applications
+  log_step "Capturing the drydock diff between ${LIVE_DIFF_REVISION_A} and ${LIVE_DIFF_REVISION_B}"
+  capture_live_diff_drydock_diff
+  capture_live_diff_drydock_renders
+  log_step "Comparing live diff sync status"
+  compare_live_diff_smoke
+  log_step "Removing the live diff Applications and argocd-cm settings"
+  remove_live_diff_state
+  LIVE_DIFF_STATE_CHANGED="false"
+}
+
 main() {
   local argocd_version
   argocd_version="$(resolve_argocd_version)"
@@ -2223,6 +2488,7 @@ main() {
   compare_rolling_sync_conditions
   compare_avp_oracle_manifests
   compare_tracking_manifests
+  run_live_diff_smoke
   run_directory_decode_smoke
   if [[ "${RUN_PROJECT_POLICY_SMOKE}" == "true" ]]; then
     run_project_policy_smoke

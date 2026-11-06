@@ -1,0 +1,12 @@
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: parity-live-diff-aggregated-ignored
+aggregationRule:
+  clusterRoleSelectors:
+    - matchLabels:
+        parity.drydock.dev/aggregate-to: parity-live-diff-ignored
+rules:
+  - apiGroups: [""]
+    resources: [configmaps]
+    verbs: [get]

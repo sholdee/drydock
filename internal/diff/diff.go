@@ -1,6 +1,11 @@
 package diff
 
-import "fmt"
+import (
+	"errors"
+	"fmt"
+	"strings"
+	"time"
+)
 
 type Parent struct {
 	Namespace   string `json:"namespace,omitempty" yaml:"namespace,omitempty"`
@@ -35,6 +40,8 @@ type IgnoreRule struct {
 // rules run in Argo CD's order: ApplicationRules, then the
 // AnnotationJSONPointers rule, then CustomizationRules
 // (util/argo/diff/ignore.go:118-122 and 155-159, diff_normalizer.go:122-140).
+// When a resource exists on both sides, both sides use the current side's
+// normalization.
 type Normalization struct {
 	// ApplicationRules are the matching Application spec.ignoreDifferences
 	// entries, in spec order.
@@ -46,11 +53,17 @@ type Normalization struct {
 	KnownTypeFields       []KnownTypeField
 	CompareOptions        CompareOptions
 	// AnnotationJSONPointers holds the jsonPointers parsed from the resource's
-	// own argocd.argoproj.io/ignore-differences annotation. Argo CD applies
-	// them as JSON-patch remove operations and only logs failures, so they are
-	// applied leniently: invalid pointers and the document-root pointer are
-	// skipped rather than failing the diff or removing the whole resource.
+	// own argocd.argoproj.io/ignore-differences annotation.
 	AnnotationJSONPointers []string
+	// ServerSideDiff reports that Argo CD compares the resource's
+	// Application with server-side diff. It decides what happens when an
+	// ignore rule removes a whole object (see errObjectRemoved), and how a
+	// created or deleted resource is normalized (see
+	// withServerSideCreateOrDeleteNormalization).
+	ServerSideDiff bool
+	// skipKnownTypes turns off the known-types normalizer, including the
+	// Rollout default.
+	skipKnownTypes bool
 }
 type Document struct {
 	Parent        Parent        `json:"parent" yaml:"parent"`
@@ -87,66 +100,295 @@ type Options struct {
 	Unified           int
 	StripAttrs        []string
 	ShowIgnoredFields bool
+	// reportKnownTypeFailure, when it is set, receives each knownTypeFields
+	// field that failed to normalize. RunWithReport sets it.
+	reportKnownTypeFailure func(field string, err error)
+	// JQExecutionTimeout limits how long one jq ignore-rule deletion may run,
+	// as the Argo CD controller setting controller.ignore.normalizer.jq.timeout
+	// does. Zero means Argo CD's default of 1 second. An expression that runs
+	// longer is skipped for that resource.
+	JQExecutionTimeout time.Duration
 }
 
+// ComparisonFailure is an Application whose comparison Argo CD v3.6.1
+// fails, so it has no diff results.
+type ComparisonFailure struct {
+	Parent  Parent
+	Message string
+}
+
+// KnownTypeFailure is a knownTypeFields field that failed to normalize on a
+// changed resource. Argo CD logs it and compares the field as written.
+type KnownTypeFailure struct {
+	Parent   Parent
+	Resource Resource
+	Field    string
+	// RolloutDefault marks the built-in known type of Argo Rollouts, the
+	// PodSpec at spec.template.spec, which no knownTypeFields entry sets.
+	RolloutDefault bool
+	Message        string
+}
+
+// RunReport is the outcome of RunWithReport.
+type RunReport struct {
+	Results            []Result
+	ComparisonFailures []ComparisonFailure
+	KnownTypeFailures  []KnownTypeFailure
+}
+
+// Run diffs the documents. It returns an error for an Application whose
+// comparison fails; use RunWithFailures to diff the other Applications.
 func Run(left, right []Document, opts Options) ([]Result, error) {
+	results, failures, err := RunWithFailures(left, right, opts)
+	if err != nil {
+		return nil, err
+	}
+	if len(failures) > 0 {
+		return nil, errors.New(failures[0].Message)
+	}
+	return results, nil
+}
+
+// RunWithFailures diffs the documents. An Application whose comparison
+// fails, as Argo CD fails it, gets one ComparisonFailure and no results.
+func RunWithFailures(left, right []Document, opts Options) ([]Result, []ComparisonFailure, error) {
+	report, err := RunWithReport(left, right, opts)
+	return report.Results, report.ComparisonFailures, err
+}
+
+// RunWithReport diffs the documents like RunWithFailures and also reports
+// the knownTypeFields fields that failed to normalize.
+func RunWithReport(left, right []Document, opts Options) (RunReport, error) {
 	leftByKey := documentsByKey(left)
 	rightByKey := documentsByKey(right)
 	keys := sortedKeys(leftByKey, rightByKey)
+	identities := resourceIdentities{left: identitiesOf(left), right: identitiesOf(right)}
 
 	results := make([]Result, 0)
+	var failures []ComparisonFailure
+	var knownTypeFailures []KnownTypeFailure
+	failed := map[string]struct{}{}
 	for _, key := range keys {
-		result, include, err := diffResultForKey(leftByKey, rightByKey, key, opts)
+		doc, ok := rightByKey[key]
+		if !ok {
+			doc = leftByKey[key]
+		}
+		// Known-type failures count only for a resource whose change is
+		// shown.
+		var pending []KnownTypeFailure
+		keyOpts := opts
+		keyOpts.reportKnownTypeFailure = func(field string, err error) {
+			for _, seen := range pending {
+				if seen.Field == field {
+					return
+				}
+			}
+			pending = append(pending, KnownTypeFailure{
+				Parent:         doc.Parent,
+				Resource:       doc.Resource,
+				Field:          field,
+				RolloutDefault: field == rolloutDefaultKnownTypeField,
+				Message:        err.Error(),
+			})
+		}
+		result, include, failure, err := diffResultForKey(leftByKey, rightByKey, key, keyOpts, identities)
 		if err != nil {
-			return nil, err
+			return RunReport{}, err
+		}
+		if failure != nil {
+			if _, ok := failed[parentName(failure.Parent)]; !ok {
+				failed[parentName(failure.Parent)] = struct{}{}
+				failures = append(failures, *failure)
+			}
+			continue
 		}
 		if include {
 			results = append(results, result)
+			knownTypeFailures = append(knownTypeFailures, pending...)
 		}
 	}
-
-	return results, nil
+	if len(failed) == 0 {
+		return RunReport{Results: results, KnownTypeFailures: knownTypeFailures}, nil
+	}
+	kept := results[:0]
+	for _, result := range results {
+		if _, ok := failed[parentName(result.Parent)]; !ok {
+			kept = append(kept, result)
+		}
+	}
+	keptKnownTypeFailures := knownTypeFailures[:0]
+	for _, failure := range knownTypeFailures {
+		if _, ok := failed[parentName(failure.Parent)]; !ok {
+			keptKnownTypeFailures = append(keptKnownTypeFailures, failure)
+		}
+	}
+	return RunReport{Results: kept, ComparisonFailures: failures, KnownTypeFailures: keptKnownTypeFailures}, nil
 }
-func diffResultForKey(leftByKey, rightByKey map[string]Document, key string, opts Options) (Result, bool, error) {
+
+// resourceIdentities holds, for each side, the resources by identity without
+// the Application.
+type resourceIdentities struct {
+	left, right map[string]struct{}
+}
+
+func resourceIdentityOf(doc Document) string {
+	return strings.Join([]string{doc.Resource.Group, doc.Resource.Kind, doc.Resource.Namespace, doc.Resource.Name}, "\x00")
+}
+
+func identitiesOf(docs []Document) map[string]struct{} {
+	out := make(map[string]struct{}, len(docs))
+	for _, doc := range docs {
+		out[resourceIdentityOf(doc)] = struct{}{}
+	}
+	return out
+}
+
+// createdOrDeleted reports whether a resource that only one side of its key
+// has is missing on the other side entirely. A resource that moves to
+// another Application, by a rename or an adoption, is not: Argo CD finds the
+// live object for the target whatever Application tracked it
+// (gitops-engine pkg/cache/cluster.go GetManagedLiveObjs), so it compares
+// the two as a modify.
+func (ids resourceIdentities) createdOrDeleted(left, right Document, hasLeft, hasRight bool) bool {
+	switch {
+	case hasLeft && !hasRight:
+		_, onRight := ids.right[resourceIdentityOf(left)]
+		return !onRight
+	case hasRight && !hasLeft:
+		_, onLeft := ids.left[resourceIdentityOf(right)]
+		return !onLeft
+	default:
+		return false
+	}
+}
+
+func diffResultForKey(leftByKey, rightByKey map[string]Document, key string, opts Options, identities resourceIdentities) (Result, bool, *ComparisonFailure, error) {
 	left, hasLeft := leftByKey[key]
 	right, hasRight := rightByKey[key]
 	left, right = documentsWithSharedNormalization(left, right, hasLeft, hasRight)
+	if identities.createdOrDeleted(left, right, hasLeft, hasRight) {
+		left, right = withServerSideCreateOrDeleteNormalization(left, right, hasLeft, hasRight)
+	}
 	if hasLeft && hasRight && left.Body == right.Body {
-		// Both sides share one merged normalization, so identical bodies always
-		// normalize identically and can never produce a diff.
-		return Result{}, false, nil
+		// Both sides share the current side's normalization, so identical bodies
+		// always normalize identically and can never produce a diff. Under
+		// client-side diff, an ignore rule that removes the whole object
+		// still fails the comparison, so one side is checked for that. Other
+		// errors of that check are ignored, as the resource is unchanged.
+		if mayFailComparison(left.Normalization) && objectRemovedByNormalization(right, opts) {
+			return Result{}, false, bothObjectsRemovedFailure(right), nil
+		}
+		return Result{}, false, nil, nil
 	}
 	leftBody, rightBody, err := normalizedDocumentBodies(left, right, hasLeft, hasRight, opts)
 	if err != nil {
-		return Result{}, false, err
+		return Result{}, false, nil, err
+	}
+	if hasLeft && hasRight && !right.Normalization.ServerSideDiff && leftBody == nullDiffBody && rightBody == nullDiffBody {
+		return Result{}, false, bothObjectsRemovedFailure(right), nil
 	}
 	doc, change, include := changedDocument(left, right, hasLeft, hasRight, leftBody, rightBody)
 	if !include {
-		return Result{}, false, nil
+		return Result{}, false, nil, nil
 	}
 	result, err := resultFor(doc, change, leftBody, rightBody, opts)
-	return result, true, err
+	return result, true, nil, err
 }
 
+// bothObjectsRemovedFailure is the failure of the comparison when an ignore
+// rule removes the object on both sides under client-side diff.
+// gitops-engine then cannot build a patch from null and null and returns an
+// error, so Argo CD fails the comparison of the Application
+// (pkg/diff/diff.go Diff, controller/state.go StateDiffs). When only one
+// side is null, the client-side diff reports a change (with the last-applied
+// annotation that a client-side sync leaves) and server-side diff always
+// does, so drydock shows a change. Server-side diff compares null with null
+// as unchanged.
+func bothObjectsRemovedFailure(doc Document) *ComparisonFailure {
+	return &ComparisonFailure{
+		Parent:  doc.Parent,
+		Message: fmt.Sprintf("%s: an ignore rule removed the whole object on both sides, so Argo CD's client-side diff fails the comparison of the Application", headerOf(doc)),
+	}
+}
+
+// objectRemovedByNormalization reports whether the document's ignore rules
+// remove its whole object. Any other normalization error counts as false.
+// The resource is unchanged, so known-type failures are not reported.
+func objectRemovedByNormalization(doc Document, opts Options) bool {
+	opts.reportKnownTypeFailure = nil
+	_, err := normalizeDiffObject(doc.Body, opts, doc.Normalization, doc.Resource)
+	return errors.Is(err, errObjectRemoved)
+}
+
+// withServerSideCreateOrDeleteNormalization gives a created or deleted
+// resource (see resourceIdentities.createdOrDeleted) the normalization of Argo CD's server-side diff for a created or
+// deleted resource. That path skips the whole ignore normalizer and the
+// known-types normalizer (gitops-engine pkg/diff/diff.go Diff and
+// handleResourceCreateOrDeleteDiff): no Application, annotation, or
+// resource.customizations rule, no status removal, which is a
+// resource.customizations rule in Argo CD, and no known types, not even the
+// Rollout default. The aggregated-role normalization still runs. Managed
+// fields need both sides, so they never apply here. drydock's own display
+// steps, such as the ConfigMap binaryData summary and Secret redaction,
+// still run on the body.
+func withServerSideCreateOrDeleteNormalization(left, right Document, hasLeft, hasRight bool) (Document, Document) {
+	if hasLeft == hasRight {
+		return left, right
+	}
+	adjust := func(doc Document) Document {
+		if !doc.Normalization.ServerSideDiff {
+			return doc
+		}
+		doc.Normalization.ApplicationRules = nil
+		doc.Normalization.CustomizationRules = nil
+		doc.Normalization.AnnotationJSONPointers = nil
+		doc.Normalization.KnownTypeFields = nil
+		doc.Normalization.ManagedFieldsManagers = nil
+		doc.Normalization.CompareOptions.IgnoreResourceStatusField = IgnoreResourceStatusNone
+		doc.Normalization.skipKnownTypes = true
+		return doc
+	}
+	if hasLeft {
+		return adjust(left), right
+	}
+	return left, adjust(right)
+}
+
+// mayFailComparison reports whether normalization can remove a whole object
+// under client-side diff, which fails the comparison even when both bodies
+// are identical. Only a jq expression can remove the whole object.
+func mayFailComparison(normalization Normalization) bool {
+	if normalization.ServerSideDiff {
+		return false
+	}
+	for _, rules := range [][]IgnoreRule{normalization.ApplicationRules, normalization.CustomizationRules} {
+		for _, rule := range rules {
+			if len(rule.JQPathExpressions) > 0 {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// documentsWithSharedNormalization gives both sides the normalization of the
+// current (right) side. Argo CD compares the desired state with the live
+// state under one rule list: the ignore rules of the Application and the
+// settings it runs with when it compares the new desired state, which are
+// the current side's rules. It reads the ignore-differences annotation from
+// the desired (target) objects only (util/argo/diff/normalize.go:14-15,
+// diff.go:290-291, ignore.go:130-131). drydock compares desired against
+// desired, so the current side stands in for the target. A resource that
+// exists only on the baseline side has no target. It keeps the rules its
+// document carries, which the caller sets to the current side's rules of the
+// Application, but its own annotation does not normalize it.
 func documentsWithSharedNormalization(left, right Document, hasLeft, hasRight bool) (Document, Document) {
 	var normalization Normalization
-	switch {
-	case hasLeft && hasRight:
-		normalization = mergeNormalization(left.Normalization, right.Normalization)
-	case hasLeft:
-		normalization = left.Normalization
-	case hasRight:
-		normalization = right.Normalization
-	}
-	// Argo CD reads the ignore-differences annotation from the desired (target)
-	// objects only (util/argo/diff/normalize.go:14-15, diff.go:290-291,
-	// ignore.go:130-131). drydock compares desired against desired, so the
-	// current (right) side stands in for the target. A resource that exists
-	// only on the baseline side has no target, so its own annotation does not
-	// normalize it.
-	normalization.AnnotationJSONPointers = nil
 	if hasRight {
-		normalization.AnnotationJSONPointers = right.Normalization.AnnotationJSONPointers
+		normalization = right.Normalization
+	} else {
+		normalization = left.Normalization
+		normalization.AnnotationJSONPointers = nil
 	}
 	if hasLeft {
 		left.Normalization = cloneNormalization(normalization)

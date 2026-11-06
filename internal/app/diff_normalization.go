@@ -1,13 +1,16 @@
 package app
 
 import (
+	"fmt"
 	"sort"
 	"strings"
 
+	resourceutil "github.com/argoproj/argo-cd/gitops-engine/v3/pkg/sync/resource"
 	"github.com/argoproj/argo-cd/v3/common"
 	argoappv1 "github.com/argoproj/argo-cd/v3/pkg/apis/application/v1alpha1"
 	"github.com/argoproj/argo-cd/v3/util/glob"
 	"github.com/sholdee/drydock/internal/config"
+	"github.com/sholdee/drydock/internal/diagnostic"
 	"github.com/sholdee/drydock/internal/diff"
 	"github.com/sholdee/drydock/internal/format"
 	"github.com/sholdee/drydock/internal/manifest"
@@ -64,11 +67,27 @@ func normalizationFor(application argoappv1.Application, id manifest.Identity, s
 		normalization.ApplicationRules = appendIgnoreRule(normalization.ApplicationRules, rule.JSONPointers, rule.JQPathExpressions)
 		normalization.ManagedFieldsManagers = append(normalization.ManagedFieldsManagers, rule.ManagedFieldsManagers...)
 	}
+	normalization.ServerSideDiff = applicationServerSideDiff(application)
 	global := globalNormalizationFor(settings, id)
 	normalization.CustomizationRules = global.CustomizationRules
 	normalization.ManagedFieldsManagers = append(normalization.ManagedFieldsManagers, global.ManagedFieldsManagers...)
 	normalization.KnownTypeFields = global.KnownTypeFields
 	return normalization
+}
+
+// applicationServerSideDiff reports whether Argo CD v3.6.1 compares the
+// Application with server-side diff, as shouldUseServerSideDiff does
+// (controller/state.go:1184-1191): an explicit ServerSideDiff=false
+// compare option turns it off, and a ServerSideDiff=true compare option or
+// the ServerSideApply=true sync option turns it on. drydock does not read
+// the controller-level switch controller.diff.server.side, which turns it on
+// for every Application; it reports that key as runtime-only.
+func applicationServerSideDiff(application argoappv1.Application) bool {
+	if resourceutil.HasAnnotationOption(&application, common.AnnotationCompareOptions, "ServerSideDiff=false") {
+		return false
+	}
+	return resourceutil.HasAnnotationOption(&application, common.AnnotationCompareOptions, "ServerSideDiff=true") ||
+		(application.Spec.SyncPolicy != nil && application.Spec.SyncPolicy.SyncOptions.HasOption("ServerSideApply=true"))
 }
 
 // appendIgnoreRule adds one rule when it has pointers or jq expressions, as
@@ -163,4 +182,196 @@ func marshalDiffObject(obj map[string]any) (string, error) {
 		return "", err
 	}
 	return string(data), nil
+}
+
+// Stable codes of the diff normalization diagnostics.
+const (
+	// diffIgnorePointerInvalidCode is the warning for an ignore-rule
+	// jsonPointer that is not a valid JSON pointer. Argo CD applies it with
+	// JSON-patch path rules and skips it where the patch fails, so drydock
+	// does the same and warns.
+	diffIgnorePointerInvalidCode = "diff.ignore-pointer-invalid"
+	// diffIgnoreRuleInvalidCode is the error for a jq expression that Argo
+	// CD cannot build. Argo CD fails the comparison of the Application.
+	diffIgnoreRuleInvalidCode = "diff.ignore-rule-invalid"
+	// diffComparisonFailedCode is the error for an Application whose
+	// comparison Argo CD fails while it diffs a resource, such as an ignore
+	// rule that removes a whole object under client-side diff.
+	diffComparisonFailedCode = "diff.comparison-failed"
+	// diffKnownTypeSkippedCode is the advisory warning that a knownTypeFields
+	// field of a changed resource failed to normalize. Argo CD logs the error
+	// and compares the field as written, and so does drydock, so --strict
+	// does not fail on it.
+	diffKnownTypeSkippedCode = "diff.known-type-skipped"
+)
+
+// diffApplicationKey names one Application in a diff.
+type diffApplicationKey struct {
+	Namespace string
+	Name      string
+}
+
+func (key diffApplicationKey) String() string {
+	if key.Namespace == "" {
+		return key.Name
+	}
+	return key.Namespace + "/" + key.Name
+}
+
+// currentApplications returns the Applications of the current side by
+// namespace and name, including those that render no manifests.
+func currentApplications(build BuildResult) map[diffApplicationKey]argoappv1.Application {
+	apps := make(map[diffApplicationKey]argoappv1.Application, len(build.Applications))
+	for _, application := range build.Applications {
+		apps[diffApplicationKey{Namespace: application.Namespace, Name: application.Name}] = application
+	}
+	return apps
+}
+
+// invalidIgnoreRuleDiagnostics returns an error diagnostic for each
+// current-side Application whose ignore rules hold a jq expression that does
+// not parse or compile. Argo CD v3.6.1 builds the jq patches of every
+// Application rule and every resource.customizations entry before it matches
+// any resource, also when the Application has no resources
+// (util/argo/diff/diff.go:298-325), and a failure fails the comparison of
+// that Application with a ComparisonError condition
+// (controller/state.go:975-983). Argo CD never compares an Application that
+// was deleted, so an Application that only the baseline side has is not
+// checked.
+func invalidIgnoreRuleDiagnostics(rightBuild BuildResult) (map[diffApplicationKey]struct{}, []diagnostic.Diagnostic) {
+	apps := currentApplications(rightBuild)
+	keys := make([]diffApplicationKey, 0, len(apps))
+	for key := range apps {
+		keys = append(keys, key)
+	}
+	sort.Slice(keys, func(i, j int) bool { return keys[i].String() < keys[j].String() })
+	failed := map[diffApplicationKey]struct{}{}
+	var diags []diagnostic.Diagnostic
+	for _, key := range keys {
+		message := invalidIgnoreRuleMessage(apps[key], rightBuild.Settings)
+		if message == "" {
+			continue
+		}
+		failed[key] = struct{}{}
+		diags = append(diags, diagnostic.Diagnostic{
+			Code:     diffIgnoreRuleInvalidCode,
+			Severity: diagnostic.SeverityError,
+			Category: "diff",
+			Message:  fmt.Sprintf("Application %s: failed to compare desired states, as Argo CD fails the comparison: %s", key, message),
+		})
+	}
+	return failed, diags
+}
+
+func invalidIgnoreRuleMessage(application argoappv1.Application, settings config.ArgoSettings) string {
+	for i, rule := range application.Spec.IgnoreDifferences {
+		for _, expression := range rule.JQPathExpressions {
+			if err := diff.ValidateJQPathExpression(expression); err != nil {
+				return fmt.Sprintf("spec.ignoreDifferences[%d]: %v", i, err)
+			}
+		}
+	}
+	keys := make([]string, 0, len(settings.ResourceCustomizations))
+	for key := range settings.ResourceCustomizations {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		for _, expression := range settings.ResourceCustomizations[key].IgnoreDifferences.JQPathExpressions {
+			if err := diff.ValidateJQPathExpression(expression); err != nil {
+				return fmt.Sprintf("resource.customizations %s: %v", key, err)
+			}
+		}
+	}
+	return ""
+}
+
+// invalidIgnorePointerDiagnostics warns once per Application and pointer
+// about an Application or resource.customizations jsonPointer that is not a
+// valid JSON pointer and that a rendered resource uses. drydock applies it
+// with Argo CD's JSON-patch path rules. Every document carries the current
+// side's rules (see baselineNormalization), so a pointer that only the
+// baseline side has gives no warning.
+func invalidIgnorePointerDiagnostics(leftDocs, rightDocs []diff.Document) []diagnostic.Diagnostic {
+	seen := map[string]struct{}{}
+	var diags []diagnostic.Diagnostic
+	for _, doc := range append(append([]diff.Document(nil), rightDocs...), leftDocs...) {
+		app := diffApplicationKey{Namespace: doc.Parent.Namespace, Name: doc.Parent.Name}
+		for _, source := range []struct {
+			name  string
+			rules []diff.IgnoreRule
+		}{
+			{"spec.ignoreDifferences", doc.Normalization.ApplicationRules},
+			{"resource.customizations", doc.Normalization.CustomizationRules},
+		} {
+			for _, rule := range source.rules {
+				for _, pointer := range rule.JSONPointers {
+					reason := diff.InvalidJSONPointerReason(pointer)
+					if reason == "" {
+						continue
+					}
+					id := app.String() + "\x00" + source.name + "\x00" + pointer
+					if _, ok := seen[id]; ok {
+						continue
+					}
+					seen[id] = struct{}{}
+					diags = append(diags, diagnostic.Diagnostic{
+						Code:     diffIgnorePointerInvalidCode,
+						Severity: diagnostic.SeverityWarning,
+						Category: "diff",
+						Message: fmt.Sprintf("Application %s: %s jsonPointer %q is not a valid JSON pointer (%s); like Argo CD, drydock applies it as a JSON-patch path and skips it where the patch fails",
+							app, source.name, pointer, reason),
+					})
+				}
+			}
+		}
+	}
+	return diags
+}
+
+func diffResourceName(resource diff.Resource) string {
+	kind := resource.Kind
+	if resource.Group != "" {
+		kind = resource.Group + "/" + kind
+	}
+	name := resource.Name
+	if resource.Namespace != "" {
+		name = resource.Namespace + "/" + name
+	}
+	return kind + " " + name
+}
+
+func withoutApplications(docs []diff.Document, failed map[diffApplicationKey]struct{}) []diff.Document {
+	if len(failed) == 0 {
+		return docs
+	}
+	out := make([]diff.Document, 0, len(docs))
+	for _, doc := range docs {
+		if _, ok := failed[diffApplicationKey{Namespace: doc.Parent.Namespace, Name: doc.Parent.Name}]; ok {
+			continue
+		}
+		out = append(out, doc)
+	}
+	return out
+}
+
+// baselineNormalization returns the normalization of a baseline-side
+// document. Argo CD compares the live objects under the current rules and
+// settings of the live Application, also a live object that the new desired
+// state no longer has (controller/state.go:931-932,
+// util/argo/diff/diff.go:298-325). So a baseline document of an Application
+// that the current side still has uses the current side's Application rules
+// and settings. Its own annotation is kept here, and diff.Run ignores it when
+// the current side has no copy of the resource. Argo CD never compares an
+// Application that was deleted, so the resources of an Application that only
+// the baseline side has get no ignore rules: a rule that does not build
+// cannot fail the diff, and its pointers give no warning.
+func baselineNormalization(item ApplicationManifest, id manifest.Identity, current map[diffApplicationKey]argoappv1.Application, settings config.ArgoSettings) diff.Normalization {
+	application, ok := current[diffApplicationKey{Namespace: item.Application.Namespace, Name: item.Application.Name}]
+	if !ok {
+		return diff.Normalization{}
+	}
+	normalization := normalizationFor(application, id, settings)
+	normalization.AnnotationJSONPointers = annotationIgnoreJSONPointers(item.Manifest.Object)
+	return normalization
 }

@@ -255,8 +255,8 @@ func TestOrchestratorDiffAppsInvalidJQPathExpressionReturnsError(t *testing.T) {
 			if err == nil {
 				t.Fatal("DiffApps() error = nil, want invalid jq error")
 			}
-			if !strings.Contains(err.Error(), "normalize") || !strings.Contains(err.Error(), "jq") {
-				t.Fatalf("DiffApps() error = %v, want jq normalization error", err)
+			if !strings.Contains(err.Error(), "Application argocd/demo") || !strings.Contains(err.Error(), "jq") {
+				t.Fatalf("DiffApps() error = %v, want jq error for Application argocd/demo", err)
 			}
 			if len(result.Results) != 0 {
 				t.Fatalf("Results = %#v, want none on normalization error", result.Results)

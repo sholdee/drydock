@@ -1,0 +1,26 @@
+# The Argo CD settings for the live diff smoke. drydock reads them from this
+# file at each ref. The smoke applies the same data keys to the live
+# argocd-cm before it applies the Applications, and removes them after.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: argocd-cm
+  namespace: argocd
+data:
+  # A split key for a core kind, written without a slash.
+  resource.customizations.ignoreDifferences.ServiceAccount: |
+    jsonPointers:
+      - /metadata/annotations/parity.drydock.dev~1ignored
+  # The split key "all" applies to every group and kind.
+  resource.customizations.ignoreDifferences.all: |
+    jsonPointers:
+      - /metadata/labels/parity.drydock.dev~1ignored-all
+  # The block form. The select drops only the verbs of the configmaps rule.
+  resource.customizations: |
+    rbac.authorization.k8s.io/Role:
+      ignoreDifferences: |
+        jqPathExpressions:
+          - .rules[] | select(.resources == ["configmaps"]) | .verbs
+  # Aggregated ClusterRoles: Argo CD ignores their rules.
+  resource.compareoptions: |
+    ignoreAggregatedRoles: true

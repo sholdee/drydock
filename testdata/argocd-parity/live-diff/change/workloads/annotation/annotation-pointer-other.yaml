@@ -1,0 +1,11 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: annotation-pointer-other
+  annotations:
+    argocd.argoproj.io/ignore-differences: |
+      jsonPointers:
+        - /data/ignored
+data:
+  ignored: after
+  kept: after

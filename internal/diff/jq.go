@@ -10,28 +10,52 @@ import (
 	"github.com/itchyny/gojq"
 )
 
-const jqExecutionTimeout = time.Second
+// defaultJQExecutionTimeout is the time one jq deletion may run when
+// Options.JQExecutionTimeout is zero. It is Argo CD v3.6.1's
+// normalizers.DefaultJQExecutionTimeout.
+const defaultJQExecutionTimeout = time.Second
 
-func removeJQPathExpressions(object map[string]any, expressions []string) (map[string]any, error) {
+// jqTimeout returns the jq timeout of opts.
+func jqTimeout(opts Options) time.Duration {
+	if opts.JQExecutionTimeout <= 0 {
+		return defaultJQExecutionTimeout
+	}
+	return opts.JQExecutionTimeout
+}
+
+// removeJQPathExpressions deletes each jq path expression from object in
+// order. An expression that does not parse or compile is an error, as Argo CD
+// v3.6.1 fails the whole comparison when it builds such a patch. An expression
+// that fails while it runs on this object is skipped, and the next one runs
+// on the unchanged object: Argo CD logs the failed patch and keeps going
+// (util/argo/normalizers/diff_normalizer.go:205-220). A typical case is a
+// containers expression that a wildcard rule applies to a ConfigMap.
+func removeJQPathExpressions(object map[string]any, expressions []string, timeout time.Duration) (map[string]any, error) {
 	if len(expressions) == 0 {
 		return object, nil
 	}
-	var current any = object
+	current := object
 	for _, expression := range expressions {
-		next, err := removeJQPathExpression(current, expression)
+		code, err := compileJQPathExpression(expression)
 		if err != nil {
 			return nil, err
 		}
-		current = next
+		next, err := runJQPathExpression(code, current, expression, timeout)
+		if err != nil {
+			continue
+		}
+		typed, ok := next.(map[string]any)
+		if !ok {
+			// The expression removed the whole object, as "." does. See
+			// errObjectRemoved.
+			return nil, errObjectRemoved
+		}
+		current = typed
 	}
-	typed, ok := current.(map[string]any)
-	if !ok {
-		return nil, fmt.Errorf("jq normalization produced %T root, want object", current)
-	}
-	return typed, nil
+	return current, nil
 }
 
-func removeJQPathExpression(object any, expression string) (any, error) {
+func compileJQPathExpression(expression string) (*gojq.Code, error) {
 	query, err := gojq.Parse(fmt.Sprintf("del(%s)", expression))
 	if err != nil {
 		return nil, fmt.Errorf("invalid jq path expression %q: %w", expression, err)
@@ -40,7 +64,14 @@ func removeJQPathExpression(object any, expression string) (any, error) {
 	if err != nil {
 		return nil, fmt.Errorf("compile jq path expression %q: %w", expression, err)
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), jqExecutionTimeout)
+	return code, nil
+}
+
+// runJQPathExpression runs one compiled deletion. Like Argo CD's
+// jqNormalizerPatch.Apply, it fails when the expression returns no value, an
+// error, or more than one value, or when it runs longer than the timeout.
+func runJQPathExpression(code *gojq.Code, object any, expression string, timeout time.Duration) (any, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 	iter := code.RunWithContext(ctx, object)
 	first, ok := iter.Next()
@@ -48,11 +79,11 @@ func removeJQPathExpression(object any, expression string) (any, error) {
 		return nil, fmt.Errorf("jq path expression %q did not return any data", expression)
 	}
 	if errValue, ok := first.(error); ok {
-		return nil, jqResultError(expression, errValue)
+		return nil, jqResultError(expression, errValue, timeout)
 	}
 	if second, ok := iter.Next(); ok {
 		if errValue, ok := second.(error); ok {
-			return nil, jqResultError(expression, errValue)
+			return nil, jqResultError(expression, errValue, timeout)
 		}
 		return nil, fmt.Errorf("jq path expression %q returned multiple objects", expression)
 	}
@@ -67,9 +98,19 @@ func removeJQPathExpression(object any, expression string) (any, error) {
 	return out, nil
 }
 
-func jqResultError(expression string, err error) error {
+func jqResultError(expression string, err error, timeout time.Duration) error {
 	if errors.Is(err, context.DeadlineExceeded) {
-		return fmt.Errorf("jq path expression %q timed out after %s", expression, jqExecutionTimeout)
+		return fmt.Errorf("jq path expression %q timed out after %s", expression, timeout)
 	}
 	return fmt.Errorf("jq path expression %q returned error: %w", expression, err)
+}
+
+// ValidateJQPathExpression reports whether Argo CD v3.6.1 can build the jq
+// deletion patch for expression. NewIgnoreNormalizer parses and compiles
+// every expression before it matches any resource, and a failure there fails
+// the whole comparison of the Application
+// (util/argo/normalizers/diff_normalizer.go:159-168).
+func ValidateJQPathExpression(expression string) error {
+	_, err := compileJQPathExpression(expression)
+	return err
 }
