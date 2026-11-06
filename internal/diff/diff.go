@@ -111,8 +111,8 @@ func diffResultForKey(leftByKey, rightByKey map[string]Document, key string, opt
 	right, hasRight := rightByKey[key]
 	left, right = documentsWithSharedNormalization(left, right, hasLeft, hasRight)
 	if hasLeft && hasRight && left.Body == right.Body {
-		// Both sides share one merged normalization, so identical bodies always
-		// normalize identically and can never produce a diff.
+		// Both sides share the current side's normalization, so identical bodies
+		// always normalize identically and can never produce a diff.
 		return Result{}, false, nil
 	}
 	leftBody, rightBody, err := normalizedDocumentBodies(left, right, hasLeft, hasRight, opts)
@@ -135,9 +135,9 @@ func diffResultForKey(leftByKey, rightByKey map[string]Document, key string, opt
 // the desired (target) objects only (util/argo/diff/normalize.go:14-15,
 // diff.go:290-291, ignore.go:130-131). drydock compares desired against
 // desired, so the current side stands in for the target. A resource that
-// exists only on the baseline side has no target. It keeps its own rules
-// for the removed-resource diff, but its own annotation does not normalize
-// it.
+// exists only on the baseline side has no target. It keeps the rules its
+// document carries, which the caller sets to the current side's rules of the
+// Application, but its own annotation does not normalize it.
 func documentsWithSharedNormalization(left, right Document, hasLeft, hasRight bool) (Document, Document) {
 	var normalization Normalization
 	if hasRight {

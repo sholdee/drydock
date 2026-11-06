@@ -1227,17 +1227,24 @@ Supported:
 - A `jqPathExpressions` entry that fails to run on one resource, such as a
   `containers[]` expression on a ConfigMap, is skipped for that resource, and
   the other rules still apply. Argo CD logs such a failed patch and goes on
-  (`util/argo/normalizers/diff_normalizer.go`).
+  (`util/argo/normalizers/diff_normalizer.go`). An expression that returns
+  more than one value, or that runs longer than 1 second, is skipped the
+  same way. The 1 second is Argo CD's default. drydock does not read the
+  `controller.ignore.normalizer.jq.timeout` key of `argocd-cmd-params-cm`,
+  which changes it.
 - A jq expression that does not parse or compile fails the comparison of
-  each Application it belongs to, even when it matches no resource. Argo CD
-  builds every jq patch of the Application's rules and of all
-  `resource.customizations` entries before it compares any resource, and it
-  sets a `ComparisonError` condition with sync status `Unknown`
-  (`controller/state.go`). So an expression in `resource.customizations`
-  fails every Application. drydock reports a `diff.ignore-rule-invalid`
-  error for each such Application, leaves its resources out of the diff, and
-  still diffs the other Applications. The command fails, as for a render
-  failure.
+  each current-side Application it belongs to, even when it matches no
+  resource or the Application renders no resources. Argo CD builds every jq
+  patch of the Application's rules and of all `resource.customizations`
+  entries before it compares any resource, and it sets a `ComparisonError`
+  condition with sync status `Unknown` (`controller/state.go`). So an
+  expression in `resource.customizations` fails every Application. drydock
+  reports a `diff.ignore-rule-invalid` error for each such Application. The
+  `diff` commands then print the diagnostics and no diff, and fail, as for a
+  render failure. Library callers of `DiffApps` still get the results of the
+  other Applications with the error. Argo CD never compares a deleted
+  Application, so an Application that only the baseline side has is not
+  checked.
 - `resource.customizations` keys as Argo CD reads them for `jsonPointers`,
   `jqPathExpressions`, and `knownTypeFields`
   (`util/argo/normalizers/util.go`): `group/kind` matches with globs, a key
@@ -1260,9 +1267,14 @@ Supported:
   the annotation. Argo CD compares the new desired state under the rules of
   the live Application, which are the new rules once the Application change
   is synced. A rule that only the baseline side has does not hide a change.
-  A resource that exists only on the baseline side keeps its own rules,
-  except its annotation. Earlier drydock releases used the union of both
-  sides' rules.
+  A resource that exists only on the baseline side also uses the current
+  side's rules and settings of its Application, as Argo CD normalizes a
+  live object that the new desired state no longer has. Its own annotation
+  does not apply, because only a desired object carries the annotation
+  rule. A pointer warning comes only from the current side's rules. The
+  resources of an Application that only the baseline side has get no ignore
+  rules, because Argo CD never compares a deleted Application. Earlier
+  drydock releases used the union of both sides' rules.
 - `argocd-cm` `resource.exclusions` and `resource.inclusions` (Argo CD
   v3.6.1), with Argo CD's core exclusions. drydock decodes them as Argo CD
   decodes them, with `sigs.k8s.io/yaml`. Keys match case-insensitively, so

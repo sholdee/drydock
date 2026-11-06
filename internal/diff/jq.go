@@ -10,14 +10,19 @@ import (
 	"github.com/itchyny/gojq"
 )
 
-const jqExecutionTimeout = time.Second
+// jqExecutionTimeout is the time one jq deletion may run. It is Argo CD
+// v3.6.1's default, normalizers.DefaultJQExecutionTimeout. The Argo CD
+// controller can change it with controller.ignore.normalizer.jq.timeout in
+// argocd-cmd-params-cm; drydock does not read that key. It is a variable so
+// that tests can shorten it.
+var jqExecutionTimeout = time.Second
 
 // removeJQPathExpressions deletes each jq path expression from object in
 // order. An expression that does not parse or compile is an error, as Argo CD
 // v3.6.1 fails the whole comparison when it builds such a patch. An expression
 // that fails while it runs on this object is skipped, and the next one runs
 // on the unchanged object: Argo CD logs the failed patch and keeps going
-// (util/argo/normalizers/diff_normalizer.go:210-224). A typical case is a
+// (util/argo/normalizers/diff_normalizer.go:205-220). A typical case is a
 // containers expression that a wildcard rule applies to a ConfigMap.
 func removeJQPathExpressions(object map[string]any, expressions []string) (map[string]any, error) {
 	if len(expressions) == 0 {

@@ -624,7 +624,10 @@ func selectDiffAppApplications(leftApps, rightApps []argoappv1.Application, name
 // and no results, and the other Applications are still diffed. The returned
 // error reports that failure, and with strict, any normalization warning.
 func diffBuildResults(leftBuild, rightBuild BuildResult, opts diff.Options, strict bool) ([]diff.Result, []diagnostic.Diagnostic, error) {
-	leftDocs, err := diffDocuments(leftBuild)
+	current := currentApplications(rightBuild)
+	leftDocs, err := diffDocumentsWith(leftBuild, func(item ApplicationManifest, id manifest.Identity) diff.Normalization {
+		return baselineNormalization(item, id, current, rightBuild.Settings)
+	})
 	if err != nil {
 		return nil, nil, err
 	}
@@ -632,7 +635,7 @@ func diffBuildResults(leftBuild, rightBuild BuildResult, opts diff.Options, stri
 	if err != nil {
 		return nil, nil, err
 	}
-	failed, diags := invalidIgnoreRuleDiagnostics(leftBuild, rightBuild)
+	failed, diags := invalidIgnoreRuleDiagnostics(rightBuild)
 	leftDocs = withoutApplications(leftDocs, failed)
 	rightDocs = withoutApplications(rightDocs, failed)
 	diags = normalizeDiagnostics(append(diags, invalidIgnorePointerDiagnostics(leftDocs, rightDocs)...), strict, false)
@@ -647,7 +650,17 @@ func hasRenderedDiffInput(leftBuild, rightBuild BuildResult) bool {
 	return len(leftBuild.ApplicationManifests) > 0 || len(rightBuild.ApplicationManifests) > 0
 }
 
+// diffDocuments returns the documents of one build, each normalized with its
+// own Application's rules and the build's settings.
 func diffDocuments(build BuildResult) ([]diff.Document, error) {
+	return diffDocumentsWith(build, func(item ApplicationManifest, id manifest.Identity) diff.Normalization {
+		normalization := normalizationFor(item.Application, id, build.Settings)
+		normalization.AnnotationJSONPointers = annotationIgnoreJSONPointers(item.Manifest.Object)
+		return normalization
+	})
+}
+
+func diffDocumentsWith(build BuildResult, normalizationOf func(ApplicationManifest, manifest.Identity) diff.Normalization) ([]diff.Document, error) {
 	docs := make([]diff.Document, 0, len(build.ApplicationManifests))
 	for _, item := range build.ApplicationManifests {
 		if item.Manifest.Object == nil {
@@ -658,8 +671,7 @@ func diffDocuments(build BuildResult) ([]diff.Document, error) {
 		if err != nil {
 			return nil, err
 		}
-		normalization := normalizationFor(item.Application, id, build.Settings)
-		normalization.AnnotationJSONPointers = annotationIgnoreJSONPointers(item.Manifest.Object)
+		normalization := normalizationOf(item, id)
 		docs = append(docs, diff.Document{
 			Parent: diff.Parent{
 				Namespace:   item.Application.Namespace,

@@ -151,7 +151,9 @@ resource diffs. Supported ignore fields are `jsonPointers`,
 `jqPathExpressions`, and `managedFieldsManagers`. When a resource exists on
 both sides, drydock normalizes both sides with the current tree's rules and
 settings, as Argo CD compares the new desired state under the Application's new
-rules. A rule that only the baseline tree has does not hide a change.
+rules. A rule that only the baseline tree has does not hide a change. A
+resource that only the baseline tree has also uses the current tree's rules of
+its Application. The resources of a deleted Application get no ignore rules.
 
 drydock runs ignore rules in Argo CD's order. Application rules run first, then
 the resource's annotation rule, then `resource.customizations` rules. Each rule
@@ -167,7 +169,8 @@ example, `.spec.template.spec.containers[] | .image` fails on a ConfigMap,
 which has no `spec`. A jq expression that does not parse fails each Application
 it belongs to with a `diff.ignore-rule-invalid` error, even when it matches no
 resource, because Argo CD then fails the comparison of the Application. An
-expression in `resource.customizations` belongs to every Application.
+expression in `resource.customizations` belongs to every Application. The
+command then prints no diff and fails.
 
 Every `jsonPointers` entry follows the path rules of the JSON-patch library
 that Argo CD applies it with, the same rules as annotation pointers below. A

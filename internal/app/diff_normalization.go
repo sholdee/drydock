@@ -192,45 +192,37 @@ func (key diffApplicationKey) String() string {
 	return key.Namespace + "/" + key.Name
 }
 
-// targetApplications returns each Application that renders manifests, with
-// the build that holds the settings it is compared under: the current side
-// when the Application exists there, and the baseline side otherwise. Argo
-// CD compares under the rules and settings of the live Application, which
-// are the current side's after the change.
-func targetApplications(leftBuild, rightBuild BuildResult) ([]diffApplicationKey, map[diffApplicationKey]argoappv1.Application, map[diffApplicationKey]config.ArgoSettings) {
-	apps := map[diffApplicationKey]argoappv1.Application{}
-	settings := map[diffApplicationKey]config.ArgoSettings{}
-	for _, build := range []BuildResult{rightBuild, leftBuild} {
-		for _, item := range build.ApplicationManifests {
-			key := diffApplicationKey{Namespace: item.Application.Namespace, Name: item.Application.Name}
-			if _, ok := apps[key]; ok {
-				continue
-			}
-			apps[key] = item.Application
-			settings[key] = build.Settings
-		}
+// currentApplications returns the Applications of the current side by
+// namespace and name, including those that render no manifests.
+func currentApplications(build BuildResult) map[diffApplicationKey]argoappv1.Application {
+	apps := make(map[diffApplicationKey]argoappv1.Application, len(build.Applications))
+	for _, application := range build.Applications {
+		apps[diffApplicationKey{Namespace: application.Namespace, Name: application.Name}] = application
 	}
+	return apps
+}
+
+// invalidIgnoreRuleDiagnostics returns an error diagnostic for each
+// current-side Application whose ignore rules hold a jq expression that does
+// not parse or compile. Argo CD v3.6.1 builds the jq patches of every
+// Application rule and every resource.customizations entry before it matches
+// any resource, also when the Application has no resources
+// (util/argo/diff/diff.go:298-325), and a failure fails the comparison of
+// that Application with a ComparisonError condition
+// (controller/state.go:975-983). Argo CD never compares an Application that
+// was deleted, so an Application that only the baseline side has is not
+// checked.
+func invalidIgnoreRuleDiagnostics(rightBuild BuildResult) (map[diffApplicationKey]struct{}, []diagnostic.Diagnostic) {
+	apps := currentApplications(rightBuild)
 	keys := make([]diffApplicationKey, 0, len(apps))
 	for key := range apps {
 		keys = append(keys, key)
 	}
 	sort.Slice(keys, func(i, j int) bool { return keys[i].String() < keys[j].String() })
-	return keys, apps, settings
-}
-
-// invalidIgnoreRuleDiagnostics returns an error diagnostic for each
-// Application whose ignore rules hold a jq expression that does not parse or
-// compile. Argo CD v3.6.1 builds the jq patches of every Application rule and
-// every resource.customizations entry before it matches any resource, and a
-// failure fails the comparison of that Application with a ComparisonError
-// condition (controller/state.go:975-983). So the rule fails the
-// Application even when it matches no resource.
-func invalidIgnoreRuleDiagnostics(leftBuild, rightBuild BuildResult) (map[diffApplicationKey]struct{}, []diagnostic.Diagnostic) {
-	keys, apps, settings := targetApplications(leftBuild, rightBuild)
 	failed := map[diffApplicationKey]struct{}{}
 	var diags []diagnostic.Diagnostic
 	for _, key := range keys {
-		message := invalidIgnoreRuleMessage(apps[key], settings[key])
+		message := invalidIgnoreRuleMessage(apps[key], rightBuild.Settings)
 		if message == "" {
 			continue
 		}
@@ -271,23 +263,13 @@ func invalidIgnoreRuleMessage(application argoappv1.Application, settings config
 // invalidIgnorePointerDiagnostics warns once per Application and pointer
 // about an Application or resource.customizations jsonPointer that is not a
 // valid JSON pointer and that a rendered resource uses. drydock applies it
-// with Argo CD's JSON-patch path rules. It reads the rules each resource is
-// compared under: the current side's, or the baseline side's for a resource
-// that only the baseline has.
+// with Argo CD's JSON-patch path rules. Every document carries the current
+// side's rules (see baselineNormalization), so a pointer that only the
+// baseline side has gives no warning.
 func invalidIgnorePointerDiagnostics(leftDocs, rightDocs []diff.Document) []diagnostic.Diagnostic {
-	current := make(map[string]struct{}, len(rightDocs))
-	for _, doc := range rightDocs {
-		current[diffDocumentKey(doc)] = struct{}{}
-	}
-	docs := append([]diff.Document(nil), rightDocs...)
-	for _, doc := range leftDocs {
-		if _, ok := current[diffDocumentKey(doc)]; !ok {
-			docs = append(docs, doc)
-		}
-	}
 	seen := map[string]struct{}{}
 	var diags []diagnostic.Diagnostic
-	for _, doc := range docs {
+	for _, doc := range append(append([]diff.Document(nil), rightDocs...), leftDocs...) {
 		app := diffApplicationKey{Namespace: doc.Parent.Namespace, Name: doc.Parent.Name}
 		for _, source := range []struct {
 			name  string
@@ -321,10 +303,6 @@ func invalidIgnorePointerDiagnostics(leftDocs, rightDocs []diff.Document) []diag
 	return diags
 }
 
-func diffDocumentKey(doc diff.Document) string {
-	return strings.Join([]string{doc.Parent.Namespace, doc.Parent.Name, doc.Resource.Group, doc.Resource.Kind, doc.Resource.Namespace, doc.Resource.Name}, "\x00")
-}
-
 func withoutApplications(docs []diff.Document, failed map[diffApplicationKey]struct{}) []diff.Document {
 	if len(failed) == 0 {
 		return docs
@@ -337,4 +315,25 @@ func withoutApplications(docs []diff.Document, failed map[diffApplicationKey]str
 		out = append(out, doc)
 	}
 	return out
+}
+
+// baselineNormalization returns the normalization of a baseline-side
+// document. Argo CD compares the live objects under the current rules and
+// settings of the live Application, also a live object that the new desired
+// state no longer has (controller/state.go:931-932,
+// util/argo/diff/diff.go:298-325). So a baseline document of an Application
+// that the current side still has uses the current side's Application rules
+// and settings. Its own annotation is kept here, and diff.Run ignores it when
+// the current side has no copy of the resource. Argo CD never compares an
+// Application that was deleted, so the resources of an Application that only
+// the baseline side has get no ignore rules: a rule that does not build
+// cannot fail the diff, and its pointers give no warning.
+func baselineNormalization(item ApplicationManifest, id manifest.Identity, current map[diffApplicationKey]argoappv1.Application, settings config.ArgoSettings) diff.Normalization {
+	application, ok := current[diffApplicationKey{Namespace: item.Application.Namespace, Name: item.Application.Name}]
+	if !ok {
+		return diff.Normalization{}
+	}
+	normalization := normalizationFor(application, id, settings)
+	normalization.AnnotationJSONPointers = annotationIgnoreJSONPointers(item.Manifest.Object)
+	return normalization
 }

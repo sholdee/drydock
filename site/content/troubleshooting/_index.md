@@ -391,9 +391,9 @@ with a leading `/`. `--strict` makes the warning an error.
 `diff.ignore-rule-invalid` is an error. A `jqPathExpressions` entry does not
 parse or compile. Argo CD then fails the comparison of the Application with a
 `ComparisonError` condition, even when the rule matches no resource. An
-expression in `resource.customizations` fails every Application. drydock
-leaves the resources of each such Application out of the diff, and the command
-fails. Fix the jq expression.
+expression in `resource.customizations` fails every Application. The command
+prints the diagnostics and no diff, and fails. Fix the jq expression. A
+deleted Application is not checked, because Argo CD never compares it.
 
 ## Symptom: Changed-Only Falls Back To All Apps
 
