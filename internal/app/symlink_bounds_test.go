@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 
 	argoappv1 "github.com/argoproj/argo-cd/v3/pkg/apis/application/v1alpha1"
@@ -173,19 +174,88 @@ func TestLocalProviderChecksEachScope(t *testing.T) {
 			t.Fatalf("RenderSource() error = %v, want the chart out-of-bounds error", err)
 		}
 	})
-	t.Run("$ref repository", func(t *testing.T) {
+	refValues := func(t *testing.T) (string, sourcepkg.RepoMap) {
+		t.Helper()
 		values := t.TempDir()
 		writeTestFile(t, filepath.Join(values, "values.yaml"), "a: 1\n")
 		symlinkBoundsLink(t, "/etc/hosts", filepath.Join(values, "escape.yaml"))
+		return values, sourcepkg.RepoMap{URL: "https://git.example.test/values.git", Path: values}
+	}
+	refOptions := render.RenderOptions{
+		ValueFiles: []string{"$values/values.yaml"},
+		RefSources: map[string]render.ResolvedSource{"$values": {RepoURL: "https://git.example.test/values.git", TargetRevision: "main"}},
+	}
+	t.Run("$ref repository", func(t *testing.T) {
+		_, valuesMap := refValues(t)
+		root := t.TempDir()
+		writeTestFile(t, filepath.Join(root, "chart", "Chart.yaml"), "apiVersion: v2\nname: demo\nversion: 1.0.0\n")
+		provider := localProvider{
+			repoRoot:       root,
+			sourceResolver: sourcepkg.NewResolver(sourcepkg.Options{RepoMaps: []sourcepkg.RepoMap{valuesMap}}),
+		}
+		_, _, err := provider.RenderSource(context.Background(), render.ResolvedSource{RepoRoot: root, Path: "chart"}, refOptions)
+		if err == nil || !strings.Contains(err.Error(), "ref root $values: repository contains out-of-bounds symlinks. file: escape.yaml") {
+			t.Fatalf("RenderSource() error = %v, want the $ref out-of-bounds error", err)
+		}
+	})
+	t.Run("a Helm repository chart is checked before its $ref repository", func(t *testing.T) {
+		_, valuesMap := refValues(t)
+		chartDir := filepath.Join(t.TempDir(), "demo")
+		writeTestFile(t, filepath.Join(chartDir, "Chart.yaml"), "apiVersion: v2\nname: demo\nversion: 1.0.0\n")
+		symlinkBoundsLink(t, "/etc/hosts", filepath.Join(chartDir, "templates", "escape.yaml"))
 		provider := localProvider{
 			repoRoot:       t.TempDir(),
-			sourceResolver: sourcepkg.NewResolver(sourcepkg.Options{RepoMaps: []sourcepkg.RepoMap{{URL: "https://git.example.test/values.git", Path: values}}}),
+			chartAcquirer:  fixedChartAcquirer{dir: chartDir},
+			sourceResolver: sourcepkg.NewResolver(sourcepkg.Options{RepoMaps: []sourcepkg.RepoMap{valuesMap}}),
 		}
-		_, err := provider.resolveRefRoots(context.Background(), map[string]render.ResolvedSource{
-			"$values": {RepoURL: "https://git.example.test/values.git", TargetRevision: "main"},
-		})
-		if err == nil || !strings.Contains(err.Error(), "ref root $values: repository contains out-of-bounds symlinks. file: escape.yaml") {
-			t.Fatalf("resolveRefRoots() error = %v, want the $ref out-of-bounds error", err)
+		_, _, err := provider.RenderSource(context.Background(), render.ResolvedSource{RepoURL: "https://charts.example.test", Chart: "demo", TargetRevision: "1.0.0"}, refOptions)
+		if err == nil || !strings.Contains(err.Error(), "chart contains out-of-bounds symlinks. file: templates/escape.yaml") {
+			t.Fatalf("RenderSource() error = %v, want the chart error first", err)
+		}
+	})
+}
+
+// TestRenderApplicationChecksBeforeOverridesAndOCIRefOnlySources pins two
+// repo-server orders. The tree is checked before GenerateManifests reads
+// .argocd-source.yaml, and an oci:// source that only sets ref is extracted
+// and checked, because the ref-only skip at reposerver/repository/
+// repository.go:670 (v3.6.1) leaves out OCI sources.
+func TestRenderApplicationChecksBeforeOverridesAndOCIRefOnlySources(t *testing.T) {
+	t.Run("override", func(t *testing.T) {
+		root := t.TempDir()
+		writeTestFile(t, filepath.Join(root, "app", "cm.yaml"), symlinkBoundsConfigMap)
+		writeTestFile(t, filepath.Join(root, "app", ".argocd-source.yaml"), "directory: [not, a, map\n")
+		symlinkBoundsLink(t, "/etc/hosts", filepath.Join(root, "other", "escape.yaml"))
+		application := argoappv1.Application{
+			Name: "demo",
+			Spec: argoappv1.ApplicationSpec{Source: &argoappv1.ApplicationSource{RepoURL: "https://git.example.test/repo.git", TargetRevision: "main", Path: "app"}},
+		}
+		provider := localProvider{repoRoot: root, sourceResolver: sourcepkg.NewResolver(sourcepkg.Options{})}
+		_, err := RenderApplication(context.Background(), application, provider)
+		if err == nil || !strings.Contains(err.Error(), "repository contains out-of-bounds symlinks. file: other/escape.yaml") {
+			t.Fatalf("RenderApplication() error = %v, want the out-of-bounds error before the override error", err)
+		}
+	})
+	t.Run("OCI ref-only source", func(t *testing.T) {
+		root := t.TempDir()
+		writeTestFile(t, filepath.Join(root, "app", "cm.yaml"), symlinkBoundsConfigMap)
+		artifact := t.TempDir()
+		writeTestFile(t, filepath.Join(artifact, "values.yaml"), "a: 1\n")
+		symlinkBoundsLink(t, "/etc/hosts", filepath.Join(artifact, "escape.yaml"))
+		application := argoappv1.Application{
+			Name: "demo",
+			Spec: argoappv1.ApplicationSpec{Sources: argoappv1.ApplicationSources{
+				{RepoURL: "https://git.example.test/repo.git", TargetRevision: "main", Path: "app"},
+				{RepoURL: "oci://registry.example.test/parity/values", TargetRevision: "v1", Ref: "values"},
+			}},
+		}
+		provider := localProvider{
+			repoRoot:       root,
+			sourceResolver: sourcepkg.NewResolver(sourcepkg.Options{RepoMaps: []sourcepkg.RepoMap{{URL: "oci://registry.example.test/parity/values", Path: artifact}}}),
+		}
+		_, err := RenderApplication(context.Background(), application, provider)
+		if err == nil || !strings.Contains(err.Error(), "source[1]") || !strings.Contains(err.Error(), "oci image contains out-of-bounds symlinks. file: escape.yaml") {
+			t.Fatalf("RenderApplication() error = %v, want the OCI ref-only source checked", err)
 		}
 	})
 }
@@ -266,5 +336,65 @@ func TestOrchestratorDiffAppsChangedOnlyRendersAllOnOutOfBoundsSymlink(t *testin
 	}
 	if err := diagnosticFailure(normalizeDiagnostics([]diagnostic.Diagnostic{want}, true, false), true); err != nil {
 		t.Fatalf("strict diagnosticFailure() = %v, want the symlink render-all exempt", err)
+	}
+}
+
+// TestChangedOnlySymlinksRenderAllWhenTheCheckFails pins that a tree that
+// drydock cannot walk does not stop a changed-only diff: every Application
+// renders, and each source then fails on its own, as in a full diff.
+// change.Detect walks the same trees first, so this needs a tree that fails
+// only the symlink walk, such as one that is gone.
+func TestChangedOnlySymlinksRenderAllWhenTheCheckFails(t *testing.T) {
+	left := t.TempDir()
+	missing := filepath.Join(t.TempDir(), "gone")
+	settings := config.DefaultSettings()
+	renderAll, diag, err := changedOnlySymlinksRenderAll(context.Background(), newSymlinkBoundsMemo(), left, missing, settings, settings)
+	if err != nil || !renderAll || diag.Code != changedOnlySymlinksCode || !strings.Contains(diag.Message, "could not check the repository for out-of-bounds symlinks") {
+		t.Fatalf("changedOnlySymlinksRenderAll() = %t, %#v, %v, want a render-all warning", renderAll, diag, err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, _, err := changedOnlySymlinksRenderAll(ctx, newSymlinkBoundsMemo(), left, missing, settings, settings); err == nil {
+		t.Fatal("changedOnlySymlinksRenderAll() with a canceled context = nil error")
+	}
+	if renderAll, _, err := changedOnlySymlinksRenderAll(context.Background(), newSymlinkBoundsMemo(), left, left, settings, settings); err != nil || renderAll {
+		t.Fatalf("changedOnlySymlinksRenderAll() for equal trees = %t, %v", renderAll, err)
+	}
+}
+
+// TestSymlinkBoundsMemoWalksEachTreeOnce pins that the run memo walks a tree
+// once and keeps different trees apart, also when callers ask at the same
+// time.
+func TestSymlinkBoundsMemoWalksEachTreeOnce(t *testing.T) {
+	bad := t.TempDir()
+	symlinkBoundsLink(t, "/etc/hosts", filepath.Join(bad, "escape.yaml"))
+	good := t.TempDir()
+	memo := newSymlinkBoundsMemo()
+	var wg sync.WaitGroup
+	results := make([]string, 8)
+	for i := range results {
+		wg.Go(func() {
+			root := good
+			if i%2 == 0 {
+				root = bad
+			}
+			results[i], _ = memo.findOutOfBoundsSymlink(context.Background(), root, render.OutOfBoundsSymlinkScopeRepository)
+		})
+	}
+	wg.Wait()
+	for i, got := range results {
+		want := ""
+		if i%2 == 0 {
+			want = "escape.yaml"
+		}
+		if got != want {
+			t.Fatalf("result %d = %q, want %q", i, got, want)
+		}
+	}
+	if err := os.Remove(filepath.Join(bad, "escape.yaml")); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := memo.findOutOfBoundsSymlink(context.Background(), bad, render.OutOfBoundsSymlinkScopeRepository); got != "escape.yaml" {
+		t.Fatalf("second check = %q, want the kept answer", got)
 	}
 }

@@ -654,7 +654,6 @@ prepare_fixture_git_image() {
   git --git-dir="${bare}" update-server-info
   prepare_oob_symlink_repo
 
-
   dockerfile="${WORK_DIR}/Dockerfile.git"
   cat > "${dockerfile}" <<'DOCKERFILE'
 FROM alpine:3.23

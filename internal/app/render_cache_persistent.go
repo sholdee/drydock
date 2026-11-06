@@ -413,6 +413,10 @@ func renderCacheRefreshOptions(options RenderCacheOptions, acquisition Acquisiti
 // ensurePersistentRenderCache opens or reuses the run-scoped persistent render
 // cache handle. Only the creator's release sweeps and surfaces events.
 func ensurePersistentRenderCache(request BuildRequest) (BuildRequest, func() []cacheevent.Event) {
+	// The out-of-bounds symlink memo has the same run scope.
+	if request.symlinkBounds == nil {
+		request.symlinkBounds = newSymlinkBoundsMemo()
+	}
 	if request.persistentRenderCache != nil {
 		return request, noRenderCacheEvents
 	}
@@ -427,6 +431,9 @@ func ensurePersistentRenderCache(request BuildRequest) (BuildRequest, func() []c
 // ensureDiffPersistentRenderCache is the DiffRequest twin; buildRequest copies
 // the handle into both side BuildRequests.
 func ensureDiffPersistentRenderCache(request DiffRequest) (DiffRequest, func() []cacheevent.Event) {
+	if request.symlinkBounds == nil {
+		request.symlinkBounds = newSymlinkBoundsMemo()
+	}
 	if request.persistentRenderCache != nil {
 		return request, noRenderCacheEvents
 	}

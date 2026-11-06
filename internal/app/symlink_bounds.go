@@ -3,12 +3,14 @@ package app
 import (
 	"context"
 	"errors"
+	"fmt"
 	"path/filepath"
 	"strings"
 	"sync"
 
 	"github.com/sholdee/drydock/internal/config"
 	"github.com/sholdee/drydock/internal/gitref"
+	"github.com/sholdee/drydock/internal/ociartifact"
 	"github.com/sholdee/drydock/internal/render"
 )
 
@@ -24,18 +26,34 @@ func allowOutOfBoundsSymlinks(settings config.ArgoSettings) bool {
 // symlinkBoundsMemo keeps the out-of-bounds symlink check of each tree for
 // one run. Every Application that renders from a tree needs the same
 // answer, and the run treats the tree as stable, as the render cache does.
+// One memo serves the whole run: discovery, build, and changed-only
+// selection share it through the request. Each tree has its own lock, so
+// different trees are walked at the same time and one tree is walked once.
 type symlinkBoundsMemo struct {
 	mu      sync.Mutex
-	results map[string]symlinkBoundsResult
+	entries map[string]*symlinkBoundsEntry
 }
 
-type symlinkBoundsResult struct {
+type symlinkBoundsEntry struct {
+	mu   sync.Mutex
+	done bool
 	file string
 	err  error
 }
 
 func newSymlinkBoundsMemo() *symlinkBoundsMemo {
-	return &symlinkBoundsMemo{results: map[string]symlinkBoundsResult{}}
+	return &symlinkBoundsMemo{entries: map[string]*symlinkBoundsEntry{}}
+}
+
+func (m *symlinkBoundsMemo) entry(key string) *symlinkBoundsEntry {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	entry, ok := m.entries[key]
+	if !ok {
+		entry = &symlinkBoundsEntry{}
+		m.entries[key] = entry
+	}
+	return entry
 }
 
 // findOutOfBoundsSymlink returns the first out-of-bounds symlink of the tree
@@ -52,13 +70,25 @@ func (m *symlinkBoundsMemo) findOutOfBoundsSymlink(ctx context.Context, root str
 		return "", err
 	}
 	key := string(scope) + "\x00" + filepath.Clean(abs)
-	if m != nil {
-		m.mu.Lock()
-		defer m.mu.Unlock()
-		if result, ok := m.results[key]; ok {
-			return result.file, result.err
-		}
+	if m == nil {
+		return walkOutOfBoundsSymlinks(ctx, abs, scope)
 	}
+	entry := m.entry(key)
+	entry.mu.Lock()
+	defer entry.mu.Unlock()
+	if entry.done {
+		return entry.file, entry.err
+	}
+	file, err := walkOutOfBoundsSymlinks(ctx, abs, scope)
+	// A canceled walk says nothing about the tree, so the next caller walks
+	// again.
+	if !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
+		entry.done, entry.file, entry.err = true, file, err
+	}
+	return file, err
+}
+
+func walkOutOfBoundsSymlinks(ctx context.Context, abs string, scope render.OutOfBoundsSymlinkScope) (string, error) {
 	opts := render.OutOfBoundsSymlinkOptions{}
 	if scope == render.OutOfBoundsSymlinkScopeRepository {
 		opts.SkipRootGit = true
@@ -67,11 +97,7 @@ func (m *symlinkBoundsMemo) findOutOfBoundsSymlink(ctx context.Context, root str
 			opts.Skip = filter.Skip
 		}
 	}
-	file, err := render.FindOutOfBoundsSymlink(ctx, abs, opts)
-	if m != nil && !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
-		m.results[key] = symlinkBoundsResult{file: file, err: err}
-	}
-	return file, err
+	return render.FindOutOfBoundsSymlink(ctx, abs, opts)
 }
 
 // checkOutOfBoundsSymlinks fails, as the Argo CD v3.6.1 repo-server does
@@ -92,6 +118,62 @@ func (p localProvider) checkOutOfBoundsSymlinks(ctx context.Context, root string
 		return &render.OutOfBoundsSymlinkError{Scope: scope, File: file}
 	}
 	return nil
+}
+
+// checkHelmRefRootsOutOfBoundsSymlinks checks each Git repository that a
+// Helm $ref value file or file parameter reads, in the order the
+// repo-server does: value files first, then file parameters, each
+// repository once (reposerver/repository/repository.go:870-959 at v3.6.1).
+// The repo-server runs this after it checked the source's own tree, so a
+// chart-only source runs it after its chart check.
+func (p localProvider) checkHelmRefRootsOutOfBoundsSymlinks(ctx context.Context, opts render.RenderOptions) error {
+	candidates := append([]string(nil), opts.ValueFiles...)
+	for _, parameter := range opts.HelmFileParameters {
+		candidates = append(candidates, parameter.Path)
+	}
+	checked := map[string]bool{}
+	for _, candidate := range candidates {
+		if !strings.HasPrefix(candidate, "$") {
+			continue
+		}
+		refKey, _, _ := strings.Cut(candidate, "/")
+		root, ok := opts.RefRoots[refKey]
+		if !ok || checked[refKey] {
+			continue
+		}
+		checked[refKey] = true
+		if err := p.checkOutOfBoundsSymlinks(ctx, root, render.OutOfBoundsSymlinkScopeRepository); err != nil {
+			return fmt.Errorf("ref root %s: %w", refKey, err)
+		}
+	}
+	return nil
+}
+
+// checkRefOnlyOCISource acquires and checks an oci:// source that only sets
+// ref. The repo-server skips a ref-only source only when it is not OCI and
+// not Helm (reposerver/repository/repository.go:670 at v3.6.1), so it
+// extracts such an artifact and checks it (429-444), and then generates
+// nothing from it because its path and chart are empty (689-697).
+func (p localProvider) checkRefOnlyOCISource(ctx context.Context, sourcePlan SourcePlan) error {
+	source := normalizeOCISource(render.ResolvedSource{
+		Path:           sourcePlan.Source.Path,
+		RepoURL:        sourcePlan.Source.RepoURL,
+		TargetRevision: sourcePlan.Source.TargetRevision,
+	})
+	root, err := p.resolveSourceRoot(ctx, source)
+	if err != nil {
+		return err
+	}
+	return p.checkOutOfBoundsSymlinks(ctx, root, render.OutOfBoundsSymlinkScopeOCI)
+}
+
+// sourceOutOfBoundsSymlinkScope is the tree kind the repo-server checks
+// for a source that renders from its resolved root.
+func sourceOutOfBoundsSymlinkScope(source render.ResolvedSource) render.OutOfBoundsSymlinkScope {
+	if ociartifact.IsOCIURL(source.RepoURL) {
+		return render.OutOfBoundsSymlinkScopeOCI
+	}
+	return render.OutOfBoundsSymlinkScopeRepository
 }
 
 // rootOutOfBoundsSymlink is the out-of-bounds symlink verdict of the

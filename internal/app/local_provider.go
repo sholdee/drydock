@@ -151,11 +151,7 @@ func (p localProvider) renderSource(ctx context.Context, source render.ResolvedS
 	// generates manifests from it. A chart-only source renders from the
 	// chart it acquires, which renderChartOnlySource checks.
 	if !chartFlowSource(source) {
-		scope := render.OutOfBoundsSymlinkScopeRepository
-		if ociartifact.IsOCIURL(source.RepoURL) {
-			scope = render.OutOfBoundsSymlinkScopeOCI
-		}
-		if err := p.checkOutOfBoundsSymlinks(ctx, sourceRoot, scope); err != nil {
+		if err := p.checkOutOfBoundsSymlinks(ctx, sourceRoot, sourceOutOfBoundsSymlinkScope(source)); err != nil {
 			return nil, nearMissDiags, err
 		}
 	}
@@ -193,6 +189,11 @@ func (p localProvider) renderSource(ctx context.Context, source render.ResolvedS
 		return nil, nearMissDiags, err
 	}
 	opts.RefRoots = mergeRefRoots(anchoredRefRoots, refRoots)
+	if !chartFlowSource(source) {
+		if err := p.checkHelmRefRootsOutOfBoundsSymlinks(ctx, opts); err != nil {
+			return nil, nearMissDiags, err
+		}
+	}
 	if opts.Plugin != nil {
 		manifests, diags, err := p.renderPluginSource(ctx, source, opts)
 		return manifests, append(nearMissDiags, diags...), err

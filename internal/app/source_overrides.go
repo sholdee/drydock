@@ -44,6 +44,13 @@ func (p localProvider) PrepareSource(ctx context.Context, application argoappv1.
 	if err != nil {
 		return sourcePlan, err
 	}
+	// The repo-server checks the tree before GenerateManifests reads the
+	// overrides (reposerver/repository/repository.go:499-514 and
+	// 1907-1923 at v3.6.1). A chart-only source has no path, so it never
+	// gets here.
+	if err := p.checkOutOfBoundsSymlinks(ctx, sourceRoot, sourceOutOfBoundsSymlinkScope(source)); err != nil {
+		return sourcePlan, err
+	}
 
 	sourcePath, err := cleanLocalSourcePath(source.Path)
 	if err != nil {

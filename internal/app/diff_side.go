@@ -143,6 +143,18 @@ func changedOnlyProjectsDiagnostic() diagnostic.Diagnostic {
 // changedOnlySettingsCode.
 const changedOnlySymlinksCode = "diff.changed-only-symlinks"
 
+// changedOnlySymlinksUnknownDiagnostic is the changedOnlySymlinksCode
+// render-all for a tree that drydock could not walk: each source that renders
+// from it then fails on its own, as it does in a full diff.
+func changedOnlySymlinksUnknownDiagnostic(err error) diagnostic.Diagnostic {
+	return diagnostic.Diagnostic{
+		Code:     changedOnlySymlinksCode,
+		Severity: diagnostic.SeverityWarning,
+		Category: "changed-only",
+		Message:  fmt.Sprintf("could not check the repository for out-of-bounds symlinks (%v); rendering all Applications", err),
+	}
+}
+
 func changedOnlySymlinksDiagnostic(left, right string) diagnostic.Diagnostic {
 	describe := func(file string) string {
 		if file == "" {
@@ -160,12 +172,12 @@ func changedOnlySymlinksDiagnostic(left, right string) diagnostic.Diagnostic {
 
 // outOfBoundsSymlinkVerdicts returns the first out-of-bounds symlink of the
 // tree of each side, or "" for a side that has none or allows them.
-func outOfBoundsSymlinkVerdicts(ctx context.Context, leftRoot, rightRoot string, leftSettings, rightSettings config.ArgoSettings) (string, string, error) {
+func outOfBoundsSymlinkVerdicts(ctx context.Context, memo *symlinkBoundsMemo, leftRoot, rightRoot string, leftSettings, rightSettings config.ArgoSettings) (string, string, error) {
 	verdict := func(root string, settings config.ArgoSettings) (string, error) {
 		if allowOutOfBoundsSymlinks(settings) {
 			return "", nil
 		}
-		return (*symlinkBoundsMemo)(nil).findOutOfBoundsSymlink(ctx, root, render.OutOfBoundsSymlinkScopeRepository)
+		return memo.findOutOfBoundsSymlink(ctx, root, render.OutOfBoundsSymlinkScopeRepository)
 	}
 	left, err := verdict(leftRoot, leftSettings)
 	if err != nil {
@@ -173,6 +185,26 @@ func outOfBoundsSymlinkVerdicts(ctx context.Context, leftRoot, rightRoot string,
 	}
 	right, err := verdict(rightRoot, rightSettings)
 	return left, right, err
+}
+
+// changedOnlySymlinksRenderAll reports whether a changed-only diff renders
+// every Application because the out-of-bounds symlink verdict of the tree
+// under diff differs between the sides, or cannot be read. A tree that
+// cannot be walked does not stop the diff: each source that renders from it
+// then fails on its own, as in a full diff. Only a canceled context is an
+// error.
+func changedOnlySymlinksRenderAll(ctx context.Context, memo *symlinkBoundsMemo, leftRoot, rightRoot string, leftSettings, rightSettings config.ArgoSettings) (bool, diagnostic.Diagnostic, error) {
+	left, right, err := outOfBoundsSymlinkVerdicts(ctx, memo, leftRoot, rightRoot, leftSettings, rightSettings)
+	if err != nil {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return false, diagnostic.Diagnostic{}, ctxErr
+		}
+		return true, changedOnlySymlinksUnknownDiagnostic(err), nil
+	}
+	if left != right {
+		return true, changedOnlySymlinksDiagnostic(left, right), nil
+	}
+	return false, diagnostic.Diagnostic{}, nil
 }
 
 // changedOnlyApplications returns the Applications each side of a
@@ -199,12 +231,10 @@ func changedOnlyApplications(ctx context.Context, request DiffRequest, leftBuild
 	// that renders from it, whichever path holds it, and a changed-only
 	// ignore glob may hide that path. A change of the first such symlink
 	// reaches nearly every Application, so render them all.
-	leftSymlink, rightSymlink, err := outOfBoundsSymlinkVerdicts(ctx, leftBuildRequest.Path, rightBuildRequest.Path, leftList.Settings, rightList.Settings)
-	if err != nil {
+	if renderAll, diag, err := changedOnlySymlinksRenderAll(ctx, leftBuildRequest.symlinkBounds, leftBuildRequest.Path, rightBuildRequest.Path, leftList.Settings, rightList.Settings); err != nil {
 		return nil, nil, nil, err
-	}
-	if leftSymlink != rightSymlink {
-		return leftList.Applications, rightList.Applications, []diagnostic.Diagnostic{changedOnlySymlinksDiagnostic(leftSymlink, rightSymlink)}, nil
+	} else if renderAll {
+		return leftList.Applications, rightList.Applications, []diagnostic.Diagnostic{diag}, nil
 	}
 
 	// An AppProject change reaches every Application in the project through

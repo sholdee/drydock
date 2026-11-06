@@ -57,11 +57,14 @@ type BuildRequest struct {
 	discovered              *discovery.Result
 	snapshotSession         *acquisition.SnapshotSession
 	persistentRenderCache   *persistentRenderCache
-	rootRevision            string
-	selfRepo                selfRepoRefs
-	discoveryPathMemo       *sync.Map
-	appsetGenerationMemo    *sync.Map
-	settingsInstallMemo     *sync.Map
+	// symlinkBounds keeps the out-of-bounds symlink check of each tree for
+	// the run, shared by every provider the run builds.
+	symlinkBounds        *symlinkBoundsMemo
+	rootRevision         string
+	selfRepo             selfRepoRefs
+	discoveryPathMemo    *sync.Map
+	appsetGenerationMemo *sync.Map
+	settingsInstallMemo  *sync.Map
 }
 
 type BuildAppRequest struct {

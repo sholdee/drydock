@@ -242,8 +242,6 @@ func assertSettingsChangeClass(t *testing.T, name string, left, right config.Arg
 	}
 }
 
-// nonZeroValue builds a value of typ with every exported field, element, and
-// map entry set, so that any change a reader could see is present.
 // nonZeroOverrides holds the non-zero value of a field whose generic one
 // means the same as the zero value: the repo-server reads any
 // reposerver.allow.oob.symlinks value other than "true" as false.
@@ -251,6 +249,8 @@ var nonZeroOverrides = map[string]any{
 	"ArgoSettings.AllowOutOfBoundsSymlinks.Value": "true",
 }
 
+// nonZeroValue builds a value of typ with every exported field, element, and
+// map entry set, so that any change a reader could see is present.
 func nonZeroValue(t *testing.T, path string, typ reflect.Type) reflect.Value {
 	t.Helper()
 	value := reflect.New(typ).Elem()

@@ -49,6 +49,7 @@ type DiffRequest struct {
 
 	changedPaths          []string
 	persistentRenderCache *persistentRenderCache
+	symlinkBounds         *symlinkBoundsMemo
 	leftPathRevision      string
 	rightPathRevision     string
 	selfRepo              selfRepoRefs
@@ -486,6 +487,7 @@ func (request DiffRequest) buildRequest(path string, forbiddenRoots []string) Bu
 		// per-side deep copy: no shared mutable state across concurrent sides
 		selfRepo:              request.selfRepo.clone(),
 		persistentRenderCache: request.persistentRenderCache,
+		symlinkBounds:         request.symlinkBounds,
 	}
 }
 
