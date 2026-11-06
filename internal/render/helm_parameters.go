@@ -2,12 +2,14 @@ package render
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 
 	argoappv1 "github.com/argoproj/argo-cd/v3/pkg/apis/application/v1alpha1"
+	"github.com/sholdee/drydock/internal/pathsafety"
 	"github.com/sholdee/drydock/internal/remote"
 	"helm.sh/helm/v4/pkg/strvals"
 )
@@ -174,7 +176,14 @@ func helmFileParameterReader(ctx context.Context, target helmFileParameterTarget
 		if err != nil {
 			return nil, err
 		}
-		data, err := os.ReadFile(real)
+		data, err := pathsafety.ReadRegularFile(real)
+		if errors.Is(err, pathsafety.ErrNotRegular) {
+			if info, statErr := os.Stat(real); statErr == nil && info.IsDir() {
+				// helm's os.ReadFile fails on a directory with "is a
+				// directory", at once.
+				_, err = os.ReadFile(real)
+			}
+		}
 		if err != nil {
 			return nil, fmt.Errorf("read helm file parameter %q: %w", target.file, err)
 		}

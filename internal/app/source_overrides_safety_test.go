@@ -60,6 +60,17 @@ func TestArgocdSourceOverridesReadOnlySafeFiles(t *testing.T) {
 		{name: "dangling symlink is skipped", make: func(t *testing.T, root, file string) {
 			symlinkBoundsLink(t, "missing.yaml", file)
 		}, skips: true},
+		{name: "symlink to a directory in the repository is skipped", make: func(t *testing.T, root, file string) {
+			writeTestFile(t, filepath.Join(root, "shared", "dir", "keep.yaml"), "helm: {}\n")
+			symlinkBoundsLink(t, "../../shared/dir", file)
+		}, skips: true},
+		{name: "symlink to a directory in .git is skipped", make: func(t *testing.T, root, file string) {
+			writeTestFile(t, filepath.Join(root, ".git", "refs", "keep"), "x\n")
+			symlinkBoundsLink(t, "../../.git/refs", file)
+		}, skips: true},
+		{name: "symlink to a directory outside the repository is skipped", make: func(t *testing.T, root, file string) {
+			symlinkBoundsLink(t, outside, file)
+		}, skips: true},
 		{name: "symlink in the repository", make: func(t *testing.T, root, file string) {
 			writeTestFile(t, filepath.Join(root, "shared", "override.yaml"), "helm:\n  releaseName: from-linked-override\n")
 			symlinkBoundsLink(t, "../../shared/override.yaml", file)
@@ -112,4 +123,38 @@ func assertUnsafeOverrideFallback(t *testing.T, root string, application argoapp
 			t.Errorf("RenderApplication() error = %v, want %q", err, want)
 		}
 	})
+}
+
+// TestArgocdSourceOverrideWithRelativeRoot pins that a relative root, such
+// as --path ., reads an override file that is a symlink with an absolute
+// target in the repository.
+func TestArgocdSourceOverrideWithRelativeRoot(t *testing.T) {
+	root := t.TempDir()
+	application := writeHelmFileParameterSymlinkApp(t, root, false)
+	writeTestFile(t, filepath.Join(root, "shared", "override.yaml"), "helm:\n  releaseName: from-absolute-link\n")
+	symlinkBoundsLink(t, filepath.Join(root, "shared", "override.yaml"), filepath.Join(root, "charts", "demo", repoSourceFile))
+	t.Chdir(root)
+	merged, err := mergeArgocdSourceOverrides(*application.Spec.Source, ".", filepath.Join("charts", "demo"), "demo")
+	if err != nil || merged.Helm == nil || merged.Helm.ReleaseName != "from-absolute-link" {
+		t.Fatalf("mergeArgocdSourceOverrides() = %#v, %v, want the linked override read", merged.Helm, err)
+	}
+}
+
+// TestSettingsInstallMergedSourceFallsBackOnUnsafeOverride pins that the
+// Argo CD settings scan uses the spec source when an override file is not
+// safe to read, without blocking on a named pipe.
+func TestSettingsInstallMergedSourceFallsBackOnUnsafeOverride(t *testing.T) {
+	root := t.TempDir()
+	application := writeHelmFileParameterSymlinkApp(t, root, false)
+	if err := syscall.Mkfifo(filepath.Join(root, "charts", "demo", repoSourceFile), 0o644); err != nil {
+		t.Skipf("mkfifo unavailable: %v", err)
+	}
+	plan := mustPlan(t, application)
+	var got SourcePlan
+	withTimeout(t, func() {
+		got = settingsInstallMergedSource(localProvider{repoRoot: root}, application, plan.Sources[0], root, filepath.Join(root, "charts", "demo"))
+	})
+	if got.Source.Helm == nil || len(got.Source.Helm.FileParameters) != 1 || got.Source.Helm.FileParameters[0].Path != "../../links/chain.txt" {
+		t.Fatalf("settingsInstallMergedSource() source = %#v, want the spec source", got.Source.Helm)
+	}
 }

@@ -2,10 +2,13 @@ package pathsafety
 
 import (
 	"errors"
+	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"slices"
 	"strings"
+	"syscall"
 )
 
 func RelEscapes(rel string) bool {
@@ -118,4 +121,27 @@ func ResolveSymlinkedRoot(root string) string {
 		return root
 	}
 	return resolved
+}
+
+// ErrNotRegular reports a path that is not a regular file.
+var ErrNotRegular = errors.New("not a regular file")
+
+// ReadRegularFile reads the file at path only when the open file is a
+// regular file. It opens without blocking, so a named pipe that replaced
+// the file after an earlier check cannot stall the read, and it checks the
+// open handle, so the file it reads is the file it checked.
+func ReadRegularFile(path string) ([]byte, error) {
+	file, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NONBLOCK, 0)
+	if err != nil {
+		return nil, err
+	}
+	defer file.Close()
+	info, err := file.Stat()
+	if err != nil {
+		return nil, err
+	}
+	if !info.Mode().IsRegular() {
+		return nil, fmt.Errorf("%s: %w", path, ErrNotRegular)
+	}
+	return io.ReadAll(file)
 }

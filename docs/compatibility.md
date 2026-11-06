@@ -1074,11 +1074,13 @@ Documented runtime-offline safety boundary:
   repo-server would read it through a symlinked directory.
 - drydock reads an `.argocd-source.yaml` or `.argocd-source-<app>.yaml`
   file only when it is a regular file whose real path is in the repository
-  and outside `.git`, for the render and for changed-only selection. A
-  symlink out of the repository or into `.git`, a named pipe, or a device
-  fails the render, and selection then uses the spec source. The
+  and outside `.git`, for the render, for changed-only selection, and for
+  the scan for Argo CD settings. A file that is a symlink out of the
+  repository or into `.git`, a named pipe, or a device fails the render,
+  and selection and the settings scan then use the spec source. The
   repo-server reads such a file. A missing file, a dangling symlink, and a
-  directory are skipped, as in Argo CD.
+  directory are skipped, as in Argo CD, also a symlink to a directory
+  wherever it points.
 
 Not supported:
 

@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -148,28 +149,25 @@ func (p localProvider) overrideInstanceName(application argoappv1.Application) s
 }
 
 // readArgocdSourceOverride reads one override file. It reports false for a
-// file the repo-server skips: a missing file, a dangling symlink, or a
-// directory. drydock reads the file only when its real path is under root
-// and outside .git, also through a symlink or a symlinked directory, and
-// only when it is a regular file, so a named pipe or a device cannot block
-// or flood the render. The repo-server would read such a file, but its
-// out-of-bounds symlink check fails a repository with a symlink that leaves
-// it unless reposerver.allow.oob.symlinks is true.
+// file the repo-server skips: a missing file, a dangling symlink, or a path
+// that is a directory, also through a symlink, wherever it points
+// (mergeSourceParameters stats it, reposerver/repository/repository.go:
+// 1913-1922 at v3.6.1). drydock reads any other file only when its real path
+// is under root and outside .git, also through a symlink or a symlinked
+// directory, and only when it is a regular file, so a named pipe or a device
+// cannot block or flood the render. The repo-server would read such a file,
+// but its out-of-bounds symlink check fails a repository with a symlink that
+// leaves it unless reposerver.allow.oob.symlinks is true.
 func readArgocdSourceOverride(root, filename string) ([]byte, bool, error) {
-	if _, err := os.Lstat(filename); err != nil {
-		if os.IsNotExist(err) {
-			return nil, false, nil
-		}
+	real, info, ok, err := statArgocdSourceOverride(filename)
+	if err != nil || !ok {
 		return nil, false, err
 	}
-	real, err := filepath.EvalSymlinks(filename)
-	if os.IsNotExist(err) {
-		return nil, false, nil
-	}
+	absRoot, err := filepath.Abs(root)
 	if err != nil {
-		return nil, false, fmt.Errorf("%s: %w", filename, err)
+		return nil, false, err
 	}
-	realRoot, err := filepath.EvalSymlinks(root)
+	realRoot, err := filepath.EvalSymlinks(absRoot)
 	if err != nil {
 		return nil, false, fmt.Errorf("%s: %w", filename, err)
 	}
@@ -180,19 +178,47 @@ func readArgocdSourceOverride(root, filename string) ([]byte, bool, error) {
 	if pathsafety.RelEntersGit(rel) {
 		return nil, false, fmt.Errorf("%s: override file resolves into a .git directory, which drydock never reads", filename)
 	}
-	info, err := os.Stat(real)
-	if err != nil {
-		return nil, false, fmt.Errorf("%s: %w", filename, err)
-	}
-	if info.IsDir() {
-		return nil, false, nil
-	}
 	if !info.Mode().IsRegular() {
 		return nil, false, fmt.Errorf("%s: override file is not a regular file", filename)
 	}
-	data, err := os.ReadFile(real)
+	data, err := pathsafety.ReadRegularFile(real)
+	if errors.Is(err, pathsafety.ErrNotRegular) {
+		return nil, false, fmt.Errorf("%s: override file is not a regular file", filename)
+	}
 	if err != nil {
 		return nil, false, fmt.Errorf("%s: %w", filename, err)
 	}
 	return data, true, nil
+}
+
+// statArgocdSourceOverride returns the absolute real path of an override
+// file and its stat. It reports false for a file that the repo-server
+// skips: a missing file, a dangling symlink, or a directory. A stat reads
+// no contents, so it runs before any bounds check.
+func statArgocdSourceOverride(filename string) (string, os.FileInfo, bool, error) {
+	absFile, err := filepath.Abs(filename)
+	if err != nil {
+		return "", nil, false, err
+	}
+	if _, err := os.Lstat(absFile); err != nil {
+		if os.IsNotExist(err) {
+			return "", nil, false, nil
+		}
+		return "", nil, false, err
+	}
+	real, err := filepath.EvalSymlinks(absFile)
+	if os.IsNotExist(err) {
+		return "", nil, false, nil
+	}
+	if err != nil {
+		return "", nil, false, fmt.Errorf("%s: %w", filename, err)
+	}
+	info, err := os.Stat(real)
+	if err != nil {
+		return "", nil, false, fmt.Errorf("%s: %w", filename, err)
+	}
+	if info.IsDir() {
+		return "", nil, false, nil
+	}
+	return real, info, true, nil
 }
