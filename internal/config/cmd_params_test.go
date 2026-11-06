@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	argoenv "github.com/argoproj/argo-cd/v3/util/env"
 	"github.com/sholdee/drydock/internal/diagnostic"
 )
 
@@ -222,7 +223,51 @@ data:
 	if len(diags) != 0 {
 		t.Fatalf("diagnostics = %#v, want no metadata-only warning (--strict would promote it)", diags)
 	}
-	assertCommandParameter(t, settings, "applicationsetcontroller.enable.progressive.syncs", "true", false, CommandParameterRuntimeOnly)
+	assertCommandParameter(t, settings, "applicationsetcontroller.enable.progressive.syncs", "true", false, CommandParameterRendered)
+	if got := settings.EnableProgressiveSyncs.Value; got != "true" {
+		t.Fatalf("EnableProgressiveSyncs = %q, want true", got)
+	}
+	if settings.EnableProgressiveSyncs.Provenance.Pointer != "data.applicationsetcontroller.enable.progressive.syncs" {
+		t.Fatalf("provenance = %#v", settings.EnableProgressiveSyncs.Provenance)
+	}
+}
+
+// TestMergeEnableProgressiveSyncs pins that two settings sources conflict
+// only when the ApplicationSet controller would read them differently.
+func TestMergeEnableProgressiveSyncs(t *testing.T) {
+	on, _ := commandParametersSettings("on.yaml", "data", map[string]string{enableProgressiveSyncsKey: "true"})
+	merged, diags := MergeDiscovered([]ArgoSettings{on, on})
+	if merged.EnableProgressiveSyncs.Value != "true" || len(diags) != 0 {
+		t.Fatalf("MergeDiscovered() = %q, %#v", merged.EnableProgressiveSyncs.Value, diags)
+	}
+	off, _ := commandParametersSettings("off.yaml", "data", map[string]string{enableProgressiveSyncsKey: "false"})
+	if _, conflict := MergeDiscovered([]ArgoSettings{on, off}); len(conflict) != 1 {
+		t.Fatalf("MergeDiscovered() conflict diagnostics = %#v, want one", conflict)
+	}
+	for _, pair := range [][2]string{{"TRUE", "true"}, {"false", "1"}, {"", " true"}} {
+		left, _ := commandParametersSettings("left.yaml", "data", map[string]string{enableProgressiveSyncsKey: pair[0]})
+		right, _ := commandParametersSettings("right.yaml", "data", map[string]string{enableProgressiveSyncsKey: pair[1]})
+		if _, diags := MergeDiscovered([]ArgoSettings{left, right}); len(diags) != 0 {
+			t.Fatalf("MergeDiscovered(%q, %q) diagnostics = %#v, want none", pair[0], pair[1], diags)
+		}
+	}
+}
+
+// TestParseCommandParameterBoolsMatchArgoCD compares drydock's parsers with
+// the Argo CD v3.6.1 env.ParseBoolFromEnv that the repo-server and the
+// ApplicationSet controller call for these keys, on the same values.
+func TestParseCommandParameterBoolsMatchArgoCD(t *testing.T) {
+	const envVar = "DRYDOCK_TEST_PARSE_BOOL_FROM_ENV"
+	for _, value := range []string{"", "true", "TRUE", "True", "false", "FALSE", "1", "0", "yes", " true", "true ", "t"} {
+		t.Setenv(envVar, value)
+		want := argoenv.ParseBoolFromEnv(envVar, false)
+		if got := ParseEnableProgressiveSyncs(value); got != want {
+			t.Errorf("ParseEnableProgressiveSyncs(%q) = %t, want %t", value, got, want)
+		}
+		if got := ParseAllowOutOfBoundsSymlinks(value); got != want {
+			t.Errorf("ParseAllowOutOfBoundsSymlinks(%q) = %t, want %t", value, got, want)
+		}
+	}
 }
 
 func requireCommandParameter(t *testing.T, settings ArgoSettings, key string) CommandParameterSetting {

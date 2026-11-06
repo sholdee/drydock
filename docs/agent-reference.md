@@ -204,10 +204,14 @@ message and dispatch case in sync.
 After rendering, generated Applications go through Argo CD's name validation
 (empty names first, then duplicates; every Application sharing a duplicated
 name is dropped) as `appset.application-validation-failed` warnings, and
-`spec.strategy` RollingSync steps are linted as `appset.rollout-no-steps` and
-`appset.invalid-rollout-config` warnings that never change generation output;
-`appset.invalid-rollout-config` is strict-exempt (`strictExemptDiagnostic`)
-because Argo CD's condition is non-blocking. Each of these codes dispatches on a message substring kept in sync with
+`spec.strategy` RollingSync handling follows
+`applicationsetcontroller.enable.progressive.syncs` (`appset.Options.ProgressiveSyncs`,
+read from the settings in `expandApplicationSetDiscovery`). Off, it gives one
+`appset.rollout-strategy-ignored` advisory. On, an empty steps list gives
+`appset.rollout-no-steps` and no Applications, and other findings are
+`appset.invalid-rollout-config` warnings that never change generation output.
+`appset.rollout-strategy-ignored` and `appset.invalid-rollout-config` are
+strict-exempt (`strictExemptDiagnostic`); `appset.rollout-no-steps` is not. Each of these codes dispatches on a message substring kept in sync with
 `internal/diagnostic.appSetCode`.
 
 ## Source Resolution, Cache, And Credentials

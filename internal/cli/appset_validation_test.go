@@ -16,10 +16,6 @@ metadata:
   namespace: argocd
 spec:
   goTemplate: true
-  strategy:
-    type: RollingSync
-    rollingSync:
-      steps: []
   generators:
     - list:
         elements:
@@ -41,7 +37,121 @@ spec:
 `)
 }
 
-func TestGetAppsReportsGeneratedApplicationValidationAndRolloutWarnings(t *testing.T) {
+// writeProgressiveSyncsOn writes an argocd-cmd-params-cm that turns on
+// applicationsetcontroller.enable.progressive.syncs.
+func writeProgressiveSyncsOn(t *testing.T, root string) {
+	t.Helper()
+	writeCLITestFile(t, filepath.Join(root, "argocd", "argocd-cmd-params-cm.yaml"), `apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: argocd-cmd-params-cm
+  namespace: argocd
+data:
+  applicationsetcontroller.enable.progressive.syncs: "true"
+`)
+}
+
+// writeRollingSyncWithoutSteps writes an ApplicationSet whose RollingSync
+// strategy has an empty steps list.
+func writeRollingSyncWithoutSteps(t *testing.T, root string) {
+	t.Helper()
+	writeCLITestFile(t, filepath.Join(root, "appset.yaml"), `apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: guestbook
+  namespace: argocd
+spec:
+  goTemplate: true
+  strategy:
+    type: RollingSync
+    rollingSync:
+      steps: []
+  generators:
+    - list:
+        elements:
+          - name: alpha
+  template:
+    metadata:
+      name: '{{.name}}'
+    spec:
+      project: default
+      source:
+        repoURL: https://github.com/example/repo
+        path: apps/{{.name}}
+        targetRevision: main
+      destination:
+        name: in-cluster
+        namespace: default
+`)
+}
+
+// With progressive syncs on, Argo CD v3.6.1 reconciles no Application of an
+// ApplicationSet whose RollingSync steps list is empty, so drydock lists
+// none, warns, and --strict fails as for other ApplicationSet errors.
+func TestGetAppsDropsRollingSyncWithoutStepsWhenProgressiveSyncsOn(t *testing.T) {
+	root := t.TempDir()
+	writeRollingSyncWithoutSteps(t, root)
+	writeProgressiveSyncsOn(t, root)
+
+	cmd := NewRootCommand(VersionInfo{})
+	cmd.SetArgs([]string{"get", "apps", "--path", root, "-o", "name"})
+	var out, stderr bytes.Buffer
+	cmd.SetOut(&out)
+	cmd.SetErr(&stderr)
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("Execute() error = %v\nstderr:\n%s", err, stderr.String())
+	}
+	if got := out.String(); got != "" {
+		t.Fatalf("stdout = %q, want no Applications", got)
+	}
+	want := "warning appset.rollout-no-steps: ApplicationSet argocd/guestbook uses the RollingSync strategy with an empty steps list: No steps defined for rollout;"
+	if !strings.Contains(stderr.String(), want) {
+		t.Fatalf("stderr missing %q:\n%s", want, stderr.String())
+	}
+	if strings.Contains(stderr.String(), "generated zero Applications") {
+		t.Fatalf("stderr also reports generated zero Applications:\n%s", stderr.String())
+	}
+
+	strictCmd := NewRootCommand(VersionInfo{})
+	strictCmd.SetArgs([]string{"get", "apps", "--path", root, "-o", "name", "--strict"})
+	out.Reset()
+	stderr.Reset()
+	strictCmd.SetOut(&out)
+	strictCmd.SetErr(&stderr)
+	err := strictCmd.Execute()
+	if err == nil || !strings.Contains(stderr.String()+err.Error(), "No steps defined for rollout") {
+		t.Fatalf("Execute(--strict) error = %v, want the rollout-no-steps warning to fail\nstderr:\n%s", err, stderr.String())
+	}
+}
+
+// With progressive syncs off (the Argo CD default), Argo CD ignores the
+// RollingSync strategy, so drydock lists the Applications and gives one
+// advisory that --strict does not fail on.
+func TestGetAppsIgnoresRollingSyncWhenProgressiveSyncsOff(t *testing.T) {
+	root := t.TempDir()
+	writeRollingSyncWithoutSteps(t, root)
+
+	cmd := NewRootCommand(VersionInfo{})
+	cmd.SetArgs([]string{"get", "apps", "--path", root, "-o", "name", "--strict"})
+	var out, stderr bytes.Buffer
+	cmd.SetOut(&out)
+	cmd.SetErr(&stderr)
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("Execute(--strict) error = %v\nstderr:\n%s", err, stderr.String())
+	}
+	if got, want := out.String(), "argocd/alpha\n"; got != want {
+		t.Fatalf("stdout = %q, want %q", got, want)
+	}
+	want := "warning appset.rollout-strategy-ignored: ApplicationSet argocd/guestbook: the RollingSync strategy is not used, because applicationsetcontroller.enable.progressive.syncs is not true in argocd-cmd-params-cm"
+	if !strings.Contains(stderr.String(), want) {
+		t.Fatalf("stderr missing %q:\n%s", want, stderr.String())
+	}
+	if strings.Contains(stderr.String(), "rollout-no-steps") {
+		t.Fatalf("stderr reports rollout-no-steps with progressive syncs off:\n%s", stderr.String())
+	}
+}
+
+func TestGetAppsReportsGeneratedApplicationValidationWarnings(t *testing.T) {
 	root := t.TempDir()
 	writeAppSetValidationFixture(t, root)
 
@@ -58,7 +168,6 @@ func TestGetAppsReportsGeneratedApplicationValidationAndRolloutWarnings(t *testi
 	}
 	for _, want := range []string{
 		"warning appset.application-validation-failed: generated Application validation failed: ApplicationSet guestbook contains applications with duplicate name: alpha;",
-		"warning appset.rollout-no-steps: ApplicationSet argocd/guestbook uses the RollingSync strategy with an empty steps list: No steps defined for rollout;",
 	} {
 		if !strings.Contains(stderr.String(), want) {
 			t.Fatalf("stderr missing %q:\n%s", want, stderr.String())
@@ -80,11 +189,13 @@ func TestGetAppsReportsGeneratedApplicationValidationAndRolloutWarnings(t *testi
 	}
 }
 
-// Argo CD v3.6.1 evaluates RollingSync steps only with progressive syncs
-// enabled, and InvalidRolloutConfig never blocks reconciliation, so --strict
-// keeps appset.invalid-rollout-config a warning and does not fail on it.
+// With progressive syncs on, Argo CD v3.6.1 reports an invalid RollingSync
+// config as an InvalidRolloutConfig condition that never blocks
+// reconciliation, so --strict keeps appset.invalid-rollout-config a warning
+// and does not fail on it.
 func TestGetAppsStrictDoesNotFailOnInvalidRolloutConfig(t *testing.T) {
 	root := t.TempDir()
+	writeProgressiveSyncsOn(t, root)
 	writeCLITestFile(t, filepath.Join(root, "appset.yaml"), `apiVersion: argoproj.io/v1alpha1
 kind: ApplicationSet
 metadata:

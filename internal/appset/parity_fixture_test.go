@@ -11,6 +11,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/sholdee/drydock/internal/config"
 	"github.com/sholdee/drydock/internal/diagnostic"
 	corev1 "k8s.io/api/core/v1"
 	k8syaml "k8s.io/apimachinery/pkg/util/yaml"
@@ -157,11 +158,13 @@ func TestArgoCDParityFixtureSelectorListParams(t *testing.T) {
 	}
 }
 
-// TestArgoCDParityFixtureRollingSync pins the RollingSync smoke fixtures.
-// Every Application still generates. The first warning must carry the
-// message that the smoke expects in the Argo CD condition
-// (ROLLING_SYNC_CONDITIONS in scripts/argocd-parity-smoke.sh); later
-// warnings are the lower-priority findings that Argo CD does not show.
+// TestArgoCDParityFixtureRollingSync pins the RollingSync smoke fixtures,
+// with progressive syncs on as the fixture's argocd-cmd-params-cm sets
+// them. Every Application generates except those of the empty steps list.
+// The first warning must carry the message that the smoke expects in the
+// Argo CD condition (ROLLING_SYNC_CONDITIONS in
+// scripts/argocd-parity-smoke.sh); later warnings are the lower-priority
+// findings that Argo CD does not show.
 func TestArgoCDParityFixtureRollingSync(t *testing.T) {
 	tests := []struct {
 		file         string
@@ -201,6 +204,14 @@ func TestArgoCDParityFixtureRollingSync(t *testing.T) {
 		},
 	}
 	repoRoot := filepath.Join(parityFixtureRoot, "repo")
+	params, _, err := config.LoadCommandParametersConfigMap(filepath.Join(repoRoot, "settings", "argocd-cmd-params-cm.yaml"))
+	if err != nil {
+		t.Fatalf("LoadCommandParametersConfigMap() error = %v", err)
+	}
+	options := Options{ProgressiveSyncs: config.ParseEnableProgressiveSyncs(params.EnableProgressiveSyncs.Value)}
+	if !options.ProgressiveSyncs {
+		t.Fatal("the fixture argocd-cmd-params-cm must turn progressive syncs on, as the smoke does on the live Argo CD")
+	}
 	for _, tt := range tests {
 		t.Run(tt.file, func(t *testing.T) {
 			manifestPath := filepath.Join("applicationsets", tt.file)
@@ -208,7 +219,7 @@ func TestArgoCDParityFixtureRollingSync(t *testing.T) {
 			if err != nil {
 				t.Fatalf("read %s: %v", manifestPath, err)
 			}
-			apps, diags, err := GenerateFromYAMLWithOptions(repoRoot, manifestPath, data, Options{})
+			apps, diags, err := GenerateFromYAMLWithOptions(repoRoot, manifestPath, data, options)
 			if err != nil {
 				t.Fatalf("GenerateFromYAMLWithOptions() error = %v", err)
 			}

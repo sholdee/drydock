@@ -1083,17 +1083,18 @@ func normalizeDiagnostics(diags []diagnostic.Diagnostic, strict, forceWarning bo
 // desired-vs-desired diffs are identical whether or not they are set, and
 // the argo-cd Helm chart sets eight of them by default.
 // The ApplicationSet invalid-rollout-config lint is the same kind of advisory:
-// Argo CD v3.6.1 evaluates RollingSync steps only when the ApplicationSet
-// controller runs with progressive syncs enabled (off by default), and even
-// then InvalidRolloutConfig is a condition that never stops Applications from
-// being created or updated (applicationset_controller.go). Generation output
-// is identical either way, and an ordinary staged rollout (a prod step with no
-// Applications yet) must not fail --strict CI. The empty-steps lint
-// (appset.rollout-no-steps) stays promotable: with progressive syncs enabled
-// it aborts reconciliation of the whole ApplicationSet.
+// with progressive syncs on, Argo CD v3.6.1 reports InvalidRolloutConfig as a
+// condition that never stops Applications from being created or updated
+// (applicationset_controller.go). Generation output is identical either way,
+// and an ordinary staged rollout (a prod step with no Applications yet) must
+// not fail --strict CI. So is rollout-strategy-ignored: with progressive
+// syncs off, Argo CD ignores the RollingSync strategy and reconciles the
+// Applications as usual. The empty-steps lint (appset.rollout-no-steps)
+// stays promotable: with progressive syncs on it aborts reconciliation of
+// the whole ApplicationSet, which then contributes no Applications.
 func strictExemptDiagnostic(diag diagnostic.Diagnostic) bool {
 	switch diag.Code {
-	case selfRepoNearMissCode, ociChartIgnoredCode, diagnostic.CodeSettingsIgnoreResourceUpdates, diagnostic.CodePluginPolicyEnvIgnored, changedOnlySettingsCode, changedOnlySettingsScopedCode, changedOnlyProjectsCode, changedOnlySymlinksCode, changedOnlyJsonnetScanCode, diagnostic.CodeAppSetInvalidRolloutConfig, render.DirectoryExtensionFilterDisabledCode:
+	case selfRepoNearMissCode, ociChartIgnoredCode, diagnostic.CodeSettingsIgnoreResourceUpdates, diagnostic.CodePluginPolicyEnvIgnored, changedOnlySettingsCode, changedOnlySettingsScopedCode, changedOnlyProjectsCode, changedOnlySymlinksCode, changedOnlyJsonnetScanCode, diagnostic.CodeAppSetInvalidRolloutConfig, diagnostic.CodeAppSetRolloutStrategyIgnored, render.DirectoryExtensionFilterDisabledCode:
 		return true
 	}
 	return false

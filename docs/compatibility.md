@@ -228,19 +228,22 @@ Supported:
   Applications still generate, and `--strict` promotes the warning. The
   render parity smoke checks both cases against Argo CD, and it compares the
   whole drydock Application list with the Argo CD list.
-- Argo CD v3.6.1 RollingSync rollout lint for `spec.strategy.type:
-  RollingSync`: an empty step list warns as `appset.rollout-no-steps`, and
-  invalid `matchExpressions` operators, Applications selected by several
+- Argo CD v3.6.1 RollingSync handling for `spec.strategy.type: RollingSync`,
+  gated on `applicationsetcontroller.enable.progressive.syncs` in
+  `argocd-cmd-params-cm` (off by default; only `true` in any letter case
+  turns it on). With it off, Argo CD ignores the strategy: the Applications
+  generate as usual, and drydock gives one strict-exempt
+  `appset.rollout-strategy-ignored` advisory. With it on, an empty step list
+  warns as `appset.rollout-no-steps` and the ApplicationSet contributes no
+  Applications, because Argo CD then creates, updates, or deletes none.
+  Invalid `matchExpressions` operators, Applications selected by several
   steps, invalid `maxUpdate` values, and steps that match no generated
-  Application warn as `appset.invalid-rollout-config`. Argo CD applies these
-  only when the ApplicationSet controller runs with progressive syncs
-  enabled, which drydock cannot observe, so generation output is unchanged.
-  `--strict` promotes `appset.rollout-no-steps`, which stops reconciliation
-  when progressive syncs are enabled, but neither escalates nor fails on
-  `appset.invalid-rollout-config`, because Argo CD's `InvalidRolloutConfig`
-  condition never blocks Application create or update. The render parity
-  smoke turns progressive syncs on and checks each finding class against the
-  live ApplicationSet condition.
+  Application warn as `appset.invalid-rollout-config`, and the Applications
+  still generate. `--strict` promotes `appset.rollout-no-steps`, but neither
+  escalates nor fails on `appset.invalid-rollout-config`, because Argo CD's
+  `InvalidRolloutConfig` condition never blocks Application create or update.
+  The render parity smoke turns progressive syncs on and checks each finding
+  class against the live ApplicationSet condition and Application list.
 
 Not supported:
 

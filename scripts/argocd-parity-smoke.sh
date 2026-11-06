@@ -278,8 +278,8 @@ APPLICATIONS=(
   # select on path.segments.3 and must be absent on both sides.
   parity-segments-alpha
   # RollingSync strategies. InvalidRolloutConfig never blocks Applications,
-  # so every one of them exists. parity-rolling-sync-no-steps has no
-  # elements, so it has no Applications on either side.
+  # so every one of them exists. An empty steps list stops the whole
+  # ApplicationSet, so no parity-rolling-sync-no-steps-* name is here.
   parity-rolling-sync-valid-dev
   parity-rolling-sync-valid-prod
   parity-rolling-sync-operator-dev
@@ -1126,7 +1126,8 @@ install_argocd() {
   kubectl wait --for=condition=Established crd/applicationsets.argoproj.io --timeout=120s
   kubectl -n argocd patch configmap argocd-cm --type merge -p '{"data":{"kustomize.buildOptions":"--enable-helm"}}' >/dev/null
   # Argo CD checks RollingSync steps only with progressive syncs on, and they
-  # are off by default. The ApplicationSet controller restart below picks it up.
+  # are off by default. The ApplicationSet controller restart below picks it
+  # up. drydock reads the same key from repo/settings/argocd-cmd-params-cm.yaml.
   kubectl -n argocd patch configmap argocd-cmd-params-cm --type merge \
     -p '{"data":{"applicationsetcontroller.enable.progressive.syncs":"true"}}' >/dev/null
   # Argo CD derives the OCI registry CA from argocd-tls-certs-cm keyed by the

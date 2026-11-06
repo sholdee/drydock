@@ -115,20 +115,23 @@ func generatedApplicationValidationDiagnostic(manifestPath, upstreamMessage stri
 }
 
 // rolloutStrategyDiagnostics lints spec.strategy.rollingSync the way Argo CD
-// v3.6.1 does when the ApplicationSet controller runs with progressive syncs
-// enabled (applicationset/progressivesync progressive_sync.go and
-// validation_issues.go). Progressive syncs are a runtime controller flag that
-// drydock cannot observe, so the findings are warnings and generation output
-// is unchanged. generated is every generated Application (upstream evaluates
-// steps before dropping validation failures); valid stands in for the live
-// Applications whose status entries drive the maxUpdate check, assuming a
-// steady state where the cluster holds exactly the valid desired set.
-func rolloutStrategyDiagnostics(manifestPath string, appset argoappv1.ApplicationSet, generated, valid []GeneratedApplication) []diagnostic.Diagnostic {
+// v3.6.1 does (applicationset/progressivesync progressive_sync.go and
+// validation_issues.go). With progressive syncs off, Argo CD ignores the
+// strategy (applicationset_controller.go:254-295), so drydock reports only
+// that. With them on, an invalid config becomes an InvalidRolloutConfig
+// condition that never blocks Applications, so the findings are warnings
+// and generation output is unchanged. An empty steps list never reaches
+// here (rolloutStepsEmpty). generated is every generated Application
+// (upstream evaluates steps before dropping validation failures); valid
+// stands in for the live Applications whose status entries drive the
+// maxUpdate check, assuming a steady state where the cluster holds exactly
+// the valid desired set.
+func rolloutStrategyDiagnostics(manifestPath string, appset argoappv1.ApplicationSet, generated, valid []GeneratedApplication, options Options) []diagnostic.Diagnostic {
 	if !isRollingSyncStrategy(appset) {
 		return nil
 	}
-	if len(appset.Spec.Strategy.RollingSync.Steps) == 0 {
-		return []diagnostic.Diagnostic{rolloutNoStepsDiagnostic(manifestPath, appset)}
+	if !options.ProgressiveSyncs {
+		return []diagnostic.Diagnostic{rolloutStrategyIgnoredDiagnostic(manifestPath, appset)}
 	}
 	issues := rolloutValidationIssues(appset.Spec.Strategy.RollingSync.Steps, generated, valid)
 	var diags []diagnostic.Diagnostic
@@ -143,6 +146,28 @@ func isRollingSyncStrategy(appset argoappv1.ApplicationSet) bool {
 	return appset.Spec.Strategy != nil && appset.Spec.Strategy.Type == "RollingSync" && appset.Spec.Strategy.RollingSync != nil
 }
 
+// rolloutStepsEmpty reports an ApplicationSet whose RollingSync strategy has
+// an empty steps list while progressive syncs are on. Argo CD v3.6.1
+// (progressivesync.IsStepsEmpty) then reconciles none of its Applications.
+func rolloutStepsEmpty(appset argoappv1.ApplicationSet, options Options) bool {
+	return options.ProgressiveSyncs && isRollingSyncStrategy(appset) && len(appset.Spec.Strategy.RollingSync.Steps) == 0
+}
+
+// rolloutStrategyIgnoredDiagnostic reports a RollingSync strategy that Argo
+// CD ignores because progressive syncs are off. The "RollingSync strategy is
+// not used" substring is the stable-code dispatch key
+// (appset.rollout-strategy-ignored).
+func rolloutStrategyIgnoredDiagnostic(manifestPath string, appset argoappv1.ApplicationSet) diagnostic.Diagnostic {
+	diag := diagnostic.Diagnostic{
+		Severity:   diagnostic.SeverityWarning,
+		Category:   "appset",
+		Message:    fmt.Sprintf("ApplicationSet %s: the RollingSync strategy is not used, because applicationsetcontroller.enable.progressive.syncs is not true in argocd-cmd-params-cm", appsetDisplayName(appset)),
+		Provenance: diagnostic.Provenance{Path: manifestPath, Pointer: "spec.strategy"},
+	}
+	diag.Code = diagnostic.StableCode(diag)
+	return diag
+}
+
 // rolloutNoStepsDiagnostic carries upstream's "No steps defined for rollout"
 // condition message, which is also the stable-code dispatch key
 // (appset.rollout-no-steps).
@@ -150,7 +175,7 @@ func rolloutNoStepsDiagnostic(manifestPath string, appset argoappv1.ApplicationS
 	diag := diagnostic.Diagnostic{
 		Severity:   diagnostic.SeverityWarning,
 		Category:   "appset",
-		Message:    fmt.Sprintf("ApplicationSet %s uses the RollingSync strategy with an empty steps list: No steps defined for rollout; when the ApplicationSet controller runs with progressive syncs enabled, Argo CD reports an ErrorOccurred condition (ApplicationSetRolloutError) and creates, updates, or deletes none of its Applications, while drydock still generates them", appsetDisplayName(appset)),
+		Message:    fmt.Sprintf("ApplicationSet %s uses the RollingSync strategy with an empty steps list: No steps defined for rollout; Argo CD reports an ErrorOccurred condition (ApplicationSetRolloutError) and creates, updates, or deletes none of its Applications, so this ApplicationSet contributes no Applications", appsetDisplayName(appset)),
 		Provenance: diagnostic.Provenance{Path: manifestPath, Pointer: "spec.strategy.rollingSync.steps"},
 	}
 	diag.Code = diagnostic.StableCode(diag)
@@ -164,7 +189,7 @@ func invalidRolloutConfigDiagnostic(manifestPath string, appset argoappv1.Applic
 	diag := diagnostic.Diagnostic{
 		Severity:   diagnostic.SeverityWarning,
 		Category:   "appset",
-		Message:    fmt.Sprintf("ApplicationSet %s has an invalid RollingSync rollout config: %s; when the ApplicationSet controller runs with progressive syncs enabled, Argo CD reports an InvalidRolloutConfig condition, while drydock still generates the Applications", appsetDisplayName(appset), upstreamMessage),
+		Message:    fmt.Sprintf("ApplicationSet %s has an invalid RollingSync rollout config: %s; Argo CD reports an InvalidRolloutConfig condition and still creates and updates the Applications", appsetDisplayName(appset), upstreamMessage),
 		Provenance: diagnostic.Provenance{Path: manifestPath, Pointer: "spec.strategy.rollingSync.steps"},
 	}
 	diag.Code = diagnostic.StableCode(diag)

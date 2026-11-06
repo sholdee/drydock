@@ -27,6 +27,7 @@ func MergeDiscovered(candidates []ArgoSettings) (ArgoSettings, []diagnostic.Diag
 		mergeCommandParameters(&merged, candidate)
 		diags = append(diags, mergeMaxCombinedDirectoryManifestsSize(&merged, candidate)...)
 		diags = append(diags, mergeAllowOutOfBoundsSymlinks(&merged, candidate)...)
+		diags = append(diags, mergeEnableProgressiveSyncs(&merged, candidate)...)
 		merged.ResourceExclusions = append(merged.ResourceExclusions, candidate.ResourceExclusions...)
 		merged.ResourceInclusions = append(merged.ResourceInclusions, candidate.ResourceInclusions...)
 		merged.ResourceSelectors = append(merged.ResourceSelectors, candidate.ResourceSelectors...)
@@ -107,11 +108,34 @@ func mergeMaxCombinedDirectoryManifestsSize(merged *ArgoSettings, candidate Argo
 }
 
 // ParseAllowOutOfBoundsSymlinks reads reposerver.allow.oob.symlinks as the
-// Argo CD v3.6.1 repo-server reads it, through env.ParseBoolFromEnv
-// (util/env/env.go:184-193): "true" or "false" in any case, and the
-// default false for an empty or any other value.
+// Argo CD v3.6.1 repo-server reads it, through env.ParseBoolFromEnv with
+// the default false.
 func ParseAllowOutOfBoundsSymlinks(value string) bool {
-	return strings.EqualFold(value, "true")
+	return parseBoolFromEnv(value, false)
+}
+
+// ParseEnableProgressiveSyncs reads
+// applicationsetcontroller.enable.progressive.syncs as the Argo CD v3.6.1
+// ApplicationSet controller reads it, through env.ParseBoolFromEnv with the
+// default false.
+func ParseEnableProgressiveSyncs(value string) bool {
+	return parseBoolFromEnv(value, false)
+}
+
+// parseBoolFromEnv copies env.ParseBoolFromEnv (Argo CD v3.6.1
+// util/env/env.go:184-193) for a value read from argocd-cmd-params-cm,
+// which Kubernetes passes to the process as an environment variable
+// unchanged: "true" or "false" in any case, and defaultValue for an empty
+// or any other value, such as "1" or " true".
+func parseBoolFromEnv(value string, defaultValue bool) bool {
+	if value != "" {
+		if strings.EqualFold(value, "true") {
+			return true
+		} else if strings.EqualFold(value, "false") {
+			return false
+		}
+	}
+	return defaultValue
 }
 
 func mergeAllowOutOfBoundsSymlinks(merged *ArgoSettings, candidate ArgoSettings) []diagnostic.Diagnostic {
@@ -127,6 +151,21 @@ func mergeAllowOutOfBoundsSymlinks(merged *ArgoSettings, candidate ArgoSettings)
 		)}
 	}
 	merged.AllowOutOfBoundsSymlinks = candidate.AllowOutOfBoundsSymlinks
+	return nil
+}
+
+func mergeEnableProgressiveSyncs(merged *ArgoSettings, candidate ArgoSettings) []diagnostic.Diagnostic {
+	if !hasProvenance(candidate.EnableProgressiveSyncs) {
+		return nil
+	}
+	// Spellings that the controller reads the same do not conflict.
+	if hasProvenance(merged.EnableProgressiveSyncs) && ParseEnableProgressiveSyncs(merged.EnableProgressiveSyncs.Value) != ParseEnableProgressiveSyncs(candidate.EnableProgressiveSyncs.Value) {
+		return []diagnostic.Diagnostic{conflictDiagnostic(
+			fmt.Sprintf("conflicting %s values %q and %q", enableProgressiveSyncsKey, merged.EnableProgressiveSyncs.Value, candidate.EnableProgressiveSyncs.Value),
+			candidate.EnableProgressiveSyncs.Provenance,
+		)}
+	}
+	merged.EnableProgressiveSyncs = candidate.EnableProgressiveSyncs
 	return nil
 }
 

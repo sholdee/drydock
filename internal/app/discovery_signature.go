@@ -93,6 +93,10 @@ func changedOnlySettingsSignature(settings config.ArgoSettings) (string, error) 
 	// renderSig carries the parsed allow flag, so "TRUE" and "true", or ""
 	// and "no", are not a change.
 	settings.AllowOutOfBoundsSymlinks = config.Value[string]{}
+	// The progressive syncs flag changes ApplicationSet generation, not
+	// renders, so it is signed here as the value the controller parses.
+	progressiveSyncs := config.ParseEnableProgressiveSyncs(settings.EnableProgressiveSyncs.Value)
+	settings.EnableProgressiveSyncs = config.Value[string]{}
 	data, err := json.Marshal(settings)
 	if err != nil {
 		return "", fmt.Errorf("fingerprint Argo CD settings: %w", err)
@@ -105,7 +109,7 @@ func changedOnlySettingsSignature(settings config.ArgoSettings) (string, error) 
 	for key, plugin := range settings.ConfigManagementPlugins {
 		discover[key] = plugin.Discover
 	}
-	data, err = json.Marshal([]any{renderSig, withoutProvenance(fields), discover})
+	data, err = json.Marshal([]any{renderSig, withoutProvenance(fields), discover, progressiveSyncs})
 	if err != nil {
 		return "", fmt.Errorf("fingerprint Argo CD settings: %w", err)
 	}

@@ -834,7 +834,9 @@ v3.6.1 has a progressive syncs flag
 `argocd-cmd-params-cm`). Without that flag, the controller does not check
 RollingSync steps. The flag is off by default
 (`cmd/argocd-applicationset-controller/commands/applicationset_controller.go:327`).
-The smoke turns it on during the Argo CD install.
+The smoke turns it on during the Argo CD install. drydock reads the same key
+from `settings/argocd-cmd-params-cm.yaml` in the fixture repository, so keep
+the two equal.
 
 With the flag on, Argo CD sets one of these conditions on the ApplicationSet:
 
@@ -860,10 +862,14 @@ condition turns `True` on a reconcile after the first one.
 An empty steps list is different. Argo CD sets `ErrorOccurred` and returns
 before it creates, updates, or deletes any Application
 (`applicationset/controllers/applicationset_controller.go:263-277`). drydock
-still generates the Applications, because it cannot know whether the flag is
-on. This is a known difference. So `parity-rolling-sync-no-steps` has no list
-elements: neither side has Applications, and the smoke compares only the
-condition with the warning.
+also generates no Applications for it. `parity-rolling-sync-no-steps` has a
+list element, and no `parity-rolling-sync-no-steps-*` name is in
+`APPLICATIONS`, so the inventory checks prove that both sides drop it.
+
+The smoke does not run Argo CD with the flag off, because that needs a second
+ApplicationSet controller restart and a second set of waits. Unit tests cover
+the flag off: drydock then generates every Application and gives one
+`appset.rollout-strategy-ignored` advisory.
 
 The smoke checks the conditions in two steps:
 

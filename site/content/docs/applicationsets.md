@@ -229,23 +229,32 @@ Each failure emits an `appset.application-validation-failed` warning carrying
 Argo CD's message, and the ApplicationSet's other Applications still
 generate. `--strict` promotes the warning to an error.
 
-## RollingSync Rollout Lint
+## RollingSync Strategy
 
-For `spec.strategy.type: RollingSync` with a `rollingSync` block, drydock
-checks the steps against the generated Applications' labels the way the Argo
-CD v3.6.1 controller does when progressive syncs are enabled:
+The ApplicationSet controller of Argo CD v3.6.1 has a progressive syncs
+switch. Without it, the controller does not use
+`spec.strategy.type: RollingSync`. drydock reads that switch, `applicationsetcontroller.enable.progressive.syncs`, from
+`argocd-cmd-params-cm` (see
+[Diagnostics](/reference/cli/#diagnostics)). As in Argo CD, only
+`true` in any letter case turns it on, and it is off by default.
 
-| Finding | Stable code | Argo CD v3.6.1 behavior |
-| --- | --- | --- |
-| Empty `steps` | `appset.rollout-no-steps` | `ErrorOccurred` ("No steps defined for rollout"); no Applications are created, updated, or deleted |
-| `matchExpressions` operator other than `In`/`NotIn` | `appset.invalid-rollout-config` | `InvalidRolloutConfig` condition |
-| Application selected by more than one step | `appset.invalid-rollout-config` | `InvalidRolloutConfig` condition |
-| Invalid `maxUpdate` value | `appset.invalid-rollout-config` | `InvalidRolloutConfig` condition |
-| Step that matches no generated Application | `appset.invalid-rollout-config` | `InvalidRolloutConfig` condition |
+With progressive syncs off, Argo CD ignores the strategy. drydock generates
+the Applications as usual and gives one `appset.rollout-strategy-ignored`
+advisory for each ApplicationSet with a RollingSync strategy. `--strict` does
+not fail on it.
 
-These are warnings only: progressive syncs are an ApplicationSet controller
-flag drydock cannot observe, so drydock still generates the Applications.
-Messages reuse Argo CD's text; drydock reports every finding class, while the
+With progressive syncs on, drydock checks the steps against the generated
+Applications' labels the way the Argo CD controller does:
+
+| Finding | Stable code | Argo CD v3.6.1 behavior | drydock |
+| --- | --- | --- | --- |
+| Empty `steps` | `appset.rollout-no-steps` | `ErrorOccurred` ("No steps defined for rollout"). No Applications are created, updated, or deleted | The ApplicationSet contributes no Applications |
+| `matchExpressions` operator other than `In`/`NotIn` | `appset.invalid-rollout-config` | `InvalidRolloutConfig` condition | Applications generate |
+| Application selected by more than one step | `appset.invalid-rollout-config` | `InvalidRolloutConfig` condition | Applications generate |
+| Invalid `maxUpdate` value | `appset.invalid-rollout-config` | `InvalidRolloutConfig` condition | Applications generate |
+| Step that matches no generated Application | `appset.invalid-rollout-config` | `InvalidRolloutConfig` condition | Applications generate |
+
+Messages reuse Argo CD's text. drydock reports every finding class, while the
 Argo CD condition shows the highest-priority one. The `maxUpdate` check
 assumes the cluster already holds the generated Applications. `--strict`
 promotes `appset.rollout-no-steps` to an error, because Argo CD stops
@@ -255,9 +264,10 @@ condition never blocks Applications, so a staged rollout whose later step has
 no Applications yet still passes `--strict` CI.
 
 The [render parity smoke](/concepts/argocd-render-parity/) runs Argo CD with
-progressive syncs on. It checks that Argo CD sets the matching condition on
-the same ApplicationSets that drydock flags, with the same message. It covers
-each finding class above.
+progressive syncs on. Argo CD must set the matching condition on the same
+ApplicationSets that drydock flags, with the same message. For the empty
+steps list, both sides must create no Applications. The smoke covers each
+finding class above. Unit tests cover progressive syncs off.
 
 ## Provider Fixtures
 

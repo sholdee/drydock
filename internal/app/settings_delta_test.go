@@ -44,6 +44,9 @@ var argoSettingsFieldClasses = map[string]settingsChangeClass{
 	"MaxCombinedDirectoryManifestsSize": settingsRenderAll,
 	// Whether an out-of-bounds symlink fails every source of its tree.
 	"AllowOutOfBoundsSymlinks": settingsRenderAll,
+	// Which Applications an ApplicationSet with a RollingSync strategy
+	// generates, and the RollingSync warnings.
+	"EnableProgressiveSyncs": settingsRenderAll,
 	// Diff: which rendered resources survive, and normalization.
 	"ResourceExclusions": settingsRenderAll,
 	"ResourceInclusions": settingsRenderAll,
@@ -247,6 +250,7 @@ func assertSettingsChangeClass(t *testing.T, name string, left, right config.Arg
 // reposerver.allow.oob.symlinks value other than "true" as false.
 var nonZeroOverrides = map[string]any{
 	"ArgoSettings.AllowOutOfBoundsSymlinks.Value": "true",
+	"ArgoSettings.EnableProgressiveSyncs.Value":   "true",
 }
 
 // nonZeroValue builds a value of typ with every exported field, element, and

@@ -187,6 +187,12 @@ type ArgoSettings struct {
 	// reposerver.allow.oob.symlinks, as written. The repo-server reads
 	// "true" or "false" in any case; any other value means false.
 	AllowOutOfBoundsSymlinks Value[string] `json:"allowOutOfBoundsSymlinks,omitempty" yaml:"allowOutOfBoundsSymlinks,omitempty"`
+	// EnableProgressiveSyncs is the argocd-cmd-params-cm key
+	// applicationsetcontroller.enable.progressive.syncs, as written. The
+	// ApplicationSet controller reads "true" or "false" in any case; any
+	// other value means false. It decides whether a RollingSync strategy
+	// applies, so it changes which Applications an ApplicationSet generates.
+	EnableProgressiveSyncs Value[string] `json:"enableProgressiveSyncs,omitempty" yaml:"enableProgressiveSyncs,omitempty"`
 }
 
 func DefaultSettings() ArgoSettings {

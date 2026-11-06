@@ -98,7 +98,36 @@ func (o Orchestrator) discoverRepositoryWithOCI(ctx context.Context, root string
 		renderSig = nextRenderSig
 	}
 
-	return discovered, dedupeDiagnostics(allDiags), allEvents, renderCache, renderSig, nil
+	allDiags, err = withoutStaleRolloutDiagnostics(root, discovered, allDiags)
+	return discovered, dedupeDiagnostics(allDiags), allEvents, renderCache, renderSig, err
+}
+
+// withoutStaleRolloutDiagnostics drops the RollingSync diagnostics that an
+// ApplicationSet expansion gave before discovery learned the final
+// applicationsetcontroller.enable.progressive.syncs value, for example from
+// a rendered Argo CD install. Each expansion reads the settings found so
+// far, so only the diagnostics that match the final value stay.
+func withoutStaleRolloutDiagnostics(root string, discovered discovery.Result, diags []diagnostic.Diagnostic) ([]diagnostic.Diagnostic, error) {
+	settings, _, err := loadSettingsFromDiscovery(root, discovered)
+	if err != nil {
+		return diags, err
+	}
+	progressiveSyncs := config.ParseEnableProgressiveSyncs(settings.EnableProgressiveSyncs.Value)
+	out := make([]diagnostic.Diagnostic, 0, len(diags))
+	for _, diag := range diags {
+		switch diagnostic.StableCode(diag) {
+		case diagnostic.CodeAppSetRolloutStrategyIgnored:
+			if progressiveSyncs {
+				continue
+			}
+		case diagnostic.CodeAppSetInvalidRolloutConfig, diagnostic.CodeAppSetRolloutNoSteps:
+			if !progressiveSyncs {
+				continue
+			}
+		}
+		out = append(out, diag)
+	}
+	return out, nil
 }
 
 // scanRepositoryDiscovery scans root for committed objects and adds the
