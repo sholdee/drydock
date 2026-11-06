@@ -465,19 +465,7 @@ func TestCommittedExpectedFileMatchesFixtures(t *testing.T) {
 			t.Fatalf("read Application for %s: %v", tc.Name, err)
 		}
 		if tc.Repository != "" {
-			// The smoke builds this repository and adds the failing file.
-			for _, want := range []string{
-				"name: " + tc.Name + "\n",
-				"namespace: " + testNamespace + "\n",
-				"repoURL: git://argocd-parity-git.argocd-parity.svc.cluster.local/" + tc.Repository + ".git\n",
-			} {
-				if !strings.Contains(string(app), want) {
-					t.Fatalf("Application for %s does not contain %q", tc.Name, want)
-				}
-			}
-			if info, err := os.Stat(filepath.Join(repoRoot, "testdata", "argocd-parity", tc.Repository+"-repo")); err != nil || !info.IsDir() {
-				t.Fatalf("fixture repository for %s: %v", tc.Name, err)
-			}
+			checkSeparateRepositoryCase(t, repoRoot, tc, string(app))
 			continue
 		}
 		for _, want := range []string{
@@ -496,6 +484,25 @@ func TestCommittedExpectedFileMatchesFixtures(t *testing.T) {
 		if tc.ArgoCDNamesObject != "" && !strings.Contains(string(failing), "name: "+tc.ArgoCDNamesObject+"\n") {
 			t.Fatalf("failing file for %s does not hold the object %q", tc.Name, tc.ArgoCDNamesObject)
 		}
+	}
+}
+
+// checkSeparateRepositoryCase checks a case whose Application renders from
+// a fixture repository other than the main one. The smoke builds that
+// repository and adds the failing file.
+func checkSeparateRepositoryCase(t *testing.T, repoRoot string, tc expectedCase, app string) {
+	t.Helper()
+	for _, want := range []string{
+		"name: " + tc.Name + "\n",
+		"namespace: " + testNamespace + "\n",
+		"repoURL: git://argocd-parity-git.argocd-parity.svc.cluster.local/" + tc.Repository + ".git\n",
+	} {
+		if !strings.Contains(app, want) {
+			t.Fatalf("Application for %s does not contain %q", tc.Name, want)
+		}
+	}
+	if info, err := os.Stat(filepath.Join(repoRoot, "testdata", "argocd-parity", tc.Repository+"-repo")); err != nil || !info.IsDir() {
+		t.Fatalf("fixture repository for %s: %v", tc.Name, err)
 	}
 }
 

@@ -347,7 +347,7 @@ func TestDirectorySymlinksSmokeFixtureMatchesUpstream(t *testing.T) {
 	if err != nil {
 		t.Fatalf("upstream error = %v", err)
 	}
-	var upstreamNames []string
+	upstreamNames := make([]string, 0, len(upstreamObjs))
 	for _, obj := range upstreamObjs {
 		upstreamNames = append(upstreamNames, obj.GetName())
 	}
