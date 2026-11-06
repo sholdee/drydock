@@ -838,6 +838,15 @@ The smoke turns it on during the Argo CD install. drydock reads the same key
 from `settings/argocd-cmd-params-cm.yaml` in the fixture repository, so keep
 the two equal.
 
+The smoke also sets `applicationsetcontroller.concurrent.reconciliations.max`
+to `1`. Argo CD v3.6.1 keeps the RollingSync findings in one field of a
+`progressivesync.Manager` that all reconciles share
+(`applicationset/progressivesync/progressive_sync.go:82` and `:119-125`).
+With the default of 10 concurrent reconciles, one ApplicationSet can show the
+`InvalidRolloutConfig` message of another one. For example, a CI run showed
+the `maxUpdate` message on `parity-rolling-sync-duplicate`. drydock does not
+model this race. It changes only the condition message, not the Applications.
+
 With the flag on, Argo CD sets one of these conditions on the ApplicationSet:
 
 | ApplicationSet | Condition | Message |
