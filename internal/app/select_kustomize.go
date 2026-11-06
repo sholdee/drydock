@@ -28,8 +28,9 @@ type selectionSide struct {
 // the local inputs of every source that renders from root: its Kustomize
 // graph (bases, components, helmCharts values files, patches, generator
 // files, and spec.source.kustomize components and patches), its Helm
-// value files and file parameters, and the paths that the symlinks under its
-// path and Jsonnet libraries reach, even outside spec.source.path. Every
+// value files and file parameters, the paths that the symlinks under its
+// path and Jsonnet libraries reach, and the files that its Jsonnet files
+// import, even outside spec.source.path. Every
 // source also owns the $ref value files and file parameters whose ref root
 // is this tree (selfRepo identifies the repository under diff).
 // It exists for changed-only ownership only: ApplicationSelectionInput.Paths
@@ -72,6 +73,10 @@ func withSelectionOnlyPaths(ctx context.Context, root string, repoMaps []sourcep
 		paths, ok := symlinkMemo[key]
 		if !ok {
 			paths = render.DirectorySymlinkInputPaths(root, dirs)
+			// A source that cannot be read keeps its other ownership; the
+			// render reports the error.
+			imports, _ := render.DirectoryJsonnetImportPaths(root, source.Path, dirs[1:])
+			paths = append(paths, imports...)
 			symlinkMemo[key] = paths
 		}
 		return paths
@@ -89,8 +94,9 @@ func withSelectionOnlyPaths(ctx context.Context, root string, repoMaps []sourcep
 				continue
 			}
 			out[i].Paths = append(out[i].Paths, helmLocalSelectionPaths(source)...)
-			// A directory source reads the files that its symlinks reach,
-			// also outside its path; a plugin may follow them too.
+			// A directory source reads the files that its symlinks reach
+			// and its Jsonnet files import, also outside its path; a plugin
+			// can follow the symlinks too.
 			out[i].Paths = append(out[i].Paths, symlinkInputs(source)...)
 			if mayWalkKustomizeGraph(source) {
 				out[i].Paths = append(out[i].Paths, kustomizeGraph(source)...)
