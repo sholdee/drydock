@@ -1233,6 +1233,24 @@ Supported:
   `argocd-cmd-params-cm` key `controller.ignore.normalizer.jq.timeout` of
   the current side, and 1 second when the key is empty, zero, negative, or
   not a duration.
+- drydock parses and runs jq expressions with the gojq version that Argo CD
+  v3.6.1 requires (v0.12.19). A newer gojq accepts some expressions that
+  Argo CD rejects, such as `.data.ignored?//empty`.
+- A jq expression that removes the whole object, such as `.`, makes Argo CD
+  continue with the object `null`, which it cannot decode. gitops-engine
+  only logs that error, and the object stays `null`. The result depends on
+  the diff mode. With the client-side diff, gitops-engine cannot build a
+  patch and fails, so Argo CD fails the comparison of the Application.
+  drydock then reports a `diff.comparison-failed` error for that
+  Application, also when its resource did not change. With server-side
+  diff, Argo CD compares `null` with `null`, so a change to the resource is
+  hidden, and drydock does the same. A new or deleted resource shows as a
+  change in both modes. drydock reads the diff mode from the Application:
+  the `ServerSideDiff=true` or `ServerSideDiff=false` compare option and
+  the `ServerSideApply=true` sync option. drydock does not read the
+  controller-level switch `controller.diff.server.side`, which turns on
+  server-side diff for every Application. With that switch, drydock fails
+  an Application that Argo CD compares with server-side diff.
 - A jq expression that does not parse or compile fails the comparison of
   each current-side Application it belongs to, even when it matches no
   resource or the Application renders no resources. Argo CD builds every jq

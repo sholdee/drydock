@@ -5,6 +5,7 @@ import (
 	"sort"
 	"strings"
 
+	resourceutil "github.com/argoproj/argo-cd/gitops-engine/v3/pkg/sync/resource"
 	"github.com/argoproj/argo-cd/v3/common"
 	argoappv1 "github.com/argoproj/argo-cd/v3/pkg/apis/application/v1alpha1"
 	"github.com/argoproj/argo-cd/v3/util/glob"
@@ -66,11 +67,27 @@ func normalizationFor(application argoappv1.Application, id manifest.Identity, s
 		normalization.ApplicationRules = appendIgnoreRule(normalization.ApplicationRules, rule.JSONPointers, rule.JQPathExpressions)
 		normalization.ManagedFieldsManagers = append(normalization.ManagedFieldsManagers, rule.ManagedFieldsManagers...)
 	}
+	normalization.ServerSideDiff = applicationServerSideDiff(application)
 	global := globalNormalizationFor(settings, id)
 	normalization.CustomizationRules = global.CustomizationRules
 	normalization.ManagedFieldsManagers = append(normalization.ManagedFieldsManagers, global.ManagedFieldsManagers...)
 	normalization.KnownTypeFields = global.KnownTypeFields
 	return normalization
+}
+
+// applicationServerSideDiff reports whether Argo CD v3.6.1 compares the
+// Application with server-side diff, as shouldUseServerSideDiff does
+// (controller/state.go:1184-1191): an explicit ServerSideDiff=false
+// compare option turns it off, and a ServerSideDiff=true compare option or
+// the ServerSideApply=true sync option turns it on. drydock does not read
+// the controller-level switch controller.diff.server.side, which turns it on
+// for every Application; it reports that key as runtime-only.
+func applicationServerSideDiff(application argoappv1.Application) bool {
+	if resourceutil.HasAnnotationOption(&application, common.AnnotationCompareOptions, "ServerSideDiff=false") {
+		return false
+	}
+	return resourceutil.HasAnnotationOption(&application, common.AnnotationCompareOptions, "ServerSideDiff=true") ||
+		(application.Spec.SyncPolicy != nil && application.Spec.SyncPolicy.SyncOptions.HasOption("ServerSideApply=true"))
 }
 
 // appendIgnoreRule adds one rule when it has pointers or jq expressions, as
@@ -177,6 +194,10 @@ const (
 	// diffIgnoreRuleInvalidCode is the error for a jq expression that Argo
 	// CD cannot build. Argo CD fails the comparison of the Application.
 	diffIgnoreRuleInvalidCode = "diff.ignore-rule-invalid"
+	// diffComparisonFailedCode is the error for an Application whose
+	// comparison Argo CD fails while it diffs a resource, such as an ignore
+	// rule that removes a whole object under client-side diff.
+	diffComparisonFailedCode = "diff.comparison-failed"
 )
 
 // diffApplicationKey names one Application in a diff.

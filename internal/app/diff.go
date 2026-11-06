@@ -642,11 +642,20 @@ func diffBuildResults(leftBuild, rightBuild BuildResult, opts diff.Options, stri
 	failed, diags := invalidIgnoreRuleDiagnostics(rightBuild)
 	leftDocs = withoutApplications(leftDocs, failed)
 	rightDocs = withoutApplications(rightDocs, failed)
-	diags = normalizeDiagnostics(append(diags, invalidIgnorePointerDiagnostics(leftDocs, rightDocs)...), strict, false)
-	results, err := diff.Run(leftDocs, rightDocs, opts)
+	diags = append(diags, invalidIgnorePointerDiagnostics(leftDocs, rightDocs)...)
+	results, failures, err := diff.RunWithFailures(leftDocs, rightDocs, opts)
 	if err != nil {
-		return nil, diags, err
+		return nil, normalizeDiagnostics(diags, strict, false), err
 	}
+	for _, failure := range failures {
+		diags = append(diags, diagnostic.Diagnostic{
+			Code:     diffComparisonFailedCode,
+			Severity: diagnostic.SeverityError,
+			Category: "diff",
+			Message:  fmt.Sprintf("Application %s: failed to compare desired states, as Argo CD fails the comparison: %s", diffApplicationKey{Namespace: failure.Parent.Namespace, Name: failure.Parent.Name}, failure.Message),
+		})
+	}
+	diags = normalizeDiagnostics(diags, strict, false)
 	return results, diags, diagnosticFailure(diags, strict)
 }
 

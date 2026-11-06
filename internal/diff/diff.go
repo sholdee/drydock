@@ -1,6 +1,7 @@
 package diff
 
 import (
+	"errors"
 	"fmt"
 	"time"
 )
@@ -53,6 +54,10 @@ type Normalization struct {
 	// AnnotationJSONPointers holds the jsonPointers parsed from the resource's
 	// own argocd.argoproj.io/ignore-differences annotation.
 	AnnotationJSONPointers []string
+	// ServerSideDiff reports that Argo CD compares the resource's
+	// Application with server-side diff. It decides what happens when an
+	// ignore rule removes a whole object (see errObjectRemoved).
+	ServerSideDiff bool
 }
 type Document struct {
 	Parent        Parent        `json:"parent" yaml:"parent"`
@@ -96,43 +101,110 @@ type Options struct {
 	JQExecutionTimeout time.Duration
 }
 
+// ComparisonFailure is an Application whose comparison Argo CD v3.6.1
+// fails, so it has no diff results.
+type ComparisonFailure struct {
+	Parent  Parent
+	Message string
+}
+
+// Run diffs the documents. It returns an error for an Application whose
+// comparison fails; use RunWithFailures to diff the other Applications.
 func Run(left, right []Document, opts Options) ([]Result, error) {
+	results, failures, err := RunWithFailures(left, right, opts)
+	if err != nil {
+		return nil, err
+	}
+	if len(failures) > 0 {
+		return nil, errors.New(failures[0].Message)
+	}
+	return results, nil
+}
+
+// RunWithFailures diffs the documents. An Application whose comparison
+// fails, as Argo CD fails it, gets one ComparisonFailure and no results.
+func RunWithFailures(left, right []Document, opts Options) ([]Result, []ComparisonFailure, error) {
 	leftByKey := documentsByKey(left)
 	rightByKey := documentsByKey(right)
 	keys := sortedKeys(leftByKey, rightByKey)
 
 	results := make([]Result, 0)
+	var failures []ComparisonFailure
+	failed := map[string]struct{}{}
 	for _, key := range keys {
-		result, include, err := diffResultForKey(leftByKey, rightByKey, key, opts)
+		result, include, failure, err := diffResultForKey(leftByKey, rightByKey, key, opts)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
+		}
+		if failure != nil {
+			if _, ok := failed[parentName(failure.Parent)]; !ok {
+				failed[parentName(failure.Parent)] = struct{}{}
+				failures = append(failures, *failure)
+			}
+			continue
 		}
 		if include {
 			results = append(results, result)
 		}
 	}
-
-	return results, nil
+	if len(failed) == 0 {
+		return results, nil, nil
+	}
+	kept := results[:0]
+	for _, result := range results {
+		if _, ok := failed[parentName(result.Parent)]; !ok {
+			kept = append(kept, result)
+		}
+	}
+	return kept, failures, nil
 }
-func diffResultForKey(leftByKey, rightByKey map[string]Document, key string, opts Options) (Result, bool, error) {
+
+func diffResultForKey(leftByKey, rightByKey map[string]Document, key string, opts Options) (Result, bool, *ComparisonFailure, error) {
 	left, hasLeft := leftByKey[key]
 	right, hasRight := rightByKey[key]
 	left, right = documentsWithSharedNormalization(left, right, hasLeft, hasRight)
-	if hasLeft && hasRight && left.Body == right.Body {
+	if hasLeft && hasRight && left.Body == right.Body && !mayFailComparison(left.Normalization) {
 		// Both sides share the current side's normalization, so identical bodies
 		// always normalize identically and can never produce a diff.
-		return Result{}, false, nil
+		return Result{}, false, nil, nil
 	}
 	leftBody, rightBody, err := normalizedDocumentBodies(left, right, hasLeft, hasRight, opts)
 	if err != nil {
-		return Result{}, false, err
+		return Result{}, false, nil, err
+	}
+	if hasLeft && hasRight && !right.Normalization.ServerSideDiff && (leftBody == nullDiffBody || rightBody == nullDiffBody) {
+		// gitops-engine's client-side diff cannot build a patch from the
+		// object null and returns an error, so Argo CD fails the comparison
+		// of the Application (pkg/diff/diff.go Diff, controller/state.go
+		// StateDiffs). Server-side diff compares null as it is.
+		return Result{}, false, &ComparisonFailure{
+			Parent:  right.Parent,
+			Message: fmt.Sprintf("%s: an ignore rule removed the whole object, so Argo CD's client-side diff fails the comparison of the Application", headerOf(right)),
+		}, nil
 	}
 	doc, change, include := changedDocument(left, right, hasLeft, hasRight, leftBody, rightBody)
 	if !include {
-		return Result{}, false, nil
+		return Result{}, false, nil, nil
 	}
 	result, err := resultFor(doc, change, leftBody, rightBody, opts)
-	return result, true, err
+	return result, true, nil, err
+}
+
+// mayFailComparison reports whether normalization can remove a whole object
+// under client-side diff, which fails the comparison even when both bodies
+// are identical. Only a jq expression can remove the whole object.
+func mayFailComparison(normalization Normalization) bool {
+	if normalization.ServerSideDiff {
+		return false
+	}
+	for _, rules := range [][]IgnoreRule{normalization.ApplicationRules, normalization.CustomizationRules} {
+		for _, rule := range rules {
+			if len(rule.JQPathExpressions) > 0 {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // documentsWithSharedNormalization gives both sides the normalization of the

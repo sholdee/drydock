@@ -14,6 +14,19 @@ import (
 
 var errEmptyDiffBody = errors.New("empty diff body")
 
+// errObjectRemoved reports that an ignore rule removed the whole object,
+// such as the jq path expression ".". Argo CD v3.6.1 then continues with the
+// JSON text null and cannot decode it back into the object
+// (util/argo/normalizers/diff_normalizer.go:221-224). The object becomes
+// null, and gitops-engine only logs the error (pkg/diff/diff.go:771-775).
+// The known-types normalizer does not run. See nullDiffBody for how the diff
+// then treats the resource.
+var errObjectRemoved = errors.New("ignore rule removed the whole object")
+
+// nullDiffBody is the normalized body of a resource whose object an ignore
+// rule removed.
+const nullDiffBody = "null\n"
+
 func normalizedDocumentBodies(left, right Document, hasLeft, hasRight bool, opts Options) (string, string, error) {
 	if hasLeft && hasRight && len(left.Normalization.ManagedFieldsManagers) > 0 {
 		leftBody, rightBody, err := normalizedDocumentPairBodies(left, right, opts)
@@ -44,15 +57,28 @@ func normalizedDocumentBodies(left, right Document, hasLeft, hasRight bool, opts
 	return summarizeConfigMapBinaryDataDocumentBodies(leftBody, rightBody, left, right, hasLeft, hasRight)
 }
 func normalizedDocumentPairBodies(left, right Document, opts Options) (string, string, error) {
-	leftObject, err := normalizeDiffObject(left.Body, opts, left.Normalization, left.Resource)
-	if err != nil {
-		return "", "", fmt.Errorf("normalize %s: %w", headerOf(left), err)
+	leftObject, leftErr := normalizeDiffObject(left.Body, opts, left.Normalization, left.Resource)
+	if leftErr != nil && !errors.Is(leftErr, errObjectRemoved) {
+		return "", "", fmt.Errorf("normalize %s: %w", headerOf(left), leftErr)
 	}
-	rightObject, err := normalizeDiffObject(right.Body, opts, right.Normalization, right.Resource)
-	if err != nil {
-		return "", "", fmt.Errorf("normalize %s: %w", headerOf(right), err)
+	rightObject, rightErr := normalizeDiffObject(right.Body, opts, right.Normalization, right.Resource)
+	if rightErr != nil && !errors.Is(rightErr, errObjectRemoved) {
+		return "", "", fmt.Errorf("normalize %s: %w", headerOf(right), rightErr)
 	}
-	leftObject, rightObject, err = normalizeManagedFieldsPair(leftObject, rightObject, left.Normalization.ManagedFieldsManagers)
+	if leftErr != nil || rightErr != nil {
+		// An ignore rule removed an object, so there is no pair to compare
+		// managed fields on.
+		leftBody, err := objectRemovedBody(leftObject, leftErr != nil)
+		if err != nil {
+			return "", "", fmt.Errorf("normalize %s: %w", headerOf(left), err)
+		}
+		rightBody, err := objectRemovedBody(rightObject, rightErr != nil)
+		if err != nil {
+			return "", "", fmt.Errorf("normalize %s: %w", headerOf(right), err)
+		}
+		return leftBody, rightBody, nil
+	}
+	leftObject, rightObject, err := normalizeManagedFieldsPair(leftObject, rightObject, left.Normalization.ManagedFieldsManagers)
 	if err != nil {
 		return "", "", fmt.Errorf("normalize %s: %w", headerOf(right), err)
 	}
@@ -68,6 +94,17 @@ func normalizedDocumentPairBodies(left, right Document, opts Options) (string, s
 		return "", "", fmt.Errorf("normalize %s: %w", headerOf(right), err)
 	}
 	return leftBody, rightBody, nil
+}
+
+// objectRemovedBody encodes one side of a pair where an ignore rule removed
+// at least one object: nullDiffBody for a removed object, and the object
+// itself otherwise.
+func objectRemovedBody(object map[string]any, removed bool) (string, error) {
+	if removed {
+		return nullDiffBody, nil
+	}
+	stripManagedFields(object)
+	return encodeDiffYAML(object)
 }
 func normalizeDocumentBody(doc Document, opts Options) (string, error) {
 	body, err := normalizeDiffBodyForResource(doc.Body, opts, doc.Normalization, doc.Resource)
@@ -91,6 +128,9 @@ func normalizeDiffBodyForResource(body string, opts Options, normalization Norma
 		return body, nil
 	}
 	object, err := normalizeDiffObject(body, opts, normalization, resource)
+	if errors.Is(err, errObjectRemoved) {
+		return nullDiffBody, nil
+	}
 	if err != nil {
 		return "", err
 	}
@@ -121,6 +161,8 @@ func normalizeDiffObject(body string, opts Options, normalization Normalization,
 	if !opts.ShowIgnoredFields {
 		stripDefaultIgnoredFields(object)
 	}
+	// errObjectRemoved passes through: Argo CD then skips the rest of its
+	// normalization of the resource.
 	object, err = applyIgnoreRules(object, normalization, jqTimeout(opts))
 	if err != nil {
 		return nil, err
@@ -387,5 +429,6 @@ func cloneNormalization(normalization Normalization) Normalization {
 		KnownTypeFields:        append([]KnownTypeField(nil), normalization.KnownTypeFields...),
 		CompareOptions:         normalization.CompareOptions,
 		AnnotationJSONPointers: append([]string(nil), normalization.AnnotationJSONPointers...),
+		ServerSideDiff:         normalization.ServerSideDiff,
 	}
 }

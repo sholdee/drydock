@@ -389,3 +389,205 @@ func TestSettingsSignaturesSignJQTimeoutForChangedOnlyOnly(t *testing.T) {
 		}
 	}
 }
+
+// drydock parses jq ignore rules with the gojq version that Argo CD v3.6.1
+// uses (v0.12.19). That version cannot parse `?//`, the alternative
+// destructuring operator, so Argo CD fails the comparison of this
+// Application. A newer gojq parses it and would hide the change.
+func TestOrchestratorDiffAppsJQRuleThatArgoCDGojqCannotParse(t *testing.T) {
+	root := t.TempDir()
+	left := filepath.Join(root, "left")
+	right := filepath.Join(root, "right")
+	rule := "  ignoreDifferences:\n    - kind: ConfigMap\n      jqPathExpressions:\n        - .data.ignored?//empty\n"
+	writeConfigMapApp(t, left, "demo", "a", rule)
+	writeConfigMapApp(t, right, "demo", "b", rule)
+
+	result, err := Orchestrator{}.DiffApps(context.Background(), DiffRequest{LeftPath: left, RightPath: right, Unified: 3})
+	failures := diagnosticsWithCode(result.Diagnostics, diffIgnoreRuleInvalidCode)
+	if err == nil || len(failures) != 1 || !strings.Contains(failures[0].Message, "Application argocd/demo:") {
+		t.Fatalf("DiffApps() error = %v, %s diagnostics = %#v, want one for Application argocd/demo", err, diffIgnoreRuleInvalidCode, failures)
+	}
+}
+
+// A jq rule that removes the whole object makes Argo CD's client-side diff
+// fail, which fails the comparison of the Application. Server-side diff
+// compares null with null, so the change is hidden. The other Applications
+// diff as usual in both modes. TestUpstreamIgnoreRuleThatRemovesTheObject
+// in internal/diff pins the upstream behavior.
+func TestOrchestratorDiffAppsIgnoreRuleThatRemovesTheObject(t *testing.T) {
+	removeAll := "  ignoreDifferences:\n    - kind: ConfigMap\n      jqPathExpressions:\n        - .\n"
+	serverSide := removeAll + "  syncPolicy:\n    syncOptions:\n      - ServerSideApply=true\n"
+	for _, tt := range []struct {
+		name        string
+		rules       string
+		wantFailure bool
+	}{
+		{name: "client-side diff", rules: removeAll, wantFailure: true},
+		{name: "server-side diff", rules: serverSide},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			root := t.TempDir()
+			left := filepath.Join(root, "left")
+			right := filepath.Join(root, "right")
+			for _, side := range []struct {
+				root, value string
+			}{{left, "a"}, {right, "b"}} {
+				writeConfigMapApp(t, side.root, "broken", side.value, tt.rules)
+				writeConfigMapApp(t, side.root, "healthy", side.value, "")
+			}
+
+			result, err := Orchestrator{}.DiffApps(context.Background(), DiffRequest{LeftPath: left, RightPath: right, Unified: 3})
+			failures := diagnosticsWithCode(result.Diagnostics, diffComparisonFailedCode)
+			if tt.wantFailure {
+				if err == nil || len(failures) != 1 || !strings.Contains(failures[0].Message, "Application argocd/broken:") {
+					t.Fatalf("DiffApps() error = %v, %s diagnostics = %#v, want one for Application argocd/broken", err, diffComparisonFailedCode, failures)
+				}
+			} else if err != nil || len(failures) != 0 {
+				t.Fatalf("DiffApps() error = %v, %s diagnostics = %#v, want none", err, diffComparisonFailedCode, failures)
+			}
+			if len(result.Results) != 1 || result.Results[0].Parent.Name != "healthy" {
+				t.Fatalf("Results = %#v, want only the change of Application healthy", result.Results)
+			}
+		})
+	}
+}
+
+// `diff app` compares only the named Application, so a broken jq rule of
+// another Application does not fail it.
+func TestOrchestratorDiffAppIgnoresBrokenRulesOfOtherApplications(t *testing.T) {
+	root := t.TempDir()
+	left := filepath.Join(root, "left")
+	right := filepath.Join(root, "right")
+	broken := "  ignoreDifferences:\n    - kind: ConfigMap\n      jqPathExpressions:\n        - .data[\n"
+	for _, side := range []struct {
+		root, value string
+	}{{left, "a"}, {right, "b"}} {
+		writeConfigMapApp(t, side.root, "broken", side.value, broken)
+		writeConfigMapApp(t, side.root, "healthy", side.value, "")
+	}
+
+	request := DiffAppRequest{Name: "healthy"}
+	request.LeftPath, request.RightPath, request.Unified = left, right, 3
+	result, err := Orchestrator{}.DiffApp(context.Background(), request)
+	if err != nil {
+		t.Fatalf("DiffApp() error = %v, diagnostics = %#v", err, result.Diagnostics)
+	}
+	if len(result.Results) != 1 || result.Results[0].Parent.Name != "healthy" {
+		t.Fatalf("Results = %#v, want the change of Application healthy", result.Results)
+	}
+}
+
+// Compare options and knownTypeFields come from the current side's
+// settings only, like the ignore rules.
+func TestOrchestratorDiffAppsUsesCurrentSideCompareOptionsAndKnownTypes(t *testing.T) {
+	writeApp := func(t *testing.T, root, verbs, cpu string) {
+		t.Helper()
+		writeTestFile(t, filepath.Join(root, "apps", "demo.yaml"), `apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: demo
+  namespace: argocd
+spec:
+  source:
+    repoURL: https://github.com/example/repo
+    path: manifests/demo
+    targetRevision: main
+  destination:
+    name: in-cluster
+    namespace: demo
+`)
+		writeTestFile(t, filepath.Join(root, "manifests", "demo", "clusterrole.yaml"), `apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: aggregated
+aggregationRule:
+  clusterRoleSelectors:
+    - matchLabels:
+        example.com/aggregate: "true"
+rules:
+  - apiGroups: [""]
+    resources: [configmaps]
+    verbs: `+verbs+`
+`)
+		writeTestFile(t, filepath.Join(root, "manifests", "demo", "widget.yaml"), `apiVersion: example.com/v1
+kind: Widget
+metadata:
+  name: widget
+spec:
+  resources:
+    limits:
+      cpu: `+cpu+`
+`)
+	}
+	root := t.TempDir()
+	left := filepath.Join(root, "left")
+	right := filepath.Join(root, "right")
+	writeApp(t, left, "[get]", "0.1")
+	writeTestFile(t, filepath.Join(left, "argocd-cm.yaml"), `apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: argocd-cm
+  namespace: argocd
+data:
+  resource.compareoptions: |
+    ignoreAggregatedRoles: true
+  resource.customizations.knownTypeFields.example.com_Widget: |
+    - field: spec.resources
+      type: core/v1/ResourceRequirements
+`)
+	writeApp(t, right, "[get, list]", "100m")
+
+	result, err := Orchestrator{}.DiffApps(context.Background(), DiffRequest{LeftPath: left, RightPath: right, Unified: 3})
+	if err != nil {
+		t.Fatalf("DiffApps() error = %v, diagnostics = %#v", err, result.Diagnostics)
+	}
+	byName := resultsByResourceName(result.Results)
+	for _, name := range []string{"ClusterRole/aggregated", "Widget/widget"} {
+		if _, ok := byName[name]; !ok {
+			t.Fatalf("Results = %#v, want a change of %s: baseline-only settings must not hide it", result.Results, name)
+		}
+	}
+}
+
+// Changed-only selection picks the Application whose rule and resource
+// change, and normalizes it with the new rule.
+func TestOrchestratorDiffAppsChangedOnlyUsesCurrentSideRules(t *testing.T) {
+	rule := "  ignoreDifferences:\n    - kind: ConfigMap\n      jsonPointers:\n        - /data/ignored\n"
+	for _, tt := range []struct {
+		name                string
+		leftRule, rightRule string
+		wantResults         int
+	}{
+		{name: "rule removed", leftRule: rule, wantResults: 1},
+		{name: "rule added", rightRule: rule, wantResults: 0},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			root := t.TempDir()
+			left := filepath.Join(root, "left")
+			right := filepath.Join(root, "right")
+			writeConfigMapApp(t, left, "demo", "a", tt.leftRule)
+			writeConfigMapApp(t, right, "demo", "b", tt.rightRule)
+			writeConfigMapApp(t, left, "other", "a", "")
+			writeConfigMapApp(t, right, "other", "a", "")
+
+			result, err := Orchestrator{}.DiffApps(context.Background(), DiffRequest{
+				LeftPath:          left,
+				RightPath:         right,
+				ChangedOnly:       true,
+				StrictChangedOnly: true,
+				Unified:           3,
+			})
+			if err != nil {
+				t.Fatalf("DiffApps() error = %v, diagnostics = %#v", err, result.Diagnostics)
+			}
+			if len(result.Results) != tt.wantResults {
+				t.Fatalf("Results = %#v, want %d", result.Results, tt.wantResults)
+			}
+			for _, res := range result.Results {
+				if res.Parent.Name != "demo" {
+					t.Fatalf("Results = %#v, want only Application demo", result.Results)
+				}
+			}
+		})
+	}
+}

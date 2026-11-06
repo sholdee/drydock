@@ -436,10 +436,19 @@ open and several stay collapsed. Warning diagnostics stay collapsed. `-o name`
 remains unsupported for `diff apps` and `diff app`.
 
 Application-local and global ignore rules support `jsonPointers`,
-`jqPathExpressions`, and `managedFieldsManagers`. Apply the union from both
-sides when both sides contain a matching resource. Managed fields support is an
-offline desired-vs-desired approximation using rendered manifests; do not
-claim live server-side ownership prediction.
+`jqPathExpressions`, and `managedFieldsManagers`. Normalize both sides with the
+current side's rules and settings, as Argo CD compares under the live
+Application's current rules. A resource that only the baseline side has also
+uses the current side's rules of its Application. The resources of an
+Application that only the baseline side has get no ignore rules. Managed fields
+support is an offline desired-vs-desired approximation using rendered
+manifests; do not claim live server-side ownership prediction.
+
+Keep `github.com/itchyny/gojq` at exactly the version the selected Argo CD
+requires: it parses and runs `jqPathExpressions`. Renovate ignores it, and
+`scripts/sync-argocd-gitops-engine.go` sets it after an Argo CD upgrade, with
+the GitOps Engine version. `TestGojqMatchesSelectedArgoCD` fails when they
+differ.
 
 Ignore rules run in Argo CD v3.6.1 order: Application rules, then the
 annotation rule, then `resource.customizations` rules, each rule applying its

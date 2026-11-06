@@ -376,7 +376,7 @@ will follow upstream when it changes. Until then, use one of these fixes:
 - List only one component that can be valid under `ignoreMissingComponents`.
 - Move the components into the kustomization's own `components:` list.
 
-## Symptom: `diff.ignore-pointer-invalid` Or `diff.ignore-rule-invalid`
+## Symptom: `diff.ignore-pointer-invalid`, `diff.ignore-rule-invalid`, Or `diff.comparison-failed`
 
 `diff.ignore-pointer-invalid` is a warning. It names an Application and a
 `jsonPointers` entry of its `spec.ignoreDifferences` or of
@@ -394,6 +394,11 @@ parse or compile. Argo CD then fails the comparison of the Application with a
 expression in `resource.customizations` fails every Application. The command
 prints the diagnostics and no diff, and fails. Fix the jq expression. A
 deleted Application is not checked, because Argo CD never compares it.
+
+`diff.comparison-failed` is an error. A `jqPathExpressions` entry removed a
+whole object, as `.` does, and the Application uses the client-side diff.
+Argo CD then fails the comparison of the Application. Fix the jq expression so
+that it removes a field, not the object.
 
 ## Symptom: Changed-Only Falls Back To All Apps
 

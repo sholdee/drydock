@@ -34,7 +34,7 @@ func removeJQPathExpressions(object map[string]any, expressions []string, timeou
 	if len(expressions) == 0 {
 		return object, nil
 	}
-	var current any = object
+	current := object
 	for _, expression := range expressions {
 		code, err := compileJQPathExpression(expression)
 		if err != nil {
@@ -44,13 +44,15 @@ func removeJQPathExpressions(object map[string]any, expressions []string, timeou
 		if err != nil {
 			continue
 		}
-		current = next
+		typed, ok := next.(map[string]any)
+		if !ok {
+			// The expression removed the whole object, as "." does. See
+			// errObjectRemoved.
+			return nil, errObjectRemoved
+		}
+		current = typed
 	}
-	typed, ok := current.(map[string]any)
-	if !ok {
-		return nil, fmt.Errorf("jq normalization produced %T root, want object", current)
-	}
-	return typed, nil
+	return current, nil
 }
 
 func compileJQPathExpression(expression string) (*gojq.Code, error) {
