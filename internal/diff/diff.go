@@ -1,6 +1,9 @@
 package diff
 
-import "fmt"
+import (
+	"fmt"
+	"time"
+)
 
 type Parent struct {
 	Namespace   string `json:"namespace,omitempty" yaml:"namespace,omitempty"`
@@ -86,6 +89,11 @@ type Options struct {
 	Unified           int
 	StripAttrs        []string
 	ShowIgnoredFields bool
+	// JQExecutionTimeout limits how long one jq ignore-rule deletion may run,
+	// as the Argo CD controller setting controller.ignore.normalizer.jq.timeout
+	// does. Zero means Argo CD's default of 1 second. An expression that runs
+	// longer is skipped for that resource.
+	JQExecutionTimeout time.Duration
 }
 
 func Run(left, right []Document, opts Options) ([]Result, error) {

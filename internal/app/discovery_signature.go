@@ -78,8 +78,12 @@ func renderSettingsSignature(settings config.ArgoSettings) (string, error) {
 // renderSettingsSignature does not need but a diff reads — resource filters,
 // compare options, ignoreDifferences, clusters — or one added later is never
 // missed. Command parameters are left out as renderSettingsSignature leaves
-// them out: only diag reads them. Provenance is dropped: it names the side's
-// own tree, so identical settings in two trees would otherwise always differ.
+// them out: only diag reads them. The jq timeout of
+// controller.ignore.normalizer.jq.timeout is signed as the parsed duration:
+// it can change the diff of any Application with a jq ignore rule, but it
+// changes no render, so it stays out of renderSettingsSignature and the
+// render cache keys. Provenance is dropped: it names the side's own tree, so
+// identical settings in two trees would otherwise always differ.
 func changedOnlySettingsSignature(settings config.ArgoSettings) (string, error) {
 	renderSig, err := renderSettingsSignature(settings)
 	if err != nil {
@@ -97,6 +101,10 @@ func changedOnlySettingsSignature(settings config.ArgoSettings) (string, error) 
 	// renders, so it is signed here as the value the controller parses.
 	progressiveSyncs := config.ParseEnableProgressiveSyncs(settings.EnableProgressiveSyncs.Value)
 	settings.EnableProgressiveSyncs = config.Value[string]{}
+	// Signed below as the parsed duration, so "60s" and "1m" are not a
+	// change.
+	jqTimeout := config.ParseIgnoreNormalizerJQTimeout(settings.IgnoreNormalizerJQTimeout.Value)
+	settings.IgnoreNormalizerJQTimeout = config.Value[string]{}
 	data, err := json.Marshal(settings)
 	if err != nil {
 		return "", fmt.Errorf("fingerprint Argo CD settings: %w", err)
@@ -109,7 +117,7 @@ func changedOnlySettingsSignature(settings config.ArgoSettings) (string, error) 
 	for key, plugin := range settings.ConfigManagementPlugins {
 		discover[key] = plugin.Discover
 	}
-	data, err = json.Marshal([]any{renderSig, withoutProvenance(fields), discover, progressiveSyncs})
+	data, err = json.Marshal([]any{renderSig, withoutProvenance(fields), discover, progressiveSyncs, jqTimeout})
 	if err != nil {
 		return "", fmt.Errorf("fingerprint Argo CD settings: %w", err)
 	}

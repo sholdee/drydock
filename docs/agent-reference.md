@@ -126,6 +126,11 @@ settings signature:
 - `reposerver.allow.oob.symlinks` decides whether a source fails while the
   tree it renders from holds an out-of-bounds symlink.
 
+`controller.ignore.normalizer.jq.timeout` changes only diffs: it limits how
+long one jq ignore-rule deletion may run. Keep it out of the render settings
+signature and the render cache keys. It is in the changed-only settings
+signature as the parsed duration.
+
 Repository Secrets may contribute non-sensitive metadata such as `url`, `type`,
 `name`, `project`, and `enableOCI`. They must not retain username, password,
 bearer tokens, SSH keys, TLS material, or other credential fields.

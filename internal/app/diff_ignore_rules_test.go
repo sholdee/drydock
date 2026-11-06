@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/sholdee/drydock/internal/config"
 	"github.com/sholdee/drydock/internal/diagnostic"
 	"github.com/sholdee/drydock/internal/diff"
 )
@@ -309,5 +310,82 @@ func TestOrchestratorDiffAppsUsesCurrentSideApplicationRules(t *testing.T) {
 				t.Fatalf("Results = %#v, want %d", result.Results, tt.wantResults)
 			}
 		})
+	}
+}
+
+// The Argo CD controller reads its jq timeout from argocd-cmd-params-cm
+// controller.ignore.normalizer.jq.timeout. A jq rule that runs longer is
+// skipped, so the change it would hide shows. With the default of 1 second,
+// the same rule finishes and hides the change.
+func TestOrchestratorDiffAppsUsesCommandParametersJQTimeout(t *testing.T) {
+	// The range makes the expression run for some milliseconds, far below
+	// the default and far above 1ns.
+	rule := "  ignoreDifferences:\n    - kind: ConfigMap\n      jqPathExpressions:\n        - .data.ignored, .data[range(2000) | tostring]\n"
+	for _, tt := range []struct {
+		name        string
+		timeout     string
+		wantResults int
+	}{
+		{name: "default", wantResults: 0},
+		{name: "timeout from argocd-cmd-params-cm", timeout: "1ns", wantResults: 1},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			root := t.TempDir()
+			left := filepath.Join(root, "left")
+			right := filepath.Join(root, "right")
+			for _, side := range []struct {
+				root, value string
+			}{{left, "a"}, {right, "b"}} {
+				writeConfigMapApp(t, side.root, "demo", side.value, rule)
+				if tt.timeout != "" {
+					writeTestFile(t, filepath.Join(side.root, "argocd-cmd-params-cm.yaml"), "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: argocd-cmd-params-cm\n  namespace: argocd\ndata:\n  controller.ignore.normalizer.jq.timeout: "+tt.timeout+"\n")
+				}
+			}
+
+			result, err := Orchestrator{}.DiffApps(context.Background(), DiffRequest{LeftPath: left, RightPath: right, Unified: 3})
+			if err != nil {
+				t.Fatalf("DiffApps() error = %v", err)
+			}
+			if len(result.Results) != tt.wantResults {
+				t.Fatalf("Results = %#v, want %d", result.Results, tt.wantResults)
+			}
+		})
+	}
+}
+
+// The jq timeout changes diffs, not renders. So the changed-only settings
+// signature sees the parsed timeout, and the render signature, which keys
+// the render cache, does not see it at all.
+func TestSettingsSignaturesSignJQTimeoutForChangedOnlyOnly(t *testing.T) {
+	signatures := func(value string) (string, string) {
+		t.Helper()
+		settings := config.DefaultSettings()
+		if value != "" {
+			settings.IgnoreNormalizerJQTimeout = config.Value[string]{Value: value}
+		}
+		renderSig, err := renderSettingsSignature(settings)
+		if err != nil {
+			t.Fatalf("renderSettingsSignature() error = %v", err)
+		}
+		changedOnlySig, err := changedOnlySettingsSignature(settings)
+		if err != nil {
+			t.Fatalf("changedOnlySettingsSignature() error = %v", err)
+		}
+		return renderSig, changedOnlySig
+	}
+	defaultRender, defaultChangedOnly := signatures("")
+	slowRender, slowChangedOnly := signatures("5s")
+	if slowRender != defaultRender {
+		t.Fatal("render signature changed with the jq timeout, want it to stay out of render cache keys")
+	}
+	if slowChangedOnly == defaultChangedOnly {
+		t.Fatal("changed-only settings signature ignores the jq timeout")
+	}
+	for _, pair := range [][2]string{{"60s", "1m"}, {"", "1s"}, {"abc", "0"}} {
+		_, left := signatures(pair[0])
+		_, right := signatures(pair[1])
+		if left != right {
+			t.Fatalf("changed-only signatures of %q and %q differ, want the same parsed timeout to match", pair[0], pair[1])
+		}
 	}
 }

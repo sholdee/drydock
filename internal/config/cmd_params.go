@@ -35,6 +35,13 @@ const allowOutOfBoundsSymlinksKey = "reposerver.allow.oob.symlinks"
 // and manifests/install.yaml:35041-35044).
 const enableProgressiveSyncsKey = "applicationsetcontroller.enable.progressive.syncs"
 
+// ignoreNormalizerJQTimeoutKey sets the application controller flag
+// --ignore-normalizer-jq-execution-timeout-seconds through the environment
+// variable ARGOCD_IGNORE_NORMALIZER_JQ_TIMEOUT (Argo CD v3.6.1
+// cmd/argocd-application-controller/commands/argocd_application_controller.go:300
+// and manifests/install.yaml:36973-36976).
+const ignoreNormalizerJQTimeoutKey = "controller.ignore.normalizer.jq.timeout"
+
 type commandParameterValueMode int
 
 const (
@@ -198,6 +205,14 @@ func commandParametersSettings(path, basePointer string, values map[string]strin
 				Provenance: setting.Provenance,
 			}
 		}
+		if key == ignoreNormalizerJQTimeoutKey {
+			// Kept as written: the controller reads it with
+			// env.ParseDurationFromEnv, which parses the raw value.
+			settings.IgnoreNormalizerJQTimeout = Value[string]{
+				Value:      values[key],
+				Provenance: setting.Provenance,
+			}
+		}
 		settings.CommandParameters = append(settings.CommandParameters, setting)
 	}
 
@@ -238,6 +253,11 @@ func classifyCommandParameterKey(key string) commandParameterClassification {
 	case maxCombinedDirectoryManifestsSizeKey, allowOutOfBoundsSymlinksKey, enableProgressiveSyncsKey:
 		return commandParameterClassification{
 			classification: CommandParameterRendered,
+			valueMode:      commandParameterSanitizedValue,
+		}
+	case ignoreNormalizerJQTimeoutKey:
+		return commandParameterClassification{
+			classification: CommandParameterDiffed,
 			valueMode:      commandParameterSanitizedValue,
 		}
 	case "controller.diff.server.side",

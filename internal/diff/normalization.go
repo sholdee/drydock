@@ -9,6 +9,7 @@ import (
 	"go.yaml.in/yaml/v3"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"strings"
+	"time"
 )
 
 var errEmptyDiffBody = errors.New("empty diff body")
@@ -120,7 +121,7 @@ func normalizeDiffObject(body string, opts Options, normalization Normalization,
 	if !opts.ShowIgnoredFields {
 		stripDefaultIgnoredFields(object)
 	}
-	object, err = applyIgnoreRules(object, normalization)
+	object, err = applyIgnoreRules(object, normalization, jqTimeout(opts))
 	if err != nil {
 		return nil, err
 	}
@@ -143,11 +144,11 @@ func normalizeDiffObject(body string, opts Options, normalization Normalization,
 // pointer, from any of these sources, as its own JSON-patch remove operation
 // and skips one that fails, so all pointers use the same JSON-patch path
 // rules here.
-func applyIgnoreRules(object map[string]any, normalization Normalization) (map[string]any, error) {
+func applyIgnoreRules(object map[string]any, normalization Normalization, jqTimeout time.Duration) (map[string]any, error) {
 	apply := func(rule IgnoreRule) error {
 		var err error
 		object = removeJSONPatchPointers(object, rule.JSONPointers)
-		object, err = removeJQPathExpressions(object, rule.JQPathExpressions)
+		object, err = removeJQPathExpressions(object, rule.JQPathExpressions, jqTimeout)
 		return err
 	}
 	for _, rule := range normalization.ApplicationRules {

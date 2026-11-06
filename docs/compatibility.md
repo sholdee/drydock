@@ -1228,10 +1228,11 @@ Supported:
   `containers[]` expression on a ConfigMap, is skipped for that resource, and
   the other rules still apply. Argo CD logs such a failed patch and goes on
   (`util/argo/normalizers/diff_normalizer.go`). An expression that returns
-  more than one value, or that runs longer than 1 second, is skipped the
-  same way. The 1 second is Argo CD's default. drydock does not read the
-  `controller.ignore.normalizer.jq.timeout` key of `argocd-cmd-params-cm`,
-  which changes it.
+  more than one value, or that runs longer than the controller's jq
+  timeout, is skipped the same way. The timeout is the
+  `argocd-cmd-params-cm` key `controller.ignore.normalizer.jq.timeout` of
+  the current side, and 1 second when the key is empty, zero, negative, or
+  not a duration.
 - A jq expression that does not parse or compile fails the comparison of
   each current-side Application it belongs to, even when it matches no
   resource or the Application renders no resources. Argo CD builds every jq
@@ -1390,7 +1391,18 @@ Supported:
   settings are parsed as metadata and do not mutate render behavior, except
   `reposerver.max.combined.directory.manifests.size` (see the directory
   size limit above) and `reposerver.allow.oob.symlinks` (see the
-  out-of-bounds symlink check above).
+  out-of-bounds symlink check above). drydock also applies
+  `controller.ignore.normalizer.jq.timeout` to diffs: it limits how long one
+  jq ignore-rule deletion may run. drydock parses it as the Argo CD v3.6.1
+  controller parses `ARGOCD_IGNORE_NORMALIZER_JQ_TIMEOUT` with
+  `env.ParseDurationFromEnv`: a Go duration such as `1500ms`, or a whole
+  number of seconds, minutes, hours or days such as `2d`. An empty, zero,
+  negative or unparseable value means the default, 1 second. A day count
+  too large for the controller ends the controller. drydock uses the
+  default for it. Two settings sources with different parsed values
+  conflict. The key changes no render, so it is not in the render cache
+  keys. It is in the changed-only settings signature, because a new
+  timeout can change the diff of every Application with a jq rule.
 - Custom health Lua validation in `test apps` and `test app`, executed offline
   against rendered desired manifests. It reports Lua runtime errors and
   invalid status values. A `deletionMessage` (Argo CD v3.6.1) applies only to

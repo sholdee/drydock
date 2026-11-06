@@ -3,7 +3,10 @@ package config
 import (
 	"fmt"
 	"reflect"
+	"regexp"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/sholdee/drydock/internal/diagnostic"
 )
@@ -28,6 +31,7 @@ func MergeDiscovered(candidates []ArgoSettings) (ArgoSettings, []diagnostic.Diag
 		diags = append(diags, mergeMaxCombinedDirectoryManifestsSize(&merged, candidate)...)
 		diags = append(diags, mergeAllowOutOfBoundsSymlinks(&merged, candidate)...)
 		diags = append(diags, mergeEnableProgressiveSyncs(&merged, candidate)...)
+		diags = append(diags, mergeIgnoreNormalizerJQTimeout(&merged, candidate)...)
 		merged.ResourceExclusions = append(merged.ResourceExclusions, candidate.ResourceExclusions...)
 		merged.ResourceInclusions = append(merged.ResourceInclusions, candidate.ResourceInclusions...)
 		merged.ResourceSelectors = append(merged.ResourceSelectors, candidate.ResourceSelectors...)
@@ -166,6 +170,86 @@ func mergeEnableProgressiveSyncs(merged *ArgoSettings, candidate ArgoSettings) [
 		)}
 	}
 	merged.EnableProgressiveSyncs = candidate.EnableProgressiveSyncs
+	return nil
+}
+
+// DefaultIgnoreNormalizerJQTimeout is Argo CD v3.6.1's
+// normalizers.DefaultJQExecutionTimeout. The controller uses it when
+// controller.ignore.normalizer.jq.timeout gives zero
+// (util/argo/normalizers/diff_normalizer.go:113-118).
+const DefaultIgnoreNormalizerJQTimeout = time.Second
+
+// jqTimeoutDurationRegex is the format of github.com/argoproj/pkg/v2/time
+// ParseDuration, which env.ParseDurationFromEnv tries after
+// time.ParseDuration fails.
+var jqTimeoutDurationRegex = regexp.MustCompile(`^(\d+)([smhd])$`)
+
+// ParseIgnoreNormalizerJQTimeout returns the jq timeout that the Argo CD
+// v3.6.1 application controller uses for controller.ignore.normalizer.jq.timeout.
+// The controller reads the value with env.ParseDurationFromEnv(...,
+// 0, 0, math.MaxInt64) (util/env/env.go:123-148), and a zero result means
+// DefaultIgnoreNormalizerJQTimeout. So an empty value, a value that does not
+// parse, and a negative value all give the default. A value that does not
+// parse with time.ParseDuration is tried as a whole number of seconds,
+// minutes, hours or days, such as "2d". When that number overflows int64,
+// the upstream helper ends the controller with log.Fatal. drydock cannot
+// copy that and uses the default instead.
+func ParseIgnoreNormalizerJQTimeout(value string) time.Duration {
+	timeout := parseDurationLikeArgoCDEnv(value)
+	if timeout == 0 {
+		return DefaultIgnoreNormalizerJQTimeout
+	}
+	return timeout
+}
+
+func parseDurationLikeArgoCDEnv(value string) time.Duration {
+	if value == "" {
+		return 0
+	}
+	duration, err := time.ParseDuration(value)
+	if err != nil {
+		matches := jqTimeoutDurationRegex.FindStringSubmatch(value)
+		if len(matches) != 3 {
+			return 0
+		}
+		amount, err := strconv.ParseInt(matches[1], 10, 64)
+		if err != nil {
+			return 0
+		}
+		var unit time.Duration
+		switch matches[2] {
+		case "s":
+			unit = time.Second
+		case "m":
+			unit = time.Minute
+		case "h":
+			unit = time.Hour
+		case "d":
+			unit = time.Hour * 24
+		}
+		duration = unit * time.Duration(amount)
+	}
+	// The minimum is 0 and the maximum math.MaxInt64, so only a negative
+	// value is out of range.
+	if duration < 0 {
+		return 0
+	}
+	return duration
+}
+
+func mergeIgnoreNormalizerJQTimeout(merged *ArgoSettings, candidate ArgoSettings) []diagnostic.Diagnostic {
+	if !hasProvenance(candidate.IgnoreNormalizerJQTimeout) {
+		return nil
+	}
+	// Spellings that the controller reads the same, such as "60s" and "1m",
+	// do not conflict.
+	if hasProvenance(merged.IgnoreNormalizerJQTimeout) && ParseIgnoreNormalizerJQTimeout(merged.IgnoreNormalizerJQTimeout.Value) != ParseIgnoreNormalizerJQTimeout(candidate.IgnoreNormalizerJQTimeout.Value) {
+		return []diagnostic.Diagnostic{conflictDiagnostic(
+			fmt.Sprintf("conflicting %s values %q and %q", ignoreNormalizerJQTimeoutKey, merged.IgnoreNormalizerJQTimeout.Value, candidate.IgnoreNormalizerJQTimeout.Value),
+			candidate.IgnoreNormalizerJQTimeout.Provenance,
+		)}
+	}
+	merged.IgnoreNormalizerJQTimeout = candidate.IgnoreNormalizerJQTimeout
 	return nil
 }
 

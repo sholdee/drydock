@@ -150,6 +150,9 @@ const (
 	// CommandParameterRendered marks a command parameter that drydock
 	// applies when it renders.
 	CommandParameterRendered CommandParameterClassification = "rendered"
+	// CommandParameterDiffed marks a command parameter that drydock applies
+	// when it diffs.
+	CommandParameterDiffed CommandParameterClassification = "diffed"
 )
 
 type CommandParameterSetting struct {
@@ -193,6 +196,10 @@ type ArgoSettings struct {
 	// other value means false. It decides whether a RollingSync strategy
 	// applies, so it changes which Applications an ApplicationSet generates.
 	EnableProgressiveSyncs Value[string] `json:"enableProgressiveSyncs,omitempty" yaml:"enableProgressiveSyncs,omitempty"`
+	// IgnoreNormalizerJQTimeout is the argocd-cmd-params-cm key
+	// controller.ignore.normalizer.jq.timeout, as written. It limits how long
+	// one jq ignore-rule deletion may run. See ParseIgnoreNormalizerJQTimeout.
+	IgnoreNormalizerJQTimeout Value[string] `json:"ignoreNormalizerJQTimeout,omitempty" yaml:"ignoreNormalizerJQTimeout,omitempty"`
 }
 
 func DefaultSettings() ArgoSettings {

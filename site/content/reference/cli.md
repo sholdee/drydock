@@ -471,6 +471,13 @@ drydock render behavior. There are three exceptions:
   controller reads the value as the repo-server reads the key above. See
   [RollingSync Strategy](/docs/applicationsets/#rollingsync-strategy).
 
+drydock also applies one key to diffs:
+
+- `controller.ignore.normalizer.jq.timeout`: the time one jq ignore-rule
+  deletion may run before drydock skips it, as the Argo CD controller does.
+  drydock reads it as the controller does: a duration such as `1500ms` or
+  `2d`. An empty, zero, negative or unparseable value means 1 second.
+
 The repository can install Argo CD from the argo-cd Helm chart. Then drydock
 reads these keys from the rendered `argocd-cmd-params-cm`, which the chart
 makes from `configs.params`. When the render reads a committed values file

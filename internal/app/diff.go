@@ -12,6 +12,7 @@ import (
 	"github.com/sholdee/drydock/internal/acquisition"
 	"github.com/sholdee/drydock/internal/cacheevent"
 	"github.com/sholdee/drydock/internal/chart"
+	"github.com/sholdee/drydock/internal/config"
 	"github.com/sholdee/drydock/internal/diagnostic"
 	"github.com/sholdee/drydock/internal/diff"
 	"github.com/sholdee/drydock/internal/gitref"
@@ -635,6 +636,9 @@ func diffBuildResults(leftBuild, rightBuild BuildResult, opts diff.Options, stri
 	if err != nil {
 		return nil, nil, err
 	}
+	// The controller's jq timeout comes from the current side's
+	// argocd-cmd-params-cm, like the rest of the settings it compares with.
+	opts.JQExecutionTimeout = config.ParseIgnoreNormalizerJQTimeout(rightBuild.Settings.IgnoreNormalizerJQTimeout.Value)
 	failed, diags := invalidIgnoreRuleDiagnostics(rightBuild)
 	leftDocs = withoutApplications(leftDocs, failed)
 	rightDocs = withoutApplications(rightDocs, failed)

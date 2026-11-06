@@ -54,6 +54,8 @@ var argoSettingsFieldClasses = map[string]settingsChangeClass{
 	"ResourceSelectors":      settingsRenderAll,
 	"CompareOptions":         settingsRenderAll,
 	"ResourceCustomizations": settingsRenderAll,
+	// The jq timeout of every jq ignore rule.
+	"IgnoreNormalizerJQTimeout": settingsRenderAll,
 	// Project validation of the Applications that use the entry; the OCI
 	// repository set it implies is render-all (renderAllSettingsSignature).
 	"HelmRepositories": settingsScoped,
@@ -247,10 +249,13 @@ func assertSettingsChangeClass(t *testing.T, name string, left, right config.Arg
 
 // nonZeroOverrides holds the non-zero value of a field whose generic one
 // means the same as the zero value: the repo-server reads any
-// reposerver.allow.oob.symlinks value other than "true" as false.
+// reposerver.allow.oob.symlinks value other than "true" as false, and the
+// controller reads a controller.ignore.normalizer.jq.timeout value that is
+// not a duration as the default.
 var nonZeroOverrides = map[string]any{
-	"ArgoSettings.AllowOutOfBoundsSymlinks.Value": "true",
-	"ArgoSettings.EnableProgressiveSyncs.Value":   "true",
+	"ArgoSettings.AllowOutOfBoundsSymlinks.Value":  "true",
+	"ArgoSettings.EnableProgressiveSyncs.Value":    "true",
+	"ArgoSettings.IgnoreNormalizerJQTimeout.Value": "5s",
 }
 
 // nonZeroValue builds a value of typ with every exported field, element, and

@@ -89,16 +89,13 @@ data:
   ignored: v1
   kept: v1
 `
-	previous := jqExecutionTimeout
-	jqExecutionTimeout = time.Millisecond
-	t.Cleanup(func() { jqExecutionTimeout = previous })
 	for name, expression := range map[string]string{
 		// del(.data.kept), (.metadata) returns two values.
 		"multiple results": `.data.kept), (.metadata`,
 		"timeout":          `.data[range(100000000) | tostring]`,
 	} {
 		t.Run(name, func(t *testing.T) {
-			got, err := normalizeDiffBody(body, Options{}, Normalization{
+			got, err := normalizeDiffBody(body, Options{JQExecutionTimeout: time.Millisecond}, Normalization{
 				ApplicationRules: []IgnoreRule{
 					{JQPathExpressions: []string{expression}},
 					{JSONPointers: []string{"/data/ignored"}},
