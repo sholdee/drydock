@@ -153,6 +153,29 @@ func rolloutStepsEmpty(appset argoappv1.ApplicationSet, options Options) bool {
 	return options.ProgressiveSyncs && isRollingSyncStrategy(appset) && len(appset.Spec.Strategy.RollingSync.Steps) == 0
 }
 
+// disableRollingSyncAutomatedSync mirrors SyncDesiredApplications and
+// disableAutomatedSync (Argo CD v3.6.1
+// applicationset/progressivesync/progressive_sync.go:997-1013), which the
+// controller calls with progressive syncs on for a RollingSync strategy that
+// has steps (applicationset_controller.go:335-343). Every Application with
+// an automated sync policy gets automated.enabled false, because the
+// ApplicationSet controller starts the syncs itself. The sync operations it
+// then adds are live state and are not modeled.
+func disableRollingSyncAutomatedSync(appset argoappv1.ApplicationSet, options Options, apps []GeneratedApplication) {
+	if !options.ProgressiveSyncs || !isRollingSyncStrategy(appset) || len(appset.Spec.Strategy.RollingSync.Steps) == 0 {
+		return
+	}
+	for i := range apps {
+		policy := apps[i].Application.Spec.SyncPolicy
+		if policy == nil || policy.Automated == nil {
+			continue
+		}
+		policy = policy.DeepCopy()
+		policy.Automated.Enabled = new(false)
+		apps[i].Application.Spec.SyncPolicy = policy
+	}
+}
+
 // rolloutStrategyIgnoredDiagnostic reports a RollingSync strategy that Argo
 // CD ignores because progressive syncs are off. The "RollingSync strategy is
 // not used" substring is the stable-code dispatch key

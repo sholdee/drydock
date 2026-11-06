@@ -122,6 +122,7 @@ func GenerateWithOptions(repoRoot, manifestPath string, appset argoappv1.Applica
 	}
 	diags = append(diags, validationDiags...)
 	diags = append(diags, rolloutStrategyDiagnostics(manifestPath, appset, out, valid, options)...)
+	disableRollingSyncAutomatedSync(appset, options, valid)
 	return valid, diags, nil
 }
 

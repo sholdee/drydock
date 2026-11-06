@@ -2,6 +2,7 @@ package appset
 
 import (
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -504,4 +505,89 @@ func TestGenerateIgnoresRollingSyncWithoutProgressiveSyncs(t *testing.T) {
 			}
 		})
 	}
+}
+
+// With progressive syncs on and RollingSync steps set, Argo CD v3.6.1 writes
+// every generated Application with automated.enabled false
+// (progressive_sync.go:997-1013); otherwise it keeps the template's policy.
+func TestGenerateDisablesAutomatedSyncForRollingSync(t *testing.T) {
+	appSetYAML := func(strategy string) []byte {
+		return []byte(`apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: guestbook
+  namespace: argocd
+spec:
+  goTemplate: true
+` + strategy + `  generators:
+    - list:
+        elements:
+          - name: alpha
+            env: dev
+          - name: beta
+            env: prod
+  template:
+    metadata:
+      name: '{{.name}}'
+      labels:
+        env: '{{.env}}'
+    spec:
+      project: default
+      source:
+        repoURL: https://github.com/example/repo
+        path: apps/{{.name}}
+        targetRevision: main
+      destination:
+        name: in-cluster
+        namespace: default
+      syncPolicy:
+        automated:
+          prune: true
+`)
+	}
+	rollingSync := `  strategy:
+    type: RollingSync
+    rollingSync:
+      steps:
+        - matchExpressions:
+            - key: env
+              operator: In
+              values: [dev]
+`
+	for _, tc := range []struct {
+		name     string
+		strategy string
+		options  Options
+		want     *bool
+	}{
+		{name: "progressive syncs on", strategy: rollingSync, options: Options{ProgressiveSyncs: true}, want: new(false)},
+		{name: "progressive syncs off", strategy: rollingSync},
+		{name: "no strategy", options: Options{ProgressiveSyncs: true}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			apps, _, err := GenerateFromYAMLWithOptions(t.TempDir(), "app-set.yaml", appSetYAML(tc.strategy), tc.options)
+			if err != nil {
+				t.Fatalf("GenerateFromYAMLWithOptions() error = %v", err)
+			}
+			if len(apps) != 2 {
+				t.Fatalf("generated names = %#v, want both", generatedNames(apps))
+			}
+			for _, app := range apps {
+				automated := app.Application.Spec.SyncPolicy.Automated
+				if automated == nil || automated.Prune == nil || !*automated.Prune {
+					t.Fatalf("%s automated = %#v, want the template's prune kept", app.Application.Name, automated)
+				}
+				if got := automated.Enabled; (got == nil) != (tc.want == nil) || (got != nil && *got != *tc.want) {
+					t.Fatalf("%s automated.enabled = %s, want %s", app.Application.Name, boolPointerString(got), boolPointerString(tc.want))
+				}
+			}
+		})
+	}
+}
+
+func boolPointerString(value *bool) string {
+	if value == nil {
+		return "unset"
+	}
+	return strconv.FormatBool(*value)
 }
