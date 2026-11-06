@@ -735,7 +735,10 @@ Supported:
   worktree does not track, or that Git ignores itself, is checked whole.
 - The persistent render cache key and changed-only selection of a Helm
   source cover each symlink that a `fileParameters` path passes through and
-  the file that helm reads. For an overridden entry whose path passes through a
+  the file that helm reads. Changed-only selection reads every source with
+  its `.argocd-source*.yaml` files merged in, as the render and the cache
+  key do, so it owns the value files, file parameters, and Kustomize inputs
+  that only an override file names. For an overridden entry whose path passes through a
   symlink, these paths are optional inputs, because they decide whether the
   path resolves.
 - The persistent render cache key and changed-only selection of a directory

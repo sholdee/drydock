@@ -68,6 +68,75 @@ func TestWithSelectionOnlyPathsOwnsHelmFileParameterSymlinks(t *testing.T) {
 	}
 }
 
+// TestWithSelectionOnlyPathsOwnsOverrideFileInputs pins that changed-only
+// selection reads a source with its .argocd-source*.yaml files merged in,
+// as the render and the persistent cache key do. The Helm Application sets
+// its value files and file parameters only in its per-Application override
+// file, and the Kustomize Application adds a component only in
+// .argocd-source.yaml.
+func TestWithSelectionOnlyPathsOwnsOverrideFileInputs(t *testing.T) {
+	root := t.TempDir()
+	helmApp := writeHelmFileParameterSymlinkApp(t, root, true)
+	helmApp.Spec.Source.Helm = nil
+	writeTestFile(t, filepath.Join(root, "values", "extra.yaml"), "chain: from-values\n")
+	writeTestFile(t, filepath.Join(root, "charts", "demo", ".argocd-source-demo.yaml"), `helm:
+  valueFiles:
+    - ../../values/extra.yaml
+  fileParameters:
+    - name: inner
+      path: ../../links/dir-link/inner.txt
+`)
+	writeTestFile(t, filepath.Join(root, "kustomize", "app", "kustomization.yaml"), "resources:\n  - cm.yaml\n")
+	writeTestFile(t, filepath.Join(root, "kustomize", "app", "cm.yaml"), "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: kustomize\n")
+	writeTestFile(t, filepath.Join(root, "kustomize", "app", ".argocd-source.yaml"), "kustomize:\n  components:\n    - ../component\n")
+	writeTestFile(t, filepath.Join(root, "kustomize", "component", "kustomization.yaml"), "apiVersion: kustomize.config.k8s.io/v1alpha1\nkind: Component\n")
+	kustomizeApp := argoappv1.Application{
+		Name: "kustomize", Namespace: "argocd",
+		Spec: argoappv1.ApplicationSpec{
+			Source:      &argoappv1.ApplicationSource{RepoURL: "https://git.example.test/org/repo.git", Path: "kustomize/app", TargetRevision: "main"},
+			Destination: argoappv1.ApplicationDestination{Namespace: "default"},
+		},
+	}
+	got := withSelectionOnlyPaths(context.Background(), root, nil, selfRepoRefs{}, []ApplicationSelectionInput{{Application: helmApp}, {Application: kustomizeApp}}).inputs
+	for changed, want := range map[string]string{
+		"values/extra.yaml":                      "demo",
+		"links/real/inner.txt":                   "demo",
+		"links/dir-link":                         "demo",
+		"kustomize/component/kustomization.yaml": "kustomize",
+	} {
+		selected, _ := SelectChangedApplicationInputs(got, []string{changed})
+		if len(selected) != 1 || selected[0].Name != want {
+			t.Errorf("change to %s selected %d Applications, want %s (paths %v and %v)", changed, len(selected), want, got[0].Paths, got[1].Paths)
+		}
+	}
+}
+
+// TestWithSelectionOnlyPathsOwnsSmokeOverrideFileParameters pins the case
+// of the parity smoke: parity-helm-file-parameter-symlinks-override reads
+// file-parameter-links/targets/message.txt only through the file parameters
+// of its override file.
+func TestWithSelectionOnlyPathsOwnsSmokeOverrideFileParameters(t *testing.T) {
+	root, err := filepath.Abs(filepath.Join("..", "..", "testdata", "argocd-parity", "repo"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	application := argoappv1.Application{
+		Name: "parity-helm-file-parameter-symlinks-override", Namespace: "argocd",
+		Spec: argoappv1.ApplicationSpec{
+			Source: &argoappv1.ApplicationSource{
+				RepoURL: "git://argocd-parity-git.argocd-parity.svc.cluster.local/repo.git", Path: "charts/helm-file-parameter-symlinks", TargetRevision: "HEAD",
+			},
+			Destination: argoappv1.ApplicationDestination{Name: "in-cluster", Namespace: "parity-helm-file-parameter-symlinks-override"},
+		},
+	}
+	got := withSelectionOnlyPaths(context.Background(), root, nil, selfRepoRefs{}, []ApplicationSelectionInput{{Application: application}}).inputs
+	for _, changed := range []string{"file-parameter-links/targets/message.txt", "file-parameter-links/targets/inner.txt", "file-parameter-links/chain.txt"} {
+		if selected, _ := SelectChangedApplicationInputs(got, []string{changed}); len(selected) != 1 {
+			t.Errorf("change to %s selected %d Applications, want 1 (paths %v)", changed, len(selected), got[0].Paths)
+		}
+	}
+}
+
 // TestRenderInputCoverageHelmFileParameterSymlinkRetarget pins that the
 // persistent render cache digest covers each symlink of a file parameter
 // chain: pointing one of them at another file changes the render, so the

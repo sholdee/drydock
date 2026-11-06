@@ -161,7 +161,8 @@ compatibility build it with Kustomize; explicit Helm and Directory sources do
 not.
 
 A Helm source also owns each `helm.valueFiles` and `helm.fileParameters[].path`
-entry it resolves, even when the resolved path escapes `spec.source.path`, bound
+entry it resolves, also an entry that only an `.argocd-source.yaml` or
+`.argocd-source-<app>.yaml` file sets, even when the resolved path escapes `spec.source.path`, bound
 to the repository root. A glob value file owns its static leading directory, not
 the files the glob expands to. Entries that use environment substitution (`$`)
 own nothing. A `$ref` value file or file parameter owns its resolved path when
@@ -173,7 +174,9 @@ including a pinned commit SHA or OCI, owns nothing. A file parameter path that
 starts with `/` is relative to the repository root, as in Argo CD. When a file
 parameter path passes through a symlink, the source also owns each symlink on
 the way and the file where the path ends, so a change to the target of the
-symlink selects it.
+symlink selects it. The same holds for the Kustomize inputs that an override
+file adds: drydock reads every source with its override files merged in, as the
+render does.
 
 An Application's `argocd.argoproj.io/manifest-generate-paths` annotation adds
 ownership that drydock cannot infer, such as the files an exec or container

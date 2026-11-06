@@ -93,7 +93,13 @@ func helmRefSelectionPaths(tree *selectionTree, application argoappv1.Applicatio
 	}
 	var paths []string
 	for _, sourcePlan := range plan.Sources {
-		if sourcePlan.RefOnly || sourcePlan.Source.Helm == nil {
+		if sourcePlan.RefOnly {
+			continue
+		}
+		if pathSourceRendersFromRoot(tree, sourcePlan.Source) {
+			sourcePlan.Source = selectionSourceWithOverrides(tree.root, application, sourcePlan.Source)
+		}
+		if sourcePlan.Source.Helm == nil {
 			continue
 		}
 		helm := sourcePlan.Source.Helm
@@ -173,4 +179,28 @@ func globStaticPrefix(pattern string) string {
 		}
 	}
 	return pattern
+}
+
+// selectionSourceWithOverrides returns source with the .argocd-source.yaml
+// and .argocd-source-<app>.yaml files of its path under root merged in, as
+// PrepareSource merges them before the render and the persistent cache key
+// reads the merged source. So an Application owns the value files, file
+// parameters, and other inputs that only an override file names. drydock
+// uses the default Argo CD controller namespace for the instance name, as
+// the render does. When the files cannot be read or merged, it returns
+// source: the render then fails, and the Application still owns its path,
+// which holds the override files.
+func selectionSourceWithOverrides(root string, application argoappv1.Application, source argoappv1.ApplicationSource) argoappv1.ApplicationSource {
+	if strings.TrimSpace(source.Path) == "" {
+		return source
+	}
+	sourcePath, err := cleanLocalSourcePath(source.Path)
+	if err != nil {
+		return source
+	}
+	merged, err := mergeArgocdSourceOverrides(source, filepath.Join(root, sourcePath), application.InstanceName(defaultArgoCDControllerNamespace))
+	if err != nil {
+		return source
+	}
+	return merged
 }
