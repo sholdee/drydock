@@ -147,14 +147,6 @@ func (p localProvider) renderSource(ctx context.Context, source render.ResolvedS
 		}
 	}
 	source.RepoRoot = sourceRoot
-	// The repo-server checks the whole checkout or artifact before it
-	// generates manifests from it. A chart-only source renders from the
-	// chart it acquires, which renderChartOnlySource checks.
-	if !chartFlowSource(source) {
-		if err := p.checkOutOfBoundsSymlinks(ctx, sourceRoot, sourceOutOfBoundsSymlinkScope(source)); err != nil {
-			return nil, nearMissDiags, err
-		}
-	}
 	opts.ChartAcquirer = p.acquisition.ChartAcquirer(p.chartAcquirer)
 	opts.ChartCacheDir = p.chartCacheDir
 	opts.OfflineCharts = p.offline
@@ -189,10 +181,8 @@ func (p localProvider) renderSource(ctx context.Context, source render.ResolvedS
 		return nil, nearMissDiags, err
 	}
 	opts.RefRoots = mergeRefRoots(anchoredRefRoots, refRoots)
-	if !chartFlowSource(source) {
-		if err := p.checkHelmRefRootsOutOfBoundsSymlinks(ctx, opts); err != nil {
-			return nil, nearMissDiags, err
-		}
+	if err := p.checkSourceTreesOutOfBoundsSymlinks(ctx, source, opts); err != nil {
+		return nil, nearMissDiags, err
 	}
 	if opts.Plugin != nil {
 		manifests, diags, err := p.renderPluginSource(ctx, source, opts)

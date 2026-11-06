@@ -120,6 +120,21 @@ func (p localProvider) checkOutOfBoundsSymlinks(ctx context.Context, root string
 	return nil
 }
 
+// checkSourceTreesOutOfBoundsSymlinks checks the tree a source renders
+// from, then each $ref repository it reads, as the repo-server does before
+// it generates manifests. source.RepoRoot is the resolved root. A
+// chart-only source renders from the chart it acquires, which
+// renderChartOnlySource checks before its $ref repositories.
+func (p localProvider) checkSourceTreesOutOfBoundsSymlinks(ctx context.Context, source render.ResolvedSource, opts render.RenderOptions) error {
+	if chartFlowSource(source) {
+		return nil
+	}
+	if err := p.checkOutOfBoundsSymlinks(ctx, source.RepoRoot, sourceOutOfBoundsSymlinkScope(source)); err != nil {
+		return err
+	}
+	return p.checkHelmRefRootsOutOfBoundsSymlinks(ctx, opts)
+}
+
 // checkHelmRefRootsOutOfBoundsSymlinks checks each Git repository that a
 // Helm $ref value file or file parameter reads, in the order the
 // repo-server does: value files first, then file parameters, each
