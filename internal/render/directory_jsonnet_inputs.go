@@ -62,8 +62,8 @@ func DirectoryJsonnetImportPaths(ctx context.Context, repoRoot, sourcePath strin
 		jpaths = append(jpaths, resolved)
 	}
 	// Only the source path is left out of the result. Files found in a
-	// library are kept: changed-only selection does not own library
-	// directories as a whole.
+	// library are kept: changed-only selection owns a library through the
+	// files it serves, not as a whole directory.
 	covered := []string{filepath.Clean(sourcePath)}
 	realRoot, err := filepath.EvalSymlinks(absRoot)
 	if err != nil {
@@ -101,8 +101,8 @@ func DirectoryJsonnetImportPaths(ctx context.Context, repoRoot, sourcePath strin
 // nothing. dirs are the libraries as the renderer resolves them
 // (resolveJsonnetLib), "." for the repository root; a library that does not
 // resolve is left out. links are the paths that decide that resolution: each
-// library path as written, joined to the root, and every symlink on the way
-// to its target. A change to one of them can move the library, so it is an
+// library path as written, joined to the root, when it is a symlink or
+// missing, and every symlink on the way to its target. A change to one of them can move the library, so it is an
 // input even when no imported file changed. All paths are relative to the
 // repository root, with forward slashes.
 func DirectoryJsonnetLibInputs(repoRoot, sourcePath string, libs []string) (dirs, links []string, err error) {
@@ -139,11 +139,18 @@ func DirectoryJsonnetLibInputs(repoRoot, sourcePath string, libs []string) (dirs
 }
 
 // appendJsonnetLibLinks adds the library path as written, joined to the
-// root, and every symlink on the way to its target.
+// root, when it is a symlink or missing, and every symlink on the way to
+// its target.
 func appendJsonnetLibLinks(links []string, absRoot, realRoot, lib string) []string {
 	joined := filepath.Join(absRoot, filepath.FromSlash(lib))
-	if rel, ok := repoRelative(absRoot, joined); ok && rel != "." && !pathsafety.RelEntersGit(filepath.FromSlash(rel)) {
-		links = appendUnique(links, rel)
+	// The path as written counts only when it is a symlink or missing.
+	// Changed-only ownership is a prefix match, so a real directory would
+	// own every file below it, also files no Jsonnet file imports. The
+	// import scan already owns the files a library serves.
+	if info, err := os.Lstat(joined); err != nil || info.Mode()&os.ModeSymlink != 0 {
+		if rel, ok := repoRelative(absRoot, joined); ok && rel != "." && !pathsafety.RelEntersGit(filepath.FromSlash(rel)) {
+			links = appendUnique(links, rel)
+		}
 	}
 	visited, _ := traceSymlinkPaths(joined)
 	for _, hop := range visited {

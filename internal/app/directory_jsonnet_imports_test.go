@@ -283,3 +283,32 @@ func TestWithSelectionOnlyPathsOwnsTheJsonnetLibraryLink(t *testing.T) {
 		t.Fatalf("selected = %v, want jsonnet and tools", names)
 	}
 }
+
+// TestWithSelectionOnlyPathsDoesNotOwnARealLibraryDirectory pins the review
+// repro: a library that is a real directory is owned only through the files
+// a Jsonnet file imports from it. Other files below it stay unowned, so a
+// change to them still renders every Application.
+func TestWithSelectionOnlyPathsDoesNotOwnARealLibraryDirectory(t *testing.T) {
+	root := t.TempDir()
+	writeTestFile(t, filepath.Join(root, "app", "main.jsonnet"), "{ apiVersion: 'v1', kind: 'ConfigMap', metadata: { name: (import 'common.libsonnet').name } }\n")
+	writeTestFile(t, filepath.Join(root, "manifests", "common.libsonnet"), "{ name: 'demo' }\n")
+	writeTestFile(t, filepath.Join(root, "manifests", "plugin-data", "values.txt"), "x\n")
+	writeTestFile(t, filepath.Join(root, "manifests", "new-app", "cm.yaml"), "a: 1\n")
+	application := argoappv1.Application{
+		Name: "jsonnet",
+		Spec: argoappv1.ApplicationSpec{Source: &argoappv1.ApplicationSource{
+			RepoURL: "https://git.example.test/repo.git", TargetRevision: "main", Path: "app",
+			Directory: &argoappv1.ApplicationSourceDirectory{Jsonnet: argoappv1.ApplicationSourceJsonnet{Libs: []string{"manifests"}}},
+		}},
+	}
+	inputs := withSelectionOnlyPaths(context.Background(), root, nil, selfRepoRefs{}, []ApplicationSelectionInput{{Application: application}}).inputs
+	for _, changed := range []string{"manifests/plugin-data/values.txt", "manifests/new-app/cm.yaml"} {
+		selected, unowned := SelectChangedApplicationInputs(inputs, []string{changed})
+		if len(selected) != 0 || len(unowned) != 1 {
+			t.Errorf("change to %s: selected %d, unowned %v, want it unowned (paths %v)", changed, len(selected), unowned, inputs[0].Paths)
+		}
+	}
+	if selected, _ := SelectChangedApplicationInputs(inputs, []string{"manifests/common.libsonnet"}); len(selected) != 1 {
+		t.Error("a change to the imported library file did not select the Jsonnet source")
+	}
+}

@@ -38,7 +38,7 @@ local vendored = import 'vendored.libsonnet';
 		t.Fatalf("DirectoryJsonnetImportPaths() error = %v", err)
 	}
 	// Files found in the library vendor count too: changed-only selection
-	// does not own library directories as a whole.
+	// owns a library through the files it serves, not as a whole directory.
 	want := []string{"other/target.libsonnet", "shared/lib.libsonnet", "shared/nested.libsonnet", "shared/text.txt", "vendor/nested.libsonnet", "vendor/vendored.libsonnet"}
 	if strings.Join(got, ",") != strings.Join(want, ",") {
 		t.Fatalf("DirectoryJsonnetImportPaths() = %v, want %v", got, want)
