@@ -594,23 +594,29 @@ Supported:
   checked whole, also when the temporary directory is inside some other
   worktree. The root can be the top level of the worktree or a directory
   in it that the worktree tracks.
-  When the `git` command is on `PATH`, drydock asks Git for that set with
-  `git ls-files --others --ignored --exclude-standard --directory`, so every
-  ignore rule that Git applies counts. The call drops the Git variables that
-  point at another repository, index, or worktree, such as `GIT_DIR` and
-  `GIT_INDEX_FILE` in a Git hook, and stops after 20 seconds. Without `git`,
-  or when it fails or stops,
-  drydock reads the index, the `.gitignore` files, and `info/exclude` (of
-  the common Git directory for a linked worktree) itself, as Git reads
-  them: it does not read an ignore file that is a symlink, or the
-  `.gitignore` files of a nested repository. It then leaves out
-  `core.excludesFile` and the default user ignore file, so it skips fewer
-  paths than Git, never more. A path at or under a submodule is always
-  checked in that case, because the parent index does not list submodule
-  files and Argo CD checks out submodules. A `.git` file at the worktree
-  root, as in a linked worktree, is skipped like a `.git` directory. A root
-  that is not in a Git worktree, that the worktree does not track, or that
-  Git ignores itself, is checked whole.
+- When the `git` command is on `PATH`, drydock asks Git for the top level,
+  the subdirectory of the root, and the ignored set (`git ls-files --others
+  --ignored --exclude-standard --directory`), so every ignore rule that Git
+  applies counts, in every repository format that Git reads. The calls drop
+  the Git variables that point at another repository, index, or worktree,
+  such as `GIT_DIR` and `GIT_INDEX_FILE` in a Git hook, and each stops after
+  20 seconds.
+- Without `git`, or when a call fails or stops, drydock reads the index, the
+  `.gitignore` files, and `info/exclude` (of the common Git directory for a
+  linked worktree) itself. It never skips more than Git, and it can skip
+  less:
+  - It leaves out `core.excludesFile` and the default user ignore file.
+  - It does not read a `.gitignore` file that is a symlink, or one in a
+    nested repository, as Git does not. It does not read an `info/exclude`
+    that is a symlink either, which Git reads.
+  - It decides file by file and never skips a whole directory, because a
+    later `!` pattern can bring back a file below an ignored directory.
+  - It reads `[!...]` in a pattern as Git does, as a negated set.
+  - It checks every path at or under a submodule, because the parent index
+    does not list submodule files and Argo CD checks out submodules.
+- A `.git` file at the worktree root, as in a linked worktree, is skipped
+  like a `.git` directory. A root that is not in a Git worktree, that the
+  worktree does not track, or that Git ignores itself, is checked whole.
 - The persistent render cache key and changed-only selection of a directory
   source cover the files outside its path and its Jsonnet libraries that
   its symlinks reach and its Jsonnet files import, directly or through other
@@ -618,8 +624,10 @@ Supported:
   does not follow imports in `extVars` or `tlas` code, so a change to a file
   that only such code imports does not change the key or select the
   Application. The import scan has a budget of 1000 files and 10 MB per
-  source, and a single Jsonnet file over 10 MB runs it out, because a symlink to a directory above the file can give one file
-  endlessly many import paths. When the budget runs out, the source gets no
+  source. The file limit is there because a symlink to a directory above a
+  file can give that file endlessly many import paths. A single Jsonnet
+  file over 10 MB also runs the budget out, because the scan does not read
+  it but the renderer evaluates it. When the budget runs out, the source gets no
   persistent cache entry and renders as usual, and changed-only renders it
   on every change, with the strict-exempt warning
   `diff.changed-only-jsonnet-scan`. A changed path that no Application owns

@@ -31,8 +31,7 @@ type UntrackedIgnoredFilter struct {
 	git *gitIgnoredSet
 
 	// The go-git fallback.
-	tracked     map[string]struct{}
-	trackedDirs map[string]struct{}
+	tracked map[string]struct{}
 	// submodules holds the gitlink paths of the index. The parent index
 	// does not list the files of a submodule, and Argo CD checks out
 	// submodules, so nothing at or under a gitlink is ever skipped.
@@ -104,7 +103,7 @@ func gitCLIUntrackedIgnoredFilter(ctx context.Context, root string) (*UntrackedI
 	filter := &UntrackedIgnoredFilter{git: set}
 	// A root that Git ignores holds nothing a commit can hold. The user
 	// still chose it as the repository, so check it whole.
-	if prefix != "" && filter.skipFull(prefix, true) {
+	if filter.rootIgnored(prefix) {
 		return &UntrackedIgnoredFilter{}, true
 	}
 	filter.prefix = prefix
@@ -145,7 +144,7 @@ func goGitOpenUntrackedIgnoredFilter(_ context.Context, root string) (*Untracked
 	}
 	// A root that Git ignores holds nothing a commit can hold. The user
 	// still chose it as the repository, so check it whole.
-	if prefix != "" && filter.skipFull(prefix, true) {
+	if filter.rootIgnored(prefix) {
 		return &UntrackedIgnoredFilter{}, nil
 	}
 	filter.prefix = prefix
@@ -284,20 +283,13 @@ func goGitUntrackedIgnoredFilter(repo *git.Repository, top string) (*UntrackedIg
 		return nil, fmt.Errorf("read Git index: %w", err)
 	}
 	filter := &UntrackedIgnoredFilter{
-		tracked:     make(map[string]struct{}, len(index.Entries)),
-		trackedDirs: map[string]struct{}{},
-		submodules:  map[string]struct{}{},
+		tracked:    make(map[string]struct{}, len(index.Entries)),
+		submodules: map[string]struct{}{},
 	}
 	for _, entry := range index.Entries {
 		filter.tracked[entry.Name] = struct{}{}
 		if entry.Mode == filemode.Submodule {
 			filter.submodules[entry.Name] = struct{}{}
-		}
-		for dir := path.Dir(entry.Name); dir != "." && dir != "/"; dir = path.Dir(dir) {
-			if _, ok := filter.trackedDirs[dir]; ok {
-				break
-			}
-			filter.trackedDirs[dir] = struct{}{}
 		}
 	}
 	// info/exclude is in the common Git directory, which for a linked
@@ -367,17 +359,34 @@ func (f *UntrackedIgnoredFilter) skipFull(full string, isDir bool) bool {
 	if f.matcher == nil {
 		return false
 	}
-	if f.inSubmodule(full) {
+	// The fallback never skips a whole directory: a later "!" pattern can
+	// bring back a file below a directory that an earlier pattern matches,
+	// such as foo/** with !foo/keep.yaml. It decides file by file, so when
+	// Git ignores a whole directory, it can check more than Git, never less.
+	if isDir || f.inSubmodule(full) {
 		return false
 	}
-	if isDir {
-		if _, ok := f.trackedDirs[full]; ok {
-			return false
-		}
-	} else if _, ok := f.tracked[full]; ok {
+	if _, ok := f.tracked[full]; ok {
 		return false
 	}
-	return f.matcher.Match(strings.Split(full, "/"), isDir)
+	return f.matcher.Match(strings.Split(full, "/"), false)
+}
+
+// rootIgnored reports whether Git ignores the filter root at prefix,
+// relative to the worktree top level. For the go-git fallback, a match of
+// the directory counts: the root is then checked whole, which is the
+// stricter side.
+func (f *UntrackedIgnoredFilter) rootIgnored(prefix string) bool {
+	if prefix == "" {
+		return false
+	}
+	if f.git != nil {
+		return f.git.ignored(prefix, true)
+	}
+	if f.matcher == nil {
+		return false
+	}
+	return f.matcher.Match(strings.Split(prefix, "/"), true)
 }
 
 // ignored reports whether Git listed full, or a directory above it, as
@@ -460,6 +469,10 @@ func readIgnorePatternFile(path string, domain []string) []gitignore.Pattern {
 		if strings.HasPrefix(line, "#") || strings.TrimSpace(line) == "" {
 			continue
 		}
+		// Git negates a bracket expression with "[!", but go-git passes the
+		// pattern to filepath.Match, which reads "!" there as a plain
+		// character and negates with "[^".
+		line = strings.ReplaceAll(line, "[!", "[^")
 		patterns = append(patterns, gitignore.ParsePattern(line, domain))
 	}
 	return patterns

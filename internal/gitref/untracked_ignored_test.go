@@ -43,7 +43,7 @@ func isolateGitUserConfig(t *testing.T) string {
 // ignores and does not track. A tracked path is kept even when an ignore
 // rule matches it, and so is a directory that holds one.
 func TestUntrackedIgnoredFilterSkipsOnlyIgnoredUntrackedPaths(t *testing.T) {
-	filterModes(t, func(t *testing.T, _ bool) {
+	filterModes(t, func(t *testing.T, cli bool) {
 		isolateGitUserConfig(t)
 		root, _, wt := newSnapshotRepo(t)
 		writeChangeSetFile(t, filepath.Join(root, ".gitignore"), "ignored/\n*.tmp\nforced/\n")
@@ -70,7 +70,9 @@ func TestUntrackedIgnoredFilterSkipsOnlyIgnoredUntrackedPaths(t *testing.T) {
 			{rel: "apps", isDir: true},
 			{rel: "apps/cm.yaml"},
 			{rel: "apps/new.yaml"},
-			{rel: "ignored", isDir: true, want: true},
+			// Only Git skips a whole directory; the fallback decides file
+			// by file.
+			{rel: "ignored", isDir: true, want: cli},
 			{rel: "ignored/x", want: true},
 			{rel: "apps/scratch.tmp", want: true},
 			{rel: "forced", isDir: true},
@@ -115,7 +117,7 @@ func TestUntrackedIgnoredFilterMapsASubdirectoryRoot(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if !filter.Skip(".venv", true) || !filter.Skip(".venv/bin/python", false) {
+		if !filter.Skip(".venv/bin/python", false) {
 			t.Fatal("Skip(.venv) = false, want the worktree ignore rules applied to the subdirectory root")
 		}
 		if filter.Skip("app/cm.yaml", false) {
@@ -212,8 +214,8 @@ func TestUntrackedIgnoredFilterReadsInfoExcludeOfALinkedWorktree(t *testing.T) {
 		if err != nil {
 			t.Fatalf("OpenUntrackedIgnoredFilter() error = %v", err)
 		}
-		if !filter.Skip("local-only", true) {
-			t.Fatal("Skip(local-only) = false, want info/exclude of the common Git directory read")
+		if !filter.Skip("local-only/x", false) {
+			t.Fatal("Skip(local-only/x) = false, want info/exclude of the common Git directory read")
 		}
 	})
 }
@@ -298,8 +300,8 @@ func TestUntrackedIgnoredFilterFallsBackWhenGitBlocks(t *testing.T) {
 	if filter.git != nil {
 		t.Fatal("the filter used the blocked git CLI, want the go-git fallback")
 	}
-	if !filter.Skip("ignored", true) {
-		t.Fatal("Skip(ignored) = false, want the go-git rules applied")
+	if !filter.Skip("ignored/x", false) {
+		t.Fatal("Skip(ignored/x) = false, want the go-git rules applied")
 	}
 }
 
@@ -418,10 +420,46 @@ func TestUntrackedIgnoredFilterOpensRepositoriesThatGoGitRefuses(t *testing.T) {
 				if base == root {
 					rel = "gitops/.venv"
 				}
-				if !filter.Skip(rel, true) {
+				if !filter.Skip(rel, true) || !filter.Skip(rel+"/bin/python", false) {
 					t.Fatalf("Skip(%s) from %s = false, want the ignored virtual environment left out", rel, base)
 				}
 			}
 		})
 	}
+}
+
+// TestUntrackedIgnoredFilterNeverSkipsMoreThanGit pins two go-git gaps that
+// the fallback closes. A "!" pattern can bring back a file below a
+// directory that an earlier pattern matches, so the fallback decides file by
+// file. Git negates a bracket expression with "[!", which go-git reads as a
+// plain "!", so the fallback rewrites it.
+func TestUntrackedIgnoredFilterNeverSkipsMoreThanGit(t *testing.T) {
+	filterModes(t, func(t *testing.T, _ bool) {
+		isolateGitUserConfig(t)
+		root, _, wt := newSnapshotRepo(t)
+		writeChangeSetFile(t, filepath.Join(root, ".gitignore"), "foo/**\n!foo/keep.yaml\nbar[!a]\n")
+		writeChangeSetFile(t, filepath.Join(root, "apps", "cm.yaml"), "a: 1\n")
+		commitAllSnapshotFiles(t, wt, "fixture")
+		writeChangeSetFile(t, filepath.Join(root, "foo", "keep.yaml"), "x\n")
+		writeChangeSetFile(t, filepath.Join(root, "foo", "drop.yaml"), "x\n")
+		writeChangeSetFile(t, filepath.Join(root, "bara"), "x\n")
+		writeChangeSetFile(t, filepath.Join(root, "barb"), "x\n")
+		filter, err := OpenUntrackedIgnoredFilter(t.Context(), root)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for rel, want := range map[string]bool{
+			"foo/keep.yaml": false,
+			"foo/drop.yaml": true,
+			"bara":          false,
+			"barb":          true,
+		} {
+			if got := filter.Skip(rel, false); got != want {
+				t.Errorf("Skip(%s) = %t, want %t", rel, got, want)
+			}
+		}
+		if filter.Skip("foo", true) {
+			t.Error("Skip(foo) = true, want a directory with a kept file walked")
+		}
+	})
 }
