@@ -8,6 +8,7 @@ import (
 
 	"github.com/go-git/go-billy/v5/osfs"
 	git "github.com/go-git/go-git/v5"
+	"github.com/go-git/go-git/v5/plumbing/filemode"
 	"github.com/go-git/go-git/v5/plumbing/format/gitignore"
 )
 
@@ -17,7 +18,11 @@ import (
 type UntrackedIgnoredFilter struct {
 	tracked     map[string]struct{}
 	trackedDirs map[string]struct{}
-	matcher     gitignore.Matcher
+	// submodules holds the gitlink paths of the index. The parent index
+	// does not list the files of a submodule, and Argo CD checks out
+	// submodules, so nothing at or under a gitlink is ever skipped.
+	submodules map[string]struct{}
+	matcher    gitignore.Matcher
 }
 
 // OpenUntrackedIgnoredFilter reads the index and the ignore rules of the Git
@@ -46,9 +51,13 @@ func OpenUntrackedIgnoredFilter(root string) (*UntrackedIgnoredFilter, error) {
 	filter := &UntrackedIgnoredFilter{
 		tracked:     make(map[string]struct{}, len(index.Entries)),
 		trackedDirs: map[string]struct{}{},
+		submodules:  map[string]struct{}{},
 	}
 	for _, entry := range index.Entries {
 		filter.tracked[entry.Name] = struct{}{}
+		if entry.Mode == filemode.Submodule {
+			filter.submodules[entry.Name] = struct{}{}
+		}
 		for dir := path.Dir(entry.Name); dir != "." && dir != "/"; dir = path.Dir(dir) {
 			if _, ok := filter.trackedDirs[dir]; ok {
 				break
@@ -75,9 +84,12 @@ func OpenUntrackedIgnoredFilter(root string) (*UntrackedIgnoredFilter, error) {
 
 // Skip reports whether rel, relative to the worktree root with forward
 // slashes, is ignored and not tracked. A directory that holds a tracked
-// path is never skipped.
+// path is never skipped, and neither is a path at or under a submodule.
 func (f *UntrackedIgnoredFilter) Skip(rel string, isDir bool) bool {
 	if f == nil || f.matcher == nil || rel == "" || rel == "." {
+		return false
+	}
+	if f.inSubmodule(rel) {
 		return false
 	}
 	if isDir {
@@ -88,4 +100,17 @@ func (f *UntrackedIgnoredFilter) Skip(rel string, isDir bool) bool {
 		return false
 	}
 	return f.matcher.Match(strings.Split(rel, "/"), isDir)
+}
+
+// inSubmodule reports whether rel is a gitlink path or is under one.
+func (f *UntrackedIgnoredFilter) inSubmodule(rel string) bool {
+	if len(f.submodules) == 0 {
+		return false
+	}
+	for candidate := rel; candidate != "." && candidate != "/" && candidate != ""; candidate = path.Dir(candidate) {
+		if _, ok := f.submodules[candidate]; ok {
+			return true
+		}
+	}
+	return false
 }

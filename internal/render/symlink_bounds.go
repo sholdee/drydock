@@ -65,11 +65,20 @@ type OutOfBoundsSymlinkOptions struct {
 // reports: a symlink with an absolute target, or one whose target leaves
 // root at any step of its components. It returns "" when there is none. The
 // walk is lexical and does not follow symlinks, as filepath.Walk is, so the
-// first symlink is the one the repo-server names.
+// first symlink is the one the repo-server names. root itself may be a
+// symlink: the walk starts at its target.
 func FindOutOfBoundsSymlink(ctx context.Context, root string, opts OutOfBoundsSymlinkOptions) (string, error) {
 	absRoot, err := filepath.Abs(root)
 	if err != nil {
 		return "", fmt.Errorf("failed to get absolute path: %w", err)
+	}
+	// The repo-server's checkout root is never a symlink. drydock's root
+	// can be one, such as a --repo-map path, and the walk would then stop at
+	// the root without reading it. Paths are relative to the resolved root,
+	// as the repo-server would report them for the tree itself.
+	absRoot, err = filepath.EvalSymlinks(absRoot)
+	if err != nil {
+		return "", fmt.Errorf("failed to resolve %s: %w", root, err)
 	}
 	var found string
 	errFound := errors.New("found")

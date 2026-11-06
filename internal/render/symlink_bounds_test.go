@@ -151,3 +151,18 @@ func TestOutOfBoundsSymlinkSmokeFixture(t *testing.T) {
 		t.Fatalf("drydock error = %v, want %q", drydockErr, tc.DrydockMessage)
 	}
 }
+
+// TestFindOutOfBoundsSymlinkFollowsASymlinkedRoot pins that a root which is
+// itself a symlink, such as a --repo-map path, is checked through: the walk
+// would otherwise stop at the root and find nothing.
+func TestFindOutOfBoundsSymlinkFollowsASymlinkedRoot(t *testing.T) {
+	parent := t.TempDir()
+	symlink(t, "/etc/hosts", filepath.Join(parent, "real", "app", "bad.yaml"))
+	symlink(t, "real", filepath.Join(parent, "link"))
+	for _, root := range []string{filepath.Join(parent, "link"), filepath.Join(parent, "link") + string(filepath.Separator)} {
+		got, err := FindOutOfBoundsSymlink(t.Context(), root, OutOfBoundsSymlinkOptions{SkipRootGit: true})
+		if err != nil || got != "app/bad.yaml" {
+			t.Fatalf("FindOutOfBoundsSymlink(%q) = %q, %v, want app/bad.yaml", root, got, err)
+		}
+	}
+}

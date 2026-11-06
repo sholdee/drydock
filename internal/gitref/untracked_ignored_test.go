@@ -54,3 +54,33 @@ func TestUntrackedIgnoredFilterSkipsNothingOutsideAWorktree(t *testing.T) {
 		t.Fatal("the filter of a directory that is not a worktree skipped a path")
 	}
 }
+
+// TestUntrackedIgnoredFilterNeverSkipsSubmodulePaths pins that paths at or
+// under a gitlink are kept. The parent index does not list the files of a
+// submodule, but Argo CD checks out submodules, so a tracked submodule file
+// that a parent ignore rule matches is in every checkout.
+func TestUntrackedIgnoredFilterNeverSkipsSubmodulePaths(t *testing.T) {
+	root, repo, wt := newSnapshotRepo(t)
+	writeChangeSetFile(t, filepath.Join(root, ".gitignore"), "result\nsub/\n")
+	commitAllSnapshotFiles(t, wt, "fixture")
+	commitSubmoduleEntryForTest(t, repo, wt, "sub")
+	filter, err := OpenUntrackedIgnoredFilter(root)
+	if err != nil {
+		t.Fatalf("OpenUntrackedIgnoredFilter() error = %v", err)
+	}
+	for _, tc := range []struct {
+		rel   string
+		isDir bool
+	}{
+		{rel: "sub", isDir: true},
+		{rel: "sub/result"},
+		{rel: "sub/deep/result"},
+	} {
+		if filter.Skip(tc.rel, tc.isDir) {
+			t.Errorf("Skip(%q, %t) = true, want a submodule path kept", tc.rel, tc.isDir)
+		}
+	}
+	if !filter.Skip("result", false) {
+		t.Error("Skip(result) = false, want the ignored parent path skipped")
+	}
+}
