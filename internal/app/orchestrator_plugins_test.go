@@ -1850,6 +1850,37 @@ func TestOrchestratorBuildReadsExecPolicyOutputAsArgoCD(t *testing.T) {
 	}
 }
 
+// TestOrchestratorBuildTrimsPluginOutputAsArgoCD checks that drydock removes
+// one line break from the end of plugin output, as the Argo CD v3.6.1
+// cmp-server does with the output of the generate command
+// (cmpserver/plugin/plugin.go:155). The plugin prints a "|+" value with a
+// blank line at the end, so Argo CD reads "x\n", not "x\n\n".
+func TestOrchestratorBuildTrimsPluginOutputAsArgoCD(t *testing.T) {
+	root := t.TempDir()
+	writePluginBuildApplication(t, root, "plugin", "exec-renderer")
+	t.Setenv("DRYDOCK_APP_EXEC_HELPER", "1")
+	policy, fingerprint := testExecPluginPolicy(t, "exec-renderer", appExecCommand(t, "keep-chomp"))
+
+	result, err := (Orchestrator{}).Build(context.Background(), BuildRequest{
+		Path:                    root,
+		EnablePlugins:           true,
+		pluginPolicyLoaded:      true,
+		pluginPolicy:            policy,
+		pluginPolicyFingerprint: fingerprint,
+		pluginPolicyExecTrusted: true,
+	})
+	if err != nil {
+		t.Fatalf("Build() error = %v\nDiagnostics: %#v", err, result.Diagnostics)
+	}
+	manifest, ok := manifestByName(result.Manifests, "keep-chomp")
+	if !ok {
+		t.Fatalf("Manifests = %#v, want keep-chomp", result.Manifests)
+	}
+	if got, _, _ := unstructured.NestedString(manifest.Object.Object, "data", "kept"); got != "x\n" {
+		t.Fatalf("data.kept = %q, want %q", got, "x\n")
+	}
+}
+
 func TestOrchestratorBuildRunsExecPolicyPostRenderer(t *testing.T) {
 	root := t.TempDir()
 	writePluginBuildApplication(t, root, "plugin", "exec-renderer")
@@ -3067,6 +3098,9 @@ func TestAppExecPluginHelperProcess(t *testing.T) {
 		os.Exit(0)
 	case "empty-object":
 		fmt.Print("apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: first\n---\n{}\n")
+		os.Exit(0)
+	case "keep-chomp":
+		fmt.Print("apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: keep-chomp\ndata:\n  kept: |+\n    x\n\n")
 		os.Exit(0)
 	case "list-item-kindless":
 		fmt.Print("apiVersion: v1\nkind: List\nitems:\n  - metadata:\n      name: kindless\n")

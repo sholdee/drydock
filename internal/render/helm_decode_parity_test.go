@@ -79,7 +79,8 @@ func upstreamHelmTemplate(t *testing.T, chartDir string, skipTests bool, release
 }
 
 // upstreamHelmOutcome is what Argo CD v3.6.1 does with a Helm source:
-// helm template, then kube.SplitYAML (helmTemplate,
+// helm template, whose output loses one line break at its end
+// (util/exec/exec.go:285), then kube.SplitYAML (helmTemplate,
 // reposerver/repository/repository.go:1444), then the GenerateManifests
 // loop and the controller read-back.
 func upstreamHelmOutcome(t *testing.T, chartDir string, skipTests bool) ([]*unstructured.Unstructured, error) {
@@ -322,6 +323,12 @@ func TestHelmRendererTrimsTheEndOfTheReleaseManifest(t *testing.T) {
 		"last document before a hook": {
 			"templates/a.yaml": keep("ConfigMap", "plain", ""),
 			"templates/b.yaml": keep("ConfigMap", "hook", "  annotations:\n    helm.sh/hook: pre-install\n"),
+		},
+		// Argo CD also removes one line break from the end of the whole
+		// output, here from the hook that helm prints last.
+		"hook printed last": {
+			"templates/a.yaml": keep("ConfigMap", "plain", ""),
+			"templates/b.yaml": keep("ConfigMap", "hook", "  annotations:\n    helm.sh/hook: pre-install\n    argocd.argoproj.io/hook: Skip\n"),
 		},
 		"CRD without templates": {
 			"crds/crd.yaml": "apiVersion: apiextensions.k8s.io/v1\nkind: CustomResourceDefinition\nmetadata:\n  name: widgets.example.com\nspec:\n  group: example.com\n  note: |+\n    x\n\n\n",

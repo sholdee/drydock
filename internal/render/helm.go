@@ -232,6 +232,7 @@ func decodeHelmManifests(manifestPath string, pathMap map[string]string, chrt he
 		}
 		return targetManifests(targets), nil, nil
 	}
+	trimCommandOutput(chunks)
 	var docs []generatedDocument
 	for _, chunk := range chunks {
 		docs, err = splitGeneratedDocuments(docs, chunk.path, utilyaml.NewYAMLToJSONDecoder(strings.NewReader(chunk.text)), chunk.firstIndex)
@@ -292,6 +293,10 @@ type helmEntryKey struct {
 //     (strings.TrimSpace(rel.Manifest), pkg/cmd/template.go:122). So the
 //     last of these chunks loses the white space at its end, such as the
 //     blank lines that a "|+" block scalar keeps.
+//
+// Argo CD also removes one line break from the end of the whole output.
+// decodeHelmManifests does that (see trimCommandOutput), because kustomize
+// helmCharts output keeps it.
 func helmTemplateStream(manifestPath string, pathMap map[string]string, chrt helmchart.Charter, rendered map[string]string, opts RenderOptions) ([]helmStreamChunk, error) {
 	stream := &helmStream{manifestPath: manifestPath, pathMap: pathMap}
 	if shouldIncludeCRDs(opts) {
@@ -330,6 +335,18 @@ func helmTemplateStream(manifestPath string, pathMap map[string]string, chrt hel
 		}
 	}
 	return stream.chunks, nil
+}
+
+// trimCommandOutput removes one line break from the end of the stream, as
+// Argo CD does with the output of helm template (util/exec/exec.go:285 at
+// v3.6.1, through util/helm/cmd.go). kustomize reads the output of helm
+// itself, so helmCharts output keeps the line break.
+func trimCommandOutput(chunks []helmStreamChunk) {
+	if len(chunks) == 0 {
+		return
+	}
+	last := &chunks[len(chunks)-1]
+	last.text = strings.TrimSuffix(last.text, "\n")
 }
 
 // helmStream collects the chunks of helm template output for

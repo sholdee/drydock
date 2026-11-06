@@ -30,7 +30,12 @@ func upstreamGeneratedOutcome(data string) ([]*unstructured.Unstructured, error)
 
 // upstreamGeneratedOutcomeFor is upstreamGeneratedOutcome for an Application
 // instance name and destination namespace.
+//
+// data is what the command prints. Argo CD first removes one line break
+// from its end (util/exec/exec.go:285 for helm template and kustomize
+// build, cmpserver/plugin/plugin.go:155 for a plugin).
 func upstreamGeneratedOutcomeFor(data, appName, namespace string) ([]*unstructured.Unstructured, error) {
+	data = strings.TrimSuffix(data, "\n")
 	objs, err := kube.SplitYAML([]byte(data))
 	if err != nil {
 		return nil, err
@@ -179,6 +184,11 @@ func TestDecodeGeneratedOutputMatchesUpstream(t *testing.T) {
 			wantErr: []string{"out document 1 has no kind"},
 		},
 		{
+			// Argo CD removes one line break from the end of the output.
+			name:  "last document ends with a keep block scalar",
+			input: configMap("first") + "---\n" + configMap("last") + "data:\n  kept: |+\n    x\n\n",
+		},
+		{
 			name:  "JSON stream indented with tabs",
 			input: "{\n\t\"apiVersion\": \"v1\",\n\t\"kind\": \"ConfigMap\",\n\t\"metadata\": {\"name\": \"tabs\"}\n}\n",
 		},
@@ -290,6 +300,15 @@ func TestKustomizeRendererDecodeMatchesUpstream(t *testing.T) {
 				"typo.yaml":   "apiVersion: apps/v1/\nkind: Deployment\nmetadata:\n  name: typo\n",
 			},
 			wantErr: `apps/kustomization.yaml document 1 has apiVersion "apps/v1/", which is not a valid group version, so it has no kind`,
+		},
+		{
+			// Argo CD removes one line break from the end of the build
+			// output, so the value is "x\n", not "x\n\n". kustomize sorts
+			// the fields, so spec is the last one.
+			name: "last document ends with a keep block scalar",
+			resources: map[string]string{
+				"widget.yaml": "apiVersion: example.com/v1\nkind: Widget\nmetadata:\n  name: widget\nspec:\n  kept: |+\n    x\n\n",
+			},
 		},
 		{
 			name: "renders",

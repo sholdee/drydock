@@ -281,9 +281,16 @@ func generatedManifests(docs []generatedDocument, track func(*unstructured.Unstr
 //  3. The controller fails on an emitted manifest without a kind, such as a
 //     list item (see checkManifestKinds).
 //
+// Before these stages, Argo CD removes one line break from the end of the
+// command output (util/exec/exec.go:285 for kustomize build, and
+// cmpserver/plugin/plugin.go:155 for the generate command of a config
+// management plugin), and DecodeGeneratedOutput does the same. Only a "|+"
+// block scalar at the end of the last document shows it.
+//
 // path names the output in errors, with the document index. A nil track
 // skips the tracking check.
 func DecodeGeneratedOutput(path string, data []byte, track func(*unstructured.Unstructured) error) ([]Manifest, error) {
+	data = bytes.TrimSuffix(data, []byte("\n"))
 	decoder := utilyaml.NewYAMLOrJSONDecoder(bytes.NewReader(data), generatedJSONGuessSize)
 	docs, err := splitGeneratedDocuments(nil, path, decoder, 0)
 	if err != nil {

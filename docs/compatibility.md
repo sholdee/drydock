@@ -563,7 +563,14 @@ Supported:
   releases skipped such an item when it also had no `apiVersion`.
 - Helm, Kustomize, and config management plugin output is read as the
   Argo CD v3.6.1 repo-server reads it, with gitops-engine `kube.SplitYAML`.
-  The whole output is split into documents first. An empty document, a
+  Argo CD first removes one line break from the end of the command output,
+  so a `|+` block scalar at the end of the last document loses one line
+  break. drydock does the same. Kustomize `helmCharts` keep the line break,
+  because kustomize reads the output of Helm itself. The second reading of
+  each document by `kube.SplitYAML` has rules of its own, and drydock runs
+  it too. For example, NEL (U+0085) folds a value and fails a key, and a
+  key over 1022 characters after JSON escapes fails. The whole output is
+  split into documents first. An empty document, a
   document with only comments, and a `null` document add nothing. Then each
   document is decoded into an object that must have a `kind`. A document
   that is not an object fails the source. A document without a `kind` fails
