@@ -580,7 +580,7 @@ func TestHelmRendererAppliesHelmParametersLikeArgoCD(t *testing.T) {
 				{Name: "f", Path: "../../outside.txt"},
 				{Name: "f", Path: "present.txt"},
 			},
-			wantErr: "escapes",
+			wantErr: "error resolving helm value file path: file '../../outside.txt' resolved to outside repository root",
 		},
 		{
 			name: "overridden file parameter URL scheme is still checked",
@@ -678,12 +678,17 @@ func TestHelmRendererAppliesRefHelmFileParameters(t *testing.T) {
 	}
 }
 
-func TestHelmRendererRejectsSymlinkedHelmFileParameters(t *testing.T) {
+// TestHelmRendererRejectsRefHelmFileParameterSymlinkOutsideRefRoot pins
+// that a $ref file parameter whose symlink points outside the ref root fails
+// with the repo-server's error (getResolvedRefValueFile,
+// reposerver/repository/repository.go:1583-1604 at v3.6.1) and that the
+// target is never read.
+func TestHelmRendererRejectsRefHelmFileParameterSymlinkOutsideRefRoot(t *testing.T) {
 	root := t.TempDir()
 	valuesRoot := t.TempDir()
 	outside := t.TempDir()
 	writeParameterChart(t, filepath.Join(root, "chart"))
-	writeFile(t, filepath.Join(outside, "message.txt"), "outside")
+	writeFile(t, filepath.Join(outside, "message.txt"), "content-outside-the-ref-root")
 	symlink(t, filepath.Join(outside, "message.txt"), filepath.Join(valuesRoot, "message.txt"))
 
 	result, diags, err := (HelmRenderer{}).Render(context.Background(), ResolvedSource{
@@ -698,13 +703,11 @@ func TestHelmRendererRejectsSymlinkedHelmFileParameters(t *testing.T) {
 			{Name: "fileValue", Path: "$values/message.txt"},
 		},
 	})
-	if err == nil {
-		t.Fatal("Render() error = nil, want symlink error")
+	want := "error resolving set-file path: error resolving value file path: file '/message.txt' resolved to outside repository root"
+	if err == nil || !strings.Contains(err.Error(), want) {
+		t.Fatalf("Render() error = %v, want %q", err, want)
 	}
-	if !strings.Contains(err.Error(), "symlink") {
-		t.Fatalf("Render() error = %v, want symlink error", err)
-	}
-	if strings.Contains(err.Error(), "outside") {
+	if strings.Contains(err.Error(), "content-outside-the-ref-root") {
 		t.Fatalf("Render() error = %v leaked file contents", err)
 	}
 	if len(diags) != 0 {
@@ -2315,7 +2318,7 @@ func TestHelmRendererRejectsFileParameterEscapingRepoRoot(t *testing.T) {
 	if err == nil {
 		t.Fatal("Render() error = nil, want repo root escape error")
 	}
-	if !strings.Contains(err.Error(), "escapes value files") {
-		t.Fatalf("Render() error = %v, want value files escape", err)
+	if !strings.Contains(err.Error(), "error resolving helm value file path: file '../../../outside.txt' resolved to outside repository root") {
+		t.Fatalf("Render() error = %v, want the repo-server's outside repository root error", err)
 	}
 }

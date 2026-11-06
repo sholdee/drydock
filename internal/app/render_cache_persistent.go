@@ -881,22 +881,27 @@ func localHelmInputDigestPaths(plan PlanResult, sourcePlan SourcePlan, repoRoot 
 	if err != nil {
 		return nil, false, err
 	}
-	valueFiles, fileParameters, err := localHelmDigestInputPaths(plan, sourcePlan, opts)
+	valueFiles, fileParameters, overridden, err := localHelmDigestInputPaths(plan, sourcePlan, opts)
 	if err != nil {
 		return nil, false, err
 	}
 	helmGlobs := helmDigestInputsHaveGlob(valueFiles, fileParameters)
 	opts.ValueFiles = valueFiles
 	opts.HelmFileParameters = fileParameters
-	refRoots, _, err := renderRefsForSource(plan, sourcePlan, helmRefInputPaths(opts))
+	refPaths := helmRefInputPaths(opts)
+	for _, parameter := range overridden {
+		refPaths = append(refPaths, parameter.Path)
+	}
+	refRoots, _, err := renderRefsForSource(plan, sourcePlan, refPaths)
 	if err != nil {
 		return nil, helmGlobs, err
 	}
 	opts.RefRoots = mergeRefRoots(opts.RefRoots, refRoots)
 	collected, err := render.CollectHelmLocalInputPaths(render.HelmLocalInputOptions{
-		RepoRoot: repoRoot,
-		Source:   resolvedSourceForPlan(sourcePlan),
-		Options:  opts,
+		RepoRoot:                 repoRoot,
+		Source:                   resolvedSourceForPlan(sourcePlan),
+		Options:                  opts,
+		OverriddenFileParameters: overridden,
 	})
 	if err != nil {
 		return nil, helmGlobs, err
@@ -908,12 +913,15 @@ func localHelmInputDigestPaths(plan PlanResult, sourcePlan SourcePlan, repoRoot 
 	return paths, helmGlobs, nil
 }
 
-func localHelmDigestInputPaths(plan PlanResult, sourcePlan SourcePlan, opts render.RenderOptions) ([]string, []argoappv1.HelmFileParameter, error) {
+// localHelmDigestInputPaths returns the value files, the file parameters
+// that helm reads, and the overridden file parameters whose paths the render
+// only resolves, each without the entries that read a fetched ref.
+func localHelmDigestInputPaths(plan PlanResult, sourcePlan SourcePlan, opts render.RenderOptions) ([]string, []argoappv1.HelmFileParameter, []argoappv1.HelmFileParameter, error) {
 	valueFiles := make([]string, 0, len(opts.ValueFiles))
 	for _, valueFile := range opts.ValueFiles {
 		keep, err := localHelmDigestShouldCollectPath(plan, sourcePlan, valueFile)
 		if err != nil {
-			return nil, nil, err
+			return nil, nil, nil, err
 		}
 		if keep {
 			valueFiles = append(valueFiles, valueFile)
@@ -921,18 +929,30 @@ func localHelmDigestInputPaths(plan PlanResult, sourcePlan SourcePlan, opts rend
 	}
 	// Pick the file parameters helm reads before dropping fetched-ref ones, so
 	// a local entry overridden by a fetched-ref entry is not an input.
-	effective := render.EffectiveHelmFileParameters(opts.HelmFileParameters)
-	fileParameters := make([]argoappv1.HelmFileParameter, 0, len(effective))
-	for _, parameter := range effective {
-		keep, err := localHelmDigestShouldCollectPath(plan, sourcePlan, parameter.Path)
-		if err != nil {
-			return nil, nil, err
+	keepLocal := func(parameters []argoappv1.HelmFileParameter) ([]argoappv1.HelmFileParameter, error) {
+		kept := make([]argoappv1.HelmFileParameter, 0, len(parameters))
+		for _, parameter := range parameters {
+			keep, err := localHelmDigestShouldCollectPath(plan, sourcePlan, parameter.Path)
+			if err != nil {
+				return nil, err
+			}
+			if keep {
+				kept = append(kept, parameter)
+			}
 		}
-		if keep {
-			fileParameters = append(fileParameters, parameter)
-		}
+		return kept, nil
 	}
-	return valueFiles, fileParameters, nil
+	fileParameters, err := keepLocal(render.EffectiveHelmFileParameters(opts.HelmFileParameters))
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	// The render still resolves an overridden path, and the symlinks on the
+	// way decide whether that fails.
+	overridden, err := keepLocal(render.OverriddenHelmFileParameters(opts.HelmFileParameters))
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	return valueFiles, fileParameters, overridden, nil
 }
 
 func localHelmDigestShouldCollectPath(plan PlanResult, sourcePlan SourcePlan, inputPath string) (bool, error) {

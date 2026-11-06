@@ -117,11 +117,12 @@ func withSelectionOnlyPaths(ctx context.Context, root string, repoMaps []sourcep
 			if !pathSourceRendersFromRoot(tree, source) {
 				continue
 			}
-			out[i].Paths = append(out[i].Paths, helmLocalSelectionPaths(source)...)
+			out[i].Paths = append(out[i].Paths, helmLocalSelectionPaths(root, source)...)
 			// A directory source reads the files that its symlinks reach
-			// and its Jsonnet files import, also outside its path. The Helm
-			// and Kustomize renderers reject symlinks and evaluate no
-			// Jsonnet.
+			// and its Jsonnet files import, also outside its path. The
+			// Kustomize renderer and Helm charts and value files reject
+			// symlinks, and neither evaluates Jsonnet. Helm file parameters
+			// own their symlinks above.
 			if rendersAsDirectory(root, source) {
 				selection := symlinkInputs(source)
 				out[i].Paths = append(out[i].Paths, selection.paths...)

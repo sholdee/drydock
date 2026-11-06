@@ -3,7 +3,7 @@ package render
 import (
 	"context"
 	"fmt"
-	"os"
+	"path/filepath"
 	"strings"
 
 	argoappv1 "github.com/argoproj/argo-cd/v3/pkg/apis/application/v1alpha1"
@@ -12,7 +12,8 @@ import (
 )
 
 // applyHelmParameters applies helm.parameters and helm.fileParameters the way
-// Argo CD's helm template call does. The repo-server collects --set,
+// Argo CD's helm template call does. The repo-server first resolves the path
+// of every file parameter (resolveHelmFileParameter). It collects --set,
 // --set-string and --set-file values into maps keyed by the exact parameter
 // name, so only the last entry per name of each kind reaches helm, and helm
 // applies every --set, then every --set-string, then every --set-file,
@@ -20,6 +21,15 @@ import (
 // order; Argo CD's own order within one kind follows Go's randomized map
 // iteration order.
 func applyHelmParameters(ctx context.Context, source ResolvedSource, opts RenderOptions, values map[string]any) error {
+	targets := make([]helmFileParameterTarget, len(opts.HelmFileParameters))
+	for i, parameter := range opts.HelmFileParameters {
+		target, err := resolveHelmFileParameter(source, opts, parameter.Path)
+		if err != nil {
+			return fmt.Errorf("helm file parameter %q: %w", parameter.Name, err)
+		}
+		targets[i] = target
+	}
+
 	lastParameters := lastHelmParameters(opts.HelmParameters)
 	for _, forceString := range []bool{false, true} {
 		for i, parameter := range opts.HelmParameters {
@@ -32,22 +42,14 @@ func applyHelmParameters(ctx context.Context, source ResolvedSource, opts Render
 		}
 	}
 
-	if len(opts.HelmFileParameters) == 0 {
-		return nil
-	}
-	reader := helmFileParameterReader(ctx, source, opts)
 	lastFileParameters := lastHelmFileParameters(opts.HelmFileParameters)
 	for i, parameter := range opts.HelmFileParameters {
-		rawPath := parameter.Path
-		filePath := envsubstHelmValueFilePath(rawPath, opts, opts.RefRoots)
 		if !lastFileParameters[i] {
-			if err := resolveOverriddenHelmFileParameter(source, opts, filePath); err != nil {
-				return fmt.Errorf("helm file parameter %q: %s", parameter.Name, redactHelmParameterError(err.Error(), rawPath, filePath))
-			}
 			continue
 		}
-		if err := strvals.ParseIntoFile(parameter.Name+"="+cleanHelmSetParameter(filePath), values, reader); err != nil {
-			return fmt.Errorf("helm file parameter %q failed to parse: %s", parameter.Name, redactHelmParameterError(err.Error(), rawPath, filePath))
+		target := targets[i]
+		if err := strvals.ParseIntoFile(parameter.Name+"="+cleanHelmSetParameter(helmFileParameterSetValue(target)), values, helmFileParameterReader(ctx, target)); err != nil {
+			return fmt.Errorf("helm file parameter %q failed to parse: %s", parameter.Name, redactHelmParameterError(err.Error(), parameter.Path, target.file))
 		}
 	}
 	return nil
@@ -104,6 +106,20 @@ func EffectiveHelmFileParameters(parameters []argoappv1.HelmFileParameter) []arg
 	return effective
 }
 
+// OverriddenHelmFileParameters returns the helm.fileParameters entries that a
+// later entry with the same name overrides, in list order. The render
+// resolves their paths but helm never reads them.
+func OverriddenHelmFileParameters(parameters []argoappv1.HelmFileParameter) []argoappv1.HelmFileParameter {
+	last := lastHelmFileParameters(parameters)
+	var overridden []argoappv1.HelmFileParameter
+	for i, parameter := range parameters {
+		if !last[i] {
+			overridden = append(overridden, parameter)
+		}
+	}
+	return overridden
+}
+
 func lastEntryPerKey[T any, K comparable](entries []T, key func(T) K) []bool {
 	last := make([]bool, len(entries))
 	seen := make(map[K]struct{}, len(entries))
@@ -118,42 +134,35 @@ func lastEntryPerKey[T any, K comparable](entries []T, key func(T) K) []bool {
 	return last
 }
 
-// resolveOverriddenHelmFileParameter checks the path of a file parameter that
-// a later entry with the same name overrides. Argo CD resolves every file
-// parameter path before it runs helm, so a path that escapes its root or a URL
-// with a disallowed scheme still fails, but the file is never read. Unlike the
-// repo-server, drydock does not follow a symlink at the path, which keeps the
-// render independent of files the persistent cache does not digest.
-func resolveOverriddenHelmFileParameter(source ResolvedSource, opts RenderOptions, file string) error {
-	if parsed, ok := parseRemoteHelmValueFile(file); ok {
-		if !helmValueFileSchemeAllowed(parsed.Scheme, opts) {
-			return fmt.Errorf("URL scheme %q is not allowed", parsed.Scheme)
-		}
-		return nil
+// helmFileParameterSetValue is the file that drydock passes to --set-file for
+// target. The repo-server passes the absolute resolved path. drydock passes
+// it relative to the root, with a leading "/", so a comma or a backslash in
+// the path of drydock's checkout cannot change how helm splits the value.
+func helmFileParameterSetValue(target helmFileParameterTarget) string {
+	if target.url != "" {
+		return target.url
 	}
-	_, _, err := resolveHelmValueFile(source.RepoRoot, helmValueFilesBaseDir(source, opts), helmValueFilesBoundaryRoot(source, opts), opts.RefRoots, file)
-	return err
+	rel, err := filepath.Rel(target.root, target.path)
+	if err != nil {
+		return target.path
+	}
+	return "/" + filepath.ToSlash(rel)
 }
 
-func helmFileParameterReader(ctx context.Context, source ResolvedSource, opts RenderOptions) strvals.RunesValueReader {
+// helmFileParameterReader reads the file that helm --set-file names for
+// target. helm reads the file even when the parameter name is empty.
+func helmFileParameterReader(ctx context.Context, target helmFileParameterTarget) strvals.RunesValueReader {
 	return func(input []rune) (any, error) {
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
-		file := string(input)
-		if isRemoteHelmValueFile(file) {
-			return nil, fmt.Errorf("helm file parameter %q must reference a local or $ref file", remote.RedactURL(file))
+		value := string(input)
+		if target.url != "" || isRemoteHelmValueFile(value) {
+			return nil, fmt.Errorf("helm file parameter %q must reference a local or $ref file", remote.RedactURL(value))
 		}
-		root, resolved, err := resolveHelmValueFile(source.RepoRoot, helmValueFilesBaseDir(source, opts), helmValueFilesBoundaryRoot(source, opts), opts.RefRoots, file)
+		data, err := readHelmFileParameter(target.root, filepath.Join(target.root, filepath.FromSlash(value)), target.file)
 		if err != nil {
 			return nil, err
-		}
-		if err := rejectSymlinkedPath(root, resolved); err != nil {
-			return nil, fmt.Errorf("helm file parameter %q: %w", file, err)
-		}
-		data, err := os.ReadFile(resolved)
-		if err != nil {
-			return nil, fmt.Errorf("read helm file parameter %q: %w", file, err)
 		}
 		return string(data), nil
 	}

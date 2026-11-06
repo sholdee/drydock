@@ -169,7 +169,11 @@ the ref root is the local tree: a
 [self-repository](/concepts/source-acquisition/#self-repository-sources) ref, a
 ref `--repo-map`ped to the repository root, or one sharing the repository and
 revision of a source whose path is in the checkout. A ref drydock fetches,
-including a pinned commit SHA or OCI, owns nothing.
+including a pinned commit SHA or OCI, owns nothing. A file parameter path that
+starts with `/` is relative to the repository root, as in Argo CD. When a file
+parameter path passes through a symlink, the source also owns each symlink on
+the way and the file where the path ends, so a change to the target of the
+symlink selects it.
 
 An Application's `argocd.argoproj.io/manifest-generate-paths` annotation adds
 ownership that drydock cannot infer, such as the files an exec or container

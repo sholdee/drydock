@@ -467,10 +467,49 @@ Supported:
   map iteration order, so overlapping names within one kind (such as `a` and
   `a.b`) can render differently from one Argo CD run to the next. drydock
   applies them in list order, which is one of the possible outcomes.
-- Recorded divergence from strict Argo CD v3.6.1 (unchanged since v3.5.x):
-  drydock does not follow a symlink at an overridden `fileParameters` path,
-  so it accepts one whose target escapes the repository where the
-  repo-server fails.
+- Helm `fileParameters` paths resolve as in the Argo CD v3.6.1 repo-server
+  (`ResolveValueFilePathOrUrl`, `util/io/path/resolved.go`), for every
+  entry, also an overridden one, and also for entries that come from an
+  `.argocd-source.yaml` file. A relative path is relative to the source
+  path, and a path that starts with `/` is relative to the repository root.
+  A `$ref` path is relative to the root of the ref source. When the path
+  itself is a symlink, the resolver follows it, up to ten levels, and joins
+  a relative target to the directory of the path as text. So a symlink to a
+  file in the repository works, and so does a path through a symlinked
+  directory. A dangling symlink resolves to its missing target, which fails
+  only when helm reads it. The result must be in the repository as text,
+  and must not be the repository root:
+  - `error resolving helm value file path: file '<path>' resolved to outside
+    repository root`, or for a `$ref` path `error resolving set-file path:
+    error resolving value file path: file '/<path>' resolved to outside
+    repository root`.
+  - `internal error: failed to resolve path. Check logs for more details`
+    for a symlink loop or a path that resolves to the repository root.
+    drydock adds the cause after this text.
+- Because the resolver joins a symlink target to the path as written, a
+  relative target under a symlinked directory resolves from that directory,
+  not from the real directory of the symlink. A target with `..` can then
+  name a different file, or leave the repository as text and fail, where
+  the out-of-bounds symlink check passes. drydock does the same. The parity
+  smoke pins both cases.
+- drydock reads a file parameter only when its real path is in the
+  repository and outside `.git`. A path through a symlinked directory that
+  leaves the repository fails with `resolves to a file outside the
+  repository through a symlinked directory`. The repo-server reads such a
+  file, but its out-of-bounds symlink check fails the repository first
+  unless `reposerver.allow.oob.symlinks` is `true`. drydock also does not
+  read the link text of a path that is outside the repository before it
+  follows the link. The repo-server reads it and accepts a symlink there
+  that points back into its checkout.
+- Recorded divergence from strict Argo CD v3.6.1: a `fileParameters` URL
+  with an allowed scheme fails in drydock (`must reference a local or $ref
+  file`). helm `--set-file` fetches it in Argo CD. An overridden URL is
+  never fetched, so it works on both sides.
+- Recorded divergence from strict Argo CD v3.6.1: Helm `valueFiles` do not
+  use this resolver in drydock yet. A value file that is a symlink, or that
+  has a symlinked directory on the way, fails, and so does a value file
+  path that starts with `/`. The repo-server resolves both as it resolves
+  file parameters.
 - `.argocd-source.yaml` and `.argocd-source-<app>.yaml` overrides, where
   `<app>` is the Application instance name like the repo-server's lookup: an
   Application outside the controller namespace reads
@@ -673,6 +712,11 @@ Supported:
 - A `.git` file at the worktree root, as in a linked worktree, is skipped
   like a `.git` directory. A root that is not in a Git worktree, that the
   worktree does not track, or that Git ignores itself, is checked whole.
+- The persistent render cache key and changed-only selection of a Helm
+  source cover each symlink that a `fileParameters` path passes through and
+  the file it ends at. For an overridden entry whose path passes through a
+  symlink, these paths are optional inputs, because they decide whether the
+  path resolves.
 - The persistent render cache key and changed-only selection of a directory
   source cover the files outside its path that its symlinks reach, and the
   files that its Jsonnet files import, directly or through other imports,
@@ -695,9 +739,11 @@ Supported:
   still renders every Application.
 - Recorded divergence from strict Argo CD v3.6.1: drydock never extracts an
   OCI artifact that holds an out-of-bounds symlink, also when
-  `reposerver.allow.oob.symlinks` is `true`. Helm charts and Kustomize
-  graphs still reject every symlink in drydock (see the safety boundary
-  below), where the repo-server follows in-tree symlinks.
+  `reposerver.allow.oob.symlinks` is `true`. Helm charts, Helm value
+  files, and Kustomize graphs still reject every symlink in drydock (see
+  the safety boundary below), where the repo-server follows in-tree
+  symlinks. Helm `fileParameters` follow symlinks as in Argo CD (see
+  Rendering).
 - A directory file that is not a regular file, such as a named pipe or a
   socket, is skipped, as in Argo CD. Earlier drydock releases tried to read
   it, and a named pipe stopped the render.
@@ -974,6 +1020,9 @@ Documented runtime-offline safety boundary:
   file is an in-repository symlink counts as present, as in Argo CD v3.6.1,
   and then fails drydock's symlinked graph entry check where the repo-server
   renders it.
+- A Helm `fileParameters` path never reads a file outside the repository
+  or in `.git`, also when `reposerver.allow.oob.symlinks` is `true` and the
+  repo-server would read it through a symlinked directory.
 
 Not supported:
 
