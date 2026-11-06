@@ -161,8 +161,10 @@ func commandParametersSettings(path, basePointer string, values map[string]strin
 			runtimeOnlyKeys = append(runtimeOnlyKeys, key)
 		}
 		if key == maxCombinedDirectoryManifestsSizeKey {
+			// The value is kept as written: the repo-server parses it with
+			// resource.ParseQuantity, which rejects spaces around it.
 			settings.MaxCombinedDirectoryManifestsSize = Value[string]{
-				Value:      strings.TrimSpace(values[key]),
+				Value:      values[key],
 				Provenance: setting.Provenance,
 			}
 		}

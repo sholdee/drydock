@@ -267,10 +267,19 @@ func assertContainsNone(t *testing.T, text string, values []string) {
 // recording it as runtime-only metadata.
 func TestCommandParametersReadMaxCombinedDirectoryManifestsSize(t *testing.T) {
 	settings, diags := commandParametersSettings("argocd-cmd-params-cm.yaml", "data", map[string]string{
-		"reposerver.max.combined.directory.manifests.size": " 20M ",
+		"reposerver.max.combined.directory.manifests.size": "20M",
 	})
 	if got := settings.MaxCombinedDirectoryManifestsSize.Value; got != "20M" {
 		t.Fatalf("MaxCombinedDirectoryManifestsSize = %q, want 20M", got)
+	}
+	// The value is kept as written. The repo-server parses it with
+	// resource.ParseQuantity, which rejects spaces around it, so drydock must
+	// see the spaces to fail the same way.
+	spaced, _ := commandParametersSettings("argocd-cmd-params-cm.yaml", "data", map[string]string{
+		"reposerver.max.combined.directory.manifests.size": " 20M ",
+	})
+	if got := spaced.MaxCombinedDirectoryManifestsSize.Value; got != " 20M " {
+		t.Fatalf("MaxCombinedDirectoryManifestsSize = %q, want \" 20M \"", got)
 	}
 	if settings.MaxCombinedDirectoryManifestsSize.Provenance.Pointer != "data.reposerver.max.combined.directory.manifests.size" {
 		t.Fatalf("provenance = %#v", settings.MaxCombinedDirectoryManifestsSize.Provenance)

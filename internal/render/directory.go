@@ -75,10 +75,13 @@ func (DirectoryRenderer) Render(ctx context.Context, source ResolvedSource, opts
 		return nil, diags, err
 	}
 	var objects []directoryObject
-	for _, file := range files {
+	for index := range files {
 		if err := ctx.Err(); err != nil {
 			return nil, diags, err
 		}
+		file := files[index]
+		// Release the file text once it is decoded.
+		files[index].data = nil
 		var fileObjects []directoryObject
 		switch {
 		case isJsonnetFile(file.path):
@@ -112,7 +115,8 @@ func (DirectoryRenderer) Render(ctx context.Context, source ResolvedSource, opts
 type directoryCandidateFile struct {
 	path         string
 	manifestPath string
-	// data is the decoded file text (see decodeDirectoryFileText).
+	// data is the decoded file text (see decodeDirectoryFileText), nil
+	// for a Jsonnet file.
 	data []byte
 }
 
@@ -176,8 +180,11 @@ func directoryCandidateFiles(ctx context.Context, root string, source ResolvedSo
 			return nil
 		}
 		// The repo-server does not count a Jsonnet file: the Jsonnet
-		// evaluator manages its own memory.
-		if !isJsonnetFile(path) {
+		// evaluator manages its own memory. The evaluator also reads the file
+		// again, so its text is not kept.
+		if isJsonnetFile(path) {
+			data = nil
+		} else {
 			combinedSize += int64(len(raw))
 			if limit := opts.DirectoryMaxCombinedManifestsSize; limit != 0 && combinedSize > limit {
 				return directorySizeLimitError(manifestPath, limit)

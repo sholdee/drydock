@@ -505,9 +505,20 @@ Supported:
   does not count Jsonnet files or files with the skip marker. Over the limit,
   Argo CD fails with `exceeded max combined manifest file size`, and drydock
   fails with an error that names the file that went over and the limit.
-  drydock reads the setting from the `argocd-cmd-params-cm` that it
-  discovers or that you pass, and uses the default otherwise. Earlier
-  drydock releases had no limit.
+  drydock reads the setting only from an `argocd-cmd-params-cm` that it
+  discovers in the repository or in rendered Application output. Otherwise
+  it uses `10M`. So drydock does not see a limit that the Argo CD Helm chart
+  sets through `configs.params`, `repoServer.extraArgs`, or `repoServer.env`,
+  unless the rendered `argocd-cmd-params-cm` of that install is discovered.
+  An empty value means `10M`, and a value that is not a Kubernetes quantity,
+  spaces around it included, fails the build, as it stops the repo-server at
+  startup. Earlier drydock releases had no limit.
+- Recorded divergence from strict Argo CD v3.6.1: drydock skips every file
+  symlink in a directory source. The repo-server follows a file symlink
+  whose target is in the repository, renders the target, and counts the
+  target size toward the limit, so the drydock sum can be lower. A file
+  symlink whose target is outside the repository fails the source in Argo
+  CD, but drydock skips it. A later change will match this.
 - A directory file that is not a regular file, such as a named pipe or a
   socket, is skipped, as in Argo CD. Earlier drydock releases tried to read
   it, and a named pipe stopped the render.
