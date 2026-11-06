@@ -376,11 +376,14 @@ func isKnownArgoCMSettingKey(key string) bool {
 		"resource.exclusions",
 		"resource.inclusions",
 		"resource.selectors",
-		"resource.compareoptions",
-		"resource.customizations":
+		"resource.compareoptions":
 		return true
 	default:
-		return strings.HasPrefix(key, "resource.customizations.")
+		// Argo CD v3.6.1 reads every key that starts with
+		// resource.customizations, with no final dot, as resource
+		// customization settings (util/settings/settings.go:1224). This also
+		// covers the resource.customizations block key itself.
+		return strings.HasPrefix(key, "resource.customizations")
 	}
 }
 

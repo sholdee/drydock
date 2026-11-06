@@ -755,6 +755,11 @@ Supported:
   the result. Otherwise it does not. With valid ConfigMap keys, only this
   prefix rule can cause that. drydock reads the split keys in sorted order,
   keeps the last value, and reports a warning.
+- Discovery of Argo CD settings. drydock finds the `argocd-cm` ConfigMap by
+  its name, as Argo CD does. drydock finds an Argo CD Helm values file by
+  the keys under `configs.cm`. A key that starts with
+  `resource.customizations` counts, with or without a dot after it, because
+  Argo CD reads both forms.
 - Ignore rule order as in Argo CD v3.6.1. Application rules run first, then
   the resource's annotation rule, then `resource.customizations` rules
   (`util/argo/diff/ignore.go`, `util/argo/normalizers/diff_normalizer.go`).
