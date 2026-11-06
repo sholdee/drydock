@@ -437,13 +437,23 @@ func TestUntrackedIgnoredFilterNeverSkipsMoreThanGit(t *testing.T) {
 	filterModes(t, func(t *testing.T, _ bool) {
 		isolateGitUserConfig(t)
 		root, _, wt := newSnapshotRepo(t)
-		writeChangeSetFile(t, filepath.Join(root, ".gitignore"), "foo/**\n!foo/keep.yaml\nbar[!a]\n")
+		writeChangeSetFile(t, filepath.Join(root, ".gitignore"), "foo/**\n!foo/keep.yaml\nbar[!a]\nbaz/**\nqux/**/\nsub/**\n")
+		writeChangeSetFile(t, filepath.Join(root, "sub", ".gitignore"), "!keep.yaml\n")
 		writeChangeSetFile(t, filepath.Join(root, "apps", "cm.yaml"), "a: 1\n")
 		commitAllSnapshotFiles(t, wt, "fixture")
 		writeChangeSetFile(t, filepath.Join(root, "foo", "keep.yaml"), "x\n")
 		writeChangeSetFile(t, filepath.Join(root, "foo", "drop.yaml"), "x\n")
 		writeChangeSetFile(t, filepath.Join(root, "bara"), "x\n")
 		writeChangeSetFile(t, filepath.Join(root, "barb"), "x\n")
+		// "baz/**" needs a part after baz, so a file named baz is kept.
+		writeChangeSetFile(t, filepath.Join(root, "baz"), "x\n")
+		// "qux/**/" matches directories below qux, not a file in it.
+		writeChangeSetFile(t, filepath.Join(root, "qux", "direct"), "x\n")
+		writeChangeSetFile(t, filepath.Join(root, "qux", "deeper", "x"), "x\n")
+		// "sub/**" does not match sub, so Git reads sub/.gitignore and
+		// brings keep.yaml back.
+		writeChangeSetFile(t, filepath.Join(root, "sub", "keep.yaml"), "x\n")
+		writeChangeSetFile(t, filepath.Join(root, "sub", "drop.yaml"), "x\n")
 		filter, err := OpenUntrackedIgnoredFilter(t.Context(), root)
 		if err != nil {
 			t.Fatal(err)
@@ -453,6 +463,11 @@ func TestUntrackedIgnoredFilterNeverSkipsMoreThanGit(t *testing.T) {
 			"foo/drop.yaml": true,
 			"bara":          false,
 			"barb":          true,
+			"baz":           false,
+			"qux/direct":    false,
+			"qux/deeper/x":  true,
+			"sub/keep.yaml": false,
+			"sub/drop.yaml": true,
 		} {
 			if got := filter.Skip(rel, false); got != want {
 				t.Errorf("Skip(%s) = %t, want %t", rel, got, want)

@@ -611,7 +611,9 @@ Supported:
     that is a symlink either, which Git reads.
   - It decides file by file and never skips a whole directory, because a
     later `!` pattern can bring back a file below an ignored directory.
-  - It reads `[!...]` in a pattern as Git does, as a negated set.
+  - It reads `[!...]` in a pattern as Git does, as a negated set, and it
+    requires a path part after a final `/**`, as Git does, so `foo/**`
+    does not match `foo` itself.
   - It checks every path at or under a submodule, because the parent index
     does not list submodule files and Argo CD checks out submodules.
 - A `.git` file at the worktree root, as in a linked worktree, is skipped

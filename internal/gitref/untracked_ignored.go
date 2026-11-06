@@ -447,6 +447,23 @@ func linkedWorktreeInfoExclude(top string) string {
 	return filepath.Join(commonDir, "info", "exclude")
 }
 
+// requireOnePartAfterTrailingDoubleStar rewrites a pattern that ends in
+// "/**" or "/**/" so that go-git needs one more path part after the "**",
+// as Git does: "foo/**" matches everything inside foo, but not foo itself.
+// go-git lets a final "**" match no part at all, so it would also match a
+// file named foo, and treat the directory foo as ignored.
+func requireOnePartAfterTrailingDoubleStar(line string) string {
+	trimmed := strings.TrimRight(line, " \t")
+	switch {
+	case strings.HasSuffix(trimmed, "/**"):
+		return trimmed + "/*"
+	case strings.HasSuffix(trimmed, "/**/"):
+		return strings.TrimSuffix(trimmed, "/") + "/*/"
+	default:
+		return line
+	}
+}
+
 // readIgnorePatternFile reads the patterns of one ignore file whose
 // patterns apply below domain, path components from the worktree top
 // level. Git does not read an ignore file that is a symlink, so neither
@@ -473,6 +490,7 @@ func readIgnorePatternFile(path string, domain []string) []gitignore.Pattern {
 		// pattern to filepath.Match, which reads "!" there as a plain
 		// character and negates with "[^".
 		line = strings.ReplaceAll(line, "[!", "[^")
+		line = requireOnePartAfterTrailingDoubleStar(line)
 		patterns = append(patterns, gitignore.ParsePattern(line, domain))
 	}
 	return patterns
