@@ -591,7 +591,10 @@ Supported:
   path. The root can be the top level of the worktree or a directory in it.
   When the `git` command is on `PATH`, drydock asks Git for that set with
   `git ls-files --others --ignored --exclude-standard --directory`, so every
-  ignore rule that Git applies counts. Without `git`, or when it fails,
+  ignore rule that Git applies counts. The call drops the Git variables that
+  point at another repository, index, or worktree, such as `GIT_DIR` and
+  `GIT_INDEX_FILE` in a Git hook, and stops after 20 seconds. Without `git`,
+  or when it fails or stops,
   drydock reads the index, the `.gitignore` files, and `info/exclude` (of
   the common Git directory for a linked worktree) itself. It then leaves out
   `core.excludesFile` and the default user ignore file, so it skips fewer

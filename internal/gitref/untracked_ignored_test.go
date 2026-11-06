@@ -3,7 +3,9 @@ package gitref
 import (
 	"os/exec"
 	"path/filepath"
+	"syscall"
 	"testing"
+	"time"
 )
 
 // filterModes runs a test with the git CLI and with the go-git fallback,
@@ -211,4 +213,89 @@ func TestUntrackedIgnoredFilterReadsInfoExcludeOfALinkedWorktree(t *testing.T) {
 			t.Fatal("Skip(local-only) = false, want info/exclude of the common Git directory read")
 		}
 	})
+}
+
+// TestUntrackedIgnoredFilterIgnoresInheritedGitEnvironment pins that the git
+// CLI call reads the worktree it is given, whatever GIT_DIR or
+// GIT_INDEX_FILE the process inherited, as in a Git hook. A force-added,
+// tracked file under an ignored directory is kept.
+func TestUntrackedIgnoredFilterIgnoresInheritedGitEnvironment(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not installed")
+	}
+	isolateGitUserConfig(t)
+	root, _, wt := newSnapshotRepo(t)
+	writeChangeSetFile(t, filepath.Join(root, ".gitignore"), "vendor/\n")
+	writeChangeSetFile(t, filepath.Join(root, "apps", "cm.yaml"), "a: 1\n")
+	commitAllSnapshotFiles(t, wt, "fixture")
+	writeChangeSetFile(t, filepath.Join(root, "vendor", "kept.yaml"), "a: 1\n")
+	if _, err := wt.Add("vendor/kept.yaml"); err != nil {
+		t.Fatal(err)
+	}
+	other, _, otherWt := newSnapshotRepo(t)
+	writeChangeSetFile(t, filepath.Join(other, "x"), "x\n")
+	commitAllSnapshotFiles(t, otherWt, "other")
+	for name, value := range map[string]string{
+		"GIT_INDEX_FILE": filepath.Join(t.TempDir(), "empty-index"),
+		"GIT_DIR":        filepath.Join(other, ".git"),
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Setenv(name, value)
+			filter, err := OpenUntrackedIgnoredFilter(t.Context(), root)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if filter.git == nil {
+				t.Fatal("the filter did not use the git CLI")
+			}
+			if filter.Skip("vendor/kept.yaml", false) || filter.Skip("vendor", true) {
+				t.Fatalf("the filter skipped a tracked file because of the inherited %s", name)
+			}
+		})
+	}
+}
+
+// TestUntrackedIgnoredFilterFallsBackWhenGitBlocks pins that a git CLI call
+// that blocks, here on a FIFO named by core.excludesFile, falls back to the
+// go-git rules after gitCLITimeout.
+func TestUntrackedIgnoredFilterFallsBackWhenGitBlocks(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not installed")
+	}
+	isolateGitUserConfig(t)
+	root, repo, wt := newSnapshotRepo(t)
+	writeChangeSetFile(t, filepath.Join(root, ".gitignore"), "ignored/\n")
+	writeChangeSetFile(t, filepath.Join(root, "apps", "cm.yaml"), "a: 1\n")
+	commitAllSnapshotFiles(t, wt, "fixture")
+	writeChangeSetFile(t, filepath.Join(root, "ignored", "x"), "x\n")
+	fifo := filepath.Join(t.TempDir(), "excludes")
+	if err := syscall.Mkfifo(fifo, 0o644); err != nil {
+		t.Skipf("mkfifo: %v", err)
+	}
+	cfg, err := repo.Config()
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg.Raw.Section("core").SetOption("excludesFile", fifo)
+	if err := repo.Storer.SetConfig(cfg); err != nil {
+		t.Fatal(err)
+	}
+	previous := gitCLITimeout
+	gitCLITimeout = 500 * time.Millisecond
+	t.Cleanup(func() { gitCLITimeout = previous })
+
+	start := time.Now()
+	filter, err := OpenUntrackedIgnoredFilter(t.Context(), root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if elapsed := time.Since(start); elapsed > 10*time.Second {
+		t.Fatalf("OpenUntrackedIgnoredFilter() took %s, want it bounded", elapsed)
+	}
+	if filter.git != nil {
+		t.Fatal("the filter used the blocked git CLI, want the go-git fallback")
+	}
+	if !filter.Skip("ignored", true) {
+		t.Fatal("Skip(ignored) = false, want the go-git rules applied")
+	}
 }

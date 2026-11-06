@@ -10,6 +10,7 @@ import (
 	"path"
 	"path/filepath"
 	"strings"
+	"time"
 
 	git "github.com/go-git/go-git/v5"
 	"github.com/go-git/go-git/v5/plumbing/filemode"
@@ -118,20 +119,66 @@ func worktreePrefix(top, root string) (string, bool) {
 	return filepath.ToSlash(rel), true
 }
 
+// gitCLITimeout bounds the git CLI call. A FIFO named by core.excludesFile,
+// or a lazy fetch in a partial clone, can block it.
+var gitCLITimeout = 20 * time.Second
+
+// gitLocalEnvVars are the variables that `git rev-parse --local-env-vars`
+// lists (Git 2.56). Git sets some of them for hooks and for
+// `git rebase --exec`, and they would point the call at another
+// repository, index, or worktree than the one at top. -C does not override
+// them.
+var gitLocalEnvVars = map[string]bool{
+	"GIT_ALTERNATE_OBJECT_DIRECTORIES": true,
+	"GIT_CONFIG":                       true,
+	"GIT_CONFIG_PARAMETERS":            true,
+	"GIT_CONFIG_COUNT":                 true,
+	"GIT_OBJECT_DIRECTORY":             true,
+	"GIT_DIR":                          true,
+	"GIT_WORK_TREE":                    true,
+	"GIT_IMPLICIT_WORK_TREE":           true,
+	"GIT_GRAFT_FILE":                   true,
+	"GIT_INDEX_FILE":                   true,
+	"GIT_NO_REPLACE_OBJECTS":           true,
+	"GIT_REPLACE_REF_BASE":             true,
+	"GIT_PREFIX":                       true,
+	"GIT_SHALLOW_FILE":                 true,
+	"GIT_COMMON_DIR":                   true,
+}
+
+// gitCLIEnv is the environment of the git CLI call: the process
+// environment without gitLocalEnvVars, with optional locks, terminal
+// prompts, and lazy fetches off.
+func gitCLIEnv() []string {
+	env := make([]string, 0, len(os.Environ())+3)
+	for _, entry := range os.Environ() {
+		name, _, _ := strings.Cut(entry, "=")
+		if gitLocalEnvVars[name] {
+			continue
+		}
+		env = append(env, entry)
+	}
+	return append(env, "GIT_OPTIONAL_LOCKS=0", "GIT_TERMINAL_PROMPT=0", "GIT_NO_LAZY_FETCH=1")
+}
+
 // gitCLIIgnoredSet asks the git CLI for the untracked ignored paths of the
-// worktree at top. It reports false when git is not on PATH or fails, such
-// as for a repository that Git refuses as unsafe. The command reads the
-// index and the worktree only: it takes no lock and runs no fsmonitor hook.
+// worktree at top. It reports false when git is not on PATH, fails, or
+// takes longer than gitCLITimeout, such as for a repository that Git
+// refuses as unsafe. The command reads the index and the worktree only: it
+// takes no lock, runs no fsmonitor hook, and prompts for nothing.
 func gitCLIIgnoredSet(ctx context.Context, top string) (*gitIgnoredSet, bool) {
 	gitBin, err := exec.LookPath("git")
 	if err != nil {
 		return nil, false
 	}
+	ctx, cancel := context.WithTimeout(ctx, gitCLITimeout)
+	defer cancel()
 	cmd := exec.CommandContext(ctx, gitBin,
 		"-c", "core.fsmonitor=false",
 		"-C", top,
 		"ls-files", "-z", "--others", "--ignored", "--exclude-standard", "--directory")
-	cmd.Env = append(os.Environ(), "GIT_OPTIONAL_LOCKS=0")
+	cmd.Env = gitCLIEnv()
+	cmd.WaitDelay = time.Second
 	var stdout bytes.Buffer
 	cmd.Stdout = &stdout
 	if err := cmd.Run(); err != nil {
