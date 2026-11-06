@@ -25,3 +25,15 @@ func TestHeadRevision(t *testing.T) {
 		t.Fatalf("HeadRevision(linked worktree) = %q, want %q", got, hash.String())
 	}
 }
+
+func TestPinnedRevisionReturnsBeforeOpeningForNonHexRevisions(t *testing.T) {
+	missing := filepath.Join(t.TempDir(), "missing")
+	if _, _, ok := PinnedRevision(missing, "main"); ok {
+		t.Fatal("PinnedRevision(main) ok = true, want false for a branch name")
+	}
+	const upper = "ABCDEF0123456789ABCDEF0123456789ABCDEF01"
+	single, multi, ok := PinnedRevision(missing, upper)
+	if !ok || single != "abcdef0123456789abcdef0123456789abcdef01" || multi != upper {
+		t.Fatalf("PinnedRevision(full SHA, no repository) = %q, %q, %t", single, multi, ok)
+	}
+}

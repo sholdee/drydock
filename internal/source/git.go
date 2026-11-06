@@ -272,7 +272,7 @@ func checkoutGitRevision(repo *git.Repository, worktree *git.Worktree, revision 
 		return head.Hash().String(), nil
 	}
 
-	hash, err := ResolveGitRevision(repo, cleanRevision)
+	hash, err := resolveCheckoutRevision(repo, cleanRevision)
 	if err != nil {
 		return "", err
 	}
@@ -282,13 +282,36 @@ func checkoutGitRevision(repo *git.Repository, worktree *git.Worktree, revision 
 	return hash.String(), nil
 }
 
+// resolveCheckoutRevision resolves the revision that a fetched Git source
+// checks out. A hex revision that is also the name of a branch or tag
+// resolves to that ref, as `git ls-remote` in the Argo CD v3.6.1 repo-server
+// matches ref names before it takes a hex revision as an abbreviated SHA
+// (util/git/client.go:991-1022). go-git prefers the object, so
+// ResolveGitRevision alone would check out another commit.
+//
+// git reads hex digits in either case, and go-git only in lower case, so a
+// hex revision that names no ref resolves in lower case.
+func resolveCheckoutRevision(repo *git.Repository, revision string) (*plumbing.Hash, error) {
+	if !abbreviatedCommitSHA.MatchString(revision) {
+		return ResolveGitRevision(repo, revision)
+	}
+	if !fullCommitSHA.MatchString(revision) {
+		if hash, ok := lsRemoteRefCommit(repo, revision); ok {
+			return &hash, nil
+		}
+	}
+	if hash, err := ResolveGitRevision(repo, revision); err == nil {
+		return hash, nil
+	}
+	return ResolveGitRevision(repo, strings.ToLower(revision))
+}
+
 // LsRemoteRevision returns the revision that the Argo CD v3.6.1
 // repo-server passes on for a source of a multi-source Application, where it
 // uses the `git ls-remote` result as it is (nativeGitClient.lsRemote,
 // util/git/client.go:961-1027, and runRepoOperation,
 // reposerver/repository/repository.go:516-518). commit is the full commit
-// SHA that revision resolves to in repo, the commit drydock renders. The
-// result is:
+// SHA that drydock checked out for revision in repo. The result is:
 //
 //   - revision as written when it is a full 40-digit SHA;
 //   - revision as written when it is an abbreviated SHA (7 or more hex
@@ -303,15 +326,11 @@ func LsRemoteRevision(repo *git.Repository, revision, commit string) string {
 	if fullCommitSHA.MatchString(revision) {
 		return revision
 	}
-	if repo == nil || isDefaultGitRevision(revision) || !abbreviatedCommitSHA.MatchString(revision) {
+	if repo == nil || !abbreviatedCommitSHA.MatchString(revision) {
 		return commit
 	}
-	// ls-remote matches a ref name before it takes a hex revision as an
-	// abbreviated SHA.
-	for _, name := range lsRemoteRefNames(revision) {
-		if _, err := repo.Reference(name, true); err == nil {
-			return commit
-		}
+	if _, ok := lsRemoteRefCommit(repo, revision); ok {
+		return commit
 	}
 	if strings.HasPrefix(commit, strings.ToLower(revision)) {
 		return revision
@@ -319,21 +338,77 @@ func LsRemoteRevision(repo *git.Repository, revision, commit string) string {
 	return commit
 }
 
+// PinnedRevision returns what the Argo CD v3.6.1 repo-server reports as
+// ARGOCD_APP_REVISION for a targetRevision that pins a commit by SHA, when
+// drydock renders a local tree and not a checkout of that revision. single
+// is the value of a single-source Application (`git rev-parse HEAD` after
+// the checkout) and multi the value of a source of a multi-source
+// Application (the ls-remote result as it is). ok is false when revision is
+// not hex, so it names a branch, a tag, or HEAD.
+//
+//   - A full SHA gives the SHA in lower case for single and as written for
+//     multi. repo may be nil.
+//   - A hex revision that names a branch or a tag of repo gives the commit
+//     of that ref for both, because ls-remote matches ref names first.
+//   - Any other abbreviated SHA stays as written for multi. single is the
+//     commit in repo that the abbreviation names, or "" when repo has no
+//     such single commit.
+func PinnedRevision(repo *git.Repository, revision string) (single, multi string, ok bool) {
+	revision = strings.TrimSpace(revision)
+	if fullCommitSHA.MatchString(revision) {
+		return strings.ToLower(revision), revision, true
+	}
+	if !abbreviatedCommitSHA.MatchString(revision) {
+		return "", "", false
+	}
+	if repo == nil {
+		return "", revision, true
+	}
+	if hash, ok := lsRemoteRefCommit(repo, revision); ok {
+		return hash.String(), hash.String(), true
+	}
+	hash, err := repo.ResolveRevision(plumbing.Revision(strings.ToLower(revision)))
+	if err != nil || !strings.HasPrefix(hash.String(), strings.ToLower(revision)) {
+		return "", revision, true
+	}
+	return hash.String(), revision, true
+}
+
+// IsHexRevision reports whether revision is a full or abbreviated commit SHA
+// in the sense of the Argo CD repo-server (7 or more hex digits).
+func IsHexRevision(revision string) bool {
+	return abbreviatedCommitSHA.MatchString(strings.TrimSpace(revision))
+}
+
 var (
 	fullCommitSHA        = regexp.MustCompile("^[0-9A-Fa-f]{40}$")
 	abbreviatedCommitSHA = regexp.MustCompile("^[0-9A-Fa-f]{7,}$")
 )
 
-// lsRemoteRefNames lists the local ref names that would hold a branch or a
-// tag named revision: refs/heads/<name> in a working repository,
-// refs/remotes/origin/<name> in a drydock Git cache clone, and
-// refs/tags/<name>.
-func lsRemoteRefNames(revision string) []plumbing.ReferenceName {
-	return []plumbing.ReferenceName{
-		plumbing.NewBranchReferenceName(revision),
-		plumbing.NewRemoteReferenceName("origin", revision),
-		plumbing.NewTagReferenceName(revision),
+// lsRemoteRefCommit returns the commit of the branch or tag named name in
+// repo: refs/heads/<name>, refs/remotes/<remote>/<name> for every remote,
+// or refs/tags/<name>, peeled to its commit. A branch wins over a tag.
+// ls-remote takes the first match in a ref list that has no fixed order,
+// so for a name that is both a branch and a tag Argo CD can pick either.
+func lsRemoteRefCommit(repo *git.Repository, name string) (plumbing.Hash, bool) {
+	names := []plumbing.ReferenceName{plumbing.NewBranchReferenceName(name)}
+	if remotes, err := repo.Remotes(); err == nil {
+		for _, remote := range remotes {
+			names = append(names, plumbing.NewRemoteReferenceName(remote.Config().Name, name))
+		}
 	}
+	names = append(names, plumbing.NewTagReferenceName(name))
+	for _, refName := range names {
+		if _, err := repo.Reference(refName, true); err != nil {
+			continue
+		}
+		hash, err := repo.ResolveRevision(plumbing.Revision(refName.String()))
+		if err != nil {
+			continue
+		}
+		return *hash, true
+	}
+	return plumbing.ZeroHash, false
 }
 
 func isDefaultGitRevision(revision string) bool {

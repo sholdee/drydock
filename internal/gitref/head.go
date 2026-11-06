@@ -21,14 +21,17 @@ func HeadRevision(repoPath string) string {
 	return hash.String()
 }
 
-// LsRemoteRevision returns source.LsRemoteRevision for revision in the Git
-// repository whose top-level directory is repoPath, where commit is the
-// commit drydock renders. It returns commit when repoPath is no repository
-// top.
-func LsRemoteRevision(repoPath, revision, commit string) string {
+// PinnedRevision returns source.PinnedRevision for revision in the Git
+// repository whose top-level directory is repoPath. A revision that is not
+// hex returns before the repository is opened. When repoPath is no
+// repository top, only a full SHA resolves.
+func PinnedRevision(repoPath, revision string) (single, multi string, ok bool) {
+	if !source.IsHexRevision(revision) {
+		return "", "", false
+	}
 	repo, _, err := openLocalRepository(repoPath)
 	if err != nil {
-		return source.LsRemoteRevision(nil, revision, commit)
+		return source.PinnedRevision(nil, revision)
 	}
-	return source.LsRemoteRevision(repo, revision, commit)
+	return source.PinnedRevision(repo, revision)
 }

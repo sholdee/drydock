@@ -221,7 +221,7 @@ func settingsInstallHelmValueFiles(provider localProvider, application argoappv1
 	if err != nil {
 		return nil
 	}
-	opts.ArgoEnv = settingsInstallRenderEnv(provider, application, sourcePlan.Source, local)
+	opts.ArgoEnv = settingsInstallRenderEnv(provider, application, sourcePlan.Source)
 	refRoots, refSources, err := renderRefsForSource(plan, sourcePlan, helmRefInputPaths(opts))
 	if err != nil {
 		return nil
@@ -255,13 +255,16 @@ func settingsInstallTracking(provider localProvider) TrackingOptions {
 }
 
 // settingsInstallRenderEnv is the Argo CD build environment of a source, as
-// the render passes it to the Helm value file loader. A local source renders
-// from the repository root, so its ARGOCD_APP_REVISION is the root commit,
-// as sourceAppRevision gives it.
-func settingsInstallRenderEnv(provider localProvider, application argoappv1.Application, source argoappv1.ApplicationSource, local bool) argoappv1.Env {
+// the render passes it to the Helm value file loader. A source that renders
+// a local tree gets the ARGOCD_APP_REVISION that the render gives it
+// (localSourceAppRevision): the commit of the tree, the ls-remote form for
+// a multi-source Application, and the HEAD commit of a --repo-map target.
+// Any other source keeps the spec targetRevision, because drydock finds
+// these files without acquiring anything.
+func settingsInstallRenderEnv(provider localProvider, application argoappv1.Application, source argoappv1.ApplicationSource) argoappv1.Env {
 	controllerNamespace := settingsInstallTracking(provider).ControllerNamespace
-	if local && provider.rootAppRevision != "" && strings.TrimSpace(source.RepoURL) != "" {
-		return argoRenderEnvAt(application, source, provider.rootAppRevision, controllerNamespace)
+	if revision := provider.localSourceAppRevision(source, application.Spec.HasMultipleSources()); revision != "" {
+		return argoRenderEnvAt(application, source, revision, controllerNamespace)
 	}
 	return argoRenderEnv(application, source, controllerNamespace)
 }

@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	argoappv1 "github.com/argoproj/argo-cd/v3/pkg/apis/application/v1alpha1"
 	"github.com/sholdee/drydock/internal/cacheevent"
 	"github.com/sholdee/drydock/internal/gitref"
 	"github.com/sholdee/drydock/internal/ociartifact"
@@ -140,14 +141,14 @@ func (p localProvider) resolveSourceRootIdentity(ctx context.Context, source ren
 // written, else the commit SHA (listRemote peels annotated tags).
 //
 // root and identity are what resolveSourceRootIdentity returned for source.
-// drydock reports the commit of the tree it renders: the resolved commit of
-// a fetched Git source, the commit of the provider root for a source that
-// renders from it, and the HEAD commit of a --repo-map target. "" means
-// drydock cannot tell, and the build environment keeps the spec
-// targetRevision. A chart from a chart repository never gets here
-// (PrepareSource stops at an empty path): for the exact versions drydock
-// supports, the repo-server reports the targetRevision unchanged
-// (newHelmClientResolveRevision, repository.go:3038-3040).
+// A fetched Git source reports what drydock checked out. A source that
+// renders a local tree (the provider root or a --repo-map target) is
+// localTreeAppRevision. "" means drydock cannot tell, and the build
+// environment keeps the spec targetRevision. A chart from a chart
+// repository never gets here (PrepareSource stops at an empty path): for
+// the exact versions drydock supports, the repo-server reports the
+// targetRevision unchanged (newHelmClientResolveRevision,
+// repository.go:3038-3040).
 func (p localProvider) sourceAppRevision(source render.ResolvedSource, root string, identity SourceIdentity, multi bool) string {
 	switch identity.Kind {
 	case sourceIdentityKindGit:
@@ -164,7 +165,7 @@ func (p localProvider) sourceAppRevision(source render.ResolvedSource, root stri
 		if strings.TrimSpace(source.RepoURL) == "" {
 			return ""
 		}
-		return p.treeAppRevision(p.rootGitRepo, p.rootAppRevision, source.TargetRevision, multi)
+		return localTreeAppRevision(p.rootGitRepo, p.rootAppRevision, source.TargetRevision, multi)
 	}
 	if p.sourceResolver == nil {
 		return ""
@@ -172,20 +173,55 @@ func (p localProvider) sourceAppRevision(source render.ResolvedSource, root stri
 	if _, ok := p.sourceResolver.MappedPath(source.RepoURL); !ok {
 		return ""
 	}
-	if p.isRepoRoot(root) {
-		return p.treeAppRevision(p.rootGitRepo, p.rootAppRevision, source.TargetRevision, multi)
-	}
-	return p.treeAppRevision(root, p.mappedAppRevision(root), source.TargetRevision, multi)
+	return p.mappedTreeAppRevision(root, source.TargetRevision, multi)
 }
 
-// treeAppRevision returns commit, the commit of a local tree, or for a
-// multi-source Application its ls-remote form for targetRevision in the Git
-// repository at repo.
-func (p localProvider) treeAppRevision(repo, commit, targetRevision string, multi bool) string {
-	if !multi || commit == "" || repo == "" {
+// localSourceAppRevision is sourceAppRevision for a source that
+// sourceResolvesToRepoRoot or a --repo-map resolves to a local tree, found
+// without acquiring anything. It returns "" for any other source.
+func (p localProvider) localSourceAppRevision(source argoappv1.ApplicationSource, multi bool) string {
+	if strings.TrimSpace(source.RepoURL) == "" {
+		return ""
+	}
+	if p.sourceResolver != nil {
+		if mappedPath, ok := p.sourceResolver.MappedPath(source.RepoURL); ok {
+			return p.mappedTreeAppRevision(mappedPath, source.TargetRevision, multi)
+		}
+	}
+	if !p.sourceResolvesToRepoRoot(settingsInstallResolvedSource(source)) {
+		return ""
+	}
+	return localTreeAppRevision(p.rootGitRepo, p.rootAppRevision, source.TargetRevision, multi)
+}
+
+// mappedTreeAppRevision is localTreeAppRevision for a --repo-map target.
+func (p localProvider) mappedTreeAppRevision(root, targetRevision string, multi bool) string {
+	if p.isRepoRoot(root) {
+		return localTreeAppRevision(p.rootGitRepo, p.rootAppRevision, targetRevision, multi)
+	}
+	return localTreeAppRevision(root, p.mappedAppRevision(root), targetRevision, multi)
+}
+
+// localTreeAppRevision returns the ARGOCD_APP_REVISION of a source that
+// renders a local tree, whose commit is commit in the Git repository at
+// repo. drydock renders the tree whatever targetRevision names. A
+// targetRevision that pins a commit by SHA gives what the repo-server
+// reports for it (sourcepkg.PinnedRevision), because that is known offline.
+// Any other targetRevision gives commit, which is "" when the tree is not
+// the top of a Git repository. An abbreviated SHA that no single commit of
+// repo matches gives commit for a single-source Application.
+func localTreeAppRevision(repo, commit, targetRevision string, multi bool) string {
+	single, multiRevision, ok := gitref.PinnedRevision(repo, targetRevision)
+	switch {
+	case !ok:
+		return commit
+	case multi:
+		return multiRevision
+	case single != "":
+		return single
+	default:
 		return commit
 	}
-	return gitref.LsRemoteRevision(repo, targetRevision, commit)
 }
 
 // isRepoRoot reports whether dir is the provider root.
