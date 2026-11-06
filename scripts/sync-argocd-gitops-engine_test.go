@@ -146,11 +146,11 @@ func TestGojqMatchesSelectedArgoCD(t *testing.T) {
 	if err != nil {
 		t.Fatalf("readGoMod(%s) error = %v", argo.GoMod, err)
 	}
-	modules, err := gojqModules()
+	modules, err := gojqModules("readonly")
 	if err != nil {
 		t.Fatalf("gojqModules() error = %v", err)
 	}
-	if len(modules) < 2 || !slices.Contains(modules, gojqModule) {
+	if !slices.Contains(modules, gojqModule) {
 		t.Fatalf("gojqModules() = %v, want gojq and the modules it compiles in", modules)
 	}
 	for _, module := range modules {

@@ -184,7 +184,8 @@ func requireGojqModules(argoGoMod goModFile) error {
 	if err := runGo("mod", "edit", "-require="+gojqModule+"@"+gojqVersion); err != nil {
 		return fmt.Errorf("update gojq requirement: %w", err)
 	}
-	modules, err := gojqModules()
+	// -mod=mod lets go list read the go.mod that the edit above changed.
+	modules, err := gojqModules("mod")
 	if err != nil {
 		return err
 	}
@@ -202,9 +203,11 @@ func requireGojqModules(argoGoMod goModFile) error {
 
 // gojqModules returns the modules whose packages the gojq package compiles
 // into drydock, gojq included. Modules that only gojq's command-line tool
-// uses are not part of drydock and are left out.
-func gojqModules() ([]string, error) {
-	cmd := exec.Command("go", "list", "-mod=mod", "-deps", "-f", "{{with .Module}}{{.Path}}{{end}}", gojqModule)
+// uses are not part of drydock and are left out. mod is the -mod mode: the
+// helper uses "mod" after it edits go.mod, and the test uses "readonly", so
+// an out-of-date go.mod fails instead of being fixed.
+func gojqModules(mod string) ([]string, error) {
+	cmd := exec.Command("go", "list", "-mod="+mod, "-deps", "-f", "{{with .Module}}{{.Path}}{{end}}", gojqModule)
 	output, err := cmd.Output()
 	if err != nil {
 		return nil, fmt.Errorf("go list -deps %s: %w", gojqModule, err)
