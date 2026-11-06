@@ -234,10 +234,10 @@ config, so the daemon it reaches is `DOCKER_HOST` or `/var/run/docker.sock`,
 and `DOCKER_HOST` must be a local `unix://` socket. Before the capture the
 harness checks both with the same lookups. On Docker Desktop
 `/var/run/docker.sock` exists; on colima or OrbStack without it, set
-`DOCKER_HOST` to the `unix://` endpoint `docker context inspect` reports. Run with
-`KUBECONFIG` pointing at a fresh file (for example `KUBECONFIG=$(mktemp)`) so
-the throwaway kind cluster never touches your kubeconfig. Apple Silicon hosts
-run the `linux/arm64` image variants.
+`DOCKER_HOST` to the `unix://` endpoint `docker context inspect` reports. The
+smoke uses its own kubeconfig, so the throwaway kind cluster never touches
+yours (see [Concurrent runs](#concurrent-runs)). Apple Silicon hosts run the
+`linux/arm64` image variants.
 
 ## argocd-vault-plugin fixture
 
@@ -885,6 +885,15 @@ The smoke checks the conditions in two steps:
 The usual inventory and manifest comparisons cover the generated
 Applications. `TestArgoCDParityFixtureRollingSync` in `internal/appset` pins
 the drydock side.
+
+## Concurrent runs
+
+Each smoke run writes its own kubeconfig to `<out>/kubeconfig` and removes it
+on exit (unless `--keep-cluster` is set). So two runs on one host do not
+switch each other's kubectl context. Two runs still cannot overlap: the
+registry bridge and the Argo CD server port-forward use the fixed local ports
+5443 and 18080. Give each run its own `--cluster-name` and `--out`. When the
+other run no longer uses either port, start the next run.
 
 ## Directory decode fixture
 

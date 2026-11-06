@@ -502,6 +502,13 @@ done
 [[ -d "${SIDECAR_PATH}" ]] || fail "CMP sidecar manifest directory not found: ${SIDECAR_PATH}"
 
 OUT_DIR="$(mkdir -p "${OUT_DIR}" && cd "${OUT_DIR}" && pwd)"
+# Each run has its own kubeconfig. kind create cluster and kind export
+# kubeconfig set the current context of the kubeconfig they write, so a
+# shared file would let two runs on one host switch each other's context.
+# cleanup removes the file unless --keep-cluster keeps the cluster.
+KUBECONFIG="${OUT_DIR}/kubeconfig"
+export KUBECONFIG
+rm -f "${KUBECONFIG}"
 WORK_DIR="$(mktemp -d)"
 ARGOCD_CONFIG_DIR="${WORK_DIR}/argocd"
 ARGOCD_CONFIG="${ARGOCD_CONFIG_DIR}/config"
@@ -560,6 +567,9 @@ cleanup() {
   rm -rf "${WORK_DIR}"
   if [[ "${CREATE_CLUSTER}" == "true" && "${KEEP_CLUSTER}" != "true" ]]; then
     kind delete cluster --name "${CLUSTER_NAME}" >/dev/null 2>&1 || true
+  fi
+  if [[ "${KEEP_CLUSTER}" != "true" ]]; then
+    rm -f "${KUBECONFIG}"
   fi
 }
 trap cleanup EXIT
