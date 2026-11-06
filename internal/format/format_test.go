@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	yamlv2 "go.yaml.in/yaml/v2"
 	"go.yaml.in/yaml/v3"
 	sigsyaml "sigs.k8s.io/yaml"
 )
@@ -147,5 +148,65 @@ func TestYAMLIndentsByTwoSpaces(t *testing.T) {
 	}
 	if got := string(data); got != want {
 		t.Fatalf("MarshalYAML() = %q, want %q", got, want)
+	}
+}
+
+// TestMarshalYAMLTabLeadingStringsRoundTrip pins that every YAML parser
+// drydock output meets reads a string back unchanged, including strings that
+// start with a tab. yaml.v3 writes "\tx\n" as a literal block whose first
+// content line starts with a tab, which yaml.v3, yaml.v2 and sigs.k8s.io/yaml
+// (kubectl) all reject.
+func TestMarshalYAMLTabLeadingStringsRoundTrip(t *testing.T) {
+	for _, text := range []string{
+		"\treturn 1\n",
+		"\treturn 1",
+		"\t",
+		"\t\n",
+		"\ta\n\tb\n",
+		"\ta\r\nb",
+		"a\n\tb\n",
+		"\n\tx\n",
+		" \tx\ny\n",
+		"x\n\t\n",
+		"plain\nblock\n",
+		"  leading spaces\nkeep\n",
+	} {
+		value := map[string]any{
+			"data":  map[string]any{"key": text},
+			"items": []any{text, map[string]any{"nested": text}},
+		}
+		data, err := MarshalYAML(value)
+		if err != nil {
+			t.Fatalf("MarshalYAML(%q) error = %v", text, err)
+		}
+		for name, unmarshal := range map[string]func([]byte, any) error{
+			"yaml.v3":          yaml.Unmarshal,
+			"yaml.v2":          yamlv2.Unmarshal,
+			"sigs.k8s.io/yaml": func(data []byte, out any) error { return sigsyaml.Unmarshal(data, out) },
+		} {
+			var back struct {
+				Data  map[string]string `json:"data" yaml:"data"`
+				Items []any             `json:"items" yaml:"items"`
+			}
+			if err := unmarshal(data, &back); err != nil {
+				t.Fatalf("%s cannot read MarshalYAML(%q) output: %v\n%s", name, text, err, data)
+			}
+			if back.Data["key"] != text || back.Items[0] != text {
+				t.Fatalf("%s read %q back as %q and %q\n%s", name, text, back.Data["key"], back.Items[0], data)
+			}
+		}
+	}
+}
+
+// TestMarshalYAMLKeepsBlockStyleWithoutLeadingTab pins that only strings
+// that start with a tab change style: other multi-line strings stay literal
+// blocks.
+func TestMarshalYAMLKeepsBlockStyleWithoutLeadingTab(t *testing.T) {
+	data, err := MarshalYAML(map[string]any{"a": "x\n\ty\n", "b": "\tz\n"})
+	if err != nil {
+		t.Fatalf("MarshalYAML() error = %v", err)
+	}
+	if want := "a: |\n  x\n  \ty\nb: \"\\tz\\n\"\n"; string(data) != want {
+		t.Fatalf("MarshalYAML() = %q, want %q", data, want)
 	}
 }
