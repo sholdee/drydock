@@ -78,7 +78,7 @@ func (p localProvider) PrepareSource(ctx context.Context, application argoappv1.
 
 	sourcePlan.Source = merged
 	sourcePlan.SourceRoot = sourceRoot
-	sourcePlan.AppRevision = p.sourceAppRevision(source, sourceRoot, identity)
+	sourcePlan.AppRevision = p.sourceAppRevision(source, sourceRoot, identity, application.Spec.HasMultipleSources())
 	sourcePlan.ExplicitType = ""
 	if explicitType != nil {
 		sourcePlan.ExplicitType = *explicitType

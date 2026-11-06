@@ -108,6 +108,10 @@ func newLocalProvider(ctx context.Context, orchestrator Orchestrator, root strin
 	provider.userRoots = userRootSet(root, request.rootRevision, request.RepoMaps)
 	provider.rootIdentity, provider.rootInputMode, provider.rootDirtyPaths = rootIdentityForRequest(ctx, root, request)
 	provider.rootAppRevision = rootAppRevisionForRequest(root, request, provider.rootIdentity)
+	provider.rootGitRepo = root
+	if strings.TrimSpace(request.rootRevision) != "" {
+		provider.rootGitRepo = request.rootRepo
+	}
 	provider.mappedAppRevisions = &sync.Map{}
 	if matcher := newSelfRepoMatcher(request.selfRepo); len(matcher.urlKeys) > 0 {
 		provider.selfRepoURLKeys = matcher.urlKeys

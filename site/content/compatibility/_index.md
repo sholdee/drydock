@@ -81,8 +81,10 @@ The build environment variables `ARGOCD_APP_REVISION`,
 revision that the Argo CD repo-server resolves. A Git source gets the commit
 SHA of the tree that drydock renders: the fetched commit, the HEAD commit of
 the `--path` tree or of a `--repo-map` directory, or the snapshot commit of
-each side of a `--ref` diff. An OCI artifact source gets the manifest digest,
-and a chart from a Helm repository gets the chart version. When the tree is
+each side of a `--ref` diff. In a multi-source Application a Git source gets
+the `git ls-remote` form, as in Argo CD: the tag object SHA for an annotated
+tag and an abbreviated SHA as written. An OCI artifact source gets the
+manifest digest, and a chart from a Helm repository gets the chart version. When the tree is
 not the top of a Git repository, drydock cannot tell the commit and keeps
 the spec `targetRevision`. A source that renders the local tree reports the
 local commit, which differs from the commit that Argo CD sees after a push

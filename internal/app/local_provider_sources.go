@@ -121,9 +121,10 @@ func (p localProvider) resolveSourceRootIdentity(ctx context.Context, source ren
 		ResolvedRevision:  acquired.Revision,
 	})
 	return acquired.Path, SourceIdentity{
-		Kind:     sourceIdentityKindGit,
-		Locator:  sourcepkg.NormalizeURL(source.RepoURL),
-		Revision: acquired.Revision,
+		Kind:             sourceIdentityKindGit,
+		Locator:          sourcepkg.NormalizeURL(source.RepoURL),
+		Revision:         acquired.Revision,
+		LsRemoteRevision: acquired.LsRemoteRevision,
 	}, nil
 }
 
@@ -132,18 +133,29 @@ func (p localProvider) resolveSourceRootIdentity(ctx context.Context, source ren
 // (reposerver/repository/repository.go:1864-1878) exposes as
 // ARGOCD_APP_REVISION. runRepoOperation (repository.go:375-386 and 516-536)
 // resolves it: the commit SHA for a Git source and the manifest digest for an
-// OCI source. root and identity are what resolveSourceRootIdentity returned
-// for source. drydock reports the commit of the tree it renders: the
-// resolved commit of a fetched Git source, the commit of the provider root
-// for a source that renders from it, and the HEAD commit of a --repo-map
-// target. "" means drydock cannot tell, and the build environment keeps the
-// spec targetRevision. A chart from a chart repository never gets here
+// OCI source. For a Git source of a single-source Application it is the
+// checked-out commit (`git rev-parse HEAD`). For a Git source of a
+// multi-source Application (multi) it is the `git ls-remote` result as it
+// is, which sourcepkg.LsRemoteRevision gives: the tag object SHA for an
+// annotated tag and an abbreviated SHA as written.
+//
+// root and identity are what resolveSourceRootIdentity returned for source.
+// drydock reports the commit of the tree it renders: the resolved commit of
+// a fetched Git source, the commit of the provider root for a source that
+// renders from it, and the HEAD commit of a --repo-map target. "" means
+// drydock cannot tell, and the build environment keeps the spec
+// targetRevision. A chart from a chart repository never gets here
 // (PrepareSource stops at an empty path): for the exact versions drydock
 // supports, the repo-server reports the targetRevision unchanged
 // (newHelmClientResolveRevision, repository.go:3038-3040).
-func (p localProvider) sourceAppRevision(source render.ResolvedSource, root string, identity SourceIdentity) string {
+func (p localProvider) sourceAppRevision(source render.ResolvedSource, root string, identity SourceIdentity, multi bool) string {
 	switch identity.Kind {
-	case sourceIdentityKindGit, sourceIdentityKindOCI:
+	case sourceIdentityKindGit:
+		if multi && identity.LsRemoteRevision != "" {
+			return identity.LsRemoteRevision
+		}
+		return strings.TrimSpace(identity.Revision)
+	case sourceIdentityKindOCI:
 		return strings.TrimSpace(identity.Revision)
 	case sourceIdentityKindRoot:
 		// Only the synthetic Application of a plugin policy bootstrap
@@ -152,7 +164,7 @@ func (p localProvider) sourceAppRevision(source render.ResolvedSource, root stri
 		if strings.TrimSpace(source.RepoURL) == "" {
 			return ""
 		}
-		return p.rootAppRevision
+		return p.treeAppRevision(p.rootGitRepo, p.rootAppRevision, source.TargetRevision, multi)
 	}
 	if p.sourceResolver == nil {
 		return ""
@@ -160,21 +172,40 @@ func (p localProvider) sourceAppRevision(source render.ResolvedSource, root stri
 	if _, ok := p.sourceResolver.MappedPath(source.RepoURL); !ok {
 		return ""
 	}
-	return p.mappedAppRevision(root)
+	if p.isRepoRoot(root) {
+		return p.treeAppRevision(p.rootGitRepo, p.rootAppRevision, source.TargetRevision, multi)
+	}
+	return p.treeAppRevision(root, p.mappedAppRevision(root), source.TargetRevision, multi)
 }
 
-// mappedAppRevision returns the HEAD commit of a --repo-map target directory,
-// or the provider root revision when the target is the provider root. It
-// returns "" when the directory is not the top of a Git repository.
+// treeAppRevision returns commit, the commit of a local tree, or for a
+// multi-source Application its ls-remote form for targetRevision in the Git
+// repository at repo.
+func (p localProvider) treeAppRevision(repo, commit, targetRevision string, multi bool) string {
+	if !multi || commit == "" || repo == "" {
+		return commit
+	}
+	return gitref.LsRemoteRevision(repo, targetRevision, commit)
+}
+
+// isRepoRoot reports whether dir is the provider root.
+func (p localProvider) isRepoRoot(dir string) bool {
+	abs, err := filepath.Abs(dir)
+	if err != nil {
+		return false
+	}
+	repoRoot, err := filepath.Abs(p.repoRoot)
+	return err == nil && filepath.Clean(repoRoot) == filepath.Clean(abs)
+}
+
+// mappedAppRevision returns the HEAD commit of a --repo-map target directory.
+// It returns "" when the directory is not the top of a Git repository.
 func (p localProvider) mappedAppRevision(root string) string {
 	abs, err := filepath.Abs(root)
 	if err != nil {
 		return ""
 	}
 	abs = filepath.Clean(abs)
-	if repoRoot, err := filepath.Abs(p.repoRoot); err == nil && filepath.Clean(repoRoot) == abs {
-		return p.rootAppRevision
-	}
 	if p.mappedAppRevisions == nil {
 		return gitref.HeadRevision(abs)
 	}

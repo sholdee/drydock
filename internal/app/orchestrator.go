@@ -60,8 +60,11 @@ type BuildRequest struct {
 	persistentRenderCache   *persistentRenderCache
 	// symlinkBounds keeps the out-of-bounds symlink check of each tree for
 	// the run, shared by every provider the run builds.
-	symlinkBounds        *symlinkBoundsMemo
-	rootRevision         string
+	symlinkBounds *symlinkBoundsMemo
+	rootRevision  string
+	// rootRepo is the Git repository that the rootRevision snapshot came
+	// from. It is set with rootRevision.
+	rootRepo             string
 	selfRepo             selfRepoRefs
 	discoveryPathMemo    *sync.Map
 	appsetGenerationMemo *sync.Map

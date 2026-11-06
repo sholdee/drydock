@@ -20,3 +20,15 @@ func HeadRevision(repoPath string) string {
 	}
 	return hash.String()
 }
+
+// LsRemoteRevision returns source.LsRemoteRevision for revision in the Git
+// repository whose top-level directory is repoPath, where commit is the
+// commit drydock renders. It returns commit when repoPath is no repository
+// top.
+func LsRemoteRevision(repoPath, revision, commit string) string {
+	repo, _, err := openLocalRepository(repoPath)
+	if err != nil {
+		return source.LsRemoteRevision(nil, revision, commit)
+	}
+	return source.LsRemoteRevision(repo, revision, commit)
+}

@@ -90,6 +90,11 @@ type localProvider struct {
 	// It is the ARGOCD_APP_REVISION of every source that renders from
 	// repoRoot (see sourceAppRevision).
 	rootAppRevision string
+	// rootGitRepo is the Git repository that holds rootAppRevision: the
+	// repository a diff side snapshot came from, else repoRoot. Its refs
+	// give the ls-remote form of the revision for multi-source
+	// Applications (sourceAppRevision).
+	rootGitRepo string
 	// mappedAppRevisions memoizes the HEAD commit of each --repo-map target
 	// directory for the run, keyed by absolute path. nil computes every time.
 	mappedAppRevisions *sync.Map

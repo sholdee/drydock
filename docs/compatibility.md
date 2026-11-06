@@ -495,6 +495,22 @@ Supported:
     so it reports the commit of that tree. Each side of a `--ref` or
     `--ref-orig` diff gets the commit of its snapshot.
   - A `--repo-map` source gets the HEAD commit of the mapped directory.
+  - A Git source of a multi-source Application gets what `git ls-remote`
+    resolution gives, as Argo CD does. The repo-server passes the
+    `ls-remote` result as the revision there and does not read the
+    checked-out commit (`repository.go:516-518`, `util/git/client.go:961-1027`).
+    So a `targetRevision` that names an annotated tag gives the SHA of the
+    tag object, not of the commit, and an abbreviated commit SHA stays as
+    written. A full SHA also stays as written. HEAD, a branch and a
+    lightweight tag give the commit SHA. A single-source Application gets
+    the checked-out commit SHA in all of these cases (`git rev-parse HEAD`,
+    `repository.go:519-525`). Any `spec.sources` list counts as
+    multi-source, also with one entry. drydock reads the tag refs of the
+    Git cache clone, of the repository of a `--ref` snapshot, of the
+    `--path` tree, or of the `--repo-map` directory. It uses the tag only
+    when the tag points to the commit that drydock renders, else the commit
+    SHA. When a branch and a tag have the same name, drydock uses the
+    branch. Argo CD takes whichever comes first in an unordered list there.
   - An OCI artifact source gets the manifest digest (`sha256:...`), so
     `_SHORT` is `sha256:` and `_SHORT_8` is `sha256:` plus one hex digit,
     as in Argo CD.
@@ -510,13 +526,12 @@ Supported:
     Argo CD reports the commit that `targetRevision` names in the remote
     repository, which is a different commit until the change is pushed and,
     after a merge, is the merge commit.
-  - In a multi-source Application, the repo-server passes the result of
-    `git ls-remote` as the revision and does not read the checked-out commit
-    (`repository.go:516-525`). So for a `targetRevision` that names an
-    annotated tag it reports the SHA of the tag object, and for an
-    abbreviated commit SHA it reports the abbreviation as written. A
-    single-source Application reports the commit SHA in both cases. drydock
-    reports the full commit SHA in all of these cases.
+  - drydock reads the tags of the local repository, not of the remote. A
+    multi-source Application at an annotated tag that exists only locally
+    and was never pushed reports the SHA of the local tag object, where
+    Argo CD cannot resolve the tag and fails the Application. A tag that
+    exists only in the remote and was never fetched gives the commit SHA
+    in drydock.
 - The persistent render cache keys a local source on its input files and not
   on the commit, so a commit that leaves the inputs unchanged keeps the
   cached entry. A local source whose spec names one of the
