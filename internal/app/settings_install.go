@@ -93,11 +93,19 @@ func applicationSettingsInstall(ctx context.Context, request BuildRequest, provi
 	return install
 }
 
+// settingsInstallMemoKey covers every input of computeSettingsInstall that
+// comes from the Application: the name, namespace, and project, which the
+// build environment and the .argocd-source-<app>.yaml file name read, the
+// destination, which the build environment reads, and the sources.
 func settingsInstallMemoKey(application argoappv1.Application) (string, bool) {
 	data, err := json.Marshal(struct {
-		Source  *argoappv1.ApplicationSource `json:"source,omitempty"`
-		Sources argoappv1.ApplicationSources `json:"sources,omitempty"`
-	}{application.Spec.Source, application.Spec.Sources})
+		Name        string                           `json:"name"`
+		Namespace   string                           `json:"namespace"`
+		Project     string                           `json:"project"`
+		Destination argoappv1.ApplicationDestination `json:"destination"`
+		Source      *argoappv1.ApplicationSource     `json:"source,omitempty"`
+		Sources     argoappv1.ApplicationSources     `json:"sources,omitempty"`
+	}{application.Name, application.Namespace, application.Spec.Project, application.Spec.Destination, application.Spec.Source, application.Spec.Sources})
 	if err != nil {
 		return "", false
 	}
@@ -149,7 +157,7 @@ func (b *settingsInstallBuilder) addSource(ctx context.Context, provider localPr
 	source := sourcePlan.Source
 	sourceType := settingsInstallSourceType(sourcePlan, b.root, sourcePath, local)
 	if sourceType == argoappv1.ApplicationSourceTypeKustomize && local {
-		b.addKustomize(ctx, sourcePath, source.Kustomize)
+		b.addKustomize(ctx, sourcePath, source.Kustomize, settingsInstallRenderEnv(provider, application, source))
 	}
 	if sourceType != argoappv1.ApplicationSourceTypeHelm {
 		return
@@ -171,7 +179,7 @@ func (b *settingsInstallBuilder) addSource(ctx context.Context, provider localPr
 	if source.Helm == nil {
 		return
 	}
-	for _, rel := range settingsInstallHelmValueFiles(provider, application, plan, source, sourcePath, local) {
+	for _, rel := range settingsInstallHelmValueFiles(provider, application, plan, sourcePlan, sourcePath, local) {
 		b.addValuesFile(rel)
 	}
 	if helmSourceInlineSetsArgoCDSettings(source.Helm) {
@@ -201,27 +209,49 @@ func settingsInstallMergedSource(provider localProvider, application argoappv1.A
 }
 
 // settingsInstallHelmValueFiles returns the local Helm value files that the
-// render of source reads. It builds the render options as the render does,
-// with the Argo CD build environment for env substitution, and maps each $ref
-// whose source resolves to this repository root to that root. Then
+// render of sourcePlan reads. It builds the render options as the render
+// does, with the Argo CD build environment for env substitution, and finds
+// the $ref roots with renderRefsForSource, as the render does: a ref with
+// the repository and revision of the source is the source root, and any
+// other ref counts when its source resolves to this repository root. Then
 // render.HelmValueFileReads resolves the entries as the renderer does,
 // globs included.
-func settingsInstallHelmValueFiles(provider localProvider, application argoappv1.Application, plan PlanResult, source argoappv1.ApplicationSource, sourcePath string, local bool) []string {
+func settingsInstallHelmValueFiles(provider localProvider, application argoappv1.Application, plan PlanResult, sourcePlan SourcePlan, sourcePath string, local bool) []string {
+	opts, err := renderOptions(application, sourcePlan.Source, CapabilityOptions{}, settingsInstallTracking(provider))
+	if err != nil {
+		return nil
+	}
+	refRoots, refSources, err := renderRefsForSource(plan, sourcePlan, helmRefInputPaths(opts))
+	if err != nil {
+		return nil
+	}
+	// The source root of a local source or a chart from a chart repository is
+	// the repository root (resolveSourceRootIdentity).
+	anchored, err := anchorLocalRefRoots(provider.repoRoot, refRoots)
+	if err != nil {
+		return nil
+	}
+	for refKey, refSource := range refSources {
+		if provider.sourceResolvesToRepoRoot(refSource) {
+			anchored[refKey] = provider.repoRoot
+		}
+	}
+	opts.RefRoots = anchored
+	return render.HelmValueFileReads(provider.repoRoot, render.ResolvedSource{RepoRoot: provider.repoRoot, Path: sourcePath}, opts, !local)
+}
+
+func settingsInstallTracking(provider localProvider) TrackingOptions {
 	tracking := defaultTrackingOptions()
 	if provider.controllerNamespace != "" {
 		tracking.ControllerNamespace = provider.controllerNamespace
 	}
-	opts, err := renderOptions(application, source, CapabilityOptions{}, tracking)
-	if err != nil {
-		return nil
-	}
-	opts.RefRoots = map[string]string{}
-	for refKey, refPlan := range plan.Refs {
-		if provider.sourceResolvesToRepoRoot(settingsInstallResolvedSource(refPlan.Source)) {
-			opts.RefRoots[refKey] = provider.repoRoot
-		}
-	}
-	return render.HelmValueFileReads(provider.repoRoot, render.ResolvedSource{RepoRoot: provider.repoRoot, Path: sourcePath}, opts, !local)
+	return tracking
+}
+
+// settingsInstallRenderEnv is the Argo CD build environment of a source, as
+// the render passes it to the Helm value file loader.
+func settingsInstallRenderEnv(provider localProvider, application argoappv1.Application, source argoappv1.ApplicationSource) argoappv1.Env {
+	return argoRenderEnv(application, source, settingsInstallTracking(provider).ControllerNamespace)
 }
 
 // settingsInstallSourceType returns the source type as Argo CD picks it: the
@@ -250,8 +280,8 @@ func settingsInstallSourceType(sourcePlan SourcePlan, root, sourcePath string, l
 	}
 }
 
-func (b *settingsInstallBuilder) addKustomize(ctx context.Context, sourcePath string, kustomize *argoappv1.ApplicationSourceKustomize) {
-	values, err := render.KustomizeHelmValues(ctx, b.root, sourcePath, kustomize)
+func (b *settingsInstallBuilder) addKustomize(ctx context.Context, sourcePath string, kustomize *argoappv1.ApplicationSourceKustomize, env argoappv1.Env) {
+	values, err := render.KustomizeHelmValues(ctx, b.root, sourcePath, kustomize, env)
 	if err != nil {
 		return
 	}

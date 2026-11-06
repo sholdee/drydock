@@ -163,10 +163,10 @@ func renderAndScanDiscoveryApplication(ctx context.Context, request BuildRequest
 	}, application)
 	inCluster := settingsInstallInCluster(application, renderSettings.settings)
 	if err != nil {
-		if ctx.Err() != nil {
+		if ctx.Err() != nil || !inCluster {
 			return skippedRenderedDiscovery()
 		}
-		if install := applicationSettingsInstall(ctx, request, provider, application); inCluster && install.installsArgoCD() {
+		if install := applicationSettingsInstall(ctx, request, provider, application); install.installsArgoCD() {
 			// The values files stay settings candidates, so drydock falls
 			// back to reading them; say so instead of falling back silently.
 			return discovery.Result{}, []diagnostic.Diagnostic{settingsInstallRenderFailedDiagnostic(appFile, install, err)}, nil

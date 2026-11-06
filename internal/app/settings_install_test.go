@@ -1385,3 +1385,194 @@ func TestSettingsFromRenderedLocalChartKeepsUnreadChartFiles(t *testing.T) {
 		})
 	}
 }
+
+// Two installs on this cluster have the same sources, and their value files
+// name $ARGOCD_APP_NAME. Each install reads its own file, so the result of
+// one must not stand in for the other: every values file gives way, and the
+// two argocd-cm only collide.
+func TestSettingsInstallKeysOnTheApplication(t *testing.T) {
+	root := t.TempDir()
+	for _, name := range []string{"argocd", "argocd-dev"} {
+		writeTestFile(t, filepath.Join(root, "apps", name+".yaml"), `apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: `+name+`
+  namespace: argocd
+spec:
+  project: default
+  sources:
+    - repoURL: `+fakeArgoCDChartRepo+`
+      chart: argo-cd
+      targetRevision: `+fakeArgoCDChartVersion+`
+      helm:
+        valueFiles:
+          - $values/argocd/values-$ARGOCD_APP_NAME.yaml
+          - $values/argocd/values-final.yaml
+    - repoURL: `+argoCDValuesRepoURL+`
+      targetRevision: main
+      ref: values
+  destination:
+    name: in-cluster
+    namespace: argocd
+`)
+	}
+	writeTestFile(t, filepath.Join(root, "argocd", "values-argocd.yaml"), "configs:\n  cm:\n    application.resourceTrackingMethod: label\n")
+	writeTestFile(t, filepath.Join(root, "argocd", "values-argocd-dev.yaml"), "configs:\n  cm:\n    application.resourceTrackingMethod: annotation\n")
+	writeTestFile(t, filepath.Join(root, "argocd", "values-final.yaml"), "configs:\n  cm:\n    timeout.reconciliation: 300s\n")
+
+	result := listArgoCDInstallSettings(t, root, argoCDInstallShape{repoMaps: func(root string) []sourcepkg.RepoMap {
+		return []sourcepkg.RepoMap{{URL: argoCDValuesRepoURL, Path: root}}
+	}}, fakeArgoCDChartAcquirer(t))
+	for _, diag := range result.Diagnostics {
+		if diag.Category == "settings" && diag.Code != diagnostic.CodeSettingsIgnoreResourceUpdates {
+			t.Fatalf("settings diagnostic = %#v, want no conflict", diag)
+		}
+	}
+	if got := filepath.ToSlash(result.Settings.TrackingMethod.Provenance.Path); !strings.HasPrefix(got, "rendered/") {
+		t.Fatalf("TrackingMethod %q from %q, want a rendered argocd-cm", result.Settings.TrackingMethod.Value, got)
+	}
+}
+
+// A $ref source with the repository and revision of the chart source is the
+// chart source's root, as in the render, even when drydock cannot tell that
+// the repository is the local checkout.
+func TestSettingsFromRenderedArgoCDInstallSameRepositoryRef(t *testing.T) {
+	root := t.TempDir()
+	writeFakeArgoCDChart(t, filepath.Join(root, "argocd", "chart"))
+	writeTestFile(t, filepath.Join(root, "apps", "argocd.yaml"), `apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: argocd
+  namespace: argocd
+spec:
+  project: default
+  sources:
+    - repoURL: https://github.com/example/repo
+      targetRevision: main
+      path: argocd/chart
+      helm:
+        valueFiles:
+          - $values/argocd/values-prod.yaml
+          - ../values-override.yaml
+    - repoURL: https://github.com/example/repo
+      targetRevision: main
+      ref: values
+  destination:
+    name: in-cluster
+    namespace: argocd
+`)
+	writeTestFile(t, filepath.Join(root, "argocd", "values-prod.yaml"), "configs:\n  cm:\n    application.resourceTrackingMethod: label\n")
+	writeTestFile(t, filepath.Join(root, "argocd", "values-override.yaml"), "configs:\n  cm:\n    application.resourceTrackingMethod: annotation+label\n")
+
+	result := listArgoCDInstallSettings(t, root, argoCDInstallShape{}, fakeArgoCDChartAcquirer(t))
+	if diags := settingsDiagnostics(result.Diagnostics); len(diags) != 0 {
+		t.Fatalf("settings diagnostics = %#v, want none", diags)
+	}
+	if got := filepath.ToSlash(result.Settings.TrackingMethod.Provenance.Path); result.Settings.TrackingMethod.Value != "annotation+label" || !strings.HasPrefix(got, "rendered/") {
+		t.Fatalf("TrackingMethod = %q from %q, want annotation+label from the rendered argocd-cm", result.Settings.TrackingMethod.Value, got)
+	}
+}
+
+// A --discover-kustomize path names the Argo CD install explicitly, so its
+// rendered argocd-cm replaces the values files that its render reads, also
+// with no Application that installs Argo CD.
+func TestSettingsFromDiscoverKustomizeArgoCDInstall(t *testing.T) {
+	root := t.TempDir()
+	writeTestFile(t, filepath.Join(root, "argocd", "kustomization.yaml"), kustomizeArgoCDInstallYAML("", []string{"values-base.yaml", "values-prod.yaml"}))
+	writeTestFile(t, filepath.Join(root, "argocd", "values-base.yaml"), "configs:\n  cm:\n    application.resourceTrackingMethod: label\n")
+	writeTestFile(t, filepath.Join(root, "argocd", "values-prod.yaml"), "configs:\n  cm:\n    application.resourceTrackingMethod: annotation+label\n")
+
+	request := BuildRequest{Path: root, Parallelism: 1, DiscoverKustomizePaths: []string{"argocd"}}
+	result, err := Orchestrator{ChartAcquirer: fakeArgoCDChartAcquirer(t)}.ListApplications(context.Background(), request)
+	if err != nil {
+		t.Fatalf("ListApplications() error = %v, diagnostics = %#v", err, result.Diagnostics)
+	}
+	if got := filepath.ToSlash(result.Settings.TrackingMethod.Provenance.Path); result.Settings.TrackingMethod.Value != "annotation+label" || !strings.HasPrefix(got, "argocd") {
+		t.Fatalf("TrackingMethod = %q from %q, want annotation+label from the rendered argocd-cm", result.Settings.TrackingMethod.Value, got)
+	}
+	if got := result.Settings.InstanceLabelKey.Value; got != "argocd.argoproj.io/instance" {
+		t.Fatalf("InstanceLabelKey = %q, want the chart default", got)
+	}
+}
+
+// A diff reports one ignoreResourceUpdates advisory, not one per side and
+// phase.
+func TestDiffAppsReportsIgnoreResourceUpdatesAdvisoryOnce(t *testing.T) {
+	root := t.TempDir()
+	left := filepath.Join(root, "left")
+	right := filepath.Join(root, "right")
+	for _, side := range []string{left, right} {
+		writeKustomizeArgoCDInstall(t, side, []string{"values.yaml"})
+		writeTestFile(t, filepath.Join(side, "argocd", "values.yaml"), "configs:\n  cm:\n    timeout.reconciliation: 300s\n")
+	}
+	result, err := Orchestrator{ChartAcquirer: fakeArgoCDChartAcquirer(t)}.DiffApps(context.Background(), DiffRequest{
+		LeftPath:    left,
+		RightPath:   right,
+		Unified:     3,
+		Parallelism: 1,
+	})
+	if err != nil {
+		t.Fatalf("DiffApps() error = %v, diagnostics = %#v", err, result.Diagnostics)
+	}
+	count := 0
+	for _, diag := range result.Diagnostics {
+		if diag.Code == diagnostic.CodeSettingsIgnoreResourceUpdates {
+			count++
+		}
+	}
+	if count != 1 {
+		t.Fatalf("ignoreResourceUpdates advisories = %d, want 1: %#v", count, result.Diagnostics)
+	}
+}
+
+// An install counts only when its destination resolves to the in-cluster
+// server, as project validation resolves it.
+func TestSettingsInstallInCluster(t *testing.T) {
+	inCluster := argoappv1.KubernetesInternalAPIServerAddr
+	withLocalSecret := config.DefaultSettings()
+	withLocalSecret.Clusters = map[string]config.ClusterSettings{inCluster: {Name: "local", Server: inCluster}}
+	disabled := config.DefaultSettings()
+	disabled.InClusterEnabled = config.Value[bool]{Value: false, Provenance: config.Provenance{Path: "argocd-cm.yaml"}}
+	for _, tc := range []struct {
+		name        string
+		destination argoappv1.ApplicationDestination
+		settings    config.ArgoSettings
+		want        bool
+	}{
+		{name: "in-cluster server", destination: argoappv1.ApplicationDestination{Server: inCluster}, settings: config.DefaultSettings(), want: true},
+		{name: "in-cluster name", destination: argoappv1.ApplicationDestination{Name: "in-cluster"}, settings: config.DefaultSettings(), want: true},
+		{name: "cluster Secret name for in-cluster", destination: argoappv1.ApplicationDestination{Name: "local"}, settings: withLocalSecret, want: true},
+		{name: "in-cluster name while disabled", destination: argoappv1.ApplicationDestination{Name: "in-cluster"}, settings: disabled, want: false},
+		{name: "unknown name", destination: argoappv1.ApplicationDestination{Name: "unknown"}, settings: config.DefaultSettings(), want: false},
+		{name: "remote server", destination: argoappv1.ApplicationDestination{Server: "https://spoke.example.com"}, settings: config.DefaultSettings(), want: false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			application := argoappv1.Application{Spec: argoappv1.ApplicationSpec{Destination: tc.destination}}
+			if got := settingsInstallInCluster(application, tc.settings); got != tc.want {
+				t.Fatalf("settingsInstallInCluster() = %t, want %t", got, tc.want)
+			}
+		})
+	}
+}
+
+// With cluster.inClusterEnabled "false", Argo CD does not deploy to the
+// in-cluster destination, so the install there does not count, and its
+// values file is read on its own.
+func TestSettingsFromInstallWhileInClusterDisabledFallsBack(t *testing.T) {
+	root := t.TempDir()
+	writeKustomizeArgoCDInstall(t, root, []string{"values.yaml"})
+	writeTestFile(t, filepath.Join(root, "argocd", "values.yaml"), "configs:\n  cm:\n    application.resourceTrackingMethod: label\n")
+	writeTestFile(t, filepath.Join(root, "settings", "argocd-cm.yaml"), `apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: argocd-cm
+  namespace: settings
+data:
+  cluster.inClusterEnabled: "false"
+`)
+
+	result := listArgoCDInstallSettings(t, root, argoCDInstallShape{}, fakeArgoCDChartAcquirer(t))
+	if got := filepath.ToSlash(result.Settings.TrackingMethod.Provenance.Path); result.Settings.TrackingMethod.Value != "label" || !strings.HasSuffix(got, "/argocd/values.yaml") {
+		t.Fatalf("TrackingMethod = %q from %q, want label from the values file read on its own", result.Settings.TrackingMethod.Value, got)
+	}
+}

@@ -1,0 +1,64 @@
+package render
+
+import (
+	"context"
+	"path/filepath"
+	"slices"
+	"testing"
+
+	argoappv1 "github.com/argoproj/argo-cd/v3/pkg/apis/application/v1alpha1"
+)
+
+// KustomizeHelmValues lists the values files that the helmCharts render
+// reads: valuesFile only when valuesMerge allows it, and additionalValuesFiles
+// with globs and the Argo CD build environment, as the Helm value file
+// loader reads them.
+func TestKustomizeHelmValuesReadsValuesFilesLikeTheRenderer(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		chart string
+		want  []string
+	}{
+		{
+			name:  "valuesFile and additionalValuesFiles",
+			chart: "    valuesFile: values.yaml\n    additionalValuesFiles:\n      - extra.yaml\n",
+			want:  []string{"install/extra.yaml", "install/values.yaml"},
+		},
+		{
+			name:  "replace with valuesInline skips valuesFile",
+			chart: "    valuesFile: values.yaml\n    valuesMerge: replace\n    valuesInline:\n      a: 1\n    additionalValuesFiles:\n      - extra.yaml\n",
+			want:  []string{"install/extra.yaml"},
+		},
+		{
+			name:  "merge with valuesInline reads valuesFile",
+			chart: "    valuesFile: values.yaml\n    valuesMerge: merge\n    valuesInline:\n      a: 1\n",
+			want:  []string{"install/values.yaml"},
+		},
+		{
+			name:  "glob in additionalValuesFiles",
+			chart: "    additionalValuesFiles:\n      - layers/*.yaml\n",
+			want:  []string{"install/layers/a.yaml", "install/layers/b.yaml"},
+		},
+		{
+			name:  "build environment in additionalValuesFiles",
+			chart: "    additionalValuesFiles:\n      - values-$ARGOCD_APP_NAME.yaml\n",
+			want:  []string{"install/values-demo.yaml"},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			writeFile(t, filepath.Join(root, "install", "kustomization.yaml"), "apiVersion: kustomize.config.k8s.io/v1beta1\nkind: Kustomization\nhelmCharts:\n  - name: demo\n    releaseName: demo\n"+tc.chart)
+			for _, file := range []string{"values.yaml", "extra.yaml", "layers/a.yaml", "layers/b.yaml", "values-demo.yaml"} {
+				writeFile(t, filepath.Join(root, "install", filepath.FromSlash(file)), "a: 1\n")
+			}
+			env := argoappv1.Env{{Name: "ARGOCD_APP_NAME", Value: "demo"}}
+			values, err := KustomizeHelmValues(context.Background(), root, "install", nil, env)
+			if err != nil {
+				t.Fatalf("KustomizeHelmValues() error = %v", err)
+			}
+			if !slices.Equal(values.ValuesFiles, tc.want) {
+				t.Fatalf("ValuesFiles = %v, want %v", values.ValuesFiles, tc.want)
+			}
+		})
+	}
+}

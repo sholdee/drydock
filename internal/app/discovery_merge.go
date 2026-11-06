@@ -142,6 +142,13 @@ func mergeSettingsCandidates(base, overlay []discovery.SettingsCandidate) ([]dis
 
 // keepSettingsRenderInputs gives each merged candidate the union of the
 // render input files of every base and overlay candidate with its identity.
+//
+// The union only grows. A later discovery round can stop counting an install
+// that an earlier round rendered, for example when a discovered cluster
+// Secret moves its destination off this cluster, and the files of that
+// render then stay superseded. Discovery is additive in the same way for
+// every object, which keeps the rounds converging, and such a change inside
+// one run is rare.
 func keepSettingsRenderInputs(out, base, overlay []discovery.SettingsCandidate) []discovery.SettingsCandidate {
 	type files struct{ values, other []string }
 	byKey := map[string]files{}

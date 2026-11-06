@@ -7,6 +7,7 @@ import (
 	"sort"
 
 	argoappv1 "github.com/argoproj/argo-cd/v3/pkg/apis/application/v1alpha1"
+	"sigs.k8s.io/kustomize/api/types"
 )
 
 // KustomizeHelmValuesInputs is what the helmCharts entries of a Kustomize
@@ -37,13 +38,17 @@ type KustomizeHelmValuesInputs struct {
 // KustomizeSelectionPaths: a ref that is remote, missing, outside repoRoot,
 // or symlinked is skipped. An error means the graph itself could not be
 // read.
-func KustomizeHelmValues(ctx context.Context, repoRoot, sourcePath string, kustomize *argoappv1.ApplicationSourceKustomize) (KustomizeHelmValuesInputs, error) {
+//
+// env is the Argo CD build environment of the Application, which the Helm
+// value file loader substitutes in value file paths.
+func KustomizeHelmValues(ctx context.Context, repoRoot, sourcePath string, kustomize *argoappv1.ApplicationSourceKustomize, env argoappv1.Env) (KustomizeHelmValuesInputs, error) {
 	paths, graph, err := kustomizeSelectionGraph(ctx, repoRoot, sourcePath, kustomize)
 	if err != nil {
 		return KustomizeHelmValuesInputs{}, err
 	}
 	values := kustomizeHelmValuesCollector{
 		collector: &kustomizeInputCollector{repoRoot: filepath.Clean(repoRoot), bestEffort: true},
+		env:       env,
 		seen:      map[string]struct{}{},
 	}
 	for _, rel := range paths {
@@ -65,6 +70,7 @@ func KustomizeHelmValues(ctx context.Context, repoRoot, sourcePath string, kusto
 
 type kustomizeHelmValuesCollector struct {
 	collector *kustomizeInputCollector
+	env       argoappv1.Env
 	seen      map[string]struct{}
 	out       KustomizeHelmValuesInputs
 }
@@ -79,14 +85,8 @@ func (c *kustomizeHelmValuesCollector) addNode(node kustomizeGraphNode) {
 				c.addValuesFile(filepath.Join(c.collector.repoRoot, filepath.FromSlash(rel)))
 			}
 		}
-		refs := append([]string{helmChart.ValuesFile}, helmChart.AdditionalValuesFiles...)
-		for _, ref := range refs {
-			if ref == "" || isRemoteHelmValueFile(ref) {
-				continue
-			}
-			if path, err := c.collector.resolveLocalRef(node.Dir, "helmCharts.valuesFile", ref); err == nil {
-				c.addValuesFile(path)
-			}
+		for _, rel := range c.helmChartValueFileReads(node, helmChart) {
+			c.addValuesFile(filepath.Join(c.collector.repoRoot, filepath.FromSlash(rel)))
 		}
 		if len(helmChart.ValuesInline) > 0 {
 			c.out.ValuesInline = append(c.out.ValuesInline, cloneValues(helmChart.ValuesInline))
@@ -114,4 +114,35 @@ func (c *kustomizeHelmValuesCollector) addValuesFile(path string) {
 	}
 	c.seen[rel] = struct{}{}
 	c.out.ValuesFiles = append(c.out.ValuesFiles, rel)
+}
+
+// helmChartValueFileReads returns the local values files that the render of
+// one helmCharts entry reads, as renderOptionsForKustomizeHelmChart and
+// writeKustomizeHelmGeneratedValuesFile read them. valuesFile is read only
+// when shouldLoadHelmValueFiles allows it: valuesMerge replace with
+// valuesInline skips it. additionalValuesFiles are always read. Both go
+// through the Helm value file loader, relative to the kustomization
+// directory, with globs and env substitution (HelmValueFileReads).
+func (c *kustomizeHelmValuesCollector) helmChartValueFileReads(node kustomizeGraphNode, helmChart types.HelmChart) []string {
+	var files []string
+	if helmChart.ValuesFile != "" {
+		if load, err := shouldLoadHelmValueFiles(helmChart.ValuesMerge, helmChart.ValuesInline); err == nil && load {
+			files = append(files, helmChart.ValuesFile)
+		}
+	}
+	files = append(files, helmChart.AdditionalValuesFiles...)
+	if len(files) == 0 {
+		return nil
+	}
+	nodeRel, err := relativeManifestPath(c.collector.repoRoot, node.Dir)
+	if err != nil {
+		return nil
+	}
+	nodeRel = filepath.ToSlash(nodeRel)
+	return HelmValueFileReads(c.collector.repoRoot, ResolvedSource{RepoRoot: c.collector.repoRoot, Path: nodeRel}, RenderOptions{
+		ValueFiles:             files,
+		ValueFilesBaseDir:      nodeRel,
+		ValueFilesBoundaryRoot: ".",
+		ArgoEnv:                c.env,
+	}, false)
 }
