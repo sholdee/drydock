@@ -12,10 +12,21 @@
 # A Synced resource changes only fields that an ignore rule removes. An
 # OutOfSync resource changes the same fields and also a field that no rule
 # removes, so it proves that the rule does not hide too much.
+#
+# drydockWarnings are texts that the stderr of the drydock diff must contain.
+# An Application with comparisonError has a rule that Argo CD cannot build.
+# Argo CD must report a ComparisonError condition that contains argocdMessage,
+# with every resource Unknown. A separate `drydock diff app` of it must fail
+# with drydockMessage on stderr. The main drydock diff leaves it out.
 targetRevision: live-diff-b
 applications:
   # Application spec.ignoreDifferences, with server-side diff.
   - name: parity-live-diff-application
+    # The ConfigMap rule lists data/kept, which is not a valid JSON pointer,
+    # before /data/ignored. Argo CD applies it as the missing path /kept and
+    # skips it, so data/kept removes nothing and /data/ignored still applies.
+    drydockWarnings:
+      - 'diff.ignore-pointer-invalid: Application argocd/parity-live-diff-application: spec.ignoreDifferences jsonPointer "data/kept"'
     resources:
       # jsonPointers.
       - kind: ConfigMap
@@ -44,6 +55,8 @@ applications:
         status: OutOfSync
   # The same resources and rules, with the client-side three-way diff.
   - name: parity-live-diff-application-legacy
+    drydockWarnings:
+      - 'diff.ignore-pointer-invalid: Application argocd/parity-live-diff-application-legacy: spec.ignoreDifferences jsonPointer "data/kept"'
     resources:
       - kind: ConfigMap
         name: pointer-ignored
@@ -124,3 +137,24 @@ applications:
       - kind: ConfigMap
         name: annotation-lenient-pointers
         status: Synced
+  # live-diff-b moves the Application's rule from rule-removed to rule-added.
+  # The smoke applies the live-diff-b Application before Argo CD compares, as
+  # a parent Application would. Argo CD compares under the new rules only.
+  - name: parity-live-diff-rules-change
+    resources:
+      - kind: ConfigMap
+        name: rule-added
+        status: Synced
+      - kind: ConfigMap
+        name: rule-removed
+        status: OutOfSync
+  # A jq expression that does not parse fails the comparison, although no
+  # resource matches the rule. Argo CD builds every jq patch first.
+  - name: parity-live-diff-invalid-jq
+    comparisonError:
+      argocdMessage: 'failed to create diff normalizer: unexpected token ")"'
+      drydockMessage: "diff.ignore-rule-invalid: Application argocd/parity-live-diff-invalid-jq:"
+    resources:
+      - kind: ConfigMap
+        name: invalid-jq
+        status: Unknown

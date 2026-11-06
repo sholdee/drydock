@@ -19,17 +19,29 @@ applications:
         kind: Deployment
         name: jq-other
         status: OutOfSync
+    drydockWarnings:
+      - "diff.ignore-pointer-invalid: Application argocd/parity-live-diff-application:"
   - name: parity-live-diff-annotation
     resources:
       - kind: ConfigMap
         name: pointer-ignored
         status: Synced
+  - name: parity-live-diff-invalid-jq
+    comparisonError:
+      argocdMessage: failed to create diff normalizer
+      drydockMessage: "diff.ignore-rule-invalid: Application argocd/parity-live-diff-invalid-jq"
+    resources:
+      - kind: ConfigMap
+        name: invalid-jq
+        status: Unknown
 `
 
 type testFixture struct {
-	expected string
-	appDir   string
-	drydock  string
+	expected   string
+	appDir     string
+	drydock    string
+	stderr     string
+	failureDir string
 }
 
 func newTestFixture(t *testing.T, expected string) testFixture {
@@ -39,9 +51,14 @@ func newTestFixture(t *testing.T, expected string) testFixture {
 		expected: filepath.Join(root, "expected.yaml"),
 		appDir:   filepath.Join(root, "apps"),
 		drydock:  filepath.Join(root, "drydock-diff.json"),
+		stderr:   filepath.Join(root, "drydock-diff.stderr"),
+
+		failureDir: filepath.Join(root, "failures"),
 	}
-	if err := os.Mkdir(fixture.appDir, 0o755); err != nil {
-		t.Fatalf("Mkdir() error = %v", err)
+	for _, dir := range []string{fixture.appDir, fixture.failureDir} {
+		if err := os.Mkdir(dir, 0o755); err != nil {
+			t.Fatalf("Mkdir() error = %v", err)
+		}
 	}
 	writeFile(t, fixture.expected, expected)
 	return fixture
@@ -52,12 +69,21 @@ func (fixture testFixture) options() options {
 		Expected:     fixture.expected,
 		ArgoCDAppDir: fixture.appDir,
 		DrydockDiff:  fixture.drydock,
+
+		DrydockStderr:     fixture.stderr,
+		DrydockFailureDir: fixture.failureDir,
 	}
 }
 
 func (fixture testFixture) writeApplication(t *testing.T, name, revision, syncStatus string, resources ...appResourceStatus) {
 	t.Helper()
+	fixture.writeApplicationWithConditions(t, name, revision, syncStatus, nil, resources...)
+}
+
+func (fixture testFixture) writeApplicationWithConditions(t *testing.T, name, revision, syncStatus string, conditions []appCondition, resources ...appResourceStatus) {
+	t.Helper()
 	var app appStatusFile
+	app.Status.Conditions = conditions
 	app.Metadata.Name = name
 	app.Metadata.Namespace = argocdNamespace
 	app.Status.Sync.Status = syncStatus
@@ -106,6 +132,17 @@ func (fixture testFixture) writePassingCases(t *testing.T) {
 	fixture.writeApplication(t, "parity-live-diff-annotation", "live-diff-b", statusSynced,
 		resourceStatus("", "ConfigMap", "pointer-ignored", statusSynced))
 	fixture.writeDrydock(t, drydockChange("parity-live-diff-application", "apps", "Deployment", "jq-other", "modified"))
+	writeFile(t, fixture.stderr, "warning diff.ignore-pointer-invalid: Application argocd/parity-live-diff-application: spec.ignoreDifferences jsonPointer \"data/kept\" is not a valid JSON pointer\n")
+	fixture.writeApplicationWithConditions(t, "parity-live-diff-invalid-jq", "live-diff-b", statusUnknown,
+		[]appCondition{{Type: comparisonErrorType, Message: "Failed to compare desired state to live state: failed to create diff normalizer: unexpected token"}},
+		resourceStatus("", "ConfigMap", "invalid-jq", statusUnknown))
+	fixture.writeFailure(t, "parity-live-diff-invalid-jq", "2", "error diff.ignore-rule-invalid: Application argocd/parity-live-diff-invalid-jq: failed to compare desired states\n")
+}
+
+func (fixture testFixture) writeFailure(t *testing.T, name, exitCode, stderr string) {
+	t.Helper()
+	writeFile(t, filepath.Join(fixture.failureDir, name+".exit"), exitCode+"\n")
+	writeFile(t, filepath.Join(fixture.failureDir, name+".stderr"), stderr)
 }
 
 func TestComparePassesWhenBothSidesMatchTheExpectedStatus(t *testing.T) {
@@ -121,12 +158,13 @@ func TestComparePassesWhenBothSidesMatchTheExpectedStatus(t *testing.T) {
 	}
 	summary := result.Summary()
 	for _, want := range []string{
-		"Applications: 2",
-		"Resources: 3",
+		"Applications: 3",
+		"Resources: 4",
 		"Differences: 1",
 		"Failures: 0",
 		"ok argocd/parity-live-diff-application",
 		"ok argocd/parity-live-diff-annotation",
+		"ok argocd/parity-live-diff-invalid-jq",
 	} {
 		if !strings.Contains(summary, want) {
 			t.Fatalf("Summary() = %q, want %q", summary, want)
@@ -222,6 +260,35 @@ func TestCompareFailures(t *testing.T) {
 			want: "Argo CD has no resource ConfigMap/pointer-ignored",
 		},
 		{
+			name: "drydock misses a warning",
+			mutate: func(t *testing.T, fixture testFixture) {
+				writeFile(t, fixture.stderr, "")
+			},
+			want: `drydock diff stderr does not contain "diff.ignore-pointer-invalid: Application argocd/parity-live-diff-application:"`,
+		},
+		{
+			name: "drydock diffs a comparisonError Application",
+			mutate: func(t *testing.T, fixture testFixture) {
+				fixture.writeFailure(t, "parity-live-diff-invalid-jq", "0", "")
+			},
+			want: "drydock diffed the Application, want a failure",
+		},
+		{
+			name: "drydock fails a comparisonError Application with another message",
+			mutate: func(t *testing.T, fixture testFixture) {
+				fixture.writeFailure(t, "parity-live-diff-invalid-jq", "2", "error render.failed\n")
+			},
+			want: `drydock stderr does not contain "diff.ignore-rule-invalid: Application argocd/parity-live-diff-invalid-jq"`,
+		},
+		{
+			name: "Argo CD compares a comparisonError Application",
+			mutate: func(t *testing.T, fixture testFixture) {
+				fixture.writeApplication(t, "parity-live-diff-invalid-jq", "live-diff-b", statusSynced,
+					resourceStatus("", "ConfigMap", "invalid-jq", statusSynced))
+			},
+			want: "Argo CD has no ComparisonError condition",
+		},
+		{
 			name: "Argo CD capture is missing",
 			mutate: func(t *testing.T, fixture testFixture) {
 				if err := os.Remove(filepath.Join(fixture.appDir, "parity-live-diff-annotation.json")); err != nil {
@@ -275,6 +342,16 @@ func TestReadExpectedRejectsInvalidFiles(t *testing.T) {
 			name:     "unknown status",
 			expected: "targetRevision: b\napplications:\n  - name: a\n    resources: [{kind: ConfigMap, name: c, status: Unknown}]\n",
 			want:     `has status "Unknown"`,
+		},
+		{
+			name:     "comparisonError without Unknown status",
+			expected: "targetRevision: b\napplications:\n  - name: a\n    comparisonError: {argocdMessage: x, drydockMessage: y}\n    resources: [{kind: ConfigMap, name: c, status: Synced}]\n",
+			want:     "want Unknown for a comparisonError Application",
+		},
+		{
+			name:     "comparisonError without messages",
+			expected: "targetRevision: b\napplications:\n  - name: a\n    comparisonError: {argocdMessage: x}\n    resources: [{kind: ConfigMap, name: c, status: Unknown}]\n",
+			want:     "must set argocdMessage and drydockMessage",
 		},
 	}
 	for _, tt := range tests {

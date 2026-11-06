@@ -7,7 +7,13 @@
 // report for it. drydock must report a change for a resource exactly when
 // that status is OutOfSync. The check fails when either side differs from the
 // expected file, or when either side has a resource that the file does not
-// list.
+// list. An Application can also list warnings that drydock must print.
+//
+// An Application with comparisonError has ignore rules that Argo CD cannot
+// build. Argo CD must report a ComparisonError condition and sync status
+// Unknown, and a separate drydock diff of that Application must fail with
+// the expected message. The main drydock diff leaves it out, because the
+// failure fails the whole command.
 package main
 
 import (
@@ -29,17 +35,25 @@ import (
 const (
 	statusSynced    = "Synced"
 	statusOutOfSync = "OutOfSync"
+	statusUnknown   = "Unknown"
 )
+
+// comparisonErrorType is the Application condition type that the Argo CD
+// controller sets when the comparison fails (controller/state.go at v3.6.1).
+const comparisonErrorType = "ComparisonError"
 
 // argocdNamespace is the namespace of the live diff Applications.
 const argocdNamespace = "argocd"
 
 type options struct {
-	Expected     string
-	ArgoCDAppDir string
-	DrydockDiff  string
-	Out          string
-	List         bool
+	Expected             string
+	ArgoCDAppDir         string
+	DrydockDiff          string
+	DrydockStderr        string
+	DrydockFailureDir    string
+	Out                  string
+	List                 bool
+	ListComparisonErrors bool
 }
 
 type expectedFile struct {
@@ -50,6 +64,19 @@ type expectedFile struct {
 type expectedApplication struct {
 	Name      string             `yaml:"name"`
 	Resources []expectedResource `yaml:"resources"`
+	// DrydockWarnings are texts that the stderr of the main drydock diff
+	// must contain.
+	DrydockWarnings []string `yaml:"drydockWarnings"`
+	// ComparisonError marks an Application whose comparison must fail.
+	ComparisonError *expectedComparisonError `yaml:"comparisonError"`
+}
+
+type expectedComparisonError struct {
+	// ArgoCDMessage is text that the ComparisonError condition must contain.
+	ArgoCDMessage string `yaml:"argocdMessage"`
+	// DrydockMessage is text that the stderr of the failed drydock diff of
+	// the Application must contain.
+	DrydockMessage string `yaml:"drydockMessage"`
 }
 
 type expectedResource struct {
@@ -88,8 +115,14 @@ type appStatusFile struct {
 				} `json:"source"`
 			} `json:"comparedTo"`
 		} `json:"sync"`
-		Resources []appResourceStatus `json:"resources"`
+		Resources  []appResourceStatus `json:"resources"`
+		Conditions []appCondition      `json:"conditions"`
 	} `json:"status"`
+}
+
+type appCondition struct {
+	Type    string `json:"type"`
+	Message string `json:"message"`
 }
 
 type appResourceStatus struct {
@@ -126,18 +159,23 @@ func main() {
 	flag.StringVar(&opts.Expected, "expected", "", "YAML file that lists the expected sync status of each resource")
 	flag.StringVar(&opts.ArgoCDAppDir, "argocd-app-dir", "", "directory of captured Argo CD Application JSON files, one <name>.json per Application")
 	flag.StringVar(&opts.DrydockDiff, "drydock-diff", "", "output of drydock diff apps -o json")
+	flag.StringVar(&opts.DrydockStderr, "drydock-stderr", "", "stderr of the same drydock diff apps run")
+	flag.StringVar(&opts.DrydockFailureDir, "drydock-failure-dir", "", "directory of drydock diff app results for the comparisonError Applications, one <name>.exit and <name>.stderr each")
 	flag.StringVar(&opts.Out, "out", "", "optional path for a text summary")
-	flag.BoolVar(&opts.List, "list", false, "print the expected Application names, one per line, and exit")
+	flag.BoolVar(&opts.List, "list", false, "print the names of the Applications without comparisonError, one per line, and exit")
+	flag.BoolVar(&opts.ListComparisonErrors, "list-comparison-errors", false, "print the names of the comparisonError Applications, one per line, and exit")
 	flag.Parse()
 
-	if opts.List {
+	if opts.List || opts.ListComparisonErrors {
 		expected, err := readExpected(opts.Expected)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "argocd live diff smoke: %v\n", err)
 			os.Exit(2)
 		}
 		for _, app := range expected.Applications {
-			fmt.Println(app.Name)
+			if (app.ComparisonError != nil) == opts.ListComparisonErrors {
+				fmt.Println(app.Name)
+			}
 		}
 		return
 	}
@@ -172,13 +210,25 @@ func compare(opts options) (comparisonResult, error) {
 	if err != nil {
 		return comparisonResult{}, err
 	}
+	stderr, err := os.ReadFile(opts.DrydockStderr)
+	if err != nil {
+		return comparisonResult{}, fmt.Errorf("read drydock diff stderr: %w", err)
+	}
 	result := comparisonResult{Applications: len(expected.Applications)}
 	listed := make(map[string]struct{}, len(expected.Applications))
 	for _, app := range expected.Applications {
 		listed[app.Name] = struct{}{}
 		result.Resources += len(app.Resources)
 		failures := evaluateArgoCD(app, expected.TargetRevision, opts.ArgoCDAppDir)
+		if app.ComparisonError != nil {
+			failures = append(failures, evaluateDrydockFailure(app, opts.DrydockFailureDir)...)
+		}
 		failures = append(failures, evaluateDrydock(app, changes[app.Name])...)
+		for _, warning := range app.DrydockWarnings {
+			if !strings.Contains(string(stderr), warning) {
+				failures = append(failures, fmt.Sprintf("drydock diff stderr does not contain %q", warning))
+			}
+		}
 		for _, resource := range app.Resources {
 			if resource.Status == statusOutOfSync {
 				result.Differences++
@@ -207,6 +257,8 @@ func (opts options) validate() error {
 		{"--expected", opts.Expected},
 		{"--argocd-app-dir", opts.ArgoCDAppDir},
 		{"--drydock-diff", opts.DrydockDiff},
+		{"--drydock-stderr", opts.DrydockStderr},
+		{"--drydock-failure-dir", opts.DrydockFailureDir},
 	} {
 		if strings.TrimSpace(flagValue.value) == "" {
 			missing = append(missing, flagValue.name)
@@ -265,10 +317,28 @@ func validateExpected(expected expectedFile) error {
 				return fmt.Errorf("expected Application %s lists %s twice", app.Name, key)
 			}
 			resources[key] = struct{}{}
-			if resource.Status != statusSynced && resource.Status != statusOutOfSync {
-				return fmt.Errorf("expected Application %s resource %s has status %q, want %s or %s", app.Name, key, resource.Status, statusSynced, statusOutOfSync)
+			if err := app.validateStatus(resource); err != nil {
+				return err
 			}
 		}
+		if app.ComparisonError != nil && (app.ComparisonError.ArgoCDMessage == "" || app.ComparisonError.DrydockMessage == "") {
+			return fmt.Errorf("expected Application %s comparisonError must set argocdMessage and drydockMessage", app.Name)
+		}
+	}
+	return nil
+}
+
+// validateStatus requires Synced or OutOfSync, or Unknown for an Application
+// whose comparison fails: Argo CD then reports every resource as Unknown.
+func (app expectedApplication) validateStatus(resource expectedResource) error {
+	if app.ComparisonError != nil {
+		if resource.Status != statusUnknown {
+			return fmt.Errorf("expected Application %s resource %s has status %q, want %s for a comparisonError Application", app.Name, resource.key(), resource.Status, statusUnknown)
+		}
+		return nil
+	}
+	if resource.Status != statusSynced && resource.Status != statusOutOfSync {
+		return fmt.Errorf("expected Application %s resource %s has status %q, want %s or %s", app.Name, resource.key(), resource.Status, statusSynced, statusOutOfSync)
 	}
 	return nil
 }
@@ -278,8 +348,12 @@ func (resource expectedResource) key() resourceKey {
 }
 
 // applicationStatus is the sync status Argo CD must report for the whole
-// Application: OutOfSync when any resource is OutOfSync.
+// Application: Unknown when its comparison fails, and OutOfSync when any
+// resource is OutOfSync.
 func (app expectedApplication) applicationStatus() string {
+	if app.ComparisonError != nil {
+		return statusUnknown
+	}
 	for _, resource := range app.Resources {
 		if resource.Status == statusOutOfSync {
 			return statusOutOfSync
@@ -300,6 +374,9 @@ func evaluateArgoCD(app expectedApplication, targetRevision, dir string) []strin
 		return []string{fmt.Sprintf("Argo CD compared targetRevision %q, want %q", got, targetRevision)}
 	}
 	var failures []string
+	if app.ComparisonError != nil {
+		failures = append(failures, evaluateComparisonError(app, status.Status.Conditions)...)
+	}
 	if got, want := status.Status.Sync.Status, app.applicationStatus(); got != want {
 		failures = append(failures, fmt.Sprintf("Argo CD Application sync status is %q, want %q", got, want))
 	}
@@ -319,6 +396,44 @@ func evaluateArgoCD(app expectedApplication, targetRevision, dir string) []strin
 	}
 	for _, key := range sortedResourceKeys(live) {
 		failures = append(failures, fmt.Sprintf("Argo CD has resource %s, which the expected file does not list", key))
+	}
+	return failures
+}
+
+func evaluateComparisonError(app expectedApplication, conditions []appCondition) []string {
+	var messages []string
+	for _, condition := range conditions {
+		if condition.Type != comparisonErrorType {
+			continue
+		}
+		if strings.Contains(condition.Message, app.ComparisonError.ArgoCDMessage) {
+			return nil
+		}
+		messages = append(messages, condition.Message)
+	}
+	if len(messages) == 0 {
+		return []string{fmt.Sprintf("Argo CD has no %s condition, want one containing %q", comparisonErrorType, app.ComparisonError.ArgoCDMessage)}
+	}
+	return []string{fmt.Sprintf("Argo CD %s condition %q does not contain %q", comparisonErrorType, strings.Join(messages, " | "), app.ComparisonError.ArgoCDMessage)}
+}
+
+// evaluateDrydockFailure checks the separate drydock diff of a
+// comparisonError Application: it must fail with the expected message.
+func evaluateDrydockFailure(app expectedApplication, dir string) []string {
+	exitData, err := os.ReadFile(filepath.Join(dir, app.Name+".exit"))
+	if err != nil {
+		return []string{fmt.Sprintf("missing drydock exit code capture: %v", err)}
+	}
+	stderr, err := os.ReadFile(filepath.Join(dir, app.Name+".stderr"))
+	if err != nil {
+		return []string{fmt.Sprintf("missing drydock stderr capture: %v", err)}
+	}
+	var failures []string
+	if strings.TrimSpace(string(exitData)) == "0" {
+		failures = append(failures, "drydock diffed the Application, want a failure")
+	}
+	if !strings.Contains(string(stderr), app.ComparisonError.DrydockMessage) {
+		failures = append(failures, fmt.Sprintf("drydock stderr does not contain %q", app.ComparisonError.DrydockMessage))
 	}
 	return failures
 }

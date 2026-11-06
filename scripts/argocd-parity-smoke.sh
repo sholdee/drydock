@@ -79,8 +79,11 @@ LIVE_DIFF_REVISION_B="live-diff-b"
 LIVE_DIFF_NAMESPACES=(parity-live-diff parity-live-diff-legacy)
 # The field manager that owns the live argocd-cm keys from LIVE_DIFF_SETTINGS.
 LIVE_DIFF_FIELD_MANAGER="drydock-live-diff-smoke"
-# Set by run_live_diff_smoke from LIVE_DIFF_EXPECTED.
+# Set by run_live_diff_smoke from LIVE_DIFF_EXPECTED: the Applications that
+# the smoke syncs and compares, and the Applications whose comparison must
+# fail because Argo CD cannot build their ignore rules.
 LIVE_DIFF_APPLICATIONS=()
+LIVE_DIFF_ERROR_APPLICATIONS=()
 # Set by prepare_live_diff_repo: the local git repo of LIVE_DIFF_REPO_URL,
 # which drydock diffs.
 LIVE_DIFF_WORK=""
@@ -2198,6 +2201,10 @@ load_live_diff_applications() {
   done < <(cd "${REPO_ROOT}" && go run ./scripts/argocd-live-diff-smoke --list --expected "${LIVE_DIFF_EXPECTED}")
   [[ "${#LIVE_DIFF_APPLICATIONS[@]}" -gt 0 ]] \
     || fail "no live diff Applications listed in ${LIVE_DIFF_EXPECTED}"
+  LIVE_DIFF_ERROR_APPLICATIONS=()
+  while IFS= read -r app; do
+    [[ -n "${app}" ]] && LIVE_DIFF_ERROR_APPLICATIONS+=("${app}")
+  done < <(cd "${REPO_ROOT}" && go run ./scripts/argocd-live-diff-smoke --list-comparison-errors --expected "${LIVE_DIFF_EXPECTED}")
 }
 
 # apply_live_diff_settings adds the argocd-cm keys of LIVE_DIFF_SETTINGS to
@@ -2225,7 +2232,7 @@ dump_live_diff_applications() {
   local message="$1"
   local app failure_dir
   failure_dir="$(artifact_dir live-diff/failed)"
-  for app in "${LIVE_DIFF_APPLICATIONS[@]}"; do
+  for app in "${LIVE_DIFF_APPLICATIONS[@]}" "${LIVE_DIFF_ERROR_APPLICATIONS[@]}"; do
     kubectl -n argocd get application "${app}" -o yaml > "${failure_dir}/${app}.yaml" 2>&1 || true
   done
   fail "${message}; see ${failure_dir}"
@@ -2244,19 +2251,21 @@ sync_live_diff_applications() {
     || dump_live_diff_applications "the live diff Applications are not Synced and Healthy at ${LIVE_DIFF_REVISION_A} (log: ${output_dir}/argocd-wait.log)"
 }
 
-# compare_live_diff_revision_b points every live diff Application at
-# LIVE_DIFF_REVISION_B with a hard refresh, and waits until Argo CD has
-# compared that commit. The controller removes the refresh annotation when
-# the refresh is done.
+# compare_live_diff_revision_b applies the Applications of
+# LIVE_DIFF_REVISION_B, as a parent Application would sync a changed
+# Application spec. Then it points every live diff Application at that tag
+# with a hard refresh, and waits until Argo CD has compared it. The
+# controller removes the refresh annotation when the refresh is done.
 compare_live_diff_revision_b() {
   local app revision_b state expected
   revision_b="$(git -C "${LIVE_DIFF_WORK}" rev-parse "${LIVE_DIFF_REVISION_B}^{commit}")"
-  for app in "${LIVE_DIFF_APPLICATIONS[@]}"; do
+  kubectl -n argocd apply -f "${LIVE_DIFF_WORK}/applications" >/dev/null
+  for app in "${LIVE_DIFF_APPLICATIONS[@]}" "${LIVE_DIFF_ERROR_APPLICATIONS[@]}"; do
     kubectl -n argocd patch application "${app}" --type merge \
       -p "{\"metadata\":{\"annotations\":{\"argocd.argoproj.io/refresh\":\"hard\"}},\"spec\":{\"source\":{\"targetRevision\":\"${LIVE_DIFF_REVISION_B}\"}}}" >/dev/null
   done
   expected="${revision_b}|${LIVE_DIFF_REVISION_B}|"
-  for app in "${LIVE_DIFF_APPLICATIONS[@]}"; do
+  for app in "${LIVE_DIFF_APPLICATIONS[@]}" "${LIVE_DIFF_ERROR_APPLICATIONS[@]}"; do
     state=""
     for _ in {1..90}; do
       state="$(kubectl -n argocd get application "${app}" \
@@ -2272,34 +2281,55 @@ compare_live_diff_revision_b() {
 capture_live_diff_argocd_applications() {
   local app output_dir
   output_dir="$(artifact_dir live-diff/argocd-applications)"
-  for app in "${LIVE_DIFF_APPLICATIONS[@]}"; do
+  for app in "${LIVE_DIFF_APPLICATIONS[@]}" "${LIVE_DIFF_ERROR_APPLICATIONS[@]}"; do
     kubectl -n argocd get application "${app}" -o json > "${output_dir}/${app}.json"
   done
 }
 
-# capture_live_diff_drydock_diff diffs the two tags. --show-ignored-fields
-# turns off drydock's own Helm noise filter, so only Argo CD normalization
-# applies.
+# live_diff_drydock_args sets LIVE_DIFF_DRYDOCK_ARGS to the flags that every
+# drydock diff of the two tags shares. --show-ignored-fields turns off
+# drydock's own Helm noise filter, so only Argo CD normalization applies.
+live_diff_drydock_args() {
+  LIVE_DIFF_DRYDOCK_ARGS=(--repo "${LIVE_DIFF_WORK}"
+    --path "${LIVE_DIFF_WORK}"
+    --ref "${LIVE_DIFF_REVISION_B}"
+    --ref-orig "${LIVE_DIFF_REVISION_A}"
+    --repo-map "${LIVE_DIFF_REPO_URL}=${LIVE_DIFF_WORK}"
+    --render-cache-dir "${WORK_DIR}/render-cache-live-diff"
+    --changed-only=false
+    --show-ignored-fields
+    --exit-code=false
+    --offline
+    -o json)
+}
+
+# capture_live_diff_drydock_diff diffs the two tags. It leaves out the
+# Applications whose comparison must fail, because that failure fails the
+# whole command, and keeps stderr for the expected warnings. Then it diffs
+# each of those Applications on its own and keeps the exit code and stderr.
 capture_live_diff_drydock_diff() {
-  local output_dir stderr_file
+  local app output_dir failure_dir stderr_file exit_code
+  local diff_args=()
   output_dir="$(artifact_dir live-diff)"
+  failure_dir="$(artifact_dir live-diff/drydock-failures)"
   stderr_file="${output_dir}/drydock-diff.stderr"
-  if ! (cd "${REPO_ROOT}" && "${DRYDOCK_CMD[@]}" diff apps \
-    --repo "${LIVE_DIFF_WORK}" \
-    --path "${LIVE_DIFF_WORK}" \
-    --ref "${LIVE_DIFF_REVISION_B}" \
-    --ref-orig "${LIVE_DIFF_REVISION_A}" \
-    --repo-map "${LIVE_DIFF_REPO_URL}=${LIVE_DIFF_WORK}" \
-    --render-cache-dir "${WORK_DIR}/render-cache-live-diff" \
-    --changed-only=false \
-    --show-ignored-fields \
-    --exit-code=false \
-    --offline \
-    -o json > "${output_dir}/drydock-diff.json" 2> "${stderr_file}"); then
+  live_diff_drydock_args
+  diff_args=("${LIVE_DIFF_DRYDOCK_ARGS[@]}")
+  for app in "${LIVE_DIFF_ERROR_APPLICATIONS[@]}"; do
+    diff_args+=(--discover-ignore "applications/${app}.yaml")
+  done
+  if ! (cd "${REPO_ROOT}" && "${DRYDOCK_CMD[@]}" diff apps "${diff_args[@]}" \
+    > "${output_dir}/drydock-diff.json" 2> "${stderr_file}"); then
     echo "argocd render parity smoke: drydock diff of the live diff fixture failed; its stderr follows" >&2
     cat "${stderr_file}" >&2 || true
     fail "drydock diff of the live diff fixture failed; see ${stderr_file}"
   fi
+  for app in "${LIVE_DIFF_ERROR_APPLICATIONS[@]}"; do
+    exit_code=0
+    (cd "${REPO_ROOT}" && "${DRYDOCK_CMD[@]}" diff app "${app}" "${LIVE_DIFF_DRYDOCK_ARGS[@]}" \
+      > "${failure_dir}/${app}.json" 2> "${failure_dir}/${app}.stderr") || exit_code="$?"
+    printf '%s\n' "${exit_code}" > "${failure_dir}/${app}.exit"
+  done
 }
 
 compare_live_diff_smoke() {
@@ -2309,6 +2339,8 @@ compare_live_diff_smoke() {
     --expected "${LIVE_DIFF_EXPECTED}" \
     --argocd-app-dir "${output_dir}/argocd-applications" \
     --drydock-diff "${output_dir}/drydock-diff.json" \
+    --drydock-stderr "${output_dir}/drydock-diff.stderr" \
+    --drydock-failure-dir "${output_dir}/drydock-failures" \
     --out "${output_dir}/summary.txt")
 }
 

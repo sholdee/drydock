@@ -15,9 +15,12 @@ spec:
     name: in-cluster
     namespace: parity-live-diff
   ignoreDifferences:
-    # Every ConfigMap: drop data.ignored.
+    # Every ConfigMap: drop data.ignored. data/kept is not a valid JSON
+    # pointer. Argo CD applies it as the JSON-patch path /kept, which is
+    # missing, and still applies /data/ignored.
     - kind: ConfigMap
       jsonPointers:
+        - data/kept
         - /data/ignored
     # Only the app container's image. The select keeps the sidecar image.
     - group: apps
