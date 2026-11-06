@@ -161,6 +161,11 @@ listed twice removes two containers. For `jsonPointers` and
 `jqPathExpressions`, a `resource.customizations` key with no slash, such as
 `Service`, names that kind in the core group only.
 
+A `jqPathExpressions` entry that fails to run on a resource is skipped for
+that resource, and the other rules still apply, as in Argo CD v3.6.1. For
+example, `.spec.template.spec.containers[] | .image` fails on a ConfigMap,
+which has no `spec`. A jq expression that does not parse fails the diff.
+
 `managedFieldsManagers` in `resource.customizations` follow a different key
 rule, as in Argo CD v3.6.1. The key must be the exact `group/kind` text or
 `*/*`. Globs do not match. A core resource needs a key with a leading slash,

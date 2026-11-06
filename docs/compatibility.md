@@ -1224,6 +1224,11 @@ Supported:
   expression, so a repeated array-index pointer removes one element per copy.
   Argo CD walks `resource.customizations` in Go map order, which is not
   defined. drydock uses sorted key order so the result is stable.
+- A `jqPathExpressions` entry that fails to run on one resource, such as a
+  `containers[]` expression on a ConfigMap, is skipped for that resource, and
+  the other rules still apply. Argo CD logs such a failed patch and goes on
+  (`util/argo/normalizers/diff_normalizer.go`). A jq expression that does not
+  parse fails the diff. Argo CD fails the comparison for it.
 - `resource.customizations` keys as Argo CD reads them for `jsonPointers`,
   `jqPathExpressions`, and `knownTypeFields`
   (`util/argo/normalizers/util.go`): `group/kind` matches with globs, a key

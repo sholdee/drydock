@@ -12,15 +12,26 @@ import (
 
 const jqExecutionTimeout = time.Second
 
+// removeJQPathExpressions deletes each jq path expression from object in
+// order. An expression that does not parse or compile is an error, as Argo CD
+// v3.6.1 fails the whole comparison when it builds such a patch. An expression
+// that fails while it runs on this object is skipped, and the next one runs
+// on the unchanged object: Argo CD logs the failed patch and keeps going
+// (util/argo/normalizers/diff_normalizer.go:210-224). A typical case is a
+// containers expression that a wildcard rule applies to a ConfigMap.
 func removeJQPathExpressions(object map[string]any, expressions []string) (map[string]any, error) {
 	if len(expressions) == 0 {
 		return object, nil
 	}
 	var current any = object
 	for _, expression := range expressions {
-		next, err := removeJQPathExpression(current, expression)
+		code, err := compileJQPathExpression(expression)
 		if err != nil {
 			return nil, err
+		}
+		next, err := runJQPathExpression(code, current, expression)
+		if err != nil {
+			continue
 		}
 		current = next
 	}
@@ -31,7 +42,7 @@ func removeJQPathExpressions(object map[string]any, expressions []string) (map[s
 	return typed, nil
 }
 
-func removeJQPathExpression(object any, expression string) (any, error) {
+func compileJQPathExpression(expression string) (*gojq.Code, error) {
 	query, err := gojq.Parse(fmt.Sprintf("del(%s)", expression))
 	if err != nil {
 		return nil, fmt.Errorf("invalid jq path expression %q: %w", expression, err)
@@ -40,6 +51,13 @@ func removeJQPathExpression(object any, expression string) (any, error) {
 	if err != nil {
 		return nil, fmt.Errorf("compile jq path expression %q: %w", expression, err)
 	}
+	return code, nil
+}
+
+// runJQPathExpression runs one compiled deletion. Like Argo CD's
+// jqNormalizerPatch.Apply, it fails when the expression returns no value, an
+// error, or more than one value, or when it runs longer than the timeout.
+func runJQPathExpression(code *gojq.Code, object any, expression string) (any, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), jqExecutionTimeout)
 	defer cancel()
 	iter := code.RunWithContext(ctx, object)
