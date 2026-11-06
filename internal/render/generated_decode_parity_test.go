@@ -14,7 +14,6 @@ import (
 	"github.com/argoproj/argo-cd/gitops-engine/v3/pkg/utils/kube"
 	"github.com/argoproj/argo-cd/v3/pkg/apis/application/v1alpha1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
-	utilyaml "k8s.io/apimachinery/pkg/util/yaml"
 	"sigs.k8s.io/kustomize/api/krusty"
 	"sigs.k8s.io/kustomize/kyaml/filesys"
 	"sigs.k8s.io/yaml"
@@ -182,6 +181,40 @@ func TestDecodeGeneratedOutputMatchesUpstream(t *testing.T) {
 		{
 			name:  "JSON stream indented with tabs",
 			input: "{\n\t\"apiVersion\": \"v1\",\n\t\"kind\": \"ConfigMap\",\n\t\"metadata\": {\"name\": \"tabs\"}\n}\n",
+		},
+		// kube.SplitYAML reads each document a second time with the
+		// go.yaml.in/yaml/v2 scanner, which has rules of its own. The
+		// first reading writes NEL (U+0085, the YAML escape \N) as is into
+		// the JSON text. The second reading takes it as a line break, so
+		// it folds a value and fails on a key.
+		{
+			name:  "NEL in a value is folded by the second reading",
+			input: configMap("nel") + "data:\n  a: \"one\\Ntwo\"\n",
+		},
+		{
+			name:    "NEL in a key fails the second reading",
+			input:   configMap("nel") + "data:\n  \"one\\Ntwo\": a\n",
+			wantErr: []string{"out document 0: failed to unmarshal manifest: error converting YAML to JSON: yaml:"},
+		},
+		// The second reading allows a simple key of at most 1024
+		// characters (scannerc.go). The JSON key has two quotes, so a key
+		// of 1022 characters passes and one of 1023 characters fails.
+		// kustomize writes a key over 128 characters as an explicit "? "
+		// key, which the first reading allows at any length.
+		{
+			name:  "key of 1022 characters",
+			input: configMap("long") + "data:\n  ? " + strings.Repeat("k", 1022) + "\n  : a\n",
+		},
+		{
+			name:    "key of 1023 characters",
+			input:   configMap("long") + "data:\n  ? " + strings.Repeat("k", 1023) + "\n  : a\n",
+			wantErr: []string{"out document 0: failed to unmarshal manifest: error converting YAML to JSON: yaml:"},
+		},
+		{
+			// encoding/json writes "<" as the six characters \u003c.
+			name:    "key that JSON escapes past 1024 characters",
+			input:   configMap("long") + "data:\n  ? \"" + strings.Repeat("<", 200) + "\"\n  : a\n",
+			wantErr: []string{"out document 0: failed to unmarshal manifest: error converting YAML to JSON: yaml:"},
 		},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
@@ -414,68 +447,9 @@ func renderGeneratedParityCase(t *testing.T, tc parityDecodeCase) (drydockErr, u
 	return drydockErr, upstreamErr
 }
 
-// generatedFastPathSeeds are YAML streams whose documents must decode the
-// same with and without the second sigs.k8s.io/yaml conversion.
-var generatedFastPathSeeds = []string{
-	"apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: a\ndata:\n  a: no\n  b: on\n  c: y\n  d: \"yes\"\n  e: ~\n  f: \"\"\n",
-	"apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: keys\ndata:\n  y: a\n  on: b\n  8080: c\n  1.5: d\n  no: e\n",
-	"apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: dates\ndata:\n  d1: 2024-01-02\n  d2: 2024-01-02 03:04:05\n  d3: 2024-01-02T03:04:05.000Z\n",
-	"apiVersion: example.com/v1\nkind: Widget\nmetadata:\n  name: numbers\nspec:\n  one: 1.0\n  mil: 1e6\n  big: 9223372036854775808\n  huge: 18446744073709551616\n  neg: -9223372036854775809\n  max: 9223372036854775807\n  half: 1.5\n  tiny: 1.0e-7\n  third: 0.3333333333333333\n  hex: 0x1F\n  oct: 017\n  zero: -0\n  negzero: -0.0\n  big2: 1e21\n  e: 2.5e+300\n",
-	"apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: text\ndata:\n  html: \"<a href='x'>&amp;</a>\"\n  sep: \"line\\u2028sep\\u2029\"\n  ctl: \"tab\\tbell\\a\\x01\"\n  uni: \"caf\\u00e9 \\U0001F600\"\n  bs: 'back\\slash'\n  quote: \"say \\\"hi\\\"\"\n  multi: |\n    one\n    two\n  folded: >-\n    a\n    b\n",
-	"apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: anchors\nbase: &b\n  x: 1\ndata:\n  <<: *b\n  y: [1, \"2\", 3.5, true, null, {z: q}]\n",
-	"apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: binary\ndata:\n  b: !!binary aGVsbG8=\n  s: !!str 123\n  f: !!float 1\n",
-	"metadata:\n  name: kindless\n---\n{}\n---\nhello\n---\n- a\n---\napiVersion: a/b/c\nkind: X\n---\napiVersion: v1\nkind: 5\n",
-	"apiVersion: v1\nkind: List\nitems:\n  - apiVersion: v1\n    kind: ConfigMap\n    metadata:\n      name: item\n  - text\nitems2: null\n",
-	// Characters that encoding/json writes as is but the YAML reader
-	// refuses or reads as a byte order mark.
-	"apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: refused\ndata:\n  b: !!binary aGVsbX80\n",
-	"apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: refused\ndata:\n  del: \"a\\x7fb\"\n",
-	"apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: refused\ndata:\n  c1: \"\\x80\"\n  nel: \"\\x85\"\n",
-	"apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: refused\ndata:\n  bom: \"a\\uFEFFb\"\n  ffff: \"\\uFFFF\"\n",
-}
-
-// FuzzGeneratedDocumentFastPath checks that decoding text that
-// sigs.k8s.io/yaml wrote from YAML gives the same object and the same
-// error with the second conversion that kube.SplitYAML does (sigsyaml.
-// Unmarshal) and without it (unmarshalGeneratedDocument).
-func FuzzGeneratedDocumentFastPath(f *testing.F) {
-	for _, seed := range generatedFastPathSeeds {
-		f.Add(seed)
-	}
-	f.Fuzz(func(t *testing.T, input string) {
-		docs, err := splitGeneratedDocuments(nil, "f", kubeyamlNewYAMLToJSONDecoder(input), 0, true)
-		if err != nil {
-			return
-		}
-		for _, doc := range docs {
-			slow := &unstructured.Unstructured{}
-			slowErr := yaml.Unmarshal(doc.raw, slow)
-			fast := &unstructured.Unstructured{}
-			fastErr := unmarshalGeneratedDocument(doc, fast)
-			if (slowErr == nil) != (fastErr == nil) {
-				t.Fatalf("%s: slow error = %v, fast error = %v", doc.raw, slowErr, fastErr)
-			}
-			if slowErr != nil {
-				if isMissingKindError(slowErr) != isMissingKindError(fastErr) {
-					t.Fatalf("%s: slow error = %v, fast error = %v", doc.raw, slowErr, fastErr)
-				}
-				if !isMissingKindError(slowErr) && slowErr.Error() != fastErr.Error() {
-					t.Fatalf("%s: slow error = %q, fast error = %q", doc.raw, slowErr, fastErr)
-				}
-			}
-			if !reflect.DeepEqual(slow.Object, fast.Object) {
-				t.Fatalf("%s: slow %#v, fast %#v", doc.raw, slow.Object, fast.Object)
-			}
-		}
-	})
-}
-
-func kubeyamlNewYAMLToJSONDecoder(input string) rawExtensionDecoder {
-	return utilyaml.NewYAMLToJSONDecoder(strings.NewReader(input))
-}
-
 // BenchmarkDecodeGeneratedOutput reads a 7 MB stream of large CRDs, the
-// shape of Kustomize output that vendors CRDs.
+// shape of Kustomize output that vendors CRDs. kube.SplitYAML reads each
+// document twice, and drydock does the same.
 func BenchmarkDecodeGeneratedOutput(b *testing.B) {
 	var builder strings.Builder
 	for doc := range 20 {

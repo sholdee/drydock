@@ -234,7 +234,7 @@ func decodeHelmManifests(manifestPath string, pathMap map[string]string, chrt he
 	}
 	var docs []generatedDocument
 	for _, chunk := range chunks {
-		docs, err = splitGeneratedDocuments(docs, chunk.path, utilyaml.NewYAMLToJSONDecoder(strings.NewReader(chunk.text)), chunk.firstIndex, true)
+		docs, err = splitGeneratedDocuments(docs, chunk.path, utilyaml.NewYAMLToJSONDecoder(strings.NewReader(chunk.text)), chunk.firstIndex)
 		if err != nil {
 			return nil, nil, err
 		}
