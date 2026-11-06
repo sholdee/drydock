@@ -1736,3 +1736,39 @@ spec:
 		})
 	}
 }
+
+// When --discover-kustomize names the install path, that render is the
+// install. drydock does not render the Application at the same path again
+// for its settings, so no duplicate settings ConfigMap appears, --strict
+// passes, and the values files stay superseded.
+func TestSettingsFromDiscoverKustomizeInstallPathWithApplication(t *testing.T) {
+	for _, shape := range []argoCDInstallShape{
+		{name: "Application", write: writeKustomizeArgoCDInstall},
+		{name: "ApplicationSet-generated Application", write: writeApplicationSetKustomizeArgoCDInstall},
+	} {
+		t.Run(shape.name, func(t *testing.T) {
+			root := t.TempDir()
+			shape.write(t, root, []string{"values-base.yaml", "values-prod.yaml"})
+			writeTestFile(t, filepath.Join(root, "argocd", "values-base.yaml"), "configs:\n  cm:\n    application.resourceTrackingMethod: label\n")
+			writeTestFile(t, filepath.Join(root, "argocd", "values-prod.yaml"), "configs:\n  cm:\n    application.resourceTrackingMethod: annotation+label\n")
+
+			result, err := Orchestrator{ChartAcquirer: fakeArgoCDChartAcquirer(t)}.Build(context.Background(), BuildRequest{
+				Path:                   root,
+				Parallelism:            1,
+				Strict:                 true,
+				DiscoverKustomizePaths: []string{"argocd"},
+			})
+			if err != nil {
+				t.Fatalf("Build(--strict) error = %v, diagnostics = %#v", err, result.Diagnostics)
+			}
+			for _, diag := range result.Diagnostics {
+				if strings.Contains(diag.Message, "duplicate") {
+					t.Fatalf("diagnostic = %#v, want no duplicate", diag)
+				}
+			}
+			if got := filepath.ToSlash(result.Settings.TrackingMethod.Provenance.Path); result.Settings.TrackingMethod.Value != "annotation+label" || !strings.HasPrefix(got, "argocd") {
+				t.Fatalf("TrackingMethod = %q from %q, want annotation+label from the --discover-kustomize render", result.Settings.TrackingMethod.Value, got)
+			}
+		})
+	}
+}

@@ -325,9 +325,17 @@ func settingsInstallRenderSignature(settings config.ArgoSettings) (string, error
 // Application again with the full settings.
 func (o Orchestrator) renderSettingsInstalls(ctx context.Context, root string, request BuildRequest, discovered discovery.Result, settings config.ArgoSettings, installSig string, renderCache *applicationRenderCache) (discovery.Result, bool, []diagnostic.Diagnostic, []cacheevent.Event, error) {
 	probe := settingsInstallProbe(root, request)
+	explicit := explicitDiscoverKustomizePaths(request)
 	var installs []discovery.ApplicationFile
 	for _, appFile := range discovered.Applications {
 		if applicationMayRenderDiscoveryObjects(root, request, discovered, appFile.Application) {
+			continue
+		}
+		if applicationRendersExplicitKustomizePath(probe, appFile.Application, explicit) {
+			// --discover-kustomize already rendered this path, and that
+			// render is the install: it holds the settings ConfigMaps and
+			// supersedes the files the render read. A second render would
+			// only give duplicates with other tracking metadata.
 			continue
 		}
 		if settingsInstallInCluster(appFile.Application, settings) && applicationSettingsInstall(ctx, request, probe, appFile.Application).installsArgoCD() {

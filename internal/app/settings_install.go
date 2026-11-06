@@ -344,6 +344,39 @@ func localChartIsArgoCD(dir string) bool {
 	return false
 }
 
+// explicitDiscoverKustomizePaths returns the clean --discover-kustomize
+// paths of request.
+func explicitDiscoverKustomizePaths(request BuildRequest) map[string]struct{} {
+	paths := make(map[string]struct{}, len(request.DiscoverKustomizePaths))
+	for _, raw := range request.DiscoverKustomizePaths {
+		if clean, err := cleanLocalSourcePath(raw); err == nil {
+			paths[filepath.ToSlash(clean)] = struct{}{}
+		}
+	}
+	return paths
+}
+
+// applicationRendersExplicitKustomizePath reports whether a source of
+// application renders, from this repository root, a path that
+// --discover-kustomize renders too.
+func applicationRendersExplicitKustomizePath(provider localProvider, application argoappv1.Application, explicit map[string]struct{}) bool {
+	if len(explicit) == 0 {
+		return false
+	}
+	sources := application.Spec.Sources
+	if len(sources) == 0 && application.Spec.Source != nil {
+		sources = argoappv1.ApplicationSources{*application.Spec.Source}
+	}
+	for _, source := range sources {
+		if sourcePath, ok := settingsInstallLocalSourcePath(provider, source); ok {
+			if _, found := explicit[sourcePath]; found {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // settingsInstallLocalSourcePath returns the clean repository-relative path
 // of a source that renders from this repository root.
 func settingsInstallLocalSourcePath(provider localProvider, source argoappv1.ApplicationSource) (string, bool) {
