@@ -149,17 +149,30 @@ func rejectBroadDiagPath(path string) error {
 		return err
 	}
 	abs = filepath.Clean(abs)
-	if filepath.Dir(abs) == abs {
+	// A --path symlink to / or to the home directory scans that tree, so
+	// compare the resolved paths too.
+	resolved := resolvedDiagPath(abs)
+	if filepath.Dir(abs) == abs || filepath.Dir(resolved) == resolved {
 		return fmt.Errorf("refusing to recursively scan filesystem root %q; pass --path to a GitOps repository directory", abs)
 	}
 	home, err := os.UserHomeDir()
 	if err == nil && home != "" {
 		homeAbs, homeErr := filepath.Abs(home)
-		if homeErr == nil && sameCleanPath(abs, homeAbs) {
+		if homeErr == nil && (sameCleanPath(abs, homeAbs) || sameCleanPath(resolved, resolvedDiagPath(homeAbs))) {
 			return fmt.Errorf("refusing to recursively scan home directory %q; run from a GitOps repository root or pass --path to that repository", abs)
 		}
 	}
 	return nil
+}
+
+// resolvedDiagPath returns path with every symlink in it resolved, or path
+// when it does not resolve.
+func resolvedDiagPath(path string) string {
+	resolved, err := filepath.EvalSymlinks(path)
+	if err != nil {
+		return path
+	}
+	return filepath.Clean(resolved)
 }
 
 func sameCleanPath(left, right string) bool {
