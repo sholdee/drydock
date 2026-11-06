@@ -1881,6 +1881,38 @@ func TestOrchestratorBuildTrimsPluginOutputAsArgoCD(t *testing.T) {
 	}
 }
 
+// TestOrchestratorBuildTrimsContainerPluginOutputAsArgoCD is
+// TestOrchestratorBuildTrimsPluginOutputAsArgoCD for the container engine,
+// with a fake runner that prints the same output.
+func TestOrchestratorBuildTrimsContainerPluginOutputAsArgoCD(t *testing.T) {
+	root := t.TempDir()
+	writePluginBuildApplication(t, root, "plugin", "container-renderer")
+	policy, fingerprint := testContainerPluginPolicy(t, "container-renderer")
+	runner := &recordingContainerRunner{result: pluginexec.Result{
+		Stdout: []byte("apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: keep-chomp\ndata:\n  kept: |+\n    x\n\n"),
+	}}
+
+	result, err := (Orchestrator{PluginContainerRunner: runner}).Build(context.Background(), BuildRequest{
+		Path:                    root,
+		EnablePlugins:           true,
+		PluginCacheDir:          filepath.Join(t.TempDir(), "plugin-cache"),
+		pluginPolicyLoaded:      true,
+		pluginPolicy:            policy,
+		pluginPolicyFingerprint: fingerprint,
+		pluginPolicyExecTrusted: true,
+	})
+	if err != nil {
+		t.Fatalf("Build() error = %v\nDiagnostics: %#v", err, result.Diagnostics)
+	}
+	manifest, ok := manifestByName(result.Manifests, "keep-chomp")
+	if !ok {
+		t.Fatalf("Manifests = %#v, want keep-chomp", result.Manifests)
+	}
+	if got, _, _ := unstructured.NestedString(manifest.Object.Object, "data", "kept"); got != "x\n" {
+		t.Fatalf("data.kept = %q, want %q", got, "x\n")
+	}
+}
+
 func TestOrchestratorBuildRunsExecPolicyPostRenderer(t *testing.T) {
 	root := t.TempDir()
 	writePluginBuildApplication(t, root, "plugin", "exec-renderer")
