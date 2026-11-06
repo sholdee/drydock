@@ -198,7 +198,7 @@ func selectionSourceWithOverrides(root string, application argoappv1.Application
 	if err != nil {
 		return source
 	}
-	merged, err := mergeArgocdSourceOverrides(source, filepath.Join(root, sourcePath), application.InstanceName(defaultArgoCDControllerNamespace))
+	merged, err := mergeArgocdSourceOverrides(source, root, filepath.Join(root, sourcePath), application.InstanceName(defaultArgoCDControllerNamespace))
 	if err != nil {
 		return source
 	}

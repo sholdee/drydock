@@ -152,7 +152,7 @@ func (b *settingsInstallBuilder) addValuesFile(rel string, parser valuesParser) 
 func (b *settingsInstallBuilder) addSource(ctx context.Context, provider localProvider, application argoappv1.Application, plan PlanResult, sourcePlan SourcePlan) {
 	sourcePath, local := settingsInstallLocalSourcePath(provider, sourcePlan.Source)
 	if local {
-		sourcePlan = settingsInstallMergedSource(provider, application, sourcePlan, filepath.Join(b.root, filepath.FromSlash(sourcePath)))
+		sourcePlan = settingsInstallMergedSource(provider, application, sourcePlan, b.root, filepath.Join(b.root, filepath.FromSlash(sourcePath)))
 	}
 	source := sourcePlan.Source
 	sourceType := settingsInstallSourceType(sourcePlan, b.root, sourcePath, local)
@@ -191,8 +191,8 @@ func (b *settingsInstallBuilder) addSource(ctx context.Context, provider localPr
 // local source into it, as PrepareSource does before the render picks the
 // source type and the value files. The merge reads only local files. When it
 // fails, the render fails too, and drydock uses the source as written.
-func settingsInstallMergedSource(provider localProvider, application argoappv1.Application, sourcePlan SourcePlan, sourceDir string) SourcePlan {
-	merged, err := mergeArgocdSourceOverrides(sourcePlan.Source, sourceDir, provider.overrideInstanceName(application))
+func settingsInstallMergedSource(provider localProvider, application argoappv1.Application, sourcePlan SourcePlan, root, sourceDir string) SourcePlan {
+	merged, err := mergeArgocdSourceOverrides(sourcePlan.Source, root, sourceDir, provider.overrideInstanceName(application))
 	if err != nil {
 		return sourcePlan
 	}

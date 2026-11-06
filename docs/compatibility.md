@@ -1047,6 +1047,13 @@ Documented runtime-offline safety boundary:
 - A Helm `fileParameters` path never reads a file outside the repository
   or in `.git`, also when `reposerver.allow.oob.symlinks` is `true` and the
   repo-server would read it through a symlinked directory.
+- drydock reads an `.argocd-source.yaml` or `.argocd-source-<app>.yaml`
+  file only when it is a regular file whose real path is in the repository
+  and outside `.git`, for the render and for changed-only selection. A
+  symlink out of the repository or into `.git`, a named pipe, or a device
+  fails the render, and selection then uses the spec source. The
+  repo-server reads such a file. A missing file, a dangling symlink, and a
+  directory are skipped, as in Argo CD.
 
 Not supported:
 
