@@ -38,6 +38,11 @@ func TestKustomizeHelmValuesReadsValuesFilesLikeTheRenderer(t *testing.T) {
 			want:  []string{"install/layers/a.yaml", "install/layers/b.yaml"},
 		},
 		{
+			name:  "build environment variable stays literal in valuesFile with valuesInline",
+			chart: "    valuesFile: values-$ARGOCD_APP_NAME.yaml\n    valuesMerge: merge\n    valuesInline:\n      a: 1\n",
+			want:  []string{"install/values-$ARGOCD_APP_NAME.yaml"},
+		},
+		{
 			name:  "build environment variable stays literal in additionalValuesFiles",
 			chart: "    additionalValuesFiles:\n      - values-$ARGOCD_APP_NAME.yaml\n",
 			want:  []string{"install/values-$ARGOCD_APP_NAME.yaml"},

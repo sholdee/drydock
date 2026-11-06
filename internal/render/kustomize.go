@@ -398,6 +398,11 @@ func kustomizeHelmKubeVersion(helmChart types.HelmChart, opts RenderOptions) str
 }
 
 func writeKustomizeHelmGeneratedValuesFile(ctx context.Context, tempRepoRoot, tempSourceRoot, chartRel, valueFilesBaseDir, generatedName string, helmChart types.HelmChart, opts RenderOptions) (string, error) {
+	// kustomize reads valuesFile as written here too
+	// (HelmChartInflationGeneratorPlugin.replaceValuesInline), so the
+	// Argo CD build environment of the source never reaches the path.
+	opts.ArgoEnv = nil
+	opts.LiteralValueFilePaths = true
 	primaryValues := map[string]any{}
 	loadPrimaryValues, err := shouldLoadHelmValueFiles(helmChart.ValuesMerge, helmChart.ValuesInline)
 	if err != nil {
