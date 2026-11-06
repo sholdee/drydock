@@ -16,7 +16,8 @@ import (
 // RFC 3339 strings. kustomize keeps metadata labels and annotations as the
 // text they were written with, which this reading does not reproduce. It
 // exists for manifests drydock hands to kustomize as input; everything Argo
-// CD itself reads goes through DecodeDocuments or DecodeGeneratedDocuments.
+// CD itself reads goes through DecodeDocuments or, for generated output, the
+// render package.
 func DecodeYAML12Documents(path string, reader io.Reader) ([]Document, error) {
 	return decodeDocuments(path, yaml12Decoder{decoder: yaml.NewDecoder(reader)}, true)
 }

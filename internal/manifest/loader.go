@@ -28,13 +28,6 @@ func DecodeDocumentRoots(path string, reader io.Reader) ([]Document, error) {
 	return decodeDocuments(path, manifestyaml.NewDecoder(reader), false)
 }
 
-// DecodeGeneratedDocuments decodes helm, kustomize, or config management
-// plugin output the way Argo CD's repo-server splits it with gitops-engine
-// kube.SplitYAML (see manifestyaml.NewGeneratedDecoder).
-func DecodeGeneratedDocuments(path string, reader io.Reader) ([]Document, error) {
-	return decodeDocuments(path, manifestyaml.NewGeneratedDecoder(reader), true)
-}
-
 type documentDecoder interface {
 	// Decode returns the next document's value, nil for an empty document,
 	// or io.EOF after the last document.

@@ -33,9 +33,9 @@ type argoReaderCase struct {
 	input string
 	// want is what every reader produces.
 	want []map[string]any
-	// wantGenerated, when set, is what kube.SplitYAML (and
-	// DecodeGeneratedDocuments) produces where it differs from the
-	// kubectl/directory reading in want.
+	// wantGenerated, when set, is what kube.SplitYAML produces where it
+	// differs from the kubectl/directory reading in want. The render package
+	// tests drydock's reading of generated output against kube.SplitYAML.
 	wantGenerated []map[string]any
 }
 
@@ -192,7 +192,6 @@ metadata:
 			}
 
 			assertDocumentObjects(t, "DecodeDocuments", tt.input, DecodeDocuments, tt.want)
-			assertDocumentObjects(t, "DecodeGeneratedDocuments", tt.input, DecodeGeneratedDocuments, wantGenerated)
 
 			split, err := kube.SplitYAML([]byte(tt.input))
 			if err != nil {
@@ -222,9 +221,8 @@ func TestDecodeDocumentsRejectsContentAfterDocumentSeparator(t *testing.T) {
 		t.Fatal("kube.SplitYAML() error = nil, want invalid separator error")
 	}
 	for name, decode := range map[string]func(string, io.Reader) ([]Document, error){
-		"DecodeDocuments":          DecodeDocuments,
-		"DecodeDocumentRoots":      DecodeDocumentRoots,
-		"DecodeGeneratedDocuments": DecodeGeneratedDocuments,
+		"DecodeDocuments":     DecodeDocuments,
+		"DecodeDocumentRoots": DecodeDocumentRoots,
 	} {
 		_, err := decode("secret.yaml", strings.NewReader(input))
 		if err == nil {
@@ -314,7 +312,6 @@ func TestDecodeDocumentsOutOfRangeJSONNumberMatchesArgoCDReaders(t *testing.T) {
 	if got := unstructuredObjects(split); !reflect.DeepEqual(got, want) {
 		t.Fatalf("kube.SplitYAML() = %#v, want %#v", got, want)
 	}
-	assertDocumentObjects(t, "DecodeGeneratedDocuments", input, DecodeGeneratedDocuments, want)
 }
 
 func TestDecodeDocumentsCountsDocumentsAsTheManifestSplitterDoes(t *testing.T) {
