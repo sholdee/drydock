@@ -1,9 +1,12 @@
 package render
 
 import (
+	"context"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 // TestDirectoryJsonnetImportPaths pins the files outside a directory source
@@ -29,12 +32,42 @@ local vendored = import 'vendored.libsonnet';
 	symlink(t, "../other/target.libsonnet", filepath.Join(root, "app", "linked.libsonnet"))
 	writeFile(t, filepath.Join(root, "app", "broken.jsonnet"), "local x = import '../ignored.libsonnet'; {")
 
-	got, err := DirectoryJsonnetImportPaths(root, "app", []string{"vendor"})
+	got, err := DirectoryJsonnetImportPaths(t.Context(), root, "app", []string{"vendor"})
 	if err != nil {
 		t.Fatalf("DirectoryJsonnetImportPaths() error = %v", err)
 	}
 	want := []string{"other/target.libsonnet", "shared/lib.libsonnet", "shared/nested.libsonnet", "shared/text.txt"}
 	if strings.Join(got, ",") != strings.Join(want, ",") {
 		t.Fatalf("DirectoryJsonnetImportPaths() = %v, want %v", got, want)
+	}
+}
+
+// TestDirectoryJsonnetImportPathsReadsOnlyBoundedRepositoryFiles pins that
+// the import scan reads a file only after the renderer's importer checks.
+// An entry file or an import that is a symlink to a device that never ends,
+// or to a file outside the repository, is not read: the scan neither hangs
+// nor follows the imports of such a file.
+func TestDirectoryJsonnetImportPathsReadsOnlyBoundedRepositoryFiles(t *testing.T) {
+	if _, err := os.Stat("/dev/zero"); err != nil {
+		t.Skipf("/dev/zero unavailable: %v", err)
+	}
+	root := t.TempDir()
+	outside := filepath.Join(t.TempDir(), "outside.jsonnet")
+	writeFile(t, outside, "import '../shared/leak.libsonnet'\n")
+	symlink(t, "/dev/zero", filepath.Join(root, "app", "zero.jsonnet"))
+	symlink(t, outside, filepath.Join(root, "app", "outside.jsonnet"))
+	symlink(t, "/dev/zero", filepath.Join(root, "app", "z.libsonnet"))
+	writeFile(t, filepath.Join(root, "app", "main.jsonnet"), "import 'z.libsonnet'\n")
+	big := filepath.Join(root, "app", "big.jsonnet")
+	writeFile(t, big, "import '../shared/big.libsonnet'\n"+strings.Repeat(" ", maxJsonnetImportScanBytes))
+
+	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
+	defer cancel()
+	got, err := DirectoryJsonnetImportPaths(ctx, root, "app", nil)
+	if err != nil {
+		t.Fatalf("DirectoryJsonnetImportPaths() error = %v", err)
+	}
+	if len(got) != 0 {
+		t.Fatalf("DirectoryJsonnetImportPaths() = %v, want nothing read from outside or unbounded files", got)
 	}
 }

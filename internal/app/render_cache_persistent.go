@@ -835,7 +835,7 @@ func localToolInputDigestPaths(ctx context.Context, plan PlanResult, sourcePlan 
 	}
 	switch renderer.(type) {
 	case render.DirectoryRenderer:
-		paths, err := localDirectoryInputDigestPaths(plan, sourcePlan, repoRoot)
+		paths, err := localDirectoryInputDigestPaths(ctx, plan, sourcePlan, repoRoot)
 		return paths, false, err
 	case render.HelmRenderer:
 		return localHelmInputDigestPaths(plan, sourcePlan, repoRoot)
@@ -864,7 +864,7 @@ func localKustomizeInputDigestPaths(ctx context.Context, plan PlanResult, source
 	return render.KustomizeInputDigestPaths(ctx, source, opts)
 }
 
-func localDirectoryInputDigestPaths(plan PlanResult, sourcePlan SourcePlan, repoRoot string) ([]gitref.PathDigestPath, error) {
+func localDirectoryInputDigestPaths(ctx context.Context, plan PlanResult, sourcePlan SourcePlan, repoRoot string) ([]gitref.PathDigestPath, error) {
 	opts, err := renderOptions(plan.Application, sourcePlan.Source, CapabilityOptions{}, defaultTrackingOptions())
 	if err != nil {
 		return nil, err
@@ -873,7 +873,7 @@ func localDirectoryInputDigestPaths(plan PlanResult, sourcePlan SourcePlan, repo
 	if source.RepoRoot == "" {
 		source.RepoRoot = repoRoot
 	}
-	return render.DirectoryInputDigestPaths(source, opts)
+	return render.DirectoryInputDigestPaths(ctx, source, opts)
 }
 
 func localHelmInputDigestPaths(plan PlanResult, sourcePlan SourcePlan, repoRoot string) ([]gitref.PathDigestPath, bool, error) {

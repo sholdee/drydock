@@ -1,6 +1,8 @@
 package render
 
 import (
+	"context"
+	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -23,9 +25,12 @@ import (
 // path's target. It reads every .jsonnet file under the source path, also
 // one that recurse or a filter leaves out, so the result is conservative.
 // An import that the renderer refuses, a file that does not parse, and
-// imports in extVar or TLA code add nothing. The result is sorted, with
-// forward slashes.
-func DirectoryJsonnetImportPaths(repoRoot, sourcePath string, libs []string) ([]string, error) {
+// imports in extVar or TLA code add nothing. It reads a file only after the
+// checks of the renderer's importer: its symlinks must resolve to a regular
+// file inside the repository, outside .git. It reads at most
+// maxJsonnetImportScanBytes of a file, and does not parse a larger one. The
+// result is sorted, with forward slashes.
+func DirectoryJsonnetImportPaths(ctx context.Context, repoRoot, sourcePath string, libs []string) ([]string, error) {
 	absRoot, err := filepath.Abs(repoRoot)
 	if err != nil {
 		return nil, err
@@ -61,6 +66,7 @@ func DirectoryJsonnetImportPaths(repoRoot, sourcePath string, libs []string) ([]
 		return nil, err
 	}
 	collector := jsonnetImportCollector{
+		ctx:      ctx,
 		importer: newBoundedJsonnetImporter(absRoot, jpaths),
 		absRoot:  absRoot,
 		realRoot: realRoot,
@@ -70,6 +76,9 @@ func DirectoryJsonnetImportPaths(repoRoot, sourcePath string, libs []string) ([]
 	}
 	for _, entry := range entries {
 		collector.visit(entry)
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
 	}
 	out := make([]string, 0, len(collector.found))
 	for rel := range collector.found {
@@ -101,7 +110,13 @@ func directoryJsonnetEntryFiles(appPath string) ([]string, error) {
 	return entries, err
 }
 
+// maxJsonnetImportScanBytes bounds how much of one Jsonnet file the import
+// scan reads. It is the default repo-server limit on the combined size of a
+// directory source, which no single manifest file can pass.
+const maxJsonnetImportScanBytes = 10_000_000
+
 type jsonnetImportCollector struct {
+	ctx      context.Context
 	importer *boundedJsonnetImporter
 	absRoot  string
 	realRoot string
@@ -114,12 +129,12 @@ type jsonnetImportCollector struct {
 // at, and follows its imports. A relative import resolves against the
 // directory of that path, also when it is a symlink.
 func (c *jsonnetImportCollector) visit(path string) {
-	if c.visited[path] {
+	if c.visited[path] || c.ctx.Err() != nil {
 		return
 	}
 	c.visited[path] = true
-	data, err := os.ReadFile(path)
-	if err != nil {
+	data, ok := c.read(path)
+	if !ok {
 		return
 	}
 	node, err := jsonnet.SnippetToAST(path, string(data))
@@ -149,6 +164,31 @@ func (c *jsonnetImportCollector) visit(path string) {
 			break
 		}
 	}
+}
+
+// read reads the Jsonnet file at path after the checks of the renderer's
+// importer (boundedJsonnetImporter.validate), so it never reads outside the
+// repository, from .git, or from a file that is not a regular file, such
+// as a device that never ends. It does not read a file larger than
+// maxJsonnetImportScanBytes.
+func (c *jsonnetImportCollector) read(path string) ([]byte, bool) {
+	if pathEntersGit(c.importer.boundary, path) {
+		return nil, false
+	}
+	resolved, err := c.importer.validate(path, path)
+	if err != nil {
+		return nil, false
+	}
+	file, err := os.Open(resolved)
+	if err != nil {
+		return nil, false
+	}
+	defer func() { _ = file.Close() }()
+	data, err := io.ReadAll(io.LimitReader(file, maxJsonnetImportScanBytes+1))
+	if err != nil || len(data) > maxJsonnetImportScanBytes {
+		return nil, false
+	}
+	return data, true
 }
 
 func (c *jsonnetImportCollector) add(path string) {

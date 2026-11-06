@@ -75,7 +75,7 @@ func withSelectionOnlyPaths(ctx context.Context, root string, repoMaps []sourcep
 			paths = render.DirectorySymlinkInputPaths(root, dirs)
 			// A source that cannot be read keeps its other ownership; the
 			// render reports the error.
-			imports, _ := render.DirectoryJsonnetImportPaths(root, source.Path, dirs[1:])
+			imports, _ := render.DirectoryJsonnetImportPaths(ctx, root, source.Path, dirs[1:])
 			paths = append(paths, imports...)
 			symlinkMemo[key] = paths
 		}

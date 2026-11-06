@@ -43,7 +43,7 @@ func TestDirectoryInputDigestPathsCoverSymlinkTargets(t *testing.T) {
 	writeFile(t, filepath.Join(root, "targets", "end.yaml"), "a: 1\n")
 	symlink(t, "../targets/end.yaml", filepath.Join(root, "apps", "linked.yaml"))
 	symlink(t, "../targets/missing.yaml", filepath.Join(root, "apps", "dangling.yaml"))
-	paths, err := DirectoryInputDigestPaths(ResolvedSource{RepoRoot: root, Path: "apps"}, RenderOptions{})
+	paths, err := DirectoryInputDigestPaths(t.Context(), ResolvedSource{RepoRoot: root, Path: "apps"}, RenderOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}

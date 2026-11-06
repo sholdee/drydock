@@ -1,6 +1,7 @@
 package render
 
 import (
+	"context"
 	"fmt"
 	"path/filepath"
 
@@ -16,7 +17,7 @@ import (
 // optional paths: a symlink whose target is missing reads nothing now but
 // renders the target once it exists. So are the files that its Jsonnet
 // files import from outside those trees (DirectoryJsonnetImportPaths).
-func DirectoryInputDigestPaths(source ResolvedSource, opts RenderOptions) ([]gitref.PathDigestPath, error) {
+func DirectoryInputDigestPaths(ctx context.Context, source ResolvedSource, opts RenderOptions) ([]gitref.PathDigestPath, error) {
 	root, err := sourceRoot(source)
 	if err != nil {
 		return nil, err
@@ -44,7 +45,7 @@ func DirectoryInputDigestPaths(source ResolvedSource, opts RenderOptions) ([]git
 	for _, rel := range DirectorySymlinkInputPaths(source.RepoRoot, trees) {
 		paths = append(paths, gitref.PathDigestPath{Path: rel, Optional: true})
 	}
-	imports, err := DirectoryJsonnetImportPaths(source.RepoRoot, source.Path, opts.Jsonnet.Libs)
+	imports, err := DirectoryJsonnetImportPaths(ctx, source.RepoRoot, source.Path, opts.Jsonnet.Libs)
 	if err != nil {
 		return nil, err
 	}
