@@ -238,7 +238,9 @@ Supported:
   `--strict` promotes `appset.rollout-no-steps`, which stops reconciliation
   when progressive syncs are enabled, but neither escalates nor fails on
   `appset.invalid-rollout-config`, because Argo CD's `InvalidRolloutConfig`
-  condition never blocks Application create or update.
+  condition never blocks Application create or update. The render parity
+  smoke turns progressive syncs on and checks each finding class against the
+  live ApplicationSet condition.
 
 Not supported:
 

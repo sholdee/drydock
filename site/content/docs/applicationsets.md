@@ -254,6 +254,11 @@ reconciling the ApplicationSet. It neither escalates nor fails on
 condition never blocks Applications, so a staged rollout whose later step has
 no Applications yet still passes `--strict` CI.
 
+The [render parity smoke](/concepts/argocd-render-parity/) runs Argo CD with
+progressive syncs on. It checks that Argo CD sets the matching condition on
+the same ApplicationSets that drydock flags, with the same message. It covers
+each finding class above.
+
 ## Provider Fixtures
 
 Use the repeatable `--appset-provider-fixture` flag to provide deterministic
