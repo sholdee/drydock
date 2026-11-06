@@ -124,3 +124,17 @@ cases:
     argocdNamesObject: parity-decode-order-tracking-annotations
     argocdMessage: "failed to set app instance tracking info on manifest: failed to get annotations for /v1, Kind=ConfigMap parity-directory-decode-workloads/parity-decode-order-tracking-annotations"
     drydockMessage: "b-tracking.yaml document 0 list item /items/0: failed to set app instance tracking info on manifest"
+  # An apiVersion with two or more slashes does not parse as a group
+  # version, so the Unstructured decode finds no kind. A .json object then
+  # passes the OCI image manifest test, and the controller fails on it.
+  - name: parity-decode-json-apiversion
+    file: apiversion.json
+    argocdQuotesObject: true
+    argocdMessage: "Object 'Kind' is missing in '{\"apiVersion\":\"apps/v1/\",\"kind\":\"Deployment\",\"metadata\":{\"annotations\":{\"argocd.argoproj.io/tracking-id\":\"parity-directory-decode_parity-decode-json-apiversion:"
+    drydockMessage: 'apiversion.json: JSON object has apiVersion "apps/v1/", which is not a valid group version, so it has no kind'
+  # The same apiVersion in a YAML file stops the stream at the first
+  # document, and the file text holds every manifest marker.
+  - name: parity-decode-yaml-apiversion
+    file: apiversion.yaml
+    argocdMessage: Failed to unmarshal "apiversion.yaml"
+    drydockMessage: 'apiversion.yaml document 0 has apiVersion "apps/v1/", which is not a valid group version, so it has no kind'

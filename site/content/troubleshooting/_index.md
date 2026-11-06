@@ -273,6 +273,12 @@ drydock selects directory-source files as the Argo CD v3.6.1 repo-server does:
   metadata, and checks for a missing `kind` last. So a file that does not
   decode is reported before an earlier file whose list or tracking metadata
   fails.
+- An `apiVersion` with two or more slashes, such as the typo `apps/v1/`, does
+  not parse as a group version. Argo CD then finds no `kind` in the object,
+  so the file fails or is skipped as for a missing `kind`. drydock names the
+  `apiVersion` in an error such as
+  `apiversion.json: JSON object has apiVersion "apps/v1/", which is not a valid group version, so it has no kind`.
+  Fix the `apiVersion`.
 - A document with a `kind` and no `apiVersion` renders without an
   `apiVersion`, as in Argo CD. Kubernetes cannot apply a manifest without
   an `apiVersion`, so add it.

@@ -500,6 +500,14 @@ Supported:
   tracking method, so annotation tracking reads the annotations, label
   tracking reads the labels, and annotation and label tracking reads both.
   A list item takes the same check. drydock names the file and the item.
+- An object counts as having a `kind` only when its `apiVersion` also parses
+  as a group version, as in the Unstructured decode that Argo CD v3.6.1 uses.
+  An `apiVersion` with two or more slashes, such as the typo `apps/v1/`, does
+  not parse, so the object has no `kind` for Argo CD. In a YAML file such a
+  document stops the stream. A `.json` object or a list item with it fails
+  in the controller stage with `Object 'Kind' is missing`. drydock reports
+  the same failure and names the `apiVersion`. Earlier drydock releases
+  rendered such a YAML document or list item.
 - An object with a `kind` whose `items` field is a string, a number, or a
   map is not a list, so it renders unchanged, as in Argo CD. This holds for
   every source type. Earlier drydock releases failed it with

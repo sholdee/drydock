@@ -1,0 +1,7 @@
+# The apiVersion has a trailing slash, so the document has no kind for Argo
+# CD and stops the stream. The file text has no metadata marker, so the file
+# is skipped.
+apiVersion: apps/v1/
+kind: Deployment
+spec:
+  replicas: 1

@@ -820,6 +820,7 @@ ConfigMap and these files:
 | `invalid-utf8.yaml` | rendered: the invalid byte becomes U+FFFD |
 | `apiversion-only.yaml` | skipped: the first document has an `apiVersion` but no `kind`, and the file text has no `kind:` |
 | `empty-kind.yaml` | skipped: `kind: ""` stops the stream like a missing `kind`, and the file text has no `metadata:` |
+| `apiversion-typo.yaml` | skipped: the `apiVersion` `apps/v1/` does not parse as a group version, so the document has no `kind` for Argo CD, and the file text has no `metadata:` |
 | `kind-only.yaml` | rendered: a document needs a `kind` but not an `apiVersion`, so the ConfigMap renders without an `apiVersion` |
 | `list-no-apiversion.yaml` | rendered: a `kind: List` without an `apiVersion` is still split into its item |
 | `items-scalar.yaml` | rendered: a ConfigMap whose `items` field is a string is not a list, so it renders unchanged |
@@ -865,8 +866,10 @@ each case it names the file that Argo CD reports, the text that the Argo CD
 must contain. Both texts must name the file, so a failure caused by a
 different file does not pass.
 
-The cases without a `kind` are different. The repo-server accepts the two
+The cases without a `kind` are different. The repo-server accepts the three
 `.json` objects without a `kind` as OCI image manifests and emits each one.
+One of them has a `kind` field, but its `apiVersion` does not parse, so the
+Unstructured decode finds no `kind`.
 It splits every list into its items and emits each item, so the three list
 items without a `kind` are emitted too. The controller then fails with
 `Object 'Kind' is missing in '...'`, which quotes the manifest but not the
@@ -904,6 +907,8 @@ case, so the other texts are compared without case.
 | `parity-decode-jsonnet-list-item` | `list.jsonnet` | an item of a Jsonnet `kind: List` has no `kind`, so the controller fails |
 | `parity-decode-yaml-tracking` | `tracking.yaml` | a List item whose `annotations` field is a string, so the repo-server cannot set the tracking annotation |
 | `parity-decode-order-decode` | `b-invalid.json` | `b-invalid.json` does not decode. It wins over `a-scalar-item.json`, whose list item is not an object, because the repo-server reads every file before it splits lists |
+| `parity-decode-json-apiversion` | `apiversion.json` | the `apiVersion` `apps/v1/` does not parse as a group version, so the object has no `kind` and the controller fails |
+| `parity-decode-yaml-apiversion` | `apiversion.yaml` | the same `apiVersion` in the first YAML document stops the stream, and the file text holds every manifest marker |
 | `parity-decode-order-tracking` | `b-tracking.yaml` | `b-tracking.yaml` fails the tracking annotation. It wins over `a-kindless.json`, which has no `kind`, because the controller checks kinds last |
 
 `run_directory_decode_smoke` in `scripts/argocd-parity-smoke.sh` waits for a
