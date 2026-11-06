@@ -176,6 +176,10 @@ type generatedDocument struct {
 	path  string
 	label string
 	raw   []byte
+	// converted marks JSON text that sigs.k8s.io/yaml wrote from a YAML
+	// document. Such text is already in the form that a second conversion
+	// writes, so decodeGeneratedDocuments decodes it without one.
+	converted bool
 }
 
 // rawExtensionDecoder is the Decode method of apimachinery's
@@ -189,8 +193,10 @@ type rawExtensionDecoder interface {
 // RawExtension, trims it, and drops an empty or null document, such as a
 // document that holds only comments. It stops at the first document that
 // does not decode. The label of a document counts every document the
-// decoder returns, empty ones included, from firstIndex. It appends to out.
-func splitGeneratedDocuments(out []generatedDocument, path string, decoder rawExtensionDecoder, firstIndex int) ([]generatedDocument, error) {
+// decoder returns, empty ones included, from firstIndex. converted says that
+// the decoder reads every document as YAML, which is true when the stream
+// does not start with "{" (utilyaml.IsJSONBuffer). It appends to out.
+func splitGeneratedDocuments(out []generatedDocument, path string, decoder rawExtensionDecoder, firstIndex int, converted bool) ([]generatedDocument, error) {
 	for index := firstIndex; ; index++ {
 		var ext runtime.RawExtension
 		if err := decoder.Decode(&ext); err != nil {
@@ -204,9 +210,10 @@ func splitGeneratedDocuments(out []generatedDocument, path string, decoder rawEx
 			continue
 		}
 		out = append(out, generatedDocument{
-			path:  path,
-			label: fmt.Sprintf("%s document %d", path, index),
-			raw:   raw,
+			path:      path,
+			label:     fmt.Sprintf("%s document %d", path, index),
+			raw:       raw,
+			converted: converted,
 		})
 	}
 }
@@ -222,7 +229,7 @@ func decodeGeneratedDocuments(docs []generatedDocument) ([]generatedObject, erro
 	objects := make([]generatedObject, 0, len(docs))
 	for _, doc := range docs {
 		object := &unstructured.Unstructured{}
-		if err := sigsyaml.Unmarshal(doc.raw, object); err != nil {
+		if err := unmarshalGeneratedDocument(doc, object); err != nil {
 			if isMissingKindError(err) {
 				// The Unstructured decode stores the object before it
 				// checks the kind.
@@ -237,6 +244,50 @@ func decodeGeneratedDocuments(docs []generatedDocument) ([]generatedObject, erro
 		})
 	}
 	return objects, nil
+}
+
+// unmarshalGeneratedDocument decodes one document into object as
+// kube.SplitYAML does with sigs.k8s.io/yaml.Unmarshal. That function
+// converts the text from YAML to JSON and then decodes the JSON with
+// encoding/json, which calls Unstructured.UnmarshalJSON. For text that
+// sigs.k8s.io/yaml already wrote from YAML, the conversion writes the same
+// JSON again, so drydock skips it and calls UnmarshalJSON with the same
+// error text. Two kinds of text take the full path. JSON from a JSON stream
+// is not in that form, for example 1e999 becomes a string. And JSON text can
+// hold a character that the YAML reader refuses, which a YAML escape such as
+// "\x7f" or a !!binary value can make, so the second conversion fails.
+func unmarshalGeneratedDocument(doc generatedDocument, object *unstructured.Unstructured) error {
+	if !doc.converted || hasYAMLRefusedCharacter(doc.raw) {
+		return sigsyaml.Unmarshal(doc.raw, object)
+	}
+	if err := object.UnmarshalJSON(doc.raw); err != nil {
+		return fmt.Errorf("error unmarshaling JSON: while decoding JSON: %w", err)
+	}
+	return nil
+}
+
+// hasYAMLRefusedCharacter reports whether UTF-8 text holds a character that
+// encoding/json writes as is but the go.yaml.in/yaml/v2 reader refuses
+// (readerc.go, "control characters are not allowed"): U+007F, U+0080 to
+// U+009F except U+0085, U+FFFE, and U+FFFF. It also reports U+FEFF, which
+// the reader takes as a byte order mark. encoding/json escapes every other
+// control character.
+func hasYAMLRefusedCharacter(text []byte) bool {
+	for i := range text {
+		switch text[i] {
+		case 0x7F:
+			return true
+		case 0xC2:
+			if i+1 < len(text) && text[i+1] >= 0x80 && text[i+1] <= 0x9F && text[i+1] != 0x85 {
+				return true
+			}
+		case 0xEF:
+			if i+2 < len(text) && ((text[i+1] == 0xBF && (text[i+2] == 0xBE || text[i+2] == 0xBF)) || (text[i+1] == 0xBB && text[i+2] == 0xBF)) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // isMissingKindError reports whether err wraps the apimachinery missing-kind
@@ -285,7 +336,11 @@ func generatedManifests(docs []generatedDocument, track func(*unstructured.Unstr
 // skips the tracking check.
 func DecodeGeneratedOutput(path string, data []byte, track func(*unstructured.Unstructured) error) ([]Manifest, error) {
 	decoder := utilyaml.NewYAMLOrJSONDecoder(bytes.NewReader(data), generatedJSONGuessSize)
-	docs, err := splitGeneratedDocuments(nil, path, decoder, 0)
+	// NewYAMLOrJSONDecoder reads the stream as YAML from the start unless
+	// the first bytes it peeks at start with "{". A stream that starts as
+	// JSON can switch to YAML later, so drydock takes the full path for it.
+	head := data[:min(len(data), generatedJSONGuessSize)]
+	docs, err := splitGeneratedDocuments(nil, path, decoder, 0, !utilyaml.IsJSONBuffer(head))
 	if err != nil {
 		return nil, err
 	}
