@@ -59,8 +59,6 @@ func TestDirectoryJsonnetImportPathsReadsOnlyBoundedRepositoryFiles(t *testing.T
 	symlink(t, outside, filepath.Join(root, "app", "outside.jsonnet"))
 	symlink(t, "/dev/zero", filepath.Join(root, "app", "z.libsonnet"))
 	writeFile(t, filepath.Join(root, "app", "main.jsonnet"), "import 'z.libsonnet'\n")
-	big := filepath.Join(root, "app", "big.jsonnet")
-	writeFile(t, big, "import '../shared/big.libsonnet'\n"+strings.Repeat(" ", maxJsonnetImportScanBytes))
 
 	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
 	defer cancel()
@@ -103,5 +101,17 @@ func TestDirectoryJsonnetImportPathsStopsAtItsBudget(t *testing.T) {
 	}
 	if ctx.Err() != nil {
 		t.Fatal("the scan ran past its deadline")
+	}
+}
+
+// TestDirectoryJsonnetImportPathsRunsOutOnALargeFile pins that a Jsonnet
+// file over the scan budget is not dropped silently. The renderer
+// evaluates it, so its imports are inputs that the scan cannot list.
+func TestDirectoryJsonnetImportPathsRunsOutOnALargeFile(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "lib", "inner.libsonnet"), "{}\n")
+	writeFile(t, filepath.Join(root, "app", "main.jsonnet"), "import '../lib/inner.libsonnet'\n"+strings.Repeat(" ", maxJsonnetImportScanBytes))
+	if _, err := DirectoryJsonnetImportPaths(t.Context(), root, "app", nil); !errors.Is(err, ErrJsonnetImportScanBudget) {
+		t.Fatalf("DirectoryJsonnetImportPaths() error = %v, want the budget error", err)
 	}
 }

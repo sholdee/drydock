@@ -214,7 +214,13 @@ func (c *jsonnetImportCollector) read(path string) ([]byte, bool) {
 	}
 	defer func() { _ = file.Close() }()
 	data, err := io.ReadAll(io.LimitReader(file, maxJsonnetImportScanBytes+1))
-	if err != nil || len(data) > maxJsonnetImportScanBytes {
+	if err != nil {
+		return nil, false
+	}
+	if len(data) > maxJsonnetImportScanBytes {
+		// The renderer evaluates such a file, so its imports are inputs
+		// that the scan cannot list.
+		c.exhausted = true
 		return nil, false
 	}
 	c.bytesRead += int64(len(data))
