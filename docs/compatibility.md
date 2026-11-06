@@ -586,7 +586,11 @@ Supported:
   discovers, as for the size limit.
 - In a local Git worktree, the out-of-bounds check leaves out every path that
   Git ignores and does not track, such as a Python virtual environment or a
-  Nix build result. No commit, and so no Argo CD checkout, can hold such a
+  Nix build result. drydock reads the ignore rules from `.gitignore` files,
+  from `info/exclude` (of the common Git directory for a linked worktree),
+  and from the file that `core.excludesFile` names, or the default user file
+  `$XDG_CONFIG_HOME/git/ignore` or `~/.config/git/ignore` without one. It
+  does not follow `include` sections of a Git configuration file. No commit, and so no Argo CD checkout, can hold such a
   path. A `.git` file at the worktree root, as in a linked worktree, is
   skipped like a `.git` directory. A path at or under a submodule is always
   checked, because Argo CD checks out submodules and the parent index does

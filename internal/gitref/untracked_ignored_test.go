@@ -1,6 +1,7 @@
 package gitref
 
 import (
+	"os/exec"
 	"path/filepath"
 	"testing"
 )
@@ -82,5 +83,64 @@ func TestUntrackedIgnoredFilterNeverSkipsSubmodulePaths(t *testing.T) {
 	}
 	if !filter.Skip("result", false) {
 		t.Error("Skip(result) = false, want the ignored parent path skipped")
+	}
+}
+
+// TestUntrackedIgnoredFilterReadsTheDefaultUserIgnoreFile pins that Git's
+// default user ignore file applies when core.excludesFile is not set, and
+// that a configured core.excludesFile replaces it.
+func TestUntrackedIgnoredFilterReadsTheDefaultUserIgnoreFile(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	xdg := filepath.Join(home, "xdg")
+	t.Setenv("XDG_CONFIG_HOME", xdg)
+	writeChangeSetFile(t, filepath.Join(xdg, "git", "ignore"), "result\n")
+	root, _, wt := newSnapshotRepo(t)
+	writeChangeSetFile(t, filepath.Join(root, "apps", "cm.yaml"), "a: 1\n")
+	commitAllSnapshotFiles(t, wt, "fixture")
+
+	filter, err := OpenUntrackedIgnoredFilter(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !filter.Skip("result", false) {
+		t.Fatal("Skip(result) = false, want the default user ignore file read")
+	}
+
+	writeChangeSetFile(t, filepath.Join(home, ".gitconfig"), "[core]\n\texcludesFile = ~/custom-ignore\n")
+	writeChangeSetFile(t, filepath.Join(home, "custom-ignore"), ".venv/\n")
+	filter, err = OpenUntrackedIgnoredFilter(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if filter.Skip("result", false) || !filter.Skip(".venv", true) {
+		t.Fatal("core.excludesFile did not replace the default user ignore file")
+	}
+}
+
+// TestUntrackedIgnoredFilterReadsInfoExcludeOfALinkedWorktree pins that a
+// linked worktree, whose .git is a file, reads info/exclude of the common
+// Git directory.
+func TestUntrackedIgnoredFilterReadsInfoExcludeOfALinkedWorktree(t *testing.T) {
+	gitBin, err := exec.LookPath("git")
+	if err != nil {
+		t.Skip("git not installed")
+	}
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("XDG_CONFIG_HOME", "")
+	main, _, wt := newSnapshotRepo(t)
+	writeChangeSetFile(t, filepath.Join(main, "apps", "cm.yaml"), "a: 1\n")
+	commitAllSnapshotFiles(t, wt, "fixture")
+	writeChangeSetFile(t, filepath.Join(main, ".git", "info", "exclude"), "local-only/\n")
+	linked := filepath.Join(t.TempDir(), "linked")
+	if out, err := exec.Command(gitBin, "-C", main, "worktree", "add", "-q", linked).CombinedOutput(); err != nil {
+		t.Skipf("git worktree add: %v: %s", err, out)
+	}
+	filter, err := OpenUntrackedIgnoredFilter(linked)
+	if err != nil {
+		t.Fatalf("OpenUntrackedIgnoredFilter() error = %v", err)
+	}
+	if !filter.Skip("local-only", true) {
+		t.Fatal("Skip(local-only) = false, want info/exclude of the common Git directory read")
 	}
 }
