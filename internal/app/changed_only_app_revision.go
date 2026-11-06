@@ -25,7 +25,7 @@ func changedOnlyAppRevisionDiagnostic(selected int) diagnostic.Diagnostic {
 		Code:     changedOnlyAppRevisionCode,
 		Severity: diagnostic.SeverityWarning,
 		Category: "changed-only",
-		Message:  fmt.Sprintf("the two sides render different commits; selecting %d Application(s) whose spec reads ARGOCD_APP_REVISION, ARGOCD_APP_REVISION_SHORT, or ARGOCD_APP_REVISION_SHORT_8", selected),
+		Message:  fmt.Sprintf("the two sides render different commits; selecting %d Application(s) whose spec reads ARGOCD_APP_REVISION, ARGOCD_APP_REVISION_SHORT, or ARGOCD_APP_REVISION_SHORT_8, or that render through a config management plugin", selected),
 	}
 }
 
@@ -40,7 +40,8 @@ func diffSideTreeRevision(request BuildRequest) string {
 }
 
 // withAppRevisionSelection adds to the changed-only selection every
-// Application that reads an ARGOCD_APP_REVISION variable when the two sides
+// Application that reads an ARGOCD_APP_REVISION variable, and every
+// Application with a config management plugin source, when the two sides
 // render different commits. Its output changes with the commit, as in Argo
 // CD (newEnv, reposerver/repository/repository.go:1864-1878), even when no
 // path it owns changed. The test is the one that keys the persistent render
@@ -85,13 +86,18 @@ func withAppRevisionSelection(leftRequest, rightRequest BuildRequest, left, righ
 // applicationReadsAppRevision reports whether a source of application reads
 // an ARGOCD_APP_REVISION variable, in its spec or after the .argocd-source
 // overrides under root are merged into it, as PrepareSource merges them.
+// Every config management plugin source counts: the repo-server always puts
+// the variables in the plugin environment (getPluginEnvs,
+// reposerver/repository/repository.go:2398-2408), so its output can change
+// with each commit. Plugin sources never persist, so this widening does not
+// reach the render cache key (sourceReadsAppRevision).
 func applicationReadsAppRevision(root, controllerNamespace string, application argoappv1.Application) bool {
 	sources := application.Spec.Sources
 	if len(sources) == 0 && application.Spec.Source != nil {
 		sources = argoappv1.ApplicationSources{*application.Spec.Source}
 	}
 	for _, source := range sources {
-		if sourceReadsAppRevision(source) {
+		if source.Plugin != nil || sourceReadsAppRevision(source) {
 			return true
 		}
 		if strings.TrimSpace(source.Path) == "" {
@@ -106,7 +112,7 @@ func applicationReadsAppRevision(root, controllerNamespace string, application a
 			continue
 		}
 		merged, err := mergeArgocdSourceOverrides(source, sourceDir, application.InstanceName(controllerNamespace))
-		if err == nil && sourceReadsAppRevision(merged) {
+		if err == nil && (merged.Plugin != nil || sourceReadsAppRevision(merged)) {
 			return true
 		}
 	}

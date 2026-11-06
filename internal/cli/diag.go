@@ -277,7 +277,9 @@ func renderDiagnosticsWithColor(w io.Writer, diags []diagnostic.Diagnostic, colo
 		// markdown report, and the docs use to identify a diagnostic, so it
 		// replaces the category label. Codes are <category>.<detail> except
 		// changed-only (diff.changed-only-incomplete, diff.changed-only-settings,
-		// diff.changed-only-settings-scoped, diff.changed-only-projects),
+		// diff.changed-only-settings-scoped, diff.changed-only-projects,
+		// diff.changed-only-symlinks, diff.changed-only-jsonnet-scan,
+		// diff.changed-only-app-revision),
 		// repeated-resource (render.repeated-resource), and crd-scope
 		// (build.crd-scope-collision).
 		if _, err := fmt.Fprintf(w, "%s %s: %s%s\n", severity, diag.Code, diag.Message, formatDiagnosticProvenance(diag.Provenance)); err != nil {

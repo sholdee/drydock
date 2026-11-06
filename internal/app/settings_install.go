@@ -260,7 +260,11 @@ func settingsInstallTracking(provider localProvider) TrackingOptions {
 // (localSourceAppRevision): the commit of the tree, the ls-remote form for
 // a multi-source Application, and the HEAD commit of a --repo-map target.
 // Any other source keeps the spec targetRevision, because drydock finds
-// these files without acquiring anything.
+// these files without acquiring anything. source is merged with its
+// .argocd-source overrides, but the merge keeps the spec targetRevision, as
+// the repo-server's does (mergeSourceParameters,
+// reposerver/repository/repository.go:1946-1949), so the revision resolves
+// from the spec targetRevision as in the render (PrepareSource).
 func settingsInstallRenderEnv(provider localProvider, application argoappv1.Application, source argoappv1.ApplicationSource) argoappv1.Env {
 	controllerNamespace := settingsInstallTracking(provider).ControllerNamespace
 	if revision := provider.localSourceAppRevision(source, application.Spec.HasMultipleSources()); revision != "" {
