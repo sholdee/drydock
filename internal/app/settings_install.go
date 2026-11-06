@@ -11,8 +11,10 @@ import (
 	"sync"
 
 	argoappv1 "github.com/argoproj/argo-cd/v3/pkg/apis/application/v1alpha1"
+	"github.com/sholdee/drydock/internal/config"
 	"github.com/sholdee/drydock/internal/diagnostic"
 	"github.com/sholdee/drydock/internal/discovery"
+	"github.com/sholdee/drydock/internal/project"
 	"github.com/sholdee/drydock/internal/render"
 	sourcepkg "github.com/sholdee/drydock/internal/source"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -61,8 +63,9 @@ func (install settingsInstall) installsArgoCD() bool {
 // with it as with the full provider of the same root and request.
 func settingsInstallProbe(root string, request BuildRequest) localProvider {
 	provider := localProvider{
-		repoRoot:       root,
-		sourceResolver: sourcepkg.NewResolver(sourcepkg.Options{RepoMaps: request.RepoMaps, Offline: request.Offline}),
+		repoRoot:            root,
+		sourceResolver:      sourcepkg.NewResolver(sourcepkg.Options{RepoMaps: request.RepoMaps, Offline: request.Offline}),
+		controllerNamespace: defaultArgoCDControllerNamespace,
 	}
 	if matcher := newSelfRepoMatcher(request.selfRepo); len(matcher.urlKeys) > 0 {
 		provider.selfRepoURLKeys = matcher.urlKeys
@@ -111,7 +114,7 @@ func computeSettingsInstall(ctx context.Context, memo *sync.Map, provider localP
 		if sourcePlan.RefOnly {
 			continue
 		}
-		builder.addSource(ctx, provider, plan, sourcePlan)
+		builder.addSource(ctx, provider, application, plan, sourcePlan)
 	}
 	builder.install.valuesFilesRead = uniqueStrings(builder.install.valuesFilesRead)
 	builder.install.files = uniqueStrings(builder.install.files)
@@ -138,9 +141,12 @@ func (b *settingsInstallBuilder) addValuesFile(rel string) {
 	}
 }
 
-func (b *settingsInstallBuilder) addSource(ctx context.Context, provider localProvider, plan PlanResult, sourcePlan SourcePlan) {
+func (b *settingsInstallBuilder) addSource(ctx context.Context, provider localProvider, application argoappv1.Application, plan PlanResult, sourcePlan SourcePlan) {
+	sourcePath, local := settingsInstallLocalSourcePath(provider, sourcePlan.Source)
+	if local {
+		sourcePlan = settingsInstallMergedSource(provider, application, sourcePlan, filepath.Join(b.root, filepath.FromSlash(sourcePath)))
+	}
 	source := sourcePlan.Source
-	sourcePath, local := settingsInstallLocalSourcePath(provider, source)
 	sourceType := settingsInstallSourceType(sourcePlan, b.root, sourcePath, local)
 	if sourceType == argoappv1.ApplicationSourceTypeKustomize && local {
 		b.addKustomize(ctx, sourcePath, source.Kustomize)
@@ -152,23 +158,70 @@ func (b *settingsInstallBuilder) addSource(ctx context.Context, provider localPr
 		b.install.chart = true
 	}
 	if local {
-		// Helm reads the values.yaml of the chart as its defaults.
-		b.addValuesFile(path.Join(sourcePath, "values.yaml"))
-		if localChartIsArgoCD(filepath.Join(b.root, filepath.FromSlash(sourcePath))) {
+		chartDir := filepath.Join(b.root, filepath.FromSlash(sourcePath))
+		// Helm reads the values.yaml files of the chart and of its unpacked
+		// subcharts as defaults.
+		for _, rel := range render.HelmChartValuesFiles(b.root, chartDir) {
+			b.addValuesFile(rel)
+		}
+		if localChartIsArgoCD(chartDir) {
 			b.install.chart = true
 		}
 	}
 	if source.Helm == nil {
 		return
 	}
-	for _, valueFile := range source.Helm.ValueFiles {
-		if rel, ok := settingsInstallHelmValueFile(provider, plan, sourcePath, local, valueFile); ok {
-			b.addValuesFile(rel)
-		}
+	for _, rel := range settingsInstallHelmValueFiles(provider, application, plan, source, sourcePath, local) {
+		b.addValuesFile(rel)
 	}
 	if helmSourceInlineSetsArgoCDSettings(source.Helm) {
 		b.install.inline = true
 	}
+}
+
+// settingsInstallMergedSource merges the .argocd-source override files of a
+// local source into it, as PrepareSource does before the render picks the
+// source type and the value files. The merge reads only local files. When it
+// fails, the render fails too, and drydock uses the source as written.
+func settingsInstallMergedSource(provider localProvider, application argoappv1.Application, sourcePlan SourcePlan, sourceDir string) SourcePlan {
+	merged, err := mergeArgocdSourceOverrides(sourcePlan.Source, sourceDir, provider.overrideInstanceName(application))
+	if err != nil {
+		return sourcePlan
+	}
+	explicitType, err := merged.ExplicitType()
+	if err != nil {
+		return sourcePlan
+	}
+	sourcePlan.Source = merged
+	sourcePlan.ExplicitType = ""
+	if explicitType != nil {
+		sourcePlan.ExplicitType = *explicitType
+	}
+	return sourcePlan
+}
+
+// settingsInstallHelmValueFiles returns the local Helm value files that the
+// render of source reads. It builds the render options as the render does,
+// with the Argo CD build environment for env substitution, and maps each $ref
+// whose source resolves to this repository root to that root. Then
+// render.HelmValueFileReads resolves the entries as the renderer does,
+// globs included.
+func settingsInstallHelmValueFiles(provider localProvider, application argoappv1.Application, plan PlanResult, source argoappv1.ApplicationSource, sourcePath string, local bool) []string {
+	tracking := defaultTrackingOptions()
+	if provider.controllerNamespace != "" {
+		tracking.ControllerNamespace = provider.controllerNamespace
+	}
+	opts, err := renderOptions(application, source, CapabilityOptions{}, tracking)
+	if err != nil {
+		return nil
+	}
+	opts.RefRoots = map[string]string{}
+	for refKey, refPlan := range plan.Refs {
+		if provider.sourceResolvesToRepoRoot(settingsInstallResolvedSource(refPlan.Source)) {
+			opts.RefRoots[refKey] = provider.repoRoot
+		}
+	}
+	return render.HelmValueFileReads(provider.repoRoot, render.ResolvedSource{RepoRoot: provider.repoRoot, Path: sourcePath}, opts, !local)
 }
 
 // settingsInstallSourceType returns the source type as Argo CD picks it: the
@@ -275,33 +328,6 @@ func settingsInstallResolvedSource(source argoappv1.ApplicationSource) render.Re
 	}
 }
 
-// settingsInstallHelmValueFile returns the repository path of a Helm value
-// file that the render reads from this repository root. A $ref value file
-// is relative to the root of the referenced source, and any other value
-// file is relative to the source path of a local chart. A remote value
-// file, a value file of a chart from a chart repository, and a glob have no
-// single local path.
-func settingsInstallHelmValueFile(provider localProvider, plan PlanResult, sourcePath string, local bool, valueFile string) (string, bool) {
-	if strings.ContainsAny(valueFile, "*?[") || strings.Contains(valueFile, "://") {
-		return "", false
-	}
-	if strings.HasPrefix(valueFile, "$") {
-		refKey, refPath, ok := splitHelmValueFileRef(valueFile)
-		if !ok {
-			return "", false
-		}
-		refPlan, ok := plan.Refs[refKey]
-		if !ok || !provider.sourceResolvesToRepoRoot(settingsInstallResolvedSource(refPlan.Source)) {
-			return "", false
-		}
-		return cleanSelectionRelativePath(refPath)
-	}
-	if !local {
-		return "", false
-	}
-	return cleanSelectionRelativePath(path.Join(sourcePath, valueFile))
-}
-
 // helmValuesFileSetsArgoCDSettings reads a local Helm values file as Helm
 // does and reports whether it sets Argo CD settings. A file that is missing,
 // is not a regular file, or does not decode sets none.
@@ -403,14 +429,52 @@ func isSettingsConfigMapObject(obj *unstructured.Unstructured) bool {
 }
 
 // markSettingsRenderInputs records the files that the render of install
-// read on every settings ConfigMap in result.
-func markSettingsRenderInputs(result *discovery.Result, install settingsInstall) {
+// read on every settings ConfigMap in result that lands in namespace, the
+// Argo CD namespace. A rendered object without a namespace lands in the
+// destination namespace of the Application.
+func markSettingsRenderInputs(result *discovery.Result, install settingsInstall, destinationNamespace, namespace string) {
 	for i := range result.SettingsCandidates {
-		if discovery.IsSettingsConfigMapKind(result.SettingsCandidates[i].Kind) {
-			result.SettingsCandidates[i].RenderValuesFiles = append([]string(nil), install.valuesFilesRead...)
-			result.SettingsCandidates[i].RenderFiles = append([]string(nil), install.files...)
+		candidate := &result.SettingsCandidates[i]
+		if !discovery.IsSettingsConfigMapKind(candidate.Kind) || settingsCandidateNamespace(*candidate, destinationNamespace) != namespace {
+			continue
+		}
+		candidate.RenderValuesFiles = append([]string(nil), install.valuesFilesRead...)
+		candidate.RenderFiles = append([]string(nil), install.files...)
+	}
+}
+
+func settingsCandidateNamespace(candidate discovery.SettingsCandidate, destinationNamespace string) string {
+	namespace := candidate.Namespace
+	if candidate.Object != nil {
+		namespace = candidate.Object.GetNamespace()
+	}
+	if namespace == "" {
+		return destinationNamespace
+	}
+	return namespace
+}
+
+// settingsConfigMapsInNamespace keeps the settings ConfigMaps of result that
+// land in namespace.
+func settingsConfigMapsInNamespace(result discovery.Result, destinationNamespace, namespace string) discovery.Result {
+	kept := result.SettingsCandidates[:0:0]
+	for _, candidate := range result.SettingsCandidates {
+		if settingsCandidateNamespace(candidate, destinationNamespace) == namespace {
+			kept = append(kept, candidate)
 		}
 	}
+	result.SettingsCandidates = kept
+	return result
+}
+
+// settingsInstallInCluster reports whether an Application deploys to the
+// cluster that drydock emulates Argo CD for: its destination resolves to the
+// in-cluster server, the way project validation resolves it. drydock reads
+// the settings of an Argo CD install only on that cluster: an Argo CD that
+// an Application installs on another cluster runs other Applications.
+func settingsInstallInCluster(application argoappv1.Application, settings config.ArgoSettings) bool {
+	server, ok := project.ResolveDestinationServer(application.Spec.Destination, settings)
+	return ok && server == argoappv1.KubernetesInternalAPIServerAddr
 }
 
 func hasSettingsConfigMapCandidate(result discovery.Result) bool {
@@ -454,13 +518,12 @@ type settingsRenderInputs struct {
 }
 
 // renderedSettingsInputs returns the files that every rendered settings
-// ConfigMap in candidates read.
+// ConfigMap in candidates read. A committed ConfigMap that won a collision
+// with a rendered one carries the files of the rendered one
+// (mergeSettingsCandidates), so it counts too.
 func renderedSettingsInputs(candidates []discovery.SettingsCandidate) settingsRenderInputs {
 	inputs := settingsRenderInputs{valuesFiles: map[string]struct{}{}, files: map[string]struct{}{}}
 	for _, candidate := range candidates {
-		if candidate.Tier == discovery.SourceTierStatic || candidate.Tier == discovery.SourceTierExternalManifest {
-			continue
-		}
 		for _, file := range candidate.RenderValuesFiles {
 			inputs.valuesFiles[cleanSettingsInputPath(file)] = struct{}{}
 		}

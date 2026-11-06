@@ -21,8 +21,9 @@ type KustomizeHelmValuesInputs struct {
 	Files []string
 	// ValuesFiles lists the repository-relative local Helm values files of
 	// the helmCharts entries that exist: valuesFile, additionalValuesFiles,
-	// and the values.yaml of each local chart, which Helm reads as the chart
-	// defaults.
+	// and the values.yaml files of each local chart and its unpacked
+	// subcharts, which Helm reads as the chart defaults
+	// (HelmChartValuesFiles).
 	ValuesFiles []string
 	// ValuesInline holds the valuesInline map of each helmCharts entry that
 	// sets one.
@@ -74,7 +75,9 @@ func (c *kustomizeHelmValuesCollector) addNode(node kustomizeGraphNode) {
 		c.out.ChartNames = append(c.out.ChartNames, helmChart.Name)
 		chartPath := localKustomizeHelmChartPath(node.Dir, chartHome, helmChart)
 		if rejectPathOutsideBoundary("kustomize helmCharts.name", chartPath, c.collector.repoRoot) == nil {
-			c.addValuesFile(filepath.Join(chartPath, "values.yaml"))
+			for _, rel := range HelmChartValuesFiles(c.collector.repoRoot, chartPath) {
+				c.addValuesFile(filepath.Join(c.collector.repoRoot, filepath.FromSlash(rel)))
+			}
 		}
 		refs := append([]string{helmChart.ValuesFile}, helmChart.AdditionalValuesFiles...)
 		for _, ref := range refs {

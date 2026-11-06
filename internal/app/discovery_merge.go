@@ -114,6 +114,11 @@ func mergeProjects(base, overlay []discovery.ProjectFile) ([]discovery.ProjectFi
 // first: the rendered ConfigMap is what the cluster gets from it, so it is
 // not a duplicate. Values files stay; loadSettingsFromDiscovery leaves out
 // the ones a render read.
+//
+// When two ConfigMaps with the same identity collide, one is kept and the
+// duplicate is reported (mergeDiscoveryItems). The kept one also takes the
+// files that the other one's render read, so the losing install's values
+// files do not come back as settings sources.
 func mergeSettingsCandidates(base, overlay []discovery.SettingsCandidate) ([]discovery.SettingsCandidate, []diagnostic.Diagnostic) {
 	if inputs := renderedSettingsInputs(overlay); !inputs.empty() {
 		kept := make([]discovery.SettingsCandidate, 0, len(base))
@@ -125,13 +130,41 @@ func mergeSettingsCandidates(base, overlay []discovery.SettingsCandidate) ([]dis
 		}
 		base = kept
 	}
-	return mergeDiscoveryItems(base, overlay,
+	out, diags := mergeDiscoveryItems(base, overlay,
 		settingsDiscoveryKey,
 		func(item discovery.SettingsCandidate) string { return settingsObjectKind(item.Kind) },
 		sameSettingsDiscoveryObject,
 		func(item discovery.SettingsCandidate) (discovery.SourceTier, string, int) {
 			return item.Tier, item.Path, item.DocumentIndex
 		})
+	return keepSettingsRenderInputs(out, base, overlay), diags
+}
+
+// keepSettingsRenderInputs gives each merged candidate the union of the
+// render input files of every base and overlay candidate with its identity.
+func keepSettingsRenderInputs(out, base, overlay []discovery.SettingsCandidate) []discovery.SettingsCandidate {
+	type files struct{ values, other []string }
+	byKey := map[string]files{}
+	for _, item := range append(append([]discovery.SettingsCandidate(nil), base...), overlay...) {
+		if len(item.RenderValuesFiles) == 0 && len(item.RenderFiles) == 0 {
+			continue
+		}
+		key := settingsDiscoveryKey(item)
+		entry := byKey[key]
+		entry.values = append(entry.values, item.RenderValuesFiles...)
+		entry.other = append(entry.other, item.RenderFiles...)
+		byKey[key] = entry
+	}
+	if len(byKey) == 0 {
+		return out
+	}
+	for i := range out {
+		if entry, ok := byKey[settingsDiscoveryKey(out[i])]; ok {
+			out[i].RenderValuesFiles = uniqueStrings(entry.values)
+			out[i].RenderFiles = uniqueStrings(entry.other)
+		}
+	}
+	return out
 }
 
 type discoveryLooseIndex struct {

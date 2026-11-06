@@ -24,7 +24,7 @@ func (o Orchestrator) renderDiscoveryFrontier(ctx context.Context, root string, 
 	defer cleanup()
 
 	inputs := applicationInputsByKey(discovered)
-	renderSettings := discoveryRenderSettings{signature: settingsSig, tracking: trackingOptionsFromSettings(settings)}
+	renderSettings := discoveryRenderSettings{signature: settingsSig, tracking: trackingOptionsFromSettings(settings), settings: settings}
 	parallelism, err := normalizeParallelism(request.Parallelism)
 	if err != nil {
 		return discovery.Result{}, nil, recorder.Events(), err
@@ -55,6 +55,9 @@ func (o Orchestrator) renderDiscoveryFrontier(ctx context.Context, root string, 
 type discoveryRenderSettings struct {
 	signature string
 	tracking  TrackingOptions
+	// settings resolves Application destinations
+	// (settingsInstallInCluster).
+	settings config.ArgoSettings
 }
 
 type indexedDiscoveryRenderResult struct {
@@ -158,11 +161,12 @@ func renderAndScanDiscoveryApplication(ctx context.Context, request BuildRequest
 		applicationInputsKnown:     inputs != nil,
 		applicationInputsDuplicate: entry.Duplicate,
 	}, application)
+	inCluster := settingsInstallInCluster(application, renderSettings.settings)
 	if err != nil {
 		if ctx.Err() != nil {
 			return skippedRenderedDiscovery()
 		}
-		if install := applicationSettingsInstall(ctx, request, provider, application); install.installsArgoCD() {
+		if install := applicationSettingsInstall(ctx, request, provider, application); inCluster && install.installsArgoCD() {
 			// The values files stay settings candidates, so drydock falls
 			// back to reading them; say so instead of falling back silently.
 			return discovery.Result{}, []diagnostic.Diagnostic{settingsInstallRenderFailedDiagnostic(appFile, install, err)}, nil
@@ -174,10 +178,25 @@ func renderAndScanDiscoveryApplication(ctx context.Context, request BuildRequest
 		manifests = settingsConfigMapManifests(manifests)
 	}
 	result, diags, err := scanRenderedApplicationObjects(application, parentInputs, manifests)
-	if err != nil || !hasSettingsConfigMapCandidate(result) {
+	if err != nil {
 		return result, diags, err
 	}
-	markSettingsRenderInputs(&result, applicationSettingsInstall(ctx, request, provider, application))
+	argoNamespace := provider.controllerNamespace
+	if argoNamespace == "" {
+		argoNamespace = defaultArgoCDControllerNamespace
+	}
+	destinationNamespace := application.Spec.Destination.Namespace
+	if settingsOnly {
+		// Only the settings ConfigMaps in the Argo CD namespace are settings
+		// of this Argo CD.
+		result = settingsConfigMapsInNamespace(result, destinationNamespace, argoNamespace)
+	}
+	if !hasSettingsConfigMapCandidate(result) || !inCluster {
+		return result, diags, nil
+	}
+	if install := applicationSettingsInstall(ctx, request, provider, application); install.installsArgoCD() {
+		markSettingsRenderInputs(&result, install, destinationNamespace, argoNamespace)
+	}
 	return result, diags, nil
 }
 

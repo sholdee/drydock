@@ -169,7 +169,7 @@ func (o Orchestrator) discoverRenderedKustomize(ctx context.Context, root string
 			// Best-effort: without the graph paths, committed settings
 			// files stay candidates as before.
 			if values, err := render.KustomizeHelmValues(ctx, root, displayPath, nil); err == nil {
-				markSettingsRenderInputs(&next, settingsInstall{valuesFilesRead: values.ValuesFiles, files: values.Files})
+				markSettingsRenderInputs(&next, settingsInstall{valuesFilesRead: values.ValuesFiles, files: values.Files}, "", defaultArgoCDControllerNamespace)
 			}
 		}
 		var mergeDiags []diagnostic.Diagnostic
@@ -330,7 +330,7 @@ func (o Orchestrator) renderSettingsInstalls(ctx context.Context, root string, r
 		if applicationMayRenderDiscoveryObjects(root, request, discovered, appFile.Application) {
 			continue
 		}
-		if applicationSettingsInstall(ctx, request, probe, appFile.Application).installsArgoCD() {
+		if settingsInstallInCluster(appFile.Application, settings) && applicationSettingsInstall(ctx, request, probe, appFile.Application).installsArgoCD() {
 			installs = append(installs, appFile)
 		}
 	}
@@ -346,7 +346,7 @@ func (o Orchestrator) renderSettingsInstalls(ctx context.Context, root string, r
 	defer cleanup()
 
 	inputs := applicationInputsByKey(discovered)
-	renderSettings := discoveryRenderSettings{signature: "settings-install\x00" + installSig}
+	renderSettings := discoveryRenderSettings{signature: "settings-install\x00" + installSig, settings: settings}
 	var out discovery.Result
 	var allDiags []diagnostic.Diagnostic
 	for _, appFile := range installs {
