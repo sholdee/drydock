@@ -234,8 +234,10 @@ const DefaultControllerNamespace = "argocd"
 // run in. The argocd-cmd-params-cm ConfigMap lives there, so its
 // metadata.namespace decides when it names one. Otherwise fallback decides,
 // such as the namespace of an AppProject, and then
-// DefaultControllerNamespace. Every reader of the controller namespace uses
-// this one rule, so they cannot disagree.
+// DefaultControllerNamespace. The namespace gate and AppProject validation
+// use this one rule, so they cannot disagree. One known exception remains:
+// resource tracking and Application instance names (internal/app
+// tracking.go) still assume argocd, as docs/compatibility.md records.
 func (s ArgoSettings) ControllerNamespace(fallback string) string {
 	if namespace := strings.TrimSpace(s.CommandParametersNamespace); namespace != "" {
 		return namespace

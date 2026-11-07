@@ -40,7 +40,7 @@ func sourceHydratorDiagnostic(application argoappv1.Application) (diagnostic.Dia
 		Code:     sourceHydratorCode,
 		Severity: diagnostic.SeverityWarning,
 		Category: "source",
-		Message: fmt.Sprintf("Application %s uses spec.sourceHydrator: drydock renders the sync source %s at branch %q, path %q, as Argo CD compares it, and ignores spec.source and spec.sources; it reads the branch from the local tree only when the tree holds that branch, else from a --repo-map Git repository, the Git cache, or a fetch; drydock does not run the hydrator, so changes to the dry source %q show only after the hydrator commits them",
+		Message: fmt.Sprintf("Application %s uses spec.sourceHydrator: drydock renders the sync source %s at branch %q, path %q, as Argo CD compares it, and ignores spec.source and spec.sources; it reads the branch from the local tree only when the self-repo rule tracks that branch there, else from a --repo-map Git repository, the Git cache, or a fetch; drydock does not run the hydrator, so changes to the dry source %q show only after the hydrator commits them",
 			applicationDisplayName(application), remote.RedactGitRepoURL(syncSource.RepoURL), syncSource.TargetRevision, syncSource.Path, hydrator.DrySource.Path),
 		Provenance: diagnostic.Provenance{Path: applicationDisplayName(application)},
 	}, true

@@ -150,9 +150,13 @@ Supported:
     out. When it is the top of a Git repository with another branch checked
     out, drydock renders a snapshot of the branch, or of `origin/<branch>`.
     Any other target fails, because drydock cannot read the branch from it.
-  - The local repository renders from the local tree only when the tree
-    holds that branch: the checked-out branch, or the `--ref` or
-    `--ref-orig` name of a diff side.
+  - The repository under analysis follows the rule of every other source
+    of that repository: it renders from the tree of this side when the
+    branch is `HEAD`, a `--ref` or `--ref-orig` name, or the default branch
+    that the remote `HEAD` symref names. So each side of a diff reads its
+    own tree, and a change to the hydrated path shows in the diff.
+    Changed-only selection owns the sync path only in this case and in the
+    `--repo-map` case above.
   - Any other sync source comes from the Git cache or a fetch, and
     `--offline` fails on a cache miss.
 
@@ -316,7 +320,16 @@ Supported:
   `appset.application-validation-failed` warning; the ApplicationSet's other
   Applications still generate, and `--strict` promotes the warning. The
   render parity smoke checks both cases against Argo CD, and it compares the
-  whole drydock Application list with the Argo CD list.
+  whole drydock Application list with the Argo CD list. The ApplicationSet
+  controller then looks up the AppProject of each generated Application. An
+  empty `spec.project` names no AppProject, so drydock omits that
+  Application with the same warning, as Argo CD does. drydock keeps a
+  generated Application whose named AppProject is missing from the
+  repository, because that AppProject can exist only in the cluster. It
+  also skips the destination-cluster check of the ApplicationSet
+  controller for generated Applications, because the clusters can exist
+  only in the cluster. AppProject validation reports both later, as for any
+  Application.
 - Argo CD v3.6.1 RollingSync handling for `spec.strategy.type: RollingSync`,
   gated on `applicationsetcontroller.enable.progressive.syncs` in
   `argocd-cmd-params-cm` (off by default; only `true` in any letter case
@@ -549,7 +562,11 @@ Supported:
   the repo-server's values: `ARGOCD_APP_NAME` is the Application instance name
   (`<namespace>_<name>` for Applications outside the controller namespace;
   drydock assumes the Argo CD controller namespace is `argocd`) and
-  `ARGOCD_APP_NAMESPACE` is `spec.destination.namespace`.
+  `ARGOCD_APP_NAMESPACE` is `spec.destination.namespace`. Instance names
+  and resource tracking are the known exception to the shared
+  controller-namespace rule that the namespace gate and AppProject
+  validation use: they do not read the `argocd-cmd-params-cm` namespace
+  yet.
 - Source type detection as in the Argo CD v3.6.1 repo-server
   (`discovery.Discover`, `util/app/discovery/discovery.go:50-70`) for a
   source without an explicit type. Argo CD reads the file names directly in
