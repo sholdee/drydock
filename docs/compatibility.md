@@ -287,6 +287,10 @@ Supported:
 - Kustomize `helmCharts` rendered through the shared Go-library Helm path.
 - Helm `$ref/...` external value files and file parameters from Git sources.
 - HTTP(S) remote Helm value files through the remote-resource cache.
+- A remote Kustomize Git ref at a branch name resolves from the
+  remote-tracking ref of its clone first, so `--refresh-remote-resources`
+  renders the remote's current commit also for the default branch, whose
+  local branch in the clone never moves. A refresh prunes deleted branches.
 - Remote Kustomize HTTP(S) file refs and Git refs through the remote-resource
   cache.
 - Default Git clone/fetch into the Git cache for unmapped path sources missing
@@ -498,9 +502,12 @@ Supported:
     when a commit and a tree or blob share the abbreviation. drydock looks
     for a branch first under the remote-tracking refs of its clone, which
     every fetch and `--refresh-git` update, and then under the local branch
-    that the clone created. It uses the remote whose URL is the `repoURL` of
-    the source, compared without letter case as Argo CD compares repository
-    URLs, and every remote in name order when no remote has that URL.
+    that the clone created. A `--refresh-git` fetch prunes the branches
+    that the remote deleted, so such a branch stops resolving, as in
+    `ls-remote`. It uses the remote whose URL is the `repoURL` of the
+    source, compared in lower case (also a `.GIT` suffix) as Argo CD
+    compares repository URLs, and every remote in name order when no
+    remote has that URL.
   - A source that renders from the `--path` tree (a path that exists there,
     or a repository that drydock maps to the tree) gets the HEAD commit of
     that tree, also when the worktree has uncommitted changes. drydock
@@ -594,8 +601,12 @@ Supported:
   config management plugin source that the run renders with a command,
   whose environment always holds the variables, whenever the two sides
   render different commits. A plugin source renders with a command only
-  through a trusted exec or container policy with `--enable-plugins`, or
-  an injected plugin renderer. Native policy engines, the built-in
+  through a trusted exec or container policy with `--enable-plugins` whose
+  checks before the command pass (source path, parameters, and
+  `applicationEnv.allow`; the render and the selection share them), or an
+  injected plugin renderer. A plugin found by discovery is matched in the
+  same root the render uses, such as a `--repo-map` directory. Native
+  policy engines, the built-in
   argocd-vault-plugin compatibility and the native Kustomize CMP render in
   process without the variables, and a plugin source that drydock cannot
   render stays out of the selection, so it does not fail the diff with
