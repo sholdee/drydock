@@ -122,8 +122,7 @@ func TestPluginRunsWithBuildEnvUsesTheRenderRoot(t *testing.T) {
       discover:
         fileName: match.txt
 `)
-	request := BuildRequest{Path: root, EnablePlugins: true, pluginPolicy: policy, pluginPolicyExecTrusted: true}
-	request.RepoMaps = []sourcepkg.RepoMap{{URL: mappedURL, Path: mapped}}
+	request := BuildRequest{Path: root, EnablePlugins: true, pluginPolicy: policy, pluginPolicyExecTrusted: true, RepoMaps: []sourcepkg.RepoMap{{URL: mappedURL, Path: mapped}}}
 	application := appRevisionSelectionApp("mapped", argoappv1.ApplicationSource{RepoURL: mappedURL, Path: "manifests/plugin", Plugin: &argoappv1.ApplicationSourcePlugin{}})
 	if !pluginRunsWithBuildEnv(request, false, application, *application.Spec.Source) {
 		t.Fatal("pluginRunsWithBuildEnv() = false, want discovery in the --repo-map directory to match")
@@ -146,7 +145,7 @@ func TestDiffChangedOnlySelectsTrustedExecPluginApp(t *testing.T) {
 
 	result, err := (Orchestrator{PluginExecRunner: runner}).DiffApps(context.Background(), DiffRequest{
 		RightPath: root, Repo: root, Ref: "HEAD", RefOrig: base, ChangedOnly: true,
-		PluginOptions: PluginOptions{EnablePlugins: true, pluginPolicyLoaded: true, pluginPolicy: policy, pluginPolicyFingerprint: fingerprint, pluginPolicyExecTrusted: true},
+		EnablePlugins: true, pluginPolicyLoaded: true, pluginPolicy: policy, pluginPolicyFingerprint: fingerprint, pluginPolicyExecTrusted: true,
 	})
 	if err != nil {
 		t.Fatalf("DiffApps() error = %v\nDiagnostics: %#v", err, result.Diagnostics)
