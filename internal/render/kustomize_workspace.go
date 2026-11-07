@@ -163,6 +163,10 @@ func (w *kustomizeWorkspace) prepareKustomizationDir(ctx context.Context, dir, b
 		return fmt.Errorf("%s: %w", manifestPath, err)
 	}
 	kustomization.Resources = resources
+	// The resources before the output of helmCharts and generators:, and
+	// that output, for checkKustomizeGeneratorOrder.
+	earlierResources := append([]string(nil), resources...)
+	var laterOutputs []string
 
 	if len(kustomization.HelmCharts) != 0 {
 		if err := missingKustomizeResourceError(dir, kustomization.Resources); err != nil {
@@ -178,6 +182,7 @@ func (w *kustomizeWorkspace) prepareKustomizationDir(ctx context.Context, dir, b
 		}
 		kustomization.HelmCharts = nil
 		kustomization.Resources = append(kustomization.Resources, generatedResources...)
+		laterOutputs = append(laterOutputs, generatedResources...)
 	}
 
 	components, err := w.prepareKustomizeRefs(ctx, dir, boundaryRoot, "components", graphIndex, kustomization.Components, childInheritedHelmNamespace, false)
@@ -198,7 +203,12 @@ func (w *kustomizeWorkspace) prepareKustomizationDir(ctx context.Context, dir, b
 	// Generator classification runs after the path-ref rewrite above so
 	// remote-acquired generator manifests are materialized in the workspace
 	// before they are classified.
+	resourcesBeforeGenerators := len(kustomization.Resources)
 	if err := w.prepareKustomizeGenerators(ctx, dir, boundaryRoot, graphIndex, &kustomization); err != nil {
+		return fmt.Errorf("%s: %w", manifestPath, err)
+	}
+	laterOutputs = append(laterOutputs, kustomization.Resources[resourcesBeforeGenerators:]...)
+	if err := checkKustomizeGeneratorOrder(dir, graphIndex, &kustomization, earlierResources, laterOutputs); err != nil {
 		return fmt.Errorf("%s: %w", manifestPath, err)
 	}
 	if err := w.prepareKustomizeTransformers(ctx, dir, boundaryRoot, graphIndex, &kustomization); err != nil {
