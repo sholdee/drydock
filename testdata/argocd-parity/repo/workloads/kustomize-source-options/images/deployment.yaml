@@ -23,3 +23,5 @@ spec:
           image: busybox
         - name: redis
           image: redis:7
+        - name: memcached
+          image: memcached:1

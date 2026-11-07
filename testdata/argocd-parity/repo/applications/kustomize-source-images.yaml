@@ -18,8 +18,25 @@ spec:
         - nginx=registry.example.invalid/nginx:*
         # A tag and a digest without =.
         - busybox:1.36@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
-        # = with nothing after it changes nothing.
+        # = with nothing after it sets an entry with only the name. Here no
+        # redis entry exists, so it changes nothing. It would replace an
+        # existing redis entry.
         - redis=
+        # An empty name before = counts as no =. The entry sets the tag of
+        # memcached and replaces the memcached entry of the kustomization.
+        - "=memcached:1.6"
+      # kustomize matches the patch option names without regard to letter
+      # case.
+      patches:
+        - target:
+            kind: Deployment
+            name: images
+          patch: |-
+            - op: replace
+              path: /metadata/name
+              value: images-renamed
+          options:
+            AllowNameChange: true
   destination:
     name: in-cluster
     namespace: parity-kustomize-source-images

@@ -181,7 +181,7 @@ Four Applications in the main comparison render on both sides:
 
 | Application | What it pins |
 | --- | --- |
-| `parity-kustomize-source-images` | `edit set image` sorts the images by name. So `a=b` runs before the `b` rename of the kustomization, and container `a` gets the new name of `b`. `nginx=...:*` keeps the `newTag` of the kustomization. A tag and a digest without `=` set both. `redis=` changes nothing. |
+| `parity-kustomize-source-images` | `edit set image` sorts the images by name. So `a=b` runs before the `b` rename of the kustomization, and container `a` gets the new name of `b`. `nginx=...:*` keeps the `newTag` of the kustomization. A tag and a digest without `=` set both. `redis=` sets an entry with only the name, and no `redis` entry exists, so it changes nothing. `=memcached:1.6` counts as no `=`, so it replaces the `memcached` entry of the kustomization. The patch option `AllowNameChange` works, because kustomize matches field names without regard to letter case. |
 | `parity-kustomize-source-labels` | The `team` key is in a `labels` entry of the kustomization, which `edit add label` does not look at, so the render does not fail. A value in double quotes loses the quotes, for labels and for annotations. |
 | `parity-kustomize-source-labels-without-selector` | With `labelWithoutSelector` and `labelIncludeTemplates`, the labels go to a new `labels` entry. The `commonLabels` key and the key of the entry with `includeSelectors: true` are not looked at. |
 | `parity-kustomize-source-components` | `../parts/*` adds `a` and `b`, but not `.hidden`. `a` is already in the kustomization, and the repeated `b` is added once. |

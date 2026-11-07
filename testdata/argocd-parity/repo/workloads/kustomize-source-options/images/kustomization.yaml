@@ -7,3 +7,5 @@ images:
     newName: registry.example.invalid/renamed-b
   - name: nginx
     newTag: "1.0"
+  - name: memcached
+    newName: registry.example.invalid/old-memcached
