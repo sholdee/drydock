@@ -37,9 +37,10 @@ func copyRegularTree(srcRoot, dstRoot string) error {
 }
 
 type preparedKustomizeWorkspaceCopier struct {
-	repoRoot   string
-	dstRoot    string
-	copiedDirs []string
+	repoRoot string
+	dstRoot  string
+	// copiedDirs holds the Lstat of each folder copied as a whole tree.
+	copiedDirs []os.FileInfo
 	copied     map[string]struct{}
 	forceCopy  workspaceCopyFiles
 }
@@ -88,17 +89,9 @@ func copyPreparedKustomizeWorkspaceTree(ctx context.Context, repoRoot, sourceRoo
 
 func (c *preparedKustomizeWorkspaceCopier) copyPath(path string) error {
 	path = filepath.Clean(path)
-	rel, err := filepath.Rel(c.repoRoot, path)
-	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-		return fmt.Errorf("copy source path %q escapes source root %q", path, c.repoRoot)
-	}
-	// Render input never lives in a .git directory; copying one would put
-	// repository metadata (credentials included) where kustomize can read it.
-	if pathsafety.RelEntersGit(rel) {
-		return fmt.Errorf("copy source path %q enters a .git directory", path)
-	}
-	if c.pathCovered(path) {
-		return nil
+	rel, skip, err := c.sourceRel(path)
+	if err != nil || skip {
+		return err
 	}
 	info, err := os.Lstat(path)
 	if err != nil {
@@ -112,11 +105,14 @@ func (c *preparedKustomizeWorkspaceCopier) copyPath(path string) error {
 	if err != nil || dstRel == ".." || strings.HasPrefix(dstRel, ".."+string(filepath.Separator)) {
 		return fmt.Errorf("copy destination path %q escapes destination root %q", dstPath, c.dstRoot)
 	}
+	if err := rejectSymlinkedDestination(c.dstRoot, filepath.Dir(dstPath)); err != nil {
+		return err
+	}
 	if info.IsDir() {
 		if err := copyWorkspaceTreeWithForceCopy(path, dstPath, c.forceCopy); err != nil {
 			return err
 		}
-		c.copiedDirs = append(c.copiedDirs, path)
+		c.copiedDirs = append(c.copiedDirs, info)
 		return nil
 	}
 	if _, ok := c.copied[path]; ok {
@@ -199,14 +195,100 @@ func kustomizeGraphDirs(graph []kustomizeGraphNode) []string {
 	return out
 }
 
+// sourceRel checks the repository path that the copier is asked to copy
+// and returns it relative to the repository root. skip is true when the
+// copier must not copy it.
+func (c *preparedKustomizeWorkspaceCopier) sourceRel(path string) (rel string, skip bool, err error) {
+	rel, err = filepath.Rel(c.repoRoot, path)
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return "", false, fmt.Errorf("copy source path %q escapes source root %q", path, c.repoRoot)
+	}
+	// Render input never lives in a .git directory; copying one would put
+	// repository metadata (credentials included) where kustomize can read it.
+	if pathsafety.RelEntersGit(rel) {
+		return "", false, fmt.Errorf("copy source path %q enters a .git directory", path)
+	}
+	// A path through a symlinked folder is never copied. The render
+	// rejects such a path later, with the error of the field that names
+	// it. A copy could put files outside the workspace: the tree copy
+	// keeps symlinks, so the destination can resolve through one.
+	symlink, err := firstSymlinkedFolder(c.repoRoot, filepath.Dir(path))
+	if err != nil {
+		return "", false, err
+	}
+	if symlink != "" || c.pathCovered(path) {
+		return "", true, nil
+	}
+	return rel, false, nil
+}
+
+// pathCovered reports whether path, or a folder above it inside the
+// repository, is a folder already copied as a whole tree. It compares
+// folders on disk (os.SameFile), not path text: on a case-insensitive file
+// system APP/lnk and app/lnk name one folder, and a second copy of it
+// could fail on a symlink it already made.
 func (c *preparedKustomizeWorkspaceCopier) pathCovered(path string) bool {
-	for _, dir := range c.copiedDirs {
-		rel, err := filepath.Rel(dir, path)
-		if err == nil && (rel == "." || (rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)))) {
+	if len(c.copiedDirs) == 0 {
+		return false
+	}
+	for current := path; ; current = filepath.Dir(current) {
+		rel, err := filepath.Rel(c.repoRoot, current)
+		if err != nil || pathsafety.RelEscapes(rel) {
+			return false
+		}
+		if info, err := os.Lstat(current); err == nil && info.IsDir() && slices.ContainsFunc(c.copiedDirs, func(dir os.FileInfo) bool {
+			return os.SameFile(dir, info)
+		}) {
 			return true
 		}
+		if rel == "." {
+			return false
+		}
 	}
-	return false
+}
+
+// firstSymlinkedFolder returns the first folder from root down to dir,
+// dir included and root not, that is a symlink, or "" when there is none.
+// A missing folder ends the walk.
+func firstSymlinkedFolder(root, dir string) (string, error) {
+	rel, err := filepath.Rel(root, dir)
+	if err != nil || pathsafety.RelEscapes(rel) {
+		return "", fmt.Errorf("path %q escapes root %q", dir, root)
+	}
+	if rel == "." {
+		return "", nil
+	}
+	current := root
+	for component := range strings.SplitSeq(rel, string(filepath.Separator)) {
+		current = filepath.Join(current, component)
+		info, err := os.Lstat(current)
+		if err != nil {
+			if os.IsNotExist(err) {
+				return "", nil
+			}
+			return "", err
+		}
+		if info.Mode()&os.ModeSymlink != 0 {
+			return current, nil
+		}
+	}
+	return "", nil
+}
+
+// rejectSymlinkedDestination fails when dir, a folder of the workspace
+// under root, or a folder between root and dir, is a symlink. The tree copy
+// keeps symlinks, and a copy through one would write outside the
+// workspace. A missing folder is fine: the copy creates it as a real
+// folder.
+func rejectSymlinkedDestination(root, dir string) error {
+	symlink, err := firstSymlinkedFolder(root, dir)
+	if err != nil {
+		return fmt.Errorf("copy destination: %w", err)
+	}
+	if symlink != "" {
+		return fmt.Errorf("copy destination %q goes through symlink %q", dir, symlink)
+	}
+	return nil
 }
 
 //nolint:gocyclo // Kustomize local-reference collection mirrors the schema fields that can point at files.
@@ -512,6 +594,9 @@ func copyTree(srcRoot, dstRoot string, options copyTreeOptions) error {
 	srcRoot = filepath.Clean(srcRoot)
 	dstRoot = filepath.Clean(dstRoot)
 
+	// The walk goes top-down and checks each destination folder before it
+	// writes under it, so no copy goes through a symlink, also not one this
+	// walk or an earlier copy made at a colliding name.
 	return filepath.WalkDir(srcRoot, func(path string, entry os.DirEntry, err error) error {
 		if err != nil {
 			return err
@@ -547,6 +632,9 @@ func copyTree(srcRoot, dstRoot string, options copyTreeOptions) error {
 		}
 
 		if entry.IsDir() {
+			if err := rejectSymlinkedDestination(filepath.Dir(dstRoot), dstPath); err != nil {
+				return err
+			}
 			return os.MkdirAll(dstPath, 0o755)
 		}
 		if !entry.Type().IsRegular() {
