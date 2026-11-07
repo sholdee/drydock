@@ -478,3 +478,59 @@ func TestHelmNamespaceKustomizeNamespaceOverride(t *testing.T) {
 		t.Fatalf("HelmNamespace = %q, diagnostics %q, want other: with Kustomize off the object keeps its namespace", ns, msgs)
 	}
 }
+
+// A chart from a chart repository with a version range and no destination
+// namespace renders in the repo-server namespace, with the resolved version
+// as ARGOCD_APP_REVISION. Its Chart.yaml kubeVersion is not checked
+// without an explicit kube version.
+func TestHelmNamespaceReachesChartOnlyRangeSource(t *testing.T) {
+	root := t.TempDir()
+	writeTestFile(t, filepath.Join(root, "argocd", "install.yaml"), repoServerKustomizeInstall)
+	writeTestFile(t, filepath.Join(root, "argocd", "kustomization.yaml"), "namespace: argocd\nresources:\n  - install.yaml\n")
+	writeReviewApplication(t, root, "argocd", "argocd", "", "argocd")
+	writeTestFile(t, filepath.Join(root, "apps", "ranged.yaml"), `apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: ranged
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: https://charts.example.test
+    chart: demo
+    targetRevision: '>=1.0.0'
+    helm:
+      parameters:
+      - name: revision
+        value: $ARGOCD_APP_REVISION
+  destination:
+    name: in-cluster
+`)
+	chartDir := filepath.Join(t.TempDir(), "demo")
+	writeTestFile(t, filepath.Join(chartDir, "Chart.yaml"), "apiVersion: v2\nname: demo\nversion: 1.4.0\nkubeVersion: '<1.20.0-0'\n")
+	writeTestFile(t, filepath.Join(chartDir, "templates", "cm.yaml"), "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: ranged\ndata:\n  namespace: {{ .Release.Namespace | quote }}\n  revision: {{ .Values.revision | quote }}\n")
+	acquirer := &recordingChartAcquirer{chartDir: chartDir, resolvedVersion: "1.4.0"}
+	result, err := Orchestrator{ChartAcquirer: acquirer}.Build(context.Background(), BuildRequest{
+		Path:          root,
+		RepoMaps:      []sourcepkg.RepoMap{{URL: reviewRepoURL, Path: root}},
+		Offline:       true,
+		ChartCacheDir: t.TempDir(),
+	})
+	if err != nil {
+		t.Fatalf("Build() error = %v", err)
+	}
+	if got := result.Settings.HelmNamespace(); got != "argocd" {
+		t.Fatalf("HelmNamespace = %q, want argocd", got)
+	}
+	for _, item := range result.ApplicationManifests {
+		if item.Application.Name != "ranged" {
+			continue
+		}
+		data, _ := item.Manifest.Object.Object["data"].(map[string]any)
+		if data["namespace"] != "argocd" || data["revision"] != "1.4.0" {
+			t.Fatalf("data = %v, want namespace argocd and revision 1.4.0", data)
+		}
+		return
+	}
+	t.Fatal("no manifest for Application ranged")
+}
