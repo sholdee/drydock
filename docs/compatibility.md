@@ -840,6 +840,14 @@ Supported:
   stands for the cluster version. A `--kube-version` that does not parse
   fails every run, also when every Application sets its own `kubeVersion`.
   Earlier drydock releases let `--kube-version` win.
+- Per-app `helm.apiVersions` or `kustomize.apiVersions` replace the
+  `--api-versions` values, which stand for the API versions of the cluster
+  (`ApplicationSource.GetAPIVersionsOrDefault`,
+  `pkg/apis/application/v1alpha1/types.go:400-412`). The per-app values
+  keep their order, because the order of `--helm-api-versions` matters to
+  `helmCharts`. Helm splits each API version at commas, as CSV, for a Helm
+  source and for `helmCharts`. Earlier drydock releases added the two lists
+  together and did not split the values.
 - Helm `parameters` and `fileParameters` applied the way Argo CD's
   `helm template` call applies them: every `--set`, then every `--set-string`
   (`forceString: true`), then every `--set-file`, keeping only the last entry
@@ -1435,17 +1443,73 @@ Supported:
   `directory.extension-filter-disabled` warning, where the repo-server logs a
   warning. Upstream calls this a valid configuration, so `--strict` keeps the
   warning advisory.
-- Local Kustomize rendering with supported `kustomize.buildOptions`:
-  `--enable-helm`, `--helm-api-versions`,
-  `--load-restrictor=LoadRestrictionsRootOnly|LoadRestrictionsNone`,
-  `--enable-alpha-plugins`, and `--enable-exec`. The latter two are accepted
-  without error — Argo CD sets them repo-wide in `argocd-cm`, so rejecting
-  the option would fail every app in such repositories, including ones with no
-  generators. They do NOT enable arbitrary exec: drydock never executes
-  generator commands.
-  Kustomize `helmCharts` render through drydock's Go-library Helm path, so
-  chart inflation does not require an external Kustomize binary or CLI
-  `--enable-helm`.
+- `kustomize.buildOptions` as Argo CD v3.6.1 and kustomize v5.8.3 read it.
+  Argo CD splits the value at white space, with no quoting, and passes the
+  words after `kustomize build <path>`
+  (`util/kustomize/kustomize.go:432-449`). drydock parses them with the flag
+  set of the kustomize v5.8.3 build command, so every pflag form works:
+  `--flag=value`, `--flag value`, `--flag=false`, and `-e value`. A flag that
+  kustomize does not know fails with the kustomize text, for example
+  `kustomize build: unknown flag: --no-such-flag`. A second path fails with
+  `specify one path to kustomization.yaml`. An illegal `--load-restrictor` or
+  `--reorder` value fails with the kustomize text. Earlier drydock releases
+  accepted only a few flags and failed on the rest. The flags act as
+  follows:
+  - `--enable-helm` and `--enable-alpha-plugins` turn Helm on for
+    `helmCharts`. `--enable-alpha-plugins` does so too
+    (`HonorKustomizeFlags`). drydock still runs no plugin program, also
+    with `--enable-exec`.
+  - `--load-restrictor` with an empty value means
+    `LoadRestrictionsRootOnly`, as in kustomize.
+  - `--reorder none` keeps the resource order, and `--reorder legacy` or no
+    `--reorder` sorts in the legacy order, as in the kustomize binary. Earlier
+    drydock releases kept the resource order by default.
+  - `--enable-managedby-label` adds `app.kubernetes.io/managed-by:
+    kustomize-v5.8.3`. The kustomization field `buildMetadata:
+    [managedByLabel]` gives the same value. Earlier drydock releases wrote the
+    drydock version there.
+  - `--helm-kube-version` and `--helm-api-versions` give the flag values of
+    `helmCharts`. The last `--helm-kube-version` wins, and the
+    `--helm-api-versions` values add up.
+  - `--helm-command` with the default value `helm` changes nothing. An empty
+    value fails `helmCharts` with `must specify --helm-command`, as in
+    kustomize.
+  - `--helm-debug`, `--stack-trace`, `--network`, `--network-name`,
+    `--mount`, `-e`/`--env`, and `--as-current-user` change nothing that
+    drydock renders. kustomize reads the last five only for KRM functions,
+    which drydock never runs.
+- Argo CD adds flags after `kustomize.buildOptions`: when the value contains
+  the text `--enable-helm` anywhere, also as `--enable-helm=false`, it adds
+  `--helm-kube-version` with the kube version of the Application and one
+  `--helm-api-versions` per API version of the Application
+  (`isHelmEnabled`). So with `--enable-helm`, the kube version of the
+  Application wins over one in `kustomize.buildOptions`. With only
+  `--enable-alpha-plugins`, Argo CD adds nothing, and `helmCharts` get the
+  Helm default kube and API versions unless `kustomize.buildOptions` sets
+  them. Earlier drydock releases always used the kube and API versions of the
+  Application.
+- With a found `argocd-cm`, `helmCharts` render only when
+  `kustomize.buildOptions` turns Helm on. Otherwise they fail with the
+  kustomize text `must specify --enable-helm`, as in Argo CD. Without an
+  `argocd-cm`, drydock cannot tell the flags, so it assumes `--enable-helm`.
+  The renders that read the Argo CD settings of an install also assume
+  `--enable-helm`, because the cluster already holds the settings that the
+  install creates. The final render of the install uses the found settings.
+  Earlier drydock releases rendered `helmCharts` without `--enable-helm`.
+- A config management plugin whose generate command is `kustomize build`
+  renders natively with exactly the flags of that command. Argo CD adds no
+  flags to a plugin command, so the kube and API versions of the
+  Application do not reach its `helmCharts`.
+- Recorded divergences for `kustomize.buildOptions`, because drydock does not
+  run the output that they ask for, or another program:
+  `--help`, `-h`, `-o`, and `--output` fail closed, because kustomize then
+  prints its help or writes the build to a file, and Argo CD reads no
+  manifests. A `--helm-command` other than `helm` fails `helmCharts` closed,
+  because drydock renders charts with the Helm library and cannot run another
+  program. With `--reorder none`, drydock puts the output of `helmCharts`
+  before the output of `configMapGenerator` and `secretGenerator` of the same
+  kustomization, where kustomize puts it after them. In the default legacy
+  order, the two outputs are the same.
 - Kustomize `helmCharts` release names and namespaces as kustomize v5.8.3
   passes them to `helm template`. Without `releaseName`, kustomize passes
   `--generate-name`, and `helm template` renders the release
@@ -1468,6 +1532,15 @@ Supported:
   from `kustomize.buildOptions` and from `spec.source.kustomize.apiVersions`.
   An entry without `apiVersions` keeps those values. Earlier drydock
   releases added the two lists together.
+- The kustomize v5.8.3 defect of the shared `--helm-api-versions` values, as
+  Argo CD v3.6.1 has it. kustomize gives each `helmCharts` entry the slice of
+  flag values itself, without a copy, and decodes the `apiVersions` of the
+  entry into it. So the `apiVersions` of one entry overwrite the first flag
+  values, and every entry that holds the same slice, before or after it, sees
+  them. This crosses bases, overlays, and components of one build, in the
+  order that kustomize configures them. drydock copies the defect with the
+  same operations. Helm then splits each value at commas, as CSV. Earlier
+  drydock releases did not copy the defect.
 - A Kustomize `helmCharts` entry without `valuesFile` fails when its chart
   has no `values.yaml`, as kustomize fails it, unless the entry has
   `valuesInline` with `valuesMerge: replace`. kustomize reads that file
@@ -1479,14 +1552,6 @@ Supported:
   `valuesFile`, so a missing one does not fail. The scan for Argo CD
   settings reads the same files. Earlier drydock releases expanded the
   glob.
-- Recorded divergence from strict Argo CD v3.6.1: kustomize v5.8.3 copies
-  the `--helm-api-versions` list into each `helmCharts` entry without its
-  backing array, so the `apiVersions` of one entry overwrite the first flag
-  values that the other entries of the same build see. drydock does not
-  copy this defect: an entry without `apiVersions` always sees the flag
-  values. The difference shows only when one build has an entry with
-  `apiVersions`, an entry without them, and flag values. Argo CD passes
-  flag values whenever `kustomize.buildOptions` holds `--enable-helm`.
 - Kustomize Helm `valuesFile` and `additionalValuesFiles` entries load as
   the kustomize file loader loads them (`fileloader.go:320-332` and
   `loadrestrictions.go:15-30` at kustomize/api v0.21.3). Under the default
@@ -2313,9 +2378,22 @@ Supported:
   every `actions` value and reports no error for it. This includes text
   that does not decode. For such text, the summary has only the SHA-256
   value of the text.
-- Warning diagnostics for version-specific `kustomize.buildOptions.<version>`
-  and `kustomize.path.<version>` settings because drydock does not select
-  external Kustomize binaries.
+- `argocd-cm` `kustomize.version.<name>` and `kustomize.path.<name>`, as
+  Argo CD v3.6.1 reads them (`GetKustomizeSettings`,
+  `util/settings/settings.go:1346-1390`). A Kustomize source whose
+  `spec.source.kustomize.version` names no registered version fails with
+  `error getting kustomize binary path: kustomize version <name> is not
+  registered`, before drydock reads its kube version. A name that two keys
+  register fails the settings with `failed to add kustomize version from
+  "<key>": found duplicate kustomize version: <name>`. Without an
+  `argocd-cm`, drydock cannot tell the versions, so it accepts every name.
+  drydock renders a registered version with its embedded kustomize v5.8.3,
+  and `kustomize.path.<name>` keeps its warning.
+- `kustomize.buildOptions.<name>` is not applied, as in Argo CD v3.6.1:
+  Argo CD stores it with the version, but kustomize build gets only
+  `kustomize.buildOptions`, whichever kustomize binary runs
+  (`util/kustomize/kustomize.go:391-392`). drydock warns that it parsed the
+  key and did not apply it.
 - `argocd-cm` `resource.selectors` (Argo CD v3.6.1), decoded as Argo CD
   decodes it. An unparsable list or label selector is a
   `settings.resource-selector-invalid` error, because Argo CD fails settings

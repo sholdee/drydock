@@ -383,20 +383,28 @@ render it. Its old chart-cache entries are orphaned; `drydock cache prune
 
 ## Kustomize Sources
 
-For local Kustomize sources, drydock applies the supported subset of Argo CD
-`kustomize.buildOptions` discovered from `argocd-cm` or Argo CD Helm values:
+For local Kustomize sources, drydock reads the Argo CD
+`kustomize.buildOptions` that it finds in `argocd-cm` or in Argo CD Helm
+values, as the kustomize v5.8.3 build command reads them:
 
 | Build option | Behavior |
 | --- | --- |
-| `--enable-helm` | Enables native Kustomize `helmCharts` rendering through drydock's Helm library path. |
-| `--helm-api-versions` | Passes declared API versions to Helm chart inflation. |
-| `--load-restrictor=LoadRestrictionsRootOnly` | Keeps Kustomize's root-only load restriction. |
-| `--load-restrictor=LoadRestrictionsNone` | Allows Kustomize to load files outside the Kustomization root. |
+| `--enable-helm` | Turns on `helmCharts`, which drydock renders with its Helm library. Argo CD then adds the kube and API versions of the Application. |
+| `--enable-alpha-plugins` | Turns on `helmCharts` too. Argo CD adds no kube or API versions. drydock runs no plugin program. |
+| `--helm-kube-version`, `--helm-api-versions` | Give the kube version and the API versions of `helmCharts`. |
+| `--load-restrictor` | `LoadRestrictionsRootOnly`, an empty value, or `LoadRestrictionsNone`. |
+| `--reorder`, `--enable-managedby-label` | Change the order of the output and add the managed-by label, as in kustomize. |
+| `--helm-debug`, `--network`, `--mount`, `-e`, and the other function flags | Change nothing that drydock renders. |
+| `--help`, `--output`, a `--helm-command` other than `helm` | Fail, because drydock does not run what they ask for. |
 
-Unsupported build options fail explicitly instead of being ignored.
-Version-specific `kustomize.buildOptions.<version>` and
-`kustomize.path.<version>` settings produce warnings because drydock uses
-embedded Go libraries instead of selecting external Kustomize binaries.
+A flag that kustomize does not know fails with the kustomize error. With a
+found `argocd-cm`, `helmCharts` fail without `--enable-helm` or
+`--enable-alpha-plugins`, as in Argo CD. Without one, drydock assumes
+`--enable-helm`. A source whose `spec.source.kustomize.version` names no
+`kustomize.version.<name>` or `kustomize.path.<name>` key fails, as in
+Argo CD. drydock renders every version with its embedded kustomize, and
+`kustomize.path.<name>` produces a warning. Argo CD v3.6.1 never applies
+`kustomize.buildOptions.<name>`, and drydock warns about it.
 
 Kustomize `helmCharts` render natively through the same Helm library path used
 for Argo CD chart sources. No external Kustomize CLI is required for chart

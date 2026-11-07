@@ -44,7 +44,7 @@ which boundaries are intentionally runtime-offline.
 | Remote Helm or schemeless OCI charts (`repoURL: ghcr.io/org/charts` plus `chart:`) | Let drydock fetch into its chart cache, or pre-populate the cache and use `--offline`. |
 | First-class OCI artifact sources (every `repoURL: oci://...`) | Use normal commands; drydock resolves the tag or constraint to a digest and renders the artifact content at `path` (default `.`), as Argo CD's repo-server does. `chart:` on such a source is ignored and reported as the advisory `source.oci-chart-ignored` warning. Warm the cache online with `--oci-cache-dir` before `--offline` runs. |
 | Private Git, Helm, OCI artifact, or remote Kustomize sources | Pass explicit auth flags (`--registry-config` supplies per-registry credentials for OCI artifact sources and OCI chart registries) or local repo maps. drydock does not read ambient credential helpers. Git SSH is the exception: the runner's ssh-agent and `~/.ssh` identities are used when no `--git-ssh-key-file` is given. Host keys are always verified against known_hosts. |
-| Kustomize with Helm charts | Use the native renderer. `kustomize.buildOptions: --enable-helm` is honored without shelling out to Kustomize. |
+| Kustomize with Helm charts | Use the native renderer. With a found `argocd-cm`, `kustomize.buildOptions` must hold `--enable-helm`, as in Argo CD. drydock does not shell out to Kustomize. |
 | Config management plugins | Prefer native compatibility paths. Use trusted plugin policy plus `--enable-plugins` only when exec or container command simulation is truly needed. |
 | Pull request review | Use `diff apps`, `diff images`, or the GitHub PR action for markdown comments and artifacts. |
 
