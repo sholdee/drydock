@@ -441,7 +441,6 @@ func TestParitySpecCasesMatchUpstream(t *testing.T) {
 	}
 }
 
-
 // TestValidateApplicationSpecSourcesAppliesSyncPathSchema pins the CRD
 // schema of spec.sourceHydrator.syncSource.path (minLength 1 and the
 // pattern ^.{2,}|[^./]$, pkg/apis/application/v1alpha1/types.go:510-512 at
