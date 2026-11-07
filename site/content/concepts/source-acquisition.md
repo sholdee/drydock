@@ -395,8 +395,9 @@ values, as the kustomize v5.8.3 build command reads them:
 | `--load-restrictor` | `LoadRestrictionsRootOnly`, an empty value, or `LoadRestrictionsNone`. |
 | `--reorder`, `--enable-managedby-label` | Change the order of the output and add the managed-by label, as in kustomize. |
 | `--helm-debug`, `--network`, `--mount`, `-e`, and the other function flags | Change nothing that drydock renders. |
+| `--enable-exec` | Without it, kustomize skips exec functions in `generators:` and `transformers:`, and drydock does the same. With it, an exec function fails, because drydock does not run it. KSOPS is emulated. |
 | `--output` | `/dev/stdout` changes nothing. Another path gives no manifests and a warning, as Argo CD reads none. |
-| `--helm-command` | A program named `helm` changes nothing. Another program fails `helmCharts`, because drydock does not run it. |
+| `--helm-command` | A program named `helm` changes nothing. drydock cannot check that the path exists. Another program fails `helmCharts`, because drydock does not run it. |
 | `--help` | Fails, because kustomize prints its help instead of manifests. |
 
 A flag that kustomize does not know fails with the kustomize error. With a
