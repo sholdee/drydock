@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/sholdee/drydock/internal/filecopy"
 	"github.com/sholdee/drydock/internal/pathsafety"
 	"sigs.k8s.io/kustomize/api/types"
 )
@@ -305,14 +306,11 @@ func generatedKustomizeWorkspacePath(root, rel string) (string, error) {
 }
 
 // writeGeneratedKustomizeWorkspaceFile writes a drydock-generated file at rel
-// under root, failing closed when anything already exists at the destination.
-// Prepared workspace trees materialize repository files as hard links
-// (copyWorkspaceFile), so an O_TRUNC rewrite of a path the repository already
-// committed would write THROUGH the shared inode into the user's original
-// file. All generated-file writers (ksops-compat placeholders, generated helm
-// values, generated helm manifests) must route through this helper: the Lstat
-// produces the actionable error, and the O_EXCL open makes the rejection
-// race-free.
+// under root, failing closed when anything already exists at the destination:
+// the repository then holds a file in drydock's generated namespace. All
+// generated-file writers (ksops-compat placeholders, generated helm values,
+// generated helm manifests) must route through this helper. The write itself
+// goes through writeWorkspaceFile.
 func writeGeneratedKustomizeWorkspaceFile(root, rel string, data []byte) error {
 	path, err := generatedKustomizeWorkspacePath(root, rel)
 	if err != nil {
@@ -323,21 +321,28 @@ func writeGeneratedKustomizeWorkspaceFile(root, rel string, data []byte) error {
 	} else if !os.IsNotExist(err) {
 		return err
 	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+	return writeWorkspaceFile(root, path, data)
+}
+
+// writeWorkspaceFile writes data to path, a file of the prepared workspace
+// under root. Every write to a workspace file goes through it.
+//
+// A prepared workspace holds most repository files as hard links
+// (copyWorkspaceFile), and a remote Git base as hard links to the files of
+// the Git cache, or of the local repository a self-referencing base maps to.
+// A write in place (os.WriteFile, O_TRUNC, append) at such a path goes
+// through the shared inode into the original file. So the write never
+// happens in place: filecopy.ReplaceFile removes the workspace path first,
+// which breaks a hard link, and then creates a new file with O_EXCL. A
+// symlink at path, or on the way to it, fails the write.
+func writeWorkspaceFile(root, path string, data []byte) error {
+	if err := rejectPathOutsideBoundary("workspace file", path, root); err != nil {
 		return err
 	}
-	file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
-	if err != nil {
-		if os.IsExist(err) {
-			return generatedKustomizeWorkspacePathExistsError(rel)
-		}
-		return err
+	if err := rejectSymlinkedPath(root, path); err != nil {
+		return fmt.Errorf("workspace file %q: %w", path, err)
 	}
-	if _, err := file.Write(data); err != nil {
-		_ = file.Close()
-		return err
-	}
-	return file.Close()
+	return filecopy.ReplaceFile(path, data, 0o644)
 }
 
 func generatedKustomizeWorkspacePathExistsError(rel string) error {
