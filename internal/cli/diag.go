@@ -14,6 +14,7 @@ import (
 	"github.com/sholdee/drydock/internal/config"
 	"github.com/sholdee/drydock/internal/diagnostic"
 	"github.com/spf13/cobra"
+	"k8s.io/apimachinery/pkg/labels"
 )
 
 type diagReport struct {
@@ -105,11 +106,12 @@ func runDiagCommand(cmd *cobra.Command, deps Dependencies, flags commonFlags, op
 		return err
 	}
 	request.RecordCacheEvents = flags.cacheEvents
-	result, err := runDiag(context.Background(), deps.Orchestrator, request, diagMode{
+	mode := diagMode{
 		Render: options.includeRender || flags.cacheEvents || options.includePluginExecutions,
-	}, applicationSelectorFunc(selector))
+	}
+	result, err := runDiag(context.Background(), deps.Orchestrator, request, mode, applicationSelectorFunc(selector))
 	if err == nil {
-		result.Diagnostics = append(result.Diagnostics, selectorNoMatchDiagnostics(selector, len(result.Applications))...)
+		result.Diagnostics = append(result.Diagnostics, diagSelectorNoMatchDiagnostics(selector, len(result.Applications), mode)...)
 	}
 	result.Diagnostics = diagnostic.FilterProjectDiagnostics(diagnostic.WithStableCodes(result.Diagnostics), request.ProjectDiagnosticsMode)
 	if err != nil && len(result.Diagnostics) == 0 {
@@ -185,6 +187,23 @@ func resolvedDiagPath(path string) string {
 
 func sameCleanPath(left, right string) bool {
 	return filepath.Clean(left) == filepath.Clean(right)
+}
+
+// diagStaticSelectorHint ends the selector.no-match warning of a diag run
+// without rendering: static discovery does not see the child Applications
+// that only rendering finds, so the selector may match one of them.
+const diagStaticSelectorHint = "; static discovery does not see child Applications that only rendering finds, and --render includes them"
+
+// diagSelectorNoMatchDiagnostics is selectorNoMatchDiagnostics for diag. A
+// static run adds diagStaticSelectorHint to the warning.
+func diagSelectorNoMatchDiagnostics(selector labels.Selector, selected int, mode diagMode) []diagnostic.Diagnostic {
+	diagnostics := selectorNoMatchDiagnostics(selector, selected)
+	if !mode.Render {
+		for i := range diagnostics {
+			diagnostics[i].Message += diagStaticSelectorHint
+		}
+	}
+	return diagnostics
 }
 
 type diagMode struct {

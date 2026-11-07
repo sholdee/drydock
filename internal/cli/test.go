@@ -139,6 +139,7 @@ func newTestCommand(info VersionInfo, deps Dependencies) *cobra.Command {
 		},
 	}
 	bindCommonFlags(appCmd, &appFlags)
+	bindIgnoredSelectorFlag(appCmd, &appFlags)
 	bindLuaHealthTestFlag(appCmd, &appFlags)
 
 	cmd.AddCommand(apps, appCmd)

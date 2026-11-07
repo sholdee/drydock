@@ -151,6 +151,7 @@ func newDiffAppCommand(info VersionInfo, deps Dependencies) *cobra.Command {
 		},
 	}
 	bindCommonFlags(appCmd, &appFlags)
+	bindIgnoredSelectorFlag(appCmd, &appFlags)
 	bindDiffPathFlag(appCmd, &appFlags)
 	bindChangedOnlyFlags(appCmd, &appFlags)
 	bindDiffExitFlag(appCmd, &appFlags)

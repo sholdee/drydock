@@ -37,7 +37,7 @@ and remote-resource acquisition controls, output formats, diff filters,
 ApplicationSet fixtures, cache events, and render parallelism. Commands that
 run on many Applications also accept the `-l`/`--selector` label selector, and
 each of them filters on it; single-Application commands (`build app`,
-`test app`, `diff app`) do not register it. Diff commands
+`test app`, `diff app`) keep it hidden and deprecated, and ignore it. Diff commands
 also accept `--repo`, `--ref`, and `--ref-orig` for local Git ref diffs. Keep
 detailed flag behavior in CLI code or generated/user-facing docs instead of
 duplicating full inventories here.

@@ -336,7 +336,6 @@ type recordingCLIOrchestrator struct {
 	diagError                        error
 	diagStaticResult                 app.DiagResult
 	diagStaticError                  error
-	diagSelectedApplications         []argoappv1.Application
 }
 
 func (orchestrator *recordingCLIOrchestrator) Build(_ context.Context, request app.BuildRequest) (app.BuildResult, error) {
@@ -399,7 +398,6 @@ func (orchestrator *recordingCLIOrchestrator) DiagStatic(_ context.Context, requ
 func (orchestrator *recordingCLIOrchestrator) selectDiagApplications(result app.DiagResult, selectApps app.ApplicationSelector) app.DiagResult {
 	if selectApps != nil {
 		result.Applications = selectApps(orchestrator.listResult.Applications)
-		orchestrator.diagSelectedApplications = result.Applications
 	}
 	return result
 }

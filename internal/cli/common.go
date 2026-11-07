@@ -141,11 +141,24 @@ func bindPathDiscoveryFlags(cmd *cobra.Command, flags *commonFlags) {
 }
 
 // bindSelectorFlag registers -l/--selector. Only commands that run on many
-// Applications register it, and each of them filters on it: a command that
-// names one Application (build app, test app, diff app) has nothing for a
-// selector to choose.
+// Applications register it as a working flag, and each of them filters on
+// it: a command that names one Application (build app, test app, diff app)
+// has nothing for a selector to choose (bindIgnoredSelectorFlag).
 func bindSelectorFlag(cmd *cobra.Command, flags *commonFlags) {
 	cmd.Flags().StringVarP(&flags.selector, "selector", "l", flags.selector, "label selector for Applications")
+}
+
+// singleApplicationSelectorDeprecation is the notice that build app, test
+// app, and diff app print when -l/--selector is passed.
+const singleApplicationSelectorDeprecation = "-l does not apply to a single Application and is ignored"
+
+// bindIgnoredSelectorFlag keeps -l/--selector on a command that names one
+// Application. Those commands once accepted the flag and ignored it, so
+// scripts may still pass it. The flag stays accepted and ignored, hidden from
+// help, and prints a deprecation notice when it is used.
+func bindIgnoredSelectorFlag(cmd *cobra.Command, flags *commonFlags) {
+	bindSelectorFlag(cmd, flags)
+	_ = cmd.Flags().MarkDeprecated("selector", singleApplicationSelectorDeprecation)
 }
 
 func bindAcquisitionCacheFlags(cmd *cobra.Command, flags *commonFlags) {

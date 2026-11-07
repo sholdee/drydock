@@ -47,6 +47,7 @@ func newBuildCommand(info VersionInfo, deps Dependencies) *cobra.Command {
 		},
 	}
 	bindCommonFlags(appCmd, &appFlags)
+	bindIgnoredSelectorFlag(appCmd, &appFlags)
 
 	cmd.AddCommand(apps, appCmd)
 	return cmd

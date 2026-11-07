@@ -138,8 +138,8 @@ For repository shapes, see [Repository topologies](/concepts/topologies/).
 ### Select Applications by label
 
 `-l` or `--selector` takes a Kubernetes label selector and matches it against
-`Application.metadata.labels`. Only the commands that run on many
-Applications accept it, and each of them uses it:
+`Application.metadata.labels`. The commands that run on many Applications
+use it:
 
 | Command | What the selector limits |
 | --- | --- |
@@ -148,7 +148,7 @@ Applications accept it, and each of them uses it:
 | `build apps` | The Applications that are rendered and printed. |
 | `test apps` | The Applications that are tested. |
 | `diff apps`, `diff images` | The Applications that are rendered and compared on both sides. |
-| `diag` | The Applications that are validated against their AppProjects and, with `--render`, rendered. |
+| `diag` | The Applications that are validated against their AppProjects and, with `--render`, rendered. Without `--render`, diag uses static discovery, so it does not see child Applications that only rendering finds. |
 | `plugin-policy init`, `plugin-policy doctor` | The Applications that are analyzed for plugin use. |
 
 drydock still discovers every Application, because discovery must read the
@@ -157,8 +157,10 @@ Applications. `diag`
 also reports discovery, settings, and plugin policy diagnostics, because these
 belong to the repository and not to one Application.
 
-`build app`, `test app`, and `diff app` name one Application, so they do not
-accept `-l`.
+`build app`, `test app`, and `diff app` name one Application, so a selector
+has nothing to choose. They still accept `-l` so that old scripts keep
+working, but they ignore it and print a deprecation notice. The flag does not
+show in their help.
 
 In a diff, an Application that exists on only one side matches with its
 labels on that side. An Application that exists on both sides matches when
@@ -172,8 +174,19 @@ When the selector matches no discovered Application, the command still
 succeeds with an empty result and reports a `selector.no-match` warning with
 its other diagnostics: on stderr, or in the markdown or structured report when
 diagnostics go there. The warning tells an empty result from a selector apart
-from an empty repository or a diff with no change. `test apps` then prints
-`No Applications matched the selector.`
+from an empty repository. `test apps` then prints
+`No Applications matched the selector.` A static `diag` run adds to the
+warning that `--render` also finds the child Applications that rendering
+discovers.
+
+The warning is strict-exempt: `--strict` does not turn it into an error or
+fail the run, because an empty selection is a valid answer to the selector.
+
+A changed-only diff with no changed path returns before it discovers any
+Application, so it reports no `selector.no-match` warning. With a selector,
+the changed-only warnings that render every Application, such as
+`diff.changed-only-settings`, say `rendering all selected Applications`,
+because drydock renders only the selected ones.
 
 A child Application that drydock finds by rendering its parent has the
 tracking metadata that Argo CD sets on it, from the tracking settings of the
@@ -181,7 +194,10 @@ repository. Under label tracking, the child has the label
 `app.kubernetes.io/instance` (or the configured
 `application.instanceLabelKey`) with the parent name, and `-l` can select on
 it. A selector does not add the children of a selected parent: each child
-must match on its own labels.
+must match on its own labels. When the repository also commits the child
+manifest as a static file, the static copy wins over the rendered one, so
+labels that only the parent's render adds do not count. Hide the static copy
+with `--discover-ignore` to select on the rendered labels.
 
 ## Build Commands
 
