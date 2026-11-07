@@ -6,7 +6,6 @@ import (
 	"strings"
 
 	argoappv1 "github.com/argoproj/argo-cd/v3/pkg/apis/application/v1alpha1"
-	"github.com/sholdee/drydock/internal/gitref"
 	"github.com/sholdee/drydock/internal/ociartifact"
 	"github.com/sholdee/drydock/internal/render"
 	sourcepkg "github.com/sholdee/drydock/internal/source"
@@ -270,10 +269,9 @@ func sourceRendersFromRoot(tree *selectionTree, application argoappv1.Applicatio
 }
 
 // hydratorSyncRendersFromRoot mirrors localProvider.resolveHydratorSyncSource:
-// a sync source renders from the local tree only when its repository is
-// repo-mapped to root with its branch checked out there, or when it is the
-// repository under analysis at a branch that the self-repo rule tracks
-// (selfRepoMatcher.matches). A path that exists locally is not enough,
+// a sync source renders from the local tree only when it is the repository
+// under analysis, by its remote or by a --repo-map to root, at a branch that
+// the self-repo rule tracks (selfRepoMatcher.matches and tracksRevision). A path that exists locally is not enough,
 // because the dry and the sync source often share a path.
 func hydratorSyncRendersFromRoot(tree *selectionTree, source argoappv1.ApplicationSource) bool {
 	branch := strings.TrimSpace(source.TargetRevision)
@@ -281,7 +279,10 @@ func hydratorSyncRendersFromRoot(tree *selectionTree, source argoappv1.Applicati
 		return false
 	}
 	if toRoot, mapped := tree.repoMapped(source.RepoURL); mapped {
-		return toRoot && gitref.CurrentBranch(tree.root) == branch
+		// A map to this tree names the repository under analysis
+		// (localProvider.hydratorSelfMapped); a map elsewhere never renders
+		// from this tree.
+		return toRoot && tree.selfRepo.tracksRevision(branch)
 	}
 	return tree.selfRepo.matches(source.RepoURL, branch)
 }

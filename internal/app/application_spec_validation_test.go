@@ -270,11 +270,15 @@ func TestBuildRendersHydratorSyncSource(t *testing.T) {
 		branch   string
 		syncPath string
 		repoMap  bool
+		selfMap  bool
 		want     string
 		wantErr  string
 	}{
 		{name: "repo-mapped Git repository at another branch", syncRepo: self, branch: "env/prod", syncPath: "workloads/hydrated", repoMap: true, want: "from-hydrated-branch"},
 		{name: "repo-mapped Git repository at the checked-out branch", syncRepo: self, branch: "master", syncPath: "workloads/hydrated", repoMap: true, want: "from-hydrated"},
+		// A map to the tree under analysis behaves as if there were no map.
+		{name: "self repo-map at the default branch", syncRepo: self, branch: "master", syncPath: "workloads/hydrated", selfMap: true, want: "from-hydrated"},
+		{name: "self repo-map at another branch", syncRepo: self, branch: "env/prod", syncPath: "workloads/hydrated", selfMap: true, wantErr: "env/prod"},
 		{name: "local repository at its default branch", syncRepo: self, branch: "master", syncPath: "workloads/hydrated", want: "from-hydrated"},
 		{name: "local repository at another branch", syncRepo: self, branch: "env/prod", syncPath: "workloads/hydrated", wantErr: "env/prod"},
 		// The review repro: the sync path is also the local dry path, in
@@ -287,7 +291,14 @@ func TestBuildRendersHydratorSyncSource(t *testing.T) {
 			hydratorBranchRepo(t, root)
 			writeTestFile(t, filepath.Join(root, "apps", "app.yaml"), hydratorApplication(testCase.syncRepo, testCase.branch, testCase.syncPath))
 			request := BuildRequest{Path: root, Strict: true, Offline: true, GitCacheDir: t.TempDir()}
-			if testCase.repoMap {
+			switch {
+			case testCase.repoMap:
+				// Another checkout of the same repository, so the map does
+				// not name the tree under analysis.
+				mapped := t.TempDir()
+				hydratorBranchRepo(t, mapped)
+				request.RepoMaps = []sourcepkg.RepoMap{{URL: self, Path: mapped}}
+			case testCase.selfMap:
 				request.RepoMaps = []sourcepkg.RepoMap{{URL: self, Path: root}}
 			}
 			result, err := Orchestrator{}.Build(context.Background(), request)
@@ -327,8 +338,11 @@ func TestBuildRendersHydratorSyncSource(t *testing.T) {
 // that is no Git repository cannot stand in for a sync branch.
 func TestBuildFailsHydratorSyncFromPlainRepoMap(t *testing.T) {
 	root := t.TempDir()
-	writeSpecValidationRepo(t, root, hydratorApplication("https://example.test/repo.git", "env/prod", "workloads/hydrated"))
-	result, err := Orchestrator{}.Build(context.Background(), specValidationBuildRequest(root))
+	writeSpecValidationRepo(t, root, hydratorApplication("https://example.test/deployments.git", "env/prod", "workloads/hydrated"))
+	plain := t.TempDir()
+	writeTestFile(t, filepath.Join(plain, "workloads", "hydrated", "cm.yaml"), "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: plain\n")
+	request := BuildRequest{Path: root, RepoMaps: []sourcepkg.RepoMap{{URL: "https://example.test/deployments.git", Path: plain}}}
+	result, err := Orchestrator{}.Build(context.Background(), request)
 	if err == nil || len(result.Statuses) != 1 || !strings.Contains(result.Statuses[0].Message, "is not the top of a Git repository") {
 		t.Fatalf("Build() error = %v, statuses = %#v, want the plain --repo-map target refused", err, result.Statuses)
 	}

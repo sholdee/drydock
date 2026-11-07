@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"errors"
+	"fmt"
 	"path/filepath"
 	"slices"
 	"testing"
@@ -163,5 +164,43 @@ func TestPersistentRenderCacheKeyFollowsHydratorSyncBranchCommit(t *testing.T) {
 	second := keyAt("2222222222222222222222222222222222222222")
 	if first == second {
 		t.Fatal("a new sync branch commit did not change the persistent render cache key")
+	}
+}
+
+// TestDiffRefHydratorSyncBranchWithSelfRepoMap pins a --ref diff with a
+// --repo-map of the repository under diff, which the diff rewrites to each
+// side's snapshot. The map names the repository under analysis, so the sync
+// source follows the self-repo revision rule as without the map: each side
+// reads its own tree, with and without changed-only selection.
+func TestDiffRefHydratorSyncBranchWithSelfRepoMap(t *testing.T) {
+	for _, changedOnly := range []bool{false, true} {
+		t.Run(fmt.Sprintf("changed-only %t", changedOnly), func(t *testing.T) {
+			root, fixture := initSelfRepoDiffGitRepo(t, selfRepoRemoteURL)
+			writeDiffHydratorApp(t, root)
+			writeDiffHydratedConfigMap(t, root, "old")
+			writeTestFile(t, filepath.Join(root, "dry", "cm.yaml"), "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: dry\n")
+			commitDiffGitRepo(t, fixture.repo, fixture.wt, "baseline")
+			checkoutDiffGitBranch(t, fixture.wt, "feature")
+			writeDiffHydratedConfigMap(t, root, "new")
+			commitDiffGitRepo(t, fixture.repo, fixture.wt, "feature hydrated")
+
+			gitAcquirer := &countingGitAcquirer{err: errors.New("the self-mapped sync branch must not be acquired")}
+			result, err := (Orchestrator{GitAcquirer: gitAcquirer}).DiffApps(context.Background(), DiffRequest{
+				Repo:        root,
+				RefOrig:     "master",
+				Ref:         "feature",
+				Unified:     3,
+				Parallelism: 1,
+				ChangedOnly: changedOnly,
+				RepoMaps:    []sourcepkg.RepoMap{{URL: selfRepoRemoteURL, Path: root}},
+			})
+			if err != nil {
+				t.Fatalf("DiffApps() error = %v", err)
+			}
+			if got := gitAcquirer.calls(); got != 0 {
+				t.Fatalf("git acquire calls = %d, want 0: %#v", got, gitAcquirer.requests)
+			}
+			assertSingleDiffContains(t, result, "-  value: old", "+  value: new")
+		})
 	}
 }

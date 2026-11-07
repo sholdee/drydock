@@ -66,16 +66,15 @@ func sourceHydratorDiagnostic(application argoappv1.Application) (diagnostic.Dia
 //     fails on a cache miss.
 func (p localProvider) resolveHydratorSyncSource(ctx context.Context, source render.ResolvedSource) (string, SourceIdentity, error) {
 	branch := strings.TrimSpace(source.TargetRevision)
-	if p.sourceResolver != nil {
-		if mappedPath, ok := p.sourceResolver.MappedPath(source.RepoURL); ok {
-			return p.resolveMappedHydratorBranch(ctx, source, mappedPath, branch)
-		}
-	}
 	if p.hydratorSyncIsLocalTree(source) {
 		p.recordCacheEvent(cacheevent.Event{Source: cacheevent.SourceGit, Action: cacheevent.ActionLocal, Target: source.RepoURL, Revision: source.TargetRevision})
 		return p.repoRoot, p.rootIdentity, nil
 	}
-	if p.sourceResolver != nil {
+	selfMapped := p.hydratorSelfMapped(source.RepoURL)
+	if p.sourceResolver != nil && !selfMapped {
+		if mappedPath, ok := p.sourceResolver.MappedPath(source.RepoURL); ok {
+			return p.resolveMappedHydratorBranch(ctx, source, mappedPath, branch)
+		}
 		if _, err := p.sourceResolver.Resolve(source.RepoURL, source.TargetRevision); err != nil {
 			return "", SourceIdentity{}, fmt.Errorf("source hydrator sync branch %q: %w", branch, err)
 		}
@@ -87,12 +86,32 @@ func (p localProvider) resolveHydratorSyncSource(ctx context.Context, source ren
 	return root, identity, nil
 }
 
+// hydratorSelfMapped reports a --repo-map of the sync repository to the tree
+// of this side: a map to the checkout of a build, or a map to the
+// repository under a --ref diff, which the diff rewrites to each side's
+// snapshot (DiffRequest.buildRequest). Such a map names the repository
+// under analysis, so the sync source then behaves as if it had no map.
+func (p localProvider) hydratorSelfMapped(repoURL string) bool {
+	if p.sourceResolver == nil {
+		return false
+	}
+	mappedPath, ok := p.sourceResolver.MappedPath(repoURL)
+	return ok && sameLocalPath(mappedPath, p.repoRoot)
+}
+
 // hydratorSyncIsLocalTree reports whether a source hydrator sync source
-// renders from the local tree: its repository is the local repository, and
-// the tree tracks its branch (resolveHydratorSyncSource).
+// renders from the local tree: its repository is the repository under
+// analysis, by its remote or by a --repo-map to this tree, and the
+// self-repo rule tracks its branch (resolveHydratorSyncSource).
 func (p localProvider) hydratorSyncIsLocalTree(source render.ResolvedSource) bool {
 	branch := strings.TrimSpace(source.TargetRevision)
-	return branch != "" && p.isSelfRepoRef(source.RepoURL, branch)
+	if branch == "" {
+		return false
+	}
+	if p.hydratorSelfMapped(source.RepoURL) {
+		return selfRepoMatcher{revisions: p.selfRepoRevisions}.tracksRevision(branch)
+	}
+	return p.isSelfRepoRef(source.RepoURL, branch)
 }
 
 // hydratorSnapshot is one snapshot of a branch of a --repo-map Git
