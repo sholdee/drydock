@@ -291,7 +291,11 @@ func checkoutGitRevision(repo *git.Repository, worktree *git.Worktree, revision,
 //   - a branch or tag with that name wins next, also for a name of hex
 //     digits such as `2024` or `cafe`, because ls-remote matches ref names
 //     first. go-git prefers an object whose SHA starts with the name, so
-//     ResolveGitRevision alone could check out another commit;
+//     ResolveGitRevision alone could check out another commit. A branch
+//     resolves from the remote-tracking ref of the cache clone first: a
+//     fetch updates refs/remotes/<remote>/<branch>, but never the local
+//     branch that the clone created for the default branch, which would
+//     stay at the commit of clone time after --refresh-git;
 //   - a hex revision of 7 or more digits is then an abbreviated SHA, which
 //     must name a single commit or tag (resolveAbbreviatedCommit);
 //   - a shorter all-hex name that names no ref does not resolve, as in
@@ -301,7 +305,7 @@ func resolveCheckoutRevision(repo *git.Repository, revision, repoURL string) (*p
 	if fullCommitSHA.MatchString(revision) {
 		return ResolveGitRevision(repo, strings.ToLower(revision))
 	}
-	if hash, ok := lsRemoteRefCommit(repo, revision, repoURL); ok {
+	if hash, ok := lsRemoteRefCommit(repo, revision, repoURL, true); ok {
 		return &hash, nil
 	}
 	if abbreviatedCommitSHA.MatchString(revision) {
@@ -321,34 +325,31 @@ func resolveCheckoutRevision(repo *git.Repository, revision, repoURL string) (*p
 }
 
 // resolveAbbreviatedCommit resolves an abbreviated SHA as `git checkout`
-// does: among the objects whose SHA starts with it, only commits and tags
-// count. One such object resolves to its commit, a tag peeled to the commit
-// it points to. More than one fails like git ("short object ID ... is
-// ambiguous"). found is false when none matches.
+// does. git gives the name no type hint there, so every object whose SHA
+// starts with the abbreviation counts, of any type: more than one fails
+// like git ("short object ID ... is ambiguous"), also when only one of
+// them is a commit. A single commit resolves to itself, and a single
+// annotated tag to the commit it points to. A single tree or blob is no
+// commit, which fails too. found is false when no object matches.
 func resolveAbbreviatedCommit(repo *git.Repository, abbreviated string) (plumbing.Hash, bool, error) {
 	abbreviated = strings.ToLower(abbreviated)
-	var matches []plumbing.Hash
-	for _, hash := range hashesWithPrefix(repo, abbreviated) {
-		if commit, err := repo.CommitObject(hash); err == nil {
-			matches = append(matches, commit.Hash)
-			continue
-		}
-		if tag, err := repo.TagObject(hash); err == nil {
-			commit, err := tag.Commit()
-			if err != nil {
-				continue
-			}
-			matches = append(matches, commit.Hash)
-		}
-	}
+	matches := hashesWithPrefix(repo, abbreviated)
 	switch len(matches) {
 	case 0:
 		return plumbing.ZeroHash, false, nil
 	case 1:
-		return matches[0], true, nil
 	default:
 		return plumbing.ZeroHash, false, fmt.Errorf("short object ID %s is ambiguous", abbreviated)
 	}
+	if commit, err := repo.CommitObject(matches[0]); err == nil {
+		return commit.Hash, true, nil
+	}
+	if tag, err := repo.TagObject(matches[0]); err == nil {
+		if commit, err := tag.Commit(); err == nil {
+			return commit.Hash, true, nil
+		}
+	}
+	return plumbing.ZeroHash, false, fmt.Errorf("short object ID %s does not name a commit", abbreviated)
 }
 
 // hashesWithPrefix lists the SHAs of the objects of repo that start with the
@@ -381,10 +382,13 @@ func hashesWithPrefix(repo *git.Repository, prefix string) []plumbing.Hash {
 		})
 	}
 	var out []plumbing.Hash
+	seen := map[plumbing.Hash]struct{}{}
 	for _, hash := range candidates {
-		if strings.HasPrefix(hash.String(), prefix) {
-			out = append(out, hash)
+		if _, ok := seen[hash]; ok || !strings.HasPrefix(hash.String(), prefix) {
+			continue
 		}
+		seen[hash] = struct{}{}
+		out = append(out, hash)
 	}
 	return out
 }
@@ -399,7 +403,9 @@ func hashesWithPrefix(repo *git.Repository, prefix string) []plumbing.Hash {
 //
 //   - revision as written when it is a full 40-digit SHA;
 //   - revision as written when it is an abbreviated SHA (7 or more hex
-//     digits) that names no branch or tag and is a prefix of commit;
+//     digits) that names no branch or tag, as ls-remote returns it
+//     (util/git/client.go:1019-1022), also when it abbreviates an
+//     annotated tag object that the checkout peeled to commit;
 //   - commit in every other case: HEAD, a branch, a lightweight tag, and an
 //     annotated tag, because listRemote peels each tag that the server
 //     advertises with a peeled SHA (util/git/workaround.go:86-96).
@@ -413,10 +419,10 @@ func LsRemoteRevision(repo *git.Repository, revision, commit, repoURL string) st
 	if repo == nil || !abbreviatedCommitSHA.MatchString(revision) {
 		return commit
 	}
-	if _, ok := lsRemoteRefCommit(repo, revision, repoURL); ok {
+	if _, ok := lsRemoteRefCommit(repo, revision, repoURL, true); ok {
 		return commit
 	}
-	if strings.HasPrefix(commit, strings.ToLower(revision)) {
+	if hash, found, err := resolveAbbreviatedCommit(repo, revision); err == nil && found && hash.String() == commit {
 		return revision
 	}
 	return commit
@@ -437,9 +443,10 @@ func LsRemoteRevision(repo *git.Repository, revision, commit, repoURL string) st
 //     of that ref for both, because ls-remote matches ref names first.
 //   - Any other abbreviated SHA stays as written for multi. single is the
 //     commit that the abbreviation names in repo, an abbreviated annotated
-//     tag object peeled to its commit, or "" when nothing in repo matches.
-//   - An abbreviation that matches more than one commit or tag fails, as
-//     `git checkout` fails for it in the repo-server.
+//     tag object peeled to its commit, or "" when no object in repo matches.
+//   - An abbreviation that matches more than one object of any type, or a
+//     single object that is no commit or tag, fails, as `git checkout`
+//     fails for it in the repo-server (resolveAbbreviatedCommit).
 func PinnedRevision(repo *git.Repository, revision, repoURL string) (single, multi string, ok bool, err error) {
 	revision = strings.TrimSpace(revision)
 	if fullCommitSHA.MatchString(revision) {
@@ -451,7 +458,7 @@ func PinnedRevision(repo *git.Repository, revision, repoURL string) (single, mul
 	if repo == nil {
 		return "", revision, true, nil
 	}
-	if hash, ok := lsRemoteRefCommit(repo, revision, repoURL); ok {
+	if hash, ok := lsRemoteRefCommit(repo, revision, repoURL, false); ok {
 		return hash.String(), hash.String(), true, nil
 	}
 	hash, found, err := resolveAbbreviatedCommit(repo, revision)
@@ -477,21 +484,28 @@ var (
 )
 
 // lsRemoteRefCommit returns the commit of the branch or tag named name in
-// repo, peeled to its commit: refs/heads/<name>, then
-// refs/remotes/<remote>/<name>, then refs/tags/<name>. The remote is the
-// one whose URL is repoURL (CanonicalGitURLKey); when no remote has that
-// URL, every remote is tried in name order. A branch wins over a tag.
-// ls-remote takes the first match in a ref list that has no fixed order,
-// so for a name that is both a branch and a tag Argo CD can pick either.
-func lsRemoteRefCommit(repo *git.Repository, name, repoURL string) (plumbing.Hash, bool) {
-	if strings.HasPrefix(name, "refs/") {
+// repo, peeled to its commit. name is a short name, or a full
+// refs/heads/<branch> or refs/tags/<tag> name. A branch is
+// refs/heads/<branch> or refs/remotes/<remote>/<branch>, where the remote
+// is the one whose URL is repoURL, or every remote in name order when no
+// remote has that URL. preferRemote looks at the remote-tracking ref first,
+// which is the current remote commit in a drydock Git cache clone. Without
+// it the local branch wins, which is what the user has in a local tree. A
+// branch wins over a tag. ls-remote takes the first match in a ref list
+// that has no fixed order, so for a name that is both a branch and a tag
+// Argo CD can pick either.
+func lsRemoteRefCommit(repo *git.Repository, name, repoURL string, preferRemote bool) (plumbing.Hash, bool) {
+	var names []plumbing.ReferenceName
+	switch {
+	case strings.HasPrefix(name, "refs/tags/"):
+		names = []plumbing.ReferenceName{plumbing.ReferenceName(name)}
+	case strings.HasPrefix(name, "refs/heads/"):
+		names = lsRemoteBranchRefNames(repo, strings.TrimPrefix(name, "refs/heads/"), repoURL, preferRemote)
+	case strings.HasPrefix(name, "refs/"):
 		return plumbing.ZeroHash, false
+	default:
+		names = append(lsRemoteBranchRefNames(repo, name, repoURL, preferRemote), plumbing.NewTagReferenceName(name))
 	}
-	names := []plumbing.ReferenceName{plumbing.NewBranchReferenceName(name)}
-	for _, remote := range lsRemoteRemoteNames(repo, repoURL) {
-		names = append(names, plumbing.NewRemoteReferenceName(remote, name))
-	}
-	names = append(names, plumbing.NewTagReferenceName(name))
 	for _, refName := range names {
 		if _, err := repo.Reference(refName, true); err != nil {
 			continue
@@ -505,6 +519,20 @@ func lsRemoteRefCommit(repo *git.Repository, name, repoURL string) (plumbing.Has
 	return plumbing.ZeroHash, false
 }
 
+// lsRemoteBranchRefNames lists the ref names that hold branch in repo, in
+// the order lsRemoteRefCommit tries them.
+func lsRemoteBranchRefNames(repo *git.Repository, branch, repoURL string, preferRemote bool) []plumbing.ReferenceName {
+	var remote []plumbing.ReferenceName
+	for _, name := range lsRemoteRemoteNames(repo, repoURL) {
+		remote = append(remote, plumbing.NewRemoteReferenceName(name, branch))
+	}
+	local := plumbing.NewBranchReferenceName(branch)
+	if preferRemote {
+		return append(remote, local)
+	}
+	return append([]plumbing.ReferenceName{local}, remote...)
+}
+
 // lsRemoteRemoteNames returns the remote of repo whose URL is repoURL, or
 // every remote in name order when none is.
 func lsRemoteRemoteNames(repo *git.Repository, repoURL string) []string {
@@ -512,6 +540,10 @@ func lsRemoteRemoteNames(repo *git.Repository, repoURL string) []string {
 	if err != nil {
 		return nil
 	}
+	// Argo CD compares repository URLs without letter case
+	// (NormalizeGitURL lowercases the whole URL, util/git/git.go:74-91).
+	// The scheme and user are dropped too, because a local remote may use
+	// SSH where the Application uses HTTPS.
 	want := CanonicalGitURLKey(repoURL)
 	var all []string
 	for _, remote := range remotes {
@@ -521,7 +553,7 @@ func lsRemoteRemoteNames(repo *git.Repository, repoURL string) []string {
 			continue
 		}
 		for _, url := range config.URLs {
-			if CanonicalGitURLKey(url) == want {
+			if strings.EqualFold(CanonicalGitURLKey(url), want) {
 				return []string{config.Name}
 			}
 		}

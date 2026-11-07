@@ -130,32 +130,130 @@ func TestPinnedRevision(t *testing.T) {
 	}
 }
 
-// An abbreviation that matches more than one commit or tag fails, as git
-// checkout fails with "short object ID ... is ambiguous". Seven hex digits
-// cannot be made to collide in a test, so this uses a one-digit prefix that
-// two of many commits share.
-func TestResolveAbbreviatedCommitFailsWhenAmbiguous(t *testing.T) {
+// git checkout gives an abbreviated SHA no type hint, so every object type
+// counts: an abbreviation that a commit and a tree or blob share is
+// ambiguous, and one that only a tree or blob matches names no commit.
+// Seven hex digits cannot be made to collide in a test, so this uses a
+// one-digit prefix.
+func TestResolveAbbreviatedCommitCountsEveryObjectType(t *testing.T) {
 	fixture := createGitFixture(t)
-	byFirstDigit := map[byte][]plumbing.Hash{}
-	var shared byte
-	for i := 0; i < 64 && shared == 0; i++ {
+	commits := make([]plumbing.Hash, 0, 32)
+	isCommit := map[plumbing.Hash]bool{}
+	for i := range 32 {
 		hash := commitFixtureFile(t, fixture.repo, fixture.worktree, "config.yaml", fmt.Sprintf("version: %d\n", i))
-		digit := hash.String()[0]
-		byFirstDigit[digit] = append(byFirstDigit[digit], hash)
-		if len(byFirstDigit[digit]) == 2 {
-			shared = digit
+		commits = append(commits, hash)
+		isCommit[hash] = true
+	}
+	digit := commitAndOtherObjectDigit(fixture.repo, isCommit)
+	if digit == "" {
+		t.Skip("no first digit is shared by exactly one commit and another object")
+	}
+	if _, _, err := resolveAbbreviatedCommit(fixture.repo, digit); err == nil || !strings.Contains(err.Error(), "is ambiguous") {
+		t.Fatalf("resolveAbbreviatedCommit(%q) error = %v, want ambiguous for one commit and a tree or blob", digit, err)
+	}
+	commit, err := fixture.repo.CommitObject(commits[0])
+	if err != nil {
+		t.Fatalf("CommitObject() error = %v", err)
+	}
+	if _, _, err := resolveAbbreviatedCommit(fixture.repo, commit.TreeHash.String()[:12]); err == nil || !strings.Contains(err.Error(), "does not name a commit") {
+		t.Fatalf("resolveAbbreviatedCommit(tree) error = %v, want no commit", err)
+	}
+	hash, found, err := resolveAbbreviatedCommit(fixture.repo, commits[0].String()[:12])
+	if err != nil || !found || hash != commits[0] {
+		t.Fatalf("resolveAbbreviatedCommit(unique) = %s, %t, %v; want %s", hash, found, err, commits[0])
+	}
+}
+
+// commitAndOtherObjectDigit returns a first hex digit that exactly one
+// commit and at least one tree or blob of repo share, or "".
+func commitAndOtherObjectDigit(repo *git.Repository, isCommit map[plumbing.Hash]bool) string {
+	for _, candidate := range "0123456789abcdef" {
+		var commitsWith, othersWith int
+		for _, hash := range hashesWithPrefix(repo, string(candidate)) {
+			if isCommit[hash] {
+				commitsWith++
+			} else {
+				othersWith++
+			}
+		}
+		if commitsWith == 1 && othersWith > 0 {
+			return string(candidate)
 		}
 	}
-	if shared == 0 {
-		t.Fatal("no two commits share a first hex digit")
+	return ""
+}
+
+// A non-hex branch name resolves from the refs first, and a branch wins over
+// a tag of the same name. Argo CD has no fixed order there: ls-remote takes
+// the first match in a ref list without a fixed order.
+func TestResolveCheckoutRevisionBranchBeforeTag(t *testing.T) {
+	fixture := createGitFixture(t)
+	branchCommit := commitFixtureFile(t, fixture.repo, fixture.worktree, "config.yaml", "version: branch\n")
+	tagCommit := commitFixtureFile(t, fixture.repo, fixture.worktree, "config.yaml", "version: tag\n")
+	if err := fixture.repo.Storer.SetReference(plumbing.NewHashReference(plumbing.NewBranchReferenceName("feature"), branchCommit)); err != nil {
+		t.Fatalf("SetReference(feature) error = %v", err)
 	}
-	if _, _, err := resolveAbbreviatedCommit(fixture.repo, string(shared)); err == nil || !strings.Contains(err.Error(), "is ambiguous") {
-		t.Fatalf("resolveAbbreviatedCommit(%q) error = %v, want ambiguous", string(shared), err)
+	if err := fixture.repo.Storer.SetReference(plumbing.NewHashReference(plumbing.NewBranchReferenceName("dup"), branchCommit)); err != nil {
+		t.Fatalf("SetReference(branch dup) error = %v", err)
 	}
-	unique := byFirstDigit[shared][0]
-	hash, found, err := resolveAbbreviatedCommit(fixture.repo, unique.String()[:12])
-	if err != nil || !found || hash != unique {
-		t.Fatalf("resolveAbbreviatedCommit(unique) = %s, %t, %v; want %s", hash, found, err, unique)
+	createAnnotatedFixtureTag(t, fixture.repo, "dup", tagCommit)
+	for _, tc := range []struct{ revision, want string }{
+		{revision: "feature", want: branchCommit.String()},
+		{revision: "refs/heads/feature", want: branchCommit.String()},
+		{revision: "dup", want: branchCommit.String()},
+		{revision: "refs/tags/dup", want: tagCommit.String()},
+	} {
+		hash, err := resolveCheckoutRevision(fixture.repo, tc.revision, "")
+		if err != nil || hash.String() != tc.want {
+			t.Fatalf("resolveCheckoutRevision(%q) = %v, %v; want %s", tc.revision, hash, err, tc.want)
+		}
+	}
+}
+
+// --refresh-git fetches the remote, which updates the remote-tracking refs
+// of the cache clone but not the local branch that the clone created for
+// the default branch. A source at the default branch name must render the
+// remote's current commit, as ls-remote gives it, also by full ref name.
+func TestDefaultGitAcquirerRefreshesTheDefaultBranchByName(t *testing.T) {
+	remote := createGitFixture(t)
+	commitFixtureFile(t, remote.repo, remote.worktree, "config.yaml", "version: one\n")
+	head, err := remote.repo.Head()
+	if err != nil {
+		t.Fatalf("Head() error = %v", err)
+	}
+	url := "file://" + filepath.ToSlash(remote.path)
+	cacheDir := t.TempDir()
+	for _, revision := range []string{head.Name().Short(), head.Name().String()} {
+		if _, err := (DefaultGitAcquirer{}).Acquire(context.Background(), GitRequest{URL: url, Revision: revision}, GitOptions{AllowNetwork: true, CacheDir: cacheDir}); err != nil {
+			t.Fatalf("Acquire(%s) error = %v", revision, err)
+		}
+	}
+	pushed := commitFixtureFile(t, remote.repo, remote.worktree, "config.yaml", "version: two\n")
+	for _, revision := range []string{head.Name().Short(), head.Name().String()} {
+		result, err := DefaultGitAcquirer{}.Acquire(context.Background(), GitRequest{URL: url, Revision: revision}, GitOptions{AllowNetwork: true, CacheDir: cacheDir, Refresh: true})
+		if err != nil {
+			t.Fatalf("Acquire(%s, refresh) error = %v", revision, err)
+		}
+		if result.Revision != pushed.String() {
+			t.Fatalf("Acquire(%s, refresh) Revision = %s, want the pushed commit %s", revision, result.Revision, pushed)
+		}
+	}
+}
+
+// For a multi-source Application, ls-remote returns an abbreviation that
+// names no ref as written (util/git/client.go:1019-1022), also one of an
+// annotated tag object, which the checkout peels to its commit.
+func TestDefaultGitAcquirerKeepsAbbreviatedTagObjectAsWritten(t *testing.T) {
+	remote := createGitFixture(t)
+	commit := commitFixtureFile(t, remote.repo, remote.worktree, "config.yaml", "version: tag\n")
+	tagObject := createAnnotatedFixtureTag(t, remote.repo, "v1.0.0", commit)
+	abbreviated := tagObject.String()[:12]
+	result, err := DefaultGitAcquirer{}.Acquire(context.Background(), GitRequest{URL: "file://" + filepath.ToSlash(remote.path), Revision: abbreviated}, GitOptions{AllowNetwork: true, CacheDir: t.TempDir()})
+	if err != nil {
+		t.Fatalf("Acquire() error = %v", err)
+	}
+	if result.Revision != commit.String() || result.LsRemoteRevision != abbreviated {
+		t.Fatalf("Revision, LsRemoteRevision = %s, %s; want %s, %s", result.Revision, result.LsRemoteRevision, commit, abbreviated)
 	}
 }
 
@@ -187,8 +285,9 @@ func TestResolveCheckoutRevisionPrefersShortHexRefNames(t *testing.T) {
 	}
 }
 
-// A branch of the remote whose URL is the repoURL of the source wins. When
-// no remote has that URL, the remotes are tried in name order.
+// A branch of the remote whose URL is the repoURL of the source wins, with
+// the URL compared without letter case, as Argo CD compares repository URLs.
+// When no remote has that URL, the remotes are tried in name order.
 func TestLsRemoteRefCommitPicksTheRemoteOfTheRepoURL(t *testing.T) {
 	fixture := createGitFixture(t)
 	older := commitFixtureFile(t, fixture.repo, fixture.worktree, "config.yaml", "version: older\n")
@@ -207,10 +306,10 @@ func TestLsRemoteRefCommitPicksTheRemoteOfTheRepoURL(t *testing.T) {
 			t.Fatalf("SetReference(%s/deadbeef1) error = %v", remote.name, err)
 		}
 	}
-	if hash, ok := lsRemoteRefCommit(fixture.repo, "deadbeef1", "https://example.invalid/org/app"); !ok || hash != newer {
+	if hash, ok := lsRemoteRefCommit(fixture.repo, "deadbeef1", "https://EXAMPLE.invalid/Org/App", false); !ok || hash != newer {
 		t.Fatalf("lsRemoteRefCommit(matching URL) = %s, %t; want %s", hash, ok, newer)
 	}
-	if hash, ok := lsRemoteRefCommit(fixture.repo, "deadbeef1", "https://example.invalid/unknown.git"); !ok || hash != older {
+	if hash, ok := lsRemoteRefCommit(fixture.repo, "deadbeef1", "https://example.invalid/unknown.git", false); !ok || hash != older {
 		t.Fatalf("lsRemoteRefCommit(no matching URL) = %s, %t; want the first remote by name %s", hash, ok, older)
 	}
 }
