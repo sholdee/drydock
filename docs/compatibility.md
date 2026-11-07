@@ -504,9 +504,13 @@ Important boundaries:
   older than the max age, or of unknown age, is still used, as an expired
   chart is. It gives the `source.chart-cache-stale` warning, which names
   the version list and its fetch time, and the render is not stored. Every
-  resolve, online or offline, records its use of the list, and an age prune
-  (`drydock cache prune --older-than`) of the chart cache removes the
-  version lists that no run used within the duration.
+  resolve, online or offline, tries to record its use of the list, and an
+  age prune (`drydock cache prune --older-than`) of the chart cache removes
+  the version lists that no run used within the duration. Recording a use
+  is best effort. drydock skips it when the cache is read-only, when
+  another process holds the lock on the lists for more than 5 seconds, or
+  when the write fails, and the render goes on. A skipped use can let a
+  later age prune remove a list that an offline run still needs.
 - Recorded divergence from strict Argo CD v3.6.1: on a schemeless OCI
   repository, drydock lists the tags with helm's registry client, which
   keeps only strict semver tags. The repo-server lists every tag, so a
