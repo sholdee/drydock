@@ -465,3 +465,143 @@ func requireCaseInsensitiveTempDir(t *testing.T) {
 		t.Skip("temp directory is on a case-sensitive file system")
 	}
 }
+
+// TestPreparedWorkspaceCopyRefusesSymlinkedDestination pins that no copy
+// step writes through a symlink that the workspace holds. On a
+// case-insensitive file system the copier could reach app/lnk, a symlink
+// that the tree copy kept, under the name APP/lnk. The test builds that
+// state on any file system: the repository holds app/lnk as a real folder,
+// and the workspace holds app/lnk as a symlink to a folder outside it.
+func TestPreparedWorkspaceCopyRefusesSymlinkedDestination(t *testing.T) {
+	for _, target := range []string{"file", "folder"} {
+		t.Run(target, func(t *testing.T) {
+			top := t.TempDir()
+			repoRoot := filepath.Join(top, "repo")
+			writeFile(t, filepath.Join(repoRoot, "app", "lnk", "cm.yaml"), decodeTestConfigMap("repo", "value"))
+			outside := filepath.Join(top, "shared")
+			writeFile(t, filepath.Join(outside, "cm.yaml"), decodeTestConfigMap("shared", "value"))
+			if err := os.Chmod(filepath.Join(outside, "cm.yaml"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			workspaceRoot := filepath.Join(top, "workspace")
+			symlink(t, outside, filepath.Join(workspaceRoot, "app", "lnk"))
+			before := snapshotHardlinkTestTree(t, outside)
+
+			copier := &preparedKustomizeWorkspaceCopier{
+				repoRoot: repoRoot,
+				dstRoot:  workspaceRoot,
+				copied:   map[string]struct{}{},
+			}
+			path := filepath.Join(repoRoot, "app", "lnk")
+			if target == "file" {
+				path = filepath.Join(path, "cm.yaml")
+			}
+			err := copier.copyPath(path)
+			if err == nil || !strings.Contains(err.Error(), "goes through symlink") {
+				t.Fatalf("copyPath() error = %v, want error containing %q", err, "goes through symlink")
+			}
+			assertTreeUnchanged(t, outside, before)
+		})
+	}
+}
+
+// TestPreparedWorkspaceCopySkipsSymlinkedSourcePath pins that the copier
+// never copies a path through a symlinked folder of the repository. Such a
+// path reaches the copier from spec.source.kustomize patches before any
+// symlink check, and the render rejects it later.
+func TestPreparedWorkspaceCopySkipsSymlinkedSourcePath(t *testing.T) {
+	top := t.TempDir()
+	repoRoot := filepath.Join(top, "repo")
+	writeFile(t, filepath.Join(repoRoot, "shared", "cm.yaml"), decodeTestConfigMap("shared", "value"))
+	symlink(t, filepath.Join(repoRoot, "shared"), filepath.Join(repoRoot, "app", "lnk"))
+	workspaceRoot := filepath.Join(top, "workspace")
+
+	copier := &preparedKustomizeWorkspaceCopier{
+		repoRoot: repoRoot,
+		dstRoot:  workspaceRoot,
+		copied:   map[string]struct{}{},
+	}
+	if err := copier.copyPath(filepath.Join(repoRoot, "app", "lnk", "cm.yaml")); err != nil {
+		t.Fatalf("copyPath() error = %v", err)
+	}
+	if _, err := os.Lstat(filepath.Join(workspaceRoot, "app", "lnk")); !os.IsNotExist(err) {
+		t.Fatalf("copyPath() copied a path through a symlink (Lstat error %v), want nothing copied", err)
+	}
+}
+
+// TestPreparedWorkspaceCopierCoversByFolderIdentity pins that a path under
+// a folder already copied is covered when it names that folder another
+// way. On a case-insensitive file system BASE names base. On any file
+// system, a path through a symlink above the folder names it too.
+func TestPreparedWorkspaceCopierCoversByFolderIdentity(t *testing.T) {
+	top := t.TempDir()
+	repoRoot := filepath.Join(top, "repo")
+	writeFile(t, filepath.Join(repoRoot, "base", "extra", "cm.yaml"), decodeTestConfigMap("extra", "value"))
+	symlink(t, "base", filepath.Join(repoRoot, "alias"))
+
+	copier := &preparedKustomizeWorkspaceCopier{
+		repoRoot: repoRoot,
+		dstRoot:  filepath.Join(top, "workspace"),
+		copied:   map[string]struct{}{},
+	}
+	if err := copier.copyPath(filepath.Join(repoRoot, "base", "extra")); err != nil {
+		t.Fatalf("copyPath() error = %v", err)
+	}
+	if !copier.pathCovered(filepath.Join(repoRoot, "alias", "extra", "cm.yaml")) {
+		t.Fatalf("pathCovered(alias/extra/cm.yaml) = false, want true: alias/extra names the copied folder base/extra")
+	}
+	if copier.pathCovered(filepath.Join(repoRoot, "other")) {
+		t.Fatalf("pathCovered(other) = true, want false")
+	}
+}
+
+// TestKustomizeRenderCaseInsensitiveSymlinkAndDoubleCopy runs the two
+// review reproductions on a case-insensitive file system: a source option
+// patch through APP/lnk, a symlink to a repository folder, and a base named
+// both BASE and base/extra, whose second copy met a symlink the first copy
+// made.
+func TestKustomizeRenderCaseInsensitiveSymlinkAndDoubleCopy(t *testing.T) {
+	requireCaseInsensitiveTempDir(t)
+	t.Run("source option patch through a symlink", func(t *testing.T) {
+		repoRoot := filepath.Join(t.TempDir(), "repo")
+		writeHardlinkTestRepo(t, repoRoot, "base", "kustomization.yaml")
+		writeFile(t, filepath.Join(repoRoot, "shared", "cm.yaml"), "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: demo\ndata:\n  patched: \"true\"\n")
+		if err := os.Chmod(filepath.Join(repoRoot, "shared", "cm.yaml"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		symlink(t, filepath.Join(repoRoot, "shared"), filepath.Join(repoRoot, "app", "lnk"))
+		before := snapshotHardlinkTestTree(t, repoRoot)
+
+		_, _, err := (KustomizeRenderer{}).Render(context.Background(), ResolvedSource{RepoRoot: repoRoot, Path: "app"}, RenderOptions{
+			Kustomize: &argoappv1.ApplicationSourceKustomize{
+				Patches: argoappv1.KustomizePatches{{Path: "../APP/lnk/cm.yaml"}},
+			},
+		})
+		if err == nil || !strings.Contains(err.Error(), "symlink") {
+			t.Fatalf("Render() error = %v, want a symlink error", err)
+		}
+		assertTreeUnchanged(t, repoRoot, before)
+	})
+	t.Run("base copied under two names", func(t *testing.T) {
+		repoRoot := filepath.Join(t.TempDir(), "repo")
+		writeFile(t, filepath.Join(repoRoot, "app", "kustomization.yaml"), "resources:\n  - ../BASE\n  - ../base/extra\ngenerators:\n  - gen.yaml\n")
+		writeFile(t, filepath.Join(repoRoot, "app", "gen.yaml"), hardlinkTestGenerator)
+		writeFile(t, filepath.Join(repoRoot, "base", "kustomization.yaml"), hardlinkTestBaseKustomization)
+		writeFile(t, filepath.Join(repoRoot, "base", "cm.yaml"), decodeTestConfigMap("demo", "value"))
+		writeFile(t, filepath.Join(repoRoot, "base", "extra", "kustomization.yaml"), "resources:\n  - cm.yaml\n")
+		writeFile(t, filepath.Join(repoRoot, "base", "extra", "cm.yaml"), decodeTestConfigMap("extra", "value"))
+		symlink(t, "cm.yaml", filepath.Join(repoRoot, "base", "extra", "unused.yaml"))
+		before := snapshotHardlinkTestTree(t, repoRoot)
+
+		manifests, _, err := (KustomizeRenderer{}).Render(context.Background(), ResolvedSource{RepoRoot: repoRoot, Path: "app"}, RenderOptions{})
+		if err != nil {
+			t.Fatalf("Render() error = %v", err)
+		}
+		for _, name := range []string{"demo", "extra"} {
+			if !containsManifest(manifests, "ConfigMap", name) {
+				t.Fatalf("Render() manifests = %v, want ConfigMap %s", manifests, name)
+			}
+		}
+		assertTreeUnchanged(t, repoRoot, before)
+	})
+}
