@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -336,8 +337,8 @@ func TestDefaultAcquirerUsesExplicitOCIDependencyVersions(t *testing.T) {
 // targetRevision such as "1.2" on an HTTP repository is not a fixed pin:
 // the cache entry is the version that helm pull takes, so the next online
 // run picks up a new 1.2.x. A partial version in a hand-edited Chart.lock
-// resolves the same way. A Kustomize helmCharts "1.2" (VersionAsWritten)
-// never reads that entry.
+// takes the version that equals it, 1.2.0, as helm dependency build does. A
+// Kustomize helmCharts "1.2" (VersionAsWritten) never reads those entries.
 func TestDefaultAcquirerResolvesPartialVersionsAgain(t *testing.T) {
 	server, requests := newRangeIndexServer(t)
 	cacheDir := t.TempDir()
@@ -357,8 +358,10 @@ func TestDefaultAcquirerResolvesPartialVersionsAgain(t *testing.T) {
 	}
 	locked := request
 	locked.VersionPolicy = VersionHelmLocked
-	if result, err := acquirer.Acquire(context.Background(), locked, Options{CacheDir: cacheDir}); err != nil || result.Version != "1.2.3" {
-		t.Fatalf("locked Acquire() = %#v, %v, want a hand-edited lock version 1.2 resolved to 1.2.3", result, err)
+	// helm dependency build takes the entry whose version equals 1.2 as
+	// semver (findVersionedEntry), which is 1.2.0.
+	if result, err := acquirer.Acquire(context.Background(), locked, Options{CacheDir: cacheDir}); err != nil || result.Version != "1.2.0" || chartDescription(t, result.ChartDir) != "1.2.0" {
+		t.Fatalf("locked Acquire() = %#v, %v, want a hand-edited lock version 1.2 resolved to 1.2.0", result, err)
 	}
 	kustomize := request
 	kustomize.VersionPolicy = VersionAsWritten
@@ -413,6 +416,97 @@ func TestDefaultAcquirerMarksOldVersionListsStale(t *testing.T) {
 			used, ok := readVersionsRecord(cacheDir, request)
 			if !ok || time.Since(used.UsedAt) > time.Minute || !used.FetchedAt.Equal(tt.fetchedAt) {
 				t.Fatalf("version record = %#v, want a fresh use and the old fetch time", used)
+			}
+		})
+	}
+}
+
+// TestVersionListUseKeepsANewerList pins that recording the use of a
+// version list never overwrites a newer list that another writer stored at
+// the same time: the use re-reads the list under the file lock.
+func TestVersionListUseKeepsANewerList(t *testing.T) {
+	cacheDir := t.TempDir()
+	request := Request{Repository: "https://charts.example.test", Name: "demo", Kind: RepositoryHTTP}
+	old := chartVersionsRecord{Found: true, Versions: []recordedChartVersion{{Version: "1.0.0", HasURL: true}}, FetchedAt: time.Unix(100, 0).UTC()}
+	newer := chartVersionsRecord{Found: true, Versions: []recordedChartVersion{{Version: "2.0.0", HasURL: true}}, FetchedAt: time.Unix(200, 0).UTC()}
+	for range 20 {
+		writeVersionsRecord(cacheDir, request, old, nil)
+		var wg sync.WaitGroup
+		for range 8 {
+			wg.Go(func() {
+				touchVersionsRecord(cacheDir, request, nil)
+			})
+		}
+		writeVersionsRecord(cacheDir, request, newer, nil)
+		wg.Wait()
+		got, ok := readVersionsRecord(cacheDir, request)
+		if !ok || !got.FetchedAt.Equal(newer.FetchedAt) || len(got.Versions) != 1 || got.Versions[0].Version != "2.0.0" {
+			t.Fatalf("version list = %#v, want the newer list kept", got)
+		}
+	}
+}
+
+// TestOfflineRangeOnAReadOnlyCache pins that an offline range resolves from
+// a read-only chart cache: the use of the version list cannot be recorded,
+// and that does not fail the render.
+func TestOfflineRangeOnAReadOnlyCache(t *testing.T) {
+	server, _ := newRangeIndexServer(t)
+	cacheDir := t.TempDir()
+	acquirer := DefaultAcquirer{Client: server.Client()}
+	request := Request{Repository: server.URL, Name: "demo", Version: "1.2.*", Kind: RepositoryHTTP, VersionPolicy: VersionArgoTargetRevision}
+	if _, err := acquirer.Acquire(context.Background(), request, Options{CacheDir: cacheDir}); err != nil {
+		t.Fatal(err)
+	}
+	var dirs []string
+	_ = filepath.Walk(cacheDir, func(path string, info os.FileInfo, err error) error {
+		if err == nil && info.IsDir() {
+			dirs = append(dirs, path)
+		}
+		return nil
+	})
+	for _, dir := range dirs {
+		if err := os.Chmod(dir, 0o555); err != nil {
+			t.Fatal(err)
+		}
+	}
+	defer func() {
+		for _, dir := range dirs {
+			_ = os.Chmod(dir, 0o755)
+		}
+	}()
+	result, err := acquirer.Acquire(context.Background(), request, Options{CacheDir: cacheDir, Offline: true})
+	if err != nil || result.Version != "1.2.3" {
+		t.Fatalf("offline Acquire() = %#v, %v, want 1.2.3", result, err)
+	}
+}
+
+// TestDefaultAcquirerFetchesLockedVersionsLikeHelm pins how helm dependency
+// build finds the archive of a locked version (findVersionedEntry and
+// versionEquals, helm v4.3.1 pkg/downloader/manager.go:781-806): the first
+// entry with an archive URL whose version equals it as semver, so "v1.2.0"
+// takes 1.2.0, and an entry without a URL is skipped, unlike helm pull.
+func TestDefaultAcquirerFetchesLockedVersionsLikeHelm(t *testing.T) {
+	for _, tt := range []struct {
+		version, want, wantErr string
+	}{
+		{version: "1.2.3", want: "1.2.3"},
+		{version: "v1.2.0", want: "1.2.0"},
+		{version: "1.4.0", want: "v1.4.0"},
+		{version: "1.1.0", wantErr: "chart demo version 1.1.0 not found in repository index"},
+		{version: "not-semver", want: "not-semver"},
+	} {
+		t.Run(tt.version, func(t *testing.T) {
+			server, _ := newRangeIndexServer(t)
+			request := Request{Repository: server.URL, Name: "demo", Version: tt.version, Kind: RepositoryHTTP, VersionPolicy: VersionHelmLocked}
+			result, err := (DefaultAcquirer{Client: server.Client()}).Acquire(context.Background(), request, Options{CacheDir: t.TempDir()})
+			if tt.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+					t.Fatalf("Acquire() error = %v, want %q", err, tt.wantErr)
+				}
+				return
+			}
+			if err != nil || chartDescription(t, result.ChartDir) != tt.want {
+				t.Fatalf("Acquire() = %#v, %v, want the archive of %s", result, err, tt.want)
 			}
 		})
 	}

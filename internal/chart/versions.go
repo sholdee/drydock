@@ -17,6 +17,7 @@ import (
 	"github.com/Masterminds/semver/v3"
 	"github.com/argoproj/argo-cd/v3/util/versions"
 	"github.com/sholdee/drydock/internal/cache"
+	"github.com/sholdee/drydock/internal/filelock"
 )
 
 // VersionPolicy says how a chart request names its version.
@@ -48,9 +49,13 @@ const (
 	// as semver is an explicit tag and stays as written.
 	VersionHelmDependency VersionPolicy = "helm-dependency"
 	// VersionHelmLocked is the version of a Chart.lock entry, which
-	// `helm dependency build` fetches as helm pull does (helmIndexGet). A
-	// partial version in a hand-edited lock on an HTTP repository resolves
-	// like a partial targetRevision.
+	// `helm dependency build` fetches from the repository that the
+	// repo-server added with `helm repo add` (Manager.findChartURL and
+	// findVersionedEntry, helm v4.3.1 pkg/downloader/manager.go:724-806):
+	// the first index entry, from highest to lowest, that has an archive
+	// URL and whose version equals the locked one as semver, or as text
+	// when the locked version does not parse. So a partial version such as
+	// "1.2" in a hand-edited lock takes 1.2.0, not the highest 1.2.x.
 	VersionHelmLocked VersionPolicy = "helm-locked"
 )
 
@@ -77,6 +82,8 @@ func needsVersionResolution(request Request) bool {
 		}
 		return !IsExactVersion(version)
 	case VersionHelmLocked:
+		// The cache entry carries the full version that a partial locked
+		// version matches, so a Kustomize helmCharts "1.2" never reads it.
 		return request.Kind == RepositoryHTTP && !IsExactVersion(version)
 	case VersionAsWritten:
 		return false
@@ -140,7 +147,12 @@ func (record chartVersionsRecord) tags() []string {
 func (record chartVersionsRecord) entries() []repositoryChartVersion {
 	out := make([]repositoryChartVersion, 0, len(record.Versions))
 	for _, version := range record.Versions {
-		out = append(out, repositoryChartVersion{Version: version.Version})
+		entry := repositoryChartVersion{Version: version.Version}
+		if version.HasURL {
+			// Only whether an entry has an archive URL counts here.
+			entry.URLs = []string{""}
+		}
+		out = append(out, entry)
 	}
 	return out
 }
@@ -170,14 +182,56 @@ func readVersionsRecord(cacheDir string, request Request) (chartVersionsRecord, 
 	return record, true
 }
 
-// writeVersionsRecord is best-effort: a failed write only makes a later
-// offline resolve miss. The write is atomic (temp+rename).
+// versionsRecordLockTimeout bounds the wait for the lock on the version
+// lists. A use that cannot get it in time records nothing.
+const versionsRecordLockTimeout = 5 * time.Second
+
+// writeVersionsRecord writes record as the version list of request.
 func writeVersionsRecord(cacheDir string, request Request, record chartVersionsRecord, forbiddenRoots []string) {
+	updateVersionsRecord(cacheDir, request, forbiddenRoots, func(chartVersionsRecord, bool) (chartVersionsRecord, bool) {
+		return record, true
+	})
+}
+
+// touchVersionsRecord records that a resolve used the version list of
+// request now. It re-reads the list under the lock and keeps it, so a newer
+// list that another process wrote stays.
+func touchVersionsRecord(cacheDir string, request Request, forbiddenRoots []string) {
+	now := time.Now().UTC()
+	updateVersionsRecord(cacheDir, request, forbiddenRoots, func(current chartVersionsRecord, ok bool) (chartVersionsRecord, bool) {
+		if !ok || current.UsedAt.After(now) {
+			return current, false
+		}
+		current.UsedAt = now
+		return current, true
+	})
+}
+
+// updateVersionsRecord changes the version list of request under a file
+// lock that every drydock process sharing the cache takes, so a use never
+// overwrites a list that another process wrote in between. update gets the
+// current list and whether it exists, and returns the new list and whether
+// to write it. It is best-effort: a cache that cannot be locked or written,
+// such as a read-only one, only makes a later offline resolve miss or a
+// prune see an older use, and never fails the render. The write is atomic
+// (temp+rename).
+func updateVersionsRecord(cacheDir string, request Request, forbiddenRoots []string, update func(chartVersionsRecord, bool) (chartVersionsRecord, bool)) {
 	path, err := versionsRecordPath(cacheDir, request)
 	if err != nil || rejectForbiddenCachePath(path, forbiddenRoots) != nil {
 		return
 	}
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), versionsRecordLockTimeout)
+	defer cancel()
+	lock, err := filelock.Acquire(ctx, filepath.Join(filepath.Dir(path), ".lock"))
+	if err != nil {
+		return
+	}
+	defer lock.Release()
+	record, write := update(readVersionsRecord(cacheDir, request))
+	if !write {
 		return
 	}
 	data, err := json.Marshal(record)
@@ -228,9 +282,7 @@ func (acquirer DefaultAcquirer) resolveVersion(ctx context.Context, request Requ
 		}
 		resolved, err := selectChartVersion(request, record)
 		stale := Expired(record.FetchedAt, !record.FetchedAt.IsZero(), opts.MaxAge, time.Now())
-		used := record
-		used.UsedAt = time.Now().UTC()
-		writeVersionsRecord(opts.CacheDir, request, used, opts.ForbiddenRoots)
+		touchVersionsRecord(opts.CacheDir, request, opts.ForbiddenRoots)
 		return resolvedVersion{version: resolved, stale: stale, listFetchedAt: record.FetchedAt}, err
 	}
 	now := time.Now().UTC()
@@ -287,12 +339,48 @@ func selectChartVersion(request Request, record chartVersionsRecord) (string, er
 	case VersionHelmDependency:
 		return resolveHelmDependencyVersion(request, record)
 	case VersionHelmLocked:
-		return helmIndexGetVersion(request, record)
+		entry, err := helmFindVersionedEntry(record.entries(), request.Name, version)
+		return entry.Version, err
 	case VersionAsWritten:
 		return version, nil
 	default:
 		return version, nil
 	}
+}
+
+// helmFindVersionedEntry is findVersionedEntry (helm v4.3.1
+// pkg/downloader/manager.go:781-806) on the entries sorted as helm loads an
+// index: the first entry with an archive URL whose version equals version
+// (versionEquals).
+func helmFindVersionedEntry(entries []repositoryChartVersion, name, version string) (repositoryChartVersion, error) {
+	sorted := append([]repositoryChartVersion(nil), entries...)
+	sort.SliceStable(sorted, func(i, j int) bool {
+		return semverHigher(sorted[i].Version, sorted[j].Version)
+	})
+	for _, entry := range sorted {
+		if len(entry.URLs) == 0 {
+			continue
+		}
+		if version == "" || helmVersionEquals(version, entry.Version) {
+			return entry, nil
+		}
+	}
+	return repositoryChartVersion{}, fmt.Errorf("chart %s version %s not found in repository index", name, version)
+}
+
+// helmVersionEquals is versionEquals (helm v4.3.1
+// pkg/downloader/manager.go:795-806): equal as semver, or as text when v1
+// does not parse.
+func helmVersionEquals(v1, v2 string) bool {
+	sv1, err := semver.NewVersion(v1)
+	if err != nil {
+		return v1 == v2
+	}
+	sv2, err := semver.NewVersion(v2)
+	if err != nil {
+		return false
+	}
+	return sv1.Equal(sv2)
 }
 
 // helmIndexGetVersion returns the version of the index entry that helm pull

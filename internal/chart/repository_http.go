@@ -169,6 +169,9 @@ func findChartURL(repository string, request Request, index repositoryIndex) (st
 
 func findChartVersion(request Request, index repositoryIndex) (repositoryChartVersion, error) {
 	versions := index.Entries[request.Name]
+	if request.VersionPolicy == VersionHelmLocked {
+		return helmFindVersionedEntry(versions, request.Name, strings.TrimSpace(request.Version))
+	}
 	if request.VersionPolicy != VersionAsWritten {
 		entry, err := helmIndexGet(versions, request.Name, strings.TrimSpace(request.Version))
 		if errors.Is(err, errChartVersionNotFound) {

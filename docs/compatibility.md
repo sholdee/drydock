@@ -580,7 +580,10 @@ Important boundaries:
     repositories of `Chart.yaml` before the build, so an `http://`
     repository fails with `no repository definition for <url>. Please add
     the missing repos via 'helm repo add'`. Every locked dependency is
-    fetched at its locked version.
+    fetched at its locked version. helm takes the first index entry with
+    an archive URL whose version equals the locked one as semver
+    (`findVersionedEntry`), so a partial version such as `1.2` in a
+    hand-edited `Chart.lock` takes `1.2.0`, not the highest `1.2.x`.
   - Without a `Chart.lock`, each `Chart.yaml` version resolves against its
     repository, as `helm dependency update` resolves it: the highest index
     version with an archive URL, or the highest strict semver registry
@@ -588,9 +591,7 @@ Important boundaries:
     version that parses as semver, such as `v1.2.3` or `1.2`, is pulled as
     a tag as written. An `http://` repository works here. With
     `--offline`, a range resolves from the version list that an earlier
-    online run recorded. A partial version such as `1.2` in a hand-edited
-    `Chart.lock` resolves on an HTTP repository as a partial
-    `targetRevision` does.
+    online run recorded.
   - A dependency without a repository must be a directory
     `charts/<name>` whose version matches the dependency version. Without
     a `Chart.lock`, helm first checks every dependency in order: a version
@@ -619,6 +620,13 @@ Important boundaries:
   When `charts/` holds a vendored directory of a chart that the build
   fetches, helm keeps both and picks one of them in Go map order. drydock
   replaces the directory with the fetched chart.
+- Recorded divergence from strict Argo CD v3.6.1, in error text only: helm
+  checks the dependencies in their order and fetches the remote ones
+  between the checks of the local ones. drydock checks every dependency
+  without a repository first, and fetches the remote dependencies after
+  that. When a chart has both a failing local dependency and a failing
+  remote dependency, drydock can report the local error where helm reports
+  the remote one. Both sides fail the render.
 - Cached Helm charts never expire by default. Argo CD v3.6.1's repo-server
   re-pulls a cached chart archive older than its repo cache expiration (24h
   by default), so a republished chart version converges there; drydock needs
