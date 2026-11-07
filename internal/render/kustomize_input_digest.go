@@ -128,6 +128,36 @@ func (c *kustomizeInputCollector) collectSourceKustomizeRefs(ctx context.Context
 		if skipped {
 			continue
 		}
+		if err := c.collectSourceKustomizeComponent(ctx, sourceRoot, component); err != nil {
+			return err
+		}
+	}
+	for _, patch := range kustomize.Patches {
+		if err := c.addKustomizeRef(ctx, sourceRoot, "kustomize.patches.path", patch.Path, false); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// collectSourceKustomizeComponent adds the components that one
+// spec.source.kustomize.components pattern adds through the globs of
+// `kustomize edit add component`, with their graphs. A glob pattern also
+// owns the directory it lists (kustomizeComponentGlobDir), so a new match
+// there selects the source, unless that directory is the repository root:
+// like a Helm value file glob without a static prefix, it then owns
+// nothing more.
+func (c *kustomizeInputCollector) collectSourceKustomizeComponent(ctx context.Context, sourceRoot, pattern string) error {
+	matches, globDirs := sourceKustomizeComponentMatches(c.repoRoot, sourceRoot, []string{pattern})
+	for _, globDir := range globDirs {
+		if filepath.Clean(globDir) == c.repoRoot {
+			continue
+		}
+		if err := c.addAbsPath(ctx, globDir, true); err != nil {
+			return err
+		}
+	}
+	for _, component := range matches {
 		if err := c.addKustomizeRef(ctx, sourceRoot, "kustomize.components", component, false); err != nil {
 			return err
 		}
@@ -146,11 +176,6 @@ func (c *kustomizeInputCollector) collectSourceKustomizeRefs(ctx context.Context
 			if err := c.collectNode(ctx, node); err != nil {
 				return err
 			}
-		}
-	}
-	for _, patch := range kustomize.Patches {
-		if err := c.addKustomizeRef(ctx, sourceRoot, "kustomize.patches.path", patch.Path, false); err != nil {
-			return err
 		}
 	}
 	return nil

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	argoappv1 "github.com/argoproj/argo-cd/v3/pkg/apis/application/v1alpha1"
@@ -309,27 +310,78 @@ func sourceKustomizeWorkspaceAdditions(ctx context.Context, repoRoot, sourceRoot
 }
 
 // sourceKustomizeAddedComponents returns the spec.source.kustomize
-// components that rendering adds and, under ignoreMissingComponents, the
-// optional render inputs of the components it does not add: the
-// in-repository directories skipped before the first valid component and the
-// kustomization file names of each component after it.
+// components that rendering adds and the optional render inputs that decide
+// them. Under ignoreMissingComponents the optional inputs are the
+// in-repository directories skipped before the first valid component and
+// the kustomization file names of each component after it. The components
+// then go through the globs of `kustomize edit add component`
+// (sourceKustomizeComponentMatches), and the directories those globs list
+// are optional inputs too.
 func sourceKustomizeAddedComponents(repoRoot, sourceRoot string, kustomize *argoappv1.ApplicationSourceKustomize) ([]string, []string, error) {
-	if !kustomize.IgnoreMissingComponents {
-		return kustomize.Components, nil, nil
-	}
-	selection, err := selectIgnoreMissingComponents(sourceRoot, repoRoot, kustomize.Components)
-	if err != nil {
-		return nil, nil, err
-	}
+	components := kustomize.Components
 	var optionalRefs []string
-	for _, skipped := range selection.skipped {
-		optionalRefs = appendNonEmpty(optionalRefs, skipped.probe)
+	if kustomize.IgnoreMissingComponents {
+		selection, err := selectIgnoreMissingComponents(sourceRoot, repoRoot, kustomize.Components)
+		if err != nil {
+			return nil, nil, err
+		}
+		for _, skipped := range selection.skipped {
+			optionalRefs = appendNonEmpty(optionalRefs, skipped.probe)
+		}
+		optionalRefs = append(optionalRefs, laterIgnoreMissingComponentInputs(sourceRoot, repoRoot, selection.later)...)
+		if !selection.found {
+			return nil, optionalRefs, nil
+		}
+		components = []string{selection.kept}
 	}
-	optionalRefs = append(optionalRefs, laterIgnoreMissingComponentInputs(sourceRoot, repoRoot, selection.later)...)
-	if !selection.found {
-		return nil, optionalRefs, nil
+	matches, globDirs := sourceKustomizeComponentMatches(repoRoot, sourceRoot, components)
+	return matches, append(optionalRefs, globDirs...), nil
+}
+
+// sourceKustomizeComponentMatches returns the components that `kustomize
+// edit add component` reads from the patterns in components, without the
+// source kustomization file itself, and the directories that the glob
+// patterns list (kustomizeComponentGlobDir). A new entry in such a
+// directory can change the matches, so the directory is a render input.
+// When the arguments or the globs fail the command, the patterns come back
+// as written: the render then fails in applySourceKustomizeOptions.
+func sourceKustomizeComponentMatches(repoRoot, sourceRoot string, components []string) (matches, globDirs []string) {
+	patterns := sourceKustomizeComponentArgs(components)
+	matches = expandKustomizeComponentPatternsOrWritten(sourceRoot, repoRoot, patterns)
+	if kustomizationFile, err := findKustomizationFile(sourceRoot); err == nil {
+		name := filepath.Base(kustomizationFile)
+		matches = slices.DeleteFunc(matches, func(match string) bool { return match == name })
 	}
-	return []string{selection.kept}, optionalRefs, nil
+	for _, pattern := range patterns {
+		if globDir, ok := kustomizeComponentGlobDir(sourceRoot, pattern); ok {
+			globDirs = append(globDirs, globDir)
+		}
+	}
+	return matches, globDirs
+}
+
+// sourceKustomizeComponentArgs returns the component patterns that `kustomize
+// edit add component` reads from components after its flags, or components
+// as written when the flags fail the command.
+func sourceKustomizeComponentArgs(components []string) []string {
+	line, err := parseKustomizeEditArgs("add component", components, kustomizeEditCommonFlags)
+	switch {
+	case err != nil:
+		return components
+	case line.help:
+		return nil
+	}
+	return line.args
+}
+
+// expandKustomizeComponentPatternsOrWritten returns the matches of
+// patterns, or patterns as written when the globs fail.
+func expandKustomizeComponentPatternsOrWritten(sourceRoot, repoRoot string, patterns []string) []string {
+	matches, err := expandKustomizeComponentPatterns(sourceRoot, repoRoot, patterns)
+	if err != nil {
+		return patterns
+	}
+	return matches
 }
 
 func appendNonEmpty(values []string, value string) []string {

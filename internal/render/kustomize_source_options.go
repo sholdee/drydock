@@ -2,9 +2,9 @@ package render
 
 import (
 	"fmt"
-	"maps"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -12,6 +12,7 @@ import (
 	"github.com/sholdee/drydock/internal/diagnostic"
 	"github.com/sholdee/drydock/internal/pathsafety"
 	"sigs.k8s.io/kustomize/api/types"
+	sigsyaml "sigs.k8s.io/yaml"
 )
 
 // KustomizeIgnoreMissingComponentsDroppedCode identifies the warning for a
@@ -48,15 +49,20 @@ func hasKustomizeSourceMutations(opts RenderOptions) bool {
 }
 
 // applySourceKustomizeOptions merges the spec.source.kustomize options into
-// the source kustomization. dir and boundaryRoot are the source directory and
+// the source kustomization, in the order and with the checks of the
+// `kustomize edit` commands that Argo CD v3.6.1 runs before `kustomize
+// build` (util/kustomize/kustomize.go:174-401): namePrefix, nameSuffix,
+// images, replicas, commonLabels, commonAnnotations, namespace, patches,
+// then components. kustomizationFile is the source kustomization file, and
+// content is its text. dir and boundaryRoot are the source directory and
 // repository root in the render workspace. originDir and originRoot are the
-// same paths in the original repository: the workspace does not hold the
-// components that ignoreMissingComponents drops, so the dropped-component
-// warning looks for them there. The returned diagnostics report options that
+// same paths in the original repository: the component globs, and the
+// dropped-component warning, look there, because the workspace holds only
+// the files the render reads. The returned diagnostics report options that
 // Argo CD v3.6.1 accepts but does not fully apply.
 //
 //nolint:gocyclo // Mirrors Argo CD's source-level Kustomize override surface explicitly.
-func applySourceKustomizeOptions(kustomization *types.Kustomization, dir, boundaryRoot, originDir, originRoot string, opts RenderOptions) ([]diagnostic.Diagnostic, error) {
+func applySourceKustomizeOptions(kustomization *types.Kustomization, kustomizationFile string, content []byte, dir, boundaryRoot, originDir, originRoot string, opts RenderOptions) ([]diagnostic.Diagnostic, error) {
 	kustomize := opts.Kustomize
 	if kustomize == nil {
 		return nil, nil
@@ -68,188 +74,139 @@ func applySourceKustomizeOptions(kustomization *types.Kustomization, dir, bounda
 	if kustomize.NameSuffix != "" {
 		kustomization.NameSuffix = kustomize.NameSuffix
 	}
-	if kustomize.Namespace != "" {
-		kustomization.Namespace = kustomize.Namespace
-	}
 	if len(kustomize.Images) != 0 {
-		images, err := sourceKustomizeImages(kustomize.Images, opts.ArgoEnv)
-		if err != nil {
+		// The build environment reaches each image (kustomize.go:202-205).
+		args := make([]string, 0, len(kustomize.Images))
+		for _, image := range kustomize.Images {
+			args = append(args, opts.ArgoEnv.Envsubst(string(image)))
+		}
+		if err := editSetKustomizeImages(kustomization, args); err != nil {
 			return nil, err
 		}
-		kustomization.Images = upsertImages(kustomization.Images, images)
 	}
 	if len(kustomize.Replicas) != 0 {
-		replicas, err := sourceKustomizeReplicas(kustomize.Replicas)
-		if err != nil {
+		args := make([]string, 0, len(kustomize.Replicas))
+		for _, replica := range kustomize.Replicas {
+			count, err := replica.GetIntCount()
+			if err != nil {
+				return nil, err
+			}
+			args = append(args, fmt.Sprintf("%s=%d", replica.Name, count))
+		}
+		if err := editSetKustomizeReplicas(kustomization, args); err != nil {
 			return nil, err
 		}
-		kustomization.Replicas = upsertReplicas(kustomization.Replicas, replicas)
 	}
 	if len(kustomize.CommonLabels) != 0 {
+		// The build environment always reaches the label values
+		// (kustomize.go:247-250).
 		labels := envsubstStringMap(kustomize.CommonLabels, opts.ArgoEnv)
-		if err := applySourceKustomizeLabels(kustomization, labels, kustomize); err != nil {
+		if err := editAddKustomizeLabels(kustomization, labels, kustomizeEditMetadataOptions{
+			force:            kustomize.ForceCommonLabels,
+			withoutSelector:  kustomize.LabelWithoutSelector,
+			includeTemplates: kustomize.LabelIncludeTemplates,
+		}); err != nil {
 			return nil, err
 		}
 	}
 	if len(kustomize.CommonAnnotations) != 0 {
-		annotations := cloneStringMap(kustomize.CommonAnnotations)
+		annotations := kustomize.CommonAnnotations
 		if kustomize.CommonAnnotationsEnvsubst {
 			annotations = envsubstStringMap(annotations, opts.ArgoEnv)
 		}
-		if err := mergeStringMap(kustomization.CommonAnnotations, annotations, kustomize.ForceCommonAnnotations, "common annotation"); err != nil {
+		if err := editAddKustomizeAnnotations(kustomization, annotations, kustomize.ForceCommonAnnotations); err != nil {
 			return nil, err
 		}
-		if kustomization.CommonAnnotations == nil {
-			kustomization.CommonAnnotations = map[string]string{}
-		}
-		maps.Copy(kustomization.CommonAnnotations, annotations)
 	}
+	if kustomize.Namespace != "" {
+		kustomization.Namespace = kustomize.Namespace
+	}
+	// kustomize reads the patches only in the build, or in the next edit
+	// command, so a patch error comes after the component globs.
+	var patchErr error
 	if len(kustomize.Patches) != 0 {
+		if !kustomizeSourceEditedBeforePatches(kustomize) {
+			if err := sourceKustomizationPatchesField(content); err != nil {
+				return nil, err
+			}
+		}
 		kustomization.Patches = append(kustomization.Patches, sourceKustomizePatches(kustomize.Patches)...)
+		patchErr = sourceKustomizePatchOptionsError(kustomize.Patches)
 	}
 	if len(kustomize.Components) != 0 {
 		components, dropped, err := sourceKustomizeComponents(dir, boundaryRoot, originDir, originRoot, kustomize.Components, kustomize.IgnoreMissingComponents)
 		if err != nil {
 			return nil, err
 		}
-		kustomization.Components = append(kustomization.Components, components...)
+		if len(components) != 0 {
+			if err := editAddKustomizeComponents(kustomization, filepath.Base(kustomizationFile), originDir, originRoot, components); err != nil {
+				return nil, err
+			}
+		}
 		if len(dropped) != 0 {
 			diags = append(diags, ignoreMissingComponentsDroppedDiagnostic(components[0], dropped))
 		}
 	}
+	if patchErr != nil {
+		return nil, patchErr
+	}
 	return diags, nil
 }
 
-func sourceKustomizeImages(images argoappv1.KustomizeImages, env argoappv1.Env) ([]types.Image, error) {
-	out := make([]types.Image, 0, len(images))
-	for _, image := range images {
-		parsed, err := parseKustomizeImageOverride(env.Envsubst(string(image)))
-		if err != nil {
-			return nil, err
-		}
-		out = append(out, parsed)
-	}
-	return out, nil
+// kustomizeSourceEditedBeforePatches reports whether Argo CD runs a
+// `kustomize edit` command before it adds the patches. Such a command
+// rewrites the kustomization file from its decoded form.
+func kustomizeSourceEditedBeforePatches(kustomize *argoappv1.ApplicationSourceKustomize) bool {
+	return kustomize.NamePrefix != "" ||
+		kustomize.NameSuffix != "" ||
+		len(kustomize.Images) != 0 ||
+		len(kustomize.Replicas) != 0 ||
+		len(kustomize.CommonLabels) != 0 ||
+		len(kustomize.CommonAnnotations) != 0 ||
+		kustomize.Namespace != ""
 }
 
-func parseKustomizeImageOverride(value string) (types.Image, error) {
-	value = strings.TrimSpace(value)
-	if value == "" {
-		return types.Image{}, fmt.Errorf("kustomize image override must not be empty")
+// sourceKustomizationPatchesField mirrors how Argo CD v3.6.1 reads the
+// patches field of the kustomization file before it appends the source
+// patches (util/kustomize/kustomize.go:286-312): the file is read as YAML,
+// and a patches field that is there must be a list. A patches field that
+// kustomize decodes as no patches, such as "patches:" with no value, fails.
+// Any other value that is not a list already fails the kustomize decode.
+func sourceKustomizationPatchesField(content []byte) error {
+	var kustomization any
+	if err := sigsyaml.Unmarshal(content, &kustomization); err != nil {
+		return fmt.Errorf("failed to unmarshal kustomization.yaml: %w", err)
 	}
-	if name, replacement, ok := strings.Cut(value, "="); ok {
-		name = strings.TrimSpace(name)
-		replacement = strings.TrimSpace(replacement)
-		if name == "" || replacement == "" {
-			return types.Image{}, fmt.Errorf("invalid kustomize image override %q", value)
-		}
-		image := types.Image{Name: name}
-		image.NewName, image.NewTag, image.Digest = splitImageReplacement(replacement)
-		return image, nil
+	fields, ok := kustomization.(map[string]any)
+	if !ok {
+		return fmt.Errorf("expected kustomization.yaml to be type map[string]any, but got %T", fields)
 	}
-	name, tag, digest := splitImageReplacement(value)
-	image := types.Image{Name: name, NewTag: tag, Digest: digest}
-	if image.Name == "" {
-		return types.Image{}, fmt.Errorf("invalid kustomize image override %q", value)
-	}
-	return image, nil
-}
-
-func splitImageReplacement(value string) (name, tag, digest string) {
-	if before, after, ok := strings.Cut(value, "@"); ok {
-		name = before
-		digest = after
-		return name, tag, digest
-	}
-	tagIndex := strings.LastIndex(value, ":")
-	slashIndex := strings.LastIndex(value, "/")
-	if tagIndex > slashIndex {
-		name = value[:tagIndex]
-		tag = value[tagIndex+1:]
-		return name, tag, digest
-	}
-	return value, "", ""
-}
-
-func upsertImages(existing, overrides []types.Image) []types.Image {
-	out := append([]types.Image(nil), existing...)
-	for _, override := range overrides {
-		found := false
-		for i := range out {
-			if out[i].Name == override.Name {
-				out[i] = override
-				found = true
-				break
-			}
-		}
-		if !found {
-			out = append(out, override)
-		}
-	}
-	return out
-}
-
-func sourceKustomizeReplicas(replicas argoappv1.KustomizeReplicas) ([]types.Replica, error) {
-	out := make([]types.Replica, 0, len(replicas))
-	for _, replica := range replicas {
-		count, err := replica.GetIntCount()
-		if err != nil {
-			return nil, err
-		}
-		out = append(out, types.Replica{Name: replica.Name, Count: int64(count)})
-	}
-	return out, nil
-}
-
-func upsertReplicas(existing, overrides []types.Replica) []types.Replica {
-	out := append([]types.Replica(nil), existing...)
-	for _, override := range overrides {
-		found := false
-		for i := range out {
-			if out[i].Name == override.Name {
-				out[i] = override
-				found = true
-				break
-			}
-		}
-		if !found {
-			out = append(out, override)
-		}
-	}
-	return out
-}
-
-func applySourceKustomizeLabels(kustomization *types.Kustomization, labels map[string]string, kustomize *argoappv1.ApplicationSourceKustomize) error {
-	if err := mergeStringMap(kustomization.CommonLabels, labels, kustomize.ForceCommonLabels, "common label"); err != nil { //nolint:staticcheck // CommonLabels remains part of Argo CD source override semantics.
-		return err
-	}
-	for _, existing := range kustomization.Labels {
-		if err := mergeStringMap(existing.Pairs, labels, kustomize.ForceCommonLabels, "common label"); err != nil {
-			return err
-		}
-	}
-	if kustomize.LabelWithoutSelector || kustomize.LabelIncludeTemplates {
-		kustomization.Labels = append(kustomization.Labels, types.Label{
-			Pairs:            labels,
-			IncludeSelectors: !kustomize.LabelWithoutSelector,
-			IncludeTemplates: kustomize.LabelIncludeTemplates,
-		})
+	patches, ok := fields["patches"]
+	if !ok {
 		return nil
 	}
-	if kustomization.CommonLabels == nil { //nolint:staticcheck // CommonLabels remains part of Argo CD source override semantics.
-		kustomization.CommonLabels = map[string]string{} //nolint:staticcheck // CommonLabels remains part of Argo CD source override semantics.
+	if _, ok := patches.([]any); !ok {
+		return fmt.Errorf("expected 'patches' field in kustomization.yaml to be []any, but got %T", patches)
 	}
-	maps.Copy(kustomization.CommonLabels, labels) //nolint:staticcheck // CommonLabels remains part of Argo CD source override semantics.
 	return nil
 }
 
-func mergeStringMap(existing, incoming map[string]string, force bool, field string) error {
-	if force {
-		return nil
-	}
-	for key, value := range incoming {
-		if existingValue, ok := existing[key]; ok && existingValue != value {
-			return fmt.Errorf("kustomize %s %q already exists; set force to override", field, key)
+// sourceKustomizePatchOptionsError mirrors how kustomize reads the patches
+// that Argo CD v3.6.1 writes into the kustomization file: it decodes the
+// file with unknown fields disallowed (types.Kustomization.Unmarshal), and
+// a patch option other than allowNameChange and allowKindChange is an
+// unknown field.
+func sourceKustomizePatchOptionsError(patches argoappv1.KustomizePatches) error {
+	for _, patch := range patches {
+		keys := make([]string, 0, len(patch.Options))
+		for key := range patch.Options {
+			keys = append(keys, key)
+		}
+		sort.Strings(keys)
+		for _, key := range keys {
+			if key != "allowNameChange" && key != "allowKindChange" {
+				return fmt.Errorf("invalid Kustomization: json: unknown field %q", key)
+			}
 		}
 	}
 	return nil
@@ -260,12 +217,6 @@ func envsubstStringMap(in map[string]string, env argoappv1.Env) map[string]strin
 	for key, value := range in {
 		out[key] = env.Envsubst(value)
 	}
-	return out
-}
-
-func cloneStringMap(in map[string]string) map[string]string {
-	out := make(map[string]string, len(in))
-	maps.Copy(out, in)
 	return out
 }
 

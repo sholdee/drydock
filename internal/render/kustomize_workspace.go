@@ -122,7 +122,7 @@ func (w *kustomizeWorkspace) prepareKustomizationDir(ctx context.Context, dir, b
 		if err != nil {
 			return err
 		}
-		diags, err := applySourceKustomizeOptions(&kustomization, dir, boundaryRoot, originDir, w.originalRepoRoot, w.opts)
+		diags, err := applySourceKustomizeOptions(&kustomization, kustomizationFile, content, dir, boundaryRoot, originDir, w.originalRepoRoot, w.opts)
 		if err != nil {
 			return fmt.Errorf("%s: %w", manifestPath, err)
 		}
