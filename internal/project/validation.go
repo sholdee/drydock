@@ -49,8 +49,11 @@ func ValidateApplications(apps []argoappv1.Application, projects []argoappv1.App
 		}
 		proj = effectiveProject(proj, settings)
 
-		diags = append(diags, validateSources(app, proj)...)
-		diags = append(diags, validateDestination(app, proj, settings)...)
+		sources, checkDestination := policyCheckedSources(app.Spec)
+		diags = append(diags, validateSources(app, proj, sources)...)
+		if checkDestination {
+			diags = append(diags, validateDestination(app, proj, settings)...)
+		}
 		diags = append(diags, validateSourceNamespace(app, proj, settings)...)
 		diags = append(diags, rbacMetadataDiagnostics(proj)...)
 		if hasLocalProjects {
@@ -142,9 +145,11 @@ func implicitDefaultProject() argoappv1.AppProject {
 	}
 }
 
-func validateSources(app argoappv1.Application, proj argoappv1.AppProject) []diagnostic.Diagnostic {
+// validateSources checks that proj permits the repository of each source
+// in sources (policyCheckedSources).
+func validateSources(app argoappv1.Application, proj argoappv1.AppProject, sources argoappv1.ApplicationSources) []diagnostic.Diagnostic {
 	var diags []diagnostic.Diagnostic
-	for _, source := range projectCheckedSources(app.Spec) {
+	for _, source := range sources {
 		if proj.IsSourcePermitted(source) {
 			continue
 		}

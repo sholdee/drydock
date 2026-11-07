@@ -108,11 +108,8 @@ func TestValidateApplicationSpecSourcesMatchesUpstream(t *testing.T) {
 			SyncSource: argoappv1.SyncSource{Path: "hydrated"},
 		}}},
 		{name: "hydrator with every check failing", spec: argoappv1.ApplicationSpec{SourceHydrator: &argoappv1.SourceHydrator{
-			HydrateTo: &argoappv1.HydrateTo{},
-		}}},
-		{name: "hydrator without sync path", spec: argoappv1.ApplicationSpec{SourceHydrator: &argoappv1.SourceHydrator{
-			DrySource:  argoappv1.DrySource{RepoURL: repo, Path: "dry"},
-			SyncSource: argoappv1.SyncSource{TargetBranch: "env/prod"},
+			SyncSource: argoappv1.SyncSource{Path: "hydrated"},
+			HydrateTo:  &argoappv1.HydrateTo{},
 		}}},
 	}
 	for _, testCase := range testCases {
@@ -446,5 +443,34 @@ func TestHydratorBranchForRequest(t *testing.T) {
 	}
 	if got := hydratorBranchForRequest(root, BuildRequest{rootRevision: "0123456789abcdef0123456789abcdef01234567", rootRefName: "0123456789abcdef0123456789abcdef01234567"}); got != "" {
 		t.Fatalf("SHA side branch = %q, want empty", got)
+	}
+}
+
+// TestValidateApplicationSpecSourcesAppliesSyncPathSchema pins the CRD
+// schema of spec.sourceHydrator.syncSource.path (minLength 1 and the
+// pattern ^.{2,}|[^./]$, pkg/apis/application/v1alpha1/types.go:510-512 at
+// v3.6.1). The API server rejects such an Application, so Argo CD never
+// holds it. The check runs before the controller checks.
+func TestValidateApplicationSpecSourcesAppliesSyncPathSchema(t *testing.T) {
+	spec := func(path string) argoappv1.ApplicationSpec {
+		return argoappv1.ApplicationSpec{SourceHydrator: &argoappv1.SourceHydrator{
+			DrySource:  argoappv1.DrySource{RepoURL: "https://example.test/repo.git", Path: "dry"},
+			SyncSource: argoappv1.SyncSource{TargetBranch: "env/prod", Path: path},
+		}}
+	}
+	for path, want := range map[string]string{
+		"":  "should be at least 1 chars long",
+		".": `Invalid value: ".": spec.sourceHydrator.syncSource.path in body should match '^.{2,}|[^./]$'`,
+		"/": `Invalid value: "/": spec.sourceHydrator.syncSource.path in body should match '^.{2,}|[^./]$'`,
+	} {
+		err := validateApplicationSpecSources(spec(path))
+		if err == nil || !strings.Contains(err.Error(), want) {
+			t.Fatalf("path %q: error = %v, want %q", path, err, want)
+		}
+	}
+	for _, path := range []string{"a", "..", "./", "hydrated/prod", "x."} {
+		if err := validateApplicationSpecSources(spec(path)); err != nil {
+			t.Fatalf("path %q: error = %v, want nil", path, err)
+		}
 	}
 }
