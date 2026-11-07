@@ -108,8 +108,11 @@ func (p localProvider) hydratorSyncIsLocalTree(source render.ResolvedSource) boo
 	if branch == "" {
 		return false
 	}
-	if p.hydratorSelfMapped(source.RepoURL) {
-		return selfRepoMatcher{revisions: p.selfRepoRevisions}.tracksRevision(branch)
+	if p.sourceResolver != nil {
+		if _, mapped := p.sourceResolver.MappedPath(source.RepoURL); mapped {
+			// A map to another tree always wins, as for every source.
+			return p.hydratorSelfMapped(source.RepoURL) && selfRepoMatcher{revisions: p.selfRepoRevisions}.tracksRevision(branch)
+		}
 	}
 	return p.isSelfRepoRef(source.RepoURL, branch)
 }

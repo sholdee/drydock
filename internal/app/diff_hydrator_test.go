@@ -204,3 +204,28 @@ func TestDiffRefHydratorSyncBranchWithSelfRepoMap(t *testing.T) {
 		})
 	}
 }
+
+// TestHydratorSyncMapToAnotherTreeWins pins that a --repo-map to another
+// directory wins over the self-repo rule, as for every source: the sync
+// source then never renders from the tree under analysis.
+func TestHydratorSyncMapToAnotherTreeWins(t *testing.T) {
+	root := t.TempDir()
+	provider, cleanup, err := newLocalProvider(context.Background(), Orchestrator{}, root, config.ArgoSettings{}, BuildRequest{
+		Path:     root,
+		RepoMaps: []sourcepkg.RepoMap{{URL: selfRepoRemoteURL, Path: t.TempDir()}},
+		selfRepo: selfRepoRefs{urlKeys: []string{sourcepkg.CanonicalGitURLKey(selfRepoRemoteURL)}, revisions: []string{"main"}},
+	}, nil, "drydock-hydrator-map-*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cleanup()
+	source := resolvedSourceForPlan(SourcePlan{HydratorSync: true, Source: argoappv1.ApplicationSource{RepoURL: selfRepoSpecURL, TargetRevision: "main", Path: "hydrated"}})
+	if provider.hydratorSyncIsLocalTree(source) {
+		t.Fatal("hydratorSyncIsLocalTree() = true, want false for a map to another directory")
+	}
+	self := provider
+	self.sourceResolver = sourcepkg.NewResolver(sourcepkg.Options{RepoMaps: []sourcepkg.RepoMap{{URL: selfRepoRemoteURL, Path: root}}})
+	if !self.hydratorSyncIsLocalTree(source) {
+		t.Fatal("hydratorSyncIsLocalTree() = false, want true for a map to the tree under analysis at a tracked branch")
+	}
+}
