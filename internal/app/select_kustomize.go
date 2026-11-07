@@ -190,10 +190,7 @@ func kustomizeSelectionMemoKey(source argoappv1.ApplicationSource) string {
 }
 
 func applicationSources(app argoappv1.Application) argoappv1.ApplicationSources {
-	if len(app.Spec.Sources) == 0 && app.Spec.Source != nil {
-		return argoappv1.ApplicationSources{*app.Spec.Source}
-	}
-	return app.Spec.Sources
+	return applicationRenderSources(app.Spec)
 }
 
 // selectionTree is the tree one withSelectionOnlyPaths call owns inputs in,

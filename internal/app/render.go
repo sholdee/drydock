@@ -740,7 +740,7 @@ func helmValueFileRefKey(valueFile string) (string, bool) {
 // drydock sorts them. An Application with one source has no error: the
 // path is a local path.
 func unknownHelmRefError(plan PlanResult, refKey string) error {
-	if len(plan.Application.Spec.Sources) == 0 {
+	if !plan.Application.Spec.HasMultipleSources() {
 		return nil
 	}
 	if len(plan.Refs) == 0 {

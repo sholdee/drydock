@@ -81,10 +81,7 @@ func applicationSelectionPaths(input ApplicationSelectionInput) []string {
 }
 
 func applicationSourcePaths(app argoappv1.Application) []string {
-	sources := app.Spec.Sources
-	if len(sources) == 0 && app.Spec.Source != nil {
-		sources = argoappv1.ApplicationSources{*app.Spec.Source}
-	}
+	sources := applicationRenderSources(app.Spec)
 
 	paths := make([]string, 0, len(sources))
 	for _, source := range sources {

@@ -96,7 +96,8 @@ func applicationSettingsInstall(ctx context.Context, request BuildRequest, provi
 // settingsInstallMemoKey covers every input of computeSettingsInstall that
 // comes from the Application: the name, namespace, and project, which the
 // build environment and the .argocd-source-<app>.yaml file name read, the
-// destination, which the build environment reads, and the sources.
+// destination, which the build environment reads, and the sources, with the
+// source hydrator, whose sync source replaces them.
 func settingsInstallMemoKey(application argoappv1.Application) (string, bool) {
 	data, err := json.Marshal(struct {
 		Name        string                           `json:"name"`
@@ -105,7 +106,8 @@ func settingsInstallMemoKey(application argoappv1.Application) (string, bool) {
 		Destination argoappv1.ApplicationDestination `json:"destination"`
 		Source      *argoappv1.ApplicationSource     `json:"source,omitempty"`
 		Sources     argoappv1.ApplicationSources     `json:"sources,omitempty"`
-	}{application.Name, application.Namespace, application.Spec.Project, application.Spec.Destination, application.Spec.Source, application.Spec.Sources})
+		Hydrator    *argoappv1.SourceHydrator        `json:"sourceHydrator,omitempty"`
+	}{application.Name, application.Namespace, application.Spec.Project, application.Spec.Destination, application.Spec.Source, application.Spec.Sources, application.Spec.SourceHydrator})
 	if err != nil {
 		return "", false
 	}
@@ -373,10 +375,7 @@ func applicationRendersExplicitKustomizePath(provider localProvider, application
 	if len(explicit) == 0 {
 		return false
 	}
-	sources := application.Spec.Sources
-	if len(sources) == 0 && application.Spec.Source != nil {
-		sources = argoappv1.ApplicationSources{*application.Spec.Source}
-	}
+	sources := applicationRenderSources(application.Spec)
 	for _, source := range sources {
 		if sourcePath, ok := settingsInstallLocalSourcePath(provider, source); ok {
 			if _, found := explicit[sourcePath]; found {

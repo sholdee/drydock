@@ -163,3 +163,49 @@ func hasSourceRepositoryDiagnosticForRepo(diags []diagnostic.Diagnostic, repoURL
 	}
 	return false
 }
+
+// TestValidateApplicationsHydratorSourceRepositories pins the repositories
+// that the AppProject must permit for an Application with
+// spec.sourceHydrator: the dry source's, and the sync source's when it names
+// another repository (ValidatePermissions, util/argo/argo.go:701-719 at
+// v3.6.1). spec.source is ignored.
+func TestValidateApplicationsHydratorSourceRepositories(t *testing.T) {
+	const allowed = "https://github.com/example/allowed"
+	const denied = "https://github.com/example/denied"
+	tests := []struct {
+		name     string
+		dryRepo  string
+		syncRepo string
+		want     []string
+	}{
+		{name: "dry repository allowed, sync inherits it", dryRepo: allowed},
+		{name: "dry repository denied, sync inherits it", dryRepo: denied, want: []string{denied}},
+		{name: "dry repository denied, sync repository allowed", dryRepo: denied, syncRepo: allowed, want: []string{denied}},
+		{name: "dry repository allowed, sync repository denied", dryRepo: allowed, syncRepo: denied, want: []string{denied}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			app := sourceParityApplication(nil)
+			app.Spec.Source = &argoappv1.ApplicationSource{RepoURL: denied + "-ignored", Path: "ignored"}
+			app.Spec.SourceHydrator = &argoappv1.SourceHydrator{
+				DrySource:  argoappv1.DrySource{RepoURL: tt.dryRepo, Path: "dry", TargetRevision: "main"},
+				SyncSource: argoappv1.SyncSource{RepoURL: tt.syncRepo, TargetBranch: "env/prod", Path: "hydrated"},
+			}
+			diags := ValidateApplications([]argoappv1.Application{app}, []argoappv1.AppProject{sourceParityProject([]string{allowed})}, config.DefaultSettings())
+			var got []string
+			for _, diag := range diags {
+				if diag.Code == diagnostic.CodeProjectSourceRepositoryDenied || strings.Contains(diag.Message, "source repository") {
+					got = append(got, diag.Message)
+				}
+			}
+			if len(got) != len(tt.want) {
+				t.Fatalf("source repository diagnostics = %q, want %d naming %q", got, len(tt.want), tt.want)
+			}
+			for i, repo := range tt.want {
+				if !strings.Contains(got[i], repo) {
+					t.Fatalf("diagnostic %q does not name %q", got[i], repo)
+				}
+			}
+		})
+	}
+}

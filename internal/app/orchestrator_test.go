@@ -15,6 +15,7 @@ import (
 	"github.com/sholdee/drydock/internal/config"
 	"github.com/sholdee/drydock/internal/diagnostic"
 	"github.com/sholdee/drydock/internal/discovery"
+	sourcepkg "github.com/sholdee/drydock/internal/source"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 )
 
@@ -176,11 +177,12 @@ spec:
     namespace: default
     server: https://kubernetes.default.svc
   source:
+    repoURL: https://example.test/repo.git
     targetRevision: HEAD
     path: apps/missing/source
 `)
 
-	result, err := Orchestrator{}.Build(context.Background(), BuildRequest{Path: root})
+	result, err := Orchestrator{}.Build(context.Background(), BuildRequest{Path: root, RepoMaps: []sourcepkg.RepoMap{{URL: "https://example.test/repo.git", Path: root}}})
 	if err == nil {
 		t.Fatal("Build() error = nil, want missing source path failure")
 	}

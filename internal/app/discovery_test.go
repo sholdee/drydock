@@ -453,6 +453,16 @@ spec:
 kind: Application
 metadata:
   name: child
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/example/repo
+    targetRevision: main
+    path: workloads/child
+  destination:
+    name: in-cluster
+    namespace: child
 `)
 	writeTestFile(t, filepath.Join(root, "workloads", "child", "cm.yaml"), `apiVersion: v1
 kind: ConfigMap

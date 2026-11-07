@@ -144,13 +144,28 @@ func implicitDefaultProject() argoappv1.AppProject {
 
 func validateSources(app argoappv1.Application, proj argoappv1.AppProject) []diagnostic.Diagnostic {
 	var diags []diagnostic.Diagnostic
-	for _, source := range app.Spec.GetSources() {
+	for _, source := range projectCheckedSources(app.Spec) {
 		if proj.IsSourcePermitted(source) {
 			continue
 		}
 		diags = append(diags, projectWarning(app, fmt.Sprintf("Application %s source repository %q is not permitted by AppProject %q", applicationName(app), displayRepoURL(source.RepoURL), proj.Name)))
 	}
 	return diags
+}
+
+// projectCheckedSources returns the sources whose repositories the AppProject
+// must permit (ValidatePermissions, util/argo/argo.go:701-737 at v3.6.1).
+// With spec.sourceHydrator set, that is the dry source, and the sync source
+// when it names a repository other than the dry source's.
+func projectCheckedSources(spec argoappv1.ApplicationSpec) argoappv1.ApplicationSources {
+	if spec.SourceHydrator == nil {
+		return spec.GetSources()
+	}
+	sources := argoappv1.ApplicationSources{spec.SourceHydrator.GetDrySource()}
+	if syncSource := spec.SourceHydrator.GetSyncSource(); syncSource.RepoURL != spec.SourceHydrator.DrySource.RepoURL {
+		sources = append(sources, syncSource)
+	}
+	return sources
 }
 
 func validateDestination(app argoappv1.Application, proj argoappv1.AppProject, settings config.ArgoSettings) []diagnostic.Diagnostic {
