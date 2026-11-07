@@ -165,6 +165,8 @@ func pluginRunsWithBuildEnv(request BuildRequest, injectedPlugins bool, applicat
 	switch plan.plugin.Engine {
 	case pluginpolicy.EngineExec, pluginpolicy.EngineContainer:
 		return opts.EnablePlugins && provider.pluginPolicyExecTrusted
+	case pluginpolicy.EngineAVPCompat, pluginpolicy.EngineNativeKustomize:
+		return false
 	default:
 		return false
 	}

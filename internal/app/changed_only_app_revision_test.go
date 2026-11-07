@@ -58,10 +58,7 @@ func TestPluginRunsWithBuildEnvFollowsTheRenderer(t *testing.T) {
 	policy, _ := testExecPluginPolicy(t, "exec-renderer", []string{"renderer"})
 	application := appRevisionSelectionApp("plugin", argoappv1.ApplicationSource{RepoURL: appRevisionTestRepoURL, Path: "manifests/plugin", Plugin: &argoappv1.ApplicationSourcePlugin{Name: "exec-renderer"}})
 	unknown := appRevisionSelectionApp("unknown", argoappv1.ApplicationSource{RepoURL: appRevisionTestRepoURL, Path: "manifests/plugin", Plugin: &argoappv1.ApplicationSourcePlugin{Name: "no-such-plugin"}})
-	trusted := BuildRequest{Path: root}
-	trusted.EnablePlugins = true
-	trusted.pluginPolicy = policy
-	trusted.pluginPolicyExecTrusted = true
+	trusted := BuildRequest{Path: root, EnablePlugins: true, pluginPolicy: policy, pluginPolicyExecTrusted: true}
 	disabled := trusted
 	disabled.EnablePlugins = false
 	untrusted := trusted
