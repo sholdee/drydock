@@ -8,6 +8,8 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -108,12 +110,12 @@ func refreshRaceChartArchive(t *testing.T, files int) []byte {
 	return buf.Bytes()
 }
 
-// TestChartAcquirerRefreshesAResolvedEntryOncePerSession pins
+// TestChartAcquirerRefreshesAResolvedEntryOncePerRun pins
 // --refresh-charts with snapshots for requests whose versions resolve to
-// one cache entry: the session refreshes the entry once and copies it
+// one cache entry: the run refreshes the entry once and copies it
 // under the entry lock, so no request copies an entry that another one
 // replaces. Each run fetches the archive once, and every request succeeds.
-func TestChartAcquirerRefreshesAResolvedEntryOncePerSession(t *testing.T) {
+func TestChartAcquirerRefreshesAResolvedEntryOncePerRun(t *testing.T) {
 	archive := refreshRaceChartArchive(t, 1000)
 	var archiveRequests atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -149,5 +151,98 @@ func TestChartAcquirerRefreshesAResolvedEntryOncePerSession(t *testing.T) {
 	}
 	if got := archiveRequests.Load(); got != runs {
 		t.Fatalf("archive requests = %d, want one per run (%d)", got, runs)
+	}
+}
+
+// TestChartAcquirerRetriesAFailedRefresh pins that a refresh that fails to
+// fetch is not recorded as done: the next refresh request in the same run,
+// and in a later run, fetches again instead of reusing the old entry.
+func TestChartAcquirerRetriesAFailedRefresh(t *testing.T) {
+	archive := refreshRaceChartArchive(t, 1)
+	var archiveRequests atomic.Int32
+	var fail atomic.Bool
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/index.yaml" {
+			_, _ = w.Write([]byte("apiVersion: v1\nentries:\n  demo:\n    - version: 1.2.5\n      urls: [demo-1.2.5.tgz]\n"))
+			return
+		}
+		archiveRequests.Add(1)
+		if fail.Load() {
+			http.Error(w, "boom", http.StatusInternalServerError)
+			return
+		}
+		_, _ = w.Write(archive)
+	}))
+	defer server.Close()
+	cacheDir := t.TempDir()
+	request := chart.Request{Repository: server.URL, Name: "demo", Version: "1.2.5", Kind: chart.RepositoryHTTP, VersionPolicy: chart.VersionArgoTargetRevision}
+	if _, err := (chart.DefaultAcquirer{Client: server.Client()}).Acquire(context.Background(), request, chart.Options{CacheDir: cacheDir}); err != nil {
+		t.Fatal(err)
+	}
+	locks := NewTargetLocks()
+	session := Session{Locks: locks, SnapshotRoot: t.TempDir(), SnapshotCacheReads: true, SnapshotCache: NewSnapshotCache()}
+	acquirer := session.ChartAcquirer(chart.DefaultAcquirer{Client: server.Client()})
+	fail.Store(true)
+	if _, err := acquirer.Acquire(context.Background(), request, chart.Options{CacheDir: cacheDir, Refresh: true}); err == nil {
+		t.Fatal("Acquire() error = nil, want the failed refresh")
+	}
+	fail.Store(false)
+	for name, next := range map[string]chart.Acquirer{
+		"same run":  acquirer,
+		"later run": Session{Locks: locks, SnapshotRoot: t.TempDir(), SnapshotCacheReads: true, SnapshotCache: NewSnapshotCache()}.ChartAcquirer(chart.DefaultAcquirer{Client: server.Client()}),
+	} {
+		before := archiveRequests.Load()
+		result, err := next.Acquire(context.Background(), request, chart.Options{CacheDir: cacheDir, Refresh: true})
+		if err != nil || result.FromCache || archiveRequests.Load() != before+1 {
+			t.Fatalf("%s: Acquire() = %#v, %v with %d fetches, want a fresh fetch", name, result, err, archiveRequests.Load()-before)
+		}
+	}
+}
+
+// TestSnapshotChartFollowsTheLatestPublish pins that the snapshot of a
+// resolved entry is kept per publish and per cache directory: a refetch of
+// the entry gets its own copy, and a reused copy carries the fields of the
+// latest result.
+func TestSnapshotChartFollowsTheLatestPublish(t *testing.T) {
+	acquirer := cacheSafeChartAcquirer{snapshotRoot: t.TempDir(), snapshot: true, snapshotCache: NewSnapshotCache()}
+	writeChart := func(content string) string {
+		dir := filepath.Join(t.TempDir(), "demo")
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, "Chart.yaml"), []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		return dir
+	}
+	first := chart.Result{ChartDir: writeChart("first"), Kind: chart.RepositoryHTTP, CacheKey: "k", FetchedAt: time.Unix(100, 0)}
+	second := chart.Result{ChartDir: writeChart("second"), Kind: chart.RepositoryHTTP, CacheKey: "k", FetchedAt: time.Unix(200, 0)}
+	read := func(result chart.Result) string {
+		data, err := os.ReadFile(filepath.Join(result.ChartDir, "Chart.yaml"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(data)
+	}
+	got, err := acquirer.snapshotChart("/cache/a", first)
+	if err != nil || read(got) != "first" {
+		t.Fatalf("first snapshot = %#v, %v", got, err)
+	}
+	got, err = acquirer.snapshotChart("/cache/a", second)
+	if err != nil || read(got) != "second" || !got.FetchedAt.Equal(second.FetchedAt) {
+		t.Fatalf("refetched snapshot = %#v, %v, want the second publish", got, err)
+	}
+	again := second
+	again.ChartDir = writeChart("not copied")
+	again.Stale = true
+	got, err = acquirer.snapshotChart("/cache/a", again)
+	if err != nil || read(got) != "second" || !got.Stale {
+		t.Fatalf("reused snapshot = %#v, %v, want the second copy with the latest fields", got, err)
+	}
+	other := second
+	other.ChartDir = writeChart("other cache")
+	got, err = acquirer.snapshotChart("/cache/b", other)
+	if err != nil || read(got) != "other cache" {
+		t.Fatalf("snapshot for another cache dir = %#v, %v, want its own copy", got, err)
 	}
 }

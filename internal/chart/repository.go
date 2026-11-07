@@ -84,17 +84,27 @@ func (acquirer DefaultAcquirer) Acquire(ctx context.Context, request Request, op
 	if err != nil {
 		return Result{}, err
 	}
+	markChartEntryRefreshed(opts, keyDir)
 	return holdChartEntry(opts, result)
 }
 
+// markChartEntryRefreshed tells the entry hooks that a refresh published
+// the entry at keyDir. It runs only after a successful publish, so a failed
+// fetch is retried.
+func markChartEntryRefreshed(opts Options, keyDir string) {
+	if opts.Refresh && opts.EntryHooks != nil && opts.EntryHooks.MarkRefreshed != nil {
+		opts.EntryHooks.MarkRefreshed(keyDir)
+	}
+}
+
 // refreshChartEntry reports whether the request refetches the entry at
-// keyDir: under Options.Refresh, unless the entry hooks say that this
-// session already refreshed it.
+// keyDir: under Options.Refresh, unless the entry hooks say that this run
+// already refreshed it.
 func refreshChartEntry(opts Options, keyDir string) bool {
 	if !opts.Refresh {
 		return false
 	}
-	return opts.EntryHooks == nil || opts.EntryHooks.RefreshOnce == nil || opts.EntryHooks.RefreshOnce(keyDir)
+	return opts.EntryHooks == nil || opts.EntryHooks.Refreshed == nil || !opts.EntryHooks.Refreshed(keyDir)
 }
 
 // reuseCachedChart returns the cached chart of the entry at keyDir when it

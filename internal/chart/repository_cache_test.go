@@ -1,9 +1,11 @@
 package chart
 
 import (
+	"context"
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -73,5 +75,49 @@ func TestPublishChartCacheAcceptsOnlyAnotherWritersEntry(t *testing.T) {
 				t.Fatalf("entry = %q, want %q", got, tt.wantMarker)
 			}
 		})
+	}
+}
+
+// TestDefaultAcquirerEntryHooks pins the entry hooks: Hold runs on a fetched
+// and on a reused entry, and its error fails the acquire. A refresh marks
+// the entry refreshed only after it published the fetched chart, and a
+// refresh of an entry that the run already refreshed reuses it.
+func TestDefaultAcquirerEntryHooks(t *testing.T) {
+	server, requests := newRangeIndexServer(t)
+	cacheDir := t.TempDir()
+	acquirer := DefaultAcquirer{Client: server.Client()}
+	request := Request{Repository: server.URL, Name: "demo", Version: "1.2.3", Kind: RepositoryHTTP, VersionPolicy: VersionArgoTargetRevision}
+	holdErr := errors.New("hold failed")
+	var marked []string
+	hooks := &EntryHooks{
+		Refreshed:     func(entryPath string) bool { return slices.Contains(marked, entryPath) },
+		MarkRefreshed: func(entryPath string) { marked = append(marked, entryPath) },
+		Hold:          func(Result) (Result, error) { return Result{}, holdErr },
+	}
+	for _, refresh := range []bool{true, false} {
+		if _, err := acquirer.Acquire(context.Background(), request, Options{CacheDir: cacheDir, Refresh: refresh, EntryHooks: hooks}); !errors.Is(err, holdErr) {
+			t.Fatalf("Acquire(refresh %v) error = %v, want the Hold error", refresh, err)
+		}
+	}
+	if len(marked) != 1 {
+		t.Fatalf("marked = %v, want the one refreshed entry", marked)
+	}
+	hooks.Hold = nil
+	before := requests["/demo-1.2.3.tgz"]
+	if _, err := acquirer.Acquire(context.Background(), request, Options{CacheDir: cacheDir, Refresh: true, EntryHooks: hooks}); err != nil {
+		t.Fatal(err)
+	}
+	if requests["/demo-1.2.3.tgz"] != before {
+		t.Fatalf("archive fetched again after the run refreshed it")
+	}
+
+	failing := request
+	failing.Name = "missing"
+	marked = nil
+	if _, err := acquirer.Acquire(context.Background(), failing, Options{CacheDir: cacheDir, Refresh: true, EntryHooks: hooks}); err == nil {
+		t.Fatal("Acquire() error = nil, want a failed fetch")
+	}
+	if len(marked) != 0 {
+		t.Fatalf("marked = %v after a failed fetch, want none", marked)
 	}
 }

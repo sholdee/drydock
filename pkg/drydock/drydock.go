@@ -84,7 +84,10 @@ type Config struct {
 	// explicit repo maps, or cache hits.
 	Offline bool
 	// RefreshCharts refreshes chart cache entries instead of reusing cached
-	// charts when network acquisition is allowed.
+	// charts when network acquisition is allowed. One call refreshes each
+	// chart cache entry at most once, also when chart versions that differ
+	// as written resolve to it and also for both sides of a diff. A later
+	// call refreshes again.
 	RefreshCharts bool
 	// ChartCacheMaxAge, when positive, refetches cached charts fetched longer
 	// ago than it, as Argo CD 3.6's repo-server expires cached chart archives

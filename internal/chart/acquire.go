@@ -78,10 +78,14 @@ type Options struct {
 // on that entry. The entry is the resolved one, so requests whose versions
 // resolve to one version, such as 1.2.* and ~1.2.0, share it.
 type EntryHooks struct {
-	// RefreshOnce reports whether a refresh may refetch the entry at
-	// entryPath. A false answer reuses the cached entry, so a session
+	// Refreshed reports whether this run already refreshed the entry at
+	// entryPath. A refresh then reuses the cached entry, so a run
 	// refreshes each entry at most once.
-	RefreshOnce func(entryPath string) bool
+	Refreshed func(entryPath string) bool
+	// MarkRefreshed records that a refresh fetched and published the entry
+	// at entryPath. A failed fetch is not recorded, so the next refresh
+	// request tries again.
+	MarkRefreshed func(entryPath string)
 	// Hold runs on a successful result before the acquirer releases the
 	// entry lock, so the caller can copy the entry before another request
 	// replaces it. Its result replaces the result.
