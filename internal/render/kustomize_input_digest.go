@@ -149,16 +149,22 @@ func (c *kustomizeInputCollector) collectSourceKustomizeRefs(ctx context.Context
 // directory is the repository root, the pattern owns nothing more, like a
 // Helm value file glob without a static prefix.
 func (c *kustomizeInputCollector) collectSourceKustomizeComponent(ctx context.Context, sourceRoot, pattern string) error {
-	matches, globDirs, err := sourceKustomizeComponentMatches(c.repoRoot, sourceRoot, []string{pattern})
-	if err != nil {
-		return c.skip(ctx, err)
-	}
-	for _, globDir := range globDirs {
+	// Own the glob folders first, from the pattern text, so a glob that
+	// then fails on a symlink still owns them.
+	for _, componentPattern := range sourceKustomizeComponentArgs([]string{pattern}) {
+		globDir, ok := kustomizeComponentGlobDir(sourceRoot, componentPattern)
+		if !ok {
+			continue
+		}
 		if err := c.addSelectionPrefix(globDir); err != nil {
 			if err := c.skip(ctx, err); err != nil {
 				return err
 			}
 		}
+	}
+	matches, _, err := sourceKustomizeComponentMatches(c.repoRoot, sourceRoot, []string{pattern})
+	if err != nil {
+		return c.skip(ctx, err)
 	}
 	for _, component := range matches {
 		if err := c.collectSourceKustomizeComponentMatch(ctx, sourceRoot, component); err != nil {

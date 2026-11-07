@@ -1738,3 +1738,112 @@ func TestKustomizeSourceIgnoreMissingComponentInGit(t *testing.T) {
 		}
 	}
 }
+
+// A ".." after a missing element or a file does not go back, as for the
+// OS: the glob finds no match there. kustomize then loads the entry as a
+// folder, and ConfirmDir cleans it as text first, so an entry without
+// glob characters names the folder after the "..".
+func TestKustomizeSourceComponentParentOfFileOrMissing(t *testing.T) {
+	for _, tc := range []struct {
+		component, want, wantErr string
+	}{
+		{component: "deploy.yaml/../../../components/*", wantErr: "kustomize edit add component: deploy.yaml/../../../components/* has no match: must build at directory: not a valid directory"},
+		{component: "../../nonexist/../components/[ab]", wantErr: "kustomize edit add component: ../../nonexist/../components/[ab] has no match: must build at directory: not a valid directory"},
+		{component: "deploy.yaml/../../../components/a", want: "componenta"},
+	} {
+		t.Run(tc.component, func(t *testing.T) {
+			manifests, err := renderSourceEditTest(t, writeSourceEditTestRepo(t, ""), argoappv1.ApplicationSourceKustomize{Components: []string{tc.component}})
+			if tc.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+					t.Fatalf("Render() error = %v, want %q", err, tc.wantErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("Render() error = %v", err)
+			}
+			if findManifest(manifests, "ConfigMap", tc.want) == nil {
+				t.Fatalf("manifests = %#v, want ConfigMap %s", manifests, tc.want)
+			}
+		})
+	}
+}
+
+// A glob that fails on a symlink still owns its folder for changed-only
+// selection: the folder comes from the pattern text.
+func TestKustomizeSourceComponentGlobOwnsItsDirectoryAfterSymlinkError(t *testing.T) {
+	root := writeSourceEditTestRepo(t, "")
+	writeFile(t, filepath.Join(root, "components", "a", "sub", "kustomization.yaml"), "apiVersion: kustomize.config.k8s.io/v1alpha1\nkind: Component\n")
+	if err := os.Symlink("a", filepath.Join(root, "components", "zlink")); err != nil {
+		t.Fatalf("Symlink() error = %v", err)
+	}
+	selection, err := KustomizeSelectionPaths(context.Background(), root, filepath.Join("apps", "demo"), &argoappv1.ApplicationSourceKustomize{Components: []string{"../../components/*/sub"}})
+	if err != nil {
+		t.Fatalf("KustomizeSelectionPaths() error = %v", err)
+	}
+	if !slices.Contains(selection, "components") {
+		t.Fatalf("selection paths = %q, want components", selection)
+	}
+}
+
+// A folder that becomes a symlink to .git between the resolve and the
+// open is not listed: the glob makes sure that the open folder is still
+// the one it resolved.
+func TestKustomizeComponentGlobRejectsFolderSwappedForSymlink(t *testing.T) {
+	root := writeSourceEditTestRepo(t, "")
+	writeFile(t, filepath.Join(root, ".git", "secret-entry"), "x\n")
+	repoRoot, err := os.OpenRoot(root)
+	if err != nil {
+		t.Fatalf("OpenRoot() error = %v", err)
+	}
+	defer func() { _ = repoRoot.Close() }()
+	glob := newKustomizeComponentGlob(repoRoot, root, filepath.Join(root, "apps", "demo"))
+	glob.beforeOpen = func(rel string) {
+		if rel != "components" {
+			return
+		}
+		if err := os.Rename(filepath.Join(root, "components"), filepath.Join(root, "components-moved")); err != nil {
+			t.Fatalf("Rename() error = %v", err)
+		}
+		if err := os.Symlink(".git", filepath.Join(root, "components")); err != nil {
+			t.Fatalf("Symlink() error = %v", err)
+		}
+	}
+	matches, err := glob.glob(filepath.Join("..", "..", "components", "*"), 0)
+	if err == nil || !strings.Contains(err.Error(), "symlink") {
+		t.Fatalf("glob() = %q, %v, want the symlink error", matches, err)
+	}
+	for _, match := range matches {
+		if strings.Contains(match, "secret-entry") {
+			t.Fatalf("glob() listed .git: %q", matches)
+		}
+	}
+}
+
+// An absolute symlink target is followed element by element from the
+// repository root, so a symlink inside it that leads outside is found
+// before a ".." after it is applied.
+func TestKustomizeComponentGlobAbsoluteSymlinkTargetLeavingRepository(t *testing.T) {
+	parent := t.TempDir()
+	root := filepath.Join(parent, "repo")
+	writeFile(t, filepath.Join(root, "apps", "demo", "kustomization.yaml"), "resources: []\n")
+	writeFile(t, filepath.Join(root, "components", "a", "kustomization.yaml"), "kind: Component\n")
+	writeFile(t, filepath.Join(parent, "outside", "o2", "o3", "x"), "x\n")
+	writeFile(t, filepath.Join(parent, "outside", "o2", "secret-outside", "kustomization.yaml"), "kind: Component\n")
+	if err := os.Symlink(filepath.Join(parent, "outside", "o2", "o3"), filepath.Join(root, "L")); err != nil {
+		t.Fatalf("Symlink() error = %v", err)
+	}
+	if err := os.Symlink(root+string(filepath.Separator)+"L"+string(filepath.Separator)+"..", filepath.Join(root, "components", "abs")); err != nil {
+		t.Fatalf("Symlink() error = %v", err)
+	}
+	// The pattern matches nothing at the repository root, where a text
+	// clean of the target would lead, so only the outside check fails it
+	// with the symlink error.
+	matches, err := expandKustomizeComponentPatterns(filepath.Join(root, "apps", "demo"), root, []string{"../../components/abs/zz*"})
+	if err == nil || !strings.Contains(err.Error(), `includes symlink component "abs"`) {
+		t.Fatalf("expandKustomizeComponentPatterns() = %q, %v, want the symlink error", matches, err)
+	}
+	if strings.Contains(err.Error(), "secret-outside") {
+		t.Fatalf("error %v names an entry outside the repository", err)
+	}
+}

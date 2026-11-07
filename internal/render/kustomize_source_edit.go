@@ -504,7 +504,7 @@ func expandKustomizeComponentPatterns(dir, boundaryRoot string, patterns []strin
 			}
 			root = opened
 		}
-		glob := kustomizeComponentGlob{root: root, boundaryRoot: filepath.Clean(boundaryRoot), dir: filepath.Clean(dir)}
+		glob := newKustomizeComponentGlob(root, boundaryRoot, dir)
 		matches, err := glob.glob(pattern, 0)
 		var symlinkErr kustomizeComponentSymlinkError
 		switch {
@@ -537,7 +537,22 @@ func expandKustomizeComponentPatterns(dir, boundaryRoot string, patterns []strin
 type kustomizeComponentGlob struct {
 	root         *os.Root
 	boundaryRoot string
-	dir          string
+	// realRoot is boundaryRoot with its symlinks resolved. An absolute
+	// symlink target can name the repository root either way.
+	realRoot string
+	dir      string
+	// beforeOpen, when set, runs between the resolve and the open of a
+	// directory that globDir lists. Tests use it to change the tree there.
+	beforeOpen func(rel string)
+}
+
+func newKustomizeComponentGlob(root *os.Root, boundaryRoot, dir string) kustomizeComponentGlob {
+	boundaryRoot = filepath.Clean(boundaryRoot)
+	realRoot, err := filepath.EvalSymlinks(boundaryRoot)
+	if err != nil {
+		realRoot = boundaryRoot
+	}
+	return kustomizeComponentGlob{root: root, boundaryRoot: boundaryRoot, realRoot: realRoot, dir: filepath.Clean(dir)}
 }
 
 // kustomizeGlobDepthLimit is the recursion limit of filepath.Glob.
@@ -590,15 +605,24 @@ func (g kustomizeComponentGlob) globDir(dirPath, pattern string, matches []strin
 	if err != nil || !resolved.ok {
 		return matches, err
 	}
-	info, err := g.root.Stat(resolved.rel)
-	if err != nil || !info.IsDir() {
-		return matches, nil
+	if g.beforeOpen != nil {
+		g.beforeOpen(resolved.rel)
 	}
 	file, err := g.root.Open(resolved.rel)
 	if err != nil {
 		return matches, nil
 	}
 	defer func() { _ = file.Close() }()
+	info, err := file.Stat()
+	if err != nil || !info.IsDir() {
+		return matches, nil
+	}
+	// The os.Root follows symlinks inside the repository, .git too. So
+	// make sure that the open directory is still the one that resolve
+	// found, without a symlink on the way, before it is listed.
+	if err := g.sameResolvedDir(dirPath, resolved, info); err != nil {
+		return matches, err
+	}
 	names, _ := file.Readdirnames(-1)
 	slices.Sort(names)
 	found := len(matches)
@@ -617,9 +641,25 @@ func (g kustomizeComponentGlob) globDir(dirPath, pattern string, matches []strin
 	return matches, nil
 }
 
+// sameResolvedDir fails with the symlink error when dirPath no longer
+// resolves to the directory that was opened, info.
+func (g kustomizeComponentGlob) sameResolvedDir(dirPath string, resolved kustomizeResolvedPath, info os.FileInfo) error {
+	again, err := g.resolve(dirPath, true)
+	if err != nil {
+		return err
+	}
+	current, statErr := g.root.Lstat(again.rel)
+	if !again.ok || again.rel != resolved.rel || again.symlink != resolved.symlink || statErr != nil || !os.SameFile(info, current) {
+		clean := filepath.Clean(filepath.Join(g.dir, dirPath))
+		return kustomizeComponentSymlinkError{err: fmt.Errorf("path %q changed while drydock read it", clean)}
+	}
+	return nil
+}
+
 // confirmDir mirrors the local branch of loader.New: path must have no
 // element that holds ".." next to other characters, and it must be a
-// directory.
+// directory. Like filesys.ConfirmDir, it cleans the path as text first and
+// then follows its symlinks, so "file.yaml/../a" names the folder a.
 func (g kustomizeComponentGlob) confirmDir(path string) error {
 	if path == "" {
 		return errors.New("new root cannot be empty")
@@ -629,7 +669,11 @@ func (g kustomizeComponentGlob) confirmDir(path string) error {
 			return fmt.Errorf("path %q is ambiguous: resolves to %q after normalization, which is likely not the intended target; check for YAML indentation errors in your kustomization file", path, filepath.Clean(path))
 		}
 	}
-	resolved, err := g.resolve(path, true)
+	rel, err := filepath.Rel(g.boundaryRoot, filepath.Clean(filepath.Join(g.dir, path)))
+	if err != nil || pathsafety.RelEscapes(rel) {
+		return errors.New("must build at directory: not a valid directory")
+	}
+	resolved, err := g.resolveElements(strings.Split(rel, string(filepath.Separator)), path, true)
 	if err != nil {
 		return err
 	}
@@ -719,7 +763,13 @@ func (g kustomizeComponentGlob) resolve(path string, followLast bool) (kustomize
 	if !ok {
 		return kustomizeResolvedPath{}, nil
 	}
-	walk := &kustomizePathWalk{queue: append(strings.Split(dirRel, string(filepath.Separator)), strings.Split(path, string(filepath.Separator))...)}
+	return g.resolveElements(append(strings.Split(dirRel, string(filepath.Separator)), strings.Split(path, string(filepath.Separator))...), path, followLast)
+}
+
+// resolveElements resolves the path elements, from the repository root,
+// as resolve does. path names the path in errors.
+func (g kustomizeComponentGlob) resolveElements(elements []string, path string, followLast bool) (kustomizeResolvedPath, error) {
+	walk := &kustomizePathWalk{queue: elements}
 	for len(walk.queue) > 0 {
 		element := walk.queue[0]
 		walk.queue = walk.queue[1:]
@@ -754,42 +804,69 @@ func (g kustomizeComponentGlob) resolveElement(walk *kustomizePathWalk, path, el
 		return true, g.afterSymlink(path, walk.resolved)
 	}
 	candidate := filepath.Join(append(append([]string(nil), walk.stack...), element)...)
-	target, isSymlink := g.symlinkTarget(candidate)
-	if !isSymlink || (len(walk.queue) == 0 && !followLast) {
+	target, follow, done := g.lookupElement(candidate, len(walk.queue) != 0, followLast)
+	if done {
+		return true, nil
+	}
+	if !follow {
 		walk.stack = append(walk.stack, element)
 		return false, nil
 	}
 	walk.hops++
-	if walk.hops > kustomizeSymlinkHopLimit || target == "" {
+	if walk.hops > kustomizeSymlinkHopLimit {
 		return true, nil
 	}
 	if walk.resolved.symlink == "" {
 		walk.resolved.symlink = element
 	}
+	targetElements := strings.Split(target, string(filepath.Separator))
 	if filepath.IsAbs(target) {
-		rel, err := filepath.Rel(g.boundaryRoot, target)
-		if err != nil || pathsafety.RelEscapes(rel) {
+		rest, inside := g.underRoot(targetElements)
+		if !inside {
 			return true, g.afterSymlink(path, walk.resolved)
 		}
 		walk.stack = nil
-		target = rel
+		targetElements = rest
 	}
-	walk.queue = append(strings.Split(target, string(filepath.Separator)), walk.queue...)
+	walk.queue = append(targetElements, walk.queue...)
 	return false, nil
 }
 
-// symlinkTarget returns the target of rel when it is a symlink. An unread
-// symlink has an empty target.
-func (g kustomizeComponentGlob) symlinkTarget(rel string) (string, bool) {
-	info, statErr := g.root.Lstat(rel)
-	if statErr != nil || info.Mode()&os.ModeSymlink == 0 {
-		return "", false
+// lookupElement looks up candidate, a path element with more elements
+// after it when more is set, as the OS does. done reports that the path
+// ends with no match: a missing element (ENOENT) or a file (ENOTDIR) with
+// more elements after it, so a ".." after it does not go back, or a
+// symlink that cannot be read. follow reports a symlink to follow, with
+// its target.
+func (g kustomizeComponentGlob) lookupElement(candidate string, more, followLast bool) (target string, follow, done bool) {
+	info, statErr := g.root.Lstat(candidate)
+	switch {
+	case statErr != nil:
+		return "", false, more
+	case info.Mode()&os.ModeSymlink == 0 || (!more && !followLast):
+		return "", false, more && !info.IsDir() && info.Mode()&os.ModeSymlink == 0
 	}
-	target, readErr := g.root.Readlink(rel)
-	if readErr != nil {
-		return "", true
+	target, readErr := g.root.Readlink(candidate)
+	if readErr != nil || target == "" {
+		return "", false, true
 	}
-	return target, true
+	return target, true, false
+}
+
+// underRoot returns the elements of an absolute symlink target after the
+// repository root, as written or with its symlinks resolved. The elements
+// are compared as written, without cleaning, so a ".." stays for the walk
+// to resolve after any symlink before it. inside is false for a target
+// that does not start with the repository root: it leads outside.
+func (g kustomizeComponentGlob) underRoot(target []string) (rest []string, inside bool) {
+	target = slices.DeleteFunc(slices.Clone(target), func(element string) bool { return element == "" || element == "." })
+	for _, root := range []string{g.boundaryRoot, g.realRoot} {
+		rootElements := slices.DeleteFunc(strings.Split(root, string(filepath.Separator)), func(element string) bool { return element == "" })
+		if len(target) >= len(rootElements) && slices.Equal(target[:len(rootElements)], rootElements) {
+			return target[len(rootElements):], true
+		}
+	}
+	return nil, false
 }
 
 // dirRel returns dir relative to the repository root.
