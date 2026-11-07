@@ -303,7 +303,10 @@ func sourceKustomizeWorkspaceAdditions(ctx context.Context, repoRoot, sourceRoot
 			}
 			return nil, nil, nil, err
 		}
-		_, componentGraph, err := collectKustomizeGraph(ctx, repoRoot, componentPath, kustomizeInputWalk)
+		// The render walk checks the plugin referents too, as the walk of
+		// the source does, so no file of the component is read before the
+		// boundary, symlink, remote and .git checks.
+		_, componentGraph, err := collectKustomizeGraph(ctx, repoRoot, componentPath, kustomizeRenderWalk)
 		if err != nil {
 			return nil, nil, nil, err
 		}
