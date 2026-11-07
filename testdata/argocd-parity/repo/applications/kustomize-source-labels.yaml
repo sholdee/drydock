@@ -1,0 +1,23 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: parity-kustomize-source-labels
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: git://argocd-parity-git.argocd-parity.svc.cluster.local/repo.git
+    targetRevision: HEAD
+    path: workloads/kustomize-source-options/labels
+    kustomize:
+      # team is in a labels entry, which kustomize edit add label does not
+      # check. Values in double quotes lose the quotes.
+      commonLabels:
+        team: from-source-option
+        quoted: "\"quoted-label\""
+        app-name: ${ARGOCD_APP_NAME}
+      commonAnnotations:
+        quoted: "\"quoted-annotation\""
+  destination:
+    name: in-cluster
+    namespace: parity-kustomize-source-labels

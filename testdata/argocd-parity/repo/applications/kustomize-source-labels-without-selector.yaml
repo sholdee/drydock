@@ -1,0 +1,23 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: parity-kustomize-source-labels-without-selector
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: git://argocd-parity-git.argocd-parity.svc.cluster.local/repo.git
+    targetRevision: HEAD
+    path: workloads/kustomize-source-options/labels-without-selector
+    kustomize:
+      # With --without-selector, kustomize edit add label checks only the
+      # first labels entry without selectors and with the same templates
+      # setting. Neither commonLabels nor the selector entry is checked.
+      commonLabels:
+        team: from-source-option
+        zone: from-source-option
+      labelWithoutSelector: true
+      labelIncludeTemplates: true
+  destination:
+    name: in-cluster
+    namespace: parity-kustomize-source-labels-without-selector

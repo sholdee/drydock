@@ -1,0 +1,7 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - deployment.yaml
+# An empty patches field. Argo CD reads it before it adds the source
+# patches, unless an edit command rewrote the file first.
+patches:

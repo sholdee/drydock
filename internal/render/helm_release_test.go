@@ -306,6 +306,9 @@ func TestHelmRenderParityDecodeFixtures(t *testing.T) {
 				// repository itself.
 				opts.RefRoots = map[string]string{"$values": repoRoot}
 			}
+			// The spec.source.kustomize options of the Kustomize source
+			// option cases.
+			opts.Kustomize = source.Kustomize
 			resolved := ResolvedSource{RepoRoot: repoRoot, Path: source.Path}
 			var renderer Renderer = HelmRenderer{}
 			if _, err := os.Stat(filepath.Join(repoRoot, source.Path, "kustomization.yaml")); err == nil {

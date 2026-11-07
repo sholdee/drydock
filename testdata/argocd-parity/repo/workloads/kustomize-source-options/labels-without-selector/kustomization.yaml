@@ -1,0 +1,10 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - deployment.yaml
+commonLabels:
+  team: from-common-labels
+labels:
+  - pairs:
+      zone: from-selector-entry
+    includeSelectors: true

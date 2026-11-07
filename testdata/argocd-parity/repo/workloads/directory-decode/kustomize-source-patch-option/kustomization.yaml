@@ -1,0 +1,7 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - deployment.yaml
+# namePrefix rewrites the file before the patches are added, so this
+# empty patches field does not fail.
+patches:

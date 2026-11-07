@@ -1,0 +1,25 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: parity-kustomize-source-images
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: git://argocd-parity-git.argocd-parity.svc.cluster.local/repo.git
+    targetRevision: HEAD
+    path: workloads/kustomize-source-options/images
+    kustomize:
+      images:
+        # kustomize edit set image sorts the images by name, so a is
+        # renamed to b, then b to registry.example.invalid/renamed-b.
+        - a=b
+        # The * keeps the newTag of the nginx image in the kustomization.
+        - nginx=registry.example.invalid/nginx:*
+        # A tag and a digest without =.
+        - busybox:1.36@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+        # = with nothing after it changes nothing.
+        - redis=
+  destination:
+    name: in-cluster
+    namespace: parity-kustomize-source-images

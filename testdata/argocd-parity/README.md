@@ -169,6 +169,43 @@ these cases. drydock must fail each one with the same text.
 Applications offline through drydock and through the upstream
 `ValidatePermissions`.
 
+## Kustomize source option fixture
+
+Argo CD v3.6.1 applies most `spec.source.kustomize` options with
+`kustomize edit` commands on its copy of the source, before `kustomize
+build` (`util/kustomize/kustomize.go:174-401`). The commands come from
+kustomize v5.8.3. These fixtures pin the rules of those commands. The
+sources live under `workloads/kustomize-source-options/`.
+
+Four Applications in the main comparison render on both sides:
+
+| Application | What it pins |
+| --- | --- |
+| `parity-kustomize-source-images` | `edit set image` sorts the images by name. So `a=b` runs before the `b` rename of the kustomization, and container `a` gets the new name of `b`. `nginx=...:*` keeps the `newTag` of the kustomization. A tag and a digest without `=` set both. `redis=` changes nothing. |
+| `parity-kustomize-source-labels` | The `team` key is in a `labels` entry of the kustomization, which `edit add label` does not look at, so the render does not fail. A value in double quotes loses the quotes, for labels and for annotations. |
+| `parity-kustomize-source-labels-without-selector` | With `labelWithoutSelector` and `labelIncludeTemplates`, the labels go to a new `labels` entry. The `commonLabels` key and the key of the entry with `includeSelectors: true` are not looked at. |
+| `parity-kustomize-source-components` | `../parts/*` adds `a` and `b`, but not `.hidden`. `a` is already in the kustomization, and the repeated `b` is added once. |
+
+Eight more cases in `directory-decode-applications/` fail on both sides.
+They use `source: render` in `../directory-decode-expected.yaml`, and each
+one has its own source directory under `workloads/directory-decode/`:
+
+| Application | Why it fails |
+| --- | --- |
+| `parity-decode-kustomize-source-image-bare` | the image `nginx` without a tag, a digest, or `=` |
+| `parity-decode-kustomize-source-image-flag` | the image `-x`, which kustomize reads as a flag |
+| `parity-decode-kustomize-source-label-exists` | the label `team` is already in `commonLabels`, with the same value |
+| `parity-decode-kustomize-source-label-templates` | `labelIncludeTemplates` without `labelWithoutSelector` |
+| `parity-decode-kustomize-source-annotation-exists` | the annotation `owner` is already in `commonAnnotations` |
+| `parity-decode-kustomize-source-patches-null` | the kustomization has an empty `patches` field, and no edit command rewrites the file before Argo CD reads it |
+| `parity-decode-kustomize-source-patch-option` | the patch option `unknownOption`, which `kustomize build` does not know |
+| `parity-decode-kustomize-source-component-no-match` | a component glob that matches nothing |
+
+`TestHelmRenderParityDecodeFixtures` in `internal/render` renders these
+cases with drydock and requires `drydockMessage`. The tests in
+`internal/render/kustomize_source_edit_test.go` hold the kustomize v5.8.3
+test tables for these commands, and compare the flag reading with cobra.
+
 ## Config management plugin fixture
 
 `applications/plugin-env.yaml` (`parity-plugin-env`) renders through a config
