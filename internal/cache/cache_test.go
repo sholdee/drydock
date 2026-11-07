@@ -525,17 +525,12 @@ func TestPruneRemovesOldChartVersionRecords(t *testing.T) {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	oldRecord := filepath.Join(dir, "old.json")
-	newRecord := filepath.Join(dir, "new.json")
-	for _, path := range []string{oldRecord, newRecord} {
-		if err := os.WriteFile(path, []byte("{}"), 0o644); err != nil {
-			t.Fatal(err)
-		}
-	}
 	past := time.Now().Add(-48 * time.Hour)
-	if err := os.Chtimes(oldRecord, past, past); err != nil {
-		t.Fatal(err)
-	}
+	oldRecord := writeVersionRecordFile(t, dir, "old.json", "{}", past)
+	newRecord := writeVersionRecordFile(t, dir, "new.json", "{}", time.Now())
+	// The used record was written long ago, but an offline run used it
+	// just now, so it stays.
+	usedRecord := writeVersionRecordFile(t, dir, "used.json", `{"usedAt":"`+time.Now().UTC().Format(time.RFC3339)+`"}`, past)
 	opts := OperationOptions{ChartCacheDir: root, OlderThan: 24 * time.Hour, Yes: true}
 
 	other := opts
@@ -557,7 +552,23 @@ func TestPruneRemovesOldChartVersionRecords(t *testing.T) {
 	if _, err := os.Stat(oldRecord); !os.IsNotExist(err) {
 		t.Fatalf("old record still exists: %v", err)
 	}
-	if _, err := os.Stat(newRecord); err != nil {
-		t.Fatalf("new record removed: %v", err)
+	for _, path := range []string{newRecord, usedRecord} {
+		if _, err := os.Stat(path); err != nil {
+			t.Fatalf("record %s removed: %v", path, err)
+		}
 	}
+}
+
+// writeVersionRecordFile writes a version list file with content and file
+// time modified, and returns its path.
+func writeVersionRecordFile(t *testing.T, dir, name, content string, modified time.Time) string {
+	t.Helper()
+	path := filepath.Join(dir, name)
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chtimes(path, modified, modified); err != nil {
+		t.Fatal(err)
+	}
+	return path
 }

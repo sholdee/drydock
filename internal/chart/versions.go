@@ -48,7 +48,9 @@ const (
 	// as semver is an explicit tag and stays as written.
 	VersionHelmDependency VersionPolicy = "helm-dependency"
 	// VersionHelmLocked is the version of a Chart.lock entry, which
-	// `helm dependency build` fetches as helm pull does (helmIndexGet).
+	// `helm dependency build` fetches as helm pull does (helmIndexGet). A
+	// partial version in a hand-edited lock on an HTTP repository resolves
+	// like a partial targetRevision.
 	VersionHelmLocked VersionPolicy = "helm-locked"
 )
 
@@ -74,7 +76,9 @@ func needsVersionResolution(request Request) bool {
 			return err != nil
 		}
 		return !IsExactVersion(version)
-	case VersionAsWritten, VersionHelmLocked:
+	case VersionHelmLocked:
+		return request.Kind == RepositoryHTTP && !IsExactVersion(version)
+	case VersionAsWritten:
 		return false
 	default:
 		return false
@@ -113,6 +117,10 @@ type chartVersionsRecord struct {
 	// resolve from a list older than the chart cache max age reports the
 	// result stale, as for an expired chart cache entry.
 	FetchedAt time.Time `json:"fetchedAt,omitzero"`
+	// UsedAt is when a resolve, online or offline, last used the list. An
+	// age prune removes lists by this time, as it prunes chart entries by
+	// last use.
+	UsedAt time.Time `json:"usedAt,omitzero"`
 }
 
 type recordedChartVersion struct {
@@ -201,6 +209,9 @@ type resolvedVersion struct {
 	// stale reports an offline resolve from a version list older than the
 	// chart cache max age, or of unknown age under a max age.
 	stale bool
+	// listFetchedAt is when an online run fetched the version list that an
+	// offline resolve used, zero when unknown.
+	listFetchedAt time.Time
 }
 
 // resolveVersion returns the version that request names, under its
@@ -217,9 +228,13 @@ func (acquirer DefaultAcquirer) resolveVersion(ctx context.Context, request Requ
 		}
 		resolved, err := selectChartVersion(request, record)
 		stale := Expired(record.FetchedAt, !record.FetchedAt.IsZero(), opts.MaxAge, time.Now())
-		return resolvedVersion{version: resolved, stale: stale}, err
+		used := record
+		used.UsedAt = time.Now().UTC()
+		writeVersionsRecord(opts.CacheDir, request, used, opts.ForbiddenRoots)
+		return resolvedVersion{version: resolved, stale: stale, listFetchedAt: record.FetchedAt}, err
 	}
-	record := chartVersionsRecord{FetchedAt: time.Now().UTC()}
+	now := time.Now().UTC()
+	record := chartVersionsRecord{FetchedAt: now, UsedAt: now}
 	var index *repositoryIndex
 	switch request.Kind {
 	case RepositoryHTTP:
@@ -258,11 +273,7 @@ func selectChartVersion(request Request, record chartVersionsRecord) (string, er
 		if request.Kind == RepositoryHTTP && versions.IsVersion(version) {
 			// A partial version: helm pull takes the index entry that
 			// IndexFile.Get returns for it.
-			entry, err := helmIndexGet(record.entries(), request.Name, version)
-			if errors.Is(err, errChartVersionNotFound) {
-				return "", fmt.Errorf("chart %s version %s not found in repository index", request.Name, version)
-			}
-			return entry.Version, err
+			return helmIndexGetVersion(request, record)
 		}
 		if request.Kind == RepositoryHTTP && !record.Found {
 			// helm.Index.GetEntries (util/helm/index.go:27-33 at v3.6.1).
@@ -275,11 +286,24 @@ func selectChartVersion(request Request, record chartVersionsRecord) (string, er
 		return resolved, nil
 	case VersionHelmDependency:
 		return resolveHelmDependencyVersion(request, record)
-	case VersionAsWritten, VersionHelmLocked:
+	case VersionHelmLocked:
+		return helmIndexGetVersion(request, record)
+	case VersionAsWritten:
 		return version, nil
 	default:
 		return version, nil
 	}
+}
+
+// helmIndexGetVersion returns the version of the index entry that helm pull
+// takes for the version of request (helmIndexGet).
+func helmIndexGetVersion(request Request, record chartVersionsRecord) (string, error) {
+	version := strings.TrimSpace(request.Version)
+	entry, err := helmIndexGet(record.entries(), request.Name, version)
+	if errors.Is(err, errChartVersionNotFound) {
+		return "", fmt.Errorf("chart %s version %s not found in repository index", request.Name, version)
+	}
+	return entry.Version, err
 }
 
 // resolveHelmDependencyVersion is the remote branch of resolver.Resolve

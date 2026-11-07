@@ -395,11 +395,11 @@ func renderCacheOperation(cmd *cobra.Command, output cliformat.Output, result ca
 				}
 			}
 			_, err := fmt.Fprintf(cmd.OutOrStdout(),
-				"%s %d cache entries (%d by age, %d by size); freed %d bytes by size, %d bytes remain\n",
-				verb, count, ageCount, sizeCount, result.SizeEvictedBytes, result.TotalSizeBytes)
+				"%s %d cache entries (%d by age, %d by size); freed %d bytes by size, %d bytes remain%s\n",
+				verb, count, ageCount, sizeCount, result.SizeEvictedBytes, result.TotalSizeBytes, versionRecordsSuffix(result))
 			return err
 		}
-		_, err := fmt.Fprintf(cmd.OutOrStdout(), "%s %d cache entries\n", verb, count)
+		_, err := fmt.Fprintf(cmd.OutOrStdout(), "%s %d cache entries%s\n", verb, count, versionRecordsSuffix(result))
 		return err
 	case cliformat.OutputJSON:
 		return cliformat.JSON(cmd.OutOrStdout(), result)
@@ -410,6 +410,15 @@ func renderCacheOperation(cmd *cobra.Command, output cliformat.Output, result ca
 	default:
 		return fmt.Errorf("unsupported cache output %q", output)
 	}
+}
+
+// versionRecordsSuffix words the chart version lists that a prune removed,
+// or would remove, for the table output. It is empty when there are none.
+func versionRecordsSuffix(result cache.OperationResult) string {
+	if result.VersionRecordsRemoved == 0 {
+		return ""
+	}
+	return fmt.Sprintf(" and %d chart version lists", result.VersionRecordsRemoved)
 }
 
 func cacheEntryRows(entries []cache.Entry) []map[string]string {

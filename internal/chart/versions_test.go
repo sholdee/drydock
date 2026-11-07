@@ -335,7 +335,8 @@ func TestDefaultAcquirerUsesExplicitOCIDependencyVersions(t *testing.T) {
 // TestDefaultAcquirerResolvesPartialVersionsAgain pins that a partial
 // targetRevision such as "1.2" on an HTTP repository is not a fixed pin:
 // the cache entry is the version that helm pull takes, so the next online
-// run picks up a new 1.2.x. A Kustomize helmCharts "1.2" (VersionAsWritten)
+// run picks up a new 1.2.x. A partial version in a hand-edited Chart.lock
+// resolves the same way. A Kustomize helmCharts "1.2" (VersionAsWritten)
 // never reads that entry.
 func TestDefaultAcquirerResolvesPartialVersionsAgain(t *testing.T) {
 	server, requests := newRangeIndexServer(t)
@@ -354,6 +355,11 @@ func TestDefaultAcquirerResolvesPartialVersionsAgain(t *testing.T) {
 	if requests["/index.yaml"] != 2 {
 		t.Fatalf("index requests = %d, want one per online run", requests["/index.yaml"])
 	}
+	locked := request
+	locked.VersionPolicy = VersionHelmLocked
+	if result, err := acquirer.Acquire(context.Background(), locked, Options{CacheDir: cacheDir}); err != nil || result.Version != "1.2.3" {
+		t.Fatalf("locked Acquire() = %#v, %v, want a hand-edited lock version 1.2 resolved to 1.2.3", result, err)
+	}
 	kustomize := request
 	kustomize.VersionPolicy = VersionAsWritten
 	if _, err := acquirer.Acquire(context.Background(), kustomize, Options{CacheDir: cacheDir, Offline: true}); err == nil || !strings.Contains(err.Error(), "offline cache miss for chart demo 1.2") {
@@ -363,9 +369,11 @@ func TestDefaultAcquirerResolvesPartialVersionsAgain(t *testing.T) {
 
 // TestDefaultAcquirerMarksOldVersionListsStale pins that an offline resolve
 // from a version list older than the chart cache max age still resolves,
-// and reports the result stale, as an expired chart cache entry is. A
-// version list of unknown age is stale under a max age too. Without a max
-// age nothing expires.
+// and reports the version list stale with its fetch time, as an expired
+// chart cache entry is reported. The fresh chart entry itself is not
+// stale. A version list of unknown age is stale under a max age too.
+// Without a max age nothing expires. Every offline resolve records its use
+// in the list, so an age prune keeps a list that offline runs still use.
 func TestDefaultAcquirerMarksOldVersionListsStale(t *testing.T) {
 	server, _ := newRangeIndexServer(t)
 	cacheDir := t.TempDir()
@@ -396,8 +404,15 @@ func TestDefaultAcquirerMarksOldVersionListsStale(t *testing.T) {
 			if err != nil {
 				t.Fatalf("offline Acquire() error = %v", err)
 			}
-			if result.Version != "1.2.3" || result.Stale != tt.stale {
-				t.Fatalf("result = %#v, want 1.2.3 with stale %v", result, tt.stale)
+			if result.Version != "1.2.3" || result.Stale || result.VersionListStale != tt.stale {
+				t.Fatalf("result = %#v, want 1.2.3 with a stale version list %v", result, tt.stale)
+			}
+			if tt.stale && !result.VersionListFetchedAt.Equal(tt.fetchedAt) {
+				t.Fatalf("version list fetched at = %v, want %v", result.VersionListFetchedAt, tt.fetchedAt)
+			}
+			used, ok := readVersionsRecord(cacheDir, request)
+			if !ok || time.Since(used.UsedAt) > time.Minute || !used.FetchedAt.Equal(tt.fetchedAt) {
+				t.Fatalf("version record = %#v, want a fresh use and the old fetch time", used)
 			}
 		})
 	}

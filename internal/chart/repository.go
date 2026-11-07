@@ -40,7 +40,7 @@ func (acquirer DefaultAcquirer) Acquire(ctx context.Context, request Request, op
 	}
 	opts.CacheDir = cacheDir
 	var index *repositoryIndex
-	versionsStale := false
+	var versionList resolvedVersion
 	if needsVersionResolution(request) {
 		resolved, err := acquirer.resolveVersion(ctx, request, opts)
 		if err != nil {
@@ -48,7 +48,7 @@ func (acquirer DefaultAcquirer) Acquire(ctx context.Context, request Request, op
 		}
 		request.Version = resolved.version
 		index = resolved.index
-		versionsStale = resolved.stale
+		versionList = resolved
 	}
 	key, err := NewCacheKey(request)
 	if err != nil {
@@ -60,24 +60,12 @@ func (acquirer DefaultAcquirer) Acquire(ctx context.Context, request Request, op
 	// one version, such as 1.2.* and ~1.2.0, do not publish it at once.
 	chartKeyLock.Lock(keyDir)
 	defer chartKeyLock.Unlock(keyDir)
-	chartDir := filepath.Join(keyDir, chartLeaf(request.Name))
 	if err := rejectForbiddenCachePath(keyDir, opts.ForbiddenRoots); err != nil {
 		return Result{}, err
 	}
-	if !opts.Refresh && chartDirReady(chartDir) {
-		fetchedAt, known := entryFetchedAt(keyDir, request.Kind, key)
-		expired := Expired(fetchedAt, known, opts.MaxAge, time.Now())
-		if !expired || opts.Offline {
-			// Reuse refreshes the entry's last-use time. An entry of unknown
-			// age keeps its fetch time unknown, whatever the max age: dating
-			// the old content as freshly fetched would let a later max-age
-			// run serve it instead of refetching it.
-			writeChartMetadata(keyDir, key, request, time.Time{}, !known)
-			result := resultFor(request, chartDir, true)
-			result.CacheKey = key
-			result.FetchedAt = fetchedAt
-			result.Stale = expired || versionsStale
-			return result, nil
+	if !refreshChartEntry(opts, keyDir) {
+		if result, ok := reuseCachedChart(request, opts, keyDir, key, versionList); ok {
+			return holdChartEntry(opts, result)
 		}
 	}
 	if opts.Offline {
@@ -92,7 +80,58 @@ func (acquirer DefaultAcquirer) Acquire(ctx context.Context, request Request, op
 		return Result{}, fmt.Errorf("chart archive for %s %s does not contain %s/Chart.yaml", request.Name, request.Version, chartLeaf(request.Name))
 	}
 
-	return publishFetchedChart(request, opts, keyParent, keyDir, key, archive)
+	result, err := publishFetchedChart(request, opts, keyParent, keyDir, key, archive)
+	if err != nil {
+		return Result{}, err
+	}
+	return holdChartEntry(opts, result)
+}
+
+// refreshChartEntry reports whether the request refetches the entry at
+// keyDir: under Options.Refresh, unless the entry hooks say that this
+// session already refreshed it.
+func refreshChartEntry(opts Options, keyDir string) bool {
+	if !opts.Refresh {
+		return false
+	}
+	return opts.EntryHooks == nil || opts.EntryHooks.RefreshOnce == nil || opts.EntryHooks.RefreshOnce(keyDir)
+}
+
+// reuseCachedChart returns the cached chart of the entry at keyDir when it
+// is ready and not expired under Options.MaxAge, or expired but offline.
+// Reuse refreshes the entry's last-use time. An entry of unknown age keeps
+// its fetch time unknown, whatever the max age: dating the old content as
+// freshly fetched would let a later max-age run serve it instead of
+// refetching it.
+func reuseCachedChart(request Request, opts Options, keyDir, key string, versionList resolvedVersion) (Result, bool) {
+	chartDir := filepath.Join(keyDir, chartLeaf(request.Name))
+	if !chartDirReady(chartDir) {
+		return Result{}, false
+	}
+	fetchedAt, known := entryFetchedAt(keyDir, request.Kind, key)
+	expired := Expired(fetchedAt, known, opts.MaxAge, time.Now())
+	if expired && !opts.Offline {
+		return Result{}, false
+	}
+	writeChartMetadata(keyDir, key, request, time.Time{}, !known)
+	result := resultFor(request, chartDir, true)
+	result.CacheKey = key
+	result.FetchedAt = fetchedAt
+	result.Stale = expired
+	result.VersionListStale = versionList.stale
+	if versionList.stale {
+		result.VersionListFetchedAt = versionList.listFetchedAt
+	}
+	return result, true
+}
+
+// holdChartEntry runs the Hold hook of opts on result, while the caller
+// still holds the entry lock.
+func holdChartEntry(opts Options, result Result) (Result, error) {
+	if opts.EntryHooks == nil || opts.EntryHooks.Hold == nil {
+		return result, nil
+	}
+	return opts.EntryHooks.Hold(result)
 }
 
 // validateRequest rejects unsupported kinds, unsafe chart names, and malformed

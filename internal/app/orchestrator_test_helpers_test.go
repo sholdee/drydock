@@ -497,6 +497,9 @@ func (acquirer *recordingRemoteAcquirer) Acquire(_ context.Context, request remo
 }
 func (acquirer *recordingChartAcquirer) Acquire(_ context.Context, request chart.Request, opts chart.Options) (chart.Result, error) {
 	acquirer.requests = append(acquirer.requests, request)
+	// The session's entry hooks are functions, which never compare equal,
+	// and this acquirer does not run them.
+	opts.EntryHooks = nil
 	acquirer.options = append(acquirer.options, opts)
 	if acquirer.acquireErr != nil {
 		return chart.Result{}, acquirer.acquireErr

@@ -46,6 +46,11 @@ type ChartAcquisition struct {
 	// because --offline forbids refetching it.
 	MaxAge time.Duration
 	Stale  bool
+	// VersionListStale reports a version range that an offline run
+	// resolved from a recorded version list older than MaxAge (or of
+	// unknown age), fetched at VersionListFetchedAt.
+	VersionListStale     bool
+	VersionListFetchedAt time.Time
 }
 
 // AcquisitionCollector gathers records for one application render. It records

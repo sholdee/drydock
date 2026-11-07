@@ -1,6 +1,7 @@
 package cache
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -143,18 +144,23 @@ func Prune(opts OperationOptions) (OperationResult, error) {
 		return OperationResult{}, err
 	}
 	selected, result := buildPruneResult(entries, opts)
-	records, err := pruneChartVersionRecords(opts)
-	if err != nil {
-		return OperationResult{}, err
-	}
-	result.VersionRecordsRemoved = records
 	if opts.DryRun {
+		records, err := pruneChartVersionRecords(opts)
+		if err != nil {
+			return OperationResult{}, err
+		}
+		result.VersionRecordsRemoved = records
 		return result, nil
 	}
 	if err := removeEntries(selected); err != nil {
 		return OperationResult{}, err
 	}
 	result.RemovedCount = len(selected)
+	records, err := pruneChartVersionRecords(opts)
+	if err != nil {
+		return OperationResult{}, err
+	}
+	result.VersionRecordsRemoved = records
 	if enabledSources(opts.Sources)[SourceRender] && (opts.Source == "" || opts.Source == SourceRender) {
 		sweep, err := pruneRenderSweep(opts.RenderCacheDir, opts.RenderCacheMaxBytes, opts.ForbiddenRoots)
 		if err != nil {
@@ -585,9 +591,10 @@ func resolveCacheRoot(root string, forbiddenRoots []string) (string, bool, error
 }
 
 // pruneChartVersionRecords removes, in an age prune of the chart cache, the
-// recorded chart version lists that were written before the cutoff. An
-// online resolve rewrites its list, so the write time is its fetch time. A
-// dry run only counts them.
+// recorded chart version lists that were last used before the cutoff, as
+// chart entries are pruned by last use (entryAgeTime). Every resolve, online
+// or offline, records its use in the list (usedAt). A list without it falls
+// back to its file time. A dry run only counts them.
 func pruneChartVersionRecords(opts OperationOptions) (int, error) {
 	if opts.OlderThan <= 0 || !enabledSources(opts.Sources)[SourceChart] || (opts.Source != "" && opts.Source != SourceChart) {
 		return 0, nil
@@ -626,18 +633,42 @@ func pruneVersionRecordDir(dir string, cutoff time.Time, dryRun bool) (int, erro
 		if !child.Type().IsRegular() || filepath.Ext(child.Name()) != ".json" {
 			continue
 		}
-		info, err := child.Info()
-		if err != nil || !info.ModTime().Before(cutoff) {
+		path := filepath.Join(dir, child.Name())
+		used, ok := versionRecordUsedAt(path)
+		if !ok {
+			info, err := child.Info()
+			if err != nil {
+				continue
+			}
+			used = info.ModTime()
+		}
+		if !used.Before(cutoff) {
 			continue
 		}
 		if !dryRun {
-			if err := os.Remove(filepath.Join(dir, child.Name())); err != nil && !os.IsNotExist(err) {
+			if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
 				return removed, err
 			}
 		}
 		removed++
 	}
 	return removed, nil
+}
+
+// versionRecordUsedAt reads the last-use time of the chart version list at
+// path.
+func versionRecordUsedAt(path string) (time.Time, bool) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return time.Time{}, false
+	}
+	var record struct {
+		UsedAt time.Time `json:"usedAt"`
+	}
+	if err := json.Unmarshal(data, &record); err != nil || record.UsedAt.IsZero() {
+		return time.Time{}, false
+	}
+	return record.UsedAt, true
 }
 
 func enabledSources(sources []Source) map[Source]bool {

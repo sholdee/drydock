@@ -37,6 +37,9 @@ type SnapshotSession struct {
 type TargetLocks struct {
 	mu    sync.Mutex
 	locks map[string]*targetLock
+	// chartRefreshes holds the chart cache entries that a refresh in this
+	// session already refetched (firstChartRefresh).
+	chartRefreshes map[string]struct{}
 }
 
 type SnapshotCache struct {
@@ -157,6 +160,26 @@ func (cache *SnapshotCache) storeChart(key string, result chart.Result) {
 	cache.mu.Lock()
 	defer cache.mu.Unlock()
 	cache.charts[key] = result
+}
+
+// firstChartRefresh reports whether the chart cache entry at entryPath is
+// refreshed for the first time in this session, and records it. A later
+// refresh request for the same entry reuses it, so the snapshot copy of an
+// earlier request is never replaced under it.
+func (locks *TargetLocks) firstChartRefresh(entryPath string) bool {
+	if locks == nil {
+		return true
+	}
+	locks.mu.Lock()
+	defer locks.mu.Unlock()
+	if locks.chartRefreshes == nil {
+		locks.chartRefreshes = map[string]struct{}{}
+	}
+	if _, ok := locks.chartRefreshes[entryPath]; ok {
+		return false
+	}
+	locks.chartRefreshes[entryPath] = struct{}{}
+	return true
 }
 
 func (locks *TargetLocks) lock(key string) func() {
@@ -315,16 +338,58 @@ func (acquirer cacheSafeChartAcquirer) Acquire(ctx context.Context, request char
 		}
 	}
 
+	// The hooks run under the lock of the resolved cache entry: the
+	// session refreshes each entry once, and copies it before the lock is
+	// released, so a request whose version resolves to the same entry
+	// never replaces it during the copy.
+	held := false
+	opts.EntryHooks = &chart.EntryHooks{
+		RefreshOnce: acquirer.locks.firstChartRefresh,
+		Hold: func(result chart.Result) (chart.Result, error) {
+			held = true
+			return acquirer.snapshotChart(result)
+		},
+	}
 	result, err := acquirer.delegate.Acquire(ctx, request, opts)
-	if err != nil || !acquirer.snapshot {
+	if err != nil {
 		return result, err
+	}
+	if !held {
+		// An acquirer that does not run the hooks.
+		if result, err = acquirer.snapshotChart(result); err != nil {
+			return chart.Result{}, err
+		}
+	}
+	if acquirer.snapshot {
+		acquirer.snapshotCache.storeChart(key, result)
+	}
+	return result, nil
+}
+
+// snapshotChart copies the chart of result into the session snapshot area,
+// once per resolved cache entry, when the session takes snapshots.
+func (acquirer cacheSafeChartAcquirer) snapshotChart(result chart.Result) (chart.Result, error) {
+	if !acquirer.snapshot {
+		return result, nil
+	}
+	entryKey := ""
+	if result.CacheKey != "" {
+		entryKey = "entry:" + string(result.Kind) + ":" + result.CacheKey
+		if cached, ok := acquirer.snapshotCache.chart(entryKey); ok {
+			cached.Stale = result.Stale
+			cached.VersionListStale = result.VersionListStale
+			cached.VersionListFetchedAt = result.VersionListFetchedAt
+			return cached, nil
+		}
 	}
 	snapshot, err := snapshotCachePath(acquirer.snapshotRoot, "chart", result.ChartDir, snapshotCopyOptions{linkRegularFiles: true})
 	if err != nil {
 		return chart.Result{}, err
 	}
 	result.ChartDir = snapshot
-	acquirer.snapshotCache.storeChart(key, result)
+	if entryKey != "" {
+		acquirer.snapshotCache.storeChart(entryKey, result)
+	}
 	return result, nil
 }
 

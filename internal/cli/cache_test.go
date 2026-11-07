@@ -851,3 +851,22 @@ func TestRenderCacheOperationTableSizePhaseDryRun(t *testing.T) {
 		t.Fatalf("got %q, want %q", out.String(), want)
 	}
 }
+
+// TestRenderCacheOperationTableNamesVersionRecords pins that the table
+// output of a prune names the chart version lists it removed.
+func TestRenderCacheOperationTableNamesVersionRecords(t *testing.T) {
+	result := cache.OperationResult{
+		Entries:               []cache.Entry{{PruneReason: "age"}},
+		RemovedCount:          1,
+		VersionRecordsRemoved: 3,
+	}
+	cmd := NewRootCommand(VersionInfo{})
+	var out bytes.Buffer
+	cmd.SetOut(&out)
+	if err := renderCacheOperation(cmd, "table", result); err != nil {
+		t.Fatalf("renderCacheOperation() error = %v", err)
+	}
+	if got, want := out.String(), "removed 1 cache entries and 3 chart version lists\n"; got != want {
+		t.Fatalf("got %q, want %q", got, want)
+	}
+}

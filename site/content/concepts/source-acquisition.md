@@ -773,6 +773,14 @@ never require confirmation.
 (`Metadata.UpdatedAt`, refreshed on every cache hit and fetch) predates the
 given duration. Legacy entries without metadata fall back to filesystem mtime.
 
+The chart cache also holds the recorded version list of each chart whose
+version range drydock resolved. An offline run resolves the range from that
+list. Every resolve, online or offline, records when it last used the list,
+and an age prune of the chart cache removes the lists that no run used within
+the duration, the same as chart entries. `cache list` does not show the lists,
+and `cache prune` reports how many it removed. A list keeps its fetch time
+apart from its last use, and `--chart-cache-max-age` judges that fetch time.
+
 ### Pruning by size (`--max-size`)
 
 `--max-size QUANTITY` evicts the least-recently-used entries from the selected

@@ -50,6 +50,12 @@ type Result struct {
 	// Stale reports a cached chart older than Options.MaxAge (or of unknown
 	// age) that was reused because Options.Offline forbids refetching it.
 	Stale bool
+	// VersionListStale reports a version range that an offline run
+	// resolved from a recorded version list older than Options.MaxAge (or
+	// of unknown age). VersionListFetchedAt is when that list was fetched,
+	// zero when unknown.
+	VersionListStale     bool
+	VersionListFetchedAt time.Time
 }
 
 type Options struct {
@@ -63,6 +69,23 @@ type Options struct {
 	ForbiddenRoots  []string
 	PassCredentials bool
 	Credentials     ChartCredentials
+	// EntryHooks, when set, lets the caller act on the resolved cache
+	// entry while the acquirer holds its lock.
+	EntryHooks *EntryHooks
+}
+
+// EntryHooks act on a chart cache entry while the acquirer holds the lock
+// on that entry. The entry is the resolved one, so requests whose versions
+// resolve to one version, such as 1.2.* and ~1.2.0, share it.
+type EntryHooks struct {
+	// RefreshOnce reports whether a refresh may refetch the entry at
+	// entryPath. A false answer reuses the cached entry, so a session
+	// refreshes each entry at most once.
+	RefreshOnce func(entryPath string) bool
+	// Hold runs on a successful result before the acquirer releases the
+	// entry lock, so the caller can copy the entry before another request
+	// replaces it. Its result replaces the result.
+	Hold func(Result) (Result, error)
 }
 
 type ChartCredentials struct {
