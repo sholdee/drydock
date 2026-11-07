@@ -6,6 +6,7 @@ import (
 	"os"
 	"path"
 	"slices"
+	"strings"
 
 	"github.com/sholdee/drydock/internal/diagnostic"
 
@@ -82,16 +83,31 @@ var kustomizeStdoutPaths = []string{"/dev/stdout", "/dev/fd/1", "/proc/self/fd/1
 
 // kustomizeOutputDiscarded reports whether --output sends the build
 // somewhere other than the standard output that Argo CD reads. kustomize
-// writes the build to the --output path, or one file per resource when the
-// path is a directory (NewCmdBuild, commands/build/build.go at kustomize
-// v5.8.3). A path that names the standard output, such as /dev/stdout,
-// gives the usual output. Any other path leaves the standard output empty,
-// and Argo CD then reads no manifests and does not fail.
-func kustomizeOutputDiscarded(settings kustomizeBuildSettings) bool {
+// writes the build to the --output path with os.WriteFile, or one file per
+// resource when the path is a directory (NewCmdBuild, commands/build/
+// build.go at kustomize v5.8.3). A path that names the standard output,
+// such as /dev/stdout, gives the usual output. Any other path leaves the
+// standard output empty, and Argo CD then reads no manifests and does not
+// fail.
+//
+// Linux opens a path with extra or "." elements, such as /dev//stdout, as
+// the cleaned path, so the check cleans the path. A trailing slash is
+// different: Linux refuses to create or truncate a file through such a
+// path (EISDIR), so kustomize fails with "open /dev/stdout/: is a
+// directory".
+// drydock fails such a path to the standard output in the same way. For
+// another path with a trailing slash, drydock cannot tell whether the
+// repo-server has that directory, so it reads the path as a directory and
+// renders nothing.
+func kustomizeOutputDiscarded(settings kustomizeBuildSettings) (bool, error) {
 	if settings.OutputPath == "" {
-		return false
+		return false, nil
 	}
-	return !slices.Contains(kustomizeStdoutPaths, path.Clean(settings.OutputPath))
+	stdout := slices.Contains(kustomizeStdoutPaths, path.Clean(settings.OutputPath))
+	if stdout && strings.HasSuffix(settings.OutputPath, "/") {
+		return false, fmt.Errorf("open %s: is a directory", settings.OutputPath)
+	}
+	return !stdout, nil
 }
 
 // KustomizeBuildOutputDiscardedCode identifies the warning for a

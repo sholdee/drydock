@@ -39,7 +39,11 @@ func (KustomizeRenderer) Render(ctx context.Context, source ResolvedSource, opts
 		return nil, nil, err
 	}
 	diags = append(diags, renderDiags...)
-	if kustomizeOutputDiscarded(buildSettings) {
+	discarded, err := kustomizeOutputDiscarded(buildSettings)
+	if err != nil {
+		return nil, nil, err
+	}
+	if discarded {
 		// kustomize builds first and then writes, so a build error still
 		// fails the source.
 		return nil, append(diags, kustomizeOutputDiscardedDiagnostic(buildSettings)), nil

@@ -149,6 +149,9 @@ func TestKustomizeOutputFlag(t *testing.T) {
 		{name: "proc self fd 1", options: []string{"--output", "/proc/self/fd/1"}, want: 1},
 		{name: "file", options: []string{"-o", "out.yaml"}, warn: true},
 		{name: "dev stderr", options: []string{"-o", "/dev/stderr"}, warn: true},
+		{name: "dev stdout with double slash", options: []string{"-o", "/dev//stdout"}, want: 1},
+		{name: "dev stdout with trailing slash", options: []string{"-o", "/dev/stdout/"}, wantErr: "open /dev/stdout/: is a directory"},
+		{name: "directory", options: []string{"-o", "manifests/"}, warn: true},
 		{name: "build error first", options: []string{"-o", "out.yaml", "--reorder", "bad"}, wantErr: "illegal flag value --reorder bad"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
