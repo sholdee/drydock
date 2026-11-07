@@ -238,7 +238,7 @@ func renderKustomizeHelmCharts(ctx context.Context, tempRepoRoot, tempSourceRoot
 		if err := requireKustomizeHelmDefaultValuesFile(tempRepoRoot, chartRel, chartHome, helmChart); err != nil {
 			return nil, err
 		}
-		if err := loader.checkValuesFile(helmChart); err != nil {
+		if err := loader.checkValuesFile(helmChart, chartHome); err != nil {
 			return nil, err
 		}
 		helmChart, err = literalKustomizeHelmValuesFiles(tempSourceRoot, helmChart)
@@ -720,13 +720,22 @@ func (l kustomizeValuesFileLoader) check(file string) error {
 		}
 		return err
 	}
-	if l.rootOnly {
-		if rel, err := filepath.Rel(l.dir, target); err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-			return fmt.Errorf("security; file '%s' is not in or below '%s'", l.display(target), l.display(l.dir))
-		}
-	}
+	// RestrictionRootOnly checks for a directory before it checks the root
+	// (loadrestrictions.go:20-27).
 	if info.IsDir() {
 		return fmt.Errorf("'%s' must resolve to a file", l.display(target))
+	}
+	return l.checkRoot(target)
+}
+
+// checkRoot fails a path outside the kustomization directory under
+// LoadRestrictionsRootOnly.
+func (l kustomizeValuesFileLoader) checkRoot(target string) error {
+	if !l.rootOnly {
+		return nil
+	}
+	if rel, err := filepath.Rel(l.dir, target); err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return fmt.Errorf("security; file '%s' is not in or below '%s'", l.display(target), l.display(l.dir))
 	}
 	return nil
 }
@@ -734,9 +743,17 @@ func (l kustomizeValuesFileLoader) check(file string) error {
 // checkValuesFile checks valuesFile when kustomize loads it: unless the
 // entry has valuesInline with valuesMerge replace
 // (HelmChartInflationGeneratorPlugin.Generate).
-func (l kustomizeValuesFileLoader) checkValuesFile(helmChart types.HelmChart) error {
-	if helmChart.ValuesFile == "" || (len(helmChart.ValuesInline) != 0 && helmChart.ValuesMerge == "replace") {
+//
+// Without valuesFile, kustomize loads <chartHome>/<name>/values.yaml
+// (validateArgs, HelmChartInflationGenerator.go:119), also through the
+// restriction, so a chartHome outside the kustomization directory fails.
+// requireKustomizeHelmDefaultValuesFile already failed a missing file.
+func (l kustomizeValuesFileLoader) checkValuesFile(helmChart types.HelmChart, chartHome string) error {
+	if len(helmChart.ValuesInline) != 0 && helmChart.ValuesMerge == "replace" {
 		return nil
+	}
+	if helmChart.ValuesFile == "" {
+		return l.checkRoot(filepath.Join(l.dir, localKustomizeHelmChartPath("", chartHome, helmChart), "values.yaml"))
 	}
 	if hasHelmValueGlob(helmChart.ValuesFile) {
 		// literalKustomizeHelmValuesFiles reports a missing file name with

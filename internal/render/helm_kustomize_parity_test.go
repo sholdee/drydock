@@ -3,6 +3,7 @@ package render
 import (
 	"context"
 	"errors"
+	"os"
 	"path/filepath"
 	"regexp"
 	"slices"
@@ -225,5 +226,78 @@ func TestHelmRendererReturnsSpecErrorFirst(t *testing.T) {
 	_, _, err := (HelmRenderer{}).Render(context.Background(), ResolvedSource{RepoRoot: root, Path: "app"}, RenderOptions{AppName: "x", HelmSpecError: errFakeSpec, ReleaseName: "Bad_Name"})
 	if !errors.Is(err, errFakeSpec) {
 		t.Fatalf("Render() error = %v, want the spec error first", err)
+	}
+}
+
+// Without valuesFile, kustomize loads <chartHome>/<name>/values.yaml
+// through the load restrictor, so a chartHome outside the kustomization
+// directory fails, except with valuesInline and valuesMerge replace, where
+// kustomize does not load it. kustomize 5.8.3 gives the same results.
+func TestKustomizeHelmChartsDefaultValuesFileFollowsTheLoadRestrictor(t *testing.T) {
+	for _, tc := range []struct {
+		name, chart, want string
+	}{
+		{name: "no valuesFile", want: "security; file 'shared/charts/probe/values.yaml' is not in or below 'app'"},
+		{name: "valuesInline override", chart: "    valuesInline:\n      a: b\n", want: "security; file 'shared/charts/probe/values.yaml' is not in or below 'app'"},
+		{name: "valuesInline replace", chart: "    valuesInline:\n      a: b\n    valuesMerge: replace\n"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			writeReleaseProbeChart(t, filepath.Join(root, "shared", "charts", "probe"), "")
+			writeFile(t, filepath.Join(root, "app", "kustomization.yaml"), "helmGlobals:\n  chartHome: ../shared/charts\nhelmCharts:\n  - name: probe\n    releaseName: probe\n"+tc.chart)
+			render := func(opts RenderOptions) error {
+				_, _, err := (KustomizeRenderer{}).Render(context.Background(), ResolvedSource{RepoRoot: root, Path: "app"}, opts)
+				return err
+			}
+			err := render(RenderOptions{})
+			if tc.want == "" {
+				if err != nil {
+					t.Fatalf("Render() error = %v", err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("Render() error = %v, want %q", err, tc.want)
+			}
+			if err := render(RenderOptions{BuildOptions: []string{"--load-restrictor", "LoadRestrictionsNone"}}); err != nil {
+				t.Fatalf("Render() with LoadRestrictionsNone error = %v", err)
+			}
+		})
+	}
+}
+
+// The restrictor checks for a directory before it checks the root, so a
+// directory outside the kustomization directory gives the directory text.
+func TestKustomizeHelmChartsDirectoryOutsideTheRoot(t *testing.T) {
+	files := map[string]string{"../shared/vdir/keep.yaml": "x: 1\n"}
+	for _, tc := range []struct {
+		chart, want string
+	}{
+		{chart: "    additionalValuesFiles:\n      - ../shared/vdir\n", want: "could not load additionalValuesFile: 'shared/vdir' must resolve to a file"},
+		{chart: "    valuesFile: ../shared/vdir\n", want: "'shared/vdir' must resolve to a file"},
+	} {
+		_, err := renderReleaseProbeKustomize(t, "helmCharts:\n  - name: probe\n    releaseName: probe\n"+tc.chart, RenderOptions{}, files)
+		if err == nil || !strings.Contains(err.Error(), tc.want) {
+			t.Fatalf("Render(%q) error = %v, want %q", tc.chart, err, tc.want)
+		}
+	}
+}
+
+// Recorded divergence (probe-lr/c of the third review): kustomize resolves
+// a symlink in a helmCharts values file path before it checks the root, so
+// a link that resolves inside the kustomization directory loads. drydock
+// fails any symlink component in such a path. This test pins drydock's
+// side of the divergence that docs/compatibility.md records.
+func TestKustomizeHelmChartsValuesFileSymlinkIsRejected(t *testing.T) {
+	root := t.TempDir()
+	writeReleaseProbeChart(t, filepath.Join(root, "app", "charts", "probe"), "")
+	writeFile(t, filepath.Join(root, "app", "in.yaml"), "x: 1\n")
+	if err := os.Symlink("app", filepath.Join(root, "applink")); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(root, "app", "kustomization.yaml"), "helmCharts:\n  - name: probe\n    releaseName: probe\n    valuesFile: ../applink/in.yaml\n")
+	_, _, err := (KustomizeRenderer{}).Render(context.Background(), ResolvedSource{RepoRoot: root, Path: "app"}, RenderOptions{})
+	if err == nil || !strings.Contains(err.Error(), "symlink") {
+		t.Fatalf("Render() error = %v, want the symlink rejection", err)
 	}
 }
