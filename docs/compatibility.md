@@ -502,9 +502,11 @@ Important boundaries:
   because the next run can resolve another version.
 - With `--chart-cache-max-age`, an offline resolve from a version list
   older than the max age, or of unknown age, is still used, as an expired
-  chart is. It gives the `source.chart-cache-stale` warning. An age prune
-  (`drydock cache prune --older-than`) of the chart cache also removes the
-  version lists that are older than the cutoff.
+  chart is. It gives the `source.chart-cache-stale` warning, which names
+  the version list and its fetch time, and the render is not stored. Every
+  resolve, online or offline, records its use of the list, and an age prune
+  (`drydock cache prune --older-than`) of the chart cache removes the
+  version lists that no run used within the duration.
 - Recorded divergence from strict Argo CD v3.6.1: on a schemeless OCI
   repository, drydock lists the tags with helm's registry client, which
   keeps only strict semver tags. The repo-server lists every tag, so a
@@ -586,13 +588,18 @@ Important boundaries:
     version that parses as semver, such as `v1.2.3` or `1.2`, is pulled as
     a tag as written. An `http://` repository works here. With
     `--offline`, a range resolves from the version list that an earlier
-    online run recorded.
+    online run recorded. A partial version such as `1.2` in a hand-edited
+    `Chart.lock` resolves on an HTTP repository as a partial
+    `targetRevision` does.
   - A dependency without a repository must be a directory
     `charts/<name>` whose version matches the dependency version. Without
-    a `Chart.lock`, a missing path fails with `directory charts/<name> not
-    found`, also when `charts/` holds the chart as an archive. A directory
-    of another version fails with `dependency <name> at version <version>
-    does not satisfy the constraint <constraint>`.
+    a `Chart.lock`, helm first checks every dependency in order: a version
+    that does not parse fails with `dependency "<name>" has an invalid
+    version/constraint format`, and a missing path fails with `directory
+    charts/<name> not found`, also when `charts/` holds the chart as an
+    archive. Only then does a directory of another version fail with
+    `dependency <name> at version <version> does not satisfy the constraint
+    <constraint>`.
   - The build fetches every remote dependency, also one that is vendored,
     and removes each chart archive under `charts/` whose chart it did not
     fetch, also one that `Chart.yaml` does not name. It decides by the

@@ -39,6 +39,9 @@ func TestHelmLocalSelectionPathsFollowValueFileGlobSymlinks(t *testing.T) {
 	write("shared/dir/inner.yaml", "a: 1\n")
 	link("../../../shared/real.yaml", "charts/app/env/linked.yaml")
 	link("../../shared/dir", "charts/app/linkdir")
+	// "[a].yaml" is a literal name: the glob `esc/\[a\].yaml` escapes the
+	// brackets, as doublestar reads a backslash in the render.
+	link("../../../shared/real.yaml", "charts/app/esc/[a].yaml")
 	for _, tt := range []struct {
 		file string
 		want []string
@@ -46,9 +49,14 @@ func TestHelmLocalSelectionPathsFollowValueFileGlobSymlinks(t *testing.T) {
 		{file: "env/*.yaml", want: []string{"charts/app/env", "charts/app/env/linked.yaml", "shared/real.yaml"}},
 		{file: "linkdir/*.yaml", want: []string{"charts/app/linkdir", "shared/dir/inner.yaml"}},
 		{file: "/charts/app/env/*.yaml", want: []string{"charts/app/env", "charts/app/env/linked.yaml", "shared/real.yaml"}},
+		{file: `esc/\[a\].yaml`, want: []string{"charts/app/esc/[a].yaml", "shared/real.yaml"}},
 	} {
 		source := argoappv1.ApplicationSource{Path: "charts/app", Helm: &argoappv1.ApplicationSourceHelm{ValueFiles: []string{tt.file}}}
-		got := helmLocalSelectionPaths(repo, source)
+		memo := helmGlobMemo{}
+		got := helmLocalSelectionPaths(repo, memo, source)
+		if again := helmLocalSelectionPaths(repo, memo, source); !slices.Equal(again, got) {
+			t.Fatalf("helmLocalSelectionPaths(%q) from the memo = %v, want %v", tt.file, again, got)
+		}
 		for _, want := range tt.want {
 			if !slices.Contains(got, want) {
 				t.Fatalf("helmLocalSelectionPaths(%q) = %v, want %q", tt.file, got, want)

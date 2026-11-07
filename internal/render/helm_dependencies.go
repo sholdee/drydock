@@ -135,23 +135,15 @@ func acquireHelmDependencies(ctx context.Context, tempChartPath string, requests
 // When a missing dependency is one that drydock does not fetch, it fetches
 // nothing, and the render fails on the missing dependency. chartPath is the
 // chart directory, whose charts/ directory holds the dependencies without a
-// repository (checkHelmLocalDependency).
+// repository (resolveHelmLocalDependencies, checkHelmLocalDependencies).
 func helmDependencyBuildRequests(chrt helmchart.Charter, chartPath string, missing []helmchart.Dependency, ociRepositories map[string]bool) ([]chart.Request, map[string]bool, error) {
 	parent, ok := chrt.(*chartv2.Chart)
 	if !ok || parent.Metadata == nil {
 		return nil, nil, nil
 	}
-	dependencies := parent.Metadata.Dependencies
-	policy := chart.VersionHelmDependency
-	if parent.Lock != nil {
-		if err := checkHelmChartLock(parent); err != nil {
-			return nil, nil, err
-		}
-		if err := checkHelmLockRepositories(parent.Lock.Dependencies); err != nil {
-			return nil, nil, err
-		}
-		dependencies = parent.Lock.Dependencies
-		policy = chart.VersionHelmLocked
+	dependencies, policy, err := helmBuildDependencies(parent, chartPath)
+	if err != nil {
+		return nil, nil, err
 	}
 	keep := map[string]bool{}
 	fetched := map[string]bool{}
@@ -160,11 +152,6 @@ func helmDependencyBuildRequests(chrt helmchart.Charter, chartPath string, missi
 	for _, dependency := range dependencies {
 		if dependency == nil {
 			continue
-		}
-		if strings.TrimSpace(dependency.Repository) == "" {
-			if err := checkHelmLocalDependency(chartPath, dependency, parent.Lock != nil); err != nil {
-				return nil, nil, err
-			}
 		}
 		request, ok, err := helmDependencyChartRequest(dependency, ociRepositories)
 		if err != nil {
@@ -204,38 +191,86 @@ func allHelmDependenciesFetched(missing []helmchart.Dependency, fetched map[stri
 	return true, nil
 }
 
-// checkHelmLocalDependency checks a dependency without a repository as
-// `helm dependency build` does. Without a Chart.lock, resolver.Resolve
-// requires the path charts/<name> (helm v4.3.1
-// internal/resolver/resolver.go:66-77). Then Manager.downloadAll loads
-// charts/<name> as a directory and requires its version to match the
-// dependency version (pkg/downloader/manager.go:279-300), also with a
-// Chart.lock. The errors have helm's text, with the path relative to the
-// chart, as the repo-server runs the build in the chart directory.
-func checkHelmLocalDependency(chartPath string, dependency *chartv2.Dependency, locked bool) error {
-	rel := filepath.ToSlash(filepath.Join("charts", dependency.Name))
-	path := filepath.Join(chartPath, "charts", dependency.Name)
-	if !locked {
-		if _, err := os.Stat(path); errors.Is(err, os.ErrNotExist) {
+// helmBuildDependencies returns the dependencies that `helm dependency
+// build` fetches and their version policy, after the checks that need no
+// repository: the Chart.lock with its repositories (Manager.Build), or the
+// resolve without one (Manager.Update), and then the dependencies without a
+// repository (Manager.downloadAll).
+func helmBuildDependencies(parent *chartv2.Chart, chartPath string) ([]*chartv2.Dependency, chart.VersionPolicy, error) {
+	dependencies := parent.Metadata.Dependencies
+	policy := chart.VersionHelmDependency
+	if parent.Lock != nil {
+		if err := checkHelmChartLock(parent); err != nil {
+			return nil, "", err
+		}
+		if err := checkHelmLockRepositories(parent.Lock.Dependencies); err != nil {
+			return nil, "", err
+		}
+		dependencies = parent.Lock.Dependencies
+		policy = chart.VersionHelmLocked
+	} else if err := resolveHelmLocalDependencies(chartPath, dependencies); err != nil {
+		return nil, "", err
+	}
+	if err := checkHelmLocalDependencies(chartPath, dependencies); err != nil {
+		return nil, "", err
+	}
+	return dependencies, policy, nil
+}
+
+// resolveHelmLocalDependencies runs the checks of resolver.Resolve (helm
+// v4.3.1 internal/resolver/resolver.go:60-77) that need no repository, for
+// a build without a Chart.lock, over every dependency in order: the version
+// must parse as a constraint, and a dependency without a repository needs
+// the path charts/<name>. The errors have helm's text, with the path
+// relative to the chart, as the repo-server runs the build in the chart
+// directory.
+func resolveHelmLocalDependencies(chartPath string, dependencies []*chartv2.Dependency) error {
+	for _, dependency := range dependencies {
+		if dependency == nil {
+			continue
+		}
+		if _, err := semver.NewConstraint(dependency.Version); err != nil {
+			return fmt.Errorf("dependency %q has an invalid version/constraint format: %w", dependency.Name, err)
+		}
+		if strings.TrimSpace(dependency.Repository) != "" {
+			continue
+		}
+		rel := filepath.ToSlash(filepath.Join("charts", dependency.Name))
+		if _, err := os.Stat(filepath.Join(chartPath, "charts", dependency.Name)); errors.Is(err, os.ErrNotExist) {
 			return fmt.Errorf("directory %s not found", rel)
 		} else if err != nil {
 			return err
 		}
 	}
-	local, err := chartv2loader.LoadDir(path)
-	if err != nil {
-		return fmt.Errorf("unable to load chart '%s': %w", rel, err)
-	}
-	constraint, err := semver.NewConstraint(dependency.Version)
-	if err != nil {
-		return fmt.Errorf("dependency %s has an invalid version/constraint format: %w", dependency.Name, err)
-	}
-	v, err := semver.NewVersion(local.Metadata.Version)
-	if err != nil {
-		return fmt.Errorf("invalid version %s for dependency %s: %w", dependency.Version, dependency.Name, err)
-	}
-	if !constraint.Check(v) {
-		return fmt.Errorf("dependency %s at version %s does not satisfy the constraint %s", dependency.Name, local.Metadata.Version, dependency.Version)
+	return nil
+}
+
+// checkHelmLocalDependencies checks each dependency without a repository as
+// Manager.downloadAll does (helm v4.3.1 pkg/downloader/manager.go:279-300),
+// after the resolve and also with a Chart.lock: charts/<name> must load as
+// a directory, and its version must match the dependency version. The
+// errors have helm's text.
+func checkHelmLocalDependencies(chartPath string, dependencies []*chartv2.Dependency) error {
+	for _, dependency := range dependencies {
+		if dependency == nil || strings.TrimSpace(dependency.Repository) != "" {
+			continue
+		}
+		rel := filepath.ToSlash(filepath.Join("charts", dependency.Name))
+		local, err := chartv2loader.LoadDir(filepath.Join(chartPath, "charts", dependency.Name))
+		if err != nil {
+			return fmt.Errorf("unable to load chart '%s': %w", rel, err)
+		}
+		constraint, err := semver.NewConstraint(dependency.Version)
+		if err != nil {
+			return fmt.Errorf("dependency %s has an invalid version/constraint format: %w", dependency.Name, err)
+		}
+		v, err := semver.NewVersion(local.Metadata.Version)
+		if err != nil {
+			return fmt.Errorf("invalid version %s for dependency %s: %w", dependency.Version, dependency.Name, err)
+		}
+		if !constraint.Check(v) {
+			return fmt.Errorf("dependency %s at version %s does not satisfy the constraint %s", dependency.Name, local.Metadata.Version, dependency.Version)
+		}
 	}
 	return nil
 }
@@ -575,6 +610,9 @@ func ChartAcquisitionRecord(request chart.Request, acquired chart.Result, maxAge
 			FetchedAt: acquired.FetchedAt,
 			MaxAge:    maxAge,
 			Stale:     acquired.Stale,
+
+			VersionListStale:     acquired.VersionListStale,
+			VersionListFetchedAt: acquired.VersionListFetchedAt,
 		},
 	}
 }

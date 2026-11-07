@@ -321,16 +321,52 @@ func TestHelmDependencyBuildKeepsArchivesOfOtherCharts(t *testing.T) {
 
 // TestHelmDependencyBuildChecksDependenciesWithoutRepository pins how
 // `helm dependency build` checks a dependency without a repository, with
-// helm's text (checked against the helm 4.3.1 binary): without a
-// Chart.lock, charts/<name> must exist as a path, so a vendored archive
-// does not count, and the vendored directory must match the version
-// constraint.
+// helm's text and in helm's order (checked against the helm 4.3.1 binary):
+// without a Chart.lock, every version must parse as a constraint and
+// charts/<name> must exist as a path, so a vendored archive does not
+// count. Only then must each vendored directory match its version.
 func TestHelmDependencyBuildChecksDependenciesWithoutRepository(t *testing.T) {
 	for _, tt := range []struct {
 		name    string
+		chart   string
 		vendor  func(t *testing.T, parent string)
 		wantErr string
 	}{
+		{
+			// The resolve checks every dependency before the download
+			// checks any version, so the missing b wins over the
+			// vendored a of another version.
+			name: "missing before another version",
+			chart: `
+  - name: a
+    version: 2.0.0
+  - name: b
+    version: 1.0.0
+  - name: redis
+    version: 1.0.0
+    repository: https://charts.example.test
+`,
+			vendor: func(t *testing.T, parent string) {
+				writeNamedTestChart(t, filepath.Join(parent, "charts", "a"), "a", "1.0.0", configMapTemplate("vendored-a"))
+			},
+			wantErr: "directory charts/b not found",
+		},
+		{
+			name: "invalid constraint",
+			chart: `
+  - name: a
+    version: 2.0.0
+  - name: b
+    version: "!!bad"
+  - name: redis
+    version: 1.0.0
+    repository: https://charts.example.test
+`,
+			vendor: func(t *testing.T, parent string) {
+				writeNamedTestChart(t, filepath.Join(parent, "charts", "a"), "a", "1.0.0", configMapTemplate("vendored-a"))
+			},
+			wantErr: `dependency "b" has an invalid version/constraint format: improper constraint: "!!bad"`,
+		},
 		{
 			name:    "missing",
 			vendor:  func(*testing.T, string) {},
@@ -353,13 +389,17 @@ func TestHelmDependencyBuildChecksDependenciesWithoutRepository(t *testing.T) {
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			root := t.TempDir()
-			parent := writeHelmDependencyParent(t, root, `
+			dependencies := tt.chart
+			if dependencies == "" {
+				dependencies = `
   - name: sub
     version: 2.0.0
   - name: redis
     version: 1.0.0
     repository: https://charts.example.test
-`)
+`
+			}
+			parent := writeHelmDependencyParent(t, root, dependencies)
 			tt.vendor(t, parent)
 			acquirer := &namedChartAcquirer{chartDirs: map[string]string{"redis": filepath.Join(root, "acquired", "redis")}}
 			_, err := renderHelmDependencyParent(t, root, acquirer)

@@ -244,9 +244,10 @@ CRD_REJECTED_MESSAGE="Invalid value: \".\": spec.sourceHydrator.syncSource.path 
 # HELM_REPO_CHARTS lists one "name version" archive for each entry of
 # helm-repo/index.yaml.
 HELM_REPO_PORT="18879"
-# The busybox-extras package of PARITY_ALPINE_IMAGE_DIGEST (alpine 3.23.6),
-# whose httpd serves the HTTP Helm repository.
-BUSYBOX_EXTRAS_VERSION="1.37.0-r30"
+# The busybox-extras release of PARITY_ALPINE_IMAGE_DIGEST (alpine 3.23.6),
+# whose httpd serves the HTTP Helm repository. It pins the upstream version
+# only, because Alpine drops old package releases from its mirrors.
+BUSYBOX_EXTRAS_VERSION="1.37"
 HELM_REPO_URL="http://argocd-parity-registry.argocd-parity.svc.cluster.local:${HELM_REPO_PORT}"
 HELM_REPO_PATH="${REPO_ROOT}/testdata/argocd-parity/helm-repo"
 HELM_REPO_CHARTS=(
@@ -966,7 +967,7 @@ prepare_fixture_git_image() {
   # pulled. busybox-extras serves the HTTP Helm repository.
   cat > "${dockerfile}" <<DOCKERFILE
 FROM ${PARITY_ALPINE_POLICY_IMAGE}
-RUN apk add --no-cache git-daemon busybox-extras=${BUSYBOX_EXTRAS_VERSION}
+RUN apk add --no-cache git-daemon busybox-extras~${BUSYBOX_EXTRAS_VERSION}
 COPY --chown=65534:65534 helm-repo /srv/helm
 COPY --chown=65534:65534 repo.git /srv/git/repo.git
 COPY --chown=65534:65534 oob-symlink.git /srv/git/oob-symlink.git

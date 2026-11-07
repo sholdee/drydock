@@ -18,7 +18,7 @@ import (
 // the repository root, as in Argo CD. Each also owns the symlinks that its
 // path passes through and the paths they end at
 // (helmFileParameterSymlinkSelectionPaths, helmValueFileSymlinkSelectionPaths).
-func helmLocalSelectionPaths(root string, source argoappv1.ApplicationSource) []string {
+func helmLocalSelectionPaths(root string, globs helmGlobMemo, source argoappv1.ApplicationSource) []string {
 	if source.Helm == nil {
 		return nil
 	}
@@ -32,7 +32,7 @@ func helmLocalSelectionPaths(root string, source argoappv1.ApplicationSource) []
 			paths = append(paths, selectionPath)
 		}
 		if helmInputPathHasGlob(valueFile) {
-			paths = append(paths, helmValueFileGlobSymlinkSelectionPaths(root, source.Path, valueFile)...)
+			paths = append(paths, helmValueFileGlobSymlinkSelectionPaths(globs, root, source.Path, valueFile)...)
 		} else {
 			paths = append(paths, helmValueFileSymlinkSelectionPaths(root, source.Path, valueFile)...)
 		}
@@ -73,23 +73,33 @@ func helmValueFileSymlinkSelectionPaths(root, appRel, file string) []string {
 	return helmInputSymlinkSelectionPaths(root, appRel, file, render.HelmValueFileInputPaths)
 }
 
+// helmGlobMemo holds the paths that each value file glob owns on one tree,
+// by root and pattern, so a glob that many Applications name expands once
+// per diff side.
+type helmGlobMemo map[string][]string
+
 // helmValueFileGlobSymlinkSelectionPaths expands the local value file glob
 // file, relative to appRel or, with a leading "/", to root, on the tree at
-// root, as the render expands it with doublestar. Each match owns the
-// symlinks on its way and the file where it ends, as a value file written
-// as that path does (helmValueFileSymlinkSelectionPaths). The static
-// directory of the glob is owned elsewhere (helmLocalInputSelectionPath).
-func helmValueFileGlobSymlinkSelectionPaths(root, appRel, file string) []string {
+// root, as the render expands it with doublestar. A backslash escapes the
+// next character, as in doublestar. Each match owns the symlinks on its way
+// and the file where it ends, as a value file written as that path does
+// (helmValueFileSymlinkSelectionPaths). The static directory of the glob is
+// owned elsewhere (helmLocalInputSelectionPath). memo, when set, keeps the
+// result.
+func helmValueFileGlobSymlinkSelectionPaths(memo helmGlobMemo, root, appRel, file string) []string {
 	if strings.TrimSpace(file) == "" || strings.Contains(file, "$") || strings.Contains(file, "://") {
 		return nil
 	}
-	file = strings.ReplaceAll(file, "\\", "/")
 	pattern := path.Join(normalizeSelectPath(appRel), file)
 	if strings.HasPrefix(file, "/") {
 		pattern = path.Clean(strings.TrimLeft(file, "/"))
 	}
 	if pattern == "." || pattern == ".." || strings.HasPrefix(pattern, "../") || path.IsAbs(pattern) {
 		return nil
+	}
+	key := root + "\x00" + pattern
+	if paths, ok := memo[key]; ok {
+		return paths
 	}
 	matches, err := doublestar.Glob(os.DirFS(root), pattern)
 	if err != nil {
@@ -98,6 +108,9 @@ func helmValueFileGlobSymlinkSelectionPaths(root, appRel, file string) []string 
 	var paths []string
 	for _, match := range matches {
 		paths = append(paths, helmValueFileSymlinkSelectionPaths(root, "", "/"+match)...)
+	}
+	if memo != nil {
+		memo[key] = paths
 	}
 	return paths
 }
@@ -167,7 +180,7 @@ func helmRefSelectionPaths(tree *selectionTree, application argoappv1.Applicatio
 				paths = append(paths, selectionPath)
 				_, refPath, _ := splitHelmValueFileRef(valueFile)
 				if helmInputPathHasGlob(refPath) {
-					paths = append(paths, helmValueFileGlobSymlinkSelectionPaths(tree.root, "", "/"+refPath)...)
+					paths = append(paths, helmValueFileGlobSymlinkSelectionPaths(tree.helmGlobs, tree.root, "", "/"+refPath)...)
 				} else {
 					paths = append(paths, helmValueFileSymlinkSelectionPaths(tree.root, "", "/"+refPath)...)
 				}
