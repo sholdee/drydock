@@ -1364,7 +1364,7 @@ resolver.
 
 ### Helm and Kustomize helmCharts renders that fail
 
-Eleven more cases fail inside `helm template` or kustomize, not on the
+Thirteen more cases fail inside `helm template` or kustomize, not on the
 decode of the output. Their messages are Helm and kustomize texts, so
 `TestGeneratedParityDecodeFixtures` has no offline upstream oracle for
 them. `TestHelmRenderParityDecodeFixtures` in `internal/render` renders
@@ -1390,6 +1390,8 @@ a `ComparisonError` that contains `argocdMessage`.
 | `parity-decode-kustomize-helm-release-name-dash` | kustomize rejects the `releaseName` `-bad`, which helm would read as a flag |
 | `parity-decode-kustomize-helm-values-outside-root` | `additionalValuesFiles` names `../kustomize-helm-values-outside-root.yaml`, outside the kustomization directory, and the smoke `argocd-cm` keeps the default `LoadRestrictionsRootOnly`. Argo CD names absolute paths, so `argocdMessage` is the start of the text |
 | `parity-decode-kustomize-helm-values-directory` | `valuesFile` names the directory `vals`, which the kustomize file loader cannot load |
+| `parity-decode-kustomize-helm-values-directory-outside-root` | `additionalValuesFiles` names the directory `../kustomize-helm-values-outside-dir`. The restriction checks for a directory before it checks the root, so the text is the directory text |
+| `parity-decode-kustomize-helm-charthome-outside-root` | `helmGlobals.chartHome` is `../kustomize-helm-shared-charts`, and the entry sets no `valuesFile`, so kustomize loads the chart `values.yaml` outside the kustomization directory and fails |
 | `parity-decode-helm-release-name-long` | `helm.releaseName` has 54 characters, and helm allows 53 |
 | `parity-decode-helm-release-name-template` | Argo CD passes the release name as `--name-template`, and `{{ .Missing.Field }` does not parse as a Go template |
 | `parity-decode-helm-version` | Argo CD v3.6.1 accepts `helm.version` empty, `v3`, or `v4`, not `v2` |

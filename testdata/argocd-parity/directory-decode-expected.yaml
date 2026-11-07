@@ -271,6 +271,18 @@ cases:
     source: render
     argocdMessage: "could not load additionalValuesFile: security; file '"
     drydockMessage: "could not load additionalValuesFile: security; file 'workloads/directory-decode/kustomize-helm-values-outside-root.yaml' is not in or below 'workloads/directory-decode/kustomize-helm-values-outside-root'"
+  # The default values file of a chart under a chart home outside the
+  # kustomization directory goes through the same restriction.
+  - name: parity-decode-kustomize-helm-charthome-outside-root
+    source: render
+    argocdMessage: "kustomize-helm-shared-charts/rootprobe/values.yaml' is not in or below '"
+    drydockMessage: "security; file 'workloads/directory-decode/kustomize-helm-shared-charts/rootprobe/values.yaml' is not in or below 'workloads/directory-decode/kustomize-helm-charthome-outside-root'"
+  # A directory outside the kustomization directory fails as a directory:
+  # the restriction checks for a directory first (loadrestrictions.go:20-27).
+  - name: parity-decode-kustomize-helm-values-directory-outside-root
+    source: render
+    argocdMessage: "kustomize-helm-values-outside-dir' must resolve to a file"
+    drydockMessage: "could not load additionalValuesFile: 'workloads/directory-decode/kustomize-helm-values-outside-dir' must resolve to a file"
   # A values file that is a directory fails in the file loader.
   - name: parity-decode-kustomize-helm-values-directory
     source: render
