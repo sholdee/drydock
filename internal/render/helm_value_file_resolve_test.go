@@ -387,7 +387,7 @@ func TestHelmFileParameterURLFetchesThroughRemoteCache(t *testing.T) {
 	if got["f"] != "remote-content" {
 		t.Fatalf("values = %v, want f from the remote file", got)
 	}
-	if len(acquirer.requests) != 1 || acquirer.requests[0].URL != "https://values.example.test/a,b.txt" {
+	if len(acquirer.requests) != 1 || acquirer.requests[0].URL != "https://values.example.test/a,b.txt" || !acquirer.requests[0].AnyFileType {
 		t.Fatalf("remote requests = %#v, want the file parameter URL", acquirer.requests)
 	}
 	if !acquirer.options[0].Offline {

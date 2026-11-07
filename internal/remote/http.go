@@ -29,7 +29,7 @@ func (acquirer DefaultAcquirer) Acquire(ctx context.Context, request Request, op
 }
 
 func (acquirer DefaultAcquirer) acquireHTTPFile(ctx context.Context, request Request, opts Options) (Result, error) {
-	normalized, err := NormalizeURL(request.URL)
+	normalized, err := normalizeHTTPFileURL(request.URL, request.AnyFileType)
 	if err != nil {
 		return Result{}, err
 	}
@@ -37,7 +37,7 @@ func (acquirer DefaultAcquirer) acquireHTTPFile(ctx context.Context, request Req
 	if err != nil {
 		return Result{}, err
 	}
-	key, err := NewCacheKey(Request{URL: normalized})
+	key, err := NewCacheKey(Request{URL: normalized, AnyFileType: request.AnyFileType})
 	if err != nil {
 		return Result{}, err
 	}

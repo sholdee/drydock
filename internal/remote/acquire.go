@@ -29,6 +29,11 @@ type Request struct {
 	Kind     RequestKind
 	RepoURL  string
 	Revision string
+	// AnyFileType accepts an HTTP file URL whose path does not end in a
+	// YAML or JSON extension, such as a Helm value file or file parameter
+	// URL, which helm fetches whatever its name. The cache key does not
+	// change.
+	AnyFileType bool
 }
 
 type Credentials struct {
@@ -83,7 +88,7 @@ func DefaultCacheDir() (string, error) {
 func NewCacheKey(request Request) (string, error) {
 	switch requestKind(request.Kind) {
 	case RequestHTTPFile:
-		normalized, err := NormalizeURL(request.URL)
+		normalized, err := normalizeHTTPFileURL(request.URL, request.AnyFileType)
 		if err != nil {
 			return "", err
 		}
@@ -183,7 +188,14 @@ func isRedactedSCPStyleGitURL(raw string) bool {
 	return strings.Contains(host, ".") || strings.ContainsAny(repoPath, `/\`)
 }
 
+// NormalizeURL normalizes the URL of a remote YAML or JSON file.
 func NormalizeURL(raw string) (string, error) {
+	return normalizeHTTPFileURL(raw, false)
+}
+
+// normalizeHTTPFileURL normalizes the URL of a remote file. Unless
+// anyFileType is set, its path must end in a YAML or JSON extension.
+func normalizeHTTPFileURL(raw string, anyFileType bool) (string, error) {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {
 		return "", fmt.Errorf("remote resource URL is required")
@@ -211,7 +223,7 @@ func NormalizeURL(raw string) (string, error) {
 		return "", fmt.Errorf("remote resource URL %q must not include a fragment", RedactURL(raw))
 	}
 	ext := strings.ToLower(path.Ext(parsed.Path))
-	if ext != ".yaml" && ext != ".yml" && ext != ".json" {
+	if !anyFileType && ext != ".yaml" && ext != ".yml" && ext != ".json" {
 		return "", fmt.Errorf("remote resource URL %q must point to a YAML or JSON file", RedactURL(raw))
 	}
 	return parsed.String(), nil

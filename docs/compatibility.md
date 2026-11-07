@@ -901,7 +901,9 @@ Supported:
   result must still be in the repository.
 - A `fileParameters` URL with an allowed scheme is fetched as helm
   `--set-file` fetches it in Argo CD, through the remote-resource cache, so
-  `--offline` reads only a cached copy. An overridden URL is never fetched.
+  `--offline` reads only a cached copy. A file parameter or value file URL
+  can have any file name, as in helm. A URL with a query or a fragment
+  still fails in drydock. An overridden URL is never fetched.
   A scheme that `helm.valuesFileSchemes` allows but that is not `http` or
   `https` fails in drydock, as for a value file URL.
 - Recorded divergence from strict Argo CD v3.6.1: helm `--set-file` drops a

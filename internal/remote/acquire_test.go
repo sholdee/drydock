@@ -267,6 +267,43 @@ func TestDefaultAcquirerFetchesAndCachesResource(t *testing.T) {
 	}
 }
 
+// TestDefaultAcquirerAnyFileTypeAcceptsOtherNames pins that a request with
+// AnyFileType fetches and caches a file whose name has no YAML or JSON
+// extension, as helm fetches a file parameter URL, under the same cache key
+// as a YAML request for the same URL. A request without it still fails.
+func TestDefaultAcquirerAnyFileTypeAcceptsOtherNames(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte("plain text"))
+	}))
+	defer server.Close()
+
+	cacheDir := t.TempDir()
+	acquirer := DefaultAcquirer{Client: server.Client()}
+	if _, err := acquirer.Acquire(context.Background(), Request{URL: server.URL + "/file.txt"}, Options{CacheDir: cacheDir}); err == nil || !strings.Contains(err.Error(), "must point to a YAML or JSON file") {
+		t.Fatalf("Acquire() error = %v, want the YAML or JSON name error", err)
+	}
+	request := Request{URL: server.URL + "/file.txt", AnyFileType: true}
+	result, err := acquirer.Acquire(context.Background(), request, Options{CacheDir: cacheDir})
+	if err != nil {
+		t.Fatalf("Acquire() error = %v", err)
+	}
+	if data, err := os.ReadFile(result.Path); err != nil || string(data) != "plain text" {
+		t.Fatalf("cached data = %q, %v, want plain text", data, err)
+	}
+	cached, err := acquirer.Acquire(context.Background(), request, Options{CacheDir: cacheDir, Offline: true})
+	if err != nil || !cached.FromCache || cached.Path != result.Path {
+		t.Fatalf("offline Acquire() = %#v, %v, want the cached file", cached, err)
+	}
+	yamlKey, err := NewCacheKey(Request{URL: server.URL + "/values.yaml"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	anyKey, err := NewCacheKey(Request{URL: server.URL + "/values.yaml", AnyFileType: true})
+	if err != nil || anyKey != yamlKey {
+		t.Fatalf("cache key = %q, %v, want the YAML request key %q", anyKey, err, yamlKey)
+	}
+}
+
 func TestDefaultRemoteAcquirerWritesHTTPMetadata(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write([]byte("apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: remote\n"))

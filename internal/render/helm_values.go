@@ -698,7 +698,9 @@ func readHelmRemoteFile(ctx context.Context, opts RenderOptions, repoRoot, label
 	if len(forbiddenRoots) == 0 {
 		forbiddenRoots = []string{repoRoot}
 	}
-	request := remote.Request{URL: file, Kind: remote.RequestHTTPFile}
+	// helm fetches the URL whatever its name. Kustomize helmCharts value
+	// files keep the YAML or JSON name check.
+	request := remote.Request{URL: file, Kind: remote.RequestHTTPFile, AnyFileType: argoHelmValueFiles(opts)}
 	acquired, err := acquirer.Acquire(ctx, request, remote.Options{
 		CacheDir:       opts.RemoteResourceCacheDir,
 		Offline:        opts.OfflineRemoteResources,
