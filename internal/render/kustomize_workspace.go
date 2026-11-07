@@ -36,6 +36,9 @@ type kustomizeWorkspace struct {
 	// annotation names no program.
 	skippedExecFunctions  int
 	skippedEmptyFunctions int
+	// rewrittenEntries maps the generated files that stand for generators:
+	// and transformers: entries to the entries.
+	rewrittenEntries map[string]string
 	// sourceOptionDiagnostics holds the warnings from merging the
 	// spec.source.kustomize options into the source kustomization.
 	sourceOptionDiagnostics []diagnostic.Diagnostic
@@ -89,13 +92,14 @@ func renderKustomizeWithPreparedWorkspace(ctx context.Context, source ResolvedSo
 		visited:          make(map[string]struct{}),
 	}
 	if err := workspace.prepareKustomizationDir(ctx, tempRoot, tempRepoRoot, ""); err != nil {
-		return nil, nil, err
+		return nil, nil, workspace.restoreErrorPaths(err)
 	}
 
 	manifests, renderDiags, err := renderPlainKustomize(ctx, tempSource, tempRoot, buildSettings, opts)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, workspace.restoreErrorPaths(err)
 	}
+	workspace.restoreRewrittenEntryPaths(manifests)
 	return manifests, append(workspace.diagnostics(), renderDiags...), nil
 }
 

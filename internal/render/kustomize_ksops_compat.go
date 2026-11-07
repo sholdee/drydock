@@ -180,6 +180,14 @@ func (w *kustomizeWorkspace) prepareKustomizeGeneratorEntry(dir, boundaryRoot st
 			ksopsSteps[root] = len(docSteps)
 			docSteps = append(docSteps, kustomizeGenerationStep{behavior: "unspecified", moved: true})
 		case kustomizePluginSkip:
+			// kustomize reads the generator options of the configuration
+			// it adds (FnPlugin.Generate and UpdateResourceOptions,
+			// fnplugin.go:116-126): needs-hash renames it, and behavior
+			// merges it. drydock adds the configuration as a resource, which
+			// has no such options, so it fails closed.
+			if annotation, ok := generatorOptionAnnotation(root); ok {
+				return prepared, fmt.Errorf("kustomize generators entry %q: the configuration of a skipped function sets the generator option annotation %q, which drydock does not apply", describe, annotation)
+			}
 			config := localConfigCopy(root)
 			skippedDocs = append(skippedDocs, config)
 			docSteps = append(docSteps, kustomizeGenerationStep{creates: []resid.ResId{resid.FromRNode(kyaml.NewRNode(config))}, behavior: "unspecified", moved: true})
@@ -197,13 +205,14 @@ func (w *kustomizeWorkspace) prepareKustomizeGeneratorEntry(dir, boundaryRoot st
 		return prepared, fmt.Errorf("kustomize generators entry %q mixes KSOPS and builtin generator documents; split them into separate generator manifests", describe)
 	}
 	if len(builtinDocs) != 0 {
-		if len(skippedDocs) == 0 && !read.rewrite {
+		if len(skippedDocs) == 0 {
 			prepared.replacement = entry
 		} else {
 			rel, err := writeKustomizePluginDocuments(dir, filepath.Join(".drydock", "generators", fmt.Sprintf("%03d-%03d.yaml", graphIndex, entryIndex)), builtinDocs)
 			if err != nil {
 				return prepared, err
 			}
+			w.recordRewrittenEntry(rel, entry)
 			prepared.replacement = rel
 		}
 	}
@@ -212,6 +221,7 @@ func (w *kustomizeWorkspace) prepareKustomizeGeneratorEntry(dir, boundaryRoot st
 		if err != nil {
 			return prepared, err
 		}
+		w.recordRewrittenEntry(rel, entry)
 		prepared.resources = append(prepared.resources, rel)
 	}
 	if len(ksopsDocs) != 0 && !w.opts.EnableKSOPSCompat {
@@ -231,6 +241,7 @@ func (w *kustomizeWorkspace) prepareKustomizeGeneratorEntry(dir, boundaryRoot st
 				return prepared, err
 			}
 			fileIndex++
+			w.recordRewrittenEntry(rel, entry)
 			prepared.resources = append(prepared.resources, rel)
 			if ids, ok := kustomizeResourceFileIDs(dir, []string{rel}); ok {
 				step := &docSteps[ksopsSteps[root]]

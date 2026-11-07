@@ -112,7 +112,7 @@ func renderPlainKustomize(ctx context.Context, source ResolvedSource, root strin
 	kustomizer := krusty.MakeKustomizer(options)
 	resMap, err := kustomizer.Run(filesys.MakeFsOnDisk(), root)
 	if err != nil {
-		return nil, nil, fmt.Errorf("kustomize build %s: %w", root, err)
+		return nil, nil, fmt.Errorf("kustomize build %s: %w", root, kustomizeDirectoryPluginError(err, opts, settings))
 	}
 	if err := setKustomizeManagedByLabel(resMap, root, settings); err != nil {
 		return nil, nil, fmt.Errorf("kustomize build %s: %w", root, err)

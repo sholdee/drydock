@@ -13,10 +13,8 @@ import (
 	goyaml "go.yaml.in/yaml/v3"
 	"sigs.k8s.io/kustomize/api/hasher"
 	"sigs.k8s.io/kustomize/api/konfig"
-	"sigs.k8s.io/kustomize/api/krusty"
 	"sigs.k8s.io/kustomize/api/resource"
 	"sigs.k8s.io/kustomize/api/types"
-	"sigs.k8s.io/kustomize/kyaml/filesys"
 	"sigs.k8s.io/kustomize/kyaml/fn/runtime/runtimeutil"
 	kyaml "sigs.k8s.io/kustomize/kyaml/yaml"
 )
@@ -147,20 +145,21 @@ type kustomizePluginEntry struct {
 	roots       []*goyaml.Node
 	describe    string
 	manifestDir string
-	// rewrite reports that the configurations do not come from one file as
-	// written, so krusty must get them from a generated file: they come
-	// from a kustomization directory.
-	rewrite bool
 }
 
 // readKustomizePluginEntry reads the plugin configurations of one
 // generators: or transformers: entry as kustomize reads them
 // (KustTarget.configureExternalGenerators and
-// configureExternalTransformers): an inline configuration, a file, or a
-// kustomization directory, which kustomize builds. kustomize parses them
-// with its resource factory, which expands a List into its items. A file
-// outside the kustomization directory fails under LoadRestrictionsRootOnly,
-// with the text of KustTarget.accumulateResources.
+// configureExternalTransformers): an inline configuration or a file.
+// kustomize parses them with its resource factory, which expands a List
+// into its items. A file outside the kustomization directory fails under
+// LoadRestrictionsRootOnly, with the text of KustTarget.accumulateResources.
+//
+// kustomize also accepts a kustomization directory, which it builds.
+// drydock does not build it here, because such a build would read files
+// that no graph check has seen. A directory entry fails here; a
+// transformers directory stays in the kustomization for krusty
+// (prepareKustomizeTransformers), which walks it with the graph checks.
 func (w *kustomizeWorkspace) readKustomizePluginEntry(field kustomizePluginField, dir, boundaryRoot, entry string) (kustomizePluginEntry, error) {
 	if _, inline := inlineKustomizeGeneratorDocuments(entry); inline {
 		roots, err := kustomizePluginRoots([]byte(entry))
@@ -179,11 +178,7 @@ func (w *kustomizeWorkspace) readKustomizePluginEntry(field kustomizePluginField
 		return kustomizePluginEntry{}, fmt.Errorf("kustomize %s %q: %s manifest not found", field.name, entry, singular)
 	}
 	if info.IsDir() {
-		roots, err := w.buildKustomizePluginDirectory(path)
-		if err != nil {
-			return kustomizePluginEntry{}, fmt.Errorf("kustomize %s %q: %w", field.name, entry, err)
-		}
-		return kustomizePluginEntry{roots: roots, describe: describe, manifestDir: path, rewrite: true}, nil
+		return kustomizePluginEntry{}, fmt.Errorf("kustomize %s entry %q is a kustomization directory; drydock does not expand directory entries of %s, which can hold plugin functions", field.name, entry, field.name)
 	}
 	if !info.Mode().IsRegular() {
 		return kustomizePluginEntry{}, fmt.Errorf("kustomize %s %q: %s manifest must be a regular file", field.name, entry, singular)
@@ -213,22 +208,6 @@ func kustomizePluginRoots(content []byte) ([]*goyaml.Node, error) {
 	roots := make([]*goyaml.Node, 0, len(nodes))
 	for _, node := range nodes {
 		roots = append(roots, node.YNode())
-	}
-	return roots, nil
-}
-
-// buildKustomizePluginDirectory builds a kustomization directory of plugin
-// configurations with krusty, as kustomize accumulates such an entry.
-func (w *kustomizeWorkspace) buildKustomizePluginDirectory(path string) ([]*goyaml.Node, error) {
-	options := krusty.MakeDefaultOptions()
-	options.LoadRestrictions = w.buildSettings.LoadRestrictions
-	resMap, err := krusty.MakeKustomizer(options).Run(filesys.MakeFsOnDisk(), path)
-	if err != nil {
-		return nil, err
-	}
-	roots := make([]*goyaml.Node, 0, resMap.Size())
-	for _, res := range resMap.Resources() {
-		roots = append(roots, res.Copy().YNode())
 	}
 	return roots, nil
 }
@@ -286,6 +265,13 @@ func (w *kustomizeWorkspace) prepareKustomizeTransformers(ctx context.Context, d
 		if err := ctx.Err(); err != nil {
 			return err
 		}
+		if isKustomizeDirectoryEntry(dir, boundaryRoot, entry) {
+			// krusty builds the directory with the graph checks of the
+			// build. A plugin function in it fails there
+			// (kustomizeDirectoryPluginError).
+			remaining = append(remaining, entry)
+			continue
+		}
 		read, err := w.readKustomizePluginEntry(kustomizeTransformersField, dir, boundaryRoot, entry)
 		if err != nil {
 			return err
@@ -303,7 +289,7 @@ func (w *kustomizeWorkspace) prepareKustomizeTransformers(ctx context.Context, d
 			}
 			kept = append(kept, root)
 		}
-		if skipped == 0 && !read.rewrite {
+		if skipped == 0 {
 			remaining = append(remaining, entry)
 			continue
 		}
@@ -311,8 +297,114 @@ func (w *kustomizeWorkspace) prepareKustomizeTransformers(ctx context.Context, d
 		if err != nil {
 			return err
 		}
+		w.recordRewrittenEntry(rel, entry)
 		remaining = append(remaining, rel)
 	}
 	kustomization.Transformers = remaining
 	return nil
+}
+
+// isKustomizeDirectoryEntry reports whether a transformers: or generators:
+// entry names a local directory.
+func isKustomizeDirectoryEntry(dir, boundaryRoot, entry string) bool {
+	if _, inline := inlineKustomizeGeneratorDocuments(entry); inline {
+		return false
+	}
+	_, info, err := validateLocalKustomizeRef(boundaryRoot, dir, "transformers", entry)
+	return err == nil && info != nil && info.IsDir()
+}
+
+// kustomizeDirectoryPluginError gives the krusty error of a build an
+// accurate text. With a found argocd-cm and --enable-alpha-plugins, drydock
+// prepared every plugin file entry, so the only plugin that krusty can
+// still refuse with "external plugins disabled" is one in a transformers:
+// directory entry. kustomize would load it, so the text of krusty is wrong
+// there: drydock does not expand such directories.
+func kustomizeDirectoryPluginError(err error, opts RenderOptions, settings kustomizeBuildSettings) error {
+	if err == nil || opts.KustomizeCaller == KustomizeCallerArgoCDAssumed || !settings.EnableAlphaPlugins || !strings.Contains(err.Error(), "external plugins disabled") {
+		return err
+	}
+	return fmt.Errorf("a transformers: entry that is a kustomization directory holds a plugin; drydock does not expand directory entries that hold plugin functions (krusty: %w)", err)
+}
+
+// recordRewrittenEntry records that the generated file rel stands for a
+// generators: or transformers: entry, so the origin annotations and errors
+// of the build can name the entry (restoreRewrittenEntryPaths).
+func (w *kustomizeWorkspace) recordRewrittenEntry(rel, entry string) {
+	if w.rewrittenEntries == nil {
+		w.rewrittenEntries = map[string]string{}
+	}
+	w.rewrittenEntries[filepath.ToSlash(rel)] = strings.TrimSpace(entry)
+}
+
+// kustomizeOriginAnnotations are the annotations of buildMetadata
+// originAnnotations and transformerAnnotations, which name the file of a
+// generator or transformer configuration.
+var kustomizeOriginAnnotations = []string{"config.kubernetes.io/origin", "alpha.config.kubernetes.io/transformations"}
+
+// restoreRewrittenEntryText replaces the paths of the generated files that
+// stand for entries with the entry paths, and the workspace root with
+// nothing, so text names the repository files.
+func (w *kustomizeWorkspace) restoreRewrittenEntryText(text string) string {
+	for rel, entry := range w.rewrittenEntries {
+		text = strings.ReplaceAll(text, rel, entry)
+	}
+	for _, root := range w.workspaceRoots() {
+		text = strings.ReplaceAll(text, root+string(filepath.Separator), "")
+	}
+	return text
+}
+
+// workspaceRoots returns the temp repository root as written and with its
+// symlinks resolved, as krusty can name either.
+func (w *kustomizeWorkspace) workspaceRoots() []string {
+	roots := []string{w.tempRepoRoot}
+	if resolved, err := filepath.EvalSymlinks(w.tempRepoRoot); err == nil && resolved != w.tempRepoRoot {
+		roots = append(roots, resolved)
+	}
+	return roots
+}
+
+// restoreRewrittenEntryPaths names the entries instead of their generated
+// files in the origin annotations of the output.
+func (w *kustomizeWorkspace) restoreRewrittenEntryPaths(manifests []Manifest) {
+	if len(w.rewrittenEntries) == 0 {
+		return
+	}
+	for _, manifest := range manifests {
+		annotations := manifest.Object.GetAnnotations()
+		changed := false
+		for _, key := range kustomizeOriginAnnotations {
+			if value, ok := annotations[key]; ok {
+				if restored := w.restoreRewrittenEntryText(value); restored != value {
+					annotations[key] = restored
+					changed = true
+				}
+			}
+		}
+		if changed {
+			manifest.Object.SetAnnotations(annotations)
+		}
+	}
+}
+
+// workspaceError is an error of the prepared workspace whose text names the
+// repository files instead of the workspace files.
+type workspaceError struct {
+	text string
+	err  error
+}
+
+func (e workspaceError) Error() string { return e.text }
+func (e workspaceError) Unwrap() error { return e.err }
+
+func (w *kustomizeWorkspace) restoreErrorPaths(err error) error {
+	if err == nil {
+		return nil
+	}
+	text := w.restoreRewrittenEntryText(err.Error())
+	if text == err.Error() {
+		return err
+	}
+	return workspaceError{text: text, err: err}
 }

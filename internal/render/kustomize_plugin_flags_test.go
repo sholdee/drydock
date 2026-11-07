@@ -154,6 +154,7 @@ func TestKustomizeSkippedPluginsStayInTheBuild(t *testing.T) {
 		wantErr   string
 		wantNames string
 		wantData  string
+		wantLabel bool
 	}{
 		{name: "only a skipped transformer", path: "one", files: map[string]string{
 			"one/kustomization.yaml": "transformers: [fn.yaml]\n", "one/fn.yaml": fooFunction("foo", "Foo", "example.com/v1"),
@@ -177,13 +178,33 @@ func TestKustomizeSkippedPluginsStayInTheBuild(t *testing.T) {
 		{name: "same skipped generator twice", path: "d", wantErr: "already registered id", files: map[string]string{
 			"d/kustomization.yaml": "resources: [cm.yaml]\ngenerators: [gen.yaml, gen.yaml]\n", "d/cm.yaml": cm("plain"), "d/gen.yaml": fooFunction("foo", "Foo", "example.com/v1"),
 		}},
-		{name: "transformer directory", path: "e", wantNames: "plain", files: map[string]string{
+		// drydock does not expand a directory entry that holds a plugin
+		// function, where kustomize skips the function (recorded
+		// divergence).
+		{name: "transformer directory with a function", path: "e", wantErr: "drydock does not expand directory entries that hold plugin functions", files: map[string]string{
 			"e/kustomization.yaml": "resources: [cm.yaml]\ntransformers: [fns]\n", "e/cm.yaml": cm("plain"),
 			"e/fns/kustomization.yaml": "resources: [fn.yaml]\n", "e/fns/fn.yaml": fooFunction("foo", "Foo", "example.com/v1"),
 		}},
-		{name: "generator directory", path: "e", wantNames: "plain", files: map[string]string{
+		{name: "generator directory", path: "e", wantErr: `kustomize generators entry "fns" is a kustomization directory; drydock does not expand directory entries of generators`, files: map[string]string{
 			"e/kustomization.yaml": "resources: [cm.yaml]\ngenerators: [fns]\n", "e/cm.yaml": cm("plain"),
 			"e/fns/kustomization.yaml": "resources: [fn.yaml]\n", "e/fns/fn.yaml": fooFunction("foo", "Foo", "example.com/v1"),
+		}},
+		// krusty builds a transformers directory of builtins as kustomize
+		// accumulates it, without dropping local-config configurations.
+		{name: "transformer directory of builtins", path: "e", wantNames: "plain", wantLabel: true, files: map[string]string{
+			"e/kustomization.yaml": "resources: [cm.yaml]\ntransformers: [fns]\n", "e/cm.yaml": cm("plain"),
+			"e/fns/kustomization.yaml": "resources: [label.yaml]\n", "e/fns/label.yaml": strings.Replace(builtinLabelTransformer, "  name: label\n", "  name: label\n  annotations:\n    config.kubernetes.io/local-config: \"true\"\n", 1),
+		}},
+		// kustomize fails a directory entry at or above the kustomization
+		// with "cycle detected" (fileloader.go:286). drydock fails it
+		// earlier, with another text: the plugin referent walk reaches the
+		// kustomization again, and it sets more than resources.
+		{name: "transformer directory of itself", path: "e", wantErr: "sets fields other than resources", files: map[string]string{
+			"e/kustomization.yaml": "resources: [cm.yaml]\ntransformers: [.]\n", "e/cm.yaml": cm("plain"),
+		}},
+		{name: "transformer directory above", path: "top/e", wantErr: "sets fields other than resources", files: map[string]string{
+			"top/kustomization.yaml":   "resources: [e]\n",
+			"top/e/kustomization.yaml": "resources: [cm.yaml]\ntransformers: [..]\n", "top/e/cm.yaml": cm("plain"),
 		}},
 		{name: "transformer List", path: "l", wantNames: "plain", files: map[string]string{
 			"l/kustomization.yaml": "resources: [cm.yaml]\ntransformers: [list.yaml]\n", "l/cm.yaml": cm("plain"),
@@ -195,7 +216,7 @@ func TestKustomizeSkippedPluginsStayInTheBuild(t *testing.T) {
 		{name: "generator outside the kustomization directory", path: "app", wantErr: "loading generator plugins: accumulation err='accumulating resources from '../shared/fn.yaml': security; file 'shared/fn.yaml' is not in or below 'app'", files: map[string]string{
 			"app/kustomization.yaml": "resources: [cm.yaml]\ngenerators: [../shared/fn.yaml]\n", "app/cm.yaml": cm("plain"), "shared/fn.yaml": builtinConfigMapGenerator,
 		}},
-		{name: "transformer outside the directory without the restriction", path: "app", options: []string{"--load-restrictor", "LoadRestrictionsNone"}, wantNames: "plain", files: map[string]string{
+		{name: "transformer outside the directory without the restriction", path: "app", options: []string{"--load-restrictor", "LoadRestrictionsNone"}, wantNames: "plain", wantLabel: true, files: map[string]string{
 			"app/kustomization.yaml": "resources: [cm.yaml]\ntransformers: [../shared/fn.yaml]\n", "app/cm.yaml": cm("plain"), "shared/fn.yaml": builtinLabelTransformer,
 		}},
 	} {
@@ -226,6 +247,9 @@ func TestKustomizeSkippedPluginsStayInTheBuild(t *testing.T) {
 						t.Fatalf("data = %v, want a=%s", data, tc.wantData)
 					}
 				}
+				if got := manifest.Object.GetLabels()["added"] == "true"; got != tc.wantLabel {
+					t.Fatalf("labels = %v, want the builtin label %t", manifest.Object.GetLabels(), tc.wantLabel)
+				}
 				if tc.name == "transformer List" && manifest.Object.GetAnnotations()["note"] != "listed" {
 					t.Fatalf("annotations = %v, want the List transformer applied", manifest.Object.GetAnnotations())
 				}
@@ -234,5 +258,88 @@ func TestKustomizeSkippedPluginsStayInTheBuild(t *testing.T) {
 				t.Fatalf("names = %s, want %s", got, tc.wantNames)
 			}
 		})
+	}
+}
+
+// Errors and origin annotations name the entries, not the files that
+// drydock writes for them in its workspace.
+func TestKustomizeRewrittenEntriesKeepTheirNames(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "app", "kustomization.yaml"), "buildMetadata: [originAnnotations, transformerAnnotations]\nresources: [cm.yaml]\ngenerators: [plugin.yaml]\ntransformers: [tr.yaml]\n")
+	writeFile(t, filepath.Join(root, "app", "cm.yaml"), "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: plain\n")
+	writeFile(t, filepath.Join(root, "app", "plugin.yaml"), builtinConfigMapGenerator+"---\n"+fooExecFunction)
+	writeFile(t, filepath.Join(root, "app", "tr.yaml"), builtinLabelTransformer+"---\n"+fooExecFunction)
+	opts := RenderOptions{KustomizeCaller: KustomizeCallerArgoCD, BuildOptions: []string{"--enable-alpha-plugins"}}
+	manifests, _, err := (KustomizeRenderer{}).Render(context.Background(), ResolvedSource{RepoRoot: root, Path: "app"}, opts)
+	if err != nil {
+		t.Fatalf("Render() error = %v", err)
+	}
+	for _, manifest := range manifests {
+		for key, value := range manifest.Object.GetAnnotations() {
+			if strings.Contains(value, ".drydock") {
+				t.Fatalf("%s %s = %q, names a workspace file", manifest.Object.GetName(), key, value)
+			}
+		}
+	}
+	for _, manifest := range manifests {
+		annotations := manifest.Object.GetAnnotations()
+		if !strings.Contains(annotations["alpha.config.kubernetes.io/transformations"], "configuredIn: tr.yaml") {
+			t.Fatalf("%s transformations = %q, want the entry tr.yaml", manifest.Object.GetName(), annotations["alpha.config.kubernetes.io/transformations"])
+		}
+		if manifest.Object.GetName() == "generated" && !strings.Contains(annotations["config.kubernetes.io/origin"], "configuredIn: plugin.yaml") {
+			t.Fatalf("origin = %q, want the entry plugin.yaml", annotations["config.kubernetes.io/origin"])
+		}
+	}
+
+	// Two copies of a skipped generator configuration collide. The error
+	// names the entry.
+	writeFile(t, filepath.Join(root, "app", "kustomization.yaml"), "resources: [cm.yaml]\ngenerators: [fn.yaml, fn.yaml]\n")
+	writeFile(t, filepath.Join(root, "app", "fn.yaml"), fooExecFunction)
+	_, _, err = (KustomizeRenderer{}).Render(context.Background(), ResolvedSource{RepoRoot: root, Path: "app"}, opts)
+	if err == nil || strings.Contains(err.Error(), ".drydock") || strings.Contains(err.Error(), "drydock-kustomize-") || !strings.Contains(err.Error(), "fn.yaml") {
+		t.Fatalf("Render() error = %v, want it to name fn.yaml and no workspace path", err)
+	}
+}
+
+// A function annotation that names neither a container nor an exec
+// program gives kustomize nothing to run, also with both flags. The
+// warning gives that reason, not a missing --enable-exec.
+func TestKustomizeFunctionWithoutProgramWarning(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "app", "kustomization.yaml"), "resources: [cm.yaml]\ngenerators: [fn.yaml]\n")
+	writeFile(t, filepath.Join(root, "app", "cm.yaml"), "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: plain\n")
+	writeFile(t, filepath.Join(root, "app", "fn.yaml"), "apiVersion: example.com/v1\nkind: Foo\nmetadata:\n  name: foo\n  annotations:\n    config.kubernetes.io/function: |\n      deferFailure: true\n")
+	manifests, diags, err := (KustomizeRenderer{}).Render(context.Background(), ResolvedSource{RepoRoot: root, Path: "app"}, RenderOptions{
+		KustomizeCaller: KustomizeCallerArgoCD,
+		BuildOptions:    []string{"--enable-alpha-plugins", "--enable-exec"},
+	})
+	if err != nil || len(manifests) != 1 {
+		t.Fatalf("Render() = %d manifests, error %v", len(manifests), err)
+	}
+	for _, diag := range diags {
+		if diag.Code != KustomizeExecFunctionSkippedCode {
+			continue
+		}
+		if !strings.Contains(diag.Message, "1 functions whose annotation names neither a container nor an exec program") || strings.Contains(diag.Message, "no --enable-exec") {
+			t.Fatalf("warning = %q, want the reason without a missing --enable-exec", diag.Message)
+		}
+		return
+	}
+	t.Fatalf("diagnostics = %#v, want the skip warning", diags)
+}
+
+// kustomize applies the generator options of a skipped configuration that
+// it adds; drydock does not, so it fails closed.
+func TestKustomizeSkippedGeneratorWithOptionsFailsClosed(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "app", "kustomization.yaml"), "resources: [cm.yaml]\ngenerators: [fn.yaml]\n")
+	writeFile(t, filepath.Join(root, "app", "cm.yaml"), "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: plain\n")
+	writeFile(t, filepath.Join(root, "app", "fn.yaml"), strings.Replace(fooExecFunction, "  annotations:\n", "  annotations:\n    kustomize.config.k8s.io/needs-hash: \"true\"\n", 1))
+	_, _, err := (KustomizeRenderer{}).Render(context.Background(), ResolvedSource{RepoRoot: root, Path: "app"}, RenderOptions{
+		KustomizeCaller: KustomizeCallerArgoCD,
+		BuildOptions:    []string{"--enable-alpha-plugins"},
+	})
+	if err == nil || !strings.Contains(err.Error(), `sets the generator option annotation "kustomize.config.k8s.io/needs-hash", which drydock does not apply`) {
+		t.Fatalf("Render() error = %v, want the generator option failure", err)
 	}
 }
